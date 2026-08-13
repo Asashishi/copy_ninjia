@@ -16,6 +16,7 @@ import {
   stickerCatalogRetryState,
 } from "../../../cache/workers/aiChat/stickers/catalog";
 import { transientDescriptionCache } from "../../../cache/workers/aiChat/imageDescription";
+import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worker";
 import { invalidateStickerMenu } from "../../../cache/workers/aiChat/stickers/menu";
 import {
   STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS,
@@ -69,15 +70,18 @@ function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapsh
  * 重新采样；SDK 已耗尽 HTTP 重试的请求立即停止，避免乘法重试。 */
 async function callWithRetry(
   label: string,
-  call: () => Promise<AiTextResult>
+  call: () => Promise<AiTextResult>,
+  signal: AbortSignal
 ): Promise<string | null> {
   for (let attempt: number = 0; ; attempt++) {
+    if (signal.aborted) return null;
     const result: AiTextResult = await call();
+    if (signal.aborted) return null;
     if (result.ok) return result.text;
     if (!result.retryable || attempt >= STICKER_CATALOG_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = STICKER_CATALOG_RETRY_DELAYS_MS[attempt]!;
     logger.error(`${label} attempt ${attempt + 1} returned no usable text; resampling in ${delayMs} ms.`);
-    await sleep(delayMs);
+    await sleep(delayMs, signal);
   }
 }
 
@@ -186,9 +190,10 @@ export function flushDirtyStickerCatalogs(post: (event: AiStickerCatalogEvent) =
  * 崩溃重启后重放 init）天然幂等。
  */
 export function ensureStickerCatalogs(packs: readonly string[]): void {
+  const signal: AbortSignal = aiChatWorkerAbortController.current.signal;
   for (const pack of packs) {
     if (generatingPacks.has(pack)) continue;
-    const task: Promise<void> = generatePackCatalog(pack).finally((): void => {
+    const task: Promise<void> = generatePackCatalog(pack, signal).finally((): void => {
       if (generatingPacks.get(pack) === task) generatingPacks.delete(pack);
     });
     generatingPacks.set(pack, task);
@@ -250,10 +255,10 @@ export function retryIncompleteStickerCatalogs(packs: readonly string[], now: nu
  * ensureStickerCatalogs 是 fire-and-forget 的公开入口，拿不到这个句柄）；
  * 生产代码路径统一走 ensureStickerCatalogs。
  */
-export async function generatePackCatalog(pack: string): Promise<void> {
+export async function generatePackCatalog(pack: string, signal: AbortSignal = aiChatWorkerAbortController.current.signal): Promise<void> {
   try {
-    const set: StickerSet | null = await getStickerSet(pack);
-    if (!set) return;
+    const set: StickerSet | null = await getStickerSet(pack, undefined, signal);
+    if (!set || signal.aborted) return;
 
     const map: Map<string, StickerCatalogEntry> = getPackMap(pack);
     const liveIds: Set<string> = new Set(set.stickers.map((sticker: Sticker): string => sticker.file_unique_id));
@@ -282,6 +287,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     }
 
     for (const sticker of set.stickers) {
+      if (signal.aborted) return;
       if (map.has(sticker.file_unique_id) || isEntryFailureActive(pack, sticker.file_unique_id)) continue;
 
       const source: { fileId: string; fileUniqueId: string } | null = pickStickerVisionSource(sticker);
@@ -294,8 +300,10 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       // 读到旧描述。
       const description: string | null = await callWithRetry(
         `Sticker catalog description (pack "${pack}", sticker ${sticker.file_unique_id})`,
-        (): Promise<AiTextResult> => describeMediaForStickerCatalog(source.fileId)
+        (): Promise<AiTextResult> => describeMediaForStickerCatalog(source.fileId, signal),
+        signal
       );
+      if (signal.aborted) return;
       if (!description) {
         markEntryFailed(pack, sticker.file_unique_id);
         continue;
@@ -313,8 +321,10 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     if (map.size > 0 && (entriesChanged || !packSummaries.has(pack))) {
       const summary: string | null = await callWithRetry(
         `Sticker pack summary (pack "${pack}")`,
-        (): Promise<AiTextResult> => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
+        (): Promise<AiTextResult> => summarizePack(set.title, [...map.values()].map(formatEntryForSummary), signal),
+        signal
       );
+      if (signal.aborted) return;
       if (summary) {
         packSummaries.set(pack, summary);
         dirtyPacks.add(pack);
@@ -324,6 +334,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       }
     }
   } catch (error: unknown) {
+    if (signal.aborted) return;
     logger.error(`Error reconciling sticker catalog for pack "${pack}":`, error);
   }
 }
@@ -340,11 +351,16 @@ function formatEntryForSummary(entry: StickerCatalogEntry): string {
  * STICKER_PACK_SUMMARY_PROMPT）。走与冷消息压缩相同的中性总结模型；
  * 产出压成单行并按子句边界截断；结果同时声明业务层是否允许重新采样。
  */
-async function summarizePack(title: string, descriptions: string[]): Promise<AiTextResult> {
+async function summarizePack(
+  title: string,
+  descriptions: string[],
+  signal: AbortSignal
+): Promise<AiTextResult> {
   return summaryAiProvider().generateText({
     purpose: "stickerPackSummary",
     systemPrompt: STICKER_PACK_SUMMARY_PROMPT,
     userContent: `贴纸包「${title}」内每枚贴纸的画面描述：\n${descriptions.join("\n")}`,
+    signal,
     errorLabel: STICKER_PACK_SUMMARY_ERROR_LABEL,
     normalize: (text: string): string => {
       const sanitized: string = sanitizeInline(text);

@@ -20,8 +20,10 @@
 | `bun run test` | ファイル分離を強制して全テストを実行 |
 | `bun run test:coverage` | テスト + 全ソースコードのカバレッジ |
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
-| `bun run check` | conventions + lint + typecheck + coverage。**コミット前に必須** |
+| `bun run check` | conventions + lint + typecheck + coverage + hot path gate。**コミット前に必須** |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
+| `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
+| `bun run perf:hot-path-gate` | 全 hot path シナリオの memory/GC/JIT gate。`check` に組み込み済み |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で独立 process の比較 benchmark を実行 |
 | `bun run release:check` | frozen lockfile install + check + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
@@ -35,7 +37,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2245 tests / 234 files / 32766 `expect()` calls**。全ソースコードの**関数カバレッジは 95.66%、行カバレッジは 96.62%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2269 tests / 235 files / 32867 `expect()` calls**。全ソースコードの**関数カバレッジは 95.66%、行カバレッジは 96.70%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -57,6 +59,16 @@
 ## Fault injection suite
 
 `bun run test:fault-injection` は crash recovery と永続化境界を重点的に検証します。ライフサイクル失敗、update runner の確認境界、StateStore と cleanup、AI/Anti-Raid Worker のミラーとライフサイクル、Disk I/O の追記・snapshot・ログファイル、flush barrier などが対象です。完全な一覧は [`package.json`](../../package.json) の script 定義を参照してください。[04 実行時の正式な不変条件](04-invariants.md) に関わる経路を変更した場合、この suite は必ず成功しなければなりません。
+
+## Hot path gate
+
+`bun run perf:hot-path-gate` は `bun run check` の最終段で、コミットのたびに実行されます。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` の各シナリオ・各繰り返しごとに独立した子プロセスを 2 つ起動します。`steadyProfile` は正式ループの GC と JIT だけを判定し、`retained` は profiler 自身のメモリ干渉がない状態で RSS、heapUsed のピーク、full GC 後の残存を判定します。
+
+gate を設けている項目：GC sample 比率、sampling RSS ピークとプロセス生涯 RSS 高水位（同一上限を共有。後者は 2 つの tick の間に完全に収まる一時的な確保を捕捉できます）、sampling heapUsed 増加、full GC 後の JSC heap／heap 外メモリ／object 数の残存、最小 sample 数、そして production probe ごとの「warmup 後に DFG 到達済み」と「sampling 中に再コンパイルや脱最適化なし」。
+
+出力のうち `Diagnostic` 接尾辞が付く項目は報告のみで gate しません。集計 FTL 比率はその一つで、純粋な leaf シナリオでは 100% 近く、非同期の主経路では一桁に留まります（sample に native Promise とスケジューラのフレームが混ざるため）。単一の閾値は両者に共通の意味を持ちません。`reoptRetries` の絶対値も同様で、sampling 開始前の JIT 安定ラウンドが既に連続ラウンドでの不変を要求しているため、残るのは warmup 期の履歴だけです。
+
+`profile` / `retained` の接頭辞は、その読み取り値がどちらの子プロセス由来かを示します。両者の warmup 回数は一桁違う（profile 側は JIT 安定ラウンドを追加で回す）ため、混ぜて読んではいけません。
 
 ## 入室ログ性能 benchmark
 

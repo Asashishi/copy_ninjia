@@ -15,11 +15,10 @@
  * 已知与 Gemini 侧的第二处差异：请求不带采样温度，GPT-5 系推理模型只接受默认
  * 值。中立契约的 `grounded` 因此在本包不影响采样，只有 Gemini 侧会据此降温。
  *
- * 已知与 Gemini 侧的差异：本会话拿不到可回传的思考上下文。Responses 的
- * `reasoning.encrypted_content` 需要服务端配合返回，自建/代理网关普遍会把
- * reasoning item 剥掉，因此这里不声明 include，也不依赖跨轮思考续传——多轮
- * 工具往返只保证「函数调用与结果配对正确」，不保证思考连续。既然拿不到载荷，
- * 回放 reasoning item 也就一定是错的：见下方 toInputItems。
+ * OpenAI 原生 Responses 在 `store:false` 时默认把可回放的
+ * `reasoning.encrypted_content` 带回；多轮工具往返必须与函数调用一起续传。
+ * 兼容网关可能剥掉该载荷，因此只回放确实带非空密文的 reasoning item；
+ * id-only item 仍丢弃，避免下一轮被无服务端状态可查的兼容端点拒绝。
  */
 
 import type OpenAI from "openai";
@@ -72,26 +71,28 @@ function buildTools(request: AiReplyTurnRequest): OpenAI.Responses.Tool[] {
 }
 
 /**
- * 把模型这一轮的 output item 收窄成可回填 input 的条目。只保留续接对话真正
- * 需要的三类：可配对的函数调用、正文消息、服务端检索记录；其余 item 类型本
+ * 把模型这一轮的 output item 收窄成可回填 input 的条目。保留可回放的
+ * 加密推理、可配对的函数调用、正文消息与服务端检索记录；其余 item 类型本
  * 项目不挂载对应工具，出现即忽略。
  *
  * **函数调用要过 isPairableFunctionCall**，与 extractFunctionCalls 同一判据：
  * 缺 call_id 的那条不会被执行、也就配不上 function_call_output，原样推回
  * input 只会让下一轮请求被整体 400 拒绝（详见该函数的 JSDoc）。
  *
- * **reasoning item 一律不回放**：请求钉死 `store: false`
- * （OPENAI_STORE_RESPONSES），而这里也从不声明
- * `include: ["reasoning.encrypted_content"]`，因此回放的只是一个背后既没有
- * 服务端存储、也没有加密载荷的 `rs_…` id，官方 Responses 端点会 400 拒绝整个
- * 请求——于是**每一个需要多于一轮工具的回复**都会在第一轮副作用已经落地之后
- * 失败。日后真要回传思考上下文，必须连同 store 或 include 一起改，不能只把
- * 这一类加回来。
+ * **reasoning item 只在有非空加密载荷时回放**：OpenAI 原生端点在无状态
+ * 模式下默认返回它，不需要额外的 include；兼容网关若只留下 `rs_…` id，
+ * 回放反而可能因无服务端状态可查而被拒绝，所以仍然 fail-safe 丢弃。
  */
 function toInputItems(output: readonly OpenAI.Responses.ResponseOutputItem[]): OpenAI.Responses.ResponseInputItem[] {
   const items: OpenAI.Responses.ResponseInputItem[] = [];
   for (const item of output) {
-    if (item.type === "function_call") {
+    if (
+      item.type === "reasoning" &&
+      typeof item.encrypted_content === "string" &&
+      item.encrypted_content.length > 0
+    ) {
+      items.push(item);
+    } else if (item.type === "function_call") {
       if (isPairableFunctionCall(item)) items.push(item);
     } else if (item.type === "message" || item.type === "web_search_call") {
       items.push(item);

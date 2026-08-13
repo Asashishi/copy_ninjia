@@ -29,15 +29,17 @@ beforeEach(() => {
 
 describe("纯文本生成", () => {
   test("系统提示词进 systemInstruction，待处理内容进单段 user text", async () => {
+    const controller: AbortController = new AbortController();
     await generateGeminiText({
       purpose: "chatSummary",
       systemPrompt: "把下面的对话压成一句话",
       userContent: "甲：你好\n乙：在",
+      signal: controller.signal,
       errorLabel: "AI summarize API",
       normalize: (text: string): string => text,
     });
 
-    const options = requestGeminiTextResult.mock.calls[0]![0] as { buildBody: () => GenerateContentParameters; errorLabel: string };
+    const options = requestGeminiTextResult.mock.calls[0]![0] as { buildBody: () => GenerateContentParameters; errorLabel: string; signal?: AbortSignal };
     const body: GenerateContentParameters = options.buildBody();
     expect(body.model).toBe(getAgentDeploymentConfig().summary.model);
     expect(body.contents).toEqual([{ role: "user", parts: [{ text: "甲：你好\n乙：在" }] }]);
@@ -45,6 +47,8 @@ describe("纯文本生成", () => {
     expect(body.config?.temperature).toBe(GEMINI_SUMMARY_TEMPERATURE);
     expect(body.config?.maxOutputTokens).toBe(GEMINI_CHAT_SUMMARY_MAX_TOKENS);
     expect(options.errorLabel).toBe("AI summarize API");
+    expect(body.config?.abortSignal).toBe(controller.signal);
+    expect(options.signal).toBe(controller.signal);
   });
 
   test("贴纸整包简介走另一档 token 上限", async () => {

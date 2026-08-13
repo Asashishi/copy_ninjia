@@ -30,7 +30,7 @@ const { scheduleRotation } = await import("../../../packages/workers/aiChat/comp
 const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 const { compactionChains, compactionPendingCounts } = await import("../../../packages/cache/workers/aiChat/compaction");
 const { chatSummaries, dirtyMemoryChats, pendingSummaries } = await import("../../../packages/cache/workers/aiChat/memory");
-const { resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
+const { replyAbortControllers, resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
 const { resetAiChatCompactionCache } = await import("../../../packages/cache/workers/aiChat/compaction");
 const { resetAiChatMemoryCache } = await import("../../../packages/cache/workers/aiChat/memory");
 const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../packages/consts/aiChat/memory");
@@ -101,7 +101,7 @@ describe("AI 中期记忆压缩", () => {
 
     expect(generateText).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
-    expect(sleep).toHaveBeenCalledWith(15_000);
+    expect(sleep).toHaveBeenCalledWith(15_000, expect.any(AbortSignal));
     expect(pendingSummaries.get(-1002)).toBe("重试得到的摘要");
   });
 
@@ -142,13 +142,18 @@ describe("AI 中期记忆压缩", () => {
     expect(dirtyMemoryChats.has(-1003)).toBe(false);
   });
 
-  test("单群压缩积压达到硬顶时直接丢弃新任务", () => {
+  test("单群压缩积压达到硬顶时直接丢弃新任务，且拒绝路径不留下任何登记", () => {
     compactionPendingCounts.set(-1004, COMPACTION_MAX_PENDING_PER_CHAT);
+    const controllersBefore: number = replyAbortControllers.size;
 
     scheduleRotation(-1004, batch, false);
 
     expect(generateText).not.toHaveBeenCalled();
     expect(compactionPendingCounts.get(-1004)).toBe(COMPACTION_MAX_PENDING_PER_CHAT);
     expect(logError).toHaveBeenCalledTimes(1);
+    // 拒绝路径不得惰性建出 AbortController：登记项只由 trackReplyGenerationTask
+    // 的 finally（需要已跟踪任务）或整代失效清理摘除，这里没有任何一方会来收，
+    // 持续溢出且长期不被作废的群会一路累积用不上的 controller。
+    expect(replyAbortControllers.size).toBe(controllersBefore);
   });
 });

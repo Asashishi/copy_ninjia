@@ -22,6 +22,7 @@ import {
   claimSampleContextParts,
 } from "../../../packages/workers/antiRaid/adDetect/bundle";
 import { handleIncomingMessage } from "../../../packages/auto/message";
+import { handleProactiveMessageActions } from "../../../packages/auto/message/proactive";
 import {
   observeMemberMessage,
   resetFloodWindows,
@@ -30,6 +31,7 @@ import { resolveMentionFacts, resolveReplyReference } from "../../../packages/au
 import { redactSecretsInText } from "../../../packages/libs/redaction";
 import { LUCK_TIERS } from "../../../packages/consts/luckChallenge";
 import { collectDueGagSpeakNotices } from "../../../packages/commands/gag/counter";
+import { createLuckReceiptFastPathScenario } from "./luckReceiptScenario";
 import { createGagTargetProfileUrl } from "../../../packages/commands/gag/identity";
 import { FLOOD_WINDOW_MAX_MEMBERS } from "../../../packages/consts/antiRaid/flood";
 import { buildTieredVerbatimTranscript } from "../../../packages/aiChat/ai/utils/chatTranscript";
@@ -415,7 +417,12 @@ function incomingMessageSpineScenario(): Scenario {
       userCache.clear();
       senderUsernameCache.clear();
     },
-    probes: { handleIncomingMessage, cacheSender, observeGroupMessageForAiReply },
+    probes: {
+      handleIncomingMessage,
+      handleProactiveMessageActions,
+      cacheSender,
+      observeGroupMessageForAiReply,
+    },
   };
 }
 
@@ -900,6 +907,8 @@ export function createScenario(name: ScenarioName): Scenario {
       return senderScenario();
     case "sender-stable-username":
       return senderScenario("Stable_User");
+    case "luck-receipt-fast-path":
+      return createLuckReceiptFastPathScenario();
     case "ai-activity-window":
       return aiActivityScenario();
     case "ai-activity-lru-miss":

@@ -39,7 +39,11 @@ describe("sendCommandMessage", () => {
       text: "提示",
       replyToMessageId: 10,
       api,
+      onSent: expect.any(Function),
     });
+    const onSent: ((messageId: number) => void) =
+      (sendMessage.mock.calls[0]![0] as { onSent: (messageId: number) => void }).onSent;
+    onSent(77);
     expect(deleteMessageAfter).toHaveBeenCalledWith({
       chatId: -1001,
       messageId: 77,
@@ -79,5 +83,25 @@ describe("sendCommandMessage", () => {
     })).resolves.toBeUndefined();
 
     expect(deleteMessageAfter).not.toHaveBeenCalled();
+  });
+
+  test("远端成功后 update 立即取消时仍同步登记删除", async () => {
+    const aborted: Error = new DOMException("update aborted", "AbortError");
+    sendMessage.mockImplementationOnce(async (params: unknown): Promise<number | undefined> => {
+      (params as { onSent: (messageId: number) => void }).onSent(91);
+      throw aborted;
+    });
+
+    await expect(sendCommandMessage({
+      chatId: -1001,
+      text: "已发送但当前 update 已取消",
+    })).rejects.toBe(aborted);
+
+    expect(deleteMessageAfter).toHaveBeenCalledWith({
+      chatId: -1001,
+      messageId: 91,
+      delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
+      api: undefined,
+    });
   });
 });

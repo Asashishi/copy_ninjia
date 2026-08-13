@@ -19,7 +19,7 @@ flowchart TD
     classDef main stroke:#8e75ff,stroke-width:2.5px;
     classDef worker stroke:#3b82f6,stroke-width:2px;
 
-    MAIN["🧵 主线程<br/>grammY runner + 按群 sequentialize<br/>唯一 Telegram 客户端 + 出站总闸<br/>state 门面 + StateStore（state.json）"]:::main
+    MAIN["🧵 主线程<br/>确认式 update runner（逐条串行取数）<br/>唯一 Telegram 客户端 + 出站总闸<br/>state 门面 + StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>多轮工具调用（可替换 provider）<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
     DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 身份数据库 / 运势 / 验证文件 / 入群日志"]:::worker
@@ -44,17 +44,16 @@ Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共
 
 ## 一条消息的旅程
 
-更新链在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 一次性显式安装，middleware 顺序即语义：
+更新链在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 一次性显式安装，middleware 顺序即语义。链上**没有** `sequentialize`：顺序保证来自取数侧的确认式 runner（[`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)），它每次只取一条 update，且该条的 middleware 完成前不再调用 `getUpdates`——因此保证比「按群串行」更强，是全局逐条串行。反应同步走独立合并队列，不占这条车道。
 
 1. **update_id 追踪**——记录已进入处理的最大 `update_id`，停机时用于确认 Telegram offset。
 2. **运势签名回执确认**——在一切网关之前，转发副本也有效。
 3. **init 网关**——未 `/init enable` 的群，其普通业务 update 在这里终止；`my_chat_member`、自身 `via_bot` 消息与超级管理员的 `/init` 等显式例外由 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 放行。
-4. **按群串行**——`sequentialize` 保证同群消息顺序处理；反应同步走独立合并队列，不占聊天车道。
-5. **私聊网关**——私聊只放行 `/send` 入口与进行中的中转会话；中转消息短路进消息流水线，避免文本被当成命令。
-6. **入群验证**——必须早于命令处理，否则待验证用户发的命令不会被追踪清理。整条链路（验证 + 防冲群私密模式）按群缺省关闭，由 `/antiraid enable` 打开；关着的群在这一步就不投递任何入群事件。
-7. **命令注册**——所有 `bot.command(...)` 在这里逐项注册，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。其中 `/x` 是菜单占位项：它只为曝光中文动作命令的用法，收到时回一句用法说明并就此终止链路。
-8. **中文动作命令**——`/咬`、`/贴贴` 这类命令（动作词收 1~2 个中文字）拿不到 Telegram 的 `bot_command` 实体，`bot.command` 匹配不到，只能用 `bot.hears` 按消息原文匹配（见 [`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts)）。**必须排在下一步的消息兜底之前**——排在后面就会被当成普通消息进入 AI/复读流水线，整个特性静默失效。因为它排在自动流水线之前，那条流水线的自发消息门禁对它无效，handler 自己要跳过机器人自己的消息；也因为被它认领的消息不再往下走，handler 要自己补上发送者身份缓存。不认领的形态（`/咬@OtherBot`、caption 形态、消息形态异常）一律 `next()` 放行。
-9. **自动消息流水线**——[`packages/auto/`](../../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
+4. **私聊网关**——私聊只放行 `/send` 入口与进行中的中转会话；中转消息短路进消息流水线，避免文本被当成命令。
+5. **入群验证**——必须早于命令处理，否则待验证用户发的命令不会被追踪清理。整条链路（验证 + 防冲群私密模式）按群缺省关闭，由 `/antiraid enable` 打开；关着的群在这一步就不投递任何入群事件。
+6. **命令注册**——所有 `bot.command(...)` 在这里逐项注册，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。其中 `/x` 是菜单占位项：它只为曝光中文动作命令的用法，收到时回一句用法说明并就此终止链路。
+7. **中文动作命令**——`/咬`、`/贴贴` 这类命令（动作词收 1~2 个中文字）拿不到 Telegram 的 `bot_command` 实体，`bot.command` 匹配不到，只能用 `bot.hears` 按消息原文匹配（见 [`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts)）。**必须排在下一步的消息兜底之前**——排在后面就会被当成普通消息进入 AI/复读流水线，整个特性静默失效。因为它排在自动流水线之前，那条流水线的自发消息门禁对它无效，handler 自己要跳过机器人自己的消息；也因为被它认领的消息不再往下走，handler 要自己补上发送者身份缓存。不认领的形态（`/咬@OtherBot`、caption 形态、消息形态异常）一律 `next()` 放行。
+8. **自动消息流水线**——[`packages/auto/`](../../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
 
 AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投递 AI Worker → Worker 组装三段式模型输入（参考记忆 / 当前会话 / 本轮任务）→ 多轮工具调用（发消息、贴纸、反应、生图，全部经主线程代理执行）→ 结果写回滚动记忆 → 周期快照落盘。活跃度概率只是一道**随机主动搭话闸门**：按群观察近期消息，冷群保持低触发率，同群越活跃触发率越高但有硬上限；@、回复机器人等直接触发不由这道概率闸决定。
 
@@ -109,9 +108,9 @@ flowchart TD
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
 3. **恢复 state 持久化边界与全局安全配置**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 等全局启动输入非法时会在联网和 Worker 创建前拒绝启动。`config/` 下其余四份可选业务 JSON **不在这里预热**——它们各属一个按群 opt-in 的功能，校验挪到了对应的开关命令上（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts)）。恢复完 `state.json` 后再核对一次：还有群开着的可选功能，其凭据与配置必须齐备，否则带着群 id 拒绝启动（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。
 4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，并严格 hydrate `database/storage.sqlite` 的白名单、黑名单计数和未完成处置；主线程不复制两张名单整表，只建立有界 LRU。任何领域恢复失败都拒绝以部分状态启动。
-5. 注册 handler、设置命令菜单并执行 `bot.init()`。
-6. 初始化 **AI Worker**，只 hydrate `state.json` 中明确启用 AI 的群；随后恢复运势与待验证镜像、初始化 **Anti-Raid Worker**，最后启动 acknowledgement-safe runner。
-7. 一切就绪后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
+4. 注册 handler、设置命令菜单并执行 `bot.init()`。
+5. 初始化 **AI Worker**，只 hydrate `state.json` 中明确启用 AI 的群；随后恢复运势与待验证镜像、初始化 **Anti-Raid Worker**，最后启动 acknowledgement-safe runner。
+6. 一切就绪后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
 
 失败与退出统一由 `ApplicationLifecycle` 收口：只有已取得的资源才会释放或 flush。
 

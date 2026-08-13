@@ -8,35 +8,35 @@ import type {
   WhiteCommandTexts,
 } from "../types/whitelist";
 
-/** 白名单条目缺省不可使用手动禁言。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可使用手动禁言。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_MUTE: boolean = false;
-/** 白名单条目缺省不可使用手动解除禁言。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可使用手动解除禁言。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_UNMUTE: boolean = false;
-/** 白名单条目缺省不可使用 /gag 与 /ungag。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可使用 /gag 与 /ungag。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_GAG: boolean = false;
-/** 白名单条目缺省可以查看 /bot_status。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省可以查看 /bot_status。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_VIEW_BOT_STATUS: boolean = true;
-/** 白名单条目缺省不可写入永久黑名单。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可写入永久黑名单。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_BLOCK: boolean = false;
-/** 白名单条目缺省不可移出永久黑名单。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可移出永久黑名单。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_UNBLOCK: boolean = false;
 /** 白名单条目缺省不可代为新增其它白名单身份。所属模块：packages/commands/white.ts。 */
 const DEFAULT_IS_CAN_WHITE_OTHER: boolean = false;
-/** 白名单条目缺省不可重抽 AI 心情。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可重抽 AI 心情。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_SWITCH_MOOD: boolean = false;
-/** 白名单条目缺省绕过广告检测。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省绕过广告检测。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_BYPASS_AD_DETECTION: boolean = true;
-/** 白名单条目缺省绕过防刷屏禁言。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省绕过防刷屏禁言。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_BYPASS_FLOOD_CONTROL: boolean = true;
-/** 白名单条目缺省不可开关 AI 闲聊。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可开关 AI 闲聊。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION: boolean = false;
-/** 白名单条目缺省不可开关广告检测。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可开关广告检测。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION: boolean = false;
-/** 白名单条目缺省不可开关防刷屏禁言。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可开关防刷屏禁言。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION: boolean = false;
-/** 白名单条目缺省不可开关日语翻译。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可开关日语翻译。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION: boolean = false;
-/** 白名单条目缺省不可开关入群守卫。所属模块：packages/whitelist.ts。 */
+/** 白名单条目缺省不可开关入群守卫。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION: boolean = false;
 
 /**
@@ -68,7 +68,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
  *
  * `/permission query` 在同步白名单缓存没有目标条目时直接复用本对象，不创建、
  * 补齐或写入 SQLite 记录。字段顺序与 DEFAULT_WHITELIST_PERMISSIONS 保持一致，
- * 让三种查询视图拥有相同对象 shape。所属模块：packages/whitelist.ts。
+ * 让三种查询视图拥有相同对象 shape。所属模块：packages/infra/identityPolicy/whitelist.ts。
  */
 export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: false,
@@ -93,7 +93,7 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
  *
  * 超级管理员的授权来自 `SUPER_ADMIN_USER_ID` 这个身份本身，不来自 SQLite
  * 白名单表——因此它**不写入**该表，只在运行时由
- * `packages/whitelist.ts` 的读取边界覆盖上去。这样既让所有可授予的
+ * `packages/infra/identityPolicy/whitelist.ts` 的读取边界覆盖上去。这样既让所有可授予的
  * 白名单权限判定对超级管理员恒为 true（调用方不必再单独判身份），又保证
  * `/white`、`/permission` 永远只落盘管理员明确登记的条目：否则一旦
  * `SUPER_ADMIN_USER_ID` 换人，表里会留下一条全开的旧身份。
@@ -106,7 +106,7 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
  * antiRaid/floodControl.ts），那里的 `permissions[key]` 取值只有在本对象与
  * parsePermissions 产出的条目共用同一个 JSC Structure 时才保持单态。JSC 按
  * **键的插入顺序**分配 Structure，因此重排字段（哪怕键集合不变）会当场把这个
- * 热点取值打成多态。所属模块：packages/whitelist.ts。
+ * 热点取值打成多态。所属模块：packages/infra/identityPolicy/whitelist.ts。
  */
 export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: true,

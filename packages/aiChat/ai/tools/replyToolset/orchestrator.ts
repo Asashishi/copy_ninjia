@@ -37,7 +37,7 @@ import type { RoundMessageState } from "../../../../types/aiChat/replies";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
 export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
-  const menu: readonly StickerPackCandidate[] = await buildStickerPackMenu();
+  const menu: readonly StickerPackCandidate[] = await buildStickerPackMenu(ctx.signal);
   const stickerState: StickerRoundState = createStickerRoundState();
   const messageState: RoundMessageState = createRoundMessageState();
   let actionsUsed: number = 0;

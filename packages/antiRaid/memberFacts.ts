@@ -1,7 +1,7 @@
 import {
   hasWhitelistPermission,
   isWhitelisted,
-} from "../whitelist";
+} from "../infra/identityPolicy/whitelist";
 import { isAdminStatus } from "../libs/chatMember";
 import type { ChatMember } from "@grammyjs/types";
 import type { AntiRaidMember } from "../types/antiRaid";

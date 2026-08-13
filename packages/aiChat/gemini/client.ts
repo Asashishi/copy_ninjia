@@ -180,6 +180,7 @@ export interface GeminiTextRequestOptions {
   readonly buildBody: () => GenerateContentParameters;
   readonly errorLabel: string;
   readonly normalize: (text: string) => string;
+  readonly signal?: AbortSignal;
 }
 
 export async function requestGeminiTextResult({
@@ -187,8 +188,10 @@ export async function requestGeminiTextResult({
   buildBody,
   errorLabel,
   normalize,
+  signal,
 }: GeminiTextRequestOptions): Promise<AiTextResult> {
   const result: GeminiRequestResult = await requestGeminiResult(capability, buildBody, errorLabel);
+  if (signal?.aborted === true) return { ok: false, retryable: false };
   if (!result.ok) return classifyAiTextFailure(result.failureKind, capability);
   const text: string = normalize(result.response.text ?? "");
   return finalizeAiTextResult(text);

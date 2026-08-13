@@ -105,12 +105,20 @@ function quotaRunnerFor(config: AgentCapabilityConfig): PrioritizedBoundedTaskRu
   return lane.runner;
 }
 
-function scheduleProviderTask<T>(
-  runner: PrioritizedBoundedTaskRunner,
-  priority: AiProviderTaskPriority,
-  task: () => Promise<T>
-): Promise<T | undefined> {
-  return runner.run(priority, task);
+interface ScheduleProviderTaskOptions<T> {
+  readonly runner: PrioritizedBoundedTaskRunner;
+  readonly priority: AiProviderTaskPriority;
+  readonly task: () => Promise<T>;
+  readonly signal?: AbortSignal;
+}
+
+function scheduleProviderTask<T>({
+  runner,
+  priority,
+  task,
+  signal,
+}: ScheduleProviderTaskOptions<T>): Promise<T | undefined> {
+  return runner.run(priority, task, signal);
 }
 
 function queueRejectedReplyTurn(): AiReplyTurn {
@@ -136,11 +144,12 @@ function createTextFacade(
       const session: AiReplySession = provider.createReplySession(params);
       return {
         async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
-          const result: AiReplyTurn | undefined = await scheduleProviderTask(
+          const result: AiReplyTurn | undefined = await scheduleProviderTask({
             runner,
-            "interactive",
-            (): Promise<AiReplyTurn> => session.request(request)
-          );
+            priority: "interactive",
+            task: (): Promise<AiReplyTurn> => session.request(request),
+            signal: params.signal,
+          });
           return result ?? queueRejectedReplyTurn();
         },
         appendToolOutputs: session.appendToolOutputs.bind(session),
@@ -157,11 +166,12 @@ function createSummaryFacade(
   return {
     name: provider.name,
     async generateText(request: AiTextRequest): Promise<AiTextResult> {
-      const result: AiTextResult | undefined = await scheduleProviderTask(
+      const result: AiTextResult | undefined = await scheduleProviderTask({
         runner,
-        "background",
-        (): Promise<AiTextResult> => provider.generateText(request)
-      );
+        priority: "background",
+        task: (): Promise<AiTextResult> => provider.generateText(request),
+        signal: request.signal,
+      });
       return result ?? { ok: false, retryable: false };
     },
   };
@@ -177,11 +187,12 @@ function createMediaFacade(
   const describeVision: AiMediaProvider["describeVision"] = async (
     request: AiVisionRequest
   ): Promise<AiTextResult> => {
-    const result: AiTextResult | undefined = await scheduleProviderTask(
+    const result: AiTextResult | undefined = await scheduleProviderTask({
       runner,
       priority,
-      (): Promise<AiTextResult> => provider.describeVision(request)
-    );
+      task: (): Promise<AiTextResult> => provider.describeVision(request),
+      signal: request.signal,
+    });
     return result ?? { ok: false, retryable: false };
   };
   if (transcribeVoice === undefined) return { name: provider.name, describeVision };
@@ -189,11 +200,12 @@ function createMediaFacade(
     name: provider.name,
     describeVision,
     async transcribeVoice(request: AiVoiceRequest): Promise<AiTextResult> {
-      const result: AiTextResult | undefined = await scheduleProviderTask(
+      const result: AiTextResult | undefined = await scheduleProviderTask({
         runner,
         priority,
-        (): Promise<AiTextResult> => transcribeVoice(request)
-      );
+        task: (): Promise<AiTextResult> => transcribeVoice(request),
+        signal: request.signal,
+      });
       return result ?? { ok: false, retryable: false };
     },
   };
@@ -205,16 +217,20 @@ function createMediaFacade(
  * 队列满时 runner 返回 undefined，这里统一归一成 `null`——生图与生歌的调用方都
  * 按「这次没做出来」处理，不能把队列拒绝泄漏成一个 undefined 让工具层再猜一次。
  */
-function scheduleMediaGeneration<TRequest, TResult>(
+function scheduleMediaGeneration<
+  TRequest extends { readonly signal?: AbortSignal },
+  TResult
+>(
   runner: PrioritizedBoundedTaskRunner,
   generate: (request: TRequest) => Promise<TResult | null>
 ): (request: TRequest) => Promise<TResult | null> {
   return async (request: TRequest): Promise<TResult | null> => {
-    const result: TResult | null | undefined = await scheduleProviderTask(
+    const result: TResult | null | undefined = await scheduleProviderTask({
       runner,
-      "interactive",
-      (): Promise<TResult | null> => generate(request)
-    );
+      priority: "interactive",
+      task: (): Promise<TResult | null> => generate(request),
+      signal: request.signal,
+    });
     return result ?? null;
   };
 }

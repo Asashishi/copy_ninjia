@@ -20,8 +20,10 @@
 | `bun run test` | Run the complete test suite with forced file isolation |
 | `bun run test:coverage` | Run tests and measure coverage across all source files |
 | `bun run check:conventions` | Check repository conventions with `scripts/checkProjectConventions.ts` |
-| `bun run check` | Run conventions + lint + typecheck + coverage; **required before every commit** |
+| `bun run check` | Run conventions + lint + typecheck + coverage + the hot-path gate; **required before every commit** |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
+| `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
+| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over every hot-path scenario; already part of `check` |
 | `bun run perf:join-log` | Run the independent-process comparison at the 250,000-record join-log limit |
 | `bun run release:check` | Run frozen-lockfile install + check + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
@@ -35,7 +37,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2245 tests / 234 files / 32766 `expect()` calls**; full-source **function coverage 95.66% / line coverage 96.62%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2269 tests / 235 files / 32867 `expect()` calls**; full-source **function coverage 95.66% / line coverage 96.70%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -57,6 +59,16 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 ## Fault-Injection Suite
 
 `bun run test:fault-injection` concentrates on crash recovery and persistence boundaries: lifecycle failure, update-runner acknowledgement boundaries, StateStore and cleanup, AI/Anti-Raid Worker mirrors and lifecycles, Disk I/O append/snapshot/log files, flush barriers, and more. See the scripts in [`package.json`](../../package.json) for the complete list. This suite must pass whenever a changed path is covered by [04 Authoritative Runtime Invariants](04-invariants.md).
+
+## Hot-Path Gate
+
+`bun run perf:hot-path-gate` is the final stage of `bun run check`, so it runs before every commit. For each scenario in `HOT_PATH_PROFILE_SCENARIOS` (`packages/consts/performance.ts`) and each repeat it spawns two independent children: `steadyProfile` judges only GC and JIT during the formal loop, while `retained` judges RSS, the heapUsed peak, and post-full-GC retention without the profiler's own memory interfering.
+
+Gated metrics: GC sample share; the sampled RSS peak and the process lifetime RSS high-water mark (they share one limit — the latter catches a transient allocation that falls entirely between two sampling ticks); sampled heapUsed growth; post-full-GC retained JSC heap, extra memory, and object count; the minimum sample count; and, per production probe, "entered DFG during warmup" plus "no recompilation or deoptimization during steady sampling".
+
+Fields suffixed with `Diagnostic` are reported but not gated. The aggregate FTL share is one of them: it approaches 100% for a pure leaf scenario yet stays in the single digits for the asynchronous spine (whose samples mix in native Promise and scheduler frames), so a single threshold carries no shared meaning across the two. The absolute `reoptRetries` count is another — the JIT stabilization rounds already require it to stay unchanged across consecutive rounds before sampling begins, so what remains is warmup history.
+
+The `profile` / `retained` prefixes record which child a reading came from; their warmup iteration counts differ by an order of magnitude (profiled scenarios run extra JIT stabilization rounds), so the two must not be read together.
 
 ## Join-Log Performance Benchmark
 

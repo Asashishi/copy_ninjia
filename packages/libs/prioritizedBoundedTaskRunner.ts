@@ -11,7 +11,11 @@ export interface PrioritizedBoundedTaskRunner {
   readonly activeCount: number;
   readonly pendingCount: number;
   readonly backgroundPendingCount: number;
-  run<T>(priority: TaskPriority, task: () => Promise<T>): Promise<T | undefined>;
+  run<T>(
+    priority: TaskPriority,
+    task: () => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T | undefined>;
 }
 
 /** 创建优先级执行器的容量与公平参数。 */
@@ -68,10 +72,12 @@ export function createPrioritizedBoundedTaskRunner({
     return backgroundPending.shift();
   }
 
-  function start<T>(task: () => Promise<T>): Promise<T> {
+  function start<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T | undefined> {
     activeCount += 1;
     return Promise.resolve()
-      .then(task)
+      .then((): Promise<T> | undefined => {
+        return signal?.aborted === true ? undefined : task();
+      })
       .finally((): void => {
         activeCount -= 1;
         takePending()?.();
@@ -88,22 +94,45 @@ export function createPrioritizedBoundedTaskRunner({
     get backgroundPendingCount(): number {
       return backgroundPending.size;
     },
-    run<T>(priority: TaskPriority, task: () => Promise<T>): Promise<T | undefined> {
-      if (activeCount < maxConcurrent) return start(task);
+    run<T>(
+      priority: TaskPriority,
+      task: () => Promise<T>,
+      signal?: AbortSignal
+    ): Promise<T | undefined> {
+      if (signal?.aborted === true) return Promise.resolve(undefined);
+      if (activeCount < maxConcurrent) return start(task, signal);
       const pendingCount: number = interactivePending.size + backgroundPending.size;
       if (
         pendingCount >= maxPending ||
         (priority === "background" && backgroundPending.size >= maxBackgroundPending)
       ) return Promise.resolve(undefined);
-      return new Promise<T>((
-        resolve: (value: T | PromiseLike<T>) => void,
+      return new Promise<T | undefined>((
+        resolve: (value: T | undefined | PromiseLike<T | undefined>) => void,
         reject: (reason?: unknown) => void
       ): void => {
-        const resume: () => void = (): void => {
-          void start(task).then(resolve, reject);
-        };
-        if (priority === "interactive") interactivePending.push(resume);
-        else backgroundPending.push(resume);
+        const queue: LinkedQueue<() => void> = priority === "interactive"
+          ? interactivePending
+          : backgroundPending;
+        let queued: boolean = true;
+
+        function resume(): void {
+          if (!queued) return;
+          queued = false;
+          signal?.removeEventListener("abort", onAbort);
+          void start(task, signal).then(resolve, reject);
+        }
+
+        function onAbort(): void {
+          if (!queued || !queue.removeValue(resume)) return;
+          queued = false;
+          signal?.removeEventListener("abort", onAbort);
+          resolve(undefined);
+        }
+
+        // 入口处已对已 abort 的 signal 提前返回，且到这里没有跨过任何 await，
+        // 因此注册即生效，不需要在注册后再补一次 aborted 复查。
+        queue.push(resume);
+        signal?.addEventListener("abort", onAbort, { once: true });
       });
     },
   };

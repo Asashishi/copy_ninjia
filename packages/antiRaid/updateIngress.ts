@@ -17,7 +17,7 @@ import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
 import { isAdminStatus } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
-import { isWhitelisted } from "../whitelist";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { getChatState } from "../infra/storage/stateStore";
 import { buildAdCandidate } from "./adCandidate";
 import { observeChatKind } from "./chatKind";

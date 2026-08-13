@@ -50,10 +50,12 @@ beforeEach(() => {
 
 describe("纯文本生成", () => {
   test("系统提示词进 instructions，待处理内容进 input", async () => {
+    const controller: AbortController = new AbortController();
     await generateOpenAiText({
       purpose: "chatSummary",
       systemPrompt: "把下面的对话压成一句话",
       userContent: "甲：你好\n乙：在",
+      signal: controller.signal,
       errorLabel: "AI summarize API",
       normalize: (text: string): string => text,
     });
@@ -65,6 +67,8 @@ describe("纯文本生成", () => {
     expect(body.max_output_tokens).toBe(OPENAI_CHAT_SUMMARY_MAX_TOKENS);
     expect(body.store).toBe(false);
     expect((requestOpenAiTextResult.mock.calls[0]![0] as { errorLabel: string }).errorLabel).toBe("AI summarize API");
+    expect((requestOpenAiTextResult.mock.calls[0]![0] as { signal?: AbortSignal }).signal)
+      .toBe(controller.signal);
   });
 
   test("从不发送采样温度：摘要低温策略在 GPT-5 系推理模型上不可用", async () => {
@@ -146,11 +150,13 @@ describe("视觉描述", () => {
 
 describe("语音转写", () => {
   test("首次真实请求把 OGG 文件交给 media 模型并清洗结果", async () => {
+    const controller: AbortController = new AbortController();
     const bytes: Buffer = Buffer.from([0x4f, 0x67, 0x67, 0x53]);
     await expect(transcribeOpenAiVoice({
       prompt: "逐字转写",
       clip: { bytes, mime: "audio/ogg", durationSeconds: 3 },
       errorLabel: "AI voice transcription API",
+      signal: controller.signal,
       normalize: (text: string): string => text.trim().replaceAll("\n", " "),
     })).resolves.toEqual({ ok: true, text: "你好 世界" });
 
@@ -166,5 +172,6 @@ describe("语音转写", () => {
     expect(body.response_format).toBe("json");
     expect(body.file.name).toBe("voice.ogg");
     expect(body.file.type).toBe("audio/ogg");
+    expect(createTranscription.mock.calls[0]?.[1]).toEqual({ signal: controller.signal });
   });
 });

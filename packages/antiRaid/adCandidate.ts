@@ -8,7 +8,7 @@ import type {
 } from "@grammyjs/types";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { adDetectConfigReadiness } from "../config/readiness";
-import { isWhitelisted } from "../whitelist";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import {
   AD_DETECT_LINK_URL_MAX_CHARS,
   AD_DETECT_MAX_LINK_URLS,

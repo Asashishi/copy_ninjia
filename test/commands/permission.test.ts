@@ -84,8 +84,8 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 // 1 是超级管理员：始终在白名单边界内、逐项权限全开，且永远不出现在
 // whitelistPermissionsById（即已预热的 SQLite 白名单视图）里——照实模拟
-// packages/whitelist.ts 那层只读覆盖。
-mock.module("../../packages/whitelist", () => ({
+// packages/infra/identityPolicy/whitelist.ts 那层只读覆盖。
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   confirmWhitelistEntryPersisted,
   hasWhitelistPermission: (id: number): boolean => id === 1,
   enableAllWhitelistPermissions,

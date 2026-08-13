@@ -19,9 +19,9 @@ const delegatedPermissions: Map<number, Set<string>> = new Map<number, Set<strin
 mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
 }));
-// 超级管理员由身份直接持有全部白名单权限（见 packages/whitelist.ts 的
+// 超级管理员由身份直接持有全部白名单权限（见 packages/infra/identityPolicy/whitelist.ts 的
 // getEffectiveWhitelistPermissions），其余身份按逐项授权表决定。
-mock.module("../../packages/whitelist", () => ({
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 100 || delegatedPermissions.get(id)?.has(key) === true,
 }));

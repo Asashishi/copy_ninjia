@@ -20,10 +20,10 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => {
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
-// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/whitelist.ts
+// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
-mock.module("../../packages/whitelist", () => ({
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100 || id === -500,
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 || ((id === 100 || id === -500) && key === "isCanBlock"),

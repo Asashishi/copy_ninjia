@@ -20,6 +20,7 @@ const describeMediaMock = mock(async (..._args: unknown[]): Promise<string | nul
 const describeMediaForStickerCatalogMock = mock(async (..._args: unknown[]): Promise<AiTextResult> => retryableFailure);
 // 整包简介生成：默认返回一条固定简介文本，可按用例改写/断言调用次数。
 const generateTextMock = mock(async (..._args: unknown[]): Promise<AiTextResult> => generatedText("一包默认简介"));
+const sleepMock = mock(async (..._args: unknown[]): Promise<void> => {});
 
 mock.module("../../../../packages/aiChat/ai/stickers/sets", () => ({
   getStickerSet: getStickerSetMock,
@@ -33,7 +34,7 @@ mock.module("../../../../packages/aiChat/ai/imageDescription", () => ({
 }));
 // 单次调用失败会按 STICKER_CATALOG_RETRY_DELAYS_MS 退避重试；测试里把
 // 睡眠打成即时返回，失败用例才不会真等几分钟。
-mock.module("../../../../packages/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
+mock.module("../../../../packages/libs/sleep", () => ({ sleep: sleepMock }));
 mock.module("../../../../packages/aiChat/provider", () => ({
   summaryAiProvider: () => ({ name: "google", generateText: generateTextMock }),
 }));
@@ -86,6 +87,41 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     expect(drained).toBeTrue();
     expect(generatingPacks.has("pack_drain")).toBeFalse();
   });
+
+  test("Worker 取消会中止目录重采样退避且不写失败负缓存", async () => {
+    const controller: AbortController = new AbortController();
+    let markSleeping: (() => void) | null = null;
+    const sleeping: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      markSleeping = resolve;
+    });
+    sleepMock.mockClear();
+    sleepMock.mockImplementationOnce((...args: unknown[]): Promise<void> => {
+      const signal: AbortSignal | undefined = args[1] as AbortSignal | undefined;
+      if (signal === undefined) return Promise.reject(new Error("missing abort signal"));
+      const activeSignal: AbortSignal = signal;
+      markSleeping?.();
+      return new Promise<void>((
+        _resolve: (value: void | PromiseLike<void>) => void,
+        reject: (reason?: unknown) => void
+      ): void => {
+        activeSignal.addEventListener("abort", (): void => reject(activeSignal.reason), { once: true });
+      });
+    });
+    getStickerSetMock.mockImplementationOnce(async () => ({
+      title: "取消包",
+      stickers: [sticker("cancelled-uid", "🛑")],
+    }));
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => retryableFailure);
+
+    const task: Promise<void> = generatePackCatalog("pack_cancelled", controller.signal);
+    await sleeping;
+    controller.abort(new DOMException("test cancellation", "AbortError"));
+    await task;
+
+    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(1);
+    expect(failedEntries.has("pack_cancelled")).toBeFalse();
+    expect(getCatalogEntry("cancelled-uid")).toBeUndefined();
+  });
   test("hydrate 遇到语法合法但形状错误的快照时只丢弃该包", () => {
     hydrateStickerCatalogs(new Map([["pack_bad_shape", JSON.stringify({ version: 1, entries: null })]]));
 
@@ -103,7 +139,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
     expect(getCatalogEntry("new-uid")).toEqual({ emoji: "😂", description: "一只猫大笑" });
     expect(getPackSummary("pack_add")).toBe("一包猫猫表情");
-    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledWith("id-new-uid");
+    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledWith("id-new-uid", expect.any(AbortSignal));
     expect(describeMediaMock).not.toHaveBeenCalled();
     expect(transientDescriptionCache.has("new-uid")).toBe(false);
   });

@@ -53,7 +53,7 @@
 
   **写入采用 write-through + 精确 revision ACK**：调用方先把目标主键的最终值发布到 LRU，再登记同主键最新未确认 revision 并投给 Disk I/O Worker；Worker 对白名单、黑名单和 outbox 各自按 128 个变化或首个变化等待 30 秒为界，在一个显式 SQLite 事务里提交当时全部变化。事务失败保留缓冲等待重试，成功只 ACK 精确 revision；迟到读不得覆盖未确认最终值，Worker 重建按 revision 顺序重放。`/white`、`/permission` 与 `/block` 的关键成功回执必须等待本领域 durable 确认；同步拒收、超时或未收到目标 ACK 由命令就地报告，不能让异常逃出 update handler 形成重投重启循环。
 
-  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`，其余身份才查白名单 LRU。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
+  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`，其余身份才查白名单 LRU。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
 
   `/permission query` 与 `/permission help` 是只读入口：`query` 可以查询自身、回复目标或显式目标，返回补齐默认值后的完整视图，不创建数据库行；`help` 长期保留，`query` 与拒绝/用法提示仍走统一 30 秒清理。
 - **进程级 Telegram 身份严格来自 `config/telegram.json`**：`bot_token` 与 `super_admin_user_id` 联网前必检，缺失、未知字段或非法值均拒绝启动。AI key 全部属于 `config/agent.json` 中的能力配置；每项能力独立声明 provider、api_key、base_url 与 model，不存在凭据默认、跨能力回退或运行时覆盖。`base_url` 只接受 `https`，明文 `http` 仅限 `localhost`/`127.0.0.1`/`::1`，且不得带 userinfo 或 `#` 片段——它旁边就是同一项能力的 api_key。

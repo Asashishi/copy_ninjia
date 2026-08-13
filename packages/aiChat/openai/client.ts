@@ -156,6 +156,7 @@ export interface OpenAiTextRequestOptions {
   readonly buildBody: () => OpenAI.Responses.ResponseCreateParamsNonStreaming;
   readonly errorLabel: string;
   readonly normalize: (text: string) => string;
+  readonly signal?: AbortSignal;
 }
 
 export async function requestOpenAiTextResult({
@@ -163,8 +164,16 @@ export async function requestOpenAiTextResult({
   buildBody,
   errorLabel,
   normalize,
+  signal,
 }: OpenAiTextRequestOptions): Promise<AiTextResult> {
-  const result: OpenAiRequestResult = await requestOpenAiResult({ capability, buildBody, errorLabel });
+  const result: OpenAiRequestResult = await requestOpenAiResult({
+    capability,
+    buildBody,
+    errorLabel,
+    signal,
+  });
+  // 主动取消不是供应商故障，媒体能力状态机不得把它记作瞬时失败。
+  if (signal?.aborted === true) return { ok: false, retryable: false };
   if (!result.ok) return classifyAiTextFailure(result.failureKind, capability);
   const text: string = normalize(responseOutputText(result.response));
   return finalizeAiTextResult(text);

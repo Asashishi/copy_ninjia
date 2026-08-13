@@ -19,7 +19,7 @@ mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 })
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
-mock.module("../../packages/whitelist", () => ({
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   confirmWhitelistEntryPersisted,
   hasWhitelistPermission,
   setWhitelistMembership,
@@ -40,7 +40,7 @@ const {
 const { protectedIdentityMutationQueue } =
   await import("../../packages/cache/main/blocklist");
 const { runProtectedIdentityMutation } =
-  await import("../../packages/infra/identityPolicy");
+  await import("../../packages/infra/identityPolicy/coordination");
 
 function context(
   userId: number,
@@ -300,7 +300,7 @@ describe("/white", () => {
     });
 
     // disable 只清表里的残留条目，清完超级管理员本人的权限一点不受影响
-    // （权限来自身份，见 packages/whitelist.ts）。
+    // （权限来自身份，见 packages/infra/identityPolicy/whitelist.ts）。
     await handleWhiteCommand(context(1, "1 disable"));
     expect(setWhitelistMembership).toHaveBeenCalledWith({ id: 1, enabled: false });
     // 回执因此不能说成「已经从白名单里踢出去啦」：紧接着 /permission query

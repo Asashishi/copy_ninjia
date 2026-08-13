@@ -14,7 +14,7 @@ import {
   unblockUser,
 } from "../infra/blocklist/membership";
 import { getAllChatStates } from "../infra/storage/stateStore";
-import { runBlocklistIdentityMutation } from "../infra/identityPolicy";
+import { runBlocklistIdentityMutation } from "../infra/identityPolicy/coordination";
 
 interface UnblockExecutionOutcome extends UnbanOutcome {
   removedFromList: boolean;

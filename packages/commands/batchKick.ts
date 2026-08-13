@@ -8,7 +8,7 @@ import {
   formatDurationCn,
   parseDurationTokenMs,
 } from "../libs/durationToken";
-import { isWhitelisted } from "../whitelist";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import {
   requestBlocklistResweep,

@@ -15,6 +15,7 @@ mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   currentReplyGeneration: () => 0,
   generateAndSendReply,
   isReplyGenerationCurrent: () => true,
+  replyGenerationSignal: (): AbortSignal => new AbortController().signal,
   trackReplyGenerationTask,
 }));
 

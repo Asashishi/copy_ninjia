@@ -32,7 +32,7 @@ import { formatTokyoTime } from "../libs/time";
 import {
   runBlocklistIdentityMutation,
   runProtectedIdentityMutation,
-} from "../infra/identityPolicy";
+} from "../infra/identityPolicy/coordination";
 import type { AdDetectedEvent } from "../types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
 import type { AdSampleDiskMessage } from "../types/diskIO";

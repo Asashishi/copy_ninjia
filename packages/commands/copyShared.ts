@@ -7,7 +7,7 @@ import type {
 } from "../types/copy/cooldown";
 import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { isWhitelisted } from "../whitelist";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
 import { queueAvatarUpdate } from "../copy/avatarQueue";
@@ -30,9 +30,8 @@ interface CopyCommandUser {
  * （跨所有群，不再按群分别计时——消耗的是机器人自己头像这一份全局资源）。
  *
  * 检查通过后会在同一个同步执行栈里立刻写入 globalCopyState.lastCopyTime 占住
- * 冷却槽，中间不经过任何 await：grammY 按群并发处理更新（不同群互不排队，见
- * app/registerHandlers.ts 的 sequentialize），若"检查"和"占用"分成两步、
- * 中间跨了 await，
+ * 冷却槽，中间不经过任何 await。当前 acknowledged runner 全局逐条处理 update，
+ * 但这份原子性不能依赖调用入口；若"检查"和"占用"分成两步、中间跨了 await，
  * 两个几乎同时抵达的不同群命令就可能都读到"未冷却"从而一起放行，全局冷却
  * 形同虚设。调用方后续如果发现这次尝试并不会真正触发复制（解析目标失败、
  * 已经在复读别人等），必须调用 releaseCopyCooldownClaim 撤销占用，否则无效

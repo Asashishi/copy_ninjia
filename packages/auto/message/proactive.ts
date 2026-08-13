@@ -26,12 +26,42 @@ export interface HandleProactiveMessageActionsParams {
   aiChatEnabled: boolean;
 }
 
-export async function handleProactiveMessageActions({
+/** 洗澡关键词命中后的异步发送与 AI 自消息记录。 */
+async function replyToBathTrigger(
+  message: Message,
+  bot: AiBotInfo,
+  aiChatEnabled: boolean
+): Promise<void> {
+  const sentMessageId: number | undefined = await sendMessage({
+    chatId: message.chat.id,
+    text: BATH_TRIGGER_REPLY_TEXT,
+    replyToMessageId: message.message_id,
+  });
+  if (aiChatEnabled && sentMessageId !== undefined) {
+    recordChatMessage(buildSelfRecordMessage({
+      chatId: message.chat.id,
+      self: bot,
+      messageId: sentMessageId,
+      text: BATH_TRIGGER_REPLY_TEXT,
+    }));
+  }
+}
+
+/** 随机复读命中后吸收底层消息标识，保持编排层只暴露完成信号。 */
+async function performRandomEcho(
+  chatId: number,
+  message: Message,
+  mode: CopyMode | undefined
+): Promise<void> {
+  await echoMessage({ chatId, message, mode });
+}
+
+export function handleProactiveMessageActions({
   message,
   bot,
   isQuiet,
   aiChatEnabled,
-}: HandleProactiveMessageActionsParams): Promise<void> {
+}: HandleProactiveMessageActionsParams): Promise<void> | undefined {
   const chatId: number = message.chat.id;
   if (
     !isQuiet &&
@@ -40,20 +70,7 @@ export async function handleProactiveMessageActions({
     message.text.length <= BATH_TRIGGER_MAX_MESSAGE_LENGTH &&
     BATH_TRIGGER_PATTERN.test(message.text)
   ) {
-    const sentMessageId: number | undefined = await sendMessage({
-      chatId,
-      text: BATH_TRIGGER_REPLY_TEXT,
-      replyToMessageId: message.message_id,
-    });
-    if (aiChatEnabled && sentMessageId !== undefined) {
-      recordChatMessage(buildSelfRecordMessage({
-        chatId,
-        self: bot,
-        messageId: sentMessageId,
-        text: BATH_TRIGGER_REPLY_TEXT,
-      }));
-    }
-    return;
+    return replyToBathTrigger(message, bot, aiChatEnabled);
   }
 
   if (
@@ -63,6 +80,7 @@ export async function handleProactiveMessageActions({
     Math.random() < RANDOM_ECHO_PROBABILITY
   ) {
     const mode: CopyMode | undefined = resolveEffectiveCopyMode(chatId, pickRandom(RANDOM_ECHO_MODES));
-    await echoMessage({ chatId, message, mode });
+    return performRandomEcho(chatId, message, mode);
   }
+  return undefined;
 }

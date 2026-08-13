@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type { Bot, Context } from "grammy";
 import { registerHandlers } from "../../packages/app/registerHandlers";
 import { CJK_ACTION_COMMAND_PATTERN } from "../../packages/consts/commands";
-import { settleTestBatch } from "../libs/helpers";
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => unknown;
 
@@ -56,7 +55,7 @@ describe("application handler registration", () => {
     expect(middleware).toHaveLength(0);
     const registration = registerHandlers(fakeBot as unknown as Bot);
 
-    expect(middleware).toHaveLength(6);
+    expect(middleware).toHaveLength(5);
     expect(commands).toEqual([
       "permission",
       "white",
@@ -88,20 +87,15 @@ describe("application handler registration", () => {
       "x",
     ]);
     // use:3 同时承载 init 与私聊命令门禁；全部命令都必须注册在它之后，避免
-    // 新命令以后又意外绕过。授权维护必须位于 use:4 的 sequentialize 后，
-    // 否则权限检查和持久化修改会与同群更新交错。
+    // 新命令以后又意外绕过。
     for (const command of commands) {
       expect(registrationOrder.indexOf(`command:${command}`))
         .toBeGreaterThan(registrationOrder.indexOf("use:3"));
     }
-    for (const command of ["permission", "white"]) {
-      expect(registrationOrder.indexOf(`command:${command}`))
-        .toBeGreaterThan(registrationOrder.indexOf("use:4"));
-    }
     // 每一条命令都必须排在入群验证 ingress 之后，授权维护也不例外：命令
     // handler 一律不调 next()，注册在 ingress 之前的那条就会整条绕开刷屏计数、
     // 黑名单频道消息就地删除与待验证成员的消息追踪（见 antiRaid/updateIngress.ts
-    // 的函数头）。只断言 use:3/use:4 是拦不住这种漏网的。
+    // 的函数头）。只断言前置 use 是拦不住这种漏网的。
     const antiRaidIngressIndex: number =
       registrationOrder.indexOf(`on:${JSON.stringify("message")}`);
     expect(antiRaidIngressIndex).toBeGreaterThan(-1);
@@ -140,62 +134,22 @@ describe("application handler registration", () => {
     await middleware[0]!({ update: { update_id: 8 } } as Context, next);
     expect(registration.getLastSeenUpdateId()).toBe(12);
 
+    // 普通消息回执检查必须直接返回 next 的 Promise，不能重新包一层微任务。
+    let receiptNextCalled: boolean = false;
+    const receiptNextResult: Promise<void> = Promise.resolve();
+    const receiptMiddlewareResult: unknown = middleware[1]!({
+      update: { update_id: 11 },
+    } as Context, (): Promise<void> => {
+      receiptNextCalled = true;
+      return receiptNextResult;
+    });
+    expect(receiptNextCalled).toBeTrue();
+    expect(receiptMiddlewareResult).toBe(receiptNextResult);
+
     const durabilityError = new Error("durability barrier failed");
     expect(() => caughtHandler!({
       ctx: { update: { update_id: 13 } } as Context,
       error: durabilityError,
     })).toThrow(durabilityError);
-  });
-
-  test("同一 chat 的并发更新不能穿过授权维护所在的串行车道", async () => {
-    const middleware: TestMiddleware[] = [];
-    const fakeBot: FakeBot = {
-      use(handler: TestMiddleware): FakeBot {
-        middleware.push(handler);
-        return fakeBot;
-      },
-      command(): FakeBot {
-        return fakeBot;
-      },
-      hears(): FakeBot {
-        return fakeBot;
-      },
-      on(): FakeBot {
-        return fakeBot;
-      },
-      catch(): FakeBot {
-        return fakeBot;
-      },
-    };
-    registerHandlers(fakeBot as unknown as Bot);
-
-    const sequentialMiddleware: TestMiddleware = middleware[3]!;
-    const events: string[] = [];
-    let releaseFirst: (() => void) | undefined;
-    const firstBarrier: Promise<void> = new Promise<void>((resolve: () => void): void => {
-      releaseFirst = resolve;
-    });
-    const firstUpdate: Promise<unknown> = Promise.resolve(sequentialMiddleware(
-      { update: { update_id: 1 }, chat: { id: -1001, type: "supergroup" } } as Context,
-      async (): Promise<void> => {
-        events.push("first:start");
-        await firstBarrier;
-        events.push("first:end");
-      }
-    ));
-    const secondUpdate: Promise<unknown> = Promise.resolve(sequentialMiddleware(
-      { update: { update_id: 2 }, chat: { id: -1001, type: "supergroup" } } as Context,
-      async (): Promise<void> => {
-        events.push("second:start");
-        events.push("second:end");
-      }
-    ));
-
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(events).toEqual(["first:start"]);
-    releaseFirst!();
-    await settleTestBatch([firstUpdate, secondUpdate]);
-    expect(events).toEqual(["first:start", "first:end", "second:start", "second:end"]);
   });
 });

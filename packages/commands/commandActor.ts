@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import type { Chat, Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
 import type { WhitelistPermissionKey } from "../types/identityPolicy";
-import { hasWhitelistPermission } from "../whitelist";
+import { hasWhitelistPermission } from "../infra/identityPolicy/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 
 /**

@@ -13,7 +13,7 @@ import type {
  * 同时广告判定可从 Worker 回投并同步 `blockUser`。两者若各自排队，同一身份会
  * 在白名单写盘期间被拉黑，留下启动门禁下一次必然拒绝的矛盾状态。
  *
- * 所有调用都必须经 packages/infra/identityPolicy.ts；失败会被尾链吸收，下一次
+ * 所有调用都必须经 packages/infra/identityPolicy/coordination.ts；失败会被尾链吸收，下一次
  * 操作仍可继续。队列只保存一个 Promise，不随身份数增长，进程重启后自然重建。
  */
 export const protectedIdentityMutationQueue: { current: Promise<void> } = {

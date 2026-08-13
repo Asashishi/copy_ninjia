@@ -22,7 +22,7 @@ import {
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import type { AiTextResult } from "../../types/aiChat/provider";
 import { currentTimeSentence } from "./timeSentence";
-import { trackReplyGenerationTask } from "./replyGeneration";
+import { replyGenerationSignal, trackReplyGenerationTask } from "./replyGeneration";
 
 /**
  * 中期记忆的轮换/压缩：镜像块攒满后串行执行「晋升上一轮摘要 + AI 压缩新
@@ -50,12 +50,18 @@ export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[],
     return;
   }
 
+  // 溢出判定之后才取 signal：replyGenerationSignal 会惰性建一个 AbortController 并
+  // 登记进 replyAbortControllers，而登记项只由 trackReplyGenerationTask 的 finally
+  // （需要已跟踪任务）或整代失效清理摘除。放在判定之前的话，持续溢出且长期不被
+  // 作废的群会一路累积用不上的 controller。
+  const signal: AbortSignal = replyGenerationSignal(chatId, generation);
   compactionPendingCounts.set(chatId, pendingCount + 1);
   const next: Promise<void> = compactionRunner.run(chatId, (): Promise<void> => rotateCompaction({
     chatId,
     mirrorBatch,
     promoteFirst,
     generation,
+    signal,
   }));
   trackReplyGenerationTask(chatId, generation, next);
   void next.then(
@@ -77,6 +83,7 @@ export interface RotateCompactionParams {
   mirrorBatch: BufferedMessage[];
   promoteFirst: boolean;
   generation: number;
+  signal: AbortSignal;
 }
 
 /** 执行一轮轮换：先晋升上一轮镜像的摘要（若有），再 AI 压缩新镜像存为待晋升。 */
@@ -85,14 +92,15 @@ async function rotateCompaction({
   mirrorBatch,
   promoteFirst,
   generation,
+  signal,
 }: RotateCompactionParams): Promise<void> {
   try {
-    if (!isCachedReplyGenerationCurrent(chatId, generation)) return;
+    if (signal.aborted || !isCachedReplyGenerationCurrent(chatId, generation)) return;
     if (promoteFirst) {
       promotePendingSummary(chatId);
     }
-    const summary: string | null = await summarizeBatchWithRetry(chatId, mirrorBatch);
-    if (!isCachedReplyGenerationCurrent(chatId, generation)) return;
+    const summary: string | null = await summarizeBatchWithRetry(chatId, mirrorBatch, signal);
+    if (signal.aborted || !isCachedReplyGenerationCurrent(chatId, generation)) return;
     if (summary) {
       pendingSummaries.set(chatId, summary);
       dirtyMemoryChats.add(chatId);
@@ -102,6 +110,7 @@ async function rotateCompaction({
       logger.error(`AI compaction failed: chat ${chatId}'s ${mirrorBatch.length} mirrored messages produced no summary after eligible retries; mid-term memory for this window will be missing once it slides out.`);
     }
   } catch (error: unknown) {
+    if (signal.aborted) return;
     logger.error("Error in chat compaction task:", error);
   }
 }
@@ -112,14 +121,20 @@ async function rotateCompaction({
  * 此处立即停止，避免两层次数相乘。等待期间镜像原文仍在逐字区；本函数在该群
  * 的轮换串行链上执行，只顺延本群后续轮换，不阻塞消息分发。
  */
-async function summarizeBatchWithRetry(chatId: number, batch: BufferedMessage[]): Promise<string | null> {
+async function summarizeBatchWithRetry(
+  chatId: number,
+  batch: BufferedMessage[],
+  signal: AbortSignal
+): Promise<string | null> {
   for (let attempt: number = 0; ; attempt++) {
-    const result: AiTextResult = await summarizeBatch(batch);
+    if (signal.aborted) return null;
+    const result: AiTextResult = await summarizeBatch(batch, signal);
+    if (signal.aborted) return null;
     if (result.ok) return result.text;
     if (!result.retryable || attempt >= SUMMARY_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = SUMMARY_RETRY_DELAYS_MS[attempt]!;
     logger.error(`AI compaction attempt ${attempt + 1} returned no usable summary for chat ${chatId}; resampling in ${delayMs} ms.`);
-    await sleep(delayMs);
+    await sleep(delayMs, signal);
   }
 }
 
@@ -151,7 +166,7 @@ function promotePendingSummary(chatId: number): void {
  * 落进 memory/ai/<chat>.json，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
  * （truncateAtClauseBoundary 的 JSDoc 记的正是这类残留）。
  */
-async function summarizeBatch(batch: BufferedMessage[]): Promise<AiTextResult> {
+async function summarizeBatch(batch: BufferedMessage[], signal: AbortSignal): Promise<AiTextResult> {
   const selfNote: string = botInfoState.current
     ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
     : "";
@@ -159,6 +174,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<AiTextResult> {
     purpose: "chatSummary",
     systemPrompt: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
     userContent: selfNote + batch.map(formatBufferedMessageLine).join("\n"),
+    signal,
     errorLabel: CHAT_SUMMARY_ERROR_LABEL,
     normalize: (text: string): string => {
       const sanitized: string = sanitizeInline(text);

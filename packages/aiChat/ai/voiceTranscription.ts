@@ -31,6 +31,7 @@ export interface TranscribeVoiceParams {
   /** Telegram 声明的 mime_type，交给下载侧按白名单归一。 */
   declaredMime: string | undefined;
   durationSeconds: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -45,6 +46,7 @@ export async function transcribeVoiceUncached({
   fileId,
   declaredMime,
   durationSeconds,
+  signal,
 }: TranscribeVoiceParams): Promise<AiTextResult> {
   try {
     const provider: AiMediaProvider = mediaAiProvider();
@@ -55,11 +57,17 @@ export async function transcribeVoiceUncached({
       logger.error(`Voice transcription is unavailable: the ${provider.name} media provider does not implement it.`);
       return { ok: false, retryable: false, mediaFailure: "unsupported" };
     }
-    const clip: VoiceClip | null = await downloadTelegramVoice({ fileId, declaredMime, durationSeconds });
+    const clip: VoiceClip | null = await downloadTelegramVoice({
+      fileId,
+      declaredMime,
+      durationSeconds,
+      signal,
+    });
     if (!clip) return { ok: false, retryable: true };
     return await transcribe({
       prompt: VOICE_TRANSCRIPTION_PROMPT,
       clip,
+      signal,
       errorLabel: VOICE_TRANSCRIPTION_ERROR_LABEL,
       normalize: (text: string): string => {
         const transcript: string = sanitizeInline(text);
@@ -70,6 +78,7 @@ export async function transcribeVoiceUncached({
       },
     });
   } catch (error: unknown) {
+    if (signal?.aborted === true) return { ok: false, retryable: false };
     logger.error("Error transcribing chat voice:", error);
     return { ok: false, retryable: false };
   }

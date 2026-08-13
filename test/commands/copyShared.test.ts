@@ -10,7 +10,7 @@ const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
 const DEFAULT_AVATAR_URL: string = "https://cdn.example/default-face.jpg";
 
-mock.module("../../packages/whitelist", () => ({
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 100,
 }));
 mock.module("../../packages/infra/telegram", () => ({

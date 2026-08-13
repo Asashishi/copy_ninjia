@@ -74,13 +74,137 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     expect(downloadTelegramFileFromMain).toHaveBeenCalledWith({
       fileId: "file-a",
       purpose: "vision",
-      signal: undefined,
+      signal: expect.any(AbortSignal),
     });
     expect(describeVision).toHaveBeenCalledTimes(1);
     const request = describeVision.mock.calls[0]![0] as { prompt: string; image: { mime: string } };
     expect(request.image.mime).toBe("image/png");
     expect(request.prompt).toContain("贴纸");
     expect(transientDescriptionCache.has("unique-a")).toBe(true);
+  });
+
+  test("同一媒体的一个消费者取消不会中止仍有消费者使用的共享请求", async () => {
+    const firstController: AbortController = new AbortController();
+    const secondController: AbortController = new AbortController();
+    const resultControl: { resolve: ((result: AiTextResult) => void) | null } = {
+      resolve: null,
+    };
+    let markStarted: (() => void) | null = null;
+    const started: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      markStarted = resolve;
+    });
+    const requestSignal: { current: AbortSignal | null } = { current: null };
+    describeVision.mockImplementationOnce((...args: unknown[]): Promise<AiTextResult> => {
+      const request: { signal?: AbortSignal } = args[0] as { signal?: AbortSignal };
+      requestSignal.current = request.signal ?? null;
+      markStarted?.();
+      return new Promise<AiTextResult>((
+        resolve: (result: AiTextResult) => void
+      ): void => {
+        resultControl.resolve = resolve;
+      });
+    });
+
+    const first: Promise<string | null> = describeMedia({
+      kind: "photo",
+      fileId: "shared-a",
+      fileUniqueId: "shared-unique",
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
+      signal: firstController.signal,
+    });
+    const second: Promise<string | null> = describeMedia({
+      kind: "photo",
+      fileId: "shared-b",
+      fileUniqueId: "shared-unique",
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
+      signal: secondController.signal,
+    });
+
+    await started;
+    firstController.abort();
+    await expect(first).resolves.toBeNull();
+    expect(requestSignal.current?.aborted).toBeFalse();
+    resultControl.resolve?.({ ok: true, text: "共享描述" });
+    await expect(second).resolves.toBe("共享描述");
+    expect(downloadTelegramFileFromMain).toHaveBeenCalledTimes(1);
+  });
+
+  test("最后一个消费者取消：中止共享请求，并摘除注定为 null 的缓存条目", async () => {
+    // 支持度预置为已确认，避开首次探测那条路，把用例聚焦在引用计数与缓存摘除上。
+    mediaInputSupportCache.current = {
+      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+    };
+    const controller: AbortController = new AbortController();
+    const requestSignal: { current: AbortSignal | null } = { current: null };
+    let markStarted: (() => void) | null = null;
+    const started: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      markStarted = resolve;
+    });
+    describeVision.mockImplementationOnce((...args: unknown[]): Promise<AiTextResult> => {
+      const request: { signal?: AbortSignal } = args[0] as { signal?: AbortSignal };
+      requestSignal.current = request.signal ?? null;
+      markStarted?.();
+      return new Promise<AiTextResult>((): void => {});
+    });
+
+    const only: Promise<string | null> = describeMedia({
+      kind: "photo",
+      fileId: "lone-a",
+      fileUniqueId: "lone-unique",
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
+      signal: controller.signal,
+    });
+    await started;
+    expect(transientDescriptionCache.has("lone-unique")).toBe(true);
+
+    controller.abort();
+    await expect(only).resolves.toBeNull();
+    // 引用计数归零才中止底层请求——这正是计数机制存在的理由。
+    expect(requestSignal.current?.aborted).toBeTrue();
+    // 中止的同时摘掉条目：底层请求要到回卷完才把 pending 结算成 null，这段窗口里
+    // 另一个聊天带着存活的 signal 进来会命中它、挂到一个已中止的任务上，从此永远
+    // 拿到与自身取消无关的 null。
+    expect(transientDescriptionCache.has("lone-unique")).toBe(false);
+
+    const laterController: AbortController = new AbortController();
+    await expect(describeMedia({
+      kind: "photo",
+      fileId: "lone-b",
+      fileUniqueId: "lone-unique",
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
+      signal: laterController.signal,
+    })).resolves.toBe("一只挥手的猫");
+    expect(describeVision).toHaveBeenCalledTimes(2);
+  });
+
+  test("成功返回之后才取消：这次观测仍要记成模态可用", async () => {
+    // 模态尚无结论，这次调用同时是首次探测。
+    expect(mediaInputSupportCache.current).toBeNull();
+    const controller: AbortController = new AbortController();
+    describeVision.mockImplementationOnce(async (): Promise<AiTextResult> => {
+      // 供应商已经给出结论，之后调用方那一轮回复才失效。
+      controller.abort();
+      return { ok: true, text: "迟到但成功" };
+    });
+
+    await expect(describeMedia({
+      kind: "photo",
+      fileId: "late-ok",
+      fileUniqueId: "late-ok-unique",
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
+      signal: controller.signal,
+    })).resolves.toBeNull();
+
+    // 文本可以丢，观测不能丢：连结论一起丢掉会让 support 永远停在 unknown，之后
+    // 每份媒体都退回「只放行一个探测」的串行路径，频繁失效的聊天永远学不会端点。
+    expect(mediaInputSupportCache.current?.vision.support).toBe("supported");
+    expect(mediaInputSupportCache.current?.vision.nextProbeAt).toBe(0);
   });
 
   test("失败结果不负缓存，同一媒体下次重发会重新尝试", async () => {

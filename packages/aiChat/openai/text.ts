@@ -54,6 +54,7 @@ export function generateOpenAiText(request: AiTextRequest): Promise<AiTextResult
     }),
     errorLabel: request.errorLabel,
     normalize: request.normalize,
+    signal: request.signal,
   });
 }
 
@@ -86,6 +87,7 @@ export function describeOpenAiVision(request: AiVisionRequest): Promise<AiTextRe
     }),
     errorLabel: request.errorLabel,
     normalize: request.normalize,
+    signal: request.signal,
   });
 }
 
@@ -93,21 +95,30 @@ export function describeOpenAiVision(request: AiVisionRequest): Promise<AiTextRe
  * 用 media 能力配置尝试 OpenAI 兼容音频转写。模型是否同时支持视觉与音频不靠
  * 名字推断：第一次真实语音请求由端点回答，结果会被媒体支持度缓存记住。
  */
+function isVoiceRequestAborted(request: AiVoiceRequest): boolean {
+  return request.signal?.aborted === true;
+}
+
 export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<AiTextResult> {
+  if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
   try {
     const model: string = getAgentDeploymentConfig().media.model;
     const upload: Uploadable = await toFile(request.clip.bytes, "voice.ogg", {
       type: request.clip.mime,
     });
     const response: OpenAI.Audio.Transcriptions.TranscriptionCreateResponse =
-      await getOpenAiClient("media").audio.transcriptions.create({
-        file: upload,
-        model,
-        prompt: request.prompt,
-        response_format: "json",
-      });
+      await getOpenAiClient("media").audio.transcriptions.create(
+        {
+          file: upload,
+          model,
+          prompt: request.prompt,
+          response_format: "json",
+        },
+        { signal: request.signal }
+      );
     return finalizeAiTextResult(request.normalize(response.text));
   } catch (error: unknown) {
+    if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
     if (error instanceof OpenAI.APIError) {
       const status: number | undefined = numericErrorStatus(error);
       logger.error(`${request.errorLabel} error: ${status ?? "?"} ${error.message}`);

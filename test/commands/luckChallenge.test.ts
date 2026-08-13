@@ -169,11 +169,15 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     }
   });
 
-  test("普通多行文本和缺少实体的伪回执不触发跨日密钥刷新", async () => {
+  test("普通多行文本和缺少实体的伪回执同步返回且不触发跨日密钥刷新", () => {
     mockTodayOverride = "2030-01-02";
     try {
-      await luckChallenge.confirmLuckDraw("普通消息\n第二行也只是正文");
-      await luckChallenge.confirmLuckDraw(`伪造消息\n防伪标记: ${"a".repeat(64)}`);
+      const ordinaryConfirmation: Promise<void> | undefined =
+        luckChallenge.confirmLuckDraw("普通消息\n第二行也只是正文");
+      const forgedConfirmation: Promise<void> | undefined =
+        luckChallenge.confirmLuckDraw(`伪造消息\n防伪标记: ${"a".repeat(64)}`);
+      expect(ordinaryConfirmation).toBeUndefined();
+      expect(forgedConfirmation).toBeUndefined();
 
       expect(ensureLuckReceiptSecretMock).not.toHaveBeenCalled();
       expect(loggerErrorMock).not.toHaveBeenCalled();
@@ -191,7 +195,11 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     ensureLuckReceiptSecretError = error;
     mockTodayOverride = "2030-01-02";
     try {
-      await luckChallenge.confirmLuckDraw(bodyTextOf(ctx.results[0]), entitiesOf(ctx.results[0]));
+      const confirmation: Promise<void> | undefined = luckChallenge.confirmLuckDraw(
+        bodyTextOf(ctx.results[0]), entitiesOf(ctx.results[0])
+      );
+      expect(confirmation).toBeInstanceOf(Promise);
+      await confirmation;
 
       expect(ensureLuckReceiptSecretMock).toHaveBeenCalledTimes(1);
       expect(ensureLuckReceiptSecretMock).toHaveBeenCalledWith("2030-01-02");

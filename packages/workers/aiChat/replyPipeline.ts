@@ -30,6 +30,7 @@ export {
   invalidateChatReplies,
   isReplyGenerationCurrent,
   quiesceAiChatReplies,
+  replyGenerationSignal,
   trackReplyGenerationTask,
 } from "./replyState";
 

@@ -19,8 +19,12 @@
 
 import { logger } from "../../infra/logger";
 import { mediaAiProvider } from "../provider";
+import { raceAbort } from "../../libs/abortSignal";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
-import { transientDescriptionCache } from "../../cache/workers/aiChat/imageDescription";
+import {
+  transientDescriptionAbortStates,
+  transientDescriptionCache,
+} from "../../cache/workers/aiChat/imageDescription";
 import {
   clearMediaInputProbe,
   getMediaInputProbe,
@@ -41,6 +45,9 @@ import { downloadTelegramVisionImage } from "./telegramImage";
 import { runMediaTask } from "./mediaTaskRunner";
 import { transcribeVoiceUncached } from "./voiceTranscription";
 import type { VisionImage } from "../../types/media";
+import type {
+  TransientDescriptionAbortState,
+} from "../../cache/workers/aiChat/imageDescription";
 import type {
   AiTextResult,
   AiProviderTaskPriority,
@@ -65,6 +72,9 @@ const MEDIA_BACKOFF_RESULT: AiTextResult = { ok: false, retryable: true };
 
 /** 执行器拒绝接纳任务时的共享瞬时失败结果。 */
 const MEDIA_TASK_REJECTED_RESULT: AiTextResult = { ok: false, retryable: true };
+
+/** 主动取消不属于供应商或模态故障，也不允许业务层重采样。 */
+const MEDIA_CANCELLED_RESULT: AiTextResult = { ok: false, retryable: false };
 
 /** 模态不可用时复用同一个已完成 Promise，避免每条后续媒体都分配新 Promise。 */
 const MEDIA_CLOSED_PROMISE: Promise<AiTextResult> = Promise.resolve(MEDIA_CLOSED_RESULT);
@@ -115,6 +125,8 @@ export interface DescribeMediaParams {
   voiceMime: string | undefined;
   /** 语音时长（秒）；其余媒体为 0。 */
   voiceDurationSeconds: number;
+  /** 当前聊天回复代际失效时停止等待；共享底层任务由消费者计数决定是否中止。 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -126,6 +138,7 @@ export interface DescribeMediaParams {
  * @returns 压成单行、截断后的中文描述或语音转写；下载/转码/解析任一步失败则 null。
  */
 export function describeMedia(params: DescribeMediaParams): Promise<string | null> {
+  if (params.signal?.aborted === true) return SKIPPED_DESCRIPTION_PROMISE;
   const capability: MediaInputCapability = params.kind === "voice" ? "voice" : "vision";
   // 两类跳过都在建立 LRU 条目之前返回：不下载、不排队、也不留下一条注定为 null
   // 的缓存项。退避到期后同一份媒体仍可被下一条消息重新解析。
@@ -137,9 +150,24 @@ export function describeMedia(params: DescribeMediaParams): Promise<string | nul
   }
   const fileUniqueId: string = params.fileUniqueId;
   const cached: Promise<string | null> | undefined = transientDescriptionCache.get(fileUniqueId);
-  if (cached) return cached;
+  if (cached) {
+    const state: TransientDescriptionAbortState | undefined =
+      transientDescriptionAbortStates.get(cached);
+    return state === undefined ? cached : attachDescriptionConsumer(cached, state, params.signal);
+  }
 
-  const pending: Promise<string | null> = resolveMedia(params)
+  const controller: AbortController = new AbortController();
+  const state: TransientDescriptionAbortState = {
+    controller,
+    fileUniqueId,
+    consumers: new Map<AbortSignal, number>(),
+    uncancellableConsumers: 0,
+    settled: false,
+  };
+  const pending: Promise<string | null> = resolveMedia({
+    ...params,
+    signal: controller.signal,
+  })
     .then((attempt: AiTextResult): string | null => {
     // 执行槽位和等待队列都满时返回 undefined；按普通解析失败降级，不再
     // 启动下载、转码或视觉 API 请求。
@@ -154,11 +182,16 @@ export function describeMedia(params: DescribeMediaParams): Promise<string | nul
         transientDescriptionCache.delete(fileUniqueId);
       }
       return result;
+    })
+    .finally((): void => {
+      state.settled = true;
+      transientDescriptionAbortStates.delete(pending);
     });
   // 写入即满足容量上限的淘汰（超容量删最久未使用的一个），见
   // cache/workers/aiChat/imageDescription.ts 的 LruCache 用法。
+  transientDescriptionAbortStates.set(pending, state);
   transientDescriptionCache.set(fileUniqueId, pending);
-  return pending;
+  return attachDescriptionConsumer(pending, state, params.signal);
 }
 
 /**
@@ -168,10 +201,19 @@ export function describeMedia(params: DescribeMediaParams): Promise<string | nul
  * 常驻目录。失败结果额外声明目录层能否重新采样：供应商 SDK 已耗尽 HTTP 重试时
  * 禁止再次套完整请求，下载/排队或成功响应正文不可用时则允许。
  */
-export function describeMediaForStickerCatalog(fileId: string): Promise<AiTextResult> {
+export function describeMediaForStickerCatalog(
+  fileId: string,
+  signal?: AbortSignal
+): Promise<AiTextResult> {
   return runMediaInputRequest(
     "vision",
-    (): Promise<AiTextResult> => describeVisionUncached("sticker", fileId, "background")
+    (): Promise<AiTextResult> => describeVisionUncached({
+      kind: "sticker",
+      fileId,
+      priority: "background",
+      signal,
+    }),
+    signal
   );
 }
 
@@ -181,6 +223,7 @@ function resolveMedia({
   fileId,
   voiceMime,
   voiceDurationSeconds,
+  signal,
 }: DescribeMediaParams): Promise<AiTextResult> {
   const capability: MediaInputCapability = kind === "voice" ? "voice" : "vision";
   return runMediaInputRequest(
@@ -190,8 +233,14 @@ function resolveMedia({
         fileId,
         declaredMime: voiceMime,
         durationSeconds: voiceDurationSeconds,
+        signal,
       })
-      : (): Promise<AiTextResult> => describeVisionUncached(kind, fileId)
+      : (): Promise<AiTextResult> => describeVisionUncached({
+        kind,
+        fileId,
+        signal,
+      }),
+    signal
   );
 }
 
@@ -202,12 +251,23 @@ function resolveMedia({
  */
 function runTrackedMediaAttempt(
   capability: MediaInputCapability,
-  task: () => Promise<AiTextResult>
+  task: () => Promise<AiTextResult>,
+  signal?: AbortSignal
 ): Promise<AiTextResult> {
-  return runMediaTask(task).then((result: AiTextResult | undefined): AiTextResult => {
-    const attempt: AiTextResult = result ?? MEDIA_TASK_REJECTED_RESULT;
-    recordMediaInputResult(capability, attempt, Date.now());
-    return attempt;
+  return runMediaTask(task, signal).then((result: AiTextResult | undefined): AiTextResult => {
+    // undefined 表示任务根本没启动：执行槽位和等待队列都满，或出队时已取消。两者
+    // 都不是一次真实观测，不推进模态状态机（recordMediaInputResult 对不带
+    // mediaFailure 的失败本就是 no-op，这里显式跳过是为了不把没发生的调用记成观测）。
+    if (result === undefined) {
+      return signal?.aborted === true ? MEDIA_CANCELLED_RESULT : MEDIA_TASK_REJECTED_RESULT;
+    }
+    // 归因先于取消判定：请求已经发出并拿到结论，调用方还要不要这份文本，与「端点
+    // 支不支持这个模态」无关。连同结论一起丢掉会让 support 永远停在 unknown——
+    // 成功那一档本该由 recordMediaInputResult 置 supported 并清空退避——于是之后
+    // 每份媒体都退回 runMediaInputRequest 第 4 条的单探测串行路径，频繁作废回复
+    // 的聊天永远学不会这个端点。
+    recordMediaInputResult(capability, result, Date.now());
+    return signal?.aborted === true ? MEDIA_CANCELLED_RESULT : result;
   });
 }
 
@@ -224,37 +284,57 @@ function runTrackedMediaAttempt(
  */
 function runMediaInputRequest(
   capability: MediaInputCapability,
-  task: () => Promise<AiTextResult>
+  task: () => Promise<AiTextResult>,
+  signal?: AbortSignal
 ): Promise<AiTextResult> {
+  if (signal?.aborted === true) return Promise.resolve(MEDIA_CANCELLED_RESULT);
   const support: MediaInputSupport = getMediaInputSupport(capability);
   if (isMediaInputClosed(support)) return MEDIA_CLOSED_PROMISE;
   if (isMediaInputProbeCoolingDown(capability, Date.now())) return MEDIA_BACKOFF_PROMISE;
-  if (support === "supported") return runTrackedMediaAttempt(capability, task);
+  if (support === "supported") return runTrackedMediaAttempt(capability, task, signal);
 
   const activeProbe: Promise<AiTextResult> | null = getMediaInputProbe(capability);
   if (activeProbe !== null) {
-    return activeProbe.then((result: AiTextResult): Promise<AiTextResult> | AiTextResult =>
-      result.ok ? runTrackedMediaAttempt(capability, task) : result
+    return waitForMediaProbe(activeProbe, signal).then(
+      (result: AiTextResult): Promise<AiTextResult> | AiTextResult => {
+        if (result === MEDIA_CANCELLED_RESULT && signal?.aborted !== true) {
+          return runMediaInputRequest(capability, task, signal);
+        }
+        return result.ok ? runTrackedMediaAttempt(capability, task, signal) : result;
+      }
     );
   }
 
-  const probe: Promise<AiTextResult> = runTrackedMediaAttempt(capability, task)
+  const probe: Promise<AiTextResult> = runTrackedMediaAttempt(capability, task, signal)
     .finally((): void => clearMediaInputProbe(capability, probe));
   setMediaInputProbe(capability, probe);
   return probe;
 }
 
-async function describeVisionUncached(
-  kind: MediaKind,
-  fileId: string,
-  priority: AiProviderTaskPriority = "interactive"
-): Promise<AiTextResult> {
+interface DescribeVisionUncachedParams {
+  readonly kind: MediaKind;
+  readonly fileId: string;
+  readonly priority?: AiProviderTaskPriority;
+  readonly signal?: AbortSignal;
+}
+
+async function describeVisionUncached({
+  kind,
+  fileId,
+  priority = "interactive",
+  signal,
+}: DescribeVisionUncachedParams): Promise<AiTextResult> {
   try {
-    const image: VisionImage | null = await downloadTelegramVisionImage({ fileId, logLabel: `chat media (kind=${kind})` });
+    const image: VisionImage | null = await downloadTelegramVisionImage({
+      fileId,
+      logLabel: `chat media (kind=${kind})`,
+      signal,
+    });
     if (!image) return { ok: false, retryable: true };
     return await mediaAiProvider(priority).describeVision({
       prompt: promptFor(kind),
       image,
+      signal,
       errorLabel: MEDIA_DESCRIPTION_ERROR_LABEL,
       normalize: (text: string): string => {
         const description: string = sanitizeInline(text);
@@ -265,7 +345,72 @@ async function describeVisionUncached(
       },
     });
   } catch (error: unknown) {
+    if (signal?.aborted === true) return MEDIA_CANCELLED_RESULT;
     logger.error(`Error describing chat media (kind=${kind}):`, error);
     return { ok: false, retryable: false };
   }
+}
+
+/**
+ * 最后一个可取消消费者离场时中止共享请求，并连带摘除缓存条目。
+ *
+ * 只 abort 不摘条目是不够的：底层请求要到回卷完才把 pending 结算成 null、才走到
+ * describeMedia 里那段按引用删除的逻辑。这段窗口里另一个聊天带着**存活**的 signal
+ * 进来会命中缓存、挂到一个 controller 已中止的任务上，最终拿到与自身取消无关的
+ * null（图片永久退化成「[图片]」占位）。摘除同样按身份守卫：并发重新插入的新一份
+ * 不能被这一轮误删，判据是「当前占着这个键的条目仍指向本 state」。
+ */
+function abortUnusedDescription(state: TransientDescriptionAbortState): void {
+  if (
+    state.settled || state.uncancellableConsumers !== 0 || state.consumers.size !== 0
+  ) return;
+  state.controller.abort();
+  const current: Promise<string | null> | undefined =
+    transientDescriptionCache.peek(state.fileUniqueId);
+  if (current !== undefined && transientDescriptionAbortStates.get(current) === state) {
+    transientDescriptionCache.delete(state.fileUniqueId);
+  }
+}
+
+/** 引用计数减一；同一个 signal 可能被同一轮回复的多份媒体重复登记。 */
+function releaseDescriptionConsumer(
+  state: TransientDescriptionAbortState,
+  signal: AbortSignal
+): void {
+  const current: number = state.consumers.get(signal) ?? 0;
+  if (current <= 1) state.consumers.delete(signal);
+  else state.consumers.set(signal, current - 1);
+}
+
+function attachDescriptionConsumer(
+  pending: Promise<string | null>,
+  state: TransientDescriptionAbortState,
+  signal?: AbortSignal
+): Promise<string | null> {
+  if (signal === undefined) {
+    state.uncancellableConsumers += 1;
+    return pending;
+  }
+  const consumerCount: number = state.consumers.get(signal) ?? 0;
+  state.consumers.set(signal, consumerCount + 1);
+  return raceAbort(pending, {
+    signal,
+    cancelled: null,
+    rejected: null,
+    onSettle: (): void => releaseDescriptionConsumer(state, signal),
+    onCancel: (): void => abortUnusedDescription(state),
+  });
+}
+
+function waitForMediaProbe(
+  probe: Promise<AiTextResult>,
+  signal?: AbortSignal
+): Promise<AiTextResult> {
+  // 探测本身由首个放行者驱动，等待者失效只结束自己这一份等待；reject 与取消要分
+  // 开归口，runMediaInputRequest 靠 MEDIA_CANCELLED_RESULT 的对象身份判断是否重试。
+  return raceAbort(probe, {
+    signal,
+    cancelled: MEDIA_CANCELLED_RESULT,
+    rejected: MEDIA_TASK_REJECTED_RESULT,
+  });
 }

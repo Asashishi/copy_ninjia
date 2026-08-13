@@ -1,13 +1,27 @@
 import type { StickerSet } from "@grammyjs/types";
 import { logger } from "../../../infra/logger";
 import { telegramApi } from "../../../infra/telegram";
+import { raceAbort } from "../../../libs/abortSignal";
 import { failedPacks, inflightStickerSets, stickerSetCache } from "../../../cache/workers/aiChat/stickers/sets";
 import { STICKER_SET_FAILURE_RETRY_MS } from "../../../consts/aiChat/stickers";
 import { invalidateStickerMenu } from "../../../cache/workers/aiChat/stickers/menu";
+import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worker";
 
+/**
+ * 与 grammy 的 `Api.getStickerSet(name, signal?)` 同签名，便于测试注入替身。
+ *
+ * signal 声明成 DOM 的 `AbortSignal`，而不是 grammy `.d.ts` 里那个来自
+ * `abort-controller` 包的同名类型：两者运行期是同一个东西，静态结构却不兼容
+ * （`dispatchEvent`/`composedPath` 的签名不同）。把不兼容收在下面绑定
+ * `telegramApi` 的那一处断言里，调用点与注入替身就都能拿到真实的类型检查——
+ * 此前该参数声明为 `never`、调用处 `signal as never`，等于对第二个参数完全不检查。
+ */
 interface StickerSetApi {
-  getStickerSet(packName: string): Promise<StickerSet>;
+  getStickerSet(packName: string, signal?: AbortSignal): Promise<StickerSet>;
 }
+
+/** grammy 的 signal 类型与 DOM 版结构不兼容（见 StickerSetApi），在这一处收口。 */
+const defaultStickerSetApi: StickerSetApi = telegramApi as unknown as StickerSetApi;
 
 /**
  * 白名单贴纸包的拉取与缓存（getStickerSet，按 pack short name）。
@@ -21,8 +35,18 @@ interface StickerSetApi {
 
 /** 拉取（或复用缓存）单个包的贴纸集合；失败返回 null（而非空集合），供
  *  调用方区分「拉取失败」与「包确实没有贴纸」——见 aiChat/ai/stickers/catalog.ts
- *  的 generatePackCatalog，剪枝逻辑必须能分辨这两种情况。 */
-export async function getStickerSet(packName: string, api: StickerSetApi = telegramApi): Promise<StickerSet | null> {
+ *  的 generatePackCatalog，剪枝逻辑必须能分辨这两种情况。
+ *
+ *  `signal` 只约束**本次调用自己的等待**，不驱动共享请求：合并后的那一次 Telegram
+ *  请求属于所有等待者，其生命周期是 Worker 的（见下方 workerSignal）。把它绑到
+ *  恰好第一个到达的调用方身上，会让那个调用方一取消就把结果连同正缓存回写和菜单
+ *  失效一起作废，signal 仍存活的其余等待者只能拿到 null 并当成「这个包不可用」。 */
+export async function getStickerSet(
+  packName: string,
+  api: StickerSetApi = defaultStickerSetApi,
+  signal?: AbortSignal
+): Promise<StickerSet | null> {
+  if (signal?.aborted === true) return null;
   const cached: StickerSet | undefined = stickerSetCache.get(packName);
   if (cached) return cached;
   const retryAt: number | undefined = failedPacks.get(packName);
@@ -35,8 +59,13 @@ export async function getStickerSet(packName: string, api: StickerSetApi = teleg
   // aiChat/ai/imageDescription.ts 的 describeMedia）：并发的几轮回复同时组装贴纸
   // 菜单时，同一个未缓存的包只对 Telegram 发一次请求。
   const inflight: Promise<StickerSet | null> | undefined = inflightStickerSets.get(packName);
-  if (inflight) return inflight;
+  if (inflight) return waitForStickerSet(inflight, signal);
 
+  // 共享请求绑 Worker 信号，而不是任一调用方的 signal：结果进的是 Worker 独占的
+  // stickerSetCache，服务的是本线程后续所有回复，因此它的正确生命周期就是本线程的。
+  // 现取当前 controller 的 signal（Worker 重建时 holder 会换一个新的，见
+  // cache/workers/aiChat/worker.ts），这也正是下面两处 await 后守卫要挡的那件事。
+  const workerSignal: AbortSignal = aiChatWorkerAbortController.current.signal;
   // 先登记占位、再启动请求：反过来的话，`api.getStickerSet` 同步抛出时（线程还
   // 没 installTelegramApi，currentTelegramApi() 就是内联抛）整个 IIFE 体在第一个
   // await 之前跑完，finally 删掉一个尚不存在的条目，随后这一行又把**已经 settle
@@ -45,13 +74,16 @@ export async function getStickerSet(packName: string, api: StickerSetApi = teleg
   // resolved-null，该贴纸包在 Worker 余生里静默缺席且不再报一次错。
   const request: Promise<StickerSet | null> = (async (): Promise<StickerSet | null> => {
     try {
-      const set: StickerSet = await api.getStickerSet(packName);
+      const set: StickerSet = await api.getStickerSet(packName, workerSignal);
+      // 某些注入实现或代理可能忽略 signal；Worker 已停时仍不得回写正缓存。
+      if (workerSignal.aborted) return null;
       stickerSetCache.set(packName, set);
       // 拉到一个此前拿不到的包会让贴纸菜单多出一项，记忆化的那份就旧了。
       invalidateStickerMenu();
       failedPacks.delete(packName);
       return set;
     } catch (error: unknown) {
+      if (workerSignal.aborted) return null;
       logger.error(`Failed to fetch sticker set "${packName}":`, error);
       failedPacks.set(packName, Date.now() + STICKER_SET_FAILURE_RETRY_MS);
       return null;
@@ -68,5 +100,13 @@ export async function getStickerSet(packName: string, api: StickerSetApi = teleg
     }
   };
   void request.then(settleInflight, settleInflight);
-  return request;
+  return waitForStickerSet(request, signal);
+}
+
+/** 每个调用方只取消自己的等待；共享请求继续服务其余等待者，见 libs/abortSignal.ts。 */
+function waitForStickerSet(
+  request: Promise<StickerSet | null>,
+  signal?: AbortSignal
+): Promise<StickerSet | null> {
+  return raceAbort(request, { signal, cancelled: null, rejected: null });
 }

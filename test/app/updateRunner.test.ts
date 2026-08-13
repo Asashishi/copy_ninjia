@@ -48,6 +48,47 @@ describe("acknowledgement-safe update runner", () => {
     await runner.stop();
   });
 
+  test("update 严格串行：前一条 middleware 未完成前绝不启动下一条", async () => {
+    // per-chat sequentialize 已从 registerHandlers 移除，同群消息的顺序保证此后
+    // 完全来自本 runner 的 `await updateTask` 循环，因此这条不变量必须被直接断言，
+    // 而不是只看 offset 记账。
+    const gates = [deferred(), deferred()];
+    const started: number[] = [];
+    let fetchCount: number = 0;
+    const fakeBot = {
+      api: {
+        getUpdates: async (_args: { offset: number; limit: number }, signal: AbortSignal): Promise<Update[]> => {
+          fetchCount++;
+          if (fetchCount <= 2) return [{ update_id: 9 + fetchCount }] as Update[];
+          return await new Promise<Update[]>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("aborted")));
+          });
+        },
+      },
+      handleUpdate: async (update: Update): Promise<void> => {
+        started.push(update.update_id);
+        await gates[started.length - 1]!.promise;
+      },
+      errorHandler: (): void => {},
+    };
+
+    const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
+    await Bun.sleep(0);
+    expect(started).toEqual([10]);
+
+    // 第一条仍悬挂：再放几拍事件循环，第二条也不许开始。
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    expect(started).toEqual([10]);
+
+    gates[0]!.resolve();
+    await Bun.sleep(0);
+    expect(started).toEqual([10, 11]);
+
+    await runner.stop();
+    gates[1]!.resolve();
+  });
+
   test("stop 不等待悬挂 middleware，且停止后绝不通过下一次 fetch 确认该批次", async () => {
     const gate = deferred();
     const fetchOffsets: number[] = [];

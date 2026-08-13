@@ -58,7 +58,7 @@ const {
   isWhitelisted,
   setWhitelistMembership,
   setWhitelistPermission,
-} = await import("../../packages/whitelist");
+} = await import("../../packages/infra/identityPolicy/whitelist");
 
 function seedMissing(id: number): void {
   whitelistEntryCache.set(id, null);

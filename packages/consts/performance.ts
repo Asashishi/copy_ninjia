@@ -27,12 +27,14 @@ export const HOT_PATH_PROFILE_FAST_SCENARIO_ITERATION_MULTIPLIER: number = 4;
 export const HOT_PATH_PROFILE_MAX_GC_PERCENT: number = 5;
 
 /**
- * 稳态采样必须落在 FTL 的最低比例。异步入站主链仍有 native/调度样本，Bun 1.3.14
- * 三轮实测最低 45.7%，因此以 35% 作为能识别高层 JIT 失效且保留噪声余量的闸值。
+ * retained 子进程的 RSS 上限，覆盖 JSC 与 Bun 原生堆。逐节拍采样峰值与进程生命周期
+ * 高水位（getrusage maxRSS）共用这一个阈值：只掐采样峰值的话，完整落在两次节拍之间
+ * 的大块瞬时分配会被漏掉，而那正是这条门禁要拦的东西。
+ *
+ * Bun 1.3.14 实测两者几乎重合（incoming-message-spine 106.5/107.0 MB、
+ * flood-window-steady 130.5/130.5 MB、mention-facts-plain 75.5/75.5 MB），据此对更强的
+ * 那个指标也保留约两倍余量。
  */
-export const HOT_PATH_PROFILE_MIN_FTL_PERCENT: number = 35;
-
-/** 单个热路径独立进程允许达到的 RSS 峰值，覆盖 JSC 与 Bun 原生堆。 */
 export const HOT_PATH_PROFILE_MAX_RSS_BYTES: number = 256 * 1024 * 1024;
 
 /**
@@ -43,12 +45,25 @@ export const HOT_PATH_PROFILE_MAX_RSS_BYTES: number = 256 * 1024 * 1024;
 export const HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES: number =
   96 * 1024 * 1024;
 
+/** retained 场景在 full GC 后允许留下的 JSC 堆增量。 */
+export const HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES: number =
+  1 * 1024 * 1024;
+
+/** retained 场景在 full GC 后允许留下的 JSC 堆外内存增量。 */
+export const HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES: number =
+  1 * 1024 * 1024;
+
+/** retained 场景在 full GC 后允许留下的对象数增量。 */
+export const HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH: number = 4_096;
+
 /**
- * 默认性能门禁覆盖的真实消息主链及三个高频叶子热点；元素顺序固定，独立进程
- * 按此顺序串行运行，避免并发争抢 CPU/内存污染读数。
+ * 默认性能门禁覆盖真实消息主链与固定高频叶子热点；元素顺序固定，独立进程按此
+ * 顺序串行运行，避免并发争抢 CPU/内存污染读数。
  */
 export const HOT_PATH_PROFILE_SCENARIOS: readonly string[] = [
   "incoming-message-spine",
+  "sender-stable-username",
+  "luck-receipt-fast-path",
   "ai-activity-window",
   "flood-window-steady",
   "mention-facts-plain",

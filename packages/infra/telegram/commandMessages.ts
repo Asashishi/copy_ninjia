@@ -24,18 +24,20 @@ export async function sendCommandMessage({
   preserveInGroup = false,
   ...params
 }: SendCommandMessageParams): Promise<number | undefined> {
-  const messageId: number | undefined = await sendMessage(params);
-  if (
-    messageId !== undefined &&
-    params.chatId < 0 &&
-    !preserveInGroup
-  ) {
-    deleteMessageAfter({
-      chatId: params.chatId,
-      messageId,
-      delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
-      api: params.api,
-    });
-  }
-  return messageId;
+  if (params.chatId >= 0 || preserveInGroup) return sendMessage(params);
+  const callerOnSent: SendMessageParams["onSent"] = params.onSent;
+  return sendMessage({
+    ...params,
+    // 删除 owner 必须在拿到 id 的同步时点认领；远端成功后 update
+    // 若立即 abort，runTelegramAction 会丢掉返回值，但不能丢掉已发消息的清理责任。
+    onSent: (messageId: number): void => {
+      deleteMessageAfter({
+        chatId: params.chatId,
+        messageId,
+        delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
+        api: params.api,
+      });
+      callerOnSent?.(messageId);
+    },
+  });
 }

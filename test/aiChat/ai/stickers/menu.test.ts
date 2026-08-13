@@ -38,6 +38,9 @@ const {
   stickerMenuInflight,
   stickerMenuRevision,
 } = await import("../../../../packages/cache/workers/aiChat/stickers/menu");
+const { aiChatWorkerAbortController } = await import(
+  "../../../../packages/cache/workers/aiChat/worker"
+);
 
 function sticker(fileUniqueId: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji: "😂", is_animated: false, is_video: false };
@@ -52,6 +55,7 @@ beforeEach(() => {
   stickerMenuCache.current = null;
   stickerMenuInflight.current = null;
   stickerMenuRevision.current = 0;
+  aiChatWorkerAbortController.current = new AbortController();
 });
 
 describe("贴纸包菜单的记忆化", () => {
@@ -114,5 +118,34 @@ describe("贴纸包菜单的记忆化", () => {
     expect(stickerMenuCache.current).toBeNull();
     await buildStickerPackMenu();
     expect(getStickerSetMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("一轮回复取消只停止自身等待，不中止共享菜单构建", async () => {
+    let release!: () => void;
+    const gate: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      release = resolve;
+    });
+    getStickerSetMock.mockImplementation(async (): Promise<any> => {
+      await gate;
+      return { title: "猫猫包", stickers: [sticker("a1")] };
+    });
+    const controller: AbortController = new AbortController();
+
+    const cancelled: Promise<readonly any[]> = buildStickerPackMenu(controller.signal);
+    const live: Promise<readonly any[]> = buildStickerPackMenu();
+    expect(getStickerSetMock).toHaveBeenCalledWith(
+      "pack_a",
+      undefined,
+      aiChatWorkerAbortController.current.signal
+    );
+
+    controller.abort(new DOMException("reply invalidated", "AbortError"));
+    expect(await cancelled).toEqual([]);
+    expect(aiChatWorkerAbortController.current.signal.aborted).toBeFalse();
+
+    release();
+    const menu: readonly any[] = await live;
+    expect(menu).toHaveLength(1);
+    expect(stickerMenuCache.current?.menu).toBe(menu);
   });
 });

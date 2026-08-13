@@ -1,15 +1,15 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
-import type { SetWhitelistMembershipResult } from "../whitelist";
+import type { SetWhitelistMembershipResult } from "../infra/identityPolicy/whitelist";
 import {
   confirmWhitelistEntryPersisted,
   hasWhitelistPermission,
   setWhitelistMembership,
-} from "../whitelist";
+} from "../infra/identityPolicy/whitelist";
 import { WHITE_COMMAND_TEXTS } from "../consts/whitelist";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
-import { runProtectedIdentityMutation } from "../infra/identityPolicy";
+import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
 import { identityMetadataFromCachedUser } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";

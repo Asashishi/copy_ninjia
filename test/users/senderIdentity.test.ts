@@ -110,6 +110,49 @@ describe("sender identity cache", () => {
     expect(senderUsernameCache.size).toBe(0);
   });
 
+  test("频道身份未变化时保留同一缓存对象", () => {
+    const message: Message = senderChatMessage(-1008, "StableChannel");
+    cacheSender(message);
+    const cached: CachedUser | undefined = userCache.get("stablechannel");
+
+    cacheSender(message);
+
+    expect(userCache.get("stablechannel")).toBe(cached);
+    expect(senderUsernameCache.get(-1008)).toBe("stablechannel");
+  });
+
+  test("username 不变但资料字段变化时照样刷新：守住快路径的比较清单", () => {
+    // cacheSender 的快路径逐字段比对缓存条目（为的是每条群消息不白付一次对象
+    // 分配），字段清单必须覆盖 resolveSenderIdentity 构造的全部字段：漏掉任何
+    // 一个，该字段的变化都会被误判成「未变」，缓存从此停在旧资料上。
+    const user: Message = userMessage(41, "ProfileUser");
+    cacheSender(user);
+    expect(userCache.get("profileuser")).toMatchObject({ first_name: "User 41" });
+
+    const renamed: Message = userMessage(41, "ProfileUser");
+    (renamed.from as { first_name: string }).first_name = "改名后";
+    cacheSender(renamed);
+    expect(userCache.get("profileuser")).toMatchObject({ first_name: "改名后" });
+
+    const withLastName: Message = userMessage(41, "ProfileUser");
+    (withLastName.from as { first_name: string; last_name?: string }).first_name = "改名后";
+    (withLastName.from as { last_name?: string }).last_name = "新姓氏";
+    cacheSender(withLastName);
+    expect(userCache.get("profileuser")).toMatchObject({ last_name: "新姓氏" });
+
+    const channel: Message = senderChatMessage(-1041, "ProfileChannel");
+    cacheSender(channel);
+    expect(userCache.get("profilechannel")).toMatchObject({ title: "Channel -1041" });
+
+    const retitled: Message = senderChatMessage(-1041, "ProfileChannel");
+    (retitled.sender_chat as { title: string }).title = "改名后的频道";
+    cacheSender(retitled);
+    expect(userCache.get("profilechannel")).toMatchObject({
+      title: "改名后的频道",
+      isChannel: true,
+    });
+  });
+
   test("频道 sender_chat 改名和去名时同步清理 alias", () => {
     cacheSender(senderChatMessage(-1009, "OldChannel"));
     expect(resolveUsernameTarget("oldchannel")).toMatchObject({

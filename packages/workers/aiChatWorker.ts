@@ -16,6 +16,7 @@ import { sweepSongGenerationCache } from "../cache/workers/aiChat/songGeneration
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
 import {
   aiChatMaintenanceTimer,
+  aiChatWorkerAbortController,
   aiChatWorkerDrain,
   aiChatWorkerQuiescing,
 } from "../cache/workers/aiChat/worker";
@@ -112,6 +113,9 @@ function handleInvalidateChat(msg: AiInvalidateChatMessage): void {
 /** 首条 flush 同步封住新任务入口，并停止会派生目录/回复工作的后台推力。 */
 function beginAiChatWorkerQuiesce(): Promise<void> {
   aiChatWorkerQuiescing.current = true;
+  aiChatWorkerAbortController.current.abort(
+    new DOMException("AI chat Worker is quiescing.", "AbortError")
+  );
   if (aiChatMaintenanceTimer.current !== null) {
     clearInterval(aiChatMaintenanceTimer.current);
     aiChatMaintenanceTimer.current = null;
@@ -242,6 +246,7 @@ export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
 export function startAiChatWorker(): void {
   if (aiChatMaintenanceTimer.current !== null) return;
   aiChatWorkerQuiescing.current = false;
+  aiChatWorkerAbortController.current = new AbortController();
   aiChatWorkerDrain.current = null;
   installTelegramApi(workerTelegramApi);
   initializeWorkerDuplex<TelegramWorkerRequest>((
@@ -270,6 +275,9 @@ export function startAiChatWorker(): void {
 
 /** 协作式停止 AI Worker 的 handler、维护 timer 与天气刷新 owner。 */
 export function stopAiChatWorker(): void {
+  aiChatWorkerAbortController.current.abort(
+    new DOMException("AI chat Worker stopped.", "AbortError")
+  );
   if (aiChatMaintenanceTimer.current !== null) {
     clearInterval(aiChatMaintenanceTimer.current);
     aiChatMaintenanceTimer.current = null;

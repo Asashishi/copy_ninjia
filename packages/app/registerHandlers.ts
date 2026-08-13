@@ -1,5 +1,4 @@
 import { GrammyError, type Bot } from "grammy";
-import { sequentialize } from "@grammyjs/runner";
 import { handleIncomingMessage, handleReaction } from "../auto";
 import {
   confirmLuckDraw,
@@ -88,22 +87,20 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
 
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
   // 因此必须在 isInit 网关前检查。
-  bot.use(async (ctx: Context, next: NextFunction): Promise<void> => {
-    await confirmLuckDraw(ctx.msg?.text, ctx.msg?.entities);
-    return next();
+  bot.use((ctx: Context, next: NextFunction): Promise<void> => {
+    const confirmation: Promise<void> | undefined = confirmLuckDraw(
+      ctx.msg?.text,
+      ctx.msg?.entities
+    );
+    return confirmation === undefined ? next() : confirmation.then(next);
   });
 
-  // 未初始化群和不允许的私聊命令在这里终止，避免继续进入授权维护、串行队列、
+  // 未初始化群和不允许的私聊命令在这里终止，避免继续进入授权维护、身份预热、
   // 验证、命令与 AI 链路。群内只有首次 /init 与 my_chat_member 等网关自身
   // 明确放行的更新能越过初始化状态；私聊只接受超级管理员的 /send。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined =>
     shouldPassInitGate(ctx) && shouldPassPrivateCommandGate(ctx) ? next() : undefined
   );
-
-  // 普通聊天按 chat 串行；授权维护命令也必须进入本车道，保证权限检查与
-  // 随后的持久化修改不会同本群另一条更新交错。反应同步有自己的合并队列，
-  // 不占用聊天车道。
-  bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
 
   // 黑白名单判断保持同步 LRU 读取；每个 update 在进入 Anti-Raid 和命令前，一次性
   // 补齐可见身份的冷缺失。热命中不跨线程，冷读同时查询两表并写入正/负缓存。

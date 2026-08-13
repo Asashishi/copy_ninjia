@@ -1,9 +1,9 @@
 /**
- * 固定 Bun、固定场景、独立进程重复的热路径内存/GC 门禁。
+ * 固定 Bun、固定场景、独立进程重复的热路径内存/GC/JIT 门禁。
  *
- * 每个子进程只在预热后的正式循环开启 JSC sampling profiler，因此 GC 比例不含
- * import、预热和 retained-heap 强制 GC。RSS 使用进程生命周期峰值；heapUsed 增长
- * 使用每个正式采样节拍的观测峰值。脚本串行运行，避免场景之间争抢资源。
+ * 每个场景分别运行 sampling-profile 与 retained 子进程：前者只判断正式循环的
+ * GC/JIT，后者在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC
+ * 后留存。脚本串行运行，避免场景之间争抢资源。
  */
 
 import { join } from "node:path";
@@ -12,9 +12,11 @@ import {
   HOT_PATH_PROFILE_BUN_REVISION,
   HOT_PATH_PROFILE_BUN_VERSION,
   HOT_PATH_PROFILE_MAX_GC_PERCENT,
+  HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES,
+  HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES,
+  HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH,
   HOT_PATH_PROFILE_MAX_RSS_BYTES,
   HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES,
-  HOT_PATH_PROFILE_MIN_FTL_PERCENT,
   HOT_PATH_PROFILE_MIN_SAMPLES,
   HOT_PATH_PROFILE_REPEATS,
   HOT_PATH_PROFILE_SCENARIOS,
@@ -43,25 +45,40 @@ interface ChildProfileResult {
   readonly bunRevision: string;
   readonly warmupIterations: number;
   readonly medianNsPerOp: number;
+  readonly retainedHeapDelta: number | null;
+  readonly retainedExtraMemoryDelta: number | null;
+  readonly retainedObjectDelta: number | null;
   readonly peakSampledHeapUsedDelta: number;
+  readonly peakSampledRssBytes: number;
   readonly processPeakRssBytes: number;
-  readonly samplingProfile: SamplingProfileResult;
+  readonly samplingProfile: SamplingProfileResult | null;
   readonly jit: Readonly<Record<string, JitProbeResult>>;
 }
 
+/**
+ * 单场景的汇总读数。字段名标明来源与效力：`...Diagnostic` 后缀表示只输出、不设闸门，
+ * 其余每一项都有 assert*WithinLimits 里的对应断言；`profile`/`retained` 前缀标明取自
+ * 哪个子进程，两者的预热轮数差一个数量级（profiler 场景要多跑 JIT 稳定轮），混在
+ * 同一行会让读数无法解释。
+ */
 interface ScenarioGateResult {
   readonly scenario: string;
   readonly repeats: number;
   readonly bunVersion: string;
   readonly bunRevision: string;
   readonly maxGcPercent: number;
+  readonly maxSampledRssBytes: number;
   readonly maxProcessPeakRssBytes: number;
   readonly maxSampledHeapUsedGrowthBytes: number;
+  readonly maxRetainedHeapGrowthBytes: number;
+  readonly maxRetainedExtraMemoryGrowthBytes: number;
+  readonly maxRetainedObjectGrowth: number;
   readonly minProfileSamples: number;
-  readonly minFtlPercent: number;
+  readonly minFtlPercentDiagnostic: number;
   readonly minProductionProbeDfgCompiles: number;
-  readonly maxProductionProbeReoptRetries: number;
-  readonly maxWarmupIterations: number;
+  readonly maxProductionProbeReoptRetriesDiagnostic: number;
+  readonly maxProfileWarmupIterations: number;
+  readonly maxRetainedWarmupIterations: number;
   readonly minMedianOpsPerSecond: number;
   readonly minMedianNsPerOp: number;
   readonly maxMedianNsPerOp: number;
@@ -96,6 +113,20 @@ function requiredBoolean(
   const value: unknown = record[key];
   if (typeof value !== "boolean") {
     throw new Error(`Hot-path child result omitted boolean field ${key}.`);
+  }
+  return value;
+}
+
+function requiredNullableNumber(
+  record: Readonly<Record<string, unknown>>,
+  key: string
+): number | null {
+  const value: unknown = record[key];
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(
+      `Hot-path child omitted finite number or null field ${key}.`
+    );
   }
   return value;
 }
@@ -150,12 +181,21 @@ function parseChildProfileResult(text: string): ChildProfileResult {
     bunRevision: requiredString(parsed, "bunRevision"),
     warmupIterations: requiredNumber(parsed, "warmupIterations"),
     medianNsPerOp: requiredNumber(parsed, "medianNsPerOp"),
+    retainedHeapDelta: requiredNullableNumber(parsed, "retainedHeapDelta"),
+    retainedExtraMemoryDelta: requiredNullableNumber(
+      parsed,
+      "retainedExtraMemoryDelta"
+    ),
+    retainedObjectDelta: requiredNullableNumber(parsed, "retainedObjectDelta"),
     peakSampledHeapUsedDelta: requiredNumber(
       parsed,
       "peakSampledHeapUsedDelta"
     ),
+    peakSampledRssBytes: requiredNumber(parsed, "peakSampledRssBytes"),
     processPeakRssBytes: requiredNumber(parsed, "processPeakRssBytes"),
-    samplingProfile: parseSamplingProfile(parsed.samplingProfile),
+    samplingProfile: parsed.samplingProfile === null
+      ? null
+      : parseSamplingProfile(parsed.samplingProfile),
     jit: parseJitProbes(parsed.jit),
   };
 }
@@ -175,7 +215,7 @@ function productionJitProbes(result: ChildProfileResult): readonly JitProbeResul
   return probes;
 }
 
-function assertRunWithinLimits(result: ChildProfileResult): void {
+function assertRuntimeMatches(result: ChildProfileResult): void {
   if (
     result.bunVersion !== HOT_PATH_PROFILE_BUN_VERSION ||
     result.bunRevision !== HOT_PATH_PROFILE_BUN_REVISION
@@ -186,9 +226,6 @@ function assertRunWithinLimits(result: ChildProfileResult): void {
       `(${result.bunRevision}); recalibrate the profile thresholds before comparing results.`
     );
   }
-  if (result.measurementMode !== "steadyProfile") {
-    throw new Error(`${result.scenario}: child did not run in steadyProfile mode.`);
-  }
   if (
     !Number.isSafeInteger(result.warmupIterations) ||
     result.warmupIterations <= 0
@@ -198,39 +235,38 @@ function assertRunWithinLimits(result: ChildProfileResult): void {
   if (result.medianNsPerOp <= 0) {
     throw new Error(`${result.scenario}: child returned invalid median latency.`);
   }
-  if (result.samplingProfile.totalSamples < HOT_PATH_PROFILE_MIN_SAMPLES) {
+}
+
+function assertProfileRunWithinLimits(result: ChildProfileResult): void {
+  assertRuntimeMatches(result);
+  if (result.measurementMode !== "steadyProfile" || result.samplingProfile === null) {
+    throw new Error(`${result.scenario}: child did not return a sampling profile.`);
+  }
+  const samplingProfile: SamplingProfileResult = result.samplingProfile;
+  if (samplingProfile.totalSamples < HOT_PATH_PROFILE_MIN_SAMPLES) {
     throw new Error(
-      `${result.scenario}: only ${result.samplingProfile.totalSamples} profile samples; ` +
+      `${result.scenario}: only ${samplingProfile.totalSamples} profile samples; ` +
       `expected at least ${HOT_PATH_PROFILE_MIN_SAMPLES}.`
     );
   }
-  if (result.samplingProfile.gcPercent > HOT_PATH_PROFILE_MAX_GC_PERCENT) {
+  if (samplingProfile.gcPercent > HOT_PATH_PROFILE_MAX_GC_PERCENT) {
     throw new Error(
-      `${result.scenario}: GC used ${result.samplingProfile.gcPercent.toFixed(3)}% of ` +
+      `${result.scenario}: GC used ${samplingProfile.gcPercent.toFixed(3)}% of ` +
       `steady samples; limit is ${HOT_PATH_PROFILE_MAX_GC_PERCENT}%.`
     );
   }
-  if (result.samplingProfile.ftlPercent < HOT_PATH_PROFILE_MIN_FTL_PERCENT) {
-    throw new Error(
-      `${result.scenario}: FTL covered only ${result.samplingProfile.ftlPercent.toFixed(3)}% ` +
-      `of steady samples; expected at least ${HOT_PATH_PROFILE_MIN_FTL_PERCENT}%.`
-    );
-  }
-  if (result.processPeakRssBytes > HOT_PATH_PROFILE_MAX_RSS_BYTES) {
-    throw new Error(
-      `${result.scenario}: process RSS peaked at ${result.processPeakRssBytes} bytes; ` +
-      `limit is ${HOT_PATH_PROFILE_MAX_RSS_BYTES}.`
-    );
-  }
-  if (
-    result.peakSampledHeapUsedDelta >
-      HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES
-  ) {
-    throw new Error(
-      `${result.scenario}: sampled heapUsed grew by ${result.peakSampledHeapUsedDelta} bytes; ` +
-      `limit is ${HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES}.`
-    );
-  }
+  // 汇总 FTL 比例只作诊断（输出字段名带 Diagnostic 后缀），异步场景会混入 native
+  // Promise/调度采样，不能代表内部生产函数的 JIT 层级：Bun 1.3.14 实测
+  // mention-facts-plain（纯叶子）97.98%、incoming-message-spine（异步主链）3.17%，
+  // 单一阈值对两类场景没有共同含义，按场景标定又等于把噪声写死成契约。
+  //
+  // reoptRetries 的绝对值同样只作诊断：hotPaths.ts 的 productionJitTiersAreStable
+  // 已经要求它连续两个完整轮次不变才开始采样，采样期再由 changedDuringSampling
+  // 复查，因此这个计数剩下的只是预热期历史。实测 6 个场景里 5 个恒为 0，
+  // flood-window-steady 的 observeMemberMessage 稳定为 1（dfgCompiles=2，预热期
+  // 被去优化过一次又重编译），对它设硬上限只会逼出一张按场景标定的阈值表。
+  //
+  // 稳态 JIT 闸门因此就是下面这两条逐生产探针的判据。
   for (const probe of productionJitProbes(result)) {
     if (probe.dfgCompiles < 1) {
       throw new Error(
@@ -245,17 +281,77 @@ function assertRunWithinLimits(result: ChildProfileResult): void {
   }
 }
 
+function assertRetainedRunWithinLimits(result: ChildProfileResult): void {
+  assertRuntimeMatches(result);
+  if (
+    result.measurementMode !== "retained" ||
+    result.samplingProfile !== null ||
+    result.retainedHeapDelta === null ||
+    result.retainedExtraMemoryDelta === null ||
+    result.retainedObjectDelta === null
+  ) {
+    throw new Error(`${result.scenario}: child did not return retained-memory results.`);
+  }
+  if (result.peakSampledRssBytes > HOT_PATH_PROFILE_MAX_RSS_BYTES) {
+    throw new Error(
+      `${result.scenario}: sampled RSS peaked at ${result.peakSampledRssBytes} bytes; ` +
+      `limit is ${HOT_PATH_PROFILE_MAX_RSS_BYTES}.`
+    );
+  }
+  // 逐节拍采样只看得见节拍那一刻的 RSS；完整落在两次节拍之间的瞬时大块分配要靠
+  // 进程生命周期高水位才拦得住，两者共用同一个上限。
+  if (result.processPeakRssBytes > HOT_PATH_PROFILE_MAX_RSS_BYTES) {
+    throw new Error(
+      `${result.scenario}: process peak RSS reached ${result.processPeakRssBytes} bytes; ` +
+      `limit is ${HOT_PATH_PROFILE_MAX_RSS_BYTES}.`
+    );
+  }
+  if (
+    result.peakSampledHeapUsedDelta >
+      HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES
+  ) {
+    throw new Error(
+      `${result.scenario}: sampled heapUsed grew by ${result.peakSampledHeapUsedDelta} bytes; ` +
+      `limit is ${HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES}.`
+    );
+  }
+  if (result.retainedHeapDelta > HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES) {
+    throw new Error(
+      `${result.scenario}: retained JSC heap grew by ${result.retainedHeapDelta} bytes; ` +
+      `limit is ${HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES}.`
+    );
+  }
+  if (
+    result.retainedExtraMemoryDelta >
+      HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES
+  ) {
+    throw new Error(
+      `${result.scenario}: retained extra memory grew by ` +
+      `${result.retainedExtraMemoryDelta} bytes; limit is ` +
+      `${HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES}.`
+    );
+  }
+  if (result.retainedObjectDelta > HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH) {
+    throw new Error(
+      `${result.scenario}: retained object count grew by ${result.retainedObjectDelta}; ` +
+      `limit is ${HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH}.`
+    );
+  }
+}
+
 async function runChild(
   projectRoot: string,
-  scenario: string
+  scenario: string,
+  measurementMode: "retained" | "steadyProfile"
 ): Promise<ChildProfileResult> {
+  const args: string[] = [
+    process.execPath,
+    join(projectRoot, "scripts/perf/hotPaths.ts"),
+    scenario,
+  ];
+  if (measurementMode === "steadyProfile") args.push("--profile");
   const subprocess: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn(
-    [
-      process.execPath,
-      join(projectRoot, "scripts/perf/hotPaths.ts"),
-      scenario,
-      "--profile",
-    ],
+    args,
     {
       cwd: projectRoot,
       stdin: "ignore",
@@ -277,7 +373,11 @@ async function runChild(
   if (result.scenario !== scenario) {
     throw new Error(`${scenario}: child returned scenario ${result.scenario}.`);
   }
-  assertRunWithinLimits(result);
+  if (measurementMode === "steadyProfile") {
+    assertProfileRunWithinLimits(result);
+  } else {
+    assertRetainedRunWithinLimits(result);
+  }
   return result;
 }
 
@@ -295,63 +395,91 @@ let expectedBunVersion: string | undefined;
 let expectedBunRevision: string | undefined;
 
 for (const scenario of HOT_PATH_PROFILE_SCENARIOS) {
-  const runs: ChildProfileResult[] = [];
+  const profileRuns: ChildProfileResult[] = [];
+  const retainedRuns: ChildProfileResult[] = [];
   for (let repeat: number = 0; repeat < HOT_PATH_PROFILE_REPEATS; repeat++) {
-    const run: ChildProfileResult = await runChild(projectRoot, scenario);
-    expectedBunVersion ??= run.bunVersion;
-    expectedBunRevision ??= run.bunRevision;
+    const profileRun: ChildProfileResult = await runChild(
+      projectRoot,
+      scenario,
+      "steadyProfile"
+    );
+    const retainedRun: ChildProfileResult = await runChild(
+      projectRoot,
+      scenario,
+      "retained"
+    );
+    expectedBunVersion ??= profileRun.bunVersion;
+    expectedBunRevision ??= profileRun.bunRevision;
     if (
-      run.bunVersion !== expectedBunVersion ||
-      run.bunRevision !== expectedBunRevision
+      profileRun.bunVersion !== expectedBunVersion ||
+      profileRun.bunRevision !== expectedBunRevision ||
+      retainedRun.bunVersion !== expectedBunVersion ||
+      retainedRun.bunRevision !== expectedBunRevision
     ) {
       throw new Error(`${scenario}: Bun version changed during the profile gate.`);
     }
-    runs.push(run);
+    profileRuns.push(profileRun);
+    retainedRuns.push(retainedRun);
   }
-  const reference: ChildProfileResult | undefined = runs[0];
+  const reference: ChildProfileResult | undefined = profileRuns[0];
   if (reference === undefined) {
     throw new Error(`${scenario}: profile gate did not execute any repeats.`);
   }
   gateResults.push({
     scenario,
-    repeats: runs.length,
+    repeats: profileRuns.length,
     bunVersion: reference.bunVersion,
     bunRevision: reference.bunRevision,
-    maxGcPercent: maximum(runs.map(
-      (run: ChildProfileResult): number => run.samplingProfile.gcPercent
+    maxGcPercent: maximum(profileRuns.map(
+      (run: ChildProfileResult): number => run.samplingProfile!.gcPercent
     )),
-    maxProcessPeakRssBytes: maximum(runs.map(
+    maxSampledRssBytes: maximum(retainedRuns.map(
+      (run: ChildProfileResult): number => run.peakSampledRssBytes
+    )),
+    maxProcessPeakRssBytes: maximum(retainedRuns.map(
       (run: ChildProfileResult): number => run.processPeakRssBytes
     )),
-    maxSampledHeapUsedGrowthBytes: maximum(runs.map(
+    maxSampledHeapUsedGrowthBytes: maximum(retainedRuns.map(
       (run: ChildProfileResult): number => run.peakSampledHeapUsedDelta
     )),
-    minProfileSamples: minimum(runs.map(
-      (run: ChildProfileResult): number => run.samplingProfile.totalSamples
+    maxRetainedHeapGrowthBytes: maximum(retainedRuns.map(
+      (run: ChildProfileResult): number => run.retainedHeapDelta!
     )),
-    minFtlPercent: minimum(runs.map(
-      (run: ChildProfileResult): number => run.samplingProfile.ftlPercent
+    maxRetainedExtraMemoryGrowthBytes: maximum(retainedRuns.map(
+      (run: ChildProfileResult): number => run.retainedExtraMemoryDelta!
     )),
-    minProductionProbeDfgCompiles: minimum(runs.flatMap(
+    maxRetainedObjectGrowth: maximum(retainedRuns.map(
+      (run: ChildProfileResult): number => run.retainedObjectDelta!
+    )),
+    minProfileSamples: minimum(profileRuns.map(
+      (run: ChildProfileResult): number => run.samplingProfile!.totalSamples
+    )),
+    minFtlPercentDiagnostic: minimum(profileRuns.map(
+      (run: ChildProfileResult): number => run.samplingProfile!.ftlPercent
+    )),
+    minProductionProbeDfgCompiles: minimum(profileRuns.flatMap(
       (run: ChildProfileResult): readonly number[] => productionJitProbes(run).map(
         (probe: JitProbeResult): number => probe.dfgCompiles
       )
     )),
-    maxProductionProbeReoptRetries: maximum(runs.flatMap(
+    maxProductionProbeReoptRetriesDiagnostic: maximum(profileRuns.flatMap(
       (run: ChildProfileResult): readonly number[] => productionJitProbes(run).map(
         (probe: JitProbeResult): number => probe.reoptRetries
       )
     )),
-    maxWarmupIterations: maximum(runs.map(
+    maxProfileWarmupIterations: maximum(profileRuns.map(
       (run: ChildProfileResult): number => run.warmupIterations
     )),
-    minMedianOpsPerSecond: 1_000_000_000 / maximum(runs.map(
+    maxRetainedWarmupIterations: maximum(retainedRuns.map(
+      (run: ChildProfileResult): number => run.warmupIterations
+    )),
+    minMedianOpsPerSecond: 1_000_000_000 / maximum(retainedRuns.map(
       (run: ChildProfileResult): number => run.medianNsPerOp
     )),
-    minMedianNsPerOp: minimum(runs.map(
+    minMedianNsPerOp: minimum(retainedRuns.map(
       (run: ChildProfileResult): number => run.medianNsPerOp
     )),
-    maxMedianNsPerOp: maximum(runs.map(
+    maxMedianNsPerOp: maximum(retainedRuns.map(
       (run: ChildProfileResult): number => run.medianNsPerOp
     )),
   });
@@ -366,11 +494,17 @@ process.stdout.write(`${JSON.stringify({
   bunRevision: expectedBunRevision,
   thresholds: {
     maxGcPercent: HOT_PATH_PROFILE_MAX_GC_PERCENT,
+    maxSampledRssBytes: HOT_PATH_PROFILE_MAX_RSS_BYTES,
     maxProcessPeakRssBytes: HOT_PATH_PROFILE_MAX_RSS_BYTES,
     maxSampledHeapUsedGrowthBytes:
       HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES,
+    maxRetainedHeapGrowthBytes:
+      HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES,
+    maxRetainedExtraMemoryGrowthBytes:
+      HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES,
+    maxRetainedObjectGrowth:
+      HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH,
     minProfileSamples: HOT_PATH_PROFILE_MIN_SAMPLES,
-    minFtlPercent: HOT_PATH_PROFILE_MIN_FTL_PERCENT,
   },
   scenarios: gateResults,
 })}\n`);

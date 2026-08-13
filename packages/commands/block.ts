@@ -7,13 +7,13 @@ import {
   isChatMember,
 } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { isWhitelisted } from "../whitelist";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { BLOCK_COMMAND_CONCURRENCY, BLOCK_TARGET_TEXTS } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import { resolveBotAdminStatus } from "../infra/botAdmin";
 import { logger } from "../infra/logger";
-import { runProtectedIdentityMutation } from "../infra/identityPolicy";
+import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
 import { identityMetadataFromCachedUser } from "../infra/identityStorage";
 import {
   blockUser,

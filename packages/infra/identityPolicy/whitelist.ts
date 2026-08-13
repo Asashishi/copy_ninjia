@@ -3,19 +3,19 @@ import {
   NON_WHITELIST_PERMISSIONS,
   SUPER_ADMIN_WHITELIST_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
-} from "./consts/whitelist";
-import { SUPER_ADMIN_USER_ID } from "./config/telegram";
+} from "../../consts/whitelist";
+import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
 import {
   cachedWhitelistEntry,
   confirmIdentityPolicyPersisted,
   queueIdentityPolicyWrite,
-} from "./infra/identityStorage";
+} from "../identityStorage";
 import type {
   TelegramIdentityMetadata,
   WhitelistEntryData,
   WhitelistPermissionKey,
   WhitelistPermissions,
-} from "./types/identityPolicy";
+} from "../../types/identityPolicy";
 
 /** /permission 持久化一项授权时的入参。 */
 export interface SetWhitelistPermissionParams {

@@ -44,7 +44,7 @@ function capturedBody(index: number): ResponseBody {
 /** 一份带 reasoning、web_search_call 与 function_call 的模型输出。 */
 function modelOutput(): unknown[] {
   return [
-    { type: "reasoning", id: "rs-1", summary: [] },
+    { type: "reasoning", id: "rs-1", summary: [], encrypted_content: "encrypted-reasoning" },
     { type: "web_search_call", id: "ws-1", status: "completed", action: { type: "search" } },
     { type: "function_call", id: "fc-1", call_id: "call-1", name: "send_message", arguments: '{"text":"你好"}', status: "completed" },
   ];
@@ -192,19 +192,42 @@ describe("OpenAI 回复会话的对话记录累积", () => {
     await session.request(baseRequest({ webSearchEnabled: true }));
     const body: ResponseBody = capturedBody(1);
     const input = body.input as unknown[];
-    // 初始 user 轮次 + 两条可回放的模型 output item + 一条函数结果。
-    // reasoning 不在其中：请求钉死 store:false 且不声明
-    // include:["reasoning.encrypted_content"]，回放的只是一个背后没有任何载荷的
-    // 服务端 id，官方端点会 400 拒绝整个请求。
-    expect(input).toHaveLength(4);
-    expect(input.some((item: unknown): boolean => (item as { type?: string }).type === "reasoning")).toBe(false);
-    expect((input[1] as { type: string }).type).toBe("web_search_call");
-    expect((input[2] as { type: string }).type).toBe("function_call");
-    expect(input[3]).toEqual({
+    // 初始 user 轮次 + 三条可回放的模型 output item + 一条函数结果。
+    // store:false 下 OpenAI 原生端点默认返回加密 reasoning 载荷，
+    // 它必须与该轮的函数调用和结果一起续传。
+    expect(input).toHaveLength(5);
+    expect(input[1]).toEqual({
+      type: "reasoning",
+      id: "rs-1",
+      summary: [],
+      encrypted_content: "encrypted-reasoning",
+    });
+    expect((input[2] as { type: string }).type).toBe("web_search_call");
+    expect((input[3] as { type: string }).type).toBe("function_call");
+    expect(input[4]).toEqual({
       type: "function_call_output",
       call_id: "call-1",
       output: JSON.stringify({ success: true }),
     });
+  });
+
+  test("兼容网关剥掉加密载荷时不回灌 id-only reasoning", async () => {
+    requestOpenAiResult.mockResolvedValueOnce(okResult([
+      { type: "reasoning", id: "rs-without-payload", summary: [] },
+      { type: "function_call", id: "fc-1", call_id: "call-1", name: "send_message", arguments: "{}", status: "completed" },
+    ]));
+
+    const session: AiReplySession = createOpenAiReplySession({ promptBlocks: ["区块"] });
+    const turn = await session.request(baseRequest());
+    expect(session.appendToolOutputs([
+      { call: turn.functionCalls[0]!, responseJson: "{}" },
+    ])).toBe(true);
+
+    await session.request(baseRequest());
+    const input = capturedBody(1).input as unknown[];
+    expect(input).toHaveLength(3);
+    expect(input.some((item: unknown): boolean =>
+      (item as { type?: string }).type === "reasoning")).toBe(false);
   });
 
   test("缺 call_id 的 function_call 不回灌 input：它配不上任何 function_call_output", async () => {

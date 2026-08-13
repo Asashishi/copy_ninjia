@@ -66,7 +66,7 @@ export interface WhiteCommandTexts {
    * 目标是超级管理员自己、动作是 disable，且文件里确实有一条残留被清掉。
    *
    * 与 disabled 分开：超级管理员的白名单身份与权限来自 SUPER_ADMIN_USER_ID
-   * 本身（见 whitelist.ts 的 isWhitelisted 与
+   * 本身（见 infra/identityPolicy/whitelist.ts 的 isWhitelisted 与
    * getEffectiveWhitelistPermissions），删掉文件里那条残留改变不了其中任何
    * 一样。沿用 disabled 那句「已经被本天才从白名单里踢出去啦」是一份与事实
    * 相反的回执：紧接着 /permission query 仍会打印全开。

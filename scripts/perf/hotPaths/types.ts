@@ -8,6 +8,7 @@
 export type ScenarioName =
   | "sender-no-username"
   | "sender-stable-username"
+  | "luck-receipt-fast-path"
   | "ai-activity-window"
   | "ai-activity-lru-miss"
   | "ad-empty-metadata"

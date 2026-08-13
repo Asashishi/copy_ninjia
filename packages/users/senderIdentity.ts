@@ -97,28 +97,56 @@ function updateCachedIdentity(identity: CachedUser): void {
  * @returns 解析出的发送者 id（若以频道身份发送则为频道 id，否则为用户 id）。
  */
 export function cacheSender(message: Message): number | undefined {
-  const identity: CachedUser | undefined = resolveSenderIdentity(message);
-  if (identity === undefined) return undefined;
+  const fromUser: User | undefined = message.from;
+  const senderChat: Chat | undefined = visibleSenderChat(message);
+  if (senderChat === undefined && fromUser === undefined) return undefined;
+  const identityId: number = senderChat?.id ?? fromUser!.id;
+  const username: string | undefined = senderChat !== undefined
+    ? ("username" in senderChat ? senderChat.username : undefined)
+    : fromUser!.username;
   const previousUsername: string | undefined =
-    senderUsernameCache.get(identity.id);
-  if (identity.username === undefined && previousUsername === undefined) {
-    return identity.id;
+    senderUsernameCache.get(identityId);
+  if (username === undefined && previousUsername === undefined) {
+    return identityId;
   }
   const cached: CachedUser | undefined = previousUsername === undefined
     ? undefined
     : userCache.get(previousUsername);
-  if (
-    cached?.id === identity.id &&
-    cached.username === identity.username &&
-    cached.first_name === identity.first_name &&
-    cached.last_name === identity.last_name &&
-    cached.title === identity.title &&
-    cached.isChannel === identity.isChannel
+  // 逐字段比对而不是先构造一个 CachedUser 再比：每条群消息都会走到这里，绝大多数
+  // 消息的发送者资料没变，构造一个只为比较的临时对象等于白付一次分配。两种身份形态
+  // 缺席的字段也要比（频道没有 first/last_name，用户没有 title/isChannel），否则同一
+  // id 在两种形态之间切换时会被误判成「未变」。字段清单必须与 resolveSenderIdentity
+  // 构造的两种形态一致，见 test/users/senderIdentity.test.ts 的形态同步用例。
+  if (senderChat !== undefined) {
+    const title: string | undefined = "title" in senderChat
+      ? senderChat.title
+      : undefined;
+    if (
+      cached?.id === identityId &&
+      cached.username === username &&
+      cached.first_name === undefined &&
+      cached.last_name === undefined &&
+      cached.title === title &&
+      cached.isChannel === true
+    ) {
+      return identityId;
+    }
+  } else if (
+    cached?.id === identityId &&
+    cached.username === username &&
+    cached.first_name === fromUser!.first_name &&
+    cached.last_name === fromUser!.last_name &&
+    cached.title === undefined &&
+    cached.isChannel === undefined
   ) {
-    return identity.id;
+    return identityId;
   }
-  updateCachedIdentity(identity);
-  return identity.id;
+
+  // 只有确实要写入时才构造，且一律走 resolveSenderIdentity：两种身份形态的构造
+  // 只此一处，不再各写一份可能悄悄漂移的字面量。这条路只在资料真的变了时才走到。
+  const identity: CachedUser | undefined = resolveSenderIdentity(message);
+  if (identity !== undefined) updateCachedIdentity(identity);
+  return identityId;
 }
 
 /**
@@ -165,7 +193,9 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
  * 这个标记是承重的——`/unblock` 靠它决定走 unbanChatSenderChat 还是
  * unbanChatMemberIfBanned，漏标就会拿一个负数去调后者，报错记进 failedCount，
  * 管理员收到一份「还有 N 个群没解开」的假战报。缓存命中那条路不必重复标：
- * 负 id 的缓存条目只由 resolveSenderIdentity 产出，那里已经带上了 isChannel。
+ * 负 id 的缓存条目只有两个来源，都已经带上 isChannel——消息观察一律经
+ * resolveSenderIdentity 构造（cacheSender 与 resolveReplyTarget 都走它），启动预热的
+ * seedSenderCache 写入的是持久化状态里原样保留该标记的身份。
  *
  * 双向一致才采信缓存里的那份，理由同 resolveUsernameTarget：单边残留的别名
  * 会把标签写成另一个人的名字。

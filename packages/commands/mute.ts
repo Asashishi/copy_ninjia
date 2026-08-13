@@ -3,7 +3,7 @@ import type { CachedUser } from "../types/chatState";
 import type { MuteChatMemberOutcome, UnmuteChatMemberOutcome } from "../infra/telegram";
 import { muteChatMemberWithOutcome, sendCommandMessage, unmuteChatMemberWithOutcome } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { isWhitelisted } from "../whitelist";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import {
   MUTE_MAX_DURATION_MS,
   MUTE_MIN_DURATION_MS,

@@ -17,3 +17,13 @@ export const aiChatWorkerQuiescing: { current: boolean } = { current: false };
  * 重建或显式重新启动时重置，容量固定为一个 Promise holder。
  */
 export const aiChatWorkerDrain: { current: Promise<void> | null } = { current: null };
+
+/**
+ * AI Worker 后台任务的统一生命周期信号。Worker 启动时替换为新 controller，进入
+ * quiesce 或显式停止时 abort；崩溃后随 isolate 销毁并由新 Worker 重建。容量固定
+ * 为一个 controller。无独立任务条目时仍保留当前信号；aborted 表示本 Worker 不得
+ * 再派生贴纸目录等后台工作，而不是沿用上一轮 controller。
+ */
+export const aiChatWorkerAbortController: { current: AbortController } = {
+  current: new AbortController(),
+};

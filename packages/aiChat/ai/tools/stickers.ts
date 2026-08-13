@@ -5,6 +5,7 @@ import { sendSticker } from "../../../infra/telegram";
 import { logger } from "../../../infra/logger";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
 import { parseIndexField } from "../utils/toolArgs";
+import { raceAbort } from "../../../libs/abortSignal";
 import {
   MAX_STICKER_PACK_VIEWS_PER_REPLY,
   MAX_STICKERS_PER_REPLY,
@@ -25,6 +26,7 @@ import {
   stickerMenuInflight,
   stickerMenuRevision,
 } from "../../../cache/workers/aiChat/stickers/menu";
+import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worker";
 import { pauseForToolAction } from "../utils/toolPause";
 import type { ChatActionControl } from "../../../types/aiChat/chatAction";
 import type { StickerCatalogEntry } from "../../../types/stickers/catalog";
@@ -58,30 +60,44 @@ export function createStickerRoundState(): StickerRoundState {
   return { viewedPackIntents: new Map(), sentStickerUids: new Set() };
 }
 
+/** 本轮回复不取菜单（已失效或等待被取消）时复用的空菜单，避免每次各分配一个数组。
+ *  调用方只读遍历，不写回，理由同 consts 的只读容器约定。 */
+const EMPTY_STICKER_MENU: readonly StickerPackCandidate[] = [];
+
 /**
  * 组装当前可选的贴纸包菜单：每个白名单包收整包简介 + 包内已经生成过画面
  * 描述的贴纸（还没描述的贴纸不出现，等下一轮目录对账补上）。拉取失败或
  * 一枚可用贴纸都没有的包整个跳过；简介还没生成出来的包用占位文案，包内
  * 清单照常可看。
  */
-export function buildStickerPackMenu(): Promise<readonly StickerPackCandidate[]> {
+export function buildStickerPackMenu(
+  signal?: AbortSignal
+): Promise<readonly StickerPackCandidate[]> {
+  if (signal?.aborted === true) return Promise.resolve(EMPTY_STICKER_MENU);
   const revision: number = stickerMenuRevision.current;
   const cached: typeof stickerMenuCache.current = stickerMenuCache.current;
   if (cached?.revision === revision) return Promise.resolve(cached.menu);
   const inflight: typeof stickerMenuInflight.current = stickerMenuInflight.current;
-  if (inflight?.revision === revision) return inflight.promise;
+  if (inflight?.revision === revision) return waitForStickerMenu(inflight.promise, signal);
 
-  const promise: Promise<readonly StickerPackCandidate[]> = rebuildStickerPackMenu(revision);
+  const workerSignal: AbortSignal = aiChatWorkerAbortController.current.signal;
+  const promise: Promise<readonly StickerPackCandidate[]> = rebuildStickerPackMenu(
+    revision,
+    workerSignal
+  );
   stickerMenuInflight.current = { revision, promise };
-  return promise;
+  return waitForStickerMenu(promise, signal);
 }
 
 /** 真正重建一次菜单，并在期间没有再次失效时写回记忆化缓存。 */
-async function rebuildStickerPackMenu(revision: number): Promise<readonly StickerPackCandidate[]> {
+async function rebuildStickerPackMenu(
+  revision: number,
+  signal: AbortSignal
+): Promise<readonly StickerPackCandidate[]> {
   try {
-    const menu: readonly StickerPackCandidate[] = await collectStickerPackMenu();
+    const menu: readonly StickerPackCandidate[] = await collectStickerPackMenu(signal);
     // 构建期间目录又变过就不落缓存：这一份已经是旧的，下一次取会重建。
-    if (stickerMenuRevision.current === revision) {
+    if (!signal.aborted && stickerMenuRevision.current === revision) {
       stickerMenuCache.current = { revision, menu };
     }
     return menu;
@@ -90,13 +106,17 @@ async function rebuildStickerPackMenu(revision: number): Promise<readonly Sticke
   }
 }
 
-async function collectStickerPackMenu(): Promise<StickerPackCandidate[]> {
+async function collectStickerPackMenu(signal: AbortSignal): Promise<StickerPackCandidate[]> {
   const packs: readonly string[] = getStickerConfig().packs;
   // 各包拉取互不依赖，并发进行，避免冷启动/负缓存刚过期时把多个包的网络
   // 延迟串联进同一轮回复。用 allSettled 而非 all：任何一个包的意外异常都
   // 不该把其余已经拉回来的包一并作废（getStickerSet 自身失败返回 null，
   // reject 属于防御场景）。
-  const results: PromiseSettledResult<StickerSet | null>[] = await Promise.allSettled(packs.map((pack: string): Promise<StickerSet | null> => getStickerSet(pack)));
+  const results: PromiseSettledResult<StickerSet | null>[] = await Promise.allSettled(
+    packs.map((pack: string): Promise<StickerSet | null> =>
+      getStickerSet(pack, undefined, signal)
+    )
+  );
   const menu: StickerPackCandidate[] = [];
   for (let i: number = 0; i < packs.length; i++) {
     const pack: string = packs[i]!;
@@ -117,6 +137,19 @@ async function collectStickerPackMenu(): Promise<StickerPackCandidate[]> {
     menu.push({ pack, title: set.title, summary: getPackSummary(pack) ?? STICKER_PACK_SUMMARY_PENDING, stickers });
   }
   return menu;
+}
+
+/** 每轮回复只取消自己的等待；共享构建继续服务其它回复，底层由 Worker 信号收口，
+ *  竞速实现见 libs/abortSignal.ts。 */
+function waitForStickerMenu(
+  request: Promise<readonly StickerPackCandidate[]>,
+  signal?: AbortSignal
+): Promise<readonly StickerPackCandidate[]> {
+  return raceAbort(request, {
+    signal,
+    cancelled: EMPTY_STICKER_MENU,
+    rejected: EMPTY_STICKER_MENU,
+  });
 }
 
 /** 包内贴纸的编号清单文本（每行「编号. emoji 画面描述」），一层工具的返回值用。 */

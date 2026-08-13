@@ -93,7 +93,10 @@ interface BenchmarkResult {
   sampledHeapUsedEndDelta: number;
   peakSampledHeapUsedDelta: number;
   sampledRssEndDelta: number;
+  /** 正式循环各节拍观测到的当前 RSS 绝对峰值。 */
+  peakSampledRssBytes: number;
   peakSampledRssDelta: number;
+  /** getrusage/JSC 的生命周期高水位；可能包含 exec 前启动峰值，只作诊断。 */
   processPeakRssBytes: number;
   samplingProfile: HotPathSamplingProfileSummary | null;
   /** 采样结束时各热函数的 JSC 分层状态；键与 Scenario.probes 一致。 */
@@ -166,6 +169,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
   switch (value) {
     case "sender-no-username":
     case "sender-stable-username":
+    case "luck-receipt-fast-path":
     case "ai-activity-window":
     case "ai-activity-lru-miss":
     case "ad-empty-metadata":
@@ -196,8 +200,8 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     default:
       throw new Error(
         "Usage: bun run perf:hot-paths -- " +
-        "<sender-no-username|sender-stable-username|ai-activity-window|ad-empty-metadata|" +
-        "ai-activity-lru-miss|" +
+        "<sender-no-username|sender-stable-username|luck-receipt-fast-path|" +
+        "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
         "ad-wire-clone|array-timestamp-window|float64-timestamp-window|" +
         "array-timestamp-cold|float64-timestamp-cold|" +
         "linked-timestamp-window|linked-rolling-buffer|" +
@@ -343,6 +347,7 @@ async function runBenchmark(
       peakSampledHeapUsed - liveBefore.heapUsed
     ),
     sampledRssEndDelta: liveAfter.rss - liveBefore.rss,
+    peakSampledRssBytes: peakSampledRss,
     peakSampledRssDelta: Math.max(0, peakSampledRss - liveBefore.rss),
     processPeakRssBytes,
     samplingProfile,

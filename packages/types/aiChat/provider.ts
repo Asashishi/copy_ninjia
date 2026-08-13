@@ -184,6 +184,8 @@ export interface AiTextRequest {
   readonly purpose: AiTextPurpose;
   readonly systemPrompt: string;
   readonly userContent: string;
+  /** 终止排队、供应商请求与业务重采样。 */
+  readonly signal?: AbortSignal;
   /** 出现在错误日志里的调用名（英文）。 */
   readonly errorLabel: string;
   /** 清洗模型正文；返回空串表示这次产出不可用，允许业务层重采样。 */
@@ -196,6 +198,8 @@ export interface AiVisionRequest {
   /** 描述指令，同时充当系统提示词。 */
   readonly prompt: string;
   readonly image: VisionImage;
+  /** 终止下载后的供应商请求与等待中的媒体任务。 */
+  readonly signal?: AbortSignal;
   readonly errorLabel: string;
   readonly normalize: (text: string) => string;
 }
@@ -208,6 +212,8 @@ export interface AiVoiceRequest {
   /** 转写指令，同时充当系统提示词。 */
   readonly prompt: string;
   readonly clip: VoiceClip;
+  /** 终止下载后的供应商请求与等待中的媒体任务。 */
+  readonly signal?: AbortSignal;
   readonly errorLabel: string;
   readonly normalize: (text: string) => string;
 }

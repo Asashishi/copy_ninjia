@@ -196,8 +196,8 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     });
     return;
   }
-  // 跨群 update 不共用 sequentialize 车道；目标解析与成员查询后必须再同步
-  // 预约，才能严格守住全局容量。starting 不拦消息，发送失败只撤销本对象。
+  // 目标解析与成员查询后必须再同步预约，才能在任何调用入口下严格守住全局
+  // 容量。starting 不拦消息，发送失败只撤销本对象。
   const session: GagSession = createGagReservation(ctx, target, parsed);
   const reservation: GagReservationOutcome = reserveGagSession(session);
   if (reservation === "quiescing") return;

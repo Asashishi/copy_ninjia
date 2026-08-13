@@ -35,7 +35,7 @@ export function isUserBlocked(userId: number): boolean {
 /**
  * 启动阶段的致命互斥校验：配置里的超级管理员不得同时存在于 blocklist_entries。
  *
- * `isWhitelisted` 对超管短路 true，`isUserBlocked` 不短路（见 whitelist.ts
+ * `isWhitelisted` 对超管短路 true，`isUserBlocked` 不短路（见 infra/identityPolicy/whitelist.ts
  * 与本文件上方）。两者同时成立时，`sweepManagedBlocklistChats` 会给每个托管群排一次
  * 探测扫描，把这位新超管从所有群里清出去，重进又被 claimBlockedJoiner 再踢一次；
  * 而他连撤销的机会都没有——私聊网关只放行 `/send`，群里的消息在落地前就被处置。

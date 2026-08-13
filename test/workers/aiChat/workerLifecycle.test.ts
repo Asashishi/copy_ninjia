@@ -87,7 +87,7 @@ const injectedAgentConfig: AgentDeploymentConfig = {
   summary: { provider: "openai", apiKey: "injected-summary-key", baseUrl: undefined, model: "injected-summary" },
   media: { provider: "google", apiKey: "injected-media-key", baseUrl: undefined, model: "injected-media" },
 };
-const { aiChatWorkerDrain, aiChatWorkerQuiescing } =
+const { aiChatWorkerAbortController, aiChatWorkerDrain, aiChatWorkerQuiescing } =
   await import("../../../packages/cache/workers/aiChat/worker");
 
 beforeEach(() => {
@@ -100,6 +100,7 @@ beforeEach(() => {
   // 新 isolate 的 holder 本来就是空的：init 之前取配置必须 fail-closed。
   agentDeploymentConfigCache.current = null;
   aiChatWorkerQuiescing.current = false;
+  aiChatWorkerAbortController.current = new AbortController();
   aiChatWorkerDrain.current = null;
   for (const mocked of [
     ensureStickerCatalogs,
@@ -223,6 +224,7 @@ describe("AI Chat Worker lifecycle", () => {
   });
 
   test("flush 等回复与贴纸目录任务全部结算后才上报最终快照", async () => {
+    const workerSignal: AbortSignal = aiChatWorkerAbortController.current.signal;
     let releaseReplies: (() => void) | undefined;
     let releaseCatalogs: (() => void) | undefined;
     quiesceAiChatReplies.mockImplementationOnce((): Promise<void> =>
@@ -231,6 +233,7 @@ describe("AI Chat Worker lifecycle", () => {
       new Promise<void>((resolve: () => void): void => { releaseCatalogs = resolve; }));
 
     worker.handleAiChatWorkerMessage({ type: "flushMemory", flushId: 9 });
+    expect(workerSignal.aborted).toBeTrue();
     worker.handleAiChatWorkerMessage({
       type: "trigger",
       chatId: -1001,

@@ -22,7 +22,7 @@ const postDiskIO = mock((..._args: unknown[]): boolean => true);
 const flushDiskIO = mock(async (): Promise<string> => "flushed");
 
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
-mock.module("../../packages/whitelist", () => ({
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 || (id === 100 && key === "isCanUnBlock"),

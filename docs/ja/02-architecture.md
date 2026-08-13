@@ -19,7 +19,7 @@ flowchart TD
     classDef main stroke:#8e75ff,stroke-width:2.5px;
     classDef worker stroke:#3b82f6,stroke-width:2px;
 
-    MAIN["🧵 メインスレッド<br/>grammY runner + グループ単位の sequentialize<br/>唯一の Telegram client + outbound gate<br/>state facade + StateStore（state.json）"]:::main
+    MAIN["🧵 メインスレッド<br/>確認付き update runner（1 件ずつ直列）<br/>唯一の Telegram client + outbound gate<br/>state facade + StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>複数ターンのツール呼び出し（差し替え可能な provider）<br/>ローリングメモリ · 要約圧縮 · ムード"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>認証とロックダウンの状態機械 / ブロックリスト処置 / 広告検出"]:::worker
     DISK["💾 Disk I/O Worker<br/>ログ / メモリスナップショット / identity database / 運勢 / 認証ファイル / 入室ログ"]:::worker
@@ -44,17 +44,16 @@ Worker のクラッシュはレート制限付きで自己修復しますが、�
 
 ## 1 件のメッセージが通る経路
 
-[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) が update チェーンを 1 か所で明示的に登録し、middleware の順序そのものが意味を持ちます。
+[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) が update チェーンを 1 か所で明示的に登録し、middleware の順序そのものが意味を持ちます。チェーンに `sequentialize` は**ありません**。順序保証は取得側の確認付き runner（[`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)）から来ます。1 回に 1 件だけ取得し、その update の middleware が完了するまで `getUpdates` を再呼び出ししないため、グループ単位の直列化より強い「全体で 1 件ずつ」の保証になります。リアクション同期は独立した結合キューを使い、このレーンを占有しません。
 
 1. **`update_id` の追跡** — 処理に入った最大の update ID を記録し、停止時に正しい Telegram offset を確認できるようにします。
 2. **運勢の署名付き receipt 確認** — すべてのゲートウェイより前に実行し、転送された複製も有効です。
 3. **init ゲートウェイ** — `/init enable` されていないグループの通常業務 update はここで終了します。`my_chat_member`、Bot 自身の `via_bot` メッセージ、スーパー管理者の `/init` など明示的な例外は [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) が許可します。
-4. **グループ単位の直列化** — `sequentialize` が同一チャット内のメッセージ順を保証します。リアクション同期は独立した結合キューを使い、チャットレーンを占有しません。
-5. **プライベートチャット・ゲートウェイ** — プライベートチャットでは `/send` の入口と進行中の中継セッションだけを許可します。中継メッセージはメッセージパイプラインへ直接入り、本文がコマンドとして解釈されるのを防ぎます。
-6. **参加認証** — コマンド処理より前でなければなりません。後ろに置くと、認証待ちユーザーのコマンドを追跡して削除できません。この系列全体（認証と対レイド private mode）はチャットごとに既定で無効で、`/antiraid enable` で開きます。無効なチャットではこの段階で参加イベントを一切投函しません。
-7. **コマンド登録** — すべての `bot.command(...)` handler をここで明示的に登録します。詳細は [06 よくある変更手順](06-modification-guide.md#スラッシュコマンドの追加) を参照してください。うち `/x` はメニュー用のプレースホルダーで、漢字アクションコマンドの使い方を見せるためだけに存在し、受信時は使い方を 1 行返してチェーンを終了します。
-8. **漢字アクションコマンド** — `/咬` や `/贴贴` のようなコマンド（アクション語は漢字 1~2 文字）は Telegram の `bot_command` エンティティを得られず `bot.command` では一致しないため、`bot.hears` でメッセージ原文と照合します（[`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts) を参照）。**次のメッセージ・フォールバックより前に登録しなければなりません**。後ろに置くと通常メッセージとして AI／copy パイプラインに飲み込まれ、機能全体が静かに動かなくなります。自動パイプラインより前にあるため、そのパイプラインの自己送信ガードは効かず、handler 自身が Bot 自身のメッセージを除外する必要があります。また受理したメッセージは先へ進まないので、送信者 ID のキャッシュも handler 自身が行います。受理しない形（`/咬@OtherBot`、caption のみ、不正な update）は `next()` で通します。
-9. **自動メッセージパイプライン** — [`packages/auto/`](../../packages/auto) が copy、AI の文字起こしとトリガー判定、リアクション同期などコマンド以外の動作を処理します。
+4. **プライベートチャット・ゲートウェイ** — プライベートチャットでは `/send` の入口と進行中の中継セッションだけを許可します。中継メッセージはメッセージパイプラインへ直接入り、本文がコマンドとして解釈されるのを防ぎます。
+5. **参加認証** — コマンド処理より前でなければなりません。後ろに置くと、認証待ちユーザーのコマンドを追跡して削除できません。この系列全体（認証と対レイド private mode）はチャットごとに既定で無効で、`/antiraid enable` で開きます。無効なチャットではこの段階で参加イベントを一切投函しません。
+6. **コマンド登録** — すべての `bot.command(...)` handler をここで明示的に登録します。詳細は [06 よくある変更手順](06-modification-guide.md#スラッシュコマンドの追加) を参照してください。うち `/x` はメニュー用のプレースホルダーで、漢字アクションコマンドの使い方を見せるためだけに存在し、受信時は使い方を 1 行返してチェーンを終了します。
+7. **漢字アクションコマンド** — `/咬` や `/贴贴` のようなコマンド（アクション語は漢字 1~2 文字）は Telegram の `bot_command` エンティティを得られず `bot.command` では一致しないため、`bot.hears` でメッセージ原文と照合します（[`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts) を参照）。**次のメッセージ・フォールバックより前に登録しなければなりません**。後ろに置くと通常メッセージとして AI／copy パイプラインに飲み込まれ、機能全体が静かに動かなくなります。自動パイプラインより前にあるため、そのパイプラインの自己送信ガードは効かず、handler 自身が Bot 自身のメッセージを除外する必要があります。また受理したメッセージは先へ進まないので、送信者 ID のキャッシュも handler 自身が行います。受理しない形（`/咬@OtherBot`、caption のみ、不正な update）は `next()` で通します。
+8. **自動メッセージパイプライン** — [`packages/auto/`](../../packages/auto) が copy、AI の文字起こしとトリガー判定、リアクション同期などコマンド以外の動作を処理します。
 
 AI がトリガーされた後は、メインスレッドが活動量に基づく確率または直接トリガーを判定し、AI Worker に送信します。Worker はモデル入力を参照メモリ、現在の会話、今回の返信タスクという 3 部構成にし、複数ターンのツール呼び出しを実行します。メッセージ、スタンプ、リアクション、画像生成はすべてメインスレッドのプロキシ経由で行い、結果をローリングメモリへ戻して定期的にスナップショットへ保存します。活動量に基づく確率は、あくまで**ランダムな自発返信の関門**です。チャットごとの最近のメッセージを観測し、静かなチャットでは低い発火率を保ち、同じチャットが活発になるほど確率を上げますが、硬い上限を越えません。@メンションや Bot への返信などの直接トリガーは、この確率関門には依存しません。
 
@@ -109,9 +108,9 @@ flowchart TD
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
 3. **state 永続化境界と global security configuration を復元**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元し、業務 facade から正式なメモリを hydrate します。`telegram.json` など global startup input が不正なら network 接続や Worker 作成より前に拒否します。`config/` の残り 4 つの optional feature JSON は**ここでは事前読み込みしません**。chat ごとの opt-in feature に属するため、検証は対応する toggle command へ移しました（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) を参照）。`state.json` の復元後にもう一度照合し、有効なままの optional feature に credential または設定が欠けていれば chat id を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。
 4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータを復元し、`database/storage.sqlite` から allowlist/blocklist count と未完了 removal を厳密 hydrate します。main thread は policy 2 table 全体を複製せず、有界 LRU から開始します。どれかの domain で復元に失敗すると、部分状態での起動を拒否します。
-5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
-6. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。
-7. すべての準備完了後にだけ、query category の request と connection を無制限に占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。
+4. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
+5. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。
+6. すべての準備完了後にだけ、query category の request と connection を無制限に占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。
 
 失敗と終了は `ApplicationLifecycle` が一元管理し、実際に取得したリソースだけを解放または flush します。
 

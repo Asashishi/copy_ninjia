@@ -46,11 +46,31 @@ function receiptFromLinkEntity(
   return luckReceiptHmacHash(receipt) === receiptHash ? receipt : undefined;
 }
 
-/** 从消息末行与实体元数据验证 HMAC 回执，并把对应 pending 抽签转正。 */
-export async function confirmLuckDraw(
+/** 完成已通过同步格式校验的回执确认；只有真实候选回执才进入异步刷新。 */
+async function confirmLuckReceipt(receipt: string): Promise<void> {
+  try {
+    await ensureLuckCacheFreshForToday();
+  } catch (error: unknown) {
+    logger.error("Failed to refresh luck cache while confirming a luck receipt:", error);
+    return;
+  }
+  const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
+  if (!secret) return;
+  const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);
+  if (!cacheKey) return;
+  // 验签通过即证明该回执是用当天密钥签发的：即便进程内已跨过零点、pending
+  // 已被清空，也允许用当天密钥重建派生（见 promotePendingDraw 的参数注释）。
+  promotePendingDraw(cacheKey, true);
+}
+
+/**
+ * 从消息末行与实体元数据验证 HMAC 回执，并把对应 pending 抽签转正。
+ * 普通消息同步返回，不创建 Promise；只有携带完整候选回执时才进入异步刷新。
+ */
+export function confirmLuckDraw(
   messageText: string | undefined,
   entities?: readonly MessageEntity[]
-): Promise<void> {
+): Promise<void> | undefined {
   if (typeof messageText !== "string") return;
   const lastLineBreak: number = messageText.lastIndexOf("\n");
   if (lastLineBreak < 0) return;
@@ -66,17 +86,5 @@ export async function confirmLuckDraw(
     entities
   );
   if (!receipt) return;
-  try {
-    await ensureLuckCacheFreshForToday();
-  } catch (error: unknown) {
-    logger.error("Failed to refresh luck cache while confirming a luck receipt:", error);
-    return;
-  }
-  const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
-  if (!secret) return;
-  const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);
-  if (!cacheKey) return;
-  // 验签通过即证明该回执是用当天密钥签发的：即便进程内已跨过零点、pending
-  // 已被清空，也允许用当天密钥重建派生（见 promotePendingDraw 的参数注释）。
-  promotePendingDraw(cacheKey, true);
+  return confirmLuckReceipt(receipt);
 }

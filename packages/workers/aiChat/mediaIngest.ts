@@ -12,6 +12,7 @@ import {
   currentReplyGeneration,
   generateAndSendReply,
   isReplyGenerationCurrent,
+  replyGenerationSignal,
   trackReplyGenerationTask,
 } from "./replyPipeline";
 import { replyReferenceForBufferedEntry } from "./replyChain";
@@ -60,6 +61,7 @@ function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGeneration
  */
 export function recordChatMedia(msg: AiRecordMediaMessage): void {
   const generation: number = currentReplyGeneration(msg.chatId);
+  const signal: AbortSignal = replyGenerationSignal(msg.chatId, generation);
   const sanitizedCaption: string = sanitizeInline(msg.caption);
   const imageGenerationReference: ImageGenerationReference | undefined = imageGenerationReferenceFor(msg);
 
@@ -127,6 +129,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     fileUniqueId: msg.fileUniqueId,
     voiceMime: msg.voiceMime,
     voiceDurationSeconds: msg.voiceDurationSeconds,
+    signal,
   }).then((description: string | null): void => {
     if (!isReplyGenerationCurrent(msg.chatId, generation)) return;
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);

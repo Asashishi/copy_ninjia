@@ -15,7 +15,7 @@ import type { Message } from "@grammyjs/types";
  * 里排在本网关**之前**的一道 bot.use，转发副本也要认，从来不经过这里。留着它
  * 只对「从没 /init enable 过」的群有效果（已启用的群下一行本来就放行），而
  * inline 模式是公开的——任何人 `@bot <query>` 选一条结果，就能让这条更新进
- * sequentialize、入群守卫和刷屏流水线，每条都换一次没有缓存的 getChatMember
+ * 身份预热、入群守卫和刷屏流水线，每条都换一次没有缓存的 getChatMember
  * （recordBotAdminStatus 对未初始化的群不落盘，见 infra/botAdmin.ts），频率由
  * 对方控制。收益是零：唯一的下游 recordSelfInlineResult 要求本群开着 AI 闲聊，
  * 而 /ai_chat enable 本身就在网关之后。
@@ -24,7 +24,7 @@ export function shouldPassInitGate(ctx: Context): boolean {
   if (ctx.myChatMember) return true;
   if (!ctx.chat || ctx.chat.type === "private") return true;
   if (getChatState(ctx.chat.id).isInitEnabled === true) return true;
-  // 未初始化群的低成本网关必须在进入 sequentialize/入群守卫之前完成权限
+  // 未初始化群的低成本网关必须在进入身份预热/入群守卫之前完成权限
   // 与目标 bot 校验。否则任意用户可用 /init（甚至 /init@OtherBot）反复触发
   // 管理员 API 查询；真正的命令处理器虽会拒绝权限，却已经太晚。
   const message: Message | undefined = ctx.msg ?? ctx.message;

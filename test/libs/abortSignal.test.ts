@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { signalWithTimeout } from "../../packages/libs/abortSignal";
+import { raceAbort, signalWithTimeout } from "../../packages/libs/abortSignal";
+import { deferred } from "./helpers";
 
 describe("AbortSignal 组合", () => {
   test("调用方取消会立即传播到组合信号", () => {
@@ -24,5 +25,119 @@ describe("AbortSignal 组合", () => {
     expect(first.reason).toBeInstanceOf(DOMException);
     expect(first.reason.name).toBe("TimeoutError");
     expect(second.aborted).toBeFalse();
+  });
+});
+
+describe("raceAbort 共享等待", () => {
+  const CANCELLED = { kind: "cancelled" } as const;
+  const REJECTED = { kind: "rejected" } as const;
+
+  test("省略 signal 时原样返回同一个 Promise，不额外包一层", () => {
+    const shared: Promise<string> = Promise.resolve("ok");
+
+    expect(raceAbort(shared, { cancelled: "x", rejected: "y" })).toBe(shared);
+  });
+
+  test("取消只结束本次等待：共享 Promise 照常结算，其余等待者拿到真实结果", async () => {
+    const gate = deferred();
+    const shared: Promise<string> = gate.promise.then((): string => "共享结果");
+    const first: AbortController = new AbortController();
+    const second: AbortController = new AbortController();
+
+    const cancelledWait: Promise<string> = raceAbort(shared, {
+      signal: first.signal,
+      cancelled: "取消",
+      rejected: "失败",
+    });
+    const liveWait: Promise<string> = raceAbort(shared, {
+      signal: second.signal,
+      cancelled: "取消",
+      rejected: "失败",
+    });
+
+    first.abort();
+    expect(await cancelledWait).toBe("取消");
+
+    gate.resolve();
+    expect(await liveWait).toBe("共享结果");
+    expect(await shared).toBe("共享结果");
+  });
+
+  test("reject 与取消归到各自的值，且按对象身份原样交回", async () => {
+    const failing: Promise<typeof CANCELLED | typeof REJECTED> =
+      Promise.reject(new Error("boom"));
+    const controller: AbortController = new AbortController();
+
+    // 调用方靠对象身份区分「被取消」与「底层失败」，包一层新对象就会破坏判定。
+    expect(await raceAbort(failing, {
+      signal: controller.signal,
+      cancelled: CANCELLED,
+      rejected: REJECTED,
+    })).toBe(REJECTED);
+
+    const cancelledController: AbortController = new AbortController();
+    const pending: Promise<typeof CANCELLED | typeof REJECTED> =
+      new Promise<typeof CANCELLED | typeof REJECTED>((): void => {});
+    const wait: Promise<typeof CANCELLED | typeof REJECTED> = raceAbort(pending, {
+      signal: cancelledController.signal,
+      cancelled: CANCELLED,
+      rejected: REJECTED,
+    });
+    cancelledController.abort();
+    expect(await wait).toBe(CANCELLED);
+  });
+
+  test("钩子顺序固定为 onSettle → onCancel，取消与正常结算各走一次 onSettle", async () => {
+    const order: string[] = [];
+    const gate = deferred();
+    const controller: AbortController = new AbortController();
+
+    const wait: Promise<string> = raceAbort(gate.promise.then((): string => "done"), {
+      signal: controller.signal,
+      cancelled: "取消",
+      rejected: "失败",
+      onSettle: (): void => { order.push("settle"); },
+      onCancel: (): void => { order.push("cancel"); },
+    });
+    controller.abort();
+    expect(await wait).toBe("取消");
+    // 引用计数必须先释放，onCancel 才能读到「本等待者已离场」之后的真实计数。
+    expect(order).toEqual(["settle", "cancel"]);
+
+    gate.resolve();
+    const settled = deferred();
+    const normal: Promise<string> = raceAbort(settled.promise.then((): string => "done"), {
+      signal: new AbortController().signal,
+      cancelled: "取消",
+      rejected: "失败",
+      onSettle: (): void => { order.push("settle-normal"); },
+      onCancel: (): void => { order.push("cancel-normal"); },
+    });
+    settled.resolve();
+    expect(await normal).toBe("done");
+    expect(order).toEqual(["settle", "cancel", "settle-normal"]);
+  });
+
+  test("传入已 abort 的 signal 时立即回退，并同样走过两个钩子", async () => {
+    const controller: AbortController = new AbortController();
+    controller.abort();
+    const order: string[] = [];
+    let started: boolean = false;
+    const shared: Promise<string> = Promise.resolve().then((): string => {
+      started = true;
+      return "共享结果";
+    });
+
+    expect(await raceAbort(shared, {
+      signal: controller.signal,
+      cancelled: "取消",
+      rejected: "失败",
+      onSettle: (): void => { order.push("settle"); },
+      onCancel: (): void => { order.push("cancel"); },
+    })).toBe("取消");
+    expect(order).toEqual(["settle", "cancel"]);
+    // 共享工作不受这次等待影响，仍然自己跑完。
+    expect(await shared).toBe("共享结果");
+    expect(started).toBeTrue();
   });
 });

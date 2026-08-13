@@ -39,9 +39,9 @@ mock.module("../../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 1,
   getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 1 }),
 }));
-// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/whitelist.ts
+// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
-mock.module("../../../packages/whitelist", () => ({
+mock.module("../../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 || ((id === 100 || id === -200) && key === "isCanBypassAdDetection"),
   isWhitelisted: (id: number): boolean =>
@@ -74,7 +74,7 @@ const { drainAdDisposals, formatAdNotice, handleAdDetected } =
 const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
 const { blocklistIdentityMutationQueues } = await import("../../../packages/cache/main/blocklist");
-const { runBlocklistIdentityMutation } = await import("../../../packages/infra/identityPolicy");
+const { runBlocklistIdentityMutation } = await import("../../../packages/infra/identityPolicy/coordination");
 const { markSelfSent } = await import("../../../packages/infra/selfSentTracker");
 const { sentMessages } = await import("../../../packages/cache/perThread/selfSentTracker");
 const { blocklistEntryCache, whitelistEntryCache } =

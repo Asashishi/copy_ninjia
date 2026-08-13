@@ -11,9 +11,9 @@ mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
   getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 100 }),
 }));
-// 超级管理员由身份直接持有全部白名单权限（见 packages/whitelist.ts 的
+// 超级管理员由身份直接持有全部白名单权限（见 packages/infra/identityPolicy/whitelist.ts 的
 // getEffectiveWhitelistPermissions），命令层不再单独判身份。
-mock.module("../../packages/whitelist", () => ({
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number): boolean => id === 100,
 }));
 mock.module("../../packages/infra/telegram", () => ({

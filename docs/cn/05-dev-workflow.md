@@ -20,8 +20,10 @@
 | `bun run test` | 全量测试（强制文件隔离） |
 | `bun run test:coverage` | 测试 + 全源码覆盖率 |
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
-| `bun run check` | conventions + lint + typecheck + coverage，**提交前必跑** |
+| `bun run check` | conventions + lint + typecheck + coverage + 热路径门禁，**提交前必跑** |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
+| `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
+| `bun run perf:hot-path-gate` | 全部热路径场景的内存/GC/JIT 门禁，已并入 `check` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照的独立进程对照基准 |
 | `bun run release:check` | frozen lockfile 安装 + check + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
@@ -35,7 +37,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2245 tests / 234 files / 32766 次 `expect()`**；全源码**函数覆盖率 95.66% / 行覆盖率 96.62%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2269 tests / 235 files / 32867 次 `expect()`**；全源码**函数覆盖率 95.66% / 行覆盖率 96.70%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -57,6 +59,16 @@
 ## 故障注入套件
 
 `bun run test:fault-injection` 重点回归崩溃恢复与持久化边界：生命周期失败、update runner 确认边界、StateStore 与清理、AI/Anti-Raid Worker 的镜像恢复与生命周期、Disk I/O 的追加/快照/日志文件、flush barrier 等（完整清单见 [`package.json`](../../package.json) 的脚本定义）。改动 [04 运行时权威约束](04-invariants.md) 涉及的路径时，本套件必须绿。
+
+## 热路径门禁
+
+`bun run perf:hot-path-gate` 是 `bun run check` 的最后一段，因此每次提交前都会跑。它按 `packages/consts/performance.ts` 的 `HOT_PATH_PROFILE_SCENARIOS` 逐场景、逐次重复各起两个独立子进程：`steadyProfile` 只判断正式循环的 GC 与 JIT，`retained` 在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC 后留存。
+
+设闸门的项：GC 采样占比、采样 RSS 峰值与进程生命周期 RSS 高水位（共用同一上限，后者能拦住完整落在两次节拍之间的瞬时分配）、采样 heapUsed 增长、full-GC 后的 JSC heap/堆外内存/对象数留存、最少采样数，以及逐生产探针的「预热后已进 DFG」与「采样期无重编译或去优化」。
+
+输出里带 `Diagnostic` 后缀的字段只报告、不设闸门。汇总 FTL 比例是其中之一：它对纯叶子场景接近 100%、对异步主链只有个位数（采样里混着 native Promise 与调度帧），单一阈值对两类场景没有共同含义。`reoptRetries` 的绝对值同理——采样前的 JIT 稳定轮已经要求它连续两轮不变，剩下的只是预热期历史。
+
+`profile` / `retained` 前缀标明读数取自哪个子进程；两者预热轮数相差一个数量级（profiler 场景要多跑 JIT 稳定轮），不能混读。
 
 ## 入群日志性能基准
 

@@ -1,7 +1,7 @@
 import {
   blocklistIdentityMutationQueues,
   protectedIdentityMutationQueue,
-} from "../cache/main/blocklist";
+} from "../../cache/main/blocklist";
 
 /**
  * 串行执行会改变「白名单成员 / 动态黑名单成员」互斥关系的主线程操作。

@@ -36,6 +36,7 @@ export function generateGeminiText(request: AiTextRequest): Promise<AiTextResult
       contents: [{ role: "user", parts: [{ text: request.userContent }] }],
       config: {
         systemInstruction: request.systemPrompt,
+        abortSignal: request.signal,
         temperature: GEMINI_SUMMARY_TEMPERATURE,
         maxOutputTokens: request.purpose === "chatSummary"
           ? GEMINI_CHAT_SUMMARY_MAX_TOKENS
@@ -44,6 +45,7 @@ export function generateGeminiText(request: AiTextRequest): Promise<AiTextResult
     }),
     errorLabel: request.errorLabel,
     normalize: request.normalize,
+    signal: request.signal,
   });
 }
 
@@ -53,6 +55,7 @@ interface InlineMediaPrompt {
   readonly prompt: string;
   readonly maxOutputTokens: number;
   readonly errorLabel: string;
+  readonly signal?: AbortSignal;
   readonly normalize: AiVisionRequest["normalize"];
 }
 
@@ -71,6 +74,7 @@ function requestInlineMediaText({
   prompt,
   maxOutputTokens,
   errorLabel,
+  signal,
   normalize,
 }: InlineMediaPrompt): Promise<AiTextResult> {
   return requestGeminiTextResult({
@@ -86,10 +90,11 @@ function requestInlineMediaText({
           ],
         },
       ],
-      config: { maxOutputTokens },
+      config: { maxOutputTokens, abortSignal: signal },
     }),
     errorLabel,
     normalize,
+    signal,
   });
 }
 
@@ -104,6 +109,7 @@ export function describeGeminiVision(request: AiVisionRequest): Promise<AiTextRe
     prompt: request.prompt,
     maxOutputTokens: GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS,
     errorLabel: request.errorLabel,
+    signal: request.signal,
     normalize: request.normalize,
   });
 }
@@ -119,6 +125,7 @@ export function transcribeGeminiVoice(request: AiVoiceRequest): Promise<AiTextRe
     prompt: request.prompt,
     maxOutputTokens: GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS,
     errorLabel: request.errorLabel,
+    signal: request.signal,
     normalize: request.normalize,
   });
 }

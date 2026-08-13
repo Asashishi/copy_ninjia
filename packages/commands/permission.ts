@@ -5,7 +5,7 @@ import type {
   WhitelistPermissionKey,
   WhitelistPermissions,
 } from "../types/identityPolicy";
-import type { SetWhitelistPermissionResult } from "../whitelist";
+import type { SetWhitelistPermissionResult } from "../infra/identityPolicy/whitelist";
 import {
   PERMISSION_COMMAND_TEXTS,
   WHITELIST_PERMISSION_ALL_COMMAND,
@@ -20,7 +20,7 @@ import {
   getWhitelistPermissionQueryView,
   isWhitelisted,
   setWhitelistPermission,
-} from "../whitelist";
+} from "../infra/identityPolicy/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
