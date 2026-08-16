@@ -19,7 +19,7 @@ import {
   trackBlockedRemoval,
 } from "../infra/blocklist/outbox";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
-import { getAllChatStates, getChatState } from "../infra/storage/stateStore";
+import { getChatStateCache, getChatState } from "../infra/storage/stateStore";
 import { postDiskIODiagnostic } from "../infra/diskIO";
 import { deleteMessageAfter, sendMessage } from "../infra/telegram/actions";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
@@ -41,8 +41,11 @@ import type { FlushResult } from "../types/lifecycle";
 /** 处置目标所在的群清单：机器人已初始化且是管理员的群，同 /block 的连坐范围。 */
 function managedChatIds(originChatId: number): number[] {
   const chatIds: number[] = [];
-  for (const [chatId, chatState] of getAllChatStates()) {
-    if (chatState.botIsAdmin !== true || chatState.isInitEnabled !== true) continue;
+  for (const [chatId, chatState] of getChatStateCache()) {
+    if (
+      chatState.botPermissions?.isAdministrator !== true ||
+      chatState.isInitEnabled !== true
+    ) continue;
     chatIds.push(chatId);
   }
   // 判定发生的这个群排最前：那里正躺着刚发出来的广告，最该先封。
@@ -98,7 +101,7 @@ function recordAdSample(event: AdDetectedEvent): void {
  * 修好磁盘后的人为重试，这条路是刷屏号自己触发的，两者不该共用一套代价。
  */
 async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
-  // 候选入队时虽已预热，但模型往返期间该身份可能被 8196 项 LRU 淘汰；写前重读
+  // 候选入队时虽已预热，但模型往返期间该身份可能被 8192 项 LRU 淘汰；写前重读
   // 一次，确保互斥检查与表计数建立在当前数据库最终值上。
   await prefetchIdentityPolicies([event.senderId]);
   const newlyBlocked: boolean | null = await runProtectedIdentityMutation(
@@ -291,7 +294,7 @@ export function handleAdDetected(event: AdDetectedEvent): void {
  *
  * 预算不能省。处置内部要走 confirmBlocklistPersisted（一次带 fsync 的领域 flush）
  * 与 dispatchBlockedRemovals（outbox 写前落盘 + mailbox 屏障），裸等的话，异常
- * 退出那条把全部预算设成 0 的路径（FATAL_FLUSH_TIMEOUTS，见
+ * 退出那条把全部预算设成 0 的路径（EMERGENCY_FLUSH_TIMEOUTS，见
  * docs/cn/04-invariants.md）本该立刻结算成 timedOut，实际会一路拖到 15 秒强制退出
  * ——进程带非零码死在停机中途，实例锁不释放、offset 不确认。
  * @returns 全部结算为 flushed；预算用尽仍有在途为 timedOut。

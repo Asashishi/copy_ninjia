@@ -25,6 +25,31 @@ describe("libs/text truncateAtClauseBoundary", () => {
     expect(truncateAtClauseBoundary(text, 10)).toBe(truncateInline(text, 10));
   });
 
+  // 判定从 `"。！？…～♡".includes(ch)` 换成逐码元比对之后，写错任何一个码点都只会
+  // 让**那一个**标点静默失效（收不住句、退化成硬切），整体用例照样绿。这里把两个
+  // 取值集合逐字符钉住。
+  test("六个句末标点各自都能收住句子", () => {
+    for (const mark of "。！？…～♡") {
+      const text: string = `第一句说完了${mark}第二句还没说完就要被截断了`;
+      expect(truncateAtClauseBoundary(text, 15)).toBe(`第一句说完了${mark}`);
+    }
+  });
+
+  test("四个子句分隔符各自都能收在它之前（丢掉悬空的分隔符）", () => {
+    for (const mark of "，、；：") {
+      const text: string = `前半句讲了一件事情${mark}后半句还在继续讲呢`;
+      expect(truncateAtClauseBoundary(text, 15)).toBe("前半句讲了一件事情");
+    }
+  });
+
+  test("不在两个集合里的标点不当成边界（句号是全角的那个，不是点号）", () => {
+    // U+FF0E（全角句点）与 U+002E（半角点）都不在句末标点集合里。
+    for (const mark of "．.·-—") {
+      const text: string = `前半句讲了一件事情${mark}后半句还在继续讲呢`;
+      expect(truncateAtClauseBoundary(text, 15)).toBe(truncateInline(text, 15));
+    }
+  });
+
   test("回归：maxChars=1（minKeep=0）时不因 -1 哨兵值巧合满足边界判断而丢光硬切内容", () => {
     const text: string = "无标点内容";
     expect(truncateAtClauseBoundary(text, 1)).toBe(truncateInline(text, 1));

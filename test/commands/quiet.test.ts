@@ -24,8 +24,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     if (Object.keys(state).length === 0) states.delete(chatId);
     return true;
   },
-  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
-  saveStateInBackground,
+  persistChatState: async (_chatId: number, context: string): Promise<void> => { saveStateInBackground(context); },
 }));
 
 const { handleQuietCommand, handleUnquietCommand } = await import("../../packages/commands/quiet");

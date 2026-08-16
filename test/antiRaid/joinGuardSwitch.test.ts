@@ -23,11 +23,11 @@ mock.module("../../packages/infra/logger", () => ({
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
   getChatState: () => chatState,
-  getAllChatStates: () => new Map(),
+  getChatStateCache: () => new Map(),
   getOrCreateChatState: () => ({}),
-  saveState: async (): Promise<void> => {},
+  persistChatState: async (): Promise<void> => {},
   flushStateToDisk: async (): Promise<string> => "flushed",
-  saveStateInBackground: (): void => {},
+  saveChatStateInBackground: (): void => {},
 }));
 mock.module("../../packages/infra/telegram/actions", () => ({
   answerCallbackQuery: async (params: { callbackQueryId: string; text?: string }): Promise<boolean> => {

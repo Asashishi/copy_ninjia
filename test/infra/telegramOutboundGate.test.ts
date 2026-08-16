@@ -18,10 +18,12 @@ import {
   initTelegramOutbound,
   quiesceTelegramOutbound,
   runTelegramCategorizedRequest,
-  telegramRetryCategoryFor,
   telegramOutboundGate,
-  TelegramRetryQueueFullError,
 } from "../../packages/infra/telegram/outboundGate";
+import {
+  telegramRetryCategoryFor,
+  TelegramRetryQueueFullError,
+} from "../../packages/infra/telegram/outboundRetryPolicy";
 
 type PreviousCall = Parameters<Transformer<RawApi>>[0];
 

@@ -20,7 +20,7 @@ const realFetch = globalThis.fetch;
 type FetchInput = Parameters<typeof fetch>[0];
 
 const { bot } = await import("../../packages/infra/telegram/mainClient");
-const { copyUserProfilePhoto } = await import("../../packages/infra/telegram/avatar");
+const { copyUserProfilePhoto } = await import("../../packages/infra/telegram/avatar/copy");
 
 const getChatMock = mock(async (_chatId: number): Promise<any> => ({
   id: -1003952764805,

@@ -1,6 +1,19 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
+import {
+  runtimeExternalDependencies,
+  threadModuleClosure,
+} from "./conventions/moduleGraph";
+import {
+  collectSharedConstantProblems,
+  declarationName,
+  hasJsDoc,
+  isExported,
+  isObjectFreezeCall,
+  moduleCacheInitializerKind,
+  sourceFilesUnder,
+} from "./conventions/sourceAnalysis";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
 const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
@@ -85,260 +98,6 @@ function checkMarkdownLocalLinks(path: string, failures: string[]): void {
   }
 }
 
-function sourceFilesUnder(root: string): string[] {
-  const files: string[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    const path: string = join(root, entry.name);
-    if (entry.isDirectory()) files.push(...sourceFilesUnder(path));
-    else if (entry.isFile() && extname(entry.name) === ".ts") files.push(path);
-  }
-  return files;
-}
-
-function isExported(node: ts.Node): boolean {
-  return ts.canHaveModifiers(node) &&
-    ts.getModifiers(node)?.some((modifier: ts.ModifierLike): boolean => modifier.kind === ts.SyntaxKind.ExportKeyword) === true;
-}
-
-function hasJsDoc(node: ts.Node): boolean {
-  return ts.getJSDocCommentsAndTags(node).length > 0;
-}
-
-/** 剥掉 `as const` / `satisfies T` / 多余括号，拿到真正的初始化表达式。 */
-function unwrapTypeWrappers(expression: ts.Expression): ts.Expression {
-  let current: ts.Expression = expression;
-  while (
-    ts.isAsExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isParenthesizedExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
-function isObjectFreezeCall(expression: ts.Expression): boolean {
-  return ts.isCallExpression(expression) &&
-    ts.isPropertyAccessExpression(expression.expression) &&
-    expression.expression.expression.getText() === "Object" &&
-    expression.expression.name.text === "freeze";
-}
-
-/**
- * 模块顶层 Map/Set 与 holder 都是跨调用长期存活的状态，必须进入带 owner 的
- * packages/cache/。consts 下的 ReadonlySet 是静态查找表，不属于运行时缓存。
- */
-function moduleCacheInitializerKind(expression: ts.Expression): string | null {
-  const initializer: ts.Expression = unwrapTypeWrappers(expression);
-  if (
-    ts.isNewExpression(initializer) &&
-    ts.isIdentifier(initializer.expression) &&
-    ["Map", "Set", "WeakMap", "WeakSet"].includes(initializer.expression.text)
-  ) {
-    return initializer.expression.text;
-  }
-  if (!ts.isObjectLiteralExpression(initializer)) return null;
-  const hasCurrent: boolean = initializer.properties.some(
-    (property: ts.ObjectLiteralElementLike): boolean =>
-      ts.isPropertyAssignment(property) &&
-      (
-        (ts.isIdentifier(property.name) && property.name.text === "current") ||
-        (ts.isStringLiteral(property.name) && property.name.text === "current")
-      )
-  );
-  return hasCurrent ? "holder" : null;
-}
-
-/**
- * 声明类型是不是「只读容器」。共享常量的不可变性由**类型**承担，因此数组/元组
- * 必须带 readonly 修饰，对象必须包在 Readonly<> 里。
- *
- * 刻意不含 Map/Set：它们的数据在内部槽里，`Readonly<Map<…>>` 也拦不住 .set()，
- * 该用的是 ReadonlyMap/ReadonlySet，那两个名字本身就在下面的白名单里。
- */
-function isReadonlyContainerTypeNode(type: ts.TypeNode | undefined): boolean {
-  if (type === undefined) return false;
-  // `readonly T[]` / `readonly [A, B]` 都是 TypeOperator(readonly) 包着数组/元组。
-  if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) return true;
-  if (ts.isTypeReferenceNode(type)) {
-    const READONLY_TYPE_NAMES: readonly string[] = [
-      "Readonly", "ReadonlyArray", "ReadonlySet", "ReadonlyMap",
-    ];
-    return READONLY_TYPE_NAMES.includes(type.typeName.getText());
-  }
-  return false;
-}
-
-/** 裸的可变容器类型：`T[]`、`[A, B]`、`Record<…>`、`Array<…>`、`Set`/`Map`。 */
-function isMutableContainerTypeNode(type: ts.TypeNode | undefined): boolean {
-  if (type === undefined) return false;
-  if (ts.isArrayTypeNode(type) || ts.isTupleTypeNode(type)) return true;
-  if (ts.isTypeReferenceNode(type)) {
-    const MUTABLE_TYPE_NAMES: readonly string[] = ["Record", "Array", "Set", "Map"];
-    return MUTABLE_TYPE_NAMES.includes(type.typeName.getText());
-  }
-  return false;
-}
-
-/**
- * 共享常量的不可变性检查。
- *
- * **约定：编译期 readonly，运行期不 `Object.freeze`。** 常量本来就不会变，
- * 运行期再冻一次买不到任何东西，却要为此付一大笔读取成本——JSC 对冻结数组的
- * 下标读取和 for-of 都没有快路径：实测（Bun 1.3.14，三次独立进程复现）下标读
- * 1.4~3.4 → 26.5~33.6 ns/op，for-of 18.5 → 194.1 ns/op，冻结对象的属性读也从
- * 0.9 涨到 2.5 ns/op。生产上这些表是要被逐条扫的，`LUCK_TIERS` 那样一张 7 项
- * 的权重表，解冻后加权抽选从 206~216 降到 12~13 ns/op。
- *
- * 因此这里改成两条：容器常量必须声明成只读类型（`readonly T[]`、`Readonly<T>`、
- * `ReadonlyMap`…），且不得再出现 `Object.freeze`。RegExp、`new X()` 与派生的
- * 标量计算不在此列——冻结正则还会把 lastIndex 变成只读，对带 /g 的正则是直接
- * 引入 bug。
- *
- * **已知边界：只看得见容器这一层。** 本检查是纯 AST 的，判不了
- * `readonly LuckTier[]` 里那个 `LuckTier` 的字段到底可不可写——要判得靠完整
- * 的 TypeChecker，代价与误报风险都不划算。旧的逐层 `Object.freeze` 规则覆盖过
- * 这一层，因此它由 `test/consts/immutability.test.ts` 用 `@ts-expect-error`
- * 接管：元素类型被放宽成可写时，那里会因为「预期的错误没有发生」让 typecheck
- * 失败。新增带对象元素的常量表时，记得在那个文件里补一行。
- * @returns 需要报告的问题描述；没问题则为空数组。
- */
-function collectSharedConstantProblems(
-  expression: ts.Expression,
-  type: ts.TypeNode | undefined,
-  path: string
-): string[] {
-  const inner: ts.Expression = unwrapTypeWrappers(expression);
-
-  if (isObjectFreezeCall(inner)) {
-    return [
-      `${path} must not use Object.freeze: shared constants rely on readonly types, ` +
-      "and freezing costs an order of magnitude on every read (see AGENTS.md 常量)",
-    ];
-  }
-
-  const isContainerLiteral: boolean =
-    ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner);
-  const isContainerCall: boolean =
-    (ts.isCallExpression(inner) || ts.isNewExpression(inner)) &&
-    (isReadonlyContainerTypeNode(type) || isMutableContainerTypeNode(type));
-  if (!isContainerLiteral && !isContainerCall) return [];
-
-  if (!isReadonlyContainerTypeNode(type)) {
-    return [
-      `${path} is a shared container and must be declared with a readonly type ` +
-      "(readonly T[] / Readonly<T> / ReadonlyArray<T> / ReadonlyMap / ReadonlySet)",
-    ];
-  }
-  return [];
-}
-
-function declarationName(node: ts.Node): string {
-  if ("name" in node && node.name !== undefined) {
-    return (node.name as ts.Node).getText();
-  }
-  return ts.SyntaxKind[node.kind];
-}
-
-/**
- * 一条 import/export 说明符是不是**运行时**依赖边。`import type` 与「具名项
- * 全部标了 type」的形态都会被 TypeScript 整条擦掉，不会让目标模块在本线程里
- * 求值，因此不算边；副作用 import（没有 importClause）永远算。
- */
-function isRuntimeModuleEdge(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
-  if (ts.isExportDeclaration(node)) return !node.isTypeOnly;
-  const clause: ts.ImportClause | undefined = node.importClause;
-  if (clause === undefined) return true;
-  if (clause.phaseModifier === ts.SyntaxKind.TypeKeyword) return false;
-  if (clause.name !== undefined) return true;
-  const bindings: ts.NamedImportBindings | undefined = clause.namedBindings;
-  if (bindings === undefined || !ts.isNamedImports(bindings)) return true;
-  return bindings.elements.some((element: ts.ImportSpecifier): boolean => !element.isTypeOnly);
-}
-
-/** 把相对说明符解析成仓库内的 .ts 文件；解析不到（npm 包等）返回 undefined。 */
-function resolveRelativeModule(specifier: string, fromFile: string): string | undefined {
-  if (!specifier.startsWith(".")) return undefined;
-  const base: string = resolve(dirname(fromFile), specifier);
-  for (const candidate of [`${base}.ts`, join(base, "index.ts"), base]) {
-    if (candidate.endsWith(".ts") && existsSync(candidate)) return candidate;
-  }
-  return undefined;
-}
-
-/**
- * 本文件在**同一条线程内**会拉起哪些模块。刻意不跟 `new Worker(new URL(...))`：
- * 那正是线程边界，跟过去就把四条线程的模块图糊成一张。
- */
-function runtimeDependencies(path: string): string[] {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    readFileSync(path, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  const targets: string[] = [];
-  function visit(node: ts.Node): void {
-    if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      node.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(node.moduleSpecifier) &&
-      isRuntimeModuleEdge(node)
-    ) {
-      const resolved: string | undefined = resolveRelativeModule(node.moduleSpecifier.text, path);
-      if (resolved !== undefined) targets.push(resolved);
-    }
-    if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments[0] !== undefined &&
-      ts.isStringLiteral(node.arguments[0])
-    ) {
-      const resolved: string | undefined = resolveRelativeModule(node.arguments[0].text, path);
-      if (resolved !== undefined) targets.push(resolved);
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
-  return targets;
-}
-
-/** 本文件会在运行期加载的 npm 包；类型专用 import 不进入结果。 */
-function runtimeExternalDependencies(path: string): string[] {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    readFileSync(path, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  const targets: string[] = [];
-  function visit(node: ts.Node): void {
-    if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      node.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(node.moduleSpecifier) &&
-      isRuntimeModuleEdge(node) &&
-      !node.moduleSpecifier.text.startsWith(".")
-    ) {
-      targets.push(node.moduleSpecifier.text);
-    }
-    if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments[0] !== undefined &&
-      ts.isStringLiteral(node.arguments[0]) &&
-      !node.arguments[0].text.startsWith(".")
-    ) {
-      targets.push(node.arguments[0].text);
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
-  return targets;
-}
-
 /** 四条线程各自的入口，以及从入口出发能加载到的模块闭包（含最短引入路径）。 */
 const THREAD_ENTRIES: Readonly<Record<string, string>> = {
   main: join(PROJECT_ROOT, "index.ts"),
@@ -346,21 +105,6 @@ const THREAD_ENTRIES: Readonly<Record<string, string>> = {
   antiRaid: join(PROJECT_ROOT, "packages", "workers", "antiRaidWorker.ts"),
   diskIO: join(PROJECT_ROOT, "packages", "workers", "diskIOWorker.ts"),
 };
-
-function threadModuleClosure(entry: string): Map<string, string[]> {
-  const trail: Map<string, string[]> = new Map([[entry, [entry]]]);
-  const queue: string[] = [entry];
-  while (queue.length > 0) {
-    const current: string = queue.shift()!;
-    const path: string[] = trail.get(current)!;
-    for (const dependency of runtimeDependencies(current)) {
-      if (trail.has(dependency)) continue;
-      trail.set(dependency, [...path, dependency]);
-      queue.push(dependency);
-    }
-  }
-  return trail;
-}
 
 /**
  * `packages/cache/` 的目录名就是这份状态的 owner 线程，见

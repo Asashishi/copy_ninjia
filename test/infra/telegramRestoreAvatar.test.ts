@@ -34,7 +34,7 @@ mock.module("../../packages/infra/logger", () => ({
 
 const realFetch = globalThis.fetch;
 const { bot } = await import("../../packages/infra/telegram/mainClient");
-const { restoreDefaultProfilePhoto } = await import("../../packages/infra/telegram/avatar");
+const { restoreDefaultProfilePhoto } = await import("../../packages/infra/telegram/avatar/restore");
 
 const setMyProfilePhotoMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
 type FetchInput = Parameters<typeof fetch>[0];

@@ -5,7 +5,7 @@ import type {
   TelegramWorkerJsonCall,
   TelegramWorkerRequest,
 } from "../../packages/types/telegramWorker";
-import { telegramRetryCategoryFor } from "../../packages/infra/telegram/outboundGate";
+import { telegramRetryCategoryFor } from "../../packages/infra/telegram/outboundRetryPolicy";
 
 interface CapturedDuplexRequest {
   readonly request: TelegramWorkerRequest;

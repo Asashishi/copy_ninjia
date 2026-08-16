@@ -47,7 +47,7 @@ describe("Anti-Raid Worker 群类型反查", () => {
     resolveChat({ type: "supergroup" });
 
     await expect(lookup).resolves.toBeFalse();
-    expect(chatKind.chatIsSupergroup(-1002)).toBeFalse();
+    expect(workerChatIsSupergroup.get(-1002)).toBeFalse();
     expect(workerChatKindFetches.size).toBe(0);
   });
 });

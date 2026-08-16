@@ -42,12 +42,13 @@ const flushLuckAppends = mock((): boolean => true);
 const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
-const pendingIdentityDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
+const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
   "blocklistRemovalOutbox",
 ]);
 const flushJoinLogDomain = mock((): boolean => true);
 const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
+const handleChatStateWrite = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 const hydrateStickerCatalogs = mock((_packs: readonly string[]): Map<string, string> => new Map());
 // Worker 重建时仍会自行复核贴纸白名单；运行期被改坏时恢复必须拒绝。
@@ -101,21 +102,24 @@ mock.module("../../packages/config/stickers", () => ({
     return { packs: ["pack_a"] };
   },
 }));
-mock.module("../../packages/workers/diskIO/identityDatabase", () => ({
-  configureIdentityPersistenceReply: (): void => {},
-  flushIdentityDatabase: flushBlocklistRemovalOutbox,
+mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
+  configureStoragePersistenceReply: (): void => {},
+  flushStorageDatabase: flushBlocklistRemovalOutbox,
   handleIdentityPolicyWrite,
+  handleChatStateWrite,
   handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
-  hydrateIdentityDatabase: (): {
+  hydrateStorageDatabase: (): {
     blocklistEntryCount: number;
     whitelistEntryCount: number;
     pendingBlockedRemovals: Map<number, never>;
+    chatStates: Map<number, never>;
   } => ({
     blocklistEntryCount: 0,
     whitelistEntryCount: 0,
     pendingBlockedRemovals: new Map<number, never>(),
+    chatStates: new Map<number, never>(),
   }),
-  pendingIdentityDatabaseDomains,
+  pendingStorageDatabaseDomains,
   readBlocklistIds: (message: { requestId: number }): unknown => ({
     type: "blocklistIdsRead",
     requestId: message.requestId,
@@ -136,8 +140,8 @@ const { handleDiskIOWorkerMessage } = await import("../../packages/workers/diskI
 // 拒收标记走真实的 owner 缓存：路由层的兜底就是靠它把失败传给统一 flush。
 const { consumeJoinLogRejection } = await import("../../packages/cache/workers/diskIO/joinLog");
 const {
-  rejectedIdentityDomains,
-} = await import("../../packages/cache/workers/diskIO/identityDatabase");
+  rejectedStorageDomains,
+} = await import("../../packages/cache/workers/diskIO/storageDatabase");
 const { resetDiskIOReplayWindow } = await import("../../packages/cache/workers/diskIO/recovery");
 
 afterAll(() => {
@@ -162,10 +166,12 @@ beforeEach(() => {
     flushLuckAppends,
     flushVerificationChanges,
     flushBlocklistRemovalOutbox,
-    pendingIdentityDatabaseDomains,
+    pendingStorageDatabaseDomains,
     flushJoinLogDomain,
     handleBlocklistRemovalsMessage,
     handleIdentityPolicyWrite,
+    handleChatStateWrite,
+    handleChatStateWrite,
     postMessage,
     hydrateLuckDay,
     hydrateStickerCatalogs,
@@ -290,13 +296,13 @@ describe("Disk I/O Worker protocol router", () => {
     expect(consoleError).toHaveBeenCalledTimes(2);
     // 主线程只能靠下一次领域 flush 的失败回执才知道这条最终值没落盘——
     // /block 的 confirmBlocklistPersisted 正是这么问的。
-    expect([...rejectedIdentityDomains].sort()).toEqual([
+    expect([...rejectedStorageDomains].sort()).toEqual([
       "blocklistRemovalOutbox",
       "whitelist",
     ]);
     // 在线消息不升级为停机：主线程仍持有未 ACK 的 revision，Worker 重建时重放。
     expect(postMessage).not.toHaveBeenCalled();
-    rejectedIdentityDomains.clear();
+    rejectedStorageDomains.clear();
   });
 
   test("恢复重放期间的身份写失败升级为停机回执，不只是记拒收", () => {
@@ -325,7 +331,7 @@ describe("Disk I/O Worker protocol router", () => {
       type: "recoveryReplayFailed",
       domain: "blocklist",
     }));
-    rejectedIdentityDomains.clear();
+    rejectedStorageDomains.clear();
   });
 
   test("入群事实的 owner 抛错不逸出 onmessage，改记拒收让统一 flush 回报失败", () => {

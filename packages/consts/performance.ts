@@ -1,3 +1,5 @@
+import type { HotPathProfileScenarioName } from "../types/performance";
+
 /** 热路径 GC/RSS 门禁校准时使用的 Bun 版本；升级运行时必须重新测量阈值。 */
 export const HOT_PATH_PROFILE_BUN_VERSION: string = "1.3.14";
 
@@ -20,6 +22,9 @@ export const HOT_PATH_PROFILE_MAX_JIT_STABILIZATION_ROUNDS: number = 6;
 /** 单次稳态 profile 至少需要的样本数；不足时 GC 百分比没有判别力。 */
 export const HOT_PATH_PROFILE_MIN_SAMPLES: number = 50;
 
+/** 读取进程内存时仅对系统调用中断进行的最大尝试次数，耗尽后保留原错误失败。 */
+export const HOT_PATH_PROFILE_MEMORY_USAGE_MAX_ATTEMPTS: number = 3;
+
 /** 极短 mention 叶子在 profile 模式下的操作数倍数，确保 1 ms 采样至少覆盖 50 点。 */
 export const HOT_PATH_PROFILE_FAST_SCENARIO_ITERATION_MULTIPLIER: number = 4;
 
@@ -31,11 +36,21 @@ export const HOT_PATH_PROFILE_MAX_GC_PERCENT: number = 5;
  * 高水位（getrusage maxRSS）共用这一个阈值：只掐采样峰值的话，完整落在两次节拍之间
  * 的大块瞬时分配会被漏掉，而那正是这条门禁要拦的东西。
  *
- * Bun 1.3.14 实测两者几乎重合（incoming-message-spine 106.5/107.0 MB、
- * flood-window-steady 130.5/130.5 MB、mention-facts-plain 75.5/75.5 MB），据此对更强的
- * 那个指标也保留约两倍余量。
+ * **这是失控兜底，不是回归判据，更不是机器内存预算**：场景子进程一次只起一个（见
+ * scripts/perf/hotPathProfileGate.ts 的串行 for 循环），硬失败仍由 GC、JIT 与 full-GC
+ * 后全局留存上限判定；逐场景延迟只做软上报，避免把确实耗时的合法操作误判失败。
+ *
+ * Bun 1.3.14 实测采样峰值与生命周期高水位几乎重合，最重的是
+ * flood-window-steady 145.6/146.4 MB，其次 incoming-message-spine 105.1/105.8 MB、
+ * luck-receipt-fast-path 96.3 MB、mention-facts-plain 73.6 MB。384 MB 对最重的那个
+ * 保留约 2.6 倍余量，取的是「负载高的 CI 机器上单次读数抖动也不会误报」。
+ *
+ * 代价要说明白：最重那个场景**真的翻倍**（145.6 → 291 MB）也不会碰到这道闸。这是
+ * 有意的分工，不是失手——CPU 延迟异常由逐场景 ns/op 软上报指出，而这里只负责
+ * 拦住「一路涨到把机器吃光」。改这个数之前先想清楚它现在只承担哪一件事，
+ * 别再拿「还够得着一次翻倍」当理由继续放宽。
  */
-export const HOT_PATH_PROFILE_MAX_RSS_BYTES: number = 256 * 1024 * 1024;
+export const HOT_PATH_PROFILE_MAX_RSS_BYTES: number = 384 * 1024 * 1024;
 
 /**
  * 正式采样各节拍观测到的 heapUsed 相对预热基线最大增长。上限覆盖满载 flood LRU
@@ -57,14 +72,40 @@ export const HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES: number =
 export const HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH: number = 4_096;
 
 /**
+ * 每个默认热场景在 retained 独立进程中的中位纳秒/操作软上报阈值。
+ * 超过只输出场景与超额读数，不让门禁失败；数值只能在固定 Bun revision、
+ * 固定输入并经多个独立进程重测后调整。
+ * Bun 1.3.14 每场景 10 进程的最慢中位数为 2024.461/33.027/49.993/76.583/
+ * 521.289/18.550/218.306/134.700 ns/op；上限在其上增加 max(25%, 10 ns) 并向上取整。
+ *
+ * identity-permission-read 的那个数取自 20 个独立进程加门禁自己的 repeat：它是本表
+ * 里离散度最大的一项（90.0~134.7），只按前 10 个进程定阈值会让它每隔几次门禁就软
+ * 报一次，而软报的价值全在「出现即异常」。
+ */
+export const HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS: Readonly<
+  Record<HotPathProfileScenarioName, number>
+> = {
+  "incoming-message-spine": 2_550,
+  "sender-stable-username": 44,
+  "luck-receipt-fast-path": 63,
+  "ai-activity-window": 96,
+  "flood-window-steady": 655,
+  "mention-facts-plain": 29,
+  "ad-capacity-reject": 275,
+  "identity-permission-read": 169,
+};
+
+/**
  * 默认性能门禁覆盖真实消息主链与固定高频叶子热点；元素顺序固定，独立进程按此
  * 顺序串行运行，避免并发争抢 CPU/内存污染读数。
  */
-export const HOT_PATH_PROFILE_SCENARIOS: readonly string[] = [
+export const HOT_PATH_PROFILE_SCENARIOS: readonly HotPathProfileScenarioName[] = [
   "incoming-message-spine",
   "sender-stable-username",
   "luck-receipt-fast-path",
   "ai-activity-window",
   "flood-window-steady",
   "mention-facts-plain",
+  "ad-capacity-reject",
+  "identity-permission-read",
 ];

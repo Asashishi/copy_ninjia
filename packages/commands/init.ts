@@ -1,8 +1,19 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
-import { INIT_DISABLE_TEARDOWN_FAILED_TEXT, INIT_TOGGLE_TEXTS } from "../consts/commands";
+import type { ReadonlyLruCache } from "../libs/lruCache";
+import {
+  INIT_CHAT_LIMIT_TEXT,
+  INIT_DISABLE_TEARDOWN_FAILED_TEXT,
+  INIT_TOGGLE_TEXTS,
+} from "../consts/commands";
+import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
 import { logger } from "../infra/logger";
-import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
+import {
+  clearChatStateField,
+  getChatStateCache,
+  getOrCreateChatState,
+  persistChatState,
+} from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
 import { invalidateBotAdminStatus, resolveBotAdminStatus, teardownChatRuntime } from "../infra/botAdmin";
@@ -22,12 +33,25 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
 
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
+  const knownChats: ReadonlyLruCache<number, ChatState> = getChatStateCache();
+  if (
+    arg === "enable" &&
+    !knownChats.has(chatId) &&
+    knownChats.size >= STATE_MANAGED_CHAT_LIMIT
+  ) {
+    await sendCommandMessage({
+      chatId,
+      text: INIT_CHAT_LIMIT_TEXT,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
   const state: ChatState = getOrCreateChatState(chatId);
   const wasEnabled: boolean = state.isInitEnabled === true;
   const isEnabled: boolean = arg === "enable";
   state.isInitEnabled = isEnabled;
   // 唯一不作废的情形：对已经启用的群重复 /init enable。那是一次空操作，若
-  // 照样作废，随后的重新判定会让 recordBotAdminStatus 看到 undefined -> true，
+  // 照样作废，随后的重新判定会让 recordBotChatPermissions 看到未知 -> 管理员，
   // 被当成一次全新的边沿，把整份黑名单再清扫一遍（名单几百条时就是几百次
   // getChatMember 压进验证队列）。disable 一律作废——关掉之后这份权限记录
   // 本来就不该继续被信任。
@@ -46,10 +70,19 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
       teardownFailed = true;
       teardownError = error;
     }
+    // 群名只为「在管的群」而记（infra/chatTitle.ts 的 applyChatTitle 同样只认
+    // isInitEnabled === true），关掉之后它就是一条没有任何人会读的残留。而它偏偏是
+    // isEmptyChatState 的判据之一：不清的话，这条记录既不空、也不再被管理，却继续占着
+    // STATE_MANAGED_CHAT_LIMIT 的一个名额——25 轮「启用又关掉」之后，/init enable 对任何
+    // 新群都只回 INIT_CHAT_LIMIT_TEXT，而实际在管的群可能是零个，且没有任何命令能删掉
+    // 这些残留行。teardown 失败也照清：总开关下面就 durable 地关掉了，「不再管这个群」
+    // 已经成立。清完若整条状态回到缺省，clearChatStateField 会顺手删掉 LRU 条目，下面
+    // 那次 persistChatState 写出的就是删除墓碑，SQLite 行一并消失。
+    clearChatStateField(chatId, "title");
   }
   // 落盘失败照旧原样上抛：那是 fatal durability failure，这条 update 不能被确认
   // （见 docs/cn/04-invariants.md）。
-  await persistAuthoritativeState("init toggled");
+  await persistChatState(chatId, "init toggled");
   if (teardownFailed) {
     logger.error(
       `Failed to tear down the chat runtime for chat ${chatId}; the init gate is already persisted as disabled:`,
@@ -58,7 +91,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   }
 
   // enable 之后立刻把管理员身份重新判定一次。上面的 invalidateBotAdminStatus 刚把
-  // 记录作废，这次现查会经 recordBotAdminStatus 回填——「是管理员 && 已初始化」
+  // 记录作废，这次现查会经 recordBotChatPermissions 回填——「是管理员 && 已初始化」
   // 这个合取若因本次 enable 而成立，那道边沿就在那里触发一次黑名单清扫
   // （见 infra/botAdmin.ts）。不这么做的话，「先给管理员、后 /init enable」这个
   // 最常见的上线顺序永远等不到清扫：管理员那一跳发生时本群还没初始化。
@@ -69,9 +102,9 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // 与 docs/cn/04-invariants.md，上面那句「自己吞掉所有错误」以前写反了）。进程
   // 因此带非零码退出、Telegram 重投这条 /init enable 时 wasEnabled 已经是
   // true，挂 !wasEnabled 的话管理员身份重判与它要触发的黑名单清扫就永远不会
-  // 再发生了；而作废过的记录此刻仍是空的，挂 botIsAdmin 就能自然接上。
+  // 再发生了；而作废过的记录此刻仍是空的，挂 botPermissions 就能自然接上。
   // 记录已知的重复 enable 照旧跳过：那一刻合取没有发生任何变化。
-  if (isEnabled && state.botIsAdmin === undefined) await resolveBotAdminStatus(chatId);
+  if (isEnabled && state.botPermissions === undefined) await resolveBotAdminStatus(chatId);
 
   const replyText: string = teardownFailed
     ? INIT_DISABLE_TEARDOWN_FAILED_TEXT

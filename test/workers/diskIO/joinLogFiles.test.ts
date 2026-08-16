@@ -145,6 +145,15 @@ describe("diskIO/joinLogFiles", () => {
     expect(readFileSync(futurePath, "utf8")).toBe("{}");
   });
 
+  test("启动恢复拒绝以正数私聊 ID 命名的入群日志", () => {
+    const path: string = currentFile(1001);
+    mkdirSync(joinLogDir, { recursive: true });
+    writeFileSync(path, "{}");
+
+    expect(() => recoverJoinLogFiles()).toThrow("negative safe-integer Telegram group or channel ID");
+    expect(readFileSync(path, "utf8")).toBe("{}");
+  });
+
   test("入群先进入内存批次，flush 后按群追写当天 JSON 文件", () => {
     const now: number = todayAt();
     handleJoinLogMessage(joinMessage(-1001, 42, now));

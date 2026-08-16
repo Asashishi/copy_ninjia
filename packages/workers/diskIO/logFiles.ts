@@ -49,7 +49,7 @@ interface LogRecord {
 }
 
 /** 东京时区、含毫秒的日期时间格式器（模块加载时构造一次复用，同 libs/time.ts
- *  的 TOKYO_TIME_FORMATTER 一个道理）。libs/time.ts 的 formatTokyoTime 没有
+ *  里那几个模块级格式器一个道理）。libs/time.ts 的 formatTokyoTime 没有
  *  毫秒精度、分隔符也不同（"/" 而非 "-"），日志 key 需要毫秒来对齐同一秒内
  *  多条日志的先后顺序，所以这里单独维护一份，不复用它。 */
 const TOKYO_DATETIME_MS_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US", {
@@ -167,7 +167,7 @@ function writeDay(day: string, texts: string[]): boolean {
   // 卷转只读这类故障不会在一个 flush 周期内自愈，而重开一次要把整个日文件读两
   // 遍、逐条校验 schema、再扫一遍目录——不退避的话每个周期都要按日文件大小付
   // 一次这个代价，且故障期本身制造的 logger.error 还会把节拍压得更密。这条线程
-  // 同时持有 state.json、黑名单、移除 outbox 与 AI 记忆快照（见
+  // 同时持有身份策略/群状态 SQLite、移除 outbox 与 AI 记忆快照（见
   // consts/diskIO/appendOnly.ts 的 LOG_REOPEN_RETRY_MS）。
   if (loggerFileState.current === null && now < loggerReopenState.retryAt) return false;
   try {

@@ -27,7 +27,7 @@ import {
   postDiskIO,
 } from "../diskIO";
 import { logger } from "../logger";
-import { getAllChatStates } from "../storage/stateStore";
+import { getChatStateCache } from "../storage/stateStore";
 import { hasAnyBlockedIdentity } from "../identityStorage";
 import type {
   BlockedMemberRemover,
@@ -81,8 +81,8 @@ export function hydrateBlocklist(
   let filtered: boolean = false;
   for (const [removalId, pending] of recoveredRemovals) {
     blocklistRemovalCounter.current = Math.max(blocklistRemovalCounter.current, removalId);
-    const state: ChatState | undefined = getAllChatStates().get(pending.params.chatId);
-    if (state?.isInitEnabled !== true || state.botIsAdmin !== true) {
+    const state: ChatState | undefined = getChatStateCache().get(pending.params.chatId);
+    if (state?.isInitEnabled !== true || state.botPermissions?.isAdministrator !== true) {
       filtered = true;
       continue;
     }
@@ -110,9 +110,9 @@ export function hydrateBlocklist(
       continue;
     }
     // 冻结批次在这里**不再裁剪**，因为 SQLite owner 根本不会交出需要裁剪的行：
-    // hydrateIdentityDatabase 对「冻结 userId 不在 blocklist_entries」直接抛错，
+    // hydrateStorageDatabase 对「冻结 userId 不在 blocklist_entries」直接抛错，
     // handlePendingRemovalSnapshot 对同一条件也抛（见 workers/diskIO/
-    // identityDatabase.ts）。也就是说这是一条断言而不是一次修剪——部署方从旧备份
+    // storageDatabase/pendingRemoval.ts）。也就是说这是一条断言而不是一次修剪——部署方从旧备份
     // 恢复 database/storage.sqlite、或手删一行 blocklist_entries 撤销误 /block 时，
     // 进程会在启动阶段以非零码退出并点名那一行，按 AGENTS.md「不为用户行为兜底」
     // 要求运维显式修好数据，而不是让本函数悄悄丢掉一批待踢成员。

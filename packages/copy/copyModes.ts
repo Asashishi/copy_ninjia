@@ -14,7 +14,7 @@ function reverseText(text: string): string {
 
 /**
  * 给尚未以 喵~ 结尾的文本追加 " 喵~"（前面带一个半角空格）。安全校验由调用方负责
- * （见 handleIncomingMessage 中的 isPlainText）——本函数只会在已通过该校验的消息上
+ * （见 auto/message/echo.ts 的 containsRenderableCommand 守卫与 plainText 判定）——本函数只会在已通过该校验的消息上
  * 运行，且结果仍会通过不带 parse_mode 的 sendMessage() 发送。
  * @param text 待追加后缀的文本。
  */

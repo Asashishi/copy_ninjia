@@ -5,6 +5,11 @@ import {
 } from "../../consts/logger";
 import { AcknowledgedBatchQueue } from "../../libs/acknowledgedBatchQueue";
 import type { LogMessage } from "../../types/diskIO";
+import type {
+  AdDetectAgentConfig,
+  AgentDeploymentConfig,
+  TelegramConfig,
+} from "../../types/config";
 
 /**
  * owner：每个业务 Worker isolate。
@@ -37,3 +42,27 @@ export const forwardedLogDropState: {
     droppedSerializedBytes: 0,
   },
 };
+
+/**
+ * owner：每条线程各持一份（同 cache/perThread/config.ts 的三个凭据 holder）。
+ *
+ * `infra/logger/serialization.ts` 的 currentSecrets 每条日志都要把当前凭据摊成
+ * 一个数组交给值级脱敏；那三份配置一个进程只有一代（见 docs/cn/04-invariants.md
+ * 的「同一进程内只有一代 AI 配置」），逐条重建纯属白付。这里缓存上一次的结果，
+ * **并连同它依据的三个 holder 取值一起记下来**：判据是对象身份，不是「已经算过
+ * 一次」——三个 holder 都是惰性填充的，先记一次空结果就把「配置还没读完」固化成
+ * 「这个进程没有凭据」，此后每条日志都不再脱敏。三处填充点（config/agent.ts 的
+ * 启动总闸与两个测试替身入口、config/telegram.ts 的 `??=`）都是整体替换、绝不
+ * 就地改写，因此身份变了就一定要重算，身份没变就一定还是同一份凭据。
+ *
+ * 容量恒为一个对象加一个最多 6 项的只读数组，因此没有单独的清理时机：四格只在
+ * 身份变化时整体替换，不回收也不增长。Worker 崩溃或线程重建后从初始值起步，
+ * 而初始的三个 null 与「三个 holder 都还没填」是同一件事——那时结果本来就是空数组，
+ * 下一条日志会照常按当时的 holder 重算。
+ */
+export const loggerSecretsMemo: {
+  telegram: TelegramConfig | null;
+  adDetect: AdDetectAgentConfig | null;
+  agent: AgentDeploymentConfig | null;
+  value: readonly string[];
+} = { telegram: null, adDetect: null, agent: null, value: [] };

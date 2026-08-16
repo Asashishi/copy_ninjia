@@ -1,5 +1,6 @@
 import type { BotCommand } from "@grammyjs/types";
 import type { CommandTargetMessages, ToggleCommandTexts } from "../types/commands";
+import { STATE_MANAGED_CHAT_LIMIT } from "./storage";
 
 /** 群聊命令文本发送后自动清理的最长保留时间。 */
 export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
@@ -33,7 +34,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "ad_detect", description: "用 enable/disable 开关本群广告检测；命中就拉黑并全群封禁删消息，只有获授权者配碰，杂鱼♡" },
   { command: "flood_control", description: "用 enable/disable 开关本群防刷屏禁言，只有获授权者配碰，刷屏杂鱼可别手抖哦♡" },
   { command: "antiraid", description: "用 enable/disable 开关本群入群验证与防冲群私密模式，只有获授权者配碰，关掉就没人替你拦僵尸了哦杂鱼♡" },
-  { command: "bot_status", description: "查看全局模型能力、Telegram 出站和本群已开启功能，连本天才会什么都记不住吗，笨蛋♡" },
+  { command: "bot_status", description: "查看本机进程、全局模型能力、Telegram 出站、本群权限与已开启功能，连本天才会什么都记不住吗，笨蛋♡" },
   { command: "query_mood", description: "偷看本群 AI 当前心情，群成员都能问，连本天才的脸色都不会看吗，杂鱼♡" },
   { command: "switch_mood", description: "重新抽取本群 AI 心情，只有获授权者配左右本天才，杂鱼别得意♡" },
   { command: "init", description: "用 enable/disable 开关本群机器人监听/初始化，只有超级管理员配决定本天才管不管，杂鱼♡" },
@@ -322,6 +323,10 @@ export const INIT_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
 export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
   `本天才不想再理这个群了，爱干嘛干嘛去吧——不过有几样运行态没能拆干净，` +
   `日志里写着呢，杂鱼管理员去看一眼♡`;
+
+/** `/init enable` 在 State 已达群数上限时的拒绝提示。 */
+export const INIT_CHAT_LIMIT_TEXT: string =
+  `State 最多只能管理 ${STATE_MANAGED_CHAT_LIMIT} 个群；请先删除不再管理的群状态，再启用本群。`;
 
 /**
  * 各命令的目标解析提示文案表。

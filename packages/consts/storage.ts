@@ -23,6 +23,12 @@ export const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000,
 export const STATE_SAVE_MAX_ATTEMPTS: number = STATE_SAVE_RETRY_DELAYS_MS.length + 1;
 
 /**
+ * SQLite `chat_states` 允许管理的最大群数。它是启动期和运行期均不可放宽的
+ * 容量不变量；超出时必须由部署方删除不再管理的群后重新启动。
+ */
+export const STATE_MANAGED_CHAT_LIMIT: number = 25;
+
+/**
  * 显式配置的数据根允许的最大 Unix 权限：owner 可读写遍历、group 只读遍历、
  * other 无权访问。现有目录只能比它更严格，启动预检不会擅自 chmod。
  */
@@ -38,7 +44,7 @@ export const RUNTIME_SENSITIVE_DIRECTORY_NAMES: readonly string[] = [
   "database",
 ];
 
-/** state.json 中允许持久化的 Telegram 群权限字段全集。 */
+/** SQLite 群状态中允许持久化的 Telegram 群权限字段全集。 */
 export const CHAT_PERMISSION_KEYS: readonly (keyof ChatPermissions)[] = [
   "can_send_messages",
   "can_send_audios",

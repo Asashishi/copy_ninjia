@@ -28,10 +28,10 @@ cp -n config_example/*.json config/
 | --- | --- | --- |
 | `telegram.json` | Telegram Bot token 与唯一超级管理员 | 始终拒绝启动 |
 | `agent.json` | 各项 AI 能力自己的 provider、凭据、端点和模型 | 由能力决定，见下文 |
-| `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；若已有群启用则拒绝启动 |
-| `reactions.json` | AI 文本情绪到 Telegram reaction 的候选词 | AI 对话不能启用；若已有群启用则拒绝启动 |
-| `mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；若已有群启用则拒绝启动 |
-| `ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；若已有群启用则拒绝启动 |
+| `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `reactions.json` | AI 文本情绪到 Telegram reaction 的候选词 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
 
 AI 对话还依赖 `prompt/persona.md`，日语翻译依赖项目根目录下的 `g-auth.json`；两者不在
 本目录。任一可选配置文件已经存在但内容非法时，即使对应功能当前关闭也会拒绝启动。
@@ -90,10 +90,22 @@ OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provid
 后续媒体仍可再探测。普通 Google/OpenAI HTTP 请求最多在首次失败后重试五次，配置
 修改或 Worker/进程重建后会重新探测。
 
-## 身份策略不在 `config/`
+## 撤掉凭据之前先关掉功能
 
-白名单、黑名单和待完成处置的权威源是运行时数据根下的
-`database/storage.sqlite`。`/white`、`/permission`、`/block` 与 `/unblock` 通过
+某项能力在群里还开着，却把它的 API key 或配置撤掉了——进程**照常启动**，那个 `true` 也照常恢复，
+但该功能在唯一判定入口上被判为不可用：AI 闲聊的 Worker 根本不启动、记忆不 hydrate（磁盘快照
+原样留着），`/ja_copy` 退化成普通复制，广告检测不再送检。群里看到的就是机器人从某次重启起
+再也不干活，痕迹只有 `logs/` 里的一行。正确顺序是先在群里 `/ai_chat disable`、
+`/ad_detect disable` 或 `/ja_copy disable`，再撤掉配置；或者把前提补回去。
+
+**注意方向**：这只适用于文件**真的不存在**。文件还在但内容非法时，启动总闸照旧拒绝启动——
+哪怕对应功能当前是关的。
+
+## 身份策略与群状态不在 `config/`
+
+白名单、黑名单、待完成处置和**每群状态**（功能开关、静默、锁定记录、机器人权限快照、
+群名、中转标记）的权威源都是运行时数据根下的 `database/storage.sqlite`。群状态存放在
+`chat_states` 表，最多 25 个群，超出时 `/init enable` 会以一句回执拒绝。`/white`、`/permission`、`/block` 与 `/unblock` 通过
 Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限键与默认值以
 `/permission help` 为准，数据库 schema 非法、版本不匹配或两张名单存在交集都会在
 联网前拒绝启动。旧 JSON 部署按 [运维文档](../../docs/cn/07-operations.md) 的一次性

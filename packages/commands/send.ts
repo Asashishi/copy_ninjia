@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import { clearChatStateField, getActiveProxySendTarget, getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
+import { clearChatStateField, getActiveProxySendTarget, getChatStateCache, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { logApiError, sendCommandMessage } from "../infra/telegram";
 import { bot } from "../infra/telegram/mainClient";
 import {
@@ -11,8 +11,9 @@ import { parseChatIdArgument } from "./targetResolution";
 import type { ChatFullInfo } from "@grammyjs/types";
 
 /**
- * 隐藏的超管私聊中转命令；群聊和非超管调用静默拒绝。只接受可达的
- * group/supergroup，持久化位置由 ChatState.isProxySendEnabled 定义。
+ * 隐藏的超管私聊中转命令；群聊和非超管调用静默拒绝。只接受可达、且已经在
+ * chat_states 里被纳管的 group/supergroup（这条命令自己绝不新建群状态，理由见
+ * 下方那处判定），持久化位置由 ChatState.isProxySendEnabled 定义。
  */
 export async function handleSendCommand(ctx: CommandContext<Context>): Promise<void> {
   if (ctx.chat.type !== "private") return;
@@ -31,7 +32,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
       return;
     }
     clearChatStateField(activeTargetChatId, "isProxySendEnabled");
-    await persistAuthoritativeState("send finished");
+    await persistChatState(activeTargetChatId, "send finished");
     await sendCommandMessage({ chatId, text: `好啦，不转发了♡`, replyToMessageId: messageId });
     return;
   }
@@ -48,6 +49,26 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
 
   if (activeTargetChatId !== undefined) {
     await sendCommandMessage({ chatId, text: `已经在转发到 ${activeTargetChatId} 了，先 /send finish 呀♡`, replyToMessageId: messageId });
+    return;
+  }
+
+  // 目标群必须已经在 chat_states 里，否则只回一句提示。
+  //
+  // 这条命令以前直接 getOrCreateChatState(targetChatId)：目标没被纳管时那是一次
+  // **新建**，而新建要过容量闸（见 infra/chatStateStorage.ts 的
+  // assertChatStateCapacity）——State 已管 STATE_MANAGED_CHAT_LIMIT 个群时它抛错。
+  // 抛在这里没人接：异常逸出命令处理器 → acknowledged runner 不确认这条 update
+  // 并带非零码退出 → Telegram 重投同一条 /send → 再抛一次。一条超管命令就能把
+  // 进程钉进重启循环，且退不出来（重投的还是它）。容量拒绝只属于 /init enable
+  // 那一处，在那里是一句回执（INIT_CHAT_LIMIT_TEXT），不是异常。
+  //
+  // 顺带修掉的是同一行的另一半问题：为一个没 /init 过的群凭空建一条 chat_states
+  // 记录，违反「未纳管的群不长记录」——infra/botAdmin.ts 与 infra/chatTitle.ts
+  // 全程按这条不变量写（两边的写入都先判 isInitEnabled）。
+  //
+  // 判定放在 getChat 之前：没纳管的目标连可达性都不必探，省一次 API 往返。
+  if (!getChatStateCache().has(targetChatId)) {
+    await sendCommandMessage({ chatId, text: `${targetChatId} 本天才还没接管呢，先去那边 /init enable 再来找我♡`, replyToMessageId: messageId });
     return;
   }
 
@@ -71,6 +92,6 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   }
 
   getOrCreateChatState(targetChatId).isProxySendEnabled = true;
-  await persistAuthoritativeState("send started");
+  await persistChatState(targetChatId, "send started");
   await sendCommandMessage({ chatId, text: `好，现在这里发的消息本天才都会转发进 ${targetChatId}，说完了记得 /send finish♡`, replyToMessageId: messageId });
 }

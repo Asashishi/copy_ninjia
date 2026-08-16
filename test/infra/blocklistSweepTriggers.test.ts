@@ -1,13 +1,15 @@
 /** 「是管理员 && 已初始化」成立那一刻的补扫触发边界。 */
 
 import { describe, expect, test } from "bun:test";
+import { botPermissions } from "../helpers/botPermissions";
+import { settleBackgroundWork } from "../libs/helpers";
 const {
   blockedUserIds,
   expectLastRemoval,
   getChatMember,
   installBlocklistSweepHooks,
   lastRemovalId,
-  persistAuthoritativeState,
+  persistChatState,
   postDiskIO,
   promotion,
   remover,
@@ -68,7 +70,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("扫过一次就不再重复扫：每条更新都重扫会把验证队列压死", async () => {
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     // 管理员权限变更（比如加了删消息权）也走 my_chat_member。第一次仍要补扫
@@ -144,7 +146,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
 
   test("确证拿到封禁权限后立刻解锁并重扫", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     await sweepBlockedMembers(-1001, 1_000);
     settleLastAsForbidden();
     remover.mockClear();
@@ -222,7 +224,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     expect(remover).not.toHaveBeenCalled();
 
     // 解锁边沿照常能打开它。
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     await handleMyChatMemberUpdate(promotion("administrator", "administrator", true));
     expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeFalse();
     // 先重放原 frozen 批次，再补一轮当前全名单；两者各自按 removalId 回执。
@@ -241,7 +243,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   test("权限恢复重放同群 frozen 批次，各批只按自己的 complete 回执销账", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     blockedUserIds.set(8, { isBlocked: true, blockedAt: "2026/07/26 00:00:01" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     const first = trackBlockedRemoval({
       chatId: -1001,
       userIds: [7],
@@ -295,7 +297,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
 
   test("回归用例：权限恢复时释放补扫 claim，别的批次留下的闩锁不能把这个群永久卡死", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     // 补扫批次 R 已经占住 claim 并投出去。
     await sweepBlockedMembers(-1001, 1_000);
     const sweepRemovalId: number = lastRemovalId();
@@ -355,7 +357,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("重启恢复权限闩锁：静态名单仍在也不空转，权限恢复后用新补扫取代旧任务", async () => {
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     blockedUserIds.set(-4004, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     hydrateBlocklist(
       new Map([
@@ -444,16 +446,19 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
 
     await markBotAdminObserved(-1001);
 
+    // 现查按设计不被 await（不能挡住串行的 update 处理），补扫挂在它落地之后。
+    await settleBackgroundWork();
     expectLastRemoval({ chatId: -1001, userIds: [7], probeMembership: true });
 
     // 再观测一次不再扫。
     remover.mockClear();
     await markBotAdminObserved(-1001);
+    await settleBackgroundWork();
     expect(remover).not.toHaveBeenCalled();
   });
 
   test("被撤管理员时不清扫：合取由成立变为不成立", async () => {
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     await handleMyChatMemberUpdate(promotion("member", "administrator"));
@@ -463,15 +468,15 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
 
   test("停管的在途批次先丢弃再落盘：落盘失败也不会把它们留到下次重启", async () => {
     // 停管是 Telegram 已经告知的权威事实，不会因为 state.json 没写成而撤销。
-    // 清理排在落盘之后的话，persistAuthoritativeState 一拒绝这行就不执行、
-    // 进程随即退出，而 state.json 里 botIsAdmin 还是 true——启动恢复那道
-    // `botIsAdmin !== true` 过滤同样兜不住，这批注定失败的处置会在每次重启和
+    // 清理排在落盘之后的话，persistChatState 一拒绝这行就不执行、
+    // 进程随即退出，而 state.json 里的权限快照还是管理员——启动恢复那道
+    // `isAdministrator !== true` 过滤同样兜不住，这批注定失败的处置会在每次重启和
     // 每次 Worker 重建时原样重投。
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
     expect(pendingBlockedRemovals.size).toBe(1);
-    persistAuthoritativeState.mockRejectedValueOnce(new Error("state store quiesced"));
+    persistChatState.mockRejectedValueOnce(new Error("state store quiesced"));
 
     await expect(handleMyChatMemberUpdate(promotion("member", "administrator")))
       .rejects.toThrow("state store quiesced");
@@ -485,7 +490,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     // 跟踪、超时也不踢，一整批刷群就这么走进来，而唯一的诊断把锅指向 Telegram
     // API，下一次调用又从内存读到 true，现象根本复现不了。
     states.set(-1001, { isInitEnabled: true });
-    persistAuthoritativeState.mockRejectedValueOnce(new Error("state store quiesced"));
+    persistChatState.mockRejectedValueOnce(new Error("state store quiesced"));
 
     await expect(resolveBotAdminStatus(-1001)).rejects.toThrow("state store quiesced");
   });
@@ -495,8 +500,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     getChatMember.mockRejectedValueOnce(new Error("Bad Request: chat not found"));
 
     expect(await resolveBotAdminStatus(-1001)).toBeFalse();
-    expect(persistAuthoritativeState).not.toHaveBeenCalled();
-    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
+    expect(persistChatState).not.toHaveBeenCalled();
+    expect(states.get(-1001)?.botPermissions).toBeUndefined();
   });
 
   test("还没 /init enable 的群不清扫，哪怕这一刻成了管理员", async () => {
@@ -575,6 +580,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     states.set(-1001, { isInitEnabled: true });
     await markBotAdminObserved(-1001);
 
+    await settleBackgroundWork();
     expectLastRemoval({ chatId: -1001, userIds: [7], probeMembership: true });
   });
 });

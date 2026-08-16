@@ -28,7 +28,8 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 | ⚡ **Invariants** | Cross-module constraints, concurrency safety, invariant rules | [📖 04 Invariants](04-invariants.md) |
 | 🧪 **Development** | `bun run check` pipeline, test isolation, coverage rules | [📖 05 Workflow](05-dev-workflow.md) |
 | 🛠️ **Modifications** | Step-by-step recipes for commands, AI tools, and schema edits | [📖 06 Recipes](06-modification-guide.md) |
-| 🛡️ **Operations** | systemd deployment, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
+| 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
+| 🎮 **Look up a command** | Every command, permission semantics and behavioural details (the root README keeps only a summary) | [📖 08 Commands](08-commands.md) |
 
 ---
 
@@ -54,10 +55,10 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Authoritative constraints across modules and lifecycles (source `@see` comments point here)
    - Startup and import boundaries: startup order, optional-credential degradation, data root, outbound request and message safety
    - Worker and state ownership: thread ownership, state-machine contracts, AI chat runtime, join verification and terminal disposal, flood muting and the bot's own permission cache
-   - Persistence: durability and snapshot contracts, blocklist and ad detection, acknowledgement boundary and shutdown, file permissions
+   - Persistence: durability and snapshot contracts, chat state and `chat_states`, blocklist and ad detection, acknowledgement boundary and shutdown, file permissions
 
 5. **[05 Development Workflow and Quality Gates](05-dev-workflow.md)**
-   - `bun run check` 4-stage validation: conventions + lint + typecheck + full test suite with coverage
+   - `bun run check` 5-stage validation: conventions + lint + typecheck + full test suite with coverage + the hot-path gate
    - Test isolation mechanism and temporary data root sandbox
    - Commit standards and pre-release fault injection suite `bun run test:fault-injection`
 
@@ -69,10 +70,15 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Non-goal: no i18n — fork it to change languages
 
 7. **[07 Operations and Troubleshooting](07-operations.md)**
-   - Recommended hardware specs and deployment options
+   - Deployment model and the hardware guidance table (by deployment size)
    - `COPY_NINJIA_DATA_ROOT` directory capability checks (fsync / hard link / rename)
    - Backup and recovery (`memory/luck/receipt-secret.json` key consistency)
    - Common startup failures and `bot.lock` troubleshooting
+
+8. **[08 Command and Behaviour Reference](08-commands.md)**
+   - Copy modes and how a target is specified
+   - The permission tier of every command (permission key / super admin / group member)
+   - Behavioural details for `/gag`, `/block`, `/batch_kick`, ad detection and join verification
 
 ---
 

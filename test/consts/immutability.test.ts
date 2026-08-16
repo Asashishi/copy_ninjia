@@ -39,7 +39,9 @@ import {
   WHITE_COMMAND_TEXTS,
 } from "../../packages/consts/whitelist";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
+import { BOT_STATUS_PERMISSION_LABELS } from "../../packages/consts/botStatus";
 import { getChatState } from "../../packages/infra/storage/stateStore";
+import { HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS } from "../../packages/consts/performance";
 
 /**
  * 共享常量表的不可变性回归测试。
@@ -92,6 +94,9 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   expect(() => { MUTED_CHAT_PERMISSIONS.can_send_messages = true; }).toBeDefined();
   // @ts-expect-error Readonly<Record<number, string>> 不允许新增/覆盖键
   expect(() => { WEATHER_CODE_DESCRIPTIONS[0] = "篡改"; }).toBeDefined();
+  // @ts-expect-error 权限中文名表被 /bot_status 每次回执读取，改坏它等于对着
+  // 所有群报错一个权限位的含义。
+  expect(() => { BOT_STATUS_PERMISSION_LABELS.canDeleteMessages = "篡改"; }).toBeDefined();
   // @ts-expect-error Readonly<WhitelistPermissions> 的字段只读；这份默认值被
   // parsePermissions 逐条展开复用，写坏它等于改掉此后所有条目的缺省权限。
   expect(() => { DEFAULT_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
@@ -103,6 +108,11 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   expect(() => { SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock = false; }).toBeDefined();
   // @ts-expect-error 非白名单 query 复用这份逐项 false 视图，不允许调用方改写。
   expect(() => { NON_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
+  const compileOnly: () => void = (): void => {
+    // @ts-expect-error 逐场景纳秒软上报阈值经独立进程校准，调用方不允许覆写。
+    HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS["ad-capacity-reject"] = 1;
+  };
+  expect(compileOnly).toBeFunction();
 });
 
 /**
@@ -245,7 +255,14 @@ test("默认群状态单例与它的只读访问器都不许被写", () => {
   // @ts-expect-error Readonly<ChatState> 的字段只读
   expect(() => { DEFAULT_CHAT_STATE.isInitEnabled = true; }).toBeDefined();
   // @ts-expect-error getChatState 返回 Readonly<ChatState>，不得经它改状态
-  expect(() => { getChatState(-1).botIsAdmin = true; }).toBeDefined();
+  expect(() => { getChatState(-1).botPermissions = undefined; }).toBeDefined();
+  const assertBotPermissionsReadonly: () => void = (): void => {
+    const permissions = getChatState(-1).botPermissions;
+    if (permissions === undefined) return;
+    // @ts-expect-error 权限快照构造后逐位只读，只允许主线程整体替换 State 字段
+    permissions.canDeleteMessages = true;
+  };
+  expect(assertBotPermissionsReadonly).toBeFunction();
   // 读取照常。
   expect(DEFAULT_CHAT_STATE.isInitEnabled).toBeUndefined();
   expect(DEFAULT_CHAT_STATE.isFloodControlEnabled).toBeUndefined();

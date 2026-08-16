@@ -9,6 +9,7 @@ import {
 } from "../../consts/weather";
 import { weatherCache, weatherRefreshTimer } from "../../cache/workers/aiChat/weather";
 import { fetchJsonWithTimeout } from "../../libs/httpFetch";
+import { isPlainRecord } from "../../libs/record";
 import type { TokyoWeatherResult } from "../../types/aiChat/weather";
 
 /**
@@ -44,12 +45,12 @@ async function refreshTokyoWeather(): Promise<void> {
   });
   if (data === null) return;
 
-  const record: Record<string, unknown> = typeof data === "object" && data !== null && !Array.isArray(data) ? data as Record<string, unknown> : {};
-  const current: Record<string, unknown> = typeof record.current === "object" && record.current !== null && !Array.isArray(record.current)
-    ? record.current as Record<string, unknown>
+  const record: Record<string, unknown> = isPlainRecord(data) ? data : {};
+  const current: Record<string, unknown> = isPlainRecord(record.current)
+    ? record.current
     : {};
-  const daily: Record<string, unknown> = typeof record.daily === "object" && record.daily !== null && !Array.isArray(record.daily)
-    ? record.daily as Record<string, unknown>
+  const daily: Record<string, unknown> = isPlainRecord(record.daily)
+    ? record.daily
     : {};
   const first = (value: unknown): unknown => Array.isArray(value) ? value[0] : undefined;
   const currentTemperatureC: unknown = current.temperature_2m;

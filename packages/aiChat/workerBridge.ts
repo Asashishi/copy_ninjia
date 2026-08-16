@@ -27,7 +27,9 @@ import {
 } from "../consts/lifecycle";
 import { MOOD_REQUEST_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
-import { getAllChatStates, getChatState } from "../infra/storage/stateStore";
+import type { ChatState } from "../types/chatState";
+import type { ReadonlyLruCache } from "../libs/lruCache";
+import { getChatStateCache, getChatState } from "../infra/storage/stateStore";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
@@ -268,7 +270,7 @@ export function initAiChat(botInfo: AiBotInfo): void {
  *
  * 1. 进程侧前提齐备（isAiChatConfigured）。缺 key 时每个群看起来都是关的，
  *    不拦的话一次临时抽掉密钥的重启就把所有群的记忆一起抹掉。
- * 2. `state.json` 确实认识这个群。「群在状态表里、但开关不是 true」才是管理员
+ * 2. SQLite `chat_states` 确实认识这个群。「群在状态表里、但开关不是 true」才是管理员
  *    关掉了它；「群根本不在状态表里」说明状态自己丢了（LKG 回滚等），这时
  *    没有任何权威依据支持删除——那恰恰是最该保住记忆的时刻。
  *
@@ -276,7 +278,7 @@ export function initAiChat(botInfo: AiBotInfo): void {
  */
 export function hydrateAiMemory(memories: Map<number, string>): void {
   if (!isAiChatConfigured()) return;
-  const knownChats: ReadonlyMap<number, unknown> = getAllChatStates();
+  const knownChats: ReadonlyLruCache<number, ChatState> = getChatStateCache();
   const enabledMemories: Map<number, string> = new Map();
   const dropped: number[] = [];
   const keptWithoutChatState: number[] = [];
@@ -300,7 +302,7 @@ export function hydrateAiMemory(memories: Map<number, string>): void {
   }
   if (keptWithoutChatState.length > 0) {
     logger.error(
-      `Keeping the persisted AI memory of ${keptWithoutChatState.length} chat(s) absent from state.json ` +
+      `Keeping the persisted AI memory of ${keptWithoutChatState.length} chat(s) absent from chat_states ` +
       `(${keptWithoutChatState.join(", ")}); restore or re-enter those chats, or delete the files by hand.`
     );
   }

@@ -24,14 +24,14 @@ export interface QueuedReplyTrigger {
   text: string;
 }
 
-/** 一轮回复交给模型的有序初始上下文区块。直接 @/回复触发时，invokerFocus
- * 作为独立区块插在完整转录与回复任务之间；随机触发和随机媒体评价不携带。
- * 区块保持领域语义，直到各供应商实现包的 replySession.ts 边界，才映射成同一个
- * user 轮次下的多段文本。 */
+/** 一轮回复交给模型的有序初始上下文区块。三段恒定出现——触发类型只改变
+ * replyTask 的内容（直接触发时它开头多一句唤起者声明），不改变区块数量，
+ * 因此本接口没有可选字段，构造点也不会分出第二种 shape。区块保持领域语义，
+ * 直到各供应商实现包的 replySession.ts 边界，才映射成同一个 user 轮次下的
+ * 多段文本。 */
 export interface ReplyPromptSections {
   readonly referenceMemory: string;
   readonly currentConversation: string;
-  readonly invokerFocus?: string;
   readonly replyTask: string;
 }
 

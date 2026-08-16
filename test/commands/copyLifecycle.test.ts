@@ -38,8 +38,7 @@ mock.module("../../packages/infra/telegram", () => ({
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: () => ({ isJATranslationEnabled: jaEnabled }),
   getGlobalCopyState: () => globalCopy,
-  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
-  saveStateInBackground,
+  persistGlobalState: async (context: string): Promise<void> => { saveStateInBackground(context); },
 }));
 mock.module("../../packages/commands/copyShared", () => ({
   claimCopyCooldownOrReject,

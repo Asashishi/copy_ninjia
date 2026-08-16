@@ -63,6 +63,8 @@ mock.module("../../packages/libs/time", () => ({
 }));
 
 const luckChallenge = await import("../../packages/commands/luckChallenge/index");
+const { inlineResultSources } = await import("../../packages/cache/main/inlineResultSources");
+const { inlineResultSourceOf } = await import("../../packages/infra/inlineResultSources");
 const cache = await import("../../packages/cache/main/luckChallenge");
 const {
   DAILY_LUCK_CACHE_MAX,
@@ -117,6 +119,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     loggerErrorMock.mockClear();
     ensureLuckReceiptSecretMock.mockClear();
     ensureLuckReceiptSecretError = null;
+    inlineResultSources.clear();
   });
 
   test("普通内联回答失败只记录错误，不向 update handler 抛出", async () => {
@@ -323,6 +326,23 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: expectedKey });
     expect(expectedKey.startsWith("333:")).toBe(true);
     expect(cache.dailyLuckCache.has(expectedKey)).toBe(true);
+  });
+
+  test("带文本的结果登记所求事项作为源文本；纯运势与概率结果不登记", async () => {
+    // 结果正文是本 bot 的模板加防伪回执，广告检测只判用户写的这一段
+    // （见 packages/infra/inlineResultSources.ts）。
+    const ctx = makeInlineCtx(334, "加我微信 abcd");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    expect(inlineResultSourceOf(bodyTextOf(ctx.results[0])))
+      .toBe("加我微信 abcd");
+
+    // 没写所求事项时两条结果里没有一个字是用户写的，不登记也就不进判定。
+    const plain = makeInlineCtx(335, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(plain as any);
+    expect(plain.results.length).toBe(2);
+    for (const result of plain.results) {
+      expect(inlineResultSourceOf(bodyTextOf(result))).toBeUndefined();
+    }
   });
 
   test("带文本：同款问题按钮只展示前 4 个字加 ...，但仍携带完整文本", async () => {
@@ -627,8 +647,10 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
       // 东京零点翻页：下一次确认路径进入时整体切换日缓存、清空 pending。
       mockTodayOverride = "2030-01-02";
-      const registration: unknown[] = onDiskIORespawnMock.mock.calls[0]!;
-      expect(registration[0]).toBe("daily luck");
+      const registration: unknown[] | undefined = onDiskIORespawnMock.mock.calls
+        .find((call: unknown[]): boolean => call[0] === "daily luck");
+      expect(registration?.[0]).toBe("daily luck");
+      if (registration === undefined) throw new Error("daily luck respawn listener was not registered");
       expect(registration[1]).toBe(400);
       const respawnListener = registration[2] as (transport: {
         post(message: unknown): boolean;

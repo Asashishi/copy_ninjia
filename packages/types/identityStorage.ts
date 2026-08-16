@@ -1,4 +1,5 @@
 import type { PendingBlockedRemoval } from "./blocklist";
+import type { ChatState } from "./chatState";
 
 /** Disk I/O 回执路由层尚未解码的两表 JSON 文本。 */
 export interface IdentityPolicyRawReadResult {
@@ -23,9 +24,22 @@ export interface PendingRemovalWrite {
   readonly data: string | null;
 }
 
-/** 身份数据库启动恢复交给主线程的有界结果。 */
-export interface IdentityDatabaseHydration {
+/** Disk I/O Worker 同一群主键在事务提交前保留的最新最终值。 */
+export interface PendingChatStateWrite {
+  readonly data: string | null;
+  readonly revision: number;
+}
+
+/** 主线程保留到 SQLite ACK 的最小群状态恢复元数据；正文只存在于 LRU。 */
+export interface UnacknowledgedChatStateWrite {
+  readonly revision: number;
+  readonly deleted: boolean;
+}
+
+/** 共享存储数据库启动恢复交给主线程的有界结果。 */
+export interface StorageDatabaseHydration {
   readonly blocklistEntryCount: number;
   readonly whitelistEntryCount: number;
   readonly pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
+  readonly chatStates: Map<number, ChatState>;
 }

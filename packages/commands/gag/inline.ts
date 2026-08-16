@@ -13,6 +13,7 @@ import {
   GAG_INLINE_LABEL_MAX_CHARS,
   GAG_INLINE_QUERY_PREFIX,
 } from "../../consts/gag";
+import { recordInlineResultSources } from "../../infra/inlineResultSources";
 import { getGagThumbnailUrl } from "../../infra/storage/stateStore";
 import {
   deleteMessageWithOutcome,
@@ -22,7 +23,7 @@ import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,
 } from "../../infra/updateContext";
-import { truncateInline } from "../../libs/text";
+import { sanitizeInline, truncateInline } from "../../libs/text";
 import type {
   GagSession,
   ParsedGagInlineQuery,
@@ -388,6 +389,15 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
       }
     }
   }
+  // 发言正文由 renderGagSpeech 变形生成且不可逆，落群消息里没有这个人真正打的
+  // 字；广告检测只能按结果正文取回这里登记的源文本（见
+  // infra/inlineResultSources.ts）。归一方式与 renderGagSpeech 内部一致，登记的
+  // 因此正是被变形的那段文本。
+  recordInlineResultSources(
+    inlineQuery.from.id,
+    sanitizeInline(scopedQuery?.text ?? ""),
+    results
+  );
   try {
     await ctx.answerInlineQuery(
       results,

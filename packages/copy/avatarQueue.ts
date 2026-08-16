@@ -2,7 +2,8 @@ import { avatarDrainWaiters, avatarUpdateRuntime, avatarUpdateState } from "../c
 import type { FlushResult } from "../types/lifecycle";
 import { drainWithWaiter } from "../libs/drainWaiter";
 import { logger } from "../infra/logger";
-import { copyUserProfilePhoto, restoreDefaultProfilePhoto } from "../infra/telegram/avatar";
+import { copyUserProfilePhoto } from "../infra/telegram/avatar/copy";
+import { restoreDefaultProfilePhoto } from "../infra/telegram/avatar/restore";
 import { getBotDefaultAvatarUrl } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import type { AvatarUpdateRequest, AvatarUpdateTask } from "../types/copy/avatar";

@@ -30,8 +30,8 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getActiveProxySendTarget: () => undefined,
   getChatState: () => ({ isAIChatEnabled: aiChatEnabled, quietUntil }),
   getOrCreateChatState: () => ({}),
-  persistAuthoritativeState: async (): Promise<void> => {},
-  saveStateInBackground: () => {},
+  persistChatState: async (): Promise<void> => {},
+  saveChatStateInBackground: () => {},
 }));
 mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
 mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
@@ -190,6 +190,8 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 12,
       imageGenerationRequested: true,
+      imageGenerationReference: undefined,
+      isRandomTrigger: false,
     });
   });
 
@@ -363,6 +365,7 @@ describe("媒体直接叫机器人", () => {
         width: 1280,
         height: 960,
       },
+      isRandomTrigger: false,
     });
   });
 
@@ -406,6 +409,7 @@ describe("媒体直接叫机器人", () => {
         width: 512,
         height: 512,
       },
+      isRandomTrigger: false,
     });
   });
 
@@ -487,6 +491,8 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 16,
       imageGenerationRequested: true,
+      imageGenerationReference: undefined,
+      isRandomTrigger: false,
     });
   });
 
@@ -559,8 +565,9 @@ describe("媒体直接叫机器人", () => {
       chatId: -100800,
       triggerSenderId: 123,
       replyToMessageId: 32,
-      isRandomTrigger: true,
       imageGenerationRequested: false,
+      imageGenerationReference: undefined,
+      isRandomTrigger: true,
     });
   });
 
@@ -724,6 +731,8 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 34,
       imageGenerationRequested: true,
+      imageGenerationReference: undefined,
+      isRandomTrigger: false,
     });
   });
 });

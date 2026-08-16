@@ -1,6 +1,7 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import type { FlushResult } from "../../types/lifecycle";
-import { chatStates, globalAssetState, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
+import { chatStateCache } from "../../cache/main/chatState";
+import { globalAssetState, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
 import {
   BOT_DEFAULT_AVATAR_URL,
   FORTUNE_THUMBNAIL_URL,
@@ -9,16 +10,22 @@ import {
 } from "../../consts/ui/assets";
 import {
   DEFAULT_CHAT_STATE,
-  adoptChatState,
   createChatState,
   isEmptyChatState,
   normalizeChatState,
-  normalizeChatStateEntry,
 } from "../../libs/chatState";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../../types/chatState";
+import type { ReadonlyLruCache } from "../../libs/lruCache";
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
+import { assertChatStateCapacity } from "../chatStateStorage";
 import { StateStore } from "./statePersistence";
+
+export {
+  hydrateChatStateCache,
+  persistChatState,
+  saveChatStateInBackground,
+} from "../chatStateStorage";
 
 export { StateStore } from "./statePersistence";
 export type { StateSaveOptions, StateStoreOptions } from "./statePersistence";
@@ -70,12 +77,12 @@ export function getBotDefaultAvatarUrl(): string {
   return globalAssetState.botDefaultAvatarUrl ?? BOT_DEFAULT_AVATAR_URL;
 }
 
-export function getAllChatStates(): ReadonlyMap<number, ChatState> {
-  return chatStates;
+export function getChatStateCache(): ReadonlyLruCache<number, ChatState> {
+  return chatStateCache;
 }
 
 export function getActiveProxySendTarget(): number | undefined {
-  for (const [chatId, chatState] of chatStates) {
+  for (const [chatId, chatState] of chatStateCache) {
     if (chatState.isProxySendEnabled === true) return chatId;
   }
   return undefined;
@@ -102,13 +109,6 @@ export async function loadState(): Promise<void> {
     globalAssetState.probabilityThumbnailUrl = decoded.global.assets.probabilityThumbnailUrl;
     globalAssetState.gagThumbnailUrl = decoded.global.assets.gagThumbnailUrl;
     globalAssetState.botDefaultAvatarUrl = decoded.global.assets.botDefaultAvatarUrl;
-    for (const [chatIdStr, decodedState] of Object.entries(decoded.chats)) {
-      // 解码结果是稀疏的（JSON.parse 只带文件里真正出现过的键），必须先搬进规范
-      // 形状再进 chatStates，否则磁盘上的形状差异会一路带进每条群消息的读取路径。
-      const chatState: ChatState = adoptChatState(decodedState);
-      normalizeChatState(chatState);
-      if (!isEmptyChatState(chatState)) chatStates.set(Number(chatIdStr), chatState);
-    }
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
     throw error;
@@ -125,7 +125,7 @@ export async function loadState(): Promise<void> {
  *
  * 只补缺的那一项：已经配过的值原样保留，绝不用常量覆盖部署方写下的地址。
  *
- * 落盘走 saveStateInBackground 而不是 persistAuthoritativeState：这是一次为了
+ * 落盘走 saveGlobalStateInBackground 而不是 persistGlobalState：这是一次为了
  * 可读性做的补写，不是谁按下的权威决策，写失败不该拦住启动——失败会照常走
  * StateStore 的重试与 fatal 通道（见 app/lifecycle.ts 的 setStatePersistenceFatalHandler）。
  * @returns 本次补写了几项；四项都配过时为 0，且不产生任何写盘。
@@ -148,40 +148,27 @@ export function seedMissingAssetState(): number {
     globalAssetState.botDefaultAvatarUrl = BOT_DEFAULT_AVATAR_URL;
     seeded++;
   }
-  if (seeded > 0) saveStateInBackground("seed default asset URLs");
+  if (seeded > 0) saveGlobalStateInBackground("seed default asset URLs");
   return seeded;
 }
 
-function currentStateSnapshot(): StateFileSchema {
-  const chats: Record<string, ChatState> = {};
-  for (const [chatId, chatState] of chatStates) {
-    normalizeChatState(chatState);
-    if (isEmptyChatState(chatState)) {
-      chatStates.delete(chatId);
-      continue;
-    }
-    chats[String(chatId)] = chatState;
-  }
-  return { chats, global: { copy: globalCopyState, assets: globalAssetState } };
-}
-
-export function saveState(): Promise<void> {
-  return sharedStateStore().save(currentStateSnapshot());
+function currentGlobalState(): StateFileSchema {
+  return { global: { copy: globalCopyState, assets: globalAssetState } };
 }
 
 /**
- * 权威业务状态的统一 durability barrier。快照在调用同步栈内完成序列化，
+ * 全局状态的 durability barrier。值在调用同步栈内完成序列化，
  * 返回的 Promise 只会在对应 revision（或更新 revision）主、备两份都落盘后完成。
  */
-export async function persistAuthoritativeState(context: string): Promise<void> {
+export async function persistGlobalState(context: string): Promise<void> {
   throwIfUpdateAborted();
   try {
-    await sharedStateStore().save(currentStateSnapshot());
+    await sharedStateStore().save(currentGlobalState());
     throwIfUpdateAborted();
   } catch (error: unknown) {
     throwIfUpdateAborted();
     const reason: Error = error instanceof Error ? error : new Error(String(error));
-    throw new Error(`Failed to persist authoritative state update (${context}): ${reason.message}`, { cause: error });
+    throw new Error(`Failed to persist global state update (${context}): ${reason.message}`, { cause: error });
   }
 }
 
@@ -189,10 +176,10 @@ export function setStatePersistenceFatalHandler(handler: ((error: Error) => void
   sharedStateStore().setFatalHandler(handler);
 }
 
-export function saveStateInBackground(context: string): void {
+export function saveGlobalStateInBackground(context: string): void {
   throwIfUpdateAborted();
-  void sharedStateStore().save(currentStateSnapshot(), { waitForPersistence: false }).catch((error: unknown): void => {
-    logger.error(`Failed to persist background state update (${context}):`, error);
+  void sharedStateStore().save(currentGlobalState(), { waitForPersistence: false }).catch((error: unknown): void => {
+    logger.error(`Failed to persist background global state update (${context}):`, error);
   });
 }
 
@@ -209,28 +196,43 @@ export function flushStateToDisk(
  * 把那个共享单例交出去（TS 的 `readonly` 不参与可赋值性判定，声明成
  * `Readonly<ChatState>` 的常量在这个边界会被静默放宽回可变），一次误写就污染
  * 所有没有状态的群。要修改状态的调用方一律走 `getOrCreateChatState`。
+ *
+ * 取值走 `peek` 而不是 `get`：后者命中时会 `Map.delete` + `Map.set` 把条目挪到
+ * 迭代序最新一端，也就是**全仓最热的那个读会改写缓存**。而这份缓存的容量恰好是
+ * STATE_MANAGED_CHAT_LIMIT，`getOrCreateChatState` 与 `hydrateChatStateCache` 又都在
+ * 入口处拒绝第 26 条（见 infra/chatStateStorage.ts 的 assertChatStateCapacity），
+ * 淘汰分支永远走不到——这次热度刷新一分钱也买不到，却要为它付 `Map` 的删+插：
+ * chat-state-map-read 场景实测 **253.0 → 14.1 ns/op**（Bun 1.3.14，10M 次取值，
+ * 各 7 个样本，两簇完全不重叠）。每条群消息要读 4~6 次（见 libs/chatState.ts 的
+ * 形状契约），外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn。
+ *
+ * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/unblock 的连带
+ * 封禁群清单、各处 managed 群清扫、lockdown 收养与恢复……），用 `get` 会让它变成
+ * 「读历史的函数」，其中两处直接呈现给用户。
  */
 export function getChatState(chatId: number): Readonly<ChatState> {
-  return chatStates.get(chatId) ?? DEFAULT_CHAT_STATE;
+  return chatStateCache.peek(chatId) ?? DEFAULT_CHAT_STATE;
 }
 
 export function getOrCreateChatState(chatId: number): ChatState {
-  let chatState: ChatState | undefined = chatStates.get(chatId);
+  let chatState: ChatState | undefined = chatStateCache.peek(chatId);
   if (!chatState) {
+    assertChatStateCapacity(chatId);
     // 规范形状一次建好；写入方只赋值，不往裸 `{}` 上一个个加字段（见
     // libs/chatState.ts 的 createChatState）。
     chatState = createChatState();
-    chatStates.set(chatId, chatState);
+    chatStateCache.set(chatId, chatState);
   }
   return chatState;
 }
 
 export function clearChatStateField(chatId: number, field: keyof ChatState): boolean {
-  const chatState: ChatState | undefined = chatStates.get(chatId);
+  const chatState: ChatState | undefined = chatStateCache.get(chatId);
   // 判「有没有设过」看取值而不是 `field in chatState`：规范形状下键一直都在。
   if (chatState?.[field] === undefined) return false;
   chatState[field] = undefined;
-  normalizeChatStateEntry(chatStates, chatId);
+  normalizeChatState(chatState);
+  if (isEmptyChatState(chatState)) chatStateCache.delete(chatId);
   return true;
 }
 
@@ -239,13 +241,13 @@ export function clearChatStateField(chatId: number, field: keyof ChatState): boo
  * 无记录时不做任何事；调用方负责在同一 teardown 尾部统一落盘。
  */
 export function pruneDepartedChatState(chatId: number): void {
-  const current: ChatState | undefined = chatStates.get(chatId);
+  const current: ChatState | undefined = chatStateCache.get(chatId);
   if (!current) return;
   if (current.lockdown === undefined) {
-    chatStates.delete(chatId);
+    chatStateCache.delete(chatId);
     return;
   }
   const retained: ChatState = createChatState();
   retained.lockdown = current.lockdown;
-  chatStates.set(chatId, retained);
+  chatStateCache.set(chatId, retained);
 }

@@ -5,14 +5,26 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="06-modification-guide.md">← 前のページ：06 変更レシピ</a> · <b>次のページ：なし →</b>
+  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="06-modification-guide.md">← 前のページ：06 変更レシピ</a> · <a href="08-commands.md">次のページ：08 コマンドリファレンス →</a>
 </p>
 
 ---
 
 ## デプロイ形態
 
-webhook と外部 database service を使わない、単一インスタンスのロングポーリングプロセスです。identity policy はローカル SQLite、その他の永続化は data root 内の file を使います。1 インスタンスはおよそ 15 個以下の active group を推奨します。主な bottleneck は 1 つの Bot API、AI provider の quota、メディア throughput です。ハードウェアの目安はルート README の「クイックスタート」を参照してください。
+webhook と外部 database service を使わない、単一インスタンスのロングポーリングプロセスです。identity policy はローカル SQLite、その他の永続化は data root 内の file を使います。
+
+### ハードウェアの目安
+
+<table width="100%">
+<tr><th width="33%" align="left">規模</th><th width="26%" align="left">推奨スペック</th><th width="41%" align="left">備考</th></tr>
+<tr><td>入門（低アクティブ、テキスト中心）</td><td>2 vCPU / 2 GB RAM / ローカル SSD</td><td>動作可能ですがメディアピーク時は CPU 競合が発生します。2 GB のスワップ領域を推奨します</td></tr>
+<tr><td>軽量本番（テキスト中心）</td><td>4 vCPU / 2 GB RAM / ローカル SSD</td><td>2 GB はメディア処理ピーク時のメモリ確保に適しません。2 GB のスワップ領域を推奨します</td></tr>
+<tr><td>推奨本番（1 グループあたり 1 日平均 1,000〜3,000 メッセージのアクティブグループ約 15 個）</td><td>4 vCPU / 4 GB RAM / ローカル SSD</td><td>2 GB のスワップ領域を推奨します</td></tr>
+<tr><td>全群 AI 有効かつ画像・スタンプ多数</td><td>4 vCPU / 8 GB RAM</td><td>メディア処理と Base64 符号化に十分な余裕を確保</td></tr>
+</table>
+
+1 インスタンスは上記規模の active group をおよそ 15 個以下に抑えることを推奨します。主な制約は 1 つの Bot API、AI provider の quota、実際のメッセージ／メディア速度であり、グループの総メンバー数ではありません。
 
 ### systemd の例
 
@@ -47,21 +59,23 @@ program は root・`logs/`・`memory/`・初期 `database/` を `0750` で作り
 `COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。空の場合はプロジェクトルートです。
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：グループスイッチ（参加認証と対レイド private mode をまとめて制御する
-    `isAntiRaidEnabled` を含む。既定で無効）、copy、ロックダウンミラーなどの正式な状態に
-    加え、`global.assets` の素材直リンク 3 本（運勢サムネイル 2 枚と Bot 既定
-    アバター）。model 選択は runtime state ではなくなりました。
+  - **内容**：グローバルな状態だけ——copy の対象と、`global.assets` の素材直リンク 4 本
+    （運勢サムネイル 2 枚、gag 発言 inline 結果のサムネイル、Bot 既定アバター）。
+    グループ単位の状態——グループスイッチ
+    （参加認証と対レイド private mode をまとめて制御する `isAntiRaidEnabled` を含む。
+    既定で無効）、ロックダウン記録、権限スナップショット——は `database/storage.sqlite` の
+    `chat_states` に移りました。model 選択は runtime state ではなくなりました。
   - **バックアップ**：主・副を同時にバックアップ。
   - **素材直リンクの変更は停止中のみ**：プロセスは正式な状態をメモリに保持しファイル全体を
     上書きするため、稼働中の編集は次回の保存で消えます。サービス停止 → `global.assets` を編集
     → 起動の順です。未設定項目は起動が完全に成功した後に現在有効な値で補完され、壊れた値
     （scheme 欠落や不一致）は decode 時にファイル全体を拒否してフィールドパスを示します。
-    画像バイトを直接返せば画像ホストは問いませんが、サムネイル 2 枚は `https` 必須で、
+    画像バイトを直接返せば画像ホストは問いませんが、サムネイル 3 枚は `https` 必須で、
     明文 `http` を許すのは `botDefaultAvatarUrl` だけです。またその取得は
     **リダイレクトを追います**——直リンクがまず実ストレージのドメインへ 302 する形
     （内蔵既定の Drive リンクもこれです）はそのまま使え、最終ホップを自分で解決する
     必要はありません。
-  - **アップグレード前にこの 3 項目を確認**：サムネイル 2 枚は現在 `https` のみを受け付ける
+  - **アップグレード前にこの 4 項目を確認**：サムネイル 3 枚は現在 `https` のみを受け付ける
     ため、古いバージョンで `http://` のままの項目があると decode 時に起動を拒否し、
     フィールドパスを示します。
 - **`memory/ai/<chatId>.json`**
@@ -96,9 +110,10 @@ program は root・`logs/`・`memory/`・初期 `database/` を `0750` で作り
     深夜をまたぐ処理中 query のため東京暦日 3 日分を保持。完全な再配信は再追記せず、
     履歴は user ごとの最新値へ compact し、1 chat/day は最新 250,000 人まで保持。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
-  - **内容**：schema v3 identity database。`whitelist_entries` と `blocklist_entries` は
+  - **内容**：schema v4 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
     allowlist / blocklist の正式表、`pending_blocked_removals` は未完了の chat 別 BAN
-    outbox、`storage_metadata` は唯一の schema version を保持します。Drizzle migration
+    outbox、`chat_states` はグループ単位状態の正式表（最大 25 行。26 行目があれば起動を
+    拒否）、`storage_metadata` は唯一の schema version を保持します。Drizzle migration
     journal は対応する lineage と厳密に一致しなければなりません。
   - **バックアップ**：必須です。blocklist を失えば恒久 BAN がすべて解除され、outbox を
     失えば未完了処置が抜けます。Bot 停止後、主 DB とその時点で存在する WAL/SHM を同じ
@@ -157,15 +172,16 @@ bun run migrate:identity-storage --apply
 
 新規 deployment も同じ明示境界を通ります。[01 セットアップ](01-getting-started.md#identity-database-の初期化) に従って一時的な空の旧 input 2 件を作り、`--apply` を実行します。起動は database 欠落を「空 policy」と推測せず、migration も既存 target を上書きしません。
 
-### SQLite schema v2 → v3
+### SQLite schema v3 → v4（chat state の database 移行）
 
-すでに JSONB schema v2 を使う deployment は、Bot 停止中に次を実行します。
+chat state を `state.json` から SQLite `chat_states` へ移した release より前の deployment——database が schema v3 のままで、`state.json` にまだ `chats` がある場合——は、Bot 停止中に次を実行します。
 
 ```bash
-bun run migrate:whitelist-permission -- --apply
+bun run migrate:chat-state -- --check
+bun run migrate:chat-state -- --apply
 ```
 
-script は対応する v2 migration lineage だけを受け入れます。最初に SQLite serialization で system temporary directory へ `0600` の外部 backup を作り、hash と integrity を検証してから allowlist permission を schema v3 へ上げます。未知 lineage、不正 row、allowlist/blocklist の交差、transaction failure は元のまま拒否します。v3 に対して実行した場合は strict validation だけを行い、migration 不要と報告します。Release の Compatibility / Migration Notes には実行した migration、backup location、restore 手順、permission 要件を記載します。
+どちらのモードもまず `bot.lock` を取得し（したがってサービスは停止済みである必要があります）、`state.json` の主・副を厳密に読み、database 全体の integrity check を行い、対応する v3 または v4 の migration lineage だけを厳密に受け入れます。未知 lineage、不正 row、allowlist/blocklist の交差は元のまま拒否します。`--check` は移行待ちの chat 行数を報告するだけで、deployment data を一切変更しません。`--apply` は各 chat の Bot 権限 snapshot を Telegram から補完し（旧形式は `botIsAdmin` boolean しか保持していません）、state の主・副と SQLite serialization snapshot の外部 backup を owner/mode/SHA-256 付きで残してから、schema migration、chat 行の書き込み、業務テーブルが変更されていないことの検証を行い、最後に `state.json.bak`、`state.json` の順で global ブロックのみの新形式へ atomic publish します。いずれかの段階で失敗した場合は外部 backup を保持し、その path を表示します。移行済みの database に対して実行した場合は strict validation だけを行い、migration 不要と報告します。Release の Compatibility / Migration Notes には実行した migration、backup location、restore 手順、permission 要件を記載します。
 
 ## 起動失敗の調査
 

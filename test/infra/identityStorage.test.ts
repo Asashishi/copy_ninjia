@@ -43,7 +43,7 @@ const flushDiskIODomainOutcome = mock(
       writes.push({ table: message.table, id: message.id, revision: message.revision });
     }
     for (const listener of persistedListeners) {
-      listener({ type: "identityStoragePersisted", writes });
+      listener({ type: "identityStoragePersisted", writes, chatStateWrites: [] });
     }
     return { result: "flushed" };
   }
@@ -145,6 +145,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: writeRevision }],
+        chatStateWrites: [],
       });
     }
     expect(unacknowledgedBlocklistWrites.has(7)).toBeFalse();
@@ -170,6 +171,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: firstRevision }],
+        chatStateWrites: [],
       });
     }
     expect(unacknowledgedBlocklistWrites.get(7)?.revision).toBe(secondRevision);
@@ -177,6 +179,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: secondRevision }],
+        chatStateWrites: [],
       });
     }
     expect(unacknowledgedBlocklistWrites.has(7)).toBeFalse();
@@ -296,7 +299,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     expect(first.revision).toBeLessThan(second.revision);
   });
 
-  test("黑白两份正/负 LRU 各自严格限制为 8196 项", () => {
+  test("黑白两份正/负 LRU 各自严格限制为 IDENTITY_READ_CACHE_MAX_ENTRIES 项", () => {
     for (let id: number = 1; id <= IDENTITY_READ_CACHE_MAX_ENTRIES + 1; id++) {
       blocklistEntryCache.set(id, null);
       whitelistEntryCache.set(id, null);

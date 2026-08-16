@@ -5,7 +5,7 @@ import type {
   CopyCooldownClaim,
   GrantedCopyCooldownClaim,
 } from "../types/copy/cooldown";
-import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
+import { getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
@@ -68,7 +68,7 @@ export async function claimCopyCooldownOrReject(
   const previousLastCopyTime: number | undefined = globalCopyState.lastCopyTime;
   const claimedAt: number = Date.now();
   globalCopyState.lastCopyTime = claimedAt;
-  await persistAuthoritativeState("copy cooldown claimed");
+  await persistGlobalState("copy cooldown claimed");
   return { rejected: false, previousLastCopyTime, claimedAt };
 }
 
@@ -91,7 +91,7 @@ export async function releaseCopyCooldownClaim(
   const globalCopyState: GlobalCopyState = getGlobalCopyState();
   if (globalCopyState.lastCopyTime === claim.claimedAt) {
     globalCopyState.lastCopyTime = claim.previousLastCopyTime;
-    await persistAuthoritativeState("copy cooldown released");
+    await persistGlobalState("copy cooldown released");
   }
 }
 

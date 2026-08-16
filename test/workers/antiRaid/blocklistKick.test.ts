@@ -26,11 +26,11 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   // 入群守卫开着：本文件考察的是守卫开启时黑名单如何取代验证投递（关着时
   // 的行为由 test/antiRaid/joinGuardSwitch.test.ts 覆盖）。
   getChatState: () => ({ isFloodControlEnabled: true, isAntiRaidEnabled: true }),
-  getAllChatStates: () => new Map(),
+  getChatStateCache: () => new Map(),
   getOrCreateChatState: () => ({}),
-  saveState: async (): Promise<void> => {},
+  persistChatState: async (): Promise<void> => {},
   flushStateToDisk: async (): Promise<string> => "flushed",
-  saveStateInBackground: (): void => {},
+  saveChatStateInBackground: (): void => {},
 }));
 mock.module("../../../packages/infra/telegram/actions", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,

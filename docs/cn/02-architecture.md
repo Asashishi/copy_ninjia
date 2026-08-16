@@ -31,7 +31,7 @@ flowchart TD
 
 分工原则是**状态独占**：每份运行时状态只有一个 owner，跨线程只传消息不共享内存。
 
-- **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及 `cache/main/storage.ts` 中的 `state.json` 权威内存镜像（群开关、copy 状态、锁定镜像等）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
+- **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及两份权威内存镜像：`cache/main/storage.ts` 的 `state.json` 全局镜像（copy 状态与素材直链），和 `cache/main/chatState.ts` 的 `chat_states` 群状态热读副本（群开关、锁定记录、权限快照、群名与中转标记，容量恰为 25）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
 - **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 SQLite `pending_blocked_removals` 表；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
 - **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/` 六个领域目录的串行读写；`state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
@@ -106,11 +106,11 @@ flowchart TD
 
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
-3. **恢复 state 持久化边界与全局安全配置**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 等全局启动输入非法时会在联网和 Worker 创建前拒绝启动。`config/` 下其余四份可选业务 JSON **不在这里预热**——它们各属一个按群 opt-in 的功能，校验挪到了对应的开关命令上（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts)）。恢复完 `state.json` 后再核对一次：还有群开着的可选功能，其凭据与配置必须齐备，否则带着群 id 拒绝启动（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。
-4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，并严格 hydrate `database/storage.sqlite` 的白名单、黑名单计数和未完成处置；主线程不复制两张名单整表，只建立有界 LRU。任何领域恢复失败都拒绝以部分状态启动。
-4. 注册 handler、设置命令菜单并执行 `bot.init()`。
-5. 初始化 **AI Worker**，只 hydrate `state.json` 中明确启用 AI 的群；随后恢复运势与待验证镜像、初始化 **Anti-Raid Worker**，最后启动 acknowledgement-safe runner。
-6. 一切就绪后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
+3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，出口在 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。
+4. 初始化 **Disk I/O Worker**，恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，并严格 hydrate `database/storage.sqlite` 的 `chat_states`、白名单/黑名单计数和未完成处置；主线程不复制两张名单整表，只建立有界 LRU。任何领域恢复失败都拒绝以部分状态启动。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
+5. 注册 handler、设置命令菜单并执行 `bot.init()`。
+6. 初始化 **AI Worker**（AI 配置不可用时这一步只记一行日志并整体跳过），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker** 与黑名单补扫调度，并对已托管的群补扫一轮黑名单。
+7. 把 `state.global.assets` 的缺项补成内置缺省值（后台落盘，不阻塞启动），启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
 
 失败与退出统一由 `ApplicationLifecycle` 收口：只有已取得的资源才会释放或 flush。
 

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ConfigReadiness } from "../../packages/types/config";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
-const persistAuthoritativeState = mock(async (..._args: unknown[]): Promise<void> => {});
+const persistChatState = mock(async (..._args: unknown[]): Promise<void> => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
@@ -49,7 +49,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     return state;
   },
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
-  persistAuthoritativeState,
+  persistChatState,
 }));
 
 const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
@@ -69,7 +69,7 @@ function context(argument: string): never {
 beforeEach(() => {
   states.clear();
   sendMessage.mockClear();
-  persistAuthoritativeState.mockClear();
+  persistChatState.mockClear();
   loggerError.mockClear();
   clearAdDetection.mockClear();
   handleCopyCommand.mockClear();
@@ -86,7 +86,7 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     await handleAiChatCommand(context("enable"));
 
     expect(states.size).toBe(0);
-    expect(persistAuthoritativeState).not.toHaveBeenCalled();
+    expect(persistChatState).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("config/mood.json"),
@@ -102,7 +102,7 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     await handleAiChatCommand(context("disable"));
 
     expect(states.get(-1001)?.isAIChatEnabled).toBe(false);
-    expect(persistAuthoritativeState).toHaveBeenCalledWith("ai_chat toggled");
+    expect(persistChatState).toHaveBeenCalledWith(-1001, "ai_chat toggled");
   });
 
   test("/ad_detect enable 点名示例清单", async () => {
@@ -122,7 +122,7 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     await handleJaCopyCommand(context("enable"));
 
     expect(states.size).toBe(0);
-    expect(persistAuthoritativeState).not.toHaveBeenCalled();
+    expect(persistChatState).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("g-auth.json"),

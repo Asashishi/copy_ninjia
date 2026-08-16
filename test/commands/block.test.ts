@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
+import type { BotChatPermissions } from "../../packages/types/telegram";
 import { BLOCK_COMMAND_CONCURRENCY } from "../../packages/consts/commands";
+import { botPermissions } from "../helpers/botPermissions";
 import {
   blockedIdentityTestView as blockedUserIds,
   seedMissingIdentity,
@@ -17,7 +19,7 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => {
   if (target !== undefined) seedMissingIdentity(target.id);
   return target;
 });
-const chatStates = new Map<number, { botIsAdmin?: boolean }>();
+const chatStates = new Map<number, { botPermissions?: BotChatPermissions }>();
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
@@ -44,7 +46,7 @@ mock.module("../../packages/infra/botAdmin", () => ({
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
-mock.module("../../packages/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
+mock.module("../../packages/infra/storage/stateStore", () => ({ getChatStateCache: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 const flushDiskIO = mock(async (): Promise<string> => "flushed");
 mock.module("../../packages/infra/diskIO", () => ({
@@ -136,7 +138,7 @@ describe("/block 跨群封禁与黑名单", () => {
     // resolveCommandTarget 对只给 id 的参数返回只带 id 的最小身份（缓存里没有
     // 这个人）。战报里必须能看出打的是哪个 id，否则打错一位数字没人看得出来。
     target = { id: 4242 };
-    chatStates.set(-2002, { botIsAdmin: true });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
 
     await handleBlockCommand(context());
 
@@ -162,8 +164,8 @@ describe("/block 跨群封禁与黑名单", () => {
   });
 
   test("本群无权限时仍处理其它管理员群，并区分踢出、确认封禁和失败", async () => {
-    chatStates.set(-2002, { botIsAdmin: true });
-    chatStates.set(-3003, { botIsAdmin: true });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
+    chatStates.set(-3003, { botPermissions: botPermissions() });
     isChatMember.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     banChatMember.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
@@ -180,7 +182,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
   test("单群意外 rejection 不吞掉其它群结果，并把失败群交回补扫", async () => {
     resolveBotAdminStatus.mockResolvedValueOnce(true);
-    chatStates.set(-2002, { botIsAdmin: true });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
     blocklistSweepState.set(-1001, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0, permissionBlocked: false });
     banChatMember
       .mockRejectedValueOnce(new Error("unexpected adapter rejection"))
@@ -204,7 +206,7 @@ describe("/block 跨群封禁与黑名单", () => {
   test("跨群封禁只启动固定小并发，完成项释放槽位后才取下一群", async () => {
     resolveBotAdminStatus.mockResolvedValueOnce(true);
     for (let index: number = 0; index < BLOCK_COMMAND_CONCURRENCY + 3; index++) {
-      chatStates.set(-2000 - index, { botIsAdmin: true });
+      chatStates.set(-2000 - index, { botPermissions: botPermissions() });
     }
     let active: number = 0;
     let peak: number = 0;
@@ -297,7 +299,7 @@ describe("/block 跨群封禁与黑名单", () => {
   test("当前群组皮套仍可被解析，但 /block 不会把整个群误当作匿名管理员封禁", async () => {
     target = { id: -1001, title: "Test Group", isChannel: true };
     resolveBotAdminStatus.mockResolvedValueOnce(true);
-    chatStates.set(-2002, { botIsAdmin: true });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
 
     await handleBlockCommand(context());
 
@@ -407,7 +409,7 @@ describe("/block 的黑名单落盘", () => {
   test("封禁失败的群被标回「欠一次」补扫", async () => {
     // sweptAt 是永久闩锁，唯一的复位路径本来只有停管：这个群若早就扫过，
     // 被拉黑的人会一直待到进程结束——入群秒踢只对之后的入群更新生效。
-    chatStates.set(-2002, { botIsAdmin: true });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
     blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0, permissionBlocked: false });
     banChatMember.mockResolvedValue(false);
 
@@ -417,7 +419,7 @@ describe("/block 的黑名单落盘", () => {
   });
 
   test("封禁成功的群不必重扫", async () => {
-    chatStates.set(-2002, { botIsAdmin: true });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
     blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0, permissionBlocked: false });
 
     await handleBlockCommand(context());

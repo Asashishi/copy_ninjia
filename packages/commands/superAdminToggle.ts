@@ -3,7 +3,7 @@ import type { User } from "@grammyjs/types";
 import { logger } from "../infra/logger";
 import {
   getOrCreateChatState,
-  persistAuthoritativeState,
+  persistChatState,
 } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
@@ -73,7 +73,7 @@ export interface ChatToggleCommandParams {
   readonly texts: ToggleCommandTexts;
   /** 授权用的白名单权限键；超级管理员恒持有全部键。 */
   readonly permission: WhitelistPermissionKey;
-  /** 落盘原因串，进 persistAuthoritativeState。 */
+  /** 落盘原因串，进 persistChatState。 */
   readonly persistReason: string;
   /** 运行时清理对象的英文名，只进错误日志，例如 `queued ad detection`。 */
   readonly runtimeLabel: string;
@@ -135,7 +135,7 @@ export async function runChatToggleCommand({
   write(state, isEnabled);
   // 落盘失败原样上抛：那是 fatal durability failure，这条 update 不能被确认
   // （见 docs/cn/04-invariants.md）。
-  await persistAuthoritativeState(persistReason);
+  await persistChatState(chatId, persistReason);
 
   let teardownFailed: boolean = false;
   if (!isEnabled && teardown !== undefined) {

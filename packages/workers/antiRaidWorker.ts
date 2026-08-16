@@ -62,6 +62,7 @@ import {
 import { sweepRecentComments } from "./antiRaid/recentComments";
 import { antiRaidCacheSweepTimer } from "../cache/workers/antiRaid/worker";
 import {
+  antiRaidDispatchSignal,
   drainAntiRaidTasks,
   quiesceAntiRaidDispatch,
   resetAntiRaidTaskTracker,
@@ -72,6 +73,7 @@ import {
   initializeWorkerDuplex,
   isWorkerDuplexResponse,
   resetWorkerDuplex,
+  setWorkerDuplexRequestSignal,
 } from "../libs/workerDuplex";
 import type { WorkerDuplexOutbound } from "../types/workerDuplex";
 import { installTelegramApi } from "../infra/telegram/client";
@@ -104,7 +106,7 @@ import { acceptForwardedLogBatch } from "../infra/logger";
  * 不使用本地 Telegram 网络客户端。error 日志仍经 logger.ts 回传主线程。
  *
  * lockdown/unlock 与 pending verification 变化都会回报主线程；前者写入
- * state.json，后者由主线程转投 Disk I/O Worker 的当日增量 JSON。两者都可
+ * SQLite `chat_states`，后者由主线程转投 Disk I/O Worker 的当日增量 JSON。两者都可
  * 在 Worker 或整个进程重建后 adopt。
  */
 
@@ -207,7 +209,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "barrier":
       self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });
       break;
-    case "drain":
+    case "drain": {
       // drain 只发生在停机路径上：先停掉广告判定的节拍，别在退出前又开一批新的
       // LLM 请求、又去删一轮消息。在途的那次不在等待集合里，不会拖住 drain。
       quiesceAdDetectQueue();
@@ -217,13 +219,24 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       quiesceAntiRaidDispatch();
       // 所有 deleteMessageAfter 路径由同一 owner 认领；刷屏公告会按群合批。
       // 返回的请求接进 task tracker，避免 Worker 终止时遗漏已启动的删除。
-      for (const task of flushPendingMessageDeletions()) {
+      // 这些请求属于 drain 自己，不能继承刚 abort 的业务信号。调用同步栈返回前
+      // 恢复该信号，让可能迟到的验证 timer 继续 fail-fast；每个双工请求已经捕获
+      // 创建时的 null，不受恢复影响。
+      setWorkerDuplexRequestSignal(null);
+      let deletionTasks: readonly Promise<void>[];
+      try {
+        deletionTasks = flushPendingMessageDeletions();
+      } finally {
+        setWorkerDuplexRequestSignal(antiRaidDispatchSignal());
+      }
+      for (const task of deletionTasks) {
         void trackAntiRaidTask({ task });
       }
       void drainAntiRaidTasks().then((): void => {
         self.postMessage({ type: "drainComplete", drainId: msg.drainId });
       });
       break;
+    }
   }
 }
 
@@ -248,6 +261,7 @@ export function startAntiRaidWorker(): void {
     if (transfer === undefined) self.postMessage(message);
     else self.postMessage(message, transfer);
   });
+  setWorkerDuplexRequestSignal(antiRaidDispatchSignal());
   startAdDetectQueue((event: AdDetectedEvent): void => self.postMessage(event));
   self.onmessage = (event: MessageEvent<unknown>): void => {
     if (acceptForwardedLogBatch(event.data)) return;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
 import { buildFloodCandidate } from "../../packages/antiRaid/floodControl";
-import { chatStates } from "../../packages/cache/main/storage";
+import { chatStateCache } from "../../packages/cache/main/chatState";
 import { whitelistEntryCache } from "../../packages/cache/main/identityStorage";
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
@@ -20,22 +20,22 @@ function groupMessage(overrides: Partial<Message> = {}): Message {
 }
 
 beforeEach(() => {
-  chatStates.clear();
-  chatStates.set(-1001, { isFloodControlEnabled: true });
+  chatStateCache.clear();
+  chatStateCache.set(-1001, { isFloodControlEnabled: true });
   whitelistEntryCache.clear();
 });
 
 afterEach(() => {
-  chatStates.clear();
+  chatStateCache.clear();
   whitelistEntryCache.clear();
 });
 
 describe("刷屏计数的主线程投递门禁", () => {
   test("按群缺省关闭，只有显式开启后才投递", () => {
-    chatStates.clear();
+    chatStateCache.clear();
     expect(buildFloodCandidate(groupMessage(), BOT_ID)).toBeUndefined();
 
-    chatStates.set(-1001, { isFloodControlEnabled: true });
+    chatStateCache.set(-1001, { isFloodControlEnabled: true });
     expect(buildFloodCandidate(groupMessage(), BOT_ID)?.type).toBe("floodCandidate");
   });
 

@@ -11,6 +11,7 @@ import {
 } from "../../packages/consts/gag";
 import { GAG_THUMBNAIL_URL } from "../../packages/consts/ui/assets";
 import type { GagSession } from "../../packages/types/gag";
+import { inlineResultSourceOf } from "../../packages/infra/inlineResultSources";
 import { settleTestBatch } from "../libs/helpers";
 import {
   addSession,
@@ -555,6 +556,53 @@ describe("gag 消息与 inline 入口", () => {
     } as never);
     expect(copiedGagPrefixHandled).toBeTrue();
     expect(answerInlineQuery.mock.calls[0]?.[0]).toHaveLength(0);
+  });
+
+  test("每次应答登记本次全部结果的源文本，供广告检测按落群正文取回", async () => {
+    // 送检的是这份源文本而不是变形正文；对应关系只有应答那一刻能建立。
+    const userSession: GagSession = createSession();
+    const otherChatSession: GagSession = createSession({ chatId: -1002 });
+    addSession(userSession);
+    addSession(otherChatSession);
+    const renderQuery = async (
+      text: string,
+      id: string
+    ): Promise<string[]> => {
+      answerInlineQuery.mockClear();
+      await gag.handleGagInlineQuery({
+        inlineQuery: {
+          id,
+          from: { id: 7, is_bot: false, first_name: "Alice" },
+          query: `gag:${userSession.targetId} ${text}`,
+          offset: "",
+        },
+        answerInlineQuery,
+      } as never);
+      const [results]: [readonly InlineResult[], InlineAnswerOptions, unknown?] =
+        answerInlineQuery.mock.calls[0]!;
+      return results.map((result: InlineResult): string =>
+        (result.input_message_content as { message_text: string }).message_text
+      );
+    };
+
+    // 同一个人在两个群被 gag：一次查询给出两条结果，选中任意一条都要取得回。
+    const rendered: string[] = await renderQuery(" 小号  也有啊 ", "inline-source-1");
+    expect(rendered).toHaveLength(2);
+    // 登记的是归一后的源文本，与 renderGagSpeech 内部变形前用的是同一段文本。
+    for (const messageText of rendered) {
+      expect(inlineResultSourceOf(messageText)).toBe("小号 也有啊");
+    }
+
+    // 每敲一个键就来一次应答并整体覆盖：上一次按键那些结果再也取不回源文本，
+    // 只会被当成拿不到，而不会拿这次的源文本去判上一次那条正文。
+    const latest: string[] = await renderQuery("小号也有啊喵", "inline-source-2");
+    expect(inlineResultSourceOf(latest[0]!)).toBe("小号也有啊喵");
+    expect(inlineResultSourceOf(rendered[0]!)).toBeUndefined();
+
+    // 源文本为空的应答不登记：那种结果只有前缀和填充点，没有一个字是用户写的。
+    const emptyRendered: string[] = await renderQuery("", "inline-source-empty");
+    expect(inlineResultSourceOf(emptyRendered[0]!)).toBeUndefined();
+    expect(inlineResultSourceOf(latest[0]!)).toBe("小号也有啊喵");
   });
 
   test("频道查询只携带目标 ID，结果用主页和超级群 ID 双重绑定落点", async () => {

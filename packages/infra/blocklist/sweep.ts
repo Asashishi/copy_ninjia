@@ -17,7 +17,7 @@ import {
   BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS,
 } from "../../consts/antiRaid/blocklist";
 import { logger } from "../logger";
-import { getAllChatStates } from "../storage/stateStore";
+import { getChatStateCache } from "../storage/stateStore";
 import {
   hasAnyBlockedIdentity,
   listAllBlockedIdentityIds,
@@ -122,7 +122,7 @@ export function noteBanPermissionObserved(chatId: number, canRestrict: boolean):
   armBlocklistSweepScheduler();
   // frozen 秒踢/广告批次各自还带着独立 removalId，新的全名单补扫不会替它们
   // 回执销账。权限边沿到达时先整批重新交给 Worker，让各批按自己的 complete
-  // 回执收敛；随后 recordBotAdminStatus 仍会调用 sweepBlockedMembers，覆盖
+  // 回执收敛；随后 recordBotChatPermissions 仍会调用 sweepBlockedMembers，覆盖
   // `/block` 直接封禁失败但从未建立 frozen pending 的成员。
   replayPendingBlockedRemovalsForChat(chatId);
 }
@@ -309,7 +309,7 @@ export async function sweepBlockedMembers(
   // 名单读取必须留在 try 里：它已经不是同步本地读，而是跨线程 request/reply，
   // 超时或 Worker 拒收都会 reject（infra/diskIO/host.ts）。落在 try 之外时那次
   // reject 直接跳过 finally，`armBlocklistSweepScheduler()` 本次不执行——典型
-  // 路径是 recordBotAdminStatus 在权限恢复时调用本函数而 Disk I/O 正在 recycle，
+  // 路径是 recordBotChatPermissions 在权限恢复时调用本函数而 Disk I/O 正在 recycle，
   // 于是周期性补扫在本进程生命周期内不再被武装。
   try {
     const blockedIds: readonly number[] = hasAnyBlockedIdentity()
@@ -333,9 +333,12 @@ export async function sweepBlockedMembers(
  * 还多一行错误日志。资格判定与 prepareBlocklistSweep 保持同一口径。
  */
 function deferManagedBlocklistSweeps(now: number): void {
-  for (const [chatId, state] of getAllChatStates()) {
+  for (const [chatId, state] of getChatStateCache()) {
     const chatState: ChatState = state;
-    if (chatState.isInitEnabled !== true || chatState.botIsAdmin !== true) continue;
+    if (
+      chatState.isInitEnabled !== true ||
+      chatState.botPermissions?.isAdministrator !== true
+    ) continue;
     const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
     if (progress !== undefined && (
       progress.sweptAt !== null ||
@@ -368,11 +371,11 @@ export async function sweepManagedBlocklistChats(
     }
     if (blockedIds.length === 0) return;
     const sweeps: PreparedBlocklistSweep[] = [];
-    for (const [chatId, state] of getAllChatStates()) {
+    for (const [chatId, state] of getChatStateCache()) {
       const chatState: ChatState = state;
       if (
         chatState.isInitEnabled !== true ||
-        chatState.botIsAdmin !== true
+        chatState.botPermissions?.isAdministrator !== true
       ) {
         continue;
       }

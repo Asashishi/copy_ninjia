@@ -18,6 +18,7 @@
 | `bun run lint` / `lint:fix` | ESLint 检查 / 自动修复 |
 | `bun run typecheck` | `tsc --noEmit`，全严格模式 |
 | `bun run test` | 全量测试（强制文件隔离） |
+| `bun run test:random` | 固定种子的乱序全量测试，用于暴露测试间残留 |
 | `bun run test:coverage` | 测试 + 全源码覆盖率 |
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
 | `bun run check` | conventions + lint + typecheck + coverage + 热路径门禁，**提交前必跑** |
@@ -25,6 +26,9 @@
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
 | `bun run perf:hot-path-gate` | 全部热路径场景的内存/GC/JIT 门禁，已并入 `check` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照的独立进程对照基准 |
+| `bun run perf:identity-database` | 身份数据库四条真实路径的独立进程基准 |
+| `bun run migrate:identity-storage` | 旧 JSON 名单 → `database/storage.sqlite` 的停机冷迁移 |
+| `bun run migrate:chat-state` | `state.json` 群状态 → SQLite `chat_states`（schema v3 → v4）的停机冷迁移 |
 | `bun run release:check` | frozen lockfile 安装 + check + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
 
@@ -37,7 +41,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2269 tests / 235 files / 32867 次 `expect()`**；全源码**函数覆盖率 95.66% / 行覆盖率 96.70%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2361 tests / 246 files / 94774 次 `expect()`**；全源码**函数覆盖率 94.86% / 行覆盖率 95.59%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -76,7 +80,7 @@
 
 ## 身份数据库性能基准
 
-`bun run perf:identity-database` 在临时数据根和临时 SQLite 中测四条真实路径：8 个身份一批的双表冷读、128 行显式事务写入、主线程 8,196 项 LRU 热读，以及经过 Worker、JSONB transaction 与精确 ACK 的写透。每项先预热，再跑 5 个独立 Bun 进程；报告固定 Bun version/revision、吞吐、批延迟、样本范围/变异系数，以及强制 GC 前后的 JSC heap、extra memory、object 与 GC 耗时。`--single-process` 让每项在同一测量进程内连续复测 3 次，用于排查跨轮 retained growth，不替代独立进程性能对照。`Bun.gc(true)` 只在计时边界外诊断，生产代码不得调用。改动身份 LRU、冷预取、编码、事务批量、ACK 或 Worker 重放时必须运行，并把同一 Bun build 的差异与样本噪声、heap/GC 一起判断。
+`bun run perf:identity-database` 在临时数据根和临时 SQLite 中测四条真实路径：8 个身份一批的双表冷读、128 行显式事务写入、主线程 8,192 项 LRU 热读，以及经过 Worker、JSONB transaction 与精确 ACK 的写透。每项先预热，再跑 5 个独立 Bun 进程；报告固定 Bun version/revision、吞吐、批延迟、样本范围/变异系数，以及强制 GC 前后的 JSC heap、extra memory、object 与 GC 耗时。`--single-process` 让每项在同一测量进程内连续复测 3 次，用于排查跨轮 retained growth，不替代独立进程性能对照。`Bun.gc(true)` 只在计时边界外诊断，生产代码不得调用。改动身份 LRU、冷预取、编码、事务批量、ACK 或 Worker 重放时必须运行，并把同一 Bun build 的差异与样本噪声、heap/GC 一起判断。
 
 ## 提交流程
 
@@ -105,7 +109,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 805 处 / 78 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
+- **中文字符串统计**（当前约 846 处 / 79 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布

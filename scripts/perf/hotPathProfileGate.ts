@@ -3,7 +3,8 @@
  *
  * 每个场景分别运行 sampling-profile 与 retained 子进程：前者只判断正式循环的
  * GC/JIT，后者在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC
- * 后留存。脚本串行运行，避免场景之间争抢资源。
+ * 后留存；retained 中位 ns/op 只按逐场景阈值软上报，不让合法慢操作误伤门禁。
+ * 脚本串行运行，避免场景之间争抢资源。
  */
 
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import {
   HOT_PATH_PROFILE_BUN_REVISION,
   HOT_PATH_PROFILE_BUN_VERSION,
   HOT_PATH_PROFILE_MAX_GC_PERCENT,
+  HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS,
   HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES,
   HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES,
   HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH,
@@ -21,6 +23,11 @@ import {
   HOT_PATH_PROFILE_REPEATS,
   HOT_PATH_PROFILE_SCENARIOS,
 } from "../../packages/consts/performance";
+import {
+  assertHotPathMedianPolicyCoverage,
+  createHotPathMedianLatencyReport,
+} from "./hotPaths/gateLimits";
+import type { HotPathMedianLatencyReport } from "./hotPaths/gateLimits";
 
 interface SamplingProfileResult {
   readonly totalSamples: number;
@@ -79,9 +86,9 @@ interface ScenarioGateResult {
   readonly maxProductionProbeReoptRetriesDiagnostic: number;
   readonly maxProfileWarmupIterations: number;
   readonly maxRetainedWarmupIterations: number;
-  readonly minMedianOpsPerSecond: number;
-  readonly minMedianNsPerOp: number;
-  readonly maxMedianNsPerOp: number;
+  readonly minMedianOpsPerSecondDiagnostic: number;
+  readonly minMedianNsPerOpDiagnostic: number;
+  readonly maxMedianNsPerOpDiagnostic: number;
 }
 
 function requiredString(
@@ -391,10 +398,18 @@ function minimum(values: readonly number[]): number {
 
 const projectRoot: string = join(import.meta.dir, "../..");
 const gateResults: ScenarioGateResult[] = [];
+const softLatencyReports: HotPathMedianLatencyReport[] = [];
 let expectedBunVersion: string | undefined;
 let expectedBunRevision: string | undefined;
 
-for (const scenario of HOT_PATH_PROFILE_SCENARIOS) {
+// 阈值契约只在这里判一次；返回的表按场景顺序，下面直接连阈值一起遍历。
+const medianLatencyPolicy: ReadonlyMap<string, number> =
+  assertHotPathMedianPolicyCoverage(
+    HOT_PATH_PROFILE_SCENARIOS,
+    HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS
+  );
+
+for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
   const profileRuns: ChildProfileResult[] = [];
   const retainedRuns: ChildProfileResult[] = [];
   for (let repeat: number = 0; repeat < HOT_PATH_PROFILE_REPEATS; repeat++) {
@@ -425,6 +440,18 @@ for (const scenario of HOT_PATH_PROFILE_SCENARIOS) {
   if (reference === undefined) {
     throw new Error(`${scenario}: profile gate did not execute any repeats.`);
   }
+  const medianNsPerOps: number[] = retainedRuns.map(
+    (run: ChildProfileResult): number => run.medianNsPerOp
+  );
+  const maxMedianNsPerOp: number = maximum(medianNsPerOps);
+  const latencyReport: HotPathMedianLatencyReport | null =
+    createHotPathMedianLatencyReport({
+      scenario,
+      medianNsPerOp: maxMedianNsPerOp,
+      bunRevision: reference.bunRevision,
+      reportThresholdNsPerOp,
+    });
+  if (latencyReport !== null) softLatencyReports.push(latencyReport);
   gateResults.push({
     scenario,
     repeats: profileRuns.length,
@@ -473,20 +500,27 @@ for (const scenario of HOT_PATH_PROFILE_SCENARIOS) {
     maxRetainedWarmupIterations: maximum(retainedRuns.map(
       (run: ChildProfileResult): number => run.warmupIterations
     )),
-    minMedianOpsPerSecond: 1_000_000_000 / maximum(retainedRuns.map(
-      (run: ChildProfileResult): number => run.medianNsPerOp
-    )),
-    minMedianNsPerOp: minimum(retainedRuns.map(
-      (run: ChildProfileResult): number => run.medianNsPerOp
-    )),
-    maxMedianNsPerOp: maximum(retainedRuns.map(
-      (run: ChildProfileResult): number => run.medianNsPerOp
-    )),
+    minMedianOpsPerSecondDiagnostic: 1_000_000_000 / maxMedianNsPerOp,
+    minMedianNsPerOpDiagnostic: minimum(medianNsPerOps),
+    maxMedianNsPerOpDiagnostic: maxMedianNsPerOp,
   });
 }
 
 if (expectedBunVersion === undefined || expectedBunRevision === undefined) {
   throw new Error("Hot-path profile gate has no configured scenarios.");
+}
+
+// 软上报要有自己的一行。埋在下面那个 JSON 里等于没报：`bun run check` 照常
+// exit 0、输出里也看不出差别，一次 218 -> 400 ns/op 的退化除非有人专门去 grep
+// 那个 blob，否则不会有任何人发现。仍然不改退出码——这七个阈值是校准值不是
+// 硬门禁，硬指标由上面的 GC/RSS/常驻增长几道判定负责。
+for (const report of softLatencyReports) {
+  process.stderr.write(
+    `hot-path soft latency: ${report.scenario} median ${report.medianNsPerOp.toFixed(1)} ns/op ` +
+    `exceeds its ${report.reportThresholdNsPerOp} ns/op policy by ` +
+    `${report.overrunNsPerOp.toFixed(1)} ns/op (+${report.overrunPercent.toFixed(1)}%) ` +
+    `on Bun ${expectedBunRevision}.\n`
+  );
 }
 
 process.stdout.write(`${JSON.stringify({
@@ -506,5 +540,10 @@ process.stdout.write(`${JSON.stringify({
       HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH,
     minProfileSamples: HOT_PATH_PROFILE_MIN_SAMPLES,
   },
+  softReportThresholds: {
+    medianNsPerOpByScenario:
+      HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS,
+  },
+  softLatencyReports,
   scenarios: gateResults,
 })}\n`);

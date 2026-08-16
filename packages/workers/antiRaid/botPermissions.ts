@@ -6,17 +6,17 @@
  * 变更镜像：主线程每次确证或作废都发一条 `botPermissionsChanged`，Worker 重建与
  * 进程启动时整表重放（见 packages/antiRaid/workerBridge.ts）。
  *
- * 读出来的是三态。**「没观测到」不是「观测到没有」**：主线程对撤管理员、离群、
- * `/init` 切换和现查失败发的都是同一条「权限未知」，而这四件事里只有前三件能
- * 断定做不了。因此这里只如实转述镜像内容，由调用方决定未知那一档怎么办——
- * 目前刷屏禁言的选择是照常尝试、让 Telegram 当裁判（见 floodControl.ts）。
+ * 读出来的是三态。**「没观测到」不是「观测到没有」**：撤管理员会镜像确证的
+ * false；离群、`/init` 切换和主动失效才清成未知，首次现查失败也继续保持未知。
+ * 因此这里只如实转述镜像内容，由调用方决定未知那一档怎么办——目前刷屏禁言的
+ * 选择是照常尝试、让 Telegram 当裁判（见 floodControl.ts）。
  */
 
 import { workerBotChatPermissions } from "../../cache/workers/antiRaid/botPermissions";
-import type { BotChatPermissions } from "../../types/telegram";
+import type { BotActionPermissions } from "../../types/telegram";
 
 /** 应用一条主线程镜像过来的权限变化；permissions 为 undefined 表示此刻未知。 */
-export function applyBotPermissionsChange(chatId: number, permissions: BotChatPermissions | undefined): void {
+export function applyBotPermissionsChange(chatId: number, permissions: BotActionPermissions | undefined): void {
   if (permissions === undefined) {
     workerBotChatPermissions.delete(chatId);
     return;

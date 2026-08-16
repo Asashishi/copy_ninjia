@@ -23,8 +23,8 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getActiveProxySendTarget: () => undefined,
   getChatState: () => ({ isAIChatEnabled: true, quietUntil: Date.now() + 60_000 }),
   getOrCreateChatState: () => ({}),
-  persistAuthoritativeState: async (): Promise<void> => {},
-  saveStateInBackground: () => {},
+  persistChatState: async (): Promise<void> => {},
+  saveChatStateInBackground: () => {},
 }));
 mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
 mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
@@ -153,6 +153,8 @@ describe("AI 缓存发送者 username 传递", () => {
       triggerSenderId: 123,
       replyToMessageId: 81,
       imageGenerationRequested: true,
+      imageGenerationReference: undefined,
+      isRandomTrigger: false,
     });
   });
 

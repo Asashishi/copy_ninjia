@@ -3,27 +3,32 @@ import type { BoundedDeque } from "../../libs/boundedDeque";
 import {
   buildColdMemoryBlock,
   buildTieredVerbatimTranscript,
-  formatBufferedMessageLine,
   formatReplyChain,
-  formatReplyReference,
+  formatSpeakerIdentity,
 } from "../../aiChat/ai/utils/chatTranscript";
 import {
-  COMPACT_BATCH_SIZE,
   MAX_SUMMARY_ROUNDS,
   VERBATIM_CONTEXT_MAX,
 } from "../../consts/aiChat/memory";
 import {
-  directInvokerFocusInstruction,
-  emptyDirectInvokerFocus,
+  directInvokerSentence,
   REPLY_CONTEXT_SECTION_NAMES,
   REPLY_CONTEXT_SECTION_TEXT,
 } from "../../consts/aiChat/prompts/memory";
-import { forwardPathTemplate } from "../../consts/aiChat/prompts/transcript";
+import {
+  forwardPathTemplate,
+  SELF_ROSTER_CODE,
+  TRIGGER_NOT_IN_TRANSCRIPT_LABEL,
+} from "../../consts/aiChat/prompts/transcript";
+import { REPLY_CHAIN_NODE_MAX_CHARS } from "../../consts/aiChat/memory";
+import { truncateInline } from "../../libs/text";
 import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/workers/aiChat/memory";
 import { collectReplyChain, lookupBufferedMessage } from "./replyChain";
 import { resolvedTagFor } from "./mediaText";
+import type { RenderedTranscript } from "../../aiChat/ai/utils/chatTranscript";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type {
   MediaCommentContext,
@@ -58,6 +63,46 @@ function forwardPathFor(origin: string | undefined, senderId: number, senderName
   return origin ? forwardPathTemplate(origin, `[id:${senderId}] ${senderName}`) : "";
 }
 
+/**
+ * 唤起者的完整身份快照。协议只把 id 传过来，first/last name 与 username 从
+ * 逐字缓存回填——转录行用的就是这同一份快照，两处身份因此必然同形，不会出现
+ * 「任务里叫一个名字、转录里叫另一个」。
+ *
+ * 先认触发消息本身：它就是 TA 刚发的那条，身份最新。触发消息已滑出逐字区
+ * （排队补跑等到现在、媒体轮解析耗时久）时，从缓存尾部往回找 TA 最近的一条；
+ * 常见情形第一次比较就命中，扫到头只发生在整段缓存里都没有 TA 的时候，那时
+ * 返回 undefined 由调用方退回只报 id。
+ */
+function resolveInvoker(
+  recent: BufferedMessage[],
+  triggerMessage: BufferedMessage | undefined,
+  invokerId: number
+): AiSpeakerSnapshot | undefined {
+  if (triggerMessage?.id === invokerId) return triggerMessage;
+  for (let index: number = recent.length - 1; index >= 0; index -= 1) {
+    const message: BufferedMessage = recent[index]!;
+    if (message.id === invokerId) return message;
+  }
+  return undefined;
+}
+
+/**
+ * 触发消息已经滑出渲染窗口时，回复链标注该拿什么指代它。
+ *
+ * 正文本轮回复任务里已经引述过（排队补跑的入队快照、媒体轮的描述），因此这里
+ * 复述同一段正文把两处引用绑在一起；两边都没有正文时才退回「不在转录里」。
+ * 实测：只说「不在转录里」时模型会判定触发消息的内容没给，哪怕它就写在上一行。
+ */
+function absentTriggerLabel(
+  queuedTrigger: QueuedReplyTrigger | undefined,
+  mediaComment: MediaCommentContext | undefined
+): string {
+  const text: string | undefined = queuedTrigger?.text || mediaComment?.description;
+  return text
+    ? `就是本段上面引述的那条「${truncateInline(text, REPLY_CHAIN_NODE_MAX_CHARS)}」`
+    : TRIGGER_NOT_IN_TRANSCRIPT_LABEL;
+}
+
 /** buildReplyPromptSections 的可选附加上下文，按需组合，见各字段说明。 */
 export interface UserContentOptions {
   /** 本轮触发消息的 message_id（即工具挂回复引用的目标，见 replyRound.ts
@@ -65,7 +110,8 @@ export interface UserContentOptions {
    *  标注里点名触发消息本身。 */
   triggerMessageId: number;
   /** 明确 @/回复机器人的唤起者 id。仅直接触发传入；随机文字插话和随机媒体
-   *  评价省略。用于从【最热记忆】按发送者 id 提取独立重点区块。 */
+   *  评价省略。用于在回复任务开头声明「正在跟你说话的是谁」——身份段按这个
+   *  id 从逐字缓存里回填 first/last name 与 username，见 resolveInvoker。 */
   directInvokerId?: number;
   /** 是否是随机插话触发（见 replyPipeline.ts 的 generateAndSendReply 的
    *  isRandomTrigger）：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、
@@ -114,17 +160,28 @@ export function buildReplyPromptSections(
   if (!buf || buf.size === 0) return null;
 
   const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
-  const transcript: string = buildTieredVerbatimTranscript(recent);
+  // selfId 让机器人自己的行拿到固定编号（不必回名册查自己是谁）；triggerMessageId
+  // 保住触发消息的消息号，多层回复链标注会点名它。
+  const rendered: RenderedTranscript = buildTieredVerbatimTranscript(recent, {
+    selfId: selfInfo.id,
+    triggerMessageId,
+  });
   // 多层回复链：触发消息还在热区就用它当前的 replyTo 起跳；排队补跑/媒体
   // 触发时它可能已滑出，退回入队时保存的回复快照。链 ≥2 跳才拼标注（第一
   // 跳转录行内的单跳标注已覆盖），见 formatReplyChain。
+  const triggerMessage: BufferedMessage | undefined = lookupBufferedMessage(chatId, triggerMessageId);
   const chainFirstHop: BufferedReplyReference | undefined =
-    lookupBufferedMessage(chatId, triggerMessageId)?.replyTo ?? queuedTrigger?.replyTo ?? mediaComment?.replyTo;
+    triggerMessage?.replyTo ?? queuedTrigger?.replyTo ?? mediaComment?.replyTo;
   const replyChainBlock: string = chainFirstHop
-    ? formatReplyChain(triggerMessageId, collectReplyChain(chatId, chainFirstHop))
+    ? formatReplyChain(triggerMessageId, collectReplyChain(chatId, chainFirstHop), {
+      rendered,
+      // 触发消息滑出窗口时（排队补跑、慢媒体轮）转录里没有它的行，写 #N 等于
+      // 让模型去搜一个不存在的编号。正文本轮任务里就有，直接引述它。
+      absentTriggerLabel: absentTriggerLabel(queuedTrigger, mediaComment),
+    })
     : "";
   const queuedReplyReference: string = queuedTrigger?.replyTo
-    ? `；那条消息${formatReplyReference(queuedTrigger.replyTo)}`
+    ? `；那条消息${rendered.replyReference(queuedTrigger.replyTo)}`
     : "";
   const mediaForwardPath: string = mediaComment
     ? forwardPathFor(mediaComment.forwardedFrom, mediaComment.senderId, mediaComment.senderName)
@@ -136,8 +193,8 @@ export function buildReplyPromptSections(
     : "";
   const queuedTriggerDescription: string = queuedTrigger
     ? queuedForwardPath
-      ? `${queuedSenderName} 转发了一条给你的内容（${queuedForwardPath}；转发正文：「${queuedTrigger.text}」${queuedReplyReference}）`
-      : `${queuedSenderName} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」${queuedReplyReference}）`
+      ? `${queuedSenderName} 转发了一条给你的内容，那条就是本轮的触发消息（${queuedForwardPath}；转发正文：「${queuedTrigger.text}」${queuedReplyReference}）`
+      : `${queuedSenderName} 也在跟你说话，那条就是本轮的触发消息（TA 说的是：「${queuedTrigger.text}」${queuedReplyReference}）`
     : "";
 
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
@@ -176,7 +233,7 @@ export function buildReplyPromptSections(
   // bot.init() 之后注入的 init 消息（见 cache/workers/aiChat/identity.ts 的 botInfoState），不写死在代码里。
   const selfIdentity: string =
     `本群中你的 Telegram 账号身份是 @${selfInfo.username}（[id:${selfInfo.id}]）。` +
-    `转录里标着这个 id 的行是你自己之前说过的话；` +
+    `转录里编号写作「${SELF_ROSTER_CODE}」的行就是你自己之前说过的话（行内不会再出现这个 id）；` +
     `消息里 @ 这个用户名、或回复这个账号的消息，指向的对象都是你。`;
 
   // 冷记忆段：更早的历史按每轮 COMPACT_BATCH_SIZE 条压缩成摘要（从旧到
@@ -202,37 +259,31 @@ export function buildReplyPromptSections(
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]\n` +
     REPLY_CONTEXT_SECTION_TEXT.currentConversation.header +
     "\n" +
-    transcript +
+    rendered.text +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`;
-  // 唤起者重点区块只复制最新一个压缩块里的匹配发送者行：不从较早逐字区、
-  // 冷摘要、回复快照或排队快照补齐。这样它只是【最热记忆】的按 id 视图，
-  // 不会悄悄形成第三套上下文权威来源。热区内该 id 的发言按原行全量复制，
-  // 切片边界与 buildTieredVerbatimTranscript 的【最热记忆】完全一致。
-  let invokerFocus: string | undefined;
-  if (directInvokerId !== undefined) {
-    const invokerMessages: BufferedMessage[] = recent
-      .slice(-COMPACT_BATCH_SIZE)
-      .filter((message: BufferedMessage): boolean => message.id === directInvokerId);
-    // 一条都没有时整段换成替代文案，而不是让阅读说明配空条目——那等于让
-    // 模型去读不存在的内容，见 consts/aiChat/prompts/memory.ts 的两个文案函数。
-    const invokerBody: string = invokerMessages.length > 0
-      ? directInvokerFocusInstruction(directInvokerId) +
-        "\n" +
-        invokerMessages.map(formatBufferedMessageLine).join("\n")
-      : emptyDirectInvokerFocus(directInvokerId);
-    invokerFocus =
-      `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.invokerFocus}]\n` +
-      REPLY_CONTEXT_SECTION_TEXT.invokerFocus.header +
-      "\n" +
-      invokerBody +
-      "\n" +
-      `[END ${REPLY_CONTEXT_SECTION_NAMES.invokerFocus}]`;
-  }
+  // 唤起者声明：本轮「正在跟你说话的是谁」唯一的可信来源（防注入侧的锚点见
+  // consts/aiChat/prompts/memory.ts 的 REPLY_CONTEXT_STRUCTURE_INSTRUCTION）。
+  // 它取代了原先那个按 id 复制唤起者热区发言的独立 Part：怎么读热区、怎么
+  // 定位 TA、怎么防同名与转发混淆，已升级成系统提示词里常驻的
+  // DIRECT_INVOCATION_READING_INSTRUCTION，这里只留一行动态身份。
+  // 随机插话与随机媒体评价没有唤起者，整句不出现，模型据此判断本轮无人叫它。
+  // 整段缓存里都找不到 TA 时退回只报 id：名字宁可缺，也不能拿别处的名字凑。
+  const invokerSnapshot: AiSpeakerSnapshot | undefined = directInvokerId === undefined
+    ? undefined
+    : resolveInvoker(recent, triggerMessage, directInvokerId);
+  const invokerLine: string = directInvokerId === undefined
+    ? ""
+    : directInvokerSentence(
+      invokerSnapshot ? formatSpeakerIdentity(invokerSnapshot) : `[id:${directInvokerId}]`,
+      // 转录行内只有编号：不把它一起给出，模型就得拿 id 回名册做一次连接查询。
+      rendered.codeOf.get(directInvokerId) ?? ""
+    ) + "\n";
   const replyTask: string =
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n` +
     REPLY_CONTEXT_SECTION_TEXT.replyTask.header +
     "\n" +
+    invokerLine +
     replyInstruction +
     // 触发消息带着 ≥2 跳的回复链时补全路径标注，帮模型免于在整段转录里
     // 自行追 message_id；单跳或无回复时该段为空串，完全不出现。
@@ -242,10 +293,5 @@ export function buildReplyPromptSections(
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`;
-  return {
-    referenceMemory,
-    currentConversation,
-    ...(invokerFocus ? { invokerFocus } : {}),
-    replyTask,
-  };
+  return { referenceMemory, currentConversation, replyTask };
 }

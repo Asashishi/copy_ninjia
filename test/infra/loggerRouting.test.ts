@@ -74,6 +74,7 @@ describe("logger persistence routing boundary", () => {
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
         whitelistEntryCount: 0,
+        chatStates: new Map(),
       } satisfies DiskIOReply } as MessageEvent<DiskIOReply>);
       await loaded;
       worker.messages.length = 0;
@@ -117,6 +118,42 @@ describe("logger persistence routing boundary", () => {
       expect(errorArg.message).toBe("fetch failed");
       expect(errorArg.path).toBe("https://api.telegram.org/file/bot[REDACTED]/photo.jpg");
       expect(JSON.stringify(errorArg)).not.toContain(token);
+    } finally {
+      consoleError.mockRestore();
+      telegramConfigCache.current = originalTelegram;
+    }
+  });
+
+  /**
+   * 脱敏值列表按三个 holder 的对象身份记忆化（见 cache/perThread/logger.ts 的
+   * loggerSecretsMemo）。这条用例守的是那次记忆化唯一可能造成的事故：三个 holder
+   * 都是惰性填充的，取得实例锁之前就会有日志经过这里，若把那时算出的空结果按
+   * 「已经算过一次」缓存下来，配置读完之后每一条日志都不再脱敏——凭据从此原样
+   * 进 journal 与 logs/，而且没有任何报错。
+   */
+  test("配置在第一条日志之后才填上时，后续日志照常脱敏（记忆化不得把空结果钉死）", () => {
+    const originalTelegram: TelegramConfig | null = telegramConfigCache.current;
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      telegramConfigCache.current = null;
+      logger.error("no-config-yet");
+      expect(consoleError.mock.calls.at(-1)![0]).toBe("no-config-yet");
+
+      const token: string = "late-arriving-telegram-token";
+      telegramConfigCache.current = { botToken: token, superAdminUserId: 1 };
+      logger.error(`now with token ${token}`);
+      const stringArg: unknown = consoleError.mock.calls.at(-1)![0];
+      expect(stringArg).toBe(`now with token ${REDACTED_SECRET}`);
+      expect(String(stringArg)).not.toContain(token);
+
+      // 换成另一份配置同样要立刻生效（测试替身与启动总闸都是整体替换 holder）。
+      const rotated: string = "rotated-telegram-token";
+      telegramConfigCache.current = { botToken: rotated, superAdminUserId: 1 };
+      logger.error(`rotated ${rotated} but old ${token}`);
+      const afterRotate: string = String(consoleError.mock.calls.at(-1)![0]);
+      expect(afterRotate).not.toContain(rotated);
+      // 旧 token 已经不在配置里，不该再被当成敏感值抹掉。
+      expect(afterRotate).toContain(token);
     } finally {
       consoleError.mockRestore();
       telegramConfigCache.current = originalTelegram;

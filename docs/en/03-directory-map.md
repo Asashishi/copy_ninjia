@@ -15,8 +15,8 @@ This page answers “where does this code live, and where should new code go?”
 ## Directory Responsibilities
 
 - **`packages/app/`**
-  - **Responsibility**: startup/shutdown lifecycle, startup prerequisite checks for enabled
-    features, handler registration, command menu, update runner, and lifecycle side-effect composition.
+  - **Responsibility**: startup/shutdown lifecycle, the startup validation entry point for deployment
+    inputs that already exist, handler registration, command menu, update runner, and lifecycle side-effect composition.
   - **Representative files**: `lifecycle.ts`, `lifecycleDependencies.ts`, `featurePreflight.ts`,
     `registerHandlers.ts`, and `updateRunner.ts`. `ApplicationLifecycleDependencies` is inferred
     from and colocated with the composition object, avoiding a reverse dependency from shared types into `app/`.
@@ -35,7 +35,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
     supervision, memory mirror, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
   - **Representative files**: `workerBridge.ts`, `messageIngress.ts`, `memoryMirror.ts`,
-    `availability.ts`, `credentials.ts`, `provider.ts`, `gemini/`, `openai/`, and `ai/`;
+    `availability.ts`, `provider.ts`, `gemini/`, `openai/`, and `ai/`;
     `index.ts` is only a thin public entry point.
 - **`packages/antiRaid/`**
   - **Responsibility**: Anti-Raid main-thread proxy and ad model capability, including Worker
@@ -61,8 +61,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
   - **Representative files**: `telegram.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
 - **`packages/database/`**
-  - **Responsibility**: the identity-policy SQLite schema, codecs, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
-  - **Representative paths**: `schema/`, `codec/identity.ts`, and `interact/identity.ts`.
+  - **Responsibility**: the shared SQLite (identity policy plus chat state) schema, codecs, row validation, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
+  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `migration.ts`, `inspection.ts`), and `validation/storageRows.ts`.
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
@@ -71,7 +71,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/workers/`**
   - **Responsibility**: in-thread implementations for all three Workers.
   - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
-    `aiChat/`, `antiRaid/verificationEffects/`, `diskIO/identityDatabase.ts`, and `diskIO/verification{Codec,Recovery,Writes}.ts`.
+    `aiChat/`, `antiRaid/verificationEffects/`, `diskIO/storageDatabase.ts` with `diskIO/storageDatabase/`, and `diskIO/verification{Codec,Recovery,Writes}.ts`.
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
     thread and lifecycle ownership stays explicit.
@@ -111,7 +111,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
-  - **Representative files**: `checkProjectConventions.ts`, `migrateIdentityStorageToSqlite.ts`, `migrateWhitelistPermission.ts`, `perf/identityDatabase.ts`, and `perf/joinLog.ts`.
+  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `migrateIdentityStorageToSqlite.ts`, `migrateChatStateToSqlite.ts`, `storageDatabaseIntegrity.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, and `perf/hotPathProfileGate.ts`.
 
 ## Deciding Where New Code Belongs
 
@@ -131,7 +131,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
 
 - **`main/`**
   - **Owner**: main thread.
-  - **Contents**: command and automatic-pipeline state, the in-memory `state.json` mirror managed through the `stateStore.ts` facade, the
+  - **Contents**: command and automatic-pipeline state, the global `state.json` mirror managed through the `stateStore.ts` facade plus the `chat_states` LRU in `chatState.ts` (capacity 25), the
     Disk I/O host, and the **main-thread proxies and mirrors of the Workers**
     (`main/aiChat.ts`, `main/antiRaid/`).
 - **`workers/aiChat/`**
@@ -156,7 +156,7 @@ Watch out for shared domain code such as `packages/aiChat/ai/`: if a pure functi
 
 ## Compatibility Entry-Point (Barrel) Convention
 
-When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/consts/aiChat.ts` for `packages/consts/aiChat/`, `packages/infra/telegram/avatar.ts` for `packages/infra/telegram/avatar/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
+When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/consts/aiChat.ts` for `packages/consts/aiChat/`, `packages/infra/telegram/actions.ts` for `packages/infra/telegram/actions/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
 
 - Compatibility entry points exist only for gradual migration of old imports. **All new code imports directly from the domain submodule.**
 - A compatibility entry point must not own state, parse configuration, or introduce import-time side effects.

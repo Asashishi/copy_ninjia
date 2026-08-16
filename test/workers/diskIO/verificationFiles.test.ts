@@ -483,6 +483,20 @@ describe("pending verification daily append JSON", () => {
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 
+  test("正数私聊 ID 不能恢复为群级待验证状态", () => {
+    const path: string = join(dir, `${DAY_ONE}.json`);
+    const original: string = JSON.stringify({
+      "1001:42": {
+        version: VERIFICATION_FILE_VERSION,
+        ...snapshot(1, { chatId: 1001 }),
+      },
+    }, null, 2);
+    writeFileSync(path, original);
+
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("$.<record>");
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
   test("非法日期文件名不会在启动扫描中被静默忽略", () => {
     const path: string = join(dir, "2026-02-30.json");
     writeFileSync(path, "{}");

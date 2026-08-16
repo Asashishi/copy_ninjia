@@ -15,6 +15,8 @@ import type {
 import { GAG_THUMBNAIL_URL } from "../../packages/consts/ui/assets";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";
+import type { BotChatPermissions } from "../../packages/types/telegram";
+import { botPermissions } from "./botPermissions";
 import { settleTestBatch } from "../libs/helpers";
 // 这三个模块不在被替身覆盖的范围内（只依赖 consts/types/libs），因此可以静态
 // 导入；被测的 packages/commands/gag 必须由各用例文件在本模块的 mock.module
@@ -28,6 +30,7 @@ import {
   gagSessionCount,
   gagSessionsByChat,
 } from "../../packages/cache/main/gag";
+import { inlineResultSources } from "../../packages/cache/main/inlineResultSources";
 
 export {
   activeGagSessionCount,
@@ -83,7 +86,7 @@ export const gagTestSwitches: {
 } = { permissionAllowed: true, initEnabled: true, canDeleteMessages: true };
 
 mock.module("../../packages/infra/botAdmin", () => ({
-  botChatPermissionsIn: async (): Promise<Readonly<{ canDeleteMessages: boolean; canRestrictMembers: boolean }>> => ({
+  botChatPermissionsIn: async (): Promise<BotChatPermissions> => botPermissions({
     canDeleteMessages: gagTestSwitches.canDeleteMessages,
     canRestrictMembers: true,
   }),
@@ -269,6 +272,7 @@ export function resetGagTestState(): void {
   }
   gagSessionsByChat.clear();
   gagBackgroundTasks.clear();
+  inlineResultSources.clear();
   gagRuntimeAccepting.current = true;
 }
 

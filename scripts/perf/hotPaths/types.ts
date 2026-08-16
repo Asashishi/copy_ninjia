@@ -5,11 +5,11 @@
  * 也要用，而 jitTiers.ts 又被 scenarios.ts 引用来建探针表。
  */
 
+import type { HotPathProfileScenarioName } from "../../../packages/types/performance";
+
 export type ScenarioName =
+  | HotPathProfileScenarioName
   | "sender-no-username"
-  | "sender-stable-username"
-  | "luck-receipt-fast-path"
-  | "ai-activity-window"
   | "ai-activity-lru-miss"
   | "ad-empty-metadata"
   | "ad-wire-clone"
@@ -23,16 +23,13 @@ export type ScenarioName =
   | "chat-state-read"
   | "chat-state-map-read"
   | "self-sent-empty"
-  | "incoming-message-spine"
   | "flood-window-hit"
   | "flood-window-growth"
-  | "flood-window-steady"
   | "gag-speak-counter"
   | "buffered-message-build"
   | "transcript-render"
   | "reply-reference"
   | "mention-facts"
-  | "mention-facts-plain"
   | "redact-clean-log"
   | "luck-tier-table";
 

@@ -4,7 +4,7 @@ import {
   extractPublicUsername,
   fetchAvatarFromWebProfile,
   normalizePublicUsername,
-} from "../../packages/infra/telegram/avatar";
+} from "../../packages/infra/telegram/avatar/webProfile";
 
 const realFetch: typeof fetch = globalThis.fetch;
 

@@ -9,6 +9,17 @@ export function deferred(): { promise: Promise<void>; resolve(): void } {
   return { promise, resolve };
 }
 
+/**
+ * 排空「已经发起、但调用方按设计不 await」的后台链——典型是 infra/botAdmin.ts 的
+ * 按需权限现查：它不能挡住串行的 update 处理，因此快照要晚若干个微任务才落下。
+ *
+ * 用一个宏任务收口，而不是数着 `await Promise.resolve()` 凑圈数：要凑几圈取决于
+ * 被测实现里叠了几层 await，改一处实现就得回来改一串断言。
+ */
+export function settleBackgroundWork(): Promise<void> {
+  return new Promise((resolve: () => void): void => { setTimeout(resolve, 0); });
+}
+
 /** 按给定分块流式返回 body 的 Response，流式读取/字节上限类测试用。 */
 export function chunkedResponse(chunks: readonly Uint8Array[], init?: ResponseInit): Response {
   return new Response(

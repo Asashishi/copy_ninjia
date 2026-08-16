@@ -30,14 +30,6 @@ export function applyChatKindChange(chatId: number, isSupergroup: boolean): void
 }
 
 /**
- * 这个群此刻是不是超级群。
- * @returns 确证是 true、确证不是 false、没观测到 undefined。
- */
-export function chatIsSupergroup(chatId: number): boolean | undefined {
-  return workerChatIsSupergroup.get(chatId);
-}
-
-/**
  * 读取群类型；镜像缺失时由执行线程直接 getChat，并让同群终态复用在途请求。
  * @returns 只返回确证值；查询失败、非群聊或并发已满均返回 undefined。
  */

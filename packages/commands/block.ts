@@ -21,7 +21,7 @@ import {
   ensureBlocklistEntryQueued,
 } from "../infra/blocklist/membership";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
-import { getAllChatStates } from "../infra/storage/stateStore";
+import { getChatStateCache } from "../infra/storage/stateStore";
 import { runBoundedSettledBatch } from "../libs/boundedSettledBatch";
 import type {
   BoundedBatchExecution,
@@ -41,7 +41,7 @@ interface BlockAdmission {
  * 是管理员的手动判断，直接全网封死）。封禁对还没加入的群同样生效，目标之后
  * 也进不去，但那终究不是「踢」——战报文案按目标此刻是否在场分别措辞
  * （isChatMember）：真在场的算踢出去，不在场的只算确认封禁。群清单来自
- * 各群 ChatState.botIsAdmin（见 infra/botAdmin.ts）。机器人在发起命令的这个群
+ * 各群 ChatState.botPermissions.isAdministrator（见 infra/botAdmin.ts）。机器人在发起命令的这个群
  * 里不是管理员时，本群自然踢不了，但对其它管理的群的连坐封禁照常执行，只在
  * 回复里说明本群没踢；一个管理的群都没有才整体拒绝。
  *
@@ -142,8 +142,8 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 封禁清单：所有已记录「机器人是管理员」的群。本群是管理员时排最前
   // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
-  for (const [adminChatId, chatState] of getAllChatStates()) {
-    if (chatState.botIsAdmin === true && adminChatId !== chatId) {
+  for (const [adminChatId, chatState] of getChatStateCache()) {
+    if (chatState.botPermissions?.isAdministrator === true && adminChatId !== chatId) {
       targetChatIds.push(adminChatId);
     }
   }

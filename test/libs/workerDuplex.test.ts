@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { workerDuplexWaiters } from "../../packages/cache/perThread/workerDuplex";
+import {
+  workerDuplexRequestSignal,
+  workerDuplexWaiters,
+} from "../../packages/cache/perThread/workerDuplex";
 import {
   handleWorkerDuplexResponse,
   initializeWorkerDuplex,
   requestMainThread,
   resetWorkerDuplex,
+  setWorkerDuplexRequestSignal,
 } from "../../packages/libs/workerDuplex";
 import { superviseDuplexWorker } from "../../packages/infra/supervisedDuplexWorker";
 import type { WorkerDuplexOutbound } from "../../packages/types/workerDuplex";
@@ -94,6 +98,46 @@ describe("Worker 双工能力边界", () => {
       error: undefined,
     });
     expect(workerDuplexWaiters.size).toBe(0);
+  });
+
+  test("默认生命周期信号取消全部能力请求，显式信号与它取并集", async () => {
+    const outbound: WorkerDuplexOutbound<TestRequest>[] = [];
+    initializeWorkerDuplex<TestRequest>((
+      message: WorkerDuplexOutbound<TestRequest>
+    ): void => {
+      outbound.push(message);
+    });
+    const lifecycle: AbortController = new AbortController();
+    setWorkerDuplexRequestSignal(lifecycle.signal);
+
+    const inherited: Promise<number> = requestMainThread<TestRequest, number>({
+      value: "inherited",
+    });
+    const explicit: AbortController = new AbortController();
+    const combined: Promise<number> = requestMainThread<TestRequest, number>(
+      { value: "combined" },
+      explicit.signal
+    );
+    const inheritedRequest: WorkerDuplexOutbound<TestRequest> | undefined = outbound[0];
+    const combinedRequest: WorkerDuplexOutbound<TestRequest> | undefined = outbound[1];
+    if (inheritedRequest?.__duplex !== "request") {
+      throw new Error("inherited request envelope missing");
+    }
+    if (combinedRequest?.__duplex !== "request") {
+      throw new Error("combined request envelope missing");
+    }
+    expect(workerDuplexRequestSignal.current).toBe(lifecycle.signal);
+
+    explicit.abort();
+    await expect(combined).rejects.toMatchObject({ name: "AbortError" });
+    expect(outbound[2]).toEqual({ __duplex: "cancel", requestId: combinedRequest.requestId });
+    lifecycle.abort();
+    await expect(inherited).rejects.toMatchObject({ name: "AbortError" });
+    expect(outbound[3]).toEqual({ __duplex: "cancel", requestId: inheritedRequest.requestId });
+    expect(workerDuplexWaiters.size).toBe(0);
+
+    resetWorkerDuplex("reset signal");
+    expect(workerDuplexRequestSignal.current).toBeNull();
   });
 
   test("主线程只回投当前代际；取消或 Worker 重建会中止能力请求", async () => {

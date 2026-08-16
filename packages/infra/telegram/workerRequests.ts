@@ -18,10 +18,8 @@ import type {
   TelegramWorkerRequest,
   TelegramWorkerTemporaryMessageResult,
 } from "../../types/telegramWorker";
-import {
-  runTelegramCategorizedRequest,
-  telegramRetryCategoryFor,
-} from "./outboundGate";
+import { runTelegramCategorizedRequest } from "./outboundGate";
+import { telegramRetryCategoryFor } from "./outboundRetryPolicy";
 
 async function sendTemporaryMessage(
   request: Extract<TelegramWorkerRequest, { operation: "sendTemporaryMessage" }>,

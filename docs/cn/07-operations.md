@@ -5,14 +5,26 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 开发者文档首页</a> · <a href="06-modification-guide.md">← 上一页：06 修改配方</a> · <b>下一页：无 →</b>
+  <a href="conntent-table.md">📚 开发者文档首页</a> · <a href="06-modification-guide.md">← 上一页：06 修改配方</a> · <a href="08-commands.md">下一页：08 命令与行为参考 →</a>
 </p>
 
 ---
 
 ## 部署形态
 
-单实例长轮询进程，无 webhook、无外部数据库服务；身份策略使用本地 SQLite，其余持久化使用数据根内文件。单实例建议承载约 15 个活跃群以内（瓶颈是单 Bot API、AI 供应商配额与媒体速率，硬件参考见根 README「快速开始」）。
+单实例长轮询进程，无 webhook、无外部数据库服务；身份策略使用本地 SQLite，其余持久化使用数据根内文件。
+
+### 硬件参考
+
+<table width="100%">
+<tr><th width="33%" align="left">部署规模</th><th width="26%" align="left">建议配置</th><th width="41%" align="left">说明</th></tr>
+<tr><td>入门（低活跃、文本为主、仅少量群开启 AI）</td><td>2 vCPU / 2 GB RAM / 本地 SSD</td><td>可以运行，但媒体高峰时多个 Worker 可能争用 CPU；建议配备 2 GB Swap</td></tr>
+<tr><td>轻量生产（文本为主、仅少量群开启 AI）</td><td>4 vCPU / 2 GB RAM / 本地 SSD</td><td>不建议用 2 GB 内存承载媒体处理高峰；建议配备 2 GB Swap</td></tr>
+<tr><td>推荐生产（约 15 个单群日均 1,000～3,000 条消息的活跃群）</td><td>4 vCPU / 4 GB RAM / 本地 SSD</td><td>建议配备 2 GB Swap</td></tr>
+<tr><td>全部群开启 AI 且图片、贴纸较多</td><td>4 vCPU / 8 GB RAM</td><td>给媒体下载、Base64 编码和图片转码预留峰值空间</td></tr>
+</table>
+
+单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自 Telegram Bot API、所配 AI provider 配额和实际消息/媒体速率，而不是群成员总数。
 
 ### systemd 示例
 
@@ -47,17 +59,19 @@ WantedBy=multi-user.target
 `COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（留空则为项目根目录）：
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：群开关（含 `isAntiRaidEnabled`：入群验证 + 防冲群私密模式的总开关，
-    缺省关闭）、copy、锁定镜像等权威状态，以及 `global.assets` 的三条素材直链
-    （两张运势缩略图 + 机器人默认头像）。模型选择不再属于运行时状态。
+  - **内容**：只剩全局状态——copy 目标，以及 `global.assets` 的四条素材直链
+    （运势的「未卜先知」「概率论」两张缩略图、gag 发言 inline 结果的缩略图，以及机器人
+    默认头像）。群开关（含 `isAntiRaidEnabled`：入群验证 +
+    防冲群私密模式的总开关，缺省关闭）、锁定记录、权限快照等按群状态已迁入
+    `database/storage.sqlite` 的 `chat_states`。模型选择不再属于运行时状态。
   - **备份**：主备一起备份。
   - **改素材直链只能停机改**：进程持有权威内存并会整份覆写这个文件，运行中编辑会被
     下次落盘抹掉。停服务 → 改 `global.assets` → 起服务；缺项会在启动成功后被自动
     补成当前生效值，写坏（漏 scheme、协议不对）则在解码期拒绝整份文件并点名字段路径。
-    图床不限，只要能直出图片字节；两张缩略图必须是 `https`，只有 `botDefaultAvatarUrl`
+    图床不限，只要能直出图片字节；三张缩略图必须是 `https`，只有 `botDefaultAvatarUrl`
     允许明文 `http`，且它**跟随重定向**——直链先 302 到实际存储域名（内置缺省那条 Drive
     链接即是）照样能用，不必自己解析出终点。
-  - **升级前先看一眼这三项**：两张缩略图现在只认 `https`，从更早版本升上来时若有一项
+  - **升级前先看一眼这四项**：三张缩略图现在只认 `https`，从更早版本升上来时若有一项
     配成 `http://`，会在解码期拒绝启动并点名字段路径。
 - **`memory/ai/<chatId>.json`**
   - **内容**：每群 AI 记忆的 version=1 原子快照，包括最近逐字消息、历史摘要、
@@ -87,8 +101,9 @@ WantedBy=multi-user.target
     跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
     最新 250,000 人。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
-  - **内容**：schema v3 身份数据库。`whitelist_entries` 与 `blocklist_entries` 是白名单、
+  - **内容**：schema v4 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是白名单、
     黑名单权威表，`pending_blocked_removals` 是未完成群级封禁任务 outbox，
+    `chat_states` 是每群状态权威表（最多 25 行，超出即拒绝启动），
     `storage_metadata` 记录唯一 schema version；Drizzle migration journal 必须匹配受支持谱系。
   - **备份**：必须备份，丢失黑名单等于解除全部永久封禁，丢失 outbox 则会漏掉未完成处置。
     停止 Bot 后，把主库及当时存在的 WAL/SHM 作为同一一致性集合复制到工作树外，并记录
@@ -144,15 +159,24 @@ bun run migrate:identity-storage --apply
 
 全新部署也必须显式走同一迁移边界：按 [01 环境搭建](01-getting-started.md#初始化身份数据库) 创建两份临时空旧输入后执行 `--apply`。启动不会凭缺失数据库猜测“空名单”，目标库已存在时迁移脚本也拒绝覆盖。
 
-### SQLite schema v2 → v3
+### SQLite schema v3 → v4（群状态入库）
 
-已在使用 JSONB schema v2 的部署，在 Bot 停止后执行：
+群状态从 `state.json` 迁进 SQLite `chat_states` 的那一版之前的部署（数据库仍是 schema v3、
+`state.json` 里还带 `chats`），在 Bot 停止后执行：
 
 ```bash
-bun run migrate:whitelist-permission -- --apply
+bun run migrate:chat-state -- --check
+bun run migrate:chat-state -- --apply
 ```
 
-脚本只接受精确的受支持 v2 migration lineage，先通过 SQLite serialization 在系统临时目录建立 `0600` 外部备份并核验哈希与完整性，再把白名单权限升级到 schema v3；未知谱系、非法行、黑白名单交叉或事务失败都原样拒绝。对已经是 v3 的库运行只做严格验证并报告无需迁移。Release 的 Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置、恢复步骤和权限要求。
+两种模式都先取 `bot.lock`（因此必须先停服务），严格读取 `state.json` 主备两份、整库做一次
+integrity 检查，并只接受精确的受支持 v3 或 v4 migration lineage；未知谱系、非法行、黑白名单
+交叉一律原样拒绝。`--check` 只报告待迁移的群行数，不改任何部署数据。`--apply` 通过 Telegram
+补齐各群的机器人权限快照（旧格式只存过一个 `botIsAdmin` 布尔值），在工作树外留下 state 主备与
+SQLite 序列化快照的备份并记录 owner/mode/SHA-256，随后执行 schema migration、写入群行、核对
+业务表未被改动，最后把 `state.json.bak`、`state.json` 依次原子发布成只剩全局块的新格式。任一步
+失败都保留外部备份并打印路径。对已经完成迁移的库运行只做严格验证并报告无需迁移。Release 的
+Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置、恢复步骤和权限要求。
 
 ## 启动失败排查
 

@@ -4,6 +4,8 @@ import type {
   IdentityStoragePersistedReply,
 } from "../../packages/types/diskIO";
 import type { PendingBlockedRemoval } from "../../packages/types/blocklist";
+import type { BotChatPermissions } from "../../packages/types/telegram";
+import { botPermissions } from "../helpers/botPermissions";
 import {
   blockedIdentityTestView as blockedUserIds,
   seedMissingIdentity,
@@ -27,8 +29,8 @@ mock.module("../../packages/infra/diskIO", () => ({
   },
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getAllChatStates: (): ReadonlyMap<number, { isInitEnabled: boolean; botIsAdmin: boolean }> =>
-    new Map([[-1001, { isInitEnabled: true, botIsAdmin: true }]]),
+  getChatStateCache: (): ReadonlyMap<number, { isInitEnabled: boolean; botPermissions: BotChatPermissions }> =>
+    new Map([[-1001, { isInitEnabled: true, botPermissions: botPermissions() }]]),
 }));
 
 const {
@@ -112,6 +114,7 @@ describe("SQLite 黑名单主线程最终值", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 9, revision }],
+        chatStateWrites: [],
       });
     }
     expect(ensureBlocklistEntryQueued(9)).toBeFalse();

@@ -18,6 +18,7 @@
 | `bun run lint` / `lint:fix` | Run ESLint / apply automatic fixes |
 | `bun run typecheck` | Run `tsc --noEmit` in fully strict mode |
 | `bun run test` | Run the complete test suite with forced file isolation |
+| `bun run test:random` | Run the whole suite in a fixed-seed random order to expose cross-test residue |
 | `bun run test:coverage` | Run tests and measure coverage across all source files |
 | `bun run check:conventions` | Check repository conventions with `scripts/checkProjectConventions.ts` |
 | `bun run check` | Run conventions + lint + typecheck + coverage + the hot-path gate; **required before every commit** |
@@ -25,6 +26,9 @@
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
 | `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over every hot-path scenario; already part of `check` |
 | `bun run perf:join-log` | Run the independent-process comparison at the 250,000-record join-log limit |
+| `bun run perf:identity-database` | Benchmark the four real identity-database paths in independent processes |
+| `bun run migrate:identity-storage` | Offline cold migration from the legacy JSON lists into `database/storage.sqlite` |
+| `bun run migrate:chat-state` | Offline cold migration of `state.json` chat state into SQLite `chat_states` (schema v3 → v4) |
 | `bun run release:check` | Run frozen-lockfile install + check + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
 
@@ -37,7 +41,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2269 tests / 235 files / 32867 `expect()` calls**; full-source **function coverage 95.66% / line coverage 96.70%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2361 tests / 246 files / 94774 `expect()` calls**; full-source **function coverage 94.86% / line coverage 95.59%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -76,7 +80,7 @@ The `profile` / `retained` prefixes record which child a reading came from; thei
 
 ## Identity-Database Performance Benchmark
 
-`bun run perf:identity-database` uses temporary data roots and SQLite databases to measure four production paths: two-table cold reads in batches of 8 identities, explicit 128-row transaction writes, hot reads through the main-thread 8,196-entry LRU, and write-through that crosses the Worker, JSONB transaction, and exact ACK boundary. Each operation warms up before five independent Bun processes are sampled. The report fixes Bun version/revision and records throughput, batch latency, sample range/coefficient of variation, retained JSC heap/extra memory/object counts, and GC time. `--single-process` repeats each operation three times in one measurement process to investigate retained growth across rounds; it does not replace independent-process performance comparison. `Bun.gc(true)` remains outside timed regions and diagnostic-only. Run this benchmark when identity LRU, cold prefetch, encoding, transaction batching, acknowledgements, or Worker replay changes, and judge the same-Bun-build difference together with sample noise and heap/GC results.
+`bun run perf:identity-database` uses temporary data roots and SQLite databases to measure four production paths: two-table cold reads in batches of 8 identities, explicit 128-row transaction writes, hot reads through the main-thread 8,192-entry LRU, and write-through that crosses the Worker, JSONB transaction, and exact ACK boundary. Each operation warms up before five independent Bun processes are sampled. The report fixes Bun version/revision and records throughput, batch latency, sample range/coefficient of variation, retained JSC heap/extra memory/object counts, and GC time. `--single-process` repeats each operation three times in one measurement process to investigate retained growth across rounds; it does not replace independent-process performance comparison. `Bun.gc(true)` remains outside timed regions and diagnostic-only. Run this benchmark when identity LRU, cold prefetch, encoding, transaction batching, acknowledgements, or Worker replay changes, and judge the same-Bun-build difference together with sample noise and heap/GC results.
 
 ## Commit Workflow
 
@@ -105,7 +109,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~805 source lines across 78 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
+- **The Chinese string-literal count** (currently ~846 source lines across 79 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

@@ -5,7 +5,6 @@ import {
   telegramOutboundGateState,
 } from "../../cache/main/telegram";
 import {
-  TELEGRAM_429_FALLBACK_RETRY_MS,
   TELEGRAM_429_RECOVERY_MAX_CONCURRENT,
   TELEGRAM_429_RETRY_QUEUE_MAX,
   TELEGRAM_TIMER_MAX_DELAY_MS,
@@ -17,9 +16,12 @@ import type {
   TelegramRetryCategory,
   TelegramRetryLane,
 } from "../../types/telegramOutbound";
-import type { TelegramProjectRawMethod } from "../../types/telegramWorker";
 import { TelegramRetryPreconditionChangedError } from "./errors";
-import { isTelegramMessageRequest } from "./messageThrottler";
+import {
+  telegramRetryAfterMilliseconds,
+  telegramRetryCategoryFor,
+  TelegramRetryQueueFullError,
+} from "./outboundRetryPolicy";
 
 type PreviousCall = Parameters<Transformer<RawApi>>[0];
 type UnbanChatMemberPayload = Parameters<RawApi["unbanChatMember"]>[0];
@@ -68,83 +70,6 @@ async function revalidateUnbanKickRetry(
     default:
       throw new Error("Telegram kick retry returned an unknown member status.");
   }
-}
-
-/** 429 退避队列拒绝错误；安全动作的 durable owner 收到后保留原任务并重投。 */
-export class TelegramRetryQueueFullError extends Error {
-  constructor() {
-    super(`Telegram 429 retry queue reached its ${TELEGRAM_429_RETRY_QUEUE_MAX} request limit.`);
-    this.name = "TelegramRetryQueueFullError";
-  }
-}
-
-/**
- * 按业务语义选择独立的 429 域。高频调用都走 switch 的稳定分支；前缀兜底只
- * 服务未在项目调用面出现的新 Bot API，避免它意外与已有安全动作共享冷却。
- */
-export function telegramRetryCategoryFor(
-  method: keyof RawApi | TelegramProjectRawMethod
-): TelegramRetryCategory {
-  if (method === "deleteEphemeralMessage") return "delete";
-  if (isTelegramMessageRequest(method)) return "message";
-  switch (method) {
-    case "answerInlineQuery":
-    case "answerWebAppQuery":
-    case "savePreparedInlineMessage":
-      return "inline";
-    case "getFile":
-      return "download";
-    case "banChatMember":
-    case "kickChatMember":
-    case "banChatSenderChat":
-    case "unbanChatMember":
-    case "unbanChatSenderChat":
-      return "kick";
-    case "restrictChatMember":
-    case "setChatPermissions":
-    case "promoteChatMember":
-    case "setChatAdministratorCustomTitle":
-      return "restrict";
-    case "deleteMessage":
-    case "deleteMessages":
-    case "deleteBusinessMessages":
-      return "delete";
-    case "sendChatAction":
-      return "chatAction";
-    case "setMessageReaction":
-    case "deleteMessageReaction":
-    case "deleteAllMessageReactions":
-      return "reaction";
-    case "answerCallbackQuery":
-    case "answerPreCheckoutQuery":
-    case "answerShippingQuery":
-      return "callback";
-    case "getChat":
-    case "getChatAdministrators":
-    case "getChatMember":
-    case "getStickerSet":
-    case "getUserProfilePhotos":
-      return "query";
-    default:
-      break;
-  }
-  const name: string = method;
-  if (name.startsWith("get")) return "query";
-  if (name.startsWith("edit") || method === "stopPoll") return "edit";
-  if (
-    name.includes("ProfilePhoto") ||
-    name.startsWith("setMyName") ||
-    name.startsWith("setMyDescription") ||
-    name.startsWith("setMyShortDescription")
-  ) return "profile";
-  if (
-    name.startsWith("setMy") ||
-    name.startsWith("deleteMy") ||
-    name.includes("Webhook") ||
-    name.includes("ForumTopic") ||
-    name.includes("InviteLink")
-  ) return "management";
-  return "other";
 }
 
 function laneFor(category: TelegramRetryCategory): TelegramRetryLane {
@@ -230,57 +155,6 @@ function outboundSignal(signal: AbortSignal | undefined): AbortSignal {
     telegramOutboundAbortController.current.signal;
   if (signal === undefined || signal === lifecycleSignal) return lifecycleSignal;
   return AbortSignal.any([signal, lifecycleSignal]);
-}
-
-/**
- * 429 退避的下限：非正数一律回落到统一兜底值。
- *
- * 零延迟重试就是对着一个刚刚说过 429 的服务端空转——实测持续 429 时 300ms 内能
- * 打出近三百次请求（正常兜底是两次）。零可以从三条路进来，其中两条完全合法：
- * 空或纯空白的 `Retry-After:` 头（`Number("")` 是 0，绕过 null 兜底）、RFC 9110
- * 允许的 `Retry-After: 0`、以及已经过去的 HTTP-date。三条都收在这里。
- */
-function clampRetryDelay(delayMs: number): number {
-  return delayMs > 0 ? delayMs : TELEGRAM_429_FALLBACK_RETRY_MS;
-}
-
-function retryAfterMilliseconds(response: unknown): number | undefined {
-  if (response instanceof Response) {
-    if (response.status !== 429) return undefined;
-    const retryAfter: string | null = response.headers.get("retry-after");
-    if (retryAfter === null) return TELEGRAM_429_FALLBACK_RETRY_MS;
-    const seconds: number = Number(retryAfter);
-    // 空串与纯空白都会被 Number 归成 0，必须先排除，否则它们会伪装成
-    // 「服务端明确说了 0 秒」而不是「这个头没法解析」。
-    if (retryAfter.trim().length > 0 && Number.isFinite(seconds) && seconds >= 0) {
-      return clampRetryDelay(Math.ceil(seconds * 1_000));
-    }
-    const retryAt: number = Date.parse(retryAfter);
-    return Number.isFinite(retryAt)
-      ? clampRetryDelay(retryAt - Date.now())
-      : TELEGRAM_429_FALLBACK_RETRY_MS;
-  }
-  if (
-    typeof response !== "object" ||
-    response === null ||
-    !("ok" in response) ||
-    response.ok !== false ||
-    !("error_code" in response) ||
-    response.error_code !== 429
-  ) return undefined;
-  if (
-    !("parameters" in response) ||
-    typeof response.parameters !== "object" ||
-    response.parameters === null ||
-    !("retry_after" in response.parameters)
-  ) return TELEGRAM_429_FALLBACK_RETRY_MS;
-  const retryAfterSeconds: unknown = response.parameters.retry_after;
-  if (
-    typeof retryAfterSeconds !== "number" ||
-    !Number.isFinite(retryAfterSeconds) ||
-    retryAfterSeconds < 0
-  ) return TELEGRAM_429_FALLBACK_RETRY_MS;
-  return clampRetryDelay(Math.ceil(retryAfterSeconds * 1_000));
 }
 
 function scheduleRetryTimer(
@@ -429,7 +303,7 @@ function handleActiveResponse(job: TelegramOutboundJob, response: unknown): void
     }
     return;
   }
-  const retryAfterMs: number | undefined = retryAfterMilliseconds(response);
+  const retryAfterMs: number | undefined = telegramRetryAfterMilliseconds(response);
   if (retryAfterMs === undefined) {
     resolveActiveJob(job, response);
     return;

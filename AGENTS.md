@@ -23,8 +23,10 @@
 - 文件从“受跟踪”变为“忽略”前必须完成外部备份，并在 Release 的 Compatibility / Migration Notes 中写明备份、恢复和权限步骤。
 - Git 操作后必须先恢复部署文件，再按新结构手工迁移。
 - 禁止用 `cp -r config_example config` 覆盖现有配置；补缺必须使用不覆盖语义或逐项确认，并核对哈希、预期差异、严格解析结果和权限。
-- `/white`、`/permission` 等会原子改写的目录和文件必须允许服务账号写入。
+- `/white`、`/permission`、`/block` 等会改写持久化身份策略的命令经 Disk I/O Worker 事务写入 `database/storage.sqlite`；该目录（含 WAL/SHM 旁路文件）必须允许服务账号写入，`config/` 可保持只读。原子改写的 `state.json`、`bot.lock` 及 `memory/` 各领域目录同样必须可写。
 - 文件结构变化只做手工迁移，不在代码中保留旧格式兼容逻辑。
+- 生产运行时、应用启动入口和普通业务代码只接受当前格式，不执行热迁移，也不得保留旧格式读取、自动升级或静默回写分支。
+- `scripts/` 中的冷迁移脚本只覆盖「最近一个已发布版本 → 当前版本」的直接迁移及该迁移自身的中断续跑；不得累积更早版本或跨多个版本的兼容链。更旧部署必须先分阶段升级到最近版本，未知谱系一律拒绝。
 - 配置和状态全部就位后才能启动服务。
 - 启动后必须确认 `ActiveState=active`、`SubState=running`，观察至少两个 supervisor 重启间隔，并确认 `NRestarts` 不增长、journal 无新增非零退出。
 - 只有哈希、迁移、配置校验和服务稳定性全部确认后才能删除外部备份；任一步失败时必须保留备份和现场并停止发布。
@@ -85,7 +87,7 @@
 
 ### 常量与不可变性
 
-- 字面量常量放在 `packages/consts/<domain>.ts`；env 派生配置放在 `packages/infra/config.ts`。
+- 字面量常量放在 `packages/consts/<domain>.ts`；env 派生配置放在 `packages/consts/paths.ts`，环境变量名放在 `packages/consts/environment.ts`（这两处是全仓唯一读取 `process.env` 的边界）；部署 JSON 的严格解析放在 `packages/config/<domain>.ts`。
 - 常量使用 `SCREAMING_SNAKE_CASE` 和显式类型；长数值使用 `_` 分隔。
 - `packages/` 下禁止使用 `Object.freeze`。
 - 不可变性必须在编译期表达；容器必须声明为 `readonly T[]`、`Readonly<T>`、`ReadonlyArray<T>`、`ReadonlyMap` 或 `ReadonlySet` 等只读类型。
@@ -102,7 +104,7 @@
 - 长期 Map、Set、队列、timer 和单例放在 `packages/cache/<owner>/`。
 - 第一层 owner 仅允许 `main/`、`workers/aiChat/`、`workers/antiRaid/`、`workers/diskIO/`、`perThread/`。
 - 缓存文件头必须注明 owner。
-- 缓存只能被 owner 线程 import；跨线程只能传消息，不得共享内存。
+- 缓存只能被 owner 线程 import；跨线程只能传消息，不得共享内存。归属由 `bun run check:conventions` 按真实模块图核对，当前只有一条豁免：`packages/cache/main/diskIO.ts` 允许被 aiChat / antiRaid isolate 引入（`infra/logger.ts` 静态 import `infra/diskIO.ts`，Worker 里那份状态恒为初始值）。新增豁免必须同时改 `CACHE_OWNER_EXEMPTIONS` 与被豁免模块的头注。
 - 可变单例必须使用 `{ current: T | null }` holder，不得使用 `export let`；泛型必须写在类型标注上。
 - 每个缓存导出必须用 JSDoc 写明填充和清理时机、Worker 崩溃重建方式、容量及清理策略。
 - 新增缓存必须按以下顺序决策，前一项可行时不得进入后一项：
@@ -151,8 +153,9 @@
 
 - 注释和 JSDoc 使用中文，并说明不变量和设计依据。
 - 跨模块约束必须引用 `docs/cn/04-invariants.md`，不得在代码中重复全文。
-- 日志必须使用 `logger`，不得直接使用 `console.log`。
-- 仅 `packages/workers/diskIOWorker.ts` 和 `packages/workers/diskIO/` 内的错误允许使用 `console.error`。
+- `packages/` 与 `index.ts` 的日志必须使用 `logger`，不得直接使用 `console.log`。
+- `packages/` 下仅 `packages/workers/diskIOWorker.ts` 和 `packages/workers/diskIO/` 内的错误允许使用 `console.error`；该边界由 `bun run check:conventions` 强制。
+- `scripts/` 的一次性 CLI（约定自检、冷迁移、性能基准）不接入 `logger`，直接向 stdout/stderr 输出。
 - `logger.error` 等错误文案使用英文。
 - 约束、流程和设计写入 `docs/`；代码仅保留必要 JSDoc。
 - 未经用户明确要求，不得更新文档、README 或指标。

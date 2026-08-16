@@ -17,7 +17,7 @@ export const BLOCKLIST_REMOVAL_RETRY_DELAY_MS: number = 5_000;
  * 不分批的话，该类别一旦进入恢复期，几千条名单会先占满 FIFO；分批和让步
  * 允许新到的验证踢人在下一批之前插入。
  */
-export const BLOCKLIST_SWEEP_BATCH_SIZE: number = 25;
+export const BLOCKLIST_SWEEP_BATCH_SIZE: number = 15;
 
 /** 每批之间让出的时间，给排在后面的验证副作用留出插空的机会。 */
 export const BLOCKLIST_SWEEP_BATCH_PAUSE_MS: number = 1_000;
@@ -41,7 +41,14 @@ export const BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES: number = 5_000;
  * 覆盖，两边都不丢任务。
  * 所属模块：infra/blocklist/。
  */
-export const BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES: number = 10_000;
+export const BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES: number = 4_096;
+
+/**
+ * 启动恢复从 SQLite 顺序接管待踢 outbox 时的单页行数。使用 removal_id 游标，
+ * 每页完成存储形态与领域解码后才读取下一页，避免一次性投影整表。
+ * 所属模块：workers/diskIO/storageDatabase/hydration.ts。
+ */
+export const BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE: number = 2_048;
 
 /**
  * 处置消息投递前，「落盘 → 再看一眼权威镜像还是不是同一批」的对账最多重来几轮。

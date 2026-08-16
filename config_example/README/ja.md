@@ -31,10 +31,10 @@ blocklist、未完了 removal は deployment 設定ではなく runtime data で
 | --- | --- | --- |
 | `telegram.json` | Telegram Bot token と唯一のスーパー管理者 | 常に startup を拒否 |
 | `agent.json` | capability ごとの AI provider、credential、endpoint、model | capability ごとに異なる。下記参照 |
-| `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できず、すでに有効な chat があれば startup を拒否 |
-| `reactions.json` | Telegram reaction の候補 keyword | AI chat を有効化できず、すでに有効な chat があれば startup を拒否 |
-| `mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できず、すでに有効な chat があれば startup を拒否 |
-| `ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できず、すでに有効な chat があれば startup を拒否 |
+| `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `reactions.json` | Telegram reaction の候補 keyword | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 
 AI chat は `prompt/persona.md`、日本語翻訳はプロジェクトルートの `g-auth.json` にも依存します。
 どちらもこのディレクトリにはありません。optional file が存在するのに不正な場合、feature が
@@ -98,10 +98,25 @@ unsupported と判定した後、その Worker は同種 media を download し�
 Google/OpenAI HTTP request は初回 failure 後に最大 5 回 retry します。Worker／process 再構築で
 probe 結果を消し、新設定を適用します。
 
-## identity policy は `config/` に置かない
+## 資格情報を外す前に機能を無効化する
 
-allowlist、blocklist、未完了 removal の authoritative source は runtime data root の
-`database/storage.sqlite` です。`/white`、`/permission`、`/block`、`/unblock` は Disk I/O Worker
+ある機能がどこかのグループで有効なまま、その API key や設定を外しても、プロセスは**通常どおり
+起動**し、その `true` も従来どおり復元されます。ただしその機能は唯一の判定入口で利用不可と
+判定されます——AI 雑談の Worker はそもそも起動せずメモリも hydrate されず（ディスク上の
+スナップショットはそのまま保持）、`/ja_copy` は通常コピーへ退化し、広告検出は bundle を送らなく
+なります。グループからは Bot がある再起動を境に働かなくなったようにしか見えず、痕跡は `logs/` の
+1 行だけです。正しい順序は、まずグループで `/ai_chat disable`、`/ad_detect disable`、
+`/ja_copy disable` を実行し、その後に設定を外すこと。あるいは前提を復旧することです。
+
+**方向に注意**：これはファイルが**本当に存在しない**場合だけです。ファイルが残っていて内容が
+不正なら、対応機能が今オフでも従来どおり起動時のゲートが拒否します。
+
+## identity policy とグループ状態は `config/` に置かない
+
+allowlist、blocklist、未完了 removal、そして**グループ単位の状態**（機能スイッチ、静音、
+ロックダウン記録、Bot の権限スナップショット、グループ名、中継フラグ）の authoritative source は
+いずれも runtime data root の `database/storage.sqlite` です。グループ状態は `chat_states` テーブルに
+あり、最大 25 グループまで。超過時は `/init enable` が 1 行の返信で拒否します。`/white`、`/permission`、`/block`、`/unblock` は Disk I/O Worker
 経由の transaction で変更を永続化し、通常の deployment は database を直接編集しません。
 permission key と default は `/permission help` が現行 reference です。不正 schema、未対応 version、
 2 つの policy table の重複は network 接続前に startup を拒否します。legacy JSON deployment は

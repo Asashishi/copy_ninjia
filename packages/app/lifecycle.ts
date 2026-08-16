@@ -137,18 +137,14 @@ export class ApplicationLifecycle {
     this.dependencies.initGagRuntime();
     this.flags.translateInitialized = true;
 
-    // 配置文件和持久化状态都是不可信部署输入。配置总闸会在
-    // preflightEnabledFeatures 中校验所有已存在的输入，不受功能开关影响；
+    // 配置文件和持久化状态都是不可信部署输入。已有部署输入不受功能开关影响，
     // 各 Worker 在自己的 isolate 中复用同一严格解析器。
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
-    // 状态就绪、还没碰网络与 Worker 时执行总闸：已存在配置必须全部
-    // 合法，已启用功能的凭据与前提也必须齐备（见 app/featurePreflight.ts）。
-    this.dependencies.preflightEnabledFeatures();
-
-    // state 主副本已经严格校验并建立 LKG 后，才创建运行时 Worker 和会安装
-    // 心跳 timer 的 Telegram transformer；恢复失败不会留下半初始化组件。
-    this.dependencies.initTelegramClients();
+    this.dependencies.validateExistingDeploymentInputs();
+    // global state 主副本与部署输入都通过严格校验后，才创建本地 Disk I/O Worker。
+    // SQLite 群状态只负责恢复运行时开关，不再沿用 state.json 时代的功能前提或
+    // 数据正确性启动总闸；功能命令和消息入口各自在 readiness 边界拒绝不可用配置。
     this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
     this.flags.diskIOInitialized = true;
 
@@ -159,6 +155,8 @@ export class ApplicationLifecycle {
     ) {
       throw new Error("Identity database recovery did not return both policy table counts.");
     }
+    this.dependencies.hydrateChatStateCache(loaded.chatStates);
+    this.dependencies.initTelegramClients();
     this.dependencies.hydrateIdentityStorageCounts(
       loaded.whitelistEntryCount,
       loaded.blocklistEntryCount
@@ -196,9 +194,9 @@ export class ApplicationLifecycle {
     // 补进 state 并后台落盘，改图的人打开 state.json 就能看到当前生效值（见
     // infra/storage/stateStore.ts 的 seedMissingAssetState）。补写不阻塞启动。
     //
-    // 排在**最后一个会拒绝启动的 await 之后**：功能闸、持久化恢复、bot.init 与
+    // 排在**最后一个会拒绝启动的 await 之后**：部署输入闸、持久化恢复、bot.init 与
     // 黑名单补扫都可能中止这次启动，而被拒绝的那次运行不该顺手改写运维正要拿去
-    // 排查的 state.json——只排在功能闸之后是守不住这句话的。
+    // 排查的 state.json——只排在部署输入闸之后是守不住这句话的。
     //
     // 确有补写就记一行：改的是部署方的文件，logs/ 里不能只字不提（见
     // AGENTS.md 的数据归属）。
@@ -212,7 +210,7 @@ export class ApplicationLifecycle {
 
     this.dependencies.logger.log(
       `Bot started as @${this.dependencies.bot.botInfo.username}. ` +
-      `Restored state for ${this.dependencies.getAllChatStates().size} chat(s)` +
+      `Restored state for ${this.dependencies.getChatStateCache().size} chat(s)` +
       (restoredCopiedUser ? `, currently copying ${restoredCopiedUser.id}.` : ".")
     );
 
@@ -260,7 +258,7 @@ export class ApplicationLifecycle {
     const maintenanceQuiesceSucceeded: boolean = this.quiesceMaintenance();
     const runnerDrained: boolean = await this.waitForRunnerDrain(runner);
 
-    // 标题刷新可能触发 saveStateInBackground；必须先等它完成，再做最终 flush。
+    // 标题刷新可能排入 chatState SQLite 写缓冲；必须先等它完成，再做最终 flush。
     const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(
       NORMAL_FLUSH_TIMEOUTS.maintenanceMs
     );

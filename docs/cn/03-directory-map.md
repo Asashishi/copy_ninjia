@@ -15,7 +15,7 @@
 ## 目录职责
 
 - **`packages/app/`**
-  - **职责**：启动/退出生命周期、已启用功能的启动前提核对、handler 注册、命令菜单
+  - **职责**：启动/退出生命周期、已存在部署输入的启动校验出口、handler 注册、命令菜单
     与 update runner，以及生命周期副作用依赖装配。
   - **典型文件**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、
     `registerHandlers.ts`、`updateRunner.ts`。`ApplicationLifecycleDependencies` 从装配对象
@@ -32,7 +32,7 @@
   - **职责**：AI 闲聊主线程代理与模型能力，包括 Worker 监督、记忆镜像、可用性判定，
     以及供应商实现包（`gemini/`、`openai/`）、provider 选取、贴纸、工具和媒体实现。
   - **典型文件**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
-    `availability.ts`、`credentials.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`；
+    `availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`；
     `index.ts` 只提供薄公开入口。
 - **`packages/antiRaid/`**
   - **职责**：Anti-Raid 主线程代理与广告模型能力，包括 Worker 监督、持久化交接、
@@ -56,8 +56,10 @@
   - **职责**：部署 `config/*.json` 的严格 schema、进程快照与按功能聚合的可用性判定；身份策略不在这里。
   - **典型文件**：`telegram.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
 - **`packages/database/`**
-  - **职责**：身份策略 SQLite 的 schema、codec 与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
-  - **典型目录**：`schema/`、`codec/identity.ts`、`interact/identity.ts`。
+  - **职责**：共享 SQLite（身份策略 + 群状态）的 schema、codec、行校验与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
+  - **典型目录**：`schema/`（含 `migrations/`）、`codec/identity.ts`、`codec/chatState.ts`、
+    `interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、
+    `migration.ts`、`inspection.ts`）、`validation/storageRows.ts`。
 - **`packages/libs/`**
   - **职责**：领域无关的基础设施，包括原子文件、有界 I/O 与并发工具。
   - **典型文件**：`flushBarrier.ts`、`linkedQueue.ts`、`acknowledgedBatchQueue.ts`、
@@ -65,7 +67,8 @@
 - **`packages/workers/`**
   - **职责**：三个 Worker 的线程内实现。
   - **典型文件**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`，以及
-    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/identityDatabase.ts`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
+    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/storageDatabase.ts` 与
+    `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **职责**：模型与能力按所属功能放置，避免共享目录模糊线程和生命周期边界。
   - **典型文件**：`tools/replyToolset/`、`utils/`、`provider.ts`；AI 闲聊的模型收发不在
@@ -98,7 +101,7 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
-  - **典型文件**：`checkProjectConventions.ts`、`migrateIdentityStorageToSqlite.ts`、`migrateWhitelistPermission.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`。
+  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`migrateIdentityStorageToSqlite.ts`、`migrateChatStateToSqlite.ts`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts` 与 `perf/hotPathProfileGate.ts`。
 
 ## 新代码放置决策
 
@@ -118,7 +121,7 @@
 
 - **`main/`**
   - **owner**：主线程。
-  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 内存镜像、Disk I/O 宿主，以及
+  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像与 `chatState.ts` 的 `chat_states` 群状态 LRU（容量 25）、Disk I/O 宿主，以及
     **主线程侧的 Worker 代理与镜像**（`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **owner**：AI 闲聊 Worker。
@@ -140,7 +143,7 @@
 
 ## 兼容入口（barrel）约定
 
-大文件拆分成子模块后，原文件可以降级为无状态的薄兼容导出入口（如 `packages/consts/aiChat.ts` 对 `packages/consts/aiChat/`、`packages/infra/telegram/avatar.ts` 对 `packages/infra/telegram/avatar/`，以及验证文件领域的 `verificationFiles.ts`）。规则：
+大文件拆分成子模块后，原文件可以降级为无状态的薄兼容导出入口（如 `packages/consts/aiChat.ts` 对 `packages/consts/aiChat/`、`packages/infra/telegram/actions.ts` 对 `packages/infra/telegram/actions/`，以及验证文件领域的 `verificationFiles.ts`）。规则：
 
 - 兼容入口只服务旧 import 的渐进迁移；**新代码一律直接从领域子文件导入**。
 - 兼容入口不得重新持有状态、解析配置或引入 import 副作用。

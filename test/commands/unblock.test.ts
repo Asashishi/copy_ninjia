@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
+import type { BotChatPermissions } from "../../packages/types/telegram";
+import { botPermissions } from "../helpers/botPermissions";
 import {
   blockedIdentityTestView as blockedUserIds,
   seedMissingIdentity,
@@ -9,9 +11,9 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 const unbanChatMemberIfBanned = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const unbanChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
-const chatStates: Map<number, { botIsAdmin?: boolean }> = new Map<
+const chatStates: Map<number, { botPermissions?: BotChatPermissions }> = new Map<
   number,
-  { botIsAdmin?: boolean }
+  { botPermissions?: BotChatPermissions }
 >();
 let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => {
@@ -37,7 +39,7 @@ mock.module("../../packages/infra/telegram/client", () => ({
   joinVerificationApi: { kind: "guard-api" },
 }));
 mock.module("../../packages/infra/botAdmin", () => ({ resolveBotAdminStatus }));
-mock.module("../../packages/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
+mock.module("../../packages/infra/storage/stateStore", () => ({ getChatStateCache: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 mock.module("../../packages/infra/diskIO", () => ({
   postDiskIO,
@@ -95,7 +97,7 @@ describe("/unblock", () => {
 
   test("从 SQLite 视图移除后在所有管理员群解除真人封禁", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
-    chatStates.set(-2002, { botIsAdmin: true });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
     resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleUnblockCommand(context());

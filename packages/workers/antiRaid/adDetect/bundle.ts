@@ -16,7 +16,7 @@ import { logger } from "../../../infra/logger";
 import { sanitizeInline } from "../../../libs/text";
 import {
   AD_DETECT_BUNDLE_MAX_CHARS,
-  AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS,
+  AD_DETECT_JUDGED_RETENTION_WINDOW_MS,
   AD_DETECT_LINK_URL_MAX_CHARS,
   AD_DETECT_MAX_LINK_URLS,
   AD_DETECT_MAX_MESSAGES_PER_SENDER,
@@ -31,7 +31,7 @@ import type {
 } from "../../../types/antiRaid/adDetect";
 
 /**
- * 裁掉去重窗口外、并且已经判过的旧上下文。尚未判定的条目即使等待超过一个
+ * 裁掉保留窗口外、并且已经判过的旧上下文。尚未判定的条目即使等待超过一个
  * 窗口也必须留到消费；entries 按序号与时间入队，碰到未消费或仍在窗口内的
  * 第一条就可以停。
  */
@@ -41,7 +41,7 @@ export function pruneConsumedContext(bundle: AdMessageBundle, now: number): void
     if (
       oldest === undefined ||
       oldest.seq > bundle.checkedSeq ||
-      now - oldest.receivedAt < AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS
+      now - oldest.receivedAt < AD_DETECT_JUDGED_RETENTION_WINDOW_MS
     ) break;
     bundle.entries.shift();
   }
@@ -64,6 +64,15 @@ export function enforceBundleCapacity(bundle: AdMessageBundle): void {
   }
   while (bundle.entries.length > AD_DETECT_MAX_MESSAGES_PER_SENDER) {
     const evicted: AdCandidateEntry = bundle.entries.shift()!;
+    // 每个发送者只记一次：撑满之后每条新消息都会再挤掉一条，逐条记等于刷屏。
+    if (bundle.uncheckedEvicted !== true) {
+      bundle.uncheckedEvicted = true;
+      logger.error(
+        `Ad detection dropped never-judged message text from sender ${bundle.senderId} in chat ` +
+        `${bundle.chatId}: the burst filled the ${AD_DETECT_MAX_MESSAGES_PER_SENDER}-message ` +
+        "per-sender limit before the first tick, so that content never reaches the classifier."
+      );
+    }
     if (bundle.pendingDeleteIds.length >= AD_DETECT_MAX_PENDING_DELETE_IDS) {
       // 每个发送者只记一次：溢出之后每条新消息都会再挤掉一个，逐条记等于刷屏。
       if (bundle.pendingDeleteOverflowed !== true) {
@@ -207,8 +216,8 @@ export function boundSampleContext(
 /**
  * 选出本次送检的条目，并给出这一拍真正判到了哪里。
  *
- * **未判定的内容一律从最旧一条开始装**，装不下的留到下一次判定（
- * requeueIfUnchecked → 去重窗口轮换）。这个顺序不是偏好而是正确性要求：
+ * **未判定的内容一律从最旧一条开始装**，装不下的留到下一次判定（当前批结算后
+ * 由 requeueIfUnchecked 立即重排）。这个顺序不是偏好而是正确性要求：
  * checkedSeq 是「≤ 它的都判过了」的单调水位，只有按序判定才表达得出来。
  * 反过来从最新一条往回取的话，被预算挡在外面的旧消息会夹在水位下面，跟着
  * 水位一起被记成「判过」再被 pruneConsumedContext 裁掉——一次没有任何日志

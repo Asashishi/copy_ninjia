@@ -16,14 +16,14 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
-mock.module("../../packages/infra/telegram/avatar", () => ({ copyUserProfilePhoto, restoreDefaultProfilePhoto }));
+mock.module("../../packages/infra/telegram/avatar/copy", () => ({ copyUserProfilePhoto }));
+mock.module("../../packages/infra/telegram/avatar/restore", () => ({ restoreDefaultProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getGlobalCopyState: () => globalCopyState,
   // copy/avatarQueue.ts 在主线程取默认头像直链后传给 restoreDefaultProfilePhoto；
   // 这里的替身必须一并提供，否则整个模块的具名导入会在加载期就失败。
   getBotDefaultAvatarUrl: (): string => DEFAULT_AVATAR_URL,
-  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
-  saveStateInBackground,
+  persistGlobalState: async (context: string): Promise<void> => { saveStateInBackground(context); },
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 mock.module("../../packages/infra/logger", () => ({

@@ -24,14 +24,18 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
 const chatStates = new Map<number, Record<string, unknown>>();
 const saveStateInBackgroundMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/storage/stateStore", () => ({
+  // 故意按「State 已经管满」建模：真实的 getOrCreateChatState 在 chat_states 已达
+  // STATE_MANAGED_CHAT_LIMIT 时，为一个未知群新建状态会抛容量错（见
+  // infra/chatStateStorage.ts 的 assertChatStateCapacity）。handleSendCommand 绝不
+  // 该为未纳管的群走到这里，所以这句抛错等价于一条断言：它一旦逸出，复现的就是
+  // 「一条 /send 让 update 不被确认、进程带非零码退出、Telegram 重投再抛」的
+  // 重启循环。
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
-    let state = chatStates.get(chatId);
-    if (!state) {
-      state = {};
-      chatStates.set(chatId, state);
-    }
+    const state = chatStates.get(chatId);
+    if (!state) throw new Error("chat_states must contain at most 25 chats; delete chats that are no longer managed before adding another chat.");
     return state;
   },
+  getChatStateCache: (): ReadonlyMap<number, Record<string, unknown>> => chatStates,
   getActiveProxySendTarget: (): number | undefined => {
     for (const [chatId, state] of chatStates) {
       if (state.isProxySendEnabled === true) return chatId;
@@ -45,8 +49,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     if (Object.keys(state).length === 0) chatStates.delete(chatId);
     return true;
   },
-  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackgroundMock(...args); },
-  saveStateInBackground: saveStateInBackgroundMock,
+  persistChatState: async (_chatId: number, context: string): Promise<void> => { saveStateInBackgroundMock(context); },
 }));
 
 const { handleSendCommand } = await import("../../packages/commands/send");
@@ -59,6 +62,11 @@ function makeCtx(chatType: "private" | "group", userId: number | undefined, arg:
     msgId: 1,
     match: arg,
   };
+}
+
+/** 把一个群标成「已纳管」：/init enable 过的群在 chat_states 里就是这么一条记录。 */
+function manage(chatId: number): void {
+  chatStates.set(chatId, {});
 }
 
 describe("handleSendCommand", () => {
@@ -92,25 +100,42 @@ describe("handleSendCommand", () => {
   });
 
   test("目标聊天不可达时拒绝开启会话，不落盘", async () => {
+    manage(-100123);
     getChatMock.mockImplementation(async (): Promise<any> => {
       throw new Error("Bad Request: chat not found");
     });
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100123"));
     expect(saveStateInBackgroundMock).not.toHaveBeenCalled();
-    expect(chatStates.get(-100123)).toBeUndefined();
+    expect(chatStates.get(-100123)).toEqual({});
     expect(logApiErrorMock).toHaveBeenCalledTimes(1);
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
   });
 
   test("可达的私人用户或频道也拒绝作为中转目标，避免私聊泄露", async () => {
+    manage(-1001);
     for (const type of ["private", "channel"]) {
       getChatMock.mockImplementationOnce(async (): Promise<any> => ({ id: -1001, type, first_name: "Not a group" }));
       await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-1001"));
     }
     expect(saveStateInBackgroundMock).not.toHaveBeenCalled();
-    expect(chatStates.size).toBe(0);
+    expect(chatStates.get(-1001)).toEqual({});
     expect(logApiErrorMock).not.toHaveBeenCalled();
     expect(sendMessageMock).toHaveBeenCalledTimes(2);
+  });
+
+  // 这条命令过去在这里 getOrCreateChatState(targetChatId)：目标没纳管时那是一次
+  // 新建，State 管满 25 个群时新建抛容量错，异常逸出命令处理器就是一个由重投
+  // 驱动的重启循环。现在只回一句提示——容量拒绝只属于 /init enable 那一处。
+  test("目标群没被纳管时只回一句提示：不抛错、不建状态、不落盘，也不探可达性", async () => {
+    for (let index: number = 0; index < 25; index += 1) manage(-2_000 - index);
+
+    await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100123"));
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(chatStates.has(-100123)).toBe(false);
+    expect(chatStates.size).toBe(25);
+    expect(getChatMock).not.toHaveBeenCalled();
+    expect(saveStateInBackgroundMock).not.toHaveBeenCalled();
   });
 
   test("非规范写法的 id 按用法错误挡在可达性探测之前，绝不开会话", async () => {
@@ -127,6 +152,8 @@ describe("handleSendCommand", () => {
   });
 
   test("合法且可达的群组 id 开启会话并落盘（状态挂在目标群自己的 chatId 下）；重复调用被拒绝、不换目标", async () => {
+    manage(-100123);
+    manage(-100456);
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100123"));
     expect(getChatMock).toHaveBeenCalledTimes(1);
     expect(chatStates.get(-100123)).toEqual({ isProxySendEnabled: true });
@@ -134,12 +161,13 @@ describe("handleSendCommand", () => {
 
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100456"));
     expect(chatStates.get(-100123)).toEqual({ isProxySendEnabled: true });
-    expect(chatStates.has(-100456)).toBe(false);
+    expect(chatStates.get(-100456)).toEqual({}); // 已纳管但没被开成第二个目标
     expect(saveStateInBackgroundMock).toHaveBeenCalledTimes(1); // 被拒绝的这次没有再落盘
     expect(getChatMock).toHaveBeenCalledTimes(1); // 已经在转发就不必再探一次可达性
   });
 
   test("finish 结束会话并落盘（清掉目标群自己的 isProxySendEnabled）；没有会话时 finish 只提示、不落盘", async () => {
+    manage(-100123);
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "finish"));
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
     expect(saveStateInBackgroundMock).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
-import { clearChatStateField, getChatState, getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
+import { clearChatStateField, getChatState, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { QUIET_DEFAULT_MINUTES, QUIET_MAX_MINUTES, QUIET_MIN_MINUTES } from "../consts/commands";
 import { isQuietUntilActive } from "../libs/chatState";
@@ -37,7 +37,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
 
   const state: ChatState = getOrCreateChatState(chatId);
   state.quietUntil = Date.now() + minutes * 60_000;
-  await persistAuthoritativeState("quiet set");
+  await persistChatState(chatId, "quiet set");
 
   await sendCommandMessage({ chatId, text: `哼，本天才就赏你们 ${minutes} 分钟清净，不主动插话也不复读。想本天才了就回复或 @ 我，杂鱼♡`, replyToMessageId: messageId });
 }
@@ -59,7 +59,7 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
   // 静默生效中说明 /quiet 写过真实状态；统一清字段，并在它是最后一个字段时
   // 同步回收 Map 条目。
   clearChatStateField(chatId, "quietUntil");
-  await persistAuthoritativeState("quiet cleared");
+  await persistChatState(chatId, "quiet cleared");
 
   await sendCommandMessage({ chatId, text: `哼，这么快就受不了没有本天才的日子啦？静默解除，杂鱼们做好被吵的准备吧♡`, replyToMessageId: messageId });
 }

@@ -5,14 +5,26 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="06-modification-guide.md">← Prev: 06 Recipes</a> · <b>Next: None →</b>
+  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="06-modification-guide.md">← Prev: 06 Recipes</a> · <a href="08-commands.md">Next: 08 Commands →</a>
 </p>
 
 ---
 
 ## Deployment Model
 
-Copy Ninjia runs as one long-polling process with no webhook or external database service. Identity policy uses local SQLite; other persistence uses files under the data root. Keep a single instance to roughly 15 active groups or fewer. The practical bottlenecks are one Bot API, AI provider quotas, and media throughput; see “Quick Start” in the root README for hardware guidance.
+Copy Ninjia runs as one long-polling process with no webhook or external database service. Identity policy uses local SQLite; other persistence uses files under the data root.
+
+### Hardware Guidance
+
+<table width="100%">
+<tr><th width="33%" align="left">Deployment Scale</th><th width="26%" align="left">Recommended Specs</th><th width="41%" align="left">Notes</th></tr>
+<tr><td>Starter (Low activity, mostly text, AI in few groups)</td><td>2 vCPU / 2 GB RAM / Local SSD</td><td>Runs fine, but multi-Worker setup competes for CPU under peak media loads; 2 GB of swap is recommended</td></tr>
+<tr><td>Light Production (Mostly text, AI in few groups)</td><td>4 vCPU / 2 GB RAM / Local SSD</td><td>2 GB is not recommended for media spikes; 2 GB of swap is recommended</td></tr>
+<tr><td>Recommended Production (~15 active groups, each averaging 1,000–3,000 messages/day)</td><td>4 vCPU / 4 GB RAM / Local SSD</td><td>2 GB of swap is recommended</td></tr>
+<tr><td>All groups AI enabled with high image/sticker volume</td><td>4 vCPU / 8 GB RAM</td><td>Leaves peak headroom for media processing and image encoding</td></tr>
+</table>
+
+Keep a single instance to roughly 15 active groups of the sizes above or fewer. The practical bottlenecks are one Bot API, AI provider quotas, and the actual message/media rate — not the total member count.
 
 ### systemd Example
 
@@ -47,21 +59,24 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 `COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When empty, it defaults to the project root:
 
 - **`state.json` + `state.json.bak`**
-  - **Contents**: authoritative group switches (including `isAntiRaidEnabled`, the single switch
-    for join verification plus the anti-raid private mode, off by default), copy state, lockdown
-    mirrors, and related state, plus the three asset URLs under `global.assets` (two fortune
-    thumbnails and the bot's default avatar). Model selection is no longer runtime state.
+  - **Contents**: global state only — the copy target, plus the four asset URLs under
+    `global.assets` (the two fortune thumbnails, the gag inline-result thumbnail, and the bot's
+    default avatar). Per-chat state —
+    group switches (including `isAntiRaidEnabled`, the single switch for join verification plus
+    the anti-raid private mode, off by default), lockdown records and permission snapshots —
+    now lives in `chat_states` inside `database/storage.sqlite`. Model selection is no longer
+    runtime state.
   - **Backup**: back up the primary and backup together.
   - **Asset URLs can only be edited while stopped**: the process holds the authoritative state in
     memory and rewrites the whole file, so an edit made while running is erased by the next save.
     Stop the service → edit `global.assets` → start it. Missing entries are seeded with their
     currently effective values once startup has fully succeeded; a malformed value (missing or
     wrong scheme) rejects the whole file at decode time and names the field path. Any image host
-    works as long as it serves raw image bytes; the two thumbnails must be `https`, only
+    works as long as it serves raw image bytes; the three thumbnails must be `https`, only
     `botDefaultAvatarUrl` may be plain `http`, and that download **does follow redirects** — a
     direct link that 302s to the actual storage domain (the built-in Drive default among them)
     works as-is, with no need to resolve the final hop yourself.
-  - **Check the three entries before upgrading**: the two thumbnails now accept `https` only, so
+  - **Check the four entries before upgrading**: the three thumbnails now accept `https` only, so
     one left as `http://` by an older version refuses to start at decode time and names the field
     path.
 - **`memory/ai/<chatId>.json`**
@@ -99,9 +114,10 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
     again, history compacts to the latest record per user, and each chat/day retains at most the
     newest 250,000 users.
 - **`database/storage.sqlite`** (with possible runtime `-wal` / `-shm` sidecars)
-  - **Contents**: schema-v3 identity database. `whitelist_entries` and `blocklist_entries` are the
+  - **Contents**: schema-v4 shared storage database. `whitelist_entries` and `blocklist_entries` are the
     authoritative allowlist and blocklist; `pending_blocked_removals` is the unfinished per-chat
-    ban outbox; `storage_metadata` carries the one schema version. The Drizzle migration journal
+    ban outbox; `chat_states` is the authoritative per-chat state table (at most 25 rows — a 26th
+    refuses startup); `storage_metadata` carries the one schema version. The Drizzle migration journal
     must match a supported lineage.
   - **Backup**: mandatory. Losing the blocklist removes every permanent ban; losing the outbox
     loses unfinished enforcement. With the bot stopped, copy the main database and any WAL/SHM
@@ -159,15 +175,28 @@ bun run migrate:identity-storage --apply
 
 A fresh deployment crosses the same explicit boundary: create the two temporary empty legacy inputs described in [01 Setup](01-getting-started.md#initialize-the-identity-database), then run `--apply`. Startup never guesses that a missing database means empty policy, and migration refuses to overwrite an existing target.
 
-### SQLite Schema v2 → v3
+### SQLite Schema v3 → v4 (chat state moves into the database)
 
-With the bot stopped, deployments already using JSONB schema v2 run:
+Deployments predating the release that moved chat state out of `state.json` — the database is still
+schema v3 and `state.json` still carries `chats` — run this with the bot stopped:
 
 ```bash
-bun run migrate:whitelist-permission -- --apply
+bun run migrate:chat-state -- --check
+bun run migrate:chat-state -- --apply
 ```
 
-The script accepts only the exact supported v2 migration lineage. It first creates a `0600` external backup under the system temporary directory through SQLite serialization and verifies its hash and integrity, then upgrades allowlist permissions to schema v3. Unknown lineage, invalid rows, allowlist/blocklist overlap, or a failed transaction leaves the source rejected as-is. Running it on v3 performs strict validation and reports that no migration is needed. Release Compatibility / Migration Notes must name the migration actually run, backup location, restore procedure, and permission requirements.
+Both modes acquire `bot.lock` first (so the service must already be stopped), strictly read both the
+primary and backup `state.json`, run a whole-database integrity check, and accept only the exact
+supported v3 or v4 migration lineage; unknown lineage, invalid rows, or allowlist/blocklist overlap
+is rejected as-is. `--check` only reports how many chat rows are pending and changes no deployment
+data. `--apply` resolves each chat's bot permission snapshot through Telegram (the legacy format
+stored only a `botIsAdmin` boolean), keeps an external backup of both state files and a serialized
+SQLite snapshot with owner/mode/SHA-256 recorded, then runs the schema migration, writes the chat
+rows, verifies the business tables were left untouched, and finally publishes `state.json.bak` and
+`state.json` atomically in that order as the new global-only format. Any failure retains the external
+backup and prints its path. Running it on an already-migrated database performs strict validation and
+reports that no migration is needed. Release Compatibility / Migration Notes must name the migration
+actually run, backup location, restore procedure, and permission requirements.
 
 ## Startup Failures
 

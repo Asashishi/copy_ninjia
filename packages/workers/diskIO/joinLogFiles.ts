@@ -40,6 +40,7 @@ import {
 import { JOIN_LOG_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { atomicWriteTextChunksSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { isTelegramGroupChatId } from "../../libs/telegramId";
 import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type {
   JoinLogDiskMessage,
@@ -220,8 +221,12 @@ export function recoverJoinLogFiles(today: string = getTokyoDateKey()): void {
     const chatIdText: string = match[1]!;
     const chatId: number = Number(chatIdText);
     const day: string = match[2]!;
-    if (!Number.isSafeInteger(chatId) || chatId === 0 || String(chatId) !== chatIdText) {
-      return invalidInput(path, "$filename", "a canonical non-zero safe-integer chat ID");
+    if (!isTelegramGroupChatId(chatId) || String(chatId) !== chatIdText) {
+      return invalidInput(
+        path,
+        "$filename",
+        "a canonical negative safe-integer Telegram group or channel ID"
+      );
     }
     if (!isCanonicalDateKey(day)) {
       return invalidInput(path, "$filename", "a canonical calendar date");

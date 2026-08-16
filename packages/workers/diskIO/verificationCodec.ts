@@ -8,6 +8,7 @@ import {
 import { verificationKey } from "../../libs/verificationKey";
 import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../../libs/record";
+import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type {
   VerificationSnapshot,
   VerificationSnapshotBase,
@@ -67,9 +68,7 @@ export function decodeVerificationSnapshot(
   if (
     !hasCurrentVerificationKeys(value) ||
     value.version !== VERIFICATION_FILE_VERSION ||
-    typeof value.chatId !== "number" ||
-    !Number.isSafeInteger(value.chatId) ||
-    value.chatId === 0 ||
+    !isTelegramGroupChatId(value.chatId) ||
     !isPositiveId(value.userId) ||
     !isPositiveId(value.generation) ||
     !isPositiveId(value.revision) ||

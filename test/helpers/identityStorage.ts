@@ -60,7 +60,7 @@ export const blockedIdentityTestView: {
   },
 };
 
-/** 模拟 SQLite 全表主键查询；不受主线程 8196 项 LRU 淘汰影响。 */
+/** 模拟 SQLite 全表主键查询；不受主线程 8192 项 LRU 淘汰影响。 */
 export function readBlockedIdentityTestIds(): readonly number[] {
   return [...blockedIdentityTestIds];
 }

@@ -7,7 +7,7 @@ import {
 } from "../consts/commands";
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
-import { getChatState, getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
+import { getChatState, getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { isJaTranslationConfigured } from "../copy/availability";
@@ -140,7 +140,7 @@ export async function handleCopyCommand(
   // 开始复制模式（状态已由 commitCopySlot 在无 await 的同步块内原子写入）。
   // 全局槽仍在同步块内原子提交；成功反馈和头像任务必须等对应 revision
   // 的主、备两份 state 都 durable，避免 update 已确认后重启复活旧 copy 状态。
-  await persistAuthoritativeState("copy started");
+  await persistGlobalState("copy started");
 
   const targetLabel: string = formatUserLabel(targetUser);
   const startText: string = `正在把 ${targetLabel} 的脸皮扒下来当本天才的头像哦${describeCopyModeEffect(mode)}，杂鱼乖乖等一下~♡`;
@@ -180,7 +180,7 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
     globalCopy.copiedUser = null;
     globalCopy.copyMode = undefined;
     globalCopy.copyChatId = undefined;
-    await persistAuthoritativeState("copy stopped");
+    await persistGlobalState("copy stopped");
   }
 
   await sendCommandMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });

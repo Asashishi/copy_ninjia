@@ -1,4 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
+import type { BotChatPermissions } from "./telegram";
 
 /** 反刷群锁定跨 Worker 与持久化共用的离散阶段。 */
 export type LockdownPhase = "applying" | "active" | "reconciling" | "restoring";
@@ -35,7 +36,7 @@ export type CopyMode = "reverse" | "nya" | "ja";
 
 /**
  * 单个群聊各自独立的状态。机器人可能同时在多个群里运行，每个群各自维护一份，
- * 互不影响——见 infra/storage/stateStore.ts 中 Map<chatId, ChatState> 的用法。复读目标不在
+ * 互不影响——主线程以容量 25 的 LRU 保留 SQLite `chat_states` 的热读值。复读目标不在
  * 这里——复读消耗的是机器人头像/人格这一份全局资源，同一时刻全局只有一个
  * 复读目标，见 GlobalCopyState。
  */
@@ -102,14 +103,17 @@ export interface ChatState {
    */
   isInitEnabled?: boolean;
   /**
-   * 机器人自己在本群是否为管理员。由 my_chat_member 更新近实时维护，未知时
-   * 按需 getChatMember 现查回填（见 packages/infra/botAdmin.ts）。这是入群守卫和
-   * /block 的权限门控依据，也是「/block 在所有管理员群同步生效」的群清单来源
-   * ——Bot API 无法枚举机器人所在的群，只能这样记下来。
+   * 机器人自己在本群的完整管理员权限快照。由主线程的 `my_chat_member`
+   * 更新近实时替换，未知时按需 `getChatMember` 现查回填（见
+   * packages/infra/botAdmin.ts）。`undefined` 仅表示尚未确证；已确证不是管理员时
+   * 仍保存一份 `isAdministrator: false` 且其它权限全 false 的完整快照。
+   *
+   * 这是主线程唯一的权威副本：入群守卫、/block 群清单与具体动作权限
+   * 都直接读它，不再并行维护第二张主线程 Map。
    */
-  botIsAdmin?: boolean;
+  botPermissions?: BotChatPermissions;
   /**
-   * 本群名称，纯粹供人读 state.json 时核对某个 chatId 是哪个群，不参与任何
+   * 本群名称，纯粹供人核对 SQLite 中某个 chatId 是哪个群，不参与任何
    * 业务判断。启动时全量现查一轮回填，此后每条群消息顺手用消息自带的
    * chat.title 刷新（零额外 API 开销），见 packages/infra/chatTitle.ts。
    */
@@ -167,8 +171,6 @@ export interface GlobalAssetState {
 /**
  * 所有群共用的全局状态，按用途分块：`copy` 是复读状态与冷却时钟，`assets`
  * 是外部素材直链。AI provider 与模型只由 config/agent.json 管理，不进入状态。
- * 分块是为了让「全局」与按群的 `chats` 在文件里一眼分得开，也给后续的全局项留一个
- * 不必再改顶层形状的位置。
  */
 export interface GlobalState {
   copy: GlobalCopyState;
@@ -176,16 +178,13 @@ export interface GlobalState {
 }
 
 /**
- * state.json 的整体结构：chats 以 chatId（字符串）为键分别保存各群聊各自的
- * 状态（静默期、私密模式镜像）；global 是所有群共用的那一份。整个文件由内存中
- * 唯一一份状态全量序列化而来（见 infra/storage/stateStore.ts），
- * 不拆分文件、不做局部 patch——这点状态量全量写一份 JSON 毫无性能压力。
+ * state.json 的整体结构只保留所有群共用的 global。群级状态由
+ * `database/storage.sqlite` 的 `chat_states` 表持久化，不在这里保留镜像。
  *
  * 结构变更只做手工迁移，解码器里不留旧形状的兼容分支：顶层出现 `globalCopy`
  * 这类旧键会被 knownKeys 当场拒绝，让运维照着报错迁移，而不是静默把复读状态
  * 读成空。
  */
 export interface StateFileSchema {
-  chats: Record<string, ChatState>;
   global: GlobalState;
 }

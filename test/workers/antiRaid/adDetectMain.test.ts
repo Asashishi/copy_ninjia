@@ -3,6 +3,7 @@ import type { Message } from "@grammyjs/types";
 import type { AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { TelegramConfig } from "../../../packages/types/config";
+import { botPermissions } from "../../helpers/botPermissions";
 
 const chatStates = new Map<number, Record<string, unknown>>();
 const activeVerificationSnapshots = new Map<string, unknown>();
@@ -64,7 +65,7 @@ mock.module("../../../packages/infra/blocklist/sweep", () => ({ requestBlocklist
 mock.module("../../../packages/cache/main/antiRaid/verificationMirror", () => ({ activeVerificationSnapshots }));
 mock.module("../../../packages/infra/diskIO", () => ({ postDiskIODiagnostic: postDiskIO }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
-  getAllChatStates: () => chatStates,
+  getChatStateCache: () => chatStates,
   getChatState: (chatId: number) => chatStates.get(chatId) ?? {},
 }));
 
@@ -75,6 +76,8 @@ const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/te
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
 const { blocklistIdentityMutationQueues } = await import("../../../packages/cache/main/blocklist");
 const { runBlocklistIdentityMutation } = await import("../../../packages/infra/identityPolicy/coordination");
+const { inlineResultSources } = await import("../../../packages/cache/main/inlineResultSources");
+const { recordInlineResultSources } = await import("../../../packages/infra/inlineResultSources");
 const { markSelfSent } = await import("../../../packages/infra/selfSentTracker");
 const { sentMessages } = await import("../../../packages/cache/perThread/selfSentTracker");
 const { blocklistEntryCache, whitelistEntryCache } =
@@ -107,7 +110,11 @@ function detected(overrides: Partial<AdDetectedEvent> = {}): AdDetectedEvent {
 
 beforeEach(() => {
   chatStates.clear();
-  chatStates.set(-1001, { isAdDetectEnabled: true, isInitEnabled: true, botIsAdmin: true });
+  chatStates.set(-1001, {
+    isAdDetectEnabled: true,
+    isInitEnabled: true,
+    botPermissions: botPermissions(),
+  });
   activeVerificationSnapshots.clear();
   dispatched.length = 0;
   errorLogs.length = 0;
@@ -141,6 +148,7 @@ beforeEach(() => {
   postDiskIO.mockImplementation((message: unknown): boolean => (diskMessages.push(message), true));
   for (const timer of sentMessages.values()) clearTimeout(timer);
   sentMessages.clear();
+  inlineResultSources.clear();
 });
 
 describe("广告检测投递门禁", () => {
@@ -394,6 +402,90 @@ describe("广告检测投递门禁", () => {
     expect(buildAdCandidate(message(), 999)).toBeUndefined();
   });
 
+  test("本 bot 自己的 inline 结果一律按源文本判定，取不到源文本就不判", () => {
+    // gag 落群正文由 renderGagSpeech 随机插点生成，正落在提示词「刻意变形」那条
+    // 最强单项信号上，前缀那条隐藏主页 marker 又补上一个 t.me 落点；运势正文则是
+    // 问候、抽签结果与防伪回执——两者都是本 bot 自己写的，送检的必须是应答那一刻
+    // 登记下来的源文本。
+    const gagSpeech = (overrides: Partial<Message> = {}): Message => message({
+      via_bot: { id: 999, is_bot: true, first_name: "Bot" },
+      text: "（透过口塞）小. .. ..号. ...也有... . ..啊",
+      entities: [{
+        type: "text_link",
+        offset: 0,
+        length: 6,
+        url: "https://t.me/spammer?profile#-1001",
+      }],
+      ...overrides,
+    });
+    recordInlineResultSources(7, "小号也有啊", [{
+      type: "article",
+      id: "gag--1001-7",
+      title: "在 群 发言",
+      input_message_content: {
+        message_text: "（透过口塞）小. .. ..号. ...也有... . ..啊",
+      },
+    }]);
+    const gagged = buildAdCandidate(gagSpeech(), 999);
+    expect(gagged?.text).toBe("小号也有啊");
+    expect(gagged?.messageId).toBe(10);
+    expect(gagged?.senderId).toBe(7);
+    expect(gagged?.linkUrls).toBeUndefined();
+
+    // 运势结果同样只判用户写的所求事项，问候、抽签结果、防伪回执与那条回执
+    // 链接都不进判定。
+    const fortuneText: string =
+      "你好，@spammer\n所求事项: 加我微信\n结果: 大吉\n防伪标记: 0123";
+    recordInlineResultSources(7, "加我微信", [{
+      type: "article",
+      id: "luck-fortune-text",
+      title: "未卜先知",
+      input_message_content: { message_text: fortuneText },
+    }]);
+    const fortune = buildAdCandidate(message({
+      via_bot: { id: 999, is_bot: true, first_name: "Bot" },
+      text: fortuneText,
+      entities: [{
+        type: "text_link",
+        offset: 30,
+        length: 4,
+        url: "https://t.me/#luck-receipt=0123",
+      }],
+    }), 999);
+    expect(fortune?.text).toBe("加我微信");
+    expect(fortune?.linkUrls).toBeUndefined();
+
+    // 正文对不上本次登记（客户端发的是上一次按键那条结果、或进程在发言之后
+    // 重启）时整条不判：本 bot 的渲染结果一个字都不能送检。
+    expect(buildAdCandidate(gagSpeech(), 999)).toBeUndefined();
+    inlineResultSources.clear();
+    expect(buildAdCandidate(message({
+      via_bot: { id: 999, is_bot: true, first_name: "Bot" },
+      text: fortuneText,
+    }), 999)).toBeUndefined();
+
+    // 别的机器人的 inline 结果不是自己人：这条通道只对本 bot 的渲染结果生效，
+    // 它照常按消息正文送检，落地页也照常补进去——广告最常见的形态之一就是借
+    // 别人的 inline bot 发出来，绝不能跟着一起豁免。
+    const otherBotMessage = (): Message => message({
+      via_bot: { id: 1000, is_bot: true, first_name: "Other" },
+      text: "点这里",
+      entities: [{ type: "text_link", offset: 0, length: 3, url: "https://t.me/spamchannel" }],
+    });
+    const otherBot = buildAdCandidate(otherBotMessage(), 999);
+    expect(otherBot?.text).toBe("点这里");
+    expect(otherBot?.linkUrls).toEqual(["https://t.me/spamchannel"]);
+
+    // 即使登记表里恰好有一条同样正文的源文本，别人的结果也不得改判成源文本。
+    recordInlineResultSources(7, "换成这段就错了", [{
+      type: "article",
+      id: "gag--1001-7",
+      title: "在 群 发言",
+      input_message_content: { message_text: "点这里" },
+    }]);
+    expect(buildAdCandidate(otherBotMessage(), 999)?.text).toBe("点这里");
+  });
+
   test("仍在入群验证窗口内时带上 justJoined 事实", () => {
     // 这条事实模型自己看不到（转录里没有入群时间），只能由主线程按待验证镜像喂。
     expect(buildAdCandidate(message(), 999)?.justJoined).toBe(false);
@@ -451,9 +543,12 @@ describe("广告检测投递门禁", () => {
 
 describe("广告判定命中后的处置", () => {
   test("按 /block 同样的动作：先写名单落盘，再给每个在管群登记一批封禁", async () => {
-    chatStates.set(-1002, { isInitEnabled: true, botIsAdmin: true });
-    chatStates.set(-1003, { isInitEnabled: true, botIsAdmin: false });
-    chatStates.set(-1004, { botIsAdmin: true });
+    chatStates.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
+    chatStates.set(-1003, {
+      isInitEnabled: true,
+      botPermissions: botPermissions({ isAdministrator: false, canManageChat: false }),
+    });
+    chatStates.set(-1004, { botPermissions: botPermissions() });
 
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
@@ -513,7 +608,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("重复命中只补触发群一批封禁，不再重走整套落盘与各群登记", async () => {
-    chatStates.set(-1002, { isInitEnabled: true, botIsAdmin: true });
+    chatStates.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
 
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
@@ -533,7 +628,11 @@ describe("广告判定命中后的处置", () => {
     await drainAdDisposals(5_000);
     expect(dispatched).toHaveLength(1);
 
-    chatStates.set(-1001, { isAdDetectEnabled: true, isInitEnabled: true, botIsAdmin: false });
+    chatStates.set(-1001, {
+      isAdDetectEnabled: true,
+      isInitEnabled: true,
+      botPermissions: botPermissions({ isAdministrator: false, canManageChat: false }),
+    });
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
 
@@ -542,8 +641,8 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("某个群登记失败只作废那个群：其余群照常封，失败的群改欠一次补扫", async () => {
-    chatStates.set(-1002, { isInitEnabled: true, botIsAdmin: true });
-    chatStates.set(-1003, { isInitEnabled: true, botIsAdmin: true });
+    chatStates.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
+    chatStates.set(-1003, { isInitEnabled: true, botPermissions: botPermissions() });
     // outbox 满：登记在第二个群上抛出。整段用 map 的话这一抛会让已登记的第一
     // 批留在 outbox 里而 dispatchBlockedRemovals 一次都调不到，这个刷屏号在
     // 所有群都封不掉。
@@ -563,7 +662,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("每个群都登记失败时不投空批次，且每个群都欠上补扫", async () => {
-    chatStates.set(-1002, { isInitEnabled: true, botIsAdmin: true });
+    chatStates.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
     trackBlockedRemoval.mockImplementation((): RemoveBlockedMembersParams => {
       throw new Error("Blocklist removal outbox reached its capacity.");
     });
@@ -675,7 +774,11 @@ describe("广告判定命中后的处置", () => {
     // 线程里还没判的队列，够不到一条已经发布出来的判定，所以这道复查必须在
     // 主线程这边（见 antiRaid/adDetect.ts）。
     handleAdDetected(detected());
-    chatStates.set(-1001, { isAdDetectEnabled: false, isInitEnabled: true, botIsAdmin: true });
+    chatStates.set(-1001, {
+      isAdDetectEnabled: false,
+      isInitEnabled: true,
+      botPermissions: botPermissions(),
+    });
     await drainAdDisposals(5_000);
 
     expect(blockUser).not.toHaveBeenCalled();
@@ -687,7 +790,11 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("一个可执行的群都没有时只留名单与日志，不投空批次", async () => {
-    chatStates.set(-1001, { isAdDetectEnabled: true, isInitEnabled: true, botIsAdmin: false });
+    chatStates.set(-1001, {
+      isAdDetectEnabled: true,
+      isInitEnabled: true,
+      botPermissions: botPermissions({ isAdministrator: false, canManageChat: false }),
+    });
 
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
@@ -733,7 +840,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("排空受预算约束：预算为 0 时立刻结算成 timedOut，不拖到强制退出线", async () => {
-    // 异常退出路径把全部预算设成 0（FATAL_FLUSH_TIMEOUTS）。裸等的话，处置内部
+    // 异常退出路径把全部预算设成 0（EMERGENCY_FLUSH_TIMEOUTS）。裸等的话，处置内部
     // 的落盘确认与 outbox 屏障会把停机一路拖到 15 秒强制退出：进程带非零码死在
     // 半路，实例锁不释放、offset 不确认。
     let release: (() => void) | undefined;

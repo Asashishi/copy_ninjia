@@ -143,7 +143,13 @@ describe("AI reply admission pipeline", () => {
     expect(drainQueuedReplies).toHaveBeenCalledTimes(2);
   });
 
-  test("缺少图片引用或触发快照时不塞空字段进轮次参数", () => {
+  // 轮次参数的两个构造点（本文件的 startQueuedRound 与 generateAndSendReply 的
+  // startRound 分支）必须产出同一个隐藏类：缺席的可选字段显式写 undefined，而不是
+  // 条件展开成「不写这个键」。口径与 auto/message/recordContext.ts、
+  // antiRaid/adCandidate.ts、workers/aiChat/bufferedMessage.ts 一致；那三处的注释
+  // 记着同一件事——这种对象会被下游反复读，多种 shape 会让读点多态。
+  // 键集合仍然逐字校验，误加或漏字段照样测得出来。
+  test("轮次参数保持单一 shape：缺席的可选字段显式写成 undefined", () => {
     generateAndSendReply(baseRequest);
     startReplyRound.mock.calls[0]![1](-1001);
     const startQueuedRound = drainQueuedReplies.mock.calls[0]![1];
@@ -157,8 +163,20 @@ describe("AI reply admission pipeline", () => {
     });
 
     const roundParams = startReplyRound.mock.calls[1]![0] as Record<string, unknown>;
-    expect("imageGenerationReference" in roundParams).toBeFalse();
-    expect("triggerReference" in roundParams).toBeFalse();
+    expect(roundParams.imageGenerationReference).toBeUndefined();
+    expect(roundParams.triggerReference).toBeUndefined();
+    expect(Object.keys(roundParams).sort()).toEqual([
+      "chatId",
+      "generation",
+      "imageGenerationReference",
+      "imageGenerationRequested",
+      "isRandomTrigger",
+      "mediaComment",
+      "queuedTrigger",
+      "replyToMessageId",
+      "triggerReference",
+      "triggerSenderId",
+    ]);
   });
 
   test("维护节拍在限频窗口空出来后补跑积压，窗口仍满时不空转", () => {

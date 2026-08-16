@@ -1,5 +1,5 @@
 import type { StateStore } from "../../infra/storage/statePersistence";
-import type { ChatState, GlobalAssetState, GlobalCopyState } from "../../types/chatState";
+import type { GlobalAssetState, GlobalCopyState } from "../../types/chatState";
 
 /** state 权威存储（packages/infra/storage/stateStore.ts）的内存状态。 */
 
@@ -8,12 +8,6 @@ import type { ChatState, GlobalAssetState, GlobalCopyState } from "../../types/c
  * 结束后对象保持 quiesced 直到进程退出；新进程从空 holder 创建全新 writer。
  */
 export const stateStoreHolder: { current: StateStore | null } = { current: null };
-
-/**
- * state.json 的群级权威内存镜像。启动恢复时填充，业务变更与退群 teardown
- * 更新或删除；进程重建时从严格校验后的主/LKG 副本恢复，群数量即容量上界。
- */
-export const chatStates: Map<number, ChatState> = new Map();
 
 /**
  * 全局 copy 权威内存镜像。启动恢复时填充，copy 命令更新；进程重建时从
@@ -28,7 +22,7 @@ export const globalCopyState: GlobalCopyState = { copiedUser: null };
  * seedMissingAssetState 把仍为 undefined 的项补成内置常量并落盘一次；**此后运行期
  * 没有任何写入方**——没有命令改它，换图靠手工编辑 state.json 后重启。容量固定为
  * 四个可选标量，四个字段在创建时一次写齐（哪怕都是 undefined），此后只赋值不增删
- * 键：它是每次 currentStateSnapshot 都要读的长期单例，
+ * 键：它是每次 global 状态落盘都要读的长期单例，
  * shape 不该在 loadState 之后再变一次。
  *
  * 字段缺省 = 从没设过，该项回退到代码里的内置常量（见 infra/storage/stateStore.ts

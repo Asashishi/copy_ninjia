@@ -13,7 +13,7 @@ import {
   confirmBlocklistPersisted,
   unblockUser,
 } from "../infra/blocklist/membership";
-import { getAllChatStates } from "../infra/storage/stateStore";
+import { getChatStateCache } from "../infra/storage/stateStore";
 import { runBlocklistIdentityMutation } from "../infra/identityPolicy/coordination";
 
 interface UnblockExecutionOutcome extends UnbanOutcome {
@@ -140,14 +140,16 @@ interface UnbanOutcome {
 
 /**
  * 在所有「本天才是管理员」的群里解除该目标的封禁。群清单与 /block 的连坐封禁
- * 同源（各群 ChatState.botIsAdmin），本群排最前；串行执行，避免一次命令制造
+ * 同源（各群 ChatState.botPermissions.isAdministrator），本群排最前；串行执行，避免一次命令制造
  * 突发请求，也让计数按确定顺序收敛。
  */
 async function unbanEverywhereFor(targetUser: CachedUser, chatId: number): Promise<UnbanOutcome> {
   const isAdminHere: boolean = await resolveBotAdminStatus(chatId);
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
-  for (const [adminChatId, chatState] of getAllChatStates()) {
-    if (chatState.botIsAdmin === true && adminChatId !== chatId) targetChatIds.push(adminChatId);
+  for (const [adminChatId, chatState] of getChatStateCache()) {
+    if (chatState.botPermissions?.isAdministrator === true && adminChatId !== chatId) {
+      targetChatIds.push(adminChatId);
+    }
   }
 
   let unbannedCount: number = 0;

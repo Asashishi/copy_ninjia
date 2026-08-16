@@ -7,6 +7,7 @@ const banChatSenderChatWithOutcome = mock(async (..._args: unknown[]): Promise<s
 const probeChatAdmin = mock(async (..._args: unknown[]): Promise<boolean | undefined> => false);
 const deleteMessage = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const recordJoin = mock((..._args: unknown[]): void => {});
+const releaseAdDetectDedupKey = mock((..._args: unknown[]): void => {});
 /** 入群守卫调用面的替身：断言处置始终使用受限 Worker 能力边界。 */
 const guardApi = { kind: "guard-api" };
 
@@ -22,6 +23,9 @@ mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: guardApi,
 }));
 mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({ recordJoin }));
+mock.module("../../../packages/workers/antiRaid/adDetect/queue", () => ({
+  releaseAdDetectDedupKey,
+}));
 // 真实节奏（5s 退避、25 个一批）在测试里没法等；只压缩时间，不改变分支。
 mock.module("../../../packages/consts/antiRaid/blocklist", () => ({
   BLOCKLIST_REMOVAL_MAX_ATTEMPTS: 3,
@@ -68,7 +72,15 @@ function settle(): Promise<void> {
 }
 
 beforeEach(() => {
-  for (const mocked of [probeChatMembership, probeChatAdmin, banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, recordJoin]) {
+  for (const mocked of [
+    probeChatMembership,
+    probeChatAdmin,
+    banChatMemberWithOutcome,
+    banChatSenderChatWithOutcome,
+    deleteMessage,
+    recordJoin,
+    releaseAdDetectDedupKey,
+  ]) {
     mocked.mockClear();
   }
   probeChatAdmin.mockImplementation(async (): Promise<boolean | undefined> => false);
@@ -93,7 +105,26 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     expect(probeChatMembership).not.toHaveBeenCalled();
     // 与验证超时踢人共用 kick 类别，不进入消息发送的 grammY 桶。
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42, guardApi);
+    expect(releaseAdDetectDedupKey).toHaveBeenCalledWith(-1001, 42);
     expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 1, complete: true, permissionDenied: false, targetIsAdmin: false }]);
+  });
+
+  test("去重回收抛出也不改回执：一个已经跑完的批次不能被重投", async () => {
+    // 回收排在 publish 之前时，这里抛出会转进 .catch 并改发 complete:false，
+    // 主线程据此重投一个其实已经完成的批次。回执必须先于任何尽力而为的清理。
+    releaseAdDetectDedupKey.mockImplementationOnce((): void => {
+      throw new Error("ad-detect release failed");
+    });
+
+    handleRemoveBlockedMembers({
+      msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 9 },
+      publish,
+    });
+    await settle();
+
+    expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42, guardApi);
+    // 恰好一条，且是真实结果；不能既发 complete:true 又补一条 complete:false。
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 9, complete: true, permissionDenied: false, targetIsAdmin: false }]);
   });
 
   test("probeMembership=true 时逐个探测，只封此刻真在群里的人", async () => {
@@ -110,6 +141,8 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 7, guardApi);
     // 确认不在群不算失败：这批算完整落定。
     expect(events[0]?.complete).toBeTrue();
+    // 补扫批次可能很大，不用它逐 id 触发广告去重回收。
+    expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
   });
 
   test("探测失败不算「不在群」：宁可多封一次，也不放过坐在群里的人", async () => {
@@ -136,6 +169,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(3);
+    expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
     expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 4, complete: false, permissionDenied: false, targetIsAdmin: false }]);
   });
 
@@ -160,6 +194,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     expect(events).toEqual([
       { type: "blockedMembersRemoved", chatId: -1001, removalId: 41, complete: true, permissionDenied: false, targetIsAdmin: true },
     ]);
+    expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
   });
 
   test("确证不了目标身份时维持原判：仍按机器人缺权限上报", async () => {

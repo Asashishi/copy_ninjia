@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { BotChatPermissions } from "../../../packages/types/telegram";
+import type { BotActionPermissions } from "../../../packages/types/telegram";
 import type { FloodCandidateMessage } from "../../../packages/types/antiRaid";
 import type { FloodWindowEntry } from "../../../packages/types/antiRaid/internal";
 
@@ -129,7 +129,7 @@ const {
   FLOOD_WINDOW_MS,
 } = await import("../../../packages/consts/antiRaid/flood");
 
-const FULL_RIGHTS: BotChatPermissions = { canRestrictMembers: true, canDeleteMessages: true };
+const FULL_RIGHTS: BotActionPermissions = { canRestrictMembers: true, canDeleteMessages: true };
 
 function candidate(chatId: number = -1001, userId: number = 7): FloodCandidateMessage {
   return { type: "floodCandidate", chatId, userId, label: "刷屏怪" };
@@ -461,7 +461,7 @@ describe("刷屏禁言的处置", () => {
 
   test("回归用例：禁言已经排上队时 drain 就地撤掉它，不发那条公告", async () => {
     // 请求按设计最长排 FLOOD_MUTE_DISPATCH_TIMEOUT_MS（2 分钟），而 drain 的预算是
-    // ANTI_RAID_BARRIER_TIMEOUT_MS 那一档的秒级数值：不撤掉就是每次撞上都换来一次
+    // ANTI_RAID_DRAIN_TIMEOUT_MS 那一档的秒级数值：不撤掉就是每次撞上都换来一次
     // 脏退出（offset 不确认、非零状态）加一批 update 重投。
     holdMute = true;
     for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT; i++) handleFloodCandidate(candidate());

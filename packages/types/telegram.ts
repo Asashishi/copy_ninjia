@@ -19,6 +19,15 @@ export interface TelegramSendResult {
   repliedToMessageId?: number;
 }
 
+/**
+ * 一个查询者最近一次 inline 应答：他打进查询的源文本，以及这次应答渲染出的
+ * 全部结果正文（同一次查询可能同时给出多条结果，只有被选中的那条会落群）。
+ */
+export interface InlineResultSource {
+  readonly sourceText: string;
+  readonly resultTexts: readonly string[];
+}
+
 /** 等待跨线程自发消息标记的单个主线程 rendezvous。 */
 export interface SelfSentWaiter {
   readonly resolve: (matched: boolean) => void;
@@ -42,18 +51,60 @@ export interface PendingMessageDeletion {
 }
 
 /**
- * 机器人自己在某个群里持有的、决定「破坏性动作做不做得成」的管理员权限位。
+ * 机器人自己在某个群里的完整管理员权限快照。
  *
- * 「是管理员」与「能踢人/能删消息」是两回事：被授予管理员却没勾对应开关是
- * 最常见的失败成因，而 Telegram 对这类拒绝只回一句 400 `not enough rights`，
- * 事后看日志分不清是权限问题还是别的。因此主线程按群缓存这份权限位，在真正
- * 发请求之前就地判定（见 packages/infra/botAdmin.ts 与 packages/cache/main/botAdmin.ts）。
- * 只收「对别人动手」需要的那几项——改群资料、置顶这类与本项目行为无关的开关
- * 不进来，多存一项就多一处要跟着 Telegram 维护的事实。
+ * 这一份同时取代旧 `botIsAdmin` 布尔值与主线程独立权限 Map：权威副本就是
+ * `ChatState.botPermissions`，`my_chat_member` 与按需 `getChatMember` 都只替换这一份
+ * 快照。字段对齐当前锁定的 `@grammyjs/types` 中 `ChatAdministratorRights`；
+ * 可选的频道/论坛权限也显式收敛为布尔值，不让「API 没返回」与「已确认没有」
+ * 在持久化状态里混用。
  */
 export interface BotChatPermissions {
-  /** 能否限制成员（禁言、私密模式收发言权、封禁）。群主恒为真。 */
-  canRestrictMembers: boolean;
-  /** 能否删除别人的消息。群主恒为真。 */
-  canDeleteMessages: boolean;
+  /** 是否为管理员或群主；其它权限为 false 时仍不能代替此身份位。 */
+  readonly isAdministrator: boolean;
+  /** 管理员身份是否匿名。 */
+  readonly isAnonymous: boolean;
+  /** 能否管理聊天的通用管理能力。 */
+  readonly canManageChat: boolean;
+  /** 能否删除别人的消息。 */
+  readonly canDeleteMessages: boolean;
+  /** 能否管理视频聊天。 */
+  readonly canManageVideoChats: boolean;
+  /** 能否限制、封禁或解封成员。 */
+  readonly canRestrictMembers: boolean;
+  /** 能否任免其它管理员。 */
+  readonly canPromoteMembers: boolean;
+  /** 能否修改聊天资料。 */
+  readonly canChangeInfo: boolean;
+  /** 能否邀请用户。 */
+  readonly canInviteUsers: boolean;
+  /** 能否管理普通成员标签。 */
+  readonly canManageTags: boolean;
+  /** 能否发布聊天故事。 */
+  readonly canPostStories: boolean;
+  /** 能否编辑聊天故事。 */
+  readonly canEditStories: boolean;
+  /** 能否删除聊天故事。 */
+  readonly canDeleteStories: boolean;
+  /** 能否在频道发布消息。 */
+  readonly canPostMessages: boolean;
+  /** 能否编辑频道消息。 */
+  readonly canEditMessages: boolean;
+  /** 能否置顶群消息。 */
+  readonly canPinMessages: boolean;
+  /** 能否管理论坛话题。 */
+  readonly canManageTopics: boolean;
+  /** 能否管理频道私信与建议帖。 */
+  readonly canManageDirectMessages: boolean;
+}
+
+/**
+ * Anti-Raid Worker 执行破坏性动作前实际需要的最小权限投影。
+ * 完整快照只存于主线程 State；跨线程消息不传送 Worker 不会读取的字段。
+ */
+export interface BotActionPermissions {
+  /** 能否限制、封禁或解封成员。 */
+  readonly canRestrictMembers: boolean;
+  /** 能否删除别人的消息。 */
+  readonly canDeleteMessages: boolean;
 }

@@ -44,6 +44,7 @@ import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnl
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../libs/record";
+import { isTelegramGroupChatId } from "../../libs/telegramId";
 import { isCanonicalDateKey } from "../../libs/time";
 
 /**
@@ -140,8 +141,12 @@ export function recoverAiMemories(): Map<number, string> {
     // 枚举顺序——该群的 AI 记忆静默回退到旧副本，而回写只用 `${chatId}.json`，
     // 补零那份永不被改写或删除，每次重启继续顶替。位数超出安全整数的文件名
     // （1e20 那种）同样在这里挡掉，否则水合出的 key 与任何真实 chatId 都对不上。
-    if (!Number.isSafeInteger(chatId) || chatId === 0 || String(chatId) !== chatIdText) {
-      return invalidInput(path, "$filename", "the canonical <chatId>.json form with a non-zero safe integer chat ID");
+    if (!isTelegramGroupChatId(chatId) || String(chatId) !== chatIdText) {
+      return invalidInput(
+        path,
+        "$filename",
+        "the canonical <chatId>.json form with a negative safe integer Telegram group or channel ID"
+      );
     }
     ensurePersistedFileMode(path);
     const parsed: unknown = readJsonInput(path);

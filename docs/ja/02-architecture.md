@@ -31,7 +31,7 @@ flowchart TD
 
 基本原則は**状態の排他的所有**です。各実行時状態には所有者が 1 つだけ存在し、スレッド間ではメモリを共有せずメッセージだけを渡します。
 
-- **メインスレッド**は Telegram runner、唯一の実 grammY Bot、Telegram outbound gate、3 つの Worker の監視ハンドル、`cache/main/storage.ts` の正式な `state.json` メモリミラーを所有します。AI/Anti-Raid Worker は監視付き duplex message だけで Telegram capability を要求し、Bot API と Telegram file download は最終的にすべてメインスレッドから開始されます。`stateStore.ts` は業務アクセスと snapshot、`statePersistence.ts` の `StateStore` は厳密な復元と永続化 lifecycle を担当します。
+- **メインスレッド**は Telegram runner、唯一の実 grammY Bot、Telegram outbound gate、3 つの Worker の監視ハンドル、そして 2 つの正式なメモリミラー——`cache/main/storage.ts` のグローバル `state.json` ミラー（copy 状態と素材直リンク）と、`cache/main/chatState.ts` の `chat_states` ホット読み取りコピー（グループスイッチ、ロックダウン記録、権限スナップショット、グループ名、中継フラグ。容量はちょうど 25）——を所有します。AI/Anti-Raid Worker は監視付き duplex message だけで Telegram capability を要求し、Bot API と Telegram file download は最終的にすべてメインスレッドから開始されます。`stateStore.ts` は業務アクセスと snapshot、`statePersistence.ts` の `StateStore` は厳密な復元と永続化 lifecycle を担当します。
 - **AI Worker**はグループチャットのメモリ、返信の受け入れ制御、メディア説明パイプライン、グループごとのムード、スタンプカタログの実行時状態を排他的に所有します。
 - **Anti-Raid Worker**は認証・lockdown 状態機械と timer を所有します。kick、query、restriction、delete の意味は Worker が解釈しますが、network request は duplex 境界から main thread の独立 429 category へ戻ります。未着地の blocklist batch は SQLite `pending_blocked_removals` table、認証 kick は日次認証 snapshot の `kickPending` で再投入します。
 - **Disk I/O Worker**は `database/storage.sqlite`、`logs/`、`memory/` 配下の 6 domain `ai/`、`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/` の読み書きを直列化して排他的に扱います。`state.json` は main thread が業務 facade 経由で `StateStore` を呼び出して atomic write します。全 persistence 形態と復元・保持の役割は [07 データルート](07-operations.md#データルート) を参照してください。
@@ -106,11 +106,11 @@ flowchart TD
 
 1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
-3. **state 永続化境界と global security configuration を復元**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元し、業務 facade から正式なメモリを hydrate します。`telegram.json` など global startup input が不正なら network 接続や Worker 作成より前に拒否します。`config/` の残り 4 つの optional feature JSON は**ここでは事前読み込みしません**。chat ごとの opt-in feature に属するため、検証は対応する toggle command へ移しました（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) を参照）。`state.json` の復元後にもう一度照合し、有効なままの optional feature に credential または設定が欠けていれば chat id を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。
-4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータを復元し、`database/storage.sqlite` から allowlist/blocklist count と未完了 removal を厳密 hydrate します。main thread は policy 2 table 全体を複製せず、有界 LRU から開始します。どれかの domain で復元に失敗すると、部分状態での起動を拒否します。
-4. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
-5. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。
-6. すべての準備完了後にだけ、query category の request と connection を無制限に占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。
+3. **state 永続化境界を復元し、すでに存在するデプロイ入力を検証**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元し、業務 facade から正式なメモリを hydrate します。`telegram.json` はプロセスレベルで必須、その他の任意入力は**ファイルが存在する限り厳密なパースを通らなければならず**、本当に欠落している場合は各機能自身の readiness 判定に委ねます（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs`。出口は [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` のグループスイッチはこの照合に関与せず、次段の永続化復元境界でのみデコードされます。
+4. **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータを復元し、`database/storage.sqlite` から `chat_states`、allowlist/blocklist count、未完了 removal を厳密 hydrate します。main thread は policy 2 table 全体を複製せず、有界 LRU から開始します。どれかの domain で復元に失敗すると、部分状態での起動を拒否します。続いて Telegram クライアントを初期化し、スーパー管理者が blocklist に載っていないことを表明します。
+5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
+6. **AI Worker** を初期化し（AI 設定が利用不可ならこの段階はログ 1 行を残して丸ごとスキップされます）、`chat_states` で AI が明示的に有効なグループだけを hydrate します。その後、スタンプ目録・運勢・認証待ちのミラーを復元し、**Anti-Raid Worker** と blocklist 掃き取りスケジューラを初期化して、管理中のグループを 1 巡だけ掃き取ります。
+7. `state.global.assets` の未設定項目を内蔵既定値で補い（background で永続化し、起動はブロックしません）、acknowledgement-safe runner を開始し、最後に query category の request と connection を無制限に占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。
 
 失敗と終了は `ApplicationLifecycle` が一元管理し、実際に取得したリソースだけを解放または flush します。
 

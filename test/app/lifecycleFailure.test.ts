@@ -39,7 +39,7 @@ const {
   loadState,
   loggerLog,
   loggerError,
-  preflightEnabledFeatures,
+  validateExistingDeploymentInputs,
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
@@ -132,53 +132,6 @@ describe("应用启动失败与退出清理", () => {
     expect(process.exitCode).toBe(0);
   });
 
-  test("SQLite 白名单行损坏时在注册 handler 前拒绝启动", async () => {
-    loadPersistedData.mockRejectedValueOnce(new Error("Invalid whitelist row"));
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    await lifecycle.run();
-    await lifecycle.dispose();
-
-    expect(initTelegramClients).toHaveBeenCalledTimes(1);
-    expect(initDiskIO).toHaveBeenCalledTimes(1);
-    expect(registerHandlers).not.toHaveBeenCalled();
-    expect(botInit).not.toHaveBeenCalled();
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("SQLite 黑名单行损坏时同样不注册 handler", async () => {
-    loadPersistedData.mockRejectedValueOnce(new Error("Invalid blocklist row"));
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    await lifecycle.run();
-    await lifecycle.dispose();
-
-    expect(initTelegramClients).toHaveBeenCalledTimes(1);
-    expect(initDiskIO).toHaveBeenCalledTimes(1);
-    expect(registerHandlers).not.toHaveBeenCalled();
-    expect(botInit).not.toHaveBeenCalled();
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("SQLite 黑白名单身份冲突时拒绝启动", async () => {
-    loadPersistedData.mockRejectedValueOnce(new Error("Identity 7 exists in both policy tables"));
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    await lifecycle.run();
-    await lifecycle.dispose();
-
-    expect(initTelegramClients).toHaveBeenCalledTimes(1);
-    expect(initDiskIO).toHaveBeenCalledTimes(1);
-    expect(registerHandlers).not.toHaveBeenCalled();
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-    expect(loggerError).toHaveBeenCalledWith(
-      "Unhandled error in bot main runner:",
-      expect.objectContaining({
-        message: expect.stringContaining("exists in both policy tables"),
-      })
-    );
-  });
-
   test("SQLite 恢复缺少表计数时拒绝启动 Telegram handler", async () => {
     loadPersistedData.mockResolvedValueOnce({
       aiMemories: new Map<number, string>(),
@@ -200,20 +153,27 @@ describe("应用启动失败与退出清理", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("state 清理与 LKG 恢复完成后才初始化 Telegram 和 Disk I/O Worker", async () => {
+  test("state 与部署输入校验完成后才初始化 Telegram 和 Disk I/O Worker", async () => {
     const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     expect(calls.indexOf("cleanupTemps")).toBeLessThan(calls.indexOf("loadState"));
-    expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initTelegram"));
-    expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initDiskIO"));
+    expect(calls.indexOf("loadState")).toBeLessThan(
+      calls.indexOf("validateDeploymentInputs")
+    );
+    expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(
+      calls.indexOf("initDiskIO")
+    );
+    expect(calls.indexOf("initDiskIO")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("initDiskIO")).toBeLessThan(calls.indexOf("hydrateIdentityCounts"));
     expect(calls.indexOf("hydrateIdentityCounts")).toBeLessThan(calls.indexOf("botInit"));
     // 补齐素材直链读的是 loadState 恢复出来的内存，且必须排在**所有**会拒绝启动的
-    // await 之后（功能闸、bot.init、黑名单补扫）——被拒绝启动的那次运行不该顺手
+    // await 之后（部署输入闸、bot.init、黑名单补扫）——被拒绝启动的那次运行不该顺手
     // 改写运维正要拿去排查的 state.json。
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("seedAssets"));
-    expect(calls.indexOf("preflightFeatures")).toBeLessThan(calls.indexOf("seedAssets"));
+    expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(
+      calls.indexOf("seedAssets")
+    );
     expect(calls.indexOf("botInit")).toBeLessThan(calls.indexOf("seedAssets"));
     expect(calls.indexOf("sweepBlocklist")).toBeLessThan(calls.indexOf("seedAssets"));
     expect(hydrateBlocklist).toHaveBeenCalledWith(expect.any(Map));
@@ -247,11 +207,11 @@ describe("应用启动失败与退出清理", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("启动闸拒绝时不补齐素材直链，state.json 保持运维看到的原样", async () => {
+  test("部署输入闸拒绝时不补齐素材直链，state.json 保持运维看到的原样", async () => {
     // 补齐是纯可读性写入；被拒绝启动的那次运行改写 state.json 只会干扰排查。
-    preflightEnabledFeatures.mockImplementationOnce((): void => {
-      calls.push("preflightFeatures");
-      throw new Error("AI chat is enabled in 1 chat(s) but config/mood.json is unusable");
+    validateExistingDeploymentInputs.mockImplementationOnce((): void => {
+      calls.push("validateDeploymentInputs");
+      throw new Error("config/mood.json: $ must match its current schema");
     });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
@@ -261,11 +221,12 @@ describe("应用启动失败与退出清理", () => {
     expect(process.exitCode).toBe(1);
     expect(seedMissingAssetState).not.toHaveBeenCalled();
     expect(initTelegramClients).not.toHaveBeenCalled();
+    expect(initDiskIO).not.toHaveBeenCalled();
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("功能闸之后的启动拒绝同样不补齐——bot.init 失败也不改写 state.json", async () => {
-    // 功能闸不是最后一道拒绝点：吊销的 token 要到 bot.init 才炸。补齐排在所有
+  test("部署输入闸之后的启动拒绝同样不补齐——bot.init 失败也不改写 state.json", async () => {
+    // 部署输入闸不是最后一道拒绝点：吊销的 token 要到 bot.init 才炸。补齐排在所有
     // 会中止启动的 await 之后，这条路径才守得住「被拒绝的启动不动运维的文件」。
     botInit.mockImplementationOnce(async (): Promise<never> => {
       calls.push("botInit");

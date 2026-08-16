@@ -11,6 +11,7 @@ import {
   admitAdCandidate,
   admitAdDispatch,
   admitAdRequeue,
+  isNewAdBundleAtCapacity,
 } from "../../packages/states/adDetectAdmission";
 import {
   AD_DETECT_MAX_IN_FLIGHT,
@@ -33,8 +34,6 @@ const REQUEUE: AdRequeueInput = {
   hasUncheckedContent: true,
   queued: false,
   inFlight: false,
-  recentlyEnqueued: false,
-  dedupWindowSize: 0,
 };
 
 describe("投递闸 admitAdCandidate", () => {
@@ -53,7 +52,7 @@ describe("投递闸 admitAdCandidate", () => {
     expect(admitAdCandidate({ ...CANDIDATE, knownAdmin: true, isChannel: true })).toEqual({ action: "accept" });
   });
 
-  test("本窗口刚处置过：普通账号忽略，频道马甲要顺手删这一条", () => {
+  test("自身 TTL 内刚处置过：普通账号忽略，频道马甲要顺手删这一条", () => {
     // banChatSenderChat 没有 revoke_messages，这段跨线程空档里频道新发的广告
     // 既不会被那次封禁带走，也不会再有第二次判定来删它。
     expect(admitAdCandidate({ ...CANDIDATE, recentlyDisposed: true })).toEqual({ action: "ignore" });
@@ -76,27 +75,17 @@ describe("排队闸 admitAdRequeue", () => {
     expect(admitAdRequeue({ ...REQUEUE, hasUncheckedContent: false })).toEqual({ action: "skip" });
   });
 
-  test("已排队/在途/本窗口排过 → 一律跳过", () => {
-    for (const field of ["queued", "inFlight", "recentlyEnqueued"] as const) {
+  test("已排队或在途 → 一律跳过", () => {
+    for (const field of ["queued", "inFlight"] as const) {
       expect(admitAdRequeue({ ...REQUEUE, [field]: true })).toEqual({ action: "skip" });
     }
   });
 
-  test("去重表撞上硬顶 → 报容量拒绝，调用方据此记边沿日志", () => {
-    expect(admitAdRequeue({ ...REQUEUE, dedupWindowSize: AD_DETECT_MAX_PENDING_SENDERS }))
-      .toEqual({ action: "rejectAtCapacity" });
-    expect(admitAdRequeue({ ...REQUEUE, dedupWindowSize: AD_DETECT_MAX_PENDING_SENDERS - 1 }))
-      .toEqual({ action: "enqueue" });
-  });
-
-  test("容量判定排在去重之后：本窗口已排过的键即使满载也只是 skip", () => {
-    // 顺序反过来的话，满载期间已接纳的键会被报成「容量拒绝」，日志把一次
-    // 正常的去重跳过说成了洪泛。
-    expect(admitAdRequeue({
-      ...REQUEUE,
-      recentlyEnqueued: true,
-      dedupWindowSize: AD_DETECT_MAX_PENDING_SENDERS,
-    })).toEqual({ action: "skip" });
+  test("排队闸没有容量判据：队列每键最多一个位置，长度天然被待检硬顶兜住", () => {
+    // 曾经另有一张与队列并行的 TTL 认领表，它撞顶会让这里返回容量拒绝——而
+    // 认领一旦漏还就成孤儿，把补排永久挡在门外。判据收敛到队列本身之后，
+    // 走到这一步的键必定已在 pendingAdMessages 里，容量在那道闸就判完了。
+    expect(admitAdRequeue(REQUEUE)).toEqual({ action: "enqueue" });
   });
 });
 
@@ -105,27 +94,26 @@ describe("容量闸 admitAdBundleStorage", () => {
     expect(admitAdBundleStorage({
       alreadyStored: true,
       pendingSize: AD_DETECT_MAX_PENDING_SENDERS,
-      dedupWindowSize: AD_DETECT_MAX_PENDING_SENDERS,
     })).toEqual({ action: "store" });
   });
 
-  test("两张表任一撞顶都拒绝新的不同键，而不是淘汰队首", () => {
+  test("待检表撞顶时拒绝新的不同键，而不是淘汰队首", () => {
     // FIFO 淘汰会让先到的人在从没被判过一次的情况下消失。
     expect(admitAdBundleStorage({
       alreadyStored: false,
       pendingSize: AD_DETECT_MAX_PENDING_SENDERS,
-      dedupWindowSize: 0,
-    })).toEqual({ action: "rejectAtCapacity" });
-    expect(admitAdBundleStorage({
-      alreadyStored: false,
-      pendingSize: 0,
-      dedupWindowSize: AD_DETECT_MAX_PENDING_SENDERS,
     })).toEqual({ action: "rejectAtCapacity" });
     expect(admitAdBundleStorage({
       alreadyStored: false,
       pendingSize: AD_DETECT_MAX_PENDING_SENDERS - 1,
-      dedupWindowSize: AD_DETECT_MAX_PENDING_SENDERS - 1,
     })).toEqual({ action: "store" });
+  });
+
+  test("待检表是唯一一张会撞上接纳硬顶的表", () => {
+    // 判据只剩 pendingSize 一个：曾经并行的 TTL 认领表撑顶也会拒绝新键，
+    // 而它可以在 pending 远未满时因孤儿认领假性撑顶，把正常发言判成洪泛。
+    expect(isNewAdBundleAtCapacity(AD_DETECT_MAX_PENDING_SENDERS)).toBe(true);
+    expect(isNewAdBundleAtCapacity(AD_DETECT_MAX_PENDING_SENDERS - 1)).toBe(false);
   });
 });
 

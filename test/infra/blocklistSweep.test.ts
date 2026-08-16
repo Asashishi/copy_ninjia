@@ -1,6 +1,7 @@
 /** 黑名单补扫的退避、claim、回执结算与 outbox 交互。 */
 
 import { describe, expect, test } from "bun:test";
+import { botPermissions } from "../helpers/botPermissions";
 const {
   blockedUserIds,
   configuredBlockedIds,
@@ -56,7 +57,7 @@ installBlocklistSweepHooks({
 describe("黑名单清扫", () => {
   test("补扫截止时间由唯一 timer 主动唤醒，不依赖后续成员事件", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     initBlocklistSweepScheduler();
     requestBlocklistResweep(-1001, Date.now() + 5);
 
@@ -69,7 +70,7 @@ describe("黑名单清扫", () => {
 
   test("停机 quiesce 取消补扫 timer，durable 状态留给下次启动", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     initBlocklistSweepScheduler();
     requestBlocklistResweep(-1001, Date.now() + 10);
 
@@ -87,10 +88,13 @@ describe("黑名单清扫", () => {
       isBlocked: true,
       blockedAt: "2026/07/26 00:00:00",
     });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
-    states.set(-1002, { isInitEnabled: false, botIsAdmin: true });
-    states.set(-1003, { isInitEnabled: true, botIsAdmin: false });
-    states.set(-1004, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    states.set(-1002, { isInitEnabled: false, botPermissions: botPermissions() });
+    states.set(-1003, {
+      isInitEnabled: true,
+      botPermissions: botPermissions({ isAdministrator: false, canManageChat: false }),
+    });
+    states.set(-1004, { isInitEnabled: true, botPermissions: botPermissions() });
 
     await sweepManagedBlocklistChats(1_000);
 

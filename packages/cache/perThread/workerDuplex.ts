@@ -23,6 +23,16 @@ export const workerDuplexWaiters: Map<number, WorkerDuplexWaiter> = new Map();
 /** 当前 isolate 的单调请求编号；不回退，避免迟到回执命中新请求。 */
 export const workerDuplexRequestCounter: { current: number } = { current: 0 };
 
+/**
+ * 当前 Worker 业务生命周期的默认能力请求取消信号。
+ *
+ * 由需要协作式排空的 Worker 在启动时注入；每个请求创建时捕获当时的信号，
+ * drain 可短暂置空以派发只属于收尾阶段的能力请求，随后恢复已经 abort 的业务
+ * 信号，保证迟到业务仍 fail-fast。AI Worker 未配置时保持 null。Worker stop
+ * 由 resetWorkerDuplex 清空，重建后的新 isolate 从 null 开始。
+ */
+export const workerDuplexRequestSignal: { current: AbortSignal | null } = { current: null };
+
 /** 当前 isolate 注入的唯一 postMessage 出口；Worker 停止时清空。 */
 export const workerDuplexPoster: {
   current: ((

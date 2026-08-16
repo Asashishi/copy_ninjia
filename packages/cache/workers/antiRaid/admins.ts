@@ -42,7 +42,7 @@ export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: 
 /**
  * 获取或创建同群唯一一次全量拉取；settle 后释放**自己那个**在途槽位。
  *
- * 释放前必须比对身份（主线程侧的同类表 botAdminFetches/botPermissionFetches
+ * 释放前必须比对身份（主线程侧的同类表 botPermissionFetches
  * 都做了这道比对）：`resetAdminCache()` 会在拉取在途时清空整张表，随后新的
  * `fetchAdminIds` 会为同一个群登记一条全新的 fetch。陈旧 fetch 结算时若无条件
  * delete，删掉的是**新 fetch** 的槽位，去重随之失效——下一个调用者会在入群

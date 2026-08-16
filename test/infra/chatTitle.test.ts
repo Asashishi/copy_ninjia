@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { CHAT_TITLE_REFRESH_CONCURRENCY, CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE } from "../../packages/consts/telegram";
+import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../../packages/consts/telegram";
+import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 
 const states = new Map<number, { isInitEnabled: true; title?: string }>();
 const saveStateInBackground = mock((_context: string): void => {});
@@ -15,10 +16,10 @@ mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, warn(): void {}, info: loggerInfo, error: loggerError },
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getAllChatStates: () => states,
+  getChatStateCache: () => states,
   getChatState: (chatId: number) => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number) => states.get(chatId)!,
-  saveStateInBackground,
+  saveChatStateInBackground: (_chatId: number, context: string): void => { saveStateInBackground(context); },
 }));
 
 const {
@@ -37,8 +38,8 @@ beforeEach(() => {
 });
 
 describe("chat title maintenance", () => {
-  test("500 个历史 chat 使用固定小并发池并全部独立结算", async () => {
-    for (let chatId: number = 1; chatId <= 500; chatId++) {
+  test("25 个受管 chat 使用固定小并发池并全部独立结算", async () => {
+    for (let chatId: number = 1; chatId <= STATE_MANAGED_CHAT_LIMIT; chatId++) {
       states.set(chatId, { isInitEnabled: true });
     }
     let active: number = 0;
@@ -53,13 +54,11 @@ describe("chat title maintenance", () => {
 
     await refreshAllChatTitles();
 
-    expect(getChat).toHaveBeenCalledTimes(500);
+    expect(getChat).toHaveBeenCalledTimes(STATE_MANAGED_CHAT_LIMIT);
     expect(maxActive).toBeLessThanOrEqual(CHAT_TITLE_REFRESH_CONCURRENCY);
-    // 攒批落盘：逐个群 save 会让启动期变成 O(群数²) 的主线程序列化+深校验
-    // （StateStore.save 每次都对**全部**群做一遍，LatestValueRunner 只合并磁盘
-    // 写、不合并这段 CPU），正好压在 runner 刚开始投喂更新的窗口上。
-    expect(saveStateInBackground).toHaveBeenCalledTimes(500 / CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE);
-    expect(loggerInfo).toHaveBeenCalledWith(expect.stringContaining("500/500"));
+    // 每条标题只编码本群并入 Worker 事务缓冲，不再重复序列化全量群快照。
+    expect(saveStateInBackground).toHaveBeenCalledTimes(STATE_MANAGED_CHAT_LIMIT);
+    expect(loggerInfo).toHaveBeenCalledWith(expect.stringContaining(`${STATE_MANAGED_CHAT_LIMIT}/${STATE_MANAGED_CHAT_LIMIT}`));
   });
 
   test("标题没变化的群不触发落盘", async () => {
@@ -87,7 +86,7 @@ describe("chat title maintenance", () => {
 
     await refreshAllChatTitles();
 
-    expect(saveStateInBackground).toHaveBeenCalledTimes(1);
+    expect(saveStateInBackground).toHaveBeenCalledTimes(3);
     expect(states.get(3)?.title).toBe("chat-3");
   });
 

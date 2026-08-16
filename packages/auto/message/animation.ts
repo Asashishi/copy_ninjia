@@ -26,6 +26,8 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
       imageGenerationRequested: true,
+      imageGenerationReference: undefined,
+      isRandomTrigger: false,
     });
     return true;
   }

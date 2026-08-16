@@ -1,150 +1,66 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import type { AdCandidateMessage, AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { AdVerdict } from "../../../packages/types/antiRaid/adDetect";
-import type { TelegramWorkerTemporaryMessageResult } from "../../../packages/types/telegramWorker";
-
-const classifyAdText = mock(async (_text: string): Promise<AdVerdict | null> => ({ isAd: false, reason: "" }));
-const disposeAdSender = mock(async (..._args: unknown[]): Promise<void> => {});
-let warningNow: number = 1_000;
-const warnReferencedAdSender = mock(async (): Promise<TelegramWorkerTemporaryMessageResult | undefined> => ({
-  messageId: 555,
-  sentAt: warningNow,
-}));
-const deleteReferencedAdMessages = mock((..._args: unknown[]): void => {});
-const deleteStaleReferencedAdWarning = mock((..._args: unknown[]): void => {});
-const deleteStragglerAdMessage = mock((_chatId: number, _messageId: number): void => {});
-const classifiedTexts: string[] = [];
-const classifiedFacts: boolean[] = [];
-/** 各群的管理员集合；undefined 表示缓存未命中，freshAdminIds 据此返回 undefined。 */
-const cachedAdmins = new Map<number, Set<number>>();
-const fetchedAdmins = new Map<number, Set<number>>();
-const fetchAdminIds = mock(async (chatId: number): Promise<Set<number>> => {
-  const admins: Set<number> | undefined = fetchedAdmins.get(chatId);
-  if (!admins) throw new Error("admin fetch failed");
-  return admins;
-});
-
-const errorLogs: string[] = [];
-mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
-}));
-mock.module("../../../packages/workers/antiRaid/adDetect/classifier", () => ({
-  classifyAdText: async (params: { text: string; justJoined: boolean }): Promise<AdVerdict | null> => {
-    classifiedTexts.push(params.text);
-    classifiedFacts.push(params.justJoined);
-    return classifyAdText(params.text);
-  },
-}));
-mock.module("../../../packages/workers/antiRaid/adDetect/disposal", () => ({
+import {
+  candidate,
+  classifiedFacts,
+  classifiedTexts,
+  classifyAdText,
   disposeAdSender,
+  errorLogs,
+  resetAdDetectQueueHarness,
   warnReferencedAdSender,
-  deleteReferencedAdMessages,
-  deleteStaleReferencedAdWarning,
-  deleteStragglerAdMessage,
-}));
-mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
-  freshAdminIds: (chatId: number): Set<number> | undefined => cachedAdmins.get(chatId),
-  fetchAdminIds,
-  // 三态契约的替身；真实现由 test/workers/antiRaid/adminCache.test.ts 钉住。
-  isChatAdmin: async (chatId: number, userId: number): Promise<boolean | undefined> => {
-    const cached: Set<number> | undefined = cachedAdmins.get(chatId);
-    if (cached !== undefined) return cached.has(userId);
-    try {
-      return (await fetchAdminIds(chatId)).has(userId);
-    } catch {
-      return undefined;
-    }
-  },
-}));
+} from "../../helpers/adDetectQueueHarness";
 
 const {
   clearChatAdDetect,
   enqueueAdCandidate,
+  expireAdDetectDisposalMarkers,
   quiesceAdDetectQueue,
-  rotateAdDetectDedupWindow,
   runAdDetectBatch,
   startAdDetectQueue,
   stopAdDetectQueue,
   sweepAdDetect,
 } = await import("../../../packages/workers/antiRaid/adDetect/queue");
-// 消息串的整形（裁剪/收容量/拼正文）拆在 bundle.ts，见该文件头注。
-const { formatAdBundleText } = await import("../../../packages/workers/antiRaid/adDetect/bundle");
 const { antiRaidInFlightTasks } = await import("../../../packages/cache/workers/antiRaid/tasks");
 const {
-  adDetectDedupTimer,
-  adDetectQueue,
   adDetectPublishHolder,
+  adDetectQueue,
   adDetectTickTimer,
   inFlightAdDetectKeys,
   inFlightReferencedAdCleanupTasks,
   pendingAdMessages,
   queuedAdDetectKeys,
-  referencedAdWarningStates,
   recentlyDisposedAdKeys,
-  recentlyEnqueuedAdKeys,
+  referencedAdWarningStates,
 } = await import("../../../packages/cache/workers/antiRaid/adDetect");
 const {
   AD_DETECT_BATCH_SIZE,
-  AD_DETECT_BUNDLE_MAX_CHARS,
-  AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS,
-  AD_DETECT_LINK_URL_MAX_CHARS,
+  AD_DETECT_JUDGED_RETENTION_WINDOW_MS,
   AD_DETECT_MAX_IN_FLIGHT,
-  AD_DETECT_MAX_LINK_URLS,
   AD_DETECT_MAX_MESSAGES_PER_SENDER,
   AD_DETECT_MAX_PENDING_SENDERS,
   AD_DETECT_MESSAGE_MAX_CHARS,
-  AD_SAMPLE_CONTEXT_MAX_CHARS,
-  AD_REFERENCE_WARNING_WINDOW_MS,
 } = await import("../../../packages/consts/antiRaid/adDetect");
 
-function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMessage {
-  return {
-    type: "adCandidate",
-    chatId: -1001,
-    senderId: 7,
-    messageId: 1,
-    text: "随便聊聊",
-    linkUrls: [],
-    label: "@spammer",
-    meta: { firstName: "Spammer", lastName: "", username: "spammer" },
-    isChannel: false,
-    isForwarded: false,
-    blocked: false,
-    justJoined: false,
-    ...overrides,
-  };
+beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
+
+/**
+ * 「谁在待检」只有一个答案：queuedAdDetectKeys 必须与 adDetectQueue 的内容逐键
+ * 一致，且同一个键在队列里最多占一个位置。
+ *
+ * 去重、容量与补排判据现在全部落在这一张表上（曾经并行的 TTL 认领表已删除），
+ * 它一旦和队列失配，要么同一个人吃掉两份判定额度，要么未判内容永远排不回来。
+ */
+function expectQueueOwnershipConsistent(): void {
+  const queued: string[] = adDetectQueue.last(adDetectQueue.size);
+  expect(new Set<string>(queued).size).toBe(queued.length);
+  expect(queuedAdDetectKeys.size).toBe(queued.length);
+  for (const key of queued) expect(queuedAdDetectKeys.has(key)).toBe(true);
+  expect(queuedAdDetectKeys.size).toBeLessThanOrEqual(pendingAdMessages.size);
 }
 
-beforeEach(() => {
-  stopAdDetectQueue();
-  errorLogs.length = 0;
-  classifiedTexts.length = 0;
-  classifiedFacts.length = 0;
-  classifyAdText.mockClear();
-  classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => ({ isAd: false, reason: "" }));
-  disposeAdSender.mockClear();
-  warnReferencedAdSender.mockClear();
-  warningNow = 1_000;
-  warnReferencedAdSender.mockImplementation(async (): Promise<TelegramWorkerTemporaryMessageResult> => ({
-    messageId: 555,
-    sentAt: warningNow,
-  }));
-  deleteReferencedAdMessages.mockClear();
-  deleteStaleReferencedAdWarning.mockClear();
-  deleteStragglerAdMessage.mockClear();
-  fetchAdminIds.mockClear();
-  cachedAdmins.clear();
-  fetchedAdmins.clear();
-  // 默认：管理员表拿得到且目标不是管理员，处置照常走。
-  fetchedAdmins.set(-1001, new Set());
-});
-
-describe("广告判定队列", () => {
+describe("广告判定队列：排队、调度与位置所有权", () => {
   test("队列只排键，同一个人的多条消息并进同一串", () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "加我" }), 1_000);
     enqueueAdCandidate(candidate({ messageId: 2, text: "微信" }), 1_500);
@@ -176,12 +92,12 @@ describe("广告判定队列", () => {
     expect(pendingAdMessages.get("-1001:7")?.entries[0]?.text).toHaveLength(AD_DETECT_MESSAGE_MAX_CHARS);
   });
 
-  test("去重窗口外已消费的旧上下文会裁掉，新消息仍算未判定", () => {
+  test("自身去重 TTL 外已消费的旧上下文会裁掉，新消息仍算未判定", () => {
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
     const bundle = pendingAdMessages.get("-1001:7")!;
     bundle.checkedSeq = 1;
 
-    enqueueAdCandidate(candidate({ messageId: 2 }), 1_000 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1);
+    enqueueAdCandidate(candidate({ messageId: 2 }), 1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1);
     expect(bundle.entries.map((entry) => entry.messageId)).toEqual([2]);
     // 序号单调递增，裁剪不回退它：新那条的 seq 比 checkedSeq 大，照样要判。
     expect(bundle.entries[0]?.seq).toBe(2);
@@ -199,7 +115,7 @@ describe("广告判定队列", () => {
     enqueueAdCandidate(candidate({ messageId: 2 }), 1_100);
     const running: Promise<void> = runAdDetectBatch(1_100);
 
-    const late: number = 1_100 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1;
+    const late: number = 1_100 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
     enqueueAdCandidate(candidate({ messageId: 3, text: "加我微信" }), late);
     enqueueAdCandidate(candidate({ messageId: 4, text: "带你上岸" }), late);
     const bundle = pendingAdMessages.get("-1001:7")!;
@@ -209,7 +125,7 @@ describe("广告判定队列", () => {
     await running;
     expect(bundle.checkedSeq).toBe(2);
 
-    rotateAdDetectDedupWindow();
+    // 结算时 requeueIfUnchecked 已经把未判内容排进下一批，不靠任何周期回收推动。
     expect(adDetectQueue.size).toBe(1);
     await runAdDetectBatch(late);
     expect(classifiedTexts[1]).toBe("1. 加我微信\n2. 带你上岸");
@@ -222,6 +138,7 @@ describe("广告判定队列", () => {
     const entries = pendingAdMessages.get("-1001:7")!.entries;
     expect(entries).toHaveLength(AD_DETECT_MAX_MESSAGES_PER_SENDER);
     expect(entries[0]?.messageId).toBe(2);
+    expect(pendingAdMessages.get("-1001:7")?.pendingDeleteIds).toEqual([1]);
 
     for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS + 5; index++) {
       enqueueAdCandidate(candidate({ senderId: 1_000 + index }));
@@ -229,14 +146,13 @@ describe("广告判定队列", () => {
     expect(pendingAdMessages.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(adDetectQueue.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(queuedAdDetectKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
-    expect(recentlyEnqueuedAdKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(pendingAdMessages.has(`-1001:${1_000 + AD_DETECT_MAX_PENDING_SENDERS + 4}`)).toBe(false);
   });
 
   test("已接纳 key 等待超过去重窗口仍会获得首次判定", async () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "排队中的广告" }), 1_000);
 
-    await runAdDetectBatch(1_000 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1);
+    await runAdDetectBatch(1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1);
 
     expect(classifiedTexts).toEqual(["1. 排队中的广告"]);
     expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
@@ -247,8 +163,8 @@ describe("广告判定队列", () => {
     // getAdSampleConfig()，而后者只缓存成功结果——进程启动之后把
     // config/ad_samples.json 改坏，每一次调用都重新抛同一个错。不接住的话异常
     // 一路逃到 runAdDetectBatch 的 Promise.allSettled 被整个吞掉：checkedSeq
-    // 永不推进，这个键每轮去重窗口轮换都重判、每次都失败，全程一行日志都没有，
-    // 而 /ad_detect 仍然报告功能已启用。
+    // 永不推进，之后每条新发言都会把同一批旧内容带回来再次失败，全程一行日志
+    // 都没有，而 /ad_detect 仍然报告功能已启用。
     classifyAdText.mockImplementationOnce((): Promise<AdVerdict | null> => {
       throw new Error("config/ad_samples.json must contain a JSON object.");
     });
@@ -306,50 +222,61 @@ describe("广告判定队列", () => {
     expect(adDetectQueue.size).toBe(0);
   });
 
-  test("一个窗口内同一个人只判一次，期间新说的话只并进消息串", async () => {
+  test("批次派发即释放入队 key，后续内容直接形成下一批", async () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "在吗" }), 1_000);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(true);
     await runAdDetectBatch(1_000);
     expect(classifiedTexts).toEqual(["1. 在吗"]);
     expect(adDetectQueue.size).toBe(0);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
     expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
 
     // 同一串没有新内容时不该被重复判定，否则每一拍都在重烧同一条消息。
     await runAdDetectBatch(1_000);
     expect(classifyAdText).toHaveBeenCalledTimes(1);
 
-    // 窗口内的后续消息不再各自触发一次判定：只并串，等窗口轮换时一起判。
+    // 派发已经释放旧认领：下一条取得一个新队列位置，随后消息继续并入该批。
     enqueueAdCandidate(candidate({ messageId: 2, text: "加我微信" }), 2_000);
     enqueueAdCandidate(candidate({ messageId: 3, text: "带你上岸" }), 3_000);
-    expect(adDetectQueue.size).toBe(0);
-    await runAdDetectBatch(3_000);
-    expect(classifyAdText).toHaveBeenCalledTimes(1);
-    expect(pendingAdMessages.get("-1001:7")?.entries).toHaveLength(3);
-  });
-
-  test("窗口轮换时把攒着未判定内容的键补排一次，并带上整串上下文", async () => {
-    enqueueAdCandidate(candidate({ messageId: 1, text: "在吗" }), 1_000);
-    await runAdDetectBatch(1_000);
-    enqueueAdCandidate(candidate({ messageId: 2, text: "加我微信" }), 2_000);
-    enqueueAdCandidate(candidate({ messageId: 3, text: "带你上岸" }), 3_000);
-
-    rotateAdDetectDedupWindow();
-    expect(recentlyEnqueuedAdKeys.has("-1001:7")).toBe(true);
     expect(adDetectQueue.size).toBe(1);
     await runAdDetectBatch(3_000);
-    // 补排这一步不能省：窗口内第二条之后的消息没有自己的入队机会，只清表不
-    // 补排的话，拆开发的广告会永远停在第一条的无害判定上。
+    expect(classifyAdText).toHaveBeenCalledTimes(2);
     expect(classifiedTexts[1]).toBe("1. 在吗\n2. 加我微信\n3. 带你上岸");
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
   });
 
-  test("窗口轮换不会给没有新内容的键白排一次判定", async () => {
+  test("派发释放 key 不会给没有新内容的 bundle 白排一次判定", async () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "在吗" }), 1_000);
     await runAdDetectBatch(1_000);
     expect(classifyAdText).toHaveBeenCalledTimes(1);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
 
-    rotateAdDetectDedupWindow();
     expect(adDetectQueue.size).toBe(0);
     await runAdDetectBatch(1_000);
     expect(classifyAdText).toHaveBeenCalledTimes(1);
+  });
+
+  test("待检位置没有等待 TTL：排多久都不过期，也不产生副本", async () => {
+    // 已接纳的键在发生至少一次判定尝试前不能因为等太久而消失（见
+    // docs/cn/04-invariants.md）。位置由 queuedAdDetectKeys 独家表达，没有计时器
+    // 能把它收走——曾经并行的认领 TTL 到期只会删认领、留下键继续排着。
+    const firstAt: number = 1_000;
+    const secondAt: number = 2_000;
+    enqueueAdCandidate(candidate({ senderId: 7, messageId: 1 }), firstAt);
+    enqueueAdCandidate(candidate({ senderId: 8, messageId: 2 }), secondAt);
+    expect(adDetectQueue.size).toBe(2);
+    expectQueueOwnershipConsistent();
+
+    const longAfter: number = firstAt + AD_DETECT_JUDGED_RETENTION_WINDOW_MS * 10;
+    sweepAdDetect(longAfter);
+    expect(adDetectQueue.size).toBe(2);
+    expect(adDetectQueue.peek()).toBe("-1001:7");
+    expectQueueOwnershipConsistent();
+
+    await runAdDetectBatch(longAfter);
+    expect(classifyAdText).toHaveBeenCalledTimes(2);
+    expect(adDetectQueue.size).toBe(0);
+    expect(queuedAdDetectKeys.size).toBe(0);
   });
 
   test("判成广告即摘掉整串并交给处置，不再重新排队", async () => {
@@ -408,228 +335,6 @@ describe("广告判定队列", () => {
     )).toBeTrue();
   });
 
-  test("引用类广告第一次只公开警告并清串，警告后下一条可立即重新判定", async () => {
-    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
-      isAd: text.includes("日入过千"),
-      reason: "引用内容引流",
-    }));
-    enqueueAdCandidate(candidate({
-      text: "这种广告真烦",
-      sampleContext: { quote: "日入过千 加V xxx996" },
-    }), 1_000);
-
-    await runAdDetectBatch(1_000);
-
-    expect(classifiedTexts).toEqual([
-      "1. 这种广告真烦 日入过千 加V xxx996",
-      "1. 这种广告真烦",
-    ]);
-    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
-    expect(disposeAdSender).not.toHaveBeenCalled();
-    expect(referencedAdWarningStates.get("-1001:7")).toMatchObject({
-      phase: "warned",
-      warnedAt: 1_000,
-      expiresAt: 1_000 + AD_REFERENCE_WARNING_WINDOW_MS,
-    });
-    expect(pendingAdMessages.has("-1001:7")).toBe(false);
-    expect(recentlyEnqueuedAdKeys.has("-1001:7")).toBe(false);
-
-    enqueueAdCandidate(candidate({
-      messageId: 2,
-      text: "又来一条",
-      sampleContext: { replyTo: "日入过千 加V second" },
-    }), 2_000);
-    expect(adDetectQueue.size).toBe(1);
-  });
-
-  test("公开警告在途时跨去重窗口不重复送检，警告后的新消息在结算后立即补排", async () => {
-    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
-      isAd: text.includes("日入过千"),
-      reason: "引用内容引流",
-    }));
-    let releaseWarning!: () => void;
-    warnReferencedAdSender.mockImplementationOnce((): Promise<TelegramWorkerTemporaryMessageResult> =>
-      new Promise<TelegramWorkerTemporaryMessageResult>(
-        (resolve: (result: TelegramWorkerTemporaryMessageResult) => void): void => {
-          releaseWarning = (): void => {
-            // Telegram 已建立 555 号公开警告，但 HTTP 回执还没回来；用户此时发出的
-            // 556/557 在群内顺序上明确晚于警告，本机接收时钟却早于回执 sentAt。
-            enqueueAdCandidate(candidate({
-              messageId: 556,
-              text: "又来一条",
-              sampleContext: { quote: "日入过千 加V same" },
-            }), 2_000);
-            enqueueAdCandidate(candidate({
-              messageId: 557,
-              text: "连续第三条",
-              sampleContext: { quote: "日入过千 加V same" },
-            }), 2_100);
-            resolve({ messageId: 555, sentAt: 3_000 });
-          };
-        }
-      ));
-    enqueueAdCandidate(candidate({
-      text: "第一次",
-      sampleContext: { quote: "日入过千 加V same" },
-    }), 1_000);
-
-    const running: Promise<void> = runAdDetectBatch(1_000);
-    await Bun.sleep(0);
-
-    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
-    expect(inFlightAdDetectKeys.has("-1001:7")).toBe(true);
-    rotateAdDetectDedupWindow();
-    expect(adDetectQueue.size).toBe(0);
-    expect(classifyAdText).toHaveBeenCalledTimes(2);
-
-    releaseWarning();
-    await running;
-
-    expect(inFlightAdDetectKeys.has("-1001:7")).toBe(false);
-    expect(pendingAdMessages.get("-1001:7")?.entries.map((entry) => entry.messageId)).toEqual([556, 557]);
-    expect(pendingAdMessages.get("-1001:7")?.entries[0]?.text)
-      .toContain("日入过千 加V same");
-    expect(adDetectQueue.size).toBe(1);
-
-    await runAdDetectBatch(2_000);
-    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
-    expect(disposeAdSender).toHaveBeenCalledTimes(1);
-  });
-
-  test("五分钟内再次命中引用类广告时走现有 block 路径", async () => {
-    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
-      isAd: text.includes("日入过千"),
-      reason: "引用内容引流",
-    }));
-    enqueueAdCandidate(candidate({
-      text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
-    }), 1_000);
-    await runAdDetectBatch(1_000);
-
-    enqueueAdCandidate(candidate({
-      messageId: 2,
-      text: "第二次",
-      sampleContext: { quote: "日入过千 加V second" },
-    }), 2_000);
-    await runAdDetectBatch(2_000);
-
-    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
-    expect(disposeAdSender).toHaveBeenCalledTimes(1);
-    expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
-  });
-
-  test("五分钟内到达的多次回复即使延迟到窗口外处理也会 block", async () => {
-    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
-      isAd: text.includes("日入过千"),
-      reason: "引用内容引流",
-    }));
-    enqueueAdCandidate(candidate({
-      text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
-    }), 1_000);
-    await runAdDetectBatch(1_000);
-
-    const receivedWithinWindow: number =
-      1_000 + AD_REFERENCE_WARNING_WINDOW_MS - 1;
-    enqueueAdCandidate(candidate({
-      messageId: 2,
-      text: "连续回复",
-      sampleContext: { quote: "日入过千 加V again" },
-    }), receivedWithinWindow);
-    await runAdDetectBatch(
-      1_000 + AD_REFERENCE_WARNING_WINDOW_MS + 60_000
-    );
-
-    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
-    expect(disposeAdSender).toHaveBeenCalledTimes(1);
-  });
-
-  test("五分钟窗口到期后再次命中会重新警告，不直接 block", async () => {
-    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
-      isAd: text.includes("日入过千"),
-      reason: "引用内容引流",
-    }));
-    enqueueAdCandidate(candidate({
-      text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
-    }), 1_000);
-    await runAdDetectBatch(1_000);
-
-    const afterWindow: number = 1_000 + AD_REFERENCE_WARNING_WINDOW_MS;
-    warningNow = afterWindow;
-    enqueueAdCandidate(candidate({
-      messageId: 2,
-      text: "窗口后",
-      sampleContext: { quote: "日入过千 加V later" },
-    }), afterWindow);
-    await runAdDetectBatch(afterWindow);
-
-    expect(warnReferencedAdSender).toHaveBeenCalledTimes(2);
-    expect(disposeAdSender).not.toHaveBeenCalled();
-  });
-
-  test("公开警告发送失败时不开启升级窗口", async () => {
-    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
-      isAd: text.includes("日入过千"),
-      reason: "引用内容引流",
-    }));
-    warnReferencedAdSender.mockImplementationOnce(async (): Promise<undefined> => undefined);
-    enqueueAdCandidate(candidate({
-      text: "看看",
-      sampleContext: { quote: "日入过千 加V xxx996" },
-    }), 1_000);
-
-    await runAdDetectBatch(1_000);
-
-    expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
-    expect(disposeAdSender).not.toHaveBeenCalled();
-    expect(deleteReferencedAdMessages).toHaveBeenCalledTimes(1);
-  });
-
-  test("关开关时迟到的警告只撤提示，不留下窗口或继续删用户消息", async () => {
-    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
-      isAd: text.includes("日入过千"),
-      reason: "引用内容引流",
-    }));
-    let resolveWarning!: (result: TelegramWorkerTemporaryMessageResult) => void;
-    warnReferencedAdSender.mockImplementationOnce((): Promise<TelegramWorkerTemporaryMessageResult> =>
-      new Promise<TelegramWorkerTemporaryMessageResult>((resolve) => {
-        resolveWarning = resolve;
-      }));
-    enqueueAdCandidate(candidate({
-      text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
-    }), 1_000);
-    const running: Promise<void> = runAdDetectBatch(1_000);
-    await Bun.sleep(0);
-
-    clearChatAdDetect(-1001);
-    resolveWarning({ messageId: 555, sentAt: 1_100 });
-    await running;
-
-    expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
-    expect(deleteStaleReferencedAdWarning).toHaveBeenCalledWith(-1001, 555);
-    expect(deleteReferencedAdMessages).not.toHaveBeenCalled();
-  });
-
-  test("手工转发的正文归属于来源，第一次命中只警告转发者", async () => {
-    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({
-      isAd: true,
-      reason: "转发广告",
-    }));
-    enqueueAdCandidate(candidate({
-      text: "日入过千 加V origin",
-      isForwarded: true,
-    }), 1_000);
-
-    await runAdDetectBatch(1_000);
-
-    expect(classifiedTexts).toEqual(["1. 日入过千 加V origin"]);
-    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
-    expect(disposeAdSender).not.toHaveBeenCalled();
-  });
-
   test("判定失败当作本次没判定，但不无限重试同一批", async () => {
     classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => null);
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
@@ -651,6 +356,7 @@ describe("广告判定队列", () => {
 
     enqueueAdCandidate(candidate({ messageId: 2 }), 1_100);
     expect(inFlightAdDetectKeys.has("-1001:7")).toBe(true);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
     // 在途期间新消息只并串，不排第二个位置，也不会再发一次请求。
     expect(adDetectQueue.size).toBe(0);
     await runAdDetectBatch(1_100);
@@ -658,10 +364,11 @@ describe("广告判定队列", () => {
 
     release({ isAd: false, reason: "" });
     await first;
-    // 本窗口他已经判过一次，结算时不再补排；新消息留在串里等窗口轮换。
-    expect(adDetectQueue.size).toBe(0);
-    rotateAdDetectDedupWindow();
+    // 当前批只推进派发前冻结的水位；在途期间的新消息结算后恰好重排一次。
     expect(adDetectQueue.size).toBe(1);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(true);
+    await runAdDetectBatch(1_100);
+    expect(classifyAdText).toHaveBeenCalledTimes(2);
   });
 
   test("停管/关开关丢掉该群待检串，在途判定结算后不再处置", async () => {
@@ -687,249 +394,13 @@ describe("广告判定队列", () => {
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
     enqueueAdCandidate(candidate({ senderId: 8, messageId: 2 }), 1_000);
     await runAdDetectBatch(1_000);
-    const late: number = 1_000 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1;
+    const late: number = 1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
     enqueueAdCandidate(candidate({ senderId: 8, messageId: 3 }), late);
 
     sweepAdDetect(late);
     expect(pendingAdMessages.has("-1001:7")).toBe(false);
     expect(pendingAdMessages.has("-1001:8")).toBe(true);
     expect(pendingAdMessages.get("-1001:8")?.entries.map((entry) => entry.messageId)).toEqual([3]);
-  });
-
-  test("拼串只负责编号，取舍由 selectAdBundleEntries 定完再交过来", () => {
-    expect(formatAdBundleText([
-      {
-        messageId: 1,
-        seq: 1,
-        text: "第一条",
-        directText: "第一条",
-        receivedAt: 1,
-        withinReferencedWarning: false,
-      },
-      {
-        messageId: 2,
-        seq: 2,
-        text: "第二条",
-        directText: "第二条",
-        receivedAt: 2,
-        withinReferencedWarning: false,
-      },
-    ])).toBe("1. 第一条\n2. 第二条");
-    expect(formatAdBundleText([])).toBe("");
-  });
-
-  test("送检预算装不下时按序判定，没送审的条目不算判过", async () => {
-    // 一条广告后面跟一串灌水撑爆 AD_DETECT_BUNDLE_MAX_CHARS。水位只能推到这一拍
-    // 真正送检的最后一条：从最新一条往回取的话，最旧的那条广告会夹在水位下面被
-    // 记成判过再被 pruneConsumedContext 裁掉——模型从没读过它，也就永远判不出来。
-    const filler: string = "填".repeat(AD_DETECT_MESSAGE_MAX_CHARS);
-    const fillerCount: number = Math.ceil(AD_DETECT_BUNDLE_MAX_CHARS / AD_DETECT_MESSAGE_MAX_CHARS) + 1;
-    enqueueAdCandidate(candidate({ messageId: 1, text: "日入过千 加V xxx996" }), 1_000);
-    for (let index: number = 0; index < fillerCount; index++) {
-      enqueueAdCandidate(candidate({ messageId: index + 2, text: filler }), 1_000 + index);
-    }
-
-    await runAdDetectBatch(1_000);
-    const bundle = pendingAdMessages.get("-1001:7")!;
-    // 第一拍读到的是最旧那批（广告在其中），而不是被预算挤剩的尾巴。
-    expect(classifiedTexts[0]).toContain("日入过千");
-    expect(bundle.checkedSeq).toBeLessThan(fillerCount + 1);
-    expect(bundle.entries.some((entry) => entry.seq > bundle.checkedSeq)).toBe(true);
-
-    // 剩下的未判条目在去重窗口轮换后照样判得到，一条都不落。
-    rotateAdDetectDedupWindow();
-    await runAdDetectBatch(1_000 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1);
-    expect(bundle.checkedSeq).toBe(fillerCount + 1);
-  });
-
-  test("引用与回复接进送检文本一起判定：广告主流形态是「编辑旧消息 + 回复/引用顶上来」，" +
-    "广告正文永远不在新消息的 text 里", async () => {
-    // quote 与 replyTo 完全重合（引用的正是所回复消息的片段）时只接一遍，
-    // 重复接只是白烧送检预算。
-    enqueueAdCandidate(candidate({
-      messageId: 1,
-      text: "这种广告真烦",
-      sampleContext: { quote: "日入过千 加V xxx996", replyTo: "日入过千 加V xxx996" },
-    }), 1_000);
-
-    const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
-    expect(entry.text).toBe("这种广告真烦 日入过千 加V xxx996");
-    expect(entry.directText).toBe("这种广告真烦");
-    // 样本侧仍留一份没并进正文的原样：人回头查误判时要分得清哪段是他自己写的。
-    expect(entry.quote).toBe("日入过千 加V xxx996");
-    expect(entry.replyTo).toBe("日入过千 加V xxx996");
-
-    await runAdDetectBatch(1_000);
-    expect(classifiedTexts).toEqual(["1. 这种广告真烦 日入过千 加V xxx996"]);
-  });
-
-  test("同一段引文整串只接一份：拆开发的碎片才凑得进同一份清单，不被重复引文吃掉预算", async () => {
-    // 广告号把话术拆成三条、每条都回复同一条（已被编辑成广告的）消息。
-    const replyTo: string = "日".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS);
-    for (const [index, own] of ["加我", "微 信", "xxx996"].entries()) {
-      enqueueAdCandidate(candidate({ messageId: index + 1, text: own, sampleContext: { replyTo } }), 1_000);
-    }
-
-    const entries = pendingAdMessages.get("-1001:7")!.entries;
-    expect(entries.map((entry): string => entry.text)).toEqual([`加我 ${replyTo}`, "微 信", "xxx996"]);
-    // 样本侧照旧每条都留一份原样：判定去重了，取证不能跟着丢。
-    expect(entries.map((entry): string | undefined => entry.replyTo)).toEqual([replyTo, replyTo, replyTo]);
-
-    await runAdDetectBatch(1_000);
-    // 三个碎片与那段引文一起进同一次判定，而不是被切成好几轮各判一个无害片段。
-    expect(classifiedTexts).toEqual([`1. 加我 ${replyTo}\n2. 微 信\n3. xxx996`]);
-  });
-
-  test("认领者被裁掉后引文重新认领：串里再没人带着它时，下一条候选自己接一份", async () => {
-    const replyTo: string = "日入过千 加V xxx996";
-    enqueueAdCandidate(candidate({ messageId: 1, text: "看这个", sampleContext: { replyTo } }), 1_000);
-    await runAdDetectBatch(1_000);
-
-    // 第一条判过又出了去重窗口，pruneConsumedContext 会把它连引文一起裁掉。
-    const later: number = 1_000 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1;
-    enqueueAdCandidate(candidate({ messageId: 2, text: "再看这个", sampleContext: { replyTo } }), later);
-
-    const entries = pendingAdMessages.get("-1001:7")!.entries;
-    expect(entries.map((entry): string => entry.text)).toEqual([`再看这个 ${replyTo}`]);
-  });
-
-  test("引用段与被回复原文不同时两段都接，且不带「引用：」这类可被伪造的系统措辞", async () => {
-    enqueueAdCandidate(candidate({
-      messageId: 1,
-      text: "真的假的",
-      sampleContext: { quote: "日入过千", replyTo: "加V xxx996" },
-    }), 1_000);
-
-    await runAdDetectBatch(1_000);
-    expect(classifiedTexts).toEqual(["1. 真的假的 日入过千 加V xxx996"]);
-  });
-
-  test("上下文接在正文截断之后，几百字废话顶不掉引文", async () => {
-    // 先拼后截就是一条零成本绕过：填充文本把引文挤出 AD_DETECT_MESSAGE_MAX_CHARS。
-    enqueueAdCandidate(candidate({
-      messageId: 1,
-      text: "废".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 200),
-      sampleContext: { quote: "日入过千 加V xxx996" },
-    }), 1_000);
-
-    const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
-    expect(entry.text).toBe(`${"废".repeat(AD_DETECT_MESSAGE_MAX_CHARS)} 日入过千 加V xxx996`);
-  });
-
-  test("落地页 URL 有独立配额，填充文本顶不掉它", () => {
-    // 正文按 AD_DETECT_MESSAGE_MAX_CHARS 从头保留，URL 接在截断之后——共用额度
-    // 的话，七百字废话加一个「点这里」超链接就能让落地页永远到不了模型面前。
-    enqueueAdCandidate(candidate({
-      text: "填".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 200),
-      linkUrls: ["https://t.me/spamchannel"],
-    }), 1_000);
-    const text: string = pendingAdMessages.get("-1001:7")!.entries[0]!.text;
-    expect(text.endsWith(" https://t.me/spamchannel")).toBe(true);
-    expect(text).toHaveLength(AD_DETECT_MESSAGE_MAX_CHARS + 1 + "https://t.me/spamchannel".length);
-  });
-
-  test("URL 段自己也有上界：条数与单条长度在 Worker 侧再收一次", () => {
-    enqueueAdCandidate(candidate({
-      text: "点这里",
-      linkUrls: [
-        ...Array.from({ length: AD_DETECT_MAX_LINK_URLS + 3 }, (_unused, index: number) => `https://spam.example/${index}`),
-        `https://spam.example/${"x".repeat(AD_DETECT_LINK_URL_MAX_CHARS)}`,
-      ],
-    }), 1_000);
-    const parts: string[] = pendingAdMessages.get("-1001:7")!.entries[0]!.text.split(" ");
-    expect(parts).toHaveLength(AD_DETECT_MAX_LINK_URLS + 1);
-    for (const part of parts.slice(1)) expect(part.length).toBeLessThanOrEqual(AD_DETECT_LINK_URL_MAX_CHARS);
-  });
-
-  test("命中后同窗口内抢跑进来的消息直接丢弃，不再攒出第二次处置", async () => {
-    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
-    enqueueAdCandidate(candidate({ messageId: 1, text: "USDT 承兑加我" }), 1_000);
-    await runAdDetectBatch(1_000);
-    expect(disposeAdSender).toHaveBeenCalledTimes(1);
-    expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(true);
-
-    // 封禁还没落地时他还能再说几句；重判只会换来第二次完全相同的处置。
-    enqueueAdCandidate(candidate({ messageId: 2, text: "还有名额" }), 1_500);
-    expect(pendingAdMessages.size).toBe(0);
-    await runAdDetectBatch(1_500);
-    expect(disposeAdSender).toHaveBeenCalledTimes(1);
-
-    // 窗口轮换后抑制解除；此时主线程的黑名单门禁早已接管投递侧。
-    rotateAdDetectDedupWindow();
-    expect(recentlyDisposedAdKeys.size).toBe(0);
-  });
-
-  test("命中后频道马甲抢跑进来的广告照样删掉", async () => {
-    // banChatSenderChat 没有 revoke_messages，逐条删除是这些消息唯一的清理路径；
-    // 判定到封禁落地之间还隔着回投主线程、名单 fsync 与 outbox 屏障。
-    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
-    enqueueAdCandidate(candidate({ senderId: -1005, isChannel: true, messageId: 1, text: "USDT 承兑" }), 1_000);
-    await runAdDetectBatch(1_000);
-    expect(disposeAdSender).toHaveBeenCalledTimes(1);
-
-    enqueueAdCandidate(candidate({ senderId: -1005, isChannel: true, messageId: 2, text: "还有名额" }), 1_500);
-    expect(deleteStragglerAdMessage).toHaveBeenCalledWith(-1001, 2);
-    // 仍然不重判、不重新处置：那一套只该走一次。
-    expect(pendingAdMessages.size).toBe(0);
-    expect(disposeAdSender).toHaveBeenCalledTimes(1);
-
-    // 真人目标走 revoke_messages，不需要这条补删。
-    enqueueAdCandidate(candidate({ messageId: 3, text: "加我微信" }), 1_500);
-    await runAdDetectBatch(1_500);
-    expect(deleteStragglerAdMessage).toHaveBeenCalledTimes(1);
-  });
-
-  test("已拉黑的频道马甲跨窗口照样删，不占判定额度", () => {
-    // recentlyDisposedAdKeys 只活一个去重窗口，而「已拉黑但封禁没落地」可以跨
-    // 窗口存在（秒踢、补扫、上个窗口判定登记的封禁批次都是先写名单再等 outbox
-    // 落盘与 mailbox 屏障）。窗口一轮换就只剩 blocked 这一个判据认得它。
-    rotateAdDetectDedupWindow();
-    expect(recentlyDisposedAdKeys.size).toBe(0);
-
-    enqueueAdCandidate(candidate({
-      senderId: -1006,
-      isChannel: true,
-      blocked: true,
-      messageId: 4,
-      text: "换汇加我",
-    }), 2_000);
-
-    expect(deleteStragglerAdMessage).toHaveBeenCalledWith(-1001, 4);
-    expect(pendingAdMessages.has("-1001:-1006")).toBe(false);
-    expect(adDetectQueue.size).toBe(0);
-  });
-
-  test("群管理员即使被判成广告也不处置", async () => {
-    // 处置与 /block 同权且不可逆：永久黑名单 + 每个托管群封禁 + revoke_messages
-    // 抹掉近期消息，恢复要人工 /unblock 再逐群解封。
-    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
-    fetchedAdmins.set(-1001, new Set([7]));
-    enqueueAdCandidate(candidate({ messageId: 1, text: "看我合作方的链接" }), 1_000);
-
-    await runAdDetectBatch(1_000);
-    expect(disposeAdSender).not.toHaveBeenCalled();
-    expect(pendingAdMessages.size).toBe(0);
-  });
-
-  test("管理员表查不出来时保守放过，不赌一次不可逆处置", async () => {
-    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
-    fetchedAdmins.delete(-1001);
-    enqueueAdCandidate(candidate({ messageId: 1, text: "USDT 承兑加我" }), 1_000);
-
-    await runAdDetectBatch(1_000);
-    expect(disposeAdSender).not.toHaveBeenCalled();
-  });
-
-  test("缓存已知的管理员连送检都不送，不白烧额度", async () => {
-    cachedAdmins.set(-1001, new Set([7]));
-    enqueueAdCandidate(candidate({ messageId: 1, text: "加我微信" }), 1_000);
-    expect(pendingAdMessages.size).toBe(0);
-
-    await runAdDetectBatch(1_000);
-    expect(classifyAdText).not.toHaveBeenCalled();
-    // 缓存里的普通成员照常入队。
-    enqueueAdCandidate(candidate({ senderId: 8, messageId: 2 }), 1_000);
-    expect(pendingAdMessages.size).toBe(1);
   });
 
   test("容量满载拒绝新 key，不淘汰已接纳或正在送检的 key", async () => {
@@ -948,10 +419,21 @@ describe("广告判定队列", () => {
     }
     expect(pendingAdMessages.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(pendingAdMessages.has("-1001:7")).toBe(true);
-    expect(recentlyEnqueuedAdKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(adDetectQueue.size).toBe(AD_DETECT_MAX_PENDING_SENDERS - 1);
     expect(queuedAdDetectKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS - 1);
     expect(pendingAdMessages.has(`-1001:${1_000 + AD_DETECT_MAX_PENDING_SENDERS + 4}`)).toBe(false);
+
+    let payloadReads: number = 0;
+    const unreadAtCapacity: AdCandidateMessage = candidate({
+      senderId: 1_000 + AD_DETECT_MAX_PENDING_SENDERS + 10,
+    });
+    Object.defineProperties(unreadAtCapacity, {
+      text: { get: (): string => { payloadReads++; throw new Error("text must stay unread"); } },
+      linkUrls: { get: (): string[] => { payloadReads++; throw new Error("links must stay unread"); } },
+      sampleContext: { get: (): never => { payloadReads++; throw new Error("context must stay unread"); } },
+    });
+    expect((): void => enqueueAdCandidate(unreadAtCapacity, 1_000)).not.toThrow();
+    expect(payloadReads).toBe(0);
 
     release({ isAd: true, reason: "引流" });
     await running;
@@ -973,12 +455,12 @@ describe("广告判定队列", () => {
       warnedAt: 1_000,
       expiresAt: 10_000,
     });
-    expect(recentlyEnqueuedAdKeys.has("-1001:7")).toBe(true);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(true);
 
     clearChatAdDetect(-1001);
     // 留着只会让重新开启开关后的头一个窗口白白哑火。
-    expect(recentlyEnqueuedAdKeys.has("-1001:7")).toBe(false);
-    expect(recentlyEnqueuedAdKeys.has("-1002:9")).toBe(true);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
+    expect(queuedAdDetectKeys.has("-1002:9")).toBe(true);
     expect(pendingAdMessages.has("-1001:7")).toBe(false);
     expect(pendingAdMessages.has("-1002:9")).toBe(true);
     expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
@@ -1002,7 +484,6 @@ describe("广告判定队列", () => {
 
     quiesceAdDetectQueue();
     expect(adDetectTickTimer.current).toBeNull();
-    expect(adDetectDedupTimer.current).toBeNull();
     // 状态原样留着：它随 isolate 一起消失，退出路径上不必多做清理。
     expect(pendingAdMessages.size).toBe(1);
 
@@ -1049,10 +530,207 @@ describe("广告判定队列", () => {
     expect(adDetectPublishHolder.current).toBeNull();
     expect(pendingAdMessages.size).toBe(0);
     expect(queuedAdDetectKeys.size).toBe(0);
-    expect(recentlyEnqueuedAdKeys.size).toBe(0);
     expect(recentlyDisposedAdKeys.size).toBe(0);
     expect(referencedAdWarningStates.size).toBe(0);
     expect(inFlightReferencedAdCleanupTasks.size).toBe(0);
     expect(adDetectQueue.size).toBe(0);
+  });
+
+  test("离开队列的键无论走哪条出口都交还待检位置", async () => {
+    // 位置一交出去就必须从 queuedAdDetectKeys 消失，否则「谁在待检」有两个
+    // 互相矛盾的答案：键不在队列里却仍被判成已排队，未判内容再也排不回来。
+    const key: string = "-1001:7";
+
+    // 出口一：消息串已经不在了（清群之类）。
+    enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
+    pendingAdMessages.delete(key);
+    await runAdDetectBatch(1_000);
+    expect(queuedAdDetectKeys.has(key)).toBe(false);
+    expectQueueOwnershipConsistent();
+
+    // 出口二：裁剪之后整串空了，pending 一并摘掉。
+    resetAdDetectQueueHarness(stopAdDetectQueue);
+    enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
+    pendingAdMessages.get(key)!.entries.length = 0;
+    await runAdDetectBatch(1_000);
+    expect(pendingAdMessages.has(key)).toBe(false);
+    expect(queuedAdDetectKeys.has(key)).toBe(false);
+    expectQueueOwnershipConsistent();
+
+    // 出口三：上一次判定还没回来，这一拍不重复送检。
+    resetAdDetectQueueHarness(stopAdDetectQueue);
+    enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
+    inFlightAdDetectKeys.add(key);
+    await runAdDetectBatch(1_000);
+    expect(queuedAdDetectKeys.has(key)).toBe(false);
+    expectQueueOwnershipConsistent();
+    inFlightAdDetectKeys.delete(key);
+
+    // 出口四：整串都判过，这一拍没有要送检的内容。
+    resetAdDetectQueueHarness(stopAdDetectQueue);
+    enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
+    pendingAdMessages.get(key)!.checkedSeq = 1;
+    await runAdDetectBatch(1_000);
+    expect(classifyAdText).not.toHaveBeenCalled();
+    expect(queuedAdDetectKeys.has(key)).toBe(false);
+    expectQueueOwnershipConsistent();
+  });
+
+  test("反复「入队 -> 空串 -> 出队」不会让待检位置数越过待检 key 数", async () => {
+    // 这条不变量此前没有任何断言守着，正是同类失配让容量闸误报过满载。
+    for (let round: number = 0; round < 32; round++) {
+      const at: number = 1_000 + round;
+      enqueueAdCandidate(candidate({ senderId: round, messageId: round + 1 }), at);
+      pendingAdMessages.get(`-1001:${round}`)!.entries.length = 0;
+      await runAdDetectBatch(at);
+      expectQueueOwnershipConsistent();
+    }
+    expect(queuedAdDetectKeys.size).toBe(0);
+    expect(pendingAdMessages.size).toBe(0);
+  });
+
+  test("墙钟回拨时处置抑制强制失效，不拉长成「回拨幅度 + 窗口」", () => {
+    recentlyDisposedAdKeys.set("-1001:9", 10_000);
+
+    // NTP 把钟往回拨。按失效时刻比较的话这条记录会多活「回拨幅度 + 90 秒」，
+    // 期间这个人的消息一律 ignore，判定对他静默停摆。
+    expireAdDetectDisposalMarkers(9_000);
+
+    expect(recentlyDisposedAdKeys.has("-1001:9")).toBe(false);
+  });
+
+  test("回拨后处置抑制立即解除，同一个人的新消息照常收下", () => {
+    recentlyDisposedAdKeys.set("-1001:7", 10_000);
+
+    enqueueAdCandidate(candidate({ messageId: 1, text: "换个号继续" }), 9_000);
+
+    expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(false);
+    expect(pendingAdMessages.has("-1001:7")).toBe(true);
+  });
+
+  test("sweep 补排失去调度位置的未判消息串，接手旧窗口轮换的自愈职责", () => {
+    enqueueAdCandidate(candidate({ messageId: 1, text: "USDT 承兑加我" }), 1_000);
+    // 模拟异常态：队列位置没了，消息串还留着未判内容。派发循环只走队列，
+    // 这种串没有任何其它力量会把它排回去。
+    adDetectQueue.clear();
+    queuedAdDetectKeys.clear();
+    expect(pendingAdMessages.get("-1001:7")!.entries.length).toBe(1);
+
+    sweepAdDetect(1_500);
+
+    expect(adDetectQueue.size).toBe(1);
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(true);
+    expectQueueOwnershipConsistent();
+  });
+
+  test("sweep 不给已经判完的串白排一次判定", () => {
+    enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
+    pendingAdMessages.get("-1001:7")!.checkedSeq = 1;
+    adDetectQueue.clear();
+    queuedAdDetectKeys.clear();
+
+    sweepAdDetect(1_500);
+
+    expect(adDetectQueue.size).toBe(0);
+    expect(queuedAdDetectKeys.size).toBe(0);
+  });
+
+  test("处置去重表撞顶时淘汰最早处置的键，不无限增长", async () => {
+    // 这张表只由处置路径写入，没有任何入口闸替它把关；节拍停掉或处置快过回收
+    // 时它是整条流水线里唯一一张会无限长的表。
+    const disposedAt: number = Date.now();
+    for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS; index++) {
+      recentlyDisposedAdKeys.set(`-1002:${index}`, disposedAt);
+    }
+    expect(recentlyDisposedAdKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
+
+    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
+    enqueueAdCandidate(candidate({ messageId: 1, text: "USDT 承兑加我" }), disposedAt);
+    await runAdDetectBatch(disposedAt);
+
+    expect(recentlyDisposedAdKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
+    expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(true);
+    // FIFO：挤掉的是最早写进去的那个，它的封禁早已落地。
+    expect(recentlyDisposedAdKeys.has("-1002:0")).toBe(false);
+    expect(recentlyDisposedAdKeys.has("-1002:1")).toBe(true);
+  });
+
+  test("在途闸长期撑满：积压的键坐满一个窗口也不丢位置、不产生副本", async () => {
+    // 已接纳的键撞上在途上限时留在队列里等容量恢复，不会过期（见
+    // docs/cn/04-invariants.md）。撑满在途闸把这段积压真造出来。
+    classifyAdText.mockImplementation((): Promise<AdVerdict> => new Promise<AdVerdict>((): void => {}));
+    const startedAt: number = 1_000;
+    const senders: number = AD_DETECT_MAX_IN_FLIGHT + AD_DETECT_BATCH_SIZE;
+    for (let index: number = 0; index < senders; index++) {
+      enqueueAdCandidate(candidate({ senderId: index, messageId: index + 1 }), startedAt);
+    }
+    expect(adDetectQueue.size).toBe(senders);
+    expectQueueOwnershipConsistent();
+
+    // 每拍最多起 AD_DETECT_BATCH_SIZE 个，撞上 AD_DETECT_MAX_IN_FLIGHT 后停手。
+    while (inFlightAdDetectKeys.size < AD_DETECT_MAX_IN_FLIGHT) {
+      void runAdDetectBatch(startedAt);
+      expectQueueOwnershipConsistent();
+    }
+    expect(inFlightAdDetectKeys.size).toBe(AD_DETECT_MAX_IN_FLIGHT);
+    const backlog: number = adDetectQueue.size;
+    expect(backlog).toBe(AD_DETECT_BATCH_SIZE);
+
+    // 积压的那批在队列里坐满一个窗口，队列位置必须原样保留。
+    const afterWindow: number = startedAt + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
+    void runAdDetectBatch(afterWindow);
+    sweepAdDetect(afterWindow);
+
+    expect(adDetectQueue.size).toBe(backlog);
+    expect(queuedAdDetectKeys.size).toBe(backlog);
+    expectQueueOwnershipConsistent();
+  });
+
+  test("长期积压期间同一个人的新消息只并串，不排出第二个位置", async () => {
+    // 挡住重复入队的只有 queuedAdDetectKeys 一道。它要是不管用，同一个人会在
+    // 队列里占两个位置，判定额度被一个人吃掉两份。
+    classifyAdText.mockImplementation((): Promise<AdVerdict> => new Promise<AdVerdict>((): void => {}));
+    const startedAt: number = 1_000;
+    for (let index: number = 0; index < AD_DETECT_MAX_IN_FLIGHT + 1; index++) {
+      enqueueAdCandidate(candidate({ senderId: index, messageId: index + 1 }), startedAt);
+    }
+    while (inFlightAdDetectKeys.size < AD_DETECT_MAX_IN_FLIGHT) {
+      void runAdDetectBatch(startedAt);
+    }
+    const backlogKey: string = `-1001:${AD_DETECT_MAX_IN_FLIGHT}`;
+    expect(queuedAdDetectKeys.has(backlogKey)).toBe(true);
+
+    const afterWindow: number = startedAt + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
+    sweepAdDetect(afterWindow);
+    expect(queuedAdDetectKeys.has(backlogKey)).toBe(true);
+
+    const queuedBefore: number = adDetectQueue.size;
+    enqueueAdCandidate(candidate({
+      senderId: AD_DETECT_MAX_IN_FLIGHT,
+      messageId: 9_999,
+      text: "再来一条",
+    }), afterWindow);
+
+    expect(adDetectQueue.size).toBe(queuedBefore);
+    expect(pendingAdMessages.get(backlogKey)!.entries).toHaveLength(2);
+    expectQueueOwnershipConsistent();
+  });
+
+  test("正常调度的每一步都维持「队列与待检位置表一致」", async () => {
+    // 覆盖派发、结算补排、判成广告摘串三条主路径，而不只是异常出口。
+    enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
+    expectQueueOwnershipConsistent();
+    await runAdDetectBatch(1_000);
+    expectQueueOwnershipConsistent();
+
+    enqueueAdCandidate(candidate({ messageId: 2, text: "换汇加我" }), 1_100);
+    expectQueueOwnershipConsistent();
+    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
+    await runAdDetectBatch(1_100);
+    expectQueueOwnershipConsistent();
+    expect(disposeAdSender).toHaveBeenCalledTimes(1);
+
+    sweepAdDetect(1_200);
+    expectQueueOwnershipConsistent();
   });
 });

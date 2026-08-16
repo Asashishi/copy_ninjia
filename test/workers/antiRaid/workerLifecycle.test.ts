@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../packages/types";
 import type { AdDetectAgentConfig } from "../../../packages/types/config";
+import { workerDuplexRequestSignal } from "../../../packages/cache/perThread/workerDuplex";
 
 const calls: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
 let removeBlockedMembersTask: Promise<void> = Promise.resolve();
 let deleteDeferredVerificationResult: boolean = false;
+let deletionFlushRequestSignal: AbortSignal | null | undefined;
 const workerSelf: {
   onmessage: ((event: MessageEvent<AntiRaidWorkerMessage>) => void) | null;
   postMessage: (event: AntiRaidWorkerEvent) => void;
@@ -75,6 +77,7 @@ mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepR
 mock.module("../../../packages/infra/telegram/actions/messageLifecycle", () => ({
   flushPendingMessageDeletions(): readonly Promise<void>[] {
     calls.push("flushGenericMessageDeletions");
+    deletionFlushRequestSignal = workerDuplexRequestSignal.current;
     return [];
   },
   resetPendingMessageDeletions(): void { calls.push("resetGenericMessageDeletions"); },
@@ -114,6 +117,7 @@ beforeEach(() => {
   workerEvents.length = 0;
   removeBlockedMembersTask = Promise.resolve();
   deleteDeferredVerificationResult = false;
+  deletionFlushRequestSignal = undefined;
   sweepRecentComments.mockClear();
   adminFetches.clear();
   chatAdmins.clear();
@@ -155,6 +159,7 @@ describe("Anti-Raid Worker lifecycle", () => {
     worker.startAntiRaidWorker();
     worker.startAntiRaidWorker();
     expect(telegramApiState.current).toBe(workerTelegramApi);
+    expect(workerDuplexRequestSignal.current?.aborted).toBeFalse();
     expect(workerSelf.onmessage).not.toBeNull();
 
     const messages: AntiRaidWorkerMessage[] = [
@@ -260,6 +265,8 @@ describe("Anti-Raid Worker lifecycle", () => {
     // 返回的删除 Promise 会接入同一个在途集合。
     expect(calls.indexOf("flushGenericMessageDeletions"))
       .toBeGreaterThan(calls.indexOf("quiesceAdDetect"));
+    expect(deletionFlushRequestSignal).toBeNull();
+    expect(workerDuplexRequestSignal.current?.aborted).toBeTrue();
     expect(blocklistRemovalTaskCounts.get(-1001)).toBe(1);
     expect(blocklistRemovalEpochs.get(-1001)).toBe(1);
 

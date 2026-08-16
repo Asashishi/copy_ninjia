@@ -20,7 +20,7 @@ export const DAY_FILE_JSON_INDENT: number = 2;
  * JSON.parse 两遍、逐条走一次 schema 校验、再 readdirSync 扫一遍目录，而磁盘满
  * 或卷转只读这类故障不会在一个 flush 周期内自愈：不退避的话每个周期都要按日
  * 文件大小付一次这个代价，而故障期本身还会制造大量 `logger.error` 把
- * FLUSH_MAX_ENTRIES 压得更密。这条线程同时持有 state.json、黑名单、移除 outbox
+ * FLUSH_MAX_ENTRIES 压得更密。这条线程同时持有身份策略/群状态 SQLite、移除 outbox
  * 与 AI 记忆快照，日志写不下去不该把它们一起拖垮。
  *
  * 取 FLUSH_INTERVAL_MS 的十倍：重试够勤（磁盘腾出来后五分钟内恢复），又足够稀

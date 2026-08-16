@@ -18,6 +18,7 @@
 | `bun run lint` / `lint:fix` | ESLint の検査 / 自動修正 |
 | `bun run typecheck` | 完全 strict mode で `tsc --noEmit` を実行 |
 | `bun run test` | ファイル分離を強制して全テストを実行 |
+| `bun run test:random` | 固定 seed のランダム順で全テストを実行し、テスト間の残留を炙り出す |
 | `bun run test:coverage` | テスト + 全ソースコードのカバレッジ |
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
 | `bun run check` | conventions + lint + typecheck + coverage + hot path gate。**コミット前に必須** |
@@ -25,6 +26,9 @@
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
 | `bun run perf:hot-path-gate` | 全 hot path シナリオの memory/GC/JIT gate。`check` に組み込み済み |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で独立 process の比較 benchmark を実行 |
+| `bun run perf:identity-database` | identity database の実経路 4 本を独立 process で benchmark |
+| `bun run migrate:identity-storage` | 旧 JSON リスト → `database/storage.sqlite` への停止時 cold migration |
+| `bun run migrate:chat-state` | `state.json` の chat state → SQLite `chat_states`（schema v3 → v4）への停止時 cold migration |
 | `bun run release:check` | frozen lockfile install + check + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
 
@@ -37,7 +41,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2269 tests / 235 files / 32867 `expect()` calls**。全ソースコードの**関数カバレッジは 95.66%、行カバレッジは 96.70%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2361 tests / 246 files / 94774 `expect()` calls**。全ソースコードの**関数カバレッジは 94.86%、行カバレッジは 95.59%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -76,7 +80,7 @@ gate を設けている項目：GC sample 比率、sampling RSS ピークとプ�
 
 ## Identity database 性能 benchmark
 
-`bun run perf:identity-database` は一時 data root / SQLite で 4 つの production path を測ります。identity 8 件単位の 2 table cold read、128 row の明示 transaction write、main thread の 8,196-entry LRU hot read、Worker・JSONB transaction・exact ACK を通る write-through です。各 operation を warm-up してから 5 個の独立 Bun process で sample し、Bun version/revision、throughput、batch latency、sample range / coefficient of variation、強制 GC 前後の JSC heap・extra memory・object・GC time を報告します。`--single-process` は同じ measurement process 内で各 operation を 3 回反復し、round 間の retained growth を調べますが、独立 process 比較の代わりではありません。`Bun.gc(true)` は計時外の診断専用です。identity LRU、cold prefetch、encoding、transaction batch、ACK、Worker replay を変えた場合に実行し、同じ Bun build の差を sample noise と heap/GC の両方で判断します。
+`bun run perf:identity-database` は一時 data root / SQLite で 4 つの production path を測ります。identity 8 件単位の 2 table cold read、128 row の明示 transaction write、main thread の 8,192-entry LRU hot read、Worker・JSONB transaction・exact ACK を通る write-through です。各 operation を warm-up してから 5 個の独立 Bun process で sample し、Bun version/revision、throughput、batch latency、sample range / coefficient of variation、強制 GC 前後の JSC heap・extra memory・object・GC time を報告します。`--single-process` は同じ measurement process 内で各 operation を 3 回反復し、round 間の retained growth を調べますが、独立 process 比較の代わりではありません。`Bun.gc(true)` は計時外の診断専用です。identity LRU、cold prefetch、encoding、transaction batch、ACK、Worker replay を変えた場合に実行し、同じ Bun build の差を sample noise と heap/GC の両方で判断します。
 
 ## コミット手順
 
@@ -105,7 +109,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
 
-- **中国語の文字列リテラル数**（現在およそ 805 ソース行 / 78 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
+- **中国語の文字列リテラル数**（現在およそ 846 ソース行 / 79 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
 - **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース

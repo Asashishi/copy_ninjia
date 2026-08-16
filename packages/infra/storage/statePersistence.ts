@@ -81,8 +81,8 @@ function describeStateDecodeFailure(path: string, error: unknown): Error {
 }
 
 /**
- * state.json 的可注入持久化边界：负责 schema 解码/序列化、latest-only 串行写、
- * 失败退避和退出 flush；ChatState 的业务内存不进入这个类。
+ * state.json 的可注入持久化边界：只负责 global schema 解码/序列化、latest-only
+ * 串行写、失败退避和退出 flush；群状态由 SQLite 独立持久化。
  */
 export class StateStore {
   private readonly stateFilePath: string;
@@ -218,8 +218,8 @@ export class StateStore {
     let json: string;
     try {
       json = JSON.stringify(schema, null, 2);
-      // TypeScript 类型不能约束运行时对共享 ChatState 的修改；两份磁盘副本
-      // 只能接收可被启动期同一严格 codec 再次加载的快照。
+      // TypeScript 类型不能约束运行时对共享 global 对象的修改；两份磁盘副本
+      // 只能接收可被启动期同一严格 codec 再次加载的值。
       decodeStateFile(JSON.parse(json));
     } catch (error: unknown) {
       const reason: Error = error instanceof Error ? error : new Error(String(error));

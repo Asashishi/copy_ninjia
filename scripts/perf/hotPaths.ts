@@ -11,6 +11,7 @@ import { clearAiReplyActivity } from "../../packages/auto/message/aiReplyActivit
 import { bot } from "../../packages/infra/telegram/mainClient";
 import type { Transformer } from "grammy";
 import { collectJitTiers, diffJitTiers } from "./hotPaths/jitTiers";
+import { readInterruptibleMemory, readProcessMemoryUsage } from "./hotPaths/liveMemory";
 import { createScenario } from "./hotPaths/scenarios";
 import type { JitTierCounts, JitTierStats, Scenario, ScenarioName } from "./hotPaths/types";
 import {
@@ -122,10 +123,24 @@ function snapshotHeap(): HeapSnapshot {
   };
 }
 
+/** 读取器提到模块级：本函数按样本调用，闭包现造会把分配算进被测的堆增长。 */
+function readJscMemoryUsage(): ReturnType<typeof jscMemoryUsage> {
+  return jscMemoryUsage();
+}
+
+/** 同上；单位是 KiB，换算留给调用方。 */
+function readProcessPeakRssKb(): number {
+  return process.resourceUsage().maxRSS;
+}
+
 function snapshotLiveMemory(): LiveMemorySnapshot {
-  const processMemory: NodeJS.MemoryUsage = process.memoryUsage();
-  const jscMemory: ReturnType<typeof jscMemoryUsage> = jscMemoryUsage();
-  const resourcePeakRssBytes: number = process.resourceUsage().maxRSS * 1024;
+  // 三次读取都要包：只护住其中一次的话，另外两次照样能被同一个信号打断，
+  // 而它们抛出来的效果与第一次完全一样——整轮 profile 白跑。
+  const processMemory: NodeJS.MemoryUsage = readProcessMemoryUsage();
+  const jscMemory: ReturnType<typeof jscMemoryUsage> =
+    readInterruptibleMemory(readJscMemoryUsage);
+  const resourcePeakRssBytes: number =
+    readInterruptibleMemory(readProcessPeakRssKb) * 1024;
   return {
     heapUsed: processMemory.heapUsed,
     rss: processMemory.rss,
@@ -174,6 +189,8 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "ai-activity-lru-miss":
     case "ad-empty-metadata":
     case "ad-wire-clone":
+    case "ad-capacity-reject":
+    case "identity-permission-read":
     case "array-timestamp-window":
     case "float64-timestamp-window":
     case "array-timestamp-cold":
@@ -202,7 +219,8 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "Usage: bun run perf:hot-paths -- " +
         "<sender-no-username|sender-stable-username|luck-receipt-fast-path|" +
         "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
-        "ad-wire-clone|array-timestamp-window|float64-timestamp-window|" +
+        "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
+        "array-timestamp-window|float64-timestamp-window|" +
         "array-timestamp-cold|float64-timestamp-cold|" +
         "linked-timestamp-window|linked-rolling-buffer|" +
         "bounded-rolling-buffer|chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +

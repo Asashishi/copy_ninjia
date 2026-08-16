@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 /** 黑名单和白名单各自在主线程保留的热查询 LRU 容量。 */
-export const IDENTITY_READ_CACHE_MAX_ENTRIES: number = 8_196;
+export const IDENTITY_READ_CACHE_MAX_ENTRIES: number = 8_192;
 
 /**
  * 单次跨线程冷读携带的主键上限；**必须严格小于** IDENTITY_READ_CACHE_MAX_ENTRIES。
@@ -20,7 +20,7 @@ export const IDENTITY_WRITE_BATCH_MAX_ENTRIES: number = 128;
 export const IDENTITY_WRITE_FLUSH_INTERVAL_MS: number = 30_000;
 
 /** SQLite 当前唯一受支持的 schema 版本。 */
-export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 3;
+export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 4;
 
 /** 旧文本 SQLite 初始 migration 的时间戳；只用于识别已部署 v2 谱系。 */
 export const IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT: number = 20_260_811_000_000;
@@ -48,6 +48,14 @@ export const IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT: number
 /** 新增白名单代加权限 migration 的 SHA-256。 */
 export const IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH: string =
   "b227cd2cfb34ffa77f50dac3c2b018a1294ceca4009a3c804eeff55e8a3c932e";
+
+/** 新增群状态表 migration 的时间戳。 */
+export const IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT: number =
+  20_260_813_000_000;
+
+/** 新增群状态表 migration 的 SHA-256；部署迁移据此拒绝未知谱系。 */
+export const IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH: string =
+  "35147ec6645084114dfbfd3328652c6464810a83a94d717424691de354f7208e";
 
 /** SQLite 表级 CHECK 对自产 JSONB 做常数时间外壳校验的标志位。 */
 export const IDENTITY_DATABASE_JSONB_VALIDATION_FLAG: number = 0x04;

@@ -16,7 +16,7 @@ export const antiRaidTaskTrackerGeneration: { current: number } = { current: 0 }
  * 「本 Worker 正在停机」的取消信号源，供**排队时长可以远超 drain 预算**的尽力
  * 而为请求订阅。
  *
- * drain 的预算是 ANTI_RAID_BARRIER_TIMEOUT_MS 那一档的秒级数值，而登记进上面那个
+ * drain 的预算是 ANTI_RAID_DRAIN_TIMEOUT_MS 那一档的秒级数值，而登记进上面那个
  * 在途集合的请求可能等待 grammY 消息桶，也可能等待各自类别的 Telegram 429
  * retry_after；刷屏禁言更是**按设计**最长等待 FLOOD_MUTE_DISPATCH_TIMEOUT_MS（2 分钟，见
  * consts/antiRaid/flood.ts）。停机恰好落在排队期间时，drain 等不到结算就超时，

@@ -21,7 +21,7 @@ const flushDiskIODomainOutcome = mock(
       writes.push({ table: message.table, id: message.id, revision: message.revision });
     }
     for (const listener of persistedListeners) {
-      listener({ type: "identityStoragePersisted", writes });
+      listener({ type: "identityStoragePersisted", writes, chatStateWrites: [] });
     }
     return { result: "flushed" as const };
   }

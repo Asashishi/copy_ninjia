@@ -23,13 +23,13 @@ import {
   DATABASE_DIR,
   IDENTITY_DATABASE_PATH,
 } from "../packages/consts/paths";
+import { seedStorageDatabase } from "../packages/database/interact/admin";
 import {
-  closeIdentityDatabase,
-  createIdentityDatabase,
-  openIdentityDatabase,
-  seedIdentityDatabase,
-} from "../packages/database/interact/identity";
-import type { IdentityDatabase } from "../packages/types/identityDatabase";
+  closeStorageDatabase,
+  openStorageDatabase,
+} from "../packages/database/interact/connection";
+import { createStorageDatabase } from "../packages/database/interact/migration";
+import type { StorageDatabase } from "../packages/types/storageDatabase";
 
 // 每个测试进程用独立数据根创建空库；生产运行期仍只接受迁移脚本建好的数据库。
 mkdirSync(DATABASE_DIR, {
@@ -37,11 +37,11 @@ mkdirSync(DATABASE_DIR, {
   mode: IDENTITY_DATABASE_DIRECTORY_MODE,
 });
 chmodSync(DATABASE_DIR, IDENTITY_DATABASE_DIRECTORY_MODE);
-createIdentityDatabase(IDENTITY_DATABASE_PATH);
-const identityDatabase: IdentityDatabase = openIdentityDatabase({
+createStorageDatabase(IDENTITY_DATABASE_PATH);
+const identityDatabase: StorageDatabase = openStorageDatabase({
   path: IDENTITY_DATABASE_PATH,
 });
-seedIdentityDatabase(identityDatabase, {
+seedStorageDatabase(identityDatabase, {
   metadata: [{
     key: IDENTITY_DATABASE_SCHEMA_KEY,
     data: IDENTITY_DATABASE_SCHEMA_DATA,
@@ -50,7 +50,7 @@ seedIdentityDatabase(identityDatabase, {
   blocklist: [],
   removals: [],
 });
-closeIdentityDatabase(identityDatabase);
+closeStorageDatabase(identityDatabase);
 chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
 
 // agent.json 是唯一不由运行时读盘取得的部署配置：真实进程里主线程解析一次，

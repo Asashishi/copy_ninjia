@@ -8,9 +8,11 @@ import {
 import {
   CHAT_INTERACTION_INSTRUCTION,
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
+  DIRECT_INVOCATION_READING_INSTRUCTION,
   MEMORY_MECHANISM_SILENCE_INSTRUCTION,
   REPLY_CONTEXT_STRUCTURE_INSTRUCTION,
   TIME_AWARENESS_INSTRUCTION,
+  TRANSCRIPT_FORMAT_INSTRUCTION,
 } from "../../consts/aiChat/prompts/memory";
 import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../consts/aiChat/prompts/agent";
 import { ACTION_TOOL_NAMES } from "../../consts/tools";
@@ -88,8 +90,8 @@ function systemPrompt(): string {
  * 跑完一轮回复对话。
  * @param chatId 群聊 ID，用于取该群当前的心情（见 aiChat/ai/mood.ts 的
  *   currentMoodInstruction）。
- * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话、可选的
- *   直接唤起者重点记录与回复任务。
+ * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话与本轮
+ *   回复任务；三段恒定出现，直接触发只体现为回复任务开头多一句唤起者声明。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
  *   副作用（发消息/贴纸/反应/图片）都发生在它内部；toolset.functions 直接
  *   透传给请求，本函数不再自己组装。
@@ -110,16 +112,22 @@ export async function generateReply(
   const systemPromptPrefix: string =
     `${systemPrompt()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
     `${CHAT_INTERACTION_INSTRUCTION}\n\n` +
-    `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n` +
-    `${MEMORY_MECHANISM_SILENCE_INSTRUCTION}\n\n` +
+    `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n` +
+    // 先说清有哪些 Part，紧接着说清转录行怎么读，再往下才是两层仲裁与读法。
+    // 这段说明原先拼在转录区块头部，随每轮都变的转录一起落在缓存不到的那一半。
+    `${TRANSCRIPT_FORMAT_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n` +
+    // 被直接叫到时的阅读次序紧跟两层仲裁：它讲的就是怎么用那两层。全文恒定，
+    // 与上面几段一起落在心情和当前时间之前的可缓存前缀里。
+    `${DIRECT_INVOCATION_READING_INSTRUCTION}\n${MEMORY_MECHANISM_SILENCE_INSTRUCTION}\n\n` +
     `## 今天的状态\n${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
     `## 当前时间\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
 
   // 有序的初始上下文区块；映射成同一个 user 轮次下的多段文本由实现包负责。
+  // 定长三元，不再按触发类型条件展开：区块数恒定，实现包那侧的 map 也就只
+  // 见得到一种数组形状。
   const promptBlocks: string[] = [
     promptSections.referenceMemory,
     promptSections.currentConversation,
-    ...(promptSections.invokerFocus ? [promptSections.invokerFocus] : []),
     promptSections.replyTask,
   ];
   const session: AiReplySession = textAiProvider().createReplySession({

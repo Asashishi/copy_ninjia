@@ -1,6 +1,6 @@
 import type { RemoveBlockedMembersParams } from "./blocklist";
 import type { AdDetectAgentConfig } from "./config";
-import type { BotChatPermissions } from "./telegram";
+import type { BotActionPermissions } from "./telegram";
 import type { ChatPermissions } from "@grammyjs/types";
 import type { LockdownPhase } from "./chatState";
 import type { TelegramWorkerRequest } from "./telegramWorker";
@@ -119,7 +119,7 @@ export interface AdoptableLockdown {
   intentId: number;
   originalPermissions: ChatPermissions;
   announced: boolean;
-  /** false 表示仅存在主线程内存镜像，必须继续等待原 saveState 的落盘回执。 */
+  /** false 表示仅存在主线程 LRU 最终值，必须继续等待 SQLite 的落盘回执。 */
   persisted?: boolean;
   /**
    * 距离应当恢复原始权限还剩多久（ms，已按 Math.max(0, ...) 夹到不为负）
@@ -298,7 +298,7 @@ export interface AdminsChangedMessage {
   isInviterExempt: boolean;
 }
 
-/** 主线程完成 state.json 写入后，允许 Worker 执行对应权限副作用。 */
+/** 主线程收到 SQLite 精确事务 ACK 后，允许 Worker 执行对应权限副作用。 */
 export interface LockdownPersistedMessage {
   type: "lockdownPersisted";
   chatId: number;
@@ -348,10 +348,11 @@ export interface BotPermissionsChangedMessage {
   type: "botPermissionsChanged";
   chatId: number;
   /**
-   * 省略表示「此刻未知」——撤管理员、离群、`/init` 切换或现查失败都会这样发。
-   * Worker 必须按「这个动作做不了」处理，不得沿用上一次的值。
+   * 省略表示「此刻未知」——离群、`/init` 切换或主动失效会这样发；撤管理员
+   * 则发送两项都为 false 的确证投影。Worker 不得沿用上一次的值，具体动作可按
+   * 自己的三态边界决定未知时是否让 Telegram 作最终裁判。
    */
-  permissions?: BotChatPermissions;
+  permissions?: BotActionPermissions;
 }
 
 /**

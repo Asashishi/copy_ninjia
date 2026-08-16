@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { botPermissions } from "../helpers/botPermissions";
 
 const calls: string[] = [];
 const states = new Map<number, Record<string, unknown>>();
@@ -22,7 +23,7 @@ mock.module("../../packages/infra/telegram/actions", () => ({
   banChatSenderChat: async (): Promise<boolean> => true,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getAllChatStates: (): ReadonlyMap<number, Record<string, unknown>> => states,
+  getChatStateCache: (): ReadonlyMap<number, Record<string, unknown>> => states,
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
     let state = states.get(chatId);
@@ -45,8 +46,10 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     if (lockdown === undefined) states.delete(chatId);
     else states.set(chatId, { lockdown });
   },
-  persistAuthoritativeState: async (context: string): Promise<void> => { saveStateInBackground(context); },
-  saveStateInBackground,
+  persistChatState: async (_chatId: number, context: string): Promise<void> => { saveStateInBackground(context); },
+  // 丢掉一份已知权限快照时 botAdmin 会顺手排一次后台写（内存清了、磁盘也得清）；
+  // 这里只需要它存在，落盘断言在 botAdminPermissions.test.ts。
+  saveChatStateInBackground: (_chatId: number, context: string): void => { saveStateInBackground(context); },
 }));
 
 const botAdmin = await import("../../packages/infra/botAdmin");
@@ -69,9 +72,8 @@ beforeEach(() => {
   saveStateInBackground.mockClear();
   getChatMember.mockClear();
   getChatMember.mockImplementation(async (): Promise<{ status: string }> => ({ status: "administrator" }));
-  botAdminCache.botAdminFetches.clear();
-  botAdminCache.botAdminGenerations.clear();
-  botAdminCache.botAdminGenerationUsers.clear();
+  botAdminCache.botPermissionFetches.clear();
+  botAdminCache.botPermissionRequestTokens.clear();
   chatTeardown.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
   chatTeardown.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
   chatTeardown.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
@@ -135,13 +137,19 @@ describe("chat runtime teardown", () => {
     };
     states.set(-1001, {
       isInitEnabled: true,
-      botIsAdmin: true,
+      botPermissions: botPermissions(),
       isProxySendEnabled: true,
       lockdown,
     });
     await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"));
     expect(states.get(-1001)).toEqual({ lockdown });
-    expect(calls.slice(0, 7)).toEqual([
+    // 第二条是权限快照被丢掉时顺手排的后台写：botPermissions 是持久字段，只清内存
+    // 会让磁盘继续留着一份已经作废的快照（见 infra/botAdmin.ts 的
+    // forgetBotChatPermissions）。这一路后面那次 persistChatState 会以更高 revision
+    // 盖过它，多出来的这次写是 teardown 每群一次的固定成本，不进任何热路径。
+    expect(calls.slice(0, 9)).toEqual([
+      "clear:botPermissions",
+      "save:bot permissions forgotten",
       "copy:-1001",
       "gag:-1001",
       "clear:isProxySendEnabled",
@@ -154,7 +162,11 @@ describe("chat runtime teardown", () => {
 
   test("退群 teardown 失败仍裁剪并持久化权威状态，随后传播错误", async () => {
     const teardownError = new Error("anti-raid teardown failed");
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
+    states.set(-1001, {
+      isInitEnabled: true,
+      botPermissions: botPermissions(),
+      isProxySendEnabled: true,
+    });
     chatTeardown.registerChatTeardown("antiRaid", async (): Promise<void> => { throw teardownError; });
 
     const error = await botAdmin.handleMyChatMemberUpdate(memberContext("left"))
@@ -167,8 +179,12 @@ describe("chat runtime teardown", () => {
     expect(calls).toContain("save:chat -1001 state pruned after bot left/kicked");
   });
 
-  test("管理员降级调用同一 teardown，并记录 botIsAdmin=false", async () => {
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
+  test("管理员降级调用同一 teardown，并记录完整非管理员权限快照", async () => {
+    states.set(-1001, {
+      isInitEnabled: true,
+      botPermissions: botPermissions(),
+      isProxySendEnabled: true,
+    });
     await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
     expect(calls.slice(0, 5)).toEqual([
       "copy:-1001",
@@ -177,12 +193,16 @@ describe("chat runtime teardown", () => {
       "ai:-1001:true",
       "anti:-1001",
     ]);
-    expect(states.get(-1001)?.botIsAdmin).toBe(false);
+    expect((states.get(-1001)?.botPermissions as { isAdministrator?: boolean })?.isAdministrator).toBe(false);
   });
 
-  test("管理员降级 teardown 失败仍持久化 botIsAdmin=false，随后传播错误", async () => {
+  test("管理员降级 teardown 失败仍持久化非管理员权限快照，随后传播错误", async () => {
     const teardownError = new Error("AI teardown failed");
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
+    states.set(-1001, {
+      isInitEnabled: true,
+      botPermissions: botPermissions(),
+      isProxySendEnabled: true,
+    });
     chatTeardown.registerChatTeardown("aiChat", async (): Promise<void> => { throw teardownError; });
 
     const error = await botAdmin.handleMyChatMemberUpdate(memberContext("member"))
@@ -190,8 +210,8 @@ describe("chat runtime teardown", () => {
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual([teardownError]);
-    expect(states.get(-1001)?.botIsAdmin).toBe(false);
-    expect(saveStateInBackground).toHaveBeenCalledWith("bot admin status refresh");
+    expect((states.get(-1001)?.botPermissions as { isAdministrator?: boolean })?.isAdministrator).toBe(false);
+    expect(saveStateInBackground).toHaveBeenCalledWith("bot permissions refresh");
   });
 
   test("/init 切换后废弃旧在途结果，第一次权限判定必须重查", async () => {
@@ -208,6 +228,6 @@ describe("chat runtime teardown", () => {
     releaseOld({ status: "administrator" });
     expect(await staleCheck).toBe(false);
     expect(getChatMember).toHaveBeenCalledTimes(2);
-    expect(states.get(-1001)?.botIsAdmin).toBe(false);
+    expect((states.get(-1001)?.botPermissions as { isAdministrator?: boolean })?.isAdministrator).toBe(false);
   });
 });

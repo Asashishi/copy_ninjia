@@ -26,11 +26,15 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       : undefined;
     const imageGenerationReference: TelegramVisionSource | undefined = repliedPhoto ?? repliedSticker;
     generateAndSendReply({
+      // 字段一律写全（缺省显式 undefined），不用条件展开：五个入口共用同一个
+      // 隐藏类，messageIngress.ts 的解构与 Worker 侧读取才不会多态。口径同
+      // auto/message/recordContext.ts。
       chatId,
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
       imageGenerationRequested: true,
-      ...(imageGenerationReference ? { imageGenerationReference } : {}),
+      imageGenerationReference,
+      isRandomTrigger: false,
     });
     return true;
   }
@@ -42,9 +46,10 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       chatId,
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
-      isRandomTrigger: true,
       // 没有回复/@机器人只是随机插话，不构成对生图工具的明确调用。
       imageGenerationRequested: false,
+      imageGenerationReference: undefined,
+      isRandomTrigger: true,
     });
   }
   // 掷骰命中但个人冷却未取得时仍不随机复读，与原流水线语义一致。

@@ -16,6 +16,7 @@ import {
 } from "../consts/antiRaid/adDetect";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import { isIdentityPolicyCached } from "../infra/identityStorage";
+import { inlineResultSourceOf } from "../infra/inlineResultSources";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { getChatState } from "../infra/storage/stateStore";
 import { sanitizeInline, truncateInline } from "../libs/text";
@@ -128,6 +129,21 @@ export function buildAdCandidate(
   const blocked: boolean = isUserBlocked(senderId);
   if (blocked && senderChat === undefined) return undefined;
 
+  // 本 bot 自己的 inline 结果送检的是**用户打进 inline 查询的源文本**，不是落群
+  // 的那段正文：后者整段由本 bot 渲染——gag 按字形随机插点、替换字符，正落在提示
+  // 词 B 条「联系方式或关键词被刻意变形……看到就几乎可以判 true」这个最强单项信号
+  // 上；运势那边则是问候、抽签结果与防伪回执，用户写的只有所求事项一段。拿渲染
+  // 结果送检等于按本 bot 自己的排版判人。源文本只在应答那一刻登记得到（见
+  // infra/inlineResultSources.ts），取不到就整条不判——登记被容量挤掉、进程在发言
+  // 之后重启，或客户端发出的是上一次按键那条结果，都不足以拿另一段文本去判一条
+  // 真实消息，而本 bot 的渲染结果一个字都不该流进判定。
+  const selfInlineResult: boolean = message.via_bot?.id === botId;
+  let inlineSource: string | undefined;
+  if (selfInlineResult) {
+    inlineSource = inlineResultSourceOf(message.text ?? "");
+    if (inlineSource === undefined) return undefined;
+  }
+
   const isForwarded: boolean = message.forward_origin !== undefined;
   const forwardSourceId: number | undefined =
     messageOriginIdentityId(message.forward_origin);
@@ -138,11 +154,21 @@ export function buildAdCandidate(
     sourceWhitelistStatus(forwardSourceId) !== false
   ) return undefined;
 
-  const text: string = sanitizeInline(message.text ?? message.caption ?? "");
-  const linkUrls: string[] | undefined = collectHiddenLinkUrls(
-    text,
-    message.entities ?? message.caption_entities
+  const text: string = sanitizeInline(
+    inlineSource ?? message.text ?? message.caption ?? ""
   );
+  // 送检的是源文本时，实体属于本 bot 渲染出来的那段正文，与源文本对不上号，
+  // 一律不补。本 bot 的 inline 结果里 text_link 也**全部**是自己拼上去的（结果按
+  // 显式 entities 发出，用户打的字只是纯文本；Telegram 自动识别出来的裸链接是
+  // `url` 实体，不是这里读的 `text_link`），补进去只会给每条运势结果凭空添一个
+  // 「把人带离本群的落点」——那是运势的防伪回执链接。用户自己打进查询的链接留在
+  // 源文本里，照常参与判定。
+  const linkUrls: string[] | undefined = selfInlineResult
+    ? undefined
+    : collectHiddenLinkUrls(
+      text,
+      message.entities ?? message.caption_entities
+    );
   const sampleContext: AdSampleContext | undefined = buildSampleContext(message);
   if (text.length === 0 && linkUrls === undefined && sampleContext === undefined) return undefined;
 

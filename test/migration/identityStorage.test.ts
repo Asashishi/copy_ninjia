@@ -11,6 +11,8 @@ import {
   IDENTITY_DATABASE_CURRENT_BASE_MIGRATION_HASH,
   IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_JSONB_MIGRATION_HASH,
+  IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH,
   IDENTITY_DATABASE_SCHEMA_DATA,
   IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_TEXT_MIGRATION_HASH,
@@ -19,26 +21,33 @@ import {
   IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
 } from
   "../../packages/consts/identityStorage";
+import { putIdentityPolicyRow } from "../../packages/database/interact/admin";
 import {
-  assertIdentityDatabaseIntegrity,
-  assertIdentityDatabaseJsonbStorage,
-  closeIdentityDatabase,
-  createIdentityDatabase,
-  migrateIdentityDatabaseSchema,
-  openIdentityDatabase,
-  putIdentityPolicyRow,
-  readIdentityDatabaseMigrationJournal,
-  readStoredIdentityPolicies,
-  readIdentityDatabaseRows,
-  readIdentityDatabaseJsonStorage,
-  serializeIdentityDatabaseSnapshot,
-} from "../../packages/database/interact/identity";
+  closeStorageDatabase,
+  openStorageDatabase,
+  serializeStorageDatabaseSnapshot,
+} from "../../packages/database/interact/connection";
+import { readStoredIdentityPolicies } from
+  "../../packages/database/interact/identityPolicy";
+import {
+  assertStorageDatabaseJsonbStorage,
+  readStorageDatabaseBaseRows,
+  readStorageDatabaseJsonStorage,
+  readStorageDatabaseRows,
+} from "../../packages/database/interact/inspection";
+import {
+  createStorageDatabase,
+  migrateStorageDatabaseSchema,
+  readStorageDatabaseMigrationJournal,
+} from "../../packages/database/interact/migration";
+import { assertStorageDatabaseIntegrity } from "../../scripts/storageDatabaseIntegrity";
 import type {
-  IdentityDatabase,
-  IdentityDatabaseMigrationJournalEntry,
-  IdentityDatabaseRows,
-  IdentityDatabaseJsonStorageRow,
-} from "../../packages/types/identityDatabase";
+  StorageDatabase,
+  StorageDatabaseBaseRows,
+  StorageDatabaseMigrationJournalEntry,
+  StorageDatabaseRows,
+  StorageDatabaseJsonStorageRow,
+} from "../../packages/types/storageDatabase";
 import {
   decodeWhitelistEntryData,
   encodeBlocklistEntryData,
@@ -86,7 +95,7 @@ const REMOVAL: PendingBlockedRemoval = {
 
 let temporaryRoot: string | null = null;
 
-function freshMigrationJournal(): readonly IdentityDatabaseMigrationJournalEntry[] {
+function freshMigrationJournal(): readonly StorageDatabaseMigrationJournalEntry[] {
   return [
     {
       createdAt: IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
@@ -96,10 +105,14 @@ function freshMigrationJournal(): readonly IdentityDatabaseMigrationJournalEntry
       createdAt: IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT,
       hash: IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH,
     },
+    {
+      createdAt: IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
+      hash: IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH,
+    },
   ];
 }
 
-function upgradedMigrationJournal(): readonly IdentityDatabaseMigrationJournalEntry[] {
+function upgradedMigrationJournal(): readonly StorageDatabaseMigrationJournalEntry[] {
   return [
     {
       createdAt: IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
@@ -112,6 +125,10 @@ function upgradedMigrationJournal(): readonly IdentityDatabaseMigrationJournalEn
     {
       createdAt: IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT,
       hash: IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH,
+    },
+    {
+      createdAt: IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
+      hash: IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH,
     },
   ];
 }
@@ -146,12 +163,12 @@ function createMigratedDatabase({
   input,
   metadata,
 }: ReturnType<typeof fixture>): void {
-  createIdentityDatabase(path);
-  const database: InsertMigratedRowsParams["database"] = openIdentityDatabase({ path });
+  createStorageDatabase(path);
+  const database: InsertMigratedRowsParams["database"] = openStorageDatabase({ path });
   try {
     insertMigratedRows({ database, input, metadata, blockedAt: BLOCKED_AT });
   } finally {
-    closeIdentityDatabase(database);
+    closeStorageDatabase(database);
   }
 }
 
@@ -201,54 +218,54 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
       [-9, { ...BLACK_META, username: "dynamic" }],
     ]);
     createMigratedDatabase({ path, input, metadata });
-    const database: IdentityDatabase = openIdentityDatabase({ path });
+    const database: StorageDatabase = openStorageDatabase({ path });
     try {
-      assertIdentityDatabaseJsonbStorage(database, path);
-      const rows: IdentityDatabaseRows = readIdentityDatabaseRows(database);
+      assertStorageDatabaseJsonbStorage(database, path);
+      const rows: StorageDatabaseRows = readStorageDatabaseRows(database);
       expect(rows.whitelist).toHaveLength(2);
       expect(rows.blocklist).toHaveLength(2);
       expect(rows.removals).toHaveLength(1);
-      expect(readIdentityDatabaseMigrationJournal(database))
+      expect(readStorageDatabaseMigrationJournal(database))
         .toEqual(freshMigrationJournal());
       expect(input.whitelist.get(7)?.isCanWhiteOther).toBeFalse();
       expect(input.whitelist.get(8)?.isCanWhiteOther).toBeTrue();
     } finally {
-      closeIdentityDatabase(database);
+      closeStorageDatabase(database);
     }
   });
 
-  test("migration 链建立四张严格 JSONB 表，读取边界返回规范 JSON 文本", () => {
+  test("migration 链建立五张严格 JSONB 表，读取边界返回规范 JSON 文本", () => {
     const value: ReturnType<typeof fixture> = fixture();
     createMigratedDatabase(value);
-    const database: IdentityDatabase = openIdentityDatabase({ path: value.path });
+    const database: StorageDatabase = openStorageDatabase({ path: value.path });
     try {
-      expect(() => assertIdentityDatabaseJsonbStorage(database, value.path)).not.toThrow();
-      const storage: readonly IdentityDatabaseJsonStorageRow[] =
-        readIdentityDatabaseJsonStorage(database);
-      expect(storage).toHaveLength(4);
+      expect(() => assertStorageDatabaseJsonbStorage(database, value.path)).not.toThrow();
+      const storage: readonly StorageDatabaseJsonStorageRow[] =
+        readStorageDatabaseJsonStorage(database);
+      expect(storage).toHaveLength(5);
       for (const row of storage) {
         expect(row.declaredType).toBe("BLOB");
         expect(row.textRows).toBe(0);
         expect(row.blobRows).toBe(row.rowCount);
         expect(row.invalidJsonbRows).toBe(0);
       }
-      expect(readIdentityDatabaseMigrationJournal(database))
+      expect(readStorageDatabaseMigrationJournal(database))
         .toEqual(freshMigrationJournal());
       const snapshotPath: string = `${value.path}.snapshot`;
-      writeFileSync(snapshotPath, serializeIdentityDatabaseSnapshot(database));
-      const snapshot: IdentityDatabase = openIdentityDatabase({
+      writeFileSync(snapshotPath, serializeStorageDatabaseSnapshot(database));
+      const snapshot: StorageDatabase = openStorageDatabase({
         path: snapshotPath,
         readonly: true,
       });
       try {
-        expect(() => assertIdentityDatabaseIntegrity(snapshot)).not.toThrow();
-        expect(() => assertIdentityDatabaseJsonbStorage(snapshot, snapshotPath))
+        expect(() => assertStorageDatabaseIntegrity(snapshot)).not.toThrow();
+        expect(() => assertStorageDatabaseJsonbStorage(snapshot, snapshotPath))
           .not.toThrow();
       } finally {
-        closeIdentityDatabase(snapshot);
+        closeStorageDatabase(snapshot);
       }
 
-      const rows: IdentityDatabaseRows = readIdentityDatabaseRows(database);
+      const rows: StorageDatabaseRows = readStorageDatabaseRows(database);
       const texts: string[] = [
         ...rows.metadata.map((row): string => row.data),
         ...rows.whitelist.map((row): string => row.data),
@@ -260,14 +277,14 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
         expect(text).toBe(JSON.stringify(JSON.parse(text)));
       }
     } finally {
-      closeIdentityDatabase(database);
+      closeStorageDatabase(database);
     }
   });
 
   test("v2 白名单迁移：旧权限全 true 才补 isCanWhiteOther=true，其余默认 false", () => {
     const value: ReturnType<typeof fixture> = fixture();
     createMigratedDatabase(value);
-    const database: IdentityDatabase = openIdentityDatabase({ path: value.path });
+    const database: StorageDatabase = openStorageDatabase({ path: value.path });
     try {
       const allPermissions: WhitelistPermissions = {
         ...DEFAULT_WHITELIST_PERMISSIONS,
@@ -292,6 +309,7 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
         "UPDATE storage_metadata SET data = jsonb('{\"version\":2}') " +
         "WHERE key = 'schema-version';"
       );
+      database.$client.run("DROP TABLE chat_states;");
       database.$client.run("DELETE FROM __drizzle_migrations;");
       const insertMigration = database.$client.prepare(
         "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?1, ?2);"
@@ -304,13 +322,13 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
         IDENTITY_DATABASE_JSONB_MIGRATION_HASH,
         IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT
       );
-      const before: IdentityDatabaseRows = readIdentityDatabaseRows(database);
+      const before: StorageDatabaseBaseRows = readStorageDatabaseBaseRows(database);
       expect(() => decodeWhitelistEntryData(before.whitelist[0]!.data, "v2 row"))
         .toThrow("complete supported boolean permission object");
 
-      migrateIdentityDatabaseSchema(database);
+      migrateStorageDatabaseSchema(database);
 
-      const after: IdentityDatabaseRows = readIdentityDatabaseRows(database);
+      const after: StorageDatabaseRows = readStorageDatabaseRows(database);
       const permissionsById: Map<number, Readonly<WhitelistPermissions>> =
         new Map<number, Readonly<WhitelistPermissions>>();
       for (const row of after.whitelist) {
@@ -322,19 +340,19 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
       expect(permissionsById.get(7)?.isCanWhiteOther).toBeFalse();
       expect(permissionsById.get(8)?.isCanWhiteOther).toBeTrue();
       expect(after.metadata[0]?.data).toBe(IDENTITY_DATABASE_SCHEMA_DATA);
-      expect(readIdentityDatabaseMigrationJournal(database))
+      expect(readStorageDatabaseMigrationJournal(database))
         .toEqual(upgradedMigrationJournal());
-      expect(() => assertIdentityDatabaseJsonbStorage(database, value.path))
+      expect(() => assertStorageDatabaseJsonbStorage(database, value.path))
         .not.toThrow();
     } finally {
-      closeIdentityDatabase(database);
+      closeStorageDatabase(database);
     }
   });
 
   test("批量冷读支持 4096 项硬顶，并拒绝越过主线程预取边界", () => {
     const value: ReturnType<typeof fixture> = fixture();
     createMigratedDatabase(value);
-    const database: IdentityDatabase = openIdentityDatabase({ path: value.path });
+    const database: StorageDatabase = openStorageDatabase({ path: value.path });
     try {
       const ids: number[] = new Array<number>(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
       for (let index: number = 0; index < ids.length; index += 1) ids[index] = index + 1;
@@ -343,7 +361,7 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
       expect(() => readStoredIdentityPolicies(database, "whitelist", ids))
         .toThrow(`at most ${IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES} IDs`);
     } finally {
-      closeIdentityDatabase(database);
+      closeStorageDatabase(database);
     }
   });
 
@@ -394,7 +412,7 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
     };
     expect(() => verifyDatabase(verify)).not.toThrow();
 
-    const database: IdentityDatabase = openIdentityDatabase({ path: value.path });
+    const database: StorageDatabase = openStorageDatabase({ path: value.path });
     try {
       putIdentityPolicyRow({
         database,
@@ -406,7 +424,7 @@ describe("旧 JSON 身份存储直达 SQLite JSONB", () => {
         }),
       });
     } finally {
-      closeIdentityDatabase(database);
+      closeStorageDatabase(database);
     }
     expect(() => verifyDatabase(verify)).toThrow("does not match its migrated source value");
   });

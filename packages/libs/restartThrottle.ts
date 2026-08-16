@@ -14,7 +14,7 @@ import { tryConsumeSlidingWindow } from "./slidingWindowRateLimit";
 export function createRestartThrottle(maxRestarts: number, windowMs: number): { shouldGiveUp: () => boolean } {
   const timestamps: LinkedQueue<number> = new LinkedQueue();
   return {
-    // 语义与 tryConsume 恰好互为反面：还在配额内就记一次本次重启并继续自愈，
+    // 语义与 tryConsumeSlidingWindow 恰好互为反面：还在配额内就记一次本次重启并继续自愈，
     // 配额已满则不记账（被拒的这次不占后续窗口名额）并放弃。
     shouldGiveUp: (): boolean => !tryConsumeSlidingWindow({ timestamps, windowMs, maxCalls: maxRestarts }),
   };

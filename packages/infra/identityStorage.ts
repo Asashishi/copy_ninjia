@@ -1,5 +1,5 @@
 /**
- * 主线程身份策略门面：两份 8196 项 LRU、批量冷读、write-through 与事务 ACK 重放。
+ * 主线程身份策略门面：两份 8192 项 LRU、批量冷读、write-through 与事务 ACK 重放。
  * 普通同步权限判断只读这里的热缓存；跨线程请求统一发生在 update 前置预热或明确
  * 的命令/补扫边界，不在每个判定点做 request/reply。
  */
@@ -74,7 +74,7 @@ export function identityMetadataFromCachedUser(
   };
 }
 
-/** 启动恢复只灌入严格计数，不把 SQLite 整表复制到主线程。 */
+/** 启动恢复只灌入数据库计数，不把 SQLite 整表复制到主线程。 */
 export function hydrateIdentityStorageCounts(
   whitelistCount: number,
   blocklistCount: number

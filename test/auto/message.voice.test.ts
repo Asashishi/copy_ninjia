@@ -26,8 +26,8 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getActiveProxySendTarget: () => undefined,
   getChatState: () => ({ isAIChatEnabled: true, quietUntil: Date.now() + 60_000 }),
   getOrCreateChatState: () => ({}),
-  persistAuthoritativeState: async (): Promise<void> => {},
-  saveStateInBackground: () => {},
+  persistChatState: async (): Promise<void> => {},
+  saveChatStateInBackground: () => {},
 }));
 mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
 mock.module("../../packages/users/senderIdentity", () => ({

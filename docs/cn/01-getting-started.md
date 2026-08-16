@@ -18,7 +18,7 @@
 - **Bun 1.3+**：`curl -fsSL https://bun.sh/install | bash`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
-- **（可选）Google Cloud 服务账号 JSON**：只有 `/ja_copy` 日语翻译需要，存为项目根的 `g-auth.json`。缺失或写坏时 `/ja_copy` 直接拒绝并点名这个文件，自动复读的 ja 变换退化成普通复制；若已有群开着 `/ja_copy enable`，则拒绝启动。
+- **（可选）Google Cloud 服务账号 JSON**：只有 `/ja_copy` 日语翻译需要，存为项目根的 `g-auth.json`。缺失时 `/ja_copy` 直接拒绝并点名这个文件，自动复读的 ja 变换退化成普通复制，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
 
 ## 安装
 
@@ -93,7 +93,7 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
     以 404/405 表明模型/路径不存在时都停止下载该类媒体（后者另记一行指向
     `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力。
 
-白名单、黑名单与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB 行结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/ja_copy enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关；若该功能已在状态中开启，则启动总闸拒绝进程启动。结论按进程缓存，修好文件后必须重启。
+白名单、黑名单与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB 行结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/ja_copy enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。结论按进程缓存，修好文件后必须重启。
 
 ### 初始化身份数据库
 
@@ -118,27 +118,28 @@ bun run migrate:identity-storage --apply
 
 旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并运行身份存储迁移；不要在 SQLite 迁移完成后手改数据库。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 
-**例外：功能已经开着的时候仍然拒绝启动。**`state.json` 里那个 `true` 是管理员当初明确按下的，把它悄悄降级成「静默不干活」，群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译。因此启动时会核对一次：凡是还有群开着的可选功能，凭据与配置必须齐备，缺了就带着群 id 和缺失项拒绝启动（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。出路是补回前提，或者先 `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` 再撤掉它。
+**注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——AI 闲聊的 Worker 根本不启动、记忆不 hydrate（`memory/` 里那份原样留着等前提补齐），`/ja_copy` 退化成普通复制，广告检测不再送检。群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable`，或者干脆把前提补回去。
 
-### 换掉运势缩略图与机器人默认头像
+### 换掉内联缩略图与机器人默认头像
 
-两张内联抽签缩略图（`/luck_challenge` 的「未卜先知」「概率论」）和 `/reset_icon`、`/stop_copy` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
+三张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」，以及 gag 发言入口）和 `/reset_icon`、`/stop_copy` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
 
 ```json
 "global": {
   "assets": {
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
+    "gagThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-三个键依次是「未卜先知」的缩略图、「概率论」的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
+四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
 
-三项在启动成功时被自动补成代码里的内置缺省值，所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。两张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+四项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
 
-> 从 `state.global.assets` 早于本节的版本升级上来时，**先看一眼这三项再启动**：两张缩略图现在只认 `https`，此前配成 `http://` 的会在解码期拒绝启动并点名字段路径。
+> 从 `state.global.assets` 早于本节的版本升级上来时，**先看一眼这四项再启动**：三张缩略图现在只认 `https`，此前配成 `http://` 的会在解码期拒绝启动并点名字段路径。
 
 **改法是停机改**：运行中的进程持有权威内存，会整份覆写这个文件，改完必须 `systemctl stop` → 编辑 → `systemctl start`（同 [07 运维与排障](07-operations.md)）。
 
@@ -152,7 +153,7 @@ bun run migrate:identity-storage --apply
 ## 首次启动
 
 ```bash
-bun run check     # 约定检查 + ESLint + tsc + 全源码覆盖率测试，首次跑一遍确认环境完好
+bun run check     # 约定检查 + ESLint + tsc + 全源码覆盖率测试 + 热路径门禁，首次跑一遍确认环境完好
 bun run start     # 启动长轮询
 ```
 

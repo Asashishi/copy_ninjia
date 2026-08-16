@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT } from "../../packages/consts/commands";
+import {
+  ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
+  INIT_CHAT_LIMIT_TEXT,
+} from "../../packages/consts/commands";
+import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
+import { botPermissions } from "../helpers/botPermissions";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
 const teardownChatRuntime = mock(async (..._args: unknown[]): Promise<void> => {});
 const invalidateBotAdminStatus = mock((chatId: number): void => {
-  delete states.get(chatId)?.botIsAdmin;
+  delete states.get(chatId)?.botPermissions;
 });
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
-const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); });
+const persistChatState = mock(async (_chatId: number, context: string): Promise<void> => { saveStateInBackground(context); });
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const clearFloodControl = mock((..._args: unknown[]): void => {});
@@ -26,7 +31,7 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
     id === 100 || delegatedPermissions.get(id)?.has(key) === true,
 }));
 // 开关命令测试只验证授权与状态变化；部署文件的失败分支由 configGate 与
-// featurePreflight 专门覆盖，不能让本机 g-auth.json 是否存在左右这里的结果。
+// config readiness 测试覆盖，不能让本机 g-auth.json 是否存在左右这里的结果。
 mock.module("../../packages/config/readiness", () => ({
   adDetectConfigReadiness: (): { ok: true } => ({ ok: true }),
   aiChatConfigReadiness: (): { ok: true } => ({ ok: true }),
@@ -55,8 +60,23 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState(chatId: number): Record<string, unknown> {
     return states.get(chatId) ?? {};
   },
-  persistAuthoritativeState,
-  saveStateInBackground,
+  getChatStateCache(): ReadonlyMap<number, Record<string, unknown>> {
+    return states;
+  },
+  // 复刻真实实现的两步收敛（见 infra/storage/stateStore.ts 与 libs/chatState.ts）：
+  // 清掉字段后跑一次 normalize（布尔开关的 false 等价于「没设过」），整条回到缺省
+  // 就把记录本身删掉。/init disable 的残留判定全靠这一步，简化掉就测不出来了。
+  clearChatStateField(chatId: number, field: string): boolean {
+    const state = states.get(chatId);
+    if (state === undefined || state[field] === undefined) return false;
+    delete state[field];
+    for (const key of Object.keys(state)) {
+      if (state[key] === false) delete state[key];
+    }
+    if (Object.keys(state).length === 0) states.delete(chatId);
+    return true;
+  },
+  persistChatState,
 }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));
 
@@ -68,9 +88,9 @@ const { handleFloodControlCommand } = await import("../../packages/commands/floo
 const { handleAntiRaidCommand } = await import("../../packages/commands/antiRaid");
 const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
 
-function context(argument: string, userId: number | undefined = 100): never {
+function context(argument: string, userId: number | undefined = 100, chatId: number = -1001): never {
   return {
-    chat: { id: -1001 },
+    chat: { id: chatId },
     from: userId === undefined ? undefined : { id: userId, first_name: "Admin", username: "admin" },
     msgId: 7,
     match: argument,
@@ -87,9 +107,9 @@ beforeEach(() => {
   resolveBotAdminStatus.mockClear();
   resolveBotAdminStatus.mockImplementation(async (_chatId: number): Promise<boolean> => false);
   saveStateInBackground.mockClear();
-  persistAuthoritativeState.mockClear();
-  persistAuthoritativeState.mockImplementation(async (...args: unknown[]): Promise<void> => {
-    saveStateInBackground(...args);
+  persistChatState.mockClear();
+  persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
+    saveStateInBackground(context);
   });
   handleCopyCommand.mockClear();
   clearAdDetection.mockClear();
@@ -266,6 +286,43 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isAIChatEnabled).toBe(true);
   });
 
+  test("State 已管理 25 个群时拒绝为第 26 个群启用 /init", async () => {
+    for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index += 1) {
+      states.set(-2_000 - index, { isInitEnabled: true });
+    }
+
+    await handleInitCommand(context("enable"));
+
+    expect(states.has(-1001)).toBe(false);
+    expect(persistChatState).not.toHaveBeenCalled();
+    expect(resolveBotAdminStatus).not.toHaveBeenCalled();
+    expect(lastReplyText()).toBe(INIT_CHAT_LIMIT_TEXT);
+  });
+
+  test("/init disable 连群名一起清掉：不再管的群不留任何记录", async () => {
+    states.set(-1001, { isInitEnabled: true, title: "Test Group" });
+
+    await handleInitCommand(context("disable"));
+
+    expect(states.has(-1001)).toBe(false);
+  });
+
+  test("25 轮「启用又关掉」之后仍能为新群启用 /init——残留的 title 曾经会把群槽吃光", async () => {
+    for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index += 1) {
+      const chatId: number = -2_000 - index;
+      await handleInitCommand(context("enable", 100, chatId));
+      // 启用过的群基本都会记下群名（每条群消息顺手记一次，见 infra/chatTitle.ts）。
+      states.get(chatId)!.title = `群 ${index}`;
+      await handleInitCommand(context("disable", 100, chatId));
+      expect(states.has(chatId)).toBe(false);
+    }
+
+    await handleInitCommand(context("enable"));
+
+    expect(states.get(-1001)?.isInitEnabled).toBe(true);
+    expect(lastReplyText()).not.toBe(INIT_CHAT_LIMIT_TEXT);
+  });
+
   test("频道白名单按 sender_chat 取得委派权限", async () => {
     delegatedPermissions.set(-500, new Set(["isCanControllAdDetectPermission"]));
     const ctx = context("enable", 201) as unknown as {
@@ -281,17 +338,20 @@ describe("超级管理员开关命令", () => {
   });
 
   test("/init disable 同时失效 AI，enable 恢复群更新入口", async () => {
-    states.set(-1001, { botIsAdmin: true });
+    states.set(-1001, { botPermissions: botPermissions() });
     await handleInitCommand(context("disable"));
     expect(states.get(-1001)?.isInitEnabled).toBe(false);
-    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
+    expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(invalidateBotAdminStatus).toHaveBeenLastCalledWith(-1001);
     expect(teardownChatRuntime).toHaveBeenCalledWith(-1001, "explicitDisable");
 
-    states.get(-1001)!.botIsAdmin = false;
+    states.get(-1001)!.botPermissions = botPermissions({
+      isAdministrator: false,
+      canManageChat: false,
+    });
     await handleInitCommand(context("enable"));
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
-    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
+    expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
     // enable 必须立刻重新判定管理员身份：作废之后不重判，「是管理员 && 已初始化」
@@ -303,7 +363,7 @@ describe("超级管理员开关命令", () => {
 
   test("/init disable 拆运行态失败仍持久化禁用状态，回执如实说没拆干净", async () => {
     const teardownError = new Error("chat teardown failed");
-    states.set(-1001, { botIsAdmin: true });
+    states.set(-1001, { botPermissions: botPermissions() });
     teardownChatRuntime.mockRejectedValueOnce(teardownError);
 
     // 不上抛：异常逸出会让 acknowledged runner 带非零码退出且不确认 offset，
@@ -312,15 +372,15 @@ describe("超级管理员开关命令", () => {
     await handleInitCommand(context("disable"));
 
     expect(states.get(-1001)?.isInitEnabled).toBe(false);
-    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
+    expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
     expect(lastReplyText()).toContain("没能拆干净");
   });
 
   test("/init disable 落盘失败仍原样上抛，不确认这条 update", async () => {
     const persistError = new Error("state store quiesced");
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
-    persistAuthoritativeState.mockRejectedValueOnce(persistError);
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    persistChatState.mockRejectedValueOnce(persistError);
 
     await expect(handleInitCommand(context("disable"))).rejects.toBe(persistError);
     expect(sendMessage).not.toHaveBeenCalled();
@@ -341,8 +401,8 @@ describe("超级管理员开关命令", () => {
   test("/ai_chat disable 在 state 与记忆删除都完成前不发送成功反馈", async () => {
     let releaseState!: () => void;
     let releaseDelete!: () => void;
-    persistAuthoritativeState.mockImplementationOnce(async (...args: unknown[]): Promise<void> => {
-      saveStateInBackground(...args);
+    persistChatState.mockImplementationOnce(async (_chatId: number, context: string): Promise<void> => {
+      saveStateInBackground(context);
       await new Promise<void>((resolve) => { releaseState = resolve; });
     });
     invalidateAiChat.mockImplementationOnce(async () => {
@@ -449,15 +509,15 @@ describe("开关命令的同状态重复执行", () => {
   });
 
   test("/init 重复 enable 仍不作废管理员记录，只是回执说破没变", async () => {
-    // 空操作照样作废的话，随后的重新判定会被 recordBotAdminStatus 当成一次全新
+    // 空操作照样作废的话，随后的重新判定会被 recordBotChatPermissions 当成一次全新
     // 的 undefined -> true 边沿，把整份黑名单再清扫一遍（见 commands/init.ts）。
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
 
     await handleInitCommand(context("enable"));
 
     expect(invalidateBotAdminStatus).not.toHaveBeenCalled();
     expect(resolveBotAdminStatus).not.toHaveBeenCalled();
-    expect(states.get(-1001)?.botIsAdmin).toBe(true);
+    expect((states.get(-1001)?.botPermissions as { isAdministrator?: boolean } | undefined)?.isAdministrator).toBe(true);
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
     expect(lastReplyText()).toContain("本来就");
   });

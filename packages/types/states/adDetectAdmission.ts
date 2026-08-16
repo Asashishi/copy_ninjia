@@ -10,7 +10,7 @@ export interface AdCandidateAdmissionInput {
   readonly isChannel: boolean;
   /** Worker 侧管理员缓存**明确**认得这个发送者是本群管理员；缓存冷时为 false。 */
   readonly knownAdmin: boolean;
-  /** 本轮去重窗口内这个键刚被判成广告并已发出处置。 */
+  /** 自己的去重 TTL 内这个键刚被判成广告并已发出处置。 */
   readonly recentlyDisposed: boolean;
   /** 主线程投递时这个发送者已经在永久黑名单里（封禁多半还没落地）。 */
   readonly blocked: boolean;
@@ -31,25 +31,18 @@ export interface AdRequeueInput {
   readonly queued: boolean;
   /** 这个键此刻正在等广告检测 provider 回话。 */
   readonly inFlight: boolean;
-  /** 这个键在本轮去重窗口里已经排过一次队。 */
-  readonly recentlyEnqueued: boolean;
-  /** 去重窗口表当前的键数，用于容量硬顶判定。 */
-  readonly dedupWindowSize: number;
 }
 
 export type AdRequeueDecision =
   | { readonly action: "enqueue" }
-  /** 无需排队：没有新内容，或这个键已经排着/在途/本窗口判过了。 */
-  | { readonly action: "skip" }
-  | { readonly action: "rejectAtCapacity" };
+  /** 无需排队：没有新内容，或这个键已经排着、在途。 */
+  | { readonly action: "skip" };
 
 export interface AdBundleStorageInput {
   /** 这个键已经有一串在待检表里（本次只是并进去，不占新名额）。 */
   readonly alreadyStored: boolean;
   /** 待检表当前的键数。 */
   readonly pendingSize: number;
-  /** 去重窗口表当前的键数。 */
-  readonly dedupWindowSize: number;
 }
 
 export type AdBundleStorageDecision =

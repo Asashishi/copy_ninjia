@@ -39,6 +39,7 @@ import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import type { BlockedMembersRemovedEvent, RemoveBlockedMembersMessage } from "../../types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../types/blocklist";
 import { trackAntiRaidTask } from "./taskTracker";
+import { releaseAdDetectDedupKey } from "./adDetect/queue";
 
 /**
  * 单个 id 的处置结局。
@@ -219,6 +220,10 @@ export interface HandleRemoveBlockedMembersParams {
 export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlockedMembersParams): Promise<void> {
   const task: Promise<void> = removeBlockedMembers(msg)
     .then((result: RemoveBatchResult): void => {
+      // 回执先发。主线程只在 complete 时销镜像并把群标成已清扫，排在它后面的
+      // 任何一步抛出都会转到下面的 .catch 并改发 complete:false，让主线程重投
+      // 一个其实已经跑完的批次——去重记录回收是尽力而为的清理，不该有能力
+      // 否决一个已经确定的结果。
       publish({
         type: "blockedMembersRemoved",
         chatId: msg.chatId,
@@ -227,6 +232,22 @@ export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlocked
         permissionDenied: result.permissionDenied,
         targetIsAdmin: result.targetIsAdmin,
       });
+      // 非探测批次里的目标已确认封禁后，尝试释放同 key 的广告判定去重记录；
+      // release 内部只认 direct-ad 标记，不会误碰手工 /block 或秒踢的待检 bundle。
+      // 自带 try：抛出去只会落进下面的 .catch 再补发一条 complete:false，同一个
+      // removalId 就有了两条互相矛盾的回执。这里失败最多让几个 key 多等一个窗口。
+      if (result.complete && !result.targetIsAdmin && !msg.probeMembership) {
+        try {
+          for (const userId of msg.userIds) {
+            releaseAdDetectDedupKey(msg.chatId, userId);
+          }
+        } catch (error: unknown) {
+          logger.error(
+            `Failed to release ad-detect disposal markers for chat ${msg.chatId}:`,
+            error
+          );
+        }
+      }
     })
     .catch((error: unknown): void => {
       logger.error(`Failed to remove blocklisted members from chat ${msg.chatId}:`, error);

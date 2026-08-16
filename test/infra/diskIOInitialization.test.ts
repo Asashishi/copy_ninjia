@@ -24,34 +24,14 @@ import {
   pauseDiskIODiagnosticChannel,
   resumeDiskIODiagnosticChannel,
 } from "../../packages/infra/diskIO/diagnosticChannel";
+import {
+  emitSuccessfulDiskIOLoad as emitSuccessfulLoad,
+  FakeDiskIOWorker as FakeWorker,
+  TEST_LUCK_RECEIPT_SECRET as luckReceiptSecret,
+} from "../helpers/diskIOWorkerHarness";
 
 const diskIO = await import("../../packages/infra/diskIO");
 const { superviseWorker } = await import("../../packages/infra/supervisedWorker");
-
-class FakeWorker {
-  static instances: FakeWorker[] = [];
-  onmessage: ((event: MessageEvent<DiskIOReply>) => void) | null = null;
-  onerror: ((event: ErrorEvent) => void) | null = null;
-  readonly messages: DiskIOMessage[] = [];
-  readonly rejectedTypes = new Set<DiskIOMessage["type"]>();
-  terminated: boolean = false;
-
-  constructor(readonly url: string) {
-    FakeWorker.instances.push(this);
-  }
-
-  unref(): void {}
-
-  postMessage(message: DiskIOMessage): void {
-    if (this.rejectedTypes.has(message.type)) throw new Error(`rejected ${message.type}`);
-    this.messages.push(message);
-  }
-
-  async terminate(): Promise<number> {
-    this.terminated = true;
-    return 0;
-  }
-}
 
 const luckDraw: LuckDrawDiskMessage = {
   type: "luckDraw",
@@ -60,26 +40,6 @@ const luckDraw: LuckDrawDiskMessage = {
   label: "大吉",
   fortunePercent: 99,
 };
-const luckReceiptSecret = {
-  version: 1 as const,
-  day: "2026-07-19",
-  key: Buffer.alloc(32, 7).toString("base64url"),
-};
-
-function emitSuccessfulLoad(worker: FakeWorker): void {
-  worker.onmessage!({ data: {
-    type: "loaded",
-    aiMemories: new Map(),
-    stickerCatalogs: new Map(),
-    luckDay: null,
-    luckReceiptSecret,
-    verifications: new Map(),
-    pendingBlockedRemovals: new Map(),
-    blocklistEntryCount: 0,
-    whitelistEntryCount: 0,
-  } } as MessageEvent<DiskIOReply>);
-}
-
 function deferredVoid(): { promise: Promise<void>; resolve(): void } {
   let resolve: (() => void) | undefined;
   const promise: Promise<void> = new Promise<void>((done: () => void): void => {

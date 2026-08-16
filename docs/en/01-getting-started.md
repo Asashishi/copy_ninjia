@@ -18,7 +18,7 @@ This page takes a clean environment all the way to “the bot works normally in 
 - **Bun 1.3+**: install it with `curl -fsSL https://bun.sh/install | bash`. Every project script, test, and runtime path uses Bun; Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
-- **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation; store it as `g-auth.json` in the project root. When it is missing or malformed, `/ja_copy` refuses and names the file, the ja transform on the automatic copy path falls back to a plain copy, and if any chat still has `/ja_copy enable` on, startup is refused.
+- **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation; store it as `g-auth.json` in the project root. When it is missing, `/ja_copy` refuses and names the file and the ja transform on the automatic copy path falls back to a plain copy, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
 
 ## Installation
 
@@ -106,9 +106,12 @@ Allowlist, blocklist, and pending-removal state are no longer deployment JSON. T
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
 SQLite integrity, migration lineage, schema version, JSONB row shapes, and policy disjointness.
 Other inputs are validated per feature: AI chat reads stickers, reactions, moods, persona, and the
-chat section of `agent.json`; Japanese translation reads `g-auth.json`. A missing input refuses
-only that toggle unless the feature is already enabled in state, in which case startup fails.
-Results are cached until restart.
+chat section of `agent.json`; Japanese translation reads `g-auth.json`. A missing input refuses only
+that toggle and that feature's runtime path — it does not block startup. **A file that exists must
+still parse strictly**, though: invalid content refuses startup even when the matching feature is
+currently off (see `validateExistingDeploymentInputs` in
+[`packages/config/readiness.ts`](../../packages/config/readiness.ts)). Results are cached until
+restart.
 
 ### Initializing Identity Storage
 
@@ -140,27 +143,28 @@ Model changes now require editing the relevant capability while stopped and rest
 
 Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration; never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/telegram.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
 
-**One exception: startup still fails while the feature is switched on.** That `true` in `state.json` is something an administrator deliberately turned on, and silently downgrading it to "quietly does nothing" means the group just sees the bot stop chatting, stop catching ads, or stop translating from one restart onward. So startup checks once: every optional feature that is still enabled in some chat must have its credential and configuration present, and a missing prerequisite aborts startup naming the chat ids and what is missing (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)). The way out is to restore the prerequisite, or run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing it.
+**Careful: removing a credential does not fail startup, but that chat goes quiet.** The startup gate validates only deployment inputs that **already exist** (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts), now just an export of `validateExistingDeploymentInputs` from `packages/config/readiness.ts`): a present file must parse strictly, while a genuinely absent one does not block startup. The `true` in `chat_states` is restored as usual, but the matching feature is judged unavailable at its single decision entry point — the AI chat Worker never starts and memory is not hydrated (the snapshots under `memory/` stay untouched until the prerequisite returns), `/ja_copy` degrades to a plain copy, and ad detection stops submitting bundles. The group simply sees the bot stop chatting, stop catching ads, or stop translating from one restart onward, with a single line in `logs/` as the only trace. So run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing a credential — or restore the prerequisite instead.
 
-### Replacing the Fortune Thumbnails and the Default Avatar
+### Replacing the Inline Thumbnails and the Default Avatar
 
-The two inline fortune thumbnails (`/luck_challenge`) and the default avatar restored by `/reset_icon` and `/stop_copy` are all configured under `global.assets` in `state.json`:
+The three inline thumbnails (the two `/luck_challenge` results and the gag speech entry) and the default avatar restored by `/reset_icon` and `/stop_copy` are all configured under `global.assets` in `state.json`:
 
 ```json
 "global": {
   "assets": {
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
+    "gagThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-The three keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
+The four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
 
-All three are seeded with the built-in defaults on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The two thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
+All four are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
 
-> Upgrading from a version older than this section's `state.global.assets`? **Check the three entries before starting**: the two thumbnails now accept `https` only, and one previously configured as `http://` will refuse to start at decode time and name the field path.
+> Upgrading from a version older than this section's `state.global.assets`? **Check the four entries before starting**: the three thumbnails now accept `https` only, and one previously configured as `http://` will refuse to start at decode time and name the field path.
 
 **Edit it while stopped**: the running process holds the authoritative state in memory and rewrites the whole file, so `systemctl stop` → edit → `systemctl start` (see [07 Operations and Troubleshooting](07-operations.md)).
 
@@ -174,7 +178,7 @@ All three are seeded with the built-in defaults on a successful startup, so the 
 ## First Launch
 
 ```bash
-bun run check     # conventions + ESLint + tsc + full-source coverage; run once to verify the environment
+bun run check     # conventions + ESLint + tsc + full-source coverage + hot-path gate; run once to verify the environment
 bun run start     # start long polling
 ```
 

@@ -1,0 +1,90 @@
+import type { Database } from "bun:sqlite";
+import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import type { storageDatabaseSchema } from "../database/schema/storage";
+
+/** Drizzle 绑定 Bun SQLite 与共享运行时 schema 后的同步句柄。 */
+export type StorageDatabase = BunSQLiteDatabase<typeof storageDatabaseSchema> & {
+  $client: Database;
+};
+
+/** 黑白名单 JSONB 经 SQLite `json()` 规范化后的文本行。 */
+export interface StoredIdentityPolicyRow {
+  readonly id: number;
+  readonly data: string;
+}
+
+/** 只投影黑名单主键时使用的轻量数据库行。 */
+export interface StoredIdentityIdRow {
+  readonly id: number;
+}
+
+/** 待踢成员 JSONB 经 SQLite `json()` 规范化后的文本行。 */
+export interface StoredPendingRemovalRow {
+  readonly removalId: number;
+  readonly data: string;
+}
+
+/** 生产启动分页读取的待踢行；data 为 null 表示存储形态或严格 JSONB 校验失败。 */
+export interface StoredPendingRemovalStartupRow {
+  readonly removalId: number;
+  readonly data: string | null;
+  readonly storageClass: string;
+}
+
+/** 群状态 JSONB 经 SQLite `json()` 规范化后的文本行。 */
+export interface StoredChatStateRow {
+  readonly chatId: number;
+  readonly data: string;
+}
+
+/** SQLite 自身元数据表的一行。 */
+export interface StoredStorageMetadataRow {
+  readonly key: string;
+  readonly data: string;
+}
+
+/** chat_states 引入前后都存在的四张基础表；仅供显式冷迁移严格核对。 */
+export interface StorageDatabaseBaseRows {
+  readonly whitelist: readonly StoredIdentityPolicyRow[];
+  readonly blocklist: readonly StoredIdentityPolicyRow[];
+  readonly removals: readonly StoredPendingRemovalRow[];
+  readonly metadata: readonly StoredStorageMetadataRow[];
+}
+
+/** 显式冷迁移全表检查读取的共享 SQLite 业务表与元数据。 */
+export interface StorageDatabaseRows extends StorageDatabaseBaseRows {
+  readonly chatStates: readonly StoredChatStateRow[];
+}
+
+/**
+ * 生产启动恢复载荷；名单只取计数，群状态只恢复正文而不执行启动正确性校验。
+ *
+ * 不含 schema 元数据：版本判定必须早于本载荷的读取（`chat_states` 是 v4 才有的
+ * 表），因此那一行由 readStorageDatabaseSchemaMetadata 单独取，不从这里回传。
+ */
+export interface StorageDatabaseStartupRows {
+  readonly whitelistEntryCount: number;
+  readonly blocklistEntryCount: number;
+  readonly chatStates: readonly StoredChatStateRow[];
+}
+
+/** 事务缓冲中一项主键的最终 JSON 文本；null 表示删除。 */
+export interface StorageDatabaseChange {
+  readonly data: string | null;
+}
+
+/** Drizzle 迁移日志中用于严格识别部署谱系的一项。 */
+export interface StorageDatabaseMigrationJournalEntry {
+  readonly createdAt: number;
+  readonly hash: string;
+}
+
+/** 一张 JSONB 表的 Drizzle data 声明及当前 SQLite 存储类型统计。 */
+export interface StorageDatabaseJsonStorageRow {
+  readonly tableName: string;
+  readonly declaredType: string | null;
+  readonly rowCount: number;
+  readonly textRows: number;
+  readonly blobRows: number;
+  readonly invalidJsonbRows: number;
+}

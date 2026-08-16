@@ -25,8 +25,8 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getActiveProxySendTarget: () => targetChatId,
   getChatState: () => chatState,
   getOrCreateChatState: () => ({}),
-  persistAuthoritativeState: async (): Promise<void> => {},
-  saveStateInBackground: () => {},
+  persistChatState: async (): Promise<void> => {},
+  saveChatStateInBackground: () => {},
 }));
 mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
 mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.from?.id }));

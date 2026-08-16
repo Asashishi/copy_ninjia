@@ -26,7 +26,7 @@ export const configuredBlockedIds: {
 
 export const states = new Map<number, Record<string, unknown>>();
 export const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
-export const persistAuthoritativeState = mock(async (): Promise<void> => {});
+export const persistChatState = mock(async (): Promise<void> => {});
 /**
  * 处置的执行 owner 替身：主线程侧只该「投出去」，不该自己打 API。
  * 返回值是**真正投出去的条数**（见 types/blocklist.ts 的 BlockedMemberRemover）：
@@ -61,7 +61,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: "flushed" }),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getAllChatStates: (): ReadonlyMap<number, Record<string, unknown>> => states,
+  getChatStateCache: (): ReadonlyMap<number, Record<string, unknown>> => states,
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
     const current = states.get(chatId) ?? {};
@@ -70,8 +70,8 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   },
   clearChatStateField: (): boolean => false,
   pruneDepartedChatState: (): void => {},
-  persistAuthoritativeState,
-  saveStateInBackground: (): void => {},
+  persistChatState,
+  saveChatStateInBackground: (): void => {},
 }));
 mock.module("../../packages/infra/chatTeardown", () => ({
   teardownRegisteredChat: async (): Promise<void> => {},
@@ -169,7 +169,7 @@ export function installBlocklistSweepHooks(injected: BlocklistSweepDeps): void {
     remover.mockClear();
     postDiskIO.mockClear();
     getChatMember.mockClear();
-    persistAuthoritativeState.mockClear();
+    persistChatState.mockClear();
     postDiskIO.mockImplementation((): boolean => true);
     remover.mockImplementation(async (...args: unknown[]): Promise<number> =>
       (args[0] as readonly unknown[]).length);

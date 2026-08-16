@@ -15,7 +15,7 @@
 ## ディレクトリの責務
 
 - **`packages/app/`**
-  - **責務**：起動・終了ライフサイクル、有効な機能の起動時前提チェック、handler
+  - **責務**：起動・終了ライフサイクル、すでに存在するデプロイ入力の起動時検証入口、handler
     登録、コマンドメニュー、update runner、ライフサイクル副作用の composition。
   - **代表的なファイル**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、
     `registerHandlers.ts`、`updateRunner.ts`。`ApplicationLifecycleDependencies` は composition object
@@ -35,7 +35,7 @@
   - **責務**：AI chat のメインスレッド代理と model capability。Worker 監督、
     memory mirror、availability、provider 実装パッケージ（`gemini/`、`openai/`）と選択、sticker、tool、media を含む。
   - **代表的なファイル**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
-    `availability.ts`、`credentials.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`。
+    `availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`。
     `index.ts` は薄い公開入口だけを提供。
 - **`packages/antiRaid/`**
   - **責務**：Anti-Raid のメインスレッド代理と広告 model capability。Worker 監督、
@@ -59,8 +59,8 @@
   - **責務**：deployment `config/*.json` の厳密 schema と process snapshot、feature 単位の readiness 判定。identity policy はここに置きません。
   - **代表的なファイル**：`telegram.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
 - **`packages/database/`**
-  - **責務**：identity policy SQLite schema、codec、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
-  - **代表的な path**：`schema/`、`codec/identity.ts`、`interact/identity.ts`。
+  - **責務**：共有 SQLite（identity policy と chat state）の schema、codec、行検証、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
+  - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`migration.ts`、`inspection.ts`）、`validation/storageRows.ts`。
 - **`packages/libs/`**
   - **責務**：アトミックファイル、上限付き I/O、並行処理ツールなど、
     ドメイン非依存の基盤。
@@ -69,7 +69,7 @@
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
-    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/identityDatabase.ts`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
+    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/storageDatabase.ts` と `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
@@ -108,7 +108,7 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
-  - **代表的なファイル**：`checkProjectConventions.ts`、`migrateIdentityStorageToSqlite.ts`、`migrateWhitelistPermission.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`。
+  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`migrateIdentityStorageToSqlite.ts`、`migrateChatStateToSqlite.ts`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`。
 
 ## 新しいコードの配置判断
 
@@ -128,7 +128,7 @@
 
 - **`main/`**
   - **所有者**：メインスレッド。
-  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理する `state.json` のメモリミラー、
+  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラーと `chatState.ts` の `chat_states` LRU（容量 25）、
     Disk I/O ホスト、および **Worker のメインスレッド側プロキシとミラー**
     （`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
@@ -154,7 +154,7 @@
 
 ## 互換エントリ（barrel）の規約
 
-大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/consts/aiChat/` に対する `packages/consts/aiChat.ts`、`packages/infra/telegram/avatar/` に対する `packages/infra/telegram/avatar.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
+大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/consts/aiChat/` に対する `packages/consts/aiChat.ts`、`packages/infra/telegram/actions/` に対する `packages/infra/telegram/actions.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
 
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。

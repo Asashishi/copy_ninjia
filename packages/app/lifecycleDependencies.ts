@@ -30,8 +30,9 @@ import { cleanupOrphanedTempFiles } from "../infra/storage/cleanup";
 import { acquireSingleInstanceLock, releaseSingleInstanceLock } from "../infra/storage/instanceLock";
 import {
   flushStateToDisk,
-  getAllChatStates,
+  getChatStateCache,
   getGlobalCopyState,
+  hydrateChatStateCache,
   loadState,
   seedMissingAssetState,
   setStatePersistenceFatalHandler,
@@ -44,8 +45,8 @@ import { bot, initTelegramClients } from "../infra/telegram/mainClient";
 import { sleep } from "../libs/sleep";
 import { monotonicNow } from "../libs/monotonicDeadline";
 import { seedSenderCache } from "../users/senderIdentity";
-import { preflightEnabledFeatures } from "./featurePreflight";
 import { hydrateIdentityStorageCounts } from "../infra/identityStorage";
+import { validateExistingDeploymentInputs } from "./featurePreflight";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers } from "./registerHandlers";
 import { runAcknowledgedUpdateBatches } from "./updateRunner";
@@ -77,9 +78,10 @@ export const lifecycleDependencies = {
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
-  getAllChatStates,
+  getChatStateCache,
   getGlobalCopyState,
   hydrateIdentityStorageCounts,
+  hydrateChatStateCache,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,
@@ -98,7 +100,7 @@ export const lifecycleDependencies = {
   loadState,
   logger,
   monotonicNow,
-  preflightEnabledFeatures,
+  validateExistingDeploymentInputs,
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,

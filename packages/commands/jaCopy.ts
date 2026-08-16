@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { jaTranslateConfigReadiness } from "../config/readiness";
 import { JA_COPY_TOGGLE_TEXTS } from "../consts/commands";
-import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
+import { getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
 import { handleCopyCommand } from "./copy";
@@ -51,7 +51,7 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
   const wasEnabled: boolean = state.isJATranslationEnabled === true;
   const isEnabled: boolean = toggleArg === "enable";
   state.isJATranslationEnabled = isEnabled;
-  await persistAuthoritativeState("ja_copy toggled");
+  await persistChatState(chatId, "ja_copy toggled");
 
   const replyText: string = toggleReplyText({
     isEnabled,

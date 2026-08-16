@@ -1,6 +1,7 @@
 /** 黑名单主键跨线程读失败时的降级、re-arm 与忙等防护。 */
 
 import { describe, expect, test } from "bun:test";
+import { botPermissions } from "../helpers/botPermissions";
 const {
   blockedUserIds,
   expectLastRemoval,
@@ -48,7 +49,7 @@ describe("黑名单主键读失败的降级边界", () => {
 
   test("sweepBlockedMembers 的读失败仍会重新武装补扫时钟", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     initBlocklistSweepScheduler();
     requestBlocklistResweep(-1001, Date.now() + 60_000);
     failBlocklistIdReads();
@@ -62,7 +63,7 @@ describe("黑名单主键读失败的降级边界", () => {
 
   test("多群补扫的读失败按退避排下一轮，不把失败抛给调度器形成忙等", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     failBlocklistIdReads();
 
     await expect(sweepManagedBlocklistChats(1_000)).resolves.toBeUndefined();
@@ -74,8 +75,8 @@ describe("黑名单主键读失败的降级边界", () => {
 
   test("重放遇读失败时冻结批次照常重投，只跳过需要现算名单的补扫", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
-    states.set(-1002, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    states.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
     // 一条冻结批次（/block 秒踢）和一条补扫批次。
     trackBlockedRemoval({ chatId: -1001, probeMembership: false, userIds: [7] });
     trackBlockedRemoval({ chatId: -1002, probeMembership: true }, [7]);

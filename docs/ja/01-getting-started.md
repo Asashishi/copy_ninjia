@@ -18,7 +18,7 @@
 - **Bun 1.3+**：`curl -fsSL https://bun.sh/install | bash` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
-- **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落や破損時は `/ja_copy` がこのファイルを名指しして拒否し、自動 copy の ja 変換は通常の copy に退化します。いずれかのチャットで `/ja_copy enable` が有効なままなら起動を拒否します。
+- **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/ja_copy` がこのファイルを名指しして拒否し、自動 copy の ja 変換は通常の copy に退化しますが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
 
 ## インストール
 
@@ -106,8 +106,11 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
 allowlist、blocklist、未完了 removal は deployment JSON ではなく、runtime data root の
 `database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、
 migration lineage、schema version、JSONB row shape、policy の非重複を検証します。その他は
-feature 単位で検証し、日本語翻訳は `g-auth.json` を読みます。欠落は対応 toggle だけを
-拒否しますが、state 上ですでに有効なら startup を拒否します。修復後は再起動が必要です。
+feature 単位で検証し、日本語翻訳は `g-auth.json` を読みます。欠落は対応 toggle とその機能の
+実行経路だけを拒否し、起動は妨げません。ただし**ファイルが存在する限り厳密なパースを
+通らなければならず**、対応機能が今オフでも不正な内容は起動を拒否します
+（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の
+`validateExistingDeploymentInputs` を参照）。修復後は再起動が必要です。
 
 ### identity storage の初期化
 
@@ -137,27 +140,28 @@ script は `bot.lock` を取得し、owner/mode/SHA-256 inventory 付き外部 b
 
 旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、identity storage migration を実行します。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/telegram.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
 
-**例外として、機能が有効なままの場合は従来どおり起動を拒否します。** `state.json` の `true` は管理者が明確に有効化したものであり、これを黙って「何もしない」状態に格下げすると、グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えません。そこで起動時に一度だけ照合します。いずれかのチャットで有効なままの任意機能は、資格情報と設定が揃っていなければならず、欠けていればチャット id と欠落項目を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。対処は前提を復旧するか、取り除く前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行することです。
+**注意：資格情報を外しても起動は拒否されませんが、そのグループは静かに止まります。** 起動時の総ゲートが検証するのは**すでに存在する**デプロイ入力だけです（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照。現在は `packages/config/readiness.ts` の `validateExistingDeploymentInputs` を再 export するだけです）。存在するファイルは厳密なパースを通らなければならず、本当に存在しないファイルは起動を妨げません。`chat_states` の `true` は従来どおり復元されますが、対応機能は唯一の判定入口で利用不可と判定されます——AI 雑談の Worker はそもそも起動せずメモリも hydrate されず（`memory/` のスナップショットは前提が戻るまでそのまま保持されます）、`/ja_copy` は通常コピーへ退化し、広告検出は bundle を送らなくなります。グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えず、痕跡は `logs/` の 1 行だけです。したがって資格情報を外す前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行するか、前提そのものを復旧してください。
 
-### 運勢サムネイルと Bot 既定アバターの差し替え
+### インラインサムネイルと Bot 既定アバターの差し替え
 
-インライン運勢（`/luck_challenge`）のサムネイル 2 枚と、`/reset_icon`・`/stop_copy` で復元する既定アバターの直リンクは、いずれも `state.json` の `global.assets` にあります。
+インライン結果のサムネイル 3 枚（`/luck_challenge` の 2 枚と gag 発言入口の 1 枚）と、`/reset_icon`・`/stop_copy` で復元する既定アバターの直リンクは、いずれも `state.json` の `global.assets` にあります。
 
 ```json
 "global": {
   "assets": {
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
+    "gagThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-3 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
+4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
 
-3 項目は起動成功時に内蔵の既定値で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 2 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
+4 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
 
-> `state.global.assets` が導入される前のバージョンから上げる場合は、**起動前にこの 3 項目を確認**してください：サムネイル 2 枚は現在 `https` のみを受け付けるため、以前 `http://` で設定していたものはデコード時に起動を拒否し、フィールドパスを示します。
+> `state.global.assets` が導入される前のバージョンから上げる場合は、**起動前にこの 4 項目を確認**してください：サムネイル 3 枚は現在 `https` のみを受け付けるため、以前 `http://` で設定していたものはデコード時に起動を拒否し、フィールドパスを示します。
 
 **変更は停止中に行います**：稼働中のプロセスは正式な状態をメモリに保持しファイル全体を上書きするため、`systemctl stop` → 編集 → `systemctl start` の順です（[07 運用とトラブルシューティング](07-operations.md) を参照）。
 
@@ -171,7 +175,7 @@ script は `bot.lock` を取得し、owner/mode/SHA-256 inventory 付き外部 b
 ## 初回起動
 
 ```bash
-bun run check     # 規約 + ESLint + tsc + 全ソースカバレッジ。最初に環境が正常か確認
+bun run check     # 規約 + ESLint + tsc + 全ソースカバレッジ + hot path gate。最初に環境が正常か確認
 bun run start     # ロングポーリングを開始
 ```
 

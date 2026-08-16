@@ -3,7 +3,8 @@
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
  * 目录快照、每日运势缓存、待验证当日增量 JSON、身份策略 SQLite 与入群日志都由
  * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
- * 互相踩坏。state.json 是明确例外，由主线程 StateStore 独立异步维护。
+ * 互相踩坏。群状态也进入同一 SQLite；只有 global-only `state.json` 是明确例外，
+ * 由主线程 StateStore 独立异步维护。
  * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *
  * 本文件只做消息路由、统一 flush 调度、启动恢复编排；具体逻辑分别在
@@ -11,7 +12,7 @@
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
  * diskIO/verificationRecovery.ts 与 verificationWrites.ts（待验证按日增量）、
- * diskIO/identityDatabase.ts（黑白名单与未完成处置 outbox）、
+ * diskIO/storageDatabase.ts（黑白名单与未完成处置 outbox）、
  * diskIO/joinLogFiles.ts（滚动入群追写与命令按需读取）、
  * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
  * 共用 appendOnlyDayFile.ts 的按位置追加机制；SQLite 权威状态不启用截断修复。
@@ -26,15 +27,16 @@
 
 import { handleAdSampleMessage } from "./diskIO/adSampleFile";
 import {
-  configureIdentityPersistenceReply,
-  flushIdentityDatabase,
+  configureStoragePersistenceReply,
+  flushStorageDatabase,
+  handleChatStateWrite,
   handleIdentityPolicyWrite,
   handlePendingRemovalSnapshot,
-  hydrateIdentityDatabase,
-  pendingIdentityDatabaseDomains,
+  hydrateStorageDatabase,
+  pendingStorageDatabaseDomains,
   readBlocklistIds,
   readIdentityPolicies,
-} from "./diskIO/identityDatabase";
+} from "./diskIO/storageDatabase";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import {
   configureLuckAppendStalledReply,
@@ -72,10 +74,11 @@ import { aiMemoryCache, forgetAiMemoryChat } from "../cache/workers/diskIO/snaps
 import { stickerCatalogCache } from "../cache/workers/diskIO/stickers";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
-import { noteIdentityWriteRejected } from "../cache/workers/diskIO/identityDatabase";
+import { noteStorageWriteRejected } from "../cache/workers/diskIO/storageDatabase";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type { VerificationSnapshot } from "../types/antiRaid";
 import type { PendingBlockedRemoval } from "../types/blocklist";
+import type { ChatState } from "../types/chatState";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
@@ -117,10 +120,10 @@ function flushAll(scope: DiskFlushRequest["scope"]): readonly DiskIODomain[] {
   if (!flushVerificationChanges(
     (reply: VerificationPersistedReply): void => self.postMessage(reply)
   )) failedDomains.push("verification");
-  if (!flushIdentityDatabase(
+  if (!flushStorageDatabase(
     (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
   )) {
-    failedDomains.push(...pendingIdentityDatabaseDomains());
+    failedDomains.push(...pendingStorageDatabaseDomains());
   }
   if (!flushJoinLogDomain()) failedDomains.push("joinLog");
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
@@ -154,6 +157,7 @@ function handleLoad(): void {
   let blocklistEntryCount: number = 0;
   let whitelistEntryCount: number = 0;
   let pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
+  let chatStates: Map<number, ChatState> = new Map();
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
     hydrateAiMemorySnapshots();
@@ -167,11 +171,12 @@ function handleLoad(): void {
     });
     verifications = recoverVerificationDay(todayKey);
     scheduleVerificationRollover((reply: VerificationPersistedReply): void => self.postMessage(reply));
-    const identityStorage: ReturnType<typeof hydrateIdentityDatabase> =
-      hydrateIdentityDatabase();
+    const identityStorage: ReturnType<typeof hydrateStorageDatabase> =
+      hydrateStorageDatabase();
     blocklistEntryCount = identityStorage.blocklistEntryCount;
     whitelistEntryCount = identityStorage.whitelistEntryCount;
     pendingBlockedRemovals = identityStorage.pendingBlockedRemovals;
+    chatStates = identityStorage.chatStates;
   } catch (error: unknown) {
     loadError = error instanceof Error ? error.message : String(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
@@ -187,6 +192,7 @@ function handleLoad(): void {
     pendingBlockedRemovals,
     blocklistEntryCount,
     whitelistEntryCount,
+    chatStates,
     error: loadError,
   };
   self.postMessage(reply);
@@ -313,6 +319,15 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
         )
       );
       break;
+    case "chatStateWrite":
+      handleIdentityMessage(
+        "chatState",
+        (): void => handleChatStateWrite(
+          msg,
+          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
+        )
+      );
+      break;
     case "recoveryReplay":
       diskIOReplayWindow.current = msg.active;
       break;
@@ -392,13 +407,13 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
  * joinLog 与 types/diskIO.ts 的 RecoveryReplayRequest）。
  */
 function handleIdentityMessage(
-  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox",
+  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState",
   apply: () => void
 ): void {
   try {
     apply();
   } catch (error: unknown) {
-    noteIdentityWriteRejected(domain);
+    noteStorageWriteRejected(domain);
     console.error(`[diskIOWorker] rejected an identity ${domain} message:`, error);
     if (!diskIOReplayWindow.current) return;
     const reply: RecoveryReplayFailedReply = {
@@ -424,7 +439,7 @@ function handleDiskIODiagnostic(message: DiskDiagnosticMessage): boolean {
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 export function startDiskIOWorker(): void {
-  configureIdentityPersistenceReply(
+  configureStoragePersistenceReply(
     (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
   );
   configureAiMemoryDeletePersistedReply((reply: AiMemoryDeletedPersistedReply): void => self.postMessage(reply));

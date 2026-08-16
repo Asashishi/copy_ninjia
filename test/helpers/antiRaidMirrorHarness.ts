@@ -67,7 +67,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     delete state[field];
     return true;
   },
-  getAllChatStates: () => chatStates,
+  getChatStateCache: () => chatStates,
   // 入群守卫默认开着：本文件的用例全部考察守卫开启后的镜像与恢复语义，
   // 逐个用例再去建 chat state 只会淹没被测的东西。
   getChatState: (chatId: number) => ({ isAntiRaidEnabled: true, ...chatStates.get(chatId) }),
@@ -76,9 +76,9 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     chatStates.set(chatId, current);
     return current;
   },
-  saveState,
+  persistChatState: async (): Promise<void> => saveState(),
   flushStateToDisk,
-  saveStateInBackground,
+  saveChatStateInBackground: (_chatId: number, context: string): void => { saveStateInBackground(context); },
 }));
 mock.module("../../packages/infra/telegram/actions", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,

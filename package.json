@@ -18,7 +18,7 @@
     "perf:identity-database": "bun scripts/perf/identityDatabase.ts",
     "perf:join-log": "bun scripts/perf/joinLog.ts",
     "migrate:identity-storage": "bun scripts/migrateIdentityStorageToSqlite.ts",
-    "migrate:whitelist-permission": "bun scripts/migrateWhitelistPermission.ts",
+    "migrate:chat-state": "bun scripts/migrateChatStateToSqlite.ts",
     "typecheck": "tsc --noEmit",
     "check": "bun run check:conventions && bun run lint && bun run typecheck && bun run test:coverage && bun run perf:hot-path-gate",
     "release:check": "bun install --frozen-lockfile && bun run check && bun run test:fault-injection",

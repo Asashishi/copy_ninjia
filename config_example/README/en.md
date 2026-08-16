@@ -32,10 +32,10 @@ configuration. Truly absent optional capabilities follow the feature boundaries 
 | --- | --- | --- |
 | `telegram.json` | Telegram Bot token and sole super administrator | Startup always fails |
 | `agent.json` | Per-capability AI provider, credential, endpoint, and model | Depends on the capability; see below |
-| `stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; startup fails if any chat already has it enabled |
-| `reactions.json` | Candidate words for Telegram reactions | AI chat cannot be enabled; startup fails if any chat already has it enabled |
-| `mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; startup fails if any chat already has it enabled |
-| `ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; startup fails if any chat already has it enabled |
+| `stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
+| `reactions.json` | Candidate words for Telegram reactions | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
+| `mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
+| `ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 
 AI chat also needs `prompt/persona.md`, and Japanese translation needs `g-auth.json` at the project
 root; neither belongs in this directory. An optional file that exists but is invalid aborts startup
@@ -100,10 +100,27 @@ marks it supported; transient network errors leave support unknown so later medi
 Ordinary Google/OpenAI HTTP requests retry at most five times after the initial failure. A Worker
 or process rebuild clears the probe result and applies the new configuration.
 
-## Identity Policies Are Not Configuration Files
+## Disable a Feature Before Removing Its Credential
 
-The authoritative allowlist, blocklist, and pending-removal state lives in
-`database/storage.sqlite` under the runtime data root. `/white`, `/permission`, `/block`, and
+If a capability is still switched on in some chat and you remove its API key or configuration, the
+process **still starts** and that `true` is restored as usual, but the capability is judged
+unavailable at its single decision entry point: the AI chat Worker never starts and memory is not
+hydrated (the on-disk snapshots stay untouched), `/ja_copy` degrades to a plain copy, and ad
+detection stops submitting bundles. The chat simply sees the bot stop working from one restart
+onward, with a single line in `logs/` as the only trace. The correct order is `/ai_chat disable`,
+`/ad_detect disable` or `/ja_copy disable` in the chat first, then remove the configuration — or
+restore the prerequisite.
+
+**Note the direction**: this applies only when the file is **genuinely absent**. A file that is
+still there but invalid refuses startup at the gate as before, even when the matching feature is
+currently off.
+
+## Identity Policies and Chat State Are Not Configuration Files
+
+The authoritative allowlist, blocklist, pending-removal state and **per-chat state** (feature
+switches, quiet mode, lockdown records, the bot's permission snapshot, title and relay flag) all live
+in `database/storage.sqlite` under the runtime data root. Chat state sits in the `chat_states` table,
+capped at 25 chats; over the limit `/init enable` refuses with a one-line reply. `/white`, `/permission`, `/block`, and
 `/unblock` persist changes transactionally through the Disk I/O Worker; ordinary deployments
 should not edit the database directly. `/permission help` is the current permission-key and
 default reference. An invalid schema, unsupported version, or overlap between the two policy

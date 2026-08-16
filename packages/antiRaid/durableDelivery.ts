@@ -4,6 +4,7 @@ import {
 } from "../infra/storage/stateStore";
 import {
   ANTI_RAID_BARRIER_TIMEOUT_MS,
+  ANTI_RAID_DRAIN_TIMEOUT_MS,
   ANTI_RAID_DRAIN_MAX_ROUNDS,
 } from "../consts/antiRaid/protocol";
 import { flushDiskIO } from "../infra/diskIO";
@@ -50,7 +51,7 @@ function remainingDrainTime(deadline: number): number {
  * 网络副作用。若副作用又发布了新镜像则重复，直到固定点或达到轮数上限。
  */
 export async function drainAntiRaid(
-  timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS
+  timeoutMs: number = ANTI_RAID_DRAIN_TIMEOUT_MS
 ): Promise<FlushResult> {
   if (!antiRaidRuntimeState.initialized) return "flushed";
   const deadline: number = createMonotonicDeadline(timeoutMs);

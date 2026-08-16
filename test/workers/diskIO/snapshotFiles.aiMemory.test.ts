@@ -210,11 +210,17 @@ test("位数超出安全整数的文件名同样拒绝恢复", () => {
   // 全新文件，旧文件永远留在盘上。
   writeFileSync(join(aiDir, "99999999999999999999.json"), currentBytes);
 
-  expect(() => recoverAiMemories()).toThrow("non-zero safe integer chat ID");
+  expect(() => recoverAiMemories()).toThrow("negative safe integer Telegram group or channel ID");
 });
 
 test("chatId 为零的文件名拒绝恢复", () => {
   writeFileSync(join(aiDir, "0.json"), currentBytes);
 
-  expect(() => recoverAiMemories()).toThrow("non-zero safe integer chat ID");
+  expect(() => recoverAiMemories()).toThrow("negative safe integer Telegram group or channel ID");
+});
+
+test("正数私聊 ID 的文件名拒绝恢复", () => {
+  writeFileSync(join(aiDir, "100123.json"), currentBytes);
+
+  expect(() => recoverAiMemories()).toThrow("negative safe integer Telegram group or channel ID");
 });

@@ -106,7 +106,7 @@ export function requestAiMemoryDelete(chatId: number, wait: true): Promise<void>
 export function requestAiMemoryDelete(chatId: number, wait: false): undefined;
 export function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<void> | undefined {
   // 新一轮 purge 使此前任何“首份新快照”确认失效；删除 revision 之后真正
-  // 出现的新记录会按 revisionCounter + 无镜像条件重新武装快速路径。
+  // 出现的新记录会按 aiMemoryRevisionCounters + 无镜像条件重新武装快速路径。
   postPurgeAiMemoryPersistRevisions.delete(chatId);
   const hadLatestSnapshot: boolean = latestAiMemories.delete(chatId);
   latestAiMemoryRevisions.delete(chatId);

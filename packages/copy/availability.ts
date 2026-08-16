@@ -19,9 +19,8 @@ import { jaTranslateConfigReadiness } from "../config/readiness";
 import { getChatState } from "../infra/storage/stateStore";
 
 /**
- * 进程侧是否具备跑日语翻译的前提。为假时 /ja_copy enable 被拒、已经开着的群
- * 由启动闸拦在前面（见 app/featurePreflight.ts），这里兜的是同一进程内密钥
- * 中途被改坏那条路径。
+ * 进程侧是否具备跑日语翻译的前提。为假时 /ja_copy enable 被拒；已经开着的群
+ * 也会在消息入口降级为普通复读，但不会因此阻止整个进程启动。
  */
 export function isJaTranslationConfigured(): boolean {
   return jaTranslateConfigReadiness().ok;

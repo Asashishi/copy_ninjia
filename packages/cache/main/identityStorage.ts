@@ -9,13 +9,13 @@ import type { UnacknowledgedIdentityWrite } from "../../types/identityStorage";
 
 /** 主线程身份策略 LRU 与未 ACK 写入；跨线程只通过 Disk I/O 消息同步。 */
 
-/** 白名单热查询缓存；null 是已确认不存在的负缓存，容量严格为 8196。 */
+/** 白名单热查询缓存；null 是已确认不存在的负缓存，容量严格为 8192。 */
 export const whitelistEntryCache: LruCache<
   number,
   Readonly<WhitelistEntryData> | null
 > = new LruCache(IDENTITY_READ_CACHE_MAX_ENTRIES);
 
-/** 黑名单热查询缓存；null 是已确认不存在的负缓存，容量严格为 8196。 */
+/** 黑名单热查询缓存；null 是已确认不存在的负缓存，容量严格为 8192。 */
 export const blocklistEntryCache: LruCache<
   number,
   Readonly<BlocklistEntryData> | null

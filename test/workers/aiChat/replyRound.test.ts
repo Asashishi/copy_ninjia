@@ -297,7 +297,7 @@ describe("AI 单轮回复生命周期", () => {
     expect(capturedContext?.mediaToolsRequested).toBe(true);
   });
 
-  test("仅回复或 @ 直接触发把发送者 id 交给唤起者重点区块", async () => {
+  test("仅回复或 @ 直接触发把发送者 id 交给唤起者声明", async () => {
     await runRound({ triggerSenderId: 7 });
     expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).toEqual(
       expect.objectContaining({ directInvokerId: 7 })

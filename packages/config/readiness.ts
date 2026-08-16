@@ -9,8 +9,8 @@
  * 失败就等于每条消息一次 readFileSync。修好文件后要重启才生效，与
  * `config/*.json` 一贯的「读一次、进程内不再重载」语义一致，拒绝文案里也点明了。
  *
- * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令、
- * 投喂门禁与启动前置核对，全在主线程；Worker 不问「这个功能能不能开」。
+ * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
+ * 投喂门禁，全在主线程；Worker 不问「这个功能能不能开」。
  *
  * 功能 readiness 对 config/agent.json 仍按消费方**分段**探测，且与运行时共用同
  * 一对 holder：启动总闸严格解析整份文件后会同时填充两段快照，探测因此只是

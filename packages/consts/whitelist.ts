@@ -104,7 +104,8 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
  * **字段顺序必须与 DEFAULT_WHITELIST_PERMISSIONS 逐字一致**：`hasWhitelistPermission`
  * 在每条群消息的广告检测与防刷屏门禁上被调用（antiRaid/adCandidate.ts、
  * antiRaid/floodControl.ts），那里的 `permissions[key]` 取值只有在本对象与
- * parsePermissions 产出的条目共用同一个 JSC Structure 时才保持单态。JSC 按
+ * `parseStoredPermissions`（database/codec/identity.ts）产出的条目共用同一个 JSC Structure
+ * 时才保持单态。JSC 按
  * **键的插入顺序**分配 Structure，因此重排字段（哪怕键集合不变）会当场把这个
  * 热点取值打成多态。所属模块：packages/infra/identityPolicy/whitelist.ts。
  */

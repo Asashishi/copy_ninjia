@@ -21,16 +21,16 @@ import type {
  * `lockdown` 事件，而那条事件的 `expiresAt` 是当场 `Date.now() + LOCKDOWN_MS`
  * 算出来的，每次都不一样（见 workers/antiRaid/lockdownRuntime.ts 的
  * publishLockdownState）。把它算进指纹，antiRaid/workerBridge.ts 的对账循环就永远等不到
- * 一次「存下去的还是当前这份」——每轮一次带 fsync 的 state.json + .bak 整文件
- * 重写，入群比这两次写更快时循环不终止，既写不下指纹也发不出 lockdownPersisted。
+ * 一次「存下去的还是当前这份」——每轮都要等待 SQLite 精确事务 ACK；入群变化
+ * 比 ACK 更快时循环不终止，既写不下指纹也发不出 lockdownPersisted。
  * 倒计时本身照常落在 ChatState.lockdown.expiresAt 里，adopt 时按它换算剩余时长。
  */
 /**
  * 记录某群当前 lockdown 记录是否已确认落盘，而非 lockdown 本身——真正的
  * 私密模式状态在 ChatState.lockdown（stateStore 持有）。initAntiRaid 启动时
- * 先清空，再用已加载的 state.json 记录播种（能载入即视为上次已持久化）；
+ * 先清空，再用已加载的 SQLite 记录播种（能载入即视为上次已持久化）；
  * Worker 报告新的 lockdown 持久化事实或 unlock（onEvent）时先删除旧指纹，
- * persistCurrentLockdown 待 saveState 成功且记录未被更新覆盖后才重新写入
+ * persistCurrentLockdown 待 SQLite ACK 成功且记录未被更新覆盖后才重新写入
  * 并通知 Worker；主线程紧急恢复权限成功后同样删除。仅供
  * antiRaid/lockdownMirror.ts 构建 adopt 消息时判断某条记录是否已知持久化。
  */
@@ -40,7 +40,7 @@ export const persistedLockdownFingerprints: Map<number, PersistedLockdownFingerp
 export const pendingLockdownPersistence: Set<number> = new Set();
 
 /**
- * 在某群 saveState 等待期间到达的新 lockdown 事件。每轮读取快照前消费一次；
+ * 在某群 SQLite barrier 等待期间到达的新 lockdown 事件。每轮读取最终值前消费一次；
  * 最后一轮或同指纹倒计时刷新留下的标记会在当前任务 finally 后触发下一任务。
  */
 export const queuedLockdownPersistence: Set<number> = new Set();

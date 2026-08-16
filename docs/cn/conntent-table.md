@@ -28,7 +28,8 @@
 | ⚡ **遵守不变量** | 跨模块权威约束、并发防护与全局状态机规则 | [📖 04 权威约束](04-invariants.md) |
 | 🧪 **开发与测试** | `bun run check` 质量门禁、测试隔离机制与覆盖率口径 | [📖 05 开发流程](05-dev-workflow.md) |
 | 🛠️ **新增/修改功能** | 添加命令、调参、新增 AI 工具及 schema 变更的分步指南 | [📖 06 修改配方](06-modification-guide.md) |
-| 🛡️ **生产运维** | systemd 部署、`COPY_NINJIA_DATA_ROOT`、备份与故障排查 | [📖 07 运维手册](07-operations.md) |
+| 🛡️ **生产运维** | systemd 部署、硬件参考、`COPY_NINJIA_DATA_ROOT`、备份与故障排查 | [📖 07 运维手册](07-operations.md) |
+| 🎮 **查命令** | 全部命令、权限口径与行为细节（根 README 只留概述） | [📖 08 命令参考](08-commands.md) |
 
 ---
 
@@ -54,10 +55,10 @@
    - 跨模块与跨生命周期的权威不变量（源码 `@see` 注释指向此处）
    - 启动与 import 边界：启动顺序、可选凭据降级、数据根、出站请求与消息安全
    - Worker 与状态所有权：线程归属、状态机契约、AI 闲聊运行时、入群验证与终态处置、刷屏禁言与自身权限缓存
-   - 持久化：落盘与快照契约、黑名单与广告检测、确认边界与停机、文件权限
+   - 持久化：落盘与快照契约、群状态与 `chat_states`、黑名单与广告检测、确认边界与停机、文件权限
 
 5. **[05 开发流程与质量门禁](05-dev-workflow.md)**
-   - `bun run check` 4 级串行流水线：规范检查 + Lint + Typecheck + 带覆盖率统计的全量测试
+   - `bun run check` 5 级串行流水线：规范检查 + Lint + Typecheck + 带覆盖率统计的全量测试 + 热路径门禁
    - 测试环境隔离机制与临时数据根沙盒
    - 提交规范与发布前故障注入测试 `bun run test:fault-injection`
 
@@ -69,10 +70,15 @@
    - 非目标：不做 i18n，换语言请 fork
 
 7. **[07 运维与排障](07-operations.md)**
-   - 生产环境推荐硬件配置与部署指南
+   - 部署形态与硬件参考表（按部署规模）
    - `COPY_NINJIA_DATA_ROOT` 目录能力校验（fsync / hard link / rename）
    - 备份与恢复（`memory/luck/receipt-secret.json` 密钥一致性）
    - 常见启动失败与 `bot.lock` 单实例锁故障排查
+
+8. **[08 命令与行为参考](08-commands.md)**
+   - 复读模式与目标指定方式
+   - 全部命令的权限口径（权限键 / 超级管理员 / 群成员）
+   - `/gag`、`/block`、`/batch_kick`、广告检测、入群验证等的行为细节
 
 ---
 

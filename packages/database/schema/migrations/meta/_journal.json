@@ -15,6 +15,13 @@
       "when": 20260812000000,
       "tag": "0001_whitelist_delegation_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 20260813000000,
+      "tag": "0002_chat_state",
+      "breakpoints": true
     }
   ]
 }

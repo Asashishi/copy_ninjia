@@ -38,14 +38,22 @@ export const AD_DETECT_BATCH_SIZE: number = 35;
 export const AD_DETECT_MAX_IN_FLIGHT: number = 95;
 
 /**
- * 入队去重与已消费上下文保留窗口：同一发送者在这段时间内最多排进队列一次，
- * 期间新说的话只并进消息串；窗口轮换时仍有未消费内容的 key 才重新排队。
+ * 处置抑制与已消费上下文的保留 TTL：判成广告的 key 从处置那一刻起独立计时，
+ * 窗口内抢跑进来的消息不再重判；等待派发期间新说的话只并进消息串，那一侧由
+ * queuedAdDetectKeys 表达，不靠计时器。
  *
  * 只有已经判过（seq <= checkedSeq）的旧上下文能在窗口外裁掉；已接纳但尚未判定
- * 的条目没有时间 TTL，无论队列积压多久都必须保留。90 秒用于聚合拆开发的话术，
+ * 的条目没有时间 TTL，无论队列积压多久都必须保留。90 秒同时约束已消费上下文，
  * 不是判定任务的保鲜期。
+ *
+ * **这 90 秒不是「同一个人多久判一次」**。待检位置在出队那一刻就释放、结算时
+ * 只要有新内容立刻补排，因此持续发言的人稳态判定间隔是「1 秒节拍 +
+ * 一次分类往返」，约 3~4 秒，而不是一个窗口一次。这是有意的：窗口一次的节奏
+ * 会把整场刷屏压成一次判定，中间几十条广告只能靠水位事后补。代价是 provider
+ * 调用量按活跃刷屏人数线性上去，最终由 AD_DETECT_MAX_IN_FLIGHT 与
+ * AD_DETECT_BATCH_SIZE 两道闸封顶（见上），改这个窗口不会改变那个速率。
  */
-export const AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS: number = 90_000;
+export const AD_DETECT_JUDGED_RETENTION_WINDOW_MS: number = 90_000;
 
 /**
  * 引用、回复或转发非白名单广告第一次命中后的升级窗口；窗口内再次命中才沿用
@@ -58,23 +66,37 @@ export const AD_REFERENCE_WARNING_WINDOW_MS: number = 300_000;
  * 入队的旧 key；同一 key 的后续消息仍受单 key 条数/字符上限约束。
  *
  * 这个数字直接乘出入群守卫线程 isolate 的常驻上界：每个 key 最多
- * AD_DETECT_MAX_MESSAGES_PER_SENDER 条，每条最多 AD_DETECT_MESSAGE_MAX_CHARS 正文
- * 加 AD_DETECT_MAX_LINK_URLS × AD_DETECT_LINK_URL_MAX_CHARS 的 URL 段、再加两段
- * AD_SAMPLE_CONTEXT_MAX_CHARS 的样本上下文。撑满不是 OOM 一个启发式那么简单——
- * 入群验证、封锁、黑名单执行都在同一个 isolate 里，跟着一起死，supervisedWorker
- * 烧完 WORKER_MAX_RESTARTS 后验证就静默失效了。上限因此按「撑满也还活着」定，
- * 而不是按「能接纳多少人」定。
+ * AD_DETECT_MAX_MESSAGES_PER_SENDER（15）条，每条最多 AD_DETECT_MESSAGE_MAX_CHARS
+ * 正文加 AD_DETECT_MAX_LINK_URLS × AD_DETECT_LINK_URL_MAX_CHARS 的 URL 段、再加
+ * 两段 AD_SAMPLE_CONTEXT_MAX_CHARS 的样本上下文。撑满不是 OOM 一个启发式那么
+ * 简单——入群验证、封锁、黑名单执行都在同一个 isolate 里，跟着一起死，
+ * supervisedWorker 烧完 WORKER_MAX_RESTARTS 后验证就静默失效了。上限因此按
+ * 「撑满也还活着」定，而不是按「能接纳多少人」定。8,192 与 15 条是一起调下来的，
+ * 改任何一个都要重算这个乘积。
+ *
+ * 同一个上限还兜住 recentlyDisposedAdKeys（setBoundedMapValue 直接顶住）；待检
+ * 位置由 queuedAdDetectKeys 表达，每键最多一个位置，长度天然被这个数兜住。
  */
-export const AD_DETECT_MAX_PENDING_SENDERS: number = 11_500;
+export const AD_DETECT_MAX_PENDING_SENDERS: number = 8_192;
 
 /**
  * 单个键最多保留的**完整**消息条数（正文 + 样本上下文）；越界时丢弃最早的一条。
  *
- * 丢的优先是已经判过的旧上下文。整串都还没判过时（一次爆发式刷屏可以在第一个
- * 节拍到来之前就撑满）只能丢没判过的，那时正文不再留，但消息 id 会转存进
- * AdMessageBundle.pendingDeleteIds——判定命中后靠它把这些消息一并删掉。
+ * 丢的优先是已经判过的旧上下文。整串都还没判过时只能丢没判过的，那时正文不再
+ * 留，但消息 id 会转存进 AdMessageBundle.pendingDeleteIds——判定命中后靠它把
+ * 这些消息一并删掉，同时记一行错误日志（每个发送者只记一次）。
+ *
+ * 15 条不是「够用」而是「撑满也还活着」的分摊结果：它乘上
+ * AD_DETECT_MAX_PENDING_SENDERS 才是 isolate 常驻上界。代价是丢正文的门槛
+ * 随之降低——1 秒节拍内发够 16 条就会触发，不再是罕见情形，因此那条路径必须
+ * 有日志。真正的漏判边界由 AD_DETECT_MAX_PENDING_DELETE_IDS 兜住：正文没了，
+ * 消息 id 还在，命中后照样删得掉。
+ *
+ * 注意它与 AD_DETECT_BUNDLE_MAX_CHARS 的关系已经不宽裕：15 × 512 = 7,680 字符
+ * 对 4,096 的送检预算，只有不到两倍（45 条时是五倍多）。预算装不下的部分仍是
+ * 未判内容，由结算后的 requeueIfUnchecked 排进下一批，不会被记成判过。
  */
-export const AD_DETECT_MAX_MESSAGES_PER_SENDER: number = 45;
+export const AD_DETECT_MAX_MESSAGES_PER_SENDER: number = 15;
 
 /**
  * 单个键最多转存多少条「已被挤出上下文、但仍要删」的消息 id。

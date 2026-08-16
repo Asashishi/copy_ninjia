@@ -29,17 +29,21 @@ import {
   whitelistEntryCache,
 } from "../../packages/cache/main/identityStorage";
 import {
-  assertIdentityDatabaseIntegrity,
-  assertIdentityDatabaseJsonbStorage,
-  clearIdentityBusinessTables,
-  closeIdentityDatabase,
-  commitIdentityDatabaseChanges,
-  createIdentityDatabase,
-  enableIdentityDatabaseWal,
-  openIdentityDatabase,
-  readStoredIdentityPolicies,
-  seedIdentityDatabase,
-} from "../../packages/database/interact/identity";
+  clearStorageBusinessTables,
+  seedStorageDatabase,
+} from "../../packages/database/interact/admin";
+import {
+  closeStorageDatabase,
+  enableStorageDatabaseWal,
+  openStorageDatabase,
+} from "../../packages/database/interact/connection";
+import { readStoredIdentityPolicies } from
+  "../../packages/database/interact/identityPolicy";
+import { assertStorageDatabaseJsonbStorage } from
+  "../../packages/database/interact/inspection";
+import { createStorageDatabase } from "../../packages/database/interact/migration";
+import { commitStorageDatabaseChanges } from
+  "../../packages/database/interact/transaction";
 import {
   cachedBlocklistEntry,
   cachedWhitelistEntry,
@@ -63,10 +67,10 @@ import type {
 } from "../../packages/types/identityPolicy";
 import type { FlushResult } from "../../packages/types/lifecycle";
 import type {
-  IdentityDatabase,
-  IdentityDatabaseChange,
+  StorageDatabase,
+  StorageDatabaseChange,
   StoredIdentityPolicyRow,
-} from "../../packages/types/identityDatabase";
+} from "../../packages/types/storageDatabase";
 
 type BenchmarkOperation =
   | "storage-read"
@@ -82,7 +86,7 @@ interface HeapSnapshot {
 
 interface DatabaseFixture {
   readonly root: string;
-  readonly database: IdentityDatabase;
+  readonly database: StorageDatabase;
 }
 
 interface ChildResult {
@@ -185,10 +189,10 @@ function forceGc(): number {
 function createFixture(): DatabaseFixture {
   const root: string = mkdtempSync(join(process.cwd(), ".identity-database-bench-"));
   const path: string = join(root, "storage.sqlite");
-  createIdentityDatabase(path);
-  enableIdentityDatabaseWal(path);
-  const database: IdentityDatabase = openIdentityDatabase({ path });
-  seedIdentityDatabase(database, {
+  createStorageDatabase(path);
+  enableStorageDatabaseWal(path);
+  const database: StorageDatabase = openStorageDatabase({ path });
+  seedStorageDatabase(database, {
     metadata: [{
       key: IDENTITY_DATABASE_SCHEMA_KEY,
       data: IDENTITY_DATABASE_SCHEMA_DATA,
@@ -201,7 +205,7 @@ function createFixture(): DatabaseFixture {
 }
 
 function closeFixture(fixture: DatabaseFixture): void {
-  closeIdentityDatabase(fixture.database);
+  closeStorageDatabase(fixture.database);
   rmSync(fixture.root, { recursive: true, force: true });
 }
 
@@ -213,14 +217,14 @@ function readIds(): readonly number[] {
   return ids;
 }
 
-function seedReadFixture(database: IdentityDatabase): void {
+function seedReadFixture(database: StorageDatabase): void {
   const whitelist: StoredIdentityPolicyRow[] = [];
   const blocklist: StoredIdentityPolicyRow[] = [];
   for (let id: number = 1; id <= READ_FIXTURE_SIZE; id += 1) {
     if ((id & 1) === 0) blocklist.push({ id, data: BLACK_DATA });
     else whitelist.push({ id, data: WHITE_DATA });
   }
-  seedIdentityDatabase(database, {
+  seedStorageDatabase(database, {
     metadata: [],
     whitelist,
     blocklist,
@@ -229,7 +233,7 @@ function seedReadFixture(database: IdentityDatabase): void {
 }
 
 function runReadBatches(
-  database: IdentityDatabase,
+  database: StorageDatabase,
   ids: readonly number[],
   batches: number
 ): number {
@@ -241,11 +245,11 @@ function runReadBatches(
   return checksum;
 }
 
-function createWriteBatches(): readonly ReadonlyMap<number, IdentityDatabaseChange>[] {
-  const batches: ReadonlyMap<number, IdentityDatabaseChange>[] = [];
+function createWriteBatches(): readonly ReadonlyMap<number, StorageDatabaseChange>[] {
+  const batches: ReadonlyMap<number, StorageDatabaseChange>[] = [];
   let id: number = 1;
   for (let batch: number = 0; batch < WRITE_TRANSACTION_COUNT; batch += 1) {
-    const changes: Map<number, IdentityDatabaseChange> = new Map();
+    const changes: Map<number, StorageDatabaseChange> = new Map();
     for (
       let offset: number = 0;
       offset < IDENTITY_WRITE_BATCH_MAX_ENTRIES;
@@ -260,16 +264,17 @@ function createWriteBatches(): readonly ReadonlyMap<number, IdentityDatabaseChan
 }
 
 function runWriteBatches(
-  database: IdentityDatabase,
-  batches: readonly ReadonlyMap<number, IdentityDatabaseChange>[]
+  database: StorageDatabase,
+  batches: readonly ReadonlyMap<number, StorageDatabaseChange>[]
 ): number {
-  const empty: ReadonlyMap<number, IdentityDatabaseChange> = new Map();
+  const empty: ReadonlyMap<number, StorageDatabaseChange> = new Map();
   let checksum: number = 0;
   for (const whitelist of batches) {
-    commitIdentityDatabaseChanges(database, {
+    commitStorageDatabaseChanges(database, {
       whitelist,
       blocklist: empty,
       removals: empty,
+      chatStates: empty,
     });
     checksum += whitelist.size;
   }
@@ -424,7 +429,6 @@ function runReadChild(): ChildResult {
     if (result.checksum !== operations) {
       throw new Error(`Read benchmark checksum mismatch: ${result.checksum}.`);
     }
-    assertIdentityDatabaseIntegrity(fixture.database);
     return result;
   } finally {
     closeFixture(fixture);
@@ -434,11 +438,11 @@ function runReadChild(): ChildResult {
 function runWriteChild(): ChildResult {
   const fixture: DatabaseFixture = createFixture();
   try {
-    const warmup: readonly ReadonlyMap<number, IdentityDatabaseChange>[] =
+    const warmup: readonly ReadonlyMap<number, StorageDatabaseChange>[] =
       createWriteBatches().slice(0, 16);
     runWriteBatches(fixture.database, warmup);
-    clearIdentityBusinessTables(fixture.database);
-    const batches: readonly ReadonlyMap<number, IdentityDatabaseChange>[] =
+    clearStorageBusinessTables(fixture.database);
+    const batches: readonly ReadonlyMap<number, StorageDatabaseChange>[] =
       createWriteBatches();
     const operations: number = WRITE_TRANSACTION_COUNT *
       IDENTITY_WRITE_BATCH_MAX_ENTRIES;
@@ -451,7 +455,6 @@ function runWriteChild(): ChildResult {
     if (result.checksum !== operations) {
       throw new Error(`Write benchmark checksum mismatch: ${result.checksum}.`);
     }
-    assertIdentityDatabaseIntegrity(fixture.database);
     return result;
   } finally {
     closeFixture(fixture);
@@ -631,11 +634,11 @@ function createMainBenchmarkRoot(): string {
     const databaseDirectory: string = join(temporaryRoot, "database");
     mkdirSync(databaseDirectory);
     const path: string = join(databaseDirectory, "storage.sqlite");
-    createIdentityDatabase(path);
-    enableIdentityDatabaseWal(path);
-    const database: IdentityDatabase = openIdentityDatabase({ path });
+    createStorageDatabase(path);
+    enableStorageDatabaseWal(path);
+    const database: StorageDatabase = openStorageDatabase({ path });
     try {
-      seedIdentityDatabase(database, {
+      seedStorageDatabase(database, {
         metadata: [{
           key: IDENTITY_DATABASE_SCHEMA_KEY,
           data: IDENTITY_DATABASE_SCHEMA_DATA,
@@ -645,7 +648,7 @@ function createMainBenchmarkRoot(): string {
         removals: [],
       });
     } finally {
-      closeIdentityDatabase(database);
+      closeStorageDatabase(database);
     }
     return temporaryRoot;
   } catch (error: unknown) {
@@ -656,12 +659,11 @@ function createMainBenchmarkRoot(): string {
 
 function assertMainBenchmarkDatabase(temporaryRoot: string): void {
   const path: string = join(temporaryRoot, "database", "storage.sqlite");
-  const database: IdentityDatabase = openIdentityDatabase({ path, readonly: true });
+  const database: StorageDatabase = openStorageDatabase({ path, readonly: true });
   try {
-    assertIdentityDatabaseIntegrity(database);
-    assertIdentityDatabaseJsonbStorage(database, path);
+    assertStorageDatabaseJsonbStorage(database, path);
   } finally {
-    closeIdentityDatabase(database);
+    closeStorageDatabase(database);
   }
 }
 

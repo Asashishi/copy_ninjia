@@ -47,16 +47,21 @@ export {
  */
 function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean {
   if (aiChatWorkerQuiescing.current) return false;
+  // 字段一律写全、缺省显式 undefined：startReplyRound 只有本函数与
+  // generateAndSendReply 两个调用点，两处同形才只有一个隐藏类进它的解构。
+  // 口径同 replyQueue.ts 的 pushReplyTrigger。
   return startReplyRound(
     {
       chatId,
       triggerSenderId: trigger.triggerSenderId,
       replyToMessageId: trigger.replyToMessageId,
       imageGenerationRequested: trigger.imageGenerationRequested,
-      ...(trigger.imageGenerationReference ? { imageGenerationReference: trigger.imageGenerationReference } : {}),
-      ...(trigger.triggerReference ? { triggerReference: trigger.triggerReference } : {}),
+      imageGenerationReference: trigger.imageGenerationReference,
+      triggerReference: trigger.triggerReference,
       isRandomTrigger: false,
+      mediaComment: undefined,
       queuedTrigger: trigger,
+      generation: undefined,
     },
     onReplyRoundFinished
   );
@@ -156,10 +161,11 @@ export function generateAndSendReply({
           triggerSenderId,
           replyToMessageId,
           imageGenerationRequested,
-          ...(imageGenerationReference ? { imageGenerationReference } : {}),
-          ...(triggerReference ? { triggerReference } : {}),
+          imageGenerationReference,
+          triggerReference,
           isRandomTrigger,
           mediaComment,
+          queuedTrigger: undefined,
           generation,
         },
         onReplyRoundFinished

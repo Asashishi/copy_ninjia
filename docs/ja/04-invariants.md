@@ -23,7 +23,7 @@
 | --- | --- |
 | [起動と import の境界](#起動と-import-の境界) | [起動順序とリソース取得](#起動順序とリソース取得) · [任意の資格情報と設定の縮退](#任意の資格情報と設定の縮退) · [データルートとバックグラウンドタスク](#データルートとバックグラウンドタスク) · [送信リクエストとメッセージの安全性](#送信リクエストとメッセージの安全性) |
 | [Worker と状態の所有権](#worker-と状態の所有権) | [スレッドと状態の帰属](#スレッドと状態の帰属) · [状態機械の contract](#状態機械の-contract) · [AI チャットの実行時](#ai-チャットの実行時) · [AI プロンプトと transcript](#ai-プロンプトと-transcript) · [参加認証と終端処置](#参加認証と終端処置) · [連投ミュートと自身の権限キャッシュ](#連投ミュートと自身の権限キャッシュ) · [識別子の解決と実行時のクリーンアップ](#識別子の解決と実行時のクリーンアップ) |
-| [永続化](#永続化) | [永続化と snapshot の contract](#永続化と-snapshot-の-contract) · [ブロックリストと広告検出](#ブロックリストと広告検出) · [運勢と AI メモリの復元](#運勢と-ai-メモリの復元) · [確認境界と停止](#確認境界と停止) · [ファイル権限と schema](#ファイル権限と-schema) · [ロックダウンミラーと終端フラグ](#ロックダウンミラーと終端フラグ) |
+| [永続化](#永続化) | [永続化と snapshot の contract](#永続化と-snapshot-の-contract) · [グループ状態と `chat_states`](#グループ状態と-chat_states) · [ブロックリストと広告検出](#ブロックリストと広告検出) · [運勢と AI メモリの復元](#運勢と-ai-メモリの復元) · [確認境界と停止](#確認境界と停止) · [ファイル権限と schema](#ファイル権限と-schema) · [ロックダウンミラーと終端フラグ](#ロックダウンミラーと終端フラグ) |
 | [互換エントリ](#互換エントリ) | トップレベル barrel と運勢 receipt の形式 |
 
 ## 起動と import の境界
@@ -51,7 +51,7 @@
   空の許可リストへ退化させるのは厳禁で、そうすると許可リストに無い永続ファイルをすべて孤児として削除してしまいます。
 - allowlist、blocklist、未完了 removal は `database/storage.sqlite` を authoritative source とし、runtime は policy JSON を読み書きしません。Disk I/O Worker は startup 時に SQLite integrity、JSONB storage class、migration lineage、schema version、全 row の strict codec、policy 非重複、outbox reference を検証し、1 つでも失敗すれば partial state で起動しません。production startup は欠落 database を作成・自動 migration せず、offline migration script だけが構造を変更します。
 
-  **同期 authorization は main thread の有界 LRU 2 個だけを読みます。** allowlist と blocklist は各 8,196 positive/negative entry を保持し、`null` は明示 negative cache です。Disk I/O startup は 2 table 全体ではなく count だけを返します。update preflight は必要 identity を batch prefetch し、cross-thread cold read は 1 回最大 4,096 primary key。command と join check はその後同期 cache を読み、判定点ごとの request/reply を行いません。cold read failure は通常 path では fail-closed、destructive bulk path では中止し、unknown を unprotected と扱いません。
+  **同期 authorization は main thread の有界 LRU 2 個だけを読みます。** allowlist と blocklist は各 8,192 positive/negative entry を保持し、`null` は明示 negative cache です。Disk I/O startup は 2 table 全体ではなく count だけを返します。update preflight は必要 identity を batch prefetch し、cross-thread cold read は 1 回最大 4,096 primary key。command と join check はその後同期 cache を読み、判定点ごとの request/reply を行いません。cold read failure は通常 path では fail-closed、destructive bulk path では中止し、unknown を unprotected と扱いません。
 
   **write は write-through と exact revision ACK です。** caller は 1 primary key の final value を LRU へ先に publish し、最新 unacknowledged revision を保持して Disk I/O へ post します。Worker は allowlist、blocklist、outbox のいずれかが 128 change に達するか最初の change が 30 秒待った時点で、現在の全 change を 1 explicit SQLite transaction で commit します。failure は buffer を残して retry、success は exact revision だけ ACK。late read は未 ACK final value を上書きできず、Worker recovery は revision 順に replay します。`/white`、`/permission`、`/block` の critical success reply は各 domain の durable confirmation を待ちます。同期拒収、timeout、target ACK 欠落は command 内で報告し、update handler から replay/restart loop へ漏らしません。
 
@@ -75,11 +75,11 @@
   **AI 雑談が「いま動いているか」の判定は `packages/aiChat/availability.ts` ただ 1 か所**（資格情報の有無とチャットごとの opt-in の論理積）であり、新しい呼び出し箇所は必ずここを通します。この論理積を各呼び出し箇所に書き下すと、いずれどこかがチャット側のスイッチだけを見るようになります。それが起動時の hydrate 経路で起きるとデータ損失です——その経路は「このチャットは無効」をディスク上の記憶を削除する根拠として扱い、資格情報が無いときはすべてのチャットが無効に見えるからです。
 
   **したがって資格情報が欠けている場合、`hydrateAiMemory` / `hydrateStickerCatalog` は丸ごと早期 return し、1 件も削除してはなりません**。`memory/` 配下のスナップショットは鍵が戻るまでそのまま保持します。
-- **降格が許されるのは「誰も有効化していない」場合だけで、「有効なまま」なら起動を拒否します。** `state.json` の `isAIChatEnabled` / `isAdDetectEnabled` / `isJATranslationEnabled` は管理者が明確に入れたスイッチであり、黙って「何もしない」状態へ格下げすると、外からは Bot がある再起動を境に反応しなくなったようにしか見えず、痕跡は誰も読まないログ 1 行だけです。
+- **起動時の総ゲートが検証するのは「すでに存在する」デプロイ入力だけで、欠落しているかどうかは feature readiness に委ねます。** `packages/app/featurePreflight.ts` は現在 `packages/config/readiness.ts` の `validateExistingDeploymentInputs` を再 export するだけです。`telegram.json` はプロセスレベルで必須、その他の任意入力（`stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json`、`agent.json`、`g-auth.json`、`prompt/persona.md`）は**ファイルが存在する限り厳密なパースを通らなければなりません**。対応する機能が今オフだからといって不正な内容を見逃すことはありません。ファイルが本当に存在しない場合は起動を妨げません。
 
-  そこで `packages/app/featurePreflight.ts` が `loadState` の後、Telegram クライアントと任意の Worker より前に一度だけ照合します。いずれかのチャットで有効なままの任意機能は資格情報とデプロイ設定が揃っていなければならず、欠けていればチャット id・欠落項目・無効化コマンド名を添えて throw し、`ApplicationLifecycle` の失敗経路がインスタンスロックを解放します。
+  **SQLite `chat_states` は起動時の前提照合に関与しません**。グループスイッチは永続化復元の境界でのみデコードされ、ランタイム状態の復元に使われます。資格情報の欠落は各機能の唯一の判定入口が扱います——AI 雑談は `packages/aiChat/availability.ts`（Worker は起動せず、メモリも hydrate せず、`/ai_chat enable` を拒否）、日本語翻訳は `packages/copy/availability.ts`（コマンドは `g-auth.json` を名指しして拒否し、自動 copy は通常コピーへ降格）、広告検出は `adDetectConfigReadiness()`（送出ゲートが bundle を送らなくなる）です。
 
-  この位置は `loadState` より前（チャット状態をまだ読めない）にも Worker 作成より後（失敗時に解放すべき資源がロックだけで済まなくなる）にも動かせません。報告するのは最初に壊れた機能 1 つだけです。3 つ同時に壊れる確率は「1 つ直して再起動」より遥かに低く、まとめて出すと本当に直すべき 1 つが埋もれます。
+  `deploymentInputExists` が「本当に未設定」と見なすのは ENOENT だけです。リンク切れの symlink やアクセス不能なパスは「設定済みだが不正」として従来どおり起動を拒否します。報告するのは最初に壊れた入力 1 つだけです。複数が同時に壊れる確率は「1 つ直して再起動」より遥かに低く、まとめて出すと本当に直すべき 1 つが埋もれます。
 
 ### データルートとバックグラウンドタスク
 
@@ -106,7 +106,7 @@
 - グループ内の非機能的な command text は `sendCommandMessage` を通し、送信成功から 30 秒後に削除します。private chat は対象外です。ユーザーが明示的に許可した `/permission help` と成功した CJK action result だけが `preserveInGroup: true` で長期保持できます。action command の対象 validation failure と `/x` の使い方提示は引き続き自動削除します。新しい例外は呼び出し箇所とテストの両方で明示しなければなりません。
 - **起きていない状態変化を応答が報告してはいけません。** `/init`、`/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/ja_copy` の 6 つの switch command は書き込み前に必ず元の値を読み、同じ状態で繰り返し実行した場合は「元からそうです」と言い切らなければなりません。変更直後の文をそのまま流用すると、管理者は最初の実行が効いたのかどうか判断できません。4 つの結末の文言は `ToggleCommandTexts`（`packages/types/commands.ts`）という **4 項目すべて必須**の構造に収め、選択は `toggleReplyText` が行います。「on」「off」の 2 文しか用意しない新しい switch command は compile できません。`/quiet`、`/unquiet`、`/white`、`/permission` は同じ方針の既存実装です。
 
-  判定は「目標の状態」と「元の状態」だけを見ます。**永続化や runtime cleanup が実行されたかは見ません。** これらの cleanup はベストエフォートで、失敗しても log を残すだけです（`clearAdDetection`、`clearFloodControl`、`invalidateAiChat`、および `/init disable` の `teardownChatRuntime`——失敗しても総 switch はすでに durable に off なので、応答は「片付け切れなかったものがある」と名指しする文面に切り替え、決して throw しません。throw すれば offset を確定できず、再配信時には `wasEnabled` がすでに false なので、管理者はかえって「もともと off だった」と告げられます）。したがって「disable したあともう一度 disable する」は Worker 復帰後にもっとも自然な手動リトライであり、同じ状態での繰り返し実行でも永続化と cleanup は通常どおり行い、応答だけが「何も変わっていない」と正直に伝えます。`/init` は、すでに有効なチャットで `enable` を繰り返しても管理者身分の記録を無効化しません。無効化すると `recordBotAdminStatus` が新しい `undefined -> true` の edge を見て blocklist 全体を再走査してしまうためです。
+  判定は「目標の状態」と「元の状態」だけを見ます。**永続化や runtime cleanup が実行されたかは見ません。** これらの cleanup はベストエフォートで、失敗しても log を残すだけです（`clearAdDetection`、`clearFloodControl`、`invalidateAiChat`、および `/init disable` の `teardownChatRuntime`——失敗しても総 switch はすでに durable に off なので、応答は「片付け切れなかったものがある」と名指しする文面に切り替え、決して throw しません。throw すれば offset を確定できず、再配信時には `wasEnabled` がすでに false なので、管理者はかえって「もともと off だった」と告げられます）。したがって「disable したあともう一度 disable する」は Worker 復帰後にもっとも自然な手動リトライであり、同じ状態での繰り返し実行でも永続化と cleanup は通常どおり行い、応答だけが「何も変わっていない」と正直に伝えます。`/init` は、すでに有効なチャットで `enable` を繰り返しても管理者身分の記録を無効化しません。無効化すると `recordBotChatPermissions` が新しい `undefined -> true` の edge を見て blocklist 全体を再走査してしまうためです。
 
 <p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
 
@@ -192,7 +192,7 @@
 - メインスレッドの AI 活動量・確率レイヤーは、ランダムな自発返信の受け入れ関門であり、AI 返信ラウンドの rate limit ではありません。表示されたグループメッセージはまずそのチャットの sliding window に入り、最近のメッセージが多いほどランダム発火率が上がりますが、活発なチャット向けの上限に達するとそれ以上は上がりません。チャット間で活動量を共有せず、プロセス再起動時は冷たい状態から始まり、直接トリガーはこの確率関門を通りません。調整値は `packages/consts/aiChat/rateLimit.ts` に集約し、文書は現在値ではなくこの意味論だけを固定します。
 
   この activity table は全グループメッセージが通る JIT hot path でもあります。既存 chat の hit は固定 shape の `AiReplyActivityEntry`（`timestamps`、`lastAccessSequence`、`lastObservedAt`）をその場で更新し、`Map.delete` + `Map.set` で並べ直したり、一時的な compound key や projection object を allocation したりしてはいけません。満杯の有界 table へ新しい chat を挿入する cold path だけが table を scan して LRU を選びます。window timestamp、capacity、eviction order、wall-clock rollback protection は性能変更でも維持する semantics です。
-- **4 種類のメディア（画像 / スタンプ / GIF / 音声メッセージ）は 1 本の「プレースホルダー → 非同期解析 → その場で書き戻し」パイプラインを共有します**。重複排除 cache、有界 executor、書き戻しの順序はいずれも 1 つしか存在せず、種類ごとの差分は「vision 記述か音声文字起こしか」という 1 か所の分岐だけに落ちます（`packages/aiChat/ai/imageDescription.ts` の `resolveMediaUncached`）。音声に別のパイプラインを立てると、同一メディアの並行マージ、容量による追い出し、executor スロットの競合をもう一度書くことになり、そこはまさに test で押さえるのが最も難しい部分です。
+- **4 種類のメディア（画像 / スタンプ / GIF / 音声メッセージ）は 1 本の「プレースホルダー → 非同期解析 → その場で書き戻し」パイプラインを共有します**。重複排除 cache、有界 executor、書き戻しの順序はいずれも 1 つしか存在せず、種類ごとの差分は「vision 記述か音声文字起こしか」という 1 か所の分岐だけに落ちます（`packages/aiChat/ai/imageDescription.ts` の `resolveMedia`）。音声に別のパイプラインを立てると、同一メディアの並行マージ、容量による追い出し、executor スロットの競合をもう一度書くことになり、そこはまさに test で押さえるのが最も難しい部分です。
 
   **音声の 2 つの上限（長さ・申告サイズ）はダウンロードの前に判定しなければなりません。**Telegram の update には最初から `duration` と `file_size` が載っている一方、ダウンロード側の byte gate は全体を引き終えてからでないと超過を知れません——1 時間の音声メッセージは media executor のスロットと帯域を丸ごと空費した挙げ句、得られるのは fallback placeholder 1 行だけです。弾かれた音声は時間付きの `[语音 N 秒]` の平文 1 行に退避します。**弾いているのは文字起こしであって返信ではありません**——直接トリガーには必ず何か返します。既読スルーは「長すぎて聞けなかった」と言うより悪いからです。音声 byte は transcode しません（voice note は常に OGG/Opus で、multimodal endpoint は `audio/ogg` を受け取ります）が、byte 上限は vision 側よりはるかに小さくする必要があります：音声は base64 として request に inline され 4/3 に膨らむため、16 MiB を流用すると 20 MB を超えて encode され、request ごとサーバー側で拒否されます。文字起こしの切り詰め上限もメディア記述より緩めです——それはモデルの要約ではなくメンバーの**発言そのもの**であり、途中で切るとモデルが見当違いの返事をします。
 
@@ -211,13 +211,17 @@
 - AI 返信のウェブ検証説明は、その round の検索進捗に応じて 3 つの状態を切り替えます。未検索なら「検索すべき条件」と「行動前に検証する」ルールを示し、検索済みで残枠がある場合は結果の使用規律と不足分の再検索に切り替え、枠を使い切った場合も結果の使用規律を保ったうえで「見つからなかったとき」の締め方を示します。3 状態は同じ規律を共有します——検索結果は既存の認識より優先され、結果に無い具体情報を記憶から補ってはいけません——どの状態でもこれを省略できません。
 
   モデルから見える prompt には、Google Search が統一 action budget に計上されないことを明記し、action を節約するために検証を省略させないようにします。サーバー側検索を観測した後の tool round はより低い sampling temperature を使います。検索とその round の最初の本文生成は同一リクエスト内で起きるため予測できず、その round は通常の返信 temperature のままです。
-- AI 返信の最初の入力は、1 つの user ターン内に順序付きの 3〜4 個のテキストブロックを維持します。すなわち、読み取り専用の参照メモリ、読み取り専用の現在会話、直接呼びかけ時にだけ挿入する呼びかけ者の重点記録、今回の返信タスクです。ブロックは `packages/workers/aiChat/replyModel.ts` まで領域上の意味を保ち、各 provider 実装パッケージの `replySession.ts` で初めて各社の形へ写像します（Gemini は 1 つの `user Content` 配下の複数 `text Part`、OpenAI は 1 つの user message 配下の複数 `input_text`）。各 section はモデルから見える開始・終了タグと、先頭の責務説明 1 行だけで囲みます。データと命令の区別、偽造 boundary の無効化、内部構造の非開示という共通の prompt injection 防止規則は system prompt に 1 回だけ記載し、各 section で繰り返しません。
+- AI 返信の最初の入力は、1 つの user ターン内に順序付きの 3 個のテキストブロックを維持します。すなわち、読み取り専用の参照メモリ、読み取り専用の現在会話、今回の返信タスクです。ブロック数は trigger の種類に依存しません——直接 @ / 返信の場合は返信タスクの冒頭に呼びかけ者の宣言（`directInvokerSentence`。identity 部分は転写行と逐字同形）が 1 行増えるだけで、そのために Part を追加したり、そのメンバーの hot window 発言をもう一度複製したりしてはいけません。ブロックは `packages/workers/aiChat/replyModel.ts` まで領域上の意味を保ち、各 provider 実装パッケージの `replySession.ts` で初めて各社の形へ写像します（Gemini は 1 つの `user Content` 配下の複数 `text Part`、OpenAI は 1 つの user message 配下の複数 `input_text`）。各 section はモデルから見える開始・終了タグと、先頭の責務説明 1 行だけで囲みます。データと命令の区別、偽造 boundary の無効化、内部構造の非開示という共通の prompt injection 防止規則は system prompt に 1 回だけ記載し、各 section で繰り返しません。データ Part にはデータと階層 marker だけを置きます——transcript の行をどう読むかは system prompt の `TRANSCRIPT_FORMAT_INSTRUCTION` が示し（どの Part の話かを自ら明示します）、不変のテキストを毎 round 変わる transcript 区画へ連結してはいけません。したがって prompt injection 防止規則の whitelist にも「形式説明」という区分はもうありません。
 
   ツール呼び出し後の履歴は実際の `model/user` role で追加し、参照資料を過去の会話 turn に見せかけてはいけません。system prompt は独立した `GenerateContentConfig.systemInstruction` field でだけ送信し、通常会話の `contents` へ連結しません。
-- メモリの階層（`【最热记忆】`、`【较早逐字记录】`、`【冷记忆】`、`【唤起者重点记录】`）はモデルが context を読むための内部的な仕組みにすぎず、グループのメンバーには一切見せません。`MEMORY_MECHANISM_SILENCE_INSTRUCTION` は、返信の中でこれらの階層名を出すことも仄めかすことも禁止し、context、区画、`Part`、要約、圧縮、sliding window、cache、件数上限、token、system prompt といった仕組みの語彙も同様に禁止します。
+- 直接 @ / 返信されたときの読み方は、system prompt に常駐する `DIRECT_INVOCATION_READING_INSTRUCTION` が推論の順序として定めます。まず `【最热记忆】` を通読してグループで今なにが起きているかを把握し、次に返信タスクが与える呼びかけ者の名簿番号でその発言を特定し、最後に両者を踏まえて答えます（転写行には番号しかなく `[id:]` は現れないため、指示も番号で書かなければモデルは存在しない marker を探しに行きます）。これは hot window を id で複製していた旧方式の置き換えであり、番号の背後にある `[id:]` だけで人物を同定する・転送本文は転送元のものとして扱う・過去の発言は文脈理解のためだけに使い 1 件ずつ返信しない、という 3 つの取り違え防止規則もこの常駐テキストに引き継がれています。全文が不変であるため、気分と現在時刻より前に置き、cache 可能な system prompt の prefix 内に収めます。
+- メモリの階層（`【最热记忆】`、`【较早逐字记录】`、`【冷记忆】`）はモデルが context を読むための内部的な仕組みにすぎず、グループのメンバーには一切見せません。`MEMORY_MECHANISM_SILENCE_INSTRUCTION` は、返信の中でこれらの階層名を出すことも仄めかすことも禁止し、context、区画、`Part`、要約、圧縮、sliding window、cache、件数上限、token、system prompt といった仕組みの語彙も同様に禁止します。
 
-  **禁止対象は transcript に実際に現れる階層名を 1 つずつ名指しする必要があります。** これらの marker はもともとモデルから見える transcript に書かれているため、「内部構造を露出しない」という一般論だけでは、名指しされなかった階層をモデルが説明してしまいます。さらに「あれはもう window から流れ出た」と自分から言い出して、なぜ忘れたのかを説明することさえあり、内部の context 構造をその容量ごとメンバーへ渡すことになります。直接問われた場合も、開発者・管理者・テスト中を自称するメンバーに探りを入れられた場合も、説明せず、肯定せず、否定せず、「だいたいそんな感じ」といった示唆も与えません。思い出せないときは、階層・圧縮・クリーンアップ・window からの流出としてではなく、日常的な言い方で表します。本項は `CHAT_MEMORY_PRIORITY_INSTRUCTION` と責務を分けます。後者は階層をどう使うかだけを扱い、本項は階層を口に出さないことだけを扱います。
-- グループチャット transcript の行内 marker（返信引用、転送元）は、`packages/consts/aiChat/prompts/transcript.ts` の共通 template が、組み立てる本文と prompt の形式説明にある placeholder の両方を生成します。同じ形式を両側で個別に手書きしてはいけません。転送元の帰属は marker の入れ子で区別し、外側は現在のメッセージ、内側は返信先の元メッセージに属します。
+  **禁止対象は transcript に実際に現れる階層名と行内 marker を 1 つずつ名指しする必要があります**（階層名と名簿の区画名、`me`/`uN`/`fN` の番号、`#メッセージ番号`、そして返信先が流れ出たときの `[已滑出]`）。 これらの marker はもともとモデルから見える transcript に書かれているため、「内部構造を露出しない」という一般論だけでは、名指しされなかった階層をモデルが説明してしまいます。さらに「あれはもう window から流れ出た」と自分から言い出して、なぜ忘れたのかを説明することさえあり、内部の context 構造をその容量ごとメンバーへ渡すことになります。直接問われた場合も、開発者・管理者・テスト中を自称するメンバーに探りを入れられた場合も、説明せず、肯定せず、否定せず、「だいたいそんな感じ」といった示唆も与えません。思い出せないときは、階層・圧縮・クリーンアップ・window からの流出としてではなく、日常的な言い方で表します。本項は `CHAT_MEMORY_PRIORITY_INSTRUCTION` と責務を分けます。後者は階層をどう使うかだけを扱い、本項は階層を口に出さないことだけを扱います。
+- 返信用 transcript は**名簿 + 番号**の圧縮描画（`buildTieredVerbatimTranscript`）を使います。発言者と転送元の身元は【发言人名册】【转发来源名册】に一度だけ載せ、行内には番号しか書きません。bot 自身は `uN` に混ぜず常に `me` を使います。日付は変わったときだけ区切り行を出し、行内は時刻のみ。各記憶階層の先頭では現在の日付を再掲します。`#メッセージ番号` は「この区間内で誰かに返信された行」と今回の trigger メッセージにだけ付けます。返信先が区間内にある場合は `（回复 #番号）` という pointer だけを残し、作者と本文はその行を読ませます。区間から流れ出た場合のみ `[已滑出]` を付けた inline snapshot に戻します。transcript は入力全体で最も高価な部分（user ブロックの 80〜86%、そのうちメンバーが実際に打った文字は 2 割だけ）であり、返信のたびに再送されて返信をまたぐ cache にも乗りません。これらの圧縮で transcript の token を約半分削り、人物同定・返信追跡・転送帰属に関する 88 問の客観テストでは完全形式と同点でした。同一の `message_id` が hot 区間に 2 件ある場合（snapshot の hydrate で 1 件、Telegram が同じ update を再投函して 1 件）は最後の 1 件だけを描画します。メディア説明などの後埋めは後に書かれた側にしか載らず、同じ番号の行が 2 本あると `#メッセージ番号` の pointer が両方に当たってしまうためです。重複判定に走査は増やしません。context 構築で全メッセージ分の在席集合をどのみち作るので、重複件数は `messages.length - present.size` からただで得られ、重複がなければ入力配列をそのまま描画します。
+- transcript の外で人やメッセージを名指しする箇所は、transcript と同じ書き方を使い、**transcript に存在しない番号を指してはいけません**。呼びかけ者の宣言にはその人の名簿番号を添え、参照メモリの自己同定文は `[id:]` の行を探すのではなく `me` で自分の発言を認識し、多層返信チェーンの各 hop と queue 再実行時の返信引用も番号と `#メッセージ番号` だけを書きます（名簿にない chain 末尾の snapshot は完全な identity 部分へ、流れ出た返信先は `[已滑出]` 付きの inline snapshot へ戻します）。trigger メッセージ自体が描画 window から流れ出ている場合（queue 再実行、遅いメディアラウンド）は `#メッセージ番号` を書かず、その round の返信タスクに既に引用されている本文を引く形で参照し、2 か所の参照が互いを指し示すようにします。実測の根拠：transcript から解決できない番号だけを与えると、本文がすぐ上の行にあってもモデルは trigger の内容が「与えられていない」と判断します——同一の mock 問題集で、圧縮前は 8/8、番号の言い換えだけでは 0/8、2 か所の参照を結び付けて 8/8 に戻りました。したがって描画結果（`RenderedTranscript`）は行内番号表と「実際に transcript にあるメッセージ番号」の集合を呼び出し側へ併せて渡し、この制約を呼び出し地点で判定できるようにします。
+- 冷履歴の圧縮（`summarizeBatch`）は**自己完結型**の行形式（`formatBufferedMessageLine`）のままにします。あちらは名簿を参照できない独立した 1 回のモデル呼び出しで、`COMPACT_BATCH_SIZE` 件ごとにしか走らないため圧縮しても得がありません。2 つの形式は説明用の定数も別々です（圧縮形式は `TRANSCRIPT_FORMAT_INSTRUCTION`、自己完結形式は `SUMMARY_SYSTEM_PROMPT`）。片方を変えたついでにもう片方を変えてはいけません。
+- グループチャット transcript の行内 marker（返信引用と pointer、pointer の後ろに付く厳密な引用断片、転送元、名簿の項目、2 つの名簿の区画名、日付区切り行、メッセージ番号）は、`packages/consts/aiChat/prompts/transcript.ts` の共通 template が、組み立てる本文と prompt の形式説明にある placeholder の両方を生成します。同じ形式を両側で個別に手書きしてはいけません。placeholder の形は placeholder を template に通して生成しなければならず、魔法の数値で一度 template を走らせてからその数字を置換して作ってはいけません。template に同じ数字がもう 1 つ現れた時点で置換は最初の 1 か所しか書き換えず、説明側は renderer が決して出さない形をモデルに教えることになります。転送元の帰属は marker の入れ子で区別し、外側は現在のメッセージ、内側は返信先の元メッセージに属します。
 
   Bot 自身のアクション記号（`（发了一枚贴纸：…）`、`（…生成并发送了一张图片：…）`、`（生成并发送了一首歌：…）`）も同じ template file 由来で、**アクションが実際に着地した後に実行側だけが書き込みます**。これは「そのアクションが確かに起きた」ことの唯一の証跡であり、モデルは読めても自分で生成してはいけません。
 
@@ -227,7 +231,7 @@
 
   **拒否は裸の語句ではなく template 全体の形に錨を打つ必要があります**（`SELF_ACTION_TAG_PATTERNS`：marker が全角括弧の対の中にあり、直後が `：` か閉じ `）` であること。間には `）` をまたがない短い前置きだけを許し、モデルが「参考素材」を「参考上传的素材」のように書き換えても捕まえます）。**この RegExp 群は module レベルの singleton で、いまや 2 つの executor が共有しているため、`g`/`y` フラグを付けてはいけません**——フラグ付きの `.test()` は `lastIndex` を保持し、2 つの呼び出し箇所が互いを汚染します。症状は caption 側で偽造記号の検出がまれに漏れることで、しかも「直前の呼び出しがたまたま一致していた」ときにしか再現しません。裸の部分文字列では不十分です——「发了一枚贴纸」「生成并发送了一张图片」自体が日常的な中国語で、メンバーが「你刚刚生成并发送了一张图片吗？」
 
-  と尋ねただけでモデルの通常の返答が拒否され、そのラウンドの最終テキストも同じ executor を通ってもう一度拒否され、結果として直接の @ メンションに完全な沈黙で応じることになります。3 つの利用側（実行側の書き込み、prompt の placeholder、拒否判定）は同一のリテラルを共有し、どこか 1 か所でも手書きすると証跡が無効になります。複数階層の返信チェーンにおける各 hop の形式、転送元、`[仅回复快照]` marker も同じドメイン template を再利用します。
+  と尋ねただけでモデルの通常の返答が拒否され、そのラウンドの最終テキストも同じ executor を通ってもう一度拒否され、結果として直接の @ メンションに完全な沈黙で応じることになります。3 つの利用側（実行側の書き込み、prompt の placeholder、拒否判定）は同一のリテラルを共有し、どこか 1 か所でも手書きすると証跡が無効になります。複数階層の返信チェーンにおける各 hop の形式、転送元、`[仅回复快照]` marker も同じドメイン template を再利用し、各 hop の発言者も名簿番号だけを書きます（名簿にない chain 末尾の snapshot のみ完全な identity 部分へ戻します）。転写行と同じ形になります。
 
   返信タスクにチェーンを追加するのは 2 階層以上の場合だけです。snapshot-only の末尾では、元メッセージが逐語 transcript から既に外れていることを明示し、完全な原文をモデルが参照できると示唆してはいけません。
 
@@ -248,7 +252,7 @@
   `message_thread_id` はフォーラム（topics）グループのすべてのメッセージにも付くため、`is_topic_message !== true` でフォーラムトピックを除外しなければなりません。トピックは常に通常の認証待ち semantics に従い、barrier の追加投函も連携チャンネル lookup も発生させません。cold cache の `message_thread_id` は非同期確認候補にすぎません。
 
   lookup 完了までは通常の認証待ちメッセージとして扱い、`linked_chat_id` が確認され、状態オブジェクトと generation が一致する場合だけ取り消します。lookup 失敗は fail-closed とし、後続の再試行を許可します。
-- **Worker 側の管理者免除 cache は、実行中スロットを同一性で解放し、書き戻しを世代で判定しなければなりません。** `getOrCreateAdminFetch` の `.finally()` が delete してよいのは `adminFetches.get(chatId)` が自分自身の promise のままである場合だけです（メインスレッド側の `botAdminFetches` / `botPermissionFetches` と同じ）。`resetAdminCache()` は取得中でもテーブル全体を消去し、その後に同じチャットの新しい fetch が登録されるため、古い fetch が無条件に delete すると消えるのは **新しい** fetch のスロットです。重複排除が壊れ、次の呼び出し側は query category の Telegram lane でもう 1 回全件取得を始めます。`resetAdminCache()` はテーブル全体の世代番号も進め、実行中の fetch は `.then` で自分の snapshot が無効化されたかを判定します。世代が一致しなければ結果を待ち手に渡すだけで `cacheAdminIds` は決して呼ばず、`.catch` の `discardPendingAdminChanges` も同様に飛ばします。そうしないと reset 前の古い snapshot が消去直後のテーブルに流し込まれ、しかもその reset はその窓の間に届いた降格を一緒に捨てています——降格されたはずの人物は `ADMIN_CACHE_TTL_MS` の間ずっと招待者免除集合に残り、その人が招いた全員が参加認証を素通りします。
+- **Worker 側の管理者免除 cache は、実行中スロットを同一性で解放し、書き戻しを世代で判定しなければなりません。** `getOrCreateAdminFetch` の `.finally()` が delete してよいのは `adminFetches.get(chatId)` が自分自身の promise のままである場合だけです（メインスレッド側の `botPermissionFetches` と同じ）。`resetAdminCache()` は取得中でもテーブル全体を消去し、その後に同じチャットの新しい fetch が登録されるため、古い fetch が無条件に delete すると消えるのは **新しい** fetch のスロットです。重複排除が壊れ、次の呼び出し側は query category の Telegram lane でもう 1 回全件取得を始めます。`resetAdminCache()` はテーブル全体の世代番号も進め、実行中の fetch は `.then` で自分の snapshot が無効化されたかを判定します。世代が一致しなければ結果を待ち手に渡すだけで `cacheAdminIds` は決して呼ばず、`.catch` の `discardPendingAdminChanges` も同様に飛ばします。そうしないと reset 前の古い snapshot が消去直後のテーブルに流し込まれ、しかもその reset はその窓の間に届いた降格を一緒に捨てています——降格されたはずの人物は `ADMIN_CACHE_TTL_MS` の間ずっと招待者免除集合に残り、その人が招いた全員が参加認証を素通りします。
 - 人間メンバーの参加認証は本人のクリックだけを受け付けます。Worker は caller の自己申告ではなく、信頼できる `callback_query.from.id === callback_data` の対象 ID から本人関係を導出しなければなりません。クリックしたユーザーが allowlist 境界の内側にいても（SQLite `whitelist_entries` の entry、または常に内側にいる `SUPER_ADMIN_USER_ID`）、別の人間を認証できません。代行保証の唯一の例外は、現在の認証待ち snapshot が `isBot === true` で、クリックしたユーザーが同じ境界の内側にいる場合です。
 
   対象が存在しない、終端状態、または不一致の場合は失敗応答だけを返し、認証状態を変更してはいけません。
@@ -346,13 +350,15 @@
 
 #### Bot 自身の権限ミラー
 
-- **Bot 自身の権限ビットはメインスレッドが保持し、変更のたびに Worker へミラーする。「観測していない」を「観測して無かった」に折り畳んではならない**：`packages/cache/main/botAdmin.ts` の `botChatPermissions` が `can_restrict_members` と `can_delete_messages` を保持し、owner は `packages/infra/botAdmin.ts`、条目は `/init enable` 済みのグループにだけ作ります（さもないと大量のグループに追加されただけで表が生えてきます）。
+- **Bot 自身の権限ビットはメインスレッドが保持し、変更のたびに Worker へミラーする。「観測していない」を「観測して無かった」に折り畳んではならない**：スナップショットは `ChatState.botPermissions`（固定した Bot API バージョンの全権限ビット。グループ状態と一緒に永続化されます）に保持し、owner は `packages/infra/botAdmin.ts`、条目は `/init enable` 済みのグループにだけ作ります（さもないと大量のグループに追加されただけで表が生えてきます）。
 
   観測が起こり得るのはメインスレッドだけ——`my_chat_member` 更新（Bot の任免時だけでなく、**管理者が権限スイッチを 1 つ変えただけ**でも Telegram は届けます）と、必要時の `getChatMember` 実照会——ですが、キック・ミュート・メッセージ削除はすべて Worker で実行されます。
 
   そこで確証・失効のたびに `packages/cache/main/botAdmin.ts` の逆登録シングルスロット経由で `botPermissionsChanged` として配信し（infra は Anti-Raid の業務モジュールに静的依存してはいけません）、Worker 側は読み取り専用スナップショット（`packages/cache/workers/antiRaid/botPermissions.ts`）だけを持ちます。
 
-  他人の `chat_member` 更新が届く経路からは「自分は管理者だ」しか導けず権限ビットは導けないため、表に書かず配信もしません——書けば権限の揃ったグループを恒久的に「手が出せない」と判定することになります。管理者剥奪、グループからの除去、`/init` の切り替えはいずれも条目を即座に消し、「不明」を配信し、実行中の照会を無効化します。無効化は世代照合で行い、**世代エントリが存在するかどうかがそのまま「照会が実行中か」の唯一の根拠なので、リクエストを出す前に同期的に確保しなければなりません**。
+  **永続化と配信では重複排除の基準が異なります**：永続化は全権限ビットを比較し（スナップショット自体は正確に保存する必要があります）、配信は下流が実際に読む `canRestrictMembers` と `canDeleteMessages` の 2 ビットだけを比較します（フィールド集合は `packages/consts/botAdmin.ts` の `BOT_ACTION_PERMISSION_KEYS`）。`my_chat_member` は Bot 自身のメンバー記録が変わればどんな変更でも届くため、全表一致で配信を判定すると、本リポジトリが一切読まない権限を 1 つ外しただけでも直前と 1 バイト違わないメッセージを Worker の mailbox に積むことになります。
+
+  他人の `chat_member` 更新が届く経路からは「自分は管理者だ」しか導けず権限ビットは導けないため、**それだけを根拠に不完全な「管理者である」を書いてはいけません**——書けば権限の揃ったグループを恒久的に「手が出せない」と判定することになります。スナップショットが無い場合、またはその事実と矛盾する（管理者ではないと記録している）場合は、この経路で完全な `ChatMember` を 1 回照会し、丸ごと書き込みます。その照会はバックオフゲートを通し、かつ `await` してはいけません（後述）。管理者剥奪、グループからの除去、`/init` の切り替えはいずれも条目を即座に消し、「不明」を配信し、実行中の照会を無効化します。**消去はディスクにも届かなければなりません**：このスナップショットは永続フィールドなので、メモリだけ消すと再起動時に失効と判定したはずの古いスナップショットを読み戻してしまい、しかも「undefined ではない」という一点だけで以降の判定がすべて早期 return し、そのグループは次のメンバー変動で自己修復するまで権限なし扱いになります。無効化は世代照合で行い、**世代エントリが存在するかどうかがそのまま「照会が実行中か」の唯一の根拠なので、リクエストを出す前に同期的に確保しなければなりません**。
 
   さもないとその僅かな窓に届いた無効化が取りこぼされ、古い身分が書き戻されます。照会失敗、無効化による破棄、返ってきたのが管理者ですらなかった場合はいずれも `undefined` を返します。メインスレッド側は「この動作は今できない」として扱い、Worker 側は三値をそのまま伝えるだけで、未知の扱いは各処置が決めます（連投ミュートの選択は前項）。
 
@@ -360,7 +366,9 @@
 
   **Worker の再生成とプロセス起動では表を丸ごと再送しなければなりません**（`replayBotPermissions`、adopt より前）：新しい isolate の表は空であり、空の表は契約上「何もできない」を意味します。
 
-  ホットパスでの必要時補完（`ensureBotChatPermissions`）には**バックオフが必須**です（`BOT_PERMISSION_PROBE_RETRY_MS`）：`state.json` は管理者と記録しているのに実際は違う場合や `getChatMember` が失敗し続ける場合、`botChatPermissionsIn` は契約上キャッシュを残さないため、バックオフがないとそのようなグループでは 1 件ごとに確実に失敗する照会を打つことになります。
+  **「スナップショットが無いから照会する」入口はすべて同じバックオフゲートを通さなければなりません**（`BOT_PERMISSION_PROBE_RETRY_MS`；現在はホットパスでの必要時補完 `ensureBotChatPermissions` と、入室ラッシュ上の身分観測 `markBotAdminObserved` の 2 か所）：スナップショットは管理者と記録しているのに実際は違う場合や `getChatMember` が失敗し続ける場合、`botChatPermissionsIn` は契約上スナップショットを残さないため、バックオフがないとそのようなグループではメッセージ 1 件ごと・新規メンバー 1 人ごとに確実に失敗する照会を打つことになります。
+
+  **この 2 か所の照会はいずれも `await` してはいけません**：Telegram との往復 1 回に加えて durable な書き込み 1 回を払うことになり、update runner は厳密に直列（1 件の update が終わるまで次の `getUpdates` を呼ばない）なので、`await` すると冷えたプロセスでのラッシュ 1 件目の `chat_member` が ingress 全体を止めてしまいます。1 拍遅れて取得することは、この回に取得できないことと同じ状況です——バックオフに当たった場合も何も得られません——そして下流が「不明」を読んでも処置は落ちません：Worker 側の消費点はいずれも**確証された `false`** にだけ短絡します。
 
   このキャッシュは破壊的な動作すべての「撃つ前に判定する」を支えます：連投ミュートは `canRestrictMembers` を、広告処置の一括削除・チャンネル別名の取りこぼし・認証タイムアウト強制退出の痕跡清掃は `canDeleteMessages` を見ます。delete と kick は独立した 429 category ですが、失敗確定 request は network、log、shutdown budget を浪費します。遮るのは確証された `false` だけで、`undefined` は従来どおり要求を送ります（三値の口径は前項と同じ）。
 
@@ -393,7 +401,7 @@
   **負の id には必ず `isChannel` が付きます**（`resolveIdTarget` が最小 identity の時点で付与。符号による振り分けは `workers/antiRaid/blocklistEffects.ts` と同源）：`/unblock` はこれを見て `unbanChatMemberIfBanned` ではなく `unbanChatSenderChat` を選ぶため、付け忘れると解除が失敗して `failedCount` に計上され、応答は「一度も触れていない対象」についての虚偽の戦果報告になります。
 - gag の正式なテーブルは main thread が所有し、chat ごとの小さな対象リストを保持します。グローバル上限は 5 で、同一 chat の同一 identity は `starting`、`active`、`ending` の全期間を通して 1 slot だけを占有します。すべての対象へ最初に群内の公開 status を送ります。通常 user の公開 status はボタンなしで、その後に `receiver_user_id` で限定された対象本人だけに見えるボタン付き ephemeral 入口を送ります。受信 user を持たない channel はボタン付き公開 status だけを保持します。必要な全メッセージが成功し、公開 `message_id` と、通常 user では検証済みの `ephemeral_message_id` の両方を同期的に記録してから `active` へ移り、`unref` timer を設置します。2 通目の送信に失敗した場合も、予約を解放する前に着地済みの公開 status を削除しなければなりません。timeout、対象指定の `/ungag`、chat teardown は、まず同期的に `ending` を取得して timer を解除し、対応する削除 API を順に呼びます。すべての削除結果が `deleted/gone` で、必要な解除通知も settle した後にだけ object identity で slot を解放します。`failed/forbidden` は ending owner を保持し、有限かつ `unref` の backoff retry を行います。retry を使い切った後も `/ungag`、chat teardown、process drain が再試行できます。したがって古い後処理が同一対象の新 session を削除したり途中へ割り込んだりせず、cleanup debt も同じ 5 slot 上限内に収まります。すべての開始 status は gag session が所有し、固定 30 秒の command cleanup には入れません。解除通知だけは統一 command boundary を通します。gag owner は Telegram outbound gate より先に quiesce/drain し、未完了 cleanup は最終 offset と instance lock の解放を止めます。
 
-  gag とおみくじの inline routing protocol は厳密に排他的です。`gag:` prefix のない通常の `@bot` query は、query user が gag 中でも gag を飛ばし、おみくじだけへ進みます。user と channel のボタンはどちらも `gag:<対象 Telegram id> `（user は正の id、channel は負の id）だけを事前入力します。最初の空白より前はこの canonical safe integer だけであり、MD5/その他の digest、random token、chat id、その他の metadata を追加してはいけません。`ParsedGagInlineQuery` にそのような scope field を増やしてはならず、`GagSession.chatId` は command 入口で確定した authoritative session chat だけを保存し、digest/token などの side-channel 認証 state を派生させてはいけません。`gag:` を持つ query はすべて gag 入口で分配を終了し、不正・期限切れ・user identity 不一致では空結果を返して、おみくじへ fallback してはなりません。
+  gag とおみくじの inline routing protocol は厳密に排他的です。`gag:` prefix のない通常の `@bot` query は、query user が gag 中でも gag を飛ばし、おみくじだけへ進みます。user と channel のボタンはどちらも `gag:<対象 Telegram id> `（user は正の id、channel は負の id）だけを事前入力します。最初の空白より前はこの canonical safe integer だけであり、MD5/その他の digest、random token、chat id、その他の metadata を追加してはいけません。`ParsedGagInlineQuery` にそのような scope field を増やしてはならず、`GagSession.chatId` は command 入口で確定した authoritative session chat だけを保存し、digest/token などの side-channel 認証 state を派生させてはいけません。`gag:` を持つ query はすべて gag 入口で分配を終了し、不正・期限切れ・user identity 不一致では空結果を返して、おみくじへ fallback してはなりません。応答時に query 送信者ごとに登録する元テキスト（`recordInlineResultSources`。全 inline 機能で共用）は**広告判定へ送るテキストの供給源にすぎず**、identity・chat 束縛・有効期限の根拠ではありません。着地時の検証は従来どおり marker と `from.id`/`sender_chat.id`、`message.chat.id` だけを見ます。どの経路もこの登録を根拠に発言を通したり拒否したりしてはいけません。
 
   Telegram の `InlineQuery` はクリックした user と query を渡しますが、query が存在する chat については chat type だけで、現在の具体的な `chat.id` は含みません。結果の選択から送信までの間に Bot が cancel できる hook もありません。したがって token、digest、または自己申告の chat id を追加しても入力欄の実在 chat は証明できず、「検証強化」を理由に再導入してはいけません。通常ボタンは `switch_inline_query_current_chat` で session chat に留めるだけです。user query はさらに `inline_query.from.id` を照合し、channel query は負の対象 id だけで候補を選び、group 名を出さない共通 title を使います。
 
@@ -413,16 +421,16 @@
 
 ### 永続化と snapshot の contract
 
-- `state.json` は最新値の結合、一時ファイル、fsync、アトミック rename を使います。コマンドスイッチ、中継、copy、権限、退出状態などの正式な変更は、該当 revision が主ファイルと LKG に順番どおり書かれるまで成功を返さず、middleware から戻りません。グループタイトルなど再構築可能な metadata だけは background の eventual consistency で保存できます。
-- **`state.global.assets`（インライン運勢のサムネイル 2 枚と Bot の既定アバターの直リンク）は、項目が無い＝一度も設定していない＝コード内の定数へフォールバックです**。「前回の値を引き継ぐ」ではありません。起動が完全に成功した後、`seedMissingAssetState` が未設定の項目を現在有効な値で補い、**background** で 1 回だけ永続化します。これは可読性のための書き込みであって誰かが下した正式な決定ではないため、起動をブロックせず、書き込み失敗は `StateStore` 通常のリトライと fatal 経路に従います。補完は欠けている項目だけを埋め、デプロイ側が書いたアドレスを上書きしません。実行順は**起動を中断しうる最後の `await` の後**です（機能 gate、永続データの復元、`bot.init()`、ブロックリストの掃き取りはいずれも起動を拒否しうる）——起動を拒否される回が、運用者がこれから調べる `state.json` を書き換えてはいけません。機能 gate の直後に置くだけではこの約束を守れません。補完が実際に走ったときは 1 行ログを残します：そのファイルはデプロイ側のものです。一度書かれた値はそれ以降コード定数に追随しません。追随させたい場合はその項目を削除して再起動します。
-- 素材直リンクの妥当性は decode 時に判定します。空でないこと、前後空白を除去した上で解析可能な絶対 URL であること。読み戻すのは生の文字列ではなく WHATWG 正規化後の `href` です（`trim` は前後だけで、URL コンストラクタは文字列**内部**の tab/LF/CR を飲み込み空白を percent encode します。生のまま残すと「コンストラクタは通すが Telegram は受け取らない」アドレスが検証を通過します）。**画像ホストは限定しません**が、scheme は限定します：サムネイル 2 枚は Telegram クライアントが取得するため `https` のみ、明文 `http` を許すのは本プロセス自身が取得する `botDefaultAvatarUrl` だけです（TLS を使うかはデプロイ側の判断）。壊れた値は定数へ黙って戻すのではなくファイル全体を拒否します——scheme を書き忘れた場合 Telegram は画像を表示しないだけで、グループからは「画像が落ちている」と区別が付きません。
+- `state.json` は最新値の結合、一時ファイル、fsync、アトミック rename を使います。現在このファイルが持つのは**グローバル**な状態だけです：copy の対象と `global.assets`（グループ単位のものはすべて SQLite の `chat_states` にあります。次項参照）。copy のような正式な変更は、該当 revision が主ファイルと LKG に順番どおり書かれるまで成功を返さず、middleware から戻りません。
+- **`state.global.assets`（インライン運勢のサムネイル 2 枚、gag 発言 inline のサムネイル、Bot の既定アバターの直リンク）は、項目が無い＝一度も設定していない＝コード内の定数へフォールバックです**。「前回の値を引き継ぐ」ではありません。起動が完全に成功した後、`seedMissingAssetState` が未設定の項目を現在有効な値で補い、**background** で 1 回だけ永続化します。これは可読性のための書き込みであって誰かが下した正式な決定ではないため、起動をブロックせず、書き込み失敗は `StateStore` 通常のリトライと fatal 経路に従います。補完は欠けている項目だけを埋め、デプロイ側が書いたアドレスを上書きしません。実行順は**起動を中断しうる最後の `await` の後**です（機能 gate、永続データの復元、`bot.init()`、ブロックリストの掃き取りはいずれも起動を拒否しうる）——起動を拒否される回が、運用者がこれから調べる `state.json` を書き換えてはいけません。機能 gate の直後に置くだけではこの約束を守れません。補完が実際に走ったときは 1 行ログを残します：そのファイルはデプロイ側のものです。一度書かれた値はそれ以降コード定数に追随しません。追随させたい場合はその項目を削除して再起動します。
+- 素材直リンクの妥当性は decode 時に判定します。空でないこと、前後空白を除去した上で解析可能な絶対 URL であること。読み戻すのは生の文字列ではなく WHATWG 正規化後の `href` です（`trim` は前後だけで、URL コンストラクタは文字列**内部**の tab/LF/CR を飲み込み空白を percent encode します。生のまま残すと「コンストラクタは通すが Telegram は受け取らない」アドレスが検証を通過します）。**画像ホストは限定しません**が、scheme は限定します：サムネイル 3 枚は Telegram クライアントが取得するため `https` のみ、明文 `http` を許すのは本プロセス自身が取得する `botDefaultAvatarUrl` だけです（TLS を使うかはデプロイ側の判断）。壊れた値は定数へ黙って戻すのではなくファイル全体を拒否します——scheme を書き忘れた場合 Telegram は画像を表示しないだけで、グループからは「画像が落ちている」と区別が付きません。
 - 既定アバターの取得は**リダイレクトを追います**（`redirect: "follow"`）：このアドレスは配備側の設定の一部であり、どこへ飛ぶかは設定者が選んだ画像ホストが決めます。「直リンクがまず 302 で実ストレージのドメインへ飛ぶ」は画像ホストやオブジェクトストレージではまさに常態であり（内蔵既定の Google Drive リンクもそうです）、最終ホップの解決を設定者に強いることは、必ず踏む落とし穴をドキュメントの注意書きに変えるだけです。`/copy`・`/steal_icon` の 3 本で redirect を禁じているのは別の制約（[送信リクエストとメッセージの安全性](#送信リクエストとメッセージの安全性)）に属します——あの 3 本のアドレスは Bot API の `file_path` や t.me ページの HTML 由来で、Telegram 所有 asset domain の allowlist が管轄するものであり、この項目はその弱体版ではありません。`AVATAR_MAX_DOWNLOAD_BYTES` の上限付き読み取りとアップロード前のバイト署名判定は従来どおりですが、この 2 つが防ぐのは「返ってきたものがそもそも画像ではない」（Drive の quota / ウイルススキャンの HTML 挿入ページが典型）ことであり、リダイレクトの可否とは無関係です。
 - 4 本の失敗ログはいずれも実効アドレスを明記します。「`state.json` の記述が誤っている」のか「配布されたフォールバック定数が腐った」のかを区別できるのはこれだけです。ただし出力するのは **`origin + pathname` のみ**（`libs/redaction.ts` の `redactUrlForLog`）で、query・fragment・userinfo は捨てます。この項目は運用側が設定するもので S3/OSS の presigned URL でもあり得ますが、`logs/<day>.json` は mode `0644` かつバックアップ対象であり、同じファイルの `redactSecretsInText` は登録済み env secret しか伏せず query を見ません。取得自体は完全なアドレスを使います——署名を削れば画像はそもそも取得できません。
 - 共通 logger は journal、Worker envelope、`logs/` に渡す**前**に 2 段階で redact します。登録済み env secret は値で置換し、SDK/HTTP error 内の `authorization`、`cookie`、`set-cookie`、API key、token、secret、password などの credential field は key で置換します。raw header tuple も対象です。xAI/Cloudflare の response Cookie は process config の値ではないため、後者を env list だけに頼ってはいけません。error object 全体を毎回 deep copy せず既存の JSON serialization traversal を再利用し、request id、rate-limit counter、token count など非機密の診断は残します。
-- **`normalizeChatState` が回収するのは「本当に期限切れ」のフィールドだけで、「値が不自然に見える」ものは削除ではなく丸めます。** `quietUntil` の上限判定（`isQuietUntilActive`）は壁時計の巻き戻しのために置かれていますが、`/quiet <上限分>` が書く `quietUntil - now` はちょうど `QUIET_MAX_DURATION_MS` と等しく、許容差がなければ 1 ミリ秒の巻き戻しで上限いっぱいの静粛がその場で無効になります。そこで判定には `QUIET_CLOCK_SKEW_TOLERANCE_MS` の許容差を持たせて通常の NTP step を吸収し、それを超える大きな巻き戻しはこの normalizer が `now + QUIET_MAX_DURATION_MS` へ丸めます——静粛は有効なまま、かつ上限までに必ず終わることが保証され、それこそがこの上限の本来の意味です。フィールドの削除は選べません。この normalizer は `saveState()` のたびに全チャットに対して走るため、一度削れば静粛はメモリと `state.json` から同時に消え、時計が戻っても復元できません（巻き戻しに対して「範囲外の項目だけを捨て、窓全体は決して消さない」とする `libs/slidingWindowRateLimit.ts` と同じ判断です）。
+- **`normalizeChatState` が回収するのは「本当に期限切れ」のフィールドだけで、「値が不自然に見える」ものは削除ではなく丸めます。** `quietUntil` の上限判定（`isQuietUntilActive`）は壁時計の巻き戻しのために置かれていますが、`/quiet <上限分>` が書く `quietUntil - now` はちょうど `QUIET_MAX_DURATION_MS` と等しく、許容差がなければ 1 ミリ秒の巻き戻しで上限いっぱいの静粛がその場で無効になります。そこで判定には `QUIET_CLOCK_SKEW_TOLERANCE_MS` の許容差を持たせて通常の NTP step を吸収し、それを超える大きな巻き戻しはこの normalizer が `now + QUIET_MAX_DURATION_MS` へ丸めます——静粛は有効なまま、かつ上限までに必ず終わることが保証され、それこそがこの上限の本来の意味です。フィールドの削除は選べません。この normalizer は `saveState()` のたびに全チャットに対して走るため、一度削れば静粛はメモリと SQLite `chat_states` から同時に消え、時計が戻っても復元できません（巻き戻しに対して「範囲外の項目だけを捨て、窓全体は決して消さない」とする `libs/slidingWindowRateLimit.ts` と同じ判断です）。
 - **`ChatState` は正準形状です：全フィールドを一度に作り切り、以後は代入のみで決して `delete` しません**（`libs/chatState.ts` の `createChatState`）。「設定されたことがない」は `undefined` で表し、キーの不在では表しません。エントリのないチャットに `getChatState` が渡す `DEFAULT_CHAT_STATE` も同じ形状でなければならず、さもないと「エントリあり／なし」の間で hidden class が行き来します。これはホット呼び出し地点の形状契約です（AGENTS.md：後からフィールドを増減してはならない）——グループメッセージ 1 通ごとに `getChatState(chatId).isXEnabled` を 4〜6 回読みます（`antiRaid/updateIngress.ts`、`antiRaid/floodControl.ts`、`antiRaid/adCandidate.ts`、`auto/message/index.ts`、`aiChat/availability.ts`）。以前は各書き込み側が裸の `{}` にそれぞれ別のフィールドを 1 つ足し、normalizer が保存のたびに全チャットへ `delete` を走らせていたため、2 つとして同じ hidden class のチャットがありませんでした。
 
-  **ディスク形式は変わりません**：`JSON.stringify` は値が `undefined` のキーを飛ばすため、`state.json` には既定値から外れたフィールドだけが残ります（`botIsAdmin: false` は例外——それは「管理者でないと確認済み」であり「未確認」とは別物なので必ず永続化します）。したがって空判定は `Object.keys().length` を数えるのではなくフィールドごとに値を見ます（正準形状では常に一定です）。`clearChatStateField` の「設定されたことがあるか」も同様に `field in chatState` ではなく値で判定します。デコード結果は疎です（`JSON.parse` はファイルに実在したキーしか持ちません）ので、`chatStates` へ入れる前に `adoptChatState` で正準形状へ移さなければ、ディスク上の形状差がそのままホットパスへ持ち込まれます。アップグレード後の初回保存では各チャットのキーが固定順に並び替わりますが、値も構造も変わらず、旧バージョンでも読み戻せます。
+  **ディスク形式は変わりません**：`JSON.stringify` は値が `undefined` のキーを飛ばすため、SQLite `chat_states` の JSONB 行には既定値から外れたフィールドだけが残ります（確認済みの `botPermissions` は例外——「管理者でない」は `isAdministrator: false` の完全な snapshot として保存し、「未確認」を表す `undefined` とは別物なので必ず永続化します。`libs/chatState.ts` の `isEmptyChatState` を参照）。したがって空判定は `Object.keys().length` を数えるのではなくフィールドごとに値を見ます（正準形状では常に 11 です）。`clearChatStateField` の「設定されたことがあるか」も同様に `field in chatState` ではなく値で判定します。デコード結果は疎です（行には実在したキーしか含まれません）ので、`chatStates` へ入れる前に `adoptChatState` で正準形状へ移さなければ、ディスク上の形状差がそのままホットパスへ持ち込まれます。書き戻しは必ず `encodeChatStateData` を通り、同じ厳密デコーダがフィールド集合を守ると同時に各チャットのキーを固定順へ並べ替えます。
 - AI メモリとスタンプカタログは entity ごとのアトミック snapshot を使います。ログ、運勢、認証待ち状態は末尾切断を修復できる追記型 JSON を使います。各追記 batch は成功応答より前に fsync します。認証完了は tombstone を追記します。東京日付をまたいだ起動では、最新の旧日ファイルを厳格に decode し、当日のより新しい active 値と tombstone を重ねて当日へ原子的に compact します。公開成功後だけ旧日を削除し、旧日が破損していれば新旧双方を変更せず復元を拒否します。
 
   定常時は東京当日のファイルだけを保持し、件数または byte threshold で active snapshot へ compact します。切断修復では JSON 文字列、escape、括弧の深さからトップレベル member の境界を判定し、object 値末尾のインデントに依存してはいけません。`null` tombstone など primitive 値も完全な最終値として扱います。
@@ -446,6 +454,24 @@
 
   **`/batch_kick` の戦果報告にある「ブロックリストへ引き渡し」は、本当に引き渡さなければなりません。** ブロックリスト命中で即座に return するレコードに対して、このコマンドは何もしていません（探索も除去もせず）。返信で件数を数えるだけです。バッチ終了後に 1 回だけ再スイープを依頼（`requestBlocklistResweep` + `sweepBlockedMembers`）しなければその一文は空手形です——管理者はブロックリスト側の流れが引き取ったと解釈しますが、実際には batch も sweep も再試行も存在しません。典型的な原因は、以前の BAN batch が流量制限下で `complete` と判定されながら実際には効いておらず、当人がまだ部屋にいる、というものです。ディスパッチは `blocked` の合計ではなく「即 return した件数」で判定します。並行 block 後に BAN を打ち直せた経路はすでに当人を押さえており、sweep を起こす必要はありません。バッチにつき 1 回で十分です。`prepareBlocklistSweep` 自身が claim と `nextRetryAt` の門を持つため、レコードごとに呼んでもコマンドの固定小並列プールの中で空回りするだけです。
 
+### グループ状態と `chat_states`
+
+- **グループごとの状態の正本は SQLite の `chat_states` テーブルであり、メインスレッドは容量がちょうど `STATE_MANAGED_CHAT_LIMIT`（25）のホット読み取り用コピーだけを持ちます**（`packages/cache/main/chatState.ts`）。行の中身は `ChatState` の正規形状です：7 つの機能スイッチ、`quietUntil`、`lockdown` の write-ahead レコード、`botPermissions` の完全なスナップショット、`title`、`isProxySendEnabled`。
+
+- **容量ゲートは拒否するだけで、決して追い出しません。** 26 件目を新規作成しようとすると `assertChatStateCapacity` が throw し、起動時に 26 行目を読むと `hydrateChatStateCache` が起動を拒否し、Disk I/O Worker も書き込み側で独立に再検証します（3 つとも互いに依存しません）。したがってキャッシュの追い出し分岐には到達しませんが、これは意図的です——管理中のグループの状態を追い出すと、それは黙って `DEFAULT_CHAT_STATE` として読まれます：全機能オフ、権限は不明、しかもどこにもエラーが出ません。
+
+  追い出しが起こり得ないからこそ、**ホット読み取りは `get` ではなく `peek` を使います**：recency を更新するための `Map.delete` + `Map.set` は何も買えず（chat-state-map-read の実測で 253.0 → 14.1 ns/op）、`getChatStateCache()` の反復順序を読み取り履歴の関数にしてしまいます。その順序は `/block`・`/unblock` の連動 BAN 対象グループ一覧としてそのままユーザーに提示されます。
+
+- **容量超過の拒否は `/init enable` だけのものであり、必ず 1 行の返信でなければなりません。** 新しいグループを管理下に置く入口はこのコマンドだけで、上限を超えた場合は `INIT_CHAT_LIMIT_TEXT` を返します。他のコマンドは新規作成を引き起こしてはいけません——したがって `/send <グループ id>` は対象が既に行を持っていることを要求し、無ければ 1 行の案内だけを返します。容量エラーがコマンドハンドラから逸出すると、それは再配信に駆動される再起動ループです：update は確認されず、プロセスは非ゼロで終了し、Telegram が同じコマンドを再配信し、また throw します。
+
+- **既定値に戻ったレコードは消えなければなりません。** 書き込みの前に必ず `normalizeChatState` を通し（`false` のスイッチは `undefined` に収束し、期限切れの `quietUntil` は回収されます）、その結果 `isEmptyChatState` が真ならキャッシュ条目を削除し、削除の tombstone を書きます。そのため `/init disable` は `title` も一緒に消す必要があります——グループ名は管理中のグループのためだけに記録され（`applyChatTitle` も `isInitEnabled === true` しか認めません）、残したままだとレコードは永遠に空にならず、そのスロットは二度と戻らず、しかも残骸を消せるコマンドはリポジトリのどこにもありません。
+
+- **アクティブな中継先は最大 1 つ**（`isProxySendEnabled`）：書き込み側と起動時の全表復元がそれぞれ独立に検証します。書き込み側は**帰納的**に判定します——この書き込みの前に不変条件は成立しているので、それを壊し得るのは `isProxySendEnabled` を立てる書き込みだけであり、それ以外の書き込みは他の行を走査する必要がありません。
+
+- 永続化は identity テーブルと同じ write-through ＋ 正確な revision ACK です：`persistChatState` は正式な決定のための durable barrier、`saveChatStateInBackground` はタイトル更新や権限スナップショットの失効のような再構築可能な値のための低優先度書き込みです。
+
+<p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
+
 ### ブロックリストと広告検出
 
 この節では、[正式なブロックリストと block コマンド](#正式なブロックリストと-block-コマンド)、[広告検出の受付・判定・処置](#広告検出の受付判定処置)、[BAN とメッセージ撤回](#ban-とメッセージ撤回)、[blocklist removal outbox](#blocklist-removal-outbox)、[権限回復後の replay](#権限回復後の-replay)を順に説明します。
@@ -454,7 +480,7 @@
 
 - `/block` の authoritative list は SQLite `blocklist_entries` table です。main thread は最近参照した identity の有界 LRU と未 ACK final value だけを保持します。blocklist は同期 security boundary のままであり、mutation 前に target の allow/block policy positive/negative state を prefetch し、write path は database revision の post より先に final LRU value を publish します。逆順では 2 step の間に届く join update が新 block を見落とします。entry は自動 expire せず、manual deletion は `/unblock` だけ。各 row は `blockedAt` と Telegram metadata を含む strict complete record です。
 
-  **`/unblock` は既定で完全解除します。** row があれば negative cache と deletion tombstone を publish し、pending batch から id を除去します。row の有無にかかわらず `ChatState.botIsAdmin` が true の全 chat で Telegram BAN を解除します。必要 permission は `isCanUnBlock` で、旧 `all` 引数は解析しません。chat 横断解除は `only_if_banned: true` の `unbanChatMemberIfBanned` を通し、current member の誤 kick を防ぎます。channel identity は `unbanChatSenderChat`。Worker 内ですでに実行中の batch は撤回できず、短い既知 window が残ります。
+  **`/unblock` は既定で完全解除します。** row があれば negative cache と deletion tombstone を publish し、pending batch から id を除去します。row の有無にかかわらず `ChatState.botPermissions?.isAdministrator` が true の全 chat で Telegram BAN を解除します。必要 permission は `isCanUnBlock` で、旧 `all` 引数は解析しません。chat 横断解除は `only_if_banned: true` の `unbanChatMemberIfBanned` を通し、current member の誤 kick を防ぎます。channel identity は `unbanChatSenderChat`。Worker 内ですでに実行中の batch は撤回できず、短い既知 window が残ります。
 
   **身内は blocklist に入れません。** `isWhitelisted` 1 つで SQLite allowlist row と常時 protected のスーパー管理者を覆い、`/block`、`/mute`、`/batch_kick` が同じ境界を使います。`/white enable` も blocklist 中の identity を拒否します。`runProtectedIdentityMutation` は「disjointness check + authoritative identity value publish」を main-thread tail 1 本で直列化します。critical section は identity check と authoritative change だけを含み、Telegram effect と durable confirmation は外に置きます。Disk I/O transaction と startup hydrate も table 非重複を独立再検証し、conflict は fail closed です。
 
@@ -476,13 +502,13 @@
 
   トリガーは特定の update ではなく論理積そのもので、どちらの辺が変わっても対象です。
 
-  **エッジを消費してよいのは処理が着地した瞬間だけで、投げた瞬間ではありません。** `recordBotAdminStatus` は管理者身分を確認するたびに `sweepBlockedMembers` を呼び、「このチャットは掃除済みか」は Worker の `blockedMembersRemoved` 受領に基づいて `blocklistSweepState`（`packages/cache/main/blocklist.ts`）が記帳します。`complete` のときだけ `sweptAt` を記録します。
+  **エッジを消費してよいのは処理が着地した瞬間だけで、投げた瞬間ではありません。** `recordBotChatPermissions` は管理者身分を確認するたびに `sweepBlockedMembers` を呼び、「このチャットは掃除済みか」は Worker の `blockedMembersRemoved` 受領に基づいて `blocklistSweepState`（`packages/cache/main/blocklist.ts`）が記帳します。`complete` のときだけ `sweptAt` を記録します。
 
   身分変化のエッジに掛けてしまうと、1 度の rate limit 失敗がそのまま「その人たちが永久に部屋に居座る」ことになります。再試行も同じ管理者観測に乗るため、入室のたびに届くその更新に対して `BLOCKLIST_SWEEP_RETRY_INTERVAL_MS` の待機が必須です。`/init` の切り替え、管理者剥奪、退出はいずれも `forgetChatBlocklistWork` を通り、そのチャットの掃除進捗を破棄する**と同時に実行中の batch も捨てます**。再び担当することになれば改めて 1 回借りを作ります。
 
-  この破棄は状態の永続化より**前**に行わなければなりません。担当を外れたことは Telegram が既に伝えてきた権威ある事実であり、`state.json` が書けなかったからといって取り消されません。永続化が拒否されるとプロセスはそのまま終了し、ディスク上の `botIsAdmin` は `true` のままで起動時の filter も効かず、必ず失敗する処置が再起動と Worker 再生成のたびに投げ直されます。
+  この破棄は状態の永続化より**前**に行わなければなりません。担当を外れたことは Telegram が既に伝えてきた権威ある事実であり、`state.json` が書けなかったからといって取り消されません。永続化が拒否されるとプロセスはそのまま終了し、ディスク上の `botPermissions` snapshot は `isAdministrator: true` のままで起動時の filter も効かず、必ず失敗する処置が再起動と Worker 再生成のたびに投げ直されます。
 
-  同じ理由で、`isBotAdminIn` の「取得できなければ管理者ではないとみなす」は `getChatMember` 自体にしか掛かりません。状態の永続化失敗はそのまま上へ投げる必要があります。「管理者ではない」に畳み込むと呼び出し側が入室ガードを丸ごとスキップし（その `new_chat_members` の一団は認証 window も開かず、メッセージ追跡もされず、timeout kick も来ません）、しかも診断は Telegram API を指し、次の呼び出しはメモリから `true` を読むため、現象を再現できなくなります。
+  同じ理由で、`resolveBotAdminStatus` の「取得できなければ管理者ではないとみなす」は `getChatMember` 自体にしか掛かりません。状態の永続化失敗はそのまま上へ投げる必要があります。「管理者ではない」に畳み込むと呼び出し側が入室ガードを丸ごとスキップし（その `new_chat_members` の一団は認証 window も開かず、メッセージ追跡もされず、timeout kick も来ません）、しかも診断は Telegram API を指し、次の呼び出しはメモリから `true` を読むため、現象を再現できなくなります。
 
   **`sweptAt` は latch であり、それを開ける経路が必ず要ります。** `requestBlocklistResweep`（`packages/infra/blocklist/sweep.ts`）は「このチャットにまだブロックリストのメンバーが残っている」という信号——`/block` があるチャットで `banChatMember` に失敗した、即 kick の batch の受領が `complete: false` だった——を受けて `sweptAt` を null に戻します。
 
@@ -580,7 +606,7 @@
 
 #### 広告検出の受付・判定・処置
 
-- `/ad_detect` の広告検出は**ベストエフォートのヒューリスティック**であり security boundary ではありませんが、処分の重さは `/block` と完全に同じなので境界は厳密に引きます。送出の門は 3 条件の連言です。当該グループが `ChatState.isAdDetectEnabled === true` であること、Bot がそのグループの管理者であること（参加ガードと同じ `isBotAdminIn` 判定を共有します。
+- `/ad_detect` の広告検出は**ベストエフォートのヒューリスティック**であり security boundary ではありませんが、処分の重さは `/block` と完全に同じなので境界は厳密に引きます。送出の門は 3 条件の連言です。当該グループが `ChatState.isAdDetectEnabled === true` であること、Bot がそのグループの管理者であること（参加ガードと同じ `resolveBotAdminStatus` 判定を共有します。
 
   管理者でなければ広告も消せず BAN もできず、判定は quota を焼くだけです）、送信者に広告検出 bypass がないことです。bypass は個別の `isCanBypassAdDetection` permission だけで決まります。false に設定した identity は判定へ送られ、Worker が命中した message bundle を削除することがあります。`SUPER_ADMIN_USER_ID` は常にこの permission を持つため常に bypass し、判定箇所で identity を個別に比較することはもうありません。
 
@@ -594,6 +620,12 @@
 
   チャンネル投稿の可否はチャンネル管理者が決めることで、ディスカッショングループの広告検出の管轄ではありません。
 
+  **Bot 自身の inline 結果（`via_bot` が自分を指すもの）は、グループに落ちた本文ではなく query の元テキストを送出して判定します——これは全 inline 機能に等しく適用されます**。そのメッセージを送ったのは実在のユーザーですが、本文は丸ごと Bot が描画したものです。gag は `renderGagSpeech` が書記素クラスタ単位でランダムに点を挿入し文字を置換して**生成**したもので、判定規則 B「連絡先やキーワードが意図的に変形されている……見ただけでほぼ true と答えてよい」という単項最強のシグナルにそのまま当たり、発言 prefix に付く隠し profile marker も `t.me` リンクなので規則 C「このグループの外へ連れ出す着地点」まで満たします。おみくじの本文は挨拶・抽選結果・偽造防止レシートで、ユーザーが書いたのは所望事項の一行だけです。描画結果を送出するのは、Bot 自身の体裁を根拠に人を一人ずつ恒久 blocklist 入りさせることに等しくなります。この経路が差し替えるのは送出テキストだけで、message id・送信者 identity・処分は従来どおり、広告と判定されるのも実在のそのメッセージです。
+
+  元テキストは**応答したその瞬間**にしか取得できません（Telegram は inline query の原文をグループに落ちたメッセージへ入れず、両者を結び付けるフィールドも持ちません）。そのため各機能は `answerInlineQuery` の前に `recordInlineResultSources(query 送信者 id, 元テキスト, 今回の結果)` で登録し、広告検出は落ちた本文から取り戻します（`inlineResultSourceOf`）。**新しい inline 機能も必ず同じことを行ってください**。登録しなくてもエラーにはなりませんが、その結果は一律に元テキストを取得できず、したがって一律に広告判定へ入りません。ここに登録される内容は送出テキストの供給源にすぎず、通過・紐付け・認証の根拠にしてはいけません。
+
+  **query 送信者ごとに 1 件だけ、まるごと上書きし、履歴は残しません**。inline query はキーを 1 つ叩くたびに届き、実際に送信され得るのは最後の応答に含まれる結果だけです。1 回の応答に複数の結果がある場合（同一人物が複数のグループで同時に gag 中）は同じ元テキストを共有するため、まとめて登録しなければなりません。容量は `INLINE_RESULT_SOURCE_MAX_AUTHORS` を hard cap とし（inline mode は誰にでも開かれており、同時に入力する人数に他の上界がありません）、満杯時は最も長く登録のない query 送信者から捨てます。落ちた本文は登録済みの結果本文と**一字一句同じ**でなければ認めません——クライアントが 1 つ前のキー入力に対する結果を送ることがあり、送信直後に次の query を開けば登録も上書きされます。どちらの場合も、別のテキストで実在のメッセージを判定するより、元テキストを取得できなかったものとして扱う方が安全です。**元テキストを取得できない場合は一律に判定しません**（未登録・容量で押し出された・発言後にプロセスが再起動した・本文が一致しない）。広告 1 件を見逃す方が、Bot 自身の描画結果を判定へ流し込むよりましです。元テキストが空の応答も同様に登録しません。そうした結果にはユーザーが書いた文字が一つも含まれないからです（素のおみくじ、確率カード、レート制限の通知）。
+
   **この免除は引用文にも及ばせなければなりません**：ディスカッショングループではトップレベルのコメント 1 件ごとの `reply_to_message` が同じチャンネル投稿であり、投稿自身だけを弾いてその本文を `sampleContext` に写して送出するのは、チャンネル自身の宣伝コピーでコメント投稿者を一人ずつ判定するのと同じです——チャンネルの宣伝 1 件でコメント欄の全員が、一文字も書いていないまま順にブロックリスト入りしかねません。`quote` は返信先メッセージから切り出した抜粋なので、一緒に捨てます。
 
   **グループ管理者／オーナーは決して処分しません**。処分は `/block` と同じく不可逆（永久リスト + 管理下の各グループでの BAN + `revoke_messages` による直近メッセージの消去）である一方、管理者が提携先のリンクを転送する、冗談で「WeChat 追加して」と言う、それだけで宣伝と読まれ得ます。門は 2 段構えです。
@@ -606,21 +638,23 @@
 
   **これら 3 つに触れてよいかの判定は `packages/states/adDetectAdmission.ts`** に集約しました（投入・再キュー・容量・実行中の 4 つの純粋ゲート）。実行時側は結論を実行するだけです。メッセージ束そのものの整形（切り詰め、上限適用、判定用テキストの組み立て）は `packages/workers/antiRaid/adDetect/bundle.ts` にあり、別の不変条件——追い出してよいのは判定済みの項目だけ——を守ります。
 
-  `AD_DETECT_MAX_PENDING_SENDERS` は異なる 11,500 キーの hard cap です。この数字は「何人受け入れられるか」ではなく「満杯でも生き残れるか」で決めます——1 キー当たりの件数上限と各エントリの本文／URL／サンプル文脈の上限を掛け合わせたものが Anti-Raid Worker isolate の常駐上限であり、参加認証・ロックダウン・ブロックリスト執行はすべて同じ isolate にいるため、OOM はベストエフォートのヒューリスティックもろとも巻き添えにします。
+  `AD_DETECT_MAX_PENDING_SENDERS` は異なる 8,192 キーの hard cap です。この数字は「何人受け入れられるか」ではなく「満杯でも生き残れるか」で決めます——1 キー当たりの件数上限（`AD_DETECT_MAX_MESSAGES_PER_SENDER`、15 件）と各エントリの本文／URL／サンプル文脈の上限を掛け合わせたものが Anti-Raid Worker isolate の常駐上限であり、参加認証・ロックダウン・ブロックリスト執行はすべて同じ isolate にいるため、OOM はベストエフォートのヒューリスティックもろとも巻き添えにします。
 
-  満杯時は Map、キュー、Set のどれも変更する前に 11,501 個目の新規キーを拒否し、受け入れ済みの古いキーを FIFO 追い出ししてはいけません。同じキーの後続メッセージは既存の 1 キー当たり件数・文字数枠の範囲で引き続き合流します。受け入れ済みキーには、少なくとも 1 回の判定試行を受けるまで待機 TTL がなく、周期 sweep も削除できません。
+  この 2 つの数字はセットで調整したものなので、どちらを変えても積を計算し直す必要があります。満杯時は Map、キュー、Set のどれも変更する前に 8,193 個目の新規キーを拒否し、受け入れ済みの古いキーを FIFO 追い出ししてはいけません。同じキーの後続メッセージは既存の 1 キー当たり件数・文字数枠の範囲で引き続き合流します。受け入れ済みキーには、少なくとも 1 回の判定試行を受けるまで待機 TTL がなく、周期 sweep も削除できません。
 
-  担当外れ、`/init disable`、`/ad_detect disable`、Worker 停止だけが正当な cancellation 境界であり、Map、キュー、関連 Set から同時に取り除きます。`recentlyEnqueuedAdKeys` と `recentlyDisposedAdKeys` も 11,500 の hard cap を持ち、窓ごとにローテーションするため、過去の送信者が無制限 Set へ変わることはありません。
+  担当外れ、`/init disable`、`/ad_detect disable`、Worker 停止だけが正当な cancellation 境界であり、Map、キュー、関連 Set から同時に取り除きます。**「このキーは送出待ちの席を取っている」は `queuedAdDetectKeys` だけが表します**。`adDetectQueue` と同期して増減し、取り出した瞬間に解放され、重複排除・容量・再投入の判断はすべてこの 1 枚を読みます。1 つのキーはキュー内で最大 1 席しか占めないため、キュー長は待機表の 8,192 hard cap に自然に抑えられ、投入関門は独立した容量判定を持つ必要も持ってはいけません。かつては同じ事実を表す TTL claim 表（`recentlyEnqueuedAdKeys`）がキューと並行して存在しました：2 枚の増減はすべて厳密に同期させる必要があり、1 か所でも返し忘れると孤児 claim が重複排除の容量を占め続け、claim を辿る回収は claim を持たないメッセージ列を見つけられません。重複排除表が見かけ上埋まると投入関門は全キーに容量拒否を返し、未判定の内容は二度とスケジュールされなくなります——この表は削除され、判断はキュー自身へ収束しました。
 
-  スケジューラは `AD_DETECT_QUEUE_TICK_MS` ごとに 1 本の全体 FIFO から最大 `AD_DETECT_BATCH_SIZE` キーを取り、さらに全体の `AD_DETECT_MAX_IN_FLIGHT` 関門を通します。どちらもグループ別 quota ではなく、実行中上限で止められた受け入れ済みキーは容量回復までキューに残り、期限切れになりません。90 秒の `AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS` が制限するのは再投入と消費済み文脈だけです。
+  `recentlyDisposedAdKeys` は処分経路からしか書かれず、手前に受け入れ関門が一切ないため、`setBoundedMapValue` で同じ 8,192 に直接上限を守り、満杯時は最も古い処分を追い出します。過去の送信者が無制限 Map へ変わることはありません。失効時刻ではなく **処分時刻** を保持します：窓は定数であり、`now` が処分時刻より前であること自体が壁時計の巻き戻しの証拠なので、それを根拠に強制失効させます。さもないと巻き戻しは抑止を「巻き戻し幅 + 窓」まで延ばし、その間その送信者のメッセージは一律無視されます。正しさは読み取り時回収が、上限は hard cap が保証するため、この表は **判定 tick には載せません**——tick は全表走査を一切行わず、死んだ記録は周期 sweep に任せます。
 
-  `seq > checkedSeq` の未消費エントリは待ち時間にかかわらず残し、窓外で刈り取れるのは `seq <= checkedSeq` の消費済み文脈だけです。窓の切り替え時には未消費内容を持つキーを再投入します。`checkedSeq` は「ここまで消費済み」を表す単調通し番号であり、刈り取りで戻してはいけません。
+  スケジューラは `AD_DETECT_QUEUE_TICK_MS` ごとに 1 本の全体 FIFO から最大 `AD_DETECT_BATCH_SIZE` キーを取り、さらに全体の `AD_DETECT_MAX_IN_FLIGHT` 関門を通します。どちらもグループ別 quota ではなく、実行中上限で止められた受け入れ済みキーは容量回復までキューに残り、期限切れになりません。90 秒の `AD_DETECT_JUDGED_RETENTION_WINDOW_MS` が制限するのは処分抑止と消費済み文脈だけで、**「同じ人を何秒ごとに判定するか」ではありません**。再投入は `queuedAdDetectKeys` が時計と無関係に塞ぎます。
 
-  **送出の文字数枠（`AD_DETECT_BUNDLE_MAX_CHARS`）が決めるのは「この tick がどこまで判定するか」だけで、「どのメッセージが判定されるか」ではありません**。未判定の内容は必ず最も古い 1 件から詰め、入り切らない分は次回の判定（窓の切り替え時の再投入）へ回し、余った枠に隣接する判定済み文脈を足します。通し番号は今回実際に送出した最後の 1 件までしか進められません。逆に最新から遡って詰めるのは誤りです——枠から外れた古いメッセージが通し番号の下に埋もれ、通し番号と一緒に「判定済み」として記録されたうえで刈り取られます。
+  `seq > checkedSeq` の未消費エントリは待ち時間にかかわらず残し、窓外で刈り取れるのは `seq <= checkedSeq` の消費済み文脈だけです。**周期 sweep は、未消費内容を持ちながらキューにも実行中にもおらず claim も持たないキーを再投入しなければなりません**——claim を辿る失効回収はそのようなメッセージ列を見つけられず、この保険がないとスケジュール枠を永久に失います。なおこの 90 秒は「同じ人を何秒ごとに判定するか」では **ありません**：claim は送出の瞬間に解放され、判定確定時に未判定の内容が残っていれば直ちに再投入されるため、話し続ける送信者の定常間隔は「1 tick + 分類 1 往復」です。スレッド全体の要求上限は `AD_DETECT_MAX_IN_FLIGHT` と tick 毎の `AD_DETECT_BATCH_SIZE` だけが決めます。provider の quota はこの窓ではなくその 2 つで見積もってください。`checkedSeq` は「ここまで消費済み」を表す単調通し番号であり、刈り取りで戻してはいけません。
 
-  1 キー当たりの件数上限（45 件 × 512 文字）はこの枠の数倍広いため、長文の連投 1 回で成立します。それは log の痕跡が一切ない見逃しであり、まさにこの規則が禁じているものです。
+  **送出の文字数枠（`AD_DETECT_BUNDLE_MAX_CHARS`）が決めるのは「この tick がどこまで判定するか」だけで、「どのメッセージが判定されるか」ではありません**。未判定の内容は必ず最も古い 1 件から詰め、入り切らない分は次回の判定（確定後の再投入）へ回し、余った枠に隣接する判定済み文脈を足します。通し番号は今回実際に送出した最後の 1 件までしか進められません。逆に最新から遡って詰めるのは誤りです——枠から外れた古いメッセージが通し番号の下に埋もれ、通し番号と一緒に「判定済み」として記録されたうえで刈り取られます。
 
-  **送信者ごとの件数上限（`AD_DETECT_MAX_MESSAGES_PER_SENDER`）も、押し出せるのは消費済みの項目だけです**。爆発的な連投は最初の tick が来る前に上限を埋められ、そのときは未判定の項目しか捨てるものがありません。本文は残しませんが、メッセージ id は `AdMessageBundle.pendingDeleteIds` へ移す必要があります（上限は `AD_DETECT_MAX_PENDING_DELETE_IDS`。あふれたら最も古い 1 件を捨ててエラーログを残します）。
+  1 キー当たりの件数上限（15 件 × 512 文字 = 7,680）は依然としてこの枠（4,096）より広いため、長文の連投 1 回で成立します。それは log の痕跡が一切ない見逃しであり、まさにこの規則が禁じているものです。
+
+  **送信者ごとの件数上限（`AD_DETECT_MAX_MESSAGES_PER_SENDER`）も、押し出せるのは消費済みの項目だけです**。爆発的な連投は最初の tick が来る前に上限を埋められ、そのときは未判定の項目しか捨てるものがありません。本文は残しませんが、メッセージ id は `AdMessageBundle.pendingDeleteIds` へ移す必要があります（上限は `AD_DETECT_MAX_PENDING_DELETE_IDS`。あふれたら最も古い 1 件を捨ててエラーログを残します）。**未判定の本文を捨てること自体にもエラーログが必要です**（送信者ごとに 1 回だけ。上限を超えた後は新しい 1 件ごとにもう 1 件押し出されるため、都度記録すればそれ自体が flood になります）。その内容は二度と分類器へ届かず、本モジュール唯一の内容レベルの見逃しになります。ログがなければ運用側は「判定が緩い」ことしか分からず、モデルが見逃したのか本文がそもそも届かなかったのかを切り分けられません。15 件という上限はこの経路を稀ではなくするため、痕跡を残すことは必須です。
 
   移さないと、それらは判定にも処分の削除集合にも入りません——判定根拠（`judged`）と現在の列（`entries`）のどちらからも漏れるため、命中後もグループに永久に残ります。チャンネル名義では特にそうです（`banChatSenderChat` に `revoke_messages` はありません）。
 
@@ -636,7 +670,7 @@
 
   後続のメッセージは自分の本文で従来どおり選ばれ、読むのは同じ完全な引用文です。サンプル側の 1 部は**重複排除しません**——判定は 1 回読めば足りますが、証跡は各メッセージが当時何を引用したかを正直に記録しなければなりません。同じ理由から、本文・URL・文脈の三つがすべて空のときにだけ「判定する内容がない」と見なします：広告を押し上げるメッセージ自身は一文字も打たない（スタンプ、caption のない画像）ことが十分あり得ます。逆に `text_link` エンティティ内の URL は送出テキストへ必ず付加します。
 
-  ハイパーリンクの可視テキストは完全に無害（「ここをクリック」）でも構わず、着地先はエンティティにしか存在しないため、付加しなければ「この群から人を連れ出すか」という最も硬い規則がハイパーリンクに隠れた広告すべてに対して無効化されます。URL は**本文とは別立てでスレッドを跨ぎ、それぞれ独立した文字数枠を持たせなければなりません**（`AdCandidateMessage.linkUrls`。Worker 側が本文を `AD_DETECT_MESSAGE_MAX_CHARS` で切り詰めた後に連結します）。
+  ハイパーリンクの可視テキストは完全に無害（「ここをクリック」）でも構わず、着地先はエンティティにしか存在しないため、付加しなければ「この群から人を連れ出すか」という最も硬い規則がハイパーリンクに隠れた広告すべてに対して無効化されます。**唯一の例外は Bot 自身の inline 結果（`via_bot` が自分を指すもの）です**。その種のメッセージは明示的な `entities` を付けて送られ、ユーザーが打った文字はただの平文です（Telegram が自動認識した裸の URL は `url` エンティティで、ここで読む `text_link` ではありません）。したがってその `text_link` はすべて Bot 自身が付けたもので、付加すればおみくじの結果ごとに「この群から人を連れ出す着地点」を一つでっち上げることになります。ユーザーが query に打ち込んだリンクは元テキストの中に残り、従来どおり判定に加わります。URL は**本文とは別立てでスレッドを跨ぎ、それぞれ独立した文字数枠を持たせなければなりません**（`AdCandidateMessage.linkUrls`。Worker 側が本文を `AD_DETECT_MESSAGE_MAX_CHARS` で切り詰めた後に連結します）。
 
   メインスレッドが本文の末尾へ連結してしまうと、Worker の「先頭から残す」切り詰めで落ちるのがまさにその URL です——700 文字の埋め草と「ここをクリック」というアンカーテキストのリンク 1 本で成立する、コストゼロの回避経路になります。付加するのはメッセージ自身が持つ URL でシステム文言を伴わないため、本文に偽造可能な構造を持ち込みません。
 
@@ -648,7 +682,7 @@
 
   あちらは 1 つの重複排除窓しか生きませんが、「リストにいるが BAN が未着地」は窓を跨いで存在し得るうえ、今回の判定だけが生む状態でもありません（即時 kick、再 sweep、前の窓で積まれた removal バッチはいずれも先にリストへ書いてから outbox flush と mailbox barrier を待ちます）。Worker 側にも同一窓内の抑止（`recentlyDisposedAdKeys`）を置きます。
 
-  広告と判定されたキーは処分の送出と同時に記録し、「処分は出た／メインスレッドはまだブロックリストへ書いていない」というスレッド跨ぎの隙間に滑り込んだメッセージを受け止め、窓の切り替えで一緒に消えます。
+  広告と判定されたキーは処分の送出と同時に記録し、「処分は出た／メインスレッドはまだブロックリストへ書いていない」というスレッド跨ぎの隙間に滑り込んだメッセージを受け止め、各キーは自分の TTL で失効します。BAN が確定した時点でブロックリスト執行側が前倒しで回収しますが、その回収は removal 受領通知の **後** に走らせなければなりません——ベストエフォートの後始末が、既に確定した結果を覆せてはならないからです。先に置くと、そこで 1 回投げただけで受領通知が「未完了」に書き換わり、実際には完走したバッチをメインスレッドが再投入してしまいます。
 
   **チャンネル身分についてはこの抑止が抑えるのは判定だけで、削除は抑えません**。`banChatSenderChat` に `revoke_messages` はなくその BAN では持って行けず、抑止が効いている間は 2 度目の判定も走らないため、抑止分岐の中で削除を 1 回補わなければ、それらの広告はグループに永久に残ります。
 
@@ -656,9 +690,9 @@
 
   entry は初回命中時に blocklist LRU へ書かれ、未 ACK revision も登録済みです。失敗は log に明記され、Disk I/O Worker の再生成時には有界な未 ACK Map から最終値を replay します。他 group の batch は SQLite outbox で再試行を待っています。これは `/block` の再試行意味論と矛盾しません。あちらの再実行はディスクを直した管理者による人為的な再試行、こちらは連投者自身が引き起こすものであり、同じ代価を共有すべきではありません。
 
-  補う 1 バッチも `isInitEnabled && botIsAdmin` の filter を通します。2 回の命中の間に管理者権限を失っている可能性があるからです。
+  補う 1 バッチも `isInitEnabled && botPermissions.isAdministrator` の filter を通します。2 回の命中の間に管理者権限を失っている可能性があるからです。
 
-  **命中後の処分はブロックリストと同じくスレッドで分担します**。Worker 側はその列のメッセージを削除し、`adDetected` をメインスレッドへ返します。メインスレッドは失ってはならない部分——`blockUser` と `flushDiskIODomain("blocklist")`、続いて `isInitEnabled && botIsAdmin` の各グループごとに `trackBlockedRemoval` したバッチを durable outbox 経由で Worker へ戻し、最後にグループ内告知を送る——を担当します。
+  **命中後の処分はブロックリストと同じくスレッドで分担します**。Worker 側はその列のメッセージを削除し、`adDetected` をメインスレッドへ返します。メインスレッドは失ってはならない部分——`blockUser` と `flushDiskIODomain("blocklist")`、続いて `isInitEnabled && botPermissions.isAdministrator` の各グループごとに `trackBlockedRemoval` したバッチを durable outbox 経由で Worker へ戻し、最後にグループ内告知を送る——を担当します。
 
   **告知は BAN 登録の結果が分かってから送る必要があります**。文面は「見張っているすべてのグループでまとめて BAN した」と断言しますが、登録は 1 グループも成立しないことがあり（outbox 満杯、直前の管理者権限剥奪、`/init disable`）、その場合は誰も退出させられていないので、そのまま送れば事実と反する掲示になります——登録ゼロなら管理者に権限確認を促す文面へ切り替えます。
 
@@ -670,9 +704,9 @@
 
   **この待機もラウンド内の他の各段と同じ残り予算を使い**、尽きたら `timedOut` として決着します。予算なしで待つのは不可です。
 
-  処分の内部では `confirmBlocklistPersisted`（fsync を伴う領域 flush）と `dispatchBlockedRemovals`（outbox の write-ahead 永続化 + mailbox barrier）を通るため、全予算を 0 にする異常終了経路（`FATAL_FLUSH_TIMEOUTS`）は本来即座に決着すべきところ、実際には 15 秒の強制終了線まで引きずられます——プロセスは停止処理の途中で非ゼロ終了し、インスタンスロックは解放されず offset も確認されません。
+  処分の内部では `confirmBlocklistPersisted`（fsync を伴う領域 flush）と `dispatchBlockedRemovals`（outbox の write-ahead 永続化 + mailbox barrier）を通るため、全予算を 0 にする異常終了経路（`EMERGENCY_FLUSH_TIMEOUTS`）は本来即座に決着すべきところ、実際には 15 秒の強制終了線まで引きずられます——プロセスは停止処理の途中で非ゼロ終了し、インスタンスロックは解放されず offset も確認されません。
 
-  **逆に、Worker 側の判定バッチを Anti-Raid の実行中 task 集合へ登録してはいけません**。その集合は停止時 drain の待機対象で、予算は `ANTI_RAID_BARRIER_TIMEOUT_MS` 相当の秒単位ですが、判定リクエスト 1 回は `DEEPSEEK_REQUEST_TIMEOUT_MS`（30 秒）に空本文リトライを掛けた時間まで伸び得ます。
+  **逆に、Worker 側の判定バッチを Anti-Raid の実行中 task 集合へ登録してはいけません**。その集合は停止時 drain の待機対象で、予算は `ANTI_RAID_BARRIER_TIMEOUT_MS` 相当の秒単位ですが、判定リクエスト 1 回は `AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS` / `AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS`（各 30 秒）に空本文リトライを掛けた時間まで伸び得ます。
 
   登録すれば、停止時にたまたま判定が実行中であるたびに drain がタイムアウトし、ライフサイクルは Telegram offset の確定を拒否して非ゼロ終了します——ベストエフォートのヒューリスティックのために汚い終了と update の再配信を買うことになります。drain が来たら判定の tick を quiesce するだけ（新規リクエストも削除も告知も行わない）にし、実行中の判定は自然に収束させます。
 
@@ -720,7 +754,7 @@
 
   メインスレッド状態、thread message、Disk I/O snapshot は各 owner が必要とする 1 copy だけを持ちます。受信側は 1 行を一度だけ encode して canonical text を cache し、差分比較で旧行を毎回 stringify + parse してはいけません。診断 field だけの変化は表全体を独立に deep-copy せず、次の正式な snapshot と一緒に書き戻します。ただし alert threshold をまたぐ 1 回だけは即時 durable にします。threshold 到達は診断を強めるだけで、security task を削除しません。
 
-  write-ahead flush の待機中には cancel や trim が競合し得るため、post 前に再照合し、revision が変わっていれば durable 内容が送信予定 message と一致するまで再 flush します。最終照合と同期 post の間に `await` を置いてはいけません。起動時は runner より先に SQLite から復元し、正式な blocklist と `isInitEnabled && botIsAdmin` で無効 entry を filter し、最大 `removalId` から counter を初期化して batch replay します。strict decode failure、`BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES` 超過、transaction failure はすべて fail-closed であり、空の outbox として続行してはいけません。
+  write-ahead flush の待機中には cancel や trim が競合し得るため、post 前に再照合し、revision が変わっていれば durable 内容が送信予定 message と一致するまで再 flush します。最終照合と同期 post の間に `await` を置いてはいけません。起動時は runner より先に SQLite から復元し、正式な blocklist と `isInitEnabled && botPermissions.isAdministrator` で無効 entry を filter し、最大 `removalId` から counter を初期化して batch replay します。strict decode failure、`BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES` 超過、transaction failure はすべて fail-closed であり、空の outbox として続行してはいけません。
 
 #### 権限回復後の replay
 

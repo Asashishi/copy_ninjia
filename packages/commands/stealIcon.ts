@@ -32,7 +32,7 @@ export async function handleStealIconCommand(ctx: CommandContext<Context>): Prom
   }
 
   // 全局冷却时钟已经在 claimCopyCooldownOrReject 里原子占用并落盘（见其
-  // persistAuthoritativeState 调用），这里不需要再落一次。
+  // persistGlobalState 调用），这里不需要再落一次。
 
   const targetLabel: string = formatUserLabel(targetUser);
   await sendCommandMessage({

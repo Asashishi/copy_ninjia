@@ -6,6 +6,7 @@ import {
 import { WHITELIST_PERMISSION_KEYS } from "../../consts/whitelist";
 import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../libs/record";
+import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type {
   BlocklistRemovalFailure,
   PendingBlockedRemoval,
@@ -125,8 +126,12 @@ function decodePendingParams(
   if (!isPlainRecord(value) || !hasOnlyKeys(value, BLOCKLIST_REMOVAL_PARAM_KEYS)) {
     return invalidInput(source, "$.params", "the current pending removal parameter shape");
   }
-  if (!Number.isSafeInteger(value.chatId) || value.chatId === 0) {
-    return invalidInput(source, "$.params.chatId", "a non-zero safe integer");
+  if (!isTelegramGroupChatId(value.chatId)) {
+    return invalidInput(
+      source,
+      "$.params.chatId",
+      "a negative safe integer Telegram group or channel ID"
+    );
   }
   if (!Number.isSafeInteger(value.removalId) || (value.removalId as number) < 1) {
     return invalidInput(source, "$.params.removalId", "a positive safe integer");
@@ -134,7 +139,7 @@ function decodePendingParams(
   if (typeof value.probeMembership !== "boolean") {
     return invalidInput(source, "$.params.probeMembership", "a boolean");
   }
-  const chatId: number = value.chatId as number;
+  const chatId: number = value.chatId;
   const removalId: number = value.removalId as number;
   if (value.probeMembership) {
     if (
@@ -240,7 +245,8 @@ export interface EncodedPendingBlockedRemoval {
  * 编码前先走同一严格解码器，并把那次解码的结果一并返回。
  *
  * outbox 快照对每一条 removal 都要「编码 -> 落库文本」和「规范值 -> 内存镜像」
- * 两样东西（见 workers/diskIO/identityDatabase.ts 的 handlePendingRemovalSnapshot）。
+ * 两样东西（见 workers/diskIO/storageDatabase/pendingRemoval.ts 的
+ * handlePendingRemovalSnapshot）。
  * 只回 text 的话调用方必须紧接着再解一次同一段 JSON，等于每条持久化条目多付一次
  * 完整 parse + 全量校验。
  */

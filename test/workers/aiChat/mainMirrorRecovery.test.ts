@@ -71,7 +71,7 @@ mock.module("../../../packages/infra/diskIO", () => ({
 const knownChats = new Set<number>();
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
-  getAllChatStates: (): Map<number, unknown> =>
+  getChatStateCache: (): Map<number, unknown> =>
     new Map([...aiEnabledChats, ...knownChats].map((chatId: number): [number, unknown] => [chatId, {}])),
 }));
 

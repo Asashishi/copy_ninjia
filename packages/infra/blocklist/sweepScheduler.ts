@@ -10,7 +10,7 @@ import {
   blocklistSweepState,
 } from "../../cache/main/blocklist";
 import { logger } from "../logger";
-import { getAllChatStates } from "../storage/stateStore";
+import { getChatStateCache } from "../storage/stateStore";
 import { hasAnyBlockedIdentity } from "../identityStorage";
 import type { ChatState } from "../../types/chatState";
 
@@ -28,10 +28,10 @@ function nextBlocklistSweepAt(): number | null {
   if (!hasAnyBlockedIdentity()) return null;
   let earliest: number | null = null;
   for (const [chatId, progress] of blocklistSweepState) {
-    const chatState: ChatState | undefined = getAllChatStates().get(chatId);
+    const chatState: ChatState | undefined = getChatStateCache().get(chatId);
     if (
       chatState?.isInitEnabled !== true ||
-      chatState.botIsAdmin !== true ||
+      chatState.botPermissions?.isAdministrator !== true ||
       progress.sweptAt !== null ||
       progress.removalId !== null ||
       progress.permissionBlocked

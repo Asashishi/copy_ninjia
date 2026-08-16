@@ -22,7 +22,9 @@ const initDiskIO = mock((options?: { onFatal?: (error: Error) => void }): void =
   diskIOFatalHandler = options?.onFatal;
 });
 const cleanupOrphanedTempFiles = mock(async (): Promise<void> => { calls.push("cleanupTemps"); });
-const preflightEnabledFeatures = mock((): void => { calls.push("preflightFeatures"); });
+const validateExistingDeploymentInputs = mock((): void => {
+  calls.push("validateDeploymentInputs");
+});
 const seedMissingAssetState = mock((): number => { calls.push("seedAssets"); return 0; });
 const loadState = mock(async (): Promise<void> => { calls.push("loadState"); });
 const refreshAllChatTitles = mock(async (): Promise<void> => { calls.push("refreshTitles"); });
@@ -34,6 +36,7 @@ const loadPersistedData = mock(async () => ({
   verifications: new Map<string, never>(),
   pendingBlockedRemovals: new Map(),
   blocklistEntryCount: 0,
+  chatStates: new Map<number, never>(),
   whitelistEntryCount: 0,
 }));
 type FlushResult = "flushed" | "timedOut" | "failed";
@@ -72,6 +75,7 @@ const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiM
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
 const hydratePendingVerifications = mock((_value: unknown): void => { calls.push("hydrateVerifications"); });
+const hydrateChatStateCache = mock((_value: unknown): void => { calls.push("hydrateChatStates"); });
 const hydrateIdentityStorageCounts = mock((..._args: unknown[]): void => { calls.push("hydrateIdentityCounts"); });
 const assertSuperAdminNotBlocked = mock(async (..._args: unknown[]): Promise<void> => { calls.push("assertSuperAdminNotBlocked"); });
 const hydrateBlocklist = mock((..._args: unknown[]): void => { calls.push("hydrateBlocklist"); });
@@ -84,7 +88,7 @@ const seedSenderCache = mock((_value: unknown): void => { calls.push("seedSender
 const registerCommandMenu = mock(async (): Promise<void> => { calls.push("registerMenu"); });
 let lastSeenUpdateId: number = 0;
 const registerHandlers = mock(() => ({ getLastSeenUpdateId: (): number => lastSeenUpdateId }));
-const getAllChatStates = mock(() => new Map<number, unknown>());
+const getChatStateCache = mock(() => new Map<number, unknown>());
 let copiedUser: object | null = null;
 const getGlobalCopyState = mock(() => ({ copiedUser }));
 const sleep = mock(async (): Promise<void> => {});
@@ -142,10 +146,11 @@ const testDependencies = {
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
-  getAllChatStates,
+  getChatStateCache,
   getGlobalCopyState,
   assertSuperAdminNotBlocked,
   hydrateIdentityStorageCounts,
+  hydrateChatStateCache,
   hydrateAiMemory,
   hydratePendingVerifications,
   hydrateBlocklist,
@@ -169,7 +174,7 @@ const testDependencies = {
   },
   monotonicNow,
   loadState,
-  preflightEnabledFeatures,
+  validateExistingDeploymentInputs,
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,
@@ -239,7 +244,7 @@ export function installLifecycleFixtureHooks(): void {
       initTelegramClients,
       initDiskIO,
       cleanupOrphanedTempFiles,
-      preflightEnabledFeatures,
+      validateExistingDeploymentInputs,
       loadState,
       seedMissingAssetState,
       refreshAllChatTitles,
@@ -275,6 +280,7 @@ export function installLifecycleFixtureHooks(): void {
       initAiChat,
       hydratePendingVerifications,
       assertSuperAdminNotBlocked,
+      hydrateChatStateCache,
       hydrateIdentityStorageCounts,
       hydrateBlocklist,
       initAntiRaid,
@@ -356,6 +362,7 @@ export const lifecycleFixture = {
   flushStateToDisk,
   getUpdates,
   hydrateAiMemory,
+  hydrateChatStateCache,
   hydrateBlocklist,
   hydratePendingVerifications,
   hydrateStickerCatalog,
@@ -373,7 +380,7 @@ export const lifecycleFixture = {
   loadState,
   loggerLog,
   loggerError,
-  preflightEnabledFeatures,
+  validateExistingDeploymentInputs,
   quiesceAvatarUpdates,
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,

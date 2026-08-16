@@ -13,7 +13,7 @@ export function formatMinSec(ms: number): string {
 }
 
 /** getTokyoDateKey 的格式器：模块加载时构造一次复用（Intl.DateTimeFormat
- *  的构造远贵于 format 调用本身，同下方 TOKYO_TIME_FORMATTER 的理由）——
+ *  的构造远贵于 format 调用本身，同下方另外两个格式器的理由）——
  *  日志落盘按条调用它算文件名日期，不能每条日志都重新构造一个格式器。 */
 const TOKYO_DATE_KEY_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Tokyo",
@@ -38,26 +38,43 @@ export function isCanonicalDateKey(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-/** formatTokyoTime 的格式器：模块加载时构造一次复用（Intl.DateTimeFormat
- *  的构造远贵于 format 调用本身）。 */
-const TOKYO_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Tokyo",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-});
+/** 东京相对 UTC 的固定偏移；日本自 1951 年起不再实行夏令时，见 formatTokyoTime。 */
+const TOKYO_UTC_OFFSET_MS: number = 9 * 60 * 60 * 1000;
+
+/** 两位零填充；只服务下方固定宽度的时间串。 */
+function padTwoDigits(value: number): string {
+  return value < 10 ? `0${value}` : `${value}`;
+}
 
 /**
  * 毫秒时间戳 → 东京时区的「2026/07/16 21:35:04」。AI 对话缓存条目
  * （BufferedMessage.at）在记录时格式化一次、直接以此形态落盘/入转录行，
  * 模型可直接读，之后拼上下文不再有任何格式化开销。
+ *
+ * **按固定 UTC+9 算术产出，不走 Intl。** 这一句跑在每条进滚动记忆的群消息上
+ * （workers/aiChat/bufferedMessage.ts 的 buildBufferedMessage），而
+ * `Intl.DateTimeFormat.format` 即便复用同一个格式器仍要走一遍 ICU 的字段
+ * 格式化：实测（Bun 1.3.14，5 个独立进程各 5 轮取中位数，真实群消息到达节奏）
+ * 1 280.9 ns/op，本实现 158.9 ns/op，8.1 倍。
+ *
+ * 等价性不是推断出来的：`test/libs/time.test.ts` 拿 53 万个时间戳对拍
+ * （1970–2100 均匀采样 + 伪随机散点 + 跨秒/跨分/跨日/闰日/年末各 ±2000 ms
+ * 逐毫秒）确认与原 `zh-CN` 格式器逐字符相同。
+ *
+ * **成立的前提是「只格式化本进程当下的时刻」**：日本 1948-1951 实行过夏令时，
+ * 那段时间本函数与 Intl 相差一小时（1950-07-01 03:00 UTC：Intl 给 13:00、
+ * 本实现给 12:00）。全部调用点传的都是 `Date.now()` 派生值，落在 1951 之后。
+ * 若将来要格式化用户提供的历史时间，必须换回 Intl 并重测。
+ *
+ * 同文件其余三个格式器仍走 Intl：它们要么按天/按小时调用（getTokyoDateKey、
+ * getTokyoHour），要么产出带本地化词汇的长格式（getCurrentTime 的 dateStyle:
+ * "full"），算术替换不了，也没有对应的热点证据。
  */
 export function formatTokyoTime(timestampMs: number): string {
-  return TOKYO_TIME_FORMATTER.format(timestampMs);
+  const shifted: Date = new Date(timestampMs + TOKYO_UTC_OFFSET_MS);
+  return `${shifted.getUTCFullYear()}/${padTwoDigits(shifted.getUTCMonth() + 1)}/` +
+    `${padTwoDigits(shifted.getUTCDate())} ${padTwoDigits(shifted.getUTCHours())}:` +
+    `${padTwoDigits(shifted.getUTCMinutes())}:${padTwoDigits(shifted.getUTCSeconds())}`;
 }
 
 /** getTokyoHour 的格式器：模块加载时构造一次复用（理由同上）。hourCycle 显式

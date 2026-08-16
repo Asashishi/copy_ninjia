@@ -1,6 +1,7 @@
 import {
   workerDuplexPoster,
   workerDuplexRequestCounter,
+  workerDuplexRequestSignal,
   workerDuplexWaiters,
 } from "../cache/perThread/workerDuplex";
 import type {
@@ -43,6 +44,11 @@ export function initializeWorkerDuplex<TRequest>(
   ) => void;
 }
 
+/** 配置当前 Worker 此后新建的双工请求所继承的业务生命周期信号。 */
+export function setWorkerDuplexRequestSignal(signal: AbortSignal | null): void {
+  workerDuplexRequestSignal.current = signal;
+}
+
 function abortError(): Error {
   return new DOMException("Worker duplex request was aborted.", "AbortError");
 }
@@ -56,7 +62,13 @@ export function requestMainThread<TRequest, TResult>(
   signal?: AbortSignal,
   transfer?: Bun.Transferable[]
 ): Promise<TResult> {
-  if (signal?.aborted === true) return Promise.reject(abortError());
+  const defaultSignal: AbortSignal | null = workerDuplexRequestSignal.current;
+  const requestSignal: AbortSignal | undefined = defaultSignal === null
+    ? signal
+    : signal === undefined || signal === defaultSignal
+      ? defaultSignal
+      : AbortSignal.any([defaultSignal, signal]);
+  if (requestSignal?.aborted === true) return Promise.reject(abortError());
   const poster: ((
     message: WorkerDuplexOutbound<unknown>,
     transfer?: Bun.Transferable[]
@@ -73,7 +85,7 @@ export function requestMainThread<TRequest, TResult>(
     resolve: (value: TResult | PromiseLike<TResult>) => void,
     reject: (reason?: unknown) => void
   ): void => {
-    const abortListener: (() => void) | undefined = signal === undefined
+    const abortListener: (() => void) | undefined = requestSignal === undefined
       ? undefined
       : (): void => {
         if (!workerDuplexWaiters.delete(requestId)) return;
@@ -87,18 +99,20 @@ export function requestMainThread<TRequest, TResult>(
     const waiter: WorkerDuplexWaiter = {
       resolve: (value: unknown): void => resolve(value as TResult),
       reject,
-      signal,
+      signal: requestSignal,
       abortListener,
     };
     workerDuplexWaiters.set(requestId, waiter);
     if (abortListener !== undefined) {
-      signal!.addEventListener("abort", abortListener, { once: true });
+      requestSignal!.addEventListener("abort", abortListener, { once: true });
     }
     try {
       poster({ __duplex: "request", requestId, request }, transfer);
     } catch (error: unknown) {
       workerDuplexWaiters.delete(requestId);
-      if (abortListener !== undefined) signal!.removeEventListener("abort", abortListener);
+      if (abortListener !== undefined) {
+        requestSignal!.removeEventListener("abort", abortListener);
+      }
       reject(error instanceof Error ? error : new Error("Worker duplex post failed."));
     }
   });
@@ -128,6 +142,7 @@ export function handleWorkerDuplexResponse(response: WorkerDuplexResponse): void
 /** Worker 停止时结算本 isolate 的全部等待者。 */
 export function resetWorkerDuplex(reason: string): void {
   workerDuplexPoster.current = null;
+  workerDuplexRequestSignal.current = null;
   const error: Error = new Error(reason);
   for (const waiter of workerDuplexWaiters.values()) {
     if (waiter.abortListener !== undefined) {

@@ -1,7 +1,7 @@
 /**
  * 进程唯一的共享数据 Disk I/O Worker 宿主（主线程侧）：统一承载日志、AI/贴纸快照、
- * 每日运势、待验证当日增量 JSON 与 /block 黑名单——由 diskIOWorker 在单一 Worker 线程里
- * 串行执行，避免多个业务 Worker 并发写坏共享文件。state.json 是明确例外，
+ * 每日运势、待验证当日增量 JSON、群状态与 /block 黑名单——由 diskIOWorker 在单一 Worker
+ * 线程里串行执行，避免多个业务 Worker 并发写坏共享文件。state.json 只保留 global，
  * 由主线程经 infra/storage/stateStore.ts 门面交给 statePersistence.ts 独立异步读写与 flush。
  *
  * Worker 拥有权、flush/load 握手与对外投递语义收在本文件；Worker 创建、
@@ -306,6 +306,7 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         pendingBlockedRemovals: reply.pendingBlockedRemovals,
         blocklistEntryCount: reply.blocklistEntryCount,
         whitelistEntryCount: reply.whitelistEntryCount,
+        chatStates: reply.chatStates,
       });
     };
     const request: LoadRequest = { type: "load" };

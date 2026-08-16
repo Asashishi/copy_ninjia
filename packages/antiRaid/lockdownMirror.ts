@@ -1,8 +1,8 @@
 import { logger } from "../infra/logger";
 import {
   clearChatStateField,
-  getAllChatStates,
-  saveStateInBackground,
+  getChatStateCache,
+  saveChatStateInBackground,
 } from "../infra/storage/stateStore";
 import { joinVerificationApi } from "../infra/telegram/client";
 import { restoreLockdownInvitePermission } from "../infra/telegram/lockdownPermissions";
@@ -83,7 +83,7 @@ function toAdoptableLockdown(
 export function buildAdoptLockdownsMessage(): AdoptLockdownsMessage {
   const lockdowns: AdoptableLockdown[] = [];
   const now: number = Date.now();
-  for (const [chatId, chatState] of getAllChatStates()) {
+  for (const [chatId, chatState] of getChatStateCache()) {
     if (chatState.lockdown) {
       lockdowns.push(toAdoptableLockdown(chatId, chatState.lockdown, now));
     }
@@ -91,10 +91,10 @@ export function buildAdoptLockdownsMessage(): AdoptLockdownsMessage {
   return { type: "adopt", lockdowns };
 }
 
-/** 用启动时已从 state.json 恢复的记录播种“已持久化”指纹。 */
+/** 用启动时已从 SQLite 恢复的记录播种“已持久化”指纹。 */
 export function seedPersistedLockdownFingerprints(): void {
   persistedLockdownFingerprints.clear();
-  for (const [chatId, chatState] of getAllChatStates()) {
+  for (const [chatId, chatState] of getChatStateCache()) {
     if (chatState.lockdown !== undefined) {
       persistedLockdownFingerprints.set(chatId, lockdownFingerprint(chatState.lockdown));
     }
@@ -125,7 +125,7 @@ function runEmergencyLockdownRecovery(
   ) return;
 
   const task: Promise<void> = (async (): Promise<void> => {
-    const before: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
+    const before: LockdownRecord | undefined = getChatStateCache().get(chatId)?.lockdown;
     if (
       before === undefined ||
       !lockdownIntentMatches(before, recovery.fingerprint)
@@ -146,7 +146,7 @@ function runEmergencyLockdownRecovery(
         finishEmergencyLockdownRecovery(chatId, recovery);
         return;
       }
-      const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
+      const current: LockdownRecord | undefined = getChatStateCache().get(chatId)?.lockdown;
       if (
         current === undefined ||
         !lockdownIntentMatches(current, recovery.fingerprint)
@@ -160,13 +160,13 @@ function runEmergencyLockdownRecovery(
       }
       persistedLockdownFingerprints.delete(chatId);
       if (clearChatStateField(chatId, "lockdown")) {
-        saveStateInBackground("emergency anti-raid unlock");
+        saveChatStateInBackground(chatId, "emergency anti-raid unlock");
         antiRaidRuntimeState.persistenceVersion++;
       }
       logger.log(`Emergency anti-raid permission restore completed for chat ${chatId}.`);
       finishEmergencyLockdownRecovery(chatId, recovery);
     } catch (error: unknown) {
-      const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
+      const current: LockdownRecord | undefined = getChatStateCache().get(chatId)?.lockdown;
       if (
         emergencyLockdownRecoveryRuntime.stopped ||
         current === undefined ||
@@ -232,7 +232,7 @@ export function stopEmergencyLockdownRecoveries(): void {
 /** Worker 自愈放弃后，由主线程独立接管仍挂着的邀请权限恢复。 */
 export function recoverAbandonedLockdowns(): void {
   const abandoned: number[] = [];
-  for (const [chatId, chatState] of getAllChatStates()) {
+  for (const [chatId, chatState] of getChatStateCache()) {
     if (chatState.lockdown === undefined) continue;
     abandoned.push(chatId);
     startEmergencyLockdownRecovery(chatId, chatState.lockdown);

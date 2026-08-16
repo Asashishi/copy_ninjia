@@ -168,15 +168,6 @@ export const TELEGRAM_TIMER_MAX_DELAY_MS: number = 2_147_483_647;
 export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 15;
 
 /**
- * 启动期标题回填累计改动多少个群才落一次盘。逐个群落盘会把启动期变成
- * O(群数²) 的主线程 CPU——StateStore.save 每次都要对**全部**群做一遍
- * 序列化 + 解析 + 深校验，而 LatestValueRunner 只合并磁盘写、不合并这段工作。
- * 群名称不参与任何业务判断（见 infra/chatTitle.ts），中途崩溃丢掉几个标题
- * 没有副作用，因此可以放心攒批。
- */
-export const CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE: number = 50;
-
-/**
  * 自发消息登记表（见 infra/selfSentTracker.ts）的存活时长：只需覆盖「发送 →
  * 更新原样弹回」的往返时间（频道帖自回环、转发进关联讨论组的副本），
  * 未被命中的登记项到期自动清理，不值得长期占内存。
@@ -188,3 +179,21 @@ export const SELF_SENT_MESSAGE_TTL_MS: number = 15_000;
  * 只作用于频道帖子和关联讨论组自动转发，不进入普通群消息热路径。
  */
 export const SELF_SENT_RENDEZVOUS_TIMEOUT_MS: number = 1_000;
+
+/**
+ * inline 源文本登记表（见 infra/inlineResultSources.ts）同时保留多少个**查询者**。
+ *
+ * 每个查询者只占一条：新一次 inline 应答整体覆盖他上一次的登记，不留历史——
+ * 只有最后一次应答里的结果才可能被发出去。上限管的是「同时有多少人正在输入
+ * inline 查询」，inline 模式对任何人开放，因此必须有硬顶；撑满时按最久未登记
+ * 的查询者淘汰，被淘汰只意味着他那条 inline 结果拿不到源文本、退回不判定。
+ *
+ * 定 1024 而不是几十：淘汰的代价是漏判一条广告，而多留一位查询者的代价只是一份
+ * 应答文本，两边完全不对称；这个数量级足以覆盖同时输入的真实并发，正常不会有人
+ * 因为被挤掉而漏判。占用上界算得出来——单条登记就是一次应答的全部结果正文，运势
+ * 是一条几百字符的回执，gag 一条不超过 TELEGRAM_MESSAGE_MAX_CHARS、一次应答至多
+ * GAG_SESSION_MAX 条，即单人最坏约 20K 字符。常态是每人几百字符、全表百 KB 级；
+ * 理论最坏要 1024 个不同的人同时各用满长度查询命中满额 gag 会话，而每人只占一条、
+ * 下次查询就地覆盖，不会累积。
+ */
+export const INLINE_RESULT_SOURCE_MAX_AUTHORS: number = 1_024;

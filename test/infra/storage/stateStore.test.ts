@@ -8,14 +8,13 @@ import {
   getBotDefaultAvatarUrl,
   getFortuneThumbnailUrl,
   getGagThumbnailUrl,
-  getOrCreateChatState,
   getProbabilityThumbnailUrl,
   loadState,
   pruneDepartedChatState,
-  saveState,
   seedMissingAssetState,
 } from "../../../packages/infra/storage/stateStore";
-import { chatStates, globalAssetState, stateStoreHolder } from "../../../packages/cache/main/storage";
+import { chatStateCache } from "../../../packages/cache/main/chatState";
+import { globalAssetState, stateStoreHolder } from "../../../packages/cache/main/storage";
 import {
   BOT_DEFAULT_AVATAR_URL,
   FORTUNE_THUMBNAIL_URL,
@@ -23,11 +22,11 @@ import {
   PROBABILITY_THUMBNAIL_URL,
 } from "../../../packages/consts/ui/assets";
 import type { LockdownRecord, StateFileSchema } from "../../../packages/types/chatState";
+import { botPermissions } from "../../helpers/botPermissions";
 
 function schema(chatId: number): StateFileSchema {
   return {
-    chats: { [String(chatId)]: { isAIChatEnabled: true } },
-    global: { copy: { copiedUser: null }, assets: {} },
+    global: { copy: { copiedUser: null, lastCopyTime: chatId }, assets: {} },
   };
 }
 
@@ -192,20 +191,7 @@ describe("StateStore", () => {
     // 落盘是临时文件 + 原子 rename，主文件不会写出半份，所以「在但解不开」只剩
     // 手改错和介质损坏两种来源。拿 LKG 顶上去 = 把运维刚编辑的文件改名成
     // .corrupt、用陈旧内容盖回去，然后一切正常启动（见 AGENTS.md 不为用户行为兜底）。
-    const valid: StateFileSchema = {
-      chats: {
-        "-100": {
-          lockdown: {
-            phase: "active",
-            intentId: 9,
-            originalPermissions: { can_invite_users: true, can_send_messages: false },
-            announced: true,
-            expiresAt: 1_900_000_000_000,
-          },
-        },
-      },
-      global: { copy: { copiedUser: null }, assets: {} },
-    };
+    const valid: StateFileSchema = schema(53);
     const backup: string = JSON.stringify(valid, null, 2);
     const writes: { path: string; content: string }[] = [];
     const store = new StateStore({
@@ -222,7 +208,6 @@ describe("StateStore", () => {
   test("手改错的字段不被 LKG 静默还原，诊断不回显原值", async () => {
     const backup: string = JSON.stringify(schema(58), null, 2);
     const edited: string = JSON.stringify({
-      chats: {},
       // 漏掉 scheme 是最常见的手误，且它在两份副本逐字节相同时只会出现在主文件里。
       global: { copy: { copiedUser: null }, assets: { botDefaultAvatarUrl: "cdn.example.com/face.jpg" } },
     }, null, 2);
@@ -325,7 +310,6 @@ describe("StateStore", () => {
       writeText: async (path) => { paths.push(path); },
     });
     const invalid = {
-      chats: {},
       global: { copy: { copiedUser: null } },
       unknownField: true,
     } as unknown as StateFileSchema;
@@ -412,10 +396,11 @@ describe("StateStore", () => {
  */
 describe("群级状态门面", () => {
   afterEach(() => {
-    chatStates.clear();
+    chatStateCache.clear();
   });
 
   test("退群清理普通配置，但保留尚需恢复的 lockdown 记录", () => {
+    const permissions = botPermissions({ canRestrictMembers: true });
     const lockdown: LockdownRecord = {
       phase: "active",
       intentId: 3,
@@ -423,53 +408,24 @@ describe("群级状态门面", () => {
       announced: true,
       expiresAt: 1_700_000_000_000,
     };
-    chatStates.set(-1001, { isAIChatEnabled: true, botIsAdmin: true });
-    chatStates.set(-1002, { isAIChatEnabled: true, botIsAdmin: true, lockdown });
+    chatStateCache.set(-1001, { isAIChatEnabled: true, botPermissions: permissions });
+    chatStateCache.set(-1002, { isAIChatEnabled: true, botPermissions: permissions, lockdown });
 
     pruneDepartedChatState(-1001);
     pruneDepartedChatState(-1002);
     // 没有任何记录的群不应被凭空建出条目。
     pruneDepartedChatState(-1003);
 
-    expect(chatStates.has(-1001)).toBeFalse();
-    expect(chatStates.get(-1002)).toEqual({ lockdown });
-    expect(chatStates.has(-1003)).toBeFalse();
-  });
-
-  test("规范形状不改磁盘格式：关掉的开关仍然不出现在 state.json 里", async () => {
-    // 形状固定之后，「没设过」由 undefined 表示而不再由「键不存在」表示。落盘
-    // 结果必须逐字节照旧——`JSON.stringify` 跳过取值为 undefined 的键。这条如果
-    // 松了，state.json 会突然多出一堆 `"isAIChatEnabled": false`，而 decodeStateFile
-    // 的 knownKeys 与部署方手改文件的习惯都建立在旧格式上。
-    const writes: string[] = [];
-    stateStoreHolder.current = new StateStore({
-      stateFilePath: "/virtual/state.json",
-      writeText: async (_path: string, content: string): Promise<void> => { writes.push(content); },
-    });
-    try {
-      const chatState = getOrCreateChatState(-1001);
-      chatState.isAIChatEnabled = true;
-      chatState.botIsAdmin = false;
-      chatState.isAIChatEnabled = false;
-
-      await saveState();
-
-      const written = JSON.parse(writes[0]!) as { chats: Record<string, Record<string, unknown>> };
-      // 关掉的开关按缺省语义整键消失；botIsAdmin 的 false 是「已确认不是管理员」，
-      // 与缺省不同，必须留在文件里。
-      expect(Object.keys(written.chats["-1001"]!)).toEqual(["botIsAdmin"]);
-      expect(written.chats["-1001"]!.botIsAdmin).toBe(false);
-    } finally {
-      stateStoreHolder.current?.dispose();
-      stateStoreHolder.current = null;
-    }
+    expect(chatStateCache.has(-1001)).toBeFalse();
+    expect(chatStateCache.get(-1002)).toEqual({ lockdown });
+    expect(chatStateCache.has(-1003)).toBeFalse();
   });
 
   test("中转发送目标全局唯一，扫描全部群只认显式启用的那个", () => {
-    chatStates.set(-1001, { isAIChatEnabled: true });
+    chatStateCache.set(-1001, { isAIChatEnabled: true });
     expect(getActiveProxySendTarget()).toBeUndefined();
 
-    chatStates.set(-1002, { isProxySendEnabled: true });
+    chatStateCache.set(-1002, { isProxySendEnabled: true });
     expect(getActiveProxySendTarget()).toBe(-1002);
   });
 });
@@ -518,7 +474,7 @@ describe("素材直链的加载接线", () => {
     globalAssetState.probabilityThumbnailUrl = undefined;
     globalAssetState.gagThumbnailUrl = undefined;
     globalAssetState.botDefaultAvatarUrl = undefined;
-    chatStates.clear();
+    chatStateCache.clear();
     stateStoreHolder.current?.dispose();
     stateStoreHolder.current = null;
     rmSync(dir, { recursive: true, force: true });
@@ -529,7 +485,6 @@ describe("素材直链的加载接线", () => {
     // 也看不出来。
     const statePath: string = join(dir, "state.json");
     const stored: StateFileSchema = {
-      chats: {},
       global: {
         copy: { copiedUser: null },
         assets: {
@@ -553,7 +508,7 @@ describe("素材直链的加载接线", () => {
 
   test("文件里没有 assets 块时四项都回退到内置常量", async () => {
     const statePath: string = join(dir, "state-without-assets.json");
-    writeFileSync(statePath, JSON.stringify({ chats: {}, global: { copy: { copiedUser: null } } }, null, 2));
+    writeFileSync(statePath, JSON.stringify({ global: { copy: { copiedUser: null } } }, null, 2));
     stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
 
     await loadState();
@@ -585,7 +540,7 @@ describe("启动补齐素材直链", () => {
   });
 
   /**
-   * 让 saveStateInBackground 落到可观测的注入 IO 上，不碰真实数据根。
+   * 让 saveGlobalStateInBackground 落到可观测的注入 IO 上，不碰真实数据根。
    * @returns 主、备两份都写完时兑现的 Promise；补写是 fire-and-forget，没有别的
    *   等待点（用 flush() 等会把同一份 dirty 快照再推一次，看到的写入数会翻倍）。
    */

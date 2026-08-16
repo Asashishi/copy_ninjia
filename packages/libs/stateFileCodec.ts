@@ -1,14 +1,11 @@
-import type { ChatPermissions } from "@grammyjs/types";
-import { CHAT_PERMISSION_KEYS } from "../consts/storage";
 import { isPlainRecord } from "./record";
+import { isTelegramGroupChatId } from "./telegramId";
 import type {
   CachedUser,
-  ChatState,
   CopyMode,
   GlobalAssetState,
   GlobalCopyState,
   GlobalState,
-  LockdownRecord,
   StateFileSchema,
 } from "../types/chatState";
 
@@ -58,10 +55,6 @@ function copyMode(value: unknown, path: string): CopyMode | undefined {
 }
 
 /**
- * 模型选取值（生图与闲聊两项共用）。口径与其余字段一致：缺省即从没设过，存在
- * 但非法拒绝整份文件——静默丢掉它等于让超管以为切过了、实际还在用默认供应商。
- */
-/**
  * 外部素材直链。口径与其余字段一致：缺省即从没设过、由代码常量兜底；存在但不是
  * 可解析的绝对地址（协议见下）就拒绝整份文件——少写 scheme（`cdn.example.com/face.jpg`）
  * 是最常见的手误，而 Telegram 收到它只会静默不显示这张图，运维看到的现象与
@@ -110,75 +103,6 @@ function cachedUser(value: unknown, path: string): CachedUser {
   };
 }
 
-function chatPermissions(value: unknown, path: string): ChatPermissions {
-  const raw: Record<string, unknown> = record(value, path);
-  knownKeys(raw, CHAT_PERMISSION_KEYS, path);
-  const decoded: ChatPermissions = {};
-  for (const key of CHAT_PERMISSION_KEYS) {
-    const field: unknown = raw[key];
-    if (field === undefined) continue;
-    if (typeof field !== "boolean") throw new Error(`${path}.${key} must be a boolean`);
-    Reflect.set(decoded, key, field);
-  }
-  return decoded;
-}
-
-function lockdown(value: unknown, path: string): LockdownRecord {
-  const raw: Record<string, unknown> = record(value, path);
-  knownKeys(raw, ["phase", "intentId", "originalPermissions", "announced", "expiresAt"], path);
-  const expiresAt: number | undefined = optionalTimestamp(raw, "expiresAt", path);
-  if (expiresAt === undefined) throw new Error(`${path}.expiresAt is required`);
-  const phase: unknown = raw.phase;
-  if (
-    phase !== "applying" &&
-    phase !== "active" &&
-    phase !== "reconciling" &&
-    phase !== "restoring"
-  ) {
-    throw new Error(
-      `${path}.phase is required and must be applying, active, reconciling or restoring`
-    );
-  }
-  const intentId: number | undefined = optionalTimestamp(raw, "intentId", path);
-  if (intentId === undefined || intentId === 0) {
-    throw new Error(`${path}.intentId must be a positive safe integer`);
-  }
-  const announced: boolean | undefined = optionalBoolean(raw, "announced", path);
-  if (announced === undefined) throw new Error(`${path}.announced is required and must be a boolean`);
-  if (phase === "applying" && announced) {
-    throw new Error(`${path}.announced must be false while phase is applying`);
-  }
-  return {
-    phase,
-    intentId,
-    originalPermissions: chatPermissions(raw.originalPermissions, `${path}.originalPermissions`),
-    announced,
-    expiresAt,
-  };
-}
-
-function chatState(value: unknown, path: string): ChatState {
-  const raw: Record<string, unknown> = record(value, path);
-  knownKeys(raw, [
-    "quietUntil", "lockdown", "isAIChatEnabled", "isJATranslationEnabled",
-    "isAdDetectEnabled", "isFloodControlEnabled", "isAntiRaidEnabled", "isInitEnabled",
-    "botIsAdmin", "title", "isProxySendEnabled",
-  ], path);
-  return {
-    quietUntil: optionalTimestamp(raw, "quietUntil", path),
-    lockdown: raw.lockdown === undefined ? undefined : lockdown(raw.lockdown, `${path}.lockdown`),
-    isAIChatEnabled: optionalBoolean(raw, "isAIChatEnabled", path),
-    isJATranslationEnabled: optionalBoolean(raw, "isJATranslationEnabled", path),
-    isAdDetectEnabled: optionalBoolean(raw, "isAdDetectEnabled", path),
-    isFloodControlEnabled: optionalBoolean(raw, "isFloodControlEnabled", path),
-    isAntiRaidEnabled: optionalBoolean(raw, "isAntiRaidEnabled", path),
-    isInitEnabled: optionalBoolean(raw, "isInitEnabled", path),
-    botIsAdmin: optionalBoolean(raw, "botIsAdmin", path),
-    title: optionalString(raw, "title", path),
-    isProxySendEnabled: optionalBoolean(raw, "isProxySendEnabled", path),
-  };
-}
-
 function globalCopy(value: unknown): GlobalCopyState {
   const path: string = "state.global.copy";
   const raw: Record<string, unknown> = record(value, path);
@@ -191,8 +115,10 @@ function globalCopy(value: unknown): GlobalCopyState {
     }
     return { copiedUser: null, lastCopyTime };
   }
-  if (typeof raw.copyChatId !== "number" || !Number.isSafeInteger(raw.copyChatId) || raw.copyChatId === 0) {
-    throw new Error(`${path}.copyChatId must be a non-zero safe integer when copiedUser is set`);
+  if (!isTelegramGroupChatId(raw.copyChatId)) {
+    throw new Error(
+      `${path}.copyChatId must be a negative safe integer Telegram group or channel ID when copiedUser is set`
+    );
   }
   return {
     lastCopyTime,
@@ -251,22 +177,7 @@ export function decodeStateFile(value: unknown): StateFileSchema {
   const raw: Record<string, unknown> = record(value, "state");
   // 旧顶层键（globalCopy/imageProvider/chatProvider）会在这里被当场拒绝：结构
   // 变更只做手工迁移，解码器不留兼容分支（见 types/chatState.ts 的 StateFileSchema）。
-  knownKeys(raw, ["chats", "global"], "state");
+  knownKeys(raw, ["global"], "state");
   if (!("global" in raw)) throw new Error("state.global is required");
-  const rawChats: Record<string, unknown> = record(raw.chats, "state.chats");
-  const chats: Record<string, ChatState> = {};
-  const activeProxyChatIds: number[] = [];
-  for (const [chatIdText, value] of Object.entries(rawChats)) {
-    const chatId: number = Number(chatIdText);
-    if (!Number.isSafeInteger(chatId) || chatId === 0 || String(chatId) !== chatIdText) {
-      throw new Error(`state.chats has invalid chat id key: ${chatIdText}`);
-    }
-    const decodedChatState: ChatState = chatState(value, `state.chats.${chatIdText}`);
-    chats[chatIdText] = decodedChatState;
-    if (decodedChatState.isProxySendEnabled === true) activeProxyChatIds.push(chatId);
-  }
-  if (activeProxyChatIds.length > 1) {
-    throw new Error(`state.chats has multiple active proxy send targets: ${activeProxyChatIds.join(", ")}`);
-  }
-  return { chats, global: globalState(raw.global) };
+  return { global: globalState(raw.global) };
 }
