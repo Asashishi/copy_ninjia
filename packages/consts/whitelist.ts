@@ -146,6 +146,23 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanControllAntiRaidPermission",
 ];
 
+/**
+ * 权限键的小写输入到规范拼写的只读索引；命令解析复用，避免每次从头遍历并对
+ * 15 个候选重复 lower-case。所属模块：packages/commands/permission.ts。
+ */
+export const WHITELIST_PERMISSION_KEY_BY_LOWERCASE: ReadonlyMap<
+  string,
+  WhitelistPermissionKey
+> = new Map(
+  WHITELIST_PERMISSION_KEYS.map(
+    (key: WhitelistPermissionKey): readonly [string, WhitelistPermissionKey] =>
+      [key.toLowerCase(), key]
+  )
+);
+if (WHITELIST_PERMISSION_KEY_BY_LOWERCASE.size !== WHITELIST_PERMISSION_KEYS.length) {
+  throw new Error("WHITELIST_PERMISSION_KEYS must be unique after lower-case normalization");
+}
+
 /** /permission 的权限说明子命令。所属模块：packages/commands/permission.ts。 */
 export const WHITELIST_PERMISSION_HELP_COMMAND: string = "help";
 /** /permission 查询自身或指定用户权限的子命令。所属模块：packages/commands/permission.ts。 */
@@ -176,6 +193,13 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanControllJATranslatePermission: "让这号杂鱼能用 /ja_copy enable|disable 开关日语翻译，这点小事总看得懂吧♡",
   isCanControllAntiRaidPermission: "让这号杂鱼能用 /antiraid enable|disable 开关入群验证与防冲群私密模式，关掉可就没人拦僵尸了哦♡",
 };
+
+/**
+ * /permission help 的稳定 JSON 代码块；说明表在进程内不可变，模块加载时序列化
+ * 一次即可。所属模块：packages/commands/permission.ts。
+ */
+export const WHITELIST_PERMISSION_HELP_JSON: string =
+  JSON.stringify(WHITELIST_PERMISSION_HELP, null, 2);
 
 /** /permission 用法说明的正文；usage 与 usageWithKeys 共用同一份措辞。 */
 const PERMISSION_USAGE_TEXT: string =

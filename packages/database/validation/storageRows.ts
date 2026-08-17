@@ -6,7 +6,6 @@ import {
   decodeBlocklistEntryData,
   decodePendingBlockedRemovalData,
   decodeWhitelistEntryData,
-  encodePendingBlockedRemovalData,
 } from "../codec/identity";
 import { parseJsonInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
@@ -114,7 +113,9 @@ export function decodeStoredPendingRemovals(
       throw new Error(`${path}: params.removalId must equal the row primary key.`);
     }
     values.set(row.removalId, pending);
-    encoded.set(row.removalId, encodePendingBlockedRemovalData(pending, path).text);
+    // pending 已由上面的严格 decoder 规范化；这里直接生成与 encoder 相同的稳定
+    // 文本，避免为了取得文本把刚解出的同一个值再 parse 和逐字段校验一遍。
+    encoded.set(row.removalId, JSON.stringify(pending));
   }
   return { values, encoded };
 }

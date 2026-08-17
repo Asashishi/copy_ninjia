@@ -11,7 +11,10 @@ import type {
   DiskIORespawnListener,
   IdentityStoragePersistedReply,
 } from "../../packages/types/diskIO";
-import type { IdentityPolicyRawReadResult } from "../../packages/types/identityStorage";
+import type {
+  BlocklistIdPage,
+  IdentityPolicyRawReadResult,
+} from "../../packages/types/identityStorage";
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -31,8 +34,18 @@ const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [
 const respawnListeners: DiskIORespawnListener[] = [];
 let readImplementation: (ids: readonly number[]) => Promise<IdentityPolicyRawReadResult> =
   async (): Promise<IdentityPolicyRawReadResult> => ({ whitelist: [], blocklist: [] });
+let pageReadImplementation: (afterId: number | null) => Promise<BlocklistIdPage> =
+  async (afterId: number | null): Promise<BlocklistIdPage> => ({
+    ids: [],
+    nextCursor: afterId,
+    done: true,
+  });
 const readIdentityPolicies = mock(
   (ids: readonly number[]): Promise<IdentityPolicyRawReadResult> => readImplementation(ids)
+);
+const readBlocklistIdPage = mock(
+  (afterId: number | null): Promise<BlocklistIdPage> =>
+    pageReadImplementation(afterId)
 );
 let acceptDiskMessages: boolean = true;
 const flushDiskIODomainOutcome = mock(
@@ -68,7 +81,7 @@ mock.module("../../packages/infra/diskIO", () => ({
     return acceptDiskMessages;
   },
   flushDiskIODomainOutcome,
-  readBlocklistIds: async (): Promise<readonly number[]> => [],
+  readBlocklistIdPage,
   readIdentityPolicies,
   relayLogMessage: (): boolean => true,
 }));
@@ -89,6 +102,8 @@ const {
   isIdentityPolicyCached,
   prefetchIdentityPolicies,
   queueIdentityPolicyWrite,
+  readBlocklistSweepPage,
+  retainCurrentlyBlockedIdentityIds,
 } = await import("../../packages/infra/identityStorage");
 
 function seedMissing(id: number): void {
@@ -108,10 +123,18 @@ beforeEach(() => {
   acceptDiskMessages = true;
   resetIdentityStorageCache();
   readIdentityPolicies.mockClear();
+  readBlocklistIdPage.mockClear();
   flushDiskIODomainOutcome.mockClear();
   readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
     whitelist: [],
     blocklist: [],
+  });
+  pageReadImplementation = async (
+    afterId: number | null
+  ): Promise<BlocklistIdPage> => ({
+    ids: [],
+    nextCursor: afterId,
+    done: true,
   });
 });
 
@@ -324,6 +347,51 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     // 管理员会按冷未命中判成普通成员踢出去（见 commands/batchKick.ts）。
     expect(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES)
       .toBeLessThan(IDENTITY_READ_CACHE_MAX_ENTRIES);
+  });
+
+  test("补扫每页先等待黑名单精确 ACK，再以该页游标读取 SQLite", async () => {
+    seedMissing(7);
+    queueIdentityPolicyWrite("blocklist", 7, blockValue());
+    pageReadImplementation = async (): Promise<BlocklistIdPage> => ({
+      ids: [7],
+      nextCursor: 7,
+      done: true,
+    });
+
+    await expect(readBlocklistSweepPage(null)).resolves.toEqual({
+      ids: [7],
+      nextCursor: 7,
+      done: true,
+    });
+
+    expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("blocklist");
+    expect(unacknowledgedBlocklistWrites.size).toBe(0);
+    expect(readBlocklistIdPage).toHaveBeenCalledWith(null);
+  });
+
+  test("flush 没有精确 ACK 时拒绝开始补扫，不拿数据库旧页继续", async () => {
+    seedMissing(7);
+    queueIdentityPolicyWrite("blocklist", 7, blockValue());
+    flushDiskIODomainOutcome.mockImplementationOnce(
+      async (): Promise<DomainFlushOutcome> => ({ result: "flushed" })
+    );
+
+    await expect(readBlocklistSweepPage(null))
+      .rejects.toThrow("unacknowledged write");
+    expect(readBlocklistIdPage).not.toHaveBeenCalled();
+  });
+
+  test("durable 对账只复核当前有界页，未 ACK 最终值覆盖数据库迟到结果", async () => {
+    for (const id of [7, 8, 9]) seedMissing(id);
+    queueIdentityPolicyWrite("blocklist", 7, null);
+    queueIdentityPolicyWrite("blocklist", 9, blockValue());
+    readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
+      whitelist: [],
+      blocklist: [[7, "{}"], [8, "{}"]],
+    });
+
+    await expect(retainCurrentlyBlockedIdentityIds([7, 8, 9]))
+      .resolves.toEqual([8, 9]);
   });
 
   test("冷读失败就地降级为「仍是冷的」，不把异常抛给 update 前置中间件", async () => {

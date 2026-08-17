@@ -8,6 +8,7 @@ import type {
   LuckDayCache,
   LuckReceiptSecret,
 } from "./storage";
+import type { BlocklistIdPage } from "../identityStorage";
 /** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
  * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify，
  * 见 workers/diskIO/snapshotFiles.ts），供 hydrate 链路直接透传。 */
@@ -71,11 +72,11 @@ export interface IdentityPoliciesReadReply {
   error?: string;
 }
 
-/** Disk I/O Worker -> 主线程：群级补扫所需的完整黑名单 ID。 */
-export interface BlocklistIdsReadReply {
-  type: "blocklistIdsRead";
+/** Disk I/O Worker -> 主线程：群级补扫所需的有界黑名单主键页。 */
+export interface BlocklistIdPageReadReply {
+  type: "blocklistIdPageRead";
   requestId: number;
-  ids?: readonly number[];
+  page?: BlocklistIdPage;
   error?: string;
 }
 
@@ -236,7 +237,7 @@ export type DiskIOReply =
   | LuckSecretReply
   | JoinLogReadReply
   | IdentityPoliciesReadReply
-  | BlocklistIdsReadReply
+  | BlocklistIdPageReadReply
   | IdentityStoragePersistedReply
   | DiskFlushReply
   | DiskFlushFailedReply

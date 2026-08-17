@@ -636,7 +636,7 @@
 
 - 黑名单移除批次必须跨进程存活：主线程在投递 Anti-Raid Worker 前，把当前 `pendingBlockedRemovals` 快照交给 Disk I/O Worker，并按独立的 `blocklistRemovalOutbox` 领域等待 SQLite `pending_blocked_removals` 变化的 snapshot revision ACK；只有对应 transaction durable 后才能交接 update。Worker 把新旧快照比较成按主键的 upsert/delete，只编码实际变化的行，不再为每次销账整份重写文件。
 
-  **补扫条目（`probeMembership: true`）不得持久化 `userIds`**：outbox 只记录「拿当前黑名单扫这个群」的任务，投递与重放时由 Disk I/O 边界读取此刻完整 `blocklist_entries` 主键集合。把名单冻结进每个群任务会放大成「群数 × 名单长度」的存储和 structured-clone 成本，而且重放时已经过期。反过来，秒踢类 `probeMembership: false` 任务必须冻结当时已确定的非空 `userIds`；两种 shape 由判别联合与严格 codec 同时约束。
+  **补扫条目（`probeMembership: true`）不得持久化 `userIds`**：outbox 只记录「拿当前黑名单扫这个群」的任务。投递与重放按主键升序从 Disk I/O 边界读取稳定游标页，每页最多 512 个 id；上一页收到完整回执后才读下一页，最后一页落定后才能销掉 durable task。每页读取前先确认 blocklist 领域的写入已经 flush/ACK，Disk I/O Worker 再把 SQLite 已提交页与最多 128 条并发 pending 最终值合并；不得把多页拼回完整 `Set` 或数组。任一页读取或投递失败都保留 outbox、释放本轮 claim 并推进退避，下次从空游标安全重放。把名单冻结进每个群任务会放大成「群数 × 名单长度」的存储和 structured-clone 成本，而且重放时已经过期。反过来，秒踢类 `probeMembership: false` 任务必须冻结当时已确定的非空 `userIds`；两种 shape 由判别联合与严格 codec 同时约束。
 
   主线程、跨线程消息与 Disk I/O 快照各只保留职责所需的一份；接收端编码一次并缓存规范文本，比较变化时不得对旧行重复 stringify + parse。只有诊断字段变化时不额外深拷贝整表，下一次权威快照顺带提交；跨越告警阈值的那次仍立即持久化。达到告警阈值只升级诊断，不删除安全任务。
 

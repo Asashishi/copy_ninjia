@@ -7,6 +7,15 @@ export interface IdentityPolicyRawReadResult {
   readonly blocklist: readonly (readonly [number, string])[];
 }
 
+/** SQLite 按主键稳定顺序返回的一页黑名单 ID；载荷受固定页大小硬顶。 */
+export interface BlocklistIdPage {
+  readonly ids: readonly number[];
+  /** 本页最后一个主键；空页保持请求游标，完成页不再使用它续读。 */
+  readonly nextCursor: number | null;
+  /** true 表示当前游标之后已没有更多有效黑名单主键。 */
+  readonly done: boolean;
+}
+
 /** 主线程按表和主键保留到事务 ACK 的最终值。 */
 export interface UnacknowledgedIdentityWrite {
   readonly data: string | null;

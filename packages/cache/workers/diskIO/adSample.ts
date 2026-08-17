@@ -29,3 +29,25 @@ export const adSampleTempsSwept: { current: boolean } = { current: false };
  * 回到 null，可安全重扫一次；清扫失败也记录日期，失败本身不能拖累旁路追加。
  */
 export const adSampleArchiveSweepDay: { current: string | null } = { current: null };
+
+/** 每日归档选名的最小有界游标；完整生命周期见 adSampleArchiveCursor。 */
+export interface AdSampleArchiveCursor {
+  /** 当前索引所属的东京日期。 */
+  readonly day: string;
+  /** 按既有命名规则应当从哪个正整数候选继续碰撞检查；1 表示无序号文件。 */
+  readonly nextIndex: number;
+}
+
+/**
+ * 广告样本归档的下一个候选索引。
+ *
+ * - 填充：每日保留期目录扫描完成后，从同一份目录快照算出最小空缺；每次成功
+ *   选名后前移一格。
+ * - 清理/重建：Worker 重建后为 null，由首次样本触发的目录扫描重建；日期变化
+ *   时用新日扫描结果整体替换。
+ * - 容量：一个日期和一个安全整数，无增长。
+ * - 碰撞策略：使用前仍以 existsSync 向前复核，因此外部新增归档不会被覆盖。
+ */
+export const adSampleArchiveCursor: {
+  current: AdSampleArchiveCursor | null;
+} = { current: null };

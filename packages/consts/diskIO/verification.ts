@@ -26,3 +26,37 @@ export const VERIFICATION_FILE_COMPACT_BYTES: number = 4 * 1024 * 1024;
  * 文件，不代表业务预期长度。
  */
 export const VERIFICATION_LABEL_MAX_CHARS: number = 512;
+
+/**
+ * 四种待验证记录共同允许的字段；codec 只读查表，不为每条恢复记录重建 Set。
+ * 所属模块：workers/diskIO/verificationCodec.ts。
+ */
+export const VERIFICATION_BASE_RECORD_KEYS: ReadonlySet<string> = new Set([
+  "version", "chatId", "userId", "generation", "revision", "phase", "label",
+  "isBot", "announcementMessageId", "trackedMessageTimes", "invitedBy",
+  "reminderMessageId", "replyReminderMessageId", "replyReminderRequested",
+  "welcomeAnchorMessageId", "reminderSuperseded", "joinedAt", "expiresAt",
+]);
+
+/** kickPending 记录在公共字段之外允许的阶段字段。所属模块：workers/diskIO/verificationCodec.ts。 */
+export const VERIFICATION_KICK_PENDING_RECORD_KEYS: ReadonlySet<string> = new Set([
+  ...VERIFICATION_BASE_RECORD_KEYS,
+  "requestedAt",
+  "countedJoinAt",
+]);
+
+/** checkingInviter 记录在公共字段之外允许的阶段字段。所属模块：workers/diskIO/verificationCodec.ts。 */
+export const VERIFICATION_CHECKING_INVITER_RECORD_KEYS: ReadonlySet<string> = new Set([
+  ...VERIFICATION_BASE_RECORD_KEYS,
+  "terminalInviterId",
+]);
+
+/** expelling 记录在公共字段之外允许的阶段字段。所属模块：workers/diskIO/verificationCodec.ts。 */
+export const VERIFICATION_EXPELLING_RECORD_KEYS: ReadonlySet<string> = new Set([
+  ...VERIFICATION_BASE_RECORD_KEYS,
+  "expelReason",
+  "successNoticeSent",
+  "failureNoticeSent",
+  "unconfirmedNoticeSent",
+  "removalConfirmed",
+]);

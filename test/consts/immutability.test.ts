@@ -36,6 +36,7 @@ import {
   NON_WHITELIST_PERMISSIONS,
   PERMISSION_COMMAND_TEXTS,
   SUPER_ADMIN_WHITELIST_PERMISSIONS,
+  WHITELIST_PERMISSION_KEY_BY_LOWERCASE,
   WHITE_COMMAND_TEXTS,
 } from "../../packages/consts/whitelist";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
@@ -111,6 +112,8 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   const compileOnly: () => void = (): void => {
     // @ts-expect-error 逐场景纳秒软上报阈值经独立进程校准，调用方不允许覆写。
     HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS["ad-capacity-reject"] = 1;
+    // @ts-expect-error 权限键规范化索引是跨命令调用共享的只读查表，不允许增删。
+    WHITELIST_PERMISSION_KEY_BY_LOWERCASE.set("x", "isCanMute");
   };
   expect(compileOnly).toBeFunction();
 });

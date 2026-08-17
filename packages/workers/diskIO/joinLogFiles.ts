@@ -7,6 +7,7 @@
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   unlinkSync,
 } from "node:fs";
@@ -39,7 +40,7 @@ import {
 } from "../../consts/diskIO/common";
 import { JOIN_LOG_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { atomicWriteTextChunksSync } from "../../libs/atomicFile";
-import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { invalidInput } from "../../libs/inputValidation";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type {
@@ -55,6 +56,7 @@ import type {
 import {
   appendToAppendOnlyFile,
   openAppendOnlyFile,
+  openValidatedAppendOnlyFile,
 } from "./appendOnlyDayFile";
 import {
   assertJoinLogSchema,
@@ -128,13 +130,26 @@ function maybeCompactJoinLogFile(
 function openJoinLogFile(chatId: number, day: string): JoinLogFileCache {
   const path: string = joinLogPath(chatId, day);
   let parsed: Record<string, JoinLogRecord> = {};
+  let content: string | null = null;
   if (existsSync(path)) {
-    const candidate: unknown = readJsonInput(path);
+    let candidate: unknown;
+    try {
+      content = readFileSync(path, "utf8");
+      candidate = JSON.parse(content) as unknown;
+    } catch {
+      return invalidInput(path, "$", "a readable valid JSON document");
+    }
     assertJoinLogSchema(path, candidate);
     parsed = candidate;
   }
-  const state: AppendOnlyFileState =
-    openAppendOnlyFile(path, PERSISTED_FILE_MODE);
+  const state: AppendOnlyFileState = content === null
+    ? openAppendOnlyFile(path, PERSISTED_FILE_MODE)
+    : openValidatedAppendOnlyFile({
+      path,
+      content,
+      empty: Object.keys(parsed).length === 0,
+      mode: PERSISTED_FILE_MODE,
+    });
   const latestByUser: Map<number, JoinLogRecord> =
     latestJoinLogRecords(parsed);
   if (latestByUser.size > JOIN_LOG_MAX_USERS_PER_CHAT_DAY) {
@@ -172,11 +187,15 @@ function getJoinLogFileCache(
 }
 
 /** 按文件名清掉保留窗口以外的入群日志和遗留临时文件，不读取日志内容。 */
-function cleanupExpiredDays(today: string): void {
+function cleanupExpiredDays(
+  today: string,
+  knownNames?: readonly string[]
+): void {
   mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
+  const names: readonly string[] = knownNames ?? readdirSync(JOIN_LOG_MEMORY_DIR);
   const retainedDays: ReadonlySet<string> =
     recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
-  for (const name of readdirSync(JOIN_LOG_MEMORY_DIR)) {
+  for (const name of names) {
     const path: string = join(JOIN_LOG_MEMORY_DIR, name);
     if (name.endsWith(TMP_FILE_SUFFIX)) {
       try {
@@ -208,7 +227,8 @@ export function recoverJoinLogFiles(today: string = getTokyoDateKey()): void {
   mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
   const retainedDays: ReadonlySet<string> =
     recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
-  for (const name of readdirSync(JOIN_LOG_MEMORY_DIR)) {
+  const names: string[] = readdirSync(JOIN_LOG_MEMORY_DIR);
+  for (const name of names) {
     if (name.endsWith(TMP_FILE_SUFFIX)) continue;
     const path: string = join(JOIN_LOG_MEMORY_DIR, name);
     const match: RegExpExecArray | null = JOIN_LOG_FILE_PATTERN.exec(name);
@@ -235,15 +255,27 @@ export function recoverJoinLogFiles(today: string = getTokyoDateKey()): void {
       return invalidInput(path, "$filename", "a date no later than the current Tokyo day");
     }
     if (!retainedDays.has(day)) continue;
-    const candidate: unknown = readJsonInput(path);
+    let content: string;
+    let candidate: unknown;
+    try {
+      content = readFileSync(path, "utf8");
+      candidate = JSON.parse(content) as unknown;
+    } catch {
+      return invalidInput(path, "$", "a readable valid JSON document");
+    }
     assertJoinLogSchema(path, candidate);
     const latest: Map<number, JoinLogRecord> = latestJoinLogRecords(candidate);
     if (latest.size > JOIN_LOG_MAX_USERS_PER_CHAT_DAY) {
       return invalidInput(path, "$", `at most ${JOIN_LOG_MAX_USERS_PER_CHAT_DAY} distinct users per chat day`);
     }
-    openAppendOnlyFile(path, PERSISTED_FILE_MODE);
+    openValidatedAppendOnlyFile({
+      path,
+      content,
+      empty: Object.keys(candidate).length === 0,
+      mode: PERSISTED_FILE_MODE,
+    });
   }
-  cleanupExpiredDays(today);
+  cleanupExpiredDays(today, names);
 }
 
 function ensureCurrentDayPrepared(today: string): void {

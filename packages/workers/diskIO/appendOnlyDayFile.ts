@@ -40,6 +40,17 @@ export interface SyncWriteRequest {
 export type SyncBufferWriter = (request: SyncWriteRequest) => number;
 export type SyncFile = (fd: number) => void;
 
+export interface OpenValidatedAppendOnlyFileOptions {
+  /** 已由领域 codec 严格校验过的目标路径。 */
+  readonly path: string;
+  /** 与领域校验使用同一轮读取取得的原始文本。 */
+  readonly content: string;
+  /** 顶层对象是否没有自有条目；由领域校验过程顺带给出。 */
+  readonly empty: boolean;
+  /** 需要接管的持久化权限；缺省时沿用部署方现有权限。 */
+  readonly mode?: number;
+}
+
 export interface WriteBufferFullyParams {
   position: number;
   write?: SyncBufferWriter;
@@ -152,9 +163,56 @@ export function openAppendOnlyFile(path: string, mode?: number, repair: boolean 
   return state;
 }
 
+/**
+ * 接管已经由领域 codec 严格解析、校验过的追加文件。
+ *
+ * 调用方必须把同一轮读取的 content 与空对象结论一起传入；本函数只复核通用的
+ * 规范结尾、物理大小和权限，不再把同一份 JSON 解析第二次。不存在时仍按
+ * openAppendOnlyFile 的空文件语义返回，外部并发删除不会让旧游标被接管。
+ * 该入口不提供 repair：需要裁尾的异常文件仍必须走 openAppendOnlyFile，避免
+ * 绕开修复后的领域复核。
+ */
+export function openValidatedAppendOnlyFile({
+  path,
+  content,
+  empty,
+  mode,
+}: OpenValidatedAppendOnlyFileOptions): AppendOnlyFileState {
+  const state: AppendOnlyFileState = { size: 0, empty: true };
+  if (!existsSync(path)) return state;
+  if (mode !== undefined && (statSync(path).mode & 0o777) !== mode) {
+    chmodSync(path, mode);
+  }
+  if (empty) return state;
+  if (!content.endsWith("\n}")) {
+    throw new AppendOnlyFileFormatError(
+      path,
+      "must use the canonical append-only JSON object formatting."
+    );
+  }
+  state.size = statSync(path).size;
+  state.empty = false;
+  return state;
+}
+
 /** openAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装（按天滚动的三个领域用）。 */
 export function openDayFile(dir: string, day: string, mode?: number): DayFileState {
   return { day, ...openAppendOnlyFile(join(dir, `${day}.json`), mode) };
+}
+
+/** 构造并复核一个顶层成员边界候选；成功时交出可直接原子发布的完整文本。 */
+function repairCandidateAt(
+  content: string,
+  boundaries: readonly number[],
+  boundaryIndex: number
+): string | null {
+  const candidate: string = `${content.slice(0, boundaries[boundaryIndex])}\n}`;
+  try {
+    JSON.parse(candidate);
+    return candidate;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -203,16 +261,29 @@ function repairTruncated(content: string): string | null {
     }
   }
 
-  for (let i: number = boundaries.length - 1; i >= 0; i--) {
-    const candidate: string = `${content.slice(0, boundaries[i])}\n}`;
-    try {
-      JSON.parse(candidate);
-      return candidate;
-    } catch {
-      // 更晚的完整记录本身也可能损坏；继续回退到更早的顶层边界。
+  if (boundaries.length === 0) return null;
+  // 尾部撕裂是常见情况，仍与旧实现一样先只试最后一个完整成员边界。
+  const last: string | null = repairCandidateAt(content, boundaries, boundaries.length - 1);
+  if (last !== null) return last;
+
+  // 顶层边界候选具有「前缀有效、后缀无效」的单调性：某个边界之前一旦已有
+  // 非法 token，之后追加完整的 `, member` 不可能改正更早的语法；反过来，损坏
+  // 发生前的所有完整成员前缀都可独立补 `}` 解析。因此对最后一个有效前缀二分，
+  // 避免早期损坏时从文件尾反复 slice + parse 退化为 O(n²)。
+  let low: number = 0;
+  let high: number = boundaries.length - 2;
+  let best: string | null = null;
+  while (low <= high) {
+    const middle: number = low + Math.floor((high - low) / 2);
+    const candidate: string | null = repairCandidateAt(content, boundaries, middle);
+    if (candidate === null) {
+      high = middle - 1;
+    } else {
+      best = candidate;
+      low = middle + 1;
     }
   }
-  return null;
+  return best;
 }
 
 export interface AppendToAppendOnlyFileParams {

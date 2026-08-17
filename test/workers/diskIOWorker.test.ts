@@ -120,10 +120,10 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
     chatStates: new Map<number, never>(),
   }),
   pendingStorageDatabaseDomains,
-  readBlocklistIds: (message: { requestId: number }): unknown => ({
-    type: "blocklistIdsRead",
+  readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({
+    type: "blocklistIdPageRead",
     requestId: message.requestId,
-    ids: [],
+    page: { ids: [], nextCursor: message.afterId, done: true },
   }),
   readIdentityPolicies: (message: { requestId: number }): unknown => ({
     type: "identityPoliciesRead",

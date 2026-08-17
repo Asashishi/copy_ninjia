@@ -2,12 +2,16 @@
 
 import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../consts/antiRaid/lockdown";
 import {
+  VERIFICATION_BASE_RECORD_KEYS,
+  VERIFICATION_CHECKING_INVITER_RECORD_KEYS,
+  VERIFICATION_EXPELLING_RECORD_KEYS,
   VERIFICATION_FILE_VERSION,
+  VERIFICATION_KICK_PENDING_RECORD_KEYS,
   VERIFICATION_LABEL_MAX_CHARS,
 } from "../../consts/diskIO/verification";
 import { verificationKey } from "../../libs/verificationKey";
 import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
-import { hasOnlyKeys, isPlainRecord } from "../../libs/record";
+import { isPlainRecord } from "../../libs/record";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type {
   VerificationSnapshot,
@@ -34,29 +38,18 @@ function isOptionalSafeTimestamp(value: unknown): value is number | undefined {
 
 /** 按 phase 拒绝未知字段，避免 compact 时静默甩掉状态内容。 */
 function hasCurrentVerificationKeys(value: Record<string, unknown>): boolean {
-  const baseKeys: readonly string[] = [
-    "version", "chatId", "userId", "generation", "revision", "phase", "label",
-    "isBot", "announcementMessageId", "trackedMessageTimes", "invitedBy",
-    "reminderMessageId", "replyReminderMessageId", "replyReminderRequested",
-    "welcomeAnchorMessageId", "reminderSuperseded", "joinedAt", "expiresAt",
-  ];
+  let allowed: ReadonlySet<string> = VERIFICATION_BASE_RECORD_KEYS;
   if (value.phase === "kickPending") {
-    return hasOnlyKeys(value, [...baseKeys, "requestedAt", "countedJoinAt"]);
+    allowed = VERIFICATION_KICK_PENDING_RECORD_KEYS;
+  } else if (value.phase === "checkingInviter") {
+    allowed = VERIFICATION_CHECKING_INVITER_RECORD_KEYS;
+  } else if (value.phase === "expelling") {
+    allowed = VERIFICATION_EXPELLING_RECORD_KEYS;
   }
-  if (value.phase === "checkingInviter") {
-    return hasOnlyKeys(value, [...baseKeys, "terminalInviterId"]);
+  for (const key in value) {
+    if (Object.hasOwn(value, key) && !allowed.has(key)) return false;
   }
-  if (value.phase === "expelling") {
-    return hasOnlyKeys(value, [
-      ...baseKeys,
-      "expelReason",
-      "successNoticeSent",
-      "failureNoticeSent",
-      "unconfirmedNoticeSent",
-      "removalConfirmed",
-    ]);
-  }
-  return hasOnlyKeys(value, baseKeys);
+  return true;
 }
 
 /** 对当天文件中的最新值逐字段校验，不把畸形数据带回业务 Worker。 */

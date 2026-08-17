@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { AD_SAMPLE_FILE_PATH, AD_SAMPLE_MEMORY_DIR } from "../../../packages/consts/paths";
 import { AD_SAMPLE_FILE_MAX_BYTES, PERSISTED_FILE_MODE } from "../../../packages/consts/diskIO/common";
 import {
+  adSampleArchiveCursor,
   adSampleArchiveSweepDay,
   adSampleFileState,
   adSampleTempsSwept,
@@ -40,6 +41,7 @@ beforeEach(() => {
   adSampleFileState.current = null;
   adSampleTempsSwept.current = false;
   adSampleArchiveSweepDay.current = null;
+  adSampleArchiveCursor.current = null;
   rmSync(AD_SAMPLE_MEMORY_DIR, { recursive: true, force: true });
 });
 
@@ -103,6 +105,21 @@ describe("广告命中样本旁路", () => {
       .filter((name: string): boolean => name !== "sample.json");
     expect(archives).toHaveLength(1);
     expect(readFileSync(join(AD_SAMPLE_MEMORY_DIR, archives[0]!), "utf8")).toBe(archivedBytes);
+  });
+
+  test("目录扫描缓存最小空缺归档序号，仍保持既有选名规则", () => {
+    mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
+    const today: string = getTokyoDateKey();
+    writeFileSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.json`), "{}");
+    writeFileSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.3.json`), "{}");
+    writeFileSync(AD_SAMPLE_FILE_PATH, "{}");
+
+    sweepExpiredAdSampleArchives({ today });
+    expect(adSampleArchiveCursor.current).toEqual({ day: today, nextIndex: 2 });
+    adSampleFileState.current = { size: AD_SAMPLE_FILE_MAX_BYTES, empty: true };
+    handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "gap" }] }));
+
+    expect(existsSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.2.json`))).toBeTrue();
   });
 
   test("归档只按严格文件名保留最近 15 个东京自然日，不误删当前文件、未知项或目录", () => {

@@ -8,6 +8,7 @@
 
 import {
   blockedMemberRemoverHolder,
+  blocklistSweepPages,
   blocklistSweepState,
   pendingBlockedRemovals,
 } from "../../cache/main/blocklist";
@@ -20,7 +21,7 @@ import { logger } from "../logger";
 import { getChatStateCache } from "../storage/stateStore";
 import {
   hasAnyBlockedIdentity,
-  listAllBlockedIdentityIds,
+  readBlocklistSweepPage,
 } from "../identityStorage";
 import {
   armBlocklistSweepScheduler as armSweepScheduler,
@@ -34,11 +35,13 @@ import {
 import type { BlockedMembersRemovedEvent } from "../../types/antiRaid";
 import type {
   BlocklistRemovalFailure,
+  BlocklistSweepPageState,
   BlocklistSweepRecord,
   PendingBlockedRemoval,
   RemoveBlockedMembersParams,
 } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
+import type { BlocklistIdPage } from "../../types/identityStorage";
 
 export { quiesceBlocklistSweepScheduler } from "./sweepScheduler";
 
@@ -183,6 +186,7 @@ function forgetChatSweepBatches(chatId: number, exceptRemovalId?: number): void 
       removalId !== exceptRemovalId
     ) {
       pendingBlockedRemovals.delete(removalId);
+      blocklistSweepPages.delete(removalId);
       changed = true;
     }
   }
@@ -202,7 +206,7 @@ interface PreparedBlocklistSweep {
 function prepareBlocklistSweep(
   chatId: number,
   now: number,
-  blockedIds: readonly number[]
+  page: BlocklistIdPage
 ): PreparedBlocklistSweep | null {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
   if (progress !== undefined && (
@@ -217,7 +221,7 @@ function prepareBlocklistSweep(
   const failedSweeps: number = progress?.failedSweeps ?? 0;
   let params: RemoveBlockedMembersParams;
   try {
-    params = trackBlockedRemoval({ chatId, probeMembership: true }, blockedIds);
+    params = trackBlockedRemoval({ chatId, probeMembership: true }, page.ids);
   } catch (error: unknown) {
     // 满仓或 id 耗尽必须在 update 内就地降级；抛出去会形成重投/重启循环。
     logger.error(`Failed to queue the blocklist sweep of chat ${chatId}:`, error);
@@ -233,6 +237,12 @@ function prepareBlocklistSweep(
     resweepRequested: false,
     failedSweeps,
     permissionBlocked: false,
+  });
+  blocklistSweepPages.set(params.removalId, {
+    chatId,
+    nextCursor: page.nextCursor,
+    done: page.done,
+    awaitingAck: true,
   });
   armBlocklistSweepScheduler();
   return { chatId, params, failedSweeps, now };
@@ -255,6 +265,7 @@ function abandonPreparedSweeps(sweeps: readonly PreparedBlocklistSweep[]): void 
         sweep.chatId,
         "delivery-boundary"
       );
+      blocklistSweepPages.delete(sweep.params.removalId);
       // 这批任务不会再有回执来推进退避（claim 已清空，迟到的回执走
       // requestBlocklistResweep 那条不动计数的路），因此必须在这里推进。
       noteSweepAttemptFailed(
@@ -312,12 +323,12 @@ export async function sweepBlockedMembers(
   // 路径是 recordBotChatPermissions 在权限恢复时调用本函数而 Disk I/O 正在 recycle，
   // 于是周期性补扫在本进程生命周期内不再被武装。
   try {
-    const blockedIds: readonly number[] = hasAnyBlockedIdentity()
-      ? await listAllBlockedIdentityIds()
-      : [];
-    const sweep: PreparedBlocklistSweep | null = blockedIds.length === 0
+    const page: BlocklistIdPage = hasAnyBlockedIdentity()
+      ? await readBlocklistSweepPage(null)
+      : { ids: [], nextCursor: null, done: true };
+    const sweep: PreparedBlocklistSweep | null = page.ids.length === 0
       ? null
-      : prepareBlocklistSweep(chatId, now, blockedIds);
+      : prepareBlocklistSweep(chatId, now, page);
     if (sweep === null) return;
     await deliverPreparedSweeps([sweep]);
   } finally {
@@ -361,15 +372,15 @@ export async function sweepManagedBlocklistChats(
 ): Promise<void> {
   try {
     if (!hasAnyBlockedIdentity()) return;
-    let blockedIds: readonly number[];
+    let page: BlocklistIdPage;
     try {
-      blockedIds = await listAllBlockedIdentityIds();
+      page = await readBlocklistSweepPage(null);
     } catch (error: unknown) {
-      logger.error("Failed to read blocklist IDs for the managed chat sweep:", error);
+      logger.error("Failed to read the first blocklist ID page for the managed chat sweep:", error);
       deferManagedBlocklistSweeps(now);
       return;
     }
-    if (blockedIds.length === 0) return;
+    if (page.ids.length === 0) return;
     const sweeps: PreparedBlocklistSweep[] = [];
     for (const [chatId, state] of getChatStateCache()) {
       const chatState: ChatState = state;
@@ -380,7 +391,7 @@ export async function sweepManagedBlocklistChats(
         continue;
       }
       const sweep: PreparedBlocklistSweep | null =
-        prepareBlocklistSweep(chatId, now, blockedIds);
+        prepareBlocklistSweep(chatId, now, page);
       if (sweep !== null) sweeps.push(sweep);
     }
     await deliverPreparedSweeps(sweeps);
@@ -390,10 +401,123 @@ export async function sweepManagedBlocklistChats(
 }
 
 /**
+ * 上一页完整落定后读取并投递同一 durable 任务的下一页。
+ * 任一步失败都释放 claim、推进退避并保留 outbox；下一轮从空游标安全重放。
+ */
+async function continueBlocklistSweep(
+  chatId: number,
+  removalId: number,
+  afterId: number
+): Promise<void> {
+  try {
+    const page: BlocklistIdPage = await readBlocklistSweepPage(afterId);
+    const progress: BlocklistSweepRecord | undefined =
+      blocklistSweepState.get(chatId);
+    const pending: PendingBlockedRemoval | undefined =
+      pendingBlockedRemovals.get(removalId);
+    if (
+      progress?.removalId !== removalId ||
+      pending?.params.probeMembership !== true
+    ) {
+      blocklistSweepPages.delete(removalId);
+      return;
+    }
+    if (page.ids.length === 0) {
+      blocklistSweepPages.delete(removalId);
+      settleBlockedRemoval({
+        type: "blockedMembersRemoved",
+        chatId,
+        removalId,
+        complete: true,
+        permissionDenied: false,
+        targetIsAdmin: false,
+      });
+      return;
+    }
+    const params: RemoveBlockedMembersParams | undefined =
+      materializeRemovalParams(pending.params, page.ids);
+    if (params === undefined) {
+      throw new Error(`Blocklist sweep page for removal ${removalId} has no target.`);
+    }
+    blocklistSweepPages.set(removalId, {
+      chatId,
+      nextCursor: page.nextCursor,
+      done: page.done,
+      awaitingAck: true,
+    });
+    await deliverPreparedSweeps([{
+      chatId,
+      params,
+      failedSweeps: progress.failedSweeps,
+      now: Date.now(),
+    }]);
+  } catch (error: unknown) {
+    const progress: BlocklistSweepRecord | undefined =
+      blocklistSweepState.get(chatId);
+    if (progress?.removalId === removalId) {
+      recordPendingRemovalFailure(removalId, chatId, "delivery-boundary");
+      blocklistSweepPages.delete(removalId);
+      noteSweepAttemptFailed(chatId, progress.failedSweeps, Date.now());
+    }
+    logger.error(
+      `Failed to continue blocklist sweep ${removalId} for chat ${chatId}:`,
+      error
+    );
+  }
+}
+
+/**
  * Worker 回执：complete 才销 durable 镜像并允许 sweptAt 落地；未落定任务永久
  * 留在 outbox，直到完成或权威状态取消。
  */
 export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
+  const page: BlocklistSweepPageState | undefined =
+    blocklistSweepPages.get(event.removalId);
+  const currentProgress: BlocklistSweepRecord | undefined =
+    blocklistSweepState.get(event.chatId);
+  if (
+    page !== undefined &&
+    currentProgress?.removalId === event.removalId
+  ) {
+    // 上一页已经落定、下一页仍在 read/flush 时收到的重复回执不得把整轮提前销账。
+    if (!page.awaitingAck) return;
+    if (event.complete && !page.done) {
+      if (event.targetIsAdmin === true) {
+        blocklistSweepState.set(event.chatId, {
+          ...currentProgress,
+          resweepRequested: true,
+        });
+      }
+      if (page.nextCursor === null) {
+        blocklistSweepPages.delete(event.removalId);
+        recordPendingRemovalFailure(
+          event.removalId,
+          event.chatId,
+          "delivery-boundary"
+        );
+        noteSweepAttemptFailed(
+          event.chatId,
+          currentProgress.failedSweeps,
+          Date.now()
+        );
+        logger.error(
+          `Non-final blocklist sweep ${event.removalId} is missing its next cursor.`
+        );
+        return;
+      }
+      blocklistSweepPages.set(event.removalId, {
+        ...page,
+        awaitingAck: false,
+      });
+      void continueBlocklistSweep(
+        event.chatId,
+        event.removalId,
+        page.nextCursor
+      );
+      return;
+    }
+    blocklistSweepPages.delete(event.removalId);
+  }
   if (event.complete) {
     if (
       pendingBlockedRemovals.delete(event.removalId) &&
@@ -524,9 +648,26 @@ function replayPendingBlockedRemovalsForChat(chatId: number): void {
  * 按整份黑名单重新materialize 的，覆盖得了丢掉的那批人——口径同
  * settleBlockedRemoval 对未落定回执的处理，不另起一套机制。
  */
-function rearmSweepAfterFailedReplay(chatIds: Iterable<number>): void {
+function rearmSweepAfterFailedReplay(
+  chatIds: Iterable<number>,
+  sweepRemovalIds: ReadonlyMap<number, number> = new Map()
+): void {
   for (const chatId of chatIds) {
     const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
+    const sweepRemovalId: number | undefined = sweepRemovalIds.get(chatId);
+    if (
+      sweepRemovalId !== undefined &&
+      progress?.removalId === sweepRemovalId
+    ) {
+      blocklistSweepPages.delete(sweepRemovalId);
+      recordPendingRemovalFailure(
+        sweepRemovalId,
+        chatId,
+        "delivery-boundary"
+      );
+      noteSweepAttemptFailed(chatId, progress.failedSweeps, Date.now());
+      continue;
+    }
     requestBlocklistResweep(chatId, Date.now() + sweepRetryDelayMs(progress?.failedSweeps ?? 0));
   }
 }
@@ -547,10 +688,12 @@ async function replayPendingBlockedRemovalsAsync(
   const removals: RemoveBlockedMembersParams[] = [];
   const replayedChatIds: Set<number> = new Set<number>();
   const deferredSweepChatIds: Set<number> = new Set<number>();
-  let blockedIds: readonly number[] = [];
-  let blockedIdsUnavailable: boolean = false;
+  const replayedSweepRemovalIds: Map<number, number> = new Map();
+  const deferredSweepRemovalIds: Map<number, number> = new Map();
+  let page: BlocklistIdPage = { ids: [], nextCursor: null, done: true };
+  blocklistSweepPages.clear();
   try {
-    if (hasAnyBlockedIdentity()) blockedIds = await listAllBlockedIdentityIds();
+    if (hasAnyBlockedIdentity()) page = await readBlocklistSweepPage(null);
   } catch (error: unknown) {
     // 这次读只服务于 probeMembership 补扫批次；冻结批次（`/block` 秒踢、广告
     // 处置）的名单在登记时就冻好了，materializeRemovalParams 对它们根本不看
@@ -558,8 +701,7 @@ async function replayPendingBlockedRemovalsAsync(
     // 退避，重试钩子只有「下一次 Worker 重建」和「一次确证的权限恢复」——两者
     // 都不来时那批人就一直坐在群里，`/block` 却早已回执成功。因此只把补扫降级
     // 成「本轮跳过」，并在下面为它们重新排一次补扫。
-    blockedIdsUnavailable = true;
-    logger.error("Failed to read blocklist IDs for pending removal replay:", error);
+    logger.error("Failed to read the first blocklist ID page for pending removal replay:", error);
   }
   for (const [removalId, pending] of [...pendingBlockedRemovals]) {
     if (
@@ -567,11 +709,15 @@ async function replayPendingBlockedRemovalsAsync(
     ) {
       continue;
     }
+    const blockedIds: readonly number[] = pending.params.probeMembership
+      ? page.ids
+      : [];
     const params: RemoveBlockedMembersParams | undefined =
       materializeRemovalParams(pending.params, blockedIds);
     if (params === undefined) {
-      if (blockedIdsUnavailable && pending.params.probeMembership) {
+      if (pending.params.probeMembership) {
         deferredSweepChatIds.add(pending.params.chatId);
+        deferredSweepRemovalIds.set(pending.params.chatId, removalId);
       }
       continue;
     }
@@ -582,14 +728,28 @@ async function replayPendingBlockedRemovalsAsync(
         "worker-restarted"
       );
     }
+    if (pending.params.probeMembership) {
+      blocklistSweepPages.set(removalId, {
+        chatId: pending.params.chatId,
+        nextCursor: page.nextCursor,
+        done: page.done,
+        awaitingAck: true,
+      });
+      replayedSweepRemovalIds.set(pending.params.chatId, removalId);
+    }
     removals.push(params);
     replayedChatIds.add(pending.params.chatId);
   }
   // 名单读失败而被跳过的补扫没有任何回执可等；沿用重投失败的同一条 re-arm 口径。
-  if (deferredSweepChatIds.size > 0) rearmSweepAfterFailedReplay(deferredSweepChatIds);
+  if (deferredSweepChatIds.size > 0) {
+    rearmSweepAfterFailedReplay(
+      deferredSweepChatIds,
+      deferredSweepRemovalIds
+    );
+  }
   if (removals.length === 0) return;
   await blockedMemberRemoverHolder.current(removals).catch((error: unknown): void => {
     logger.error(`Failed to replay ${removals.length} blocklist removal batch(es):`, error);
-    rearmSweepAfterFailedReplay(replayedChatIds);
+    rearmSweepAfterFailedReplay(replayedChatIds, replayedSweepRemovalIds);
   });
 }

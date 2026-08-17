@@ -10,6 +10,11 @@ import type { RemoveBlockedMembersParams } from "../../packages/types/blocklist"
 const errorLogs: string[] = [];
 const requestBlocklistResweep = mock((_chatId: number): void => {});
 const persistPendingBlockedRemovals = mock(async (): Promise<void> => {});
+const effectiveBlockedIds: Set<number> = new Set<number>();
+const retainCurrentlyBlockedIdentityIds = mock(
+  async (ids: readonly number[]): Promise<readonly number[]> =>
+    ids.filter((id: number): boolean => effectiveBlockedIds.has(id))
+);
 let authoritative = new Map<number, RemoveBlockedMembersParams>();
 
 mock.module("../../packages/infra/logger", () => ({
@@ -21,13 +26,25 @@ mock.module("../../packages/infra/logger", () => ({
   },
 }));
 mock.module("../../packages/infra/blocklist/outbox", () => ({
-  getPendingBlockedRemovalParams: (removalId: number): RemoveBlockedMembersParams | undefined => {
+  getPendingBlockedRemovalParams: (
+    removalId: number,
+    blockedIds: readonly number[] = []
+  ): RemoveBlockedMembersParams | undefined => {
     const params: RemoveBlockedMembersParams | undefined = authoritative.get(removalId);
-    return params === undefined ? undefined : { ...params, userIds: [...params.userIds] };
+    if (params === undefined) return undefined;
+    const userIds: readonly number[] = params.probeMembership
+      ? blockedIds
+      : params.userIds;
+    return userIds.length === 0
+      ? undefined
+      : { ...params, userIds: [...userIds] };
   },
   persistPendingBlockedRemovals,
 }));
 mock.module("../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
+mock.module("../../packages/infra/identityStorage", () => ({
+  retainCurrentlyBlockedIdentityIds,
+}));
 
 const { prepareDurableAntiRaidMessages } =
   await import("../../packages/antiRaid/blocklistDelivery");
@@ -50,6 +67,9 @@ beforeEach(() => {
   errorLogs.length = 0;
   requestBlocklistResweep.mockClear();
   persistPendingBlockedRemovals.mockClear();
+  retainCurrentlyBlockedIdentityIds.mockClear();
+  effectiveBlockedIds.clear();
+  effectiveBlockedIds.add(42);
   authoritative = new Map([[7, { chatId: -1001, userIds: [42], probeMembership: false, removalId: 7 }]]);
 });
 
@@ -77,10 +97,9 @@ describe("黑名单处置投递前的 durable 对账", () => {
     expect(result).toEqual([]);
   });
 
-  test("补扫的现算名单不参与对账比较：落盘窗口里有人被拉黑不该白烧轮次", async () => {
-    // 补扫的名单不进 outbox，durable 的只有任务本身。拿现算结果去比，等落盘的
-    // 那几毫秒里随便一次 /block 或广告处置命中都会判成「内容变了」再来一轮，
-    // 连着变几次就把一次完全合法的补扫整个 withheld 掉。
+  test("补扫只复核当前有界页：落盘窗口里的新增身份不扩张本页", async () => {
+    // 补扫的名单不进 outbox，durable 的只有任务本身。当前页开始投递后又新增的
+    // 身份由直接处置/下一轮补扫覆盖，不能把它并进当前页并重新制造全量快照。
     const sweep: AntiRaidWorkerMessage = {
       type: "removeBlockedMembers",
       chatId: -1001,
@@ -88,24 +107,50 @@ describe("黑名单处置投递前的 durable 对账", () => {
       probeMembership: true,
       removalId: 7,
     };
-    let blocked: number[] = [42];
-    authoritative = {
-      get: (removalId: number): RemoveBlockedMembersParams | undefined =>
-        removalId === 7
-          ? { chatId: -1001, userIds: [...blocked], probeMembership: true, removalId: 7 }
-          : undefined,
-    } as Map<number, RemoveBlockedMembersParams>;
+    authoritative = new Map([[7, {
+      chatId: -1001,
+      userIds: [42],
+      probeMembership: true,
+      removalId: 7,
+    }]]);
     // 第一次落盘之后名单又多了一个人。
     persistPendingBlockedRemovals.mockImplementationOnce(async (): Promise<void> => {
-      blocked = [42, 43];
+      effectiveBlockedIds.add(43);
     });
 
     const result = await prepareDurableAntiRaidMessages([sweep], new Map());
 
-    // 一轮就收敛，且投出去的是最新那一份。
+    // 一轮就收敛，且投出去的载荷仍严格受当前页边界约束。
     expect(persistPendingBlockedRemovals).toHaveBeenCalledTimes(1);
-    expect(result).toEqual([{ ...sweep, userIds: [42, 43] }]);
+    expect(result).toEqual([sweep]);
+    expect(retainCurrentlyBlockedIdentityIds).toHaveBeenCalledWith([42]);
     expect(requestBlocklistResweep).not.toHaveBeenCalled();
+  });
+
+  test("多个群共享同一有界页时只复核一次 SQLite 结果", async () => {
+    const first: AntiRaidWorkerMessage = {
+      type: "removeBlockedMembers",
+      chatId: -1001,
+      userIds: [42],
+      probeMembership: true,
+      removalId: 7,
+    };
+    const second: AntiRaidWorkerMessage = {
+      type: "removeBlockedMembers",
+      chatId: -1002,
+      userIds: [42],
+      probeMembership: true,
+      removalId: 8,
+    };
+    authoritative = new Map([
+      [7, { ...first }],
+      [8, { ...second }],
+    ]);
+
+    await expect(prepareDurableAntiRaidMessages([first, second], new Map()))
+      .resolves.toEqual([first, second]);
+
+    expect(retainCurrentlyBlockedIdentityIds).toHaveBeenCalledTimes(1);
   });
 
   test("对账轮次用尽只摘掉处置、不补 join：批次还在 outbox 里，人仍待清出去", async () => {

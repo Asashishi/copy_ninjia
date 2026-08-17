@@ -20,6 +20,29 @@ export const LUCK_TIERS: readonly LuckTier[] = [
   { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: [3, 12] as const },
 ];
 
+/**
+ * 按持久化 label 取回当前运势档位。固定七档使用分支查找，避免启动恢复与
+ * 主线程水合时为每条记录遍历整张表；未知 label 仍返回 undefined 并由调用方
+ * fail closed。所属模块：commands/luckChallenge/cache.ts、workers/diskIO/snapshotFiles.ts。
+ */
+export function luckTierByLabel(label: string): LuckTier | undefined {
+  switch (label) {
+    case "大吉": return LUCK_TIERS[0];
+    case "吉": return LUCK_TIERS[1];
+    case "小吉": return LUCK_TIERS[2];
+    case "尚可": return LUCK_TIERS[3];
+    case "小凶": return LUCK_TIERS[4];
+    case "凶": return LUCK_TIERS[5];
+    case "大凶": return LUCK_TIERS[6];
+    default: return undefined;
+  }
+}
+if (LUCK_TIERS.some(
+  (tier: LuckTier): boolean => luckTierByLabel(tier.label) !== tier
+)) {
+  throw new Error("luckTierByLabel must cover every current LUCK_TIERS label exactly once");
+}
+
 // weight 必须凑满 100（drawLuckTier 按 1~100 掷骰累加匹配）：凑不满 100，
 // 最后一档会因兜底 return 吃到多余权重；超过 100，末尾档位会被挤到摇不出——
 // 加载期直接炸掉，不留一个只有注释约束、没人真正校验的隐性契约。

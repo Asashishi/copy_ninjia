@@ -33,6 +33,7 @@ import {
   PERSISTED_FILE_MODE,
 } from "../../consts/diskIO/common";
 import {
+  adSampleArchiveCursor,
   adSampleArchiveSweepDay,
   adSampleFileState,
   adSampleTempsSwept,
@@ -51,6 +52,12 @@ interface AdSampleRecord {
   label: string;
   reason: string;
   messages: AdSampleDiskMessage["messages"];
+}
+
+interface AdSampleArchiveTarget {
+  readonly day: string;
+  readonly index: number;
+  readonly path: string;
 }
 
 export interface AdSampleArchiveEntry {
@@ -146,9 +153,20 @@ export function sweepExpiredAdSampleArchives({
     console.error("[diskIOWorker] failed to sweep expired ad sample archives:", error);
     return;
   }
+  let occupiedTodayIndexes: Set<number> | null = null;
   for (const entry of entries) {
     if (!entry.isFile) continue;
     const archiveDay: string | null = archiveDayFromName(entry.name);
+    if (archiveDay === today) {
+      const match: RegExpExecArray | null = AD_SAMPLE_ARCHIVE_FILENAME_PATTERN.exec(entry.name);
+      const suffix: string | undefined = match?.[2];
+      const index: number = suffix === undefined ? 1 : Number(suffix);
+      // `.1` 不是选名器会生成的候选；它不能占用无序号的 index=1。
+      if (suffix === undefined || (index >= 2 && Number.isSafeInteger(index))) {
+        occupiedTodayIndexes ??= new Set<number>();
+        occupiedTodayIndexes.add(index);
+      }
+    }
     if (archiveDay === null || archiveDay >= earliestRetainedDay) continue;
     try {
       removeFile(join(AD_SAMPLE_MEMORY_DIR, entry.name));
@@ -159,19 +177,33 @@ export function sweepExpiredAdSampleArchives({
       );
     }
   }
+  if (occupiedTodayIndexes === null) {
+    adSampleArchiveCursor.current = null;
+  } else {
+    let nextIndex: number = 1;
+    while (occupiedTodayIndexes.has(nextIndex)) nextIndex++;
+    adSampleArchiveCursor.current = { day: today, nextIndex };
+  }
 }
 
 /**
  * 给这次轮转挑一个没被占用的归档名：`sample.<东京日期>.json`，同一天再轮转
  * 就往后加序号；保留期清理由 sweepExpiredAdSampleArchives 独立负责。
  */
-function nextArchivePath(): string {
+function nextArchiveTarget(): AdSampleArchiveTarget {
   const day: string = getTokyoDateKey();
   const base: string = join(AD_SAMPLE_MEMORY_DIR, `sample.${day}`);
-  if (!existsSync(`${base}.json`)) return `${base}.json`;
-  for (let index: number = 2; ; index++) {
-    const candidate: string = `${base}.${index}.json`;
-    if (!existsSync(candidate)) return candidate;
+  let index: number = adSampleArchiveCursor.current?.day === day
+    ? adSampleArchiveCursor.current.nextIndex
+    : 1;
+  while (true) {
+    const candidate: string = index === 1
+      ? `${base}.json`
+      : `${base}.${index}.json`;
+    if (!existsSync(candidate)) {
+      return { day, index, path: candidate };
+    }
+    index++;
   }
 }
 
@@ -181,10 +213,12 @@ function nextArchivePath(): string {
  */
 function rotateIfOversized(state: AppendOnlyFileState): AppendOnlyFileState {
   if (state.size < AD_SAMPLE_FILE_MAX_BYTES) return state;
-  const archivePath: string = nextArchivePath();
-  renameSync(AD_SAMPLE_FILE_PATH, archivePath);
+  const archive: AdSampleArchiveTarget = nextArchiveTarget();
+  renameSync(AD_SAMPLE_FILE_PATH, archive.path);
+  // 只有 rename 成功才推进；失败时下轮仍复用同一个最小空缺，保持既有选名语义。
+  adSampleArchiveCursor.current = { day: archive.day, nextIndex: archive.index + 1 };
   console.error(
-    `[diskIOWorker] ad sample file reached ${state.size} bytes; archived it as ${basename(archivePath)}.`
+    `[diskIOWorker] ad sample file reached ${state.size} bytes; archived it as ${basename(archive.path)}.`
   );
   return { size: 0, empty: true };
 }

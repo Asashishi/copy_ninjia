@@ -14,7 +14,7 @@ export {
 export { hydrateStorageDatabase } from "./storageDatabase/hydration";
 export {
   handleIdentityPolicyWrite,
-  readBlocklistIds,
+  readBlocklistIdPage,
   readIdentityPolicies,
 } from "./storageDatabase/identityPolicy";
 export { handlePendingRemovalSnapshot } from "./storageDatabase/pendingRemoval";

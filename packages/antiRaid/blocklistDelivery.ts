@@ -4,13 +4,24 @@ import {
 } from "../infra/blocklist/outbox";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
 import {
-  hasAnyBlockedIdentity,
-  listAllBlockedIdentityIds,
+  retainCurrentlyBlockedIdentityIds,
 } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS } from "../consts/antiRaid/blocklist";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
+
+/** 两个有界补扫页是否包含同一组稳定顺序的主键。 */
+function blocklistPagesMatch(
+  left: readonly number[],
+  right: readonly number[]
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index: number = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
 
 /**
  * 以主线程当前权威镜像重建处置消息；已经取消的批次从待投数组摘掉。
@@ -22,16 +33,31 @@ import type { RemoveBlockedMembersParams } from "../types/blocklist";
  * 而系统里再没有任何一处会为他重新开一个（反刷群的入群计数同样漏记）。
  * @param replacedJoins removalId -> 被它取代的 join，由 claimBlockedJoiner 登记。
  */
-function reconcileBlockedRemovalMessages(
+async function reconcileBlockedRemovalMessages(
   messages: readonly AntiRaidWorkerMessage[],
   replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage>,
-  blockedIds: readonly number[]
-): AntiRaidWorkerMessage[] {
+  filterProbeIds: boolean
+): Promise<AntiRaidWorkerMessage[]> {
   const reconciled: AntiRaidWorkerMessage[] = [];
+  let previousProbeIds: readonly number[] | null = null;
+  let previousRetainedIds: readonly number[] = [];
   for (const message of messages) {
     if (message.type !== "removeBlockedMembers") {
       reconciled.push(message);
       continue;
+    }
+    let blockedIds: readonly number[] = message.userIds;
+    if (message.probeMembership && filterProbeIds) {
+      if (
+        previousProbeIds !== null &&
+        blocklistPagesMatch(previousProbeIds, message.userIds)
+      ) {
+        blockedIds = previousRetainedIds;
+      } else {
+        blockedIds = await retainCurrentlyBlockedIdentityIds(message.userIds);
+        previousProbeIds = message.userIds;
+        previousRetainedIds = blockedIds;
+      }
     }
     const params: RemoveBlockedMembersParams | undefined =
       getPendingBlockedRemovalParams(message.removalId, blockedIds);
@@ -116,22 +142,12 @@ export async function prepareDurableAntiRaidMessages(
   messages: readonly AntiRaidWorkerMessage[],
   replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage> = new Map()
 ): Promise<AntiRaidWorkerMessage[]> {
-  const needsBlocklistSnapshot: boolean = messages.some(
-    (message: AntiRaidWorkerMessage): boolean =>
-      message.type === "removeBlockedMembers" && message.probeMembership
-  );
-  let blockedIds: readonly number[] = needsBlocklistSnapshot && hasAnyBlockedIdentity()
-    ? await listAllBlockedIdentityIds()
-    : [];
   let durableMessages: AntiRaidWorkerMessage[] =
-    reconcileBlockedRemovalMessages(messages, replacedJoins, blockedIds);
+    await reconcileBlockedRemovalMessages(messages, replacedJoins, false);
   for (let round: number = 0; round < BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS; round++) {
     await persistPendingBlockedRemovals();
-    blockedIds = needsBlocklistSnapshot && hasAnyBlockedIdentity()
-      ? await listAllBlockedIdentityIds()
-      : [];
     const currentMessages: AntiRaidWorkerMessage[] =
-      reconcileBlockedRemovalMessages(messages, replacedJoins, blockedIds);
+      await reconcileBlockedRemovalMessages(messages, replacedJoins, true);
     if (durableAntiRaidMessagesMatch(durableMessages, currentMessages)) {
       return currentMessages;
     }

@@ -128,6 +128,19 @@ export interface BlocklistSweepRecord {
   permissionBlocked: boolean;
 }
 
+/**
+ * 一条补扫任务当前唯一允许在途的 SQLite 游标页。
+ *
+ * awaitingAck=false 表示上一页已经落定、下一页正在读取；迟到的重复回执必须忽略。
+ * Worker 或进程重建时从空游标重放，重复封禁保持幂等，不持久化这个运行态游标。
+ */
+export interface BlocklistSweepPageState {
+  readonly chatId: number;
+  readonly nextCursor: number | null;
+  readonly done: boolean;
+  readonly awaitingAck: boolean;
+}
+
 /** 主线程黑名单补扫最近截止时间调度器的固定容量运行态。 */
 export interface BlocklistSweepSchedulerState {
   timer: ReturnType<typeof setTimeout> | null;

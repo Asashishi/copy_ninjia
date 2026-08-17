@@ -168,6 +168,13 @@ function validateGoogleServiceAccountKey(
   }
 }
 
+/** 启动总闸成功校验默认密钥后同步填充 readiness，避免首次功能探测重复读盘。 */
+function validateAndCacheGoogleServiceAccountKey(): void {
+  validateGoogleServiceAccountKey();
+  // 失败结论一旦缓存就保持到重启；不得因进程内文件变化把它静默翻成成功。
+  jaTranslateConfigReadinessCache.current ??= { ok: true };
+}
+
 export function jaTranslateConfigReadiness(): ConfigReadiness {
   return cachedReadiness(jaTranslateConfigReadinessCache, JA_TRANSLATE_PROBES);
 }
@@ -196,7 +203,7 @@ export function validateExistingDeploymentInputs(): void {
     { path: MOOD_CONFIG_PATH, load: (): unknown => getMoodConfig() },
     { path: AD_SAMPLES_CONFIG_PATH, load: (): unknown => getAdSampleConfig() },
     { path: AGENT_CONFIG_PATH, load: (): void => validateAgentDeploymentConfig() },
-    { path: GOOGLE_AUTH_FILE_PATH, load: (): void => validateGoogleServiceAccountKey() },
+    { path: GOOGLE_AUTH_FILE_PATH, load: validateAndCacheGoogleServiceAccountKey },
     { path: PERSONA_PATH, load: (): string => getPersona() },
   ];
   for (const probe of probes) {

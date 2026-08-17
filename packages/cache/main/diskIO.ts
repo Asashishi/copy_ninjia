@@ -24,6 +24,7 @@ import type {
 } from "../../types/diskIO";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
+import type { BlocklistIdPage } from "../../types/identityStorage";
 
 /**
  * 磁盘 IO 宿主（packages/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。
@@ -91,9 +92,9 @@ export const joinLogReadRequests: DiskIORequestChannel<readonly JoinLogRecord[]>
 export const identityPolicyReadRequests: DiskIORequestChannel<IdentityPolicyRawReadResult> =
   createDiskIORequestChannel("identity policy read", "Disk I/O Worker returned no identity policy rows.");
 
-/** 群级补扫完整黑名单 ID 的请求通道。 */
-export const blocklistIdReadRequests: DiskIORequestChannel<readonly number[]> =
-  createDiskIORequestChannel("blocklist ID read", "Disk I/O Worker returned no blocklist IDs.");
+/** 群级补扫有界黑名单主键页的请求通道。 */
+export const blocklistIdPageReadRequests: DiskIORequestChannel<BlocklistIdPage> =
+  createDiskIORequestChannel("blocklist ID page read", "Disk I/O Worker returned no blocklist ID page.");
 
 /**
  * 全部请求通道。Worker 代际失效、恢复失败与 terminate 都必须一次结算所有等待者，
@@ -104,7 +105,7 @@ export const DISK_IO_REQUEST_CHANNELS: readonly DiskIORequestChannel<never>[] = 
   luckSecretRequests,
   joinLogReadRequests,
   identityPolicyReadRequests,
-  blocklistIdReadRequests,
+  blocklistIdPageReadRequests,
 ] as readonly DiskIORequestChannel<never>[];
 
 /**

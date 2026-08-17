@@ -27,6 +27,7 @@ const {
 } = await import("../../packages/infra/blocklist/sweep");
 
 const {
+  blocklistSweepPages,
   blocklistSweepSchedulerState,
   blocklistSweepState,
   pendingBlockedRemovals,
@@ -36,6 +37,7 @@ installBlocklistSweepHooks({
   quiesceBlocklistSweepScheduler,
   registerBlockedMemberRemover,
   settleBlockedRemoval,
+  blocklistSweepPages,
   blocklistSweepState,
   pendingBlockedRemovals,
 });

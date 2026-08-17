@@ -278,12 +278,16 @@ export class StateStore {
   }
 
   private resolvePersistedWaiters(revision: number): void {
-    for (let index: number = this.persistenceWaiters.length - 1; index >= 0; index--) {
-      const waiter: PersistenceWaiter = this.persistenceWaiters[index]!;
-      if (waiter.revision > revision) continue;
-      this.persistenceWaiters.splice(index, 1);
-      waiter.resolve();
+    let settledCount: number = 0;
+    while (
+      settledCount < this.persistenceWaiters.length &&
+      this.persistenceWaiters[settledCount]!.revision <= revision
+    ) settledCount++;
+    // 保留既有的倒序 resolve 次序，只把每条一次 splice 改为最后一次性移除前缀。
+    for (let index: number = settledCount - 1; index >= 0; index--) {
+      this.persistenceWaiters[index]!.resolve();
     }
+    if (settledCount > 0) this.persistenceWaiters.splice(0, settledCount);
   }
 
   private rejectPersistenceWaiters(error: unknown): void {

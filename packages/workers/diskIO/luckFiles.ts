@@ -32,7 +32,7 @@ import {
 } from "../../cache/workers/diskIO/luck";
 import { appendLuckEntries, cleanupStaleLuckFiles, recoverLuckDay } from "./snapshotFiles";
 import type { LuckAppendStalledReply, LuckDrawDiskMessage } from "../../types/diskIO";
-import type { LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
+import type { DayFileState, LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
 
 /** 装上运势追加停摆诊断的投递出口（仅 Worker 线程启动时调用一次）。 */
 export function configureLuckAppendStalledReply(
@@ -225,5 +225,9 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
 
 /** 启动恢复边界：只读当天文件并以恢复结果整体替换内存 owner。 */
 export function hydrateLuckDay(day: string): void {
-  hydrateLuckCache(recoverLuckDay(day));
+  const recoveredFileState: { current: DayFileState | null } = { current: null };
+  const recovered: LuckDayCache | null = recoverLuckDay(day, recoveredFileState);
+  hydrateLuckCache(recovered);
+  // hydrate 先清掉上一 owner 的游标，再接管与本次领域校验同一轮读取得到的新游标。
+  luckFileState.current = recoveredFileState.current;
 }

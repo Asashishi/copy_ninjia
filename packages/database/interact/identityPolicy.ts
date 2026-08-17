@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { asc, eq, gt, inArray } from "drizzle-orm";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../consts/identityStorage";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
 import { jsonbTextProjection } from "../schema/jsonb";
@@ -23,13 +23,21 @@ export function hasStoredIdentityPolicy(
   return row !== undefined;
 }
 
-/** 读取已提交黑名单主键，供 Worker 叠加其事务缓冲。 */
-export function readStoredBlocklistIds(
-  database: StorageDatabase
+/**
+ * 按唯一主键稳定顺序读取已提交黑名单的一段游标页。
+ * limit 由上层固定硬顶；本函数不使用 offset，名单增长时单页查询仍为有界工作。
+ */
+export function readStoredBlocklistIdPage(
+  database: StorageDatabase,
+  afterId: number | null,
+  limit: number
 ): readonly number[] {
   const rows: StoredIdentityIdRow[] = database
     .select({ id: blocklistEntries.id })
     .from(blocklistEntries)
+    .where(afterId === null ? undefined : gt(blocklistEntries.id, afterId))
+    .orderBy(asc(blocklistEntries.id))
+    .limit(limit)
     .all();
   return rows.map((row: StoredIdentityIdRow): number => row.id);
 }

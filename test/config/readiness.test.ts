@@ -192,6 +192,14 @@ describe("deployment config readiness", () => {
 });
 
 describe("Google service account readiness", () => {
+  test("启动总闸复用已经通过的密钥校验结论", () => {
+    validateExistingDeploymentInputs();
+    const cached: ConfigReadiness | null = jaTranslateConfigReadinessCache.current;
+    if (cached === null) throw new Error("expected startup validation to seed readiness");
+    expect(cached).toEqual({ ok: true });
+    expect(jaTranslateConfigReadiness()).toBe(cached);
+  });
+
   test("非对象与空字段均拒绝", () => {
     writeAuthFile(JSON.stringify(["client_email"]));
     const notObject: ConfigReadiness = jaTranslateConfigReadiness();

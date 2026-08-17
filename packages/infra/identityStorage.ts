@@ -13,7 +13,10 @@ import {
   unacknowledgedWhitelistWrites,
   whitelistEntryCache,
 } from "../cache/main/identityStorage";
-import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../consts/identityStorage";
+import {
+  BLOCKLIST_SWEEP_PAGE_SIZE,
+  IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
+} from "../consts/identityStorage";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
 import {
   assertTelegramIdentityId,
@@ -38,6 +41,7 @@ import type {
 } from "../types/identityPolicy";
 import type { DiskIORecoveryTransport } from "../types/diskIO";
 import type {
+  BlocklistIdPage,
   IdentityPolicyRawReadResult,
   UnacknowledgedIdentityWrite,
 } from "../types/identityStorage";
@@ -48,7 +52,7 @@ interface IdentityDiskIOApi {
   readonly onDiskIORespawn?: typeof diskIO.onDiskIORespawn;
   readonly onIdentityStoragePersisted?: typeof diskIO.onIdentityStoragePersisted;
   readonly postDiskIO?: typeof diskIO.postDiskIO;
-  readonly readBlocklistIds?: typeof diskIO.readBlocklistIds;
+  readonly readBlocklistIdPage?: typeof diskIO.readBlocklistIdPage;
   readonly readIdentityPolicies?: typeof diskIO.readIdentityPolicies;
 }
 
@@ -329,12 +333,92 @@ export function hasAnyBlockedIdentity(): boolean {
   return identityEntryCounts.blocklist > 0;
 }
 
-/** 群级补扫读取完整 ID；普通消息热路径只用 LRU，不得调用。 */
-export async function listAllBlockedIdentityIds(): Promise<readonly number[]> {
-  const read: typeof diskIO.readBlocklistIds | undefined = identityDiskIOApi.readBlocklistIds;
-  if (read === undefined) return [];
-  const ids: readonly number[] = await read();
-  return ids;
+/** 校验 Disk I/O 回传的游标页仍满足固定大小、严格升序与续读游标契约。 */
+function validateBlocklistIdPage(
+  page: BlocklistIdPage,
+  afterId: number | null
+): BlocklistIdPage {
+  if (page.ids.length > BLOCKLIST_SWEEP_PAGE_SIZE) {
+    throw new Error(
+      `Blocklist ID page exceeds ${BLOCKLIST_SWEEP_PAGE_SIZE} entries.`
+    );
+  }
+  let previous: number | null = afterId;
+  for (const id of page.ids) {
+    assertTelegramIdentityId(id, "blocklist ID page");
+    if (previous !== null && id <= previous) {
+      throw new Error("Blocklist ID page must be strictly ordered after its cursor.");
+    }
+    previous = id;
+  }
+  const expectedCursor: number | null = page.ids.length === 0
+    ? afterId
+    : page.ids[page.ids.length - 1]!;
+  if (page.nextCursor !== expectedCursor) {
+    throw new Error("Blocklist ID page returned an inconsistent next cursor.");
+  }
+  if (!page.done && page.ids.length !== BLOCKLIST_SWEEP_PAGE_SIZE) {
+    throw new Error("A non-final blocklist ID page must fill the fixed page size.");
+  }
+  return page;
+}
+
+/**
+ * 群级补扫读取一页稳定主键。每页先提交黑名单事务并确认主线程 revision 已 ACK，
+ * 因而 SQLite 游标是权威输入；普通消息热路径只用 LRU，不得调用。
+ */
+export async function readBlocklistSweepPage(
+  afterId: number | null
+): Promise<BlocklistIdPage> {
+  const flush: typeof diskIO.flushDiskIODomainOutcome | undefined =
+    identityDiskIOApi.flushDiskIODomainOutcome;
+  const read: typeof diskIO.readBlocklistIdPage | undefined =
+    identityDiskIOApi.readBlocklistIdPage;
+  if (flush === undefined || read === undefined) {
+    return { ids: [], nextCursor: afterId, done: true };
+  }
+  const outcome: DomainFlushOutcome = await flush("blocklist");
+  if (outcome.result !== "flushed") {
+    throw new Error(`Blocklist sweep flush ${outcome.result}.`);
+  }
+  if (unacknowledgedBlocklistWrites.size !== 0) {
+    throw new Error(
+      `Blocklist sweep flush left ${unacknowledgedBlocklistWrites.size} unacknowledged write(s).`
+    );
+  }
+  return validateBlocklistIdPage(await read(afterId), afterId);
+}
+
+/**
+ * durable outbox flush 后复核一个有界处置页；迟到的本地最终值覆盖数据库旧值。
+ * 返回顺序沿用输入，供投递边界在 `/unblock` 并发裁剪后安全发送剩余目标。
+ */
+export async function retainCurrentlyBlockedIdentityIds(
+  ids: readonly number[]
+): Promise<readonly number[]> {
+  if (ids.length > BLOCKLIST_SWEEP_PAGE_SIZE) {
+    throw new Error(
+      `Blocklist reconciliation accepts at most ${BLOCKLIST_SWEEP_PAGE_SIZE} IDs.`
+    );
+  }
+  if (ids.length === 0) return [];
+  const read: typeof diskIO.readIdentityPolicies | undefined =
+    identityDiskIOApi.readIdentityPolicies;
+  if (read === undefined) return ids;
+  const reply: IdentityPolicyRawReadResult = await read(ids);
+  const requested: Set<number> = new Set(ids);
+  const rows: Map<number, string> = rawRows(
+    reply.blocklist,
+    requested,
+    "blocklist"
+  );
+  const retained: number[] = [];
+  for (const id of ids) {
+    if (currentPolicyText("blocklist", id, rows.get(id)) !== null) {
+      retained.push(id);
+    }
+  }
+  return retained;
 }
 
 /** 重投某主键仍未 ACK 的最终值；不创建新 revision。 */

@@ -17,7 +17,10 @@ import {
   flushIfStorageFull,
   hasPendingStorageWrites,
 } from "./flush";
-import { effectiveBlocklistIds } from "./identityPolicy";
+import {
+  hasAnyEffectiveBlocklistIdentity,
+  hasEffectiveBlocklistIdentity,
+} from "./identityPolicy";
 
 function clonePendingRemoval(pending: PendingBlockedRemoval): PendingBlockedRemoval {
   return {
@@ -56,17 +59,20 @@ export function handlePendingRemovalSnapshot(
     next.set(removalId, pending);
     encoded.set(removalId, data);
   }
-  const blockedIds: Set<number> = effectiveBlocklistIds();
+  let hasAnyBlockedIdentity: boolean | undefined;
   for (const [removalId, pending] of next) {
     if (pending.params.probeMembership) {
-      if (blockedIds.size === 0) {
+      hasAnyBlockedIdentity ??= hasAnyEffectiveBlocklistIdentity();
+      if (!hasAnyBlockedIdentity) {
         throw new Error(
           `Pending removal row ${removalId} requires at least one effective blocklist entry.`
         );
       }
       continue;
     }
-    if (pending.params.userIds.some((id: number): boolean => !blockedIds.has(id))) {
+    if (pending.params.userIds.some(
+      (id: number): boolean => !hasEffectiveBlocklistIdentity(id)
+    )) {
       throw new Error(
         `Pending removal row ${removalId} contains an identity absent from the effective blocklist.`
       );

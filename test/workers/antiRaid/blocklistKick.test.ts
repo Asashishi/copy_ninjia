@@ -77,7 +77,29 @@ mock.module("../../../packages/infra/diskIO", () => ({
   flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIODomain() }),
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (): void => {},
-  readBlocklistIds: async (): Promise<readonly number[]> => readBlockedIdentityTestIds(),
+  readBlocklistIdPage: async (afterId: number | null): Promise<{
+    ids: readonly number[];
+    nextCursor: number | null;
+    done: boolean;
+  }> => {
+    const remaining: number[] = readBlockedIdentityTestIds()
+      .filter((id: number): boolean => afterId === null || id > afterId)
+      .sort((left: number, right: number): number => left - right);
+    return {
+      ids: remaining,
+      nextCursor: remaining.length === 0 ? afterId : remaining[remaining.length - 1]!,
+      done: true,
+    };
+  },
+  readIdentityPolicies: async (ids: readonly number[]): Promise<{
+    whitelist: readonly (readonly [number, string])[];
+    blocklist: readonly (readonly [number, string])[];
+  }> => ({
+    whitelist: [],
+    blocklist: ids
+      .filter((id: number): boolean => readBlockedIdentityTestIds().includes(id))
+      .map((id: number): readonly [number, string] => [id, "{}"]),
+  }),
   onVerificationPersisted: (): void => {},
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskPosts.push(message);

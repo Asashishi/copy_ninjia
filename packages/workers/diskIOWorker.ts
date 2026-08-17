@@ -34,7 +34,7 @@ import {
   handlePendingRemovalSnapshot,
   hydrateStorageDatabase,
   pendingStorageDatabaseDomains,
-  readBlocklistIds,
+  readBlocklistIdPage,
   readIdentityPolicies,
 } from "./diskIO/storageDatabase";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
@@ -382,8 +382,8 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     case "readIdentityPolicies":
       self.postMessage(readIdentityPolicies(msg));
       break;
-    case "readBlocklistIds":
-      self.postMessage(readBlocklistIds(msg));
+    case "readBlocklistIdPage":
+      self.postMessage(readBlocklistIdPage(msg));
       break;
     case "load":
       handleLoad();

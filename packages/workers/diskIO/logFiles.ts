@@ -35,6 +35,7 @@ import {
   AppendOnlyFileFormatError,
   appendToDayFile,
   openAppendOnlyFile,
+  openValidatedAppendOnlyFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
 import type { BufferedLogEntry } from "../../types/diskIO/storage";
@@ -88,13 +89,26 @@ function assertLogFileSchema(path: string, parsed: unknown): void {
  */
 function openLogDay(day: string): DayFileState {
   const path: string = join(LOGS_DIR, `${day}.json`);
-  let schemaValidated: boolean = false;
   if (existsSync(path)) {
     const content: string = readFileSync(path, "utf8");
     try {
       const parsed: unknown = JSON.parse(content);
       assertLogFileSchema(path, parsed);
-      schemaValidated = true;
+      const empty: boolean = Object.keys(parsed as Record<string, unknown>).length === 0;
+      if (!empty && !content.endsWith("\n}")) {
+        return {
+          day,
+          ...openAppendOnlyFile(path, undefined, true),
+        };
+      }
+      return {
+        day,
+        ...openValidatedAppendOnlyFile({
+          path,
+          content,
+          empty,
+        }),
+      };
     } catch (error: unknown) {
       if (!(error instanceof SyntaxError)) throw error;
     }
@@ -103,7 +117,7 @@ function openLogDay(day: string): DayFileState {
     day,
     ...openAppendOnlyFile(path, undefined, true),
   };
-  if (!schemaValidated && existsSync(path)) {
+  if (existsSync(path)) {
     assertLogFileSchema(path, JSON.parse(readFileSync(path, "utf8")));
   }
   return state;
@@ -134,8 +148,8 @@ function dayKey(timestamp: number): string {
  * <day>.json.tmp，保留期清理天然覆盖不到，得单独扫一遍删掉——对齐
  * snapshotFiles.ts 的 recoverAiMemories/recoverLuckDay 同样的清理。
  */
-function cleanupStaleTmpFiles(): void {
-  for (const name of readdirSync(LOGS_DIR)) {
+function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): void {
+  for (const name of names) {
     if (!name.endsWith(TMP_FILE_SUFFIX)) continue;
     try {
       unlinkSync(join(LOGS_DIR, name));
@@ -146,9 +160,9 @@ function cleanupStaleTmpFiles(): void {
 }
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
-function cleanupOldLogs(): void {
+function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)): void {
   const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
-  for (const name of readdirSync(LOGS_DIR)) {
+  for (const name of names) {
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     if (match && match[1]! < oldestKept) {
       try {
@@ -197,11 +211,12 @@ function writeDay(day: string, texts: string[]): boolean {
 export function initLogFiles(): void {
   resetLogCache();
   mkdirSync(LOGS_DIR, { recursive: true });
-  cleanupStaleTmpFiles();
+  const names: string[] = readdirSync(LOGS_DIR);
+  cleanupStaleTmpFiles(names);
   // 当前日文件必须在 Worker 宣称可接收消息前完成结构校验；只在启动扫描一次，
   // 后续 appendToDayFile 仍按已缓存的字节 offset 做 O(1) 追记。
   loggerFileState.current = openLogDay(dayKey(Date.now()));
-  cleanupOldLogs();
+  cleanupOldLogs(names);
 }
 
 /** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */

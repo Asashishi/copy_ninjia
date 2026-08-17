@@ -19,7 +19,7 @@
  * 保留原始字节并拒绝启动，不能猜测哪条已确认结果可以丢弃。
  */
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AiMemorySnapshot, BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
@@ -38,9 +38,14 @@ import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { AI_MEMORY_FILE_PATTERN } from "../../consts/diskIO/snapshots";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat/memory";
 import { STICKER_PACK_NAME_PATTERN } from "../../consts/aiChat/stickers";
-import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS } from "../../consts/luckChallenge";
+import { DAILY_LUCK_CACHE_MAX, luckTierByLabel } from "../../consts/luckChallenge";
 import { LUCK_CACHE_KEY_PATTERN } from "../../consts/luckReceipt";
-import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
+import {
+  appendToDayFile,
+  openDayFile,
+  openValidatedAppendOnlyFile,
+  serializeDayFileEntry,
+} from "./appendOnlyDayFile";
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../libs/record";
@@ -258,8 +263,11 @@ export function writeStickerCatalogFile(pack: string, snapshotJson: string): voi
 /**
  * 删除 memory/luck/ 下早于 todayKey 的 YYYY-MM-DD.json；非规范或未来文件拒绝清理。
  */
-export function cleanupStaleLuckFiles(todayKey: string): void {
-  for (const name of readdirSync(LUCK_MEMORY_DIR)) {
+export function cleanupStaleLuckFiles(
+  todayKey: string,
+  names: readonly string[] = readdirSync(LUCK_MEMORY_DIR)
+): void {
+  for (const name of names) {
     // 密钥与按日结果同属 luck owner，但由 recoverLuckReceiptSecret 单独严格
     // 校验；这里仅负责按日文件，不能把已登记的固定元数据文件误判成坏日期。
     if (name === basename(LUCK_RECEIPT_SECRET_PATH)) continue;
@@ -286,34 +294,56 @@ export function cleanupStaleLuckFiles(todayKey: string): void {
   }
 }
 
+export interface LuckFileStateHolder {
+  current: DayFileState | null;
+}
+
 /**
  * 启动恢复：建目录、清 *.tmp 残留（防御性——追加写不产生 .tmp，清一次
  * 挡住外部干预留下的残留）、删除所有非今天的日期文件，只关心今天那份
  * （不存在则返回 null）。先严格校验 JSON、领域 schema 与容量，再接管追加
  * 游标；任何不规范内容都阻止启动并保留原文件，等待人工处理。
  */
-export function recoverLuckDay(todayKey: string): LuckDayCache | null {
+export function recoverLuckDay(
+  todayKey: string,
+  fileState?: LuckFileStateHolder
+): LuckDayCache | null {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
-  for (const name of readdirSync(LUCK_MEMORY_DIR)) {
+  const names: string[] = readdirSync(LUCK_MEMORY_DIR);
+  for (const name of names) {
     if (name.endsWith(TMP_FILE_SUFFIX)) tryUnlink(join(LUCK_MEMORY_DIR, name));
   }
   const todayPath: string = join(LUCK_MEMORY_DIR, `${todayKey}.json`);
   if (!existsSync(todayPath)) {
-    cleanupStaleLuckFiles(todayKey);
+    cleanupStaleLuckFiles(todayKey, names);
     return null;
   }
-  const parsed: unknown = readJsonInput(todayPath);
+  let content: string;
+  let parsed: unknown;
+  try {
+    content = readFileSync(todayPath, "utf8");
+    parsed = JSON.parse(content) as unknown;
+  } catch {
+    return invalidInput(todayPath, "$", "a readable valid JSON document");
+  }
   if (!isPlainRecord(parsed)) {
     return invalidInput(todayPath, "$", "a JSON object keyed by canonical luck cache keys");
   }
   const raw: Record<string, unknown> = parsed;
-  if (Object.keys(raw).length > DAILY_LUCK_CACHE_MAX) {
-    return invalidInput(todayPath, "$", `at most ${DAILY_LUCK_CACHE_MAX} confirmed luck records`);
-  }
+  let entryCount: number = 0;
   const entries: Map<string, LuckDrawRecord> = new Map();
-  for (const [key, value] of Object.entries(raw)) {
+  let failurePath: string | null = null;
+  let failureExpected: string = "";
+  for (const key in raw) {
+    if (!Object.hasOwn(raw, key)) continue;
+    entryCount++;
+    // 容量错误按既有口径优先于任意记录错误；记住首个领域错误但继续完成计数。
+    if (failurePath !== null) continue;
+    const value: unknown = raw[key];
     if (!LUCK_CACHE_KEY_PATTERN.test(key)) {
-      return invalidInput(todayPath, "$.<key>", "a canonical luck cache key");
+      failurePath = "$.<key>";
+      failureExpected = "a canonical luck cache key";
+      continue;
     }
     if (
       !isPlainRecord(value) ||
@@ -322,23 +352,40 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
       typeof value.fortunePercent !== "number" ||
       !Number.isFinite(value.fortunePercent)
     ) {
-      return invalidInput(todayPath, "$.<record>", "exactly { label: string, fortunePercent: finiteNumber }");
+      failurePath = "$.<record>";
+      failureExpected = "exactly { label: string, fortunePercent: finiteNumber }";
+      continue;
     }
-    const tier: LuckTier | undefined = LUCK_TIERS.find(
-      (candidate: LuckTier): boolean => candidate.label === value.label
-    );
+    const tier: LuckTier | undefined = luckTierByLabel(value.label);
     if (tier === undefined) {
-      return invalidInput(todayPath, "$.<record>.label", "a current luck tier label");
+      failurePath = "$.<record>.label";
+      failureExpected = "a current luck tier label";
+      continue;
     }
     const [minimum, maximum]: readonly [number, number] = tier.fortunePercentRange;
     if (value.fortunePercent < minimum || value.fortunePercent > maximum) {
-      return invalidInput(todayPath, "$.<record>.fortunePercent", "within the selected tier range");
+      failurePath = "$.<record>.fortunePercent";
+      failureExpected = "within the selected tier range";
+      continue;
     }
     entries.set(key, { label: value.label, fortunePercent: value.fortunePercent });
   }
+  if (entryCount > DAILY_LUCK_CACHE_MAX) {
+    return invalidInput(todayPath, "$", `at most ${DAILY_LUCK_CACHE_MAX} confirmed luck records`);
+  }
+  if (failurePath !== null) return invalidInput(todayPath, failurePath, failureExpected);
   // 领域 schema 全部通过后才接管追加游标；非规范排版同样 fail-closed。
-  openDayFile(LUCK_MEMORY_DIR, todayKey, PERSISTED_FILE_MODE);
-  cleanupStaleLuckFiles(todayKey);
+  const opened: DayFileState = {
+    day: todayKey,
+    ...openValidatedAppendOnlyFile({
+      path: todayPath,
+      content,
+      empty: entryCount === 0,
+      mode: PERSISTED_FILE_MODE,
+    }),
+  };
+  cleanupStaleLuckFiles(todayKey, names);
+  if (fileState !== undefined) fileState.current = opened;
   return { day: todayKey, entries };
 }
 
@@ -349,10 +396,6 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
  * 或刚跨天）时，先探测/接管一次对应日期的文件。pending 为空是防御性早退
  * ——调用方按 dirty 判断只在非空时才会调用，这里不该真的走到。
  */
-export interface LuckFileStateHolder {
-  current: DayFileState | null;
-}
-
 export function appendLuckEntries(day: string, fileState: LuckFileStateHolder, pending: LuckPendingEntry[]): void {
   if (pending.length === 0) return;
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });

@@ -170,6 +170,9 @@ beforeEach(() => {
 
 describe("/permission", () => {
   test("权限键大小写不敏感，布尔值只接受 true/false", () => {
+    for (const key of WHITELIST_PERMISSION_KEYS) {
+      expect(parseWhitelistPermissionKey(key.toUpperCase())).toBe(key);
+    }
     expect(parseWhitelistPermissionKey("ISCANMUTE")).toBe("isCanMute");
     expect(parseWhitelistPermissionKey("ISCANVIEWBOTSTATUS")).toBe("isCanViewBotStatus");
     expect(parseWhitelistPermissionKey("ISCANCONTROLLFLOODCONTROLPERMISSION"))

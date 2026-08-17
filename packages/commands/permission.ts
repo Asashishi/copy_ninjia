@@ -9,8 +9,9 @@ import type { SetWhitelistPermissionResult } from "../infra/identityPolicy/white
 import {
   PERMISSION_COMMAND_TEXTS,
   WHITELIST_PERMISSION_ALL_COMMAND,
-  WHITELIST_PERMISSION_HELP,
   WHITELIST_PERMISSION_HELP_COMMAND,
+  WHITELIST_PERMISSION_HELP_JSON,
+  WHITELIST_PERMISSION_KEY_BY_LOWERCASE,
   WHITELIST_PERMISSION_KEYS,
   WHITELIST_PERMISSION_QUERY_COMMAND,
 } from "../consts/whitelist";
@@ -36,7 +37,7 @@ interface PermissionHelpMessage {
 /** 把权限键与说明渲染为可复制的 JSON 代码块，实体偏移按 UTF-16 code unit 计算。 */
 function formatPermissionHelpMessage(): PermissionHelpMessage {
   const prefix: string = PERMISSION_COMMAND_TEXTS.helpPrefix;
-  const permissionJson: string = JSON.stringify(WHITELIST_PERMISSION_HELP, null, 2);
+  const permissionJson: string = WHITELIST_PERMISSION_HELP_JSON;
   return {
     text: `${prefix}${permissionJson}\n${PERMISSION_COMMAND_TEXTS.helpSuffix}`,
     entities: [
@@ -75,9 +76,7 @@ export function parseWhitelistPermissionKey(
   raw: string
 ): WhitelistPermissionKey | undefined {
   const normalized: string = raw.toLowerCase();
-  return WHITELIST_PERMISSION_KEYS.find(
-    (key: WhitelistPermissionKey): boolean => key.toLowerCase() === normalized
-  );
+  return WHITELIST_PERMISSION_KEY_BY_LOWERCASE.get(normalized);
 }
 
 /** 只接受字面量 true/false，避免 1、yes 等形态日后出现多套口径。 */

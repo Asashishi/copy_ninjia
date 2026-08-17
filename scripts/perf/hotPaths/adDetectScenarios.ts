@@ -22,19 +22,42 @@ import type { AdMessageBundle } from "../../../packages/types/antiRaid/adDetect"
 import type { Scenario } from "./types";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
 
-/** 容量预置共用的最小 bundle；计时路径永远不读 value，只量 Map 满载拒绝。 */
-const CAPACITY_BUNDLE: AdMessageBundle = {
-  chatId: BENCHMARK_CHAT_ID,
-  senderId: 1,
-  label: "benchmark",
-  meta: { firstName: "Benchmark", lastName: "", username: "benchmark" },
-  isChannel: false,
-  justJoined: false,
-  entries: [],
-  pendingDeleteIds: [],
-  nextSeq: 1,
-  checkedSeq: 0,
-};
+/**
+ * 为容量预置创建一份真实队列形态的独立 bundle。
+ *
+ * 每个 sender 都必须拥有自己的 bundle、元数据、entry 与数组；共享空对象会把
+ * 满载 Map 的 retained heap 严重低估。这里保留一条已经接纳但尚未判定的消息，
+ * 只模拟 sender 容量边界，不在默认门禁里同时制造每 sender 15 条的极端峰值。
+ */
+function createCapacityBundle(index: number): AdMessageBundle {
+  const senderId: number = index + 1;
+  const messageId: number = index + 1;
+  return {
+    chatId: BENCHMARK_CHAT_ID,
+    senderId,
+    label: `benchmark sender ${senderId}`,
+    meta: {
+      firstName: `Benchmark ${senderId}`,
+      lastName: "Sender",
+      username: `benchmark_${senderId}`,
+    },
+    isChannel: false,
+    justJoined: false,
+    entries: [{
+      messageId,
+      seq: 1,
+      text: `capacity benchmark message ${messageId}`,
+      directText: `capacity benchmark message ${messageId}`,
+      receivedAt: BENCHMARK_EPOCH_MS,
+      withinReferencedWarning: false,
+      quote: undefined,
+      replyTo: undefined,
+    }],
+    pendingDeleteIds: [],
+    nextSeq: 2,
+    checkedSeq: 0,
+  };
+}
 
 /** 满载拒绝输入故意带满所有可变载荷；正式循环不得读取它们。 */
 const SATURATED_CANDIDATE: AdCandidateMessage = {
@@ -79,7 +102,10 @@ function prepareAdCapacityScenario(): void {
     index < AD_DETECT_MAX_PENDING_SENDERS;
     index++
   ) {
-    pendingAdMessages.set(`benchmark-capacity:${index}`, CAPACITY_BUNDLE);
+    pendingAdMessages.set(
+      `benchmark-capacity:${index}`,
+      createCapacityBundle(index)
+    );
   }
   // 满载边沿日志只记第一次；本场景量的是稳态拒绝，不把一次 I/O 摊进热循环。
   adDetectCapacitySaturated.current = true;

@@ -6,7 +6,11 @@ import {
   luckRuntimeState,
   pendingLuckDraws,
 } from "../../cache/main/luckChallenge";
-import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
+import {
+  DAILY_LUCK_CACHE_MAX,
+  luckTierByLabel,
+  PENDING_LUCK_CACHE_MAX,
+} from "../../consts/luckChallenge";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";
@@ -261,7 +265,7 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
   if (loaded?.day !== todayKey) return;
 
   for (const [key, record] of loaded.entries) {
-    const tier: LuckTier | undefined = LUCK_TIERS.find((candidate: LuckTier): boolean => candidate.label === record.label);
+    const tier: LuckTier | undefined = luckTierByLabel(record.label);
     if (!tier) {
       throw new Error("Loaded luck state violates the validated tier-label invariant.");
     }

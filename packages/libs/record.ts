@@ -11,11 +11,22 @@ export function isPlainRecord(value: unknown): value is Record<string, unknown> 
 /** 要求对象键集合与调用方 schema 完全一致。 */
 export function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actualKeys: string[] = Object.keys(value);
-  return actualKeys.length === keys.length && keys.every((key: string): boolean => Object.hasOwn(value, key));
+  if (actualKeys.length !== keys.length) return false;
+  let index: number = 0;
+  while (index < keys.length) {
+    if (!Object.hasOwn(value, keys[index]!)) return false;
+    index++;
+  }
+  return true;
 }
 
 /** 要求对象不包含调用方 schema 之外的键，但允许可选键缺省。 */
 export function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const allowed: ReadonlySet<string> = new Set(keys);
-  return Object.keys(value).every((key: string): boolean => allowed.has(key));
+  const actualKeys: string[] = Object.keys(value);
+  let index: number = 0;
+  while (index < actualKeys.length) {
+    if (!keys.includes(actualKeys[index]!)) return false;
+    index++;
+  }
+  return true;
 }

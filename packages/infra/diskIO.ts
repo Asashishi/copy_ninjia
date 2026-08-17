@@ -32,7 +32,7 @@ import {
   rejectPendingDiskIORequests,
   requestJoinLogFromWorker,
   requestIdentityPoliciesFromWorker,
-  requestBlocklistIdsFromWorker,
+  requestBlocklistIdPageFromWorker,
   requestLuckSecretFromWorker,
   stopWorkerAfterLoadFailure,
 } from "./diskIO/host";
@@ -66,6 +66,7 @@ import type {
   LuckReceiptSecret,
 } from "../types/diskIO/storage";
 import type { IdentityPolicyRawReadResult } from "../types/identityStorage";
+import type { BlocklistIdPage } from "../types/identityStorage";
 
 const isMainThread: boolean = Bun.isMainThread;
 export interface DiskIOInitOptions {
@@ -384,16 +385,17 @@ export function readIdentityPolicies(
   return requestIdentityPoliciesFromWorker({ worker, ids, timeoutMs });
 }
 
-/** 群级补扫按需读取完整黑名单 ID；普通成员判定不得调用。 */
-export function readBlocklistIds(
+/** 群级补扫按稳定主键游标读取一页黑名单；普通成员判定不得调用。 */
+export function readBlocklistIdPage(
+  afterId: number | null,
   timeoutMs: number = LOAD_TIMEOUT_MS
-): Promise<readonly number[]> {
+): Promise<BlocklistIdPage> {
   requirePositiveFinite(timeoutMs, "Blocklist ID read timeout");
   const worker: Worker | null = diskIORuntime.worker;
   if (!worker || !diskIORuntime.writable) {
-    return Promise.reject(new Error("Persistence Worker is unavailable; cannot read blocklist IDs."));
+    return Promise.reject(new Error("Persistence Worker is unavailable; cannot read a blocklist ID page."));
   }
-  return requestBlocklistIdsFromWorker(worker, timeoutMs);
+  return requestBlocklistIdPageFromWorker(worker, afterId, timeoutMs);
 }
 
 /**

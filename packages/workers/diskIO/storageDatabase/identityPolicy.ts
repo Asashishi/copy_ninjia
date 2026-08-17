@@ -1,4 +1,8 @@
 import {
+  BLOCKLIST_SWEEP_PAGE_SIZE,
+  BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES,
+} from "../../../consts/identityStorage";
+import {
   pendingBlocklistWrites,
   pendingWhitelistWrites,
 } from "../../../cache/workers/diskIO/storageDatabase";
@@ -10,20 +14,21 @@ import {
 } from "../../../database/codec/identity";
 import {
   hasStoredIdentityPolicy,
-  readStoredBlocklistIds,
+  readStoredBlocklistIdPage,
   readStoredIdentityPolicies,
 } from "../../../database/interact/identityPolicy";
 import type {
-  BlocklistIdsReadReply,
+  BlocklistIdPageReadReply,
   IdentityPersistenceReply,
   IdentityPoliciesReadReply,
   IdentityPolicyWriteDiskMessage,
-  ReadBlocklistIdsRequest,
+  ReadBlocklistIdPageRequest,
   ReadIdentityPoliciesRequest,
 } from "../../../types/diskIO";
 import type { IdentityPolicyTable } from "../../../types/identityPolicy";
 import type { PendingIdentityPolicyWrite } from "../../../types/identityStorage";
 import type { StoredIdentityPolicyRow } from "../../../types/storageDatabase";
+import type { BlocklistIdPage } from "../../../types/identityStorage";
 import { requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull } from "./flush";
 
@@ -33,14 +38,63 @@ function pendingPolicyMap(
   return table === "whitelist" ? pendingWhitelistWrites : pendingBlocklistWrites;
 }
 
-/** SQLite 已提交值叠加当前事务缓冲后的黑名单主键集合。 */
-export function effectiveBlocklistIds(): Set<number> {
-  const ids: Set<number> = new Set(readStoredBlocklistIds(requireStorageDatabase()));
-  for (const [id, pending] of pendingBlocklistWrites) {
-    if (pending.data === null) ids.delete(id);
-    else ids.add(id);
+/**
+ * SQLite 已提交游标页叠加事务内最终值；候选集合严格受「页 + pending 硬顶」约束。
+ * 补扫每页前会先 flush，这个合并只处理 flush 回执后并发到达的短窗口变化。
+ */
+function effectiveBlocklistIdPage(afterId: number | null): BlocklistIdPage {
+  if (
+    pendingBlocklistWrites.size >
+    BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES
+  ) {
+    throw new Error(
+      `Pending blocklist delta exceeds ${BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES} entries; ` +
+      "refusing to expand a sweep page."
+    );
   }
-  return ids;
+  const readLimit: number = BLOCKLIST_SWEEP_PAGE_SIZE +
+    pendingBlocklistWrites.size + 1;
+  const storedIds: readonly number[] = readStoredBlocklistIdPage(
+    requireStorageDatabase(),
+    afterId,
+    readLimit
+  );
+  const candidates: Set<number> = new Set<number>();
+  for (const id of storedIds) {
+    if (pendingBlocklistWrites.get(id)?.data !== null) candidates.add(id);
+  }
+  for (const [id, pending] of pendingBlocklistWrites) {
+    if (
+      pending.data !== null &&
+      (afterId === null || id > afterId)
+    ) {
+      candidates.add(id);
+    }
+  }
+  const ordered: number[] = [...candidates];
+  ordered.sort((left: number, right: number): number => left - right);
+  const done: boolean = ordered.length <= BLOCKLIST_SWEEP_PAGE_SIZE;
+  const ids: number[] = done
+    ? ordered
+    : ordered.slice(0, BLOCKLIST_SWEEP_PAGE_SIZE);
+  return {
+    ids,
+    nextCursor: ids.length === 0 ? afterId : ids[ids.length - 1]!,
+    done,
+  };
+}
+
+/** outbox 严格校验一个冻结目标是否仍属于事务叠加后的黑名单。 */
+export function hasEffectiveBlocklistIdentity(id: number): boolean {
+  const pending: PendingIdentityPolicyWrite | undefined =
+    pendingBlocklistWrites.get(id);
+  if (pending !== undefined) return pending.data !== null;
+  return hasStoredIdentityPolicy(requireStorageDatabase(), "blocklist", id);
+}
+
+/** outbox 的 probe 任务是否仍至少有一个目标；只读取第一张有界游标页。 */
+export function hasAnyEffectiveBlocklistIdentity(): boolean {
+  return effectiveBlocklistIdPage(null).ids.length > 0;
 }
 
 function validatePolicyData(message: IdentityPolicyWriteDiskMessage): void {
@@ -136,16 +190,25 @@ export function readIdentityPolicies(
   }
 }
 
-/** 读取完整黑名单主键集合并叠加尚未提交的最终值；只在群级补扫边界调用。 */
-export function readBlocklistIds(
-  message: ReadBlocklistIdsRequest
-): BlocklistIdsReadReply {
+/** 读取一页有界黑名单主键并叠加尚未提交的最终值；只在群级补扫边界调用。 */
+export function readBlocklistIdPage(
+  message: ReadBlocklistIdPageRequest
+): BlocklistIdPageReadReply {
   try {
-    const ids: Set<number> = effectiveBlocklistIds();
-    return { type: "blocklistIdsRead", requestId: message.requestId, ids: [...ids] };
+    if (message.afterId !== null) {
+      assertTelegramIdentityId(
+        message.afterId,
+        `${IDENTITY_DATABASE_PATH}:readBlocklistIdPage.afterId`
+      );
+    }
+    return {
+      type: "blocklistIdPageRead",
+      requestId: message.requestId,
+      page: effectiveBlocklistIdPage(message.afterId),
+    };
   } catch (error: unknown) {
     return {
-      type: "blocklistIdsRead",
+      type: "blocklistIdPageRead",
       requestId: message.requestId,
       error: error instanceof Error ? error.message : String(error),
     };

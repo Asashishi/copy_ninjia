@@ -10,6 +10,7 @@
 import {
   blockedMemberRemoverHolder,
   blocklistRemovalCounter,
+  blocklistSweepPages,
   blocklistSweepState,
   clearBlocklistSweepState,
   pendingBlockedRemovals,
@@ -77,6 +78,7 @@ export function hydrateBlocklist(
 ): void {
   pendingBlockedRemovals.clear();
   blocklistSweepState.clear();
+  blocklistSweepPages.clear();
   blocklistRemovalCounter.current = 0;
   let filtered: boolean = false;
   for (const [removalId, pending] of recoveredRemovals) {
@@ -178,9 +180,13 @@ export function materializeRemovalParams(
   if (!params.probeMembership) {
     return { ...params, userIds: [...params.userIds] };
   }
-  const userIds: number[] = [...blockedIds];
-  if (userIds.length === 0) return undefined;
-  return { chatId: params.chatId, probeMembership: true, removalId: params.removalId, userIds };
+  if (blockedIds.length === 0) return undefined;
+  return {
+    chatId: params.chatId,
+    probeMembership: true,
+    removalId: params.removalId,
+    userIds: [...blockedIds],
+  };
 }
 
 /**
@@ -217,6 +223,7 @@ export function forgetUserBlocklistRemovals(userId: number): void {
     if (pending.params.probeMembership) {
       if (!blocklistEmptied) continue;
       pendingBlockedRemovals.delete(removalId);
+      blocklistSweepPages.delete(removalId);
       releaseSweepClaim(pending.params.chatId, removalId);
       changed = true;
       continue;
@@ -225,6 +232,7 @@ export function forgetUserBlocklistRemovals(userId: number): void {
     const remaining: number[] = pending.params.userIds.filter((id: number): boolean => id !== userId);
     if (remaining.length === 0) {
       pendingBlockedRemovals.delete(removalId);
+      blocklistSweepPages.delete(removalId);
       releaseSweepClaim(pending.params.chatId, removalId);
     } else {
       pendingBlockedRemovals.set(removalId, {
@@ -294,6 +302,7 @@ export function forgetChatBlocklistWork(chatId: number): void {
   for (const [removalId, pending] of pendingBlockedRemovals) {
     if (pending.params.chatId !== chatId) continue;
     pendingBlockedRemovals.delete(removalId);
+    blocklistSweepPages.delete(removalId);
     changed = true;
   }
   if (changed && !queuePendingBlockedRemovalsSnapshot()) {

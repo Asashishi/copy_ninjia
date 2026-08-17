@@ -13,8 +13,26 @@ export const IDENTITY_READ_CACHE_MAX_ENTRIES: number = 8_192;
  */
 export const IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES: number = 4_096;
 
+/**
+ * 群级黑名单补扫一次从 SQLite 读取并投给 Anti-Raid Worker 的主键数上限。
+ *
+ * 游标页、跨线程消息与单群在途处置共用这一上限；不得把多页重新拼成全量数组。
+ * 所属模块：infra/blocklist/、workers/diskIO/storageDatabase/identityPolicy.ts。
+ */
+export const BLOCKLIST_SWEEP_PAGE_SIZE: number = 512;
+
 /** 每张业务表独立累计到该变化数时，立即用显式事务提交当前全部待写变化。 */
 export const IDENTITY_WRITE_BATCH_MAX_ENTRIES: number = 128;
+
+/**
+ * 游标读取允许叠加的 Worker 事务内黑名单变化上限。
+ *
+ * 正常补扫在每页前先 flush 并确认主线程 revision 已 ACK，因此这里通常为零；
+ * 该硬顶只兜并发写入和异常恢复，防止读请求为合并未提交变化重新物化无界集合。
+ * 所属模块：workers/diskIO/storageDatabase/identityPolicy.ts。
+ */
+export const BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES: number =
+  IDENTITY_WRITE_BATCH_MAX_ENTRIES;
 
 /** 第一条待写变化进入后，即使未满批也必须在该窗口内提交。 */
 export const IDENTITY_WRITE_FLUSH_INTERVAL_MS: number = 30_000;

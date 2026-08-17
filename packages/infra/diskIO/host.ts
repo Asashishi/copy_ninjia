@@ -1,7 +1,7 @@
 /** Disk I/O Worker 工厂与回执路由；请求通道和恢复状态机位于同目录叶子模块。 */
 
 import {
-  blocklistIdReadRequests,
+  blocklistIdPageReadRequests,
   diskIOFlushBarrier,
   diskIORuntime,
   identityPolicyReadRequests,
@@ -13,7 +13,7 @@ import {
 import { DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES } from
   "../../consts/diskIO/diagnostics";
 import type {
-  BlocklistIdsReadReply,
+  BlocklistIdPageReadReply,
   DiskIOReply,
   IdentityPoliciesReadReply,
   JoinLogReadReply,
@@ -34,7 +34,7 @@ import {
 
 export {
   rejectPendingDiskIORequests,
-  requestBlocklistIdsFromWorker,
+  requestBlocklistIdPageFromWorker,
   requestIdentityPoliciesFromWorker,
   requestJoinLogFromWorker,
   requestLuckSecretFromWorker,
@@ -156,13 +156,13 @@ export function createDiskIOWorker(): Worker {
       });
       return;
     }
-    if (data.type === "blocklistIdsRead") {
-      const reply: BlocklistIdsReadReply = data;
+    if (data.type === "blocklistIdPageRead") {
+      const reply: BlocklistIdPageReadReply = data;
       settleDiskIOReply({
-        channel: blocklistIdReadRequests,
+        channel: blocklistIdPageReadRequests,
         requestId: reply.requestId,
         error: reply.error,
-        payload: reply.ids,
+        payload: reply.page,
       });
       return;
     }

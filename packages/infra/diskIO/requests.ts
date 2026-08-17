@@ -2,7 +2,7 @@
 
 import {
   DISK_IO_REQUEST_CHANNELS,
-  blocklistIdReadRequests,
+  blocklistIdPageReadRequests,
   identityPolicyReadRequests,
   joinLogReadRequests,
   luckSecretRequests,
@@ -11,12 +11,13 @@ import type { DiskIORequestChannel, PendingDiskIORequest } from "../../cache/mai
 import type {
   DiskIORequestMessage,
   EnsureLuckSecretRequest,
-  ReadBlocklistIdsRequest,
+  ReadBlocklistIdPageRequest,
   ReadIdentityPoliciesRequest,
   ReadJoinLogRequest,
 } from "../../types/diskIO";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
+import type { BlocklistIdPage } from "../../types/identityStorage";
 import { safePostDiskIO } from "./transport";
 
 /** 结算一条通道上的全部等待者；Worker 代际失效与 terminate 共用。 */
@@ -192,18 +193,20 @@ export function requestIdentityPoliciesFromWorker({
   });
 }
 
-/** 向当前 Disk I/O 代际读取完整黑名单主键集合。 */
-export function requestBlocklistIdsFromWorker(
+/** 向当前 Disk I/O 代际按稳定主键游标读取一页黑名单。 */
+export function requestBlocklistIdPageFromWorker(
   worker: Worker,
+  afterId: number | null,
   timeoutMs: number
-): Promise<readonly number[]> {
-  return requestDiskIO<readonly number[], ReadBlocklistIdsRequest>({
+): Promise<BlocklistIdPage> {
+  return requestDiskIO<BlocklistIdPage, ReadBlocklistIdPageRequest>({
     worker,
-    channel: blocklistIdReadRequests,
+    channel: blocklistIdPageReadRequests,
     timeoutMs,
-    buildRequest: (requestId: number): ReadBlocklistIdsRequest => ({
-      type: "readBlocklistIds",
+    buildRequest: (requestId: number): ReadBlocklistIdPageRequest => ({
+      type: "readBlocklistIdPage",
       requestId,
+      afterId,
     }),
   });
 }

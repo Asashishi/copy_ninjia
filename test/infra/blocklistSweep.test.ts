@@ -2,6 +2,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { botPermissions } from "../helpers/botPermissions";
+import { settleBackgroundWork } from "../libs/helpers";
 const {
   blockedUserIds,
   configuredBlockedIds,
@@ -9,7 +10,9 @@ const {
   getChatMember,
   installBlocklistSweepHooks,
   lastRemovalId,
+  readBlocklistIdPage,
   remover,
+  setBlocklistIdReads,
   settleLast,
   states,
 } = await import("../helpers/blocklistSweepHarness");
@@ -38,9 +41,13 @@ const {
   BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
   BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
 } = await import("../../packages/consts/antiRaid/blocklist");
+const {
+  BLOCKLIST_SWEEP_PAGE_SIZE,
+} = await import("../../packages/consts/identityStorage");
 
 const {
   blockedMemberRemoverHolder,
+  blocklistSweepPages,
   blocklistSweepSchedulerState,
   blocklistSweepState,
   pendingBlockedRemovals,
@@ -50,6 +57,7 @@ installBlocklistSweepHooks({
   quiesceBlocklistSweepScheduler,
   registerBlockedMemberRemover,
   settleBlockedRemoval,
+  blocklistSweepPages,
   blocklistSweepState,
   pendingBlockedRemovals,
 });
@@ -128,13 +136,122 @@ describe("黑名单清扫", () => {
     // 逐个探一次；那 O(名单长度) 次请求不该发生在主线程。
     expect(remover).toHaveBeenCalledWith([{
       chatId: -1001,
-      userIds: [7, -4004],
+      userIds: [-4004, 7],
       probeMembership: true,
       removalId: expect.any(Number),
     }]);
     expect(getChatMember).not.toHaveBeenCalled();
     // 回执之前批次一直挂在镜像里：Worker 崩溃时它是唯一的重放依据。
     expect(pendingBlockedRemovals.size).toBe(1);
+  });
+
+  test("补扫严格按固定页投递，上一页回执前不读取或排队下一页", async () => {
+    for (let id: number = 1; id <= BLOCKLIST_SWEEP_PAGE_SIZE + 2; id++) {
+      blockedUserIds.set(id, {
+        isBlocked: true,
+        blockedAt: "2026/08/17 00:00:00",
+      });
+    }
+
+    await sweepBlockedMembers(-1001, 1_000);
+
+    expect(readBlocklistIdPage).toHaveBeenCalledTimes(1);
+    expect(readBlocklistIdPage).toHaveBeenLastCalledWith(null);
+    expect(remover).toHaveBeenCalledTimes(1);
+    const firstPage = remover.mock.calls[0]![0] as {
+      chatId: number;
+      probeMembership: boolean;
+      removalId: number;
+      userIds: number[];
+    }[];
+    expect(firstPage[0]!.userIds).toHaveLength(BLOCKLIST_SWEEP_PAGE_SIZE);
+    const removalId: number = firstPage[0]!.removalId;
+    expect(blocklistSweepPages.size).toBe(1);
+    expect(pendingBlockedRemovals.size).toBe(1);
+
+    // 一页只有落地回执后才允许续读；不能一次把剩余页全塞进 Worker mailbox。
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      chatId: -1001,
+      removalId,
+      complete: true,
+      permissionDenied: false,
+      targetIsAdmin: false,
+    });
+    // 下一页 flush/read 尚未完成时，上一页的重复回执不能把 durable 任务提前销账。
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      chatId: -1001,
+      removalId,
+      complete: true,
+      permissionDenied: false,
+      targetIsAdmin: false,
+    });
+    expect(pendingBlockedRemovals.size).toBe(1);
+    await settleBackgroundWork();
+
+    expect(readBlocklistIdPage).toHaveBeenCalledTimes(2);
+    expect(readBlocklistIdPage).toHaveBeenLastCalledWith(
+      BLOCKLIST_SWEEP_PAGE_SIZE
+    );
+    expect(remover).toHaveBeenCalledTimes(2);
+    const finalPage = remover.mock.calls[1]![0] as {
+      chatId: number;
+      probeMembership: boolean;
+      removalId: number;
+      userIds: number[];
+    }[];
+    expect(finalPage).toEqual([{
+      chatId: -1001,
+      probeMembership: true,
+      removalId,
+      userIds: [BLOCKLIST_SWEEP_PAGE_SIZE + 1, BLOCKLIST_SWEEP_PAGE_SIZE + 2],
+    }]);
+    // 多页共用一条 durable 任务；中间页回执不得提前销账。
+    expect(pendingBlockedRemovals.size).toBe(1);
+
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      chatId: -1001,
+      removalId,
+      complete: true,
+      permissionDenied: false,
+      targetIsAdmin: false,
+    });
+    expect(pendingBlockedRemovals.size).toBe(0);
+    expect(blocklistSweepPages.size).toBe(0);
+  });
+
+  test("续页读取失败释放 claim 并推进退避，outbox 留给下一轮从头重放", async () => {
+    for (let id: number = 1; id <= BLOCKLIST_SWEEP_PAGE_SIZE + 1; id++) {
+      blockedUserIds.set(id, {
+        isBlocked: true,
+        blockedAt: "2026/08/17 00:00:00",
+      });
+    }
+    let reads: number = 0;
+    setBlocklistIdReads((): Promise<readonly number[]> => {
+      reads++;
+      if (reads === 1) return Promise.resolve([...blockedUserIds.keys()]);
+      return Promise.reject(new Error("cursor page unavailable"));
+    });
+
+    await sweepBlockedMembers(-1001, 1_000);
+    const removalId: number = lastRemovalId();
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      chatId: -1001,
+      removalId,
+      complete: true,
+      permissionDenied: false,
+      targetIsAdmin: false,
+    });
+    await settleBackgroundWork();
+
+    expect(pendingBlockedRemovals.has(removalId)).toBeTrue();
+    expect(blocklistSweepPages.has(removalId)).toBeFalse();
+    expect(blocklistSweepState.get(-1001)?.removalId).toBeNull();
+    expect(blocklistSweepState.get(-1001)?.failedSweeps).toBe(1);
   });
 
   test("补扫在 outbox 里不冻结名单：条目不随名单长度增长，投递时才现算", async () => {
@@ -154,7 +271,7 @@ describe("黑名单清扫", () => {
       expect(pending.params.probeMembership).toBeTrue();
       expect("userIds" in pending.params).toBeFalse();
     }
-    // 投出去的那一份照常带着完整名单。
+    // 投出去的那一份只带当前有界页。
     const dispatched = remover.mock.calls.at(-1)![0] as { userIds: number[] }[];
     expect(dispatched[0]!.userIds).toHaveLength(50);
   });

@@ -316,6 +316,21 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     expect(readDay("2026-07-16")).toEqual({ K: null, R: { revision: 1 }, C: true });
   });
 
+  test("截断修复：早期成员损坏后仍只保留损坏前的最后有效前缀", () => {
+    const path: string = join(dir, "2026-07-16.json");
+    const later: string[] = [];
+    for (let index: number = 0; index < 4_000; index++) {
+      later.push(`  "later-${index}": {"value": ${index}}`);
+    }
+    const original: string =
+      `{\n  "valid": {"value": 1},\n  "bad": truX,\n${later.join(",\n")},\n  "torn":`;
+    writeFileSync(path, original);
+
+    const recovered: DayFileState = openRepairableDay("2026-07-16");
+    expect(recovered.empty).toBeFalse();
+    expect(readDay("2026-07-16")).toEqual({ valid: { value: 1 } });
+  });
+
   test("截断修复：断电截断发生在第一条记录写入之前（文件只剩一个 \"{\"），修复出的空对象要被正确判成 empty，" +
     "否则下一次追加会误判成「非空、按位置追加」写出非法 JSON（回归：曾导致这条记录永久丢失的级联损坏）", () => {
     const path = join(dir, "2026-07-16.json");

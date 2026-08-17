@@ -29,6 +29,7 @@ export const blockedIdentityTestView: {
   clear(): void;
   get(id: number): BlockedTestRecord | undefined;
   has(id: number): boolean;
+  keys(): IterableIterator<number>;
   set(id: number, record: BlockedTestRecord): void;
 } = {
   get size(): number {
@@ -48,6 +49,9 @@ export const blockedIdentityTestView: {
   has(id: number): boolean {
     return blocklistEntryCache.peek(id) !== undefined &&
       blocklistEntryCache.peek(id) !== null;
+  },
+  keys(): IterableIterator<number> {
+    return blockedIdentityTestIds.keys();
   },
   set(id: number, record: BlockedTestRecord): void {
     if (!this.has(id)) identityEntryCounts.blocklist++;

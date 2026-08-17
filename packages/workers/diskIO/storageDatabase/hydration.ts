@@ -108,7 +108,9 @@ export function hydrateStorageDatabase(): StorageDatabaseHydration {
     return {
       blocklistEntryCount: rows.blocklistEntryCount,
       whitelistEntryCount: rows.whitelistEntryCount,
-      pendingBlockedRemovals: new Map(removalSnapshot),
+      // handleLoad 在同一消息轮立刻 postMessage；结构化克隆完成前本 Worker 不会
+      // 处理下一条消息，因此直接交出现有快照不会暴露跨线程可变引用。
+      pendingBlockedRemovals: removalSnapshot,
       chatStates,
     };
   } catch (error: unknown) {

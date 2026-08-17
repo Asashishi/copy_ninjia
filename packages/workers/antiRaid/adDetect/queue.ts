@@ -291,11 +291,11 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     directText,
     receivedAt: now,
     withinReferencedWarning: hasActiveReferencedAdWarning(key, now),
+    quote: context?.quote,
+    replyTo: context?.replyTo,
   };
   // 两段上下文已经并进上面的 text 参与判定；这里再留一份独立的，只服务命中
   // 样本——人回头查误判时要分得清哪一段是他自己写的、哪一段是引来的。
-  if (context?.quote !== undefined) entry.quote = context.quote;
-  if (context?.replyTo !== undefined) entry.replyTo = context.replyTo;
   bundle.entries.push(entry);
   enforceBundleCapacity(bundle);
   if (!storeBundle(key, bundle)) return;

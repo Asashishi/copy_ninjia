@@ -36,6 +36,7 @@ const {
   LUCK_APPEND_STALL_ALERT_FAILURES,
   LUCK_DEFERRED_DRAW_MAX,
 } = await import("../../../packages/consts/diskIO");
+const { DAILY_LUCK_CACHE_MAX } = await import("../../../packages/consts/luckChallenge");
 import type { LuckAppendStalledReply, LuckDrawDiskMessage } from "../../../packages/types";
 
 const DAY = "2026-07-16";
@@ -164,6 +165,21 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
 
     expect(() => recoverLuckDay(DAY)).toThrow("$.<record> must be exactly");
     expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  test("启动恢复仍让容量错误优先于记录错误", () => {
+    mkdirSync(luckDir, { recursive: true });
+    const path: string = join(luckDir, `${DAY}.json`);
+    const records: Record<string, unknown> = {};
+    for (let index: number = 1; index <= DAILY_LUCK_CACHE_MAX + 1; index++) {
+      records[String(index)] = { label: "大吉", fortunePercent: 90.12 };
+    }
+    records["1"] = { label: 123, fortunePercent: 90.12 };
+    writeFileSync(path, JSON.stringify(records, null, 2));
+
+    expect(() => recoverLuckDay(DAY)).toThrow(
+      `at most ${DAILY_LUCK_CACHE_MAX} confirmed luck records`
+    );
   });
 
   test("启动清理拒绝非法或未来日期文件，不把时钟回拨产生的状态当过期项删除", () => {

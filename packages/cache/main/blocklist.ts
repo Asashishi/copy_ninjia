@@ -1,5 +1,6 @@
 import type {
   BlockedMemberRemover,
+  BlocklistSweepPageState,
   BlocklistSweepRecord,
   BlocklistSweepSchedulerState,
   PendingBlockedRemoval,
@@ -68,6 +69,16 @@ export const blocklistRemovalCounter: { current: number } = { current: 0 };
  * 容量按「本进程见过的管理员群」计，随停管即时释放。
  */
 export const blocklistSweepState: Map<number, BlocklistSweepRecord> = new Map();
+
+/**
+ * 当前补扫 removalId 对应的唯一在途游标页。
+ *
+ * 填充：首/续页投递前；清理：页失败、整轮落定、群停管、任务被新补扫取代或
+ * Worker 重建从空游标重放时。权威线程是 main，容量不超过受管群上限；每群同时
+ * 只有一页等待回执，因此 Anti-Raid mailbox 不会随黑名单总长度增长。
+ */
+export const blocklistSweepPages: Map<number, BlocklistSweepPageState> =
+  new Map();
 
 /**
  * 主线程唯一黑名单补扫 timer owner。

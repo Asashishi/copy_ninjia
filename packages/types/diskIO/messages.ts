@@ -298,10 +298,12 @@ export interface ReadIdentityPoliciesRequest {
   ids: readonly number[];
 }
 
-/** 主线程 -> Disk I/O Worker：按需读取完整黑名单 ID，用于群级补扫。 */
-export interface ReadBlocklistIdsRequest {
-  type: "readBlocklistIds";
+/** 主线程 -> Disk I/O Worker：按稳定主键游标读取一页黑名单 ID。 */
+export interface ReadBlocklistIdPageRequest {
+  type: "readBlocklistIdPage";
   requestId: number;
+  /** null 从最小主键开始；其余值只读取严格大于该主键的行。 */
+  afterId: number | null;
 }
 
 /**
@@ -313,7 +315,7 @@ export type DiskIORequestMessage =
   | EnsureLuckSecretRequest
   | ReadJoinLogRequest
   | ReadIdentityPoliciesRequest
-  | ReadBlocklistIdsRequest;
+  | ReadBlocklistIdPageRequest;
 
 export type DiskIOMessage =
   | DiskDiagnosticBatchRequest
@@ -331,7 +333,7 @@ export type DiskIOMessage =
   | EnsureLuckSecretRequest
   | ReadJoinLogRequest
   | ReadIdentityPoliciesRequest
-  | ReadBlocklistIdsRequest
+  | ReadBlocklistIdPageRequest
   | LoadRequest
   | RecoveryReplayRequest
   | DiskFlushRequest;

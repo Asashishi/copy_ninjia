@@ -7,6 +7,8 @@
 
 import { beforeEach, expect, mock } from "bun:test";
 import type { BlockedMemberRemover } from "../../packages/types/blocklist";
+import { BLOCKLIST_SWEEP_PAGE_SIZE } from "../../packages/consts/identityStorage";
+import type { BlocklistIdPage } from "../../packages/types/identityStorage";
 import {
   blockedIdentityTestView as blockedUserIds,
   readBlockedIdentityTestIds,
@@ -39,9 +41,23 @@ export const postDiskIO = mock((..._args: unknown[]): boolean => true);
  * 黑名单主键读的当前实现。SQLite 迁移之后它是**跨线程 request/reply**，Disk I/O
  * 自愈窗口里会直接 reject（见 infra/diskIO.ts），因此用例要能切换成失败。
  */
-const readBlocklistIds: { current: () => Promise<readonly number[]> } = {
+const blocklistIdPageSource: { current: () => Promise<readonly number[]> } = {
   current: async (): Promise<readonly number[]> => readBlockedIdentityTestIds(),
 };
+export const readBlocklistIdPage = mock(
+  async (afterId: number | null): Promise<BlocklistIdPage> => {
+    const all: readonly number[] = await blocklistIdPageSource.current();
+    const remaining: number[] = all
+      .filter((id: number): boolean => afterId === null || id > afterId)
+      .sort((left: number, right: number): number => left - right);
+    const ids: number[] = remaining.slice(0, BLOCKLIST_SWEEP_PAGE_SIZE);
+    return {
+      ids,
+      nextCursor: ids.length === 0 ? afterId : ids[ids.length - 1]!,
+      done: remaining.length <= BLOCKLIST_SWEEP_PAGE_SIZE,
+    };
+  }
+);
 
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
@@ -53,7 +69,16 @@ mock.module("../../packages/infra/diskIO", () => ({
   postDiskIO,
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (): void => {},
-  readBlocklistIds: (): Promise<readonly number[]> => readBlocklistIds.current(),
+  readBlocklistIdPage,
+  readIdentityPolicies: async (ids: readonly number[]): Promise<{
+    whitelist: readonly (readonly [number, string])[];
+    blocklist: readonly (readonly [number, string])[];
+  }> => ({
+    whitelist: [],
+    blocklist: ids
+      .filter((id: number): boolean => blockedUserIds.has(id))
+      .map((id: number): readonly [number, string] => [id, "{}"]),
+  }),
   relayLogMessage: (): boolean => true,
   flushDiskIO: async (): Promise<string> => "flushed",
   // /block 只等黑名单这一个领域的落盘回执（见 confirmBlocklistPersisted）。
@@ -90,6 +115,7 @@ export interface BlocklistSweepDeps {
   readonly quiesceBlocklistSweepScheduler: () => void;
   readonly registerBlockedMemberRemover: (remover: BlockedMemberRemover) => void;
   readonly settleBlockedRemoval: (event: never) => void;
+  readonly blocklistSweepPages: Map<number, unknown>;
   readonly blocklistSweepState: Map<number, unknown>;
   readonly pendingBlockedRemovals: Map<number, unknown>;
 }
@@ -153,7 +179,7 @@ export function settleLastAsForbidden(chatId: number = -1001): void {
 export function setBlocklistIdReads(
   implementation: () => Promise<readonly number[]>
 ): void {
-  readBlocklistIds.current = implementation;
+  blocklistIdPageSource.current = implementation;
 }
 
 /** 三个黑名单清扫用例文件共用的隔离钩子；每份都要登记一次。 */
@@ -164,9 +190,11 @@ export function installBlocklistSweepHooks(injected: BlocklistSweepDeps): void {
     states.clear();
     blockedUserIds.clear();
     configuredBlockedIds.clear();
+    injected.blocklistSweepPages.clear();
     injected.blocklistSweepState.clear();
     injected.pendingBlockedRemovals.clear();
     remover.mockClear();
+    readBlocklistIdPage.mockClear();
     postDiskIO.mockClear();
     getChatMember.mockClear();
     persistChatState.mockClear();
@@ -174,7 +202,7 @@ export function installBlocklistSweepHooks(injected: BlocklistSweepDeps): void {
     remover.mockImplementation(async (...args: unknown[]): Promise<number> =>
       (args[0] as readonly unknown[]).length);
     injected.registerBlockedMemberRemover(remover as unknown as BlockedMemberRemover);
-    readBlocklistIds.current = async (): Promise<readonly number[]> =>
+    blocklistIdPageSource.current = async (): Promise<readonly number[]> =>
       readBlockedIdentityTestIds();
   });
 }

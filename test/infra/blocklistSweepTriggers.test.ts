@@ -47,6 +47,7 @@ const {
 } = await import("../../packages/infra/botAdmin");
 
 const {
+  blocklistSweepPages,
   blocklistSweepState,
   pendingBlockedRemovals,
 } = await import("../../packages/cache/main/blocklist");
@@ -55,6 +56,7 @@ installBlocklistSweepHooks({
   quiesceBlocklistSweepScheduler,
   registerBlockedMemberRemover,
   settleBlockedRemoval,
+  blocklistSweepPages,
   blocklistSweepState,
   pendingBlockedRemovals,
 });
