@@ -176,10 +176,7 @@ function renderEnvironment(
       copy.environmentLabels.kernel,
       `${report.environment.platform} ${report.environment.kernel} · ${report.environment.arch}`,
     ],
-    [
-      copy.environmentLabels.cpu,
-      `${report.environment.cpuModel} × ${report.environment.cpuCount}`,
-    ],
+    [copy.environmentLabels.cpuCores, formatCount(report.environment.cpuCount)],
     [copy.environmentLabels.memory, formatBytes(report.environment.totalMemoryBytes)],
     [copy.environmentLabels.rounds, formatCount(report.rounds)],
     [copy.environmentLabels.dataRoot, `\`${report.mockDataRoot}/\``],

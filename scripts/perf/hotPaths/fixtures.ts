@@ -16,8 +16,8 @@ export const BENCHMARK_CHAT_ID: number = -100_000_000_000_001;
  * 必须用生产量级，不能用 1_000_000 这类小整数。`Date.now()` 的毫秒值约 1.75e12，
  * 早已超出 int32；生产里这些窗口喂进来的全是 `Date.now()`，基准喂小整数就等于
  * 在量一份生产永远遇不到的输入。换成本常量后多个场景的读数明显移位
- * （linked-timestamp-window 46.8 → 74.1、linked-rolling-buffer 75.2 → 107.9
- * ns/op），说明旧读数确实建立在不具代表性的输入上。
+ * （linked-timestamp-window 46.8 → 74.1 ns/op），说明旧读数确实建立在不具
+ * 代表性的输入上。
  *
  * 需要澄清一点，免得后来者据此得出过强的结论：**单纯的大数值本身并不会让
  * JSC 反复去优化**——全程只喂 `Date.now()` 量级时，`observeGroupMessageForAiReply`

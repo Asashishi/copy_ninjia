@@ -22,6 +22,10 @@ import {
 } from "../../../packages/workers/antiRaid/adDetect/bundle";
 import { redactSecretsInText } from "../../../packages/libs/redaction";
 import { LUCK_TIERS } from "../../../packages/consts/luckChallenge";
+import {
+  COMPACT_BATCH_SIZE,
+  VERBATIM_CONTEXT_MAX,
+} from "../../../packages/consts/aiChat/memory";
 import { collectDueGagSpeakNotices } from "../../../packages/commands/gag/counter";
 import { createGagTargetProfileUrl } from "../../../packages/commands/gag/identity";
 import type { GagSession } from "../../../packages/types/gag";
@@ -47,13 +51,7 @@ import {
 import { prototypeProbes } from "./jitTiers";
 import { createAdCapacityRejectScenario } from "./adDetectScenarios";
 import { createIdentityPermissionReadScenario } from "./identityScenarios";
-import type { JitProbe, Scenario, ScenarioName } from "./types";
-import {
-  ArrayTimestampWindow,
-  Float64TimestampWindow,
-  type RollingBuffer,
-  type TimestampWindow,
-} from "./containers";
+import type { Scenario, ScenarioName } from "./types";
 
 /** 广告无元数据路径的只读空输入，避免基准自身制造额外容器。 */
 const EMPTY_LINK_URLS: readonly string[] = [];
@@ -89,22 +87,6 @@ const AD_SAMPLE_TEXTS: readonly string[] = [
   "yet another one",
   "short",
 ];
-
-/**
- * 两种时间窗实现的探针表，热/冷两组分开登记。
- *
- * 冷场景只 push、从不 trim（见 coldTimestampWindowScenario），把 trim 也登记
- * 进去只会得到一行恒为 0 的读数——探针表必须与该场景真实调用到的函数一致，
- * 否则 dfgCompiles=0 到底是「没热起来」还是「压根没调用」就分不清了。
- */
-const ARRAY_WINDOW_PROBES: Readonly<Record<string, JitProbe>> =
-  prototypeProbes("ArrayTimestampWindow", ArrayTimestampWindow.prototype, ["push", "trim"]);
-const FLOAT64_WINDOW_PROBES: Readonly<Record<string, JitProbe>> =
-  prototypeProbes("Float64TimestampWindow", Float64TimestampWindow.prototype, ["push", "trim"]);
-const ARRAY_WINDOW_COLD_PROBES: Readonly<Record<string, JitProbe>> =
-  prototypeProbes("ArrayTimestampWindow", ArrayTimestampWindow.prototype, ["push"]);
-const FLOAT64_WINDOW_COLD_PROBES: Readonly<Record<string, JitProbe>> =
-  prototypeProbes("Float64TimestampWindow", Float64TimestampWindow.prototype, ["push"]);
 
 function senderScenario(username?: string): Scenario {
   const message: Message = messageFixture(username);
@@ -192,67 +174,28 @@ function linkedTimestampWindowScenario(): Scenario {
   };
 }
 
-function timestampWindowScenario(
-  createWindow: () => TimestampWindow,
-  probes: Readonly<Record<string, JitProbe>>
-): Scenario {
-  const timestamps: TimestampWindow = createWindow();
-  let now: number = BENCHMARK_EPOCH_MS;
-  return {
-    iterations: 1_000_000,
-    run: (iterations: number): number => {
-      for (let index: number = 0; index < iterations; index += 1) {
-        now += 1;
-        timestamps.trim(165, now);
-        timestamps.push(now);
-      }
-      return timestamps.size;
-    },
-    probes,
-  };
-}
-
-function coldTimestampWindowScenario(
-  createWindow: () => TimestampWindow,
-  probes: Readonly<Record<string, JitProbe>>
-): Scenario {
-  const timestamps: TimestampWindow[] = [];
-  return {
-    iterations: 15_000,
-    run: (iterations: number): number => {
-      timestamps.length = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        const window: TimestampWindow = createWindow();
-        window.push(index);
-        timestamps.push(window);
-      }
-      return timestamps.length;
-    },
-    reset: (): void => {
-      timestamps.length = 0;
-    },
-    probes,
-  };
-}
-
-function rollingBufferScenario(
-  createBuffer: () => RollingBuffer,
-  probes: Readonly<Record<string, JitProbe>>
-): Scenario {
-  const buffer: RollingBuffer = createBuffer();
+/**
+ * AI 滚动记忆缓冲的容器成本：`BoundedDeque` 就是 `cache/workers/aiChat/memory.ts`
+ * 里每群那一份逐字上下文缓冲用的容器。
+ *
+ * 容量与批量直接引生产常量：满 `VERBATIM_CONTEXT_MAX` 后压缩一块
+ * `COMPACT_BATCH_SIZE` 再继续推入，正是生产里摘要触发前后的进出形状。
+ */
+function boundedRollingBufferScenario(): Scenario {
+  const buffer: BoundedDeque<number> = new BoundedDeque<number>(VERBATIM_CONTEXT_MAX);
   return {
     iterations: 500_000,
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
         buffer.push(index);
-        if (buffer.size === 150) {
-          for (let removed: number = 0; removed < 75; removed += 1) {
+        if (buffer.size === VERBATIM_CONTEXT_MAX) {
+          for (let removed: number = 0; removed < COMPACT_BATCH_SIZE; removed += 1) {
             checksum += buffer.shift() ?? 0;
           }
-          checksum += buffer.last(75)[0] ?? 0;
-        } else if (buffer.size === 75) {
-          checksum += buffer.last(75)[0] ?? 0;
+          checksum += buffer.last(COMPACT_BATCH_SIZE)[0] ?? 0;
+        } else if (buffer.size === COMPACT_BATCH_SIZE) {
+          checksum += buffer.last(COMPACT_BATCH_SIZE)[0] ?? 0;
         }
       }
       return checksum;
@@ -260,7 +203,11 @@ function rollingBufferScenario(
     reset: (): void => {
       buffer.clear();
     },
-    probes,
+    probes: prototypeProbes(
+      "BoundedDeque",
+      BoundedDeque.prototype,
+      ["push", "shift", "last"]
+    ),
   };
 }
 
@@ -553,38 +500,10 @@ export function createScenario(name: ScenarioName): Scenario {
       return createAdCapacityRejectScenario();
     case "identity-permission-read":
       return createIdentityPermissionReadScenario();
-    case "array-timestamp-window":
-      return timestampWindowScenario(
-        (): TimestampWindow => new ArrayTimestampWindow(),
-        ARRAY_WINDOW_PROBES
-      );
-    case "float64-timestamp-window":
-      return timestampWindowScenario(
-        (): TimestampWindow => new Float64TimestampWindow(),
-        FLOAT64_WINDOW_PROBES
-      );
-    case "array-timestamp-cold":
-      return coldTimestampWindowScenario(
-        (): TimestampWindow => new ArrayTimestampWindow(),
-        ARRAY_WINDOW_COLD_PROBES
-      );
-    case "float64-timestamp-cold":
-      return coldTimestampWindowScenario(
-        (): TimestampWindow => new Float64TimestampWindow(),
-        FLOAT64_WINDOW_COLD_PROBES
-      );
     case "linked-timestamp-window":
       return linkedTimestampWindowScenario();
-    case "linked-rolling-buffer":
-      return rollingBufferScenario(
-        (): RollingBuffer => new LinkedQueue<number>(),
-        prototypeProbes("LinkedQueue", LinkedQueue.prototype, ["push", "shift", "last"])
-      );
     case "bounded-rolling-buffer":
-      return rollingBufferScenario(
-        (): RollingBuffer => new BoundedDeque<number>(150),
-        prototypeProbes("BoundedDeque", BoundedDeque.prototype, ["push", "shift", "last"])
-      );
+      return boundedRollingBufferScenario();
     case "chat-state-read":
       return chatStateReadScenario();
     case "chat-state-map-read":

@@ -85,7 +85,7 @@
 
 ## 全量性能基准
 
-`bun run perf:full` 只在发布和明确指令时运行，不进 `bun run check`，也不设失败阈值——热路径的硬门禁仍是上面的 `perf:hot-path-gate`。它把六个分区各跑三轮独立子进程再取平均：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、实现对照、入群日志容量线。每一项除平均值外还给最小值、最大值与变异系数，CV 明显变大的那一行不能拿去和历史比。
+`bun run perf:full` 只在发布和明确指令时运行，不进 `bun run check`，也不设失败阈值——热路径的硬门禁仍是上面的 `perf:hot-path-gate`。它把六个分区各跑三轮独立子进程再取平均：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线。每一项除平均值外还给最小值、最大值与变异系数，CV 明显变大的那一行不能拿去和历史比。
 
 被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
 

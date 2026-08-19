@@ -82,7 +82,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Behavioural details for `/gag`, `/block`, `/batch_kick`, ad detection and join verification
 
 9. **[09 Performance Benchmark](09-performance.md)**
-   - What the six sections of `bun run perf:full` measure: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, implementation comparisons, join-log capacity line
+   - What the six sections of `bun run perf:full` measure: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, containers and algorithms, join-log capacity line
    - Three independent rounds per item, reported as a mean with min, max and coefficient of variation
    - Total throughput, total I/O and mock data-root footprint per round
 

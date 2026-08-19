@@ -138,7 +138,7 @@
 
 - 全量基准入口是 `bun run perf:full`（`scripts/perf/fullSuite.ts`），只在发布和明确指令时运行，不进 `bun run check`。
 - 全量基准不设失败阈值、不改退出码；热路径的 GC/RSS/JIT 硬门禁使用 `bun run perf:hot-path-gate`。
-- 分区固定为冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、实现对照、入群日志容量线；每项在独立子进程里跑三轮，报告平均值、最小值、最大值与变异系数。
+- 分区固定为冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线；每项在独立子进程里跑三轮，报告平均值、最小值、最大值与变异系数。
 - 全部数据写在仓库根的 `performance/`，配置读 `config_example/`，每轮跑完删除整棵目录；运行结束后 `performance/` 下不得有残留目录。
 - 父进程与 `scripts/perf/fullSuite/` 下除 `fixture.ts`、`seed.ts`、`coldStart.ts`、`chain.ts`、`storage.ts` 以外的模块，只能 import 纯常量与 `import type`，不得 import `packages/` 下的实现模块。
 - 新增被测项复用 `scripts/perf/` 已有实现与生产入口；不得为基准另写生产逻辑、落盘格式或夹具规模，夹具规模引用生产常量。

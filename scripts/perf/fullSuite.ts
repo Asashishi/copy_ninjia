@@ -6,7 +6,7 @@
  * `bun run perf:hot-path-gate` 承担，本脚本不重复那件事，也不设失败阈值）。
  *
  * 覆盖六个分区：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、
- * 实现对照、入群日志容量线。每一项都在独立子进程里跑三轮，报告给平均值、
+ * 容器与算法、入群日志容量线。每一项都在独立子进程里跑三轮，报告给平均值、
  * 最小值、最大值与变异系数。
  *
  * 数据一律落在仓库根的 `performance/` 下（不进 Git），配置读 `config_example/`，
@@ -32,7 +32,7 @@ import {
 } from "./fullSuite/mockRoot";
 import {
   CHAIN_NAMES,
-  COMPARISON_HOT_PATH_SCENARIOS,
+  CONTAINER_ALGORITHM_SCENARIOS,
   PRODUCTION_HOT_PATH_SCENARIOS,
   runChainSection,
   runColdStartSection,
@@ -95,15 +95,13 @@ function parseOptions(argv: readonly string[]): SuiteOptions {
 }
 
 function suiteEnvironment(): SuiteEnvironment {
-  const processors: ReturnType<typeof cpus> = cpus();
   return {
     bunVersion: Bun.version,
     bunRevision: Bun.revision,
     platform: platform(),
     arch: arch(),
     kernel: release(),
-    cpuModel: processors[0]?.model.trim() ?? "unknown",
-    cpuCount: processors.length,
+    cpuCount: cpus().length,
     totalMemoryBytes: totalmem(),
   };
 }
@@ -152,8 +150,8 @@ async function runSuite(options: SuiteOptions): Promise<FullSuiteReport> {
     sections.push(await runStorageSection(context));
     sections.push(await runHotPathSection(
       context,
-      "hot-path-comparison",
-      COMPARISON_HOT_PATH_SCENARIOS
+      "container-algorithm",
+      CONTAINER_ALGORITHM_SCENARIOS
     ));
     sections.push(await runJoinLogSection(context));
     return {
@@ -236,7 +234,7 @@ if (Bun.argv[2] === "--child") {
   }
   process.stderr.write(
     `perf:full finished ${CHAIN_NAMES.length} chains and ` +
-    `${PRODUCTION_HOT_PATH_SCENARIOS.length + COMPARISON_HOT_PATH_SCENARIOS.length} ` +
+    `${PRODUCTION_HOT_PATH_SCENARIOS.length + CONTAINER_ALGORITHM_SCENARIOS.length} ` +
     `hot-path scenarios in ${(report.wallClockMs / 1_000).toFixed(1)}s\n`
   );
 }

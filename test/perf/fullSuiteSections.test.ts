@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HOT_PATH_PROFILE_SCENARIOS } from "../../packages/consts/performance";
 import {
-  COMPARISON_HOT_PATH_SCENARIOS,
+  CONTAINER_ALGORITHM_SCENARIOS,
   PRODUCTION_HOT_PATH_SCENARIOS,
 } from "../../scripts/perf/fullSuite/sections";
 import {
@@ -11,12 +11,12 @@ import {
 import type { ScenarioName } from "../../scripts/perf/hotPaths/types";
 
 describe("全量基准的热路径场景划分", () => {
-  test("生产场景与实现对照互不重叠，且各自没有重复", () => {
+  test("生产场景与容器场景互不重叠，且各自没有重复", () => {
     const production = new Set<ScenarioName>(PRODUCTION_HOT_PATH_SCENARIOS);
-    const comparison = new Set<ScenarioName>(COMPARISON_HOT_PATH_SCENARIOS);
+    const containers = new Set<ScenarioName>(CONTAINER_ALGORITHM_SCENARIOS);
     expect(production.size).toBe(PRODUCTION_HOT_PATH_SCENARIOS.length);
-    expect(comparison.size).toBe(COMPARISON_HOT_PATH_SCENARIOS.length);
-    for (const scenario of comparison) expect(production.has(scenario)).toBe(false);
+    expect(containers.size).toBe(CONTAINER_ALGORITHM_SCENARIOS.length);
+    for (const scenario of containers) expect(production.has(scenario)).toBe(false);
   });
 
   test("热路径门禁盯着的场景必须都在生产表里", () => {

@@ -146,12 +146,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "ad-wire-clone":
     case "ad-capacity-reject":
     case "identity-permission-read":
-    case "array-timestamp-window":
-    case "float64-timestamp-window":
-    case "array-timestamp-cold":
-    case "float64-timestamp-cold":
     case "linked-timestamp-window":
-    case "linked-rolling-buffer":
     case "bounded-rolling-buffer":
     case "chat-state-read":
     case "chat-state-map-read":
@@ -175,10 +170,8 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "<sender-no-username|sender-stable-username|luck-receipt-fast-path|" +
         "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
         "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
-        "array-timestamp-window|float64-timestamp-window|" +
-        "array-timestamp-cold|float64-timestamp-cold|" +
-        "linked-timestamp-window|linked-rolling-buffer|" +
-        "bounded-rolling-buffer|chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
+        "linked-timestamp-window|bounded-rolling-buffer|" +
+        "chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
         "flood-window-hit|flood-window-growth|flood-window-steady|" +
         "gag-speak-counter|" +
         "buffered-message-build|transcript-render|reply-reference|" +

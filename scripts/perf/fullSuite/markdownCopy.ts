@@ -18,7 +18,13 @@ export interface BenchmarkCopy {
   readonly summaryRounds: string;
   readonly environmentTitle: string;
   readonly environmentLabels: Readonly<Record<
-    "runtime" | "kernel" | "cpu" | "memory" | "rounds" | "dataRoot" | "generatedAt",
+    | "runtime"
+    | "kernel"
+    | "cpuCores"
+    | "memory"
+    | "rounds"
+    | "dataRoot"
+    | "generatedAt",
     string
   >>;
   readonly totalsTitle: string;
@@ -53,7 +59,7 @@ const ZH: BenchmarkCopy = {
   environmentLabels: {
     runtime: "运行时",
     kernel: "内核",
-    cpu: "CPU",
+    cpuCores: "CPU 核心数",
     memory: "内存",
     rounds: "轮数",
     dataRoot: "mock 数据根",
@@ -80,7 +86,7 @@ const ZH: BenchmarkCopy = {
     "hot-path": "热路径 · 生产函数",
     chain: "链路 · 端到端 durable 耗时",
     storage: "存储 · SQLite 与主线程缓存",
-    "hot-path-comparison": "实现对照 · 容器与算法选型",
+    "container-algorithm": "容器与算法",
     "join-log-capacity": "入群日志 · 25 万容量线",
   },
   sectionNotes: {
@@ -93,18 +99,19 @@ const ZH: BenchmarkCopy = {
       "每条链路都由主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。",
     storage:
       "复用 `bun run perf:identity-database` 的实现；「冷」指连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。",
-    "hot-path-comparison":
-      "同一件事的两种实现对照，只在选型时有意义；这些不是线上跑的代码。",
+    "container-algorithm":
+      "生产选用的容器与算法：滑动窗口用 `LinkedQueue` + `trimSlidingWindow`，" +
+      "AI 滚动记忆缓冲用 `BoundedDeque`；这里单独量容器本身的成本。",
     "join-log-capacity":
-      "`current` 是当前实现，`baseline` 固化优化前的整表复制与排序，只作测量参照。",
+      "25 万条满库入群日志上跑当前实现的快照与容量裁剪。",
   },
   sectionSubjects: {
     "cold-start": "启动阶段",
     "hot-path": "场景",
     chain: "链路",
     storage: "操作",
-    "hot-path-comparison": "实现",
-    "join-log-capacity": "对照点",
+    "container-algorithm": "容器",
+    "join-log-capacity": "操作",
   },
   metricLabels: {
     duration: "耗时",
@@ -127,9 +134,7 @@ const ZH: BenchmarkCopy = {
     "{memories} 份 AI 记忆快照；进程峰值 RSS {rss}。",
   metricColumn: "指标",
   valueColumn: "读数",
-  footer:
-    "复现：`bun run perf:full`（仅发布与明确指令时运行）。数据全部落在仓库 `performance/` 下且不进 Git，" +
-    "配置读 `config_example/`，跑完即删。",
+  footer: "复现：`bun run perf:full`。",
 };
 
 const EN: BenchmarkCopy = {
@@ -139,7 +144,7 @@ const EN: BenchmarkCopy = {
   environmentLabels: {
     runtime: "Runtime",
     kernel: "Kernel",
-    cpu: "CPU",
+    cpuCores: "CPU cores",
     memory: "Memory",
     rounds: "Rounds",
     dataRoot: "Mock data root",
@@ -167,7 +172,7 @@ const EN: BenchmarkCopy = {
     "hot-path": "Hot path · production functions",
     chain: "Chains · end-to-end durability",
     storage: "Storage · SQLite and main-thread caches",
-    "hot-path-comparison": "Implementation comparison · containers and algorithms",
+    "container-algorithm": "Containers and algorithms",
     "join-log-capacity": "Join log · 250k capacity line",
   },
   sectionNotes: {
@@ -183,18 +188,19 @@ const EN: BenchmarkCopy = {
     storage:
       "Reuses `bun run perf:identity-database`; \"cold\" means an empty connection page cache and statement cache, " +
       "not a dropped OS page cache.",
-    "hot-path-comparison":
-      "Two implementations of the same job, meaningful only when choosing between them; this is not production code.",
+    "container-algorithm":
+      "The containers and algorithms production actually runs on: sliding windows use `LinkedQueue` + " +
+      "`trimSlidingWindow`, the AI rolling memory buffer uses `BoundedDeque`; this section prices the container itself.",
     "join-log-capacity":
-      "`current` is today's implementation; `baseline` freezes the pre-optimisation whole-table copy and sort as a reference.",
+      "Today's implementation, taking a snapshot and trimming to capacity over a full 250k-record join log.",
   },
   sectionSubjects: {
     "cold-start": "Phase",
     "hot-path": "Scenario",
     chain: "Chain",
     storage: "Operation",
-    "hot-path-comparison": "Implementation",
-    "join-log-capacity": "Case",
+    "container-algorithm": "Container",
+    "join-log-capacity": "Operation",
   },
   metricLabels: {
     duration: "Duration",
@@ -217,9 +223,7 @@ const EN: BenchmarkCopy = {
     "{memories} AI memory snapshots; process peak RSS {rss}.",
   metricColumn: "Metric",
   valueColumn: "Value",
-  footer:
-    "Reproduce with `bun run perf:full` (release and explicit request only). All data lives under the untracked " +
-    "`performance/` directory, configuration is read from `config_example/`, and the tree is removed afterwards.",
+  footer: "Reproduce with `bun run perf:full`.",
 };
 
 const JA: BenchmarkCopy = {
@@ -229,7 +233,7 @@ const JA: BenchmarkCopy = {
   environmentLabels: {
     runtime: "ランタイム",
     kernel: "カーネル",
-    cpu: "CPU",
+    cpuCores: "CPU コア数",
     memory: "メモリ",
     rounds: "ラウンド数",
     dataRoot: "モックデータルート",
@@ -257,7 +261,7 @@ const JA: BenchmarkCopy = {
     "hot-path": "ホットパス · 本番関数",
     chain: "チェーン · エンドツーエンドの永続化",
     storage: "ストレージ · SQLite とメインスレッドキャッシュ",
-    "hot-path-comparison": "実装比較 · コンテナとアルゴリズム",
+    "container-algorithm": "コンテナとアルゴリズム",
     "join-log-capacity": "参加ログ · 25 万件の容量線",
   },
   sectionNotes: {
@@ -271,18 +275,19 @@ const JA: BenchmarkCopy = {
     storage:
       "`bun run perf:identity-database` の実装を再利用。「コールド」は接続のページキャッシュと文キャッシュが空である意味で、" +
       "OS のページキャッシュを破棄したという意味ではない。",
-    "hot-path-comparison":
-      "同一処理の 2 実装の比較であり、選定時にのみ意味を持つ。本番で動くコードではない。",
+    "container-algorithm":
+      "本番が実際に使うコンテナとアルゴリズム：スライディングウィンドウは `LinkedQueue` + `trimSlidingWindow`、" +
+      "AI のローリングメモリバッファは `BoundedDeque`。ここではコンテナ自体のコストを計測する。",
     "join-log-capacity":
-      "`current` が現行実装、`baseline` は最適化前の全表コピーとソートを固定した計測用の参照。",
+      "25 万件を満載した参加ログ上で、現行実装のスナップショットと容量トリムを計測する。",
   },
   sectionSubjects: {
     "cold-start": "段階",
     "hot-path": "シナリオ",
     chain: "チェーン",
     storage: "操作",
-    "hot-path-comparison": "実装",
-    "join-log-capacity": "比較対象",
+    "container-algorithm": "コンテナ",
+    "join-log-capacity": "操作",
   },
   metricLabels: {
     duration: "所要時間",
@@ -305,9 +310,7 @@ const JA: BenchmarkCopy = {
     "AI メモリスナップショット {memories} 件、プロセスのピーク RSS {rss}。",
   metricColumn: "指標",
   valueColumn: "計測値",
-  footer:
-    "再現方法：`bun run perf:full`（リリース時と明示的な指示時のみ実行）。データはすべて Git 管理外の `performance/` " +
-    "配下に置かれ、設定は `config_example/` から読み込み、完了後に削除される。",
+  footer: "再現方法：`bun run perf:full`。",
 };
 
 /** 取某种语言的文案表。 */

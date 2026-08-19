@@ -98,18 +98,16 @@ export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
 ];
 
 /**
- * 实现对照场景：同一件事的两种容器/算法实现，只在选型时有意义。
+ * 生产选用的容器与算法，单独把容器本身的成本量出来。
  *
- * 与生产热路径分表，是因为它们**不是**线上跑的代码；混在一张表里会让读者把一
- * 个被淘汰实现的读数当成生产成本。
+ * 只列线上真正在用的那一个实现：滑动窗口是 `LinkedQueue` + `trimSlidingWindow`，
+ * AI 滚动记忆缓冲是 `BoundedDeque`。被淘汰的候选实现不进表——读者没有办法从
+ * 一行读数看出它到底是不是生产成本。
+ *
+ * 与生产热路径分表，是因为那张表量的是完整业务函数，这张表量的是容器原语。
  */
-export const COMPARISON_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
-  "array-timestamp-window",
-  "float64-timestamp-window",
-  "array-timestamp-cold",
-  "float64-timestamp-cold",
+export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "linked-timestamp-window",
-  "linked-rolling-buffer",
   "bounded-rolling-buffer",
 ];
 
@@ -122,13 +120,13 @@ export const CHAIN_NAMES: readonly ChainName[] = [
   "diagnostic-log",
 ];
 
-/** 入群日志容量线的四个对照点：两项操作 × 优化前后两个实现。 */
-const JOIN_LOG_CASES: readonly (readonly [string, string])[] = [
-  ["snapshot", "current"],
-  ["snapshot", "baseline"],
-  ["capacity", "current"],
-  ["capacity", "baseline"],
-];
+/**
+ * 入群日志容量线的两项操作，一律跑 `current` 变体。
+ *
+ * `baseline`（优化前的整表复制与排序）留在 `bun run perf:join-log` 里当新旧
+ * 对照与 checksum 等价性校验，但不进文档：这一页只报当前实现的成本。
+ */
+const JOIN_LOG_OPERATIONS: readonly string[] = ["snapshot", "capacity"];
 
 /**
  * 所有子进程必须与父进程用同一个 Bun 构建。
@@ -293,7 +291,7 @@ const HOT_PATH_METRICS: readonly MetricDefinition<HotPathRound>[] = [
 /** 热路径分区：直接复用 `scripts/perf/hotPaths.ts` 的场景实现与迭代规模。 */
 export async function runHotPathSection(
   context: SectionContext,
-  sectionId: "hot-path" | "hot-path-comparison",
+  sectionId: "hot-path" | "container-algorithm",
   scenarios: readonly ScenarioName[]
 ): Promise<BenchmarkSection> {
   const entries: BenchmarkEntry[] = [];
@@ -444,23 +442,23 @@ const JOIN_LOG_METRICS: readonly MetricDefinition<JoinLogRound>[] = [
   },
 ];
 
-/** 入群日志 25 万容量线：复用既有的优化前后对照子进程。 */
+/** 入群日志 25 万容量线：复用既有子进程，只跑当前实现。 */
 export async function runJoinLogSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {
   const entries: BenchmarkEntry[] = [];
-  for (const [operation, variant] of JOIN_LOG_CASES) {
+  for (const operation of JOIN_LOG_OPERATIONS) {
     const rounds: readonly JoinLogRound[] = await runRounds<JoinLogRound>(
       context,
       {
-        label: `join-log:${operation}:${variant}`,
+        label: `join-log:${operation}`,
         seedMode: "none",
-        args: [JOIN_LOG_ENTRY, "--child", operation, variant],
+        args: [JOIN_LOG_ENTRY, "--child", operation, "current"],
       }
     );
     for (const round of rounds) context.recordOperations(round.recordCount);
     entries.push({
-      id: `${operation}:${variant}`,
+      id: operation,
       metrics: aggregateRounds(rounds, JOIN_LOG_METRICS),
     });
   }

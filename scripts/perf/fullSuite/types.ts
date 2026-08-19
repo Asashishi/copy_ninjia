@@ -154,7 +154,7 @@ export interface BenchmarkEntry {
 export type SectionId =
   | "cold-start"
   | "hot-path"
-  | "hot-path-comparison"
+  | "container-algorithm"
   | "storage"
   | "chain"
   | "join-log-capacity";
@@ -199,7 +199,12 @@ export interface SuiteEnvironment {
   readonly platform: string;
   readonly arch: string;
   readonly kernel: string;
-  readonly cpuModel: string;
+  /**
+   * 逻辑核心数；刻意不记录 CPU 型号。
+   *
+   * 型号既不参与任何读数的解释，又把出数机器的具体硬件写进了公开文档；判断一
+   * 份读数能不能和历史比，看的是核心数、内存和 Bun 构建这三项。
+   */
   readonly cpuCount: number;
   readonly totalMemoryBytes: number;
 }

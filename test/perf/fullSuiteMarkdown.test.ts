@@ -74,7 +74,6 @@ const REPORT: FullSuiteReport = {
     platform: "linux",
     arch: "x64",
     kernel: "6.8.0-31-generic",
-    cpuModel: "Intel Xeon E312xx (Sandy Bridge)",
     cpuCount: 4,
     totalMemoryBytes: 8_326_057_984,
   },
@@ -139,6 +138,23 @@ describe("基准区块渲染", () => {
       { ...REPORT, sections: [SECTIONS[0]!] },
       "zh"
     )).toThrow("the README summary line cannot be rendered from a partial run");
+  });
+
+  test("运行环境只给核心数与内存，不写 CPU 型号", () => {
+    for (const [language, cores, footer] of [
+      ["zh", "| CPU 核心数 | 4 |", "> 复现：`bun run perf:full`。"],
+      ["en", "| CPU cores | 4 |", "> Reproduce with `bun run perf:full`."],
+      ["ja", "| CPU コア数 | 4 |", "> 再現方法：`bun run perf:full`。"],
+    ] as const) {
+      const block: string = renderBenchmarkBlock(REPORT, language);
+      expect(block).toContain(cores);
+      expect(block).toContain("7.75 GiB");
+      // 型号是出数机器的具体硬件，任何语言的区块里都不该出现。
+      expect(block).not.toContain("Xeon");
+      // 页脚只留复现命令：运行时机与 mock 根的口径写在文档正文，不进生成块。
+      expect(block).toContain(footer);
+      expect(block).not.toContain("config_example");
+    }
   });
 
   test("同一张表里混入不同指标集时拒绝渲染", () => {
