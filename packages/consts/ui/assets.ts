@@ -14,4 +14,4 @@ export const GAG_THUMBNAIL_URL: string =
 
 /** `/reset_icon`、`/stop_copy` 复原机器人头像时下载的缺省直链。 */
 export const BOT_DEFAULT_AVATAR_URL: string =
-  "https://drive.google.com/uc?export=download&id=1o9Vh5t8mVeJPfi7fRzT1uWjPJ3BY7SSF";
+  "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci";
