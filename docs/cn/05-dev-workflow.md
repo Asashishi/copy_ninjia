@@ -26,7 +26,8 @@
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
 | `bun run perf:hot-path-gate` | 全部热路径场景的内存/GC/JIT 门禁，已并入 `check` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照的独立进程对照基准 |
-| `bun run perf:identity-database` | 身份数据库四条真实路径的独立进程基准 |
+| `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
+| `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 写回 09 性能基准页 |
 | `bun run migrate:identity-storage` | 旧 JSON 名单 → `database/storage.sqlite` 的停机冷迁移 |
 | `bun run migrate:chat-state` | `state.json` 群状态 → SQLite `chat_states`（schema v3 → v4）的停机冷迁移 |
 | `bun run release:check` | frozen lockfile 安装 + check + 故障注入，发布前必跑 |
@@ -41,7 +42,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2361 tests / 246 files / 94774 次 `expect()`**；全源码**函数覆盖率 94.86% / 行覆盖率 95.59%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2414 tests / 254 files / 94976 次 `expect()`**；全源码**函数覆盖率 94.61% / 行覆盖率 95.40%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -80,7 +81,15 @@
 
 ## 身份数据库性能基准
 
-`bun run perf:identity-database` 在临时数据根和临时 SQLite 中测四条真实路径：8 个身份一批的双表冷读、128 行显式事务写入、主线程 8,192 项 LRU 热读，以及经过 Worker、JSONB transaction 与精确 ACK 的写透。每项先预热，再跑 5 个独立 Bun 进程；报告固定 Bun version/revision、吞吐、批延迟、样本范围/变异系数，以及强制 GC 前后的 JSC heap、extra memory、object 与 GC 耗时。`--single-process` 让每项在同一测量进程内连续复测 3 次，用于排查跨轮 retained growth，不替代独立进程性能对照。`Bun.gc(true)` 只在计时边界外诊断，生产代码不得调用。改动身份 LRU、冷预取、编码、事务批量、ACK 或 Worker 重放时必须运行，并把同一 Bun build 的差异与样本噪声、heap/GC 一起判断。
+`bun run perf:identity-database` 在临时数据根和临时 SQLite 中测六项真实操作：8 个身份一批的双表读（同一连接的热读、每批换新连接的冷读）、128 行显式事务写入（同样分热连接与冷连接两种）、主线程 8,192 项 LRU 热读，以及经过 Worker、JSONB transaction 与精确 ACK 的写透。「冷」只表示连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。每项先预热，再跑 5 个独立 Bun 进程；报告固定 Bun version/revision、吞吐、批延迟、样本范围/变异系数，以及强制 GC 前后的 JSC heap、extra memory、object 与 GC 耗时。`--single-process` 让每项在同一测量进程内连续复测 3 次，用于排查跨轮 retained growth，不替代独立进程性能对照。`Bun.gc(true)` 只在计时边界外诊断，生产代码不得调用。改动身份 LRU、冷预取、编码、事务批量、ACK 或 Worker 重放时必须运行，并把同一 Bun build 的差异与样本噪声、heap/GC 一起判断。
+
+## 全量性能基准
+
+`bun run perf:full` 只在发布和明确指令时运行，不进 `bun run check`，也不设失败阈值——热路径的硬门禁仍是上面的 `perf:hot-path-gate`。它把六个分区各跑三轮独立子进程再取平均：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、实现对照、入群日志容量线。每一项除平均值外还给最小值、最大值与变异系数，CV 明显变大的那一行不能拿去和历史比。
+
+被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
+
+数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此它没有能力写到真实数据根。加 `--write-doc` 会把三语区块写回 `docs/{cn,en,ja}/09-performance.md`；读数与各分区口径见 [09 性能基准](09-performance.md)。
 
 ## 提交流程
 
@@ -115,6 +124,8 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 ## 发布
 
 本仓库不依赖 GitHub Actions。发布环境把 `bun run release:check` 作为显式构建或 pre-deploy 步骤；联网环境追加 `bun run audit:release`（网络失败只表示审计未完成，不等于零漏洞；忽略 CVE 要记录原因与到期时间）。包含持久化结构变更的版本，先走 [06 常见修改配方](06-modification-guide.md#变更持久化-schema) 的迁移流程。
+
+每次发布先在 `dev` 上跑 `bun run perf:full -- --write-doc`，把三语 [09 性能基准](09-performance.md) 更新到本次读数并与代码改动一起提交。
 
 每次 squash 合并进 `master` 都要创建一个 GitHub Release：
 

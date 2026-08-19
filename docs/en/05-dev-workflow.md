@@ -26,7 +26,8 @@
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
 | `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over every hot-path scenario; already part of `check` |
 | `bun run perf:join-log` | Run the independent-process comparison at the 250,000-record join-log limit |
-| `bun run perf:identity-database` | Benchmark the four real identity-database paths in independent processes |
+| `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
+| `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only, `--write-doc` rewrites the 09 Performance page |
 | `bun run migrate:identity-storage` | Offline cold migration from the legacy JSON lists into `database/storage.sqlite` |
 | `bun run migrate:chat-state` | Offline cold migration of `state.json` chat state into SQLite `chat_states` (schema v3 → v4) |
 | `bun run release:check` | Run frozen-lockfile install + check + fault injection; required before release |
@@ -41,7 +42,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2361 tests / 246 files / 94774 `expect()` calls**; full-source **function coverage 94.86% / line coverage 95.59%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2414 tests / 254 files / 94976 `expect()` calls**; full-source **function coverage 94.61% / line coverage 95.40%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -80,7 +81,15 @@ The `profile` / `retained` prefixes record which child a reading came from; thei
 
 ## Identity-Database Performance Benchmark
 
-`bun run perf:identity-database` uses temporary data roots and SQLite databases to measure four production paths: two-table cold reads in batches of 8 identities, explicit 128-row transaction writes, hot reads through the main-thread 8,192-entry LRU, and write-through that crosses the Worker, JSONB transaction, and exact ACK boundary. Each operation warms up before five independent Bun processes are sampled. The report fixes Bun version/revision and records throughput, batch latency, sample range/coefficient of variation, retained JSC heap/extra memory/object counts, and GC time. `--single-process` repeats each operation three times in one measurement process to investigate retained growth across rounds; it does not replace independent-process performance comparison. `Bun.gc(true)` remains outside timed regions and diagnostic-only. Run this benchmark when identity LRU, cold prefetch, encoding, transaction batching, acknowledgements, or Worker replay changes, and judge the same-Bun-build difference together with sample noise and heap/GC results.
+`bun run perf:identity-database` uses temporary data roots and SQLite databases to measure six production operations: two-table reads in batches of 8 identities (hot on one connection, cold with a fresh connection per batch), explicit 128-row transaction writes (again split into hot and cold connections), hot reads through the main-thread 8,192-entry LRU, and write-through that crosses the Worker, JSONB transaction, and exact ACK boundary. "Cold" only means an empty connection page cache and statement cache, not a dropped OS page cache. Each operation warms up before five independent Bun processes are sampled. The report fixes Bun version/revision and records throughput, batch latency, sample range/coefficient of variation, retained JSC heap/extra memory/object counts, and GC time. `--single-process` repeats each operation three times in one measurement process to investigate retained growth across rounds; it does not replace independent-process performance comparison. `Bun.gc(true)` remains outside timed regions and diagnostic-only. Run this benchmark when identity LRU, cold prefetch, encoding, transaction batching, acknowledgements, or Worker replay changes, and judge the same-Bun-build difference together with sample noise and heap/GC results.
+
+## Full Performance Benchmark
+
+`bun run perf:full` runs on release and on explicit request only. It is not part of `bun run check` and sets no failure threshold — the hard gate for hot paths is still `perf:hot-path-gate` above. It runs six sections for three independent-process rounds each and reports the mean: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, implementation comparisons, and the join-log capacity line. Every item also carries min, max, and coefficient of variation; a row whose CV jumps cannot be compared against history.
+
+Everything measured reuses existing code: hot paths run the `perf:hot-paths` scenarios at their own iteration counts, storage calls the `perf:identity-database` implementations, the capacity line calls the `perf:join-log` children, and the chains drive a real Disk I/O Worker through the main-thread production entries `recordJoinLog`, `persistChatState`, `queueIdentityPolicyWrite`, `postDiskIO`, and `relayLogMessage`, timed until the durable acknowledgement. Cold start times a fully seeded fixture phase by phase in the order of `packages/app/lifecycle.ts`, excluding networked handshakes and the two business Workers.
+
+All data is written under the repository-root `performance/` directory (already in `.gitignore`), configuration is read from `config_example/`, and each round's tree is removed afterwards; nothing should remain there once the run ends. The parent process imports no production implementation module, so it has no way to write to the real data root. Adding `--write-doc` rewrites the trilingual block in `docs/{cn,en,ja}/09-performance.md`; the figures and the meaning of each section live in [09 Performance Benchmark](09-performance.md).
 
 ## Commit Workflow
 
@@ -115,6 +124,8 @@ Two more sets of measured figures drift just as silently, independently of cover
 ## Release
 
 This repository does not rely on GitHub Actions. Release environments should make `bun run release:check` an explicit build or pre-deploy step. Networked environments should additionally run `bun run audit:release`; network failure means the audit was not completed, not that there are zero vulnerabilities. Any ignored CVE needs a recorded reason and expiration date. For releases with persistence-structure changes, first follow the migration process in [06 Common Modification Recipes](06-modification-guide.md#changing-a-persistence-schema).
+
+Every release starts by running `bun run perf:full -- --write-doc` on `dev`, updating the trilingual [09 Performance Benchmark](09-performance.md) with the current figures and committing it alongside the code.
 
 Every squash merge into `master` must produce one GitHub Release:
 

@@ -26,7 +26,8 @@
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
 | `bun run perf:hot-path-gate` | 全 hot path シナリオの memory/GC/JIT gate。`check` に組み込み済み |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で独立 process の比較 benchmark を実行 |
-| `bun run perf:identity-database` | identity database の実経路 4 本を独立 process で benchmark |
+| `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
+| `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 09 パフォーマンスページを更新 |
 | `bun run migrate:identity-storage` | 旧 JSON リスト → `database/storage.sqlite` への停止時 cold migration |
 | `bun run migrate:chat-state` | `state.json` の chat state → SQLite `chat_states`（schema v3 → v4）への停止時 cold migration |
 | `bun run release:check` | frozen lockfile install + check + fault injection。リリース前に必須 |
@@ -41,7 +42,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2361 tests / 246 files / 94774 `expect()` calls**。全ソースコードの**関数カバレッジは 94.86%、行カバレッジは 95.59%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2414 tests / 254 files / 94976 `expect()` calls**。全ソースコードの**関数カバレッジは 94.61%、行カバレッジは 95.40%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -80,7 +81,15 @@ gate を設けている項目：GC sample 比率、sampling RSS ピークとプ�
 
 ## Identity database 性能 benchmark
 
-`bun run perf:identity-database` は一時 data root / SQLite で 4 つの production path を測ります。identity 8 件単位の 2 table cold read、128 row の明示 transaction write、main thread の 8,192-entry LRU hot read、Worker・JSONB transaction・exact ACK を通る write-through です。各 operation を warm-up してから 5 個の独立 Bun process で sample し、Bun version/revision、throughput、batch latency、sample range / coefficient of variation、強制 GC 前後の JSC heap・extra memory・object・GC time を報告します。`--single-process` は同じ measurement process 内で各 operation を 3 回反復し、round 間の retained growth を調べますが、独立 process 比較の代わりではありません。`Bun.gc(true)` は計時外の診断専用です。identity LRU、cold prefetch、encoding、transaction batch、ACK、Worker replay を変えた場合に実行し、同じ Bun build の差を sample noise と heap/GC の両方で判断します。
+`bun run perf:identity-database` は一時 data root / SQLite で 6 つの production operation を測ります。identity 8 件単位の 2 table read（同一接続の hot read と、batch ごとに接続を開き直す cold read）、128 row の明示 transaction write（同じく hot 接続と cold 接続の 2 種）、main thread の 8,192-entry LRU hot read、Worker・JSONB transaction・exact ACK を通る write-through です。「cold」は接続の page cache と statement cache が空という意味で、OS の page cache を破棄したという意味ではありません。各 operation を warm-up してから 5 個の独立 Bun process で sample し、Bun version/revision、throughput、batch latency、sample range / coefficient of variation、強制 GC 前後の JSC heap・extra memory・object・GC time を報告します。`--single-process` は同じ measurement process 内で各 operation を 3 回反復し、round 間の retained growth を調べますが、独立 process 比較の代わりではありません。`Bun.gc(true)` は計時外の診断専用です。identity LRU、cold prefetch、encoding、transaction batch、ACK、Worker replay を変えた場合に実行し、同じ Bun build の差を sample noise と heap/GC の両方で判断します。
+
+## 全量パフォーマンス benchmark
+
+`bun run perf:full` はリリース時と明示的な指示があったときにのみ実行します。`bun run check` には含めず、失敗閾値も設けません。ホットパスのハードゲートは上記の `perf:hot-path-gate` のままです。6 つのセクションをそれぞれ独立プロセスで 3 ラウンド実行し、平均を報告します。コールドスタート、本番ホットパス、エンドツーエンドの永続化チェーン、SQLite とメインスレッドキャッシュ、実装比較、参加ログ容量線の 6 つです。各項目には平均に加えて最小値・最大値・変動係数も付き、CV が大きく跳ねた行は履歴と比較できません。
+
+計測対象はすべて既存コードの再利用です。ホットパスは `perf:hot-paths` のシナリオと反復数をそのまま使い、ストレージは `perf:identity-database` の実装を呼び、容量線は `perf:join-log` の子プロセスを呼びます。チェーンは `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` というメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測します。コールドスタートは満載のフィクスチャ上で `packages/app/lifecycle.ts` の init 順に段階ごとに計測し、通信を伴う処理と 2 つの業務 Worker の生成は含みません。
+
+データはすべてリポジトリ直下の `performance/`（`.gitignore` 済み）に書き、設定は `config_example/` から読み、各ラウンドの終了後にツリーごと削除します。実行が終わればこのディレクトリには何も残りません。親プロセスは production の実装モジュールを一切 import しないため、実データルートへ書き込む手段を持ちません。`--write-doc` を付けると `docs/{cn,en,ja}/09-performance.md` の 3 言語ブロックを書き換えます。計測値と各セクションの定義は [09 パフォーマンスベンチマーク](09-performance.md) を参照してください。
 
 ## コミット手順
 
@@ -115,6 +124,8 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 ## リリース
 
 このリポジトリは GitHub Actions に依存しません。リリース環境では `bun run release:check` を明示的な build または pre-deploy step としてください。ネットワーク接続可能な環境では `bun run audit:release` も実行します。ネットワーク失敗は監査未完了を意味し、脆弱性が 0 件という意味ではありません。CVE を無視する場合は理由と期限を記録します。永続化構造を変更するリリースでは、先に [06 よくある変更手順](06-modification-guide.md#永続化-schema-の変更) の migration を実行してください。
+
+リリースはまず `dev` で `bun run perf:full -- --write-doc` を実行し、3 言語の [09 パフォーマンスベンチマーク](09-performance.md) を今回の計測値に更新してコード変更と一緒にコミットするところから始めます。
 
 `master` への squash merge ごとに GitHub Release を 1 つ作成します。
 

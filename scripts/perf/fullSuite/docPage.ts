@@ -1,0 +1,67 @@
+/**
+ * 把基准区块写回三语性能基准文档页。
+ *
+ * 只做「标记之间整块替换」，从不猜插入位置：页标题、语言切换、上下页导航都是
+ * 手写的，让脚本去猜该往哪儿插，早晚会把它插进导航中间。标记不在就直接失败，
+ * 并说清楚该怎么补——那是一次性的人工动作。
+ */
+
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  README_BLOCK_END,
+  README_BLOCK_START,
+} from "./constants";
+import { renderBenchmarkBlock } from "./markdown";
+import { PROJECT_ROOT } from "./mockRoot";
+import type { Language } from "./markdownCopy";
+import type { FullSuiteReport } from "./types";
+
+/** 一份要写入的文档页及其语言。 */
+export interface DocPageTarget {
+  readonly path: string;
+  readonly language: Language;
+}
+
+/** 三份性能基准页的固定目标；发布时一起更新，不允许只更新其中一份。 */
+export const DOC_PAGE_TARGETS: readonly DocPageTarget[] = [
+  { path: join("docs", "cn", "09-performance.md"), language: "zh" },
+  { path: join("docs", "en", "09-performance.md"), language: "en" },
+  { path: join("docs", "ja", "09-performance.md"), language: "ja" },
+];
+
+/**
+ * 按标记整块替换。
+ *
+ * 导出是为了让替换语义能被单测钉住：这段逻辑一旦写错，改的是三份手写 README，
+ * 而错误要等到有人肉眼发现才暴露。
+ */
+export function replaceBlock(source: string, block: string, path: string): string {
+  const start: number = source.indexOf(README_BLOCK_START);
+  const end: number = source.indexOf(README_BLOCK_END);
+  if (start < 0 || end < 0 || end < start) {
+    throw new Error(
+      `${path} has no performance benchmark block. Add the ` +
+      `${README_BLOCK_START} / ${README_BLOCK_END} marker pair once, at the ` +
+      "place the benchmark results should appear."
+    );
+  }
+  return source.slice(0, start) +
+    block +
+    source.slice(end + README_BLOCK_END.length);
+}
+
+/** 把报告写进三份性能基准页；返回实际改写的路径，供 CLI 回显。 */
+export function writeBenchmarkDocPages(
+  report: FullSuiteReport
+): readonly string[] {
+  const written: string[] = [];
+  for (const target of DOC_PAGE_TARGETS) {
+    const path: string = join(PROJECT_ROOT, target.path);
+    const source: string = readFileSync(path, "utf8");
+    const block: string = renderBenchmarkBlock(report, target.language);
+    writeFileSync(path, replaceBlock(source, block, target.path));
+    written.push(target.path);
+  }
+  return written;
+}

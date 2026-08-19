@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 Documentation home</a> · <a href="07-operations.md">← Prev: 07 Operations</a> · <b>Next: none →</b>
+  <a href="conntent-table.md">📚 Documentation home</a> · <a href="07-operations.md">← Prev: 07 Operations</a> · <a href="09-performance.md">Next: 09 Performance Benchmark →</a>
 </p>
 
 ---

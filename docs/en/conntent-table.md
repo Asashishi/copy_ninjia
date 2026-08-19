@@ -30,6 +30,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 | 🛠️ **Modifications** | Step-by-step recipes for commands, AI tools, and schema edits | [📖 06 Recipes](06-modification-guide.md) |
 | 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
 | 🎮 **Look up a command** | Every command, permission semantics and behavioural details (the root README keeps only a summary) | [📖 08 Commands](08-commands.md) |
+| 📊 **Read the numbers** | Release benchmark for cold/hot paths, total throughput and I/O, and end-to-end chain latency | [📖 09 Performance](09-performance.md) |
 
 ---
 
@@ -79,6 +80,11 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Copy modes and how a target is specified
    - The permission tier of every command (permission key / super admin / group member)
    - Behavioural details for `/gag`, `/block`, `/batch_kick`, ad detection and join verification
+
+9. **[09 Performance Benchmark](09-performance.md)**
+   - What the six sections of `bun run perf:full` measure: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, implementation comparisons, join-log capacity line
+   - Three independent rounds per item, reported as a mean with min, max and coefficient of variation
+   - Total throughput, total I/O and mock data-root footprint per round
 
 ---
 

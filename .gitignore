@@ -25,6 +25,11 @@ memory
 # 必须锚定根目录，避免吞掉 packages/database/ 下的 Drizzle schema 与 codec 源码。
 /database/
 
+# 全量性能基准的 mock 数据根（scripts/perf/fullSuite.ts）。运行期在这里建
+# SQLite、memory/、logs/ 与 state.json，跑完即删；一次都不该进版本库。
+# 必须锚定根目录，理由同上面的 /database/ 与 /config。
+/performance/
+
 # unexpected local dotenv files (not runtime config; keep accidental secrets out of Git)
 .env
 .env.development.local

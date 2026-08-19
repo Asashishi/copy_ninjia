@@ -1,5 +1,4 @@
 import {
-  heapStats,
   memoryUsage as jscMemoryUsage,
   profile,
 } from "bun:jsc";
@@ -8,11 +7,13 @@ import {
   aiReplyActivitySweepState,
 } from "../../packages/cache/main/auto";
 import { clearAiReplyActivity } from "../../packages/auto/message/aiReplyActivity";
-import { bot } from "../../packages/infra/telegram/mainClient";
-import type { Transformer } from "grammy";
+import { snapshotHeap } from "./heapSnapshot";
+import { installOutboundGuards } from "./outboundGuard";
+import { median } from "./statistics";
 import { collectJitTiers, diffJitTiers } from "./hotPaths/jitTiers";
 import { readInterruptibleMemory, readProcessMemoryUsage } from "./hotPaths/liveMemory";
 import { createScenario } from "./hotPaths/scenarios";
+import type { HeapSnapshot } from "./heapSnapshot";
 import type { JitTierCounts, JitTierStats, Scenario, ScenarioName } from "./hotPaths/types";
 import {
   HOT_PATH_PROFILE_FAST_SCENARIO_ITERATION_MULTIPLIER,
@@ -28,39 +29,7 @@ import type {
   HotPathSamplingProfileText,
 } from "./hotPaths/profileSummary";
 
-/**
- * 出站硬闸：本脚本会 import 生产模块，而部署机上 bot 通常正在运行、用的是同一个
- * token。任何一次真实出站都以线上机器人的身份发出，且无法撤回。所有场景按设计
- * 都只碰进程内存，这里把统一出站通道堵死，让越界变成一次响亮的失败。
- *
- * **必须装 grammY transformer，光换 globalThis.fetch 拦不住它。** grammY 在模块
- * 加载时就把 fetch 绑到内部 shim 上（`node_modules/grammy/out/core/client.js` 里
- * 的 `shim_node_js_1.fetch`），之后调用只认那个绑定；而静态 import 又先于模块体
- * 执行，赋值再早也来不及。实测靠改 globalThis.fetch「保护」的一次基准，仍然向
- * Telegram 发出了三万多次 getChatAdministrators。transformer 挂在 grammY 自己的
- * 调用层，与传输实现无关，才是可靠的拦截点。
- *
- * globalThis.fetch 这道仍然保留，但它覆盖的是**另一类**调用：项目里直接写
- * `fetch(...)` 的地方（头像抓取、JSON API）在调用时才解析全局，因此拦得住。
- */
-function installOutboundGuards(): void {
-  const deny: Transformer = (_prev: unknown, method: string): never => {
-    throw new Error(`perf benchmark attempted Telegram API call '${method}'; scenarios must stay in-process`);
-  };
-  bot.api.config.use(deny);
-  globalThis.fetch = ((...args: unknown[]): never => {
-    throw new Error(
-      `perf benchmark attempted a network call (${JSON.stringify(args[0])}); scenarios must stay in-process`
-    );
-  }) as unknown as typeof fetch;
-}
 installOutboundGuards();
-
-interface HeapSnapshot {
-  heapSize: number;
-  extraMemorySize: number;
-  objectCount: number;
-}
 
 interface LiveMemorySnapshot {
   heapUsed: number;
@@ -114,15 +83,6 @@ const SAMPLE_COUNT: number = 7;
 /** 正式采样前的预热占比，确保热点有机会进入 JSC 高层级编译。 */
 const WARMUP_DIVISOR: number = 5;
 
-function snapshotHeap(): HeapSnapshot {
-  const stats: ReturnType<typeof heapStats> = heapStats();
-  return {
-    heapSize: stats.heapSize,
-    extraMemorySize: stats.extraMemorySize,
-    objectCount: stats.objectCount,
-  };
-}
-
 /** 读取器提到模块级：本函数按样本调用，闭包现造会把分配算进被测的堆增长。 */
 function readJscMemoryUsage(): ReturnType<typeof jscMemoryUsage> {
   return jscMemoryUsage();
@@ -150,11 +110,6 @@ function snapshotLiveMemory(): LiveMemorySnapshot {
       processMemory.rss
     ),
   };
-}
-
-function median(values: readonly number[]): number {
-  const sorted: number[] = [...values].sort((left: number, right: number): number => left - right);
-  return sorted[Math.floor(sorted.length / 2)] ?? Number.NaN;
 }
 
 /**

@@ -111,7 +111,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
-  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `migrateIdentityStorageToSqlite.ts`, `migrateChatStateToSqlite.ts`, `storageDatabaseIntegrity.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, and `perf/hotPathProfileGate.ts`.
+  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `migrateIdentityStorageToSqlite.ts`, `migrateChatStateToSqlite.ts`, `storageDatabaseIntegrity.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, plus the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`.
 
 ## Deciding Where New Code Belongs
 

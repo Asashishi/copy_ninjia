@@ -134,6 +134,16 @@
 - 性能改动必须保留语义测试，并为热点增加基准或压力验证。
 - 涉及持久化格式、状态机顺序、权限或 Worker 生命周期的性能改动必须执行对应门禁，不得以 JIT 为由绕过。
 
+#### 全量性能基准
+
+- 全量基准入口是 `bun run perf:full`（`scripts/perf/fullSuite.ts`），只在发布和明确指令时运行，不进 `bun run check`。
+- 全量基准不设失败阈值、不改退出码；热路径的 GC/RSS/JIT 硬门禁使用 `bun run perf:hot-path-gate`。
+- 分区固定为冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、实现对照、入群日志容量线；每项在独立子进程里跑三轮，报告平均值、最小值、最大值与变异系数。
+- 全部数据写在仓库根的 `performance/`，配置读 `config_example/`，每轮跑完删除整棵目录；运行结束后 `performance/` 下不得有残留目录。
+- 父进程与 `scripts/perf/fullSuite/` 下除 `fixture.ts`、`seed.ts`、`coldStart.ts`、`chain.ts`、`storage.ts` 以外的模块，只能 import 纯常量与 `import type`，不得 import `packages/` 下的实现模块。
+- 新增被测项复用 `scripts/perf/` 已有实现与生产入口；不得为基准另写生产逻辑、落盘格式或夹具规模，夹具规模引用生产常量。
+- 改动规模常量、迭代次数或分区构成后，在同一次发布里重新出数并在提交信息中说明。
+
 ### 类型与接口
 
 - 变量、参数、返回值、对象属性、数组元素和普通 `for` 变量必须显式标注类型。
@@ -184,11 +194,18 @@
 
 - 每次发布必须按以下顺序完整执行：
   1. 在 `dev` 完成开发和门禁。
-  2. 以 `git merge --squash` 合入 `master` 并创建单次提交。
-  3. 推送 `master`。
-  4. 创建并单独推送 annotated version tag。
-  5. 创建并确认 GitHub Release。
-  6. 将 `dev` reset 对齐到 `master`，并以 `--force-with-lease` 推送。
+  2. 在 `dev` 上运行 `bun run perf:full -- --write-doc`，把三份 `09-performance.md` 的基准区块更新到本次发布的读数，并与代码改动一起提交。
+  3. 以 `git merge --squash` 合入 `master` 并创建单次提交。
+  4. 推送 `master`。
+  5. 创建并单独推送 annotated version tag。
+  6. 创建并确认 GitHub Release。
+  7. 将 `dev` reset 对齐到 `master`，并以 `--force-with-lease` 推送。
+- 基准使用默认三轮，与上一次发布同机器、同 Bun 构建；`--rounds` 只用于本地排查，非默认轮数的读数不得写进文档。
+- 跑基准前停掉机器上的其它重负载，包括本仓库的服务进程和其它门禁。
+- 全量基准与 `bun run check` 不得连着跑；等机器空下来再跑后一个，热路径软上报按空载读数判定。
+- 基准区块由脚本按 `<!-- performance-benchmark:start -->` 与 `<!-- performance-benchmark:end -->` 标记整块替换，写入 `docs/{cn,en,ja}/09-performance.md`；区块内容不得手工编辑，三种语言必须同批更新。
+- 三份 README 只保留指向 `09-performance.md` 的链接，不得放入基准读数。
+- 基准跑失败或读数异常时停止发布，查清原因后重跑。
 - Release 确认成功前不得同步 `dev`，不得在只推送 `master` 后结束发布。
 - 发布前必须同步远端 tags，并通过 `gh release list` 读取 GitHub Latest Release。
 - 版本号仅使用无 `v` 前缀的 `MAJOR.MINOR.PATCH`。

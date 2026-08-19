@@ -5,22 +5,18 @@
  * baseline 固化优化前的整表复制、排序和整串 JSON 算法，只作为测量参照。
  */
 
-import { heapStats } from "bun:jsc";
+import { snapshotHeap } from "./heapSnapshot";
+import { median } from "./statistics";
 import { DAY_FILE_JSON_INDENT } from "../../packages/consts/diskIO/appendOnly";
 import {
   joinLogSnapshotChunks,
   trimJoinLogRecordsToCapacity,
 } from "../../packages/workers/diskIO/joinLogRecords";
+import type { HeapSnapshot } from "./heapSnapshot";
 import type { JoinLogRecord } from "../../packages/types/diskIO/storage";
 
 type Operation = "snapshot" | "capacity";
 type Variant = "baseline" | "current";
-
-interface HeapSnapshot {
-  heapSize: number;
-  extraMemorySize: number;
-  objectCount: number;
-}
 
 interface CapacityFixture {
   capacity: number;
@@ -79,15 +75,6 @@ const OVERFLOW: number = 300;
 const WARMUP_RECORD_COUNT: number = 10_000;
 /** 每个变体使用的独立进程样本数。 */
 const PROCESS_SAMPLE_COUNT: number = 5;
-
-function snapshotHeap(): HeapSnapshot {
-  const stats: ReturnType<typeof heapStats> = heapStats();
-  return {
-    heapSize: stats.heapSize,
-    extraMemorySize: stats.extraMemorySize,
-    objectCount: stats.objectCount,
-  };
-}
 
 function createRecords(count: number): Map<number, JoinLogRecord> {
   const records: Map<number, JoinLogRecord> = new Map();
@@ -237,13 +224,6 @@ function runChild(operation: Operation, variant: Variant): ChildResult {
     retainedObjectDelta: retained.objectCount - before.objectCount,
     checksum,
   };
-}
-
-function median(values: readonly number[]): number {
-  const sorted: number[] = [...values].sort(
-    (left: number, right: number): number => left - right
-  );
-  return sorted[Math.floor(sorted.length / 2)]!;
 }
 
 function aggregate(results: readonly ChildResult[]): AggregateResult {
