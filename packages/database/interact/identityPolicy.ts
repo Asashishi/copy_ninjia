@@ -1,26 +1,36 @@
-import { asc, eq, gt, inArray } from "drizzle-orm";
+import { asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../consts/identityStorage";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
 import { jsonbTextProjection } from "../schema/jsonb";
 import type { IdentityPolicyTable } from "../../types/identityPolicy";
 import type {
   StorageDatabase,
+  StoredIdentityIdLookups,
   StoredIdentityIdRow,
   StoredIdentityPolicyRow,
 } from "../../types/storageDatabase";
 
-/** 查询某名单主键是否已经持久化；使用 Drizzle get 避免构造单元素数组。 */
-export function hasStoredIdentityPolicy(
-  database: StorageDatabase,
-  table: IdentityPolicyTable,
-  id: number
-): boolean {
-  const row: StoredIdentityIdRow | undefined = table === "whitelist"
-    ? database.select({ id: whitelistEntries.id }).from(whitelistEntries)
-      .where(eq(whitelistEntries.id, id)).get()
-    : database.select({ id: blocklistEntries.id }).from(blocklistEntries)
-      .where(eq(blocklistEntries.id, id)).get();
-  return row !== undefined;
+/**
+ * 为一条连接建两条「主键是否已持久化」的预编译语句（白/黑名单各一）。
+ *
+ * 这个查询在写入路径上是按条目调的（workers/diskIO/storageDatabase/identityPolicy.ts
+ * 的 assertOppositePolicyAbsent），一批 IDENTITY_WRITE_BATCH_MAX_ENTRIES 条就要走
+ * 同样多次。现场构建 Drizzle 查询每次约 57 µs，光拼 SQL 就比那一批唯一的一次
+ * fsync 还贵；预编译后单次约 1 µs，整批的落盘延迟才由磁盘而不是查询构建决定。
+ *
+ * 本函数只负责**建**，不持有：语句归谁、活多久由调用侧决定（Disk I/O Worker 把
+ * 它挂在 cache/workers/diskIO/storageDatabase.ts 的连接级 WeakMap 上）。本文件是
+ * 不接触任何线程独占缓存的叶子模块，这条边界不要在这里破。
+ */
+export function prepareStoredIdentityIdLookups(
+  database: StorageDatabase
+): StoredIdentityIdLookups {
+  return {
+    whitelist: database.select({ id: whitelistEntries.id }).from(whitelistEntries)
+      .where(eq(whitelistEntries.id, sql.placeholder("id"))).prepare(),
+    blocklist: database.select({ id: blocklistEntries.id }).from(blocklistEntries)
+      .where(eq(blocklistEntries.id, sql.placeholder("id"))).prepare(),
+  };
 }
 
 /**

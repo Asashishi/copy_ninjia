@@ -59,6 +59,8 @@ function formatMetric(metric: MetricStats): string {
       return `${group(metric.mean.toFixed(1))} ns/op`;
     case "ops/s":
       return `${formatCount(metric.mean)} ops/s`;
+    case "records/s":
+      return `${formatCount(metric.mean)} records/s`;
     case "ms":
       return formatMilliseconds(metric.mean);
     case "bytes":
@@ -239,14 +241,14 @@ function renderSummaryLine(
   const identity: MetricStats = findMetric(report, {
     sectionId: "chain",
     entryId: "identity-policy-write",
-    metricName: "throughput",
+    metricName: "commandThroughput",
   });
   return `**${copy.summaryPrefix}** · Bun ${report.environment.bunVersion} · ` +
     `${copy.summaryRounds.replace("{n}", formatCount(report.rounds))} · ` +
     `${report.generatedAt} · ` +
     `\`ready-total\` ${formatMilliseconds(ready.mean)} · ` +
     `\`incoming-message-spine\` ${group(spine.mean.toFixed(1))} ns/op · ` +
-    `\`identity-policy-write\` ${formatCount(identity.mean)} ops/s`;
+    `\`identity-policy-write\` ${formatCount(identity.mean)} ${copy.durableOpsPerSecond}`;
 }
 
 function renderColdStartCaption(

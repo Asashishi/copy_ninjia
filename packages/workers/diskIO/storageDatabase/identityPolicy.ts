@@ -5,6 +5,7 @@ import {
 import {
   pendingBlocklistWrites,
   pendingWhitelistWrites,
+  storedIdentityIdLookups,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import {
@@ -13,7 +14,7 @@ import {
   decodeWhitelistEntryData,
 } from "../../../database/codec/identity";
 import {
-  hasStoredIdentityPolicy,
+  prepareStoredIdentityIdLookups,
   readStoredBlocklistIdPage,
   readStoredIdentityPolicies,
 } from "../../../database/interact/identityPolicy";
@@ -27,10 +28,40 @@ import type {
 } from "../../../types/diskIO";
 import type { IdentityPolicyTable } from "../../../types/identityPolicy";
 import type { PendingIdentityPolicyWrite } from "../../../types/identityStorage";
-import type { StoredIdentityPolicyRow } from "../../../types/storageDatabase";
+import type {
+  StorageDatabase,
+  StoredIdentityIdLookup,
+  StoredIdentityIdLookups,
+  StoredIdentityPolicyRow,
+} from "../../../types/storageDatabase";
 import type { BlocklistIdPage } from "../../../types/identityStorage";
 import { requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull } from "./flush";
+
+/**
+ * 取本连接的两条预编译语句，首次用到时建好挂进连接级缓存。
+ *
+ * 缓存住在这里而不是 database/interact：那一层是不接触任何线程独占缓存的叶子
+ * 模块（AGENTS.md 的分层约定），而这两条语句只有本 Worker 用。
+ */
+function identityIdLookups(): StoredIdentityIdLookups {
+  const database: StorageDatabase = requireStorageDatabase();
+  const cached: StoredIdentityIdLookups | undefined =
+    storedIdentityIdLookups.get(database);
+  if (cached !== undefined) return cached;
+  const lookups: StoredIdentityIdLookups =
+    prepareStoredIdentityIdLookups(database);
+  storedIdentityIdLookups.set(database, lookups);
+  return lookups;
+}
+
+/** 某名单主键是否已经持久化；走本连接的预编译语句，不现场拼 SQL。 */
+function hasStoredIdentityPolicy(table: IdentityPolicyTable, id: number): boolean {
+  const lookups: StoredIdentityIdLookups = identityIdLookups();
+  const lookup: StoredIdentityIdLookup =
+    table === "whitelist" ? lookups.whitelist : lookups.blocklist;
+  return lookup.get({ id }) !== undefined;
+}
 
 function pendingPolicyMap(
   table: IdentityPolicyTable
@@ -89,7 +120,7 @@ export function hasEffectiveBlocklistIdentity(id: number): boolean {
   const pending: PendingIdentityPolicyWrite | undefined =
     pendingBlocklistWrites.get(id);
   if (pending !== undefined) return pending.data !== null;
-  return hasStoredIdentityPolicy(requireStorageDatabase(), "blocklist", id);
+  return hasStoredIdentityPolicy("blocklist", id);
 }
 
 /** outbox 的 probe 任务是否仍至少有一个目标；只读取第一张有界游标页。 */
@@ -124,7 +155,7 @@ function assertOppositePolicyAbsent(message: IdentityPolicyWriteDiskMessage): vo
       `Identity ${message.id} cannot exist in both whitelist_entries and blocklist_entries.`
     );
   }
-  if (hasStoredIdentityPolicy(requireStorageDatabase(), opposite, message.id)) {
+  if (hasStoredIdentityPolicy(opposite, message.id)) {
     throw new Error(
       `Identity ${message.id} cannot exist in both whitelist_entries and blocklist_entries.`
     );

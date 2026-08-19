@@ -88,3 +88,22 @@ export interface StorageDatabaseJsonStorageRow {
   readonly blobRows: number;
   readonly invalidJsonbRows: number;
 }
+
+/**
+ * 一条预编译的主键存在性查询；只用到按占位符取单行这一种调用。
+ *
+ * 占位符表照 Drizzle 的 `prepare().get()` 原样写成 `Record<string, unknown>`：
+ * 那个形参就是这个类型，换成具名 interface 会因为缺隐式索引签名而赋不进去。
+ * 本查询唯一的占位符是 `sql.placeholder("id")`。
+ */
+export interface StoredIdentityIdLookup {
+  readonly get: (
+    values: Record<string, unknown>
+  ) => StoredIdentityIdRow | undefined;
+}
+
+/** 两张名单各一条预编译语句，随连接一起存活。 */
+export interface StoredIdentityIdLookups {
+  readonly whitelist: StoredIdentityIdLookup;
+  readonly blocklist: StoredIdentityIdLookup;
+}

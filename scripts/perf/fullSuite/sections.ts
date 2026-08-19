@@ -118,6 +118,8 @@ export const CHAIN_NAMES: readonly ChainName[] = [
   "chat-state-write",
   "ai-memory-snapshot",
   "diagnostic-log",
+  "ad-detect-command",
+  "ai-reply-command",
 ];
 
 /**
@@ -361,8 +363,13 @@ export async function runStorageSection(
 
 const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   {
-    metric: "throughput",
+    metric: "commandThroughput",
     unit: "ops/s",
+    select: (round: ChainRound): number => round.operationThroughputPerSecond,
+  },
+  {
+    metric: "recordThroughput",
+    unit: "records/s",
     select: (round: ChainRound): number => round.throughputPerSecond,
   },
   {

@@ -72,14 +72,52 @@ export const CHAIN_CHAT_STATE_WRITES: number = 400;
 /**
  * AI 记忆快照原子重写链路的计时次数。
  *
- * 比别的链路少：每次都要把一份撑满恢复上限的快照（约 230 KiB）整份 tmp + fsync
- * + rename 落盘，本机实测单次约 64 ms，取 300 次会让这一条链路独占整轮基准的
- * 三分之一时间，而分位数在 150 次上已经稳定。
+ * 每次都要把一份撑满恢复上限（COLD_START_AI_MEMORY_MESSAGES 即
+ * AI_MEMORY_HYDRATE_BUFFER_MAX）的快照整份 tmp + fsync + rename 落盘，实测约
+ * 46 KiB、单次 p50 个位数毫秒。
+ *
+ * 加样本治不了这一行的轮间摆动。空载单跑 150 次三轮是稳的（约 185 ops/s，
+ * CV 个位数），但同一条链路在整套基准里量到过 41 与 130 ops/s——差别不是采样
+ * 噪声，而是它排在冷启动、热路径、存储几个分区之后，吃的是那些分区累积下来的
+ * 文件系统写回压力。吞吐取的是均值，长尾一抬整行就跟着走；p50 反而稳。要压住
+ * 它得改的是分区间的隔离，不是这个数字，因此维持 150。
  */
 export const CHAIN_AI_MEMORY_SNAPSHOTS: number = 150;
 
 /** error 日志诊断通道链路的计时条数。 */
 export const CHAIN_LOG_ENTRIES: number = 1_000;
+
+/**
+ * 广告判定完整命令链路的计时条数。
+ *
+ * 一条 = 一条群消息从入队到「黑名单落盘 + 移除 outbox 落盘 + 处置排空」的全程，
+ * 中间的模型判定用罐头响应顶掉（见 scripts/perf/outboundGuard.ts）。每条至少两次
+ * fsync，取 150 条与 AI 记忆快照同量级，分位数已经稳定。
+ */
+export const CHAIN_AD_DETECT_COMMANDS: number = 150;
+
+/**
+ * AI 回复完整命令链路的计时条数。
+ *
+ * 一条 = 一条群消息进滚动记忆、起一轮回复、组装提示词、拿到模型输出（罐头）、
+ * 发出回复、再把这一轮的记忆快照落盘。触发在 STATE_MANAGED_CHAT_LIMIT 个群上
+ * 轮转，避开单群 5 分钟 150 次的限频闸——顶到限频后走的是「发一条限频提示」的
+ * 另一条分支，读数会突然变快且不再是同一件事。
+ */
+export const CHAIN_AI_REPLY_COMMANDS: number = 40;
+
+/** AI 回复链路的预热次数；每次都要真等一段拟人停顿，不能按通用的 64 次来。 */
+export const AI_REPLY_WARMUP_OPERATIONS: number = 8;
+
+/** 单条 AI 回复等待本轮结算的轮询上限；超过按失败处理。 */
+export const AI_REPLY_SETTLE_ATTEMPTS: number = 500;
+
+/** 单条广告命令等待处置排空的预算；超时按失败处理，不接受半截链路。 */
+export const AD_DETECT_DRAIN_BUDGET_MS: number = 30_000;
+
+/** 等待机器人权限快照落位的轮询步长与次数上限（计时窗口之外）。 */
+export const BOT_PERMISSION_WAIT_STEP_MS: number = 10;
+export const BOT_PERMISSION_WAIT_ATTEMPTS: number = 200;
 
 /** 各链路正式计时前的预热次数，让 Worker 侧文件句柄与 JIT 进入稳态。 */
 export const CHAIN_WARMUP_OPERATIONS: number = 64;

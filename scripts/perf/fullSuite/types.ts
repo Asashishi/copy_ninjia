@@ -72,7 +72,9 @@ export type ChainName =
   | "identity-policy-write"
   | "chat-state-write"
   | "ai-memory-snapshot"
-  | "diagnostic-log";
+  | "diagnostic-log"
+  | "ad-detect-command"
+  | "ai-reply-command";
 
 /** 单条链路一轮的完整回传；延迟分位数来自逐次 durable 往返。 */
 export interface ChainRound {
@@ -84,6 +86,14 @@ export interface ChainRound {
   /** 一次往返承载的业务记录数；批量链路大于 1。 */
   readonly recordsPerOperation: number;
   readonly elapsedMs: number;
+  /**
+   * 完整链路吞吐（ops/s）：每秒能把多少条命令送到落盘 durable 回执。
+   *
+   * 这是链路表唯一可以跨行比较的吞吐口径。批量链路的 `throughputPerSecond`
+   * 按记录折算，天然是它的 recordsPerOperation 倍，两者放在一起比会得出反的
+   * 结论——identity 一次提交 128 条，按记录看是全场最快，按命令看是全场最慢。
+   */
+  readonly operationThroughputPerSecond: number;
   /** 业务记录吞吐（records/s），已按 recordsPerOperation 折算。 */
   readonly throughputPerSecond: number;
   readonly meanLatencyMs: number;
@@ -127,6 +137,7 @@ export interface HotPathRound {
 export type MetricUnit =
   | "ns/op"
   | "ops/s"
+  | "records/s"
   | "ms"
   | "bytes"
   | "count"

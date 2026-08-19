@@ -20,7 +20,7 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 
 <!-- performance-benchmark:start -->
 
-**Latest full benchmark** · Bun 1.3.14 · 3-run mean · 2026-08-19T08:06:09Z · `ready-total` 392.5 ms · `incoming-message-spine` 1,983.8 ns/op · `identity-policy-write` 5,410 ops/s
+**Latest full benchmark** · Bun 1.3.14 · 3-run mean · 2026-08-19T13:20:15Z · `ready-total` 349.0 ms · `incoming-message-spine` 1,893.5 ns/op · `identity-policy-write` 64 durable chains/s
 
 ## Environment
 
@@ -32,7 +32,7 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 | Memory | 7.76 GiB |
 | Rounds | 3 |
 | Mock data root | `performance/` |
-| Generated at | 2026-08-19T08:06:09Z |
+| Generated at | 2026-08-19T13:20:15Z |
 
 ## Total throughput and I/O (per round)
 
@@ -40,15 +40,15 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 
 | Metric | Value |
 | --- | --- |
-| Measured operations | 367,030,415 |
-| Process reads | 89.15 MiB |
-| Process writes | 169.60 MiB |
+| Measured operations | 367,030,605 |
+| Process reads | 89.13 MiB |
+| Process writes | 170.29 MiB |
 | Block-device reads | 0 B |
-| Block-device writes | 184.80 MiB |
-| Read syscalls | 36,309 |
-| Write syscalls | 79,005 |
-| Mock root on disk | 20.99 MiB |
-| Mock root files | 140 |
+| Block-device writes | 186.63 MiB |
+| Read syscalls | 35,211 |
+| Write syscalls | 80,515 |
+| Mock root on disk | 22.07 MiB |
+| Mock root files | 152 |
 
 ## Cold path · startup recovery
 
@@ -56,17 +56,17 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 
 | Phase | Duration | Variation |
 | --- | --- | --- |
-| `module-graph` | 143.2 ms | ±1.9% |
-| `instance-lock` | 30.87 ms | ±19.3% |
-| `orphan-cleanup` | 0.884 ms | ±11.1% |
-| `state-load` | 1.91 ms | ±17.1% |
-| `deployment-inputs` | 4.42 ms | ±13.7% |
-| `disk-io-init` | 0.525 ms | ±13.2% |
-| `persisted-load` | 163.3 ms | ±7.2% |
-| `hydrate` | 0.940 ms | ±18.1% |
-| `ready-total` | 392.5 ms | ±3.9% |
+| `module-graph` | 130.7 ms | ±3.0% |
+| `instance-lock` | 22.68 ms | ±2.8% |
+| `orphan-cleanup` | 0.791 ms | ±18.0% |
+| `state-load` | 2.02 ms | ±19.5% |
+| `deployment-inputs` | 4.85 ms | ±18.9% |
+| `disk-io-init` | 0.614 ms | ±33.2% |
+| `persisted-load` | 144.3 ms | ±6.6% |
+| `hydrate` | 0.846 ms | ±29.0% |
+| `ready-total` | 349.0 ms | ±3.4% |
 
-> Recovered this round: 8,192 whitelist · 8,192 blocklist · 25 chat states · 25 AI memory snapshots; process peak RSS 109.41 MiB.
+> Recovered this round: 8,192 whitelist · 8,192 blocklist · 25 chat states · 25 AI memory snapshots; process peak RSS 110.04 MiB.
 
 ## Hot path · production functions
 
@@ -74,42 +74,44 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 
 | Scenario | Median latency | Throughput | Peak RSS | Retained after GC | Variation |
 | --- | --- | --- | --- | --- | --- |
-| `incoming-message-spine` | 1,983.8 ns/op | 504,162 ops/s | 114.67 MiB | 28.31 KiB | ±1.2% |
-| `sender-no-username` | 13.7 ns/op | 73,582,912 ops/s | 80.41 MiB | 20.70 KiB | ±7.4% |
-| `sender-stable-username` | 32.4 ns/op | 31,224,265 ops/s | 80.17 MiB | 21.15 KiB | ±10.8% |
-| `self-sent-empty` | 0.7 ns/op | 1,392,133,368 ops/s | 78.04 MiB | 22.05 KiB | ±11.8% |
-| `chat-state-read` | 4.4 ns/op | 228,497,199 ops/s | 79.08 MiB | 20.77 KiB | ±5.4% |
-| `chat-state-map-read` | 16.3 ns/op | 61,533,830 ops/s | 80.05 MiB | 21.01 KiB | ±2.9% |
-| `ai-activity-window` | 60.1 ns/op | 16,725,942 ops/s | 82.74 MiB | 20.44 KiB | ±7.9% |
-| `ai-activity-lru-miss` | 10,438.3 ns/op | 96,198 ops/s | 158.12 MiB | 23.89 KiB | ±6.4% |
-| `identity-permission-read` | 121.7 ns/op | 8,253,940 ops/s | 89.16 MiB | 20.00 KiB | ±6.7% |
-| `flood-window-hit` | 54.0 ns/op | 18,594,936 ops/s | 83.87 MiB | 19.51 KiB | ±6.6% |
-| `flood-window-growth` | 497.3 ns/op | 2,012,937 ops/s | 137.50 MiB | 5.78 MiB | ±3.1% |
-| `flood-window-steady` | 563.2 ns/op | 1,779,972 ops/s | 143.27 MiB | 21.27 KiB | ±4.9% |
-| `ad-empty-metadata` | 5.8 ns/op | 183,154,585 ops/s | 80.83 MiB | 20.88 KiB | ±21.7% |
-| `ad-wire-clone` | 5,389.3 ns/op | 185,852 ops/s | 145.92 MiB | -1.86 MiB | ±4.0% |
-| `ad-capacity-reject` | 214.3 ns/op | 4,718,897 ops/s | 146.18 MiB | 23.05 KiB | ±10.5% |
-| `buffered-message-build` | 768.7 ns/op | 1,301,082 ops/s | 119.70 MiB | 23.25 KiB | ±1.0% |
-| `transcript-render` | 74,319.5 ns/op | 13,458 ops/s | 126.58 MiB | -1.86 MiB | ±1.4% |
-| `reply-reference` | 24.8 ns/op | 40,888,955 ops/s | 109.07 MiB | 22.91 KiB | ±12.0% |
-| `mention-facts` | 114.8 ns/op | 8,726,816 ops/s | 124.02 MiB | 20.62 KiB | ±4.7% |
-| `mention-facts-plain` | 4.0 ns/op | 247,441,531 ops/s | 86.58 MiB | 20.74 KiB | ±3.6% |
-| `gag-speak-counter` | 38.7 ns/op | 25,878,997 ops/s | 107.37 MiB | 20.56 KiB | ±3.3% |
-| `luck-receipt-fast-path` | 36.0 ns/op | 27,860,245 ops/s | 106.13 MiB | 20.89 KiB | ±5.6% |
-| `luck-tier-table` | 13.8 ns/op | 72,839,280 ops/s | 84.58 MiB | 20.08 KiB | ±6.4% |
-| `redact-clean-log` | 85.1 ns/op | 11,756,600 ops/s | 81.61 MiB | 21.41 KiB | ±1.7% |
+| `incoming-message-spine` | 1,893.5 ns/op | 528,292 ops/s | 114.33 MiB | 28.79 KiB | ±1.8% |
+| `sender-no-username` | 12.3 ns/op | 81,132,408 ops/s | 79.87 MiB | 20.41 KiB | ±0.6% |
+| `sender-stable-username` | 27.0 ns/op | 37,039,262 ops/s | 80.70 MiB | 20.48 KiB | ±3.3% |
+| `self-sent-empty` | 0.6 ns/op | 1,965,877,099 ops/s | 78.58 MiB | 21.19 KiB | ±28.6% |
+| `chat-state-read` | 4.0 ns/op | 249,919,011 ops/s | 78.67 MiB | 22.41 KiB | ±2.8% |
+| `chat-state-map-read` | 16.5 ns/op | 60,969,929 ops/s | 80.42 MiB | 21.45 KiB | ±7.2% |
+| `ai-activity-window` | 57.1 ns/op | 17,529,288 ops/s | 82.79 MiB | 20.01 KiB | ±2.9% |
+| `ai-activity-lru-miss` | 10,911.9 ns/op | 92,173 ops/s | 157.82 MiB | 24.13 KiB | ±7.7% |
+| `identity-permission-read` | 95.8 ns/op | 10,444,193 ops/s | 90.43 MiB | 20.32 KiB | ±3.0% |
+| `flood-window-hit` | 55.5 ns/op | 18,019,927 ops/s | 83.95 MiB | 21.39 KiB | ±2.4% |
+| `flood-window-growth` | 521.1 ns/op | 1,927,093 ops/s | 139.85 MiB | 5.78 MiB | ±6.6% |
+| `flood-window-steady` | 455.7 ns/op | 2,196,636 ops/s | 144.50 MiB | 20.81 KiB | ±3.1% |
+| `ad-empty-metadata` | 4.8 ns/op | 211,088,445 ops/s | 80.71 MiB | 20.75 KiB | ±10.9% |
+| `ad-wire-clone` | 5,603.6 ns/op | 179,035 ops/s | 146.06 MiB | -1.86 MiB | ±5.7% |
+| `ad-capacity-reject` | 193.1 ns/op | 5,211,348 ops/s | 147.13 MiB | 23.85 KiB | ±7.9% |
+| `buffered-message-build` | 707.5 ns/op | 1,413,860 ops/s | 121.86 MiB | 21.51 KiB | ±1.6% |
+| `transcript-render` | 71,971.4 ns/op | 13,896 ops/s | 129.36 MiB | -1.87 MiB | ±1.2% |
+| `reply-reference` | 23.4 ns/op | 42,862,473 ops/s | 109.53 MiB | 22.69 KiB | ±5.6% |
+| `mention-facts` | 112.4 ns/op | 8,932,680 ops/s | 123.67 MiB | 19.39 KiB | ±6.5% |
+| `mention-facts-plain` | 4.0 ns/op | 251,772,350 ops/s | 86.71 MiB | 22.14 KiB | ±2.2% |
+| `gag-speak-counter` | 37.3 ns/op | 27,131,080 ops/s | 107.54 MiB | 20.32 KiB | ±11.0% |
+| `luck-receipt-fast-path` | 36.6 ns/op | 27,390,926 ops/s | 105.83 MiB | 21.23 KiB | ±4.6% |
+| `luck-tier-table` | 12.7 ns/op | 79,062,170 ops/s | 84.33 MiB | 21.01 KiB | ±3.2% |
+| `redact-clean-log` | 83.1 ns/op | 12,049,184 ops/s | 81.50 MiB | 20.29 KiB | ±3.3% |
 
 ## Chains · end-to-end durability
 
-> Every chain is driven through its main-thread production entry against a real Disk I/O Worker, timed until the durable acknowledgement.
+> Every chain is driven through its main-thread production entry against a real Disk I/O Worker, timed until the durable acknowledgement. "Full chains/s" is how many commands per second reach that durable acknowledgement and is the only throughput comparable across rows; "Records/s" counts the business records they carry, which batched chains multiply. `ad-detect-command` and `ai-reply-command` time one group message through the whole command: model calls and Telegram traffic are answered by in-process canned replies, so these numbers contain no network round trip at all — only in-process work and disk, with every step except the network inside the timing window. `ai-reply-command` additionally subtracts the human-like pause before sending (1.5s base, 55ms per character, capped at 7.5s): it is per-chat pacing that burns no CPU and blocks no other chat, so counting it would report that deliberate rhythm rather than processing capacity. The subtracted `ai-memory-snapshot` throughput is tail-dominated: every operation rewrites a ~46 KiB snapshot in full with two fsyncs, and a single write differs by an order of magnitude depending on whether it lands in page cache or hits a filesystem writeback stall. It runs after the earlier sections and inherits their accumulated writeback pressure, so its round means can differ severalfold (about 185 ops/s when run alone on an idle machine) while its p50 stays steady — read the variation column first and compare that row by p50 rather than throughput. The subtracted amount is measured per operation, not estimated. That chain ends when the reply is sent and carries no durable write: production flushes memory snapshots on a 30-second timer in batches, not once per reply, and that cost is priced separately by `ai-memory-snapshot`.
 
-| Chain | Throughput | p50 | p95 | p99 | Max | Block-device writes | Variation |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `join-log-append` | 313 ops/s | 2.24 ms | 10.14 ms | 15.31 ms | 29.77 ms | 3.91 MiB | ±5.5% |
-| `identity-policy-write` | 5,410 ops/s | 25.76 ms | 41.66 ms | 49.77 ms | 60.26 ms | 20.53 MiB | ±1.8% |
-| `chat-state-write` | 237 ops/s | 3.21 ms | 11.68 ms | 15.60 ms | 27.04 ms | 3.13 MiB | ±4.5% |
-| `ai-memory-snapshot` | 33 ops/s | 31.55 ms | 66.98 ms | 94.65 ms | 108.7 ms | 7.03 MiB | ±8.2% |
-| `diagnostic-log` | 298 ops/s | 2.38 ms | 10.96 ms | 14.82 ms | 31.86 ms | 4.16 MiB | ±1.8% |
+| Chain | Full chains/s | Records/s | p50 | p95 | p99 | Max | Block-device writes | Variation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `join-log-append` | 372 ops/s | 372 records/s | 2.08 ms | 5.34 ms | 11.87 ms | 29.56 ms | 3.91 MiB | ±5.1% |
+| `identity-policy-write` | 64 ops/s | 8,143 records/s | 16.62 ms | 26.22 ms | 31.08 ms | 41.70 ms | 20.53 MiB | ±2.2% |
+| `chat-state-write` | 310 ops/s | 310 records/s | 2.72 ms | 5.50 ms | 12.12 ms | 14.69 ms | 3.13 MiB | ±2.0% |
+| `ai-memory-snapshot` | 193 ops/s | 193 records/s | 4.61 ms | 8.32 ms | 14.47 ms | 23.94 ms | 7.03 MiB | ±1.7% |
+| `diagnostic-log` | 373 ops/s | 373 records/s | 2.19 ms | 4.78 ms | 11.54 ms | 16.90 ms | 4.16 MiB | ±2.0% |
+| `ad-detect-command` | 142 ops/s | 142 records/s | 6.26 ms | 12.18 ms | 20.37 ms | 21.95 ms | 1.83 MiB | ±0.8% |
+| `ai-reply-command` | 616 ops/s | 616 records/s | 1.50 ms | 2.49 ms | 3.07 ms | 3.07 ms | 0 B | ±4.3% |
 
 ## Storage · SQLite and main-thread caches
 
@@ -117,12 +119,12 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 
 | Operation | Throughput | Batch latency | Block-device writes | Retained after GC | Variation |
 | --- | --- | --- | --- | --- | --- |
-| `main-lru-read` | 24,380,841 ops/s | 0.000 ms | 0 B | 5.27 KiB | ±2.5% |
-| `main-write-through-acked` | 5,747 ops/s | 22.27 ms | 61.91 MiB | -1.46 MiB | ±0.6% |
-| `storage-read-hot-connection` | 27,450 ops/s | 0.292 ms | 4.83 MiB | -1.51 MiB | ±2.1% |
-| `storage-read-cold-connection` | 10,890 ops/s | 0.736 ms | 2.67 MiB | 260.13 KiB | ±3.6% |
-| `storage-write-hot-connection` | 6,245 ops/s | 20.50 ms | 67.68 MiB | -1.39 MiB | ±1.1% |
-| `storage-write-cold-connection` | 5,617 ops/s | 22.87 ms | 8.91 MiB | 242.52 KiB | ±6.1% |
+| `main-lru-read` | 26,190,480 ops/s | 0.000 ms | 0 B | 7.82 KiB | ±7.3% |
+| `main-write-through-acked` | 8,475 ops/s | 15.11 ms | 61.91 MiB | -1.46 MiB | ±1.2% |
+| `storage-read-hot-connection` | 28,512 ops/s | 0.281 ms | 4.83 MiB | -1.51 MiB | ±4.7% |
+| `storage-read-cold-connection` | 11,626 ops/s | 0.689 ms | 2.67 MiB | 268.13 KiB | ±2.5% |
+| `storage-write-hot-connection` | 7,323 ops/s | 17.49 ms | 67.68 MiB | -1.39 MiB | ±2.4% |
+| `storage-write-cold-connection` | 6,851 ops/s | 18.72 ms | 8.91 MiB | 249.53 KiB | ±4.4% |
 
 ## Containers and algorithms
 
@@ -130,8 +132,8 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 
 | Container | Median latency | Throughput | Peak RSS | Retained after GC | Variation |
 | --- | --- | --- | --- | --- | --- |
-| `linked-timestamp-window` | 35.0 ns/op | 28,769,422 ops/s | 155.39 MiB | 21.64 KiB | ±7.9% |
-| `bounded-rolling-buffer` | 33.1 ns/op | 30,529,867 ops/s | 107.60 MiB | 24.53 KiB | ±9.9% |
+| `linked-timestamp-window` | 43.0 ns/op | 24,003,425 ops/s | 154.72 MiB | 22.43 KiB | ±18.1% |
+| `bounded-rolling-buffer` | 31.8 ns/op | 31,907,766 ops/s | 108.40 MiB | 26.79 KiB | ±12.8% |
 
 ## Join log · 250k capacity line
 
@@ -139,8 +141,8 @@ hard GC/RSS/JIT gate for hot paths lives in `bun run perf:hot-path-gate` — see
 
 | Operation | Elapsed | Allocated before GC | Retained after GC | Variation |
 | --- | --- | --- | --- | --- |
-| `snapshot` | 183.8 ms | 1.39 MiB | 4.92 KiB | ±1.9% |
-| `capacity` | 44.18 ms | 0 B | -9.71 KiB | ±4.6% |
+| `snapshot` | 171.3 ms | 1.39 MiB | 5.29 KiB | ±6.8% |
+| `capacity` | 43.52 ms | 0 B | -5.67 KiB | ±4.7% |
 
 > Reproduce with `bun run perf:full`.
 

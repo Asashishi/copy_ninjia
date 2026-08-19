@@ -142,6 +142,8 @@
 - 全部数据写在仓库根的 `performance/`，配置读 `config_example/`，每轮跑完删除整棵目录；运行结束后 `performance/` 下不得有残留目录。
 - 父进程与 `scripts/perf/fullSuite/` 下除 `fixture.ts`、`seed.ts`、`coldStart.ts`、`chain.ts`、`storage.ts` 以外的模块，只能 import 纯常量与 `import type`，不得 import `packages/` 下的实现模块。
 - 新增被测项复用 `scripts/perf/` 已有实现与生产入口；不得为基准另写生产逻辑、落盘格式或夹具规模，夹具规模引用生产常量。
+- 完整命令链路（`ad-detect-command`、`ai-reply-command`）只在**基准侧**顶掉出站：模型客户端走 `packages/cache/` 已有的 holder，Telegram 走 `scripts/perf/outboundGuard.ts` 的罐头应答（必须装在 `installOutboundGuards` 之后才在最外层）。绝不为此在 `packages/` 里加基准专用分支，也绝不发起真实请求——那会产生真实费用并以线上机器人身份出站。
+- 命令链路必须断言这一条真的走完了（处置排空结果、`cannedTelegramCalls` 计数）。缺了断言，一次把链路导进静默 return 的回归会表现成读数变快而不是失败。
 - 改动规模常量、迭代次数或分区构成后，在同一次发布里重新出数并在提交信息中说明。
 
 ### 类型与接口

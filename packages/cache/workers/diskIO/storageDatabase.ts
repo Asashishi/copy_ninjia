@@ -1,7 +1,10 @@
 import { closeStorageDatabase } from "../../../database/interact/connection";
 import type { PendingBlockedRemoval } from "../../../types/blocklist";
 import type { IdentityPersistenceReply } from "../../../types/diskIO";
-import type { StorageDatabase } from "../../../types/storageDatabase";
+import type {
+  StorageDatabase,
+  StoredIdentityIdLookups,
+} from "../../../types/storageDatabase";
 import type {
   PendingChatStateWrite,
   PendingIdentityPolicyWrite,
@@ -9,6 +12,26 @@ import type {
 } from "../../../types/identityStorage";
 
 /** Disk I/O Worker 独占的 SQLite 连接与业务表写缓冲。 */
+
+/**
+ * Owner: Disk I/O Worker。
+ *
+ * 每条连接两条预编译的主键存在性语句（白/黑名单各一），首次用到时由
+ * workers/diskIO/storageDatabase/identityPolicy.ts 建好放进来。写入路径按条目调这个
+ * 查询（assertOppositePolicyAbsent），一批 IDENTITY_WRITE_BATCH_MAX_ENTRIES 条就走
+ * 同样多次；现场构建 Drizzle 查询每次约 57 µs，光拼 SQL 就比那一批唯一的一次 fsync
+ * 还贵，预编译后单次约 1 µs。
+ *
+ * 容量固定为「每条活着的连接一项」，而本线程同时只持有一条连接，因此无淘汰需求。
+ * 清理交给 GC：键是连接对象本身，连接被换掉后整项随之回收，本表不额外持有强引用。
+ * 之所以按连接存而不是做成模块级单例——库句柄会被整个换掉（重开库、测试重建），
+ * 而 SQLite 预编译语句绑在它自己的连接上，跨连接复用会在旧连接关闭后失效。
+ * Worker 崩溃重建后是全新 isolate，本表随之为空，下一次调用重新预编译。
+ */
+export const storedIdentityIdLookups: WeakMap<
+  StorageDatabase,
+  StoredIdentityIdLookups
+> = new WeakMap<StorageDatabase, StoredIdentityIdLookups>();
 
 /**
  * 30 秒 timer 使用的 ACK 通道；Worker 启动时填充，随整个 DiskIO isolate 销毁。

@@ -347,6 +347,28 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(restored.whitelistEntryCount).toBe(1);
   });
 
+  test("已提交行的跨表互斥两个方向都拒绝，不靠未提交视图兜底", () => {
+    // 这条专钉「已经落库」那条分支：pending 里没有这个主键时，互斥校验只能去查
+    // 数据库（assertOppositePolicyAbsent 的 hasStoredIdentityPolicy）。上面那条
+    // 「同一事务先删后加」走的是未提交视图，两表接反也照样过——查库这条不补，
+    // 预编译语句把白名单查成黑名单就没有任何测试拦得住。
+    handleIdentityPolicyWrite(blocklistWrite(11, 1), reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    expect((): void => handleIdentityPolicyWrite(whitelistWrite(11, 2), reply))
+      .toThrow("Identity 11 cannot exist in both whitelist_entries and blocklist_entries.");
+
+    // 反方向同样要拒绝：只查一张表的实现能过上面那半，过不了这半。
+    handleIdentityPolicyWrite(whitelistWrite(12, 1), reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    expect((): void => handleIdentityPolicyWrite(blocklistWrite(12, 2), reply))
+      .toThrow("Identity 12 cannot exist in both whitelist_entries and blocklist_entries.");
+
+    resetStorageDatabaseCache();
+    const restored = hydrateStorageDatabase();
+    expect(restored.blocklistEntryCount).toBe(1);
+    expect(restored.whitelistEntryCount).toBe(1);
+  });
+
   test("群状态第 25 条自动事务提交并精确 ACK，第 26 条在 Worker owner 再次拒绝", () => {
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index++) {
       handleChatStateWrite(chatStateWrite(-1_000 - index, 1), reply);

@@ -49,6 +49,8 @@ export interface BenchmarkCopy {
   readonly coldStartCaption: string;
   readonly metricColumn: string;
   readonly valueColumn: string;
+  /** 摘要行里紧跟吞吐数字的单位，必须点明这是落盘口径。 */
+  readonly durableOpsPerSecond: string;
   readonly footer: string;
 }
 
@@ -96,7 +98,15 @@ const ZH: BenchmarkCopy = {
     "hot-path":
       "每个场景一个独立进程，预热后取 7 个样本的中位数；吞吐由中位延迟折算。",
     chain:
-      "每条链路都由主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。",
+      "每条链路都由主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。" +
+      "「完整链路/s」是每秒能把多少条命令送到落盘回执，是唯一可以跨行比较的吞吐；" +
+      "「记录/s」是其中承载的业务记录数，批量链路会成倍高于前者。" +
+      "`ad-detect-command` 与 `ai-reply-command` 量的是一条群消息走完整条命令：" +
+      "模型判定/生成与 Telegram 出站都由进程内罐头就地应答，因此读数里没有任何网络往返，" +
+      "只有进程内工作与磁盘——除网络之外的每一步都在计时窗口里。" +
+      "`ai-reply-command` 另外扣掉了发送前那段拟人停顿（1.5 秒起步、每字 55 毫秒、" +
+      "上限 7.5 秒）：它按群计、CPU 空转，同一时刻别的群照跑，算进来报出的就不是" +
+      "处理能力而是这段刻意设定的节奏。扣除量按每条实际发生的停顿实测，不是估算。",
     storage:
       "复用 `bun run perf:identity-database` 的实现；「冷」指连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。",
     "container-algorithm":
@@ -117,6 +127,8 @@ const ZH: BenchmarkCopy = {
     duration: "耗时",
     medianLatency: "中位延迟",
     throughput: "吞吐",
+    commandThroughput: "完整链路/s",
+    recordThroughput: "记录/s",
     peakRss: "峰值 RSS",
     retainedHeap: "GC 后留存",
     batchLatency: "批次延迟",
@@ -134,6 +146,7 @@ const ZH: BenchmarkCopy = {
     "{memories} 份 AI 记忆快照；进程峰值 RSS {rss}。",
   metricColumn: "指标",
   valueColumn: "读数",
+  durableOpsPerSecond: "条完整链路/s（落盘）",
   footer: "复现：`bun run perf:full`。",
 };
 
@@ -184,7 +197,24 @@ const EN: BenchmarkCopy = {
       "One isolated process per scenario; median of 7 samples after warmup, with throughput derived from it.",
     chain:
       "Every chain is driven through its main-thread production entry against a real Disk I/O Worker, " +
-      "timed until the durable acknowledgement.",
+      "timed until the durable acknowledgement. \"Full chains/s\" is how many commands per second reach that " +
+      "durable acknowledgement and is the only throughput comparable across rows; \"Records/s\" counts the " +
+      "business records they carry, which batched chains multiply. `ad-detect-command` and `ai-reply-command` " +
+      "time one group message through the whole command: model calls and Telegram traffic are answered by " +
+      "in-process canned replies, so these numbers contain no network round trip at all — only in-process " +
+      "work and disk, with every step except the network inside the timing window. " +
+      "`ai-reply-command` additionally subtracts the human-like pause before sending (1.5s base, 55ms per " +
+      "character, capped at 7.5s): it is per-chat pacing that burns no CPU and blocks no other chat, so " +
+      "counting it would report that deliberate rhythm rather than processing capacity. The subtracted " +
+      "`ai-memory-snapshot` throughput is tail-dominated: every operation rewrites a ~46 KiB snapshot in full " +
+      "with two fsyncs, and a single write differs by an order of magnitude depending on whether it lands in " +
+      "page cache or hits a filesystem writeback stall. It runs after the earlier sections and inherits their " +
+      "accumulated writeback pressure, so its round means can differ severalfold (about 185 ops/s when run " +
+      "alone on an idle machine) while its p50 stays steady — read the variation column first and compare that " +
+      "row by p50 rather than throughput. " +
+      "The subtracted amount is measured per operation, not estimated. That chain ends when the reply is sent and carries no " +
+      "durable write: production flushes memory snapshots on a 30-second timer in batches, not once per reply, " +
+      "and that cost is priced separately by `ai-memory-snapshot`.",
     storage:
       "Reuses `bun run perf:identity-database`; \"cold\" means an empty connection page cache and statement cache, " +
       "not a dropped OS page cache.",
@@ -206,6 +236,8 @@ const EN: BenchmarkCopy = {
     duration: "Duration",
     medianLatency: "Median latency",
     throughput: "Throughput",
+    commandThroughput: "Full chains/s",
+    recordThroughput: "Records/s",
     peakRss: "Peak RSS",
     retainedHeap: "Retained after GC",
     batchLatency: "Batch latency",
@@ -223,6 +255,7 @@ const EN: BenchmarkCopy = {
     "{memories} AI memory snapshots; process peak RSS {rss}.",
   metricColumn: "Metric",
   valueColumn: "Value",
+  durableOpsPerSecond: "durable chains/s",
   footer: "Reproduce with `bun run perf:full`.",
 };
 
@@ -271,7 +304,23 @@ const JA: BenchmarkCopy = {
     "hot-path":
       "シナリオごとに独立プロセスで実行し、ウォームアップ後 7 サンプルの中央値を取る。スループットはその中央値から換算。",
     chain:
-      "各チェーンはメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測する。",
+      "各チェーンはメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測する。" +
+      "「完全チェーン/s」は永続化応答まで到達するコマンド数で、行をまたいで比較できる唯一のスループット。" +
+      "「レコード/s」はそこに載る業務レコード数で、バッチ処理のチェーンでは前者の倍数になる。" +
+      "`ad-detect-command` と `ai-reply-command` は 1 通のグループメッセージがコマンド全体を通る時間を計測する。" +
+      "モデル呼び出しと Telegram 送信はプロセス内の固定応答が返すため、計測値にネットワーク往復は一切含まれず、" +
+      "ネットワーク以外のすべての工程がプロセス内処理とディスクとして計測窓に入っている。" +
+      "`ai-reply-command` はさらに送信前の擬人的な間（基準 1.5 秒、1 文字あたり 55 ミリ秒、上限 7.5 秒）を" +
+      "差し引く。これはチャットごとの間合いで CPU を消費せず他チャットも止めないため、含めると" +
+      "`ai-memory-snapshot` のスループットはテール依存です。1 回ごとに約 46 KiB のスナップショットを全面書き換えし " +
+      "fsync を 2 回行うため、ページキャッシュに収まるかファイルシステムの書き戻し停止に当たるかで 1 回の値が桁違いに" +
+      "変わります。先行するセクションの書き戻し圧力を引き継ぐので、ラウンド平均は数倍ぶれることがあり" +
+      "（単独・無負荷では約 185 ops/s）、一方 p50 は安定しています。この行はまず変動列を見て、スループットではなく " +
+      "p50 で履歴と比較してください。" +
+      "処理能力ではなく意図的なリズムを報告することになる。差し引く量は 1 件ごとに実測しており推定ではない。" +
+      "このチェーンは「返信を送信した」時点までで永続化を含まない：本番の記憶スナップショットは" +
+      "30 秒タイマーでまとめて書き出す方式であり、返信 1 件ごとではない。その費用は" +
+      "`ai-memory-snapshot` の行が単独で示す。",
     storage:
       "`bun run perf:identity-database` の実装を再利用。「コールド」は接続のページキャッシュと文キャッシュが空である意味で、" +
       "OS のページキャッシュを破棄したという意味ではない。",
@@ -293,6 +342,8 @@ const JA: BenchmarkCopy = {
     duration: "所要時間",
     medianLatency: "中央値レイテンシ",
     throughput: "スループット",
+    commandThroughput: "完全チェーン/s",
+    recordThroughput: "レコード/s",
     peakRss: "ピーク RSS",
     retainedHeap: "GC 後の残存",
     batchLatency: "バッチ遅延",
@@ -310,6 +361,7 @@ const JA: BenchmarkCopy = {
     "AI メモリスナップショット {memories} 件、プロセスのピーク RSS {rss}。",
   metricColumn: "指標",
   valueColumn: "計測値",
+  durableOpsPerSecond: "完全チェーン/s（永続化）",
   footer: "再現方法：`bun run perf:full`。",
 };
 

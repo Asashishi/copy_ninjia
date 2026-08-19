@@ -51,7 +51,10 @@ const SECTIONS: readonly BenchmarkSection[] = [
       {
         id: "identity-policy-write",
         metrics: [
-          stats("throughput", "ops/s", 5_626),
+          // 批量链路的两个吞吐口径刻意取不同量级：渲染层把它们混成一列时，
+          // 这一行会立刻暴露（记录/s 是完整链路/s 的 IDENTITY_WRITE_BATCH_MAX_ENTRIES 倍）。
+          stats("commandThroughput", "ops/s", 44),
+          stats("recordThroughput", "records/s", 5_626),
           stats("p50Latency", "ms", 25.4),
           stats("p95Latency", "ms", 40.8),
           stats("p99Latency", "ms", 49.9),
@@ -126,10 +129,19 @@ describe("基准区块渲染", () => {
     const block: string = renderBenchmarkBlock(REPORT, "zh");
     expect(block).toContain("1,926.9 ns/op");
     expect(block).toContain("518,958 ops/s");
+    expect(block).toContain("5,626 records/s");
     expect(block).toContain("2.00 MiB");
     expect(block).toContain("420.5 ms");
     expect(block).toContain("±1.3%");
     expect(block).toContain("385,240,415");
+  });
+
+  test("摘要行报完整链路口径，不报被批大小放大过的记录口径", () => {
+    // 曾经这里取的是 records/s。identity 一次提交 128 条，摘要行因此把全场
+    // **最慢**的一条链路报成了全场最快，而这一行会直接进三份 README。
+    const block: string = renderBenchmarkBlock(REPORT, "zh");
+    expect(block).toContain("`identity-policy-write` 44 条完整链路/s（落盘）");
+    expect(block).not.toContain("`identity-policy-write` 5,626");
   });
 
   test("摘要行给出三个关键读数，缺任何一个都拒绝渲染", () => {

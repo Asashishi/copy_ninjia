@@ -19,7 +19,7 @@
 
 <!-- performance-benchmark:start -->
 
-**直近の全量ベンチマーク** · Bun 1.3.14 · 3 ラウンドの平均 · 2026-08-19T08:06:09Z · `ready-total` 392.5 ms · `incoming-message-spine` 1,983.8 ns/op · `identity-policy-write` 5,410 ops/s
+**直近の全量ベンチマーク** · Bun 1.3.14 · 3 ラウンドの平均 · 2026-08-19T13:20:15Z · `ready-total` 349.0 ms · `incoming-message-spine` 1,893.5 ns/op · `identity-policy-write` 64 完全チェーン/s（永続化）
 
 ## 実行環境
 
@@ -31,7 +31,7 @@
 | メモリ | 7.76 GiB |
 | ラウンド数 | 3 |
 | モックデータルート | `performance/` |
-| 計測日時 | 2026-08-19T08:06:09Z |
+| 計測日時 | 2026-08-19T13:20:15Z |
 
 ## 総スループットと総 I/O（1 ラウンドあたり）
 
@@ -39,15 +39,15 @@
 
 | 指標 | 計測値 |
 | --- | --- |
-| 計測オペレーション数 | 367,030,415 |
-| プロセス読み込み | 89.15 MiB |
-| プロセス書き込み | 169.60 MiB |
+| 計測オペレーション数 | 367,030,605 |
+| プロセス読み込み | 89.13 MiB |
+| プロセス書き込み | 170.29 MiB |
 | ブロックデバイス読み込み | 0 B |
-| ブロックデバイス書き込み | 184.80 MiB |
-| 読み込みシステムコール | 36,309 |
-| 書き込みシステムコール | 79,005 |
-| モックルート使用量 | 20.99 MiB |
-| モックルートファイル数 | 140 |
+| ブロックデバイス書き込み | 186.63 MiB |
+| 読み込みシステムコール | 35,211 |
+| 書き込みシステムコール | 80,515 |
+| モックルート使用量 | 22.07 MiB |
+| モックルートファイル数 | 152 |
 
 ## コールドパス · 起動リカバリ
 
@@ -55,17 +55,17 @@
 
 | 段階 | 所要時間 | 変動 |
 | --- | --- | --- |
-| `module-graph` | 143.2 ms | ±1.9% |
-| `instance-lock` | 30.87 ms | ±19.3% |
-| `orphan-cleanup` | 0.884 ms | ±11.1% |
-| `state-load` | 1.91 ms | ±17.1% |
-| `deployment-inputs` | 4.42 ms | ±13.7% |
-| `disk-io-init` | 0.525 ms | ±13.2% |
-| `persisted-load` | 163.3 ms | ±7.2% |
-| `hydrate` | 0.940 ms | ±18.1% |
-| `ready-total` | 392.5 ms | ±3.9% |
+| `module-graph` | 130.7 ms | ±3.0% |
+| `instance-lock` | 22.68 ms | ±2.8% |
+| `orphan-cleanup` | 0.791 ms | ±18.0% |
+| `state-load` | 2.02 ms | ±19.5% |
+| `deployment-inputs` | 4.85 ms | ±18.9% |
+| `disk-io-init` | 0.614 ms | ±33.2% |
+| `persisted-load` | 144.3 ms | ±6.6% |
+| `hydrate` | 0.846 ms | ±29.0% |
+| `ready-total` | 349.0 ms | ±3.4% |
 
-> このラウンドの復元：ホワイトリスト 8,192 件 · ブロックリスト 8,192 件 · チャット状態 25 件 · AI メモリスナップショット 25 件、プロセスのピーク RSS 109.41 MiB。
+> このラウンドの復元：ホワイトリスト 8,192 件 · ブロックリスト 8,192 件 · チャット状態 25 件 · AI メモリスナップショット 25 件、プロセスのピーク RSS 110.04 MiB。
 
 ## ホットパス · 本番関数
 
@@ -73,42 +73,44 @@
 
 | シナリオ | 中央値レイテンシ | スループット | ピーク RSS | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- | --- |
-| `incoming-message-spine` | 1,983.8 ns/op | 504,162 ops/s | 114.67 MiB | 28.31 KiB | ±1.2% |
-| `sender-no-username` | 13.7 ns/op | 73,582,912 ops/s | 80.41 MiB | 20.70 KiB | ±7.4% |
-| `sender-stable-username` | 32.4 ns/op | 31,224,265 ops/s | 80.17 MiB | 21.15 KiB | ±10.8% |
-| `self-sent-empty` | 0.7 ns/op | 1,392,133,368 ops/s | 78.04 MiB | 22.05 KiB | ±11.8% |
-| `chat-state-read` | 4.4 ns/op | 228,497,199 ops/s | 79.08 MiB | 20.77 KiB | ±5.4% |
-| `chat-state-map-read` | 16.3 ns/op | 61,533,830 ops/s | 80.05 MiB | 21.01 KiB | ±2.9% |
-| `ai-activity-window` | 60.1 ns/op | 16,725,942 ops/s | 82.74 MiB | 20.44 KiB | ±7.9% |
-| `ai-activity-lru-miss` | 10,438.3 ns/op | 96,198 ops/s | 158.12 MiB | 23.89 KiB | ±6.4% |
-| `identity-permission-read` | 121.7 ns/op | 8,253,940 ops/s | 89.16 MiB | 20.00 KiB | ±6.7% |
-| `flood-window-hit` | 54.0 ns/op | 18,594,936 ops/s | 83.87 MiB | 19.51 KiB | ±6.6% |
-| `flood-window-growth` | 497.3 ns/op | 2,012,937 ops/s | 137.50 MiB | 5.78 MiB | ±3.1% |
-| `flood-window-steady` | 563.2 ns/op | 1,779,972 ops/s | 143.27 MiB | 21.27 KiB | ±4.9% |
-| `ad-empty-metadata` | 5.8 ns/op | 183,154,585 ops/s | 80.83 MiB | 20.88 KiB | ±21.7% |
-| `ad-wire-clone` | 5,389.3 ns/op | 185,852 ops/s | 145.92 MiB | -1.86 MiB | ±4.0% |
-| `ad-capacity-reject` | 214.3 ns/op | 4,718,897 ops/s | 146.18 MiB | 23.05 KiB | ±10.5% |
-| `buffered-message-build` | 768.7 ns/op | 1,301,082 ops/s | 119.70 MiB | 23.25 KiB | ±1.0% |
-| `transcript-render` | 74,319.5 ns/op | 13,458 ops/s | 126.58 MiB | -1.86 MiB | ±1.4% |
-| `reply-reference` | 24.8 ns/op | 40,888,955 ops/s | 109.07 MiB | 22.91 KiB | ±12.0% |
-| `mention-facts` | 114.8 ns/op | 8,726,816 ops/s | 124.02 MiB | 20.62 KiB | ±4.7% |
-| `mention-facts-plain` | 4.0 ns/op | 247,441,531 ops/s | 86.58 MiB | 20.74 KiB | ±3.6% |
-| `gag-speak-counter` | 38.7 ns/op | 25,878,997 ops/s | 107.37 MiB | 20.56 KiB | ±3.3% |
-| `luck-receipt-fast-path` | 36.0 ns/op | 27,860,245 ops/s | 106.13 MiB | 20.89 KiB | ±5.6% |
-| `luck-tier-table` | 13.8 ns/op | 72,839,280 ops/s | 84.58 MiB | 20.08 KiB | ±6.4% |
-| `redact-clean-log` | 85.1 ns/op | 11,756,600 ops/s | 81.61 MiB | 21.41 KiB | ±1.7% |
+| `incoming-message-spine` | 1,893.5 ns/op | 528,292 ops/s | 114.33 MiB | 28.79 KiB | ±1.8% |
+| `sender-no-username` | 12.3 ns/op | 81,132,408 ops/s | 79.87 MiB | 20.41 KiB | ±0.6% |
+| `sender-stable-username` | 27.0 ns/op | 37,039,262 ops/s | 80.70 MiB | 20.48 KiB | ±3.3% |
+| `self-sent-empty` | 0.6 ns/op | 1,965,877,099 ops/s | 78.58 MiB | 21.19 KiB | ±28.6% |
+| `chat-state-read` | 4.0 ns/op | 249,919,011 ops/s | 78.67 MiB | 22.41 KiB | ±2.8% |
+| `chat-state-map-read` | 16.5 ns/op | 60,969,929 ops/s | 80.42 MiB | 21.45 KiB | ±7.2% |
+| `ai-activity-window` | 57.1 ns/op | 17,529,288 ops/s | 82.79 MiB | 20.01 KiB | ±2.9% |
+| `ai-activity-lru-miss` | 10,911.9 ns/op | 92,173 ops/s | 157.82 MiB | 24.13 KiB | ±7.7% |
+| `identity-permission-read` | 95.8 ns/op | 10,444,193 ops/s | 90.43 MiB | 20.32 KiB | ±3.0% |
+| `flood-window-hit` | 55.5 ns/op | 18,019,927 ops/s | 83.95 MiB | 21.39 KiB | ±2.4% |
+| `flood-window-growth` | 521.1 ns/op | 1,927,093 ops/s | 139.85 MiB | 5.78 MiB | ±6.6% |
+| `flood-window-steady` | 455.7 ns/op | 2,196,636 ops/s | 144.50 MiB | 20.81 KiB | ±3.1% |
+| `ad-empty-metadata` | 4.8 ns/op | 211,088,445 ops/s | 80.71 MiB | 20.75 KiB | ±10.9% |
+| `ad-wire-clone` | 5,603.6 ns/op | 179,035 ops/s | 146.06 MiB | -1.86 MiB | ±5.7% |
+| `ad-capacity-reject` | 193.1 ns/op | 5,211,348 ops/s | 147.13 MiB | 23.85 KiB | ±7.9% |
+| `buffered-message-build` | 707.5 ns/op | 1,413,860 ops/s | 121.86 MiB | 21.51 KiB | ±1.6% |
+| `transcript-render` | 71,971.4 ns/op | 13,896 ops/s | 129.36 MiB | -1.87 MiB | ±1.2% |
+| `reply-reference` | 23.4 ns/op | 42,862,473 ops/s | 109.53 MiB | 22.69 KiB | ±5.6% |
+| `mention-facts` | 112.4 ns/op | 8,932,680 ops/s | 123.67 MiB | 19.39 KiB | ±6.5% |
+| `mention-facts-plain` | 4.0 ns/op | 251,772,350 ops/s | 86.71 MiB | 22.14 KiB | ±2.2% |
+| `gag-speak-counter` | 37.3 ns/op | 27,131,080 ops/s | 107.54 MiB | 20.32 KiB | ±11.0% |
+| `luck-receipt-fast-path` | 36.6 ns/op | 27,390,926 ops/s | 105.83 MiB | 21.23 KiB | ±4.6% |
+| `luck-tier-table` | 12.7 ns/op | 79,062,170 ops/s | 84.33 MiB | 21.01 KiB | ±3.2% |
+| `redact-clean-log` | 83.1 ns/op | 12,049,184 ops/s | 81.50 MiB | 20.29 KiB | ±3.3% |
 
 ## チェーン · エンドツーエンドの永続化
 
-> 各チェーンはメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測する。
+> 各チェーンはメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測する。「完全チェーン/s」は永続化応答まで到達するコマンド数で、行をまたいで比較できる唯一のスループット。「レコード/s」はそこに載る業務レコード数で、バッチ処理のチェーンでは前者の倍数になる。`ad-detect-command` と `ai-reply-command` は 1 通のグループメッセージがコマンド全体を通る時間を計測する。モデル呼び出しと Telegram 送信はプロセス内の固定応答が返すため、計測値にネットワーク往復は一切含まれず、ネットワーク以外のすべての工程がプロセス内処理とディスクとして計測窓に入っている。`ai-reply-command` はさらに送信前の擬人的な間（基準 1.5 秒、1 文字あたり 55 ミリ秒、上限 7.5 秒）を差し引く。これはチャットごとの間合いで CPU を消費せず他チャットも止めないため、含めると`ai-memory-snapshot` のスループットはテール依存です。1 回ごとに約 46 KiB のスナップショットを全面書き換えし fsync を 2 回行うため、ページキャッシュに収まるかファイルシステムの書き戻し停止に当たるかで 1 回の値が桁違いに変わります。先行するセクションの書き戻し圧力を引き継ぐので、ラウンド平均は数倍ぶれることがあり（単独・無負荷では約 185 ops/s）、一方 p50 は安定しています。この行はまず変動列を見て、スループットではなく p50 で履歴と比較してください。処理能力ではなく意図的なリズムを報告することになる。差し引く量は 1 件ごとに実測しており推定ではない。このチェーンは「返信を送信した」時点までで永続化を含まない：本番の記憶スナップショットは30 秒タイマーでまとめて書き出す方式であり、返信 1 件ごとではない。その費用は`ai-memory-snapshot` の行が単独で示す。
 
-| チェーン | スループット | p50 | p95 | p99 | 最大 | ブロックデバイス書き込み | 変動 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `join-log-append` | 313 ops/s | 2.24 ms | 10.14 ms | 15.31 ms | 29.77 ms | 3.91 MiB | ±5.5% |
-| `identity-policy-write` | 5,410 ops/s | 25.76 ms | 41.66 ms | 49.77 ms | 60.26 ms | 20.53 MiB | ±1.8% |
-| `chat-state-write` | 237 ops/s | 3.21 ms | 11.68 ms | 15.60 ms | 27.04 ms | 3.13 MiB | ±4.5% |
-| `ai-memory-snapshot` | 33 ops/s | 31.55 ms | 66.98 ms | 94.65 ms | 108.7 ms | 7.03 MiB | ±8.2% |
-| `diagnostic-log` | 298 ops/s | 2.38 ms | 10.96 ms | 14.82 ms | 31.86 ms | 4.16 MiB | ±1.8% |
+| チェーン | 完全チェーン/s | レコード/s | p50 | p95 | p99 | 最大 | ブロックデバイス書き込み | 変動 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `join-log-append` | 372 ops/s | 372 records/s | 2.08 ms | 5.34 ms | 11.87 ms | 29.56 ms | 3.91 MiB | ±5.1% |
+| `identity-policy-write` | 64 ops/s | 8,143 records/s | 16.62 ms | 26.22 ms | 31.08 ms | 41.70 ms | 20.53 MiB | ±2.2% |
+| `chat-state-write` | 310 ops/s | 310 records/s | 2.72 ms | 5.50 ms | 12.12 ms | 14.69 ms | 3.13 MiB | ±2.0% |
+| `ai-memory-snapshot` | 193 ops/s | 193 records/s | 4.61 ms | 8.32 ms | 14.47 ms | 23.94 ms | 7.03 MiB | ±1.7% |
+| `diagnostic-log` | 373 ops/s | 373 records/s | 2.19 ms | 4.78 ms | 11.54 ms | 16.90 ms | 4.16 MiB | ±2.0% |
+| `ad-detect-command` | 142 ops/s | 142 records/s | 6.26 ms | 12.18 ms | 20.37 ms | 21.95 ms | 1.83 MiB | ±0.8% |
+| `ai-reply-command` | 616 ops/s | 616 records/s | 1.50 ms | 2.49 ms | 3.07 ms | 3.07 ms | 0 B | ±4.3% |
 
 ## ストレージ · SQLite とメインスレッドキャッシュ
 
@@ -116,12 +118,12 @@
 
 | 操作 | スループット | バッチ遅延 | ブロックデバイス書き込み | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- | --- |
-| `main-lru-read` | 24,380,841 ops/s | 0.000 ms | 0 B | 5.27 KiB | ±2.5% |
-| `main-write-through-acked` | 5,747 ops/s | 22.27 ms | 61.91 MiB | -1.46 MiB | ±0.6% |
-| `storage-read-hot-connection` | 27,450 ops/s | 0.292 ms | 4.83 MiB | -1.51 MiB | ±2.1% |
-| `storage-read-cold-connection` | 10,890 ops/s | 0.736 ms | 2.67 MiB | 260.13 KiB | ±3.6% |
-| `storage-write-hot-connection` | 6,245 ops/s | 20.50 ms | 67.68 MiB | -1.39 MiB | ±1.1% |
-| `storage-write-cold-connection` | 5,617 ops/s | 22.87 ms | 8.91 MiB | 242.52 KiB | ±6.1% |
+| `main-lru-read` | 26,190,480 ops/s | 0.000 ms | 0 B | 7.82 KiB | ±7.3% |
+| `main-write-through-acked` | 8,475 ops/s | 15.11 ms | 61.91 MiB | -1.46 MiB | ±1.2% |
+| `storage-read-hot-connection` | 28,512 ops/s | 0.281 ms | 4.83 MiB | -1.51 MiB | ±4.7% |
+| `storage-read-cold-connection` | 11,626 ops/s | 0.689 ms | 2.67 MiB | 268.13 KiB | ±2.5% |
+| `storage-write-hot-connection` | 7,323 ops/s | 17.49 ms | 67.68 MiB | -1.39 MiB | ±2.4% |
+| `storage-write-cold-connection` | 6,851 ops/s | 18.72 ms | 8.91 MiB | 249.53 KiB | ±4.4% |
 
 ## コンテナとアルゴリズム
 
@@ -129,8 +131,8 @@
 
 | コンテナ | 中央値レイテンシ | スループット | ピーク RSS | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- | --- |
-| `linked-timestamp-window` | 35.0 ns/op | 28,769,422 ops/s | 155.39 MiB | 21.64 KiB | ±7.9% |
-| `bounded-rolling-buffer` | 33.1 ns/op | 30,529,867 ops/s | 107.60 MiB | 24.53 KiB | ±9.9% |
+| `linked-timestamp-window` | 43.0 ns/op | 24,003,425 ops/s | 154.72 MiB | 22.43 KiB | ±18.1% |
+| `bounded-rolling-buffer` | 31.8 ns/op | 31,907,766 ops/s | 108.40 MiB | 26.79 KiB | ±12.8% |
 
 ## 参加ログ · 25 万件の容量線
 
@@ -138,8 +140,8 @@
 
 | 操作 | 所要時間 | GC 前の割り当て | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- |
-| `snapshot` | 183.8 ms | 1.39 MiB | 4.92 KiB | ±1.9% |
-| `capacity` | 44.18 ms | 0 B | -9.71 KiB | ±4.6% |
+| `snapshot` | 171.3 ms | 1.39 MiB | 5.29 KiB | ±6.8% |
+| `capacity` | 43.52 ms | 0 B | -5.67 KiB | ±4.7% |
 
 > 再現方法：`bun run perf:full`。
 
