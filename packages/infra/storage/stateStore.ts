@@ -14,7 +14,15 @@ import {
   isEmptyChatState,
   normalizeChatState,
 } from "../../libs/chatState";
-import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../../types/chatState";
+import type {
+  CachedUser,
+  ChatState,
+  CopyMode,
+  DecodedGlobalCopyState,
+  DecodedStateFile,
+  GlobalCopyState,
+  StateFileSchema,
+} from "../../types/chatState";
 import type { ReadonlyLruCache } from "../../libs/lruCache";
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
@@ -96,13 +104,16 @@ function adoptCopyTarget(copiedUser: CachedUser, copyMode: CopyMode | undefined,
 
 export async function loadState(): Promise<void> {
   try {
-    const decoded: StateFileSchema | null = await sharedStateStore().load();
+    const decoded: DecodedStateFile | null = await sharedStateStore().load();
     if (decoded === null) return;
     if (decoded.global.copy.lastCopyTime !== undefined) {
       globalCopyState.lastCopyTime = decoded.global.copy.lastCopyTime;
     }
-    if (decoded.global.copy.copiedUser !== null) {
-      adoptCopyTarget(decoded.global.copy.copiedUser, decoded.global.copy.copyMode, decoded.global.copy.copyChatId!);
+    // 判别联合让 copyChatId 在这一支里就是 number，不必再用非空断言把它从
+    // undefined 里捞出来（配对由 libs/stateFileCodec.ts 的 globalCopy 强制）。
+    const copy: DecodedGlobalCopyState = decoded.global.copy;
+    if (copy.copiedUser !== null) {
+      adoptCopyTarget(copy.copiedUser, copy.copyMode, copy.copyChatId);
     }
     // 直接整块赋值：缺字段就是 undefined，那是「从没设过」，不是「沿用上次」。
     globalAssetState.fortuneThumbnailUrl = decoded.global.assets.fortuneThumbnailUrl;

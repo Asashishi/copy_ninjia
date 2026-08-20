@@ -20,7 +20,8 @@ import {
 } from "../../cache/workers/diskIO/verification";
 import { getTokyoDateKey } from "../../libs/time";
 import { verificationKey } from "../../libs/verificationKey";
-import type { VerificationSnapshot } from "../../types/antiRaid";
+import type { VerificationSnapshot } from
+  "../../types/antiRaid/verification";
 import type {
   VerificationDeleteDiskMessage,
   VerificationFileChange,

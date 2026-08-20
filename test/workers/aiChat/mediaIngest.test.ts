@@ -41,7 +41,7 @@ function photoMessage(): AiRecordMediaMessage {
     stickerFallbackText: undefined,
     voiceMime: undefined,
     voiceDurationSeconds: 0,
-    directTrigger: { reason: "mention" },
+    directTriggerReason: "mention",
     username: undefined,
     replyTo: undefined,
     forwardedFrom: undefined,
@@ -142,7 +142,7 @@ describe("AI 媒体触发的生图参考图", () => {
     recordChatMedia({
       ...stickerMessage(),
       imageGenerationRequested: false,
-      directTrigger: undefined,
+      directTriggerReason: undefined,
       commentOnResolve: true,
     });
     await Promise.resolve();

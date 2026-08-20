@@ -381,6 +381,115 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramOutboundGateState.retryPendingCount).toBe(0);
   });
 
+  /**
+   * 上面那条覆盖的是「查得出来，且确证目标已不在群」——现查干净地否掉了重放。
+   * 下面两条覆盖的是**查不出来**：形状不对与状态未知。
+   *
+   * 这两条必须与上面同样地放弃重放。不带 only_if_banned 的 unbanChatMember 是
+   * 超级群的纯踢出，一次 429 等待足以让人工管理员在期间把目标真正封禁；此时
+   * 盲目重放等于替对方解封。因此复核拿不准时唯一安全的结局是「不重放」——
+   * 回归成默默重放不会有任何日志痕迹，只会表现为人工封禁莫名其妙失效。
+   */
+  test("重放前的成员复核拿到畸形响应时放弃重放，不替人工封禁解封", async () => {
+    const calledMethods: string[] = [];
+    let unbanAttempts: number = 0;
+    const previous: PreviousCall = ((method: string): Promise<unknown> => {
+      calledMethods.push(method);
+      if (method === "getChatMember") {
+        // ok 为真但 result 里没有 status：Telegram 侧不该出现，但代理/网关改写
+        // 响应体时会。形状不符一律当作「没查出来」。
+        return Promise.resolve({ ok: true, result: {} });
+      }
+      if (method === "unbanChatMember") {
+        unbanAttempts++;
+        if (unbanAttempts === 1) {
+          return Promise.resolve({
+            ok: false,
+            error_code: 429,
+            description: "Too Many Requests",
+            parameters: { retry_after: 0 },
+          });
+        }
+      }
+      return Promise.resolve({ ok: true, result: true });
+    }) as PreviousCall;
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const request: Promise<unknown> = transform(previous, "unbanChatMember", {
+      chat_id: -1001,
+      user_id: 7,
+    }) as Promise<unknown>;
+
+    await expect(request).rejects.toThrow("membership revalidation failed");
+    expect(unbanAttempts).toBe(1);
+    expect(calledMethods).toEqual(["unbanChatMember", "getChatMember"]);
+    expect(telegramOutboundGateState.retryPendingCount).toBe(0);
+  });
+
+  test("重放前的成员复核拿到未知成员状态时同样放弃重放", async () => {
+    const calledMethods: string[] = [];
+    let unbanAttempts: number = 0;
+    const previous: PreviousCall = ((method: string): Promise<unknown> => {
+      calledMethods.push(method);
+      if (method === "getChatMember") {
+        return Promise.resolve({
+          ok: true,
+          result: { status: "some_future_status", user: { id: 7, is_bot: false, first_name: "x" } },
+        });
+      }
+      if (method === "unbanChatMember") {
+        unbanAttempts++;
+        if (unbanAttempts === 1) {
+          return Promise.resolve({
+            ok: false,
+            error_code: 429,
+            description: "Too Many Requests",
+            parameters: { retry_after: 0 },
+          });
+        }
+      }
+      return Promise.resolve({ ok: true, result: true });
+    }) as PreviousCall;
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const request: Promise<unknown> = transform(previous, "unbanChatMember", {
+      chat_id: -1001,
+      user_id: 7,
+    }) as Promise<unknown>;
+
+    await expect(request).rejects.toThrow("unknown member status");
+    expect(unbanAttempts).toBe(1);
+    expect(calledMethods).toEqual(["unbanChatMember", "getChatMember"]);
+    expect(telegramOutboundGateState.retryPendingCount).toBe(0);
+  });
+
+  test("带 only_if_banned 的解封重放不做成员复核：它本来就不会误解封", async () => {
+    const calledMethods: string[] = [];
+    let unbanAttempts: number = 0;
+    const previous: PreviousCall = ((method: string): Promise<unknown> => {
+      calledMethods.push(method);
+      if (method === "unbanChatMember") {
+        unbanAttempts++;
+        if (unbanAttempts === 1) {
+          return Promise.resolve({
+            ok: false,
+            error_code: 429,
+            parameters: { retry_after: 0.001 },
+          });
+        }
+      }
+      return Promise.resolve({ ok: true, result: true });
+    }) as PreviousCall;
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const request: Promise<unknown> = transform(previous, "unbanChatMember", {
+      chat_id: -1001,
+      user_id: 7,
+      only_if_banned: true,
+    }) as Promise<unknown>;
+
+    await expect(request).resolves.toEqual({ ok: true, result: true });
+    expect(unbanAttempts).toBe(2);
+    expect(calledMethods).toEqual(["unbanChatMember", "unbanChatMember"]);
+  });
+
   test("drain 后已接纳的纯踢重试仍可完成内部成员复核", async () => {
     let unbanAttempts: number = 0;
     const previous: PreviousCall = ((method: string): Promise<unknown> => {

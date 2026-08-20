@@ -6,46 +6,21 @@ import {
 } from "../helpers/aiMemoryFixtures";
 
 /** 「拿媒体直接叫机器人」的触发判定（见 packages/auto/message/ 的媒体分支）：
- * 有视觉素材时经 recordChatMedia 带 directTrigger 走「先试缓存、解析完成再
+ * 有视觉素材时经 recordChatMedia 带 directTriggerReason 走「先试缓存、解析完成再
  * 回答」的必回管线；没有素材时记完兜底行直接触发。storage mock 里
  * quietUntil 恒为将来时刻——必回路径与文字回复/@ 一致地无视 /quiet，正好
  * 顺带验证这一点。 */
 
-const recordChatMessageMock = mock((..._args: unknown[]): void => {});
-const recordChatMediaMock = mock((..._args: unknown[]): void => {});
-const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
-const copyMessageMock = mock(async (..._args: unknown[]): Promise<undefined> => undefined);
-let quietUntil: number = Date.now() + 60_000;
-let aiChatEnabled: boolean = true;
-
-mock.module("../../packages/infra/telegram", () => ({
-  copyMessage: copyMessageMock,
-  sendMessage: async (): Promise<undefined> => undefined,
-  bot: { api: {} },
-  logApiError: () => {},
-}));
-mock.module("../../packages/infra/storage/stateStore", () => ({
-  clearChatStateField: () => false,
-  getActiveCopyIn: () => null,
-  getActiveProxySendTarget: () => undefined,
-  getChatState: () => ({ isAIChatEnabled: aiChatEnabled, quietUntil }),
-  getOrCreateChatState: () => ({}),
-  persistChatState: async (): Promise<void> => {},
-  saveChatStateInBackground: () => {},
-}));
-mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
-mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
-mock.module("../../packages/aiChat", () => ({
-  recordChatMessage: recordChatMessageMock,
-  recordChatMedia: recordChatMediaMock,
-  generateAndSendReply: generateAndSendReplyMock,
-}));
-mock.module("../../packages/infra/selfSentTracker", () => ({
-  isSelfSent: () => false,
-  isBotOwnMessage: () => false,
-  needsBotOwnMessageWait: () => false,
-  waitForBotOwnMessage: async (): Promise<boolean> => false,
-}));
+// 六个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
+// 必须在下面的 await import 之前登记。本文件另外还桩了贴纸视觉源解析。
+import {
+  autoMessageChatState,
+  copyMessageMock,
+  generateAndSendReplyMock,
+  recordChatMediaMock,
+  recordChatMessageMock,
+  resetAutoMessageMocks,
+} from "../helpers/autoMessageMocks";
 
 // tryClaimUserReplyTrigger 的 15s 每人触发冷却按真实 Date.now() 计时（见
 // packages/auto/message/）：本文件多个用例共用同一个 chatId + alice.id 夹具，
@@ -107,12 +82,7 @@ const selfReplyReference = aiReplyReferenceFixture({
 
 describe("媒体直接叫机器人", () => {
   beforeEach(() => {
-    recordChatMessageMock.mockClear();
-    recordChatMediaMock.mockClear();
-    generateAndSendReplyMock.mockClear();
-    copyMessageMock.mockClear();
-    quietUntil = Date.now() + 60_000;
-    aiChatEnabled = true;
+    resetAutoMessageMocks();
     clearUserReplyTriggerTimes();
     clearAiReplyActivity();
   });
@@ -153,7 +123,7 @@ describe("媒体直接叫机器人", () => {
       commentOnResolve: false,
       imageGenerationRequested: true,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
-      directTrigger: { reason: "reply" },
+      directTriggerReason: "reply",
     }));
     // 触发在 Worker 侧等描述就绪后才发生，主线程不直接 trigger。
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -215,7 +185,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("随机媒体评价命中后不再落入随机复读", async () => {
-    quietUntil = 0;
+    autoMessageChatState.quietUntilOffsetMs = undefined;
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -249,12 +219,12 @@ describe("媒体直接叫机器人", () => {
       commentOnResolve: true,
       imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
-      directTrigger: undefined,
+      directTriggerReason: undefined,
     }));
     expect(copyMessageMock).not.toHaveBeenCalled();
   });
 
-  test("贴纸回复的不是机器人：不带 directTrigger，也不触发回复", async () => {
+  test("贴纸回复的不是机器人：不带 directTriggerReason，也不触发回复", async () => {
     await handleIncomingMessage({
       me: botInfo,
       msg: {
@@ -291,7 +261,7 @@ describe("媒体直接叫机器人", () => {
       commentOnResolve: false,
       imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
-      directTrigger: undefined,
+      directTriggerReason: undefined,
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
@@ -326,7 +296,7 @@ describe("媒体直接叫机器人", () => {
       messageId: 14,
       commentOnResolve: false,
       imageGenerationRequested: true,
-      directTrigger: { reason: "mention" },
+      directTriggerReason: "mention",
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
@@ -450,7 +420,7 @@ describe("媒体直接叫机器人", () => {
       messageId: 15,
       commentOnResolve: false,
       imageGenerationRequested: true,
-      directTrigger: { reason: "reply" },
+      directTriggerReason: "reply",
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
@@ -497,7 +467,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("文字回复自己的消息不参与随机 AI 回复", async () => {
-    quietUntil = 0;
+    autoMessageChatState.quietUntilOffsetMs = undefined;
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -536,7 +506,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("文字回复别人仍可参与随机 AI 回复", async () => {
-    quietUntil = 0;
+    autoMessageChatState.quietUntilOffsetMs = undefined;
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -572,7 +542,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("冷群首条使用活跃度概率闸门，不沿用固定概率", async () => {
-    quietUntil = 0;
+    autoMessageChatState.quietUntilOffsetMs = undefined;
     const originalRandom = Math.random;
     const coldGroupProbability: number = 1 / (AI_REPLY_PROBABILITY_BASE_INITIAL - 1);
     // 取一个明确高于冷群闸门的样本，证明当前消息不会误走随机 AI 回复。
@@ -597,7 +567,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("AI 模式开启时关闭随机复读，关闭后恢复", async () => {
-    quietUntil = 0;
+    autoMessageChatState.quietUntilOffsetMs = undefined;
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -613,7 +583,7 @@ describe("媒体直接叫机器人", () => {
       } as any);
       expect(copyMessageMock).not.toHaveBeenCalled();
 
-      aiChatEnabled = false;
+      autoMessageChatState.isAIChatEnabled = false;
       await handleIncomingMessage({
         me: botInfo,
         msg: {
@@ -632,7 +602,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("回复自己发的图片不参与随机 AI 评价", async () => {
-    quietUntil = 0;
+    autoMessageChatState.quietUntilOffsetMs = undefined;
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -674,13 +644,13 @@ describe("媒体直接叫机器人", () => {
       messageId: 35,
       commentOnResolve: false,
       imageGenerationRequested: false,
-      directTrigger: undefined,
+      directTriggerReason: undefined,
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
   test("@ 其他用户不参与随机 AI 回复，@ 机器人仍走直接触发", async () => {
-    quietUntil = 0;
+    autoMessageChatState.quietUntilOffsetMs = undefined;
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {

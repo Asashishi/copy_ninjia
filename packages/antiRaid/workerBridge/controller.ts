@@ -21,11 +21,12 @@ import { WorkerUndeliveredError } from "../../libs/workerDelivery";
 import type {
   AdoptableLockdown,
   AdoptLockdownsMessage,
-  AntiRaidWorkerEvent,
   AntiRaidWorkerMessage,
   AntiRaidWorkerRequest,
-  VerificationSnapshot,
-} from "../../types/antiRaid";
+} from "../../types/antiRaid/protocol";
+import type { AntiRaidWorkerEvent } from "../../types/antiRaid/events";
+import type { VerificationSnapshot } from
+  "../../types/antiRaid/verification";
 import type { WorkerDuplexInbound } from "../../types/workerDuplex";
 import {
   buildAdoptLockdownsMessage,

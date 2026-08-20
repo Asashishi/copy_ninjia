@@ -13,11 +13,14 @@ import { postDiskIO } from "../infra/diskIO";
 import { verificationKey, verificationKeyPrefix } from "../libs/verificationKey";
 import type {
   DeferredVerificationRecord,
+  VerificationSnapshot,
+} from "../types/antiRaid/verification";
+import type {
   VerificationAttemptPermitRequest,
   VerificationAttemptPermitResult,
-  VerificationDeferredEvent,
-  VerificationSnapshot,
-} from "../types/antiRaid";
+} from "../types/antiRaid/protocol";
+import type { VerificationDeferredEvent } from
+  "../types/antiRaid/events";
 
 function isTerminalSnapshot(
   snapshot: VerificationSnapshot | undefined

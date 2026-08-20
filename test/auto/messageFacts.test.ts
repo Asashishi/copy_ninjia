@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
 import type { Animation, Message, PhotoSize } from "@grammyjs/types";
-import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../packages/consts/aiChat";
+import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../packages/consts/aiChat/media";
 import {
   hasCopyableContent,
   isReplyToSelf,

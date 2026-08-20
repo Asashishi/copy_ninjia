@@ -4,9 +4,11 @@ import type { JoinEvent, PendingState, VerificationState } from "../../packages/
 import {
   ANTI_RAID_PER_MINUTE_LIMIT,
   JOIN_WINDOW_MS,
+} from "../../packages/consts/antiRaid/lockdown";
+import {
   VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
   VERIFICATION_TIMEOUT_MS,
-} from "../../packages/consts/antiRaid";
+} from "../../packages/consts/antiRaid/verification";
 
 /** 造一个 join 事件，默认是「自主入群、无豁免、无锁定」，用覆盖项表达各场景。 */
 function joinEvent(overrides: Partial<JoinEvent> = {}): JoinEvent {

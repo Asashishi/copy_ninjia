@@ -83,6 +83,7 @@ import {
   boundSampleContext,
   claimSampleContextParts,
   containsReferencedAdContent,
+  EMPTY_AD_CANDIDATE_ENTRIES,
   enforceBundleCapacity,
   formatAdBundleText,
   formatDirectAdBundleText,
@@ -100,10 +101,16 @@ import {
   resetReferencedAdWarnings,
   sweepReferencedAdWarnings,
 } from "./referencePolicy";
-import type { AdBundleSelection } from "../../../types/antiRaid/adDetect";
+import type {
+  AdBundleSelection,
+  AdCandidateEntry,
+  AdCandidateMessage,
+  AdDetectedEvent,
+  AdMessageBundle,
+  AdSampleContext,
+  AdVerdict,
+} from "../../../types/antiRaid/adDetect";
 import { verificationKey, verificationKeyPrefix } from "../../../libs/verificationKey";
-import type { AdCandidateMessage, AdDetectedEvent, AdSampleContext } from "../../../types/antiRaid";
-import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";
 import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
 import type {
   AdBundleStorageDecision,
@@ -229,6 +236,18 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   // 裁剪提到接纳判定之前：下面那道引文去重要按「裁完之后这一串还剩哪些条目」算，
   // 否则会把一段引文认领给本次就要被回收的 entry，新来的这条跟着丢掉它。
   if (existing !== undefined) pruneConsumedContext(existing, now);
+  // 已知管理员（用户身份）在投递闸里恒判 ignore，与正文长短无关，而判据是纯
+  // O(1) 的缓存查表。提到正文清洗之前，理由与上面那道容量闸完全相同——结论
+  // 已经确定的消息不该先付一遍 sanitize/truncate/URL 拼接/引文认领（实测这
+  // 一段约 1.77 µs/条）。频道马甲不适用本豁免：它没有「群成员」身份，判据是
+  // isChannel 而不是 id 在不在表里，仍交给下面的投递闸按 blocked/处置抑制分派。
+  //
+  // 传本条消息的 now 而不是让 freshAdminIds 自己读钟：这台机器上一次 Date.now()
+  // 约 870 ns，且同一条消息的两处判定必须落在同一时刻（同 auto/message/index.ts
+  // 的「本条消息统一的『现在』」）。
+  const knownAdmin: boolean =
+    freshAdminIds(message.chatId, now)?.has(message.senderId) === true;
+  if (knownAdmin && !message.isChannel) return;
   // 被引用段/被回复原文与正文一起送检：广告的主流形态是「先发正常消息 → 隔一段
   // 时间编辑成广告 → 用回复/引用把它顶上来」，广告正文永远不在新消息的 text 里
   // （详见 bundle.ts 的 claimSampleContextParts，归因边界与跨条去重也写在那里）。
@@ -247,7 +266,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     : claimSampleContextParts(
       textWithLinks,
       context,
-      existing?.entries ?? []
+      existing?.entries ?? EMPTY_AD_CANDIDATE_ENTRIES
     );
   const directText: string = message.isForwarded ? "" : textWithLinks;
   // 三道投递闸（没有可判定正文、已知管理员、自己的 TTL 内刚处置过）收在
@@ -255,7 +274,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   const decision: AdCandidateDecision = admitAdCandidate({
     textLength: text.length,
     isChannel: message.isChannel,
-    knownAdmin: freshAdminIds(message.chatId)?.has(message.senderId) === true,
+    knownAdmin,
     recentlyDisposed,
     blocked: message.blocked,
   });

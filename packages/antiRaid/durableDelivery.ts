@@ -19,7 +19,7 @@ import { registerBlocklistRemoval } from "./blocklistGuard";
 import { prepareDurableAntiRaidMessages } from "./blocklistDelivery";
 import { postAntiRaid } from "./workerBridge";
 import type { FlushResult } from "../types/lifecycle";
-import type { AntiRaidWorkerMessage } from "../types/antiRaid";
+import type { AntiRaidWorkerMessage } from "../types/antiRaid/protocol";
 
 /** FIFO mailbox barrier：只证明此前消息已同步路由，不等待后台网络副作用。 */
 function barrierAntiRaidMailbox(

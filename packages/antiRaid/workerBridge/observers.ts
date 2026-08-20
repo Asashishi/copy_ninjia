@@ -15,7 +15,10 @@ import {
   onVerificationPersisted,
 } from "../../infra/diskIO";
 import { logger } from "../../infra/logger";
-import type { AntiRaidWorkerMessage, VerificationSnapshot } from "../../types/antiRaid";
+import type { AntiRaidWorkerMessage } from
+  "../../types/antiRaid/protocol";
+import type { VerificationSnapshot } from
+  "../../types/antiRaid/verification";
 import type { ChatTeardownReason } from "../../types/chatTeardown";
 import type {
   DiskIORecoveryTransport,

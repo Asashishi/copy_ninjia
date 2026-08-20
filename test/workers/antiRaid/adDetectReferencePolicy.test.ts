@@ -379,4 +379,60 @@ describe("引用类广告的警告升级与处置抑制", () => {
     enqueueAdCandidate(candidate({ senderId: 8, messageId: 2 }), 1_000);
     expect(pendingAdMessages.size).toBe(1);
   });
+
+  /**
+   * 已知管理员这道闸在 enqueueAdCandidate 里排在正文清洗之前（见那边的注释）。
+   * 下面四条钉住的是「提前返回不得改变任何一种身份组合的结局」——判据横跨
+   * isChannel / blocked / recentlyDisposed 与「串里已有内容」四个维度，正是提前
+   * 返回唯一可能踩空的地方。
+   */
+  test("中途被提为管理员：新消息被忽略，既有消息串原样不动", async () => {
+    enqueueAdCandidate(candidate({ messageId: 1, text: "先说一句正常的" }), 1_000);
+    expect(pendingAdMessages.get("-1001:7")?.entries).toHaveLength(1);
+
+    cachedAdmins.set(-1001, new Set([7]));
+    enqueueAdCandidate(candidate({
+      messageId: 2,
+      text: "提为管理员之后又说一句",
+      sampleContext: { quote: "被引用的一段原文", replyTo: "被回复的一段原文" },
+    }), 1_100);
+
+    // 既不新增条目，也不改写既有条目——提前返回不得顺手动到别人的串。
+    const bundle = pendingAdMessages.get("-1001:7");
+    expect(bundle?.entries).toHaveLength(1);
+    expect(bundle?.entries[0]?.messageId).toBe(1);
+    expect(bundle?.nextSeq).toBe(2);
+  });
+
+  test("管理员豁免只认用户身份：频道马甲不因同 id 出现在管理员表而放行", async () => {
+    // 频道 id 是负数，正常不会进管理员表；这里刻意塞进去，确认判据是 isChannel
+    // 而不是「id 在不在表里」。频道马甲照常入队送检。
+    cachedAdmins.set(-1001, new Set([-1005]));
+    enqueueAdCandidate(candidate({
+      senderId: -1005,
+      isChannel: true,
+      messageId: 1,
+      text: "换汇加我",
+    }), 1_000);
+
+    expect(pendingAdMessages.has("-1001:-1005")).toBe(true);
+  });
+
+  test("已拉黑的管理员按用户身份忽略，不走频道尾随删除", async () => {
+    cachedAdmins.set(-1001, new Set([7]));
+    enqueueAdCandidate(candidate({ blocked: true, messageId: 1, text: "加我微信" }), 1_000);
+
+    expect(deleteStragglerAdMessage).not.toHaveBeenCalled();
+    expect(pendingAdMessages.size).toBe(0);
+  });
+
+  test("管理员的空白正文与普通空白正文结局一致，都不入队", () => {
+    cachedAdmins.set(-1001, new Set([7]));
+    enqueueAdCandidate(candidate({ messageId: 1, text: "   " }), 1_000);
+    expect(pendingAdMessages.size).toBe(0);
+
+    cachedAdmins.clear();
+    enqueueAdCandidate(candidate({ messageId: 2, text: "   " }), 1_000);
+    expect(pendingAdMessages.size).toBe(0);
+  });
 });

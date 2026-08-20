@@ -19,13 +19,15 @@ mock.module("../../packages/config/readiness", () => ({
   aiChatConfigReadiness: () => ({ ok: true }),
   adDetectConfigReadiness: () => ({ ok: true }),
 }));
+const clearChatStateFieldMock = mock((..._args: unknown[]): boolean => true);
+const persistChatStateMock = mock(async (..._args: unknown[]): Promise<void> => {});
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  clearChatStateField: () => true,
+  clearChatStateField: clearChatStateFieldMock,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => targetChatId,
   getChatState: () => chatState,
   getOrCreateChatState: () => ({}),
-  persistChatState: async (): Promise<void> => {},
+  persistChatState: persistChatStateMock,
   saveChatStateInBackground: () => {},
 }));
 mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
@@ -60,7 +62,10 @@ describe("/send 私聊中转权限", () => {
     chatState = {};
     jaReadiness = { ok: true };
     copyMessageMock.mockClear();
+    copyMessageMock.mockImplementation(async (): Promise<number | undefined> => 42);
     sendMessageMock.mockClear();
+    clearChatStateFieldMock.mockClear();
+    persistChatStateMock.mockClear();
   });
 
   test("全局会话活动时也不会复制外部用户私聊，只复制超管本人的消息", async () => {
@@ -88,5 +93,33 @@ describe("/send 私聊中转权限", () => {
     jaReadiness = { ok: false, failure: { file: "g-auth.json", reason: "missing" } };
     expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBeUndefined();
     expect(resolveEffectiveCopyMode(targetChatId, "nya")).toBe("nya");
+  });
+
+  /**
+   * 转发失败必须**当场结束会话**并回执一句。
+   *
+   * 不结束的话超管此后每条私聊都会被这条静默失败的路径吞掉：`copyMessage` 返回
+   * undefined 不抛错，会话标志还开着，于是消息既没转出去、也不落进任何别的处理，
+   * 而超管那头看不到任何异常——正是这条路径存在的全部理由。
+   */
+  test("转发失败时关掉中转会话、落盘并回执，不再静默吞掉后续私聊", async () => {
+    copyMessageMock.mockImplementation(async (): Promise<number | undefined> => undefined);
+
+    await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID));
+
+    expect(clearChatStateFieldMock).toHaveBeenCalledWith(targetChatId, "isProxySendEnabled");
+    expect(persistChatStateMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    const notice = sendMessageMock.mock.calls[0]![0] as { chatId: number; text: string };
+    expect(notice.chatId).toBe(SUPER_ADMIN_USER_ID);
+    expect(notice.text).toContain(String(targetChatId));
+  });
+
+  test("转发成功时不碰会话状态，也不发回执", async () => {
+    await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID));
+
+    expect(clearChatStateFieldMock).not.toHaveBeenCalled();
+    expect(persistChatStateMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 });

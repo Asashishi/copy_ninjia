@@ -5,7 +5,7 @@ import {
   AI_REPLY_ACTIVITY_WINDOW_MS,
   AI_REPLY_PROBABILITY_BASE_INITIAL,
   AI_REPLY_PROBABILITY_BASE_MIN,
-} from "../../packages/consts/aiChat";
+} from "../../packages/consts/aiChat/rateLimit";
 import { aiReplyActivityByChat } from "../../packages/cache/main/auto";
 import {
   clearAiReplyActivity,

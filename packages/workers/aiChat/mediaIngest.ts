@@ -51,7 +51,7 @@ function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGeneration
  * 回填先于触发，模型拼上下文时看到的已是描述而非占位。解析失败没内容可评，
  * 静默放弃。
  *
- * msg.directTrigger（用户拿这份媒体回复机器人，或 caption 里 @ 机器人，见
+ * msg.directTriggerReason（用户拿这份媒体回复机器人，或 caption 里 @ 机器人，见
  * auto/message/）则是必触发：白名单目录命中时立即回；未命中等 describeMedia
  * （内部自带 file_unique_id 描述缓存）解析完成再回；解析失败也用兜底文本回
  * ——真人在等回应，评价那套「失败静默放弃」在这里就是被投诉的「已读不回」。
@@ -73,7 +73,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption)
       )!;
       pushBufferedMessage(msg.chatId, entry);
-      if (msg.directTrigger) {
+      if (msg.directTriggerReason !== undefined) {
         generateAndSendReply({
           chatId: msg.chatId,
           triggerSenderId: msg.senderId,
@@ -88,7 +88,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
             description: catalogEntry.description,
             triggerText: entry.text,
             triggerReference: replyReferenceForBufferedEntry(msg.messageId, entry),
-            directTriggerReason: msg.directTrigger.reason,
+            directTriggerReason: msg.directTriggerReason,
             ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
             ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
           },
@@ -135,7 +135,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
     dirtyMemoryChats.add(msg.chatId);
-    if (msg.directTrigger) {
+    if (msg.directTriggerReason !== undefined) {
       // 回填先于触发（同评价），模型拼上下文时看到的已是描述；解析失败
       // 退回兜底文本照样触发——回应可以含糊，失踪不行。
       generateAndSendReply({
@@ -152,7 +152,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           description: description ?? replyFallbackDescriptionFor(msg),
           triggerText: entry.text,
           triggerReference: replyReferenceForBufferedEntry(msg.messageId, entry),
-          directTriggerReason: msg.directTrigger.reason,
+          directTriggerReason: msg.directTriggerReason,
           ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
           ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
         },

@@ -76,7 +76,8 @@ import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
 import { noteStorageWriteRejected } from "../cache/workers/diskIO/storageDatabase";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
-import type { VerificationSnapshot } from "../types/antiRaid";
+import type { VerificationSnapshot } from
+  "../types/antiRaid/verification";
 import type { PendingBlockedRemoval } from "../types/blocklist";
 import type { ChatState } from "../types/chatState";
 import type {

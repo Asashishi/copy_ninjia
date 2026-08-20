@@ -15,7 +15,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
   recordChatMessage(buildAiRecordMessage({ context, speaker, text: message.text }));
 
-  if (context.directTrigger) {
+  if (context.directTriggerReason !== undefined) {
     // 这里只确认当前消息确实直接叫了机器人；是否包含生图/修图意图由模型
     // 根据本轮消息与工具说明判断，避免关键词正则漏掉自然表达。
     const repliedPhoto: TelegramVisionSource | undefined = Array.isArray(context.repliedTo?.photo) && context.repliedTo.photo.length > 0
@@ -41,7 +41,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
 
   const isRandomTrigger: boolean = shouldAttemptRandomTrigger(context);
   if (!isRandomTrigger) return false;
-  if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
+  if (tryClaimUserReplyTrigger(chatId, speaker.id, context.now)) {
     generateAndSendReply({
       chatId,
       triggerSenderId: speaker.id,

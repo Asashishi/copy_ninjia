@@ -128,6 +128,10 @@ export function startChatActionHeartbeat(
       if (live?.timer !== timer || live.action === "idle") return;
       pumpChatAction({ chatId, entry: live, deduplicate: false, dependencies });
     }, dependencies.intervalMs);
+    // 与全仓其余四处 setInterval 一致地 unref：条目正常由 stop/refCount 归零或
+    // resetAiChatHeartbeatCache 清掉，但一个还在重发打字状态的心跳不该成为
+    // 「谁都没拆表」时唯一吊住 Worker 事件循环、拖住停机的东西。
+    timer.unref();
     entry = {
       timer,
       signal,

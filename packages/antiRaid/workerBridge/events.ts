@@ -14,10 +14,9 @@ import {
   persistChatState,
   saveChatStateInBackground,
 } from "../../infra/storage/stateStore";
-import type {
-  AntiRaidWorkerEvent,
-  AntiRaidWorkerMessage,
-} from "../../types/antiRaid";
+import type { AntiRaidWorkerEvent } from "../../types/antiRaid/events";
+import type { AntiRaidWorkerMessage } from
+  "../../types/antiRaid/protocol";
 import type { PersistedLockdownFingerprint } from "../../types/antiRaid/internal";
 import type { LockdownRecord } from "../../types/chatState";
 import { handleAdDetected } from "../adDetect";

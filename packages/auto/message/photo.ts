@@ -8,7 +8,7 @@ import type { TelegramVisionSource } from "../../types/media";
 
 /** 记录图片占位/描述，并调度直接回复或随机评价。 */
 export function handlePhotoMessage(context: MessageTriggerContext): boolean {
-  const { message, directTrigger }: MessageTriggerContext = context;
+  const { message, directTriggerReason }: MessageTriggerContext = context;
   if (!Array.isArray(message.photo) || message.photo.length === 0) return false;
 
   const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
@@ -27,11 +27,11 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
       height: photoFile.height,
       commentOnResolve: claimedRandomTrigger,
       // 直接回复/@ 只开放工具资格，具体是否要编辑图片交给模型判断。
-      imageGenerationRequested: directTrigger !== undefined,
+      imageGenerationRequested: directTriggerReason !== undefined,
       stickerFallbackText: undefined,
       voiceMime: undefined,
       voiceDurationSeconds: 0,
     },
   }));
-  return directTrigger !== undefined || commentOnResolveCandidate;
+  return directTriggerReason !== undefined || commentOnResolveCandidate;
 }

@@ -152,6 +152,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "chat-state-map-read":
     case "self-sent-empty":
     case "incoming-message-spine":
+    case "ai-media-direct-trigger":
     case "flood-window-hit":
     case "flood-window-growth":
     case "flood-window-steady":
@@ -172,6 +173,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
         "linked-timestamp-window|bounded-rolling-buffer|" +
         "chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
+        "ai-media-direct-trigger|" +
         "flood-window-hit|flood-window-growth|flood-window-steady|" +
         "gag-speak-counter|" +
         "buffered-message-build|transcript-render|reply-reference|" +

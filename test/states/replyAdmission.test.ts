@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../../packages/consts/aiChat";
+import {
+  RATE_LIMIT_LONG_MAX_TRIGGERS,
+  REPLY_ROUND_MAX_CONCURRENT,
+  REPLY_TRIGGER_QUEUE_MAX,
+} from "../../packages/consts/aiChat/rateLimit";
 import { admitRound, admitTrigger as decideTrigger } from "../../packages/states/replyAdmission";
 import type { AdmitDecision, AdmitTriggerInput, TriggerKind } from "../../packages/types/states/replyAdmission";
 

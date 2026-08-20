@@ -17,7 +17,8 @@ import {
   AD_SAMPLE_CONTEXT_MAX_CHARS,
 } from "../../../packages/consts/antiRaid/adDetect";
 import { enqueueAdCandidate } from "../../../packages/workers/antiRaid/adDetect/queue";
-import type { AdCandidateMessage } from "../../../packages/types/antiRaid";
+import type { AdCandidateMessage } from
+  "../../../packages/types/antiRaid/adDetect";
 import type { AdMessageBundle } from "../../../packages/types/antiRaid/adDetect";
 import type { Scenario } from "./types";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";

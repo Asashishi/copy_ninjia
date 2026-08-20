@@ -16,7 +16,7 @@ import { verificationKey } from "../libs/verificationKey";
 import { BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES } from "../consts/antiRaid/blocklist";
 import { JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
 import { visibleSenderChat } from "../users/visibleSender";
-import type { AntiRaidWorkerMessage } from "../types/antiRaid";
+import type { AntiRaidWorkerMessage } from "../types/antiRaid/protocol";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
 import type { DeleteMessageOutcome } from "../infra/telegram/actions";
 

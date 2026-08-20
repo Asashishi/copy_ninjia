@@ -75,6 +75,8 @@ gate を設けている項目：GC sample 比率、sampling RSS ピークとプ�
 
 `profile` / `retained` の接頭辞は、その読み取り値がどちらの子プロセス由来かを示します。両者の warmup 回数は一桁違う（profile 側は JIT 安定ラウンドを追加で回す）ため、混ぜて読んではいけません。
 
+シナリオを追加・書き換えるときに**必ず守る収束ルール**が 1 つあります。被測定関数が文字列を返す場合、benchmark を `.length` だけで収束させてはいけません。JSC の rope は自身の長さを持つため、長さを読んでも materialize されません。それでは「連結ツリーを組んだ」ことを測っているだけで、「使える文字列を得た」ことにはなりません。同一入力で実測すると、転写レンダリングを行ごとの `+=` に変えた後は 2 つの収束方法で 42.0 対 57.5 µs/op（27%）の差が出ますが、変更前は 3.1% しか違いませんでした。長さだけで収束させる benchmark は、この変更を「42% 高速化」と読んでしまい、その半分以上はまだ実行していない作業です。収束は必ず `charCodeAt(length - 1)` のような強制解決で行ってください（`scripts/perf/hotPaths/transcriptScenarios.ts` の `transcript-render` を参照）。同じ理屈は「後でまとめて実体化する」あらゆる遅延構造に当てはまります。**benchmark は本番が実際に支払う工程を支払わなければなりません。** さもないと、その工程を経路から外してしまう regression が、失敗ではなく読み取り値の高速化として現れます。
+
 ## 入室ログ性能 benchmark
 
 `bun run perf:join-log` は入力を容量 250,000 件、overflow 300 件、warm-up 10,000 件に固定し、snapshot と capacity の baseline/current をそれぞれ 5 個の独立 Bun process で実行します。出力には完全な Bun version/revision、所要時間の中央値と範囲、強制 GC 前後の JSC heap/object 変化を記録します。baseline は最適化前の Map 全体 copy、全件 sort、完全な JSON 文字列生成を、同一 Bun build 内の前後比較専用として固定したものです。`Bun.gc(true)` はこの benchmark にしか存在せず、production control flow には入りません。入室 index、容量裁剪、snapshot serialization、分割 atomic write を変更した場合は必ず実行し、差が 5 sample の範囲に表れる noise より十分大きいことを確認します。

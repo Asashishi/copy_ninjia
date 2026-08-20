@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AiTextResult } from "../../../../packages/types/aiChat/provider";
 
 function generatedText(text: string): AiTextResult {
@@ -56,6 +56,35 @@ const {
 } = await import("../../../../packages/cache/workers/aiChat/stickers/catalog");
 const { STICKER_CATALOG_RETRY_INTERVAL_MS } = await import("../../../../packages/consts/aiChat/stickers");
 
+/**
+ * 五个替身都是模块级共享的，而 bun 的 `mockClear()` 只清调用记录、**不清
+ * `mockImplementationOnce` 排队的实现**。此前本文件没有 `beforeEach`，各用例只在
+ * 自己开头零散地清掉「这条要断言的那一个」——于是「谁在谁之前跑」成了断言成立的
+ * 隐含前提：换一个 `--randomize` 种子（实测 `--seed=20260821`），「Worker 取消会中止
+ * 目录重采样退避」那条拿到的就是 3 次调用而不是 1 次。而 `bun run test:random` 把
+ * 种子钉死在 20260802（恰好通过），门禁一直看不见。这里统一把调用记录连同实现
+ * 一起复位，用例之间不再有顺序耦合。
+ *
+ * **目录状态刻意不在这里清**：每条用例都用各自独立的包名与 uid 自行 `hydrate`
+ * 播种，彼此不可见；清掉反而会把「hydrate 是合并语义」这件事从覆盖里抹掉。
+ */
+beforeEach(() => {
+  getStickerSetMock.mockReset();
+  getStickerSetMock.mockImplementation(async (_pack: string): Promise<any> => null);
+  describeMediaMock.mockReset();
+  describeMediaMock.mockImplementation(async (..._args: unknown[]): Promise<string | null> => null);
+  describeMediaForStickerCatalogMock.mockReset();
+  describeMediaForStickerCatalogMock.mockImplementation(
+    async (..._args: unknown[]): Promise<AiTextResult> => retryableFailure
+  );
+  generateTextMock.mockReset();
+  generateTextMock.mockImplementation(
+    async (..._args: unknown[]): Promise<AiTextResult> => generatedText("一包默认简介")
+  );
+  sleepMock.mockReset();
+  sleepMock.mockImplementation(async (..._args: unknown[]): Promise<void> => {});
+});
+
 function sticker(fileUniqueId: string, emoji: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji, is_animated: false, is_video: false };
 }
@@ -94,7 +123,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     const sleeping: Promise<void> = new Promise<void>((resolve: () => void): void => {
       markSleeping = resolve;
     });
-    sleepMock.mockClear();
     sleepMock.mockImplementationOnce((...args: unknown[]): Promise<void> => {
       const signal: AbortSignal | undefined = args[1] as AbortSignal | undefined;
       if (signal === undefined) return Promise.reject(new Error("missing abort signal"));
@@ -172,7 +200,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   test("同一枚贴纸已有描述则不重复生成（不调用 describeMedia）", async () => {
     hydrateStickerCatalogs(persisted("pack_skip", { "existing-uid": { emoji: "👍", description: "已经生成过" } }, "已有简介"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "老包", stickers: [sticker("existing-uid", "👍")] }));
-    describeMediaForStickerCatalogMock.mockClear();
 
     await generatePackCatalog("pack_skip");
 
@@ -183,7 +210,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   test("条目没变化且已有整包简介：不重新生成简介", async () => {
     hydrateStickerCatalogs(persisted("pack_summary_keep", { "uid-a": { emoji: "👍", description: "描述A" } }, "旧简介"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "稳定包", stickers: [sticker("uid-a", "👍")] }));
-    generateTextMock.mockClear();
 
     await generatePackCatalog("pack_summary_keep");
 
@@ -206,7 +232,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     // 包内容有变化（新增一枚），简介要重生成，但首次和三次重试全部失败。
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "变动包", stickers: [sticker("uid-c", "👍"), sticker("uid-d", "😂")] }));
     describeMediaForStickerCatalogMock.mockImplementationOnce(async () => generatedText("新贴纸描述"));
-    generateTextMock.mockClear();
     generateTextMock
       .mockImplementationOnce(async () => retryableFailure)
       .mockImplementationOnce(async () => retryableFailure)
@@ -227,7 +252,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
       stickers: [sticker("uid-e", "👍"), sticker("uid-f", "😂")],
     }));
     describeMediaForStickerCatalogMock.mockImplementationOnce(async () => generatedText("新描述F"));
-    generateTextMock.mockClear();
     generateTextMock.mockImplementationOnce(async () => requestFailure);
 
     await generatePackCatalog("pack_request_fail");
@@ -238,7 +262,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
   test("单枚解析与简介生成瞬时失败：退避重试内成功即正常写入", async () => {
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "抖动包", stickers: [sticker("retry-uid", "😂")] }));
-    describeMediaForStickerCatalogMock.mockClear();
     describeMediaForStickerCatalogMock
       .mockImplementationOnce(async () => retryableFailure)
       .mockImplementationOnce(async () => generatedText("第二次成功的描述"));
@@ -257,7 +280,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     // 生产路径上 ensureStickerCatalogs 只有 init 那一次调用，而拉贴纸集合失败
     // 是整包放弃的：一次几秒的网络抖动就能让 catalogs 永久为空，两个贴纸工具
     // 对所有回复返回 null，而 systemd 托管的进程可能几周都不重启。
-    getStickerSetMock.mockClear();
     getStickerSetMock.mockImplementation(async () => null);
     stickerCatalogRetryState.lastAttemptAt = 0;
 
@@ -292,7 +314,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     // 只会原地跳过每一枚，目录永远填不起来——两个贴纸工具对所有回复返回 null，
     // 而 systemd 托管的进程可以连跑几周。
     getStickerSetMock.mockImplementation(async () => ({ title: "闩死包", stickers: [sticker("latch-uid", "😂")] }));
-    describeMediaForStickerCatalogMock.mockClear();
     describeMediaForStickerCatalogMock.mockImplementation(async () => retryableFailure);
 
     await generatePackCatalog("pack_latch");

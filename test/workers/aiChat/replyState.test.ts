@@ -11,7 +11,8 @@ import {
   replyGenerations,
   sweepAiChatReplyCache,
 } from "../../../packages/cache/workers/aiChat/replies";
-import { RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../../packages/consts/aiChat";
+import { RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from
+  "../../../packages/consts/aiChat/rateLimit";
 import { typingHeartbeats } from "../../../packages/cache/workers/aiChat/heartbeat";
 import { resetAiChatWorkerCache } from "../../../packages/cache/workers/aiChat/index";
 import { botInfoState } from "../../../packages/cache/workers/aiChat/identity";

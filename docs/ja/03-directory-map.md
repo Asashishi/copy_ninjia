@@ -154,7 +154,7 @@
 
 ## 互換エントリ（barrel）の規約
 
-大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/consts/aiChat/` に対する `packages/consts/aiChat.ts`、`packages/infra/telegram/actions/` に対する `packages/infra/telegram/actions.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
+大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/infra/telegram/actions/` に対する `packages/infra/telegram/actions.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
 
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。

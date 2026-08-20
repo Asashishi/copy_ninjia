@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import type { InstanceLockOptions } from "../../packages/infra/storage/instanceL
 import type { ProcessIdentity } from "../../packages/types/storage";
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { error: mock((..._args: unknown[]): void => {}) },
+  logger: loggerStub({ error: mock((..._args: unknown[]): void => {}) }),
 }));
 
 const {

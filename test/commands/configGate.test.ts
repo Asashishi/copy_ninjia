@@ -5,6 +5,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { ConfigReadiness } from "../../packages/types/config";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
@@ -35,7 +36,7 @@ mock.module("../../packages/config/telegram", () => ({
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
-mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
+mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat: mock((): void => {}), queryAiMood, switchAiMood }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));

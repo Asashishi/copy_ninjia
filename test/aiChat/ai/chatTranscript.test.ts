@@ -6,7 +6,8 @@ import {
   formatReplyChain,
   formatSpeakerIdentity,
 } from "../../../packages/aiChat/ai/utils/chatTranscript";
-import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from "../../../packages/consts/aiChat";
+import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from
+  "../../../packages/consts/aiChat/memory";
 import {
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
   MEMORY_MECHANISM_SILENCE_INSTRUCTION,

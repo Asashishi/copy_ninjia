@@ -98,7 +98,12 @@ const {
   blocklistRemovalEpochs,
   blocklistRemovalTaskCounts,
 } = await import("../../../packages/cache/workers/antiRaid/blocklist");
-const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } = await import("../../../packages/consts/antiRaid");
+const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS } = await import(
+  "../../../packages/consts/antiRaid/cache"
+);
+const { VERIFICATION_REVISION_RETENTION_MS } = await import(
+  "../../../packages/consts/antiRaid/verification"
+);
 const { adDetectAgentConfigCache } = await import("../../../packages/cache/perThread/config");
 
 /** 主线程投递过来的那一代 ad_detect 快照；断言 Worker 原样收进 holder。 */

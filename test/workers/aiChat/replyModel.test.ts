@@ -8,6 +8,7 @@
  */
 
 import { beforeEach, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { readFileSync } from "node:fs";
 import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/agent";
 import {
@@ -83,7 +84,7 @@ mock.module("../../../packages/aiChat/provider", () => ({
 }));
 mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMoodInstruction: (): string => "当前心情测试" }));
 mock.module("../../../packages/aiChat/ai/tools", () => ({ callTool: callToolMock }));
-mock.module("../../../packages/infra/logger", () => ({ logger: { error: loggerErrorMock } }));
+mock.module("../../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerErrorMock }) }));
 mock.module("../../../packages/workers/aiChat/timeSentence", () => ({ currentTimeSentence: (): string => "当前实际时间：测试。" }));
 
 const { generateReply } = await import("../../../packages/workers/aiChat/replyModel");

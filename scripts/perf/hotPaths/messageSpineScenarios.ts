@@ -1,12 +1,19 @@
 /**
- * 每条群消息共担的那段主干与自发消息判定两个场景。
+ * 每条群消息共担的那段主干、自发消息判定，以及 AI 开启后媒体分支的纯计算段。
  *
- * 与 scenarios.ts 分开：这两条量的是编排主干（handleIncomingMessage 那串固定
+ * 与 scenarios.ts 分开：这几条量的是编排主干（handleIncomingMessage 那串固定
  * 调用），改动它们要读的是 auto/message 那一侧，与容器/时间窗那批叶子场景无关。
  */
 
 import type { Message } from "@grammyjs/types";
 import type { Context } from "grammy";
+import { resolveSpeaker } from "../../../packages/auto/message/facts";
+import { buildAiRecordMediaMessage } from "../../../packages/auto/message/recordContext";
+import { createMessageTriggerContext } from "../../../packages/auto/message/triggerContext";
+import { claimRandomMediaTrigger } from "../../../packages/auto/message/triggerPolicy";
+import type { AiBotInfo, AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
+import type { AiSpeakerSnapshot } from "../../../packages/types/aiChat/speaker";
+import type { MessageTriggerContext } from "../../../packages/types/auto";
 import {
   clearAiReplyActivity,
   observeGroupMessageForAiReply,
@@ -20,7 +27,7 @@ import {
 import { sentMessages } from "../../../packages/cache/perThread/selfSentTracker";
 import { isSelfSent } from "../../../packages/infra/selfSentTracker";
 import { cacheSender } from "../../../packages/users/senderIdentity";
-import { BENCHMARK_CHAT_ID } from "./fixtures";
+import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
 import type { Scenario } from "./types";
 
 export function selfSentEmptyScenario(): Scenario {
@@ -96,6 +103,101 @@ export function incomingMessageSpineScenario(): Scenario {
       handleProactiveMessageActions,
       cacheSender,
       observeGroupMessageForAiReply,
+    },
+  };
+}
+
+/**
+ * AI 开启后，每条**媒体**消息共担的纯计算段。
+ *
+ * 补的是 incoming-message-spine 明确不覆盖的那一半：那条场景的 fixture 是「无可
+ * 复制内容且 AI 关闭」，因此从不进入各载荷 handler。而 AI 开着才是这个机器人的
+ * 常态，这一段（一次触发上下文 + 一次掷骰判定 + 一次 22 字段媒体载荷）此前既没有
+ * 基准也不在 GC/JIT 门禁里。
+ *
+ * **fixture 刻意选「回复机器人的图片」这条直接唤起路径**，这是本场景零副作用与
+ * 可复现的依据，不是随手挑的：
+ * - 有 directTriggerReason 时 shouldAttemptRandomTrigger 在第一个条件就短路，
+ *   因此不调 Math.random()、不写 userReplyTriggerTimes、不排 timer——读数可复现，
+ *   也不会让门禁的 retained/RSS 判据混进一张会增长的冷却表。
+ * - 三个被测函数（triggerContext.ts / triggerPolicy.ts / recordContext.ts）连同它们
+ *   依赖的 facts.ts 全是纯函数，只 import 常量与类型，不碰配置、缓存、Worker 与网络。
+ *   这里**不**调 recordChatMedia：那一步会 postAiChatOrThrow 到 AI Worker，
+ *   而基准进程从不启动它。
+ */
+export function aiMediaDirectTriggerScenario(): Scenario {
+  const bot: AiBotInfo = { id: 4242, first_name: "Tensai", username: "tensai_bot" };
+  const chat: Message["chat"] = {
+    id: BENCHMARK_CHAT_ID,
+    type: "supergroup",
+    title: "Performance fixture",
+  };
+  // 被回复的那条用 ReplyMessage 形态（Telegram 不会再往下嵌一层 reply_to_message）。
+  const repliedTo: NonNullable<Message["reply_to_message"]> = {
+    message_id: 41,
+    date: 1,
+    chat,
+    from: { id: bot.id, is_bot: true, first_name: "Tensai", username: "tensai_bot" },
+    text: "机器人之前说的话",
+    // ReplyMessage 按 Telegram 的实际形态不再嵌套下一层被回复消息。
+    reply_to_message: undefined,
+  };
+  const message: Message = {
+    message_id: 42,
+    date: 1,
+    chat,
+    from: { id: 7, is_bot: false, first_name: "Stable", last_name: "Sender", username: "stable_user" },
+    caption: "看看这张",
+    photo: [{ file_id: "AgACAgUAAx", file_unique_id: "AQADu", width: 1280, height: 720, file_size: 90_000 }],
+    reply_to_message: repliedTo,
+  };
+  return {
+    iterations: 300_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        // resolveSpeaker 必须留在循环里：生产的每个媒体 handler 都是每条消息解析
+        // 一次发言人身份（并为此造一个 AiSpeakerSnapshot）。提到循环外既少量了一次
+        // 每消息分配，也会让它作为门禁探针形同虚设——那条断言要求每个生产探针在
+        // 采样期确实跑在 DFG 稳态上，没被调用的函数满足不了它想证明的东西。
+        const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
+        // now 逐轮递增：生产里它是每条消息各自的 Date.now()，喂同一个字面量会让
+        // 整个循环体退化成常量表达式（同 scenarios.ts 里 AD_SAMPLE_TEXTS 那段的理由）。
+        const context: MessageTriggerContext = createMessageTriggerContext({
+          message,
+          bot,
+          now: BENCHMARK_EPOCH_MS + index,
+          isQuiet: false,
+          aiReplyProbability: 1 / 40,
+        });
+        const claim: { candidate: boolean; claimed: boolean } =
+          claimRandomMediaTrigger(context, speaker.id);
+        const payload: AiRecordMediaMessage = buildAiRecordMediaMessage({
+          context,
+          speaker,
+          media: {
+            kind: "photo",
+            caption: "看看这张",
+            fileId: "AgACAgUAAx",
+            fileUniqueId: "AQADu",
+            width: 1280,
+            height: 720,
+            commentOnResolve: claim.claimed,
+            imageGenerationRequested: context.directTriggerReason !== undefined,
+            stickerFallbackText: undefined,
+            voiceMime: undefined,
+            voiceDurationSeconds: 0,
+          },
+        });
+        checksum += payload.width + (payload.directTriggerReason === undefined ? 0 : 1);
+      }
+      return checksum;
+    },
+    probes: {
+      createMessageTriggerContext,
+      claimRandomMediaTrigger,
+      buildAiRecordMediaMessage,
+      resolveSpeaker,
     },
   };
 }

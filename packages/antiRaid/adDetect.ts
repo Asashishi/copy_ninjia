@@ -33,7 +33,7 @@ import {
   runBlocklistIdentityMutation,
   runProtectedIdentityMutation,
 } from "../infra/identityPolicy/coordination";
-import type { AdDetectedEvent } from "../types/antiRaid";
+import type { AdDetectedEvent } from "../types/antiRaid/adDetect";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
 import type { AdSampleDiskMessage } from "../types/diskIO";
 import type { FlushResult } from "../types/lifecycle";

@@ -1,6 +1,6 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
-import { AI_MEMORY_MAX_CHATS } from "../../../packages/consts/aiChat";
+import { AI_MEMORY_MAX_CHATS } from "../../../packages/consts/aiChat/memory";
 
 const postMessageMock = mock((..._args: unknown[]): void => {});
 (globalThis as unknown as { self: { postMessage: typeof postMessageMock } }).self = { postMessage: postMessageMock };

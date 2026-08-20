@@ -106,7 +106,7 @@ export function aiRecordMediaMessageFixture(
     stickerFallbackText: undefined,
     voiceMime: undefined,
     voiceDurationSeconds: 0,
-    directTrigger: undefined,
+    directTriggerReason: undefined,
     ...overrides,
   };
 }

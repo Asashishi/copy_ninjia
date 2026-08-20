@@ -1,7 +1,7 @@
 import type {
   DeferredVerificationRecord,
   VerificationSnapshot,
-} from "../../../types/antiRaid";
+} from "../../../types/antiRaid/verification";
 
 /**
  * 入群验证的主线程侧镜像（owner 是 packages/antiRaid/verificationMirror.ts）。

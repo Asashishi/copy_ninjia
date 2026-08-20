@@ -14,6 +14,7 @@ import {
   moduleCacheInitializerKind,
   sourceFilesUnder,
 } from "./conventions/sourceAnalysis";
+import { collectColdMigrationProblems } from "./conventions/coldMigrations";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
 const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
@@ -129,6 +130,9 @@ const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
 };
 
 const failures: string[] = [];
+for (const problem of collectColdMigrationProblems(PROJECT_ROOT)) {
+  failures.push(`cold migration: ${problem}`);
+}
 const tracked: string[] = trackedFiles();
 for (const trackedPath of tracked) {
   const path: string = join(PROJECT_ROOT, trackedPath);
@@ -485,9 +489,13 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
   function visit(node: ts.Node): void {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const modulePath: string = node.moduleSpecifier.text;
+      const importsTypeIndex: boolean =
+        /(^|\/)types$/.test(modulePath) || /(^|\/)types\/index$/.test(modulePath);
+      const importsAntiRaidTypeBarrel: boolean =
+        /(^|\/)types\/antiRaid$/.test(modulePath);
       if (
         modulePath.startsWith(".") &&
-        (/(^|\/)types$/.test(modulePath) || /(^|\/)types\/index$/.test(modulePath))
+        (importsTypeIndex || importsAntiRaidTypeBarrel)
       ) {
         failures.push(
           `${relative(PROJECT_ROOT, path)}:` +

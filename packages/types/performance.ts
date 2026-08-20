@@ -2,6 +2,7 @@
 
 export type HotPathProfileScenarioName =
   | "incoming-message-spine"
+  | "ai-media-direct-trigger"
   | "sender-stable-username"
   | "luck-receipt-fast-path"
   | "ai-activity-window"

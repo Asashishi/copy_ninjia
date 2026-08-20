@@ -7,6 +7,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { SONG_GENERATION_MAX_BYTES } from "../../../packages/consts/aiChat/songGeneration";
 import type { GeneratedChatSong } from "../../../packages/types/aiChat/songGeneration";
@@ -17,7 +18,7 @@ const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/aiChat/gemini/client", () => ({
   getGeminiClient: (_capability: string): unknown => ({ interactions: { create } }),
 }));
-mock.module("../../../packages/infra/logger", () => ({ logger: { error: loggerError, info: () => {}, warn: () => {} } }));
+mock.module("../../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 
 const { generateGeminiSong } = await import("../../../packages/aiChat/gemini/song");
 const {

@@ -10,7 +10,7 @@ import type { MessageTriggerContext } from "../../types/auto";
 
 /** 文本和三类媒体共用的随机搭话/评价掷骰条件。 */
 export function shouldAttemptRandomTrigger(context: MessageTriggerContext): boolean {
-  return !context.directTrigger &&
+  return context.directTriggerReason === undefined &&
     !context.isQuiet &&
     !context.hasOtherMention &&
     !context.repliesToSelf &&
@@ -23,7 +23,7 @@ export function shouldAttemptRandomTrigger(context: MessageTriggerContext): bool
  *  claimed 决定 recordChatMedia 的 commentOnResolve。 */
 export function claimRandomMediaTrigger(context: MessageTriggerContext, speakerId: number): { candidate: boolean; claimed: boolean } {
   const candidate: boolean = shouldAttemptRandomTrigger(context);
-  return { candidate, claimed: candidate && tryClaimUserReplyTrigger(context.chatId, speakerId) };
+  return { candidate, claimed: candidate && tryClaimUserReplyTrigger(context.chatId, speakerId, context.now) };
 }
 
 /**

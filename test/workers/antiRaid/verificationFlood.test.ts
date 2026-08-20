@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../../packages/consts/antiRaid";
+import { ANTI_RAID_PER_MINUTE_LIMIT } from
+  "../../../packages/consts/antiRaid/lockdown";
 import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../packages/types";
 
 const actions: string[] = [];

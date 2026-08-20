@@ -4,9 +4,9 @@ import type {
   CachedUser,
   CopyMode,
   GlobalAssetState,
-  GlobalCopyState,
-  GlobalState,
-  StateFileSchema,
+  DecodedGlobalCopyState,
+  DecodedGlobalState,
+  DecodedStateFile,
 } from "../types/chatState";
 
 /**
@@ -103,7 +103,7 @@ function cachedUser(value: unknown, path: string): CachedUser {
   };
 }
 
-function globalCopy(value: unknown): GlobalCopyState {
+function globalCopy(value: unknown): DecodedGlobalCopyState {
   const path: string = "state.global.copy";
   const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, ["lastCopyTime", "copiedUser", "copyMode", "copyChatId"], path);
@@ -161,7 +161,7 @@ function globalAssets(value: unknown): GlobalAssetState {
 }
 
 /** 所有群共用的那一块；copy 必填，assets 可缺省。 */
-function globalState(value: unknown): GlobalState {
+function globalState(value: unknown): DecodedGlobalState {
   const path: string = "state.global";
   const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, ["copy", "assets"], path);
@@ -173,7 +173,7 @@ function globalState(value: unknown): GlobalState {
 }
 
 /** 解码完整 state.json；任何存在但非法的字段都会拒绝整个文件。 */
-export function decodeStateFile(value: unknown): StateFileSchema {
+export function decodeStateFile(value: unknown): DecodedStateFile {
   const raw: Record<string, unknown> = record(value, "state");
   // 旧顶层键（globalCopy/imageProvider/chatProvider）会在这里被当场拒绝：结构
   // 变更只做手工迁移，解码器不留兼容分支（见 types/chatState.ts 的 StateFileSchema）。

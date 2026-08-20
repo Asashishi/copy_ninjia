@@ -15,9 +15,11 @@ import {
 import type {
   AdoptVerificationsMessage,
   AntiRaidWorkerMessage,
+} from "../../types/antiRaid/protocol";
+import type {
   DeferredVerificationRecord,
   VerificationSnapshot,
-} from "../../types/antiRaid";
+} from "../../types/antiRaid/verification";
 import type { BotChatPermissions } from "../../types/telegram";
 import { deleteDeferredVerificationsForChat } from "../verificationAttempts";
 

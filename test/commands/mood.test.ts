@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { TelegramConfig } from "../../packages/types/config";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
@@ -20,7 +21,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/aiChat", () => ({ queryAiMood, switchAiMood }));
-mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
+mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
 }));

@@ -4,7 +4,6 @@ import type {
 } from "../../types/aiChat/protocol";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { MessageTriggerContext } from "../../types/auto";
-import type { MediaKind } from "../../types/media";
 
 /**
  * 文字与各媒体 handler 共用的 Worker 记录载荷构造边界，集中保持身份和回复
@@ -51,24 +50,29 @@ export function buildAiRecordMessage({
   };
 }
 
-/** 媒体记录里逐载荷不同的那部分；身份与回复关系仍由本文件统一填。 */
-export interface AiRecordMediaPayload {
-  kind: MediaKind;
-  caption: string;
-  fileId: string;
-  fileUniqueId: string;
-  /** 视觉素材的像素尺寸；语音传 0。 */
-  width: number;
-  height: number;
-  commentOnResolve: boolean;
-  imageGenerationRequested: boolean;
-  /** 仅贴纸使用；其余媒体传 undefined。 */
-  stickerFallbackText: string | undefined;
-  /** 仅语音使用：Telegram 声明的容器；其余媒体传 undefined。 */
-  voiceMime: string | undefined;
-  /** 仅语音使用：时长（秒）；其余媒体传 0。 */
-  voiceDurationSeconds: number;
-}
+/**
+ * 媒体记录里逐载荷不同的那部分；身份与回复关系仍由本文件统一填。
+ *
+ * 从协议类型 `Pick` 出来而不是另抄一份字段表：这十一项此前在这里与
+ * types/aiChat/protocol.ts 的 `AiRecordMediaMessage` 各声明一次，两份逐字相同却
+ * 没有任何东西保证它们同步——给协议加一个媒体字段而忘了这边，四个 handler 照常
+ * 编译通过，只是那个字段永远传不上去。改成派生之后，协议一变，四个调用点当场
+ * 编译失败。各字段的语义（语音传 0、仅贴纸用等）由协议侧的 JSDoc 一并带过来。
+ */
+export type AiRecordMediaPayload = Pick<
+  AiRecordMediaMessage,
+  | "kind"
+  | "caption"
+  | "fileId"
+  | "fileUniqueId"
+  | "width"
+  | "height"
+  | "commentOnResolve"
+  | "imageGenerationRequested"
+  | "stickerFallbackText"
+  | "voiceMime"
+  | "voiceDurationSeconds"
+>;
 
 export interface BuildAiRecordMediaMessageParams {
   context: MessageTriggerContext;
@@ -104,6 +108,6 @@ export function buildAiRecordMediaMessage({
     stickerFallbackText: media.stickerFallbackText,
     voiceMime: media.voiceMime,
     voiceDurationSeconds: media.voiceDurationSeconds,
-    directTrigger: context.directTrigger,
+    directTriggerReason: context.directTriggerReason,
   };
 }

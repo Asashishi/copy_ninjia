@@ -23,7 +23,7 @@ export interface SeedStorageDatabaseOptions {
   readonly chatStates?: readonly StoredChatStateRow[];
 }
 
-/** 一次性迁移在一个 Drizzle 事务内写入 JSONB schema 版本和全部业务行。 */
+/** 测试与性能夹具在一个 Drizzle 事务内写入 schema 元数据和全部业务行。 */
 export function seedStorageDatabase(
   database: StorageDatabase,
   {
@@ -60,7 +60,7 @@ export interface PutIdentityPolicyRowOptions {
   readonly data: string;
 }
 
-/** 写入一条原始名单行；迁移逐值校验和损坏数据回归测试使用。 */
+/** 写入一条原始名单行；只供损坏数据回归测试构造严格启动输入。 */
 export function putIdentityPolicyRow({
   database,
   table,

@@ -87,6 +87,11 @@ export function bufferedMessageBuildScenario(): Scenario {
  * 出一个并不存在的收益：这段的成本压倒性地在拼串本身，属性读取那点差异淹没
  * 在里面。定形真正的收益在构造侧（见 buffered-message-build）。本场景保留的
  * 意义是当**回归哨兵**——转录渲染是每次 AI 回复的必经之地。
+ *
+ * 上面那批历史读数取自「只读 `.length`」的旧口径。当时的渲染侧攒数组再 join，
+ * 内层 join 已经把大头展平了，两种口径实测只差 3.1%（71.6 vs 73.9 µs/op）；改成逐行
+ * `+=` 之后差到 27%（42.0 vs 57.5），下面的 run 因此显式强制展平，理由见那里的注释。
+ * 跨这次改动比较读数时要注意口径。
  */
 export function transcriptRenderScenario(): Scenario {
   const messages: BufferedMessage[] = [];
@@ -116,7 +121,15 @@ export function transcriptRenderScenario(): Scenario {
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
-        checksum += buildTieredVerbatimTranscript(messages, options).text.length;
+        const text: string = buildTieredVerbatimTranscript(messages, options).text;
+        // **必须强制展平**，不能只读 `.length`：JSC 的 rope 自带长度，`.length` 不会让它
+        // materialize。渲染侧逐行 `+=` 累加（见 chatTranscript.ts 的 renderRange），返回的
+        // 是一棵几百个节点的 rope；只读长度的话这条场景量到的是「建了棵树」而不是「拿到
+        // 一个可用的字符串」——同一份实现、同一份输入，两种收口口径实测 42.0 vs 57.5 µs/op。
+        // 生产里这段转录一定会被展平（拼进提示词、跨线程 clone、送上网络），因此展平成本
+        // 属于本场景；不强制的话，一次把展平从链路里摘掉的回归会表现成读数变快而不是失败。
+        // charCodeAt 是最便宜的强制解析。
+        checksum += text.charCodeAt(text.length - 1);
       }
       return checksum;
     },

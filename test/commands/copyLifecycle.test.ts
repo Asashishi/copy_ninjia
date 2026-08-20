@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser, CopyMode } from "../../packages/types/chatState";
 import {
   COPY_TARGET_TEXTS,
@@ -28,7 +29,7 @@ const claimCopyCooldownOrReject = mock(async () => cooldownRejected ? { rejected
 const resolveCopyCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => target);
 
 const loggerError = mock((..._args: unknown[]): void => {});
-mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
+mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/config/readiness", () => ({
   jaTranslateConfigReadiness: () => jaReadiness,
 }));

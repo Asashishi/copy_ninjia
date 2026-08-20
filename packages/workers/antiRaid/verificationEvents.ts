@@ -14,7 +14,7 @@ import type {
   NewMemberMessage,
   TrackedChatMessage,
   VerifyCallbackMessage,
-} from "../../types/antiRaid";
+} from "../../types/antiRaid/protocol";
 import type {
   ThreadCommentConfirmation,
   VerificationDispatcher,

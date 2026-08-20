@@ -21,10 +21,10 @@ import {
   GAG_THUMBNAIL_URL,
   PROBABILITY_THUMBNAIL_URL,
 } from "../../../packages/consts/ui/assets";
-import type { LockdownRecord, StateFileSchema } from "../../../packages/types/chatState";
+import type { DecodedStateFile, LockdownRecord, StateFileSchema } from "../../../packages/types/chatState";
 import { botPermissions } from "../../helpers/botPermissions";
 
-function schema(chatId: number): StateFileSchema {
+function schema(chatId: number): DecodedStateFile {
   return {
     global: { copy: { copiedUser: null, lastCopyTime: chatId }, assets: {} },
   };
@@ -104,7 +104,13 @@ describe("StateStore", () => {
     });
 
     await expect(store.save(schema(40), { waitForPersistence: false })).resolves.toBeUndefined();
-    await Bun.sleep(5);
+    // 等的这条链只有 `retryDelaysMs` 那 1 毫秒是设计延迟，其余是调度延迟：
+    // save 返回 → writer 异步 reject → handleWriteFailure → scheduleRetry 的
+    // setTimeout(1) → 触发后再 push 一次 writeText。事件循环繁忙时 timer 会晚触发，
+    // 实测（300 次采样）空载 p99 2.4ms / max 2.8ms，而 6 个忙循环争用 CPU 时
+    // p99 8.3ms / max 9.3ms——`bun test --isolate --coverage` 跑 260 个文件时正是
+    // 后一种条件，5ms 预算下约 3% 的运行会误报。15ms 在实测最大值上留了约 60% 余量。
+    await Bun.sleep(15);
     expect(attempts).toBeGreaterThan(1);
     await expect(store.flush(20, true)).resolves.toBe("failed");
     store.dispose();
@@ -144,7 +150,7 @@ describe("StateStore", () => {
   });
 
   test("主文件有效但备份缺失时先补建 LKG，再返回解码状态", async () => {
-    const expected: StateFileSchema = schema(50);
+    const expected: DecodedStateFile = schema(50);
     const primaryContent: string = JSON.stringify(expected, null, 2);
     const writes: { path: string; content: string }[] = [];
     const store = new StateStore({
@@ -191,7 +197,7 @@ describe("StateStore", () => {
     // 落盘是临时文件 + 原子 rename，主文件不会写出半份，所以「在但解不开」只剩
     // 手改错和介质损坏两种来源。拿 LKG 顶上去 = 把运维刚编辑的文件改名成
     // .corrupt、用陈旧内容盖回去，然后一切正常启动（见 AGENTS.md 不为用户行为兜底）。
-    const valid: StateFileSchema = schema(53);
+    const valid: DecodedStateFile = schema(53);
     const backup: string = JSON.stringify(valid, null, 2);
     const writes: { path: string; content: string }[] = [];
     const store = new StateStore({
@@ -231,7 +237,7 @@ describe("StateStore", () => {
   });
 
   test("主文件缺失时从有效 LKG 原子恢复且不创建损坏隔离件", async () => {
-    const expected: StateFileSchema = schema(54);
+    const expected: DecodedStateFile = schema(54);
     const backup: string = JSON.stringify(expected, null, 2);
     const writes: { path: string; content: string }[] = [];
     const store = new StateStore({
@@ -484,7 +490,7 @@ describe("素材直链的加载接线", () => {
     // 四个值互不相同：两张运势缩略图的内置常量逐字节相同，用常量做断言的话交换两行
     // 也看不出来。
     const statePath: string = join(dir, "state.json");
-    const stored: StateFileSchema = {
+    const stored: DecodedStateFile = {
       global: {
         copy: { copiedUser: null },
         assets: {

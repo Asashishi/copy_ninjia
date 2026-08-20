@@ -188,3 +188,39 @@ export interface GlobalState {
 export interface StateFileSchema {
   global: GlobalState;
 }
+
+/**
+ * `state.global.copy` **解码后**的形态。
+ *
+ * 与运行期的 `GlobalCopyState` 分开：后者是主线程那份可变持有者，初始只有
+ * `copiedUser: null`、三个字段由 adoptCopyTarget 一次写齐，因此写不成判别联合。
+ * 而解码器（libs/stateFileCodec.ts 的 globalCopy）**已经**强制了「copiedUser 为
+ * null ⟺ 没有 copyMode/copyChatId；copiedUser 非空 ⟺ copyChatId 是合法负数群 id」
+ * 这条配对，这里把它表达进类型：消费侧不必再用非空断言把 copyChatId 从 undefined
+ * 里捞出来，将来漏掉哪一侧校验也会在编译期当场暴露，而不是等到运行期凭空捏造
+ * 出一个 chatId。
+ */
+export type DecodedGlobalCopyState =
+  | Readonly<{
+    copiedUser: null;
+    lastCopyTime?: number;
+    copyMode?: undefined;
+    copyChatId?: undefined;
+  }>
+  | Readonly<{
+    copiedUser: CachedUser;
+    copyChatId: number;
+    copyMode?: CopyMode;
+    lastCopyTime?: number;
+  }>;
+
+/** 解码后的 global 块；只有 copy 的形态与运行期不同，assets 逐字相同。 */
+export interface DecodedGlobalState {
+  copy: DecodedGlobalCopyState;
+  assets: GlobalAssetState;
+}
+
+/** decodeStateFile 与 StateStore.load 的返回形态；落盘侧仍用 StateFileSchema。 */
+export interface DecodedStateFile {
+  global: DecodedGlobalState;
+}

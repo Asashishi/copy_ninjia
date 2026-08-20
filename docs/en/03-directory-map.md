@@ -156,7 +156,7 @@ Watch out for shared domain code such as `packages/aiChat/ai/`: if a pure functi
 
 ## Compatibility Entry-Point (Barrel) Convention
 
-When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/consts/aiChat.ts` for `packages/consts/aiChat/`, `packages/infra/telegram/actions.ts` for `packages/infra/telegram/actions/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
+When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/infra/telegram/actions.ts` for `packages/infra/telegram/actions/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
 
 - Compatibility entry points exist only for gradual migration of old imports. **All new code imports directly from the domain submodule.**
 - A compatibility entry point must not own state, parse configuration, or introduce import-time side effects.

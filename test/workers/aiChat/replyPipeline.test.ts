@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { AdmitDecision, RoundDecision } from "../../../packages/types/states/replyAdmission";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 
@@ -33,7 +34,7 @@ mock.module("../../../packages/cache/workers/aiChat/replies", () => ({
   pendingReplyTriggers,
 }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../../packages/states/replyAdmission", () => ({ admitTrigger, admitRound }));
 mock.module("../../../packages/workers/aiChat/replyQueue", () => ({

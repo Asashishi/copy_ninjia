@@ -24,7 +24,7 @@ import { verificationKey } from "../libs/verificationKey";
 import type {
   AdCandidateMessage,
   AdSampleContext,
-} from "../types/antiRaid";
+} from "../types/antiRaid/adDetect";
 import { formatUserLabel } from "../users/userLabel";
 import { messageOriginIdentityId } from "../users/messageOrigin";
 import { visibleSenderChat } from "../users/visibleSender";

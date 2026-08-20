@@ -4,7 +4,8 @@ import type {
   ThreadCommentConfirmation,
   VerificationEntry,
 } from "../../../types/antiRaid/internal";
-import type { DeferredVerificationRecord } from "../../../types/antiRaid";
+import type { DeferredVerificationRecord } from
+  "../../../types/antiRaid/verification";
 
 /** 入群验证状态机（packages/workers/antiRaid/verificationRuntime.ts）的内存状态。 */
 

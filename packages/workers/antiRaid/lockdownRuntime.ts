@@ -12,7 +12,10 @@ import {
   lockdownEntries,
 } from "../../cache/workers/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
-import type { AdoptableLockdown, LockdownEvent, LockdownPersistedMessage, UnlockEvent } from "../../types/antiRaid";
+import type { LockdownEvent, UnlockEvent } from
+  "../../types/antiRaid/events";
+import type { AdoptableLockdown, LockdownPersistedMessage } from
+  "../../types/antiRaid/protocol";
 import { transitionLockdown } from "../../states/lockdown";
 import type { LockdownEffect, LockdownMachineEvent, LockdownTransition, LockdownState } from "../../types/states/lockdown";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";

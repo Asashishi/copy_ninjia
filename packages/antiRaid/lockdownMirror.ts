@@ -18,7 +18,8 @@ import type {
   LockdownIntentFingerprint,
   PersistedLockdownFingerprint,
 } from "../types/antiRaid/internal";
-import type { AdoptableLockdown, AdoptLockdownsMessage } from "../types/antiRaid";
+import type { AdoptableLockdown, AdoptLockdownsMessage } from
+  "../types/antiRaid/protocol";
 import type { LockdownRecord } from "../types/chatState";
 
 /**

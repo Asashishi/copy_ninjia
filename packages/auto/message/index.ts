@@ -96,6 +96,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const triggerContext: MessageTriggerContext = createMessageTriggerContext({
       message,
       bot: botIdentity,
+      now,
       isQuiet,
       aiReplyProbability,
     });

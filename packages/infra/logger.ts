@@ -19,18 +19,15 @@
 import { relayLogMessage } from "./diskIO";
 import { serializeLogArgs } from "./logger/serialization";
 import {
-  forwardedLogDropState,
-  forwardedLogQueue,
-} from "../cache/perThread/logger";
+  acceptForwardedLogBatch as acceptForwardedLogBatchInternal,
+  forwardWorkerLog,
+} from "./logger/forwarding";
+import type { ForwardedLogSink } from "./logger/forwarding";
 import type {
   ForwardedLogBatch,
-  ForwardedLogBatchAccepted,
   LogLevel,
   LogMessage,
 } from "../types/diskIO";
-import type { AcknowledgedBatch } from "../libs/acknowledgedBatchQueue";
-import { jsonSerializedBytes } from "../libs/jsonBytes";
-import { saturatingSafeIntegerAdd } from "../libs/saturatingNumber";
 
 declare const self: Worker;
 
@@ -38,82 +35,22 @@ declare const self: Worker;
 // 转发给拥有本 Worker 的主线程模块。
 const isMainThread: boolean = Bun.isMainThread;
 
-/** Worker 转发通道没有在途批次时发送下一批；同步拒绝保留原批且不抛出。 */
-function pumpForwardedLogs(): boolean {
-  const batch: AcknowledgedBatch<LogMessage> | null = forwardedLogQueue.nextDelivery();
-  if (batch === null) return true;
-  const forwarded: ForwardedLogBatch = {
-    __logBatch: {
-      batchId: batch.batchId,
-      messages: batch.values,
-    },
-  };
-  try {
-    self.postMessage(forwarded);
-    forwardedLogQueue.markDelivered(batch.batchId);
-    return true;
-  } catch {
-    forwardedLogQueue.markDeliveryRejected();
-    return false;
-  }
-}
-
-/** 主线程重新消费后，把 Worker 侧整段溢出收敛为一条可落盘的普通日志。 */
-function enqueueForwardedLogDropSummary(): void {
-  const dropState: typeof forwardedLogDropState.current =
-    forwardedLogDropState.current;
-  const droppedMessages: number = dropState.droppedMessages;
-  if (droppedMessages === 0) return;
-  const summary: LogMessage = {
-    timestamp: Date.now(),
-    level: "error",
-    args: [
-      `[logger] dropped ${droppedMessages} Worker error log(s) totaling ` +
-      `${dropState.droppedSerializedBytes} serialized byte(s) after ` +
-      "the forwarding queue reached its hard limits.",
-    ],
-  };
-  if (!forwardedLogQueue.enqueue(summary, jsonSerializedBytes(summary))) return;
-  dropState.droppedMessages = 0;
-  dropState.droppedSerializedBytes = 0;
-}
-
-/** Worker error 日志进入有界转发队列；主线程不调用这条路径。 */
-function forwardWorkerLog(message: LogMessage): void {
-  enqueueForwardedLogDropSummary();
-  const serializedBytes: number = jsonSerializedBytes(message);
-  if (!forwardedLogQueue.enqueue(message, serializedBytes)) {
-    const dropState: typeof forwardedLogDropState.current =
-      forwardedLogDropState.current;
-    dropState.droppedMessages = saturatingSafeIntegerAdd(
-      dropState.droppedMessages,
-      1
-    );
-    dropState.droppedSerializedBytes = saturatingSafeIntegerAdd(
-      dropState.droppedSerializedBytes,
-      serializedBytes
-    );
-  }
-  pumpForwardedLogs();
-}
+/**
+ * Worker 侧转发出口。整条协议（有界队列、单批 ACK、溢出汇总）住在
+ * infra/logger/forwarding.ts；这里只把它接到本 isolate 的 postMessage 上。
+ * 拆开的理由见那个文件的头注：isMainThread 是加载期常量，协议留在本文件里
+ * 就永远只能在真 Worker 里执行，测不到。
+ */
+const forwardToMainThread: ForwardedLogSink = (batch: ForwardedLogBatch): void => {
+  self.postMessage(batch);
+};
 
 /**
  * 消费主线程发回的日志批次 ACK。返回 true 表示该消息属于 logger 协议，Worker
- * 入口不得再把它交给业务路由；迟到/重复 ACK 也视为已消费但不会推进错误批次。
+ * 入口不得再把它交给业务路由。
  */
 export function acceptForwardedLogBatch(message: unknown): boolean {
-  if (message === null || typeof message !== "object" || !("__logBatchAccepted" in message)) {
-    return false;
-  }
-  const accepted: ForwardedLogBatchAccepted = message as ForwardedLogBatchAccepted;
-  if (
-    typeof accepted.__logBatchAccepted === "number" &&
-    forwardedLogQueue.acknowledge(accepted.__logBatchAccepted)
-  ) {
-    enqueueForwardedLogDropSummary();
-    pumpForwardedLogs();
-  }
-  return true;
+  return acceptForwardedLogBatchInternal(message, forwardToMainThread);
 }
 
 function emit(level: LogLevel, args: unknown[]): void {
@@ -136,7 +73,7 @@ function emit(level: LogLevel, args: unknown[]): void {
     relayLogMessage(message);
   } else {
     // 转发模式：先进入单批 ACK、有界待发送 FIFO，再由主线程转投落盘线程。
-    forwardWorkerLog(message);
+    forwardWorkerLog(message, forwardToMainThread);
   }
 }
 

@@ -2,7 +2,7 @@ import { requestMainThread } from "../../libs/workerDuplex";
 import type {
   AntiRaidWorkerRequest,
   VerificationAttemptPermitResult,
-} from "../../types/antiRaid";
+} from "../../types/antiRaid/protocol";
 
 /** Worker 通过既有双工桥向主线程申请一轮进程级验证终态执行许可。 */
 export function requestVerificationAttemptPermit(

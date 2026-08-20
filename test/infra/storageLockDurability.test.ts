@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import * as realFsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,7 +23,7 @@ let failCandidateSync: boolean = false;
 let failCandidateDirectorySync: boolean = false;
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { error: mock((..._args: unknown[]): void => {}) },
+  logger: loggerStub({ error: mock((..._args: unknown[]): void => {}) }),
 }));
 
 mock.module("node:fs/promises", () => ({

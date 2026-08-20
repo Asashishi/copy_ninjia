@@ -1,7 +1,7 @@
 /**
  * mock 运行时数据根的 fixture：SQLite 业务表、AI 记忆快照与入群日志。
  *
- * 全部经生产入口写出：SQLite 走冷迁移脚本用的同一个 `seedStorageDatabase`，
+ * 全部经仓库唯一的当前 schema 夹具入口写出：SQLite 走 `seedStorageDatabase`，
  * `memory/` 下的文件走真实 Disk I/O Worker。**不手写任何落盘格式**——手写一份
  * 就等于在基准里养一份会和生产悄悄分叉的第二实现，等它分叉的那天，冷启动量
  * 到的是一条生产根本不会走的解析分支。

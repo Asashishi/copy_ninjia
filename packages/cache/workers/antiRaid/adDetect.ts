@@ -1,5 +1,5 @@
 import { LinkedQueue } from "../../../libs/linkedQueue";
-import type { AdDetectedEvent } from "../../../types/antiRaid";
+import type { AdDetectedEvent } from "../../../types/antiRaid/adDetect";
 import type {
   AdMessageBundle,
   ReferencedAdWarningState,

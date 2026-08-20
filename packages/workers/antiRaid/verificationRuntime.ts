@@ -13,17 +13,21 @@ import {
 } from "../../cache/workers/antiRaid/verification";
 import type {
   AdoptVerificationsMessage,
-  DeferredVerificationRecord,
   NewMemberMessage,
   TrackedChatMessage,
-  VerificationDeleteEvent,
-  VerificationDeferredEvent,
   VerificationPersistedMessage,
+  VerifyCallbackMessage,
+} from "../../types/antiRaid/protocol";
+import type {
+  DeferredVerificationRecord,
   VerificationSnapshot,
   VerificationSnapshotBase,
+} from "../../types/antiRaid/verification";
+import type {
+  VerificationDeleteEvent,
+  VerificationDeferredEvent,
   VerificationUpsertEvent,
-  VerifyCallbackMessage,
-} from "../../types/antiRaid";
+} from "../../types/antiRaid/events";
 import {
   transitionVerification,
 } from "../../states/verification";

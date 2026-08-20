@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { LOCKDOWN_MS, RESTORE_RETRY_MS } from "../../packages/consts/antiRaid";
+import { LOCKDOWN_MS, RESTORE_RETRY_MS } from
+  "../../packages/consts/antiRaid/lockdown";
 import { transitionLockdown } from "../../packages/states/lockdown";
 import type { LockdownState } from "../../packages/types/states/lockdown";
 

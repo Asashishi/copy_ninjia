@@ -78,6 +78,11 @@ export const HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH: number = 4_096;
  * Bun 1.3.14 每场景 10 进程的最慢中位数为 2024.461/33.027/49.993/76.583/
  * 521.289/18.550/218.306/134.700 ns/op；上限在其上增加 max(25%, 10 ns) 并向上取整。
  *
+ * 上面那串八个数按本表**前八项原有的声明顺序**给出，不含后加的
+ * ai-media-direct-trigger；那一项 10 进程最慢中位数 164.080 ns/op，按同一规则取 210。
+ * 它的校准跑在一台同时运行着本仓库服务进程的机器上（那份负载当时无法移除），
+ * 因此这个数偏保守——重新校准时若机器空载，读数会更低，可以按同一规则收紧。
+ *
  * identity-permission-read 的那个数取自 20 个独立进程加门禁自己的 repeat：它是本表
  * 里离散度最大的一项（90.0~134.7），只按前 10 个进程定阈值会让它每隔几次门禁就软
  * 报一次，而软报的价值全在「出现即异常」。
@@ -86,6 +91,7 @@ export const HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS: Readonly<
   Record<HotPathProfileScenarioName, number>
 > = {
   "incoming-message-spine": 2_550,
+  "ai-media-direct-trigger": 210,
   "sender-stable-username": 44,
   "luck-receipt-fast-path": 63,
   "ai-activity-window": 96,
@@ -101,6 +107,7 @@ export const HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS: Readonly<
  */
 export const HOT_PATH_PROFILE_SCENARIOS: readonly HotPathProfileScenarioName[] = [
   "incoming-message-spine",
+  "ai-media-direct-trigger",
   "sender-stable-username",
   "luck-receipt-fast-path",
   "ai-activity-window",

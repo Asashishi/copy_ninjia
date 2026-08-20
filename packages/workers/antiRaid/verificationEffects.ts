@@ -35,7 +35,8 @@ import {
 } from "./verificationReminders";
 import { trackAntiRaidTask } from "./taskTracker";
 import { requestVerificationAttemptPermit } from "./verificationAttemptPermit";
-import type { VerificationAttemptPermitResult } from "../../types/antiRaid";
+import type { VerificationAttemptPermitResult } from
+  "../../types/antiRaid/protocol";
 
 export type VerificationAttemptRequester = (
   key: string,

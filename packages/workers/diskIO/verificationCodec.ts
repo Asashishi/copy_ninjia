@@ -16,7 +16,7 @@ import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type {
   VerificationSnapshot,
   VerificationSnapshotBase,
-} from "../../types/antiRaid";
+} from "../../types/antiRaid/verification";
 
 export type VerificationDayValue = VerificationSnapshot | null;
 

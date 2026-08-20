@@ -23,10 +23,19 @@ import { trackAntiRaidTask } from "./taskTracker";
  * 操作者表示没有稳定保证，不能用可能脱敏/共享的身份跳过入群验证。
  */
 
-/** 未过期的某群非匿名管理员 ID 集合；没有或过期时返回 undefined。 */
-export function freshAdminIds(chatId: number): Set<number> | undefined {
+/**
+ * 未过期的某群非匿名管理员 ID 集合；没有或过期时返回 undefined。
+ *
+ * `now` 缺省取墙钟，但**每条群消息都会走到的调用点必须显式传本条消息的那个
+ * `now`**（见 adDetect/queue.ts 的 enqueueAdCandidate）：这台部署机的
+ * `Date.now()` 走不到 vDSO 快路径，实测单次约 870 ns，比这个函数其余部分
+ * （两次 Map 查表加一次比较）贵两个数量级。同一条消息读两次钟既白付一次
+ * syscall，也让 TTL 判定和消息记账落在两个时刻上。形状同
+ * libs/chatState.ts 的 isQuietUntilActive：热路径传值，低频命令用缺省。
+ */
+export function freshAdminIds(chatId: number, now: number = Date.now()): Set<number> | undefined {
   const cached: ChatAdminCache | undefined = chatAdmins.get(chatId);
-  if (!cached || Date.now() - cached.fetchedAt > ADMIN_CACHE_TTL_MS) return undefined;
+  if (!cached || now - cached.fetchedAt > ADMIN_CACHE_TTL_MS) return undefined;
   return cached.adminIds;
 }
 

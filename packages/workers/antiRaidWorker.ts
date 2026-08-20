@@ -50,11 +50,12 @@ import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/worke
 import { recentChannelComments } from "../cache/workers/antiRaid/recentComments";
 import { sweepVerificationRevisionCache } from "../cache/workers/antiRaid/verification";
 import type {
-  AdDetectedEvent,
   AntiRaidWorkerMessage,
   AntiRaidWorkerRequest,
-  BlockedMembersRemovedEvent,
-} from "../types/antiRaid";
+} from "../types/antiRaid/protocol";
+import type { AdDetectedEvent } from "../types/antiRaid/adDetect";
+import type { BlockedMembersRemovedEvent } from
+  "../types/antiRaid/events";
 import {
   flushPendingMessageDeletions,
   resetPendingMessageDeletions as resetGenericMessageDeletions,

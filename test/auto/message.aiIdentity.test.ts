@@ -1,44 +1,16 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { aiRecordMessageFixture, aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
-
-const recordChatMessageMock = mock((..._args: unknown[]): void => {});
-const recordChatMediaMock = mock((..._args: unknown[]): void => {});
-const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
-const isBotOwnMessageMock = mock((..._args: unknown[]): boolean => false);
-const waitForBotOwnMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => false);
-const needsBotOwnMessageWaitMock = mock((message: any): boolean =>
-  message.chat.type === "channel" ||
-  (message.is_automatic_forward === true && message.forward_origin?.type === "channel")
-);
-
-mock.module("../../packages/infra/telegram", () => ({
-  copyMessage: async (): Promise<undefined> => undefined,
-  sendMessage: async (): Promise<undefined> => undefined,
-  bot: { api: {} },
-  logApiError: () => {},
-}));
-mock.module("../../packages/infra/storage/stateStore", () => ({
-  clearChatStateField: () => false,
-  getActiveCopyIn: () => null,
-  getActiveProxySendTarget: () => undefined,
-  getChatState: () => ({ isAIChatEnabled: true, quietUntil: Date.now() + 60_000 }),
-  getOrCreateChatState: () => ({}),
-  persistChatState: async (): Promise<void> => {},
-  saveChatStateInBackground: () => {},
-}));
-mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
-mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
-mock.module("../../packages/aiChat", () => ({
-  recordChatMessage: recordChatMessageMock,
-  recordChatMedia: recordChatMediaMock,
-  generateAndSendReply: generateAndSendReplyMock,
-}));
-mock.module("../../packages/infra/selfSentTracker", () => ({
-  isSelfSent: () => false,
-  isBotOwnMessage: isBotOwnMessageMock,
-  needsBotOwnMessageWait: needsBotOwnMessageWaitMock,
-  waitForBotOwnMessage: waitForBotOwnMessageMock,
-}));
+// 六个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
+// 必须在下面的 await import 之前登记。
+import {
+  generateAndSendReplyMock,
+  isBotOwnMessageMock,
+  needsBotOwnMessageWaitMock,
+  recordChatMediaMock,
+  recordChatMessageMock,
+  resetAutoMessageMocks,
+  waitForBotOwnMessageMock,
+} from "../helpers/autoMessageMocks";
 
 const { handleIncomingMessage } = await import("../../packages/auto/message");
 
@@ -46,14 +18,13 @@ const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 
 describe("AI 缓存发送者 username 传递", () => {
   beforeEach(() => {
-    recordChatMessageMock.mockClear();
-    recordChatMediaMock.mockClear();
-    generateAndSendReplyMock.mockClear();
-    isBotOwnMessageMock.mockClear();
-    isBotOwnMessageMock.mockImplementation((): boolean => false);
-    waitForBotOwnMessageMock.mockClear();
-    needsBotOwnMessageWaitMock.mockClear();
-    waitForBotOwnMessageMock.mockImplementation(async (): Promise<boolean> => false);
+    resetAutoMessageMocks();
+    // 本文件专测频道/自动转发的自发消息等待，因此把 needsBotOwnMessageWait 换成
+    // 生产语义（helper 的缺省是恒 false，供不关心这条分支的用例使用）。
+    needsBotOwnMessageWaitMock.mockImplementation((message: any): boolean =>
+      message.chat.type === "channel" ||
+      (message.is_automatic_forward === true && message.forward_origin?.type === "channel")
+    );
   });
 
   test("普通用户文字消息把 username 一并交给 AI", async () => {
@@ -263,7 +234,7 @@ describe("AI 缓存发送者 username 传递", () => {
       stickerFallbackText: undefined,
       voiceMime: undefined,
       voiceDurationSeconds: 0,
-      directTrigger: undefined,
+      directTriggerReason: undefined,
     });
   });
 });

@@ -80,4 +80,83 @@ describe("runBoundedSettledBatch", () => {
       execute: async (): Promise<number> => 1,
     })).rejects.toThrow("retry delays");
   });
+
+  /**
+   * 下面四条钉住的是本模块的**防御分支**：回调自身抛出、worker 意外 reject、
+   * 以及「逐项结果没填满」这个不变量违背。它们此前一条都没有覆盖，而这套批
+   * 处理骨架承载的是黑名单补扫、批量踢人这类不可逆的破坏性动作——回调抛错时
+   * 若把整批吞掉或让某一项静默消失，调用方拿到的是一份「都成功了」的假战报。
+   */
+  test("shouldRetry 自身抛出时按该项失败结算，并把原错与分类器错一并交出", async () => {
+    const classifierError: Error = new Error("classifier exploded");
+    const results: BoundedBatchResult<number, number>[] =
+      await runBoundedSettledBatch<number, number>({
+        items: [1, 2],
+        maxConcurrent: 1,
+        retryDelaysMs: [1],
+        execute: async ({ item }): Promise<number> => {
+          if (item === 1) throw new Error("execute failed");
+          return item;
+        },
+        shouldRetry: (): boolean => { throw classifierError; },
+      });
+
+    const first: BoundedBatchResult<number, number> = results[0]!;
+    expect(first.status).toBe("rejected");
+    const reason: unknown = first.status === "rejected" ? first.reason : undefined;
+    expect(reason).toBeInstanceOf(AggregateError);
+    expect((reason as AggregateError).errors).toHaveLength(2);
+    expect((reason as AggregateError).errors[1]).toBe(classifierError);
+    // 同批的其它项不受牵连，照常结算。
+    expect(results[1]?.status).toBe("fulfilled");
+  });
+
+  test("onRetry 自身抛出时同样只失败该项，不改变其它项的重试语义", async () => {
+    const traceError: Error = new Error("trace sink exploded");
+    let attempts: number = 0;
+    const results: BoundedBatchResult<number, number>[] =
+      await runBoundedSettledBatch<number, number>({
+        items: [1, 2],
+        maxConcurrent: 1,
+        retryDelaysMs: [1],
+        execute: async ({ item }): Promise<number> => {
+          if (item === 1) { attempts++; throw new Error("execute failed"); }
+          return item;
+        },
+        onRetry: (): void => { throw traceError; },
+      });
+
+    const first: BoundedBatchResult<number, number> = results[0]!;
+    expect(first.status).toBe("rejected");
+    const reason: unknown = first.status === "rejected" ? first.reason : undefined;
+    expect(reason).toBeInstanceOf(AggregateError);
+    expect((reason as AggregateError).errors[1]).toBe(traceError);
+    // 钩子抛出发生在退避之前，因此那次重试没有真的发生。
+    expect(attempts).toBe(1);
+    expect(results[1]?.status).toBe("fulfilled");
+  });
+
+  test("execute 同步抛出（不返回 Promise）也按该项失败结算，不炸穿整批", async () => {
+    const results: BoundedBatchResult<number, number>[] =
+      await runBoundedSettledBatch<number, number>({
+        items: [1, 2],
+        maxConcurrent: 2,
+        execute: ((): Promise<number> => { throw new Error("sync throw"); }),
+      });
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.status === "rejected")).toBeTrue();
+  });
+
+  test("空输入直接返回空数组，不启动任何 worker", async () => {
+    let executed: number = 0;
+    const results: BoundedBatchResult<number, number>[] =
+      await runBoundedSettledBatch<number, number>({
+        items: [],
+        maxConcurrent: 4,
+        execute: async (): Promise<number> => { executed++; return 0; },
+      });
+    expect(results).toEqual([]);
+    expect(executed).toBe(0);
+  });
 });

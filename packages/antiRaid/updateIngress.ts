@@ -35,9 +35,11 @@ import { postAntiRaidDurably } from "./durableDelivery";
 import { postAntiRaid } from "./workerBridge";
 import type {
   AdCandidateMessage,
+} from "../types/antiRaid/adDetect";
+import type {
   AntiRaidWorkerMessage,
   FloodCandidateMessage,
-} from "../types/antiRaid";
+} from "../types/antiRaid/protocol";
 
 /**
  * 处理 `chat_member` 更新：这是权威且始终会送达的入群/离群信号（不同于

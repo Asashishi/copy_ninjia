@@ -4,7 +4,7 @@ import {
 } from "../infra/identityPolicy/whitelist";
 import { isAdminStatus } from "../libs/chatMember";
 import type { ChatMember } from "@grammyjs/types";
-import type { AntiRaidMember } from "../types/antiRaid";
+import type { AntiRaidMember } from "../types/antiRaid/protocol";
 
 /**
  * 从 grammY 的 ChatMember/User 对象里提取入群守卫需要的几个事实。纯函数、

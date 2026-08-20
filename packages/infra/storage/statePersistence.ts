@@ -7,7 +7,7 @@ import { InputValidationError, parseJsonInput } from "../../libs/inputValidation
 import { createLatestValueRunner, type LatestValueRunner } from "../../libs/latestValueRunner";
 import { decodeStateFile } from "../../libs/stateFileCodec";
 import type { FlushResult } from "../../types/lifecycle";
-import type { StateFileSchema } from "../../types/chatState";
+import type { DecodedStateFile, StateFileSchema } from "../../types/chatState";
 import { logger } from "../logger";
 
 export interface StateStoreOptions {
@@ -35,7 +35,7 @@ interface StateWrite {
 interface ValidStateCopy {
   kind: "valid";
   content: string;
-  schema: StateFileSchema;
+  schema: DecodedStateFile;
 }
 
 interface InvalidStateCopy {
@@ -149,7 +149,7 @@ export class StateStore {
     });
   }
 
-  async load(): Promise<StateFileSchema | null> {
+  async load(): Promise<DecodedStateFile | null> {
     // 两份副本必须先全部读完、严格解码，再做任何隔离或修复。这样两份都
     // 不可用时能原样保留现场，绝不把可能含 lockdown 的状态静默变为空。
     const copies: [PromiseSettledResult<StateCopy>, PromiseSettledResult<StateCopy>] = await Promise.allSettled([

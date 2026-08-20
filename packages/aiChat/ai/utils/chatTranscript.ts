@@ -262,16 +262,35 @@ function buildRosterBlock(context: TranscriptContext): string {
  * 区间开头一定先发一条日期分隔行（`lastDate` 传空串即可），这样每个分层区块
  * 都自带日期，模型跳进任一区块都不必回头找。
  *
- * 攒进数组再一次 `join`，不走循环 `+=`：JSC 每次 `+=` 都挂一个 rope 节点，
- * 150 条那档实测 14 → 1635 个对象、22 → 52 KB（同 joinMessageLines 时期测得的
- * 结论）。数组不预分配长度，因为日期分隔行让行数不再等于消息数。
+ * **逐行 `+=` 累加，不再攒数组一次 `join`。** 这条推翻了本函数早先的相反结论，
+ * 因此把两次测量的口径一并记在这里：
+ *
+ * - 旧结论按**对象数**定（150 条那档 14 → 1635 个对象、22 → 52 KB）。那些 rope
+ *   节点是纯瞬时垃圾：full GC 后的 retained 两种写法一样（20,000 轮渲染下
+ *   323 vs 328 个对象、22 KB vs 33 KB，已是测量噪声），它们从来没有留存下来。
+ * - 按**时间**测，`+=` 稳定更快：整条 buildTieredVerbatimTranscript 在 150 条那档
+ *   74.1 → 57.8 µs/op（基准夹具的短正文）、84.3 → 62.5 µs/op（贴近生产的
+ *   20~80 字正文），各 9 个独立进程 × 7 样本，两组区间完全不重叠。ns/op 是含 GC
+ *   的墙钟，多出来的 rope 节点触发的 GC 已经算在这个数里。
+ *
+ * **测这段时有个坑，务必记住**：rope 自带长度，只读 `.length` 不会让它 materialize。
+ * 同一份输入下，本函数改成 `+=` 之后两种收口口径差着 42.0 vs 57.5 µs/op（27%），
+ * 而改之前只差 71.6 vs 73.9（3.1%，内层 `join` 已经把大头展平了）。也就是说：
+ * 只读 `.length` 的基准会把这次改动量成「快了 42%」，其中一多半是**还没做的活**。
+ * 生产里这段转录一定会被展平（拼进提示词、跨线程 clone、送上网络），因此上面两组
+ * 数都用 `charCodeAt(length-1)` 强制展平后才取——见 scripts/perf/hotPaths/
+ * transcriptScenarios.ts 的同名说明。
+ *
+ * `first` 用显式布尔而不是 `rendered === ""` 判空：后者把正确性绑在「任何一行都不会
+ * 是空串」这个附带事实上，而布尔无条件成立。
  */
 function renderRange(
   messages: BufferedMessage[],
   context: TranscriptContext,
   { start, end }: TranscriptRange
 ): string {
-  const lines: string[] = [];
+  let rendered: string = "";
+  let first: boolean = true;
   let lastDate: string = "";
   for (let index: number = start; index < end; index += 1) {
     const message: BufferedMessage = messages[index]!;
@@ -288,18 +307,21 @@ function renderRange(
     // 却正好把这条路堵死。
     if (separator > 0 && (separator !== lastDate.length || !at.startsWith(lastDate))) {
       lastDate = at.slice(0, separator);
-      lines.push(transcriptDateHeader(lastDate));
+      if (!first) rendered += "\n";
+      rendered += transcriptDateHeader(lastDate);
+      first = false;
     }
     const clock: string = separator > 0 ? at.slice(separator + 1) : at;
     const numberTag: string = context.numbered.has(message.messageId) ? ` ${messageNumberTag(message.messageId)}` : "";
     const forwardTag: string = message.forwardedFrom === undefined
       ? ""
       : forwardTagTemplate(context.origins.get(message.forwardedFrom) ?? message.forwardedFrom);
-    lines.push(
-      `[${clock}]${numberTag} ${context.speakers.get(message.id) ?? formatSpeakerIdentity(message)}${forwardTag}${formatCompactReplyTag(message.replyTo, context)}：${message.text}`
-    );
+    if (!first) rendered += "\n";
+    rendered +=
+      `[${clock}]${numberTag} ${context.speakers.get(message.id) ?? formatSpeakerIdentity(message)}${forwardTag}${formatCompactReplyTag(message.replyTo, context)}：${message.text}`;
+    first = false;
   }
-  return lines.join("\n");
+  return rendered;
 }
 
 /**

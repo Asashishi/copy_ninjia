@@ -143,7 +143,7 @@
 
 ## 兼容入口（barrel）约定
 
-大文件拆分成子模块后，原文件可以降级为无状态的薄兼容导出入口（如 `packages/consts/aiChat.ts` 对 `packages/consts/aiChat/`、`packages/infra/telegram/actions.ts` 对 `packages/infra/telegram/actions/`，以及验证文件领域的 `verificationFiles.ts`）。规则：
+大文件拆分成子模块后，原文件可以降级为无状态的薄兼容导出入口（如 `packages/infra/telegram/actions.ts` 对 `packages/infra/telegram/actions/`，以及验证文件领域的 `verificationFiles.ts`）。规则：
 
 - 兼容入口只服务旧 import 的渐进迁移；**新代码一律直接从领域子文件导入**。
 - 兼容入口不得重新持有状态、解析配置或引入 import 副作用。

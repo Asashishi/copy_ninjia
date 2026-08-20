@@ -9,7 +9,12 @@ import {
   resetAiChatReplyCache,
 } from "../../../packages/cache/workers/aiChat/replies";
 import { chatBuffers, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
-import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS, REPLY_ROUND_MAX_CONCURRENT, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat";
+import { VERBATIM_CONTEXT_MAX } from
+  "../../../packages/consts/aiChat/memory";
+import {
+  QUEUED_TRIGGER_SNIPPET_MAX_CHARS,
+  REPLY_ROUND_MAX_CONCURRENT,
+} from "../../../packages/consts/aiChat/rateLimit";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";

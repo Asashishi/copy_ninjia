@@ -29,7 +29,8 @@ import {
 import { collectDueGagSpeakNotices } from "../../../packages/commands/gag/counter";
 import { createGagTargetProfileUrl } from "../../../packages/commands/gag/identity";
 import type { GagSession } from "../../../packages/types/gag";
-import type { AdCandidateMessage, AdSampleContext } from "../../../packages/types/antiRaid";
+import type { AdCandidateMessage, AdSampleContext } from
+  "../../../packages/types/antiRaid/adDetect";
 import type { AdCandidateEntry } from "../../../packages/types/antiRaid/adDetect";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, messageFixture } from "./fixtures";
 import {
@@ -39,6 +40,7 @@ import {
 } from "./floodScenarios";
 import { createLuckReceiptFastPathScenario } from "./luckReceiptScenario";
 import {
+  aiMediaDirectTriggerScenario,
   incomingMessageSpineScenario,
   selfSentEmptyScenario,
 } from "./messageSpineScenarios";
@@ -512,6 +514,8 @@ export function createScenario(name: ScenarioName): Scenario {
       return selfSentEmptyScenario();
     case "incoming-message-spine":
       return incomingMessageSpineScenario();
+    case "ai-media-direct-trigger":
+      return aiMediaDirectTriggerScenario();
     case "flood-window-hit":
       return floodWindowHitScenario();
     case "flood-window-growth":

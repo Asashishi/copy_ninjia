@@ -7,43 +7,16 @@
  * 回一句——真人在等回应，「已读不回」比回一句「太长了没听」更糟。
  */
 
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { aiRecordMediaMessageFixture, aiRecordMessageFixture } from "../helpers/aiMemoryFixtures";
-
-const recordChatMessageMock = mock((..._args: unknown[]): void => {});
-const recordChatMediaMock = mock((..._args: unknown[]): void => {});
-const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
-
-mock.module("../../packages/infra/telegram", () => ({
-  copyMessage: async (): Promise<undefined> => undefined,
-  sendMessage: async (): Promise<undefined> => undefined,
-  bot: { api: {} },
-  logApiError: () => {},
-}));
-mock.module("../../packages/infra/storage/stateStore", () => ({
-  clearChatStateField: () => false,
-  getActiveCopyIn: () => null,
-  getActiveProxySendTarget: () => undefined,
-  getChatState: () => ({ isAIChatEnabled: true, quietUntil: Date.now() + 60_000 }),
-  getOrCreateChatState: () => ({}),
-  persistChatState: async (): Promise<void> => {},
-  saveChatStateInBackground: () => {},
-}));
-mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
-mock.module("../../packages/users/senderIdentity", () => ({
-  cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id,
-}));
-mock.module("../../packages/aiChat", () => ({
-  recordChatMessage: recordChatMessageMock,
-  recordChatMedia: recordChatMediaMock,
-  generateAndSendReply: generateAndSendReplyMock,
-}));
-mock.module("../../packages/infra/selfSentTracker", () => ({
-  isSelfSent: () => false,
-  isBotOwnMessage: () => false,
-  needsBotOwnMessageWait: () => false,
-  waitForBotOwnMessage: async (): Promise<boolean> => false,
-}));
+// 六个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
+// 必须在下面的 await import 之前登记。
+import {
+  generateAndSendReplyMock,
+  recordChatMediaMock,
+  recordChatMessageMock,
+  resetAutoMessageMocks,
+} from "../helpers/autoMessageMocks";
 
 const { handleIncomingMessage } = await import("../../packages/auto/message");
 const { clearAiReplyActivity } = await import("../../packages/auto/message/aiReplyActivity");
@@ -81,9 +54,7 @@ function voiceMessage(voice: Record<string, unknown>, replyToBot: boolean = true
 
 describe("群聊语音消息", () => {
   beforeEach(() => {
-    recordChatMessageMock.mockClear();
-    recordChatMediaMock.mockClear();
-    generateAndSendReplyMock.mockClear();
+    resetAutoMessageMocks();
     clearUserReplyTriggerTimes();
     clearAiReplyActivity();
   });
@@ -108,7 +79,7 @@ describe("群聊语音消息", () => {
       voiceMime: "audio/ogg",
       voiceDurationSeconds: 12,
       stickerFallbackText: undefined,
-      directTrigger: { reason: "reply" },
+      directTriggerReason: "reply",
     });
     // 语音不作为生图参考素材，但直接触发仍开放重媒体工具资格。
     expect(payload.imageGenerationRequested).toBe(true);

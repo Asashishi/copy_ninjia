@@ -35,7 +35,7 @@ const {
   FLUSH_MAX_ENTRIES,
   LUCK_APPEND_STALL_ALERT_FAILURES,
   LUCK_DEFERRED_DRAW_MAX,
-} = await import("../../../packages/consts/diskIO");
+} = await import("../../../packages/consts/diskIO/appendOnly");
 const { DAILY_LUCK_CACHE_MAX } = await import("../../../packages/consts/luckChallenge");
 import type { LuckAppendStalledReply, LuckDrawDiskMessage } from "../../../packages/types";
 

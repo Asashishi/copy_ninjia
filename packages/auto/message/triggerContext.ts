@@ -1,15 +1,14 @@
 import type { Message } from "@grammyjs/types";
 import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference } from "./facts";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
-import type {
-  DirectTrigger,
-  MentionFacts,
-  MessageTriggerContext,
-} from "../../types/auto";
+import type { MentionFacts, MessageTriggerContext } from "../../types/auto";
+import type { AiDirectTriggerReason } from "../../types/aiChat/protocol";
 
 export interface CreateMessageTriggerContextParams {
   message: Message;
   bot: AiBotInfo;
+  /** 本条消息统一的「现在」；见 types/auto.ts 的 MessageTriggerContext.now。 */
+  now: number;
   isQuiet: boolean;
   aiReplyProbability: number;
 }
@@ -18,6 +17,7 @@ export interface CreateMessageTriggerContextParams {
 export function createMessageTriggerContext({
   message,
   bot,
+  now,
   isQuiet,
   aiReplyProbability,
 }: CreateMessageTriggerContextParams): MessageTriggerContext {
@@ -25,15 +25,16 @@ export function createMessageTriggerContext({
   const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === bot.id;
   // 两个提及事实一次遍历解析（见 facts.ts 的 resolveMentionFacts）。
   const mentionFacts: MentionFacts = resolveMentionFacts(message, bot.id, bot.username);
-  const directTrigger: DirectTrigger | undefined = isReplyToBot
-    ? { reason: "reply" }
+  const directTriggerReason: AiDirectTriggerReason | undefined = isReplyToBot
+    ? "reply"
     : mentionFacts.isMentioned
-    ? { reason: "mention" }
+    ? "mention"
     : undefined;
 
   return {
     message,
     chatId: message.chat.id,
+    now,
     bot,
     isQuiet,
     aiReplyProbability,
@@ -43,6 +44,6 @@ export function createMessageTriggerContext({
     isMentioned: mentionFacts.isMentioned,
     hasOtherMention: mentionFacts.hasOtherMention,
     repliesToSelf: isReplyToSelf(message),
-    directTrigger,
+    directTriggerReason,
   };
 }

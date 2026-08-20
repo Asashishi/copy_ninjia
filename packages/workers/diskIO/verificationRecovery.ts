@@ -19,7 +19,8 @@ import {
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { invalidInput } from "../../libs/inputValidation";
 import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
-import type { VerificationSnapshot } from "../../types/antiRaid";
+import type { VerificationSnapshot } from
+  "../../types/antiRaid/verification";
 import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
 import { openDayFile, openValidatedAppendOnlyFile } from "./appendOnlyDayFile";
 import {

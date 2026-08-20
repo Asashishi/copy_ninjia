@@ -13,7 +13,7 @@ import { formatUserLabel } from "../users/userLabel";
 import { visibleSenderChat } from "../users/visibleSender";
 import { getChatState } from "../infra/storage/stateStore";
 import { canBypassFloodControl } from "./memberFacts";
-import type { FloodCandidateMessage } from "../types/antiRaid";
+import type { FloodCandidateMessage } from "../types/antiRaid/protocol";
 import type { Message, User } from "@grammyjs/types";
 
 /**

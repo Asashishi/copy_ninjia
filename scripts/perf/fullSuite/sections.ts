@@ -72,6 +72,7 @@ function childEnv(runtimeRoot: string): Readonly<Record<string, string>> {
 /** 生产热路径：真实业务函数，读数直接反映线上每条消息的成本。 */
 export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
   "incoming-message-spine",
+  "ai-media-direct-trigger",
   "sender-no-username",
   "sender-stable-username",
   "self-sent-empty",

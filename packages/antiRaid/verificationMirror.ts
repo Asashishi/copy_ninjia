@@ -14,10 +14,12 @@ import { postDiskIO } from "../infra/diskIO";
 import { signalBusinessWorkerFatal } from "../infra/workerSupervisor";
 import type {
   DeferredVerificationRecord,
-  VerificationDeleteEvent,
   VerificationSnapshot,
+} from "../types/antiRaid/verification";
+import type {
+  VerificationDeleteEvent,
   VerificationUpsertEvent,
-} from "../types/antiRaid";
+} from "../types/antiRaid/events";
 
 /**
  * 同代际的 revision 水位线；**旧代际的条目一律记 0**。

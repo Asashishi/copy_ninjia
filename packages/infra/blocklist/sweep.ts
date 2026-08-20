@@ -32,7 +32,8 @@ import {
   queuePendingBlockedRemovalsSnapshot,
   trackBlockedRemoval,
 } from "./outbox";
-import type { BlockedMembersRemovedEvent } from "../../types/antiRaid";
+import type { BlockedMembersRemovedEvent } from
+  "../../types/antiRaid/events";
 import type {
   BlocklistRemovalFailure,
   BlocklistSweepPageState,

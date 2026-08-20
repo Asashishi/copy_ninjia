@@ -8,7 +8,8 @@ import {
   openDayFile,
   serializeDayFileEntry,
 } from "../../../packages/workers/diskIO/appendOnlyDayFile";
-import { PERSISTED_FILE_MODE } from "../../../packages/consts/diskIO";
+import { PERSISTED_FILE_MODE } from
+  "../../../packages/consts/diskIO/common";
 import type { DayFileState } from "../../../packages/types";
 
 let dir: string;

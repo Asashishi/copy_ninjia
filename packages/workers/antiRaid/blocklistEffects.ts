@@ -36,7 +36,10 @@ import {
   BLOCKLIST_SWEEP_BATCH_SIZE,
 } from "../../consts/antiRaid/blocklist";
 import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
-import type { BlockedMembersRemovedEvent, RemoveBlockedMembersMessage } from "../../types/antiRaid";
+import type { BlockedMembersRemovedEvent } from
+  "../../types/antiRaid/events";
+import type { RemoveBlockedMembersMessage } from
+  "../../types/antiRaid/protocol";
 import type { RemoveBlockedMembersParams } from "../../types/blocklist";
 import { trackAntiRaidTask } from "./taskTracker";
 import { releaseAdDetectDedupKey } from "./adDetect/queue";

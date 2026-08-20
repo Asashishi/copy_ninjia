@@ -1,9 +1,10 @@
-import type { VerificationSnapshot } from "../../../types/antiRaid";
+import type { VerificationSnapshot } from
+  "../../../types/antiRaid/verification";
 import type { VerificationFileChange } from "../../../types/diskIO";
 import type { DayFileState } from "../../../types/diskIO/storage";
 
 /**
- * 待验证按日 append JSON 的落盘状态（packages/workers/diskIO/verificationFiles.ts）
+ * 待验证按日 append JSON 的落盘状态（packages/workers/diskIO/verificationWrites.ts）
  * 的内存状态：active 镜像、增量、文件游标及两个 timer。
  */
 

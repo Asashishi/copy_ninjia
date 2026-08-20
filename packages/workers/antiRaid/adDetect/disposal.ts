@@ -28,10 +28,11 @@ import {
   KICK_NOTICE_AUTO_DELETE_MS,
   TELEGRAM_DELETE_MESSAGES_BATCH_MAX,
 } from "../../../consts/telegram";
-import type { AdDetectedEvent, AdSampleMessage } from "../../../types/antiRaid";
 import type {
   AdCandidateEntry,
+  AdDetectedEvent,
   AdMessageBundle,
+  AdSampleMessage,
   AdVerdict,
 } from "../../../types/antiRaid/adDetect";
 import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";

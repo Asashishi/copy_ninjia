@@ -8,7 +8,7 @@ import {
 } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS } from "../consts/antiRaid/blocklist";
-import type { AntiRaidWorkerMessage } from "../types/antiRaid";
+import type { AntiRaidWorkerMessage } from "../types/antiRaid/protocol";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
 
 /** 两个有界补扫页是否包含同一组稳定顺序的主键。 */

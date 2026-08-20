@@ -26,7 +26,7 @@ const stickerMessage: AiRecordMediaMessage = {
   stickerFallbackText: "[贴纸：🙂，来自 pack]",
   voiceMime: undefined,
   voiceDurationSeconds: 0,
-  directTrigger: undefined,
+  directTriggerReason: undefined,
   username: undefined,
   replyTo: undefined,
   forwardedFrom: undefined,

@@ -68,11 +68,6 @@ export const TELEGRAM_CONFIG_PATH: string = join(CONFIG_ROOT, "telegram.json");
  * base_url，见 packages/config/agent.ts。
  */
 export const AGENT_CONFIG_PATH: string = join(CONFIG_ROOT, "agent.json");
-/** 一次性 SQLite 迁移读取的旧白名单路径；运行时不得访问。 */
-export const WHITELIST_CONFIG_PATH: string = join(CONFIG_ROOT, "whitelist.json");
-/** 一次性 SQLite 迁移读取的旧静态黑名单路径；运行时不得访问。 */
-export const BLOCKLIST_CONFIG_PATH: string = join(CONFIG_ROOT, "blocklist.json");
-
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 
@@ -109,19 +104,6 @@ export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
  * `/batch_kick` 查询和新入群事件再按需建立有界缓存。
  */
 export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
-/**
- * 一次性 SQLite 迁移读取并最终删除的旧黑名单目录；运行时不得访问。
- */
-export const BLOCKLIST_MEMORY_DIR: string = join(MEMORY_DIR, "blocklist");
-/**
- * 一次性迁移读取的旧动态黑名单文件；运行时权威源已经是 SQLite。
- */
-export const BLOCKLIST_FILE_PATH: string = join(BLOCKLIST_MEMORY_DIR, "blocklist.json");
-/**
- * 一次性迁移读取的旧待踢成员 outbox 文件；运行时权威源已经是 SQLite。
- */
-export const BLOCKLIST_REMOVAL_OUTBOX_PATH: string = join(BLOCKLIST_MEMORY_DIR, "removals.json");
-
 /**
  * 广告检测命中样本的旁路目录。与 memory/ 下其余子目录同级，但性质完全不同：
  * 它**不是运行时状态**，进程从不读它，启动恢复也不碰它——纯粹是给人看的、

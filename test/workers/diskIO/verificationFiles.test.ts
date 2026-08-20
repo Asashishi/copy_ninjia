@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   compactVerificationDay,
+  recoverVerificationDay,
+} from "../../../packages/workers/diskIO/verificationRecovery";
+import {
   flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
-  recoverVerificationDay,
-} from "../../../packages/workers/diskIO/verificationFiles";
+} from "../../../packages/workers/diskIO/verificationWrites";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
@@ -25,7 +27,7 @@ import type {
 import {
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_VERSION,
-} from "../../../packages/consts/diskIO";
+} from "../../../packages/consts/diskIO/verification";
 import { VERIFICATION_RECORD_CAPACITY } from "../../../packages/consts/antiRaid/verification";
 
 const DAY_ONE = "2026-07-19";

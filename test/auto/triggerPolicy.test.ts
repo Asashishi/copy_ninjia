@@ -8,10 +8,26 @@ import {
   USER_REPLY_TRIGGER_COOLDOWN_MS,
 } from "../../packages/consts/auto";
 import {
+  claimRandomMediaTrigger,
   clearUserReplyTriggerTimes,
   sweepUserReplyTriggerTimes,
   tryClaimUserReplyTrigger,
 } from "../../packages/auto/message/triggerPolicy";
+import type { MessageTriggerContext } from "../../packages/types/auto";
+
+/** 只带随机掷骰与冷却判定所需字段的最小上下文；其余字段本组用例不读。 */
+function triggerContextAt(now: number, chatId: number = -1001): MessageTriggerContext {
+  return {
+    chatId,
+    now,
+    isQuiet: false,
+    hasOtherMention: false,
+    repliesToSelf: false,
+    directTriggerReason: undefined,
+    // 概率取 1，让掷骰必中，把用例聚焦在冷却判定本身。
+    aiReplyProbability: 1,
+  } as unknown as MessageTriggerContext;
+}
 
 afterEach(clearUserReplyTriggerTimes);
 
@@ -67,5 +83,42 @@ describe("随机回复个人冷却", () => {
       )
     ).toBeTrue();
     expect(userReplyTriggerTimes.size).toBe(1);
+  });
+
+  /**
+   * 冷却必须按**本条消息的 now** 计时，而不是让被调方自己再读一次墙钟。
+   *
+   * 两个理由，缺一不可：语义上，同一条消息的活跃度入窗、安静期判定与这次冷却
+   * 认领必须落在同一时刻（见 auto/message/index.ts 的「本条消息统一的『现在』」）；
+   * 性能上，这台部署机的 clocksource 是 kvm-clock，实测在带真实工作集的函数里
+   * 多读一次墙钟约 3 µs（syscall 本身约 0.87 µs，其余是它对缓存的污染），
+   * 是这条判定其余部分的几十倍。
+   */
+  test("媒体随机掷骰的冷却按上下文的 now 计时，不读墙钟", () => {
+    const base: number = 1_767_225_600_000;
+
+    expect(claimRandomMediaTrigger(triggerContextAt(base), 7)).toEqual({ candidate: true, claimed: true });
+    expect(userReplyTriggerTimes.get("-1001_7")).toBe(base);
+
+    // 冷却未到期：即便墙钟早已走过，判定仍只认上下文里的 now。
+    expect(claimRandomMediaTrigger(triggerContextAt(base + USER_REPLY_TRIGGER_COOLDOWN_MS - 1), 7))
+      .toEqual({ candidate: true, claimed: false });
+    expect(userReplyTriggerTimes.get("-1001_7")).toBe(base);
+
+    // 恰好到期：重新认领，并把冷却起点推到这条消息的 now。
+    const renewed: number = base + USER_REPLY_TRIGGER_COOLDOWN_MS;
+    expect(claimRandomMediaTrigger(triggerContextAt(renewed), 7))
+      .toEqual({ candidate: true, claimed: true });
+    expect(userReplyTriggerTimes.get("-1001_7")).toBe(renewed);
+  });
+
+  test("掷骰没中时不占用冷却名额，也不落任何条目", () => {
+    const base: number = 1_767_225_600_000;
+    const context: MessageTriggerContext = triggerContextAt(base);
+    // 概率归零即必不中；candidate 为假时 claimed 必须跟着为假。
+    (context as { aiReplyProbability: number }).aiReplyProbability = 0;
+
+    expect(claimRandomMediaTrigger(context, 7)).toEqual({ candidate: false, claimed: false });
+    expect(userReplyTriggerTimes.size).toBe(0);
   });
 });

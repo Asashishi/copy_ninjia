@@ -1,8 +1,9 @@
 import type { Voice } from "@grammyjs/types";
-import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../aiChat";
+import { recordChatMedia } from "../../aiChat";
 import { VOICE_MAX_DOWNLOAD_BYTES, VOICE_MAX_DURATION_SECONDS } from "../../consts/aiChat/voice";
 import { resolveSpeaker } from "./facts";
-import { buildAiRecordMediaMessage, buildAiRecordMessage } from "./recordContext";
+import { buildAiRecordMediaMessage } from "./recordContext";
+import { replyToUnresolvableMedia } from "./mediaFallback";
 import type { MessageTriggerContext } from "../../types/auto";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
@@ -28,7 +29,7 @@ function isTranscribable(voice: Voice): boolean {
  * 「已读不回」比回一句「这条语音太长了没听」更糟。
  */
 export function handleVoiceMessage(context: MessageTriggerContext): boolean {
-  const { message, chatId, directTrigger }: MessageTriggerContext = context;
+  const { message, directTriggerReason }: MessageTriggerContext = context;
   const voice: Voice | undefined = message.voice;
   if (!voice) return false;
 
@@ -38,21 +39,11 @@ export function handleVoiceMessage(context: MessageTriggerContext): boolean {
     // 时长写进转录行：模型至少知道「对方发了条多长的语音」，而不是只看到一个
     // 没有任何信息量的 [语音]。
     const label: string = `[语音 ${voice.duration} 秒]`;
-    recordChatMessage(buildAiRecordMessage({
+    return replyToUnresolvableMedia({
       context,
       speaker,
       text: caption ? `${label} ${caption}` : label,
-    }));
-    if (!directTrigger) return false;
-    generateAndSendReply({
-      chatId,
-      triggerSenderId: speaker.id,
-      replyToMessageId: message.message_id,
-      imageGenerationRequested: true,
-      imageGenerationReference: undefined,
-      isRandomTrigger: false,
     });
-    return true;
   }
 
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger }: { candidate: boolean; claimed: boolean; } = claimRandomMediaTrigger(context, speaker.id);
@@ -70,11 +61,11 @@ export function handleVoiceMessage(context: MessageTriggerContext): boolean {
       commentOnResolve: claimedRandomTrigger,
       // 直接回复/@ 只开放重媒体工具资格，具体调不调由模型判断；语音不作为
       // 生图参考素材（imageGenerationReferenceFor 只认图片和贴纸）。
-      imageGenerationRequested: directTrigger !== undefined,
+      imageGenerationRequested: directTriggerReason !== undefined,
       stickerFallbackText: undefined,
       voiceMime: voice.mime_type,
       voiceDurationSeconds: voice.duration,
     },
   }));
-  return directTrigger !== undefined || commentOnResolveCandidate;
+  return directTriggerReason !== undefined || commentOnResolveCandidate;
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 
 let resolveChat!: (chat: { type: "group" | "supergroup" }) => void;
 const getChat = mock((): Promise<{ type: "group" | "supergroup" }> =>
@@ -11,7 +12,7 @@ mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: { getChat },
 }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { error: mock((..._args: unknown[]): void => {}) },
+  logger: loggerStub({ error: mock((..._args: unknown[]): void => {}) }),
 }));
 
 const chatKind = await import("../../../packages/workers/antiRaid/chatKind");

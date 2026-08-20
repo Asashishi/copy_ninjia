@@ -2,7 +2,8 @@ import { beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../../packages/consts/aiChat";
+import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from
+  "../../../packages/consts/aiChat/memory";
 
 // 与既有单测同样的手法:先把 AI_MEMORY_DIR 重定向到临时目录再 import,
 // 绝不能碰项目真实的 memory/ai/(线上 bot 正在用)。

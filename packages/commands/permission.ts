@@ -34,12 +34,35 @@ interface PermissionHelpMessage {
   entities: readonly MessageEntity[];
 }
 
-/** 把权限键与说明渲染为可复制的 JSON 代码块，实体偏移按 UTF-16 code unit 计算。 */
-function formatPermissionHelpMessage(): PermissionHelpMessage {
-  const prefix: string = PERMISSION_COMMAND_TEXTS.helpPrefix;
-  const permissionJson: string = WHITELIST_PERMISSION_HELP_JSON;
+/**
+ * 前缀 + JSON 代码块 + 可选后缀。
+ *
+ * 三段都用具名字段而不是位置参数：它们同为 string，位置写反不会报错，只会让
+ * 下面那对 offset/length 指到错误的区间——而那正是这次收拢要防的东西。
+ */
+export interface FormatJsonBlockMessageParams {
+  prefix: string;
+  /** 要渲染成 `pre` 代码块的那一段；offset/length 按它算。 */
+  permissionJson: string;
+  /** 代码块之后追加的说明；query 回执不需要，传空串。 */
+  suffix: string;
+}
+
+/**
+ * 前缀 + JSON 代码块的统一渲染。
+ *
+ * 两个调用点（help 与 query）此前各写一份同样的 `entities` 字面量，而那里最容易
+ * 出错的恰好是 offset/length 这对数：它们按 **UTF-16 code unit** 计，写死成别的
+ * 长度不会报错，只会让 Telegram 把代码块画歪或整段吞掉。收在一处之后，两条回执
+ * 的实体只有一个真相来源。
+ */
+function formatJsonBlockMessage({
+  prefix,
+  permissionJson,
+  suffix,
+}: FormatJsonBlockMessageParams): PermissionHelpMessage {
   return {
-    text: `${prefix}${permissionJson}\n${PERMISSION_COMMAND_TEXTS.helpSuffix}`,
+    text: `${prefix}${permissionJson}${suffix}`,
     entities: [
       {
         type: "pre",
@@ -51,24 +74,25 @@ function formatPermissionHelpMessage(): PermissionHelpMessage {
   };
 }
 
+/** 把权限键与说明渲染为可复制的 JSON 代码块，实体偏移按 UTF-16 code unit 计算。 */
+function formatPermissionHelpMessage(): PermissionHelpMessage {
+  return formatJsonBlockMessage({
+    prefix: PERMISSION_COMMAND_TEXTS.helpPrefix,
+    permissionJson: WHITELIST_PERMISSION_HELP_JSON,
+    suffix: `\n${PERMISSION_COMMAND_TEXTS.helpSuffix}`,
+  });
+}
+
 /** 把目标身份的完整权限渲染为 JSON 代码块；查询回执仍按普通群提示自动删除。 */
 function formatPermissionQueryMessage(
   permissions: Readonly<WhitelistPermissions>,
   targetLabel: string
 ): PermissionHelpMessage {
-  const prefix: string = PERMISSION_COMMAND_TEXTS.queryPrefix(targetLabel);
-  const permissionJson: string = JSON.stringify(permissions, null, 2);
-  return {
-    text: `${prefix}${permissionJson}`,
-    entities: [
-      {
-        type: "pre",
-        offset: prefix.length,
-        length: permissionJson.length,
-        language: "json",
-      },
-    ],
-  };
+  return formatJsonBlockMessage({
+    prefix: PERMISSION_COMMAND_TEXTS.queryPrefix(targetLabel),
+    permissionJson: JSON.stringify(permissions, null, 2),
+    suffix: "",
+  });
 }
 
 /** 大小写不敏感地还原为配置中的规范权限键。 */

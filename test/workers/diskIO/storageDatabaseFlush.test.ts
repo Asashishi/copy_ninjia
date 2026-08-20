@@ -1,0 +1,173 @@
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
+import {
+  IDENTITY_WRITE_FLUSH_INTERVAL_MS,
+} from "../../../packages/consts/identityStorage";
+import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
+import { DEFAULT_WHITELIST_PERMISSIONS } from "../../../packages/consts/whitelist";
+import { encodeWhitelistEntryData } from
+  "../../../packages/database/codec/identity";
+import { clearStorageBusinessTables } from
+  "../../../packages/database/interact/admin";
+import {
+  closeStorageDatabase,
+  openStorageDatabase,
+} from "../../../packages/database/interact/connection";
+import {
+  latestRemovalSnapshotRevision,
+  pendingRemovalSnapshotRevision,
+  pendingWhitelistWrites,
+  resetStorageDatabaseCache,
+  storageDatabaseHandle,
+  storagePersistenceReplyHolder,
+  storageWriteFlushTimer,
+} from "../../../packages/cache/workers/diskIO/storageDatabase";
+import {
+  configureStoragePersistenceReply,
+  flushStorageDatabase,
+} from "../../../packages/workers/diskIO/storageDatabase/flush";
+import { hydrateStorageDatabase } from
+  "../../../packages/workers/diskIO/storageDatabase/hydration";
+import { handleIdentityPolicyWrite } from
+  "../../../packages/workers/diskIO/storageDatabase/identityPolicy";
+import { handlePendingRemovalSnapshot } from
+  "../../../packages/workers/diskIO/storageDatabase/pendingRemoval";
+import type {
+  IdentityPolicyWriteDiskMessage,
+  IdentityStoragePersistedReply,
+} from "../../../packages/types/diskIO";
+import type { WhitelistEntryData } from
+  "../../../packages/types/identityPolicy";
+import type { StorageDatabase } from
+  "../../../packages/types/storageDatabase";
+
+const META: Readonly<{ firstName: string; lastName: string; username: string }> = {
+  firstName: "本天才才不是雑魚喵~",
+  lastName: "",
+  username: "copy_ninjia_bot",
+};
+const acknowledgements: IdentityStoragePersistedReply[] = [];
+
+function reply(value: IdentityStoragePersistedReply): void {
+  acknowledgements.push(value);
+}
+
+function whitelistWrite(id: number, revision: number): IdentityPolicyWriteDiskMessage {
+  const value: WhitelistEntryData = {
+    permissions: DEFAULT_WHITELIST_PERMISSIONS,
+    meta: META,
+  };
+  return {
+    type: "identityPolicyWrite",
+    table: "whitelist",
+    id,
+    data: encodeWhitelistEntryData(value),
+    revision,
+  };
+}
+
+function resetDatabaseFixture(): void {
+  resetStorageDatabaseCache();
+  const database: StorageDatabase = openStorageDatabase({
+    path: IDENTITY_DATABASE_PATH,
+  });
+  clearStorageBusinessTables(database);
+  closeStorageDatabase(database);
+  hydrateStorageDatabase();
+}
+
+beforeEach((): void => {
+  acknowledgements.length = 0;
+  storagePersistenceReplyHolder.current = null;
+  resetDatabaseFixture();
+});
+
+afterEach((): void => {
+  resetStorageDatabaseCache();
+  storagePersistenceReplyHolder.current = null;
+  jest.useRealTimers();
+});
+
+describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
+  test("首条 dirty 只建一个 unref timer，ACK 通道恢复后原批只提交一次", (): void => {
+    jest.useFakeTimers();
+
+    handleIdentityPolicyWrite(whitelistWrite(7, 1), reply);
+    const firstTimer: ReturnType<typeof setTimeout> | null =
+      storageWriteFlushTimer.current;
+    expect(firstTimer).not.toBeNull();
+    expect(firstTimer?.hasRef()).toBeFalse();
+
+    handleIdentityPolicyWrite(whitelistWrite(8, 1), reply);
+    expect(storageWriteFlushTimer.current).toBe(firstTimer);
+
+    jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS);
+    const retryTimer: ReturnType<typeof setTimeout> | null =
+      storageWriteFlushTimer.current;
+    expect(retryTimer).not.toBeNull();
+    expect(retryTimer).not.toBe(firstTimer);
+    expect(retryTimer?.hasRef()).toBeFalse();
+    expect(pendingWhitelistWrites).toHaveLength(2);
+    expect(acknowledgements).toHaveLength(0);
+
+    configureStoragePersistenceReply(reply);
+    jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS);
+
+    expect(storageWriteFlushTimer.current).toBeNull();
+    expect(pendingWhitelistWrites).toHaveLength(0);
+    expect(acknowledgements).toEqual([{
+      type: "identityStoragePersisted",
+      writes: [
+        { table: "whitelist", id: 7, revision: 1 },
+        { table: "whitelist", id: 8, revision: 1 },
+      ],
+      chatStateWrites: [],
+    }]);
+  });
+
+  test("真实 SQLite 事务失败保留最终值并重排，连接恢复后再 durable ACK", (): void => {
+    handleIdentityPolicyWrite(whitelistWrite(9, 4), reply);
+    const failedDatabase: StorageDatabase | null = storageDatabaseHandle.current;
+    expect(failedDatabase).not.toBeNull();
+    closeStorageDatabase(failedDatabase!);
+
+    expect(flushStorageDatabase(reply)).toBeFalse();
+    expect(pendingWhitelistWrites.get(9)?.revision).toBe(4);
+    expect(storageWriteFlushTimer.current).not.toBeNull();
+    expect(acknowledgements).toHaveLength(0);
+
+    storageDatabaseHandle.current = openStorageDatabase({
+      path: IDENTITY_DATABASE_PATH,
+    });
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    expect(storageWriteFlushTimer.current).toBeNull();
+    expect(pendingWhitelistWrites).toHaveLength(0);
+    expect(acknowledgements).toEqual([{
+      type: "identityStoragePersisted",
+      writes: [{ table: "whitelist", id: 9, revision: 4 }],
+      chatStateWrites: [],
+    }]);
+
+    resetStorageDatabaseCache();
+    expect(hydrateStorageDatabase().whitelistEntryCount).toBe(1);
+  });
+
+  test("空 outbox 的新 revision 当场 ACK，后续 flush 不重复确认", (): void => {
+    handlePendingRemovalSnapshot({
+      type: "blocklistRemovals",
+      removals: [],
+      revision: 5,
+    }, reply);
+
+    expect(latestRemovalSnapshotRevision.current).toBe(5);
+    expect(pendingRemovalSnapshotRevision.current).toBeNull();
+    expect(acknowledgements).toEqual([{
+      type: "identityStoragePersisted",
+      writes: [],
+      chatStateWrites: [],
+      removalSnapshotRevision: 5,
+    }]);
+
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    expect(acknowledgements).toHaveLength(1);
+  });
+});

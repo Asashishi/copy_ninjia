@@ -36,7 +36,8 @@ import { TimestampDeque } from "../../libs/timestampDeque";
 import { botCanRestrictIn } from "./botPermissions";
 import { isChatAdmin } from "./adminCache";
 import { antiRaidDispatchSignal, trackAntiRaidTask } from "./taskTracker";
-import type { FloodCandidateMessage } from "../../types/antiRaid";
+import type { FloodCandidateMessage } from
+  "../../types/antiRaid/protocol";
 import type {
   FloodWindowCacheState,
   FloodWindowEntry,
