@@ -27,7 +27,7 @@ const SECTIONS: readonly BenchmarkSection[] = [
   {
     id: "cold-start",
     entries: [
-      { id: "module-graph", metrics: [stats("duration", "ms", 150)] },
+      { id: "module-graph", metrics: [stats("duration", "ms", 0.00042)] },
       { id: "ready-total", metrics: [stats("duration", "ms", 420.5)] },
     ],
   },
@@ -53,13 +53,37 @@ const SECTIONS: readonly BenchmarkSection[] = [
         metrics: [
           // 批量链路的两个吞吐口径刻意取不同量级：渲染层把它们混成一列时，
           // 这一行会立刻暴露（记录/s 是完整链路/s 的 IDENTITY_WRITE_BATCH_MAX_ENTRIES 倍）。
-          stats("commandThroughput", "ops/s", 44),
-          stats("recordThroughput", "records/s", 5_626),
+          stats("completedThroughput", "ops/s", 44),
+          stats("meanLatency", "ms", 0.42),
           stats("p50Latency", "ms", 25.4),
           stats("p95Latency", "ms", 40.8),
-          stats("p99Latency", "ms", 49.9),
           stats("maxLatency", "ms", 53.6),
+          stats("recordThroughput", "records/s", 5_626),
           stats("writtenBytes", "bytes", 20_971_520),
+        ],
+      },
+      {
+        id: "ad-detect-command",
+        metrics: [
+          stats("completedThroughput", "ops/s", 120),
+          stats("meanLatency", "ms", 8.8),
+          stats("p50Latency", "ms", 8.2),
+          stats("p95Latency", "ms", 13.1),
+          stats("maxLatency", "ms", 16.4),
+          stats("recordThroughput", "records/s", 120),
+          stats("writtenBytes", "bytes", 1_048_576),
+        ],
+      },
+      {
+        id: "ai-reply-command",
+        metrics: [
+          stats("completedThroughput", "ops/s", 400),
+          stats("meanLatency", "ms", 2.8),
+          stats("p50Latency", "ms", 2.5),
+          stats("p95Latency", "ms", 4.2),
+          stats("maxLatency", "ms", 5.1),
+          stats("recordThroughput", "records/s", 400),
+          stats("writtenBytes", "bytes", 0),
         ],
       },
     ],
@@ -118,33 +142,38 @@ describe("基准区块渲染", () => {
       expect(block.split("\n").filter(
         (line: string): boolean => line.startsWith("## ")
       ).length).toBe(5);
-      // 被测对象的 id 是标识符，任何语言里都必须原样出现。
-      expect(block).toContain("`incoming-message-spine`");
-      expect(block).toContain("`identity-policy-write`");
-      expect(block).toContain("`ready-total`");
+      // 人类动作名在前，稳定 id 仍原样保留给代码定位与精确复跑。
+      expect(block).toContain("incoming-message-spine</code>");
+      expect(block).toContain("identity-policy-write</code>");
+      expect(block).toContain("ready-total</code>");
     }
   });
 
   test("数字格式与千分位不随运行环境 locale 变化", () => {
     const block: string = renderBenchmarkBlock(REPORT, "zh");
-    expect(block).toContain("1,926.9 ns/op");
-    expect(block).toContain("518,958 ops/s");
-    expect(block).toContain("5,626 records/s");
+    expect(block).toContain("1.927 µs");
+    expect(block).toContain("420.0 ns");
+    expect(block).toContain("420.0 µs");
+    expect(block).toContain("518,958 次/s");
+    expect(block).toContain("5,626 条记录/s");
     expect(block).toContain("2.00 MiB");
     expect(block).toContain("420.5 ms");
     expect(block).toContain("±1.3%");
     expect(block).toContain("385,240,415");
   });
 
-  test("摘要行报完整链路口径，不报被批大小放大过的记录口径", () => {
-    // 曾经这里取的是 records/s。identity 一次提交 128 条，摘要行因此把全场
-    // **最慢**的一条链路报成了全场最快，而这一行会直接进三份 README。
+  test("摘要行直接报告两条用户可见流程的本地单轮耗时与完整吞吐", () => {
     const block: string = renderBenchmarkBlock(REPORT, "zh");
-    expect(block).toContain("`identity-policy-write` 44 条完整链路/s（落盘）");
-    expect(block).not.toContain("`identity-policy-write` 5,626");
+    expect(block).toContain(
+      "ai_chat：生成并发送 1 轮回复（不含网络与拟人停顿） 2.50 ms / 400 次/s"
+    );
+    expect(block).toContain(
+      "广告检测：完整判定并处置 1 条群消息（不含网络） 8.20 ms / 120 次/s"
+    );
+    expect(block).not.toContain("身份策略并收到落盘回执 5,626");
   });
 
-  test("摘要行给出三个关键读数，缺任何一个都拒绝渲染", () => {
+  test("摘要行给出本地启动、消息主干和两条完整流程，缺任何一个都拒绝渲染", () => {
     expect(renderBenchmarkBlock(REPORT, "zh")).toContain("3 轮取平均");
     expect((): string => renderBenchmarkBlock(
       { ...REPORT, sections: [SECTIONS[0]!] },

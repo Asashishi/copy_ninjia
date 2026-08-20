@@ -11,7 +11,9 @@ import {
   README_BLOCK_START,
 } from "./constants";
 import { benchmarkCopy } from "./markdownCopy";
+import { benchmarkEntryCopy } from "./markdownEntryCopy";
 import type { BenchmarkCopy, Language } from "./markdownCopy";
+import type { BenchmarkEntryCopy } from "./markdownEntryCopy";
 import type {
   BenchmarkEntry,
   BenchmarkSection,
@@ -47,20 +49,34 @@ function formatBytes(value: number): string {
   return `${sign}${group(magnitude.toFixed(digits))} ${BYTE_UNITS[unit]}`;
 }
 
-function formatMilliseconds(value: number): string {
-  if (value < 1) return `${value.toFixed(3)} ms`;
-  if (value < 100) return `${value.toFixed(2)} ms`;
-  return `${group(value.toFixed(1))} ms`;
+/** 耗时统一选最接近人类尺度的单位，避免出现 `0.000 ms` 这类丢信息读数。 */
+function formatNanoseconds(value: number): string {
+  if (value < 1_000) return `${value.toFixed(1)} ns`;
+  if (value < 1_000_000) {
+    const microseconds: number = value / 1_000;
+    const digits: number = microseconds < 10 ? 3 : microseconds < 100 ? 2 : 1;
+    return `${group(microseconds.toFixed(digits))} µs`;
+  }
+  const milliseconds: number = value / 1_000_000;
+  if (milliseconds < 100) return `${milliseconds.toFixed(2)} ms`;
+  return `${group(milliseconds.toFixed(1))} ms`;
 }
 
-function formatMetric(metric: MetricStats): string {
+function formatMilliseconds(value: number): string {
+  return formatNanoseconds(value * 1_000_000);
+}
+
+function formatMetric(
+  metric: MetricStats,
+  entryCopy: BenchmarkEntryCopy
+): string {
   switch (metric.unit) {
     case "ns/op":
-      return `${group(metric.mean.toFixed(1))} ns/op`;
+      return formatNanoseconds(metric.mean);
     case "ops/s":
-      return `${formatCount(metric.mean)} ops/s`;
+      return `${formatCount(metric.mean)} ${entryCopy.operationsPerSecond}`;
     case "records/s":
-      return `${formatCount(metric.mean)} records/s`;
+      return `${formatCount(metric.mean)} ${entryCopy.recordsPerSecond}`;
     case "ms":
       return formatMilliseconds(metric.mean);
     case "bytes":
@@ -97,7 +113,8 @@ function metricHeader(metric: MetricStats, copy: BenchmarkCopy): string {
  */
 function renderSection(
   section: BenchmarkSection,
-  copy: BenchmarkCopy
+  copy: BenchmarkCopy,
+  entryCopy: BenchmarkEntryCopy
 ): readonly string[] {
   const first: BenchmarkEntry | undefined = section.entries[0];
   if (first === undefined) {
@@ -120,7 +137,8 @@ function renderSection(
         `Benchmark section ${section.id} mixes different metric sets.`
       );
     }
-    const cells: string[] = [`\`${entry.id}\``];
+    const label: string = entryCopy.labels[entry.id] ?? entry.id;
+    const cells: string[] = [`${label}<br><code>${entry.id}</code>`];
     for (let index: number = 0; index < entry.metrics.length; index += 1) {
       const metric: MetricStats = entry.metrics[index]!;
       if (metric.metric !== first.metrics[index]!.metric) {
@@ -128,7 +146,7 @@ function renderSection(
           `Benchmark section ${section.id} mixes different metric sets.`
         );
       }
-      cells.push(formatMetric(metric));
+      cells.push(formatMetric(metric, entryCopy));
     }
     cells.push(formatVariation(entry.metrics[0]!));
     lines.push(tableRow(cells));
@@ -226,7 +244,8 @@ function findMetric(
 
 function renderSummaryLine(
   report: FullSuiteReport,
-  copy: BenchmarkCopy
+  copy: BenchmarkCopy,
+  entryCopy: BenchmarkEntryCopy
 ): string {
   const ready: MetricStats = findMetric(report, {
     sectionId: "cold-start",
@@ -238,17 +257,36 @@ function renderSummaryLine(
     entryId: "incoming-message-spine",
     metricName: "medianLatency",
   });
-  const identity: MetricStats = findMetric(report, {
+  const aiLatency: MetricStats = findMetric(report, {
     sectionId: "chain",
-    entryId: "identity-policy-write",
-    metricName: "commandThroughput",
+    entryId: "ai-reply-command",
+    metricName: "p50Latency",
+  });
+  const aiThroughput: MetricStats = findMetric(report, {
+    sectionId: "chain",
+    entryId: "ai-reply-command",
+    metricName: "completedThroughput",
+  });
+  const adLatency: MetricStats = findMetric(report, {
+    sectionId: "chain",
+    entryId: "ad-detect-command",
+    metricName: "p50Latency",
+  });
+  const adThroughput: MetricStats = findMetric(report, {
+    sectionId: "chain",
+    entryId: "ad-detect-command",
+    metricName: "completedThroughput",
   });
   return `**${copy.summaryPrefix}** · Bun ${report.environment.bunVersion} · ` +
     `${copy.summaryRounds.replace("{n}", formatCount(report.rounds))} · ` +
     `${report.generatedAt} · ` +
-    `\`ready-total\` ${formatMilliseconds(ready.mean)} · ` +
-    `\`incoming-message-spine\` ${group(spine.mean.toFixed(1))} ns/op · ` +
-    `\`identity-policy-write\` ${formatCount(identity.mean)} ${copy.durableOpsPerSecond}`;
+    `${entryCopy.labels["ready-total"] ?? "ready-total"} ${formatMetric(ready, entryCopy)} · ` +
+    `${entryCopy.labels["incoming-message-spine"] ?? "incoming-message-spine"} ` +
+    `${formatMetric(spine, entryCopy)} · ` +
+    `${entryCopy.labels["ai-reply-command"] ?? "ai-reply-command"} ` +
+    `${formatMetric(aiLatency, entryCopy)} / ${formatMetric(aiThroughput, entryCopy)} · ` +
+    `${entryCopy.labels["ad-detect-command"] ?? "ad-detect-command"} ` +
+    `${formatMetric(adLatency, entryCopy)} / ${formatMetric(adThroughput, entryCopy)}`;
 }
 
 function renderColdStartCaption(
@@ -274,16 +312,17 @@ export function renderBenchmarkBlock(
   language: Language
 ): string {
   const copy: BenchmarkCopy = benchmarkCopy(language);
+  const entryCopy: BenchmarkEntryCopy = benchmarkEntryCopy(language);
   const lines: string[] = [
     README_BLOCK_START,
     "",
-    renderSummaryLine(report, copy),
+    renderSummaryLine(report, copy, entryCopy),
     "",
     ...renderEnvironment(report, copy),
     ...renderTotals(report.totals, copy),
   ];
   for (const section of report.sections) {
-    lines.push(...renderSection(section, copy));
+    lines.push(...renderSection(section, copy, entryCopy));
     if (section.id === "cold-start") {
       lines.push(renderColdStartCaption(report, copy), "");
     }

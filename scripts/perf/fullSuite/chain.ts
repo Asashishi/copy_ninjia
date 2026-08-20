@@ -1,18 +1,20 @@
 /**
- * 链路子进程：逐次量「主线程发起 -> Disk I/O Worker -> 落盘 durable -> 回执」
- * 的端到端耗时。
+ * 完整流程子进程：逐次量生产入口到该动作完成点的本地端到端耗时。
  *
  * 与热路径分区的分工要说清楚：那边量的是纯 CPU 叶子和编排主干，这里量的是
- * **一条业务事实真正写进硬盘要多久**——包含 Worker 消息往返、SQLite 事务、
- * 追加写与 fsync。两组数不可互相换算，也不该放进同一张表比较。
+ * 五条落盘动作回答**一条业务事实真正写进硬盘要多久**，包含 Worker 消息往返、
+ * SQLite 事务、追加写与 fsync；两条命令流程回答一次群消息在排除网络后需要多少
+ * 本地处理。两组数的完成点由文档行名明确说明，不能互相换算。
  *
  * 每条链路各起一个子进程：同一个进程里连着跑，前一条链路留下的页缓存温度、
  * Worker 侧文件句柄和 JIT 反馈都会带进下一条，读数会系统性偏乐观。
  *
- * `ad-detect-command` 与前几条的粒度不同：它量的是**一条群消息走完整条广告命令**
- * ——入队、成串、管理员豁免、模型判定、删除与封禁、黑名单落盘、移除 outbox 落盘、
- * 处置排空。模型与 Telegram 两处出站都由 outboundGuard 的罐头就地应答，因此读数
- * 里没有网络往返，只有进程内工作与磁盘；这正是「除网络延迟外都要测」的口径。
+ * `ad-detect-command` 与 `ai-reply-command` 量的是**一条群消息走完用户可见流程**。
+ * 前者覆盖入队、成串、管理员豁免、模型判定、删除与封禁、黑名单落盘、移除
+ * outbox 落盘、处置排空；后者覆盖上下文记录、提示词构造、模型生成与消息发送，
+ * 并扣除不占 CPU 的拟人停顿。模型与 Telegram 两处出站都由罐头就地应答，因此
+ * 读数里没有网络往返，只有进程内工作与磁盘；这正是「除网络延迟外都要测」的
+ * 口径。
  */
 
 import {
@@ -549,7 +551,6 @@ async function measureChain(definition: ChainDefinition): Promise<ChainRound> {
     meanLatencyMs: latencySum / definition.operations,
     p50LatencyMs: percentile(sorted, 50),
     p95LatencyMs: percentile(sorted, 95),
-    p99LatencyMs: percentile(sorted, 99),
     maxLatencyMs: sorted[sorted.length - 1]!,
     io: diffProcessIo(ioBefore, io),
     peakRssBytes: Math.max(

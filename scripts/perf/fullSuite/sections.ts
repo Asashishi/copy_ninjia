@@ -111,7 +111,7 @@ export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "bounded-rolling-buffer",
 ];
 
-/** 五条链路的固定出数顺序。 */
+/** 七条完整生产动作的固定出数顺序：五条落盘动作与两条用户可见流程。 */
 export const CHAIN_NAMES: readonly ChainName[] = [
   "join-log-append",
   "identity-policy-write",
@@ -363,14 +363,14 @@ export async function runStorageSection(
 
 const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   {
-    metric: "commandThroughput",
+    metric: "completedThroughput",
     unit: "ops/s",
     select: (round: ChainRound): number => round.operationThroughputPerSecond,
   },
   {
-    metric: "recordThroughput",
-    unit: "records/s",
-    select: (round: ChainRound): number => round.throughputPerSecond,
+    metric: "meanLatency",
+    unit: "ms",
+    select: (round: ChainRound): number => round.meanLatencyMs,
   },
   {
     metric: "p50Latency",
@@ -383,14 +383,14 @@ const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
     select: (round: ChainRound): number => round.p95LatencyMs,
   },
   {
-    metric: "p99Latency",
-    unit: "ms",
-    select: (round: ChainRound): number => round.p99LatencyMs,
-  },
-  {
     metric: "maxLatency",
     unit: "ms",
     select: (round: ChainRound): number => round.maxLatencyMs,
+  },
+  {
+    metric: "recordThroughput",
+    unit: "records/s",
+    select: (round: ChainRound): number => round.throughputPerSecond,
   },
   {
     metric: "writtenBytes",
@@ -399,7 +399,7 @@ const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   },
 ];
 
-/** 链路分区：五条真实 durable 链路的端到端延迟分位数与吞吐。 */
+/** 完整流程分区：五条 durable 动作与两条本地命令流程的单次耗时及吞吐。 */
 export async function runChainSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {

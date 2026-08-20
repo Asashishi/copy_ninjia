@@ -66,7 +66,7 @@ export interface ColdStartRound {
   readonly peakRssBytes: number;
 }
 
-/** 五条真实落盘链路；每条都由主线程生产入口驱动真实 Disk I/O Worker。 */
+/** 五条真实落盘动作与两条用户可见本地流程；全部从生产入口驱动。 */
 export type ChainName =
   | "join-log-append"
   | "identity-policy-write"
@@ -87,11 +87,11 @@ export interface ChainRound {
   readonly recordsPerOperation: number;
   readonly elapsedMs: number;
   /**
-   * 完整链路吞吐（ops/s）：每秒能把多少条命令送到落盘 durable 回执。
+   * 完整处理吞吐（ops/s）：每秒能从生产入口跑完多少次该动作。
    *
-   * 这是链路表唯一可以跨行比较的吞吐口径。批量链路的 `throughputPerSecond`
-   * 按记录折算，天然是它的 recordsPerOperation 倍，两者放在一起比会得出反的
-   * 结论——identity 一次提交 128 条，按记录看是全场最快，按命令看是全场最慢。
+   * 五条落盘动作的终点是 durable 回执；广告检测与 AI 回复的终点分别是处置
+   * 排空与消息发送完成。批量动作的 `throughputPerSecond` 按记录折算，天然是它
+   * 的 recordsPerOperation 倍，不能替代这一口径比较一次完整动作的成本。
    */
   readonly operationThroughputPerSecond: number;
   /** 业务记录吞吐（records/s），已按 recordsPerOperation 折算。 */
@@ -99,7 +99,6 @@ export interface ChainRound {
   readonly meanLatencyMs: number;
   readonly p50LatencyMs: number;
   readonly p95LatencyMs: number;
-  readonly p99LatencyMs: number;
   readonly maxLatencyMs: number;
   readonly io: ProcessIoDelta;
   readonly peakRssBytes: number;

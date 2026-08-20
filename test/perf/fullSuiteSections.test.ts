@@ -1,14 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { HOT_PATH_PROFILE_SCENARIOS } from "../../packages/consts/performance";
 import {
+  CHAIN_NAMES,
   CONTAINER_ALGORITHM_SCENARIOS,
   PRODUCTION_HOT_PATH_SCENARIOS,
 } from "../../scripts/perf/fullSuite/sections";
+import { benchmarkEntryCopy } from "../../scripts/perf/fullSuite/markdownEntryCopy";
 import {
   STORAGE_OPERATIONS,
   parseStorageOperation,
 } from "../../scripts/perf/fullSuite/storageOperations";
 import type { ScenarioName } from "../../scripts/perf/hotPaths/types";
+import type { BenchmarkEntryCopy } from "../../scripts/perf/fullSuite/markdownEntryCopy";
+import type { Language } from "../../scripts/perf/fullSuite/markdownCopy";
+
+const COLD_START_AND_CAPACITY_IDS: readonly string[] = [
+  "module-graph",
+  "instance-lock",
+  "orphan-cleanup",
+  "state-load",
+  "deployment-inputs",
+  "disk-io-init",
+  "persisted-load",
+  "hydrate",
+  "ready-total",
+  "snapshot",
+  "capacity",
+];
 
 describe("全量基准的热路径场景划分", () => {
   test("生产场景与容器场景互不重叠，且各自没有重复", () => {
@@ -39,5 +57,21 @@ describe("存储分区的操作表", () => {
       .toThrow("Storage child expects one of");
     expect((): unknown => parseStorageOperation(undefined))
       .toThrow("Storage child expects one of");
+  });
+});
+
+describe("性能文档的人类可读名称", () => {
+  test("三种语言覆盖全量基准当前会输出的每一个稳定 id", () => {
+    const ids: readonly string[] = [
+      ...COLD_START_AND_CAPACITY_IDS,
+      ...PRODUCTION_HOT_PATH_SCENARIOS,
+      ...CONTAINER_ALGORITHM_SCENARIOS,
+      ...CHAIN_NAMES,
+      ...STORAGE_OPERATIONS,
+    ];
+    for (const language of ["zh", "en", "ja"] as const satisfies readonly Language[]) {
+      const copy: BenchmarkEntryCopy = benchmarkEntryCopy(language);
+      for (const id of ids) expect(copy.labels[id]?.length).toBeGreaterThan(0);
+    }
   });
 });
