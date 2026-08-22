@@ -36,6 +36,7 @@ mock.module("../../../packages/workers/antiRaid/verificationRuntime", () => ({
 mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({
   adoptLockdowns(): void { calls.push("adopt"); },
   handleLockdownPersisted(): void { calls.push("lockdownPersisted"); },
+  handleLockdownPersistFailed(): void { calls.push("lockdownPersistFailed"); },
   deactivateLockdownChat(): void { calls.push("deactivateLockdown"); },
   stopLockdownRuntime(): void { calls.push("stopLockdown"); },
 }));

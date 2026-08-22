@@ -154,7 +154,7 @@
 
 ## 🚀 快速开始
 
-需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.3+、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/ja_copy` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
+需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.4+、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/ja_copy` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
 
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git

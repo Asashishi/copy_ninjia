@@ -27,6 +27,8 @@ export interface LockdownEvent {
   intentId: number;
   originalPermissions: ChatPermissions;
   announced: boolean;
+  /** 封锁公告的消息 ID；未发出或已丢失时缺省，主线程不得回填旧值。 */
+  announcementMessageId?: number;
   expiresAt: number;
 }
 

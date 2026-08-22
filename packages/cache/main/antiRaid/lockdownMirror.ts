@@ -17,11 +17,10 @@ import type {
  * 主线程判断 lockdown 落盘回执是否仍对应当前意图的指纹。
  *
  * 只由 `phase` + `intentId` 组成——它们才是一次锁定意图的身份。刻意**不含**
- * `expiresAt`：私密模式生效期间，每一条越过阈值的入群都会让 Worker 重发一次
- * `lockdown` 事件，而那条事件的 `expiresAt` 是当场 `Date.now() + LOCKDOWN_MS`
- * 算出来的，每次都不一样（见 workers/antiRaid/lockdownRuntime.ts 的
- * publishLockdownState）。把它算进指纹，antiRaid/workerBridge.ts 的对账循环就永远等不到
- * 一次「存下去的还是当前这份」——每轮都要等待 SQLite 精确事务 ACK；入群变化
+ * `expiresAt`：`APPLYING`/`RESTORING` 阶段发布时它填的是当刻墙钟（见
+ * workers/antiRaid/lockdownRuntime.ts 的 publishLockdownState），同一份意图前后
+ * 两次发布就会不相等。把它算进指纹，antiRaid/workerBridge.ts 的对账循环就永远
+ * 等不到一次「存下去的还是当前这份」——每轮都要等待 SQLite 精确事务 ACK；发布
  * 比 ACK 更快时循环不终止，既写不下指纹也发不出 lockdownPersisted。
  * 倒计时本身照常落在 ChatState.lockdown.expiresAt 里，adopt 时按它换算剩余时长。
  */

@@ -56,6 +56,20 @@ function requiredBoolean(
   return field;
 }
 
+/** Telegram 消息 ID 恒为正整数；0 与负数不是「没有消息」，而是坏数据。 */
+function optionalMessageId(
+  value: Record<string, unknown>,
+  key: string,
+  { source, path }: DecodeFieldContext
+): number | undefined {
+  const field: unknown = value[key];
+  if (field === undefined) return undefined;
+  if (!Number.isSafeInteger(field) || (field as number) < 1) {
+    return invalidInput(source, `${path}.${key}`, "a positive safe integer message ID");
+  }
+  return field as number;
+}
+
 function optionalTimestamp(
   value: Record<string, unknown>,
   key: string,
@@ -142,6 +156,7 @@ function decodeLockdown(
     "intentId",
     "originalPermissions",
     "announced",
+    "announcementMessageId",
     "expiresAt",
   ];
   if (!isPlainRecord(value) || !hasOnlyKeys(value, keys)) {
@@ -167,8 +182,11 @@ function decodeLockdown(
     return invalidInput(source, `${path}.expiresAt`, "a required non-negative safe integer timestamp");
   }
   const announced: boolean = requiredBoolean(value, "announced", context);
-  if (phase === "applying" && announced) {
-    return invalidInput(source, `${path}.announced`, "false while phase is applying");
+  const announcementMessageId: number | undefined =
+    optionalMessageId(value, "announcementMessageId", context);
+  if (announcementMessageId !== undefined && !announced) {
+    // 消息 ID 只可能来自一次成功的发送，两者必须同时成立。
+    return invalidInput(source, `${path}.announcementMessageId`, "absent while announced is false");
   }
   return {
     phase,
@@ -179,8 +197,23 @@ function decodeLockdown(
       `${path}.originalPermissions`
     ),
     announced,
+    announcementMessageId,
     expiresAt,
   };
+}
+
+/**
+ * 主线程接收 Worker lockdown 事件时的入站校验。
+ *
+ * ChatState 是「先写内存、再落盘」的：一条落盘自检过不了的记录挂进内存，会让
+ * 该群此后**所有**状态写入（任何开关命令）一并抛错。落盘格式的守门必须提前
+ * 到入口，不能等到 encodeChatStateData 才发现。校验规则与磁盘解码同源。
+ */
+export function assertPersistableLockdown(
+  record: LockdownRecord,
+  source: string
+): void {
+  decodeLockdown(record, source, "$.lockdown");
 }
 
 /** 严格解码一条 `chat_states.data`；未知字段和空状态都拒绝。 */

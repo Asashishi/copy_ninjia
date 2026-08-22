@@ -13,6 +13,11 @@ export interface LockdownRecord {
   originalPermissions: ChatPermissions;
   /** 本轮封锁公告是否确实发送过；决定恢复后能否发送解锁公告。 */
   announced: boolean;
+  /**
+   * 封锁公告的消息 ID；解除封锁时按它删除群里那条公告。发送失败、或接管的是
+   * 更早进程留下的记录时缺省——删不掉就不删，绝不猜 ID。
+   */
+  announcementMessageId?: number;
   /** 应恢复原始权限的绝对时间戳（ms）；续期必须同步刷新。 */
   expiresAt: number;
 }

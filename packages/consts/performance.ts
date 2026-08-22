@@ -1,11 +1,11 @@
 import type { HotPathProfileScenarioName } from "../types/performance";
 
 /** 热路径 GC/RSS 门禁校准时使用的 Bun 版本；升级运行时必须重新测量阈值。 */
-export const HOT_PATH_PROFILE_BUN_VERSION: string = "1.3.14";
+export const HOT_PATH_PROFILE_BUN_VERSION: string = "1.4.0";
 
 /** 热路径 GC/RSS 门禁校准时使用的 Bun 构建 revision，防止同版本不同引擎混测。 */
 export const HOT_PATH_PROFILE_BUN_REVISION: string =
-  "0d9b296af33f2b851fcbf4df3e9ec89751734ba4";
+  "34cbb9a40b4bd1bd767d134a7065e66c2432a676";
 
 /** 热路径稳态采样的 JSC profiler 间隔；1 ms 与 Bun CPU profiler 默认粒度对齐。 */
 export const HOT_PATH_PROFILE_SAMPLE_INTERVAL_US: number = 1_000;

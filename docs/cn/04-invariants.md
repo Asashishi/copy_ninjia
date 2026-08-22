@@ -135,9 +135,21 @@
 
   把后者硬塞进单机形态，状态对象里会同时出现「我这一条」和「全线程一共多少」，两者生命周期完全不同，反而更难读。
 - **私密模式对群默认权限的每一次读改写都必须带 `use_independent_chat_permissions: true`**（加锁、到期恢复、迟到回执后的纠偏，以及主线程 onGiveUp 的紧急恢复，共用 `packages/infra/telegram/lockdownPermissions.ts` 与 `lockdownRuntime.ts` 两处边界）。这条路是把 `getChat().permissions` 原样读回来、只改 `can_invite_users` 再写回去，里面必然有为 true 的项；不带这个标志时 Bot API 会按蕴含规则把 `can_send_other_messages` 展开成 `can_send_messages`、`can_send_audios`、`can_send_documents`、`can_send_photos`、`can_send_videos`、`can_send_video_notes` 与 `can_send_voice_notes`（`can_send_polls` 蕴含 `can_send_messages`）。于是一个「只开表情/GIF、关掉图片视频文件」的群，每进出一次私密模式就被静默地把媒体权限全部打开，管理员那边没有任何提示——而这两处边界的契约恰恰是「其它默认权限一律以 Telegram 当前值为准」。
-- **私密模式的解锁公告只在真的公告过封锁时才发**（`LockdownState.announced`）。`RESTORING` 有两个入口：正常到期/手动解除（来自 `ACTIVE`，公告过）与 `setChatPermissions` 抛错后的补偿对账（`applyResult(!ok)`，从未公告过）。少了这面旗，后一条路恢复成功时会往群里发一句「限制解除」——而那个群从头到尾没收到过封锁公告，读起来是句没头没尾的话。
+- **封锁公告与占位同刻发出，本轮结束时定向删除**（`LockdownState.announced` 与 `announcementMessageId`）。`APPLYING` 占位一落地，新入群的人——包括被群友拉进来的——就被直接请出去，因此公告排在读取原权限之前：群里必须同时知道「为什么进不来人」。发送成功回投的 message ID 随记录落盘，本轮恢复完成时按它删除那条公告；本轮在公告落地前就结束（读原权限失败、期间被解除）时，迟到的发送结果由 `INACTIVE` 分支直接删掉那条消息，不留孤儿公告。删除失败只记日志，绝不阻塞恢复——解除的关键动作是把邀请权限还回去。
 
-  `announced` 由 `ACTIVE` 一路带到 `RESTORING`，也带过 `RESTORING ──再次超阈值──> ACTIVE` 这条回头路（那一步不重发封锁公告，因此不能在那里重置成 true）。它必须进入 `state.json`：持久化记录的形状是 `{phase,intentId,originalPermissions,announced,expiresAt}`。`ACTIVE(false)` 先落盘，群内封锁公告发送成功后才改成 true 并再次落盘；这样 Worker 或进程在两步间退出时，恢复路径不会把「准备发送」猜成「已经发送」。`applying` 阶段只能为 false；旧记录缺失该字段属于不兼容输入，必须在旧进程停止期间依据群内是否真实出现过封锁公告手工迁移，无法核实时保留现场并拒绝启动。`reportUnlock` 与公告是两件事，任何一条路都照发——主线程要据此清掉持久化记录。
+- **解锁公告只在真的公告过封锁时才发**（`announced`）。`RESTORING` 有两个入口：正常到期/手动解除，与 `setChatPermissions` 抛错后的补偿对账（`applyResult(!ok)`）。公告发送失败的那一轮 `announced` 仍是 false，恢复成功时就不能凭空往群里丢一句「限制解除」——那个群从头到尾没收到过封锁公告，读起来是句没头没尾的话。
+
+  公告记账属于「这一轮封锁」，沿所有阶段原样传递，包括 `RESTORING ──再次超阈值──> ACTIVE` 这条回头路（那一步不重发封锁公告，因此不能在那里重置）。`announced` 与 `announcementMessageId` 都必须进入 SQLite：持久化记录的形状是 `{phase,intentId,originalPermissions,announced,announcementMessageId?,expiresAt}`，`announcementMessageId` 只可能来自一次成功的发送，解码器拒绝「未公告却带 ID」。`applying` 阶段同样可以是「已公告」——公告先于 intent 形成。「公告在途」只活在内存里：跨进程接管时上一代那次发送的结局已无从追认，落盘说没公告过而锁定仍要继续时补发一次（`RESTORING` 除外，它正在收尾，补公告只会前言不搭后语）。`reportUnlock` 与公告是两件事，任何一条路都照发——主线程要据此清掉持久化记录。
+
+- **一轮私密模式的时长上限就是 `LOCKDOWN_MS`**。恢复时刻在进入 `ACTIVE` 那一刻定死，锁定期内再怎么灌人也不重排倒计时、不重新落盘；到点必须真的解除（权限还回去、公告删掉、发解除通知）并清空该群的入群滑窗，窗口若仍越过阈值，再由下一条入群开启新的一轮。反过来做（每次超阈值都把倒计时重排满）会让持续刷群把同一轮无限续期，群里表现为「过了 5 分钟也没解除」，而且不留任何错误日志；解除时不清滑窗同样致命——窗口里那 45+ 个时间戳正是刚被这一轮踢出去的人留下的，留着它们会让解除后的第一条入群立刻再锁一轮，上限于是名存实亡。
+
+- **`getChat().permissions` 必须在入口收敛成持久化 schema 认识的字段集**（`packages/libs/chatPermissions.ts` 的 `normalizeChatPermissions`）。字段集由 Telegram 单方面决定：平台新增一个权限键，原样存进 `ChatState.lockdown.originalPermissions` 就会在落盘自检（`database/codec/chatState.ts`）处变成致命错误，整轮私密模式卡死在 `APPLYING`——秒踢不停、倒计时压根没被安排过——并让该群此后每一次状态写入一起失败。严格解码器管的是我们自己的持久化格式，平台响应必须在入口收敛。收敛只作用于要存下来的那份快照（恢复时只读它的 `can_invite_users`）；写回 Telegram 的读改写必须继续传当场读回的原始对象，丢掉未知字段等于悄悄关掉群里一项新权限。
+
+- **lockdown intent 落不了盘时一律 fail-safe 打开**（`persistFailed`）。落盘是「崩溃后还有人能恢复这条限制」的唯一凭据，写不进去就不能继续锁着群：`APPLYING` 直接撤销占位（从未改过 Telegram），`ACTIVE`/`RECONCILING` 立刻发起恢复而不再等落盘回执，本就等着回执去恢复的 `RESTORING` 直接恢复。主线程同时清掉内存与磁盘上的那条记录——留着内存里那条，本群此后每一次状态写入都会带着它一起失败；留着磁盘上那条，下次进程启动会 adopt 出一个没人在恢复的私密模式，继续把新进群的人踢掉。作废的那一轮同时进入 `LOCKDOWN_RETRIGGER_COOLDOWN_MS` 冷却（读不到原权限的两条路同理）：这类失败对同一个群通常是系统性的，而触发判定挂在每一条越过阈值的入群上，不冷却就会每进一个人重来一次公告与 API 往返。冷却由状态机在真正作废的那条转移上发出，迟到或重复的失败通知撞上已经换代的状态时不得连累健康的一轮；冷却期内入群照常计数与逐个验证，只是不再进入私密模式。
+
+- **Worker 事件里的 lockdown 记录必须先过落盘自检再挂进内存 `ChatState`**（`assertPersistableLockdown`）。`ChatState` 是先写内存、再落盘的：挂上一条自检过不了的记录，等于让该群此后每一条状态写入（任何开关命令）都抛错，而那条错误会沿未捕获路径打崩整个 update 处理。守门必须提前到入口，不能等到 `encodeChatStateData` 才发现。
+
+- **同一份 applying intent 的 `commitApply` 只发一次**（`commitStarted`）。落盘回执可能对同一个 `phase + intentId` 到达多次——公告结果落盘、主线程对账循环重跑都会再发一次——而 `commitApply` 是一次真实的 `setChatPermissions`：结果虽然幂等，重复调用仍是白付的往返，也让「落盘回执后恰好 commit 一次」这条契约名存实亡。接管一份已确认落盘的 intent 时随立刻发出的 `commitApply` 一起置位。
 
 ### AI 闲聊运行时
 
@@ -215,7 +227,7 @@
 
 - **`/antiraid disable` 的语义是「从此不再触发」，同时收掉已经失效的交互入口**：`deactivateJoinGuard` 让 Worker 把该群每条验证记录喂给状态机的 `guardDisabled` 转移（`packages/states/verification/disable.ts`），一律回到 ABSENT，并删除机器人已经发出的两类验证提醒；其中按钮在开关关闭后已经失效，不能长期留在群里。入群公告与成员自己的消息不删，也不踢人（pending 的超时踢出与两个终态的处置一并作废）。已落盘的 `checkingInviter`/`expelling` 由 dispatcher 发出 tombstone，重启后不会被 adopt 重放回来接着踢人。已发出的踢人请求无法撤回，但迟到结算找不到原状态，不会再触发后续动作。只有管理员主动执行 `/antiraid disable` 或 `/init disable` 才走这条 Telegram 清理路径；失去管理员权限或离群时只做本地紧急拆除，不再调用无权执行的删除 API。
 
-  同一条消息还会对该群的私密模式发 `deactivate`：`APPLYING(preparing)` 直接撤销占位（还没碰过 Telegram），其余阶段进 RESTORING 走既有的落盘→恢复链把 `can_invite_users` 还回去——开关都关了，没人再会解开那把锁。入群滑动窗口一并丢弃，重新开启从零开始计数。
+  同一条消息还会对该群的私密模式发 `deactivate`：`APPLYING(preparing)` 直接撤销占位（还没碰过 Telegram），其余阶段进 RESTORING 走既有的落盘→恢复链把 `can_invite_users` 还回去——开关都关了，没人再会解开那把锁。群里那条封锁公告一并撤掉。入群滑动窗口与作废冷却也一起丢弃：重新开启从零开始计数，也不该背着上一次的冷却继续不设防。
 
   Worker 不可用时这条拆除会失败：开关照样 durable 地关掉（异常不得逃出 handler，否则扣住 offset 让 Telegram 重投同一条命令），回执必须如实说「没拆干净」。残留由 adopt 之后的 `purgeDisabledJoinGuards`（`packages/antiRaid/workerBridge.ts`）在每次进程启动与 Worker 重生时收掉；它**排在两类 adopt 之后**——先拆后 adopt 等于对着空状态发拆除，那个群的邀请权限就再也没人恢复了。
 
@@ -706,7 +718,7 @@
 
 ### 锁定镜像与终态标志
 
-- lockdown 落盘握手的指纹由 `phase`、`intentId` 与 `announced` 组成。前两项是一次锁定意图的稳定身份；`announced` 虽然每轮最多只从 false 变为 true 一次，却直接决定恢复后能否发解锁公告，因此落盘回执必须覆盖它。紧急权限恢复判断迟到结果是否仍属于当前意图时仍只比较 `phase` 与 `intentId`，公告落盘不应创建新的权限意图。两类指纹都不得含 `expiresAt`：私密模式生效期间，每条越过阈值的入群都会让 Worker 重发一次 `lockdown` 事件，而其中的 `expiresAt` 是当场按墙钟算出来的，每次都不一样；把它算进落盘指纹，主线程「存下去 → 再看一眼还是不是同一份」的对账循环永远等不到相等，每轮一次带 fsync 的 `state.json` + LKG 整文件重写，入群比写盘更快时循环不终止，既写不下指纹也发不出落盘回执。
+- lockdown 落盘握手的指纹由 `phase`、`intentId` 与 `announced` 组成。前两项是一次锁定意图的稳定身份；`announced` 虽然每轮最多只从 false 变为 true 一次，却直接决定恢复后能否发解锁公告，因此落盘回执必须覆盖它。紧急权限恢复判断迟到结果是否仍属于当前意图时仍只比较 `phase` 与 `intentId`，公告落盘不应创建新的权限意图。两类指纹都不得含 `expiresAt`：`APPLYING`/`RESTORING` 阶段发布时它填的是当刻墙钟，同一份意图前后两次发布（例如公告结果落盘）就会不相等；把它算进落盘指纹，主线程「存下去 → 再看一眼还是不是同一份」的对账循环永远等不到相等，每轮一次带 fsync 的整表写入，发布比写盘更快时循环不终止，既写不下指纹也发不出落盘回执。
 
   倒计时本身照常落在镜像的 `expiresAt` 里，adopt 时据此换算剩余时长。该对账循环另有轮次上限兜底；持久化在途期间到达的新事件会置位待续跑标记，用尽后当前任务只留下错误日志并让出微任务，随后自动以最新镜像开启新任务，不得依赖下一条外部 lockdown 事件补回最后一次唤醒。
 - 当前 lockdown 镜像要求 `phase` 与正数 `intentId`；待验证 active 记录要求 `phase` 与 `trackedMessageTimes`。reminder ID 与 `announcementMessageId` 仍是业务可选字段：缺失只表示提醒尚未成功落地、或这条记录压根没观测到入群公告，恢复后各走自己的补发/清理路径。其它缺失或不兼容字段必须在旧进程停止期间人工迁移，生产读取路径不保留兼容逻辑。

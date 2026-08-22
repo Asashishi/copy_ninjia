@@ -91,6 +91,8 @@ export interface AdoptableLockdown {
   intentId: number;
   originalPermissions: ChatPermissions;
   announced: boolean;
+  /** 上一代留下的封锁公告消息 ID；接管方解除时按它删除，缺省即不删。 */
+  announcementMessageId?: number;
   /** false 表示仅存在主线程 LRU 最终值，必须继续等待 SQLite 的落盘回执。 */
   persisted?: boolean;
   /** 距离应当恢复原始权限还剩多久。 */
@@ -153,6 +155,20 @@ export interface AdminsChangedMessage {
 /** 主线程收到 SQLite 精确事务 ACK 后，允许 Worker 执行对应权限副作用。 */
 export interface LockdownPersistedMessage {
   type: "lockdownPersisted";
+  chatId: number;
+  phase: LockdownPhase;
+  intentId: number;
+}
+
+/**
+ * 主线程 -> Worker：这一轮 lockdown 意图确定写不进 SQLite。
+ *
+ * 落盘是私密模式「跨进程可恢复」的唯一凭据。失去它以后再维持限制，就等于把
+ * 一条没人能恢复的限制留在群里；Worker 收到后按阶段 fail-safe 打开（见
+ * states/lockdown.ts 的 persistFailed 分支），并进入重触发冷却。
+ */
+export interface LockdownPersistFailedMessage {
+  type: "lockdownPersistFailed";
   chatId: number;
   phase: LockdownPhase;
   intentId: number;
@@ -224,6 +240,7 @@ export type AntiRaidWorkerMessage =
   | AdoptVerificationsMessage
   | VerificationPersistedMessage
   | LockdownPersistedMessage
+  | LockdownPersistFailedMessage
   | AdminsChangedMessage
   | RemoveBlockedMembersMessage
   | AdCandidateMessage

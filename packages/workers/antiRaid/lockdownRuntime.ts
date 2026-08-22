@@ -1,8 +1,12 @@
 import { logger } from "../../infra/logger";
 import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
-import { joinVerificationApi, sendMessage } from "../../infra/telegram";
+import { deleteMessage, joinVerificationApi, sendMessage } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
-import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
+import {
+  ANTI_RAID_PER_MINUTE_LIMIT,
+  JOIN_WINDOW_MS,
+  LOCKDOWN_MS,
+} from "../../consts/antiRaid/lockdown";
 import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
 import {
   joinWindows,
@@ -10,14 +14,25 @@ import {
   lockdownApiChains,
   lockdownApiRunner,
   lockdownEntries,
+  lockdownRetriggerCooldowns,
 } from "../../cache/workers/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
+import { normalizeChatPermissions } from "../../libs/chatPermissions";
 import type { LockdownEvent, UnlockEvent } from
   "../../types/antiRaid/events";
-import type { AdoptableLockdown, LockdownPersistedMessage } from
-  "../../types/antiRaid/protocol";
+import type {
+  AdoptableLockdown,
+  LockdownPersistedMessage,
+  LockdownPersistFailedMessage,
+} from "../../types/antiRaid/protocol";
 import { transitionLockdown } from "../../states/lockdown";
-import type { LockdownEffect, LockdownMachineEvent, LockdownTransition, LockdownState } from "../../types/states/lockdown";
+import type {
+  LockdownAbandonReason,
+  LockdownEffect,
+  LockdownMachineEvent,
+  LockdownState,
+  LockdownTransition,
+} from "../../types/states/lockdown";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 import type { JoinWindow, LockdownEntry } from "../../types/antiRaid/internal";
@@ -167,10 +182,21 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         reapplyLockdownRestriction(chatId);
         break;
       case "reportUnlock":
+        // 本轮已经处理过的入群不再为下一轮计数：窗口里那 45+ 个时间戳是刚被
+        // 这一轮踢出去的人留下的，留着它们会让解除后的第一条入群立刻再锁一
+        // 轮，「最长 LOCKDOWN_MS」就成了纸面上的数字。清零后必须重新在
+        // JOIN_WINDOW_MS 内攒够阈值才会再次进入私密模式。
+        clearJoinWindow(chatId);
         self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
         break;
       case "beginLockdownAnnouncement":
         beginLockdownAnnouncement(chatId, effect.joinCount);
+        break;
+      case "deleteLockdownAnnouncement":
+        deleteLockdownAnnouncement(chatId, effect.messageId);
+        break;
+      case "suppressRetrigger":
+        beginLockdownRetriggerCooldown(chatId, effect.reason, effect.durationMs);
         break;
       case "announceUnlock":
         void trackAntiRaidTask({
@@ -189,20 +215,20 @@ function publishLockdownState(chatId: number): void {
   const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
   if (entry === undefined) return;
   const state: LockdownState = entry.state;
+  // 公告记账在所有阶段都成立：公告与占位同刻发出，早于 intent 形成。
+  const announced: boolean = state.announced;
+  const announcementMessageId: number | undefined = state.announcementMessageId;
   let intentId: number;
   let originalPermissions: ChatPermissions;
-  let announced: boolean;
   let expiresAt: number;
   if (state.kind === "applying") {
     if (state.stage !== "prepared") return;
     intentId = state.intentId;
     originalPermissions = state.originalPermissions;
-    announced = false;
     expiresAt = Date.now();
   } else {
     intentId = state.intentId;
     originalPermissions = state.originalPermissions;
-    announced = state.announced;
     if (state.kind === "active" || state.kind === "reconciling") {
       if (entry.restoreAt === undefined) {
         throw new Error(`Lockdown ${state.kind} state for chat ${chatId} is missing its restore deadline.`);
@@ -219,8 +245,24 @@ function publishLockdownState(chatId: number): void {
     intentId,
     originalPermissions,
     announced,
+    announcementMessageId,
     expiresAt,
   } satisfies LockdownEvent);
+}
+
+/**
+ * 主线程报告这一轮意图写不进 SQLite：按阶段 fail-safe 打开，并进入重触发冷却。
+ *
+ * 落盘是「崩溃后还有人能恢复这条限制」的唯一凭据。写不进去还继续锁着群，就是
+ * 今天这条故障的形态：占位永远停在 APPLYING，秒踢不停、5 分钟的倒计时压根
+ * 没被安排过（见 states/lockdown.ts 的 persistFailed 分支）。
+ */
+export function handleLockdownPersistFailed(msg: LockdownPersistFailedMessage): void {
+  dispatchLockdown(msg.chatId, {
+    type: "persistFailed",
+    phase: msg.phase,
+    intentId: msg.intentId,
+  });
 }
 
 /** 主线程确认 write-ahead 阶段已落盘后，继续对应权限副作用。 */
@@ -234,12 +276,18 @@ export function handleLockdownPersisted(msg: LockdownPersistedMessage): void {
 
 /** 群被禁用/离开/撤管理员时，先持久化 restoring 再尝试恢复权限。 */
 export function deactivateLockdownChat(chatId: number): void {
-  const window: JoinWindow | undefined = joinWindows.get(chatId);
-  if (window !== undefined) {
-    clearTimeout(window.resetTimeout);
-    joinWindows.delete(chatId);
-  }
+  clearJoinWindow(chatId);
+  // 守卫都关了，重新开启时不该背着上一次的作废冷却继续不设防。
+  lockdownRetriggerCooldowns.delete(chatId);
   dispatchLockdown(chatId, { type: "deactivate", intentId: nextLockdownIntentId() });
+}
+
+/** 丢弃某群的入群滑窗与它的静默清理计时器；重新计数从零开始。 */
+function clearJoinWindow(chatId: number): void {
+  const window: JoinWindow | undefined = joinWindows.get(chatId);
+  if (window === undefined) return;
+  clearTimeout(window.resetTimeout);
+  joinWindows.delete(chatId);
 }
 
 /** 私密模式加锁/纠偏共用：在给定权限上关闭 can_invite_users，其余字段原样保留。 */
@@ -261,23 +309,89 @@ function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
 }
 
 /**
- * active(false) 已落盘后再发送封锁公告，并把实际发送结果回投状态机。
- * 与权限调用共用群级串行链，确保显式解除不会越过仍在途的公告后先行落地。
+ * 占位一落地就发封锁公告（新进群的人从这一刻起被直接请出去），并把发送结果
+ * 连同 message ID 回投状态机。与权限调用共用群级串行链，确保显式解除不会越过
+ * 仍在途的公告后先行落地。
+ *
+ * message ID 走 onSent 同步登记：停机 abort 可能恰好落在「远端已经收下、await
+ * 还没解开」的窗口里，返回值会连同 ID 一起丢失，本轮结束时就再也删不掉群里
+ * 那条公告（见 infra/telegram/actions/messages.ts 的 onSent 注释）。
  */
 function beginLockdownAnnouncement(chatId: number, joinCount?: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
-    let ok: boolean = false;
+    let messageId: number | undefined;
     try {
-      ok = (await sendMessage({
+      const sentMessageId: number | undefined = await sendMessage({
         chatId,
         text: lockdownAnnouncementText(joinCount),
         api: joinVerificationApi,
-      })) !== undefined;
+        onSent: (pendingMessageId: number): void => {
+          messageId = pendingMessageId;
+        },
+      });
+      if (sentMessageId !== undefined) messageId = sentMessageId;
     } catch (error: unknown) {
       logger.error(`Error sending anti-raid lockdown announcement for chat ${chatId}:`, error);
     }
-    dispatchLockdown(chatId, { type: "announcementResult", ok });
+    dispatchLockdown(chatId, {
+      type: "announcementResult",
+      ok: messageId !== undefined,
+      messageId,
+    });
   });
+}
+
+/**
+ * 本轮封锁结束，撤掉群里那条封锁公告。
+ *
+ * 删不掉只记日志：解除的关键动作是把邀请权限还回去，不能让一条留在群里的
+ * 旧公告把恢复链带崩（串行链要求 task 自身兜错，见 runLockdownApiCall）。
+ */
+function deleteLockdownAnnouncement(chatId: number, messageId: number): void {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
+    try {
+      await deleteMessage(chatId, messageId, joinVerificationApi);
+    } catch (error: unknown) {
+      logger.error(
+        `Error deleting the anti-raid lockdown announcement in chat ${chatId}:`,
+        error
+      );
+    }
+  });
+}
+
+/**
+ * 让这个群在冷却期内不再触发私密模式（由状态机的 suppressRetrigger 副作用驱动）。
+ *
+ * 触发判定挂在每一条越过阈值的入群上，而「状态写不进 SQLite」「原权限读不回来」
+ * 这类失败对同一个群通常是系统性的：不冷却就会每进一个人重来一次公告与 API
+ * 往返（见 consts/antiRaid/lockdown.ts）。写入时顺手清掉已过期条目——只有作废
+ * 路径才会走到这里，条目数与群数同阶，扫一遍远比给每个群挂一个 timer 便宜。
+ */
+function beginLockdownRetriggerCooldown(
+  chatId: number,
+  reason: LockdownAbandonReason,
+  durationMs: number
+): void {
+  const now: number = Date.now();
+  for (const [cooledChatId, until] of lockdownRetriggerCooldowns) {
+    if (now >= until) lockdownRetriggerCooldowns.delete(cooledChatId);
+  }
+  lockdownRetriggerCooldowns.set(chatId, now + durationMs);
+  logger.error(
+    `Anti-raid lockdown for chat ${chatId} was abandoned (${reason}); ` +
+    `suppressing new lockdown triggers there for ${durationMs / 60_000} minutes. ` +
+    "Per-member join verification is unaffected."
+  );
+}
+
+/** 冷却是否仍然生效；到期条目就地删除，避免长期占位。 */
+function lockdownRetriggerCoolingDown(chatId: number, now: number): boolean {
+  const until: number | undefined = lockdownRetriggerCooldowns.get(chatId);
+  if (until === undefined) return false;
+  if (now < until) return true;
+  lockdownRetriggerCooldowns.delete(chatId);
+  return false;
 }
 
 /**
@@ -297,7 +411,10 @@ function prepareApplyLockdown(chatId: number, joinCount: number): void {
         dispatchLockdown(chatId, { type: "applyPreparationFailed" });
         return;
       }
-      const originalPermissions: ChatPermissions = chat.permissions;
+      // 只留持久化 schema 认识的字段：平台新增一个权限键，原样存下去会在落盘
+      // 自检处变成致命错误（见 libs/chatPermissions.ts）。写回 Telegram 的那两
+      // 处仍用当场读回的原始对象，不能拿这份收敛过的快照去覆盖群权限。
+      const originalPermissions: ChatPermissions = normalizeChatPermissions(chat.permissions);
       dispatchLockdown(chatId, {
         type: "applyPrepared",
         originalPermissions,
@@ -415,7 +532,10 @@ export function recordJoin(chatId: number, now: number): void {
   trimSlidingWindow({ timestamps: window.timestamps, windowMs: JOIN_WINDOW_MS, now });
   window.timestamps.push(now);
 
-  if (window.timestamps.size > ANTI_RAID_PER_MINUTE_LIMIT) {
+  if (
+    window.timestamps.size > ANTI_RAID_PER_MINUTE_LIMIT &&
+    !lockdownRetriggerCoolingDown(chatId, now)
+  ) {
     dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount: window.timestamps.size });
   }
 }
@@ -454,18 +574,31 @@ export function stopLockdownRuntime(): void {
   joinWindows.clear();
   lockdownEntries.clear();
   lockdownApiChains.clear();
+  lockdownRetriggerCooldowns.clear();
   lastLockdownIntentId.current = 0;
 }
 
 /** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid/workerBridge.ts）。 */
 export function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
-  for (const { chatId, phase, intentId, originalPermissions, announced, remainingMs, persisted } of lockdowns) {
+  for (
+    const {
+      chatId,
+      phase,
+      intentId,
+      originalPermissions,
+      announced,
+      announcementMessageId,
+      remainingMs,
+      persisted,
+    } of lockdowns
+  ) {
     dispatchLockdown(chatId, {
       type: "adopt",
       phase,
       intentId,
       originalPermissions,
       announced,
+      announcementMessageId,
       remainingMs,
       persisted,
     });

@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type {
+  AntiRaidWorkerEvent,
   AntiRaidWorkerMessage,
 } from "../../../packages/types";
 
@@ -61,6 +62,95 @@ describe("Anti-Raid mirror persistence barriers", () => {
       { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
       { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
       { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
+    ]);
+  });
+
+  test("落盘自检过不了的 lockdown intent 绝不进内存，Worker 立刻 fail-safe 打开", async () => {
+    // Telegram 给 getChat().permissions 新增一个字段就是这个形态：严格解码器
+    // 不认识它。回归：这条记录曾先挂进内存 ChatState 再落盘，于是该群此后
+    // 每一条状态写入（任何开关命令）都跟着抛，/antiraid enable 直接打崩进程。
+    workerPosts.length = 0;
+    saveState.mockClear();
+    chatStates.delete(-2005);
+    const unknownPermissionField = {
+      type: "lockdown",
+      chatId: -2005,
+      phase: "applying",
+      intentId: 91,
+      originalPermissions: { can_invite_users: true, can_send_confetti: true },
+      announced: true,
+      expiresAt: 700_000,
+    } as unknown as AntiRaidWorkerEvent;
+
+    workerHooks.supervisorOptions!.onEvent(unknownPermissionField);
+    await Bun.sleep(0);
+
+    expect(chatStates.get(-2005)?.lockdown).toBeUndefined();
+    expect(saveState).not.toHaveBeenCalled();
+    expect(workerPosts.filter((message) => message.type === "lockdownPersistFailed")).toEqual([
+      { type: "lockdownPersistFailed", chatId: -2005, phase: "applying", intentId: 91 },
+    ]);
+  });
+
+  test("intent 落不了盘 → 清掉内存与磁盘记录，并让 Worker fail-safe 打开", async () => {
+    workerPosts.length = 0;
+    saveState.mockClear();
+    saveStateInBackground.mockClear();
+    saveState.mockImplementationOnce(async (): Promise<void> => {
+      throw new Error("disk is full");
+    });
+
+    workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2006,
+      phase: "active",
+      intentId: 92,
+      originalPermissions: { can_invite_users: true },
+      announced: true,
+      expiresAt: 800_000,
+    });
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(chatStates.get(-2006)?.lockdown).toBeUndefined();
+    expect(saveStateInBackground).toHaveBeenCalledWith("anti-raid lockdown persist failure");
+    expect(workerPosts.filter((message) => message.type === "lockdownPersistFailed")).toEqual([
+      { type: "lockdownPersistFailed", chatId: -2006, phase: "active", intentId: 92 },
+    ]);
+    // 没落定的 intent 绝不能发出「已落盘」回执。
+    expect(workerPosts.some((message) =>
+      message.type === "lockdownPersisted" && message.chatId === -2006
+    )).toBeFalse();
+  });
+
+  test("落盘失败期间意图已经换代 → 不动更新的那份，只把作废通知发回 Worker", async () => {
+    workerPosts.length = 0;
+    saveState.mockClear();
+    saveStateInBackground.mockClear();
+    // 写盘在途时新一轮把记录换掉了：这条失败属于上一份意图，不能拿它去清掉
+    // 现在这份——那会把一条仍然有效、且可能还锁着群的记录一起丢掉。
+    saveState.mockImplementationOnce(async (): Promise<void> => {
+      const state = chatStates.get(-2007);
+      if (state?.lockdown !== undefined) state.lockdown.intentId = 93;
+      throw new Error("disk is full");
+    });
+
+    workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2007,
+      phase: "active",
+      intentId: 92,
+      originalPermissions: { can_invite_users: true },
+      announced: true,
+      expiresAt: 800_000,
+    });
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(chatStates.get(-2007)?.lockdown?.intentId).toBe(93);
+    expect(saveStateInBackground).not.toHaveBeenCalled();
+    expect(workerPosts.filter((message) => message.type === "lockdownPersistFailed")).toEqual([
+      { type: "lockdownPersistFailed", chatId: -2007, phase: "active", intentId: 92 },
     ]);
   });
 

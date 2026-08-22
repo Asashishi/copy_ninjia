@@ -154,7 +154,7 @@ The full command table, permission semantics and per-command behaviour live in *
 
 ## 🚀 Quick Start
 
-You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.3+, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/ja_copy` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
+You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.4+, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/ja_copy` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
 
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git

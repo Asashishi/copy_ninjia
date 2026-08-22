@@ -18,12 +18,20 @@ import {
   linkedChannels,
   resetLinkedChannelCache,
 } from "../../../packages/cache/workers/antiRaid/linkedChannels";
-import { joinWindows, lockdownApiChains, lockdownEntries } from "../../../packages/cache/workers/antiRaid/lockdown";
+import {
+  joinWindows,
+  lockdownApiChains,
+  lockdownEntries,
+  lockdownRetriggerCooldowns,
+} from "../../../packages/cache/workers/antiRaid/lockdown";
+import { LOCKDOWN_RETRIGGER_COOLDOWN_MS } from
+  "../../../packages/consts/antiRaid/lockdown";
 import type { AntiRaidWorkerEvent } from "../../../packages/types";
 
 const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
 const sentMessages: { chatId: number; text: string }[] = [];
+const deletedMessages: { chatId: number; messageId: number }[] = [];
 let currentPermissions: Record<string, boolean | undefined> = {};
 let sendMessageResult: number | undefined = 700;
 const getChat = mock(async (): Promise<{ permissions?: Record<string, boolean | undefined> }> => ({
@@ -54,10 +62,19 @@ mock.module("../../../packages/infra/telegram", () => ({
     setChatPermissions,
   },
   sendMessage: async (message: { chatId: number; text: string }): Promise<number | undefined> => {
-    sentMessages.push(message);
+    sentMessages.push({ chatId: message.chatId, text: message.text });
     return sendMessageResult;
   },
+  deleteMessage: async (chatId: number, messageId: number): Promise<boolean> => {
+    deletedMessages.push({ chatId, messageId });
+    return true;
+  },
 }));
+
+/** 加锁、公告与恢复都排在同一条串行链上；多让出几次微任务等它们全部结算。 */
+async function settleLockdownCalls(): Promise<void> {
+  for (let index = 0; index < 8; index++) await Bun.sleep(0);
+}
 
 const adminCache = await import("../../../packages/workers/antiRaid/adminCache");
 const lockdownRuntime = await import("../../../packages/workers/antiRaid/lockdownRuntime");
@@ -68,6 +85,7 @@ beforeEach(() => {
   lockdownEvents.length = 0;
   permissionWrites.length = 0;
   sentMessages.length = 0;
+  deletedMessages.length = 0;
   currentPermissions = {};
   sendMessageResult = 700;
   getChat.mockClear();
@@ -90,6 +108,8 @@ beforeEach(() => {
   joinWindows.clear();
   lockdownEntries.clear();
   lockdownApiChains.clear();
+  // 作废冷却按群留存，不清就会漏给下一个用例（stopLockdownRuntime 同样清它）。
+  lockdownRetriggerCooldowns.clear();
 });
 
 describe("Anti-Raid cache owners", () => {
@@ -255,15 +275,22 @@ describe("Lockdown write-ahead runtime", () => {
     expect(joinWindows.has(chatId)).toBeFalse();
   });
 
-  test("getChat 后先发布 applying，落盘回执前绝不修改权限", async () => {
+  test("占位一落地就先在群里报告封锁，落盘回执前绝不修改权限", async () => {
     const chatId = -1001;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
     for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
-    await Bun.sleep(0);
+    await settleLockdownCalls();
 
+    // 公告必须先于任何权限写落地：从占位那一刻起入群就被直接请出去了。
+    expect(sentMessages[0]?.text).toContain("60 秒内冲进来了 46 个");
     const applying = lockdownEvents.find((event) => event.type === "lockdown");
-    expect(applying).toMatchObject({ type: "lockdown", phase: "applying" });
+    expect(applying).toMatchObject({
+      type: "lockdown",
+      phase: "applying",
+      announced: true,
+      announcementMessageId: 700,
+    });
     expect(permissionWrites).toEqual([]);
     if (applying?.type !== "lockdown") throw new Error("missing applying intent");
 
@@ -275,7 +302,7 @@ describe("Lockdown write-ahead runtime", () => {
       phase: "applying",
       intentId: applying.intentId,
     });
-    await Bun.sleep(0);
+    await settleLockdownCalls();
     expect(permissionWrites[0]).toEqual({
       can_invite_users: false,
       can_send_messages: false,
@@ -285,8 +312,12 @@ describe("Lockdown write-ahead runtime", () => {
     const active = lockdownEvents.findLast((event) =>
       event.type === "lockdown" && event.phase === "active"
     );
-    expect(active).toMatchObject({ type: "lockdown", phase: "active", announced: false });
-    expect(sentMessages).toEqual([]);
+    expect(active).toMatchObject({
+      type: "lockdown",
+      phase: "active",
+      announced: true,
+      announcementMessageId: 700,
+    });
     if (active?.type !== "lockdown") throw new Error("missing active intent");
 
     lockdownRuntime.handleLockdownPersisted({
@@ -295,12 +326,175 @@ describe("Lockdown write-ahead runtime", () => {
       phase: "active",
       intentId: active.intentId,
     });
-    await Bun.sleep(0);
+    await settleLockdownCalls();
 
-    expect(sentMessages[0]?.text).toContain("60 秒内冲进来了 46 个");
-    expect(lockdownEvents.some((event) =>
-      event.type === "lockdown" && event.phase === "active" && event.announced
-    )).toBeTrue();
+    // 公告只发一次：进入 ACTIVE 不重发。
+    expect(sentMessages).toHaveLength(1);
+  });
+
+  test("作废冷却到期后可以重新进入私密模式", async () => {
+    const chatId = -1011;
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+    const applying = lockdownEvents.find((event) =>
+      event.type === "lockdown" && event.chatId === chatId
+    );
+    if (applying?.type !== "lockdown") throw new Error("missing applying intent");
+    lockdownRuntime.handleLockdownPersistFailed({
+      type: "lockdownPersistFailed",
+      chatId,
+      phase: "applying",
+      intentId: applying.intentId,
+    });
+    await settleLockdownCalls();
+    expect(lockdownRetriggerCooldowns.has(chatId)).toBeTrue();
+
+    // 冷却是暂停不是永久关闭：过了这段时间，同样的刷群必须能再次锁上。
+    const afterCooldown = Date.now() + LOCKDOWN_RETRIGGER_COOLDOWN_MS + 1;
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, afterCooldown);
+    await settleLockdownCalls();
+
+    expect(lockdownEntries.has(chatId)).toBeTrue();
+    expect(lockdownRetriggerCooldowns.has(chatId)).toBeFalse();
+  });
+
+  test("群停用会一并丢掉作废冷却：重新开启不背着旧的不设防", async () => {
+    const chatId = -1012;
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+    const applying = lockdownEvents.find((event) =>
+      event.type === "lockdown" && event.chatId === chatId
+    );
+    if (applying?.type !== "lockdown") throw new Error("missing applying intent");
+    lockdownRuntime.handleLockdownPersistFailed({
+      type: "lockdownPersistFailed",
+      chatId,
+      phase: "applying",
+      intentId: applying.intentId,
+    });
+    await settleLockdownCalls();
+    expect(lockdownRetriggerCooldowns.has(chatId)).toBeTrue();
+
+    lockdownRuntime.deactivateLockdownChat(chatId);
+    expect(lockdownRetriggerCooldowns.has(chatId)).toBeFalse();
+
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+    expect(lockdownEntries.has(chatId)).toBeTrue();
+  });
+
+  test("锁定期内继续灌人不再推后恢复时刻，也不重新落盘", async () => {
+    const chatId = -1009;
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+
+    const applying = lockdownEvents.find((event) =>
+      event.type === "lockdown" && event.chatId === chatId
+    );
+    if (applying?.type !== "lockdown") throw new Error("missing applying intent");
+    lockdownRuntime.handleLockdownPersisted({
+      type: "lockdownPersisted",
+      chatId,
+      phase: "applying",
+      intentId: applying.intentId,
+    });
+    await settleLockdownCalls();
+
+    const restoreAt = lockdownEntries.get(chatId)?.restoreAt;
+    expect(restoreAt).toBeDefined();
+    const publishedBefore = lockdownEvents.filter((event) =>
+      event.type === "lockdown" && event.chatId === chatId
+    ).length;
+
+    // 回归：这里曾经每进一个人就把倒计时重排满 LOCKDOWN_MS 并再落一次盘，
+    // 持续刷群等于让同一轮永不到期。
+    for (let index = 0; index < 20; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+
+    expect(lockdownEntries.get(chatId)?.restoreAt).toBe(restoreAt!);
+    expect(lockdownEvents.filter((event) =>
+      event.type === "lockdown" && event.chatId === chatId
+    )).toHaveLength(publishedBefore);
+  });
+
+  test("解除后入群滑窗清零：再锁一轮必须重新攒够阈值", async () => {
+    const chatId = -1010;
+    currentPermissions = { can_invite_users: false, can_send_messages: true };
+    for (let index = 0; index < 10; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    expect(joinWindows.has(chatId)).toBeTrue();
+
+    lockdownRuntime.adoptLockdowns([{
+      chatId,
+      phase: "restoring",
+      intentId: 13,
+      originalPermissions: { can_invite_users: true, can_send_messages: true },
+      announced: false,
+      remainingMs: 0,
+    }]);
+    await settleLockdownCalls();
+
+    expect(lockdownEvents.some((event) => event.type === "unlock" && event.chatId === chatId)).toBeTrue();
+    expect(joinWindows.has(chatId)).toBeFalse();
+  });
+
+  test("解除封锁 → 删掉群里那条封锁公告，再发解除通知", async () => {
+    const chatId = -1007;
+    currentPermissions = { can_invite_users: false, can_send_messages: true };
+    lockdownRuntime.adoptLockdowns([{
+      chatId,
+      phase: "restoring",
+      intentId: 12,
+      originalPermissions: { can_invite_users: true, can_send_messages: true },
+      announced: true,
+      announcementMessageId: 640,
+      remainingMs: 0,
+    }]);
+    await settleLockdownCalls();
+
+    expect(deletedMessages).toEqual([{ chatId, messageId: 640 }]);
+    expect(sentMessages[0]?.text).toContain("解除限制");
+  });
+
+  test("落盘失败 → 撤销占位、撤掉公告、报解锁，并在冷却期内不再触发", async () => {
+    const chatId = -1008;
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+
+    const applying = lockdownEvents.find((event) =>
+      event.type === "lockdown" && event.chatId === chatId
+    );
+    if (applying?.type !== "lockdown") throw new Error("missing applying intent");
+    expect(lockdownEntries.has(chatId)).toBeTrue();
+
+    lockdownRuntime.handleLockdownPersistFailed({
+      type: "lockdownPersistFailed",
+      chatId,
+      phase: "applying",
+      intentId: applying.intentId,
+    });
+    await settleLockdownCalls();
+
+    // 回归：落盘失败曾经只记一行日志，占位就此永久停在 APPLYING——秒踢不停，
+    // 5 分钟的恢复计时压根没被安排过。
+    expect(lockdownEntries.has(chatId)).toBeFalse();
+    expect(permissionWrites).toEqual([]);
+    expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);
+    expect(lockdownEvents.some((event) => event.type === "unlock" && event.chatId === chatId)).toBeTrue();
+
+    // 冷却期内继续刷群也不再重来一轮公告与 API 往返。
+    sentMessages.length = 0;
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+    expect(lockdownEntries.has(chatId)).toBeFalse();
+    expect(sentMessages).toEqual([]);
   });
 
   test("重建 applying 也合并当前权限，并使用未知人数文案", async () => {

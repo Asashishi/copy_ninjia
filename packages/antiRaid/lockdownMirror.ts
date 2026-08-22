@@ -75,6 +75,7 @@ function toAdoptableLockdown(
     intentId: record.intentId,
     originalPermissions: record.originalPermissions,
     announced: record.announced,
+    announcementMessageId: record.announcementMessageId,
     remainingMs: Math.max(0, record.expiresAt - now),
     persisted: lockdownFingerprintMatches(record, persistedLockdownFingerprints.get(chatId)),
   };

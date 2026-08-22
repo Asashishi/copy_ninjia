@@ -26,8 +26,9 @@ export interface LockdownIntentFingerprint {
  * 主线程判断 lockdown 落盘回执是否覆盖当前恢复语义的指纹。
  *
  * announced 一轮最多从 false 变为 true 一次，且决定能否发送解锁公告，必须被
- * 落盘确认覆盖；expiresAt 会被持续入群刷新，把它纳入会让高频入群期间的落盘
- * 对账永远追不上当前记录。
+ * 落盘确认覆盖；expiresAt 不参与身份判定——APPLYING/RESTORING 阶段每次发布都
+ * 按当刻墙钟填，同一份意图前后两次发布就会不相等，纳入指纹会让对账循环永远
+ * 等不到「存下去的还是当前这份」。
  */
 export interface PersistedLockdownFingerprint extends LockdownIntentFingerprint {
   announced: boolean;

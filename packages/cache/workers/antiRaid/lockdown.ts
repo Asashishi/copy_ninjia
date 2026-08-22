@@ -11,6 +11,18 @@ import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal
 export const joinWindows: Map<number, JoinWindow> = new Map();
 /** 每群 lockdown 状态机与恢复 timer；解锁、停用或 Worker 停止时清除。 */
 export const lockdownEntries: Map<number, LockdownEntry> = new Map();
+/**
+ * 每群「暂停再次触发私密模式」的绝对截止时刻（ms）。
+ *
+ * 状态机判定一轮作废时（读不到原权限、intent 落不了盘）发 suppressRetrigger，
+ * lockdownRuntime.ts 的 beginLockdownRetriggerCooldown 据此写入；recordJoin 在
+ * 到期前不再投递 thresholdExceeded。三处清理：到期后被下一次 recordJoin 就地
+ * 删除、写入新条目时顺带扫掉所有已过期条目、群停用时按 chatId 删除（守卫都关
+ * 了，重开不该背着旧冷却）；Worker 停止时随 stopLockdownRuntime 整体清空。
+ * 条目只在作废路径产生，最多与机器人所在群数同阶。Worker 崩溃重建后为空 Map：
+ * 无条目 = 不抑制触发，这是 fail-safe 方向（宁可多试一次也不漏防）。
+ */
+export const lockdownRetriggerCooldowns: Map<number, number> = new Map();
 /** 同一群的加锁、恢复和纠偏 API 调用共用的串行链。 */
 export const lockdownApiChains: Map<number, Promise<void>> = new Map();
 /**

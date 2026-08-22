@@ -47,6 +47,27 @@ describe("chat_states codec", () => {
     });
   });
 
+  test("封锁公告的 message ID 必须能原样往返：重启接管的那一轮靠它删公告", () => {
+    const text: string = encodeChatStateData({
+      lockdown: {
+        phase: "active",
+        intentId: 5,
+        announced: true,
+        announcementMessageId: 900,
+        originalPermissions: { can_invite_users: true },
+        expiresAt: 9_000,
+      },
+    }, "chat_states[-1001].data");
+    expect(decodeChatStateData(text, "chat_states[-1001].data").lockdown).toEqual({
+      phase: "active",
+      intentId: 5,
+      announced: true,
+      announcementMessageId: 900,
+      originalPermissions: { can_invite_users: true },
+      expiresAt: 9_000,
+    });
+  });
+
   test("权限快照必须完整，非管理员时其它权限必须全 false", () => {
     const incomplete: Record<string, boolean> = {
       ...botPermissions({ canDeleteMessages: true }),
@@ -76,18 +97,47 @@ describe("chat_states codec", () => {
     )).toThrow("supported chat-state fields");
     expect(() => decodeChatStateData("{}", "chat_states[-1001].data"))
       .toThrow("a non-empty chat-state object");
+    // 公告在占位落地那一刻就发出，因此 applying 阶段也可以是「已公告」。
     expect(() => decodeChatStateData(
       JSON.stringify({
         lockdown: {
           phase: "applying",
           intentId: 1,
           announced: true,
+          announcementMessageId: 900,
           originalPermissions: {},
           expiresAt: 2_000,
         },
       }),
       "chat_states[-1001].data"
-    )).toThrow("$.lockdown.announced");
+    )).not.toThrow();
+    // message ID 只可能来自一次成功的发送。
+    expect(() => decodeChatStateData(
+      JSON.stringify({
+        lockdown: {
+          phase: "active",
+          intentId: 1,
+          announced: false,
+          announcementMessageId: 900,
+          originalPermissions: {},
+          expiresAt: 2_000,
+        },
+      }),
+      "chat_states[-1001].data"
+    )).toThrow("$.lockdown.announcementMessageId");
+    expect(() => decodeChatStateData(
+      JSON.stringify({
+        lockdown: {
+          phase: "active",
+          intentId: 1,
+          announced: true,
+          announcementMessageId: 0,
+          originalPermissions: {},
+          expiresAt: 2_000,
+        },
+      }),
+      "chat_states[-1001].data"
+    )).toThrow("$.lockdown.announcementMessageId");
   });
 
   test("chat 主键必须是负安全整数的群或频道 ID", () => {

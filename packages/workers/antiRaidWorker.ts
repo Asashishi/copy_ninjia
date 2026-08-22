@@ -14,6 +14,7 @@ import {
   adoptLockdowns,
   deactivateLockdownChat,
   handleLockdownPersisted,
+  handleLockdownPersistFailed,
   stopLockdownRuntime,
 } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
@@ -166,6 +167,9 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       break;
     case "lockdownPersisted":
       handleLockdownPersisted(msg);
+      break;
+    case "lockdownPersistFailed":
+      handleLockdownPersistFailed(msg);
       break;
     case "adoptVerifications":
       adoptVerifications(msg);
