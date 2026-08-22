@@ -3,9 +3,9 @@ import type { HotPathProfileScenarioName } from "../types/performance";
 /**
  * 热路径 GC/RSS 门禁校准时使用的 Bun 版本；升级运行时必须重新测量阈值。
  *
- * 9.3.0 把锚点从 1.3.14 抬到 1.4.0，但本文件的内存上限与逐场景 ns/op 软阈值仍是
- * 1.3.14 的采样：1.4.0 上硬门禁全过、软上报为空，因此没有借「重标」之名顺手放宽或
- * 收紧。重标完成前，这两组数只保证「在 1.4.0 上不误报」，不再保证贴着引擎真实水位。
+ * 9.3.0 把锚点抬到 1.4.0 时阈值还是 1.3.14 的采样，9.3.2 补上了这次重测：本文件
+ * 的逐场景 ns/op 软阈值全部按 1.4.0 空载重标，内存上限的引用读数也换成 1.4.0。
+ * 下次再升运行时，这两组数同样必须整组重测，不能只改这里的版本号。
  */
 export const HOT_PATH_PROFILE_BUN_VERSION: string = "1.4.0";
 
@@ -46,10 +46,13 @@ export const HOT_PATH_PROFILE_MAX_GC_PERCENT: number = 5;
  * scripts/perf/hotPathProfileGate.ts 的串行 for 循环），硬失败仍由 GC、JIT 与 full-GC
  * 后全局留存上限判定；逐场景延迟只做软上报，避免把确实耗时的合法操作误判失败。
  *
- * Bun 1.3.14 实测采样峰值与生命周期高水位几乎重合，最重的是
- * flood-window-steady 145.6/146.4 MB，其次 incoming-message-spine 105.1/105.8 MB、
- * luck-receipt-fast-path 96.3 MB、mention-facts-plain 73.6 MB。384 MB 对最重的那个
- * 保留约 2.6 倍余量，取的是「负载高的 CI 机器上单次读数抖动也不会误报」。
+ * Bun 1.4.0 空载实测（每场景 10 进程，identity-permission-read 20 进程）采样峰值
+ * 与生命周期高水位几乎重合，最重的是 flood-window-steady 126.5/126.5 MB，其次
+ * ad-capacity-reject 107.4 MB、incoming-message-spine 83.6/85.3 MB、
+ * mention-facts-plain 74.1 MB。1.4.0 整体比 1.3.14 省内存（同口径下
+ * flood-window-steady 曾是 145.6/146.4 MB、incoming-message-spine 105.1/105.8 MB），
+ * 384 MB 对最重的那个因此从约 2.6 倍余量放大到约 3.0 倍。**没有跟着收紧**：这道闸
+ * 的职责是拦失控，不是贴着水位跑；把兜底闸调成回归判据只会换来会抖的硬失败。
  *
  * 代价要说明白：最重那个场景**真的翻倍**（145.6 → 291 MB）也不会碰到这道闸。这是
  * 有意的分工，不是失手——CPU 延迟异常由逐场景 ns/op 软上报指出，而这里只负责
@@ -60,8 +63,10 @@ export const HOT_PATH_PROFILE_MAX_RSS_BYTES: number = 384 * 1024 * 1024;
 
 /**
  * 正式采样各节拍观测到的 heapUsed 相对预热基线最大增长。上限覆盖满载 flood LRU
- * 持续换入不同成员时尚未到下一次 GC 的有界对象波峰；Bun 1.3.14 三次独立进程
- * 实测峰值 62.1 MB，据此保留约 1.5 倍余量。
+ * 持续换入不同成员时尚未到下一次 GC 的有界对象波峰；Bun 1.4.0 空载重测（同上，
+ * 每场景 10 进程）峰值 24.1 MB，仍出在 flood-window-steady，其余场景都在 0.1 MB
+ * 以下。1.3.14 同口径是 62.1 MB，96 MB 的余量因此从约 1.5 倍放大到约 4 倍。
+ * 与 RSS 上限同理不收紧：GC 何时到来本就不确定，把它压到贴着水位会换来偶发硬失败。
  */
 export const HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES: number =
   96 * 1024 * 1024;
@@ -81,36 +86,50 @@ export const HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH: number = 4_096;
  * 每个默认热场景在 retained 独立进程中的中位纳秒/操作软上报阈值。
  * 超过只输出场景与超额读数，不让门禁失败；数值只能在固定 Bun revision、
  * 固定输入并经多个独立进程重测后调整。
- * Bun 1.3.14 每场景 10 进程的最慢中位数为 2024.461/33.027/49.993/76.583/
- * 521.289/18.550/218.306/134.700 ns/op；上限在其上增加 max(25%, 10 ns) 并向上取整。
  *
- * 上面那串八个数按本表**前八项原有的声明顺序**给出，不含后加的
- * ai-media-direct-trigger；那一项 10 进程最慢中位数 164.080 ns/op，按同一规则取 210。
- * 它的校准跑在一台同时运行着本仓库服务进程的机器上（那份负载当时无法移除），
- * 因此这个数偏保守——重新校准时若机器空载，读数会更低，可以按同一规则收紧。
+ * 当前值来自 Bun 1.4.0（revision 34cbb9a4）空载重标：服务已停、机器无其它负载。
+ * 每场景至少 13 个独立 retained 子进程，ai-media-direct-trigger 与 ai-activity-window
+ * 各 22 个、identity-permission-read 43 个（这三项尾部方差大，见下）。各场景最慢中位数
+ * 按本表声明顺序为 2285.791/193.800/33.655/37.434/76.300/537.271/19.334/150.738/
+ * 117.900 ns/op；阈值 = 最慢中位数 + max(25%, 10 ns) 后向上取整，不再额外凑到整五或
+ * 整十——凑整会让「这个数怎么来的」无法复算。
  *
- * identity-permission-read 的那个数取自 20 个独立进程加门禁自己的 repeat：它是本表
- * 里离散度最大的一项（90.0~134.7），只按前 10 个进程定阈值会让它每隔几次门禁就软
- * 报一次，而软报的价值全在「出现即异常」。
+ * 进程数逐场景定，理由全部来自实测而非预设。先按 10 个进程定了一版，随后三轮门禁
+ * 接连在 spine、flood-window-steady、ai-activity-window、ai-media-direct-trigger 与
+ * identity-permission-read 上刷出更慢的读数，余量被吃到 10%~13%。尾部低估是量出来的，
+ * 于是样本只加不减：并入门禁自身读数，再给反复越界的 ai-media-direct-trigger、
+ * ai-activity-window 各补 10 个进程，给 identity-permission-read 补到 43 个。补完
+ * ai-activity-window 的阈值回到 96，与 1.3.14 定的值一致——两次取到了同一条尾部。
+ * 再重标时同样只能加样本，别拿一两轮读数就定值。
  *
- * 以上全部是 Bun 1.3.14 的采样，尚未在 1.4.0 上重标（见 HOT_PATH_PROFILE_BUN_VERSION）。
- * 9.3.0 的全量基准里 incoming-message-spine 从 1.901 µs 涨到 2.167 µs，而门禁 retained
- * 模式的中位数没有触碰 2_550 这道软报线——两者测量包络不同、不能互相换算，但方向一致：
- * 1.4.0 上这一项确实更慢。重标时按同一规则重新取值（最慢中位数 + max(25%, 10 ns) 向上
- * 取整），并且必须在空载机器上跑，别再复现 ai-media-direct-trigger 那次带负载校准。
+ * identity-permission-read 仍是本表离散度最大的一项，且**没有**因为换引擎而收敛：
+ * 43 个进程实测 82.167~117.900（中位 89.2），跨度约 1.4 倍，与 1.3.14 的 90.0~134.7
+ * 同一量级。中途只用 20~23 个进程时它两次被刷穿，正是抽样没覆盖到尾部；这一项的
+ * 进程数只能加不能减。
+ *
+ * 对比 1.3.14 的同口径读数：incoming-message-spine 2024.461 → 2285.791（+12.9%）与
+ * ai-media-direct-trigger 164.080 → 193.800（+18.1%）确实变慢；三项变快，
+ * ad-capacity-reject 218.306 → 150.738、luck-receipt-fast-path 49.993 → 37.434、
+ * identity-permission-read 134.700 → 117.900；其余四项在 ±5% 以内。阈值因此有松有紧：
+ * spine 与 ai-media-direct-trigger 放宽（它们在 1.4.0 上真的更慢），
+ * luck-receipt-fast-path、ad-capacity-reject、identity-permission-read 收紧——继续留着
+ * 1.3.14 的宽度，软报就失去了「出现即异常」的意义。
+ *
+ * 重标必须在空载机器上跑。1.3.14 时代 ai-media-direct-trigger 是在跑着本仓库服务
+ * 进程的机器上校准的，那个数因此偏保守；本次已消除该偏差。
  */
 export const HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS: Readonly<
   Record<HotPathProfileScenarioName, number>
 > = {
-  "incoming-message-spine": 2_550,
-  "ai-media-direct-trigger": 210,
+  "incoming-message-spine": 2_858,
+  "ai-media-direct-trigger": 243,
   "sender-stable-username": 44,
-  "luck-receipt-fast-path": 63,
+  "luck-receipt-fast-path": 48,
   "ai-activity-window": 96,
-  "flood-window-steady": 655,
-  "mention-facts-plain": 29,
-  "ad-capacity-reject": 275,
-  "identity-permission-read": 169,
+  "flood-window-steady": 672,
+  "mention-facts-plain": 30,
+  "ad-capacity-reject": 189,
+  "identity-permission-read": 148,
 };
 
 /**
