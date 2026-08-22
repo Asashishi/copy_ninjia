@@ -1,6 +1,12 @@
 import type { HotPathProfileScenarioName } from "../types/performance";
 
-/** 热路径 GC/RSS 门禁校准时使用的 Bun 版本；升级运行时必须重新测量阈值。 */
+/**
+ * 热路径 GC/RSS 门禁校准时使用的 Bun 版本；升级运行时必须重新测量阈值。
+ *
+ * 9.3.0 把锚点从 1.3.14 抬到 1.4.0，但本文件的内存上限与逐场景 ns/op 软阈值仍是
+ * 1.3.14 的采样：1.4.0 上硬门禁全过、软上报为空，因此没有借「重标」之名顺手放宽或
+ * 收紧。重标完成前，这两组数只保证「在 1.4.0 上不误报」，不再保证贴着引擎真实水位。
+ */
 export const HOT_PATH_PROFILE_BUN_VERSION: string = "1.4.0";
 
 /** 热路径 GC/RSS 门禁校准时使用的 Bun 构建 revision，防止同版本不同引擎混测。 */
@@ -86,6 +92,12 @@ export const HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH: number = 4_096;
  * identity-permission-read 的那个数取自 20 个独立进程加门禁自己的 repeat：它是本表
  * 里离散度最大的一项（90.0~134.7），只按前 10 个进程定阈值会让它每隔几次门禁就软
  * 报一次，而软报的价值全在「出现即异常」。
+ *
+ * 以上全部是 Bun 1.3.14 的采样，尚未在 1.4.0 上重标（见 HOT_PATH_PROFILE_BUN_VERSION）。
+ * 9.3.0 的全量基准里 incoming-message-spine 从 1.901 µs 涨到 2.167 µs，而门禁 retained
+ * 模式的中位数没有触碰 2_550 这道软报线——两者测量包络不同、不能互相换算，但方向一致：
+ * 1.4.0 上这一项确实更慢。重标时按同一规则重新取值（最慢中位数 + max(25%, 10 ns) 向上
+ * 取整），并且必须在空载机器上跑，别再复现 ai-media-direct-trigger 那次带负载校准。
  */
 export const HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS: Readonly<
   Record<HotPathProfileScenarioName, number>
