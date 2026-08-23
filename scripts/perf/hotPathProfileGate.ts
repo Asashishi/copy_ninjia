@@ -5,21 +5,16 @@
  * GC/JIT，后者在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC
  * 后留存；retained 中位 ns/op 只按逐场景阈值软上报，不让合法慢操作误伤门禁。
  * 脚本串行运行，避免场景之间争抢资源。
+ *
+ * 阈值与 Bun 锚点全部来自仓库根被跟踪的 `performance-result.json`（见
+ * `scripts/perf/hotPaths/gateResult.ts`），不再写死在 TypeScript 里。带
+ * `--write-result` 运行时，本次读数覆盖写回同一份文件的 `lastRun`；不带这个
+ * 开关就只读不写，`bun run check` 因此不会弄脏工作树。
  */
 
 import { join } from "node:path";
 import { isPlainRecord } from "../../packages/libs/record";
 import {
-  HOT_PATH_PROFILE_BUN_REVISION,
-  HOT_PATH_PROFILE_BUN_VERSION,
-  HOT_PATH_PROFILE_MAX_GC_PERCENT,
-  HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS,
-  HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES,
-  HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES,
-  HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH,
-  HOT_PATH_PROFILE_MAX_RSS_BYTES,
-  HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES,
-  HOT_PATH_PROFILE_MIN_SAMPLES,
   HOT_PATH_PROFILE_REPEATS,
   HOT_PATH_PROFILE_SCENARIOS,
 } from "../../packages/consts/performance";
@@ -28,6 +23,27 @@ import {
   createHotPathMedianLatencyReport,
 } from "./hotPaths/gateLimits";
 import type { HotPathMedianLatencyReport } from "./hotPaths/gateLimits";
+import {
+  readHotPathGateCalibration,
+  writeHotPathGateLastRun,
+} from "./hotPaths/gateResult";
+import type { HotPathGateCalibration } from "./hotPaths/gateResult";
+import { PERFORMANCE_RESULT_PATH } from "./performanceResult";
+
+/** 仓库根；场景子进程按它定位。 */
+const projectRoot: string = join(import.meta.dir, "../..");
+
+/**
+ * 校准记录在任何子进程启动之前读一次并严格校验。放在这里而不是首次用到时才读：
+ * 记录写坏时不该先花十几分钟跑完九个场景再报错。
+ */
+const calibration: HotPathGateCalibration = readHotPathGateCalibration(PERFORMANCE_RESULT_PATH);
+
+/**
+ * 只有显式传 `--write-result` 才把本次读数写回 `lastRun`。默认只读，
+ * `bun run check` 因此不会因为跑了一次门禁就产生工作树改动。
+ */
+const shouldWriteResult: boolean = process.argv.includes("--write-result");
 
 interface SamplingProfileResult {
   readonly totalSamples: number;
@@ -224,12 +240,12 @@ function productionJitProbes(result: ChildProfileResult): readonly JitProbeResul
 
 function assertRuntimeMatches(result: ChildProfileResult): void {
   if (
-    result.bunVersion !== HOT_PATH_PROFILE_BUN_VERSION ||
-    result.bunRevision !== HOT_PATH_PROFILE_BUN_REVISION
+    result.bunVersion !== calibration.runtime.bunVersion ||
+    result.bunRevision !== calibration.runtime.bunRevision
   ) {
     throw new Error(
-      `${result.scenario}: expected Bun ${HOT_PATH_PROFILE_BUN_VERSION} ` +
-      `(${HOT_PATH_PROFILE_BUN_REVISION}), received ${result.bunVersion} ` +
+      `${result.scenario}: expected Bun ${calibration.runtime.bunVersion} ` +
+      `(${calibration.runtime.bunRevision}), received ${result.bunVersion} ` +
       `(${result.bunRevision}); recalibrate the profile thresholds before comparing results.`
     );
   }
@@ -250,16 +266,16 @@ function assertProfileRunWithinLimits(result: ChildProfileResult): void {
     throw new Error(`${result.scenario}: child did not return a sampling profile.`);
   }
   const samplingProfile: SamplingProfileResult = result.samplingProfile;
-  if (samplingProfile.totalSamples < HOT_PATH_PROFILE_MIN_SAMPLES) {
+  if (samplingProfile.totalSamples < calibration.limits.minProfileSamples) {
     throw new Error(
       `${result.scenario}: only ${samplingProfile.totalSamples} profile samples; ` +
-      `expected at least ${HOT_PATH_PROFILE_MIN_SAMPLES}.`
+      `expected at least ${calibration.limits.minProfileSamples}.`
     );
   }
-  if (samplingProfile.gcPercent > HOT_PATH_PROFILE_MAX_GC_PERCENT) {
+  if (samplingProfile.gcPercent > calibration.limits.maxGcPercent) {
     throw new Error(
       `${result.scenario}: GC used ${samplingProfile.gcPercent.toFixed(3)}% of ` +
-      `steady samples; limit is ${HOT_PATH_PROFILE_MAX_GC_PERCENT}%.`
+      `steady samples; limit is ${calibration.limits.maxGcPercent}%.`
     );
   }
   // 汇总 FTL 比例只作诊断（输出字段名带 Diagnostic 后缀），异步场景会混入 native
@@ -299,49 +315,49 @@ function assertRetainedRunWithinLimits(result: ChildProfileResult): void {
   ) {
     throw new Error(`${result.scenario}: child did not return retained-memory results.`);
   }
-  if (result.peakSampledRssBytes > HOT_PATH_PROFILE_MAX_RSS_BYTES) {
+  if (result.peakSampledRssBytes > calibration.limits.maxRssBytes) {
     throw new Error(
       `${result.scenario}: sampled RSS peaked at ${result.peakSampledRssBytes} bytes; ` +
-      `limit is ${HOT_PATH_PROFILE_MAX_RSS_BYTES}.`
+      `limit is ${calibration.limits.maxRssBytes}.`
     );
   }
   // 逐节拍采样只看得见节拍那一刻的 RSS；完整落在两次节拍之间的瞬时大块分配要靠
   // 进程生命周期高水位才拦得住，两者共用同一个上限。
-  if (result.processPeakRssBytes > HOT_PATH_PROFILE_MAX_RSS_BYTES) {
+  if (result.processPeakRssBytes > calibration.limits.maxRssBytes) {
     throw new Error(
       `${result.scenario}: process peak RSS reached ${result.processPeakRssBytes} bytes; ` +
-      `limit is ${HOT_PATH_PROFILE_MAX_RSS_BYTES}.`
+      `limit is ${calibration.limits.maxRssBytes}.`
     );
   }
   if (
     result.peakSampledHeapUsedDelta >
-      HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES
+      calibration.limits.maxSampledHeapGrowthBytes
   ) {
     throw new Error(
       `${result.scenario}: sampled heapUsed grew by ${result.peakSampledHeapUsedDelta} bytes; ` +
-      `limit is ${HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES}.`
+      `limit is ${calibration.limits.maxSampledHeapGrowthBytes}.`
     );
   }
-  if (result.retainedHeapDelta > HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES) {
+  if (result.retainedHeapDelta > calibration.limits.maxRetainedHeapGrowthBytes) {
     throw new Error(
       `${result.scenario}: retained JSC heap grew by ${result.retainedHeapDelta} bytes; ` +
-      `limit is ${HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES}.`
+      `limit is ${calibration.limits.maxRetainedHeapGrowthBytes}.`
     );
   }
   if (
     result.retainedExtraMemoryDelta >
-      HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES
+      calibration.limits.maxRetainedExtraMemoryGrowthBytes
   ) {
     throw new Error(
       `${result.scenario}: retained extra memory grew by ` +
       `${result.retainedExtraMemoryDelta} bytes; limit is ` +
-      `${HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES}.`
+      `${calibration.limits.maxRetainedExtraMemoryGrowthBytes}.`
     );
   }
-  if (result.retainedObjectDelta > HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH) {
+  if (result.retainedObjectDelta > calibration.limits.maxRetainedObjectGrowth) {
     throw new Error(
       `${result.scenario}: retained object count grew by ${result.retainedObjectDelta}; ` +
-      `limit is ${HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH}.`
+      `limit is ${calibration.limits.maxRetainedObjectGrowth}.`
     );
   }
 }
@@ -396,7 +412,6 @@ function minimum(values: readonly number[]): number {
   return Math.min(...values);
 }
 
-const projectRoot: string = join(import.meta.dir, "../..");
 const gateResults: ScenarioGateResult[] = [];
 const softLatencyReports: HotPathMedianLatencyReport[] = [];
 let expectedBunVersion: string | undefined;
@@ -406,7 +421,7 @@ let expectedBunRevision: string | undefined;
 const medianLatencyPolicy: ReadonlyMap<string, number> =
   assertHotPathMedianPolicyCoverage(
     HOT_PATH_PROFILE_SCENARIOS,
-    HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS
+    calibration.medianNsPerOpReportThresholds
   );
 
 for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
@@ -523,27 +538,42 @@ for (const report of softLatencyReports) {
   );
 }
 
-process.stdout.write(`${JSON.stringify({
+/**
+ * 本次门禁的完整读数。stdout 与 performance-result.json 的 `lastRun` 是同一个对象，不各写
+ * 一份：两份形状迟早会分叉，而分叉之后「我看到的那个 JSON」到底来自哪里就说
+ * 不清了。`thresholds` 一并带上，让一份记录自己就能解释判据是什么。
+ */
+const lastRun: Readonly<Record<string, unknown>> = {
+  recordedAt: new Date().toISOString(),
   bunVersion: expectedBunVersion,
   bunRevision: expectedBunRevision,
   thresholds: {
-    maxGcPercent: HOT_PATH_PROFILE_MAX_GC_PERCENT,
-    maxSampledRssBytes: HOT_PATH_PROFILE_MAX_RSS_BYTES,
-    maxProcessPeakRssBytes: HOT_PATH_PROFILE_MAX_RSS_BYTES,
+    maxGcPercent: calibration.limits.maxGcPercent,
+    maxSampledRssBytes: calibration.limits.maxRssBytes,
+    maxProcessPeakRssBytes: calibration.limits.maxRssBytes,
     maxSampledHeapUsedGrowthBytes:
-      HOT_PATH_PROFILE_MAX_SAMPLED_HEAP_GROWTH_BYTES,
+      calibration.limits.maxSampledHeapGrowthBytes,
     maxRetainedHeapGrowthBytes:
-      HOT_PATH_PROFILE_MAX_RETAINED_HEAP_GROWTH_BYTES,
+      calibration.limits.maxRetainedHeapGrowthBytes,
     maxRetainedExtraMemoryGrowthBytes:
-      HOT_PATH_PROFILE_MAX_RETAINED_EXTRA_MEMORY_GROWTH_BYTES,
+      calibration.limits.maxRetainedExtraMemoryGrowthBytes,
     maxRetainedObjectGrowth:
-      HOT_PATH_PROFILE_MAX_RETAINED_OBJECT_GROWTH,
-    minProfileSamples: HOT_PATH_PROFILE_MIN_SAMPLES,
+      calibration.limits.maxRetainedObjectGrowth,
+    minProfileSamples: calibration.limits.minProfileSamples,
   },
   softReportThresholds: {
     medianNsPerOpByScenario:
-      HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS,
+      calibration.medianNsPerOpReportThresholds,
   },
   softLatencyReports,
   scenarios: gateResults,
-})}\n`);
+};
+
+process.stdout.write(`${JSON.stringify(lastRun)}\n`);
+
+// 回写只覆盖 lastRun。`calibration` 那一半是人重标出来的判据，绝不由一次运行
+// 的读数自动改写——那等于把闸门焊死在当前性能上，退化会连同阈值一起被记下来。
+if (shouldWriteResult) {
+  writeHotPathGateLastRun(PERFORMANCE_RESULT_PATH, lastRun);
+  process.stderr.write(`hot-path gate: recorded this run into ${PERFORMANCE_RESULT_PATH}\n`);
+}

@@ -35,6 +35,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       imageGenerationRequested: true,
       imageGenerationReference,
       isRandomTrigger: false,
+      messageThreadId: context.messageThreadId,
     });
     return true;
   }
@@ -50,6 +51,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       imageGenerationRequested: false,
       imageGenerationReference: undefined,
       isRandomTrigger: true,
+      messageThreadId: context.messageThreadId,
     });
   }
   // 掷骰命中但个人冷却未取得时仍不随机复读，与原流水线语义一致。

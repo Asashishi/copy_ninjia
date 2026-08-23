@@ -9,6 +9,7 @@ import {
   RANDOM_ECHO_PROBABILITY,
 } from "../../consts/auto";
 import { sendMessage } from "../../infra/telegram";
+import { forumTopicThreadId } from "../../libs/forumTopic";
 import { pickRandom } from "../../libs/random";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type { CopyMode } from "../../types/chatState";
@@ -36,6 +37,10 @@ async function replyToBathTrigger(
     chatId: message.chat.id,
     text: BATH_TRIGGER_REPLY_TEXT,
     replyToMessageId: message.message_id,
+    // 这条回复不挂延迟删除，会长期留在群里，因此必须自己带话题：只靠
+    // reply_parameters 的话，触发它的消息被删掉时整条回复会落进 General
+    // （同 performRandomEcho，见 SendMessageParams.messageThreadId）。
+    messageThreadId: forumTopicThreadId(message),
   });
   if (aiChatEnabled && sentMessageId !== undefined) {
     recordChatMessage(buildSelfRecordMessage({
@@ -53,7 +58,12 @@ async function performRandomEcho(
   message: Message,
   mode: CopyMode | undefined
 ): Promise<void> {
-  await echoMessage({ chatId, message, mode });
+  await echoMessage({
+    chatId,
+    message,
+    mode,
+    messageThreadId: forumTopicThreadId(message),
+  });
 }
 
 export function handleProactiveMessageActions({

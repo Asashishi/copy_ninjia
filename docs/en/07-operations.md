@@ -48,9 +48,11 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Pre-create the data root with the deployment tool: `sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`. For containers, mount that same directory as persistent storage and set its owner on the host or in an init container. Do not place `memory/` or `database/` on the container's ephemeral layer.
+Pre-create the data root with the deployment tool: `sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia` (`0755` is also accepted, see below). For containers, mount that same directory as persistent storage and set its owner on the host or in an init container. Do not place `memory/` or `database/` on the container's ephemeral layer.
 
-The program creates the root, `logs/`, `memory/`, and the initial `database/` at `0750`; all four reject symbolic links. The root, `logs/`, and `memory/` must be owned by the runtime UID and no broader than `0750`. Identity migration changes `database/` to `02770` and the main database plus WAL/SHM to `0660`. That directory may be owned by the runtime UID, or by the deployment account when its group is effective for the runtime and has complete `rwx`. Never recursively apply `chmod 0750` to the whole data root: doing so removes the group write SQLite needs for sidecar creation. `config/` is read-only deployment input in the project tree; identity policy is no longer loaded from or written back to it.
+The program creates the root, `logs/`, `memory/`, and the initial `database/` (the first three at `0755`, `database/` at `0770`, both further narrowed by umask); all four reject symbolic links. The root, `logs/`, and `memory/` must be owned by the runtime UID and no broader than `0755` — this gate blocks **writes**: any group or other `w` bit refuses startup. The read side is relaxed to `0755` because this project is treated as single-tenant, most deployments run directly as root, and a directory created under the default umask is exactly `0755`.
+
+> **The cost**: files under `memory/` are themselves `0644`, so that directory bit is the only access control left on verbatim group-chat transcripts. Leaving it at `0755` means any local account on the machine can read them. On multi-tenant hosts, or any host with unprivileged login users, tighten the data root and `memory/` back to `0750` yourself; the preflight only guarantees "no broader than `0755`" and will not decide for you. Identity migration changes `database/` to `02770` and the main database plus WAL/SHM to `0660`. That directory may be owned by the runtime UID, or by the deployment account when its group is effective for the runtime and has complete `rwx`. Never recursively apply `chmod 0750` to the whole data root: doing so removes the group write SQLite needs for sidecar creation. `config/` is read-only deployment input in the project tree; identity policy is no longer loaded from or written back to it.
 
 Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification, lockdown timers, identity write-through, AI memory, and unacknowledged Telegram updates resume according to the recovery semantics in [04 Authoritative Runtime Invariants](04-invariants.md#persistence).
 
@@ -162,41 +164,45 @@ Back up the complete data root while the bot is stopped or at a storage-snapshot
 
 The runtime has no old-format compatibility path and never creates this database automatically. Before any migration, stop the bot and confirm it is inactive. On failure, preserve the external backup and site, do not start the new build, and never overwrite real input from `config_example/`.
 
-### Legacy JSON → SQLite
+### Creating the database on a fresh deployment
 
-Deployments still using `config/whitelist.json`, `config/blocklist.json`, and optional `memory/blocklist/` migrate in this order:
+Startup never guesses that a missing database means empty policy, so a fresh deployment must explicitly create one empty database at the current schema. The steps are in [01 Setup](01-getting-started.md#initializing-identity-storage), and `install.sh` already includes them. The creation entry point refuses to overwrite an existing target.
 
-```bash
-bun run migrate:identity-storage --check
-bun run migrate:identity-storage --apply
-```
+### Legacy JSON → SQLite (9.1.5 and earlier)
 
-`--check` strictly reads and merges the legacy allowlist, static/dynamic blocklists, and v2 removal outbox without changing files. `--apply` acquires `bot.lock`, resolves identity metadata through Telegram, creates an external backup with inventory, owner/mode, and SHA-256, then builds a candidate SQLite database. It verifies integrity, JSONB, row counts, primary keys, and codecs before atomically publishing `database/storage.sqlite`, and only then removes the three old structures. The script retains and prints the external backup directory; keep it until startup, permission commands, and removal replay have all been verified.
+Deployments still using `config/whitelist.json`, `config/blocklist.json`, and optional `memory/blocklist/` must **first upgrade to 9.1.5 and complete the migration on that version**, then continue upgrading to the current release.
 
-A fresh deployment crosses the same explicit boundary: create the two temporary empty legacy inputs described in [01 Setup](01-getting-started.md#initialize-the-identity-database), then run `--apply`. Startup never guesses that a missing database means empty policy, and migration refuses to overwrite an existing target.
+`bun run migrate:identity-storage` last shipped in 9.1.5. Under the rule that cold-migration scripts only cover "most recent released version → current version", it was removed from `scripts/` in 9.2.0; the current release neither offers that migration nor accepts legacy JSON lists as input. Do not create empty `whitelist.json`/`blocklist.json` files on the current release and then create an empty database — that leaves the real lists behind and puts the bot online with an empty blocklist.
 
-### SQLite Schema v3 → v4 (chat state moves into the database)
+### SQLite Schema v4 → v5 (chat Q&A moves into the database)
 
-Deployments predating the release that moved chat state out of `state.json` — the database is still
-schema v3 and `state.json` still carries `chats` — run this with the bot stopped:
+Deployments predating the `chat_qa` table (database still at schema v4) migrate with the bot stopped:
 
 ```bash
-bun run migrate:chat-state -- --check
-bun run migrate:chat-state -- --apply
+bun run migrate:chat-qa -- --check
+bun run migrate:chat-qa -- --apply
 ```
 
-Both modes acquire `bot.lock` first (so the service must already be stopped), strictly read both the
-primary and backup `state.json`, run a whole-database integrity check, and accept only the exact
-supported v3 or v4 migration lineage; unknown lineage, invalid rows, or allowlist/blocklist overlap
-is rejected as-is. `--check` only reports how many chat rows are pending and changes no deployment
-data. `--apply` resolves each chat's bot permission snapshot through Telegram (the legacy format
-stored only a `botIsAdmin` boolean), keeps an external backup of both state files and a serialized
-SQLite snapshot with owner/mode/SHA-256 recorded, then runs the schema migration, writes the chat
-rows, verifies the business tables were left untouched, and finally publishes `state.json.bak` and
-`state.json` atomically in that order as the new global-only format. Any failure retains the external
-backup and prints its path. Running it on an already-migrated database performs strict validation and
-reports that no migration is needed. Release Compatibility / Migration Notes must name the migration
-actually run, backup location, restore procedure, and permission requirements.
+Both modes acquire `bot.lock` first (so the service must already be stopped), run a whole-database
+integrity check, strictly decode every business row, and accept only the exact supported v4 or v5
+migration lineage; unknown lineages, invalid rows, and allowlist/blocklist crossover are refused as-is.
+
+**Pre-migration allowlist validation uses the v4 permission key set**, not the current constant: v5
+adds `isCanControllQaPermission` to every allowlist entry, and validating a not-yet-migrated database
+with the current decoder would condemn every pending deployment before the migration starts, naming a
+field its operator never wrote. `meta` is still checked with the production parser — `--check` must
+reject everything `--apply` would, or a bad row surfaces only after the database has been rewritten.
+
+`--check` changes no deployment data. `--apply` keeps a consistent SQLite snapshot outside the work
+tree with an owner/mode/SHA-256 manifest (and re-inspects that backup as if it were a live database),
+then runs the schema migration: it creates `chat_qa` and the index on `q`, and backfills
+`isCanControllQaPermission` — **true only where the existing entry already holds every other
+permission**, the same rule used when `isCanWhiteOther` was introduced. Afterwards it verifies that
+business-table row counts are unchanged and that the whole database still decodes strictly under the
+new schema. Any failure retains the external backup and prints its path. Running against an
+already-migrated database only validates and reports that no migration is needed. A release's
+Compatibility / Migration Notes must state the migration actually performed, the backup location, the
+restore steps, and the permission requirements.
 
 ## Startup Failures
 
@@ -204,11 +210,11 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
 
 - **Data-root preflight fails with a path**
   - **Cause**: the data root, `memory`, `logs`, or `database` is a symbolic link; one of the first
-    three is broader than `0750`; `database/` is broader than `0770` or its collaboration group
+    three is broader than `0755` (that is, group/other gained a write bit); `database/` is broader than `0770` or its collaboration group
     cannot write; a directory is not writable; or the filesystem lacks fsync, hard links, or
     atomic rename.
-  - **Action**: stop all instances and fix owner/group/mode per directory. Use `0750` for the
-    root, `memory/`, and `logs/`; use `0750` or `02770` for `database/` according to the deployment
+  - **Action**: stop all instances and fix owner/group/mode per directory. Use `0750` or `0755` for
+    the root, `memory/`, and `logs/`; use `0750` or `02770` for `database/` according to the deployment
     model. If it still fails, use a local filesystem with the required semantics.
 - **`bot.lock` refuses startup**
   - **Cause and action**: see the next section.
@@ -219,7 +225,7 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
 - **Identity database is missing or fails validation**
   - **Cause**: migration has not run; `storage.sqlite` is not writable; integrity, JSONB, schema,
     or migration lineage is invalid; a row codec fails; or one identity exists in both lists.
-  - **Action**: keep the bot stopped and complete or roll back [Identity Storage Migration](#identity-storage-migration).
+  - **Action**: keep the bot stopped and create the database or roll back, per [Identity Storage Migration](#identity-storage-migration).
     Restore the database and sidecars from one consistency point and repair collaboration-group
     permissions before starting. Never create an empty replacement or delete failing rows.
 - **Both state copies are invalid**

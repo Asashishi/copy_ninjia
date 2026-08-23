@@ -13,6 +13,7 @@ import {
   AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER,
   AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
 } from "../consts/aiChat/provider";
+import { getChatQa } from "../infra/qaStore";
 import { telegramOutboundStats } from "../infra/telegram/outboundGate";
 import { postAiChatOrThrow } from "./workerBridge";
 
@@ -76,6 +77,7 @@ export function generateAndSendReply({
   imageGenerationRequested,
   imageGenerationReference,
   isRandomTrigger = false,
+  messageThreadId,
 }: GenerateAndSendReplyParams): void {
   const telegramStats: ReturnType<typeof telegramOutboundStats> = telegramOutboundStats();
   postAiChatOrThrow({
@@ -91,5 +93,12 @@ export function generateAndSendReply({
     // 同 workers/aiChat/rollingMemory.ts：字段一律发出，不用条件展开。这条消息
     // 走在每次 AI 触发的路径上，两种形状轮着产生会让 Worker 侧的读取变多态。
     imageGenerationReference,
+    // 同理恒发。本群没登记问答时是 undefined，Worker 侧据此不挂那两个工具；
+    // structuredClone 会复制这张 Map，两条线程不共享可变内存。载荷有界：
+    // 每群至多 CHAT_QA_MAX_PER_CHAT 条。
+    chatQa: getChatQa(chatId),
+    // 话题群里除「挂了回复」之外的每一条主动发送都靠它才落回原话题；同样恒发，
+    // General 与非论坛群是显式 undefined（见 libs/forumTopic.ts）。
+    messageThreadId,
   });
 }

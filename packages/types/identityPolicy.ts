@@ -22,6 +22,7 @@ export interface WhitelistPermissions {
   isCanControllFloodControlPermission: boolean;
   isCanControllJATranslatePermission: boolean;
   isCanControllAntiRaidPermission: boolean;
+  isCanControllQaPermission: boolean;
 }
 
 /** /permission 接受的权限键。 */

@@ -46,6 +46,8 @@ export interface TextMessageParams {
   readonly text: string;
   readonly replyToMessageId?: number;
   readonly keyboard?: InlineKeyboardMarkup;
+  /** 论坛话题落点；General 与非论坛群为 undefined。 */
+  readonly messageThreadId?: number;
   readonly onSent?: (messageId: number) => void;
 }
 
@@ -168,6 +170,8 @@ export interface SessionOverrides {
   readonly speakNoticeMessageId?: number;
   readonly pendingSpeakNoticeMessageId?: number;
   readonly retiredSpeakNoticeMessageId?: number;
+  /** 入口当前挂在哪个论坛话题；缺省为 General/非论坛群。 */
+  readonly speakNoticeThreadId?: number;
   readonly messagesSinceSpeakNotice?: number;
   readonly targetProfileUrl?: string;
 }
@@ -182,6 +186,7 @@ export function createSession({
   speakNoticeMessageId,
   pendingSpeakNoticeMessageId = 0,
   retiredSpeakNoticeMessageId = 0,
+  speakNoticeThreadId,
   messagesSinceSpeakNotice = 0,
   targetProfileUrl,
 }: SessionOverrides = {}): GagSession {
@@ -202,6 +207,7 @@ export function createSession({
       speakNoticeMessageId ?? (targetId > 0 ? 55 : 54),
     pendingSpeakNoticeMessageId,
     retiredSpeakNoticeMessageId,
+    speakNoticeThreadId,
     messagesSinceSpeakNotice,
     speakNoticeRefreshTask: null,
     noticePending: false,

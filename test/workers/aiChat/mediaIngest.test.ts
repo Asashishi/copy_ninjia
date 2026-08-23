@@ -25,6 +25,7 @@ const { dirtyMemoryChats } = await import("../../../packages/cache/workers/aiCha
 function photoMessage(): AiRecordMediaMessage {
   return {
     type: "recordMedia",
+    messageThreadId: undefined,
     kind: "photo",
     chatId: -1001,
     senderId: 7,
@@ -37,7 +38,6 @@ function photoMessage(): AiRecordMediaMessage {
     height: 900,
     messageId: 10,
     commentOnResolve: false,
-    imageGenerationRequested: true,
     stickerFallbackText: undefined,
     voiceMime: undefined,
     voiceDurationSeconds: 0,
@@ -78,7 +78,6 @@ describe("AI 媒体触发的生图参考图", () => {
     expect(generateAndSendReply).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
       replyToMessageId: 10,
-      imageGenerationRequested: true,
       imageGenerationReference: {
         fileId: "current-photo",
         fileUniqueId: "current-photo-unique",
@@ -111,7 +110,6 @@ describe("AI 媒体触发的生图参考图", () => {
     await Promise.resolve();
 
     expect(generateAndSendReply).toHaveBeenCalledWith(expect.objectContaining({
-      imageGenerationRequested: true,
       imageGenerationReference: {
         fileId: "sticker-vision-source",
         fileUniqueId: "sticker-unique",
@@ -128,7 +126,6 @@ describe("AI 媒体触发的生图参考图", () => {
 
     expect(describeMedia).not.toHaveBeenCalled();
     expect(generateAndSendReply).toHaveBeenCalledWith(expect.objectContaining({
-      imageGenerationRequested: true,
       imageGenerationReference: {
         fileId: "sticker-vision-source",
         fileUniqueId: "sticker-unique",
@@ -141,7 +138,6 @@ describe("AI 媒体触发的生图参考图", () => {
   test("随机媒体评价不会附带参考图", async () => {
     recordChatMedia({
       ...stickerMessage(),
-      imageGenerationRequested: false,
       directTriggerReason: undefined,
       commentOnResolve: true,
     });

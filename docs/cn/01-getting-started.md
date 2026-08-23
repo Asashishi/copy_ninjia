@@ -22,6 +22,28 @@
 
 ## 安装
 
+### 一键安装
+
+假设机器上什么都没装的话，[`install.sh`](../../install.sh) 把本页剩下的步骤连成一条：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
+```
+
+不用先 clone：脚本自己会 clone 到当前目录下的 `copy_ninjia/`（想换目录设 `COPY_NINJIA_DIR`）。已经有工作树时，在仓库根跑 `bash install.sh` 等价，会跳过 clone 那一步。
+
+管道运行下 fd 0 是脚本正文本身，所以所有问答都从 `/dev/tty` 读——拿不到控制终端时脚本直接退出，不会读到半截脚本当答案。
+
+它按顺序做三件事，之外什么都不做（不注册 systemd、不拉 release tag、不备份、不迁移）：
+
+1. **配环境**：自检 Linux、可读 `/proc` 与可用控制终端；缺 `git`/`curl`/`unzip` 用系统包管理器补齐（root 直跑，否则 `sudo`，两者都没有就打出该跑的命令后退出）；取得工作树；缺 Bun 装官方发行版并校验 ≥1.4；`bun install --frozen-lockfile`。
+2. **问配置**：从 `config_example/` 补齐 `config/`，**已存在的一律不覆盖**；交互询问 `bot_token`（不回显）与 `super_admin_user_id`，六项 AI 能力逐项可选；写出的 `telegram.json`、`agent.json` 权限为 `600`。一项 AI 都没配时删掉示例 `agent.json`——占位 key 留着只会让人以为配好了。
+3. **建库并启动**：`database/storage.sqlite` 不存在时建一份空库，跑一次和启动总闸同一份配置校验，然后 `bun run start`。
+
+脚本可以重跑：既有配置、既有数据库都原样保留。`/ja_copy` 需要的 `g-auth.json` 是 GCP 服务账号密钥，只能从控制台下载后带外传到机器上，因此是脚本的**前置条件**而不是其中一步；缺它只是 `/ja_copy` 不可用，不影响启动。
+
+### 手工安装
+
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
@@ -97,17 +119,50 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
 
 ### 初始化身份数据库
 
-运行时不会猜测缺失数据库并自动建空表。全新部署先准备两份只供迁移脚本消费的空旧格式文件，确认目标库不存在，再显式迁移：
+运行时不会猜测缺失数据库并自动建空表，全新部署必须显式建一次空库。[`install.sh`](../../install.sh) 已经包含这一步；手工安装时执行：
 
 ```bash
-test ! -e config/whitelist.json
-test ! -e config/blocklist.json
-printf '{}\n' > config/whitelist.json
-printf '{"blockedIds":[]}\n' > config/blocklist.json
-bun run migrate:identity-storage --apply
+mkdir -p database
+bun -e '
+  import { createStorageDatabase } from "./packages/database/interact/migration";
+  import {
+    closeStorageDatabase,
+    enableStorageDatabaseWal,
+    openStorageDatabase,
+  } from "./packages/database/interact/connection";
+  import { seedStorageDatabase } from "./packages/database/interact/admin";
+  import {
+    IDENTITY_DATABASE_SCHEMA_DATA,
+    IDENTITY_DATABASE_SCHEMA_KEY,
+  } from "./packages/consts/identityStorage";
+  import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
+  createStorageDatabase(IDENTITY_DATABASE_PATH);
+  const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
+  try {
+    seedStorageDatabase(database, {
+      metadata: [{
+        key: IDENTITY_DATABASE_SCHEMA_KEY,
+        data: IDENTITY_DATABASE_SCHEMA_DATA,
+      }],
+      whitelist: [],
+      blocklist: [],
+      removals: [],
+    });
+  } finally {
+    closeStorageDatabase(database);
+  }
+  enableStorageDatabaseWal(IDENTITY_DATABASE_PATH);
+'
+chmod 2770 database
+chmod 660 database/storage.sqlite
 ```
 
-脚本取得 `bot.lock`、在工作树外留存带 owner/mode/SHA-256 清单的备份、原子发布当前 schema 的 `database/storage.sqlite`，随后删除两份临时旧文件；备份路径会打印出来。已有旧 JSON 部署不要创建空文件覆盖现场，按 [07 运维与排障](07-operations.md#身份存储迁移) 迁移真实数据。
+`seedStorageDatabase` 那一笔不能省：`createStorageDatabase` 只建表，`storage_metadata` 的 schema-version 行不在 migration 里（`0001`/`0002` 只 `UPDATE` 它，空表上是 no-op）。漏掉它库看着是好的，但启动 hydrate 会以「storage_metadata must contain exactly one schema-version row」拒绝，而报错出现在下一步，很难往回想到是建库少了一笔。
+
+建出来的是当前 schema 的空库，黑白名单和待踢 outbox 都为空；目标库已存在时 `createStorageDatabase` 直接拒绝覆盖，不会动现场。两个 `chmod` 与
+[`packages/consts/identityStorage.ts`](../../packages/consts/identityStorage.ts) 的 `IDENTITY_DATABASE_DIRECTORY_MODE`、`IDENTITY_DATABASE_FILE_MODE` 一致，setgid 让 WAL/SHM 旁路文件继承同一个协作组。
+
+仍在用 `config/whitelist.json`、`config/blocklist.json` 的旧部署**不适用**这条路径：那份冷迁移脚本最后一次随 9.1.5 发布，见 [07 运维与排障](07-operations.md#身份存储迁移)。
 
 ### 从 2.1.0 升级
 
@@ -116,13 +171,13 @@ bun run migrate:identity-storage --apply
 变量和 `state.json.global.model` 运行时选择不再读取；模型切换改为停机修改对应能力配置后
 重启。示例值只保证结构正确，不保证账号具有调用权限。
 
-旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并运行身份存储迁移；不要在 SQLite 迁移完成后手改数据库。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
+旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 
 **注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——AI 闲聊的 Worker 根本不启动、记忆不 hydrate（`memory/` 里那份原样留着等前提补齐），`/ja_copy` 退化成普通复制，广告检测不再送检。群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable`，或者干脆把前提补回去。
 
 ### 换掉内联缩略图与机器人默认头像
 
-三张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」，以及 gag 发言入口）和 `/reset_icon`、`/stop_copy` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
+四张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」、gag 发言入口，以及 `/set_qa` 表单）和 `/reset_icon`、`/stop_copy` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
 
 ```json
 "global": {
@@ -130,16 +185,17 @@ bun run migrate:identity-storage --apply
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
+    "qaThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
+五个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、`/set_qa` 表单 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
 
-四项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+五项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。四张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
 
-> 从 `state.global.assets` 早于本节的版本升级上来时，**先看一眼这四项再启动**：三张缩略图现在只认 `https`，此前配成 `http://` 的会在解码期拒绝启动并点名字段路径。
+> 从 `state.global.assets` 早于本节的版本升级上来时，**先看一眼这五项再启动**：四张缩略图现在只认 `https`，此前配成 `http://` 的会在解码期拒绝启动并点名字段路径。
 
 **改法是停机改**：运行中的进程持有权威内存，会整份覆写这个文件，改完必须 `systemctl stop` → 编辑 → `systemctl start`（同 [07 运维与排障](07-operations.md)）。
 

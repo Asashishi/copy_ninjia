@@ -24,12 +24,11 @@
 | `bun run check` | conventions + lint + typecheck + coverage + 热路径门禁，**提交前必跑** |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
-| `bun run perf:hot-path-gate` | 全部热路径场景的内存/GC/JIT 门禁，已并入 `check` |
+| `bun run perf:hot-path-gate` | 全部热路径场景的内存/GC/JIT 门禁，已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
-| `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 写回 09 性能基准页 |
-| `bun run migrate:identity-storage` | 旧 JSON 名单 → `database/storage.sqlite` 的停机冷迁移 |
-| `bun run migrate:chat-state` | `state.json` 群状态 → SQLite `chat_states`（schema v3 → v4）的停机冷迁移 |
+| `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
+| `bun run migrate:chat-qa` | 新增 `chat_qa` 表与问答权限键（schema v4 → v5）的停机冷迁移 |
 | `bun run release:check` | frozen lockfile 安装 + check + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
 
@@ -38,11 +37,11 @@
 - **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 90%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
-- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接与 tracked 非脚本文件的可执行权限，先于 lint 运行。
+- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接与 tracked 非脚本文件的可执行权限，先于 lint 运行。另有两条跨文件一致性检查：群内长期保留的命令内容（`preserveInGroup: true`）必须同时传 `messageThreadId`；三份 `09-performance.md` 的基准区块时间戳必须彼此一致，且在 `performance-result.json` 的 `fullSuite.lastRun` 已记录过时与它同源（未记录过按「从没跑过」放行，由发布流程第 2 步补齐）。
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2498 tests / 261 files / 95379 次 `expect()`**；全源码**函数覆盖率 95.41% / 行覆盖率 96.67%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2581 tests / 271 files / 95642 次 `expect()`**；全源码**函数覆盖率 95.23% / 行覆盖率 96.62%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -68,6 +67,12 @@
 ## 热路径门禁
 
 `bun run perf:hot-path-gate` 是 `bun run check` 的最后一段，因此每次提交前都会跑。它按 `packages/consts/performance.ts` 的 `HOT_PATH_PROFILE_SCENARIOS` 逐场景、逐次重复各起两个独立子进程：`steadyProfile` 只判断正式循环的 GC 与 JIT，`retained` 在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC 后留存。
+
+判据本身**不写在 TypeScript 里**。Bun 版本与 revision 锚点、GC/RSS/常驻增长的硬上限、逐场景 ns/op 软上报阈值，以及每个数字背后的实测读数（最慢中位数、采样进程数、与上一个 Bun 版本的对比），全部放在仓库根被跟踪的 `performance-result.json`，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析：未知键、缺字段、类型不符，以及「阈值低于它自己的来源读数」一律在起子进程之前就拒绝。`packages/consts/performance.ts` 只留与测量无关的采样旋钮和场景表——重标运行时改那份 JSON，不改代码。
+
+`hotPathProfileGate` 这一节是双向的，但两半 owner 不同：`calibration` 由人重标后手工修改，门禁只读；`lastRun` 记录最近一次门禁读数，只有显式传 `bun run perf:hot-path-gate -- --write-result` 才覆盖写，因此 `bun run check` 跑完不会产生工作树改动。回写一个字节都不碰 `calibration`——让门禁拿一次运行的读数自动改自己的判据，等于把闸门焊死在当前性能上。
+
+同一份文件的另一节 `fullSuite.lastRun` 属于[全量基准](#全量性能基准)，由 `bun run perf:full -- --write-doc` 写入。两套基准在不同进程、不同时刻运行，因此写入统一走 `scripts/perf/performanceResult.ts` 的「读整份 → 只换自己那一格 → 整份写回」：谁都不按解析结果重建文档，否则后跑的那个会把另一节连同 `calibration` 里那些给人看的说明一起抹掉。
 
 设闸门的项：GC 采样占比、采样 RSS 峰值与进程生命周期 RSS 高水位（共用同一上限，后者能拦住完整落在两次节拍之间的瞬时分配）、采样 heapUsed 增长、full-GC 后的 JSC heap/堆外内存/对象数留存、最少采样数，以及逐生产探针的「预热后已进 DFG」与「采样期无重编译或去优化」。
 

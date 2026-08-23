@@ -56,7 +56,7 @@ const flushDiskIODomainOutcome = mock(
       writes.push({ table: message.table, id: message.id, revision: message.revision });
     }
     for (const listener of persistedListeners) {
-      listener({ type: "identityStoragePersisted", writes, chatStateWrites: [] });
+      listener({ type: "identityStoragePersisted", writes, chatStateWrites: [], chatQaWrites: [] });
     }
     return { result: "flushed" };
   }
@@ -169,6 +169,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: writeRevision }],
         chatStateWrites: [],
+        chatQaWrites: [],
       });
     }
     expect(unacknowledgedBlocklistWrites.has(7)).toBeFalse();
@@ -195,6 +196,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: firstRevision }],
         chatStateWrites: [],
+        chatQaWrites: [],
       });
     }
     expect(unacknowledgedBlocklistWrites.get(7)?.revision).toBe(secondRevision);
@@ -203,6 +205,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: secondRevision }],
         chatStateWrites: [],
+        chatQaWrites: [],
       });
     }
     expect(unacknowledgedBlocklistWrites.has(7)).toBeFalse();

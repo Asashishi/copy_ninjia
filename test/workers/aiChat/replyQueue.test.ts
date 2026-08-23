@@ -66,6 +66,7 @@ describe("AI 回复触发队列", () => {
       triggerSenderId: 2,
       replyToMessageId: 88,
       telegramBackpressured: false,
+      messageThreadId: undefined,
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reply-photo", fileUniqueId: "reply-photo-unique", width: 1280, height: 960 },
     });
@@ -74,6 +75,7 @@ describe("AI 回复触发队列", () => {
       replyToMessageId: 88,
       triggerSenderId: 2,
       telegramBackpressured: false,
+      messageThreadId: undefined,
       triggerReference: bufferedReplyReferenceFixture({
         messageId: 88,
         id: 2,
@@ -97,6 +99,7 @@ describe("AI 回复触发队列", () => {
       triggerSenderId: 3,
       replyToMessageId: 89,
       telegramBackpressured: false,
+      messageThreadId: undefined,
       imageGenerationRequested: true,
       mediaTrigger: {
         kind: "animation",
@@ -122,6 +125,7 @@ describe("AI 回复触发队列", () => {
       replyToMessageId: 89,
       triggerSenderId: 3,
       telegramBackpressured: false,
+      messageThreadId: undefined,
       triggerReference: bufferedReplyReferenceFixture({
         messageId: 89,
         id: 3,
@@ -140,8 +144,8 @@ describe("AI 回复触发队列", () => {
 
   test("按 FIFO 补跑，并在回调占满并发位后保留剩余项", () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
-    queue.push({ triggerSenderId: 1, replyToMessageId: 1, telegramBackpressured: false, imageGenerationRequested: false, senderName: "A", text: "first" });
-    queue.push({ triggerSenderId: 2, replyToMessageId: 2, telegramBackpressured: false, imageGenerationRequested: true, senderName: "B", text: "second" });
+    queue.push({ triggerSenderId: 1, replyToMessageId: 1, telegramBackpressured: false, messageThreadId: undefined, imageGenerationRequested: false, senderName: "A", text: "first" });
+    queue.push({ triggerSenderId: 2, replyToMessageId: 2, telegramBackpressured: false, messageThreadId: undefined, imageGenerationRequested: true, senderName: "B", text: "second" });
     pendingReplyTriggers.set(-1001, queue);
     activeReplyCounts.set(-1001, REPLY_ROUND_MAX_CONCURRENT - 1);
     const started: number[] = [];
@@ -163,7 +167,7 @@ describe("AI 回复触发队列", () => {
     // 那些人一句回复都收不到。
     const queue = new LinkedQueue<QueuedReplyTrigger>();
     for (let index: number = 1; index <= 3; index++) {
-      queue.push({ triggerSenderId: index, replyToMessageId: index, telegramBackpressured: false, imageGenerationRequested: false, senderName: "A", text: "x" });
+      queue.push({ triggerSenderId: index, replyToMessageId: index, telegramBackpressured: false, messageThreadId: undefined, imageGenerationRequested: false, senderName: "A", text: "x" });
     }
     pendingReplyTriggers.set(-1001, queue);
     activeReplyCounts.delete(-1001);
@@ -181,8 +185,8 @@ describe("AI 回复触发队列", () => {
 
   test("高压期间排队项只补跑一个同群轮次", () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
-    queue.push({ triggerSenderId: 1, replyToMessageId: 1, telegramBackpressured: true, imageGenerationRequested: false, senderName: "A", text: "first" });
-    queue.push({ triggerSenderId: 2, replyToMessageId: 2, telegramBackpressured: true, imageGenerationRequested: false, senderName: "B", text: "second" });
+    queue.push({ triggerSenderId: 1, replyToMessageId: 1, telegramBackpressured: true, messageThreadId: undefined, imageGenerationRequested: false, senderName: "A", text: "first" });
+    queue.push({ triggerSenderId: 2, replyToMessageId: 2, telegramBackpressured: true, messageThreadId: undefined, imageGenerationRequested: false, senderName: "B", text: "second" });
     pendingReplyTriggers.set(-1001, queue);
     const started: number[] = [];
 

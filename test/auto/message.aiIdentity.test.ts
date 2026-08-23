@@ -126,6 +126,58 @@ describe("AI 缓存发送者 username 传递", () => {
       imageGenerationRequested: true,
       imageGenerationReference: undefined,
       isRandomTrigger: false,
+      messageThreadId: undefined,
+    });
+  });
+
+  test("论坛话题里的直接触发把话题 id 一路带进 trigger，其它话题/General 不受影响", async () => {
+    // 话题群里 AI 的主动发送全靠这个 id 落回原话题；漏掉它整轮都会掉进 General。
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 90,
+        date: 1,
+        chat: { id: -100800, type: "supergroup", title: "Test Group", is_forum: true },
+        message_thread_id: 77,
+        is_topic_message: true,
+        from: { id: 123, is_bot: false, username: "alice_dev", first_name: "Alice", last_name: "Tester" },
+        text: "@test_bot 在话题里问",
+        entities: [{ type: "mention", offset: 0, length: 9 }],
+      },
+    } as any);
+
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      triggerSenderId: 123,
+      replyToMessageId: 90,
+      imageGenerationRequested: true,
+      imageGenerationReference: undefined,
+      isRandomTrigger: false,
+      messageThreadId: 77,
+    });
+  });
+
+  test("General 里的直接触发不带话题：Bot API 里「没有话题」就是 General", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 91,
+        date: 1,
+        chat: { id: -100800, type: "supergroup", title: "Test Group", is_forum: true },
+        from: { id: 123, is_bot: false, username: "alice_dev", first_name: "Alice", last_name: "Tester" },
+        text: "@test_bot 在 General 问",
+        entities: [{ type: "mention", offset: 0, length: 9 }],
+      },
+    } as any);
+
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      triggerSenderId: 123,
+      replyToMessageId: 91,
+      imageGenerationRequested: true,
+      imageGenerationReference: undefined,
+      isRandomTrigger: false,
+      messageThreadId: undefined,
     });
   });
 
@@ -223,6 +275,7 @@ describe("AI 缓存发送者 username 传递", () => {
       replyTo: undefined,
       forwardedFrom: undefined,
       persistImmediately: false,
+      messageThreadId: undefined,
       kind: "photo",
       caption: "photo caption",
       fileId: "photo-file",
@@ -230,7 +283,6 @@ describe("AI 缓存发送者 username 传递", () => {
       width: 640,
       height: 480,
       commentOnResolve: false,
-      imageGenerationRequested: false,
       stickerFallbackText: undefined,
       voiceMime: undefined,
       voiceDurationSeconds: 0,

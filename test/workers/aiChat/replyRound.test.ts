@@ -87,6 +87,7 @@ function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}
       chatId: -1001,
       triggerSenderId: 7,
       replyToMessageId: 10,
+      messageThreadId: undefined,
       imageGenerationRequested: false,
       isRandomTrigger: false,
       ...overrides,
@@ -180,6 +181,7 @@ describe("AI 单轮回复生命周期", () => {
 
     await runRound({
       replyToMessageId: 555,
+      messageThreadId: undefined,
       triggerReference: bufferedReplyReferenceFixture({
         messageId: 555,
         id: 7,
@@ -220,6 +222,7 @@ describe("AI 单轮回复生命周期", () => {
 
     await runRound({
       replyToMessageId: 556,
+      messageThreadId: undefined,
       triggerReference: bufferedReplyReferenceFixture({
         messageId: 556,
         id: 8,
@@ -374,6 +377,7 @@ describe("AI 单轮回复生命周期", () => {
       chatId: -1001,
       triggerSenderId: 7,
       replyToMessageId: 10,
+      messageThreadId: undefined,
       imageGenerationRequested: false,
       isRandomTrigger: false,
       generation: 0,
@@ -383,6 +387,7 @@ describe("AI 单轮回复生命周期", () => {
       chatId: -1002,
       triggerSenderId: 8,
       replyToMessageId: 11,
+      messageThreadId: undefined,
       imageGenerationRequested: false,
       isRandomTrigger: false,
     }, finished);
@@ -404,6 +409,7 @@ describe("AI 单轮回复生命周期", () => {
       chatId: -1001,
       triggerSenderId: 7,
       replyToMessageId: 10,
+      messageThreadId: undefined,
       imageGenerationRequested: false,
       isRandomTrigger: false,
     }, finished);

@@ -293,6 +293,9 @@ export async function finishGag(
           text: `${reasonText}，${session.targetLabel} 的 ${session.tool} 已经取下，` +
             "终于又能正常说话咯，可别高兴得太早呀，杂鱼♡",
           replyToMessageId,
+          // 到期那一路没有可回复的消息，缺了话题就会把解除回执播到 General，
+          // 而被管教的人正盯着入口所在的那个话题（见 types/gag.ts 的同名字段）。
+          messageThreadId: session.speakNoticeThreadId,
         });
       }
     } finally {

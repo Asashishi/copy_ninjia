@@ -51,7 +51,8 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
-  getActiveCopyIn: (): null => null,
+  activeCopyTargetIdIn: (): undefined => undefined,
+  activeCopyModeIn: (): undefined => undefined,
   getActiveProxySendTarget: (): undefined => undefined,
   getChatState: (): Record<string, unknown> => ({
     isAIChatEnabled: autoMessageChatState.isAIChatEnabled,

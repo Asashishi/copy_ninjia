@@ -16,6 +16,14 @@ export {
   resetGagSessions,
   teardownGagInChat,
 } from "./gag";
+export {
+  handleQaInlineQuery,
+  handleQaMessageIngress,
+  handleQueryQaCommand,
+  handleRemoveQaCommand,
+  handleSetQaCommand,
+  teardownQaInChat,
+} from "./qa";
 export { handleInlineQuery } from "./inline";
 export { handleBlockCommand } from "./block";
 export { handleBatchKickCommand } from "./batchKick";

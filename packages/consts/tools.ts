@@ -34,6 +34,24 @@ export const GENERATE_IMAGE_TOOL: string = "generate_image";
 export const GENERATE_SONG_TOOL: string = "generate_song";
 
 /**
+ * group_qa_query 工具名：列出本群已登记的问答**问题清单**。
+ *
+ * 只在本群真的登记过问答时才进本轮工具集（见 replyToolset/groupQa.ts）。它是
+ * 纯查询、不计入动作预算——模型先看清单，判断当前这句话是不是在问其中之一。
+ * 一字不差的提问根本走不到模型：那种情况由主干直答短路（见
+ * auto/message/qaDirectAnswer.ts）。到得了这里的都是「意思像但字面不同」。
+ */
+export const GROUP_QA_QUERY_TOOL: string = "group_qa_query";
+
+/**
+ * group_qa_answer 工具名：按问题原文取回登记的答案。
+ *
+ * 参数必须是 group_qa_query 列出的原文之一；模型自己判断语义是否够近，
+ * 够近才调这个工具拿答案，再照着答案措辞。
+ */
+export const GROUP_QA_ANSWER_TOOL: string = "group_qa_answer";
+
+/**
  * 会消耗整轮可见动作预算的工具名；查看贴纸包与查询类工具不计入。
  * 使用只读数组，调用方通过 includes 判断，避免共享 Set 被意外修改。
  *

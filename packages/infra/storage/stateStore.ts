@@ -6,6 +6,7 @@ import {
   BOT_DEFAULT_AVATAR_URL,
   FORTUNE_THUMBNAIL_URL,
   GAG_THUMBNAIL_URL,
+  QA_THUMBNAIL_URL,
   PROBABILITY_THUMBNAIL_URL,
 } from "../../consts/ui/assets";
 import {
@@ -47,9 +48,36 @@ export function getGlobalCopyState(): GlobalCopyState {
   return globalCopyState;
 }
 
-export function getActiveCopyIn(chatId: number): { copiedUser: CachedUser; copyMode: CopyMode | undefined } | null {
-  if (globalCopyState.copiedUser === null || globalCopyState.copyChatId !== chatId) return null;
-  return { copiedUser: globalCopyState.copiedUser, copyMode: globalCopyState.copyMode };
+/**
+ * 本群此刻的复读目标 id；没有目标、或目标锁在别的群时为 undefined。
+ *
+ * **刻意不返回 `{ copiedUser, copyMode }` 投影对象**：这条判定挂在每条群消息和
+ * 每次反应更新上（auto/message/index.ts、auto/reactionSync.ts、echo.ts、
+ * guards.ts 四处），而四个调用点要的都只是「是不是 TA」——为此现造一个两字段
+ * 对象，等于复读进行期间每条消息白付一次分配（见 AGENTS.md 的「高频路径可直接
+ * 读取现值时，不得创建投影对象」）。需要整份身份的冷路径直接读
+ * getGlobalCopyState()。
+ */
+export function activeCopyTargetIdIn(chatId: number): number | undefined {
+  if (globalCopyState.copiedUser === null || globalCopyState.copyChatId !== chatId) {
+    return undefined;
+  }
+  return globalCopyState.copiedUser.id;
+}
+
+/**
+ * 本群此刻生效的复读模式。
+ *
+ * 语义上依附于上面那个判定：**调用方必须先用 activeCopyTargetIdIn 确认本群确有
+ * 目标**，否则这里的 undefined 分不清「没目标」还是「有目标但没指定模式」。
+ * 拆成两个函数而不是返回一个二元组，正是为了让「没目标」那条最常见的路径
+ * 一次分配都不产生。
+ */
+export function activeCopyModeIn(chatId: number): CopyMode | undefined {
+  if (globalCopyState.copiedUser === null || globalCopyState.copyChatId !== chatId) {
+    return undefined;
+  }
+  return globalCopyState.copyMode;
 }
 
 /**
@@ -71,6 +99,11 @@ export function getProbabilityThumbnailUrl(): string {
 /** gag 发言内联结果此刻该用的缩略图直链；缺省语义同上。 */
 export function getGagThumbnailUrl(): string {
   return globalAssetState.gagThumbnailUrl ?? GAG_THUMBNAIL_URL;
+}
+
+/** `/set_qa` 表单内联结果此刻该用的缩略图直链；缺省语义同上。 */
+export function getQaThumbnailUrl(): string {
+  return globalAssetState.qaThumbnailUrl ?? QA_THUMBNAIL_URL;
 }
 
 /**
@@ -119,6 +152,7 @@ export async function loadState(): Promise<void> {
     globalAssetState.fortuneThumbnailUrl = decoded.global.assets.fortuneThumbnailUrl;
     globalAssetState.probabilityThumbnailUrl = decoded.global.assets.probabilityThumbnailUrl;
     globalAssetState.gagThumbnailUrl = decoded.global.assets.gagThumbnailUrl;
+    globalAssetState.qaThumbnailUrl = decoded.global.assets.qaThumbnailUrl;
     globalAssetState.botDefaultAvatarUrl = decoded.global.assets.botDefaultAvatarUrl;
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
@@ -153,6 +187,10 @@ export function seedMissingAssetState(): number {
   }
   if (globalAssetState.gagThumbnailUrl === undefined) {
     globalAssetState.gagThumbnailUrl = GAG_THUMBNAIL_URL;
+    seeded++;
+  }
+  if (globalAssetState.qaThumbnailUrl === undefined) {
+    globalAssetState.qaThumbnailUrl = QA_THUMBNAIL_URL;
     seeded++;
   }
   if (globalAssetState.botDefaultAvatarUrl === undefined) {

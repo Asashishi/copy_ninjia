@@ -68,6 +68,9 @@ export function createSendMessageExecutor(
       text: typo.textToSend,
       replyToMessageId,
       signal: ctx.signal,
+      // reply_to_trigger=false 的正文没有回复关系可以带路，话题群里缺了它
+      // 就会掉进 General；挂了回复也要带，回复目标被删时不至于跟着掉出话题。
+      messageThreadId: ctx.messageThreadId,
     });
     if (sent === undefined) return toolError("Failed to send message");
 

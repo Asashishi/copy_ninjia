@@ -63,7 +63,8 @@
 
 - Bot 发到群里的非功能性提示发送成功后必须统一在 30 秒后删除，包括命令校验失败、权限拒绝、用法提示和操作回执。
 - 所有延迟删除必须复用统一的发送和清理边界，不得遗漏旁路或重复实现定时删除。
-- 仅 `/permission help` 和成功的中文动作命令结果（如 `/咬`、`/揪住`）允许长期保留。
+- 状态机拥有的按钮消息（入群验证按钮、`/set_qa` 表单）不挂固定延迟删除，只由按钮、状态机或 teardown 路径删除；新增此类消息必须在 `bun run check:conventions` 里登记对应豁免，并把发送收在唯一一个边界函数里。
+- 仅 `/permission help`、`/permission query` 的权限看板、`/query_qa` 的问答看板、问答直答的答案，和成功的中文动作命令结果（如 `/咬`、`/揪住`）允许长期保留。
 - 动作命令目标校验失败和 `/x` 用法提示必须在 30 秒后删除。
 - 新增长期保留例外必须由用户明确授权，并在调用点和测试中显式标记。
 - 删除任务不得阻止进程退出；发送失败时不得创建删除任务；删除失败必须走统一 Telegram 错误日志。
@@ -132,6 +133,7 @@
 - 全量基准不设失败阈值、不改退出码；热路径的 GC/RSS/JIT 硬门禁使用 `bun run perf:hot-path-gate`。
 - 分区固定为冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线；每项在独立子进程里跑三轮，报告平均值、最小值、最大值与变异系数。
 - 全部数据写在仓库根的 `performance/`，配置读 `config_example/`，每轮跑完删除整棵目录；运行结束后 `performance/` 下不得有残留目录。
+- `--write-doc` 同时写两处：三份 `09-performance.md` 的基准区块，以及仓库根 `performance-result.json` 的 `fullSuite.lastRun`（结构化报告全文）。两者是同一次运行的两种呈现，必须由这一个开关一起写出，不得拆成两个 flag。该文件的另一节 `hotPathProfileGate` 由热路径门禁写，两侧都只换自己那一格，见 `scripts/perf/performanceResult.ts`。
 - 父进程与 `scripts/perf/fullSuite/` 下除 `fixture.ts`、`seed.ts`、`coldStart.ts`、`chain.ts`、`storage.ts` 以外的模块，只能 import 纯常量与 `import type`，不得 import `packages/` 下的实现模块。
 - 新增被测项复用 `scripts/perf/` 已有实现与生产入口；不得为基准另写生产逻辑、落盘格式或夹具规模，夹具规模引用生产常量。
 - 完整命令链路（`ad-detect-command`、`ai-reply-command`）只在**基准侧**顶掉出站：模型客户端走 `packages/cache/` 已有的 holder，Telegram 走 `scripts/perf/outboundGuard.ts` 的罐头应答（必须装在 `installOutboundGuards` 之后才在最外层）。绝不为此在 `packages/` 里加基准专用分支，也绝不发起真实请求——那会产生真实费用并以线上机器人身份出站。
@@ -188,7 +190,7 @@
 
 - 每次发布必须按以下顺序完整执行：
   1. 在 `dev` 完成开发和门禁。
-  2. 在 `dev` 上运行 `bun run perf:full -- --write-doc`，把三份 `09-performance.md` 的基准区块更新到本次发布的读数，并与代码改动一起提交。
+  2. 在 `dev` 上运行 `bun run perf:full -- --write-doc`，把三份 `09-performance.md` 的基准区块与 `performance-result.json` 的 `fullSuite.lastRun` 更新到本次发布的读数，并与代码改动一起提交。
   3. 以 `git merge --squash` 合入 `master` 并创建单次提交。
   4. 推送 `master`。
   5. 创建并单独推送 annotated version tag。

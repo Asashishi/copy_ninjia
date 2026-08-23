@@ -141,6 +141,7 @@ function globalAssets(value: unknown): GlobalAssetState {
       fortuneThumbnailUrl: undefined,
       probabilityThumbnailUrl: undefined,
       gagThumbnailUrl: undefined,
+      qaThumbnailUrl: undefined,
       botDefaultAvatarUrl: undefined,
     };
   }
@@ -149,12 +150,14 @@ function globalAssets(value: unknown): GlobalAssetState {
     "fortuneThumbnailUrl",
     "probabilityThumbnailUrl",
     "gagThumbnailUrl",
+    "qaThumbnailUrl",
     "botDefaultAvatarUrl",
   ], path);
   return {
     fortuneThumbnailUrl: assetUrl(raw.fortuneThumbnailUrl, `${path}.fortuneThumbnailUrl`),
     probabilityThumbnailUrl: assetUrl(raw.probabilityThumbnailUrl, `${path}.probabilityThumbnailUrl`),
     gagThumbnailUrl: assetUrl(raw.gagThumbnailUrl, `${path}.gagThumbnailUrl`),
+    qaThumbnailUrl: assetUrl(raw.qaThumbnailUrl, `${path}.qaThumbnailUrl`),
     // 只有这一项允许明文 http，理由见 assetUrl。
     botDefaultAvatarUrl: assetUrl(raw.botDefaultAvatarUrl, `${path}.botDefaultAvatarUrl`, true),
   };

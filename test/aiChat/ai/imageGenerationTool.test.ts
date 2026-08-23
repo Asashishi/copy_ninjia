@@ -69,6 +69,7 @@ function buildContext(
   return {
     chatId,
     replyToMessageId: 42,
+    messageThreadId: undefined,
     mediaToolsRequested: requested,
     bypassMediaToolCooldown: bypass,
     chatAction: {
@@ -178,6 +179,7 @@ describe("generate_image 工具执行器", () => {
       bytes: generatedBytes,
       mimeType: "image/png",
       replyToMessageId: 42,
+      messageThreadId: undefined,
     });
     // 图片请求固定指向触发消息，服务端实际挂上后自录回调才带回复目标。
     expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：日落下的纸飞机）", 77, 42);
@@ -296,6 +298,7 @@ describe("generate_image 工具执行器", () => {
       bytes: generatedBytes,
       mimeType: "image/png",
       replyToMessageId: 42,
+      messageThreadId: undefined,
       caption: "照着你说的画了一张",
     });
     // 一条消息只留一条自录：图记号和图注拼在同一个 message_id 上。
@@ -325,11 +328,13 @@ describe("generate_image 工具执行器", () => {
       bytes: generatedBytes,
       mimeType: "image/png",
       replyToMessageId: 42,
+      messageThreadId: undefined,
     });
     expect(sendMessageWithResult).toHaveBeenCalledWith({
       chatId: -1001,
       text: longCaption,
       replyToMessageId: 42,
+      messageThreadId: undefined,
       signal: undefined,
     });
     expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：超长图注）", 77, 42);

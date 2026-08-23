@@ -115,6 +115,7 @@ describe("SQLite 黑名单主线程最终值", () => {
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 9, revision }],
         chatStateWrites: [],
+        chatQaWrites: [],
       });
     }
     expect(ensureBlocklistEntryQueued(9)).toBeFalse();

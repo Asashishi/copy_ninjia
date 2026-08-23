@@ -14,6 +14,10 @@ import {
   handleFloodControlCommand,
   handleGagCommand,
   handleGagMessageIngress,
+  handleQaMessageIngress,
+  handleQueryQaCommand,
+  handleRemoveQaCommand,
+  handleSetQaCommand,
   handleInitCommand,
   handleJaCopyCommand,
   handleInlineQuery,
@@ -177,6 +181,13 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
+  // /set_qa 表单结果同样要覆盖命令消息，且必须终止本条 update：那条中转消息
+  // 已经被认领并删除，再放进 AI、复读或命令链路只会处理一个不存在的东西。
+  bot.on("message", async (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> => {
+    if (await handleQaMessageIngress(ctx.message, ctx.me.id)) return;
+    return next();
+  });
+
   // 授权维护命令与其余命令一样排在上面那道 ingress 之后，没有例外：这两条
   // handler 都不调 next()，注册在 ingress 之前的话，/permission 与 /white 会
   // 整条绕开 handleAntiRaidMessageIngress —— 发的人不计入刷屏窗口却每条都能
@@ -214,6 +225,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
   // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
   // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
+  bot.command("set_qa", (ctx: CommandContext<Context>): Promise<void> => handleSetQaCommand(ctx));
+  bot.command("query_qa", (ctx: CommandContext<Context>): Promise<void> => handleQueryQaCommand(ctx));
+  bot.command("remove_qa", (ctx: CommandContext<Context>): Promise<void> => handleRemoveQaCommand(ctx));
   bot.command("x", (ctx: CommandContext<Context>): Promise<void> => handleCjkActionUsageCommand(ctx));
   // `/咬`、`/贴贴` 这类中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
   // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成

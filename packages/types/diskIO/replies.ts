@@ -27,6 +27,8 @@ export interface LoadedReply {
   whitelistEntryCount: number;
   /** 当前格式的全部群状态；主线程据此建立同容量 LRU，不重复启动正确性校验。 */
   chatStates: Map<number, ChatState>;
+  /** 全部群问答；整表恒定不超过 125 行，主线程据此建立直答热表。 */
+  chatQa: Map<number, ReadonlyMap<string, string>>;
   /** 恢复失败时主线程必须拒绝启动，不能把部分结果当成空状态继续。 */
   error?: string;
 }
@@ -45,6 +47,8 @@ export interface LoadedData {
   blocklistEntryCount: number;
   whitelistEntryCount: number;
   chatStates: Map<number, ChatState>;
+  /** 群 -> 问题 -> 答案；整表恒定不超过 125 行，启动一次性读全。 */
+  chatQa: Map<number, ReadonlyMap<string, string>>;
 }
 
 /** ensureLuckSecret 的逐请求回执；失败时不返回密钥，主线程不得继续抽签。 */
@@ -93,12 +97,21 @@ export interface ChatStatePersistedRevision {
   readonly revision: number;
 }
 
+/** 一条群问答最终值已经由显式 SQLite 事务提交；主键是 (chatId, q) 复合键。 */
+export interface ChatQaPersistedRevision {
+  readonly chatId: number;
+  readonly q: string;
+  readonly revision: number;
+}
+
 /** Disk I/O Worker -> 主线程：清理最终一致性重放缓冲的事务 ACK。 */
 export interface IdentityStoragePersistedReply {
   type: "identityStoragePersisted";
   writes: readonly IdentityPolicyPersistedRevision[];
   /** 本事务提交的群状态 revision；与身份策略共享同一 SQLite 事务。 */
   chatStateWrites: readonly ChatStatePersistedRevision[];
+  /** 本事务提交的群问答 revision；与群状态共享同一 SQLite 事务。 */
+  chatQaWrites: readonly ChatQaPersistedRevision[];
   /** 本事务覆盖到的最新待踢成员快照修订号。 */
   removalSnapshotRevision?: number;
 }
@@ -109,7 +122,7 @@ export type IdentityPersistenceReply = (
 ) => void;
 
 /**
- * 统一 flush 覆盖的十个落盘领域。回执按领域拆开，是为了让「等自己这条记录
+ * 统一 flush 覆盖的十一个落盘领域。回执按领域拆开，是为了让「等自己这条记录
  * 落盘」的调用方（典型是 /block）不会因为无关领域失败而误报——那会把运维
  * 引向一个其实没坏的文件，而真正坏掉的领域按设计只有 console.error，
  * 永远进不了 logs/（见 workers/diskIOWorker.ts 的 flushAll）。
@@ -124,6 +137,7 @@ export type DiskIODomain =
   | "blocklist"
   | "blocklistRemovalOutbox"
   | "chatState"
+  | "chatQa"
   | "joinLog";
 
 /**

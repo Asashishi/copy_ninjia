@@ -2,7 +2,7 @@ import { recordChatMedia } from "../../aiChat";
 import { pickAnimationVisionSource, resolveSpeaker } from "./facts";
 import { buildAiRecordMediaMessage } from "./recordContext";
 import { replyToUnresolvableMedia } from "./mediaFallback";
-import type { MessageTriggerContext } from "../../types/auto";
+import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { TelegramVisionSource } from "../../types/media";
@@ -23,7 +23,7 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
     });
   }
 
-  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger }: { candidate: boolean; claimed: boolean; } = claimRandomMediaTrigger(context, speaker.id);
+  const randomTrigger: RandomMediaTrigger = claimRandomMediaTrigger(context, speaker.id);
   recordChatMedia(buildAiRecordMediaMessage({
     context,
     speaker,
@@ -34,12 +34,11 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
       fileUniqueId: visionSource.fileUniqueId,
       width: visionSource.width,
       height: visionSource.height,
-      commentOnResolve: claimedRandomTrigger,
-      imageGenerationRequested: directTriggerReason !== undefined,
+      commentOnResolve: randomTrigger === "claimed",
       stickerFallbackText: undefined,
       voiceMime: undefined,
       voiceDurationSeconds: 0,
     },
   }));
-  return directTriggerReason !== undefined || commentOnResolveCandidate;
+  return directTriggerReason !== undefined || randomTrigger !== "none";
 }

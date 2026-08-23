@@ -347,6 +347,7 @@ function gagSpeakCounterScenario(): Scenario {
       speakNoticeMessageId: 2_000 + index,
       pendingSpeakNoticeMessageId: 0,
       retiredSpeakNoticeMessageId: 0,
+      speakNoticeThreadId: undefined,
       messagesSinceSpeakNotice: 0,
       speakNoticeRefreshTask: null,
       noticePending: false,

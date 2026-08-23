@@ -119,7 +119,8 @@ async function rejectUnrestrictableTarget(
  * 群里的非功能性提示统一由那道边界回收，操作回执也在其内（见
  * AGENTS.md 的「Telegram 提示留存」）。长期保留是需要显式授权的例外，`/mute`
  * 不在其中——`preserveInGroup: true` 只出现在获授权的调用点（`/permission help`
- * 与成功的中文动作命令）。禁言期内「TA 为什么不说话」由 Telegram 自己的成员
+ * 与 `/permission query` 的权限看板，以及成功的中文动作命令）。禁言期内
+ * 「TA 为什么不说话」由 Telegram 自己的成员
  * 权限界面回答，不靠一条常驻群里的机器人消息。
  */
 export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<void> {

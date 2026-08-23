@@ -86,7 +86,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(true);
     expect(await actions.unbanChatMemberIfBanned(-1001, 7, api)).toBe(true);
     expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(true);
-    expect(await actions.copyMessage(-1001, -2002, 8)).toBe(91);
+    expect(await actions.copyMessage({ chatId: -1001, fromChatId: -2002, messageId: 8 })).toBe(91);
     expect(markSelfSent.mock.calls).toEqual([[-1001, 11], [-1001, 12], [-1001, 13], [-1001, 91]]);
     expect(logApiError).not.toHaveBeenCalled();
   });
@@ -111,7 +111,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(false);
 
     copyMessageApi.mockRejectedValueOnce(new Error("copy failed"));
-    expect(await actions.copyMessage(-1001, -2002, 8)).toBeUndefined();
+    expect(await actions.copyMessage({ chatId: -1001, fromChatId: -2002, messageId: 8 })).toBeUndefined();
     expect(logApiError).toHaveBeenCalledTimes(16);
     expect(markSelfSent).not.toHaveBeenCalled();
   });

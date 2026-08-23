@@ -5,6 +5,15 @@ import { settleInflight, trackInflight } from "../../libs/inflight";
 import type { ChatActionHeartbeatControl, ChatActionHeartbeatEntry, ChatActionPhase } from "../../types/aiChat/chatAction";
 import type { TelegramChatAction } from "../../types/telegram";
 
+/** 一发状态请求的完整参数；话题是第四项，因此收成 options。 */
+export interface ChatActionSendRequest {
+  action: TelegramChatAction;
+  chatId: number;
+  /** 状态要亮在哪个论坛话题；General、非论坛群为 undefined。 */
+  messageThreadId: number | undefined;
+  signal?: AbortSignal;
+}
+
 /** 依赖可注入只为让心跳的并发/失败时序能用确定性的单测覆盖；生产调用使用
  *  下方默认值，仍共享 Worker 内的 typingHeartbeats。 */
 export interface ChatActionHeartbeatDependencies {
@@ -13,15 +22,20 @@ export interface ChatActionHeartbeatDependencies {
   maxConsecutiveFailures: number;
   /** 只有一个发送口：每个挡位各开一个依赖方法的话，新增挡位要同时改依赖接口、
    *  默认值与分发分支，而漏掉分发那处对现有挡位照样编译通过。 */
-  sendChatAction(action: TelegramChatAction, chatId: number, signal?: AbortSignal): Promise<boolean>;
+  sendChatAction(request: ChatActionSendRequest): Promise<boolean>;
 }
 
 const DEFAULT_DEPENDENCIES: ChatActionHeartbeatDependencies = {
   entries: typingHeartbeats,
   intervalMs: TYPING_ACTION_INTERVAL_MS,
   maxConsecutiveFailures: CHAT_ACTION_MAX_CONSECUTIVE_FAILURES,
-  sendChatAction: (action: TelegramChatAction, chatId: number, signal?: AbortSignal): Promise<boolean> =>
-    sendChatAction({ chatId, action, ...(signal ? { signal } : {}) }),
+  sendChatAction: ({
+    action,
+    chatId,
+    messageThreadId,
+    signal,
+  }: ChatActionSendRequest): Promise<boolean> =>
+    sendChatAction({ chatId, action, messageThreadId, ...(signal ? { signal } : {}) }),
 };
 
 /**
@@ -67,7 +81,12 @@ export function pumpChatAction({
     if (deduplicable && entry.lastSentPhase === phase && Date.now() - entry.lastSentAt < dependencies.intervalMs) return;
     let ok: boolean;
     try {
-      ok = await dependencies.sendChatAction(phase, chatId, entry.signal);
+      ok = await dependencies.sendChatAction({
+        action: phase,
+        chatId,
+        messageThreadId: entry.messageThreadId,
+        signal: entry.signal,
+      });
     } catch {
       ok = false;
     }
@@ -109,11 +128,24 @@ export function pumpChatAction({
  * 本代链上仍可能有请求在途；若此时直接返回，它们就会在消息之后迟到并重新
  * 盖回状态。stop 同样会等待这些请求，避免异常中断后还有状态请求姗姗来迟。
  */
-export function startChatActionHeartbeat(
-  chatId: number,
-  dependencies: ChatActionHeartbeatDependencies = DEFAULT_DEPENDENCIES,
-  signal?: AbortSignal
-): ChatActionHeartbeatControl {
+export interface StartChatActionHeartbeatParams {
+  chatId: number;
+  /**
+   * 本轮所在的论坛话题；General、非论坛群为 undefined。
+   *
+   * 不带它的话，话题群里「正在输入…」会亮在 General，而消息落在话题里。
+   */
+  messageThreadId: number | undefined;
+  dependencies?: ChatActionHeartbeatDependencies;
+  signal?: AbortSignal;
+}
+
+export function startChatActionHeartbeat({
+  chatId,
+  messageThreadId,
+  dependencies = DEFAULT_DEPENDENCIES,
+  signal,
+}: StartChatActionHeartbeatParams): ChatActionHeartbeatControl {
   let entry: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
   if (entry !== undefined && entry.signal !== signal) {
     // invalidate 已同步 abort 旧 generation，但新 generation 可以在旧任务 settle
@@ -137,6 +169,7 @@ export function startChatActionHeartbeat(
       signal,
       refCount: 0,
       action: "idle",
+      messageThreadId: undefined,
       owner: null,
       sendChain: Promise.resolve(),
       pendingSend: false,
@@ -170,6 +203,7 @@ export function startChatActionHeartbeat(
         if (acquired.owner !== ownerToken) return;
         acquired.owner = null;
         acquired.action = "idle";
+        acquired.messageThreadId = undefined;
         // 重置节流记忆：切 idle 意味着一条消息/贴纸即将落地并清掉聊天状态，
         // 下一段窗口哪怕还是同一挡位，第一发也必须立即补出去，不能被
         // 「刚发过」误判跳过而黑屏到下一个 tick。
@@ -178,6 +212,7 @@ export function startChatActionHeartbeat(
       }
       acquired.owner = ownerToken;
       acquired.action = phase;
+      acquired.messageThreadId = messageThreadId;
       pumpChatAction({ chatId, entry: acquired, deduplicate: true, dependencies });
     },
     settle: async (): Promise<void> => {
@@ -194,6 +229,7 @@ export function startChatActionHeartbeat(
           if (acquired.owner === ownerToken) {
             acquired.owner = null;
             acquired.action = "idle";
+            acquired.messageThreadId = undefined;
             acquired.lastSentPhase = "idle";
           }
           if (--acquired.refCount <= 0) {

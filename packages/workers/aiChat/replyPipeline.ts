@@ -59,6 +59,8 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean 
       imageGenerationReference: trigger.imageGenerationReference,
       triggerReference: trigger.triggerReference,
       isRandomTrigger: false,
+      chatQa: trigger.chatQa,
+      messageThreadId: trigger.messageThreadId,
       mediaComment: undefined,
       queuedTrigger: trigger,
       generation: undefined,
@@ -125,6 +127,10 @@ export interface GenerateAndSendReplyParams {
   imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
   isRandomTrigger: boolean;
   telegramBackpressured?: boolean;
+  /** 主线程随 trigger 消息附带的本群问答；本群没有时是 undefined。 */
+  chatQa?: ReadonlyMap<string, string>;
+  /** 触发消息所在的论坛话题；本轮全部发送据此落回原话题。 */
+  messageThreadId: number | undefined;
   mediaComment?: MediaCommentContext;
 }
 
@@ -136,6 +142,8 @@ export function generateAndSendReply({
   imageGenerationReference,
   isRandomTrigger,
   telegramBackpressured = false,
+  chatQa,
+  messageThreadId,
   mediaComment,
 }: GenerateAndSendReplyParams): void {
   if (aiChatWorkerQuiescing.current) return;
@@ -164,6 +172,8 @@ export function generateAndSendReply({
           imageGenerationReference,
           triggerReference,
           isRandomTrigger,
+          chatQa,
+          messageThreadId,
           mediaComment,
           queuedTrigger: undefined,
           generation,
@@ -182,6 +192,8 @@ export function generateAndSendReply({
         imageGenerationRequested,
         imageGenerationReference,
         triggerReference,
+        chatQa,
+        messageThreadId,
         mediaTrigger: mediaComment,
       });
       // 入队之后立刻按 FIFO 试着推一次：并发位可能本来就是空的（上一批轮次
@@ -191,8 +203,9 @@ export function generateAndSendReply({
       drainReplyQueueIfWindowAllows(chatId, Date.now());
       break;
     case "enqueueOverflow":
-      // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。
-      pendingOverflowNotices.add(chatId);
+      // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。话题一并记下：
+      // 提示是对这条被丢掉的触发的回应，得落回它所在的话题。
+      pendingOverflowNotices.set(chatId, messageThreadId);
       break;
   }
 }

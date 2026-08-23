@@ -37,6 +37,15 @@ export interface StoredChatStateRow {
   readonly data: string;
 }
 
+/**
+ * 群问答表的一行。主键是 (chatId, q) 复合键，因此这里两列都是标识而非载荷。
+ */
+export interface StoredChatQaRow {
+  readonly chatId: number;
+  readonly q: string;
+  readonly data: string;
+}
+
 /** SQLite 自身元数据表的一行。 */
 export interface StoredStorageMetadataRow {
   readonly key: string;
@@ -54,6 +63,7 @@ export interface StorageDatabaseBaseRows {
 /** 显式冷迁移全表检查读取的共享 SQLite 业务表与元数据。 */
 export interface StorageDatabaseRows extends StorageDatabaseBaseRows {
   readonly chatStates: readonly StoredChatStateRow[];
+  readonly chatQa: readonly StoredChatQaRow[];
 }
 
 /**
@@ -66,6 +76,7 @@ export interface StorageDatabaseStartupRows {
   readonly whitelistEntryCount: number;
   readonly blocklistEntryCount: number;
   readonly chatStates: readonly StoredChatStateRow[];
+  readonly chatQa: readonly StoredChatQaRow[];
 }
 
 /** 事务缓冲中一项主键的最终 JSON 文本；null 表示删除。 */

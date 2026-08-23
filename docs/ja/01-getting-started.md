@@ -22,6 +22,43 @@
 
 ## インストール
 
+### ワンショット install
+
+何も入っていないマシンを前提に、[`install.sh`](../../install.sh) が本ページの残りの手順を 1 本に
+つなぎます。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
+```
+
+事前の clone は不要です。script 自身がカレントディレクトリ直下の `copy_ninjia/` へ clone します
+（変更したい場合は `COPY_NINJIA_DIR` を設定）。既に work tree がある場合は repository root で
+`bash install.sh` を実行すれば等価で、clone 手順を飛ばします。
+
+pipe 実行では fd 0 が script 本文そのものなので、すべての問い合わせは `/dev/tty` から読みます。
+制御端末が使えない場合は、script 本文の続きを回答として読んでしまう前に終了します。
+
+順に 3 つのことだけを行い、それ以外はしません（systemd unit の登録、release tag の取得、backup、
+migration はいずれも行いません）。
+
+1. **環境の準備**：Linux、読み取り可能な `/proc`、使用可能な制御端末を自己確認。`git`/`curl`/`unzip`
+   が無ければ system の package manager で補完（root ならそのまま、そうでなければ `sudo`。どちらも
+   無い場合は実行すべきコマンドを表示して終了）。work tree を取得。Bun が無ければ公式配布版を導入し
+   1.4 以上を検証。`bun install --frozen-lockfile` を実行。
+2. **設定の入力**：`config_example/` から `config/` を補完し、**既存ファイルは一切上書きしません**。
+   `bot_token`（非表示入力）と `super_admin_user_id` を対話的に尋ね、6 つの AI 能力は個別に任意。
+   書き出す `telegram.json`・`agent.json` の権限は `600`。AI 能力を 1 つも設定しなかった場合は
+   サンプルの `agent.json` を削除します。placeholder の key を残すと設定済みに見えてしまうためです。
+3. **database 作成と起動**：`database/storage.sqlite` が無ければ空 database を作成し、起動時の総
+   ゲートと同じ deployment input 検証を 1 回実行してから `bun run start`。
+
+再実行しても安全です。既存の設定と既存の database はそのまま保持されます。`/ja_copy` が必要とする
+`g-auth.json` は GCP サービスアカウント鍵で、コンソールから download して帯域外で転送するしかない
+ため、script の**前提条件**であって手順の一部ではありません。無くても `/ja_copy` が使えなくなるだけ
+で、起動には影響しません。
+
+### 手動 install
+
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
@@ -114,21 +151,57 @@ feature 単位で検証し、日本語翻訳は `g-auth.json` を読みます。
 
 ### identity storage の初期化
 
-runtime は database 欠落を空 table と推測しません。新規 deployment は migration 専用の空 legacy
-input を用意し、target が存在しないことを確認して明示 migration します。
+runtime は database 欠落を空 table と推測しないため、新規 deployment は空 database を一度だけ明示的に
+作成する必要があります。[`install.sh`](../../install.sh) にはこの手順が含まれています。手動 install の
+場合は次を実行します。
 
 ```bash
-test ! -e config/whitelist.json
-test ! -e config/blocklist.json
-printf '{}\n' > config/whitelist.json
-printf '{"blockedIds":[]}\n' > config/blocklist.json
-bun run migrate:identity-storage --apply
+mkdir -p database
+bun -e '
+  import { createStorageDatabase } from "./packages/database/interact/migration";
+  import {
+    closeStorageDatabase,
+    enableStorageDatabaseWal,
+    openStorageDatabase,
+  } from "./packages/database/interact/connection";
+  import { seedStorageDatabase } from "./packages/database/interact/admin";
+  import {
+    IDENTITY_DATABASE_SCHEMA_DATA,
+    IDENTITY_DATABASE_SCHEMA_KEY,
+  } from "./packages/consts/identityStorage";
+  import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
+  createStorageDatabase(IDENTITY_DATABASE_PATH);
+  const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
+  try {
+    seedStorageDatabase(database, {
+      metadata: [{
+        key: IDENTITY_DATABASE_SCHEMA_KEY,
+        data: IDENTITY_DATABASE_SCHEMA_DATA,
+      }],
+      whitelist: [],
+      blocklist: [],
+      removals: [],
+    });
+  } finally {
+    closeStorageDatabase(database);
+  }
+  enableStorageDatabaseWal(IDENTITY_DATABASE_PATH);
+'
+chmod 2770 database
+chmod 660 database/storage.sqlite
 ```
 
-script は `bot.lock` を取得し、owner/mode/SHA-256 inventory 付き外部 backup を残し、現行
-`database/storage.sqlite` を atomic publish して 2 つの temporary legacy file を削除します。
-既存 legacy deployment は空 file で上書きせず、[運用文書](07-operations.md#identity-storage-migration)
-に従って実データを migration してください。
+`seedStorageDatabase` の 1 行は省略できません。`createStorageDatabase` は table を作るだけで、`storage_metadata` の schema-version 行はどの migration にも含まれません（`0001`/`0002` は `UPDATE` するだけで、空 table では no-op です）。省くと database は一見正常ですが、起動時の hydrate が「storage_metadata must contain exactly one schema-version row」で拒否します。しかもその error は次の段階で出るため、作成時の 1 行不足まで遡るのが難しくなります。
+
+作られるのは現行 schema の空 database で、allowlist・blocklist・removal outbox はいずれも空です。
+target が既に存在する場合 `createStorageDatabase` は上書きを拒否するため、現場には触れません。2 つの
+`chmod` は [`packages/consts/identityStorage.ts`](../../packages/consts/identityStorage.ts) の
+`IDENTITY_DATABASE_DIRECTORY_MODE`・`IDENTITY_DATABASE_FILE_MODE` と一致し、setgid により WAL/SHM の
+sidecar が同じ協働 group を継承します。
+
+`config/whitelist.json`・`config/blocklist.json` を使い続けている旧 deployment はこの path を使えません。
+その cold migration は 9.1.5 が最後の提供版です。[運用文書](07-operations.md#identity-storage-migration)
+を参照してください。
 
 ### 2.1.0 からのアップグレード
 
@@ -138,13 +211,13 @@ script は `bot.lock` を取得し、owner/mode/SHA-256 inventory 付き外部 b
 `state.json.global.model` の runtime 選択はもう読みません。model 変更は停止中に該当能力を
 編集し、再起動して反映します。
 
-旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、identity storage migration を実行します。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/telegram.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
+旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、**9.1.5 上で** identity storage migration を実行します（この script は 9.2.0 で削除済み。[運用文書](07-operations.md#identity-storage-migration) を参照）。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/telegram.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
 
 **注意：資格情報を外しても起動は拒否されませんが、そのグループは静かに止まります。** 起動時の総ゲートが検証するのは**すでに存在する**デプロイ入力だけです（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照。現在は `packages/config/readiness.ts` の `validateExistingDeploymentInputs` を再 export するだけです）。存在するファイルは厳密なパースを通らなければならず、本当に存在しないファイルは起動を妨げません。`chat_states` の `true` は従来どおり復元されますが、対応機能は唯一の判定入口で利用不可と判定されます——AI 雑談の Worker はそもそも起動せずメモリも hydrate されず（`memory/` のスナップショットは前提が戻るまでそのまま保持されます）、`/ja_copy` は通常コピーへ退化し、広告検出は bundle を送らなくなります。グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えず、痕跡は `logs/` の 1 行だけです。したがって資格情報を外す前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行するか、前提そのものを復旧してください。
 
 ### インラインサムネイルと Bot 既定アバターの差し替え
 
-インライン結果のサムネイル 3 枚（`/luck_challenge` の 2 枚と gag 発言入口の 1 枚）と、`/reset_icon`・`/stop_copy` で復元する既定アバターの直リンクは、いずれも `state.json` の `global.assets` にあります。
+インライン結果のサムネイル 4 枚（`/luck_challenge` の 2 枚、gag 発言入口、`/set_qa` フォーム）と、`/reset_icon`・`/stop_copy` で復元する既定アバターの直リンクは、いずれも `state.json` の `global.assets` にあります。
 
 ```json
 "global": {
@@ -152,16 +225,17 @@ script は `bot.lock` を取得し、owner/mode/SHA-256 inventory 付き外部 b
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
+    "qaThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
+5 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、`/set_qa` フォーム inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
 
-4 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
+5 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 4 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
 
-> `state.global.assets` が導入される前のバージョンから上げる場合は、**起動前にこの 4 項目を確認**してください：サムネイル 3 枚は現在 `https` のみを受け付けるため、以前 `http://` で設定していたものはデコード時に起動を拒否し、フィールドパスを示します。
+> `state.global.assets` が導入される前のバージョンから上げる場合は、**起動前にこの 5 項目を確認**してください：サムネイル 4 枚は現在 `https` のみを受け付けるため、以前 `http://` で設定していたものはデコード時に起動を拒否し、フィールドパスを示します。
 
 **変更は停止中に行います**：稼働中のプロセスは正式な状態をメモリに保持しファイル全体を上書きするため、`systemctl stop` → 編集 → `systemctl start` の順です（[07 運用とトラブルシューティング](07-operations.md) を参照）。
 

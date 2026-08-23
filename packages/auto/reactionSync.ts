@@ -1,14 +1,13 @@
 import type { Context } from "grammy";
 import type { CopyableReaction } from "../types/reactionQueue";
-import { getActiveCopyIn } from "../infra/storage/stateStore";
+import { activeCopyTargetIdIn } from "../infra/storage/stateStore";
 import { enqueueReaction } from "../copy/reactionQueue";
 import type { MessageReactionUpdated } from "@grammyjs/types";
-import type { CachedUser, CopyMode } from "../types/chatState";
 
 /**
  * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义
  * emoji 都支持）同步到同一条消息上；目标移除了自己的回应时也会跟着清除。
- * 与复读一致，只在发起 /copy 的那个群里同步（判定统一走 getActiveCopyIn）。
+ * 与复读一致，只在发起 /copy 的那个群里同步（判定统一走 activeCopyTargetIdIn）。
  * 实际的 setMessageReaction 调用走 reactionQueue（同消息合并、按 chat 隔离
  * API 长尾；429 由主线程 reaction 类别独立退避，网络/5xx 交还 owner）；本 update 等到对应版本被
  * 应用、覆盖或按硬顶丢弃才结算，使下一轮取数不会提前确认仍在后台的反应。
@@ -17,9 +16,9 @@ export async function handleReaction(ctx: Context): Promise<void> {
   const reaction: MessageReactionUpdated | undefined = ctx.messageReaction;
   if (!reaction) return;
 
-  const activeCopy: { copiedUser: CachedUser; copyMode: CopyMode | undefined; } | null = getActiveCopyIn(reaction.chat.id);
+  const copyTargetId: number | undefined = activeCopyTargetIdIn(reaction.chat.id);
   const reactorId: number | undefined = reaction.actor_chat ? reaction.actor_chat.id : reaction.user?.id;
-  if (!activeCopy || reactorId !== activeCopy.copiedUser.id) return;
+  if (copyTargetId === undefined || reactorId !== copyTargetId) return;
 
   // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组算好（付费反应被
   // 单独归类，天然排除——原因见 CopyableReaction 类型注释）。机器人没有

@@ -44,6 +44,54 @@ describe("Telegram 常规动作封装", () => {
     expect(isSelfSent(-1001, 77)).toBe(true);
   });
 
+  test("话题群里不挂回复的发送带上 message_thread_id，否则会掉进 General", async () => {
+    const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 78 }));
+    const api = { sendMessage: sendMessageMock } as unknown as TelegramApi;
+
+    await sendMessageWithResult({
+      chatId: -1001,
+      text: "随机插话",
+      api,
+      messageThreadId: 77,
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith(-1001, "随机插话", {
+      message_thread_id: 77,
+    });
+  });
+
+  test("挂了回复也照样带话题：目标被删时 allow_sending_without_reply 会退化成普通发送", async () => {
+    const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 79 }));
+    const api = { sendMessage: sendMessageMock } as unknown as TelegramApi;
+
+    await sendMessageWithResult({
+      chatId: -1001,
+      text: "回一句",
+      replyToMessageId: 42,
+      api,
+      messageThreadId: 77,
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith(-1001, "回一句", {
+      message_thread_id: 77,
+      reply_parameters: { message_id: 42, allow_sending_without_reply: true },
+    });
+  });
+
+  test("非论坛群（messageThreadId 为 undefined）不带这个参数", async () => {
+    const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 80 }));
+    const api = { sendMessage: sendMessageMock } as unknown as TelegramApi;
+
+    await sendMessageWithResult({
+      chatId: -1001,
+      text: "普通群",
+      api,
+      messageThreadId: undefined,
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith(-1001, "普通群", {});
+  });
+
   test("目标专属临时消息透传 Bot API 10.2 字段且不登记 message_id 0", async () => {
     const sendMessageMock = mock(async (..._args: unknown[]) => ({
       message_id: 0,

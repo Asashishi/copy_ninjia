@@ -84,8 +84,6 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   width: number;
   height: number;
   commentOnResolve: boolean;
-  /** 当前媒体消息是否直接回复/@机器人，允许模型自行判断图片工具意图。 */
-  imageGenerationRequested: boolean;
   /** 贴纸取不到视觉源时的兜底文案；其余媒体为 undefined。 */
   stickerFallbackText: string | undefined;
   /**
@@ -108,8 +106,30 @@ export interface AiRecordMediaMessage extends AiRecordContext {
    * 消息走一次的协议上既多一次分配，也让消费侧读取点多态。实测把这一个字段
    * 从 `{ reason }` 改成字符串后，整条载荷的 structuredClone 从 9.05 µs 降到
    * 4.16 µs（Bun 1.3.14，7 个独立进程各 7 样本取中位数）。
+   *
+   * **它同时就是「本轮有没有图片工具资格」这一个事实**，不要再加一个布尔字段来
+   * 重复它：`imageGenerationRequested` 曾经存在，四个 handler 一律写成
+   * `directTriggerReason !== undefined`，消费侧 workers/aiChat/mediaIngest.ts 也只
+   * 拿它做同一个判断。删掉它还有一条硬性理由——见本接口末尾 messageThreadId 的说明。
    */
   directTriggerReason: AiDirectTriggerReason | undefined;
+  /**
+   * 触发消息所在的论坛话题 id；General、非论坛群与讨论组评论为 undefined。
+   *
+   * 媒体轮的回复由 Worker 在 describeMedia 解析完成后异步发起，那时手上只剩这条
+   * 载荷，因此话题落点必须随它一起过线（见 workers/aiChat/mediaIngest.ts）。判定
+   * 与提取见 libs/forumTopic.ts。键恒发、缺省显式 undefined——理由同上面
+   * directTriggerReason 那段：本协议每条媒体消息走一次，两种形状轮着产生会让
+   * Worker 侧的读取点多态。
+   *
+   * **本接口的字段数是 22，这是硬上限，加字段前先删一个。** JSC 的
+   * JSFinalObject 内联容量到 22 槽为止；第 23 个属性会把整个对象挤出内联存储、
+   * 改走 butterfly，`buildAiRecordMediaMessage` 这条每条媒体消息都要跑的构造随之
+   * 变慢一倍。实测（perf:hot-path-gate 的 ai-media-direct-trigger，同机同 Bun，
+   * 3 轮取中位数区间）：22 项 152~177 ns/op，23 项 286~307 ns/op。本字段能加进来，
+   * 正是因为同时删掉了与 directTriggerReason 等价的 imageGenerationRequested。
+   */
+  messageThreadId: number | undefined;
 }
 
 export interface AiTriggerMessage {
@@ -124,6 +144,27 @@ export interface AiTriggerMessage {
   imageGenerationRequested: boolean;
   /** 当前图片/贴纸，或本条文字回复的图片/贴纸；仅在直接触发的本轮短期附带。 */
   imageGenerationReference?: ImageGenerationReference;
+  /**
+   * 本群已登记的问答（问题原文 -> 答案）；本群一条都没有时省略。
+   *
+   * 挂在这条已有消息上而不是另建一份 Worker 镜像：接收方所需的最终字段放进
+   * 现有消息，就不必为它维护推送时机、全量/增量模式和 Worker 重启后的重放方
+   * （见 AGENTS.md 的「缓存与线程归属」）。载荷有界——每群至多 5 条。
+   *
+   * 一字不差的提问不会走到这里：那种情况在主干上就被直答短路了，连 trigger
+   * 都不会发。到得了 Worker 的只有「意思像但字面不同」，交给模型判断。
+   */
+  chatQa?: ReadonlyMap<string, string>;
+  /**
+   * 触发消息所在的论坛话题 id；General、非论坛群与讨论组评论为 undefined。
+   *
+   * 本轮全部主动发送（文字、贴纸、生图、生歌、「正在输入…」与限频提示）都要带上
+   * 它，否则话题群里除「挂了回复」之外的每一条都会掉进 General。判定与提取见
+   * libs/forumTopic.ts。键恒发、缺省显式 undefined，理由同上面的
+   * imageGenerationReference：这条消息走在每次 AI 触发的路径上，两种形状轮着
+   * 产生会让 Worker 侧的读取变多态。
+   */
+  messageThreadId: number | undefined;
 }
 
 export interface AiHydrateMessage {

@@ -15,6 +15,7 @@ import {
   sourceFilesUnder,
 } from "./conventions/sourceAnalysis";
 import { collectColdMigrationProblems } from "./conventions/coldMigrations";
+import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
 const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
@@ -132,6 +133,9 @@ const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
 const failures: string[] = [];
 for (const problem of collectColdMigrationProblems(PROJECT_ROOT)) {
   failures.push(`cold migration: ${problem}`);
+}
+for (const problem of collectPerformanceRecordProblems(PROJECT_ROOT)) {
+  failures.push(`performance record: ${problem}`);
 }
 const tracked: string[] = trackedFiles();
 for (const trackedPath of tracked) {
@@ -354,10 +358,12 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
 }
 
 /**
- * 群聊命令文本必须经统一的 30 秒清理边界发送。唯一例外是 gag 会话状态和
- * 发言入口；它们由同一会话持有，只能由滚动换新、超时、`/ungag` 或 teardown
- * 删除。头像更新结果虽在 copy owner 内异步
- * 落地，但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
+ * 群聊命令文本必须经统一的 30 秒清理边界发送。例外只有两处，且都是**状态机
+ * 拥有的按钮消息**：gag 的会话状态与发言入口（由滚动换新、超时、`/ungag` 或
+ * teardown 删除），以及 `/set_qa` 的两按钮表单（由「两项填齐」、TTL 到期或群
+ * teardown 删除）。这类消息挂固定 30 秒清理只会让用户照着按钮填到一半时消息
+ * 自己消失。头像更新结果虽在 copy owner 内异步落地，但只由 /copy 与
+ * /steal_icon 触发，因此同样纳入检查。
  */
 const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
   ...sourceFilesUnder(COMMANDS_ROOT),
@@ -365,6 +371,7 @@ const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
 ];
 const GAG_COMMAND_PATH: string = join(COMMANDS_ROOT, "gag.ts");
 const GAG_NOTICES_PATH: string = join(COMMANDS_ROOT, "gag", "notices.ts");
+const QA_NOTICES_PATH: string = join(COMMANDS_ROOT, "qa", "notices.ts");
 for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
@@ -381,7 +388,8 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
       )
     ) {
       if (
-        (path === GAG_COMMAND_PATH || path === GAG_NOTICES_PATH) &&
+        (path === GAG_COMMAND_PATH || path === GAG_NOTICES_PATH ||
+          path === QA_NOTICES_PATH) &&
         ["sendEphemeralMessage", "sendMessage"].includes(node.name.text)
       ) {
         ts.forEachChild(node, visit);
@@ -398,8 +406,8 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   visit(source);
 }
 
-/** gag 只允许状态消息和统一入口动作边界绕开 30 秒清理。 */
-for (const path of [GAG_COMMAND_PATH, GAG_NOTICES_PATH]) {
+/** 只允许 gag 的状态消息与统一入口、以及 qa 的表单入口绕开 30 秒清理。 */
+for (const path of [GAG_COMMAND_PATH, GAG_NOTICES_PATH, QA_NOTICES_PATH]) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
     readFileSync(path, "utf8"),
@@ -428,11 +436,65 @@ for (const path of [GAG_COMMAND_PATH, GAG_NOTICES_PATH]) {
       const isSpeakNoticeBoundary: boolean = path === GAG_NOTICES_PATH &&
         owner !== undefined && ts.isFunctionDeclaration(owner) &&
         owner.name?.text === "sendGagSpeakNotice";
-      if (!isPublicNoticeAssignment && !isSpeakNoticeBoundary) {
+      // qa 表单同样只允许唯一那个发送边界；别处再想直接发消息一律拦下。
+      const isQaFormBoundary: boolean = path === QA_NOTICES_PATH &&
+        owner !== undefined && ts.isFunctionDeclaration(owner) &&
+        owner.name?.text === "sendQaForm";
+      if (!isPublicNoticeAssignment && !isSpeakNoticeBoundary && !isQaFormBoundary) {
         failures.push(
           `${relative(PROJECT_ROOT, path)}:` +
           `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
           "only the state-owned gag notice may bypass sendCommandMessage"
+        );
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
+/**
+ * 长期留存的群内消息必须自己带 `messageThreadId`。
+ *
+ * 判定口径按**留存时长**，不按消息种类：不会自己消失的消息落错话题就是永久
+ * 错位，而 30 秒自删的命令回执错也只错到清理为止（见 actions/messages.ts 的
+ * SendMessageParams.messageThreadId）。这里检查其中**可静态判定**的那一半——
+ * 显式声明 `preserveInGroup: true` 的长期保留例外（两块权限看板、问答看板、
+ * 成功的中文动作结果）。它们既然绕开了 30 秒清理，就必须同时带上话题。
+ *
+ * 只挂 `reply_parameters` 不算数：`allow_sending_without_reply` 会在被回复的
+ * 消息已被删除时把这条降级成普通发送，那时只有 `message_thread_id` 还留在
+ * 话题里——而这些看板恰恰会一直留在群里让人看见。
+ */
+for (const path of sourceFilesUnder(COMMANDS_ROOT)) {
+  const source: ts.SourceFile = ts.createSourceFile(
+    path,
+    readFileSync(path, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  function visit(node: ts.Node): void {
+    if (ts.isObjectLiteralExpression(node)) {
+      let preservesInGroup: boolean = false;
+      let carriesThread: boolean = false;
+      for (const property of node.properties) {
+        const name: string | undefined = property.name !== undefined &&
+          ts.isIdentifier(property.name)
+          ? property.name.text
+          : undefined;
+        if (
+          name === "preserveInGroup" &&
+          ts.isPropertyAssignment(property) &&
+          property.initializer.kind === ts.SyntaxKind.TrueKeyword
+        ) preservesInGroup = true;
+        if (name === "messageThreadId") carriesThread = true;
+      }
+      if (preservesInGroup && !carriesThread) {
+        failures.push(
+          `${relative(PROJECT_ROOT, path)}:` +
+          `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
+          "preserveInGroup content stays in the chat forever and must also pass messageThreadId"
         );
       }
     }

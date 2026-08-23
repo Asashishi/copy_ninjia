@@ -140,6 +140,20 @@
 
 **任意ブロックの追加は手順 3–4 を省略できます**。条件は「未設定」を明確に定義することです。decoder はブロック自体の欠落とフィールドの欠落の両方を許容し（`libs/stateFileCodec.ts` の `globalAssets` に倣い、両分岐が同じフィールド集合を返すことで `save` の自己検証が 2 種類の shape を見ないようにします）、取得側で既定値を 1 つに収束させます。実例は `state.global.assets` で、既存ファイルは無変更のまま読み込め、ブロックが無かった頃と同じ挙動になります。そのブロックが人手で編集する調整項目なら、起動時の補完（`seedMissingAssetState`）を足して未設定項目に現在有効な値を書き、キーがファイルに現れるようにします。補完は**起動を中断しうるすべての `await` の後**に実行し、欠けている項目だけを埋め、background で永続化します（[04](04-invariants.md#永続化と-snapshot-の-contract) を参照）。逆に、**既存ファイルの decode を失敗させる変更は従来どおり手順 3–4 を完全に実施します**。
 
+## SQLite table を追加する
+
+`state.json` の変更より制約が 1 つ厳しくなります。**runtime は自動 migration を行わず**、database の version が合わなければ起動を拒否するため、table を 1 つ増やすたびに停止時 cold migration が必要です。手順：
+
+1. `packages/database/schema/<domain>.ts` で table を宣言し、`schema/storage.ts` に登録します。`data` 列は他の業務 table と同じく `jsonbText` と `jsonDataCheck` を使います。
+2. `schema/migrations/000N_<name>.sql` を書き、`migrations/meta/_journal.json` に entry を追加します。
+3. **hash は計算せず実測します**：使い捨ての database を作って migration を 1 回実行し、`__drizzle_migrations` から `created_at` と `hash` を読み戻して `packages/consts/identityStorage.ts` に書きます。同時に `IDENTITY_DATABASE_SCHEMA_VERSION` を 1 つ上げます。
+4. cold migration script を書き、`scripts/conventions/coldMigrations.ts` の唯一の edge を**置き換え**ます。規約は「直前の release → 現行版」の 1 本だけを許すため、旧 script はその test ごと削除します。
+5. migration **前**の検証はその version の歴史的な形態で行います。今回の変更が table の閉じた field 集合を変える場合（permission key の追加など）、事前に production decoder は使えません。新 version の field が存在することを既に要求しているため、移行待ちの deployment はすべて migration 開始前に破損と判定され、運用者が書いたことのない field を名指しされます。歴史的な key 一覧は migration script 内に固定し、現行定数から導出しないでください。導出は、次に key を追加したときこの歴史的 edge の判定を静かに書き換えます。
+6. version に依存しない部分（`meta` など）は production の parser を使います。`--check` は `--apply` が拒否するものをすべて拒否しなければならず、さもないと不正な row は database が書き換えられた後にしか露見しません。
+7. 永続化は既存の write-through を再利用します：main thread が memory 上の最終値を publish し、Disk I/O Worker へ post、明示 transaction で commit、正確な revision を ACK、再構築後は memory から replay します。
+
+実例は `chat_qa` です（`0003_chat_qa.sql` と `scripts/migrateChatQa.ts`）。
+
 ## Worker 間 protocol の変更
 
 スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/query_mood` と `/switch_mood` が共有する mood handshake が実装例です。

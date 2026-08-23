@@ -13,11 +13,13 @@ export async function handlePrivateProxySend(message: Message): Promise<void> {
   const targetChatId: number | undefined = getActiveProxySendTarget();
   if (targetChatId === undefined) return;
 
-  const copiedMessageId: number | undefined = await copyMessage(
-    targetChatId,
-    message.chat.id,
-    message.message_id
-  );
+  // 中转的目标是整个群，不是群里某个话题：`/send <群id>` 从来没有话题这个入参，
+  // 落进 General 正是它本来的语义。
+  const copiedMessageId: number | undefined = await copyMessage({
+    chatId: targetChatId,
+    fromChatId: message.chat.id,
+    messageId: message.message_id,
+  });
   if (copiedMessageId !== undefined) return;
 
   // 转发失败立即结束会话，避免后续私聊消息继续被静默吞掉。

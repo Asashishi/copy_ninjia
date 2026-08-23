@@ -124,16 +124,20 @@ export async function prepareRuntimeDataRoot(
     for (const directoryName of RUNTIME_SENSITIVE_DIRECTORY_NAMES) {
       const directoryPath: string = join(root, directoryName);
       const isIdentityDatabaseDirectory: boolean = directoryName === "database";
+      // 建目录和校验目录必须用同一个上限。`database/` 的上限是 0770（协作组可写、
+      // 但不给 other 任何位），比数据根的 0755 在 other 侧更严；拿数据根那个值去
+      // 建它，建出来的 0755 会当场被下面的断言判成「宽于 0770」——自己建的目录
+      // 自己不收，而且报错指向的是部署方从没碰过的路径。
+      const maximumMode: number = isIdentityDatabaseDirectory
+        ? IDENTITY_DATABASE_DIRECTORY_MODE & 0o777
+        : RUNTIME_DATA_ROOT_MAX_MODE;
       let directoryStat: Stats;
       try {
         directoryStat = await fs.lstat(directoryPath);
       } catch (error: unknown) {
         if (!isErrno(error, "ENOENT")) throw error;
         if (!enforcePrivatePermissions) continue;
-        await fs.mkdir(directoryPath, {
-          recursive: true,
-          mode: RUNTIME_DATA_ROOT_MAX_MODE,
-        });
+        await fs.mkdir(directoryPath, { recursive: true, mode: maximumMode });
         directoryStat = await fs.lstat(directoryPath);
       }
       if (enforcePrivatePermissions) {
@@ -141,9 +145,7 @@ export async function prepareRuntimeDataRoot(
           allowCollaborativeGroup: isIdentityDatabaseDirectory,
           expectedGroupGids,
           expectedOwnerUid,
-          maximumMode: isIdentityDatabaseDirectory
-            ? IDENTITY_DATABASE_DIRECTORY_MODE & 0o777
-            : RUNTIME_DATA_ROOT_MAX_MODE,
+          maximumMode,
         });
       } else if (directoryStat.isSymbolicLink()) {
         throw new Error(`${directoryPath} is a symbolic link; runtime data directories must be real directories`);

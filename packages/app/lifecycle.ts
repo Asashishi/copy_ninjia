@@ -156,6 +156,7 @@ export class ApplicationLifecycle {
       throw new Error("Identity database recovery did not return both policy table counts.");
     }
     this.dependencies.hydrateChatStateCache(loaded.chatStates);
+    this.dependencies.hydrateChatQaCache(loaded.chatQa);
     this.dependencies.initTelegramClients();
     this.dependencies.hydrateIdentityStorageCounts(
       loaded.whitelistEntryCount,

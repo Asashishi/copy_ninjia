@@ -2,7 +2,7 @@ import type { Message } from "@grammyjs/types";
 import { recordChatMessage } from "../../aiChat";
 import { isAiChatActiveIn } from "../../aiChat/availability";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
-import { getActiveCopyIn } from "../../infra/storage/stateStore";
+import { activeCopyTargetIdIn } from "../../infra/storage/stateStore";
 import { stripLuckReceipt } from "../../libs/luckReceipt";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 
@@ -10,7 +10,7 @@ import type { AiBotInfo } from "../../types/aiChat/protocol";
 export function recordSelfInlineResult(message: Message, bot: AiBotInfo): void {
   if (message.chat.type === "private" || typeof message.text !== "string") return;
   const chatId: number = message.chat.id;
-  if (getActiveCopyIn(chatId) || !isAiChatActiveIn(chatId)) return;
+  if (activeCopyTargetIdIn(chatId) !== undefined || !isAiChatActiveIn(chatId)) return;
   recordChatMessage(buildSelfRecordMessage({
     chatId,
     self: bot,

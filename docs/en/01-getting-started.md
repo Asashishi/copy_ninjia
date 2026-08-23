@@ -22,6 +22,45 @@ This page takes a clean environment all the way to “the bot works normally in 
 
 ## Installation
 
+### One-shot install
+
+Assuming a machine with nothing installed, [`install.sh`](../../install.sh) chains together the rest
+of this page:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
+```
+
+No prior clone is needed: the script clones into `copy_ninjia/` under the current directory (set
+`COPY_NINJIA_DIR` to change that). If you already have a work tree, running `bash install.sh` from
+the repository root is equivalent and skips the clone step.
+
+Under a pipe, fd 0 is the script text itself, so every prompt reads from `/dev/tty` — without a
+usable controlling terminal the script exits rather than consuming half of its own body as answers.
+
+It does three things in order and nothing else — no systemd unit, no release-tag fetch, no backup,
+no migration:
+
+1. **Set up the environment**: check for Linux, a readable `/proc`, and a usable controlling
+   terminal; add `git`/`curl`/`unzip` through the system package manager when missing (directly as
+   root, otherwise via `sudo`; with neither, it prints the command to run and exits); obtain the work
+   tree; install the official Bun release when missing and verify ≥1.4; run
+   `bun install --frozen-lockfile`.
+2. **Ask for configuration**: fill `config/` from `config_example/`, **never overwriting anything
+   that already exists**; ask interactively for `bot_token` (not echoed) and `super_admin_user_id`,
+   with each of the six AI capabilities individually optional. The `telegram.json` and `agent.json`
+   it writes get mode `600`. When no AI capability is configured it deletes the example
+   `agent.json` — leaving placeholder keys behind only makes it look configured.
+3. **Create the database and start**: create an empty `database/storage.sqlite` when absent, run the
+   same deployment-input validation as the startup gate, then `bun run start`.
+
+The script is safe to re-run: existing configuration and an existing database are left untouched.
+The `g-auth.json` that `/ja_copy` needs is a GCP service-account key that can only be downloaded from
+the console and transferred out of band, so it is a **precondition** of the script rather than a step
+inside it; without it only `/ja_copy` is unavailable, and startup is unaffected.
+
+### Manual install
+
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
@@ -115,23 +154,57 @@ restart.
 
 ### Initializing Identity Storage
 
-The runtime never guesses that a missing database should mean empty tables. On a fresh deployment,
-create two empty legacy inputs solely for the explicit migration, verify that no target exists,
-and migrate:
+The runtime never guesses that a missing database should mean empty tables, so a fresh deployment
+must create the empty database explicitly once. [`install.sh`](../../install.sh) already does this;
+for a manual install, run:
 
 ```bash
-test ! -e config/whitelist.json
-test ! -e config/blocklist.json
-printf '{}\n' > config/whitelist.json
-printf '{"blockedIds":[]}\n' > config/blocklist.json
-bun run migrate:identity-storage --apply
+mkdir -p database
+bun -e '
+  import { createStorageDatabase } from "./packages/database/interact/migration";
+  import {
+    closeStorageDatabase,
+    enableStorageDatabaseWal,
+    openStorageDatabase,
+  } from "./packages/database/interact/connection";
+  import { seedStorageDatabase } from "./packages/database/interact/admin";
+  import {
+    IDENTITY_DATABASE_SCHEMA_DATA,
+    IDENTITY_DATABASE_SCHEMA_KEY,
+  } from "./packages/consts/identityStorage";
+  import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
+  createStorageDatabase(IDENTITY_DATABASE_PATH);
+  const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
+  try {
+    seedStorageDatabase(database, {
+      metadata: [{
+        key: IDENTITY_DATABASE_SCHEMA_KEY,
+        data: IDENTITY_DATABASE_SCHEMA_DATA,
+      }],
+      whitelist: [],
+      blocklist: [],
+      removals: [],
+    });
+  } finally {
+    closeStorageDatabase(database);
+  }
+  enableStorageDatabaseWal(IDENTITY_DATABASE_PATH);
+'
+chmod 2770 database
+chmod 660 database/storage.sqlite
 ```
 
-The script acquires `bot.lock`, keeps an external backup with owner/mode/SHA-256 inventory,
-atomically publishes the current `database/storage.sqlite`, and deletes the two temporary legacy
-files. It prints the retained backup path. Existing legacy deployments must preserve their real
-inputs and follow [Operations](07-operations.md#identity-storage-migration) instead of creating
-empty replacements.
+The `seedStorageDatabase` call is not optional. `createStorageDatabase` only creates tables; the `storage_metadata` schema-version row is not part of any migration (`0001`/`0002` merely `UPDATE` it, which is a no-op on an empty table). Skip it and the database looks fine, but startup hydration refuses with "storage_metadata must contain exactly one schema-version row" — and because that error surfaces one step later, it is hard to trace back to a missing row at creation time.
+
+This produces an empty database at the current schema — no allowlist, blocklist, or removal outbox
+rows. `createStorageDatabase` refuses to overwrite an existing target, so it never touches a live
+site. Both `chmod` values match `IDENTITY_DATABASE_DIRECTORY_MODE` and `IDENTITY_DATABASE_FILE_MODE`
+in [`packages/consts/identityStorage.ts`](../../packages/consts/identityStorage.ts); setgid makes the
+WAL/SHM sidecars inherit the same collaborative group.
+
+Deployments still holding `config/whitelist.json` and `config/blocklist.json` must **not** take this
+path; that cold migration last shipped in 9.1.5, see
+[Operations](07-operations.md#identity-storage-migration).
 
 ### Upgrading from 2.1.0
 
@@ -141,13 +214,13 @@ environment variables into the unified `agent.json`; never overwrite deployment 
 with `config_example/`. Runtime selections in `state.json.global.model` are no longer read.
 Model changes now require editing the relevant capability while stopped and restarting.
 
-Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration; never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/telegram.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
+Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration **on 9.1.5** (that script was removed in 9.2.0, see [Operations](07-operations.md#identity-storage-migration)); never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/telegram.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
 
 **Careful: removing a credential does not fail startup, but that chat goes quiet.** The startup gate validates only deployment inputs that **already exist** (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts), now just an export of `validateExistingDeploymentInputs` from `packages/config/readiness.ts`): a present file must parse strictly, while a genuinely absent one does not block startup. The `true` in `chat_states` is restored as usual, but the matching feature is judged unavailable at its single decision entry point — the AI chat Worker never starts and memory is not hydrated (the snapshots under `memory/` stay untouched until the prerequisite returns), `/ja_copy` degrades to a plain copy, and ad detection stops submitting bundles. The group simply sees the bot stop chatting, stop catching ads, or stop translating from one restart onward, with a single line in `logs/` as the only trace. So run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing a credential — or restore the prerequisite instead.
 
 ### Replacing the Inline Thumbnails and the Default Avatar
 
-The three inline thumbnails (the two `/luck_challenge` results and the gag speech entry) and the default avatar restored by `/reset_icon` and `/stop_copy` are all configured under `global.assets` in `state.json`:
+The four inline thumbnails (the two `/luck_challenge` results, the gag speech entry, and the `/set_qa` form) and the default avatar restored by `/reset_icon` and `/stop_copy` are all configured under `global.assets` in `state.json`:
 
 ```json
 "global": {
@@ -155,16 +228,17 @@ The three inline thumbnails (the two `/luck_challenge` results and the gag speec
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
+    "qaThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-The four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
+The five keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, the thumbnail for the `/set_qa` form inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
 
-All four are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
+All five are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The four thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
 
-> Upgrading from a version older than this section's `state.global.assets`? **Check the four entries before starting**: the three thumbnails now accept `https` only, and one previously configured as `http://` will refuse to start at decode time and name the field path.
+> Upgrading from a version older than this section's `state.global.assets`? **Check the five entries before starting**: the four thumbnails now accept `https` only, and one previously configured as `http://` will refuse to start at decode time and name the field path.
 
 **Edit it while stopped**: the running process holds the authoritative state in memory and rewrites the whole file, so `systemctl stop` → edit → `systemctl start` (see [07 Operations and Troubleshooting](07-operations.md)).
 

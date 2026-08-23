@@ -18,6 +18,7 @@ import {
 import {
   decodeStoredPendingRemovals,
   readStorageSchemaVersion,
+  decodeStoredChatQa,
   restoreStoredChatStates,
 } from "../../../database/validation/storageRows";
 import type { ChatState } from "../../../types/chatState";
@@ -83,10 +84,10 @@ export function hydrateStorageDatabase(): StorageDatabaseHydration {
   storageDatabaseHandle.current = database;
   try {
     assertStorageDatabaseStartupJsonbStorage(database, IDENTITY_DATABASE_PATH);
-    // 版本判定必须排在读取业务行**之前**：`chat_states` 是 v4 才建的表，先读
-    // startup rows 的话，一个没迁移的 v3 库会以 `no such table: chat_states`
-    // 失败——拒绝启动是对的，但运维拿到的是一句 SQLite 原始报错，而不是下面这条
-    // 点名 schema 版本、指向 `bun run migrate:chat-state` 的结论。
+    // 版本判定必须排在读取业务行**之前**：`chat_qa` 是 v5 才建的表，先读 startup
+    // rows 的话，一个没迁移的 v4 库会以 `no such table: chat_qa` 失败——拒绝启动
+    // 是对的，但运维拿到的是一句 SQLite 原始报错，而不是下面这条点名 schema
+    // 版本、指向 `bun run migrate:chat-qa` 的结论。
     const metadata: readonly StoredStorageMetadataRow[] =
       readStorageDatabaseSchemaMetadata(database);
     const version: number = readStorageSchemaVersion(
@@ -105,6 +106,10 @@ export function hydrateStorageDatabase(): StorageDatabaseHydration {
       rows.chatStates,
       IDENTITY_DATABASE_PATH
     );
+    // 问答与群状态同一次事务读出，因此这里拿到的是同一时点的快照。
+    const chatQaEntries: Map<number, ReadonlyMap<string, string>> = new Map(
+      decodeStoredChatQa(rows.chatQa, IDENTITY_DATABASE_PATH)
+    );
     return {
       blocklistEntryCount: rows.blocklistEntryCount,
       whitelistEntryCount: rows.whitelistEntryCount,
@@ -112,6 +117,7 @@ export function hydrateStorageDatabase(): StorageDatabaseHydration {
       // 处理下一条消息，因此直接交出现有快照不会暴露跨线程可变引用。
       pendingBlockedRemovals: removalSnapshot,
       chatStates,
+      chatQa: chatQaEntries,
     };
   } catch (error: unknown) {
     resetStorageDatabaseCache();

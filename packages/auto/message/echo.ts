@@ -1,7 +1,7 @@
 import type { Message } from "@grammyjs/types";
 import type { CopyMode } from "../../types/chatState";
 import { isJaTranslationActiveIn } from "../../copy/availability";
-import { getActiveCopyIn } from "../../infra/storage/stateStore";
+import { activeCopyTargetIdIn } from "../../infra/storage/stateStore";
 import { copyMessage, sendMessage } from "../../infra/telegram";
 import { applyCopyModeTransform } from "../../copy/copyModes";
 import { containsRenderableCommand } from "../../libs/renderableCommand";
@@ -28,6 +28,14 @@ export interface EchoMessageParams {
   message: Message;
   mode: CopyMode | undefined;
   expectedTargetId?: number;
+  /**
+   * 复读要落进的论坛话题；General、非论坛群为 undefined。
+   *
+   * 复读**不挂回复**（复读的是原话，不是回原话），所以话题群里缺了它，被复读的
+   * 人在自己话题里说话、本天才却在 General 学舌（判定见 libs/forumTopic.ts）。
+   * 两条出口都要带：文本变换走 sendMessage，其余载荷走 copyMessage。
+   */
+  messageThreadId?: number;
 }
 
 export async function echoMessage({
@@ -35,6 +43,7 @@ export async function echoMessage({
   message,
   mode,
   expectedTargetId,
+  messageThreadId,
 }: EchoMessageParams): Promise<string | undefined> {
   // caption 也要看：只读 message.text 的话，图片/动画/文件消息在这里恒为空串，
   // 一条 caption 写着 `/batch_kick 1d` 的图片会一路走到下面的 copyMessage 被
@@ -57,7 +66,7 @@ export async function echoMessage({
     ? await applyCopyModeTransform(plainText, mode)
     : null;
 
-  if (expectedTargetId !== undefined && getActiveCopyIn(chatId)?.copiedUser.id !== expectedTargetId) {
+  if (expectedTargetId !== undefined && activeCopyTargetIdIn(chatId) !== expectedTargetId) {
     return undefined;
   }
 
@@ -69,10 +78,19 @@ export async function echoMessage({
     // 命中即整条丢弃，不退化成 copyMessage：那是把用户原文重发一遍，虽然安全
     // 但复读的内容与本次抽到的模式对不上，不如什么都不说。
     if (containsRenderableCommand(transformed)) return undefined;
-    const sentMessageId: number | undefined = await sendMessage({ chatId, text: transformed });
+    const sentMessageId: number | undefined = await sendMessage({
+      chatId,
+      text: transformed,
+      messageThreadId,
+    });
     return sentMessageId !== undefined ? transformed : undefined;
   }
 
-  const copiedMessageId: number | undefined = await copyMessage(chatId, chatId, message.message_id);
+  const copiedMessageId: number | undefined = await copyMessage({
+    chatId,
+    fromChatId: chatId,
+    messageId: message.message_id,
+    messageThreadId,
+  });
   return copiedMessageId !== undefined && typeof message.text === "string" ? message.text : undefined;
 }

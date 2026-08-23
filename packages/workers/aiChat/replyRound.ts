@@ -45,6 +45,10 @@ export interface ReplyRoundRequest {
   /** 轮次开始前捕获的触发消息快照；生成或排队期间滑出热区时用于自录兜底。 */
   triggerReference?: BufferedReplyReference;
   isRandomTrigger: boolean;
+  /** 触发时刻的本群问答；空或缺省时本轮不挂问答工具。 */
+  chatQa?: ReadonlyMap<string, string>;
+  /** 本轮全部发送要落进的论坛话题；General、非论坛群为 undefined。 */
+  messageThreadId: number | undefined;
   mediaComment?: MediaCommentContext;
   queuedTrigger?: QueuedReplyTrigger;
   /** 直接触发在准入时捕获代数；排队补跑省略并使用出队时的当前代数。 */
@@ -66,6 +70,8 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     imageGenerationReference,
     triggerReference,
     isRandomTrigger,
+    chatQa,
+    messageThreadId,
     mediaComment,
     queuedTrigger,
   }: ReplyRoundRequest = request;
@@ -99,7 +105,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   // 回拨会破坏 FIFO 时间队列的单调性；丢弃旧时间轴的整个窗口，
   trimSlidingWindow({ timestamps: longTimes, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
   if (admitRound({ windowCount: longTimes.size }).action === "rateLimited") {
-    notifyRateLimited(chatId, now, generation);
+    notifyRateLimited({ chatId, now, generation, messageThreadId });
     return false;
   }
 
@@ -126,7 +132,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
 
       // 心跳从 idle 起步，只有具体发送工具临发前才显示输入或选择贴纸状态。
       const heartbeat: ChatActionHeartbeatControl =
-        startChatActionHeartbeat(chatId, undefined, signal);
+        startChatActionHeartbeat({ chatId, messageThreadId, signal });
       try {
         /** 只为 Telegram 实际返回的回复目标建边；目标已滑出热区时退回轮次
          * 开始前捕获的触发快照。 */
@@ -163,6 +169,8 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         const ctx: ReplyToolContext = {
           chatId,
           replyToMessageId,
+          messageThreadId,
+          chatQa,
           mediaToolsRequested: mediaToolsAllowed,
           ...(mediaToolsAllowed && imageGenerationReference ? { imageGenerationReference } : {}),
           bypassMediaToolCooldown: triggerSenderId === superAdminUserIdState.current,

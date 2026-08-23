@@ -145,6 +145,21 @@ export interface ChatStateWriteDiskMessage {
 }
 
 /**
+ * 主线程 -> Disk I/O Worker：一条群问答最终值；`data` 为 null 表示删除这条问答。
+ *
+ * 主键是 (chatId, q) 复合键，因此两者都要随消息过去；`q` 由主线程 trim 后作为
+ * 落库主键，Worker 不再做归一化——两侧对同一条问答必须指的是同一个键。
+ */
+export interface ChatQaWriteDiskMessage {
+  type: "chatQaWrite";
+  chatId: number;
+  q: string;
+  data: string | null;
+  /** 主线程问答写入的单调修订号。 */
+  revision: number;
+}
+
+/**
  * 主线程 -> diskIOWorker：一条广告判定命中样本，追加进 memory/ad-detected/sample.json。
  *
  * 这是整个持久化里唯一**只写不读**的一类：进程从不加载它，启动恢复也不碰，
@@ -204,6 +219,7 @@ export type DiskBusinessMessage =
   | BlocklistRemovalsDiskMessage
   | IdentityPolicyWriteDiskMessage
   | ChatStateWriteDiskMessage
+  | ChatQaWriteDiskMessage
   | JoinLogDiskMessage;
 
 /**

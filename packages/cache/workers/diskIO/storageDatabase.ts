@@ -6,6 +6,7 @@ import type {
   StoredIdentityIdLookups,
 } from "../../../types/storageDatabase";
 import type {
+  PendingChatQaWrite,
   PendingChatStateWrite,
   PendingIdentityPolicyWrite,
   PendingRemovalWrite,
@@ -59,6 +60,15 @@ export const pendingRemovalWrites: Map<number, PendingRemovalWrite> = new Map();
 export const pendingChatStateWrites: Map<number, PendingChatStateWrite> = new Map();
 
 /**
+ * 群问答未提交最终值，外层按群、内层按问题文本。
+ *
+ * 容量天然有界：受管群不超过 STATE_MANAGED_CHAT_LIMIT，每群问答不超过
+ * CHAT_QA_MAX_PER_CHAT，因此整个缓冲恒定不超过 125 条，不需要额外淘汰策略。
+ * 一群的最后一条被提交或删除后，外层那一项随之移除，空 Map 不留存。
+ */
+export const pendingChatQaWrites: Map<number, Map<string, PendingChatQaWrite>> = new Map();
+
+/**
  * Worker 当前待踢成员权威快照。启动从 SQLite 恢复，之后由主线程完整快照替换；
  * 只用于计算行级 diff，容量受 outbox 业务硬顶约束。
  */
@@ -88,12 +98,12 @@ export const storageWriteFlushTimer: {
  * 容量最多为四个持久化领域，Worker 重建时由 reset 清空。
  */
 export const rejectedStorageDomains: Set<
-  "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState"
+  "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
 > = new Set();
 
 /** 记下某个存储领域本轮拒收的一条消息；下一次 flush 会按该领域回报失败。 */
 export function noteStorageWriteRejected(
-  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState"
+  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
 ): void {
   rejectedStorageDomains.add(domain);
 }
@@ -108,6 +118,7 @@ export function resetStorageDatabaseCache(): void {
   pendingBlocklistWrites.clear();
   pendingRemovalWrites.clear();
   pendingChatStateWrites.clear();
+  pendingChatQaWrites.clear();
   removalSnapshot.clear();
   removalSnapshotData.clear();
   pendingRemovalSnapshotRevision.current = null;

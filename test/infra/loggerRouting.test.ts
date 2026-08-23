@@ -75,6 +75,7 @@ describe("logger persistence routing boundary", () => {
         blocklistEntryCount: 0,
         whitelistEntryCount: 0,
         chatStates: new Map(),
+        chatQa: new Map(),
       } satisfies DiskIOReply } as MessageEvent<DiskIOReply>);
       await loaded;
       worker.messages.length = 0;

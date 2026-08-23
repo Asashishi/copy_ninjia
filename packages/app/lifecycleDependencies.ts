@@ -28,6 +28,7 @@ import { logger } from "../infra/logger";
 import { setBusinessWorkerFatalHandler } from "../infra/workerSupervisor";
 import { cleanupOrphanedTempFiles } from "../infra/storage/cleanup";
 import { acquireSingleInstanceLock, releaseSingleInstanceLock } from "../infra/storage/instanceLock";
+import { hydrateChatQaCache } from "../infra/qaStore";
 import {
   flushStateToDisk,
   getChatStateCache,
@@ -82,6 +83,7 @@ export const lifecycleDependencies = {
   getGlobalCopyState,
   hydrateIdentityStorageCounts,
   hydrateChatStateCache,
+  hydrateChatQaCache,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,

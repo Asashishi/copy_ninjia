@@ -12,7 +12,7 @@ const pushReplyTrigger = mock((_input: unknown): void => {});
 const drainQueuedReplies = mock((_chatId: number, _start: (trigger: unknown) => void): void => {});
 const flushOverflowNotice = mock((chatId: number): void => { pendingOverflowNotices.delete(chatId); });
 const loggerError = mock((_message: string): void => {});
-const pendingOverflowNotices = new Set<number>();
+const pendingOverflowNotices = new Map<number, number | undefined>();
 const pendingReplyTriggers = new Map<number, { size: number }>();
 const longTriggerTimes = new Map<number, LinkedQueue<number>>();
 const triggerReference = {
@@ -63,6 +63,7 @@ const baseRequest = {
   chatId: -1001,
   triggerSenderId: 42,
   replyToMessageId: 7,
+  messageThreadId: undefined,
   imageGenerationRequested: false,
   isRandomTrigger: false,
 };
@@ -125,6 +126,7 @@ describe("AI reply admission pipeline", () => {
     const queued = {
       triggerSenderId: 42,
       replyToMessageId: 7,
+      messageThreadId: undefined,
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "f", fileUniqueId: "u", width: 512, height: 512 },
       triggerReference,
@@ -139,6 +141,7 @@ describe("AI reply admission pipeline", () => {
       chatId: -1001,
       triggerSenderId: 42,
       replyToMessageId: 7,
+      messageThreadId: undefined,
       imageGenerationRequested: true,
       imageGenerationReference: queued.imageGenerationReference,
       triggerReference,
@@ -164,6 +167,7 @@ describe("AI reply admission pipeline", () => {
     startQueuedRound({
       triggerSenderId: 42,
       replyToMessageId: 7,
+      messageThreadId: undefined,
       imageGenerationRequested: false,
       senderName: "Alice",
       text: "排队期间的触发原文",
@@ -174,11 +178,13 @@ describe("AI reply admission pipeline", () => {
     expect(roundParams.triggerReference).toBeUndefined();
     expect(Object.keys(roundParams).sort()).toEqual([
       "chatId",
+      "chatQa",
       "generation",
       "imageGenerationReference",
       "imageGenerationRequested",
       "isRandomTrigger",
       "mediaComment",
+      "messageThreadId",
       "queuedTrigger",
       "replyToMessageId",
       "triggerReference",
@@ -218,7 +224,7 @@ describe("AI reply admission pipeline", () => {
     drainQueuedReplies.mockClear();
 
     roundDecision = { action: "rateLimited" };
-    pendingOverflowNotices.add(-1001);
+    pendingOverflowNotices.set(-1001, undefined);
     onFinished(-1001);
 
     expect(drainQueuedReplies).not.toHaveBeenCalled();

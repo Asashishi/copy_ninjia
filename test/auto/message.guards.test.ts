@@ -14,7 +14,7 @@ mock.module("../../packages/aiChat/availability", () => ({
   isAiChatActiveIn: (_chatId: number): boolean => aiActive,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getActiveCopyIn: (_chatId: number): boolean => copyActive,
+  activeCopyTargetIdIn: (_chatId: number): number | undefined => (copyActive ? 42 : undefined),
 }));
 
 const { recordSelfInlineResult } = await import("../../packages/auto/message/guards");

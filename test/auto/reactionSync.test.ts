@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
-const getActiveCopyIn = mock((_chatId: number): { copiedUser: { id: number } } | null => ({
-  copiedUser: { id: 42 },
-}));
+const activeCopyTargetIdIn = mock((_chatId: number): number | undefined => 42);
 const enqueueReaction = mock(async (..._args: unknown[]): Promise<void> => {});
 
-mock.module("../../packages/infra/storage/stateStore", () => ({ getActiveCopyIn }));
+mock.module("../../packages/infra/storage/stateStore", () => ({ activeCopyTargetIdIn }));
 mock.module("../../packages/copy/reactionQueue", () => ({ enqueueReaction }));
 
 const { handleReaction } = await import("../../packages/auto/reactionSync");
@@ -36,9 +34,9 @@ function context(
 }
 
 beforeEach(() => {
-  getActiveCopyIn.mockClear();
+  activeCopyTargetIdIn.mockClear();
   enqueueReaction.mockClear();
-  getActiveCopyIn.mockImplementation(() => ({ copiedUser: { id: 42 } }));
+  activeCopyTargetIdIn.mockImplementation((): number | undefined => 42);
   enqueueReaction.mockImplementation(async (): Promise<void> => {});
 });
 
@@ -64,7 +62,7 @@ describe("reaction sync update entry", () => {
     await handled;
 
     await handleReaction(context({ emojiAdded: ["👍"] }, { userId: 7 }));
-    getActiveCopyIn.mockReturnValueOnce(null);
+    activeCopyTargetIdIn.mockReturnValueOnce(undefined);
     await handleReaction(context({ emojiAdded: ["👍"] }));
     expect(enqueueReaction).toHaveBeenCalledTimes(1);
   });

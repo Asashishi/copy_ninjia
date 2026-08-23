@@ -16,6 +16,7 @@ import {
   botPermissionRequestTokens,
 } from "../cache/main/botAdmin";
 import { BOT_PERMISSION_PROBE_RETRY_MS } from "../consts/botAdmin";
+import { CHAT_TEARDOWN_ORDER } from "../consts/chatTeardown";
 import {
   botActionPermissionsEqual,
   botChatPermissionsEqual,
@@ -60,17 +61,20 @@ export async function teardownChatRuntime(
 ): Promise<void> {
   // 先同步调用全部 owner，让跨群 copy 槽、代理入口和 Worker 闸门在第一个
   // await 之前一起关闭；随后等待需要 durable 回执的异步 owner。
-  const copyTeardown: Promise<void> = teardownRegisteredChat("copy", chatId, reason);
-  const gagTeardown: Promise<void> = teardownRegisteredChat("gag", chatId, reason);
+  //
+  // 遍历 CHAT_TEARDOWN_ORDER 而不是在这里手写 owner 列表：手写过一版，五个里
+  // 只写了四个，漏掉的 `qa` 直到全仓审查才被发现。那份顺序表由类型强制穷尽
+  // ChatRuntimeOwner（见 consts/chatTeardown.ts），漏一个就编译不过。
+  //
+  // 代理入口不属于任何 owner 的回调，但同样要在这个同步段里关掉。放在循环前
+  // 与放在循环中间等价：整个循环没有 await，且没有任何 owner 的 teardown 读
+  // isProxySendEnabled。
   clearChatStateField(chatId, "isProxySendEnabled");
-  const aiTeardown: Promise<void> = teardownRegisteredChat("aiChat", chatId, reason);
-  const antiRaidTeardown: Promise<void> = teardownRegisteredChat("antiRaid", chatId, reason);
-  const results: PromiseSettledResult<void>[] = await Promise.allSettled([
-    copyTeardown,
-    gagTeardown,
-    aiTeardown,
-    antiRaidTeardown,
-  ]);
+  const teardowns: Promise<void>[] = [];
+  for (const owner of CHAT_TEARDOWN_ORDER) {
+    teardowns.push(teardownRegisteredChat(owner, chatId, reason));
+  }
+  const results: PromiseSettledResult<void>[] = await Promise.allSettled(teardowns);
   const failures: unknown[] = results.flatMap(
     (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
   );

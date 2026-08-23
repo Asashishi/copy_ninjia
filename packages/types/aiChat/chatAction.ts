@@ -19,6 +19,13 @@ export interface ChatActionHeartbeatEntry {
   signal?: AbortSignal;
   refCount: number;
   action: ChatActionPhase;
+  /**
+   * 当前挡位持有轮所在的论坛话题；idle 与非论坛群为 undefined。
+   *
+   * 与 owner 一起由「后切非 idle 挡的轮」写入：Telegram 一个聊天同时只显示一种
+   * 状态，因此并发轮里显示的本来就是最后切挡那一轮的状态，话题跟着它才自洽。
+   */
+  messageThreadId: number | undefined;
   owner: object | null;
   sendChain: Promise<void>;
   pendingSend: boolean;

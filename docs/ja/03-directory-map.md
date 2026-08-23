@@ -108,7 +108,7 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
-  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`migrateIdentityStorageToSqlite.ts`、`migrateChatStateToSqlite.ts`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
+  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`migrateChatQa.ts` と `chatQaMigration/`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
 
 ## 新しいコードの配置判断
 

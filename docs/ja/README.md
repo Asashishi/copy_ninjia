@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2498_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.67%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2581_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.62%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 2498 件のテストが全て成功 / テストファイル 261 件 / expect() 呼び出し 95,379 回 / 関数カバレッジ 95.41% / 行カバレッジ 96.67%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 2581 件のテストが全て成功 / テストファイル 271 件 / expect() 呼び出し 95,642 回 / 関数カバレッジ 95.23% / 行カバレッジ 96.62%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -142,6 +142,14 @@
   <p><code>/block</code> 一つで管理下の全グループから同期 BAN し、id を永続ブロックリストへ記録。以降は監視中のどのグループに入室しても即 kick され、新たに管理者になったグループも自動で掃除します。</p>
 </td>
 </tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>💬 chat Q&amp;A</b></p>
+  <p><code>/set_qa</code> は 2 ボタンの form で質問と回答を登録します（chat ごとに最大 5 件）。一字一句同じ質問が来れば AI を介さず即答し、登録文と字面が異なる言い回しだけを model の 2 つの照会 tool に委ねます。</p>
+</td>
+<td align="left" valign="top"></td>
+<td align="left" valign="top"></td>
+</tr>
 </table>
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
@@ -164,6 +172,19 @@ Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンド�
 
 必要なものは Linux（`/proc` が読めること。他の OS ではインスタンスロックが fail closed になります）、Bun 1.4+、Bot Token、スーパー管理者のユーザー ID です。有効化する AI 機能ごとにその provider の API Key が要り、`/ja_copy` には Google Cloud サービスアカウント JSON も必要です。ハードウェアの目安は [07 運用とトラブルシュート](07-operations.md#ハードウェアの目安) を参照してください。
 
+ワンショット install（足りないものを導入し、設定を尋ねてそのまま起動）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
+```
+
+行うのは 3 つだけです。環境の準備（`git`/`curl`/`unzip` の補完、`./copy_ninjia` への clone、Bun の
+導入、`bun install`）、Telegram と AI 設定の対話的な入力、そして空の identity database を作ってからの
+起動。systemd unit は登録せず、既存の設定も上書きしないため、再実行しても安全です。すでに clone 済み
+なら repository root で `bash install.sh` を実行すれば clone 手順を飛ばします。
+
+手動 install：
+
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
@@ -174,8 +195,8 @@ bun run check                          # 規約 + ESLint + TypeScript 厳格チ�
 bun run start                          # ロングポーリング開始
 ```
 
-初回起動の前に identity database の初期化と、BotFather 側での Privacy Mode 無効化・Inline Mode
-有効化も必要です。設定項目の意味、必須の組み合わせ、厳格な検証ルールは
+手動 install の場合、初回起動の前に identity database の初期化と、BotFather 側での Privacy Mode
+無効化・Inline Mode 有効化も必要です。設定項目の意味、必須の組み合わせ、厳格な検証ルールは
 [`config_example/README/ja.md`](../../config_example/README/ja.md)、手順の全体（ランタイム data root、
 素材の直リンク、移行コマンド）は [01 環境構築と初回起動](01-getting-started.md) にあります。
 

@@ -33,3 +33,11 @@ export const BLACK_DATA: string = encodeBlocklistEntryData(BLACK_ENTRY);
 export const EMPTY_STORAGE_CHANGES:
 ReadonlyMap<number, StorageDatabaseChange> =
   new Map<number, StorageDatabaseChange>();
+
+/**
+ * 问答表的空变更集合；本基准不写它，但事务入口按表要求全量给齐。
+ * 与 EMPTY_STORAGE_CHANGES 同理共享同一个实例，不在每次调用现造。
+ */
+export const EMPTY_CHAT_QA_CHANGES:
+ReadonlyMap<number, ReadonlyMap<string, StorageDatabaseChange>> =
+  new Map<number, ReadonlyMap<string, StorageDatabaseChange>>();

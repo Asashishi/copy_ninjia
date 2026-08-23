@@ -53,7 +53,7 @@ afterAll(() => {
 
 describe("AI 限频提示", () => {
   test("首次触发发送提示、回报自发消息并写入滚动记忆", async () => {
-    notifyRateLimited(CHAT_ID, NOW);
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
 
     expect(sendMessage).toHaveBeenCalledWith({
@@ -75,13 +75,13 @@ describe("AI 限频提示", () => {
   });
 
   test("冷却窗口内不重复刷屏，窗口一满才允许再提示", async () => {
-    notifyRateLimited(CHAT_ID, NOW);
-    notifyRateLimited(CHAT_ID, NOW + RATE_LIMIT_NOTICE_COOLDOWN_MS - 1);
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW + RATE_LIMIT_NOTICE_COOLDOWN_MS - 1, messageThreadId: undefined });
     await Bun.sleep(0);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(rateLimitNoticeTimes.get(CHAT_ID)).toBe(NOW);
 
-    notifyRateLimited(CHAT_ID, NOW + RATE_LIMIT_NOTICE_COOLDOWN_MS);
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW + RATE_LIMIT_NOTICE_COOLDOWN_MS, messageThreadId: undefined });
     await Bun.sleep(0);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(rateLimitNoticeTimes.get(CHAT_ID)).toBe(NOW + RATE_LIMIT_NOTICE_COOLDOWN_MS);
@@ -90,7 +90,7 @@ describe("AI 限频提示", () => {
   test("提示没发出去时不回报也不写记忆，但冷却照常记账", async () => {
     nextSentMessageId = undefined;
 
-    notifyRateLimited(CHAT_ID, NOW);
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
 
     expect(postMessage).not.toHaveBeenCalled();
@@ -105,7 +105,7 @@ describe("AI 限频提示", () => {
       return 502;
     });
 
-    notifyRateLimited(CHAT_ID, NOW, generation);
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW, generation, messageThreadId: undefined });
     await Bun.sleep(0);
 
     expect(postMessage).toHaveBeenCalledWith({ type: "sent", chatId: CHAT_ID, messageId: 502 });
@@ -115,7 +115,7 @@ describe("AI 限频提示", () => {
   test("身份尚未初始化时不写滚动记忆", async () => {
     botInfoState.current = null;
 
-    notifyRateLimited(CHAT_ID, NOW);
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
 
     expect(postMessage).toHaveBeenCalledWith({ type: "sent", chatId: CHAT_ID, messageId: 501 });

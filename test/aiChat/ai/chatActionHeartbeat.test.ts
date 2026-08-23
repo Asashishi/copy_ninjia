@@ -1,9 +1,11 @@
 import { describe, expect, mock, test } from "bun:test";
 
 const { startChatActionHeartbeat, pumpChatAction } = await import("../../../packages/aiChat/ai/chatActionHeartbeat");
-import type { ChatActionHeartbeatDependencies } from "../../../packages/aiChat/ai/chatActionHeartbeat";
+import type {
+  ChatActionHeartbeatDependencies,
+  ChatActionSendRequest,
+} from "../../../packages/aiChat/ai/chatActionHeartbeat";
 import type { ChatActionHeartbeatEntry } from "../../../packages/types";
-import type { TelegramChatAction } from "../../../packages/types/telegram";
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
@@ -35,7 +37,7 @@ function dependencies(
     intervalMs: 60_000,
     maxConsecutiveFailures,
     sendUploadPhoto: async (): Promise<boolean> => true,
-    sendChatAction: (action: TelegramChatAction, chatId: number, signal?: AbortSignal): Promise<boolean> => {
+    sendChatAction: ({ action, chatId, signal }: ChatActionSendRequest): Promise<boolean> => {
       if (action === "typing") return sendTyping(chatId, signal);
       if (action === "upload_photo") return deps.sendUploadPhoto(chatId, signal);
       return sendChooseSticker(chatId, signal);
@@ -60,7 +62,7 @@ describe("chatActionHeartbeat", () => {
       }
     );
     const deps = dependencies(sendTyping, async () => true);
-    const first = startChatActionHeartbeat(100, deps, firstController.signal);
+    const first = startChatActionHeartbeat({ chatId: 100, messageThreadId: undefined, dependencies: deps, signal: firstController.signal });
     first.set("typing");
     await flush();
 
@@ -68,7 +70,7 @@ describe("chatActionHeartbeat", () => {
     firstController.abort(new DOMException("invalidated", "AbortError"));
     await first.stop();
 
-    const second = startChatActionHeartbeat(100, deps, secondController.signal);
+    const second = startChatActionHeartbeat({ chatId: 100, messageThreadId: undefined, dependencies: deps, signal: secondController.signal });
     expect(deps.entries.get(100)?.signal).toBe(secondController.signal);
     expect(first.current()).toBe("idle");
     await second.stop();
@@ -81,7 +83,7 @@ describe("chatActionHeartbeat", () => {
     const sendChooseSticker = mock((_chatId: number): Promise<boolean> => choose.promise);
     const deps = dependencies(sendTyping, sendChooseSticker);
     deps.sendUploadPhoto = sendUploadPhoto;
-    const heartbeat = startChatActionHeartbeat(123, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 123, messageThreadId: undefined, dependencies: deps });
 
     expect(heartbeat.current()).toBe("idle");
     expect(sendTyping).not.toHaveBeenCalled();
@@ -122,7 +124,7 @@ describe("chatActionHeartbeat", () => {
     const typing = deferred<boolean>();
     const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
     const deps = dependencies(() => typing.promise, sendChooseSticker);
-    const heartbeat = startChatActionHeartbeat(456, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 456, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
     await flush();
@@ -140,7 +142,7 @@ describe("chatActionHeartbeat", () => {
   test("节流：同一挡位在间隔内重复 set 只发一次；切过 idle 后重新补发", async () => {
     const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
     const deps = dependencies(sendTyping, async () => true);
-    const heartbeat = startChatActionHeartbeat(789, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 789, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
     await flush();
@@ -160,8 +162,8 @@ describe("chatActionHeartbeat", () => {
   test("挡位归属：并发轮先结束时收回自己的挡位，不遗留给还在跑的轮", async () => {
     const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
     const deps = dependencies(async () => true, sendChooseSticker);
-    const roundA = startChatActionHeartbeat(111, deps);
-    const roundB = startChatActionHeartbeat(111, deps);
+    const roundA = startChatActionHeartbeat({ chatId: 111, messageThreadId: undefined, dependencies: deps });
+    const roundB = startChatActionHeartbeat({ chatId: 111, messageThreadId: undefined, dependencies: deps });
 
     roundA.set("choose_sticker");
     await flush();
@@ -180,8 +182,8 @@ describe("chatActionHeartbeat", () => {
 
   test("挡位归属：非持有轮的 set(idle) 不掐灭持有轮亮着的窗口", async () => {
     const deps = dependencies(async () => true, async () => true);
-    const roundA = startChatActionHeartbeat(222, deps);
-    const roundB = startChatActionHeartbeat(222, deps);
+    const roundA = startChatActionHeartbeat({ chatId: 222, messageThreadId: undefined, dependencies: deps });
+    const roundB = startChatActionHeartbeat({ chatId: 222, messageThreadId: undefined, dependencies: deps });
 
     roundA.set("typing");
     roundB.set("idle");
@@ -202,7 +204,7 @@ describe("chatActionHeartbeat", () => {
     const typing = deferred<boolean>();
     const sendTyping = mock((_chatId: number): Promise<boolean> => typing.promise);
     const deps = dependencies(sendTyping, async () => true);
-    const heartbeat = startChatActionHeartbeat(654, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 654, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
     await flush();
@@ -226,7 +228,7 @@ describe("chatActionHeartbeat", () => {
     const typing = deferred<boolean>();
     const sendTyping = mock((_chatId: number): Promise<boolean> => typing.promise);
     const deps = dependencies(sendTyping, async () => true);
-    const heartbeat = startChatActionHeartbeat(987, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 987, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
     await flush();
@@ -250,7 +252,7 @@ describe("chatActionHeartbeat", () => {
     const typing = deferred<boolean>();
     const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
     const deps = dependencies(() => typing.promise, sendChooseSticker, 1);
-    const heartbeat = startChatActionHeartbeat(456, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 456, messageThreadId: undefined, dependencies: deps });
     heartbeat.set("typing");
     await flush();
     heartbeat.set("choose_sticker");
@@ -270,7 +272,7 @@ describe("chatActionHeartbeat", () => {
   test("异常中断时 stop 先移除心跳，再等待已经发出的状态请求落定", async () => {
     const typing = deferred<boolean>();
     const deps = dependencies(() => typing.promise, async () => true);
-    const heartbeat = startChatActionHeartbeat(789, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 789, messageThreadId: undefined, dependencies: deps });
     heartbeat.set("typing");
     await flush();
 
@@ -290,7 +292,7 @@ describe("chatActionHeartbeat", () => {
   test("单次失败不中断心跳，达到连续失败阈值才止损；失败不落节流账", async () => {
     const sendTyping = mock(async (_chatId: number): Promise<boolean> => false);
     const deps = dependencies(sendTyping, async () => true, 3);
-    const heartbeat = startChatActionHeartbeat(321, deps);
+    const heartbeat = startChatActionHeartbeat({ chatId: 321, messageThreadId: undefined, dependencies: deps });
 
     // 节流记忆只记真正送达的状态：前一发失败后，同挡位补发不会被「刚发过」
     // 误拦，三连败照常累计到阈值。

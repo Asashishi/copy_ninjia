@@ -44,6 +44,10 @@ export interface PushReplyTriggerParams {
   imageGenerationRequested: boolean;
   imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
   triggerReference?: BufferedReplyReference;
+  /** 触发时刻的本群问答；随触发一起入队，补跑时用当时那份清单。 */
+  chatQa?: ReadonlyMap<string, string>;
+  /** 触发消息所在的论坛话题；补跑那一轮仍然回到当初那个话题。 */
+  messageThreadId: number | undefined;
   mediaTrigger?: MediaCommentContext;
 }
 
@@ -65,6 +69,8 @@ export function pushReplyTrigger({
   imageGenerationRequested,
   imageGenerationReference,
   triggerReference,
+  chatQa,
+  messageThreadId,
   mediaTrigger,
 }: PushReplyTriggerParams): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
@@ -84,6 +90,8 @@ export function pushReplyTrigger({
       forwardedFrom: mediaTrigger.forwardedFrom ? mediaTrigger.forwardedFrom : undefined,
       imageGenerationRequested,
       imageGenerationReference,
+      chatQa,
+      messageThreadId,
       senderName: mediaTrigger.senderName,
       text: truncateInline(
         mediaTrigger.triggerText ?? resolvedTagFor(mediaTrigger.kind, mediaTrigger.description),
@@ -105,6 +113,8 @@ export function pushReplyTrigger({
     forwardedFrom: triggerEntry?.forwardedFrom ? triggerEntry.forwardedFrom : undefined,
     imageGenerationRequested,
     imageGenerationReference,
+    chatQa,
+    messageThreadId,
     senderName: triggerEntry ? displayBufferedMessageName(triggerEntry) : "",
     text: triggerEntry ? truncateInline(triggerEntry.text, QUEUED_TRIGGER_SNIPPET_MAX_CHARS) : "",
   });
@@ -119,9 +129,12 @@ export function pushReplyTrigger({
  * 每轮结束空转一次限频闸，变成每分钟往群里刷一条限频提示。
  */
 export function flushOverflowNotice(chatId: number): void {
-  if (pendingOverflowNotices.delete(chatId)) {
-    notifyRateLimited(chatId, Date.now());
-  }
+  // 先取值再 delete：值本身可以是 undefined（General/非论坛群），因此「在不在表里」
+  // 只能由 delete 的返回值回答，不能靠 get 是不是 undefined 判断。两次查找足够，
+  // 不需要再多一次 has。
+  const messageThreadId: number | undefined = pendingOverflowNotices.get(chatId);
+  if (!pendingOverflowNotices.delete(chatId)) return;
+  notifyRateLimited({ chatId, now: Date.now(), messageThreadId });
 }
 
 /**

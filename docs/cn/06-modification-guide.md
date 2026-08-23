@@ -140,6 +140,20 @@
 
 **新增可选块可以免掉第 3–4 步**，前提是把「缺省」定义清楚：解码器对整块与块内字段都允许缺省（照 `libs/stateFileCodec.ts` 里 `globalAssets` 的写法，两条分支返回同一组字段，`save` 的自校验才不会看到两种 shape），取值侧收敛出唯一的兜底值。现成范例是 `state.global.assets`——旧文件不用改也能读回，行为与没有这一块时逐字相同。若这一块是给人手工编辑的旋钮，再补一个启动补齐（`seedMissingAssetState`）把缺项写成当前生效值，让键出现在文件里；补齐必须排在**所有会中止启动的 `await` 之后**、只补缺项、走后台落盘，理由见 [04](04-invariants.md#落盘与快照契约)。反过来，**任何会让旧文件解码失败的改动仍然走完整的 3–4 步**。
 
+## 新增一张 SQLite 表
+
+比改 `state.json` 多一条硬约束：**运行时不自动迁移**，库版本对不上就拒绝启动，因此每加一张表都要配一条停机冷迁移。顺序：
+
+1. `packages/database/schema/<domain>.ts` 声明表并注册进 `schema/storage.ts`；`data` 列沿用 `jsonbText` + `jsonDataCheck`，与其余业务表同一口径。
+2. 写 `schema/migrations/000N_<name>.sql`，并把条目补进 `migrations/meta/_journal.json`。
+3. **hash 要实测，不能算**：建一个临时库跑一次 migration，从 `__drizzle_migrations` 读回 `created_at` 与 `hash`，再写进 `packages/consts/identityStorage.ts`。同时把 `IDENTITY_DATABASE_SCHEMA_VERSION` 加一。
+4. 写冷迁移脚本，并**替换** `scripts/conventions/coldMigrations.ts` 里那条唯一的边——约定只允许存在「上一版 → 当前版」一条，旧脚本连同它的测试一起删掉。
+5. 迁移**前**的校验必须用那一版的历史形态。若本次改动了某张表的字段闭集（例如给白名单加一个权限键），迁移前不能用生产解码器：它已经按新版要求那个字段存在，拿它去校验待迁库会让每个部署在迁移开始前就被判成损坏，报错还指向部署方从没写过的字段。历史键集合写死在迁移脚本里，不从当前常量推导——推导会在下次加键时悄悄改写这条历史边的判定。
+6. 不随版本变的部分（如 `meta`）仍用生产解析器：`--check` 必须拦下 `--apply` 会拒绝的一切，否则坏行要等库已经被改过之后才暴露。
+7. 落盘沿用既有 write-through：主线程发布内存最终值 → 投给 Disk I/O Worker → 显式事务 → 精确 revision ACK → Worker 重建后从内存重放。
+
+现成范例是 `chat_qa`（`0003_chat_qa.sql` 与 `scripts/migrateChatQa.ts`）。
+
 ## 改动 Worker 间协议
 
 `packages/types/` 持有跨线程消息协议。改协议时同步三处：类型定义、主线程侧代理（`packages/infra/` 或 `packages/cache/main/` 对应模块）、Worker 侧处理（`packages/workers/<domain>/`）。请求/回执式交互遵循 [04](04-invariants.md#worker-与状态所有权) 的 waiter 先登记再投递、超时/崩溃统一结算模式（现成范例：`/query_mood` 与 `/switch_mood` 共用的心情握手）。

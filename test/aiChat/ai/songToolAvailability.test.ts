@@ -39,6 +39,7 @@ function buildContext(): ReplyToolContext {
   return {
     chatId: -1001,
     replyToMessageId: 42,
+    messageThreadId: undefined,
     mediaToolsRequested: true,
     bypassMediaToolCooldown: false,
     chatAction: {

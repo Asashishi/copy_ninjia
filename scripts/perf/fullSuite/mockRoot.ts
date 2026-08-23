@@ -32,7 +32,7 @@ export const PERFORMANCE_MOCK_ROOT: string = join(
  * 显式配置数据根后，生产预检会拒绝比这更宽的目录，mock 根必须同样严格，
  * 否则冷启动那一段量到的是一条生产走不到的分支。
  */
-const RUNTIME_ROOT_MODE: number = 0o750;
+const RUNTIME_ROOT_MODE: number = 0o755;
 
 /** 判定路径是否落在 mock 根内部；软链接与 `..` 逃逸都会在解析后暴露。 */
 export function isInsidePerformanceMockRoot(path: string): boolean {

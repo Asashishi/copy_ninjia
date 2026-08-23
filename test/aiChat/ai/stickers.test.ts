@@ -90,7 +90,7 @@ function sendStickerForTest({
   state?: any;
   onSent?: (stickerDescription: string, messageId: number) => void;
 }): Promise<string> {
-  return sendStickerTool({ chatAction, stickerLock, chatId, menu, argumentsJson, state, onSent });
+  return sendStickerTool({ chatAction, stickerLock, chatId, messageThreadId: undefined, menu, argumentsJson, state, onSent });
 }
 
 describe("aiChat/ai/stickers parseIndexField", () => {

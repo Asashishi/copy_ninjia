@@ -43,6 +43,7 @@ export function replyToUnresolvableMedia({
     imageGenerationRequested: true,
     imageGenerationReference: undefined,
     isRandomTrigger: false,
+    messageThreadId: context.messageThreadId,
   });
   return true;
 }

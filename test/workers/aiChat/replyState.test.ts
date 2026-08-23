@@ -40,9 +40,9 @@ afterEach(() => {
 describe("AI 回复代际状态", () => {
   test("失效操作回收旧 epoch，清除排队/限频/心跳，但保留在途计数到 finally", async () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
-    queue.push({ triggerSenderId: 7, replyToMessageId: 1, telegramBackpressured: false, imageGenerationRequested: false, senderName: "Alice", text: "hello" });
+    queue.push({ triggerSenderId: 7, replyToMessageId: 1, telegramBackpressured: false, messageThreadId: undefined, imageGenerationRequested: false, senderName: "Alice", text: "hello" });
     pendingReplyTriggers.set(-1001, queue);
-    pendingOverflowNotices.add(-1001);
+    pendingOverflowNotices.set(-1001, undefined);
     const triggerTimes = new LinkedQueue<number>();
     triggerTimes.push(Date.now());
     longTriggerTimes.set(-1001, triggerTimes);
@@ -53,6 +53,7 @@ describe("AI 回复代际状态", () => {
       timer,
       refCount: 1,
       action: "typing",
+      messageThreadId: undefined,
       owner: {},
       sendChain: Promise.resolve(),
       pendingSend: false,
@@ -193,12 +194,13 @@ describe("AI 回复代际状态", () => {
     chatLastActivityTimes.set(-1002, Date.now());
     compactionChains.set(-1002, Promise.resolve());
     compactionPendingCounts.set(-1002, 1);
-    pendingOverflowNotices.add(-1002);
+    pendingOverflowNotices.set(-1002, undefined);
     const timer = setInterval(() => {}, 60_000);
     typingHeartbeats.set(-1002, {
       timer,
       refCount: 1,
       action: "choose_sticker",
+      messageThreadId: undefined,
       owner: {},
       sendChain: Promise.resolve(),
       pendingSend: false,

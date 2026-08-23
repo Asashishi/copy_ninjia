@@ -184,6 +184,7 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
     triggerSenderId: 1,
     replyToMessageId: 81,
     telegramBackpressured: false,
+    messageThreadId: undefined,
     replyTo: bufferedReplyReferenceFixture({
       messageId: 70,
       id: 2,
@@ -314,6 +315,7 @@ test("触发消息已滑出窗口时，链标注改用引述式指代而不是�
     triggerSenderId: 3,
     replyToMessageId: 2000,
     telegramBackpressured: false,
+    messageThreadId: undefined,
     replyTo: bufferedReplyReferenceFixture({ messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "接着追问" }),
     forwardedFrom: undefined,
     imageGenerationRequested: false,

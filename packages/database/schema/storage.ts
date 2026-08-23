@@ -1,3 +1,4 @@
+import { chatQa } from "./chatQa";
 import { chatStates } from "./chatState";
 import { blocklistEntries, whitelistEntries } from "./identityPolicy";
 import { storageMetadata } from "./metadata";
@@ -9,11 +10,13 @@ export const storageDatabaseSchema: Readonly<{
   blocklistEntries: typeof blocklistEntries;
   pendingBlockedRemovals: typeof pendingBlockedRemovals;
   chatStates: typeof chatStates;
+  chatQa: typeof chatQa;
   storageMetadata: typeof storageMetadata;
 }> = {
   whitelistEntries,
   blocklistEntries,
   pendingBlockedRemovals,
   chatStates,
+  chatQa,
   storageMetadata,
 };

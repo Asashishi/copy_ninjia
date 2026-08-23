@@ -33,7 +33,7 @@ afterEach(clearUserReplyTriggerTimes);
 
 describe("随机回复个人冷却", () => {
   test("小回拨立即失效未来点，新冷却仍按正常时长恢复", () => {
-    const key = "-1001_7";
+    const key = "-1001:7";
     userReplyTriggerTimes.set(key, 1_001);
 
     expect(tryClaimUserReplyTrigger(-1001, 7, 1_000)).toBeTrue();
@@ -42,9 +42,9 @@ describe("随机回复个人冷却", () => {
   });
 
   test("大回拨不会让冷却长时冻结", () => {
-    userReplyTriggerTimes.set("-1002_8", 9_999_999);
+    userReplyTriggerTimes.set("-1002:8", 9_999_999);
     expect(tryClaimUserReplyTrigger(-1002, 8, 10)).toBeTrue();
-    expect(userReplyTriggerTimes.get("-1002_8")).toBe(10);
+    expect(userReplyTriggerTimes.get("-1002:8")).toBe(10);
   });
 
   test("多名用户共用唯一清扫 timer，精确到期后统一删除", () => {
@@ -57,8 +57,8 @@ describe("随机回复个人冷却", () => {
     expect(userReplyTriggerSweepState.timer).toBe(timer);
 
     sweepUserReplyTriggerTimes(1_000 + USER_REPLY_TRIGGER_COOLDOWN_MS);
-    expect(userReplyTriggerTimes.has("-1001_1")).toBeFalse();
-    expect(userReplyTriggerTimes.has("-1001_2")).toBeTrue();
+    expect(userReplyTriggerTimes.has("-1001:1")).toBeFalse();
+    expect(userReplyTriggerTimes.has("-1001:2")).toBeTrue();
   });
 
   test("达到硬顶后拒绝新随机 claim，清出过期空间后恢复", () => {
@@ -97,28 +97,27 @@ describe("随机回复个人冷却", () => {
   test("媒体随机掷骰的冷却按上下文的 now 计时，不读墙钟", () => {
     const base: number = 1_767_225_600_000;
 
-    expect(claimRandomMediaTrigger(triggerContextAt(base), 7)).toEqual({ candidate: true, claimed: true });
-    expect(userReplyTriggerTimes.get("-1001_7")).toBe(base);
+    expect(claimRandomMediaTrigger(triggerContextAt(base), 7)).toBe("claimed");
+    expect(userReplyTriggerTimes.get("-1001:7")).toBe(base);
 
     // 冷却未到期：即便墙钟早已走过，判定仍只认上下文里的 now。
     expect(claimRandomMediaTrigger(triggerContextAt(base + USER_REPLY_TRIGGER_COOLDOWN_MS - 1), 7))
-      .toEqual({ candidate: true, claimed: false });
-    expect(userReplyTriggerTimes.get("-1001_7")).toBe(base);
+      .toBe("candidate");
+    expect(userReplyTriggerTimes.get("-1001:7")).toBe(base);
 
     // 恰好到期：重新认领，并把冷却起点推到这条消息的 now。
     const renewed: number = base + USER_REPLY_TRIGGER_COOLDOWN_MS;
-    expect(claimRandomMediaTrigger(triggerContextAt(renewed), 7))
-      .toEqual({ candidate: true, claimed: true });
-    expect(userReplyTriggerTimes.get("-1001_7")).toBe(renewed);
+    expect(claimRandomMediaTrigger(triggerContextAt(renewed), 7)).toBe("claimed");
+    expect(userReplyTriggerTimes.get("-1001:7")).toBe(renewed);
   });
 
   test("掷骰没中时不占用冷却名额，也不落任何条目", () => {
     const base: number = 1_767_225_600_000;
     const context: MessageTriggerContext = triggerContextAt(base);
-    // 概率归零即必不中；candidate 为假时 claimed 必须跟着为假。
+    // 概率归零即必不中；没中就是 "none"，不会往下走冷却认领那一步。
     (context as { aiReplyProbability: number }).aiReplyProbability = 0;
 
-    expect(claimRandomMediaTrigger(context, 7)).toEqual({ candidate: false, claimed: false });
+    expect(claimRandomMediaTrigger(context, 7)).toBe("none");
     expect(userReplyTriggerTimes.size).toBe(0);
   });
 });

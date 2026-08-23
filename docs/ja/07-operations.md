@@ -48,9 +48,11 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` と `database/` を container の一時 layer に置かないでください。
+データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`（`0755` も受け付けます。下記参照）。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` と `database/` を container の一時 layer に置かないでください。
 
-program は root・`logs/`・`memory/`・初期 `database/` を `0750` で作り、4 path の symlink を拒否します。root・`logs/`・`memory/` は runtime UID 所有かつ `0750` 以下でなければなりません。identity migration は `database/` を `02770`、主 DB と WAL/SHM を `0660` にします。この directory は runtime UID 所有、または deployment account 所有でも group が runtime の有効 group で完全な `rwx` を持つ場合だけ許可されます。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
+program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 者は `0755`、`database/` は `0770`。実際の mode は umask でさらに絞られます）、4 path の symlink を拒否します。root・`logs/`・`memory/` は runtime UID 所有かつ `0755` 以下でなければなりません。この gate が止めるのは**書き込み**で、group または other に `w` bit があれば起動を拒否します。読み側を `0755` まで緩めているのは、本 project を単一テナントとして扱い、大半の deployment が root で直接動かし、既定 umask で作られる directory がまさに `0755` だからです。
+
+> **代償**：`memory/` 配下の file 自体は `0644` なので、group chat の逐語記録に残る access control はこの directory bit だけです。`0755` のままにすると、同じマシンのどの local account からも読めます。マルチテナント、あるいは非特権 login user がいるホストでは、data root と `memory/` を自分で `0750` に戻してください。preflight が保証するのは「`0755` より広くない」ことだけで、判断は代行しません。identity migration は `database/` を `02770`、主 DB と WAL/SHM を `0660` にします。この directory は runtime UID 所有、または deployment account 所有でも group が runtime の有効 group で完全な `rwx` を持つ場合だけ許可されます。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
 
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、identity write-through、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
@@ -159,29 +161,46 @@ Bot 停止中または storage snapshot の整合境界でデータルート全�
 
 runtime は旧形式の互換 path を持たず、database を自動作成しません。migration 前に Bot を停止して inactive を確認します。失敗時は外部 backup と現場を保全し、新版を起動せず、`config_example/` で実 input を上書きしてはいけません。
 
-### 旧 JSON → SQLite
+### 新規 deployment での database 作成
 
-`config/whitelist.json`、`config/blocklist.json`、および任意の `memory/blocklist/` を使う deployment は次の順で migration します。
+起動は database 欠落を「空 policy」と推測しないため、新規 deployment は現行 schema の空 database を明示的に一度作成する必要があります。手順は [01 セットアップ](01-getting-started.md#identity-storage-の初期化) にあり、`install.sh` にも含まれています。作成 entry point は既存 target の上書きを拒否します。
 
-```bash
-bun run migrate:identity-storage --check
-bun run migrate:identity-storage --apply
-```
+### 旧 JSON → SQLite（9.1.5 以前）
 
-`--check` は旧 allowlist、静的/動的 blocklist、v2 removal outbox を厳密に読み、統合するだけで file を変更しません。`--apply` は `bot.lock` を取得し、Telegram から identity metadata を補完し、inventory・owner/mode・SHA-256 付きの外部 backup を作ります。その後 candidate SQLite の integrity、JSONB、row count、主キー、codec を検証し、`database/storage.sqlite` を atomic publish してからだけ 3 つの旧構造を削除します。script が表示する外部 backup directory は、起動・permission command・removal replay の検証がすべて終わるまで保持します。
+`config/whitelist.json`、`config/blocklist.json`、および任意の `memory/blocklist/` を使う deployment は、**まず 9.1.5 へ上げてその版で migration を完了**させてから、現行版へ upgrade してください。
 
-新規 deployment も同じ明示境界を通ります。[01 セットアップ](01-getting-started.md#identity-database-の初期化) に従って一時的な空の旧 input 2 件を作り、`--apply` を実行します。起動は database 欠落を「空 policy」と推測せず、migration も既存 target を上書きしません。
+`bun run migrate:identity-storage` は 9.1.5 が最後の提供版です。「cold migration script は直近の released version → 現行版のみを覆う」という規約に従い 9.2.0 で `scripts/` から削除されており、現行版はこの migration を提供せず、旧 JSON リストを input として受け付けません。現行版で空の `whitelist.json`／`blocklist.json` を作ってから空 database を作る、という手順は取らないでください。実際のリストが取り残され、空の blocklist のまま Bot が稼働します。
 
-### SQLite schema v3 → v4（chat state の database 移行）
+### SQLite schema v4 → v5（chat Q&A の database 化）
 
-chat state を `state.json` から SQLite `chat_states` へ移した release より前の deployment——database が schema v3 のままで、`state.json` にまだ `chats` がある場合——は、Bot 停止中に次を実行します。
+`chat_qa` table 追加前の deployment（database が schema v4 のまま）は、Bot を停止してから実行します。
 
 ```bash
-bun run migrate:chat-state -- --check
-bun run migrate:chat-state -- --apply
+bun run migrate:chat-qa -- --check
+bun run migrate:chat-qa -- --apply
 ```
 
-どちらのモードもまず `bot.lock` を取得し（したがってサービスは停止済みである必要があります）、`state.json` の主・副を厳密に読み、database 全体の integrity check を行い、対応する v3 または v4 の migration lineage だけを厳密に受け入れます。未知 lineage、不正 row、allowlist/blocklist の交差は元のまま拒否します。`--check` は移行待ちの chat 行数を報告するだけで、deployment data を一切変更しません。`--apply` は各 chat の Bot 権限 snapshot を Telegram から補完し（旧形式は `botIsAdmin` boolean しか保持していません）、state の主・副と SQLite serialization snapshot の外部 backup を owner/mode/SHA-256 付きで残してから、schema migration、chat 行の書き込み、業務テーブルが変更されていないことの検証を行い、最後に `state.json.bak`、`state.json` の順で global ブロックのみの新形式へ atomic publish します。いずれかの段階で失敗した場合は外部 backup を保持し、その path を表示します。移行済みの database に対して実行した場合は strict validation だけを行い、migration 不要と報告します。Release の Compatibility / Migration Notes には実行した migration、backup location、restore 手順、permission 要件を記載します。
+どちらの mode も先に `bot.lock` を取得し（したがってサービスは停止済みである必要があります）、
+database 全体の integrity 検査と全業務 row の厳格 decode を行い、サポートされる v4 または v5 の
+migration lineage だけを正確に受け入れます。未知の lineage、不正な row、allowlist と blocklist の
+重複はそのまま拒否します。
+
+**migration 前の allowlist 検証は v4 の permission key 集合で行います**。現行の定数ではありません。
+v5 は全 allowlist entry に `isCanControllQaPermission` を追加するため、未 migration の database を
+現行 decoder で検証すると、移行待ちの deployment はすべて migration 開始前に破損と判定され、しかも
+運用者が一度も書いたことのない field を名指しされます。`meta` は production の parser で検証します。
+`--check` は `--apply` が拒否するものをすべて拒否しなければならず、さもないと不正な row は database が
+書き換えられた後にしか露見しません。
+
+`--check` は deployment data を一切変更しません。`--apply` は owner/mode/SHA-256 manifest 付きの
+一貫した SQLite snapshot を work tree の外に保持し（その backup 自体を実 database として再検査し）、
+続いて schema migration を実行します。`chat_qa` table と `q` の index を作成し、
+`isCanControllQaPermission` を backfill します——**既存 entry が他の permission をすべて持つ場合にのみ
+true**で、`isCanWhiteOther` 導入時と同じ規則です。その後、業務 table の row 数が変わっていないこと、
+新 schema 下でも database 全体が厳格に decode できることを検証します。いずれかの段階で失敗した場合は
+外部 backup を保持してその path を出力します。migration 済みの database に対しては検証のみ行い、
+migration 不要である旨を報告します。Release の Compatibility / Migration Notes には、実際に実行した
+migration、backup の位置、復旧手順、権限要件を記載しなければなりません。
 
 ## 起動失敗の調査
 
@@ -189,11 +208,11 @@ bun run migrate:chat-state -- --apply
 
 - **パス付きでデータルート事前検査が失敗**
   - **原因**：data root・`memory`・`logs`・`database` が symlink、最初の 3 path が
-    `0750` より広い、`database/` が `0770` より広いか collaboration group で書けない、
+    `0755` より広い（group/other に書き込み bit がある）、`database/` が `0770` より広いか collaboration group で書けない、
     directory が書込不能、または filesystem が fsync、hard link、atomic rename を
     support しない。
   - **対応**：全 instance を停止し、directory ごとに owner/group/mode を修正します。
-    root・`memory/`・`logs/` は `0750`、`database/` は deployment model に応じて
+    root・`memory/`・`logs/` は `0750` または `0755`、`database/` は deployment model に応じて
     `0750` または `02770` を使います。解決しなければ必要な semantics を持つ local
     filesystem を使用します。
 - **`bot.lock` が起動を拒否**
@@ -205,7 +224,7 @@ bun run migrate:chat-state -- --apply
 - **identity database が欠落、または validation failure**
   - **原因**：migration 未実行、`storage.sqlite` が書込不能、integrity/JSONB/schema/
     migration lineage 不正、row codec failure、または同じ identity が両 list に存在。
-  - **対応**：Bot を停止したまま [Identity Storage Migration](#identity-storage-migration) を完了または
+  - **対応**：Bot を停止したまま [Identity Storage Migration](#identity-storage-migration) に従って database を作成または
     rollback します。同一 consistency point の DB と sidecar を復元し、collaboration group
     permission を直してから起動します。空 DB を作ったり失敗 row を削除してはいけません。
 - **state の 2 コピーが両方無効**

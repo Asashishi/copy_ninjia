@@ -55,6 +55,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 const botAdmin = await import("../../packages/infra/botAdmin");
 const botAdminCache = await import("../../packages/cache/main/botAdmin");
 const chatTeardown = await import("../../packages/infra/chatTeardown");
+const { CHAT_TEARDOWN_ORDER } = await import("../../packages/consts/chatTeardown");
 
 function memberContext(newStatus: string, oldStatus: string = "administrator"): never {
   return {
@@ -76,11 +77,28 @@ beforeEach(() => {
   botAdminCache.botPermissionRequestTokens.clear();
   chatTeardown.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
   chatTeardown.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
+  chatTeardown.registerChatTeardown("qa", (chatId: number): void => { calls.push(`qa:${chatId}`); });
   chatTeardown.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
   chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
 });
 
 describe("chat runtime teardown", () => {
+  // 这条用例是本文件的回归防线：组合 teardown 曾手写五个 owner 里的四个，漏掉的
+  // `qa` 让 `/set_qa` 表单在停管后继续留在群里，而当时的顺序断言只列了那四个，
+  // 于是测试也跟着看不见。改为从 CHAT_TEARDOWN_ORDER 取 owner 清单后，新增 owner
+  // 时忘记接线会在这里失败（漏进顺序表则先在编译期失败）。
+  test("ChatRuntimeOwner 的每个 owner 都被组合 teardown 派发到", async () => {
+    const dispatched: string[] = [];
+    for (const owner of CHAT_TEARDOWN_ORDER) {
+      chatTeardown.registerChatTeardown(owner, (): void => { dispatched.push(owner); });
+    }
+
+    await botAdmin.teardownChatRuntime(-1001, "explicitDisable");
+
+    expect(dispatched).toEqual([...CHAT_TEARDOWN_ORDER]);
+    expect(new Set(dispatched).size).toBe(CHAT_TEARDOWN_ORDER.length);
+  });
+
   test("teardown 原因原样传给 owner，用于区分显式清理与失权停管", async () => {
     const reasons: string[] = [];
     chatTeardown.registerChatTeardown("antiRaid", (_chatId: number, reason): void => {
@@ -93,13 +111,14 @@ describe("chat runtime teardown", () => {
     expect(reasons).toEqual(["explicitDisable", "lostAuthority"]);
   });
 
-  test("按 copy、gag、proxy、AI、Anti-Raid 顺序拆除组合运行态", async () => {
+  test("按 proxy、copy、gag、qa、AI、Anti-Raid 顺序拆除组合运行态", async () => {
     states.set(-1001, { isProxySendEnabled: true });
     await botAdmin.teardownChatRuntime(-1001, "explicitDisable");
     expect(calls).toEqual([
+      "clear:isProxySendEnabled",
       "copy:-1001",
       "gag:-1001",
-      "clear:isProxySendEnabled",
+      "qa:-1001",
       "ai:-1001:true",
       "anti:-1001",
     ]);
@@ -120,8 +139,9 @@ describe("chat runtime teardown", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual([copyError, aiError]);
     expect(calls).toEqual([
-      "gag:-1001",
       "clear:isProxySendEnabled",
+      "gag:-1001",
+      "qa:-1001",
       "anti:-1001",
     ]);
     expect(states.get(-1001)?.isProxySendEnabled).toBeUndefined();
@@ -147,12 +167,13 @@ describe("chat runtime teardown", () => {
     // 会让磁盘继续留着一份已经作废的快照（见 infra/botAdmin.ts 的
     // forgetBotChatPermissions）。这一路后面那次 persistChatState 会以更高 revision
     // 盖过它，多出来的这次写是 teardown 每群一次的固定成本，不进任何热路径。
-    expect(calls.slice(0, 9)).toEqual([
+    expect(calls.slice(0, 10)).toEqual([
       "clear:botPermissions",
       "save:bot permissions forgotten",
+      "clear:isProxySendEnabled",
       "copy:-1001",
       "gag:-1001",
-      "clear:isProxySendEnabled",
+      "qa:-1001",
       "ai:-1001:true",
       "anti:-1001",
       "prune:-1001",
@@ -186,10 +207,11 @@ describe("chat runtime teardown", () => {
       isProxySendEnabled: true,
     });
     await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
-    expect(calls.slice(0, 5)).toEqual([
+    expect(calls.slice(0, 6)).toEqual([
+      "clear:isProxySendEnabled",
       "copy:-1001",
       "gag:-1001",
-      "clear:isProxySendEnabled",
+      "qa:-1001",
       "ai:-1001:true",
       "anti:-1001",
     ]);

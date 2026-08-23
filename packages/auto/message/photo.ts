@@ -1,7 +1,7 @@
 import { recordChatMedia } from "../../aiChat";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
 import { buildAiRecordMediaMessage } from "./recordContext";
-import type { MessageTriggerContext } from "../../types/auto";
+import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { TelegramVisionSource } from "../../types/media";
@@ -12,7 +12,7 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
   if (!Array.isArray(message.photo) || message.photo.length === 0) return false;
 
   const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
-  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger }: { candidate: boolean; claimed: boolean; } = claimRandomMediaTrigger(context, speaker.id);
+  const randomTrigger: RandomMediaTrigger = claimRandomMediaTrigger(context, speaker.id);
   const photoFile: TelegramVisionSource = pickPhotoFile(message.photo);
   const caption: string = typeof message.caption === "string" ? message.caption : "";
   recordChatMedia(buildAiRecordMediaMessage({
@@ -25,13 +25,12 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
       fileUniqueId: photoFile.fileUniqueId,
       width: photoFile.width,
       height: photoFile.height,
-      commentOnResolve: claimedRandomTrigger,
+      commentOnResolve: randomTrigger === "claimed",
       // 直接回复/@ 只开放工具资格，具体是否要编辑图片交给模型判断。
-      imageGenerationRequested: directTriggerReason !== undefined,
       stickerFallbackText: undefined,
       voiceMime: undefined,
       voiceDurationSeconds: 0,
     },
   }));
-  return directTriggerReason !== undefined || commentOnResolveCandidate;
+  return directTriggerReason !== undefined || randomTrigger !== "none";
 }

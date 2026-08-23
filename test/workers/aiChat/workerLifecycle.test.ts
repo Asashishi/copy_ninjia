@@ -170,6 +170,7 @@ describe("AI Chat Worker lifecycle", () => {
       } as unknown as AiChatWorkerMessage,
       {
         type: "trigger",
+        messageThreadId: undefined,
         chatId: -1001,
         triggerSenderId: 7,
         replyToMessageId: 10,
@@ -201,6 +202,7 @@ describe("AI Chat Worker lifecycle", () => {
     expect(flushMemorySnapshot).toHaveBeenNthCalledWith(2, -1001, true);
     expect(generateAndSendReply).toHaveBeenCalledWith({
       type: "trigger",
+      messageThreadId: undefined,
       chatId: -1001,
       triggerSenderId: 7,
       replyToMessageId: 10,
@@ -236,6 +238,7 @@ describe("AI Chat Worker lifecycle", () => {
     expect(workerSignal.aborted).toBeTrue();
     worker.handleAiChatWorkerMessage({
       type: "trigger",
+      messageThreadId: undefined,
       chatId: -1001,
       triggerSenderId: 7,
       replyToMessageId: 10,

@@ -16,7 +16,8 @@
  * 用法：
  *   bun run perf:full                  跑完把 JSON 报告打到 stdout
  *   bun run perf:full -- --markdown    再附带打印简体中文 Markdown 区块
- *   bun run perf:full -- --write-doc     跑完把三语区块写回 docs/<lang>/09-performance.md
+ *   bun run perf:full -- --write-doc     跑完把三语区块写回 docs/<lang>/09-performance.md，
+ *                                        并把结构化报告记进仓库根 performance-result.json
  */
 
 import { arch, cpus, platform, release, totalmem } from "node:os";
@@ -42,6 +43,10 @@ import {
 } from "./fullSuite/sections";
 import { renderBenchmarkBlock } from "./fullSuite/markdown";
 import { writeBenchmarkDocPages } from "./fullSuite/docPage";
+import {
+  PERFORMANCE_RESULT_PATH,
+  writePerformanceResultEntry,
+} from "./performanceResult";
 import type { ColdStartSectionResult, SectionContext } from "./fullSuite/sections";
 import type { DirectoryFootprint } from "./fullSuite/processIo";
 import type {
@@ -231,6 +236,18 @@ if (Bun.argv[2] === "--child") {
     for (const path of writeBenchmarkDocPages(report)) {
       process.stderr.write(`perf:full wrote benchmark block to ${path}\n`);
     }
+    // 三份 markdown 和这份 JSON 是同一次运行的两种呈现，因此由同一个开关写出。
+    // 拆成两个 flag 的话，少传一个就会让两者静默错开一个版本——而「三种语言必须
+    // 同批更新」防的正是这件事，没理由在这里重新引入它。
+    writePerformanceResultEntry({
+      path: PERFORMANCE_RESULT_PATH,
+      section: "fullSuite",
+      entry: "lastRun",
+      value: report,
+    });
+    process.stderr.write(
+      `perf:full recorded this run into ${PERFORMANCE_RESULT_PATH}\n`
+    );
   }
   process.stderr.write(
     `perf:full finished ${CHAIN_NAMES.length} chains and ` +

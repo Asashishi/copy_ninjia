@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2498_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.67%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2581_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.62%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：2498 项测试全部通过 / 261 个测试文件 / 95,379 次 expect() 调用 / 函数覆盖率 95.41% / 行覆盖率 96.67%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：2581 项测试全部通过 / 271 个测试文件 / 95,642 次 expect() 调用 / 函数覆盖率 95.23% / 行覆盖率 96.62%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -138,6 +138,14 @@
   <p><code>/block</code> 一条命令即可在所有管理群联动封禁并写入持久化黑名单，之后进任何监听群都会被秒踢；新接管的群还会自动补扫。</p>
 </td>
 </tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>💬 群问答</b></p>
+  <p><code>/set_qa</code> 用两按钮表单登记问答，每群最多 5 条。有人一字不差地问出来就直接答，不经过 AI；意思相近但字面不同的问法才交给模型的两个查询工具判断。</p>
+</td>
+<td align="left" valign="top"></td>
+<td align="left" valign="top"></td>
+</tr>
 </table>
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
@@ -156,6 +164,16 @@
 
 需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.4+、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/ja_copy` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
 
+一键安装（缺什么装什么，问完配置直接启动）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
+```
+
+只做三件事：配好环境（补齐 `git`/`curl`/`unzip`、clone 仓库到 `./copy_ninjia`、装 Bun、`bun install`）、交互问 Telegram 与 AI 配置、建空身份数据库后启动。不注册 systemd、不动既有配置，重跑安全。已经 clone 过就在仓库根跑 `bash install.sh`，会跳过 clone。
+
+手工安装：
+
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
@@ -166,7 +184,7 @@ bun run check                          # 项目规约 + ESLint + TypeScript 严�
 bun run start                          # 启动长轮询
 ```
 
-首次启动前还要初始化身份数据库、在 BotFather 侧关闭 Privacy Mode 并开启 Inline Mode。
+手工安装时首次启动前还要初始化身份数据库、在 BotFather 侧关闭 Privacy Mode 并开启 Inline Mode。
 配置逐项含义、必填关系与严格校验规则见 [`config_example/README/zh.md`](config_example/README/zh.md)，
 完整步骤（含运行时数据根、素材直链与迁移命令）见 [01 环境搭建与首次运行](docs/cn/01-getting-started.md)。
 

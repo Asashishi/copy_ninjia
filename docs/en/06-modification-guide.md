@@ -140,6 +140,20 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 
 **Adding an optional block can skip steps 3–4**, provided "missing" is defined precisely: the decoder accepts both the absent block and absent fields (follow `globalAssets` in `libs/stateFileCodec.ts` — both branches return the same field set so the self-check inside `save` never sees two shapes), and the accessors collapse the default into a single fallback value. `state.global.assets` is the worked example: existing files decode unchanged and behave exactly as they did without the block. If the block is a knob meant to be hand-edited, add a startup seed (`seedMissingAssetState`) that writes the missing entries with their currently effective values so the keys show up in the file; the seed must run after **every `await` that can abort startup**, fill gaps only, and persist in the background — see [04](04-invariants.md#durability-and-snapshot-contracts). Conversely, **any change that makes an existing file fail to decode still goes through the full steps 3–4**.
 
+## Adding a SQLite Table
+
+One constraint harder than editing `state.json`: **the runtime never migrates automatically** and refuses to start when the database version does not match, so every new table needs an offline cold migration. In order:
+
+1. Declare the table in `packages/database/schema/<domain>.ts` and register it in `schema/storage.ts`; the `data` column uses `jsonbText` plus `jsonDataCheck`, the same shape as every other business table.
+2. Write `schema/migrations/000N_<name>.sql` and add its entry to `migrations/meta/_journal.json`.
+3. **Measure the hash, do not compute it**: create a throwaway database, run the migration once, read `created_at` and `hash` back from `__drizzle_migrations`, and write those into `packages/consts/identityStorage.ts`. Bump `IDENTITY_DATABASE_SCHEMA_VERSION` at the same time.
+4. Write the cold-migration script and **replace** the single edge declared in `scripts/conventions/coldMigrations.ts` — the convention allows exactly one "previous release → current" edge, so the old script and its tests are deleted with it.
+5. Validation **before** the migration must use that version's historical shape. If this change alters a table's closed field set (adding a permission key, for instance), the production decoder cannot be used beforehand: it already requires the new field, so every pending deployment would be condemned as corrupt before the migration starts, naming a field its operator never wrote. Freeze the historical key list inside the migration script rather than deriving it from the current constant — deriving would silently rewrite this historical edge the next time a key is added.
+6. Parts that do not vary by version (`meta`, for example) still use the production parser: `--check` must reject everything `--apply` would, or a bad row surfaces only after the database has been rewritten.
+7. Persistence reuses the existing write-through: the main thread publishes the in-memory final value, posts it to the Disk I/O Worker, an explicit transaction commits, an exact revision is acknowledged, and a rebuilt worker replays from memory.
+
+`chat_qa` is the worked example (`0003_chat_qa.sql` with `scripts/migrateChatQa.ts`).
+
 ## Changing an Inter-Worker Protocol
 
 `packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the shared `/query_mood` and `/switch_mood` mood handshake is the reference implementation.

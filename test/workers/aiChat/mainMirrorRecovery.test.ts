@@ -59,8 +59,11 @@ mock.module("../../../packages/infra/diskIO", () => ({
   onAiMemoryPersisted: (callback: (reply: AiMemoryPersistedReply) => void): void => {
     diskMemoryPersisted = callback;
   },
-  onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
-    diskRespawn = listener;
+  // 按 owner 名捕获，不用「最后注册的那个」：同一个 isolate 里还有别的领域
+  // （群状态、群问答、身份策略）也会登记重放回调，谁最后被 import 就会顶掉
+  // 前一个，测试于是悄悄换成在验别人的重放。
+  onDiskIORespawn: (owner: string, _priority: number, listener: DiskIORespawnListener): void => {
+    if (owner === "AI memory") diskRespawn = listener;
   },
   onDiskIOGiveUp: (callback: () => void): void => { diskGaveUp = callback; },
   relayLogMessage: (): boolean => true,

@@ -31,6 +31,7 @@ const flushDiskIODomainOutcome = mock(
           type: "identityStoragePersisted",
           writes: [],
           chatStateWrites,
+          chatQaWrites: [],
         });
       }
     }
@@ -130,6 +131,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
         type: "identityStoragePersisted",
         writes: [],
         chatStateWrites: [{ chatId: -1001, revision: firstRevision }],
+        chatQaWrites: [],
       });
     }
     expect(unacknowledgedChatStateWrites.get(-1001)?.revision).toBe(secondRevision);

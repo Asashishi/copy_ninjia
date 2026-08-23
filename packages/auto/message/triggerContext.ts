@@ -1,5 +1,6 @@
 import type { Message } from "@grammyjs/types";
 import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference } from "./facts";
+import { forumTopicThreadId } from "../../libs/forumTopic";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type { MentionFacts, MessageTriggerContext } from "../../types/auto";
 import type { AiDirectTriggerReason } from "../../types/aiChat/protocol";
@@ -45,5 +46,6 @@ export function createMessageTriggerContext({
     hasOtherMention: mentionFacts.hasOtherMention,
     repliesToSelf: isReplyToSelf(message),
     directTriggerReason,
+    messageThreadId: forumTopicThreadId(message),
   };
 }

@@ -13,7 +13,7 @@ import { createMessageTriggerContext } from "../../../packages/auto/message/trig
 import { claimRandomMediaTrigger } from "../../../packages/auto/message/triggerPolicy";
 import type { AiBotInfo, AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
 import type { AiSpeakerSnapshot } from "../../../packages/types/aiChat/speaker";
-import type { MessageTriggerContext } from "../../../packages/types/auto";
+import type { MessageTriggerContext, RandomMediaTrigger } from "../../../packages/types/auto";
 import {
   clearAiReplyActivity,
   observeGroupMessageForAiReply,
@@ -170,8 +170,7 @@ export function aiMediaDirectTriggerScenario(): Scenario {
           isQuiet: false,
           aiReplyProbability: 1 / 40,
         });
-        const claim: { candidate: boolean; claimed: boolean } =
-          claimRandomMediaTrigger(context, speaker.id);
+        const claim: RandomMediaTrigger = claimRandomMediaTrigger(context, speaker.id);
         const payload: AiRecordMediaMessage = buildAiRecordMediaMessage({
           context,
           speaker,
@@ -182,8 +181,7 @@ export function aiMediaDirectTriggerScenario(): Scenario {
             fileUniqueId: "AQADu",
             width: 1280,
             height: 720,
-            commentOnResolve: claim.claimed,
-            imageGenerationRequested: context.directTriggerReason !== undefined,
+            commentOnResolve: claim === "claimed",
             stickerFallbackText: undefined,
             voiceMime: undefined,
             voiceDurationSeconds: 0,

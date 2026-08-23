@@ -255,6 +255,7 @@ export function createGenerateImageExecutor(
         mimeType: image.mimeType,
         replyToMessageId: ctx.replyToMessageId,
         signal: ctx.signal,
+        messageThreadId: ctx.messageThreadId,
         ...(inlineCaption !== null ? { caption: inlineCaption } : {}),
       });
       if (sent === undefined) {

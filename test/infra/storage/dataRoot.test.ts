@@ -24,7 +24,7 @@ describe("runtime data root preflight", () => {
     await prepareRuntimeDataRoot(nested);
 
     expect(existsSync(nested)).toBeTrue();
-    expect((statSync(nested).mode & 0o777) & ~0o750).toBe(0);
+    expect((statSync(nested).mode & 0o777) & ~0o755).toBe(0);
     expect(readdirSync(nested).sort()).toEqual(["database", "logs", "memory"]);
     expect(existsSync(join(nested, "config"))).toBeFalse();
   });
@@ -61,24 +61,32 @@ describe("runtime data root preflight", () => {
     })).rejects.toThrow("hard links");
   });
 
-  test("已有数据根权限宽于 0750 时 fail closed，且不会自动 chmod", async () => {
+  test("数据根拿到 group/other 写位时 fail closed，且不会自动 chmod", async () => {
     const publicRoot: string = join(testDir, "public-root");
     await prepareRuntimeDataRoot(publicRoot);
+    // 默认 umask 建出来的 0755 是放行的：这道闸拦的是别的账号能不能**改**
+    // 运行状态，不是能不能读（读侧的取舍见 RUNTIME_DATA_ROOT_MAX_MODE 的 JSDoc）。
     chmodSync(publicRoot, 0o755);
+    await expect(prepareRuntimeDataRoot(publicRoot)).resolves.toBeUndefined();
 
-    await expect(prepareRuntimeDataRoot(publicRoot)).rejects.toThrow("mode 0755 is broader than 0750");
-    expect(statSync(publicRoot).mode & 0o777).toBe(0o755);
+    chmodSync(publicRoot, 0o775);
+    await expect(prepareRuntimeDataRoot(publicRoot)).rejects.toThrow("mode 0775 is broader than 0755");
+    // 拒绝之后原样保留，绝不替部署方 chmod。
+    expect(statSync(publicRoot).mode & 0o777).toBe(0o775);
   });
 
-  test("敏感顶层目录沿用同一 owner/mode 门禁，0750 的共享只读 group 可用", async () => {
+  test("敏感顶层目录沿用同一 owner/mode 门禁：读放行、写拒绝", async () => {
     const privateRoot: string = join(testDir, "private-root");
     await prepareRuntimeDataRoot(privateRoot);
     const memoryDir: string = join(privateRoot, "memory");
+    chmodSync(memoryDir, 0o775);
+
+    await expect(prepareRuntimeDataRoot(privateRoot)).rejects.toThrow(`${memoryDir} mode 0775`);
+    expect(statSync(memoryDir).mode & 0o777).toBe(0o775);
+
+    // 0755 与更严格的 0750 都放行。
     chmodSync(memoryDir, 0o755);
-
-    await expect(prepareRuntimeDataRoot(privateRoot)).rejects.toThrow(`${memoryDir} mode 0755`);
-    expect(statSync(memoryDir).mode & 0o777).toBe(0o755);
-
+    await expect(prepareRuntimeDataRoot(privateRoot)).resolves.toBeUndefined();
     chmodSync(memoryDir, 0o750);
     await expect(prepareRuntimeDataRoot(privateRoot)).resolves.toBeUndefined();
   });
@@ -94,7 +102,7 @@ describe("runtime data root preflight", () => {
     const memoryDir: string = join(privateRoot, "memory");
     chmodSync(memoryDir, 0o770);
     await expect(prepareRuntimeDataRoot(privateRoot)).rejects.toThrow(
-      `${memoryDir} mode 0770 is broader than 0750`
+      `${memoryDir} mode 0770 is broader than 0755`
     );
   });
 

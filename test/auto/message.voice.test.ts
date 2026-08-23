@@ -81,8 +81,10 @@ describe("群聊语音消息", () => {
       stickerFallbackText: undefined,
       directTriggerReason: "reply",
     });
-    // 语音不作为生图参考素材，但直接触发仍开放重媒体工具资格。
-    expect(payload.imageGenerationRequested).toBe(true);
+    // 语音不作为生图参考素材，但直接触发仍开放重媒体工具资格——这一条事实就是
+    // directTriggerReason 本身，不再有单独的布尔字段重复它
+    // （见 types/aiChat/protocol.ts 的 directTriggerReason）。
+    expect(payload.directTriggerReason).toBe("reply");
     expect(recordChatMessageMock).not.toHaveBeenCalled();
   });
 

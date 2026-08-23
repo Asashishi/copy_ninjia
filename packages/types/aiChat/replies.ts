@@ -20,6 +20,16 @@ export interface QueuedReplyTrigger {
   /** 是否允许模型根据本轮直接触发内容决定调用图片工具。 */
   imageGenerationRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;
+  /**
+   * 触发时刻的本群问答快照；与 triggerReference 同理在入队时捕获。
+   *
+   * 排队期间群里可能又改了问答，但这一轮回答的是**当时那条消息**，用当时那份
+   * 清单才自洽；何况载荷有界（每群至多 5 条），存下来比补跑时再跨线程要一次
+   * 便宜得多。
+   */
+  chatQa?: ReadonlyMap<string, string>;
+  /** 触发消息所在的论坛话题；补跑时这一轮仍然回到当初那个话题。 */
+  messageThreadId: number | undefined;
   senderName: string;
   text: string;
 }
@@ -39,6 +49,16 @@ export interface ReplyPromptSections {
 export interface ReplyToolContext {
   chatId: number;
   replyToMessageId: number;
+  /**
+   * 本轮全部发送要落进的论坛话题；General、非论坛群与讨论组评论为 undefined。
+   *
+   * 收在上下文里而不是逐个工具各传一次：一轮里文字、贴纸、生图、生歌与「正在
+   * 输入…」是同一条对话的五种出口，任一处漏掉都会把那一件事单独扔进 General
+   * （见 libs/forumTopic.ts）。
+   */
+  messageThreadId: number | undefined;
+  /** 本群已登记问答；为空或缺省时本轮不挂问答工具，模型看不到它们。 */
+  chatQa?: ReadonlyMap<string, string>;
   /**
    * 重媒体工具（generate_image / generate_song）的执行侧直接触发资格，**不**代表
    * 生图或生歌的意图已由程序预判——意图由模型按当前消息自行判断。

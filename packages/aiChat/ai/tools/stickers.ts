@@ -295,6 +295,8 @@ export interface SendStickerToolParams {
    */
   stickerLock: StickerSendLockControl;
   chatId: number;
+  /** 本轮所在的论坛话题；缺了它话题群里的贴纸会掉进 General。 */
+  messageThreadId: number | undefined;
   /**
    * 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单（与组装工具描述/
    * 一层清单时用的编号一一对应，见模块头注）。
@@ -334,6 +336,7 @@ export async function sendStickerTool({
   chatAction,
   stickerLock,
   chatId,
+  messageThreadId,
   menu,
   argumentsJson,
   state,
@@ -384,6 +387,7 @@ export async function sendStickerTool({
     chatId,
     fileId: candidate.sticker.file_id,
     signal,
+    messageThreadId,
   });
   if (sentMessageId === undefined) {
     // 发送失败不把挡位续回选择贴纸：模型若换一枚重试，发送路径会自己重新

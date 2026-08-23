@@ -18,9 +18,16 @@ import {
 import { replyReferenceForBufferedEntry } from "./replyChain";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 
-/** 直接拿当前图片/贴纸叫机器人时附上短期参考；是否实际编辑由模型决定。GIF 不隐式混入。 */
+/**
+ * 直接拿当前图片/贴纸叫机器人时附上短期参考；是否实际编辑由模型决定。GIF 不隐式混入。
+ *
+ * 「有没有图片工具资格」直接读 directTriggerReason，不再另有一个布尔字段重复它
+ * （理由见 types/aiChat/protocol.ts 的 directTriggerReason 与 messageThreadId）。
+ */
 function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGenerationReference | undefined {
-  if (!msg.imageGenerationRequested || (msg.kind !== "photo" && msg.kind !== "sticker")) return undefined;
+  if (msg.directTriggerReason === undefined || (msg.kind !== "photo" && msg.kind !== "sticker")) {
+    return undefined;
+  }
   return {
     fileId: msg.fileId,
     fileUniqueId: msg.fileUniqueId,
@@ -78,8 +85,10 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           chatId: msg.chatId,
           triggerSenderId: msg.senderId,
           replyToMessageId: msg.messageId,
+          messageThreadId: msg.messageThreadId,
           isRandomTrigger: false,
-          imageGenerationRequested: msg.imageGenerationRequested,
+          // 本分支的前置条件就是 directTriggerReason !== undefined，资格恒成立。
+          imageGenerationRequested: true,
           ...(imageGenerationReference ? { imageGenerationReference } : {}),
           mediaComment: {
             kind: "sticker",
@@ -98,6 +107,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           chatId: msg.chatId,
           triggerSenderId: msg.senderId,
           replyToMessageId: msg.messageId,
+          messageThreadId: msg.messageThreadId,
           isRandomTrigger: false,
           imageGenerationRequested: false,
           mediaComment: {
@@ -142,8 +152,10 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         chatId: msg.chatId,
         triggerSenderId: msg.senderId,
         replyToMessageId: msg.messageId,
+        messageThreadId: msg.messageThreadId,
         isRandomTrigger: false,
-        imageGenerationRequested: msg.imageGenerationRequested,
+        // 本分支的前置条件就是 directTriggerReason !== undefined，资格恒成立。
+        imageGenerationRequested: true,
         ...(imageGenerationReference ? { imageGenerationReference } : {}),
         mediaComment: {
           kind: msg.kind,
@@ -162,6 +174,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         chatId: msg.chatId,
         triggerSenderId: msg.senderId,
         replyToMessageId: msg.messageId,
+        messageThreadId: msg.messageThreadId,
         isRandomTrigger: false,
         imageGenerationRequested: false,
         mediaComment: {

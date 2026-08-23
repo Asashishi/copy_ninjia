@@ -36,6 +36,7 @@ import {
 } from "./constants";
 import {
   BLACK_DATA,
+  EMPTY_CHAT_QA_CHANGES,
   EMPTY_STORAGE_CHANGES,
   WHITE_DATA,
 } from "./fixtures";
@@ -180,6 +181,7 @@ function runWriteBatches(
       blocklist: EMPTY_STORAGE_CHANGES,
       removals: EMPTY_STORAGE_CHANGES,
       chatStates: EMPTY_STORAGE_CHANGES,
+      chatQa: EMPTY_CHAT_QA_CHANGES,
     });
     checksum += whitelist.size;
   }
@@ -200,6 +202,7 @@ function runColdWriteBatches(
         blocklist: EMPTY_STORAGE_CHANGES,
         removals: EMPTY_STORAGE_CHANGES,
         chatStates: EMPTY_STORAGE_CHANGES,
+        chatQa: EMPTY_CHAT_QA_CHANGES,
       });
       checksum += whitelist.size;
     } finally {

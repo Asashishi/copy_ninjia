@@ -71,6 +71,7 @@ function buildContext(
   return {
     chatId,
     replyToMessageId: 42,
+    messageThreadId: undefined,
     mediaToolsRequested: requested,
     bypassMediaToolCooldown: bypass,
     chatAction: {

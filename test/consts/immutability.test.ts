@@ -16,6 +16,7 @@ import {
   UNBLOCK_TARGET_TEXTS,
   UNMUTE_TARGET_TEXTS,
 } from "../../packages/consts/commands";
+import { CHAT_TEARDOWN_ORDER } from "../../packages/consts/chatTeardown";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
 import {
   GAG_MIN_OPERATION_TIERS,
@@ -42,7 +43,6 @@ import {
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
 import { BOT_STATUS_PERMISSION_LABELS } from "../../packages/consts/botStatus";
 import { getChatState } from "../../packages/infra/storage/stateStore";
-import { HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS } from "../../packages/consts/performance";
 
 /**
  * 共享常量表的不可变性回归测试。
@@ -71,6 +71,10 @@ test("常量表本身不可整体替换或就地增删", () => {
   expect(() => GAG_REPLACEMENT_CHARACTERS.push("篡改")).toBeDefined();
   // @ts-expect-error gag 操作保底档位不允许追加
   expect(() => GAG_MIN_OPERATION_TIERS.push([99, 99])).toBeDefined();
+  // @ts-expect-error teardown 派发顺序是承重的（同步段顺序 + 穷尽 owner），不允许追加
+  expect(() => CHAT_TEARDOWN_ORDER.push("copy")).toBeDefined();
+  // @ts-expect-error 同上，也不允许按下标换掉某个 owner
+  expect(() => { CHAT_TEARDOWN_ORDER[0] = "qa"; }).toBeDefined();
 });
 
 test("对象元素的字段同样不可写", () => {
@@ -110,11 +114,11 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   // @ts-expect-error 非白名单 query 复用这份逐项 false 视图，不允许调用方改写。
   expect(() => { NON_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
   const compileOnly: () => void = (): void => {
-    // @ts-expect-error 逐场景纳秒软上报阈值经独立进程校准，调用方不允许覆写。
-    HOT_PATH_PROFILE_MEDIAN_NS_PER_OP_REPORT_THRESHOLDS["ad-capacity-reject"] = 1;
     // @ts-expect-error 权限键规范化索引是跨命令调用共享的只读查表，不允许增删。
     WHITELIST_PERMISSION_KEY_BY_LOWERCASE.set("x", "isCanMute");
   };
+  // 逐场景纳秒软上报阈值已经不是代码常量：它随运行时重测而变，现在住在仓库根
+  // performance-result.json 里，只读性由 test/perf/hotPathGateResult.test.ts 在解析结果上断言。
   expect(compileOnly).toBeFunction();
 });
 

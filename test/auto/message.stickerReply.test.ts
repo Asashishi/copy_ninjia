@@ -121,7 +121,6 @@ describe("媒体直接叫机器人", () => {
       height: 512,
       messageId: 11,
       commentOnResolve: false,
-      imageGenerationRequested: true,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTriggerReason: "reply",
     }));
@@ -162,6 +161,7 @@ describe("媒体直接叫机器人", () => {
       imageGenerationRequested: true,
       imageGenerationReference: undefined,
       isRandomTrigger: false,
+      messageThreadId: undefined,
     });
   });
 
@@ -217,7 +217,6 @@ describe("媒体直接叫机器人", () => {
       height: 512,
       messageId: 23,
       commentOnResolve: true,
-      imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTriggerReason: undefined,
     }));
@@ -259,7 +258,6 @@ describe("媒体直接叫机器人", () => {
       height: 512,
       messageId: 13,
       commentOnResolve: false,
-      imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTriggerReason: undefined,
     }));
@@ -295,7 +293,6 @@ describe("媒体直接叫机器人", () => {
       height: 480,
       messageId: 14,
       commentOnResolve: false,
-      imageGenerationRequested: true,
       directTriggerReason: "mention",
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -336,6 +333,7 @@ describe("媒体直接叫机器人", () => {
         height: 960,
       },
       isRandomTrigger: false,
+      messageThreadId: undefined,
     });
   });
 
@@ -380,6 +378,7 @@ describe("媒体直接叫机器人", () => {
         height: 512,
       },
       isRandomTrigger: false,
+      messageThreadId: undefined,
     });
   });
 
@@ -419,7 +418,6 @@ describe("媒体直接叫机器人", () => {
       height: 180,
       messageId: 15,
       commentOnResolve: false,
-      imageGenerationRequested: true,
       directTriggerReason: "reply",
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -463,6 +461,7 @@ describe("媒体直接叫机器人", () => {
       imageGenerationRequested: true,
       imageGenerationReference: undefined,
       isRandomTrigger: false,
+      messageThreadId: undefined,
     });
   });
 
@@ -538,6 +537,7 @@ describe("媒体直接叫机器人", () => {
       imageGenerationRequested: false,
       imageGenerationReference: undefined,
       isRandomTrigger: true,
+      messageThreadId: undefined,
     });
   });
 
@@ -643,7 +643,6 @@ describe("媒体直接叫机器人", () => {
       height: 480,
       messageId: 35,
       commentOnResolve: false,
-      imageGenerationRequested: false,
       directTriggerReason: undefined,
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -703,6 +702,7 @@ describe("媒体直接叫机器人", () => {
       imageGenerationRequested: true,
       imageGenerationReference: undefined,
       isRandomTrigger: false,
+      messageThreadId: undefined,
     });
   });
 });

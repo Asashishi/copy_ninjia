@@ -15,7 +15,8 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 
 mock.module("../../packages/infra/telegram", () => ({ copyMessage, sendMessage }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getActiveCopyIn: (): null => null,
+  activeCopyTargetIdIn: (): undefined => undefined,
+  activeCopyModeIn: (): undefined => undefined,
 }));
 mock.module("../../packages/copy/availability", () => ({
   isJaTranslationActiveIn: (): boolean => false,
@@ -41,6 +42,47 @@ beforeEach(() => {
   sendMessage.mockClear();
 });
 
+describe("复读的话题落点", () => {
+  // 复读不挂回复，话题群里缺了 message_thread_id 就会掉进 General：被复读的人
+  // 在自己话题里说话，本天才却在 General 学舌（见 libs/forumTopic.ts）。
+  test("媒体复读把话题带给 copyMessage", async () => {
+    await echoMessage({
+      chatId: CHAT_ID,
+      message: mediaMessage("今天天气不错"),
+      mode: undefined,
+      messageThreadId: 42,
+    });
+
+    expect(copyMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID,
+      fromChatId: CHAT_ID,
+      messageId: 5,
+      messageThreadId: 42,
+    });
+  });
+
+  test("文本变换复读把话题带给 sendMessage", async () => {
+    await echoMessage({
+      chatId: CHAT_ID,
+      message: {
+        message_id: 6,
+        date: 1,
+        chat: { id: CHAT_ID, type: "supergroup", title: "Test Group" },
+        text: "今天天气不错",
+      } as unknown as Message,
+      // nya 模式才走文本变换分支；无模式的纯文本会退化成 copyMessage。
+      mode: "nya",
+      messageThreadId: 42,
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID,
+      text: "今天天气不错 喵~",
+      messageThreadId: 42,
+    });
+  });
+});
+
 describe("复读的命令守卫", () => {
   test("caption 是命令的媒体消息不复读", async () => {
     const echoed: string | undefined = await echoMessage({
@@ -60,7 +102,12 @@ describe("复读的命令守卫", () => {
       mode: undefined,
     });
 
-    expect(copyMessage).toHaveBeenCalledWith(CHAT_ID, CHAT_ID, 5);
+    expect(copyMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID,
+      fromChatId: CHAT_ID,
+      messageId: 5,
+      messageThreadId: undefined,
+    });
   });
 
   test("没有 caption 的媒体消息照常复读", async () => {
@@ -70,7 +117,12 @@ describe("复读的命令守卫", () => {
       mode: undefined,
     });
 
-    expect(copyMessage).toHaveBeenCalledWith(CHAT_ID, CHAT_ID, 5);
+    expect(copyMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID,
+      fromChatId: CHAT_ID,
+      messageId: 5,
+      messageThreadId: undefined,
+    });
   });
 
   test("命令不在行首的 caption 同样不复读", async () => {
@@ -113,7 +165,12 @@ describe("复读的命令守卫", () => {
       mode: undefined,
     });
 
-    expect(copyMessage).toHaveBeenCalledWith(CHAT_ID, CHAT_ID, 5);
+    expect(copyMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID,
+      fromChatId: CHAT_ID,
+      messageId: 5,
+      messageThreadId: undefined,
+    });
   });
 
   test("纯文本命令仍然不复读", async () => {

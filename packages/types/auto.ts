@@ -39,6 +39,14 @@ export interface MessageTriggerContext {
   hasOtherMention: boolean;
   repliesToSelf: boolean;
   /**
+   * 触发消息所在的论坛话题 id；General、非论坛群与讨论组评论为 undefined。
+   *
+   * 由 createMessageTriggerContext 一次解析后传下来，供本条消息派生的记录与触发
+   * 载荷共用——话题群里不挂回复的主动发送缺了它就会掉进 General
+   * （判定见 ../libs/forumTopic.ts）。
+   */
+  messageThreadId?: number;
+  /**
    * 直接唤起的成因；随机/无触发为 undefined。
    *
    * 摊平成字符串而不是包一个 `{ reason }` 对象，理由与
@@ -62,3 +70,17 @@ export interface MentionFacts {
    */
   hasOtherMention: boolean;
 }
+
+/**
+ * 随机媒体评价的掷骰结果。
+ *
+ * **三态而不是 `{ candidate, claimed }` 两个布尔**：`claimed` 蕴含 `candidate`，
+ * 四种组合里只有三种有意义；而返回对象意味着 photo/sticker/animation/voice
+ * 四条每消息路径各白付一次分配（见 AGENTS.md 的「高频路径……不得创建投影
+ * 对象」）。字符串字面量是常量，比较不产生任何分配，也比位标量读得懂。
+ *
+ * - `none`：没掷中，这条媒体不成为评价候选。
+ * - `candidate`：掷中了，但「群 × 发言人」的冷却名额没抢到。
+ * - `claimed`：掷中且占到名额，解析完成后真的会评价。
+ */
+export type RandomMediaTrigger = "none" | "candidate" | "claimed";

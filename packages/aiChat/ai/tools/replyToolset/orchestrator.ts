@@ -6,6 +6,8 @@ import {
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
   GENERATE_SONG_TOOL,
+  GROUP_QA_ANSWER_TOOL,
+  GROUP_QA_QUERY_TOOL,
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
   unknownToolError,
@@ -31,6 +33,11 @@ import {
 import { createRoundMessageState } from "./messageState";
 import { createAddReactionExecutor } from "./reaction";
 import { createSendMessageExecutor } from "./sendMessage";
+import {
+  buildGroupQaToolDefinitions,
+  executeGroupQaAnswer,
+  executeGroupQaQuery,
+} from "./groupQa";
 import { toolError } from "../../utils/toolResult";
 import { imageAiProvider, songAiProvider } from "../../../provider";
 import type { RoundMessageState } from "../../../../types/aiChat/replies";
@@ -56,6 +63,8 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   if (addReactionDefinition !== null) declarations.push(addReactionDefinition);
   if (viewDefinition !== null) declarations.push(viewDefinition);
   if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
+  // 本群没登记问答时这里是空数组，两个工具都不挂——模型看不到的工具不会被调用。
+  declarations.push(...buildGroupQaToolDefinitions(ctx.chatQa));
   // 只登记本轮现组装的行动工具：静态查询工具由 callTool 兜底分发，不进
   // 这份名单（见 workers/aiChat/replyModel.ts 的 toolset.has 分支）。
   const names: Set<string> = new Set<string>();
@@ -86,6 +95,10 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
         return executeGenerateSong === null
           ? toolError(unknownToolError(name))
           : executeGenerateSong(argumentsJson);
+      case GROUP_QA_QUERY_TOOL:
+        return executeGroupQaQuery(ctx.chatQa);
+      case GROUP_QA_ANSWER_TOOL:
+        return executeGroupQaAnswer(ctx.chatQa, argumentsJson);
       case VIEW_STICKER_PACK_TOOL:
         return viewStickerPackTool({
           chatAction: ctx.chatAction,
@@ -99,6 +112,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
           chatAction: ctx.chatAction,
           stickerLock: ctx.stickerLock,
           chatId: ctx.chatId,
+          messageThreadId: ctx.messageThreadId,
           menu,
           argumentsJson,
           state: stickerState,

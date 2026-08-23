@@ -6,7 +6,8 @@ import {
   USER_REPLY_TRIGGER_CACHE_MAX,
   USER_REPLY_TRIGGER_COOLDOWN_MS,
 } from "../../consts/auto";
-import type { MessageTriggerContext } from "../../types/auto";
+import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
+import { verificationKey } from "../../libs/verificationKey";
 
 /** 文本和三类媒体共用的随机搭话/评价掷骰条件。 */
 export function shouldAttemptRandomTrigger(context: MessageTriggerContext): boolean {
@@ -17,13 +18,22 @@ export function shouldAttemptRandomTrigger(context: MessageTriggerContext): bool
     Math.random() < context.aiReplyProbability;
 }
 
-/** 三类媒体 handler（photo/sticker/animation）共用的随机评价判定：先掷骰
- *  看这份媒体是否成为解析后评价的候选，命中再占用「群 × 发言人」冷却名额。
- *  两个布尔都要用：candidate 决定 handler 的返回值（是否已接管这条消息），
- *  claimed 决定 recordChatMedia 的 commentOnResolve。 */
-export function claimRandomMediaTrigger(context: MessageTriggerContext, speakerId: number): { candidate: boolean; claimed: boolean } {
-  const candidate: boolean = shouldAttemptRandomTrigger(context);
-  return { candidate, claimed: candidate && tryClaimUserReplyTrigger(context.chatId, speakerId, context.now) };
+/**
+ * 四类媒体 handler（photo/sticker/animation/voice）共用的随机评价判定：先掷骰
+ * 看这份媒体是否成为解析后评价的候选，命中再占用「群 × 发言人」冷却名额。
+ *
+ * 两级结果都要用：`!== "none"` 决定 handler 的返回值（是否已接管这条消息），
+ * `=== "claimed"` 决定 recordChatMedia 的 commentOnResolve。三态取值的理由见
+ * types/auto.ts 的 RandomMediaTrigger。
+ */
+export function claimRandomMediaTrigger(
+  context: MessageTriggerContext,
+  speakerId: number
+): RandomMediaTrigger {
+  if (!shouldAttemptRandomTrigger(context)) return "none";
+  return tryClaimUserReplyTrigger(context.chatId, speakerId, context.now)
+    ? "claimed"
+    : "candidate";
 }
 
 /**
@@ -72,7 +82,11 @@ function scheduleUserReplyTriggerSweep(now: number): void {
  * 交互不经过这里，由 Worker 的有界直接触发队列承接。
  */
 export function tryClaimUserReplyTrigger(chatId: number, speakerId: number, now: number = Date.now()): boolean {
-  const key: string = `${chatId}_${speakerId}`;
+  // 走 libs/verificationKey 这唯一一处「群 × 身份」键定义，而不是就地拼一个
+  // 下划线版本。此前这里自带一套 `${chatId}_${speakerId}`，是全仓第二套格式——
+  // 那个模块的头注写明它存在的理由正是「格式散落各处，改起来漏一处就是静默
+  // 丢条目」，广告检测队列也复用同一格式。
+  const key: string = verificationKey(chatId, speakerId);
   const lastTime: number | undefined = userReplyTriggerTimes.get(key);
   // 时钟回拨时旧冷却点位于未来；先失效它，再从新时间轴计时。
   if (lastTime !== undefined) {

@@ -121,6 +121,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
         { table: "whitelist", id: 8, revision: 1 },
       ],
       chatStateWrites: [],
+      chatQaWrites: [],
     }]);
   });
 
@@ -145,6 +146,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
       type: "identityStoragePersisted",
       writes: [{ table: "whitelist", id: 9, revision: 4 }],
       chatStateWrites: [],
+      chatQaWrites: [],
     }]);
 
     resetStorageDatabaseCache();
@@ -164,6 +166,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
       type: "identityStoragePersisted",
       writes: [],
       chatStateWrites: [],
+      chatQaWrites: [],
       removalSnapshotRevision: 5,
     }]);
 

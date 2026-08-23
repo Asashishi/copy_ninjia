@@ -23,7 +23,8 @@ const clearChatStateFieldMock = mock((..._args: unknown[]): boolean => true);
 const persistChatStateMock = mock(async (..._args: unknown[]): Promise<void> => {});
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: clearChatStateFieldMock,
-  getActiveCopyIn: () => null,
+  activeCopyTargetIdIn: (): undefined => undefined,
+  activeCopyModeIn: (): undefined => undefined,
   getActiveProxySendTarget: () => targetChatId,
   getChatState: () => chatState,
   getOrCreateChatState: () => ({}),
@@ -74,7 +75,11 @@ describe("/send 私聊中转权限", () => {
 
     await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID));
     expect(copyMessageMock).toHaveBeenCalledTimes(1);
-    expect(copyMessageMock).toHaveBeenCalledWith(targetChatId, SUPER_ADMIN_USER_ID, 7);
+    expect(copyMessageMock).toHaveBeenCalledWith({
+      chatId: targetChatId,
+      fromChatId: SUPER_ADMIN_USER_ID,
+      messageId: 7,
+    });
   });
 
   test("日语翻译缺省关闭，只有显式 true 才保留 ja 模式", () => {

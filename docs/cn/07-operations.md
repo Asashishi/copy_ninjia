@@ -48,9 +48,11 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 与 `database/` 都不要放容器临时层。
+数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`（`0755` 也接受，见下）。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 与 `database/` 都不要放容器临时层。
 
-程序会以 `0750` 补建数据根、`logs/`、`memory/` 与初始 `database/`，四者都拒绝符号链接。数据根、`logs/` 与 `memory/` 必须属于运行 UID 且 mode 不宽于 `0750`。身份迁移会把 `database/` 设为 `02770`，主库及 WAL/SHM 为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
+程序会补建数据根、`logs/`、`memory/` 与初始 `database/`（前三者按 `0755`，`database/` 按 `0770`，实际权限再受 umask 收窄），四者都拒绝符号链接。数据根、`logs/` 与 `memory/` 必须属于运行 UID 且 mode 不宽于 `0755`——这道闸拦的是**写**：group 或 other 拿到 `w` 位一律拒绝启动。读侧放开到 `0755`，因为本项目按单租户处理、绝大多数部署是 root 直接跑，而默认 umask 建出来的目录就是 `0755`。
+
+> **代价**：`memory/` 下的文件本身是 `0644`，所以群聊逐字记录的访问控制只剩这一道目录位。留在 `0755` 意味着同机器上任何本地账号都能读它们。多租户或存在非特权登录用户的机器，请自行把数据根与 `memory/` 收回 `0750`；预检只保证不比 `0755` 更宽，不替你做决定。身份迁移会把 `database/` 设为 `02770`，主库及 WAL/SHM 为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
 
 进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、身份写透、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 
@@ -146,37 +148,39 @@ WantedBy=multi-user.target
 
 运行时不保留旧格式兼容或自动建库。任何迁移都先停 Bot 并确认 inactive；失败时保留外部备份与现场，不得启动新版本，也不得用 `config_example/` 覆盖真实输入。
 
-### 旧 JSON → SQLite
+### 全新部署建空库
 
-仍使用 `config/whitelist.json`、`config/blocklist.json`，以及可选 `memory/blocklist/` 的部署按下列顺序迁移：
+启动不会凭缺失数据库猜测「空名单」，所以全新部署必须显式建一次当前 schema 的空库。步骤见 [01 环境搭建](01-getting-started.md#初始化身份数据库)，`install.sh` 也已包含。目标库已存在时建库入口直接拒绝覆盖。
 
-```bash
-bun run migrate:identity-storage --check
-bun run migrate:identity-storage --apply
-```
+### 旧 JSON → SQLite（9.1.5 及更早）
 
-`--check` 只严格读取并合并旧白名单、静态/动态黑名单与 v2 待踢 outbox，不改文件。`--apply` 取得 `bot.lock`，通过 Telegram 补齐身份 metadata，在工作树外创建带清单、owner/mode 与 SHA-256 的备份，再建立候选 SQLite、核对 integrity/JSONB/行数/主键/codec 后原子发布 `database/storage.sqlite`，最后删除三处旧结构。脚本会保留并打印外部备份目录；启动、权限命令与待踢重放全部验证正常前不得删除。
+仍使用 `config/whitelist.json`、`config/blocklist.json`，以及可选 `memory/blocklist/` 的部署，必须**先升到 9.1.5 并在那个版本上完成迁移**，再继续升级到当前版本。
 
-全新部署也必须显式走同一迁移边界：按 [01 环境搭建](01-getting-started.md#初始化身份数据库) 创建两份临时空旧输入后执行 `--apply`。启动不会凭缺失数据库猜测“空名单”，目标库已存在时迁移脚本也拒绝覆盖。
+`bun run migrate:identity-storage` 最后一次随 9.1.5 发布；按「冷迁移脚本只覆盖最近一个已发布版本 → 当前版本」的约定，它已在 9.2.0 从 `scripts/` 删除，当前版本不再提供这条迁移，也不接受旧 JSON 名单作为输入。不要在当前版本上创建空的 `whitelist.json`／`blocklist.json` 后建空库——那会把真实名单丢在原地，机器人带着一份空黑名单上线。
 
-### SQLite schema v3 → v4（群状态入库）
+### SQLite schema v4 → v5（群问答入库）
 
-群状态从 `state.json` 迁进 SQLite `chat_states` 的那一版之前的部署（数据库仍是 schema v3、
-`state.json` 里还带 `chats`），在 Bot 停止后执行：
+新增 `chat_qa` 表那一版之前的部署（数据库仍是 schema v4），在 Bot 停止后执行：
 
 ```bash
-bun run migrate:chat-state -- --check
-bun run migrate:chat-state -- --apply
+bun run migrate:chat-qa -- --check
+bun run migrate:chat-qa -- --apply
 ```
 
-两种模式都先取 `bot.lock`（因此必须先停服务），严格读取 `state.json` 主备两份、整库做一次
-integrity 检查，并只接受精确的受支持 v3 或 v4 migration lineage；未知谱系、非法行、黑白名单
-交叉一律原样拒绝。`--check` 只报告待迁移的群行数，不改任何部署数据。`--apply` 通过 Telegram
-补齐各群的机器人权限快照（旧格式只存过一个 `botIsAdmin` 布尔值），在工作树外留下 state 主备与
-SQLite 序列化快照的备份并记录 owner/mode/SHA-256，随后执行 schema migration、写入群行、核对
-业务表未被改动，最后把 `state.json.bak`、`state.json` 依次原子发布成只剩全局块的新格式。任一步
-失败都保留外部备份并打印路径。对已经完成迁移的库运行只做严格验证并报告无需迁移。Release 的
-Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置、恢复步骤和权限要求。
+两种模式都先取 `bot.lock`（因此必须先停服务），做一次整库 integrity 检查并严格解码全部业务行，
+只接受精确的受支持 v4 或 v5 migration lineage；未知谱系、非法行、黑白名单交叉一律原样拒绝。
+
+**迁移前的白名单校验按 v4 的权限键集合进行**，不是按当前常量：v5 给每条白名单补了
+`isCanControllQaPermission`，拿当前解码器去校验一个还没迁的库，任何待迁部署都会在迁移开始
+之前被判成损坏，报错还指向一个部署方从没写过的字段。`meta` 则仍用生产解析器校验——`--check`
+必须拦下 `--apply` 会拒绝的一切，否则坏行要等库已经被改过之后才暴露。
+
+`--check` 不改任何部署数据。`--apply` 在工作树外留下带 owner/mode/SHA-256 清单的 SQLite 一致
+快照（并把那份备份当成真库重新检查一遍），随后执行 schema migration：建 `chat_qa` 表与 `q` 上的
+索引，并给每条白名单补上 `isCanControllQaPermission`——**存量条目其余权限全为真时才给真**，
+与当初引入 `isCanWhiteOther` 同一口径。完成后核对业务表行数守恒、新 schema 下整库仍可严格解码。
+任一步失败都保留外部备份并打印路径。对已经完成迁移的库运行只做严格验证并报告无需迁移。
+Release 的 Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置、恢复步骤和权限要求。
 
 ## 启动失败排查
 
@@ -184,10 +188,10 @@ Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置
 
 - **数据根预检失败（带路径）**
   - **原因**：数据根/`memory`/`logs`/`database` 是符号链接，前三者 mode 宽于
-    `0750`，`database/` 宽于 `0770` 或协作组不可写，目录不可写，或文件系统不支持
+    `0755`（即 group/other 拿到了写位），`database/` 宽于 `0770` 或协作组不可写，目录不可写，或文件系统不支持
     fsync、hard link、原子 rename。
   - **处理**：停掉所有实例后逐目录修正 owner/group 与 mode；数据根、`memory/`、
-    `logs/` 使用 `0750`，`database/` 按部署模型使用 `0750` 或 `02770`。若仍失败，
+    `logs/` 使用 `0750` 或 `0755`，`database/` 按部署模型使用 `0750` 或 `02770`。若仍失败，
     改用满足能力要求的本地文件系统。
 - **`bot.lock` 拒绝启动**
   - **原因与处理**：见下节。
@@ -196,9 +200,9 @@ Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置
   - **处理**：按报错字段修正；mood 权重和必须恰好 100、天气/时段倍率不得超过 100，
     贴纸最多 5 包。
 - **身份数据库缺失或校验失败**
-  - **原因**：尚未执行身份迁移，`storage.sqlite` 不可写，integrity/JSONB/schema/
+  - **原因**：尚未建立身份数据库，`storage.sqlite` 不可写，integrity/JSONB/schema/
     migration lineage 不合法，行 codec 失败，或同一身份同时存在于黑白名单。
-  - **处理**：保持 Bot 停止，按[身份存储迁移](#身份存储迁移)完成或回滚；从同一一致性
+  - **处理**：保持 Bot 停止，按[身份存储迁移](#身份存储迁移)建库或回滚；从同一一致性
     备份恢复主库与 sidecar，修正目录协作组权限后再启动。不要创建空库或删除失败行。
 - **两份 state 副本均无效**
   - **原因**：部署了 schema 变更但没迁移数据。

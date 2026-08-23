@@ -53,7 +53,7 @@ export function buildAiRecordMessage({
 /**
  * 媒体记录里逐载荷不同的那部分；身份与回复关系仍由本文件统一填。
  *
- * 从协议类型 `Pick` 出来而不是另抄一份字段表：这十一项此前在这里与
+ * 从协议类型 `Pick` 出来而不是另抄一份字段表：这十项此前在这里与
  * types/aiChat/protocol.ts 的 `AiRecordMediaMessage` 各声明一次，两份逐字相同却
  * 没有任何东西保证它们同步——给协议加一个媒体字段而忘了这边，四个 handler 照常
  * 编译通过，只是那个字段永远传不上去。改成派生之后，协议一变，四个调用点当场
@@ -68,7 +68,6 @@ export type AiRecordMediaPayload = Pick<
   | "width"
   | "height"
   | "commentOnResolve"
-  | "imageGenerationRequested"
   | "stickerFallbackText"
   | "voiceMime"
   | "voiceDurationSeconds"
@@ -104,10 +103,12 @@ export function buildAiRecordMediaMessage({
     width: media.width,
     height: media.height,
     commentOnResolve: media.commentOnResolve,
-    imageGenerationRequested: media.imageGenerationRequested,
     stickerFallbackText: media.stickerFallbackText,
     voiceMime: media.voiceMime,
     voiceDurationSeconds: media.voiceDurationSeconds,
     directTriggerReason: context.directTriggerReason,
+    // 媒体轮的回复在 Worker 侧异步发起（describeMedia 解析完才触发），那时手上
+    // 只剩这条载荷；话题落点必须随载荷一起过去。
+    messageThreadId: context.messageThreadId,
   };
 }

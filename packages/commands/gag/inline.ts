@@ -23,6 +23,7 @@ import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,
 } from "../../infra/updateContext";
+import { forumTopicThreadId } from "../../libs/forumTopic";
 import { sanitizeInline, truncateInline } from "../../libs/text";
 import type {
   GagSession,
@@ -82,8 +83,17 @@ async function retryRetiredGagSpeakNotice(
  * 发出本会话的新入口，再原子切换 current/pending/retired 三个固定槽位，最后
  * 删除旧入口。onSent 必须先写 pending：停机 abort 即使带走返回值，ending 仍
  * 能按精确目标身份回收远端已经建立的入口。
+ *
+ * `targetThreadId` 就是这条新入口要落进的话题：按消息数滚动换新时传当前话题
+ * （原地换一条更靠下的），被管教的人换话题说话时传新话题（搬家）。两者是同一
+ * 套「发新的 → 切槽位 → 删旧的」，因此不另写一条发送/删除路径。
+ * `speakNoticeThreadId` 只在切槽位那一步更新，发送失败时仍指向旧话题，下一条
+ * 消息还会再判一次要不要搬家。
  */
-async function replaceGagSpeakNotice(session: GagSession): Promise<void> {
+async function replaceGagSpeakNotice(
+  session: GagSession,
+  targetThreadId: number | undefined
+): Promise<void> {
   if (
     findGagSession(session.chatId, session.targetId) !== session ||
     session.phase !== "active"
@@ -93,6 +103,7 @@ async function replaceGagSpeakNotice(session: GagSession): Promise<void> {
   };
   const noticeMessageId: number | undefined = await sendGagSpeakNotice({
     session,
+    messageThreadId: targetThreadId,
     onSent: recordPending,
   });
   if (noticeMessageId === undefined) {
@@ -108,6 +119,7 @@ async function replaceGagSpeakNotice(session: GagSession): Promise<void> {
   ) return;
   const previousNoticeMessageId: number = session.speakNoticeMessageId;
   session.speakNoticeMessageId = noticeMessageId;
+  session.speakNoticeThreadId = targetThreadId;
   session.pendingSpeakNoticeMessageId = 0;
   session.retiredSpeakNoticeMessageId =
     previousNoticeMessageId === noticeMessageId
@@ -118,11 +130,21 @@ async function replaceGagSpeakNotice(session: GagSession): Promise<void> {
   await retryRetiredGagSpeakNotice(session);
 }
 
-/** 同一会话只允许一条换新任务；timer/teardown 可通过字段等待并接管所有 id。 */
-async function refreshGagSpeakNotice(session: GagSession): Promise<void> {
+/**
+ * 同一会话只允许一条换新任务；timer/teardown 可通过字段等待并接管所有 id。
+ *
+ * 已有任务在途时直接复用它，不排队第二条：那条在途任务可能发往旧话题，于是
+ * `speakNoticeThreadId` 仍与来消息的话题对不上，被管教的人下一条消息会再触发
+ * 一次搬家。这条自愈路径成立的前提就是「他还在那个话题里说话」——不说话也就
+ * 不需要按钮跟过去。
+ */
+async function refreshGagSpeakNotice(
+  session: GagSession,
+  targetThreadId: number | undefined
+): Promise<void> {
   const existing: Promise<void> | null = session.speakNoticeRefreshTask;
   if (existing !== null) return existing;
-  const task: Promise<void> = replaceGagSpeakNotice(session);
+  const task: Promise<void> = replaceGagSpeakNotice(session, targetThreadId);
   session.speakNoticeRefreshTask = task;
   try {
     await task;
@@ -131,6 +153,30 @@ async function refreshGagSpeakNotice(session: GagSession): Promise<void> {
       session.speakNoticeRefreshTask = null;
     }
   }
+}
+
+/**
+ * 被管教的人在别的话题说话：把发言入口搬到那个话题，并删掉原话题里的旧入口。
+ *
+ * 与滚动换新共用 replaceGagSpeakNotice，因此 retired 槽位、单条在途任务与
+ * ending 的接管语义全部沿用，不新增状态。搬家前先把上一次换新遗留的 retired
+ * 清掉，理由同 refreshDueGagSpeakNotices：单槽位放不下第二条。
+ */
+async function moveGagSpeakNotice(
+  session: GagSession,
+  targetThreadId: number | undefined
+): Promise<void> {
+  if (
+    findGagSession(session.chatId, session.targetId) !== session ||
+    session.phase !== "active" ||
+    session.expiresAt <= Date.now() ||
+    session.speakNoticeThreadId === targetThreadId
+  ) return;
+  if (
+    session.retiredSpeakNoticeMessageId !== 0 &&
+    !await retryRetiredGagSpeakNotice(session)
+  ) return;
+  await refreshGagSpeakNotice(session, targetThreadId);
 }
 
 /** 只处理已经命中阈值的会话；常态计数路径不进入 async，避免额外 Promise。 */
@@ -151,7 +197,8 @@ async function refreshDueGagSpeakNotices(
         continue;
       }
     }
-    await refreshGagSpeakNotice(session);
+    // 滚动换新只是把入口挪到更靠下的位置，话题不变。
+    await refreshGagSpeakNotice(session, session.speakNoticeThreadId);
   }
 }
 
@@ -247,6 +294,19 @@ export async function handleGagMessageIngress(
     sessions,
     senderId
   );
+  // 只有「说话的人正被管教」才付话题解析这两次属性读取；本 handler 排在所有
+  // 命令之前，普通群消息不该为一个只对被管教者生效的判定买单。
+  if (session !== undefined) {
+    const threadId: number | undefined = forumTopicThreadId(message);
+    if (threadId !== session.speakNoticeThreadId) {
+      // 他换话题说话了：把发言入口搬过去。与滚动换新同一条理由绝不 await——
+      // 这条 handler 卡住的是整个进程的所有群（见下面那段长注释）。
+      trackGagBackgroundTask(
+        moveGagSpeakNotice(session, threadId),
+        "Unexpected error while moving a gag speak notice to another topic:"
+      );
+    }
+  }
   const isGagInlineMessage: boolean = session !== undefined &&
     isCurrentGagInlineMessage(message, botId, session);
   const now: number = Date.now();

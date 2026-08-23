@@ -24,12 +24,11 @@
 | `bun run check` | conventions + lint + typecheck + coverage + hot path gate。**コミット前に必須** |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
-| `bun run perf:hot-path-gate` | 全 hot path シナリオの memory/GC/JIT gate。`check` に組み込み済み |
+| `bun run perf:hot-path-gate` | 全 hot path シナリオの memory/GC/JIT gate。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で独立 process の比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
-| `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 09 パフォーマンスページを更新 |
-| `bun run migrate:identity-storage` | 旧 JSON リスト → `database/storage.sqlite` への停止時 cold migration |
-| `bun run migrate:chat-state` | `state.json` の chat state → SQLite `chat_states`（schema v3 → v4）への停止時 cold migration |
+| `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
+| `bun run migrate:chat-qa` | `chat_qa` table と Q&A permission key の追加（schema v4 → v5）の停止時 cold migration |
 | `bun run release:check` | frozen lockfile install + check + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
 
@@ -38,11 +37,11 @@
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限を lint より先に検査します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限を lint より先に検査します。さらに 2 つのファイル横断の整合性検査があります：グループに長期保持される command 内容（`preserveInGroup: true`）は `messageThreadId` も渡さなければならないこと、そして 3 つの `09-performance.md` の benchmark ブロックの timestamp が互いに一致し、`performance-result.json` の `fullSuite.lastRun` が記録済みならそれと同一の実行に由来すること（未記録の場合は「まだ実行していない」として通し、リリース手順の 2 番目で補います）。
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2498 tests / 261 files / 95379 `expect()` calls**。全ソースコードの**関数カバレッジは 95.41%、行カバレッジは 96.67%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2581 tests / 271 files / 95642 `expect()` calls**。全ソースコードの**関数カバレッジは 95.23%、行カバレッジは 96.62%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -68,6 +67,12 @@
 ## Hot path gate
 
 `bun run perf:hot-path-gate` は `bun run check` の最終段で、コミットのたびに実行されます。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` の各シナリオ・各繰り返しごとに独立した子プロセスを 2 つ起動します。`steadyProfile` は正式ループの GC と JIT だけを判定し、`retained` は profiler 自身のメモリ干渉がない状態で RSS、heapUsed のピーク、full GC 後の残存を判定します。
+
+判定基準そのものは **TypeScript に書きません**。Bun の version と revision の anchor、GC／RSS／常駐増加のハード上限、シナリオごとの ns/op ソフト報告閾値、そして各数値の根拠となる実測値（最遅 median、sampling process 数、前 Bun version との比較）は、すべて repository root の版管理された `performance-result.json` に置き、`scripts/perf/hotPaths/gateResult.ts` が厳格に parse します。未知の key、欠落 field、型不一致、そして「閾値が自身の根拠実測値を下回る」ケースは、子プロセスを 1 つも起動する前に拒否されます。`packages/consts/performance.ts` に残るのは測定に依存しない sampling ノブとシナリオ表だけで、runtime の再校正はコードではなくその JSON を編集します。
+
+`hotPathProfileGate` の節は双方向ですが、2 つの半分は owner が異なります。`calibration` は再校正後に人が手で編集し、gate からは read-only です。`lastRun` は直近の gate 読数を記録し、`bun run perf:hot-path-gate -- --write-result` を明示的に渡したときだけ上書きされるため、通常の `bun run check` は working tree を汚しません。write-back は `calibration` を 1 byte も触りません。gate が 1 回の実行結果から自身の判定基準を書き換えられるようにすることは、現在の性能で gate を溶接してしまうのと同じだからです。
+
+同じ file のもう一つの節 `fullSuite.lastRun` は[全量 benchmark](#全量パフォーマンス-benchmark) のもので、`bun run perf:full -- --write-doc` が書き込みます。2 つの benchmark は別プロセス・別タイミングで走るため、書き込みはどちらも `scripts/perf/performanceResult.ts` の「全体を読む → 自分の枠だけ差し替える → 全体を書き戻す」を通ります。parse 結果から document を再構築する方式は取りません。そうすると後に走った方が、もう一方の節を `calibration` 配下の人間向け説明ごと消してしまうからです。
 
 gate を設けている項目：GC sample 比率、sampling RSS ピークとプロセス生涯 RSS 高水位（同一上限を共有。後者は 2 つの tick の間に完全に収まる一時的な確保を捕捉できます）、sampling heapUsed 増加、full GC 後の JSC heap／heap 外メモリ／object 数の残存、最小 sample 数、そして production probe ごとの「warmup 後に DFG 到達済み」と「sampling 中に再コンパイルや脱最適化なし」。
 

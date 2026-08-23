@@ -155,6 +155,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       whitelistEntryCount: 0,
       pendingBlockedRemovals: new Map(),
       chatStates: new Map(),
+      chatQa: new Map(),
     });
   });
 
@@ -173,6 +174,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       type: "identityStoragePersisted",
       writes: [{ table: "whitelist", id: 7, revision: 1 }],
       chatStateWrites: [],
+      chatQaWrites: [],
     }]);
     resetStorageDatabaseCache();
     expect(hydrateStorageDatabase().whitelistEntryCount).toBe(1);
@@ -216,6 +218,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       type: "identityStoragePersisted",
       writes: [{ table: "blocklist", id: 7, revision: 1 }],
       chatStateWrites: [],
+      chatQaWrites: [],
       removalSnapshotRevision: 4,
     });
 

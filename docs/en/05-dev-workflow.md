@@ -24,12 +24,11 @@
 | `bun run check` | Run conventions + lint + typecheck + coverage + the hot-path gate; **required before every commit** |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
-| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over every hot-path scenario; already part of `check` |
+| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over every hot-path scenario; already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
 | `bun run perf:join-log` | Run the independent-process comparison at the 250,000-record join-log limit |
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
-| `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only, `--write-doc` rewrites the 09 Performance page |
-| `bun run migrate:identity-storage` | Offline cold migration from the legacy JSON lists into `database/storage.sqlite` |
-| `bun run migrate:chat-state` | Offline cold migration of `state.json` chat state into SQLite `chat_states` (schema v3 → v4) |
+| `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
+| `bun run migrate:chat-qa` | Offline cold migration adding the `chat_qa` table and the Q&A permission key (schema v4 → v5) |
 | `bun run release:check` | Run frozen-lockfile install + check + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
 
@@ -38,11 +37,11 @@
 - **The coverage denominator includes all source code**: `bun run check` adds every production runtime module to the denominator. Modules untouched by any test count as 0% covered. Both function and line coverage must remain at least 90%, so adding an untested module directly lowers global coverage.
 - **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled. `any` is forbidden in production code but exempted in tests.
 - **Explicit type annotations are lint-enforced**: in production code (`index.ts`, `packages/`, `scripts/`), variables, parameters, and destructuring must be annotated via `@typescript-eslint/typedef`, and function and callback return types via `@typescript-eslint/explicit-function-return-type` — neither accepts contextual inference. TypeScript forbids annotating `for...of` / `for...in` loop variables, so the rule skips them automatically; consts whose initializer is already an arrow function are also exempt. Test files are not subject to this.
-- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, and executable permissions on tracked non-script files before lint runs.
+- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, and executable permissions on tracked non-script files before lint runs. Two cross-file consistency checks also run: group content kept long-term (`preserveInGroup: true`) must also pass `messageThreadId`; and the benchmark-block timestamps in all three `09-performance.md` pages must agree with each other and, once `fullSuite.lastRun` in `performance-result.json` has been recorded, come from that same run (a never-recorded `lastRun` passes, and the release flow's step 2 fills it in).
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2498 tests / 261 files / 95379 `expect()` calls**; full-source **function coverage 95.41% / line coverage 96.67%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2581 tests / 271 files / 95642 `expect()` calls**; full-source **function coverage 95.23% / line coverage 96.62%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -68,6 +67,12 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 ## Hot-Path Gate
 
 `bun run perf:hot-path-gate` is the final stage of `bun run check`, so it runs before every commit. For each scenario in `HOT_PATH_PROFILE_SCENARIOS` (`packages/consts/performance.ts`) and each repeat it spawns two independent children: `steadyProfile` judges only GC and JIT during the formal loop, while `retained` judges RSS, the heapUsed peak, and post-full-GC retention without the profiler's own memory interfering.
+
+The criteria themselves are **not written in TypeScript**. The Bun version and revision anchor, the hard GC/RSS/retention limits, the per-scenario ns/op soft-report thresholds, and the measurements behind each number (slowest median, sampling process count, comparison against the previous Bun release) all live in the repository-root, version-tracked `performance-result.json`, parsed strictly by `scripts/perf/hotPaths/gateResult.ts`: unknown keys, missing fields, type mismatches, and a threshold that sits below its own source measurement are all rejected before a single child process starts. `packages/consts/performance.ts` keeps only the measurement-independent sampling knobs and the scenario list — recalibrating a runtime means editing that JSON, not the code.
+
+The `hotPathProfileGate` section is bidirectional, but the two halves have different owners. `calibration` is edited by hand after a recalibration and is read-only to the gate. `lastRun` records the most recent gate readings and is only overwritten when you explicitly pass `bun run perf:hot-path-gate -- --write-result`, so a plain `bun run check` leaves the working tree clean. The write-back never touches a byte of `calibration` — letting the gate rewrite its own criteria from one run would weld the gate shut at today's performance.
+
+The other section of the same file, `fullSuite.lastRun`, belongs to the [full benchmark](#full-performance-benchmark) and is written by `bun run perf:full -- --write-doc`. The two benchmarks run in different processes at different times, so both write through `scripts/perf/performanceResult.ts`, which reads the whole document, replaces only its own slot, and writes the whole document back. Neither rebuilds the file from parsed output — doing so would let whichever ran last erase the other section along with the human-written notes under `calibration`.
 
 Gated metrics: GC sample share; the sampled RSS peak and the process lifetime RSS high-water mark (they share one limit — the latter catches a transient allocation that falls entirely between two sampling ticks); sampled heapUsed growth; post-full-GC retained JSC heap, extra memory, and object count; the minimum sample count; and, per production probe, "entered DFG during warmup" plus "no recompilation or deoptimization during steady sampling".
 

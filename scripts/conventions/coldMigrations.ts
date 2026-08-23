@@ -20,11 +20,11 @@ interface ProjectPackageJson {
  * 必须整体替换本声明及脚本，不能在旁边累积第二条历史边。
  */
 const ACTIVE_COLD_MIGRATION_EDGE: Readonly<ActiveColdMigrationEdge> = {
-  command: "migrate:chat-state",
-  invocation: "bun scripts/migrateChatStateToSqlite.ts",
-  entryPath: "scripts/migrateChatStateToSqlite.ts",
-  sourceSchemaVersion: 3,
-  targetSchemaVersion: 4,
+  command: "migrate:chat-qa",
+  invocation: "bun scripts/migrateChatQa.ts",
+  entryPath: "scripts/migrateChatQa.ts",
+  sourceSchemaVersion: 4,
+  targetSchemaVersion: 5,
 };
 
 /** 核对 package 只暴露当前 schema 的上一格式到当前格式这一条冷迁移边。 */

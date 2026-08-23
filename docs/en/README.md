@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2498_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.67%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2581_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.62%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 2498 tests passed, 261 test files, 95,379 expect() calls, 95.41% function coverage, 96.67% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 2581 tests passed, 271 test files, 95,642 expect() calls, 95.23% function coverage, 96.62% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -138,6 +138,14 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
   <p>One <code>/block</code> bans the target across every administered group and records the id in a persistent blocklist, so any later join in a watched group is kicked on sight — newly administered groups get swept too.</p>
 </td>
 </tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>💬 Chat Q&amp;A</b></p>
+  <p><code>/set_qa</code> registers a question and its answer through a two-button form, up to five per chat. Ask one verbatim and the bot answers immediately without involving the AI; only wordings that differ from the registered text go to the model's two query tools.</p>
+</td>
+<td align="left" valign="top"></td>
+<td align="left" valign="top"></td>
+</tr>
 </table>
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
@@ -156,6 +164,20 @@ The full command table, permission semantics and per-command behaviour live in *
 
 You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.4+, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/ja_copy` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
 
+One-shot install (installs whatever is missing, asks for config, then starts):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
+```
+
+It does exactly three things: set up the environment (add `git`/`curl`/`unzip`, clone the repository
+into `./copy_ninjia`, install Bun, run `bun install`), ask interactively for the Telegram and AI
+configuration, then create the empty identity database and start. It registers no systemd unit, never
+overwrites existing configuration, and is safe to re-run. If you already have a clone, run
+`bash install.sh` from the repository root and it skips the clone step.
+
+Manual install:
+
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
@@ -166,8 +188,8 @@ bun run check                          # conventions + ESLint + strict TypeScrip
 bun run start                          # start long polling
 ```
 
-Before the first start you also initialise the identity database and, on the BotFather side, turn
-Privacy Mode off and Inline Mode on. Field-by-field meanings, required combinations and the strict
+With a manual install, before the first start you also initialise the identity database and, on the
+BotFather side, turn Privacy Mode off and Inline Mode on. Field-by-field meanings, required combinations and the strict
 validation rules are in [`config_example/README/en.md`](../../config_example/README/en.md); the full
 walkthrough (runtime data root, asset URLs, migration commands) is in
 [01 Getting Started](01-getting-started.md).

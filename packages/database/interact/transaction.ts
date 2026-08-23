@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { chatQa } from "../schema/chatQa";
 import { chatStates } from "../schema/chatState";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
 import { pendingBlockedRemovals } from "../schema/pendingRemoval";
@@ -16,6 +17,12 @@ export interface CommitStorageDatabaseChangesOptions {
   readonly blocklist: ReadonlyMap<number, StorageDatabaseChange>;
   readonly removals: ReadonlyMap<number, StorageDatabaseChange>;
   readonly chatStates: ReadonlyMap<number, StorageDatabaseChange>;
+  /**
+   * 群问答按 (chatId, q) 复合主键变更，因此外层是群、内层是问题文本。
+   * 嵌套而不是拼一个 `${chatId}\u0000${q}` 复合键：拼键要为每条变更造一个字符串，
+   * 而按群删除（群 teardown）也得把那个前缀再解析回来。
+   */
+  readonly chatQa: ReadonlyMap<number, ReadonlyMap<string, StorageDatabaseChange>>;
 }
 
 /** 共享 SQLite 各业务表的最终值在一个 Drizzle 显式事务中提交。 */
@@ -26,6 +33,7 @@ export function commitStorageDatabaseChanges(
     blocklist,
     removals,
     chatStates: chatStateChanges,
+    chatQa: chatQaChanges,
   }: CommitStorageDatabaseChangesOptions
 ): void {
   database.transaction((transaction: StorageDatabaseTransaction): void => {
@@ -67,6 +75,20 @@ export function commitStorageDatabaseChanges(
         transaction.insert(chatStates).values({ chatId, data: change.data })
           .onConflictDoUpdate({ target: chatStates.chatId, set: { data: change.data } })
           .run();
+      }
+    }
+    for (const [chatId, questions] of chatQaChanges) {
+      for (const [q, change] of questions) {
+        if (change.data === null) {
+          transaction.delete(chatQa)
+            .where(and(eq(chatQa.chatId, chatId), eq(chatQa.q, q))).run();
+        } else {
+          transaction.insert(chatQa).values({ chatId, q, data: change.data })
+            .onConflictDoUpdate({
+              target: [chatQa.chatId, chatQa.q],
+              set: { data: change.data },
+            }).run();
+        }
       }
     }
   });

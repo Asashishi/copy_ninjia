@@ -296,11 +296,24 @@ function abortJob(job: TelegramOutboundJob): void {
   settleDrainWaitersIfIdle();
 }
 
+/**
+ * 释放不再交给调用方的响应体。
+ *
+ * `telegramRetryAfterMilliseconds` 只读 header，不消费 body；被它判成 429 之后
+ * 又不往外交的那些响应，如果就这么丢掉，body 会一直占着连接与缓冲——正是
+ * telegram/workerRequests.ts 里「不读取错误页，但要显式释放响应体」防的那件事。
+ * 只有 fetch 那条路（媒体下载、头像抓取）拿得到真正的 Response；grammY
+ * transformer 那条路返回的是已解析的 Bot API 对象，这里恒为 no-op。
+ */
+function releaseResponseBody(response: unknown): void {
+  if (response instanceof Response) {
+    void response.body?.cancel().catch((): void => undefined);
+  }
+}
+
 function handleActiveResponse(job: TelegramOutboundJob, response: unknown): void {
   if (job.state !== "active") {
-    if (response instanceof Response) {
-      void response.body?.cancel().catch((): void => undefined);
-    }
+    releaseResponseBody(response);
     return;
   }
   const retryAfterMs: number | undefined = telegramRetryAfterMilliseconds(response);
@@ -309,15 +322,18 @@ function handleActiveResponse(job: TelegramOutboundJob, response: unknown): void
     return;
   }
   const lane: TelegramRetryLane = releaseActiveJob(job);
-  if (job.signal?.aborted === true) {
+  if (job.signal.aborted) {
+    // 调用方在 429 回来的同时取消了（下载超时与退避撞在一起就是这个形态）：
+    // 这条响应既不重排也不外交，body 必须在这里释放。
+    releaseResponseBody(response);
     job.state = "settled";
     detachAbortListener(job);
     job.reject(abortReason());
   } else if (appendRetryJob(job)) {
-    if (response instanceof Response) {
-      void response.body?.cancel().catch((): void => undefined);
-    }
+    // 重排进队后由下一次尝试自己拿新响应，这一份丢弃。
+    releaseResponseBody(response);
   } else {
+    // 队列已满：原样把 429 交给调用方，body 的所有权随之转移，这里不能释放。
     job.state = "settled";
     detachAbortListener(job);
     job.resolve(response);
@@ -354,7 +370,7 @@ function startJob(job: TelegramOutboundJob, fromRetryQueue: boolean): void {
   lane.activeCount++;
   telegramOutboundGateState.activeJobs.add(job);
   if (fromRetryQueue) lane.recoveryActive++;
-  if (job.signal?.aborted === true) {
+  if (job.signal.aborted) {
     releaseActiveJob(job);
     job.state = "settled";
     detachAbortListener(job);
@@ -387,7 +403,7 @@ function pumpRetryLane(lane: TelegramRetryLane): void {
   while (lane.recoveryActive < lane.recoveryLimit) {
     const job: TelegramOutboundJob | null = takeRetryHead(lane);
     if (job === null) break;
-    if (job.signal?.aborted === true) {
+    if (job.signal.aborted) {
       job.state = "settled";
       detachAbortListener(job);
       job.reject(abortReason());

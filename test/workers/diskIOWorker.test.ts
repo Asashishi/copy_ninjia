@@ -49,6 +49,7 @@ const flushJoinLogDomain = mock((): boolean => true);
 const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
 const handleChatStateWrite = mock((_message: unknown): void => {});
+const handleChatQaWrite = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 const hydrateStickerCatalogs = mock((_packs: readonly string[]): Map<string, string> => new Map());
 // Worker 重建时仍会自行复核贴纸白名单；运行期被改坏时恢复必须拒绝。
@@ -107,17 +108,20 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   flushStorageDatabase: flushBlocklistRemovalOutbox,
   handleIdentityPolicyWrite,
   handleChatStateWrite,
+  handleChatQaWrite,
   handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
   hydrateStorageDatabase: (): {
     blocklistEntryCount: number;
     whitelistEntryCount: number;
     pendingBlockedRemovals: Map<number, never>;
     chatStates: Map<number, never>;
+    chatQa: Map<number, never>;
   } => ({
     blocklistEntryCount: 0,
     whitelistEntryCount: 0,
     pendingBlockedRemovals: new Map<number, never>(),
     chatStates: new Map<number, never>(),
+    chatQa: new Map<number, never>(),
   }),
   pendingStorageDatabaseDomains,
   readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({

@@ -32,7 +32,12 @@ mock.module("../../../packages/libs/sleep", () => ({
   sleep: sleepMock,
 }));
 
-const { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
+const {
+  ADD_REACTION_TOOL,
+  GROUP_QA_ANSWER_TOOL,
+  GROUP_QA_QUERY_TOOL,
+  SEND_MESSAGE_TOOL,
+} = await import("../../../packages/consts/tools");
 const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
 const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
@@ -51,6 +56,7 @@ test("工具集真实挂载服务端联网检索，并同时提供函数行动�
   const toolset = await createReplyToolset({
     chatId: -100800,
     replyToMessageId: 10,
+    messageThreadId: undefined,
     mediaToolsRequested: true,
     bypassMediaToolCooldown: false,
     chatAction: {
@@ -77,6 +83,7 @@ describe("add_reaction 成功动作计数", () => {
     return {
       chatId: -100800,
       replyToMessageId: 10,
+      messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
       chatAction: {
@@ -141,6 +148,7 @@ test("模型提示限制为 8 个动作，执行侧留余量到 11 个动作才�
   const toolset = await createReplyToolset({
     chatId: -100800,
     replyToMessageId: 10,
+    messageThreadId: undefined,
     mediaToolsRequested: false,
     bypassMediaToolCooldown: false,
     chatAction: {
@@ -180,6 +188,7 @@ test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回
   const toolset = await createReplyToolset({
     chatId: -100800,
     replyToMessageId: 10,
+    messageThreadId: undefined,
     mediaToolsRequested: false,
     bypassMediaToolCooldown: false,
     chatAction: {
@@ -204,6 +213,44 @@ test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回
   expect(result.success).toBe(true);
   expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -100800, text: "目标已删除也照常发", replyToMessageId: 10 });
   expect(onMessageSent).toHaveBeenCalledWith("目标已删除也照常发", 100, undefined);
+});
+
+test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不掉进 General", async () => {
+  // 话题群里唯一带路的东西是 reply_parameters；模型选择不挂回复（随机插话恒是
+  // 这一路）时，缺了 message_thread_id 这条就落进 General。
+  sendMessageMock.mockImplementationOnce(async (): Promise<TelegramSendResult> => ({ messageId: 101 }));
+  const toolset = await createReplyToolset({
+    chatId: -100800,
+    replyToMessageId: 10,
+    messageThreadId: 77,
+    mediaToolsRequested: false,
+    bypassMediaToolCooldown: false,
+    chatAction: {
+      current: () => "idle",
+      set: mock((..._args: unknown[]): void => {}),
+      settle: mock(async (): Promise<void> => {}),
+    },
+    stickerLock: { tryAcquire: () => true, release: () => {} },
+    roundHasTypo: false,
+    isActive: () => true,
+    onMessageSent: mock((..._args: unknown[]): void => {}),
+    onStickerSent: mock((..._args: unknown[]): void => {}),
+    onImageSent: mock((..._args: unknown[]): void => {}),
+    onSongSent: mock((..._args: unknown[]): void => {}),
+  });
+
+  const result = JSON.parse(await toolset.execute(
+    SEND_MESSAGE_TOOL,
+    JSON.stringify({ text: "本天才自己插一句", reply_to_trigger: false })
+  ));
+
+  expect(result.success).toBe(true);
+  expect(sendMessageMock).toHaveBeenCalledWith({
+    chatId: -100800,
+    text: "本天才自己插一句",
+    replyToMessageId: undefined,
+    messageThreadId: 77,
+  });
 });
 
 describe("isEmojiOnly", () => {
@@ -306,6 +353,7 @@ describe("send_message typo correction", () => {
     const toolset = await createReplyToolset({
       chatId: -100800,
       replyToMessageId: 10,
+      messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
       chatAction: {
@@ -335,6 +383,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
         chatAction: {
@@ -382,6 +431,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
         chatAction: {
@@ -425,6 +475,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
         chatAction: {
@@ -476,6 +527,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
         chatAction: {
@@ -512,6 +564,7 @@ describe("send_message 重复消息去重", () => {
     return {
       chatId: -100800,
       replyToMessageId: 10,
+      messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
       chatAction: {
@@ -658,6 +711,7 @@ describe("send_message 可点击命令守卫", () => {
     return {
       chatId: -100800,
       replyToMessageId: 10,
+      messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
       chatAction: {
@@ -731,5 +785,77 @@ describe("send_message 可点击命令守卫", () => {
     } finally {
       Math.random = originalRandom;
     }
+  });
+});
+
+/** 只填必填项的最小上下文；各用例按需覆盖。 */
+function baseToolContext(): Record<string, unknown> {
+  return {
+    chatId: -100800,
+    replyToMessageId: 10,
+    messageThreadId: undefined,
+    mediaToolsRequested: false,
+    bypassMediaToolCooldown: false,
+    chatAction: {
+      current: () => "idle",
+      set: mock((..._args: unknown[]): void => {}),
+      settle: mock(async (): Promise<void> => {}),
+    },
+    stickerLock: { tryAcquire: () => true, release: () => {} },
+    roundHasTypo: false,
+    isActive: () => true,
+    onMessageSent: mock((..._args: unknown[]): void => {}),
+    onStickerSent: mock((..._args: unknown[]): void => {}),
+    onImageSent: mock((..._args: unknown[]): void => {}),
+    onSongSent: mock((..._args: unknown[]): void => {}),
+  };
+}
+
+describe("群问答工具在按次工具集里的接线", () => {
+  test("本群没有问答时两个工具都不挂，模型看不见就不会调", async () => {
+    const toolset = await createReplyToolset(baseToolContext() as never);
+
+    expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(false);
+    expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(false);
+    expect(toolset.functions.some((f) => f.name === GROUP_QA_QUERY_TOOL)).toBe(false);
+  });
+
+  test("本群有问答时两个工具都挂上，且 dispatch 真的走到执行器", async () => {
+    const toolset = await createReplyToolset({
+      ...baseToolContext(),
+      chatQa: new Map([["怎么入群？", "点置顶那条链接"]]),
+    } as never);
+
+    expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(true);
+    expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(true);
+
+    // 这一跳此前只有类型保证：ReplyToolContext.chatQa 有没有真的被交给执行器。
+    const listed: { questions: string[] } = JSON.parse(
+      await toolset.execute(GROUP_QA_QUERY_TOOL, "{}")
+    );
+    expect(listed.questions).toEqual(["怎么入群？"]);
+
+    const answered: { found: boolean; answer?: string } = JSON.parse(
+      await toolset.execute(GROUP_QA_ANSWER_TOOL, JSON.stringify({ question: "怎么入群？" }))
+    );
+    expect(answered.found).toBe(true);
+    expect(answered.answer).toBe("点置顶那条链接");
+  });
+
+  test("问答工具不消耗整轮可见动作预算", async () => {
+    const toolset = await createReplyToolset({
+      ...baseToolContext(),
+      chatQa: new Map([["a", "1"]]),
+    } as never);
+
+    // 预算耗尽后动作工具会被拒，查询工具必须照常可用——否则模型查一次清单
+    // 就少发一条消息。
+    for (let index: number = 0; index < HARD_MAX_ACTIONS_PER_REPLY + 1; index++) {
+      await toolset.execute(GROUP_QA_QUERY_TOOL, "{}");
+    }
+    const listed: { questions: string[] } = JSON.parse(
+      await toolset.execute(GROUP_QA_QUERY_TOOL, "{}")
+    );
+    expect(listed.questions).toEqual(["a"]);
   });
 });

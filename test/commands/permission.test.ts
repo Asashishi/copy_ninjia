@@ -48,6 +48,7 @@ function permissions(
     isCanControllFloodControlPermission: false,
     isCanControllJATranslatePermission: false,
     isCanControllAntiRaidPermission: false,
+    isCanControllQaPermission: false,
     ...overrides,
   };
 }
@@ -68,6 +69,7 @@ function allEnabledPermissions(): Record<string, boolean> {
     isCanControllFloodControlPermission: true,
     isCanControllJATranslatePermission: true,
     isCanControllAntiRaidPermission: true,
+    isCanControllQaPermission: true,
   });
 }
 
@@ -241,7 +243,7 @@ describe("/permission", () => {
     expect(text.length).toBeLessThanOrEqual(4096);
   });
 
-  test("白名单用户可用 query 查询自己的完整权限，查询回执不长期留存", async () => {
+  test("白名单用户可用 query 查询自己的完整权限，权限看板与 help 一样长期留存", async () => {
     const expected: Record<string, boolean> =
       whitelistPermissionsById.get(100)!;
 
@@ -264,7 +266,9 @@ describe("/permission", () => {
     expect(text).toContain("true 是有这项权限");
     expect(text).toContain("false 就是没有");
     expect(text).toContain("杂鱼♡");
-    expect(message?.preserveInGroup).toBeUndefined();
+    // 用户明确授权的长期保留例外：这张权限看板要照着逐项核对，30 秒清理会在
+    // 读完之前收走它。与 /permission help 同一口径，见 AGENTS.md「Telegram 提示留存」。
+    expect(message?.preserveInGroup).toBeTrue();
   });
 
   test("白名单频道按 sender_chat 查询自身权限，不泄漏附带用户的身份", async () => {

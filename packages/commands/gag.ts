@@ -20,6 +20,7 @@ import {
   sendCommandMessage,
   sendMessage,
 } from "../infra/telegram";
+import { forumTopicThreadId } from "../libs/forumTopic";
 import { sanitizeDisplayName } from "../libs/text";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
@@ -118,6 +119,9 @@ function createGagReservation(
     speakNoticeMessageId: 0,
     pendingSpeakNoticeMessageId: 0,
     retiredSpeakNoticeMessageId: 0,
+    // 入口从下命令的那个话题起步；随后被管教的人换话题说话时再搬家
+    // （见 commands/gag/inline.ts 的 moveGagSpeakNotice）。
+    speakNoticeThreadId: forumTopicThreadId(ctx.msg),
     messagesSinceSpeakNotice: 0,
     speakNoticeRefreshTask: null,
     noticePending: true,
@@ -236,6 +240,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
       const speakNoticeMessageId: number | undefined =
         await sendGagSpeakNotice({
           session,
+          messageThreadId: session.speakNoticeThreadId,
           replyToMessageId: ctx.msgId,
           onSent: recordSpeakNotice,
         });
@@ -251,6 +256,10 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
       chatId: session.chatId,
       text: renderGagPublicNotice(session),
       replyToMessageId: ctx.msgId,
+      // 公开状态是「这个人被管教了」的一次性播报，留在下命令的话题即可，不搬家；
+      // 发言提示由状态机而非固定延迟清理持有，属长期留存，因此挂了回复也照样
+      // 带话题；判定口径见 SendMessageParams.messageThreadId。
+      messageThreadId: session.speakNoticeThreadId,
       onSent: recordPublicNotice,
     });
     if (publicNoticeMessageId === undefined) {
@@ -268,6 +277,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     const speakNoticeMessageId: number | undefined =
       await sendGagSpeakNotice({
         session,
+        messageThreadId: session.speakNoticeThreadId,
         onSent: recordSpeakNotice,
       });
     if (speakNoticeMessageId === undefined) {

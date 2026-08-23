@@ -101,7 +101,7 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
-  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`migrateIdentityStorageToSqlite.ts`、`migrateChatStateToSqlite.ts`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`，以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
+  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`migrateChatQa.ts` 与 `chatQaMigration/`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
 
 ## 新代码放置决策
 

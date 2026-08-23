@@ -2,6 +2,7 @@ import { asc, count, eq, gt, ne } from "drizzle-orm";
 import { BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE } from
   "../../consts/antiRaid/blocklist";
 import { chatStates } from "../schema/chatState";
+import { readStoredChatQa } from "./chatQa";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
 import {
   guardedStrictJsonbTextProjection,
@@ -52,8 +53,8 @@ function readJsonbStorageRow(
   };
 }
 
-/** 读取 v3 与 v4 共用的四张 JSONB 表；冷迁移不得先查询尚未创建的 chat_states。 */
-export function readStorageDatabaseBaseJsonStorage(
+/** 读取当前全部 JSONB 表；仅供显式冷迁移逐表核验。 */
+function readStorageDatabaseJsonStorage(
   database: StorageDatabase
 ): readonly StorageDatabaseJsonStorageRow[] {
   return [
@@ -77,15 +78,6 @@ export function readStorageDatabaseBaseJsonStorage(
       table: storageMetadata,
       data: storageMetadata.data,
     }),
-  ];
-}
-
-/** 读取当前全部 JSONB 表；仅供显式冷迁移逐表核验。 */
-export function readStorageDatabaseJsonStorage(
-  database: StorageDatabase
-): readonly StorageDatabaseJsonStorageRow[] {
-  return [
-    ...readStorageDatabaseBaseJsonStorage(database),
     readJsonbStorageRow(database, {
       tableName: "chat_states",
       table: chatStates,
@@ -117,14 +109,6 @@ function assertJsonbStorageRows(
       );
     }
   }
-}
-
-/** 冷迁移校验 v3 与 v4 共用表，不访问 v3 尚不存在的 chat_states。 */
-export function assertStorageDatabaseBaseJsonbStorage(
-  database: StorageDatabase,
-  source: string
-): void {
-  assertJsonbStorageRows(readStorageDatabaseBaseJsonStorage(database), source, 4);
 }
 
 /** 显式冷迁移拒绝五张表的列声明、存储类型或内容不是严格 JSONB。 */
@@ -200,13 +184,13 @@ export function readStorageDatabaseRows(
     .select({ chatId: chatStates.chatId, data: jsonbTextProjection(chatStates.data) })
     .from(chatStates)
     .all();
-  return { ...base, chatStates: storedChatStates };
+  return { ...base, chatStates: storedChatStates, chatQa: readStoredChatQa(database) };
 }
 
 /**
- * 生产启动读取：名单只做 COUNT；群状态只为恢复热缓存读取，不在这里校验。
+ * 生产启动读取：名单只做 COUNT；群状态与问答只为恢复热缓存读取，不在这里校验。
  * 调用方必须已用 readStorageDatabaseSchemaMetadata 确认过 schema 版本——本函数
- * 查询 `chat_states`，在未迁移的库上只会以缺表报错。
+ * 查询 `chat_states` 与 `chat_qa`，在未迁移的库上只会以缺表报错。
  */
 export function readStorageDatabaseStartupRows(
   database: StorageDatabase
@@ -223,6 +207,9 @@ export function readStorageDatabaseStartupRows(
     whitelistEntryCount,
     blocklistEntryCount,
     chatStates: storedChatStates,
+    // 全表读而不分页：每群上限 5 条、受管群上限 STATE_MANAGED_CHAT_LIMIT，
+    // 整张表因此恒定不超过 125 行，不存在需要游标的规模。
+    chatQa: readStoredChatQa(database),
   };
 }
 

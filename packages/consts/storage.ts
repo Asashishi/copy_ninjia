@@ -29,10 +29,20 @@ export const STATE_SAVE_MAX_ATTEMPTS: number = STATE_SAVE_RETRY_DELAYS_MS.length
 export const STATE_MANAGED_CHAT_LIMIT: number = 25;
 
 /**
- * 显式配置的数据根允许的最大 Unix 权限：owner 可读写遍历、group 只读遍历、
- * other 无权访问。现有目录只能比它更严格，启动预检不会擅自 chmod。
+ * 显式配置的数据根允许的最大 Unix 权限：owner 可读写遍历，group 与 other 只读
+ * 遍历。现有目录只能比它更严格，启动预检不会擅自 chmod。
+ *
+ * 这道闸拦的是**写**：group 或 other 拿到 w 位一律拒绝启动，因为那意味着别的
+ * 账号能改运行状态。读侧按部署基线放开到 0755——本项目按单租户处理，绝大多数
+ * 部署是 root 直接跑，而用默认 umask 建出来的目录就是 0755，卡在这里只是摩擦。
+ *
+ * **代价要说明白**：`memory/` 下的文件本身是 0644（见 docs/cn/07-operations.md），
+ * 所以此前群聊逐字记录的访问控制**全靠这个目录位**，没有第二道。放到 0755 之后，
+ * 同一台机器上的任何本地账号都能读它们。多租户或有非特权登录用户的机器上，
+ * 部署方必须自己把数据根收回 0750——预检只保证不比这更宽，不替谁做决定。
+ * `database/` 不受影响，仍走 IDENTITY_DATABASE_DIRECTORY_MODE 的 0770。
  */
-export const RUNTIME_DATA_ROOT_MAX_MODE: number = 0o750;
+export const RUNTIME_DATA_ROOT_MAX_MODE: number = 0o755;
 
 /**
  * 数据根下承载敏感运行时文件的顶层目录。显式数据根预检会提前建立并验证

@@ -320,6 +320,7 @@ export function createGenerateSongExecutor(
         fileName: `${SONG_FILE_BASENAME}.${songFileExtension(song.mimeType)}`,
         replyToMessageId: ctx.replyToMessageId,
         signal: ctx.signal,
+        messageThreadId: ctx.messageThreadId,
         caption,
         title: parsed.title,
         performer: parsed.performer,

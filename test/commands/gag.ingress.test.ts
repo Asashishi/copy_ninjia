@@ -44,6 +44,96 @@ const gag = await import("../../packages/commands/gag");
 installGagTestHooks();
 
 describe("gag 消息与 inline 入口", () => {
+  test("被管教的人换个话题说话：入口搬到新话题，旧话题那条被删掉", async () => {
+    // 按钮留在原话题的话，他在话题 B 被删消息、却要回话题 A 才能说话。
+    const session: GagSession = createSession({
+      targetId: 7,
+      speakNoticeMessageId: 55,
+      speakNoticeThreadId: 11,
+    });
+    addSession(session);
+    const events: string[] = [];
+    sendEphemeralMessage.mockImplementation(
+      async (params: EphemeralMessageParams): Promise<number> => {
+        events.push(`send:${String(params.messageThreadId)}`);
+        params.onSent?.(56);
+        return 56;
+      }
+    );
+    deleteEphemeralMessageWithOutcome.mockImplementation(
+      async (params: EphemeralDeletionParams): Promise<string> => {
+        events.push(`delete:${params.ephemeralMessageId}`);
+        return "deleted";
+      }
+    );
+
+    const claimed: boolean = await gag.handleGagMessageIngress(
+      normalMessage({ message_thread_id: 22, is_topic_message: true }),
+      1
+    );
+    await settleGagBackgroundTasks();
+
+    expect(claimed).toBe(true);
+    // 先在新话题发一条，再删旧话题那条；顺序反过来会出现一段没有入口的空窗。
+    expect(events).toEqual(["send:22", "delete:55"]);
+    expect(session.speakNoticeThreadId).toBe(22);
+    expect(session.speakNoticeMessageId).toBe(56);
+    expect(session.retiredSpeakNoticeMessageId).toBe(0);
+  });
+
+  test("同一话题内说话不搬家，滚动换新仍留在原话题", async () => {
+    const session: GagSession = createSession({
+      targetId: 7,
+      speakNoticeMessageId: 55,
+      speakNoticeThreadId: 11,
+      messagesSinceSpeakNotice: GAG_SPEAK_NOTICE_MESSAGE_INTERVAL - 1,
+    });
+    addSession(session);
+    const threads: (number | undefined)[] = [];
+    sendEphemeralMessage.mockImplementation(
+      async (params: EphemeralMessageParams): Promise<number> => {
+        threads.push(params.messageThreadId);
+        params.onSent?.(57);
+        return 57;
+      }
+    );
+
+    // 目标自己的消息会被 gag 删掉，因此不进 15 条窗口；换新由别人的消息推动。
+    await gag.handleGagMessageIngress(
+      normalMessage({
+        message_id: 90,
+        from: { id: 8, is_bot: false, first_name: "Bob" },
+        message_thread_id: 11,
+        is_topic_message: true,
+      }),
+      1
+    );
+    await settleGagBackgroundTasks();
+
+    expect(threads).toEqual([11]);
+    expect(session.speakNoticeThreadId).toBe(11);
+  });
+
+  test("非论坛群不会因为话题判定而触发搬家", async () => {
+    const session: GagSession = createSession({
+      targetId: 7,
+      speakNoticeMessageId: 55,
+    });
+    addSession(session);
+    sendEphemeralMessage.mockImplementation(
+      async (params: EphemeralMessageParams): Promise<number> => {
+        params.onSent?.(58);
+        return 58;
+      }
+    );
+
+    await gag.handleGagMessageIngress(normalMessage(), 1);
+    await settleGagBackgroundTasks();
+
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+    expect(session.speakNoticeThreadId).toBeUndefined();
+  });
+
   test("多个用户和频道会话按各自入口起点每 15 条换新，且先发新入口再删本会话旧入口", async () => {
     const userSession: GagSession = createSession({
       targetId: 7,

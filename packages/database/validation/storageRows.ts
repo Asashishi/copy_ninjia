@@ -1,5 +1,7 @@
 import { IDENTITY_DATABASE_SCHEMA_KEY } from "../../consts/identityStorage";
+import { CHAT_QA_MAX_PER_CHAT } from "../../consts/qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../consts/storage";
+import { assertChatQaQuestion, decodeChatQaData } from "../codec/chatQa";
 import { assertTelegramChatId, decodeChatStateData } from "../codec/chatState";
 import {
   assertTelegramIdentityId,
@@ -13,6 +15,7 @@ import type { PendingBlockedRemoval } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
 import type {
   StorageDatabaseBaseRows,
+  StoredChatQaRow,
   StoredChatStateRow,
   StoredPendingRemovalRow,
 } from "../../types/storageDatabase";
@@ -189,4 +192,35 @@ export function restoreStoredChatStates(
     chatStates.set(row.chatId, state);
   }
   return chatStates;
+}
+
+/**
+ * 严格解码全部问答行，并顺带核对每群条数没有越过硬顶。
+ *
+ * 条数在写入侧已经把过一道闸，这里再核一次的理由与其它表一致：库里已有的行
+ * 不依赖主线程准入——手工改库、从别处恢复的备份都可能带进越界数据，而那会让
+ * `/set_qa` 从此永远拒绝新增却看不出原因。
+ *
+ * @returns 群 -> 问题 -> 答案；调用方据此重建热缓存。
+ */
+export function decodeStoredChatQa(
+  rows: readonly StoredChatQaRow[],
+  source: string
+): ReadonlyMap<number, ReadonlyMap<string, string>> {
+  const byChat: Map<number, Map<string, string>> = new Map();
+  for (const row of rows) {
+    const path: string = storageRowSource(source, "chat_qa", `${row.chatId}:${row.q}`);
+    assertTelegramChatId(row.chatId, path);
+    assertChatQaQuestion(row.q, path);
+    const existing: Map<string, string> | undefined = byChat.get(row.chatId);
+    const questions: Map<string, string> = existing ?? new Map<string, string>();
+    if (existing === undefined) byChat.set(row.chatId, questions);
+    questions.set(row.q, decodeChatQaData(row.data, path).a);
+    if (questions.size > CHAT_QA_MAX_PER_CHAT) {
+      throw new Error(
+        `${path}: chat_qa must contain at most ${CHAT_QA_MAX_PER_CHAT} entries per chat.`
+      );
+    }
+  }
+  return byChat;
 }

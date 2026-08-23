@@ -23,7 +23,7 @@
 | --- | --- |
 | [起動と import の境界](#起動と-import-の境界) | [起動順序とリソース取得](#起動順序とリソース取得) · [任意の資格情報と設定の縮退](#任意の資格情報と設定の縮退) · [データルートとバックグラウンドタスク](#データルートとバックグラウンドタスク) · [送信リクエストとメッセージの安全性](#送信リクエストとメッセージの安全性) |
 | [Worker と状態の所有権](#worker-と状態の所有権) | [スレッドと状態の帰属](#スレッドと状態の帰属) · [状態機械の contract](#状態機械の-contract) · [AI チャットの実行時](#ai-チャットの実行時) · [AI プロンプトと transcript](#ai-プロンプトと-transcript) · [参加認証と終端処置](#参加認証と終端処置) · [連投ミュートと自身の権限キャッシュ](#連投ミュートと自身の権限キャッシュ) · [識別子の解決と実行時のクリーンアップ](#識別子の解決と実行時のクリーンアップ) |
-| [永続化](#永続化) | [永続化と snapshot の contract](#永続化と-snapshot-の-contract) · [グループ状態と `chat_states`](#グループ状態と-chat_states) · [ブロックリストと広告検出](#ブロックリストと広告検出) · [運勢と AI メモリの復元](#運勢と-ai-メモリの復元) · [確認境界と停止](#確認境界と停止) · [ファイル権限と schema](#ファイル権限と-schema) · [ロックダウンミラーと終端フラグ](#ロックダウンミラーと終端フラグ) |
+| [永続化](#永続化) | [永続化と snapshot の contract](#永続化と-snapshot-の-contract) · [グループ状態と `chat_states`](#グループ状態と-chat_states) · [chat Q&A と `chat_qa`](#chat-qa-と-chat_qa) · [ブロックリストと広告検出](#ブロックリストと広告検出) · [運勢と AI メモリの復元](#運勢と-ai-メモリの復元) · [確認境界と停止](#確認境界と停止) · [ファイル権限と schema](#ファイル権限と-schema) · [ロックダウンミラーと終端フラグ](#ロックダウンミラーと終端フラグ) |
 | [互換エントリ](#互換エントリ) | トップレベル barrel と運勢 receipt の形式 |
 
 ## 起動と import の境界
@@ -31,7 +31,7 @@
 ### 起動順序とリソース取得
 
 - production モジュールを import しても Worker、timer、ネットワーク要求、共有ディレクトリへの書き込みを開始しません。
-- メインプロセスは実行時データルートを再帰的に作成し、書き込み、ファイル fsync、hard link、アトミック rename、ディレクトリ fsync を事前検査してから `bot.lock` を取得します。root と機密トップレベルの `memory/`、`logs/`、`database/` は実ディレクトリでなければならず、`lstat` がシンボリックリンクを返した場合は fail closed します。`COPY_NINJIA_DATA_ROOT` を明示設定した場合、root・`memory/`・`logs/` は mode `0750` 以下を要求します。SQLite の sidecar を deployment group が書けるよう `database/` だけは `0770` まで許可し、別 UID 所有なら runtime の有効 group に属して group `rwx` が揃っていなければなりません。既存ディレクトリは検証するだけで自動 chmod は行いません。続いてトップレベルの孤立した一時ファイルを削除し、`state.json` を厳密に復元します。ここまではすべてネットワーク接続や Worker 作成より前です。
+- メインプロセスは実行時データルートを再帰的に作成し、書き込み、ファイル fsync、hard link、アトミック rename、ディレクトリ fsync を事前検査してから `bot.lock` を取得します。root と機密トップレベルの `memory/`、`logs/`、`database/` は実ディレクトリでなければならず、`lstat` がシンボリックリンクを返した場合は fail closed します。`COPY_NINJIA_DATA_ROOT` を明示設定した場合、root・`memory/`・`logs/` は mode `0755` 以下、すなわち group と other の書き込み bit がないことを要求します。SQLite の sidecar を deployment group が書けるよう `database/` だけは `0770` まで許可し、別 UID 所有なら runtime の有効 group に属して group `rwx` が揃っていなければなりません。既存ディレクトリは検証するだけで自動 chmod は行いません。続いてトップレベルの孤立した一時ファイルを削除し、`state.json` を厳密に復元します。ここまではすべてネットワーク接続や Worker 作成より前です。
 
   その後に Telegram クライアントと Disk I/O Worker を初期化し、`memory/` を復元し、handler・コマンドメニュー・`bot.init()` の handshake を完了します。最後に AI/Anti-Raid Worker を初期化して hydrate し、acknowledgement-safe runner を開始します。
 - 初期化失敗と正常終了はどちらも `ApplicationLifecycle` に合流し、実際に取得したリソースだけを解放または flush します。
@@ -57,7 +57,7 @@
 
   **スーパー管理者 permission は identity 自体から来て SQLite row にはありません。** `packages/infra/identityPolicy/whitelist.ts` の `getEffectiveWhitelistPermissions` は `SUPER_ADMIN_USER_ID` に全 true の `SUPER_ADMIN_WHITELIST_PERMISSIONS` を返し、その他だけが allowlist LRU を読みます。override は read-only で永続化しないため、identity 変更で全開の旧 row は残りません。`/white` と `/permission` は current chat 自身を target にできません。`isCanWhiteOther` は `/white enable` だけを委任し、他 identity を default permission で追加できますが、member 削除と permission mutation はスーパー管理者だけです。
 
-  `/permission query` と `/permission help` は read-only です。`query` は self、reply target、explicit target を照会し、default 補完済み view を返すだけで row を作りません。group の `help` は長期保持し、`query`、拒否、usage hint は共通 30 秒 cleanup に従います。
+  `/permission query` と `/permission help` は read-only です。`query` は self、reply target、explicit target を照会し、default 補完済み view を返すだけで row を作りません。どちらも描画した JSON を長期保持します。1 項目ずつ突き合わせる permission board であり、30 秒 cleanup では読み終える前に消えてしまうためです。対象解決の失敗、変更の拒否、usage hint は引き続き共通 30 秒 cleanup に従います。
 - **process 全体の Telegram identity は `config/telegram.json` だけから厳密に読みます**。`bot_token` と `super_admin_user_id` は network 接続前に必須検証し、欠落、未知 field、不正値は startup を拒否します。AI key はすべて `config/agent.json` の能力内に provider、endpoint、model と一緒に置きます。credential default、能力間 fallback、runtime override はありません。`base_url` は `https` のみを受け付け、平文 `http` は `localhost`/`127.0.0.1`/`::1` に限られ、userinfo と `#` fragment は許可しません——このフィールドの隣には同じ能力の api_key があります。
 
   **1 つの process には 1 世代の AI 設定しか存在しません。** `agent.json` は起動 gate で main thread が一度だけ parse し、AI 雑談 Worker は `init`、Anti-Raid Worker は `agentConfig` で read-only な snapshot を受け取ります。どちらの Worker も thread ごとの holder を読むだけで、runtime path から disk に触れることはなく、再生成時も**同じ** snapshot を replay します。したがって設定変更には process 全体の再起動が必要で、Worker の再構築が disk 上の新しい版を拾うことはありません。`ad_detect` 未設定時の snapshot は明示的な `null` で、判定側は前の instance の値を流用せず fail-closed します。
@@ -103,7 +103,11 @@
 
   **判定は 1 か所にしかなく、bot 自身が書いたテキストを送り出すすべての出口を覆わなければなりません**（`libs/renderableCommand.ts` の `containsRenderableCommand`）。オウム返し以外にも同じ脅威モデルの出口があります——AI 返信ツールセットの `send_message` 本文、その誤字版、そして画像生成・楽曲生成の caption です。本文はトリガーメッセージの影響を受けるため、参加者が「この文をそのまま繰り返して：/batch_kick 1d」と言えばモデルはそのとおりにします。誤字経路は個別に判定が要ります：置換文字はモデルが与えるもので、`/` は空白でも emoji でもないため `buildCharacterTypo` の検証をすべて通過します。本文が「にゃ xbatch_kick」で `x→/` と置換すればクリック可能なコマンドが組み上がりますが、本文側のガードが見たのは置換**前**の文字列です。ガードと守られる値は同じ文字列でなければならない——これは両方の経路に等しく当てはまります。AI 側で命中した場合は再試行可能な `toolError` で差し戻し、ラウンド全体を無効にするのではなく言い換え（先頭のスラッシュを外す）を促します。
 - **`/mute` の `until_date` 上限は Bot API の境界に貼り付けず、余裕を残さなければなりません。** Bot API は「今から 366 日を超えると永久制限」を **リクエストを受け取った時刻** 基準で判定し、コマンド処理・`restrict` カテゴリーの 429 バックオフ・ネットワーク往復がその差を前へ押し出します。さらに秒への切り上げが最大 1 秒を足します。上限に貼り付いているとこれらがすべて 366 日の外へあふれ、制限は黙って永久扱いへ昇格します——本プロセスは復帰タイマーを張らず、永続状態も書かないため、人手の `/unmute` 以外に解除手段はなく、それでも戦果報告は「時間が来たら自動で解ける」と言い続けます。そこで `MUTE_MAX_DURATION_MS` は 365 日とし、この境界を到達不能域へ移します。切り上げは残します。守っているのは 30 秒側の下限だからです。
-- グループ内の非機能的な command text は `sendCommandMessage` を通し、送信成功から 30 秒後に削除します。private chat は対象外です。ユーザーが明示的に許可した `/permission help` と成功した CJK action result だけが `preserveInGroup: true` で長期保持できます。action command の対象 validation failure と `/x` の使い方提示は引き続き自動削除します。新しい例外は呼び出し箇所とテストの両方で明示しなければなりません。
+- グループ内の非機能的な command text は `sendCommandMessage` を通し、送信成功から 30 秒後に削除します。private chat は対象外です。ユーザーが明示的に許可した `/permission help`、`/permission query` の permission board、`/query_qa` の Q&A board、そして成功した CJK action result だけが `preserveInGroup: true` で長期保持できます。action command の対象 validation failure と `/x` の使い方提示は引き続き自動削除します。新しい例外は呼び出し箇所とテストの両方で明示しなければなりません。`check:conventions` はこの枠に `messageThreadId` も渡すことを強制します。理由は次項です。
+- **forum（topics）グループでの着地先は「そのメッセージがグループにどれだけ残るか」で決めます。メッセージの種類では決めません**。`message_thread_id` を渡さないことは General への送信と同義で、reply を付けても安全ではありません——返信先が削除済みだと `allow_sending_without_reply` が通常送信へ降格させ、その時 topic に残るのはこの parameter だけです。
+  - **長期保持されるものは必ず渡す**：会話的な出力（copy、AI 返信、入浴トリガー返信、Q&A 直答）、上項で挙げた `preserveInGroup` の例外、そして固定遅延削除が保持しない button message（`/set_qa` フォーム、gag の発言提示）。自然に消えないため、topic を間違えれば永久にずれたままです。
+  - **期限で自動削除されるものは渡さない**：30 秒で消える command receipt と使い方提示、広告 ban の告知、flood mute の告知。間違っても cleanup までで、そのために topic id を全呼び出し箇所と Worker protocol へ通す価値はありません。
+  - **入室認証の reminder は明示的な適用除外**：reply 形式の reminder は未認証メンバーの発言に紐づくため、その anchor が削除されると General に落ちます。しかし state machine が認証確定時に削除し（上限は `VERIFICATION_TIMEOUT_MS`、未送達の極端な場合でも `VERIFICATION_REMINDER_UNDELIVERED_MAX_MS`）、自動削除の枠に入ります。対応するには topic id を未認証 snapshot の形式へ永続化する必要があり、唯一の cold migration 辺を消費します。理由と再評価の契機は `packages/libs/forumTopic.ts` の module 冒頭注釈にあります。
 - **起きていない状態変化を応答が報告してはいけません。** `/init`、`/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/ja_copy` の 6 つの switch command は書き込み前に必ず元の値を読み、同じ状態で繰り返し実行した場合は「元からそうです」と言い切らなければなりません。変更直後の文をそのまま流用すると、管理者は最初の実行が効いたのかどうか判断できません。4 つの結末の文言は `ToggleCommandTexts`（`packages/types/commands.ts`）という **4 項目すべて必須**の構造に収め、選択は `toggleReplyText` が行います。「on」「off」の 2 文しか用意しない新しい switch command は compile できません。`/quiet`、`/unquiet`、`/white`、`/permission` は同じ方針の既存実装です。
 
   判定は「目標の状態」と「元の状態」だけを見ます。**永続化や runtime cleanup が実行されたかは見ません。** これらの cleanup はベストエフォートで、失敗しても log を残すだけです（`clearAdDetection`、`clearFloodControl`、`invalidateAiChat`、および `/init disable` の `teardownChatRuntime`——失敗しても総 switch はすでに durable に off なので、応答は「片付け切れなかったものがある」と名指しする文面に切り替え、決して throw しません。throw すれば offset を確定できず、再配信時には `wasEnabled` がすでに false なので、管理者はかえって「もともと off だった」と告げられます）。したがって「disable したあともう一度 disable する」は Worker 復帰後にもっとも自然な手動リトライであり、同じ状態での繰り返し実行でも永続化と cleanup は通常どおり行い、応答だけが「何も変わっていない」と正直に伝えます。`/init` は、すでに有効なチャットで `enable` を繰り返しても管理者身分の記録を無効化しません。無効化すると `recordBotChatPermissions` が新しい `undefined -> true` の edge を見て blocklist 全体を再走査してしまうためです。
@@ -423,7 +427,9 @@
 - `/steal_icon` の t.me プロフィール取得フォールバックは、**`getChat(targetId)` でその場に問い合わせた username だけを採用します**。呼び出し側のコンテキストが持つ username でこの問い合わせを短絡してはいけません。その username は `reply_to_message`（数か月前のこともあります）や identity キャッシュ由来である一方、Telegram の username は手放されると誰でも取り直せます。
 
   取得時のページ身分照合が証明できるのは「このページは @name のものだ」までで、「@name はいま targetId を指す」は証明できません。短絡すると**現在の handle 保有者**のアバターを Bot のアバターに据えてしまい、成功通知には元の対象の名前が書かれたままになります。渡された値はログ上の診断ヒントとしてのみ使います。
-- chat runtime teardown の 4 つの固定 owner callback は `packages/cache/main/chatTeardown.ts` が保持します。上位ドメインは `packages/infra/chatTeardown.ts` を通じて逆向きに登録し、`packages/infra/botAdmin.ts` は `commands/`、AI、Anti-Raid の業務モジュールへ static dependency を持ってはいけません。
+- chat runtime teardown の 5 つの固定 owner（`copy`、`gag`、`qa`、`aiChat`、`antiRaid`）callback は `packages/cache/main/chatTeardown.ts` が保持します。上位ドメインは `packages/infra/chatTeardown.ts` を通じて逆向きに登録し、`packages/infra/botAdmin.ts` は `commands/`、AI、Anti-Raid の業務モジュールへ static dependency を持ってはいけません。
+
+  **dispatch 一覧を手書きしてはいけません**。`teardownChatRuntime` は `packages/consts/chatTeardown.ts` の `CHAT_TEARDOWN_ORDER` を走査します。この定数は型で `ChatRuntimeOwner` の全項目を網羅するよう強制され、1 つでも欠ければ compile できません。以前の手書き 4 項目は `qa` を落としており、`/init disable` と権限喪失時の teardown が `/set_qa` フォームを回収できませんでした。lint も typecheck も規約検査も無言で、複合 teardown の順序テストまで同じ 4 つしか列挙しておらず一緒に見落としていました。`ChatRuntimeOwner` に owner を足して順序表を忘れると、今は compile error になります。
 - メンバー現状確認そのものが新しい非同期境界です。`probeChatMembership` が在室を返してから `kickChatMember` を呼ぶ前に、終端状態が照会開始時と同一オブジェクトのままか再確認し、その確認と API 呼び出しの間には新たな `await` を置いてはいけません。そうしないと teardown、管理停止、状態置換で取り消された旧処置が遅延結果を消費し、もはやその終端処置の対象ではないメンバーを kick できます。
 - `/unblock` は、チャット横断 unban の両端でコマンド側「kick 確認済み」cache を無効化しなければなりません。開始前に旧結果を消し、すべての `unban` await が終わった後にも、その待機中に遅れて着地した `/block` の書き戻しをもう一度消します。runner の直列化は chat 単位だけなので、異なる chat のコマンドは交錯できます。
 
@@ -485,6 +491,22 @@
 - 永続化は identity テーブルと同じ write-through ＋ 正確な revision ACK です：`persistChatState` は正式な決定のための durable barrier、`saveChatStateInBackground` はタイトル更新や権限スナップショットの失効のような再構築可能な値のための低優先度書き込みです。
 
 <p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
+
+<p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
+
+### chat Q&A と `chat_qa`
+
+- **正本は SQLite の `chat_qa` table で、main thread が唯一の hot copy を持ちます**（`packages/cache/main/qa.ts`）。主キーは `(chat_id, q)` の複合キーで、`q` には別途 index があります。1 つの chat で同じ質問に対する答えは 1 つだけ——この一意性を SQLite に直接表現させることで、書き込み側は重複を探し直す必要がなくなります。table 全体は 125 行を超えません（管理対象 chat × `CHAT_QA_MAX_PER_CHAT`）。したがって起動時に一括読み込みし、removal outbox のような paging は行いません。
+
+- **chat ごとの上限は 3 箇所で独立に守ります**：main thread の `setChatQa`、Disk I/O Worker が transaction buffer に入れる前、そして起動時の全 table decode です。3 つは互いに依存しません。database に既にある行は main thread の受け入れ判定を経ていないためで、手動編集や他所から復元した backup は上限超過のデータを持ち込みうる一方、それは `/set_qa` が以後ずっと追加を拒み続ける原因になり、しかも表面からは理由が見えません。
+
+- **質問文は書き込み時に trim し、hot path では正規化しません。** 直接応答の判定はメッセージ本線上にあり、外れたときのコストがゼロになるよう作られています。登録の無い chat は最初の `Map.get(chatId)` で戻り、`message.text` すら読みません。命中は元の文字列に対する 2 回目の `Map.get` です。この経路唯一の割り当ては先頭の bot mention を切り落とす 1 回だけで、判定は同期のままです——外れたときに promise を割り当てないためです。
+
+- **直接応答は AI トリガーより前に走り**、`/quiet` でも抑制されません。登録済みの質問をそのまま尋ねる行為は受動トリガーであり、返信や @ mention と同類です（`/quiet` の範囲は「Telegram プロンプトの保持」を参照）。命中したらその場で回答し、そのメッセージの後続処理を打ち切ります。さもないと同じ質問が登録済みの回答を受け取りつつ、AI ラウンドやランダム複読も引き起こします。**打ち切りは、その質問と回答のどちらも AI のローリングメモリに入らないことも意味します**。ローリングメモリは各 payload handler が AI の段で登録しますが、直接応答はその手前で戻るためです。これはコマンドメッセージと同じ口径です——直接応答が返すのは運用者が登録した固定の答えであり、そのラウンドのモデル出力ではありません。
+
+- **model 側の 2 つの照会 tool に mirror は不要です**：`group_qa_query` と `group_qa_answer` が読むデータは、main thread がラウンドごとに元々送っている `trigger` message に載ります（message を単態に保つため、field は常に存在し空のときは `undefined`）。したがって push protocol も worker 再起動後の replay もありません。`group_qa_answer` は曖昧一致を行いません。model が原文を書き換えた場合は not-found を返します。最も近い entry を推測することは、この chat が登録していない回答を登録済みとして提示するのと同じだからです。
+
+- 永続化は identity table と同じ write-through と正確な revision ACK を用い、worker 再構築後は memory 上の最終値から未確認の書き込みを replay します。
 
 ### ブロックリストと広告検出
 
@@ -841,7 +863,7 @@
 
 ### ファイル権限と schema
 
-- project workspace 自体は editor や automation の協業に必要な permission を維持できますが、明示設定した独立 data root は機密データ境界です。root・`memory/`・`logs/` は起動時に `0750` 以下を強制し、group write とすべての `other` permission を禁止します。唯一の例外は SQLite `database/` で、migration は setgid 協作 directory を `02770`、主 DB と WAL/SHM を `0660` で作ります。起動時は runtime UID 所有、または runtime の有効 group に属し group `rwx` が揃う directory だけを受け入れ、`other` access は引き続き拒否します。owner/group 設定と既存 directory の手動 migration は deployment tool が担い、runtime が暗黙に chmod してはいけません。
+- project workspace 自体は editor や automation の協業に必要な permission を維持できますが、明示設定した独立 data root は機密データ境界です。root・`memory/`・`logs/` は起動時に `0755` 以下を強制し、group と other の書き込み bit を禁止します。読み取りと走査は単一テナント deployment baseline として許可します（`memory/` 配下の file は `0644` なので、この段階では同じマシンの local account が chat 記録を読めます。マルチテナント deployment は自分で `0750` に戻してください）。唯一の例外は SQLite `database/` で、migration は setgid 協作 directory を `02770`、主 DB と WAL/SHM を `0660` で作ります。起動時は runtime UID 所有、または runtime の有効 group に属し group `rwx` が揃う directory だけを受け入れ、`other` access は引き続き拒否します。owner/group 設定と既存 directory の手動 migration は deployment tool が担い、runtime が暗黙に chmod してはいけません。
 - `memory/` の成果物は一律 `0644` ですが、`other` bit は `other` が traverse できない親 data root 内に封じられます。機密性は data-root permission、deployment isolation、backup 方針で共同管理します。
 - **アトミック置換のついでに対象ファイルの権限 bit を初期化してはいけません。** `tmp + fsync + rename` の一時ファイルは新規作成なので、その `0666 & ~umask`（多くは 0644）は対象の元の権限とは何の関係もなく、rename はそれをそのまま据えます。したがって `atomicWriteText` は権限を明示的に引き受けなければなりません——呼び出し側が `mode` を渡したらそれを優先し、渡さなければ先に対象を `stat` して現在の権限を引き継ぎ、対象が存在しない場合だけ既定値に落とします。この一手がないと、運用者が `chmod 0600` した `state.json`（`.bak` を含む）・`bot.lock` が通常の書き込み 1 回で黙って緩められ、log も 1 行も残りません——「実行時に勝手に chmod しない」と同じ制約の裏面です。**同期版の `atomicWriteSync` も同じ口径でなければなりません**：それが担う `logs/<day>.json` こそ「既存の配備権限ポリシーを保つ」ために意図的に `mode` を渡さない経路であり（`workers/diskIO/appendOnlyDayFile.ts` の `atomicRewrite`、当日の初回書き込みと修復のたびの書き直しで通ります）、引き継ぎの一手を欠くとそのコメントは逆のことを言っていることになります。明示的な `mode` を渡す呼び出し側は影響を受けず、余分な `stat` も払いません。
 - 永続化 schema は推測的な自動 migration を行いません。非互換入力は起動を止め、空状態が実データを上書きするのを防ぎます。

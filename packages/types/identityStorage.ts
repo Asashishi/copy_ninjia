@@ -39,6 +39,12 @@ export interface PendingChatStateWrite {
   readonly revision: number;
 }
 
+/** 一条群问答的未提交最终值；`data` 为 null 表示删除这条问答。 */
+export interface PendingChatQaWrite {
+  readonly data: string | null;
+  readonly revision: number;
+}
+
 /** 主线程保留到 SQLite ACK 的最小群状态恢复元数据；正文只存在于 LRU。 */
 export interface UnacknowledgedChatStateWrite {
   readonly revision: number;
@@ -51,4 +57,9 @@ export interface StorageDatabaseHydration {
   readonly whitelistEntryCount: number;
   readonly pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
   readonly chatStates: Map<number, ChatState>;
+  /**
+   * 群 -> 问题 -> 答案。整表恒定不超过 125 行（受管群 × 每群 5 条），因此启动
+   * 一次性读全，不像 outbox 那样分页。
+   */
+  readonly chatQa: Map<number, ReadonlyMap<string, string>>;
 }

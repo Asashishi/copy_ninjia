@@ -35,8 +35,15 @@ export const longTriggerTimes: Map<number, LinkedQueue<number>> = new Map();
 export const activeReplyCounts: Map<number, number> = new Map();
 /** 同群并发满载后的直接触发有界队列；轮次接纳或群失效时消费/清除。 */
 export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
-/** 已安排溢出提示的群集合；提示任务 settle 或群失效时删除。 */
-export const pendingOverflowNotices: Set<number> = new Set();
+/**
+ * 已安排溢出提示的群 -> 那条被丢掉的触发所在的论坛话题（General/非论坛群为
+ * undefined）；提示任务 settle 或群失效时删除。
+ *
+ * 记话题而不只是记群：提示是对某一条具体触发的回应，话题群里不带
+ * message_thread_id 发出去就会掉进 General（见 libs/forumTopic.ts）。
+ * 容量与 pendingReplyTriggers 同阶（每群至多一项）。
+ */
+export const pendingOverflowNotices: Map<number, number | undefined> = new Map();
 /**
  * 每个 chat:generation 的取消控制器。回复轮或限频提示开始时创建，invalidate
  * 同步 abort 旧代；该代任务全部 settle 后删除。

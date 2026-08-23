@@ -308,6 +308,7 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         blocklistEntryCount: reply.blocklistEntryCount,
         whitelistEntryCount: reply.whitelistEntryCount,
         chatStates: reply.chatStates,
+        chatQa: reply.chatQa,
       });
     };
     const request: LoadRequest = { type: "load" };

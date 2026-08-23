@@ -38,6 +38,8 @@ const DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION: boolean = false;
 const DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION: boolean = false;
 /** 白名单条目缺省不可开关入群守卫。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION: boolean = false;
+/** 白名单条目缺省不可维护本群问答。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
+const DEFAULT_IS_CAN_CONTROLL_QA_PERMISSION: boolean = false;
 
 /**
  * 白名单权限的完整默认值。跨调用方共享同一个对象，由 `Readonly<>` 在编译期
@@ -61,6 +63,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllFloodControlPermission: DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION,
   isCanControllJATranslatePermission: DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION,
   isCanControllAntiRaidPermission: DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION,
+  isCanControllQaPermission: DEFAULT_IS_CAN_CONTROLL_QA_PERMISSION,
 };
 
 /**
@@ -86,6 +89,7 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllFloodControlPermission: false,
   isCanControllJATranslatePermission: false,
   isCanControllAntiRaidPermission: false,
+  isCanControllQaPermission: false,
 };
 
 /**
@@ -125,6 +129,7 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
   isCanControllFloodControlPermission: true,
   isCanControllJATranslatePermission: true,
   isCanControllAntiRaidPermission: true,
+  isCanControllQaPermission: true,
 };
 
 /** 白名单权限策略与 /permission 共同接受的权限键全集。 */
@@ -144,6 +149,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanControllFloodControlPermission",
   "isCanControllJATranslatePermission",
   "isCanControllAntiRaidPermission",
+  "isCanControllQaPermission",
 ];
 
 /**
@@ -192,6 +198,7 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanControllFloodControlPermission: "让这号杂鱼能用 /flood_control enable|disable 开关防刷屏禁言，别乱按呀♡",
   isCanControllJATranslatePermission: "让这号杂鱼能用 /ja_copy enable|disable 开关日语翻译，这点小事总看得懂吧♡",
   isCanControllAntiRaidPermission: "让这号杂鱼能用 /antiraid enable|disable 开关入群验证与防冲群私密模式，关掉可就没人拦僵尸了哦♡",
+  isCanControllQaPermission: "让这号杂鱼能用 /set_qa 与 /remove_qa 维护本群问答，答错了可别赖本天才♡",
 };
 
 /**

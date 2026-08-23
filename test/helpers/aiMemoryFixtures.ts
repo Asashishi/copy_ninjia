@@ -86,6 +86,7 @@ export function aiRecordMediaMessageFixture(
 ): AiRecordMediaMessage {
   return {
     type: "recordMedia",
+    messageThreadId: undefined,
     chatId: -100_1,
     senderId: 100,
     firstName: "杂鱼",
@@ -102,7 +103,6 @@ export function aiRecordMediaMessageFixture(
     width: 640,
     height: 480,
     commentOnResolve: false,
-    imageGenerationRequested: false,
     stickerFallbackText: undefined,
     voiceMime: undefined,
     voiceDurationSeconds: 0,

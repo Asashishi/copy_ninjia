@@ -84,6 +84,9 @@ describe("application handler registration", () => {
       "gag",
       "ungag",
       "send",
+      "set_qa",
+      "query_qa",
+      "remove_qa",
       "x",
     ]);
     // use:3 同时承载 init 与私聊命令门禁；全部命令都必须注册在它之后，避免
@@ -105,12 +108,17 @@ describe("application handler registration", () => {
         messageIngressIndices.push(index);
       }
     }
-    expect(messageIngressIndices).toHaveLength(2);
+    // 三条 message ingress，顺序承重：Anti-Raid 先看原始消息以保持刷屏/黑名单
+    // 事实口径，gag 次之（被 gag 的消息不得再往下走），最后是 /set_qa 表单结果
+    // ——它认领后会删掉那条中转消息，再放行只会让下游处理一个不存在的东西。
+    expect(messageIngressIndices).toHaveLength(3);
     const gagIngressIndex: number = messageIngressIndices[1]!;
+    const qaIngressIndex: number = messageIngressIndices[2]!;
     expect(gagIngressIndex).toBeGreaterThan(antiRaidIngressIndex);
+    expect(qaIngressIndex).toBeGreaterThan(gagIngressIndex);
     for (const command of commands) {
       expect(registrationOrder.indexOf(`command:${command}`))
-        .toBeGreaterThan(gagIngressIndex);
+        .toBeGreaterThan(qaIngressIndex);
     }
     // 中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
     // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
@@ -126,7 +134,7 @@ describe("application handler registration", () => {
     expect(registrationOrder.indexOf("hears")).toBeLessThan(messageFallbackIndex);
     // /x 占位项同理：它也终止链路，必须先于消息兜底注册。
     expect(registrationOrder.indexOf("command:x")).toBeLessThan(messageFallbackIndex);
-    expect(updates).toHaveLength(9);
+    expect(updates).toHaveLength(10);
     expect(catchCount).toBe(1);
 
     const next = async (): Promise<void> => undefined;

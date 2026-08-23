@@ -583,6 +583,68 @@ describe("Telegram 主线程出站总闸", () => {
     expect(calledMethods).toEqual(["unbanChatMember", "unbanChatMember"]);
   });
 
+  /**
+   * 429 与调用方取消撞在一起时的响应体归属。
+   *
+   * 只有 fetch 那条路（媒体下载、头像抓取，见 telegram/workerRequests.ts 与
+   * avatar/）会拿到真正的 Response，而那几处都带超时 signal——「下载超时」与
+   * 「返回 429」同时发生就是这条分支。此前它直接 reject 并丢掉 response，body
+   * 没人释放，会一直占着连接与缓冲；相邻两条分支都释放了，唯独这条漏了。
+   */
+  test("调用方已取消时收到 429，响应体被释放而不是丢着", async () => {
+    let cancelled: boolean = false;
+    const controller: AbortController = new AbortController();
+    const throttled: Response = new Response("rate limited", {
+      status: 429,
+      headers: { "retry-after": "1" },
+    });
+    // 直接观察 body 的释放，而不是相信实现内部调了哪个方法。
+    const body: ReadableStream<Uint8Array> | null = throttled.body;
+    const originalCancel: (reason?: unknown) => Promise<void> =
+      body === null ? async (): Promise<void> => {} : body.cancel.bind(body);
+    if (body !== null) {
+      body.cancel = async (reason?: unknown): Promise<void> => {
+        cancelled = true;
+        return originalCancel(reason);
+      };
+    }
+
+    const request: Promise<unknown> = runTelegramCategorizedRequest({
+      category: "download",
+      signal: controller.signal,
+      execute: async (): Promise<unknown> => {
+        // 请求已发出、响应正在回来的那一刻调用方取消：先 abort 再交出 429。
+        controller.abort();
+        return throttled;
+      },
+    });
+
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    expect(cancelled).toBeTrue();
+  });
+
+  test("队列已满时把 429 原样交给调用方，不抢先释放响应体", async () => {
+    let cancelled: boolean = false;
+    const throttled: Response = new Response("rate limited", {
+      status: 429,
+      headers: { "retry-after": "1" },
+    });
+    const body: ReadableStream<Uint8Array> | null = throttled.body;
+    if (body !== null) {
+      body.cancel = async (): Promise<void> => { cancelled = true; };
+    }
+    telegramOutboundGateState.retryPendingCount = TELEGRAM_429_RETRY_QUEUE_MAX;
+
+    const response: unknown = await runTelegramCategorizedRequest({
+      category: "download",
+      execute: async (): Promise<unknown> => throttled,
+    });
+
+    // 响应交出去了，body 的所有权随之转移，闸门不能替调用方释放。
+    expect(response).toBe(throttled);
+    expect(cancelled).toBeFalse();
+  });
+
   test("inline、聊天状态和普通消息进入彼此独立的类别", () => {
     expect(telegramRetryCategoryFor("answerInlineQuery")).toBe("inline");
     expect(telegramRetryCategoryFor("answerWebAppQuery")).toBe("inline");
@@ -594,5 +656,50 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramRetryCategoryFor("deleteEphemeralMessage")).toBe("delete");
     expect(telegramRetryCategoryFor("deleteBusinessMessages")).toBe("delete");
     expect(telegramRetryCategoryFor("kickChatMember")).toBe("kick");
+  });
+
+  /**
+   * 前缀兜底此前一条用例都没有（覆盖率报告里 outboundRetryPolicy.ts:66,68-84 全白）。
+   * 它存在的**唯一**理由就是：项目调用面之外的新 Bot API 方法不能意外与 kick、
+   * restrict 这些安全动作共用一个 429 冷却域——一次退避把封禁和一个无关的
+   * setMyCommands 绑在一起，是这道闸门要防的事。没有用例的话，改错了也看不出来。
+   */
+  test("未列入 switch 的方法按前缀归类，且一律不落进安全动作的冷却域", () => {
+    expect(telegramRetryCategoryFor("getMyCommands")).toBe("query");
+    expect(telegramRetryCategoryFor("editMessageText")).toBe("edit");
+    expect(telegramRetryCategoryFor("stopPoll")).toBe("edit");
+    expect(telegramRetryCategoryFor("setBusinessAccountProfilePhoto")).toBe("profile");
+    expect(telegramRetryCategoryFor("removeBusinessAccountProfilePhoto")).toBe("profile");
+    expect(telegramRetryCategoryFor("setMyName")).toBe("profile");
+    expect(telegramRetryCategoryFor("setMyDescription")).toBe("profile");
+    expect(telegramRetryCategoryFor("setMyShortDescription")).toBe("profile");
+    expect(telegramRetryCategoryFor("setMyCommands")).toBe("management");
+    expect(telegramRetryCategoryFor("deleteMyCommands")).toBe("management");
+    expect(telegramRetryCategoryFor("setWebhook")).toBe("management");
+    expect(telegramRetryCategoryFor("createForumTopic")).toBe("management");
+    expect(telegramRetryCategoryFor("createChatInviteLink")).toBe("management");
+    expect(telegramRetryCategoryFor("sendDice")).toBe("message");
+    // 头像归 profile 认的是 `ProfilePhoto` 这个片段，不是「照片」这个概念：
+    // setChatPhoto 改的是群头像，与机器人自己的资料无关，落 other 是对的。
+    expect(telegramRetryCategoryFor("setChatPhoto")).toBe("other");
+    expect(telegramRetryCategoryFor("leaveChat")).toBe("other");
+  });
+
+  test("前缀兜底不会把任何方法归进 kick 或 restrict", () => {
+    const probes: readonly (keyof RawApi)[] = [
+      "getMyCommands",
+      "editMessageText",
+      "setChatPhoto",
+      "setMyCommands",
+      "createChatInviteLink",
+      "leaveChat",
+      "logOut",
+      "close",
+    ];
+    for (const method of probes) {
+      const category: string = telegramRetryCategoryFor(method);
+      expect(category).not.toBe("kick");
+      expect(category).not.toBe("restrict");
+    }
   });
 });

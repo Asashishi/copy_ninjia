@@ -10,6 +10,7 @@ import {
 
 const stickerMessage: AiRecordMediaMessage = {
   type: "recordMedia",
+  messageThreadId: undefined,
   kind: "sticker",
   chatId: -1001,
   senderId: 7,
@@ -22,7 +23,6 @@ const stickerMessage: AiRecordMediaMessage = {
   height: 512,
   messageId: 10,
   commentOnResolve: false,
-  imageGenerationRequested: false,
   stickerFallbackText: "[贴纸：🙂，来自 pack]",
   voiceMime: undefined,
   voiceDurationSeconds: 0,

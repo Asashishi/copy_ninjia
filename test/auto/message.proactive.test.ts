@@ -88,6 +88,39 @@ describe("群消息主动行为", () => {
     }));
   });
 
+  // 这条回复不挂延迟删除，会长期留在群里；只靠 reply_parameters 的话，触发它的
+  // 消息被删掉时整条回复会掉进 General 并永久留在那儿（见 SendMessageParams
+  // 的 messageThreadId）。同一文件里的随机复读一直是带话题的，两者口径必须一致。
+  test("论坛话题里的洗澡触发，回复带着话题发回去", async () => {
+    await handleProactiveMessageActions({
+      message: messageFixture({
+        text: "洗澡",
+        is_topic_message: true,
+        message_thread_id: 77,
+      }),
+      bot,
+      isQuiet: false,
+      aiChatEnabled: false,
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      messageThreadId: 77,
+    }));
+  });
+
+  test("General 与非论坛群不设置话题参数", async () => {
+    await handleProactiveMessageActions({
+      message: messageFixture({ text: "洗澡" }),
+      bot,
+      isQuiet: false,
+      aiChatEnabled: false,
+    });
+
+    expect(sendMessageMock.mock.calls[0]?.[0]).toMatchObject({
+      messageThreadId: undefined,
+    });
+  });
+
   test("随机复读命中仍返回完成 Promise，并吸收底层消息标识", async () => {
     const originalRandom: () => number = Math.random;
     Math.random = (): number => 0;

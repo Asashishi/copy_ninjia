@@ -55,6 +55,7 @@ export async function sendDirectMessage({
     text,
     replyToMessageId,
     signal: ctx.signal,
+    messageThreadId: ctx.messageThreadId,
   });
   if (sent !== undefined) {
     recordSentMessage({

@@ -8,6 +8,7 @@ import {
 } from "../consts/commands";
 import { recentActionCallTimestamps } from "../cache/main/cjkAction";
 import { sendCommandMessage } from "../infra/telegram";
+import { forumTopicThreadId } from "../libs/forumTopic";
 import { tryConsumeSlidingWindow } from "../libs/slidingWindowRateLimit";
 import {
   isBotOwnMessage,
@@ -117,8 +118,9 @@ export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
  * parse_mode，昵称里的标记字符不会被解析（见 infra/telegram/actions.ts）。
  * 目标解析与 /copy、/block 共用 targetResolution.ts：回复 TA 的消息优先，
  * 也可以写成 `/咬 @username`（要求本天才此前缓存过该用户）。
- * 成功动作是用户明确要求长期保留的功能性群内容，与 `/permission help` 一样显式
- * 设置 preserveInGroup；目标解析失败与 `/x` 用法提示仍走默认 30 秒清理。
+ * 成功动作是用户明确要求长期保留的功能性群内容，与 `/permission help`、
+ * `/permission query` 一样显式设置 preserveInGroup；目标解析失败与 `/x` 用法
+ * 提示仍走默认 30 秒清理。
  * 动作词进不了 Telegram 命令菜单——命令名只收 ASCII，这类命令也因此拿不到
  * bot_command 实体，只能由 bot.hears 按原文匹配；菜单里的 `/x` 只是一条不做
  * 任何处理的占位说明项，见 consts/commands.ts 的 BOT_COMMANDS。
@@ -197,5 +199,9 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
     disableLinkPreview: true,
     // 用户明确授权的长期留存例外：仅成功动作结果保留；目标校验提示仍自动清理。
     preserveInGroup: true,
+    // 长期保留的内容必须自己带话题：不清理就意味着一旦落错话题会永久留在
+    // General（见 SendMessageParams.messageThreadId）。上面那些 30 秒自删的
+    // 目标校验提示不适用本条。
+    messageThreadId: forumTopicThreadId(message),
   });
 }

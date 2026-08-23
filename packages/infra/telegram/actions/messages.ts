@@ -60,6 +60,26 @@ export interface SendMessageParams {
   entities?: readonly MessageEntity[];
   /** 是否关闭 Telegram 为正文中第一个 URL 自动生成的预览卡片。 */
   disableLinkPreview?: boolean;
+  /**
+   * 论坛（topics）群里这条消息要落进哪个话题。
+   *
+   * 不传就是 General——Bot API 里「没有 message_thread_id」和「General」是同一件事。
+   * 因此话题群里任何**不挂回复**的主动发送都必须显式带上它，否则一律掉进 General
+   * （见 libs/forumTopic.ts）。挂了回复也不等于安全：`allow_sending_without_reply`
+   * 会在目标已被删除时把这条降级成普通发送，那时只有这个参数还留在话题里。
+   *
+   * **该不该带，按这条消息在群里活多久判定**：
+   * - **长期留存的必须带**——会话性输出（复读、AI 回复、洗澡回复、问答直答）、
+   *   `AGENTS.md`「Telegram 提示留存」列举的长期保留例外（两块权限看板、问答
+   *   看板、成功的中文动作结果），以及不由固定延迟清理持有的按钮消息
+   *   （`/set_qa` 表单、gag 发言提示）。它们不会自己消失，落错话题就是永久错位。
+   *   `preserveInGroup` 那一档由 `bun run check:conventions` 强制。
+   * - **到期自删的不带**——命令回执与用法提示（30 秒清理，见 commandMessages.ts）、
+   *   广告封禁播报与刷屏禁言公告，以及入群验证提醒（理由见 libs/forumTopic.ts
+   *   的入群验证豁免）。错也只错到清理为止，不值得为它把话题 id 铺进每一个
+   *   调用点与 Worker 协议。
+   */
+  messageThreadId?: number;
   /** 消息 id 的同步登记点，语义见 SendEphemeralMessageParams.onSent。 */
   onSent?: (messageId: number) => void;
 }
@@ -77,6 +97,7 @@ export async function sendMessageWithResult({
   signal,
   entities,
   disableLinkPreview,
+  messageThreadId,
   onSent,
 }: SendMessageParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
@@ -85,6 +106,7 @@ export async function sendMessageWithResult({
       requestSignal?: AbortSignal
     ): Promise<Message.TextMessage> => {
       const other: Parameters<SendMessageApi["sendMessage"]>[2] = {
+        ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
         ...(replyToMessageId
           ? {
             reply_parameters: {
@@ -140,6 +162,11 @@ export interface SendEphemeralMessageParams {
   api?: EphemeralSendMessageApi;
   signal?: AbortSignal;
   /**
+   * 论坛（topics）群里这条目标专属提示要亮在哪个话题；语义见 SendMessageParams
+   * 的同名字段。gag 的发言入口靠它跟着被管教的人换话题（见 commands/gag/）。
+   */
+  messageThreadId?: number;
+  /**
    * 消息 id 的**同步**登记点：拿到 id 的那一刻立即回调，早于 runTelegramAction
    * 在发送成功之后补做的 update 取消判定（见 actions/core.ts）。
    *
@@ -166,9 +193,11 @@ export async function sendEphemeralMessage({
   keyboard,
   api = telegramApi,
   signal,
+  messageThreadId,
   onSent,
 }: SendEphemeralMessageParams): Promise<number | undefined> {
   const other: EphemeralSendMessageOptions = {
+    ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
     receiver_user_id: receiverUserId,
     ...(callbackQueryId === undefined
       ? {}
@@ -219,6 +248,12 @@ export interface SendChatActionParams {
   action: TelegramChatAction;
   api?: SendChatActionApi;
   signal?: AbortSignal;
+  /**
+   * 论坛（topics）群里这次状态要亮在哪个话题；语义见 SendMessageParams
+   * 的同名字段。不传就亮在 General——消息落在话题里、「正在输入…」却亮在
+   * General，是话题群里最容易被看见的那种不一致（见 libs/forumTopic.ts）。
+   */
+  messageThreadId?: number;
 }
 
 /** 发一次聊天状态（「正在输入…」这类）。 */
@@ -227,6 +262,7 @@ export async function sendChatAction({
   action,
   api = telegramApi,
   signal,
+  messageThreadId,
 }: SendChatActionParams): Promise<boolean> {
   return runBooleanTelegramAction(
     `send ${action} action`,
@@ -234,7 +270,7 @@ export async function sendChatAction({
       api.sendChatAction(
         chatId,
         action,
-        {},
+        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
         ...signalArgs(requestSignal)
       ),
     signal
@@ -272,6 +308,12 @@ export interface SendStickerParams {
   fileId: string;
   api?: SendStickerApi;
   signal?: AbortSignal;
+  /**
+   * 论坛（topics）群里这条消息要落进哪个话题；语义见 SendMessageParams
+   * 的同名字段。本入口没有回复参数，因此**只有它**能把消息送进话题，
+   * 不传一律落 General（见 libs/forumTopic.ts）。
+   */
+  messageThreadId?: number;
 }
 
 export async function sendSticker({
@@ -279,6 +321,7 @@ export async function sendSticker({
   fileId,
   api = telegramApi,
   signal,
+  messageThreadId,
 }: SendStickerParams): Promise<number | undefined> {
   return runTelegramAction({
     action: "send sticker",
@@ -288,7 +331,7 @@ export async function sendSticker({
       api.sendSticker(
         chatId,
         fileId,
-        {},
+        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
         ...signalArgs(requestSignal)
       ),
     map: (sent: Message.StickerMessage): number | undefined => {
@@ -318,6 +361,11 @@ export interface SendPhotoParams {
    * caption 是整条拒绝而不是截断，这里不做兜底截断，免得悄悄吞掉正文。
    */
   caption?: string;
+  /**
+   * 论坛（topics）群里这条消息要落进哪个话题；语义与注意事项见
+   * SendMessageParams 的同名字段（挂了回复也要带）。
+   */
+  messageThreadId?: number;
 }
 
 /** 从内存上传一张图片并返回 Telegram 实际建立的回复关系；不落临时文件。 */
@@ -329,6 +377,7 @@ export async function sendPhotoWithResult({
   api = telegramApi,
   signal,
   caption,
+  messageThreadId,
 }: SendPhotoParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send photo",
@@ -341,6 +390,7 @@ export async function sendPhotoWithResult({
       // 用户产出的自由文本，一旦按 HTML/Markdown 解析，正文里的 `<`、`_`
       // 就会变成格式或链接注入，并让整条发送因实体不闭合而失败。
       const other: Parameters<SendPhotoApi["sendPhoto"]>[2] = {
+        ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
         ...(caption ? { caption } : {}),
         ...(replyToMessageId
           ? {
@@ -408,6 +458,11 @@ export interface SendAudioParams {
    */
   /** 与音频字节相同，Worker 调用会转移所有权。 */
   thumbnailBytes?: Uint8Array;
+  /**
+   * 论坛（topics）群里这条消息要落进哪个话题；语义与注意事项见
+   * SendMessageParams 的同名字段（挂了回复也要带）。
+   */
+  messageThreadId?: number;
 }
 
 /**
@@ -429,6 +484,7 @@ export async function sendAudioWithResult({
   performer,
   duration,
   thumbnailBytes,
+  messageThreadId,
 }: SendAudioParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send audio",
@@ -439,6 +495,7 @@ export async function sendAudioWithResult({
       // 自由文本，一旦按 HTML/Markdown 解析，正文里的 `<`、`_` 就会变成格式或
       // 链接注入，并让整条发送因实体不闭合而失败。
       const other: Parameters<SendAudioApi["sendAudio"]>[2] = {
+        ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
         ...(caption ? { caption } : {}),
         ...(title ? { title } : {}),
         ...(performer ? { performer } : {}),
@@ -475,11 +532,23 @@ export async function sendAudioWithResult({
 }
 
 /** 复制一条消息并登记自发消息 ID。 */
-export async function copyMessage(
-  chatId: number,
-  fromChatId: number,
-  messageId: number
-): Promise<number | undefined> {
+export interface CopyMessageParams {
+  chatId: number;
+  fromChatId: number;
+  messageId: number;
+  /**
+   * 论坛（topics）群里这条消息要落进哪个话题；语义与注意事项见
+   * SendMessageParams 的同名字段（挂了回复也要带）。
+   */
+  messageThreadId?: number;
+}
+
+export async function copyMessage({
+  chatId,
+  fromChatId,
+  messageId,
+  messageThreadId,
+}: CopyMessageParams): Promise<number | undefined> {
   return runTelegramAction({
     action: "copy message",
     execute: (signal?: AbortSignal): Promise<MessageId> =>
@@ -487,7 +556,7 @@ export async function copyMessage(
         chatId,
         fromChatId,
         messageId,
-        {},
+        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
         ...signalArgs(signal)
       ),
     map: (copied: MessageId): number | undefined => {

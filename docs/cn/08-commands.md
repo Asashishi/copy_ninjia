@@ -59,9 +59,12 @@
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>开关本群日语翻译能力（默认关闭）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群的业务处理总入口</td></tr>
 <tr><td><code>/batch_kick &lt;Nm|Nh|Nd&gt;</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>在超级群中踢出滚动 24 小时内指定时间窗加入且仍在群内的成员；只踢不拉黑</td></tr>
-<tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">白名单身份</td><td>查询发起用户/频道自己的完整权限，或以 JSON 列出权限说明；<code>help</code> 长期保留，<code>query</code> 30 秒后删除</td></tr>
+<tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">白名单身份</td><td>查询发起用户/频道自己的完整权限，或以 JSON 列出权限说明；两者渲染出的看板都长期保留</td></tr>
 <tr><td><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>修改已有白名单用户/频道的一项权限；<code>all</code> 可全部打开</td></tr>
 <tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>新增或删除白名单用户/频道；支持回复、<code>@username</code>、用户 id 与频道 id</td></tr>
+<tr><td><code>/set_qa</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>弹出「设置文本 / 设置答案」两按钮表单，两样填齐即登记一条本群问答；每群最多 5 条</td></tr>
+<tr><td><code>/query_qa</code><br><code>/query_qa &lt;问题文本&gt;</code></td><td align="center">群成员</td><td>以 JSON 代码块列出本群全部问答，或只查那一条；看板长期保留，查不到的提示 30 秒后删除</td></tr>
+<tr><td><code>/remove_qa &lt;问题文本&gt;</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>删除本群指定问答；没删到会如实说本来就没有</td></tr>
 <tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束向目标群的中转</td></tr>
 </table>
 
@@ -70,7 +73,9 @@
 ### 行为细节
 
 - **命令入口**：群命令统一经过 `/init` 网关；未初始化群只接受超级管理员的 `/init`，所以 `/permission`、`/white` 也必须在已初始化群中使用。私聊斜杠命令只放行 `/send`。
-- **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。成功的动作结果与 `/permission help` 一样长期保留；目标缺失、参数错误和 `/x` 用法提示仍在 30 秒后删除。
+- **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。成功的动作结果与 `/permission help`、`/permission query` 一样长期保留；目标缺失、参数错误和 `/x` 用法提示仍在 30 秒后删除。
+- **群问答**：`/set_qa` 的表单靠 inline 预填收文本，因此有两条硬约束。**频道马甲一律拒绝**——Telegram 从不告诉本进程皮套底下是谁，给它维护权等于把本群问答交给任意能穿这层皮的人（同 `/permission`、`/white` 拒绝拿当前群自己当目标），而且马甲身份本就用不了 inline。话题群里 **General 与其它话题一样可用**——真正没有内联输入的只有最左边那个「全部」聚合视图，而它在 bot 侧与 General 完全无法区分（两者的消息都不带 `message_thread_id`），因此不做判定：在「全部」里点按钮点不动时，进任意一个话题再试即可。表单按群唯一、10 分钟到期自动收走；真正的写入资格在结果落群那一步按发送者重新校验，不由「谁开的表单」决定。`/init disable` 与群 teardown 只收走未填完的表单，**已登记的问答留在库里**——那是部署方登记的配置，重新 `/init enable` 后照旧生效，真要删得走 `/remove_qa`。
+- **问答直答**：本群已 `/init enable` 且消息文本与登记的问题**一字不差**时，机器人直接回答，不经过 AI，也不受 @、回复或随机插话那套触发条件约束——包括回复机器人和 @ 机器人的情形。前导 `@机器人 ` 会先剥掉再比对。语义相近但文本不同的提问不走这条路，交给 AI 那一轮的 `group_qa_query` 与 `group_qa_answer` 两个查询工具判断，两者都不消耗整轮可见动作预算，本群没有问答时根本不挂。
 - **`/gag` 限制发言**：全局最多同时生效 5 个目标，同群可有多个目标但同一身份不能重复；入口只在已初始化且 Bot 有删除权限的群中建立。普通用户先在群里留下不带按钮的公开状态，再收到一条由 `receiver_user_id` 限定、仅本人可见且带「发言」按钮的临时入口；频道没有接收用户，只发送一条带按钮的公开状态。普通 `@机器人` 查询始终只进入运势。用户和频道按钮统一只预填 `gag:<目标 Telegram id>`（用户为正数、频道为负数）；首个空格前只允许这个目标 id，禁止加入 MD5、摘要、随机 token、群 id 或任何其他元数据。Telegram 的 inline query 不提供当前具体群 id，也没有 Bot 可拦截的发送前回调，因此这些额外字段不能证明实际输入群；正常入口固定使用当前聊天按钮。生成结果以隐藏文本链接携带 `<目标主页>#<会话群 id>`，该 URL 是公开校验材料，不是秘密或认证 token；消息落群后必须同时核对链接中的目标与会话群、实际 `from.id`/`sender_chat.id` 和实际 `message.chat.id`，身份或群不匹配就立即删除。频道候选标题不显示群名。任何 `gag:` 查询均由 gag 领域独占，非法、过期或身份不匹配时只返回空结果，不回退运势。开始状态不走 30 秒清理，只在对应 `/ungag`、超时或群运行时 teardown 时按各自消息 id 删除；任一删除失败都会保留有界的收尾状态并有限重试，同一目标须等全部状态确实消失后才能重新 gag。`/ungag` 必须通过回复、`@username` 或身份 id 定向。发言渲染逐个扩展字形抽样：75% 走填充分支，在该字形后追加 3~6 个点（相邻两点各以 1/3 概率插一个空格），其余 25% 把整个字形等概率替换成六种拟声字之一。同类操作最多连续作用于两个相邻字形，第三次候选由闸门挡下，因此 75% 只是抽样概率、不承诺最终文本里的填充占比；短文本另有保底档位（2~3、4~7、8~31、32~64 个字形分别至少操作 2、3、7、15 次）。
 - **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 会从权威 SQLite 黑名单事务删除目标，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
 - **`/batch_kick` 慢速清理**：只允许超级管理员在已初始化的超级群中使用，参数是 `30m`、`2h`、`1d` 这类不超过 24 小时的单个窗口。命令按入群日志找出窗口内最后一次加入且仍在群中的成员，小并发执行只踢不封；白名单边界内的身份（含恒在边界内的超级管理员）和永久黑名单成员都不会被这条命令当作普通目标处理。

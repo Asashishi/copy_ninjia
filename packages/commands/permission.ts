@@ -6,6 +6,7 @@ import type {
   WhitelistPermissions,
 } from "../types/identityPolicy";
 import type { SetWhitelistPermissionResult } from "../infra/identityPolicy/whitelist";
+import { forumTopicThreadId } from "../libs/forumTopic";
 import {
   PERMISSION_COMMAND_TEXTS,
   WHITELIST_PERMISSION_ALL_COMMAND,
@@ -83,7 +84,13 @@ function formatPermissionHelpMessage(): PermissionHelpMessage {
   });
 }
 
-/** 把目标身份的完整权限渲染为 JSON 代码块；查询回执仍按普通群提示自动删除。 */
+/**
+ * 把目标身份的完整权限渲染为 JSON 代码块。
+ *
+ * 与 `help` 一样长期保留：这份回执是一张要照着逐项核对的权限看板，30 秒清理会
+ * 在人读完之前把它收走，于是只能反复重发同一条命令。用户已明确授权这条例外，
+ * 调用点显式传 `preserveInGroup: true`（见 AGENTS.md 的「Telegram 提示留存」）。
+ */
 function formatPermissionQueryMessage(
   permissions: Readonly<WhitelistPermissions>,
   targetLabel: string
@@ -191,6 +198,8 @@ export async function handlePermissionCommand(
       entities: helpMessage.entities,
       replyToMessageId: messageId,
       preserveInGroup: true,
+      // 长期保留的看板必须自己带话题，理由见 SendMessageParams.messageThreadId。
+      messageThreadId: forumTopicThreadId(ctx.msg),
     });
     return;
   }
@@ -228,6 +237,11 @@ export async function handlePermissionCommand(
       text: queryMessage.text,
       entities: queryMessage.entities,
       replyToMessageId: messageId,
+      // 与上面的 help 同一口径的长期保留例外；理由见
+      // formatPermissionQueryMessage 的 JSDoc。目标解析失败、修改拒绝与用法
+      // 提示仍走默认 30 秒清理，本例外只覆盖成功渲染出的那张权限看板。
+      preserveInGroup: true,
+      messageThreadId: forumTopicThreadId(ctx.msg),
     });
     return;
   }

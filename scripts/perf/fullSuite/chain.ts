@@ -440,6 +440,7 @@ function aiReplyCommandChain(): ChainDefinition {
         replyToMessageId: messageId,
         imageGenerationRequested: false,
         isRandomTrigger: false,
+        messageThreadId: undefined,
       });
       await settleReplyRound(sequence);
       // 拟人停顿正好夹在「切成 typing 状态」与「真的把消息发出去」之间。抖动在

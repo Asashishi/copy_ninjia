@@ -45,6 +45,17 @@ export interface GagSession {
   pendingSpeakNoticeMessageId: number;
   /** 已被新入口取代但删除失败的入口 id；至多保留一个，避免无界堆积。 */
   retiredSpeakNoticeMessageId: number;
+  /**
+   * 当前发言入口**实际所在**的论坛话题；General、非论坛群为 undefined。
+   *
+   * 被管教的人换个话题说话时，入口必须跟着搬过去，否则他在话题 B 被删消息、
+   * 按钮却留在话题 A，等于被封了口还找不到说话的地方。搬家复用换新那套
+   * current/pending/retired 槽位：先在新话题发一条，再删旧的（见
+   * commands/gag/inline.ts 的 replaceGagSpeakNotice）。本字段只在发送成功后
+   * 更新，因此它永远指向「群里现在真的挂着按钮的那个话题」，判定是否需要搬家
+   * 就拿它和来消息的话题比。删除不需要话题，故 pending/retired 只存 id。
+   */
+  speakNoticeThreadId: number | undefined;
   /** 当前入口发出后本群收到的消息数；达到固定阈值才换新。 */
   messagesSinceSpeakNotice: number;
   /** 唯一的入口换新任务；结束状态必须等它交出在途 message id。 */

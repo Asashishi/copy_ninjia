@@ -46,6 +46,9 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "ungag", description: "定向解除目标 gag；必须回复、写 @username 或用户/频道 id，同样需要 isCanGag，笨蛋♡" },
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
   { command: "permission", description: "用 help 看说明、query 查权限，所有杂鱼都能用；修改权限仅限超级管理员，杂鱼别乱碰♡" },
+  { command: "set_qa", description: "给本群登记一条问答：弹出两个按钮分别设置问题和答案，最多 5 条；以后有人一字不差地问，本天才直接答，仅持有 isCanControllQaPermission 的身份配用♡" },
+  { command: "query_qa", description: "看看本群登记了哪些问答，写 /query_qa <问题文本> 只查那一条，群成员都能看，杂鱼♡" },
+  { command: "remove_qa", description: "删掉本群指定问答，写成 /remove_qa <问题文本>，同样需要 isCanControllQaPermission，别手滑，笨蛋♡" },
   { command: "white", description: "新增或删除白名单用户/频道；isCanWhiteOther 只能代加默认权限，删除仍只有超级管理员配碰，杂鱼别乱伸手♡" },
 ];
 

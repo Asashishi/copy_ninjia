@@ -19,6 +19,7 @@ import {
   BOT_DEFAULT_AVATAR_URL,
   FORTUNE_THUMBNAIL_URL,
   GAG_THUMBNAIL_URL,
+  QA_THUMBNAIL_URL,
   PROBABILITY_THUMBNAIL_URL,
 } from "../../../packages/consts/ui/assets";
 import type { DecodedStateFile, LockdownRecord, StateFileSchema } from "../../../packages/types/chatState";
@@ -565,13 +566,14 @@ describe("启动补齐素材直链", () => {
     return written;
   }
 
-  test("四项都没设过时补齐并落盘一次", async () => {
+  test("五项都没设过时补齐并落盘一次", async () => {
     const written: Promise<void> = installRecordingStore();
 
-    expect(seedMissingAssetState()).toBe(4);
+    expect(seedMissingAssetState()).toBe(5);
     expect(globalAssetState.fortuneThumbnailUrl).toBe(FORTUNE_THUMBNAIL_URL);
     expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
     expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
+    expect(globalAssetState.qaThumbnailUrl).toBe(QA_THUMBNAIL_URL);
     expect(globalAssetState.botDefaultAvatarUrl).toBe(BOT_DEFAULT_AVATAR_URL);
 
     await written;
@@ -581,6 +583,7 @@ describe("启动补齐素材直链", () => {
       fortuneThumbnailUrl: FORTUNE_THUMBNAIL_URL,
       probabilityThumbnailUrl: PROBABILITY_THUMBNAIL_URL,
       gagThumbnailUrl: GAG_THUMBNAIL_URL,
+      qaThumbnailUrl: QA_THUMBNAIL_URL,
       botDefaultAvatarUrl: BOT_DEFAULT_AVATAR_URL,
     });
   });
@@ -595,6 +598,7 @@ describe("启动补齐素材直链", () => {
     expect(globalAssetState.fortuneThumbnailUrl).toBe("https://cdn.example/fortune.png");
     expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
     expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
+    expect(globalAssetState.qaThumbnailUrl).toBe(QA_THUMBNAIL_URL);
   });
 
   test("四项都配过时不写盘", async () => {

@@ -29,6 +29,7 @@ import { handleAdSampleMessage } from "./diskIO/adSampleFile";
 import {
   configureStoragePersistenceReply,
   flushStorageDatabase,
+  handleChatQaWrite,
   handleChatStateWrite,
   handleIdentityPolicyWrite,
   handlePendingRemovalSnapshot,
@@ -159,6 +160,7 @@ function handleLoad(): void {
   let whitelistEntryCount: number = 0;
   let pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
   let chatStates: Map<number, ChatState> = new Map();
+  let chatQa: Map<number, ReadonlyMap<string, string>> = new Map();
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
     hydrateAiMemorySnapshots();
@@ -178,6 +180,7 @@ function handleLoad(): void {
     whitelistEntryCount = identityStorage.whitelistEntryCount;
     pendingBlockedRemovals = identityStorage.pendingBlockedRemovals;
     chatStates = identityStorage.chatStates;
+    chatQa = identityStorage.chatQa;
   } catch (error: unknown) {
     loadError = error instanceof Error ? error.message : String(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
@@ -194,6 +197,7 @@ function handleLoad(): void {
     blocklistEntryCount,
     whitelistEntryCount,
     chatStates,
+    chatQa,
     error: loadError,
   };
   self.postMessage(reply);
@@ -329,6 +333,15 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
         )
       );
       break;
+    case "chatQaWrite":
+      handleIdentityMessage(
+        "chatQa",
+        (): void => handleChatQaWrite(
+          msg,
+          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
+        )
+      );
+      break;
     case "recoveryReplay":
       diskIOReplayWindow.current = msg.active;
       break;
@@ -408,7 +421,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
  * joinLog 与 types/diskIO.ts 的 RecoveryReplayRequest）。
  */
 function handleIdentityMessage(
-  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState",
+  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa",
   apply: () => void
 ): void {
   try {
