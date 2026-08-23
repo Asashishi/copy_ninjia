@@ -31,9 +31,22 @@ of this page:
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-No prior clone is needed: the script clones into `copy_ninjia/` under the current directory (set
-`COPY_NINJIA_DIR` to change that). If you already have a work tree, running `bash install.sh` from
-the repository root is equivalent and skips the clone step.
+No prior clone is needed: the script clones **the Latest Release on GitHub** into `copy_ninjia/`
+under the current directory (set `COPY_NINJIA_DIR` to change that), landing on that tag as a detached
+HEAD. It installs a published release rather than `master` HEAD — the tag is read from
+`releases/latest` at run time, and a lookup failure stops the install rather than falling back to
+`master`, which would put unannounced code on a production host.
+
+If you already have a work tree, running `bash install.sh` from the repository root is equivalent: it
+skips the clone and **leaves that tree's checkout untouched** (it may carry local changes or sit on a
+version deliberately), reporting only which version is present.
+
+The install then registers and enables `copy-ninjia.service` (`User` and `WorkingDirectory` taken from
+the current user and repository path) and watches two restart intervals to confirm it is not in a
+restart loop before reporting success. An existing unit is replaced only after you confirm; if you
+keep it, the script prints that unit's actual `WorkingDirectory` and `ExecStart` so you never end up
+installing into one directory while another one runs. Hosts without systemd (containers, non-systemd
+distributions) skip registration and run in the foreground instead.
 
 Under a pipe, fd 0 is the script text itself, so every prompt reads from `/dev/tty` — without a
 usable controlling terminal the script exits rather than consuming half of its own body as answers.

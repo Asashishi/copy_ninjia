@@ -178,10 +178,13 @@ Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンド�
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-行うのは 3 つだけです。環境の準備（`git`/`curl`/`unzip` の補完、`./copy_ninjia` への clone、Bun の
-導入、`bun install`）、Telegram と AI 設定の対話的な入力、そして空の identity database を作ってからの
-起動。systemd unit は登録せず、既存の設定も上書きしないため、再実行しても安全です。すでに clone 済み
-なら repository root で `bash install.sh` を実行すれば clone 手順を飛ばします。
+順に 4 つ行います。環境の準備（`git`/`curl`/`unzip` の補完、Bun の導入、`bun install`）、**GitHub の
+Latest Release** を `./copy_ninjia` へ clone、Telegram と AI 設定の対話的な入力、そして空の identity
+database 作成と systemd unit の登録・起動。入れるのは `master` HEAD ではなく公開済み release です。
+tag は実行時に `releases/latest` へ問い合わせ、取得できなければその場で失敗します（`master` へ黙って
+フォールバックしません）。既存の設定は上書きせず、既存の systemd unit は上書き前に確認するため、再実行
+しても安全です。すでに clone 済みなら repository root で `bash install.sh` を実行すれば clone を飛ばし、
+その work tree の checkout はそのまま残します。
 
 手動 install：
 

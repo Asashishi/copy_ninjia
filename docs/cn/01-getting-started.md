@@ -30,7 +30,11 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-不用先 clone：脚本自己会 clone 到当前目录下的 `copy_ninjia/`（想换目录设 `COPY_NINJIA_DIR`）。已经有工作树时，在仓库根跑 `bash install.sh` 等价，会跳过 clone 那一步。
+不用先 clone：脚本自己会把 **GitHub 上的 Latest Release** clone 到当前目录下的 `copy_ninjia/`（想换目录设 `COPY_NINJIA_DIR`），落在该 tag 上（detached HEAD）。装的是已发布版本而不是 `master` HEAD——tag 由 `releases/latest` 接口现问，问不到就当场失败，不会退回 `master`：那等于把一台生产机装成还没公告过的代码。
+
+已经有工作树时，在仓库根跑 `bash install.sh` 等价，会跳过 clone，并且**不改动那棵树的 checkout**（它可能有本地改动或有意停在某个版本），只报一句当前版本。
+
+装完会注册并启用 `copy-ninjia.service`（`User` 与 `WorkingDirectory` 取当前用户和当前仓库路径），随后观察两个重启间隔确认它没有进重启循环才算成功。已存在的 unit 会先问再覆盖；选择保留时脚本会打印那份 unit 实际的 `WorkingDirectory` 与 `ExecStart`，避免出现「装在 A、跑起来的是 B」。没有 systemd 的机器（容器、非 systemd 发行版）跳过注册，改为前台运行。
 
 管道运行下 fd 0 是脚本正文本身，所以所有问答都从 `/dev/tty` 读——拿不到控制终端时脚本直接退出，不会读到半截脚本当答案。
 

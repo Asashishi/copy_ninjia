@@ -170,7 +170,7 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-只做三件事：配好环境（补齐 `git`/`curl`/`unzip`、clone 仓库到 `./copy_ninjia`、装 Bun、`bun install`）、交互问 Telegram 与 AI 配置、建空身份数据库后启动。不注册 systemd、不动既有配置，重跑安全。已经 clone 过就在仓库根跑 `bash install.sh`，会跳过 clone。
+按顺序做四件事：配好环境（补齐 `git`/`curl`/`unzip`、装 Bun、`bun install`）、把 **GitHub 上的 Latest Release** clone 到 `./copy_ninjia`、交互问 Telegram 与 AI 配置、建空身份数据库并注册 systemd 服务后启动。装的是已发布版本而不是 master HEAD；tag 现问 `releases/latest`，问不到就当场失败，不会悄悄退回 master。不动既有配置，已存在的 systemd unit 会先问再覆盖，重跑安全。已经 clone 过就在仓库根跑 `bash install.sh`，会跳过 clone 并保留该工作树当前的 checkout。
 
 手工安装：
 

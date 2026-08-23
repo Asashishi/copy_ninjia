@@ -170,11 +170,14 @@ One-shot install (installs whatever is missing, asks for config, then starts):
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-It does exactly three things: set up the environment (add `git`/`curl`/`unzip`, clone the repository
-into `./copy_ninjia`, install Bun, run `bun install`), ask interactively for the Telegram and AI
-configuration, then create the empty identity database and start. It registers no systemd unit, never
-overwrites existing configuration, and is safe to re-run. If you already have a clone, run
-`bash install.sh` from the repository root and it skips the clone step.
+It does four things in order: set up the environment (add `git`/`curl`/`unzip`, install Bun, run
+`bun install`), clone **the Latest Release on GitHub** into `./copy_ninjia`, ask interactively for the
+Telegram and AI configuration, then create the empty identity database, register a systemd unit and
+start. It installs a published release rather than `master` HEAD — the tag comes from
+`releases/latest` at run time, and a lookup failure stops the install instead of quietly falling back
+to `master`. It never overwrites existing configuration, asks before replacing an existing systemd
+unit, and is safe to re-run. If you already have a clone, run `bash install.sh` from the repository
+root: it skips the clone and leaves that work tree's checkout alone.
 
 Manual install:
 

@@ -5,8 +5,14 @@
 # 直接跑：
 #   curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 #
-# 只做三件事，按顺序：配好环境 -> 问部署方要配置 -> 启动。不注册 systemd、不拉
-# release tag、不备份、不迁移、不卸载——那些属于运维流程，见 docs/cn/07-operations.md。
+# 按顺序做四件事：配好环境 -> 取最新 release -> 问部署方要配置 -> 注册 systemd 并启动。
+# 不备份、不迁移、不卸载——那些属于运维流程，见 docs/cn/07-operations.md。
+#
+# 装的是 GitHub 上的 Latest Release：tag 取自 releases/latest 接口，取不到即失败退出。
+# 已存在的工作树保持原有 checkout 不动，只报告当前版本。
+#
+# `curl | bash` 取到的脚本来自 master，代码来自 release tag；脚本跑完，装出来的代码
+# 是该 release 的。
 #
 # 假设机器上什么都没装：缺 git/curl/unzip 会用系统包管理器补齐，缺仓库会 clone，
 # 缺 Bun 会装官方发行版。唯一不代劳的是 /ja_copy 用的 g-auth.json：那是 GCP 服务
@@ -18,6 +24,10 @@
 set -Eeuo pipefail
 
 readonly REPOSITORY_URL="https://github.com/Asashishi/copy_ninjia.git"
+# Latest Release 的来源接口。
+readonly RELEASE_API_URL="https://api.github.com/repos/Asashishi/copy_ninjia/releases/latest"
+readonly SERVICE_NAME="copy-ninjia"
+readonly SERVICE_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 # clone 落地目录；已在仓库内运行时用不到。可用环境变量覆盖。
 readonly CLONE_TARGET="${COPY_NINJIA_DIR:-copy_ninjia}"
 
@@ -67,6 +77,20 @@ install_system_packages() {
   else
     return 1
   fi
+}
+
+# 报告已存在工作树的当前版本；不改动它的 HEAD。
+worktree_version_suffix() {
+  git describe --tags --always --dirty 2>/dev/null |
+    sed 's/^/（当前 /; s/$/，本脚本不改动它的 checkout）/'
+}
+
+# 取 GitHub 上 Latest Release 的 tag；来源只有 releases/latest 接口。
+# 任一环节失败时（pipefail）整条返回非零，由调用方 die，不回退到 master。
+latest_release_tag() {
+  curl -fsSL -H "Accept: application/vnd.github+json" -- "$RELEASE_API_URL" |
+    grep -m1 -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' |
+    cut -d'"' -f4
 }
 
 require_command() {
@@ -120,7 +144,7 @@ confirm() {
 }
 
 # --------------------------------------------------------------------------
-step "1/7 平台自检"
+step "1/8 平台自检"
 # --------------------------------------------------------------------------
 
 [ "$(uname -s)" = "Linux" ] ||
@@ -134,7 +158,7 @@ step "1/7 平台自检"
 info "Linux + 可读 /proc + 可用控制终端，均满足。"
 
 # --------------------------------------------------------------------------
-step "2/7 获取仓库"
+step "2/8 获取仓库"
 # --------------------------------------------------------------------------
 
 # 三种到达方式：仓库根跑 `bash install.sh`、仓库外跑一份下载好的脚本、以及
@@ -147,25 +171,31 @@ fi
 
 if [ -n "$SCRIPT_DIRECTORY" ] && is_repository_root "$SCRIPT_DIRECTORY"; then
   cd -- "$SCRIPT_DIRECTORY"
-  info "在脚本所在目录找到工作树：$(pwd)"
+  info "在脚本所在目录找到工作树：$(pwd)$(worktree_version_suffix)"
 elif is_repository_root "$PWD"; then
-  info "在当前目录找到工作树：$(pwd)"
+  info "在当前目录找到工作树：$(pwd)$(worktree_version_suffix)"
 elif is_repository_root "$PWD/$CLONE_TARGET"; then
   cd -- "$CLONE_TARGET"
-  info "复用已存在的工作树：$(pwd)"
+  info "复用已存在的工作树：$(pwd)$(worktree_version_suffix)"
 elif [ -e "$CLONE_TARGET" ]; then
   die "${PWD}/${CLONE_TARGET} 已存在但不是 Copy Ninjia 工作树。挪开它，或设 COPY_NINJIA_DIR 指定别的目录。"
 else
   require_command git git
+  require_command curl curl
+  RELEASE_TAG="$(latest_release_tag)" ||
+    die "取不到 GitHub 上的 Latest Release（${RELEASE_API_URL}）。装的必须是已发布版本，不会退回 master；确认网络与 API 限流后重跑。"
+  info "Latest Release 是 ${RELEASE_TAG}，按这个 tag 安装。"
   info "clone ${REPOSITORY_URL} 到 ${PWD}/${CLONE_TARGET} ……"
-  git clone -- "$REPOSITORY_URL" "$CLONE_TARGET" || die "git clone 失败。"
+  # --branch 直接落在 tag 上，得到 detached HEAD。
+  git -c advice.detachedHead=false clone --branch "$RELEASE_TAG" -- "$REPOSITORY_URL" "$CLONE_TARGET" ||
+    die "git clone ${RELEASE_TAG} 失败。"
   cd -- "$CLONE_TARGET"
   is_repository_root "$PWD" || die "clone 出来的目录不像 Copy Ninjia 工作树。"
-  info "工作树就绪：$(pwd)"
+  info "工作树就绪：$(pwd)（${RELEASE_TAG}）"
 fi
 
 # --------------------------------------------------------------------------
-step "3/7 基础工具与 Bun"
+step "3/8 基础工具与 Bun"
 # --------------------------------------------------------------------------
 
 if ! command -v bun >/dev/null 2>&1 && [ -x "${BUN_INSTALL:-$HOME/.bun}/bin/bun" ]; then
@@ -199,7 +229,7 @@ fi
 info "Bun ${BUN_VERSION}，满足 ${REQUIRED_BUN_MAJOR}.${REQUIRED_BUN_MINOR}+ 要求。"
 
 # --------------------------------------------------------------------------
-step "4/7 安装依赖"
+step "4/8 安装依赖"
 # --------------------------------------------------------------------------
 
 # 用锁文件安装：bun.lock 已进版本库，装出来的树必须和门禁跑过的那棵一致。
@@ -207,7 +237,7 @@ bun install --frozen-lockfile || die "bun install 失败。"
 info "依赖安装完成。"
 
 # --------------------------------------------------------------------------
-step "5/7 准备配置目录"
+step "5/8 准备配置目录"
 # --------------------------------------------------------------------------
 
 mkdir -p config
@@ -225,7 +255,7 @@ for example_file in config_example/*.json; do
 done
 
 # --------------------------------------------------------------------------
-step "6/7 填写配置"
+step "6/8 填写配置"
 # --------------------------------------------------------------------------
 
 CONFIGURE_TELEGRAM=1
@@ -353,7 +383,7 @@ if [ ! -e g-auth.json ]; then
 fi
 
 # --------------------------------------------------------------------------
-step "7/7 初始化身份数据库并启动"
+step "7/8 初始化身份数据库"
 # --------------------------------------------------------------------------
 
 # 身份库的真实位置由 packages/consts/paths.ts 决定：缺省是仓库根，设了
@@ -429,5 +459,83 @@ info "首次启动前还需要在 BotFather 侧关闭 Privacy Mode 并开启 Inl
 info "机器人进群后，由超级管理员在群里执行 /init enable 打开本群业务入口——未 init 的群，普通业务 update 在入口网关直接丢弃。"
 info "其余三个开关都是可选、缺省关闭：/ai_chat enable（AI 闲聊）、/ad_detect enable（广告检测）、/antiraid enable（入群验证与防冲群）。"
 info "/ad_detect 与 /antiraid 还要求机器人在本群是管理员，否则打开了也不会真正触发。"
-printf '\n==> 启动（Ctrl-C 停止；下次直接用 bun run start）\n\n'
-exec bun run start
+
+# --------------------------------------------------------------------------
+step "8/8 注册 systemd 服务并启动"
+# --------------------------------------------------------------------------
+
+# 没有可用 systemd 时（容器、非 systemd 发行版）跳过注册，改为前台运行。
+if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+  warn "本机没有可用的 systemd，跳过服务注册。"
+  info "机器人将在前台运行；Ctrl-C 停止，下次直接用 bun run start。"
+  printf '\n==> 启动\n\n'
+  exec bun run start
+fi
+
+BUN_BINARY="$(command -v bun)" || die "找不到 bun 可执行文件。"
+SERVICE_USER="$(id -un)"
+SERVICE_WORKDIR="$(pwd)"
+
+# 已存在的 unit 先问再覆盖。
+WRITE_UNIT=1
+if [ -e "$SERVICE_UNIT_PATH" ]; then
+  info "${SERVICE_UNIT_PATH} 已存在。"
+  confirm "覆盖它？（选 n 则保留现有 unit，只做 enable 与启动）" n || WRITE_UNIT=0
+fi
+
+# 保留现有 unit 时报告它实际的 WorkingDirectory 与 ExecStart。
+if [ "$WRITE_UNIT" -eq 0 ]; then
+  info "沿用现有 unit：$(systemctl show "${SERVICE_NAME}.service" -p WorkingDirectory --value)"
+  info "                 $(systemctl show "${SERVICE_NAME}.service" -p ExecStart --value | head -c 160)"
+fi
+
+# NRestarts 是该 unit 的累计值，daemon-reload 不清零；这里记基线，后面比增量。
+# 全新安装时 unit 还不存在，NRestarts 取回空串，补成 0 参与后面的比较。
+RESTARTS_BEFORE="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value 2>/dev/null)"
+: "${RESTARTS_BEFORE:=0}"
+
+if [ "$WRITE_UNIT" -eq 1 ]; then
+  # 经 tee 写入，使 run_privileged 的提权作用于写文件的那个进程。
+  printf '%s\n' \
+    "[Unit]" \
+    "Description=Copy Ninjia Telegram Bot" \
+    "After=network-online.target" \
+    "Wants=network-online.target" \
+    "" \
+    "[Service]" \
+    "Type=simple" \
+    "User=${SERVICE_USER}" \
+    "WorkingDirectory=${SERVICE_WORKDIR}" \
+    "ExecStart=${BUN_BINARY} start" \
+    "Restart=on-failure" \
+    "RestartSec=5" \
+    "" \
+    "[Install]" \
+    "WantedBy=multi-user.target" |
+    run_privileged tee "$SERVICE_UNIT_PATH" >/dev/null ||
+    die "写入 ${SERVICE_UNIT_PATH} 失败（需要 root 或 sudo）。"
+  info "已写入 ${SERVICE_UNIT_PATH}（User=${SERVICE_USER}，WorkingDirectory=${SERVICE_WORKDIR}）。"
+fi
+
+run_privileged systemctl daemon-reload || die "systemctl daemon-reload 失败。"
+run_privileged systemctl enable --now "${SERVICE_NAME}.service" ||
+  die "启动 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+
+# 观察至少两个重启间隔（RestartSec=5）后再判定，口径见 docs/cn/07-operations.md。
+info "观察 ${SERVICE_NAME}.service 是否稳定（约 12 秒）……"
+sleep 12
+# systemctl show 是只读查询，不提权。
+ACTIVE_STATE="$(systemctl show "${SERVICE_NAME}.service" -p ActiveState --value)"
+SUB_STATE="$(systemctl show "${SERVICE_NAME}.service" -p SubState --value)"
+RESTARTS_AFTER="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value)"
+if [ "$ACTIVE_STATE" != "active" ] || [ "$SUB_STATE" != "running" ]; then
+  die "${SERVICE_NAME}.service 状态是 ${ACTIVE_STATE}/${SUB_STATE}，没有正常跑起来。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+fi
+if [ "$RESTARTS_AFTER" -gt "$RESTARTS_BEFORE" ]; then
+  die "${SERVICE_NAME}.service 在观察窗口内重启了 $((RESTARTS_AFTER - RESTARTS_BEFORE)) 次，说明启动后随即退出。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+fi
+
+printf '\n'
+info "${SERVICE_NAME}.service 运行中（${ACTIVE_STATE}/${SUB_STATE}，观察窗口内未重启），已设为开机自启。"
+info "看日志：journalctl -u ${SERVICE_NAME} -f"
+info "停止 / 重启：systemctl stop ${SERVICE_NAME} / systemctl restart ${SERVICE_NAME}"

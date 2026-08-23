@@ -31,9 +31,21 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-事前の clone は不要です。script 自身がカレントディレクトリ直下の `copy_ninjia/` へ clone します
-（変更したい場合は `COPY_NINJIA_DIR` を設定）。既に work tree がある場合は repository root で
-`bash install.sh` を実行すれば等価で、clone 手順を飛ばします。
+事前の clone は不要です。script 自身が **GitHub の Latest Release** をカレントディレクトリ直下の
+`copy_ninjia/` へ clone し、その tag（detached HEAD）に着地します（変更したい場合は `COPY_NINJIA_DIR`
+を設定）。入れるのは `master` HEAD ではなく公開済み release です。tag は実行時に `releases/latest` へ
+問い合わせ、取得できなければその場で失敗します。`master` へフォールバックすることはありません——それは
+公開していないコードを本番機へ入れることに等しいためです。
+
+既に work tree がある場合は repository root で `bash install.sh` を実行すれば等価で、clone を飛ばし、
+**その tree の checkout は変更しません**（ローカル変更があったり意図的に特定版で止めている可能性がある
+ため）。現在の版数を 1 行報告するだけです。
+
+その後 `copy-ninjia.service` を登録・有効化し（`User` と `WorkingDirectory` は現在のユーザーと
+repository path）、再起動ループに入っていないことを再起動間隔 2 回分観察して確認してから成功とします。
+既存 unit は確認してからでなければ上書きしません。残す選択をした場合は、その unit の実際の
+`WorkingDirectory` と `ExecStart` を表示するので、「A に入れたのに動いているのは B」を防げます。systemd の
+無いホスト（コンテナ、非 systemd ディストリビューション）では登録を飛ばし、フォアグラウンド実行にします。
 
 pipe 実行では fd 0 が script 本文そのものなので、すべての問い合わせは `/dev/tty` から読みます。
 制御端末が使えない場合は、script 本文の続きを回答として読んでしまう前に終了します。
