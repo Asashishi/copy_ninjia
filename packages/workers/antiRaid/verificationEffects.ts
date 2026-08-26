@@ -13,7 +13,7 @@ import {
   deleteMessage,
   deleteMessageAfter,
   sendMessage,
-  joinVerificationApi,
+  telegramApi,
 } from "../../infra/telegram";
 import { verificationKey } from "../../libs/verificationKey";
 import type { VerificationDispatcher } from "../../types/antiRaid/internal";
@@ -110,7 +110,7 @@ export async function runVerificationEffects({
   for (const effect of effects) {
     switch (effect.kind) {
       case "deleteMessage":
-        await deleteMessage(chatId, effect.messageId, joinVerificationApi);
+        await deleteMessage(chatId, effect.messageId, telegramApi);
         break;
       case "kickMember":
         await runKickMemberEffect({
@@ -122,10 +122,10 @@ export async function runVerificationEffects({
         break;
       case "deleteReminders":
         if (effect.reminderMessageId !== undefined) {
-          await deleteMessage(chatId, effect.reminderMessageId, joinVerificationApi);
+          await deleteMessage(chatId, effect.reminderMessageId, telegramApi);
         }
         if (effect.replyReminderMessageId !== undefined) {
-          await deleteMessage(chatId, effect.replyReminderMessageId, joinVerificationApi);
+          await deleteMessage(chatId, effect.replyReminderMessageId, telegramApi);
         }
         break;
       case "expel":
@@ -175,14 +175,14 @@ export async function runVerificationEffects({
           chatId,
           text: welcomeText,
           replyToMessageId: effect.anchorMessageId,
-          api: joinVerificationApi,
+          api: telegramApi,
         });
         if (welcomeMessageId !== undefined) {
           deleteMessageAfter({
             chatId,
             messageId: welcomeMessageId,
             delayMs: WELCOME_AUTO_DELETE_MS,
-            api: joinVerificationApi,
+            api: telegramApi,
           });
         }
         break;
@@ -200,7 +200,7 @@ export async function runVerificationEffects({
           callbackQueryId: effect.callbackQueryId,
           text: replyText,
           showAlert: effect.reply !== "ok",
-          api: joinVerificationApi,
+          api: telegramApi,
         });
         break;
       }

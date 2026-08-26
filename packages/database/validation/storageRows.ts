@@ -3,21 +3,18 @@ import { CHAT_QA_MAX_PER_CHAT } from "../../consts/qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../consts/storage";
 import { assertChatQaQuestion, decodeChatQaData } from "../codec/chatQa";
 import { assertTelegramChatId, decodeChatStateData } from "../codec/chatState";
-import {
-  assertTelegramIdentityId,
-  decodeBlocklistEntryData,
-  decodePendingBlockedRemovalData,
-  decodeWhitelistEntryData,
-} from "../codec/identity";
+import { decodePendingBlockedRemovalData } from "../codec/identity";
 import { parseJsonInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
+import type { Statement } from "bun:sqlite";
 import type { PendingBlockedRemoval } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
 import type {
-  StorageDatabaseBaseRows,
+  StorageDatabase,
   StoredChatQaRow,
   StoredChatStateRow,
   StoredPendingRemovalRow,
+  StoredStorageMetadataRow,
 } from "../../types/storageDatabase";
 
 /** 统一生成 SQLite 业务行的安全来源路径，不包含行内容。 */
@@ -29,9 +26,14 @@ export function storageRowSource(
   return `${source}:${table}[${String(id)}].data`;
 }
 
+/** schema-version 解码只接收预先投影出的 metadata 行。 */
+export interface ReadStorageSchemaVersionParams {
+  readonly metadata: readonly StoredStorageMetadataRow[];
+}
+
 /** 严格读取唯一 schema-version 元数据行，版本范围由调用生命周期决定。 */
 export function readStorageSchemaVersion(
-  rows: Pick<StorageDatabaseBaseRows, "metadata">,
+  rows: ReadStorageSchemaVersionParams,
   source: string
 ): number {
   if (
@@ -56,46 +58,13 @@ export function readStorageSchemaVersion(
   return value.version as number;
 }
 
-/** 黑白名单校验后的主键集合；待踢 outbox 以黑名单集合校验引用完整性。 */
-export interface ValidatedIdentityPolicyRows {
-  readonly whitelistIds: ReadonlySet<number>;
-  readonly blocklistIds: ReadonlySet<number>;
-}
-
-/** 严格解码两张名单并拒绝跨表重复身份。 */
-export function validateStoredIdentityPolicies(
-  rows: StorageDatabaseBaseRows,
-  source: string
-): ValidatedIdentityPolicyRows {
-  const whitelistIds: Set<number> = new Set<number>();
-  const blocklistIds: Set<number> = new Set<number>();
-  for (const row of rows.whitelist) {
-    const path: string = storageRowSource(source, "whitelist_entries", row.id);
-    assertTelegramIdentityId(row.id, path);
-    decodeWhitelistEntryData(row.data, path);
-    whitelistIds.add(row.id);
-  }
-  for (const row of rows.blocklist) {
-    const path: string = storageRowSource(source, "blocklist_entries", row.id);
-    assertTelegramIdentityId(row.id, path);
-    decodeBlocklistEntryData(row.data, path);
-    if (whitelistIds.has(row.id)) {
-      throw new Error(
-        `${source}: identity ${row.id} exists in both whitelist_entries and blocklist_entries.`
-      );
-    }
-    blocklistIds.add(row.id);
-  }
-  return { whitelistIds, blocklistIds };
-}
-
 /** 待踢行校验结果同时保留规范文本，供 Worker 快照 diff 避免重复编码。 */
 export interface DecodedPendingRemovalRows {
   readonly values: ReadonlyMap<number, PendingBlockedRemoval>;
   readonly encoded: ReadonlyMap<number, string>;
 }
 
-/** 严格解码待踢 outbox 自身；跨名单引用只由冷迁移额外核对。 */
+/** 严格解码待踢 outbox 自身；调用方随后用同一只读数据库核对名单引用。 */
 export function decodeStoredPendingRemovals(
   rows: readonly StoredPendingRemovalRow[],
   source: string
@@ -123,12 +92,21 @@ export function decodeStoredPendingRemovals(
   return { values, encoded };
 }
 
-/** 冷迁移核对 outbox 引用；生产启动不得为此读取完整黑名单主键。 */
+/** 启动逐项核对 outbox 对黑名单的引用，不把完整黑名单复制进内存。 */
 export function assertPendingRemovalBlocklistReferences(
+  database: StorageDatabase,
   removals: ReadonlyMap<number, PendingBlockedRemoval>,
-  blocklistIds: ReadonlySet<number>,
   source: string
 ): void {
+  const anyBlocklistEntry: boolean = database.$client
+    .query<{ readonly present: number }, []>(
+      "SELECT 1 AS present FROM blocklist_entries LIMIT 1;"
+    )
+    .get() !== null;
+  const lookup: Statement<{ readonly present: number }, [number]> =
+    database.$client.query<{ readonly present: number }, [number]>(
+      "SELECT 1 AS present FROM blocklist_entries WHERE id = ?1 LIMIT 1;"
+    );
   for (const [removalId, pending] of removals) {
     const path: string = storageRowSource(
       source,
@@ -136,11 +114,11 @@ export function assertPendingRemovalBlocklistReferences(
       removalId
     );
     if (pending.params.probeMembership) {
-      if (blocklistIds.size === 0) {
+      if (!anyBlocklistEntry) {
         throw new Error(`${path}: sweep requires at least one blocklist entry.`);
       }
     } else if (pending.params.userIds.some(
-      (id: number): boolean => !blocklistIds.has(id)
+      (id: number): boolean => lookup.get(id) === null
     )) {
       throw new Error(`${path}: frozen userIds must all exist in blocklist_entries.`);
     }
@@ -175,20 +153,6 @@ export function decodeStoredChatStates(
       }
       proxyTargetChatId = row.chatId;
     }
-    chatStates.set(row.chatId, state);
-  }
-  return chatStates;
-}
-
-/** 生产启动信任当前 SQLite 写入边界，只解析群状态 JSON 以恢复热缓存。 */
-export function restoreStoredChatStates(
-  rows: readonly StoredChatStateRow[],
-  source: string
-): Map<number, ChatState> {
-  const chatStates: Map<number, ChatState> = new Map();
-  for (const row of rows) {
-    const path: string = storageRowSource(source, "chat_states", row.chatId);
-    const state: ChatState = parseJsonInput(row.data, path) as ChatState;
     chatStates.set(row.chatId, state);
   }
   return chatStates;

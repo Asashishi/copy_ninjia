@@ -254,6 +254,16 @@ export const workerTelegramApi: TelegramApi = {
       }, asSignal(signal), [bytes.buffer]);
     })();
   },
+  editMessageText: (...args: Parameters<TelegramApi["editMessageText"]>): ReturnType<TelegramApi["editMessageText"]> => {
+    const [chatId, messageId, text, other = {}, signal]: Parameters<TelegramApi["editMessageText"]> = args;
+    if (typeof text !== "string") {
+      return Promise.reject(new TypeError("Worker editMessageText requires plain text."));
+    }
+    return requestCall("edit", {
+      method: "editMessageText",
+      payload: { chat_id: chatId, message_id: messageId, text, ...other },
+    }, asSignal(signal));
+  },
   sendSticker: (...args: Parameters<Api["sendSticker"]>): ReturnType<Api["sendSticker"]> => {
     const [chatId, sticker, other = {}, signal]: Parameters<Api["sendSticker"]> = args;
     if (typeof sticker !== "string") {

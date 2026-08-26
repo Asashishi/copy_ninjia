@@ -56,7 +56,7 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {
+  telegramApi: {
     getChatAdministrators,
     getChat,
     setChatPermissions,
@@ -412,8 +412,7 @@ describe("Lockdown write-ahead runtime", () => {
       event.type === "lockdown" && event.chatId === chatId
     ).length;
 
-    // 回归：这里曾经每进一个人就把倒计时重排满 LOCKDOWN_MS 并再落一次盘，
-    // 持续刷群等于让同一轮永不到期。
+    // ACTIVE 状态下持续入群不得重排倒计时，否则同一轮会被无限续期。
     for (let index = 0; index < 20; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
 
@@ -482,8 +481,7 @@ describe("Lockdown write-ahead runtime", () => {
     });
     await settleLockdownCalls();
 
-    // 回归：落盘失败曾经只记一行日志，占位就此永久停在 APPLYING——秒踢不停，
-    // 5 分钟的恢复计时压根没被安排过。
+    // 落盘失败必须清除 APPLYING 占位，不能留下永久秒踢且无恢复计时的状态。
     expect(lockdownEntries.has(chatId)).toBeFalse();
     expect(permissionWrites).toEqual([]);
     expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);

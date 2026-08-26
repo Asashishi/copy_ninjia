@@ -209,19 +209,21 @@ if (Bun.argv[2] === "--child") {
     operation as BenchmarkOperation,
     mockRoot
   );
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(result)}\n`);
 } else if (Bun.argv[2] === "--single-process-child") {
   const mockRoot: string | undefined = Bun.argv[3];
   if (mockRoot === undefined) {
     throw new Error("Identity benchmark child requires its temporary mock root.");
   }
-  process.stdout.write(
+  await Bun.write(
+    Bun.stdout,
     `${JSON.stringify(await runSingleProcess(mockRoot), null, 2)}\n`
   );
 } else if (Bun.argv[2] === "--single-process") {
   const mockRoot: string = createMockRoot();
   try {
-    process.stdout.write(
+    await Bun.write(
+      Bun.stdout,
       `${JSON.stringify(runSingleProcessParent(mockRoot), null, 2)}\n`
     );
   } finally {
@@ -230,7 +232,7 @@ if (Bun.argv[2] === "--child") {
 } else {
   const mockRoot: string = createMockRoot();
   try {
-    process.stdout.write(`${JSON.stringify(runParent(mockRoot), null, 2)}\n`);
+    await Bun.write(Bun.stdout, `${JSON.stringify(runParent(mockRoot), null, 2)}\n`);
   } finally {
     removeMockRoot(mockRoot);
   }

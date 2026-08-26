@@ -61,10 +61,8 @@ function buildTools(request: AiReplyTurnRequest): Tool[] {
 /**
  * 抽出带 name 的函数调用；入参统一序列化成 JSON 字符串交给领域侧解析。
  *
- * 零调用时交回共用的空数组：每个回复的最后一轮按构造必然是零 function call 的
- * turn（那正是 workers/aiChat/replyModel.ts 的循环退出条件），再加上每个纯文本
- * 中间轮——哨兵原本只接在 `!result.ok` 的冷分支上，真正有流量的成功路径反而
- * 每轮都新分配一个空数组。
+ * 零调用时交回共用空数组：每个回复的最后一轮以及纯文本中间轮都没有 function
+ * call，成功路径不为这些轮次重复分配空数组。
  */
 function extractFunctionCalls(data: GenerateContentResponse): readonly AiFunctionCall[] {
   const calls: AiFunctionCall[] = [];

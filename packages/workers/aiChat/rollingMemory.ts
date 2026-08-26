@@ -1,6 +1,9 @@
 import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { BoundedDeque } from "../../libs/boundedDeque";
+import { invalidInput } from "../../libs/inputValidation";
+import { parseAiMemorySnapshot } from "../../libs/persistedSnapshotCodec";
+import { isTelegramGroupChatId } from "../../libs/telegramId";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat/memory";
 import {
   chatBuffers,
@@ -187,41 +190,24 @@ export function flushDirtyMemories(): void {
 export function hydrateMemories(memories: Map<number, string>): void {
   const parsedMemories: ParsedChatMemory[] = [];
   for (const [chatId, snapshotJson] of memories) {
+    if (!isTelegramGroupChatId(chatId)) {
+      return invalidInput(
+        "AI memory hydrate payload",
+        "$.memories.<key>",
+        "a negative safe integer Telegram group or channel ID"
+      );
+    }
+    const snapshot: AiMemorySnapshot = parseAiMemorySnapshot(
+      snapshotJson,
+      `AI memory hydrate payload for chat ${chatId}`
+    );
     if (chatBuffers.has(chatId)) continue;
-
-    // 快照全程以序列化 JSON 文本流转（见 types/aiChat.ts），这里是整条
-    // 管线唯一的解析点。文本只出自 buildMemorySnapshot 的 stringify 或
-    // 启动恢复时逐字段重建后的重新 stringify，形状可信；解析失败按防御
-    // 性丢弃处理，不让一份坏快照拦下其余群的恢复。
-    let snapshot: AiMemorySnapshot;
-    try {
-      snapshot = JSON.parse(snapshotJson) as AiMemorySnapshot;
-    } catch (error: unknown) {
-      logger.error(`Failed to parse hydrated AI memory snapshot for chat ${chatId}, skipping it:`, error);
-      continue;
-    }
-
-    // 语法合法但形状不符（例如 schema 变更后遗留的旧格式文件）同样按防御性
-    // 丢弃处理：下方排序读 savedAt、恢复读 buffer/summaries/pendingSummary，
-    // 任何一处形状不符都不能抛出未捕获异常拦下其余群的恢复——respawn 重放
-    // 同一份坏数据会变成崩溃循环。
-    if (
-      typeof snapshot !== "object" || snapshot === null ||
-      typeof snapshot.savedAt !== "number" ||
-      !Array.isArray(snapshot.buffer) ||
-      !Array.isArray(snapshot.summaries) ||
-      (snapshot.pendingSummary !== null && snapshot.pendingSummary !== undefined && typeof snapshot.pendingSummary !== "string")
-    ) {
-      logger.error(`Hydrated AI memory snapshot for chat ${chatId} has an unexpected shape, skipping it`);
-      continue;
-    }
-
     parsedMemories.push({ chatId, snapshot });
   }
 
   parsedMemories.sort((left: ParsedChatMemory, right: ParsedChatMemory): number => right.snapshot.savedAt - left.snapshot.savedAt);
   let skippedOverCapacity: number = 0;
-  // 容量判定改成随准入递增的计数，不在循环里反复重建 Set：chatMemoryIds() 每次
+  // 容量判定随准入递增，不在循环里反复重建 Set：chatMemoryIds() 每次
   // 都要新建一个 Set 并完整遍历 chatBuffers / chatSummaries / pendingSummaries，
   // 逐群调用就把启动恢复变成 O(n²)（同 ensureMemoryCapacity 已经写下的取舍）。
   let memoryChatCount: number = chatMemoryIds().size;
@@ -232,7 +218,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
       // memoryDeleted 会被主线程路由到 requestAiMemoryDelete，最终 unlink 掉
       // memory/ai/<chatId>.json：105 个群开着 AI 闲聊时，一次 systemctl restart
       // 就让 savedAt 最旧的 5 个群的逐字缓冲、中期摘要和待处理摘要从磁盘永久
-      // 消失，且触发条件只是「重启」。对比运行期的淘汰路径 ensureMemoryCapacity
+      // 消失，且触发条件只是「重启」。运行期的淘汰路径 ensureMemoryCapacity
       // ——它至少会跳过有回复在途的群。这里只跳过不加载，文件留在盘上；真要
       // 回收得走独立的过期策略，不能挂在容量判定上。
       skippedOverCapacity++;

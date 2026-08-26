@@ -52,14 +52,15 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   const viewDefinition: AiToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: AiToolDefinition | null = buildSendStickerToolDefinition(menu);
   const addReactionDefinition: AiToolDefinition | null = buildAddReactionToolDefinition();
-  // 生图与生歌都是可选配置能力：缺配置时整个不挂，模型看不到的工具不会被调用。
-  const imageSupported: boolean = imageAiProvider() !== null;
-  const songSupported: boolean = songAiProvider()?.generateSong !== undefined;
+  // 重媒体工具只在直接触发轮查询供应商能力并挂载；随机插话与非直接媒体评价
+  // 不读取对应 provider，也不向模型暴露工具 schema。
+  const imageEnabled: boolean = ctx.mediaToolsRequested && imageAiProvider() !== null;
+  const songEnabled: boolean = ctx.mediaToolsRequested && songAiProvider()?.generateSong !== undefined;
   const declarations: AiToolDefinition[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
   ];
-  if (imageSupported) declarations.push(buildGenerateImageToolDefinition(ctx));
-  if (songSupported) declarations.push(buildGenerateSongToolDefinition(ctx));
+  if (imageEnabled) declarations.push(buildGenerateImageToolDefinition(ctx));
+  if (songEnabled) declarations.push(buildGenerateSongToolDefinition(ctx));
   if (addReactionDefinition !== null) declarations.push(addReactionDefinition);
   if (viewDefinition !== null) declarations.push(viewDefinition);
   if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
@@ -73,13 +74,12 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
 
   const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
   const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
-  const executeGenerateImage: ((argumentsJson: string) => Promise<string>) | null = imageSupported
+  const executeGenerateImage: ((argumentsJson: string) => Promise<string>) | null = imageEnabled
     ? createGenerateImageExecutor(ctx, messageState, (): number => actionsUsed)
     : null;
-  // 只在真的挂了这个工具时才建执行器：没挂的话 dispatch 根本走不到那条分支
-  // （names 里没有 generate_song，编排器会把它当未知工具），白建一个闭包没有意义。
+  // 生歌执行器只与已挂载的工具一同创建；未挂载的名称按未知工具处理。
   const executeGenerateSong: ((argumentsJson: string) => Promise<string>) | null =
-    songSupported ? createGenerateSongExecutor(ctx, messageState) : null;
+    songEnabled ? createGenerateSongExecutor(ctx, messageState) : null;
 
   async function dispatch(name: string, argumentsJson: string): Promise<string> {
     switch (name) {

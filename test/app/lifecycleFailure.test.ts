@@ -21,7 +21,6 @@ const {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
-  drainReactionQueue,
   drainTelegramOutbound,
   drainTranslate,
   flushAiMemory,
@@ -42,7 +41,6 @@ const {
   validateExistingDeploymentInputs,
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
-  quiesceReactionQueue,
   quiesceGagRuntime,
   quiesceTranslate,
   realDrainDependencies,
@@ -105,7 +103,6 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.run();
 
     // init 尾部那次重新收口之后，wait()/dispose() 仍会各自再 quiesce 一遍。
-    expect(quiesceReactionQueue.mock.calls.length).toBeGreaterThan(1);
     expect(quiesceAvatarUpdates.mock.calls.length).toBeGreaterThan(1);
     expect(quiesceTranslate.mock.calls.length).toBeGreaterThan(1);
     // 标题刷新只在入口同步查一次 accepting，因此重新收口必须排在它启动之前，
@@ -456,7 +453,6 @@ describe("应用启动失败与退出清理", () => {
 
     await expect(lifecycle.dispose()).resolves.toBeUndefined();
 
-    expect(drainReactionQueue).toHaveBeenCalledTimes(1);
     expect(flushAiMemory).toHaveBeenCalledTimes(1);
     expect(flushDiskIO).toHaveBeenCalledTimes(1);
     expect(flushStateToDisk).toHaveBeenCalledTimes(1);
@@ -478,11 +474,9 @@ describe("应用启动失败与退出清理", () => {
 
     await expect(lifecycle.dispose()).resolves.toBeUndefined();
 
-    expect(quiesceReactionQueue).toHaveBeenCalledTimes(1);
     expect(quiesceChatTitleRefresh).toHaveBeenCalledTimes(1);
     expect(quiesceTranslate).toHaveBeenCalledTimes(1);
     expect(drainAvatarUpdates).toHaveBeenCalledTimes(1);
-    expect(drainReactionQueue).toHaveBeenCalledTimes(1);
     expect(flushStateToDisk).toHaveBeenCalledTimes(1);
     expect(process.exitCode).toBe(1);
     expect(releaseSingleInstanceLock).not.toHaveBeenCalled();

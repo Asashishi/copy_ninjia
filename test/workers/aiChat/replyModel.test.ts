@@ -23,7 +23,8 @@ import {
   MAX_WEB_SEARCH_CALLS_PER_REPLY,
   MAX_TOOL_ROUNDS,
 } from "../../../packages/consts/aiChat/tools";
-import { WEB_SEARCH_TOOL_LABEL } from "../../../packages/consts/aiChat/prompts/search";
+import { WEB_SEARCH_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/search";
+import { REPLY_ACTION_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/tools";
 import { PERSONA_PATH } from "../../../packages/consts/paths";
 import {
   ADD_REACTION_TOOL,
@@ -184,10 +185,9 @@ test("直接触发按序传三个上下文区块，工具结果回喂后续跑",
   // 循环只给 grounded 语义；采样温度与 token 上限由各实现包按自己的 consts 决定，
   // 见 test/aiChat/{gemini,openai}/replySession.test.ts。
   expect(first.grounded).toBe(false);
-  expect(first.systemPrompt).toContain(`${WEB_SEARCH_TOOL_LABEL}已作为本轮可调用工具真实注册`);
-  expect(first.systemPrompt).toContain(`累计最多调用 ${MAX_WEB_SEARCH_CALLS_PER_REPLY} 次`);
-  expect(first.systemPrompt).toContain("绝不能先行动再补查");
-  expect(first.systemPrompt).toContain("不计入本轮动作数");
+  expect(first.systemPrompt).toContain(REPLY_ACTION_INSTRUCTION);
+  expect(first.systemPrompt).toContain(WEB_SEARCH_INSTRUCTION);
+  expect(first.systemPrompt).toContain("必须先搜索再做可见动作");
   expect(first.systemPrompt).toContain("3 个顺序固定的 text Part");
   expect(first.systemPrompt).not.toContain("DIRECT_INVOKER_HOT_MESSAGES");
   // 唤起者身份的唯一可信来源是回复任务开头那一句，措辞必须与
@@ -211,6 +211,8 @@ test("直接触发按序传三个上下文区块，工具结果回喂后续跑",
   expect(execute).toHaveBeenCalledWith(SEND_MESSAGE_TOOL, JSON.stringify({ text: "已核实回复" }));
   expect(appendedOutputs).toHaveLength(1);
   expect(appendedOutputs[0]![0]!.responseJson).toBe(JSON.stringify({ success: true }));
+  // 动作与联网规则固定；工具往返复用完全相同的 system prompt。
+  expect(requests[1]!.systemPrompt).toBe(first.systemPrompt);
 });
 
 test("非直接触发同样只传三个区块，区块数与触发类型无关", async () => {
@@ -259,13 +261,13 @@ test("检索额度跑满后，后续工具轮摘掉服务端检索", async () =>
   const second: AiReplyTurnRequest = requests[1]!;
   expect(second.webSearchEnabled).toBe(false);
   expect(second.functions.map((definition: AiToolDefinition): string => definition.name)).toEqual([SEND_MESSAGE_TOOL]);
-  expect(second.systemPrompt).toContain(`已经达到 ${MAX_WEB_SEARCH_CALLS_PER_REPLY} 次联网检索上限`);
-  // 额度耗尽也必须继续约束结果怎么用，并压低采样随机性。
-  expect(second.systemPrompt).toContain("一律以搜索结果为准");
+  expect(second.systemPrompt).toBe(requests[0]!.systemPrompt);
+  expect(second.systemPrompt).toContain("搜索结果优先于记忆");
+  expect(second.systemPrompt).toContain("没有检索工具时就明确不确定");
   expect(second.grounded).toBe(true);
 });
 
-test("搜过且仍有额度时，联网查证说明切到结果纪律并标记 grounded", async () => {
+test("搜过且仍有额度时保持固定联网规则并标记 grounded", async () => {
   turns.push(
     okTurn({ calls: [call(SEND_MESSAGE_TOOL, { text: "搜完了" })], webSearchCalls: 1 }),
     okTurn({ text: "行动完成" })
@@ -279,12 +281,9 @@ test("搜过且仍有额度时，联网查证说明切到结果纪律并标记 g
   }))).resolves.toBe("行动完成");
 
   const second: AiReplyTurnRequest = requests[1]!;
-  // 检索工具仍在，但提示词重心从「该不该搜」换成「结果怎么用 + 缺口补搜」。
   expect(second.webSearchEnabled).toBe(true);
-  expect(second.systemPrompt).toContain(`本轮你已经调用过${WEB_SEARCH_TOOL_LABEL}`);
-  expect(second.systemPrompt).toContain("一律以搜索结果为准");
-  expect(second.systemPrompt).not.toContain("【动手前的强制自查】");
-  expect(second.systemPrompt).toContain(`当前还可调用 ${MAX_WEB_SEARCH_CALLS_PER_REPLY - 1} 次`);
+  expect(second.systemPrompt).toBe(requests[0]!.systemPrompt);
+  expect(second.systemPrompt).toContain(WEB_SEARCH_INSTRUCTION);
   expect(second.grounded).toBe(true);
 });
 

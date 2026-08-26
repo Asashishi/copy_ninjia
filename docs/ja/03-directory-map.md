@@ -30,7 +30,7 @@
 - **`packages/auto/`**
   - **責務**：copy、AI の文字起こしとトリガー、リアクション同期など、
     コマンド以外の自動動作。
-  - **代表的なファイル**：`message/`、`triggerPolicy.ts`。
+  - **代表的なファイル**：`message/`（`triggerPolicy.ts` を含む）、`reactionSync.ts`。
 - **`packages/aiChat/`**
   - **責務**：AI chat のメインスレッド代理と model capability。Worker 監督、
     memory mirror、availability、provider 実装パッケージ（`gemini/`、`openai/`）と選択、sticker、tool、media を含む。
@@ -43,10 +43,9 @@
   - **代表的なファイル**：`workerBridge.ts`、`durableDelivery.ts`、`updateIngress.ts`、
     `adCandidate.ts`、`ai/`。`index.ts` は薄い公開入口だけを提供。
 - **`packages/copy/`**
-  - **責務**：copy モード変換、アバター・リアクション・翻訳の実行キュー、
+  - **責務**：copy モード変換、アバター・翻訳の実行キュー、
     および日本語翻訳が「いま動いているか」の唯一の判定。
-  - **代表的なファイル**：`copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、
-    `translate.ts`、`availability.ts`。
+  - **代表的なファイル**：`copyModes.ts`、`avatarQueue.ts`、`translate.ts`、`availability.ts`。
 - **`packages/users/`**
   - **責務**：送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成。
   - **代表的なファイル**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`。
@@ -60,7 +59,7 @@
   - **代表的なファイル**：`telegram.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
 - **`packages/database/`**
   - **責務**：共有 SQLite（identity policy と chat state）の schema、codec、行検証、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
-  - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`migration.ts`、`inspection.ts`）、`validation/storageRows.ts`。
+  - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`chatQa.ts`、`migration.ts`、`inspection.ts`、`admin.ts`）、`validation/storageRows.ts`。
 - **`packages/libs/`**
   - **責務**：アトミックファイル、上限付き I/O、並行処理ツールなど、
     ドメイン非依存の基盤。
@@ -78,7 +77,8 @@
 - **`packages/workers/antiRaid/adDetect/`**
   - **責務**：provider routed 広告検出パイプライン。バッチキュー、送信者ごとの
     メッセージ束の整形、判定、命中時の処分を含む。
-  - **代表的なファイル**：`queue.ts`、`bundle.ts`、`classifier.ts`、`disposal.ts`。
+  - **代表的なファイル**：`queue.ts`（入口と tick）、`queueState.ts`（受理判定）、
+    `verdict.ts`（判定と処分のオーケストレーション）、`bundle.ts`、`classifier.ts`、`disposal.ts`。
 - **`packages/infra/`**
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。
@@ -108,7 +108,7 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
-  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`migrateChatQa.ts` と `chatQaMigration/`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
+  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`migrateQaThumbnail.ts` と `qaThumbnailMigration/`、cold migration が共用する `migration/backup.ts` と `migration/lifecycle.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
 
 ## 新しいコードの配置判断
 
@@ -154,7 +154,7 @@
 
 ## 互換エントリ（barrel）の規約
 
-大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/infra/telegram/actions/` に対する `packages/infra/telegram/actions.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
+大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/infra/telegram/actions/` に対する `packages/infra/telegram/actions.ts`、`packages/workers/diskIO/storageDatabase/` に対する `packages/workers/diskIO/storageDatabase.ts`。規則は次のとおりです。
 
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。
@@ -163,7 +163,7 @@
 
 ## テストのミラー構造
 
-`test/` は原則として `packages/` のパスに対応しますが、同じ分割 domain は domain-level test を共有できます。たとえば `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` は `test/workers/diskIO/verificationFiles.test.ts` でまとめて検証します。それ以外の新規モジュールのテストは同じ directory structure で作成してください。共通テスト補助は `test/libs/helpers.ts` に置き、全体の分離方式は [05 開発フロー](05-dev-workflow.md#テスト分離) を参照してください。
+`test/` は原則として `packages/` のパスに対応しますが、同じ分割 domain は domain-level test を共有できます。たとえば `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` は `test/workers/diskIO/verificationFiles.test.ts` でまとめて検証します。それ以外の新規モジュールのテストは同じ directory structure で作成してください。domain をまたぐ test double・fixture・harness は `test/helpers/` に、domain に依存しない汎用ユーティリティは `test/libs/helpers.ts` に置き、全体の分離方式は [05 開発フロー](05-dev-workflow.md#テスト分離) を参照してください。
 
 ---
 

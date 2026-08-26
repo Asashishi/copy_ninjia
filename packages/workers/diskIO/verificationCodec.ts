@@ -52,8 +52,14 @@ function hasCurrentVerificationKeys(value: Record<string, unknown>): boolean {
   return true;
 }
 
-/** 对当天文件中的最新值逐字段校验，不把畸形数据带回业务 Worker。 */
-export function decodeVerificationSnapshot(
+/**
+ * 对当天文件中的最新值逐字段校验，不把畸形数据带回业务 Worker。
+ *
+ * 只服务同文件的 decodeVerificationDay，不导出：单条记录的合法性判据依附于
+ * 「整份日文件要么全收、要么整份拒绝」这条语义，单独拿出去用会得到一个把
+ * 畸形记录悄悄读成 null 的入口。
+ */
+function decodeVerificationSnapshot(
   key: string,
   value: unknown
 ): VerificationSnapshot | null {

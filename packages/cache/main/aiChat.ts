@@ -36,8 +36,8 @@ export const latestAiMemoryRevisions: Map<number, number> = new Map();
  *
  * 不能按容量淘汰，也不能在 `/ai_chat disable` 时删：重置后的 revision 1 会与在途
  * 墓碑撞号，一条过期的删除回执就能把新记忆判成已删；postMemoryRecord 还用
- * 「计数器还在」表示「刚被 purge、下一条新记录要立刻落盘」。上界因此是「本进程
- * 见过且尚未 teardown 的群数」，不是 AI_MEMORY_MAX_CHATS。
+ * 「计数器还在」表示「刚被 purge、下一条新记录要立刻落盘」。本表没有独立淘汰，
+ * 上界由最多 25 个受管群约束；teardown 会同步移除对应条目。
  */
 export const aiMemoryRevisionCounters: Map<number, number> = new Map();
 /** 已投递但尚未收到 durable delete 回执的最新墓碑。 */

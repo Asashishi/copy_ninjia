@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "packages": [
+        {
+          "name": "@types/bun",
+          "version": "1.4.0",
+          "integrity": "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="
+        },
+        {
+          "name": "bun-types",
+          "version": "1.4.0",
+          "integrity": "sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q=="
+        }
+      ],
+      "event": "Bun 1.4.0 runtime and type-declaration alignment explicitly approved by the user",
+      "exemptionRemovedAt": "2026-08-26T16:10:55Z"
+    }
+  ]
+}

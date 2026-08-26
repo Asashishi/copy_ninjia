@@ -53,7 +53,6 @@ export interface ShutdownResults {
    */
   offsetConfirmed: boolean;
   avatar: FlushResult;
-  reaction: FlushResult;
   translate: FlushResult;
   gag: FlushResult;
   antiRaid: FlushResult;

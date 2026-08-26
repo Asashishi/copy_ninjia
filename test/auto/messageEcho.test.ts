@@ -126,9 +126,8 @@ describe("复读的命令守卫", () => {
   });
 
   test("命令不在行首的 caption 同样不复读", async () => {
-    // 这道闸曾经只判 startsWith("/")：命令挪到中段就整条绕过去，而带
-    // bot_command 实体的消息拿不到 plainText，会直接落到 copyMessage 被原样
-    // 重发——变换后那道守卫根本轮不到，等于两条兄弟分支各判各的。
+    // 带 bot_command 实体的消息拿不到 plainText，会落到 copyMessage 分支；
+    // 因此入口必须检查整段 caption，而不能只检查开头或依赖变换后守卫。
     const echoed: string | undefined = await echoMessage({
       chatId: CHAT_ID,
       message: mediaMessage("看这个 /batch_kick 1d"),

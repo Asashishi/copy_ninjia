@@ -62,9 +62,3 @@ export function guardedStrictJsonbTextProjection(
 export function jsonbStorageClass(column: SQLiteColumn): SQL<string> {
   return sql<string>`typeof(${column})`;
 }
-
-/** 严格校验某行 data 是否为 SQLite JSONB，而非仅外观相似的 BLOB。 */
-export function strictJsonbValidity(column: SQLiteColumn): SQL<number> {
-  const validationFlag: number = IDENTITY_DATABASE_JSONB_STRICT_VALIDATION_FLAG;
-  return sql<number>`json_valid(${column}, ${validationFlag})`;
-}

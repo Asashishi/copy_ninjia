@@ -14,11 +14,23 @@ export type SniffedImageFormat = "jpeg" | "png" | "webp" | "gif" | "unknown";
 
 /** 按文件头魔数嗅探格式，不依赖 Telegram 的 file_path 扩展名（贴纸/缩略图的
  *  扩展名不总是可靠）。 */
-export function sniffImageFormat(bytes: Buffer): SniffedImageFormat {
+export function sniffImageFormat(bytes: Uint8Array): SniffedImageFormat {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
-  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
-  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
-  if (bytes.length >= 6 && (bytes.subarray(0, 6).toString("ascii") === "GIF87a" || bytes.subarray(0, 6).toString("ascii") === "GIF89a")) return "gif";
+  if (
+    bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 &&
+    bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d &&
+    bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
+  ) return "png";
+  if (
+    bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 &&
+    bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 &&
+    bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) return "webp";
+  if (
+    bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 &&
+    bytes[2] === 0x46 && bytes[3] === 0x38 &&
+    (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61
+  ) return "gif";
   return "unknown";
 }
 
@@ -28,30 +40,24 @@ export function sniffImageFormat(bytes: Buffer): SniffedImageFormat {
  * 没有抽帧能力，GIF 只能按封面帧分析）。不支持的格式或转码失败均返回
  * null，调用方按「这条不解析」处理。
  */
-export async function prepareVisionImage(bytes: Buffer): Promise<VisionImage | null> {
+export async function prepareVisionImage(bytes: Uint8Array): Promise<VisionImage | null> {
   const format: SniffedImageFormat = sniffImageFormat(bytes);
   if (format === "jpeg") return { bytes, mime: "image/jpeg" };
   if (format === "png") return { bytes, mime: "image/png" };
   if (format !== "webp" && format !== "gif") return null;
 
   try {
-    // sharp 动态 import：它要加载原生绑定，实测本模块静态导入就是 134.8 ms、
-    // 常驻 +2.23 MB，约占 AI Worker 启动图的 45%。而这条转码分支只有 webp/gif
-    // 才走——Telegram 的 photo 本身是 jpeg，直通那条路一次也用不上它。
+    // sharp 动态 import：它会加载原生绑定，而转码分支只有 webp/gif 才走；
+    // Telegram photo 的 jpeg 直通路径不加载它。
     // 上面 sniffImageFormat 是纯字节判定、不依赖 sharp，正是它让「没有贴纸/GIF
     // 就永不加载 sharp」成立。
     //
-    // **转码很多时会不会反而变慢？不会，但收益会归零。** 模块注册表缓存住之后，
-    // 真加载每个 Worker 进程只发生一次：实测首次 320.4 ms，此后每次 14.2 µs，
-    // 而它紧接着的转码本身是 12.00 ms（gif）/ 24.01 ms（webp）——稳态开销占
-    // 0.059%，量不出来。收支平衡点约 13 次 webp / 27 次 gif 转码。所以这是个
-    // 免费期权：转码多则不赚不赔（sharp 迟早要加载），少或没有则白赚启动与常驻。
-    // 也正因如此不要「启动后台预热」：那等于把内存和加载原样加回来，对从不发
-    // 贴纸/GIF 的部署方就是纯浪费，恰好抵消掉这里的全部意义。
-    // 只声明本文件用到的那一路重载（Buffer 入参），理由同 copy/translate.ts：
+    // 模块注册表会缓存首次加载；不得后台预热，避免从不处理 webp/gif 的进程承担
+    // 原生绑定常驻内存。
+    // 只声明本文件用到的那一路重载（Uint8Array 入参），理由同 copy/translate.ts：
     // `typeof import(...)` 标注被 lint 禁止，而顶层只能拿到类型侧的 Sharp。
-    const { default: sharp }: { default: (input: Buffer) => Sharp } = await import("sharp");
-    const png: Buffer = await sharp(bytes).png().toBuffer();
+    const { default: sharp }: { default: (input: Uint8Array) => Sharp } = await import("sharp");
+    const png: Uint8Array = await sharp(bytes).png().toBuffer();
     return { bytes: png, mime: "image/png" };
   } catch (error: unknown) {
     logger.error(`Failed to transcode ${format} image to png for vision API:`, error);
@@ -89,12 +95,12 @@ export async function prepareThumbnailJpeg({
   maxEdge,
   maxBytes,
   qualities,
-}: PrepareThumbnailParams): Promise<Buffer | null> {
+}: PrepareThumbnailParams): Promise<Uint8Array | null> {
   try {
     // 只声明本函数用到的那一路重载（字节入参），理由同上方 prepareVisionImage。
     const { default: sharp }: { default: (input: Uint8Array) => Sharp } = await import("sharp");
     for (const quality of qualities) {
-      const thumbnail: Buffer = await sharp(bytes)
+      const thumbnail: Uint8Array = await sharp(bytes)
         // fit: "inside" 保持原始构图比例，不裁切也不拉伸；withoutEnlargement
         // 避免把一张本来就小的图放大成一堆插值噪点。
         .resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true })

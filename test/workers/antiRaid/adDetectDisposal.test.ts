@@ -24,7 +24,7 @@ mock.module("../../../packages/infra/logger", () => ({
 mock.module("../../../packages/infra/telegram", () => ({
   deleteMessage,
   deleteMessages,
-  joinVerificationApi: { kind: "guard-api" },
+  telegramApi: { kind: "guard-api" },
 }));
 mock.module("../../../packages/infra/telegram/workerClient", () => ({
   sendTemporaryMessageFromMain,
@@ -32,6 +32,7 @@ mock.module("../../../packages/infra/telegram/workerClient", () => ({
 
 const {
   deleteReferencedAdMessages,
+  deleteStragglerAdMessage,
   disposeAdSender,
   formatReferencedAdWarning,
   deleteStaleReferencedAdWarning,
@@ -40,6 +41,13 @@ const {
 const { adDetectPublishHolder, inFlightReferencedAdCleanupTasks } =
   await import("../../../packages/cache/workers/antiRaid/adDetect");
 const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
+const { AD_DETECT_MAX_IN_FLIGHT } = await import(
+  "../../../packages/consts/antiRaid/adDetect"
+);
+const {
+  applyBotPermissionsChange,
+  resetWorkerBotPermissions,
+} = await import("../../../packages/workers/antiRaid/botPermissions");
 
 function bundle(): AdMessageBundle {
   return {
@@ -78,6 +86,7 @@ beforeEach(() => {
   errorLogs.length = 0;
   deleteMessage.mockClear();
   deleteMessages.mockClear();
+  deleteMessages.mockImplementation(async (): Promise<boolean> => true);
   sendTemporaryMessageFromMain.mockClear();
   sendTemporaryMessageFromMain.mockImplementation(async (): Promise<TelegramWorkerTemporaryMessageResult> => ({
     messageId: 555,
@@ -85,6 +94,7 @@ beforeEach(() => {
   }));
   adDetectPublishHolder.current = null;
   inFlightReferencedAdCleanupTasks.clear();
+  resetWorkerBotPermissions();
 });
 
 describe("广告处置副作用", () => {
@@ -186,6 +196,47 @@ describe("广告处置副作用", () => {
     expect((deleteMessages.mock.calls[1]?.[1] as number[]).length).toBe(52);
   });
 
+  test("已确证没有删消息权限时仍回投拉黑，但不发送注定失败的删除请求", async (): Promise<void> => {
+    const events: AdDetectedEvent[] = [];
+    adDetectPublishHolder.current = (event: AdDetectedEvent): void => {
+      events.push(event);
+    };
+    applyBotPermissionsChange(-1001, {
+      canRestrictMembers: true,
+      canDeleteMessages: false,
+    });
+
+    await disposeAdSender({
+      bundle: bundle(),
+      judged: bundle().entries,
+      verdict: { isAd: true, reason: "引流" },
+    });
+    deleteStragglerAdMessage(-1001, 99);
+
+    expect(events).toHaveLength(1);
+    expect(deleteMessages).not.toHaveBeenCalled();
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(errorLogs.some((message: string): boolean =>
+      message.includes("known to lack can_delete_messages")
+    )).toBeTrue();
+  });
+
+  test("Telegram 批量删除明确失败时只汇总一条权限诊断", async (): Promise<void> => {
+    deleteMessages.mockImplementation(async (): Promise<boolean> => false);
+    adDetectPublishHolder.current = (): void => {};
+
+    await disposeAdSender({
+      bundle: bundle(),
+      judged: bundle().entries,
+      verdict: { isAd: true, reason: "引流" },
+    });
+
+    expect(deleteMessages).toHaveBeenCalledTimes(1);
+    expect(errorLogs.some((message: string): boolean =>
+      message.includes("could not delete 1 batch(es)")
+    )).toBeTrue();
+  });
+
   test("回投通道已关闭时删消息照做，只记一行错误日志", async () => {
     await disposeAdSender({ bundle: bundle(), judged: bundle().entries, verdict: { isAd: true, reason: "卖号" } });
     expect(errorLogs[0]).toContain("main-thread channel is closed");
@@ -272,6 +323,51 @@ describe("广告处置副作用", () => {
     });
     resolveDelete(true);
     await Bun.sleep(0);
+    expect(inFlightReferencedAdCleanupTasks.size).toBe(0);
+  });
+
+  test("引用广告清理任务达到硬顶后拒绝新增，不让 Promise 集合无限增长", (): void => {
+    for (
+      let index: number = 0;
+      index < AD_DETECT_MAX_IN_FLIGHT;
+      index++
+    ) {
+      inFlightReferencedAdCleanupTasks.add(Promise.resolve());
+    }
+
+    const live: AdMessageBundle = bundle();
+    deleteReferencedAdMessages({
+      bundle: live,
+      judged: live.entries,
+      messageIdThrough: 555,
+    });
+
+    expect(inFlightReferencedAdCleanupTasks.size).toBe(
+      AD_DETECT_MAX_IN_FLIGHT
+    );
+    expect(deleteMessages).not.toHaveBeenCalled();
+    expect(errorLogs.some((message: string): boolean =>
+      message.includes("cleanup task ceiling is full")
+    )).toBeTrue();
+  });
+
+  test("引用广告清理异常被统一记录，并在结算后释放任务槽位", async (): Promise<void> => {
+    const failure: Error = new Error("delete unavailable");
+    deleteMessages.mockRejectedValueOnce(failure);
+    const live: AdMessageBundle = bundle();
+
+    deleteReferencedAdMessages({
+      bundle: live,
+      judged: live.entries,
+      messageIdThrough: 555,
+    });
+    const tasks: Promise<void>[] = [...inFlightReferencedAdCleanupTasks];
+    await Promise.allSettled(tasks);
+    await Bun.sleep(0);
+
+    expect(errorLogs.some((message: string): boolean =>
+      message.includes("Unexpected error while deleting referenced ad messages")
+    )).toBeTrue();
     expect(inFlightReferencedAdCleanupTasks.size).toBe(0);
   });
 

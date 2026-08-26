@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2581_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.62%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.14%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 2581 tests passed, 271 test files, 95,642 expect() calls, 95.23% function coverage, 96.62% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 2821 tests passed, 287 test files, 96,239 expect() calls, 95.98% function coverage, 97.14% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -93,7 +93,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI group chat</b></p>
-  <p>Persona-driven autonomy: speaking, stickers, reactions, image generation, and songwriting are all tools, and the model decides how many to use per round and in what order. The model layer is a swappable provider: each capability in <code>config/agent.json</code> declares <code>google</code> or <code>openai</code> for itself, with no inheritance between capabilities and no runtime failover.</p>
+  <p>Persona-driven autonomy: speaking, stickers, reactions, image generation, and songwriting are all tools, and the model decides how many to use per round and in what order; image and song tools are exposed by configured capability only when a member directly mentions or replies to the bot. The model layer is a swappable provider: each capability in <code>config/agent.json</code> declares <code>google</code> or <code>openai</code> for itself, with no inheritance between capabilities and no runtime failover.</p>
 </td>
 </tr>
 <tr>
@@ -103,7 +103,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top">
   <p><b>🔎 Live fact-checking</b></p>
-  <p>Wired to Google Search and tools such as Tokyo weather; once a round has searched, the sampling temperature drops so answers follow the results.</p>
+  <p>Wired to provider-hosted web search and tools such as Tokyo weather. A fixed policy requires fresh facts to be searched first, gives results priority over memory, and requires explicit uncertainty when evidence is insufficient. Gemini uses a lower sampling temperature on later tool rounds after a search.</p>
 </td>
 <td align="left" valign="top">
   <p><b>🧠 Group-chat memory</b></p>
@@ -117,11 +117,11 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ Join verification</b></p>
-  <p>A 3-minute button challenge for new members: humans must click for themselves, only bots may be vouched for by allowlisted users; attributable non-anonymous administrator invitations and linked-channel discussion activity are exempt.</p>
+  <p>A 3-minute button challenge for new members: humans must click for themselves, only bots may be vouched for by allowlisted users; attributable non-anonymous administrator invitations and linked-channel discussion activity are exempt. Off by default per group; <code>/antiraid enable</code> turns it on.</p>
 </td>
 <td align="left" valign="top">
   <p><b>🚨 Anti-Raid</b></p>
-  <p>Monitors join rates, locks group invitations and removes suspicious members at the threshold, then restores state seamlessly after restart.</p>
+  <p>Monitors join rates, locks group invitations and removes suspicious members at the threshold, then restores state seamlessly after restart. Shares the single <code>/antiraid</code> switch with join verification.</p>
 </td>
 </tr>
 <tr>
@@ -141,7 +141,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 <tr>
 <td align="left" valign="top">
   <p><b>💬 Chat Q&amp;A</b></p>
-  <p><code>/set_qa</code> registers a question and its answer through a two-button form, up to five per chat. Ask one verbatim and the bot answers immediately without involving the AI; only wordings that differ from the registered text go to the model's two query tools.</p>
+  <p><code>/set_qa</code> opens a form, and the opener registers the pair as two messages prefixed <code>问题:</code> / <code>回答:</code>, up to fifteen per chat, with a <code>```json</code> block allowed in the answer. Ask one verbatim and the bot answers immediately without involving the AI; only wordings that differ from the registered text go to the model's two query tools.</p>
 </td>
 <td align="left" valign="top"></td>
 <td align="left" valign="top"></td>
@@ -177,7 +177,10 @@ start. It installs a published release rather than `master` HEAD — the tag com
 `releases/latest` at run time, and a lookup failure stops the install instead of quietly falling back
 to `master`. It never overwrites existing configuration, asks before replacing an existing systemd
 unit, and is safe to re-run. If you already have a clone, run `bash install.sh` from the repository
-root: it skips the clone and leaves that work tree's checkout alone.
+root: it skips the clone and leaves that work tree's checkout alone. If the source came from an
+extracted release archive (source present, no `.git`), it creates the git repository in place and points
+`HEAD` at the tag matching the files already on disk, so you can update with git afterwards; doing so
+writes no file in the working tree and never takes deployment data into the object store.
 
 Manual install:
 

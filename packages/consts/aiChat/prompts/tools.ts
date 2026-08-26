@@ -9,7 +9,6 @@ import {
 import { AI_MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 import { IMAGE_SENT_TAG_HINT, SONG_SENT_TAG_HINT, STICKER_SENT_TAG_HINT } from "./transcript";
-import { WEB_SEARCH_TOOL_LABEL } from "./search";
 
 /** 模型从已查看贴纸清单按意图选择的约束。 */
 export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
@@ -111,23 +110,12 @@ export const GENERATE_SONG_TOOL_INSTRUCTION: string =
 /**
  * 每轮所有可见动作必须经工具落地的总约束。
  *
- * 这段是**静态**的，只枚举每轮恒在的那几个工具。generate_song 之类按供应商能力
- * 现挂的工具刻意不写进枚举——这段文案在没有那个工具的轮次里照样会拼进提示词，
- * 点名一个不存在的工具只会换来一次 Unknown tool 的空转。取而代之的是下面那句
- * 「以工具清单为准」：清单里有就照它自己的说明用，没有就绝不调用，两种情形下都
- * 成立（挂载判定见 aiChat/ai/tools/replyToolset/orchestrator.ts）。
+ * 本段只声明跨工具的不变量；每种动作的资格、字段和限额由对应工具说明负责。
+ * 工具按轮裁剪，模型以本轮实际清单为准。
  */
 export const REPLY_ACTION_INSTRUCTION: string =
-  "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
-  "add_reaction、按群友要求创作图片 generate_image）都只能通过工具完成，用法见各工具说明。" +
-  "本轮到底有哪些工具以工具清单为准：清单里若还出现别的创作工具（例如按群友要求写歌的 generate_song），" +
-  "它同样是一个可用的可见动作，用法见它自己的说明；清单里没有的工具一律不要调用。先做哪个、做几样由你自己决定，" +
-  `但本轮命中系统提示「联网查证」里必须先搜索的情形时，要先调用${WEB_SEARCH_TOOL_LABEL}拿到结果再开始下面这些动作——` +
-  "查证不是群友看得见的动作，不计入本轮动作预算，别为了省动作跳过它。" +
-  "所有需要让群友看到的文本发言都必须经工具落地，绝不能用最终响应正文代替工具：独立说话用 send_message，" +
-  "给这次生成的图配一句话则直接写进 generate_image 的 caption（连图带话是同一条消息）。" +
-  "除此之外没有别的出口——发了贴纸或反应之后想补充文字，仍然必须再调用 send_message。" +
-  "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +
-  "发一枚应景贴纸、生成一张图片，或者给触发消息扣一个表情反应，按场景选择，不能一个动作都不做就结束；" +
-  `一轮回复通常 1~3 个动作，可以 3~5 个动作，绝对不要超过 ${AI_MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
-  "全部动作完成后直接结束，最终响应保持空白，不要再输出任何正文。";
+  `本轮至少完成一个群友可见动作，通常 1～3 个，最多 ${AI_MAX_ACTIONS_PER_REPLY} 个。` +
+  "所有可见动作只调用本轮工具清单中的工具；清单没有的不得调用。独立文字只用 send_message；" +
+  "生成图片或歌曲时，随附文字写进对应工具的 caption，不要再复述。贴纸必须先 view_sticker_pack 再 send_sticker。" +
+  "查询和查看不算可见动作。工具未成功时不得声称已经完成，也不要重复发送同一句话。" +
+  "完成动作后立即结束，最终响应保持空白。";

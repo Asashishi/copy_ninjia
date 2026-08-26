@@ -17,11 +17,19 @@ function rollFortunePercent([min, max]: readonly [number, number], fraction: num
   return Math.round(raw * 100) / 100;
 }
 
+/** 从固定 32 字节摘要读取无符号大端整数，不建立 DataView 或 Buffer 视图。 */
+function readUint32BE(bytes: Uint8Array, offset: number): number {
+  return bytes[offset]! * 0x1_000000 +
+    bytes[offset + 1]! * 0x1_0000 +
+    bytes[offset + 2]! * 0x100 +
+    bytes[offset + 3]!;
+}
+
 /** 当日密钥 + cache key 的确定性抽签；pending 淘汰或进程重启后仍得到同一结果。 */
 export function deriveLuckDraw(secret: LuckReceiptSecret, cacheKey: string): LuckDraw {
-  const entropy: Buffer = deriveLuckEntropy(secret, cacheKey);
-  const tierRoll: number = entropy.readUInt32BE(0) / 0x1_0000_0000 * 100;
+  const entropy: Uint8Array = deriveLuckEntropy(secret, cacheKey);
+  const tierRoll: number = readUint32BE(entropy, 0) / 0x1_0000_0000 * 100;
   const tier: LuckTier = drawLuckTier(tierRoll);
-  const fraction: number = entropy.readUInt32BE(4) / 0x1_0000_0000;
+  const fraction: number = readUint32BE(entropy, 4) / 0x1_0000_0000;
   return { tier, fortunePercent: rollFortunePercent(tier.fortunePercentRange, fraction) };
 }

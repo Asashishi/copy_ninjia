@@ -8,10 +8,6 @@ export const FORTUNE_THUMBNAIL_URL: string =
 export const PROBABILITY_THUMBNAIL_URL: string =
   "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA";
 
-/** `/set_qa` 表单 Telegram inline 结果的缺省缩略图直链。 */
-export const QA_THUMBNAIL_URL: string =
-  "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA";
-
 /** gag 发言 Telegram inline 结果的缺省缩略图直链。 */
 export const GAG_THUMBNAIL_URL: string =
   "https://drive.google.com/uc?export=view&id=1AhvfdbcwQnUBBk86yEafb_G3gZOWXim2";

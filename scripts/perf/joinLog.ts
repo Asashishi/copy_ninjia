@@ -2,26 +2,39 @@
  * 入群日志 25 万容量线的独立进程对照基准。
  *
  * 父进程交替启动 baseline/current 子进程，确保每个样本有独立 JSC 堆与预热；
- * baseline 固化优化前的整表复制、排序和整串 JSON 算法，只作为测量参照。
+ * baseline 是固定参照算法：整表复制加排序加整串 JSON（snapshot/capacity），
+ * 或按记录重新序列化一次只为量字节数（append-accounting）。
  */
 
 import { snapshotHeap } from "./heapSnapshot";
 import { median } from "./statistics";
 import { DAY_FILE_JSON_INDENT } from "../../packages/consts/diskIO/appendOnly";
 import {
+  JOIN_LOG_ENTRY_SEPARATOR_BYTES,
+  JOIN_LOG_MAX_BUFFERED_ENTRIES,
+} from "../../packages/consts/diskIO/joinLog";
+import {
   joinLogSnapshotChunks,
+  joinLogSnapshotEntryBytes,
+  serializeJoinLogSnapshotEntry,
   trimJoinLogRecordsToCapacity,
 } from "../../packages/workers/diskIO/joinLogRecords";
 import type { HeapSnapshot } from "./heapSnapshot";
 import type { JoinLogRecord } from "../../packages/types/diskIO/storage";
 
-type Operation = "snapshot" | "capacity";
+type Operation = "snapshot" | "capacity" | "append-accounting";
 type Variant = "baseline" | "current";
 
 interface CapacityFixture {
   capacity: number;
   records: Map<number, JoinLogRecord>;
   incoming: readonly JoinLogRecord[];
+}
+
+/** 一次 flush 的记录批次，按批重复以达到与其它算子同量级的输入规模。 */
+interface AppendFixture {
+  batch: readonly JoinLogRecord[];
+  batchCount: number;
 }
 
 interface ChildResult {
@@ -75,6 +88,11 @@ const OVERFLOW: number = 300;
 const WARMUP_RECORD_COUNT: number = 10_000;
 /** 每个变体使用的独立进程样本数。 */
 const PROCESS_SAMPLE_COUNT: number = 5;
+/** 单批规模取生产的待刷上限，对应一次 flush 能携带的最大事实数。 */
+const APPEND_BATCH_SIZE: number = JOIN_LOG_MAX_BUFFERED_ENTRIES;
+/** 批次数使总输入与 snapshot/capacity 同在 25 万条量级。 */
+const APPEND_BATCH_COUNT: number =
+  Math.floor(RECORD_COUNT / APPEND_BATCH_SIZE);
 
 function createRecords(count: number): Map<number, JoinLogRecord> {
   const records: Map<number, JoinLogRecord> = new Map();
@@ -85,6 +103,15 @@ function createRecords(count: number): Map<number, JoinLogRecord> {
     });
   }
   return records;
+}
+
+function createAppendFixture(): AppendFixture {
+  const batch: JoinLogRecord[] = new Array<JoinLogRecord>(APPEND_BATCH_SIZE);
+  for (let index: number = 0; index < APPEND_BATCH_SIZE; index += 1) {
+    const userId: number = index + 1;
+    batch[index] = { userId, joinedAt: 1_800_000_000_000 + userId };
+  }
+  return { batch, batchCount: APPEND_BATCH_COUNT };
 }
 
 function createCapacityFixture(
@@ -103,7 +130,7 @@ function createCapacityFixture(
   return { capacity, records, incoming };
 }
 
-/** 优化前快照：values 数组 + 排序 + 投影对象 + 完整 JSON 字符串。 */
+/** 固定参照快照：values 数组 + 排序 + 投影对象 + 完整 JSON 字符串。 */
 function baselineSnapshot(records: ReadonlyMap<number, JoinLogRecord>): number {
   const ordered: JoinLogRecord[] = [...records.values()];
   ordered.sort((
@@ -128,7 +155,7 @@ function currentSnapshot(records: ReadonlyMap<number, JoinLogRecord>): number {
   return streamedBytes;
 }
 
-/** 优化前容量路径：复制整张 Map，再展开和排序全部 entry。 */
+/** 固定参照容量路径：复制整张 Map，再展开和排序全部 entry。 */
 function baselineCapacity(fixture: CapacityFixture): number {
   const next: Map<number, JoinLogRecord> = new Map(fixture.records);
   for (const record of fixture.incoming) next.set(record.userId, record);
@@ -155,6 +182,42 @@ function currentCapacity(fixture: CapacityFixture): number {
   return capacityChecksum(fixture.records, fixture.capacity);
 }
 
+/**
+ * 固定参照记账：追加落盘后按记录再调用一次 joinLogSnapshotEntryBytes，而它
+ * 内部会把同一条记录重新序列化一遍，只为量出它的字节数。
+ */
+function baselineAppendAccounting(fixture: AppendFixture): number {
+  let bytes: number = 0;
+  for (let batch: number = 0; batch < fixture.batchCount; batch += 1) {
+    const texts: string[] = new Array<string>(fixture.batch.length);
+    for (let index: number = 0; index < fixture.batch.length; index += 1) {
+      texts[index] = serializeJoinLogSnapshotEntry(fixture.batch[index]!);
+    }
+    bytes += Buffer.byteLength(texts.join(",\n"));
+    for (const record of fixture.batch) {
+      bytes += JOIN_LOG_ENTRY_SEPARATOR_BYTES +
+        joinLogSnapshotEntryBytes(record);
+    }
+  }
+  return bytes;
+}
+
+/** 当前记账：复用同一轮已经序列化好的分段文本，整批只序列化一次。 */
+function currentAppendAccounting(fixture: AppendFixture): number {
+  let bytes: number = 0;
+  for (let batch: number = 0; batch < fixture.batchCount; batch += 1) {
+    const texts: string[] = new Array<string>(fixture.batch.length);
+    for (let index: number = 0; index < fixture.batch.length; index += 1) {
+      texts[index] = serializeJoinLogSnapshotEntry(fixture.batch[index]!);
+    }
+    bytes += Buffer.byteLength(texts.join(",\n"));
+    for (const text of texts) {
+      bytes += JOIN_LOG_ENTRY_SEPARATOR_BYTES + Buffer.byteLength(text);
+    }
+  }
+  return bytes;
+}
+
 function capacityChecksum(
   records: ReadonlyMap<number, JoinLogRecord>,
   capacity: number
@@ -175,6 +238,12 @@ function warmUp(operation: Operation, variant: Variant): void {
       else currentSnapshot(records);
       continue;
     }
+    if (operation === "append-accounting") {
+      const warmup: AppendFixture = { batch: createAppendFixture().batch, batchCount: 3 };
+      if (variant === "baseline") baselineAppendAccounting(warmup);
+      else currentAppendAccounting(warmup);
+      continue;
+    }
     const fixture: CapacityFixture =
       createCapacityFixture(WARMUP_RECORD_COUNT, OVERFLOW);
     if (variant === "baseline") baselineCapacity(fixture);
@@ -184,10 +253,10 @@ function warmUp(operation: Operation, variant: Variant): void {
 
 function runChild(operation: Operation, variant: Variant): ChildResult {
   warmUp(operation, variant);
-  const input: Map<number, JoinLogRecord> | CapacityFixture =
-    operation === "snapshot"
-      ? createRecords(RECORD_COUNT)
-      : createCapacityFixture(RECORD_COUNT, OVERFLOW);
+  let input: Map<number, JoinLogRecord> | CapacityFixture | AppendFixture;
+  if (operation === "snapshot") input = createRecords(RECORD_COUNT);
+  else if (operation === "append-accounting") input = createAppendFixture();
+  else input = createCapacityFixture(RECORD_COUNT, OVERFLOW);
   Bun.gc(true);
   const before: HeapSnapshot = snapshotHeap();
   const startedAt: number = performance.now();
@@ -196,6 +265,10 @@ function runChild(operation: Operation, variant: Variant): ChildResult {
     checksum = variant === "baseline"
       ? baselineSnapshot(input as Map<number, JoinLogRecord>)
       : currentSnapshot(input as Map<number, JoinLogRecord>);
+  } else if (operation === "append-accounting") {
+    checksum = variant === "baseline"
+      ? baselineAppendAccounting(input as AppendFixture)
+      : currentAppendAccounting(input as AppendFixture);
   } else {
     checksum = variant === "baseline"
       ? baselineCapacity(input as CapacityFixture)
@@ -260,8 +333,16 @@ function aggregate(results: readonly ChildResult[]): AggregateResult {
 }
 
 function parseOperation(value: string | undefined): Operation {
-  if (value === "snapshot" || value === "capacity") return value;
-  throw new Error("Child operation must be snapshot or capacity.");
+  if (
+    value === "snapshot" ||
+    value === "capacity" ||
+    value === "append-accounting"
+  ) {
+    return value;
+  }
+  throw new Error(
+    "Child operation must be snapshot, capacity or append-accounting."
+  );
 }
 
 function parseVariant(value: string | undefined): Variant {
@@ -290,7 +371,11 @@ function runIndependentChild(
 
 function runParent(): BenchmarkReport {
   const grouped: Map<string, ChildResult[]> = new Map();
-  const operations: readonly Operation[] = ["snapshot", "capacity"];
+  const operations: readonly Operation[] = [
+    "snapshot",
+    "capacity",
+    "append-accounting",
+  ];
   const variants: readonly Variant[] = ["baseline", "current"];
   for (let sample: number = 0; sample < PROCESS_SAMPLE_COUNT; sample += 1) {
     for (const operation of operations) {
@@ -336,13 +421,13 @@ function runParent(): BenchmarkReport {
   };
 }
 
-if (process.argv[2] === "--child") {
+if (Bun.argv[2] === "--child") {
   const result: ChildResult = runChild(
-    parseOperation(process.argv[3]),
-    parseVariant(process.argv[4])
+    parseOperation(Bun.argv[3]),
+    parseVariant(Bun.argv[4])
   );
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(result)}\n`);
 } else {
   const report: BenchmarkReport = runParent();
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(report, null, 2)}\n`);
 }

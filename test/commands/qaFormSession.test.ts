@@ -28,14 +28,14 @@ describe("/set_qa 表单会话", () => {
     const first: QaFormSession | null = openQaFormSession({
       chatId: CHAT_ID,
       openedById: OWNER_ID,
-      onExpire: noop,
+      onDiscard: noop,
     });
     first!.q = "旧问题";
 
     const second: QaFormSession | null = openQaFormSession({
       chatId: CHAT_ID,
       openedById: OWNER_ID,
-      onExpire: noop,
+      onDiscard: noop,
     });
 
     expect(second).not.toBe(first);
@@ -47,19 +47,19 @@ describe("/set_qa 表单会话", () => {
   test("查找只按群，不看发起人：匿名管理员开的表单也找得到", () => {
     // 命令侧的 sender_chat 是本群，因此 openedById 就是群 id；随后那条 inline
     // 查询来自真实用户账号。按人索引的话这张表单永远填不了。
-    openQaFormSession({ chatId: CHAT_ID, openedById: CHAT_ID, onExpire: noop });
+    openQaFormSession({ chatId: CHAT_ID, openedById: CHAT_ID, onDiscard: noop });
 
     expect(findQaFormSession(CHAT_ID)).toBeDefined();
   });
 
   test("达到全局上限后拒绝新建，而不是踢掉别人正在填的那张", () => {
     for (let index: number = 0; index < QA_FORM_SESSION_MAX; index++) {
-      expect(openQaFormSession({ chatId: -index - 1, openedById: 1, onExpire: noop }))
+      expect(openQaFormSession({ chatId: -index - 1, openedById: 1, onDiscard: noop }))
         .not.toBeNull();
     }
 
     // 被顶掉的人只会看到自己的按钮突然不认了，无从排查；宁可当场说满了。
-    expect(openQaFormSession({ chatId: -99999, openedById: 1, onExpire: noop })).toBeNull();
+    expect(openQaFormSession({ chatId: -99999, openedById: 1, onDiscard: noop })).toBeNull();
     expect(qaFormSessions.size).toBe(QA_FORM_SESSION_MAX);
   });
 
@@ -67,7 +67,7 @@ describe("/set_qa 表单会话", () => {
     const session: QaFormSession = openQaFormSession({
       chatId: CHAT_ID,
       openedById: OWNER_ID,
-      onExpire: noop,
+      onDiscard: noop,
     })!;
 
     closeQaFormSession(session);
@@ -78,8 +78,8 @@ describe("/set_qa 表单会话", () => {
   });
 
   test("teardown 只清本群，别的群不受影响", () => {
-    openQaFormSession({ chatId: CHAT_ID, openedById: 1, onExpire: noop });
-    openQaFormSession({ chatId: -1002, openedById: 3, onExpire: noop });
+    openQaFormSession({ chatId: CHAT_ID, openedById: 1, onDiscard: noop });
+    openQaFormSession({ chatId: -1002, openedById: 3, onDiscard: noop });
     const closed: number[] = [];
 
     closeQaFormSessionsInChat(CHAT_ID, (session: QaFormSession): void => {
@@ -92,7 +92,7 @@ describe("/set_qa 表单会话", () => {
   });
 
   test("整表复位清掉全部会话", () => {
-    openQaFormSession({ chatId: CHAT_ID, openedById: OWNER_ID, onExpire: noop });
+    openQaFormSession({ chatId: CHAT_ID, openedById: OWNER_ID, onDiscard: noop });
 
     resetChatQaCache();
 
@@ -108,7 +108,7 @@ describe("/set_qa 表单会话", () => {
       const session: QaFormSession = openQaFormSession({
         chatId: CHAT_ID,
         openedById: OWNER_ID,
-        onExpire: (closed: QaFormSession): void => { expired.push(closed); },
+        onDiscard: (closed: QaFormSession): void => { expired.push(closed); },
       })!;
       session.q = "只填了问题";
 
@@ -134,7 +134,7 @@ describe("/set_qa 表单会话", () => {
       const session: QaFormSession = openQaFormSession({
         chatId: CHAT_ID,
         openedById: OWNER_ID,
-        onExpire: (closed: QaFormSession): void => { expired.push(closed); },
+        onDiscard: (closed: QaFormSession): void => { expired.push(closed); },
       })!;
 
       closeQaFormSession(session);

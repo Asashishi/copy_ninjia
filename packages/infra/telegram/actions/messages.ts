@@ -6,6 +6,7 @@ import type {
 } from "@grammyjs/types";
 import { markSelfSent } from "../../selfSentTracker";
 import { telegramApi } from "../client";
+import { telegramErrorDetails } from "../errors";
 import {
   runBooleanTelegramAction,
   runTelegramAction,
@@ -25,6 +26,7 @@ type EphemeralSendMessageOptions = NonNullable<
   readonly callback_query_id?: string;
 };
 type EphemeralSendMessageApi = Pick<TelegramApi, "sendMessage">;
+type EditMessageTextApi = Pick<TelegramApi, "editMessageText">;
 type SendChatActionApi = Pick<TelegramApi, "sendChatAction">;
 type AnswerCallbackQueryApi = Pick<TelegramApi, "answerCallbackQuery">;
 type SendStickerApi = Pick<TelegramApi, "sendSticker">;
@@ -273,6 +275,73 @@ export async function sendChatAction({
         messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
         ...signalArgs(requestSignal)
       ),
+    signal
+  );
+}
+
+/**
+ * 「消息内容没有变化」的 Bot API 拒绝语。
+ *
+ * 翻页按钮把同一页再点一次就会撞上它。这不是故障：目标状态已经达成，按错误
+ * 记一笔只会让日志被正常操作刷满，因此在错误边界里静默掉，对调用方仍报成功。
+ */
+const MESSAGE_NOT_MODIFIED: string = "message is not modified";
+
+/** 这次拒绝是否就是「内容本就相同」。 */
+function isMessageNotModified(error: unknown): boolean {
+  return telegramErrorDetails(error)?.description.includes(MESSAGE_NOT_MODIFIED) === true;
+}
+
+export interface EditMessageTextParams {
+  chatId: number;
+  messageId: number;
+  text: string;
+  api?: EditMessageTextApi;
+  /** 由调用方自行算好偏移的富文本实体，语义同 SendMessageParams.entities。 */
+  entities?: readonly MessageEntity[];
+  /** 新的按钮；不传即**清空**原有按钮，翻页看板据此在只剩一页时收走翻页条。 */
+  keyboard?: InlineKeyboardMarkup;
+  signal?: AbortSignal;
+}
+
+/**
+ * 就地改写一条已发出的文本消息；不设置 parse_mode，理由同 sendMessageWithResult。
+ *
+ * @returns 是否已让远端处于目标状态。内容本就相同时同样为 true——调用方要的是
+ *   「这条消息现在显示的是这一页」，而不是「本次真的发生了改写」。
+ */
+export async function editMessageText({
+  chatId,
+  messageId,
+  text,
+  api = telegramApi,
+  entities,
+  keyboard,
+  signal,
+}: EditMessageTextParams): Promise<boolean> {
+  // 「内容本就相同」在这里就地咽掉，不进错误边界：那样才既不记 API 错误、
+  // 又对调用方报成功，而不必把结论从一个名叫 shouldLogError 的谓词里带出来。
+  // 其余失败原样抛给统一边界，停机 abort 因此也照 runBooleanTelegramAction
+  // 的既有口径不记错误。
+  return runBooleanTelegramAction(
+    "edit message text",
+    async (requestSignal?: AbortSignal): Promise<true> => {
+      try {
+        await api.editMessageText(
+          chatId,
+          messageId,
+          text,
+          {
+            ...(entities && entities.length > 0 ? { entities: [...entities] } : {}),
+            reply_markup: keyboard ?? { inline_keyboard: [] },
+          },
+          ...signalArgs(requestSignal)
+        );
+      } catch (error: unknown) {
+        if (!isMessageNotModified(error)) throw error;
+      }
+      return true;
+    },
     signal
   );
 }

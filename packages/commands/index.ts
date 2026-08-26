@@ -17,7 +17,7 @@ export {
   teardownGagInChat,
 } from "./gag";
 export {
-  handleQaInlineQuery,
+  handleQaBoardCallback,
   handleQaMessageIngress,
   handleQueryQaCommand,
   handleRemoveQaCommand,

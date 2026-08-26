@@ -154,7 +154,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
 
 /**
  * 权限键的小写输入到规范拼写的只读索引；命令解析复用，避免每次从头遍历并对
- * 15 个候选重复 lower-case。所属模块：packages/commands/permission.ts。
+ * 16 个候选重复 lower-case。所属模块：packages/commands/permission.ts。
  */
 export const WHITELIST_PERMISSION_KEY_BY_LOWERCASE: ReadonlyMap<
   string,

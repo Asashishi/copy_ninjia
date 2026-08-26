@@ -102,15 +102,11 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   /**
    * 直接触发的成因；随机/无触发为 undefined。
    *
-   * 摊平理由同上面 voiceMime/voiceDurationSeconds 那段——嵌套对象在这条每媒体
-   * 消息走一次的协议上既多一次分配，也让消费侧读取点多态。实测把这一个字段
-   * 从 `{ reason }` 改成字符串后，整条载荷的 structuredClone 从 9.05 µs 降到
-   * 4.16 µs（Bun 1.3.14，7 个独立进程各 7 样本取中位数）。
+   * 摊平理由同上面 voiceMime/voiceDurationSeconds：嵌套对象会增加一次分配并让
+   * 消费侧读取点多态。
    *
-   * **它同时就是「本轮有没有图片工具资格」这一个事实**，不要再加一个布尔字段来
-   * 重复它：`imageGenerationRequested` 曾经存在，四个 handler 一律写成
-   * `directTriggerReason !== undefined`，消费侧 workers/aiChat/mediaIngest.ts 也只
-   * 拿它做同一个判断。删掉它还有一条硬性理由——见本接口末尾 messageThreadId 的说明。
+   * **它同时就是「本轮有没有图片工具资格」这一个事实**，不要增加重复布尔字段；
+   * 四个 handler 与 workers/aiChat/mediaIngest.ts 都以是否为 undefined 判断。
    */
   directTriggerReason: AiDirectTriggerReason | undefined;
   /**
@@ -122,12 +118,9 @@ export interface AiRecordMediaMessage extends AiRecordContext {
    * directTriggerReason 那段：本协议每条媒体消息走一次，两种形状轮着产生会让
    * Worker 侧的读取点多态。
    *
-   * **本接口的字段数是 22，这是硬上限，加字段前先删一个。** JSC 的
-   * JSFinalObject 内联容量到 22 槽为止；第 23 个属性会把整个对象挤出内联存储、
-   * 改走 butterfly，`buildAiRecordMediaMessage` 这条每条媒体消息都要跑的构造随之
-   * 变慢一倍。实测（perf:hot-path-gate 的 ai-media-direct-trigger，同机同 Bun，
-   * 3 轮取中位数区间）：22 项 152~177 ns/op，23 项 286~307 ns/op。本字段能加进来，
-   * 正是因为同时删掉了与 directTriggerReason 等价的 imageGenerationRequested。
+   * **本接口的字段数是 22，这是硬上限，加字段前必须先删一个。** JSC 的
+   * JSFinalObject 内联容量到 22 槽为止；第 23 个属性会把对象挤出内联存储、改走
+   * butterfly。`buildAiRecordMediaMessage` 在每条媒体消息上构造此对象。
    */
   messageThreadId: number | undefined;
 }
@@ -149,7 +142,7 @@ export interface AiTriggerMessage {
    *
    * 挂在这条已有消息上而不是另建一份 Worker 镜像：接收方所需的最终字段放进
    * 现有消息，就不必为它维护推送时机、全量/增量模式和 Worker 重启后的重放方
-   * （见 AGENTS.md 的「缓存与线程归属」）。载荷有界——每群至多 5 条。
+   * （见 AGENTS.md 的「缓存与线程归属」）。载荷有界——每群至多 CHAT_QA_MAX_PER_CHAT 条。
    *
    * 一字不差的提问不会走到这里：那种情况在主干上就被直答短路了，连 trigger
    * 都不会发。到得了 Worker 的只有「意思像但字面不同」，交给模型判断。
@@ -219,12 +212,6 @@ export type AiChatWorkerMessage =
   | AiQueryMoodMessage
   | AiSwitchMoodMessage;
 
-export interface AiSentMessage {
-  type: "sent";
-  chatId: number;
-  messageId: number;
-}
-
 export interface AiMemoryEvent {
   type: "memory";
   chatId: number;
@@ -269,7 +256,6 @@ export interface AiMoodQueriedEvent {
 }
 
 export type AiChatWorkerEvent =
-  | AiSentMessage
   | AiMemoryEvent
   | AiMemoryDeletedEvent
   | AiMemoryFlushedEvent

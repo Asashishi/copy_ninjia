@@ -295,8 +295,7 @@ export async function handleAntiRaidMessageIngress(
     (
       // 先看表空不空再拼键：待验证镜像绝大多数时候是空的（没人正在验证），
       // 而 `${chatId}:${userId}` 是每条群消息都要现造的一个短命字符串。
-      // `has()` 在空表上恒为 false，这道前置判断不改变任何结果。实测这条
-      // 探测 161.36 → 6.43 ns/op。
+      // `has()` 在空表上恒为 false，这道前置判断不改变任何结果。
       (
         activeVerificationSnapshots.size > 0 &&
         activeVerificationSnapshots.has(

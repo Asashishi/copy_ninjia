@@ -11,9 +11,9 @@ import {
 import { resolveBotAdminStatus } from "../infra/botAdmin";
 import {
   confirmBlocklistPersisted,
+  managedAdminChatIds,
   unblockUser,
 } from "../infra/blocklist/membership";
-import { getChatStateCache } from "../infra/storage/stateStore";
 import { runBlocklistIdentityMutation } from "../infra/identityPolicy/coordination";
 
 interface UnblockExecutionOutcome extends UnbanOutcome {
@@ -46,12 +46,8 @@ async function executeUnblock(targetUser: CachedUser, originChatId: number): Pro
  * /unblock <用户 id> 或 /unblock <频道的负数 id>。id 不必在缓存里见过——解除
  * 拉黑处置的同样是一个 id，缓存只用来给回执配个人类可读的标签。
  *
- * 负数 id 只有这条命令认，`/block` 仍然拒绝：频道马甲的 id 本来就会进名单
- * （`/block` 回复一条频道消息、广告检测命中 sender_chat），可要把它划掉，此前
- * 只有回复消息与 `@username` 两条路——前者在广告检测删掉原消息后就没了，后者
- * 要求频道有公开 username 且没被挤出缓存，两条都断掉的频道会永远留在名单上。
- * 反方向不开是因为代价不对等：`/block` 粘错一个会话 id 就是封掉整个会话身份且
- * 不可逆，而这里指错至多是一次空解封。
+ * 负数 id 只有这条命令认，供管理员在源消息已删除、频道无公开 username 或缓存
+ * 无记录时恢复频道身份；`/block` 仍拒绝粘贴会话 id，避免误封整个会话身份。
  */
 export async function handleUnblockCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -140,17 +136,12 @@ interface UnbanOutcome {
 
 /**
  * 在所有「本天才是管理员」的群里解除该目标的封禁。群清单与 /block 的连坐封禁
- * 同源（各群 ChatState.botPermissions.isAdministrator），本群排最前；串行执行，避免一次命令制造
- * 突发请求，也让计数按确定顺序收敛。
+ * 读同一个 `managedAdminChatIds`（见 infra/blocklist/membership.ts），不是各自
+ * 遍历一遍再声明同源；串行执行，避免一次命令制造突发请求，也让计数按确定顺序收敛。
  */
 async function unbanEverywhereFor(targetUser: CachedUser, chatId: number): Promise<UnbanOutcome> {
   const isAdminHere: boolean = await resolveBotAdminStatus(chatId);
-  const targetChatIds: number[] = isAdminHere ? [chatId] : [];
-  for (const [adminChatId, chatState] of getChatStateCache()) {
-    if (chatState.botPermissions?.isAdministrator === true && adminChatId !== chatId) {
-      targetChatIds.push(adminChatId);
-    }
-  }
+  const targetChatIds: number[] = managedAdminChatIds(chatId, isAdminHere);
 
   let unbannedCount: number = 0;
   let failedCount: number = 0;

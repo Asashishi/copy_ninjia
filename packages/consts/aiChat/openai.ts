@@ -39,9 +39,8 @@ type OpenAiImageSize = NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming
  * 重试策略把整套退避全耗在一个确定性失败上。上限只是天花板，模型写多少才付
  * 多少 token，因此宁可宽。
  *
- * 抬高哪两档看提示词长度与思考深度：贴纸整包简介要一次读完整包逐贴纸描述，
- * 媒体描述要看图，两者原来的 4K/8K 都在「光推理就吃满」的量级上，各抬到
- * 16K；回复与冷消息压缩那两档本来就是 64K/48K 量级，留有余量，不动。
+ * 贴纸整包简介要一次读完整包逐贴纸描述，媒体描述要看图，两档都保留 16K；
+ * 回复与冷消息压缩分别保留 64K/48K 量级，覆盖提示词与推理消耗。
  *
  * 本包不提供采样温度：上面四个模型全是 GPT-5 系推理模型，官方端点只接受默认
  * 温度，传 0.7/0.5 会以 `unsupported_value` 直接 400，因此请求里压根不带这个
@@ -113,7 +112,7 @@ export const OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO: Readonly<
  * `openai-standard` 使用这张固定表兼容 gpt-image-1、gpt-image-1-mini、
  * gpt-image-1.5、chatgpt-image-latest 与 gpt-image-2；横向、纵向分别收敛到
  * 3:2、2:3，只有 1:1 保持方形。部署者显式选择能力档，运行时不解析模型名、
- * 不在 400 后换尺寸重试。固定 Record 还避免旧实现每次请求计算比例和最近邻。
+ * 不在 400 后换尺寸重试。固定 Record 让每次请求直接查表，不计算比例和最近邻。
  */
 export const OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO: Readonly<
   Record<ImageGenerationAspectRatio, OpenAiImageSize>
@@ -160,8 +159,8 @@ export const OPENAI_IMAGE_OUTPUT_FORMAT: NonNullable<OpenAI.Images.ImageGenerate
  * 它——SDK 没声明的字段硬塞会被 TS 拒绝，绕过类型强塞则是对未声明字段的猜测。
  * 两条分支档位不对称是**已知且有意**的，不是漏改。
  *
- * 另注：`agent.image.base_url` 指向兼容网关时，未知字段可能被严格网关以 400 拒绝；
- * 那与画幅、output_format 同属「网关差异」范畴，实测遇到再按网关能力取舍。
+ * `agent.image.base_url` 指向兼容网关时仍按本能力档发送；不支持该字段的网关必须
+ * 在部署配置层选择兼容能力，不做运行时探测或 400 后降级。
  */
 export const OPENAI_IMAGE_MODERATION: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming["moderation"]> = "low";
 

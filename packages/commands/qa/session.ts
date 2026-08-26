@@ -1,12 +1,11 @@
 /**
- * `/set_qa` 按钮表单的会话状态机。
+ * `/set_qa` 表单的会话状态机。
  *
  * 会话**按群唯一**，只活在主线程内存里。两项填齐即结算：写进热表并排进 SQLite，
  * 然后删掉表单消息。到期由自己的 timer 结算，不留半张表单。
  *
- * 为什么不按发起人索引：见 types/qa.ts 的 QaFormSession——inline 查询永远来自
- * 真实用户账号，匿名管理员与频道身份在命令侧却是 `sender_chat`，两个 id 天然
- * 对不上。写入资格改由落群那一步重新校验权限决定。
+ * 表里按群索引、按 `openedById` 鉴权：同一群同时只有一张表单，而只有开表单的
+ * 那个可见身份能往里填（见 types/qa.ts 的 QaFormSession 与 qa/ingress.ts）。
  */
 
 import { qaFormSessions } from "../../cache/main/qa";
@@ -37,25 +36,37 @@ export function closeQaFormSession(session: QaFormSession): void {
 /** 建立一张新表单的入参。 */
 export interface OpenQaFormSessionParams {
   readonly chatId: number;
-  /** 开表单的身份，只用于日志定位；不参与查找，也不决定谁能填。 */
+  /** 开表单的可见身份；投递消息的身份必须与它相同才会被认领。 */
   readonly openedById: number;
-  /** 到期时的结算动作；由命令层提供，用来删掉表单消息。 */
-  readonly onExpire: (session: QaFormSession) => void;
+  /**
+   * 表单被丢弃时的收尾动作；由命令层提供，用来删掉那条表单消息。
+   *
+   * 两条路径共用：TTL 到期，以及被同一个人重开的新表单顶掉。后者必须一起走
+   * 这个回调——只把会话从表里摘掉的话，旧那条表单消息就再没有任何路径拥有它的
+   * 删除责任，会永远留在群里，而它又不挂固定延迟清理（见 qa/notices.ts）。
+   */
+  readonly onDiscard: (session: QaFormSession) => void;
 }
 
 /**
- * 开一张新表单；同一群的旧表单先被结算掉。
+ * 开一张新表单；同一群的旧表单连同它那条消息一起丢弃。
+ *
+ * 重开是**同一个人**的重来一次：已经填进去的问题和答案随旧会话一并作废，
+ * 新表单从两项皆空开始。「别人正在填」由命令层在调用之前挡住，不到这里。
  *
  * @returns 达到全局上限时返回 null——宁可当场说「现在满了」，也不悄悄踢掉别人
- *   正在填的那张：被顶掉的人只会看到自己的按钮突然不认了，无从排查。
+ *   正在填的那张：被顶掉的人只会看到自己的表单突然不认了，无从排查。
  */
 export function openQaFormSession({
   chatId,
   openedById,
-  onExpire,
+  onDiscard,
 }: OpenQaFormSessionParams): QaFormSession | null {
   const previous: QaFormSession | undefined = qaFormSessions.get(chatId);
-  if (previous !== undefined) closeQaFormSession(previous);
+  if (previous !== undefined) {
+    closeQaFormSession(previous);
+    onDiscard(previous);
+  }
   if (qaFormSessions.size >= QA_FORM_SESSION_MAX) return null;
 
   const session: QaFormSession = {
@@ -71,10 +82,10 @@ export function openQaFormSession({
   const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
     session.timer = null;
     closeQaFormSession(session);
-    onExpire(session);
+    onDiscard(session);
   }, QA_FORM_SESSION_TTL_MS);
   // 半填的表单不该拖住进程退出：到点没人填完就该消失，不是需要落盘的状态。
-  timer.unref?.();
+  timer.unref();
   session.timer = timer;
   return session;
 }

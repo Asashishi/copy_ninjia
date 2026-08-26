@@ -4,10 +4,8 @@ import type { ChatRuntimeOwner } from "../types/chatTeardown";
  * 编译期穷尽校验：顺序表必须覆盖 `ChatRuntimeOwner` 的每一个成员，漏掉任何一个
  * 都会让参数类型退化成 `never`，在调用点当场报错。
  *
- * 单写一个函数而不是直接给数组标注 `readonly ChatRuntimeOwner[]`：后者只保证
- * 每一项合法，**不保证一项都不少**。`infra/botAdmin.ts` 的组合 teardown 此前正是
- * 手写了五个 owner 里的四个，漏掉的 `qa` 让 `/set_qa` 表单在停管后继续留在群里，
- * 而 lint、typecheck 与约定自检都看不出来（见 docs/cn/04-invariants.md 的群 teardown）。
+ * 直接标注 `readonly ChatRuntimeOwner[]` 只能保证每一项合法，不能保证成员齐全；
+ * 本函数同时约束合法性与穷尽性（见 docs/cn/04-invariants.md 的群 teardown）。
  */
 function completeOwnerOrder<T extends readonly ChatRuntimeOwner[]>(
   owners: T & ([ChatRuntimeOwner] extends [T[number]] ? unknown : never)

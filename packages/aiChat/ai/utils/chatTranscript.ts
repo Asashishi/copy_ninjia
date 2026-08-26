@@ -24,19 +24,15 @@ import { truncateInline } from "../../../libs/text";
 /**
  * 发言人的显示名：first/last 拼接，都没有则给个占位。
  *
- * 只有两个字段，却是转录里调用最密集的函数之一——每条转录行一次，加上每条
- * 回复标注、回复链每一跳各一次，一次 AI 回复要跑一两百遍。原先的
- * `[a,b].filter(...).join(" ").trim()` 为此每次造一个数组、一个过滤后数组和
- * 两个中间串；直接分支后实测「只有 first」这条最常见路径 289~313 → 49~53 ns/op，
- * 两个字段都有时也稳定更快。语义逐字对齐（含全空白字段与两者皆空的占位回退）。
+ * 这是转录热函数：每条转录行、回复标注和回复链节点都会调用。直接分支拼接，
+ * 不创建临时数组或过滤结果；全空白字段与两者皆空时回退到占位符。
  */
 function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
   const first: string = speaker.firstName;
   const last: string = speaker.lastName;
   if (first && last) return `${first} ${last}`.trim() || FALLBACK_SPEAKER_NAME;
-  // `|| ""` 不是多余的：类型上两个字段都是必填 string，但这里要跟被替换掉的
-  // `[a,b].filter(Boolean).join(" ")` 保持完全同等的健壮性——那种写法遇到
-  // undefined 会安全退化成占位符，而 `(first || last).trim()` 会抛 TypeError。
+  // `|| ""` 不是多余的：外部输入若越过类型边界带来 undefined，必须安全退化
+  // 成占位符；`(first || last).trim()` 会抛 TypeError。
   // 转录是回复链路的必经之地，不值得为省一次 `|| ""` 换一条可能抛异常的路径。
   return (first || last || "").trim() || FALLBACK_SPEAKER_NAME;
 }
@@ -51,10 +47,8 @@ export function displayBufferedMessageName(message: BufferedMessage): string {
  * 某个人（目前是回复任务开头的唤起者声明，见 workers/aiChat/promptContext.ts）
  * 用这个函数生成，模型不必在两种身份写法之间二次对齐。
  *
- * **不**回头改写上面三处的内联拼串去共用它：那三处每条转录行、每跳回复链各跑
- * 一次，一次回复上百遍，多一层调用就多物化一个中间串——同文件里
- * formatBufferedMessageLine 的注释记着这条路测出来的代价（401 → 192 ns/op）。
- * 本函数每轮回复最多跑一次，形状一致由这条注释和测试守住。
+ * 高频转录行与回复链继续内联拼接，避免先物化完整身份中间串；本函数每轮回复
+ * 最多调用一次，形状一致由测试守住。
  */
 export function formatSpeakerIdentity(speaker: AiSpeakerSnapshot): string {
   const usernameTag: string = speaker.username ? ` [username:@${speaker.username.replace(/^@+/, "")}]` : "";
@@ -119,16 +113,15 @@ export function formatReplyChain(
  * 把一条缓存消息格式化成**自包含**的一行：时间、消息号、完整身份、转发来源和
  * 被回复原文全都内嵌，不依赖任何外部名册。
  *
- * 只剩冷历史压缩这一个调用方（workers/aiChat/compaction.ts 的 summarizeBatch）。
+ * 冷历史压缩由 workers/aiChat/compaction.ts 的 summarizeBatch 调用。
  * 那条路每 COMPACT_BATCH_SIZE 条消息才跑一次、单独一次模型调用、没有名册可查，
  * 自包含正是它需要的；说明文案见 consts/aiChat/prompts/memory.ts 的
- * SUMMARY_SYSTEM_PROMPT。回复转录不再用它——那条路每次回复重发整段，改走
- * 名册 + 编号的紧凑渲染，见 buildTieredVerbatimTranscript。
+ * SUMMARY_SYSTEM_PROMPT。回复转录使用名册 + 编号的紧凑渲染，见
+ * buildTieredVerbatimTranscript。
  */
 export function formatBufferedMessageLine(message: BufferedMessage): string {
-  // message_id 段直接写进最终模板，不再先落一个 messageIdTag 中间串：那一步
-  // 只是把它先物化成字符串、紧接着又拼进大模板。实测 401 → 192 ns/op、
-  // 6.53 → 5.52 obj/op。usernameTag/replyTag 仍留变量——它们是条件分支，
+  // message_id 段直接写进最终模板，不先物化 messageIdTag 中间串。usernameTag /
+  // replyTag 仍留变量——它们是条件分支，
   // 内联成三元反而让这行长到读不动，且省不掉那次物化。
   const usernameTag: string = message.username ? ` [username:@${message.username.replace(/^@+/, "")}]` : "";
   const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo) : "";
@@ -262,24 +255,9 @@ function buildRosterBlock(context: TranscriptContext): string {
  * 区间开头一定先发一条日期分隔行（`lastDate` 传空串即可），这样每个分层区块
  * 都自带日期，模型跳进任一区块都不必回头找。
  *
- * **逐行 `+=` 累加，不再攒数组一次 `join`。** 这条推翻了本函数早先的相反结论，
- * 因此把两次测量的口径一并记在这里：
- *
- * - 旧结论按**对象数**定（150 条那档 14 → 1635 个对象、22 → 52 KB）。那些 rope
- *   节点是纯瞬时垃圾：full GC 后的 retained 两种写法一样（20,000 轮渲染下
- *   323 vs 328 个对象、22 KB vs 33 KB，已是测量噪声），它们从来没有留存下来。
- * - 按**时间**测，`+=` 稳定更快：整条 buildTieredVerbatimTranscript 在 150 条那档
- *   74.1 → 57.8 µs/op（基准夹具的短正文）、84.3 → 62.5 µs/op（贴近生产的
- *   20~80 字正文），各 9 个独立进程 × 7 样本，两组区间完全不重叠。ns/op 是含 GC
- *   的墙钟，多出来的 rope 节点触发的 GC 已经算在这个数里。
- *
- * **测这段时有个坑，务必记住**：rope 自带长度，只读 `.length` 不会让它 materialize。
- * 同一份输入下，本函数改成 `+=` 之后两种收口口径差着 42.0 vs 57.5 µs/op（27%），
- * 而改之前只差 71.6 vs 73.9（3.1%，内层 `join` 已经把大头展平了）。也就是说：
- * 只读 `.length` 的基准会把这次改动量成「快了 42%」，其中一多半是**还没做的活**。
- * 生产里这段转录一定会被展平（拼进提示词、跨线程 clone、送上网络），因此上面两组
- * 数都用 `charCodeAt(length-1)` 强制展平后才取——见 scripts/perf/hotPaths/
- * transcriptScenarios.ts 的同名说明。
+ * 逐行 `+=` 累加，不创建行数组。生产会在拼进提示词、跨线程 clone 或发送网络时
+ * 展平 rope；对应基准必须用 `charCodeAt(length - 1)` 强制物化，不能只读 `.length`，
+ * 见 scripts/perf/hotPaths/transcriptScenarios.ts。
  *
  * `first` 用显式布尔而不是 `rendered === ""` 判空：后者把正确性绑在「任何一行都不会
  * 是空串」这个附带事实上，而布尔无条件成立。
@@ -325,8 +303,7 @@ function renderRange(
 }
 
 /**
- * 紧凑回复标注。目标还在本段里就只留指针，作者与原文让模型顺编号回溯——那份
- * 内嵌副本原本是整段转录里最贵的一类结构开销（实测占转录 token 的 19%）。
+ * 紧凑回复标注。目标还在本段里就只留指针，作者与原文让模型顺编号回溯。
  *
  * 目标已滑出窗口时段内没有行可跳，退回内嵌快照；此时作者若仍在名册里就用编号，
  * 否则写完整身份。精确引用片段无论哪条路都保留：它是用户手选的片段，转录里
@@ -338,9 +315,7 @@ function formatCompactReplyTag(
 ): string {
   if (reference === undefined) return "";
   // 引用片段的拼接留在「已滑出」那条分支里。放在这里的话，紧接着的快路径 return
-  // 用的是 replyQuoteTemplate、根本不读它——而目标还在窗口内是紧凑格式的常态，
-  // 也正是这个格式存在的理由，等于每个带引用的回复白拼一个串（同一文件的
-  // formatBufferedMessageLine 就是为了同一类浪费从 401 调到 192 ns/op）。
+  // 用的是 replyQuoteTemplate、根本不读它；目标仍在窗口内时不得白拼内嵌引用串。
   if (context.present.has(reference.messageId)) {
     return `${replyPointerTemplate(reference.messageId)}${reference.quote ? replyQuoteTemplate(reference.quote) : ""}`;
   }
@@ -363,8 +338,7 @@ function formatCompactReplyTag(
  *
  * 行本身走紧凑渲染：身份、转发来源各出一次名册，行内只写编号；日期只在变化时
  * 单起一行；消息号只给真的会被引用的行；被回复消息只留指针。整段转录每次回复
- * 都要重发一遍且进不了跨回复的缓存，是全部输入里最贵的一块（实测占用户区块
- * 80~86%），而其中群友真正说出口的字只占两成——省下来的全是重复的结构开销。
+ * 都要重发且无法跨回复缓存，因此重复结构必须保持紧凑。
  * 各项对「认人 / 回复回溯」的影响在 88 道客观题上与全量格式打平，见
  * test/aiChat/ai/chatTranscript.test.ts 钉住的形状。
  *

@@ -30,7 +30,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/auto/`**
   - **Responsibility**: automatic non-command behavior, including copying, AI transcription
     and triggers, and reaction synchronization.
-  - **Representative files**: `message/`, `triggerPolicy.ts`.
+  - **Representative files**: `message/` (including `triggerPolicy.ts`) and `reactionSync.ts`.
 - **`packages/aiChat/`**
   - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
     supervision, memory mirror, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
@@ -44,10 +44,9 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `workerBridge.ts`, `durableDelivery.ts`, `updateIngress.ts`,
     `adCandidate.ts`, and `ai/`; `index.ts` is only a thin public entry point.
 - **`packages/copy/`**
-  - **Responsibility**: copy-mode transformations, execution queues for avatars, reactions,
-    and translation, plus the single decision point for whether Japanese translation is live.
-  - **Representative files**: `copyModes.ts`, `avatarQueue.ts`, `reactionQueue.ts`,
-    `translate.ts`, `availability.ts`.
+  - **Responsibility**: copy-mode transformations, execution queues for avatars and translation,
+    plus the single decision point for whether Japanese translation is live.
+  - **Representative files**: `copyModes.ts`, `avatarQueue.ts`, `translate.ts`, `availability.ts`.
 - **`packages/users/`**
   - **Responsibility**: sender-identity cache, visible-sender resolution, and user-label
     generation.
@@ -62,7 +61,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `telegram.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
 - **`packages/database/`**
   - **Responsibility**: the shared SQLite (identity policy plus chat state) schema, codecs, row validation, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
-  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `migration.ts`, `inspection.ts`), and `validation/storageRows.ts`.
+  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `migration.ts`, `inspection.ts`, `admin.ts`), and `validation/storageRows.ts`.
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
@@ -81,7 +80,9 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/workers/antiRaid/adDetect/`**
   - **Responsibility**: provider-routed ad-detection pipeline, including the batched queue, per-sender
     bundle shaping, verdicts, and disposal on a hit.
-  - **Representative files**: `queue.ts`, `bundle.ts`, `classifier.ts`, `disposal.ts`.
+  - **Representative files**: `queue.ts` (entry point and tick), `queueState.ts` (admission
+    predicates), `verdict.ts` (verdict and disposal orchestration), `bundle.ts`, `classifier.ts`,
+    `disposal.ts`.
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.
@@ -111,7 +112,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
-  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `migrateChatQa.ts` with `chatQaMigration/`, `storageDatabaseIntegrity.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), plus the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`.
+  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `migrateQaThumbnail.ts` with `qaThumbnailMigration/`, the shared cold-migration boundaries `migration/backup.ts` and `migration/lifecycle.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), plus the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`.
 
 ## Deciding Where New Code Belongs
 
@@ -156,7 +157,7 @@ Watch out for shared domain code such as `packages/aiChat/ai/`: if a pure functi
 
 ## Compatibility Entry-Point (Barrel) Convention
 
-When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/infra/telegram/actions.ts` for `packages/infra/telegram/actions/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
+When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/infra/telegram/actions.ts` for `packages/infra/telegram/actions/`, or `packages/workers/diskIO/storageDatabase.ts` for `packages/workers/diskIO/storageDatabase/`. The rules are:
 
 - Compatibility entry points exist only for gradual migration of old imports. **All new code imports directly from the domain submodule.**
 - A compatibility entry point must not own state, parse configuration, or introduce import-time side effects.
@@ -165,7 +166,7 @@ When a large file is split into submodules, the original file may become a thin 
 
 ## Mirrored Test Structure
 
-Paths under `test/` generally mirror `packages/`; one split domain may share a domain-level test. For example, `packages/workers/diskIO/verificationCodec.ts`, `verificationRecovery.ts`, and `verificationWrites.ts` are covered together by `test/workers/diskIO/verificationFiles.test.ts`. Create other new-module tests in the matching directory structure. Shared test helpers live in `test/libs/helpers.ts`; see [05 Development Workflow](05-dev-workflow.md#test-isolation) for global isolation behavior.
+Paths under `test/` generally mirror `packages/`; one split domain may share a domain-level test. For example, `packages/workers/diskIO/verificationCodec.ts`, `verificationRecovery.ts`, and `verificationWrites.ts` are covered together by `test/workers/diskIO/verificationFiles.test.ts`. Create other new-module tests in the matching directory structure. Cross-domain test doubles, fixtures and harnesses live in `test/helpers/`, and domain-agnostic utilities live in `test/libs/helpers.ts`; see [05 Development Workflow](05-dev-workflow.md#test-isolation) for global isolation behavior.
 
 ---
 

@@ -71,5 +71,5 @@ export async function main(argument: string | undefined): Promise<void> {
   const round: StorageRound = await runStorageChild(
     parseStorageOperation(argument)
   );
-  process.stdout.write(`${JSON.stringify(round)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(round)}\n`);
 }

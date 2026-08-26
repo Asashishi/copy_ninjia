@@ -6,7 +6,7 @@ import type {
   StoredChatQaRow,
 } from "../../types/storageDatabase";
 
-/** 读取全部已提交问答行（含 data）；启动整表恢复与显式冷迁移核对时使用。 */
+/** 读取全部已提交问答行（含 data）；启动按 25 群、每群 15 条的硬顶恢复。 */
 export function readStoredChatQa(
   database: StorageDatabase
 ): readonly StoredChatQaRow[] {

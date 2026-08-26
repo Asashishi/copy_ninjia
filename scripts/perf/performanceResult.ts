@@ -20,7 +20,6 @@
  * 这条隔离重写的，不是忘了复用 `packages/libs/record`。
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** 仓库根被跟踪的性能记录文件；两套基准共用这一份，文件名只在这里出现一次。 */
@@ -54,15 +53,15 @@ export interface WritePerformanceResultEntryParams {
  * 节不存在时创建；存在但不是对象则直接失败，不猜、不覆盖——那说明这份文件已经
  * 被改坏，静默重建只会把坏掉的地方藏起来。
  */
-export function writePerformanceResultEntry({
+export async function writePerformanceResultEntry({
   path,
   section,
   entry,
   value,
-}: WritePerformanceResultEntryParams): void {
+}: WritePerformanceResultEntryParams): Promise<void> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    parsed = JSON.parse(await Bun.file(path).text());
   } catch (error: unknown) {
     throw new Error(`${path}: could not be read as strict JSON.`, { cause: error });
   }
@@ -76,5 +75,5 @@ export function writePerformanceResultEntry({
   const target: Record<string, unknown> = isRecord(existing) ? existing : {};
   target[entry] = value;
   parsed[section] = target;
-  writeFileSync(path, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  await Bun.write(path, `${JSON.stringify(parsed, null, 2)}\n`);
 }

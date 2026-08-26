@@ -1,7 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const projectRoot: string = join(import.meta.dir, "..");
 
@@ -61,15 +60,10 @@ describe("production module coverage manifest", () => {
     }) as unknown as typeof setTimeout;
 
     // 文件系统写入与上面三类副作用同级拦截：任何生产模块都不得在 import
-    // 阶段写盘（历史事故见 .claude/CLAUDE.md——曾有测试进程覆盖掉线上
-    // state.json，这里是同一道防线在模块图层面的兜底断言）。只拦截写路径，
-    // import 阶段的合法读取（readFileSync/readdirSync 等）走真实实现。
+    // 阶段写盘。只拦截写路径，合法读取（readFileSync/readdirSync 等）走真实实现。
     //
-    // 拦截必须做成「带开关的透传包装」而不是简单替换：本 bun 版本对同一
-    // builtin 的 mock.module 二次调用不会覆盖第一次，mock 装上就摘不掉；
-    // 非隔离测试里它会泄漏到同进程随后加载的测试文件（真实
-    // 读写临时目录的 diskIO/instanceLock 等测试会被误伤）。开关在 finally
-    // 里关掉后，泄漏出去的只是对真实实现的纯透传。
+    // 使用带开关的透传包装：mock.module 注册会保留到同进程后续测试，finally
+    // 关闭开关后包装只透传真实实现，不影响需要读写临时目录的用例。
     let fsWriteStarts: number = 0;
     let fsGuardActive: boolean = false;
     const realFs: Record<string, unknown> = { ...(await import("node:fs")) };
@@ -98,18 +92,57 @@ describe("production module coverage manifest", () => {
     for (const name of asyncWriteFns) guardedFsPromises[name] = guardFsWrite(realFsPromises, name, `promises.${name}`);
     mock.module("node:fs", () => guardedFs);
     mock.module("node:fs/promises", () => guardedFsPromises);
+
+    // 生产代码的落盘不止 node:fs：删除走 Bun 原生 BunFile.delete()（见
+    // packages/libs/atomicFile.ts、infra/storage/{cleanup,dataRoot,instanceLock}.ts），
+    // 只拦 node:fs 会给这条路留一个 import 期写盘的盲区。Bun.write 与 BunFile 的
+    // write/writer 同理一并拦下。与 mock.module 不同，这两个是普通可写属性，
+    // finally 里能原样还原，不会把 Proxy 留给后续用例。
+    const realBunFile = Bun.file;
+    const realBunWrite = Bun.write;
+    function guardBunWrite(label: string): void {
+      if (!fsGuardActive) return;
+      fsWriteStarts++;
+      throw new Error(`A production module called ${label} during import.`);
+    }
+    Bun.write = ((...args: any[]): any => {
+      guardBunWrite("Bun.write");
+      return (realBunWrite as (...passthroughArgs: any[]) => any)(...args);
+    }) as typeof Bun.write;
+    Bun.file = ((path: any, options?: any): any => {
+      const file = realBunFile(path, options);
+      // 文件描述符形态（Bun.stdout/stderr、内部 fs.WriteStream）是控制台输出，
+      // 不是落盘：依赖内部的 debug / google-logging-utils 在 import 期就会为
+      // TTY 探测建 WriteStream，把它算成写盘会让这道防线永远误报。
+      if (typeof path === "number") return file;
+      return new Proxy(file, {
+        get(target: any, property: string | symbol): unknown {
+          if (property === "delete" || property === "unlink" || property === "write" || property === "writer") {
+            return (...args: unknown[]): unknown => {
+              guardBunWrite(`BunFile.${String(property)}`);
+              return target[property](...args);
+            };
+          }
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    }) as typeof Bun.file;
+
     fsGuardActive = true;
 
     try {
       for (const path of productionRuntimeModules) {
         currentImportPath = path;
-        await import(pathToFileURL(path).href);
+        await import(Bun.pathToFileURL(path).href);
       }
     } finally {
       globalThis.Worker = originalWorker;
       globalThis.fetch = originalFetch;
       globalThis.setInterval = originalSetInterval;
       globalThis.setTimeout = originalSetTimeout;
+      Bun.file = realBunFile;
+      Bun.write = realBunWrite;
       // 关掉开关：此后（含泄漏到其它测试文件的场景）包装函数全部透传真实实现。
       fsGuardActive = false;
     }

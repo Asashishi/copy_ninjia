@@ -81,7 +81,7 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
 }));
 mock.module("../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
-  joinVerificationApi: { kind: "guard-api" },
+  telegramApi: { kind: "guard-api" },
 }));
 // botAdmin -> blocklist 的新晋管理员补扫会取这三个；本文件名单为空，不触发。
 mock.module("../../packages/infra/telegram/actions", () => ({

@@ -36,7 +36,7 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 mock.module("../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
-  joinVerificationApi: { kind: "guard-api" },
+  telegramApi: { kind: "guard-api" },
 }));
 mock.module("../../packages/infra/botAdmin", () => ({ resolveBotAdminStatus }));
 mock.module("../../packages/infra/storage/stateStore", () => ({ getChatStateCache: () => chatStates }));

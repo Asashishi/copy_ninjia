@@ -74,16 +74,8 @@ export function handleChatStateWrite(
       `${STATE_MANAGED_CHAT_LIMIT} chats; delete chats that are no longer managed before adding another chat.`
     );
   }
-  // 唯一代理目标是**归纳**不变量：写这一条之前它已经成立——每次写入都过这道闸，
-  // 而库里已有的行由本 Worker 自己的启动整表恢复把关（见
-  // database/validation/storageRows.ts，它不依赖主线程准入）。因此只有「把
-  // isProxySendEnabled 打开」的这一条写才可能破坏它，别的写一律不必看其它行。
-  //
-  // 原先无论写什么都要把整张表（最多 STATE_MANAGED_CHAT_LIMIT 行）逐行 JSON.parse
-  // 再跑完整字段/lockdown/18 位权限校验，只为数一个布尔。25 群启动时
-  // refreshAllChatTitles 每群一次后台写，那一阵就是 625 次完整解码，且正好落在
-  // runner 开始灌 update 的窗口里。改完之后真正会走进下面这个循环的只有
-  // /send 开会话那一次。
+  // 唯一代理目标是归纳不变量：启动整表恢复先验证已有行，此后每次写入都过此闸。
+  // 只有把 isProxySendEnabled 打开的写入可能破坏它，因此其它字段的更新不扫描整表。
   if (incoming?.isProxySendEnabled === true) {
     for (const [chatId, data] of effectiveChatStateData()) {
       if (chatId === message.chatId) continue;

@@ -18,7 +18,6 @@
  * 不做默认值回填、不丢弃非法条目（见 AGENTS.md 的「不为用户行为兜底」）。
  */
 
-import { readFileSync } from "node:fs";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../../packages/libs/record";
 import { writePerformanceResultEntry } from "../performanceResult";
 
@@ -264,9 +263,11 @@ function parseScenario(
  * 只校验结构与取值形态；「场景表是否与默认场景一一对应」仍由
  * assertHotPathMedianPolicyCoverage 判定，避免同一条契约有两个 owner。
  */
-export function readHotPathGateCalibration(path: string): HotPathGateCalibration {
+export async function readHotPathGateCalibration(
+  path: string
+): Promise<HotPathGateCalibration> {
   try {
-    return parseCalibrationDocument(readDocument(path));
+    return parseCalibrationDocument(await readDocument(path));
   } catch (error: unknown) {
     const reason: string = error instanceof Error ? error.message : String(error);
     throw new Error(`${path}: ${reason}`, { cause: error });
@@ -274,9 +275,9 @@ export function readHotPathGateCalibration(path: string): HotPathGateCalibration
 }
 
 /** 严格 JSON 读取；解析失败即致命，不退回默认值也不尝试修复。 */
-function readDocument(path: string): unknown {
+async function readDocument(path: string): Promise<unknown> {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    return JSON.parse(await Bun.file(path).text());
   } catch (error: unknown) {
     throw new Error("could not be read as strict JSON.", { cause: error });
   }
@@ -334,8 +335,11 @@ function parseCalibrationDocument(parsed: unknown): HotPathGateCalibration {
  * 两边共用「只换自己那一格」的语义）。这层只钉死本侧的节名与键名，免得调用点
  * 各自拼字符串——拼错不会报错，只会往记录里多长出一个没人读的键。
  */
-export function writeHotPathGateLastRun(path: string, lastRun: unknown): void {
-  writePerformanceResultEntry({
+export async function writeHotPathGateLastRun(
+  path: string,
+  lastRun: unknown
+): Promise<void> {
+  await writePerformanceResultEntry({
     path,
     section: "hotPathProfileGate",
     entry: "lastRun",

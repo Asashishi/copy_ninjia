@@ -108,13 +108,21 @@ describe("application handler registration", () => {
         messageIngressIndices.push(index);
       }
     }
-    // 三条 message ingress，顺序承重：Anti-Raid 先看原始消息以保持刷屏/黑名单
-    // 事实口径，gag 次之（被 gag 的消息不得再往下走），最后是 /set_qa 表单结果
-    // ——它认领后会删掉那条中转消息，再放行只会让下游处理一个不存在的东西。
-    expect(messageIngressIndices).toHaveLength(3);
+    // 两条只监听 message 的 ingress，顺序承重：Anti-Raid 先看原始消息以保持
+    // 刷屏/黑名单事实口径，gag 次之（被 gag 的消息不得再往下走）。
+    expect(messageIngressIndices).toHaveLength(2);
     const gagIngressIndex: number = messageIngressIndices[1]!;
-    const qaIngressIndex: number = messageIngressIndices[2]!;
     expect(gagIngressIndex).toBeGreaterThan(antiRaidIngressIndex);
+    // /set_qa 的表单投递排在两者之后，且必须同时覆盖 channel_post：频道里的
+    // 「问题:」「回答:」是频道帖，只监听 message 的话频道根本填不了表单。
+    // 它认领后会删掉那条投递消息，再放行只会让下游处理一个不存在的东西。
+    const bothUpdates: string = `on:${JSON.stringify(["message", "channel_post"])}`;
+    const bothUpdatesIndices: number[] = [];
+    for (let index: number = 0; index < registrationOrder.length; index++) {
+      if (registrationOrder[index] === bothUpdates) bothUpdatesIndices.push(index);
+    }
+    expect(bothUpdatesIndices).toHaveLength(2);
+    const qaIngressIndex: number = bothUpdatesIndices[0]!;
     expect(qaIngressIndex).toBeGreaterThan(gagIngressIndex);
     for (const command of commands) {
       expect(registrationOrder.indexOf(`command:${command}`))
@@ -126,15 +134,25 @@ describe("application handler registration", () => {
     // 顺序是承重的，必须显式断言：把 hears 挪到消息兜底之后，上面所有断言依旧
     // 全绿，而运行时每条 `/咬` 都会先被 handleIncomingMessage 吞掉，整个动作
     // 命令特性静默失效并落进它明令要避开的 AI/复读流水线。
-    const messageFallbackIndex: number =
-      registrationOrder.indexOf(`on:${JSON.stringify(["message", "channel_post"])}`);
-    expect(messageFallbackIndex).toBeGreaterThan(-1);
+    // 消息兜底是**后**那条 ["message","channel_post"]；前一条是上面的 qa ingress，
+    // 用 indexOf 会拿到 qa 那条，把「命令必须早于兜底」这组断言整体拧松。
+    const messageFallbackIndex: number = bothUpdatesIndices[1]!;
+    expect(messageFallbackIndex).toBeGreaterThan(qaIngressIndex);
     expect(registrationOrder.indexOf("hears")).toBeGreaterThan(-1);
     expect(registrationOrder.indexOf("hears")).toBeGreaterThan(registrationOrder.indexOf("use:3"));
     expect(registrationOrder.indexOf("hears")).toBeLessThan(messageFallbackIndex);
     // /x 占位项同理：它也终止链路，必须先于消息兜底注册。
     expect(registrationOrder.indexOf("command:x")).toBeLessThan(messageFallbackIndex);
-    expect(updates).toHaveLength(10);
+    // 两条 callback_query:data：/query_qa 翻页先认领，没认领的才交给入群验证。
+    // 前者不认领时会 next()，后者不调 next()，顺序反了翻页按钮就永远转圈。
+    const callbackIndices: number[] = [];
+    for (let index: number = 0; index < registrationOrder.length; index++) {
+      if (registrationOrder[index] === `on:${JSON.stringify("callback_query:data")}`) {
+        callbackIndices.push(index);
+      }
+    }
+    expect(callbackIndices).toHaveLength(2);
+    expect(updates).toHaveLength(11);
     expect(catchCount).toBe(1);
 
     const next = async (): Promise<void> => undefined;

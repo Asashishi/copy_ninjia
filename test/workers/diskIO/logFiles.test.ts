@@ -11,9 +11,12 @@ import {
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
 import { getTokyoDateKey } from "../../../packages/libs/time";
 import {
+  adoptLogFiles,
   flushLogBuffer,
   handleLogMessage,
   initLogFiles,
+  inspectLogFiles,
+  maintainLogFiles,
 } from "../../../packages/workers/diskIO/logFiles";
 import { serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOnlyDayFile";
 
@@ -39,6 +42,31 @@ describe("diskIO/logFiles 启动恢复", () => {
     initLogFiles();
 
     expect(loggerFileState.current?.day).toBe(today);
+    expect(existsSync(stalePath)).toBeFalse();
+    expect(existsSync(tempPath)).toBeFalse();
+  });
+
+  test("inspect 不规范化或清理，adopt 与 maintenance 分阶段生效", () => {
+    const today: string = getTokyoDateKey();
+    const todayPath: string = join(LOGS_DIR, `${today}.json`);
+    const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
+    const tempPath: string = join(LOGS_DIR, `orphan${TMP_FILE_SUFFIX}`);
+    const original: string = '{"entry":{"level":"error","message":"boom"}}';
+    writeFileSync(todayPath, original);
+    writeFileSync(stalePath, "{}");
+    writeFileSync(tempPath, "partial");
+
+    const inspection = inspectLogFiles();
+    expect(readFileSync(todayPath, "utf8")).toBe(original);
+    expect(existsSync(stalePath)).toBeTrue();
+    expect(existsSync(tempPath)).toBeTrue();
+
+    adoptLogFiles(inspection);
+    expect(readFileSync(todayPath, "utf8").endsWith("\n}")).toBeTrue();
+    expect(existsSync(stalePath)).toBeTrue();
+    expect(existsSync(tempPath)).toBeTrue();
+
+    maintainLogFiles(inspection);
     expect(existsSync(stalePath)).toBeFalse();
     expect(existsSync(tempPath)).toBeFalse();
   });

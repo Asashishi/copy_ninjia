@@ -41,6 +41,20 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 **その tree の checkout は変更しません**（ローカル変更があったり意図的に特定版で止めている可能性がある
 ため）。現在の版数を 1 行報告するだけです。
 
+ソースが release アーカイブの展開（またはディレクトリのコピー）で得られたもの——ソースはあるが `.git`
+が無い——の場合は、以後 git で更新できるよう、その場に git repository を作ります：`git init` し、
+`origin` を本 repository に向け、全 tag を取得し、**tag ごとに内容を突き合わせて**現在のファイルと
+一致するものを特定し、`HEAD` をそこへ向けます（detached。clone と同じ形です）。これで `git status` は
+クリーンになり、更新は `git fetch --tags` と `git checkout <新しい tag>` の 2 手で済みます。
+
+この repository 作成は**work tree のファイルを一切書きません**。`config/`・`state.json`・`g-auth.json`
+のような deployment データを object store に取り込むこともありません——`read-tree` / `diff-index` で
+tag 自身が持つ object とだけ突き合わせ、未追跡ファイルは一切関与しないため、`.gitignore` の網羅性にも
+依存しません。どの公開 tag とも一致しない場合（改変済み、あるいはそもそも release アーカイブでない）は
+**推測しません**：repository・`origin`・tag は揃えたうえで `HEAD` はどの版も指さないので、確認のうえ
+`git checkout <tag>` してください。`git` を導入できない、tag を取得できない場合もこの手順を飛ばして
+通知するだけで、インストール自体は中断しません。
+
 その後 `copy-ninjia.service` を登録・有効化し（`User` と `WorkingDirectory` は現在のユーザーと
 repository path）、再起動ループに入っていないことを再起動間隔 2 回分観察して確認してから成功とします。
 既存 unit は確認してからでなければ上書きしません。残す選択をした場合は、その unit の実際の
@@ -237,17 +251,16 @@ sidecar が同じ協働 group を継承します。
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "qaThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-5 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、`/set_qa` フォーム inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
+4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
 
-5 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 4 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
+4 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
 
-> `state.global.assets` が導入される前のバージョンから上げる場合は、**起動前にこの 5 項目を確認**してください：サムネイル 4 枚は現在 `https` のみを受け付けるため、以前 `http://` で設定していたものはデコード時に起動を拒否し、フィールドパスを示します。
+> `state.global.assets` が導入される前のバージョンから上げる場合は、**起動前にこの 4 項目を確認**してください：サムネイル 3 枚は現在 `https` のみを受け付けるため、以前 `http://` で設定していたものはデコード時に起動を拒否し、フィールドパスを示します。
 
 **変更は停止中に行います**：稼働中のプロセスは正式な状態をメモリに保持しファイル全体を上書きするため、`systemctl stop` → 編集 → `systemctl start` の順です（[07 運用とトラブルシューティング](07-operations.md) を参照）。
 

@@ -37,13 +37,15 @@ const projectRoot: string = join(import.meta.dir, "../..");
  * 校准记录在任何子进程启动之前读一次并严格校验。放在这里而不是首次用到时才读：
  * 记录写坏时不该先花十几分钟跑完九个场景再报错。
  */
-const calibration: HotPathGateCalibration = readHotPathGateCalibration(PERFORMANCE_RESULT_PATH);
+const calibration: HotPathGateCalibration = await readHotPathGateCalibration(
+  PERFORMANCE_RESULT_PATH
+);
 
 /**
  * 只有显式传 `--write-result` 才把本次读数写回 `lastRun`。默认只读，
  * `bun run check` 因此不会因为跑了一次门禁就产生工作树改动。
  */
-const shouldWriteResult: boolean = process.argv.includes("--write-result");
+const shouldWriteResult: boolean = Bun.argv.includes("--write-result");
 
 interface SamplingProfileResult {
   readonly totalSamples: number;
@@ -530,11 +532,11 @@ if (expectedBunVersion === undefined || expectedBunRevision === undefined) {
 // 那个 blob，否则不会有任何人发现。仍然不改退出码——这七个阈值是校准值不是
 // 硬门禁，硬指标由上面的 GC/RSS/常驻增长几道判定负责。
 for (const report of softLatencyReports) {
-  process.stderr.write(
+  console.error(
     `hot-path soft latency: ${report.scenario} median ${report.medianNsPerOp.toFixed(1)} ns/op ` +
     `exceeds its ${report.reportThresholdNsPerOp} ns/op policy by ` +
     `${report.overrunNsPerOp.toFixed(1)} ns/op (+${report.overrunPercent.toFixed(1)}%) ` +
-    `on Bun ${expectedBunRevision}.\n`
+    `on Bun ${expectedBunRevision}.`
   );
 }
 
@@ -569,11 +571,11 @@ const lastRun: Readonly<Record<string, unknown>> = {
   scenarios: gateResults,
 };
 
-process.stdout.write(`${JSON.stringify(lastRun)}\n`);
+await Bun.write(Bun.stdout, `${JSON.stringify(lastRun)}\n`);
 
 // 回写只覆盖 lastRun。`calibration` 那一半是人重标出来的判据，绝不由一次运行
 // 的读数自动改写——那等于把闸门焊死在当前性能上，退化会连同阈值一起被记下来。
 if (shouldWriteResult) {
-  writeHotPathGateLastRun(PERFORMANCE_RESULT_PATH, lastRun);
-  process.stderr.write(`hot-path gate: recorded this run into ${PERFORMANCE_RESULT_PATH}\n`);
+  await writeHotPathGateLastRun(PERFORMANCE_RESULT_PATH, lastRun);
+  console.error(`hot-path gate: recorded this run into ${PERFORMANCE_RESULT_PATH}`);
 }

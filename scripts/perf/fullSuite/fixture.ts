@@ -14,6 +14,7 @@ import {
   COLD_START_AI_MEMORY_CHATS,
   COLD_START_AI_MEMORY_MESSAGES,
   COLD_START_AI_MEMORY_SUMMARIES,
+  COLD_START_CHAT_QA_ROWS,
   COLD_START_CHAT_STATE_ROWS,
   COLD_START_IDENTITY_ROWS,
   COLD_START_JOIN_LOG_EVENTS,
@@ -40,8 +41,11 @@ import { createStorageDatabase } from
   "../../../packages/database/interact/migration";
 import { encodeChatStateData } from
   "../../../packages/database/codec/chatState";
+import { encodeChatQaData } from
+  "../../../packages/database/codec/chatQa";
 import { encodePendingBlockedRemovalData } from
   "../../../packages/database/codec/identity";
+import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { createChatState } from "../../../packages/libs/chatState";
 import { getTokyoDateKey } from "../../../packages/libs/time";
 import { BLACK_DATA, WHITE_DATA } from "../identityDatabase/fixtures";
@@ -54,6 +58,7 @@ import type { SeedStorageDatabaseOptions } from
   "../../../packages/database/interact/admin";
 import type {
   StorageDatabase,
+  StoredChatQaRow,
   StoredChatStateRow,
   StoredIdentityPolicyRow,
   StoredPendingRemovalRow,
@@ -69,6 +74,7 @@ export interface SeededFixtureCounts {
   readonly whitelistEntries: number;
   readonly blocklistEntries: number;
   readonly chatStates: number;
+  readonly chatQaEntries: number;
   readonly pendingRemovals: number;
   readonly aiMemoryChats: number;
   readonly joinLogEvents: number;
@@ -79,6 +85,9 @@ const BENCHMARK_CHAT_ID_BASE: number = -1_002_000_000_000;
 
 /** 基准成员 id 的起点；与群 id 分开，避免主键在两张表之间意外重叠。 */
 const BENCHMARK_USER_ID_BASE: number = 700_000_000;
+
+/** 黑名单 fixture 的主键起点；待踢 outbox 只能冻结这段范围内的身份。 */
+const BENCHMARK_BLOCKLIST_ID_BASE: number = COLD_START_IDENTITY_ROWS + 1;
 
 /** fixture 时间戳起点，取 2026-01-01T00:00:00Z；固定值保证各轮输入完全一致。 */
 const FIXTURE_EPOCH_MS: number = 1_767_225_600_000;
@@ -164,17 +173,37 @@ function chatStateRows(): readonly StoredChatStateRow[] {
   return rows;
 }
 
+function chatQaRows(): readonly StoredChatQaRow[] {
+  const rows: StoredChatQaRow[] = new Array<StoredChatQaRow>(
+    COLD_START_CHAT_QA_ROWS
+  );
+  for (let index: number = 0; index < COLD_START_CHAT_QA_ROWS; index += 1) {
+    const chatIndex: number = Math.floor(index / CHAT_QA_MAX_PER_CHAT);
+    const questionIndex: number = index % CHAT_QA_MAX_PER_CHAT;
+    rows[index] = {
+      chatId: benchmarkChatId(chatIndex),
+      q: `性能基准问题 ${questionIndex}`,
+      data: encodeChatQaData(
+        `群 ${chatIndex} 的性能基准答案 ${questionIndex}。`,
+        `performance fixture:chat_qa[${chatIndex}:${questionIndex}].data`
+      ),
+    };
+  }
+  return rows;
+}
+
 function removalRows(): readonly StoredPendingRemovalRow[] {
   const rows: StoredPendingRemovalRow[] = new Array<StoredPendingRemovalRow>(
     COLD_START_REMOVAL_ROWS
   );
   for (let index: number = 0; index < COLD_START_REMOVAL_ROWS; index += 1) {
     const removalId: number = index + 1;
+    const firstBlockedId: number = BENCHMARK_BLOCKLIST_ID_BASE + index;
     const pending: PendingBlockedRemoval = {
       params: {
         chatId: benchmarkChatId(index % COLD_START_CHAT_STATE_ROWS),
         probeMembership: false,
-        userIds: [benchmarkUserId(index), benchmarkUserId(index + 1)],
+        userIds: [firstBlockedId, firstBlockedId + 1],
         removalId,
       },
       createdAt: FIXTURE_EPOCH_MS + removalId,
@@ -226,9 +255,10 @@ export function createBenchmarkDatabase(): void {
   createDatabase({
     metadata: [SCHEMA_METADATA_ROW],
     whitelist: identityRows(WHITE_DATA, 1),
-    blocklist: identityRows(BLACK_DATA, COLD_START_IDENTITY_ROWS + 1),
+    blocklist: identityRows(BLACK_DATA, BENCHMARK_BLOCKLIST_ID_BASE),
     removals: removalRows(),
     chatStates: chatStateRows(),
+    chatQa: chatQaRows(),
   });
 }
 
@@ -265,6 +295,7 @@ export function fixtureCounts(): SeededFixtureCounts {
     whitelistEntries: COLD_START_IDENTITY_ROWS,
     blocklistEntries: COLD_START_IDENTITY_ROWS,
     chatStates: COLD_START_CHAT_STATE_ROWS,
+    chatQaEntries: COLD_START_CHAT_QA_ROWS,
     pendingRemovals: COLD_START_REMOVAL_ROWS,
     aiMemoryChats: COLD_START_AI_MEMORY_CHATS,
     joinLogEvents: COLD_START_JOIN_LOG_EVENTS,

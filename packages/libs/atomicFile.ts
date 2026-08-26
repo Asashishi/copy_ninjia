@@ -9,7 +9,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { open, rename, stat, unlink } from "node:fs/promises";
+import { open, rename } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { TMP_FILE_SUFFIX } from "../consts/paths";
 import { isErrno } from "./errno";
@@ -62,18 +62,16 @@ type AtomicSyncWriter = (fd: number) => number;
  * 同步原子写的公共生命周期。writer 返回已经写入的字节数，异常统一走
  * close + unlink，避免文本与分块写各自维护一套容易漂移的失败路径。
  *
- * 权限接管与 atomicWriteText 同口径：`mode` 不传时沿用目标文件当前的权限。
- * 不沿用的话，新建的临时文件按 `0666 & ~umask`（常见 0644）被 rename 顶上去，
- * 部署方 `chmod 0600` 过的文件会在一次普通写入后被静默放宽——而追加型日志
- * （workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite）正是刻意不传 mode
- * 来「保持原有部署权限策略」的，缺了这一步那句注释就成了反话。
+ * 权限接管与 atomicWriteText 同口径：已有目标始终沿用部署方当前权限，`mode`
+ * 只作为首次创建的默认值。否则调用方为了给新文件指定 0644，会在下一次普通
+ * 写入时把部署方主动收紧到 0600/0640 的文件静默放宽。
  */
 function atomicWriteSync(
   path: string,
   writer: AtomicSyncWriter,
   mode?: number
 ): number {
-  const targetMode: number | undefined = mode ?? currentFileModeSync(path);
+  const targetMode: number | undefined = currentFileModeSync(path) ?? mode;
   const tmpPath: string = temporaryPath(path);
   const fd: number = openSync(tmpPath, "wx", targetMode);
   let writtenBytes: number;
@@ -141,7 +139,7 @@ function currentFileModeSync(path: string): number | undefined {
  */
 async function currentFileMode(path: string): Promise<number | undefined> {
   try {
-    return (await stat(path)).mode & 0o777;
+    return (await Bun.file(path).stat()).mode & 0o777;
   } catch (error: unknown) {
     if (isErrno(error, "ENOENT")) return undefined;
     throw error;
@@ -152,13 +150,11 @@ async function currentFileMode(path: string): Promise<number | undefined> {
  * 原子替换文本文件，并同步文件数据和父目录项。
  *
  * 权限必须显式接管：临时文件是新建的，`0666 & ~umask`（常见 0644）与目标
- * 原有的权限没有任何关系，而 rename 直接把它替换上去——部署方 `chmod 0600`
- * 过的 config/whitelist.json、state.json、bot.lock 会在一次普通写入后被静默
- * 放宽，且不留日志。`mode` 显式传入时以它为准；不传时沿用目标文件当前的
- * 权限，目标不存在才落到默认值上。同步版 atomicWriteSync 口径完全一致。
+ * 原有的权限没有任何关系，而 rename 直接把它替换上去。已有目标始终沿用
+ * 当前权限；`mode` 只给首次创建指定默认值。同步版 atomicWriteSync 口径一致。
  */
 export async function atomicWriteText(path: string, content: string, mode?: number): Promise<void> {
-  const targetMode: number | undefined = mode ?? await currentFileMode(path);
+  const targetMode: number | undefined = (await currentFileMode(path)) ?? mode;
   const tmpPath: string = temporaryPath(path);
   const handle: FileHandle = await open(tmpPath, "wx", targetMode);
   try {
@@ -169,7 +165,7 @@ export async function atomicWriteText(path: string, content: string, mode?: numb
     await handle.sync();
   } catch (error: unknown) {
     await handle.close().catch((): undefined => undefined);
-    await unlink(tmpPath).catch((): undefined => undefined);
+    await Bun.file(tmpPath).delete().catch((): undefined => undefined);
     throw error;
   }
   try {
@@ -177,14 +173,14 @@ export async function atomicWriteText(path: string, content: string, mode?: numb
   } catch (error: unknown) {
     // close() 本身失败：不能再假设 tmp 文件完好可用，按失败路径清理，
     // 不尝试 rename——否则 close 抛错时会跳过下面的清理，留下孤儿 .tmp。
-    await unlink(tmpPath).catch((): undefined => undefined);
+    await Bun.file(tmpPath).delete().catch((): undefined => undefined);
     throw error;
   }
 
   try {
     await durableRename(tmpPath, path);
   } catch (error: unknown) {
-    await unlink(tmpPath).catch((): undefined => undefined);
+    await Bun.file(tmpPath).delete().catch((): undefined => undefined);
     throw error;
   }
 }

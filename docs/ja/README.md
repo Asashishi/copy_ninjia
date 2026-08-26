@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2581_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.62%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.14%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 2581 件のテストが全て成功 / テストファイル 271 件 / expect() 呼び出し 95,642 回 / 関数カバレッジ 95.23% / 行カバレッジ 96.62%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 2821 件のテストが全て成功 / テストファイル 287 件 / expect() 呼び出し 96,239 回 / 関数カバレッジ 95.98% / 行カバレッジ 97.14%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -97,7 +97,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI チャット</b></p>
-  <p>ペルソナに基づく自律行動。発言、スタンプ、リアクション、画像生成、作曲はすべてツールで、そのラウンドで何をいくつどの順に行うかはモデル自身が決めます。モデル層は差し替え可能な provider です。<code>config/agent.json</code> の各 capability が <code>google</code> か <code>openai</code> を自分で宣言し、capability 間の継承も実行時の failover もありません。</p>
+  <p>ペルソナに基づく自律行動。発言、スタンプ、リアクション、画像生成、作曲はすべてツールで、そのラウンドで何をいくつどの順に行うかはモデル自身が決めます。画像・楽曲ツールは、メンバーが Bot を直接 @ または返信したラウンドだけ、設定済み capability に従って公開されます。モデル層は差し替え可能な provider です。<code>config/agent.json</code> の各 capability が <code>google</code> か <code>openai</code> を自分で宣言し、capability 間の継承も実行時の failover もありません。</p>
 </td>
 </tr>
 <tr>
@@ -107,7 +107,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🔎 リアルタイム事実確認</b></p>
-  <p>Google 検索や東京の天気などのツールに接続。検索済みのラウンドではサンプリング温度を下げ、結果に沿って回答させます。</p>
+  <p>provider 側のサーバー検索や東京の天気などのツールに接続。固定ルールにより、変化する事実は先に検索し、結果を記憶より優先し、根拠が足りなければ不確実だと明示します。Gemini は検索後の後続ツールラウンドで低い sampling temperature を使います。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🧠 コンテキスト記憶</b></p>
@@ -121,11 +121,11 @@
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ 参加認証</b></p>
-  <p>新規メンバーに 3 分間のボタン認証。人間は本人だけがクリックでき、Bot アカウントに限り許可リストのユーザーが代理認証できます。招待者を特定できる非匿名管理者からの招待と、連携ディスカッショングループでの活動は免除されます。</p>
+  <p>新規メンバーに 3 分間のボタン認証。人間は本人だけがクリックでき、Bot アカウントに限り許可リストのユーザーが代理認証できます。招待者を特定できる非匿名管理者からの招待と、連携ディスカッショングループでの活動は免除されます。グループごとに既定で無効で、<code>/antiraid enable</code> で有効化します。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🚨 Anti-Raid</b></p>
-  <p>参加頻度を監視し、閾値に達するとグループへの招待を停止して異常な参加者を処置します。再起動後も状態を復元できます。</p>
+  <p>参加頻度を監視し、閾値に達するとグループへの招待を停止して異常な参加者を処置します。再起動後も状態を復元できます。参加認証と <code>/antiraid</code> という 1 つのスイッチを共用します。</p>
 </td>
 </tr>
 <tr>
@@ -145,7 +145,7 @@
 <tr>
 <td align="left" valign="top">
   <p><b>💬 chat Q&amp;A</b></p>
-  <p><code>/set_qa</code> は 2 ボタンの form で質問と回答を登録します（chat ごとに最大 5 件）。一字一句同じ質問が来れば AI を介さず即答し、登録文と字面が異なる言い回しだけを model の 2 つの照会 tool に委ねます。</p>
+  <p><code>/set_qa</code> は form を開き、開いた本人が「問題:」「回答:」の 2 通で質問と回答を登録します（chat ごとに最大 15 件、回答には <code>```json</code> block も入れられます）。一字一句同じ質問が来れば AI を介さず即答し、登録文と字面が異なる言い回しだけを model の 2 つの照会 tool に委ねます。</p>
 </td>
 <td align="left" valign="top"></td>
 <td align="left" valign="top"></td>
@@ -184,7 +184,10 @@ database 作成と systemd unit の登録・起動。入れるのは `master` HE
 tag は実行時に `releases/latest` へ問い合わせ、取得できなければその場で失敗します（`master` へ黙って
 フォールバックしません）。既存の設定は上書きせず、既存の systemd unit は上書き前に確認するため、再実行
 しても安全です。すでに clone 済みなら repository root で `bash install.sh` を実行すれば clone を飛ばし、
-その work tree の checkout はそのまま残します。
+その work tree の checkout はそのまま残します。ソースが release アーカイブの展開（ソースはあるが `.git`
+が無い）の場合は、その場に git repository を作り、現在のファイルと一致する tag に `HEAD` を向けるので、
+以後 git で更新できます。この作成は work tree のファイルを一切書かず、deployment データを object store に
+取り込むこともありません。
 
 手動 install：
 

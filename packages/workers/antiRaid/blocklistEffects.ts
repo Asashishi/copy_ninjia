@@ -23,7 +23,7 @@
  * 的清扫永久闩死，见 RemovalOutcome 的 targetIsAdmin。
  */
 
-import { banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, joinVerificationApi, probeChatAdmin, probeChatMembership } from "../../infra/telegram";
+import { banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, probeChatAdmin, probeChatMembership, telegramApi } from "../../infra/telegram";
 import type { BanChatMemberOutcome } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
 import { botCanDeleteIn } from "./botPermissions";
@@ -42,7 +42,7 @@ import type { RemoveBlockedMembersMessage } from
   "../../types/antiRaid/protocol";
 import type { RemoveBlockedMembersParams } from "../../types/blocklist";
 import { trackAntiRaidTask } from "./taskTracker";
-import { releaseAdDetectDedupKey } from "./adDetect/queue";
+import { releaseAdDetectDedupKey } from "./adDetect/queueState";
 
 /**
  * 单个 id 的处置结局。
@@ -74,20 +74,20 @@ async function removeOne({ chatId, userId, probeMembership }: RemoveOneParams): 
     // 频道马甲（sender_chat）没有「成员」这个概念，getChatMember 探不到，
     // 一律直接封掉它在本群的发言权（同 commands/block.ts 的处理）。
     if (userId < 0) {
-      const outcome: BanChatMemberOutcome = await banChatSenderChatWithOutcome(chatId, userId, joinVerificationApi);
+      const outcome: BanChatMemberOutcome = await banChatSenderChatWithOutcome(chatId, userId, telegramApi);
       if (outcome === "banned") return "removed";
       // 同真人分支：权限不够时重试没有意义，这批等的是权限变更。没有
       // targetIsAdmin 那一档可分辨，理由见 banChatSenderChatWithOutcome。
       if (outcome === "forbidden") return "forbidden";
     } else {
       if (probeMembership) {
-        const present: boolean | undefined = await probeChatMembership(chatId, userId, joinVerificationApi);
+        const present: boolean | undefined = await probeChatMembership(chatId, userId, telegramApi);
         // 只有「确认不在群」才跳过。探测失败（429、网络抖动）时照样封：对一个
         // 本来就不在群里的黑名单 id 多封一次是幂等的，效果只是提前封住；反过来
         // 把失败当成「不在群」，坐在群里的人就被静默放过了。
         if (present === false) return "absent";
       }
-      const outcome: BanChatMemberOutcome = await banChatMemberWithOutcome(chatId, userId, joinVerificationApi);
+      const outcome: BanChatMemberOutcome = await banChatMemberWithOutcome(chatId, userId, telegramApi);
       if (outcome === "banned") return "removed";
       // 权限不够不再消耗剩余尝试：同一秒里重试三次只是把同一条报错刷三遍，
       // 这个批次要等的是权限变更，不是下一次退避。但在把这个群整体判成「缺
@@ -95,7 +95,7 @@ async function removeOne({ chatId, userId, probeMembership }: RemoveOneParams): 
       // 管理员」，那是一个 id 的事，不该闩住整个群（见 RemovalOutcome）。
       // 查不出身份时维持原判——没有确证就不把群级闩锁降级成逐个重试。
       if (outcome === "forbidden") {
-        return await probeChatAdmin(chatId, userId, joinVerificationApi) === true
+        return await probeChatAdmin(chatId, userId, telegramApi) === true
           ? "targetIsAdmin"
           : "forbidden";
       }
@@ -197,7 +197,7 @@ async function removeBlockedMembers({
     currentBlocklistRemovalEpoch(chatId) === epoch &&
     botCanDeleteIn(chatId) !== false
   ) {
-    await deleteMessage(chatId, announcementMessageId, joinVerificationApi);
+    await deleteMessage(chatId, announcementMessageId, telegramApi);
   }
   if (removed > 0) logger.log(`Removed ${removed} blocklisted member(s) from chat ${chatId}.`);
   if (permissionDenied) {

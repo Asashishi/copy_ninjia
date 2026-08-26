@@ -1,13 +1,11 @@
 /**
  * 广告检测的四道准入闸（纯规则）。抽出来的意义在于：`docs/cn/04-invariants.md`
  * 要求「待检所有权由 pendingAdMessages、adDetectQueue 与 queuedAdDetectKeys
- * 共同表达，三者必须同步增删」，而那份一致性此前只靠注释和散落的 mutation
- * 维持——判定集中之后，「该不该动这三张表」才有了唯一一个可以直接考的答案。
+ * 共同表达，三者必须同步增删」。本文件直接验证集中准入判定与这项不变量。
  */
 
 import { describe, expect, test } from "bun:test";
 import {
-  admitAdBundleStorage,
   admitAdCandidate,
   admitAdDispatch,
   admitAdRequeue,
@@ -82,36 +80,22 @@ describe("排队闸 admitAdRequeue", () => {
   });
 
   test("排队闸没有容量判据：队列每键最多一个位置，长度天然被待检硬顶兜住", () => {
-    // 曾经另有一张与队列并行的 TTL 认领表，它撞顶会让这里返回容量拒绝——而
-    // 认领一旦漏还就成孤儿，把补排永久挡在门外。判据收敛到队列本身之后，
-    // 走到这一步的键必定已在 pendingAdMessages 里，容量在那道闸就判完了。
+    // 走到这一步的键必定已在 pendingAdMessages 里，容量已经由待检硬顶判完；
+    // 队列不维护第二套容量判据。
     expect(admitAdRequeue(REQUEUE)).toEqual({ action: "enqueue" });
   });
 });
 
-describe("容量闸 admitAdBundleStorage", () => {
-  test("已有键的后续消息不占新名额，满载也照常合并", () => {
-    expect(admitAdBundleStorage({
-      alreadyStored: true,
-      pendingSize: AD_DETECT_MAX_PENDING_SENDERS,
-    })).toEqual({ action: "store" });
-  });
-
+describe("容量闸 isNewAdBundleAtCapacity", () => {
   test("待检表撞顶时拒绝新的不同键，而不是淘汰队首", () => {
-    // FIFO 淘汰会让先到的人在从没被判过一次的情况下消失。
-    expect(admitAdBundleStorage({
-      alreadyStored: false,
-      pendingSize: AD_DETECT_MAX_PENDING_SENDERS,
-    })).toEqual({ action: "rejectAtCapacity" });
-    expect(admitAdBundleStorage({
-      alreadyStored: false,
-      pendingSize: AD_DETECT_MAX_PENDING_SENDERS - 1,
-    })).toEqual({ action: "store" });
+    // FIFO 淘汰会让先到的人在从没被判过一次的情况下消失。已有键的后续消息由
+    // 调用方按 existing !== undefined 直接跳过本闸，不占新名额。
+    expect(isNewAdBundleAtCapacity(AD_DETECT_MAX_PENDING_SENDERS)).toBe(true);
+    expect(isNewAdBundleAtCapacity(AD_DETECT_MAX_PENDING_SENDERS - 1)).toBe(false);
   });
 
   test("待检表是唯一一张会撞上接纳硬顶的表", () => {
-    // 判据只剩 pendingSize 一个：曾经并行的 TTL 认领表撑顶也会拒绝新键，
-    // 而它可以在 pending 远未满时因孤儿认领假性撑顶，把正常发言判成洪泛。
+    // 接纳硬顶只读取 pendingSize，避免辅助索引失配造成假性满载。
     expect(isNewAdBundleAtCapacity(AD_DETECT_MAX_PENDING_SENDERS)).toBe(true);
     expect(isNewAdBundleAtCapacity(AD_DETECT_MAX_PENDING_SENDERS - 1)).toBe(false);
   });

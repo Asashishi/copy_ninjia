@@ -131,16 +131,11 @@ function toReferenceUpload(referenceImage: VisionImage): Promise<Uploadable> {
 }
 
 /**
- * xAI JSON edit 的参考图 data URI。Buffer 仅共享原 Uint8Array 的 backing store，
- * 不先复制一份图片字节；base64 字符串是 JSON 协议要求的唯一新增大对象。
+ * xAI JSON edit 的参考图 data URI。直接用 Bun 的 Uint8Array 编码；base64 字符串
+ * 是 JSON 协议要求的唯一新增大对象。
  */
 function toXAiReferenceDataUri(referenceImage: VisionImage): string {
-  const bytes: Buffer = Buffer.from(
-    referenceImage.bytes.buffer,
-    referenceImage.bytes.byteOffset,
-    referenceImage.bytes.byteLength
-  );
-  return `data:${referenceImage.mime};base64,${bytes.toString("base64")}`;
+  return `data:${referenceImage.mime};base64,${referenceImage.bytes.toBase64()}`;
 }
 
 /**
@@ -305,8 +300,7 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     }
     const decoded: GeneratedImageDecodeResult = decodeGeneratedImageBySignature(encoded);
     if (!decoded.ok) {
-      // 这条路以前是静默的 null：图照样计费，群里报一句失败，而日志里没有一行
-      // 指向「格式不匹配」还是「超出大小上限」。
+      // 解码拒绝必须写明格式不匹配或大小越界，便于定位已经计费但无法交付的响应。
       const canvas: string = imageCanvasForLog(protocol, aspectRatio, referenceImage !== undefined);
       logger.error(
         `${OPENAI_IMAGE_ERROR_LABEL} returned an unusable image payload: ${decoded.reason} ` +

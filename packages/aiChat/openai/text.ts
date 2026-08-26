@@ -76,7 +76,7 @@ export function describeOpenAiVision(request: AiVisionRequest): Promise<AiTextRe
           content: [
             {
               type: "input_image",
-              image_url: `data:${request.image.mime};base64,${request.image.bytes.toString("base64")}`,
+              image_url: `data:${request.image.mime};base64,${request.image.bytes.toBase64()}`,
               detail: "auto",
             },
           ],

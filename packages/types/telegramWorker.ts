@@ -23,6 +23,7 @@ export type TelegramWorkerJsonCall =
   | { readonly method: "deleteMessage"; readonly payload: TelegramRawPayload<"deleteMessage"> }
   | { readonly method: "deleteMessages"; readonly payload: TelegramRawPayload<"deleteMessages"> }
   | { readonly method: "deleteEphemeralMessage"; readonly payload: TelegramDeleteEphemeralMessagePayload }
+  | { readonly method: "editMessageText"; readonly payload: TelegramRawPayload<"editMessageText"> }
   | { readonly method: "getChat"; readonly payload: TelegramRawPayload<"getChat"> }
   | { readonly method: "getChatAdministrators"; readonly payload: TelegramRawPayload<"getChatAdministrators"> }
   | { readonly method: "getChatMember"; readonly payload: TelegramRawPayload<"getChatMember"> }
@@ -139,6 +140,7 @@ export type TelegramApi = Pick<Api,
   | "copyMessage"
   | "deleteMessage"
   | "deleteMessages"
+  | "editMessageText"
   | "getChat"
   | "getChatAdministrators"
   | "getChatMember"

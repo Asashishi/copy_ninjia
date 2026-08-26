@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import {
   IDENTITY_WRITE_FLUSH_INTERVAL_MS,
 } from "../../../packages/consts/identityStorage";
@@ -18,12 +18,15 @@ import {
   pendingWhitelistWrites,
   resetStorageDatabaseCache,
   storageDatabaseHandle,
+  noteStorageWriteRejected,
+  pendingChatQaWrites,
   storagePersistenceReplyHolder,
   storageWriteFlushTimer,
 } from "../../../packages/cache/workers/diskIO/storageDatabase";
 import {
   configureStoragePersistenceReply,
   flushStorageDatabase,
+  pendingStorageDatabaseDomains,
 } from "../../../packages/workers/diskIO/storageDatabase/flush";
 import { hydrateStorageDatabase } from
   "../../../packages/workers/diskIO/storageDatabase/hydration";
@@ -151,6 +154,46 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
 
     resetStorageDatabaseCache();
     expect(hydrateStorageDatabase().whitelistEntryCount).toBe(1);
+  });
+
+  test("节拍到点时提交仍然失败：点名记一行并重排下一拍，不丢最终值", (): void => {
+    // 没有这一次重排，一次瞬时的 SQLite 故障就会让这批最终值永远停在内存里：
+    // 定时器已经自清，而 dirty 标记只在下一条写入到达时才会重新建表。
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      jest.useFakeTimers();
+      handleIdentityPolicyWrite(whitelistWrite(11, 6), reply);
+      configureStoragePersistenceReply(reply);
+      closeStorageDatabase(storageDatabaseHandle.current!);
+
+      jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS);
+
+      expect(error).toHaveBeenCalledWith(
+        "[diskIOWorker] failed to flush the storage database; retaining pending changes for retry."
+      );
+      expect(storageWriteFlushTimer.current).not.toBeNull();
+      expect(pendingWhitelistWrites.get(11)?.revision).toBe(6);
+      expect(acknowledgements).toHaveLength(0);
+    } finally {
+      error.mockRestore();
+      // 句柄已经被关掉，afterEach 的 reset 不能再去关第二次。
+      storageDatabaseHandle.current = null;
+    }
+  });
+
+  test("失败领域取走即清空：拒收标记与本轮仍 dirty 的表合并上报一次", (): void => {
+    // 拒收标记不清空的话，那个领域会在此后每一次 flush 都被回报成失败，
+    // 停机排空于是永远等不到「全部落盘」。
+    noteStorageWriteRejected("blocklistRemovalOutbox");
+    handleIdentityPolicyWrite(whitelistWrite(12, 7), reply);
+    pendingChatQaWrites.set(-1001, new Map([["问", { answer: "答", revision: 1 }]]) as never);
+
+    expect(new Set(pendingStorageDatabaseDomains()))
+      .toEqual(new Set(["blocklistRemovalOutbox", "whitelist", "chatQa"]));
+
+    // 取走一次之后拒收标记不再复现；仍 dirty 的表照旧上报。
+    expect(new Set(pendingStorageDatabaseDomains()))
+      .toEqual(new Set(["whitelist", "chatQa"]));
   });
 
   test("空 outbox 的新 revision 当场 ACK，后续 flush 不重复确认", (): void => {

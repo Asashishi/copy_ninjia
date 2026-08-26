@@ -2,8 +2,7 @@ import type { ChatPermissions } from "@grammyjs/types";
 
 /** 状态持久化实现（packages/infra/storage/statePersistence.ts）的常量。文件路径见 paths.ts。 */
 
-// DEFAULT_CHAT_STATE 搬去了 libs/chatState.ts：它现在必须与 createChatState() 同
-// 形状，而形状的唯一事实源在那边；两处各写一份字段清单迟早会漂移。
+// DEFAULT_CHAT_STATE 与 createChatState() 的唯一形状定义位于 libs/chatState.ts。
 
 /** Linux boot_id 的内核格式；持久化时统一使用小写。 */
 export const LINUX_BOOT_ID_PATTERN: RegExp = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -36,9 +35,9 @@ export const STATE_MANAGED_CHAT_LIMIT: number = 25;
  * 账号能改运行状态。读侧按部署基线放开到 0755——本项目按单租户处理，绝大多数
  * 部署是 root 直接跑，而用默认 umask 建出来的目录就是 0755，卡在这里只是摩擦。
  *
- * **代价要说明白**：`memory/` 下的文件本身是 0644（见 docs/cn/07-operations.md），
- * 所以此前群聊逐字记录的访问控制**全靠这个目录位**，没有第二道。放到 0755 之后，
- * 同一台机器上的任何本地账号都能读它们。多租户或有非特权登录用户的机器上，
+ * `memory/` 下的文件本身是 0644（见 docs/cn/07-operations.md），所以群聊逐字记录
+ * 的读取边界由数据根目录权限提供。0755 会允许同机本地账号读取；多租户或有非
+ * 特权登录用户的机器上，
  * 部署方必须自己把数据根收回 0750——预检只保证不比这更宽，不替谁做决定。
  * `database/` 不受影响，仍走 IDENTITY_DATABASE_DIRECTORY_MODE 的 0770。
  */

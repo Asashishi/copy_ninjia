@@ -1,7 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import type { DiskIOMessage, DiskIOReply } from "../../packages/types";
 import { diskIORuntime } from "../../packages/cache/main/diskIO";
 import { WORKER_MAX_RESTARTS } from "../../packages/consts/workerSupervisor";
+import {
+  emitSuccessfulDiskIOLoad as emitSuccessfulLoad,
+  FakeDiskIOWorker as FakeWorker,
+  installFakeDiskIOWorker,
+} from "../helpers/diskIOWorkerHarness";
 
 /**
  * 放弃自愈这条路必须独占一个测试文件：`diskIORestartThrottle` 是模块级滑动窗口，
@@ -11,51 +15,9 @@ import { WORKER_MAX_RESTARTS } from "../../packages/consts/workerSupervisor";
 
 const diskIO = await import("../../packages/infra/diskIO");
 
-class FakeWorker {
-  static instances: FakeWorker[] = [];
-  onmessage: ((event: MessageEvent<DiskIOReply>) => void) | null = null;
-  onerror: ((event: ErrorEvent) => void) | null = null;
-  readonly messages: DiskIOMessage[] = [];
-  terminated: boolean = false;
-
-  constructor(readonly url: string) {
-    FakeWorker.instances.push(this);
-  }
-
-  unref(): void {}
-
-  postMessage(message: DiskIOMessage): void {
-    this.messages.push(message);
-  }
-
-  async terminate(): Promise<number> {
-    this.terminated = true;
-    return 0;
-  }
-}
-
-function emitSuccessfulLoad(worker: FakeWorker): void {
-  worker.onmessage!({ data: {
-    type: "loaded",
-    aiMemories: new Map(),
-    stickerCatalogs: new Map(),
-    luckDay: null,
-    luckReceiptSecret: {
-      version: 1 as const,
-      day: "2026-07-19",
-      key: Buffer.alloc(32, 7).toString("base64url"),
-    },
-    verifications: new Map(),
-    pendingBlockedRemovals: new Map(),
-    blocklistEntryCount: 0,
-    whitelistEntryCount: 0,
-  } } as MessageEvent<DiskIOReply>);
-}
-
 describe("Disk I/O Worker 放弃自愈", () => {
   test("回归：通知 give-up 订阅方，让各领域立刻按失败结算", async () => {
-    const originalWorker: typeof Worker = globalThis.Worker;
-    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const restoreWorker: () => void = installFakeDiskIOWorker();
     const error = spyOn(console, "error").mockImplementation(() => {});
     const fatalErrors: Error[] = [];
     try {
@@ -85,7 +47,7 @@ describe("Disk I/O Worker 放弃自愈", () => {
     } finally {
       await diskIO.terminateDiskIO();
       error.mockRestore();
-      globalThis.Worker = originalWorker;
+      restoreWorker();
     }
   });
 });

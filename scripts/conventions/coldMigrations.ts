@@ -1,14 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { IDENTITY_DATABASE_SCHEMA_VERSION } from
-  "../../packages/consts/identityStorage";
 
-interface ActiveColdMigrationEdge {
+/** 当前发布支持的一条直接冷迁移边。 */
+interface ColdMigrationEdge {
   readonly command: string;
   readonly invocation: string;
   readonly entryPath: string;
-  readonly sourceSchemaVersion: number;
-  readonly targetSchemaVersion: number;
+  /** 本次从 state.json 里摘掉的键路径，仅用于让声明可读可核对。 */
+  readonly retiredKeyPath: string;
 }
 
 interface ProjectPackageJson {
@@ -16,64 +15,49 @@ interface ProjectPackageJson {
 }
 
 /**
- * 当前唯一受支持的直接冷迁移边。没有新的格式变更时继续保留；下一次格式升级
- * 必须整体替换本声明及脚本，不能在旁边累积第二条历史边。
+ * 当前唯一受支持的那**一组**直接冷迁移边。
+ *
+ * 下一次发布必须整体替换本声明及对应脚本，把已经随上一个版本发出去的边删干净，
+ * 绝不能在旁边保留历史兼容链。
  */
-const ACTIVE_COLD_MIGRATION_EDGE: Readonly<ActiveColdMigrationEdge> = {
-  command: "migrate:chat-qa",
-  invocation: "bun scripts/migrateChatQa.ts",
-  entryPath: "scripts/migrateChatQa.ts",
-  sourceSchemaVersion: 4,
-  targetSchemaVersion: 5,
-};
+const ACTIVE_COLD_MIGRATION_EDGES: readonly ColdMigrationEdge[] = [
+  {
+    command: "migrate:qa-thumbnail",
+    invocation: "bun scripts/migrateQaThumbnail.ts",
+    entryPath: "scripts/migrateQaThumbnail.ts",
+    retiredKeyPath: "state.global.assets.qaThumbnailUrl",
+  },
+];
 
-/** 核对 package 只暴露当前 schema 的上一格式到当前格式这一条冷迁移边。 */
-export function collectColdMigrationProblems(projectRoot: string): readonly string[] {
+/** 核对 package 只暴露上面声明的那组冷迁移边，一条不多、一条不少。 */
+export async function collectColdMigrationProblems(
+  projectRoot: string
+): Promise<readonly string[]> {
   const packageJson: ProjectPackageJson = JSON.parse(
-    readFileSync(join(projectRoot, "package.json"), "utf8")
+    await Bun.file(join(projectRoot, "package.json")).text()
   ) as ProjectPackageJson;
   const scripts: Readonly<Record<string, string>> = packageJson.scripts ?? {};
   const migrationCommands: string[] = Object.keys(scripts).filter(
     (command: string): boolean => command.startsWith("migrate:")
-  );
+  ).sort();
+  const declaredCommands: string[] = ACTIVE_COLD_MIGRATION_EDGES.map(
+    (edge: ColdMigrationEdge): string => edge.command
+  ).sort();
   const problems: string[] = [];
 
-  if (
-    migrationCommands.length !== 1 ||
-    migrationCommands[0] !== ACTIVE_COLD_MIGRATION_EDGE.command
-  ) {
+  if (migrationCommands.join(",") !== declaredCommands.join(",")) {
     problems.push(
-      "package.json must expose exactly the declared active cold migration command " +
-      ACTIVE_COLD_MIGRATION_EDGE.command
+      "package.json must expose exactly the declared active cold migration commands " +
+      declaredCommands.join(", ")
     );
   }
-  if (
-    scripts[ACTIVE_COLD_MIGRATION_EDGE.command] !==
-    ACTIVE_COLD_MIGRATION_EDGE.invocation
-  ) {
-    problems.push(
-      `${ACTIVE_COLD_MIGRATION_EDGE.command} must invoke ` +
-      ACTIVE_COLD_MIGRATION_EDGE.invocation
-    );
-  }
-  if (!existsSync(join(projectRoot, ACTIVE_COLD_MIGRATION_EDGE.entryPath))) {
-    problems.push(
-      `active cold migration entry does not exist: ${ACTIVE_COLD_MIGRATION_EDGE.entryPath}`
-    );
-  }
-  if (
-    ACTIVE_COLD_MIGRATION_EDGE.targetSchemaVersion !==
-    IDENTITY_DATABASE_SCHEMA_VERSION
-  ) {
-    problems.push(
-      "active cold migration target must equal IDENTITY_DATABASE_SCHEMA_VERSION"
-    );
-  }
-  if (
-    ACTIVE_COLD_MIGRATION_EDGE.sourceSchemaVersion !==
-    ACTIVE_COLD_MIGRATION_EDGE.targetSchemaVersion - 1
-  ) {
-    problems.push("active cold migration must cover exactly the previous schema version");
+  for (const edge of ACTIVE_COLD_MIGRATION_EDGES) {
+    if (scripts[edge.command] !== edge.invocation) {
+      problems.push(`${edge.command} must invoke ${edge.invocation}`);
+    }
+    if (!existsSync(join(projectRoot, edge.entryPath))) {
+      problems.push(`active cold migration entry does not exist: ${edge.entryPath}`);
+    }
   }
   return problems;
 }

@@ -1,9 +1,9 @@
 /** AI 随机搭话的按群活跃度观察窗口；不落盘，重启后从冷群起步。 */
 export const AI_REPLY_ACTIVITY_WINDOW_MS: number = 60 * 60 * 1000;
 /** 冷群随机搭话概率的初始分母；当前消息入窗后再参与递减。 */
-export const AI_REPLY_PROBABILITY_BASE_INITIAL: number = 275;
+export const AI_REPLY_PROBABILITY_BASE_INITIAL: number = 175;
 /** 高活跃群随机搭话概率的分母下限，防止概率随消息数无限提高。 */
-export const AI_REPLY_PROBABILITY_BASE_MIN: number = 25;
+export const AI_REPLY_PROBABILITY_BASE_MIN: number = 15;
 /** 达到封底后更旧的时刻已不影响概率。 */
 export const AI_REPLY_ACTIVITY_MAX_TIMESTAMPS: number =
   AI_REPLY_PROBABILITY_BASE_INITIAL - AI_REPLY_PROBABILITY_BASE_MIN;

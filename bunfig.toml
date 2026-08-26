@@ -4,14 +4,7 @@ coverageSkipTestFiles = true
 coverageThreshold = { line = 0.90, function = 0.90 }
 
 [install]
-# 依赖冷却期：只解析发布满 7 天的版本，使投毒版本在被 npm 下架前无法进入依赖树。
-#
-# 这道闸门同时会挡住**刚发布的安全修复版**。需要紧急装一个尚未满 7 天的修复时，
-# 把那一个包名加进下面的 minimumReleaseAgeExcludes、装完立刻移除；**不要**改用
-# `bun install --minimum-release-age=0`——那个 CLI 覆盖是该次安装的全局阈值，会把
-# 同一次解析里所有新发布的传递依赖一并放行，等于为了修一个包而对整棵树关掉防护。
-# 豁免不替代核对：仍须过 AGENTS.md「供应链版本锁定」的双来源受害清单与 integrity 校验。
-#
-# 当前不豁免任何包：现有依赖的 latest 均已远超该阈值。
+# 只解析发布满 7 天的版本。
+# 紧急安全修复按 AGENTS.md「依赖冷却期与紧急豁免」临时配置单包豁免。
 # minimumReleaseAgeExcludes = ["<仅在紧急安全修复期间填入，装完移除>"]
 minimumReleaseAge = 604_800

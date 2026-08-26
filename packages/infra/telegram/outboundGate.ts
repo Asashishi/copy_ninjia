@@ -443,6 +443,47 @@ function enqueueOrStart(
   startJob(job, false);
 }
 
+/** createOutboundJob 的入参：一次出站请求里随调用点变化的六个字段。 */
+interface CreateOutboundJobOptions {
+  readonly signal: AbortSignal;
+  readonly category: TelegramRetryCategory;
+  /** 仅破坏性请求传入；其余类别恒为 undefined。 */
+  readonly beforeRetry: (() => Promise<void>) | undefined;
+  readonly call: (signal: AbortSignal) => Promise<unknown>;
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (reason?: unknown) => void;
+}
+
+/**
+ * 出站 job 的唯一构造点：按固定顺序一次初始化全部字段，再挂上一次性 abort
+ * 监听。每条出站请求都经过这里，字段集合与顺序不得在调用点各自展开。
+ */
+function createOutboundJob({
+  signal,
+  category,
+  beforeRetry,
+  call,
+  resolve,
+  reject,
+}: CreateOutboundJobOptions): TelegramOutboundJob {
+  const job: TelegramOutboundJob = {
+    signal,
+    previous: null,
+    next: null,
+    category,
+    state: "created",
+    fromRetryQueue: false,
+    abortListener: undefined,
+    beforeRetry,
+    call,
+    resolve,
+    reject,
+  };
+  job.abortListener = (): void => abortJob(job);
+  job.signal.addEventListener("abort", job.abortListener, { once: true });
+  return job;
+}
+
 export interface TelegramCategorizedRequestOptions<T> {
   readonly category: TelegramRetryCategory;
   readonly execute: (signal: AbortSignal) => Promise<T>;
@@ -464,22 +505,14 @@ function runTelegramCategorizedRequestInternal<T>({
     resolve: (value: T | PromiseLike<T>) => void,
     reject: (reason?: unknown) => void
   ): void => {
-    const job: TelegramOutboundJob = {
+    enqueueOrStart(createOutboundJob({
       signal: jobSignal,
-      previous: null,
-      next: null,
       category,
-      state: "created",
-      fromRetryQueue: false,
-      abortListener: undefined,
       beforeRetry: undefined,
       call: execute,
       resolve: resolve as (value: unknown) => void,
       reject,
-    };
-    job.abortListener = (): void => abortJob(job);
-    job.signal.addEventListener("abort", job.abortListener, { once: true });
-    enqueueOrStart(job, allowDuringQuiesce);
+    }), allowDuringQuiesce);
   });
 }
 
@@ -511,14 +544,9 @@ export function telegramOutboundGate(): Transformer<RawApi> {
     // resolve 的实际泛型由上面的 Transformer 上下文给出，grammY 未公开 Payload。
     // eslint-disable-next-line @typescript-eslint/typedef
     return new Promise((resolve, reject): void => {
-      const job: TelegramOutboundJob = {
+      enqueueOrStart(createOutboundJob({
         signal: jobSignal,
-        previous: null,
-        next: null,
         category,
-        state: "created",
-        fromRetryQueue: false,
-        abortListener: undefined,
         beforeRetry: method === "unbanChatMember" &&
             (payload as UnbanChatMemberPayload).only_if_banned !== true
           ? (): Promise<void> => revalidateUnbanKickRetry(
@@ -531,10 +559,7 @@ export function telegramOutboundGate(): Transformer<RawApi> {
           previous(method, payload, requestSignal as never),
         resolve: resolve as (value: unknown) => void,
         reject,
-      };
-      job.abortListener = (): void => abortJob(job);
-      job.signal.addEventListener("abort", job.abortListener, { once: true });
-      enqueueOrStart(job);
+      }));
     });
   };
   return transformer;

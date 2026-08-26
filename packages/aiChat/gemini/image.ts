@@ -44,7 +44,7 @@ export async function generateGeminiImage({
       role: "user",
       parts: [
         { text: prompt },
-        { inlineData: { mimeType: referenceImage.mime, data: referenceImage.bytes.toString("base64") } },
+        { inlineData: { mimeType: referenceImage.mime, data: referenceImage.bytes.toBase64() } },
       ],
     }]
     : prompt;

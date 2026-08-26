@@ -2,7 +2,7 @@
  * 机器人自身权限位在入群守卫线程侧的读写口。
  *
  * 观测发生在主线程（`my_chat_member` 更新与按需 `getChatMember` 现查都只到那边），
- * 执行发生在本线程（踢人、禁言、删消息都走 joinVerificationApi）。两边因此按
+ * 执行发生在本线程（踢人、禁言、删消息都走 telegramApi）。两边因此按
  * 变更镜像：主线程每次确证或作废都发一条 `botPermissionsChanged`，Worker 重建与
  * 进程启动时整表重放（见 packages/antiRaid/workerBridge.ts）。
  *

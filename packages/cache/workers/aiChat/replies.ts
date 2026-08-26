@@ -1,10 +1,10 @@
 import type { LinkedQueue } from "../../../libs/linkedQueue";
+import type { TimestampDeque } from "../../../libs/timestampDeque";
 import {
   RATE_LIMIT_LONG_WINDOW_MS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
 } from "../../../consts/aiChat/rateLimit";
 import type { QueuedReplyTrigger } from "../../../types/aiChat/replies";
-import { trimSlidingWindow } from "../../../libs/slidingWindowRateLimit";
 
 /**
  * AI 回复调度的内存状态，由回复流水线的多个子模块共同驱动，没有单一 owner：
@@ -29,8 +29,14 @@ export const replyGenerations: Map<number, number> = new Map();
 const replyGenerationCounter: { current: number } = { current: 0 };
 /** 每群最近一次限频提示时刻；周期 sweep 删除过期项，Worker 重建后清空。 */
 export const rateLimitNoticeTimes: Map<number, number> = new Map();
-/** 每群长窗口触发时刻队列；周期 sweep 删除过期项，长度受窗口请求上限约束。 */
-export const longTriggerTimes: Map<number, LinkedQueue<number>> = new Map();
+/**
+ * 每群长窗口触发时刻队列；周期 sweep 删除过期项。
+ *
+ * 只在 admitRound 判定仍有配额时记账，因此单群长度恒不超过
+ * RATE_LIMIT_LONG_MAX_TRIGGERS（150），环形缓冲按这个数定容（构造在
+ * workers/aiChat/replyRound.ts），永远撑不满。
+ */
+export const longTriggerTimes: Map<number, TimestampDeque> = new Map();
 /** 每群当前在途回复数；回复 finally 递减，Worker 重建后归零。 */
 export const activeReplyCounts: Map<number, number> = new Map();
 /** 同群并发满载后的直接触发有界队列；轮次接纳或群失效时消费/清除。 */
@@ -84,7 +90,7 @@ export function invalidateChatReplyCache(chatId: number): void {
 /** 定时收掉已过期的限频窗口和提示冷却记录。 */
 export function sweepAiChatReplyCache(now: number = Date.now()): void {
   for (const [chatId, times] of longTriggerTimes) {
-    trimSlidingWindow({ timestamps: times, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
+    times.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
     if (times.size === 0) longTriggerTimes.delete(chatId);
   }
   for (const [chatId, at] of rateLimitNoticeTimes) {

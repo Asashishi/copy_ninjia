@@ -2,22 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { IDENTITY_DATABASE_SCHEMA_KEY, IDENTITY_DATABASE_SCHEMA_VERSION } from
   "../../packages/consts/identityStorage";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
-import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
-import {
-  encodeBlocklistEntryData,
-  encodeWhitelistEntryData,
-} from "../../packages/database/codec/identity";
 import { encodeChatStateData } from "../../packages/database/codec/chatState";
 import {
-  assertPendingRemovalBlocklistReferences,
   decodeStoredChatStates,
   readStorageSchemaVersion,
-  validateStoredIdentityPolicies,
 } from "../../packages/database/validation/storageRows";
-import type { PendingBlockedRemoval } from "../../packages/types/blocklist";
 import type { ChatState } from "../../packages/types/chatState";
 import type {
-  StorageDatabaseBaseRows,
   StoredChatStateRow,
   StoredStorageMetadataRow,
 } from "../../packages/types/storageDatabase";
@@ -25,11 +16,9 @@ import type {
 /**
  * 共享 SQLite 业务行的**启动期严格校验**。
  *
- * 这四个导出此前一条用例都没有（`storageRows.test.ts` 只测了 outbox 解码），
- * 而它们正是 `AGENTS.md`「不为用户行为兜底」要求 fail closed 的那一层：手工改库、
- * 从别处恢复的备份、跨表写歪的名单，都得在建立外部连接之前以非零码停住，而不是
- * 静默丢条目继续跑。每条拒绝路径都要有用例证明它真的抛，否则「校验存在」只是
- * 代码读起来像有。
+ * schema 版本与群状态是 `AGENTS.md`「不为用户行为兜底」要求 fail closed 的边界；
+ * 身份表、outbox 与 migration 谱系由 storageDatabaseSchemaGate 的真实 SQLite
+ * 启动检查覆盖。
  *
  * 错误文案也一起钉住：必须写明来源路径与字段路径，且**不得回显行内容**。
  */
@@ -37,66 +26,15 @@ import type {
 const SOURCE: string = "database/storage.sqlite";
 const CHAT_ID: number = -1_001;
 
-function metadataRows(data: string): Pick<StorageDatabaseBaseRows, "metadata"> {
+function metadataRows(data: string): { readonly metadata: readonly StoredStorageMetadataRow[] } {
   const metadata: readonly StoredStorageMetadataRow[] = [
     { key: IDENTITY_DATABASE_SCHEMA_KEY, data },
   ];
   return { metadata };
 }
 
-function identityMeta(): { firstName: string; lastName: string; username: string } {
-  return { firstName: "Test", lastName: "", username: "test" };
-}
-
-function whitelistData(): string {
-  return encodeWhitelistEntryData({
-    permissions: DEFAULT_WHITELIST_PERMISSIONS,
-    meta: identityMeta(),
-  });
-}
-
-function blocklistData(): string {
-  return encodeBlocklistEntryData({
-    blockedAt: "2026/08/23 12:00:00",
-    meta: identityMeta(),
-  });
-}
-
-function baseRows(
-  whitelistIds: readonly number[],
-  blocklistIds: readonly number[]
-): StorageDatabaseBaseRows {
-  return {
-    whitelist: whitelistIds.map((id: number) => ({ id, data: whitelistData() })),
-    blocklist: blocklistIds.map((id: number) => ({ id, data: blocklistData() })),
-    removals: [],
-    metadata: [{
-      key: IDENTITY_DATABASE_SCHEMA_KEY,
-      data: JSON.stringify({ version: IDENTITY_DATABASE_SCHEMA_VERSION }),
-    }],
-  };
-}
-
 function chatStateRow(chatId: number, state: Readonly<ChatState>): StoredChatStateRow {
   return { chatId, data: encodeChatStateData(state) };
-}
-
-function sweepRemoval(removalId: number): PendingBlockedRemoval {
-  return {
-    params: { chatId: CHAT_ID, probeMembership: true, removalId },
-    createdAt: 1_000,
-    attempts: 0,
-    lastFailure: null,
-  };
-}
-
-function frozenRemoval(removalId: number, userIds: number[]): PendingBlockedRemoval {
-  return {
-    params: { chatId: CHAT_ID, probeMembership: false, userIds, removalId },
-    createdAt: 1_000,
-    attempts: 0,
-    lastFailure: null,
-  };
 }
 
 describe("schema 版本行", () => {
@@ -151,75 +89,6 @@ describe("schema 版本行", () => {
     }
     expect(message).toContain(SOURCE);
     expect(message).not.toContain(secret);
-  });
-});
-
-describe("黑白名单严格解码", () => {
-  test("合法两表返回各自主键集合", () => {
-    const validated = validateStoredIdentityPolicies(baseRows([11, 12], [21]), SOURCE);
-    expect([...validated.whitelistIds]).toEqual([11, 12]);
-    expect([...validated.blocklistIds]).toEqual([21]);
-  });
-
-  test("同一身份同时出现在两表时拒绝启动", () => {
-    expect(() => validateStoredIdentityPolicies(baseRows([11], [11]), SOURCE))
-      .toThrow(/exists in both whitelist_entries and blocklist_entries/);
-  });
-
-  test("主键不是合法 Telegram 身份 id 时拒绝", () => {
-    const rows: StorageDatabaseBaseRows = baseRows([], []);
-    expect(() => validateStoredIdentityPolicies({
-      ...rows,
-      whitelist: [{ id: 0, data: whitelistData() }],
-    }, SOURCE)).toThrow();
-  });
-
-  test("data 列不是当前格式时拒绝，不丢弃该条继续跑", () => {
-    const rows: StorageDatabaseBaseRows = baseRows([], []);
-    expect(() => validateStoredIdentityPolicies({
-      ...rows,
-      blocklist: [{ id: 21, data: JSON.stringify({ blockedAt: "2026/08/23 12:00:00" }) }],
-    }, SOURCE)).toThrow();
-  });
-});
-
-describe("待踢 outbox 的跨表引用", () => {
-  test("补扫批次要求黑名单至少有一条", () => {
-    const removals: ReadonlyMap<number, PendingBlockedRemoval> =
-      new Map([[1, sweepRemoval(1)]]);
-    expect(() => assertPendingRemovalBlocklistReferences(removals, new Set(), SOURCE))
-      .toThrow(/sweep requires at least one blocklist entry/);
-    expect(() => assertPendingRemovalBlocklistReferences(removals, new Set([21]), SOURCE))
-      .not.toThrow();
-  });
-
-  test("冻结名单里的 id 必须都还在黑名单里", () => {
-    const removals: ReadonlyMap<number, PendingBlockedRemoval> =
-      new Map([[2, frozenRemoval(2, [21, 22])]]);
-    expect(() => assertPendingRemovalBlocklistReferences(
-      removals,
-      new Set([21]),
-      SOURCE
-    )).toThrow(/frozen userIds must all exist in blocklist_entries/);
-    expect(() => assertPendingRemovalBlocklistReferences(
-      removals,
-      new Set([21, 22]),
-      SOURCE
-    )).not.toThrow();
-  });
-
-  test("拒绝文案定位到具体那一行的字段路径", () => {
-    let message: string = "";
-    try {
-      assertPendingRemovalBlocklistReferences(
-        new Map([[7, frozenRemoval(7, [99])]]),
-        new Set([21]),
-        SOURCE
-      );
-    } catch (error: unknown) {
-      message = error instanceof Error ? error.message : String(error);
-    }
-    expect(message).toContain(`${SOURCE}:pending_blocked_removals[7].data`);
   });
 });
 

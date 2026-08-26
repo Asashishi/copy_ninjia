@@ -19,11 +19,11 @@ import {
 const {
   clearChatAdDetect,
   enqueueAdCandidate,
-  expireAdDetectDisposalMarkers,
-  releaseAdDetectDedupKey,
   runAdDetectBatch,
   stopAdDetectQueue,
 } = await import("../../../packages/workers/antiRaid/adDetect/queue");
+const { expireAdDetectDisposalMarkers, releaseAdDetectDedupKey } =
+  await import("../../../packages/workers/antiRaid/adDetect/queueState");
 const {
   adDetectQueue,
   inFlightAdDetectKeys,

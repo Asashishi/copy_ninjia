@@ -1,14 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { DEFAULT_WHITELIST_PERMISSIONS } from
+  "../../../packages/consts/whitelist";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
+import {
+  encodeBlocklistEntryData,
+  encodePendingBlockedRemovalData,
+  encodeWhitelistEntryData,
+} from "../../../packages/database/codec/identity";
 import {
   closeStorageDatabase,
   openStorageDatabase,
 } from "../../../packages/database/interact/connection";
-import { hydrateStorageDatabase } from
+import { adoptStorageDatabase, hydrateStorageDatabase, inspectStorageDatabase } from
   "../../../packages/workers/diskIO/storageDatabase/hydration";
-import { resetStorageDatabaseCache } from
+import { resetStorageDatabaseCache, storageDatabaseHandle } from
   "../../../packages/cache/workers/diskIO/storageDatabase";
 import type { StorageDatabase } from "../../../packages/types/storageDatabase";
+import type { PendingBlockedRemoval } from "../../../packages/types/blocklist";
 
 /** 还原 v5 所需的原始 DDL、索引、migration 记录与 schema 版本行。 */
 interface SchemaSnapshot {
@@ -103,7 +111,43 @@ afterEach(() => {
   const pending: SchemaSnapshot | null = snapshot;
   snapshot = null;
   if (pending !== null) restoreSchemaV5(pending);
+  withDatabase((database: StorageDatabase): void => {
+    database.$client.run("DELETE FROM pending_blocked_removals;");
+    database.$client.run("DELETE FROM whitelist_entries;");
+    database.$client.run("DELETE FROM blocklist_entries;");
+    database.$client.run("DELETE FROM chat_states;");
+    database.$client.run("DELETE FROM chat_qa;");
+  });
 });
+
+function identityMeta(): {
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly username: string;
+} {
+  return { firstName: "Test", lastName: "", username: "test" };
+}
+
+interface InsertJsonbRowOptions {
+  readonly database: StorageDatabase;
+  readonly table: "blocklist_entries" | "chat_states" | "pending_blocked_removals" | "whitelist_entries";
+  readonly idColumn: "chat_id" | "id" | "removal_id";
+  readonly id: number;
+  readonly data: string;
+}
+
+function insertJsonbRow({
+  database,
+  table,
+  idColumn,
+  id,
+  data,
+}: InsertJsonbRowOptions): void {
+  database.$client.run(
+    `INSERT INTO ${table} (${idColumn}, data) VALUES (?1, jsonb(?2));`,
+    [id, data]
+  );
+}
 
 describe("共享存储库的启动 schema 闸", () => {
   test("未迁移的 v4 库报 schema 版本，而不是 chat_qa 缺表", () => {
@@ -124,5 +168,136 @@ describe("共享存储库的启动 schema 闸", () => {
       chatStates: new Map(),
       chatQa: new Map(),
     });
+  });
+
+  test("inspect 使用只读短连接且不发布 owner，adopt 才建立可写连接", () => {
+    resetStorageDatabaseCache();
+    const inspection = inspectStorageDatabase();
+
+    expect(storageDatabaseHandle.current).toBeNull();
+    expect(inspection.hydration).toEqual({
+      blocklistEntryCount: 0,
+      whitelistEntryCount: 0,
+      pendingBlockedRemovals: new Map(),
+      chatStates: new Map(),
+      chatQa: new Map(),
+    });
+
+    expect(adoptStorageDatabase(inspection)).toEqual(inspection.hydration);
+    expect(storageDatabaseHandle.current).not.toBeNull();
+    resetStorageDatabaseCache();
+  });
+
+  test("身份行字段损坏时在启动 inspect 阶段拒绝", () => {
+    withDatabase((database: StorageDatabase): void => {
+      insertJsonbRow({
+        database,
+        table: "whitelist_entries",
+        idColumn: "id",
+        id: 11,
+        data: JSON.stringify({ permissions: {}, meta: identityMeta() }),
+      });
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(
+      /whitelist_entries\[11\]\.data.*permissions/
+    );
+    expect(storageDatabaseHandle.current).toBeNull();
+  });
+
+  test("黑白名单主键交叉时拒绝启动", () => {
+    withDatabase((database: StorageDatabase): void => {
+      insertJsonbRow({
+        database,
+        table: "whitelist_entries",
+        idColumn: "id",
+        id: 21,
+        data: encodeWhitelistEntryData({
+          permissions: DEFAULT_WHITELIST_PERMISSIONS,
+          meta: identityMeta(),
+        }),
+      });
+      insertJsonbRow({
+        database,
+        table: "blocklist_entries",
+        idColumn: "id",
+        id: 21,
+        data: encodeBlocklistEntryData({
+          blockedAt: "2026/08/27 12:00:00",
+          meta: identityMeta(),
+        }),
+      });
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(/expected disjoint primary keys/);
+  });
+
+  test("群状态字段损坏时拒绝启动而不按宽松 JSON 恢复", () => {
+    withDatabase((database: StorageDatabase): void => {
+      insertJsonbRow({
+        database,
+        table: "chat_states",
+        idColumn: "chat_id",
+        id: -1_001,
+        data: JSON.stringify({ isInitEnabled: "yes" }),
+      });
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(/chat_states\[-1001\]\.data/);
+  });
+
+  test("待踢 outbox 引用不存在的黑名单身份时拒绝启动", () => {
+    const pending: PendingBlockedRemoval = {
+      params: {
+        chatId: -1_001,
+        probeMembership: false,
+        userIds: [31],
+        removalId: 1,
+      },
+      createdAt: 1_000,
+      attempts: 0,
+      lastFailure: null,
+    };
+    withDatabase((database: StorageDatabase): void => {
+      insertJsonbRow({
+        database,
+        table: "pending_blocked_removals",
+        idColumn: "removal_id",
+        id: 1,
+        data: encodePendingBlockedRemovalData(pending).text,
+      });
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(
+      /pending_blocked_removals\[1\]\.data.*must all exist/
+    );
+  });
+
+  test("migration 谱系 hash 被改写时拒绝启动", () => {
+    let originalHash: string = "";
+    withDatabase((database: StorageDatabase): void => {
+      const row: { readonly hash: string } | null = database.$client
+        .query<{ readonly hash: string }, []>(
+          "SELECT hash FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1;"
+        )
+        .get();
+      originalHash = row?.hash ?? "";
+      database.$client.run(
+        "UPDATE __drizzle_migrations SET hash = ?1 WHERE created_at = " +
+        "(SELECT MAX(created_at) FROM __drizzle_migrations);",
+        ["0".repeat(64)]
+      );
+    });
+    try {
+      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v5 migration lineage/);
+    } finally {
+      withDatabase((database: StorageDatabase): void => {
+        database.$client.run(
+          "UPDATE __drizzle_migrations SET hash = ?1 WHERE created_at = " +
+          "(SELECT MAX(created_at) FROM __drizzle_migrations);",
+          [originalHash]
+        );
+      });
+    }
   });
 });

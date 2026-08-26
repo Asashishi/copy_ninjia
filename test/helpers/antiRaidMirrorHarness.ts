@@ -19,8 +19,7 @@ import type {
 export const workerPosts: AntiRaidWorkerMessage[] = [];
 export const diskPosts: (VerificationUpsertDiskMessage | VerificationDeleteDiskMessage)[] = [];
 /**
- * 三个替身在 mock 安装时被回填。原先是模块级 `let`；拆成多个用例文件之后
- * ESM 的只读导入绑定不允许跨文件读写，因此收成一个 holder。
+ * 三个替身在 mock 安装时回填到 holder，供多个用例文件共享可变绑定。
  */
 export const workerHooks: {
   supervisorOptions: {
@@ -94,7 +93,7 @@ mock.module("../../packages/infra/telegram/actions", () => ({
 }));
 mock.module("../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
-  joinVerificationApi: { kind: "main-thread-test-api" },
+  telegramApi: { kind: "main-thread-test-api" },
 }));
 mock.module("../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
 // JOIN_WINDOW_MS 原样透出：秒踢路径的入群计数去重用它当窗口宽度

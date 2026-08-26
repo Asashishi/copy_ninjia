@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2581_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.62%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.14%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：2581 项测试全部通过 / 271 个测试文件 / 95,642 次 expect() 调用 / 函数覆盖率 95.23% / 行覆盖率 96.62%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：2821 项测试全部通过 / 287 个测试文件 / 96,239 次 expect() 调用 / 函数覆盖率 95.98% / 行覆盖率 97.14%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -93,7 +93,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI 群聊</b></p>
-  <p>基于人设自主决策：发言、贴纸、表情反应、生图、写歌都是工具，由模型自行决定这一轮做几件事、按什么顺序做。模型层是可替换的 provider：<code>config/agent.json</code> 按能力各自声明 <code>google</code> 或 <code>openai</code>，能力之间不继承、也不做运行时故障切换。</p>
+  <p>基于人设自主决策：发言、贴纸、表情反应、生图、写歌都是工具，由模型自行决定这一轮做几件事、按什么顺序做；生图与写歌工具只在群友直接 @ 或回复机器人时按配置能力开放。模型层是可替换的 provider：<code>config/agent.json</code> 按能力各自声明 <code>google</code> 或 <code>openai</code>，能力之间不继承、也不做运行时故障切换。</p>
 </td>
 </tr>
 <tr>
@@ -103,7 +103,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🔎 实时查证</b></p>
-  <p>接入 Google 搜索与东京天气等工具；查证过的轮次自动压低采样温度，让回答照着搜索结果讲。</p>
+  <p>接入 provider 服务端联网检索与东京天气等工具；固定查证规则要求时效事实先检索、结果优先于记忆，证据不足时明确不确定。Gemini 在已查证的后续工具轮使用较低采样温度。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🧠 群聊记忆</b></p>
@@ -141,7 +141,7 @@
 <tr>
 <td align="left" valign="top">
   <p><b>💬 群问答</b></p>
-  <p><code>/set_qa</code> 用两按钮表单登记问答，每群最多 5 条。有人一字不差地问出来就直接答，不经过 AI；意思相近但字面不同的问法才交给模型的两个查询工具判断。</p>
+  <p><code>/set_qa</code> 开一张表单，由发起者按「问题:」「回答:」分两条消息登记问答，每群最多 15 条，答案里可以直接塞 <code>```json</code> 代码块。有人一字不差地问出来就直接答，不经过 AI；意思相近但字面不同的问法才交给模型的两个查询工具判断。</p>
 </td>
 <td align="left" valign="top"></td>
 <td align="left" valign="top"></td>
@@ -170,7 +170,7 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-按顺序做四件事：配好环境（补齐 `git`/`curl`/`unzip`、装 Bun、`bun install`）、把 **GitHub 上的 Latest Release** clone 到 `./copy_ninjia`、交互问 Telegram 与 AI 配置、建空身份数据库并注册 systemd 服务后启动。装的是已发布版本而不是 master HEAD；tag 现问 `releases/latest`，问不到就当场失败，不会悄悄退回 master。不动既有配置，已存在的 systemd unit 会先问再覆盖，重跑安全。已经 clone 过就在仓库根跑 `bash install.sh`，会跳过 clone 并保留该工作树当前的 checkout。
+按顺序做四件事：配好环境（补齐 `git`/`curl`/`unzip`、装 Bun、`bun install`）、把 **GitHub 上的 Latest Release** clone 到 `./copy_ninjia`、交互问 Telegram 与 AI 配置、建空身份数据库并注册 systemd 服务后启动。装的是已发布版本而不是 master HEAD；tag 现问 `releases/latest`，问不到就当场失败，不会悄悄退回 master。不动既有配置，已存在的 systemd unit 会先问再覆盖，重跑安全。已经 clone 过就在仓库根跑 `bash install.sh`，会跳过 clone 并保留该工作树当前的 checkout。源码若是解压发布包得到的（有源码、没有 `.git`），会就地补出 git 仓库并把 `HEAD` 指到与现有文件逐字一致的那个 tag，好让此后能用 git 更新；补仓库不写工作树里任何文件，也不会把部署数据收进对象库。
 
 手工安装：
 

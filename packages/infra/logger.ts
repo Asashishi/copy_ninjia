@@ -6,7 +6,7 @@
  *
  * 本模块可能同时被主线程和其它 Bun Worker（如 aiChatWorker）import。落盘
  * 线程（diskIOWorker）的显式初始化、自愈、flush/load 握手统一由
- * infra/diskIO.ts 管理——入口取得 bot.lock 后才启动该 Worker。此前的 error
+ * infra/diskIO.ts 管理——入口取得 bot.lock 后才启动该 Worker。初始化前的 error
  * 只输出到 stderr，不会提前触碰共享 logs/。该 Worker 同时也是 AI 记忆快照的
  * 落盘线程，只由主线程启动这一个（若每个线程都自建落盘线程，多个实例按
  * 字节偏移并发追加同一个日志文件会互相踩踏写坏文件）。这里只是门面：主线程

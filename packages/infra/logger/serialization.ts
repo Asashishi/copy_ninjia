@@ -21,10 +21,7 @@ import type {
  * 快照，不反向触发同步文件 I/O。
  *
  * 结果按三个 holder 的**对象身份**记忆化（holder 见 cache/perThread/logger.ts 的
- * loggerSecretsMemo，那里写明了为什么判据必须是身份而不是「算过一次」）。配置
- * 一个进程只有一代，逐条日志重建这个数组是白付：实测（Bun 1.3.14，5 个独立进程
- * 各 5 轮取中位数）33.60 → 7.43 ns/op。身份没变时返回的一定是同一份凭据，因此
- * 与逐条重建逐值相同。
+ * loggerSecretsMemo）。配置身份没变时凭据集合也不变，因此不逐条日志重建数组。
  */
 function currentSecrets(): readonly string[] {
   const telegram: TelegramConfig | null = telegramConfigCache.current;
@@ -149,9 +146,7 @@ function ownEnumerableProperties(error: Error): Record<string, unknown> {
       continue;
     }
     const value: unknown = descriptor.value;
-    // 值为 undefined 的键整体丢掉，与「先整份 stringify 再 parse」的旧行为一致
-    // ——JSON 本来就表达不了 undefined，逐个降级时若不显式跳过，会把它变成一个
-    // 凭空多出来的 null 字段。
+    // JSON 不能表达 undefined；逐个降级时显式跳过，避免凭空生成 null 字段。
     if (value === undefined) continue;
     own[key] = JSON.parse(safeStringify(value));
   }

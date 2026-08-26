@@ -24,6 +24,7 @@
  */
 
 import type { AiToolDefinition } from "../../../../types/aiChat/provider";
+import { parseToolArguments } from "../../utils/toolArgs";
 import {
   claimSongGeneration,
   getSongGenerationAvailability,
@@ -47,7 +48,6 @@ import { TELEGRAM_CAPTION_MAX_CHARS } from "../../../../consts/telegram";
 import { GENERATE_SONG_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
 import { sendAudioWithResult } from "../../../../infra/telegram";
-import { isPlainRecord } from "../../../../libs/record";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
 import { songAiProvider } from "../../../provider";
 import { botInfoState } from "../../../../cache/workers/aiChat/identity";
@@ -161,13 +161,8 @@ function normalizeTag(value: unknown, maxChars: number): string | null {
 }
 
 function parseArguments(argumentsJson: string): ParsedSongArguments | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  if (!isPlainRecord(parsed) || typeof parsed.prompt !== "string") return null;
+  const parsed: Record<string, unknown> | null = parseToolArguments(argumentsJson);
+  if (parsed === null || typeof parsed.prompt !== "string") return null;
   const prompt: string = parsed.prompt.trim();
   if (!prompt || prompt.length > SONG_GENERATION_PROMPT_MAX_CHARS) return null;
   // title/performer/caption 都是「省略就用默认」的纯可选字段，因此 null 与
@@ -266,7 +261,7 @@ export function createGenerateSongExecutor(
       // 挂错挡位会让群里以为有人发了条语音消息。
       ctx.chatAction.set("upload_document");
       let song: GeneratedChatSong | null;
-      let cover: Buffer | null = null;
+      let cover: Uint8Array | null = null;
       try {
         modelRequestStarted = true;
         song = await generateSong({ prompt: parsed.prompt, signal: ctx.signal });

@@ -20,6 +20,7 @@ import type {
 } from "../../types/telegramWorker";
 import { runTelegramCategorizedRequest } from "./outboundGate";
 import { telegramRetryCategoryFor } from "./outboundRetryPolicy";
+import { markSelfSent } from "../selfSentTracker";
 
 async function sendTemporaryMessage(
   request: Extract<TelegramWorkerRequest, { operation: "sendTemporaryMessage" }>,
@@ -69,6 +70,8 @@ function executeJsonCall(
           requestSignal: AbortSignal
         ): Promise<true>;
       }).deleteEphemeralMessage(call.payload, signal);
+    case "editMessageText":
+      return bot.api.raw.editMessageText(call.payload, signal as never);
     case "getChat":
       return bot.api.raw.getChat(call.payload, signal as never);
     case "getChatAdministrators":
@@ -136,8 +139,43 @@ async function downloadTelegramFile(
   return { status: "ok", bytes: download.bytes };
 }
 
-/** 主线程执行已通过 Worker 能力白名单的 Telegram 请求。 */
-async function executeTelegramWorkerRequest(
+/**
+ * 把 Worker 经本边界发出的消息登记进**主线程**的自发消息表。
+ *
+ * 存在的理由是 `infra/selfSentTracker.ts` 按线程隔离：Worker 侧那次
+ * `sendMessage` 在自己的 isolate 里 `markSelfSent`，而真正的 Bot API 调用发生在
+ * 下面的 `bot.api.raw.*`——那条路绕开了共享动作层的登记。主线程因此认不出这条
+ * 消息是自己发的，频道帖回投时会被当成新内容喂进 AI/复读流水线，或被
+ * `/set_qa` 的投递入口认领（三个入口的判定见 auto/message/index.ts、
+ * commands/cjkAction.ts、commands/qa/ingress.ts）。
+ *
+ * 登记发生在**响应回传给 Worker 之前**，也就是早于 Worker 拿到 message id 的那一
+ * 刻。两个 Worker 都不回投「我发了什么」，本函数因此是全部 Worker 自发消息的
+ * **唯一**登记点。
+ *
+ * **但这不消除回投竞态，只把它收窄**：登记时刻是发送响应落地，而回投可能由一次
+ * 并发的长轮询先取回。入口侧因此仍要在同步的 `isBotOwnMessage` 之外走有界
+ * rendezvous，见 docs/cn/04-invariants.md 的「出站请求与消息安全」。
+ *
+ * 判据取**返回值的形状**而不是按方法名 switch：新增能力只要产出 Message 就自动
+ * 被覆盖，不必记得回来改这里。读结果而不读 payload 的 `chat_id`，是因为后者可以
+ * 是 `@username` 字符串，而结果里的 `chat.id` 恒为数字（唯一只返回
+ * `MessageId`、拿不到 chat 的 `copyMessage` 不在任何 Worker 能力白名单里）。
+ */
+function markWorkerSentMessage(result: unknown): void {
+  if (typeof result !== "object" || result === null) return;
+  if (!("message_id" in result) || !("chat" in result)) return;
+  const messageId: unknown = result.message_id;
+  const chat: unknown = result.chat;
+  if (typeof messageId !== "number") return;
+  if (typeof chat !== "object" || chat === null || !("id" in chat)) return;
+  const chatId: unknown = chat.id;
+  if (typeof chatId !== "number") return;
+  markSelfSent(chatId, messageId);
+}
+
+/** 按操作分派到具体的主线程实现；能力白名单已在调用方判过。 */
+async function dispatchTelegramWorkerRequest(
   request: TelegramWorkerRequest,
   signal: AbortSignal
 ): Promise<unknown> {
@@ -183,6 +221,21 @@ async function executeTelegramWorkerRequest(
       }
       return sendTemporaryMessage(request, signal);
   }
+}
+
+/**
+ * 主线程执行已通过 Worker 能力白名单的 Telegram 请求。
+ *
+ * 所有 Worker 的 Telegram 请求都收在这一个漏斗里，自发消息登记因此也只此一处
+ * （见 markWorkerSentMessage）。
+ */
+async function executeTelegramWorkerRequest(
+  request: TelegramWorkerRequest,
+  signal: AbortSignal
+): Promise<unknown> {
+  const result: unknown = await dispatchTelegramWorkerRequest(request, signal);
+  markWorkerSentMessage(result);
+  return result;
 }
 
 function aiAllows(request: TelegramWorkerRequest): boolean {

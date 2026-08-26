@@ -1,5 +1,5 @@
 import { logger } from "../../infra/logger";
-import { joinVerificationApi } from "../../infra/telegram";
+import { telegramApi } from "../../infra/telegram";
 import {
   LINKED_CHANNEL_FETCH_TIMEOUT_MS,
   LINKED_CHANNEL_TTL_MS,
@@ -28,7 +28,7 @@ export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined 
 export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | undefined> {
   const task: Promise<boolean | undefined> = getOrCreateLinkedChannelFetch(chatId, (): Promise<void> =>
     withTimeout(
-      joinVerificationApi.getChat(chatId),
+      telegramApi.getChat(chatId),
       LINKED_CHANNEL_FETCH_TIMEOUT_MS,
       `Linked-channel lookup for chat ${chatId}`
     )

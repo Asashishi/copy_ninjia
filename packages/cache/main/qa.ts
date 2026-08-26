@@ -9,7 +9,7 @@ import type { QaFormSession } from "../../types/qa";
  * **填充**：启动时由 Disk I/O Worker 的 hydrate 结果整表灌入。
  * **清理**：`/remove_qa` 删单条；群 teardown 删整群；进程重启后从 SQLite 重建。
  * **容量**：受管群不超过 STATE_MANAGED_CHAT_LIMIT，每群不超过 CHAT_QA_MAX_PER_CHAT，
- * 因此整表恒定不超过 125 条，不需要淘汰策略。一群的最后一条被删除后外层随之
+ * 因此整表恒定不超过 375 条，不需要淘汰策略。一群的最后一条被删除后外层随之
  * 移除，空 Map 不留存。
  *
  * **为什么按原文而不是归一化文本索引**：直答只认完全一致，热路径直接拿
@@ -19,18 +19,21 @@ import type { QaFormSession } from "../../types/qa";
 export const chatQaEntries: Map<number, Map<string, string>> = new Map();
 
 /**
- * `/set_qa` 未完成的按钮表单，**按群唯一**。
+ * `/set_qa` 未填完的表单会话，**按群索引、按发起人鉴权**。
  *
- * 不按发起人索引：inline 查询永远来自真实用户账号，而匿名管理员/频道身份发出的
- * 命令在命令侧是 `sender_chat`，两个 id 对不上（见 types/qa.ts 的 QaFormSession）。
- * 「谁有资格写」改由落群那一步重新校验权限决定。
+ * 表里按群唯一，同一群同时只有一张；`openedById` 决定谁能往里填——投递消息的
+ * 可见身份（`sender_chat ?? from`）必须与它一致。开表单那一步已经按
+ * isCanControllQaPermission 把过关，落群时不再查一次权限（见 types/qa.ts 的
+ * QaFormSession 与 commands/qa/ingress.ts）。
  *
- * **填充**：`/set_qa` 建立会话；同一群重开会替换掉旧的那张并清掉它的 timer。
+ * **填充**：`/set_qa` 建立会话。**同一发起人**重开会把旧的那张连同它那条表单
+ * 消息一起作废、清掉 timer，从两项皆空重新开始；别人正在填时的 `/set_qa` 由命令层
+ * 当场拒绝，到不了这里（见 commands/qa.ts 的 handleSetQaCommand）。
  * **清理**：两项填齐后结算、TTL 到期、`/init disable` 或群 teardown 时清除。
  * **容量**：受管群不超过 STATE_MANAGED_CHAT_LIMIT，因此本表天然有界；
  * QA_FORM_SESSION_MAX 再兜一道，达到上限后拒绝新建而不是淘汰别人的表单。
  * **Worker 崩溃**：本表只在主线程，不受 Worker 生命周期影响；进程重启即清空，
- * 届时按钮点下去会因找不到会话被拒绝，重开一张即可。
+ * 届时再发「问题:」「回答:」不会被认领，重开一张即可。
  */
 export const qaFormSessions: Map<number, QaFormSession> = new Map();
 
@@ -49,10 +52,10 @@ export const nextChatQaRevision: { current: number } = { current: 1 };
 /**
  * 整表复位；不触碰 SQLite，只清进程内状态。
  *
- * **仅供测试隔离**。这里曾写着「测试与 `/init disable` 复用」，但生产里没有任何
- * 调用方，而且也不该有：`/init disable` 的语义是「本天才不再管这个群」，已登记的
- * 问答是部署方写下的配置，重新 enable 之后应当照旧生效（见 commands/qa.ts
- * 的 teardownQaInChat——它只收表单，不删问答）。真要删得走 /remove_qa。
+ * **仅供测试隔离**，生产没有调用方：`/init disable` 的语义是「本天才不再管这个
+ * 群」，已登记的问答是部署方写下的配置，重新 enable 之后应当照旧生效（见
+ * commands/qa.ts 的 teardownQaInChat——它只收表单，不删问答）。真要删得走
+ * /remove_qa。
  */
 export function resetChatQaCache(): void {
   chatQaEntries.clear();

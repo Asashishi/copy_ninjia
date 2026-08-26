@@ -8,8 +8,7 @@ import {
 } from "../../cache/workers/aiChat/replies";
 import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
 import { logger } from "../../infra/logger";
-import type { LinkedQueue } from "../../libs/linkedQueue";
-import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
+import type { TimestampDeque } from "../../libs/timestampDeque";
 import { admitRound, admitTrigger } from "../../states/replyAdmission";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
@@ -78,9 +77,9 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean 
  * 饱和期，见 docs/cn/04-invariants.md。
  */
 function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
-  const times: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
+  const times: TimestampDeque | undefined = longTriggerTimes.get(chatId);
   if (times !== undefined) {
-    trimSlidingWindow({ timestamps: times, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
+    times.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
     if (admitRound({ windowCount: times.size }).action === "rateLimited") return;
   }
   drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));

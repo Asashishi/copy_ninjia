@@ -67,8 +67,8 @@ describe("Anti-Raid mirror persistence barriers", () => {
 
   test("落盘自检过不了的 lockdown intent 绝不进内存，Worker 立刻 fail-safe 打开", async () => {
     // Telegram 给 getChat().permissions 新增一个字段就是这个形态：严格解码器
-    // 不认识它。回归：这条记录曾先挂进内存 ChatState 再落盘，于是该群此后
-    // 每一条状态写入（任何开关命令）都跟着抛，/antiraid enable 直接打崩进程。
+    // 不认识它。记录必须先通过落盘自检才能进入内存 ChatState，否则该群后续
+    // 任意状态写入都会持续失败。
     workerPosts.length = 0;
     saveState.mockClear();
     chatStates.delete(-2005);

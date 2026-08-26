@@ -32,7 +32,7 @@ function openRepairableDay(day: string): DayFileState {
 }
 
 describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
-  test("新建和接管的按日文件均强制为普通用户可读的 0644", () => {
+  test("新建文件使用 0644，接管时保留部署方已有的 0600", () => {
     const previousUmask: number = process.umask(0o077);
     try {
       const state: DayFileState = openDayFile(dir, "2026-07-16", PERSISTED_FILE_MODE);
@@ -45,7 +45,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
 
     chmodSync(path, 0o600);
     openDayFile(dir, "2026-07-16", PERSISTED_FILE_MODE);
-    expect(statSync(path).mode & 0o777).toBe(0o644);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   test("文件不存在 -> openDayFile 视为空文件", () => {
@@ -290,7 +290,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     const recovered: DayFileState = openRepairableDay("2026-07-16");
     expect(recovered.empty).toBe(false);
     const parsedAfterRepair: unknown = readDay("2026-07-16");
-    // 修复只保证「此前的完整记录」不丢；这里应恢复出 A。
+    // 截断恢复必须保留残片之前的完整记录 A。
     expect((parsedAfterRepair as any).A).toEqual({ label: "大吉", fortunePercent: 90.11 });
 
     // 修复后继续追加应仍能产出合法 JSON。
@@ -341,14 +341,12 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     expect(recovered.empty).toBe(true);
     expect(readDay("2026-07-16")).toEqual({});
 
-    // 关键回归点：empty 被正确置位后，下一次追加应走「整份覆写」分支，
-    // 产出合法 JSON；修复前 empty 被错误置为 false，这里会在 3 字节文件的
-    // 中间按位置写入，产出打头带逗号的非法 JSON。
+    // empty 置位后，下一次追加必须走「整份覆写」分支并产出合法 JSON；
+    // 对 3 字节残片按非空文件追加会生成打头带逗号的非法 JSON。
     appendToDayFile({ dir, state: recovered, chunk: serializeDayFileEntry("111", { label: "大吉", fortunePercent: 90.12 }) });
     expect(readDay("2026-07-16")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
 
-    // 再模拟一次重启，确认新记录在磁盘上是完整、可正常再次解析的合法 JSON
-    // （而不是修复前那样：产出的坏文件在下次启动时会被判定修复失败并放弃）。
+    // 再模拟一次重启，确认新记录在磁盘上完整且可再次解析。
     const state3: DayFileState = openDayFile(dir, "2026-07-16");
     expect(state3.empty).toBe(false);
     appendToDayFile({ dir, state: state3, chunk: serializeDayFileEntry("222", { label: "小吉", fortunePercent: 60 }) });

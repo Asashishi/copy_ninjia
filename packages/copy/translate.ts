@@ -53,20 +53,15 @@ function ensureTranslateGeneration(expectedGeneration: number): void {
 /**
  * gRPC 客户端构造会注册退避 timer；延迟到首次真实翻译，保持模块导入无副作用。
  *
- * **SDK 本身也是动态 import 的**，不能写成顶层 `import`。`@google-cloud/translate`
- * 那张 gRPC 模块图极重：实测静态导入它要 383~447 ms、常驻 +9.72 MB 堆、+83547 个
- * 对象，而主线程整图一共才 570~734 ms / +11.35 MB / +97529 个对象——也就是说约
- * 86% 的启动堆和对象数，全压在一个 `/ja_copy` 上。本模块又经 copyModes 与
- * lifecycleDependencies 挂在启动路径上，静态导入等于每次重启都替所有部署方付这笔
- * 账，哪怕它从没开过日语复读。
+ * **SDK 本身也是动态 import 的**，不能写成顶层 `import`。本模块经 copyModes 与
+ * lifecycleDependencies 挂在启动路径上，只有真实启用日语翻译时才加载 gRPC 模块图。
  *
  * 生命周期钩子（initTranslate/quiesceTranslate/closeTranslate/drainTranslate）
  * 只碰 translateRuntime 上的标志与已有实例，都不需要 SDK，因此这条惰性边界
  * 收在这里最干净。类型侧仍是顶层 `import type`，编译期擦除、零运行时成本。
  *
- * **改成 async 之后必须重新对代**：`await import(...)` 制造了一个原先同步版本
- * 不存在的交错窗口，`closeTranslate` 可能正好在这期间把 client 置空并推进
- * generation。此时若照旧构造并写回，就会留下一个**永远不会被 close 的 gRPC
+ * `await import(...)` 期间 `closeTranslate` 可能把 client 置空并推进 generation。
+ * 此时构造并写回会留下一个**永远不会被 close 的 gRPC
  * 客户端**（close 已经拿着 null 走完了）——一条随每次停机泄漏一个通道的路径。
  * 因此 await 之后先复核 generation，不属于当前 owner 就直接抛，绝不构造。
  */
@@ -74,8 +69,7 @@ async function getTranslateClient(expectedGeneration: number): Promise<GoogleTra
   if (translateRuntime.client !== null) return translateRuntime.client;
   const { v3 }: { v3: TranslateSdkV3 } = await import("@google-cloud/translate");
   ensureTranslateGeneration(expectedGeneration);
-  // 并发首次翻译可能都走到这里；`??=` 保证只有先到的那个实例被留下，
-  // 与原先同步版本的单例语义一致。
+  // 并发首次翻译可能都走到这里；`??=` 保证只有先到的那个实例被留下。
   translateRuntime.client ??= new v3.TranslationServiceClient({
     keyFilename: GOOGLE_AUTH_FILE_PATH,
   });

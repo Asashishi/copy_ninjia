@@ -101,10 +101,8 @@ export interface RunPermissionAwareTelegramActionParams {
 /**
  * 执行一次需要区分「权限拒绝」与「偶发失败」的 Telegram 动作。
  *
- * 五个管理动作（mute / unmute / kick / ban / ban sender chat）此前各自抄了一份
- * 「闭包里的 permissionDenied 闩锁 + runTelegramAction + 三元结果映射」。三者
- * 必须成套出现：漏掉闩锁会把一次永久的 403 当成值得退避重试的抖动，长生命周期
- * 的黑名单批次会因此一直重投一个注定失败的请求。
+ * mute / unmute / kick / ban / ban sender chat 共用这一权限闩锁与三元结果映射。
+ * 闩锁必须覆盖整次动作，避免把永久的 403 归类为值得退避重试的偶发失败。
  *
  * 停机 abort 造成的失败不记 API 错误——它不是远端故障，口径与
  * runBooleanTelegramAction 一致。

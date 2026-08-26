@@ -28,7 +28,7 @@ const {
   testState,
   warnings,
   installVerificationEffectsHooks,
-  joinVerificationApi,
+  telegramApi,
 } = await import("../../helpers/verificationEffectsHarness");
 
 const { runVerificationEffects } = await import("../../../packages/workers/antiRaid/verificationEffects");
@@ -349,15 +349,15 @@ describe("同步副作用的逐条执行", () => {
   });
 
   test("私密模式首发也先探测：join update 证明的是在场，不是没被封", async () => {
-    // 曾经豁免过首发这次查询，理由是「紧跟刚到达的 join update」。但锁群下的
-    // 调用若命中 429 会排进 kick 类独立退避车道；等待期间人工管理员完全可能
+    // join update 只证明目标在场，不能替代封禁状态查询。锁群下的调用若命中 429
+    // 会排进 kick 类独立退避车道；等待期间人工管理员完全可能
     // 在客户端直接封禁这个人，而超级群的「只踢不封」映射到不带 only_if_banned
     // 的 unbanChatMember——排到的那一发会把管理员的封禁解开。
     setState(kickPendingState());
 
     await run([{ kind: "kickMember" }]);
 
-    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, joinVerificationApi);
+    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, telegramApi);
     expect(kickedUserIds).toEqual([USER_ID]);
   });
 
@@ -387,7 +387,7 @@ describe("同步副作用的逐条执行", () => {
 
     await run([{ kind: "kickMember" }]);
 
-    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, joinVerificationApi);
+    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, telegramApi);
     expect(kickedUserIds).toEqual([]);
     expect(dispatched).toContainEqual({
       userId: USER_ID,

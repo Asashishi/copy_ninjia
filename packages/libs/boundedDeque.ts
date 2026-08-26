@@ -4,6 +4,9 @@ import { assertDequeCapacities } from "./dequeCapacity";
  * 有界引用双端队列。使用可增长的环形数组，避免长期高频队列为每个元素额外
  * 创建链表节点；移出元素时立即清掉 backing slot，不能让已淘汰对象被数组继续
  * 引用。只承载进程内状态，不改变任何持久化或跨线程格式。
+ *
+ * 与 libs/timestampDeque.ts 的环形下标逻辑同构，但**刻意不合并成一个泛型**：
+ * 理由与共用校验的取舍写在 libs/dequeCapacity.ts 的头注里。
  */
 export class BoundedDeque<T> {
   private values: (T | undefined)[];
@@ -24,6 +27,16 @@ export class BoundedDeque<T> {
     return this.count;
   }
 
+  /**
+   * 从队首偏移 offset 的槽位。`head + offset` 恒小于 `2 * values.length`，
+   * 一次条件减即可折回环内；取模在这里是长期高频队列上的整数除法。
+   */
+  private slotAt(offset: number): number {
+    const length: number = this.values.length;
+    const index: number = this.head + offset;
+    return index >= length ? index - length : index;
+  }
+
   /** 追加一个引用；达到构造时的硬上限表示调用方违反了领域容量约束。 */
   push(value: T): void {
     if (this.count === this.values.length) {
@@ -32,8 +45,7 @@ export class BoundedDeque<T> {
       }
       this.grow();
     }
-    const index: number = (this.head + this.count) % this.values.length;
-    this.values[index] = value;
+    this.values[this.slotAt(this.count)] = value;
     this.count += 1;
   }
 
@@ -42,7 +54,8 @@ export class BoundedDeque<T> {
     if (this.count === 0) return undefined;
     const value: T | undefined = this.values[this.head];
     this.values[this.head] = undefined;
-    this.head = (this.head + 1) % this.values.length;
+    const next: number = this.head + 1;
+    this.head = next === this.values.length ? 0 : next;
     this.count -= 1;
     if (this.count === 0) this.head = 0;
     return value;
@@ -54,9 +67,7 @@ export class BoundedDeque<T> {
     const output: T[] = new Array<T>(length);
     const start: number = this.count - length;
     for (let index: number = 0; index < length; index += 1) {
-      output[index] = this.values[
-        (this.head + start + index) % this.values.length
-      ]!;
+      output[index] = this.values[this.slotAt(start + index)]!;
     }
     return output;
   }
@@ -64,8 +75,7 @@ export class BoundedDeque<T> {
   /** 清空并解除全部活动引用，保留已扩好的 backing array 供同一 owner 复用。 */
   clear(): void {
     for (let index: number = 0; index < this.count; index += 1) {
-      const slot: number = (this.head + index) % this.values.length;
-      this.values[slot] = undefined;
+      this.values[this.slotAt(index)] = undefined;
     }
     this.head = 0;
     this.count = 0;
@@ -79,9 +89,11 @@ export class BoundedDeque<T> {
     );
     const replacement: (T | undefined)[] =
       new Array<T | undefined>(nextCapacity);
+    const length: number = previous.length;
     for (let index: number = 0; index < this.count; index += 1) {
-      replacement[index] =
-        previous[(this.head + index) % previous.length];
+      let slot: number = this.head + index;
+      if (slot >= length) slot -= length;
+      replacement[index] = previous[slot];
     }
     this.values = replacement;
     this.head = 0;

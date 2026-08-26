@@ -56,11 +56,11 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // getChatMember 压进验证队列）。disable 一律作废——关掉之后这份权限记录
   // 本来就不该继续被信任。
   if (!(isEnabled && wasEnabled)) invalidateBotAdminStatus(chatId);
-  // 拆运行态失败**不再上抛**。落盘就在下面、总开关照样 durable 地关掉，异常
+  // 拆运行态失败**不上抛**。落盘就在下面、总开关照样 durable 地关掉，异常
   // 逸出只会让 acknowledged runner 带非零码退出且不确认 offset：Telegram 重投
   // 同一条 /init disable，而那时 wasEnabled 已经是 false，管理员第一次什么回执
   // 都没收到、第二次却被告知「本来就关着」——正是这条命令要消除的那种歧义。
-  // 改成就地降级：记一行错误日志，回执如实说「关是关了，有几样没拆干净」。
+  // 这里就地降级：记一行错误日志，回执如实说「关是关了，有几样没拆干净」。
   let teardownFailed: boolean = false;
   let teardownError: unknown;
   if (arg === "disable") {
@@ -78,6 +78,13 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
     // 这些残留行。teardown 失败也照清：总开关下面就 durable 地关掉了，「不再管这个群」
     // 已经成立。清完若整条状态回到缺省，clearChatStateField 会顺手删掉 LRU 条目，下面
     // 那次 persistChatState 写出的就是删除墓碑，SQLite 行一并消失。
+    //
+    // **只清 title，功能开关一律保留**：那几个开关是运维按下的决策，title 只是
+    // 每条群消息顺手刷回来的派生值。清开关等于让一次 /init disable 静默丢掉本群的
+    // AI、广告检测、防刷屏配置，重新 enable 时既恢复不了也不会有任何提示。代价是
+    // 「总开关关了、功能开关还开着」的群继续占一个 STATE_MANAGED_CHAT_LIMIT 名额，
+    // 直到那几个开关被逐条关掉、或机器人被移出该群（离群走 pruneDepartedChatState）。
+    // 这条代价由 INIT_CHAT_LIMIT_TEXT 如实告诉撞上上限的人，不靠删配置掩盖。
     clearChatStateField(chatId, "title");
   }
   // 落盘失败照旧原样上抛：那是 fatal durability failure，这条 update 不能被确认
@@ -98,11 +105,10 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   //
   // 条件挂在「记录此刻是不是空的」上，而不是 !wasEnabled。两者在正常一轮里
   // 完全等价（上面刚把记录作废），区别只在重投那一轮：这次调用**可能上抛**
-  // ——getChatMember 之后的状态落盘失败是有意向外传播的（见 infra/botAdmin.ts
-  // 与 docs/cn/04-invariants.md，上面那句「自己吞掉所有错误」以前写反了）。进程
-  // 因此带非零码退出、Telegram 重投这条 /init enable 时 wasEnabled 已经是
-  // true，挂 !wasEnabled 的话管理员身份重判与它要触发的黑名单清扫就永远不会
-  // 再发生了；而作废过的记录此刻仍是空的，挂 botPermissions 就能自然接上。
+  // ——getChatMember 之后的状态落盘失败会按 infra/botAdmin.ts 与
+  // docs/cn/04-invariants.md 向外传播。进程因此带非零码退出、Telegram 重投这条
+  // /init enable 时 wasEnabled 已经是 true；而作废过的权限记录仍是空的，按
+  // botPermissions 判定才能继续管理员身份重判与它要触发的黑名单清扫。
   // 记录已知的重复 enable 照旧跳过：那一刻合取没有发生任何变化。
   if (isEnabled && state.botPermissions === undefined) await resolveBotAdminStatus(chatId);
 

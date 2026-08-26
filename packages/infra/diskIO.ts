@@ -79,9 +79,8 @@ export interface DiskIOInitOptions {
 }
 
 // 落盘 Worker 只能由入口在取得 bot.lock 后显式初始化。模块导入本身不得
-// 创建线程：否则竞争单实例锁失败的第二进程仍会执行 diskIOWorker 顶层的
-// initLogFiles()，提前创建/清扫共享 logs/ 目录。Worker 线程里永远不初始化
-// 本宿主，只使用 logger.ts 的转发模式。
+// 创建线程：否则竞争单实例锁失败的第二进程仍会触达共享数据。Worker 线程里
+// 永远不初始化本宿主，只使用 logger.ts 的转发模式。
 function requirePositiveFinite(value: number, label: string): number {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${label} must be a positive finite number.`);
   return value;

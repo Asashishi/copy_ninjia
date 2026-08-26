@@ -1,4 +1,4 @@
-/** test/libs 下多个测试文件共用的小工具（非测试文件，bun test 不会执行它）。 */
+/** 多个领域的测试文件共用、与被测领域无关的小工具（非测试文件，bun test 不会执行它）。 */
 
 /** 手动控制 settle 时机的 Promise，串行/并发调度类测试用。 */
 export function deferred(): { promise: Promise<void>; resolve(): void } {

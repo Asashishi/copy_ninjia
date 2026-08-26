@@ -14,6 +14,7 @@ export type ScenarioName =
   | "ad-empty-metadata"
   | "ad-wire-clone"
   | "linked-timestamp-window"
+  | "quota-timestamp-window"
   | "bounded-rolling-buffer"
   | "chat-state-read"
   | "chat-state-map-read"

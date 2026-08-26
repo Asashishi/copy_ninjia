@@ -23,7 +23,7 @@ export interface TelegramVisionSource {
 
 /** 已转成两家供应商视觉接口都能直接接收的 JPEG/PNG 字节。 */
 export interface VisionImage {
-  bytes: Buffer;
+  bytes: Uint8Array;
   mime: "image/jpeg" | "image/png";
 }
 
@@ -36,7 +36,7 @@ export interface VisionImage {
  * 引入一层可能失败的依赖。
  */
 export interface VoiceClip {
-  bytes: Buffer;
+  bytes: Uint8Array;
   /** 供应商可接收的音频 mime；取自 Telegram 声明并经白名单归一。 */
   mime: string;
   /** Telegram 声明的时长（秒），用于诊断与转写提示词里的长度提示。 */

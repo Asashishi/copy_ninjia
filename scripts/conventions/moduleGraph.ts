@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
 
@@ -31,10 +31,10 @@ function resolveRelativeModule(specifier: string, fromFile: string): string | un
  * 本文件在同一条线程内会拉起哪些模块。刻意不跟 `new Worker(new URL(...))`：
  * 那正是线程边界，跟过去会把四条线程的模块图糊成一张。
  */
-function runtimeDependencies(path: string): string[] {
+async function runtimeDependencies(path: string): Promise<string[]> {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
-    readFileSync(path, "utf8"),
+    await Bun.file(path).text(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
@@ -66,10 +66,10 @@ function runtimeDependencies(path: string): string[] {
 }
 
 /** 本文件会在运行期加载的 npm 包；类型专用 import 不进入结果。 */
-export function runtimeExternalDependencies(path: string): string[] {
+export async function runtimeExternalDependencies(path: string): Promise<string[]> {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
-    readFileSync(path, "utf8"),
+    await Bun.file(path).text(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
@@ -101,13 +101,15 @@ export function runtimeExternalDependencies(path: string): string[] {
 }
 
 /** 从线程入口构建同线程模块闭包，并保留到每个模块的最短引入路径。 */
-export function threadModuleClosure(entry: string): Map<string, string[]> {
+export async function threadModuleClosure(
+  entry: string
+): Promise<Map<string, string[]>> {
   const trail: Map<string, string[]> = new Map([[entry, [entry]]]);
   const queue: string[] = [entry];
   while (queue.length > 0) {
     const current: string = queue.shift()!;
     const path: string[] = trail.get(current)!;
-    for (const dependency of runtimeDependencies(current)) {
+    for (const dependency of await runtimeDependencies(current)) {
       if (trail.has(dependency)) continue;
       trail.set(dependency, [...path, dependency]);
       queue.push(dependency);

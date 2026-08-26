@@ -15,6 +15,8 @@
 import type { Message, MessageEntity } from "@grammyjs/types";
 import { sendMessage } from "../../infra/telegram";
 import { getChatQa } from "../../infra/qaStore";
+import { renderFencedText } from "../../libs/codeFence";
+import type { RichTextMessage } from "../../types/telegram";
 
 /**
  * 首个实体正好是从 0 开始的 @提及时返回它的长度，否则 0。
@@ -81,6 +83,10 @@ export interface SendQaDirectAnswerParams {
  * 落空的判定分配一个 promise 并 await 它。判定留在同步的 resolveQaDirectAnswer
  * 里，调用方只在真的拿到答案时才进这条异步路径。
  *
+ * 答案里的 ``` 围栏在这里拆回 `pre` 实体（见 libs/codeFence.ts），用户当初粘进
+ * 表单的那块 ```json 才会原样渲染成可复制的代码块；没有围栏的答案在渲染的第一
+ * 行就走开，不产生任何中间对象。
+ *
  * 回答用 sendMessage 而不是 sendCommandMessage：这是本群自己登记的功能性内容，
  * 不是命令的非功能性提示，不该在 30 秒后被收走——问的人还没读完就没了。
  */
@@ -90,5 +96,12 @@ export function sendQaDirectAnswer({
   answer,
   messageThreadId,
 }: SendQaDirectAnswerParams): Promise<number | undefined> {
-  return sendMessage({ chatId, text: answer, replyToMessageId, messageThreadId });
+  const rendered: RichTextMessage = renderFencedText(answer);
+  return sendMessage({
+    chatId,
+    text: rendered.text,
+    entities: rendered.entities,
+    replyToMessageId,
+    messageThreadId,
+  });
 }

@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { link, open, readFile, unlink } from "node:fs/promises";
+import { link, open } from "node:fs/promises";
 import { dirname } from "node:path";
 import { BOT_LOCK_LINE_PATTERN, LINUX_BOOT_ID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { LOCK_FILE_PATH, RUNTIME_DATA_ROOT_IS_CONFIGURED } from "../../consts/paths";
@@ -69,20 +68,24 @@ export async function readLinuxProcessIdentity(pid: number): Promise<ProcessIden
   }
   let statContent: string;
   try {
-    statContent = await readFile(`/proc/${pid}/stat`, "utf8");
+    statContent = await Bun.file(`/proc/${pid}/stat`).text();
   } catch (error: unknown) {
     if (isErrno(error, "ENOENT")) return null;
     throw error;
   }
   const stat: LinuxProcessStat = parseLinuxProcessStat(statContent);
   if (stat.pid !== pid) throw new Error(`/proc/${pid}/stat reported an unexpected pid ${stat.pid}.`);
-  const bootId: string = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim().toLowerCase();
+  const bootId: string = (await Bun.file("/proc/sys/kernel/random/boot_id").text())
+    .trim()
+    .toLowerCase();
   return validateProcessIdentity({ pid, startTimeTicks: stat.startTimeTicks, bootId }, pid);
 }
 
 export function getBotTokenFingerprint(botToken: string): string {
   if (botToken.length === 0) throw new Error("Cannot derive a bot instance lock from an empty token");
-  return createHash("sha256").update(botToken, "utf8").digest("hex");
+  return new Bun.CryptoHasher("sha256")
+    .update(botToken, "utf8")
+    .digest("hex");
 }
 
 function serializeProcessIdentity(identity: ProcessIdentity): string {
@@ -162,7 +165,7 @@ async function readBotLockRecords(lockFilePath: string): Promise<BotLockRecord[]
 async function writeBotLockRecords(lockFilePath: string, records: BotLockRecord[]): Promise<void> {
   if (records.length === 0) {
     try {
-      await unlink(lockFilePath);
+      await Bun.file(lockFilePath).delete();
     } catch (error: unknown) {
       if (!isErrno(error, "ENOENT")) throw error;
     }
@@ -238,7 +241,7 @@ async function acquirePidFileLock(
           );
         }
         try {
-          await unlink(recoveryPath);
+          await Bun.file(recoveryPath).delete();
         } catch (error: unknown) {
           if (!isErrno(error, "ENOENT")) throw error;
         }
@@ -255,20 +258,20 @@ async function acquirePidFileLock(
         if (await isProcessIdentityActive(currentOwner, readProcessIdentity)) {
           throw new Error(`Another process (pid=${currentOwner.pid}) acquired the bot lock guard during recovery.`);
         }
-        await unlink(lockFilePath);
+        await Bun.file(lockFilePath).delete();
       } finally {
-        await unlink(recoveryPath).catch((): undefined => undefined);
+        await Bun.file(recoveryPath).delete().catch((): undefined => undefined);
       }
     }
   } finally {
-    await unlink(candidatePath).catch((): undefined => undefined);
+    await Bun.file(candidatePath).delete().catch((): undefined => undefined);
   }
 }
 
 async function releasePidFileLock(lockFilePath: string, currentIdentity: ProcessIdentity): Promise<void> {
   try {
     const owner: ProcessIdentity = parseProcessIdentity(await Bun.file(lockFilePath).text(), lockFilePath);
-    if (sameProcessIdentity(owner, currentIdentity)) await unlink(lockFilePath);
+    if (sameProcessIdentity(owner, currentIdentity)) await Bun.file(lockFilePath).delete();
   } catch (error: unknown) {
     if (!isErrno(error, "ENOENT")) throw error;
   }

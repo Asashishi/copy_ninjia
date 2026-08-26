@@ -61,3 +61,20 @@ export const JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES: number = 512 * 1_024;
  * 但不会随 25 万条容量线性增长。
  */
 export const JOIN_LOG_SNAPSHOT_CHUNK_BYTES: number = 256 * 1_024;
+
+/**
+ * 空快照文本 `{}` 的 UTF-8 字节数。
+ *
+ * 下面三条与 workers/diskIO/joinLogRecords.ts 的序列化格式一一对应：快照容量
+ * 记账走的是按记录的循环，对这些固定字面量重复调用 `Buffer.byteLength` 属于
+ * 每条记录付一次的常量开销。改动序列化格式时必须同批更新这三条；
+ * test/workers/diskIO/joinLogFiles.test.ts 用真实序列化结果的
+ * `Buffer.byteLength` 与 measureJoinLogSnapshotBytes 对拍锁住它们。
+ */
+export const JOIN_LOG_EMPTY_SNAPSHOT_BYTES: number = 2;
+
+/** 非空快照外框 `{\n` 与 `\n}` 中任意一半的 UTF-8 字节数。 */
+export const JOIN_LOG_SNAPSHOT_BRACE_BYTES: number = 2;
+
+/** 快照中相邻两条记录之间分隔符 `,\n` 的 UTF-8 字节数。 */
+export const JOIN_LOG_ENTRY_SEPARATOR_BYTES: number = 2;

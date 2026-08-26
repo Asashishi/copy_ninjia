@@ -2,8 +2,7 @@
  * 通用的"JSON 对象文件、末尾追加"落盘机制：文件内容始终是一个顶层
  * JSON 对象 { "key1": value1, "key2": value2, ... }，新增条目不整文件重写，
  * 而是覆写文件结尾的「\n}」两字节、按位置追加，写入量只与本批条数有关，
- * 与文件大小无关。原是 loggerWorker.ts 专属逻辑，现抽成通用机制，调用方
- * 是 diskIO/logFiles.ts（日志）、diskIO/snapshotFiles.ts 的
+ * 与文件大小无关。调用方是 diskIO/logFiles.ts（日志）、diskIO/snapshotFiles.ts 的
  * appendLuckEntries（每日运势）、diskIO/verificationWrites.ts（待验证）、
  * diskIO/joinLogFiles.ts（入群日志）与 diskIO/adSampleFile.ts（广告样本）；
  * 调用方各自负责 key/value 怎么序列化、
@@ -15,12 +14,13 @@
  * `<dir>/<day>.json` 命名约定上的薄封装，供按天滚动的三个领域使用。
  */
 
-import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { AppendOnlyFileState, DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { isPlainRecord } from "../../libs/record";
+import { assertFileReadableWritable } from "../../libs/fileAccess";
 
 // serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态
 // （indent 为 0 时输出单行，掐头去尾会切进内容本身）；启动即断言，不让
@@ -47,8 +47,6 @@ export interface OpenValidatedAppendOnlyFileOptions {
   readonly content: string;
   /** 顶层对象是否没有自有条目；由领域校验过程顺带给出。 */
   readonly empty: boolean;
-  /** 需要接管的持久化权限；缺省时沿用部署方现有权限。 */
-  readonly mode?: number;
 }
 
 export interface WriteBufferFullyParams {
@@ -113,11 +111,9 @@ function atomicRewrite(path: string, content: string, mode?: number): void {
 export function openAppendOnlyFile(path: string, mode?: number, repair: boolean = false): AppendOnlyFileState {
   const state: AppendOnlyFileState = { size: 0, empty: true };
   if (!existsSync(path)) return state;
-  // 调用方显式要求 mode 时，接管旧文件也修正曾被严格 umask
-  // 收紧的权限。日志路径不传 mode，保持原有部署权限策略。
-  // 已经是 0644 时不无条件 chmod：共享部署中文件可能由另一账号
-  // 所有，虽然当前账号可读写，对相同 mode 做 chmod 仍会 EPERM。
-  if (mode !== undefined && (statSync(path).mode & 0o777) !== mode) chmodSync(path, mode);
+  // mode 只用于首次创建。已有文件保留部署方权限，并在接管阶段显式确认
+  // 当前进程可读写；不能靠目录 rename 权限绕过文件本身的只读策略。
+  assertFileReadableWritable(path);
   const content: string = readFileSync(path, "utf8");
   let parsed: unknown;
   try {
@@ -128,7 +124,7 @@ export function openAppendOnlyFile(path: string, mode?: number, repair: boolean 
     if (!repair) {
       throw new AppendOnlyFileFormatError(path, "could not be parsed; refusing to repair this file.");
     }
-    const repaired: string | null = repairTruncated(content);
+    const repaired: string | null = repairTruncatedAppendOnlyContent(content);
     if (repaired === null) {
       throw new AppendOnlyFileFormatError(path, "could not be parsed or repaired.");
     }
@@ -176,13 +172,10 @@ export function openValidatedAppendOnlyFile({
   path,
   content,
   empty,
-  mode,
 }: OpenValidatedAppendOnlyFileOptions): AppendOnlyFileState {
   const state: AppendOnlyFileState = { size: 0, empty: true };
   if (!existsSync(path)) return state;
-  if (mode !== undefined && (statSync(path).mode & 0o777) !== mode) {
-    chmodSync(path, mode);
-  }
+  assertFileReadableWritable(path);
   if (empty) return state;
   if (!content.endsWith("\n}")) {
     throw new AppendOnlyFileFormatError(
@@ -226,7 +219,7 @@ function repairCandidateAt(
  *   保留字节，等待人工恢复，绝不从空文件重新开始覆盖原数据。
  * @see ../../../docs/cn/04-invariants.md
  */
-function repairTruncated(content: string): string | null {
+export function repairTruncatedAppendOnlyContent(content: string): string | null {
   const withClosingBrace: string = `${content}\n}`;
   try {
     JSON.parse(withClosingBrace);
@@ -262,7 +255,7 @@ function repairTruncated(content: string): string | null {
   }
 
   if (boundaries.length === 0) return null;
-  // 尾部撕裂是常见情况，仍与旧实现一样先只试最后一个完整成员边界。
+  // 尾部撕裂是常见情况，先只试最后一个完整成员边界。
   const last: string | null = repairCandidateAt(content, boundaries, boundaries.length - 1);
   if (last !== null) return last;
 

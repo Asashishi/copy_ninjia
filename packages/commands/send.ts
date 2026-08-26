@@ -54,19 +54,8 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
 
   // 目标群必须已经在 chat_states 里，否则只回一句提示。
   //
-  // 这条命令以前直接 getOrCreateChatState(targetChatId)：目标没被纳管时那是一次
-  // **新建**，而新建要过容量闸（见 infra/chatStateStorage.ts 的
-  // assertChatStateCapacity）——State 已管 STATE_MANAGED_CHAT_LIMIT 个群时它抛错。
-  // 抛在这里没人接：异常逸出命令处理器 → acknowledged runner 不确认这条 update
-  // 并带非零码退出 → Telegram 重投同一条 /send → 再抛一次。一条超管命令就能把
-  // 进程钉进重启循环，且退不出来（重投的还是它）。容量拒绝只属于 /init enable
-  // 那一处，在那里是一句回执（INIT_CHAT_LIMIT_TEXT），不是异常。
-  //
-  // 顺带修掉的是同一行的另一半问题：为一个没 /init 过的群凭空建一条 chat_states
-  // 记录，违反「未纳管的群不长记录」——infra/botAdmin.ts 与 infra/chatTitle.ts
-  // 全程按这条不变量写（两边的写入都先判 isInitEnabled）。
-  //
-  // 判定放在 getChat 之前：没纳管的目标连可达性都不必探，省一次 API 往返。
+  // 这里只读现有状态，不为未纳管目标创建 chat_states 记录，也不触发只属于
+  // /init enable 的容量闸。判定放在 getChat 之前，没纳管的目标无需探测可达性。
   if (!getChatStateCache().has(targetChatId)) {
     await sendCommandMessage({ chatId, text: `${targetChatId} 本天才还没接管呢，先去那边 /init enable 再来找我♡`, replyToMessageId: messageId });
     return;

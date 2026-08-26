@@ -20,16 +20,18 @@
 | `bun run test` | 全量测试（强制文件隔离） |
 | `bun run test:random` | 固定种子的乱序全量测试，用于暴露测试间残留 |
 | `bun run test:coverage` | 测试 + 全源码覆盖率 |
+| `bun run check:install-script-syntax` | 只用 `bash -n` 解析 `install.sh` 的 shell 语法；不执行安装脚本 |
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
 | `bun run check` | conventions + lint + typecheck + coverage + 热路径门禁，**提交前必跑** |
+| `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；因为要整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
 | `bun run perf:hot-path-gate` | 全部热路径场景的内存/GC/JIT 门禁，已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
-| `bun run perf:join-log` | 25 万项入群日志容量/快照的独立进程对照基准 |
+| `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
-| `bun run migrate:chat-qa` | 新增 `chat_qa` 表与问答权限键（schema v4 → v5）的停机冷迁移 |
-| `bun run release:check` | frozen lockfile 安装 + check + 故障注入，发布前必跑 |
+| `bun run migrate:qa-thumbnail` | 从 `state.json` 摘掉退场的 `global.assets.qaThumbnailUrl` 的停机冷迁移 |
+| `bun run release:check` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
 
 ## 质量门禁的口径
@@ -37,11 +39,15 @@
 - **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 90%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
-- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接与 tracked 非脚本文件的可执行权限，先于 lint 运行。另有两条跨文件一致性检查：群内长期保留的命令内容（`preserveInGroup: true`）必须同时传 `messageThreadId`；三份 `09-performance.md` 的基准区块时间戳必须彼此一致，且在 `performance-result.json` 的 `fullSuite.lastRun` 已记录过时与它同源（未记录过按「从没跑过」放行，由发布流程第 2 步补齐）。
+- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；生产代码的 Node 兼容 import、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
+
+### 依赖冷却期
+
+依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，记录写入 [`dependency-release-age-exemptions.json`](../../dependency-release-age-exemptions.json)。当前 Bun 运行时与 `@types/bun` 均为 1.4.0。
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2581 tests / 271 files / 95642 次 `expect()`**；全源码**函数覆盖率 95.23% / 行覆盖率 96.62%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2821 tests / 287 files / 96239 次 `expect()`**；全源码**函数覆盖率 95.98% / 行覆盖率 97.14%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -57,7 +63,7 @@
 ### 写测试的约定
 
 - 路径镜像 `packages/`：`packages/foo/bar.ts` → `test/foo/bar.test.ts`。
-- 公共辅助在 `test/libs/helpers.ts`；不要在测试间共享可变模块状态（隔离机制会掩盖这类错误直到有人不用 `--isolate` 运行）。
+- 跨领域共用的替身、夹具与 harness 放 `test/helpers/`，与领域无关的通用小工具放 `test/libs/helpers.ts`；不要在测试间共享可变模块状态（隔离机制会掩盖这类错误直到有人不用 `--isolate` 运行）。
 - 触发真实文件 I/O 的测试可以放心写——preload 的临时数据根兜底；但涉及 `infra/storage` 的测试注意 mock 边界（只 mock `infra/diskIO` 而漏掉 `infra/storage` 会调到真实 `saveStateInBackground`，这正是 [`AGENTS.md`](../../AGENTS.md) 要求先备份运行时文件的场景）。
 
 ## 故障注入套件
@@ -84,7 +90,7 @@
 
 ## 入群日志性能基准
 
-`bun run perf:join-log` 固定使用 250,000 条容量、300 条溢出和 10,000 条预热输入；快照与容量路径的 baseline/current 各运行 5 个独立 Bun 进程。输出记录完整 Bun version/revision、耗时的中位数与范围，以及强制 GC 前后的 JSC heap/object 变化。baseline 固化的是分配优化前的整表复制、全量排序与完整 JSON 字符串算法，只用于同一 Bun build 内的前后对照；`Bun.gc(true)` 只存在于该基准，不进入生产控制流。改动入群索引、容量裁剪、快照序列化或分块原子写时必须运行，并确认差异明显大于 5 轮样本范围所显示的噪声。
+`bun run perf:join-log` 固定使用 250,000 条容量、300 条溢出和 10,000 条预热输入；快照（`snapshot`）、容量（`capacity`）与追加记账（`append-accounting`）三条路径的 baseline/current 各运行 5 个独立 Bun 进程，父进程逐样本比对两个变体的 checksum，不一致即整体失败。`append-accounting` 的单批规模取生产的 `JOIN_LOG_MAX_BUFFERED_ENTRIES`，重复到与另两条同在 25 万条量级。输出记录完整 Bun version/revision、耗时的中位数与范围，以及强制 GC 前后的 JSC heap/object 变化。baseline 固化的是分配优化前的算法——整表复制、全量排序与完整 JSON 字符串（快照与容量），以及按记录重新序列化一次只为量出它的字节数（追加记账）——只用于同一 Bun build 内的前后对照；`Bun.gc(true)` 只存在于该基准，不进入生产控制流。改动入群索引、容量裁剪、快照序列化、追加后的字节记账或分块原子写时必须运行，并确认差异明显大于 5 轮样本范围所显示的噪声。
 
 ## 身份数据库性能基准
 
@@ -125,7 +131,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 846 处 / 79 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
+- **中文字符串统计**（当前约 861 处 / 83 个文件）：数值只写在三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节；三语 README 的「关于语言」注只链到那一节，不重复数值。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布

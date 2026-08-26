@@ -58,6 +58,8 @@ const mainTelegramApi: TelegramApi = {
     bot.api.banChatSenderChat(...args),
   copyMessage: (...args: Parameters<TelegramApi["copyMessage"]>): ReturnType<TelegramApi["copyMessage"]> =>
     bot.api.copyMessage(...args),
+  editMessageText: (...args: Parameters<TelegramApi["editMessageText"]>): ReturnType<TelegramApi["editMessageText"]> =>
+    bot.api.editMessageText(...args),
   deleteMessage: (...args: Parameters<TelegramApi["deleteMessage"]>): ReturnType<TelegramApi["deleteMessage"]> =>
     bot.api.deleteMessage(...args),
   deleteMessages: (...args: Parameters<TelegramApi["deleteMessages"]>): ReturnType<TelegramApi["deleteMessages"]> =>

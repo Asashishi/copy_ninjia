@@ -1,6 +1,7 @@
 import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User, Chat } from "@grammyjs/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
+import { joinPersonName } from "../../libs/text";
 import { visibleSenderChat } from "../../users/visibleSender";
 import type { TelegramVisionSource } from "../../types/media";
 import type { AiReplyReference } from "../../types/aiChat/protocol";
@@ -46,13 +47,8 @@ function messageEntitySource(message: Message): { text: string; entities: Messag
  * 一次遍历实体数组同时判定两个提及事实——createMessageTriggerContext 对每条
  * 消息都要两者，合并解析避免对同一条消息的 entities 重复扫两遍。
  *
- * **这里的 `{text, entities}` 看着像该被消掉的投影对象，实际不是，别再去动它。**
- * 它只在「确实有 entity 表」时才构造，而绝大多数群消息根本没有 entity，第一个
- * `if` 就带着 null 返回了——那条路上一个对象都不分配。为省这个对象把两个字段
- * 摊平成局部变量、并把 `@${botUsername}` 记忆化，实测是净亏：无 entity 的早退
- * 路径（生产上的常态）从 4.5~5.6 ns/op 变成 4 次独立进程里 3 次落在 19~20
- * ns/op，而有 entity 那条也没量出可分辨的收益（113.8~132.9 对 116.9~122.1，
- * 两组区间重叠）。JSC 本来就会把这种不逃逸的字面量整个消掉。
+ * `{text, entities}` 只在确实存在 entity 表时构造；无 entity 的常见路径直接返回，
+ * 不分配投影对象。该字面量不逃逸，可由 JSC 消除。
  */
 export function resolveMentionFacts(message: Message, botId: number, botUsername: string | undefined): MentionFacts {
   const facts: MentionFacts = { isMentioned: false, hasOtherMention: false };
@@ -90,7 +86,8 @@ function forwardOriginLabel(origin: MessageOrigin): string {
   switch (origin.type) {
     case "user": {
       const user: User = origin.sender_user;
-      const name: string = [user.first_name, user.last_name].filter((part: string | undefined): boolean => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
+      const name: string = joinPersonName(user.first_name, user.last_name).trim() ||
+        FALLBACK_SPEAKER_NAME;
       return `[id:${user.id}]${user.username ? ` [username:@${user.username}]` : ""} ${name}`;
     }
     case "hidden_user":
@@ -142,10 +139,8 @@ export function resolveReplyReference(message: Message): AiReplyReference | unde
   const repliedTo: Message | undefined = message.reply_to_message;
   if (!repliedTo) return undefined;
   const speaker: AiSpeakerSnapshot = resolveSpeaker(repliedTo);
-  // 三个可选字段一律写出来（缺省即 undefined），不再各自条件展开：那种写法让
-  // 同一个类型最多分出 8 个隐藏类，而这份引用会跟着记录进 Worker、清洗后长期
-  // 留在逐字缓存里，被转录渲染反复读（见 types/aiChat/speaker.ts 的形状约束）。
-  // 空串按 undefined 归一，保持与旧写法「假值就当没有」逐字一致的下游语义。
+  // 三个可选字段一律写出来（缺省即 undefined），让进入 Worker 与逐字缓存的引用
+  // 保持单一隐藏类（见 types/aiChat/speaker.ts 的形状约束）。空串按 undefined 归一。
   const quote: string | undefined = message.quote?.text;
   const forwardedFrom: string | undefined = resolveForwardOrigin(repliedTo);
   return {

@@ -75,9 +75,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
-    // 管理员权限变更（比如加了删消息权）也走 my_chat_member。第一次仍要补扫
-    // ——「早就是管理员」的群此前一次都没扫过，正是把边沿挂在身份变更上时
-    // 永远等不到的那一类。
+    // 管理员权限变更（比如加了删消息权）也走 my_chat_member；即使身份仍是
+    // administrator，也必须补扫，不能只依赖身份值变化边沿。
     await handleMyChatMemberUpdate(promotion("administrator", "administrator"));
     expect(remover).toHaveBeenCalledTimes(1);
     settleLast(true);

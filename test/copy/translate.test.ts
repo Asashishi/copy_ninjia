@@ -126,8 +126,8 @@ describe("Google Translation 适配层", () => {
   });
 
   test("SDK 动态 import 期间发生 close：不给已失效的 owner 造客户端，避免泄漏永不关闭的 gRPC 通道", async () => {
-    // SDK 改成动态 import 之后，`await import(...)` 多出一个同步版本不存在的
-    // 交错窗口：closeTranslate 会在这期间把 client 置空并推进 generation，
+    // `await import(...)` 形成一个交错窗口：closeTranslate 会在这期间把 client
+    // 置空并推进 generation，
     // 而它已经拿着 null 走完了关闭流程。若此时照旧构造并写回，就留下一个谁也
     // 不会去 close 的 gRPC 客户端——每次停机泄漏一个通道。
     //

@@ -13,9 +13,16 @@ import {
   markAiMemoryDirty,
   resetAiMemoryCache,
 } from "../../cache/workers/diskIO/snapshots";
-import { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } from "./snapshotFiles";
+import {
+  deleteAiMemoryFile,
+  inspectAiMemories,
+  maintainAiMemoryFiles,
+  recoverAiMemories,
+  writeAiMemoryFile,
+} from "./snapshotFiles";
 import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../../types/diskIO";
 import type { AiMemorySnapshotFileDependencies } from "../../types/diskIO/snapshotOwners";
+import type { AiMemoryRecoveryInspection } from "./snapshotFiles";
 
 const AI_MEMORY_FILE_DEPENDENCIES: AiMemorySnapshotFileDependencies = {
   recover: recoverAiMemories,
@@ -51,6 +58,26 @@ export function hydrateAiMemorySnapshots(
 ): Map<number, string> {
   hydrateAiMemoryCache(files.recover());
   return aiMemoryCache;
+}
+
+/** 跨域启动第一阶段：只读扫描并严格解码，不改缓存或磁盘。 */
+export function inspectAiMemorySnapshots(): AiMemoryRecoveryInspection {
+  return inspectAiMemories();
+}
+
+/** 跨域启动第二阶段：全部领域 inspect 成功后整体发布到 owner 缓存。 */
+export function adoptAiMemorySnapshots(
+  inspection: AiMemoryRecoveryInspection
+): Map<number, string> {
+  hydrateAiMemoryCache(inspection.snapshots);
+  return aiMemoryCache;
+}
+
+/** 跨域启动成功后的临时文件清理。 */
+export function maintainAiMemorySnapshots(
+  inspection: AiMemoryRecoveryInspection
+): void {
+  maintainAiMemoryFiles(inspection);
 }
 
 export interface MarkAiMemorySnapshotDirtyParams {

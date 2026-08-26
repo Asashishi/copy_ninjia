@@ -9,7 +9,7 @@ const getChat = mock((): Promise<{ type: "group" | "supergroup" }> =>
 );
 
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: { getChat },
+  telegramApi: { getChat },
 }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: loggerStub({ error: mock((..._args: unknown[]): void => {}) }),

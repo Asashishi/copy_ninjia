@@ -27,7 +27,7 @@ export interface LoadedReply {
   whitelistEntryCount: number;
   /** 当前格式的全部群状态；主线程据此建立同容量 LRU，不重复启动正确性校验。 */
   chatStates: Map<number, ChatState>;
-  /** 全部群问答；整表恒定不超过 125 行，主线程据此建立直答热表。 */
+  /** 全部群问答；整表恒定不超过 375 行，主线程据此建立直答热表。 */
   chatQa: Map<number, ReadonlyMap<string, string>>;
   /** 恢复失败时主线程必须拒绝启动，不能把部分结果当成空状态继续。 */
   error?: string;

@@ -142,10 +142,8 @@ export function isPairableFunctionCall(item: OpenAI.Responses.ResponseOutputItem
  * 抽出模型这一轮抛回的函数调用。`call_id` 是回填 function_call_output 的必填
  * 关联键，缺了这一条的 item 无法续接，直接跳过。
  *
- * 零调用时交回上面那个共用空数组：每个回复的最后一轮按构造必然是零 function
- * call 的 turn（那正是 workers/aiChat/replyModel.ts 的循环退出条件），再加上
- * 每个纯文本中间轮——哨兵原本只接在 `!result.ok` 的冷分支上，真正有流量的
- * 成功路径反而每轮都新分配一个空数组。
+ * 零调用时交回共用空数组：每个回复的最后一轮以及纯文本中间轮都没有 function
+ * call，成功路径不为这些轮次重复分配空数组。
  */
 export function extractFunctionCalls(response: OpenAI.Responses.Response): readonly AiFunctionCall[] {
   const calls: AiFunctionCall[] = [];

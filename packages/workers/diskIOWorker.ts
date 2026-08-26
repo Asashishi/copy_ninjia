@@ -7,7 +7,8 @@
  * 由主线程 StateStore 独立异步维护。
  * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *
- * 本文件只做消息路由、统一 flush 调度、启动恢复编排；具体逻辑分别在
+ * 本文件只做消息路由与统一 flush 调度；启动恢复编排在 diskIO/startup.ts，
+ * 具体领域逻辑分别在
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryFiles.ts（AI 记忆）、
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
@@ -33,12 +34,11 @@ import {
   handleChatStateWrite,
   handleIdentityPolicyWrite,
   handlePendingRemovalSnapshot,
-  hydrateStorageDatabase,
   pendingStorageDatabaseDomains,
   readBlocklistIdPage,
   readIdentityPolicies,
 } from "./diskIO/storageDatabase";
-import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
+import { flushLogBuffer, handleLogMessage } from "./diskIO/logFiles";
 import {
   configureLuckAppendStalledReply,
   flushLuckAppends,
@@ -50,37 +50,31 @@ import {
   flushJoinLogDomain,
   handleJoinLogMessage,
   readJoinLog,
-  recoverJoinLogFiles,
 } from "./diskIO/joinLogFiles";
-import { recoverVerificationDay } from "./diskIO/verificationRecovery";
 import {
   flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
-  scheduleVerificationRollover,
 } from "./diskIO/verificationWrites";
 import {
   configureAiMemoryDeletePersistedReply,
   configureAiMemoryPersistedReply,
   deleteAiMemorySnapshot,
   flushAiMemorySnapshots,
-  hydrateAiMemorySnapshots,
   markAiMemorySnapshotDirty,
 } from "./diskIO/aiMemoryFiles";
-import { flushStickerCatalogs, hydrateStickerCatalogs, markStickerCatalogSnapshotDirty } from "./diskIO/stickerCatalogFiles";
-import { getStickerConfig } from "../config/stickers";
-import { getTokyoDateKey } from "../libs/time";
+import {
+  flushStickerCatalogs,
+  markStickerCatalogSnapshotDirty,
+} from "./diskIO/stickerCatalogFiles";
+import { handleDiskIOStartupLoad } from "./diskIO/startup";
+import type { DiskIOStartupReplySink } from "./diskIO/startup";
 import { LOG_REOPEN_RETRY_MS } from "../consts/diskIO/appendOnly";
-import { aiMemoryCache, forgetAiMemoryChat } from "../cache/workers/diskIO/snapshots";
-import { stickerCatalogCache } from "../cache/workers/diskIO/stickers";
+import { forgetAiMemoryChat } from "../cache/workers/diskIO/snapshots";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
 import { noteStorageWriteRejected } from "../cache/workers/diskIO/storageDatabase";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
-import type { VerificationSnapshot } from
-  "../types/antiRaid/verification";
-import type { PendingBlockedRemoval } from "../types/blocklist";
-import type { ChatState } from "../types/chatState";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
@@ -94,7 +88,6 @@ import type {
   DiskIOMessage,
   JoinLogReadReply,
   IdentityStoragePersistedReply,
-  LoadedReply,
   LuckAppendStalledReply,
   LuckSecretReply,
   RecoveryReplayFailedReply,
@@ -102,7 +95,6 @@ import type {
 } from "../types/diskIO";
 import type {
   JoinLogRecord,
-  LuckReceiptSecret,
 } from "../types/diskIO/storage";
 
 declare const self: Worker;
@@ -131,76 +123,6 @@ function flushAll(scope: DiskFlushRequest["scope"]): readonly DiskIODomain[] {
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
   // 的失败误导，而那个领域的真实错误按设计只有 console.error。
   return failedDomains;
-}
-
-/**
- * 读取已在主线程启动总闸验证过的贴纸白名单。Worker 重建仍自行复核，配置若在
- * 进程运行期间被破坏则恢复失败，不能把错误配置解释成空白名单后删除全部目录。
- */
-function activeStickerPacks(): readonly string[] {
-  return getStickerConfig().packs;
-}
-
-/**
- * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
- * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/（含当天
- * 回执密钥）、当天待验证增量文件与 database/storage.sqlite，先灌进
- * 自己的缓存，再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在回执
- * 中显式报告；主线程启动
- * 握手据此拒绝以部分/空状态继续运行。
- * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
- * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）。
- * 包内部「哪些贴纸还在线上」的对账则在 aiChatWorker 那侧的
- * aiChat/ai/stickers/catalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
- */
-function handleLoad(): void {
-  let loadError: string | undefined;
-  let verifications: Map<string, VerificationSnapshot> = new Map();
-  let blocklistEntryCount: number = 0;
-  let whitelistEntryCount: number = 0;
-  let pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
-  let chatStates: Map<number, ChatState> = new Map();
-  let chatQa: Map<number, ReadonlyMap<string, string>> = new Map();
-  let luckReceiptSecret: LuckReceiptSecret | null = null;
-  try {
-    hydrateAiMemorySnapshots();
-    hydrateStickerCatalogs(activeStickerPacks());
-    const todayKey: string = getTokyoDateKey();
-    recoverJoinLogFiles(todayKey);
-    hydrateLuckDay(todayKey);
-    luckReceiptSecret = recoverLuckReceiptSecret({
-      day: todayKey,
-      confirmedResultCount: luckWorkerCache.current?.entries.size ?? 0,
-    });
-    verifications = recoverVerificationDay(todayKey);
-    scheduleVerificationRollover((reply: VerificationPersistedReply): void => self.postMessage(reply));
-    const identityStorage: ReturnType<typeof hydrateStorageDatabase> =
-      hydrateStorageDatabase();
-    blocklistEntryCount = identityStorage.blocklistEntryCount;
-    whitelistEntryCount = identityStorage.whitelistEntryCount;
-    pendingBlockedRemovals = identityStorage.pendingBlockedRemovals;
-    chatStates = identityStorage.chatStates;
-    chatQa = identityStorage.chatQa;
-  } catch (error: unknown) {
-    loadError = error instanceof Error ? error.message : String(error);
-    console.error("[diskIOWorker] startup recovery failed:", error);
-  }
-
-  const reply: LoadedReply = {
-    type: "loaded",
-    aiMemories: aiMemoryCache,
-    stickerCatalogs: stickerCatalogCache,
-    luckDay: luckWorkerCache.current,
-    luckReceiptSecret,
-    verifications,
-    pendingBlockedRemovals,
-    blocklistEntryCount,
-    whitelistEntryCount,
-    chatStates,
-    chatQa,
-    error: loadError,
-  };
-  self.postMessage(reply);
 }
 
 /** 路由一条主线程消息；独立导出便于验证协议而不初始化真实落盘目录。 */
@@ -400,7 +322,9 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       self.postMessage(readBlocklistIdPage(msg));
       break;
     case "load":
-      handleLoad();
+      handleDiskIOStartupLoad(
+        (reply: Parameters<DiskIOStartupReplySink>[0]): void => self.postMessage(reply)
+      );
       break;
     case "flush": {
       const failedDomains: readonly DiskIODomain[] = flushAll(msg.scope);
@@ -461,7 +385,6 @@ export function startDiskIOWorker(): void {
   // 运势追加持续失败时的兜底诊断出口：本线程的 console 可能被部署接到
   // /dev/null，这条会由主线程的运势 owner 记进统一 logs/（见 luckFiles.ts）。
   configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => self.postMessage(reply));
-  initLogFiles();
   self.onmessage = (event: MessageEvent<DiskIOMessage>): void => {
     handleDiskIOWorkerMessage(event.data);
   };

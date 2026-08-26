@@ -4,9 +4,10 @@ import { getStickerSet } from "./sets";
 import { pickStickerVisionSource } from "./describe";
 import { describeMediaForStickerCatalog } from "../imageDescription";
 import { summaryAiProvider } from "../../provider";
+import { invalidInput } from "../../../libs/inputValidation";
+import { parseStickerCatalogSnapshot } from "../../../libs/persistedSnapshotCodec";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../../libs/text";
 import { sleep } from "../../../libs/sleep";
-import { isPlainRecord } from "../../../libs/record";
 import {
   catalogs,
   dirtyPacks,
@@ -22,6 +23,7 @@ import {
   STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS,
   STICKER_CATALOG_RETRY_DELAYS_MS,
   STICKER_CATALOG_RETRY_INTERVAL_MS,
+  STICKER_PACK_NAME_PATTERN,
   STICKER_PACK_SUMMARY_ERROR_LABEL,
   STICKER_PACK_SUMMARY_MAX_CHARS,
 } from "../../../consts/aiChat/stickers";
@@ -30,13 +32,9 @@ import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../../types
 import type { AiStickerCatalogEvent } from "../../../types/stickers/protocol";
 import type { AiTextResult } from "../../../types/aiChat/provider";
 
-function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapshot {
-  if (!isPlainRecord(value) || value.version !== 1 || !isPlainRecord(value.entries)) return false;
-  if (value.summary !== null && typeof value.summary !== "string") return false;
-  if (typeof value.savedAt !== "number" || !Number.isFinite(value.savedAt)) return false;
-  return Object.values(value.entries).every((entry: unknown): boolean =>
-    isPlainRecord(entry) && typeof entry.emoji === "string" && typeof entry.description === "string"
-  );
+interface ParsedStickerCatalog {
+  readonly pack: string;
+  readonly snapshot: StickerCatalogSnapshot;
 }
 
 /**
@@ -125,26 +123,34 @@ function isEntryFailureActive(pack: string, fileUniqueId: string): boolean {
  *  快照全程以序列化 JSON 文本流转（见 types/stickers/protocol.ts 的
  *  AiStickerCatalogEvent.snapshot），这里是整条管线唯一的解析点；文本只
  *  出自 buildSnapshot 的 stringify 或启动恢复时逐字段重建后的重新
- *  stringify，形状可信，解析失败按防御性丢弃处理。 */
+ *  stringify。整批先使用与 Disk I/O 相同的严格 decoder 校验，任一项非法都
+ *  让 Worker 失败，不能把协议损坏解释成缺少目录后继续运行。 */
 export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
+  const parsedCatalogs: ParsedStickerCatalog[] = [];
   for (const [pack, snapshotJson] of snapshots) {
-    if (catalogs.has(pack)) continue;
-    try {
-      const parsed: unknown = JSON.parse(snapshotJson);
-      if (!isStickerCatalogSnapshot(parsed)) throw new Error("unexpected sticker catalog snapshot shape");
-      const snapshot: StickerCatalogSnapshot = parsed;
-      catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
-      invalidateStickerMenu();
-      // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
-      // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
-      for (const fileUniqueId of Object.keys(snapshot.entries)) {
-        transientDescriptionCache.delete(fileUniqueId);
-      }
-      if (snapshot.summary) packSummaries.set(pack, snapshot.summary);
-    } catch (error: unknown) {
-      logger.error(`Failed to hydrate sticker catalog snapshot for pack "${pack}", skipping it:`, error);
-      continue;
+    if (!STICKER_PACK_NAME_PATTERN.test(pack)) {
+      return invalidInput(
+        "Sticker catalog hydrate payload",
+        "$.catalogs.<key>",
+        "a canonical sticker pack short name"
+      );
     }
+    const snapshot: StickerCatalogSnapshot = parseStickerCatalogSnapshot(
+      snapshotJson,
+      `Sticker catalog hydrate payload for pack ${pack}`
+    );
+    parsedCatalogs.push({ pack, snapshot });
+  }
+  for (const { pack, snapshot } of parsedCatalogs) {
+    if (catalogs.has(pack)) continue;
+    catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
+    invalidateStickerMenu();
+    // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
+    // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
+    for (const fileUniqueId of Object.keys(snapshot.entries)) {
+      transientDescriptionCache.delete(fileUniqueId);
+    }
+    if (snapshot.summary) packSummaries.set(pack, snapshot.summary);
   }
 }
 

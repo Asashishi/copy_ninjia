@@ -8,7 +8,6 @@ import {
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
 import { sendMessage } from "../../infra/telegram";
-import type { AiSentMessage } from "../../types/aiChat/protocol";
 import { recordChatMessage } from "./rollingMemory";
 import {
   currentReplyGeneration,
@@ -16,8 +15,6 @@ import {
   replyGenerationSignal,
   trackReplyGenerationTask,
 } from "./replyGeneration";
-
-declare const self: Worker;
 
 export {
   currentReplyGeneration,
@@ -62,7 +59,6 @@ export function notifyRateLimited({
     messageThreadId,
   }).then((sentMessageId: number | undefined): void => {
     if (sentMessageId === undefined) return;
-    self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
     if (botInfoState.current && isReplyGenerationCurrent(chatId, generation)) {
       recordChatMessage(buildSelfRecordMessage({
         chatId,

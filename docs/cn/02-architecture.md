@@ -44,7 +44,7 @@ Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共
 
 ## 一条消息的旅程
 
-更新链在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 一次性显式安装，middleware 顺序即语义。链上**没有** `sequentialize`：顺序保证来自取数侧的确认式 runner（[`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)），它每次只取一条 update，且该条的 middleware 完成前不再调用 `getUpdates`——因此保证比「按群串行」更强，是全局逐条串行。反应同步走独立合并队列，不占这条车道。
+更新链在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 一次性显式安装，middleware 顺序即语义。链上**没有** `sequentialize`：顺序保证来自取数侧的确认式 runner（[`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)），它每次只取一条 update，且该条的 middleware 完成前不再调用 `getUpdates`——因此保证比「按群串行」更强，是全局逐条串行。反应同步在当前 middleware 内等待统一 Telegram 动作边界结算，成功、失败与取消都属于本条 update 的确认边界。
 
 1. **update_id 追踪**——记录已进入处理的最大 `update_id`，停机时用于确认 Telegram offset。
 2. **运势签名回执确认**——在一切网关之前，转发副本也有效。
@@ -55,7 +55,7 @@ Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共
 7. **中文动作命令**——`/咬`、`/贴贴` 这类命令（动作词收 1~2 个中文字）拿不到 Telegram 的 `bot_command` 实体，`bot.command` 匹配不到，只能用 `bot.hears` 按消息原文匹配（见 [`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts)）。**必须排在下一步的消息兜底之前**——排在后面就会被当成普通消息进入 AI/复读流水线，整个特性静默失效。因为它排在自动流水线之前，那条流水线的自发消息门禁对它无效，handler 自己要跳过机器人自己的消息；也因为被它认领的消息不再往下走，handler 要自己补上发送者身份缓存。不认领的形态（`/咬@OtherBot`、caption 形态、消息形态异常）一律 `next()` 放行。
 8. **自动消息流水线**——[`packages/auto/`](../../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
 
-AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投递 AI Worker → Worker 组装三段式模型输入（参考记忆 / 当前会话 / 本轮任务）→ 多轮工具调用（发消息、贴纸、反应、生图，全部经主线程代理执行）→ 结果写回滚动记忆 → 周期快照落盘。活跃度概率只是一道**随机主动搭话闸门**：按群观察近期消息，冷群保持低触发率，同群越活跃触发率越高但有硬上限；@、回复机器人等直接触发不由这道概率闸决定。
+AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投递 AI Worker → Worker 组装三段式模型输入（参考记忆 / 当前会话 / 本轮任务）→ 多轮工具调用（发消息、贴纸、反应，以及直接触发轮可用的生图/生歌，全部经主线程代理执行）→ 结果写回滚动记忆 → 周期快照落盘。活跃度概率只是一道**随机主动搭话闸门**：按群观察近期消息，冷群保持低触发率，同群越活跃触发率越高但有硬上限；@、回复机器人等直接触发不由这道概率闸决定。
 
 `bot.catch` 记录未处理错误后**继续抛出**——吞掉异常会让失败的 update 被确认，进程重启后 Telegram 不再重投（含持久化失败的场景）。
 
@@ -90,13 +90,13 @@ flowchart TD
 - **图片 / 贴纸 / GIF** 同样先占位入队，再异步下载并调用视觉模型生成描述，解析完成后原地回填同一条目的文本字段；命中贴纸白名单目录时跳过异步解析，直接写入目录里的现成描述。
 - **语音**走同一条占位—回填管线，只是把视觉描述换成逐字转写（使用 `config/agent.json` 的 `media` 能力）。转录行由 `[语音]` 变成 `[语音：<原话>]`。超过时长或体积上限的语音在下载之前就被拦掉；视觉与语音支持度分别由首次真实请求探测：明确不支持、或端点以 404/405 表明模型/路径不存在（记一行指向 `$.agent.media` 的诊断）之后都不再下载该模态；超时、429、5xx 这类端点故障只按连续次数做有限指数退避，退避期内直接降级为占位、不下载也不占执行器槽位，一次成功即清零。单份媒体自身的问题不改变模态结论。
 
-触发回复时，滚动记忆被组装成上一节所述的三段式模型输入，随服务端联网检索工具与自定义工具一并发给 `agent.text` 配置的 provider；摘要、媒体、生图与生歌各自读取自己的能力配置，不做运行时故障切换。检索在 provider 服务端执行（Gemini 的 `googleSearch` / OpenAI 的 hosted `web_search`），其提示词按本轮搜索进度三态切换、且不计入动作预算（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用，均经主线程代理执行而非直接操作 Telegram：
+触发回复时，滚动记忆被组装成上一节所述的三段式模型输入，随服务端联网检索工具与自定义工具一并发给 `agent.text` 配置的 provider；摘要、媒体、生图与生歌各自读取自己的能力配置，不做运行时故障切换。检索在 provider 服务端执行（Gemini 的 `googleSearch` / OpenAI 的 hosted `web_search`）；同一回复始终使用固定的联网规则，真实额度由回复循环核销并在耗尽后摘掉检索工具（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用，均经主线程代理执行而非直接操作 Telegram：
 
 - 💬 **发文字消息**——正文必须由模型显式调用发送工具；仅当整轮零成功动作时，系统才会兜底发送。
 - 👍 **添加反应**——从白名单 emoji 中选择，一轮最多成功一次。
 - 🔍 **查看贴纸包**——按需检索贴纸目录，调用次数独立计数。
-- 🎟️ **发送贴纸**、🎨 **生成图片**——同样一轮最多成功一次。
-- 🎵 **生成歌曲**——一轮最多成功一次，且**不是每轮都存在**：只有当前闲聊 provider 实现了生歌能力时才会挂进工具集。群内共享 15 分钟冷却，superAdmin 不受限。发出去的是一条带曲名/演唱者/时长的音乐消息，封面由生图侧的 provider 另画一张（那是消息装帧，不占生图冷却、不计动作预算）。
+- 🎟️ **发送贴纸**——一轮最多成功一次。
+- 🎨 **生成图片**、🎵 **生成歌曲**——只在群友直接 @/回复机器人或用媒体直接唤起时，按对应供应商能力挂进工具集；随机插话与非直接媒体评价不暴露这两个工具。两者各自一轮最多成功一次。生歌使用群内共享的 15 分钟冷却，superAdmin 不受限；发出去的是一条带曲名/演唱者/时长的音乐消息，封面由生图侧的 provider 另画一张（那是消息装帧，不占生图冷却、不计动作预算）。
 
 本轮产生的文字、贴纸、反应、图片与歌曲结果会写回滚动记忆，并按策略周期性快照落盘；单轮动作次数上限与防循环规则见 [04 运行时权威约束](04-invariants.md)。
 
@@ -107,7 +107,7 @@ flowchart TD
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
 3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，出口在 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。
-4. 初始化 **Disk I/O Worker**，恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，并严格 hydrate `database/storage.sqlite` 的 `chat_states`、白名单/黑名单计数和未完成处置；主线程不复制两张名单整表，只建立有界 LRU。任何领域恢复失败都拒绝以部分状态启动。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
+4. 初始化 **Disk I/O Worker**。日志、AI、贴纸、运势、待验证、入群日志与 `database/storage.sqlite` 先完成全域只读 inspect 和严格解码；全部成功后才统一 adopt owner，成功回执之后再清理临时/孤儿/过期文件、执行 compact 并启动 rollover timer。任何 inspect 失败都保留所有领域现场，不 chmod、rewrite、unlink 或启动 timer。主线程只接收 `chat_states`、名单计数和未完成处置，不复制两张名单整表。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
 6. 初始化 **AI Worker**（AI 配置不可用时这一步只记一行日志并整体跳过），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker** 与黑名单补扫调度，并对已托管的群补扫一轮黑名单。
 7. 把 `state.global.assets` 的缺项补成内置缺省值（后台落盘，不阻塞启动），启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
@@ -118,7 +118,7 @@ flowchart TD
 
 正常与异常停机由同一个生命周期收口，顺序固定：
 
-1. **Quiesce**：停下标题/反应/头像/翻译入口与 gag 新预约，并停止 runner。五个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这五个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。五次调用都是幂等赋值，重复执行没有代价。
+1. **Quiesce**：停下标题、头像、翻译、gag 新预约与 blocklist 补扫调度器，并停止 runner。五个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这五个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。五次调用都是幂等赋值，重复执行没有代价。
 2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
 3. **Flush 与 dispose**：正常路径先排空 Anti-Raid、gag 提示与统一延迟删除，再 flush AI、排空 Telegram 出站、flush Disk I/O 与 StateStore；最终 dispose 固定按同一维护排空顺序，再执行「flush AI → 终止 AI → 排空 Telegram 出站 → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」。
 

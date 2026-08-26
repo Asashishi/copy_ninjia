@@ -48,7 +48,7 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
 }));
 mock.module("../../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
-  joinVerificationApi: { kind: "guard-api" },
+  telegramApi: { kind: "guard-api" },
 }));
 mock.module("../../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => true,

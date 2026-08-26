@@ -38,17 +38,6 @@ export type AdRequeueDecision =
   /** 无需排队：没有新内容，或这个键已经排着、在途。 */
   | { readonly action: "skip" };
 
-export interface AdBundleStorageInput {
-  /** 这个键已经有一串在待检表里（本次只是并进去，不占新名额）。 */
-  readonly alreadyStored: boolean;
-  /** 待检表当前的键数。 */
-  readonly pendingSize: number;
-}
-
-export type AdBundleStorageDecision =
-  | { readonly action: "store" }
-  | { readonly action: "rejectAtCapacity" };
-
 export interface AdDispatchInput {
   /** 此刻正在等广告检测 provider 回话的键数。 */
   readonly inFlight: number;

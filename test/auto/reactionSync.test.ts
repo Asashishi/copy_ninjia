@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 
 const activeCopyTargetIdIn = mock((_chatId: number): number | undefined => 42);
-const enqueueReaction = mock(async (..._args: unknown[]): Promise<void> => {});
+const setMessageReactions = mock(async (..._args: unknown[]): Promise<boolean> => true);
+const loggerLog = mock((..._args: unknown[]): void => {});
 
 mock.module("../../packages/infra/storage/stateStore", () => ({ activeCopyTargetIdIn }));
-mock.module("../../packages/copy/reactionQueue", () => ({ enqueueReaction }));
+mock.module("../../packages/infra/telegram", () => ({ setMessageReactions }));
+mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ log: loggerLog }) }));
 
 const { handleReaction } = await import("../../packages/auto/reactionSync");
 
@@ -13,11 +16,10 @@ function context(
   actor: { userId?: number; actorChatId?: number } = { userId: 42 }
 ): never {
   return {
-    update: { update_id: 99 },
     messageReaction: {
       chat: { id: -1001 },
       message_id: 7,
-      date: 123,
+      date: Math.floor(Date.now() / 1000),
       ...(actor.actorChatId === undefined ? {} : { actor_chat: { id: actor.actorChatId } }),
       ...(actor.userId === undefined ? {} : { user: { id: actor.userId } }),
     },
@@ -35,36 +37,39 @@ function context(
 
 beforeEach(() => {
   activeCopyTargetIdIn.mockClear();
-  enqueueReaction.mockClear();
+  setMessageReactions.mockClear();
+  loggerLog.mockClear();
   activeCopyTargetIdIn.mockImplementation((): number | undefined => 42);
-  enqueueReaction.mockImplementation(async (): Promise<void> => {});
+  setMessageReactions.mockImplementation(async (): Promise<boolean> => true);
 });
 
 describe("reaction sync update entry", () => {
-  test("只接收当前复制目标，并等待对应队列版本结算", async () => {
+  test("只接收当前复制目标，并等待 Telegram 动作结算", async () => {
     let release!: () => void;
-    enqueueReaction.mockImplementationOnce(async (): Promise<void> => await new Promise<void>((resolve) => {
-      release = resolve;
-    }));
+    setMessageReactions.mockImplementationOnce(async (): Promise<boolean> =>
+      await new Promise<boolean>((resolve: (value: boolean) => void): void => {
+        release = (): void => resolve(true);
+      })
+    );
     let settled: boolean = false;
-    const handled = handleReaction(context({ emojiAdded: ["🔥"] })).finally(() => { settled = true; });
+    const handled: Promise<void> = handleReaction(context({ emojiAdded: ["🔥"] }))
+      .finally((): void => { settled = true; });
 
     await Bun.sleep(0);
     expect(settled).toBeFalse();
-    expect(enqueueReaction).toHaveBeenCalledWith({
+    expect(setMessageReactions).toHaveBeenCalledWith({
       chatId: -1001,
       messageId: 7,
       reactions: [{ type: "emoji", emoji: "🔥" }],
-      updateId: 99,
-      reactedAtUnix: 123,
     });
     release();
     await handled;
+    expect(loggerLog).toHaveBeenCalledTimes(1);
 
     await handleReaction(context({ emojiAdded: ["👍"] }, { userId: 7 }));
     activeCopyTargetIdIn.mockReturnValueOnce(undefined);
     await handleReaction(context({ emojiAdded: ["👍"] }));
-    expect(enqueueReaction).toHaveBeenCalledTimes(1);
+    expect(setMessageReactions).toHaveBeenCalledTimes(1);
   });
 
   test("按新增、自定义、剩余与清除的优先级生成单个可复制反应", async () => {
@@ -73,10 +78,18 @@ describe("reaction sync update entry", () => {
     await handleReaction(context({ emojiRemoved: ["😁"] }));
     await handleReaction(context({}));
 
-    expect(enqueueReaction.mock.calls.map((call) => call[0])).toEqual([
+    expect(setMessageReactions.mock.calls.map((call) => call[0])).toEqual([
       expect.objectContaining({ reactions: [{ type: "custom_emoji", custom_emoji_id: "custom-1" }] }),
       expect.objectContaining({ reactions: [{ type: "custom_emoji", custom_emoji_id: "custom-2" }] }),
       expect.objectContaining({ reactions: [] }),
     ]);
+  });
+
+  test("Telegram 动作失败时不记录成功延迟", async () => {
+    setMessageReactions.mockResolvedValueOnce(false);
+
+    await handleReaction(context({ emojiAdded: ["👍"] }));
+
+    expect(loggerLog).not.toHaveBeenCalled();
   });
 });

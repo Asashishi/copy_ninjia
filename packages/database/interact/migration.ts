@@ -28,17 +28,15 @@ export function createStorageDatabase(path: string): void {
   }
 }
 
-/**
- * 对已由部署流程完成外部备份的共享存储库显式执行 schema migrations。
- * 生产启动路径不得调用；旧版本必须先停服务并手工迁移，再进入严格 hydrate。
- */
-export function migrateStorageDatabaseSchema(database: StorageDatabase): void {
+/** 新建空库时一次性应用仓库内的当前 schema；生产启动路径不得调用。 */
+function migrateStorageDatabaseSchema(database: StorageDatabase): void {
   migrate(database, { migrationsFolder: IDENTITY_DATABASE_MIGRATIONS_DIR });
 }
 
-/** 读取并严格校验 Drizzle 迁移谱系；部署脚本据此拒绝未知历史。 */
+/** 读取并严格校验 Drizzle 迁移谱系；启动据此拒绝未知历史。 */
 export function readStorageDatabaseMigrationJournal(
-  database: StorageDatabase
+  database: StorageDatabase,
+  source: string
 ): readonly StorageDatabaseMigrationJournalEntry[] {
   const rows: StorageDatabaseMigrationJournalEntry[] = database.$client
     .query<StorageDatabaseMigrationJournalEntry, []>(
@@ -52,7 +50,9 @@ export function readStorageDatabaseMigrationJournal(
       row.createdAt < 1 ||
       !/^[a-f0-9]{64}$/.test(row.hash)
     ) {
-      throw new Error("Storage database contains an invalid Drizzle migration journal entry.");
+      throw new Error(
+        `${source}:__drizzle_migrations: expected positive timestamps and SHA-256 hashes.`
+      );
     }
   }
   return rows;

@@ -66,12 +66,13 @@ describe("群问答主线程持久化边界", () => {
     expect(getChatQa(CHAT_ID)?.get("怎么入群？")).toBe("新答案");
   });
 
-  test("满 5 条后新增抛错，覆盖既有条目不受影响", () => {
+  test("撞上每群上限后新增抛错，覆盖既有条目不受影响", () => {
     for (let index: number = 0; index < CHAT_QA_MAX_PER_CHAT; index++) {
       setChatQa(CHAT_ID, `问题${index}`, `答案${index}`);
     }
 
-    expect(() => setChatQa(CHAT_ID, "再来一条", "不行")).toThrow("at most 5 entries per chat");
+    expect(() => setChatQa(CHAT_ID, "再来一条", "不行"))
+      .toThrow(`at most ${CHAT_QA_MAX_PER_CHAT} entries per chat`);
     // 覆盖不占新名额，因此必须仍然放行。
     expect(setChatQa(CHAT_ID, "问题0", "改了")).toBe("replaced");
     expect(chatQaCount(CHAT_ID)).toBe(CHAT_QA_MAX_PER_CHAT);

@@ -297,6 +297,7 @@ function renderColdStartCaption(
     .replace("{whitelist}", formatCount(report.coldStart.recovered.whitelistEntries))
     .replace("{blocklist}", formatCount(report.coldStart.recovered.blocklistEntries))
     .replace("{chats}", formatCount(report.coldStart.recovered.chatStates))
+    .replace("{qa}", formatCount(report.coldStart.recovered.chatQaEntries))
     .replace("{memories}", formatCount(report.coldStart.recovered.aiMemoryChats))
     .replace("{rss}", formatBytes(report.coldStart.peakRssBytes.mean))}`;
 }

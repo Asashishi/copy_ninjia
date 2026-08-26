@@ -588,8 +588,8 @@ describe("Telegram 主线程出站总闸", () => {
    *
    * 只有 fetch 那条路（媒体下载、头像抓取，见 telegram/workerRequests.ts 与
    * avatar/）会拿到真正的 Response，而那几处都带超时 signal——「下载超时」与
-   * 「返回 429」同时发生就是这条分支。此前它直接 reject 并丢掉 response，body
-   * 没人释放，会一直占着连接与缓冲；相邻两条分支都释放了，唯独这条漏了。
+   * 「返回 429」同时发生就是这条分支。reject 前必须释放 response body，避免
+   * 持续占用连接与缓冲。
    */
   test("调用方已取消时收到 429，响应体被释放而不是丢着", async () => {
     let cancelled: boolean = false;
@@ -659,10 +659,9 @@ describe("Telegram 主线程出站总闸", () => {
   });
 
   /**
-   * 前缀兜底此前一条用例都没有（覆盖率报告里 outboundRetryPolicy.ts:66,68-84 全白）。
-   * 它存在的**唯一**理由就是：项目调用面之外的新 Bot API 方法不能意外与 kick、
+   * 前缀兜底保证项目调用面之外的新 Bot API 方法不会意外与 kick、
    * restrict 这些安全动作共用一个 429 冷却域——一次退避把封禁和一个无关的
-   * setMyCommands 绑在一起，是这道闸门要防的事。没有用例的话，改错了也看不出来。
+   * setMyCommands 绑在一起，是这道闸门要防的事。
    */
   test("未列入 switch 的方法按前缀归类，且一律不落进安全动作的冷却域", () => {
     expect(telegramRetryCategoryFor("getMyCommands")).toBe("query");

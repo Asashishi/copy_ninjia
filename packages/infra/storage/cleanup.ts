@@ -1,4 +1,4 @@
-import { readFile, readdir, unlink } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
@@ -38,7 +38,7 @@ async function hasDeadCandidateFilenameOwner(path: string): Promise<boolean> {
 }
 
 async function hasInactiveCurrentFormatOwner(path: string): Promise<boolean> {
-  const content: string = await readFile(path, "utf8");
+  const content: string = await Bun.file(path).text();
   const match: RegExpExecArray | null = PROCESS_IDENTITY_PATTERN.exec(content);
   if (!match) {
     // 0 字节孤儿：candidate 是先 `open(..., "wx")` 建空文件、再写身份行的（见
@@ -67,7 +67,7 @@ export async function cleanupOrphanedTempFiles({
   stateFilePath = STATE_FILE_PATH,
   lockFilePath = LOCK_FILE_PATH,
   readDirectory = readdir,
-  removeFile = unlink,
+  removeFile = (path: string): Promise<void> => Bun.file(path).delete(),
   isInactiveLockOwner = hasInactiveCurrentFormatOwner,
 }: StorageCleanupOptions = {}): Promise<void> {
   const dir: string = dirname(stateFilePath);

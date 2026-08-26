@@ -121,12 +121,8 @@ export function appendLinkUrls(
 /**
  * 串里是否已经有条目带着这段引文。
  *
- * 写成具名 for-of 而不是 `entries.some(entry => entry.text.includes(needle))`：
- * 这条判定跑在每条带引用/回复的广告候选消息上，一次调用要做两遍（quote 与
- * replyTo 各一次），闭包式写法每遍都现造一个捕获 needle 的一次性闭包，正是
- * AGENTS.md「高频路径不得创建一次性闭包」要避的形状。实测
- * claimSampleContextParts 477.5 -> 424.4 ns/op（9 个独立进程各 7 样本取中位数，
- * Mann-Whitney U=66/81，p<0.05）。
+ * 使用具名 for-of；这条判定在每条带引用/回复的候选消息上执行两遍，不能为
+ * quote 与 replyTo 各创建一个捕获 needle 的一次性闭包。
  */
 function entriesClaimContextPart(
   entries: readonly AdCandidateEntry[],
@@ -141,9 +137,8 @@ function entriesClaimContextPart(
 /**
  * 「这个发送者还没有任何待检条目」时传给 claimSampleContextParts 的空条目串。
  *
- * 共享一份而不是在调用点写 `?? []`：那里每个发送者的第一条带引用上下文的候选
- * 消息都会现造一个空数组。实测该路径 296.0 -> 253.2 ns/op（9 个独立进程各 7
- * 样本取中位数，Mann-Whitney U=67/81，p<0.05）。只读用途、生命周期与模块同寿，
+ * 共享一份而不是在调用点写 `?? []`，避免每个发送者的第一条带引用候选消息都
+ * 创建空数组。只读用途、生命周期与模块同寿，
  * 不可变性由 readonly 在编译期表达（见 AGENTS.md 的「常量与不可变性」，
  * 不用 Object.freeze）。
  */
@@ -288,7 +283,7 @@ export function selectAdBundleEntries(bundle: AdMessageBundle): AdBundleSelectio
   context.reverse();
   // 复用 context 承载最终清单：reverse 之后它正好就是清单的前半段（补回来的已判
   // 上下文），把 pending 追加上去即可，不必再 `[...context, ...pending]` 展开出
-  // 第三个数组。实测 713 → 427~456 ns/op。两个数组都是本函数的局部变量，
+  // 第三个数组。两个数组都是本函数的局部变量，
   // pending 不外传，因此不存在别名问题。
   for (const entry of pending) context.push(entry);
   return { entries: context, checkedToSeq };

@@ -1,35 +1,18 @@
 /**
- * `/set_qa` 按钮表单的 Telegram 动作边界。
+ * `/set_qa` 表单提示的 Telegram 动作边界。
  *
- * 表单是**状态机拥有的按钮消息**，与入群验证按钮同类：它只能由「两项填齐」、
+ * 表单是**状态机拥有的消息**，与入群验证按钮同类：它只能由「两项填齐」、
  * TTL 到期或群 teardown 这三条状态机路径删除，不能挂命令文本那条固定 30 秒
- * 清理——用户正在照着按钮填，消息却在 30 秒后自己消失。因此这里直接用
+ * 清理——用户正照着它写问题和回答，消息却在 30 秒后自己消失。因此这里直接用
  * sendMessage，并在 scripts/checkProjectConventions.ts 里登记了对应豁免。
  */
 
-import { InlineKeyboard } from "grammy";
 import {
-  QA_ANSWER_BUTTON_TEXT,
-  QA_INLINE_ANSWER_PREFIX,
-  QA_INLINE_QUESTION_PREFIX,
-  QA_QUESTION_BUTTON_TEXT,
-} from "../../consts/qa";
-import { deleteMessageWithOutcome, sendMessage } from "../../infra/telegram";
+  deleteMessageWithOutcome,
+  editMessageText,
+  sendMessage,
+} from "../../infra/telegram";
 import type { QaFormSession } from "../../types/qa";
-
-/**
- * 两个按钮都用 switchInlineCurrent 预填当前输入框。
- *
- * 前缀里带群 id 只是为了让两条 inline 查询各自可解析；**它不承担任何鉴权**：
- * 落群后认领与否，完全由 Telegram 给出的 `message.chat.id`、`from.id` 与
- * `via_bot` 决定（见 qa/inline.ts）。伪造前缀指向别的群，结果仍然落在伪造者
- * 自己所在的那个群，届时对不上就被丢弃。
- */
-function buildQaFormKeyboard(chatId: number): InlineKeyboard {
-  return new InlineKeyboard()
-    .switchInlineCurrent(QA_QUESTION_BUTTON_TEXT, `${QA_INLINE_QUESTION_PREFIX}${chatId} `)
-    .switchInlineCurrent(QA_ANSWER_BUTTON_TEXT, `${QA_INLINE_ANSWER_PREFIX}${chatId} `);
-}
 
 export interface SendQaFormParams {
   readonly chatId: number;
@@ -47,7 +30,7 @@ export interface SendQaFormParams {
   readonly onSent: (messageId: number) => void;
 }
 
-/** 发送带两个按钮的表单消息。 */
+/** 发送表单提示消息。 */
 export function sendQaForm({
   chatId,
   text,
@@ -60,9 +43,30 @@ export function sendQaForm({
     text,
     replyToMessageId,
     messageThreadId,
-    keyboard: buildQaFormKeyboard(chatId),
     onSent,
   });
+}
+
+/**
+ * 就地改写表单正文，让它上面那两行「已收到」等于会话当前状态。
+ *
+ * 表单会一直留到填齐、TTL 到期或群 teardown（见文件头注），而「收下了哪一样」
+ * 的那条回执走命令文本的 30 秒清理。不回写的话，中途回来的人从表单上读到的
+ * 永远是两项皆空，只能靠重发去试自己填到哪了；同一条消息里一项超长、另一项
+ * 合规时更明显——合规那项已经进了会话，表单却只字不提。
+ *
+ * 改写而不是重发：表单 id 是状态机持有的删除责任（`session.formMessageId`），
+ * 重发会让旧那条失去唯一的删除路径，永远留在群里。
+ *
+ * id 还没登记上（发送中被 abort）时什么都不做；改写失败留在 editMessageText 的
+ * 统一错误边界，不影响本次认领——表单正文是提示层，权威状态在会话里。调用方
+ * 必须 await：它和同一条 update 上的删除、回执是同一次交互的三步，改成
+ * fire-and-forget 就成了一个没有 owner 等待的在途 Telegram 请求，停机排空看不见它。
+ */
+export async function editQaForm(session: QaFormSession, text: string): Promise<void> {
+  const messageId: number | undefined = session.formMessageId;
+  if (messageId === undefined) return;
+  await editMessageText({ chatId: session.chatId, messageId, text });
 }
 
 /** 删除表单消息；id 还没登记上（发送中被 abort）时什么都不做。 */

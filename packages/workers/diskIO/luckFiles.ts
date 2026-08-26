@@ -30,9 +30,16 @@ import {
   markLuckDirty,
   startLuckDay,
 } from "../../cache/workers/diskIO/luck";
-import { appendLuckEntries, cleanupStaleLuckFiles, recoverLuckDay } from "./snapshotFiles";
+import {
+  appendLuckEntries,
+  cleanupStaleLuckFiles,
+  inspectLuckDay,
+  maintainLuckDay,
+  recoverLuckDay,
+} from "./snapshotFiles";
 import type { LuckAppendStalledReply, LuckDrawDiskMessage } from "../../types/diskIO";
 import type { DayFileState, LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
+import type { LuckDayRecoveryInspection } from "./snapshotFiles";
 
 /** 装上运势追加停摆诊断的投递出口（仅 Worker 线程启动时调用一次）。 */
 export function configureLuckAppendStalledReply(
@@ -230,4 +237,25 @@ export function hydrateLuckDay(day: string): void {
   hydrateLuckCache(recovered);
   // hydrate 先清掉上一 owner 的游标，再接管与本次领域校验同一轮读取得到的新游标。
   luckFileState.current = recoveredFileState.current;
+}
+
+/** 跨域启动第一阶段：只读恢复当天结果与追加游标。 */
+export function inspectLuckDayState(day: string): LuckDayRecoveryInspection {
+  return inspectLuckDay(day);
+}
+
+/** 跨域启动第二阶段：全部领域 inspect 成功后整体发布到 owner 缓存。 */
+export function adoptLuckDay(
+  inspection: LuckDayRecoveryInspection
+): void {
+  hydrateLuckCache(inspection.cache);
+  luckFileState.current = inspection.fileState;
+}
+
+/** 跨域启动成功后清理临时与过期日文件。 */
+export function maintainLuckDayState(
+  day: string,
+  inspection: LuckDayRecoveryInspection
+): void {
+  maintainLuckDay(day, inspection);
 }

@@ -20,6 +20,9 @@
 # 条件而不是脚本里的一步。
 #
 # 已经 clone 过仓库时，在仓库根跑 `bash install.sh` 等价，会跳过 clone 那一步。
+# 源码若是解压发布包得到的（有源码、没有 .git），会就地补出 git 仓库并把 HEAD
+# 指到与现有文件逐字一致的那个 tag，好让此后能用 git 更新；补仓库只动 .git 与
+# 索引，不改工作树里任何已有文件。
 
 set -Eeuo pipefail
 
@@ -48,6 +51,22 @@ step() { printf '\n==> %s\n' "$1"; }
 info() { printf '    %s\n' "$1"; }
 warn() { printf '    [注意] %s\n' "$1" >&2; }
 die() { printf '\n[失败] %s\n' "$1" >&2; exit 1; }
+
+# 把一个已解析的环境变量值写成 systemd Environment= 单项。
+# systemd 会先按双引号规则反转义，再展开 `%` specifier；因此反斜线、双引号和
+# 百分号必须分别转义。控制字符不是 systemd 环境值允许的输入，直接拒绝。
+systemd_environment_assignment() {
+  local variable_name="$1" value="$2" escaped_value=""
+  [[ "$variable_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
+    die "无法生成 systemd 环境变量：名称不合法。"
+  if [[ "$value" =~ [[:cntrl:]] ]]; then
+    die "无法生成 systemd 环境变量 ${variable_name}：路径包含控制字符。"
+  fi
+  escaped_value="${value//\\/\\\\}"
+  escaped_value="${escaped_value//\"/\\\"}"
+  escaped_value="${escaped_value//%/%%}"
+  printf 'Environment="%s=%s"' "$variable_name" "$escaped_value"
+}
 
 # 以 root 直接执行，否则借 sudo；两者都没有时由调用方决定怎么办。
 run_privileged() {
@@ -107,6 +126,105 @@ require_command() {
 # 目录是不是一个可用的 Copy Ninjia 工作树。
 is_repository_root() {
   [ -d "$1/config_example" ] && [ -f "$1/package.json" ] && [ -f "$1/index.ts" ]
+}
+
+# 这棵工作树自己是不是一个 git 仓库根。
+#
+# 刻意不只看 `.git` 存不存在，也不接受「恰好落在别的仓库的子目录里」——那种情况
+# 更新时动的是外层那个仓库，不是这份部署。两边都取物理路径再比，避免符号链接
+# 让同一个目录比出两种写法。
+is_git_repository_root() {
+  local target="" toplevel=""
+  target="$(cd -- "$1" 2>/dev/null && pwd -P)" || return 1
+  toplevel="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ "$toplevel" = "$target" ]
+}
+
+# 工作树没有 git 仓库时就地补一个，好让部署方此后能用 git 更新。
+#
+# 解压发布包（或整目录拷贝）得到的源码满足 is_repository_root 却没有 `.git`，
+# 于是 clone 那一步被跳过，装出来的部署此后只能靠手工换文件更新。这里补上。
+#
+# **本函数不写工作树里的任何文件，也不把工作树里的文件收进对象库**，这是它敢在
+# 一棵已经装好的部署上运行的前提：init 只建 `.git`，remote/fetch 只落 config 与
+# 远端对象，read-tree / update-index 只动索引，diff-index / rev-parse / tag 只读，
+# update-ref 只动 HEAD，而 `reset --mixed` 按定义就是「重置索引但不动工作树」。
+#
+# 失败一律降级而不是中断安装：装不上 git、拉不到 tag 都只是拿不到「能更新」这个
+# 附加好处，不该把一次本来能成功的安装掀翻。
+ensure_git_repository() {
+  is_git_repository_root "$PWD" && return 0
+
+  warn "这棵工作树没有 git 仓库（多半是解压发布包得到的），照现状此后没法用 git 更新。"
+  if ! command -v git >/dev/null 2>&1; then
+    info "缺少 git，尝试用系统包管理器安装……"
+    if ! install_system_packages git || ! command -v git >/dev/null 2>&1; then
+      warn "装不上 git，跳过建立仓库。此后更新只能手工替换文件。"
+      return 0
+    fi
+  fi
+
+  info "就地建立 git 仓库（只动 .git 与索引，不改任何已有文件）……"
+  if ! git init --quiet; then
+    warn "git init 失败（多半是对 ${PWD} 没有写权限），跳过建立仓库。"
+    return 0
+  fi
+  if ! git remote get-url origin >/dev/null 2>&1 && ! git remote add origin "$REPOSITORY_URL"; then
+    warn "设置 origin 失败，跳过建立仓库。"
+    return 0
+  fi
+
+  info "拉取 ${REPOSITORY_URL} 的 tag（首次要下整段历史，会慢一会儿）……"
+  if ! git fetch --tags --quiet origin; then
+    warn "拉不到 tag（网络或限流）。仓库与 origin 已就绪，联网后自行 git fetch --tags。"
+    return 0
+  fi
+
+  # 按**逐个 tag 比对内容**认版本，不按版本号猜：对上了才敢把 HEAD 指过去，
+  # 那之后 `git status` 是干净的，更新就是一次普通的 fetch + checkout。
+  #
+  # 刻意不用 `git add --all` + `write-tree` 求工作树哈希：`add` 会为每个未被
+  # .gitignore 排除的文件写一个 blob 进对象库，而这棵树里躺着 config/、
+  # g-auth.json、state.json 这些部署数据——一旦 .gitignore 有缺口，密钥就进了
+  # 仓库。`read-tree` 只读 tag 自带的对象，`diff-index` 只比该 tag 跟踪的那些
+  # 文件、完全无视未跟踪文件，两条都不会把部署数据收进来。
+  #
+  # 代价是每个 tag 要比一遍内容；发布 tag 数量有限，装一次多花几秒可以接受。
+  local candidate="" matched="" head_commit=""
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    git read-tree "${candidate}^{tree}" 2>/dev/null || continue
+    # 先刷新 stat 信息：read-tree 之后索引对每个文件都是 stat-dirty 的，
+    # 不刷新的话 `diff-index --quiet` 会仅因 stat 不同就报「有差异」。
+    git update-index -q --refresh >/dev/null 2>&1 || true
+    if git diff-index --quiet "${candidate}^{tree}" --; then
+      matched="$candidate"
+      break
+    fi
+  done < <(git tag --list)
+
+  # 索引此刻还留着最后一个候选 tag 的内容；无论对上与否都要先复位，免得
+  # 留下一份与 HEAD 对不上的索引，让部署方第一次 git status 就看到一片假差异。
+  if [ -z "$matched" ]; then
+    # 对不上任何已发布 tag：改过，或根本不是发布包。仓库给到位，但不替部署方
+    # 决定 HEAD 指向哪个版本——猜错会让此后每次 git status 都是一片假差异。
+    git read-tree --empty >/dev/null 2>&1 || true
+    warn "工作树与任何已发布 tag 都对不上（改过，或不是发布包）。"
+    warn "仓库与 origin/tags 已就绪，但 HEAD 未指向任何版本；核对后自行 git checkout <tag>。"
+    return 0
+  fi
+
+  # 对上了：HEAD 指到该 tag 并让索引跟上，得到与 `clone --branch <tag>` 相同的
+  # detached 状态。三条命令都不写工作树文件。
+  head_commit="$(git rev-parse --verify "${matched}^{commit}" 2>/dev/null)" || head_commit=""
+  if [ -z "$head_commit" ] ||
+    ! git update-ref --no-deref HEAD "$head_commit" ||
+    ! git reset --mixed --quiet; then
+    git read-tree --empty >/dev/null 2>&1 || true
+    warn "把 HEAD 指到 ${matched} 失败。仓库与 origin/tags 已就绪，自行 git checkout ${matched} 即可。"
+    return 0
+  fi
+  info "git 仓库已就绪，HEAD 指向 ${matched}，与现有文件逐字一致；此后 git fetch --tags 再 checkout 新 tag 即可更新。"
 }
 
 # 读一行普通输入到指定变量名。
@@ -193,6 +311,10 @@ else
   is_repository_root "$PWD" || die "clone 出来的目录不像 Copy Ninjia 工作树。"
   info "工作树就绪：$(pwd)（${RELEASE_TAG}）"
 fi
+
+# clone 那条分支天然带 .git，这里立刻返回；只有「解压发布包」那几种到达方式
+# 会真的走进去补仓库。放在链尾统一调用，四条分支就不会各写一份。
+ensure_git_repository
 
 # --------------------------------------------------------------------------
 step "3/8 基础工具与 Bun"
@@ -360,7 +482,7 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
         if (imageProtocol.length > 0) entry.image_protocol = imageProtocol;
         agent[name] = entry;
       }
-      process.stdout.write(`${JSON.stringify({ agent }, null, 2)}\n`);
+      await Bun.write(Bun.stdout, `${JSON.stringify({ agent }, null, 2)}\n`);
     ' > config/agent.json.tmp || { rm -f config/agent.json.tmp; die "生成 agent.json 失败。"; }
     mv -- config/agent.json.tmp config/agent.json
     chmod 600 config/agent.json
@@ -392,9 +514,23 @@ step "7/8 初始化身份数据库"
 # 而库其实建到了别处。顺带：那个变量存在但为空时，这一步就会当场报错。
 IDENTITY_DATABASE_FILE="$(bun -e '
   import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
-  process.stdout.write(IDENTITY_DATABASE_PATH);
+  await Bun.write(Bun.stdout, IDENTITY_DATABASE_PATH);
 ')" || die "无法解析身份数据库路径。"
 IDENTITY_DATABASE_DIR="$(dirname -- "$IDENTITY_DATABASE_FILE")"
+
+# systemd 的系统服务不会继承运行安装脚本的 shell 环境。只有部署方显式设置了
+# COPY_NINJIA_DATA_ROOT 时才写 Environment=：缺省时继续让生产代码使用项目根，
+# 不能把缺省根也写进去，否则会把 RUNTIME_DATA_ROOT_IS_CONFIGURED 错置为 true。
+SYSTEMD_DATA_ROOT_ENVIRONMENT=""
+if [ "${COPY_NINJIA_DATA_ROOT+x}" = "x" ]; then
+  RESOLVED_RUNTIME_DATA_ROOT="$(bun -e '
+    import { RUNTIME_DATA_ROOT } from "./packages/consts/paths";
+    await Bun.write(Bun.stdout, RUNTIME_DATA_ROOT);
+  ')" || die "无法解析运行时数据根。"
+  SYSTEMD_DATA_ROOT_ENVIRONMENT="$(
+    systemd_environment_assignment COPY_NINJIA_DATA_ROOT "$RESOLVED_RUNTIME_DATA_ROOT"
+  )"
+fi
 
 if [ -e "$IDENTITY_DATABASE_FILE" ]; then
   info "${IDENTITY_DATABASE_FILE} 已存在，不动它。"
@@ -506,6 +642,7 @@ if [ "$WRITE_UNIT" -eq 1 ]; then
     "Type=simple" \
     "User=${SERVICE_USER}" \
     "WorkingDirectory=${SERVICE_WORKDIR}" \
+    "${SYSTEMD_DATA_ROOT_ENVIRONMENT}" \
     "ExecStart=${BUN_BINARY} start" \
     "Restart=on-failure" \
     "RestartSec=5" \

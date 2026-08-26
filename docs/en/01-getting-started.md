@@ -41,6 +41,22 @@ If you already have a work tree, running `bash install.sh` from the repository r
 skips the clone and **leaves that tree's checkout untouched** (it may carry local changes or sit on a
 version deliberately), reporting only which version is present.
 
+If the source came from an extracted release archive (or a copied directory) — source present, no
+`.git` — the script creates the git repository in place so you can update with git afterwards: it runs
+`git init`, points `origin` at this repository, fetches every tag, then **compares content tag by tag**
+to identify the one matching the files already on disk and points `HEAD` at it (detached, the same
+shape a clone produces). `git status` is then clean and updating is a plain `git fetch --tags` followed
+by `git checkout <new tag>`.
+
+Creating the repository **writes no file in the working tree**, and it never takes deployment data such
+as `config/`, `state.json`, or `g-auth.json` into the object store — it compares only against objects
+the tag already carries, using `read-tree`/`diff-index`, so untracked files never participate and the
+result does not depend on `.gitignore` being complete. When no published tag matches (locally modified,
+or not a release archive at all) it **does not guess**: the repository, `origin`, and the tags are all
+in place, but `HEAD` points at no version and you pick one with `git checkout <tag>` after checking.
+Failing to install `git` or to fetch the tags only skips this step with a notice; it never aborts the
+install.
+
 The install then registers and enables `copy-ninjia.service` (`User` and `WorkingDirectory` taken from
 the current user and repository path) and watches two restart intervals to confirm it is not in a
 restart loop before reporting success. An existing unit is replaced only after you confirm; if you
@@ -241,17 +257,16 @@ The four inline thumbnails (the two `/luck_challenge` results, the gag speech en
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "qaThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-The five keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, the thumbnail for the `/set_qa` form inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
+The four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
 
-All five are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The four thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
+All four are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
 
-> Upgrading from a version older than this section's `state.global.assets`? **Check the five entries before starting**: the four thumbnails now accept `https` only, and one previously configured as `http://` will refuse to start at decode time and name the field path.
+> Upgrading from a version older than this section's `state.global.assets`? **Check the four entries before starting**: the three thumbnails now accept `https` only, and one previously configured as `http://` will refuse to start at decode time and name the field path.
 
 **Edit it while stopped**: the running process holds the authoritative state in memory and rewrites the whole file, so `systemctl stop` → edit → `systemctl start` (see [07 Operations and Troubleshooting](07-operations.md)).
 

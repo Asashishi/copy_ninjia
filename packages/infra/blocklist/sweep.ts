@@ -149,12 +149,9 @@ function nextFailedSweeps(failedSweeps: number): number {
 /**
  * 「这一轮没成，排下一次」的统一记账：清掉 claim、按当前计数排期、把计数推进一格。
  *
- * 收成一处而不是在各失败路径各写一份六字段字面量——散着写正是退避永不增长的成因：
- * `sweepBlockedMembers` 的两条降级路径（登记不进 outbox、投递边界抛错）原样回写
- * failedSweeps，而 nextFailedSweeps 此前只在回执结算里调用。执行 owner 持续抛错
- * （Worker 不可用、outbox 满）时，每次重试都按基础间隔 BLOCKLIST_SWEEP_RETRY_INTERVAL_MS
- * 排期、永远走不到 BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS，每一轮还烧掉一个 outbox
- * id 加一行错误日志。
+ * `sweepBlockedMembers` 的两条降级路径（登记不进 outbox、投递边界抛错）与回执
+ * 失败共用这一入口。执行 owner 持续失败时，计数按轮推进，排期间隔最终收敛到
+ * BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS。
  *
  * nextRetryAt 用**推进前**的计数算，与回执那条路径保持同一口径（那边排期用的是
  * 派发时写下的 nextRetryAt，计数留给下一轮）。

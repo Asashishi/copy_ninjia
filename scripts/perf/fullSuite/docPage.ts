@@ -6,7 +6,6 @@
  * 并说清楚该怎么补——那是一次性的人工动作。
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   README_BLOCK_END,
@@ -52,15 +51,15 @@ export function replaceBlock(source: string, block: string, path: string): strin
 }
 
 /** 把报告写进三份性能基准页；返回实际改写的路径，供 CLI 回显。 */
-export function writeBenchmarkDocPages(
+export async function writeBenchmarkDocPages(
   report: FullSuiteReport
-): readonly string[] {
+): Promise<readonly string[]> {
   const written: string[] = [];
   for (const target of DOC_PAGE_TARGETS) {
     const path: string = join(PROJECT_ROOT, target.path);
-    const source: string = readFileSync(path, "utf8");
+    const source: string = await Bun.file(path).text();
     const block: string = renderBenchmarkBlock(report, target.language);
-    writeFileSync(path, replaceBlock(source, block, target.path));
+    await Bun.write(path, replaceBlock(source, block, target.path));
     written.push(target.path);
   }
   return written;

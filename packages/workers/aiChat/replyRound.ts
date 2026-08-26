@@ -5,12 +5,15 @@ import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
 import { botInfoState, superAdminUserIdState } from "../../cache/workers/aiChat/identity";
 import { activeReplyCounts, longTriggerTimes } from "../../cache/workers/aiChat/replies";
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
-import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
+import {
+  RATE_LIMIT_LONG_MAX_TRIGGERS,
+  RATE_LIMIT_LONG_WINDOW_MS,
+} from "../../consts/aiChat/rateLimit";
 import { SEND_MESSAGE_TOOL } from "../../consts/tools";
 import { logger } from "../../infra/logger";
-import { LinkedQueue } from "../../libs/linkedQueue";
+import { TimestampDeque } from "../../libs/timestampDeque";
 import { admitRound } from "../../states/replyAdmission";
-import type { AiBotInfo, AiSentMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
+import type { AiBotInfo, ImageGenerationReference } from "../../types/aiChat/protocol";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type {
   QueuedReplyTrigger,
@@ -31,10 +34,7 @@ import {
   trackReplyGenerationTask,
 } from "./replyState";
 import { recordChatMessage } from "./rollingMemory";
-import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 import type { ChatActionHeartbeatControl } from "../../types/aiChat/chatAction";
-
-declare const self: Worker;
 
 export interface ReplyRoundRequest {
   chatId: number;
@@ -78,10 +78,8 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
   if (!isReplyGenerationCurrent(chatId, generation)) return false;
 
-  // 自动插话与随机媒体评价永远不得动用重媒体工具（生图、生歌）。这里在工具上下文
-  // 边界再做一次强制收紧，不依赖各入口永远正确传 false；用户直接
-  // 回复/@ 的文字轮，以及带 directTriggerReason 的媒体轮才可开放资格。
-  // 两个工具共用这一个判据，理由见 types/aiChat/replies.ts 的 mediaToolsRequested。
+  // 自动插话与随机媒体评价不得动用重媒体工具（生图、生歌）。用户直接回复/@
+  // 的文字轮，以及带 directTriggerReason 的媒体轮才向工具上下文开放统一资格。
   const mediaToolsAllowed: boolean = imageGenerationRequested &&
     !isRandomTrigger &&
     (mediaComment === undefined || mediaComment.directTriggerReason !== undefined);
@@ -97,13 +95,14 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   if (!selfInfo) return false;
 
   const now: number = Date.now();
-  let longTimes: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
+  let longTimes: TimestampDeque | undefined = longTriggerTimes.get(chatId);
   if (!longTimes) {
-    longTimes = new LinkedQueue<number>();
+    // 容量取本窗口自己的配额上限：下面只在未 rateLimited 时 push，长度恒不超过它。
+    longTimes = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     longTriggerTimes.set(chatId, longTimes);
   }
   // 回拨会破坏 FIFO 时间队列的单调性；丢弃旧时间轴的整个窗口，
-  trimSlidingWindow({ timestamps: longTimes, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
+  longTimes.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
   if (admitRound({ windowCount: longTimes.size }).action === "rateLimited") {
     notifyRateLimited({ chatId, now, generation, messageThreadId });
     return false;
@@ -142,16 +141,16 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           ? undefined
           : replyReferenceForBufferedMessage(chatId, repliedToMessageId) ??
             (triggerReference?.messageId === repliedToMessageId ? triggerReference : undefined);
-        /** 四个自发消息回调唯一的差别是文案来源；登记与自录的顺序是语义：
-         * 先回投 sent（主线程据此认自己的消息），再在本轮仍有效时自录转录，
-         * 而贴纸没有回复关系可还原。任何一份拷贝漏掉 isActive() 都会把已经
+        /** 四个自发消息回调唯一的差别是文案来源，贴纸没有回复关系可还原。
+         * 主线程认自己的消息不靠这里回投——代理边界在把 id 交回本线程之前就已
+         * 登记（见 infra/telegram/workerRequests.ts 的 markWorkerSentMessage），
+         * 因此这里只剩自录转录一件事。任何一份拷贝漏掉 isActive() 都会把已经
          * 作废那一轮的自发消息写回热区。 */
         const recordSelfSent = (
           text: string,
           messageId: number,
           repliedToMessageId?: number
         ): void => {
-          self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
           if (!isActive()) return;
           // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言在转录里
           // 同样带「回复了谁」，回复链也能穿过机器人的消息。请求侧固定指向触发

@@ -51,7 +51,7 @@ export function generateGeminiText(request: AiTextRequest): Promise<AiTextResult
 
 interface InlineMediaPrompt {
   readonly mime: string;
-  readonly bytes: Buffer;
+  readonly bytes: Uint8Array;
   readonly prompt: string;
   readonly maxOutputTokens: number;
   readonly errorLabel: string;
@@ -85,7 +85,7 @@ function requestInlineMediaText({
         {
           role: "user",
           parts: [
-            { inlineData: { mimeType: mime, data: bytes.toString("base64") } },
+            { inlineData: { mimeType: mime, data: bytes.toBase64() } },
             { text: prompt },
           ],
         },

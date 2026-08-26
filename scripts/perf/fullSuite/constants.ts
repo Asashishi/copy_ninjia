@@ -11,6 +11,7 @@ import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   MAX_SUMMARY_ROUNDS,
 } from "../../../packages/consts/aiChat/memory";
+import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 
 /** 每一项测量重复的独立轮数；报告按轮取平均，并附最小值、最大值与变异系数。 */
@@ -41,6 +42,10 @@ export const COLD_START_IDENTITY_ROWS: number = 8_192;
 /** 冷启动 fixture 的群状态行数；生产硬顶就是这个值，直接顶满测最坏情况。 */
 export const COLD_START_CHAT_STATE_ROWS: number = STATE_MANAGED_CHAT_LIMIT;
 
+/** 冷启动 fixture 的群问答行数；25 个受管群各自顶满每群 15 条的生产硬顶。 */
+export const COLD_START_CHAT_QA_ROWS: number =
+  STATE_MANAGED_CHAT_LIMIT * CHAT_QA_MAX_PER_CHAT;
+
 /** 冷启动 fixture 的待踢成员 outbox 行数。 */
 export const COLD_START_REMOVAL_ROWS: number = 512;
 
@@ -68,6 +73,9 @@ export const CHAIN_IDENTITY_BATCHES: number = 200;
 
 /** 群状态 durable 屏障链路的计时次数；写入在固定群集合上轮转。 */
 export const CHAIN_CHAT_STATE_WRITES: number = 400;
+
+/** 群问答 durable 屏障链路的计时次数；覆盖固定问题的新增与后续替换。 */
+export const CHAIN_CHAT_QA_WRITES: number = 400;
 
 /**
  * AI 记忆快照原子重写链路的计时次数。

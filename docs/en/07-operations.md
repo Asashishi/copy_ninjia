@@ -52,7 +52,7 @@ Pre-create the data root with the deployment tool: `sudo install -d -o copy-ninj
 
 The program creates the root, `logs/`, `memory/`, and the initial `database/` (the first three at `0755`, `database/` at `0770`, both further narrowed by umask); all four reject symbolic links. The root, `logs/`, and `memory/` must be owned by the runtime UID and no broader than `0755` — this gate blocks **writes**: any group or other `w` bit refuses startup. The read side is relaxed to `0755` because this project is treated as single-tenant, most deployments run directly as root, and a directory created under the default umask is exactly `0755`.
 
-> **The cost**: files under `memory/` are themselves `0644`, so that directory bit is the only access control left on verbatim group-chat transcripts. Leaving it at `0755` means any local account on the machine can read them. On multi-tenant hosts, or any host with unprivileged login users, tighten the data root and `memory/` back to `0750` yourself; the preflight only guarantees "no broader than `0755`" and will not decide for you. Identity migration changes `database/` to `02770` and the main database plus WAL/SHM to `0660`. That directory may be owned by the runtime UID, or by the deployment account when its group is effective for the runtime and has complete `rwx`. Never recursively apply `chmod 0750` to the whole data root: doing so removes the group write SQLite needs for sidecar creation. `config/` is read-only deployment input in the project tree; identity policy is no longer loaded from or written back to it.
+> **The cost**: new files under `memory/` default to `0644`, so deployments that keep the default rely mainly on the directory bits to protect verbatim group-chat transcripts. Leaving it at `0755` means any local account on the machine can read them. On multi-tenant hosts, tighten the data root and `memory/` to `0750` and existing files to `0600`/`0640` as appropriate; runtime adoption and replacement preserve those modes and never chmod them automatically. Identity migration changes `database/` to `02770`, while the main database and WAL/SHM use `0660` on first creation. Never recursively apply `chmod 0750` to the whole data root: doing so removes the group write SQLite needs for sidecar creation. `config/` is read-only deployment input in the project tree; identity policy is no longer loaded from or written back to it.
 
 Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification, lockdown timers, identity write-through, AI memory, and unacknowledged Telegram updates resume according to the recovery semantics in [04 Authoritative Runtime Invariants](04-invariants.md#persistence).
 
@@ -116,11 +116,17 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
     again, history compacts to the latest record per user, and each chat/day retains at most the
     newest 250,000 users.
 - **`database/storage.sqlite`** (with possible runtime `-wal` / `-shm` sidecars)
-  - **Contents**: schema-v4 shared storage database. `whitelist_entries` and `blocklist_entries` are the
+  - **Contents**: schema-v5 shared storage database. `whitelist_entries` and `blocklist_entries` are the
     authoritative allowlist and blocklist; `pending_blocked_removals` is the unfinished per-chat
     ban outbox; `chat_states` is the authoritative per-chat state table (at most 25 rows — a 26th
     refuses startup); `storage_metadata` carries the one schema version. The Drizzle migration journal
-    must match a supported lineage.
+    must match a supported lineage. A `chat_states` slot is released only when the whole record falls
+    back to its defaults: `/init disable` clears the chat title alone and deliberately keeps the
+    feature switches (so a later `/init enable` needs no reconfiguration), which means a chat whose
+    main gate is off while `/ai_chat` and friends are still on keeps holding one of the 25 rows.
+    To free a slot, disable `/ai_chat`, `/ad_detect`, `/flood_control`, `/antiraid` and `/ja_copy`
+    one by one in that chat, or remove the bot from it — leaving deletes the row unless it still
+    carries a lockdown record awaiting recovery.
   - **Backup**: mandatory. Losing the blocklist removes every permanent ban; losing the outbox
     loses unfinished enforcement. With the bot stopped, copy the main database and any WAL/SHM
     present at that point as one consistency set outside the worktree, recording owner/mode and
@@ -148,17 +154,16 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
   - **Contents**: single-instance lock.
   - **Backup**: do not back up or edit manually.
 
-No files live directly at the top of `memory/`; each of the six domains owns one subdirectory, while identity policy lives separately under `database/`. Startup recovery creates `ai/`, `stickers/`, `luck/`, and `anti-raid/` as needed. `ad-detected/` appears only after the first hit; `joinlog/` appears on the first join fact or query and is not scanned during startup recovery. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges. If downtime crosses Tokyo midnight, startup strictly reads the latest prior day and overlays today's newer records; corrupt prior data fails recovery without rewriting either file, and old days are cleaned only after today's atomic snapshot lands.
+No files live directly at the top of `memory/`; each of the six domains owns one subdirectory, while identity policy lives separately under `database/`. Startup first scans every existing domain read-only, including the `joinlog/` retention window, and strictly decodes all inputs. Owners are adopted only after every domain succeeds; directory creation, temporary/orphan/expired-file cleanup, compaction, and the rollover timer begin after the success reply. `ad-detected/` still appears only after the first hit. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges. If downtime crosses Tokyo midnight, startup strictly reads the latest prior day and overlays today's newer records; corrupt prior data fails recovery without rewriting either file, and maintenance publishes today's atomic snapshot and removes old days only after startup succeeds.
 
 A `joinlog/` query reads at most the two chat/day files covering `[since, now]` and keeps the user's latest join in that window. The third retained day exists only for a request captured at 23:59 but handled after midnight. A file evaluates compaction after 10,000 redundant records or 4 MiB of new appends and rewrites atomically only when at least 512 KiB can be reclaimed. Parseable schema violations reject that file's read/write without changing its bytes; only a truncated tail may be repaired by the append layer.
 
 ### `memory/` Support Files and Process-Only State
 
-- Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. `ai/`, `stickers/`, and `luck/` sweep `*.tmp` at startup. `ad-detected/` sweeps `.sample.json.*.tmp` before its first write, and `joinlog/` sweeps `*.tmp` when it first takes ownership of the current day. Current `anti-raid/` recovery ignores but does not remove these files; they do not participate in recovery and should be treated as orphans only after the bot is stopped and the name exactly matches the atomic-write pattern. `storage.sqlite-wal` and `storage.sqlite-shm` are normal SQLite sidecars, not orphan temporary files, and must never be deleted under this rule.
-- `memory/ai/<chatId>.json.<timestamp>.<uuid>.corrupt` and `memory/stickers/<pack>.json.<timestamp>.<uuid>.corrupt` are uniquely named quarantine files whose JSON could not be parsed. They are excluded from normal recovery and never auto-deleted; repeated corruption at one source path creates new evidence instead of overwriting an older copy. A parseable file that fails the current version=1 schema is not quarantined; it fails startup and must be migrated manually under [06](06-modification-guide.md#changing-a-persistence-schema).
+- Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. Startup inspection records these files without deleting them. After every domain has validated and startup has replied successfully, maintenance for logs, `ai/`, `stickers/`, `luck/`, and `joinlog/` removes the matching `*.tmp`. `ad-detected/` still sweeps `.sample.json.*.tmp` before its first write, while `anti-raid/` excludes temporary files from recovery input. `storage.sqlite-wal` and `storage.sqlite-shm` are normal SQLite sidecars, not orphan temporary files, and must never be deleted under this rule.
 - Challenge timers, the ad-detection admission queue/deduplication set, and short-lived Telegram member/admin caches are process-only and have no files.
 
-Back up the complete data root while the bot is stopped or at a storage-snapshot consistency boundary; the SQLite main database and existing sidecars must come from one point. Treat both `memory/` and `database/` as sensitive. Memory files use `0644`, while the database and sidecars use `0660`, under the single-tenant baseline in [04](04-invariants.md#persistence); access control relies on top-level owner/group/mode plus host-account isolation.
+Back up the complete data root while the bot is stopped or at a storage-snapshot consistency boundary; the SQLite main database and existing sidecars must come from one point. Treat both `memory/` and `database/` as sensitive. New memory files default to `0644`, while the database and sidecars default to `0660` on first creation; adoption and atomic replacement preserve the modes of existing files. See [04](04-invariants.md#persistence).
 
 ## Identity Storage Migration
 
@@ -174,36 +179,33 @@ Deployments still using `config/whitelist.json`, `config/blocklist.json`, and op
 
 `bun run migrate:identity-storage` last shipped in 9.1.5. Under the rule that cold-migration scripts only cover "most recent released version → current version", it was removed from `scripts/` in 9.2.0; the current release neither offers that migration nor accepts legacy JSON lists as input. Do not create empty `whitelist.json`/`blocklist.json` files on the current release and then create an empty database — that leaves the real lists behind and puts the bot online with an empty blocklist.
 
-### SQLite Schema v4 → v5 (chat Q&A moves into the database)
+### state.json: drop the retired `qaThumbnailUrl`
 
-Deployments predating the `chat_qa` table (database still at schema v4) migrate with the bot stopped:
+Once `/set_qa` started collecting text from `问题:` / `回答:` messages, the inline result
+thumbnail lost its only consumer and `global.assets.qaThumbnailUrl` was removed from the schema.
+`state.json` is parsed **strictly**: a leftover key makes the new version exit non-zero during
+startup rather than ignoring it silently. Run this with the bot stopped, before upgrading:
 
 ```bash
-bun run migrate:chat-qa -- --check
-bun run migrate:chat-qa -- --apply
+bun run migrate:qa-thumbnail -- --check
+bun run migrate:qa-thumbnail -- --apply
 ```
 
-Both modes acquire `bot.lock` first (so the service must already be stopped), run a whole-database
-integrity check, strictly decode every business row, and accept only the exact supported v4 or v5
-migration lineage; unknown lineages, invalid rows, and allowlist/blocklist crossover are refused as-is.
+Both modes acquire `bot.lock` first (so the service must already be stopped). The script handles
+**both copies** — `state.json` and the sibling `state.json.bak` — because they share the same strict
+schema: patching only the main file still leaves a startup failure on the fallback path.
 
-**Pre-migration allowlist validation uses the v4 permission key set**, not the current constant: v5
-adds `isCanControllQaPermission` to every allowlist entry, and validating a not-yet-migrated database
-with the current decoder would condemn every pending deployment before the migration starts, naming a
-field its operator never wrote. `meta` is still checked with the production parser — `--check` must
-reject everything `--apply` would, or a bad row surfaces only after the database has been rewritten.
+**Run this only after the new code is already in place** — the order is stop the service, swap the code, run the migration, start the service. Doing it the other way round and starting the *old* version after migrating lets that version's startup seeding write `qaThumbnailUrl` straight back into `state.json` (it counts the key among the five entries it seeds), silently undoing the migration with no error to warn you.
 
-`--check` changes no deployment data. `--apply` keeps a consistent SQLite snapshot outside the work
-tree with an owner/mode/SHA-256 manifest (and re-inspects that backup as if it were a live database),
-then runs the schema migration: it creates `chat_qa` and the index on `q`, and backfills
-`isCanControllQaPermission` — **true only where the existing entry already holds every other
-permission**, the same rule used when `isCanWhiteOther` was introduced. Afterwards it verifies that
-business-table row counts are unchanged and that the whole database still decodes strictly under the
-new schema. Any failure retains the external backup and prints its path. Running against an
-already-migrated database only validates and reports that no migration is needed. A release's
-Compatibility / Migration Notes must state the migration actually performed, the backup location, the
-restore steps, and the permission requirements.
+`--check` changes no deployment data; it only reports which copies still carry the key. `--apply`
+first writes an external snapshot of the originals with a mode/owner/SHA-256 manifest (reading each
+one back to compare hashes), then drops the key in place: the original permission bits are kept, the
+result is read back and verified, and it is decoded once more through the startup codec — what gets
+written must be what the new version can read. If the same file carries another invalid field, the
+write is refused outright rather than completed halfway.
 
+Dropping the key is idempotent: a deployment that already ran it just reports "already complete" and
+touches nothing. A fresh deployment with no `state.json` needs no migration either.
 ## Startup Failures
 
 Startup failures are **deliberately fail-fast** and include their cause. Resolve the issue rather than bypassing the check:
@@ -239,13 +241,12 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
   - **Action**: stop the bot and restore the complete `memory/luck/` directory from one
     consistency point; do not delete or regenerate only the key.
 - **A `*.corrupt` file appears**
-  - **Cause**: either one damaged state copy was quarantined, or an unparseable AI/sticker JSON
-    file was removed from its recovery set.
-  - **Action**: identify the owner from the original name and investigate the damage first.
+  - **Cause**: a damaged state backup copy was quarantined.
+  - **Action**: identify the original name and investigate the damage first.
     State self-recovers only when the **backup** copy is the broken one (the bad backup is
     quarantined and rebuilt from the primary, with a log line); an unreadable **primary** always
     refuses startup and leaves both files untouched — fix the field named in the error and start
-    again. AI/sticker quarantine files are neither restored nor deleted automatically.
+    again.
 
 ### `bot.lock` Refuses Startup
 

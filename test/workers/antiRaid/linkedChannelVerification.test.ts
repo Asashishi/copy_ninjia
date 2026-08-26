@@ -31,7 +31,7 @@ mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () =
   requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {
+  telegramApi: {
     getChat(): Promise<Record<string, unknown>> {
       const request = deferredChat();
       chatRequests.push(request);
@@ -101,6 +101,76 @@ beforeEach(() => {
 });
 
 describe("cold linked-channel verification", () => {
+  test("明确回复频道转发帖在 join 前记为最近评论并直接豁免", () => {
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [],
+    });
+
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 40,
+      messageId: 698,
+      repliesToChannelPost: true,
+    });
+
+    expect(recentChannelComments.get("-1001:40")?.messageId).toBe(698);
+    expect(chatRequests).toHaveLength(0);
+
+    runtime.handleJoin({
+      type: "join",
+      chatId: -1001,
+      member: { id: 40, first_name: "User 40" },
+      actorIsWhitelisted: false,
+    });
+
+    expect(verificationEntries.get("-1001:40")?.state.kind).toBe("exempt");
+    expect(recentChannelComments.has("-1001:40")).toBeFalse();
+  });
+
+  test("热缓存已确认关联频道时楼中楼回复直接豁免且不重复查询", () => {
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [pendingRecord(41, 1)],
+    });
+    linkedChannels.set(-1001, { hasLinked: true, fetchedAt: Date.now() });
+
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 41,
+      messageId: 699,
+      isThreadReply: true,
+    });
+
+    expect(verificationEntries.get("-1001:41")?.state.kind).toBe("exempt");
+    expect(chatRequests).toHaveLength(0);
+  });
+
+  test("普通群消息只进入成员滑动窗口，不触发关联频道查询", () => {
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [pendingRecord(42, 1)],
+    });
+
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 42,
+      messageId: 700,
+    });
+
+    expect(verificationEntries.get("-1001:42")?.state).toMatchObject({
+      kind: "pending",
+      trackedMessageTimes: [expect.any(Number)],
+    });
+    expect(chatRequests).toHaveLength(0);
+  });
+
   test("冷缓存普通 forum topic 先按待验证消息追踪，确认无关联频道后不豁免", async () => {
     runtime.adoptVerifications({
       type: "adoptVerifications",

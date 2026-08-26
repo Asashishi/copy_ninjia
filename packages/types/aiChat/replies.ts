@@ -24,7 +24,7 @@ export interface QueuedReplyTrigger {
    * 触发时刻的本群问答快照；与 triggerReference 同理在入队时捕获。
    *
    * 排队期间群里可能又改了问答，但这一轮回答的是**当时那条消息**，用当时那份
-   * 清单才自洽；何况载荷有界（每群至多 5 条），存下来比补跑时再跨线程要一次
+   * 清单才自洽；何况载荷有界（每群至多 CHAT_QA_MAX_PER_CHAT 条），存下来比补跑时再跨线程要一次
    * 便宜得多。
    */
   chatQa?: ReadonlyMap<string, string>;
@@ -60,14 +60,13 @@ export interface ReplyToolContext {
   /** 本群已登记问答；为空或缺省时本轮不挂问答工具，模型看不到它们。 */
   chatQa?: ReadonlyMap<string, string>;
   /**
-   * 重媒体工具（generate_image / generate_song）的执行侧直接触发资格，**不**代表
-   * 生图或生歌的意图已由程序预判——意图由模型按当前消息自行判断。
+   * 重媒体工具（generate_image / generate_song）的直接触发资格；为 false 时工具
+   * 整个不挂，为 true 时才按供应商能力挂载。它**不**代表生图或生歌意图已由程序
+   * 预判——具体意图仍由模型按当前消息自行判断。
    *
-   * 两个工具共用同一个布尔而不是各带一个：它们的资格判据逐字相同（本轮触发是
-   * 用户直接回复或 @ 了机器人，见 workers/aiChat/replyRound.ts 的
-   * mediaToolsAllowed），拆成两份只会多出一处能各自漂移的状态。协议层那个
-   * `imageGenerationRequested` 是另一回事，它记的是「这条消息带没带图片工具
-   * 资格」这一原始事实，见 types/aiChat/protocol.ts。
+   * 两个工具共用由 workers/aiChat/replyRound.ts 的 mediaToolsAllowed 计算的
+   * 资格。协议层 `imageGenerationRequested` 记录入口是否允许图片工具，轮次开始
+   * 时再与随机触发和媒体直接触发状态合并。
    */
   mediaToolsRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;

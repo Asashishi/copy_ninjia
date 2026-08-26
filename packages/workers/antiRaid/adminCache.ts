@@ -1,4 +1,4 @@
-import { joinVerificationApi } from "../../infra/telegram";
+import { telegramApi } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
 import { ADMIN_CACHE_TTL_MS } from "../../consts/antiRaid/cache";
 import {
@@ -27,10 +27,8 @@ import { trackAntiRaidTask } from "./taskTracker";
  * 未过期的某群非匿名管理员 ID 集合；没有或过期时返回 undefined。
  *
  * `now` 缺省取墙钟，但**每条群消息都会走到的调用点必须显式传本条消息的那个
- * `now`**（见 adDetect/queue.ts 的 enqueueAdCandidate）：这台部署机的
- * `Date.now()` 走不到 vDSO 快路径，实测单次约 870 ns，比这个函数其余部分
- * （两次 Map 查表加一次比较）贵两个数量级。同一条消息读两次钟既白付一次
- * syscall，也让 TTL 判定和消息记账落在两个时刻上。形状同
+ * `now`**（见 adDetect/queue.ts 的 enqueueAdCandidate）。同一条消息不重复读钟，
+ * TTL 判定和消息记账必须落在同一时刻。形状同
  * libs/chatState.ts 的 isQuietUntilActive：热路径传值，低频命令用缺省。
  */
 export function freshAdminIds(chatId: number, now: number = Date.now()): Set<number> | undefined {
@@ -45,7 +43,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
   // pendingAdminChangesDuringFetch 一起清空，此后这次拉取的一切写回都是过期的。
   const generation: number = adminCacheGeneration.current;
   const task: Promise<Set<number>> = getOrCreateAdminFetch(chatId, (): Promise<Set<number>> =>
-    joinVerificationApi
+    telegramApi
       .getChatAdministrators(chatId)
       .then((admins: (ChatMemberOwner | ChatMemberAdministrator)[]): Set<number> => {
         const adminIds: Set<number> = new Set(

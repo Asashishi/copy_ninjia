@@ -1,12 +1,17 @@
-import type {
-  ReadableStreamDefaultReader as WebReadableStreamDefaultReader,
-  ReadableStreamReadResult as WebReadableStreamReadResult,
-} from "node:stream/web";
-
 /** 有界响应读取结果；失败时返回实际观察到的大小，不保留部分响应体。 */
 export type BoundedResponseResult =
   | { readonly ok: true; readonly bytes: Uint8Array }
   | { readonly ok: false; readonly reason: "too-large"; readonly observedBytes: number };
+
+type ByteStreamReadResult =
+  | { readonly done: true; readonly value: Uint8Array<ArrayBufferLike> | undefined }
+  | { readonly done: false; readonly value: Uint8Array<ArrayBufferLike> };
+
+interface ByteStreamReader {
+  cancel(reason?: unknown): Promise<void>;
+  read(): Promise<ByteStreamReadResult>;
+  releaseLock(): void;
+}
 
 /**
  * 在读取过程中强制限制响应体大小。Content-Length 只用于提前拒绝，真正的
@@ -31,13 +36,14 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
   const body: ReadableStream<Uint8Array<ArrayBufferLike>> | null = response.body as ReadableStream<Uint8Array> | null;
   if (!body) return { ok: true, bytes: new Uint8Array() };
 
-  const reader: WebReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>> = body.getReader();
+  const reader: ByteStreamReader = body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes: number = 0;
   try {
     while (true) {
-      const { done, value }: WebReadableStreamReadResult<Uint8Array<ArrayBufferLike>> = await reader.read();
-      if (done) break;
+      const readResult: Awaited<ReturnType<typeof reader.read>> = await reader.read();
+      if (readResult.done) break;
+      const value: Uint8Array<ArrayBufferLike> = readResult.value;
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
         await reader.cancel().catch((): undefined => undefined);

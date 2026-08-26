@@ -19,11 +19,10 @@ import type { ForwardedLogBatch, LogMessage } from "../../packages/types/diskIO"
 /**
  * 业务 Worker -> 主线程的 error 日志转发协议。
  *
- * 这条通道此前没有任何直接测试：它的四个函数原本住在 infra/logger.ts，由
- * `Bun.isMainThread` 这个模块加载期常量分派，主线程跑的测试一行都到不了。
- * 而它承担的正是「日志系统自己被压垮时不许把 Worker 也拖下水」——单批在途、
+ * 本文件直接覆盖日志转发通道的四个函数与「日志系统被压垮时不拖住 Worker」的
+ * 边界：单批在途、
  * 双硬顶、溢出只累计标量、排空后补一条汇总。任一条回归都不会有报错，只会表现为
- * 线上少了一批 error 日志或多了一份无界增长的 mailbox。
+ * error 日志缺失或 mailbox 无界增长。
  */
 
 /** 收集出口收到的批次；可切换成同步拒绝，模拟 postMessage 抛出。 */

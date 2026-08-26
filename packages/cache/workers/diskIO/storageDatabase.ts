@@ -18,10 +18,8 @@ import type {
  * Owner: Disk I/O Worker。
  *
  * 每条连接两条预编译的主键存在性语句（白/黑名单各一），首次用到时由
- * workers/diskIO/storageDatabase/identityPolicy.ts 建好放进来。写入路径按条目调这个
- * 查询（assertOppositePolicyAbsent），一批 IDENTITY_WRITE_BATCH_MAX_ENTRIES 条就走
- * 同样多次；现场构建 Drizzle 查询每次约 57 µs，光拼 SQL 就比那一批唯一的一次 fsync
- * 还贵，预编译后单次约 1 µs。
+ * workers/diskIO/storageDatabase/identityPolicy.ts 建好放进来。写入路径按条目调用
+ * assertOppositePolicyAbsent，因此同一连接必须复用预编译语句。
  *
  * 容量固定为「每条活着的连接一项」，而本线程同时只持有一条连接，因此无淘汰需求。
  * 清理交给 GC：键是连接对象本身，连接被换掉后整项随之回收，本表不额外持有强引用。
@@ -63,7 +61,7 @@ export const pendingChatStateWrites: Map<number, PendingChatStateWrite> = new Ma
  * 群问答未提交最终值，外层按群、内层按问题文本。
  *
  * 容量天然有界：受管群不超过 STATE_MANAGED_CHAT_LIMIT，每群问答不超过
- * CHAT_QA_MAX_PER_CHAT，因此整个缓冲恒定不超过 125 条，不需要额外淘汰策略。
+ * CHAT_QA_MAX_PER_CHAT，因此整个缓冲恒定不超过 375 条，不需要额外淘汰策略。
  * 一群的最后一条被提交或删除后，外层那一项随之移除，空 Map 不留存。
  */
 export const pendingChatQaWrites: Map<number, Map<string, PendingChatQaWrite>> = new Map();

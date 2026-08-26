@@ -19,10 +19,10 @@ import type {
 
 /** decodeCheckedBytes 的中间结果；失败原因一路带到调用方的日志。 */
 type CheckedBytes =
-  | { readonly ok: true; readonly bytes: Buffer }
+  | { readonly ok: true; readonly bytes: Uint8Array }
   | { readonly ok: false; readonly reason: GeneratedImageDecodeFailure };
 
-/** API 约定返回无换行的标准 base64；严格校验，避免 Buffer.from 静默忽略脏字符。 */
+/** API 约定返回无换行的标准 base64；严格校验后才交给 Bun 原生解码器。 */
 export function isCanonicalBase64(encoded: string): boolean {
   if (encoded.length === 0 || encoded.length % 4 !== 0) return false;
   const padding: number = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
@@ -54,7 +54,7 @@ function hasExpectedImageSignature(bytes: Uint8Array, mimeType: GeneratedChatIma
  * base64 规范性与大小上限的统一门禁，通过后解码一次。
  *
  * 先按 base64 理论上限挡住异常大响应，避免解码后才发现超限而额外分配一份
- * 最多不可控大小的 Buffer；解码只发生一次，签名判定复用同一份字节。
+ * 最多不可控大小的字节数组；解码只发生一次，签名判定复用同一份字节。
  */
 function decodeCheckedBytes(encoded: string): CheckedBytes {
   if (typeof encoded !== "string" || encoded.length === 0) return { ok: false, reason: "empty payload" };
@@ -62,7 +62,16 @@ function decodeCheckedBytes(encoded: string): CheckedBytes {
     return { ok: false, reason: "encoded payload exceeds the size limit" };
   }
   if (!isCanonicalBase64(encoded)) return { ok: false, reason: "payload is not canonical base64" };
-  const bytes: Buffer = Buffer.from(encoded, "base64");
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.fromBase64(encoded, {
+      alphabet: "base64",
+      lastChunkHandling: "strict",
+    });
+  } catch (error: unknown) {
+    void error;
+    return { ok: false, reason: "payload is not canonical base64" };
+  }
   if (bytes.byteLength === 0 || bytes.byteLength > IMAGE_GENERATION_MAX_BYTES) {
     return { ok: false, reason: "decoded payload is empty or exceeds the size limit" };
   }
@@ -88,10 +97,8 @@ export function decodeGeneratedImage(encoded: string, mimeType: string | undefin
  * images 接口只回一串 b64_json，格式由请求参数与模型共同决定，响应里没有
  * 权威的 MIME 字段）——签名认不出 png/jpeg 就当作不可用，不做猜测性放行。
  *
- * 失败带回原因而不是一个裸 null：这条路上没有第二个候选可试，返回 null 就是
- * 「这次生图没有图」，而调用方此前只能记一句泛化的失败——图照样计费，日志里
- * 却没有一行指向「格式不匹配」还是「超出大小上限」。记日志留给调用方，本模块
- * 保持纯函数叶子（见文件头注）。
+ * 失败带回原因而不是裸 null：这条路没有第二个候选可试，调用方需要区分格式不
+ * 匹配与大小超限。记日志留给调用方，本模块保持纯函数叶子（见文件头注）。
  */
 export function decodeGeneratedImageBySignature(encoded: string): GeneratedImageDecodeResult {
   const checked: CheckedBytes = decodeCheckedBytes(encoded);

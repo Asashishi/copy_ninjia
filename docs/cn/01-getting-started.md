@@ -34,6 +34,10 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 
 已经有工作树时，在仓库根跑 `bash install.sh` 等价，会跳过 clone，并且**不改动那棵树的 checkout**（它可能有本地改动或有意停在某个版本），只报一句当前版本。
 
+源码若是解压发布包（或整目录拷贝）得到的——有源码、没有 `.git`——脚本会就地补出 git 仓库，好让此后能用 git 更新：`git init`、把 `origin` 指向本仓库、拉全部 tag，再**逐个 tag 比对内容**认出与现有文件一致的那个，把 `HEAD` 指过去（detached，与 clone 出来的形态相同），于是 `git status` 是干净的，更新就是一次 `git fetch --tags` 加 `git checkout <新 tag>`。
+
+补仓库这一步**不写工作树里的任何文件**，也不会把 `config/`、`state.json`、`g-auth.json` 这类部署数据收进对象库——它只用 `read-tree`/`diff-index` 比对 tag 自带的对象，未跟踪文件完全不参与，因此不依赖 `.gitignore` 是否完整。对不上任何已发布 tag 时（改过，或根本不是发布包）**不猜版本**：仓库、`origin` 和 tag 都给到位，但 `HEAD` 不指向任何版本，由你核对后自行 `git checkout <tag>`。装不上 `git`、拉不到 tag 也只是跳过这一步并提示，不会中断安装。
+
 装完会注册并启用 `copy-ninjia.service`（`User` 与 `WorkingDirectory` 取当前用户和当前仓库路径），随后观察两个重启间隔确认它没有进重启循环才算成功。已存在的 unit 会先问再覆盖；选择保留时脚本会打印那份 unit 实际的 `WorkingDirectory` 与 `ExecStart`，避免出现「装在 A、跑起来的是 B」。没有 systemd 的机器（容器、非 systemd 发行版）跳过注册，改为前台运行。
 
 管道运行下 fd 0 是脚本正文本身，所以所有问答都从 `/dev/tty` 读——拿不到控制终端时脚本直接退出，不会读到半截脚本当答案。
@@ -181,7 +185,7 @@ chmod 660 database/storage.sqlite
 
 ### 换掉内联缩略图与机器人默认头像
 
-四张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」、gag 发言入口，以及 `/set_qa` 表单）和 `/reset_icon`、`/stop_copy` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
+三张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」，以及 gag 发言入口）和 `/reset_icon`、`/stop_copy` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
 
 ```json
 "global": {
@@ -189,15 +193,14 @@ chmod 660 database/storage.sqlite
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "qaThumbnailUrl": "https://…",
     "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-五个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、`/set_qa` 表单 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
+四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
 
-五项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。四张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+四项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
 
 > 从 `state.global.assets` 早于本节的版本升级上来时，**先看一眼这五项再启动**：四张缩略图现在只认 `https`，此前配成 `http://` 的会在解码期拒绝启动并点名字段路径。
 

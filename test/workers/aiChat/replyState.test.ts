@@ -11,8 +11,11 @@ import {
   replyGenerations,
   sweepAiChatReplyCache,
 } from "../../../packages/cache/workers/aiChat/replies";
-import { RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from
-  "../../../packages/consts/aiChat/rateLimit";
+import {
+  RATE_LIMIT_LONG_MAX_TRIGGERS,
+  RATE_LIMIT_LONG_WINDOW_MS,
+  RATE_LIMIT_NOTICE_COOLDOWN_MS,
+} from "../../../packages/consts/aiChat/rateLimit";
 import { typingHeartbeats } from "../../../packages/cache/workers/aiChat/heartbeat";
 import { resetAiChatWorkerCache } from "../../../packages/cache/workers/aiChat/index";
 import { botInfoState } from "../../../packages/cache/workers/aiChat/identity";
@@ -21,6 +24,7 @@ import { chatMoodExpiresAts, chatMoods } from "../../../packages/cache/workers/a
 import { compactionChains, compactionPendingCounts } from "../../../packages/cache/workers/aiChat/compaction";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import { timestampDequeContents, timestampDequeOf } from "../../helpers/timestampDeque";
 import { logger } from "../../../packages/infra/logger";
 import { VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../packages/types";
@@ -43,9 +47,7 @@ describe("AI 回复代际状态", () => {
     queue.push({ triggerSenderId: 7, replyToMessageId: 1, telegramBackpressured: false, messageThreadId: undefined, imageGenerationRequested: false, senderName: "Alice", text: "hello" });
     pendingReplyTriggers.set(-1001, queue);
     pendingOverflowNotices.set(-1001, undefined);
-    const triggerTimes = new LinkedQueue<number>();
-    triggerTimes.push(Date.now());
-    longTriggerTimes.set(-1001, triggerTimes);
+    longTriggerTimes.set(-1001, timestampDequeOf([Date.now()], RATE_LIMIT_LONG_MAX_TRIGGERS));
     rateLimitNoticeTimes.set(-1001, Date.now());
     activeReplyCounts.set(-1001, 1);
     const timer = setInterval(() => {}, 60_000);
@@ -227,19 +229,22 @@ describe("AI 回复代际状态", () => {
 
   test("统一 sweeper 收掉过期限频状态并保留窗口内记录", () => {
     const now = 1_000_000;
-    const expiredAndFresh = new LinkedQueue<number>();
-    expiredAndFresh.push(now - RATE_LIMIT_LONG_WINDOW_MS);
-    expiredAndFresh.push(now - RATE_LIMIT_LONG_WINDOW_MS + 1);
-    longTriggerTimes.set(-1003, expiredAndFresh);
-    const expiredOnly = new LinkedQueue<number>();
-    expiredOnly.push(now - RATE_LIMIT_LONG_WINDOW_MS - 1);
-    longTriggerTimes.set(-1004, expiredOnly);
+    longTriggerTimes.set(-1003, timestampDequeOf(
+      [now - RATE_LIMIT_LONG_WINDOW_MS, now - RATE_LIMIT_LONG_WINDOW_MS + 1],
+      RATE_LIMIT_LONG_MAX_TRIGGERS
+    ));
+    longTriggerTimes.set(-1004, timestampDequeOf(
+      [now - RATE_LIMIT_LONG_WINDOW_MS - 1],
+      RATE_LIMIT_LONG_MAX_TRIGGERS
+    ));
     rateLimitNoticeTimes.set(-1003, now - RATE_LIMIT_NOTICE_COOLDOWN_MS + 1);
     rateLimitNoticeTimes.set(-1004, now - RATE_LIMIT_NOTICE_COOLDOWN_MS);
 
     sweepAiChatReplyCache(now);
 
-    expect(longTriggerTimes.get(-1003)?.last(2)).toEqual([now - RATE_LIMIT_LONG_WINDOW_MS + 1]);
+    const swept = longTriggerTimes.get(-1003);
+    expect(swept === undefined ? undefined : timestampDequeContents(swept))
+      .toEqual([now - RATE_LIMIT_LONG_WINDOW_MS + 1]);
     expect(longTriggerTimes.has(-1004)).toBe(false);
     expect(rateLimitNoticeTimes.has(-1003)).toBe(true);
     expect(rateLimitNoticeTimes.has(-1004)).toBe(false);
@@ -247,10 +252,10 @@ describe("AI 回复代际状态", () => {
 
   test("时钟回拨时整体丢弃未来的长窗口与提示冷却", () => {
     const now = 1_000_000;
-    const futureTimes = new LinkedQueue<number>();
-    futureTimes.push(now + 1);
-    futureTimes.push(now + RATE_LIMIT_LONG_WINDOW_MS * 10);
-    longTriggerTimes.set(-1005, futureTimes);
+    longTriggerTimes.set(-1005, timestampDequeOf(
+      [now + 1, now + RATE_LIMIT_LONG_WINDOW_MS * 10],
+      RATE_LIMIT_LONG_MAX_TRIGGERS
+    ));
     rateLimitNoticeTimes.set(-1005, now + 1);
 
     sweepAiChatReplyCache(now);

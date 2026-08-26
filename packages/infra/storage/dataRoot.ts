@@ -1,4 +1,4 @@
-import { link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename } from "node:fs/promises";
 import {
   RUNTIME_DATA_ROOT_MAX_MODE,
   RUNTIME_SENSITIVE_DIRECTORY_NAMES,
@@ -15,10 +15,17 @@ export interface DataRootProbeDependencies {
   open: typeof open;
   link: typeof link;
   rename: typeof rename;
-  unlink: typeof unlink;
+  unlink: (path: string) => Promise<void>;
 }
 
-const DEFAULT_DEPENDENCIES: DataRootProbeDependencies = { mkdir, lstat, open, link, rename, unlink };
+const DEFAULT_DEPENDENCIES: DataRootProbeDependencies = {
+  mkdir,
+  lstat,
+  open,
+  link,
+  rename,
+  unlink: (path: string): Promise<void> => Bun.file(path).delete(),
+};
 
 export interface PrepareRuntimeDataRootOptions {
   dependencies?: Partial<DataRootProbeDependencies>;

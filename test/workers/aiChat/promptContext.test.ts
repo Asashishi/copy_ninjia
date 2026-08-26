@@ -6,6 +6,7 @@ import {
 import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
 import { COMPACT_BATCH_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
+import { REPLY_ACTION_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/tools";
 import { REPLY_TARGET_EVICTED_TAG } from "../../../packages/consts/aiChat/prompts/transcript";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
@@ -70,6 +71,8 @@ test("直接唤起在回复任务开头声明唤起者完整身份，不再另�
   expect(sections.currentConversation).toContain(`其他人的最热消息 ${total - 2}`);
   // 区块数恒定为三段，不再按触发类型多插一个 Part。
   expect(Object.keys(sections)).toEqual(["referenceMemory", "currentConversation", "replyTask"]);
+  // 跨任务相同的行动总则只在 system prompt 出现，动态任务只保留触发语义。
+  expect(sections.replyTask).not.toContain(REPLY_ACTION_INSTRUCTION);
 });
 
 test("触发消息已不在热区索引时，唤起者身份从逐字缓存里取最近一条回填", () => {

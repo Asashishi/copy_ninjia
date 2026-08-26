@@ -51,8 +51,7 @@ interface RequestDiskIOParams<TResult, TRequest extends DiskIORequestMessage> {
 
 /**
  * main -> diskIO 的统一 request/reply 发起点：发号、登记等待者、装超时、投递，
- * 同步拒收时立刻结算。四个领域此前各自抄了一份这二十来行，超时与拒收文案、
- * 以及「拒收后要把等待者摘掉」这一步都得逐份维护。
+ * 同步拒收时立刻摘除并结算等待者。四个领域只提供信封与文案。
  */
 function requestDiskIO<TResult, TRequest extends DiskIORequestMessage>({
   worker,

@@ -56,7 +56,7 @@ import type {
   SuiteEnvironment,
 } from "./fullSuite/types";
 
-interface SuiteOptions {
+export interface SuiteOptions {
   readonly rounds: number;
   readonly markdown: boolean;
   readonly writeDoc: boolean;
@@ -76,7 +76,7 @@ function parseRounds(value: string | undefined): number {
  * `--rounds` 只为本地排查而存在；发布必须用默认的三轮，别的轮数出来的数不进
  * README（口径见 AGENTS.md 的发布流程）。
  */
-function parseOptions(argv: readonly string[]): SuiteOptions {
+export function parseOptions(argv: readonly string[]): SuiteOptions {
   let rounds: number = FULL_SUITE_ROUNDS;
   let markdown: boolean = false;
   let writeDoc: boolean = false;
@@ -126,7 +126,7 @@ async function runSuite(options: SuiteOptions): Promise<FullSuiteReport> {
     runRoot,
     rounds: options.rounds,
     onProgress: (message: string): void => {
-      process.stderr.write(`perf:full ${message}\n`);
+      console.error(`perf:full ${message}`);
     },
     recordIo: (delta: ProcessIoDelta): void => {
       io = addProcessIo(io, delta);
@@ -223,35 +223,55 @@ async function runChild(
   }
 }
 
-if (Bun.argv[2] === "--child") {
-  await runChild(Bun.argv[3], Bun.argv[4]);
-} else {
-  const options: SuiteOptions = parseOptions(Bun.argv.slice(2));
+/** `--write-doc` 绑定的两份持久化输出；测试注入记录器验证两者不可拆开。 */
+export interface SuiteDocumentWriters {
+  readonly writeBenchmarkDocPages: typeof writeBenchmarkDocPages;
+  readonly writePerformanceResultEntry: typeof writePerformanceResultEntry;
+}
+
+const DEFAULT_SUITE_DOCUMENT_WRITERS: SuiteDocumentWriters = {
+  writeBenchmarkDocPages,
+  writePerformanceResultEntry,
+};
+
+/** 同一次报告同步三语页面和结构化结果，并返回被更新的页面路径。 */
+export async function writeSuiteDocuments(
+  report: FullSuiteReport,
+  writers: SuiteDocumentWriters = DEFAULT_SUITE_DOCUMENT_WRITERS
+): Promise<readonly string[]> {
+  const paths: readonly string[] = await writers.writeBenchmarkDocPages(report);
+  await writers.writePerformanceResultEntry({
+    path: PERFORMANCE_RESULT_PATH,
+    section: "fullSuite",
+    entry: "lastRun",
+    value: report,
+  });
+  return paths;
+}
+
+/** 父进程与子进程共用的 CLI 入口；模块导入不执行基准。 */
+export async function main(argv: readonly string[]): Promise<void> {
+  if (argv[0] === "--child") {
+    await runChild(argv[1], argv[2]);
+    return;
+  }
+  const options: SuiteOptions = parseOptions(argv);
   const report: FullSuiteReport = await runSuite(options);
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(report, null, 2)}\n`);
   if (options.markdown) {
-    process.stdout.write(`\n${renderBenchmarkBlock(report, "zh")}\n`);
+    await Bun.write(Bun.stdout, `\n${renderBenchmarkBlock(report, "zh")}\n`);
   }
   if (options.writeDoc) {
-    for (const path of writeBenchmarkDocPages(report)) {
-      process.stderr.write(`perf:full wrote benchmark block to ${path}\n`);
+    for (const path of await writeSuiteDocuments(report)) {
+      console.error(`perf:full wrote benchmark block to ${path}`);
     }
-    // 三份 markdown 和这份 JSON 是同一次运行的两种呈现，因此由同一个开关写出。
-    // 拆成两个 flag 的话，少传一个就会让两者静默错开一个版本——而「三种语言必须
-    // 同批更新」防的正是这件事，没理由在这里重新引入它。
-    writePerformanceResultEntry({
-      path: PERFORMANCE_RESULT_PATH,
-      section: "fullSuite",
-      entry: "lastRun",
-      value: report,
-    });
-    process.stderr.write(
-      `perf:full recorded this run into ${PERFORMANCE_RESULT_PATH}\n`
-    );
+    console.error(`perf:full recorded this run into ${PERFORMANCE_RESULT_PATH}`);
   }
-  process.stderr.write(
+  console.error(
     `perf:full finished ${CHAIN_NAMES.length} chains and ` +
     `${PRODUCTION_HOT_PATH_SCENARIOS.length + CONTAINER_ALGORITHM_SCENARIOS.length} ` +
-    `hot-path scenarios in ${(report.wallClockMs / 1_000).toFixed(1)}s\n`
+    `hot-path scenarios in ${(report.wallClockMs / 1_000).toFixed(1)}s`
   );
 }
+
+if (import.meta.main) await main(Bun.argv.slice(2));

@@ -2,7 +2,12 @@
 
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { DAY_MS } from "../../consts/diskIO/common";
-import { JOIN_LOG_SNAPSHOT_CHUNK_BYTES } from "../../consts/diskIO/joinLog";
+import {
+  JOIN_LOG_EMPTY_SNAPSHOT_BYTES,
+  JOIN_LOG_ENTRY_SEPARATOR_BYTES,
+  JOIN_LOG_SNAPSHOT_BRACE_BYTES,
+  JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
+} from "../../consts/diskIO/joinLog";
 import type { JoinLogRecord } from "../../types/diskIO/storage";
 import { invalidInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
@@ -121,11 +126,11 @@ export function joinLogSnapshotEntryBytes(record: JoinLogRecord): number {
 export function measureJoinLogSnapshotBytes(
   latestByUser: ReadonlyMap<number, JoinLogRecord>
 ): number {
-  if (latestByUser.size === 0) return Buffer.byteLength("{}");
-  let bytes: number = Buffer.byteLength("{\n\n}");
+  if (latestByUser.size === 0) return JOIN_LOG_EMPTY_SNAPSHOT_BYTES;
+  let bytes: number = JOIN_LOG_SNAPSHOT_BRACE_BYTES * 2;
   let index: number = 0;
   for (const record of latestByUser.values()) {
-    if (index > 0) bytes += Buffer.byteLength(",\n");
+    if (index > 0) bytes += JOIN_LOG_ENTRY_SEPARATOR_BYTES;
     bytes += joinLogSnapshotEntryBytes(record);
     index += 1;
   }
@@ -144,7 +149,7 @@ export function* joinLogSnapshotChunks(
     return;
   }
   let chunk: string = "{\n";
-  let chunkBytes: number = Buffer.byteLength(chunk);
+  let chunkBytes: number = JOIN_LOG_SNAPSHOT_BRACE_BYTES;
   let index: number = 0;
   for (const record of latestByUser.values()) {
     const prefix: string = index === 0 ? "" : ",\n";

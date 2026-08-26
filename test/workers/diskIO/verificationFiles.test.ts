@@ -3,7 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  adoptVerificationDay,
   compactVerificationDay,
+  inspectVerificationDay,
+  maintainVerificationDay,
   recoverVerificationDay,
 } from "../../../packages/workers/diskIO/verificationRecovery";
 import {
@@ -270,6 +273,29 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
     expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
       .toEqual({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } });
+  });
+
+  test("跨日 inspect 不改盘，adopt 只发布内存，maintenance 才 compact 和清旧日", () => {
+    resetVerificationPersistenceCache();
+    const priorPath: string = join(dir, `${DAY_ONE}.json`);
+    const currentPath: string = join(dir, `${DAY_TWO}.json`);
+    writeFileSync(
+      priorPath,
+      JSON.stringify({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } }, null, 2)
+    );
+
+    const inspection = inspectVerificationDay(DAY_TWO, dir);
+    expect(existsSync(priorPath)).toBeTrue();
+    expect(existsSync(currentPath)).toBeFalse();
+    expect(verificationFileState.current).toBeNull();
+
+    adoptVerificationDay(inspection);
+    expect(existsSync(priorPath)).toBeTrue();
+    expect(existsSync(currentPath)).toBeFalse();
+
+    maintainVerificationDay(inspection);
+    expect(existsSync(priorPath)).toBeFalse();
+    expect(existsSync(currentPath)).toBeTrue();
   });
 
   test("只以最新旧日为迁移基线，不从更早残留复活已终结成员", () => {

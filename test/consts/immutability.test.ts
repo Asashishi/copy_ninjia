@@ -30,7 +30,8 @@ import {
   OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO,
 } from "../../packages/consts/aiChat/openai";
 import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
-import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
+import { EMPTY_MESSAGE_ENTITIES, MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
+import { QA_ANSWER_LABELS, QA_QUESTION_LABELS } from "../../packages/consts/qa";
 import { DEFAULT_CHAT_STATE, createChatState } from "../../packages/libs/chatState";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
@@ -71,6 +72,12 @@ test("常量表本身不可整体替换或就地增删", () => {
   expect(() => GAG_REPLACEMENT_CHARACTERS.push("篡改")).toBeDefined();
   // @ts-expect-error gag 操作保底档位不允许追加
   expect(() => GAG_MIN_OPERATION_TIERS.push([99, 99])).toBeDefined();
+  // @ts-expect-error 问答字段标签是投递消息的唯一判据，追加一个就等于放宽认领口径
+  expect(() => QA_QUESTION_LABELS.push("篡改:")).toBeDefined();
+  // @ts-expect-error 同上；答案标签同样跨每条投递消息共享
+  expect(() => QA_ANSWER_LABELS.push("篡改:")).toBeDefined();
+  // @ts-expect-error 共享空实体表被每条无代码块的问答直答复用，追加会污染所有调用方
+  expect(() => EMPTY_MESSAGE_ENTITIES.push({ type: "bold", offset: 0, length: 1 })).toBeDefined();
   // @ts-expect-error teardown 派发顺序是承重的（同步段顺序 + 穷尽 owner），不允许追加
   expect(() => CHAT_TEARDOWN_ORDER.push("copy")).toBeDefined();
   // @ts-expect-error 同上，也不允许按下标换掉某个 owner

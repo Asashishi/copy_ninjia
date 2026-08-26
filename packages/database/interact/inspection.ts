@@ -1,6 +1,24 @@
-import { asc, count, eq, gt, ne } from "drizzle-orm";
+import { asc, count, gt } from "drizzle-orm";
 import { BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE } from
   "../../consts/antiRaid/blocklist";
+import {
+  IDENTITY_DATABASE_CHAT_QA_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_CHAT_QA_MIGRATION_HASH,
+  IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH,
+  IDENTITY_DATABASE_CURRENT_BASE_MIGRATION_HASH,
+  IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_JSONB_MIGRATION_HASH,
+  IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_TEXT_MIGRATION_HASH,
+  IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH,
+} from "../../consts/identityStorage";
+import {
+  assertTelegramIdentityId,
+  decodeBlocklistEntryData,
+  decodeWhitelistEntryData,
+} from "../codec/identity";
 import { chatStates } from "../schema/chatState";
 import { readStoredChatQa } from "./chatQa";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
@@ -8,81 +26,80 @@ import {
   guardedStrictJsonbTextProjection,
   jsonbStorageClass,
   jsonbTextProjection,
-  strictJsonbValidity,
 } from "../schema/jsonb";
 import { storageMetadata } from "../schema/metadata";
 import { pendingBlockedRemovals } from "../schema/pendingRemoval";
+import { readStorageDatabaseMigrationJournal } from "./migration";
+import { storageRowSource } from "../validation/storageRows";
 import type {
   StorageDatabase,
-  StorageDatabaseBaseRows,
   StorageDatabaseJsonStorageRow,
-  StorageDatabaseRows,
   StorageDatabaseStartupRows,
+  StorageDatabaseMigrationJournalEntry,
   StoredChatStateRow,
   StoredIdentityPolicyRow,
-  StoredPendingRemovalRow,
   StoredPendingRemovalStartupRow,
   StoredStorageMetadataRow,
 } from "../../types/storageDatabase";
-import type { AnySQLiteColumn, AnySQLiteTable } from "drizzle-orm/sqlite-core";
 
 interface ReadJsonbStorageRowOptions {
   readonly tableName: string;
-  readonly table: AnySQLiteTable;
-  readonly data: AnySQLiteColumn;
+}
+
+interface StorageColumnDeclarationRow {
+  readonly type: string;
+}
+
+interface StorageJsonbAggregateRow {
+  readonly rowCount: number;
+  readonly textRows: number;
+  readonly blobRows: number;
+  readonly invalidJsonbRows: number;
+}
+
+interface StorageDatabaseIntegrityRow {
+  readonly integrity_check: string;
 }
 
 function readJsonbStorageRow(
   database: StorageDatabase,
-  { tableName, table, data }: ReadJsonbStorageRowOptions
+  { tableName }: ReadJsonbStorageRowOptions
 ): StorageDatabaseJsonStorageRow {
-  const rowCount: number = database.select({ value: count() }).from(table).get()?.value ?? 0;
-  const textRows: number = database.select({ value: count() }).from(table)
-    .where(eq(jsonbStorageClass(data), "text")).get()?.value ?? 0;
-  const blobRows: number = database.select({ value: count() }).from(table)
-    .where(eq(jsonbStorageClass(data), "blob")).get()?.value ?? 0;
-  const invalidJsonbRows: number = database.select({ value: count() }).from(table)
-    .where(ne(strictJsonbValidity(data), 1)).get()?.value ?? 0;
+  const declaration: StorageColumnDeclarationRow | null = database.$client
+    .query<StorageColumnDeclarationRow, [string, string]>(
+      "SELECT type FROM pragma_table_xinfo(?1) WHERE name = ?2;"
+    )
+    .get(tableName, "data");
+  const aggregate: StorageJsonbAggregateRow | null = database.$client
+    .query<StorageJsonbAggregateRow, []>(
+      `SELECT COUNT(*) AS rowCount, ` +
+      `COALESCE(SUM(typeof(data) = 'text'), 0) AS textRows, ` +
+      `COALESCE(SUM(typeof(data) = 'blob'), 0) AS blobRows, ` +
+      `COALESCE(SUM(json_valid(data, 8) <> 1), 0) AS invalidJsonbRows ` +
+      `FROM ${tableName};`
+    )
+    .get();
   return {
     tableName,
-    declaredType: data.getSQLType().toUpperCase(),
-    rowCount,
-    textRows,
-    blobRows,
-    invalidJsonbRows,
+    declaredType: declaration?.type.toUpperCase() ?? null,
+    rowCount: aggregate?.rowCount ?? 0,
+    textRows: aggregate?.textRows ?? 0,
+    blobRows: aggregate?.blobRows ?? 0,
+    invalidJsonbRows: aggregate?.invalidJsonbRows ?? 0,
   };
 }
 
-/** 读取当前全部 JSONB 表；仅供显式冷迁移逐表核验。 */
+/** 读取当前 schema 六张 JSONB 表的声明与存储统计。 */
 function readStorageDatabaseJsonStorage(
   database: StorageDatabase
 ): readonly StorageDatabaseJsonStorageRow[] {
   return [
-    readJsonbStorageRow(database, {
-      tableName: "whitelist_entries",
-      table: whitelistEntries,
-      data: whitelistEntries.data,
-    }),
-    readJsonbStorageRow(database, {
-      tableName: "blocklist_entries",
-      table: blocklistEntries,
-      data: blocklistEntries.data,
-    }),
-    readJsonbStorageRow(database, {
-      tableName: "pending_blocked_removals",
-      table: pendingBlockedRemovals,
-      data: pendingBlockedRemovals.data,
-    }),
-    readJsonbStorageRow(database, {
-      tableName: "storage_metadata",
-      table: storageMetadata,
-      data: storageMetadata.data,
-    }),
-    readJsonbStorageRow(database, {
-      tableName: "chat_states",
-      table: chatStates,
-      data: chatStates.data,
-    }),
+    readJsonbStorageRow(database, { tableName: "whitelist_entries" }),
+    readJsonbStorageRow(database, { tableName: "blocklist_entries" }),
+    readJsonbStorageRow(database, { tableName: "pending_blocked_removals" }),
+    readJsonbStorageRow(database, { tableName: "storage_metadata" }),
+    readJsonbStorageRow(database, { tableName: "chat_states" }),
+    readJsonbStorageRow(database, { tableName: "chat_qa" }),
   ];
 }
 
@@ -111,17 +128,129 @@ function assertJsonbStorageRows(
   }
 }
 
-/** 显式冷迁移拒绝五张表的列声明、存储类型或内容不是严格 JSONB。 */
+/** 启动与性能夹具都拒绝当前六张表的非严格 JSONB 存储。 */
 export function assertStorageDatabaseJsonbStorage(
   database: StorageDatabase,
   source: string
 ): void {
-  assertJsonbStorageRows(readStorageDatabaseJsonStorage(database), source, 5);
+  assertJsonbStorageRows(readStorageDatabaseJsonStorage(database), source, 6);
+}
+
+/** 启动时执行 SQLite 自身的完整性检查。 */
+export function assertStorageDatabaseIntegrity(
+  database: StorageDatabase,
+  source: string
+): void {
+  const rows: StorageDatabaseIntegrityRow[] = database.$client
+    .query<StorageDatabaseIntegrityRow, []>("PRAGMA integrity_check;")
+    .all();
+  if (rows.length !== 1 || rows[0]?.integrity_check !== "ok") {
+    throw new Error(`${source}: expected SQLite integrity_check to return exactly ok.`);
+  }
+}
+
+function isMigrationEntry(
+  entry: StorageDatabaseMigrationJournalEntry | undefined,
+  createdAt: number,
+  hash: string
+): boolean {
+  return entry?.createdAt === createdAt && entry.hash === hash;
+}
+
+function hasCurrentBaseLineage(
+  rows: readonly StorageDatabaseMigrationJournalEntry[]
+): boolean {
+  const permission: StorageDatabaseMigrationJournalEntry | undefined = rows.at(-1);
+  if (!isMigrationEntry(
+    permission,
+    IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT,
+    IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH
+  )) return false;
+  if (rows.length === 2) {
+    return isMigrationEntry(
+      rows[0],
+      IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_CURRENT_BASE_MIGRATION_HASH
+    );
+  }
+  return rows.length === 3 &&
+    isMigrationEntry(
+      rows[0],
+      IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_TEXT_MIGRATION_HASH
+    ) &&
+    isMigrationEntry(
+      rows[1],
+      IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_JSONB_MIGRATION_HASH
+    );
+}
+
+/** 当前 v5 只接受两条已发布基础谱系精确追加 chat state 与 chat Q&A。 */
+export function assertStorageDatabaseMigrationLineage(
+  database: StorageDatabase,
+  source: string
+): void {
+  const rows: readonly StorageDatabaseMigrationJournalEntry[] =
+    readStorageDatabaseMigrationJournal(database, source);
+  if (
+    rows.length < 4 ||
+    !isMigrationEntry(
+      rows.at(-1),
+      IDENTITY_DATABASE_CHAT_QA_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_CHAT_QA_MIGRATION_HASH
+    ) ||
+    !isMigrationEntry(
+      rows.at(-2),
+      IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH
+    ) ||
+    !hasCurrentBaseLineage(rows.slice(0, -2))
+  ) {
+    throw new Error(`${source}: expected the exact supported schema v5 migration lineage.`);
+  }
+}
+
+/** 流式严格解码两张身份表，并用 SQL 拒绝跨表重复主键。 */
+export function assertStoredIdentityPolicies(
+  database: StorageDatabase,
+  source: string
+): void {
+  const overlap: { readonly id: number } | null = database.$client
+    .query<{ readonly id: number }, []>(
+      "SELECT whitelist_entries.id AS id FROM whitelist_entries " +
+      "INNER JOIN blocklist_entries USING (id) LIMIT 1;"
+    )
+    .get();
+  if (overlap !== null) {
+    throw new Error(
+      `${source}:whitelist_entries/blocklist_entries[$.id]: expected disjoint primary keys.`
+    );
+  }
+  const whitelistRows: IterableIterator<StoredIdentityPolicyRow> = database.$client
+    .query<StoredIdentityPolicyRow, []>(
+      "SELECT id, json(data) AS data FROM whitelist_entries ORDER BY id ASC;"
+    )
+    .iterate();
+  for (const row of whitelistRows) {
+    const path: string = storageRowSource(source, "whitelist_entries", row.id);
+    assertTelegramIdentityId(row.id, path);
+    decodeWhitelistEntryData(row.data, path);
+  }
+  const blocklistRows: IterableIterator<StoredIdentityPolicyRow> = database.$client
+    .query<StoredIdentityPolicyRow, []>(
+      "SELECT id, json(data) AS data FROM blocklist_entries ORDER BY id ASC;"
+    )
+    .iterate();
+  for (const row of blocklistRows) {
+    const path: string = storageRowSource(source, "blocklist_entries", row.id);
+    assertTelegramIdentityId(row.id, path);
+    decodeBlocklistEntryData(row.data, path);
+  }
 }
 
 /**
- * 生产启动只扫描单行 metadata。outbox 改由 2048 条 keyset 分页随正文逐行核对，
- * 名单和群状态由当前格式的写入边界把关。
+ * 生产启动的版本前置闸只扫描单行 metadata；版本通过后再检查当前六表与正文。
  */
 export function assertStorageDatabaseStartupJsonbStorage(
   database: StorageDatabase,
@@ -130,17 +259,13 @@ export function assertStorageDatabaseStartupJsonbStorage(
   assertJsonbStorageRows([
     readJsonbStorageRow(database, {
       tableName: "storage_metadata",
-      table: storageMetadata,
-      data: storageMetadata.data,
     }),
   ], source, 1);
 }
 
 /**
- * 只读 schema 版本那一行。单独成边界是因为**启动必须先确认版本、再碰按版本才
- * 存在的表**：`chat_states` 是 v4 才建的，跟着 startup rows 一起查会让未迁移的
- * v3 库先抛 `no such table: chat_states`，把「你还没跑冷迁移」这条真正的结论盖掉。
- * storage_metadata 是 v3/v4 共用表，因此这一句在两代库上都读得动。
+ * 只读 schema 版本那一行。启动必须先确认版本、再查询当前版本的业务表，避免
+ * 旧库先以缺表错误失败而掩盖明确的版本诊断。
  */
 export function readStorageDatabaseSchemaMetadata(
   database: StorageDatabase
@@ -151,46 +276,10 @@ export function readStorageDatabaseSchemaMetadata(
     .all();
 }
 
-/** 读取 v3/v4 共用原始行；显式迁移在建 chat_states 前调用。 */
-export function readStorageDatabaseBaseRows(
-  database: StorageDatabase
-): StorageDatabaseBaseRows {
-  const whitelist: StoredIdentityPolicyRow[] = database
-    .select({ id: whitelistEntries.id, data: jsonbTextProjection(whitelistEntries.data) })
-    .from(whitelistEntries)
-    .all();
-  const blocklist: StoredIdentityPolicyRow[] = database
-    .select({ id: blocklistEntries.id, data: jsonbTextProjection(blocklistEntries.data) })
-    .from(blocklistEntries)
-    .all();
-  const removals: StoredPendingRemovalRow[] = database
-    .select({
-      removalId: pendingBlockedRemovals.removalId,
-      data: jsonbTextProjection(pendingBlockedRemovals.data),
-    })
-    .from(pendingBlockedRemovals)
-    .all();
-  const metadata: readonly StoredStorageMetadataRow[] =
-    readStorageDatabaseSchemaMetadata(database);
-  return { whitelist, blocklist, removals, metadata };
-}
-
-/** 显式冷迁移读取全部原始行；严格业务解码由调用层按来源路径完成。 */
-export function readStorageDatabaseRows(
-  database: StorageDatabase
-): StorageDatabaseRows {
-  const base: StorageDatabaseBaseRows = readStorageDatabaseBaseRows(database);
-  const storedChatStates: StoredChatStateRow[] = database
-    .select({ chatId: chatStates.chatId, data: jsonbTextProjection(chatStates.data) })
-    .from(chatStates)
-    .all();
-  return { ...base, chatStates: storedChatStates, chatQa: readStoredChatQa(database) };
-}
-
 /**
  * 生产启动读取：名单只做 COUNT；群状态与问答只为恢复热缓存读取，不在这里校验。
  * 调用方必须已用 readStorageDatabaseSchemaMetadata 确认过 schema 版本——本函数
- * 查询 `chat_states` 与 `chat_qa`，在未迁移的库上只会以缺表报错。
+ * 查询 `chat_states` 与 `chat_qa`，版本不符的库不得进入这里。
  */
 export function readStorageDatabaseStartupRows(
   database: StorageDatabase

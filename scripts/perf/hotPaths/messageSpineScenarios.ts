@@ -110,10 +110,8 @@ export function incomingMessageSpineScenario(): Scenario {
 /**
  * AI 开启后，每条**媒体**消息共担的纯计算段。
  *
- * 补的是 incoming-message-spine 明确不覆盖的那一半：那条场景的 fixture 是「无可
- * 复制内容且 AI 关闭」，因此从不进入各载荷 handler。而 AI 开着才是这个机器人的
- * 常态，这一段（一次触发上下文 + 一次掷骰判定 + 一次 22 字段媒体载荷）此前既没有
- * 基准也不在 GC/JIT 门禁里。
+ * incoming-message-spine 的 fixture 是「无可复制内容且 AI 关闭」，不进入载荷
+ * handler；本场景覆盖 AI 开启时的一次触发上下文、掷骰判定与 22 字段媒体载荷。
  *
  * **fixture 刻意选「回复机器人的图片」这条直接唤起路径**，这是本场景零副作用与
  * 可复现的依据，不是随手挑的：

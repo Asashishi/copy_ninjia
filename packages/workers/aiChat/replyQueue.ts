@@ -55,11 +55,9 @@ export interface PushReplyTriggerParams {
  * 两条分支的字段一律写全、缺省显式 undefined，不用条件展开：这些对象会推进
  * LinkedQueue 长期排着，随后被 drainReplyQueue 与 startQueuedRound 逐字段反复读，
  * 四个可选字段各自展开会让同一个类型分出至多 16 个隐藏类。口径同
- * auto/message/recordContext.ts 与 antiRaid/adCandidate.ts。实测（Bun 1.3.14，
- * 5 个独立进程各 5 轮取中位数，构造 + 入队 + 消费侧读取）325.2 → 55.1 ns/op。
+ * auto/message/recordContext.ts 与 antiRaid/adCandidate.ts。
  *
- * 空串按 undefined 归一（`x ? x : undefined`），与被替换掉的「假值就不写这个键」
- * 逐字保持同一下游语义。
+ * 空串按 undefined 归一（`x ? x : undefined`）。
  */
 export function pushReplyTrigger({
   chatId,

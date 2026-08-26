@@ -7,7 +7,7 @@ import { logger } from "../../../infra/logger";
 import {
   kickChatMemberWithOutcome,
   probeChatMembership,
-  joinVerificationApi,
+  telegramApi,
 } from "../../../infra/telegram";
 import { verificationKey } from "../../../libs/verificationKey";
 import type {
@@ -117,18 +117,13 @@ export async function runKickMemberEffect({
   // `kicked` 时 isPresentMember 为 false，人已经出去了，直接结算，绝不去碰那条
   // 封禁。
   //
-  // 首发曾经豁免过这次探测，理由是「紧跟刚到达的那条 join update，那条 update
-  // 自己就证明了人在群里」。它证明的是**在场**，不是**没有在排队期间被封**：
-  // 锁群下的调用若命中 Telegram 429，会排进 kick 类别的独立退避车道；raid
-  // 期间前面可能积着其他移除。这段等待里人工管理员完全可能在客户端直接封禁这个人
-  // （不走 /block，也就不进本 bot 的 FIFO）。排到的那一发于是解除了管理员的
-  // 封禁，outcome 还报 "kicked"、kickSettled 上报成功，而那个人凭任意邀请链接
-  // 就能回群。刷群路径上多付一次 getChatMember 换掉这个后果是划算的——正确性
-  // 优先于调用量（见 AGENTS.md）。
+  // join update 只能证明到达时在场，不能证明请求排队期间没有被人工管理员封禁。
+  // Telegram 429 会让调用进入 kick 类别的独立退避车道，因此首发与重试都必须
+  // 重新确认成员状态，避免不带 only_if_banned 的 unbanChatMember 解除现有封禁。
   //
   // 查询失败（undefined）不等于不在群，也不足以授权这个调用，照常退避重试。
   const memberPresentBeforeKick: boolean | undefined =
-    await probeChatMembership(chatId, userId, joinVerificationApi);
+    await probeChatMembership(chatId, userId, telegramApi);
   if (verificationEntries.get(key)?.state !== transitionState) return;
   if (memberPresentBeforeKick === false) {
     dispatchVerification(chatId, userId, {
@@ -156,7 +151,7 @@ export async function runKickMemberEffect({
     chatId,
     userId,
     isSupergroup,
-    api: joinVerificationApi,
+    api: telegramApi,
   });
   if (verificationEntries.get(key)?.state !== transitionState) return;
   if (outcome === "kicked" || outcome === "absent") {
@@ -170,7 +165,7 @@ export async function runKickMemberEffect({
   // 请求失败后重新允许权威豁免替换 token，再用成员探测消除响应丢失的不确定性。
   transitionState.executionStarted = false;
   const memberPresent: boolean | undefined =
-    await probeChatMembership(chatId, userId, joinVerificationApi);
+    await probeChatMembership(chatId, userId, telegramApi);
   if (verificationEntries.get(key)?.state !== transitionState) return;
   if (memberPresent === false) {
     dispatchVerification(chatId, userId, {

@@ -29,7 +29,7 @@ const {
   testState,
   traceDeleteOutcomes,
   installVerificationEffectsHooks,
-  joinVerificationApi,
+  telegramApi,
 } = await import("../../helpers/verificationEffectsHarness");
 
 const { runVerificationEffects } = await import("../../../packages/workers/antiRaid/verificationEffects");
@@ -133,7 +133,7 @@ describe("踢人失败时的权限告警", () => {
 
     await run([{ kind: "expel", snapshot: state.snapshot }]);
 
-    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, joinVerificationApi);
+    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, telegramApi);
     expect(kickedUserIds).toEqual([]);
     expect(sentTexts).toEqual([]);
     expect(dispatched).toContainEqual({ userId: USER_ID, event: { type: "expelSettled" } });
@@ -344,8 +344,8 @@ describe("踢人失败时的权限告警", () => {
   });
 
   test("回归用例：几条里只失败一条时不说「一条都删不动」，非权限失败也不点管理员", async () => {
-    // 一次瞬时网络错误：三条里删掉两条。旧实现是全有全无布尔，任一条失败即翻，
-    // 文案照样声称一条都删不动，并把管理员送去查权限。
+    // 一次瞬时网络错误：三条里删掉两条。文案必须按逐条结果计数，且只有权限失败
+    // 才提示管理员检查权限。
     traceDeleteOutcomes.push("deleted", "failed", "deleted");
     const state = expellingState({
       announcementMessageId: 20,

@@ -55,7 +55,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 846 处、分布在 79 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 861 处、分布在 83 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 
@@ -99,7 +99,7 @@
 2. **定义**：无状态的静态查询工具把 `ToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一收敛成中立的 `AiToolDefinition`（JSON Schema 参数），再由各供应商实现包的 `replySession.ts` 转成自家形状——新增工具不需要碰任何一家 SDK 的类型。
 3. **实现**：在 `packages/aiChat/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
 4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
-5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、Google Search，以及贴纸/反应/生成图片/生成歌曲各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
+5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、服务端联网检索，以及贴纸/反应/生成图片/生成歌曲各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
 6. **提示词**：如需使用规则，在 `packages/consts/aiChat/prompts/` 补充；涉及转录格式的必须复用 `transcript.ts` 共享模板，两侧不得各自手写。
 7. **测试 + 文档**：`test/aiChat/ai/`（或对应功能/Worker 路径）补测试；根 README「工具」行按需更新。
 
@@ -152,7 +152,7 @@
 6. 不随版本变的部分（如 `meta`）仍用生产解析器：`--check` 必须拦下 `--apply` 会拒绝的一切，否则坏行要等库已经被改过之后才暴露。
 7. 落盘沿用既有 write-through：主线程发布内存最终值 → 投给 Disk I/O Worker → 显式事务 → 精确 revision ACK → Worker 重建后从内存重放。
 
-现成范例是 `chat_qa`（`0003_chat_qa.sql` 与 `scripts/migrateChatQa.ts`）。
+当前仓库只保留最近发布版到当前版的迁移入口；实现新边时必须同时替换上一条入口、测试与约定登记。
 
 ## 改动 Worker 间协议
 

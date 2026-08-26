@@ -25,10 +25,8 @@ export const adDetectQueue: LinkedQueue<string> = new LinkedQueue<string>();
  * 当前排在 adDetectQueue 里的键；随队列同步增删，出队时立即删除。
  *
  * 「这个 key 已经取得一个待派发位置」由这一张表**独家**表达：排着的人再说
- * 什么都只并进消息串，不会在队列里占第二个位置。曾经另有一张 TTL 认领表
- * （recentlyEnqueuedAdKeys）并行表达同一件事，两张表的每一处增删都必须严格
- * 同步，漏一处就留下孤儿认领、把容量判定推向假满载——已经删掉，判据收敛到
- * 队列本身。队列每个键最多一个位置，因此它的长度天然被 pendingAdMessages 的
+ * 什么都只并进消息串，不会在队列里占第二个位置。队列每个键最多一个位置，
+ * 因此它的长度天然被 pendingAdMessages 的
  * 硬顶兜住，不需要独立容量闸；停管、关开关与 Worker 停止时随 adDetectQueue
  * 一起摘键，Worker 崩溃后随 isolate 从空表重建。
  */
@@ -40,10 +38,10 @@ export const queuedAdDetectKeys: Set<string> = new Set<string>();
  * 已经排在本线程的后续消息，避免同一个人被反复判定、反复触发一次完整的拉黑
  * + 各群封禁登记（见 adDetect.ts 的 disposeDetectedAd 与 docs/cn/04-invariants.md）。
  *
- * 没有任何入口闸替它把关，写入只来自处置路径，因此容量由 setBoundedMapValue
- * 直接顶在 AD_DETECT_MAX_PENDING_SENDERS：节拍停掉或处置快过回收时，它是这
- * 套流水线里唯一一张会无限长的表。每个 key 独立 TTL 到期；若封禁已取得确定
- * 结果，blocklistEffects 会立即提前回收，无需等满窗口。
+ * 没有任何入口闸替它把关，写入只来自处置路径，因此由 setBoundedMapValue 将
+ * 容量硬顶在 AD_DETECT_MAX_PENDING_SENDERS；满载时淘汰最早处置的键。每个 key
+ * 独立 TTL 到期；若封禁已取得确定结果，blocklistEffects 会立即提前回收，无需
+ * 等满窗口。
  */
 export const recentlyDisposedAdKeys: Map<string, number> = new Map<string, number>();
 

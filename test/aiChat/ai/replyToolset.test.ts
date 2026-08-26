@@ -41,6 +41,9 @@ const {
 const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
 const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
+const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../../packages/consts/tools");
+const { stickerMenuCache, stickerMenuRevision } =
+  await import("../../../packages/cache/workers/aiChat/stickers/menu");
 
 beforeEach(() => {
   nextMessageId = 100;
@@ -128,22 +131,20 @@ describe("add_reaction 成功动作计数", () => {
   });
 });
 
-test("回复提示把可见文本限死在 send_message 与生图图注两个出口，最终响应不得夹带正文", () => {
+test("回复提示把独立文字限死在 send_message，媒体配文走对应 caption，最终响应不得夹带正文", () => {
   expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("主回复、贴纸说明、动作之后的补充文字都必须显式调用");
-  expect(REPLY_ACTION_INSTRUCTION).toContain("所有需要让群友看到的文本发言都必须经工具落地");
-  expect(REPLY_ACTION_INSTRUCTION).toContain("绝不能用最终响应正文代替工具");
-  // 图注是唯一的第二个文本出口，两段提示必须一致地指向它，否则模型要么以为
-  // 配图也得再调一次 send_message，要么以为最终响应正文也能说话。
+  expect(REPLY_ACTION_INSTRUCTION).toContain("独立文字只用 send_message");
+  // 媒体配文必须随对应动作落地，不能再用 send_message 复述或留进最终正文。
   expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("写进 generate_image 的 caption");
-  expect(REPLY_ACTION_INSTRUCTION).toContain("写进 generate_image 的 caption");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("随附文字写进对应工具的 caption，不要再复述");
   expect(REPLY_ACTION_INSTRUCTION).toContain("最终响应保持空白");
 });
 
 test("模型提示限制为 8 个动作，执行侧留余量到 11 个动作才触发硬顶", async () => {
   expect(AI_MAX_ACTIONS_PER_REPLY).toBe(8);
   expect(HARD_MAX_ACTIONS_PER_REPLY).toBe(11);
-  expect(REPLY_ACTION_INSTRUCTION).toContain(`绝对不要超过 ${AI_MAX_ACTIONS_PER_REPLY} 个动作`);
-  expect(REPLY_ACTION_INSTRUCTION).not.toContain(`绝对不要超过 ${HARD_MAX_ACTIONS_PER_REPLY} 个动作`);
+  expect(REPLY_ACTION_INSTRUCTION).toContain(`最多 ${AI_MAX_ACTIONS_PER_REPLY} 个`);
+  expect(REPLY_ACTION_INSTRUCTION).not.toContain(`最多 ${HARD_MAX_ACTIONS_PER_REPLY} 个`);
 
   const toolset = await createReplyToolset({
     chatId: -100800,
@@ -829,7 +830,7 @@ describe("群问答工具在按次工具集里的接线", () => {
     expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(true);
     expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(true);
 
-    // 这一跳此前只有类型保证：ReplyToolContext.chatQa 有没有真的被交给执行器。
+    // 直接断言 ReplyToolContext.chatQa 被交给执行器，而不只依赖类型保证。
     const listed: { questions: string[] } = JSON.parse(
       await toolset.execute(GROUP_QA_QUERY_TOOL, "{}")
     );
@@ -857,5 +858,102 @@ describe("群问答工具在按次工具集里的接线", () => {
       await toolset.execute(GROUP_QA_QUERY_TOOL, "{}")
     );
     expect(listed.questions).toEqual(["a"]);
+  });
+});
+
+describe("工具分派", () => {
+  /** 只挂菜单记忆化缓存，不碰贴纸集合与目录：分派本身与怎么拉到菜单无关。 */
+  function seedStickerMenu(): void {
+    stickerMenuCache.current = {
+      revision: stickerMenuRevision.current,
+      menu: [{
+        pack: "pack_a",
+        title: "甲包",
+        summary: "一句简介",
+        stickers: [{
+          sticker: {
+            file_id: "file-a",
+            file_unique_id: "uid-a",
+            type: "regular",
+            width: 512,
+            height: 512,
+            is_animated: false,
+            is_video: false,
+          },
+          emoji: "😂",
+          description: "在笑",
+        }],
+      }],
+    };
+  }
+
+  function stickerContext() {
+    return {
+      chatId: -100800,
+      replyToMessageId: 10,
+      messageThreadId: undefined,
+      mediaToolsRequested: false,
+      bypassMediaToolCooldown: false,
+      chatAction: {
+        current: () => "idle" as const,
+        set: mock((..._args: unknown[]): void => {}),
+        settle: mock(async (): Promise<void> => {}),
+      },
+      stickerLock: { tryAcquire: () => true, release: () => {} },
+      roundHasTypo: false,
+      isActive: () => true,
+      onMessageSent: mock((..._args: unknown[]): void => {}),
+      onStickerSent: mock((..._args: unknown[]): void => {}),
+      onImageSent: mock((..._args: unknown[]): void => {}),
+      onSongSent: mock((..._args: unknown[]): void => {}),
+    };
+  }
+
+  test("两个贴纸工具都从分派表接到本轮共享的菜单与状态", async () => {
+    // 看包与发贴纸必须落在同一份菜单和同一份轮内状态上：分派时各建一份的话，
+    // 模型按 view 返回的编号去发，发出去的会是另一份菜单里的同号贴纸。
+    seedStickerMenu();
+    const context = stickerContext();
+    const toolset = await createReplyToolset(context);
+
+    const viewed = JSON.parse(await toolset.execute(
+      VIEW_STICKER_PACK_TOOL,
+      JSON.stringify({ pack_index: 1, intent: "想表达好笑" })
+    ));
+    expect(viewed.pack).toBe("甲包");
+    expect(viewed.stickers).toContain("😂");
+
+    const sent = JSON.parse(await toolset.execute(
+      SEND_STICKER_TOOL,
+      JSON.stringify({ pack_index: 1, sticker_index: 1 })
+    ));
+
+    expect(sent.success).toBe(true);
+    expect(sendStickerMock).toHaveBeenCalledTimes(1);
+    expect(context.onStickerSent).toHaveBeenCalledTimes(1);
+    expect(toolset.actionsUsed()).toBe(1);
+  });
+
+  test("没看过包就直接发贴纸会被本轮状态拦下", async () => {
+    seedStickerMenu();
+    const toolset = await createReplyToolset(stickerContext());
+
+    const sent = JSON.parse(await toolset.execute(
+      SEND_STICKER_TOOL,
+      JSON.stringify({ pack_index: 1, sticker_index: 1 })
+    ));
+
+    expect(sent.error).toBeDefined();
+    expect(sendStickerMock).not.toHaveBeenCalled();
+  });
+
+  test("未知工具名走统一错误，不消耗动作预算", async () => {
+    seedStickerMenu();
+    const toolset = await createReplyToolset(stickerContext());
+
+    const result = JSON.parse(await toolset.execute("no_such_tool", "{}"));
+
+    expect(result.error).toBeDefined();
+    expect(toolset.actionsUsed()).toBe(0);
   });
 });

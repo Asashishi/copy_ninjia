@@ -52,7 +52,7 @@ WantedBy=multi-user.target
 
 program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 者は `0755`、`database/` は `0770`。実際の mode は umask でさらに絞られます）、4 path の symlink を拒否します。root・`logs/`・`memory/` は runtime UID 所有かつ `0755` 以下でなければなりません。この gate が止めるのは**書き込み**で、group または other に `w` bit があれば起動を拒否します。読み側を `0755` まで緩めているのは、本 project を単一テナントとして扱い、大半の deployment が root で直接動かし、既定 umask で作られる directory がまさに `0755` だからです。
 
-> **代償**：`memory/` 配下の file 自体は `0644` なので、group chat の逐語記録に残る access control はこの directory bit だけです。`0755` のままにすると、同じマシンのどの local account からも読めます。マルチテナント、あるいは非特権 login user がいるホストでは、data root と `memory/` を自分で `0750` に戻してください。preflight が保証するのは「`0755` より広くない」ことだけで、判断は代行しません。identity migration は `database/` を `02770`、主 DB と WAL/SHM を `0660` にします。この directory は runtime UID 所有、または deployment account 所有でも group が runtime の有効 group で完全な `rwx` を持つ場合だけ許可されます。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
+> **代償**：`memory/` の新規 file は `0644` が既定値なので、既定のまま使う deployment では group chat の逐語記録を主に directory bit で保護します。`0755` のままにすると、同じマシンのどの local account からも読めます。マルチテナント host では data root と `memory/` を `0750`、既存 file を必要に応じて `0600`/`0640` に収めてください。runtime の adopt と replace はその mode を維持し、自動 chmod しません。identity migration は `database/` を `02770` にし、主 DB と WAL/SHM は初回作成時に `0660` を使います。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
 
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、identity write-through、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
@@ -112,11 +112,17 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     深夜をまたぐ処理中 query のため東京暦日 3 日分を保持。完全な再配信は再追記せず、
     履歴は user ごとの最新値へ compact し、1 chat/day は最新 250,000 人まで保持。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
-  - **内容**：schema v4 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
+  - **内容**：schema v5 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
     allowlist / blocklist の正式表、`pending_blocked_removals` は未完了の chat 別 BAN
     outbox、`chat_states` はグループ単位状態の正式表（最大 25 行。26 行目があれば起動を
     拒否）、`storage_metadata` は唯一の schema version を保持します。Drizzle migration
-    journal は対応する lineage と厳密に一致しなければなりません。
+    journal は対応する lineage と厳密に一致しなければなりません。`chat_states` の 25 行枠は
+    record 全体が既定値へ戻ったときだけ解放されます：`/init disable` が消すのはグループ名
+    だけで、機能スイッチは設計上そのまま残るため（`/init enable` し直しても再設定不要）、
+    主ゲートを切っても `/ai_chat` などが有効なグループは 1 行を占め続けます。枠を空けるには、
+    そのグループで `/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/ja_copy` を
+    1 つずつ disable にするか、Bot をそのグループから外します——退出時にその row は削除
+    されます（復旧待ちの lockdown が残っている場合を除く）。
   - **バックアップ**：必須です。blocklist を失えば恒久 BAN がすべて解除され、outbox を
     失えば未完了処置が抜けます。Bot 停止後、主 DB とその時点で存在する WAL/SHM を同じ
     consistency set として worktree 外へ copy し、owner/mode と SHA-256 を記録します。
@@ -145,17 +151,16 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **内容**：単一インスタンスロック。
   - **バックアップ**：バックアップも手動編集もしない。
 
-`memory/` 直下にはファイルを置かず、6 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動復元は `ai/`、`stickers/`、`luck/`、`anti-raid/` を必要に応じて作成し、`ad-detected/` は最初の hit 後、`joinlog/` は最初の入室事実または query 時にだけ現れます。起動復元は `joinlog/` を scan しません。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、当日の原子 snapshot が成功した後だけ旧日を清掃します。
+`memory/` 直下にはファイルを置かず、6 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は既存の全 domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact、rollover timer は成功応答後に開始します。`ad-detected/` は最初の hit 後にだけ現れます。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。
 
 `joinlog/` の query は `[since, now]` を覆う最大 2 個の chat/day file を読み、window 内で user ごとの最後の入室だけを返します。3 日目の保持は 23:59 に採取され、深夜を越えて Worker が処理する in-flight query 専用です。冗長履歴 10,000 件または新規追記 4 MiB で compact を評価し、512 KiB 以上回収できる場合だけ atomic rewrite します。parse 可能でも schema が不正な file は byte を変えずその read/write を拒否し、末尾の truncate 断片だけ append layer が修復できます。
 
 ### `memory/` の補助ファイルとプロセス内限定状態
 
-- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。`ai/`、`stickers/`、`luck/` は起動時に `*.tmp` を清掃し、`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp`、`joinlog/` は当日の directory を最初に接管するとき `*.tmp` を清掃します。現在の `anti-raid/` 復元はこの種のファイルを無視しますが、自動削除はしません。復元には使われないため、Bot を停止し、名前が原子書き込み形式へ厳密に一致すると確認した後だけ孤児として削除できます。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
-- `memory/ai/<chatId>.json.<timestamp>.<uuid>.corrupt` と `memory/stickers/<pack>.json.<timestamp>.<uuid>.corrupt` は JSON を parse できず一意名で隔離されたファイルです。通常復元の対象外で、自動削除もしません。同じ元 path が再び壊れた場合は旧証拠を上書きせず新しい隔離件を残します。parse はできても現行 version=1 schema に合わないファイルは隔離せず起動を拒否し、[06](06-modification-guide.md#永続化-schema-の変更) に従う手動 migration が必要です。
+- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。起動 inspect はこれらを記録するだけで削除しません。全 domain の検証と adopt が成功して成功応答を返した後、logs、`ai/`、`stickers/`、`luck/`、`joinlog/` の maintenance が対応する `*.tmp` を清掃します。`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp` を清掃し、`anti-raid/` は temporary file を復元 input から除外します。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
 - Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。
 
-Bot 停止中または storage snapshot の整合境界でデータルート全体をバックアップし、SQLite 主 DB と存在する sidecar は同一時点から取得します。`memory/` と `database/` は機密データとして扱ってください。単一 tenant 基準では memory file が `0644`、DB と sidecar が `0660` です。詳細は [04](04-invariants.md#永続化) を参照し、アクセス制御は top-level directory の owner/group/mode と host account の隔離で行います。
+Bot 停止中または storage snapshot の整合境界でデータルート全体をバックアップし、SQLite 主 DB と存在する sidecar は同一時点から取得します。`memory/` と `database/` は機密データとして扱ってください。新規 memory file は `0644`、DB と sidecar は初回作成時に `0660` が既定値で、既存 file の mode は adopt と atomic replace 後も維持されます。詳細は [04](04-invariants.md#永続化) を参照してください。
 
 ## Identity Storage Migration
 
@@ -171,37 +176,34 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 `bun run migrate:identity-storage` は 9.1.5 が最後の提供版です。「cold migration script は直近の released version → 現行版のみを覆う」という規約に従い 9.2.0 で `scripts/` から削除されており、現行版はこの migration を提供せず、旧 JSON リストを input として受け付けません。現行版で空の `whitelist.json`／`blocklist.json` を作ってから空 database を作る、という手順は取らないでください。実際のリストが取り残され、空の blocklist のまま Bot が稼働します。
 
-### SQLite schema v4 → v5（chat Q&A の database 化）
+### state.json：退場した `qaThumbnailUrl` を取り除く
 
-`chat_qa` table 追加前の deployment（database が schema v4 のまま）は、Bot を停止してから実行します。
+`/set_qa` が「問題:」「回答:」形式の message でテキストを集めるようになり、inline 結果の
+サムネイルは消費者を失ったため、`global.assets.qaThumbnailUrl` を schema から削除しました。
+`state.json` は**厳格に解析**されます。キーが残っていると新しい版は起動段階で非ゼロ終了し、
+黙って無視することはありません。アップグレード前に、Bot を停止してから実行します。
 
 ```bash
-bun run migrate:chat-qa -- --check
-bun run migrate:chat-qa -- --apply
+bun run migrate:qa-thumbnail -- --check
+bun run migrate:qa-thumbnail -- --apply
 ```
 
-どちらの mode も先に `bot.lock` を取得し（したがってサービスは停止済みである必要があります）、
-database 全体の integrity 検査と全業務 row の厳格 decode を行い、サポートされる v4 または v5 の
-migration lineage だけを正確に受け入れます。未知の lineage、不正な row、allowlist と blocklist の
-重複はそのまま拒否します。
+どちらの mode も先に `bot.lock` を取得します（したがってサービスは停止済みである必要があります）。
+このスクリプトは `state.json` と同じディレクトリの `state.json.bak` の**両方**を処理します。
+両者は同じ厳格 schema を共有するため、主ファイルだけ直しても、破損時に `.bak` へ退避した時点で
+やはり起動に失敗するからです。
 
-**migration 前の allowlist 検証は v4 の permission key 集合で行います**。現行の定数ではありません。
-v5 は全 allowlist entry に `isCanControllQaPermission` を追加するため、未 migration の database を
-現行 decoder で検証すると、移行待ちの deployment はすべて migration 開始前に破損と判定され、しかも
-運用者が一度も書いたことのない field を名指しされます。`meta` は production の parser で検証します。
-`--check` は `--apply` が拒否するものをすべて拒否しなければならず、さもないと不正な row は database が
-書き換えられた後にしか露見しません。
+**新しい版のコードが配置済みになってから実行してください**。順序は「サービス停止 → コード入れ替え → migration 実行 → サービス起動」です。逆に migration を先に済ませて*古い*版を起動すると、その版の起動時補完が `qaThumbnailUrl` を `state.json` に書き戻し（その版は補完対象 5 項目の 1 つとして数えます）、警告も出ないまま今回の migration が黙って取り消されます。
 
-`--check` は deployment data を一切変更しません。`--apply` は owner/mode/SHA-256 manifest 付きの
-一貫した SQLite snapshot を work tree の外に保持し（その backup 自体を実 database として再検査し）、
-続いて schema migration を実行します。`chat_qa` table と `q` の index を作成し、
-`isCanControllQaPermission` を backfill します——**既存 entry が他の permission をすべて持つ場合にのみ
-true**で、`isCanWhiteOther` 導入時と同じ規則です。その後、業務 table の row 数が変わっていないこと、
-新 schema 下でも database 全体が厳格に decode できることを検証します。いずれかの段階で失敗した場合は
-外部 backup を保持してその path を出力します。migration 済みの database に対しては検証のみ行い、
-migration 不要である旨を報告します。Release の Compatibility / Migration Notes には、実際に実行した
-migration、backup の位置、復旧手順、権限要件を記載しなければなりません。
+`--check` は deployment のデータを一切変更せず、どの副本にまだキーが残っているかを報告するだけです。
+`--apply` はまず作業ツリー外に mode / owner / SHA-256 の manifest 付きで原文の snapshot を残し
+（書き込み後すぐ読み戻してハッシュを照合）、その上でキーをその場で取り除きます。元の permission bit を
+保ち、書き込み後に読み戻して検証し、さらに起動時と同じ厳格 codec で再度 decode します——書き出すものは
+新しい版が読み戻せるものでなければなりません。同じファイルに他の不正フィールドがある場合は、
+中途半端に完了させず、その場で書き込みを拒否します。
 
+キーの除去は冪等です。すでに実行済みの deployment は「完了済み」と報告するだけで、何も変更しません。
+`state.json` が無い新規 deployment も migration は不要です。
 ## 起動失敗の調査
 
 起動失敗は**意図的な fail-fast**で、原因を含みます。検査を迂回せず、原因に合わせて対応してください。
@@ -238,14 +240,12 @@ migration、backup の位置、復旧手順、権限要件を記載しなけれ�
   - **対応**：Bot を停止し、同じ整合時点の `memory/luck/` 全体を復元。
     key だけを削除・再生成しない。
 - **`*.corrupt` ファイルが現れる**
-  - **原因**：state copy 1 件が壊れて隔離されたか、parse 不能な AI/スタンプ JSON
-    が復元集合から外された。
-  - **対応**：元のファイル名から owner を特定し、先に破損原因を調査。
+  - **原因**：state の backup copy が壊れて隔離された。
+  - **対応**：元のファイル名を特定し、先に破損原因を調査。
     state が自己復旧するのは壊れたのが**バックアップ側**のときだけです（壊れた
     バックアップを隔離し主ファイルから再構築し、ログを 1 行残します）。**主ファイル**が
     decode できない場合は常に起動を拒否し、両ファイルをそのまま保全します——エラーが
-    示すフィールドを直してから起動してください。AI/スタンプの隔離ファイルは自動復元も
-    自動削除もしません。
+    示すフィールドを直してから起動してください。
 
 ### `bot.lock` が起動を拒否する場合
 

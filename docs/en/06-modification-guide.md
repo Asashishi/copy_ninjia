@@ -55,7 +55,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 846 source lines containing Chinese string or template literals across 79 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 861 source lines containing Chinese string or template literals across 83 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -99,7 +99,7 @@ The contract is split into five minimal per-capability interfaces (`AiTextProvid
 2. **Definition**: put stateless static-query `ToolDefinition` values in [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `packages/aiChat/ai/tools/replyToolset/`. The reply-toolset orchestrator collects these domain definitions into neutral `AiToolDefinition` values (JSON Schema parameters); each provider package's `replySession.ts` then maps them to its own shape, so adding a tool never touches any vendor SDK type.
 3. **Implementation**: implement execution under `packages/aiChat/ai/tools/`. Telegram-facing side effects run through main-thread proxies; the Worker must not hold a Bot instance directly.
 4. **Registration**: connect static query tools to dispatch in `packages/aiChat/ai/tools/index.ts`; connect action tools to definitions, dispatch, and per-round state under `packages/aiChat/ai/tools/replyToolset/`.
-5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, Google Search, and one successful sticker, reaction, generated image, or generated song per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).
+5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, server-side web search, and one successful sticker, reaction, generated image, or generated song per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).
 6. **Prompt**: add usage rules under `packages/consts/aiChat/prompts/` if needed. Anything coupled to transcript format must reuse shared templates from `transcript.ts`; never hand-write the same format on both sides.
 7. **Tests + docs**: add tests under `test/aiChat/ai/` or the corresponding feature/Worker path, and update the root README's Tools row when relevant.
 
@@ -152,7 +152,7 @@ One constraint harder than editing `state.json`: **the runtime never migrates au
 6. Parts that do not vary by version (`meta`, for example) still use the production parser: `--check` must reject everything `--apply` would, or a bad row surfaces only after the database has been rewritten.
 7. Persistence reuses the existing write-through: the main thread publishes the in-memory final value, posts it to the Disk I/O Worker, an explicit transaction commits, an exact revision is acknowledged, and a rebuilt worker replays from memory.
 
-`chat_qa` is the worked example (`0003_chat_qa.sql` with `scripts/migrateChatQa.ts`).
+The repository keeps only the migration entry from the latest released version to the current version. A new edge must replace the preceding entry, its tests, and its convention registration together.
 
 ## Changing an Inter-Worker Protocol
 

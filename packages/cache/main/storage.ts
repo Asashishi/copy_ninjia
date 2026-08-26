@@ -34,6 +34,5 @@ export const globalAssetState: GlobalAssetState = {
   fortuneThumbnailUrl: undefined,
   probabilityThumbnailUrl: undefined,
   gagThumbnailUrl: undefined,
-  qaThumbnailUrl: undefined,
   botDefaultAvatarUrl: undefined,
 };

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import {
@@ -15,12 +15,18 @@ import {
   sourceFilesUnder,
 } from "./conventions/sourceAnalysis";
 import { collectColdMigrationProblems } from "./conventions/coldMigrations";
+import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
+import { collectCacheOwnershipProblems } from "./conventions/cacheOwnership";
+import type { CacheOwnerPrefix } from "./conventions/cacheOwnership";
+import { collectNodeCompatibilityProblems } from "./conventions/nodeCompatibility";
+import { collectTelegramMessageProblems } from "./conventions/telegramMessages";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
 const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
 const CONSTS_ROOT: string = join(PROJECT_ROOT, "packages", "consts");
 const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
+const SCRIPTS_ROOT: string = join(PROJECT_ROOT, "scripts");
 const COMMANDS_ROOT: string = join(SOURCE_ROOT, "commands");
 
 /** 读取 Git 跟踪清单；约定检查只约束会进入提交的文件。 */
@@ -62,8 +68,11 @@ function withoutMarkdownCodeFences(source: string): string {
 }
 
 /** 检查 Markdown inline/reference link 与 HTML href/src 的本地目标。 */
-function checkMarkdownLocalLinks(path: string, failures: string[]): void {
-  const source: string = readFileSync(path, "utf8");
+async function checkMarkdownLocalLinks(
+  path: string,
+  failures: string[]
+): Promise<void> {
+  const source: string = await Bun.file(path).text();
   const searchable: string = withoutMarkdownCodeFences(source);
   const patterns: readonly RegExp[] = [
     /!?\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^)]*["'])?\s*\)/g,
@@ -114,7 +123,7 @@ const THREAD_ENTRIES: Readonly<Record<string, string>> = {
  * 一致：一份只属于某条线程的状态被别的线程 import，那条线程拿到的是一份永远
  * 对不上的空副本——静态看不出来，运行起来只是「缓存莫名其妙不命中」。
  */
-const CACHE_OWNER_BY_PREFIX: readonly (readonly [string, string])[] = [
+const CACHE_OWNER_BY_PREFIX: readonly CacheOwnerPrefix[] = [
   [join("packages", "cache", "main") + "/", "main"],
   [join("packages", "cache", "workers", "aiChat") + "/", "aiChat"],
   [join("packages", "cache", "workers", "antiRaid") + "/", "antiRaid"],
@@ -131,10 +140,14 @@ const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
 };
 
 const failures: string[] = [];
-for (const problem of collectColdMigrationProblems(PROJECT_ROOT)) {
+for (const problem of await collectColdMigrationProblems(PROJECT_ROOT)) {
   failures.push(`cold migration: ${problem}`);
 }
-for (const problem of collectPerformanceRecordProblems(PROJECT_ROOT)) {
+for (const problem of await collectCoverageMetricProblems(PROJECT_ROOT)) {
+  failures.push(problem);
+}
+
+for (const problem of await collectPerformanceRecordProblems(PROJECT_ROOT)) {
   failures.push(`performance record: ${problem}`);
 }
 const tracked: string[] = trackedFiles();
@@ -143,7 +156,7 @@ for (const trackedPath of tracked) {
   // 允许尚未 stage 的正常删除；其它门禁会从最终工作树/索引确认变更范围。
   if (!existsSync(path)) continue;
   if (extname(path) === ".md") {
-    checkMarkdownLocalLinks(path, failures);
+    await checkMarkdownLocalLinks(path, failures);
   }
   const extension: string = extname(path);
   if (
@@ -153,7 +166,7 @@ for (const trackedPath of tracked) {
   ) {
     continue;
   }
-  if (readFileSync(path, "utf8").startsWith("#!")) continue;
+  if ((await Bun.file(path).text()).startsWith("#!")) continue;
   failures.push(
     `${trackedPath} is a tracked non-script ${extension} file with executable permissions`
   );
@@ -162,7 +175,7 @@ for (const trackedPath of tracked) {
 for (const path of sourceFilesUnder(CACHE_ROOT)) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
-    readFileSync(path, "utf8"),
+    await Bun.file(path).text(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
@@ -190,11 +203,10 @@ for (const path of sourceFilesUnder(CACHE_ROOT)) {
   }
 }
 
-const threadClosures: Map<string, Map<string, string[]>> = new Map(
-  Object.entries(THREAD_ENTRIES).map(
-    ([thread, entry]: [string, string]): [string, Map<string, string[]>] => [thread, threadModuleClosure(entry)]
-  )
-);
+const threadClosures: Map<string, Map<string, string[]>> = new Map();
+for (const [thread, entry] of Object.entries(THREAD_ENTRIES)) {
+  threadClosures.set(thread, await threadModuleClosure(entry));
+}
 
 /**
  * Telegram 凭据、真实客户端、网络分派与出站队列只属主线程。Worker 只能加载
@@ -220,7 +232,7 @@ for (const [thread, closure] of threadClosures) {
     );
   }
   for (const [path, trail] of closure) {
-    for (const dependency of runtimeExternalDependencies(path)) {
+    for (const dependency of await runtimeExternalDependencies(path)) {
       if (dependency !== "grammy" && !dependency.startsWith("@grammyjs/")) continue;
       failures.push(
         `${thread} Worker loads Telegram runtime package ${dependency}: ` +
@@ -230,42 +242,21 @@ for (const [thread, closure] of threadClosures) {
   }
 }
 
-for (const path of sourceFilesUnder(CACHE_ROOT)) {
-  const relativePath: string = relative(PROJECT_ROOT, path);
-  const perThread: boolean = relativePath.startsWith(join("packages", "cache", "perThread") + "/");
-  const owner: string | undefined = CACHE_OWNER_BY_PREFIX.find(
-    ([prefix]: readonly [string, string]): boolean => relativePath.startsWith(prefix)
-  )?.[1];
-  if (owner === undefined && !perThread) {
-    failures.push(
-      `${relativePath} is not under a cache owner directory ` +
-      `(expected packages/cache/{main,workers/<thread>,perThread}/)`
-    );
-    continue;
-  }
-
-  const allowed: ReadonlySet<string> = new Set(
-    owner === undefined
-      ? Object.keys(THREAD_ENTRIES)
-      : [owner, ...(CACHE_OWNER_EXEMPTIONS[relativePath] ?? [])]
-  );
-  for (const [thread, closure] of threadClosures) {
-    if (allowed.has(thread)) continue;
-    const trail: string[] | undefined = closure.get(path);
-    if (trail === undefined) continue;
-    const chain: string = trail
-      .map((step: string): string => relative(PROJECT_ROOT, step))
-      .join(" -> ");
-    failures.push(
-      `${relativePath} is owned by the ${owner} thread but is loaded by the ${thread} thread: ${chain}`
-    );
-  }
+for (const problem of collectCacheOwnershipProblems({
+  projectRoot: PROJECT_ROOT,
+  cacheFiles: sourceFilesUnder(CACHE_ROOT),
+  threadEntries: THREAD_ENTRIES,
+  threadClosures,
+  ownerByPrefix: CACHE_OWNER_BY_PREFIX,
+  exemptions: CACHE_OWNER_EXEMPTIONS,
+})) {
+  failures.push(problem);
 }
 
 for (const path of sourceFilesUnder(CONSTS_ROOT)) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
-    readFileSync(path, "utf8"),
+    await Bun.file(path).text(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
@@ -327,7 +318,13 @@ function checkNoObjectFreeze(path: string, source: ts.SourceFile, failures: stri
 for (const path of sourceFilesUnder(SOURCE_ROOT)) {
   checkNoObjectFreeze(
     path,
-    ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS),
+    ts.createSourceFile(
+      path,
+      await Bun.file(path).text(),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    ),
     failures
   );
 }
@@ -336,7 +333,7 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
   if (path.startsWith(CACHE_ROOT) || path.startsWith(CONSTS_ROOT)) continue;
   const source: ts.SourceFile = ts.createSourceFile(
     path,
-    readFileSync(path, "utf8"),
+    await Bun.file(path).text(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
@@ -357,193 +354,35 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
   }
 }
 
-/**
- * 群聊命令文本必须经统一的 30 秒清理边界发送。例外只有两处，且都是**状态机
- * 拥有的按钮消息**：gag 的会话状态与发言入口（由滚动换新、超时、`/ungag` 或
- * teardown 删除），以及 `/set_qa` 的两按钮表单（由「两项填齐」、TTL 到期或群
- * teardown 删除）。这类消息挂固定 30 秒清理只会让用户照着按钮填到一半时消息
- * 自己消失。头像更新结果虽在 copy owner 内异步落地，但只由 /copy 与
- * /steal_icon 触发，因此同样纳入检查。
- */
-const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
-  ...sourceFilesUnder(COMMANDS_ROOT),
-  join(SOURCE_ROOT, "copy", "avatarQueue.ts"),
-];
-const GAG_COMMAND_PATH: string = join(COMMANDS_ROOT, "gag.ts");
-const GAG_NOTICES_PATH: string = join(COMMANDS_ROOT, "gag", "notices.ts");
-const QA_NOTICES_PATH: string = join(COMMANDS_ROOT, "qa", "notices.ts");
-for (const path of COMMAND_TEXT_OUTPUT_FILES) {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    readFileSync(path, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  function visit(node: ts.Node): void {
-    if (
-      ts.isImportSpecifier(node) &&
-      ["sendEphemeralMessage", "sendMessage"].includes(
-        node.propertyName?.text ?? node.name.text
-      )
-    ) {
-      if (
-        (path === GAG_COMMAND_PATH || path === GAG_NOTICES_PATH ||
-          path === QA_NOTICES_PATH) &&
-        ["sendEphemeralMessage", "sendMessage"].includes(node.name.text)
-      ) {
-        ts.forEachChild(node, visit);
-        return;
-      }
-      failures.push(
-        `${relative(PROJECT_ROOT, path)}:` +
-        `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-        "command text must use sendCommandMessage so group prompts are deleted"
-      );
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
+for (const problem of await collectTelegramMessageProblems(
+  PROJECT_ROOT,
+  SOURCE_ROOT,
+  COMMANDS_ROOT
+)) {
+  failures.push(problem);
 }
 
-/** 只允许 gag 的状态消息与统一入口、以及 qa 的表单入口绕开 30 秒清理。 */
-for (const path of [GAG_COMMAND_PATH, GAG_NOTICES_PATH, QA_NOTICES_PATH]) {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    readFileSync(path, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  function visit(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      ["sendEphemeralMessage", "sendMessage"].includes(node.expression.text)
-    ) {
-      let owner: ts.Node | undefined = node.parent;
-      while (
-        owner !== undefined &&
-        !ts.isVariableDeclaration(owner) &&
-        !ts.isFunctionLike(owner)
-      ) {
-        owner = owner.parent;
-      }
-      const isPublicNoticeAssignment: boolean = path === GAG_COMMAND_PATH &&
-        owner !== undefined && ts.isVariableDeclaration(owner) &&
-        ts.isIdentifier(owner.name) &&
-        owner.name.text === "publicNoticeMessageId";
-      const isSpeakNoticeBoundary: boolean = path === GAG_NOTICES_PATH &&
-        owner !== undefined && ts.isFunctionDeclaration(owner) &&
-        owner.name?.text === "sendGagSpeakNotice";
-      // qa 表单同样只允许唯一那个发送边界；别处再想直接发消息一律拦下。
-      const isQaFormBoundary: boolean = path === QA_NOTICES_PATH &&
-        owner !== undefined && ts.isFunctionDeclaration(owner) &&
-        owner.name?.text === "sendQaForm";
-      if (!isPublicNoticeAssignment && !isSpeakNoticeBoundary && !isQaFormBoundary) {
-        failures.push(
-          `${relative(PROJECT_ROOT, path)}:` +
-          `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-          "only the state-owned gag notice may bypass sendCommandMessage"
-        );
-      }
-    }
-    ts.forEachChild(node, visit);
+for (const root of [SOURCE_ROOT, SCRIPTS_ROOT]) {
+  for (const path of sourceFilesUnder(root)) {
+    const source: ts.SourceFile = ts.createSourceFile(
+      path,
+      await Bun.file(path).text(),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    for (const problem of collectNodeCompatibilityProblems(
+      PROJECT_ROOT,
+      path,
+      source
+    )) failures.push(problem);
   }
-  visit(source);
-}
-
-/**
- * 长期留存的群内消息必须自己带 `messageThreadId`。
- *
- * 判定口径按**留存时长**，不按消息种类：不会自己消失的消息落错话题就是永久
- * 错位，而 30 秒自删的命令回执错也只错到清理为止（见 actions/messages.ts 的
- * SendMessageParams.messageThreadId）。这里检查其中**可静态判定**的那一半——
- * 显式声明 `preserveInGroup: true` 的长期保留例外（两块权限看板、问答看板、
- * 成功的中文动作结果）。它们既然绕开了 30 秒清理，就必须同时带上话题。
- *
- * 只挂 `reply_parameters` 不算数：`allow_sending_without_reply` 会在被回复的
- * 消息已被删除时把这条降级成普通发送，那时只有 `message_thread_id` 还留在
- * 话题里——而这些看板恰恰会一直留在群里让人看见。
- */
-for (const path of sourceFilesUnder(COMMANDS_ROOT)) {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    readFileSync(path, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  function visit(node: ts.Node): void {
-    if (ts.isObjectLiteralExpression(node)) {
-      let preservesInGroup: boolean = false;
-      let carriesThread: boolean = false;
-      for (const property of node.properties) {
-        const name: string | undefined = property.name !== undefined &&
-          ts.isIdentifier(property.name)
-          ? property.name.text
-          : undefined;
-        if (
-          name === "preserveInGroup" &&
-          ts.isPropertyAssignment(property) &&
-          property.initializer.kind === ts.SyntaxKind.TrueKeyword
-        ) preservesInGroup = true;
-        if (name === "messageThreadId") carriesThread = true;
-      }
-      if (preservesInGroup && !carriesThread) {
-        failures.push(
-          `${relative(PROJECT_ROOT, path)}:` +
-          `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-          "preserveInGroup content stays in the chat forever and must also pass messageThreadId"
-        );
-      }
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
-}
-
-/**
- * 入群验证按钮由状态机在点击、离群、豁免或超时结算时删除；inline 运势由
- * Telegram inline API 生成。二者都不能误接命令文本的固定延迟清理边界。
- */
-const FIXED_DELAY_DELETE_EXEMPT_FILES: readonly string[] = [
-  ...sourceFilesUnder(join(COMMANDS_ROOT, "luckChallenge")),
-  join(
-    SOURCE_ROOT,
-    "workers",
-    "antiRaid",
-    "verificationReminders.ts"
-  ),
-];
-for (const path of FIXED_DELAY_DELETE_EXEMPT_FILES) {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    readFileSync(path, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  function visit(node: ts.Node): void {
-    if (
-      ts.isImportSpecifier(node) &&
-      (node.propertyName?.text ?? node.name.text) === "sendCommandMessage"
-    ) {
-      failures.push(
-        `${relative(PROJECT_ROOT, path)}:` +
-        `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-        "state-owned button messages and inline luck results must not use fixed-delay command cleanup"
-      );
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
 }
 
 for (const path of sourceFilesUnder(SOURCE_ROOT)) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
-    readFileSync(path, "utf8"),
+    await Bun.file(path).text(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS

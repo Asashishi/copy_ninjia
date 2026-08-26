@@ -2,11 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { formatTokyoTime } from "../../packages/libs/time";
 
 /**
- * formatTokyoTime 改成固定 UTC+9 算术之后，唯一的正确性依据就是「与原来的
- * Intl 格式器逐字符相同」。参照实现在这里重建一份，逐点对拍。
- *
- * 这条用例同时是那次性能改动的语义护栏：任何人把算术改回去、或者动了拼接
- * 顺序/补零，都会在这里立刻失败。
+ * formatTokyoTime 的固定 UTC+9 算术与 Intl 参照实现逐字符对拍；拼接顺序与补零
+ * 规则必须保持一致。
  */
 const REFERENCE_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Tokyo",

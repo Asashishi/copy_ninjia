@@ -82,10 +82,7 @@ function scheduleUserReplyTriggerSweep(now: number): void {
  * 交互不经过这里，由 Worker 的有界直接触发队列承接。
  */
 export function tryClaimUserReplyTrigger(chatId: number, speakerId: number, now: number = Date.now()): boolean {
-  // 走 libs/verificationKey 这唯一一处「群 × 身份」键定义，而不是就地拼一个
-  // 下划线版本。此前这里自带一套 `${chatId}_${speakerId}`，是全仓第二套格式——
-  // 那个模块的头注写明它存在的理由正是「格式散落各处，改起来漏一处就是静默
-  // 丢条目」，广告检测队列也复用同一格式。
+  // 所有「群 × 身份」键都由 libs/verificationKey 生成，广告检测队列也复用同一格式。
   const key: string = verificationKey(chatId, speakerId);
   const lastTime: number | undefined = userReplyTriggerTimes.get(key);
   // 时钟回拨时旧冷却点位于未来；先失效它，再从新时间轴计时。

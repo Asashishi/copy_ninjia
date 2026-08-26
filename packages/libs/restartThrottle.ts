@@ -1,4 +1,4 @@
-import { LinkedQueue } from "./linkedQueue";
+import { TimestampDeque } from "./timestampDeque";
 import { tryConsumeSlidingWindow } from "./slidingWindowRateLimit";
 
 /**
@@ -10,9 +10,13 @@ import { tryConsumeSlidingWindow } from "./slidingWindowRateLimit";
  * 过期记录都修剪不掉——下一次崩溃会和一堆早该出局的时间戳一起计数，
  * `shouldGiveUp()` 立刻为真，Worker 被永久判死（业务 Worker 则连带停掉
  * runner）。共用实现只丢落在未来的那段队尾，保留仍然合法的历史记录。
+ *
+ * @param maxRestarts 窗口内允许的重启次数，必须为正整数——它同时是时间戳环形
+ *   缓冲的容量，非正值在构造时即拒绝（见 libs/dequeCapacity.ts）。
  */
 export function createRestartThrottle(maxRestarts: number, windowMs: number): { shouldGiveUp: () => boolean } {
-  const timestamps: LinkedQueue<number> = new LinkedQueue();
+  // 只在仍有配额时记账，长度恒不超过 maxRestarts；环形缓冲按这个数定容。
+  const timestamps: TimestampDeque = new TimestampDeque(maxRestarts);
   return {
     // 语义与 tryConsumeSlidingWindow 恰好互为反面：还在配额内就记一次本次重启并继续自愈，
     // 配额已满则不记账（被拒的这次不占后续窗口名额）并放弃。

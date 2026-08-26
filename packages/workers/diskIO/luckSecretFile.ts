@@ -1,24 +1,29 @@
-import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { LUCK_DAY_PATTERN, LUCK_RECEIPT_SECRET_PATTERN } from "../../consts/luckReceipt";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { assertFileReadableWritable } from "../../libs/fileAccess";
 import { isCanonicalDateKey } from "../../libs/time";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 
 export interface LuckSecretFileIO {
-  generateKey: () => Buffer;
+  generateKey: () => Uint8Array;
   writeText: (path: string, content: string, mode: number) => void;
-  chmod: (path: string, mode: number) => void;
+}
+
+/** 用 Bun 支持的 Web Crypto CSPRNG 完整覆写 32 字节日级密钥。 */
+function generateLuckReceiptKey(): Uint8Array {
+  const key: Uint8Array = new Uint8Array(32);
+  crypto.getRandomValues(key);
+  return key;
 }
 
 const DEFAULT_IO: LuckSecretFileIO = {
-  generateKey: (): Buffer => randomBytes(32),
+  generateKey: generateLuckReceiptKey,
   writeText: atomicWriteTextSync,
-  chmod: chmodSync,
 };
 
 function decodeLuckReceiptSecret(value: unknown, path: string): LuckReceiptSecret {
@@ -37,17 +42,24 @@ function decodeLuckReceiptSecret(value: unknown, path: string): LuckReceiptSecre
   if (typeof raw.key !== "string" || !LUCK_RECEIPT_SECRET_PATTERN.test(raw.key)) {
     throw new Error(`${path}.key is invalid`);
   }
-  const decoded: Buffer = Buffer.from(raw.key, "base64url");
-  if (decoded.length !== 32 || decoded.toString("base64url") !== raw.key) {
+  const decoded: Uint8Array = Uint8Array.fromBase64(raw.key, { alphabet: "base64url" });
+  if (
+    decoded.length !== 32 ||
+    decoded.toBase64({ alphabet: "base64url", omitPadding: true }) !== raw.key
+  ) {
     throw new Error(`${path}.key is not canonical base64url`);
   }
   return { version: 1, day: raw.day, key: raw.key };
 }
 
 function newSecret(day: string, path: string, io: LuckSecretFileIO): LuckReceiptSecret {
-  const generated: Buffer = io.generateKey();
+  const generated: Uint8Array = io.generateKey();
   if (generated.length !== 32) throw new Error("Luck receipt key generator must return exactly 32 bytes");
-  const secret: LuckReceiptSecret = { version: 1, day, key: generated.toString("base64url") };
+  const secret: LuckReceiptSecret = {
+    version: 1,
+    day,
+    key: generated.toBase64({ alphabet: "base64url", omitPadding: true }),
+  };
   io.writeText(path, `${JSON.stringify(secret, null, 2)}\n`, PERSISTED_FILE_MODE);
   return secret;
 }
@@ -58,6 +70,12 @@ export interface RecoverLuckReceiptSecretParams {
   confirmedResultCount: number;
   path?: string;
   io?: LuckSecretFileIO;
+}
+
+export interface LuckSecretRecoveryInspection {
+  readonly day: string;
+  readonly path: string;
+  readonly secret: LuckReceiptSecret | null;
 }
 
 /**
@@ -77,26 +95,24 @@ function assertSecretCanBeCreated(
  * 损坏、未来日期、字段异常及“已有结果但密钥缺失/过期”一律拒绝，绝不
  * 静默覆盖导致当天尚未确认的预览结果改变。
  */
-export function recoverLuckReceiptSecret(
+export function inspectLuckReceiptSecret(
   {
     day,
     confirmedResultCount,
     path = LUCK_RECEIPT_SECRET_PATH,
-    io = DEFAULT_IO,
   }: RecoverLuckReceiptSecretParams
-): LuckReceiptSecret {
+): LuckSecretRecoveryInspection {
   if (!LUCK_DAY_PATTERN.test(day) || !isCanonicalDateKey(day)) {
     throw new Error("Luck receipt target day must be a canonical YYYY-MM-DD date.");
   }
   if (!Number.isSafeInteger(confirmedResultCount) || confirmedResultCount < 0) {
     throw new Error(`Invalid confirmed luck result count for ${day}: ${confirmedResultCount}`);
   }
-  mkdirSync(dirname(path), { recursive: true });
   if (!existsSync(path)) {
     assertSecretCanBeCreated(confirmedResultCount, path);
-    return newSecret(day, path, io);
+    return { day, path, secret: null };
   }
-  if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) io.chmod(path, PERSISTED_FILE_MODE);
+  assertFileReadableWritable(path);
 
   let secret: LuckReceiptSecret;
   try {
@@ -109,7 +125,27 @@ export function recoverLuckReceiptSecret(
   }
   if (secret.day < day) {
     assertSecretCanBeCreated(confirmedResultCount, path);
-    return newSecret(day, path, io);
+    return { day, path, secret: null };
   }
-  return secret;
+  return { day, path, secret };
+}
+
+/** 全域严格 inspect 成功后接管已有密钥，或按首次创建语义生成当天密钥。 */
+export function adoptLuckReceiptSecret(
+  inspection: LuckSecretRecoveryInspection,
+  io: LuckSecretFileIO = DEFAULT_IO
+): LuckReceiptSecret {
+  if (inspection.secret !== null) return inspection.secret;
+  mkdirSync(dirname(inspection.path), { recursive: true });
+  return newSecret(inspection.day, inspection.path, io);
+}
+
+/** 单领域恢复入口；跨域启动编排使用 inspect/adopt 两阶段 API。 */
+export function recoverLuckReceiptSecret(
+  params: RecoverLuckReceiptSecretParams
+): LuckReceiptSecret {
+  return adoptLuckReceiptSecret(
+    inspectLuckReceiptSecret(params),
+    params.io ?? DEFAULT_IO
+  );
 }

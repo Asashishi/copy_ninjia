@@ -2,7 +2,7 @@
  * 完整流程子进程：逐次量生产入口到该动作完成点的本地端到端耗时。
  *
  * 与热路径分区的分工要说清楚：那边量的是纯 CPU 叶子和编排主干，这里量的是
- * 五条落盘动作回答**一条业务事实真正写进硬盘要多久**，包含 Worker 消息往返、
+ * 六条落盘动作回答**一条业务事实真正写进硬盘要多久**，包含 Worker 消息往返、
  * SQLite 事务、追加写与 fsync；两条命令流程回答一次群消息在排除网络后需要多少
  * 本地处理。两组数的完成点由文档行名明确说明，不能互相换算。
  *
@@ -25,6 +25,7 @@ import {
   CHAIN_AD_DETECT_COMMANDS,
   CHAIN_AI_MEMORY_SNAPSHOTS,
   CHAIN_AI_REPLY_COMMANDS,
+  CHAIN_CHAT_QA_WRITES,
   CHAIN_CHAT_STATE_WRITES,
   CHAIN_IDENTITY_BATCHES,
   CHAIN_JOIN_LOG_EVENTS,
@@ -61,6 +62,7 @@ import {
 import { hydrateIdentityStorageCounts, queueIdentityPolicyWrite } from
   "../../../packages/infra/identityStorage";
 import { persistChatState } from "../../../packages/infra/chatStateStorage";
+import { setChatQa } from "../../../packages/infra/qaStore";
 import { recordJoinLog } from "../../../packages/infra/joinLog";
 import { getOrCreateChatState } from
   "../../../packages/infra/storage/stateStore";
@@ -212,6 +214,27 @@ function chatStateChain(): ChainDefinition {
       state.isAntiRaidEnabled = (sequence & 1) === 0;
       state.title = `Performance fixture chat ${sequence}`;
       await persistChatState(chatId, "performance benchmark chain");
+    },
+  };
+}
+
+function chatQaChain(): ChainDefinition {
+  return {
+    chain: "chat-qa-write",
+    operations: CHAIN_CHAT_QA_WRITES,
+    recordsPerOperation: 1,
+    run: async (sequence: number): Promise<void> => {
+      const chatId: number = chatIdForSequence(sequence);
+      // 每群固定一个问题，在首轮新增后持续替换答案：既不越过每群 5 条硬顶，
+      // 又保证每次编码结果真的变化，不把重复最终值当成一次真实写入。
+      setChatQa(
+        chatId,
+        "性能基准问题",
+        `性能基准答案 ${sequence}`
+      );
+      if (await flushDiskIODomain("chatQa") !== "flushed") {
+        throw new Error(`Chat Q&A write ${sequence} was not committed.`);
+      }
     },
   };
 }
@@ -473,6 +496,8 @@ function createChain(chain: ChainName): ChainDefinition {
       return identityPolicyChain();
     case "chat-state-write":
       return chatStateChain();
+    case "chat-qa-write":
+      return chatQaChain();
     case "ai-memory-snapshot":
       return aiMemoryChain();
     case "diagnostic-log":
@@ -490,6 +515,7 @@ function parseChainName(value: string | undefined): ChainName {
     case "join-log-append":
     case "identity-policy-write":
     case "chat-state-write":
+    case "chat-qa-write":
     case "ai-memory-snapshot":
     case "diagnostic-log":
     case "ad-detect-command":
@@ -498,7 +524,7 @@ function parseChainName(value: string | undefined): ChainName {
     default:
       throw new Error(
         "Chain child expects one of join-log-append|identity-policy-write|" +
-        "chat-state-write|ai-memory-snapshot|diagnostic-log|ad-detect-command|" +
+        "chat-state-write|chat-qa-write|ai-memory-snapshot|diagnostic-log|ad-detect-command|" +
         "ai-reply-command."
       );
   }
@@ -582,8 +608,8 @@ async function runChainChild(chain: ChainName): Promise<ChainRound> {
   routeBusinessLogsToStderr();
   installOutboundGuards();
   // 罐头只给命令链路装，且必须装在硬闸之后才在最外层（理由见 outboundGuard.ts）。
-  // 不给其余五条装是有意的：硬闸的第二个作用是「越界出站 = 一次响亮的失败」，
-  // 而罐头会把越界变成一次安静的成功。那五条按设计根本碰不到出站，保持它们撞在
+  // 不给其余六条装是有意的：硬闸的第二个作用是「越界出站 = 一次响亮的失败」，
+  // 而罐头会把越界变成一次安静的成功。那六条按设计根本碰不到出站，保持它们撞在
   // 硬闸上，将来谁不小心把出站引进那些链路，仍然是当场炸而不是悄悄出一个数。
   if (COMMAND_CHAINS.has(chain)) installCannedTelegramOutbound();
   initDiskIO();
@@ -598,5 +624,5 @@ async function runChainChild(chain: ChainName): Promise<ChainRound> {
 /** `--child chain <name>` 的入口；结果按 JSON 打到 stdout。 */
 export async function main(argument: string | undefined): Promise<void> {
   const round: ChainRound = await runChainChild(parseChainName(argument));
-  process.stdout.write(`${JSON.stringify(round)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(round)}\n`);
 }

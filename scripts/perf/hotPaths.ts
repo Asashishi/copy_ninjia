@@ -50,8 +50,7 @@ interface BenchmarkResult {
    * 采样期间**留存下来**的堆增量（采样前后各做一次 full GC 再读）。
    *
    * 这里只有 retained 一组，没有「GC 前」的对应项：`heapStats()` 的计数在 GC
-   * 边界才更新，采样后不 GC 直接读恒为 0（见 HeapSnapshot），那组数曾经存在过，
-   * 但它衡量不了任何东西，留着只会被误读成「这条路径不分配」。
+   * 边界才更新，采样后不 GC 直接读恒为 0（见 HeapSnapshot），不能用来衡量分配。
    *
    * 也要清楚它**不度量分配速率**：采样中被回收的短命对象一律不计。短命分配
    * 的运行时后果由 steadyProfile 模式的 GC 采样占比、heapUsed 与 RSS 节拍峰值
@@ -147,6 +146,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "ad-capacity-reject":
     case "identity-permission-read":
     case "linked-timestamp-window":
+    case "quota-timestamp-window":
     case "bounded-rolling-buffer":
     case "chat-state-read":
     case "chat-state-map-read":
@@ -171,7 +171,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "<sender-no-username|sender-stable-username|luck-receipt-fast-path|" +
         "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
         "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
-        "linked-timestamp-window|bounded-rolling-buffer|" +
+        "linked-timestamp-window|quota-timestamp-window|bounded-rolling-buffer|" +
         "chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
         "ai-media-direct-trigger|" +
         "flood-window-hit|flood-window-growth|flood-window-steady|" +
@@ -326,8 +326,8 @@ async function runBenchmark(
   };
 }
 
-const scenarioName: ScenarioName = parseScenarioName(process.argv[2]);
-const mode: string | undefined = process.argv[3];
+const scenarioName: ScenarioName = parseScenarioName(Bun.argv[2]);
+const mode: string | undefined = Bun.argv[3];
 if (mode !== undefined && mode !== "--profile") {
   throw new Error("Usage: bun scripts/perf/hotPaths.ts <scenario> [--profile]");
 }
@@ -335,7 +335,7 @@ const result: BenchmarkResult = await runBenchmark(
   scenarioName,
   mode === "--profile"
 );
-process.stdout.write(`${JSON.stringify(result)}\n`);
+await Bun.write(Bun.stdout, `${JSON.stringify(result)}\n`);
 
 if (aiReplyActivitySweepState.timer !== null || aiReplyActivityByChat.size > 0) {
   clearAiReplyActivity();

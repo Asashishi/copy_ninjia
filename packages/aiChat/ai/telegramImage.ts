@@ -38,14 +38,9 @@ export async function downloadTelegramVisionImage({
       return null;
     }
 
-    // 下载缓冲已从主线程转移并归本 Worker 独占；建立 Buffer 视图即可，避免
-    // 为单张大图再复制一次并增加峰值堆与 GC 压力。
-    const imageBytes: Buffer = Buffer.from(
-      download.bytes.buffer,
-      download.bytes.byteOffset,
-      download.bytes.byteLength
-    );
-    const image: VisionImage | null = await prepareVisionImage(imageBytes);
+    // 下载缓冲已从主线程转移并归本 Worker 独占，直接传递同一个 Uint8Array，
+    // 不为单张大图建立额外视图或复制字节。
+    const image: VisionImage | null = await prepareVisionImage(download.bytes);
     if (!image) {
       logger.error(`${logLabel} is an unsupported/unrecognized image format.`);
       return null;

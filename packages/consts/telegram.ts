@@ -1,4 +1,4 @@
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions, MessageEntity } from "@grammyjs/types";
 
 /** Telegram API 封装（packages/infra/telegram/）的调参常量。 */
 
@@ -197,3 +197,21 @@ export const SELF_SENT_RENDEZVOUS_TIMEOUT_MS: number = 1_000;
  * 下次查询就地覆盖，不会累积。
  */
 export const INLINE_RESULT_SOURCE_MAX_AUTHORS: number = 1_024;
+
+/**
+ * Markdown 代码块的围栏字面量；开栏（```<语言>）与闭栏（```）共用同一串。
+ *
+ * Telegram 客户端在发送前就把围栏折成 `pre` 实体，因此这串只出现在两处：把
+ * 实体还原成可落盘文本时补写，以及把落盘文本拆回实体时识别（见
+ * libs/codeFence.ts）。所属模块：packages/libs/codeFence.ts。
+ */
+export const CODE_FENCE: string = "```";
+
+/**
+ * 无富文本实体时共用的空实体表。
+ *
+ * 存在的意义是让「这条消息没有实体」这条常态不必每次都分配一个新数组——
+ * 问答直答对每条命中的答案都要走一次渲染，而绝大多数答案里没有代码块。
+ * 所属模块：packages/libs/codeFence.ts。
+ */
+export const EMPTY_MESSAGE_ENTITIES: readonly MessageEntity[] = [];

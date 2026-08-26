@@ -5,12 +5,13 @@ import {
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,
   RATE_LIMIT_WINDOW_MS,
 } from "../../packages/consts/luckChallenge";
+import { timestampDequeContents } from "../helpers/timestampDeque";
 
 afterEach(() => { recentCallTimestamps.clear(); });
 
-/** 队列内容快照：窗口是 LinkedQueue，断言前先摊平成数组。 */
+/** 队列内容快照：窗口是定容环形缓冲，断言前先摊平成数组。 */
 function windowContents(): number[] {
-  return recentCallTimestamps.last(recentCallTimestamps.size);
+  return timestampDequeContents(recentCallTimestamps);
 }
 
 describe("运势全局滑动窗口", () => {

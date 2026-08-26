@@ -5,8 +5,8 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
  * isChatAdmin）。
  *
  * 它是一条权限边界：`undefined` 表示「没查出来」，调用方必须按不处置办。刷屏
- * 禁言与广告处置两条链路此前各抄了一份实现，改一份漏一份就会对「谁豁免」各执
- * 一词；收敛到一处之后，那两条链路的用例把它 mock 掉，真语义只剩这里钉。
+ * 禁言与广告处置共用这一权限边界；两条链路的用例会 mock 它，真实语义由本文件
+ * 直接覆盖。
  */
 
 const errorLogs: string[] = [];
@@ -23,7 +23,7 @@ mock.module("../../../packages/infra/logger", () => ({
   },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {
+  telegramApi: {
     getChatAdministrators: async (chatId: number): Promise<{ user: { id: number }; is_anonymous?: boolean }[]> => {
       fetchCalls++;
       const admins: Set<number> | undefined = fetchedAdmins.get(chatId);

@@ -2,7 +2,7 @@ import { logger } from "../../infra/logger";
 import {
   deleteMessage,
   sendMessage,
-  joinVerificationApi,
+  telegramApi,
 } from "../../infra/telegram";
 import {
   VERIFICATION_BUTTON_TEXT,
@@ -92,7 +92,7 @@ function attemptReminderDelivery(
         chatId: delivery.chatId,
         text: delivery.text,
         replyToMessageId: delivery.replyToMessageId,
-        api: joinVerificationApi,
+        api: telegramApi,
         keyboard: verifyKeyboard,
       });
     } catch (error: unknown) {
@@ -108,7 +108,7 @@ function attemptReminderDelivery(
     ) {
       if (reminderMessageId !== undefined) {
         void trackAntiRaidTask({
-          task: deleteMessage(delivery.chatId, reminderMessageId, joinVerificationApi),
+          task: deleteMessage(delivery.chatId, reminderMessageId, telegramApi),
         });
       }
       return;

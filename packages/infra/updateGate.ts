@@ -10,15 +10,9 @@ import type { Message } from "@grammyjs/types";
  * app/registerHandlers.ts 的同一个前置 middleware 中合取。
  * /permission 与 /white 同样位于本中间件之后，只有通过初始化网关才能处理。
  *
- * 指向自己的 via_bot 消息**不**豁免。曾经有过这么一条，理由是「否则运势回执
- * 够不到 confirmLuckDraw」，但那个前提早就不成立了：回执是 registerHandlers.ts
- * 里排在本网关**之前**的一道 bot.use，转发副本也要认，从来不经过这里。留着它
- * 只对「从没 /init enable 过」的群有效果（已启用的群下一行本来就放行），而
- * inline 模式是公开的——任何人 `@bot <query>` 选一条结果，就能让这条更新进
- * 身份预热、入群守卫和刷屏流水线，每条都换一次没有缓存的 getChatMember
- * （recordBotChatPermissions 对未初始化的群不落盘，见 infra/botAdmin.ts），频率由
- * 对方控制。收益是零：唯一的下游 recordSelfInlineResult 要求本群开着 AI 闲聊，
- * 而 /ai_chat enable 本身就在网关之后。
+ * 指向自己的 via_bot 消息**不**豁免。运势回执确认位于本网关之前；未初始化群
+ * 的 via_bot 更新不得进入身份预热、入群守卫和刷屏流水线。唯一相关的下游
+ * recordSelfInlineResult 也要求本群已经启用 AI 闲聊。
  */
 export function shouldPassInitGate(ctx: Context): boolean {
   if (ctx.myChatMember) return true;
@@ -31,10 +25,8 @@ export function shouldPassInitGate(ctx: Context): boolean {
   const actorId: number | undefined =
     message?.sender_chat?.id ??
     (ctx.chat.type === "channel" ? ctx.chat.id : ctx.from?.id);
-  // 身份判定排在全部字符串工作之前。走到这里的是**未初始化群里的每一条消息**，
-  // 而其中几乎没有一条是超级管理员发的；把切词、两次 toLowerCase 与模板拼接
-  // 留在它后面，本网关才对得起「低成本」这个定位。实测（Bun 1.3.14，5 个独立
-  // 进程各 5 轮取中位数）267.9 → 7.0 ns/op，判定结果逐例不变。
+  // 身份判定排在全部字符串工作之前；未初始化群的普通消息无需切词、大小写归一
+  // 或模板拼接。
   if (actorId !== SUPER_ADMIN_USER_ID) return false;
   const text: string = message?.text ?? "";
   const firstToken: string = text.split(/\s/, 1)[0]?.toLowerCase() ?? "";

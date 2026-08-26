@@ -156,6 +156,32 @@ describe("Telegram 动作适配层失败归一化", () => {
     );
   });
 
+  test("批量反应动作原样传递普通、自定义与清除状态", async () => {
+    const setMessageReaction = mock(async (..._args: unknown[]): Promise<true> => true);
+    const api: Api = { setMessageReaction } as unknown as Api;
+    const signal: AbortSignal = new AbortController().signal;
+
+    await actions.setMessageReactions({
+      chatId: -1001,
+      messageId: 3,
+      reactions: [{ type: "custom_emoji", custom_emoji_id: "custom-1" }],
+      api,
+      signal,
+    });
+    await actions.setMessageReactions({
+      chatId: -1001,
+      messageId: 3,
+      reactions: [],
+      api,
+      signal,
+    });
+
+    expect(setMessageReaction.mock.calls).toEqual([
+      [-1001, 3, [{ type: "custom_emoji", custom_emoji_id: "custom-1" }], {}, signal],
+      [-1001, 3, [], {}, signal],
+    ]);
+  });
+
   test("停机取消当前 update 时 abort Telegram 请求并向上解开 handler", async () => {
     const controller: AbortController = new AbortController();
     let requestSignal: AbortSignal | undefined;
@@ -332,7 +358,7 @@ describe("解除封禁必须带 only_if_banned", () => {
 describe("黑名单封禁结果归一化", () => {
   test("权限不足与偶发失败必须分成两档", async () => {
     // 缺封禁权限时重试多少次都一样，只有权限本身变了才有意义；把它跟限流、
-    // 网络抖动混成一个 false，主线程就只能按时间盲目重试（见 infra/blocklist.ts）。
+    // 网络抖动混成一个 false，主线程就只能按时间盲目重试（见 infra/blocklist/）。
     const banChatMember = mock(async (..._args: unknown[]) => true);
     const api: Api = { banChatMember } as unknown as Api;
     expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("banned");
@@ -366,5 +392,64 @@ describe("黑名单封禁结果归一化", () => {
 
     await actions.banChatMember(-1001, 7, api);
     expect(banChatMember).toHaveBeenLastCalledWith(-1001, 7, { revoke_messages: true });
+  });
+});
+
+describe("editMessageText 的失败分档", () => {
+  function editApi(reject: () => never): Api {
+    return { editMessageText: mock(async (..._args: unknown[]): Promise<never> => reject()) } as unknown as Api;
+  }
+
+  test("「内容本就相同」报成功且不记 API 错误", async () => {
+    // 翻页按钮把同一页再点一次就会撞上它：目标状态已经达成，调用方要的是
+    // 「这条消息现在显示的是这一页」。
+    logApiError.mockClear();
+    const api: Api = editApi((): never => {
+      throw new GrammyError("x", {
+        ok: false,
+        error_code: 400,
+        description: "Bad Request: message is not modified",
+      }, "editMessageText", {});
+    });
+
+    expect(await actions.editMessageText({ chatId: -1001, messageId: 7, text: "x", api: api as never }))
+      .toBe(true);
+    expect(logApiError).not.toHaveBeenCalled();
+  });
+
+  test("真实失败报失败并记一次 API 错误", async () => {
+    logApiError.mockClear();
+    const api: Api = editApi((): never => { throw new Error("socket hang up"); });
+
+    expect(await actions.editMessageText({ chatId: -1001, messageId: 7, text: "x", api: api as never }))
+      .toBe(false);
+    expect(logApiError).toHaveBeenCalledTimes(1);
+  });
+
+  test("调用方 signal 已 abort 时与同类动作一样不记 API 错误", async () => {
+    // 本文件其余动作全部按 `actionSignal?.aborted !== true` 判定；editMessageText
+    // 曾经是唯一的例外，把停机/取消造成的失败记成 Telegram API 错误。
+    const controller: AbortController = new AbortController();
+    controller.abort();
+    const abortRejection = (): never => { throw new DOMException("aborted", "AbortError"); };
+
+    logApiError.mockClear();
+    expect(await actions.editMessageText({
+      chatId: -1001, messageId: 7, text: "x",
+      api: editApi(abortRejection) as never,
+      signal: controller.signal,
+    })).toBe(false);
+    const editCalls: number = logApiError.mock.calls.length;
+
+    logApiError.mockClear();
+    await actions.sendMessageWithResult({
+      chatId: -1001, text: "x",
+      api: { sendMessage: mock(async (..._args: unknown[]): Promise<never> => abortRejection()) } as never,
+      signal: controller.signal,
+    });
+    const sendCalls: number = logApiError.mock.calls.length;
+
+    expect(editCalls).toBe(sendCalls);
+    expect(editCalls).toBe(0);
   });
 });

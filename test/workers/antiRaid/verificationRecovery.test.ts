@@ -35,7 +35,7 @@ mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () =
   requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {
+  telegramApi: {
     getChat: async (): Promise<{ type: "supergroup" }> => ({ type: "supergroup" }),
   },
   sendMessage: async (): Promise<number | undefined> => {

@@ -12,7 +12,12 @@ import { getChatState, getOrCreateChatState } from "../../../packages/infra/stor
 import type { ChatState } from "../../../packages/types/chatState";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
-import { trimSlidingWindow } from "../../../packages/libs/slidingWindowRateLimit";
+import {
+  trimSlidingWindow,
+  tryConsumeSlidingWindow,
+} from "../../../packages/libs/slidingWindowRateLimit";
+import { TimestampDeque } from "../../../packages/libs/timestampDeque";
+import { CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../../packages/consts/commands";
 import { readBotChatPermissions } from "../../../packages/libs/chatMember";
 import { cacheSender } from "../../../packages/users/senderIdentity";
 import {
@@ -152,6 +157,12 @@ function aiActivityLruMissScenario(): Scenario {
   };
 }
 
+/**
+ * 无硬顶滑动窗口的容器成本：`LinkedQueue` + `trimSlidingWindow` 就是反刷群
+ * 入群窗口（`workers/antiRaid/lockdownRuntime.ts` 的 recordJoin）用的那一套。
+ * 它是全仓唯一还留在链表上的滑动窗口，理由见 `types/antiRaid/internal.ts`
+ * 的 JoinWindow：入群记账无配额上界，定容环形缓冲会在刷群时撑满抛错。
+ */
 function linkedTimestampWindowScenario(): Scenario {
   const timestamps: LinkedQueue<number> = new LinkedQueue();
   let now: number = BENCHMARK_EPOCH_MS;
@@ -172,6 +183,45 @@ function linkedTimestampWindowScenario(): Scenario {
     probes: {
       trimSlidingWindow,
       ...prototypeProbes("LinkedQueue", LinkedQueue.prototype, ["push"]),
+    },
+  };
+}
+
+/**
+ * 有硬顶配额窗口的容器成本：`TimestampDeque` + `tryConsumeSlidingWindow` 是
+ * 除入群窗口外所有滑动窗口用的那一套（中文动作命令、运势内联查询、AI 回复长
+ * 窗口、Worker 重启节流）。容量直接引生产常量——配额上限即长度上界，判定只在
+ * 未满时记账，环形缓冲因此永远撑不满。
+ *
+ * 与 linked-timestamp-window 同窗口长度、同迭代数，两行读数直接可比：链表每次
+ * 记账要新建一个节点对象，环形缓冲不分配。
+ */
+function quotaTimestampWindowScenario(): Scenario {
+  const timestamps: TimestampDeque =
+    new TimestampDeque(CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW);
+  let now: number = BENCHMARK_EPOCH_MS;
+  return {
+    iterations: 1_000_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        now += 1;
+        if (tryConsumeSlidingWindow({
+          timestamps,
+          windowMs: 165,
+          maxCalls: CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW,
+          now,
+        })) checksum += 1;
+      }
+      return checksum;
+    },
+    reset: (): void => {
+      timestamps.clear();
+      now = BENCHMARK_EPOCH_MS;
+    },
+    probes: {
+      tryConsumeSlidingWindow,
+      ...prototypeProbes("TimestampDeque", TimestampDeque.prototype, ["push", "trim"]),
     },
   };
 }
@@ -385,21 +435,16 @@ function gagSpeakCounterScenario(): Scenario {
  * 调用点见 antiRaid/updateIngress.ts、antiRaid/floodControl.ts、
  * antiRaid/adCandidate.ts、auto/message/index.ts、aiChat/availability.ts）。
  *
- * **Map 查找刻意提到循环外**：本场景量的是对象 shape 稳定性，而不是
- * `chatStateCache.get`。把 `getChatState` 整个放进循环的话，哈希查找的成本会盖住
- * property access 那几纳秒，两种形状的读数在本机噪声里分不开——先前试过，
- * 基线与修复版都落在 18~32 ns/op 的同一片区间。这里只轮转已经取到手的状态对象，
- * 量的正好是 D1 改动的那一步。
+ * **Map 查找刻意提到循环外**：本场景量对象 shape 稳定性，而不是
+ * `chatStateCache.get`。这里只轮转已经取到手的状态对象，避免哈希查找掩盖字段读取。
  *
  * 状态表刻意由不同写入方各设一个字段建出来，复刻生产里各写各的那种分布：只有
  * 当每份 ChatState 都出自 createChatState() 的同一个隐藏类时，这个读取点才拿得到
  * 内联缓存。没有条目的群走 DEFAULT_CHAT_STATE，它也必须是同一个形状，因此一并
  * 排进轮转。
  *
- * 本机 Bun 1.3.14 各跑 3 次的中位数：规范形状 5.57 / 5.89 / 5.96，改动前的发散
- * 形状 5.78 / 6.22 / 7.50 ns/op——修复侧更快且离散度明显更小。**不要拿它去对
- * 「2 倍」那个数**：那份读数来自只量 property access、且把加字段后再 delete 的
- * 形状迁移也算进去的微基准，这个 fixture 只复刻了 7 种形状，没有 delete 迁移。
+ * fixture 只复刻七种生产形状，不包含字段删除造成的隐藏类迁移；报告仅用于本场景
+ * 固定输入下的纵向门禁。
  */
 function chatStateReadScenario(): Scenario {
   const writers: readonly ((state: ChatState) => void)[] = [
@@ -505,6 +550,8 @@ export function createScenario(name: ScenarioName): Scenario {
       return createIdentityPermissionReadScenario();
     case "linked-timestamp-window":
       return linkedTimestampWindowScenario();
+    case "quota-timestamp-window":
+      return quotaTimestampWindowScenario();
     case "bounded-rolling-buffer":
       return boundedRollingBufferScenario();
     case "chat-state-read":

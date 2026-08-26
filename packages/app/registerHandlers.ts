@@ -14,6 +14,7 @@ import {
   handleFloodControlCommand,
   handleGagCommand,
   handleGagMessageIngress,
+  handleQaBoardCallback,
   handleQaMessageIngress,
   handleQueryQaCommand,
   handleRemoveQaCommand,
@@ -111,7 +112,10 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 预热是 best-effort：Disk I/O 自愈窗口里冷读会失败，prefetchIdentityPolicies
   // 自己就地降级并返回 false（异常逸出会被 bot.catch 重抛成整进程重启循环，
   // 见该函数头注）。本中间件不消费这个结论——留冷即按 fail-closed 判定。
-  bot.use(async (ctx: Context, next: NextFunction): Promise<void> => {
+  //
+  // **不写成 async**：全热 update 的 ids 恒为 null，不应为每条 update 无条件创建
+  // promise 与 async 帧；只有冷读分支返回实际 Promise。
+  bot.use((ctx: Context, next: NextFunction): Promise<void> => {
     let ids: number[] | null = null;
     if (ctx.from !== undefined) ids = appendColdIdentityId(ids, ctx.from.id);
     if (ctx.msg?.sender_chat !== undefined) {
@@ -156,8 +160,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     if (ctx.chatMember !== undefined) {
       ids = appendColdIdentityId(ids, ctx.chatMember.new_chat_member.user.id);
     }
-    if (ids !== null) await prefetchIdentityPolicies(ids);
-    return next();
+    return ids === null ? next() : prefetchIdentityPolicies(ids).then(next);
   });
 
   // 私聊命令已在前置网关统一收口；活动中的 /send 中转会话只把非命令消息
@@ -181,10 +184,15 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
-  // /set_qa 表单结果同样要覆盖命令消息，且必须终止本条 update：那条中转消息
+  // /set_qa 表单投递同样要覆盖命令消息，且必须终止本条 update：那条投递消息
   // 已经被认领并删除，再放进 AI、复读或命令链路只会处理一个不存在的东西。
-  bot.on("message", async (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> => {
-    if (await handleQaMessageIngress(ctx.message, ctx.me.id)) return;
+  // 必须同时挂在 channel_post 上——频道里的「问题:」「回答:」是频道帖，只监听
+  // message 的话频道根本填不了表单，而频道能设置问答正是本轮改动的目的。
+  bot.on(["message", "channel_post"], async (
+    ctx: Filter<Context, "message" | "channel_post">,
+    next: NextFunction
+  ): Promise<void> => {
+    if (await handleQaMessageIngress(ctx.msg)) return;
     return next();
   });
 
@@ -221,13 +229,13 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("gag", (ctx: CommandContext<Context>): Promise<void> => handleGagCommand(ctx));
   bot.command("ungag", (ctx: CommandContext<Context>): Promise<void> => handleUngagCommand(ctx));
   bot.command("send", (ctx: CommandContext<Context>): Promise<void> => handleSendCommand(ctx));
+  bot.command("set_qa", (ctx: CommandContext<Context>): Promise<void> => handleSetQaCommand(ctx));
+  bot.command("query_qa", (ctx: CommandContext<Context>): Promise<void> => handleQueryQaCommand(ctx));
+  bot.command("remove_qa", (ctx: CommandContext<Context>): Promise<void> => handleRemoveQaCommand(ctx));
   // 菜单占位项：它只为在命令菜单里曝光「/<1~2 个中文字>」这个用法（那类命令名
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
   // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
   // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
-  bot.command("set_qa", (ctx: CommandContext<Context>): Promise<void> => handleSetQaCommand(ctx));
-  bot.command("query_qa", (ctx: CommandContext<Context>): Promise<void> => handleQueryQaCommand(ctx));
-  bot.command("remove_qa", (ctx: CommandContext<Context>): Promise<void> => handleRemoveQaCommand(ctx));
   bot.command("x", (ctx: CommandContext<Context>): Promise<void> => handleCjkActionUsageCommand(ctx));
   // `/咬`、`/贴贴` 这类中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
   // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成
@@ -237,6 +245,15 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.on("message_reaction", (ctx: Filter<Context, "message_reaction">): Promise<void> => handleReaction(ctx));
   bot.on("chat_member", (ctx: Filter<Context, "chat_member">): Promise<void> => handleChatMemberUpdate(ctx));
   bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx));
+  // /query_qa 看板的翻页按钮排在入群验证之前：两者前缀互不为前缀，认领了就
+  // 不再往下走，没认领的原样交给验证按钮。
+  bot.on("callback_query:data", async (
+    ctx: Filter<Context, "callback_query:data">,
+    next: NextFunction
+  ): Promise<void> => {
+    if (await handleQaBoardCallback(ctx)) return;
+    return next();
+  });
   bot.on("callback_query:data", (ctx: Filter<Context, "callback_query:data">): Promise<void> =>
     handleVerificationCallback(ctx));
   bot.on("inline_query", (ctx: Filter<Context, "inline_query">): Promise<void> => handleInlineQuery(ctx));

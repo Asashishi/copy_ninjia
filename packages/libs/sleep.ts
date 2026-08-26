@@ -4,7 +4,7 @@
  * 不带 signal 时直接用 `Bun.sleep`：它同样是 referenced 的（pending 期间会把
  * 进程留在事件循环里），但省掉自建 timer 句柄、abort 监听与包装 Promise。
  * 带 signal 时仍需自己持有 timer 才能在停机时 clearTimeout 并立即 reject，
- * 保持原实现。
+ * 并在结算时移除取消监听。
  */
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (!Number.isFinite(ms) || ms < 0) return Promise.reject(new RangeError("sleep duration must be finite and non-negative"));

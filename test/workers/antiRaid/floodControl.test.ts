@@ -38,7 +38,7 @@ mock.module("../../../packages/infra/logger", () => ({
   },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: { kind: "guard-api" },
+  telegramApi: { kind: "guard-api" },
   muteChatMemberWithOutcome: async (
     params: { chatId: number; userId: number; mutedUntil: number; signal?: AbortSignal }
   ): Promise<string> => {

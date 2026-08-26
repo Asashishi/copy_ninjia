@@ -225,11 +225,8 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
  * 闸**，否则那种群里每一条触发它的更新都换一次注定失败的现查。目前是两处：热路径的
  * 按需补齐（ensureBotChatPermissions）与入群洪流上的身份观测（markBotAdminObserved）。
  *
- * 取钟惰性化不能丢。`now: number = Date.now()` 那种写法由 JSC 在函数 prologue 里
- * 求值，也就是**调用方早退的那条路也照付一次 Date.now()**；稳定状态下
- * ensureBotChatPermissions 每条群消息都跑、且几乎总是在调用本函数之前就命中返回，
- * 实测热路径 55~63 ns/op 里约 98% 就是这次白取的钟（改成惰性后 0.75~1.13）。
- * 调用方注入的值仍然原样生效，退避语义不变。
+ * 取钟保持惰性：调用方早退时不得执行 Date.now()。调用方注入的值原样生效，
+ * 退避语义不变。
  */
 function admitBotPermissionProbe(chatId: number, now?: number): boolean {
   const observedAt: number = now ?? Date.now();

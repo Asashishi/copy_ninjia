@@ -54,15 +54,14 @@ export interface SongCoverParams {
 /**
  * 画一张封面并压成缩略图；任一步失败返回 null。
  *
- * 画幅固定正方形：封面本来就是方的，而缩略图还会被客户端按方形裁一次，交一张
- * 宽幅图过去只是先白画一遍再被裁掉两边。
+ * 画幅固定正方形：封面与客户端缩略图都是方形，避免生成最终会被裁掉的边缘内容。
  */
 export async function generateSongCover({
   title,
   performer,
   songPrompt,
   signal,
-}: SongCoverParams): Promise<Buffer | null> {
+}: SongCoverParams): Promise<Uint8Array | null> {
   try {
     const image: GeneratedChatImage | null = await generateChatImage({
       prompt: songCoverPrompt(title, performer, songPrompt),

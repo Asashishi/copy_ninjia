@@ -17,7 +17,7 @@ import {
   deleteMessageAfter,
   muteChatMemberWithOutcome,
   sendMessage,
-  joinVerificationApi,
+  telegramApi,
 } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
 import {
@@ -219,7 +219,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     chatId: message.chatId,
     userId: message.userId,
     mutedUntil,
-    api: joinVerificationApi,
+    api: telegramApi,
     // 两个取消源合起来：
     // - 超时：until_date 是这一刻算好的绝对时刻，请求命中 429 后还可能在 restrict 类退避车道排队。
     //   太久时它会在发出那一刻落进 Bot API 的「不足 30 秒即永久」区间——本模块
@@ -257,7 +257,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
   const noticeMessageId: number | undefined = await sendMessage({
     chatId: message.chatId,
     text: formatFloodMuteNotice(message.label),
-    api: joinVerificationApi,
+    api: telegramApi,
     // 公告仍带派发截止时间：消息发送与踢人虽然已分属独立 429 队列，消息本身
     // 仍可能等待 grammY 的群聊限流。停管后再补发一条过期公告没有业务价值，也
     // 不该让它长期占住停机 drain（见 FLOOD_NOTICE_DISPATCH_TIMEOUT_MS）。
@@ -273,7 +273,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     chatId: message.chatId,
     messageId: noticeMessageId,
     delayMs: FLOOD_MUTE_DURATION_MS,
-    api: joinVerificationApi,
+    api: telegramApi,
     batchOnFlush: true,
   });
 }
@@ -334,8 +334,7 @@ export function clearChatFloodWindows(chatId: number): void {
 /**
  * 删掉空闲满一个窗口的条目，挂在 Worker 的统一 sweep 节拍上。
  *
- * 只靠 LRU 是不够的：容量淘汰按写入顺序丢最早的那条，一个曾经热闹过、此刻
- * 早已安静的群会一直占着名额，把真正活跃的群挤出去。仍在抑制期的条目要留着
+ * 只靠 LRU 是不够的：容量未满时，已经安静的群仍会长期占着名额。仍在抑制期的条目要留着
  * ——`suppressedUntil` 正是「这段时间到的消息不必再判」的依据，删掉就等于
  * 让抑制提前失效。
  * @returns 本次删除的条目数，便于测试与诊断。

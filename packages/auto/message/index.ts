@@ -61,13 +61,8 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   /**
    * 本条消息统一的「现在」，显式传给下面两个吃 now 的判定。
    *
-   * 两个好处。语义上，活跃度入窗与安静期判定用的是同一时刻，不会因为两次
-   * 各自取 Date.now() 而横跨毫秒边界。性能上，这两个函数的形参都写成
-   * `now: number = Date.now()`，而**默认参数在被调方 prologue 里求值会挡住内联**：
-   * 实测 observeGroupMessageForAiReply 的 1 参数调用不仅比 2 参数慢约 16%
-   * （124.44 → 107.07 ns/op），还会稳定触发一次去优化重编译（reopt 1 → 0）。
-   * 生产里这两处都在每条消息上跑，且此前是全仓仅有的 1 参数调用点——测试与
-   * 基准一直用的是 2 参数形式，因此这个分层差异过去从未被观测到。
+   * 活跃度入窗与安静期判定必须使用同一时刻，不能因两次 Date.now() 横跨毫秒边界。
+   * 两个热函数都显式接收 now，避免在被调方默认参数中重复读取墙钟。
    */
   const now: number = Date.now();
 

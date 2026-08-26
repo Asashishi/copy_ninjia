@@ -1,5 +1,10 @@
 /** Telegram 动作适配层与业务调用方共享的发送结果。 */
 
+import type {
+  MessageEntity,
+  ReactionTypeCustomEmoji,
+  ReactionTypeEmoji,
+} from "@grammyjs/types";
 import type { TelegramApi } from "./telegramWorker";
 
 /**
@@ -11,6 +16,12 @@ import type { TelegramApi } from "./telegramWorker";
  * 另一个状态。
  */
 export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "upload_document";
+
+/**
+ * 机器人能够设置的可复制反应。付费反应不在 Bot API 的可设置类型中；自定义
+ * emoji 仅用于复制目标刚刚在同一条消息上设置的反应。
+ */
+export type CopyableReaction = ReactionTypeEmoji | ReactionTypeCustomEmoji;
 
 /** 一条已成功发送的 Telegram 消息；repliedToMessageId 只在服务端实际挂上
  * 回复关系时存在，不能用请求参数推断。 */
@@ -26,6 +37,18 @@ export interface TelegramSendResult {
 export interface InlineResultSource {
   readonly sourceText: string;
   readonly resultTexts: readonly string[];
+}
+
+/**
+ * 一条带富文本实体的待发送消息：正文与调用方自行算好的实体表。
+ *
+ * `offset`/`length` 一律按 **UTF-16 code unit** 计——写死成别的长度不会报错，
+ * 只会让 Telegram 把代码块画歪或整段吞掉。问答看板、问答直答与 libs/codeFence.ts
+ * 共用这一个形状，发送侧直接把它铺进 sendMessage 的 text/entities。
+ */
+export interface RichTextMessage {
+  readonly text: string;
+  readonly entities: readonly MessageEntity[];
 }
 
 /** 等待跨线程自发消息标记的单个主线程 rendezvous。 */

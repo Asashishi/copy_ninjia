@@ -15,9 +15,9 @@ import {
 } from "../../../packages/consts/paths";
 import {
   clearStorageBusinessTables,
-  putIdentityPolicyRow,
   seedStorageDatabase,
 } from "../../../packages/database/interact/admin";
+import { putIdentityPolicyRow } from "../../helpers/identityPolicyRows";
 import {
   readStorageDatabasePendingRemovalPage,
 } from "../../../packages/database/interact/inspection";
@@ -273,7 +273,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     );
   });
 
-  test("待踢分页为损坏 BLOB 保留表、主键和字段路径", () => {
+  test("待踢损坏 BLOB 在整表存储形态闸被拒绝", () => {
     handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
     handlePendingRemovalSnapshot({
       type: "blocklistRemovals",
@@ -294,8 +294,8 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     closeStorageDatabase(database);
 
     expect(() => hydrateStorageDatabase()).toThrow(
-      `${IDENTITY_DATABASE_PATH}:pending_blocked_removals[9].data: ` +
-      "expected a BLOB containing strict SQLite JSONB."
+      `${IDENTITY_DATABASE_PATH}:pending_blocked_removals.data: ` +
+      "expected a BLOB column containing only strict SQLite JSONB."
     );
   });
 
@@ -446,7 +446,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       .toThrow("at most one active proxy send target");
   });
 
-  test("群状态启动恢复不再执行冷迁移时期的数据正确性校验", () => {
+  test("群状态启动恢复拒绝超容量与重复代理目标", () => {
     resetStorageDatabaseCache();
     const database: StorageDatabase = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
     seedStorageDatabase(database, {
@@ -463,8 +463,8 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       ),
     });
     closeStorageDatabase(database);
-    const oversized = hydrateStorageDatabase();
-    expect(oversized.chatStates).toHaveLength(STATE_MANAGED_CHAT_LIMIT + 1);
+    expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
+      .toThrow(`chat_states must contain at most ${STATE_MANAGED_CHAT_LIMIT} chats`);
 
     clearBusinessTables();
     const second: StorageDatabase = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
@@ -479,11 +479,11 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       ],
     });
     closeStorageDatabase(second);
-    const duplicateProxyTargets = hydrateStorageDatabase();
-    expect(duplicateProxyTargets.chatStates).toHaveLength(2);
+    expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
+      .toThrow("chat_states must contain at most one active proxy send target");
   });
 
-  test("启动只统计黑白名单，不读取 data 或核对跨表交集", () => {
+  test("启动严格解码身份策略并拒绝跨表交集", () => {
     resetStorageDatabaseCache();
     const database: StorageDatabase = openStorageDatabase({
       path: IDENTITY_DATABASE_PATH,
@@ -503,8 +503,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     });
     closeStorageDatabase(database);
 
-    const restored: ReturnType<typeof hydrateStorageDatabase> = hydrateStorageDatabase();
-    expect(restored.whitelistEntryCount).toBe(1);
-    expect(restored.blocklistEntryCount).toBe(1);
+    expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
+      .toThrow("whitelist_entries/blocklist_entries[$.id]: expected disjoint primary keys");
   });
 });

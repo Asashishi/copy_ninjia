@@ -41,14 +41,23 @@ export function decodeGeneratedSong(
     return { ok: false, reason: "empty payload" };
   }
   // 先按 base64 理论上限挡住异常大响应，避免解码后才发现超限而额外分配一份
-  // 最多不可控大小的 Buffer；整首歌本来就有几 MB，这一步不是可省的保险。
+  // 最多不可控大小的字节数组；整首歌本来就有几 MB，这一步不是可省的保险。
   if (encoded.length > SONG_GENERATION_MAX_ENCODED_CHARS) {
     return { ok: false, reason: "encoded payload exceeds the size limit" };
   }
   if (!isCanonicalBase64(encoded)) {
     return { ok: false, reason: "payload is not canonical base64" };
   }
-  const bytes: Buffer = Buffer.from(encoded, "base64");
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.fromBase64(encoded, {
+      alphabet: "base64",
+      lastChunkHandling: "strict",
+    });
+  } catch (error: unknown) {
+    void error;
+    return { ok: false, reason: "payload is not canonical base64" };
+  }
   if (bytes.byteLength === 0 || bytes.byteLength > SONG_GENERATION_MAX_BYTES) {
     return { ok: false, reason: "decoded payload is empty or exceeds the size limit" };
   }

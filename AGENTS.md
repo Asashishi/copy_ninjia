@@ -42,7 +42,17 @@
 - 错误信息必须写明文件路径、字段路径和期望形态，且只写这些；不得回显 token、密钥等敏感值。
 - 新增或变更配置与状态字段时必须同步更新校验。
 
-## 依赖与平台 API
+## 运行时、依赖与平台 API
+
+### Bun 运行时与原生 API
+
+- 本仓库只使用 Bun 运行 TypeScript、执行脚本、管理依赖和运行测试；仓库命令统一使用 `bun`、`bun run`、`bun test` 和 `bun install`，不得新增 `node`、`npm`、`npx`、`pnpm` 或 `yarn` 入口。
+- 实现 Node.js 兼容操作前，必须检查当前 Bun 版本、已安装的 `@types/bun` 声明和 Bun 官方文档，逐项核对语义、错误、生命周期、原子性、背压、取消与平台限制。
+- Bun 官方文档将原生 API 标为推荐、优化或更适合该操作，且所需语义完整时，必须直接使用 Bun 原生 API，不得继续调用 Node.js 兼容接口，也不得保留双实现、运行时探测、降级分支或等价包装。
+- 文件读取、写入、复制和删除在语义匹配时使用 `Bun.file`、`Bun.write` 或 `BunFile`；同步文件 I/O、文件描述符级 `fsync`/`O_EXCL`/权限接管、hard link、`rename`、目录创建、目录遍历及其他 Bun 原生文件 API 未覆盖的操作按当前 Bun 官方文档使用 `node:fs`。
+- Bun 原生与 Node.js 兼容接口存在性能取舍时，按“性能、内存与 Bun/JSC JIT”规则在当前 Bun 和固定输入下实测；热路径只采用结果稳定高于噪声且语义一致的实现。
+- Bun 原生 API 未覆盖所需语义，或 Bun 官方文档明确要求使用 Node.js 兼容模块时，使用 `node:` 接口并在 Bun 下验证；不得为兼容 Node.js 运行时牺牲 Bun 实现。
+- 第三方依赖内部的 Node.js 兼容调用由依赖自身维护；项目代码不得复制或改写依赖内部实现。
 
 - 实现功能前必须检查 `package.json`、锁文件、已安装版本的本地类型声明或源码以及官方文档，确认当前技术栈和精确版本。
 - OpenAI、Telegram/grammY 等 SDK 必须优先查官方文档，不得凭记忆猜接口，不得引入无关或版本不匹配的实现。
@@ -136,8 +146,8 @@
 - `--write-doc` 同时写两处：三份 `09-performance.md` 的基准区块，以及仓库根 `performance-result.json` 的 `fullSuite.lastRun`（结构化报告全文）。两者是同一次运行的两种呈现，必须由这一个开关一起写出，不得拆成两个 flag。该文件的另一节 `hotPathProfileGate` 由热路径门禁写，两侧都只换自己那一格，见 `scripts/perf/performanceResult.ts`。
 - 父进程与 `scripts/perf/fullSuite/` 下除 `fixture.ts`、`seed.ts`、`coldStart.ts`、`chain.ts`、`storage.ts` 以外的模块，只能 import 纯常量与 `import type`，不得 import `packages/` 下的实现模块。
 - 新增被测项复用 `scripts/perf/` 已有实现与生产入口；不得为基准另写生产逻辑、落盘格式或夹具规模，夹具规模引用生产常量。
-- 完整命令链路（`ad-detect-command`、`ai-reply-command`）只在**基准侧**顶掉出站：模型客户端走 `packages/cache/` 已有的 holder，Telegram 走 `scripts/perf/outboundGuard.ts` 的罐头应答（必须装在 `installOutboundGuards` 之后才在最外层）。绝不为此在 `packages/` 里加基准专用分支，也绝不发起真实请求——那会产生真实费用并以线上机器人身份出站。
-- 命令链路必须断言这一条真的走完了（处置排空结果、`cannedTelegramCalls` 计数）。缺了断言，一次把链路导进静默 return 的回归会表现成读数变快而不是失败。
+- 完整命令链路（`ad-detect-command`、`ai-reply-command`）只在**基准侧**替换出站：模型客户端使用 `packages/cache/` 已有的 holder，Telegram 使用 `scripts/perf/outboundGuard.ts` 的罐头应答，并在 `installOutboundGuards` 之后安装到最外层。`packages/` 不得包含基准专用分支；基准不得发起真实请求。
+- 命令链路必须断言处置排空结果和 `cannedTelegramCalls` 计数；静默提前返回必须使基准失败。
 - 改动规模常量、迭代次数或分区构成后，在同一次发布里重新出数并在提交信息中说明。
 
 ### 类型与接口
@@ -157,13 +167,16 @@
 
 ### 注释、日志与文档
 
-- 注释和 JSDoc 使用中文，并说明不变量和设计依据。
+- 注释和 JSDoc 使用中文，只描述现行代码的职责、调用方式、输入输出、状态变化、执行顺序、边界和不变量。
+- 注释和文档只写当前实现如何工作、如何配置、如何操作和如何验证；不得记录选择原因、备选方案、废弃实现、修复前行为、历史性能对比或提交过程。
+- 代码改动必须同步整理相邻注释和 JSDoc；符号、路径、数据格式、生命周期或行为变化时更新对应说明，失去用途的说明直接删除。
+- 类型、命名和控制流已经完整表达的内容不写注释；不得逐行复述代码。
 - 跨模块约束必须引用 `docs/cn/04-invariants.md`，不得在代码中重复全文。
 - `packages/` 与 `index.ts` 的日志必须使用 `logger`，不得直接使用 `console.log`。
 - `packages/` 下仅 `packages/workers/diskIOWorker.ts` 和 `packages/workers/diskIO/` 内的错误允许使用 `console.error`；该边界由 `bun run check:conventions` 强制。
 - `scripts/` 的一次性 CLI（约定自检、冷迁移、性能基准）不接入 `logger`，直接向 stdout/stderr 输出。
 - `logger.error` 等错误文案使用英文。
-- 约束、流程和设计写入 `docs/`；代码仅保留必要 JSDoc。
+- 当前架构、接口、约束、配置、操作、迁移和验证步骤写入 `docs/`；代码仅保留必要 JSDoc。
 - 未经用户明确要求，不得更新文档、README 或指标。
 - 代码使文档失真时，交付中列出待同步项。
 - 获得文档更新授权后，只能依据真实代码和门禁输出修改文档。

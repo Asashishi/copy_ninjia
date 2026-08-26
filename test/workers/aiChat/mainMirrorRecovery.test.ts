@@ -24,7 +24,6 @@ type AiDiskMessage =
 const workerPosts: AiChatWorkerMessage[] = [];
 const diskPosts: AiDiskMessage[] = [];
 const initWorker = mock((): void => {});
-const markSelfSent = mock((_chatId: number, _messageId: number): void => {});
 let workerPostAccepted: boolean = true;
 let supervisorOptions: {
   onEvent: (event: AiChatWorkerEvent) => void;
@@ -37,7 +36,6 @@ let diskMemoryPersisted: ((reply: AiMemoryPersistedReply) => void) | undefined;
 let diskGaveUp: (() => void) | undefined;
 const aiEnabledChats = new Set<number>();
 
-mock.module("../../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
 mock.module("../../../packages/infra/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
     supervisorOptions = options;
@@ -100,7 +98,6 @@ beforeEach(() => {
   workerPosts.length = 0;
   diskPosts.length = 0;
   initWorker.mockClear();
-  markSelfSent.mockClear();
   lastInitState.current = null;
   latestAiMemories.clear();
   latestAiMemoryRevisions.clear();
@@ -134,7 +131,6 @@ describe("AI main-thread persistence mirror", () => {
 
     supervisorOptions!.onEvent({ type: "memory", chatId: -1001, snapshot: "latest-memory" });
     supervisorOptions!.onEvent({ type: "stickerCatalog", pack: "pack_a", snapshot: "latest-catalog" });
-    supervisorOptions!.onEvent({ type: "sent", chatId: -1001, messageId: 42 });
 
     const aiRespawnPosts: AiChatWorkerMessage[] = [];
     supervisorOptions!.onRespawn((message) => {
@@ -143,7 +139,6 @@ describe("AI main-thread persistence mirror", () => {
     });
 
     expect(initWorker).toHaveBeenCalledTimes(1);
-    expect(markSelfSent).toHaveBeenCalledWith(-1001, 42);
     expect(aiRespawnPosts).toEqual([
       {
         type: "init",

@@ -5,6 +5,7 @@ import { sentMessages } from "../../packages/cache/perThread/selfSentTracker";
 import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import {
   deleteEphemeralMessageWithOutcome,
+  editMessageText,
   isChatMember,
   kickChatMemberWithOutcome,
   muteChatMemberWithOutcome,
@@ -435,5 +436,90 @@ describe("Telegram 常规动作封装", () => {
     await kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: false, api });
 
     expect(calls).toEqual(["unban", "ban"]);
+  });
+});
+
+describe("就地改写已发出的消息", () => {
+  /** 只暴露 editMessageText 的能力面替身；其余动作不参与本组。 */
+  function editApi(
+    implementation: (...args: unknown[]) => Promise<unknown>
+  ): { api: TelegramApi; calls: ReturnType<typeof mock> } {
+    const editMessageTextMock = mock(implementation);
+    return {
+      api: { editMessageText: editMessageTextMock } as unknown as TelegramApi,
+      calls: editMessageTextMock,
+    };
+  }
+
+  test("改写成功时报 true，并按调用约定清空原有按钮", async () => {
+    const { api, calls } = editApi(async (..._args: unknown[]) => ({ message_id: 9 }));
+
+    expect(await editMessageText({
+      chatId: -1001,
+      messageId: 9,
+      text: "第 2 页",
+      api,
+    })).toBeTrue();
+    // 不传 keyboard 即**清空**按钮：问答看板据此在只剩一页时收走翻页条。
+    expect(calls).toHaveBeenCalledWith(-1001, 9, "第 2 页", {
+      reply_markup: { inline_keyboard: [] },
+    });
+  });
+
+  test("带 entities 与新按钮时原样透传", async () => {
+    const { api, calls } = editApi(async (..._args: unknown[]) => ({ message_id: 9 }));
+    const entities = [{ type: "pre" as const, offset: 3, length: 4, language: "json" }];
+    const keyboard = { inline_keyboard: [[{ text: "下一页 ›", callback_data: "qa_page:1" }]] };
+
+    await editMessageText({
+      chatId: -1001,
+      messageId: 9,
+      text: "看板",
+      entities,
+      keyboard,
+      api,
+    });
+
+    expect(calls).toHaveBeenCalledWith(-1001, 9, "看板", {
+      entities,
+      reply_markup: keyboard,
+    });
+  });
+
+  test("「内容没有变化」仍报 true——调用方要的是「现在显示的是这一页」", async () => {
+    // 同一页再点一次就会撞上它：目标状态已经达成，不是故障。
+    const { api } = editApi(async (): Promise<never> => {
+      throw new GrammyError(
+        "Bad Request: message is not modified",
+        { ok: false, error_code: 400, description: "Bad Request: message is not modified" },
+        "editMessageText",
+        {}
+      );
+    });
+
+    expect(await editMessageText({
+      chatId: -1001,
+      messageId: 9,
+      text: "第 1 页",
+      api,
+    })).toBeTrue();
+  });
+
+  test("其余失败报 false", async () => {
+    const { api } = editApi(async (): Promise<never> => {
+      throw new GrammyError(
+        "Bad Request: message to edit not found",
+        { ok: false, error_code: 400, description: "Bad Request: message to edit not found" },
+        "editMessageText",
+        {}
+      );
+    });
+
+    expect(await editMessageText({
+      chatId: -1001,
+      messageId: 9,
+      text: "第 1 页",
+      api,
+    })).toBeFalse();
   });
 });

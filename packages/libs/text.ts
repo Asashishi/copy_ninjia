@@ -1,6 +1,10 @@
 /**
- * AI 流水线共用的文本清洗工具。原是 workers/aiChatWorker.ts 的私有函数，
- * 图片描述（aiChat/ai/imageDescription.ts）也需要同一套清洗后抽到这里共用。
+ * 拼进机器人自己文案的那些文本的共用处理：清洗（压成单行、剥双向控制符、
+ * 中和可点击命令）、按字形簇切分，以及把 Telegram 的姓名字段拼成展示名。
+ *
+ * 消费方跨 AI 流水线（aiChat/ai/imageDescription.ts 等）、命令回执
+ * （users/userLabel.ts）与消息转录（auto/message/facts.ts）；同一份规则只此一份，
+ * 各处不再自己抄。
  */
 
 import { graphemeSegmenterHolder } from "../cache/perThread/text";
@@ -20,11 +24,9 @@ const INLINE_WHITESPACE_PATTERN: RegExp = /[\s\u0085]+/g;
  * 「这串还需要规范化吗」的前置判定，命中任一条即说明 sanitizeInline 会改动它：
  * 首空白、尾空白、连续空白、非普通空格的 `\s` 空白（换行/制表等）、NEL。
  *
- * 存在的理由是**省掉绝大多数消息的那次重建**：`INLINE_WHITESPACE_PATTERN`
+ * 前置判定用于省掉规范文本的整串重建：`INLINE_WHITESPACE_PATTERN`
  * 连单个空格也匹配，因此任何含空格的正常文本都会被 `replace` 整串重建一遍，
- * 哪怕把空格换成空格是个空操作。实测典型群消息正文（单空格、无首尾空白）
- * 走这条快路径后 398→212 ns/op，且每次调用 46 B / 1 个对象的分配直接归零；
- * 需要清洗的输入没有变慢（438→395 ns/op，首空白会让判定立刻短路）。
+ * 哪怕把空格换成空格是个空操作。规范输入原样返回，不分配新字符串。
  * 这个函数在每条消息上要跑 4~5 次（见 workers/aiChat/bufferedMessage.ts）。
  *
  * **不能带 `g` 标志**：`RegExp.prototype.test` 对全局正则是有状态的（`lastIndex`
@@ -64,14 +66,30 @@ const BIDI_CONTROL_PATTERN: RegExp = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2
  *    颠倒、两个人名各自的主页链接看起来挂错人。
  * 2. 一个叫 `/batch_kick 1d` 的昵称会让机器人自己印出一条可点击命令——`/咬` 的
  *    成功回执是用户明确授权长期保留的（见 infra/telegram/commandMessages.ts），
- *    那条一键入口就会一直挂在群里等超级管理员误触。中和放在这一层而不是各调用
- *    点：所有拼进机器人文案的昵称、频道名、群标题都已经过这里，只有守住这个
- *    唯一入口才不会像之前那样一边守两道、另一边一道没有。
+ *    那条一键入口就会一直挂在群里等超级管理员误触。所有拼进机器人文案的昵称、
+ *    频道名、群标题都经由这一入口统一中和。
  *
  * 空白折叠的规则与 sanitizeInline 共用，不另写一份。
  */
 export function sanitizeDisplayName(raw: string): string {
   return sanitizeInline(neutralizeRenderableCommands(raw.replace(BIDI_CONTROL_PATTERN, "")));
+}
+
+/**
+ * 把 Telegram 的 `first_name` / `last_name` 拼成一个展示名；两段都缺时返回空串。
+ *
+ * 缺席与空串一律当作「没有这一段」，与「两段都在时用一个空格分隔」共同构成
+ * 本函数的全部语义；首尾空白由调用方按各自兜底需要决定是否 `trim`。
+ *
+ * 直接分支拼接，不创建字面量数组、filter 结果数组或一次性闭包；转发来源标注
+ * （auto/message/facts.ts 的 forwardOriginLabel）会在每条带 forward_origin 的消息上调用。
+ */
+export function joinPersonName(
+  firstName: string | undefined,
+  lastName: string | undefined
+): string {
+  if (firstName) return lastName ? `${firstName} ${lastName}` : firstName;
+  return lastName ?? "";
 }
 
 /**
@@ -143,9 +161,8 @@ function isClauseBreakCode(code: number): boolean {
 }
 
 /**
- * 截断到 maxChars 以内，但尽量收在子句边界上，不把句子从中间剁断——
- * 模型生成的描述/简介超出字数限制时用这个（曾经用 truncateInline 硬切，
- * memory/stickers/ 里留下过大量「……以戏谑的口」式断在半句的条目）。
+ * 截断到 maxChars 以内，但尽量收在子句边界上，不把句子从中间剁断；用于模型
+ * 生成的描述与简介。
  * 规则：先硬切到 maxChars；若切点内能找到句末标点（。！？…～♡），收到
  * 最后一个句末标点为止（含标点）；否则找最后一个子句分隔符（，、；：）
  * 收到它之前（丢掉悬空的分隔符）。边界位置过于靠前（不足上限一半，收完
@@ -159,10 +176,7 @@ export function truncateAtClauseBoundary(text: string, maxChars: number): string
   let lastSentenceEnd: number = -1;
   let lastClauseBreak: number = -1;
   for (let i: number = 0; i < hardCut.length; i++) {
-    // 按码元比对而不是 `"。！？…～♡".includes(hardCut[i])`：`hardCut[i]` 每次都要
-    // 物化一个单字符串（这些是 CJK/全角字符，进不了 JSC 的单字节小字符串缓存），
-    // 后面还要在两个字面量里各做一次子串查找。实测（Bun 1.3.14，5 个独立进程各
-    // 5 轮取中位数，600 字入参截到 500）35 354.8 → 1 936.2 ns/op。取值集合由
+    // 按码元比对，避免为 CJK/全角字符物化单字符字符串并做子串查找。取值集合由
     // isSentenceEndCode / isClauseBreakCode 表达，逐个标点的对拍用例在
     // test/libs/text.test.ts——写错一个码点只会让那一个标点静默失效。
     const code: number = hardCut.charCodeAt(i);

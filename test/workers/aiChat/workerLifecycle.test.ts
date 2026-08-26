@@ -225,6 +225,24 @@ describe("AI Chat Worker lifecycle", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 4, moodName: "开心" });
   });
 
+  test("hydrate decoder 失败时异常离开消息边界，由 Worker supervisor 接管", () => {
+    hydrateMemories.mockImplementationOnce((): void => {
+      throw new Error("AI memory hydrate payload: $ must be the current schema.");
+    });
+    expect((): void => worker.handleAiChatWorkerMessage({
+      type: "hydrate",
+      memories: new Map([[-1001, "bad"]]),
+    })).toThrow("AI memory hydrate payload: $ must be the current schema.");
+
+    hydrateStickerCatalogs.mockImplementationOnce((): void => {
+      throw new Error("Sticker catalog hydrate payload: $ must be the current schema.");
+    });
+    expect((): void => worker.handleAiChatWorkerMessage({
+      type: "hydrateStickerCatalog",
+      catalogs: new Map([["pack", "bad"]]),
+    })).toThrow("Sticker catalog hydrate payload: $ must be the current schema.");
+  });
+
   test("flush 等回复与贴纸目录任务全部结算后才上报最终快照", async () => {
     const workerSignal: AbortSignal = aiChatWorkerAbortController.current.signal;
     let releaseReplies: (() => void) | undefined;

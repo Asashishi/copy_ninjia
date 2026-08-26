@@ -3,10 +3,8 @@
  * （`chatId:userId`）。广告检测队列复用同一格式（见
  * workers/antiRaid/adDetect/queue.ts）。
  *
- * 生成、解析和归属判定都收在本文件：格式此前只有生成方，八个调用点各自
- * `lastIndexOf(":")`、`slice(prefix.length)` 或 `startsWith` 反推，各带各的安全
- * 检查（有的查 `Number.isSafeInteger`，有的查 `separator <= 0`，有的干脆没查）。
- * 格式一旦要改（比如加 thread id），漏掉任何一处都是静默丢弃或错投验证条目。
+ * 生成、解析和归属判定都收在本文件；任何格式变更必须同时维护这里的往返校验，
+ * 避免调用点静默丢弃或错投验证条目。
  */
 
 /** chatId 与 userId 之间的分隔符；生成与解析共用同一个事实源。 */

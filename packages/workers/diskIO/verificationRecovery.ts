@@ -22,7 +22,7 @@ import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { VerificationSnapshot } from
   "../../types/antiRaid/verification";
 import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
-import { openDayFile, openValidatedAppendOnlyFile } from "./appendOnlyDayFile";
+import { openValidatedAppendOnlyFile } from "./appendOnlyDayFile";
 import {
   decodeVerificationDay,
   storedVerificationSnapshot,
@@ -33,6 +33,21 @@ interface VerificationDirectoryRecoveryPlan {
   readonly latestPriorDay: string | undefined;
   readonly oldDayNames: string[];
   readonly futureDayCount: number;
+}
+
+export interface VerificationRecoveryInspection {
+  readonly day: string;
+  readonly dir: string;
+  readonly recovered: Map<string, VerificationSnapshot>;
+  readonly fileState: {
+    readonly day: string;
+    readonly size: number;
+    readonly empty: boolean;
+  };
+  readonly appendedEntries: number;
+  readonly appendedBytes: number;
+  readonly directoryPlan: VerificationDirectoryRecoveryPlan;
+  readonly shouldCompact: boolean;
 }
 
 /** 一轮完成恢复所需的文件名校验、旧日选择和延后清理计划，不提前删除文件。 */
@@ -143,8 +158,8 @@ function applyVerificationDirectoryRecoveryPlan(
       "verifications that this recovery refuses to merge."
     );
   }
-  plan.oldDayNames.sort();
-  for (const name of plan.oldDayNames) unlinkSync(join(dir, name));
+  const oldDayNames: string[] = [...plan.oldDayNames].sort();
+  for (const name of oldDayNames) unlinkSync(join(dir, name));
 }
 
 /** 把当前 active 镜像原子写成指定日期的规范对象；维护路径才整份重写。 */
@@ -169,96 +184,138 @@ export function compactVerificationDay(
   verificationFileState.appendedBytes = 0;
 }
 
-/** 启动恢复东京当天；若停机跨日，先合并最新旧日并原子发布，再清理旧日。 */
-export function recoverVerificationDay(
+/** 启动第一阶段：只读校验东京当天及最新旧日，构造接管与维护计划。 */
+export function inspectVerificationDay(
   day: string = getTokyoDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
-): Map<string, VerificationSnapshot> {
-  mkdirSync(dir, { recursive: true });
-  resetVerificationPersistenceCache();
+): VerificationRecoveryInspection {
+  const entries: readonly Dirent<string>[] = existsSync(dir)
+    ? readdirSync(dir, { withFileTypes: true })
+    : [];
   const directoryPlan: VerificationDirectoryRecoveryPlan = inspectVerificationDirectory(
     day,
     dir,
-    readdirSync(dir, { withFileTypes: true })
+    entries
   );
 
   const path: string = join(dir, `${day}.json`);
   const priorDay: string | undefined = directoryPlan.latestPriorDay;
+  const recovered: Map<string, VerificationSnapshot> = new Map();
+  let currentContent: string | null = null;
+  let decodedEntryCount: number = 0;
   if (priorDay !== undefined) {
     const priorPath: string = join(dir, `${priorDay}.json`);
     // 旧日是唯一恢复来源时必须严格解码；损坏时保留新旧文件并拒绝启动。
     const priorValues: Map<string, VerificationDayValue> =
       decodeVerificationDay(priorPath, readFileSync(priorPath, "utf8"));
-    const merged: Map<string, VerificationSnapshot> = new Map();
     for (const [key, value] of priorValues) {
-      if (value !== null) merged.set(key, value);
+      if (value !== null) recovered.set(key, value);
     }
 
     if (existsSync(path)) {
-      const currentContent: string = readFileSync(path, "utf8");
+      currentContent = readFileSync(path, "utf8");
       const currentValues: Map<string, VerificationDayValue> =
         decodeVerificationDay(path, currentContent);
+      decodedEntryCount = currentValues.size;
       // 新日是更晚的权威增量；null tombstone 必须压过旧日 active。
       for (const [key, value] of currentValues) {
-        if (value === null) merged.delete(key);
-        else merged.set(key, value);
+        if (value === null) recovered.delete(key);
+        else recovered.set(key, value);
       }
     }
 
     assertRecoveredVerificationCapacity(
-      merged,
+      recovered,
       existsSync(path) ? path : priorPath
     );
-
-    for (const [key, snapshot] of merged) {
-      verificationWorkerCache.set(key, snapshot);
+  } else if (existsSync(path)) {
+    currentContent = readFileSync(path, "utf8");
+    const decoded: Map<string, VerificationDayValue> =
+      decodeVerificationDay(path, currentContent);
+    decodedEntryCount = decoded.size;
+    for (const [key, value] of decoded) {
+      if (value !== null) recovered.set(key, value);
     }
-    try {
-      compactVerificationDay(day, dir);
-      applyVerificationDirectoryRecoveryPlan(day, dir, directoryPlan);
-    } catch (error: unknown) {
-      resetVerificationPersistenceCache();
-      throw error;
-    }
-    return verificationWorkerCache;
+    assertRecoveredVerificationCapacity(recovered, path);
   }
 
-  if (!existsSync(path)) {
-    verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
-    applyVerificationDirectoryRecoveryPlan(day, dir, directoryPlan);
-    return verificationWorkerCache;
-  }
+  const fileState: VerificationRecoveryInspection["fileState"] = currentContent === null
+    ? { day, size: 0, empty: true }
+    : {
+      day,
+      ...openValidatedAppendOnlyFile({
+        path,
+        content: currentContent,
+        empty: decodedEntryCount === 0,
+      }),
+    };
+  const appendedEntries: number = currentContent?.match(
+    VERIFICATION_TOP_LEVEL_ENTRY_PATTERN
+  )?.length ?? 0;
+  return {
+    day,
+    dir,
+    recovered,
+    fileState,
+    appendedEntries,
+    appendedBytes: fileState.size,
+    directoryPlan,
+    shouldCompact: priorDay !== undefined ||
+      appendedEntries >= VERIFICATION_FILE_COMPACT_ENTRIES ||
+      fileState.size >= VERIFICATION_FILE_COMPACT_BYTES,
+  };
+}
 
-  const content: string = readFileSync(path, "utf8");
-  const decoded: Map<string, VerificationDayValue> = decodeVerificationDay(path, content);
-  const recovered: Map<string, VerificationSnapshot> = new Map();
-  for (const [key, value] of decoded) {
-    if (value !== null) recovered.set(key, value);
-  }
-  assertRecoveredVerificationCapacity(recovered, path);
-
-  for (const [key, snapshot] of recovered) {
+/** 全域 inspect 成功后整体发布 verification owner 与追加游标。 */
+export function adoptVerificationDay(
+  inspection: VerificationRecoveryInspection
+): Map<string, VerificationSnapshot> {
+  resetVerificationPersistenceCache();
+  for (const [key, snapshot] of inspection.recovered) {
     verificationWorkerCache.set(key, snapshot);
   }
-  verificationFileState.current ??= {
-    day,
-    ...openValidatedAppendOnlyFile({
-      path,
-      content,
-      empty: decoded.size === 0,
-      mode: PERSISTED_FILE_MODE,
-    }),
-  };
-  applyVerificationDirectoryRecoveryPlan(day, dir, directoryPlan);
-
-  verificationFileState.appendedEntries =
-    content.match(VERIFICATION_TOP_LEVEL_ENTRY_PATTERN)?.length ?? 0;
-  verificationFileState.appendedBytes = verificationFileState.current.size;
-  if (
-    verificationFileState.appendedEntries >= VERIFICATION_FILE_COMPACT_ENTRIES ||
-    verificationFileState.appendedBytes >= VERIFICATION_FILE_COMPACT_BYTES
-  ) {
-    compactVerificationDay(day, dir);
-  }
+  verificationFileState.current = inspection.fileState;
+  verificationFileState.appendedEntries = inspection.appendedEntries;
+  verificationFileState.appendedBytes = inspection.appendedBytes;
   return verificationWorkerCache;
+}
+
+/** 启动成功后执行 compact 与旧日清理；compact 失败时不删除恢复基线。 */
+export function maintainVerificationDay(
+  inspection: VerificationRecoveryInspection
+): void {
+  try {
+    mkdirSync(inspection.dir, { recursive: true });
+    if (inspection.shouldCompact) {
+      compactVerificationDay(inspection.day, inspection.dir);
+    }
+    applyVerificationDirectoryRecoveryPlan(
+      inspection.day,
+      inspection.dir,
+      inspection.directoryPlan
+    );
+  } catch (error: unknown) {
+    // 原子 rename 成功、目录 fsync 失败时调用方会收到异常，但目标文件可能已经
+    // 发布；丢掉旧游标，下一次写先按磁盘现状重新 compact，不能沿错误 offset 追加。
+    verificationFileState.current = null;
+    verificationFileState.appendedEntries = 0;
+    verificationFileState.appendedBytes = 0;
+    throw error;
+  }
+}
+
+/** 单领域恢复入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
+export function recoverVerificationDay(
+  day: string = getTokyoDateKey(),
+  dir: string = VERIFICATION_MEMORY_DIR
+): Map<string, VerificationSnapshot> {
+  const inspection: VerificationRecoveryInspection = inspectVerificationDay(day, dir);
+  const recovered: Map<string, VerificationSnapshot> = adoptVerificationDay(inspection);
+  try {
+    maintainVerificationDay(inspection);
+  } catch (error: unknown) {
+    resetVerificationPersistenceCache();
+    throw error;
+  }
+  return recovered;
 }

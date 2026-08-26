@@ -22,7 +22,7 @@ import {
 } from "../../consts/aiChat/prompts/transcript";
 import { REPLY_CHAIN_NODE_MAX_CHARS } from "../../consts/aiChat/memory";
 import { truncateInline } from "../../libs/text";
-import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
+import { TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/workers/aiChat/memory";
 import { collectReplyChain, lookupBufferedMessage } from "./replyChain";
 import { resolvedTagFor } from "./mediaText";
@@ -91,7 +91,6 @@ function resolveInvoker(
  *
  * 正文本轮回复任务里已经引述过（排队补跑的入队快照、媒体轮的描述），因此这里
  * 复述同一段正文把两处引用绑在一起；两边都没有正文时才退回「不在转录里」。
- * 实测：只说「不在转录里」时模型会判定触发消息的内容没给，哪怕它就写在上一行。
  */
 function absentTriggerLabel(
   queuedTrigger: QueuedReplyTrigger | undefined,
@@ -128,7 +127,7 @@ export interface UserContentOptions {
    *  扣个反应，不允许沉默。 */
   queuedTrigger?: QueuedReplyTrigger;
   /** 本轮是否走「出错」分支：由 replyRound.ts 的 startReplyRound 在请求
-   *  模型之前掷一次骰子决定（见 consts/aiChat.ts 的 AI_TEXT_TYPO_PROBABILITY）。
+   *  模型之前掷一次骰子决定（见 consts/aiChat/tools.ts 的 AI_TEXT_TYPO_PROBABILITY）。
    *  为 true 时才在回复指令末尾拼上 TYPO_REQUIRED_INSTRUCTION；为 false 时
    *  完全不提错字这回事，两个分支的提示词严格分开。同一个值也传给
    *  createReplyToolset（ReplyToolContext.roundHasTypo），两处必须用同一次
@@ -197,9 +196,8 @@ export function buildReplyPromptSections(
       : `${queuedSenderName} 也在跟你说话，那条就是本轮的触发消息（TA 说的是：「${queuedTrigger.text}」${queuedReplyReference}）`
     : "";
 
-  // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
-  // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
-  // aiChat/ai/tools/replyToolset/）。
+  // 按触发类型只给动态任务；发言/贴纸/反应的统一行动规则常驻 system prompt，
+  // 不在每种任务后重复（见 replyModel.ts 与 aiChat/ai/tools/replyToolset/）。
   // - 拿媒体直接叫机器人：对方用贴纸/图片/GIF 回复机器人，或在 caption 里
   //   @ 机器人（见 MediaCommentContext 的 directTriggerReason），语气同
   //   回复/@ 触发——别已读不回；描述可能是解析结果也可能是元数据兜底，模型
@@ -211,21 +209,19 @@ export function buildReplyPromptSections(
   //   覆盖过就换个说法简短接一句、或至少扣个表情反应表示看到了，不允许
   //   沉默、也别原样重复自己说过的话。
   // - 随机插话：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、要不要
-  //   称呼对方）由模型自主判断，但必须留下回应——一句吐槽或感想，实在没话
-  //   扣个表情反应也行；触发者是谁转录最后一行本来就写着，不再单独喂名字、
-  //   不再强制点名。
+  //   称呼对方）由模型自主判断，但必须留下回应；触发者身份从转录最后一行读取。
   // - 回复/@ 触发：对方明确在跟机器人说话，别已读不回，建议第一条挂引用。
   const replyInstruction: string = mediaComment?.directTriggerReason === "reply"
-    ? `刚才 ${mediaComment.senderName} 用${mediaNounFor(mediaComment.kind)}回复了你上一条消息。${mediaForwardNotice}内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才 ${mediaComment.senderName} 用${mediaNounFor(mediaComment.kind)}回复了你上一条消息。${mediaForwardNotice}内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。`
     : mediaComment?.directTriggerReason === "mention"
-    ? `刚才 ${mediaComment.senderName} 发了${mediaNounFor(mediaComment.kind)}并在配文里 @ 了你。${mediaForwardNotice}内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才 ${mediaComment.senderName} 发了${mediaNounFor(mediaComment.kind)}并在配文里 @ 了你。${mediaForwardNotice}内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。`
     : mediaComment
-    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}。${mediaForwardNotice}内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}。${mediaForwardNotice}内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。`
     : queuedTrigger
-    ? `刚才你忙着回别的消息的时候，${queuedTriggerDescription}，这条是排队等到现在才轮到处理的。请针对这条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让对方知道你在回哪条；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给那条消息扣个表情反应表示看到了，别原样重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才你忙着回别的消息的时候，${queuedTriggerDescription}，这条是排队等到现在才轮到处理的。请针对这条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让对方知道你在回哪条；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给那条消息扣个表情反应表示看到了，别原样重复自己说过的话。`
     : isRandomTrigger
-    ? `群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
-    : `请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`;
+    ? "群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。"
+    : "请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。";
 
   // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
   // 回复你的消息、以及标着你自己 id 的行（见发送后的 recordChatMessage 自录）
@@ -262,11 +258,8 @@ export function buildReplyPromptSections(
     rendered.text +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`;
-  // 唤起者声明：本轮「正在跟你说话的是谁」唯一的可信来源（防注入侧的锚点见
-  // consts/aiChat/prompts/memory.ts 的 REPLY_CONTEXT_STRUCTURE_INSTRUCTION）。
-  // 它取代了原先那个按 id 复制唤起者热区发言的独立 Part：怎么读热区、怎么
-  // 定位 TA、怎么防同名与转发混淆，已升级成系统提示词里常驻的
-  // DIRECT_INVOCATION_READING_INSTRUCTION，这里只留一行动态身份。
+  // 唤起者声明是本轮「正在跟你说话的是谁」的唯一可信来源；热区读取、身份定位
+  // 与同名/转发边界由系统提示词的 DIRECT_INVOCATION_READING_INSTRUCTION 规定。
   // 随机插话与随机媒体评价没有唤起者，整句不出现，模型据此判断本轮无人叫它。
   // 整段缓存里都找不到 TA 时退回只报 id：名字宁可缺，也不能拿别处的名字凑。
   const invokerSnapshot: AiSpeakerSnapshot | undefined = directInvokerId === undefined

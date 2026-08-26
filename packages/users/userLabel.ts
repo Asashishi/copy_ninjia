@@ -1,5 +1,5 @@
 import type { CachedUser } from "../types/chatState";
-import { sanitizeDisplayName } from "../libs/text";
+import { joinPersonName, sanitizeDisplayName } from "../libs/text";
 
 /**
  * 生成用于回复文本中的、人类可读的用户/频道标签。当目标没有公开 @username 时
@@ -44,7 +44,7 @@ export function formatTargetLabel(user: CachedUser): string {
 export function formatFullName(user: CachedUser): string {
   const rawName: string = user.isChannel
     ? user.title ?? ""
-    : [user.first_name, user.last_name].filter(Boolean).join(" ");
+    : joinPersonName(user.first_name, user.last_name);
   const displayName: string = sanitizeDisplayName(rawName);
   if (displayName.length > 0) return displayName;
   return user.username ? `@${user.username}` : "这个杂鱼";

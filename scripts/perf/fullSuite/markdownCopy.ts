@@ -104,8 +104,9 @@ const ZH: BenchmarkCopy = {
     storage:
       "复用 `bun run perf:identity-database` 的实现；「冷」指连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。",
     "container-algorithm":
-      "生产选用的容器与算法：滑动窗口用 `LinkedQueue` + `trimSlidingWindow`，" +
-      "AI 滚动记忆缓冲用 `BoundedDeque`；这里单独量容器本身的成本。",
+      "生产选用的容器与算法：有配额上限的滑动窗口用 `TimestampDeque`，没有上限的" +
+      "反刷群入群窗口用 `LinkedQueue` + `trimSlidingWindow`，AI 滚动记忆缓冲用 " +
+      "`BoundedDeque`；这里单独量容器本身的成本。",
     "join-log-capacity":
       "25 万条满库入群日志上跑当前实现的快照与容量裁剪。",
   },
@@ -137,7 +138,7 @@ const ZH: BenchmarkCopy = {
   variationColumn: "波动",
   coldStartCaption:
     "本轮恢复：{whitelist} 条白名单 · {blocklist} 条黑名单 · {chats} 群状态 · " +
-    "{memories} 份 AI 记忆快照；进程峰值 RSS {rss}。",
+    "{qa} 条群问答 · {memories} 份 AI 记忆快照；进程峰值 RSS {rss}。",
   metricColumn: "指标",
   valueColumn: "读数",
   footer: "复现：`bun run perf:full`。",
@@ -201,8 +202,9 @@ const EN: BenchmarkCopy = {
       "Reuses `bun run perf:identity-database`; \"cold\" means an empty connection page cache and statement cache, " +
       "not a dropped OS page cache.",
     "container-algorithm":
-      "The containers and algorithms production actually runs on: sliding windows use `LinkedQueue` + " +
-      "`trimSlidingWindow`, the AI rolling memory buffer uses `BoundedDeque`; this section prices the container itself.",
+      "The containers and algorithms production actually runs on: quota-capped sliding windows use " +
+      "`TimestampDeque`, the uncapped anti-raid join window uses `LinkedQueue` + `trimSlidingWindow`, " +
+      "the AI rolling memory buffer uses `BoundedDeque`; this section prices the container itself.",
     "join-log-capacity":
       "Today's implementation, taking a snapshot and trimming to capacity over a full 250k-record join log.",
   },
@@ -234,7 +236,7 @@ const EN: BenchmarkCopy = {
   variationColumn: "Variation",
   coldStartCaption:
     "Recovered this round: {whitelist} whitelist · {blocklist} blocklist · {chats} chat states · " +
-    "{memories} AI memory snapshots; process peak RSS {rss}.",
+    "{qa} chat Q&A entries · {memories} AI memory snapshots; process peak RSS {rss}.",
   metricColumn: "Metric",
   valueColumn: "Value",
   footer: "Reproduce with `bun run perf:full`.",
@@ -295,7 +297,8 @@ const JA: BenchmarkCopy = {
       "`bun run perf:identity-database` の実装を再利用。「コールド」は接続のページキャッシュと文キャッシュが空である意味で、" +
       "OS のページキャッシュを破棄したという意味ではない。",
     "container-algorithm":
-      "本番が実際に使うコンテナとアルゴリズム：スライディングウィンドウは `LinkedQueue` + `trimSlidingWindow`、" +
+      "本番が実際に使うコンテナとアルゴリズム：上限付きスライディングウィンドウは `TimestampDeque`、" +
+      "上限なしの荒らし対策 join ウィンドウは `LinkedQueue` + `trimSlidingWindow`、" +
       "AI のローリングメモリバッファは `BoundedDeque`。ここではコンテナ自体のコストを計測する。",
     "join-log-capacity":
       "25 万件を満載した参加ログ上で、現行実装のスナップショットと容量トリムを計測する。",
@@ -328,7 +331,7 @@ const JA: BenchmarkCopy = {
   variationColumn: "変動",
   coldStartCaption:
     "このラウンドの復元：ホワイトリスト {whitelist} 件 · ブロックリスト {blocklist} 件 · チャット状態 {chats} 件 · " +
-    "AI メモリスナップショット {memories} 件、プロセスのピーク RSS {rss}。",
+    "チャット Q&A {qa} 件 · AI メモリスナップショット {memories} 件、プロセスのピーク RSS {rss}。",
   metricColumn: "指標",
   valueColumn: "計測値",
   footer: "再現方法：`bun run perf:full`。",

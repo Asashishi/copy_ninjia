@@ -5,10 +5,8 @@
  * （antiRaid/floodControl.ts 的 buildFloodCandidate）、`canBypassAdDetection`
  * 与 `isUserBlocked`（antiRaid/adCandidate.ts 的 buildAdCandidate）。
  *
- * 这个场景守的是 `libs/lruCache.ts` 的命中路径：那里曾经用「Map 删了再插」表达
- * LRU，每次命中都改写两次 Map，在这个表长上按操作摊到一次整表重哈希的份额。
- * 换成侵入式双向链表之后命中只写四个指针、零分配。没有这条场景的话，退回
- * Map 重排是一次全绿的改动——现有七个默认场景没有一个碰身份缓存。
+ * 这个场景守 `libs/lruCache.ts` 的侵入式双向链表命中路径：命中只重连节点指针，
+ * 不分配对象，也不对底层 Map 做删除后重插。场景必须持续覆盖身份缓存热读。
  *
  * 缓存整表填满：长期运行的部署本来就是这个稳态（每条 update 的前置预热会把
  * 见到的每个身份连同负缓存一起写进来，见 app/registerHandlers.ts）。取键按

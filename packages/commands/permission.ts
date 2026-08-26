@@ -39,7 +39,7 @@ interface PermissionHelpMessage {
  * 前缀 + JSON 代码块 + 可选后缀。
  *
  * 三段都用具名字段而不是位置参数：它们同为 string，位置写反不会报错，只会让
- * 下面那对 offset/length 指到错误的区间——而那正是这次收拢要防的东西。
+ * 下面那对 offset/length 指到错误的区间。
  */
 export interface FormatJsonBlockMessageParams {
   prefix: string;
@@ -52,10 +52,8 @@ export interface FormatJsonBlockMessageParams {
 /**
  * 前缀 + JSON 代码块的统一渲染。
  *
- * 两个调用点（help 与 query）此前各写一份同样的 `entities` 字面量，而那里最容易
- * 出错的恰好是 offset/length 这对数：它们按 **UTF-16 code unit** 计，写死成别的
- * 长度不会报错，只会让 Telegram 把代码块画歪或整段吞掉。收在一处之后，两条回执
- * 的实体只有一个真相来源。
+ * help 与 query 共用这一处实体构造；offset/length 必须按 **UTF-16 code unit**
+ * 计算，否则 Telegram 会错误渲染或拒绝整段代码块。
  */
 function formatJsonBlockMessage({
   prefix,

@@ -131,7 +131,6 @@ export class ApplicationLifecycle {
     this.dependencies.setBusinessWorkerFatalHandler(this.handleBusinessWorkerFatal);
     this.dependencies.setStatePersistenceFatalHandler(this.handleDiskIOFatal);
     this.dependencies.initAvatarUpdates();
-    this.dependencies.initReactionQueue();
     this.dependencies.initChatTitleRefresh();
     this.dependencies.initTranslate();
     this.dependencies.initGagRuntime();
@@ -220,8 +219,8 @@ export class ApplicationLifecycle {
       TELEGRAM_ALLOWED_UPDATES
     );
     // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
-    // init 前段，而上面的 initAvatarUpdates/initReactionQueue/
-    // initChatTitleRefresh/initTranslate/initGagRuntime/initBlocklistSweepScheduler 又把六个
+    // init 前段，而上面的 initAvatarUpdates/
+    // initChatTitleRefresh/initTranslate/initGagRuntime/initBlocklistSweepScheduler 又把五个
     // owner 重新置为接受工作。
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
@@ -521,7 +520,7 @@ export class ApplicationLifecycle {
   }
 
   /**
-   * 让六个后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
+   * 让五个后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
    * init() 里的各 init 会把 accepting 重新置真，启动期到达的停止信号若把成功
    * 记成一次性完成，此后 wait()/dispose() 的每一次调用都会被短路——owner
    * 整个停机期间继续收活，
@@ -540,7 +539,6 @@ export class ApplicationLifecycle {
     };
     // 每个入口独立结算：前一个 owner 抛错不能让后续入口继续接受新工作。
     quiesceOwner("avatar", (): void => this.dependencies.quiesceAvatarUpdates());
-    quiesceOwner("reaction", (): void => this.dependencies.quiesceReactionQueue());
     quiesceOwner("chat-title", (): void => this.dependencies.quiesceChatTitleRefresh());
     quiesceOwner("translate", (): void => this.dependencies.quiesceTranslate());
     quiesceOwner("gag", (): void => this.dependencies.quiesceGagRuntime());

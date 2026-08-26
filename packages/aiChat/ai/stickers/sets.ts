@@ -12,9 +12,8 @@ import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worke
  *
  * signal 声明成 DOM 的 `AbortSignal`，而不是 grammy `.d.ts` 里那个来自
  * `abort-controller` 包的同名类型：两者运行期是同一个东西，静态结构却不兼容
- * （`dispatchEvent`/`composedPath` 的签名不同）。把不兼容收在下面绑定
- * `telegramApi` 的那一处断言里，调用点与注入替身就都能拿到真实的类型检查——
- * 此前该参数声明为 `never`、调用处 `signal as never`，等于对第二个参数完全不检查。
+ * （`dispatchEvent`/`composedPath` 的签名不同）。不兼容只在下面绑定
+ * `telegramApi` 时断言，调用点与注入替身仍使用真实的 AbortSignal 类型检查。
  */
 interface StickerSetApi {
   getStickerSet(packName: string, signal?: AbortSignal): Promise<StickerSet>;

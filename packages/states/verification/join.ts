@@ -56,7 +56,7 @@ export function handleJoin(
   const invitedByOther: boolean = event.actorId !== undefined && event.actorId !== event.memberId;
 
   if (exempt) {
-    // 已有豁免占位时不动它，也不刷新其去重计时——与旧实现一致。
+    // 已有豁免占位时不动它，也不刷新其去重计时。
     if (state?.kind === "exempt") return { next: state, effects: [] };
     if (state?.kind === "kickPending") {
       if (state.executionStarted === true) {

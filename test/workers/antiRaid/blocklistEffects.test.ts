@@ -20,10 +20,10 @@ mock.module("../../../packages/infra/telegram", () => ({
   banChatMemberWithOutcome,
   banChatSenderChatWithOutcome,
   deleteMessage,
-  joinVerificationApi: guardApi,
+  telegramApi: guardApi,
 }));
 mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({ recordJoin }));
-mock.module("../../../packages/workers/antiRaid/adDetect/queue", () => ({
+mock.module("../../../packages/workers/antiRaid/adDetect/queueState", () => ({
   releaseAdDetectDedupKey,
 }));
 // 真实节奏（5s 退避、25 个一批）在测试里没法等；只压缩时间，不改变分支。
@@ -62,10 +62,7 @@ async function until(ready: () => boolean): Promise<void> {
  *
  * handleRemoveBlockedMembers 恒在 removeBlockedMembers 完成之后（成功或异常）发且
  * 只发一条回执，所以回执到达就等于这批的探测、封禁、删公告、补记入群全部结束
- * ——它是这个单元真正的完成边界。原先是固定 `Bun.sleep(20)`，赌的是「20 ms 内
- * 一定跑得完」：而压缩后的退避链（3 次尝试 + 2 次退避）在全量跑加覆盖率插桩的
- * 负载下会偶尔越过这个数，表现为随机一次 `toHaveBeenCalledTimes(3)` 只拿到 2。
- * 赌时长的同步点迟早会在更慢的机器或更重的负载上再赌输一次。
+ * ——它是这个单元真正的完成边界，不依赖机器负载或固定等待时长。
  */
 function settle(): Promise<void> {
   return until((): boolean => events.length > 0);

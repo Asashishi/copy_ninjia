@@ -29,7 +29,7 @@ describe("Telegram 缩略图压缩", () => {
   test("大图被缩到长边上限内，产出确实是 JPEG", async () => {
     const source: Buffer = await makePng(1_024, 1_024);
 
-    const thumbnail: Buffer | null = await prepareThumbnailJpeg({
+    const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
       maxEdge: 320,
       maxBytes: 180 * 1024,
@@ -49,7 +49,7 @@ describe("Telegram 缩略图压缩", () => {
   test("非正方形保持原始比例，不裁切也不拉伸", async () => {
     const source: Buffer = await makePng(1_600, 900);
 
-    const thumbnail: Buffer | null = await prepareThumbnailJpeg({
+    const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
       maxEdge: 320,
       maxBytes: 180 * 1024,
@@ -66,7 +66,7 @@ describe("Telegram 缩略图压缩", () => {
   test("本来就小于上限的图不会被放大成插值噪点", async () => {
     const source: Buffer = await makePng(64, 64);
 
-    const thumbnail: Buffer | null = await prepareThumbnailJpeg({
+    const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
       maxEdge: 320,
       maxBytes: 180 * 1024,
@@ -81,7 +81,7 @@ describe("Telegram 缩略图压缩", () => {
   test("所有质量档都压不进上限时返回 null，不交出一张会被拒的图", async () => {
     const source: Buffer = await makePng(1_024, 1_024);
 
-    const thumbnail: Buffer | null = await prepareThumbnailJpeg({
+    const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
       maxEdge: 320,
       // 100 字节没有任何质量档能满足，逐档降完仍要老实交回 null。
@@ -93,7 +93,7 @@ describe("Telegram 缩略图压缩", () => {
   });
 
   test("认不出的字节不抛错，归一成一次普通失败", async () => {
-    const thumbnail: Buffer | null = await prepareThumbnailJpeg({
+    const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: Buffer.from("definitely not an image"),
       maxEdge: 320,
       maxBytes: 180 * 1024,

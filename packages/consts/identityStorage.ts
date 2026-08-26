@@ -40,26 +40,33 @@ export const IDENTITY_WRITE_FLUSH_INTERVAL_MS: number = 30_000;
 /** SQLite 当前唯一受支持的 schema 版本。 */
 export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 5;
 
-/**
- * 迁移谱系常量只保留**当前那条冷迁移边**校验时用得到的两对。
- *
- * 这里曾经攒着 7 条 created_at / hash，全仓零引用，已删。删除的理由是「没有
- * 校验方」，不是「迁移本身过时」——两者必须分清，否则下一个读者会据此以为
- * 0000/0001 已经作废：
- *
- * - `*_TEXT_MIGRATION_*` 与 `*_JSONB_MIGRATION_*`（4 条）确实是废弃谱系：前者是
- *   0000 被改写成直建 JSONB 之前的旧文本版本，后者那条 20260811010000 的
- *   文本转 JSONB 迁移在当前 journal 里根本不存在。
- * - `*_CURRENT_BASE_MIGRATION_HASH` 与 `*_WHITELIST_PERMISSION_MIGRATION_*`（3 条）
- *   对应的是**现役的 0000 与 0001**，它们照常出现在每个新建库的
- *   `__drizzle_migrations` 里。删掉的只是那几个没人读的常量。
- *
- * 之所以只剩两对：受支持的冷迁移边由 scripts/conventions/coldMigrations.ts 声明为
- * v4 → v5，校验时只需要认出「源库停在 0002」和「目标库到达 0003」，中间更早的
- * 几步由 Drizzle 自己的 journal 保证顺序。按 `AGENTS.md`「不得累积更早版本或跨多个
- * 版本的兼容链」，更旧的部署必须先分阶段升级到上一个已发布版本，而不是在这里
- * 多摆几对哈希把老谱系也认下来。
- */
+/** 历史文本初始 migration 的时间戳；用于核验当前库的已发布谱系。 */
+export const IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT: number =
+  20_260_811_000_000;
+
+/** 历史文本初始 migration 的 SHA-256；用于核验历史 JSONB 转换谱系。 */
+export const IDENTITY_DATABASE_TEXT_MIGRATION_HASH: string =
+  "be64993ef4059e0fff1491bdbacc67ee9bb6b6d8097842036c7903c8c4aed93a";
+
+/** 历史文本转 JSONB migration 的时间戳；与文本来源指纹配对。 */
+export const IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT: number =
+  20_260_811_010_000;
+
+/** 历史文本转 JSONB migration 的 SHA-256；用于拒绝缺失、乱序或被改写的来源。 */
+export const IDENTITY_DATABASE_JSONB_MIGRATION_HASH: string =
+  "cb91b39a954c1638dcdc98e97ea0bfec947ea3cc1c377f39f45834bbda9d0cd3";
+
+/** 当前直建 JSONB 的初始 migration SHA-256；与历史两步来源互斥。 */
+export const IDENTITY_DATABASE_CURRENT_BASE_MIGRATION_HASH: string =
+  "6c68bc6862efa69ffc2fbd29284275a7e4094de3e8e3206f7ae19ca3b9da0000";
+
+/** 新增白名单代加权限 migration 的时间戳；两种合法基础谱系都必须包含。 */
+export const IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT: number =
+  20_260_812_000_000;
+
+/** 新增白名单代加权限 migration 的 SHA-256；用于核验当前库谱系。 */
+export const IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH: string =
+  "b227cd2cfb34ffa77f50dac3c2b018a1294ceca4009a3c804eeff55e8a3c932e";
 
 /** 新增群状态表 migration 的时间戳。 */
 export const IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT: number =

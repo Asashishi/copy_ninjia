@@ -31,7 +31,7 @@ describe("performance-result.json 的共享写入边界", () => {
     expect(existsSync(PERFORMANCE_RESULT_PATH)).toBeTrue();
   });
 
-  test("只换自己那一格，另一节与其中的人写说明原样保留", () => {
+  test("只换自己那一格，另一节与其中的人写说明原样保留", async () => {
     const path: string = writeDocument({
       hotPathProfileGate: {
         calibration: { runtime: { notes: ["给人看的说明"] } },
@@ -40,7 +40,7 @@ describe("performance-result.json 的共享写入边界", () => {
       fullSuite: { lastRun: null },
     });
 
-    writePerformanceResultEntry({
+    await writePerformanceResultEntry({
       path,
       section: "fullSuite",
       entry: "lastRun",
@@ -57,10 +57,10 @@ describe("performance-result.json 的共享写入边界", () => {
     expect((document.fullSuite as Record<string, unknown>).lastRun).toEqual({ rounds: 3 });
   });
 
-  test("节还不存在时创建它，不动其余内容", () => {
+  test("节还不存在时创建它，不动其余内容", async () => {
     const path: string = writeDocument({ hotPathProfileGate: { lastRun: null } });
 
-    writePerformanceResultEntry({
+    await writePerformanceResultEntry({
       path,
       section: "fullSuite",
       entry: "lastRun",
@@ -72,35 +72,35 @@ describe("performance-result.json 的共享写入边界", () => {
     expect(document.hotPathProfileGate).toEqual({ lastRun: null });
   });
 
-  test("节存在但不是对象时失败，不覆盖也不重建", () => {
+  test("节存在但不是对象时失败，不覆盖也不重建", async () => {
     const path: string = writeDocument({ hotPathProfileGate: {}, fullSuite: 42 });
 
-    expect((): void => writePerformanceResultEntry({
+    await expect(writePerformanceResultEntry({
       path,
       section: "fullSuite",
       entry: "lastRun",
       value: {},
-    })).toThrow("$.fullSuite must be an object");
+    })).rejects.toThrow("$.fullSuite must be an object");
     // 失败后原文不变：写坏的地方留在原地等人看，不被静默重建掩盖。
     expect(reload(path).fullSuite).toBe(42);
   });
 
-  test("非严格 JSON 与非对象顶层都直接失败", () => {
+  test("非严格 JSON 与非对象顶层都直接失败", async () => {
     const brokenPath: string = join(scratchRoot, "broken.json");
     writeFileSync(brokenPath, "{ not json }\n", "utf8");
-    expect((): void => writePerformanceResultEntry({
+    await expect(writePerformanceResultEntry({
       path: brokenPath,
       section: "fullSuite",
       entry: "lastRun",
       value: {},
-    })).toThrow("could not be read as strict JSON");
+    })).rejects.toThrow("could not be read as strict JSON");
 
     const arrayPath: string = writeDocument([]);
-    expect((): void => writePerformanceResultEntry({
+    await expect(writePerformanceResultEntry({
       path: arrayPath,
       section: "fullSuite",
       entry: "lastRun",
       value: {},
-    })).toThrow("$. must be a JSON object");
+    })).rejects.toThrow("$. must be a JSON object");
   });
 });

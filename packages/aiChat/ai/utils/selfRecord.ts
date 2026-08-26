@@ -5,16 +5,9 @@ import type {
 } from "../../../types/aiChat/protocol";
 
 /**
- * 机器人把自己刚发出的消息写回滚动记忆时的公共载荷。主线程侧（内联结果
- * 自录、洗澡触发的固定回复）与 AI Worker 侧（回复轮里的文字/贴纸/图片自录、
- * 限频提示自录）共六处都要拼同一组字段，散着写过一遍就漂移一次——转录靠
- * `[id:]` 认自己，任一处把 senderId 或 username 写错，模型就会把自己的发言
- * 当成第三个人。
- *
- * 与 auto/message/recordContext.ts 同理，这里返回的是**完整**的 AiRecordMessage
- * 而不是半份上下文：原先各调用点都要 `{...buildSelfRecordContext(...), text}`
- * 展开一次，而对象展开在 JSC 里走的是运行时枚举自有键的通用拷贝，比一次写全的
- * 字面量贵约一个数量级（实测 365.88 → 43.53 ns/op）。
+ * 机器人把自己刚发出的消息写回滚动记忆时的公共载荷。主线程侧与 AI Worker 侧
+ * 的六个调用点共用同一份完整 AiRecordMessage 构造；转录依赖 `[id:]` 识别自己，
+ * senderId 与 username 必须统一。builder 一次写齐固定字段，不创建投影或对象展开。
  *
  * lastName 固定空串：机器人账号只有 first_name，Telegram 不提供姓氏。
  * 自录不参与 purge 后的即时上报，persistImmediately 恒为 false——但这个键必须

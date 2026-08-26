@@ -60,14 +60,7 @@ export const aiMemoryPersistedNotifier: {
 
 /** 启动恢复时整体替换镜像并清除旧 dirty、待删、revision 与 timer。 */
 export function hydrateAiMemoryCache(snapshots: ReadonlyMap<number, string>): void {
-  if (aiMemoryFlushState.timer !== null) clearTimeout(aiMemoryFlushState.timer);
-  aiMemoryFlushState.timer = null;
-  aiMemoryCache.clear();
-  dirtyChats.clear();
-  deletedAiMemoryChats.clear();
-  aiMemoryRevisions.clear();
-  aiMemoryOperations.clear();
-  aiMemoryImmediateRevisions.clear();
+  resetAiMemoryCache();
   for (const [chatId, snapshot] of snapshots) {
     aiMemoryCache.set(chatId, snapshot);
     aiMemoryRevisions.set(chatId, 0);

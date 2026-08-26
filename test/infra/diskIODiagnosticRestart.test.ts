@@ -5,68 +5,27 @@ import {
   DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES,
 } from "../../packages/consts/diskIO/diagnostics";
 import type { DiskIOMessage, DiskIOReply } from "../../packages/types";
+import {
+  emitSuccessfulDiskIOLoad as emitSuccessfulLoad,
+  FakeDiskIOWorker as FakeWorker,
+  installFakeDiskIOWorker,
+  lastDiskIOMessage,
+} from "../helpers/diskIOWorkerHarness";
 
 const diskIO = await import("../../packages/infra/diskIO");
-
-class FakeWorker {
-  static readonly instances: FakeWorker[] = [];
-  onmessage: ((event: MessageEvent<DiskIOReply>) => void) | null = null;
-  onerror: ((event: ErrorEvent) => void) | null = null;
-  readonly messages: DiskIOMessage[] = [];
-  terminated: boolean = false;
-
-  constructor(readonly url: string) {
-    FakeWorker.instances.push(this);
-  }
-
-  unref(): void {}
-
-  postMessage(message: DiskIOMessage): void {
-    this.messages.push(message);
-  }
-
-  async terminate(): Promise<number> {
-    this.terminated = true;
-    return 0;
-  }
-}
-
-function emitSuccessfulLoad(worker: FakeWorker): void {
-  worker.onmessage!({ data: {
-    type: "loaded",
-    aiMemories: new Map(),
-    stickerCatalogs: new Map(),
-    luckDay: null,
-    luckReceiptSecret: {
-      version: 1 as const,
-      day: "2026-08-10",
-      key: Buffer.alloc(32, 7).toString("base64url"),
-    },
-    verifications: new Map(),
-    pendingBlockedRemovals: new Map(),
-    blocklistEntryCount: 0,
-    whitelistEntryCount: 0,
-  } } as MessageEvent<DiskIOReply>);
-}
 
 function latestDiagnosticBatch(
   worker: FakeWorker
 ): Extract<DiskIOMessage, { type: "diagnosticBatch" }> {
-  const batch: DiskIOMessage | undefined = worker.messages.findLast(
-    (message: DiskIOMessage): boolean => message.type === "diagnosticBatch"
-  );
-  if (batch?.type !== "diagnosticBatch") throw new Error("missing diagnostic batch");
-  return batch;
+  return lastDiskIOMessage(worker, "diagnosticBatch");
 }
 
 function emitBusinessFlush(
   worker: FakeWorker,
   success: boolean = true
 ): void {
-  const request: DiskIOMessage | undefined = worker.messages.findLast(
-    (message: DiskIOMessage): boolean => message.type === "flush"
-  );
-  if (request?.type !== "flush") throw new Error("missing business flush");
+  const request: Extract<DiskIOMessage, { type: "flush" }> =
+    lastDiskIOMessage(worker, "flush");
   worker.onmessage!({ data: success
     ? { type: "flushed", flushedId: request.flushId }
     : {
@@ -91,9 +50,7 @@ async function failCurrentBatch(worker: FakeWorker): Promise<void> {
 describe("Disk I/O diagnostic failure recycling", () => {
   test("成功 ACK 清零连续失败，第 45 次失败受控重建并由新代际重投原批", async () => {
     expect(DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES).toBe(45);
-    FakeWorker.instances.length = 0;
-    const originalWorker: typeof Worker = globalThis.Worker;
-    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const restoreWorker: () => void = installFakeDiskIOWorker();
     const error = spyOn(console, "error").mockImplementation((): void => {});
     try {
       diskIO.initDiskIO();
@@ -163,15 +120,13 @@ describe("Disk I/O diagnostic failure recycling", () => {
     } finally {
       await diskIO.terminateDiskIO();
       error.mockRestore();
-      globalThis.Worker = originalWorker;
+      restoreWorker();
     }
   });
 
   test("日志失败链第三次要求重建时中断 bot，普通崩溃预算不参与该计数", async () => {
     expect(DISK_DIAGNOSTIC_FATAL_REBUILD_THRESHOLD).toBe(3);
-    FakeWorker.instances.length = 0;
-    const originalWorker: typeof Worker = globalThis.Worker;
-    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const restoreWorker: () => void = installFakeDiskIOWorker();
     const error = spyOn(console, "error").mockImplementation((): void => {});
     const fatals: Error[] = [];
     try {
@@ -202,14 +157,12 @@ describe("Disk I/O diagnostic failure recycling", () => {
     } finally {
       await diskIO.terminateDiskIO();
       error.mockRestore();
-      globalThis.Worker = originalWorker;
+      restoreWorker();
     }
   });
 
   test("受控重建前业务 flush 失败会立即 fatal，不猜测非日志事实已落盘", async () => {
-    FakeWorker.instances.length = 0;
-    const originalWorker: typeof Worker = globalThis.Worker;
-    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const restoreWorker: () => void = installFakeDiskIOWorker();
     const error = spyOn(console, "error").mockImplementation((): void => {});
     const fatals: Error[] = [];
     try {
@@ -237,7 +190,7 @@ describe("Disk I/O diagnostic failure recycling", () => {
     } finally {
       await diskIO.terminateDiskIO();
       error.mockRestore();
-      globalThis.Worker = originalWorker;
+      restoreWorker();
     }
   });
 });

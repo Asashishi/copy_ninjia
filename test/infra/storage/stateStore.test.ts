@@ -4,25 +4,41 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   StateStore,
+  activeCopyModeIn,
+  activeCopyTargetIdIn,
+  clearChatStateField,
   getActiveProxySendTarget,
   getBotDefaultAvatarUrl,
+  getChatState,
+  getChatStateCache,
   getFortuneThumbnailUrl,
   getGagThumbnailUrl,
   getProbabilityThumbnailUrl,
+  getGlobalCopyState,
+  getOrCreateChatState,
   loadState,
   pruneDepartedChatState,
   seedMissingAssetState,
 } from "../../../packages/infra/storage/stateStore";
 import { chatStateCache } from "../../../packages/cache/main/chatState";
-import { globalAssetState, stateStoreHolder } from "../../../packages/cache/main/storage";
+import {
+  globalAssetState,
+  globalCopyState,
+  stateStoreHolder,
+} from "../../../packages/cache/main/storage";
 import {
   BOT_DEFAULT_AVATAR_URL,
   FORTUNE_THUMBNAIL_URL,
   GAG_THUMBNAIL_URL,
-  QA_THUMBNAIL_URL,
   PROBABILITY_THUMBNAIL_URL,
 } from "../../../packages/consts/ui/assets";
-import type { DecodedStateFile, LockdownRecord, StateFileSchema } from "../../../packages/types/chatState";
+import { DEFAULT_CHAT_STATE } from "../../../packages/libs/chatState";
+import type {
+  ChatState,
+  DecodedStateFile,
+  LockdownRecord,
+  StateFileSchema,
+} from "../../../packages/types/chatState";
 import { botPermissions } from "../../helpers/botPermissions";
 
 function schema(chatId: number): DecodedStateFile {
@@ -435,10 +451,61 @@ describe("群级状态门面", () => {
     chatStateCache.set(-1002, { isProxySendEnabled: true });
     expect(getActiveProxySendTarget()).toBe(-1002);
   });
+
+  test("缺省读取不建条目，首次写入返回同一稳定对象与只读缓存视图", (): void => {
+    const missing: Readonly<ChatState> = getChatState(-1001);
+    expect(missing).toBe(DEFAULT_CHAT_STATE);
+    expect(chatStateCache.has(-1001)).toBeFalse();
+
+    const created: ChatState = getOrCreateChatState(-1001);
+    created.isAIChatEnabled = true;
+
+    expect(getOrCreateChatState(-1001)).toBe(created);
+    expect(getChatState(-1001)).toBe(created);
+    expect(getChatStateCache()).toBe(chatStateCache);
+  });
+
+  test("清字段区分未设置与已清除，并在最后一项清空后回收群条目", (): void => {
+    const state: ChatState = getOrCreateChatState(-1001);
+    state.isAIChatEnabled = true;
+    state.isProxySendEnabled = true;
+
+    expect(clearChatStateField(-1001, "isAntiRaidEnabled")).toBeFalse();
+    expect(clearChatStateField(-1001, "isAIChatEnabled")).toBeTrue();
+    expect(chatStateCache.get(-1001)?.isProxySendEnabled).toBeTrue();
+
+    expect(clearChatStateField(-1001, "isProxySendEnabled")).toBeTrue();
+    expect(chatStateCache.has(-1001)).toBeFalse();
+    expect(clearChatStateField(-1001, "isProxySendEnabled")).toBeFalse();
+  });
+});
+
+describe("全局复读状态门面", () => {
+  afterEach((): void => {
+    globalCopyState.copiedUser = null;
+    globalCopyState.copyMode = undefined;
+    globalCopyState.copyChatId = undefined;
+    globalCopyState.lastCopyTime = undefined;
+  });
+
+  test("目标只在所属群可见，模式与同一份权威状态保持一致", (): void => {
+    expect(activeCopyTargetIdIn(-1001)).toBeUndefined();
+    expect(activeCopyModeIn(-1001)).toBeUndefined();
+
+    globalCopyState.copiedUser = { id: 42, first_name: "Target" };
+    globalCopyState.copyMode = "reverse";
+    globalCopyState.copyChatId = -1001;
+
+    expect(activeCopyTargetIdIn(-1002)).toBeUndefined();
+    expect(activeCopyModeIn(-1002)).toBeUndefined();
+    expect(activeCopyTargetIdIn(-1001)).toBe(42);
+    expect(activeCopyModeIn(-1001)).toBe("reverse");
+    expect(getGlobalCopyState()).toBe(globalCopyState);
+  });
 });
 
 /**
- * `state.global.assets` 的四个取值函数：缺省即回退到内置常量，设过就以 state 为准。
+ * `state.global.assets` 的五个取值函数：缺省即回退到内置常量，设过就以 state 为准。
  * 缺省这一侧必须守住——它是「没配过的部署行为与从前逐字相同」的唯一保证。
  */
 describe("素材直链的取值", () => {
@@ -457,15 +524,16 @@ describe("素材直链的取值", () => {
   });
 
   test("设过的那一项以 state 为准，没设过的仍走常量", () => {
-    globalAssetState.probabilityThumbnailUrl = "https://cdn.example/probability.png";
-    expect(getProbabilityThumbnailUrl()).toBe("https://cdn.example/probability.png");
+    globalAssetState.gagThumbnailUrl = "https://cdn.example/gag.png";
+    expect(getGagThumbnailUrl()).toBe("https://cdn.example/gag.png");
     expect(getFortuneThumbnailUrl()).toBe(FORTUNE_THUMBNAIL_URL);
+    expect(getProbabilityThumbnailUrl()).toBe(PROBABILITY_THUMBNAIL_URL);
     expect(getBotDefaultAvatarUrl()).toBe(BOT_DEFAULT_AVATAR_URL);
   });
 });
 
 /**
- * `loadState()` 把解码结果接到取值函数上的那三行。纯解码测试与直接改
+ * `loadState()` 把解码结果接到取值函数上的五项素材。纯解码测试与直接改
  * `globalAssetState` 的测试都走不到它：交换两行或整行删掉都能全绿，而生产表现是
  * 「我配的图悄悄不生效」，无日志、无门禁。这里从真实文件一路走到取值函数。
  */
@@ -481,6 +549,10 @@ describe("素材直链的加载接线", () => {
     globalAssetState.probabilityThumbnailUrl = undefined;
     globalAssetState.gagThumbnailUrl = undefined;
     globalAssetState.botDefaultAvatarUrl = undefined;
+    globalCopyState.copiedUser = null;
+    globalCopyState.copyMode = undefined;
+    globalCopyState.copyChatId = undefined;
+    globalCopyState.lastCopyTime = undefined;
     chatStateCache.clear();
     stateStoreHolder.current?.dispose();
     stateStoreHolder.current = null;
@@ -526,6 +598,29 @@ describe("素材直链的加载接线", () => {
     expect(getGagThumbnailUrl()).toBe(GAG_THUMBNAIL_URL);
     expect(getBotDefaultAvatarUrl()).toBe(BOT_DEFAULT_AVATAR_URL);
   });
+
+  test("复读目标、模式、所属群与冷却时间按判别联合完整恢复", async () => {
+    const statePath: string = join(dir, "state-with-copy.json");
+    const stored: DecodedStateFile = {
+      global: {
+        copy: {
+          copiedUser: { id: 42, first_name: "Target" },
+          copyMode: "nya",
+          copyChatId: -1001,
+          lastCopyTime: 123_456,
+        },
+        assets: {},
+      },
+    };
+    writeFileSync(statePath, JSON.stringify(stored, null, 2));
+    stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
+
+    await loadState();
+
+    expect(getGlobalCopyState()).toEqual(stored.global.copy);
+    expect(activeCopyTargetIdIn(-1001)).toBe(42);
+    expect(activeCopyModeIn(-1001)).toBe("nya");
+  });
 });
 
 /**
@@ -566,14 +661,13 @@ describe("启动补齐素材直链", () => {
     return written;
   }
 
-  test("五项都没设过时补齐并落盘一次", async () => {
+  test("四项都没设过时补齐并落盘一次", async () => {
     const written: Promise<void> = installRecordingStore();
 
-    expect(seedMissingAssetState()).toBe(5);
+    expect(seedMissingAssetState()).toBe(4);
     expect(globalAssetState.fortuneThumbnailUrl).toBe(FORTUNE_THUMBNAIL_URL);
     expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
     expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
-    expect(globalAssetState.qaThumbnailUrl).toBe(QA_THUMBNAIL_URL);
     expect(globalAssetState.botDefaultAvatarUrl).toBe(BOT_DEFAULT_AVATAR_URL);
 
     await written;
@@ -583,12 +677,11 @@ describe("启动补齐素材直链", () => {
       fortuneThumbnailUrl: FORTUNE_THUMBNAIL_URL,
       probabilityThumbnailUrl: PROBABILITY_THUMBNAIL_URL,
       gagThumbnailUrl: GAG_THUMBNAIL_URL,
-      qaThumbnailUrl: QA_THUMBNAIL_URL,
       botDefaultAvatarUrl: BOT_DEFAULT_AVATAR_URL,
     });
   });
 
-  test("已配置的项原样保留，只补缺的那一项", () => {
+  test("已配置的项原样保留，只补其余缺项", () => {
     void installRecordingStore();
     globalAssetState.botDefaultAvatarUrl = "https://cdn.example/custom-face.jpg";
     globalAssetState.fortuneThumbnailUrl = "https://cdn.example/fortune.png";
@@ -598,7 +691,6 @@ describe("启动补齐素材直链", () => {
     expect(globalAssetState.fortuneThumbnailUrl).toBe("https://cdn.example/fortune.png");
     expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
     expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
-    expect(globalAssetState.qaThumbnailUrl).toBe(QA_THUMBNAIL_URL);
   });
 
   test("四项都配过时不写盘", async () => {

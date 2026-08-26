@@ -1,12 +1,5 @@
 /**
- * generate_song 是**可选**供应商能力，工具集按「这个成员在不在」决定挂不挂它。
- *
- * 判据必须是能力而不是供应商名字：按名字判会让每个调用点各记一份「谁支持什么」的
- * 名单，再有第三家或某家补齐能力时，漏改的那处只会在运行期表现成一个不该出现的
- * 工具（见 types/aiChat/provider.ts 的模块头注）。
- *
- * 挂不上时还要守住第二条：dispatch 里那条分支不能变成一次对 undefined 的调用，
- * 必须与其它未知工具名同样归一成 Unknown tool。
+ * generate_song 的直接触发资格、供应商能力挂载与未知工具分发契约。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -16,8 +9,7 @@ import type { AiToolDefinition } from "../../../packages/types/aiChat/provider";
 const generateSong = mock(async (..._args: unknown[]): Promise<null> => null);
 const songAiProvider = mock((): unknown => ({ name: "google", generateSong }));
 const realTelegram = await import("../../../packages/infra/telegram");
-// 只替换 songAiProvider 这一个导出：同模块的 imageAiProvider 仍被生图工具静态
-// 引用，整份替换会让那条 import 在求值期就断掉。
+// 保留同模块的真实导出，只替换本测试观测的两个 provider selector。
 const realProvider = await import("../../../packages/aiChat/provider");
 const configuredImageAiProvider = realProvider.imageAiProvider;
 const imageAiProvider = mock((): unknown => configuredImageAiProvider());
@@ -35,12 +27,12 @@ mock.module("../../../packages/infra/telegram", () => ({
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
 const { GENERATE_IMAGE_TOOL, GENERATE_SONG_TOOL, ACTION_TOOL_NAMES } = await import("../../../packages/consts/tools");
 
-function buildContext(): ReplyToolContext {
+function buildContext(mediaToolsRequested: boolean = true): ReplyToolContext {
   return {
     chatId: -1001,
     replyToMessageId: 42,
     messageThreadId: undefined,
-    mediaToolsRequested: true,
+    mediaToolsRequested,
     bypassMediaToolCooldown: false,
     chatAction: {
       current: (): "idle" => "idle",
@@ -70,6 +62,17 @@ beforeEach(() => {
 });
 
 describe("生歌工具的可选挂载", () => {
+  test("非直接触发轮不查询供应商，也不暴露重媒体工具", async () => {
+    const toolset: ReplyToolset = await createReplyToolset(buildContext(false));
+
+    expect(songAiProvider).not.toHaveBeenCalled();
+    expect(imageAiProvider).not.toHaveBeenCalled();
+    expect(toolNames(toolset)).not.toContain(GENERATE_SONG_TOOL);
+    expect(toolNames(toolset)).not.toContain(GENERATE_IMAGE_TOOL);
+    expect(toolset.has(GENERATE_SONG_TOOL)).toBe(false);
+    expect(toolset.has(GENERATE_IMAGE_TOOL)).toBe(false);
+  });
+
   test("供应商实现了 generateSong 时才挂 generate_song", async () => {
     const toolset: ReplyToolset = await createReplyToolset(buildContext());
 

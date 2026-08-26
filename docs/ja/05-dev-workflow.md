@@ -20,16 +20,18 @@
 | `bun run test` | ファイル分離を強制して全テストを実行 |
 | `bun run test:random` | 固定 seed のランダム順で全テストを実行し、テスト間の残留を炙り出す |
 | `bun run test:coverage` | テスト + 全ソースコードのカバレッジ |
+| `bun run check:install-script-syntax` | `bash -n` で `install.sh` の shell 構文だけを解析し、インストール処理は実行しない |
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
 | `bun run check` | conventions + lint + typecheck + coverage + hot path gate。**コミット前に必須** |
+| `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するため `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
 | `bun run perf:hot-path-gate` | 全 hot path シナリオの memory/GC/JIT gate。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
-| `bun run perf:join-log` | 入室ログ 250,000 件上限で独立 process の比較 benchmark を実行 |
+| `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
-| `bun run migrate:chat-qa` | `chat_qa` table と Q&A permission key の追加（schema v4 → v5）の停止時 cold migration |
-| `bun run release:check` | frozen lockfile install + check + fault injection。リリース前に必須 |
+| `bun run migrate:qa-thumbnail` | `state.json` から退場した `global.assets.qaThumbnailUrl` を取り除く停止時 cold migration |
+| `bun run release:check` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
 
 ## 品質ゲートの基準
@@ -37,11 +39,15 @@
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限を lint より先に検査します。さらに 2 つのファイル横断の整合性検査があります：グループに長期保持される command 内容（`preserveInGroup: true`）は `messageThreadId` も渡さなければならないこと、そして 3 つの `09-performance.md` の benchmark ブロックの timestamp が互いに一致し、`performance-result.json` の `fullSuite.lastRun` が記録済みならそれと同一の実行に由来すること（未記録の場合は「まだ実行していない」として通し、リリース手順の 2 番目で補います）。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。production の Node compatibility import、Telegram の cleanup／長期保持例外、現在の cold migration 入口、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+
+### 依存関係の release-age gate
+
+依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、[`dependency-release-age-exemptions.json`](../../dependency-release-age-exemptions.json) に記録します。現在の Bun runtime と `@types/bun` はどちらも 1.4.0 です。
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2581 tests / 271 files / 95642 `expect()` calls**。全ソースコードの**関数カバレッジは 95.23%、行カバレッジは 96.62%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2821 tests / 287 files / 96239 `expect()` calls**。全ソースコードの**関数カバレッジは 95.98%、行カバレッジは 97.14%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -57,7 +63,7 @@
 ### テスト作成の規約
 
 - `packages/` のパスを反映します：`packages/foo/bar.ts` → `test/foo/bar.test.ts`。
-- 共通 helper は `test/libs/helpers.ts` に置きます。テスト間で可変なモジュール状態を共有しないでください。分離機構によって、`--isolate` なしで実行されるまで問題が隠れる可能性があります。
+- domain をまたいで共用する test double・fixture・harness は `test/helpers/` に、domain に依存しない汎用ユーティリティは `test/libs/helpers.ts` に置きます。テスト間で可変なモジュール状態を共有しないでください。分離機構によって、`--isolate` なしで実行されるまで問題が隠れる可能性があります。
 - 実ファイル I/O を行うテストも、preload の一時データルートによって安全です。ただし `infra/storage` 周辺の mock 境界には注意してください。`infra/diskIO` だけを mock して `infra/storage` を実物のままにすると、実際の `saveStateInBackground` に到達する可能性があります。これは [`AGENTS.md`](../../AGENTS.md) が実行時ファイルの事前バックアップを求める状況です。
 
 ## Fault injection suite
@@ -84,7 +90,7 @@ gate を設けている項目：GC sample 比率、sampling RSS ピークとプ�
 
 ## 入室ログ性能 benchmark
 
-`bun run perf:join-log` は入力を容量 250,000 件、overflow 300 件、warm-up 10,000 件に固定し、snapshot と capacity の baseline/current をそれぞれ 5 個の独立 Bun process で実行します。出力には完全な Bun version/revision、所要時間の中央値と範囲、強制 GC 前後の JSC heap/object 変化を記録します。baseline は最適化前の Map 全体 copy、全件 sort、完全な JSON 文字列生成を、同一 Bun build 内の前後比較専用として固定したものです。`Bun.gc(true)` はこの benchmark にしか存在せず、production control flow には入りません。入室 index、容量裁剪、snapshot serialization、分割 atomic write を変更した場合は必ず実行し、差が 5 sample の範囲に表れる noise より十分大きいことを確認します。
+`bun run perf:join-log` は入力を容量 250,000 件、overflow 300 件、warm-up 10,000 件に固定し、snapshot・capacity・append-accounting の 3 経路の baseline/current をそれぞれ 5 個の独立 Bun process で実行します。親 process は sample ごとに両 variant の checksum を突き合わせ、一致しなければ全体を失敗させます。`append-accounting` の 1 batch は production の `JOIN_LOG_MAX_BUFFERED_ENTRIES` を使い、合計が他の 2 経路と同じ 25 万件規模になるまで繰り返します。出力には完全な Bun version/revision、所要時間の中央値と範囲、強制 GC 前後の JSC heap/object 変化を記録します。baseline は最適化前の実装——Map 全体 copy、全件 sort、完全な JSON 文字列生成（snapshot と capacity）、および 1 件ずつ再 serialize して byte 数だけを測る方式（append-accounting）——を、同一 Bun build 内の前後比較専用として固定したものです。`Bun.gc(true)` はこの benchmark にしか存在せず、production control flow には入りません。入室 index、容量裁剪、snapshot serialization、追記後の byte 記帳、分割 atomic write を変更した場合は必ず実行し、差が 5 sample の範囲に表れる noise より十分大きいことを確認します。
 
 ## Identity database 性能 benchmark
 
@@ -125,7 +131,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
 
-- **中国語の文字列リテラル数**（現在およそ 846 ソース行 / 79 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
+- **中国語の文字列リテラル数**（現在およそ 861 ソース行 / 83 ファイル）：数値は 3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節にだけ書きます。3 言語 README の「言語について」注記はその節へリンクするだけで、数値は持ちません。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
 - **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース

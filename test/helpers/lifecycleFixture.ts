@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, mock } from "bun:test";
 import { ApplicationLifecycle } from "../../packages/app/lifecycle";
 import { drainAvatarUpdates as realDrainAvatarUpdates } from "../../packages/copy/avatarQueue";
-import { drainReactionQueue as realDrainReactionQueue } from "../../packages/copy/reactionQueue";
 import type { ApplicationLifecycleDependencies } from "../../packages/app/lifecycleDependencies";
 
 const calls: string[] = [];
@@ -47,7 +46,6 @@ const terminateDiskIO = mock(async (): Promise<void> => { calls.push("terminateD
 const terminateAiChat = mock(async (): Promise<void> => { calls.push("terminateAiChat"); });
 const terminateAntiRaid = mock(async (): Promise<void> => { calls.push("terminateAntiRaid"); });
 const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drainAntiRaid"); return "flushed"; });
-const drainReactionQueue = mock(async (): Promise<FlushResult> => { calls.push("drainReaction"); return "flushed"; });
 const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
 const drainGagRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainGag"); return "flushed"; });
 const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
@@ -62,11 +60,9 @@ const drainTelegramOutbound = mock(async (): Promise<FlushResult> => {
 const closeTranslate = mock(async (): Promise<FlushResult> => { calls.push("closeTranslate"); return "flushed"; });
 const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
 const initGagRuntime = mock((): void => { calls.push("initGag"); });
-const initReactionQueue = mock((): void => { calls.push("initReaction"); });
 const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
 const initTranslate = mock((): void => { calls.push("initTranslate"); });
 const quiesceAvatarUpdates = mock((): void => { calls.push("quiesceAvatar"); });
-const quiesceReactionQueue = mock((): void => { calls.push("quiesceReaction"); });
 const quiesceChatTitleRefresh = mock((): void => { calls.push("quiesceTitles"); });
 const quiesceTranslate = mock((): void => { calls.push("quiesceTranslate"); });
 const quiesceGagRuntime = mock((): void => { calls.push("quiesceGag"); });
@@ -140,7 +136,6 @@ const testDependencies = {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
-  drainReactionQueue,
   drainTranslate,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
@@ -165,7 +160,6 @@ const testDependencies = {
   initAntiRaid,
   initBlocklistSweepScheduler,
   initChatTitleRefresh,
-  initReactionQueue,
   initTranslate,
   loadPersistedData,
   logger: {
@@ -187,7 +181,6 @@ const testDependencies = {
   quiesceAvatarUpdates,
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
-  quiesceReactionQueue,
   quiesceGagRuntime,
   quiesceTranslate,
   seedSenderCache,
@@ -205,7 +198,6 @@ const testDependencies = {
 const realDrainDependencies = {
   ...testDependencies,
   drainAvatarUpdates: realDrainAvatarUpdates,
-  drainReactionQueue: realDrainReactionQueue,
 } as unknown as ApplicationLifecycleDependencies;
 
 function setCopiedUser(value: object | null): void {
@@ -258,7 +250,6 @@ export function installLifecycleFixtureHooks(): void {
       terminateAiChat,
       terminateAntiRaid,
       drainAntiRaid,
-      drainReactionQueue,
       drainAvatarUpdates,
       drainGagRuntime,
       drainTranslate,
@@ -267,12 +258,10 @@ export function installLifecycleFixtureHooks(): void {
       closeTranslate,
       initAvatarUpdates,
       initGagRuntime,
-      initReactionQueue,
       initChatTitleRefresh,
       initTranslate,
       quiesceAvatarUpdates,
       quiesceBlocklistSweepScheduler,
-      quiesceReactionQueue,
       quiesceChatTitleRefresh,
       quiesceTranslate,
       quiesceGagRuntime,
@@ -313,7 +302,6 @@ export function installLifecycleFixtureHooks(): void {
     flushStateToDisk.mockImplementation(async () => { calls.push("flushState"); return "flushed" as const; });
     flushAiMemory.mockImplementation(async () => { calls.push("flushAiMemory"); return "flushed" as const; });
     drainAntiRaid.mockImplementation(async () => { calls.push("drainAntiRaid"); return "flushed" as const; });
-    drainReactionQueue.mockImplementation(async () => { calls.push("drainReaction"); return "flushed" as const; });
     drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
     drainGagRuntime.mockImplementation(async () => { calls.push("drainGag"); return "flushed" as const; });
     drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
@@ -357,7 +345,6 @@ export const lifecycleFixture = {
   drainGagRuntime,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
-  drainReactionQueue,
   drainTranslate,
   flushAiMemory,
   flushDiskIO,
@@ -375,7 +362,6 @@ export const lifecycleFixture = {
   initGagRuntime,
   initChatTitleRefresh,
   initDiskIO,
-  initReactionQueue,
   initTelegramClients,
   initTranslate,
   loadPersistedData,
@@ -386,7 +372,6 @@ export const lifecycleFixture = {
   quiesceAvatarUpdates,
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
-  quiesceReactionQueue,
   quiesceGagRuntime,
   quiesceTranslate,
   realDrainDependencies,

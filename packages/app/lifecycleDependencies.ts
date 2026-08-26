@@ -14,7 +14,6 @@ import {
   quiesceGagRuntime,
 } from "../commands/gag/runtime";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
-import { drainReactionQueue, initReactionQueue, quiesceReactionQueue } from "../copy/reactionQueue";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../copy/translate";
 import {
   abortChatTitleRefresh,
@@ -72,7 +71,6 @@ export const lifecycleDependencies = {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
-  drainReactionQueue,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -95,7 +93,6 @@ export const lifecycleDependencies = {
   initBlocklistSweepScheduler,
   initChatTitleRefresh,
   initDiskIO,
-  initReactionQueue,
   initTranslate,
   initTelegramClients,
   loadPersistedData,
@@ -112,7 +109,6 @@ export const lifecycleDependencies = {
   seedMissingAssetState,
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
-  quiesceReactionQueue,
   quiesceGagRuntime,
   quiesceBlocklistSweepScheduler,
   quiesceTranslate,

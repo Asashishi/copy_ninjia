@@ -1,8 +1,8 @@
 /**
- * 黑名单清扫三个用例文件共用的替身、状态与隔离钩子。
+ * 黑名单清扫与启动恢复各用例文件共用的替身、状态与隔离钩子。
  *
- * 单文件曾超过 1000 行（AGENTS.md 要求必须拆分），而这套 mock.module 装配、
- * Worker 回执工厂与 beforeEach 复位三份用例都要用。
+ * 这套 mock.module 装配、Worker 回执工厂与 beforeEach 复位每一份用例都要用，
+ * 收在一处才不会各写一份悄悄漂移的替身。
  */
 
 import { beforeEach, expect, mock } from "bun:test";
@@ -182,7 +182,7 @@ export function setBlocklistIdReads(
   blocklistIdPageSource.current = implementation;
 }
 
-/** 三个黑名单清扫用例文件共用的隔离钩子；每份都要登记一次。 */
+/** 四个黑名单用例文件共用的隔离钩子；每份都要登记一次。 */
 export function installBlocklistSweepHooks(injected: BlocklistSweepDeps): void {
   deps.current = injected;
   beforeEach(() => {

@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import type { AgentDeploymentConfig } from "../../packages/types/config";
 
 let agentConfig: AgentDeploymentConfig;
@@ -27,6 +27,10 @@ const { geminiProvider } = await import("../../packages/aiChat/gemini");
 const { openAiProvider } = await import("../../packages/aiChat/openai");
 const { aiProviderQuotaLanes, resetAiProviderSchedulerCache } =
   await import("../../packages/cache/workers/aiChat/providerScheduler");
+const {
+  AI_PROVIDER_BACKGROUND_MAX_PENDING,
+  AI_PROVIDER_MAX_CONCURRENT,
+} = await import("../../packages/consts/aiChat/provider");
 
 beforeEach((): void => {
   resetAiProviderSchedulerCache();
@@ -153,4 +157,118 @@ test("跨能力调用无法通过类型检查", () => {
     rejected.push(songAiProvider()?.generateImage);
   };
   expect(typeof assertCrossCapabilityCallsRejected).toBe("function");
+});
+
+/**
+ * 门面把每一次真实模型调用裹进配额闸门。
+ *
+ * 两件事都要钉住：正常时结果原样透出（漏一层就等于配额闸门根本没生效），
+ * 闸门拒收时**按能力各自的「这次没成」形状返回**，绝不能把 undefined 交给
+ * 上层——回复流水线拿到 undefined 会当成模型返回了空正文，对着一条 @ 提及
+ * 完全沉默，而队列满本该走限频提示那条路。
+ */
+const releases: (() => void)[] = [];
+
+afterEach((): void => {
+  for (const release of releases) release();
+  releases.length = 0;
+});
+
+/** 返回一个由 afterEach 统一释放的悬挂 Promise，用来占住闸门的并发/等待位。 */
+function hang<T>(): Promise<T> {
+  return new Promise<T>((resolve: (value: T) => void): void => {
+    releases.push((): void => resolve(undefined as T));
+  });
+}
+
+test("摘要门面透出 provider 结果，并按后台额度排队", async () => {
+  const generateText = spyOn(openAiProvider, "generateText")
+    .mockImplementation(async () => ({ ok: true, text: "摘要正文" }) as never);
+  try {
+    await expect(summaryAiProvider().generateText({ prompt: "x" } as never))
+      .resolves.toEqual({ ok: true, text: "摘要正文" });
+    expect(generateText).toHaveBeenCalledTimes(1);
+  } finally {
+    generateText.mockRestore();
+  }
+});
+
+test("后台额度占满时摘要按不可重试失败返回，不吐 undefined", async () => {
+  const generateText = spyOn(openAiProvider, "generateText")
+    .mockImplementation((): Promise<never> => hang());
+  try {
+    const summary = summaryAiProvider();
+    // 并发位 + 后台等待位全部占满之后，下一次才会被闸门拒收。
+    const saturating: Promise<unknown>[] = [];
+    for (
+      let index: number = 0;
+      index < AI_PROVIDER_MAX_CONCURRENT + AI_PROVIDER_BACKGROUND_MAX_PENDING;
+      index++
+    ) saturating.push(summary.generateText({ prompt: "x" } as never));
+
+    await expect(summary.generateText({ prompt: "x" } as never))
+      .resolves.toEqual({ ok: false, retryable: false });
+    expect(saturating).toHaveLength(
+      AI_PROVIDER_MAX_CONCURRENT + AI_PROVIDER_BACKGROUND_MAX_PENDING
+    );
+  } finally {
+    generateText.mockRestore();
+  }
+});
+
+test("正文门面把整轮请求交给同一个会话，并透出这一轮的结果", async () => {
+  const request = mock(async () => ({
+    ok: true,
+    text: "回复正文",
+    functionCalls: [],
+    webSearchCalls: 0,
+    toolCallLimitHit: false,
+  }) as never);
+  const appendToolOutputs = mock((): void => {});
+  const createReplySession = spyOn(geminiProvider, "createReplySession")
+    .mockImplementation((): never => ({ request, appendToolOutputs }) as never);
+  try {
+    const session = textAiProvider().createReplySession({} as never);
+    const turn = await session.request({} as never);
+
+    expect(createReplySession).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(turn).toEqual(expect.objectContaining({ ok: true, text: "回复正文" }));
+  } finally {
+    createReplySession.mockRestore();
+  }
+});
+
+test("媒体门面的读图与转写都各自过闸并透出结果", async () => {
+  const describeVision = spyOn(geminiProvider, "describeVision")
+    .mockImplementation(async () => ({ ok: true, text: "一张图" }) as never);
+  const transcribeVoice = spyOn(geminiProvider, "transcribeVoice")
+    .mockImplementation(async () => ({ ok: true, text: "一段话" }) as never);
+  try {
+    const media = mediaAiProvider();
+
+    await expect(media.describeVision({} as never)).resolves.toEqual({ ok: true, text: "一张图" });
+    await expect(media.transcribeVoice?.({} as never)).resolves.toEqual({ ok: true, text: "一段话" });
+    expect(describeVision).toHaveBeenCalledTimes(1);
+    expect(transcribeVoice).toHaveBeenCalledTimes(1);
+  } finally {
+    describeVision.mockRestore();
+    transcribeVoice.mockRestore();
+  }
+});
+
+test("生图与生歌门面透出 provider 结果", async () => {
+  const generateImage = spyOn(openAiProvider, "generateImage")
+    .mockImplementation(async () => ({ bytes: new Uint8Array([1]), mimeType: "image/png" }) as never);
+  const generateSong = spyOn(geminiProvider, "generateSong")
+    .mockImplementation(async () => ({ bytes: new Uint8Array([2]), mimeType: "audio/mp3" }) as never);
+  try {
+    await expect(imageAiProvider()?.generateImage({} as never))
+      .resolves.toEqual({ bytes: new Uint8Array([1]), mimeType: "image/png" });
+    await expect(songAiProvider()?.generateSong?.({} as never))
+      .resolves.toEqual({ bytes: new Uint8Array([2]), mimeType: "audio/mp3" });
+  } finally {
+    generateImage.mockRestore();
+    generateSong.mockRestore();
+  }
 });

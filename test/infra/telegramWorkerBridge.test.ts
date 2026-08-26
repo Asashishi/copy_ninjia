@@ -5,6 +5,7 @@ import type {
   TelegramWorkerJsonCall,
   TelegramWorkerRequest,
 } from "../../packages/types/telegramWorker";
+import type { TelegramRetryCategory } from "../../packages/types/telegramOutbound";
 import { telegramRetryCategoryFor } from "../../packages/infra/telegram/outboundRetryPolicy";
 
 interface CapturedDuplexRequest {
@@ -122,6 +123,159 @@ describe("Telegram Worker 双工代理", () => {
     }]);
   });
 
+  test("全部 JSON 方法逐项保持 method、category、payload 与 signal", async (): Promise<void> => {
+    const signal: AbortSignal = new AbortController().signal;
+    const permissions: Readonly<Record<string, boolean>> = { can_send_messages: false };
+    const cases: readonly Readonly<{
+      method: TelegramWorkerJsonCall["method"];
+      category: TelegramRetryCategory;
+      args: readonly unknown[];
+      payload: Readonly<Record<string, unknown>>;
+    }>[] = [
+      {
+        method: "answerCallbackQuery",
+        category: "callback",
+        args: ["callback-id", { text: "done" }, signal],
+        payload: { callback_query_id: "callback-id", text: "done" },
+      },
+      {
+        method: "banChatMember",
+        category: "kick",
+        args: [-1001, 7, { until_date: 123 }, signal],
+        payload: { chat_id: -1001, user_id: 7, until_date: 123 },
+      },
+      {
+        method: "banChatSenderChat",
+        category: "kick",
+        args: [-1001, -2002, signal],
+        payload: { chat_id: -1001, sender_chat_id: -2002 },
+      },
+      {
+        method: "copyMessage",
+        category: "message",
+        args: [-1001, -1002, 8, { caption: "copy" }, signal],
+        payload: { chat_id: -1001, from_chat_id: -1002, message_id: 8, caption: "copy" },
+      },
+      {
+        method: "deleteMessage",
+        category: "delete",
+        args: [-1001, 9, signal],
+        payload: { chat_id: -1001, message_id: 9 },
+      },
+      {
+        method: "deleteMessages",
+        category: "delete",
+        args: [-1001, [9, 10], signal],
+        payload: { chat_id: -1001, message_ids: [9, 10] },
+      },
+      {
+        method: "deleteEphemeralMessage",
+        category: "delete",
+        args: [{ chatId: -1001, receiverUserId: 7, ephemeralMessageId: 11 }, signal],
+        payload: { chat_id: -1001, receiver_user_id: 7, ephemeral_message_id: 11 },
+      },
+      {
+        method: "editMessageText",
+        category: "edit",
+        args: [-1001, 12, "updated", { parse_mode: "HTML" }, signal],
+        payload: { chat_id: -1001, message_id: 12, text: "updated", parse_mode: "HTML" },
+      },
+      {
+        method: "getChat",
+        category: "query",
+        args: [-1001, signal],
+        payload: { chat_id: -1001 },
+      },
+      {
+        method: "getChatAdministrators",
+        category: "query",
+        args: [-1001, signal],
+        payload: { chat_id: -1001 },
+      },
+      {
+        method: "getChatMember",
+        category: "query",
+        args: [-1001, 7, signal],
+        payload: { chat_id: -1001, user_id: 7 },
+      },
+      {
+        method: "getStickerSet",
+        category: "query",
+        args: ["pack", signal],
+        payload: { name: "pack" },
+      },
+      {
+        method: "restrictChatMember",
+        category: "restrict",
+        args: [-1001, 7, permissions, { until_date: 456 }, signal],
+        payload: { chat_id: -1001, user_id: 7, permissions, until_date: 456 },
+      },
+      {
+        method: "sendChatAction",
+        category: "chatAction",
+        args: [-1001, "typing", { message_thread_id: 3 }, signal],
+        payload: { chat_id: -1001, action: "typing", message_thread_id: 3 },
+      },
+      {
+        method: "sendMessage",
+        category: "message",
+        args: [-1001, "hello", { disable_notification: true }, signal],
+        payload: { chat_id: -1001, text: "hello", disable_notification: true },
+      },
+      {
+        method: "sendSticker",
+        category: "message",
+        args: [-1001, "sticker-id", { emoji: "x" }, signal],
+        payload: { chat_id: -1001, sticker: "sticker-id", emoji: "x" },
+      },
+      {
+        method: "setChatPermissions",
+        category: "restrict",
+        args: [-1001, permissions, { use_independent_chat_permissions: true }, signal],
+        payload: { chat_id: -1001, permissions, use_independent_chat_permissions: true },
+      },
+      {
+        method: "setMessageReaction",
+        category: "reaction",
+        args: [-1001, 13, [], { is_big: true }, signal],
+        payload: { chat_id: -1001, message_id: 13, reaction: [], is_big: true },
+      },
+      {
+        method: "unbanChatMember",
+        category: "kick",
+        args: [-1001, 7, { only_if_banned: true }, signal],
+        payload: { chat_id: -1001, user_id: 7, only_if_banned: true },
+      },
+      {
+        method: "unbanChatSenderChat",
+        category: "kick",
+        args: [-1001, -2002, signal],
+        payload: { chat_id: -1001, sender_chat_id: -2002 },
+      },
+    ];
+    const methods = workerTelegramApi as unknown as Readonly<Record<
+      TelegramWorkerJsonCall["method"],
+      (...args: unknown[]) => Promise<unknown>
+    >>;
+
+    for (const entry of cases) {
+      const method: ((...args: unknown[]) => Promise<unknown>) | undefined = methods[entry.method];
+      if (method === undefined) throw new Error(`missing Worker Telegram method: ${entry.method}`);
+      await method(...entry.args);
+      const captured: CapturedDuplexRequest | undefined = duplexRequests.at(-1);
+      const request = captured?.request as
+        | Extract<TelegramWorkerRequest, { operation: "call" }>
+        | undefined;
+      expect(request?.operation).toBe("call");
+      expect(request?.category).toBe(entry.category);
+      expect(request?.call as unknown).toEqual({ method: entry.method, payload: entry.payload });
+      expect(captured?.signal).toBe(signal);
+      expect(captured?.transfer).toBeUndefined();
+    }
+
+    expect(duplexRequests).toHaveLength(cases.length);
+  });
+
   test("临时提示以组合请求交给主线程认领删除生命周期", async (): Promise<void> => {
     const signal: AbortSignal = new AbortController().signal;
 
@@ -215,6 +369,41 @@ describe("Telegram Worker 双工代理", () => {
     expect(request?.bytes).not.toBe(view);
     expect(request?.bytes.buffer).not.toBe(backing.buffer);
     expect(duplexRequests[0]?.transfer).toEqual([request?.bytes.buffer as ArrayBuffer]);
+  });
+
+  test("SharedArrayBuffer 与音频缩略图共享 backing store 时只转移独立副本一次", async (): Promise<void> => {
+    const shared: SharedArrayBuffer = new SharedArrayBuffer(3);
+    const sharedBytes: Uint8Array<SharedArrayBuffer> = new Uint8Array(shared);
+    sharedBytes.set([7, 8, 9]);
+
+    await workerTelegramApi.sendAudio(
+      -1001,
+      { bytes: sharedBytes, fileName: "song.mp3" },
+      { thumbnail: { bytes: sharedBytes, fileName: "cover.jpg" } }
+    );
+
+    const request = duplexRequests[0]?.request as
+      | Extract<TelegramWorkerRequest, { operation: "sendAudio" }>
+      | undefined;
+    expect(request?.bytes).toEqual(new Uint8Array([7, 8, 9]));
+    expect(request?.thumbnailBytes).toEqual(new Uint8Array([7, 8, 9]));
+    expect(request?.bytes.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(request?.thumbnailBytes?.buffer).toBeInstanceOf(ArrayBuffer);
+    expect(request?.bytes.buffer).not.toBe(shared);
+    expect(request?.thumbnailBytes?.buffer).not.toBe(shared);
+    expect(duplexRequests[0]?.transfer).toEqual([
+      request?.bytes.buffer as ArrayBuffer,
+      request?.thumbnailBytes?.buffer as ArrayBuffer,
+    ]);
+
+    duplexRequests.length = 0;
+    const exclusive: Uint8Array<ArrayBuffer> = new Uint8Array([1, 2, 3]);
+    await workerTelegramApi.sendAudio(
+      -1001,
+      { bytes: exclusive, fileName: "song.mp3" },
+      { thumbnail: { bytes: exclusive, fileName: "cover.jpg" } }
+    );
+    expect(duplexRequests[0]?.transfer).toEqual([exclusive.buffer]);
   });
 });
 

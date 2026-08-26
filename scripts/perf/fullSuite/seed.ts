@@ -47,6 +47,7 @@ const EMPTY_COUNTS: SeededFixtureCounts = {
   whitelistEntries: 0,
   blocklistEntries: 0,
   chatStates: 0,
+  chatQaEntries: 0,
   pendingRemovals: 0,
   aiMemoryChats: 0,
   joinLogEvents: 0,
@@ -115,5 +116,5 @@ async function runSeedChild(mode: SeedMode): Promise<SeededFixtureCounts> {
 /** `--child seed <mode>` 的入口；结果按 JSON 打到 stdout。 */
 export async function main(argument: string | undefined): Promise<void> {
   const counts: SeededFixtureCounts = await runSeedChild(parseSeedMode(argument));
-  process.stdout.write(`${JSON.stringify(counts)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(counts)}\n`);
 }

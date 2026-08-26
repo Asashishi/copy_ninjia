@@ -9,17 +9,8 @@ import type { MessageTriggerContext } from "../../types/auto";
  * 文字与各媒体 handler 共用的 Worker 记录载荷构造边界，集中保持身份和回复
  * 关系一致。
  *
- * **这里刻意不再返回「公共字段的一半」让调用点 `...` 展开。** 曾经是那样写的
- * （buildAiRecordContext + 调用点展开 + recordChatMessage 里再补一次
- * `{type, ...}`），一条消息为此造三个对象、拷两遍属性。对象展开在 JSC 里是按
- * 运行时枚举自有键的通用拷贝，拿不到定形分配的快路径：实测同一份载荷，
- * 「定形 builder + 一次展开」365.88 ns/op，一次写全的字面量 43.53 ns/op；
- * 连同条件展开一起算，旧写法 495.75 ns/op，新写法 52.10 ns/op。公共字段的
- * 唯一真相仍在本文件，但产出的是**完整**消息，中间不再有半成品。
- *
- * options 形参不带来额外分配：调用点那个字面量不逃逸，JSC 会把它整体消掉
- * （实测 options 11.35 ns/op vs 位置参数 11.78 ns/op，差异在噪声内），因此
- * 沿用项目「超过 3 个参数走 options interface」的既定写法没有性能代价。
+ * builder 直接产出完整消息，不创建公共字段投影，也不让调用点用对象展开重建
+ * 同构载荷。options 字面量不逃逸，字段按固定顺序一次写齐。
  *
  * 字段顺序即隐藏类顺序，两个 builder 的公共段必须保持一致，别只改一个。
  */
@@ -53,11 +44,8 @@ export function buildAiRecordMessage({
 /**
  * 媒体记录里逐载荷不同的那部分；身份与回复关系仍由本文件统一填。
  *
- * 从协议类型 `Pick` 出来而不是另抄一份字段表：这十项此前在这里与
- * types/aiChat/protocol.ts 的 `AiRecordMediaMessage` 各声明一次，两份逐字相同却
- * 没有任何东西保证它们同步——给协议加一个媒体字段而忘了这边，四个 handler 照常
- * 编译通过，只是那个字段永远传不上去。改成派生之后，协议一变，四个调用点当场
- * 编译失败。各字段的语义（语音传 0、仅贴纸用等）由协议侧的 JSDoc 一并带过来。
+ * 从协议类型 `Pick` 派生，协议字段变化会让四个调用点在编译期同步收敛。各字段
+ * 的语义（语音传 0、仅贴纸用等）由协议侧 JSDoc 统一声明。
  */
 export type AiRecordMediaPayload = Pick<
   AiRecordMediaMessage,

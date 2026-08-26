@@ -145,9 +145,8 @@ function describeRecoveryError(error: unknown): string {
 }
 
 /**
- * 开合重放区间标记。投递失败按 fatal 处理而不是降级继续：漏掉开标记会让区间内
- * 的写失败退回被静默吞掉的旧行为，漏掉关标记则会把之后每一次在线写失败都误升级
- * 成停机——两个方向都不能默默容忍。
+ * 开合重放区间标记。投递失败按 fatal 处理：开标记确保区间内写失败升级为停机，
+ * 关标记确保恢复完成后的在线写回到常规失败语义。
  */
 function postRecoveryReplayMark(worker: Worker, active: boolean): boolean {
   const request: RecoveryReplayRequest = { type: "recoveryReplay", active };

@@ -1,6 +1,7 @@
 export {
   answerCallbackQuery,
   copyMessage,
+  editMessageText,
   sendAudioWithResult,
   sendChatAction,
   sendEphemeralMessage,
@@ -12,6 +13,7 @@ export {
 } from "./actions/messages";
 export type {
   AnswerCallbackQueryParams,
+  EditMessageTextParams,
   SendAudioParams,
   SendChatActionParams,
   SendEphemeralMessageParams,
@@ -30,12 +32,14 @@ export {
   flushPendingMessageDeletions,
   resetPendingMessageDeletions,
   setMessageReaction,
+  setMessageReactions,
 } from "./actions/messageLifecycle";
 export type {
   DeleteEphemeralMessageParams,
   DeleteMessageAfterParams,
   DeleteMessageOutcome,
   SetMessageReactionParams,
+  SetMessageReactionsParams,
 } from "./actions/messageLifecycle";
 
 export {

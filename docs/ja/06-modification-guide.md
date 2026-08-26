@@ -55,7 +55,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 79 ファイルに約 846 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 83 ファイルに約 861 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -99,7 +99,7 @@
 2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
 3. **実装**：`packages/aiChat/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
 4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
-5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、Google Search、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像・生成楽曲です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
+5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、サーバー側ウェブ検索、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像・生成楽曲です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
 6. **Prompt**：必要なら `packages/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
 7. **テスト + 文書**：`test/aiChat/ai/` または対応する feature／Worker パスにテストを追加し、必要ならルート README のツール行を更新します。
 
@@ -152,7 +152,7 @@
 6. version に依存しない部分（`meta` など）は production の parser を使います。`--check` は `--apply` が拒否するものをすべて拒否しなければならず、さもないと不正な row は database が書き換えられた後にしか露見しません。
 7. 永続化は既存の write-through を再利用します：main thread が memory 上の最終値を publish し、Disk I/O Worker へ post、明示 transaction で commit、正確な revision を ACK、再構築後は memory から replay します。
 
-実例は `chat_qa` です（`0003_chat_qa.sql` と `scripts/migrateChatQa.ts`）。
+現行 repository が保持する migration entry は、直近の released version から現行 version への 1 本だけです。新しい edge を実装するときは、前の entry・test・convention 登録を同時に置き換えます。
 
 ## Worker 間 protocol の変更
 

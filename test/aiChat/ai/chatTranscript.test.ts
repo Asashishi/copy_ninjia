@@ -356,8 +356,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("日期分隔行只在真的换天时出现，行归属由它上方最近一条分隔行决定", () => {
-    // 原先只有「一个日期出现两次」这一条断言，跨天从未被真正执行过——而
-    // 150 条的窗口在安静的群里天天跨天。
+    // 150 条窗口可能跨天，直接覆盖分隔行切换与后续消息归属。
     const messages: BufferedMessage[] = [
       { ...message, messageId: 1, id: 1, text: "第一天", at: "2026/07/17 23:58:00" },
       { ...message, messageId: 2, id: 1, text: "还是第一天", at: "2026/07/17 23:59:00" },
@@ -447,9 +446,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("说明文案里的占位形态由模板直接代入生成，不靠替换数字凑", () => {
-    // 原先是 messageNumberTag(0).replace("0", "消息号")：模板里一旦多出第二个
-    // 0（补零、加前缀），replace 只改第一处，系统提示就会教给模型一个渲染器
-    // 从不产出的形状。
+    // 占位文案直接使用模板形态，避免字符串替换只覆盖首个数字。
     expect(MESSAGE_NUMBER_HINT).toBe(messageNumberTag("消息号"));
     expect(REPLY_POINTER_HINT).toBe(replyPointerTemplate("消息号"));
     expect(REPLY_POINTER_HINT).toContain(MESSAGE_NUMBER_HINT);
@@ -525,8 +522,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("链上的人在名册里就只写编号，与转录行同形；名册外的人才退回完整身份", () => {
-    // 各跳原先一律重发完整身份段，而转录行内早就只写编号了——同一个人在同一次
-    // 请求里出现两种写法，模型顺着链回转录找那一行时得先自己做一次对齐。
+    // 名册内身份沿用转录编号，保证同一请求中的指代形态一致。
     const rendered: RenderedTranscript = buildTieredVerbatimTranscript(
       [
         { ...message, messageId: 90, id: 5, text: "触发消息" },

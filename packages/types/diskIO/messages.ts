@@ -336,10 +336,8 @@ export type DiskIORequestMessage =
 /**
  * 落盘线程 mailbox 收得到的全部消息 = 诊断 + 业务 + 逐条回执请求 + 生命周期。
  *
- * 前两组直接复用 DiskBusinessMessage 与 DiskIORequestMessage，不再逐条重列：
- * 那两张清单此前在本文件里各出现两次，而漏掉的那一处不会有任何编译错误——
- * 新增一种业务消息若只进了可重放清单、没进这张路由清单，表现是恢复窗口收得下
- * 它、正常运行时却路由不到，只在重放路径上才暴露。
+ * 前两组直接复用 DiskBusinessMessage 与 DiskIORequestMessage；新增消息必须先归入
+ * 对应领域联合类型，路由与可重放清单由同一事实源展开。
  */
 export type DiskIOMessage =
   | DiskDiagnosticBatchRequest

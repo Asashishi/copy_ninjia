@@ -58,8 +58,8 @@ function context(chatId: number = -1001, replyToUserId?: number): never {
     chat: { id: chatId },
     from: { id: 8, first_name: "Caller" },
     msgId: 9,
-    // 槽位占用分支用 peekCommandTarget 只读地看一眼目标（回复优先），因此
-    // 这里必须是一条真实形状的消息。
+    // 活动 copy 拒绝分支用 peekCommandTarget 只读地看一眼目标（回复优先），
+    // 因此这里必须是一条真实形状的消息。
     msg: {
       message_id: 9,
       date: 1,
@@ -168,7 +168,7 @@ describe("copy 类命令生命周期", () => {
     });
   });
 
-  test("槽位被占时只回一条拒绝，不触发带发送副作用的目标解析", async () => {
+  test("已有复制目标时只回一条拒绝，不触发带发送副作用的目标解析", async () => {
     // 走完整解析的话，参数是未缓存的 @username 时它会自己发一条「@x 都还没
     // 说过话呢」然后返回 undefined——用户收到的是「不认识这个用户名」，而真正
     // 的原因（正在复读别人）永远没说出口。
@@ -202,26 +202,6 @@ describe("copy 类命令生命周期", () => {
     });
   });
 
-  test("两个群并发启动时第二个在目标解析完成前就被全局占位拒绝", async () => {
-    let resolveFirstTarget: ((value: CachedUser) => void) | undefined;
-    resolveCopyCommandTarget.mockImplementationOnce(async () => await new Promise<CachedUser>((resolve) => {
-      resolveFirstTarget = resolve;
-    }));
-
-    const first = handleCopyCommand(context(-1001));
-    await Bun.sleep(0);
-    await handleCopyCommand(context(-1002));
-
-    expect(sendMessage).toHaveBeenCalledWith({
-      chatId: -1002,
-      text: expect.stringContaining("正在处理另一条 /copy"),
-      replyToMessageId: 9,
-    });
-    resolveFirstTarget!({ id: 7, first_name: "Alice" });
-    await first;
-    expect(globalCopy.copyChatId).toBe(-1001);
-  });
-
   test("/stop_copy 对空状态只提示，对活动状态清空全部复制字段", async () => {
     await handleStopCommand(context());
     expect(saveStateInBackground).not.toHaveBeenCalled();
@@ -234,35 +214,6 @@ describe("copy 类命令生命周期", () => {
     await handleStopCommand(context());
     expect(globalCopy).toEqual({ copiedUser: null });
     expect(saveStateInBackground).toHaveBeenCalledWith("copy stopped");
-  });
-
-  test("/stop_copy 只取消掉排队中的那一轮 /copy 时绝不动脸", async () => {
-    // 偷脸任务在 commitCopySlot 之后才入队，这条路径上一次都没执行过。此刻这张
-    // 脸可能是 /steal_icon 单独换上的（那条命令只换脸、不开复读），无条件复原
-    // 会把它当成自己偷来的抹掉，回执还谎称「顺手把脸也换回来了」。
-    let resolveTarget: ((value: CachedUser) => void) | undefined;
-    resolveCopyCommandTarget.mockImplementationOnce(async () => await new Promise<CachedUser>((resolve) => {
-      resolveTarget = resolve;
-    }));
-
-    const pending = handleCopyCommand(context(-1001));
-    await Bun.sleep(0);
-    await handleStopCommand(context(-1001));
-
-    // 确实走到了「取消掉排队中那一轮」的分支，而不是「什么都没盯着」的空提示。
-    expect(sendMessage).toHaveBeenCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("不玩了"),
-      replyToMessageId: 9,
-    });
-    expect(restoreAvatarInBackground).not.toHaveBeenCalled();
-
-    resolveTarget!({ id: 7, first_name: "Alice" });
-    await pending;
-    // 这一轮 /copy 被取消：复读没开始，偷脸也从未入队。
-    expect(globalCopy.copiedUser).toBeNull();
-    expect(stealAvatarInBackground).not.toHaveBeenCalled();
-    expect(restoreAvatarInBackground).not.toHaveBeenCalled();
   });
 
   test("/stop_copy 停掉复读后顺带把头像复原", async () => {

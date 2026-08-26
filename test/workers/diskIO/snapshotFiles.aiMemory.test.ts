@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from
@@ -42,6 +42,17 @@ test("没有 username 的当前 version=1 AI 记忆仍恢复无损,回写字节�
 
   writeAiMemoryFile(-100123, json);
   expect(readFileSync(join(aiDir, "-100123.json"), "utf8")).toBe(currentBytes);
+});
+
+test("接管与原子回写均保留部署方已有的 0600", () => {
+  const path: string = join(aiDir, "-100123.json");
+  writeFileSync(path, currentBytes);
+  chmodSync(path, 0o600);
+
+  const recovered: Map<number, string> = recoverAiMemories();
+  writeAiMemoryFile(-100123, recovered.get(-100123)!);
+
+  expect(statSync(path).mode & 0o777).toBe(0o600);
 });
 
 test("新版可选 username 会随 version=1 AI 记忆恢复并回写", () => {

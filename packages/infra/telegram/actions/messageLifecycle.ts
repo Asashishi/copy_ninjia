@@ -20,6 +20,7 @@ import {
   signalArgs,
 } from "./core";
 import type {
+  CopyableReaction,
   PendingMessageDeletion,
   TelegramMessageDeletionApi,
 } from "../../../types/telegram";
@@ -46,6 +47,14 @@ export interface SetMessageReactionParams {
   signal?: AbortSignal;
 }
 
+export interface SetMessageReactionsParams {
+  chatId: number;
+  messageId: number;
+  reactions: CopyableReaction[];
+  api?: MessageReactionApi;
+  signal?: AbortSignal;
+}
+
 /** 设置一个标准 emoji 反应，覆盖机器人在该消息上已有的反应；仅 API 落地成功时返回 true。 */
 export async function setMessageReaction({
   chatId,
@@ -64,6 +73,28 @@ export async function setMessageReaction({
           type: "emoji",
           emoji: emoji as ReactionTypeEmoji["emoji"],
         }],
+        {},
+        ...signalArgs(requestSignal)
+      ),
+    signal
+  );
+}
+
+/** 设置普通或自定义 emoji 反应；空数组清除反应，仅 API 落地成功时返回 true。 */
+export async function setMessageReactions({
+  chatId,
+  messageId,
+  reactions,
+  api = telegramApi,
+  signal,
+}: SetMessageReactionsParams): Promise<boolean> {
+  return runBooleanTelegramAction(
+    "set message reaction",
+    (requestSignal?: AbortSignal): Promise<true> =>
+      api.setMessageReaction(
+        chatId,
+        messageId,
+        reactions,
         {},
         ...signalArgs(requestSignal)
       ),

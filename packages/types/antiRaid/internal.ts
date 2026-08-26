@@ -65,6 +65,19 @@ export interface VerificationEntry {
 
 /** 反刷群 Worker 的入群滑动计数窗口。 */
 export interface JoinWindow {
+  /**
+   * 窗口内的入群时刻，按时间升序。**全仓唯一仍用 LinkedQueue 的滑动窗口**，
+   * 两个理由缺一不可：
+   *
+   * 1. `recordJoin` 是无条件记账的，长度只由 JOIN_WINDOW_MS 和真实入群速率决定，
+   *    没有配额上界。定容环形缓冲（libs/timestampDeque.ts）撑满即抛 RangeError，
+   *    而撑满恰恰发生在刷群时——那正是本窗口必须继续工作的时刻。
+   * 2. `retractJoin` 要按值精确撤销某一次入群的时间戳（见 libs/linkedQueue.ts 的
+   *    removeValue），不能无差别 shift 队首。
+   *
+   * 修剪走 libs/slidingWindowRateLimit.ts 的 trimSlidingWindow，其边界与
+   * `TimestampDeque.trim` 逐字一致，由 test/libs/slidingWindowBoundary.test.ts 锁住。
+   */
   timestamps: LinkedQueue<number>;
   resetTimeout: ReturnType<typeof setTimeout>;
 }

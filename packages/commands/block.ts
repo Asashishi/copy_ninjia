@@ -19,9 +19,9 @@ import {
   blockUser,
   confirmBlocklistPersisted,
   ensureBlocklistEntryQueued,
+  managedAdminChatIds,
 } from "../infra/blocklist/membership";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
-import { getChatStateCache } from "../infra/storage/stateStore";
 import { runBoundedSettledBatch } from "../libs/boundedSettledBatch";
 import type {
   BoundedBatchExecution,
@@ -139,14 +139,8 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const requeued: boolean = newlyBlocked ? false : ensureBlocklistEntryQueued(targetUser.id);
   const persisted: boolean = newlyBlocked || requeued ? await confirmBlocklistPersisted() : true;
 
-  // 封禁清单：所有已记录「机器人是管理员」的群。本群是管理员时排最前
-  // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。
-  const targetChatIds: number[] = isAdminHere ? [chatId] : [];
-  for (const [adminChatId, chatState] of getChatStateCache()) {
-    if (chatState.botPermissions?.isAdministrator === true && adminChatId !== chatId) {
-      targetChatIds.push(adminChatId);
-    }
-  }
+  // 封禁清单与 /unblock 的跨群解封同源，见 infra/blocklist/membership.ts 的 managedAdminChatIds。
+  const targetChatIds: number[] = managedAdminChatIds(chatId, isAdminHere);
 
   const targetLabel: string = formatTargetLabel(targetUser);
   // 落盘失败必须说破：那条记录只活在本进程内存里，重启就没了，而管理员默认

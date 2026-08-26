@@ -41,8 +41,7 @@ export const loggedErrors: string[] = [];
  */
 export const traceDeleteOutcomes: string[] = [];
 /**
- * 用例可直接改写的替身开关。原先是一组模块级 `let`；拆成多个用例文件之后
- * ESM 的只读导入绑定不允许跨文件赋值，因此收成一个对象。
+ * 用例通过同一对象改写替身开关，满足跨文件共享可变测试状态的需要。
  */
 export const testState: {
   /** sendMessage 的返回 id；undefined 表示发送失败。 */
@@ -70,7 +69,7 @@ export const getChat = mock(async (): Promise<{ type: "group" | "supergroup" }> 
   if (testState.fetchedChatType === undefined) throw new Error("getChat unavailable");
   return { type: testState.fetchedChatType };
 });
-export const joinVerificationApi = { getChat, getChatAdministrators };
+export const telegramApi = { getChat, getChatAdministrators };
 
 Object.defineProperty(globalThis, "self", {
   configurable: true,
@@ -86,7 +85,7 @@ mock.module("../../packages/infra/logger", () => ({
   },
 }));
 mock.module("../../packages/infra/telegram", () => ({
-  joinVerificationApi,
+  telegramApi,
   sendMessage: async (message: { text: string }): Promise<number | undefined> => {
     sentTexts.push(message.text);
     return testState.nextSentMessageId;

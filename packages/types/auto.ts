@@ -22,9 +22,8 @@ export interface MessageTriggerContext {
   /**
    * 本条消息统一的「现在」，由 auto/message/index.ts 一次取得后传下来。
    *
-   * 吃 now 的判定一律读这个字段，不得自己再调 Date.now()：语义上同一条消息的
-   * 活跃度入窗、安静期与随机冷却必须落在同一时刻；性能上这台部署机的
-   * clocksource 是 kvm-clock，实测在带真实工作集的函数里多读一次墙钟约 3 µs。
+   * 吃 now 的判定一律读这个字段，不得自己再调 Date.now()：同一条消息的活跃度
+   * 入窗、安静期与随机冷却必须落在同一时刻，且热路径不重复读取墙钟。
    * @see ../../docs/cn/04-invariants.md
    */
   now: number;
@@ -53,7 +52,6 @@ export interface MessageTriggerContext {
    * types/aiChat/protocol.ts 里 voiceMime/voiceDurationSeconds 那段完全相同：
    * 这条上下文每条消息造一次、还要随媒体记录跨线程 clone 一次，多一层按类型
    * 才出现的嵌套对象既多一次分配，也让消费侧在「有对象」与「没对象」之间多态。
-   * 实测跨线程 clone 9.05 → 4.16 µs、上下文构造 18.2 → 12.5 ns/op。
    * 字段名与 types/aiChat/replies.ts 的 directTriggerReason 保持一致。
    */
   directTriggerReason?: AiDirectTriggerReason;

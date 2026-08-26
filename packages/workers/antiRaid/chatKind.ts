@@ -2,7 +2,7 @@
  * 群类型在入群守卫线程侧的读写口。
  *
  * 观测发生在主线程（每条 update 都带 `chat.type`），执行发生在本线程（踢人走
- * joinVerificationApi）。两边因此按变更镜像：主线程每次观测到新值就发一条
+ * telegramApi）。两边因此按变更镜像：主线程每次观测到新值就发一条
  * `chatKind`，Worker 重建与进程启动时整表重放（见 packages/antiRaid/workerBridge.ts）。
  *
  * 读出来的是三态。**「没观测到」不是「是普通群」**：镜像到达之前、或这个群从未
@@ -20,7 +20,7 @@ import {
   workerChatIsSupergroup,
   workerChatKindFetches,
 } from "../../cache/workers/antiRaid/chatKind";
-import { joinVerificationApi } from "../../infra/telegram";
+import { telegramApi } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
 
 /** 应用一条主线程镜像过来的群类型变化。 */
@@ -44,7 +44,7 @@ export function resolveChatIsSupergroup(
   if (workerChatKindFetches.size >= VERIFICATION_CHAT_KIND_FETCH_MAX) {
     return Promise.resolve(undefined);
   }
-  const task: Promise<boolean | undefined> = joinVerificationApi.getChat(chatId)
+  const task: Promise<boolean | undefined> = telegramApi.getChat(chatId)
     .then((chat: ChatFullInfo): boolean | undefined => {
       // 主线程镜像可能在查询期间到达。迟到请求不得覆盖它，但当前等待者可以直接
       // 使用那份更新值，避免无谓地再退避一个终态周期。

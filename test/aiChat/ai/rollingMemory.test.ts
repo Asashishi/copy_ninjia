@@ -1,6 +1,7 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { AI_MEMORY_MAX_CHATS } from "../../../packages/consts/aiChat/memory";
+import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 
 const postMessageMock = mock((..._args: unknown[]): void => {});
 (globalThis as unknown as { self: { postMessage: typeof postMessageMock } }).self = { postMessage: postMessageMock };
@@ -54,12 +55,45 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
   expect(postMessageMock).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -2 });
 });
 
-test("语法坏掉或形状不符的持久化快照都按防御性丢弃，不拦下其余群的恢复", () => {
-  const memories = new Map<number, string>([
-    [-1, "not valid json"],
-    [-2, JSON.stringify({ version: 1, buffer: [], summaries: [], pendingSummary: null, savedAt: "昨天" })],
-    [-3, JSON.stringify({ version: 1, buffer: "oops", summaries: [], pendingSummary: null, savedAt: 3 })],
-    [-4, JSON.stringify(null)],
+test("协议 hydrate 遇到坏快照时整批 fail-closed，不接管前面的合法项", () => {
+  const valid: string = JSON.stringify({
+    version: 1,
+    buffer: [{
+      messageId: 5,
+      id: 5,
+      firstName: "用户",
+      lastName: "",
+      text: "消息",
+      at: "2026/07/18 00:00:00",
+    }],
+    summaries: [],
+    pendingSummary: null,
+    savedAt: 5,
+  });
+  const invalidSnapshots: readonly string[] = [
+    "not valid json",
+    JSON.stringify({ version: 1, buffer: [], summaries: [], pendingSummary: null, savedAt: "昨天" }),
+    JSON.stringify({ version: 1, buffer: "oops", summaries: [], pendingSummary: null, savedAt: 3 }),
+    JSON.stringify(null),
+    JSON.stringify({ version: 1, buffer: [], summaries: [], pendingSummary: null, savedAt: 3, extra: true }),
+  ];
+
+  for (let index: number = 0; index < invalidSnapshots.length; index++) {
+    const invalidChatId: number = -(index + 2);
+    expect((): void => hydrateMemories(new Map<number, string>([
+      [-1, valid],
+      [invalidChatId, invalidSnapshots[index]!],
+    ]))).toThrow(`AI memory hydrate payload for chat ${invalidChatId}: $ must be`);
+    expect(memoryCache.chatBuffers.size).toBe(0);
+  }
+});
+
+test("受管群容量始终不超过 Worker 记忆容量", () => {
+  expect(STATE_MANAGED_CHAT_LIMIT).toBeLessThanOrEqual(AI_MEMORY_MAX_CHATS);
+});
+
+test("严格 hydrate 后恢复合法快照", () => {
+  hydrateMemories(new Map<number, string>([
     [-5, JSON.stringify({
       version: 1,
       buffer: [{ messageId: 5, id: 5, firstName: "用户", lastName: "", text: "消息", at: "2026/07/18 00:00:00" }],
@@ -67,9 +101,8 @@ test("语法坏掉或形状不符的持久化快照都按防御性丢弃，不�
       pendingSummary: null,
       savedAt: 5,
     })],
-  ]);
+  ]));
 
-  hydrateMemories(memories);
   expect(memoryCache.chatBuffers.has(-5)).toBe(true);
   expect(memoryCache.chatBuffers.size).toBe(1);
 });

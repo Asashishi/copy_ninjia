@@ -6,7 +6,6 @@ import {
   BOT_DEFAULT_AVATAR_URL,
   FORTUNE_THUMBNAIL_URL,
   GAG_THUMBNAIL_URL,
-  QA_THUMBNAIL_URL,
   PROBABILITY_THUMBNAIL_URL,
 } from "../../consts/ui/assets";
 import {
@@ -101,11 +100,6 @@ export function getGagThumbnailUrl(): string {
   return globalAssetState.gagThumbnailUrl ?? GAG_THUMBNAIL_URL;
 }
 
-/** `/set_qa` 表单内联结果此刻该用的缩略图直链；缺省语义同上。 */
-export function getQaThumbnailUrl(): string {
-  return globalAssetState.qaThumbnailUrl ?? QA_THUMBNAIL_URL;
-}
-
 /**
  * 复原机器人头像时该抓的那张默认脸；缺省语义同上。
  *
@@ -152,7 +146,6 @@ export async function loadState(): Promise<void> {
     globalAssetState.fortuneThumbnailUrl = decoded.global.assets.fortuneThumbnailUrl;
     globalAssetState.probabilityThumbnailUrl = decoded.global.assets.probabilityThumbnailUrl;
     globalAssetState.gagThumbnailUrl = decoded.global.assets.gagThumbnailUrl;
-    globalAssetState.qaThumbnailUrl = decoded.global.assets.qaThumbnailUrl;
     globalAssetState.botDefaultAvatarUrl = decoded.global.assets.botDefaultAvatarUrl;
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
@@ -187,10 +180,6 @@ export function seedMissingAssetState(): number {
   }
   if (globalAssetState.gagThumbnailUrl === undefined) {
     globalAssetState.gagThumbnailUrl = GAG_THUMBNAIL_URL;
-    seeded++;
-  }
-  if (globalAssetState.qaThumbnailUrl === undefined) {
-    globalAssetState.qaThumbnailUrl = QA_THUMBNAIL_URL;
     seeded++;
   }
   if (globalAssetState.botDefaultAvatarUrl === undefined) {
@@ -246,14 +235,11 @@ export function flushStateToDisk(
  * `Readonly<ChatState>` 的常量在这个边界会被静默放宽回可变），一次误写就污染
  * 所有没有状态的群。要修改状态的调用方一律走 `getOrCreateChatState`。
  *
- * 取值走 `peek` 而不是 `get`：后者命中时会 `Map.delete` + `Map.set` 把条目挪到
- * 迭代序最新一端，也就是**全仓最热的那个读会改写缓存**。而这份缓存的容量恰好是
+ * 取值走 `peek` 而不是 `get`：读取群状态不能刷新 LRU 或改变迭代顺序。缓存容量恰好是
  * STATE_MANAGED_CHAT_LIMIT，`getOrCreateChatState` 与 `hydrateChatStateCache` 又都在
  * 入口处拒绝第 26 条（见 infra/chatStateStorage.ts 的 assertChatStateCapacity），
- * 淘汰分支永远走不到——这次热度刷新一分钱也买不到，却要为它付 `Map` 的删+插：
- * chat-state-map-read 场景实测 **253.0 → 14.1 ns/op**（Bun 1.3.14，10M 次取值，
- * 各 7 个样本，两簇完全不重叠）。每条群消息要读 4~6 次（见 libs/chatState.ts 的
- * 形状契约），外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn。
+ * 淘汰分支永远走不到，因此热度刷新没有语义价值。每条群消息要读 4~6 次（见
+ * libs/chatState.ts 的形状契约），外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn。
  *
  * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/unblock 的连带
  * 封禁群清单、各处 managed 群清扫、lockdown 收养与恢复……），用 `get` 会让它变成

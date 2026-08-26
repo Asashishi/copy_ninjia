@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { encodeChatQaData } from "../../../packages/database/codec/chatQa";
+import { clearStorageBusinessTables } from
+  "../../../packages/database/interact/admin";
 import {
   pendingChatQaWrites,
   resetStorageDatabaseCache,
@@ -11,6 +13,8 @@ import { handleChatQaWrite } from
   "../../../packages/workers/diskIO/storageDatabase/chatQa";
 import { flushStorageDatabase } from
   "../../../packages/workers/diskIO/storageDatabase/flush";
+import { requireStorageDatabase } from
+  "../../../packages/workers/diskIO/storageDatabase/context";
 import type { ChatQaWriteDiskMessage } from "../../../packages/types/diskIO";
 
 const CHAT_ID: number = -1001;
@@ -30,6 +34,7 @@ function write(q: string, answer: string | null, revision: number): ChatQaWriteD
 beforeEach((): void => {
   resetStorageDatabaseCache();
   hydrateStorageDatabase();
+  clearStorageBusinessTables(requireStorageDatabase());
 });
 
 describe("Disk I/O Worker 的问答写入闸", () => {

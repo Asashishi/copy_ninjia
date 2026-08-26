@@ -1,4 +1,5 @@
 import type { AiToolDefinition } from "../../../../types/aiChat/provider";
+import { parseToolArguments } from "../../utils/toolArgs";
 import {
   claimImageGeneration,
   getImageGenerationAvailability,
@@ -23,7 +24,6 @@ import { GENERATE_IMAGE_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../../c
 import { toolError } from "../../utils/toolResult";
 import { pauseForToolAction } from "../../utils/toolPause";
 import { sendPhotoWithResult } from "../../../../infra/telegram";
-import { isPlainRecord } from "../../../../libs/record";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
 import type { ReplyToolContext, RoundMessageState } from "../../../../types/aiChat/replies";
 import type {
@@ -111,13 +111,8 @@ function parseArguments(
   argumentsJson: string,
   defaultAspectRatio: ImageGenerationAspectRatio
 ): ParsedImageArguments | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  if (!isPlainRecord(parsed) || typeof parsed.prompt !== "string") return null;
+  const parsed: Record<string, unknown> | null = parseToolArguments(argumentsJson);
+  if (parsed === null || typeof parsed.prompt !== "string") return null;
   const prompt: string = parsed.prompt.trim();
   if (!prompt || prompt.length > IMAGE_GENERATION_PROMPT_MAX_CHARS) return null;
   if (parsed.aspect_ratio !== undefined && typeof parsed.aspect_ratio !== "string") return null;

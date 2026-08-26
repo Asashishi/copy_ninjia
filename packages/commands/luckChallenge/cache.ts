@@ -240,7 +240,7 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
   initializeRespawnRecovery();
   const todayKey: string = getTokyoDateKey();
   if (secret.day !== todayKey) {
-    // 进程恰好卡在东京 00:00 前后启动：Disk I/O Worker 在 handleLoad() 里算出的
+    // 进程恰好卡在东京 00:00 前后启动：Disk I/O Worker 在启动边界算出的
     // 是 D，主线程等到 load 回执时已经是 D+1。这不是坏数据，只是这套「两个线程
     // 各算一次日期」天然带的竞态窗口。在这里抛错的话异常会逸出
     // ApplicationLifecycle.init()（调用点没有 try/catch），run() 记一行日志并以

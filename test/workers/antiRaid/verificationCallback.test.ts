@@ -1,11 +1,19 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { VerificationSnapshot } from "../../../packages/types/antiRaid";
 
+const loggerErrorMock = mock((_message: unknown, _error?: unknown): void => {});
+const answerCallbackQueryMock = mock(async (): Promise<boolean> => true);
+
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: {
+    log(): void {},
+    info(): void {},
+    warn(): void {},
+    error: loggerErrorMock,
+  },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {
+  telegramApi: {
     getChat: async (): Promise<{ type: "supergroup" }> => ({ type: "supergroup" }),
   },
   sendMessage: async (): Promise<undefined> => undefined,
@@ -15,7 +23,7 @@ mock.module("../../../packages/infra/telegram", () => ({
   kickChatMember: async (): Promise<boolean> => true,
   kickChatMemberWithOutcome: async (): Promise<"kicked"> => "kicked",
   probeChatMembership: async (): Promise<boolean> => true,
-  answerCallbackQuery: async (): Promise<boolean> => true,
+  answerCallbackQuery: answerCallbackQueryMock,
 }));
 
 Object.defineProperty(globalThis, "self", {
@@ -29,6 +37,10 @@ const runtime = await import(
 const { verificationEntries } = await import(
   "../../../packages/cache/workers/antiRaid/verification"
 );
+const {
+  drainAntiRaidTasks,
+  resetAntiRaidTaskTracker,
+} = await import("../../../packages/workers/antiRaid/taskTracker");
 
 function pendingRecord(userId: number, isBot: boolean): VerificationSnapshot {
   return {
@@ -56,11 +68,60 @@ function adoptPending(userId: number, isBot: boolean = false): void {
   });
 }
 
-afterEach(() => {
+beforeEach((): void => {
+  loggerErrorMock.mockClear();
+  answerCallbackQueryMock.mockClear();
+  answerCallbackQueryMock.mockImplementation(
+    async (): Promise<boolean> => true
+  );
+  resetAntiRaidTaskTracker();
+});
+
+afterEach((): void => {
   runtime.stopVerificationRuntime();
+  resetAntiRaidTaskTracker();
 });
 
 describe("verification callback ownership", () => {
+  test("缺少 chatId 的回调只确认 Telegram query，不进入验证状态机", async (): Promise<void> => {
+    runtime.handleVerificationCallback({
+      type: "callback",
+      callbackQueryId: "detached-callback",
+      targetUserId: 42,
+      from: { id: 42, first_name: "Self" },
+      fromIsWhitelisted: false,
+    });
+
+    await drainAntiRaidTasks();
+
+    expect(answerCallbackQueryMock).toHaveBeenCalledTimes(1);
+    expect(answerCallbackQueryMock).toHaveBeenCalledWith({
+      callbackQueryId: "detached-callback",
+      api: expect.any(Object),
+    });
+    expect(verificationEntries.size).toBe(0);
+  });
+
+  test("缺少 chatId 的回调确认失败时统一记录错误且任务正常结算", async (): Promise<void> => {
+    const failure: Error = new Error("callback unavailable");
+    answerCallbackQueryMock.mockRejectedValueOnce(failure);
+
+    runtime.handleVerificationCallback({
+      type: "callback",
+      callbackQueryId: "detached-failure",
+      targetUserId: 43,
+      from: { id: 43, first_name: "Self" },
+      fromIsWhitelisted: false,
+    });
+
+    await drainAntiRaidTasks();
+
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      "Error answering join verification callback:",
+      failure
+    );
+  });
+
   test("普通用户不能替真人点击，本人点击才会通过", () => {
     adoptPending(42);
 

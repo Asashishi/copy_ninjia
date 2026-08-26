@@ -8,11 +8,8 @@ import { QUIET_CLOCK_SKEW_TOLERANCE_MS, QUIET_MAX_DURATION_MS } from "../consts/
  * 这是热调用点的形状契约（AGENTS.md：热调用点必须保持对象 shape 稳定、不得事后
  * 增删字段）。每条群消息要读 4~6 次 `getChatState(chatId).isXEnabled`
  * （antiRaid/updateIngress.ts、antiRaid/floodControl.ts、antiRaid/adCandidate.ts、
- * auto/message/index.ts、aiChat/availability.ts）。此前每个写入方各自往一个裸
- * `{}` 上加一个不同的字段、旧全量保存又对所有群 `delete`
- * 一遍，于是没有两个群的隐藏类相同，那几处读取全部退化成 megamorphic。
- * 本机 Bun 1.3.14 实测（3 轮 2M 预热 + 20M 计时读，独立进程重复两次）：
- * 统一形状 6.02 / 6.26 ns/op，加后再删的发散形状 10.67 / 12.68 ns/op。
+ * auto/message/index.ts、aiChat/availability.ts）。所有写入方都必须从本构造器取得
+ * 同一隐藏类，并以 undefined 表示缺省值。
  *
  * **磁盘格式不变**：`JSON.stringify` 天然跳过取值为 `undefined` 的键，因此
  * SQLite JSONB 行里仍然只出现偏离缺省值的字段。

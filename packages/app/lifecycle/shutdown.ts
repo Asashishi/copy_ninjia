@@ -86,9 +86,8 @@ interface ShutdownDrainOwner {
  * 停机 owner 的**唯一**有序表：确认最终 offset 之前的落盘（flushAllToDisk）与
  * 进程退出前的收尾（runShutdownOwners）共用它。
  *
- * 两个入口以前各手写一遍同样的九步顺序，加第十个 owner 要同时改两处；漏掉
- * 前者那一处的后果是**在该 owner 还没刷盘时就确认了最终 Telegram offset**，
- * update 被 ack 而数据在重启后丢失。顺序、门禁与结果聚合因此只能有一份。
+ * 两个入口必须共用这一份顺序、门禁与结果聚合；否则任一 owner 未纳入确认前
+ * flush，就可能在数据尚未落盘时推进最终 Telegram offset。
  *
  * 顺序本身是约束，不能随手调整（见 docs/cn/04-invariants.md）：
  * - gag 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发 Telegram
@@ -105,14 +104,6 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
     initFlag: null,
     drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
       dependencies.drainAvatarUpdates(timeoutMs),
-  },
-  {
-    result: "reaction",
-    label: "reaction drain",
-    timeout: "maintenanceMs",
-    initFlag: null,
-    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
-      dependencies.drainReactionQueue(timeoutMs),
   },
   {
     result: "translate",
@@ -228,7 +219,6 @@ async function drainOwners({
 }: DrainOwnersParams): Promise<{ results: OwnerDrainResults; terminate: FlushResult }> {
   const results: OwnerDrainResults = {
     avatar: "flushed",
-    reaction: "flushed",
     translate: "flushed",
     gag: "flushed",
     antiRaid: "flushed",
@@ -329,7 +319,6 @@ function allOwnersSettled(results: ShutdownResults): boolean {
   return results.runnerDrained &&
     results.maintenanceSettled &&
     results.avatar === "flushed" &&
-    results.reaction === "flushed" &&
     results.translate === "flushed" &&
     results.gag === "flushed" &&
     results.antiRaid === "flushed" &&
@@ -359,7 +348,7 @@ export function classifyShutdown(results: ShutdownResults): ShutdownOutcome {
 export function formatShutdownResults(results: ShutdownResults): string {
   return `runner=${results.runnerDrained}, maintenance=${results.maintenanceSettled}, ` +
     `offset=${results.offsetConfirmed}, ` +
-    `avatar=${results.avatar}, reaction=${results.reaction}, translate=${results.translate}, gag=${results.gag}, ` +
+    `avatar=${results.avatar}, translate=${results.translate}, gag=${results.gag}, ` +
     `antiRaid=${results.antiRaid}, ai=${results.ai}, telegram=${results.telegram}, disk=${results.disk}, ` +
     `terminate=${results.terminate}, state=${results.state}`;
 }
@@ -402,8 +391,8 @@ export async function flushAllToDisk({
   if (unsettled) {
     process.exitCode = 1;
     dependencies.logger.error(
-      `Pre-confirmation drain/flush results: avatar=${results.avatar}, reaction=${results.reaction}, ` +
-      `antiRaid=${results.antiRaid}, translate=${results.translate}, gag=${results.gag}, ai=${results.ai}, ` +
+      `Pre-confirmation drain/flush results: avatar=${results.avatar}, antiRaid=${results.antiRaid}, ` +
+      `translate=${results.translate}, gag=${results.gag}, ai=${results.ai}, ` +
       `telegram=${results.telegram}, disk=${results.disk}, state=${state}; ` +
       "the final Telegram update offset will not be confirmed."
     );

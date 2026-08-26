@@ -11,7 +11,7 @@ beforeEach(() => rmSync(path, { recursive: true, force: true }));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("daily luck receipt secret file", () => {
-  test("文件缺失时原子创建，同日重载复用同一密钥并保持普通用户可读的 0644", () => {
+  test("文件缺失时以 0644 创建，同日重载复用密钥并保留部署方收紧的 mode", () => {
     // 即使生产进程使用严格 umask，rename 前也会 fchmod 成 0644。
     const previousUmask: number = process.umask(0o077);
     let created: ReturnType<typeof recoverLuckReceiptSecret>;
@@ -27,7 +27,7 @@ describe("daily luck receipt secret file", () => {
 
     chmodSync(path, 0o600);
     recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 3, path });
-    expect(statSync(path).mode & 0o777).toBe(0o644);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   test("东京日期前进时生成新密钥并原子替换旧日文件", () => {
@@ -57,7 +57,6 @@ describe("daily luck receipt secret file", () => {
     const io: LuckSecretFileIO = {
       generateKey: () => Buffer.alloc(32, 1),
       writeText: () => { throw new Error("disk full"); },
-      chmod: () => {},
     };
     expect(() => recoverLuckReceiptSecret({
       day: "2026-07-19",

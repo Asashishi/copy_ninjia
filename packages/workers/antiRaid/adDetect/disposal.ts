@@ -12,7 +12,7 @@
 import {
   deleteMessage,
   deleteMessages,
-  joinVerificationApi,
+  telegramApi,
 } from "../../../infra/telegram";
 import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
 import { logger } from "../../../infra/logger";
@@ -130,7 +130,7 @@ export function deleteReferencedAdMessages({
 
 /** 清群或停机使警告回执过期时，立即撤掉已经发出的迟到提示。 */
 export function deleteStaleReferencedAdWarning(chatId: number, messageId: number): void {
-  void deleteMessage(chatId, messageId, joinVerificationApi);
+  void deleteMessage(chatId, messageId, telegramApi);
 }
 
 /**
@@ -175,7 +175,7 @@ export function deleteStragglerAdMessage(chatId: number, messageId: number): voi
   // 广告突袭能把几十个注定 400 的删除顶在真正的踢人前面。三态里只拦确证的
   // false，「没观测到」照常发（理由见 ../botPermissions.ts）。
   if (botCanDeleteIn(chatId) === false) return;
-  void deleteMessage(chatId, messageId, joinVerificationApi);
+  void deleteMessage(chatId, messageId, telegramApi);
 }
 
 /**
@@ -267,7 +267,7 @@ async function deleteAdMessages(chatId: number, messageIds: readonly number[]): 
     const deleted: boolean = await deleteMessages(
       chatId,
       messageIds.slice(start, start + TELEGRAM_DELETE_MESSAGES_BATCH_MAX),
-      joinVerificationApi
+      telegramApi
     );
     if (!deleted) failedBatches++;
   }

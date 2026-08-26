@@ -29,6 +29,7 @@ import {
   JOIN_LOG_COMPACT_CHECK_BYTES,
   JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES,
   JOIN_LOG_COMPACT_REDUNDANT_ENTRIES,
+  JOIN_LOG_ENTRY_SEPARATOR_BYTES,
   JOIN_LOG_FILE_PATTERN,
   JOIN_LOG_FILE_RETENTION_DAYS,
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
@@ -123,32 +124,48 @@ function maybeCompactJoinLogFile(
   rewriteJoinLogFile(path, cache);
 }
 
+/** 一份已通过领域 schema 校验的入群日志文件：原始字节与解析结果。 */
+interface ValidatedJoinLogFile {
+  readonly content: string;
+  readonly parsed: Record<string, JoinLogRecord>;
+}
+
+/**
+ * 读取并严格校验一份已存在的入群日志文件。读取失败、JSON 语法错误与领域
+ * schema 不符一律抛出 InputValidationError；调用方拿到的一定是可信解析结果，
+ * content 原样返回供追加格式复核，不做任何降级或修复。
+ */
+function readValidatedJoinLogFile(path: string): ValidatedJoinLogFile {
+  let content: string;
+  let candidate: unknown;
+  try {
+    content = readFileSync(path, "utf8");
+    candidate = JSON.parse(content) as unknown;
+  } catch {
+    return invalidInput(path, "$", "a readable valid JSON document");
+  }
+  assertJoinLogSchema(path, candidate);
+  return { content, parsed: candidate };
+}
+
 /**
  * 首次接管某群某日文件时严格校验领域 schema、容量与规范追加格式；任何
  * 损坏都保留原始字节并拒绝接管。成功后恢复 latest-by-user 索引。
  */
 function openJoinLogFile(chatId: number, day: string): JoinLogFileCache {
   const path: string = joinLogPath(chatId, day);
-  let parsed: Record<string, JoinLogRecord> = {};
-  let content: string | null = null;
-  if (existsSync(path)) {
-    let candidate: unknown;
-    try {
-      content = readFileSync(path, "utf8");
-      candidate = JSON.parse(content) as unknown;
-    } catch {
-      return invalidInput(path, "$", "a readable valid JSON document");
-    }
-    assertJoinLogSchema(path, candidate);
-    parsed = candidate;
-  }
-  const state: AppendOnlyFileState = content === null
+  const existing: ValidatedJoinLogFile | null = existsSync(path)
+    ? readValidatedJoinLogFile(path)
+    : null;
+  const parsed: Record<string, JoinLogRecord> = existing === null
+    ? {}
+    : existing.parsed;
+  const state: AppendOnlyFileState = existing === null
     ? openAppendOnlyFile(path, PERSISTED_FILE_MODE)
     : openValidatedAppendOnlyFile({
       path,
-      content,
+      content: existing.content,
       empty: Object.keys(parsed).length === 0,
-      mode: PERSISTED_FILE_MODE,
     });
   const latestByUser: Map<number, JoinLogRecord> =
     latestJoinLogRecords(parsed);
@@ -219,15 +236,20 @@ function cleanupExpiredDays(
   joinLogCleanupDay.current = today;
 }
 
-/**
- * 启动时扫描所有仍在保留窗口内的入群状态。验证阶段只读且不填充常驻 LRU；
- * 全部通过后才清理过期日，避免一份坏的保留状态被惰性入口拖到运行期。
- */
-export function recoverJoinLogFiles(today: string = getTokyoDateKey()): void {
-  mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
+export interface JoinLogRecoveryInspection {
+  readonly today: string;
+  readonly names: readonly string[];
+}
+
+/** 启动第一阶段：只读扫描保留窗口，不填充常驻 LRU 或删除文件。 */
+export function inspectJoinLogFiles(
+  today: string = getTokyoDateKey()
+): JoinLogRecoveryInspection {
   const retainedDays: ReadonlySet<string> =
     recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
-  const names: string[] = readdirSync(JOIN_LOG_MEMORY_DIR);
+  const names: string[] = existsSync(JOIN_LOG_MEMORY_DIR)
+    ? readdirSync(JOIN_LOG_MEMORY_DIR)
+    : [];
   for (const name of names) {
     if (name.endsWith(TMP_FILE_SUFFIX)) continue;
     const path: string = join(JOIN_LOG_MEMORY_DIR, name);
@@ -255,27 +277,31 @@ export function recoverJoinLogFiles(today: string = getTokyoDateKey()): void {
       return invalidInput(path, "$filename", "a date no later than the current Tokyo day");
     }
     if (!retainedDays.has(day)) continue;
-    let content: string;
-    let candidate: unknown;
-    try {
-      content = readFileSync(path, "utf8");
-      candidate = JSON.parse(content) as unknown;
-    } catch {
-      return invalidInput(path, "$", "a readable valid JSON document");
-    }
-    assertJoinLogSchema(path, candidate);
-    const latest: Map<number, JoinLogRecord> = latestJoinLogRecords(candidate);
+    const { content, parsed }: ValidatedJoinLogFile = readValidatedJoinLogFile(path);
+    const latest: Map<number, JoinLogRecord> = latestJoinLogRecords(parsed);
     if (latest.size > JOIN_LOG_MAX_USERS_PER_CHAT_DAY) {
       return invalidInput(path, "$", `at most ${JOIN_LOG_MAX_USERS_PER_CHAT_DAY} distinct users per chat day`);
     }
     openValidatedAppendOnlyFile({
       path,
       content,
-      empty: Object.keys(candidate).length === 0,
-      mode: PERSISTED_FILE_MODE,
+      empty: Object.keys(parsed).length === 0,
     });
   }
-  cleanupExpiredDays(today, names);
+  return { today, names };
+}
+
+/** 全域启动成功后清理过期日与临时文件。 */
+export function maintainJoinLogFiles(
+  inspection: JoinLogRecoveryInspection
+): void {
+  cleanupExpiredDays(inspection.today, inspection.names);
+}
+
+/** 单领域恢复入口；跨域启动编排使用 inspect/maintenance 两阶段 API。 */
+export function recoverJoinLogFiles(today: string = getTokyoDateKey()): void {
+  const inspection: JoinLogRecoveryInspection = inspectJoinLogFiles(today);
+  maintainJoinLogFiles(inspection);
 }
 
 function ensureCurrentDayPrepared(today: string): void {
@@ -358,7 +384,7 @@ function writeFileEntries(
         const nextBytes: number =
           joinLogSnapshotEntryBytes(entry.record);
         cache.snapshotBytes += current === undefined
-          ? Buffer.byteLength(",\n") + nextBytes
+          ? JOIN_LOG_ENTRY_SEPARATOR_BYTES + nextBytes
           : nextBytes - joinLogSnapshotEntryBytes(current);
         cache.latestByUser.set(entry.record.userId, entry.record);
       }
@@ -367,7 +393,7 @@ function writeFileEntries(
         JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
         (record: JoinLogRecord): void => {
           cache.snapshotBytes -=
-            Buffer.byteLength(",\n") + joinLogSnapshotEntryBytes(record);
+            JOIN_LOG_ENTRY_SEPARATOR_BYTES + joinLogSnapshotEntryBytes(record);
         }
       );
       // 先改可丢弃的内存索引、再原子发布；失败时 catch 丢掉索引并从未改变的
@@ -396,18 +422,21 @@ function writeFileEntries(
       mode: PERSISTED_FILE_MODE,
     });
     cache.appendedBytesSinceCompaction += Buffer.byteLength(chunk);
-    for (const entry of newest) {
+    // 索引记账复用上面已经序列化好的 texts：每条记录的快照字节数就是它自己那
+    // 段文本的长度，重新调用 joinLogSnapshotEntryBytes 等于把整批再序列化一遍。
+    for (let index: number = 0; index < newest.length; index += 1) {
+      const record: JoinLogRecord = newest[index]!.record;
       const current: JoinLogRecord | undefined =
-        cache.latestByUser.get(entry.record.userId);
-      const nextBytes: number = joinLogSnapshotEntryBytes(entry.record);
+        cache.latestByUser.get(record.userId);
+      const nextBytes: number = Buffer.byteLength(texts[index]!);
       if (current !== undefined) {
         cache.redundantEntries++;
         cache.snapshotBytes +=
           nextBytes - joinLogSnapshotEntryBytes(current);
       } else {
-        cache.snapshotBytes += Buffer.byteLength(",\n") + nextBytes;
+        cache.snapshotBytes += JOIN_LOG_ENTRY_SEPARATOR_BYTES + nextBytes;
       }
-      cache.latestByUser.set(entry.record.userId, entry.record);
+      cache.latestByUser.set(record.userId, record);
     }
     maybeCompactJoinLogFile(path, cache);
     joinLogRetryAt.delete(key);

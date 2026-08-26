@@ -1,6 +1,11 @@
 /**
- * 单向链表实现的 FIFO 队列，供各处滚动窗口/任务队列使用。
+ * 单向链表实现的 FIFO 队列，供任务队列与没有容量上界的队列使用。
  * 数组的 shift() 出队要整体挪动剩余元素（O(n)），链表出队是 O(1)。
+ *
+ * 它的代价是每入队一个元素分配一个节点对象。因此**有硬顶的数值滑动窗口一律
+ * 用 libs/timestampDeque.ts 的环形缓冲**，那边零分配；只有确实无法定容的窗口
+ * （当前仅反刷群入群窗口，见 types/antiRaid/internal.ts 的 JoinWindow）和需要
+ * removeValue/removeWhere 的非数值队列留在这里。
  */
 
 interface QueueNode<T> {

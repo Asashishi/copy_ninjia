@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import type { AdmitDecision, RoundDecision } from "../../../packages/types/states/replyAdmission";
-import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import { TimestampDeque } from "../../../packages/libs/timestampDeque";
+import { RATE_LIMIT_LONG_MAX_TRIGGERS } from "../../../packages/consts/aiChat/rateLimit";
 
 let decision: AdmitDecision = { action: "startRound" };
 const admitTrigger = mock((_input: unknown): AdmitDecision => decision);
@@ -14,7 +15,7 @@ const flushOverflowNotice = mock((chatId: number): void => { pendingOverflowNoti
 const loggerError = mock((_message: string): void => {});
 const pendingOverflowNotices = new Map<number, number | undefined>();
 const pendingReplyTriggers = new Map<number, { size: number }>();
-const longTriggerTimes = new Map<number, LinkedQueue<number>>();
+const longTriggerTimes = new Map<number, TimestampDeque>();
 const triggerReference = {
   messageId: 7,
   id: 42,
@@ -197,7 +198,7 @@ describe("AI reply admission pipeline", () => {
     // 任务、也就永远不会有那次回调：没有这道兜底，撞上 5 分钟窗口上限的群会把
     // 最多 25 条 @提及连同快照无限期扣在内存里。
     pendingReplyTriggers.set(-1001, { size: 3 });
-    const times: LinkedQueue<number> = new LinkedQueue<number>();
+    const times: TimestampDeque = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(900);
     longTriggerTimes.set(-1001, times);
 
@@ -216,7 +217,7 @@ describe("AI reply admission pipeline", () => {
     // 群里每一轮结束都会空转一次 startReplyRound，被限频闸拒绝时它自己会发一条
     // 限频提示（自带 60 秒冷却）——整个饱和期每分钟往群里刷一句。
     pendingReplyTriggers.set(-1001, { size: 3 });
-    const times: LinkedQueue<number> = new LinkedQueue<number>();
+    const times: TimestampDeque = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(900);
     longTriggerTimes.set(-1001, times);
     generateAndSendReply(baseRequest);

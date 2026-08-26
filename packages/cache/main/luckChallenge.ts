@@ -1,4 +1,5 @@
-import { LinkedQueue } from "../../libs/linkedQueue";
+import { RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../consts/luckChallenge";
+import { TimestampDeque } from "../../libs/timestampDeque";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw } from "../../types/luckChallenge";
 
@@ -41,5 +42,7 @@ export const luckRuntimeState: {
 };
 
 /** 内联查询的全局滑动窗口频率限制：最近 RATE_LIMIT_WINDOW_MS（90 秒）内各次请求的时刻戳。
- *  修剪只发生在队首，故用 LinkedQueue 而非数组，见 libs/slidingWindowRateLimit.ts。 */
-export const recentCallTimestamps: LinkedQueue<number> = new LinkedQueue();
+ *  只在仍有配额时记账，长度恒不超过 RATE_LIMIT_MAX_CALLS_PER_WINDOW（300），
+ *  环形缓冲按这个数定容，见 libs/slidingWindowRateLimit.ts。 */
+export const recentCallTimestamps: TimestampDeque =
+  new TimestampDeque(RATE_LIMIT_MAX_CALLS_PER_WINDOW);

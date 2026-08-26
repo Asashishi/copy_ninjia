@@ -20,16 +20,18 @@
 | `bun run test` | Run the complete test suite with forced file isolation |
 | `bun run test:random` | Run the whole suite in a fixed-seed random order to expose cross-test residue |
 | `bun run test:coverage` | Run tests and measure coverage across all source files |
+| `bun run check:install-script-syntax` | Parse `install.sh` with `bash -n` only; the installation script is not executed |
 | `bun run check:conventions` | Check repository conventions with `scripts/checkProjectConventions.ts` |
 | `bun run check` | Run conventions + lint + typecheck + coverage + the hot-path gate; **required before every commit** |
+| `bun run check:coverage` | Measure coverage now and verify the metrics in the three README badges/alts, the three copies of this page, and both coverage images match the real reading; excluded from `check` because it runs the whole suite again |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
 | `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over every hot-path scenario; already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
-| `bun run perf:join-log` | Run the independent-process comparison at the 250,000-record join-log limit |
+| `bun run perf:join-log` | Run the independent-process comparison of the join-log capacity, snapshot, and append-accounting paths at the 250,000-record limit |
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
 | `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
-| `bun run migrate:chat-qa` | Offline cold migration adding the `chat_qa` table and the Q&A permission key (schema v4 → v5) |
-| `bun run release:check` | Run frozen-lockfile install + check + fault injection; required before release |
+| `bun run migrate:qa-thumbnail` | Offline cold migration dropping the retired `global.assets.qaThumbnailUrl` from `state.json` |
+| `bun run release:check` | Run frozen-lockfile install + check + coverage-metric verification + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
 
 ## Quality-Gate Definitions
@@ -37,11 +39,15 @@
 - **The coverage denominator includes all source code**: `bun run check` adds every production runtime module to the denominator. Modules untouched by any test count as 0% covered. Both function and line coverage must remain at least 90%, so adding an untested module directly lowers global coverage.
 - **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled. `any` is forbidden in production code but exempted in tests.
 - **Explicit type annotations are lint-enforced**: in production code (`index.ts`, `packages/`, `scripts/`), variables, parameters, and destructuring must be annotated via `@typescript-eslint/typedef`, and function and callback return types via `@typescript-eslint/explicit-function-return-type` — neither accepts contextual inference. TypeScript forbids annotating `for...of` / `for...in` loop variables, so the rule skips them automatically; consts whose initializer is already an arrow function are also exempt. Test files are not subject to this.
-- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, and executable permissions on tracked non-script files before lint runs. Two cross-file consistency checks also run: group content kept long-term (`preserveInGroup: true`) must also pass `messageThreadId`; and the benchmark-block timestamps in all three `09-performance.md` pages must agree with each other and, once `fullSuite.lastRun` in `performance-result.json` has been recorded, come from that same run (a never-recorded `lastRun` passes, and the release flow's step 2 fills it in).
+- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, executable permissions on tracked non-script files, constants, cache ownership, and Worker/Telegram boundaries against the real thread module graph. It also statically checks production Node-compatibility imports, Telegram cleanup and retention exemptions, active cold-migration entries, all 14 declared coverage locations, and the trilingual performance record. `check:coverage` performs a separate real coverage run to ensure the declarations have not drifted together.
+
+### Dependency Release-Age Gate
+
+Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation and recorded in [`dependency-release-age-exemptions.json`](../../dependency-release-age-exemptions.json). The current Bun runtime and `@types/bun` are both 1.4.0.
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2581 tests / 271 files / 95642 `expect()` calls**; full-source **function coverage 95.23% / line coverage 96.62%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2821 tests / 287 files / 96239 `expect()` calls**; full-source **function coverage 95.98% / line coverage 97.14%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -57,7 +63,7 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 ### Test-Writing Conventions
 
 - Mirror `packages/` paths: `packages/foo/bar.ts` → `test/foo/bar.test.ts`.
-- Shared helpers belong in `test/libs/helpers.ts`. Do not share mutable module state across tests; isolation can conceal such mistakes until someone runs without `--isolate`.
+- Cross-domain doubles, fixtures and harnesses belong in `test/helpers/`; domain-agnostic utilities belong in `test/libs/helpers.ts`. Do not share mutable module state across tests; isolation can conceal such mistakes until someone runs without `--isolate`.
 - Tests that exercise real file I/O are safe because the preload provides a temporary data root. Still, watch mock boundaries around `infra/storage`: mocking only `infra/diskIO` while leaving `infra/storage` real can reach the real `saveStateInBackground`, which is exactly the situation where [`AGENTS.md`](../../AGENTS.md) requires backing up runtime files first.
 
 ## Fault-Injection Suite
@@ -84,7 +90,7 @@ There is one **mandatory sink rule** when adding or rewriting a scenario: when t
 
 ## Join-Log Performance Benchmark
 
-`bun run perf:join-log` fixes the input at a 250,000-record capacity, 300-record overflow, and 10,000-record warm-up. Baseline and current variants of both snapshot and capacity paths run in five independent Bun processes each. The report records the complete Bun version/revision, median and range of elapsed time, and JSC heap/object changes before and after forced GC. The baseline freezes the pre-optimization whole-Map copy, full sort, and complete-JSON-string algorithms solely for before/after comparison within the same Bun build; `Bun.gc(true)` exists only in this benchmark and never in production control flow. Run it whenever join indexing, capacity trimming, snapshot serialization, or chunked atomic writes change, and verify that the difference is materially larger than the noise shown by the five-sample ranges.
+`bun run perf:join-log` fixes the input at a 250,000-record capacity, 300-record overflow, and 10,000-record warm-up. Baseline and current variants of all three paths — `snapshot`, `capacity`, and `append-accounting` — run in five independent Bun processes each, and the parent compares the two variants’ checksums sample by sample, failing outright on any mismatch. The `append-accounting` batch size is the production `JOIN_LOG_MAX_BUFFERED_ENTRIES`, repeated until the total input matches the 250,000-record scale of the other two. The report records the complete Bun version/revision, median and range of elapsed time, and JSC heap/object changes before and after forced GC. The baseline freezes the pre-optimization algorithms — whole-Map copy, full sort, and complete-JSON-string generation for snapshot and capacity; re-serializing each record once merely to measure its byte length for append-accounting — solely for before/after comparison within the same Bun build; `Bun.gc(true)` exists only in this benchmark and never in production control flow. Run it whenever join indexing, capacity trimming, snapshot serialization, post-append byte accounting, or chunked atomic writes change, and verify that the difference is materially larger than the noise shown by the five-sample ranges.
 
 ## Identity-Database Performance Benchmark
 
@@ -125,7 +131,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~846 source lines across 79 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
+- **The Chinese string-literal count** (currently ~861 source lines across 83 files). The figures live only in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md); the “On languages” note in each README just links there and carries no numbers. Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

@@ -1,4 +1,3 @@
-import { createHmac } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   LUCK_RECEIPT_DISPLAY_PREFIX,
@@ -18,6 +17,8 @@ import type { LuckReceiptSecret } from "../../packages/types";
 const DAY = "2026-07-19";
 const SECRET: LuckReceiptSecret = { version: 1, day: DAY, key: Buffer.alloc(32, 7).toString("base64url") };
 const OTHER_SECRET: LuckReceiptSecret = { version: 1, day: DAY, key: Buffer.alloc(32, 8).toString("base64url") };
+const EXPECTED_123_HMAC: string =
+  "916338242888c03e98e3d6efaaaba002b26adffee09afeb8bd963cd67102fb5a";
 
 describe("luck receipt protocol", () => {
   test("自描述回执往返默认 key 与带文本摘要 key", () => {
@@ -38,8 +39,25 @@ describe("luck receipt protocol", () => {
     expect(verifyLuckReceipt("x".repeat(LUCK_RECEIPT_MAX_LENGTH + 1), DAY, SECRET)).toBeUndefined();
   });
 
+  test("解不开的 base64url 一律返回 undefined，不抛异常", () => {
+    // LUCK_RECEIPT_PATTERN 的 cache key 组允许 1..120 个字符，其中长度
+    // ≡ 1 (mod 4) 的取值不是合法 base64url。这些回执来自群消息实体，异常逸出
+    // 会被 bot.catch 重抛成整进程重启循环，因此必须当成普通的格式不合法。
+    const signaturePart: string = createLuckReceipt(SECRET, "123").split(".")[1]!;
+    for (const length of [1, 5, 9, 117]) {
+      const receipt: string = `luck:v1:${DAY}:${"A".repeat(length)}.${signaturePart}`;
+      expect(() => verifyLuckReceipt(receipt, DAY, SECRET)).not.toThrow();
+      expect(verifyLuckReceipt(receipt, DAY, SECRET)).toBeUndefined();
+      expect(() => luckReceiptHmacHash(receipt)).not.toThrow();
+    }
+    // 签名组定长 43，本身永远解得开；非规范尾比特由回环比较挡下。
+    const nonCanonical: string = `luck:v1:${DAY}:MTIz.${"B".repeat(43)}`;
+    expect(luckReceiptHmacHash(nonCanonical)).toBeUndefined();
+    expect(verifyLuckReceipt(nonCanonical, DAY, SECRET)).toBeUndefined();
+  });
+
   test("同一日期、密钥和 cache key 派生熵稳定，任一输入改变都会变化", () => {
-    const first: Buffer = deriveLuckEntropy(SECRET, "123");
+    const first: Uint8Array = deriveLuckEntropy(SECRET, "123");
     expect(deriveLuckEntropy(SECRET, "123")).toEqual(first);
     expect(deriveLuckEntropy(SECRET, "124")).not.toEqual(first);
     expect(deriveLuckEntropy(OTHER_SECRET, "123")).not.toEqual(first);
@@ -47,12 +65,8 @@ describe("luck receipt protocol", () => {
 
   test("展示值直接复用回执的 HMAC，不再对完整回执二次哈希", () => {
     const firstReceipt: string = createLuckReceipt(SECRET, "123");
-    const unsigned: string = firstReceipt.slice(0, firstReceipt.lastIndexOf("."));
-    const expectedHmac: string = createHmac("sha256", Buffer.from(SECRET.key, "base64url"))
-      .update(unsigned, "utf8")
-      .digest("hex");
     const first: string | undefined = luckReceiptHmacHash(firstReceipt);
-    expect(first).toBe(expectedHmac);
+    expect(first).toBe(EXPECTED_123_HMAC);
     expect(first).toHaveLength(64);
     expect(isLuckReceiptHash(first!)).toBe(true);
     expect(luckReceiptHmacHash(createLuckReceipt(SECRET, "124"))).not.toBe(first);

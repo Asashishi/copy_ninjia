@@ -29,6 +29,23 @@ describe("libs/image sniffImageFormat", () => {
     expect(sniffImageFormat(Buffer.alloc(0))).toBe("unknown");
     expect(sniffImageFormat(Buffer.from([0x01, 0x02]))).toBe("unknown");
   });
+
+  test("Uint8Array 子视图只读取可见区间", () => {
+    const bytes: Uint8Array = new Uint8Array([
+      0,
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+      0,
+    ]);
+    expect(sniffImageFormat(bytes.subarray(1, 9))).toBe("png");
+    expect(sniffImageFormat(bytes)).toBe("unknown");
+  });
 });
 
 describe("libs/image prepareVisionImage", () => {
@@ -61,6 +78,6 @@ describe("libs/image prepareVisionImage", () => {
   });
 });
 
-function sniffImageFormatOfResult(bytes: Buffer): string {
-  return bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) ? "png" : "not-png";
+function sniffImageFormatOfResult(bytes: Uint8Array): string {
+  return sniffImageFormat(bytes);
 }

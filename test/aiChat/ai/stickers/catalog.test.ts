@@ -58,12 +58,8 @@ const { STICKER_CATALOG_RETRY_INTERVAL_MS } = await import("../../../../packages
 
 /**
  * 五个替身都是模块级共享的，而 bun 的 `mockClear()` 只清调用记录、**不清
- * `mockImplementationOnce` 排队的实现**。此前本文件没有 `beforeEach`，各用例只在
- * 自己开头零散地清掉「这条要断言的那一个」——于是「谁在谁之前跑」成了断言成立的
- * 隐含前提：换一个 `--randomize` 种子（实测 `--seed=20260821`），「Worker 取消会中止
- * 目录重采样退避」那条拿到的就是 3 次调用而不是 1 次。而 `bun run test:random` 把
- * 种子钉死在 20260802（恰好通过），门禁一直看不见。这里统一把调用记录连同实现
- * 一起复位，用例之间不再有顺序耦合。
+ * `mockImplementationOnce` 排队的实现**。每条用例开始前统一复位调用记录与实现，
+ * 保证随机执行顺序不会让排队替身泄漏到下一条用例。
  *
  * **目录状态刻意不在这里清**：每条用例都用各自独立的包名与 uid 自行 `hydrate`
  * 播种，彼此不可见；清掉反而会把「hydrate 是合并语义」这件事从覆盖里抹掉。
@@ -150,9 +146,21 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     expect(failedEntries.has("pack_cancelled")).toBeFalse();
     expect(getCatalogEntry("cancelled-uid")).toBeUndefined();
   });
-  test("hydrate 遇到语法合法但形状错误的快照时只丢弃该包", () => {
-    hydrateStickerCatalogs(new Map([["pack_bad_shape", JSON.stringify({ version: 1, entries: null })]]));
+  test("hydrate 遇到坏快照时整批 fail-closed，不接管前面的合法包", () => {
+    expect((): void => hydrateStickerCatalogs(new Map([
+      ["pack_before_bad", JSON.stringify({
+        version: 1,
+        entries: { "pack_before_bad_uid": { emoji: "👍", description: "合法描述" } },
+        summary: null,
+        savedAt: 0,
+      })],
+      ["pack_bad_shape", JSON.stringify({ version: 1, entries: null })],
+    ]))).toThrow(
+      "Sticker catalog hydrate payload for pack pack_bad_shape: $ must be " +
+      "the current version=1 sticker catalog schema."
+    );
 
+    expect(getCatalogEntry("pack_before_bad_uid")).toBeUndefined();
     expect(getPackSummary("pack_bad_shape")).toBeUndefined();
     expect(getCatalogEntry("pack_bad_shape_uid")).toBeUndefined();
   });

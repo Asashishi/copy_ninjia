@@ -3,14 +3,12 @@
  *
  * 这一族用例（身份传递、贴纸回复、语音转写……）驱动的都是同一个
  * `handleIncomingMessage`，因此都要把同一批模块挡在外面：Telegram 出站、群状态、
- * 群标题记录、发送者缓存、AI Worker 投递、自发消息判定。此前每个文件各抄一份，
- * 抄出来的六段大同小异——但**「小异」正是问题**：桩只列出被测代码当时会用到的
- * 那几个导出，生产侧新增一个导出后，各文件的桩谁补了谁没补全凭偶然，没补的那个
- * 文件里它就是 `undefined`。收在一处之后，桩面只有一份、跟着生产模块一起改。
+ * 群标题记录、发送者缓存、AI Worker 投递、自发消息判定。统一安装完整边界，
+ * 避免各文件桩面不一致；桩面随生产模块一起维护。
  *
  * 形态照 `test/helpers/adDetectQueueHarness.ts`：import 期登记 `mock.module`，
  * 因此**必须在被测生产模块之前 import**（各用例文件用顶层 `await import` 拿生产
- * 模块，天然满足）。差异靠导出的 mock 与旋钮在用例里调，不靠再抄一份。
+ * 模块，天然满足）。差异通过导出的 mock 与旋钮配置。
  */
 
 import { mock } from "bun:test";
@@ -39,9 +37,20 @@ export const waitForBotOwnMessageMock = mock(
  */
 export const autoMessageChatState: {
   isAIChatEnabled: boolean;
+  /**
+   * 本群是否已接管。缺省 false：问答直答那条分支只对已接管的群生效，不关心它的
+   * 用例保持原有走向（见 auto/message/index.ts）。
+   */
+  isInitEnabled: boolean;
   /** 距现在的静默剩余毫秒；undefined 表示从没设过静默。 */
   quietUntilOffsetMs: number | undefined;
-} = { isAIChatEnabled: true, quietUntilOffsetMs: 60_000 };
+} = { isAIChatEnabled: true, isInitEnabled: false, quietUntilOffsetMs: 60_000 };
+
+/**
+ * 本群已登记的问答；空表等价于「这个群没开问答」，`getChatQa` 返回 undefined，
+ * 直答链路在第一行就走开（口径同 infra/qaStore.ts）。
+ */
+export const autoMessageQaEntries: Map<string, string> = new Map<string, string>();
 
 mock.module("../../packages/infra/telegram", () => ({
   copyMessage: copyMessageMock,
@@ -56,6 +65,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getActiveProxySendTarget: (): undefined => undefined,
   getChatState: (): Record<string, unknown> => ({
     isAIChatEnabled: autoMessageChatState.isAIChatEnabled,
+    isInitEnabled: autoMessageChatState.isInitEnabled,
     quietUntil: autoMessageChatState.quietUntilOffsetMs === undefined
       ? undefined
       : Date.now() + autoMessageChatState.quietUntilOffsetMs,
@@ -63,6 +73,11 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getOrCreateChatState: (): Record<string, unknown> => ({}),
   persistChatState: async (): Promise<void> => {},
   saveChatStateInBackground: (): void => {},
+}));
+// 直答查表是主干上的一步；真实 qaStore 会把 Disk I/O 宿主一并拉进来。
+mock.module("../../packages/infra/qaStore", () => ({
+  getChatQa: (): ReadonlyMap<string, string> | undefined =>
+    autoMessageQaEntries.size === 0 ? undefined : autoMessageQaEntries,
 }));
 mock.module("../../packages/infra/chatTitle", () => ({
   recordChatTitleFromChat: (): void => {},
@@ -99,5 +114,7 @@ export function resetAutoMessageMocks(): void {
   waitForBotOwnMessageMock.mockClear();
   waitForBotOwnMessageMock.mockImplementation(async (): Promise<boolean> => false);
   autoMessageChatState.isAIChatEnabled = true;
+  autoMessageChatState.isInitEnabled = false;
   autoMessageChatState.quietUntilOffsetMs = 60_000;
+  autoMessageQaEntries.clear();
 }

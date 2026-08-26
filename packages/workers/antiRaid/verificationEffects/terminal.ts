@@ -12,7 +12,7 @@ import {
   kickChatMemberWithOutcome,
   probeChatMembership,
   sendMessage,
-  joinVerificationApi,
+  telegramApi,
 } from "../../../infra/telegram";
 import { formatMinSec } from "../../../libs/time";
 import { verificationKey } from "../../../libs/verificationKey";
@@ -128,10 +128,8 @@ export async function runExpelEffect({
   // 权限镜像是三态：只有确证没有限制成员权限时才跳过踢人请求。每轮保留一次
   // O(1) 判定并继续退避，权限恢复后下一轮自然重新执行；未知不能折算成没有权限。
   //
-  // **但只短路请求，不短路诊断。** 改动前这条路照常发踢人请求、吃下 Telegram
-  // 的 403/400，再发出那条唯一点名封禁权限的群内提示；把请求和提示一起省掉，
-  // 管理员就再也收不到任何信号：人无限期留在群里，退避一路静默涨到
-  // VERIFICATION_TERMINAL_RETRY_MAX_MS，机器人自己的验证提示也永远挂在群里。
+  // **但只短路请求，不短路诊断。** 管理员必须收到一次点名封禁权限的群内提示；
+  // 否则目标会留在群里，退避会静默增长，机器人的验证提示也无法收口。
   //
   // 因此第一次进这条分支时照常走一遍 expelMember——清机器人自己的验证消息、发出
   // 那条提示、记一行日志，只是不发成员探测和踢人请求。之后由 failureNoticeSent
@@ -268,7 +266,7 @@ async function kickPresentMember(
   if (!isCurrent()) return "stale";
   if (isSupergroup === undefined) return "kindUnknown";
   const present: boolean | undefined =
-    await probeChatMembership(chatId, userId, joinVerificationApi);
+    await probeChatMembership(chatId, userId, telegramApi);
   if (present === false) return "absent";
   if (present === undefined) return "unconfirmed";
   if (!isCurrent()) return "stale";
@@ -276,7 +274,7 @@ async function kickPresentMember(
     chatId,
     userId,
     isSupergroup,
-    api: joinVerificationApi,
+    api: telegramApi,
   });
   if (outcome === "kicked") return "kicked";
   if (outcome === "absent") return "absent";
@@ -324,7 +322,7 @@ async function expelMember({
     for (const messageId of cleanupMessageIds) {
       if (!stillCurrent()) return false;
       const outcome: DeleteMessageOutcome =
-        await deleteMessageWithOutcome(chatId, messageId, joinVerificationApi);
+        await deleteMessageWithOutcome(chatId, messageId, telegramApi);
       if (outcome === "deleted" || outcome === "gone") continue;
       missedCleanup++;
       if (outcome === "forbidden") permissionDenied = true;
@@ -383,7 +381,7 @@ async function expelMember({
     ? await sendMessage({
       chatId,
       text: noticeText,
-      api: joinVerificationApi,
+      api: telegramApi,
     })
     : undefined;
   if (!kicked && shouldSendNotice && noticeMessageId !== undefined) {
@@ -397,7 +395,7 @@ async function expelMember({
       chatId,
       messageId: noticeMessageId,
       delayMs: KICK_NOTICE_AUTO_DELETE_MS,
-      api: joinVerificationApi,
+      api: telegramApi,
     });
     expectedState.successNoticeSent = true;
     publishVerificationChange(chatId, userId, true);

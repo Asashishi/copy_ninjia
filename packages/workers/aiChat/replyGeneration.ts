@@ -117,7 +117,7 @@ export function invalidateChatReplies(chatId: number): Promise<void> {
       (): void => resolve(false),
       AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS
     );
-    expiryTimer.unref?.();
+    expiryTimer.unref();
   });
   return Promise.race([drained, expired]).then((settled: boolean): void => {
     if (!settled) {

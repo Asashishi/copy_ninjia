@@ -4,7 +4,7 @@ import {
   getChatStateCache,
   saveChatStateInBackground,
 } from "../infra/storage/stateStore";
-import { joinVerificationApi } from "../infra/telegram/client";
+import { telegramApi } from "../infra/telegram/client";
 import { restoreLockdownInvitePermission } from "../infra/telegram/lockdownPermissions";
 import { RESTORE_RETRY_MS } from "../consts/antiRaid/lockdown";
 import { antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
@@ -139,7 +139,7 @@ function runEmergencyLockdownRecovery(
       await restoreLockdownInvitePermission({
         chatId,
         originalPermissions: recovery.originalPermissions,
-        api: joinVerificationApi,
+        api: telegramApi,
       });
       if (
         emergencyLockdownRecoveryRuntime.stopped ||

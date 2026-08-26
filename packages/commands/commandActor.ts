@@ -8,6 +8,11 @@ import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 /**
  * 解析命令对外可见的发起身份。sender_chat（频道马甲/频道帖）优先于 from，
  * 否则频道白名单会被 Telegram 附带的匿名服务用户误判；普通用户则回退到 from。
+ *
+ * 判定口径必须与 users/visibleSender.ts 的 visibleSenderChat 逐字一致：`/set_qa`
+ * 的表单在命令侧用这里记下 openedById，在投递侧用那个函数算发送者，两边对不上
+ * 就等于匿名管理员和频道身份永远填不了自己开的表单。命令上下文里
+ * `ctx.chat === ctx.msg.chat`、`ctx.from === ctx.msg.from`，因此两处等价。
  */
 export function resolveCommandActor(ctx: CommandContext<Context>): CachedUser | undefined {
   const message: Message | undefined = ctx.msg;

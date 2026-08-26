@@ -64,9 +64,10 @@ import { acceptForwardedLogBatch, logger } from "../infra/logger";
  * （aiChat/promptContext.ts）、调模型（含 function calling 往返与内置
  * 服务端联网检索，workers/aiChat/replyModel.ts）、以及回复准入控制（并发闸 + 5 分钟
  * 滑动窗口限频 + 溢出排队补跑，aiChat/replyPipeline.ts）。发言/消息反应/
- * 应景贴纸与生图全部工具化（send_message / add_reaction / view_sticker_pack +
- * send_sticker / generate_image，见 aiChat/ai/tools/replyToolset/）：模型在同一次对话里自主决定
- * 做哪几样、什么顺序。发往 Telegram 的调用统一经双工能力请求回到主线程，
+ * 应景贴纸与重媒体创作全部工具化（send_message / add_reaction /
+ * view_sticker_pack + send_sticker / generate_image / generate_song，见
+ * aiChat/ai/tools/replyToolset/）；生图与生歌只在直接触发轮按供应商能力挂载。
+ * 模型在同一次对话里自主决定可用工具的组合与顺序。发往 Telegram 的调用统一经双工能力请求回到主线程，
  * Worker 不持有独立 Telegram 网络客户端；机器人自己的账号身份改由主线程在
  * bot.init() 后经 init 消息注入，见 cache/workers/aiChat/identity.ts 的 botInfoState）。
  * error 日志经 logger.ts 的转发模式回传主线程统一落盘。本文件只剩消息路由、

@@ -1,16 +1,17 @@
 import type { Context } from "grammy";
-import type { CopyableReaction } from "../types/reactionQueue";
+import type { CopyableReaction } from "../types/telegram";
 import { activeCopyTargetIdIn } from "../infra/storage/stateStore";
-import { enqueueReaction } from "../copy/reactionQueue";
+import { setMessageReactions } from "../infra/telegram";
+import { logger } from "../infra/logger";
 import type { MessageReactionUpdated } from "@grammyjs/types";
 
 /**
  * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义
  * emoji 都支持）同步到同一条消息上；目标移除了自己的回应时也会跟着清除。
  * 与复读一致，只在发起 /copy 的那个群里同步（判定统一走 activeCopyTargetIdIn）。
- * 实际的 setMessageReaction 调用走 reactionQueue（同消息合并、按 chat 隔离
- * API 长尾；429 由主线程 reaction 类别独立退避，网络/5xx 交还 owner）；本 update 等到对应版本被
- * 应用、覆盖或按硬顶丢弃才结算，使下一轮取数不会提前确认仍在后台的反应。
+ * 本 update 等待 Telegram 动作结算后才返回；严格串行的 acknowledged runner
+ * 在此之前不会读取或确认下一条 update。429 由主线程 reaction 类别独立退避，
+ * 网络与 5xx 由统一 Telegram 动作边界记录并结束本次同步。
  */
 export async function handleReaction(ctx: Context): Promise<void> {
   const reaction: MessageReactionUpdated | undefined = ctx.messageReaction;
@@ -43,11 +44,18 @@ export async function handleReaction(ctx: Context): Promise<void> {
     toApply = [];
   }
 
-  await enqueueReaction({
+  const startedAtMs: number = Date.now();
+  const applied: boolean = await setMessageReactions({
     chatId: reaction.chat.id,
     messageId: reaction.message_id,
     reactions: toApply,
-    updateId: ctx.update.update_id,
-    reactedAtUnix: reaction.date,
   });
+  if (!applied) return;
+
+  const nowMs: number = Date.now();
+  const deliveryMs: number = Math.max(0, startedAtMs - reaction.date * 1000);
+  logger.log(
+    `Reaction synced (chat ${reaction.chat.id}, msg ${reaction.message_id}): ` +
+    `delivery ${(deliveryMs / 1000).toFixed(1)}s, queue ${((nowMs - startedAtMs) / 1000).toFixed(1)}s`
+  );
 }

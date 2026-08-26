@@ -84,9 +84,7 @@ async function attemptRestoreDefaultProfilePhoto(
     // HTML 被当作静态图片交给 Telegram，换来一次确定性拒绝。响应体为 null 时
     // readBoundedResponseBytes 会以零长 buffer 报 ok，同样在这里被挡下
     // （长度不足以匹配任何签名）。
-    const format: SniffedImageFormat = sniffImageFormat(
-      Buffer.from(download.bytes.buffer, download.bytes.byteOffset, download.bytes.byteLength)
-    );
+    const format: SniffedImageFormat = sniffImageFormat(download.bytes);
     if (format !== "jpeg" && format !== "png") {
       logger.error(
         `The default avatar link ${redactUrlForLog(url)} did not return a JPEG or PNG image ` +

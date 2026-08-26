@@ -49,9 +49,8 @@ export const VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS: number = 15;
  * tombstone。达到上限时主线程拒绝新 key 并触发受监督停机；启动恢复超过上限也
  * 直接拒绝，不淘汰、不截断安全状态。
  *
- * Bun 1.3.14 下用最大合法 label、45 个消息时间戳和完整终态字段实测，三份独立
- * Map 各保留 10_000 条时 full GC 后约占 58 MB JSC heap；本上限据此给主线程、
- * Anti-Raid Worker 与 Disk I/O Worker 的镜像留下明确余量。所属模块：
+ * 三份独立 Map 都使用同一硬上限，给主线程、Anti-Raid Worker 与 Disk I/O Worker
+ * 的镜像留下明确且一致的容量边界。所属模块：
  * antiRaid/verificationMirror.ts 与 workers/diskIO/verificationRecovery.ts。
  */
 export const VERIFICATION_RECORD_CAPACITY: number = 10_000;
@@ -68,7 +67,7 @@ export const VERIFICATION_CHAT_KIND_FETCH_MAX: number = 100;
 export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
 /**
  * 私密模式秒踢占位遇到新 join 事件时，用来判断“这是同一次物理入群的另一条
- * 投递（chat_member 更新 + 服务消息，间隔实测毫秒级）”还是“TA 真的重新
+ * 投递（chat_member 更新 + 服务消息）”还是“TA 真的重新
  * 申请了入群”（kickChatMember 只踢不封，本就能立刻重进）的分界线。
  * 远小于 LOCKDOWN_KICK_DEDUPE_MS——那个是占位整体存活时长，这个只区分
  * 同一次入群的两条腿，见 states/verification.ts 的 handleJoin。

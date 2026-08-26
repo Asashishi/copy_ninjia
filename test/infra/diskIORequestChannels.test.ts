@@ -5,8 +5,14 @@ import type {
   LuckAppendStalledReply,
   LuckDrawDiskMessage,
 } from "../../packages/types";
+import type {
+  BlocklistIdPage,
+  IdentityPolicyRawReadResult,
+} from "../../packages/types/identityStorage";
 import {
+  blocklistIdPageReadRequests,
   diskIORuntime,
+  identityPolicyReadRequests,
   joinLogReadRequests,
   pendingLoad,
   luckSecretRequests,
@@ -160,6 +166,87 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       await diskIO.terminateDiskIO();
       expect(await pendingRead).toBeInstanceOf(Error);
       expect(joinLogReadRequests.pending.size).toBe(0);
+    } finally {
+      await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("身份策略与黑名单分页请求完整接线，缺载荷和超时均清理等待表", async (): Promise<void> => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise: Promise<unknown> = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+
+      const policiesPromise: Promise<IdentityPolicyRawReadResult> =
+        diskIO.readIdentityPolicies([42, 43], 1_000);
+      const policiesRequest: DiskIOMessage | undefined = worker.messages.at(-1);
+      expect(policiesRequest).toMatchObject({
+        type: "readIdentityPolicies",
+        ids: [42, 43],
+      });
+      if (policiesRequest?.type !== "readIdentityPolicies") {
+        throw new Error("missing identity policy request");
+      }
+      worker.onmessage!({ data: {
+        type: "identityPoliciesRead",
+        requestId: policiesRequest.requestId,
+        whitelist: [[42, "{\"isCanUseBot\":true}"]],
+        blocklist: [[43, "{\"reason\":\"spam\"}"]],
+      } } as unknown as MessageEvent<DiskIOReply>);
+      await expect(policiesPromise).resolves.toEqual({
+        whitelist: [[42, "{\"isCanUseBot\":true}"]],
+        blocklist: [[43, "{\"reason\":\"spam\"}"]],
+      });
+      expect(identityPolicyReadRequests.pending.size).toBe(0);
+
+      const pagePromise: Promise<BlocklistIdPage> =
+        diskIO.readBlocklistIdPage(43, 1_000);
+      const pageRequest: DiskIOMessage | undefined = worker.messages.at(-1);
+      expect(pageRequest).toMatchObject({
+        type: "readBlocklistIdPage",
+        afterId: 43,
+      });
+      if (pageRequest?.type !== "readBlocklistIdPage") {
+        throw new Error("missing blocklist page request");
+      }
+      worker.onmessage!({ data: {
+        type: "blocklistIdPageRead",
+        requestId: pageRequest.requestId,
+        page: { ids: [44, 45], nextCursor: 45, done: false },
+      } } as unknown as MessageEvent<DiskIOReply>);
+      await expect(pagePromise).resolves.toEqual({
+        ids: [44, 45],
+        nextCursor: 45,
+        done: false,
+      });
+      expect(blocklistIdPageReadRequests.pending.size).toBe(0);
+
+      const incompletePromise: Promise<IdentityPolicyRawReadResult> =
+        diskIO.readIdentityPolicies([99], 1_000);
+      const incompleteRequest: DiskIOMessage | undefined = worker.messages.at(-1);
+      if (incompleteRequest?.type !== "readIdentityPolicies") {
+        throw new Error("missing incomplete identity policy request");
+      }
+      worker.onmessage!({ data: {
+        type: "identityPoliciesRead",
+        requestId: incompleteRequest.requestId,
+        whitelist: [],
+      } } as unknown as MessageEvent<DiskIOReply>);
+      await expect(incompletePromise).rejects.toThrow(
+        "Disk I/O Worker returned no identity policy rows."
+      );
+      expect(identityPolicyReadRequests.pending.size).toBe(0);
+
+      await expect(diskIO.readBlocklistIdPage(null, 1)).rejects.toThrow(
+        "blocklist ID page read request timed out"
+      );
+      expect(blocklistIdPageReadRequests.pending.size).toBe(0);
     } finally {
       await diskIO.terminateDiskIO();
       globalThis.Worker = originalWorker;

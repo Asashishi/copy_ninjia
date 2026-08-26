@@ -7,6 +7,13 @@ import { assertDequeCapacities } from "./dequeCapacity";
  * backing array 从小容量起步并最多增长到构造时给定的硬上限；clear 只重置下标，
  * 数组里残留的是原始 number，不会钉住对象引用。实例只用于进程内窗口，不承担
  * 持久化格式或跨线程共享。
+ *
+ * **容量是会抛错的硬顶**：只承载配额本身就封住长度的窗口（构造时把容量取成那个
+ * 配额上限即可）。没有上界的窗口用 libs/linkedQueue.ts，见
+ * libs/slidingWindowRateLimit.ts 的头注。
+ *
+ * 与 libs/boundedDeque.ts 的环形下标逻辑同构，但**刻意不合并成一个泛型**：
+ * 理由与共用校验的取舍写在 libs/dequeCapacity.ts 的头注里。
  */
 export class TimestampDeque {
   private values: number[];
@@ -27,6 +34,16 @@ export class TimestampDeque {
     return this.count;
   }
 
+  /**
+   * 队尾槽位。`head + count - 1` 恒小于 `2 * values.length`，一次条件减即可
+   * 折回环内；取模在这里会让每条群消息都付一次整数除法。
+   */
+  private tailIndex(): number {
+    const length: number = this.values.length;
+    const index: number = this.head + this.count - 1;
+    return index >= length ? index - length : index;
+  }
+
   /** 追加一个时间戳；达到构造时的硬上限表示调用方违反了领域容量约束。 */
   push(value: number): void {
     if (this.count === this.values.length) {
@@ -35,7 +52,9 @@ export class TimestampDeque {
       }
       this.grow();
     }
-    const index: number = (this.head + this.count) % this.values.length;
+    const length: number = this.values.length;
+    let index: number = this.head + this.count;
+    if (index >= length) index -= length;
     this.values[index] = value;
     this.count += 1;
   }
@@ -44,7 +63,8 @@ export class TimestampDeque {
   shift(): number | undefined {
     if (this.count === 0) return undefined;
     const value: number | undefined = this.values[this.head];
-    this.head = (this.head + 1) % this.values.length;
+    const next: number = this.head + 1;
+    this.head = next === this.values.length ? 0 : next;
     this.count -= 1;
     if (this.count === 0) this.head = 0;
     return value;
@@ -53,9 +73,7 @@ export class TimestampDeque {
   /** 移除并返回最新时间戳，供系统时钟回拨时原地裁掉未来尾段。 */
   pop(): number | undefined {
     if (this.count === 0) return undefined;
-    const index: number =
-      (this.head + this.count - 1) % this.values.length;
-    const value: number | undefined = this.values[index];
+    const value: number | undefined = this.values[this.tailIndex()];
     this.count -= 1;
     if (this.count === 0) this.head = 0;
     return value;
@@ -69,28 +87,39 @@ export class TimestampDeque {
   /** 查看最新时间戳但不移除。 */
   peekLast(): number | undefined {
     if (this.count === 0) return undefined;
-    const index: number =
-      (this.head + this.count - 1) % this.values.length;
-    return this.values[index];
+    return this.values[this.tailIndex()];
   }
 
   /**
    * 就地保留半开窗口 `(now - windowMs, now]`。直接操作环形下标，避免热路径
-   * 为每次修剪跨多个公开队列方法调用；未来尾段处理系统时钟回拨。
+   * 为每次修剪跨多个公开队列方法调用。
+   *
+   * **全仓滑动窗口的边界定义就是这里**，调用方不要各自手写
+   * `while (peek() < cutoff) shift()`：`<` / `<=` / `>=` 的写法差一个刻度，
+   * 同样的窗口长度会因为读的是哪份副本而得出不同结论。另外两种形态
+   * （无硬顶窗口的 `trimSlidingWindow`、要随快照落盘的
+   * `trimSlidingWindowArray`，都在 libs/slidingWindowRateLimit.ts）必须与本方法
+   * 逐字一致，该约束由 test/libs/slidingWindowBoundary.test.ts 的同输入对拍锁住。
+   *
+   * 两件事：
+   * 1. 丢掉已滑出窗口的队首（`ts <= now - windowMs`）；
+   * 2. 系统时钟回拨后队尾会落在「未来」，**只丢这些越界项**，保留仍然合法的
+   *    历史记录。绝不能整窗清空：那等于把配额清零重来，往回拨 1 毫秒就能凭空
+   *    换到一整个新窗口，限流形同虚设。
    */
   trim(windowMs: number, now: number): void {
     while (this.count > 0) {
-      const tailIndex: number =
-        (this.head + this.count - 1) % this.values.length;
-      if ((this.values[tailIndex] ?? now) <= now) break;
+      if ((this.values[this.tailIndex()] ?? now) <= now) break;
       this.count -= 1;
     }
     const cutoff: number = now - windowMs;
+    const length: number = this.values.length;
     while (
       this.count > 0 &&
       (this.values[this.head] ?? Number.POSITIVE_INFINITY) <= cutoff
     ) {
-      this.head = (this.head + 1) % this.values.length;
+      const next: number = this.head + 1;
+      this.head = next === length ? 0 : next;
       this.count -= 1;
     }
     if (this.count === 0) this.head = 0;
@@ -109,9 +138,11 @@ export class TimestampDeque {
       previous.length * 2
     );
     const replacement: number[] = new Array<number>(nextCapacity);
+    const length: number = previous.length;
     for (let index: number = 0; index < this.count; index += 1) {
-      replacement[index] =
-        previous[(this.head + index) % previous.length] ?? 0;
+      let slot: number = this.head + index;
+      if (slot >= length) slot -= length;
+      replacement[index] = previous[slot] ?? 0;
     }
     this.values = replacement;
     this.head = 0;

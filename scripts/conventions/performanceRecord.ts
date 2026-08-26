@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   README_BLOCK_END,
@@ -48,13 +47,13 @@ function blockTimestamp(source: string): string | null {
 }
 
 /** 核对全量基准的文档区块与 `performance-result.json` 描述同一次运行。 */
-export function collectPerformanceRecordProblems(
+export async function collectPerformanceRecordProblems(
   projectRoot: string
-): readonly string[] {
+): Promise<readonly string[]> {
   const problems: string[] = [];
   const timestamps: Map<string, string | null> = new Map();
   for (const target of DOC_PAGE_TARGETS) {
-    const source: string = readFileSync(join(projectRoot, target.path), "utf8");
+    const source: string = await Bun.file(join(projectRoot, target.path)).text();
     timestamps.set(target.path, blockTimestamp(source));
   }
 
@@ -77,7 +76,9 @@ export function collectPerformanceRecordProblems(
     );
   }
 
-  const raw: string = readFileSync(join(projectRoot, "performance-result.json"), "utf8");
+  const raw: string = await Bun.file(
+    join(projectRoot, "performance-result.json")
+  ).text();
   const parsed: PerformanceResultFile = JSON.parse(raw) as PerformanceResultFile;
   const lastRun: { readonly generatedAt?: unknown } | null | undefined =
     parsed.fullSuite?.lastRun;

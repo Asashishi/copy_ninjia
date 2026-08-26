@@ -85,8 +85,7 @@ describe("触发与占位", () => {
   });
 
   test("ACTIVE 中再次超阈值 → 只预热管理员表：本轮倒计时不再被推后", () => {
-    // 回归：每次超阈值都把倒计时重排满 LOCKDOWN_MS，持续刷群就能把同一轮
-    // 无限续期——群里看到的是「过了 5 分钟也没解除」，且不留任何错误日志。
+    // ACTIVE 状态下再次超阈值不能重排倒计时，否则持续刷群会让同一轮无限续期。
     const state: LockdownState = ACTIVE;
     const { next, effects } = transitionLockdown(state, { type: "thresholdExceeded", joinCount: 50 });
     expect(next).toBe(state);
@@ -317,8 +316,7 @@ describe("落盘失败一律 fail-safe 打开", () => {
       phase: "applying",
       intentId: 7,
     });
-    // 回归：落盘失败曾经只记一行日志，占位就此永久停在 APPLYING——
-    // 秒踢不停，5 分钟的恢复计时压根没被安排过。
+    // 落盘失败必须清除 APPLYING 占位，不能留下永久秒踢且无恢复计时的状态。
     expect(next).toBeUndefined();
     expect(effects).toEqual([
       { kind: "reportUnlock" },

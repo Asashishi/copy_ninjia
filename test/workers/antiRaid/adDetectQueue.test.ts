@@ -15,13 +15,14 @@ import {
 const {
   clearChatAdDetect,
   enqueueAdCandidate,
-  expireAdDetectDisposalMarkers,
   quiesceAdDetectQueue,
   runAdDetectBatch,
   startAdDetectQueue,
   stopAdDetectQueue,
   sweepAdDetect,
 } = await import("../../../packages/workers/antiRaid/adDetect/queue");
+const { expireAdDetectDisposalMarkers } =
+  await import("../../../packages/workers/antiRaid/adDetect/queueState");
 const { antiRaidInFlightTasks } = await import("../../../packages/cache/workers/antiRaid/tasks");
 const {
   adDetectPublishHolder,
@@ -49,8 +50,8 @@ beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
  * 「谁在待检」只有一个答案：queuedAdDetectKeys 必须与 adDetectQueue 的内容逐键
  * 一致，且同一个键在队列里最多占一个位置。
  *
- * 去重、容量与补排判据现在全部落在这一张表上（曾经并行的 TTL 认领表已删除），
- * 它一旦和队列失配，要么同一个人吃掉两份判定额度，要么未判内容永远排不回来。
+ * 去重、容量与补排判据全部落在这一张表上；它一旦和队列失配，要么同一个人吃掉
+ * 两份判定额度，要么未判内容永远排不回来。
  */
 function expectQueueOwnershipConsistent(): void {
   const queued: string[] = adDetectQueue.last(adDetectQueue.size);
@@ -259,7 +260,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   test("待检位置没有等待 TTL：排多久都不过期，也不产生副本", async () => {
     // 已接纳的键在发生至少一次判定尝试前不能因为等太久而消失（见
     // docs/cn/04-invariants.md）。位置由 queuedAdDetectKeys 独家表达，没有计时器
-    // 能把它收走——曾经并行的认领 TTL 到期只会删认领、留下键继续排着。
+    // 能在判定前把它收走。
     const firstAt: number = 1_000;
     const secondAt: number = 2_000;
     enqueueAdCandidate(candidate({ senderId: 7, messageId: 1 }), firstAt);
@@ -577,7 +578,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("反复「入队 -> 空串 -> 出队」不会让待检位置数越过待检 key 数", async () => {
-    // 这条不变量此前没有任何断言守着，正是同类失配让容量闸误报过满载。
+    // 待检位置数不得越过待检 key 数，否则容量闸会误报满载。
     for (let round: number = 0; round < 32; round++) {
       const at: number = 1_000 + round;
       enqueueAdCandidate(candidate({ senderId: round, messageId: round + 1 }), at);

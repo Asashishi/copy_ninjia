@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,7 +14,12 @@ const realPaths = await import("../../../packages/consts/paths");
 const { mock } = await import("bun:test");
 mock.module("../../../packages/consts/paths", () => ({ ...realPaths, STICKER_MEMORY_DIR: stickerDir }));
 
-const { recoverStickerCatalogs, writeStickerCatalogFile } = await import("../../../packages/workers/diskIO/snapshotFiles");
+const {
+  inspectStickerCatalogs,
+  maintainStickerCatalogFiles,
+  recoverStickerCatalogs,
+  writeStickerCatalogFile,
+} = await import("../../../packages/workers/diskIO/snapshotFiles");
 import type { StickerCatalogSnapshot } from "../../../packages/types";
 
 /** 快照在管线上以序列化 JSON 文本流转（见 types/aiChat.ts 的
@@ -41,6 +46,34 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(result.size).toBe(1);
     expect(parseRecovered(result, "pack_a")?.entries["file-uid-1"]?.description).toBe("一只猫大笑");
     expect(parseRecovered(result, "pack_a")?.summary).toBe("一包搞笑猫猫贴纸");
+  });
+
+  test("接管与原子回写均保留部署方已有的 0640", () => {
+    const path: string = join(stickerDir, "pack_a.json");
+    writeStickerCatalogFile("pack_a", snapshot("一只猫大笑"));
+    chmodSync(path, 0o640);
+
+    const recovered: Map<string, string> = recoverStickerCatalogs(["pack_a"]);
+    writeStickerCatalogFile("pack_a", recovered.get("pack_a")!);
+
+    expect(statSync(path).mode & 0o777).toBe(0o640);
+  });
+
+  test("inspect 只登记临时文件和合法孤儿，maintenance 才删除", () => {
+    writeStickerCatalogFile("removed_pack", snapshot("待清理的包"));
+    const orphanPath: string = join(stickerDir, "removed_pack.json");
+    const temporaryPath: string = join(stickerDir, ".removed_pack.json.partial.tmp");
+    writeFileSync(temporaryPath, "partial");
+
+    const inspection = inspectStickerCatalogs([]);
+
+    expect(inspection.snapshots.size).toBe(0);
+    expect(existsSync(orphanPath)).toBeTrue();
+    expect(existsSync(temporaryPath)).toBeTrue();
+
+    maintainStickerCatalogFiles(inspection);
+    expect(existsSync(orphanPath)).toBeFalse();
+    expect(existsSync(temporaryPath)).toBeFalse();
   });
 
   test("回归用例：键名恰好是 __proto__ 的条目照常恢复，不被原型 setter 吃掉", () => {

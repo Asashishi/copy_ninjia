@@ -142,4 +142,52 @@ describe("update 前置身份预热", () => {
 
     expect(prefetchedBatches[0]).toEqual([100, 300, 200, -400, -500]);
   });
+
+  test("入群服务消息把操作者与全部新成员一并预热", async (): Promise<void> => {
+    await runPrefetchMiddleware({
+      ...botContext,
+      update: { update_id: 5 },
+      from: { id: 100 },
+      chat: { id: -1001, type: "supergroup" },
+      msg: {
+        new_chat_members: [
+          { id: 201, is_bot: false, first_name: "One" },
+          { id: 202, is_bot: true, first_name: "Two" },
+        ],
+      },
+    });
+
+    expect(prefetchedBatches[0]).toEqual([100, 201, 202]);
+  });
+
+  test("退群服务消息同时预热操作者与离群成员", async (): Promise<void> => {
+    await runPrefetchMiddleware({
+      ...botContext,
+      update: { update_id: 6 },
+      from: { id: 100 },
+      chat: { id: -1001, type: "supergroup" },
+      msg: {
+        left_chat_member: { id: 203, is_bot: false, first_name: "Left" },
+      },
+    });
+
+    expect(prefetchedBatches[0]).toEqual([100, 203]);
+  });
+
+  test("chat_member 更新预热操作者与变更后的成员身份", async (): Promise<void> => {
+    await runPrefetchMiddleware({
+      ...botContext,
+      update: { update_id: 7 },
+      from: { id: 100 },
+      chat: { id: -1001, type: "supergroup" },
+      chatMember: {
+        new_chat_member: {
+          status: "member",
+          user: { id: 204, is_bot: false, first_name: "Changed" },
+        },
+      },
+    });
+
+    expect(prefetchedBatches[0]).toEqual([100, 204]);
+  });
 });

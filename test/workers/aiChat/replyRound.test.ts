@@ -1,17 +1,10 @@
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   aiRecordMessageFixture,
   aiReplyReferenceFixture,
   bufferedReplyReferenceFixture,
 } from "../../helpers/aiMemoryFixtures";
 import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../../packages/types/aiChat/replies";
-
-const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
-const postMessage = mock((..._args: unknown[]): void => {});
-Object.defineProperty(globalThis, "self", {
-  configurable: true,
-  value: { postMessage },
-});
 
 const heartbeatStop = mock(async (): Promise<void> => {});
 const startChatActionHeartbeat = mock((_chatId: number) => ({
@@ -77,7 +70,7 @@ const {
   resetAiChatReplyCache,
 } = await import("../../../packages/cache/workers/aiChat/replies");
 const { invalidateChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
-const { LinkedQueue } = await import("../../../packages/libs/linkedQueue");
+const { TimestampDeque } = await import("../../../packages/libs/timestampDeque");
 const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../packages/consts/aiChat/rateLimit");
 const { SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
 
@@ -102,7 +95,6 @@ beforeEach(() => {
   builtPromptSections = defaultPromptSections();
   actionsUsed = 1;
   capturedContext = null;
-  postMessage.mockClear();
   heartbeatStop.mockClear();
   startChatActionHeartbeat.mockClear();
   stickerLockRelease.mockClear();
@@ -121,11 +113,6 @@ afterEach(() => {
   resetAiChatReplyCache();
   botInfoState.current = null;
   superAdminUserIdState.current = null;
-});
-
-afterAll(() => {
-  if (originalSelfDescriptor) Object.defineProperty(globalThis, "self", originalSelfDescriptor);
-  else delete (globalThis as { self?: unknown }).self;
 });
 
 describe("AI 单轮回复生命周期", () => {
@@ -155,7 +142,7 @@ describe("AI 单轮回复生命周期", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  test("工具发送回调回传消息 ID，并只在代际仍有效时登记滚动记忆", async () => {
+  test("工具发送回调只在代际仍有效时登记滚动记忆", async () => {
     actionsUsed = 2;
     generateReply.mockImplementationOnce(async (): Promise<null> => {
       capturedContext!.onMessageSent("文字消息", 101);
@@ -166,9 +153,6 @@ describe("AI 单轮回复生命周期", () => {
 
     await runRound();
 
-    expect(postMessage).toHaveBeenNthCalledWith(1, { type: "sent", chatId: -1001, messageId: 101 });
-    expect(postMessage).toHaveBeenNthCalledWith(2, { type: "sent", chatId: -1001, messageId: 102 });
-    expect(postMessage).toHaveBeenNthCalledWith(3, { type: "sent", chatId: -1001, messageId: 103 });
     expect(recordChatMessage).toHaveBeenCalledTimes(3);
   });
 
@@ -399,7 +383,7 @@ describe("AI 单轮回复生命周期", () => {
 
   test("滑动窗口达到上限时拒绝新轮，通知冷却避免重复发送", () => {
     const now: number = Date.now();
-    const times = new LinkedQueue<number>();
+    const times = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     for (let index: number = 0; index < RATE_LIMIT_LONG_MAX_TRIGGERS; index++) times.push(now);
     longTriggerTimes.set(-1001, times);
     rateLimitNoticeTimes.set(-1001, now);
@@ -422,7 +406,7 @@ describe("AI 单轮回复生命周期", () => {
 
   test("长窗口在上限时遇到时钟回拨，清空旧时间轴并正常开启新轮", async () => {
     const now: number = Date.now();
-    const times = new LinkedQueue<number>();
+    const times = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     for (let index: number = 0; index < RATE_LIMIT_LONG_MAX_TRIGGERS; index++) {
       times.push(now + 60_000 + index);
     }

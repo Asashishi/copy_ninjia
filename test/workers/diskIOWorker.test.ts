@@ -9,7 +9,17 @@ const handleLuckDrawMessage = mock((_message: unknown): void => {});
 const handleVerificationUpsert = mock((_input: unknown): void => {});
 const handleVerificationDelete = mock((_input: unknown): void => {});
 const handleJoinLogMessage = mock((_message: unknown): void => {});
-const recoverJoinLogFiles = mock((_day: string): void => {});
+const inspectLogFiles = mock((): { readonly kind: "logs" } => ({ kind: "logs" }));
+const adoptLogFiles = mock((_inspection: unknown): void => {});
+const maintainLogFiles = mock((_inspection: unknown): void => {});
+const inspectAiMemorySnapshots = mock((): { readonly kind: "ai" } => ({ kind: "ai" }));
+const adoptAiMemorySnapshots = mock((_inspection: unknown): Map<number, string> => new Map());
+const maintainAiMemorySnapshots = mock((_inspection: unknown): void => {});
+const inspectStickerCatalogSnapshots = mock((_packs: readonly string[]): { readonly kind: "stickers" } => ({ kind: "stickers" }));
+const adoptStickerCatalogSnapshots = mock((_inspection: unknown): Map<string, string> => new Map());
+const maintainStickerCatalogSnapshots = mock((_inspection: unknown): void => {});
+const inspectJoinLogFiles = mock((day: string): { readonly today: string } => ({ today: day }));
+const maintainJoinLogFiles = mock((_inspection: unknown): void => {});
 const readJoinLog = mock((_message: unknown): readonly {
   userId: number;
   joinedAt: number;
@@ -35,12 +45,34 @@ let hydratedLuckEntries: HydratedLuckEntries = new Map();
 const hydrateLuckDay = mock((day: string): void => {
   luckWorkerCache.current = { day, entries: new Map(hydratedLuckEntries) };
 });
+const inspectLuckDayState = mock((day: string): {
+  readonly day: string;
+  readonly cache: { readonly day: string; readonly entries: HydratedLuckEntries };
+} => ({ day, cache: { day, entries: new Map(hydratedLuckEntries) } }));
+const adoptLuckDay = mock((inspection: {
+  readonly cache: { day: string; entries: HydratedLuckEntries };
+}): void => { luckWorkerCache.current = inspection.cache; });
+const maintainLuckDayState = mock((_day: string, _inspection: unknown): void => {});
+const inspectLuckReceiptSecret = mock((input: LuckSecretRecoveryInput): {
+  readonly day: string;
+  readonly path: string;
+  readonly secret: null;
+} => ({ day: input.day, path: "receipt-secret.json", secret: null }));
+const adoptLuckReceiptSecret = mock((inspection: { readonly day: string }): {
+  version: 1;
+  day: string;
+  key: string;
+} => ({ version: 1, day: inspection.day, key: "secret" }));
+const inspectVerificationDay = mock((day: string): { readonly day: string } => ({ day }));
+const adoptVerificationDay = mock((_inspection: unknown): Map<string, unknown> => new Map());
+const maintainVerificationDay = mock((_inspection: unknown): void => {});
 const flushLogBuffer = mock((): boolean => true);
 const flushAiMemorySnapshots = mock((): boolean => true);
 const flushStickerCatalogs = mock((): boolean => true);
 const flushLuckAppends = mock((): boolean => true);
 const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
+const scheduleVerificationRollover = mock((_reply: (reply: unknown) => void): void => {});
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
 const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
   "blocklistRemovalOutbox",
@@ -51,50 +83,80 @@ const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
 const handleChatStateWrite = mock((_message: unknown): void => {});
 const handleChatQaWrite = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
-const hydrateStickerCatalogs = mock((_packs: readonly string[]): Map<string, string> => new Map());
 // Worker 重建时仍会自行复核贴纸白名单；运行期被改坏时恢复必须拒绝。
 let stickerConfigFailure: string | null = null;
 const consoleError = mock((..._args: unknown[]): void => {});
+interface HydratedStorageDatabase {
+  readonly blocklistEntryCount: number;
+  readonly whitelistEntryCount: number;
+  readonly pendingBlockedRemovals: Map<number, never>;
+  readonly chatStates: Map<number, never>;
+  readonly chatQa: Map<number, never>;
+}
+const inspectStorageDatabase = mock((): { readonly kind: "storage" } => ({ kind: "storage" }));
+const adoptStorageDatabase = mock((_inspection: unknown): HydratedStorageDatabase => ({
+  blocklistEntryCount: 0,
+  whitelistEntryCount: 0,
+  pendingBlockedRemovals: new Map<number, never>(),
+  chatStates: new Map<number, never>(),
+  chatQa: new Map<number, never>(),
+}));
 
 mock.module("../../packages/workers/diskIO/logFiles", () => ({
+  adoptLogFiles,
   flushLogBuffer,
   handleLogMessage,
-  initLogFiles: (): void => {},
+  inspectLogFiles,
+  maintainLogFiles,
 }));
 mock.module("../../packages/workers/diskIO/luckFiles", () => ({
+  adoptLuckDay,
   configureLuckAppendStalledReply,
   flushLuckAppends,
   handleLuckDrawMessage,
   hydrateLuckDay,
+  inspectLuckDayState,
+  maintainLuckDayState,
 }));
-mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({ recoverLuckReceiptSecret }));
+mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({
+  adoptLuckReceiptSecret,
+  inspectLuckReceiptSecret,
+  recoverLuckReceiptSecret,
+}));
 mock.module("../../packages/cache/workers/diskIO/luck", () => ({ luckWorkerCache }));
 mock.module("../../packages/workers/diskIO/verificationRecovery", () => ({
-  recoverVerificationDay: (): Map<string, unknown> => new Map(),
+  adoptVerificationDay,
+  inspectVerificationDay,
+  maintainVerificationDay,
 }));
 mock.module("../../packages/workers/diskIO/verificationWrites", () => ({
   flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
-  scheduleVerificationRollover: (): void => {},
+  scheduleVerificationRollover,
 }));
 mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
   flushJoinLogDomain,
   handleJoinLogMessage,
+  inspectJoinLogFiles,
+  maintainJoinLogFiles,
   readJoinLog,
-  recoverJoinLogFiles,
 }));
 mock.module("../../packages/workers/diskIO/aiMemoryFiles", () => ({
+  adoptAiMemorySnapshots,
   configureAiMemoryDeletePersistedReply: (): void => {},
   configureAiMemoryPersistedReply: (): void => {},
   deleteAiMemorySnapshot,
   flushAiMemorySnapshots,
-  hydrateAiMemorySnapshots: (): Map<number, string> => new Map(),
+  inspectAiMemorySnapshots,
+  maintainAiMemorySnapshots,
   markAiMemorySnapshotDirty,
 }));
 mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
+  adoptStickerCatalogSnapshots,
   flushStickerCatalogs,
-  hydrateStickerCatalogs,
+  inspectStickerCatalogSnapshots,
+  maintainStickerCatalogSnapshots,
   markStickerCatalogSnapshotDirty,
 }));
 mock.module("../../packages/config/stickers", () => ({
@@ -104,25 +166,14 @@ mock.module("../../packages/config/stickers", () => ({
   },
 }));
 mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
+  adoptStorageDatabase,
   configureStoragePersistenceReply: (): void => {},
   flushStorageDatabase: flushBlocklistRemovalOutbox,
   handleIdentityPolicyWrite,
   handleChatStateWrite,
   handleChatQaWrite,
   handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
-  hydrateStorageDatabase: (): {
-    blocklistEntryCount: number;
-    whitelistEntryCount: number;
-    pendingBlockedRemovals: Map<number, never>;
-    chatStates: Map<number, never>;
-    chatQa: Map<number, never>;
-  } => ({
-    blocklistEntryCount: 0,
-    whitelistEntryCount: 0,
-    pendingBlockedRemovals: new Map<number, never>(),
-    chatStates: new Map<number, never>(),
-    chatQa: new Map<number, never>(),
-  }),
+  inspectStorageDatabase,
   pendingStorageDatabaseDomains,
   readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({
     type: "blocklistIdPageRead",
@@ -162,24 +213,44 @@ beforeEach(() => {
     handleVerificationUpsert,
     handleVerificationDelete,
     handleJoinLogMessage,
-    recoverJoinLogFiles,
+    inspectLogFiles,
+    adoptLogFiles,
+    maintainLogFiles,
+    inspectAiMemorySnapshots,
+    adoptAiMemorySnapshots,
+    maintainAiMemorySnapshots,
+    inspectStickerCatalogSnapshots,
+    adoptStickerCatalogSnapshots,
+    maintainStickerCatalogSnapshots,
+    inspectJoinLogFiles,
+    maintainJoinLogFiles,
     readJoinLog,
     flushLogBuffer,
     flushAiMemorySnapshots,
     flushStickerCatalogs,
     flushLuckAppends,
     flushVerificationChanges,
+    scheduleVerificationRollover,
     flushBlocklistRemovalOutbox,
     pendingStorageDatabaseDomains,
     flushJoinLogDomain,
     handleBlocklistRemovalsMessage,
     handleIdentityPolicyWrite,
     handleChatStateWrite,
-    handleChatStateWrite,
+    handleChatQaWrite,
     postMessage,
     hydrateLuckDay,
-    hydrateStickerCatalogs,
+    inspectLuckDayState,
+    adoptLuckDay,
+    maintainLuckDayState,
+    inspectLuckReceiptSecret,
+    adoptLuckReceiptSecret,
+    inspectVerificationDay,
+    adoptVerificationDay,
+    maintainVerificationDay,
     consoleError,
+    inspectStorageDatabase,
+    adoptStorageDatabase,
   ]) fn.mockClear();
   // 重放窗口是 Worker 独占的模块级状态：某个用例遗留的 true 会让后面每一次
   // 写失败都误报成停机回执。
@@ -189,6 +260,13 @@ beforeEach(() => {
   hydratedLuckEntries = new Map();
   recoverLuckReceiptSecret.mockReset();
   recoverLuckReceiptSecret.mockImplementation((input) => ({ version: 1, day: input.day, key: "secret" }));
+  adoptStorageDatabase.mockImplementation((): HydratedStorageDatabase => ({
+    blocklistEntryCount: 0,
+    whitelistEntryCount: 0,
+    pendingBlockedRemovals: new Map<number, never>(),
+    chatStates: new Map<number, never>(),
+    chatQa: new Map<number, never>(),
+  }));
   flushLogBuffer.mockReturnValue(true);
   flushAiMemorySnapshots.mockReturnValue(true);
   flushStickerCatalogs.mockReturnValue(true);
@@ -279,8 +357,8 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      // 校验失败此前是裸抛：异常离开 onmessage 后 Bun 直接终止整条落盘线程，
-      // 九个领域的缓冲随线程一起没了，反复触发还会顶到重启节流停掉整个进程。
+      // 校验失败必须留在当前消息边界内；异常离开 onmessage 会让 Bun 终止落盘线程，
+      // 连带丢失九个领域的进程内缓冲并触发重启节流。
       expect((): void => route({
         type: "identityPolicyWrite",
         table: "whitelist",
@@ -507,8 +585,8 @@ describe("Disk I/O Worker protocol router", () => {
 
     route({ type: "load" });
 
-    expect(hydrateLuckDay).toHaveBeenCalledTimes(1);
-    expect(recoverLuckReceiptSecret).toHaveBeenLastCalledWith({
+    expect(inspectLuckDayState).toHaveBeenCalledTimes(1);
+    expect(inspectLuckReceiptSecret).toHaveBeenLastCalledWith({
       day: expect.any(String),
       confirmedResultCount: 1,
     });
@@ -529,21 +607,53 @@ describe("Disk I/O Worker protocol router", () => {
       console.error = originalConsoleError;
     }
 
-    expect(hydrateStickerCatalogs).not.toHaveBeenCalled();
+    expect(inspectStickerCatalogSnapshots).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalledTimes(1);
-    expect(hydrateLuckDay).not.toHaveBeenCalled();
-    expect(recoverJoinLogFiles).not.toHaveBeenCalled();
+    expect(inspectLuckDayState).not.toHaveBeenCalled();
+    expect(inspectJoinLogFiles).not.toHaveBeenCalled();
     expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       type: "loaded",
       error: "config/stickers.json: $.packs must be an array.",
     }));
   });
 
-  test("白名单可读时原样传下去，孤儿清理照常生效", () => {
+  test("白名单可读时先只读 inspect，成功回执后才执行孤儿维护", () => {
     route({ type: "load" });
 
-    expect(hydrateStickerCatalogs).toHaveBeenCalledWith(["pack_a"]);
-    expect(recoverJoinLogFiles).toHaveBeenCalledTimes(1);
+    expect(inspectStickerCatalogSnapshots).toHaveBeenCalledWith(["pack_a"]);
+    expect(inspectJoinLogFiles).toHaveBeenCalledTimes(1);
+    expect(adoptStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
+    expect(maintainStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      maintainStickerCatalogSnapshots.mock.invocationCallOrder[0]!
+    );
+  });
+
+  test("最后一个 SQLite inspect 失败时不 adopt、不维护也不启动 timer", () => {
+    inspectStorageDatabase.mockImplementationOnce((): { readonly kind: "storage" } => {
+      throw new Error("database/storage.sqlite: $.schema must be the current schema.");
+    });
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      route({ type: "load" });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(adoptStorageDatabase).not.toHaveBeenCalled();
+    expect(adoptLogFiles).not.toHaveBeenCalled();
+    expect(maintainLogFiles).not.toHaveBeenCalled();
+    expect(maintainAiMemorySnapshots).not.toHaveBeenCalled();
+    expect(maintainStickerCatalogSnapshots).not.toHaveBeenCalled();
+    expect(maintainJoinLogFiles).not.toHaveBeenCalled();
+    expect(maintainLuckDayState).not.toHaveBeenCalled();
+    expect(maintainVerificationDay).not.toHaveBeenCalled();
+    expect(scheduleVerificationRollover).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "loaded",
+      error: "database/storage.sqlite: $.schema must be the current schema.",
+    }));
   });
 
   test("flush 不短路其它 owner，并按领域回报失败", () => {

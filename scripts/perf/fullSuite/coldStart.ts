@@ -88,6 +88,7 @@ async function runColdStartChild(): Promise<ColdStartRound> {
 
     const hydrateStartedAtNs: number = Bun.nanoseconds();
     lifecycleDependencies.hydrateChatStateCache(loaded.chatStates);
+    lifecycleDependencies.hydrateChatQaCache(loaded.chatQa);
     lifecycleDependencies.hydrateIdentityStorageCounts(
       loaded.whitelistEntryCount,
       loaded.blocklistEntryCount
@@ -105,9 +106,14 @@ async function runColdStartChild(): Promise<ColdStartRound> {
       hydrateMs,
       readyMs: Bun.nanoseconds() / 1_000_000,
     };
+    let chatQaEntries: number = 0;
+    for (const questions of loaded.chatQa.values()) {
+      chatQaEntries += questions.size;
+    }
     recovered = {
       aiMemoryChats: loaded.aiMemories.size,
       chatStates: loaded.chatStates.size,
+      chatQaEntries,
       whitelistEntries: loaded.whitelistEntryCount,
       blocklistEntries: loaded.blocklistEntryCount,
       pendingRemovals: loaded.pendingBlockedRemovals.size,
@@ -135,5 +141,5 @@ async function runColdStartChild(): Promise<ColdStartRound> {
 /** `--child cold-start` 的入口；结果按 JSON 打到 stdout。 */
 export async function main(): Promise<void> {
   const round: ColdStartRound = await runColdStartChild();
-  process.stdout.write(`${JSON.stringify(round)}\n`);
+  await Bun.write(Bun.stdout, `${JSON.stringify(round)}\n`);
 }

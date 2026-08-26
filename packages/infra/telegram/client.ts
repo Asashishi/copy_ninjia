@@ -47,6 +47,8 @@ export const telegramApi: TelegramApi = {
     currentTelegramApi().getChat(...args),
   getChatAdministrators: (...args: Parameters<TelegramApi["getChatAdministrators"]>): ReturnType<TelegramApi["getChatAdministrators"]> =>
     currentTelegramApi().getChatAdministrators(...args),
+  editMessageText: (...args: Parameters<TelegramApi["editMessageText"]>): ReturnType<TelegramApi["editMessageText"]> =>
+    currentTelegramApi().editMessageText(...args),
   getChatMember: (...args: Parameters<TelegramApi["getChatMember"]>): ReturnType<TelegramApi["getChatMember"]> =>
     currentTelegramApi().getChatMember(...args),
   getStickerSet: (...args: Parameters<TelegramApi["getStickerSet"]>): ReturnType<TelegramApi["getStickerSet"]> =>
@@ -72,9 +74,6 @@ export const telegramApi: TelegramApi = {
   unbanChatSenderChat: (...args: Parameters<TelegramApi["unbanChatSenderChat"]>): ReturnType<TelegramApi["unbanChatSenderChat"]> =>
     currentTelegramApi().unbanChatSenderChat(...args),
 };
-
-/** 入群守卫兼容名称；真实请求仍由当前线程已安装的唯一能力实现处理。 */
-export const joinVerificationApi: TelegramApi = telegramApi;
 
 /** 统一展开 Telegram API 错误，保留 Bot API 的状态码和 description。 */
 export function logApiError(action: string, error: unknown): void {

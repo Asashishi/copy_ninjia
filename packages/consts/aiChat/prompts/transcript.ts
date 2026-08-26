@@ -70,8 +70,7 @@ export function replyQuoteTemplate(quote: string): string {
 /**
  * 内嵌进 replyTagTemplate 的形态：外层已经有一对括号，这里只补分隔符。
  *
- * 与上面那条共用同一份正文，两处渲染点因此不会各自漂移——它们过去是
- * chatTranscript.ts 里两条各写一遍的字面量。
+ * 与上面那条共用同一份正文，保证两个渲染点的格式同步。
  */
 export function replyQuoteInlineTemplate(quote: string): string {
   return `；${replyQuoteBody(quote)}`;

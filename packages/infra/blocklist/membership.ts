@@ -9,6 +9,7 @@
  */
 
 import { formatTokyoTime } from "../../libs/time";
+import { getChatStateCache } from "../storage/stateStore";
 import { flushDiskIODomainOutcome } from "../diskIO";
 import { logger } from "../logger";
 import { forgetUserBlocklistRemovals } from "./outbox";
@@ -23,9 +24,30 @@ import { IDENTITY_DATABASE_PATH } from "../../consts/paths";
 import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
 
 /**
+ * 连坐封禁与跨群解封共用的目标群清单：机器人已确证是管理员的全部托管群，
+ * 发起群排在最前。
+ *
+ * `/block` 与 `/unblock` 必须读同一份：两条命令是同一个处置的正反面，清单一旦
+ * 分叉就会出现「封的时候算上了 A 群、解封时漏掉 A 群」。
+ *
+ * 发起群排最前是语义不是顺手：处置发起群里的目标最紧迫，而两条命令都按这个顺序
+ * 串行执行、按确定顺序收敛计数。发起群不是管理员时不进清单——试也没用。
+ * @param isAdminHere 由调用方现查（`resolveBotAdminStatus`）：发起群的权限值得一次
+ *   实时确认，其余群只能读已落盘的权限快照。
+ */
+export function managedAdminChatIds(chatId: number, isAdminHere: boolean): number[] {
+  const targetChatIds: number[] = isAdminHere ? [chatId] : [];
+  for (const [adminChatId, chatState] of getChatStateCache()) {
+    if (chatState.botPermissions?.isAdministrator === true && adminChatId !== chatId) {
+      targetChatIds.push(adminChatId);
+    }
+  }
+  return targetChatIds;
+}
+
+/**
  * 该用户/频道身份是否在黑名单里。入群秒踢与 `/block` 去重都走这一条，也是全项目
- * 唯一的黑名单成员判定入口——同一判定曾经有 isBlockedIdentity / isUserBlocked
- * 两个公开名互为一行转发，语义一旦要改（比如给超管加短路）只会落到其中一个。
+ * 唯一的黑名单成员判定入口。
  * 冷缺失按 fail-closed 解释为「不在名单」，预热由 update 前置中间件负责。
  */
 export function isUserBlocked(userId: number): boolean {
@@ -39,9 +61,8 @@ export function isUserBlocked(userId: number): boolean {
  * 与本文件上方）。两者同时成立时，`sweepManagedBlocklistChats` 会给每个托管群排一次
  * 探测扫描，把这位新超管从所有群里清出去，重进又被 claimBlockedJoiner 再踢一次；
  * 而他连撤销的机会都没有——私聊网关只放行 `/send`，群里的消息在落地前就被处置。
- * SQLite 迁移把这条互斥断言连同 `packages/config/blocklist.ts` 一起删掉了，只在
- * 一次性迁移脚本里留了个影子。按 AGENTS.md「不为用户行为兜底」在这里补回：
- * 启动阶段以非零码退出，不猜测部署方意图继续运行。
+ * 按 AGENTS.md「不为用户行为兜底」，这条互斥在启动阶段以非零码退出，不猜测
+ * 部署方意图继续运行。
  */
 export async function assertSuperAdminNotBlocked(
   superAdminUserId: number

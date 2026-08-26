@@ -3,15 +3,8 @@ import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 
 /**
  * 限频/溢出提示的投递路径（replyState.ts 的 notifyRateLimited）：按群冷却避免
- * 刷屏，发送成功后与普通 AI 回复一样登记自发消息并写入滚动记忆。
+ * 刷屏，发送成功后与普通 AI 回复一样写入滚动记忆。
  */
-
-const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
-const postMessage = mock((..._args: unknown[]): void => {});
-Object.defineProperty(globalThis, "self", {
-  configurable: true,
-  value: { postMessage },
-});
 
 let nextSentMessageId: number | undefined = 501;
 const sendMessage = mock(async (_message: { chatId: number; text: string }): Promise<number | undefined> =>
@@ -39,7 +32,6 @@ beforeEach(() => {
   resetAiChatReplyCache();
   botInfoState.current = { id: 99, first_name: "Ninja", username: "ninja_bot" };
   nextSentMessageId = 501;
-  postMessage.mockClear();
   sendMessage.mockClear();
   recordChatMessage.mockClear();
 });
@@ -47,12 +39,10 @@ beforeEach(() => {
 afterAll(() => {
   resetAiChatReplyCache();
   botInfoState.current = null;
-  if (originalSelfDescriptor) Object.defineProperty(globalThis, "self", originalSelfDescriptor);
-  else delete (globalThis as { self?: unknown }).self;
 });
 
 describe("AI 限频提示", () => {
-  test("首次触发发送提示、回报自发消息并写入滚动记忆", async () => {
+  test("首次触发发送提示并写入滚动记忆", async () => {
     notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
 
@@ -61,7 +51,6 @@ describe("AI 限频提示", () => {
       text: RATE_LIMIT_NOTICE_TEXT,
       signal: expect.any(AbortSignal),
     });
-    expect(postMessage).toHaveBeenCalledWith({ type: "sent", chatId: CHAT_ID, messageId: 501 });
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: CHAT_ID,
       senderId: 99,
@@ -87,18 +76,17 @@ describe("AI 限频提示", () => {
     expect(rateLimitNoticeTimes.get(CHAT_ID)).toBe(NOW + RATE_LIMIT_NOTICE_COOLDOWN_MS);
   });
 
-  test("提示没发出去时不回报也不写记忆，但冷却照常记账", async () => {
+  test("提示没发出去时不写记忆，但冷却照常记账", async () => {
     nextSentMessageId = undefined;
 
     notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
 
-    expect(postMessage).not.toHaveBeenCalled();
     expect(recordChatMessage).not.toHaveBeenCalled();
     expect(rateLimitNoticeTimes.get(CHAT_ID)).toBe(NOW);
   });
 
-  test("发送在途期间群被清空时仍回报自发消息，但不再写进新一代记忆", async () => {
+  test("发送在途期间群被清空时不再写进新一代记忆", async () => {
     const generation: number = currentReplyGeneration(CHAT_ID);
     sendMessage.mockImplementationOnce(async (): Promise<number> => {
       invalidateChatReplyCache(CHAT_ID);
@@ -108,7 +96,6 @@ describe("AI 限频提示", () => {
     notifyRateLimited({ chatId: CHAT_ID, now: NOW, generation, messageThreadId: undefined });
     await Bun.sleep(0);
 
-    expect(postMessage).toHaveBeenCalledWith({ type: "sent", chatId: CHAT_ID, messageId: 502 });
     expect(recordChatMessage).not.toHaveBeenCalled();
   });
 
@@ -118,7 +105,6 @@ describe("AI 限频提示", () => {
     notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
 
-    expect(postMessage).toHaveBeenCalledWith({ type: "sent", chatId: CHAT_ID, messageId: 501 });
     expect(recordChatMessage).not.toHaveBeenCalled();
   });
 });

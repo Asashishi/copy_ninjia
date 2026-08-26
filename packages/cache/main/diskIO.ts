@@ -57,10 +57,8 @@ export interface PendingDiskIORequest<TResult> {
 /**
  * 一条 main -> diskIO 的 request/reply 通道：等待表、发号器与两句领域文案。
  *
- * 四个领域（运势密钥、入群日志、身份策略、黑名单主键）此前各自拷贝了一份等待
- * 表、一个 request-id 计数、一段请求函数、一段回执路由和一段 facade 守卫。收成
- * 一个通道对象之后，新增领域只要多声明一个常量，超时/拒收/空回执三句文案与
- * Worker 代际失效时的统一结算都不会再漏改其中一份。
+ * 运势密钥、入群日志、身份策略、黑名单主键四个领域各声明一个通道对象；统一
+ * 请求、回执路由与 Worker 代际失效结算按通道表工作。
  */
 export interface DiskIORequestChannel<TResult> {
   /** 超时与拒收文案里的领域名，例如 `identity policy read`。 */
@@ -97,8 +95,7 @@ export const blocklistIdPageReadRequests: DiskIORequestChannel<BlocklistIdPage> 
   createDiskIORequestChannel("blocklist ID page read", "Disk I/O Worker returned no blocklist ID page.");
 
 /**
- * 全部请求通道。Worker 代际失效、恢复失败与 terminate 都必须一次结算所有等待者，
- * 逐个点名正是此前漏掉一整类等待者的成因，这里按表遍历。
+ * 全部请求通道。Worker 代际失效、恢复失败与 terminate 都按表结算所有等待者。
  * 元素的 TResult 各不相同，统一失败路径只需要 reject 与 timer，故按最小结构擦除。
  */
 export const DISK_IO_REQUEST_CHANNELS: readonly DiskIORequestChannel<never>[] = [

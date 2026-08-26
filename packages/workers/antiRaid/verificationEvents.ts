@@ -1,5 +1,5 @@
 import { logger } from "../../infra/logger";
-import { answerCallbackQuery, joinVerificationApi } from "../../infra/telegram";
+import { answerCallbackQuery, telegramApi } from "../../infra/telegram";
 import { lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
 import {
   deferredVerificationRecords,
@@ -295,7 +295,7 @@ export function handleVerificationCallbackEvent({
     void trackAntiRaidTask({
       task: answerCallbackQuery({
         callbackQueryId: message.callbackQueryId,
-        api: joinVerificationApi,
+        api: telegramApi,
       }).catch((error: unknown): void => {
         logger.error("Error answering join verification callback:", error);
       }),

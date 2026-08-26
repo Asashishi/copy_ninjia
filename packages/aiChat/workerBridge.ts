@@ -1,5 +1,4 @@
 import { superviseDuplexWorker } from "../infra/supervisedDuplexWorker";
-import { markSelfSent } from "../infra/selfSentTracker";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { logger } from "../infra/logger";
 import { postDiskIO } from "../infra/diskIO";
@@ -99,11 +98,6 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
   responseTransfer: telegramWorkerResponseTransfer,
   onEvent: (event: AiChatWorkerEvent): void => {
     switch (event.type) {
-      case "sent":
-        // Worker 报回它刚发出的消息：登记进自发消息表，供自动流水线识别
-        // 频道自回环（见 infra/selfSentTracker.ts）。
-        markSelfSent(event.chatId, event.messageId);
-        break;
       case "memory":
         if (purgedAiMemoryChats.has(event.chatId)) {
           requestAiMemoryDelete(event.chatId, false);
@@ -459,6 +453,6 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
 
 registerChatTeardown("aiChat", async (chatId: number): Promise<void> => {
   await invalidateAiChat(chatId, true);
-  // AI 记忆这套状态里唯一没有容量上界的一张表；只有 teardown 能摘，见该函数。
+  // revision 计数器不能按 LRU 淘汰，只在本群 teardown 且无在途状态后归零。
   forgetAiMemoryRevisionCounter(chatId);
 });

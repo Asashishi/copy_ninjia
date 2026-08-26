@@ -1,6 +1,6 @@
 import { logger } from "../../infra/logger";
 import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
-import { deleteMessage, joinVerificationApi, sendMessage } from "../../infra/telegram";
+import { deleteMessage, sendMessage, telegramApi } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import {
   ANTI_RAID_PER_MINUTE_LIMIT,
@@ -203,7 +203,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
           task: sendMessage({
             chatId,
             text: `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`,
-            api: joinVerificationApi,
+            api: telegramApi,
           }),
         });
         break;
@@ -324,7 +324,7 @@ function beginLockdownAnnouncement(chatId: number, joinCount?: number): void {
       const sentMessageId: number | undefined = await sendMessage({
         chatId,
         text: lockdownAnnouncementText(joinCount),
-        api: joinVerificationApi,
+        api: telegramApi,
         onSent: (pendingMessageId: number): void => {
           messageId = pendingMessageId;
         },
@@ -350,7 +350,7 @@ function beginLockdownAnnouncement(chatId: number, joinCount?: number): void {
 function deleteLockdownAnnouncement(chatId: number, messageId: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      await deleteMessage(chatId, messageId, joinVerificationApi);
+      await deleteMessage(chatId, messageId, telegramApi);
     } catch (error: unknown) {
       logger.error(
         `Error deleting the anti-raid lockdown announcement in chat ${chatId}:`,
@@ -402,7 +402,7 @@ function lockdownRetriggerCoolingDown(chatId: number, now: number): boolean {
 function prepareApplyLockdown(chatId: number, joinCount: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
+      const chat: ChatFullInfo = await telegramApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) {
         // permissions 字段对群/超级群实际总会返回，缺失多半是异常响应——
         // 放弃这次锁定（入群验证的逐个踢人仍在兜底），也不能拿 {} 当"原始
@@ -437,7 +437,7 @@ function commitApplyLockdown(chatId: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     let currentPermissions: ChatPermissions;
     try {
-      const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
+      const chat: ChatFullInfo = await telegramApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) {
         logger.error(
           `Chat ${chatId} commit getChat response missing permissions field, abandoning anti-raid lockdown`
@@ -455,7 +455,7 @@ function commitApplyLockdown(chatId: number): void {
       return;
     }
     try {
-      await joinVerificationApi.setChatPermissions(
+      await telegramApi.setChatPermissions(
         chatId,
         restrictedPermissions(currentPermissions),
         INDEPENDENT_CHAT_PERMISSIONS_OTHER
@@ -475,7 +475,7 @@ function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissio
       await restoreLockdownInvitePermission({
         chatId,
         originalPermissions,
-        api: joinVerificationApi,
+        api: telegramApi,
       });
       dispatchLockdown(chatId, { type: "restoreResult", ok: true });
     } catch (error: unknown) {
@@ -495,9 +495,9 @@ function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissio
 function reapplyLockdownRestriction(chatId: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
+      const chat: ChatFullInfo = await telegramApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) throw new Error("getChat response missing permissions");
-      await joinVerificationApi.setChatPermissions(
+      await telegramApi.setChatPermissions(
         chatId,
         restrictedPermissions(chat.permissions),
         INDEPENDENT_CHAT_PERMISSIONS_OTHER

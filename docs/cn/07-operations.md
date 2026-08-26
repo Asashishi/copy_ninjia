@@ -52,7 +52,7 @@ WantedBy=multi-user.target
 
 程序会补建数据根、`logs/`、`memory/` 与初始 `database/`（前三者按 `0755`，`database/` 按 `0770`，实际权限再受 umask 收窄），四者都拒绝符号链接。数据根、`logs/` 与 `memory/` 必须属于运行 UID 且 mode 不宽于 `0755`——这道闸拦的是**写**：group 或 other 拿到 `w` 位一律拒绝启动。读侧放开到 `0755`，因为本项目按单租户处理、绝大多数部署是 root 直接跑，而默认 umask 建出来的目录就是 `0755`。
 
-> **代价**：`memory/` 下的文件本身是 `0644`，所以群聊逐字记录的访问控制只剩这一道目录位。留在 `0755` 意味着同机器上任何本地账号都能读它们。多租户或存在非特权登录用户的机器，请自行把数据根与 `memory/` 收回 `0750`；预检只保证不比 `0755` 更宽，不替你做决定。身份迁移会把 `database/` 设为 `02770`，主库及 WAL/SHM 为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
+> **代价**：`memory/` 新文件默认是 `0644`，所以只采用默认值时，群聊逐字记录的访问控制主要依赖目录位。留在 `0755` 意味着同机器上任何本地账号都能读它们。多租户或存在非特权登录用户的机器，请自行把数据根与 `memory/` 收回 `0750`，并可把既有文件收紧为 `0600`/`0640`；运行时会保留这些 mode，不自动 chmod。身份迁移会把 `database/` 设为 `02770`，主库及 WAL/SHM 首次创建为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
 
 进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、身份写透、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 
@@ -103,10 +103,15 @@ WantedBy=multi-user.target
     跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
     最新 250,000 人。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
-  - **内容**：schema v4 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是白名单、
+  - **内容**：schema v5 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是白名单、
     黑名单权威表，`pending_blocked_removals` 是未完成群级封禁任务 outbox，
     `chat_states` 是每群状态权威表（最多 25 行，超出即拒绝启动），
     `storage_metadata` 记录唯一 schema version；Drizzle migration journal 必须匹配受支持谱系。
+    `chat_states` 的 25 行名额只在整条记录回到缺省时释放：`/init disable` 只清群名，功能开关
+    按设计保留（重新 `/init enable` 不必重配），因此关掉总开关、却还开着 `/ai_chat` 之类的群
+    仍占一行。要腾出名额，得在那个群把 `/ai_chat`、`/ad_detect`、`/flood_control`、
+    `/antiraid`、`/ja_copy` 逐条 disable，或把 Bot 移出该群——离群会删掉该行，除非它还挂着
+    待恢复的 lockdown。
   - **备份**：必须备份，丢失黑名单等于解除全部永久封禁，丢失 outbox 则会漏掉未完成处置。
     停止 Bot 后，把主库及当时存在的 WAL/SHM 作为同一一致性集合复制到工作树外，并记录
     owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。schema migration 脚本会
@@ -132,17 +137,16 @@ WantedBy=multi-user.target
   - **内容**：单实例锁。
   - **备份**：不备份、不手工编辑。
 
-`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。`ai/`、`stickers/`、`luck/` 与 `anti-raid/` 会在启动恢复时按需建目录；`ad-detected/` 只在第一次命中后建立，`joinlog/` 则只在首条入群事实或首次查询时建立，启动恢复不扫描它。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有当天原子快照落地成功才清理旧日。
+`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描这些已存在目录（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact 并启动 rollover timer。`ad-detected/` 只在第一次命中后建立。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。
 
 `joinlog/` 的一次查询最多读取覆盖 `[since, now]` 的两个群日文件，并按用户取窗口内最后一次入群；第三个保留日只服务于 23:59 发起、跨午夜才进入 Worker 的在途查询。文件在 10,000 条冗余历史或新增 4 MiB 后评估压缩，预计至少回收 512 KiB 才原子重写。可解析但 schema 错误的文件会原样拒绝本次读写；仅末尾截断残片可由追加层修复。
 
 ### `memory/` 辅助文件与纯内存状态
 
-- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。`ai/`、`stickers/`、`luck/` 在启动时清理 `*.tmp`，`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`，`joinlog/` 在首次接管当日目录时清理 `*.tmp`。当前 `anti-raid/` 恢复只忽略这类文件而不主动清理；它们不参与恢复，确认 Bot 已停止且名称精确匹配上述原子写格式后才可作为孤儿删除。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
-- `memory/ai/<chatId>.json.<时间戳>.<uuid>.corrupt` 与 `memory/stickers/<pack>.json.<时间戳>.<uuid>.corrupt` 是 JSON 无法解析时保留的唯一命名隔离件，不参与正常恢复也不自动删除；同一路径再次损坏会新增证据，不覆盖旧件。字段能解析但不符合当前 version=1 schema 时不会隔离，而是直接拒绝启动，要求按 [06](06-modification-guide.md#变更持久化-schema) 手工迁移。
+- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。启动 inspect 只登记这些文件，不删除；所有领域校验与 adopt 成功并发出成功回执后，日志、`ai/`、`stickers/`、`luck/` 与 `joinlog/` 的 maintenance 才清理对应 `*.tmp`。`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`；`anti-raid/` 不把临时文件当恢复输入。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
 - Challenge timer、广告检测待判队列/去重 Set、Telegram 成员/管理员短缓存都只存在于进程内，没有对应文件。
 
-备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成；SQLite 主库与存在的 sidecar 必须来自同一时点。`memory/` 与 `database/` 都视为敏感数据：前者文件 mode 为 `0644`，后者主库及 sidecar 为 `0660`（单租户部署基线见 [04](04-invariants.md#持久化)），访问控制靠顶层目录 owner/group/权限与主机账户隔离。
+备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成；SQLite 主库与存在的 sidecar 必须来自同一时点。`memory/` 与 `database/` 都视为敏感数据：新建 memory 文件默认 `0644`，数据库及 sidecar 首次创建默认 `0660`；已有文件的 mode 会在接管和原子替换后保留（见 [04](04-invariants.md#持久化)）。
 
 ## 身份存储迁移
 
@@ -158,30 +162,30 @@ WantedBy=multi-user.target
 
 `bun run migrate:identity-storage` 最后一次随 9.1.5 发布；按「冷迁移脚本只覆盖最近一个已发布版本 → 当前版本」的约定，它已在 9.2.0 从 `scripts/` 删除，当前版本不再提供这条迁移，也不接受旧 JSON 名单作为输入。不要在当前版本上创建空的 `whitelist.json`／`blocklist.json` 后建空库——那会把真实名单丢在原地，机器人带着一份空黑名单上线。
 
-### SQLite schema v4 → v5（群问答入库）
+### state.json：摘掉退场的 `qaThumbnailUrl`
 
-新增 `chat_qa` 表那一版之前的部署（数据库仍是 schema v4），在 Bot 停止后执行：
+`/set_qa` 改成按「问题:」「回答:」格式收消息之后，inline 结果缩略图没有了消费方，
+`global.assets.qaThumbnailUrl` 随之从 schema 里删除。`state.json` 走**严格解析**：文件里
+残留这个键会让新版本在启动阶段以非零码退出，而不是静默忽略。升级前在 Bot 停止后执行：
 
 ```bash
-bun run migrate:chat-qa -- --check
-bun run migrate:chat-qa -- --apply
+bun run migrate:qa-thumbnail -- --check
+bun run migrate:qa-thumbnail -- --apply
 ```
 
-两种模式都先取 `bot.lock`（因此必须先停服务），做一次整库 integrity 检查并严格解码全部业务行，
-只接受精确的受支持 v4 或 v5 migration lineage；未知谱系、非法行、黑白名单交叉一律原样拒绝。
+两种模式都先取 `bot.lock`（因此必须先停服务）。脚本处理 `state.json` 与同目录的
+`state.json.bak` **两份副本**——两者共用同一套严格 schema，只改主文件的话，主文件损坏后
+回退到 `.bak` 仍会启动失败。
 
-**迁移前的白名单校验按 v4 的权限键集合进行**，不是按当前常量：v5 给每条白名单补了
-`isCanControllQaPermission`，拿当前解码器去校验一个还没迁的库，任何待迁部署都会在迁移开始
-之前被判成损坏，报错还指向一个部署方从没写过的字段。`meta` 则仍用生产解析器校验——`--check`
-必须拦下 `--apply` 会拒绝的一切，否则坏行要等库已经被改过之后才暴露。
+**必须在新版本代码已经就位之后再跑**，顺序是「停服务 → 换代码 → 跑迁移 → 起服务」。反过来先迁移再用旧版本启动，旧版本的启动补齐会把 `qaThumbnailUrl` 原样写回 `state.json`（那一版把它算进缺省补齐的五项之一），这次迁移就被静默撤销了，而且不会有任何报错提示你。
 
-`--check` 不改任何部署数据。`--apply` 在工作树外留下带 owner/mode/SHA-256 清单的 SQLite 一致
-快照（并把那份备份当成真库重新检查一遍），随后执行 schema migration：建 `chat_qa` 表与 `q` 上的
-索引，并给每条白名单补上 `isCanControllQaPermission`——**存量条目其余权限全为真时才给真**，
-与当初引入 `isCanWhiteOther` 同一口径。完成后核对业务表行数守恒、新 schema 下整库仍可严格解码。
-任一步失败都保留外部备份并打印路径。对已经完成迁移的库运行只做严格验证并报告无需迁移。
-Release 的 Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置、恢复步骤和权限要求。
+`--check` 不改任何部署数据，只报告哪几份副本还带着那个键。`--apply` 先在工作树外留下带
+mode/owner/SHA-256 清单的原文快照（写完立刻读回比对哈希），再就地摘键：保留原有权限位，
+写完读回复核内容，并按启动期那套严格 codec 再解析一遍——写出去的必须是新版本读得回来的。
+文件里另有非法字段时当场拒绝写出，而不是摘完了事。
 
+摘键幂等：已经跑过的部署再跑一次只报「已完成」，不碰任何文件。没有 `state.json` 的全新
+部署同样无需迁移。
 ## 启动失败排查
 
 程序的启动失败都是**有意的快速失败**，报错自带原因；对照处理，不要绕过：
@@ -214,12 +218,10 @@ Release 的 Compatibility / Migration Notes 必须写明实际执行的迁移、
   - **处理**：停止 Bot，恢复同一一致性时点的完整 `memory/luck/`；不要删除或重新生成
     单独的密钥。
 - **出现 `*.corrupt` 文件**
-  - **原因**：可能是单份 state 副本损坏被隔离，也可能是 AI/贴纸 JSON 解析失败后
-    被移出恢复集合。
-  - **处理**：先按原文件名定位 owner 并调查损坏原因。state 只有**备份副本**损坏时
+  - **原因**：state 备份副本损坏后被隔离。
+  - **处理**：先按原文件名定位并调查损坏原因。state 只有**备份副本**损坏时
     才自愈（隔离坏备份并从主文件重建，日志会记一行）；**主文件**解不开一律拒绝启动
     并原样保留现场，按报错里的字段路径改回来再起（见 [启动失败排查](#启动失败排查)）。
-    AI/贴纸隔离件不会自动恢复或删除。
 
 ### `bot.lock` 拒绝启动
 

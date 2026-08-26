@@ -10,7 +10,7 @@ import type {
 // try/catch 降级的，模块作用域直接 new 会让 ICU 不全的运行时连 import 都失败。
 
 /**
- * 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat.ts
+ * 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat/tools.ts
  * 的 TYPO_QUICK_CORRECTION_PROBABILITY 注释）：90% 补发正确单字，
  * 剩余 10% 即「没发现」；不再存在撤回后重发正确全文的分支。
  */

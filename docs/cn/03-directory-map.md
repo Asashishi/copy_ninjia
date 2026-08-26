@@ -27,7 +27,7 @@
     `gag/runtime.ts`、`gag/inline.ts`、`gag/rendering.ts` 分别承接生命周期、inline 与纯渲染。
 - **`packages/auto/`**
   - **职责**：非命令的自动行为，包括复读、AI 转录与触发、反应同步。
-  - **典型文件**：`message/`、`triggerPolicy.ts`。
+  - **典型文件**：`message/`（含 `triggerPolicy.ts`）、`reactionSync.ts`。
 - **`packages/aiChat/`**
   - **职责**：AI 闲聊主线程代理与模型能力，包括 Worker 监督、记忆镜像、可用性判定，
     以及供应商实现包（`gemini/`、`openai/`）、provider 选取、贴纸、工具和媒体实现。
@@ -40,10 +40,9 @@
   - **典型文件**：`workerBridge.ts`、`durableDelivery.ts`、`updateIngress.ts`、
     `adCandidate.ts`、`ai/`；`index.ts` 只提供薄公开入口。
 - **`packages/copy/`**
-  - **职责**：复读模式变换、头像/反应/翻译执行队列，以及日语翻译“此刻跑不跑”的
+  - **职责**：复读模式变换、头像与翻译执行队列，以及日语翻译“此刻跑不跑”的
     唯一判定。
-  - **典型文件**：`copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、
-    `translate.ts`、`availability.ts`。
+  - **典型文件**：`copyModes.ts`、`avatarQueue.ts`、`translate.ts`、`availability.ts`。
 - **`packages/users/`**
   - **职责**：发送者身份缓存、可见发送者判定、用户标签生成。
   - **典型文件**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`。
@@ -58,8 +57,9 @@
 - **`packages/database/`**
   - **职责**：共享 SQLite（身份策略 + 群状态）的 schema、codec、行校验与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
   - **典型目录**：`schema/`（含 `migrations/`）、`codec/identity.ts`、`codec/chatState.ts`、
-    `interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、
-    `migration.ts`、`inspection.ts`）、`validation/storageRows.ts`。
+    `codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、
+    `chatState.ts`、`chatQa.ts`、`migration.ts`、`inspection.ts`、`admin.ts`）、
+    `validation/storageRows.ts`。
 - **`packages/libs/`**
   - **职责**：领域无关的基础设施，包括原子文件、有界 I/O 与并发工具。
   - **典型文件**：`flushBarrier.ts`、`linkedQueue.ts`、`acknowledgedBatchQueue.ts`、
@@ -75,7 +75,8 @@
     这里，而在与供应商同名的 `packages/aiChat/{gemini,openai}/` 实现包。
 - **`packages/workers/antiRaid/adDetect/`**
   - **职责**：广告检测流水线，包括排队批处理、消息串整形、provider 判定与命中处置。
-  - **典型文件**：`queue.ts`、`bundle.ts`、`classifier.ts`、`disposal.ts`。
+  - **典型文件**：`queue.ts`（入口与节拍）、`queueState.ts`（接纳判据）、
+    `verdict.ts`（判定与处置编排）、`bundle.ts`、`classifier.ts`、`disposal.ts`。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理。
   - **典型文件**：`telegram/`、`diskIO.ts`、`identityStorage.ts`、`supervisedWorker.ts`、`workerSupervisor.ts`。
@@ -101,7 +102,7 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
-  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`migrateChatQa.ts` 与 `chatQaMigration/`、`storageDatabaseIntegrity.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
+  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`migrateQaThumbnail.ts` 与 `qaThumbnailMigration/`、冷迁移共用的 `migration/backup.ts` 与 `migration/lifecycle.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
 
 ## 新代码放置决策
 
@@ -143,7 +144,7 @@
 
 ## 兼容入口（barrel）约定
 
-大文件拆分成子模块后，原文件可以降级为无状态的薄兼容导出入口（如 `packages/infra/telegram/actions.ts` 对 `packages/infra/telegram/actions/`，以及验证文件领域的 `verificationFiles.ts`）。规则：
+大文件拆分成子模块后，原文件可以降级为无状态的薄兼容导出入口（如 `packages/infra/telegram/actions.ts` 对 `packages/infra/telegram/actions/`，`packages/workers/diskIO/storageDatabase.ts` 对 `packages/workers/diskIO/storageDatabase/`）。规则：
 
 - 兼容入口只服务旧 import 的渐进迁移；**新代码一律直接从领域子文件导入**。
 - 兼容入口不得重新持有状态、解析配置或引入 import 副作用。
@@ -152,7 +153,7 @@
 
 ## 测试的镜像结构
 
-`test/` 与 `packages/` 路径原则上一一对应；同一拆分领域可以共享领域级测试，例如 `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` 统一由 `test/workers/diskIO/verificationFiles.test.ts` 覆盖。其余新模块的测试文件跟随目录结构创建，公共测试辅助在 `test/libs/helpers.ts`，全局隔离机制见 [05 开发流程](05-dev-workflow.md#测试隔离机制)。
+`test/` 与 `packages/` 路径原则上一一对应；同一拆分领域可以共享领域级测试，例如 `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` 统一由 `test/workers/diskIO/verificationFiles.test.ts` 覆盖。其余新模块的测试文件跟随目录结构创建，跨领域共用的替身、夹具与 harness 放 `test/helpers/`，与领域无关的通用小工具放 `test/libs/helpers.ts`，全局隔离机制见 [05 开发流程](05-dev-workflow.md#测试隔离机制)。
 
 ---
 

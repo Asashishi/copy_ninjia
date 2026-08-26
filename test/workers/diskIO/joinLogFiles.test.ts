@@ -31,6 +31,8 @@ const {
   flushJoinLogBuffer,
   flushJoinLogDomain,
   handleJoinLogMessage,
+  inspectJoinLogFiles,
+  maintainJoinLogFiles,
   readJoinLog,
   recoverJoinLogFiles,
 } = await import("../../../packages/workers/diskIO/joinLogFiles");
@@ -50,6 +52,9 @@ const {
   resetJoinLogCache,
 } = await import("../../../packages/cache/workers/diskIO/joinLog");
 const {
+  JOIN_LOG_COMPACT_CHECK_BYTES,
+  JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES,
+  JOIN_LOG_COMPACT_REDUNDANT_ENTRIES,
   JOIN_LOG_MAX_BUFFERED_ENTRIES,
   JOIN_LOG_MAX_CACHED_FILES,
   JOIN_LOG_MAX_RETRY_FILES,
@@ -121,6 +126,18 @@ describe("diskIO/joinLogFiles", () => {
     expect(readFileSync(currentPath, "utf8")).toBe(original);
     expect(existsSync(stalePath)).toBeTrue();
     expect(joinLogFileCaches.size).toBe(0);
+  });
+
+  test("inspect 保留过期文件，maintenance 才执行清理", () => {
+    const stalePath: string = datedFile(-1001, "2000-01-01");
+    mkdirSync(joinLogDir, { recursive: true });
+    writeFileSync(stalePath, "{}");
+
+    const inspection = inspectJoinLogFiles();
+    expect(existsSync(stalePath)).toBeTrue();
+
+    maintainJoinLogFiles(inspection);
+    expect(existsSync(stalePath)).toBeFalse();
   });
 
   test("启动恢复拒绝非法或未来文件名，不把它们当成可忽略资产", () => {
@@ -325,6 +342,79 @@ describe("diskIO/joinLogFiles", () => {
       [`${now}:42`]: { userId: 42, joinedAt: now },
     });
     expect(content.match(new RegExp(`"${now}:42"`, "g"))).toHaveLength(1);
+  });
+
+  /**
+   * 造一份**语义合法但物理上全是历史条目**的当日追加文件：只有 userCount 个
+   * 用户，每人反复重新入群。`latestJoinLogRecords` 折叠之后活的就那么几条，
+   * 文件里剩下的全是可回收的字节。
+   */
+  function writeRedundantJoinLogFile(chatId: number, userCount: number, targetBytes: number): number {
+    const parts: string[] = [];
+    let bytes: number = 2;
+    let joinedAt: number = todayMidnight();
+    for (let index: number = 0; bytes < targetBytes; index += 1) {
+      const userId: number = 1 + (index % userCount);
+      joinedAt += 1;
+      const entry: string = serializeJoinLogSnapshotEntry({ userId, joinedAt });
+      parts.push(entry);
+      bytes += entry.length + 2;
+    }
+    const content: string = `{\n${parts.join(",\n")}\n}`;
+    mkdirSync(joinLogDir, { recursive: true });
+    writeFileSync(currentFile(chatId), content, "utf8");
+    return Buffer.byteLength(content);
+  }
+
+  test("载入超过评估门槛的历史文件时当场压实，只留每人最后一次入群", () => {
+    // 追加型文件只增不减：一个群反复有人重新入群，文件会一直涨，而真正有效的
+    // 只是每人最后那一条。没有这次压实，`/batch_kick` 的按需读取要把整份几 MB
+    // 的历史重新解析一遍，且磁盘占用永不回落。
+    const written: number = writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_CHECK_BYTES + 64 * 1_024);
+    expect(written).toBeGreaterThanOrEqual(JOIN_LOG_COMPACT_CHECK_BYTES);
+
+    // 压实挂在「第一次真正打开这份文件」上，不在启动扫描里；按需读取就是那一刻。
+    // 顺带确认压实只丢历史物理条目，语义一条不少：40 个人各留最后一次入群。
+    expect(readJoinLog({
+      type: "readJoinLog",
+      requestId: 1,
+      chatId: -1001,
+      since: todayMidnight(),
+      now: todayMidnight() + 12 * 60 * 60_000,
+    })).toHaveLength(40);
+
+    const content: string = readFileSync(currentFile(-1001), "utf8");
+    const parsed: Record<string, { userId: number; joinedAt: number }> = JSON.parse(content);
+    expect(Object.keys(parsed)).toHaveLength(40);
+    expect(Buffer.byteLength(content)).toBeLessThan(written - JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES);
+    // 压实后计数归零，下一段增量重新累计。
+    const cache: JoinLogFileCache | undefined =
+      joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
+    expect(cache?.appendedBytesSinceCompaction).toBe(0);
+    expect(cache?.redundantEntries).toBe(0);
+    expect(cache?.state.size).toBe(Buffer.byteLength(content));
+  });
+
+  test("冗余条数够了但收不回空间时不重写，只重新开始累计", () => {
+    // 本轮多数是不同用户时整表重写换不回字节，白付一次整文件序列化。
+    const now: number = todayAt();
+    handleJoinLogMessage(joinMessage(-1001, 1, now));
+    expect(flushJoinLogBuffer()).toBeTrue();
+    const before: string = readFileSync(currentFile(-1001), "utf8");
+
+    const cache: JoinLogFileCache | undefined =
+      joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
+    expect(cache).toBeDefined();
+    cache!.redundantEntries = JOIN_LOG_COMPACT_REDUNDANT_ENTRIES;
+    cache!.appendedBytesSinceCompaction = JOIN_LOG_COMPACT_CHECK_BYTES;
+
+    handleJoinLogMessage(joinMessage(-1001, 2, now + 1));
+    expect(flushJoinLogBuffer()).toBeTrue();
+
+    const after: string = readFileSync(currentFile(-1001), "utf8");
+    expect(after.startsWith(before.slice(0, before.length - 2))).toBeTrue();
+    expect(cache!.redundantEntries).toBe(0);
+    expect(cache!.appendedBytesSinceCompaction).toBe(0);
   });
 
   test("写失败时保留原批次并退避，文件恢复后可再次 flush", () => {

@@ -9,11 +9,10 @@ import type { DayFileState } from "../../../types/diskIO/storage";
  */
 
 /**
- * 待验证记录的当前 active 镜像，key 为 "chatId:userId"。没有独立的 hydrate
- * 函数：Worker 启动/恢复时由 recoverVerificationDay 内联重建——先
- * resetVerificationPersistenceCache 清空；跨午夜时先把最新旧日与当天文件
- * 严格解码合并，否则只解码当天。全部通过后才整份灌入本镜像（单条损坏则
- * 整个启动过程直接抛错，不留部分恢复结果）。此后
+ * 待验证记录的当前 active 镜像，key 为 "chatId:userId"。Worker 启动时先由
+ * inspectVerificationDay 只读解码并合并最新旧日与当天文件，所有持久化域
+ * 均通过后再由 adoptVerificationDay 清空并整份灌入本镜像；单条损坏会让
+ * 整个启动过程直接失败，不留部分恢复结果。此后
  * handleVerificationUpsert/handleVerificationDelete
  * 按验证生命周期增量更新/删除；compactVerificationDay 收敛快照或跨东京日
  * rollover 时会整份重写落盘文件，但不改变本镜像的更新方式。

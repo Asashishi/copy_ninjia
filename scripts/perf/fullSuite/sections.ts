@@ -20,6 +20,7 @@ import {
   RUNTIME_DATA_ROOT_ENV,
 } from "../../../packages/consts/environment";
 import type { MetricDefinition } from "./aggregate";
+import type { SpawnChildOptions } from "./child";
 import type { DirectoryFootprint } from "./processIo";
 import type { ScenarioName } from "../hotPaths/types";
 import type {
@@ -45,7 +46,24 @@ export interface SectionContext {
   readonly recordOperations: (operations: number) => void;
   /** 记入一个运行时数据根被删除前的落盘足迹；报告把一轮里的各份相加。 */
   readonly recordFootprint: (footprint: DirectoryFootprint) => void;
+  /** 测试注入的子进程与临时根边界；生产缺省使用本模块下方的真实实现。 */
+  readonly dependencies?: SectionDependencies;
 }
+
+/** 父进程的全部外部动作；测试用可控实现验证聚合与失败清理。 */
+export interface SectionDependencies {
+  readonly spawnJsonChild: <TResult>(options: SpawnChildOptions) => Promise<TResult>;
+  readonly createRuntimeRoot: (runRoot: string) => string;
+  readonly measureDirectoryFootprint: (runtimeRoot: string) => DirectoryFootprint;
+  readonly removeMockPath: (runtimeRoot: string) => void;
+}
+
+const DEFAULT_SECTION_DEPENDENCIES: SectionDependencies = {
+  spawnJsonChild,
+  createRuntimeRoot,
+  measureDirectoryFootprint,
+  removeMockPath,
+};
 
 /** 播种模式；`none` 表示这项测量不需要运行时数据根里有任何东西。 */
 type SeedMode = "cold-start" | "chain" | "none";
@@ -101,22 +119,26 @@ export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
 /**
  * 生产选用的容器与算法，单独把容器本身的成本量出来。
  *
- * 只列线上真正在用的那一个实现：滑动窗口是 `LinkedQueue` + `trimSlidingWindow`，
- * AI 滚动记忆缓冲是 `BoundedDeque`。被淘汰的候选实现不进表——读者没有办法从
- * 一行读数看出它到底是不是生产成本。
+ * 只列线上真正在用的实现，被淘汰的候选不进表——读者没有办法从一行读数看出它
+ * 到底是不是生产成本。滑动窗口线上有两套，都在用，因此两行都出：有配额上限的
+ * 窗口用 `TimestampDeque`，没有上限的反刷群入群窗口只能用 `LinkedQueue`
+ * （见 packages/libs/slidingWindowRateLimit.ts 的头注）。AI 滚动记忆缓冲是
+ * `BoundedDeque`。
  *
  * 与生产热路径分表，是因为那张表量的是完整业务函数，这张表量的是容器原语。
  */
 export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
+  "quota-timestamp-window",
   "linked-timestamp-window",
   "bounded-rolling-buffer",
 ];
 
-/** 七条完整生产动作的固定出数顺序：五条落盘动作与两条用户可见流程。 */
+/** 八条完整生产动作的固定出数顺序：六条落盘动作与两条用户可见流程。 */
 export const CHAIN_NAMES: readonly ChainName[] = [
   "join-log-append",
   "identity-policy-write",
   "chat-state-write",
+  "chat-qa-write",
   "ai-memory-snapshot",
   "diagnostic-log",
   "ad-detect-command",
@@ -126,8 +148,8 @@ export const CHAIN_NAMES: readonly ChainName[] = [
 /**
  * 入群日志容量线的两项操作，一律跑 `current` 变体。
  *
- * `baseline`（优化前的整表复制与排序）留在 `bun run perf:join-log` 里当新旧
- * 对照与 checksum 等价性校验，但不进文档：这一页只报当前实现的成本。
+ * `baseline` 的整表复制与排序只在 `bun run perf:join-log` 中提供固定参照与
+ * checksum 等价性校验，不进文档；这一页只报当前实现的成本。
  */
 const JOIN_LOG_OPERATIONS: readonly string[] = ["snapshot", "capacity"];
 
@@ -150,12 +172,20 @@ function assertSameRuntime(
   }
 }
 
-async function seedRuntimeRoot(
-  runtimeRoot: string,
-  mode: "cold-start" | "chain",
-  label: string
-): Promise<void> {
-  await spawnJsonChild<unknown>({
+interface SeedRuntimeRootOptions {
+  readonly dependencies: SectionDependencies;
+  readonly runtimeRoot: string;
+  readonly mode: "cold-start" | "chain";
+  readonly label: string;
+}
+
+async function seedRuntimeRoot({
+  dependencies,
+  runtimeRoot,
+  mode,
+  label,
+}: SeedRuntimeRootOptions): Promise<void> {
+  await dependencies.spawnJsonChild<unknown>({
     args: [SUITE_ENTRY, "--child", "seed", mode],
     env: childEnv(runtimeRoot),
     label: `${label} fixture`,
@@ -180,12 +210,16 @@ async function runRounds<TRound>(
   { label, seedMode, args }: RoundsOptions
 ): Promise<readonly TRound[]> {
   const rounds: TRound[] = [];
+  const dependencies: SectionDependencies =
+    context.dependencies ?? DEFAULT_SECTION_DEPENDENCIES;
   for (let round: number = 0; round < context.rounds; round += 1) {
-    const runtimeRoot: string = createRuntimeRoot(context.runRoot);
+    const runtimeRoot: string = dependencies.createRuntimeRoot(context.runRoot);
     try {
-      if (seedMode !== "none") await seedRuntimeRoot(runtimeRoot, seedMode, label);
+      if (seedMode !== "none") {
+        await seedRuntimeRoot({ dependencies, runtimeRoot, mode: seedMode, label });
+      }
       context.onProgress(`${label} ${round + 1}/${context.rounds}`);
-      rounds.push(await spawnJsonChild<TRound>({
+      rounds.push(await dependencies.spawnJsonChild<TRound>({
         args,
         env: childEnv(runtimeRoot),
         label,
@@ -193,8 +227,8 @@ async function runRounds<TRound>(
     } finally {
       // 足迹要在删之前量：这是「跑一遍基准到底在磁盘上落了多少东西」的唯一
       // 观测点，删完再问就只剩一个空目录。
-      context.recordFootprint(measureDirectoryFootprint(runtimeRoot));
-      removeMockPath(runtimeRoot);
+      context.recordFootprint(dependencies.measureDirectoryFootprint(runtimeRoot));
+      dependencies.removeMockPath(runtimeRoot);
     }
   }
   return rounds;
@@ -240,7 +274,10 @@ export async function runColdStartSection(
     context.recordOperations(1);
     if (
       round.recovered.whitelistEntries !== reference.recovered.whitelistEntries ||
+      round.recovered.blocklistEntries !== reference.recovered.blocklistEntries ||
       round.recovered.chatStates !== reference.recovered.chatStates ||
+      round.recovered.chatQaEntries !== reference.recovered.chatQaEntries ||
+      round.recovered.pendingRemovals !== reference.recovered.pendingRemovals ||
       round.recovered.aiMemoryChats !== reference.recovered.aiMemoryChats
     ) {
       throw new Error("Cold-start rounds recovered different fixture sizes.");
@@ -308,6 +345,7 @@ export async function runHotPathSection(
       }
     );
     for (const round of rounds) {
+      assertSameRuntime(round.bunVersion, round.bunRevision, `${sectionId}:${scenario}`);
       context.recordOperations(round.iterations * round.samplesNsPerOp.length);
     }
     entries.push({ id: scenario, metrics: aggregateRounds(rounds, HOT_PATH_METRICS) });
@@ -400,7 +438,7 @@ const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   },
 ];
 
-/** 完整流程分区：五条 durable 动作与两条本地命令流程的单次耗时及吞吐。 */
+/** 完整流程分区：六条 durable 动作与两条本地命令流程的单次耗时及吞吐。 */
 export async function runChainSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {

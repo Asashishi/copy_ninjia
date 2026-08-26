@@ -18,7 +18,7 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {},
+  telegramApi: {},
   sendMessage: async (): Promise<undefined> => undefined,
   deleteMessage: async (): Promise<boolean> => true,
   deleteMessageWithOutcome: async (): Promise<"deleted"> => "deleted",

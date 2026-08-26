@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as realFs from "node:fs";
 import * as realFsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,7 +15,6 @@ const realFsSnapshot = { ...realFs };
 const realFsPromisesSnapshot = { ...realFsPromises };
 const realOpen = realFsPromisesSnapshot.open;
 const realRename = realFsPromisesSnapshot.rename;
-const realUnlink = realFsPromisesSnapshot.unlink;
 const realOpenSync = realFsSnapshot.openSync;
 const realWriteFileSync = realFsSnapshot.writeFileSync;
 const realWriteSync = realFsSnapshot.writeSync;
@@ -76,11 +75,29 @@ mock.module("node:fs/promises", () => ({
     step("rename");
     await realRename(from as string, to as string);
   },
-  unlink: async (path: unknown): Promise<void> => {
-    step("unlink");
-    await realUnlink(path as string);
-  },
 }));
+
+// 异步清理走 Bun 原生 BunFile.delete()（见 packages/libs/atomicFile.ts），
+// mock.module("node:fs/promises") 拦不到它。这里就地包一层 Bun.file：delete 仍按
+// "unlink" 记名并可注入失败，其余属性绑回真实 BunFile，不影响同 isolate 的其它读写。
+// 与摘不掉的 mock.module 不同，Bun.file 是普通可写属性，afterAll 里原样还原——
+// 否则非隔离运行时这层包装会带着注入的 unlink 失败泄漏进后续测试文件。
+const realBunFile = Bun.file;
+Bun.file = ((path: any, options?: any): any => {
+  const file = realBunFile(path, options);
+  return new Proxy(file, {
+    get(target: any, property: string | symbol): unknown {
+      if (property === "delete" || property === "unlink") {
+        return async (): Promise<void> => {
+          step("unlink");
+          await target.delete();
+        };
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}) as typeof Bun.file;
 
 mock.module("node:fs", () => ({
   ...realFsSnapshot,
@@ -154,6 +171,10 @@ afterEach(() => {
   realFsSnapshot.rmSync(testDir, { recursive: true, force: true });
 });
 
+afterAll(() => {
+  Bun.file = realBunFile;
+});
+
 describe("atomicWriteText 的失败清理", () => {
   test("写入失败时删除临时文件、保留原始错误且不 rename", async () => {
     injectFailure("writeFile", "injected write failure");
@@ -219,13 +240,13 @@ describe("atomicWriteText 的权限接管", () => {
     expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("new");
   });
 
-  test("显式传入的 mode 压过目标现有权限（同 atomicWriteSync）", async () => {
+  test("显式 mode 只用于首次创建，已有目标仍保留部署方权限", async () => {
     realFsSnapshot.writeFileSync(targetPath, "old");
     realFsSnapshot.chmodSync(targetPath, 0o600);
 
     await atomicWriteText(targetPath, "new", 0o640);
 
-    expect(realFsSnapshot.statSync(targetPath).mode & 0o777).toBe(0o640);
+    expect(realFsSnapshot.statSync(targetPath).mode & 0o777).toBe(0o600);
   });
 
   test("目标还不存在时不强加权限，交给 open 的默认值", async () => {
@@ -385,13 +406,13 @@ describe("同步原子写的权限接管", () => {
     expect(modeOf(targetPath)).toBe(0o640);
   });
 
-  test("显式传入的 mode 优先于目标现有权限", () => {
+  test("显式 mode 不覆盖已有目标权限", () => {
     realFsSnapshot.writeFileSync(targetPath, "original");
     realFsSnapshot.chmodSync(targetPath, 0o600);
 
     atomicWriteTextSync(targetPath, "rewritten", 0o644);
 
-    expect(modeOf(targetPath)).toBe(0o644);
+    expect(modeOf(targetPath)).toBe(0o600);
   });
 
   test("目标不存在时没有可沿用的权限，交给 open 默认值", () => {

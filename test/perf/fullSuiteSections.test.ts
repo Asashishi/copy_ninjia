@@ -1,77 +1,151 @@
 import { describe, expect, test } from "bun:test";
-import { HOT_PATH_PROFILE_SCENARIOS } from "../../packages/consts/performance";
 import {
-  CHAIN_NAMES,
-  CONTAINER_ALGORITHM_SCENARIOS,
-  PRODUCTION_HOT_PATH_SCENARIOS,
+  runHotPathSection,
 } from "../../scripts/perf/fullSuite/sections";
-import { benchmarkEntryCopy } from "../../scripts/perf/fullSuite/markdownEntryCopy";
-import {
-  STORAGE_OPERATIONS,
-  parseStorageOperation,
-} from "../../scripts/perf/fullSuite/storageOperations";
-import type { ScenarioName } from "../../scripts/perf/hotPaths/types";
-import type { BenchmarkEntryCopy } from "../../scripts/perf/fullSuite/markdownEntryCopy";
-import type { Language } from "../../scripts/perf/fullSuite/markdownCopy";
+import type {
+  SectionContext,
+  SectionDependencies,
+} from "../../scripts/perf/fullSuite/sections";
+import type { SpawnChildOptions } from "../../scripts/perf/fullSuite/child";
+import type { HotPathRound } from "../../scripts/perf/fullSuite/types";
 
-const COLD_START_AND_CAPACITY_IDS: readonly string[] = [
-  "module-graph",
-  "instance-lock",
-  "orphan-cleanup",
-  "state-load",
-  "deployment-inputs",
-  "disk-io-init",
-  "persisted-load",
-  "hydrate",
-  "ready-total",
-  "snapshot",
-  "capacity",
-];
+function hotPathRound(
+  medianNsPerOp: number,
+  iterations: number,
+  samplesNsPerOp: readonly number[]
+): HotPathRound {
+  return {
+    scenario: "self-sent-empty",
+    bunVersion: Bun.version,
+    bunRevision: Bun.revision,
+    iterations,
+    samplesNsPerOp,
+    medianNsPerOp,
+    peakSampledRssBytes: 1_000,
+    retainedHeapDelta: 20,
+    retainedObjectDelta: 2,
+  };
+}
 
-describe("全量基准的热路径场景划分", () => {
-  test("生产场景与容器场景互不重叠，且各自没有重复", () => {
-    const production = new Set<ScenarioName>(PRODUCTION_HOT_PATH_SCENARIOS);
-    const containers = new Set<ScenarioName>(CONTAINER_ALGORITHM_SCENARIOS);
-    expect(production.size).toBe(PRODUCTION_HOT_PATH_SCENARIOS.length);
-    expect(containers.size).toBe(CONTAINER_ALGORITHM_SCENARIOS.length);
-    for (const scenario of containers) expect(production.has(scenario)).toBe(false);
-  });
-
-  test("热路径门禁盯着的场景必须都在生产表里", () => {
-    const production = new Set<string>(PRODUCTION_HOT_PATH_SCENARIOS);
-    for (const scenario of HOT_PATH_PROFILE_SCENARIOS) {
-      expect(production.has(scenario)).toBe(true);
-    }
-  });
-});
-
-describe("存储分区的操作表", () => {
-  test("表里的每一项都能被子进程参数解析接受", () => {
-    for (const operation of STORAGE_OPERATIONS) {
-      expect(parseStorageOperation(operation)).toBe(operation);
-    }
-  });
-
-  test("表外的值一律拒绝，不落到某个默认操作", () => {
-    expect((): unknown => parseStorageOperation("storage-read"))
-      .toThrow("Storage child expects one of");
-    expect((): unknown => parseStorageOperation(undefined))
-      .toThrow("Storage child expects one of");
-  });
-});
-
-describe("性能文档的人类可读名称", () => {
-  test("三种语言覆盖全量基准当前会输出的每一个稳定 id", () => {
-    const ids: readonly string[] = [
-      ...COLD_START_AND_CAPACITY_IDS,
-      ...PRODUCTION_HOT_PATH_SCENARIOS,
-      ...CONTAINER_ALGORITHM_SCENARIOS,
-      ...CHAIN_NAMES,
-      ...STORAGE_OPERATIONS,
+describe("全量基准分区编排", () => {
+  test("注入的 child runner 按轮聚合，并按真实样本数登记操作与足迹", async (): Promise<void> => {
+    const pending: HotPathRound[] = [
+      hotPathRound(10, 5, [9, 11]),
+      hotPathRound(20, 5, [18, 20, 22]),
     ];
-    for (const language of ["zh", "en", "ja"] as const satisfies readonly Language[]) {
-      const copy: BenchmarkEntryCopy = benchmarkEntryCopy(language);
-      for (const id of ids) expect(copy.labels[id]?.length).toBeGreaterThan(0);
-    }
+    const removed: string[] = [];
+    const operations: number[] = [];
+    const footprints: number[] = [];
+    let nextRoot: number = 0;
+    const dependencies: SectionDependencies = {
+      spawnJsonChild: async <TResult>(_options: SpawnChildOptions): Promise<TResult> =>
+        pending.shift() as unknown as TResult,
+      createRuntimeRoot: (_runRoot: string): string => `/fixture/runtime-${nextRoot++}`,
+      measureDirectoryFootprint: (runtimeRoot: string) => ({
+        bytes: runtimeRoot.endsWith("0") ? 100 : 200,
+        files: 1,
+      }),
+      removeMockPath: (runtimeRoot: string): void => {
+        removed.push(runtimeRoot);
+      },
+    };
+    const context: SectionContext = {
+      runRoot: "/fixture",
+      rounds: 2,
+      onProgress: (_message: string): void => {},
+      recordIo: (_io): void => {},
+      recordOperations: (count: number): void => {
+        operations.push(count);
+      },
+      recordFootprint: (footprint): void => {
+        footprints.push(footprint.bytes);
+      },
+      dependencies,
+    };
+
+    const section = await runHotPathSection(
+      context,
+      "hot-path",
+      ["self-sent-empty"]
+    );
+
+    expect(section.entries[0]?.metrics[0]).toEqual(expect.objectContaining({
+      metric: "medianLatency",
+      samples: 2,
+      mean: 15,
+      min: 10,
+      max: 20,
+    }));
+    expect(section.entries[0]?.metrics[1]).toEqual(expect.objectContaining({
+      metric: "throughput",
+      mean: 75_000_000,
+    }));
+    expect(operations).toEqual([10, 15]);
+    expect(footprints).toEqual([100, 200]);
+    expect(removed).toEqual(["/fixture/runtime-0", "/fixture/runtime-1"]);
+  });
+
+  test("child 失败仍在 finally 中计量并删除本轮运行时根", async (): Promise<void> => {
+    const measured: string[] = [];
+    const removed: string[] = [];
+    const dependencies: SectionDependencies = {
+      spawnJsonChild: async <TResult>(_options: SpawnChildOptions): Promise<TResult> => {
+        throw new Error("child failed");
+      },
+      createRuntimeRoot: (_runRoot: string): string => "/fixture/runtime-failed",
+      measureDirectoryFootprint: (runtimeRoot: string) => {
+        measured.push(runtimeRoot);
+        return { bytes: 0, files: 0 };
+      },
+      removeMockPath: (runtimeRoot: string): void => {
+        removed.push(runtimeRoot);
+      },
+    };
+    const context: SectionContext = {
+      runRoot: "/fixture",
+      rounds: 1,
+      onProgress: (_message: string): void => {},
+      recordIo: (_io): void => {},
+      recordOperations: (_count: number): void => {},
+      recordFootprint: (_footprint): void => {},
+      dependencies,
+    };
+
+    await expect(runHotPathSection(
+      context,
+      "hot-path",
+      ["self-sent-empty"]
+    )).rejects.toThrow("child failed");
+    expect(measured).toEqual(["/fixture/runtime-failed"]);
+    expect(removed).toEqual(["/fixture/runtime-failed"]);
+  });
+
+  test("热路径子进程的 Bun 构建不一致时拒绝聚合", async (): Promise<void> => {
+    const mismatched: HotPathRound = {
+      ...hotPathRound(10, 1, [10]),
+      bunRevision: "different-revision",
+    };
+    const dependencies: SectionDependencies = {
+      spawnJsonChild: async <TResult>(_options: SpawnChildOptions): Promise<TResult> =>
+        mismatched as unknown as TResult,
+      createRuntimeRoot: (_runRoot: string): string => "/fixture/runtime-mismatch",
+      measureDirectoryFootprint: (_runtimeRoot: string) => ({ bytes: 0, files: 0 }),
+      removeMockPath: (_runtimeRoot: string): void => {},
+    };
+    const context: SectionContext = {
+      runRoot: "/fixture",
+      rounds: 1,
+      onProgress: (_message: string): void => {},
+      recordIo: (_io): void => {},
+      recordOperations: (_count: number): void => {},
+      recordFootprint: (_footprint): void => {},
+      dependencies,
+    };
+
+    await expect(runHotPathSection(
+      context,
+      "hot-path",
+      ["self-sent-empty"]
+    )).rejects.toThrow("child ran Bun");
   });
 });

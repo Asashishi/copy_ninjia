@@ -36,14 +36,8 @@ export function assertTelegramIdentityId(id: number, source: string): void {
   }
 }
 
-/**
- * 严格解析身份 metadata。
- *
- * 导出是为了让冷迁移在**迁移前**也能用同一份判定：metadata 的形态不随 schema
- * 版本变化，因此 `--check` 必须按它拦住 `--apply` 会拒绝的行——否则坏数据要等到
- * 库已经被改过之后才暴露。
- */
-export function parseIdentityMetadata(
+/** 严格解析身份 metadata；白名单与黑名单 decoder 共用。 */
+function parseIdentityMetadata(
   value: unknown,
   source: string,
   path: string

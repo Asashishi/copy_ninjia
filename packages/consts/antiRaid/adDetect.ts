@@ -141,9 +141,7 @@ export const AD_DETECT_LINK_URL_MAX_CHARS: number = 256;
 /**
  * 判定输出的 token 上限。结果本身只有一小段 JSON，但这个额度是**推理与正文
  * 共用**的——广告检测模型（config/agent.json 的 agent.ad_detect.model）可能是推理模型，
- * 实测一次判定的 reasoning_tokens 在
- * 50~100 之间，遇到长而杂乱的消息串（上限 AD_DETECT_BUNDLE_MAX_CHARS）还会
- * 高出一个量级。给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文
+ * 长而杂乱的消息串会消耗大量 reasoning token。给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文
  * 一个字都没写出来（finish_reason=length、content 为空），上层只能当作「本次
  * 没判定」把这条广告放过去。因此额度按最坏情况给足，而不是按结果长度给
  * ——计费只看真正产出的 token，留白不花钱。

@@ -52,10 +52,8 @@ function padTwoDigits(value: number): string {
  * 模型可直接读，之后拼上下文不再有任何格式化开销。
  *
  * **按固定 UTC+9 算术产出，不走 Intl。** 这一句跑在每条进滚动记忆的群消息上
- * （workers/aiChat/bufferedMessage.ts 的 buildBufferedMessage），而
- * `Intl.DateTimeFormat.format` 即便复用同一个格式器仍要走一遍 ICU 的字段
- * 格式化：实测（Bun 1.3.14，5 个独立进程各 5 轮取中位数，真实群消息到达节奏）
- * 1 280.9 ns/op，本实现 158.9 ns/op，8.1 倍。
+ * （workers/aiChat/bufferedMessage.ts 的 buildBufferedMessage），避免每条消息进入
+ * ICU 字段格式化。
  *
  * 等价性不是推断出来的：`test/libs/time.test.ts` 拿 53 万个时间戳对拍
  * （1970–2100 均匀采样 + 伪随机散点 + 跨秒/跨分/跨日/闰日/年末各 ±2000 ms

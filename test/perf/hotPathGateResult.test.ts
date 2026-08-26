@@ -63,9 +63,9 @@ function writeDocument(document: unknown): string {
 }
 
 describe("热路径门禁记录 performance-result.json", () => {
-  test("仓库根那份记录能严格解析，且与默认场景表精确一一对应", () => {
+  test("仓库根那份记录能严格解析，且与默认场景表精确一一对应", async () => {
     const calibration: HotPathGateCalibration =
-      readHotPathGateCalibration(REPOSITORY_RESULT_PATH);
+      await readHotPathGateCalibration(REPOSITORY_RESULT_PATH);
 
     expect(calibration.runtime.bunVersion.length).toBeGreaterThan(0);
     expect(calibration.runtime.bunRevision.length).toBeGreaterThan(0);
@@ -82,9 +82,9 @@ describe("热路径门禁记录 performance-result.json", () => {
     }
   });
 
-  test("解析结果的阈值表在编译期只读，调用方不能覆写", () => {
+  test("解析结果的阈值表在编译期只读，调用方不能覆写", async () => {
     const calibration: HotPathGateCalibration =
-      readHotPathGateCalibration(REPOSITORY_RESULT_PATH);
+      await readHotPathGateCalibration(REPOSITORY_RESULT_PATH);
     const compileOnly: () => void = (): void => {
       // @ts-expect-error 逐场景纳秒软上报阈值经独立进程校准，调用方不允许覆写。
       calibration.medianNsPerOpReportThresholds["ad-capacity-reject"] = 1;
@@ -94,72 +94,79 @@ describe("热路径门禁记录 performance-result.json", () => {
     expect(compileOnly).toBeFunction();
   });
 
-  test("容忍全量基准写的 fullSuite 节，但拒绝未知顶层节", () => {
+  test("容忍全量基准写的 fullSuite 节，但拒绝未知顶层节", async () => {
     // 同一份文件里还住着 perf:full 的记录。门禁既不读也不写它，但必须容忍它
     // 存在——否则全量基准跑完一次，热路径门禁就会整份拒绝解析。
     const withFullSuite: Record<string, unknown> = validDocument();
     withFullSuite.fullSuite = { lastRun: { rounds: 3 } };
-    expect((): unknown => readHotPathGateCalibration(writeDocument(withFullSuite)))
-      .not.toThrow();
+    await expect(readHotPathGateCalibration(writeDocument(withFullSuite)))
+      .resolves.toBeDefined();
 
     const unknownSection: Record<string, unknown> = validDocument();
     unknownSection.somethingElse = {};
-    expect((): unknown => readHotPathGateCalibration(writeDocument(unknownSection)))
-      .toThrow("$. must declare only these keys: hotPathProfileGate, fullSuite");
+    await expect(readHotPathGateCalibration(writeDocument(unknownSection)))
+      .rejects.toThrow("$. must declare only these keys: hotPathProfileGate, fullSuite");
 
     const missingGate: Record<string, unknown> = { fullSuite: { lastRun: null } };
-    expect((): unknown => readHotPathGateCalibration(writeDocument(missingGate)))
-      .toThrow("$.hotPathProfileGate must be an object");
+    await expect(readHotPathGateCalibration(writeDocument(missingGate)))
+      .rejects.toThrow("$.hotPathProfileGate must be an object");
   });
 
-  test("未知键、缺字段与类型不符一律拒绝，并点名字段路径", () => {
+  test("未知键、缺字段与类型不符一律拒绝，并点名字段路径", async () => {
     const unknownKey: Record<string, unknown> = validDocument();
     (unknownKey.hotPathProfileGate as Record<string, unknown>).extra = 1;
-    expect((): unknown => readHotPathGateCalibration(writeDocument(unknownKey)))
-      .toThrow("$.hotPathProfileGate must declare exactly these keys");
+    await expect(readHotPathGateCalibration(writeDocument(unknownKey)))
+      .rejects.toThrow("$.hotPathProfileGate must declare exactly these keys");
 
     const missingRevision: Record<string, unknown> = validDocument();
     const runtime = ((missingRevision.hotPathProfileGate as Record<string, unknown>)
       .calibration as Record<string, unknown>).runtime as Record<string, unknown>;
     runtime.bunRevision = "";
-    expect((): unknown => readHotPathGateCalibration(writeDocument(missingRevision)))
-      .toThrow("$.hotPathProfileGate.calibration.runtime.bunRevision must be a non-empty string");
+    await expect(readHotPathGateCalibration(writeDocument(missingRevision)))
+      .rejects.toThrow(
+        "$.hotPathProfileGate.calibration.runtime.bunRevision must be a non-empty string"
+      );
 
     const badLimit: Record<string, unknown> = validDocument();
     const limits = ((badLimit.hotPathProfileGate as Record<string, unknown>)
       .calibration as Record<string, unknown>).limits as Record<string, unknown>;
     limits.maxRssBytes = 0;
-    expect((): unknown => readHotPathGateCalibration(writeDocument(badLimit)))
-      .toThrow("$.hotPathProfileGate.calibration.limits.maxRssBytes must be a finite number greater than 0");
+    await expect(readHotPathGateCalibration(writeDocument(badLimit)))
+      .rejects.toThrow(
+        "$.hotPathProfileGate.calibration.limits.maxRssBytes must be a finite number greater than 0"
+      );
   });
 
-  test("阈值低于自己的来源读数时拒绝，不静默沿用", () => {
+  test("阈值低于自己的来源读数时拒绝，不静默沿用", async () => {
     const document: Record<string, unknown> = validDocument();
     const scenarios = ((document.hotPathProfileGate as Record<string, unknown>)
       .calibration as Record<string, unknown>).scenarios as Record<string, unknown>;
     (scenarios["only-scenario"] as Record<string, unknown>)
       .medianNsPerOpReportThreshold = 79;
 
-    expect((): unknown => readHotPathGateCalibration(writeDocument(document)))
-      .toThrow("must be at least its own measured.slowestMedianNsPerOp (80)");
+    await expect(readHotPathGateCalibration(writeDocument(document)))
+      .rejects.toThrow("must be at least its own measured.slowestMedianNsPerOp (80)");
   });
 
-  test("非严格 JSON 直接失败，不退回默认值", () => {
+  test("非严格 JSON 直接失败，不退回默认值", async () => {
     const path: string = join(scratchRoot, "broken.json");
     writeFileSync(path, "{ not json }\n", "utf8");
 
-    expect((): unknown => readHotPathGateCalibration(path))
-      .toThrow("could not be read as strict JSON");
+    await expect(readHotPathGateCalibration(path))
+      .rejects.toThrow("could not be read as strict JSON");
   });
 
-  test("回写只覆盖 lastRun，calibration 与 fullSuite 节都原样保留", () => {
+  test("回写只覆盖 lastRun，calibration 与 fullSuite 节都原样保留", async () => {
     const document: Record<string, unknown> = validDocument();
     document.fullSuite = { lastRun: { rounds: 3 } };
     const path: string = writeDocument(document);
 
-    writeHotPathGateLastRun(path, { bunRevision: "revision-test", scenarios: [] });
+    await writeHotPathGateLastRun(
+      path,
+      { bunRevision: "revision-test", scenarios: [] }
+    );
 
-    const reloaded: HotPathGateCalibration = readHotPathGateCalibration(path);
+    const reloaded: HotPathGateCalibration = await readHotPathGateCalibration(path);
     expect(reloaded.runtime.bunRevision).toBe("revision-test");
     expect(reloaded.limits.maxRssBytes).toBe(402_653_184);
     // 说明字段与另一套基准的记录都不在解析结果里，只能从原文确认没被回写抹掉。

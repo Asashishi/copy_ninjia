@@ -1,5 +1,6 @@
 import type { BotCommand } from "@grammyjs/types";
 import type { CommandTargetMessages, ToggleCommandTexts } from "../types/commands";
+import { CHAT_QA_MAX_PER_CHAT } from "./qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "./storage";
 
 /** 群聊命令文本发送后自动清理的最长保留时间。 */
@@ -46,7 +47,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "ungag", description: "定向解除目标 gag；必须回复、写 @username 或用户/频道 id，同样需要 isCanGag，笨蛋♡" },
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
   { command: "permission", description: "用 help 看说明、query 查权限，所有杂鱼都能用；修改权限仅限超级管理员，杂鱼别乱碰♡" },
-  { command: "set_qa", description: "给本群登记一条问答：弹出两个按钮分别设置问题和答案，最多 5 条；以后有人一字不差地问，本天才直接答，仅持有 isCanControllQaPermission 的身份配用♡" },
+  { command: "set_qa", description: `给本群登记一条问答：照提示分两条消息发「问题:」和「回答:」，最多 ${CHAT_QA_MAX_PER_CHAT} 条；以后有人一字不差地问，本天才直接答，仅持有 isCanControllQaPermission 的身份配用♡` },
   { command: "query_qa", description: "看看本群登记了哪些问答，写 /query_qa <问题文本> 只查那一条，群成员都能看，杂鱼♡" },
   { command: "remove_qa", description: "删掉本群指定问答，写成 /remove_qa <问题文本>，同样需要 isCanControllQaPermission，别手滑，笨蛋♡" },
   { command: "white", description: "新增或删除白名单用户/频道；isCanWhiteOther 只能代加默认权限，删除仍只有超级管理员配碰，杂鱼别乱伸手♡" },
@@ -327,16 +328,27 @@ export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
   `本天才不想再理这个群了，爱干嘛干嘛去吧——不过有几样运行态没能拆干净，` +
   `日志里写着呢，杂鱼管理员去看一眼♡`;
 
-/** `/init enable` 在 State 已达群数上限时的拒绝提示。 */
+/**
+ * `/init enable` 在 State 已达群数上限时的拒绝提示。
+ *
+ * 必须点名**怎么才能腾出一格**：`/init disable` 只清 `title`，功能开关按设计
+ * 保留（重新启用不用重配，见 commands/init.ts），因此一个关了总开关、却还开着
+ * `/ai_chat` 之类的群仍占着名额；而 `chat_states` 是权威表，没有任何命令能直接
+ * 删行，运维也不得手改 SQLite（见 docs/cn/07-operations.md）。只写「请先删除
+ * 不再管理的群状态」等于指向一条不存在的操作。
+ * 所属模块：packages/commands/init.ts。
+ */
 export const INIT_CHAT_LIMIT_TEXT: string =
-  `State 最多只能管理 ${STATE_MANAGED_CHAT_LIMIT} 个群；请先删除不再管理的群状态，再启用本群。`;
+  `State 最多只能管理 ${STATE_MANAGED_CHAT_LIMIT} 个群，现在已经满了。` +
+  `/init disable 只关总开关，功能开关还开着的群仍占着名额：` +
+  `去那个群把 /ai_chat、/ad_detect、/flood_control、/antiraid、/ja_copy 逐条 disable，` +
+  `或者把本天才移出那个群，再回来启用本群。`;
 
 /**
  * 各命令的目标解析提示文案表。
  *
- * 字段口径见 packages/types/commands.ts 的 CommandTargetMessages。抽成模块级
- * 单例而不是每次调用现造：原来的写法每次命令调用都要新建一个对象加三个闭包，
- * 而这些文案与本次调用的任何入参都无关。
+ * 字段口径见 packages/types/commands.ts 的 CommandTargetMessages。文案与单次
+ * 调用入参无关，因此使用模块级单例，命令路径不会重复分配对象与三个闭包。
  *
  * 注意 `/x` 那批中文动作命令**不在此列**：它们的提示里嵌着用户现打的动作词
  * （任意 1~2 个中文字，见 CJK_ACTION_COMMAND_PATTERN），既没有有限的键集合可

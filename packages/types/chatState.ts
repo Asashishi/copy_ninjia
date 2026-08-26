@@ -169,8 +169,6 @@ export interface GlobalAssetState {
   probabilityThumbnailUrl?: string;
   /** gag 发言内联结果的缩略图直链；缺省用 GAG_THUMBNAIL_URL。 */
   gagThumbnailUrl?: string;
-  /** `/set_qa` 表单内联结果的缩略图直链；缺省用 QA_THUMBNAIL_URL。 */
-  qaThumbnailUrl?: string;
   /** `/reset_icon`、`/stop_copy` 复原机器人默认头像时抓的图；缺省用 BOT_DEFAULT_AVATAR_URL。 */
   botDefaultAvatarUrl?: string;
 }

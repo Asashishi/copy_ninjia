@@ -4,6 +4,11 @@
  * `/set_qa` 与 `/remove_qa` 需要 `isCanControllQaPermission`（超级管理员恒持有）；
  * `/query_qa` 是只读看板，群成员都能用。三条都要求本群已 `/init enable`——问答
  * 直答挂在消息主干上，没接管的群本来就不该有本天才的动静。
+ *
+ * **频道身份可用**：表单靠「问题:」「回答:」两条格式消息收文本，而不是 inline，
+ * 因此频道马甲与匿名管理员在命令侧和投递侧是同一个 `sender_chat` id，两边对得上。
+ * 写入资格由「是不是开表单的那个身份」判定，权限只在开表单那一步查（见
+ * qa/ingress.ts 的文件头注）。
  */
 
 import type { CommandContext, Context } from "grammy";
@@ -18,19 +23,20 @@ import { formatUserLabel } from "../users/userLabel";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import type { CachedUser } from "../types/chatState";
-import type { QaEntry, QaFormSession } from "../types/qa";
-import { claimQaFormMessage } from "./qa/inline";
-import type { QaFormIngressResult } from "./qa/inline";
-import { deleteQaForm, sendQaForm } from "./qa/notices";
-import { formatQaJsonMessage, renderQaFormPrompt } from "./qa/rendering";
-import type { QaJsonMessage } from "./qa/rendering";
+import type { QaEntry, QaFormIngressResult, QaFormSession } from "../types/qa";
+import type { RichTextMessage } from "../types/telegram";
+import { buildQaBoardKeyboard, buildQaBoardPages } from "./qa/board";
+import { claimQaFieldMessage } from "./qa/ingress";
+import { deleteQaForm, editQaForm, sendQaForm } from "./qa/notices";
+import { renderQaFormPrompt } from "./qa/rendering";
 import {
   closeQaFormSession,
   closeQaFormSessionsInChat,
+  findQaFormSession,
   openQaFormSession,
 } from "./qa/session";
 
-export { handleQaInlineQuery } from "./qa/inline";
+export { handleQaBoardCallback } from "./qa/board";
 
 /** 本群是否已接管；未接管时统一回同一句，不区分命令。 */
 async function requiresInitialized(
@@ -46,25 +52,10 @@ async function requiresInitialized(
   return false;
 }
 
-/**
- * 维护类命令的统一闸：先挡频道马甲，再看权限。`/query_qa` 不走这里。
- *
- * **频道身份一律拒绝**，与 `/permission`、`/white` 拒绝把当前群自己的 identity
- * 当目标同一道理：Telegram 从不告诉本进程皮套底下是谁，给它维护权就等于把本群
- * 问答交给任意一个能用这层皮的人。这里还多一条现实理由——表单靠 inline 回填，
- * 而频道马甲身份根本用不了 inline，放它进来也只会卡在一张永远填不完的表单上。
- */
+/** 维护类命令的权限闸；`/query_qa` 不走这里。 */
 async function requiresQaPermission(ctx: CommandContext<Context>): Promise<boolean> {
-  const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  if (actor?.isChannel === true) {
-    await sendCommandMessage({
-      chatId: ctx.chat.id,
-      text: QA_COMMAND_TEXTS.channelActor,
-      replyToMessageId: ctx.msgId,
-    });
-    return false;
-  }
   if (hasCommandPermission(ctx, "isCanControllQaPermission")) return true;
+  const actor: CachedUser | undefined = resolveCommandActor(ctx);
   await sendCommandMessage({
     chatId: ctx.chat.id,
     text: QA_COMMAND_TEXTS.rejected(actor ? formatUserLabel(actor) : "哪个杂鱼"),
@@ -73,14 +64,14 @@ async function requiresQaPermission(ctx: CommandContext<Context>): Promise<boole
   return false;
 }
 
-/** 表单被结算（填齐、到期或 teardown）时统一收走那条按钮消息。 */
+/** 表单被结算（填齐、到期或 teardown）时统一收走那条提示消息。 */
 function discardQaForm(session: QaFormSession): void {
   void deleteQaForm(session).catch((error: unknown): void => {
     logger.error(`Failed to delete the qa form in chat ${session.chatId}:`, error);
   });
 }
 
-/** 处理 `/set_qa`：开一张两按钮表单，两项填齐后由 ingress 结算。 */
+/** 处理 `/set_qa`：开一张表单，等发起者按格式把问题和回答发进来。 */
 export async function handleSetQaCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
@@ -96,11 +87,23 @@ export async function handleSetQaCommand(ctx: CommandContext<Context>): Promise<
   }
   const openedById: number | undefined = resolveCommandActor(ctx)?.id;
   if (openedById === undefined) return;
+  // 表单按群唯一，因此「重开」有两种：同一个人重来一次（旧表单连同它那条消息
+  // 一起作废，从两项皆空开始），和另一个人来抢——后者当场拒绝，不悄悄顶掉别人
+  // 填了一半的那张，理由同 formBusy：被顶掉的人只会看到表单突然消失。
+  const existing: QaFormSession | undefined = findQaFormSession(chatId);
+  if (existing !== undefined && existing.openedById !== openedById) {
+    await sendCommandMessage({
+      chatId,
+      text: QA_COMMAND_TEXTS.formTaken,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
 
   const session: QaFormSession | null = openQaFormSession({
     chatId,
     openedById,
-    onExpire: discardQaForm,
+    onDiscard: discardQaForm,
   });
   if (session === null) {
     await sendCommandMessage({
@@ -123,55 +126,13 @@ export async function handleSetQaCommand(ctx: CommandContext<Context>): Promise<
   });
 }
 
-/**
- * 表单结果落群时的入口；必须排在命令与消息流水线之前。
- *
- * @returns 是否已认领这条消息。认领后调用方必须终止本条 update 的后续处理——
- *   那条中转消息已经被删掉，再喂给 AI 或复读链路只会处理一个不存在的东西。
- */
-export async function handleQaMessageIngress(
-  message: Message,
-  botUserId: number
-): Promise<boolean> {
-  const claimed: QaFormIngressResult | null = await claimQaFormMessage(message, botUserId);
-  if (claimed === null) return false;
-  const session: QaFormSession = claimed.session;
+/** 两项填齐后落库并回执；表单在回执之后才删。 */
+async function settleQaForm(session: QaFormSession, q: string, a: string): Promise<void> {
   const chatId: number = session.chatId;
-
-  if (!claimed.permitted) {
-    // 表单按群索引，因此任何人都能把内容投进来；真正的写入资格在这里判。
-    // 表单本身留着，等有资格的人来填。
-    await sendCommandMessage({
-      chatId,
-      text: QA_COMMAND_TEXTS.rejected(
-        message.sender_chat?.title ?? message.from?.first_name ?? "哪个杂鱼"
-      ),
-      // 回复到表单上：话题群里 bot 主动发的消息没有 message_thread_id 就会落进
-      // General，而表单在话题里——回执必须跟表单待在同一个话题。
-      replyToMessageId: session.formMessageId,
-    });
-    return true;
-  }
-
-  if (session.q === undefined || session.a === undefined) {
-    // 还差一项：告诉用户已经收下哪一样，表单留着等另一样。
-    await sendCommandMessage({
-      chatId,
-      text: claimed.field === "q"
-        ? QA_COMMAND_TEXTS.questionSaved
-        : QA_COMMAND_TEXTS.answerSaved,
-      replyToMessageId: session.formMessageId,
-    });
-    return true;
-  }
-
-  const q: string = session.q;
-  const a: string = session.a;
   const formMessageId: number | undefined = session.formMessageId;
-  // 两项齐了。先结算会话——按钮随即失效，落库期间没人能再往这张表单里投东西。
-  // 但**先别删表单消息**：回执要回复到它身上才能留在同一个话题里，而回复一条
-  // 已删除的消息会被 Telegram 降级成普通发送，于是又落回 General。删除排在
-  // 回执之后，两条成功/失败路径各自负责删。
+  // 先结算会话——落库期间没人能再往这张表单里投东西。但**先别删表单消息**：
+  // 回执要回复到它身上才能留在同一个话题里，而回复一条已删除的消息会被
+  // Telegram 降级成普通发送，于是又落回 General。删除排在回执之后。
   closeQaFormSession(session);
   let outcome: "created" | "replaced";
   try {
@@ -187,7 +148,7 @@ export async function handleQaMessageIngress(
       replyToMessageId: formMessageId,
     });
     discardQaForm(session);
-    return true;
+    return;
   }
   await sendCommandMessage({
     chatId,
@@ -195,6 +156,55 @@ export async function handleQaMessageIngress(
     replyToMessageId: formMessageId,
   });
   discardQaForm(session);
+}
+
+/**
+ * 表单投递消息的入口；必须排在命令与消息流水线之前。
+ *
+ * @returns 是否已认领这条消息。认领后调用方必须终止本条 update 的后续处理——
+ *   那条投递消息已经被删掉，再喂给 AI 或复读链路只会处理一个不存在的东西。
+ */
+export async function handleQaMessageIngress(message: Message): Promise<boolean> {
+  const claimed: QaFormIngressResult | null = await claimQaFieldMessage(message);
+  if (claimed === null) return false;
+  const session: QaFormSession = claimed.session;
+  const chatId: number = session.chatId;
+
+  // 超长的那一项没写进会话，先把它说清楚；表单留着等一条合规的重发。同一条
+  // 消息里另一项合规时它已经进了会话，表单要跟上；两项都被挡下时会话一个字
+  // 都没变，就不为一次「内容没有变化」的改写多跑一趟 Telegram。
+  if (claimed.questionTooLong || claimed.answerTooLong) {
+    if (claimed.accepted.q !== undefined || claimed.accepted.a !== undefined) {
+      await editQaForm(session, renderQaFormPrompt(session.q, session.a));
+    }
+    await sendCommandMessage({
+      chatId,
+      text: claimed.questionTooLong
+        ? QA_COMMAND_TEXTS.questionTooLong
+        : QA_COMMAND_TEXTS.answerTooLong,
+      // 回复到表单上：话题群里 bot 主动发的消息没有 message_thread_id 就会落进
+      // General，而表单在话题里——回执必须跟表单待在同一个话题。
+      replyToMessageId: session.formMessageId,
+    });
+    return true;
+  }
+
+  const q: string | undefined = session.q;
+  const a: string | undefined = session.a;
+  if (q === undefined || a === undefined) {
+    // 还差一项：表单先跟上，再告诉用户已经收下哪一样。回执 30 秒后就自删，
+    // 之后只有表单还说得出这张单子填到了哪（见 qa/notices.ts 的 editQaForm）。
+    await editQaForm(session, renderQaFormPrompt(q, a));
+    await sendCommandMessage({
+      chatId,
+      text: claimed.accepted.q !== undefined
+        ? QA_COMMAND_TEXTS.questionSaved
+        : QA_COMMAND_TEXTS.answerSaved,
+      replyToMessageId: session.formMessageId,
+    });
+    return true;
+  }
+  await settleQaForm(session, q, a);
   return true;
 }
 
@@ -228,11 +238,14 @@ export async function handleQueryQaCommand(ctx: CommandContext<Context>): Promis
   } else {
     for (const [q, a] of entries) selected.push({ q, a });
   }
-  const rendered: QaJsonMessage = formatQaJsonMessage(selected);
+  const pages: readonly RichTextMessage[] = buildQaBoardPages(selected);
+  const first: RichTextMessage | undefined = pages[0];
+  if (first === undefined) return;
   await sendCommandMessage({
     chatId,
-    text: rendered.text,
-    entities: rendered.entities,
+    text: first.text,
+    entities: first.entities,
+    keyboard: buildQaBoardKeyboard(0, pages.length),
     replyToMessageId: messageId,
     // 与 /permission query 同一口径的长期保留例外：这是一张要照着逐条核对的
     // 看板，30 秒清理会在读完之前收走它。查不到那条的提示仍走默认清理。

@@ -8,9 +8,9 @@
  * 清理时机 = 收到 active:false，或本 Worker 因崩溃被替换——新 Worker 从 false
  * 起步，而新一轮重放必然重新发一次 active:true，不需要跨实例沿用。
  *
- * fail-safe 方向是 false：漏收开标记只会退回「按在线消息处理」，也就是修复前
- * 的旧行为；反过来把它错误地留成 true，会把一次普通的在线写失败升级成整进程
- * 停机。因此只有显式的 active:false 与新实例的初值负责清零，不设超时自动复位。
+ * fail-safe 方向是 false：漏收开标记会按在线消息处理；错误地留成 true 则会把
+ * 普通在线写失败升级成整进程停机。因此只有显式 active:false 与新实例初值负责
+ * 清零，不设超时自动复位。
  */
 export const diskIOReplayWindow: { current: boolean } = { current: false };
 

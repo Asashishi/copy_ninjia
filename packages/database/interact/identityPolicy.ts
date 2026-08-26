@@ -13,10 +13,8 @@ import type {
 /**
  * 为一条连接建两条「主键是否已持久化」的预编译语句（白/黑名单各一）。
  *
- * 这个查询在写入路径上是按条目调的（workers/diskIO/storageDatabase/identityPolicy.ts
- * 的 assertOppositePolicyAbsent），一批 IDENTITY_WRITE_BATCH_MAX_ENTRIES 条就要走
- * 同样多次。现场构建 Drizzle 查询每次约 57 µs，光拼 SQL 就比那一批唯一的一次
- * fsync 还贵；预编译后单次约 1 µs，整批的落盘延迟才由磁盘而不是查询构建决定。
+ * 这个查询在写入路径上按条目调用（workers/diskIO/storageDatabase/identityPolicy.ts
+ * 的 assertOppositePolicyAbsent），因此每条连接只构建一次并复用预编译语句。
  *
  * 本函数只负责**建**，不持有：语句归谁、活多久由调用侧决定（Disk I/O Worker 把
  * 它挂在 cache/workers/diskIO/storageDatabase.ts 的连接级 WeakMap 上）。本文件是

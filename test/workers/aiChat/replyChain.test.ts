@@ -47,7 +47,13 @@ function message(messageId: number, text: string, replyToId?: number): BufferedM
     text,
     replyTo: replyToId === undefined
       ? undefined
-      : bufferedReplyReferenceFixture({ messageId: replyToId, id: 0, firstName: "快照", lastName: "", text: `快照-${replyToId}` }),
+      : bufferedReplyReferenceFixture({
+        messageId: replyToId,
+        id: replyToId + 10,
+        firstName: "快照",
+        lastName: "",
+        text: `快照-${replyToId}`,
+      }),
     at: "2026/07/23 00:00:00",
   });
 }

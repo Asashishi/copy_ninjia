@@ -49,7 +49,7 @@ mock.module("../../packages/infra/diskIO", () => ({
 // 跨东京零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）
 // 时 getTokyoDateKey 走真实实现，其余测试完全不受影响。
 // 两个坑（都是本 bun 版本 mock.module 的行为）决定了必须写成这个形状：
-// 1. 真实模块必须先展开成普通对象快照再 mock——mock.module 之后，此前拿到的
+// 1. 真实模块必须先展开成普通对象快照再 mock——mock.module 之后，已经取得的
 //    模块命名空间引用会被追溯重绑定到 mock 本身，工厂里引用它会在加载期
 //    死锁或调用期无限递归；普通对象持有的真实函数引用不受重绑定影响。
 // 2. 对同一模块的 mock.module 二次注册不会覆盖第一次（装上摘不掉），所以
@@ -170,6 +170,32 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     } finally {
       mockTodayOverride = null;
     }
+  });
+
+  test("cache key 解不开的恶意回执走完确认链路并正常 resolve", async () => {
+    // 攻击者可离线算出整条载荷：任取 32 字节得到 43 字符签名组，它的十六进制
+    // 就是正文要展示的摘要，两道同步闸因此都放行；cache key 组则取一个长度
+    // ≡ 1 (mod 4) 的值，`Uint8Array.fromBase64` 对它抛 SyntaxError。这条 promise
+    // 一旦 reject，中间件会把异常交给 bot.catch 重抛，acknowledged runner 带着
+    // 未确认的 offset 退出，Telegram 重投同一条消息——进程再也起不来。
+    const signaturePart: string = Buffer.alloc(32, 0xab).toString("base64url");
+    const receipt: string = `luck:v1:${getTokyoDateKey()}:AAAAA.${signaturePart}`;
+    const receiptHash: string = Buffer.alloc(32, 0xab).toString("hex");
+    const body: string = "随便一段正文";
+    const text: string = `${body}\n防伪标记: ${receiptHash}`;
+    const entities = [{
+      type: "text_link",
+      offset: body.length + 1 + "防伪标记: ".length,
+      length: receiptHash.length,
+      url: `https://t.me/#luck-receipt=${receipt}`,
+    }];
+
+    const confirmation: Promise<void> | undefined =
+      luckChallenge.confirmLuckDraw(text, entities as never);
+    // 两道同步闸都通过，确实进入了异步确认——否则这条用例什么也没覆盖到。
+    expect(confirmation).toBeDefined();
+    await expect(confirmation).resolves.toBeUndefined();
+    expect(postDiskIOMock).not.toHaveBeenCalled();
   });
 
   test("普通多行文本和缺少实体的伪回执同步返回且不触发跨日密钥刷新", () => {
@@ -392,7 +418,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("以频道马甲/匿名管理员身份发出（消息 from 带不回真实 uid）：仍能按签名回执认领落盘", async () => {
     // 回归线上事故：inline 预览永远是真人账号发起，但用户以马甲身份把结果
     // 发进群时，via_bot 消息的 from 被 Telegram 换成 Channel_Bot/匿名马甲，
-    // 旧实现的 `${userId} ${文本}` 索引永远查不上——确认只能靠文本本身。
+    // via_bot 确认只能按文本索引，不能依赖被 Telegram 替换后的 from id。
     const ctx = makeInlineCtx(888, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     // 调用方只传消息文本及其实体，不含（也拿不到）真实 uid。
@@ -706,7 +732,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("启动时恰好卡在日切：丢弃过期凭据继续启动，不抛错拦下整个进程", async () => {
-    // Disk I/O Worker 在 handleLoad() 里算出的是 D，主线程等到 load 回执时已经
+    // Disk I/O Worker 在启动边界算出的是 D，主线程等到 load 回执时已经
     // 是 D+1。抛错的话异常会逸出 ApplicationLifecycle.init()（调用点没有
     // try/catch），run() 记一行日志并以退出码 1 结束——一次日切让 bot 起不来。
     try {

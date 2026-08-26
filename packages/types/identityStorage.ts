@@ -58,7 +58,7 @@ export interface StorageDatabaseHydration {
   readonly pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
   readonly chatStates: Map<number, ChatState>;
   /**
-   * 群 -> 问题 -> 答案。整表恒定不超过 125 行（受管群 × 每群 5 条），因此启动
+   * 群 -> 问题 -> 答案。整表恒定不超过 375 行（受管群 × 每群 15 条），因此启动
    * 一次性读全，不像 outbox 那样分页。
    */
   readonly chatQa: Map<number, ReadonlyMap<string, string>>;

@@ -52,25 +52,11 @@ export interface StoredStorageMetadataRow {
   readonly data: string;
 }
 
-/** chat_states 引入前后都存在的四张基础表；仅供显式冷迁移严格核对。 */
-export interface StorageDatabaseBaseRows {
-  readonly whitelist: readonly StoredIdentityPolicyRow[];
-  readonly blocklist: readonly StoredIdentityPolicyRow[];
-  readonly removals: readonly StoredPendingRemovalRow[];
-  readonly metadata: readonly StoredStorageMetadataRow[];
-}
-
-/** 显式冷迁移全表检查读取的共享 SQLite 业务表与元数据。 */
-export interface StorageDatabaseRows extends StorageDatabaseBaseRows {
-  readonly chatStates: readonly StoredChatStateRow[];
-  readonly chatQa: readonly StoredChatQaRow[];
-}
-
 /**
  * 生产启动恢复载荷；名单只取计数，群状态只恢复正文而不执行启动正确性校验。
  *
- * 不含 schema 元数据：版本判定必须早于本载荷的读取（`chat_states` 是 v4 才有的
- * 表），因此那一行由 readStorageDatabaseSchemaMetadata 单独取，不从这里回传。
+ * 不含 schema 元数据：版本判定必须早于当前业务表的读取，因此那一行由
+ * readStorageDatabaseSchemaMetadata 单独取，不从这里回传。
  */
 export interface StorageDatabaseStartupRows {
   readonly whitelistEntryCount: number;

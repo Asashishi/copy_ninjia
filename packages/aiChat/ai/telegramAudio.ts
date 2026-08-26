@@ -66,11 +66,7 @@ export async function downloadTelegramVoice({
     }
     return {
       // 下载缓冲已由主线程转移所有权，不复制大音频载荷。
-      bytes: Buffer.from(
-        download.bytes.buffer,
-        download.bytes.byteOffset,
-        download.bytes.byteLength
-      ),
+      bytes: download.bytes,
       mime: normalizeVoiceMime(declaredMime),
       durationSeconds,
     };

@@ -12,16 +12,17 @@
  * 过期文件。日期显式按东京时区划分（同 libs/time.ts 的 getTokyoDateKey，
  * 与运势/AI 记忆两个同进程内子系统口径一致），不依赖部署机器自身的系统
  * 时区设置——不然一旦部署环境时区漂移，三类落盘数据会在同一次事故里表现
- * 不一致（其余两类原本就显式用东京时区计算）。
+ * 不一致。
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO";
 import type { DayFileState } from "../../types/diskIO/storage";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import {
   DAY_FILE_PATTERN,
+  DAY_FILE_JSON_INDENT,
   FLUSH_INTERVAL_MS,
   FLUSH_MAX_ENTRIES,
   LOG_REOPEN_RETRY_MS,
@@ -31,11 +32,12 @@ import { DAY_MS } from "../../consts/diskIO/common";
 import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
+import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { assertFileReadableWritable } from "../../libs/fileAccess";
 import {
   AppendOnlyFileFormatError,
   appendToDayFile,
-  openAppendOnlyFile,
-  openValidatedAppendOnlyFile,
+  repairTruncatedAppendOnlyContent,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
 import type { BufferedLogEntry } from "../../types/diskIO/storage";
@@ -87,40 +89,63 @@ function assertLogFileSchema(path: string, parsed: unknown): void {
  * 读取只发生在启动、跨日打开，以及追加失败后按 LOG_REOPEN_RETRY_MS 退避的那次
  * 重试上；追加热路径不调用本函数。
  */
-function openLogDay(day: string): DayFileState {
+interface LogDayInspection {
+  readonly state: DayFileState;
+  readonly path: string;
+  readonly rewriteContent: string | null;
+}
+
+function inspectLogDay(day: string): LogDayInspection {
   const path: string = join(LOGS_DIR, `${day}.json`);
-  if (existsSync(path)) {
-    const content: string = readFileSync(path, "utf8");
-    try {
-      const parsed: unknown = JSON.parse(content);
-      assertLogFileSchema(path, parsed);
-      const empty: boolean = Object.keys(parsed as Record<string, unknown>).length === 0;
-      if (!empty && !content.endsWith("\n}")) {
-        return {
-          day,
-          ...openAppendOnlyFile(path, undefined, true),
-        };
-      }
-      return {
-        day,
-        ...openValidatedAppendOnlyFile({
-          path,
-          content,
-          empty,
-        }),
-      };
-    } catch (error: unknown) {
-      if (!(error instanceof SyntaxError)) throw error;
+  if (!existsSync(path)) {
+    return {
+      path,
+      rewriteContent: null,
+      state: { day, size: 0, empty: true },
+    };
+  }
+  assertFileReadableWritable(path);
+  const content: string = readFileSync(path, "utf8");
+  let parsed: unknown;
+  let rewriteContent: string | null = null;
+  try {
+    parsed = JSON.parse(content) as unknown;
+  } catch {
+    rewriteContent = repairTruncatedAppendOnlyContent(content);
+    if (rewriteContent === null) {
+      throw new AppendOnlyFileFormatError(path, "could not be parsed or repaired.");
     }
+    parsed = JSON.parse(rewriteContent) as unknown;
   }
-  const state: DayFileState = {
-    day,
-    ...openAppendOnlyFile(path, undefined, true),
+  assertLogFileSchema(path, parsed);
+  const empty: boolean = Object.keys(parsed as Record<string, unknown>).length === 0;
+  if (!empty && rewriteContent === null && !content.endsWith("\n}")) {
+    rewriteContent = JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT);
+  }
+  return {
+    path,
+    rewriteContent,
+    state: {
+      day,
+      size: empty
+        ? 0
+        : rewriteContent === null
+          ? statSync(path).size
+          : Buffer.byteLength(rewriteContent),
+      empty,
+    },
   };
-  if (existsSync(path)) {
-    assertLogFileSchema(path, JSON.parse(readFileSync(path, "utf8")));
+}
+
+function adoptLogDay(inspection: LogDayInspection): DayFileState {
+  if (inspection.rewriteContent !== null) {
+    atomicWriteTextSync(inspection.path, inspection.rewriteContent);
   }
-  return state;
+  return inspection.state;
+}
+
+function openLogDay(day: string): DayFileState {
+  return adoptLogDay(inspectLogDay(day));
 }
 
 /** 毫秒时间戳 → 东京时区的「YYYY-MM-DD HH:mm:ss.SSS」，用作落盘日志条目的
@@ -207,16 +232,35 @@ function writeDay(day: string, texts: string[]): boolean {
   }
 }
 
-/** 目录初始化 + 首次清理，由 diskIOWorker.ts 在模块加载时调用一次。 */
-export function initLogFiles(): void {
+export interface LogFilesInspection {
+  readonly names: readonly string[];
+  readonly day: LogDayInspection;
+}
+
+/** 跨域启动第一阶段：只读校验当前日志，并预计算必要的规范化内容。 */
+export function inspectLogFiles(): LogFilesInspection {
+  const names: string[] = existsSync(LOGS_DIR) ? readdirSync(LOGS_DIR) : [];
+  return { names, day: inspectLogDay(dayKey(Date.now())) };
+}
+
+/** 全域 inspect 成功后接管日志游标；可修复尾部只在这一阶段原子发布。 */
+export function adoptLogFiles(inspection: LogFilesInspection): void {
   resetLogCache();
   mkdirSync(LOGS_DIR, { recursive: true });
-  const names: string[] = readdirSync(LOGS_DIR);
-  cleanupStaleTmpFiles(names);
-  // 当前日文件必须在 Worker 宣称可接收消息前完成结构校验；只在启动扫描一次，
-  // 后续 appendToDayFile 仍按已缓存的字节 offset 做 O(1) 追记。
-  loggerFileState.current = openLogDay(dayKey(Date.now()));
-  cleanupOldLogs(names);
+  loggerFileState.current = adoptLogDay(inspection.day);
+}
+
+/** 启动成功后清理日志临时文件与过期日。 */
+export function maintainLogFiles(inspection: LogFilesInspection): void {
+  cleanupStaleTmpFiles(inspection.names);
+  cleanupOldLogs(inspection.names);
+}
+
+/** 单领域初始化入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
+export function initLogFiles(): void {
+  const inspection: LogFilesInspection = inspectLogFiles();
+  adoptLogFiles(inspection);
+  maintainLogFiles(inspection);
 }
 
 /** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */
