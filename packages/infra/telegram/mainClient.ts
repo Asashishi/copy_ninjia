@@ -12,9 +12,9 @@ import { BOT_TOKEN } from "../../config/telegram";
 import { installTelegramApi } from "./client";
 import { telegramMessageThrottler } from "./messageThrottler";
 import {
-  initTelegramOutbound,
   telegramOutboundGate,
 } from "./outboundGate";
+import { initTelegramOutbound } from "./outboundLifecycle";
 import type {
   TelegramApi,
   TelegramDeleteEphemeralMessageParams,

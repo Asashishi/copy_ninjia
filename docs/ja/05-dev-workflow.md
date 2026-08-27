@@ -43,11 +43,11 @@
 
 ### 依存関係の release-age gate
 
-依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、[`dependency-release-age-exemptions.json`](../../dependency-release-age-exemptions.json) に記録します。現在の Bun runtime と `@types/bun` はどちらも 1.4.0 です。
+依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。現在の Bun runtime と `@types/bun` はどちらも 1.4.0 です。
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2821 tests / 287 files / 96239 `expect()` calls**。全ソースコードの**関数カバレッジは 95.98%、行カバレッジは 97.14%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2876 tests / 294 files / 96444 `expect()` calls**。全ソースコードの**関数カバレッジは 96.28%、行カバレッジは 97.19%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 

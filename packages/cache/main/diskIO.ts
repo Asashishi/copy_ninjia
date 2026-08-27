@@ -11,17 +11,19 @@ import {
   DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES,
 } from "../../consts/diskIO/diagnostics";
 import type {
-  AiMemoryDeletedPersistedReply,
-  AiMemoryPersistedReply,
   DiskBusinessMessage,
-  DiskIODomain,
   DiskIORespawnRegistration,
   DiskDiagnosticMessage,
+} from "../../types/diskIO/messages";
+import type {
+  AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
+  DiskIODomain,
   LoadedReply,
   LuckAppendStalledReply,
   IdentityStoragePersistedReply,
   VerificationPersistedReply,
-} from "../../types/diskIO";
+} from "../../types/diskIO/replies";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
 import type { BlocklistIdPage } from "../../types/identityStorage";

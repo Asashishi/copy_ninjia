@@ -91,6 +91,9 @@ export function handleJoinEvent({
   if (joinCreatesNewRecord(entryState, event)) {
     // joinedAt 与滑动窗口使用同一个时间戳，retractJoin 才能按值精确撤销。
     recordJoin(chatId, event.now);
+    // 临界这一次 recordJoin 可能同步建立 lockdown 占位；事件必须看到新状态，
+    // 否则触发封锁的成员仍会进入普通验证窗口，而不是当场进入秒踢流程。
+    event.lockdownActive = lockdownEntries.has(chatId);
   }
   dispatchVerification(chatId, member.id, event);
 

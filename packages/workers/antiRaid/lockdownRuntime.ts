@@ -3,22 +3,17 @@ import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
 import { deleteMessage, sendMessage, telegramApi } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import {
-  ANTI_RAID_PER_MINUTE_LIMIT,
-  JOIN_WINDOW_MS,
   LOCKDOWN_MS,
 } from "../../consts/antiRaid/lockdown";
 import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
 import {
-  joinWindows,
   lastLockdownIntentId,
   lockdownApiChains,
   lockdownApiRunner,
   lockdownEntries,
-  lockdownRetriggerCooldowns,
 } from "../../cache/workers/antiRaid/lockdown";
-import { LinkedQueue } from "../../libs/linkedQueue";
 import { normalizeChatPermissions } from "../../libs/chatPermissions";
-import type { LockdownEvent, UnlockEvent } from
+import type { UnlockEvent } from
   "../../types/antiRaid/events";
 import type {
   AdoptableLockdown,
@@ -27,16 +22,24 @@ import type {
 } from "../../types/antiRaid/protocol";
 import { transitionLockdown } from "../../states/lockdown";
 import type {
-  LockdownAbandonReason,
   LockdownEffect,
   LockdownMachineEvent,
   LockdownState,
   LockdownTransition,
 } from "../../types/states/lockdown";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
-import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
-import type { JoinWindow, LockdownEntry } from "../../types/antiRaid/internal";
+import type { LockdownEntry } from "../../types/antiRaid/internal";
 import { trackAntiRaidTask } from "./taskTracker";
+import {
+  beginLockdownRetriggerCooldown,
+  clearJoinWindow,
+  clearJoinWindowCooldown,
+  lockdownAnnouncementText,
+  recordJoinWindow,
+  retractJoinWindow,
+  stopJoinWindowRuntime,
+} from "./lockdownJoinWindow";
+import { publishLockdownState } from "./lockdownPersistence";
 
 declare const self: Worker;
 
@@ -112,13 +115,6 @@ function reconcileLockdownEntryTimers(
   ) {
     clearRetryTimer(entry);
   }
-}
-
-function lockdownAnnouncementText(joinCount?: number): string {
-  const influx: string = joinCount === undefined
-    ? "检测到短时间内大量成员入群"
-    : `${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${joinCount} 个杂鱼`;
-  return `哼，${influx}，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`;
 }
 
 /** 执行一次私密模式转移返回的副作用（主线程网络能力请求不阻塞 mailbox，结果以事件回投）。 */
@@ -211,45 +207,6 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
   }
 }
 
-function publishLockdownState(chatId: number): void {
-  const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
-  if (entry === undefined) return;
-  const state: LockdownState = entry.state;
-  // 公告记账在所有阶段都成立：公告与占位同刻发出，早于 intent 形成。
-  const announced: boolean = state.announced;
-  const announcementMessageId: number | undefined = state.announcementMessageId;
-  let intentId: number;
-  let originalPermissions: ChatPermissions;
-  let expiresAt: number;
-  if (state.kind === "applying") {
-    if (state.stage !== "prepared") return;
-    intentId = state.intentId;
-    originalPermissions = state.originalPermissions;
-    expiresAt = Date.now();
-  } else {
-    intentId = state.intentId;
-    originalPermissions = state.originalPermissions;
-    if (state.kind === "active" || state.kind === "reconciling") {
-      if (entry.restoreAt === undefined) {
-        throw new Error(`Lockdown ${state.kind} state for chat ${chatId} is missing its restore deadline.`);
-      }
-      expiresAt = entry.restoreAt;
-    } else {
-      expiresAt = Date.now();
-    }
-  }
-  self.postMessage({
-    type: "lockdown",
-    chatId,
-    phase: state.kind,
-    intentId,
-    originalPermissions,
-    announced,
-    announcementMessageId,
-    expiresAt,
-  } satisfies LockdownEvent);
-}
-
 /**
  * 主线程报告这一轮意图写不进 SQLite：按阶段 fail-safe 打开，并进入重触发冷却。
  *
@@ -278,16 +235,8 @@ export function handleLockdownPersisted(msg: LockdownPersistedMessage): void {
 export function deactivateLockdownChat(chatId: number): void {
   clearJoinWindow(chatId);
   // 守卫都关了，重新开启时不该背着上一次的作废冷却继续不设防。
-  lockdownRetriggerCooldowns.delete(chatId);
+  clearJoinWindowCooldown(chatId);
   dispatchLockdown(chatId, { type: "deactivate", intentId: nextLockdownIntentId() });
-}
-
-/** 丢弃某群的入群滑窗与它的静默清理计时器；重新计数从零开始。 */
-function clearJoinWindow(chatId: number): void {
-  const window: JoinWindow | undefined = joinWindows.get(chatId);
-  if (window === undefined) return;
-  clearTimeout(window.resetTimeout);
-  joinWindows.delete(chatId);
 }
 
 /** 私密模式加锁/纠偏共用：在给定权限上关闭 can_invite_users，其余字段原样保留。 */
@@ -358,40 +307,6 @@ function deleteLockdownAnnouncement(chatId: number, messageId: number): void {
       );
     }
   });
-}
-
-/**
- * 让这个群在冷却期内不再触发私密模式（由状态机的 suppressRetrigger 副作用驱动）。
- *
- * 触发判定挂在每一条越过阈值的入群上，而「状态写不进 SQLite」「原权限读不回来」
- * 这类失败对同一个群通常是系统性的：不冷却就会每进一个人重来一次公告与 API
- * 往返（见 consts/antiRaid/lockdown.ts）。写入时顺手清掉已过期条目——只有作废
- * 路径才会走到这里，条目数与群数同阶，扫一遍远比给每个群挂一个 timer 便宜。
- */
-function beginLockdownRetriggerCooldown(
-  chatId: number,
-  reason: LockdownAbandonReason,
-  durationMs: number
-): void {
-  const now: number = Date.now();
-  for (const [cooledChatId, until] of lockdownRetriggerCooldowns) {
-    if (now >= until) lockdownRetriggerCooldowns.delete(cooledChatId);
-  }
-  lockdownRetriggerCooldowns.set(chatId, now + durationMs);
-  logger.error(
-    `Anti-raid lockdown for chat ${chatId} was abandoned (${reason}); ` +
-    `suppressing new lockdown triggers there for ${durationMs / 60_000} minutes. ` +
-    "Per-member join verification is unaffected."
-  );
-}
-
-/** 冷却是否仍然生效；到期条目就地删除，避免长期占位。 */
-function lockdownRetriggerCoolingDown(chatId: number, now: number): boolean {
-  const until: number | undefined = lockdownRetriggerCooldowns.get(chatId);
-  if (until === undefined) return false;
-  if (now < until) return true;
-  lockdownRetriggerCooldowns.delete(chatId);
-  return false;
 }
 
 /**
@@ -518,25 +433,9 @@ function reapplyLockdownRestriction(chatId: number): void {
  * 固定桶永远数不满）。
  */
 export function recordJoin(chatId: number, now: number): void {
-  let window: JoinWindow | undefined = joinWindows.get(chatId);
-  if (!window) {
-    window = { timestamps: new LinkedQueue<number>(), resetTimeout: setTimeout((): boolean => joinWindows.delete(chatId), JOIN_WINDOW_MS) };
-    joinWindows.set(chatId, window);
-  } else {
-    // 清理计时器在每次入群时重置：它到期即意味着窗口静默满 JOIN_WINDOW_MS，
-    // 届时所有时间戳都已过期，整个条目可以安全删除。
-    clearTimeout(window.resetTimeout);
-    window.resetTimeout = setTimeout((): boolean => joinWindows.delete(chatId), JOIN_WINDOW_MS);
-  }
-
-  trimSlidingWindow({ timestamps: window.timestamps, windowMs: JOIN_WINDOW_MS, now });
-  window.timestamps.push(now);
-
-  if (
-    window.timestamps.size > ANTI_RAID_PER_MINUTE_LIMIT &&
-    !lockdownRetriggerCoolingDown(chatId, now)
-  ) {
-    dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount: window.timestamps.size });
+  const joinCount: number | undefined = recordJoinWindow(chatId, now);
+  if (joinCount !== undefined) {
+    dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount });
   }
 }
 
@@ -551,30 +450,22 @@ export function recordJoin(chatId: number, now: number): void {
  *
  * joinedAt 必须是创建那条 PENDING 记录时 recordJoin 压进窗口的同一个时间戳
  * （见 verificationRuntime.ts 的 handleJoin 把 event.now 同时传给 recordJoin
- * 与状态机），按值精确移除，不能像早期实现那样无差别 shift 队首——
- * VERIFICATION_TIMEOUT_MS（3 分钟）比 JOIN_WINDOW_MS（60s）长，超时终核这条
- * 路径触发时，这条 join 自己的时间戳几乎总是已经被期间其它入群的
- * recordJoin 自然修剪出窗口了；这时无差别 shift 队首会误删窗口内其它人
- * 仍然合法在场的时间戳，让统计总数比真实入群数更少，反而更难触发本该
- * 触发的私密模式。按值查找找不到（已被自然修剪，或窗口已整体过期清空）
- * 就是正确的 no-op——说明这次撤销早就没有意义了。
+ * 与状态机），按值精确移除，不能无差别 shift 队首。找不到表示该项已经过期、
+ * 窗口已清空，或在极端过载时被硬顶覆盖；前两者无需撤销，最后一种保持
+ * overflowThrough 的 fail-safe 饱和判定，直到被覆盖时间戳全部过期。
  */
 export function retractJoin(chatId: number, joinedAt: number): void {
-  const window: JoinWindow | undefined = joinWindows.get(chatId);
-  if (!window) return;
-  window.timestamps.removeValue(joinedAt);
+  retractJoinWindow(chatId, joinedAt);
 }
 
 /** Worker 停止时清除全部 lockdown timer、滑窗和串行链；主线程镜像负责重建。 */
 export function stopLockdownRuntime(): void {
-  for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
+  stopJoinWindowRuntime();
   for (const entry of lockdownEntries.values()) {
     clearLockdownEntryTimers(entry);
   }
-  joinWindows.clear();
   lockdownEntries.clear();
   lockdownApiChains.clear();
-  lockdownRetriggerCooldowns.clear();
   lastLockdownIntentId.current = 0;
 }
 

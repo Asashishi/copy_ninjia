@@ -3,6 +3,7 @@ import { aiRecordMessageFixture, aiReplyReferenceFixture } from "../helpers/aiMe
 // 六个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
 // 必须在下面的 await import 之前登记。
 import {
+  autoMessageChatState,
   generateAndSendReplyMock,
   isBotOwnMessageMock,
   needsBotOwnMessageWaitMock,
@@ -12,7 +13,7 @@ import {
   waitForBotOwnMessageMock,
 } from "../helpers/autoMessageMocks";
 
-const { handleIncomingMessage } = await import("../../packages/auto/message");
+const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
 
 const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 
@@ -27,8 +28,13 @@ describe("AI 缓存发送者 username 传递", () => {
     );
   });
 
+  test("没有消息载荷时同步短路，不为这条 update 分配 Promise", () => {
+    // grammY 的 MaybePromise 边界：返回 undefined 表示这条 update 没有异步工作。
+    expect(handleIncomingMessageMiddleware({ me: botInfo } as any)).toBeUndefined();
+  });
+
   test("普通用户文字消息把 username 一并交给 AI", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 8,
@@ -53,7 +59,7 @@ describe("AI 缓存发送者 username 传递", () => {
   });
 
   test("转发文字消息把来源路径一并交给 AI", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 82,
@@ -83,7 +89,7 @@ describe("AI 缓存发送者 username 传递", () => {
   });
 
   test("@ 机器人同时回复别人时把原消息引用一并交给 AI", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 81,
@@ -132,7 +138,7 @@ describe("AI 缓存发送者 username 传递", () => {
 
   test("论坛话题里的直接触发把话题 id 一路带进 trigger，其它话题/General 不受影响", async () => {
     // 话题群里 AI 的主动发送全靠这个 id 落回原话题；漏掉它整轮都会掉进 General。
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 90,
@@ -158,7 +164,7 @@ describe("AI 缓存发送者 username 传递", () => {
   });
 
   test("General 里的直接触发不带话题：Bot API 里「没有话题」就是 General", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 91,
@@ -182,7 +188,7 @@ describe("AI 缓存发送者 username 传递", () => {
   });
 
   test("频道帖子使用频道的 username 和 title", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 9,
@@ -210,7 +216,7 @@ describe("AI 缓存发送者 username 传递", () => {
       new Promise<boolean>((resolve: (matched: boolean) => void): void => {
         releaseMarker = resolve;
       }));
-    const handling: Promise<void> = handleIncomingMessage({
+    const handling: Promise<void> | undefined = handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 91,
@@ -219,6 +225,7 @@ describe("AI 缓存发送者 username 传递", () => {
         text: "bot post",
       },
     } as any);
+    expect(handling).toBeDefined();
     await Promise.resolve();
 
     expect(recordChatMessageMock).not.toHaveBeenCalled();
@@ -231,10 +238,47 @@ describe("AI 缓存发送者 username 传递", () => {
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
+  test("关联讨论组等待结束后重读群开关，不沿用等待前的状态", async () => {
+    let releaseMarker: ((matched: boolean) => void) | undefined;
+    waitForBotOwnMessageMock.mockImplementationOnce((): Promise<boolean> =>
+      new Promise<boolean>((resolve: (matched: boolean) => void): void => {
+        releaseMarker = resolve;
+      }));
+    autoMessageChatState.isAIChatEnabled = true;
+    // 自动转发要等自发消息判定，因此这一条必须走异步分支。
+    const started: Promise<void> | undefined = handleIncomingMessageMiddleware({
+      me: botInfo,
+      msg: {
+        message_id: 93,
+        date: 1,
+        chat: { id: -100800, type: "supergroup", title: "Test Group" },
+        sender_chat: { id: -100900, type: "channel", title: "News Channel" },
+        is_automatic_forward: true,
+        forward_origin: {
+          type: "channel",
+          date: 1,
+          chat: { id: -100900, type: "channel", title: "News Channel" },
+          message_id: 9,
+        },
+        text: "channel post",
+      },
+    } as any);
+    expect(started).toBeInstanceOf(Promise);
+    const handling: Promise<void> = started as Promise<void>;
+
+    autoMessageChatState.isAIChatEnabled = false;
+    releaseMarker!(false);
+    await handling;
+
+    expect(recordChatMessageMock).not.toHaveBeenCalled();
+    expect(recordChatMediaMock).not.toHaveBeenCalled();
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
   test("自发消息已同步登记时直接跳过，不再进入异步等待", async () => {
     isBotOwnMessageMock.mockImplementationOnce((): boolean => true);
 
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 92,
@@ -251,7 +295,7 @@ describe("AI 缓存发送者 username 传递", () => {
   });
 
   test("媒体消息同样把发送者 username 交给 AI", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 10,

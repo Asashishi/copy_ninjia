@@ -25,9 +25,9 @@ import type { VerificationSnapshot } from
 import type {
   VerificationDeleteDiskMessage,
   VerificationFileChange,
-  VerificationPersistedReply,
   VerificationUpsertDiskMessage,
-} from "../../types/diskIO";
+} from "../../types/diskIO/messages";
+import type { VerificationPersistedReply } from "../../types/diskIO/replies";
 import { appendToDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { storedVerificationSnapshot } from "./verificationCodec";
 import {

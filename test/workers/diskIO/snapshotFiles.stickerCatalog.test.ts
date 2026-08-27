@@ -17,9 +17,16 @@ mock.module("../../../packages/consts/paths", () => ({ ...realPaths, STICKER_MEM
 const {
   inspectStickerCatalogs,
   maintainStickerCatalogFiles,
-  recoverStickerCatalogs,
   writeStickerCatalogFile,
 } = await import("../../../packages/workers/diskIO/snapshotFiles");
+
+/** 单领域恢复的测试编排；生产的三阶段编排见 workers/diskIO/startup.ts。 */
+function recoverStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
+  const inspection = inspectStickerCatalogs(activePacks);
+  maintainStickerCatalogFiles(inspection);
+  return inspection.snapshots;
+}
+
 import type { StickerCatalogSnapshot } from "../../../packages/types";
 
 /** 快照在管线上以序列化 JSON 文本流转（见 types/aiChat.ts 的

@@ -43,6 +43,28 @@ describe("TimestampDeque", () => {
     expect(() => queue.push(3)).toThrow("capacity exceeded");
   });
 
+  test("饱和窗口原地覆盖最早项且不增长", () => {
+    const queue = new TimestampDeque(3, 3);
+    queue.push(1);
+    queue.push(2);
+    queue.push(3);
+
+    expect(queue.pushReplacingOldest(4)).toBe(1);
+    expect(queue.size).toBe(3);
+    expect(contents(queue)).toEqual([2, 3, 4]);
+  });
+
+  test("按值撤销在回绕前后保持顺序", () => {
+    const queue = new TimestampDeque(4, 4);
+    for (const value of [1, 2, 3, 4]) queue.push(value);
+    expect(queue.shift()).toBe(1);
+    queue.push(5);
+
+    expect(queue.removeValue(3)).toBeTrue();
+    expect(queue.removeValue(99)).toBeFalse();
+    expect(contents(queue)).toEqual([2, 4, 5]);
+  });
+
   test("滑动窗口边界与时钟回拨语义和通用实现一致", () => {
     const queue = new TimestampDeque(8);
     for (const value of [100, 900, 5_002]) queue.push(value);

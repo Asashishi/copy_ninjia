@@ -26,7 +26,7 @@ import type {
   ForwardedLogBatch,
   ForwardedLogBatchAccepted,
   LogMessage,
-} from "../../types/diskIO";
+} from "../../types/diskIO/messages";
 
 /**
  * 批次的实际出口。生产是 Worker 的 `self.postMessage`（见 infra/logger.ts），

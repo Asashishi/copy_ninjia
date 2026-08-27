@@ -35,7 +35,7 @@ import {
 } from "../infra/identityPolicy/coordination";
 import type { AdDetectedEvent } from "../types/antiRaid/adDetect";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
-import type { AdSampleDiskMessage } from "../types/diskIO";
+import type { AdSampleDiskMessage } from "../types/diskIO/messages";
 import type { FlushResult } from "../types/lifecycle";
 
 /** 处置目标所在的群清单：机器人已初始化且是管理员的群，同 /block 的连坐范围。 */

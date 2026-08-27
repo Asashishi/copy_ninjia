@@ -22,10 +22,12 @@ import type {
   BlocklistIdPageReadReply,
   IdentityPersistenceReply,
   IdentityPoliciesReadReply,
+} from "../../../types/diskIO/replies";
+import type {
   IdentityPolicyWriteDiskMessage,
   ReadBlocklistIdPageRequest,
   ReadIdentityPoliciesRequest,
-} from "../../../types/diskIO";
+} from "../../../types/diskIO/messages";
 import type { IdentityPolicyTable } from "../../../types/identityPolicy";
 import type { PendingIdentityPolicyWrite } from "../../../types/identityStorage";
 import type {

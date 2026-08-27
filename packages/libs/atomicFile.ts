@@ -47,7 +47,7 @@ async function durableRename(sourcePath: string, destinationPath: string): Promi
 }
 
 /** 同步 path 所在目录的目录项，供唯一的磁盘 I/O Worker 使用。 */
-export function syncDirectorySync(path: string): void {
+function syncDirectorySync(path: string): void {
   const fd: number = openSync(dirname(path), "r");
   try {
     fsyncSync(fd);

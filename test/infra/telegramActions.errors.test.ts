@@ -77,10 +77,10 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendChatAction({ chatId: -1001, action: "choose_sticker", api })).toBe(true);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBe(12);
-    expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBe(13);
+    expect(await actions.sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toEqual({ messageId: 13 });
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(true);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
-    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe(true);
+    expect(await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe("kicked");
     expect(await actions.banChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(true);
@@ -100,10 +100,10 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendChatAction({ chatId: -1001, action: "choose_sticker", api })).toBe(false);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", api })).resolves.toBeUndefined();
     expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBeUndefined();
-    expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
+    expect(await actions.sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(false);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
-    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe(false);
+    expect(await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe("failed");
     expect(await actions.banChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(false);
@@ -339,7 +339,7 @@ describe("Telegram 动作适配层失败归一化", () => {
 });
 
 describe("解除封禁必须带 only_if_banned", () => {
-  test("unbanChatMemberIfBanned 传 only_if_banned，kickChatMember 刻意不传", async () => {
+  test("unbanChatMemberIfBanned 传 only_if_banned，踢出成员刻意不传", async () => {
     // Bot API 的 unbanChatMember 对「当前就是群成员」的人语义是把他移出群聊
     // ——kickChatMember 的「只踢不封」正是靠这一点。跨群批量解封若漏了这个
     // 标志，会把本来好端端待在群里的人一个个踢出去。
@@ -349,7 +349,7 @@ describe("解除封禁必须带 only_if_banned", () => {
     await actions.unbanChatMemberIfBanned(-1001, 7, api);
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, { only_if_banned: true });
 
-    await actions.kickChatMember({ chatId: -1001, userId: 7, isSupergroup: true, api });
+    await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api });
     // 空 options 与不传等价，关键是**没有** only_if_banned。
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, {});
   });

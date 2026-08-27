@@ -41,10 +41,36 @@ import type { ChatState } from "../../types/chatState";
 import type {
   BlocklistRemovalsDiskMessage,
   DiskIORecoveryTransport,
+} from "../../types/diskIO/messages";
+import type {
   IdentityStoragePersistedReply,
-} from "../../types/diskIO";
+} from "../../types/diskIO/replies";
 import type { FlushResult } from "../../types/lifecycle";
 import type { BlocklistSweepRecord } from "../../types/blocklist";
+
+/** 新一轮补扫完整取代同群旧批次，并把变化纳入 durable outbox 快照。 */
+export function forgetSupersededChatSweepBatches(
+  chatId: number,
+  exceptRemovalId?: number
+): void {
+  let changed: boolean = false;
+  for (const [removalId, pending] of pendingBlockedRemovals) {
+    if (
+      pending.params.chatId === chatId &&
+      pending.params.probeMembership &&
+      removalId !== exceptRemovalId
+    ) {
+      pendingBlockedRemovals.delete(removalId);
+      blocklistSweepPages.delete(removalId);
+      changed = true;
+    }
+  }
+  if (changed && !queuePendingBlockedRemovalsSnapshot()) {
+    logger.error(
+      `Failed to queue superseded blocklist sweep cleanup for chat ${chatId}.`
+    );
+  }
+}
 
 /** 恢复出的权限闩锁不重投；等确证权限恢复后以一条新补扫取代旧任务。 */
 function restorePermissionBlockedSweep(

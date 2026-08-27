@@ -1,7 +1,7 @@
 /**
  * 每条群消息共担的那段主干、自发消息判定，以及 AI 开启后媒体分支的纯计算段。
  *
- * 与 scenarios.ts 分开：这几条量的是编排主干（handleIncomingMessage 那串固定
+ * 与 scenarios.ts 分开：这几条量的是编排主干（handleIncomingMessageMiddleware 那串固定
  * 调用），改动它们要读的是 auto/message 那一侧，与容器/时间窗那批叶子场景无关。
  */
 
@@ -14,18 +14,23 @@ import { claimRandomMediaTrigger } from "../../../packages/auto/message/triggerP
 import type { AiBotInfo, AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
 import type { AiSpeakerSnapshot } from "../../../packages/types/aiChat/speaker";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../../packages/types/auto";
+import type { ChatState } from "../../../packages/types/chatState";
 import {
   clearAiReplyActivity,
   observeGroupMessageForAiReply,
 } from "../../../packages/auto/message/aiReplyActivity";
-import { handleIncomingMessage } from "../../../packages/auto/message";
+import { handleIncomingMessageMiddleware } from "../../../packages/auto/message";
 import { handleProactiveMessageActions } from "../../../packages/auto/message/proactive";
 import {
   senderUsernameCache,
   userCache,
 } from "../../../packages/cache/main/senderIdentity";
+import { aiChatConfigReadinessCache } from
+  "../../../packages/cache/main/configReadiness";
+import { chatStateCache } from "../../../packages/cache/main/chatState";
 import { sentMessages } from "../../../packages/cache/perThread/selfSentTracker";
 import { isSelfSent } from "../../../packages/infra/selfSentTracker";
+import { getOrCreateChatState } from "../../../packages/infra/storage/stateStore";
 import { cacheSender } from "../../../packages/users/senderIdentity";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
 import type { Scenario } from "./types";
@@ -49,19 +54,21 @@ export function selfSentEmptyScenario(): Scenario {
 }
 
 /**
- * 每条群消息都要走的编排主干（`auto/message/index.ts` 的 handleIncomingMessage）。
+ * 每条群消息都要走的编排主干（`auto/message/index.ts` 的 handleIncomingMessageMiddleware）。
  *
  * 其余场景量的都是叶子工具，而叶子各自快不等于串起来快；这一条量的是真正跑在
- * 每条消息上的那串固定调用：recordChatTitleFromChat → cacheSender → getChatState
+ * 每条消息上的那串固定调用：getChatState → recordChatTitleFromChat → cacheSender
  * → observeGroupMessageForAiReply → getActiveCopyIn → isQuietUntilActive →
- * isAiChatActiveIn → handleProactiveMessageActions。
+ * isAiChatConfigured → handleProactiveMessageActions。
  *
  * **fixture 必须是「无可复制内容」的消息**，这是本场景零副作用的依据，不是随手
  * 挑的：没有 `text`，洗澡触发的第一个条件就不成立；`hasCopyableContent` 为 false，
  * 随机复读（`RANDOM_ECHO_PROBABILITY` = 1/100）也进不去。两道门一关，
- * `sendMessage`/`echoMessage` 在这条路径上不可达。落盘同理——`recordChatTitle`
- * 先查 `isInitEnabled !== true`，而基准进程从不 loadState，
- * `getChatState` 恒返回 DEFAULT_CHAT_STATE，因此 `saveChatStateInBackground` 也不可达。
+ * `sendMessage`/`echoMessage` 在这条路径上不可达。落盘同理——prepare 建立一份
+ * 标题已经一致的受管群状态，`recordChatTitle` 同步比较后直接返回，因此
+ * `saveChatStateInBackground` 不可达。AI 配置 readiness 也直接预置为成功，但
+ * 群开关保持关闭：这既覆盖生产已配置进程的稳态判定，又不投递 Worker，并避免
+ * 基准读取部署方的 config/。
  * 部署机上 bot 常驻运行、共用同一份 SQLite 和 token，这两条不可达性是本场景
  * 能安全存在的前提；改 fixture 前必须重新验证它们。
  *
@@ -87,9 +94,18 @@ export function incomingMessageSpineScenario(): Scenario {
   } as unknown as Context;
   return {
     iterations: 200_000,
-    run: async (iterations: number): Promise<number> => {
+    prepare: (): void => {
+      const state: ChatState = getOrCreateChatState(BENCHMARK_CHAT_ID);
+      state.isInitEnabled = true;
+      state.title = chat.title;
+      aiChatConfigReadinessCache.current = { ok: true };
+    },
+    run: (iterations: number): number => {
       for (let index: number = 0; index < iterations; index += 1) {
-        await handleIncomingMessage(ctx);
+        const pending: Promise<void> | undefined = handleIncomingMessageMiddleware(ctx);
+        if (pending !== undefined) {
+          throw new Error("Incoming message spine unexpectedly produced async work");
+        }
       }
       return iterations;
     },
@@ -97,9 +113,11 @@ export function incomingMessageSpineScenario(): Scenario {
       clearAiReplyActivity();
       userCache.clear();
       senderUsernameCache.clear();
+      chatStateCache.delete(BENCHMARK_CHAT_ID);
+      aiChatConfigReadinessCache.current = null;
     },
     probes: {
-      handleIncomingMessage,
+      handleIncomingMessageMiddleware,
       handleProactiveMessageActions,
       cacheSender,
       observeGroupMessageForAiReply,

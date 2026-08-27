@@ -27,7 +27,7 @@ import type {
   ForwardedLogBatch,
   LogLevel,
   LogMessage,
-} from "../types/diskIO";
+} from "../types/diskIO/messages";
 
 declare const self: Worker;
 

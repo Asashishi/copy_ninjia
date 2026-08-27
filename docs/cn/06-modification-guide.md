@@ -23,7 +23,7 @@
 
 1. **handler**：在 `packages/commands/` 新建一文件，`function` 声明导出 `handleXxxCommand`，显式返回类型。权限门禁参考现成模式：按权限键授权看 `block.ts` / `mood.ts`（一律 `hasCommandPermission(ctx, key)`，超级管理员恒持有全部权限键，不要再单独判身份）；只认超管身份、无法授权出去的看 `isSuperAdminActor`（`white.ts`、`batchKick.ts`）；仅私聊看 `send.ts`（非本人/非私聊静默 return，不回错误提示）。用户可见文案不写在 handler 里：放进所属领域的 `packages/consts/<domain>.ts` 文案表，类型放 `packages/types/`（见 `PERMISSION_COMMAND_TEXTS`、`BLOCK_TARGET_TEXTS`）——那既是给文案改动一个集中入口，也免掉每次调用现造一个对象加三个闭包。文案里要嵌无界的用户输入时才例外，`cjkAction.ts` 是唯一一处。
 2. **导出**：加入 `packages/commands/index.ts`。
-3. **注册**：在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 加 `bot.command("xxx", ...)`。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
+3. **注册**：在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 的 `commands` 子链上加 `commands.command("xxx", ...)`。**不要直接挂到 `bot` 上**——命令一律收在那条 `bot.on(":entities:bot_command")` 子链后面（理由见 [02 架构总览](02-architecture.md#一条消息的旅程) 的「命令注册」），`test/app/registerHandlers.test.ts` 会拒绝任何直接挂在 `bot` 上的命令。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
 4. **私聊网关**：新命令若要在私聊中使用，还必须同步调整 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 并补网关测试；当前私聊中的斜杠命令只显式放行 `/send`，仅注册 handler 不会到达命令处理器。纯群聊命令无需改这里。
 5. **菜单**：要出现在 Telegram 命令菜单就在 [`packages/consts/commands.ts`](../../packages/consts/commands.ts) 的 `BOT_COMMANDS` 加一项；像 `/send` 这类隐藏命令则不加。
 6. **参数常量**：冷却、阈值等进 `packages/consts/commands.ts` 或对应领域 consts，带中文 JSDoc。
@@ -36,7 +36,7 @@
 
 - **改用 `bot.hears` 匹配**：Telegram 只为 ASCII 命令生成 `bot_command` 实体，`bot.command` 永远匹配不到。必须用 `bot.hears(正则, ...)` 按消息原文匹配，并注册在消息兜底处理器 `bot.on(["message", "channel_post"], ...)` 之前，否则会被当作普通消息进入 AI/复读流水线。
 - **目标解析走另一条入口**：这类 handler 拿到的是普通 `Context` 而非 `CommandContext`，改为直接给 [`targetResolution.ts`](../../packages/commands/targetResolution.ts) 的 `resolveCommandTarget` 传 `ResolveCommandTargetParams`。不认领的形态（`/咬@OtherBot`、只有 caption 的消息、消息形态异常）必须 `next()` 放行，不能静默吞掉更新。
-- **只认 `message.text`**：`bot.hears` 对 text 和 caption 都会匹配，但认领一条带图消息意味着它不再流进 `handleIncomingMessage`，那张图就不会进 AI 滚动记忆与视觉流水线。
+- **只认 `message.text`**：`bot.hears` 对 text 和 caption 都会匹配，但认领一条带图消息意味着它不再流进 `handleIncomingMessageMiddleware`，那张图就不会进 AI 滚动记忆与视觉流水线。
 - **自己补上流水线的前置动作**：注册点在自动流水线**之前**，拿不到它那道自发消息门禁与 `cacheSender`。handler 必须自己调 `isBotOwnMessage` 跳过机器人自己的消息（否则频道回弹会形成自问自答的刷屏循环），并自己把发起人写进 username 缓存。
 - **显式区分留存语义**：成功动作结果是用户授权的长期留存内容，调用 `sendCommandMessage` 时必须显式传 `preserveInGroup: true`；目标缺失、参数错误和 `/x` 用法提示仍使用默认路径，在群里发送成功 30 秒后删除。
 - **不能进 `BOT_COMMANDS` 菜单**：BotFather 的命令名同样只收 ASCII（拉丁字母、数字、下划线，最长 32 字符）。`setMyCommands` 是整体提交，混入一个非法名会让整份菜单以 `BOT_COMMAND_INVALID` 失败，而注册失败只记日志不阻断启动，菜单会静默消失。想在菜单里曝光用法，就加一条 ASCII 占位说明项（现有的 `/x`），把语法写在 description 里。

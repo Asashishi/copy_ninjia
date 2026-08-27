@@ -39,6 +39,19 @@ describe("刷屏计数的主线程投递门禁", () => {
     expect(buildFloodCandidate(groupMessage(), BOT_ID)?.type).toBe("floodCandidate");
   });
 
+  test("调用方预读的群状态直接驱动门禁，旧的双参数调用仍自行查表", () => {
+    const expected: ReturnType<typeof buildFloodCandidate> =
+      buildFloodCandidate(groupMessage(), BOT_ID);
+    chatStateCache.clear();
+
+    expect(buildFloodCandidate(
+      groupMessage(),
+      BOT_ID,
+      { isFloodControlEnabled: true }
+    )).toEqual(expected);
+    expect(buildFloodCandidate(groupMessage(), BOT_ID)).toBeUndefined();
+  });
+
   test("超级群里的真实用户收敛成投递，标签按可见发送者算好", () => {
     expect(buildFloodCandidate(groupMessage(), BOT_ID)).toEqual({
       type: "floodCandidate",

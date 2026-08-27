@@ -1,26 +1,31 @@
 export {
   answerCallbackQuery,
-  copyMessage,
   editMessageText,
-  sendAudioWithResult,
   sendChatAction,
   sendEphemeralMessage,
   sendMessage,
   sendMessageWithResult,
-  sendPhoto,
-  sendPhotoWithResult,
-  sendSticker,
 } from "./actions/messages";
 export type {
   AnswerCallbackQueryParams,
   EditMessageTextParams,
-  SendAudioParams,
   SendChatActionParams,
   SendEphemeralMessageParams,
   SendMessageParams,
+} from "./actions/messages";
+
+export {
+  copyMessage,
+  sendAudioWithResult,
+  sendPhotoWithResult,
+  sendSticker,
+} from "./actions/mediaMessages";
+export type {
+  CopyMessageParams,
+  SendAudioParams,
   SendPhotoParams,
   SendStickerParams,
-} from "./actions/messages";
+} from "./actions/mediaMessages";
 
 export {
   deleteMessage,
@@ -47,7 +52,6 @@ export {
   banChatMemberWithOutcome,
   banChatSenderChat,
   banChatSenderChatWithOutcome,
-  kickChatMember,
   kickChatMemberWithOutcome,
   muteChatMemberWithOutcome,
   unbanChatMemberIfBanned,

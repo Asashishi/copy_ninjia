@@ -29,17 +29,19 @@ import * as diskIO from "./diskIO";
 import { logger } from "./logger";
 import type { CachedUser } from "../types/chatState";
 import type {
-  DomainFlushOutcome,
   IdentityPolicyWriteDiskMessage,
+  DiskIORecoveryTransport,
+} from "../types/diskIO/messages";
+import type {
+  DomainFlushOutcome,
   IdentityStoragePersistedReply,
-} from "../types/diskIO";
+} from "../types/diskIO/replies";
 import type {
   BlocklistEntryData,
   IdentityPolicyTable,
   TelegramIdentityMetadata,
   WhitelistEntryData,
 } from "../types/identityPolicy";
-import type { DiskIORecoveryTransport } from "../types/diskIO";
 import type {
   BlocklistIdPage,
   IdentityPolicyRawReadResult,

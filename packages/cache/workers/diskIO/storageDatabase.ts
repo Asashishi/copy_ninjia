@@ -1,6 +1,6 @@
 import { closeStorageDatabase } from "../../../database/interact/connection";
 import type { PendingBlockedRemoval } from "../../../types/blocklist";
-import type { IdentityPersistenceReply } from "../../../types/diskIO";
+import type { IdentityPersistenceReply } from "../../../types/diskIO/replies";
 import type {
   StorageDatabase,
   StoredIdentityIdLookups,

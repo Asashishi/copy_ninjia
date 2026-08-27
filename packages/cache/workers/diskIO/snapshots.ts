@@ -1,4 +1,7 @@
-import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../../../types/diskIO";
+import type {
+  AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
+} from "../../../types/diskIO/replies";
 
 /**
  * AI 记忆快照落盘（packages/workers/diskIO/aiMemoryFiles.ts）的内存状态；同目录

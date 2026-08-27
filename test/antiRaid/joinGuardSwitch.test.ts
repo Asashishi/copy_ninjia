@@ -44,6 +44,8 @@ mock.module("../../packages/infra/telegram/client", () => ({
 }));
 mock.module("../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => true,
+  // ingress 的同步快路径读它；未确证时返回 undefined 才会退回上面那次现查。
+  cachedBotAdminStatus: (): true => true,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},
@@ -222,6 +224,23 @@ describe("入群守卫开关（主线程投递侧）", () => {
     } as never, 999);
 
     expect(typesOf()).not.toContain("message");
+    expect(typesOf()).toContain("floodCandidate");
+  });
+
+  test("稳定态普通群消息同步返回 false，不为每条群消息分配 Promise", () => {
+    // 管理员身份已确证（cachedBotAdminStatus 命中）、没有黑名单频道身份、不是
+    // 服务消息、待验证镜像为空：整条判定全同步。返回 Promise 就意味着每条群
+    // 消息都白付一次 Promise 分配与一个微任务回合（见 app/registerHandlers.ts
+    // 的 claimOrContinue）。这条断言是那条形态契约唯一的守卫。
+    const started: boolean | Promise<boolean> = handleAntiRaidMessageIngress({
+      chat: { id: -1001, type: "supergroup" },
+      message_id: 11,
+      from: { id: 42, is_bot: false, first_name: "Zako" },
+      text: "普通群消息",
+    } as never, 999);
+
+    expect(started).toBe(false);
+    // 同步返回不等于跳过投递：刷屏计数照样在同一次调用里投出去。
     expect(typesOf()).toContain("floodCandidate");
   });
 

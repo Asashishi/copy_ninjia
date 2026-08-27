@@ -17,7 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { LogMessage } from "../../types/diskIO";
+import type { LogMessage } from "../../types/diskIO/messages";
 import type { DayFileState } from "../../types/diskIO/storage";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import {
@@ -254,13 +254,6 @@ export function adoptLogFiles(inspection: LogFilesInspection): void {
 export function maintainLogFiles(inspection: LogFilesInspection): void {
   cleanupStaleTmpFiles(inspection.names);
   cleanupOldLogs(inspection.names);
-}
-
-/** 单领域初始化入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
-export function initLogFiles(): void {
-  const inspection: LogFilesInspection = inspectLogFiles();
-  adoptLogFiles(inspection);
-  maintainLogFiles(inspection);
 }
 
 /** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */

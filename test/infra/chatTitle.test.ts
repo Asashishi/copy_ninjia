@@ -10,6 +10,7 @@ const getChat = mock(async (_chatId: number, _signal?: AbortSignal): Promise<{
 }> => ({ type: "supergroup", title: "title" }));
 const loggerInfo = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
+const getChatState = mock((chatId: number) => states.get(chatId) ?? {});
 
 mock.module("../../packages/infra/telegram/mainClient", () => ({ bot: { api: { getChat } } }));
 mock.module("../../packages/infra/logger", () => ({
@@ -17,7 +18,7 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => states,
-  getChatState: (chatId: number) => states.get(chatId) ?? {},
+  getChatState,
   getOrCreateChatState: (chatId: number) => states.get(chatId)!,
   saveChatStateInBackground: (_chatId: number, context: string): void => { saveStateInBackground(context); },
 }));
@@ -25,6 +26,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 const {
   abortChatTitleRefresh,
   initChatTitleRefresh,
+  recordChatTitleFromChat,
   refreshAllChatTitles,
 } = await import("../../packages/infra/chatTitle");
 
@@ -34,10 +36,35 @@ beforeEach(() => {
   saveStateInBackground.mockClear();
   loggerInfo.mockClear();
   loggerError.mockClear();
+  getChatState.mockClear();
   initChatTitleRefresh();
 });
 
 describe("chat title maintenance", () => {
+  test("群消息入口保留单参数调用语义，并在标题变化时落盘", () => {
+    states.set(1, { isInitEnabled: true, title: "旧标题" });
+
+    recordChatTitleFromChat({ id: 1, type: "supergroup", title: "新标题" });
+
+    expect(getChatState).toHaveBeenCalledTimes(1);
+    expect(states.get(1)?.title).toBe("新标题");
+    expect(saveStateInBackground).toHaveBeenCalledTimes(1);
+  });
+
+  test("群消息入口复用调用方已读取的状态，不重复查表或改变写入语义", () => {
+    const state = { isInitEnabled: true as const, title: "旧标题" };
+    states.set(1, state);
+
+    recordChatTitleFromChat(
+      { id: 1, type: "supergroup", title: "新标题" },
+      state
+    );
+
+    expect(getChatState).not.toHaveBeenCalled();
+    expect(states.get(1)?.title).toBe("新标题");
+    expect(saveStateInBackground).toHaveBeenCalledTimes(1);
+  });
+
   test("25 个受管 chat 使用固定小并发池并全部独立结算", async () => {
     for (let chatId: number = 1; chatId <= STATE_MANAGED_CHAT_LIMIT; chatId++) {
       states.set(chatId, { isInitEnabled: true });

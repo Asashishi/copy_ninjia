@@ -104,8 +104,8 @@ const ZH: BenchmarkCopy = {
     storage:
       "复用 `bun run perf:identity-database` 的实现；「冷」指连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。",
     "container-algorithm":
-      "生产选用的容器与算法：有配额上限的滑动窗口用 `TimestampDeque`，没有上限的" +
-      "反刷群入群窗口用 `LinkedQueue` + `trimSlidingWindow`，AI 滚动记忆缓冲用 " +
+      "生产选用的容器与算法：普通配额窗口与有界反刷群入群窗口均使用 `TimestampDeque`，" +
+      "AI 滚动记忆缓冲用 " +
       "`BoundedDeque`；这里单独量容器本身的成本。",
     "join-log-capacity":
       "25 万条满库入群日志上跑当前实现的快照与容量裁剪。",
@@ -202,8 +202,8 @@ const EN: BenchmarkCopy = {
       "Reuses `bun run perf:identity-database`; \"cold\" means an empty connection page cache and statement cache, " +
       "not a dropped OS page cache.",
     "container-algorithm":
-      "The containers and algorithms production actually runs on: quota-capped sliding windows use " +
-      "`TimestampDeque`, the uncapped anti-raid join window uses `LinkedQueue` + `trimSlidingWindow`, " +
+      "The containers and algorithms production actually runs on: quota and bounded anti-raid join " +
+      "windows use `TimestampDeque`, " +
       "the AI rolling memory buffer uses `BoundedDeque`; this section prices the container itself.",
     "join-log-capacity":
       "Today's implementation, taking a snapshot and trimming to capacity over a full 250k-record join log.",
@@ -297,8 +297,8 @@ const JA: BenchmarkCopy = {
       "`bun run perf:identity-database` の実装を再利用。「コールド」は接続のページキャッシュと文キャッシュが空である意味で、" +
       "OS のページキャッシュを破棄したという意味ではない。",
     "container-algorithm":
-      "本番が実際に使うコンテナとアルゴリズム：上限付きスライディングウィンドウは `TimestampDeque`、" +
-      "上限なしの荒らし対策 join ウィンドウは `LinkedQueue` + `trimSlidingWindow`、" +
+      "本番が実際に使うコンテナとアルゴリズム：通常の上限付きウィンドウと有界の荒らし対策 " +
+      "join ウィンドウは `TimestampDeque`、" +
       "AI のローリングメモリバッファは `BoundedDeque`。ここではコンテナ自体のコストを計測する。",
     "join-log-capacity":
       "25 万件を満載した参加ログ上で、現行実装のスナップショットと容量トリムを計測する。",

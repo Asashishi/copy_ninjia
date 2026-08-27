@@ -8,7 +8,10 @@ import {
   JOIN_LOG_SNAPSHOT_BRACE_BYTES,
   JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
 } from "../../consts/diskIO/joinLog";
-import type { JoinLogRecord } from "../../types/diskIO/storage";
+import type {
+  BufferedJoinLogEntry,
+  JoinLogRecord,
+} from "../../types/diskIO/storage";
 import { invalidInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
 
@@ -100,6 +103,33 @@ export function latestJoinLogRecords(
     }
   }
   return latest;
+}
+
+/** 将同批乱序重投折叠成每用户比已落盘值更新的最后一项。 */
+export function newestBufferedJoinLogRecords(
+  entries: readonly BufferedJoinLogEntry[],
+  persisted: ReadonlyMap<number, JoinLogRecord>
+): BufferedJoinLogEntry[] {
+  const newestByUser: Map<number, BufferedJoinLogEntry> = new Map();
+  for (const entry of entries) {
+    const candidate: BufferedJoinLogEntry | undefined =
+      newestByUser.get(entry.record.userId);
+    if (
+      candidate === undefined ||
+      entry.record.joinedAt > candidate.record.joinedAt
+    ) {
+      newestByUser.set(entry.record.userId, entry);
+    }
+  }
+  const newest: BufferedJoinLogEntry[] = [];
+  for (const entry of newestByUser.values()) {
+    const current: JoinLogRecord | undefined =
+      persisted.get(entry.record.userId);
+    if (current === undefined || entry.record.joinedAt > current.joinedAt) {
+      newest.push(entry);
+    }
+  }
+  return newest;
 }
 
 /**

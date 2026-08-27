@@ -42,25 +42,29 @@ import {
   waitForDiskIODiagnostics,
 } from "./diskIO/diagnosticChannel";
 import { safePostDiskIO } from "./diskIO/transport";
+export {
+  onAiMemoryDeletedPersisted,
+  onAiMemoryPersisted,
+  onDiskIOGiveUp,
+  onDiskIORespawn,
+  onIdentityStoragePersisted,
+  onLuckAppendStalled,
+  onVerificationPersisted,
+} from "./diskIO/observers";
 import type { FlushResult } from "../types/lifecycle";
 import type {
-  AiMemoryDeletedPersistedReply,
-  AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskFlushRequest,
-  DiskIODomain,
-  DiskIORespawnListener,
-  DiskIORespawnRegistration,
-  DomainFlushOutcome,
   LoadRequest,
-  LoadedData,
-  LoadedReply,
   AdSampleDiskMessage,
   LogMessage,
-  LuckAppendStalledReply,
-  IdentityStoragePersistedReply,
-  VerificationPersistedReply,
-} from "../types/diskIO";
+} from "../types/diskIO/messages";
+import type {
+  DiskIODomain,
+  DomainFlushOutcome,
+  LoadedData,
+  LoadedReply,
+} from "../types/diskIO/replies";
 import type {
   JoinLogRecord,
   LuckReceiptSecret,
@@ -121,83 +125,6 @@ export function initDiskIO({
 /** 供入口生命周期守卫和无副作用 import 测试查询，不代表 Worker 当前可用。 */
 export function isDiskIOInitialized(): boolean {
   return diskIORuntime.initialized;
-}
-
-/**
- * 注册一个恢复 listener：diskIOWorker 崩溃重建后调用，用于把主线程侧的镜像
- * （AI 记忆 latestAiMemories、运势 dailyLuckCache、待验证 active/终结变化）
- * 重新投递给新实例，补齐上一次成功落盘之后的增量。listener 必须等待本领域
- * 全部异步工作并明确返回成败；普通 postDiskIO 会进入恢复缓冲，镜像重放只能
- * 使用传入的 scoped transport。落盘 Worker 是唯一单例，各领域登记一次即可。
- */
-export function onDiskIORespawn(
-  owner: string,
-  priority: number,
-  listener: DiskIORespawnListener
-): void {
-  if (owner.length === 0) throw new RangeError("Disk I/O respawn listener owner must not be empty.");
-  if (!Number.isSafeInteger(priority)) {
-    throw new RangeError("Disk I/O respawn listener priority must be a safe integer.");
-  }
-  if (diskIORuntime.respawnListeners.some(
-    (registration: DiskIORespawnRegistration): boolean => registration.owner === owner
-  )) {
-    throw new Error(`Disk I/O respawn listener owner ${owner} is already registered.`);
-  }
-  const insertionIndex: number = diskIORuntime.respawnListeners.findIndex(
-    (registration: DiskIORespawnRegistration): boolean => registration.priority > priority ||
-      (registration.priority === priority && registration.owner.localeCompare(owner) > 0)
-  );
-  const registration: DiskIORespawnRegistration = { owner, priority, listener };
-  if (insertionIndex === -1) {
-    diskIORuntime.respawnListeners.push(registration);
-    return;
-  }
-  diskIORuntime.respawnListeners.splice(insertionIndex, 0, registration);
-}
-
-/** 注册待验证增量 JSON 真正写入后的确认回调。 */
-export function onVerificationPersisted(callback: (reply: VerificationPersistedReply) => void): void {
-  diskIORuntime.verificationPersistedListeners.push(callback);
-}
-
-/** 注册 AI 记忆删除真正 durable（或被更新 revision 覆盖）的确认回调。 */
-export function onAiMemoryDeletedPersisted(callback: (reply: AiMemoryDeletedPersistedReply) => void): void {
-  diskIORuntime.aiMemoryDeletedPersistedListeners.push(callback);
-}
-
-/** 注册 purge 后首份新 AI 记忆真正 durable 的确认回调。 */
-export function onAiMemoryPersisted(callback: (reply: AiMemoryPersistedReply) => void): void {
-  diskIORuntime.aiMemoryPersistedListeners.push(callback);
-}
-
-/**
- * 注册「Worker 耗尽重启预算、放弃自愈」的回调。
- *
- * 与崩溃回调分开：普通崩溃后还有替补 Worker，各领域靠 onDiskIORespawn 重放即可
- * 自愈；放弃之后没有下一个 Worker，任何还在等 durable 回执的调用方都不会再等到
- * 它，只能由各自 owner 立刻按失败结算，而不是干等自己那份超时。
- */
-export function onDiskIOGiveUp(callback: () => void): void {
-  diskIORuntime.giveUpListeners.push(callback);
-}
-
-/**
- * 注册「当日运势追加已连续失败到阈值」的诊断回调（运势 owner 唯一订阅方）。
- *
- * 与本模块自身错误只走 console.error 不冲突：报的不是本宿主的传输故障，而是
- * Worker 报上来的领域持续丢数据，理由与递归边界见 types/diskIO.ts 的
- * LuckAppendStalledReply。
- */
-export function onLuckAppendStalled(callback: (reply: LuckAppendStalledReply) => void): void {
-  diskIORuntime.luckAppendStalledListeners.push(callback);
-}
-
-/** 注册 SQLite 事务 ACK；身份缓存 owner 与待踢 outbox owner 各自只消费自己的 revision。 */
-export function onIdentityStoragePersisted(
-  callback: (reply: IdentityStoragePersistedReply) => void
-): void {
-  diskIORuntime.identityStoragePersistedListeners.push(callback);
 }
 
 /**

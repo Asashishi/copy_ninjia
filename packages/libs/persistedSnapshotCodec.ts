@@ -31,18 +31,49 @@ function isAiSpeakerSnapshot(
     (value.username === undefined || typeof value.username === "string");
 }
 
+/**
+ * 落盘的被回复引用允许出现的全部键（AI 记忆快照格式的一部分，本模块解码用）。
+ *
+ * 三张键名表都提到模块级：解码要对滚动缓存里的**每一条**记录各调一次，写在
+ * 函数体里就是每条记录新建一个数组；内容是落盘格式本身，不随调用变化。
+ * 校验函数只读不改这些数组（见 libs/record.ts）。
+ */
+const BUFFERED_REPLY_REFERENCE_KEYS: readonly string[] = [
+  "id",
+  "firstName",
+  "lastName",
+  "username",
+  "messageId",
+  "text",
+  "quote",
+  "forwardedFrom",
+];
+
+/** 落盘的滚动缓存单条消息允许出现的全部键；理由同上。 */
+const BUFFERED_MESSAGE_KEYS: readonly string[] = [
+  "id",
+  "firstName",
+  "lastName",
+  "username",
+  "messageId",
+  "text",
+  "replyTo",
+  "forwardedFrom",
+  "at",
+];
+
+/** version=1 AI 记忆快照顶层必须**恰好**具备的键；理由同上。 */
+const AI_MEMORY_SNAPSHOT_KEYS: readonly string[] = [
+  "version",
+  "buffer",
+  "summaries",
+  "pendingSummary",
+  "savedAt",
+];
+
 function isBufferedReplyReference(value: unknown): value is BufferedReplyReference {
   return isAiSpeakerSnapshot(value) &&
-    hasOnlyKeys(value, [
-      "id",
-      "firstName",
-      "lastName",
-      "username",
-      "messageId",
-      "text",
-      "quote",
-      "forwardedFrom",
-    ]) &&
+    hasOnlyKeys(value, BUFFERED_REPLY_REFERENCE_KEYS) &&
     typeof value.messageId === "number" &&
     Number.isSafeInteger(value.messageId) &&
     value.messageId > 0 &&
@@ -53,17 +84,7 @@ function isBufferedReplyReference(value: unknown): value is BufferedReplyReferen
 
 function isBufferedMessage(value: unknown): value is BufferedMessage {
   return isAiSpeakerSnapshot(value) &&
-    hasOnlyKeys(value, [
-      "id",
-      "firstName",
-      "lastName",
-      "username",
-      "messageId",
-      "text",
-      "replyTo",
-      "forwardedFrom",
-      "at",
-    ]) &&
+    hasOnlyKeys(value, BUFFERED_MESSAGE_KEYS) &&
     typeof value.messageId === "number" &&
     Number.isSafeInteger(value.messageId) &&
     value.messageId > 0 &&
@@ -87,7 +108,7 @@ export function decodeAiMemorySnapshot(
   }
   const raw: Record<string, unknown> = parsed;
   if (
-    !hasExactKeys(raw, ["version", "buffer", "summaries", "pendingSummary", "savedAt"]) ||
+    !hasExactKeys(raw, AI_MEMORY_SNAPSHOT_KEYS) ||
     raw.version !== 1 ||
     !Array.isArray(raw.buffer) ||
     !raw.buffer.every(isBufferedMessage) ||

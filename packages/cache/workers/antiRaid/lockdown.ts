@@ -7,7 +7,10 @@ import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal
  * verificationRuntime.ts 只读取 lockdownEntries 判断当前是否处于私密模式。
  */
 
-/** 每群最近入群滑窗；静默超时、群停用或 Worker 停止时清除。 */
+/**
+ * 每群最近入群滑窗；每条最多 JOIN_WINDOW_CAPACITY 个 number 和一个 timer。
+ * 静默超时、群停用或 Worker 停止时清除；Worker 重建后为空并从下一次入群计数。
+ */
 export const joinWindows: Map<number, JoinWindow> = new Map();
 /** 每群 lockdown 状态机与恢复 timer；解锁、停用或 Worker 停止时清除。 */
 export const lockdownEntries: Map<number, LockdownEntry> = new Map();

@@ -37,7 +37,8 @@ import {
   maintainLuckDay,
   recoverLuckDay,
 } from "./snapshotFiles";
-import type { LuckAppendStalledReply, LuckDrawDiskMessage } from "../../types/diskIO";
+import type { LuckDrawDiskMessage } from "../../types/diskIO/messages";
+import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { DayFileState, LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
 import type { LuckDayRecoveryInspection } from "./snapshotFiles";
 

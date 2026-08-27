@@ -14,12 +14,14 @@ import {
   TELEGRAM_429_RETRY_QUEUE_MAX,
 } from "../../packages/consts/telegram";
 import {
-  drainTelegramOutbound,
-  initTelegramOutbound,
-  quiesceTelegramOutbound,
   runTelegramCategorizedRequest,
   telegramOutboundGate,
 } from "../../packages/infra/telegram/outboundGate";
+import {
+  drainTelegramOutbound,
+  initTelegramOutbound,
+  quiesceTelegramOutbound,
+} from "../../packages/infra/telegram/outboundLifecycle";
 import {
   telegramRetryCategoryFor,
   TelegramRetryQueueFullError,

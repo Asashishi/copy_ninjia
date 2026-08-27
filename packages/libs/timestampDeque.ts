@@ -59,6 +59,24 @@ export class TimestampDeque {
     this.count += 1;
   }
 
+  /**
+   * 追加时间戳；达到硬上限时原地覆盖最早一项并返回被覆盖值。
+   *
+   * 仅供已经定义饱和语义的窗口使用。普通配额窗口必须继续调用 push，让违反
+   * 容量不变量的写入抛错，不能静默覆盖。
+   */
+  pushReplacingOldest(value: number): number | undefined {
+    if (this.count < this.maxCapacity) {
+      this.push(value);
+      return undefined;
+    }
+    const replaced: number | undefined = this.values[this.head];
+    this.values[this.head] = value;
+    const next: number = this.head + 1;
+    this.head = next === this.values.length ? 0 : next;
+    return replaced;
+  }
+
   /** 移除并返回最早时间戳。 */
   shift(): number | undefined {
     if (this.count === 0) return undefined;
@@ -91,15 +109,43 @@ export class TimestampDeque {
   }
 
   /**
+   * 移除第一个与 value 全等的时间戳；窗口容量很小且撤销属于低频异步路径，
+   * 因此原地移动后续数字，避免为按值撤销保留链表节点或临时数组。
+   */
+  removeValue(value: number): boolean {
+    const length: number = this.values.length;
+    let foundOffset: number = -1;
+    for (let offset: number = 0; offset < this.count; offset += 1) {
+      let index: number = this.head + offset;
+      if (index >= length) index -= length;
+      if (this.values[index] === value) {
+        foundOffset = offset;
+        break;
+      }
+    }
+    if (foundOffset < 0) return false;
+    for (let offset: number = foundOffset; offset < this.count - 1; offset += 1) {
+      let target: number = this.head + offset;
+      if (target >= length) target -= length;
+      let source: number = target + 1;
+      if (source === length) source = 0;
+      this.values[target] = this.values[source] ?? 0;
+    }
+    this.count -= 1;
+    if (this.count === 0) this.head = 0;
+    return true;
+  }
+
+  /**
    * 就地保留半开窗口 `(now - windowMs, now]`。直接操作环形下标，避免热路径
    * 为每次修剪跨多个公开队列方法调用。
    *
    * **全仓滑动窗口的边界定义就是这里**，调用方不要各自手写
    * `while (peek() < cutoff) shift()`：`<` / `<=` / `>=` 的写法差一个刻度，
    * 同样的窗口长度会因为读的是哪份副本而得出不同结论。另外两种形态
-   * （无硬顶窗口的 `trimSlidingWindow`、要随快照落盘的
-   * `trimSlidingWindowArray`，都在 libs/slidingWindowRateLimit.ts）必须与本方法
-   * 逐字一致，该约束由 test/libs/slidingWindowBoundary.test.ts 的同输入对拍锁住。
+   * 要随快照落盘的 `trimSlidingWindowArray` 位于
+   * libs/slidingWindowRateLimit.ts，必须与本方法逐字一致；该约束由
+   * test/libs/slidingWindowBoundary.test.ts 的同输入对拍锁住。
    *
    * 两件事：
    * 1. 丢掉已滑出窗口的队首（`ts <= now - windowMs`）；

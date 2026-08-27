@@ -2,20 +2,18 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  IDENTITY_DATABASE_SCHEMA_DATA,
-  IDENTITY_DATABASE_SCHEMA_KEY,
-} from "../../packages/consts/identityStorage";
 import { encodeChatQaData } from "../../packages/database/codec/chatQa";
 import {
   clearStorageBusinessTables,
   seedStorageDatabase,
-} from "../../packages/database/interact/admin";
+} from "../../scripts/fixtures/storageDatabase";
 import { readStoredChatQa } from "../../packages/database/interact/chatQa";
 import {
   closeStorageDatabase,
   openStorageDatabase,
 } from "../../packages/database/interact/connection";
+import { initializeStorageDatabase } from
+  "../../packages/database/interact/initialization";
 import { createStorageDatabase } from
   "../../packages/database/interact/migration";
 import type { StorageDatabase } from "../../packages/types/storageDatabase";
@@ -39,11 +37,9 @@ describe("共享数据库夹具辅助函数", () => {
   test("播种和清理全部业务表时包含 chat_qa", () => {
     const database: StorageDatabase = createFixture();
     try {
+      initializeStorageDatabase(database);
       seedStorageDatabase(database, {
-        metadata: [{
-          key: IDENTITY_DATABASE_SCHEMA_KEY,
-          data: IDENTITY_DATABASE_SCHEMA_DATA,
-        }],
+        metadata: [],
         whitelist: [],
         blocklist: [],
         removals: [],

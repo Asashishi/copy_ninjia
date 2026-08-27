@@ -539,11 +539,7 @@ else
   # 运行时按设计不会凭缺失数据库猜出一份空名单，所以全新部署必须显式建库。
   # 直接复用生产建库入口，不另写一份建表逻辑。
   #
-  # createStorageDatabase 只建表：storage_metadata 的 schema-version 行不在
-  # migration 里（0001/0002 只 UPDATE 它，空表上是 no-op），必须由建库方补。
-  # 漏掉这一行，库建出来是好的，但启动 hydrate 会以「storage_metadata must
-  # contain exactly one schema-version row」拒绝——错误出现在下一步，很难往回
-  # 想到是建库少了一笔。
+  # createStorageDatabase 只建表；当前 schema-version 由初始化边界另写一笔。
   bun -e '
     import { createStorageDatabase } from "./packages/database/interact/migration";
     import {
@@ -551,24 +547,13 @@ else
       enableStorageDatabaseWal,
       openStorageDatabase,
     } from "./packages/database/interact/connection";
-    import { seedStorageDatabase } from "./packages/database/interact/admin";
-    import {
-      IDENTITY_DATABASE_SCHEMA_DATA,
-      IDENTITY_DATABASE_SCHEMA_KEY,
-    } from "./packages/consts/identityStorage";
+    import { initializeStorageDatabase } from
+      "./packages/database/interact/initialization";
     import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
     createStorageDatabase(IDENTITY_DATABASE_PATH);
     const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
     try {
-      seedStorageDatabase(database, {
-        metadata: [{
-          key: IDENTITY_DATABASE_SCHEMA_KEY,
-          data: IDENTITY_DATABASE_SCHEMA_DATA,
-        }],
-        whitelist: [],
-        blocklist: [],
-        removals: [],
-      });
+      initializeStorageDatabase(database);
     } finally {
       closeStorageDatabase(database);
     }

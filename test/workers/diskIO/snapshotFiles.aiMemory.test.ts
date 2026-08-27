@@ -12,7 +12,23 @@ const realPaths = await import("../../../packages/consts/paths");
 const { mock } = await import("bun:test");
 mock.module("../../../packages/consts/paths", () => ({ ...realPaths, AI_MEMORY_DIR: aiDir }));
 
-const { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } = await import("../../../packages/workers/diskIO/snapshotFiles");
+const {
+  deleteAiMemoryFile,
+  inspectAiMemories,
+  maintainAiMemoryFiles,
+  writeAiMemoryFile,
+} = await import("../../../packages/workers/diskIO/snapshotFiles");
+
+/**
+ * 单领域恢复的测试编排：生产按 inspect -> adopt -> maintenance 三阶段跑
+ * （见 workers/diskIO/startup.ts），这里把「只读扫描 + 清理临时文件」收成一行，
+ * 好让每个用例只关心解码结果。
+ */
+function recoverAiMemories(): Map<number, string> {
+  const inspection = inspectAiMemories();
+  maintainAiMemoryFiles(inspection);
+  return inspection.snapshots;
+}
 
 const currentSnapshot = {
   version: 1,

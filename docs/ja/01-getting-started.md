@@ -190,24 +190,13 @@ bun -e '
     enableStorageDatabaseWal,
     openStorageDatabase,
   } from "./packages/database/interact/connection";
-  import { seedStorageDatabase } from "./packages/database/interact/admin";
-  import {
-    IDENTITY_DATABASE_SCHEMA_DATA,
-    IDENTITY_DATABASE_SCHEMA_KEY,
-  } from "./packages/consts/identityStorage";
+  import { initializeStorageDatabase } from
+    "./packages/database/interact/initialization";
   import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
   createStorageDatabase(IDENTITY_DATABASE_PATH);
   const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
   try {
-    seedStorageDatabase(database, {
-      metadata: [{
-        key: IDENTITY_DATABASE_SCHEMA_KEY,
-        data: IDENTITY_DATABASE_SCHEMA_DATA,
-      }],
-      whitelist: [],
-      blocklist: [],
-      removals: [],
-    });
+    initializeStorageDatabase(database);
   } finally {
     closeStorageDatabase(database);
   }
@@ -217,7 +206,7 @@ chmod 2770 database
 chmod 660 database/storage.sqlite
 ```
 
-`seedStorageDatabase` の 1 行は省略できません。`createStorageDatabase` は table を作るだけで、`storage_metadata` の schema-version 行はどの migration にも含まれません（`0001`/`0002` は `UPDATE` するだけで、空 table では no-op です）。省くと database は一見正常ですが、起動時の hydrate が「storage_metadata must contain exactly one schema-version row」で拒否します。しかもその error は次の段階で出るため、作成時の 1 行不足まで遡るのが難しくなります。
+`initializeStorageDatabase` の 1 行は省略できません。`createStorageDatabase` は table を作るだけで、`storage_metadata` の schema-version 行は migration に含まれません。省くと database は一見正常ですが、起動時の hydrate が「storage_metadata must contain exactly one schema-version row」で拒否します。
 
 作られるのは現行 schema の空 database で、allowlist・blocklist・removal outbox はいずれも空です。
 target が既に存在する場合 `createStorageDatabase` は上書きを拒否するため、現場には触れません。2 つの

@@ -2,7 +2,7 @@ import { diskIORuntime } from "../../cache/main/diskIO";
 import type {
   DiskDiagnosticBatchRequest,
   DiskDiagnosticMessage,
-} from "../../types/diskIO";
+} from "../../types/diskIO/messages";
 import type { FlushResult } from "../../types/lifecycle";
 import type { AcknowledgedBatch } from "../../libs/acknowledgedBatchQueue";
 import { jsonSerializedBytes } from "../../libs/jsonBytes";

@@ -14,7 +14,7 @@ import {
   AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
 } from "../consts/aiChat/provider";
 import { getChatQa } from "../infra/qaStore";
-import { telegramOutboundStats } from "../infra/telegram/outboundGate";
+import { telegramOutboundStats } from "../infra/telegram/outboundLifecycle";
 import { postAiChatOrThrow } from "./workerBridge";
 
 /** 为 purge 后第一份新记忆武装即时持久化标志，并在投递失败时回滚新标志。 */

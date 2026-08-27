@@ -43,11 +43,11 @@
 
 ### 依赖冷却期
 
-依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，记录写入 [`dependency-release-age-exemptions.json`](../../dependency-release-age-exemptions.json)。当前 Bun 运行时与 `@types/bun` 均为 1.4.0。
+依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时与 `@types/bun` 均为 1.4.0。
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2821 tests / 287 files / 96239 次 `expect()`**；全源码**函数覆盖率 95.98% / 行覆盖率 97.14%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2876 tests / 294 files / 96444 次 `expect()`**；全源码**函数覆盖率 96.28% / 行覆盖率 97.19%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 

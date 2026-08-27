@@ -40,7 +40,7 @@ import {
 import {
   drainPendingMessageDeletions,
 } from "../infra/telegram";
-import { drainTelegramOutbound } from "../infra/telegram/outboundGate";
+import { drainTelegramOutbound } from "../infra/telegram/outboundLifecycle";
 import { bot, initTelegramClients } from "../infra/telegram/mainClient";
 import { sleep } from "../libs/sleep";
 import { monotonicNow } from "../libs/monotonicDeadline";

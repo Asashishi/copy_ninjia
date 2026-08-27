@@ -20,7 +20,7 @@ import type {
   ChatStatePersistedRevision,
   IdentityPersistenceReply,
   IdentityPolicyPersistedRevision,
-} from "../../../types/diskIO";
+} from "../../../types/diskIO/replies";
 import type {
   PendingChatQaWrite,
   PendingChatStateWrite,

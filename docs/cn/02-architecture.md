@@ -51,7 +51,7 @@ Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共
 3. **init 网关**——未 `/init enable` 的群，其普通业务 update 在这里终止；`my_chat_member`、自身 `via_bot` 消息与超级管理员的 `/init` 等显式例外由 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 放行。
 4. **私聊网关**——私聊只放行 `/send` 入口与进行中的中转会话；中转消息短路进消息流水线，避免文本被当成命令。
 5. **入群验证**——必须早于命令处理，否则待验证用户发的命令不会被追踪清理。整条链路（验证 + 防冲群私密模式）按群缺省关闭，由 `/antiraid enable` 打开；关着的群在这一步就不投递任何入群事件。
-6. **命令注册**——所有 `bot.command(...)` 在这里逐项注册，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。其中 `/x` 是菜单占位项：它只为曝光中文动作命令的用法，收到时回一句用法说明并就此终止链路。
+6. **命令注册**——所有命令都注册在同一条 `bot.on(":entities:bot_command")` 子链上，不逐条挂到 `bot`，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。这层外闸是承重的：grammY 的 `command` 经 `filter → branch → lazy` 注册，每条注册都要在**每条** update 上 `await` 一次工厂、建一个数组并 `new` 一个 Composer；平铺注册等于每条普通群消息为它一次都用不上的命令层白付这笔开销。外闸判据与 `Context.has.command()` 自己的第一步完全相同，因此命中集合、相对顺序与「命中即终止」的语义都不变。其中 `/x` 是菜单占位项：它只为曝光中文动作命令的用法，收到时回一句用法说明并就此终止链路。
 7. **中文动作命令**——`/咬`、`/贴贴` 这类命令（动作词收 1~2 个中文字）拿不到 Telegram 的 `bot_command` 实体，`bot.command` 匹配不到，只能用 `bot.hears` 按消息原文匹配（见 [`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts)）。**必须排在下一步的消息兜底之前**——排在后面就会被当成普通消息进入 AI/复读流水线，整个特性静默失效。因为它排在自动流水线之前，那条流水线的自发消息门禁对它无效，handler 自己要跳过机器人自己的消息；也因为被它认领的消息不再往下走，handler 要自己补上发送者身份缓存。不认领的形态（`/咬@OtherBot`、caption 形态、消息形态异常）一律 `next()` 放行。
 8. **自动消息流水线**——[`packages/auto/`](../../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
 

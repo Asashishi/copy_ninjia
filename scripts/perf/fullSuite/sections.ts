@@ -120,16 +120,15 @@ export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
  * 生产选用的容器与算法，单独把容器本身的成本量出来。
  *
  * 只列线上真正在用的实现，被淘汰的候选不进表——读者没有办法从一行读数看出它
- * 到底是不是生产成本。滑动窗口线上有两套，都在用，因此两行都出：有配额上限的
- * 窗口用 `TimestampDeque`，没有上限的反刷群入群窗口只能用 `LinkedQueue`
- * （见 packages/libs/slidingWindowRateLimit.ts 的头注）。AI 滚动记忆缓冲是
- * `BoundedDeque`。
+ * 到底是不是生产成本。滑动窗口线上有两套，都使用 `TimestampDeque`：普通配额
+ * 窗口满时拒绝，反刷群入群窗口满时覆盖最早项并维持饱和标记。AI 滚动记忆缓冲
+ * 使用 `BoundedDeque`。
  *
  * 与生产热路径分表，是因为那张表量的是完整业务函数，这张表量的是容器原语。
  */
 export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "quota-timestamp-window",
-  "linked-timestamp-window",
+  "join-timestamp-window",
   "bounded-rolling-buffer",
 ];
 

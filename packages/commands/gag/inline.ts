@@ -269,13 +269,34 @@ function findActiveGagSenderSession(
  * 命令前的消息入口：活动目标的任何消息都被认领。频道 inline 结果必须由主页
  * 标记与 sender_chat.id 同时绑定发言频道，并由 fragment 与 message.chat.id
  * 同时绑定超级群；用户分支对应核对主页标记、群 ID 与 from.id。
+ *
+ * **常态同步返回 false**：本群没有活动会话、这条也不是本 bot 发出的旧 gag
+ * inline 结果时，判定只有一次 Map.has 与一次 via_bot/entity 检查。本 handler
+ * 挂在每条群消息之前（见 app/registerHandlers.ts），不能为这条恒假的判定给
+ * 每条消息分配一个 Promise；只有真要认领时才进入下面的异步段。
  */
-export async function handleGagMessageIngress(
+export function handleGagMessageIngress(
+  message: Message,
+  botId: number
+): boolean | Promise<boolean> {
+  if (
+    !gagSessionsByChat.has(message.chat.id) &&
+    !hasGagInlineMarker(message, botId)
+  ) return false;
+  return claimGagMessage(message, botId);
+}
+
+/**
+ * 认领判定的异步段；只有本群有会话、或消息带 gag 标记时才走到（普通群消息在
+ * 上面那道同步守卫就返回了）。标记判定在这里重算一次：它是纯判定，而这条路
+ * 本来就低频，重算换来的是守卫与本体各自只读自己需要的东西。
+ */
+async function claimGagMessage(
   message: Message,
   botId: number
 ): Promise<boolean> {
   const hasMarker: boolean = hasGagInlineMarker(message, botId);
-  // 无活动会话时仍拦带标记的旧结果；普通消息只付一次 via_bot 判定。
+  // 本群没有会话时仍要拦下带标记的旧结果——那是跨群或已过期的 gag inline 结果。
   if (gagSessionsByChat.size === 0) {
     if (!hasMarker) return false;
     await deleteMessageWithOutcome(message.chat.id, message.message_id);

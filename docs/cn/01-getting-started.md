@@ -138,24 +138,13 @@ bun -e '
     enableStorageDatabaseWal,
     openStorageDatabase,
   } from "./packages/database/interact/connection";
-  import { seedStorageDatabase } from "./packages/database/interact/admin";
-  import {
-    IDENTITY_DATABASE_SCHEMA_DATA,
-    IDENTITY_DATABASE_SCHEMA_KEY,
-  } from "./packages/consts/identityStorage";
+  import { initializeStorageDatabase } from
+    "./packages/database/interact/initialization";
   import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
   createStorageDatabase(IDENTITY_DATABASE_PATH);
   const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
   try {
-    seedStorageDatabase(database, {
-      metadata: [{
-        key: IDENTITY_DATABASE_SCHEMA_KEY,
-        data: IDENTITY_DATABASE_SCHEMA_DATA,
-      }],
-      whitelist: [],
-      blocklist: [],
-      removals: [],
-    });
+    initializeStorageDatabase(database);
   } finally {
     closeStorageDatabase(database);
   }
@@ -165,7 +154,7 @@ chmod 2770 database
 chmod 660 database/storage.sqlite
 ```
 
-`seedStorageDatabase` 那一笔不能省：`createStorageDatabase` 只建表，`storage_metadata` 的 schema-version 行不在 migration 里（`0001`/`0002` 只 `UPDATE` 它，空表上是 no-op）。漏掉它库看着是好的，但启动 hydrate 会以「storage_metadata must contain exactly one schema-version row」拒绝，而报错出现在下一步，很难往回想到是建库少了一笔。
+`initializeStorageDatabase` 那一笔不能省：`createStorageDatabase` 只建表，`storage_metadata` 的 schema-version 行不在 migration 里。漏掉它库看着是好的，但启动 hydrate 会以「storage_metadata must contain exactly one schema-version row」拒绝。
 
 建出来的是当前 schema 的空库，黑白名单和待踢 outbox 都为空；目标库已存在时 `createStorageDatabase` 直接拒绝覆盖，不会动现场。两个 `chmod` 与
 [`packages/consts/identityStorage.ts`](../../packages/consts/identityStorage.ts) 的 `IDENTITY_DATABASE_DIRECTORY_MODE`、`IDENTITY_DATABASE_FILE_MODE` 一致，setgid 让 WAL/SHM 旁路文件继承同一个协作组。

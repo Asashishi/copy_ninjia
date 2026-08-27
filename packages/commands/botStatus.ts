@@ -21,7 +21,7 @@ import { GAG_SESSION_MAX } from "../consts/gag";
 import { readBotProcessStatus } from "../infra/processStatus";
 import { getChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { telegramOutboundStats } from "../infra/telegram/outboundGate";
+import { telegramOutboundStats } from "../infra/telegram/outboundLifecycle";
 import type { CachedUser, ChatState } from "../types/chatState";
 import type { BotProcessStatus } from "../types/botStatus";
 import type { BotChatPermissions } from "../types/telegram";

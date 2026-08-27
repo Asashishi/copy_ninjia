@@ -101,6 +101,8 @@ mock.module("../../packages/infra/telegram/lockdownPermissions", () => ({ restor
 mock.module("../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5, JOIN_WINDOW_MS: 60_000 }));
 mock.module("../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => true,
+  // ingress 的同步快路径读它；未确证时返回 undefined 才会退回上面那次现查。
+  cachedBotAdminStatus: (): true => true,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   // 权限位镜像的注册与按需补齐；本文件不触发，但整份模块被替换掉时缺了

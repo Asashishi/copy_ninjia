@@ -14,7 +14,8 @@ import {
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";
-import type { DiskIORecoveryTransport, LuckAppendStalledReply } from "../../types/diskIO";
+import type { DiskIORecoveryTransport } from "../../types/diskIO/messages";
+import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";

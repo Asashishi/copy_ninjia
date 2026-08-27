@@ -20,14 +20,18 @@ import {
   verificationRolloverTimer,
   verificationWorkerCache,
 } from "../../../packages/cache/workers/diskIO/verification";
-import { recoverVerificationDay } from
-  "../../../packages/workers/diskIO/verificationRecovery";
+import {
+  adoptVerificationDay,
+  inspectVerificationDay,
+  maintainVerificationDay,
+} from "../../../packages/workers/diskIO/verificationRecovery";
 import {
   handleVerificationUpsert,
   scheduleVerificationRollover,
 } from "../../../packages/workers/diskIO/verificationWrites";
 import type {
   PendingVerificationSnapshot,
+  VerificationSnapshot,
   VerificationSnapshotBase,
 } from "../../../packages/types/antiRaid/verification";
 import type { VerificationPersistedReply } from
@@ -80,6 +84,29 @@ function restartFixtureClock(now: number): void {
   jest.useRealTimers();
   jest.useFakeTimers({ now });
   recoverVerificationDay(DAY_ONE, dir);
+}
+
+/**
+ * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
+ * inspect -> adopt -> maintenance（见 workers/diskIO/startup.ts）。
+ *
+ * 生产没有这个包装。两点与生产不同，读断言时要记住：生产的 runMaintenance 对
+ * 每个领域单独 try/catch 并只记一行 console.error，不上抛、也不重置本领域缓存；
+ * 这里保留旧包装的「重置后上抛」，好让维护阶段的失败在用例里可断言。
+ */
+function recoverVerificationDay(
+  day: string,
+  dir: string
+): Map<string, VerificationSnapshot> {
+  const inspection = inspectVerificationDay(day, dir);
+  const recovered = adoptVerificationDay(inspection);
+  try {
+    maintainVerificationDay(inspection);
+  } catch (error: unknown) {
+    resetVerificationPersistenceCache();
+    throw error;
+  }
+  return recovered;
 }
 
 beforeEach((): void => {

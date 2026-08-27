@@ -1,4 +1,5 @@
-import type { LuckAppendStalledReply, LuckDrawDiskMessage } from "../../../types/diskIO";
+import type { LuckDrawDiskMessage } from "../../../types/diskIO/messages";
+import type { LuckAppendStalledReply } from "../../../types/diskIO/replies";
 import type { DayFileState, LuckDayCache, LuckPendingEntry } from "../../../types/diskIO/storage";
 
 /** 每日运势落盘（packages/workers/diskIO/luckFiles.ts）的内存状态。 */

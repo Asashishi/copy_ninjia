@@ -8,6 +8,11 @@ export const JOIN_WINDOW_MS: number = 60 * 1000;
  */
 export const ANTI_RAID_PER_MINUTE_LIMIT: number = 45;
 /**
+ * 入群滑窗保留的时间戳硬上限：阈值外多留一项即可证明窗口已经越界。
+ * 超出部分由 JoinWindow 的 overflowThrough 以保守饱和语义表示。
+ */
+export const JOIN_WINDOW_CAPACITY: number = ANTI_RAID_PER_MINUTE_LIMIT + 1;
+/**
  * 一轮私密模式（禁止普通成员拉人 + 新入群直接请出）的时长，也是它的**上限**。
  *
  * 恢复时刻在加锁生效那一刻定死：锁定期内再怎么灌人也不会把它推后（见

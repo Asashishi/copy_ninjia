@@ -20,8 +20,6 @@ import type {
 } from "../../types/antiRaid/protocol";
 import type {
   DeferredVerificationRecord,
-  VerificationSnapshot,
-  VerificationSnapshotBase,
 } from "../../types/antiRaid/verification";
 import type {
   VerificationDeleteEvent,
@@ -33,11 +31,9 @@ import {
 } from "../../states/verification";
 import type {
   ExpelSnapshot,
-  KickPendingState,
-  PendingState,
   VerificationEvent,
   VerificationState,
-  VerificationTerminalState, VerificationTransition,
+  VerificationTransition,
 } from "../../types/states/verification";
 import {
   type ParsedVerificationKey,
@@ -58,6 +54,10 @@ import {
 } from "./verificationReminders";
 import { trackAntiRaidTask } from "./taskTracker";
 import type { VerificationEntry } from "../../types/antiRaid/internal";
+import {
+  isPersistedVerificationState,
+  verificationSnapshot,
+} from "./verificationSnapshot";
 
 declare const self: Worker;
 
@@ -97,20 +97,6 @@ function startVerificationTimer(
     (): void => dispatchVerification(chatId, userId, { type: "dedupeExpired" }),
     LOCKDOWN_KICK_DEDUPE_MS
   );
-}
-
-type PersistedVerificationState =
-  | PendingState
-  | KickPendingState
-  | VerificationTerminalState;
-
-function isPersistedVerificationState(
-  state: VerificationState | undefined
-): state is PersistedVerificationState {
-  return state?.kind === "pending" ||
-    state?.kind === "kickPending" ||
-    state?.kind === "checkingInviter" ||
-    state?.kind === "expelling";
 }
 
 /**
@@ -210,83 +196,6 @@ export function deleteDeferredVerification(
     revision,
   } satisfies VerificationDeleteEvent);
   return true;
-}
-
-interface VerificationSnapshotParams {
-  chatId: number;
-  userId: number;
-  state: PersistedVerificationState;
-  revision: number;
-}
-
-function verificationSnapshot({
-  chatId,
-  userId,
-  state,
-  revision,
-}: VerificationSnapshotParams): VerificationSnapshot {
-  const source: PendingState | ExpelSnapshot | undefined =
-    state.kind === "pending"
-      ? state
-      : state.kind === "kickPending"
-        ? undefined
-        : state.snapshot;
-  const base: VerificationSnapshotBase = {
-    chatId,
-    userId,
-    generation: verificationGeneration.current,
-    revision,
-    label: state.kind === "kickPending" ? state.label : source!.label,
-    isBot: state.kind === "kickPending" ? state.isBot : source!.isBot,
-    announcementMessageId:
-      state.kind === "kickPending"
-        ? state.announcementMessageId
-        : source!.announcementMessageId,
-    trackedMessageTimes:
-      state.kind === "pending" ? [...state.trackedMessageTimes] : [],
-    invitedBy: state.kind === "pending" ? state.invitedBy : undefined,
-    reminderMessageId: source?.reminderMessageId,
-    replyReminderMessageId: source?.replyReminderMessageId,
-    replyReminderRequested:
-      state.kind === "pending" ? state.replyReminderRequested : false,
-    welcomeAnchorMessageId:
-      state.kind === "pending" ? state.welcomeAnchorMessageId : undefined,
-    reminderSuperseded:
-      state.kind === "pending" ? state.reminderSuperseded : true,
-    joinedAt:
-      state.kind === "kickPending" ? state.requestedAt : source!.joinedAt,
-    expiresAt:
-      state.kind === "kickPending" ? state.requestedAt : source!.expiresAt,
-  };
-  if (state.kind === "pending") return { ...base, phase: "pending" };
-  if (state.kind === "kickPending") {
-    return {
-      ...base,
-      phase: "kickPending",
-      requestedAt: state.requestedAt,
-      countedJoinAt: state.countedJoinAt,
-    };
-  }
-  if (state.kind === "checkingInviter") {
-    return {
-      ...base,
-      phase: "checkingInviter",
-      terminalInviterId: state.inviterId,
-    };
-  }
-  return {
-    ...base,
-    phase: "expelling",
-    expelReason: state.reason,
-    successNoticeSent: state.successNoticeSent,
-    // 两条失败告警都不会自删，必须跟着快照走：不落盘的话每次 Worker 重生
-    // 都会为同一个卡住的成员再发一条（见 ExpellingState.failureNoticeSent）。
-    failureNoticeSent: state.failureNoticeSent,
-    unconfirmedNoticeSent: state.unconfirmedNoticeSent,
-    // 「踢成功了、播报还欠着」同样必须跟着快照走：丢了它，下一轮探测只会看到
-    // 「人已经不在群里」并静默结算（见 ExpellingState.removalConfirmed）。
-    removalConfirmed: state.removalConfirmed,
-  };
 }
 
 /** pending/终态发布 upsert，只在彻底收尾后发布 delete。 */

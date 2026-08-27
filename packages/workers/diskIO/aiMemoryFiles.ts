@@ -17,15 +17,16 @@ import {
   deleteAiMemoryFile,
   inspectAiMemories,
   maintainAiMemoryFiles,
-  recoverAiMemories,
   writeAiMemoryFile,
 } from "./snapshotFiles";
-import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../../types/diskIO";
+import type {
+  AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
+} from "../../types/diskIO/replies";
 import type { AiMemorySnapshotFileDependencies } from "../../types/diskIO/snapshotOwners";
 import type { AiMemoryRecoveryInspection } from "./snapshotFiles";
 
 const AI_MEMORY_FILE_DEPENDENCIES: AiMemorySnapshotFileDependencies = {
-  recover: recoverAiMemories,
   write: writeAiMemoryFile,
   delete: deleteAiMemoryFile,
 };
@@ -50,14 +51,6 @@ function scheduleAiMemoryFlush(): void {
     aiMemoryFlushState.timer = null;
     flushAiMemorySnapshots();
   }, SNAPSHOT_FLUSH_INTERVAL_MS);
-}
-
-/** 启动恢复边界：用磁盘快照整体替换内存 owner。 */
-export function hydrateAiMemorySnapshots(
-  files: AiMemorySnapshotFileDependencies = AI_MEMORY_FILE_DEPENDENCIES
-): Map<number, string> {
-  hydrateAiMemoryCache(files.recover());
-  return aiMemoryCache;
 }
 
 /** 跨域启动第一阶段：只读扫描并严格解码，不改缓存或磁盘。 */

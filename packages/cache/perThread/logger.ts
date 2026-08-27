@@ -4,7 +4,7 @@ import {
   LOGGER_FORWARD_MAX_SERIALIZED_BYTES,
 } from "../../consts/logger";
 import { AcknowledgedBatchQueue } from "../../libs/acknowledgedBatchQueue";
-import type { LogMessage } from "../../types/diskIO";
+import type { LogMessage } from "../../types/diskIO/messages";
 import type {
   AdDetectAgentConfig,
   AgentDeploymentConfig,

@@ -3,13 +3,10 @@ import {
   EMERGENCY_REUSED_DISPOSE_DEADLINE_MS,
   FINAL_OFFSET_CONFIRM_TIMEOUT_MS,
   NORMAL_FLUSH_TIMEOUTS,
-  RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS,
-  RUNNER_DRAIN_POLL_INTERVAL_MS,
-  RUNNER_DRAIN_TIMEOUT_MS,
 } from "../consts/lifecycle";
 import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
 import type { CachedUser } from "../types/chatState";
-import type { LoadedData } from "../types/diskIO";
+import type { LoadedData } from "../types/diskIO/replies";
 import type {
   AcknowledgedUpdateRunner,
   FlushResult,
@@ -30,9 +27,10 @@ import {
   runShutdownOwners,
 } from "./lifecycle/shutdown";
 import {
-  createMonotonicDeadline,
-  isMonotonicDeadlineExpired,
-} from "../libs/monotonicDeadline";
+  drainAcknowledgedUpdateRunner,
+  quiesceLifecycleMaintenance,
+  waitForLifecycleBackgroundMaintenance,
+} from "./lifecycle/maintenance";
 
 type ShutdownSignal = "SIGINT" | "SIGTERM";
 
@@ -450,73 +448,18 @@ export class ApplicationLifecycle {
   }
 
   private async waitForRunnerDrain(
-    runner: AcknowledgedUpdateRunner,
-    timeoutMs: number = RUNNER_DRAIN_TIMEOUT_MS
+    runner: AcknowledgedUpdateRunner
   ): Promise<boolean> {
-    const deadline: number = createMonotonicDeadline(
-      timeoutMs,
-      this.dependencies.monotonicNow
-    );
-    while (
-      runner.size() > 0 &&
-      !isMonotonicDeadlineExpired(deadline, this.dependencies.monotonicNow)
-    ) {
-      await this.dependencies.sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
-    }
-    if (runner.size() > 0) {
-      const activeAtDeadline: number = runner.size();
-      this.dependencies.logger.error(
-        `Shutdown drain still had ${activeAtDeadline} active update(s) after ${timeoutMs}ms; ` +
-        "aborting them and withholding their Telegram offset."
-      );
-      runner.abortActive();
-      const cancellationDeadline: number = createMonotonicDeadline(
-        RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS,
-        this.dependencies.monotonicNow
-      );
-      while (
-        runner.size() > 0 &&
-        !isMonotonicDeadlineExpired(
-          cancellationDeadline,
-          this.dependencies.monotonicNow
-        )
-      ) {
-        await this.dependencies.sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
-      }
-      if (runner.size() > 0) {
-        this.runnerCancellationUnsettled = true;
-        this.dependencies.logger.error(
-          `${runner.size()} update(s) ignored shutdown cancellation for ` +
-          `${RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS}ms; forcing a failed process exit after best-effort flush.`
-        );
-      }
-      return false;
-    }
-    return true;
+    const result: "drained" | "aborted" | "unsettled" =
+      await drainAcknowledgedUpdateRunner(runner, this.dependencies);
+    if (result === "unsettled") this.runnerCancellationUnsettled = true;
+    return result === "drained";
   }
 
   private async waitForBackgroundMaintenance(timeoutMs: number): Promise<boolean> {
     const task: Promise<void> | null = this.chatTitleRefreshTask;
     if (task === null || this.chatTitleRefreshSettled) return true;
-    if (timeoutMs <= 0) {
-      // 没有等待窗口时也必须 abort：不变量要求预算耗尽后不得再写入群标题。
-      this.dependencies.abortChatTitleRefresh();
-      this.dependencies.logger.error("Skipping unfinished chat title refresh during emergency disposal; aborted it.");
-      return false;
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const settled: boolean = await Promise.race([
-      task.then((): boolean => true),
-      new Promise<boolean>((resolve: (value: boolean | PromiseLike<boolean>) => void): void => {
-        timer = setTimeout((): void => resolve(false), timeoutMs);
-      }),
-    ]);
-    if (timer !== undefined) clearTimeout(timer);
-    if (!settled) {
-      this.dependencies.abortChatTitleRefresh();
-      this.dependencies.logger.error(`Chat title refresh did not settle within ${timeoutMs}ms and was aborted.`);
-    }
-    return settled;
+    return waitForLifecycleBackgroundMaintenance(task, timeoutMs, this.dependencies);
   }
 
   /**
@@ -528,26 +471,7 @@ export class ApplicationLifecycle {
    * 一点痕迹都没有。各调用都是幂等赋值，重复执行不花什么代价。
    */
   private quiesceMaintenance(): boolean {
-    let succeeded: boolean = true;
-    const quiesceOwner = (owner: string, run: () => void): void => {
-      try {
-        run();
-      } catch (error: unknown) {
-        succeeded = false;
-        this.dependencies.logger.error(`Shutdown owner ${owner} quiesce threw during shutdown:`, error);
-      }
-    };
-    // 每个入口独立结算：前一个 owner 抛错不能让后续入口继续接受新工作。
-    quiesceOwner("avatar", (): void => this.dependencies.quiesceAvatarUpdates());
-    quiesceOwner("chat-title", (): void => this.dependencies.quiesceChatTitleRefresh());
-    quiesceOwner("translate", (): void => this.dependencies.quiesceTranslate());
-    quiesceOwner("gag", (): void => this.dependencies.quiesceGagRuntime());
-    // 补扫 timer 能启动 Anti-Raid 网络任务与 outbox 写入，必须在确认最终 offset
-    // 前与其它 maintenance owner 一起关闸；只在 dispose() 终局关会在前置 drain
-    // 已完成后重新制造工作，破坏“排空后不再有生产者”的边界。
-    quiesceOwner("blocklist-sweep", (): void =>
-      this.dependencies.quiesceBlocklistSweepScheduler());
-    return succeeded;
+    return quiesceLifecycleMaintenance(this.dependencies);
   }
 
   private flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {

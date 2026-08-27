@@ -133,7 +133,7 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
   if (!message || chatId === undefined) return next();
 
   // 只认纯文本，不认 caption。bot.hears 对 text 和 caption 都会匹配，但认领一条
-  // 带图消息意味着它不再流进 handleIncomingMessage，那张图就不会进 AI 滚动记忆
+  // 带图消息意味着它不再流进 handleIncomingMessageMiddleware，那张图就不会进 AI 滚动记忆
   // 与视觉流水线；真正的 Telegram 命令也只在 text 上产生 bot_command 实体。
   // caption 形态在这里 next() 放行，回到普通消息流水线。
   const command: CjkActionCommand | undefined = parseCjkActionCommand(message.text);
@@ -156,7 +156,7 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
 
   const actor: CachedUser | undefined = resolveSenderIdentity(message);
   if (!actor) return next();
-  // 被本 handler 认领的消息不会再流经 handleIncomingMessage，而 cacheSender 只在
+  // 被本 handler 认领的消息不会再流经 handleIncomingMessageMiddleware，而 cacheSender 只在
   // 那里调用。不在这里补一次，发言以动作命令为主的人就永远进不了 username 缓存，
   // 明明刚在群里说过话，/copy @TA 却会答「都还没说过话呢」。
   seedSenderCache(actor);

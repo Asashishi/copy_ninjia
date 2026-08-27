@@ -52,6 +52,8 @@ mock.module("../../../packages/infra/telegram/client", () => ({
 }));
 mock.module("../../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => true,
+  // ingress 的同步快路径读它；未确证时返回 undefined 才会退回上面那次现查。
+  cachedBotAdminStatus: (): true => true,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},

@@ -23,7 +23,7 @@ import {
   DATABASE_DIR,
   IDENTITY_DATABASE_PATH,
 } from "../packages/consts/paths";
-import { seedStorageDatabase } from "../packages/database/interact/admin";
+import { seedStorageDatabase } from "../scripts/fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   openStorageDatabase,

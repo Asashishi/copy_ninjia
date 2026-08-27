@@ -21,9 +21,9 @@ import type { VerificationSnapshot } from
   "../../types/antiRaid/verification";
 import type { ChatTeardownReason } from "../../types/chatTeardown";
 import type {
-  DiskIORecoveryTransport,
   VerificationPersistedReply,
-} from "../../types/diskIO";
+} from "../../types/diskIO/replies";
+import type { DiskIORecoveryTransport } from "../../types/diskIO/messages";
 import type {
   BotActionPermissions,
   BotChatPermissions,

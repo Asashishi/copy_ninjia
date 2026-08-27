@@ -25,6 +25,7 @@ import type {
   AdCandidateMessage,
   AdSampleContext,
 } from "../types/antiRaid/adDetect";
+import type { ChatState } from "../types/chatState";
 import { formatUserLabel } from "../users/userLabel";
 import { messageOriginIdentityId } from "../users/messageOrigin";
 import { visibleSenderChat } from "../users/visibleSender";
@@ -111,15 +112,18 @@ function buildSampleContext(message: Message): AdSampleContext | undefined {
 /**
  * 收敛一条待判定消息。配置未就绪、功能未开启、受保护身份和机器人自己的消息
  * 均返回 undefined；频道黑名单落地空档仍投递，以便 Worker 删除漏网消息。
+ * @param chatState 同一同步消息入口已读取的当前群状态；缺省时本函数自行读取。
  */
 export function buildAdCandidate(
   message: Message,
-  botId: number
+  botId: number,
+  chatState?: Readonly<ChatState>
 ): AdCandidateMessage | undefined {
   const chatId: number | undefined = message.chat?.id;
   if (chatId === undefined || message.chat.type === "private") return undefined;
   if (!adDetectConfigReadiness().ok) return undefined;
-  if (getChatState(chatId).isAdDetectEnabled !== true) return undefined;
+  const currentState: Readonly<ChatState> = chatState ?? getChatState(chatId);
+  if (currentState.isAdDetectEnabled !== true) return undefined;
   if (message.is_automatic_forward === true || isBotOwnMessage(message)) return undefined;
 
   const senderChat: Chat | undefined = visibleSenderChat(message);

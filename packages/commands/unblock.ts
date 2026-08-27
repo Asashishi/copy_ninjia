@@ -148,7 +148,7 @@ async function unbanEverywhereFor(targetUser: CachedUser, chatId: number): Promi
   for (const targetChatId of targetChatIds) {
     // 频道马甲走 unbanChatSenderChat；真实用户必须走带 only_if_banned 的那个
     // helper，否则「当前就在群里」的人会被 unbanChatMember 直接踢出去
-    // （见 infra/telegram/actions.ts 的 kickChatMember 与 unbanChatMemberIfBanned）。
+    // （见 infra/telegram/actions/moderation.ts）。
     const lifted: boolean = targetUser.isChannel === true
       ? await unbanChatSenderChat(targetChatId, targetUser.id)
       : await unbanChatMemberIfBanned(targetChatId, targetUser.id);

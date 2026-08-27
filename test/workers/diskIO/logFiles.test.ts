@@ -14,11 +14,21 @@ import {
   adoptLogFiles,
   flushLogBuffer,
   handleLogMessage,
-  initLogFiles,
   inspectLogFiles,
   maintainLogFiles,
 } from "../../../packages/workers/diskIO/logFiles";
 import { serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOnlyDayFile";
+
+/**
+ * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
+ * inspect -> adopt -> maintenance（见 workers/diskIO/startup.ts）。
+ * 生产没有这个包装——它是跨域编排的一环，这里只是把同一顺序收成一行。
+ */
+function initLogFiles(): void {
+  const inspection = inspectLogFiles();
+  adoptLogFiles(inspection);
+  maintainLogFiles(inspection);
+}
 
 beforeEach(() => {
   rmSync(LOGS_DIR, { recursive: true, force: true });

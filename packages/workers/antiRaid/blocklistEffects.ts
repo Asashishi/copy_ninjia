@@ -136,8 +136,8 @@ async function removeBlockedMembers({
   // 补记，一波以黑名单账号为主的刷群就凑不够反刷群窗口的阈值。
   //
   // 记的是**本线程观测到的时刻**，不是 joinedAt 本身。recordJoin 把第二个参数
-  // 当成「现在」交给 trimSlidingWindow，而后者按契约会把所有落在「未来」的队尾
-  // 判成系统时钟回拨并丢掉（见 libs/slidingWindowRateLimit.ts）。joinedAt 是主
+  // 当成「现在」交给 TimestampDeque.trim，而后者按契约会把落在「未来」的队尾
+  // 判成系统时钟回拨并丢掉（见 libs/timestampDeque.ts）。joinedAt 是主
   // 线程在 durable outbox flush **之前**取的，必然早于本线程随后用自己的
   // Date.now() 记下的那些入群——直接传进去，一次补记就能把同一批里刚记下的真实
   // 入群整段抹掉，窗口计数永远爬不到 ANTI_RAID_PER_MINUTE_LIMIT，紧急私密模式

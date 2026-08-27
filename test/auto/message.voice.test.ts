@@ -18,7 +18,7 @@ import {
   resetAutoMessageMocks,
 } from "../helpers/autoMessageMocks";
 
-const { handleIncomingMessage } = await import("../../packages/auto/message");
+const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
 const { clearAiReplyActivity } = await import("../../packages/auto/message/aiReplyActivity");
 const { clearUserReplyTriggerTimes } = await import("../../packages/auto/message/triggerPolicy");
 const {
@@ -65,7 +65,7 @@ describe("群聊语音消息", () => {
   });
 
   test("可转写的语音走媒体管线，两个尺寸字段恒为 0，容器与时长原样带上", async () => {
-    await handleIncomingMessage(voiceMessage({}) as any);
+    await handleIncomingMessageMiddleware(voiceMessage({}) as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
     const payload = recordChatMediaMock.mock.calls[0]![0] as Record<string, unknown>;
@@ -89,7 +89,7 @@ describe("群聊语音消息", () => {
   });
 
   test("caption 原样进媒体载荷", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       ...(voiceMessage({}) as any),
       msg: { ...(voiceMessage({}) as any).msg, caption: "听听这个" },
     } as any);
@@ -98,7 +98,7 @@ describe("群聊语音消息", () => {
   });
 
   test("超时长的语音退回带时长的纯文本，不进转写管线", async () => {
-    await handleIncomingMessage(voiceMessage({ duration: VOICE_MAX_DURATION_SECONDS + 1 }) as any);
+    await handleIncomingMessageMiddleware(voiceMessage({ duration: VOICE_MAX_DURATION_SECONDS + 1 }) as any);
 
     expect(recordChatMediaMock).not.toHaveBeenCalled();
     expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
@@ -110,21 +110,21 @@ describe("群聊语音消息", () => {
   });
 
   test("声明体积超上限的语音同样在下载前拦下", async () => {
-    await handleIncomingMessage(voiceMessage({ file_size: VOICE_MAX_DOWNLOAD_BYTES + 1 }) as any);
+    await handleIncomingMessageMiddleware(voiceMessage({ file_size: VOICE_MAX_DOWNLOAD_BYTES + 1 }) as any);
 
     expect(recordChatMediaMock).not.toHaveBeenCalled();
     expect((recordChatMessageMock.mock.calls[0]![0] as { text: string }).text).toBe("[语音 12 秒]");
   });
 
   test("缺 file_size 时只按时长判，仍照常转写", async () => {
-    await handleIncomingMessage(voiceMessage({ file_size: undefined }) as any);
+    await handleIncomingMessageMiddleware(voiceMessage({ file_size: undefined }) as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
     expect(recordChatMessageMock).not.toHaveBeenCalled();
   });
 
   test("超长语音且没人叫机器人时只记一行，不触发回复", async () => {
-    await handleIncomingMessage(
+    await handleIncomingMessageMiddleware(
       voiceMessage({ duration: VOICE_MAX_DURATION_SECONDS + 1 }, false) as any
     );
 
@@ -134,7 +134,7 @@ describe("群聊语音消息", () => {
 
   test("退回纯文本时 caption 跟在时长标签后面", async () => {
     const base = voiceMessage({ duration: VOICE_MAX_DURATION_SECONDS + 1 }) as any;
-    await handleIncomingMessage({ ...base, msg: { ...base.msg, caption: "很长的一段" } } as any);
+    await handleIncomingMessageMiddleware({ ...base, msg: { ...base.msg, caption: "很长的一段" } } as any);
 
     expect((recordChatMessageMock.mock.calls[0]![0] as { text: string }).text)
       .toBe(`[语音 ${VOICE_MAX_DURATION_SECONDS + 1} 秒] 很长的一段`);

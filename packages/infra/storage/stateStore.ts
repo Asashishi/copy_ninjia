@@ -214,7 +214,7 @@ export function setStatePersistenceFatalHandler(handler: ((error: Error) => void
   sharedStateStore().setFatalHandler(handler);
 }
 
-export function saveGlobalStateInBackground(context: string): void {
+function saveGlobalStateInBackground(context: string): void {
   throwIfUpdateAborted();
   void sharedStateStore().save(currentGlobalState(), { waitForPersistence: false }).catch((error: unknown): void => {
     logger.error(`Failed to persist background global state update (${context}):`, error);
@@ -238,8 +238,9 @@ export function flushStateToDisk(
  * 取值走 `peek` 而不是 `get`：读取群状态不能刷新 LRU 或改变迭代顺序。缓存容量恰好是
  * STATE_MANAGED_CHAT_LIMIT，`getOrCreateChatState` 与 `hydrateChatStateCache` 又都在
  * 入口处拒绝第 26 条（见 infra/chatStateStorage.ts 的 assertChatStateCapacity），
- * 淘汰分支永远走不到，因此热度刷新没有语义价值。每条群消息要读 4~6 次（见
- * libs/chatState.ts 的形状契约），外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn。
+ * 淘汰分支永远走不到，因此热度刷新没有语义价值。每条群消息的不同 middleware
+ * 会各读一次当前状态；同一 middleware 内复用引用（见 libs/chatState.ts 的形状契约），
+ * 外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn 的独立读取。
  *
  * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/unblock 的连带
  * 封禁群清单、各处 managed 群清扫、lockdown 收养与恢复……），用 `get` 会让它变成

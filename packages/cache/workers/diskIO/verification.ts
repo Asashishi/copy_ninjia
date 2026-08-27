@@ -1,6 +1,6 @@
 import type { VerificationSnapshot } from
   "../../../types/antiRaid/verification";
-import type { VerificationFileChange } from "../../../types/diskIO";
+import type { VerificationFileChange } from "../../../types/diskIO/messages";
 import type { DayFileState } from "../../../types/diskIO/storage";
 
 /**

@@ -280,18 +280,8 @@ function assertProfileRunWithinLimits(result: ChildProfileResult): void {
       `steady samples; limit is ${calibration.limits.maxGcPercent}%.`
     );
   }
-  // 汇总 FTL 比例只作诊断（输出字段名带 Diagnostic 后缀），异步场景会混入 native
-  // Promise/调度采样，不能代表内部生产函数的 JIT 层级：Bun 1.3.14 实测
-  // mention-facts-plain（纯叶子）97.98%、incoming-message-spine（异步主链）3.17%，
-  // 单一阈值对两类场景没有共同含义，按场景标定又等于把噪声写死成契约。
-  //
-  // reoptRetries 的绝对值同样只作诊断：hotPaths.ts 的 productionJitTiersAreStable
-  // 已经要求它连续两个完整轮次不变才开始采样，采样期再由 changedDuringSampling
-  // 复查，因此这个计数剩下的只是预热期历史。实测 6 个场景里 5 个恒为 0，
-  // flood-window-steady 的 observeMemberMessage 稳定为 1（dfgCompiles=2，预热期
-  // 被去优化过一次又重编译），对它设硬上限只会逼出一张按场景标定的阈值表。
-  //
-  // 稳态 JIT 闸门因此就是下面这两条逐生产探针的判据。
+  // 汇总 FTL 比例与预热期 reoptRetries 只作诊断；异步场景会混入 native Promise
+  // 与调度采样。稳态硬门禁只检查生产探针已进入 DFG，且采样期未重新编译或去优化。
   for (const probe of productionJitProbes(result)) {
     if (probe.dfgCompiles < 1) {
       throw new Error(

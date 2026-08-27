@@ -303,19 +303,3 @@ export function maintainVerificationDay(
     throw error;
   }
 }
-
-/** 单领域恢复入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
-export function recoverVerificationDay(
-  day: string = getTokyoDateKey(),
-  dir: string = VERIFICATION_MEMORY_DIR
-): Map<string, VerificationSnapshot> {
-  const inspection: VerificationRecoveryInspection = inspectVerificationDay(day, dir);
-  const recovered: Map<string, VerificationSnapshot> = adoptVerificationDay(inspection);
-  try {
-    maintainVerificationDay(inspection);
-  } catch (error: unknown) {
-    resetVerificationPersistenceCache();
-    throw error;
-  }
-  return recovered;
-}

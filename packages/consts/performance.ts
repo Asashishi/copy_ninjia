@@ -46,6 +46,7 @@ export const HOT_PATH_PROFILE_SCENARIOS: readonly HotPathProfileScenarioName[] =
   "luck-receipt-fast-path",
   "ai-activity-window",
   "flood-window-steady",
+  "join-timestamp-window",
   "mention-facts-plain",
   "ad-capacity-reject",
   "identity-permission-read",

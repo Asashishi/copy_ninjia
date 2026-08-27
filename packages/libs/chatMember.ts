@@ -17,7 +17,7 @@ export function isAdminStatus(status: ChatMember["status"]): boolean {
  * 「能封人」是两回事，黑名单处置卡住最常见的原因正是被授予了管理员却没勾这
  * 一项。其余身份一律为假。
  */
-export function canRestrictMembers(member: ChatMember): boolean {
+function canRestrictMembers(member: ChatMember): boolean {
   if (member.status === "creator") return true;
   return member.status === "administrator" && member.can_restrict_members === true;
 }

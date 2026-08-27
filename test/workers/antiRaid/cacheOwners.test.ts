@@ -24,7 +24,11 @@ import {
   lockdownEntries,
   lockdownRetriggerCooldowns,
 } from "../../../packages/cache/workers/antiRaid/lockdown";
-import { LOCKDOWN_RETRIGGER_COOLDOWN_MS } from
+import {
+  JOIN_WINDOW_CAPACITY,
+  JOIN_WINDOW_MS,
+  LOCKDOWN_RETRIGGER_COOLDOWN_MS,
+} from
   "../../../packages/consts/antiRaid/lockdown";
 import type { AntiRaidWorkerEvent } from "../../../packages/types";
 
@@ -78,6 +82,9 @@ async function settleLockdownCalls(): Promise<void> {
 
 const adminCache = await import("../../../packages/workers/antiRaid/adminCache");
 const lockdownRuntime = await import("../../../packages/workers/antiRaid/lockdownRuntime");
+const joinWindowRuntime = await import(
+  "../../../packages/workers/antiRaid/lockdownJoinWindow"
+);
 
 beforeEach(() => {
   resetAdminCache();
@@ -100,7 +107,9 @@ beforeEach(() => {
     permissionWrites.push({ ...permissions });
     currentPermissions = { ...permissions };
   });
-  for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
+  for (const window of joinWindows.values()) {
+    if (window.resetTimeout !== undefined) clearTimeout(window.resetTimeout);
+  }
   for (const entry of lockdownEntries.values()) {
     if (entry.restoreTimer !== undefined) clearTimeout(entry.restoreTimer);
     if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
@@ -266,6 +275,45 @@ describe("Anti-Raid cache owners", () => {
 });
 
 describe("Lockdown write-ahead runtime", () => {
+  test("入群滑窗保持数值硬顶并复用每群唯一 timer", async () => {
+    const chatId: number = -1099;
+    const base: number = Date.now();
+    lockdownRuntime.recordJoin(chatId, base);
+    const firstTimer: ReturnType<typeof setTimeout> | undefined =
+      joinWindows.get(chatId)?.resetTimeout;
+
+    for (let index: number = 1; index < JOIN_WINDOW_CAPACITY + 100; index += 1) {
+      lockdownRuntime.recordJoin(chatId, base + index);
+    }
+
+    const saturated = joinWindows.get(chatId);
+    expect(saturated?.timestamps.size).toBe(JOIN_WINDOW_CAPACITY);
+    expect(saturated?.overflowThrough).toBeDefined();
+    expect(saturated?.resetTimeout).toBe(firstTimer);
+    expect(saturated?.expiresAt).toBe(
+      base + JOIN_WINDOW_CAPACITY + 99 + JOIN_WINDOW_MS
+    );
+
+    // 被覆盖的所有值过期后恢复精确计数，不让饱和标记永久钉住群。
+    lockdownRuntime.recordJoin(chatId, base + JOIN_WINDOW_MS + JOIN_WINDOW_CAPACITY + 100);
+    const recovered = joinWindows.get(chatId);
+    expect(recovered?.timestamps.size).toBe(1);
+    expect(recovered?.overflowThrough).toBeUndefined();
+    await settleLockdownCalls();
+  });
+
+  test("入群滑窗在墙钟回拨时丢弃失效的饱和证明", () => {
+    const chatId: number = -1098;
+    const futureBase: number = 5_000;
+    for (let index: number = 0; index < JOIN_WINDOW_CAPACITY + 1; index += 1) {
+      joinWindowRuntime.recordJoinWindow(chatId, futureBase + index);
+    }
+
+    expect(joinWindowRuntime.recordJoinWindow(chatId, 0)).toBeUndefined();
+    expect(joinWindows.get(chatId)?.timestamps.size).toBe(1);
+    expect(joinWindows.get(chatId)?.overflowThrough).toBeUndefined();
+  });
+
   test("群 teardown 清除尚未到期的入群滑窗", () => {
     const chatId = -1000;
     lockdownRuntime.recordJoin(chatId, Date.now());

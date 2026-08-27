@@ -16,7 +16,7 @@ import {
 import {
   clearStorageBusinessTables,
   seedStorageDatabase,
-} from "../../../packages/database/interact/admin";
+} from "../../../scripts/fixtures/storageDatabase";
 import { putIdentityPolicyRow } from "../../helpers/identityPolicyRows";
 import {
   readStorageDatabasePendingRemovalPage,

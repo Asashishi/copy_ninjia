@@ -293,6 +293,19 @@ export function invalidateBotAdminStatus(chatId: number): void {
 }
 
 /**
+ * 同步读取已经观测到的管理员身份。
+ *
+ * `undefined` 只表示「本进程还没确证过这个群」，调用方自行决定是否付一次
+ * `resolveBotAdminStatus` 的现查；不得把未知折算成 false。存在的理由是每条群
+ * 消息的 ingress：稳定态下这个群的权限快照早就在 ChatState 里，走
+ * `resolveBotAdminStatus` 只是为了一个已经在手的布尔值分配一个 Promise
+ * （形状约束见 AGENTS.md「高频路径可直接读取现值时不得创建投影对象」）。
+ */
+export function cachedBotAdminStatus(chatId: number): boolean | undefined {
+  return getChatState(chatId).botPermissions?.isAdministrator;
+}
+
+/**
  * 机器人在某群是否为管理员。身份不再另走一套查询与缓存：直接复用
  * `botChatPermissionsIn` 的完整快照，未知/查询失败时 fail closed 为 false。
  */

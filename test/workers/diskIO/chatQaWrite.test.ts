@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { encodeChatQaData } from "../../../packages/database/codec/chatQa";
 import { clearStorageBusinessTables } from
-  "../../../packages/database/interact/admin";
+  "../../../scripts/fixtures/storageDatabase";
 import {
   pendingChatQaWrites,
   resetStorageDatabaseCache,

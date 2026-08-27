@@ -62,7 +62,7 @@ function formatForwardTag(forwardedFrom: string | undefined): string {
 }
 
 /** 回复关系以内嵌元数据呈现，模型无需靠相邻消息猜测被回复对象。 */
-export function formatReplyReference(reference: BufferedReplyReference): string {
+function formatReplyReference(reference: BufferedReplyReference): string {
   const usernameTag: string = reference.username ? ` [username:@${reference.username.replace(/^@+/, "")}]` : "";
   const quote: string = reference.quote ? replyQuoteInlineTemplate(reference.quote) : "";
   return replyTagTemplate({

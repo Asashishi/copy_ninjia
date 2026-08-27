@@ -91,6 +91,7 @@ export const blocklistSweepSchedulerState: BlocklistSweepSchedulerState = {
   timer: null,
   scheduledAt: null,
   accepting: false,
+  runSweep: null,
 };
 
 /**

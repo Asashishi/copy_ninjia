@@ -30,9 +30,11 @@ import type { ChatState } from "../types/chatState";
 import type {
   ChatStateWriteDiskMessage,
   DiskIORecoveryTransport,
+} from "../types/diskIO/messages";
+import type {
   DomainFlushOutcome,
   IdentityStoragePersistedReply,
-} from "../types/diskIO";
+} from "../types/diskIO/replies";
 import type { UnacknowledgedChatStateWrite } from "../types/identityStorage";
 
 interface ChatStateDiskIOApi {

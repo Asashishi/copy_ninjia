@@ -75,8 +75,10 @@ mock.module("@grammyjs/transformer-throttler", () => ({
 }));
 mock.module("@grammyjs/files", () => ({ hydrateFiles }));
 mock.module("../../packages/infra/telegram/outboundGate", () => ({
-  initTelegramOutbound,
   telegramOutboundGate,
+}));
+mock.module("../../packages/infra/telegram/outboundLifecycle", () => ({
+  initTelegramOutbound,
 }));
 mock.module("../../packages/config/telegram", () => ({ BOT_TOKEN: "token:secret" }));
 mock.module("../../packages/infra/logger", () => ({

@@ -1,6 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
 import type { LockdownPhase } from "../chatState";
-import type { LinkedQueue } from "../../libs/linkedQueue";
 import type { TimestampDeque } from "../../libs/timestampDeque";
 import type { LockdownState } from "../states/lockdown";
 import type {
@@ -66,20 +65,19 @@ export interface VerificationEntry {
 /** 反刷群 Worker 的入群滑动计数窗口。 */
 export interface JoinWindow {
   /**
-   * 窗口内的入群时刻，按时间升序。**全仓唯一仍用 LinkedQueue 的滑动窗口**，
-   * 两个理由缺一不可：
-   *
-   * 1. `recordJoin` 是无条件记账的，长度只由 JOIN_WINDOW_MS 和真实入群速率决定，
-   *    没有配额上界。定容环形缓冲（libs/timestampDeque.ts）撑满即抛 RangeError，
-   *    而撑满恰恰发生在刷群时——那正是本窗口必须继续工作的时刻。
-   * 2. `retractJoin` 要按值精确撤销某一次入群的时间戳（见 libs/linkedQueue.ts 的
-   *    removeValue），不能无差别 shift 队首。
-   *
-   * 修剪走 libs/slidingWindowRateLimit.ts 的 trimSlidingWindow，其边界与
-   * `TimestampDeque.trim` 逐字一致，由 test/libs/slidingWindowBoundary.test.ts 锁住。
+   * 窗口内最近的入群时刻，按时间升序；容量固定为 JOIN_WINDOW_CAPACITY。
+   * 达到硬顶后覆盖最早一项，并由 overflowThrough 保留保守饱和语义。
    */
-  timestamps: LinkedQueue<number>;
-  resetTimeout: ReturnType<typeof setTimeout>;
+  timestamps: TimestampDeque;
+  /**
+   * 最近一个被硬顶覆盖的时间戳。它仍在窗口内时，即使后续异步撤销无法确认
+   * 被覆盖项的身份，也按已经越过阈值处理；过期或墙钟回拨后恢复精确计数。
+   */
+  overflowThrough: number | undefined;
+  /** 最近一次入群到达后，整个条目最早可以删除的墙钟时刻。 */
+  expiresAt: number;
+  /** 每群唯一的静默清理 timer；到点发现仍活跃时按 expiresAt 续排。 */
+  resetTimeout: ReturnType<typeof setTimeout> | undefined;
 }
 
 /** 刷屏禁言 Worker 的单成员发言滑动窗口。 */

@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { Message } from "@grammyjs/types";
-import { isAiChatActiveIn } from "../../aiChat/availability";
+import { isAiChatConfigured } from "../../aiChat/availability";
 import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat/rateLimit";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import {
@@ -40,24 +40,14 @@ import { handleVoiceMessage } from "./voice";
  * 媒体 handler 的分派顺序按「一条消息只可能是其中一种载荷」写成 else-if 链；
  * 语音排在最后，与它在群里的出现频率一致（前面几种命中就不再往下判）。
  */
-export async function handleIncomingMessage(ctx: Context): Promise<void> {
-  const message: Message | undefined = ctx.msg;
-  if (!message) return;
-
-  recordChatTitleFromChat(message.chat);
-  const botIdentity: AiBotInfo = ctx.me;
-
-  // 内联结果要自录入上下文但不触发主动行为；普通自发消息回弹则完全忽略。
-  if (message.via_bot?.id === botIdentity.id) {
-    recordSelfInlineResult(message, botIdentity);
-    return;
-  }
-  if (isBotOwnMessage(message)) return;
-  if (needsBotOwnMessageWait(message) && await waitForBotOwnMessage(message)) return;
-
+function handleAcceptedIncomingMessage(
+  message: Message,
+  botIdentity: AiBotInfo,
+  groupState: Readonly<ChatState> | undefined
+): Promise<void> | undefined {
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message);
-  const state: Readonly<ChatState> = getChatState(chatId);
+  const state: Readonly<ChatState> = groupState ?? getChatState(chatId);
   /**
    * 本条消息统一的「现在」，显式传给下面两个吃 now 的判定。
    *
@@ -74,20 +64,18 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
 
   const copyTargetId: number | undefined = activeCopyTargetIdIn(chatId);
   if (copyTargetId !== undefined && senderId === copyTargetId) {
-    await echoMessage({
+    return echoMessage({
       chatId,
       message,
       // 上一行已确认本群确有目标，这里取模式才有意义（见 activeCopyModeIn）。
       mode: resolveEffectiveCopyMode(chatId, activeCopyModeIn(chatId)),
       expectedTargetId: copyTargetId,
       messageThreadId: forumTopicThreadId(message),
-    });
-    return;
+    }).then((): void => undefined);
   }
 
   if (message.chat.type === "private") {
-    await handlePrivateProxySend(message);
-    return;
+    return handlePrivateProxySend(message);
   }
 
   // 群问答直答：与登记问题一字不差时直接回答，不进 AI，也不受 @/回复/随机插话
@@ -102,20 +90,20 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       botIdentity.username
     );
     if (qaAnswer !== undefined) {
-      await sendQaDirectAnswer({
+      return sendQaDirectAnswer({
         chatId,
         replyToMessageId: message.message_id,
         answer: qaAnswer,
         messageThreadId: forumTopicThreadId(message),
-      });
-      return;
+      }).then((): void => undefined);
     }
   }
 
   const isQuiet: boolean = isQuietUntilActive(state.quietUntil, now);
   // 凭据缺失时这里恒为 false：既不投喂 Worker（它根本没启动），也让下面的
   // 主动行为回到「AI 关闭」那条分支——随机复读仍照常，见 aiChat/availability.ts。
-  const aiChatEnabled: boolean = isAiChatActiveIn(chatId);
+  const aiChatEnabled: boolean =
+    isAiChatConfigured() && state.isAIChatEnabled === true;
 
   if (copyTargetId === undefined && aiChatEnabled) {
     const triggerContext: MessageTriggerContext = createMessageTriggerContext({
@@ -143,8 +131,42 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 复制目标活动期间禁止本群其它主动行为；无目标时才处理洗澡触发，
   // 并且只在 AI 关闭时允许随机复读。
   if (copyTargetId === undefined) {
-    const proactiveAction: Promise<void> | undefined =
-      handleProactiveMessageActions({ message, bot: botIdentity, isQuiet, aiChatEnabled });
-    if (proactiveAction !== undefined) await proactiveAction;
+    return handleProactiveMessageActions({ message, bot: botIdentity, isQuiet, aiChatEnabled });
   }
+}
+
+/**
+ * 消息自动流水线的同步入口。普通消息只执行同步判定；只有真正命中 Telegram I/O
+ * 或自发消息等待时才返回 Promise，供 grammY 的 MaybePromise middleware 边界接管。
+ */
+export function handleIncomingMessageMiddleware(ctx: Context): Promise<void> | undefined {
+  const message: Message | undefined = ctx.msg;
+  if (!message) return undefined;
+
+  const chatId: number = message.chat.id;
+  const groupState: Readonly<ChatState> | undefined =
+    message.chat.type === "group" || message.chat.type === "supergroup"
+      ? getChatState(chatId)
+      : undefined;
+  recordChatTitleFromChat(message.chat, groupState);
+  const botIdentity: AiBotInfo = ctx.me;
+
+  // 内联结果要自录入上下文但不触发主动行为；普通自发消息回弹则完全忽略。
+  if (message.via_bot?.id === botIdentity.id) {
+    recordSelfInlineResult(message, botIdentity);
+    return undefined;
+  }
+  if (isBotOwnMessage(message)) return undefined;
+  if (needsBotOwnMessageWait(message)) {
+    return waitForBotOwnMessage(message).then(
+      (matched: boolean): Promise<void> | undefined =>
+        matched
+          ? undefined
+          // 自动转发会在超级群进入这条异步路径；等待期间开关可能变化，恢复处理
+          // 必须读取当时现值，不能把等待前的状态带过异步边界。
+          : handleAcceptedIncomingMessage(message, botIdentity, undefined)
+    );
+  }
+
+  return handleAcceptedIncomingMessage(message, botIdentity, groupState);
 }

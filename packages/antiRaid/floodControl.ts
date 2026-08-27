@@ -14,20 +14,28 @@ import { visibleSenderChat } from "../users/visibleSender";
 import { getChatState } from "../infra/storage/stateStore";
 import { canBypassFloodControl } from "./memberFacts";
 import type { FloodCandidateMessage } from "../types/antiRaid/protocol";
+import type { ChatState } from "../types/chatState";
 import type { Message, User } from "@grammyjs/types";
 
 /**
  * 把一条群消息收敛成刷屏计数投递。返回 undefined 表示这条不参与计数。
  * @param botId 本机器人的用户 id；自己发的消息不计数。
+ * @param chatState 同一同步消息入口已读取的当前群状态；缺省时本函数自行读取。
  */
-export function buildFloodCandidate(message: Message, botId: number): FloodCandidateMessage | undefined {
+export function buildFloodCandidate(
+  message: Message,
+  botId: number,
+  chatState?: Readonly<ChatState>
+): FloodCandidateMessage | undefined {
   // 只在超级群计数：`restrictChatMember` 按 Bot API 的定义只对超级群有效，
   // 普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和
   // 一行把运维引向权限配置的报错。普通群升级成超级群之后消息自带新的
   // chat.type，这道门禁随之自愈。
   if (message.chat.type !== "supergroup") return undefined;
   // 缺省关闭；在任何身份解析、白名单查询和候选对象创建之前直接返回。
-  if (getChatState(message.chat.id).isFloodControlEnabled !== true) return undefined;
+  const currentState: Readonly<ChatState> =
+    chatState ?? getChatState(message.chat.id);
+  if (currentState.isFloodControlEnabled !== true) return undefined;
   // 频道马甲与匿名管理员没有可禁言的成员身份：restrictChatMember 只认真实用户，
   // 拿频道/群 id 去调只会换一句报错，而皮套底下是谁 Telegram 并不暴露——与
   // `/block` 拒绝把当前群身份当成员目标是同一条理由。

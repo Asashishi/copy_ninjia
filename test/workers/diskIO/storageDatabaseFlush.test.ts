@@ -7,7 +7,7 @@ import { DEFAULT_WHITELIST_PERMISSIONS } from "../../../packages/consts/whitelis
 import { encodeWhitelistEntryData } from
   "../../../packages/database/codec/identity";
 import { clearStorageBusinessTables } from
-  "../../../packages/database/interact/admin";
+  "../../../scripts/fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   openStorageDatabase,

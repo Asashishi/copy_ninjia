@@ -6,7 +6,8 @@ import { QUIET_CLOCK_SKEW_TOLERANCE_MS, QUIET_MAX_DURATION_MS } from "../consts/
  * `delete`**。「没设过」由 `undefined` 表示，不由「键不存在」表示。
  *
  * 这是热调用点的形状契约（AGENTS.md：热调用点必须保持对象 shape 稳定、不得事后
- * 增删字段）。每条群消息要读 4~6 次 `getChatState(chatId).isXEnabled`
+ * 增删字段）。每条群消息会由不同 middleware 各读取当前群状态；单个 middleware
+ * 内必须复用已经取得的引用，避免为多个功能开关重复查表
  * （antiRaid/updateIngress.ts、antiRaid/floodControl.ts、antiRaid/adCandidate.ts、
  * auto/message/index.ts、aiChat/availability.ts）。所有写入方都必须从本构造器取得
  * 同一隐藏类，并以 undefined 表示缺省值。
@@ -103,17 +104,17 @@ export function normalizeChatState(chatState: ChatState, now: number = Date.now(
       chatState.quietUntil = now + QUIET_MAX_DURATION_MS;
     }
   }
-  for (const toggle of [
-    "isAIChatEnabled",
-    "isJATranslationEnabled",
-    "isAdDetectEnabled",
-    "isFloodControlEnabled",
-    "isAntiRaidEnabled",
-    "isInitEnabled",
-    "isProxySendEnabled",
-  ] as const) {
-    if (chatState[toggle] === false) chatState[toggle] = undefined;
-  }
+  // 逐字段展开而不是遍历一张键名表：本函数每次单群保存都会运行（见
+  // infra/chatStateStorage.ts 的 encodeCurrentChatState），表在函数体里就是每次
+  // 调用新建一个数组，而按变量取属性（chatState[toggle]）也把这七次读写变成
+  // 多态访问。字段清单与 createChatState / isEmptyChatState 保持一致。
+  if (chatState.isAIChatEnabled === false) chatState.isAIChatEnabled = undefined;
+  if (chatState.isJATranslationEnabled === false) chatState.isJATranslationEnabled = undefined;
+  if (chatState.isAdDetectEnabled === false) chatState.isAdDetectEnabled = undefined;
+  if (chatState.isFloodControlEnabled === false) chatState.isFloodControlEnabled = undefined;
+  if (chatState.isAntiRaidEnabled === false) chatState.isAntiRaidEnabled = undefined;
+  if (chatState.isInitEnabled === false) chatState.isInitEnabled = undefined;
+  if (chatState.isProxySendEnabled === false) chatState.isProxySendEnabled = undefined;
   return chatState;
 }
 

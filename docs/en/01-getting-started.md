@@ -196,24 +196,13 @@ bun -e '
     enableStorageDatabaseWal,
     openStorageDatabase,
   } from "./packages/database/interact/connection";
-  import { seedStorageDatabase } from "./packages/database/interact/admin";
-  import {
-    IDENTITY_DATABASE_SCHEMA_DATA,
-    IDENTITY_DATABASE_SCHEMA_KEY,
-  } from "./packages/consts/identityStorage";
+  import { initializeStorageDatabase } from
+    "./packages/database/interact/initialization";
   import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
   createStorageDatabase(IDENTITY_DATABASE_PATH);
   const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
   try {
-    seedStorageDatabase(database, {
-      metadata: [{
-        key: IDENTITY_DATABASE_SCHEMA_KEY,
-        data: IDENTITY_DATABASE_SCHEMA_DATA,
-      }],
-      whitelist: [],
-      blocklist: [],
-      removals: [],
-    });
+    initializeStorageDatabase(database);
   } finally {
     closeStorageDatabase(database);
   }
@@ -223,7 +212,7 @@ chmod 2770 database
 chmod 660 database/storage.sqlite
 ```
 
-The `seedStorageDatabase` call is not optional. `createStorageDatabase` only creates tables; the `storage_metadata` schema-version row is not part of any migration (`0001`/`0002` merely `UPDATE` it, which is a no-op on an empty table). Skip it and the database looks fine, but startup hydration refuses with "storage_metadata must contain exactly one schema-version row" — and because that error surfaces one step later, it is hard to trace back to a missing row at creation time.
+The `initializeStorageDatabase` call is not optional. `createStorageDatabase` only creates tables; the `storage_metadata` schema-version row is not part of the migrations. Skip it and the database looks fine, but startup hydration refuses with "storage_metadata must contain exactly one schema-version row."
 
 This produces an empty database at the current schema — no allowlist, blocklist, or removal outbox
 rows. `createStorageDatabase` refuses to overwrite an existing target, so it never touches a live

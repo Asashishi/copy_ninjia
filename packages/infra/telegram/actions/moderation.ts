@@ -160,13 +160,6 @@ export async function kickChatMemberWithOutcome({
   return outcome === "forbidden" ? "forbidden" : "failed";
 }
 
-/** 只关心是否踢成功的兼容入口。 */
-export async function kickChatMember(
-  params: KickChatMemberParams
-): Promise<boolean> {
-  return (await kickChatMemberWithOutcome(params)) === "kicked";
-}
-
 /**
  * 一次封禁尝试的结局。`forbidden` 与 `failed` 必须分开：前者是「再试一次也
  * 一样」，后者是限流/网络抖动这类值得退避重试的失败。

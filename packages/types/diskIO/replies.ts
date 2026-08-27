@@ -1,4 +1,4 @@
-import type { VerificationSnapshot } from "../antiRaid";
+import type { VerificationSnapshot } from "../antiRaid/verification";
 import type { PendingBlockedRemoval } from "../blocklist";
 import type { IdentityPolicyTable } from "../identityPolicy";
 import type { ChatState } from "../chatState";
@@ -47,7 +47,7 @@ export interface LoadedData {
   blocklistEntryCount: number;
   whitelistEntryCount: number;
   chatStates: Map<number, ChatState>;
-  /** 群 -> 问题 -> 答案；整表恒定不超过 125 行，启动一次性读全。 */
+  /** 群 -> 问题 -> 答案；整表恒定不超过 375 行，启动一次性读全。 */
   chatQa: Map<number, ReadonlyMap<string, string>>;
 }
 

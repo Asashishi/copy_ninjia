@@ -17,7 +17,7 @@ const postAiChatOrThrow = mock((message: AiChatWorkerMessage): void => {
 });
 
 mock.module("../../packages/aiChat/workerBridge", () => ({ postAiChatOrThrow }));
-mock.module("../../packages/infra/telegram/outboundGate", () => ({
+mock.module("../../packages/infra/telegram/outboundLifecycle", () => ({
   telegramOutboundStats: () => ({ messageActive, messageRetryPending }),
 }));
 

@@ -309,12 +309,15 @@ describe("gag 消息与 inline 入口", () => {
       }
     ));
 
-    const ingress: Promise<boolean> = gag.handleGagMessageIngress(
+    // 本群有活动会话，因此这条必须走异步认领段；同步返回就说明守卫判错了群。
+    const started: boolean | Promise<boolean> = gag.handleGagMessageIngress(
       normalMessage({
         from: { id: 100, is_bot: false, first_name: "Admin" },
       }),
       999
     );
+    expect(started).toBeInstanceOf(Promise);
+    const ingress: Promise<boolean> = started as Promise<boolean>;
     for (let step: number = 0; step < 6 && finishSend === undefined; step++) {
       await Promise.resolve();
     }
@@ -551,6 +554,15 @@ describe("gag 消息与 inline 入口", () => {
       entities: gagInlineEntities(session),
     }), 999)).toBeTrue();
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 88);
+  });
+
+  test("本群没有活动会话且这条不是 gag 结果时同步返回 false", () => {
+    // 常态：一次 Map.has 加一次 via_bot/entity 判定，同步返回。本 handler 挂在
+    // 每条群消息与全部命令之前（见 app/registerHandlers.ts），返回 Promise 就
+    // 等于每条群消息都白付一次分配与一个微任务回合。
+    expect(gagSessionsByChat.size).toBe(0);
+    expect(gag.handleGagMessageIngress(normalMessage({ message_id: 4242 }), 999))
+      .toBe(false);
   });
 
   test("本 bot 的过期或跨群 gag 标记在无活动会话时也会删除", async () => {

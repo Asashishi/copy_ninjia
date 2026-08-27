@@ -337,12 +337,17 @@ describe("Anti-Raid mirror persistence barriers", () => {
 
   test("服务消息与验证按钮入口都把各自 barrier 纳入返回 Promise", async () => {
     async function expectOwnBarrier(
-      start: () => Promise<unknown>,
+      start: () => boolean | Promise<unknown>,
       expectedMessageType: AntiRaidWorkerMessage["type"]
     ): Promise<void> {
       workerPosts.length = 0;
       let settled: boolean = false;
-      const handled = start().finally(() => { settled = true; });
+      const started: boolean | Promise<unknown> = start();
+      // 这几条入口必须把 durable barrier 纳入返回值。ingress 的常态是同步返回
+      // false（不分配 Promise），正因为如此，「服务消息这一路仍然返回 Promise」
+      // 才需要显式钉住：同步返回就等于 update 不再等 barrier 落地。
+      expect(started).toBeInstanceOf(Promise);
+      const handled = (started as Promise<unknown>).finally(() => { settled = true; });
       await Bun.sleep(0);
       expect(workerPosts[0]?.type).toBe(expectedMessageType);
       const barrier = workerPosts.at(-1);

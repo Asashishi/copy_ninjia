@@ -14,6 +14,10 @@ describe("install.sh 静态 systemd 数据根边界", () => {
     });
     expect(new TextDecoder().decode(result.stderr)).toBe("");
     expect(result.exitCode).toBe(0);
+    expect(INSTALL_SCRIPT).toContain(
+      '"./packages/database/interact/initialization";'
+    );
+    expect(INSTALL_SCRIPT).not.toContain("database/interact/admin");
   });
 
   test("显式数据根使用生产解析结果而非重新拼路径", () => {

@@ -40,7 +40,7 @@ export function aggregateMetric(
     max: Math.max(...values),
     coefficientOfVariationPercent: average === 0
       ? 0
-      : standardDeviation(values, average) * 100 / average,
+      : standardDeviation(values, average) * 100 / Math.abs(average),
   };
 }
 

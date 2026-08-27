@@ -36,6 +36,14 @@ describe("全量基准的轮次聚合", () => {
     expect(stats.coefficientOfVariationPercent).toBe(0);
   });
 
+  test("样本均值为负时变异系数仍保持非负", () => {
+    const stats: MetricStats = aggregateMetric("retainedHeap", "bytes", [-10, -12, -14]);
+    expect(stats.mean).toBe(-12);
+    expect(stats.coefficientOfVariationPercent).toBe(
+      Math.sqrt(8 / 3) * 100 / 12
+    );
+  });
+
   test("没有样本或出现非有限值时拒绝聚合", () => {
     expect((): unknown => aggregateMetric("duration", "ms", []))
       .toThrow("has no samples to aggregate");

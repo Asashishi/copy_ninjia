@@ -2,7 +2,7 @@
  * `auto/message` 消息流水线测试共用的模块桩、可调旋钮与逐用例复位。
  *
  * 这一族用例（身份传递、贴纸回复、语音转写……）驱动的都是同一个
- * `handleIncomingMessage`，因此都要把同一批模块挡在外面：Telegram 出站、群状态、
+ * `handleIncomingMessageMiddleware`，因此都要把同一批模块挡在外面：Telegram 出站、群状态、
  * 群标题记录、发送者缓存、AI Worker 投递、自发消息判定。统一安装完整边界，
  * 避免各文件桩面不一致；桩面随生产模块一起维护。
  *

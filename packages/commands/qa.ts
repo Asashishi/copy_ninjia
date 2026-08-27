@@ -161,10 +161,21 @@ async function settleQaForm(session: QaFormSession, q: string, a: string): Promi
 /**
  * 表单投递消息的入口；必须排在命令与消息流水线之前。
  *
+ * **常态同步返回 false**：绝大多数群任何时刻都没有未完成的表单，判定就是一次
+ * 以群 id 为键的 Map.get。本 handler 挂在每条群消息与频道帖之前（见
+ * app/registerHandlers.ts），不能为这条恒假的判定给每条消息分配一个 Promise。
+ * 判据顺序与 qa/ingress.ts 的 claimQaFieldMessage 一致：最便宜的那道排最前。
+ *
  * @returns 是否已认领这条消息。认领后调用方必须终止本条 update 的后续处理——
  *   那条投递消息已经被删掉，再喂给 AI 或复读链路只会处理一个不存在的东西。
  */
-export async function handleQaMessageIngress(message: Message): Promise<boolean> {
+export function handleQaMessageIngress(message: Message): boolean | Promise<boolean> {
+  if (findQaFormSession(message.chat.id) === undefined) return false;
+  return claimQaFormDelivery(message);
+}
+
+/** 认领判定与回执的异步段；只有本群确实开着一张表单时才走到。 */
+async function claimQaFormDelivery(message: Message): Promise<boolean> {
   const claimed: QaFormIngressResult | null = await claimQaFieldMessage(message);
   if (claimed === null) return false;
   const session: QaFormSession = claimed.session;

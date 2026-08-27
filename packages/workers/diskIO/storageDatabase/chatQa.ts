@@ -7,8 +7,10 @@ import { assertTelegramChatId } from "../../../database/codec/chatState";
 import { readStoredChatQaQuestions } from "../../../database/interact/chatQa";
 import type {
   ChatQaWriteDiskMessage,
+} from "../../../types/diskIO/messages";
+import type {
   IdentityPersistenceReply,
-} from "../../../types/diskIO";
+} from "../../../types/diskIO/replies";
 import type { PendingChatQaWrite } from "../../../types/identityStorage";
 import type { StoredChatQaRow } from "../../../types/storageDatabase";
 import { requireStorageDatabase, storageSource } from "./context";

@@ -296,8 +296,8 @@ export function readStorageDatabaseStartupRows(
     whitelistEntryCount,
     blocklistEntryCount,
     chatStates: storedChatStates,
-    // 全表读而不分页：每群上限 5 条、受管群上限 STATE_MANAGED_CHAT_LIMIT，
-    // 整张表因此恒定不超过 125 行，不存在需要游标的规模。
+    // 全表读而不分页：每群上限 15 条、受管群上限 STATE_MANAGED_CHAT_LIMIT，
+    // 整张表因此恒定不超过 375 行，不存在需要游标的规模。
     chatQa: readStoredChatQa(database),
   };
 }

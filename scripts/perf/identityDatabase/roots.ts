@@ -10,7 +10,7 @@ import {
   IDENTITY_DATABASE_SCHEMA_KEY,
 } from "../../../packages/consts/identityStorage";
 import { seedStorageDatabase } from
-  "../../../packages/database/interact/admin";
+  "../../fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,

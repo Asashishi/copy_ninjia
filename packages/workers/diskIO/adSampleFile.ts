@@ -22,7 +22,7 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { basename, join } from "node:path";
-import type { AdSampleDiskMessage } from "../../types/diskIO";
+import type { AdSampleDiskMessage } from "../../types/diskIO/messages";
 import type { AppendOnlyFileState } from "../../types/diskIO/storage";
 import { AD_SAMPLE_FILE_PATH, AD_SAMPLE_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import {

@@ -9,6 +9,7 @@ import { logger } from "../infra/logger";
 import { recordJoinLog } from "../infra/joinLog";
 import { answerCallbackQuery } from "../infra/telegram/actions";
 import {
+  cachedBotAdminStatus,
   ensureBotChatPermissions,
   resolveBotAdminStatus,
   markBotAdminObserved,
@@ -40,6 +41,7 @@ import type {
   AntiRaidWorkerMessage,
   FloodCandidateMessage,
 } from "../types/antiRaid/protocol";
+import type { ChatState } from "../types/chatState";
 
 /**
  * 处理 `chat_member` 更新：这是权威且始终会送达的入群/离群信号（不同于
@@ -162,12 +164,15 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
  * 入群/离群本身的检测由 handleChatMemberUpdate 驱动——与这些服务消息
  * 不同，它总是会触发。
  * @returns 若消息在此已被完全处理、调用方应跳过后续处理逻辑（入群公告），
- * 返回 true；否则返回 false，让消息正常继续流转。
+ * 为 true；否则为 false，让消息正常继续流转。稳定态（管理员身份已确证、非
+ * 服务消息、非黑名单频道身份）**同步**返回 false，不分配 Promise；只有现查
+ * 管理员身份、删除黑名单频道消息或 durable 投递这三种情形返回 Promise，
+ * 调用方按 MaybePromise 处理（见 app/registerHandlers.ts 的 claimOrContinue）。
  */
-export async function handleAntiRaidMessageIngress(
+export function handleAntiRaidMessageIngress(
   message: Message,
   botId: number
-): Promise<boolean> {
+): boolean | Promise<boolean> {
   // 验证只发生在群聊里，私聊消息不必跨线程投递去查一次注定落空的 Map。
   if (message.chat?.type === "private") return false;
 
@@ -176,26 +181,69 @@ export async function handleAntiRaidMessageIngress(
   observeChatKind(message.chat);
 
   // 机器人不是本群管理员时整个入群守卫不启动：踢人/删消息都做不了，投递
-  // 过去只会让 Worker 开一堆注定失败的验证窗口、刷一堆权限报错。已有身份
-  // 记录时这个判定是同步的（不打 API），只有从未记录过的群会现查一次。
+  // 过去只会让 Worker 开一堆注定失败的验证窗口、刷一堆权限报错。
   // 入群公告照样吞掉（服务消息本来就不该流进复读/AI 流水线），只是不投递。
-  if (!(await resolveBotAdminStatus(message.chat.id))) {
-    return !!(
-      message.new_chat_members &&
-      message.new_chat_members.length > 0
-    );
+  //
+  // 已确证过的群同步读现值，`undefined` 才付一次现查：稳定态下这个群的权限
+  // 快照早就在 ChatState 里，走 resolveBotAdminStatus 只是为一个已经在手的
+  // 布尔值分配一个 Promise。两条路的判定完全一致——cachedBotAdminStatus 返回的
+  // 就是同一份快照的 isAdministrator，而 resolveBotAdminStatus 在快照已知时
+  // 也只是把它读出来。
+  const knownAdmin: boolean | undefined = cachedBotAdminStatus(message.chat.id);
+  if (knownAdmin !== undefined) {
+    return knownAdmin
+      ? ingestAdminChatMessage(message, botId)
+      : isSwallowedJoinAnnouncement(message);
   }
+  return resolveBotAdminStatus(message.chat.id).then(
+    (isAdmin: boolean): boolean | Promise<boolean> => isAdmin
+      ? ingestAdminChatMessage(message, botId)
+      : isSwallowedJoinAnnouncement(message)
+  );
+}
 
+/**
+ * 非管理员群里唯一还要做的事：把入群公告吞掉，不让它进复读/AI 流水线。
+ * 判据与本文件下面那处 `new_chat_members` 分支逐字一致。
+ */
+function isSwallowedJoinAnnouncement(message: Message): boolean {
+  return !!(message.new_chat_members && message.new_chat_members.length > 0);
+}
+
+/**
+ * 已确证机器人是本群管理员之后的那一段。黑名单频道消息在这里就地删除；
+ * 常态下它同步返回 false，只有真要删一条消息时才产生 Promise。
+ */
+function ingestAdminChatMessage(
+  message: Message,
+  botId: number
+): boolean | Promise<boolean> {
   // 永久黑名单不依赖广告开关、模型密钥或样本配置。频道身份没有
   // banChatMember.revoke_messages 可用，因此每条仍漏进来的消息必须在公共入口
   // 就地删除；真人用户则由在途 banChatMember 的服务端全量撤回收口。
-  if (await deleteBlockedSenderChatMessage(message)) return true;
+  const blocked: boolean | Promise<boolean> =
+    deleteBlockedSenderChatMessage(message);
+  if (typeof blocked !== "boolean") {
+    return blocked.then((claimed: boolean): boolean | Promise<boolean> =>
+      claimed ? true : ingestAdmittedMessage(message, botId));
+  }
+  return blocked ? true : ingestAdmittedMessage(message, botId);
+}
 
+/**
+ * 黑名单门禁放行之后的投递段：广告候选、入群/离群服务消息、刷屏计数与
+ * 频道评论线索。同步门禁全部不命中时同步返回 false，不分配 Promise。
+ */
+function ingestAdmittedMessage(
+  message: Message,
+  botId: number
+): boolean | Promise<boolean> {
   // 广告检测与入群守卫共用上面那道管理员判定：不是管理员就删不掉广告也封不了
   // 人，判一次纯属白烧额度。投递是尽力而为的——Worker 不可用只意味着它正在
   // 重建，而待检队列本来就随 isolate 一起清空，不值得为它拒收这条 update。
+  const chatState: Readonly<ChatState> = getChatState(message.chat.id);
   const adCandidate: AdCandidateMessage | undefined =
-    buildAdCandidate(message, botId);
+    buildAdCandidate(message, botId, chatState);
   if (adCandidate !== undefined && !postAntiRaid(adCandidate)) {
     logger.error(
       `Anti-Raid Worker rejected an ad detection candidate from chat ${message.chat.id}.`
@@ -208,8 +256,7 @@ export async function handleAntiRaidMessageIngress(
   ) {
     // 入群守卫关着时这一路只剩黑名单秒踢：不开验证窗口、不记入群计数，但公告
     // 照样吞掉（服务消息本来就不该进复读/AI 流水线，与守卫开关无关）。
-    const joinGuardEnabled: boolean =
-      getChatState(message.chat.id).isAntiRaidEnabled === true;
+    const joinGuardEnabled: boolean = chatState.isAntiRaidEnabled === true;
     const messages: AntiRaidWorkerMessage[] = [];
     const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
     for (const member of message.new_chat_members) {
@@ -245,19 +292,19 @@ export async function handleAntiRaidMessageIngress(
       if (joinMessage !== undefined) messages.push(joinMessage);
     }
     if (messages.length > 0) {
-      await postAntiRaidDurably(messages, replacedJoins);
+      return postAntiRaidDurably(messages, replacedJoins).then((): boolean => true);
     }
     return true;
   }
 
   if (message.left_chat_member) {
     // left 只用来撤销这个人的验证窗口；守卫关着时没有窗口可撤。
-    if (getChatState(message.chat.id).isAntiRaidEnabled === true) {
-      await postAntiRaidDurably([{
+    if (chatState.isAntiRaidEnabled === true) {
+      return postAntiRaidDurably([{
         type: "left",
         chatId: message.chat.id,
         userId: message.left_chat_member.id,
-      }]);
+      }]).then((): boolean => false);
     }
     return false;
   }
@@ -266,7 +313,7 @@ export async function handleAntiRaidMessageIngress(
   // post，窗口与禁言都在 Worker 侧（见 workers/antiRaid/floodControl.ts）。排在
   // 服务消息两条分支之后——入群/离群公告不是谁的「发言」，不该计进那个人的窗口。
   const floodCandidate: FloodCandidateMessage | undefined =
-    buildFloodCandidate(message, botId);
+    buildFloodCandidate(message, botId, chatState);
   if (floodCandidate !== undefined) {
     // 顺手把这个群的权限位补齐一次（已知或已在途时是一次 Map 查找）：Worker 侧
     // 的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程生命周期内到过。
@@ -306,12 +353,12 @@ export async function handleAntiRaidMessageIngress(
     ) &&
     // 排在最后：守卫开着的群才需要这条投递，而上面两个判定比一次 Map 取值更
     // 便宜（空表恒 false）。关着的群没有窗口，评论区线索也无处可用。
-    getChatState(message.chat.id).isAntiRaidEnabled === true
+    chatState.isAntiRaidEnabled === true
   ) {
     // 附带频道评论区的识别线索：评论与楼中楼回复都代表 TA 已实际参与讨论，
     // Worker 据此免除验证且不计入刷群窗口。没有任何评论区消息的普通入群
     // 照常验证，超时仍会被踢出。
-    await postAntiRaidDurably([{
+    return postAntiRaidDurably([{
       type: "message",
       chatId: message.chat.id,
       userId,
@@ -319,7 +366,7 @@ export async function handleAntiRaidMessageIngress(
       repliesToChannelPost:
         message.reply_to_message?.is_automatic_forward === true,
       isThreadReply: isCommentThreadReply,
-    }]);
+    }]).then((): boolean => false);
   }
   return false;
 }

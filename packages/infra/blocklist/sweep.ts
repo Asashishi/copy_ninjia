@@ -12,11 +12,6 @@ import {
   blocklistSweepState,
   pendingBlockedRemovals,
 } from "../../cache/main/blocklist";
-import {
-  BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
-  BLOCKLIST_SWEEP_RETRY_INTERVAL_MS,
-  BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS,
-} from "../../consts/antiRaid/blocklist";
 import { logger } from "../logger";
 import { getChatStateCache } from "../storage/stateStore";
 import {
@@ -28,6 +23,7 @@ import {
   initBlocklistSweepScheduler as initSweepScheduler,
 } from "./sweepScheduler";
 import {
+  forgetSupersededChatSweepBatches,
   materializeRemovalParams,
   queuePendingBlockedRemovalsSnapshot,
   trackBlockedRemoval,
@@ -35,7 +31,6 @@ import {
 import type { BlockedMembersRemovedEvent } from
   "../../types/antiRaid/events";
 import type {
-  BlocklistRemovalFailure,
   BlocklistSweepPageState,
   BlocklistSweepRecord,
   PendingBlockedRemoval,
@@ -43,6 +38,17 @@ import type {
 } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
 import type { BlocklistIdPage } from "../../types/identityStorage";
+import {
+  nextFailedSweeps,
+  noteSweepAttemptFailed,
+  recordPendingRemovalFailure,
+  requestBlocklistResweep,
+  sweepRetryDelayMs,
+} from "./sweepRetryState";
+import { replayPendingBlockedRemovalsForChat } from "./sweepReplay";
+
+export { requestBlocklistResweep } from "./sweepRetryState";
+export { replayPendingBlockedRemovals } from "./sweepReplay";
 
 export { quiesceBlocklistSweepScheduler } from "./sweepScheduler";
 
@@ -50,34 +56,12 @@ const runScheduledBlocklistSweep: () => Promise<void> = (): Promise<void> =>
   sweepManagedBlocklistChats(Date.now());
 
 function armBlocklistSweepScheduler(): void {
-  armSweepScheduler(runScheduledBlocklistSweep);
+  armSweepScheduler();
 }
 
 /** 启动恢复完成后武装补扫时钟；重复初始化只重算最近截止时间。 */
 export function initBlocklistSweepScheduler(): void {
   initSweepScheduler(runScheduledBlocklistSweep);
-}
-
-/**
- * 让这个群重新欠一次补扫，打开 sweptAt 闩锁。有批次在途时只记
- * resweepRequested，避免迟到的 complete 回执把请求覆盖；权限闩锁只能由一次
- * 确证的权限恢复打开。
- */
-export function requestBlocklistResweep(
-  chatId: number,
-  nextRetryAt: number = Date.now()
-): void {
-  const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-  if (progress?.permissionBlocked === true) return;
-  blocklistSweepState.set(chatId, {
-    removalId: progress?.removalId ?? null,
-    sweptAt: null,
-    nextRetryAt,
-    resweepRequested: progress?.removalId !== null && progress?.removalId !== undefined,
-    failedSweeps: progress?.failedSweeps ?? 0,
-    permissionBlocked: false,
-  });
-  armBlocklistSweepScheduler();
 }
 
 /**
@@ -131,68 +115,6 @@ export function noteBanPermissionObserved(chatId: number, canRestrict: boolean):
   replayPendingBlockedRemovalsForChat(chatId);
 }
 
-/** 按连续失败次数线性放大重扫间隔，并封顶。 */
-function sweepRetryDelayMs(failedSweeps: number): number {
-  return Math.min(
-    BLOCKLIST_SWEEP_RETRY_INTERVAL_MS * (failedSweeps + 1),
-    BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS
-  );
-}
-
-/** 退避顶到上限后不再自增；该计数只服务于延迟计算。 */
-function nextFailedSweeps(failedSweeps: number): number {
-  return sweepRetryDelayMs(failedSweeps) >= BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS
-    ? failedSweeps
-    : failedSweeps + 1;
-}
-
-/**
- * 「这一轮没成，排下一次」的统一记账：清掉 claim、按当前计数排期、把计数推进一格。
- *
- * `sweepBlockedMembers` 的两条降级路径（登记不进 outbox、投递边界抛错）与回执
- * 失败共用这一入口。执行 owner 持续失败时，计数按轮推进，排期间隔最终收敛到
- * BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS。
- *
- * nextRetryAt 用**推进前**的计数算，与回执那条路径保持同一口径（那边排期用的是
- * 派发时写下的 nextRetryAt，计数留给下一轮）。
- */
-function noteSweepAttemptFailed(chatId: number, failedSweeps: number, now: number): void {
-  blocklistSweepState.set(chatId, {
-    removalId: null,
-    sweptAt: null,
-    nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
-    resweepRequested: false,
-    failedSweeps: nextFailedSweeps(failedSweeps),
-    // 闩锁只由权限观测开合，本轮失败记账不得顺手清零——理由同 settleBlockedRemoval
-    // 的收尾。deliverPreparedSweeps 的 await 期间可能刚到过一条 permissionDenied
-    // 回执：它的 removalId 属于更早的批次，notePermissionBlocked 置真后就因
-    // removalId 不匹配提前返回，闩锁是它留下的唯一痕迹。清掉之后每次
-    // markBotAdminObserved 都会重新武装一整轮注定 400 的全名单补扫，持续浪费
-    // Worker 调度、网络与日志；Worker 重建还会重投这些必败批次。
-    permissionBlocked: blocklistSweepState.get(chatId)?.permissionBlocked === true,
-  });
-  armBlocklistSweepScheduler();
-}
-
-/** 新一轮补扫完整取代同群旧批次，避免 outbox 与重放量随失败轮次增长。 */
-function forgetChatSweepBatches(chatId: number, exceptRemovalId?: number): void {
-  let changed: boolean = false;
-  for (const [removalId, pending] of pendingBlockedRemovals) {
-    if (
-      pending.params.chatId === chatId &&
-      pending.params.probeMembership &&
-      removalId !== exceptRemovalId
-    ) {
-      pendingBlockedRemovals.delete(removalId);
-      blocklistSweepPages.delete(removalId);
-      changed = true;
-    }
-  }
-  if (changed && !queuePendingBlockedRemovalsSnapshot()) {
-    logger.error(`Failed to queue superseded blocklist sweep cleanup for chat ${chatId}.`);
-  }
-}
-
 interface PreparedBlocklistSweep {
   chatId: number;
   params: RemoveBlockedMembersParams;
@@ -227,7 +149,7 @@ function prepareBlocklistSweep(
     return null;
   }
   // 先成功登记新任务，再删旧任务，避免登记异常时把唯一恢复依据提前销掉。
-  forgetChatSweepBatches(chatId, params.removalId);
+  forgetSupersededChatSweepBatches(chatId, params.removalId);
   blocklistSweepState.set(chatId, {
     removalId: params.removalId,
     sweptAt: null,
@@ -565,189 +487,4 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
     permissionBlocked: blocklistSweepState.get(event.chatId)?.permissionBlocked === true,
   });
   armBlocklistSweepScheduler();
-}
-
-/** 更新一次任务诊断；达到阈值只告警，不删除安全任务。 */
-function updatePendingRemovalFailure(
-  removalId: number,
-  chatId: number,
-  failure: BlocklistRemovalFailure
-): boolean {
-  const pending: PendingBlockedRemoval | undefined = pendingBlockedRemovals.get(removalId);
-  if (pending === undefined) return false;
-  if (pending.attempts < Number.MAX_SAFE_INTEGER) pending.attempts++;
-  pending.lastFailure = failure;
-  if (pending.attempts === BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS) {
-    logger.error(
-      `Blocklist removal ${removalId} for chat ${chatId} failed ${pending.attempts} time(s); ` +
-      "retaining its durable outbox entry until completion or authoritative cancellation."
-    );
-  }
-  return true;
-}
-
-/**
- * 中间诊断变化不逐次整表持久化，避免 N 份回执形成 O(n²) 快照/fsync；只有首次
- * 跨越告警阈值立即排队，使“已达到告警线”本身跨重启存活。
- */
-function recordPendingRemovalFailure(
-  removalId: number,
-  chatId: number,
-  failure: BlocklistRemovalFailure
-): void {
-  if (!updatePendingRemovalFailure(removalId, chatId, failure)) return;
-  if (
-    pendingBlockedRemovals.get(removalId)?.attempts !==
-    BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS
-  ) {
-    return;
-  }
-  if (!queuePendingBlockedRemovalsSnapshot()) {
-    logger.error(`Failed to queue blocklist removal retry state ${removalId}.`);
-  }
-}
-
-function replayPendingBlockedRemovalsForChat(chatId: number): void {
-  const removals: RemoveBlockedMembersParams[] = [];
-  for (const pending of pendingBlockedRemovals.values()) {
-    if (
-      pending.params.chatId !== chatId ||
-      pending.params.probeMembership
-    ) {
-      continue;
-    }
-    const params: RemoveBlockedMembersParams | undefined =
-      materializeRemovalParams(pending.params);
-    if (params !== undefined) removals.push(params);
-  }
-  if (removals.length === 0) return;
-  void blockedMemberRemoverHolder.current(removals).catch(
-    (error: unknown): void => {
-      logger.error(
-        `Failed to replay ${removals.length} permission-blocked removal batch(es) for chat ${chatId}:`,
-        error
-      );
-      rearmSweepAfterFailedReplay([chatId]);
-    }
-  );
-}
-
-/**
- * 重投的 durable 交接失败后，让这些群重新欠一次补扫。
- *
- * 重投是 fire-and-forget 的：它的 rejection 到达时 onRespawn 早已返回，够不着
- * supervisedWorker 的 replayFailure，因此不会像别的镜像那样把新实例拉下来——
- * 拉下来也不对，这里失败的通常是 Disk I/O 那侧的耐久屏障而不是 Worker 本身，
- * 换一个新 isolate 只会撞进重启节流。
- *
- * 但只记一行日志就等于放弃：frozen 批次（`/block` 秒踢、广告处置）没有计时器
- * 也没有退避，它们的重试钩子只有「下一次 Worker 重建」和「一次确证的权限恢复」；
- * 两者都不来时，那批人就一直坐在群里，而 `/block` 早已回复管理员成功。补扫是
- * 按整份黑名单重新materialize 的，覆盖得了丢掉的那批人——口径同
- * settleBlockedRemoval 对未落定回执的处理，不另起一套机制。
- */
-function rearmSweepAfterFailedReplay(
-  chatIds: Iterable<number>,
-  sweepRemovalIds: ReadonlyMap<number, number> = new Map()
-): void {
-  for (const chatId of chatIds) {
-    const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-    const sweepRemovalId: number | undefined = sweepRemovalIds.get(chatId);
-    if (
-      sweepRemovalId !== undefined &&
-      progress?.removalId === sweepRemovalId
-    ) {
-      blocklistSweepPages.delete(sweepRemovalId);
-      recordPendingRemovalFailure(
-        sweepRemovalId,
-        chatId,
-        "delivery-boundary"
-      );
-      noteSweepAttemptFailed(chatId, progress.failedSweeps, Date.now());
-      continue;
-    }
-    requestBlocklistResweep(chatId, Date.now() + sweepRetryDelayMs(progress?.failedSweeps ?? 0));
-  }
-}
-
-/**
- * Anti-Raid Worker 重建后重投所有未销账任务。重复 ban 幂等，漏投则会把人永久
- * 留在群里；权限闩锁任务等待真实权限边沿，不因 Worker 重建空转。
- */
-export function replayPendingBlockedRemovals(
-  countPreviousAttempt: boolean = true
-): void {
-  void replayPendingBlockedRemovalsAsync(countPreviousAttempt);
-}
-
-async function replayPendingBlockedRemovalsAsync(
-  countPreviousAttempt: boolean
-): Promise<void> {
-  const removals: RemoveBlockedMembersParams[] = [];
-  const replayedChatIds: Set<number> = new Set<number>();
-  const deferredSweepChatIds: Set<number> = new Set<number>();
-  const replayedSweepRemovalIds: Map<number, number> = new Map();
-  const deferredSweepRemovalIds: Map<number, number> = new Map();
-  let page: BlocklistIdPage = { ids: [], nextCursor: null, done: true };
-  blocklistSweepPages.clear();
-  try {
-    if (hasAnyBlockedIdentity()) page = await readBlocklistSweepPage(null);
-  } catch (error: unknown) {
-    // 这次读只服务于 probeMembership 补扫批次；冻结批次（`/block` 秒踢、广告
-    // 处置）的名单在登记时就冻好了，materializeRemovalParams 对它们根本不看
-    // blockedIds。整体 return 会把这些批次一并丢掉，而它们没有 timer 也没有
-    // 退避，重试钩子只有「下一次 Worker 重建」和「一次确证的权限恢复」——两者
-    // 都不来时那批人就一直坐在群里，`/block` 却早已回执成功。因此只把补扫降级
-    // 成「本轮跳过」，并在下面为它们重新排一次补扫。
-    logger.error("Failed to read the first blocklist ID page for pending removal replay:", error);
-  }
-  for (const [removalId, pending] of [...pendingBlockedRemovals]) {
-    if (
-      blocklistSweepState.get(pending.params.chatId)?.permissionBlocked === true
-    ) {
-      continue;
-    }
-    const blockedIds: readonly number[] = pending.params.probeMembership
-      ? page.ids
-      : [];
-    const params: RemoveBlockedMembersParams | undefined =
-      materializeRemovalParams(pending.params, blockedIds);
-    if (params === undefined) {
-      if (pending.params.probeMembership) {
-        deferredSweepChatIds.add(pending.params.chatId);
-        deferredSweepRemovalIds.set(pending.params.chatId, removalId);
-      }
-      continue;
-    }
-    if (countPreviousAttempt) {
-      updatePendingRemovalFailure(
-        removalId,
-        pending.params.chatId,
-        "worker-restarted"
-      );
-    }
-    if (pending.params.probeMembership) {
-      blocklistSweepPages.set(removalId, {
-        chatId: pending.params.chatId,
-        nextCursor: page.nextCursor,
-        done: page.done,
-        awaitingAck: true,
-      });
-      replayedSweepRemovalIds.set(pending.params.chatId, removalId);
-    }
-    removals.push(params);
-    replayedChatIds.add(pending.params.chatId);
-  }
-  // 名单读失败而被跳过的补扫没有任何回执可等；沿用重投失败的同一条 re-arm 口径。
-  if (deferredSweepChatIds.size > 0) {
-    rearmSweepAfterFailedReplay(
-      deferredSweepChatIds,
-      deferredSweepRemovalIds
-    );
-  }
-  if (removals.length === 0) return;
-  await blockedMemberRemoverHolder.current(removals).catch((error: unknown): void => {
-    logger.error(`Failed to replay ${removals.length} blocklist removal batch(es):`, error);
-    rearmSweepAfterFailedReplay(replayedChatIds, replayedSweepRemovalIds);
-  });
 }

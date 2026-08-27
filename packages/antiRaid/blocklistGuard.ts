@@ -33,8 +33,13 @@ export type DurableAntiRaidPost = (messages: readonly AntiRaidWorkerMessage[]) =
  * 已拉黑频道身份仍能发出消息时就地删除。权威名单与 Telegram update 都在主线程，
  * 因此不为这一条低频拒绝路径新增 Worker 消息；返回 true 表示消息已被黑名单门禁
  * 接管，调用方无论删除成败都不得再把它送进广告、刷屏或普通消息流水线。
+ *
+ * **同步返回 `false` 是常态**：绝大多数群消息没有 `sender_chat`，或者那个频道
+ * 不在黑名单里，判定就是几次属性读取加一次 Map 查找。只有真的要删一条消息时
+ * 才返回 Promise。本函数挂在每条群消息的 ingress 上，不能为这条恒假的判定给
+ * 每条消息都分配一个 Promise（见 AGENTS.md「高频路径」一节）。
  */
-export async function deleteBlockedSenderChatMessage(message: Message): Promise<boolean> {
+export function deleteBlockedSenderChatMessage(message: Message): boolean | Promise<boolean> {
   const senderChat: Chat | undefined = visibleSenderChat(message);
   const chatId: number = message.chat.id;
   if (
@@ -56,17 +61,17 @@ export async function deleteBlockedSenderChatMessage(message: Message): Promise<
     return true;
   }
 
-  const outcome: DeleteMessageOutcome = await deleteMessageWithOutcome(
-    chatId,
-    message.message_id
+  return deleteMessageWithOutcome(chatId, message.message_id).then(
+    (outcome: DeleteMessageOutcome): boolean => {
+      if (outcome === "forbidden" || outcome === "failed") {
+        logger.error(
+          `Blocked sender chat message ${message.message_id} from ${senderChat.id} in chat ${chatId} ` +
+          `could not be deleted (${outcome}).`
+        );
+      }
+      return true;
+    }
   );
-  if (outcome === "forbidden" || outcome === "failed") {
-    logger.error(
-      `Blocked sender chat message ${message.message_id} from ${senderChat.id} in chat ${chatId} ` +
-      `could not be deleted (${outcome}).`
-    );
-  }
-  return true;
 }
 
 export interface ClaimBlockedJoinerParams {

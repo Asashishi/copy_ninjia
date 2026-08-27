@@ -134,13 +134,6 @@ export function maintainAiMemoryFiles(
   for (const path of inspection.temporaryPaths) tryUnlink(path);
 }
 
-/** 单领域恢复入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
-export function recoverAiMemories(): Map<number, string> {
-  const inspection: AiMemoryRecoveryInspection = inspectAiMemories();
-  maintainAiMemoryFiles(inspection);
-  return inspection.snapshots;
-}
-
 /**
  * 覆盖式写入某群的 AI 记忆快照（tmp + fsync + rename 原子落盘）。
  * snapshotJson 是源头序列化好的 JSON 文本，原样写入。目录正常总已由
@@ -214,13 +207,6 @@ export function maintainStickerCatalogFiles(
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
   for (const path of inspection.temporaryPaths) tryUnlink(path);
   for (const path of inspection.orphanPaths) tryUnlink(path);
-}
-
-/** 单领域恢复入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
-export function recoverStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
-  const inspection: StickerCatalogRecoveryInspection = inspectStickerCatalogs(activePacks);
-  maintainStickerCatalogFiles(inspection);
-  return inspection.snapshots;
 }
 
 /** 覆盖式写入某个白名单贴纸包的目录快照（tmp + fsync + rename 原子落盘），

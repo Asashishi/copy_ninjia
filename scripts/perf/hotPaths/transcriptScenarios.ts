@@ -82,16 +82,8 @@ export function bufferedMessageBuildScenario(): Scenario {
  * 这是 BufferedMessage 形状是否稳定的**读取侧**。缓存在场景构造时建好，采样
  * 只量渲染，不把构造成本混进来。
  *
- * **实测定形之后这条读数没有变化**（定形前 88.9~93.8k，定形后 89.9~91.0k，
- * 各 3~4 次独立进程，区间完全重叠），如实记在这里免得后来者据形状理论推断
- * 出一个并不存在的收益：这段的成本压倒性地在拼串本身，属性读取那点差异淹没
- * 在里面。定形真正的收益在构造侧（见 buffered-message-build）。本场景保留的
- * 意义是当**回归哨兵**——转录渲染是每次 AI 回复的必经之地。
- *
- * 上面那批历史读数取自「只读 `.length`」的旧口径。当时的渲染侧攒数组再 join，
- * 内层 join 已经把大头展平了，两种口径实测只差 3.1%（71.6 vs 73.9 µs/op）；改成逐行
- * `+=` 之后差到 27%（42.0 vs 57.5），下面的 run 因此显式强制展平，理由见那里的注释。
- * 跨这次改动比较读数时要注意口径。
+ * 场景显式展平最终字符串，覆盖每次 AI 回复都经过的完整转录渲染成本；构造侧
+ * shape 稳定性由 buffered-message-build 单独观测。
  */
 export function transcriptRenderScenario(): Scenario {
   const messages: BufferedMessage[] = [];

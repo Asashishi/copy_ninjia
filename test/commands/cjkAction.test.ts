@@ -280,7 +280,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
 describe("动作命令的认领边界", () => {
   test("caption 形态不认领，放行回消息流水线", async () => {
     // bot.hears 对 caption 也匹配。若在这里认领，这条带图消息就再也到不了
-    // handleIncomingMessage，那张图不会进 AI 滚动记忆与视觉流水线。
+    // handleIncomingMessageMiddleware，那张图不会进 AI 滚动记忆与视觉流水线。
     const ctx: any = context("/咬");
     delete ctx.msg.text;
     ctx.msg.caption = "/咬";
@@ -321,7 +321,7 @@ describe("动作命令的认领边界", () => {
   });
 
   test("认领消息时顺手把发起人写进 username 缓存", async () => {
-    // 被认领的消息不再流经 handleIncomingMessage，而 cacheSender 只在那里调用；
+    // 被认领的消息不再流经 handleIncomingMessageMiddleware，而 cacheSender 只在那里调用；
     // 不补这一次，发言以动作命令为主的人就永远查不到。
     // 用本文件独有的名字：模块级 username 缓存会被同文件先前的用例填过。
     expect(resolveUsernameTarget("only_seen_via_action")).toBeUndefined();

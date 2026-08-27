@@ -2,9 +2,7 @@ import type {
   InlineKeyboardMarkup,
   Message,
   MessageEntity,
-  MessageId,
 } from "@grammyjs/types";
-import { markSelfSent } from "../../selfSentTracker";
 import { telegramApi } from "../client";
 import { telegramErrorDetails } from "../errors";
 import {
@@ -17,6 +15,7 @@ import type {
   TelegramSendResult,
 } from "../../../types/telegram";
 import type { TelegramApi } from "../../../types/telegramWorker";
+import { toTelegramSendResult } from "./sendResult";
 
 type SendMessageApi = Pick<TelegramApi, "sendMessage">;
 type EphemeralSendMessageOptions = NonNullable<
@@ -29,27 +28,6 @@ type EphemeralSendMessageApi = Pick<TelegramApi, "sendMessage">;
 type EditMessageTextApi = Pick<TelegramApi, "editMessageText">;
 type SendChatActionApi = Pick<TelegramApi, "sendChatAction">;
 type AnswerCallbackQueryApi = Pick<TelegramApi, "answerCallbackQuery">;
-type SendStickerApi = Pick<TelegramApi, "sendSticker">;
-type SendPhotoApi = Pick<TelegramApi, "sendPhoto">;
-type SendAudioApi = Pick<TelegramApi, "sendAudio">;
-
-/**
- * 把一条已发出的消息收敛成 TelegramSendResult：登记进自发消息表（供自动流水线
- * 识别频道自回环，见 infra/selfSentTracker.ts），并带回 Telegram 实际建立的回复
- * 关系。发消息与发图片共用，两者不得各写一份。
- */
-function toSendResult(
-  chatId: number,
-  sent: Message
-): TelegramSendResult {
-  markSelfSent(chatId, sent.message_id);
-  return {
-    messageId: sent.message_id,
-    ...(sent.reply_to_message
-      ? { repliedToMessageId: sent.reply_to_message.message_id }
-      : {}),
-  };
-}
 
 export interface SendMessageParams {
   chatId: number;
@@ -135,7 +113,7 @@ export async function sendMessageWithResult({
     map: (
       sent: Message.TextMessage
     ): TelegramSendResult | undefined => {
-      const result: TelegramSendResult = toSendResult(chatId, sent);
+      const result: TelegramSendResult = toTelegramSendResult(chatId, sent);
       onSent?.(result.messageId);
       return result;
     },
@@ -148,7 +126,7 @@ export async function sendMessageWithResult({
   });
 }
 
-/** 发送纯文本消息的兼容入口；只需要 message_id 的调用方继续使用此函数。 */
+/** 发送纯文本消息，只返回 Telegram message_id。 */
 export async function sendMessage(
   params: SendMessageParams
 ): Promise<number | undefined> {
@@ -368,270 +346,6 @@ export async function answerCallbackQuery({
         ...signalArgs(signal)
       ),
     map: (): undefined => undefined,
-    fallback: undefined,
-  });
-}
-
-export interface SendStickerParams {
-  chatId: number;
-  fileId: string;
-  api?: SendStickerApi;
-  signal?: AbortSignal;
-  /**
-   * 论坛（topics）群里这条消息要落进哪个话题；语义见 SendMessageParams
-   * 的同名字段。本入口没有回复参数，因此**只有它**能把消息送进话题，
-   * 不传一律落 General（见 libs/forumTopic.ts）。
-   */
-  messageThreadId?: number;
-}
-
-export async function sendSticker({
-  chatId,
-  fileId,
-  api = telegramApi,
-  signal,
-  messageThreadId,
-}: SendStickerParams): Promise<number | undefined> {
-  return runTelegramAction({
-    action: "send sticker",
-    execute: (
-      requestSignal?: AbortSignal
-    ): Promise<Message.StickerMessage> =>
-      api.sendSticker(
-        chatId,
-        fileId,
-        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
-        ...signalArgs(requestSignal)
-      ),
-    map: (sent: Message.StickerMessage): number | undefined => {
-      markSelfSent(chatId, sent.message_id);
-      return sent.message_id;
-    },
-    fallback: undefined,
-    signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
-  });
-}
-
-export interface SendPhotoParams {
-  chatId: number;
-  /** Worker 调用会转移底层 ArrayBuffer；sendPhoto 返回 Promise 后不得再读取。 */
-  bytes: Uint8Array;
-  mimeType: "image/jpeg" | "image/png";
-  replyToMessageId?: number;
-  api?: SendPhotoApi;
-  signal?: AbortSignal;
-  /**
-   * 随图一起发出的图注，图和文字合成同一条消息（同一个 message_id）。
-   * 长度必须由调用方压到 TELEGRAM_CAPTION_MAX_CHARS 以内——Bot API 对超长
-   * caption 是整条拒绝而不是截断，这里不做兜底截断，免得悄悄吞掉正文。
-   */
-  caption?: string;
-  /**
-   * 论坛（topics）群里这条消息要落进哪个话题；语义与注意事项见
-   * SendMessageParams 的同名字段（挂了回复也要带）。
-   */
-  messageThreadId?: number;
-}
-
-/** 从内存上传一张图片并返回 Telegram 实际建立的回复关系；不落临时文件。 */
-export async function sendPhotoWithResult({
-  chatId,
-  bytes,
-  mimeType,
-  replyToMessageId,
-  api = telegramApi,
-  signal,
-  caption,
-  messageThreadId,
-}: SendPhotoParams): Promise<TelegramSendResult | undefined> {
-  return runTelegramAction({
-    action: "send photo",
-    execute: async (
-      requestSignal?: AbortSignal
-    ): Promise<Message.PhotoMessage> => {
-      const extension: string =
-        mimeType === "image/jpeg" ? "jpg" : "png";
-      // 与 sendMessageWithResult 一致地不设置 parse_mode：图注同样是模型或
-      // 用户产出的自由文本，一旦按 HTML/Markdown 解析，正文里的 `<`、`_`
-      // 就会变成格式或链接注入，并让整条发送因实体不闭合而失败。
-      const other: Parameters<SendPhotoApi["sendPhoto"]>[2] = {
-        ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
-        ...(caption ? { caption } : {}),
-        ...(replyToMessageId
-          ? {
-            reply_parameters: {
-              message_id: replyToMessageId,
-              allow_sending_without_reply: true,
-            },
-          }
-          : {}),
-      };
-      return api.sendPhoto(
-        chatId,
-        { bytes, fileName: `generated.${extension}` },
-        other,
-        ...signalArgs(requestSignal)
-      );
-    },
-    map: (
-      sent: Message.PhotoMessage
-    ): TelegramSendResult | undefined => toSendResult(chatId, sent),
-    fallback: undefined,
-    signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
-  });
-}
-
-/** 上传图片的兼容入口；只需要 message_id 的调用方继续使用此函数。 */
-export async function sendPhoto(
-  params: SendPhotoParams
-): Promise<number | undefined> {
-  return (await sendPhotoWithResult(params))?.messageId;
-}
-
-export interface SendAudioParams {
-  chatId: number;
-  /** Worker 调用会转移底层 ArrayBuffer；sendAudio 返回 Promise 后不得再读取。 */
-  bytes: Uint8Array;
-  /** 上传文件名，必须带与真实容器一致的扩展名——Bot API 靠它判定容器。 */
-  fileName: string;
-  replyToMessageId?: number;
-  api?: SendAudioApi;
-  signal?: AbortSignal;
-  /**
-   * 随音频一起发出的说明，音频和文字合成同一条消息（同一个 message_id）。
-   * 长度必须由调用方压到 TELEGRAM_CAPTION_MAX_CHARS 以内——Bot API 对超长
-   * caption 是整条拒绝而不是截断，这里不做兜底截断，免得悄悄吞掉正文。
-   */
-  caption?: string;
-  /** 音频标题；Telegram 播放器把它显示成曲名。 */
-  title?: string;
-  /** 演唱者/作者；Telegram 播放器显示在曲名下方。 */
-  performer?: string;
-  /** 音频时长（秒）；不传时 Telegram 自己探测，探不到播放条上就没有进度。 */
-  duration?: number;
-  /**
-   * 封面缩略图字节。
-   *
-   * 必须是 JPEG、长边 ≤320、体积 <200 kB——Bot API 的三项硬性要求，任一项不满足
-   * 是**整条发送被拒**而不是不显示封面，因此压缩必须由调用方在这之前做完
-   * （见 libs/image.ts 的 prepareThumbnailJpeg）。这里不做兜底转换：在发送边界上
-   * 悄悄改写调用方给的字节，会让「为什么封面变糊了」变成一个查不到的问题。
-   */
-  /** 与音频字节相同，Worker 调用会转移所有权。 */
-  thumbnailBytes?: Uint8Array;
-  /**
-   * 论坛（topics）群里这条消息要落进哪个话题；语义与注意事项见
-   * SendMessageParams 的同名字段（挂了回复也要带）。
-   */
-  messageThreadId?: number;
-}
-
-/**
- * 从内存上传一段音频并返回 Telegram 实际建立的回复关系；不落临时文件。
- *
- * 走 sendAudio 而不是 sendVoice：voice 在客户端里是「语音条」（波形、按住播放、
- * 没有曲名），而这条路上发出去的是一首完整歌曲，用 audio 才会得到带曲名/演唱者
- * 的播放条，也才能被转发进音乐列表。
- */
-export async function sendAudioWithResult({
-  chatId,
-  bytes,
-  fileName,
-  replyToMessageId,
-  api = telegramApi,
-  signal,
-  caption,
-  title,
-  performer,
-  duration,
-  thumbnailBytes,
-  messageThreadId,
-}: SendAudioParams): Promise<TelegramSendResult | undefined> {
-  return runTelegramAction({
-    action: "send audio",
-    execute: async (
-      requestSignal?: AbortSignal
-    ): Promise<Message.AudioMessage> => {
-      // 与 sendPhotoWithResult 一致地不设置 parse_mode：说明文字同样是模型产出的
-      // 自由文本，一旦按 HTML/Markdown 解析，正文里的 `<`、`_` 就会变成格式或
-      // 链接注入，并让整条发送因实体不闭合而失败。
-      const other: Parameters<SendAudioApi["sendAudio"]>[2] = {
-        ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
-        ...(caption ? { caption } : {}),
-        ...(title ? { title } : {}),
-        ...(performer ? { performer } : {}),
-        ...(duration !== undefined ? { duration } : {}),
-        ...(thumbnailBytes
-          ? { thumbnail: { bytes: thumbnailBytes, fileName: "cover.jpg" } }
-          : {}),
-        ...(replyToMessageId
-          ? {
-            reply_parameters: {
-              message_id: replyToMessageId,
-              allow_sending_without_reply: true,
-            },
-          }
-          : {}),
-      };
-      return api.sendAudio(
-        chatId,
-        { bytes, fileName },
-        other,
-        ...signalArgs(requestSignal)
-      );
-    },
-    map: (
-      sent: Message.AudioMessage
-    ): TelegramSendResult | undefined => toSendResult(chatId, sent),
-    fallback: undefined,
-    signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
-  });
-}
-
-/** 复制一条消息并登记自发消息 ID。 */
-export interface CopyMessageParams {
-  chatId: number;
-  fromChatId: number;
-  messageId: number;
-  /**
-   * 论坛（topics）群里这条消息要落进哪个话题；语义与注意事项见
-   * SendMessageParams 的同名字段（挂了回复也要带）。
-   */
-  messageThreadId?: number;
-}
-
-export async function copyMessage({
-  chatId,
-  fromChatId,
-  messageId,
-  messageThreadId,
-}: CopyMessageParams): Promise<number | undefined> {
-  return runTelegramAction({
-    action: "copy message",
-    execute: (signal?: AbortSignal): Promise<MessageId> =>
-      telegramApi.copyMessage(
-        chatId,
-        fromChatId,
-        messageId,
-        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
-        ...signalArgs(signal)
-      ),
-    map: (copied: MessageId): number | undefined => {
-      markSelfSent(chatId, copied.message_id);
-      return copied.message_id;
-    },
     fallback: undefined,
   });
 }

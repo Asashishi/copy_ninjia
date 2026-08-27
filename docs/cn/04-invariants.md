@@ -134,6 +134,10 @@
 
   listener 的 `false`、throw、reject、超时或 scoped post 拒绝都必须终止当前代际并 fatal。旧代际 listener 的迟到结算不得写入或激活新实例。需要确认处理与落盘边界的调用方必须把 `false` 当作失败，不能确认对应 Telegram update。
 
+- **每条 update 的分发形态是承重的，不只是性能取舍。** grammY 的 `command`/`on`/`hears` 都经 `filter → branch → lazy` 注册，而 `lazy` 每条 update 都要 `await` 一次工厂、建一个数组并 `new` 一个 Composer。因此所有斜杠命令必须收在同一条 `bot.on(":entities:bot_command")` 子链后面，不得逐条挂到 `bot` 上——那层外闸的判据与 `Context.has.command()` 自己的第一步完全相同，命中集合、相对顺序与「命中即终止」都不变，换来的是不带 `bot_command` 实体的消息一次跳过整组。同理，挂在每条群消息之前的三条 ingress（Anti-Raid、gag、`/set_qa` 表单投递）与它们共用的自身管理员判定一律返回 `boolean | Promise<boolean>`：稳定态同步返回、不分配 Promise，只有现查权限、真要删一条消息或 durable 投递才返回 Promise，由 `app/registerHandlers.ts` 的 `claimOrContinue` 统一接管。
+
+  **返回不返回 Promise 是语义的一部分，不是可自由优化的实现细节**：要等 durable barrier 的那几条（入群/离群服务消息、验证按钮回投）必须返回 Promise，同步返回等于 update 在落盘确认之前就被 Telegram 确认掉；反过来把一条恒假的同步判定写成 `async`，就是让每条群消息白付一次 Promise 分配与一个微任务回合。两个方向都由测试双向钉住：稳定态断言同步返回，durable 那几条断言 `toBeInstanceOf(Promise)`。
+
 ### 状态机契约
 
 - 状态机的 `State/Event/Effect/Transition/Decision` 契约统一由 `packages/types/states/` 持有，`packages/states/` 只实现无 I/O 的纯状态转移；解释器和 cache 直接依赖前者的类型。
@@ -192,7 +196,7 @@
 
   这张活跃表也是每条群消息都会命中的 JIT 热点：已有群命中时只原地更新固定 shape 的 `AiReplyActivityEntry`（`timestamps`、`lastAccessSequence`、`lastObservedAt`），不得通过 `Map.delete` + `Map.set` 重排，也不得创建临时复合 key 或投影对象。只有容量已满且插入新群的冷路径才扫描有界表选择 LRU；窗口时间戳、容量、淘汰顺序与系统时钟回拨保护不得因性能优化改变。
 
-  **同一条群消息只读一次墙钟**：`handleIncomingMessage` 在入口取一次 `Date.now()`，活跃度入窗、安静期判定与随机搭话冷却认领都用这一个值（经 `MessageTriggerContext.now` 传给下游）；Anti-Raid 侧同理，`enqueueAdCandidate` 拿到的 `now` 一路传到管理员缓存的 TTL 判定。吃 `now` 的函数一律接受显式实参，每条消息都会走到的调用点必须传值，缺省实参只留给低频命令路径。两个理由缺一不可：语义上，同一条消息的各处判定必须落在同一时刻，各读各的钟会让它们横跨毫秒边界得出互相矛盾的结论；工程上，墙钟读取的代价完全取决于宿主 clocksource——虚拟机回退到没有 vDSO 快路径的时钟源时，单次读取可达微秒量级，比这些判定本身贵两个数量级，而且 syscall 对缓存的污染还会连带拖慢同一函数里的其余工作。
+  **同一条群消息只读一次墙钟**：`handleIncomingMessageMiddleware` 在入口取一次 `Date.now()`，活跃度入窗、安静期判定与随机搭话冷却认领都用这一个值（经 `MessageTriggerContext.now` 传给下游）；Anti-Raid 侧同理，`enqueueAdCandidate` 拿到的 `now` 一路传到管理员缓存的 TTL 判定。吃 `now` 的函数一律接受显式实参，每条消息都会走到的调用点必须传值，缺省实参只留给低频命令路径。两个理由缺一不可：语义上，同一条消息的各处判定必须落在同一时刻，各读各的钟会让它们横跨毫秒边界得出互相矛盾的结论；工程上，墙钟读取的代价完全取决于宿主 clocksource——虚拟机回退到没有 vDSO 快路径的时钟源时，单次读取可达微秒量级，比这些判定本身贵两个数量级，而且 syscall 对缓存的污染还会连带拖慢同一函数里的其余工作。
 - **四种媒体（图片/贴纸/GIF/语音）共用同一条「占位入缓存 → 异步解析 → 原位回填」管线**，去重缓存、有界执行器与回填时序只有一份；逐媒体的差异只落在「走视觉描述还是走语音转写」这一个分派上（`packages/aiChat/ai/imageDescription.ts` 的 `resolveMedia`）。语音另起一条并行管线就要把并发合并、容量淘汰、执行槽竞争各写一遍，而那几处的正确性恰恰是最难覆盖的。
 
   **语音的两条上限（时长、声明体积）必须在下载之前判**：Telegram 的 update 里本来就带 `duration` 与 `file_size`，而下载侧那道字节闸要先把整段音频拉下来才知道超限——一条一小时的语音会白占一个媒体执行槽和整段带宽，最后仍然只换来一行兜底占位。被拦下的退回一行带时长的 `[语音 N 秒]` 纯文本；**拦下的是转写，不是回复**——直接触发时照样要回一句，「已读不回」比回一句「太长了没听」更糟。音频字节不转码（voice note 恒为 OGG/Opus，多模态接口本来就收 `audio/ogg`），但字节上限必须比视觉那条小得多：音频要 base64 内联进请求，编码后涨 4/3，沿用 16 MiB 会编出 20 MB 以上、整条请求被服务端拒收。转写文本的截断上限也比媒体描述宽——那是**群友原话**而不是模型的概括，截一半会让模型据此答非所问。

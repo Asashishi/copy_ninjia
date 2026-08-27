@@ -76,23 +76,25 @@ import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
 import { noteStorageWriteRejected } from "../cache/workers/diskIO/storageDatabase";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type {
+  DiskFlushRequest,
+  DiskDiagnosticMessage,
+  DiskIOMessage,
+} from "../types/diskIO/messages";
+import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
-  DiskFlushRequest,
   DiskFlushFailedReply,
   DiskFlushReply,
   DiskDiagnosticBatchAcceptedReply,
   DiskDiagnosticBatchRetryReply,
-  DiskDiagnosticMessage,
   DiskIODomain,
-  DiskIOMessage,
   JoinLogReadReply,
   IdentityStoragePersistedReply,
   LuckAppendStalledReply,
   LuckSecretReply,
   RecoveryReplayFailedReply,
   VerificationPersistedReply,
-} from "../types/diskIO";
+} from "../types/diskIO/replies";
 import type {
   JoinLogRecord,
 } from "../types/diskIO/storage";
@@ -376,7 +378,7 @@ function handleDiskIODiagnostic(message: DiskDiagnosticMessage): boolean {
 }
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
-export function startDiskIOWorker(): void {
+function startDiskIOWorker(): void {
   configureStoragePersistenceReply(
     (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
   );

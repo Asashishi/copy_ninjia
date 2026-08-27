@@ -1,4 +1,4 @@
-import type { DiskIOMessage } from "../../types/diskIO";
+import type { DiskIOMessage } from "../../types/diskIO/messages";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 
 /**

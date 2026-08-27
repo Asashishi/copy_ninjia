@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AD_SAMPLE_FILE_PATH, AD_SAMPLE_MEMORY_DIR } from "../../../packages/consts/paths";
 import { AD_SAMPLE_FILE_MAX_BYTES, PERSISTED_FILE_MODE } from "../../../packages/consts/diskIO/common";
 import {
@@ -224,6 +224,13 @@ describe("广告命中样本旁路", () => {
 
   test("写盘失败只作废游标、不抛出：旁路绝不能拖住封禁本身", () => {
     // 目录被占成普通文件，mkdir 必然失败。
+    //
+    // 父目录必须显式建出来：本用例要造的前置条件是「ad-detected 这个名字被一个
+    // 普通文件占着」，而不是「memory/ 也不存在」。beforeEach 只删 ad-detected，
+    // memory/ 一直是别的用例调 handleAdSampleMessage 时 recursive mkdir 顺带建的
+    // ——`bun test --randomize` 把本用例排到文件里第一个时，writeFileSync 会先
+    // 撞 ENOENT，用例还没开始就失败。
+    mkdirSync(dirname(AD_SAMPLE_MEMORY_DIR), { recursive: true });
     rmSync(AD_SAMPLE_MEMORY_DIR, { recursive: true, force: true });
     writeFileSync(AD_SAMPLE_MEMORY_DIR, "not a directory");
 

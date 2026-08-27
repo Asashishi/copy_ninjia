@@ -48,7 +48,7 @@ mock.module("../../packages/aiChat/ai/stickers/describe", () => ({
   },
 }));
 
-const { handleIncomingMessage } = await import("../../packages/auto/message");
+const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
 const { clearAiReplyActivity } = await import("../../packages/auto/message/aiReplyActivity");
 const { AI_REPLY_PROBABILITY_BASE_INITIAL } =
   await import("../../packages/consts/aiChat/rateLimit");
@@ -93,7 +93,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("静态贴纸回复机器人：recordChatMedia 带上 directTrigger 与被回复文本，不掷评价骰", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 11,
@@ -129,7 +129,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("无视觉素材的贴纸回复机器人：记完兜底行直接按回复机器人触发", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 12,
@@ -167,7 +167,7 @@ describe("媒体直接叫机器人", () => {
 
   test("同一用户连续两次直接叫机器人都交给 Worker，不被 15 秒随机冷却吞掉", async () => {
     for (const messageId of [21, 22]) {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: messageId,
@@ -189,7 +189,7 @@ describe("媒体直接叫机器人", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 23,
@@ -224,7 +224,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("贴纸回复的不是机器人：不带 directTriggerReason，也不触发回复", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 13,
@@ -265,7 +265,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("图片 caption 明确要求生图并 @ 机器人：向 Worker 传递生图授权", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 14,
@@ -299,7 +299,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("文字回复一张图片并 @ 机器人要求上色：把被回复图片作为短期参考图", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 140,
@@ -338,7 +338,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("文字回复静态贴纸并 @ 机器人要求修图：把贴纸本体作为短期参考图", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 142,
@@ -383,7 +383,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("GIF 回复机器人：只把缩略图交给视觉管线，缓存键仍使用 GIF 唯一 id", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 15,
@@ -424,7 +424,7 @@ describe("媒体直接叫机器人", () => {
   });
 
   test("没有缩略图的 GIF 回复机器人：记录纯文本兜底后直接触发", async () => {
-    await handleIncomingMessage({
+    await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
         message_id: 16,
@@ -470,7 +470,7 @@ describe("媒体直接叫机器人", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 31,
@@ -509,7 +509,7 @@ describe("媒体直接叫机器人", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 32,
@@ -548,7 +548,7 @@ describe("媒体直接叫机器人", () => {
     // 取一个明确高于冷群闸门的样本，证明当前消息不会误走随机 AI 回复。
     Math.random = (): number => (coldGroupProbability + 1) / 2;
     try {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 37,
@@ -571,7 +571,7 @@ describe("媒体直接叫机器人", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 38,
@@ -584,7 +584,7 @@ describe("媒体直接叫机器人", () => {
       expect(copyMessageMock).not.toHaveBeenCalled();
 
       autoMessageChatState.isAIChatEnabled = false;
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 39,
@@ -606,7 +606,7 @@ describe("媒体直接叫机器人", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 35,
@@ -653,7 +653,7 @@ describe("媒体直接叫机器人", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 33,
@@ -666,7 +666,7 @@ describe("媒体直接叫机器人", () => {
       } as any);
       expect(generateAndSendReplyMock).not.toHaveBeenCalled();
 
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 36,
@@ -679,7 +679,7 @@ describe("媒体直接叫机器人", () => {
       } as any);
       expect(generateAndSendReplyMock).not.toHaveBeenCalled();
 
-      await handleIncomingMessage({
+      await handleIncomingMessageMiddleware({
         me: botInfo,
         msg: {
           message_id: 34,

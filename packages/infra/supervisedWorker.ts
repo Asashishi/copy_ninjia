@@ -3,7 +3,10 @@ import { relayLogMessage } from "./diskIO";
 import { signalBusinessWorkerFatal } from "./workerSupervisor";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "../libs/restartThrottle";
-import type { ForwardedLogBatch, ForwardedLogBatchAccepted } from "../types/diskIO";
+import type {
+  ForwardedLogBatch,
+  ForwardedLogBatchAccepted,
+} from "../types/diskIO/messages";
 
 /**
  * 可自愈的业务 Worker 宿主（主线程侧），aiChat/workerBridge.ts 与 antiRaid/workerBridge.ts 共用的骨架：

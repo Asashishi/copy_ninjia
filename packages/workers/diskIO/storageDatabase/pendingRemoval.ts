@@ -10,8 +10,10 @@ import type { EncodedPendingBlockedRemoval } from "../../../database/codec/ident
 import type { PendingBlockedRemoval } from "../../../types/blocklist";
 import type {
   BlocklistRemovalsDiskMessage,
+} from "../../../types/diskIO/messages";
+import type {
   IdentityPersistenceReply,
-} from "../../../types/diskIO";
+} from "../../../types/diskIO/replies";
 import { storageSource } from "./context";
 import {
   flushIfStorageFull,

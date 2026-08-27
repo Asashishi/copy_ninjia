@@ -23,7 +23,7 @@
 
 1. **Handler**：`packages/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。permission key による認可は `block.ts` / `mood.ts`（常に `hasCommandPermission(ctx, key)`。スーパー管理者はすべての permission key を持つため、identity を個別に判定しないでください）、付与できない操作は `isSuperAdminActor`（`white.ts`、`batchKick.ts`）、プライベートチャット限定は `send.ts` です。最後のものは本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。ユーザーに見える文言は handler に置きません。所属ドメインの `packages/consts/<domain>.ts` に文言テーブルとして置き、型は `packages/types/` に置きます（`PERMISSION_COMMAND_TEXTS`、`BLOCK_TARGET_TEXTS` を参照）。文言変更の集約先になり、呼び出しごとに object 1 つと closure 3 つを作り直さずに済みます。例外は無界のユーザー入力を埋め込む必要がある文言だけで、`cjkAction.ts` が唯一の該当箇所です。
 2. **Export**：`packages/commands/index.ts` に追加します。
-3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) に `bot.command("xxx", ...)` を追加します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
+3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) の `commands` サブチェーンに `commands.command("xxx", ...)` を追加します。**`bot` へ直接登録してはいけません** — コマンドはすべて共有の `bot.on(":entities:bot_command")` サブチェーンの後ろに収めます（理由は [02 アーキテクチャ概要](02-architecture.md#1-件のメッセージが通る経路) の「コマンド登録」を参照）。`test/app/registerHandlers.test.ts` は `bot` に直接登録されたコマンドを拒否します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
 4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。
 5. **メニュー**：Telegram のコマンドメニューに表示するなら [`packages/consts/commands.ts`](../../packages/consts/commands.ts) の `BOT_COMMANDS` に追加します。`/send` のような hidden command は追加しません。
 6. **パラメータ定数**：cooldown、threshold などは `packages/consts/commands.ts` または該当ドメインの consts に置き、中国語 JSDoc を付けます。
@@ -36,7 +36,7 @@
 
 - **`bot.hears` で照合する。** Telegram は ASCII コマンドにしか `bot_command` entity を付けないため `bot.command` では永久に一致しません。`bot.hears(正規表現, ...)` でメッセージ原文に対して照合し、フォールバックの `bot.on(["message", "channel_post"], ...)` より前に登録します。そうしないと通常メッセージとして AI/copy pipeline に流れます。
 - **対象解決は別の入口を通る。** この handler が受け取るのは `CommandContext` ではなく素の `Context` なので、[`targetResolution.ts`](../../packages/commands/targetResolution.ts) の `resolveCommandTarget` に `ResolveCommandTargetParams` を直接渡します。自分宛でない形（`/咬@OtherBot`、caption だけのメッセージ、異常なメッセージ形態）は `next()` で通し、update を黙って握り潰してはいけません。
-- **`message.text` だけを見る。** `bot.hears` は text と caption の両方に一致しますが、画像付きメッセージを受理するとそれは `handleIncomingMessage` に届かなくなり、その画像が AI のローリングメモリと視覚パイプラインに入りません。
+- **`message.text` だけを見る。** `bot.hears` は text と caption の両方に一致しますが、画像付きメッセージを受理するとそれは `handleIncomingMessageMiddleware` に届かなくなり、その画像が AI のローリングメモリと視覚パイプラインに入りません。
 - **パイプラインの前提を自分で用意する。** 登録位置は自動パイプラインより**前**なので、そのパイプラインの自己送信ガードと `cacheSender` の恩恵を受けられません。handler 自身が `isBotOwnMessage` で Bot 自身のメッセージを除外し（さもないとチャンネルの跳ね返りが自問自答の連投ループになります）、送信者 ID のキャッシュも自分で行う必要があります。
 - **保持 semantics を明示する。** 成功した action result はユーザーが許可した長期保持 content なので、`sendCommandMessage` に `preserveInGroup: true` を明示します。対象不足・引数エラー・`/x` の使い方提示は既定経路のままとし、グループへの送信成功から 30 秒後に削除します。
 - **`BOT_COMMANDS` メニューには入れられない。** BotFather のコマンド名も ASCII 限定（ラテン文字・数字・アンダースコア、最長 32 文字）です。`setMyCommands` はリスト全体を一括送信するので、1 件でも不正な名前が混ざるとメニュー全体が `BOT_COMMAND_INVALID` で失敗します。登録失敗はログに残るだけで起動を止めないため、メニューが黙って消えます。メニューで使い方を見せたい場合は ASCII のプレースホルダー項目（既存の `/x`）を追加し、構文は description に書きます。

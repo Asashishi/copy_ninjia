@@ -142,10 +142,14 @@ export interface BlocklistSweepPageState {
 }
 
 /** 主线程黑名单补扫最近截止时间调度器的固定容量运行态。 */
+export type BlocklistSweepRunner = () => Promise<void>;
+
 export interface BlocklistSweepSchedulerState {
   timer: ReturnType<typeof setTimeout> | null;
   scheduledAt: number | null;
   accepting: boolean;
+  /** init 时登记、quiesce 时清除的唯一执行入口。 */
+  runSweep: BlocklistSweepRunner | null;
 }
 
 /**

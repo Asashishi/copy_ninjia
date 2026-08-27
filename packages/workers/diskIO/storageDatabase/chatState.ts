@@ -12,8 +12,10 @@ import {
 } from "../../../database/interact/chatState";
 import type {
   ChatStateWriteDiskMessage,
+} from "../../../types/diskIO/messages";
+import type {
   IdentityPersistenceReply,
-} from "../../../types/diskIO";
+} from "../../../types/diskIO/replies";
 import type { ChatState } from "../../../types/chatState";
 import type { PendingChatStateWrite } from "../../../types/identityStorage";
 import type { StoredChatStateRow } from "../../../types/storageDatabase";

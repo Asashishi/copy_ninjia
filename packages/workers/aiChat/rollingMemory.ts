@@ -130,7 +130,7 @@ function ensureMemoryCapacity(excludeChatId: number): void {
  *  则要走两次深克隆），落盘端原样写文件、不再重复序列化（见
  *  types/aiChat.ts 的 AiMemoryEvent.snapshot）。缩进固定 2 空格，与磁盘
  *  文件历史格式逐字节一致。 */
-export function buildMemorySnapshot(chatId: number): string {
+function buildMemorySnapshot(chatId: number): string {
   const buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
   const snapshot: AiMemorySnapshot = {

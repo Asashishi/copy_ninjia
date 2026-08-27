@@ -1,4 +1,5 @@
-import type { AdSampleMessage, VerificationSnapshot } from "../antiRaid";
+import type { AdSampleMessage } from "../antiRaid/adDetect";
+import type { VerificationSnapshot } from "../antiRaid/verification";
 import type { PendingBlockedRemoval } from "../blocklist";
 import type { IdentityPolicyTable } from "../identityPolicy";
 import type { LuckReceiptSecret } from "./storage";

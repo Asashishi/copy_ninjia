@@ -20,8 +20,8 @@ import type { AiMemoryDeleteWaiter } from "../types/aiChat/waiters";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
-  DiskIORecoveryTransport,
-} from "../types/diskIO";
+} from "../types/diskIO/replies";
+import type { DiskIORecoveryTransport } from "../types/diskIO/messages";
 
 /**
  * AI 记忆的主线程镜像侧（owner 是 packages/aiChat/index.ts）：按 chat 单调递增的

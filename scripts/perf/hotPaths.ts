@@ -145,7 +145,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "ad-wire-clone":
     case "ad-capacity-reject":
     case "identity-permission-read":
-    case "linked-timestamp-window":
+    case "join-timestamp-window":
     case "quota-timestamp-window":
     case "bounded-rolling-buffer":
     case "chat-state-read":
@@ -171,7 +171,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "<sender-no-username|sender-stable-username|luck-receipt-fast-path|" +
         "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
         "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
-        "linked-timestamp-window|quota-timestamp-window|bounded-rolling-buffer|" +
+        "join-timestamp-window|quota-timestamp-window|bounded-rolling-buffer|" +
         "chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
         "ai-media-direct-trigger|" +
         "flood-window-hit|flood-window-growth|flood-window-steady|" +
@@ -183,9 +183,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
 }
 
 /**
- * 跑一轮并收敛成数字。同步场景在这里就地返回，绝不进微任务队列——否则每个
- * 既有场景都要多付一次 await，历史读数不再可比；只有真正返回 Promise 的
- * 编排层场景才走 await 分支。
+ * 跑一轮并收敛成数字。同步场景就地返回；只有异步场景进入 Promise 调度。
  */
 async function runOnce(scenario: Scenario, iterations: number): Promise<number> {
   const result: number | Promise<number> = scenario.run(iterations);

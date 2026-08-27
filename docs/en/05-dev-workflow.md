@@ -43,11 +43,11 @@
 
 ### Dependency Release-Age Gate
 
-Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation and recorded in [`dependency-release-age-exemptions.json`](../../dependency-release-age-exemptions.json). The current Bun runtime and `@types/bun` are both 1.4.0.
+Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The current Bun runtime and `@types/bun` are both 1.4.0.
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2821 tests / 287 files / 96239 `expect()` calls**; full-source **function coverage 95.98% / line coverage 97.14%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2876 tests / 294 files / 96444 `expect()` calls**; full-source **function coverage 96.28% / line coverage 97.19%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 

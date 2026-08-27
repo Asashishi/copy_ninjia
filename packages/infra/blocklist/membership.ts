@@ -13,7 +13,7 @@ import { getChatStateCache } from "../storage/stateStore";
 import { flushDiskIODomainOutcome } from "../diskIO";
 import { logger } from "../logger";
 import { forgetUserBlocklistRemovals } from "./outbox";
-import type { DomainFlushOutcome } from "../../types/diskIO";
+import type { DomainFlushOutcome } from "../../types/diskIO/replies";
 import {
   cachedBlocklistEntry,
   prefetchIdentityPolicies,

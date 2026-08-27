@@ -41,7 +41,7 @@ mock.module("../../packages/infra/selfSentTracker", () => ({
   waitForBotOwnMessage: async (): Promise<boolean> => false,
 }));
 
-const { handleIncomingMessage } = await import("../../packages/auto/message");
+const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
 const { resolveEffectiveCopyMode } = await import("../../packages/auto/message/echo");
 const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/telegram");
 
@@ -70,10 +70,10 @@ describe("/send 私聊中转权限", () => {
   });
 
   test("全局会话活动时也不会复制外部用户私聊，只复制超管本人的消息", async () => {
-    await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID + 1));
+    await handleIncomingMessageMiddleware(privateMessageCtx(SUPER_ADMIN_USER_ID + 1));
     expect(copyMessageMock).not.toHaveBeenCalled();
 
-    await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID));
+    await handleIncomingMessageMiddleware(privateMessageCtx(SUPER_ADMIN_USER_ID));
     expect(copyMessageMock).toHaveBeenCalledTimes(1);
     expect(copyMessageMock).toHaveBeenCalledWith({
       chatId: targetChatId,
@@ -110,7 +110,7 @@ describe("/send 私聊中转权限", () => {
   test("转发失败时关掉中转会话、落盘并回执，不再静默吞掉后续私聊", async () => {
     copyMessageMock.mockImplementation(async (): Promise<number | undefined> => undefined);
 
-    await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID));
+    await handleIncomingMessageMiddleware(privateMessageCtx(SUPER_ADMIN_USER_ID));
 
     expect(clearChatStateFieldMock).toHaveBeenCalledWith(targetChatId, "isProxySendEnabled");
     expect(persistChatStateMock).toHaveBeenCalledTimes(1);
@@ -121,7 +121,7 @@ describe("/send 私聊中转权限", () => {
   });
 
   test("转发成功时不碰会话状态，也不发回执", async () => {
-    await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID));
+    await handleIncomingMessageMiddleware(privateMessageCtx(SUPER_ADMIN_USER_ID));
 
     expect(clearChatStateFieldMock).not.toHaveBeenCalled();
     expect(persistChatStateMock).not.toHaveBeenCalled();

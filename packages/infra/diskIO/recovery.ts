@@ -17,9 +17,9 @@ import type {
   DiskFlushRequest,
   DiskIORecoveryTransport,
   LoadRequest,
-  LoadedReply,
   RecoveryReplayRequest,
-} from "../../types/diskIO";
+} from "../../types/diskIO/messages";
+import type { LoadedReply } from "../../types/diskIO/replies";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { FlushResult } from "../../types/lifecycle";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";

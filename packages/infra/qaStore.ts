@@ -20,8 +20,10 @@ import { logger } from "./logger";
 import type {
   ChatQaWriteDiskMessage,
   DiskIORecoveryTransport,
+} from "../types/diskIO/messages";
+import type {
   IdentityStoragePersistedReply,
-} from "../types/diskIO";
+} from "../types/diskIO/replies";
 
 interface ChatQaDiskIOApi {
   readonly onDiskIORespawn?: typeof diskIO.onDiskIORespawn;

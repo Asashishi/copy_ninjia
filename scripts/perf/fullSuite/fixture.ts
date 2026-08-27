@@ -31,7 +31,7 @@ import {
   IDENTITY_DATABASE_PATH,
 } from "../../../packages/consts/paths";
 import { seedStorageDatabase } from
-  "../../../packages/database/interact/admin";
+  "../../fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,
@@ -55,7 +55,7 @@ import type { PendingBlockedRemoval } from
 import type { JoinLogDiskMessage } from
   "../../../packages/types/diskIO";
 import type { SeedStorageDatabaseOptions } from
-  "../../../packages/database/interact/admin";
+  "../../fixtures/storageDatabase";
 import type {
   StorageDatabase,
   StoredChatQaRow,

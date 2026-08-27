@@ -245,7 +245,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     // 记的必须是本线程观测到的时刻。直接把 joinedAt 当「现在」交给 recordJoin
-    // 的话，trimSlidingWindow 会把同一批里刚记下的、时间戳更新的真实入群全部
+    // 的话，TimestampDeque.trim 会把同一批里刚记下的、时间戳更新的真实入群全部
     // 当成时钟回拨丢掉，反刷群阈值再也凑不满。
     expect(recordJoin).toHaveBeenCalledTimes(1);
     const [recordedChatId, recordedAt] = recordJoin.mock.calls[0] as [number, number];

@@ -28,7 +28,10 @@ import { getTokyoDateKey } from "../../libs/time";
 import type { PendingBlockedRemoval } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
 import type { VerificationSnapshot } from "../../types/antiRaid/verification";
-import type { LoadedReply, VerificationPersistedReply } from "../../types/diskIO";
+import type {
+  LoadedReply,
+  VerificationPersistedReply,
+} from "../../types/diskIO/replies";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LogFilesInspection } from "./logFiles";
 import type {

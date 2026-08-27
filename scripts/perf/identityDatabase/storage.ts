@@ -8,7 +8,7 @@ import {
 import {
   clearStorageBusinessTables,
   seedStorageDatabase,
-} from "../../../packages/database/interact/admin";
+} from "../../fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,

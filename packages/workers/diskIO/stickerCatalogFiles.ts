@@ -11,14 +11,12 @@ import { flushDirtyEntries } from "./dirtyFlush";
 import {
   inspectStickerCatalogs,
   maintainStickerCatalogFiles,
-  recoverStickerCatalogs,
   writeStickerCatalogFile,
 } from "./snapshotFiles";
 import type { StickerCatalogFileDependencies } from "../../types/diskIO/snapshotOwners";
 import type { StickerCatalogRecoveryInspection } from "./snapshotFiles";
 
 const STICKER_CATALOG_FILE_DEPENDENCIES: StickerCatalogFileDependencies = {
-  recover: recoverStickerCatalogs,
   write: writeStickerCatalogFile,
 };
 
@@ -28,18 +26,6 @@ function scheduleStickerCatalogFlush(): void {
     stickerFlushState.timer = null;
     flushStickerCatalogs();
   }, SNAPSHOT_FLUSH_INTERVAL_MS);
-}
-
-/**
- * 启动恢复边界：按当前白名单对账后整体替换内存 owner。
- * @param activePacks 已严格校验的贴纸白名单。
- */
-export function hydrateStickerCatalogs(
-  activePacks: readonly string[],
-  files: StickerCatalogFileDependencies = STICKER_CATALOG_FILE_DEPENDENCIES
-): Map<string, string> {
-  hydrateStickerCatalogCache(files.recover(activePacks));
-  return stickerCatalogCache;
 }
 
 /** 跨域启动第一阶段：只读扫描全部目录快照，孤儿也先严格解码。 */

@@ -13,8 +13,7 @@ import { logger } from "../logger";
 import { getChatStateCache } from "../storage/stateStore";
 import { hasAnyBlockedIdentity } from "../identityStorage";
 import type { ChatState } from "../../types/chatState";
-
-type ScheduledBlocklistSweep = () => Promise<void>;
+import type { BlocklistSweepRunner } from "../../types/blocklist";
 
 function clearBlocklistSweepTimer(): void {
   if (blocklistSweepSchedulerState.timer !== null) {
@@ -46,8 +45,10 @@ function nextBlocklistSweepAt(): number | null {
 }
 
 /** 按所有群最近的退避截止时间重排唯一补扫 timer。 */
-export function armBlocklistSweepScheduler(runSweep: ScheduledBlocklistSweep): void {
-  if (!blocklistSweepSchedulerState.accepting) {
+export function armBlocklistSweepScheduler(): void {
+  const runSweep: BlocklistSweepRunner | null =
+    blocklistSweepSchedulerState.runSweep;
+  if (!blocklistSweepSchedulerState.accepting || runSweep === null) {
     clearBlocklistSweepTimer();
     return;
   }
@@ -79,13 +80,15 @@ export function armBlocklistSweepScheduler(runSweep: ScheduledBlocklistSweep): v
 }
 
 /** 启动恢复完成后武装补扫时钟；重复初始化只重算最近截止时间。 */
-export function initBlocklistSweepScheduler(runSweep: ScheduledBlocklistSweep): void {
+export function initBlocklistSweepScheduler(runSweep: BlocklistSweepRunner): void {
+  blocklistSweepSchedulerState.runSweep = runSweep;
   blocklistSweepSchedulerState.accepting = true;
-  armBlocklistSweepScheduler(runSweep);
+  armBlocklistSweepScheduler();
 }
 
 /** 停机前关闭补扫入口并清理 timer；既有 durable outbox 由下次启动恢复。 */
 export function quiesceBlocklistSweepScheduler(): void {
   blocklistSweepSchedulerState.accepting = false;
+  blocklistSweepSchedulerState.runSweep = null;
   clearBlocklistSweepTimer();
 }

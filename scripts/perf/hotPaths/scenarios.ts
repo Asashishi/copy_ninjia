@@ -11,13 +11,13 @@ import { chatStateCache } from "../../../packages/cache/main/chatState";
 import { getChatState, getOrCreateChatState } from "../../../packages/infra/storage/stateStore";
 import type { ChatState } from "../../../packages/types/chatState";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
-import { LinkedQueue } from "../../../packages/libs/linkedQueue";
-import {
-  trimSlidingWindow,
-  tryConsumeSlidingWindow,
-} from "../../../packages/libs/slidingWindowRateLimit";
+import { tryConsumeSlidingWindow } from "../../../packages/libs/slidingWindowRateLimit";
 import { TimestampDeque } from "../../../packages/libs/timestampDeque";
 import { CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../../packages/consts/commands";
+import {
+  recordJoinWindow,
+  stopJoinWindowRuntime,
+} from "../../../packages/workers/antiRaid/lockdownJoinWindow";
 import { readBotChatPermissions } from "../../../packages/libs/chatMember";
 import { cacheSender } from "../../../packages/users/senderIdentity";
 import {
@@ -158,31 +158,31 @@ function aiActivityLruMissScenario(): Scenario {
 }
 
 /**
- * 无硬顶滑动窗口的容器成本：`LinkedQueue` + `trimSlidingWindow` 就是反刷群
- * 入群窗口（`workers/antiRaid/lockdownRuntime.ts` 的 recordJoin）用的那一套。
- * 它是全仓唯一还留在链表上的滑动窗口，理由见 `types/antiRaid/internal.ts`
- * 的 JoinWindow：入群记账无配额上界，定容环形缓冲会在刷群时撑满抛错。
+ * 反刷群入群窗口的完整热路径：Map owner、固定容量 TimestampDeque、饱和
+ * fail-safe 与每群唯一 timer 均走生产入口。
  */
-function linkedTimestampWindowScenario(): Scenario {
-  const timestamps: LinkedQueue<number> = new LinkedQueue();
+function joinTimestampWindowScenario(): Scenario {
   let now: number = BENCHMARK_EPOCH_MS;
   return {
     iterations: 1_000_000,
     run: (iterations: number): number => {
+      let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
         now += 1;
-        trimSlidingWindow({ timestamps, windowMs: 165, now });
-        timestamps.push(now);
+        checksum += recordJoinWindow(BENCHMARK_CHAT_ID, now) ?? 0;
       }
-      return timestamps.size;
+      return checksum;
     },
     reset: (): void => {
-      timestamps.clear();
+      stopJoinWindowRuntime();
       now = BENCHMARK_EPOCH_MS;
     },
     probes: {
-      trimSlidingWindow,
-      ...prototypeProbes("LinkedQueue", LinkedQueue.prototype, ["push"]),
+      recordJoinWindow,
+      ...prototypeProbes("TimestampDeque", TimestampDeque.prototype, [
+        "trim",
+        "pushReplacingOldest",
+      ]),
     },
   };
 }
@@ -193,8 +193,7 @@ function linkedTimestampWindowScenario(): Scenario {
  * 窗口、Worker 重启节流）。容量直接引生产常量——配额上限即长度上界，判定只在
  * 未满时记账，环形缓冲因此永远撑不满。
  *
- * 与 linked-timestamp-window 同窗口长度、同迭代数，两行读数直接可比：链表每次
- * 记账要新建一个节点对象，环形缓冲不分配。
+ * 与 join-timestamp-window 同窗口长度、同迭代数，两行读数直接可比。
  */
 function quotaTimestampWindowScenario(): Scenario {
   const timestamps: TimestampDeque =
@@ -548,8 +547,8 @@ export function createScenario(name: ScenarioName): Scenario {
       return createAdCapacityRejectScenario();
     case "identity-permission-read":
       return createIdentityPermissionReadScenario();
-    case "linked-timestamp-window":
-      return linkedTimestampWindowScenario();
+    case "join-timestamp-window":
+      return joinTimestampWindowScenario();
     case "quota-timestamp-window":
       return quotaTimestampWindowScenario();
     case "bounded-rolling-buffer":

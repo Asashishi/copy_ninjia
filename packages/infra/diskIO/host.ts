@@ -18,7 +18,7 @@ import type {
   IdentityPoliciesReadReply,
   JoinLogReadReply,
   LoadedReply,
-} from "../../types/diskIO";
+} from "../../types/diskIO/replies";
 import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 import { acceptDiskIODiagnosticBatch, retryDiskIODiagnosticBatch } from

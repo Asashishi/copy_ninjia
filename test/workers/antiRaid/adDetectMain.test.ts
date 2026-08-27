@@ -170,6 +170,19 @@ describe("广告检测投递门禁", () => {
     expect(buildAdCandidate(message({ text: undefined, caption: "扫码进群" }), 999)?.text).toBe("扫码进群");
   });
 
+  test("调用方预读的群状态直接驱动门禁，旧的双参数调用仍自行查表", () => {
+    const expected: ReturnType<typeof buildAdCandidate> =
+      buildAdCandidate(message(), 999);
+    chatStates.clear();
+
+    expect(buildAdCandidate(
+      message(),
+      999,
+      { isAdDetectEnabled: true }
+    )).toEqual(expected);
+    expect(buildAdCandidate(message(), 999)).toBeUndefined();
+  });
+
   test("没开开关、私聊、无正文与机器人自己的消息都不判定", () => {
     chatStates.set(-1002, {});
     expect(buildAdCandidate(message({ chat: { id: -1002, type: "supergroup", title: "群" } }), 999)).toBeUndefined();

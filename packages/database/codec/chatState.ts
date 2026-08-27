@@ -146,20 +146,22 @@ function decodeBotPermissions(
   return permissions;
 }
 
+/** 落盘 lockdown 记录允许出现的全部键；多一个就是格式不认识的行。 */
+const LOCKDOWN_KEYS: readonly string[] = [
+  "phase",
+  "intentId",
+  "originalPermissions",
+  "announced",
+  "announcementMessageId",
+  "expiresAt",
+];
+
 function decodeLockdown(
   value: unknown,
   source: string,
   path: string
 ): LockdownRecord {
-  const keys: readonly string[] = [
-    "phase",
-    "intentId",
-    "originalPermissions",
-    "announced",
-    "announcementMessageId",
-    "expiresAt",
-  ];
-  if (!isPlainRecord(value) || !hasOnlyKeys(value, keys)) {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, LOCKDOWN_KEYS)) {
     return invalidInput(source, path, "the current lockdown object shape");
   }
   const phaseValue: unknown = value.phase;

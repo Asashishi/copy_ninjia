@@ -61,3 +61,20 @@ export interface TelegramOutboundDrainWaiter {
   readonly resolve: (drained: boolean) => void;
   readonly timer: ReturnType<typeof setTimeout>;
 }
+
+/** 出站 job 唯一构造点的稳定字段集合。 */
+export interface CreateTelegramOutboundJobOptions {
+  readonly signal: AbortSignal;
+  readonly category: TelegramRetryCategory;
+  readonly beforeRetry: (() => Promise<void>) | undefined;
+  readonly call: (signal: AbortSignal) => Promise<unknown>;
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (reason?: unknown) => void;
+}
+
+/** 复用分类型 429 队列的一次外部请求。 */
+export interface TelegramCategorizedRequestOptions<T> {
+  readonly category: TelegramRetryCategory;
+  readonly execute: (signal: AbortSignal) => Promise<T>;
+  readonly signal?: AbortSignal;
+}

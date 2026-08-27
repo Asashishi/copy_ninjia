@@ -4,13 +4,7 @@ import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  // 全局忽略必须**单独成一个只有 ignores 的配置对象**：flat config 里一旦同一个
-  // 对象还带了别的键（这里原本带着 linterOptions），这些模式就退化成「只对该对象
-  // 生效」，构建产物目录会被真的 lint 到。而 dist/ 与 out/ 里的 .ts 命中的是下面
-  // 那条 `**/*.ts`，它只配规则、不带 typescript-eslint 插件，于是 eslint 直接以
-  // 「找不到插件 @typescript-eslint」整体退出 2——`bun run lint` 连同 `bun run check`
-  // 一起挂掉，而错误信息完全指不到真正的原因。平时三个目录都不存在，所以这条
-  // 一直是潜伏的。
+  // flat config 的全局忽略必须是只含 ignores 的独立配置对象。
   { ignores: ["coverage/**", "dist/**", "node_modules/**", "out/**"] },
   {
     linterOptions: {

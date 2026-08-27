@@ -34,7 +34,6 @@ const {
   inspectJoinLogFiles,
   maintainJoinLogFiles,
   readJoinLog,
-  recoverJoinLogFiles,
 } = await import("../../../packages/workers/diskIO/joinLogFiles");
 const {
   isRecentJoinLogDay,
@@ -93,6 +92,17 @@ function todayAt(offsetMs: number = 0): number {
 
 function todayMidnight(): number {
   return Date.parse(`${getTokyoDateKey()}T00:00:00+09:00`);
+}
+
+/**
+ * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
+ * inspect -> maintenance（见 workers/diskIO/startup.ts）。生产没有这个包装。
+ */
+function recoverJoinLogFiles(today?: string): void {
+  const inspection = today === undefined
+    ? inspectJoinLogFiles(getTokyoDateKey())
+    : inspectJoinLogFiles(today);
+  maintainJoinLogFiles(inspection);
 }
 
 beforeEach(() => {

@@ -18,8 +18,7 @@ export const VERIFICATION_REMINDER_RETRY_MAX_MS: number = 15_000;
  * 尽头——某个群 sendMessage 持续失败（论坛的 General 话题被关闭、机器人被禁言
  * 却仍保有限制成员的权限）时，每个入群者都会留下一条不朽记录：常驻待验证表、
  * 常驻主线程镜像、持续刷新 memory/anti-raid/<day>.json。超过这个总时长就按
- * 普通超时结算：踢人只踢不封
- * （kickChatMember），人随时可以重进，而那时群本身多半已经不正常了。
+ * 普通超时结算：只踢不封，成员仍可重新加入。
  * 所属模块：states/verification.ts 的 handleVerifyTimeout。
  */
 export const VERIFICATION_REMINDER_UNDELIVERED_MAX_MS: number = 15 * 60 * 1000;
@@ -30,7 +29,7 @@ export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
  *
  * 有些失败注定不会好转：机器人是管理员却没有封禁权限，或目标本人就是这个群的
  * 管理员。记录按设计不能删，于是固定 30 秒一轮就意味着——一次刷群留下的**每个**
- * 未验证成员各占一个永久的 30 秒循环，各自不停打成员探测 + kickChatMember，
+ * 未验证成员各占一个永久的 30 秒循环，各自不停执行成员探测与踢出动作，
  * 并往 logs/ 里刷同一行报错，Worker 重建和进程重启后还会照单重新武装。
  * 退避到上限而不是放弃：管理员补上封禁权限后，最迟一个上限周期内自愈。
  * 所属模块：workers/antiRaid/verificationEffects.ts。
@@ -68,7 +67,7 @@ export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
 /**
  * 私密模式秒踢占位遇到新 join 事件时，用来判断“这是同一次物理入群的另一条
  * 投递（chat_member 更新 + 服务消息）”还是“TA 真的重新
- * 申请了入群”（kickChatMember 只踢不封，本就能立刻重进）的分界线。
+ * 申请了入群”（踢出动作只踢不封，本就能立刻重进）的分界线。
  * 远小于 LOCKDOWN_KICK_DEDUPE_MS——那个是占位整体存活时长，这个只区分
  * 同一次入群的两条腿，见 states/verification.ts 的 handleJoin。
  */

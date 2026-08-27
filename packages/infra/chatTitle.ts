@@ -21,7 +21,7 @@ import type { ChatState } from "../types/chatState";
  *    覆盖存量群、以及上次运行期间改过名但没能实时捕捉到的群；
  * 2. 此后每条收到的群消息，其 chat.title 本就随更新一起送达，不用额外
  *    调 API，顺手记录/刷新（recordChatTitleFromChat，见
- *    packages/auto/message/ 的 handleIncomingMessage）。
+ *    packages/auto/message/ 的 handleIncomingMessageMiddleware）。
  */
 
 /**
@@ -30,16 +30,23 @@ import type { ChatState } from "../types/chatState";
  * 理由同 infra/botAdmin.ts 的 recordBotChatPermissions——不能让只是被拉进去、
  * 从没人管过的群凭空在 `chat_states` 里长出条目。
  */
-function applyChatTitle(chatId: number, title: string): boolean {
-  if (getChatState(chatId).isInitEnabled !== true) return false;
+function applyChatTitle(
+  chatId: number,
+  title: string,
+  currentState: Readonly<ChatState>
+): boolean {
+  if (currentState.isInitEnabled !== true || currentState.title === title) return false;
   const chatState: ChatState = getOrCreateChatState(chatId);
-  if (chatState.title === title) return false;
   chatState.title = title;
   return true;
 }
 
-function recordChatTitle(chatId: number, title: string): void {
-  if (applyChatTitle(chatId, title)) {
+function recordChatTitle(
+  chatId: number,
+  title: string,
+  currentState: Readonly<ChatState>
+): void {
+  if (applyChatTitle(chatId, title, currentState)) {
     saveChatStateInBackground(chatId, "chat title refresh");
   }
 }
@@ -47,10 +54,14 @@ function recordChatTitle(chatId: number, title: string): void {
 /**
  * 群消息/频道帖更新里顺手记录 chat.title，零额外 API 开销。私聊没有群名称，
  * 频道机器人不做任何管理，都不记录（同 infra/botAdmin.ts 的范围限定）。
+ * @param currentState 同一同步消息入口已读取的当前群状态；缺省时本函数自行读取。
  */
-export function recordChatTitleFromChat(chat: Chat): void {
+export function recordChatTitleFromChat(
+  chat: Chat,
+  currentState?: Readonly<ChatState>
+): void {
   if (chat.type !== "group" && chat.type !== "supergroup") return;
-  recordChatTitle(chat.id, chat.title);
+  recordChatTitle(chat.id, chat.title, currentState ?? getChatState(chat.id));
 }
 
 /**
@@ -85,7 +96,7 @@ export async function refreshAllChatTitles(
             signal as unknown as Parameters<typeof bot.api.getChat>[1]
           );
           if (!signal.aborted && (chat.type === "group" || chat.type === "supergroup")) {
-            if (applyChatTitle(chatId, chat.title)) {
+            if (applyChatTitle(chatId, chat.title, getChatState(chatId))) {
               saveChatStateInBackground(chatId, "chat title refresh");
             }
           }
