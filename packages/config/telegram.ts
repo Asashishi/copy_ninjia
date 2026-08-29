@@ -2,6 +2,7 @@
 
 import { telegramConfigCache } from "../cache/perThread/config";
 import { TELEGRAM_CONFIG_PATH } from "../consts/paths";
+import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../consts/telegram";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../libs/record";
 import type { TelegramConfig } from "../types/config";
@@ -18,8 +19,12 @@ export function parseTelegramConfig(
       "exactly { bot_token, super_admin_user_id }"
     );
   }
-  if (typeof value.bot_token !== "string" || value.bot_token.trim().length === 0) {
-    return invalidInput(sourcePath, "$.bot_token", "a non-empty string");
+  if (
+    typeof value.bot_token !== "string" ||
+    value.bot_token.trim().length === 0 ||
+    value.bot_token.trim() === TELEGRAM_BOT_TOKEN_PLACEHOLDER
+  ) {
+    return invalidInput(sourcePath, "$.bot_token", "a configured non-placeholder string");
   }
   if (
     typeof value.super_admin_user_id !== "number" ||

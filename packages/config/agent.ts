@@ -2,6 +2,7 @@ import {
   adDetectAgentConfigCache,
   agentDeploymentConfigCache,
 } from "../cache/perThread/config";
+import { AGENT_API_KEY_PLACEHOLDERS } from "../consts/agent";
 import { AGENT_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/record";
@@ -48,6 +49,15 @@ function requiredString(value: unknown, context: string, sourcePath: string): st
     return invalidInput(sourcePath, context, "a non-empty string");
   }
   return value.trim();
+}
+
+/** 解码必填凭据；示例占位串存在时必须在启动阶段拒绝。 */
+function requiredApiKey(value: unknown, context: string, sourcePath: string): string {
+  const apiKey: string = requiredString(value, context, sourcePath);
+  if (AGENT_API_KEY_PLACEHOLDERS.includes(apiKey)) {
+    return invalidInput(sourcePath, context, "a configured non-placeholder string");
+  }
+  return apiKey;
 }
 
 /**
@@ -122,7 +132,7 @@ function parseCapability(
   }
   return {
     provider: requiredProvider(value.provider, `${context}.provider`, sourcePath),
-    apiKey: requiredString(value.api_key, `${context}.api_key`, sourcePath),
+    apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
     baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
     model: requiredString(value.model, `${context}.model`, sourcePath),
   };
@@ -144,7 +154,7 @@ function parseImageCapability(
     }
     return {
       provider,
-      apiKey: requiredString(value.api_key, `${context}.api_key`, sourcePath),
+      apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
       baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
       model: requiredString(value.model, `${context}.model`, sourcePath),
       imageProtocol: undefined,
@@ -159,7 +169,7 @@ function parseImageCapability(
   }
   return {
     provider,
-    apiKey: requiredString(value.api_key, `${context}.api_key`, sourcePath),
+    apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
     baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
     model: requiredString(value.model, `${context}.model`, sourcePath),
     imageProtocol: requiredImageProtocol(value.image_protocol, `${context}.image_protocol`, sourcePath),

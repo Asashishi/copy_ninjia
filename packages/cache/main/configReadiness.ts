@@ -7,6 +7,7 @@ import type { ConfigReadinessCache } from "../../types/config";
  * 内容」、谁读谁缓存，这三条是「这个功能此刻能不能开」的结论，只有主线程问得到
  * ——判定挂在 `/ai_chat enable`、`/ad_detect enable`、日语翻译开关与启动前置
  * 核对上，全都是主线程的命令与生命周期路径。
+ * 同一进程不清除也不淘汰成功或失败结论；只有进程重启才恢复为 null。
  */
 
 /**

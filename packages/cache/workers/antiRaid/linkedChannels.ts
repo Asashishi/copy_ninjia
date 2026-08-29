@@ -5,7 +5,8 @@ import {
   sweepExpiredSnapshots,
 } from "../../../libs/boundedMap";
 
-/** 关联频道按需缓存（packages/workers/antiRaid/linkedChannel.ts）的内存状态。 */
+/** 关联频道按需缓存（packages/workers/antiRaid/linkedChannel.ts）的内存状态；Worker
+ * 重建后从空表开始，由下一次按需查询重新填充。 */
 
 /** 各群是否有关联频道的按需 TTL 缓存。 */
 export const linkedChannels: Map<number, LinkedChannelCache> = new Map();

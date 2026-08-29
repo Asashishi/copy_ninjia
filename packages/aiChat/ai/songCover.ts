@@ -21,7 +21,7 @@
  * 模块头注）——歌已经生成、账已经出，群里却什么都收不到。因此这里必须整段
  * try/catch，而不是依赖下层的契约。
  *
- * 正常失败的日志由底层各自记（生图在实现包里，压缩在 libs/image.ts）；只有上面
+ * 正常失败的日志由底层各自记（生图在实现包里，压缩在 infra/image.ts）；只有上面
  * 那种抛出来的失败在这里补记一行。
  *
  * 跑在 AI 闲聊 Worker 线程上（调用方就是生歌工具）。
@@ -35,7 +35,7 @@ import {
 import { DEFAULT_IMAGE_GENERATION_ASPECT_RATIO } from "../../consts/aiChat/imageGeneration";
 import { songCoverPrompt } from "../../consts/aiChat/prompts/song";
 import { logger } from "../../infra/logger";
-import { prepareThumbnailJpeg } from "../../libs/image";
+import { prepareThumbnailJpeg } from "../../infra/image";
 import { generateChatImage } from "./imageGeneration";
 import type { GeneratedChatImage } from "../../types/aiChat/imageGeneration";
 
@@ -70,7 +70,7 @@ export async function generateSongCover({
     });
     if (!image) return null;
     // 字节按引用交给压缩，不 Buffer.from 复制一份：一张 1K 生图有几 MB，而
-    // sharp 本来就接收 Uint8Array（见 libs/image.ts 的入参类型）。
+    // sharp 本来就接收 Uint8Array（见 infra/image.ts 的入参类型）。
     return await prepareThumbnailJpeg({
       bytes: image.bytes,
       maxEdge: SONG_COVER_MAX_EDGE,

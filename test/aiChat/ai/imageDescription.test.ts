@@ -19,7 +19,7 @@ mock.module("../../../packages/infra/telegram/workerClient", () => ({
 mock.module("../../../packages/aiChat/provider", () => ({
   mediaAiProvider: () => ({ name: "google", describeVision }),
 }));
-mock.module("../../../packages/libs/image", () => ({ prepareVisionImage }));
+mock.module("../../../packages/infra/image", () => ({ prepareVisionImage }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),

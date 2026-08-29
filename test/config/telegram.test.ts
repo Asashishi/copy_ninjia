@@ -12,8 +12,8 @@ afterEach((): void => {
 });
 
 describe("config/telegram.json", () => {
-  test("示例配置可加载且输出稳定的运行时类型", () => {
-    expect(BOT_TOKEN).toBe("replace-with-telegram-bot-token");
+  test("测试配置可加载且输出稳定的运行时类型", () => {
+    expect(BOT_TOKEN).toBe("123456789:test-only-telegram-bot-token");
     expect(SUPER_ADMIN_USER_ID).toBe(123456789);
   });
 
@@ -23,6 +23,18 @@ describe("config/telegram.json", () => {
       "telegram.test.json"
     );
     expect(parsed).toEqual({ botToken: "token:secret", superAdminUserId: 123 });
+  });
+
+  test("示例 token 在启动前拒绝且错误不回显原值", () => {
+    const placeholder: string = "replace-with-telegram-bot-token";
+    const parse = (): TelegramConfig => parseTelegramConfig(
+      { bot_token: placeholder, super_admin_user_id: 123 },
+      "telegram.test.json"
+    );
+    expect(parse).toThrow(
+      "telegram.test.json: $.bot_token must be a configured non-placeholder string"
+    );
+    expect(parse).not.toThrow(placeholder);
   });
 
   test("解析结果在编译期保持只读", () => {

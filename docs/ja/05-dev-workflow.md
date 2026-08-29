@@ -16,7 +16,8 @@
 | :--- | :--- |
 | `bun run start` | ロングポーリングを開始 |
 | `bun run lint` / `lint:fix` | ESLint の検査 / 自動修正 |
-| `bun run typecheck` | 完全 strict mode で `tsc --noEmit` を実行 |
+| `bun run lint:fast` | `--cache` 付きの ESLint。ローカルの編集ループ専用です。型を見る rule はファイルを跨ぐ一方 ESLint の cache はファイル単位で無効化されるため、依存先だけを変更しても依存元の警告は再報告されません。**gate では必ず cache なしの `lint` を使います** |
+| `bun run typecheck` | 完全 strict mode で `tsc --noEmit --incremental` を実行。増分情報は `tsconfig.tsbuildinfo`（gitignore 済み）に置かれます。tsconfig や依存の型を変えると丸ごと無効化されるため、gate に入れても安全です |
 | `bun run test` | ファイル分離を強制して全テストを実行 |
 | `bun run test:random` | 固定 seed のランダム順で全テストを実行し、テスト間の残留を炙り出す |
 | `bun run test:coverage` | テスト + 全ソースコードのカバレッジ |
@@ -47,7 +48,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2876 tests / 294 files / 96444 `expect()` calls**。全ソースコードの**関数カバレッジは 96.28%、行カバレッジは 97.19%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2893 tests / 294 files / 96561 `expect()` calls**。全ソースコードの**関数カバレッジは 96.37%、行カバレッジは 97.20%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -131,7 +132,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
 
-- **中国語の文字列リテラル数**（現在およそ 861 ソース行 / 83 ファイル）：数値は 3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節にだけ書きます。3 言語 README の「言語について」注記はその節へリンクするだけで、数値は持ちません。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
+- **中国語の文字列リテラル数**（現在およそ 857 ソース行 / 84 ファイル）：数値は 3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節にだけ書きます。3 言語 README の「言語について」注記はその節へリンクするだけで、数値は持ちません。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
 - **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース

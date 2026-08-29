@@ -8,7 +8,7 @@ import {
   GAG_SESSION_MAX,
 } from "../../consts/gag";
 import { registerChatTeardown } from "../../infra/chatTeardown";
-import { trackBackgroundTask } from "../../libs/backgroundTasks";
+import { trackBackgroundTask } from "../../infra/backgroundTasks";
 import { logger } from "../../infra/logger";
 import {
   deleteMessageWithOutcome,

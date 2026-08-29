@@ -51,6 +51,7 @@ describe("全量基准分区编排", () => {
     };
     const context: SectionContext = {
       runRoot: "/fixture",
+      configRoot: "/fixture/config",
       rounds: 2,
       onProgress: (_message: string): void => {},
       recordIo: (_io): void => {},
@@ -103,6 +104,7 @@ describe("全量基准分区编排", () => {
     };
     const context: SectionContext = {
       runRoot: "/fixture",
+      configRoot: "/fixture/config",
       rounds: 1,
       onProgress: (_message: string): void => {},
       recordIo: (_io): void => {},
@@ -134,6 +136,7 @@ describe("全量基准分区编排", () => {
     };
     const context: SectionContext = {
       runRoot: "/fixture",
+      configRoot: "/fixture/config",
       rounds: 1,
       onProgress: (_message: string): void => {},
       recordIo: (_io): void => {},

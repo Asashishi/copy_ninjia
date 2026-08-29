@@ -1,5 +1,5 @@
 /**
- * Telegram 缩略图压缩（libs/image.ts 的 prepareThumbnailJpeg）。
+ * Telegram 缩略图压缩（infra/image.ts 的 prepareThumbnailJpeg）。
  *
  * 这条路上**没有直通分支**：Bot API 对 thumbnail 的三项要求（JPEG、长边 ≤320、
  * 体积 <200 kB）没有一项能靠嗅探字节确认，原样上传一张 1K 生图必然被整条拒绝。
@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { prepareThumbnailJpeg, sniffImageFormat } from "../../packages/libs/image";
+import { prepareThumbnailJpeg, sniffImageFormat } from "../../packages/infra/image";
 
 /** 造一张指定尺寸的 PNG，用来模拟生图模型交回来的原始封面。 */
 async function makePng(width: number, height: number): Promise<Buffer> {

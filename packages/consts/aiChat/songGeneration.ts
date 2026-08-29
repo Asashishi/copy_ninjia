@@ -76,7 +76,7 @@ export const SONG_COVER_MAX_BYTES: number = 192 * 1_024;
  * 压缩封面时逐档尝试的 JPEG 质量。
  *
  * 从高到低试，第一个落进体积上限的就用。降质量而不是砍边长：320×320 这个尺寸上
- * 质量档还有很大余量，而边长一小缩略图就糊得看不出内容（见 libs/image.ts 的
+ * 质量档还有很大余量，而边长一小缩略图就糊得看不出内容（见 infra/image.ts 的
  * prepareThumbnailJpeg）。只读数组防止调用方误改。
  */
 export const SONG_COVER_JPEG_QUALITIES: readonly number[] = [88, 72, 55, 40];

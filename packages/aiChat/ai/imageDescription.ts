@@ -1,6 +1,6 @@
 /**
  * 群聊媒体的异步解析入口，四种媒体共用：图片/贴纸/GIF 走视觉描述（下载 Telegram
- * 文件，按需转码成视觉接口通吃的 jpg/png，见 libs/image.ts），语音走转写（原样把
+ * 文件，按需转码成视觉接口通吃的 jpg/png，见 infra/image.ts），语音走转写（原样把
  * 音频字节交给语音接口，见 aiChat/ai/voiceTranscription.ts）。产出供
  * workers/aiChat/mediaIngest.ts 的 recordChatMedia 把对话缓存里的占位文本替换掉，
  * 视觉那条同时供 aiChat/ai/stickers/catalog.ts 生成机器人自己贴纸目录的描述条目。

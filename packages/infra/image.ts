@@ -1,4 +1,4 @@
-import { logger } from "../infra/logger";
+import { logger } from "./logger";
 import type { Sharp } from "sharp";
 import type { VisionImage } from "../types/media";
 

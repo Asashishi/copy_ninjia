@@ -57,7 +57,8 @@ chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
 // 再经 AI Worker 的 init 与 Anti-Raid Worker 的 agentConfig 消息投递给两条业务
 // 线程（见 packages/config/agent.ts 的边界说明）。测试 isolate 收不到那两条
 // 消息，因此在这里把同一份 config_example/agent.json adopt 进本 isolate 的
-// holder，等价于「快照已经送到」。需要验证「没配」的用例自行把 holder 置空。
+// holder，等价于「快照已经送到」。临时副本里的凭据是测试专用值；需要验证
+// 「没配」的用例自行把 holder 置空。
 adoptAgentDeploymentConfig(loadAgentDeploymentConfig());
 adoptAdDetectAgentConfig(loadAdDetectAgentConfig());
 

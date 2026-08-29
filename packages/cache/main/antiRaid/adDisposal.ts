@@ -6,5 +6,6 @@
  * 数据库中各自保留事务 ACK，因此进程中途退出不会丢处置。这个集合只用于停机 drain——让 drainAntiRaid
  * 等这些任务结算，而不是把它们连同事件一起丢在半路（见 docs/cn/04-invariants.md）。
  * 每项在结算时自行摘除，容量因此等于同时在途的判定命中数。
+ * 进程重启后集合为空，业务真相仍由已经提交的 SQLite 事务 ACK 保持。
  */
 export const inFlightAdDisposals: Set<Promise<void>> = new Set<Promise<void>>();

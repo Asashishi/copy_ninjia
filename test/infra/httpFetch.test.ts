@@ -5,14 +5,14 @@ import {
   JSON_API_MAX_RESPONSE_BYTES,
 } from "../../packages/consts/httpFetch";
 import { WEATHER_API_URL } from "../../packages/consts/weather";
-import { chunkedResponse } from "./helpers";
+import { chunkedResponse } from "../libs/helpers";
 
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
 
-const { fetchJsonWithTimeout } = await import("../../packages/libs/httpFetch");
+const { fetchJsonWithTimeout } = await import("../../packages/infra/httpFetch");
 const realFetch: typeof fetch = globalThis.fetch;
 
 function installFetch(handler: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): void {

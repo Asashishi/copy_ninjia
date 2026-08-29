@@ -55,7 +55,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 861 source lines containing Chinese string or template literals across 83 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 857 source lines containing Chinese string or template literals across 84 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -106,7 +106,7 @@ The contract is split into five minimal per-capability interfaces (`AiTextProvid
 ## Adding a Generic JSON API Call
 
 1. Add the exact HTTPS origin explicitly to `JSON_API_ALLOWED_ORIGINS` in [`packages/consts/httpFetch.ts`](../../packages/consts/httpFetch.ts). Do not broaden it to arbitrary hosts, HTTP, or credential-bearing URLs.
-2. Reuse the bounded JSON reader in [`packages/libs/httpFetch.ts`](../../packages/libs/httpFetch.ts). Keep redirects disabled and preserve response-body and error-log limits.
+2. Reuse the bounded JSON reader in [`packages/infra/httpFetch.ts`](../../packages/infra/httpFetch.ts). Keep redirects disabled and preserve response-body and error-log limits.
 3. Add tests for origins, redirects, oversized responses, and failure logging. Telegram avatar downloads are a separate media path: both the Bot API `file.getUrl()` primary path and the `t.me` page/image fallback must keep redirects disabled and reads bounded; do not reroute that path merely to add a JSON API.
 
 ## Changing the Persona or JSON Configuration

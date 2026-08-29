@@ -12,7 +12,7 @@ import {
 import {
   settleWithinBudget,
   trackBackgroundTask,
-} from "../../../libs/backgroundTasks";
+} from "../../backgroundTasks";
 import {
   isPermissionDenied,
   runBooleanTelegramAction,

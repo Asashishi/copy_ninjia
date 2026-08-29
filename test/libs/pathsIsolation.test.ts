@@ -18,6 +18,7 @@ import {
   STATE_FILE_PATH,
   STICKERS_CONFIG_PATH,
 } from "../../packages/consts/paths";
+import { TEST_CONFIG_ROOT } from "../preloadEnv";
 
 test("测试环境的真实运行时文件与生产数据根完全隔离", () => {
   expect(RUNTIME_DATA_ROOT).not.toBe(PROJECT_ROOT);
@@ -45,8 +46,8 @@ test("测试环境的真实运行时文件与生产数据根完全隔离", () =>
   expect(existsSync(productionMarker)).toBeFalse();
 });
 
-test("测试环境的默认部署配置只读取受版本控制的示例目录", () => {
-  expect(CONFIG_ROOT).toBe(join(PROJECT_ROOT, "config_example"));
+test("测试环境的默认部署配置只读取独占临时副本", () => {
+  expect(CONFIG_ROOT).toBe(TEST_CONFIG_ROOT);
   for (const path of [
     AD_SAMPLES_CONFIG_PATH,
     MOOD_CONFIG_PATH,

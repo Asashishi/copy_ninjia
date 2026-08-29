@@ -12,7 +12,7 @@ const openAiGenerateImage = mock(async (..._args: unknown[]): Promise<GeneratedC
 }));
 const prepareThumbnailJpeg = mock(async (..._args: unknown[]): Promise<Buffer | null> =>
   Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
-const realImage = await import("../../../packages/libs/image");
+const realImage = await import("../../../packages/infra/image");
 
 let agentConfig: AgentDeploymentConfig;
 mock.module("../../../packages/config/agent", () => ({
@@ -24,7 +24,7 @@ mock.module("../../../packages/aiChat/gemini", () => ({
 mock.module("../../../packages/aiChat/openai", () => ({
   openAiProvider: { name: "openai", generateImage: openAiGenerateImage },
 }));
-mock.module("../../../packages/libs/image", () => ({ ...realImage, prepareThumbnailJpeg }));
+mock.module("../../../packages/infra/image", () => ({ ...realImage, prepareThumbnailJpeg }));
 
 const { generateSongCover } = await import("../../../packages/aiChat/ai/songCover");
 const { resetAiProviderSchedulerCache } =

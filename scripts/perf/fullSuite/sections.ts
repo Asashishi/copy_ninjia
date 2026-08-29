@@ -38,6 +38,7 @@ import type {
 /** 本次运行的共享上下文；各分区都往同一份读写与操作数账上记。 */
 export interface SectionContext {
   readonly runRoot: string;
+  readonly configRoot: string;
   readonly rounds: number;
   /** 进度只写 stderr：stdout 是给管道用的纯 JSON 报告。 */
   readonly onProgress: (message: string) => void;
@@ -73,17 +74,18 @@ const HOT_PATH_ENTRY: string = join(PROJECT_ROOT, "scripts", "perf", "hotPaths.t
 const JOIN_LOG_ENTRY: string = join(PROJECT_ROOT, "scripts", "perf", "joinLog.ts");
 
 /**
- * 所有子进程统一读 `config_example/`。
+ * 所有子进程统一读本次运行目录内的隔离配置副本。
  *
- * 不读部署方的 `config/`：那份可能带着真实 token 和各机器不同的开关，既让读数
- * 不可跨机比较，也没有任何理由让一次基准把生产凭据加载进来。
+ * 不读部署方的 `config/`，也不直接接受 `config_example/` 的占位凭据：父进程会
+ * 在 mock 根内建立严格解析可接受的副本，读数保持可比较且不会加载生产凭据。
  */
-const CONFIG_ROOT: string = join(PROJECT_ROOT, "config_example");
-
-function childEnv(runtimeRoot: string): Readonly<Record<string, string>> {
+function childEnv(
+  runtimeRoot: string,
+  configRoot: string
+): Readonly<Record<string, string>> {
   return {
     [RUNTIME_DATA_ROOT_ENV]: runtimeRoot,
-    [CONFIG_ROOT_ENV]: CONFIG_ROOT,
+    [CONFIG_ROOT_ENV]: configRoot,
   };
 }
 
@@ -174,6 +176,7 @@ function assertSameRuntime(
 interface SeedRuntimeRootOptions {
   readonly dependencies: SectionDependencies;
   readonly runtimeRoot: string;
+  readonly configRoot: string;
   readonly mode: "cold-start" | "chain";
   readonly label: string;
 }
@@ -181,12 +184,13 @@ interface SeedRuntimeRootOptions {
 async function seedRuntimeRoot({
   dependencies,
   runtimeRoot,
+  configRoot,
   mode,
   label,
 }: SeedRuntimeRootOptions): Promise<void> {
   await dependencies.spawnJsonChild<unknown>({
     args: [SUITE_ENTRY, "--child", "seed", mode],
-    env: childEnv(runtimeRoot),
+    env: childEnv(runtimeRoot, configRoot),
     label: `${label} fixture`,
   });
 }
@@ -215,12 +219,18 @@ async function runRounds<TRound>(
     const runtimeRoot: string = dependencies.createRuntimeRoot(context.runRoot);
     try {
       if (seedMode !== "none") {
-        await seedRuntimeRoot({ dependencies, runtimeRoot, mode: seedMode, label });
+        await seedRuntimeRoot({
+          dependencies,
+          runtimeRoot,
+          configRoot: context.configRoot,
+          mode: seedMode,
+          label,
+        });
       }
       context.onProgress(`${label} ${round + 1}/${context.rounds}`);
       rounds.push(await dependencies.spawnJsonChild<TRound>({
         args,
-        env: childEnv(runtimeRoot),
+        env: childEnv(runtimeRoot, context.configRoot),
         label,
       }));
     } finally {

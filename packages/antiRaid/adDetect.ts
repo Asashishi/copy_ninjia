@@ -27,7 +27,7 @@ import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
 import {
   settleWithinBudget,
   trackBackgroundTask,
-} from "../libs/backgroundTasks";
+} from "../infra/backgroundTasks";
 import { formatTokyoTime } from "../libs/time";
 import {
   runBlocklistIdentityMutation,

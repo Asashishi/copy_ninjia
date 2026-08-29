@@ -6,7 +6,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 #
 # 按顺序做四件事：配好环境 -> 取最新 release -> 问部署方要配置 -> 注册 systemd 并启动。
-# 不备份、不迁移、不卸载——那些属于运维流程，见 docs/cn/07-operations.md。
+# 不迁移、不卸载；重新填写部署配置时会在工作树外保留可核验备份，见
+# docs/cn/07-operations.md。
 #
 # 装的是 GitHub 上的 Latest Release：tag 取自 releases/latest 接口，取不到即失败退出。
 # 已存在的工作树保持原有 checkout 不动，只报告当前版本。
@@ -47,6 +48,15 @@ readonly AGENT_REQUIRED_CAPABILITIES=(text summary media)
 # bash 还在一边执行一边从它读后面的内容，动了它脚本就会从中间断掉。
 readonly TTY_DEVICE="/dev/tty"
 
+# 配置写入的临时文件与外部备份只属于本次安装进程。临时文件退出即清，外部
+# 备份只有在 systemd 启动稳定性全部核验后才删；前台运行或任何失败都会保留。
+CONFIG_STAGING_PATHS=()
+CONFIG_BACKUP_TARGETS=()
+CONFIG_CREATED_PATHS=()
+CONFIG_BACKUP_DIRECTORY=""
+CONFIG_BACKUP_MANIFEST=""
+CONFIG_CHANGED=0
+
 step() { printf '\n==> %s\n' "$1"; }
 info() { printf '    %s\n' "$1"; }
 warn() { printf '    [注意] %s\n' "$1" >&2; }
@@ -66,6 +76,43 @@ systemd_environment_assignment() {
   escaped_value="${escaped_value//\"/\\\"}"
   escaped_value="${escaped_value//%/%%}"
   printf 'Environment="%s=%s"' "$variable_name" "$escaped_value"
+}
+
+# 观察窗口开始处的 journal 游标；后面只读这一点之后新增的条目。
+# unit 从来没写过日志（全新安装）时没有游标可取，返回空串——那种情况下这条 unit
+# 的**全部**条目都是本次装出来的，调用方读全量即可，不会把旧崩溃算到本次头上。
+service_journal_cursor() {
+  # 末尾的 `|| true` 是必需的：pipefail 下 journalctl 失败会让整条管道非零，而
+  # 调用点是 `CURSOR="$(service_journal_cursor)"`，赋值失败会被 set -e 当场打死。
+  # 取不到游标只是「读全量」，不是安装失败。
+  {
+    run_privileged journalctl -u "${SERVICE_NAME}.service" -n 0 --show-cursor --no-pager 2>/dev/null |
+      sed -n 's/^-- cursor: *//p' |
+      tail -n 1
+  } || true
+}
+
+# 观察窗口内该 unit 的新增 journal 正文。读不到（没有 journalctl、journald 未启用、
+# 权限不足）时返回非零，调用方据此降级成提示，绝不把「读不到」判成「失败」。
+service_journal_since() {
+  local cursor="$1"
+  command -v journalctl >/dev/null 2>&1 || return 1
+  if [ -n "$cursor" ]; then
+    run_privileged journalctl -u "${SERVICE_NAME}.service" \
+      --after-cursor "$cursor" --output=cat --no-pager 2>/dev/null
+  else
+    run_privileged journalctl -u "${SERVICE_NAME}.service" \
+      --output=cat --no-pager 2>/dev/null
+  fi
+}
+
+# 从 journal 正文里挑出 systemd 记的非零退出。
+# `code=exited, status=0/SUCCESS` 是正常停止，不算；非 0 状态码、以及被信号杀掉的
+# `code=killed` / `code=dumped` 都算。这是 AGENTS.md 要求的「journal 无新增非零退出」
+# 那一条的判据，与 NRestarts 增量互为交叉验证：重启计数只在 systemd 真的拉起下一次
+# 时才涨，而「退出了但没被拉起来」只在这里留痕。
+journal_nonzero_exit_lines() {
+  grep -E 'code=exited, status=0*[1-9][0-9]*|code=(killed|dumped)' || true
 }
 
 # 以 root 直接执行，否则借 sudo；两者都没有时由调用方决定怎么办。
@@ -261,6 +308,179 @@ confirm() {
   done
 }
 
+# 软链接配置沿用其实际写入目标，避免原子替换将部署方软链接改成普通文件。
+resolve_config_target_path() {
+  local target_path="$1" result_name="$2" resolved_path=""
+  if [ -L "$target_path" ]; then
+    resolved_path="$(readlink -f -- "$target_path")" ||
+      die "无法解析配置软链接：${target_path}。"
+    [ -n "$resolved_path" ] || die "配置软链接没有可写目标：${target_path}。"
+  else
+    resolved_path="$target_path"
+  fi
+  printf -v "$result_name" '%s' "$resolved_path"
+}
+
+# 在实际写入目标同目录创建 0600 临时文件，使最后一步 mv 是同文件系统原子替换。
+create_config_staging_path() {
+  local target_path="$1" result_name="$2" target_directory="" target_name="" generated_path=""
+  target_directory="$(dirname -- "$target_path")"
+  target_name="$(basename -- "$target_path")"
+  generated_path="$(mktemp "${target_directory}/.${target_name}.install.XXXXXX")" ||
+    die "无法为 ${target_path} 创建配置临时文件。"
+  CONFIG_STAGING_PATHS+=("$generated_path")
+  chmod 600 -- "$generated_path" || die "无法收紧 ${target_path} 临时文件权限。"
+  printf -v "$result_name" '%s' "$generated_path"
+}
+
+# 新建示例配置也先完整复制到同目录临时文件，避免中断留下半份 JSON。
+create_config_from_example() {
+  local source_path="$1" target_path="$2" staging_path="" source_mode=""
+  local current_umask="" target_mode="" resolved_target_path=""
+  resolve_config_target_path "$target_path" resolved_target_path
+  create_config_staging_path "$resolved_target_path" staging_path
+  cp -- "$source_path" "$staging_path" ||
+    die "复制 ${source_path} 失败。"
+  source_mode="$(stat -c '%a' -- "$source_path")" || die "无法读取 ${source_path} 权限。"
+  current_umask="$(umask)"
+  printf -v target_mode '%03o' \
+    "$(( (8#$source_mode & 0777) & (~8#$current_umask & 0777) ))"
+  chmod "$target_mode" -- "$staging_path" || die "无法设置 ${target_path} 权限。"
+  mv -- "$staging_path" "$resolved_target_path" || die "建立 ${target_path} 失败。"
+  CONFIG_CREATED_PATHS+=("$resolved_target_path")
+  CONFIG_CHANGED=1
+}
+
+# 第一次覆盖部署配置前，在工作树外留一份带清单的原件；无法保留属主时仍逐份
+# 核对 SHA-256，原属主记录在 manifest 里供恢复时使用。
+backup_deployment_config() {
+  local target_path="$1" existing_target="" backup_parent="" backup_parent_real=""
+  local worktree_real="" backup_path="" source_hash="" backup_hash=""
+  local original_mode="" original_uid="" original_gid=""
+  [ -e "$target_path" ] || return 0
+  for existing_target in "${CONFIG_CREATED_PATHS[@]}"; do
+    [ "$existing_target" = "$target_path" ] && return 0
+  done
+  for existing_target in "${CONFIG_BACKUP_TARGETS[@]}"; do
+    [ "$existing_target" = "$target_path" ] && return 0
+  done
+
+  if [ -z "$CONFIG_BACKUP_DIRECTORY" ]; then
+    backup_parent="${TMPDIR:-/tmp}"
+    [ -d "$backup_parent" ] || die "配置备份父目录不存在：${backup_parent}。"
+    backup_parent_real="$(cd -- "$backup_parent" && pwd -P)" ||
+      die "无法解析配置备份父目录：${backup_parent}。"
+    worktree_real="$(pwd -P)"
+    case "$backup_parent_real" in
+      "$worktree_real"|"$worktree_real"/*)
+        die "配置备份目录必须位于工作树外：${backup_parent_real}。"
+        ;;
+    esac
+    CONFIG_BACKUP_DIRECTORY="$(mktemp -d "${backup_parent_real}/copy-ninjia-config-backup.XXXXXX")" ||
+      die "无法创建工作树外配置备份目录。"
+    chmod 700 -- "$CONFIG_BACKUP_DIRECTORY" || die "无法收紧配置备份目录权限。"
+    CONFIG_BACKUP_MANIFEST="${CONFIG_BACKUP_DIRECTORY}/manifest.tsv"
+    : > "$CONFIG_BACKUP_MANIFEST"
+    chmod 600 -- "$CONFIG_BACKUP_MANIFEST" || die "无法收紧配置备份清单权限。"
+  fi
+
+  backup_path="${CONFIG_BACKUP_DIRECTORY}/original-${#CONFIG_BACKUP_TARGETS[@]}.json"
+  if ! cp -p -- "$target_path" "$backup_path"; then
+    rm -f -- "$backup_path"
+    cp -- "$target_path" "$backup_path" ||
+      die "备份 ${target_path} 失败。"
+  fi
+  source_hash="$(sha256sum -- "$target_path")" || die "无法计算 ${target_path} 的 SHA-256。"
+  source_hash="${source_hash%% *}"
+  backup_hash="$(sha256sum -- "$backup_path")" || die "无法计算 ${target_path} 备份的 SHA-256。"
+  backup_hash="${backup_hash%% *}"
+  [ "$source_hash" = "$backup_hash" ] || die "${target_path} 的备份 SHA-256 核对失败。"
+  original_mode="$(stat -c '%a' -- "$target_path")" || die "无法读取 ${target_path} 权限。"
+  original_uid="$(stat -c '%u' -- "$target_path")" || die "无法读取 ${target_path} 属主。"
+  original_gid="$(stat -c '%g' -- "$target_path")" || die "无法读取 ${target_path} 属组。"
+  printf '%s\tmode=%s\tuid=%s\tgid=%s\tsha256=%s\tbackup=%s\n' \
+    "$target_path" "$original_mode" "$original_uid" "$original_gid" "$source_hash" \
+    "$(basename -- "$backup_path")" >> "$CONFIG_BACKUP_MANIFEST"
+  CONFIG_BACKUP_TARGETS+=("$target_path")
+  info "已备份 ${target_path} 到 ${CONFIG_BACKUP_DIRECTORY}，SHA-256 已核对。"
+}
+
+# 目标内容已严格解析后才走这里；既有配置保持属主/属组，新文件固定为 0600，
+# 原子替换时不会让服务账号失去原有读取能力，也没有宽权限窗口。
+commit_staged_config() {
+  local staging_path="$1" target_path="$2" target_uid="" target_gid=""
+  local staging_uid="" staging_gid=""
+  chmod 600 -- "$staging_path" || die "无法收紧 ${target_path} 候选文件权限。"
+  if [ -e "$target_path" ]; then
+    target_uid="$(stat -c '%u' -- "$target_path")" || die "无法读取 ${target_path} 属主。"
+    target_gid="$(stat -c '%g' -- "$target_path")" || die "无法读取 ${target_path} 属组。"
+    staging_uid="$(stat -c '%u' -- "$staging_path")" || die "无法读取 ${target_path} 候选文件属主。"
+    staging_gid="$(stat -c '%g' -- "$staging_path")" || die "无法读取 ${target_path} 候选文件属组。"
+    if [ "$staging_uid" != "$target_uid" ] || [ "$staging_gid" != "$target_gid" ]; then
+      run_privileged chown "${target_uid}:${target_gid}" "$staging_path" ||
+        die "无法保持 ${target_path} 的属主与属组，原文件未改动。"
+    fi
+  fi
+  mv -- "$staging_path" "$target_path" || die "原子替换 ${target_path} 失败。"
+  CONFIG_CHANGED=1
+}
+
+# 只验证候选 Telegram 文件，不读取或填充当前进程的默认配置 holder。
+validate_staged_telegram_config() {
+  local staging_path="$1"
+  bun -e '
+    import { parseTelegramConfig } from "./packages/config/telegram";
+    import { readJsonInput } from "./packages/libs/inputValidation";
+    const path = process.argv[1];
+    parseTelegramConfig(readJsonInput(path), path);
+  ' "$staging_path"
+}
+
+# agent 总闸本身接受路径参数，候选文件验证不会触碰部署目标。
+validate_staged_agent_config() {
+  local staging_path="$1"
+  bun -e '
+    import { validateAgentDeploymentConfig } from "./packages/config/agent";
+    validateAgentDeploymentConfig(process.argv[1]);
+  ' "$staging_path"
+}
+
+# API key 只保存在问答局部变量和数组里；生成完成或失败后立即清空。
+clear_agent_config_inputs() {
+  unset api_key provider model base_url image_protocol
+  unset AGENT_CONFIG_NAMES AGENT_CONFIG_PROVIDERS AGENT_CONFIG_API_KEYS
+  unset AGENT_CONFIG_MODELS AGENT_CONFIG_BASE_URLS AGENT_CONFIG_IMAGE_PROTOCOLS
+}
+
+# EXIT 只清理尚未提交的候选文件；外部备份不能在失败路径被顺手删掉。
+cleanup_install_staging() {
+  local staging_path=""
+  for staging_path in "${CONFIG_STAGING_PATHS[@]}"; do
+    [ -n "$staging_path" ] && rm -f -- "$staging_path"
+  done
+  if [ -n "$CONFIG_BACKUP_DIRECTORY" ]; then
+    warn "配置备份保留在 ${CONFIG_BACKUP_DIRECTORY}；核验或恢复后再手工删除。"
+  fi
+}
+trap cleanup_install_staging EXIT
+
+# 只有配置校验、ActiveState/SubState、重启计数与 journal 全部通过后才能清备份。
+finalize_config_backup() {
+  local backup_parent="" backup_name=""
+  [ -n "$CONFIG_BACKUP_DIRECTORY" ] || return 0
+  backup_parent="$(dirname -- "$CONFIG_BACKUP_DIRECTORY")"
+  backup_name="$(basename -- "$CONFIG_BACKUP_DIRECTORY")"
+  case "$backup_name" in
+    copy-ninjia-config-backup.*) ;;
+    *) die "拒绝清理无法识别的配置备份路径：${CONFIG_BACKUP_DIRECTORY}。" ;;
+  esac
+  rm -rf -- "${backup_parent}/${backup_name}" ||
+    die "服务已稳定，但清理配置备份失败：${CONFIG_BACKUP_DIRECTORY}。"
+  CONFIG_BACKUP_DIRECTORY=""
+  CONFIG_BACKUP_MANIFEST=""
+  CONFIG_BACKUP_TARGETS=()
+}
+
 # --------------------------------------------------------------------------
 step "1/8 平台自检"
 # --------------------------------------------------------------------------
@@ -363,16 +583,18 @@ step "5/8 准备配置目录"
 # --------------------------------------------------------------------------
 
 mkdir -p config
-AGENT_CONFIG_WAS_CREATED=0
 for example_file in config_example/*.json; do
   config_name="$(basename -- "$example_file")"
+  if [ "$config_name" = "agent.json" ]; then
+    # agent 示例含故意不可用的占位凭据；只有完成问卷后才生成部署文件。
+    continue
+  fi
   if [ -e "config/${config_name}" ]; then
     # 已有配置一律不覆盖：那是部署方数据，不能被示例值顶掉。
     info "保留 config/${config_name}（已存在）。"
     continue
   fi
-  cp -- "$example_file" "config/${config_name}"
-  [ "$config_name" = "agent.json" ] && AGENT_CONFIG_WAS_CREATED=1
+  create_config_from_example "$example_file" "config/${config_name}"
   info "新建 config/${config_name}（来自示例）。"
 done
 
@@ -401,27 +623,40 @@ if [ "$CONFIGURE_TELEGRAM" -eq 1 ]; then
     [[ "$SUPER_ADMIN_USER_ID" =~ ^[1-9][0-9]*$ ]] && break
     warn "只接受正整数，请重新输入。"
   done
-  cat > config/telegram.json <<JSON
+  TELEGRAM_CONFIG_STAGING_PATH=""
+  TELEGRAM_CONFIG_TARGET_PATH=""
+  resolve_config_target_path config/telegram.json TELEGRAM_CONFIG_TARGET_PATH
+  create_config_staging_path "$TELEGRAM_CONFIG_TARGET_PATH" TELEGRAM_CONFIG_STAGING_PATH
+  cat > "$TELEGRAM_CONFIG_STAGING_PATH" <<JSON
 {
   "bot_token": "${BOT_TOKEN}",
   "super_admin_user_id": ${SUPER_ADMIN_USER_ID}
 }
 JSON
-  chmod 600 config/telegram.json
+  unset BOT_TOKEN SUPER_ADMIN_USER_ID
+  backup_deployment_config "$TELEGRAM_CONFIG_TARGET_PATH"
+  validate_staged_telegram_config "$TELEGRAM_CONFIG_STAGING_PATH" ||
+    die "候选 config/telegram.json 严格校验未通过，原文件未改动。"
+  commit_staged_config "$TELEGRAM_CONFIG_STAGING_PATH" "$TELEGRAM_CONFIG_TARGET_PATH"
   info "已写入 config/telegram.json（权限 600）。"
 fi
 
-if [ "$AGENT_CONFIG_WAS_CREATED" -eq 0 ] && [ -e config/agent.json ]; then
+if [ -e config/agent.json ]; then
   info "保留既有 config/agent.json，未改动。"
 elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写歌）？不配也能启动。" n; then
   CONFIGURED_CAPABILITIES=()
+  AGENT_CONFIG_NAMES=()
+  AGENT_CONFIG_PROVIDERS=()
+  AGENT_CONFIG_API_KEYS=()
+  AGENT_CONFIG_MODELS=()
+  AGENT_CONFIG_BASE_URLS=()
+  AGENT_CONFIG_IMAGE_PROTOCOLS=()
   for capability in "${AGENT_CAPABILITIES[@]}"; do
     printf '\n'
     if ! confirm "配置 ${capability}？" n; then
       info "跳过 ${capability}。"
       continue
     fi
-    capability_key="$(printf '%s' "$capability" | tr '[:lower:]' '[:upper:]')"
     provider=""
     while true; do
       ask provider "  ${capability} 的 provider（google 或 openai）："
@@ -450,42 +685,63 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
         done
       fi
     fi
-    # 逐字段导出成环境变量，交给 Bun 拼 JSON：api_key 里可能有任何字符，
-    # 在 shell 里手工拼 JSON 迟早会拼出一份解析不了的配置。
-    export "CN_${capability_key}_PROVIDER=${provider}"
-    export "CN_${capability_key}_API_KEY=${api_key}"
-    export "CN_${capability_key}_MODEL=${model}"
-    export "CN_${capability_key}_BASE_URL=${base_url}"
-    export "CN_${capability_key}_IMAGE_PROTOCOL=${image_protocol}"
     CONFIGURED_CAPABILITIES+=("$capability")
+    AGENT_CONFIG_NAMES+=("$capability")
+    AGENT_CONFIG_PROVIDERS+=("$provider")
+    AGENT_CONFIG_API_KEYS+=("$api_key")
+    AGENT_CONFIG_MODELS+=("$model")
+    AGENT_CONFIG_BASE_URLS+=("$base_url")
+    AGENT_CONFIG_IMAGE_PROTOCOLS+=("$image_protocol")
+    unset api_key provider model base_url image_protocol
   done
 
   printf '\n'
   if [ "${#CONFIGURED_CAPABILITIES[@]}" -eq 0 ]; then
-    rm -f config/agent.json
-    info "一项都没配，已移除 config/agent.json；AI 相关功能保持不可用。"
+    clear_agent_config_inputs
+    info "一项都没配，未建立 config/agent.json；AI 相关功能保持不可用。"
   else
-    CN_AGENT_CAPABILITIES="$(IFS=,; printf '%s' "${CONFIGURED_CAPABILITIES[*]}")" \
-    bun -e '
-      const names = (process.env.CN_AGENT_CAPABILITIES ?? "").split(",").filter(Boolean);
+    AGENT_CONFIG_STAGING_PATH=""
+    AGENT_CONFIG_TARGET_PATH=""
+    resolve_config_target_path config/agent.json AGENT_CONFIG_TARGET_PATH
+    create_config_staging_path "$AGENT_CONFIG_TARGET_PATH" AGENT_CONFIG_STAGING_PATH
+    if ! {
+      for capability_index in "${!AGENT_CONFIG_NAMES[@]}"; do
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+          "${AGENT_CONFIG_NAMES[$capability_index]}" \
+          "${AGENT_CONFIG_PROVIDERS[$capability_index]}" \
+          "${AGENT_CONFIG_API_KEYS[$capability_index]}" \
+          "${AGENT_CONFIG_MODELS[$capability_index]}" \
+          "${AGENT_CONFIG_BASE_URLS[$capability_index]}" \
+          "${AGENT_CONFIG_IMAGE_PROTOCOLS[$capability_index]}"
+      done
+    } | bun -e '
+      const bytes = new Uint8Array(await Bun.stdin.arrayBuffer());
+      const fields = new TextDecoder().decode(bytes).split("\0");
+      fields.pop();
+      if (fields.length === 0 || fields.length % 6 !== 0) {
+        throw new Error("invalid agent config field stream");
+      }
       const agent = {};
-      for (const name of names) {
-        const prefix = `CN_${name.toUpperCase()}_`;
+      for (let offset = 0; offset < fields.length; offset += 6) {
+        const [name, provider, apiKey, model, baseUrl, imageProtocol] = fields.slice(offset, offset + 6);
         const entry = {
-          provider: process.env[`${prefix}PROVIDER`],
-          api_key: process.env[`${prefix}API_KEY`],
+          provider,
+          api_key: apiKey,
         };
-        const baseUrl = process.env[`${prefix}BASE_URL`] ?? "";
         if (baseUrl.length > 0) entry.base_url = baseUrl;
-        entry.model = process.env[`${prefix}MODEL`];
-        const imageProtocol = process.env[`${prefix}IMAGE_PROTOCOL`] ?? "";
+        entry.model = model;
         if (imageProtocol.length > 0) entry.image_protocol = imageProtocol;
         agent[name] = entry;
       }
       await Bun.write(Bun.stdout, `${JSON.stringify({ agent }, null, 2)}\n`);
-    ' > config/agent.json.tmp || { rm -f config/agent.json.tmp; die "生成 agent.json 失败。"; }
-    mv -- config/agent.json.tmp config/agent.json
-    chmod 600 config/agent.json
+    ' > "$AGENT_CONFIG_STAGING_PATH"; then
+      clear_agent_config_inputs
+      die "生成 agent.json 失败。"
+    fi
+    clear_agent_config_inputs
+    validate_staged_agent_config "$AGENT_CONFIG_STAGING_PATH" ||
+      die "候选 config/agent.json 严格校验未通过，未建立部署文件。"
+    commit_staged_config "$AGENT_CONFIG_STAGING_PATH" "$AGENT_CONFIG_TARGET_PATH"
     info "已写入 config/agent.json（权限 600）：${CONFIGURED_CAPABILITIES[*]}"
     for required_capability in "${AGENT_REQUIRED_CAPABILITIES[@]}"; do
       case " ${CONFIGURED_CAPABILITIES[*]} " in
@@ -494,10 +750,6 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
       esac
     done
   fi
-elif [ "$AGENT_CONFIG_WAS_CREATED" -eq 1 ]; then
-  # 示例里的 api_key 是占位串，留着只会让人以为配好了；缺文件才是诚实的状态。
-  rm -f config/agent.json
-  info "已移除示例 config/agent.json；AI 相关功能保持不可用，之后可从 config_example/agent.json 复制填好再重启。"
 fi
 
 if [ ! -e g-auth.json ]; then
@@ -588,6 +840,9 @@ step "8/8 注册 systemd 服务并启动"
 # 没有可用 systemd 时（容器、非 systemd 发行版）跳过注册，改为前台运行。
 if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
   warn "本机没有可用的 systemd，跳过服务注册。"
+  if [ -n "$CONFIG_BACKUP_DIRECTORY" ]; then
+    warn "前台进程无法自动完成稳定性观察；配置备份保留在 ${CONFIG_BACKUP_DIRECTORY}。"
+  fi
   info "机器人将在前台运行；Ctrl-C 停止，下次直接用 bun run start。"
   printf '\n==> 启动\n\n'
   exec bun run start
@@ -614,6 +869,8 @@ fi
 # 全新安装时 unit 还不存在，NRestarts 取回空串，补成 0 参与后面的比较。
 RESTARTS_BEFORE="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value 2>/dev/null)"
 : "${RESTARTS_BEFORE:=0}"
+# 与 NRestarts 基线同一时刻取 journal 游标，让两条判据覆盖同一个观察窗口。
+JOURNAL_CURSOR="$(service_journal_cursor)"
 
 if [ "$WRITE_UNIT" -eq 1 ]; then
   # 经 tee 写入，使 run_privileged 的提权作用于写文件的那个进程。
@@ -640,8 +897,15 @@ if [ "$WRITE_UNIT" -eq 1 ]; then
 fi
 
 run_privileged systemctl daemon-reload || die "systemctl daemon-reload 失败。"
-run_privileged systemctl enable --now "${SERVICE_NAME}.service" ||
-  die "启动 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+run_privileged systemctl enable "${SERVICE_NAME}.service" ||
+  die "启用 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+if [ "$CONFIG_CHANGED" -eq 1 ] || [ "$WRITE_UNIT" -eq 1 ]; then
+  run_privileged systemctl restart "${SERVICE_NAME}.service" ||
+    die "重启 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+else
+  run_privileged systemctl start "${SERVICE_NAME}.service" ||
+    die "启动 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+fi
 
 # 观察至少两个重启间隔（RestartSec=5）后再判定，口径见 docs/cn/07-operations.md。
 info "观察 ${SERVICE_NAME}.service 是否稳定（约 12 秒）……"
@@ -657,7 +921,24 @@ if [ "$RESTARTS_AFTER" -gt "$RESTARTS_BEFORE" ]; then
   die "${SERVICE_NAME}.service 在观察窗口内重启了 $((RESTARTS_AFTER - RESTARTS_BEFORE)) 次，说明启动后随即退出。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
 fi
 
+# NRestarts 只在 systemd 真的拉起下一次时才涨；启动后非零退出却没被拉起来（比如
+# 配置校验失败被 Restart=on-failure 的次数上限挡住）不会改动那个计数，只在 journal
+# 里留痕。两条判据都要过，口径见 docs/cn/07-operations.md。
+# 收尾那行只能说这一轮真做过的事：核对不成时不得写成「journal 无非零退出」。
+JOURNAL_VERDICT="、journal 无非零退出"
+if JOURNAL_TAIL="$(service_journal_since "$JOURNAL_CURSOR")"; then
+  NONZERO_EXITS="$(printf '%s\n' "$JOURNAL_TAIL" | journal_nonzero_exit_lines)"
+  if [ -n "$NONZERO_EXITS" ]; then
+    die "${SERVICE_NAME}.service 在观察窗口内记录了非零退出：${NONZERO_EXITS%%$'\n'*}。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+  fi
+  finalize_config_backup
+else
+  JOURNAL_VERDICT="、journal 未能核对"
+  warn "读不到 ${SERVICE_NAME}.service 的 journal（没有 journalctl、journald 未启用或权限不足），本次跳过非零退出核对。"
+  info "请手动确认：journalctl -u ${SERVICE_NAME} -n 50"
+fi
+
 printf '\n'
-info "${SERVICE_NAME}.service 运行中（${ACTIVE_STATE}/${SUB_STATE}，观察窗口内未重启），已设为开机自启。"
+info "${SERVICE_NAME}.service 运行中（${ACTIVE_STATE}/${SUB_STATE}，观察窗口内未重启${JOURNAL_VERDICT}），已设为开机自启。"
 info "看日志：journalctl -u ${SERVICE_NAME} -f"
 info "停止 / 重启：systemctl stop ${SERVICE_NAME} / systemctl restart ${SERVICE_NAME}"

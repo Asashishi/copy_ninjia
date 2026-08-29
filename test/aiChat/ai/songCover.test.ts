@@ -20,7 +20,7 @@ const generateChatImage = mock(async (..._args: unknown[]): Promise<GeneratedCha
 const prepareThumbnailJpeg = mock(async (..._args: unknown[]): Promise<Buffer | null> =>
   Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
 const loggerError = mock((..._args: unknown[]): void => {});
-const realImage = await import("../../../packages/libs/image");
+const realImage = await import("../../../packages/infra/image");
 
 mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({ generateChatImage }));
 mock.module("../../../packages/infra/logger", () => ({
@@ -31,7 +31,7 @@ mock.module("../../../packages/infra/logger", () => ({
     error: loggerError,
   },
 }));
-mock.module("../../../packages/libs/image", () => ({ ...realImage, prepareThumbnailJpeg }));
+mock.module("../../../packages/infra/image", () => ({ ...realImage, prepareThumbnailJpeg }));
 
 const { generateSongCover } = await import("../../../packages/aiChat/ai/songCover");
 const {

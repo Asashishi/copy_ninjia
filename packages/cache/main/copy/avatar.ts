@@ -2,7 +2,7 @@ import type { AvatarUpdateTask } from "../../../types/copy/avatar";
 
 /** 头像更新队列（packages/copy/avatarQueue.ts）的内存状态。 */
 
-/** 全局头像资源：一个执行槽 + 一个 latest-only 待执行槽。 */
+/** 全局头像资源：入口收到任务时填入一个执行槽与一个 latest-only 待执行槽。 */
 export const avatarUpdateState: {
   running: boolean;
   pending: AvatarUpdateTask | null;

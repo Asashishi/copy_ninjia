@@ -1,12 +1,12 @@
-import { logger } from "../infra/logger";
+import { logger } from "./logger";
 import {
   JSON_API_ALLOWED_ORIGINS,
   JSON_API_ERROR_LOG_MAX_CHARS,
   JSON_API_MAX_RESPONSE_BYTES,
 } from "../consts/httpFetch";
-import { readBoundedResponseBytes } from "./boundedResponse";
-import { parseAllowedHttpsUrl } from "./httpUrlPolicy";
-import type { BoundedResponseResult } from "./boundedResponse";
+import { readBoundedResponseBytes } from "../libs/boundedResponse";
+import { parseAllowedHttpsUrl } from "../libs/httpUrlPolicy";
+import type { BoundedResponseResult } from "../libs/boundedResponse";
 
 function boundedErrorPreview(text: string): string {
   if (text.length <= JSON_API_ERROR_LOG_MAX_CHARS) return text;

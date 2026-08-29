@@ -8,6 +8,13 @@ import { collectColdMigrationProblems } from "../../scripts/conventions/coldMigr
 import { collectNodeCompatibilityProblems } from "../../scripts/conventions/nodeCompatibility";
 import { collectTelegramMessageProblems } from "../../scripts/conventions/telegramMessages";
 import {
+  collectCacheJsDocProblems,
+  collectConstantProblems,
+  collectDeclarationProblems,
+  collectModuleCacheProblems,
+  collectObjectFreezeProblems,
+} from "../../scripts/conventions/sourceRules";
+import {
   collectSharedConstantProblems,
   declarationName,
   hasJsDoc,
@@ -58,7 +65,7 @@ describe("project convention collectors", () => {
     expect(collectNodeCompatibilityProblems(
       projectRoot,
       scriptPath,
-      source(scriptPath, 'import { rmSync } from "node:fs";\nimport { tmpdir } from "node:os";')
+      source(scriptPath, 'import { rmSync, symlinkSync } from "node:fs";\nimport { tmpdir } from "node:os";')
     )).toEqual([]);
     expect(collectNodeCompatibilityProblems(
       projectRoot,
@@ -239,5 +246,112 @@ describe("project convention collectors", () => {
       expect.stringContaining("exactly the declared active cold migration commands"),
       expect.stringContaining("migrate:qa-thumbnail must invoke bun scripts/migrateQaThumbnail.ts"),
     ]));
+  });
+});
+
+describe("逐文件源码规则", () => {
+  const projectRoot: string = "/project";
+
+  function rule(path: string, text: string): { projectRoot: string; path: string; source: ts.SourceFile } {
+    return { projectRoot, path, source: source(path, text) };
+  }
+
+  test("cache 导出与模块生命周期字段都由 JSDoc 门禁", () => {
+    const path: string = "/project/packages/cache/main/example.ts";
+    const complete: string = [
+      "/**",
+      " * 启动时填充，停止时清空；Worker 重建后恢复为空。",
+      " * 容量固定为一个，不淘汰有效值。",
+      " */",
+      "/** 当前值。 */",
+      "export const documented: number = 1;",
+      "",
+    ].join("\n");
+    expect(collectCacheJsDocProblems(rule(path, complete)))
+      .toEqual([]);
+    expect(collectCacheJsDocProblems(rule(
+      path,
+      "/** 只有一句说明。 */\nexport const bare: number = 1;\nexport interface Bare { readonly a: number }\n"
+    ))).toEqual([
+      "packages/cache/main/example.ts:3 export Bare lacks JSDoc",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field fill",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field clear",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field rebuild",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field capacity",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field eviction",
+    ]);
+    expect(collectCacheJsDocProblems(rule(
+      path,
+      "export const bare: number = 1;\nexport interface Bare { readonly a: number }\n"
+    ))).toEqual([
+      "packages/cache/main/example.ts:1 export bare lacks JSDoc",
+      "packages/cache/main/example.ts:2 export Bare lacks JSDoc",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field fill",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field clear",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field rebuild",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field capacity",
+      "packages/cache/main/example.ts:1 cache module JSDoc lacks lifecycle field eviction",
+    ]);
+  });
+
+  test("consts 常量要 SCREAMING_SNAKE_CASE、显式类型与 JSDoc", () => {
+    const path: string = "/project/packages/consts/example.ts";
+    expect(collectConstantProblems(rule(path, "/** 说明。 */\nexport const GOOD_NAME: number = 1;\n")))
+      .toEqual([]);
+    expect(collectConstantProblems(rule(path, "export const badName = 1;\n"))).toEqual([
+      "packages/consts/example.ts:1 constant badName is not SCREAMING_SNAKE_CASE",
+      "packages/consts/example.ts:1 constant badName lacks an explicit type",
+      "packages/consts/example.ts:1 constant badName lacks JSDoc",
+    ]);
+  });
+
+  test("Object.freeze 在 packages/ 下一处都不许有", () => {
+    const path: string = "/project/packages/example.ts";
+    expect(collectObjectFreezeProblems(rule(path, "export const A: number = 1;\n"))).toEqual([]);
+    expect(collectObjectFreezeProblems(rule(path, "const a = Object.freeze({ x: 1 });\n")))
+      .toEqual([expect.stringContaining("packages/example.ts:1 Object.freeze is not allowed")]);
+  });
+
+  test("模块级 Map/Set/holder 必须落在 packages/cache/<owner>/", () => {
+    const path: string = "/project/packages/example.ts";
+    expect(collectModuleCacheProblems(rule(path, "function f(): Map<string, number> { return new Map(); }\n")))
+      .toEqual([]);
+    expect(collectModuleCacheProblems(rule(path, "const table: Map<string, number> = new Map();\n")))
+      .toEqual([
+        "packages/example.ts:1 module-level Map table must be declared under packages/cache/<owner>/",
+      ]);
+  });
+
+  test("声明规范：类型入口、console.error 边界、返回类型、内联对象参数与 catch 标注", () => {
+    const path: string = "/project/packages/example.ts";
+    expect(collectDeclarationProblems(rule(
+      path,
+      "import type { A } from \"./types/domain\";\n" +
+      "export function ok(value: A): number {\n" +
+      "  try { return 1; } catch (error: unknown) { return Number(Boolean(error)); }\n" +
+      "}\n"
+    ))).toEqual([]);
+
+    const problems: readonly string[] = collectDeclarationProblems(rule(
+      path,
+      "import type { A } from \"./types\";\n" +
+      "export function bad(options: { a: number }) {\n" +
+      "  try { console.error(options.a); } catch (error) { void error; }\n" +
+      "  return 1;\n" +
+      "}\n"
+    ));
+    expect(problems).toEqual(expect.arrayContaining([
+      expect.stringContaining("must import from a domain type module instead of types/index"),
+      expect.stringContaining("direct console.error is restricted to the disk I/O Worker boundary"),
+      expect.stringContaining("exported function bad lacks an explicit return type"),
+      expect.stringContaining("inline object parameter type must be an exported XxxParams interface"),
+      expect.stringContaining("catch binding error must be explicitly typed unknown"),
+    ]));
+  });
+
+  test("diskIO Worker 边界仍然允许 console.error", () => {
+    const path: string = "/project/packages/workers/diskIO/files.ts";
+    expect(collectDeclarationProblems(rule(path, "export function log(): void { console.error(\"x\"); }\n")))
+      .toEqual([]);
   });
 });

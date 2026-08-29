@@ -16,7 +16,8 @@
 | :--- | :--- |
 | `bun run start` | 启动长轮询 |
 | `bun run lint` / `lint:fix` | ESLint 检查 / 自动修复 |
-| `bun run typecheck` | `tsc --noEmit`，全严格模式 |
+| `bun run lint:fast` | 带 `--cache` 的 ESLint，只给本地开发回路用。类型感知规则跨文件，而 ESLint 的缓存按文件失效：只改被依赖方时，依赖方的告警不会重报。**门禁一律用不带缓存的 `lint`** |
+| `bun run typecheck` | `tsc --noEmit --incremental`，全严格模式。增量信息写在 `tsconfig.tsbuildinfo`（已 gitignore）；改 tsconfig 或依赖类型会整份判废重算，因此可以进门禁 |
 | `bun run test` | 全量测试（强制文件隔离） |
 | `bun run test:random` | 固定种子的乱序全量测试，用于暴露测试间残留 |
 | `bun run test:coverage` | 测试 + 全源码覆盖率 |
@@ -47,7 +48,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2876 tests / 294 files / 96444 次 `expect()`**；全源码**函数覆盖率 96.28% / 行覆盖率 97.19%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2893 tests / 294 files / 96561 次 `expect()`**；全源码**函数覆盖率 96.37% / 行覆盖率 97.20%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -131,7 +132,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 861 处 / 83 个文件）：数值只写在三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节；三语 README 的「关于语言」注只链到那一节，不重复数值。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
+- **中文字符串统计**（当前约 857 处 / 84 个文件）：数值只写在三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节；三语 README 的「关于语言」注只链到那一节，不重复数值。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布

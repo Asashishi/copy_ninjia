@@ -6,8 +6,10 @@
   "scripts": {
     "start": "bun run index.ts",
     "lint": "eslint .",
+    "lint:fast": "eslint . --cache",
     "lint:fix": "eslint . --fix",
     "check:install-script-syntax": "bash -n install.sh",
+    "check:install-isolation": "bun scripts/checkInstallIsolation.ts",
     "check:conventions": "bun scripts/checkProjectConventions.ts",
     "check:coverage": "bun scripts/checkCoverageMetrics.ts",
     "test": "bun test --isolate",
@@ -20,8 +22,8 @@
     "perf:identity-database": "bun scripts/perf/identityDatabase.ts",
     "perf:join-log": "bun scripts/perf/joinLog.ts",
     "migrate:qa-thumbnail": "bun scripts/migrateQaThumbnail.ts",
-    "typecheck": "tsc --noEmit",
-    "check": "bun run check:install-script-syntax && bun run check:conventions && bun run lint && bun run typecheck && bun run test:coverage && bun run perf:hot-path-gate",
+    "typecheck": "tsc --noEmit --incremental",
+    "check": "bun run check:install-script-syntax && bun run check:install-isolation && bun run check:conventions && bun run lint && bun run typecheck && bun run test:coverage && bun run perf:hot-path-gate",
     "release:check": "bun install --frozen-lockfile && bun run check && bun run check:coverage && bun run test:fault-injection",
     "audit:release": "bun audit --audit-level=moderate"
   },

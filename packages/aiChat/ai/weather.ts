@@ -8,7 +8,7 @@ import {
   WEATHER_REQUEST_TIMEOUT_MS,
 } from "../../consts/weather";
 import { weatherCache, weatherRefreshTimer } from "../../cache/workers/aiChat/weather";
-import { fetchJsonWithTimeout } from "../../libs/httpFetch";
+import { fetchJsonWithTimeout } from "../../infra/httpFetch";
 import { isPlainRecord } from "../../libs/record";
 import type { TokyoWeatherResult } from "../../types/aiChat/weather";
 

@@ -9,9 +9,9 @@
  * 容器与算法、入群日志容量线。每一项都在独立子进程里跑三轮，报告给平均值、
  * 最小值、最大值与变异系数。
  *
- * 数据一律落在仓库根的 `performance/` 下（不进 Git），配置读 `config_example/`，
- * 每轮跑完整棵删除。父进程刻意不 import 任何生产模块，因此它自己**没有能力**
- * 写到真实数据根。
+ * 数据一律落在仓库根的 `performance/` 下（不进 Git），配置从 `config_example/`
+ * 复制到本次运行目录并换成非占位夹具凭据，每轮跑完整棵删除。父进程刻意不
+ * import 任何生产实现模块，因此它自己**没有能力**写到真实数据根。
  *
  * 用法：
  *   bun run perf:full                  跑完把 JSON 报告打到 stdout
@@ -28,6 +28,7 @@ import {
 } from "./fullSuite/processIo";
 import { PERFORMANCE_MOCK_ROOT_NAME } from "./fullSuite/constants";
 import {
+  createBenchmarkConfigRoot,
   createRunRoot,
   removeMockPath,
 } from "./fullSuite/mockRoot";
@@ -119,11 +120,19 @@ function generatedAt(): string {
 async function runSuite(options: SuiteOptions): Promise<FullSuiteReport> {
   const startedAtNs: number = Bun.nanoseconds();
   const runRoot: string = createRunRoot();
+  let configRoot: string;
+  try {
+    configRoot = await createBenchmarkConfigRoot(runRoot);
+  } catch (error: unknown) {
+    removeMockPath(runRoot);
+    throw error;
+  }
   let io: ProcessIoDelta = emptyProcessIo();
   let operations: number = 0;
   let footprint: DirectoryFootprint = { bytes: 0, files: 0 };
   const context: SectionContext = {
     runRoot,
+    configRoot,
     rounds: options.rounds,
     onProgress: (message: string): void => {
       console.error(`perf:full ${message}`);

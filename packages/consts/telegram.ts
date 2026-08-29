@@ -2,6 +2,9 @@ import type { ChatPermissions, MessageEntity } from "@grammyjs/types";
 
 /** Telegram API 封装（packages/infra/telegram/）的调参常量。 */
 
+/** Telegram 部署示例中的 Bot token 占位值；生产严格解析必须拒绝。 */
+export const TELEGRAM_BOT_TOKEN_PLACEHOLDER: string = "replace-with-telegram-bot-token";
+
 /** 长轮询订阅的完整 update 类型集合。 */
 export const TELEGRAM_ALLOWED_UPDATES: readonly (
   | "message"

@@ -392,11 +392,15 @@ export const UNMUTE_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
   selfTarget: `笨蛋，本天才又没被你捂住，拿 /unmute 对着本天才松什么嘴呀♡`,
 };
 
-/** copy 模式目标提示接受的命令名；限定集合避免提示与实际入口再次漂移。 */
-type CopyTargetCommand = "copy" | "r_copy" | "nya_copy" | "ja_copy";
+/**
+ * 共用同一套目标提示文案的命令名；限定集合避免提示与实际入口再次漂移。
+ *
+ * `/steal_icon` 也在列：它的五条文案与 copy 类逐字相同，只差命令名。
+ */
+type SharedTargetTextCommand = "copy" | "r_copy" | "nya_copy" | "ja_copy" | "steal_icon";
 
-/** 为一条 copy 模式命令创建模块级目标提示；只在模块初始化时调用。 */
-function createCopyTargetTexts(command: CopyTargetCommand): Readonly<CommandTargetMessages> {
+/** 为一条命令创建模块级目标提示；只在模块初始化时调用。 */
+function createSharedTargetTexts(command: SharedTargetTextCommand): Readonly<CommandTargetMessages> {
   const commandName: string = `/${command}`;
   return {
     missingTarget: `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`,
@@ -411,22 +415,14 @@ function createCopyTargetTexts(command: CopyTargetCommand): Readonly<CommandTarg
 }
 
 /** `/copy` 的目标解析提示。 */
-export const COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("copy");
+export const COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("copy");
 /** `/r_copy` 的目标解析提示。 */
-export const REVERSE_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("r_copy");
+export const REVERSE_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("r_copy");
 /** `/nya_copy` 的目标解析提示。 */
-export const NYA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("nya_copy");
+export const NYA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("nya_copy");
 /** `/ja_copy` 复读分支的目标解析提示。 */
-export const JA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("ja_copy");
+export const JA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("ja_copy");
 
-/** `/steal_icon` 的目标解析提示；与 COPY_TARGET_TEXTS 只差命令名。 */
-export const STEAL_ICON_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
-  missingTarget: `笨蛋，要么 /steal_icon @username，要么直接回复 TA 的一条消息再 /steal_icon，本天才总得知道杂鱼是谁吧♡`,
-  invalidUsername: (rawArgument: string): string =>
-    `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 /steal_icon @username，别在后面夹垃圾♡`,
-  unknownUsername: (rawUsername: string): string =>
-    `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 /steal_icon 呀♡`,
-  conflictingTarget: (rawArgument: string): string =>
-    `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该盯上哪个杂鱼呀？只留一个再来♡`,
-  selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
-};
+/** `/steal_icon` 的目标解析提示；与 copy 类共用同一套文案，只差命令名。 */
+export const STEAL_ICON_TARGET_TEXTS: Readonly<CommandTargetMessages> =
+  createSharedTargetTexts("steal_icon");

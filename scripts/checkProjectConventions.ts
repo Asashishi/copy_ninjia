@@ -1,19 +1,17 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
+import { createModuleGraphReader } from "./conventions/moduleGraph";
+import type { ModuleGraphReader } from "./conventions/moduleGraph";
+import { sourceFilesUnder } from "./conventions/sourceAnalysis";
 import {
-  runtimeExternalDependencies,
-  threadModuleClosure,
-} from "./conventions/moduleGraph";
-import {
-  collectSharedConstantProblems,
-  declarationName,
-  hasJsDoc,
-  isExported,
-  isObjectFreezeCall,
-  moduleCacheInitializerKind,
-  sourceFilesUnder,
-} from "./conventions/sourceAnalysis";
+  collectCacheJsDocProblems,
+  collectConstantProblems,
+  collectDeclarationProblems,
+  collectModuleCacheProblems,
+  collectObjectFreezeProblems,
+} from "./conventions/sourceRules";
+import type { SourceFileRuleParams } from "./conventions/sourceRules";
 import { collectColdMigrationProblems } from "./conventions/coldMigrations";
 import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
@@ -139,6 +137,19 @@ const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
   [join("packages", "cache", "main", "diskIO.ts")]: ["aiChat", "antiRaid"],
 };
 
+/**
+ * Telegram 凭据、真实客户端、网络分派与出站队列只属主线程。Worker 只能加载
+ * 项目自有协议和双工代理，连 grammY 运行时都不得进入其模块闭包。
+ */
+const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
+  join(PROJECT_ROOT, "packages", "config", "telegram.ts"),
+  join(PROJECT_ROOT, "packages", "cache", "main", "telegram.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "mainClient.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "messageThrottler.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "outboundGate.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "workerRequests.ts"),
+];
+
 const failures: string[] = [];
 for (const problem of await collectColdMigrationProblems(PROJECT_ROOT)) {
   failures.push(`cold migration: ${problem}`);
@@ -159,67 +170,20 @@ for (const trackedPath of tracked) {
     await checkMarkdownLocalLinks(path, failures);
   }
   const extension: string = extname(path);
-  if (
-    ![".ts", ".json", ".md", ".yaml", ".yml"].includes(extension) ||
-    !statSync(path).isFile() ||
-    (statSync(path).mode & 0o111) === 0
-  ) {
-    continue;
-  }
+  if (![".ts", ".json", ".md", ".yaml", ".yml"].includes(extension)) continue;
+  const stats: ReturnType<typeof statSync> = statSync(path);
+  if (!stats.isFile() || (stats.mode & 0o111) === 0) continue;
   if ((await Bun.file(path).text()).startsWith("#!")) continue;
   failures.push(
     `${trackedPath} is a tracked non-script ${extension} file with executable permissions`
   );
 }
 
-for (const path of sourceFilesUnder(CACHE_ROOT)) {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    await Bun.file(path).text(),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  for (const statement of source.statements) {
-    if (!isExported(statement)) continue;
-    if (ts.isVariableStatement(statement)) {
-      if (hasJsDoc(statement)) continue;
-      for (const declaration of statement.declarationList.declarations) {
-        failures.push(`${relative(PROJECT_ROOT, path)}:${source.getLineAndCharacterOfPosition(declaration.getStart()).line + 1} export ${declarationName(declaration)} lacks JSDoc`);
-      }
-      continue;
-    }
-    if (
-      ts.isFunctionDeclaration(statement) ||
-      ts.isClassDeclaration(statement) ||
-      ts.isInterfaceDeclaration(statement) ||
-      ts.isTypeAliasDeclaration(statement) ||
-      ts.isEnumDeclaration(statement)
-    ) {
-      if (!hasJsDoc(statement)) {
-        failures.push(`${relative(PROJECT_ROOT, path)}:${source.getLineAndCharacterOfPosition(statement.getStart()).line + 1} export ${declarationName(statement)} lacks JSDoc`);
-      }
-    }
-  }
-}
-
+const moduleGraph: ModuleGraphReader = createModuleGraphReader();
 const threadClosures: Map<string, Map<string, string[]>> = new Map();
 for (const [thread, entry] of Object.entries(THREAD_ENTRIES)) {
-  threadClosures.set(thread, await threadModuleClosure(entry));
+  threadClosures.set(thread, await moduleGraph.threadModuleClosure(entry));
 }
-
-/**
- * Telegram 凭据、真实客户端、网络分派与出站队列只属主线程。Worker 只能加载
- * 项目自有协议和双工代理，连 grammY 运行时都不得进入其模块闭包。
- */
-const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
-  join(PROJECT_ROOT, "packages", "config", "telegram.ts"),
-  join(PROJECT_ROOT, "packages", "cache", "main", "telegram.ts"),
-  join(PROJECT_ROOT, "packages", "infra", "telegram", "mainClient.ts"),
-  join(PROJECT_ROOT, "packages", "infra", "telegram", "messageThrottler.ts"),
-  join(PROJECT_ROOT, "packages", "infra", "telegram", "outboundGate.ts"),
-  join(PROJECT_ROOT, "packages", "infra", "telegram", "workerRequests.ts"),
-];
 
 for (const [thread, closure] of threadClosures) {
   if (thread === "main") continue;
@@ -232,7 +196,7 @@ for (const [thread, closure] of threadClosures) {
     );
   }
   for (const [path, trail] of closure) {
-    for (const dependency of await runtimeExternalDependencies(path)) {
+    for (const dependency of await moduleGraph.externalDependencies(path)) {
       if (dependency !== "grammy" && !dependency.startsWith("@grammyjs/")) continue;
       failures.push(
         `${thread} Worker loads Telegram runtime package ${dependency}: ` +
@@ -253,104 +217,55 @@ for (const problem of collectCacheOwnershipProblems({
   failures.push(problem);
 }
 
-for (const path of sourceFilesUnder(CONSTS_ROOT)) {
-  const source: ts.SourceFile = ts.createSourceFile(
+/** 解析一个源文件；每个文件在整次检查里只走这一次。 */
+async function parseSourceFile(path: string): Promise<ts.SourceFile> {
+  return ts.createSourceFile(
     path,
     await Bun.file(path).text(),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
   );
-  for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      const location: string =
-        `${relative(PROJECT_ROOT, path)}:${source.getLineAndCharacterOfPosition(declaration.getStart()).line + 1}`;
-      const name: string = declarationName(declaration);
-      if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
-        failures.push(`${location} constant ${name} is not SCREAMING_SNAKE_CASE`);
-      }
-      if (declaration.type === undefined) {
-        failures.push(`${location} constant ${name} lacks an explicit type`);
-      }
-      if (!hasJsDoc(statement)) {
-        failures.push(`${location} constant ${name} lacks JSDoc`);
-      }
-      if (isExported(statement) && declaration.initializer !== undefined) {
-        for (const problem of collectSharedConstantProblems(
-          declaration.initializer,
-          declaration.type,
-          `constant ${name}`
-        )) {
-          failures.push(`${location} ${problem}`);
-        }
-      }
-    }
-  }
 }
 
 /**
- * `Object.freeze` 在 packages/ 下一处都不许有。
+ * 逐文件的源码约定：每个文件**只读一次、只解析一次**，适用的规则全在这一趟里跑完。
  *
- * 常量、部署配置快照、句柄对象都一样：它们本来就不会变，运行期再冻一次买不到
- * 任何东西，却要为此付一大笔读取成本（数字见 collectSharedConstantProblems 的
- * 注释与 AGENTS.md 的「常量」一节）。不可变性一律由 `readonly`/`Readonly<T>`
- * 在编译期表达——那是 0 成本、且能在写入点当场报错的那一份保护。
+ * 合并前这里是六趟独立循环（cache JSDoc、consts 常量、Object.freeze、模块级缓存、
+ * Node 兼容 import、声明规范），同一个文件被重复读盘与重复建 AST 五到六次。判定
+ * 口径与适用集合都没有变化，只是把「按检查分组遍历」换成了「按文件分组遍历」——
+ * 因此失败列表现在按文件聚在一起，而不是按检查聚在一起。
  *
- * 这条独立于 consts 的常量检查：解析结果和句柄对象不是 SCREAMING_SNAKE 常量，
- * 走不到上面那段，但它们同样不该冻。
+ * cache/consts 两条规则按**同一份 sourceFilesUnder 结果**判定适用范围，而不是按路径
+ * 前缀猜：`packages/cacheX.ts` 这种同前缀但不在目录里的文件，前缀写法会把它误判进去。
+ * 模块级缓存那条的排除条件保持合并前的裸前缀写法，一个字不动。
  */
-function checkNoObjectFreeze(path: string, source: ts.SourceFile, failures: string[]): void {
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && isObjectFreezeCall(node)) {
-      const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
-      failures.push(
-        `${relative(PROJECT_ROOT, path)}:${line} Object.freeze is not allowed: ` +
-        "express immutability with readonly types instead (see AGENTS.md 常量)"
-      );
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
+const cacheSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CACHE_ROOT));
+const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_ROOT));
+for (const path of sourceFilesUnder(SOURCE_ROOT)) {
+  const source: ts.SourceFile = await parseSourceFile(path);
+  const params: SourceFileRuleParams = { projectRoot: PROJECT_ROOT, path, source };
+  for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
+    failures.push(problem);
+  }
+  if (cacheSourceFiles.has(path)) {
+    for (const problem of collectCacheJsDocProblems(params)) failures.push(problem);
+  }
+  if (constsSourceFiles.has(path)) {
+    for (const problem of collectConstantProblems(params)) failures.push(problem);
+  }
+  for (const problem of collectObjectFreezeProblems(params)) failures.push(problem);
+  if (!path.startsWith(CACHE_ROOT) && !path.startsWith(CONSTS_ROOT)) {
+    for (const problem of collectModuleCacheProblems(params)) failures.push(problem);
+  }
+  for (const problem of collectDeclarationProblems(params)) failures.push(problem);
 }
 
-for (const path of sourceFilesUnder(SOURCE_ROOT)) {
-  checkNoObjectFreeze(
-    path,
-    ts.createSourceFile(
-      path,
-      await Bun.file(path).text(),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS
-    ),
-    failures
-  );
-}
-
-for (const path of sourceFilesUnder(SOURCE_ROOT)) {
-  if (path.startsWith(CACHE_ROOT) || path.startsWith(CONSTS_ROOT)) continue;
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    await Bun.file(path).text(),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      if (declaration.initializer === undefined) continue;
-      const kind: string | null =
-        moduleCacheInitializerKind(declaration.initializer);
-      if (kind === null) continue;
-      failures.push(
-        `${relative(PROJECT_ROOT, path)}:` +
-        `${source.getLineAndCharacterOfPosition(declaration.getStart()).line + 1} ` +
-        `module-level ${kind} ${declarationName(declaration)} must be declared under packages/cache/<owner>/`
-      );
-    }
+// Node 兼容 import 是唯一同时约束 scripts/ 的规则，其余判定只针对 packages/。
+for (const path of sourceFilesUnder(SCRIPTS_ROOT)) {
+  const source: ts.SourceFile = await parseSourceFile(path);
+  for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
+    failures.push(problem);
   }
 }
 
@@ -360,104 +275,6 @@ for (const problem of await collectTelegramMessageProblems(
   COMMANDS_ROOT
 )) {
   failures.push(problem);
-}
-
-for (const root of [SOURCE_ROOT, SCRIPTS_ROOT]) {
-  for (const path of sourceFilesUnder(root)) {
-    const source: ts.SourceFile = ts.createSourceFile(
-      path,
-      await Bun.file(path).text(),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS
-    );
-    for (const problem of collectNodeCompatibilityProblems(
-      PROJECT_ROOT,
-      path,
-      source
-    )) failures.push(problem);
-  }
-}
-
-for (const path of sourceFilesUnder(SOURCE_ROOT)) {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    await Bun.file(path).text(),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  function visit(node: ts.Node): void {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      const modulePath: string = node.moduleSpecifier.text;
-      const importsTypeIndex: boolean =
-        /(^|\/)types$/.test(modulePath) || /(^|\/)types\/index$/.test(modulePath);
-      const importsAntiRaidTypeBarrel: boolean =
-        /(^|\/)types\/antiRaid$/.test(modulePath);
-      if (
-        modulePath.startsWith(".") &&
-        (importsTypeIndex || importsAntiRaidTypeBarrel)
-      ) {
-        failures.push(
-          `${relative(PROJECT_ROOT, path)}:` +
-          `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-          `production code must import from a domain type module instead of types/index`
-        );
-      }
-    }
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "console" &&
-      node.expression.name.text === "error"
-    ) {
-      const relativePath: string = relative(PROJECT_ROOT, path);
-      const isDiskIOBoundary: boolean =
-        relativePath === "packages/workers/diskIOWorker.ts" ||
-        relativePath.startsWith("packages/workers/diskIO/");
-      if (!isDiskIOBoundary) {
-        failures.push(
-          `${relativePath}:` +
-          `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-          "direct console.error is restricted to the disk I/O Worker boundary"
-        );
-      }
-    }
-    if (
-      ts.isFunctionDeclaration(node) &&
-      isExported(node) &&
-      node.type === undefined
-    ) {
-      failures.push(
-        `${relative(PROJECT_ROOT, path)}:` +
-        `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-        `exported function ${declarationName(node)} lacks an explicit return type`
-      );
-    }
-    if (ts.isFunctionLike(node)) {
-      for (const parameter of node.parameters) {
-        if (parameter.type !== undefined && ts.isTypeLiteralNode(parameter.type)) {
-          failures.push(
-            `${relative(PROJECT_ROOT, path)}:` +
-            `${source.getLineAndCharacterOfPosition(parameter.getStart()).line + 1} ` +
-            `inline object parameter type must be an exported XxxParams interface`
-          );
-        }
-      }
-    }
-    if (ts.isCatchClause(node) && node.variableDeclaration !== undefined) {
-      if (node.variableDeclaration.type?.kind !== ts.SyntaxKind.UnknownKeyword) {
-        failures.push(
-          `${relative(PROJECT_ROOT, path)}:` +
-          `${source.getLineAndCharacterOfPosition(node.variableDeclaration.getStart()).line + 1} ` +
-          `catch binding ${declarationName(node.variableDeclaration)} must be explicitly typed unknown`
-        );
-      }
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
 }
 
 if (failures.length > 0) {

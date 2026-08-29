@@ -28,6 +28,14 @@ import {
   writeHotPathGateLastRun,
 } from "./hotPaths/gateResult";
 import type { HotPathGateCalibration } from "./hotPaths/gateResult";
+import {
+  createHotPathGateFixture,
+  createHotPathGateRuntimeRoot,
+  hotPathGateChildEnvironment,
+  removeHotPathGateFixture,
+  removeHotPathGateRuntimeRoot,
+} from "./hotPaths/gateFixture";
+import type { HotPathGateFixture } from "./hotPaths/gateFixture";
 import { PERFORMANCE_RESULT_PATH } from "./performanceResult";
 
 /** 仓库根；场景子进程按它定位。 */
@@ -46,6 +54,19 @@ const calibration: HotPathGateCalibration = await readHotPathGateCalibration(
  * `bun run check` 因此不会因为跑了一次门禁就产生工作树改动。
  */
 const shouldWriteResult: boolean = Bun.argv.includes("--write-result");
+
+/** 门禁全程共用严格配置，每个被测子进程另取独占运行时数据根。 */
+const gateFixture: HotPathGateFixture = await createHotPathGateFixture();
+let gateFixturePresent: boolean = true;
+
+/** 正常结束与未捕获异常退出共用的幂等清理。 */
+function cleanupGateFixture(): void {
+  if (!gateFixturePresent) return;
+  removeHotPathGateFixture(gateFixture);
+  gateFixturePresent = false;
+}
+
+process.once("exit", cleanupGateFixture);
 
 interface SamplingProfileResult {
   readonly totalSamples: number;
@@ -354,46 +375,60 @@ function assertRetainedRunWithinLimits(result: ChildProfileResult): void {
   }
 }
 
-async function runChild(
-  projectRoot: string,
-  scenario: string,
-  measurementMode: "retained" | "steadyProfile"
-): Promise<ChildProfileResult> {
+interface RunChildOptions {
+  readonly projectRoot: string;
+  readonly scenario: string;
+  readonly measurementMode: "retained" | "steadyProfile";
+  readonly fixture: HotPathGateFixture;
+}
+
+async function runChild({
+  projectRoot,
+  scenario,
+  measurementMode,
+  fixture,
+}: RunChildOptions): Promise<ChildProfileResult> {
   const args: string[] = [
     process.execPath,
     join(projectRoot, "scripts/perf/hotPaths.ts"),
     scenario,
   ];
   if (measurementMode === "steadyProfile") args.push("--profile");
-  const subprocess: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn(
-    args,
-    {
-      cwd: projectRoot,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    }
-  );
-  const stdoutPromise: Promise<string> = new Response(subprocess.stdout).text();
-  const stderrPromise: Promise<string> = new Response(subprocess.stderr).text();
-  const exitCode: number = await subprocess.exited;
-  const stdout: string = await stdoutPromise;
-  const stderr: string = await stderrPromise;
-  if (exitCode !== 0) {
-    throw new Error(
-      `${scenario}: hot-path profile child exited ${exitCode}: ${stderr.trim()}`
+  const runtimeRoot: string = createHotPathGateRuntimeRoot(fixture);
+  try {
+    const subprocess: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn(
+      args,
+      {
+        cwd: projectRoot,
+        env: hotPathGateChildEnvironment(fixture, runtimeRoot),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }
     );
+    const stdoutPromise: Promise<string> = new Response(subprocess.stdout).text();
+    const stderrPromise: Promise<string> = new Response(subprocess.stderr).text();
+    const exitCode: number = await subprocess.exited;
+    const stdout: string = await stdoutPromise;
+    const stderr: string = await stderrPromise;
+    if (exitCode !== 0) {
+      throw new Error(
+        `${scenario}: hot-path profile child exited ${exitCode}: ${stderr.trim()}`
+      );
+    }
+    const result: ChildProfileResult = parseChildProfileResult(stdout.trim());
+    if (result.scenario !== scenario) {
+      throw new Error(`${scenario}: child returned scenario ${result.scenario}.`);
+    }
+    if (measurementMode === "steadyProfile") {
+      assertProfileRunWithinLimits(result);
+    } else {
+      assertRetainedRunWithinLimits(result);
+    }
+    return result;
+  } finally {
+    removeHotPathGateRuntimeRoot(runtimeRoot);
   }
-  const result: ChildProfileResult = parseChildProfileResult(stdout.trim());
-  if (result.scenario !== scenario) {
-    throw new Error(`${scenario}: child returned scenario ${result.scenario}.`);
-  }
-  if (measurementMode === "steadyProfile") {
-    assertProfileRunWithinLimits(result);
-  } else {
-    assertRetainedRunWithinLimits(result);
-  }
-  return result;
 }
 
 function maximum(values: readonly number[]): number {
@@ -420,16 +455,18 @@ for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
   const profileRuns: ChildProfileResult[] = [];
   const retainedRuns: ChildProfileResult[] = [];
   for (let repeat: number = 0; repeat < HOT_PATH_PROFILE_REPEATS; repeat++) {
-    const profileRun: ChildProfileResult = await runChild(
+    const profileRun: ChildProfileResult = await runChild({
       projectRoot,
       scenario,
-      "steadyProfile"
-    );
-    const retainedRun: ChildProfileResult = await runChild(
+      measurementMode: "steadyProfile",
+      fixture: gateFixture,
+    });
+    const retainedRun: ChildProfileResult = await runChild({
       projectRoot,
       scenario,
-      "retained"
-    );
+      measurementMode: "retained",
+      fixture: gateFixture,
+    });
     expectedBunVersion ??= profileRun.bunVersion;
     expectedBunRevision ??= profileRun.bunRevision;
     if (
@@ -569,3 +606,6 @@ if (shouldWriteResult) {
   await writeHotPathGateLastRun(PERFORMANCE_RESULT_PATH, lastRun);
   console.error(`hot-path gate: recorded this run into ${PERFORMANCE_RESULT_PATH}`);
 }
+
+cleanupGateFixture();
+process.off("exit", cleanupGateFixture);

@@ -1,4 +1,4 @@
-import { logger } from "../infra/logger";
+import { logger } from "./logger";
 
 /**
  * 「登记在途后台任务 + 自摘除 + 有界等待排空」的公共骨架。

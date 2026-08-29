@@ -27,93 +27,102 @@ function resolveRelativeModule(specifier: string, fromFile: string): string | un
   return undefined;
 }
 
+/** 一个模块在同线程内的运行时依赖边。 */
+interface ModuleEdges {
+  /** 解析到的仓库内 .ts 目标。 */
+  readonly internal: readonly string[];
+  /** 运行期会加载的 npm 包说明符。 */
+  readonly external: readonly string[];
+}
+
 /**
- * 本文件在同一条线程内会拉起哪些模块。刻意不跟 `new Worker(new URL(...))`：
- * 那正是线程边界，跟过去会把四条线程的模块图糊成一张。
+ * 一次约定检查内共用的模块图读取器。
+ *
+ * 四条线程的闭包高度重叠，而「这个文件依赖谁」只取决于文件本身，因此同一个
+ * 文件在整次检查里只解析一次，结果按路径记在读取器自己的表里。缓存的是抽出来的
+ * **说明符清单**（两个字符串数组），不是 SourceFile——AST 才是内存大头，逐文件用完
+ * 即弃可以让常驻内存与合并前持平。
+ *
+ * 读取器随一次检查生死；调用方各自 `createModuleGraphReader()`，不共享全局状态。
  */
-async function runtimeDependencies(path: string): Promise<string[]> {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    await Bun.file(path).text(),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  const targets: string[] = [];
-  function visit(node: ts.Node): void {
-    if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      node.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(node.moduleSpecifier) &&
-      isRuntimeModuleEdge(node)
-    ) {
-      const resolved: string | undefined = resolveRelativeModule(node.moduleSpecifier.text, path);
-      if (resolved !== undefined) targets.push(resolved);
-    }
-    if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments[0] !== undefined &&
-      ts.isStringLiteral(node.arguments[0])
-    ) {
-      const resolved: string | undefined = resolveRelativeModule(node.arguments[0].text, path);
-      if (resolved !== undefined) targets.push(resolved);
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
-  return targets;
+export interface ModuleGraphReader {
+  /**
+   * 从线程入口构建同线程模块闭包，并保留到每个模块的最短引入路径。
+   *
+   * 刻意不跟 `new Worker(new URL(...))`：那正是线程边界，跟过去会把四条线程的
+   * 模块图糊成一张。
+   */
+  threadModuleClosure(entry: string): Promise<Map<string, string[]>>;
+  /** 本文件会在运行期加载的 npm 包；类型专用 import 不进入结果。 */
+  externalDependencies(path: string): Promise<readonly string[]>;
 }
 
-/** 本文件会在运行期加载的 npm 包；类型专用 import 不进入结果。 */
-export async function runtimeExternalDependencies(path: string): Promise<string[]> {
-  const source: ts.SourceFile = ts.createSourceFile(
-    path,
-    await Bun.file(path).text(),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  const targets: string[] = [];
-  function visit(node: ts.Node): void {
-    if (
-      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-      node.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(node.moduleSpecifier) &&
-      isRuntimeModuleEdge(node) &&
-      !node.moduleSpecifier.text.startsWith(".")
-    ) {
-      targets.push(node.moduleSpecifier.text);
-    }
-    if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments[0] !== undefined &&
-      ts.isStringLiteral(node.arguments[0]) &&
-      !node.arguments[0].text.startsWith(".")
-    ) {
-      targets.push(node.arguments[0].text);
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(source);
-  return targets;
-}
+/** 创建一个带解析结果记忆的模块图读取器。 */
+export function createModuleGraphReader(): ModuleGraphReader {
+  const edgesByPath: Map<string, ModuleEdges> = new Map();
 
-/** 从线程入口构建同线程模块闭包，并保留到每个模块的最短引入路径。 */
-export async function threadModuleClosure(
-  entry: string
-): Promise<Map<string, string[]>> {
-  const trail: Map<string, string[]> = new Map([[entry, [entry]]]);
-  const queue: string[] = [entry];
-  while (queue.length > 0) {
-    const current: string = queue.shift()!;
-    const path: string[] = trail.get(current)!;
-    for (const dependency of await runtimeDependencies(current)) {
-      if (trail.has(dependency)) continue;
-      trail.set(dependency, [...path, dependency]);
-      queue.push(dependency);
+  async function moduleEdges(path: string): Promise<ModuleEdges> {
+    const cached: ModuleEdges | undefined = edgesByPath.get(path);
+    if (cached !== undefined) return cached;
+    const source: ts.SourceFile = ts.createSourceFile(
+      path,
+      await Bun.file(path).text(),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    const internal: string[] = [];
+    const external: string[] = [];
+    function record(specifier: string): void {
+      if (!specifier.startsWith(".")) {
+        external.push(specifier);
+        return;
+      }
+      const resolved: string | undefined = resolveRelativeModule(specifier, path);
+      if (resolved !== undefined) internal.push(resolved);
     }
+    function visit(node: ts.Node): void {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier !== undefined &&
+        ts.isStringLiteral(node.moduleSpecifier) &&
+        isRuntimeModuleEdge(node)
+      ) {
+        record(node.moduleSpecifier.text);
+      }
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments[0] !== undefined &&
+        ts.isStringLiteral(node.arguments[0])
+      ) {
+        record(node.arguments[0].text);
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+    const edges: ModuleEdges = { internal, external };
+    edgesByPath.set(path, edges);
+    return edges;
   }
-  return trail;
+
+  return {
+    async threadModuleClosure(entry: string): Promise<Map<string, string[]>> {
+      const trail: Map<string, string[]> = new Map([[entry, [entry]]]);
+      const queue: string[] = [entry];
+      while (queue.length > 0) {
+        const current: string = queue.shift()!;
+        const path: string[] = trail.get(current)!;
+        for (const dependency of (await moduleEdges(current)).internal) {
+          if (trail.has(dependency)) continue;
+          trail.set(dependency, [...path, dependency]);
+          queue.push(dependency);
+        }
+      }
+      return trail;
+    },
+    async externalDependencies(path: string): Promise<readonly string[]> {
+      return (await moduleEdges(path)).external;
+    },
+  };
 }

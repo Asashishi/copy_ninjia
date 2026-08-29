@@ -6,17 +6,25 @@
  * `bot.lock`，一次写错目录就是改运维正在用的数据。因此建目录、删目录两侧都
  * 先过 `assertInsidePerformanceMockRoot`，越界一律抛错而不是「尽力而为」。
  *
- * 本文件刻意不 import 任何 `packages/` 下的模块：父进程一旦把生产模块图加载
- * 进来，冷启动那一段就再也测不到真实的模块加载成本了。
+ * 本文件只从 `packages/` import 纯常量：父进程一旦把生产实现模块图加载进来，
+ * 冷启动那一段就再也测不到真实的模块加载成本了。
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { copyFixtureTree } from "../../fixtures/copyTree";
 import {
+  BENCHMARK_AGENT_API_KEY,
+  BENCHMARK_BOT_TOKEN,
+  BENCHMARK_CONFIG_ROOT_NAME,
   PERFORMANCE_MOCK_ROOT_NAME,
   RUN_ROOT_PREFIX,
   RUNTIME_ROOT_PREFIX,
 } from "./constants";
+import { AGENT_API_KEY_PLACEHOLDERS } from
+  "../../../packages/consts/agent";
+import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from
+  "../../../packages/consts/telegram";
 
 /** 仓库根目录；本文件位于 scripts/perf/fullSuite/ 下，往上跳三级。 */
 export const PROJECT_ROOT: string = resolve(import.meta.dir, "..", "..", "..");
@@ -26,6 +34,9 @@ export const PERFORMANCE_MOCK_ROOT: string = join(
   PROJECT_ROOT,
   PERFORMANCE_MOCK_ROOT_NAME
 );
+
+/** 受版本控制的配置示例只作为模板读取，基准子进程不直接加载其中的占位凭据。 */
+const CONFIG_EXAMPLE_ROOT: string = join(PROJECT_ROOT, "config_example");
 
 /**
  * 运行时数据根允许的最宽权限；与 `RUNTIME_DATA_ROOT_MAX_MODE` 对齐。
@@ -55,6 +66,46 @@ export function assertInsidePerformanceMockRoot(path: string): void {
 export function createRunRoot(): string {
   mkdirSync(PERFORMANCE_MOCK_ROOT, { recursive: true, mode: RUNTIME_ROOT_MODE });
   return mkdtempSync(join(PERFORMANCE_MOCK_ROOT, RUN_ROOT_PREFIX));
+}
+
+/**
+ * 在单次运行目录内建立可被严格解析的隔离配置副本。
+ *
+ * 示例文件必须保留面向部署者的占位值，因此只在 mock 根内替换凭据。出站能力仍
+ * 由 `scripts/perf/outboundGuard.ts` 截断；这份配置只让基准走过与生产一致的启动
+ * 校验和客户端装配路径。
+ */
+export async function createBenchmarkConfigRoot(runRoot: string): Promise<string> {
+  assertInsidePerformanceMockRoot(runRoot);
+  const configRoot: string = join(runRoot, BENCHMARK_CONFIG_ROOT_NAME);
+  await copyFixtureTree(CONFIG_EXAMPLE_ROOT, configRoot);
+
+  const agentPath: string = join(configRoot, "agent.json");
+  let agentConfig: string = await Bun.file(agentPath).text();
+  for (const placeholder of AGENT_API_KEY_PLACEHOLDERS) {
+    agentConfig = agentConfig.replaceAll(placeholder, BENCHMARK_AGENT_API_KEY);
+  }
+  if (AGENT_API_KEY_PLACEHOLDERS.some(
+    (placeholder: string): boolean => agentConfig.includes(placeholder)
+  )) {
+    throw new Error(
+      "Benchmark Agent configuration still contains placeholder credentials."
+    );
+  }
+  await Bun.write(agentPath, agentConfig, { mode: 0o600 });
+
+  const telegramPath: string = join(configRoot, "telegram.json");
+  const telegramConfig: string = (await Bun.file(telegramPath).text()).replaceAll(
+    TELEGRAM_BOT_TOKEN_PLACEHOLDER,
+    BENCHMARK_BOT_TOKEN
+  );
+  if (telegramConfig.includes(TELEGRAM_BOT_TOKEN_PLACEHOLDER)) {
+    throw new Error(
+      "Benchmark Telegram configuration still contains a placeholder token."
+    );
+  }
+  await Bun.write(telegramPath, telegramConfig, { mode: 0o600 });
+  return configRoot;
 }
 
 /**

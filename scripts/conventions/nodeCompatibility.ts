@@ -57,8 +57,8 @@ const ALLOWED_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
 /** 一次性脚本为同步编排、临时根和机器信息额外使用的 Node 兼容接口。 */
 const SCRIPT_ONLY_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
   "node:fs": {
-    symbols: ["mkdtempSync", "rmSync"],
-    purpose: "isolated temporary-root lifecycle for one-shot scripts and benchmarks",
+    symbols: ["mkdtempSync", "rmSync", "symlinkSync"],
+    purpose: "isolated temporary-root lifecycle and fixture topology for one-shot scripts and benchmarks",
   },
   "node:os": {
     symbols: ["arch", "cpus", "platform", "release", "tmpdir"],

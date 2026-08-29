@@ -16,7 +16,8 @@
 | :--- | :--- |
 | `bun run start` | Start long polling |
 | `bun run lint` / `lint:fix` | Run ESLint / apply automatic fixes |
-| `bun run typecheck` | Run `tsc --noEmit` in fully strict mode |
+| `bun run lint:fast` | ESLint with `--cache`, for the local edit loop only. Type-aware rules cross file boundaries while the ESLint cache invalidates per file, so changing only a dependency will not re-report warnings in its dependents. **Gates always use the uncached `lint`** |
+| `bun run typecheck` | Run `tsc --noEmit --incremental` in fully strict mode. The build info lives in `tsconfig.tsbuildinfo` (gitignored); changing tsconfig or dependency types invalidates it wholesale, which is why it is safe inside the gate |
 | `bun run test` | Run the complete test suite with forced file isolation |
 | `bun run test:random` | Run the whole suite in a fixed-seed random order to expose cross-test residue |
 | `bun run test:coverage` | Run tests and measure coverage across all source files |
@@ -47,7 +48,7 @@ Dependency installation always uses the seven-day release-age gate in `bunfig.to
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2876 tests / 294 files / 96444 `expect()` calls**; full-source **function coverage 96.28% / line coverage 97.19%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2893 tests / 294 files / 96561 `expect()` calls**; full-source **function coverage 96.37% / line coverage 97.20%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -131,7 +132,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~861 source lines across 83 files). The figures live only in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md); the “On languages” note in each README just links there and carries no numbers. Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
+- **The Chinese string-literal count** (currently ~857 source lines across 84 files). The figures live only in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md); the “On languages” note in each README just links there and carries no numbers. Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

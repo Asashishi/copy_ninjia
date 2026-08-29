@@ -13,7 +13,7 @@
  * getChat 补齐；只有确证是普通群（值为 false）才改道。压成一个布尔的代价是
  * 把绝大多数超级群误判成普通群，在那里打出真正的持久封禁。
  *
- * Worker 重建时由主线程整表重放；完整进程冷启动镜像为空时由执行侧反查。
+ * Worker 重建时由主线程整表重放并填充；完整进程冷启动镜像为空时由执行侧反查。
  * `deactivateChat` 与 Worker stop 时清除。
  */
 export const workerChatIsSupergroup: Map<number, boolean> = new Map();

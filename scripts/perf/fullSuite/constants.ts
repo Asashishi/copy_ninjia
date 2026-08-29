@@ -23,6 +23,16 @@ export const PERFORMANCE_MOCK_ROOT_NAME: string = "performance";
 /** 单次运行在 mock 根下独占的目录前缀；跑完整棵删除。 */
 export const RUN_ROOT_PREFIX: string = "run-";
 
+/** 单次运行使用的隔离配置目录名；只放在对应的 run-* 目录内。 */
+export const BENCHMARK_CONFIG_ROOT_NAME: string = "config";
+
+/** 性能夹具使用的非占位 Agent 凭据；出站仍由 outboundGuard 统一截断。 */
+export const BENCHMARK_AGENT_API_KEY: string = "benchmark-only-agent-api-key";
+
+/** 性能夹具使用的非占位 Telegram token；不会交给真实 Telegram 客户端。 */
+export const BENCHMARK_BOT_TOKEN: string =
+  "123456789:benchmark-only-telegram-bot-token";
+
 /**
  * 每轮运行时数据根在本次运行目录下的前缀（充当 COPY_NINJIA_DATA_ROOT）。
  *

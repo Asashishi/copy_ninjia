@@ -4,7 +4,7 @@ const responses: unknown[] = [];
 const fetchJsonWithTimeout = mock(async (..._args: unknown[]): Promise<unknown> => responses.shift() ?? null);
 const loggerError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../packages/libs/httpFetch", () => ({ fetchJsonWithTimeout }));
+mock.module("../../../packages/infra/httpFetch", () => ({ fetchJsonWithTimeout }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),

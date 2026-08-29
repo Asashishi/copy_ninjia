@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -43,6 +43,12 @@ const AGENT: Readonly<Record<string, unknown>> = {
   },
   song: { provider: "google", api_key: "google-song-key", model: "lyria-test" },
 };
+
+const AGENT_EXAMPLE: Readonly<Record<string, Readonly<Record<string, unknown>>>> = (
+  JSON.parse(
+    readFileSync(join(import.meta.dir, "..", "..", "config_example", "agent.json"), "utf8")
+  ) as { readonly agent: Readonly<Record<string, Readonly<Record<string, unknown>>>> }
+).agent;
 
 const tempDirs: string[] = [];
 
@@ -121,6 +127,29 @@ describe("agent capability config", () => {
       ...AGENT,
       text: { provider: "google", api_key: "  ", model: "m" },
     }, "agent.json")).toThrow(/agent\.text\.api_key must be a non-empty string/);
+  });
+
+  test("所有能力只拒绝示例中的实际占位凭据，且错误不回显凭据", () => {
+    for (const capability of ["ad_detect", "text", "summary", "media", "image", "song"] as const) {
+      const exampleCapability: Readonly<Record<string, unknown>> | undefined = AGENT_EXAMPLE[capability];
+      const placeholder: unknown = exampleCapability?.api_key;
+      if (typeof placeholder !== "string") throw new Error(`missing example api_key for ${capability}`);
+      const capabilityConfig: Readonly<Record<string, unknown>> = AGENT[capability] as Readonly<Record<string, unknown>>;
+      const value: Readonly<Record<string, unknown>> = {
+        ...AGENT,
+        [capability]: { ...capabilityConfig, api_key: placeholder },
+      };
+      const path: string = writeConfig({ agent: value });
+      const validate = (): void => validateAgentDeploymentConfig(path);
+      expect(validate).toThrow(
+        `${path}: $.agent.${capability}.api_key must be a configured non-placeholder string`
+      );
+      expect(validate).not.toThrow(placeholder);
+    }
+    expect(parseAgentDeploymentConfig({
+      ...AGENT,
+      text: { provider: "google", api_key: "replace-with-private-api-key", model: "m" },
+    }, "agent.json").text.apiKey).toBe("replace-with-private-api-key");
   });
 
   test("base_url 默认只收 HTTPS，明文 HTTP 仅限本机回环", () => {

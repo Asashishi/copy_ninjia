@@ -5,7 +5,7 @@ import {
   BOT_PROFILE_PHOTO_FILE_NAME,
 } from "../../../consts/telegram";
 import { readBoundedResponseBytes, type BoundedResponseResult } from "../../../libs/boundedResponse";
-import { sniffImageFormat, type SniffedImageFormat } from "../../../libs/image";
+import { sniffImageFormat, type SniffedImageFormat } from "../../image";
 import { redactUrlForLog } from "../../../libs/redaction";
 import { logger } from "../../logger";
 import { logApiError } from "../client";

@@ -1,7 +1,7 @@
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { logger } from "../../infra/logger";
 import { downloadTelegramFileFromMain } from "../../infra/telegram/workerClient";
-import { prepareVisionImage } from "../../libs/image";
+import { prepareVisionImage } from "../../infra/image";
 import type { VisionImage } from "../../types/media";
 import type { TelegramWorkerDownloadFileResult } from "../../types/telegramWorker";
 

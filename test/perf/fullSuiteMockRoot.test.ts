@@ -7,6 +7,7 @@ import {
   PROJECT_ROOT,
   assertBenchmarkRuntimeRoot,
   assertInsidePerformanceMockRoot,
+  createBenchmarkConfigRoot,
   createRunRoot,
   createRuntimeRoot,
   isBenchmarkRuntimeRoot,
@@ -15,6 +16,11 @@ import {
 } from "../../scripts/perf/fullSuite/mockRoot";
 import { isBenchmarkMockRoot } from "../../scripts/perf/identityDatabase/roots";
 import { MOCK_ROOT_PREFIX } from "../../scripts/perf/identityDatabase/constants";
+import {
+  parseAdDetectAgentConfig,
+  parseAgentDeploymentConfig,
+} from "../../packages/config/agent";
+import { parseTelegramConfig } from "../../packages/config/telegram";
 
 describe("全量基准的 mock 根边界", () => {
   test("mock 根只覆盖仓库下的 performance/", () => {
@@ -56,6 +62,35 @@ describe("全量基准的 mock 根边界", () => {
 });
 
 describe("mock 根的建立与清理", () => {
+  test("隔离配置副本替换占位凭据并通过生产严格解析", async (): Promise<void> => {
+    const runRoot: string = createRunRoot();
+    try {
+      const configRoot: string = await createBenchmarkConfigRoot(runRoot);
+      const telegramDocument: unknown = await Bun.file(
+        join(configRoot, "telegram.json")
+      ).json();
+      const agentDocument: Readonly<{
+        agent?: Readonly<{ ad_detect?: unknown }>;
+      }> = await Bun.file(
+        join(configRoot, "agent.json")
+      ).json();
+      expect((): unknown => parseTelegramConfig(
+        telegramDocument,
+        "benchmark/telegram.json"
+      )).not.toThrow();
+      expect((): unknown => parseAgentDeploymentConfig(
+        agentDocument.agent,
+        "benchmark/agent.json"
+      )).not.toThrow();
+      expect((): unknown => parseAdDetectAgentConfig(
+        agentDocument.agent?.ad_detect,
+        "benchmark/agent.json"
+      )).not.toThrow();
+    } finally {
+      removeMockPath(runRoot);
+    }
+  });
+
   test("建出的运行时数据根落在 mock 根内，删除后不留痕", () => {
     const runRoot: string = createRunRoot();
     try {

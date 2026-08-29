@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
 
-const { prepareVisionImage, sniffImageFormat } = await import("../../packages/libs/image");
+const { prepareVisionImage, sniffImageFormat } = await import("../../packages/infra/image");
 
 async function tinyPng(): Promise<Buffer> {
   return sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();
@@ -16,7 +16,7 @@ async function tinyGif(): Promise<Buffer> {
   return sharp({ create: { width: 2, height: 2, channels: 3, background: "yellow" } }).gif().toBuffer();
 }
 
-describe("libs/image sniffImageFormat", () => {
+describe("infra/image sniffImageFormat", () => {
   test("识别 png/jpeg/webp/gif 的文件头魔数", async () => {
     expect(sniffImageFormat(await tinyPng())).toBe("png");
     expect(sniffImageFormat(await tinyJpeg())).toBe("jpeg");
@@ -48,7 +48,7 @@ describe("libs/image sniffImageFormat", () => {
   });
 });
 
-describe("libs/image prepareVisionImage", () => {
+describe("infra/image prepareVisionImage", () => {
   test("jpeg/png 原样直通，不经过 sharp 转码", async () => {
     const jpeg: Buffer = await tinyJpeg();
     const jpegResult = await prepareVisionImage(jpeg);

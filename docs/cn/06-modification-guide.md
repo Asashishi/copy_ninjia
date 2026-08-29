@@ -55,7 +55,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 861 处、分布在 83 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 857 处、分布在 84 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 
@@ -106,7 +106,7 @@
 ## 新增一个通用 JSON API 调用
 
 1. 在 [`packages/consts/httpFetch.ts`](../../packages/consts/httpFetch.ts) 的 `JSON_API_ALLOWED_ORIGINS` 显式加入准确的 HTTPS origin；不要放宽成任意 host、HTTP 或 credential URL。
-2. 复用 [`packages/libs/httpFetch.ts`](../../packages/libs/httpFetch.ts) 的有界 JSON 读取；redirect 保持禁用，响应体和错误日志都受限。
+2. 复用 [`packages/infra/httpFetch.ts`](../../packages/infra/httpFetch.ts) 的有界 JSON 读取；redirect 保持禁用，响应体和错误日志都受限。
 3. 补充 origin、redirect、超大响应和失败日志测试。Telegram 头像下载是独立媒体入口：Bot API `file.getUrl()` 主路径和 `t.me` 网页/图片回退都必须禁用 redirect 并保持有界读取；不要为了新增 JSON API 而改接该路径。
 
 ## 修改人设与 JSON 配置
