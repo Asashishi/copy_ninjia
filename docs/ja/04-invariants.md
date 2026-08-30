@@ -86,7 +86,7 @@
 ### データルートとバックグラウンドタスク
 
 - `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` はすべて 1 つの実行時データルートから導出します。production の既定値はプロジェクトルートです。テスト preload は production モジュールを import する前に isolate ごとの一時ルートを注入し、実ファイル I/O が production cache や identity database へアクセスできないようにします。
-- 低優先度のグループタイトル保守は、コマンドメニュー、`bot.init()`、Worker hydrate、acknowledgement-safe runner の準備完了後にだけ開始します。title owner の `getChat` は現在最大 15 並列で、履歴補完が query category と network connection を同時に占有する量を制限し、ライフサイクルの quiesce/abort signal を受け取ります。
+- 低優先度のグループタイトル保守は、コマンドメニュー、`bot.init()`、Worker hydrate、acknowledgement-safe runner の準備完了後にだけ開始します。title owner の `getChat` は現在最大 25 並列で、履歴補完が query category と network connection を同時に占有する量を制限し、ライフサイクルの quiesce/abort signal を受け取ります。
 
 ### 送信リクエストとメッセージの安全性
 

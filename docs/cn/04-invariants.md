@@ -82,7 +82,7 @@
 ### 数据根与后台任务
 
 - `state.json`、`bot.lock`、`logs/`、`memory/` 与 `database/` 全部从统一运行时数据根派生；生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，让真实文件 I/O 也不可能读写生产缓存或身份数据库。
-- 命令菜单、`bot.init()`、Worker hydrate 与 acknowledgement-safe runner 就绪后，才启动低优先级群标题维护；标题 owner 当前最多并发 15 个 `getChat`，限制历史回填同时占用 query 类别与网络连接的规模，并接受生命周期的 quiesce/abort 信号。
+- 命令菜单、`bot.init()`、Worker hydrate 与 acknowledgement-safe runner 就绪后，才启动低优先级群标题维护；标题 owner 当前最多并发 25 个 `getChat`，限制历史回填同时占用 query 类别与网络连接的规模，并接受生命周期的 quiesce/abort 信号。
 
 ### 出站请求与消息安全
 

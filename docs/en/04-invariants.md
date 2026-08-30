@@ -86,7 +86,7 @@ For a guided explanation, see [02 Architecture Overview](02-architecture.md). Fo
 ### Data Root and Background Tasks
 
 - `state.json`, `bot.lock`, `logs/`, `memory/`, and `database/` are all derived from one runtime data root. Production defaults to the project root. Before any production module is imported, the test preload injects a separate temporary root per isolate, making it impossible for real file I/O to touch production caches or the identity database.
-- Low-priority group-title maintenance starts only after the command menu, `bot.init()`, Worker hydration, and acknowledgement-safe runner are ready. Its owner currently allows at most 15 concurrent `getChat` calls, bounding the historical backfill's simultaneous use of the query category and network connections, and accepts lifecycle quiesce/abort signals.
+- Low-priority group-title maintenance starts only after the command menu, `bot.init()`, Worker hydration, and acknowledgement-safe runner are ready. Its owner currently allows at most 25 concurrent `getChat` calls, bounding the historical backfill's simultaneous use of the query category and network connections, and accepts lifecycle quiesce/abort signals.
 
 ### Outbound Requests and Message Safety
 

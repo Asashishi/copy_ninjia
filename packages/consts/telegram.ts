@@ -168,7 +168,7 @@ export const TELEGRAM_429_RECOVERY_MAX_CONCURRENT: number = 32;
 export const TELEGRAM_TIMER_MAX_DELAY_MS: number = 2_147_483_647;
 
 /** 标题回填的最大并发 getChat 数，限制低优先级维护占用 Telegram 总闸。 */
-export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 15;
+export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 25;
 
 /**
  * 自发消息登记表（见 infra/selfSentTracker.ts）的存活时长：只需覆盖「发送 →
