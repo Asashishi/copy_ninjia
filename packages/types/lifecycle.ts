@@ -1,6 +1,9 @@
 /** 生命周期排空阶段的统一结果。 */
 export type FlushResult = "flushed" | "timedOut" | "failed";
 
+/** 应用生命周期由测试/嵌入式宿主还是生产进程驱动。 */
+export type ApplicationRunMode = "test" | "main";
+
 /** 正常或异常停机时各持久化 owner 的完整时间预算。 */
 export interface FlushTimeouts {
   aiMemoryMs: number;

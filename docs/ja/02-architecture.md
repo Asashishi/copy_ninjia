@@ -104,6 +104,8 @@ flowchart TD
 
 エントリポイントの [`index.ts`](../../index.ts) は [`packages/app/lifecycle.ts`](../../packages/app/lifecycle.ts) の `ApplicationLifecycle` を組み立てるだけです。production モジュールの import では Worker、タイマー、ネットワーク要求、共有ディレクトリへの書き込みを開始せず、実行時の初期化はすべて明示的に行います。
 
+`runApplication()` は統一された `ApplicationLifecycle.run(mode)` を `"main"` モードで呼び出し、`import.meta.main` が true のときだけ自動実行します。このモードは process レベルの signal / exception handler を登録し、未処理の実行エラーを非ゼロ終了として記録します。test または embedded host は `runTest()` を明示的に呼び出します。こちらは `"test"` モードを選び、process handler を所有せず、`dispose()` 完了後に起動または polling のエラーをそのまま呼び出し元へ返します。両モードは同じ `init()` → `wait()` → `dispose()` 境界を共有し、通常の import は引き続き副作用を持ちません。
+
 1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
 3. **state 永続化境界を復元し、すでに存在するデプロイ入力を検証**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元し、業務 facade から正式なメモリを hydrate します。`telegram.json` はプロセスレベルで必須、その他の任意入力は**ファイルが存在する限り厳密なパースを通らなければならず**、本当に欠落している場合は各機能自身の readiness 判定に委ねます（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs`。出口は [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` のグループスイッチはこの照合に関与せず、次段の永続化復元境界でのみデコードされます。

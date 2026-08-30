@@ -76,7 +76,7 @@ describe("应用启动失败与退出清理", () => {
     const beforeSigterm: number = process.listenerCount("SIGTERM");
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
     await lifecycle.dispose();
 
     expect(process.exitCode).toBe(1);
@@ -87,6 +87,25 @@ describe("应用启动失败与退出清理", () => {
     expect(process.listenerCount("SIGINT")).toBe(beforeSigint);
     expect(process.listenerCount("SIGTERM")).toBe(beforeSigterm);
     expect(loggerError).toHaveBeenCalledWith("Unhandled error in bot main runner:", expect.any(Error));
+  });
+
+  test("test 模式不安装进程监听器，清理后把启动错误交还调用方", async () => {
+    const failure: Error = new Error("temp cleanup failed");
+    cleanupOrphanedTempFiles.mockRejectedValueOnce(failure);
+    const beforeSigint: number = process.listenerCount("SIGINT");
+    const beforeSigterm: number = process.listenerCount("SIGTERM");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await expect(lifecycle.run("test")).rejects.toBe(failure);
+
+    expect(process.listenerCount("SIGINT")).toBe(beforeSigint);
+    expect(process.listenerCount("SIGTERM")).toBe(beforeSigterm);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+    expect(loggerError).not.toHaveBeenCalledWith(
+      "Unhandled error in bot main runner:",
+      expect.any(Error)
+    );
   });
 
   test("回归用例：启动期到达的停止信号不能把 quiesce 一次性闩死", async () => {
@@ -100,7 +119,7 @@ describe("应用启动失败与退出清理", () => {
     });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
 
     // init 尾部那次重新收口之后，wait()/dispose() 仍会各自再 quiesce 一遍。
     expect(quiesceAvatarUpdates.mock.calls.length).toBeGreaterThan(1);
@@ -122,7 +141,7 @@ describe("应用启动失败与退出清理", () => {
     });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
 
     expect(loggerLog).toHaveBeenCalledWith("Received SIGINT; beginning graceful shutdown.");
     expect(runnerStop).toHaveBeenCalledTimes(1);
@@ -140,7 +159,7 @@ describe("应用启动失败与退出清理", () => {
     } as never);
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
     await lifecycle.dispose();
 
     expect(initDiskIO).toHaveBeenCalledTimes(1);
@@ -195,7 +214,7 @@ describe("应用启动失败与退出清理", () => {
     loadState.mockRejectedValueOnce(new Error("manual recovery is required"));
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
     await lifecycle.dispose();
 
     expect(process.exitCode).toBe(1);
@@ -212,7 +231,7 @@ describe("应用启动失败与退出清理", () => {
     });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
     await lifecycle.dispose();
 
     expect(process.exitCode).toBe(1);
@@ -231,7 +250,7 @@ describe("应用启动失败与退出清理", () => {
     });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
     await lifecycle.dispose();
 
     expect(process.exitCode).toBe(1);
@@ -262,7 +281,7 @@ describe("应用启动失败与退出清理", () => {
     setCopiedUser({ id: 7 });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    await lifecycle.run();
+    await lifecycle.run("main");
     await lifecycle.dispose();
 
     expect(seedSenderCache).toHaveBeenCalledTimes(1);

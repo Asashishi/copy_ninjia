@@ -9,6 +9,7 @@ import type { CachedUser } from "../types/chatState";
 import type { LoadedData } from "../types/diskIO/replies";
 import type {
   AcknowledgedUpdateRunner,
+  ApplicationRunMode,
   FlushResult,
   FlushTimeouts,
   HandlerRegistration,
@@ -376,19 +377,27 @@ export class ApplicationLifecycle {
     return this.disposePromise;
   }
 
-  /** 生产运行入口：显式安装进程 handler，执行 init/wait，并保证 dispose。 */
-  run(): Promise<void> {
-    this.installProcessHandlers();
-    return this.runMain()
-      .catch((error: unknown): void => {
-        this.dependencies.logger.error("Unhandled error in bot main runner:", error);
-        process.exitCode = 1;
-      })
-      .finally(async (): Promise<void> => {
-        await this.dispose();
+  /**
+   * 执行 init/wait 并保证 dispose。main 模式额外接管进程 handler
+   * 与退出码；test 模式把运行异常原样交还调用方。
+   */
+  async run(mode: ApplicationRunMode): Promise<void> {
+    const managesProcess: boolean = mode === "main";
+    if (managesProcess) this.installProcessHandlers();
+
+    try {
+      await this.runMain();
+    } catch (error: unknown) {
+      if (!managesProcess) throw error;
+      this.dependencies.logger.error("Unhandled error in bot main runner:", error);
+      process.exitCode = 1;
+    } finally {
+      await this.dispose();
+      if (managesProcess) {
         this.removeProcessHandlers();
         if (this.runnerCancellationUnsettled) process.exit(1);
-      });
+      }
+    }
   }
 
   private async runMain(): Promise<void> {

@@ -22,7 +22,7 @@ export interface RecordJoinLogParams {
  * 硬顶的 FIFO 并返回 true，而 `flushDiskIODomain` 因为没有可写的 Worker 直接
  * 短路成 `"failed"`——同一个函数里两套语义。照 `"failed"` 报的话，窗口内任意
  * 用户入群都会让 antiRaid/updateIngress.ts 抛错、经 bot.catch rethrow 让
- * handleUpdate reject，进而使 ApplicationLifecycle.run() 以退出码 1 结束并**扣住
+ * handleUpdate reject，进而使 ApplicationLifecycle.run("main") 以退出码 1 结束并**扣住
  * 最终 offset**，Telegram 把上次确认点之后的全部更新重投一遍——一次可自愈的
  * 瞬时故障被放大成整进程退出加重复投递。
  *

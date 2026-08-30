@@ -104,6 +104,8 @@ flowchart TD
 
 入口 [`index.ts`](../../index.ts) 只组装 [`packages/app/lifecycle.ts`](../../packages/app/lifecycle.ts) 的 `ApplicationLifecycle`；生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入，一切运行时初始化都显式发生：
 
+`runApplication()` 以 `"main"` 模式调用统一的 `ApplicationLifecycle.run(mode)`，只在 `import.meta.main` 为真时自动执行；该模式安装进程信号/异常 handler，并把未处理的运行错误记录为非零退出。测试或嵌入式宿主必须显式调用 `runTest()`：它选择 `"test"` 模式，不接管进程 handler，并在完成 `dispose()` 后把启动/轮询异常原样交还调用方。两种模式共用同一条 `init()` → `wait()` → `dispose()` 边界，普通 import 仍无副作用。
+
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
 3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，出口在 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。

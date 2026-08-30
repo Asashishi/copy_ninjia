@@ -3,19 +3,14 @@ import type { ApplicationLifecycle } from "./packages/app/lifecycle";
 
 const application: ApplicationLifecycle = createApplicationLifecycle();
 
-/** 供测试或嵌入式调用显式驱动初始化与轮询。 */
-export async function main(): Promise<void> {
-  try {
-    await application.init();
-    await application.wait();
-  } finally {
-    await application.dispose();
-  }
+/** 供测试或嵌入式调用，不接管宿主进程。 */
+export function runTest(): Promise<void> {
+  return application.run("test");
 }
 
 /** 生产入口会额外安装进程级信号/异常 handler，并保证最终 dispose。 */
 export function runApplication(): Promise<void> {
-  return application.run();
+  return application.run("main");
 }
 
 if (import.meta.main) await runApplication();

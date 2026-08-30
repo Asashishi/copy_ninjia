@@ -5,7 +5,7 @@ import type { DiskBusinessMessage, JoinLogRecord } from "../../packages/types/di
  * 入群事实的 durable 屏障（packages/infra/joinLog.ts）。
  *
  * 它的返回值直接决定 antiRaid/updateIngress.ts 抛不抛错，而那条错误会一路
- * 经 bot.catch rethrow 让 handleUpdate reject，最终使 ApplicationLifecycle.run()
+ * 经 bot.catch rethrow 让 handleUpdate reject，最终使 ApplicationLifecycle.run("main")
  * 非零退出并扣住最终 offset——Telegram 会把上次确认点之后的全部更新重投一遍。
  * 因此「已缓冲待写」必须与「写入失败」分开报。
  */
