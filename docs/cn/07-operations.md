@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 开发者文档首页</a> · <a href="06-modification-guide.md">← 上一页：06 修改配方</a> · <a href="08-commands.md">下一页：08 命令与行为参考 →</a>
+  <a href="content-table.md">📚 开发者文档首页</a> · <a href="06-modification-guide.md">← 上一页：06 修改配方</a> · <a href="08-commands.md">下一页：08 命令与行为参考 →</a>
 </p>
 
 ---
@@ -103,8 +103,9 @@ WantedBy=multi-user.target
     跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
     最新 250,000 人。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
-  - **内容**：schema v5 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是白名单、
-    黑名单权威表，`pending_blocked_removals` 是未完成群级封禁任务 outbox，
+  - **内容**：schema v7 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是永久白名单、
+    黑名单权威表；`temporary_whitelist_entries` 以关系列保存跨群发言累计、连续合格日、
+    临时授权时刻和最后发言时刻；`pending_blocked_removals` 是未完成群级封禁任务 outbox，
     `chat_states` 是每群状态权威表（最多 25 行，超出即拒绝启动），
     `storage_metadata` 记录唯一 schema version；Drizzle migration journal 必须匹配受支持谱系。
     `chat_states` 的 25 行名额只在整条记录回到缺省时释放：`/init disable` 只清群名，功能开关
@@ -114,10 +115,12 @@ WantedBy=multi-user.target
     待恢复的 lockdown。
   - **备份**：必须备份，丢失黑名单等于解除全部永久封禁，丢失 outbox 则会漏掉未完成处置。
     停止 Bot 后，把主库及当时存在的 WAL/SHM 作为同一一致性集合复制到工作树外，并记录
-    owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。schema migration 脚本会
-    通过 SQLite 序列化快照建立并校验独立外部备份。
+    owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。临时白名单 schema
+    migration 脚本会在写库前逐字节复制主库及现存 sidecar，在外部目录记录
+    owner/mode/SHA-256 清单并读回校验。
   - **恢复**：Disk I/O Worker 是唯一数据库 owner；启动先做 integrity、JSONB、schema、
-    migration lineage、行 codec 与黑白名单互斥校验，再只把计数和 pending outbox 交回主线程。
+    migration lineage、行 codec、黑名单与两类白名单互斥校验，再只把永久名单计数和
+    pending outbox 交回主线程；临时累计按 update 所需身份冷读进 8,192 项 LRU。
     任一校验失败都拒绝启动，不会建空库、丢行或静默降级。
 - **`memory/ad-detected/sample.json`**
   - **内容**：广告判定命中的原始样本，包括时间、消息 id 与正文、判定理由、
@@ -137,13 +140,13 @@ WantedBy=multi-user.target
   - **内容**：单实例锁。
   - **备份**：不备份、不手工编辑。
 
-`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描这些已存在目录（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact 并启动 rollover timer。`ad-detected/` 只在第一次命中后建立。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。
+`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 统一维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
 
 `joinlog/` 的一次查询最多读取覆盖 `[since, now]` 的两个群日文件，并按用户取窗口内最后一次入群；第三个保留日只服务于 23:59 发起、跨午夜才进入 Worker 的在途查询。文件在 10,000 条冗余历史或新增 4 MiB 后评估压缩，预计至少回收 512 KiB 才原子重写。可解析但 schema 错误的文件会原样拒绝本次读写；仅末尾截断残片可由追加层修复。
 
 ### `memory/` 辅助文件与纯内存状态
 
-- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。启动 inspect 只登记这些文件，不删除；所有领域校验与 adopt 成功并发出成功回执后，日志、`ai/`、`stickers/`、`luck/` 与 `joinlog/` 的 maintenance 才清理对应 `*.tmp`。`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`；`anti-raid/` 不把临时文件当恢复输入。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
+- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。启动 inspect 只登记这些文件，不删除；所有领域校验与 adopt 成功并发出成功回执后，日志、`ai/`、`stickers/`、`luck/` 与 `joinlog/` 的 maintenance 才清理对应 `*.tmp`。已有的 `ad-detected/` 目录在启动成功后的 maintenance 清理 `.sample.json.*.tmp`，首次写样本仍执行同一兜底；`anti-raid/` 不把临时文件当恢复输入。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
 - Challenge timer、广告检测待判队列/去重 Set、Telegram 成员/管理员短缓存都只存在于进程内，没有对应文件。
 
 备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成；SQLite 主库与存在的 sidecar 必须来自同一时点。`memory/` 与 `database/` 都视为敏感数据：新建 memory 文件默认 `0644`，数据库及 sidecar 首次创建默认 `0660`；已有文件的 mode 会在接管和原子替换后保留（见 [04](04-invariants.md#持久化)）。
@@ -161,6 +164,31 @@ WantedBy=multi-user.target
 仍使用 `config/whitelist.json`、`config/blocklist.json`，以及可选 `memory/blocklist/` 的部署，必须**先升到 9.1.5 并在那个版本上完成迁移**，再继续升级到当前版本。
 
 `bun run migrate:identity-storage` 最后一次随 9.1.5 发布；按「冷迁移脚本只覆盖最近一个已发布版本 → 当前版本」的约定，它已在 9.2.0 从 `scripts/` 删除，当前版本不再提供这条迁移，也不接受旧 JSON 名单作为输入。不要在当前版本上创建空的 `whitelist.json`／`blocklist.json` 后建空库——那会把真实名单丢在原地，机器人带着一份空黑名单上线。
+
+### storage.sqlite：schema v5 → v7 临时白名单与广告免检
+
+最近发布版本的 schema v5 缺少 `temporary_whitelist_entries`，当前生产入口只接受精确的
+schema v7 谱系，不会在启动时自动加表或改写成员关系。升级代码后保持 Bot 停止，依次执行：
+
+```bash
+bun run migrate:temporary-whitelist -- --check
+bun run migrate:temporary-whitelist -- --apply
+```
+
+两种模式都先取得 `bot.lock`，所以 systemd/supervisor 必须已经停止且确认 inactive。
+`--check` 只读核对 SQLite integrity、JSONB storage class、schema version 与精确 v5/v6/v7
+migration 谱系；v5 报告可直迁，v6 只作为这次迁移可续跑的 intermediate 谱系，v7 报告已经完成，
+其它版本或未知谱系一律拒绝。
+
+对已发布部署，`--apply` 只提供 v5 → v7 这一条直接边；若同一次迁移在 v6 提交后中断，也可从该
+intermediate 谱系续跑。脚本先把主库及现存 WAL/SHM 逐字节复制到工作树外，
+写入 owner/mode/SHA-256 清单并读回校验，再由当前 Drizzle migration 新建严格关系表并把
+`storage_metadata` 依次推进到 v6，再重建关系表以授予首个合格日广告免检并推进到 v7。迁移后
+重新执行完整 v7 inspect；任何备份、迁移或复核失败都保留
+外部备份路径和原始错误，必须继续停服并从同一一致性集合恢复，不能删行、建空替代库或跨版本猜迁。
+成功后保留外部备份，启动服务并确认 `active/running`、两个 restart interval 内
+`NRestarts` 不增长且 journal 无新增非零退出，才算迁移完成。重复执行 `--apply` 对 v7 只报告
+已经完成，不再改写数据库。
 
 ### state.json：摘掉退场的 `qaThumbnailUrl`
 
@@ -205,8 +233,9 @@ mode/owner/SHA-256 清单的原文快照（写完立刻读回比对哈希），�
     贴纸最多 5 包。
 - **身份数据库缺失或校验失败**
   - **原因**：尚未建立身份数据库，`storage.sqlite` 不可写，integrity/JSONB/schema/
-    migration lineage 不合法，行 codec 失败，或同一身份同时存在于黑白名单。
-  - **处理**：保持 Bot 停止，按[身份存储迁移](#身份存储迁移)建库或回滚；从同一一致性
+    migration lineage 不合法，行 codec 失败，或黑名单与永久/临时白名单相交。
+  - **处理**：若错误点名 schema v5，保持 Bot 停止并按上面的 v5 → v7 冷迁移执行；其余情况按
+    [身份存储迁移](#身份存储迁移)建库或回滚。从同一一致性
     备份恢复主库与 sidecar，修正目录协作组权限后再启动。不要创建空库或删除失败行。
 - **两份 state 副本均无效**
   - **原因**：部署了 schema 变更但没迁移数据。
@@ -265,6 +294,6 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 
 <div align="center">
 
-[← 上一页：06 修改配方](06-modification-guide.md) · [📚 开发者文档首页](conntent-table.md) · [⬆️ 回到顶部](#07-运维与排障) · **下一页：无 →**
+[← 上一页：06 修改配方](06-modification-guide.md) · [📚 开发者文档首页](content-table.md) · [⬆️ 回到顶部](#07-运维与排障) · **下一页：无 →**
 
 </div>

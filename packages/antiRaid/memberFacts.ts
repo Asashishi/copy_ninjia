@@ -2,6 +2,8 @@ import {
   hasWhitelistPermission,
   isWhitelisted,
 } from "../infra/identityPolicy/whitelist";
+import { hasActiveTemporaryWhitelist } from
+  "../infra/identityPolicy/temporaryWhitelist";
 import { isAdminStatus } from "../libs/chatMember";
 import type { ChatMember } from "@grammyjs/types";
 import type { AntiRaidMember } from "../types/antiRaid/protocol";
@@ -14,20 +16,19 @@ import type { AntiRaidMember } from "../types/antiRaid/protocol";
 /**
  * 自己人：不得进入自动处置产生的永久黑名单。
  *
- * `SUPER_ADMIN_USER_ID` 与 SQLite 白名单是部署方明确登记的身份，两者都由
- * isWhitelisted 一并覆盖（超级管理员恒在白名单边界内，见
- * whitelist.ts）。广告检测送检另受 isCanBypassAdDetection 控制：
- * 关闭该权限的白名单成员仍可被判定并删除本批消息；防刷屏另受
- * isCanBypassFloodControl 控制。两条自动处置的最终拉黑边界仍会用本函数
- * 拒绝白名单身份。
+ * `SUPER_ADMIN_USER_ID` 与 SQLite 永久白名单是部署方明确登记的身份，两者都由
+ * isWhitelisted 一并覆盖（超级管理员恒在白名单边界内，见 whitelist.ts）。
+ * 临时白名单只持有广告检测豁免，不进入本边界；广告检测在调用本函数前先按
+ * isCanBypassAdDetection 复查。防刷屏另受 isCanBypassFloodControl 控制。
  */
 export function isProtectedSender(senderId: number): boolean {
   return isWhitelisted(senderId);
 }
 
-/** 广告检测专用豁免：按逐项权限决定，超级管理员恒持有该权限。 */
+/** 广告检测专用豁免：永久白名单成员与持有逐项权限的临时成员都不进入检测。 */
 export function canBypassAdDetection(senderId: number): boolean {
-  return hasWhitelistPermission(senderId, "isCanBypassAdDetection");
+  return isWhitelisted(senderId) ||
+    hasActiveTemporaryWhitelist(senderId);
 }
 
 /** 防刷屏专用豁免：按逐项权限决定，超级管理员恒持有该权限。 */

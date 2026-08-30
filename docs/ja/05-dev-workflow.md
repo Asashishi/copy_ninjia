@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="04-invariants.md">← 前のページ：04 不変条件</a> · <a href="06-modification-guide.md">次のページ：06 変更レシピ →</a>
+  <a href="content-table.md">📚 開発者ドキュメント TOP</a> · <a href="04-invariants.md">← 前のページ：04 不変条件</a> · <a href="06-modification-guide.md">次のページ：06 変更レシピ →</a>
 </p>
 
 ---
@@ -32,6 +32,7 @@
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
 | `bun run migrate:qa-thumbnail` | `state.json` から退場した `global.assets.qaThumbnailUrl` を取り除く停止時 cold migration |
+| `bun run migrate:temporary-whitelist` | 停止中の共有 SQLite を v5 → v7 の直接 edge で移行する cold migration。v6 は同じ migration の再開可能な intermediate lineage のみ |
 | `bun run release:check` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
 
@@ -48,7 +49,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2893 tests / 294 files / 96561 `expect()` calls**。全ソースコードの**関数カバレッジは 96.37%、行カバレッジは 97.20%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2995 tests / 304 files / 97230 `expect()` calls**。全ソースコードの**関数カバレッジは 96.50%、行カバレッジは 97.12%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -152,6 +153,6 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 <div align="center">
 
-[← 前のページ：04 不変条件](04-invariants.md) · [📚 開発者ドキュメント TOP](conntent-table.md) · [⬆️ トップへ戻る](#05-開発フローと品質ゲート) · [次のページ：06 変更レシピ →](06-modification-guide.md)
+[← 前のページ：04 不変条件](04-invariants.md) · [📚 開発者ドキュメント TOP](content-table.md) · [⬆️ トップへ戻る](#05-開発フローと品質ゲート) · [次のページ：06 変更レシピ →](06-modification-guide.md)
 
 </div>

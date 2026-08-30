@@ -4,6 +4,7 @@ import {
   pendingChatStateWrites,
   pendingRemovalSnapshotRevision,
   pendingRemovalWrites,
+  pendingTemporaryWhitelistWrites,
   pendingWhitelistWrites,
   rejectedStorageDomains,
   storagePersistenceReplyHolder,
@@ -20,6 +21,7 @@ import type {
   ChatStatePersistedRevision,
   IdentityPersistenceReply,
   IdentityPolicyPersistedRevision,
+  TemporaryWhitelistPersistedRevision,
 } from "../../../types/diskIO/replies";
 import type {
   PendingChatQaWrite,
@@ -27,12 +29,15 @@ import type {
   PendingIdentityPolicyWrite,
   PendingRemovalWrite,
 } from "../../../types/identityStorage";
+import type { PendingTemporaryWhitelistWrite } from
+  "../../../types/temporaryWhitelist";
 import { requireStorageDatabase } from "./context";
 
 /** 任一共享 SQLite 业务表存在待提交最终值时返回 true。 */
 export function hasPendingStorageWrites(): boolean {
   return pendingWhitelistWrites.size > 0 ||
     pendingBlocklistWrites.size > 0 ||
+    pendingTemporaryWhitelistWrites.size > 0 ||
     pendingRemovalWrites.size > 0 ||
     pendingChatStateWrites.size > 0 ||
     pendingChatQaWrites.size > 0;
@@ -68,6 +73,7 @@ export function flushIfStorageFull(reply: IdentityPersistenceReply): void {
   if (
     pendingWhitelistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingBlocklistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
+    pendingTemporaryWhitelistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingRemovalWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingChatStateWrites.size >= STATE_MANAGED_CHAT_LIMIT
   ) {
@@ -90,6 +96,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
       reply({
         type: "identityStoragePersisted",
         writes: [],
+        temporaryWhitelistWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
         removalSnapshotRevision: removalRevision,
@@ -103,6 +110,8 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
   }
   const whitelist: Map<number, PendingIdentityPolicyWrite> = new Map(pendingWhitelistWrites);
   const blocklist: Map<number, PendingIdentityPolicyWrite> = new Map(pendingBlocklistWrites);
+  const temporaryWhitelist: Map<number, PendingTemporaryWhitelistWrite> =
+    new Map(pendingTemporaryWhitelistWrites);
   const removals: Map<number, PendingRemovalWrite> = new Map(pendingRemovalWrites);
   const chatStates: Map<number, PendingChatStateWrite> = new Map(pendingChatStateWrites);
   // 内层 Map 也要复制：外层浅拷贝之后两边仍共享同一批内层 Map，提交期间
@@ -116,6 +125,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
     commitStorageDatabaseChanges(requireStorageDatabase(), {
       whitelist,
       blocklist,
+      temporaryWhitelist,
       removals,
       chatStates,
       chatQa: chatQaChanges,
@@ -126,6 +136,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
     return false;
   }
   const acknowledgements: IdentityPolicyPersistedRevision[] = [];
+  const temporaryWhitelistAcknowledgements: TemporaryWhitelistPersistedRevision[] = [];
   const chatStateAcknowledgements: ChatStatePersistedRevision[] = [];
   const chatQaAcknowledgements: ChatQaPersistedRevision[] = [];
   for (const [id, change] of whitelist) {
@@ -135,6 +146,12 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
   for (const [id, change] of blocklist) {
     if (pendingBlocklistWrites.get(id) === change) pendingBlocklistWrites.delete(id);
     acknowledgements.push({ table: "blocklist", id, revision: change.revision });
+  }
+  for (const [id, change] of temporaryWhitelist) {
+    if (pendingTemporaryWhitelistWrites.get(id) === change) {
+      pendingTemporaryWhitelistWrites.delete(id);
+    }
+    temporaryWhitelistAcknowledgements.push({ id, revision: change.revision });
   }
   for (const [id, change] of removals) {
     if (pendingRemovalWrites.get(id) === change) pendingRemovalWrites.delete(id);
@@ -160,6 +177,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
   reply({
     type: "identityStoragePersisted",
     writes: acknowledgements,
+    temporaryWhitelistWrites: temporaryWhitelistAcknowledgements,
     chatStateWrites: chatStateAcknowledgements,
     chatQaWrites: chatQaAcknowledgements,
     ...(removalRevision === null ? {} : { removalSnapshotRevision: removalRevision }),
@@ -170,14 +188,15 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
 
 /** 取走拒收标记，并叠加本轮仍 dirty 的表，供统一 flush 返回精确失败领域。 */
 export function pendingStorageDatabaseDomains(): readonly (
-  "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
 )[] {
   const domains: Set<
-    "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+    "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
   > = new Set(rejectedStorageDomains);
   rejectedStorageDomains.clear();
   if (pendingWhitelistWrites.size > 0) domains.add("whitelist");
   if (pendingBlocklistWrites.size > 0) domains.add("blocklist");
+  if (pendingTemporaryWhitelistWrites.size > 0) domains.add("temporaryWhitelist");
   if (pendingRemovalWrites.size > 0) domains.add("blocklistRemovalOutbox");
   if (pendingChatStateWrites.size > 0) domains.add("chatState");
   if (pendingChatQaWrites.size > 0) domains.add("chatQa");

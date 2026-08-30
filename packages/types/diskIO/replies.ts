@@ -9,6 +9,7 @@ import type {
   LuckReceiptSecret,
 } from "./storage";
 import type { BlocklistIdPage } from "../identityStorage";
+import type { StoredTemporaryWhitelistActivity } from "../temporaryWhitelist";
 /** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
  * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify，
  * 见 workers/diskIO/snapshotFiles.ts），供 hydrate 链路直接透传。 */
@@ -67,12 +68,13 @@ export interface JoinLogReadReply {
   error?: string;
 }
 
-/** Disk I/O Worker -> 主线程：一次黑白名单批量读取的原始 JSON 文本。 */
+/** Disk I/O Worker -> 主线程：一次身份策略与临时白名单累计批量读取。 */
 export interface IdentityPoliciesReadReply {
   type: "identityPoliciesRead";
   requestId: number;
   whitelist?: readonly (readonly [number, string])[];
   blocklist?: readonly (readonly [number, string])[];
+  temporaryWhitelist?: readonly StoredTemporaryWhitelistActivity[];
   error?: string;
 }
 
@@ -87,6 +89,12 @@ export interface BlocklistIdPageReadReply {
 /** 一项黑白名单最终值已由显式 SQLite 事务提交。 */
 export interface IdentityPolicyPersistedRevision {
   readonly table: IdentityPolicyTable;
+  readonly id: number;
+  readonly revision: number;
+}
+
+/** 一项临时白名单累计最终值已由显式 SQLite 事务提交。 */
+export interface TemporaryWhitelistPersistedRevision {
   readonly id: number;
   readonly revision: number;
 }
@@ -108,6 +116,8 @@ export interface ChatQaPersistedRevision {
 export interface IdentityStoragePersistedReply {
   type: "identityStoragePersisted";
   writes: readonly IdentityPolicyPersistedRevision[];
+  /** 本事务提交的临时白名单累计 revision。 */
+  temporaryWhitelistWrites: readonly TemporaryWhitelistPersistedRevision[];
   /** 本事务提交的群状态 revision；与身份策略共享同一 SQLite 事务。 */
   chatStateWrites: readonly ChatStatePersistedRevision[];
   /** 本事务提交的群问答 revision；与群状态共享同一 SQLite 事务。 */
@@ -122,7 +132,7 @@ export type IdentityPersistenceReply = (
 ) => void;
 
 /**
- * 统一 flush 覆盖的十一个落盘领域。回执按领域拆开，是为了让「等自己这条记录
+ * 统一 flush 覆盖的十二个落盘领域。回执按领域拆开，是为了让「等自己这条记录
  * 落盘」的调用方（典型是 /block）不会因为无关领域失败而误报——那会把运维
  * 引向一个其实没坏的文件，而真正坏掉的领域按设计只有 console.error，
  * 永远进不了 logs/（见 workers/diskIOWorker.ts 的 flushAll）。
@@ -135,6 +145,7 @@ export type DiskIODomain =
   | "verification"
   | "whitelist"
   | "blocklist"
+  | "temporaryWhitelist"
   | "blocklistRemovalOutbox"
   | "chatState"
   | "chatQa"
@@ -152,7 +163,7 @@ export interface DomainFlushOutcome {
   failedDomains?: readonly DiskIODomain[];
 }
 
-/** diskIOWorker -> 主线程：flush 已完成，九个领域全部落盘。 */
+/** diskIOWorker -> 主线程：flush 已完成，十二个领域全部落盘。 */
 export interface DiskFlushReply {
   type: "flushed";
   flushedId: number;

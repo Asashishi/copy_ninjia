@@ -46,9 +46,10 @@ export async function claimQaFieldMessage(
   // 群任何时刻都没有未完成表单。第一步因此必须是这次以群 id 为键的 Map.get——
   // 数字键、零分配、未命中即返回。commands/qa.ts 的 handleQaMessageIngress 用同一
   // 道判定做同步守卫，因此稳定态根本到不了这里；本函数仍自查一次，好让它作为
-  // 独立入口（单测直接调用）保持自洽。`isBotOwnMessage` 在它后面：那条判定要拼一个
-  // `chatId:messageId` 复合键字符串，放在最前面等于给每条群消息都记一次分配
-  // （见 AGENTS.md「高频路径不得创建复合键」）。这些判据都只是 return null，
+  // 独立入口（单测直接调用）保持自洽。`isBotOwnMessage` 在它后面：它同样零分配
+  // ——`infra/selfSentTracker.ts` 按 (chatId, messageId) 两级整数键直查，不拼复合串
+  // （见 AGENTS.md「高频路径不得创建复合键」）——但一条消息最多要查两对键，
+  // 仍比这里一次未命中即返回的 Map.get 贵。这些判据都只是 return null，
   // 先后顺序不影响结论，因此最贵的那道——跨线程 rendezvous——排在全部廉价判据
   // 之后、任何副作用之前。
   const session: QaFormSession | undefined = findQaFormSession(message.chat.id);

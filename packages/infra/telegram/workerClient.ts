@@ -20,6 +20,7 @@ export interface DownloadTelegramFileFromMainParams {
 
 export interface SendTemporaryMessageFromMainParams {
   readonly chatId: number;
+  readonly identityId: number;
   readonly text: string;
   readonly deleteAfterMs: number;
   readonly signal?: AbortSignal;
@@ -31,6 +32,7 @@ export interface SendTemporaryMessageFromMainParams {
  */
 export function sendTemporaryMessageFromMain({
   chatId,
+  identityId,
   text,
   deleteAfterMs,
   signal,
@@ -39,6 +41,7 @@ export function sendTemporaryMessageFromMain({
     operation: "sendTemporaryMessage",
     category: "message",
     chatId,
+    identityId,
     text,
     deleteAfterMs,
   }, signal);

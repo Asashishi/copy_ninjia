@@ -1,6 +1,8 @@
 /** 生图的官方宽高比集合。OAI 兼容侧按显式线协议映射：OpenAI 任意尺寸档逐档
  *  发送 size、标准档收敛到三种通用尺寸，xAI 改传最近 aspect_ratio，见
  *  aiChat/openai/image.ts。 */
+import type { Base64PayloadDecodeFailure } from "./payload";
+
 export type ImageGenerationAspectRatio =
   | "1:1" | "3:2" | "2:3" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
 
@@ -18,10 +20,7 @@ export interface GeneratedChatImage {
  * 或画幅，脏 base64 才是网关问题。不点名就只能从「生图失败」四个字里猜。
  */
 export type GeneratedImageDecodeFailure =
-  | "empty payload"
-  | "encoded payload exceeds the size limit"
-  | "payload is not canonical base64"
-  | "decoded payload is empty or exceeds the size limit"
+  | Base64PayloadDecodeFailure
   | "byte signature matches neither PNG nor JPEG";
 
 /** 按字节签名解码生图载荷的结果；失败一律带上可记日志的原因。 */

@@ -9,7 +9,10 @@ import {
   AD_REFERENCE_WARNING_WINDOW_MS,
 } from "../../../consts/antiRaid/adDetect";
 import { logger } from "../../../infra/logger";
-import { verificationKeyPrefix } from "../../../libs/verificationKey";
+import {
+  parseVerificationKey,
+  verificationKeyPrefix,
+} from "../../../libs/verificationKey";
 import type { ReferencedAdWarningState } from "../../../types/antiRaid/adDetect";
 
 /** 为一个首次警告建立唯一发送 attempt；undefined 表示序号已经不可安全递增。 */
@@ -78,12 +81,10 @@ export function hasActiveReferencedAdWarning(key: string, receivedAt: number): b
   const state: ReferencedAdWarningState | undefined =
     referencedAdWarningStates.get(key);
   if (state?.phase !== "warned") return false;
-  const elapsedMs: number = receivedAt - state.warnedAt;
-  if (elapsedMs >= 0 && receivedAt < state.expiresAt) return true;
-  // 负值只能由墙钟回拨造成；继续保留会把五分钟升级窗拉长。
-  if (elapsedMs < 0 || receivedAt >= state.expiresAt) {
-    referencedAdWarningStates.delete(key);
-  }
+  if (receivedAt >= state.warnedAt && receivedAt < state.expiresAt) return true;
+  // 走到这里只剩两种情况：窗口已过，或 receivedAt 早于 warnedAt——后者只能由墙钟
+  // 回拨造成，继续保留会把五分钟升级窗拉长。两种都直接回收，不再重复判一次条件。
+  referencedAdWarningStates.delete(key);
   return false;
 }
 
@@ -97,6 +98,15 @@ export function clearChatReferencedAdWarnings(chatId: number): void {
   const prefix: string = verificationKeyPrefix(chatId);
   for (const key of referencedAdWarningStates.keys()) {
     if (key.startsWith(prefix)) referencedAdWarningStates.delete(key);
+  }
+}
+
+/** 某身份获得白名单权限时，清掉它在各群的引用广告警告状态。 */
+export function clearIdentityReferencedAdWarnings(identityId: number): void {
+  for (const key of referencedAdWarningStates.keys()) {
+    if (parseVerificationKey(key)?.userId === identityId) {
+      referencedAdWarningStates.delete(key);
+    }
   }
 }
 

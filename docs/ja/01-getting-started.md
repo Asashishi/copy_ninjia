@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <b>← 前のページ：なし</b> · <a href="02-architecture.md">次のページ：02 アーキテクチャ →</a>
+  <a href="content-table.md">📚 開発者ドキュメント TOP</a> · <b>← 前のページ：なし</b> · <a href="02-architecture.md">次のページ：02 アーキテクチャ →</a>
 </p>
 
 ---
@@ -166,9 +166,9 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     （後者は `$.agent.media` を指す診断を 1 行記録）はどちらも以後 download しません。
     一時的な障害は回数に応じた backoff だけで、能力を恒久的に閉じることはありません。
 
-allowlist、blocklist、未完了 removal は deployment JSON ではなく、runtime data root の
+恒久 allowlist、blocklist、一時 allowlist activity、未完了 removal は deployment JSON ではなく、runtime data root の
 `database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、
-migration lineage、schema version、JSONB row shape、policy の非重複を検証します。その他は
+migration lineage、schema version、JSONB / relational row shape、policy の非重複を検証します。その他は
 feature 単位で検証し、日本語翻訳は `g-auth.json` を読みます。欠落は対応 toggle とその機能の
 実行経路だけを拒否し、起動は妨げません。ただし**ファイルが存在する限り厳密なパースを
 通らなければならず**、対応機能が今オフでも不正な内容は起動を拒否します
@@ -290,6 +290,6 @@ bun run start     # ロングポーリングを開始
 
 <div align="center">
 
-**← 前のページ：なし** · [📚 開発者ドキュメント TOP](conntent-table.md) · [⬆️ トップへ戻る](#01-環境構築と初回起動) · [次のページ：02 アーキテクチャ →](02-architecture.md)
+**← 前のページ：なし** · [📚 開発者ドキュメント TOP](content-table.md) · [⬆️ トップへ戻る](#01-環境構築と初回起動) · [次のページ：02 アーキテクチャ →](02-architecture.md)
 
 </div>

@@ -48,12 +48,22 @@ describe("project convention collectors", () => {
       projectRoot,
       path,
       source(path, 'import { readFileSync } from "node:fs";\nimport { join } from "node:path";')
+    )).toEqual([
+      expect.stringContaining("unreviewed Node compatibility module node:fs"),
+    ]);
+
+    const inputPath: string = "/project/packages/libs/inputValidation.ts";
+    expect(collectNodeCompatibilityProblems(
+      projectRoot,
+      inputPath,
+      source(inputPath, 'import { readFileSync } from "node:fs";')
     )).toEqual([]);
 
+    const atomicPath: string = "/project/packages/libs/atomicFile.ts";
     const problems: readonly string[] = collectNodeCompatibilityProblems(
       projectRoot,
-      path,
-      source(path, 'import * as fs from "node:fs";\nimport { readFile } from "node:fs/promises";\nimport { exec } from "node:child_process";')
+      atomicPath,
+      source(atomicPath, 'import * as fs from "node:fs";\nimport { readFile } from "node:fs/promises";\nimport { exec } from "node:child_process";')
     );
     expect(problems).toEqual([
       expect.stringContaining("must not namespace-import node:fs"),
@@ -72,8 +82,8 @@ describe("project convention collectors", () => {
       path,
       source(path, 'import { rmSync } from "node:fs";\nimport { tmpdir } from "node:os";')
     )).toEqual([
-      expect.stringContaining("unreviewed node:fs export rmSync"),
-      expect.stringContaining("unreviewed node:os export tmpdir"),
+      expect.stringContaining("unreviewed Node compatibility module node:fs"),
+      expect.stringContaining("unreviewed Node compatibility module node:os"),
     ]);
 
     const backupPath: string = "/project/scripts/migration/backup.ts";
@@ -90,6 +100,20 @@ describe("project convention collectors", () => {
       expect.stringContaining("unreviewed node:fs export readFileSync"),
       expect.stringContaining("unreviewed node:fs export writeFileSync"),
     ]);
+
+    expect(collectNodeCompatibilityProblems(
+      projectRoot,
+      path,
+      source(path, "const size: number = Buffer.byteLength('x');\nconst reference = Buffer;")
+    )).toEqual([
+      expect.stringContaining("unreviewed Node compatibility global Buffer"),
+    ]);
+    const jsonBytesPath: string = "/project/packages/libs/jsonBytes.ts";
+    expect(collectNodeCompatibilityProblems(
+      projectRoot,
+      jsonBytesPath,
+      source(jsonBytesPath, "const size: number = Buffer.byteLength('x');")
+    )).toEqual([]);
   });
 
   test("cache owner 按真实模块图拒绝跨线程读取，并尊重显式豁免", () => {
@@ -227,13 +251,51 @@ describe("project convention collectors", () => {
   test("冷迁移命令、入口与当前 schema 边必须同步", async () => {
     const root: string = temporaryRoot("copy-ninjia-conventions-");
     mkdirSync(join(root, "scripts"), { recursive: true });
+    mkdirSync(join(root, "packages", "consts"), { recursive: true });
+    for (const locale of ["cn", "en", "ja"] as const) {
+      mkdirSync(join(root, "docs", locale), { recursive: true });
+    }
     await Bun.write(join(root, "scripts", "migrateQaThumbnail.ts"), "");
+    await Bun.write(
+      join(root, "scripts", "migrateTemporaryWhitelist.ts"),
+      "// v5 → v7\n" +
+      "function inspect(): 5 | 6 | 7 {\n" +
+      "  const version: number = 7;\n" +
+      "  if (version === 5) { return 5; }\n" +
+      "  if (version === 6) { return 6; }\n" +
+      "  if (version === 7) { return 7; }\n" +
+      "  throw new Error();\n" +
+      "}\n"
+    );
+    await Bun.write(
+      join(root, "packages", "consts", "identityStorage.ts"),
+      "export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 7;\n"
+    );
+    for (const locale of ["cn", "en", "ja"] as const) {
+      await Bun.write(
+        join(root, "docs", locale, "05-dev-workflow.md"),
+        "temporary allowlist schema v5 → v7\n"
+      );
+      await Bun.write(
+        join(root, "docs", locale, "07-operations.md"),
+        "current schema v7; direct v5 → v7; v6 is a resumable intermediate lineage\n"
+      );
+    }
     await Bun.write(join(root, "package.json"), JSON.stringify({
       scripts: {
         "migrate:qa-thumbnail": "bun scripts/migrateQaThumbnail.ts",
+        "migrate:temporary-whitelist": "bun scripts/migrateTemporaryWhitelist.ts",
       },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([]);
+
+    await Bun.write(
+      join(root, "docs", "cn", "07-operations.md"),
+      "current schema v6; direct v5 → v6\n"
+    );
+    expect(await collectColdMigrationProblems(root)).toEqual(expect.arrayContaining([
+      expect.stringContaining("docs/cn/07-operations.md must document schema v7"),
+    ]));
 
     await Bun.write(join(root, "package.json"), JSON.stringify({
       scripts: {

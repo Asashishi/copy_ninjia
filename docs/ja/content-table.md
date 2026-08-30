@@ -9,7 +9,7 @@
 # 📚 Copy Ninjia 開発者ドキュメント
 
 <p align="center">
-  <a href="../cn/conntent-table.md">简体中文</a> · <a href="../en/conntent-table.md">English</a> · <b>日本語</b> · <a href="README.md">🏠 日本語 README</a>
+  <a href="../cn/content-table.md">简体中文</a> · <a href="../en/content-table.md">English</a> · <b>日本語</b> · <a href="README.md">🏠 日本語 README</a>
 </p>
 
 開発者向けマルチページガイド：環境構築、アーキテクチャ設計、コーディング規約から機能拡張・運用保守まで網羅。

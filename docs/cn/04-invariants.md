@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 开发者文档首页</a> · <a href="03-directory-map.md">← 上一页：03 目录导览</a> · <a href="05-dev-workflow.md">下一页：05 开发流程 →</a>
+  <a href="content-table.md">📚 开发者文档首页</a> · <a href="03-directory-map.md">← 上一页：03 目录导览</a> · <a href="05-dev-workflow.md">下一页：05 开发流程 →</a>
 </p>
 
 ---
@@ -47,13 +47,15 @@
   已经开着的群由运行时门禁（`aiChat/availability.ts`、`antiRaid/adDetect.ts` 的 `buildAdCandidate`）一并停摆，不让 Worker 拿着读不动的配置反复崩溃。结论**连同失败一起**按进程缓存：这道判定挂在每条群消息的门禁上，不缓存失败就是每条消息一次 `readFileSync`；代价是修好文件要重启才生效，与四份 loader 的单例语义一致。
 
   唯一无条件读配置的地方是 Disk I/O Worker 的启动恢复（要拿贴纸白名单对账 `memory/stickers/`），它必须在读不动时**整体跳过对账**——绝不能退化成空白名单，那会把不在白名单里的持久化文件当孤儿删掉。
-- 白名单、黑名单和待完成处置统一以 `database/storage.sqlite` 为权威源；运行时不再读取或写入名单 JSON。Disk I/O Worker 启动时执行 SQLite 完整性、JSONB storage class、migration 谱系、schema 版本、每行严格 codec、白/黑名单互斥和 outbox 引用一致性校验，任一失败都拒绝以部分状态启动。生产启动不会自动迁移或创建缺失数据库，结构变更只由停机迁移脚本完成。
+- 白名单、黑名单、临时白名单累计和待完成处置统一以 `database/storage.sqlite` 为权威源；运行时不再读取或写入名单 JSON。Disk I/O Worker 启动时执行 SQLite 完整性、JSONB storage class、migration 谱系、schema 版本、每行严格 codec、黑名单与两类白名单互斥以及 outbox 引用一致性校验，任一失败都拒绝以部分状态启动。生产启动不会自动迁移或创建缺失数据库，结构变更只由停机迁移脚本完成。
 
-  **同步鉴权只读主线程的两份有界 LRU**：白名单和黑名单各最多 8,192 项，`null` 是明确的负缓存；Disk I/O 启动只返回两表计数，不复制整表。每条 update 的前置边界把最终会用到的身份批量预热，单次跨线程冷读最多 4,096 个主键；命令和入群判定随后同步读缓存，不在每个判定点 request/reply。冷读失败时普通路径按缺失 fail-closed，破坏性批量路径必须取消执行，不能把未知误判成不受保护。
+  **同步鉴权只读主线程的三份有界 LRU**：永久白名单、黑名单和临时白名单活动各最多 8,192 项，`null` 是明确的负缓存；Disk I/O 启动只返回永久名单计数，不复制三张整表。每条 update 的前置边界把最终会用到的身份批量预热，单次跨线程冷读最多 4,096 个主键；命令和入群判定随后同步读缓存，不在每个判定点 request/reply。冷读失败时普通路径按缺失 fail-closed，破坏性批量路径必须取消执行，不能把未知误判成不受保护。
 
-  **写入采用 write-through + 精确 revision ACK**：调用方先把目标主键的最终值发布到 LRU，再登记同主键最新未确认 revision 并投给 Disk I/O Worker；Worker 对白名单、黑名单和 outbox 各自按 128 个变化或首个变化等待 30 秒为界，在一个显式 SQLite 事务里提交当时全部变化。事务失败保留缓冲等待重试，成功只 ACK 精确 revision；迟到读不得覆盖未确认最终值，Worker 重建按 revision 顺序重放。`/white`、`/permission` 与 `/block` 的关键成功回执必须等待本领域 durable 确认；同步拒收、超时或未收到目标 ACK 由命令就地报告，不能让异常逃出 update handler 形成重投重启循环。
+  **临时白名单按展示身份跨群累计广告检测中的正常发言**：只有广告配置可用且本群显式开启广告检测时，真实用户或频道马甲才计数；服务消息、自动转发、机器人自身、本群匿名管理员皮套和永久白名单成员都不计。东京自然日内第 8 条发言把当天记为一次合格日，同一天只记一次；首个合格日立即授予只包含广告免检的 `TEMPORARY_WHITELIST_PERMISSIONS`。连续 7 个合格日后才写入永久白名单，永久条目仍只持有这份广告免检权限。任意符合计数条件的发言都会刷新 `counted_at`；超过 24 小时未发言或合格日中断只重置连续日计数，不撤销已经授予的临时成员关系。适用的广告 true verdict、身份拉黑或永久晋升会显式清除整条临时累计；已经授予豁免后到达的旧 verdict 不得撤权。墙钟回拨也从当前消息重新累计，不沿用未来时间轴；Disk I/O Worker 的统一 Bun 原生维护 cron 以显式 `Asia/Tokyo` 时区在东京零点清理没有临时成员关系的过期行。
 
-  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`，其余身份才查白名单 LRU。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
+  **写入采用 write-through + 精确 revision ACK**：调用方先把目标主键的最终值发布到 LRU，再登记同主键最新未确认 revision 并投给 Disk I/O Worker；Worker 对永久白名单、黑名单、临时白名单和 outbox 各自按 128 个变化或首个变化等待 30 秒为界，在一个显式 SQLite 事务里提交当时全部变化。事务失败保留缓冲等待重试，成功只 ACK 精确 revision；迟到读不得覆盖未确认最终值，Worker 重建按 revision 顺序重放。`/white`、`/permission` 与 `/block` 的关键成功回执必须等待本领域 durable 确认；同步拒收、超时或未收到目标 ACK 由命令就地报告，不能让异常逃出 update handler 形成重投重启循环。
+
+  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`；其余身份先读永久白名单，未命中时才以已经授予且尚未显式清除的临时白名单返回 `TEMPORARY_WHITELIST_PERMISSIONS`。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
 
   `/permission query` 与 `/permission help` 是只读入口：`query` 可以查询自身、回复目标或显式目标，返回补齐默认值后的完整视图，不创建数据库行；两者渲染出的 JSON 都长期保留——那是要照着逐项核对的权限看板，30 秒清理会在读完之前收走它。目标解析失败、修改拒绝与用法提示仍走统一 30 秒清理。
 - **进程级 Telegram 身份严格来自 `config/telegram.json`**：`bot_token` 与 `super_admin_user_id` 联网前必检，缺失、未知字段或非法值均拒绝启动。AI key 全部属于 `config/agent.json` 中的能力配置；每项能力独立声明 provider、api_key、base_url 与 model，不存在凭据默认、跨能力回退或运行时覆盖。`base_url` 只接受 `https`，明文 `http` 仅限 `localhost`/`127.0.0.1`/`::1`，且不得带 userinfo 或 `#` 片段——它旁边就是同一项能力的 api_key。
@@ -396,7 +398,7 @@
 
   **磁盘格式不变**：`JSON.stringify` 天然跳过取值为 `undefined` 的键，SQLite `chat_states` 的 JSONB 行里仍然只出现偏离缺省值的字段（已确证的 `botPermissions` 例外——「不是管理员」保存成一份 `isAdministrator: false` 的完整快照，与「没查过」的 `undefined` 是两回事，必须落盘，见 `libs/chatState.ts` 的 `isEmptyChatState`）。因此判空要逐字段看取值，不能数 `Object.keys().length`（规范形状下恒为 11）；`clearChatStateField` 判「有没有设过」同理看取值而不是 `field in chatState`。解码结果是稀疏的（行里只带真正出现过的键），必须经 `adoptChatState` 搬进规范形状再进 `chatStates`，否则磁盘上的形状差异会一路带进热路径。写回前统一过 `encodeChatStateData`，同一份严格解码器既守住字段集合，也把各群的键排成固定顺序。
 - AI 记忆与贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的 JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone。启动跨东京午夜时，先严格解码最新旧日文件，再以当天 active/tombstone 为更晚权威值合并并原子压缩到当天；只有发布成功才删除旧日，旧日损坏则保持新旧文件不动并拒绝恢复。稳态只保留东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；
-- Disk I/O 启动恢复严格分成三阶段：所有持久化域先只读 inspect/解码，全部成功后统一 adopt 内存 owner 与可写 SQLite 连接，成功回执后才执行临时/孤儿/过期文件清理、compact 和 rollover timer。任一 inspect 失败都不得改变任一领域的文件或权限，也不得留下 timer；AI 记忆与贴纸协议在 AI Worker 再水合时复用同一严格 decoder，坏载荷必须让该 Worker 初始化/重建明确失败，不能静默跳过单项。
+- Disk I/O 启动恢复严格分成三阶段：所有持久化域先只读 inspect/解码，全部成功后统一 adopt 内存 owner 与可写 SQLite 连接，成功回执后才执行临时/孤儿/过期文件清理、compact，并注册唯一的东京零点维护 cron。该 cron 逐领域隔离失败，统一触发运势、日志、入群日志、广告样本、待验证与临时白名单维护；既有启动/事件路径仍作为兜底。任一 inspect 失败都不得改变任一领域的文件或权限，也不得留下维护 cron；AI 记忆与贴纸协议在 AI Worker 再水合时复用同一严格 decoder，坏载荷必须让该 Worker 初始化/重建明确失败，不能静默跳过单项。
 
   `null` tombstone 与其它基础类型都必须被视为完整的最后值。
 - AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，Disk I/O Worker 只有在 unlink 达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker 重建会重放 tombstone 与最新镜像，顺序不决定最终结果。一次已确认删除或 LRU 淘汰后的首份新快照必须立即写入，主线程在收到对应 durable upsert 回执前保留 revision 标记并在 Disk I/O Worker 重建后重放最新镜像。
@@ -445,7 +447,7 @@
 
 - **表单消息的删除责任必须始终有主**。表单不挂固定延迟清理（它是状态机拥有的消息），因此每一条让会话离场的路径都要把那条消息一起收走：填齐结算、TTL 到期、群 teardown，以及**被同一个人重开的新表单顶掉**。最后那条最容易漏——只把旧会话从表里摘掉的话，那条表单消息就再没有任何路径拥有它，会永远留在群里。`openQaFormSession` 因此在替换旧会话时也调 `onDiscard`。另一个人来抢由命令层在调用之前拒绝，不进入替换路径。
 
-- **投递入口必须挡住自己发的帖**。频道里本天才自己的帖会作为 `channel_post` 原样推回来（见 `infra/selfSentTracker.ts`），而表单提示正文里就写着 `问题:`、`回答:` 两行示例——不过 `isBotOwnMessage` 这一关，那张表单会拿自己的示例把自己填满并当场落库。表单消息自身的 `message_id` 再兜一道。同理，投递入口注册在 `["message", "channel_post"]` 上而不只是 `message`：频道里的投递是频道帖，只监听 `message` 等于频道根本填不了表单。**同步的 `isBotOwnMessage` 只覆盖主线程自己发的那几条**（表单、回执、看板）：update runner 严格串行，它们的 `markSelfSent` 必然早于回投 update 被取回。Worker 发的消息由代理边界在主线程登记（见[出站请求与消息安全](#出站请求与消息安全)），但登记时刻是发送响应落地，与 `channel_post` 回投之间没有顺序保证；而频道帖的可见身份就是频道自己，与频道身份开的表单 `openedById` 恒相等，按身份的判据同样挡不住它。因此还要一道 `needsBotOwnMessageWait` + `waitForBotOwnMessage` 的有界 rendezvous，口径与 `auto/message/index.ts`、`commands/cjkAction.ts` 一致。**这些判据按成本排序，不按重要性**：入口挂在每条群消息的主干上，第一步必须是以群 id 为键的那次 `Map.get`（数字键、零分配、未命中即返回），`isBotOwnMessage` 排在它后面——那条判定要拼一个 `chatId:messageId` 复合键字符串，放到最前面等于给每条群消息都记一次分配；跨线程 rendezvous 最贵，排在全部廉价判据之后、任何副作用之前。它们都只是 `return null`，先后不影响结论，只影响每条消息要付多少。
+- **投递入口必须挡住自己发的帖**。频道里本天才自己的帖会作为 `channel_post` 原样推回来（见 `infra/selfSentTracker.ts`），而表单提示正文里就写着 `问题:`、`回答:` 两行示例——不过 `isBotOwnMessage` 这一关，那张表单会拿自己的示例把自己填满并当场落库。表单消息自身的 `message_id` 再兜一道。同理，投递入口注册在 `["message", "channel_post"]` 上而不只是 `message`：频道里的投递是频道帖，只监听 `message` 等于频道根本填不了表单。**同步的 `isBotOwnMessage` 只覆盖主线程自己发的那几条**（表单、回执、看板）：update runner 严格串行，它们的 `markSelfSent` 必然早于回投 update 被取回。Worker 发的消息由代理边界在主线程登记（见[出站请求与消息安全](#出站请求与消息安全)），但登记时刻是发送响应落地，与 `channel_post` 回投之间没有顺序保证；而频道帖的可见身份就是频道自己，与频道身份开的表单 `openedById` 恒相等，按身份的判据同样挡不住它。因此还要一道 `needsBotOwnMessageWait` + `waitForBotOwnMessage` 的有界 rendezvous，口径与 `auto/message/index.ts`、`commands/cjkAction.ts` 一致。**这些判据按成本排序，不按重要性**：入口挂在每条群消息的主干上，第一步必须是以群 id 为键的那次 `Map.get`（数字键、零分配、未命中即返回），`isBotOwnMessage` 排在它后面——它同样零分配（`infra/selfSentTracker.ts` 按 `(chatId, messageId)` 两级整数键直查，不拼复合串），但一条消息最多要查两对键，仍比这里一次未命中即返回的 `Map.get` 贵；跨线程 rendezvous 最贵，排在全部廉价判据之后、任何副作用之前。它们都只是 `return null`，先后不影响结论，只影响每条消息要付多少。
 
 - **答案里的代码块以字面 ``` 围栏落盘**（`libs/codeFence.ts`）。Telegram 客户端在发送前就把围栏折成了 `pre` 实体，正文里只剩块内文本；入口把实体还原成字面围栏存下来，直答出口再拆回正文加实体发出去。存围栏而不存实体偏移，是为了让 `chat_qa.data` 保持单一字符串，不牵动持久化格式。**围栏本身算进 `CHAT_QA_ANSWER_MAX_CHARS`**，否则「存得下」与「发得出」会在边界上分家。
 
@@ -471,7 +473,7 @@
 
   **`/unblock` 默认完整解除**：已在表中时先发布负缓存和删除 tombstone，并从 `pendingBlockedRemovals` 在途批次摘掉该 id；无论目标是否在表中，都在所有 `ChatState.botPermissions?.isAdministrator === true` 的群解除 Telegram 封禁。命令只要求 `isCanUnBlock`，旧 `all` 参数不再解析。跨群解封必须走 `unbanChatMemberIfBanned`（`only_if_banned: true`），避免把当前仍是成员的人误踢；频道身份走 `unbanChatSenderChat`。已经投进 Worker 的旧批次无法撤回，这段窗口仍是已知取舍。
 
-  **自己人不可拉黑**：`isWhitelisted` 同时覆盖 SQLite 白名单条目与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。Disk I/O 事务和启动 hydrate 再各自复核两表互斥，任何冲突均 fail closed。
+  **自己人不可拉黑**：`isWhitelisted` 同时覆盖永久白名单、仍有效的临时白名单与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。拉黑路径先排临时累计墓碑，再排黑名单最终值；Disk I/O 事务和启动 hydrate 复核黑名单不得与两类白名单相交，任何冲突均 fail closed。
 
   启动恢复逐行验证 canonical 非零安全整数主键、严格 JSONB data 和表间引用；一条非法就拒绝整个身份库，不截断、不丢行、不猜。`memory/ai/<chatId>.json` 等仍以 id 命名的文件继续要求规范十进制文件名，避免补零变体映射到同一个运行时 key。
 
@@ -672,7 +674,7 @@
 
   **命中即写一条旁路样本**（`memory/ad-detected/sample.json`，见 `workers/diskIO/adSampleFile.ts`）：判定规则由提示词定死，题材口径全靠 `config/ad_samples.json` 的示例，而示例只能从真实命中里攒——没有原始素材，误判就只能靠人凭印象复述。
 
-  这是整个持久化里**唯一只写不读**的一类：进程从不加载，启动恢复不碰，因此不进统一 flush 的领域清单（一个纯诊断文件的写盘失败不该让 `/block` 的落盘确认报失败）、允许截断自愈、失败即弃只 `console.error`；当前文件达到 8 MiB 时自动轮转为 `sample.<东京日期>[.<正整数序号>].json`，归档严格按文件名日期保留今天在内最近 15 个东京自然日。保留期清扫每天至多一次，只删除严格匹配的普通文件；扫描或单文件删除失败均继续旁路追加；
+  这是整个持久化里**唯一不读样本内容**的一类：启动恢复不 hydrate，也不进统一 flush 的领域清单（一个纯诊断文件的写盘失败不该让 `/block` 的落盘确认报失败）；启动成功后的 maintenance 与统一东京零点 cron 只扫描目录项，首次写入仍是兜底。孤儿临时文件每个 Worker isolate 至多扫描一次，归档保留期每个东京日最多清扫一次；当前文件达到 8 MiB 时自动轮转为 `sample.<东京日期>[.<正整数序号>].json`，归档严格按文件名日期保留今天在内最近 15 个东京自然日。清扫只删除严格匹配的普通文件，扫描或单文件删除失败均继续旁路追加；样本允许截断自愈，失败即弃且只 `console.error`；
 
   投递排在 `blockUser` 之前，那之后每一步都可能抛错，而这条素材恰恰是「这次判得对不对」的唯一证据。样本按**整串**记录而不是只留触发那一条：判定看的就是整串，只留一条的话人看到的是一句孤立的话，复现不出模型当时读到的东西。
 
@@ -787,6 +789,6 @@
 
 <div align="center">
 
-[← 上一页：03 目录导览](03-directory-map.md) · [📚 开发者文档首页](conntent-table.md) · [⬆️ 回到顶部](#04-运行时权威约束) · [下一页：05 开发流程 →](05-dev-workflow.md)
+[← 上一页：03 目录导览](03-directory-map.md) · [📚 开发者文档首页](content-table.md) · [⬆️ 回到顶部](#04-运行时权威约束) · [下一页：05 开发流程 →](05-dev-workflow.md)
 
 </div>

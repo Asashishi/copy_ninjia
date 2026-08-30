@@ -260,3 +260,21 @@ export function maintainLuckDayState(
 ): void {
   maintainLuckDay(day, inspection);
 }
+
+/**
+ * 每日维护先提交旧 owner 与故障期滞留抽签，再严格接管目标日并清理更早文件。
+ * 目标日落后于当前 owner 时拒绝回拨，避免时钟回拨误删当前数据。
+ */
+export function maintainLuckForDay(day: string): void {
+  const currentDay: string | undefined = luckWorkerCache.current?.day;
+  if (currentDay !== undefined && day < currentDay) return;
+  if (!flushLuckAppends()) {
+    throw new Error(`Failed to flush luck results before daily maintenance for ${day}.`);
+  }
+  if (luckDeferredDraws.length > 0) drainDeferredLuckDraws();
+  if (!flushLuckAppends()) {
+    throw new Error(`Failed to flush deferred luck results before daily maintenance for ${day}.`);
+  }
+  if (luckWorkerCache.current?.day !== undefined && luckWorkerCache.current.day > day) return;
+  hydrateLuckDay(day);
+}

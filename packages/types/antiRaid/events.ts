@@ -1,6 +1,6 @@
 import type { ChatPermissions } from "@grammyjs/types";
 import type { LockdownPhase } from "../chatState";
-import type { AdDetectedEvent } from "./adDetect";
+import type { AdDetectionEvent } from "./adDetect";
 import type {
   DeferredVerificationRecord,
   VerificationSnapshot,
@@ -79,6 +79,6 @@ export type AntiRaidWorkerEvent =
   | VerificationDeleteEvent
   | VerificationDeferredEvent
   | BlockedMembersRemovedEvent
-  | AdDetectedEvent
+  | AdDetectionEvent
   | AntiRaidBarrierCompleteEvent
   | AntiRaidDrainCompleteEvent;

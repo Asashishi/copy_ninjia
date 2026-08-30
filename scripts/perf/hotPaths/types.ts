@@ -11,6 +11,7 @@ export type ScenarioName =
   | HotPathProfileScenarioName
   | "sender-no-username"
   | "ai-activity-lru-miss"
+  | "temporary-whitelist-activity"
   | "ad-empty-metadata"
   | "ad-wire-clone"
   | "quota-timestamp-window"
@@ -18,6 +19,7 @@ export type ScenarioName =
   | "chat-state-read"
   | "chat-state-map-read"
   | "self-sent-empty"
+  | "self-sent-active"
   | "flood-window-hit"
   | "flood-window-growth"
   | "gag-speak-counter"

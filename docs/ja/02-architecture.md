@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="01-getting-started.md">← 前のページ：01 環境構築</a> · <a href="03-directory-map.md">次のページ：03 ディレクトリマップ →</a>
+  <a href="content-table.md">📚 開発者ドキュメント TOP</a> · <a href="01-getting-started.md">← 前のページ：01 環境構築</a> · <a href="03-directory-map.md">次のページ：03 ディレクトリマップ →</a>
 </p>
 
 ---
@@ -107,7 +107,7 @@ flowchart TD
 1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
 3. **state 永続化境界を復元し、すでに存在するデプロイ入力を検証**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元し、業務 facade から正式なメモリを hydrate します。`telegram.json` はプロセスレベルで必須、その他の任意入力は**ファイルが存在する限り厳密なパースを通らなければならず**、本当に欠落している場合は各機能自身の readiness 判定に委ねます（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs`。出口は [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` のグループスイッチはこの照合に関与せず、次段の永続化復元境界でのみデコードされます。
-4. **Disk I/O Worker** を初期化します。ログ、AI、スタンプ、運勢、認証待ち、入室ログ、`database/storage.sqlite` を全 domain 一括で read-only inspect して厳格 decode し、すべて成功した後だけ owner を adopt します。成功応答後に temporary/orphan/期限切れ file の清掃、compact、rollover timer を開始します。inspect が 1 つでも失敗した場合、どの domain にも chmod、rewrite、unlink を行わず timer も残しません。main thread は policy 2 table 全体を複製せず、`chat_states`、policy count、未完了 removal だけを受け取ります。続いて Telegram クライアントを初期化し、スーパー管理者が blocklist に載っていないことを表明します。
+4. **Disk I/O Worker** を初期化します。ログ、AI、スタンプ、運勢、認証待ち、入室ログ、`database/storage.sqlite` を全 domain 一括で read-only inspect して厳格 decode し、すべて成功した後だけ owner を adopt します。成功応答後に temporary/orphan/期限切れ file の清掃と compact を行い、`Asia/Tokyo` を明示した Bun native の東京 0 時 maintenance cron を 1 つ登録します。この cron は運勢 file、log、入室 log、広告 sample archive、認証待ちの日別 file、一時 allowlist activity をまとめて maintenance します。既存の起動時または業務 event 起点の清掃は fallback として残し、認証待ち rollover の失敗時だけ、終了を妨げない 1 秒 retry timer を保持します。inspect が 1 つでも失敗した場合、どの domain にも chmod、rewrite、unlink を行わず、maintenance cron も残しません。main thread は `chat_states`、恒久 policy count、未完了 removal だけを受け取り、恒久 allowlist・blocklist・一時 activity table 全体は複製しません。続いて Telegram クライアントを初期化し、スーパー管理者が blocklist に載っていないことを表明します。
 5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
 6. **AI Worker** を初期化し（AI 設定が利用不可ならこの段階はログ 1 行を残して丸ごとスキップされます）、`chat_states` で AI が明示的に有効なグループだけを hydrate します。その後、スタンプ目録・運勢・認証待ちのミラーを復元し、**Anti-Raid Worker** と blocklist 掃き取りスケジューラを初期化して、管理中のグループを 1 巡だけ掃き取ります。
 7. `state.global.assets` の未設定項目を内蔵既定値で補い（background で永続化し、起動はブロックしません）、acknowledgement-safe runner を開始し、最後に query category の request と connection を無制限に占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。
@@ -137,6 +137,6 @@ lifecycle と Anti-Raid drain のプロセス内経過時間 budget は [`packag
 
 <div align="center">
 
-[← 前のページ：01 環境構築](01-getting-started.md) · [📚 開発者ドキュメント TOP](conntent-table.md) · [⬆️ トップへ戻る](#02-アーキテクチャ概要) · [次のページ：03 ディレクトリマップ →](03-directory-map.md)
+[← 前のページ：01 環境構築](01-getting-started.md) · [📚 開発者ドキュメント TOP](content-table.md) · [⬆️ トップへ戻る](#02-アーキテクチャ概要) · [次のページ：03 ディレクトリマップ →](03-directory-map.md)
 
 </div>

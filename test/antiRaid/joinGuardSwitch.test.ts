@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { Message } from "@grammyjs/types";
 import type { AntiRaidWorkerMessage } from "../../packages/types";
 import type { DiskBusinessMessage } from "../../packages/types/diskIO";
 
@@ -14,6 +15,7 @@ import type { DiskBusinessMessage } from "../../packages/types/diskIO";
 const workerPosts: AntiRaidWorkerMessage[] = [];
 const diskPosts: DiskBusinessMessage[] = [];
 const answeredCallbacks: { callbackQueryId: string; text?: string }[] = [];
+const temporaryWhitelistActivityMessages: Message[] = [];
 /** 逐用例可改的群状态；缺省是「已开防刷屏、未开入群守卫」。 */
 const chatState: Record<string, boolean> = {};
 
@@ -76,6 +78,14 @@ mock.module("../../packages/infra/diskIO", () => ({
   },
   postDiskIODiagnostic: (message: DiskBusinessMessage): boolean => {
     diskPosts.push(message);
+    return true;
+  },
+}));
+mock.module("../../packages/antiRaid/temporaryWhitelist", () => ({
+  recordEligibleTemporaryWhitelistActivity(
+    options: { readonly message: Message }
+  ): boolean {
+    temporaryWhitelistActivityMessages.push(options.message);
     return true;
   },
 }));
@@ -144,6 +154,7 @@ beforeEach(() => {
   workerPosts.length = 0;
   diskPosts.length = 0;
   answeredCallbacks.length = 0;
+  temporaryWhitelistActivityMessages.length = 0;
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
   activeVerificationSnapshots.clear();
@@ -242,6 +253,48 @@ describe("入群守卫开关（主线程投递侧）", () => {
     expect(started).toBe(false);
     // 同步返回不等于跳过投递：刷屏计数照样在同一次调用里投出去。
     expect(typesOf()).toContain("floodCandidate");
+  });
+
+  test("只有用户内容消息进入临时白名单累计，平台服务事件全部跳过", () => {
+    const contentMessages: readonly Partial<Message>[] = [
+      { text: "text" },
+      { photo: [] },
+      { sticker: {} as never },
+      { paid_media: {} as never },
+      { checklist: {} as never },
+    ];
+    const serviceMessages: readonly Partial<Message>[] = [
+      { pinned_message: {} as never },
+      { new_chat_title: "新标题" },
+      { forum_topic_created: {} as never },
+      { video_chat_started: {} as never },
+      { successful_payment: {} as never },
+      { giveaway: {} as never },
+    ];
+    let messageId: number = 100;
+    for (const content of contentMessages) {
+      handleAntiRaidMessageIngress({
+        chat: { id: -1001, type: "supergroup" },
+        message_id: messageId++,
+        date: 1,
+        from: { id: 42, is_bot: false, first_name: "Zako" },
+        ...content,
+      } as Message, 999);
+    }
+    for (const service of serviceMessages) {
+      handleAntiRaidMessageIngress({
+        chat: { id: -1001, type: "supergroup" },
+        message_id: messageId++,
+        date: 1,
+        from: { id: 42, is_bot: false, first_name: "Zako" },
+        ...service,
+      } as Message, 999);
+    }
+
+    expect(temporaryWhitelistActivityMessages).toHaveLength(contentMessages.length);
+    expect(temporaryWhitelistActivityMessages.map(
+      (message: Message): number => message.message_id
+    )).toEqual([100, 101, 102, 103, 104]);
   });
 
   test("关着时入群公告照样被吞掉：服务消息本来就不该进复读/AI 流水线", async () => {

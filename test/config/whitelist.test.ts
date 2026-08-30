@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
   NON_WHITELIST_PERMISSIONS,
+  TEMPORARY_WHITELIST_PERMISSIONS,
+  WHITELIST_PERMISSION_KEYS,
 } from "../../packages/consts/whitelist";
+import { DAY_MS } from "../../packages/consts/diskIO/common";
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
 import type {
   DiskBusinessMessage,
@@ -21,7 +24,13 @@ const flushDiskIODomainOutcome = mock(
       writes.push({ table: message.table, id: message.id, revision: message.revision });
     }
     for (const listener of persistedListeners) {
-      listener({ type: "identityStoragePersisted", writes, chatStateWrites: [], chatQaWrites: [] });
+      listener({
+        type: "identityStoragePersisted",
+        writes,
+        temporaryWhitelistWrites: [],
+        chatStateWrites: [],
+        chatQaWrites: [],
+      });
     }
     return { result: "flushed" as const };
   }
@@ -49,6 +58,9 @@ const {
   unacknowledgedWhitelistWrites,
   whitelistEntryCache,
 } = await import("../../packages/cache/main/identityStorage");
+const { temporaryWhitelistActivityCache } = await import(
+  "../../packages/cache/main/temporaryWhitelist"
+);
 const {
   enableAllWhitelistPermissions,
   confirmWhitelistEntryPersisted,
@@ -56,13 +68,18 @@ const {
   getWhitelistPermissionQueryView,
   hasWhitelistPermission,
   isWhitelisted,
+  promoteAdBypassWhitelistMembership,
   setWhitelistMembership,
   setWhitelistPermission,
 } = await import("../../packages/infra/identityPolicy/whitelist");
+const { canBypassAdDetection } = await import(
+  "../../packages/antiRaid/memberFacts"
+);
 
 function seedMissing(id: number): void {
   whitelistEntryCache.set(id, null);
   blocklistEntryCache.set(id, null);
+  temporaryWhitelistActivityCache.set(id, null);
 }
 
 beforeEach(() => {
@@ -93,6 +110,62 @@ describe("SQLite 白名单运行时视图", () => {
     expect(diskMessages).toEqual([]);
   });
 
+  test("临时白名单在显式删除前只取得广告检测豁免", () => {
+    const now: number = Date.now();
+    seedMissing(7);
+    temporaryWhitelistActivityCache.set(7, {
+      tempWhite: true,
+      tempWhiteAt: now - DAY_MS - 1,
+      tempWhiteCount: 7,
+      sendCount: 8,
+      countedAt: now - DAY_MS - 1,
+      qualifiedAt: now - DAY_MS - 1,
+    });
+
+    expect(isWhitelisted(7)).toBeFalse();
+    expect(canBypassAdDetection(SUPER_ADMIN_USER_ID)).toBeTrue();
+    expect(canBypassAdDetection(7)).toBeTrue();
+    expect(getEffectiveWhitelistPermissions(7)).toBe(TEMPORARY_WHITELIST_PERMISSIONS);
+    expect(getWhitelistPermissionQueryView(7)).toBe(TEMPORARY_WHITELIST_PERMISSIONS);
+    expect(hasWhitelistPermission(7, "isCanViewBotStatus")).toBeFalse();
+    expect(hasWhitelistPermission(7, "isCanBypassAdDetection")).toBeTrue();
+    expect(hasWhitelistPermission(7, "isCanBypassFloodControl")).toBeFalse();
+    expect(hasWhitelistPermission(7, "isCanMute")).toBeFalse();
+    for (const key of WHITELIST_PERMISSION_KEYS) {
+      expect(hasWhitelistPermission(7, key))
+        .toBe(key === "isCanBypassAdDetection");
+    }
+
+    temporaryWhitelistActivityCache.set(7, null);
+    expect(isWhitelisted(7)).toBeFalse();
+    expect(canBypassAdDetection(7)).toBeFalse();
+    expect(getEffectiveWhitelistPermissions(7)).toBeUndefined();
+  });
+
+  test("广告专用读口覆盖永久成员权限位关闭、临时成员与普通负缓存", () => {
+    seedMissing(9);
+    whitelistEntryCache.set(9, {
+      permissions: { ...DEFAULT_WHITELIST_PERMISSIONS, isCanBypassAdDetection: false },
+      meta: { firstName: "Permanent", lastName: "", username: "" },
+    });
+    expect(canBypassAdDetection(9)).toBeTrue();
+
+    seedMissing(10);
+    temporaryWhitelistActivityCache.set(10, {
+      tempWhite: false,
+      tempWhiteAt: null,
+      tempWhiteCount: 0,
+      sendCount: 1,
+      countedAt: Date.now(),
+      qualifiedAt: null,
+    });
+    expect(canBypassAdDetection(10)).toBeFalse();
+
+    seedMissing(11);
+    expect(canBypassAdDetection(11)).toBeFalse();
+    expect(canBypassAdDetection(12)).toBeFalse();
+  });
+
   test("新增成员写入完整默认权限和 Telegram meta", async () => {
     seedMissing(7);
     const result = await setWhitelistMembership({
@@ -114,6 +187,24 @@ describe("SQLite 白名单运行时视图", () => {
       revision: 1,
     }));
     expect(unacknowledgedWhitelistWrites.get(7)?.revision).toBe(1);
+  });
+
+  test("连续七日晋升只写入广告检测豁免权限", () => {
+    seedMissing(8);
+
+    expect(promoteAdBypassWhitelistMembership(8, {
+      firstName: "Alice",
+      lastName: "",
+      username: "alice",
+    })).toEqual({ changed: true, queued: true });
+    expect(whitelistEntryCache.peek(8)).toEqual({
+      permissions: TEMPORARY_WHITELIST_PERMISSIONS,
+      meta: { firstName: "Alice", lastName: "", username: "alice" },
+    });
+    for (const key of WHITELIST_PERMISSION_KEYS) {
+      expect(hasWhitelistPermission(8, key))
+        .toBe(key === "isCanBypassAdDetection");
+    }
   });
 
   test("新增缺 meta 或目标仍在黑名单时拒绝，不发布半份内存状态", () => {

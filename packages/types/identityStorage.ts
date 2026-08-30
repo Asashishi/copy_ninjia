@@ -1,10 +1,12 @@
 import type { PendingBlockedRemoval } from "./blocklist";
 import type { ChatState } from "./chatState";
+import type { StoredTemporaryWhitelistActivity } from "./temporaryWhitelist";
 
-/** Disk I/O 回执路由层尚未解码的两表 JSON 文本。 */
+/** Disk I/O 回执路由层尚未解码的永久策略文本与临时累计关系列。 */
 export interface IdentityPolicyRawReadResult {
   readonly whitelist: readonly (readonly [number, string])[];
   readonly blocklist: readonly (readonly [number, string])[];
+  readonly temporaryWhitelist: readonly StoredTemporaryWhitelistActivity[];
 }
 
 /** SQLite 按主键稳定顺序返回的一页黑名单 ID；载荷受固定页大小硬顶。 */

@@ -168,7 +168,7 @@ export function requestJoinLogFromWorker({
   });
 }
 
-/** 向当前 Disk I/O 代际批量读取两个身份策略表。 */
+/** 向当前 Disk I/O 代际批量读取永久策略与临时白名单累计表。 */
 export interface RequestIdentityPoliciesParams {
   worker: Worker;
   ids: readonly number[];

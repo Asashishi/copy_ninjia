@@ -56,8 +56,11 @@ const {
   verificationGeneration,
   verificationRevisions,
 } = await import("../../../packages/cache/workers/antiRaid/verification");
-const { resetLinkedChannelCache, linkedChannels } =
+const { linkedChannelFetches, resetLinkedChannelCache, linkedChannels } =
   await import("../../../packages/cache/workers/antiRaid/linkedChannels");
+const { fetchChatHasLinkedChannel } = await import(
+  "../../../packages/workers/antiRaid/linkedChannel"
+);
 const { recentChannelComments } = await import("../../../packages/cache/workers/antiRaid/recentComments");
 const { THREAD_COMMENT_CONFIRMATION_MAX } = await import(
   "../../../packages/consts/antiRaid/cache"
@@ -101,6 +104,33 @@ beforeEach(() => {
 });
 
 describe("cold linked-channel verification", () => {
+  test("reset 后陈旧查询不删除新槽位，也不把旧快照写回新一代", async () => {
+    const stale: Promise<boolean | undefined> =
+      fetchChatHasLinkedChannel(-1001);
+    expect(chatRequests).toHaveLength(1);
+
+    resetLinkedChannelCache();
+    const fresh: Promise<boolean | undefined> =
+      fetchChatHasLinkedChannel(-1001);
+    const freshSlot: Promise<void> | undefined = linkedChannelFetches.get(-1001);
+    expect(freshSlot).toBeDefined();
+    expect(chatRequests).toHaveLength(2);
+
+    chatRequests[0]!.resolve({
+      id: -1001,
+      type: "supergroup",
+      linked_chat_id: -2001,
+    });
+    await expect(stale).resolves.toBeUndefined();
+    expect(linkedChannelFetches.get(-1001)).toBe(freshSlot!);
+    expect(linkedChannels.has(-1001)).toBeFalse();
+
+    chatRequests[1]!.resolve({ id: -1001, type: "supergroup" });
+    await expect(fresh).resolves.toBeFalse();
+    expect(linkedChannels.get(-1001)?.hasLinked).toBeFalse();
+    expect(linkedChannelFetches.has(-1001)).toBeFalse();
+  });
+
   test("明确回复频道转发帖在 join 前记为最近评论并直接豁免", () => {
     runtime.adoptVerifications({
       type: "adoptVerifications",

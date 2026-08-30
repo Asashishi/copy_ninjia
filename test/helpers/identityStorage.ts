@@ -4,6 +4,8 @@ import {
   resetIdentityStorageCache,
   whitelistEntryCache,
 } from "../../packages/cache/main/identityStorage";
+import { temporaryWhitelistActivityCache } from
+  "../../packages/cache/main/temporaryWhitelist";
 import type { BlocklistEntryData } from "../../packages/types/identityPolicy";
 
 interface BlockedTestRecord {
@@ -22,7 +24,7 @@ const blockedIdentityTestIds: Set<number> = new Set<number>();
 
 /**
  * 只存在于测试 isolate 的旧 Map 观察适配器；生产代码不再持有无界黑名单 Map。
- * set 同时补齐两表正/负缓存，使被测写操作满足“先冷读、后变更”的运行时前提。
+ * set 同时补齐三张关系的正/负缓存，使被测写操作满足“先冷读、后变更”的前提。
  */
 export const blockedIdentityTestView: {
   readonly size: number;
@@ -61,6 +63,7 @@ export const blockedIdentityTestView: {
       meta: TEST_IDENTITY_META,
     });
     whitelistEntryCache.set(id, null);
+    temporaryWhitelistActivityCache.set(id, null);
   },
 };
 
@@ -69,8 +72,11 @@ export function readBlockedIdentityTestIds(): readonly number[] {
   return [...blockedIdentityTestIds];
 }
 
-/** 为将要新增的身份建立两张表的负缓存。 */
+/** 为将要新增的身份建立三张关系的负缓存。 */
 export function seedMissingIdentity(id: number): void {
   if (!blocklistEntryCache.has(id)) blocklistEntryCache.set(id, null);
   if (!whitelistEntryCache.has(id)) whitelistEntryCache.set(id, null);
+  if (!temporaryWhitelistActivityCache.has(id)) {
+    temporaryWhitelistActivityCache.set(id, null);
+  }
 }

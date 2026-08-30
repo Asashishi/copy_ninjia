@@ -81,6 +81,9 @@ export const CHAIN_JOIN_LOG_EVENTS: number = 1_000;
 /** 身份策略写透链路的计时批次数；每批 `IDENTITY_WRITE_BATCH_MAX_ENTRIES` 条。 */
 export const CHAIN_IDENTITY_BATCHES: number = 200;
 
+/** 临时白名单资格判定到 SQLite 精确 ACK 的计时次数。 */
+export const CHAIN_TEMPORARY_WHITELIST_WRITES: number = 400;
+
 /** 群状态 durable 屏障链路的计时次数；写入在固定群集合上轮转。 */
 export const CHAIN_CHAT_STATE_WRITES: number = 400;
 

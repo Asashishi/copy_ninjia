@@ -28,8 +28,8 @@ export function createStorageDatabase(path: string): void {
   }
 }
 
-/** 新建空库时一次性应用仓库内的当前 schema；生产启动路径不得调用。 */
-function migrateStorageDatabaseSchema(database: StorageDatabase): void {
+/** 新建空库或冷迁移脚本应用当前 schema；生产启动路径不得调用。 */
+export function migrateStorageDatabaseSchema(database: StorageDatabase): void {
   migrate(database, { migrationsFolder: IDENTITY_DATABASE_MIGRATIONS_DIR });
 }
 

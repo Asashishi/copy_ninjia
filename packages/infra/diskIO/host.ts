@@ -143,11 +143,17 @@ export function createDiskIOWorker(): Worker {
     }
     if (data.type === "identityPoliciesRead") {
       const reply: IdentityPoliciesReadReply = data;
-      // 两张表缺任意一张都不算有效载荷；合成对象只在都在时构造。
+      // 三张表缺任意一张都不算有效载荷；合成对象只在都在时构造。
       const rows: IdentityPolicyRawReadResult | undefined =
-        reply.whitelist === undefined || reply.blocklist === undefined
+        reply.whitelist === undefined ||
+          reply.blocklist === undefined ||
+          reply.temporaryWhitelist === undefined
           ? undefined
-          : { whitelist: reply.whitelist, blocklist: reply.blocklist };
+          : {
+            whitelist: reply.whitelist,
+            blocklist: reply.blocklist,
+            temporaryWhitelist: reply.temporaryWhitelist,
+          };
       settleDiskIOReply({
         channel: identityPolicyReadRequests,
         requestId: reply.requestId,

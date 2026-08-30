@@ -96,7 +96,7 @@ const ZH: BenchmarkCopy = {
       "每个场景一个独立进程，预热后取 7 个样本的中位数；吞吐由中位延迟折算。",
     chain:
       "每行都从生产入口跑到动作名称所写的完成点；「完整处理能力」表示单进程每秒能完整跑完多少次。" +
-      "前五行驱动真实 Disk I/O Worker，并计时到 durable 回执。广告检测与 `ai_chat` 两行把模型和 Telegram " +
+      "前七行驱动真实 Disk I/O Worker，并计时到 durable 回执。广告检测与 `ai_chat` 两行把模型和 Telegram " +
       "替换为进程内固定应答，因此包含提示词、状态机、处置、序列化和磁盘等全部本地工作，但不含网络。" +
       "`ai_chat` 到消息发送完成为止，不把 30 秒定时批量执行的记忆快照强摊到每轮回复；该成本由 AI 记忆快照行单列。" +
       "它还扣除了发送前 1.5–7.5 秒的拟人停顿：这段停顿逐次实测、按群限速且不占 CPU，" +
@@ -191,7 +191,7 @@ const EN: BenchmarkCopy = {
       "One isolated process per scenario; median of 7 samples after warmup, with throughput derived from it.",
     chain:
       "Each row runs from a production entry to the completion point stated in its name; \"Complete runs/s\" " +
-      "is how many such runs one process finishes per second. The first five rows drive a real Disk I/O Worker " +
+      "is how many such runs one process finishes per second. The first seven rows drive a real Disk I/O Worker " +
       "and end at its durable acknowledgement. The ad-detection and `ai_chat` rows replace model and Telegram " +
       "traffic with in-process canned replies, so they include all local prompt, state-machine, disposal, " +
       "serialization and disk work but no network time. `ai_chat` ends when the reply is sent and does not force " +
@@ -288,7 +288,7 @@ const JA: BenchmarkCopy = {
       "シナリオごとに独立プロセスで実行し、ウォームアップ後 7 サンプルの中央値を取る。スループットはその中央値から換算。",
     chain:
       "各行は本番エントリから名前に示した完了点までを実行し、「完全処理能力」は 1 プロセスが毎秒完了できる回数を示す。" +
-      "先頭 5 行は実際の Disk I/O Worker を駆動し、永続化 ACK までを計測する。広告検出と `ai_chat` はモデルと Telegram " +
+      "先頭 7 行は実際の Disk I/O Worker を駆動し、永続化 ACK までを計測する。広告検出と `ai_chat` はモデルと Telegram " +
       "通信をプロセス内の固定応答に置き換えるため、プロンプト、状態機械、処置、直列化、ディスクなどのローカル処理を" +
       "すべて含むが通信時間は含まない。`ai_chat` は返信送信で完了し、30 秒ごとの一括メモリスナップショットを各返信に" +
       "強制配賦しない。その費用は AI メモリスナップショット行で別に示す。送信前の 1.5～7.5 秒の擬人的な間も実測して" +

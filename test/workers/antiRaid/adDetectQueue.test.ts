@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { AdCandidateMessage, AdDetectedEvent } from "../../../packages/types/antiRaid";
+import type {
+  AdCandidateMessage,
+  AdDetectedEvent,
+  AdVerdictTrueEvent,
+} from "../../../packages/types/antiRaid";
 import type { AdVerdict } from "../../../packages/types/antiRaid/adDetect";
 import {
   candidate,
@@ -8,12 +12,14 @@ import {
   classifyAdText,
   disposeAdSender,
   errorLogs,
+  fetchedAdmins,
   resetAdDetectQueueHarness,
   warnReferencedAdSender,
 } from "../../helpers/adDetectQueueHarness";
 
 const {
   clearChatAdDetect,
+  clearIdentityAdDetect,
   enqueueAdCandidate,
   quiesceAdDetectQueue,
   runAdDetectBatch,
@@ -26,6 +32,7 @@ const { expireAdDetectDisposalMarkers } =
 const { antiRaidInFlightTasks } = await import("../../../packages/cache/workers/antiRaid/tasks");
 const {
   adDetectPublishHolder,
+  adVerdictTruePublishHolder,
   adDetectQueue,
   adDetectTickTimer,
   inFlightAdDetectKeys,
@@ -62,6 +69,28 @@ function expectQueueOwnershipConsistent(): void {
 }
 
 describe("广告判定队列：排队、调度与位置所有权", () => {
+  test("管理员被模型明确判为广告时不处置，但仍回投累计清零事件", async () => {
+    const events: AdVerdictTrueEvent[] = [];
+    startAdDetectQueue(
+      (): void => {},
+      (event: AdVerdictTrueEvent): void => { events.push(event); }
+    );
+    fetchedAdmins.set(-1001, new Set<number>([7]));
+    classifyAdText.mockImplementation(
+      async (): Promise<AdVerdict> => ({ isAd: true, reason: "管理员广告" })
+    );
+    enqueueAdCandidate(candidate(), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(events).toEqual([{
+      type: "adVerdictTrue",
+      chatId: -1001,
+      senderId: 7,
+    }]);
+    expect(disposeAdSender).not.toHaveBeenCalled();
+  });
+
   test("队列只排键，同一个人的多条消息并进同一串", () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "加我" }), 1_000);
     enqueueAdCandidate(candidate({ messageId: 2, text: "微信" }), 1_500);
@@ -373,6 +402,10 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("停管/关开关丢掉该群待检串，在途判定结算后不再处置", async () => {
+    const verdictEvents: AdVerdictTrueEvent[] = [];
+    adVerdictTruePublishHolder.current = (event: AdVerdictTrueEvent): void => {
+      verdictEvents.push(event);
+    };
     let release!: (verdict: AdVerdict) => void;
     classifyAdText.mockImplementationOnce((): Promise<AdVerdict> => new Promise<AdVerdict>((resolve) => {
       release = resolve;
@@ -387,8 +420,28 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     release({ isAd: true, reason: "引流" });
     await running;
-    // 整串已经不在了：旧引用对不上，判定结果直接作废，不在已停管的群里封人。
+    // 整串已经不在了：旧引用对不上，不在已停管的群里封人；已经取得的 true
+    // 仍清累计，避免重开开关后沿用广告发生前的连续日。
     expect(disposeAdSender).not.toHaveBeenCalled();
+    expect(verdictEvents).toEqual([{
+      type: "adVerdictTrue",
+      chatId: -1001,
+      senderId: 7,
+    }]);
+  });
+
+  test("获得临时广告豁免时跨群清理该身份的待检串", () => {
+    enqueueAdCandidate(candidate({ chatId: -1001, senderId: 7, messageId: 1 }), 1_000);
+    enqueueAdCandidate(candidate({ chatId: -1002, senderId: 7, messageId: 2 }), 1_000);
+    enqueueAdCandidate(candidate({ chatId: -1001, senderId: 8, messageId: 3 }), 1_000);
+
+    clearIdentityAdDetect(7);
+
+    expect(pendingAdMessages.has("-1001:7")).toBeFalse();
+    expect(pendingAdMessages.has("-1002:7")).toBeFalse();
+    expect(pendingAdMessages.get("-1001:8")?.entries.map((entry) => entry.messageId))
+      .toEqual([3]);
+    expect(queuedAdDetectKeys).toEqual(new Set(["-1001:8"]));
   });
 
   test("sweep 只回收窗口外已消费上下文，未消费条目继续保留", async () => {
@@ -518,6 +571,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     startAdDetectQueue((event: AdDetectedEvent): void => { events.push(event); });
     startAdDetectQueue((event: AdDetectedEvent): void => { events.push(event); });
     expect(adDetectPublishHolder.current).not.toBeNull();
+    expect(adVerdictTruePublishHolder.current).toBeNull();
 
     enqueueAdCandidate(candidate());
     inFlightReferencedAdCleanupTasks.add(Promise.resolve());

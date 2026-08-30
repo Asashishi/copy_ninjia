@@ -7,6 +7,8 @@ import {
 import {
   cacheLinkedChannel,
   getOrCreateLinkedChannelFetch,
+  isCurrentLinkedChannelCacheGeneration,
+  linkedChannelCacheGeneration,
   linkedChannels,
 } from "../../cache/workers/antiRaid/linkedChannels";
 import type { LinkedChannelCache } from "../../types/antiRaid/internal";
@@ -26,6 +28,7 @@ export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined 
  * undefined，让本次消息保持普通待验证语义；下一条消息仍可重新查询。
  */
 export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | undefined> {
+  const generation: number = linkedChannelCacheGeneration.current;
   const task: Promise<boolean | undefined> = getOrCreateLinkedChannelFetch(chatId, (): Promise<void> =>
     withTimeout(
       telegramApi.getChat(chatId),
@@ -33,6 +36,7 @@ export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | und
       `Linked-channel lookup for chat ${chatId}`
     )
       .then((chat: ChatFullInfo): void => {
+        if (!isCurrentLinkedChannelCacheGeneration(generation)) return;
         cacheLinkedChannel(chatId, "linked_chat_id" in chat && chat.linked_chat_id !== undefined);
       })
       .catch((error: unknown): void => {

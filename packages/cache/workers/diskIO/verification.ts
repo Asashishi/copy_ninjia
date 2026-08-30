@@ -5,7 +5,7 @@ import type { DayFileState } from "../../../types/diskIO/storage";
 
 /**
  * 待验证按日 append JSON 的落盘状态（packages/workers/diskIO/verificationWrites.ts）
- * 的内存状态：active 镜像、增量、文件游标及两个 timer。
+ * 的内存状态：active 镜像、增量、文件游标、短合并 timer 与轮换失败重试 timer。
  */
 
 /**
@@ -32,15 +32,19 @@ export const verificationFileState: {
 };
 /** 普通验证变化的短合并 timer；flush/reset 时清除。 */
 export const verificationFlushTimer: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
-/** 东京日期边界的唯一 rollover timer；重排、跨日或 reset 时清除。 */
-export const verificationRolloverTimer: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
+/** 午夜轮换失败后的唯一重试 timer；成功、重新维护或 reset 时清除。 */
+export const verificationRolloverRetryTimer: {
+  timer: ReturnType<typeof setTimeout> | null;
+} = { timer: null };
 
 /** Worker 恢复/停止时取消两个 timer 并清空镜像、增量和文件游标。 */
 export function resetVerificationPersistenceCache(): void {
   if (verificationFlushTimer.timer !== null) clearTimeout(verificationFlushTimer.timer);
-  if (verificationRolloverTimer.timer !== null) clearTimeout(verificationRolloverTimer.timer);
+  if (verificationRolloverRetryTimer.timer !== null) {
+    clearTimeout(verificationRolloverRetryTimer.timer);
+  }
   verificationFlushTimer.timer = null;
-  verificationRolloverTimer.timer = null;
+  verificationRolloverRetryTimer.timer = null;
   verificationWorkerCache.clear();
   verificationPendingChanges.clear();
   verificationFileState.current = null;

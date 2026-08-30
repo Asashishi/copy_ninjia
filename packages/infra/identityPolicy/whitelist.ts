@@ -2,6 +2,7 @@ import {
   DEFAULT_WHITELIST_PERMISSIONS,
   NON_WHITELIST_PERMISSIONS,
   SUPER_ADMIN_WHITELIST_PERMISSIONS,
+  TEMPORARY_WHITELIST_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
 } from "../../consts/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
@@ -10,6 +11,7 @@ import {
   confirmIdentityPolicyPersisted,
   queueIdentityPolicyWrite,
 } from "../identityStorage";
+import { hasActiveTemporaryWhitelist } from "./temporaryWhitelist";
 import type {
   TelegramIdentityMetadata,
   WhitelistEntryData,
@@ -47,6 +49,12 @@ export interface SetWhitelistMembershipResult {
   permissions: Readonly<WhitelistPermissions> | undefined;
 }
 
+/** 连续合格日晋升为永久广告免检时的 write-through 结果。 */
+export interface PromoteAdBypassWhitelistResult {
+  readonly changed: boolean;
+  readonly queued: boolean;
+}
+
 /**
  * 取得某身份当前完整权限；普通身份只读主线程白名单 LRU，超级管理员由身份直授。
  */
@@ -54,7 +62,9 @@ export function getEffectiveWhitelistPermissions(
   id: number
 ): Readonly<WhitelistPermissions> | undefined {
   if (id === SUPER_ADMIN_USER_ID) return SUPER_ADMIN_WHITELIST_PERMISSIONS;
-  return cachedWhitelistEntry(id)?.permissions;
+  const permanent: Readonly<WhitelistEntryData> | undefined = cachedWhitelistEntry(id);
+  if (permanent !== undefined) return permanent.permissions;
+  return hasActiveTemporaryWhitelist(id) ? TEMPORARY_WHITELIST_PERMISSIONS : undefined;
 }
 
 /**
@@ -69,9 +79,10 @@ export function getWhitelistPermissionQueryView(
   return getEffectiveWhitelistPermissions(id) ?? NON_WHITELIST_PERMISSIONS;
 }
 
-/** 身份是否处于白名单边界；冷缺失按不存在处理，update 前置中间件负责批量预热。 */
+/** 身份是否处于永久白名单边界；临时成员只通过广告豁免权限参与广告门禁。 */
 export function isWhitelisted(id: number): boolean {
-  return id === SUPER_ADMIN_USER_ID || cachedWhitelistEntry(id) !== undefined;
+  return id === SUPER_ADMIN_USER_ID ||
+    cachedWhitelistEntry(id) !== undefined;
 }
 
 /** 身份是否拥有指定权限；白名单外身份恒为 false。 */
@@ -198,4 +209,28 @@ export function setWhitelistMembership({
   };
   publishWhitelistEntry(id, { permissions, meta: storedMeta });
   return { changed: true, permissions };
+}
+
+/**
+ * 把连续七日成员写入永久白名单，只授予广告检测豁免；已有人工白名单原样保留。
+ */
+export function promoteAdBypassWhitelistMembership(
+  id: number,
+  meta: Readonly<TelegramIdentityMetadata>
+): PromoteAdBypassWhitelistResult {
+  if (cachedWhitelistEntry(id) !== undefined) {
+    return { changed: false, queued: true };
+  }
+  const storedMeta: Readonly<TelegramIdentityMetadata> = {
+    firstName: meta.firstName,
+    lastName: meta.lastName,
+    username: meta.username,
+  };
+  return {
+    changed: true,
+    queued: queueIdentityPolicyWrite("whitelist", id, {
+      permissions: TEMPORARY_WHITELIST_PERMISSIONS,
+      meta: storedMeta,
+    }),
+  };
 }

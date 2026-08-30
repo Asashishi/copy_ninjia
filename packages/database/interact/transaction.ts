@@ -3,10 +3,13 @@ import { chatQa } from "../schema/chatQa";
 import { chatStates } from "../schema/chatState";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
 import { pendingBlockedRemovals } from "../schema/pendingRemoval";
+import { temporaryWhitelistEntries } from "../schema/temporaryWhitelist";
 import type {
   StorageDatabase,
   StorageDatabaseChange,
 } from "../../types/storageDatabase";
+import type { PendingTemporaryWhitelistWrite } from
+  "../../types/temporaryWhitelist";
 
 type StorageDatabaseTransaction = Parameters<
   Parameters<StorageDatabase["transaction"]>[0]
@@ -15,6 +18,7 @@ type StorageDatabaseTransaction = Parameters<
 export interface CommitStorageDatabaseChangesOptions {
   readonly whitelist: ReadonlyMap<number, StorageDatabaseChange>;
   readonly blocklist: ReadonlyMap<number, StorageDatabaseChange>;
+  readonly temporaryWhitelist: ReadonlyMap<number, PendingTemporaryWhitelistWrite>;
   readonly removals: ReadonlyMap<number, StorageDatabaseChange>;
   readonly chatStates: ReadonlyMap<number, StorageDatabaseChange>;
   /**
@@ -31,6 +35,7 @@ export function commitStorageDatabaseChanges(
   {
     whitelist,
     blocklist,
+    temporaryWhitelist,
     removals,
     chatStates: chatStateChanges,
     chatQa: chatQaChanges,
@@ -53,6 +58,19 @@ export function commitStorageDatabaseChanges(
         transaction.insert(blocklistEntries).values({ id, data: change.data })
           .onConflictDoUpdate({ target: blocklistEntries.id, set: { data: change.data } })
           .run();
+      }
+    }
+    for (const [id, change] of temporaryWhitelist) {
+      if (change.activity === null) {
+        transaction.delete(temporaryWhitelistEntries)
+          .where(eq(temporaryWhitelistEntries.id, id)).run();
+      } else {
+        transaction.insert(temporaryWhitelistEntries)
+          .values({ id, ...change.activity })
+          .onConflictDoUpdate({
+            target: temporaryWhitelistEntries.id,
+            set: change.activity,
+          }).run();
       }
     }
     for (const [removalId, change] of removals) {

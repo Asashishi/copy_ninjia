@@ -99,8 +99,9 @@ export interface StoredIdentityIdLookup {
   ) => StoredIdentityIdRow | undefined;
 }
 
-/** 两张名单各一条预编译语句，随连接一起存活。 */
+/** 三张身份关系各一条预编译语句，随连接一起存活。 */
 export interface StoredIdentityIdLookups {
   readonly whitelist: StoredIdentityIdLookup;
   readonly blocklist: StoredIdentityIdLookup;
+  readonly temporaryWhitelist: StoredIdentityIdLookup;
 }

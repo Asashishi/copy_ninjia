@@ -198,10 +198,12 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         requestId: policiesRequest.requestId,
         whitelist: [[42, "{\"isCanUseBot\":true}"]],
         blocklist: [[43, "{\"reason\":\"spam\"}"]],
+        temporaryWhitelist: [],
       } } as unknown as MessageEvent<DiskIOReply>);
       await expect(policiesPromise).resolves.toEqual({
         whitelist: [[42, "{\"isCanUseBot\":true}"]],
         blocklist: [[43, "{\"reason\":\"spam\"}"]],
+        temporaryWhitelist: [],
       });
       expect(identityPolicyReadRequests.pending.size).toBe(0);
 

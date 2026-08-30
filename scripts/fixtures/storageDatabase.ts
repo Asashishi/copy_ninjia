@@ -7,6 +7,10 @@ import {
 import { storageMetadata } from "../../packages/database/schema/metadata";
 import { pendingBlockedRemovals } from
   "../../packages/database/schema/pendingRemoval";
+import { temporaryWhitelistEntries } from
+  "../../packages/database/schema/temporaryWhitelist";
+import type { StoredTemporaryWhitelistActivity } from
+  "../../packages/types/temporaryWhitelist";
 import type {
   StorageDatabase,
   StoredChatQaRow,
@@ -27,6 +31,7 @@ export interface SeedStorageDatabaseOptions {
   readonly removals: readonly StoredPendingRemovalRow[];
   readonly chatStates?: readonly StoredChatStateRow[];
   readonly chatQa?: readonly StoredChatQaRow[];
+  readonly temporaryWhitelist?: readonly StoredTemporaryWhitelistActivity[];
 }
 
 /** 测试与性能夹具在一个 Drizzle 事务内写入全部初始行。 */
@@ -39,6 +44,7 @@ export function seedStorageDatabase(
     removals,
     chatStates: storedChatStates = [],
     chatQa: storedChatQa = [],
+    temporaryWhitelist = [],
   }: SeedStorageDatabaseOptions
 ): void {
   database.transaction((transaction: StorageDatabaseTransaction): void => {
@@ -60,6 +66,9 @@ export function seedStorageDatabase(
     if (storedChatQa.length > 0) {
       transaction.insert(chatQa).values([...storedChatQa]).run();
     }
+    if (temporaryWhitelist.length > 0) {
+      transaction.insert(temporaryWhitelistEntries).values([...temporaryWhitelist]).run();
+    }
   });
 }
 
@@ -71,5 +80,6 @@ export function clearStorageBusinessTables(database: StorageDatabase): void {
     transaction.delete(whitelistEntries).run();
     transaction.delete(blocklistEntries).run();
     transaction.delete(chatStates).run();
+    transaction.delete(temporaryWhitelistEntries).run();
   });
 }

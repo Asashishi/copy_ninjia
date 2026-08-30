@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 开发者文档首页</a> · <a href="04-invariants.md">← 上一页：04 权威约束</a> · <a href="06-modification-guide.md">下一页：06 修改配方 →</a>
+  <a href="content-table.md">📚 开发者文档首页</a> · <a href="04-invariants.md">← 上一页：04 权威约束</a> · <a href="06-modification-guide.md">下一页：06 修改配方 →</a>
 </p>
 
 ---
@@ -32,6 +32,7 @@
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
 | `bun run migrate:qa-thumbnail` | 从 `state.json` 摘掉退场的 `global.assets.qaThumbnailUrl` 的停机冷迁移 |
+| `bun run migrate:temporary-whitelist` | 将共享 SQLite 按 v5 → v7 直接边迁移到当前 schema；只在停服时运行，v6 仅作为同次迁移可续跑的 intermediate 谱系 |
 | `bun run release:check` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
 
@@ -48,7 +49,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2893 tests / 294 files / 96561 次 `expect()`**；全源码**函数覆盖率 96.37% / 行覆盖率 97.20%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2995 tests / 304 files / 97230 次 `expect()`**；全源码**函数覆盖率 96.50% / 行覆盖率 97.12%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -152,6 +153,6 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 <div align="center">
 
-[← 上一页：04 权威约束](04-invariants.md) · [📚 开发者文档首页](conntent-table.md) · [⬆️ 回到顶部](#05-开发流程与质量门禁) · [下一页：06 修改配方 →](06-modification-guide.md)
+[← 上一页：04 权威约束](04-invariants.md) · [📚 开发者文档首页](content-table.md) · [⬆️ 回到顶部](#05-开发流程与质量门禁) · [下一页：06 修改配方 →](06-modification-guide.md)
 
 </div>

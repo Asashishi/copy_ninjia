@@ -106,8 +106,8 @@ export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
 export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
 /**
  * 广告检测命中样本的旁路目录。与 memory/ 下其余子目录同级，但性质完全不同：
- * 它**不是运行时状态**，进程从不读它，启动恢复也不碰它——纯粹是给人看的、
- * 用来回头优化 config/ad_samples.json 的原始素材。
+ * 它**不是运行时状态**，进程从不读样本内容；启动成功后的维护只扫描目录项，
+ * 清理孤儿临时文件与过期归档。内容纯粹用于回头优化 config/ad_samples.json。
  */
 export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
 /**

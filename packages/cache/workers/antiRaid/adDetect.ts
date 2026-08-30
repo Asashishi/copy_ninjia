@@ -1,8 +1,9 @@
 import { LinkedQueue } from "../../../libs/linkedQueue";
-import type { AdDetectedEvent } from "../../../types/antiRaid/adDetect";
 import type {
+  AdDetectedEvent,
   AdMessageBundle,
   ReferencedAdWarningState,
+  AdVerdictTrueEvent,
 } from "../../../types/antiRaid/adDetect";
 
 /**
@@ -125,4 +126,11 @@ export const adDetectTickTimer: { current: ReturnType<typeof setInterval> | null
  * 判定命中后回投主线程的通道（antiRaidWorker.ts 注入 self.postMessage）。
  * Worker 停止时置空，避免测试隔离下旧回调继续发消息。
  */
-export const adDetectPublishHolder: { current: ((event: AdDetectedEvent) => void) | null } = { current: null };
+export const adDetectPublishHolder: {
+  current: ((event: AdDetectedEvent) => void) | null;
+} = { current: null };
+
+/** ad=true 后清空主线程连续日累计的独立回投通道；测试未安装时保持为空。 */
+export const adVerdictTruePublishHolder: {
+  current: ((event: AdVerdictTrueEvent) => void) | null;
+} = { current: null };

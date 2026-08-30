@@ -12,6 +12,7 @@ const handleJoinLogMessage = mock((_message: unknown): void => {});
 const inspectLogFiles = mock((): { readonly kind: "logs" } => ({ kind: "logs" }));
 const adoptLogFiles = mock((_inspection: unknown): void => {});
 const maintainLogFiles = mock((_inspection: unknown): void => {});
+const maintainLogRetention = mock((): void => {});
 const inspectAiMemorySnapshots = mock((): { readonly kind: "ai" } => ({ kind: "ai" }));
 const adoptAiMemorySnapshots = mock((_inspection: unknown): Map<number, string> => new Map());
 const maintainAiMemorySnapshots = mock((_inspection: unknown): void => {});
@@ -20,6 +21,7 @@ const adoptStickerCatalogSnapshots = mock((_inspection: unknown): Map<string, st
 const maintainStickerCatalogSnapshots = mock((_inspection: unknown): void => {});
 const inspectJoinLogFiles = mock((day: string): { readonly today: string } => ({ today: day }));
 const maintainJoinLogFiles = mock((_inspection: unknown): void => {});
+const maintainJoinLogRetention = mock((_day?: string): void => {});
 const readJoinLog = mock((_message: unknown): readonly {
   userId: number;
   joinedAt: number;
@@ -53,6 +55,7 @@ const adoptLuckDay = mock((inspection: {
   readonly cache: { day: string; entries: HydratedLuckEntries };
 }): void => { luckWorkerCache.current = inspection.cache; });
 const maintainLuckDayState = mock((_day: string, _inspection: unknown): void => {});
+const maintainLuckForDay = mock((_day: string): void => {});
 const inspectLuckReceiptSecret = mock((input: LuckSecretRecoveryInput): {
   readonly day: string;
   readonly path: string;
@@ -72,7 +75,12 @@ const flushStickerCatalogs = mock((): boolean => true);
 const flushLuckAppends = mock((): boolean => true);
 const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
-const scheduleVerificationRollover = mock((_reply: (reply: unknown) => void): void => {});
+const maintainVerificationDayForToday = mock((
+  _reply: (reply: unknown) => void,
+  _day?: string
+): void => {});
+const maintainAdSampleFiles = mock((_today?: string): void => {});
+const sweepExpiredTemporaryWhitelistActivities = mock((_now?: number): void => {});
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
 const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
   "blocklistRemovalOutbox",
@@ -82,6 +90,7 @@ const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
 const handleChatStateWrite = mock((_message: unknown): void => {});
 const handleChatQaWrite = mock((_message: unknown): void => {});
+const handleTemporaryWhitelistWrite = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 // Worker 重建时仍会自行复核贴纸白名单；运行期被改坏时恢复必须拒绝。
 let stickerConfigFailure: string | null = null;
@@ -108,6 +117,7 @@ mock.module("../../packages/workers/diskIO/logFiles", () => ({
   handleLogMessage,
   inspectLogFiles,
   maintainLogFiles,
+  maintainLogRetention,
 }));
 mock.module("../../packages/workers/diskIO/luckFiles", () => ({
   adoptLuckDay,
@@ -117,6 +127,7 @@ mock.module("../../packages/workers/diskIO/luckFiles", () => ({
   hydrateLuckDay,
   inspectLuckDayState,
   maintainLuckDayState,
+  maintainLuckForDay,
 }));
 mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({
   adoptLuckReceiptSecret,
@@ -133,13 +144,18 @@ mock.module("../../packages/workers/diskIO/verificationWrites", () => ({
   flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
-  scheduleVerificationRollover,
+  maintainVerificationDayForToday,
+}));
+mock.module("../../packages/workers/diskIO/adSampleFile", () => ({
+  handleAdSampleMessage: (_message: unknown): void => {},
+  maintainAdSampleFiles,
 }));
 mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
   flushJoinLogDomain,
   handleJoinLogMessage,
   inspectJoinLogFiles,
   maintainJoinLogFiles,
+  maintainJoinLogRetention,
   readJoinLog,
 }));
 mock.module("../../packages/workers/diskIO/aiMemoryFiles", () => ({
@@ -172,9 +188,11 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   handleIdentityPolicyWrite,
   handleChatStateWrite,
   handleChatQaWrite,
+  handleTemporaryWhitelistWrite,
   handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
   inspectStorageDatabase,
   pendingStorageDatabaseDomains,
+  sweepExpiredTemporaryWhitelistActivities,
   readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({
     type: "blocklistIdPageRead",
     requestId: message.requestId,
@@ -185,13 +203,19 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
     requestId: message.requestId,
     whitelist: [],
     blocklist: [],
+    temporaryWhitelist: [],
   }),
 }));
-
 const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: unknown) => void };
 const originalPostMessage = workerGlobal.postMessage;
 workerGlobal.postMessage = postMessage;
 const { handleDiskIOWorkerMessage } = await import("../../packages/workers/diskIOWorker");
+const { diskIOMaintenanceCron } = await import(
+  "../../packages/cache/workers/diskIO/maintenance"
+);
+const { stopDiskIOMaintenanceCron } = await import(
+  "../../packages/workers/diskIO/maintenanceCron"
+);
 // 拒收标记走真实的 owner 缓存：路由层的兜底就是靠它把失败传给统一 flush。
 const { consumeJoinLogRejection } = await import("../../packages/cache/workers/diskIO/joinLog");
 const {
@@ -200,6 +224,7 @@ const {
 const { resetDiskIOReplayWindow } = await import("../../packages/cache/workers/diskIO/recovery");
 
 afterAll(() => {
+  stopDiskIOMaintenanceCron();
   workerGlobal.postMessage = originalPostMessage;
 });
 
@@ -216,6 +241,7 @@ beforeEach(() => {
     inspectLogFiles,
     adoptLogFiles,
     maintainLogFiles,
+    maintainLogRetention,
     inspectAiMemorySnapshots,
     adoptAiMemorySnapshots,
     maintainAiMemorySnapshots,
@@ -224,13 +250,16 @@ beforeEach(() => {
     maintainStickerCatalogSnapshots,
     inspectJoinLogFiles,
     maintainJoinLogFiles,
+    maintainJoinLogRetention,
     readJoinLog,
     flushLogBuffer,
     flushAiMemorySnapshots,
     flushStickerCatalogs,
     flushLuckAppends,
     flushVerificationChanges,
-    scheduleVerificationRollover,
+    maintainVerificationDayForToday,
+    maintainAdSampleFiles,
+    sweepExpiredTemporaryWhitelistActivities,
     flushBlocklistRemovalOutbox,
     pendingStorageDatabaseDomains,
     flushJoinLogDomain,
@@ -238,11 +267,13 @@ beforeEach(() => {
     handleIdentityPolicyWrite,
     handleChatStateWrite,
     handleChatQaWrite,
+    handleTemporaryWhitelistWrite,
     postMessage,
     hydrateLuckDay,
     inspectLuckDayState,
     adoptLuckDay,
     maintainLuckDayState,
+    maintainLuckForDay,
     inspectLuckReceiptSecret,
     adoptLuckReceiptSecret,
     inspectVerificationDay,
@@ -346,19 +377,22 @@ describe("Disk I/O Worker protocol router", () => {
     }));
   });
 
-  test("身份 SQLite 的两个 owner 抛错同样不逸出 onmessage，按领域记拒收", () => {
+  test("身份 SQLite 的三个 owner 抛错同样不逸出 onmessage，按领域记拒收", () => {
     handleIdentityPolicyWrite.mockImplementationOnce((): void => {
       throw new Error("Identity 7 cannot exist in both whitelist_entries and blocklist_entries.");
     });
     handleBlocklistRemovalsMessage.mockImplementationOnce((): void => {
       throw new Error("Pending removal row 1 contains an identity absent from the effective blocklist.");
     });
+    handleTemporaryWhitelistWrite.mockImplementationOnce((): void => {
+      throw new Error("Temporary whitelist activity is invalid.");
+    });
 
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
       // 校验失败必须留在当前消息边界内；异常离开 onmessage 会让 Bun 终止落盘线程，
-      // 连带丢失九个领域的进程内缓冲并触发重启节流。
+      // 连带丢失十二个领域的进程内缓冲并触发重启节流。
       expect((): void => route({
         type: "identityPolicyWrite",
         table: "whitelist",
@@ -371,15 +405,22 @@ describe("Disk I/O Worker protocol router", () => {
         revision: 1,
         removals: [],
       })).not.toThrow();
+      expect((): void => route({
+        type: "temporaryWhitelistWrite",
+        id: 8,
+        activity: null,
+        revision: 1,
+      })).not.toThrow();
     } finally {
       console.error = originalConsoleError;
     }
 
-    expect(consoleError).toHaveBeenCalledTimes(2);
+    expect(consoleError).toHaveBeenCalledTimes(3);
     // 主线程只能靠下一次领域 flush 的失败回执才知道这条最终值没落盘——
     // /block 的 confirmBlocklistPersisted 正是这么问的。
     expect([...rejectedStorageDomains].sort()).toEqual([
       "blocklistRemovalOutbox",
+      "temporaryWhitelist",
       "whitelist",
     ]);
     // 在线消息不升级为停机：主线程仍持有未 ACK 的 revision，Worker 重建时重放。
@@ -624,12 +665,15 @@ describe("Disk I/O Worker protocol router", () => {
     expect(inspectJoinLogFiles).toHaveBeenCalledTimes(1);
     expect(adoptStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
     expect(maintainStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
+    expect(maintainAdSampleFiles).toHaveBeenCalledTimes(1);
+    expect(sweepExpiredTemporaryWhitelistActivities).toHaveBeenCalledTimes(1);
+    expect(diskIOMaintenanceCron.current).not.toBeNull();
     expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(
       maintainStickerCatalogSnapshots.mock.invocationCallOrder[0]!
     );
   });
 
-  test("最后一个 SQLite inspect 失败时不 adopt、不维护也不启动 timer", () => {
+  test("最后一个 SQLite inspect 失败时不 adopt、不维护也不注册 cron", () => {
     inspectStorageDatabase.mockImplementationOnce((): { readonly kind: "storage" } => {
       throw new Error("database/storage.sqlite: $.schema must be the current schema.");
     });
@@ -649,7 +693,9 @@ describe("Disk I/O Worker protocol router", () => {
     expect(maintainJoinLogFiles).not.toHaveBeenCalled();
     expect(maintainLuckDayState).not.toHaveBeenCalled();
     expect(maintainVerificationDay).not.toHaveBeenCalled();
-    expect(scheduleVerificationRollover).not.toHaveBeenCalled();
+    expect(maintainAdSampleFiles).not.toHaveBeenCalled();
+    expect(sweepExpiredTemporaryWhitelistActivities).not.toHaveBeenCalled();
+    expect(diskIOMaintenanceCron.current).toBeNull();
     expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       type: "loaded",
       error: "database/storage.sqlite: $.schema must be the current schema.",
@@ -706,7 +752,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 13 });
   });
 
-  test("九个领域全部成功时回执不带失败领域", () => {
+  test("十二个领域全部成功时回执不带失败领域", () => {
     route({ type: "flush", flushId: 14, scope: "all" });
 
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 14 });

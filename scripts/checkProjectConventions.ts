@@ -242,7 +242,10 @@ async function parseSourceFile(path: string): Promise<ts.SourceFile> {
  */
 const cacheSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CACHE_ROOT));
 const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_ROOT));
-for (const path of sourceFilesUnder(SOURCE_ROOT)) {
+// 仓库根的 index.ts 是生产入口，AGENTS.md 多条规则的适用范围写的就是「packages/ 与
+// index.ts」；它不在 sourceFilesUnder(SOURCE_ROOT) 里，必须显式并进同一趟判定，
+// 否则日志边界、Node 兼容与声明规范在这个文件上没有任何门禁。
+for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   const params: SourceFileRuleParams = { projectRoot: PROJECT_ROOT, path, source };
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {

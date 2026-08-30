@@ -133,7 +133,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   );
 
   // 黑白名单判断保持同步 LRU 读取；每个 update 在进入 Anti-Raid 和命令前，一次性
-  // 补齐可见身份的冷缺失。热命中不跨线程，冷读同时查询两表并写入正/负缓存。
+  // 补齐可见身份的冷缺失。热命中不跨线程，冷读同时查询三张关系并写入正/负缓存。
   // 预热是 best-effort：Disk I/O 自愈窗口里冷读会失败，prefetchIdentityPolicies
   // 自己就地降级并返回 false（异常逸出会被 bot.catch 重抛成整进程重启循环，
   // 见该函数头注）。本中间件不消费这个结论——留冷即按 fail-closed 判定。

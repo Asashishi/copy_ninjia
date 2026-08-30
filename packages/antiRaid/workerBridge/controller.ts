@@ -9,6 +9,7 @@ import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification
 import {
   postDiskIO,
 } from "../../infra/diskIO";
+import { prefetchIdentityPolicies } from "../../infra/identityStorage";
 import { logger } from "../../infra/logger";
 import { replayPendingBlockedRemovals } from "../../infra/blocklist/sweep";
 import { superviseDuplexWorker } from "../../infra/supervisedDuplexWorker";
@@ -40,6 +41,7 @@ import {
   grantVerificationAttempt,
   resetVerificationAttemptRuntime,
 } from "../verificationAttempts";
+import { canBypassAdDetection } from "../memberFacts";
 import { handleAntiRaidWorkerEvent } from "./events";
 import { registerAntiRaidBridgeObservers } from "./observers";
 import {
@@ -58,12 +60,21 @@ import {
  */
 
 /** Anti-Raid 专属进程级许可与 Telegram 能力共用既有双工边界。 */
-function handleAntiRaidWorkerRequest(
+async function handleAntiRaidWorkerRequest(
   request: AntiRaidWorkerRequest,
   signal: AbortSignal
 ): Promise<unknown> {
   if (request.operation === "verificationAttemptPermit") {
-    return Promise.resolve(grantVerificationAttempt(request));
+    return grantVerificationAttempt(request);
+  }
+  if (request.operation === "sendTemporaryMessage") {
+    // 引用警告晚于候选入队和模型判定；发送前必须以主线程当前权限为准。
+    // 冷读失败时不拿未知身份冒充无豁免，避免错误警告或删除临时成员消息。
+    const prefetched: boolean = await prefetchIdentityPolicies([request.identityId]);
+    if (
+      !prefetched ||
+      canBypassAdDetection(request.identityId)
+    ) return { suppressed: true };
   }
   return handleAntiRaidWorkerTelegramRequest(request, signal);
 }

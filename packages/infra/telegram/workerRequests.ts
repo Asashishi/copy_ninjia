@@ -17,6 +17,7 @@ import type {
   TelegramWorkerJsonCall,
   TelegramWorkerRequest,
   TelegramWorkerTemporaryMessageResult,
+  TelegramWorkerTemporaryMessageSentResult,
 } from "../../types/telegramWorker";
 import { runTelegramCategorizedRequest } from "./outboundGate";
 import { telegramRetryCategoryFor } from "./outboundRetryPolicy";
@@ -36,7 +37,7 @@ async function sendTemporaryMessage(
   // 协议导入反向装载全部消息生命周期实现。
   const temporarySender: (
     params: SendTemporaryMessageOnMainParams
-  ) => Promise<TelegramWorkerTemporaryMessageResult | undefined> =
+  ) => Promise<TelegramWorkerTemporaryMessageSentResult | undefined> =
     (await import("./temporaryMessage")).sendTemporaryMessageOnMain;
   return temporarySender({
     chatId: request.chatId,

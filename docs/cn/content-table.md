@@ -9,7 +9,7 @@
 # 📚 Copy Ninjia 开发者文档
 
 <p align="center">
-  <b>简体中文</b> · <a href="../en/conntent-table.md">English</a> · <a href="../ja/conntent-table.md">日本語</a> · <a href="../../README.md">🏠 根目录 README</a>
+  <b>简体中文</b> · <a href="../en/content-table.md">English</a> · <a href="../ja/content-table.md">日本語</a> · <a href="../../README.md">🏠 根目录 README</a>
 </p>
 
 面向开发者的完整多页指南：从环境搭建、架构设计、工程规范，到功能扩展与运维排障。

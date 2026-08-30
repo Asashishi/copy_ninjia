@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="04-invariants.md">← Prev: 04 Invariants</a> · <a href="06-modification-guide.md">Next: 06 Recipes →</a>
+  <a href="content-table.md">📚 Developer Docs Home</a> · <a href="04-invariants.md">← Prev: 04 Invariants</a> · <a href="06-modification-guide.md">Next: 06 Recipes →</a>
 </p>
 
 ---
@@ -32,6 +32,7 @@
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
 | `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
 | `bun run migrate:qa-thumbnail` | Offline cold migration dropping the retired `global.assets.qaThumbnailUrl` from `state.json` |
+| `bun run migrate:temporary-whitelist` | Stopped-service cold migration over the direct v5 → v7 edge; v6 is only the resumable intermediate lineage of that migration |
 | `bun run release:check` | Run frozen-lockfile install + check + coverage-metric verification + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
 
@@ -48,7 +49,7 @@ Dependency installation always uses the seven-day release-age gate in `bunfig.to
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2893 tests / 294 files / 96561 `expect()` calls**; full-source **function coverage 96.37% / line coverage 97.20%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2995 tests / 304 files / 97230 `expect()` calls**; full-source **function coverage 96.50% / line coverage 97.12%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -152,6 +153,6 @@ Every squash merge into `master` must produce one GitHub Release:
 
 <div align="center">
 
-[← Prev: 04 Invariants](04-invariants.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#05-development-workflow-and-quality-gates) · [Next: 06 Recipes →](06-modification-guide.md)
+[← Prev: 04 Invariants](04-invariants.md) · [📚 Developer Docs Home](content-table.md) · [⬆️ Back to Top](#05-development-workflow-and-quality-gates) · [Next: 06 Recipes →](06-modification-guide.md)
 
 </div>

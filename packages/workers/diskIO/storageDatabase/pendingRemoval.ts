@@ -107,6 +107,7 @@ export function handlePendingRemovalSnapshot(
     reply({
       type: "identityStoragePersisted",
       writes: [],
+      temporaryWhitelistWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
       removalSnapshotRevision: message.revision,

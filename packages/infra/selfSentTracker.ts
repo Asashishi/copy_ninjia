@@ -21,20 +21,53 @@ import type { SelfSentWaiter } from "../types/telegram";
  * infra/telegram/ 入口注释）：Worker 里发送的消息要让主线程的自动流水线
  * 认出来，得由 Worker 经 postMessage 把 chatId/messageId 报回主线程，主线程
  * 收到后再调用这里的 markSelfSent（见 aiChat/workerBridge.ts 的 onEvent）。
+ *
+ * **isBotOwnMessage 是每条群消息都要走的判定，且一条消息会走多次**：
+ * antiRaid/temporaryWhitelist.ts、antiRaid/adCandidate.ts、commands/qa/ingress.ts、
+ * commands/cjkAction.ts、auto/message/index.ts 各查一次，自动转发那条还会查第二次。
+ * 因此这里一律按 (chatId, messageId) 两级整数键直查，不拼复合串——分层的理由与
+ * 实测差距写在 cache/perThread/selfSentTracker.ts 的头注里。
  */
 
-function key(chatId: number, messageId: number): string {
-  return `${chatId}:${messageId}`;
+/** TTL 到期：摘掉这一条，并在该群最后一条消失时把内层表一并删除。 */
+function forgetSelfSent(chatId: number, messageId: number): void {
+  const byMessage: Map<number, ReturnType<typeof setTimeout>> | undefined =
+    sentMessages.get(chatId);
+  if (byMessage === undefined) return;
+  byMessage.delete(messageId);
+  if (byMessage.size === 0) sentMessages.delete(chatId);
 }
 
-/** 只有 Telegram 会回投的两种形态需要等待跨线程标记。 */
-function rendezvousKey(message: Message): string | undefined {
-  if (message.chat.type === "channel") return key(message.chat.id, message.message_id);
-  const origin: MessageOrigin | undefined = message.forward_origin;
-  if (message.is_automatic_forward === true && origin?.type === "channel") {
-    return key(origin.chat.id, origin.message_id);
+/** 标记到达时一次唤醒同一原帖的频道帖与关联讨论组副本。 */
+function settleSelfSentWaiters(chatId: number, messageId: number): void {
+  const byMessage: Map<number, Set<SelfSentWaiter>> | undefined =
+    pendingSelfSentWaiters.get(chatId);
+  if (byMessage === undefined) return;
+  const waiters: Set<SelfSentWaiter> | undefined = byMessage.get(messageId);
+  if (waiters === undefined) return;
+  byMessage.delete(messageId);
+  if (byMessage.size === 0) pendingSelfSentWaiters.delete(chatId);
+  for (const waiter of waiters) {
+    clearTimeout(waiter.timer);
+    waiter.resolve(true);
   }
-  return undefined;
+}
+
+/** 超时或结算后摘掉自己那一个 waiter，空 Set 与空内层表同步删除。 */
+function removeSelfSentWaiter(
+  chatId: number,
+  messageId: number,
+  waiter: SelfSentWaiter
+): void {
+  const byMessage: Map<number, Set<SelfSentWaiter>> | undefined =
+    pendingSelfSentWaiters.get(chatId);
+  if (byMessage === undefined) return;
+  const waiters: Set<SelfSentWaiter> | undefined = byMessage.get(messageId);
+  if (waiters === undefined) return;
+  waiters.delete(waiter);
+  if (waiters.size > 0) return;
+  byMessage.delete(messageId);
+  if (byMessage.size === 0) pendingSelfSentWaiters.delete(chatId);
 }
 
 /**
@@ -48,33 +81,31 @@ export function needsBotOwnMessageWait(message: Message): boolean {
   return message.is_automatic_forward === true && message.forward_origin?.type === "channel";
 }
 
-/** 标记到达时一次唤醒同一原帖的频道帖与关联讨论组副本。 */
-function settleSelfSentWaiters(k: string): void {
-  const waiters: Set<SelfSentWaiter> | undefined = pendingSelfSentWaiters.get(k);
-  if (waiters === undefined) return;
-  pendingSelfSentWaiters.delete(k);
-  for (const waiter of waiters) {
-    clearTimeout(waiter.timer);
-    waiter.resolve(true);
-  }
-}
-
 /** 登记一条刚发出的消息；TTL 到期自动清理。 */
 export function markSelfSent(chatId: number, messageId: number): void {
-  const k: string = key(chatId, messageId);
-  const existing: ReturnType<typeof setTimeout> | undefined = sentMessages.get(k);
-  if (existing) clearTimeout(existing);
-  sentMessages.set(
-    k,
-    setTimeout((): boolean => sentMessages.delete(k), SELF_SENT_MESSAGE_TTL_MS).unref()
+  let byMessage: Map<number, ReturnType<typeof setTimeout>> | undefined =
+    sentMessages.get(chatId);
+  if (byMessage === undefined) {
+    byMessage = new Map<number, ReturnType<typeof setTimeout>>();
+    sentMessages.set(chatId, byMessage);
+  }
+  const existing: ReturnType<typeof setTimeout> | undefined = byMessage.get(messageId);
+  if (existing !== undefined) clearTimeout(existing);
+  byMessage.set(
+    messageId,
+    setTimeout(
+      (): void => forgetSelfSent(chatId, messageId),
+      SELF_SENT_MESSAGE_TTL_MS
+    ).unref()
   );
-  settleSelfSentWaiters(k);
+  settleSelfSentWaiters(chatId, messageId);
 }
 
 /** 某条消息是否是机器人自己刚发出的。 */
 export function isSelfSent(chatId: number, messageId: number): boolean {
+  // 本线程一条都没发过时连内层表都不必取；活跃线程则只多付一次整数键查找。
   if (sentMessages.size === 0) return false;
-  return sentMessages.has(key(chatId, messageId));
+  return sentMessages.get(chatId)?.has(messageId) === true;
 }
 
 /**
@@ -99,26 +130,44 @@ export function waitForBotOwnMessage(
   timeoutMs: number = SELF_SENT_RENDEZVOUS_TIMEOUT_MS
 ): Promise<boolean> {
   if (isBotOwnMessage(message)) return Promise.resolve(true);
-  const k: string | undefined = rendezvousKey(message);
-  if (k === undefined) return Promise.resolve(false);
+  // rendezvous 目标与 needsBotOwnMessageWait 判定的两种形态一一对应：频道帖等自己，
+  // 关联讨论组的自动转发等它的频道原帖。其余形态 Telegram 不会回投，不建等待项。
+  let chatId: number;
+  let messageId: number;
+  if (message.chat.type === "channel") {
+    chatId = message.chat.id;
+    messageId = message.message_id;
+  } else {
+    const origin: MessageOrigin | undefined = message.forward_origin;
+    if (
+      message.is_automatic_forward !== true ||
+      origin?.type !== "channel"
+    ) return Promise.resolve(false);
+    chatId = origin.chat.id;
+    messageId = origin.message_id;
+  }
   return new Promise((resolve: (matched: boolean) => void): void => {
-    let waiters: Set<SelfSentWaiter> | undefined = pendingSelfSentWaiters.get(k);
+    let byMessage: Map<number, Set<SelfSentWaiter>> | undefined =
+      pendingSelfSentWaiters.get(chatId);
+    if (byMessage === undefined) {
+      byMessage = new Map<number, Set<SelfSentWaiter>>();
+      pendingSelfSentWaiters.set(chatId, byMessage);
+    }
+    let waiters: Set<SelfSentWaiter> | undefined = byMessage.get(messageId);
     if (waiters === undefined) {
       waiters = new Set<SelfSentWaiter>();
-      pendingSelfSentWaiters.set(k, waiters);
+      byMessage.set(messageId, waiters);
     }
     const waiter: SelfSentWaiter = {
       resolve,
       timer: setTimeout((): void => {
-        const current: Set<SelfSentWaiter> | undefined = pendingSelfSentWaiters.get(k);
-        current?.delete(waiter);
-        if (current?.size === 0) pendingSelfSentWaiters.delete(k);
+        removeSelfSentWaiter(chatId, messageId, waiter);
         resolve(false);
       }, timeoutMs),
     };
     waiter.timer.unref();
     waiters.add(waiter);
     // 防御未来调用点在登记期间同步触发标记；即使时序改变也不丢唤醒。
-    if (sentMessages.has(k)) settleSelfSentWaiters(k);
+    if (isSelfSent(chatId, messageId)) settleSelfSentWaiters(chatId, messageId);
   });
 }

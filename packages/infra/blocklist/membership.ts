@@ -21,6 +21,8 @@ import {
   requeueUnacknowledgedIdentityWrite,
 } from "../identityStorage";
 import { IDENTITY_DATABASE_PATH } from "../../consts/paths";
+import { clearTemporaryWhitelistActivity } from
+  "../identityPolicy/temporaryWhitelist";
 import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
 
 /**
@@ -95,6 +97,11 @@ export function blockUser(
 ): boolean {
   if (isUserBlocked(userId)) return false;
   const blockedAt: string = formatTokyoTime(Date.now());
+  if (!clearTemporaryWhitelistActivity(userId)) {
+    throw new Error(
+      `Temporary whitelist reset for identity ${userId} was rejected by the persistence Worker.`
+    );
+  }
   queueIdentityPolicyWrite("blocklist", userId, { blockedAt, meta });
   return true;
 }
@@ -107,7 +114,7 @@ export function blockUser(
  * @returns 已 durable 为 true；false 表示这条记录目前只活在内存里，重启就没了。
  */
 export async function confirmBlocklistPersisted(): Promise<boolean> {
-  // 只看黑名单这一个领域：统一 flush 是九个领域的合取，某群 AI 记忆快照写不
+  // 只看黑名单这一个领域：统一 flush 是十二个领域的合取，某群 AI 记忆快照写不
   // 进去也会让这里报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。
   const outcome: DomainFlushOutcome = await flushDiskIODomainOutcome("blocklist");
   if (outcome.result === "flushed") return true;

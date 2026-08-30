@@ -20,6 +20,7 @@ import {
 import { isChatAdmin } from "../adminCache";
 import { logger } from "../../../infra/logger";
 import {
+  adVerdictTruePublishHolder,
   adDetectStopping,
   inFlightAdDetectKeys,
   pendingAdMessages,
@@ -53,7 +54,10 @@ import type {
   AdMessageBundle,
   AdVerdict,
 } from "../../../types/antiRaid/adDetect";
-import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
+import type {
+  TelegramWorkerTemporaryMessageResult,
+  TelegramWorkerTemporaryMessageSentResult,
+} from "../../../types/telegramWorker";
 
 /**
  * 处置前的最后一道身份闸：这个发送者此刻是不是本群管理员。
@@ -156,7 +160,7 @@ function selectedWithinReferencedWarning(
 function retainPostWarningContent(
   key: string,
   bundle: AdMessageBundle,
-  warning: TelegramWorkerTemporaryMessageResult
+  warning: TelegramWorkerTemporaryMessageSentResult
 ): void {
   const retainedEntries: AdCandidateEntry[] = [];
   for (const entry of bundle.entries) {
@@ -229,6 +233,13 @@ export async function detectOne(
   // 一条「已在所有群封掉」的播报配一条根本没落盘的黑名单。判定本就是尽力而为，
   // 停机时丢一次不构成安全边界失守。
   if (adDetectStopping.current) return;
+  if (outcome.kind === "directAd" || outcome.kind === "referencedOnly") {
+    adVerdictTruePublishHolder.current?.({
+      type: "adVerdictTrue",
+      chatId: bundle.chatId,
+      senderId: bundle.senderId,
+    });
+  }
   // 期间这个群可能被停管/关开关，整串已被丢弃或换成了新对象；旧引用对不上就
   // 放弃（同本线程其余异步回调的「状态对象同一性」惯例）。
   if (pendingAdMessages.get(key) !== bundle) return;
@@ -267,9 +278,9 @@ export async function detectOne(
     // 不再拿分类并发槽等待 deleteMessages 的 429 退避。
     inFlightAdDetectKeys.add(key);
     try {
-      let warning: TelegramWorkerTemporaryMessageResult | undefined;
+      let warningResult: TelegramWorkerTemporaryMessageResult | undefined;
       try {
-        warning = await warnReferencedAdSender(bundle);
+        warningResult = await warnReferencedAdSender(bundle);
       } catch (error: unknown) {
         logger.error(
           `Ad detection failed to send referenced-ad warning for sender ${bundle.senderId} ` +
@@ -277,6 +288,19 @@ export async function detectOne(
           error
         );
       }
+      if (
+        warningResult !== undefined &&
+        "suppressed" in warningResult
+      ) {
+        cancelReferencedAdWarning(key, warningGeneration);
+        if (pendingAdMessages.get(key) === bundle) {
+          pendingAdMessages.delete(key);
+          refreshAdDetectCapacitySaturation();
+        }
+        return;
+      }
+      const warning: TelegramWorkerTemporaryMessageSentResult | undefined =
+        warningResult;
       if (warning === undefined) {
         cancelReferencedAdWarning(key, warningGeneration);
         if (

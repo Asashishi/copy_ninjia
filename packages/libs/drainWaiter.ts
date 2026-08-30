@@ -1,9 +1,13 @@
 import type { FlushResult } from "../types/lifecycle";
 
 /**
- * 停机 drain 的公共骨架：等待某个 owner 的在途与待执行工作归零，超出预算则
- * abort 并结算。头像与反应两个队列除 abort/空闲判定不同外完全同构，语义（尤
- * 其是「预算为 0 时立即 abort 并结算」）只在这里实现一次。
+ * 停机 drain 的骨架：等待某个 owner 的在途与待执行工作归零，超出预算则 abort 并结算。
+ *
+ * 当前唯一的 owner 是头像更新队列（copy/avatarQueue.ts 的 drainAvatarUpdates）。
+ * 单调用方仍留成独立模块，是因为这里锁的是两条容易被各自重写错的语义：
+ * **预算为 0 时不抛校验错、而是立刻 abort 并按 timedOut 结算**，以及
+ * 「登记 waiter 之后必须再触发一次空闲检查」这道补漏。新增 owner 直接复用本函数，
+ * 不要在调用点各写一份。
  * @see ../../docs/cn/04-invariants.md
  */
 export interface DrainWaiterParams {

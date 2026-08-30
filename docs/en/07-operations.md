@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="06-modification-guide.md">← Prev: 06 Recipes</a> · <a href="08-commands.md">Next: 08 Commands →</a>
+  <a href="content-table.md">📚 Developer Docs Home</a> · <a href="06-modification-guide.md">← Prev: 06 Recipes</a> · <a href="08-commands.md">Next: 08 Commands →</a>
 </p>
 
 ---
@@ -116,8 +116,10 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
     again, history compacts to the latest record per user, and each chat/day retains at most the
     newest 250,000 users.
 - **`database/storage.sqlite`** (with possible runtime `-wal` / `-shm` sidecars)
-  - **Contents**: schema-v5 shared storage database. `whitelist_entries` and `blocklist_entries` are the
-    authoritative allowlist and blocklist; `pending_blocked_removals` is the unfinished per-chat
+  - **Contents**: schema-v7 shared storage database. `whitelist_entries` and `blocklist_entries` are the
+    authoritative permanent allowlist and blocklist. `temporary_whitelist_entries` stores cross-chat
+    message accumulation, consecutive qualifying days, temporary grant time, and last-message time in
+    relational columns; `pending_blocked_removals` is the unfinished per-chat
     ban outbox; `chat_states` is the authoritative per-chat state table (at most 25 rows — a 26th
     refuses startup); `storage_metadata` carries the one schema version. The Drizzle migration journal
     must match a supported lineage. A `chat_states` slot is released only when the whole record falls
@@ -130,11 +132,14 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
   - **Backup**: mandatory. Losing the blocklist removes every permanent ban; losing the outbox
     loses unfinished enforcement. With the bot stopped, copy the main database and any WAL/SHM
     present at that point as one consistency set outside the worktree, recording owner/mode and
-    SHA-256. Never hand-edit business rows with a text editor or ad-hoc SQL. Schema-migration
-    scripts create and verify a separate external backup through SQLite serialization.
+    SHA-256. Never hand-edit business rows with a text editor or ad-hoc SQL. Before writing, the
+    temporary-allowlist schema migration copies the main database and existing sidecars byte for byte,
+    records an owner/mode/SHA-256 manifest in an external directory, and reads the copies back to verify them.
   - **Recovery**: Disk I/O Worker is the sole database owner. Before returning only counts and the
-    pending outbox to the main thread, startup validates integrity, JSONB, schema, migration
-    lineage, row codecs, and allowlist/blocklist disjointness. Any failure refuses startup; it
+    permanent-policy counts and the pending outbox to the main thread, startup validates integrity,
+    JSONB, schema, migration lineage, row codecs, and disjointness between the blocklist and both
+    allowlists. Temporary activity is cold-read into an 8,192-entry LRU only for identities required
+    by an update. Any failure refuses startup; it
     never creates an empty replacement, drops rows, or silently degrades.
 - **`memory/ad-detected/sample.json`**
   - **Contents**: raw samples of ad-detection hits, including time, message IDs and text, verdict
@@ -154,13 +159,13 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
   - **Contents**: single-instance lock.
   - **Backup**: do not back up or edit manually.
 
-No files live directly at the top of `memory/`; each of the six domains owns one subdirectory, while identity policy lives separately under `database/`. Startup first scans every existing domain read-only, including the `joinlog/` retention window, and strictly decodes all inputs. Owners are adopted only after every domain succeeds; directory creation, temporary/orphan/expired-file cleanup, compaction, and the rollover timer begin after the success reply. `ad-detected/` still appears only after the first hit. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges. If downtime crosses Tokyo midnight, startup strictly reads the latest prior day and overlays today's newer records; corrupt prior data fails recovery without rewriting either file, and maintenance publishes today's atomic snapshot and removes old days only after startup succeeds.
+No files live directly at the top of `memory/`; each of the six domains owns one subdirectory, while identity policy lives separately under `database/`. Startup first scans the state domains that require recovery read-only, including the `joinlog/` retention window, and strictly decodes all inputs. Owners are adopted only after every domain succeeds; directory creation, temporary/orphan/expired-file cleanup, and compaction run after the success reply, followed by one Bun-native midnight maintenance cron with an explicit `Asia/Tokyo` timezone. The cron jointly maintains fortune files, logs, join logs, ad-sample archives, pending-verification day files, and temporary-allowlist activity, isolating one domain's failure from the rest; existing startup and business-event paths remain fallbacks. `ad-detected/` still appears only after the first hit; when the directory already exists, post-startup maintenance scans directory entries without reading sample contents. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges. If downtime crosses Tokyo midnight, startup strictly reads the latest prior day and overlays today's newer records; corrupt prior data fails recovery without rewriting either file, and maintenance publishes today's atomic snapshot and removes old days only after startup succeeds. At runtime the unified cron triggers the same rollover; failure retains the active mirror and retries through an unref'ed one-second timer.
 
 A `joinlog/` query reads at most the two chat/day files covering `[since, now]` and keeps the user's latest join in that window. The third retained day exists only for a request captured at 23:59 but handled after midnight. A file evaluates compaction after 10,000 redundant records or 4 MiB of new appends and rewrites atomically only when at least 512 KiB can be reclaimed. Parseable schema violations reject that file's read/write without changing its bytes; only a truncated tail may be repaired by the append layer.
 
 ### `memory/` Support Files and Process-Only State
 
-- Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. Startup inspection records these files without deleting them. After every domain has validated and startup has replied successfully, maintenance for logs, `ai/`, `stickers/`, `luck/`, and `joinlog/` removes the matching `*.tmp`. `ad-detected/` still sweeps `.sample.json.*.tmp` before its first write, while `anti-raid/` excludes temporary files from recovery input. `storage.sqlite-wal` and `storage.sqlite-shm` are normal SQLite sidecars, not orphan temporary files, and must never be deleted under this rule.
+- Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. Startup inspection records these files without deleting them. After every domain has validated and startup has replied successfully, maintenance for logs, `ai/`, `stickers/`, `luck/`, and `joinlog/` removes the matching `*.tmp`. An existing `ad-detected/` directory removes `.sample.json.*.tmp` during post-startup maintenance, while the first sample write retains the same fallback; `anti-raid/` excludes temporary files from recovery input. `storage.sqlite-wal` and `storage.sqlite-shm` are normal SQLite sidecars, not orphan temporary files, and must never be deleted under this rule.
 - Challenge timers, the ad-detection admission queue/deduplication set, and short-lived Telegram member/admin caches are process-only and have no files.
 
 Back up the complete data root while the bot is stopped or at a storage-snapshot consistency boundary; the SQLite main database and existing sidecars must come from one point. Treat both `memory/` and `database/` as sensitive. New memory files default to `0644`, while the database and sidecars default to `0660` on first creation; adoption and atomic replacement preserve the modes of existing files. See [04](04-invariants.md#persistence).
@@ -178,6 +183,37 @@ Startup never guesses that a missing database means empty policy, so a fresh dep
 Deployments still using `config/whitelist.json`, `config/blocklist.json`, and optional `memory/blocklist/` must **first upgrade to 9.1.5 and complete the migration on that version**, then continue upgrading to the current release.
 
 `bun run migrate:identity-storage` last shipped in 9.1.5. Under the rule that cold-migration scripts only cover "most recent released version → current version", it was removed from `scripts/` in 9.2.0; the current release neither offers that migration nor accepts legacy JSON lists as input. Do not create empty `whitelist.json`/`blocklist.json` files on the current release and then create an empty database — that leaves the real lists behind and puts the bot online with an empty blocklist.
+
+### storage.sqlite: schema v5 → v7 temporary allowlist and ad bypass
+
+The most recently released schema v5 has no `temporary_whitelist_entries` table. The current
+production entry accepts only the exact schema v7 lineage and never adds the table or rewrites
+membership at startup.
+After placing the new code, keep the bot stopped and run:
+
+```bash
+bun run migrate:temporary-whitelist -- --check
+bun run migrate:temporary-whitelist -- --apply
+```
+
+Both modes acquire `bot.lock`, so systemd/supervisor must already be stopped and confirmed inactive.
+`--check` read-only validates SQLite integrity, JSONB storage classes, schema version, and the exact
+v5/v6/v7 migration lineage. It reports v5 as directly migratable, accepts v6 only as the resumable
+intermediate lineage of this migration, and reports v7 as complete. Every other version or unknown
+lineage is refused.
+
+For released deployments, `--apply` exposes only the direct v5 → v7 edge. If the same migration was
+interrupted after committing v6, it may resume from that intermediate lineage. Before writing, the
+script copies the main database and any existing WAL/SHM sidecars byte for byte outside the worktree,
+writes and reads back an owner/mode/SHA-256 manifest, then runs the current Drizzle migrations. They
+create the strict relational table at v6, rebuild it so the first qualified day grants ad bypass,
+and set `storage_metadata` to v7. The script finishes with the complete v7 inspection.
+Any backup, migration, or verification failure retains the external backup path and original error;
+keep the service stopped and restore the whole consistency set instead of deleting rows, creating an
+empty replacement, or guessing across versions. After success, retain the backup, start the service,
+and confirm `active/running`, unchanged `NRestarts` across two restart intervals, and no new non-zero
+journal exit. Re-running `--apply` against v7 only reports that migration is complete and does not
+rewrite the database.
 
 ### state.json: drop the retired `qaThumbnailUrl`
 
@@ -226,8 +262,10 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
     multipliers must not exceed 100, and at most 5 sticker packs are allowed.
 - **Identity database is missing or fails validation**
   - **Cause**: migration has not run; `storage.sqlite` is not writable; integrity, JSONB, schema,
-    or migration lineage is invalid; a row codec fails; or one identity exists in both lists.
-  - **Action**: keep the bot stopped and create the database or roll back, per [Identity Storage Migration](#identity-storage-migration).
+    or migration lineage is invalid; a row codec fails; or the blocklist intersects the permanent
+    or temporary allowlist.
+  - **Action**: if the error names schema v5, keep the bot stopped and run the v5 → v7 cold migration
+    above. Otherwise create the database or roll back per [Identity Storage Migration](#identity-storage-migration).
     Restore the database and sidecars from one consistency point and repair collaboration-group
     permissions before starting. Never create an empty replacement or delete failing rows.
 - **Both state copies are invalid**
@@ -293,6 +331,6 @@ The token fingerprint identifies the lock owner; it is not a data-isolation boun
 
 <div align="center">
 
-[← Prev: 06 Recipes](06-modification-guide.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#07-operations-and-troubleshooting) · **Next: None →**
+[← Prev: 06 Recipes](06-modification-guide.md) · [📚 Developer Docs Home](content-table.md) · [⬆️ Back to Top](#07-operations-and-troubleshooting) · **Next: None →**
 
 </div>

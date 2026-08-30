@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="01-getting-started.md">← Prev: 01 Setup</a> · <a href="03-directory-map.md">Next: 03 Directory Map →</a>
+  <a href="content-table.md">📚 Developer Docs Home</a> · <a href="01-getting-started.md">← Prev: 01 Setup</a> · <a href="03-directory-map.md">Next: 03 Directory Map →</a>
 </p>
 
 ---
@@ -107,7 +107,7 @@ The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycl
 1. Recursively create and **preflight the data root**: write, file fsync, same-directory hard link, atomic rename, and directory fsync. Any failure aborts startup with the actual path.
 2. Acquire the **`bot.lock`** single-instance lock. See [07 Operations and Troubleshooting](07-operations.md#botlock-refuses-startup) for its format and cleanup rules.
 3. **Restore the state persistence boundary and validate the deployment inputs that exist**: remove orphaned top-level temporary files, strictly validate and restore both `state.json` copies, and hydrate authoritative memory through the business facade. `telegram.json` is process-level mandatory, and every other optional input **must parse strictly whenever the file is present**; a genuinely absent one is left to that feature's own readiness verdict (see `validateExistingDeploymentInputs` in [`packages/config/readiness.ts`](../../packages/config/readiness.ts), exported through [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)). Chat switches in SQLite `chat_states` take no part in this check; they are decoded only at the persistence-recovery boundary in the next step.
-4. Initialize the **Disk I/O Worker**. Logs, AI memory, sticker catalogs, fortune state, pending verification, join logs, and `database/storage.sqlite` first undergo read-only inspection and strict decoding as one unit. Only after every domain succeeds are the owners adopted; temporary/orphan/expired-file cleanup, compaction, and the rollover timer start after the success reply. Any inspection failure preserves every domain without chmod, rewrite, unlink, or timer creation. The main thread receives only `chat_states`, policy counts, and pending removals rather than full policy tables. Then initialize the Telegram clients and assert that the super administrator is not on the blocklist.
+4. Initialize the **Disk I/O Worker**. Logs, AI memory, sticker catalogs, fortune state, pending verification, join logs, and `database/storage.sqlite` first undergo read-only inspection and strict decoding as one unit. Only after every domain succeeds are the owners adopted; temporary/orphan/expired-file cleanup and compaction run after the success reply, followed by one Bun-native midnight maintenance cron with an explicit `Asia/Tokyo` timezone. That cron jointly maintains fortune files, logs, join logs, ad-sample archives, pending-verification day files, and temporary-allowlist activity. Existing startup- or business-event-driven cleanup remains as a fallback, while a failed verification rollover keeps only an unref'ed one-second retry timer. Any inspection failure preserves every domain without chmod, rewrite, unlink, or a surviving maintenance cron. The main thread receives only `chat_states`, permanent-policy counts, and pending removals rather than copying the permanent allowlist, blocklist, or temporary-activity tables. Then initialize the Telegram clients and assert that the super administrator is not on the blocklist.
 5. Register handlers, set the command menu, and run `bot.init()`.
 6. Initialize the **AI Worker** (when the AI configuration is unavailable this step logs one line and is skipped wholesale), hydrating only groups explicitly enabled in `chat_states`; then restore the sticker catalog, fortune, and pending-verification mirrors, initialize the **Anti-Raid Worker** and the blocklist sweep scheduler, and sweep the already-managed chats once.
 7. Seed the missing `state.global.assets` entries with their built-in defaults (persisted in the background, never blocking startup), start the acknowledgement-safe runner, and only then start the **low-priority group-title backfill**, bounded so it cannot occupy an unbounded number of query-category requests or connections.
@@ -137,6 +137,6 @@ See [04 Authoritative Runtime Invariants](04-invariants.md) for the complete rul
 
 <div align="center">
 
-[← Prev: 01 Setup](01-getting-started.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#02-architecture-overview) · [Next: 03 Directory Map →](03-directory-map.md)
+[← Prev: 01 Setup](01-getting-started.md) · [📚 Developer Docs Home](content-table.md) · [⬆️ Back to Top](#02-architecture-overview) · [Next: 03 Directory Map →](03-directory-map.md)
 
 </div>

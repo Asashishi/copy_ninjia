@@ -7,8 +7,8 @@
  * 在换容器时静默把一首正常的歌判死。这里改为「只认 audio/* 且体积在上限内」，
  * 容器正确性交给 Telegram 与播放端。
  *
- * base64 规范性判定复用 imagePayload.ts 的 isCanonicalBase64——那条规则与载荷类型
- * 无关，两份实现只会漂移。
+ * 规范性判定与两道大小上限复用 ./base64Payload.ts 的公共解码闸——那一段与载荷类型
+ * 无关，两份实现只会漂移；上限按生歌自己的常量传入。
  *
  * 纯函数叶子模块，不接触任何缓存与 SDK 类型（见 AGENTS.md 的「缓存与线程归属」）。
  */
@@ -18,7 +18,8 @@ import {
   SONG_GENERATION_MAX_ENCODED_CHARS,
 } from "../../../consts/aiChat/songGeneration";
 import type { GeneratedSongDecodeResult } from "../../../types/aiChat/songGeneration";
-import { isCanonicalBase64 } from "./imagePayload";
+import type { Base64PayloadDecodeResult } from "../../../types/aiChat/payload";
+import { decodeBase64Payload } from "./base64Payload";
 
 /**
  * 把一段模型返回的 base64 音频收窄成可发送的歌曲。
@@ -37,31 +38,15 @@ export function decodeGeneratedSong(
   if (typeof mimeType !== "string" || !mimeType.startsWith("audio/")) {
     return { ok: false, reason: "missing audio mime type" };
   }
-  if (typeof encoded !== "string" || encoded.length === 0) {
-    return { ok: false, reason: "empty payload" };
-  }
-  // 先按 base64 理论上限挡住异常大响应，避免解码后才发现超限而额外分配一份
-  // 最多不可控大小的字节数组；整首歌本来就有几 MB，这一步不是可省的保险。
-  if (encoded.length > SONG_GENERATION_MAX_ENCODED_CHARS) {
-    return { ok: false, reason: "encoded payload exceeds the size limit" };
-  }
-  if (!isCanonicalBase64(encoded)) {
-    return { ok: false, reason: "payload is not canonical base64" };
-  }
-  let bytes: Uint8Array;
-  try {
-    bytes = Uint8Array.fromBase64(encoded, {
-      alphabet: "base64",
-      lastChunkHandling: "strict",
-    });
-  } catch (error: unknown) {
-    void error;
-    return { ok: false, reason: "payload is not canonical base64" };
-  }
-  if (bytes.byteLength === 0 || bytes.byteLength > SONG_GENERATION_MAX_BYTES) {
-    return { ok: false, reason: "decoded payload is empty or exceeds the size limit" };
-  }
-  return { ok: true, song: { bytes, mimeType } };
+  // 编码态上限先挡住异常大响应，避免解码后才发现超限而额外分配一份最多不可控
+  // 大小的字节数组；整首歌本来就有几 MB，这一步不是可省的保险。
+  const decoded: Base64PayloadDecodeResult = decodeBase64Payload({
+    encoded,
+    maxEncodedChars: SONG_GENERATION_MAX_ENCODED_CHARS,
+    maxBytes: SONG_GENERATION_MAX_BYTES,
+  });
+  if (!decoded.ok) return decoded;
+  return { ok: true, song: { bytes: decoded.bytes, mimeType } };
 }
 
 /**

@@ -9,7 +9,7 @@
 # 📚 Copy Ninjia Developer Documentation
 
 <p align="center">
-  <a href="../cn/conntent-table.md">简体中文</a> · <b>English</b> · <a href="../ja/conntent-table.md">日本語</a> · <a href="README.md">🏠 English README</a>
+  <a href="../cn/content-table.md">简体中文</a> · <b>English</b> · <a href="../ja/content-table.md">日本語</a> · <a href="README.md">🏠 English README</a>
 </p>
 
 Comprehensive multi-page developer guide: from setup, architecture, and coding standards, to feature additions and operational maintenance.

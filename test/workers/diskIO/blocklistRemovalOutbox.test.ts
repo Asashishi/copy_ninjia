@@ -173,6 +173,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(acknowledgements).toEqual([{
       type: "identityStoragePersisted",
       writes: [{ table: "whitelist", id: 7, revision: 1 }],
+      temporaryWhitelistWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
     }]);
@@ -217,6 +218,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(acknowledgements.at(-1)).toEqual({
       type: "identityStoragePersisted",
       writes: [{ table: "blocklist", id: 7, revision: 1 }],
+      temporaryWhitelistWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
       removalSnapshotRevision: 4,

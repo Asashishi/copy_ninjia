@@ -1,21 +1,21 @@
 /** Owner: Disk I/O Worker。负责待验证增量缓冲、timer、append 与持久化回执。 */
 
 import { mkdirSync } from "node:fs";
-import { DAY_MS, PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
+import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
 import {
-  TOKYO_OFFSET_MS,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
   VERIFICATION_FLUSH_INTERVAL_MS,
   VERIFICATION_FLUSH_MAX_KEYS,
+  VERIFICATION_ROLLOVER_RETRY_MS,
 } from "../../consts/diskIO/verification";
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
 import {
   verificationFileState,
   verificationFlushTimer,
   verificationPendingChanges,
-  verificationRolloverTimer,
+  verificationRolloverRetryTimer,
   verificationWorkerCache,
 } from "../../cache/workers/diskIO/verification";
 import { getTokyoDateKey } from "../../libs/time";
@@ -77,44 +77,41 @@ function rolloverVerificationDay(
   acknowledge(changes, reply);
 }
 
-function msUntilNextTokyoDay(nowMs: number = Date.now()): number {
-  const tokyo: Date = new Date(nowMs + TOKYO_OFFSET_MS);
-  const nextUtcMs: number = Date.UTC(
-    tokyo.getUTCFullYear(),
-    tokyo.getUTCMonth(),
-    tokyo.getUTCDate() + 1
-  ) - TOKYO_OFFSET_MS;
-  return Math.max(1, Math.min(DAY_MS, nextUtcMs - nowMs + 50));
-}
-
-function armVerificationRollover(
+function scheduleVerificationRolloverRetry(
   reply: VerificationReplySink,
-  dir: string,
-  delayMs: number
+  dir: string
 ): void {
-  verificationRolloverTimer.timer = setTimeout((): void => {
-    verificationRolloverTimer.timer = null;
-    try {
-      rolloverVerificationDay(getTokyoDateKey(), reply, dir);
-      scheduleVerificationRollover(reply, dir);
-    } catch (error: unknown) {
-      console.error("[diskIOWorker] failed to roll pending verification day:", error);
-      // 整晚没有新验证消息时也要尽快重试旧日清理，而不是拖到下一午夜。
-      armVerificationRollover(reply, dir, 1_000);
-    }
-  }, delayMs);
-  verificationRolloverTimer.timer.unref();
+  verificationRolloverRetryTimer.timer = setTimeout((): void => {
+    verificationRolloverRetryTimer.timer = null;
+    maintainVerificationDayForToday(reply, getTokyoDateKey(), dir);
+  }, VERIFICATION_ROLLOVER_RETRY_MS);
+  verificationRolloverRetryTimer.timer.unref();
 }
 
-/** 单个 unref 定时器负责午夜轮换，不按记录创建维护定时器。 */
-export function scheduleVerificationRollover(
+/**
+ * 发布目标东京日 active 快照并清理旧日；失败时保留镜像并安装唯一 unref 重试。
+ * 正常的每日调用由 Disk I/O Worker 统一维护 cron 负责。
+ */
+export function maintainVerificationDayForToday(
   reply: VerificationReplySink,
+  day: string = getTokyoDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
 ): void {
-  if (verificationRolloverTimer.timer !== null) {
-    clearTimeout(verificationRolloverTimer.timer);
+  if (verificationFlushTimer.timer !== null) {
+    clearTimeout(verificationFlushTimer.timer);
+    verificationFlushTimer.timer = null;
   }
-  armVerificationRollover(reply, dir, msUntilNextTokyoDay());
+  if (verificationRolloverRetryTimer.timer !== null) {
+    clearTimeout(verificationRolloverRetryTimer.timer);
+    verificationRolloverRetryTimer.timer = null;
+  }
+  try {
+    rolloverVerificationDay(day, reply, dir);
+  } catch (error: unknown) {
+    console.error("[diskIOWorker] failed to roll pending verification day:", error);
+    // 整晚没有新验证消息时也要尽快重试旧日清理，而不是拖到下一午夜。
+    scheduleVerificationRolloverRetry(reply, dir);
+  }
 }
 
 function scheduleVerificationFlush(
@@ -221,6 +218,10 @@ export function flushVerificationChanges(
     mkdirSync(dir, { recursive: true });
     if (verificationFileState.current?.day !== day) {
       rolloverVerificationDay(day, reply, dir);
+      if (verificationRolloverRetryTimer.timer !== null) {
+        clearTimeout(verificationRolloverRetryTimer.timer);
+        verificationRolloverRetryTimer.timer = null;
+      }
       return true;
     }
     if (verificationPendingChanges.size === 0) return true;

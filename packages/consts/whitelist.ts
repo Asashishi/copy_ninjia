@@ -93,6 +93,33 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
 };
 
 /**
+ * 临时白名单的固定权限：仅绕过广告检测，其余权限逐项为 false。
+ *
+ * 连续七个合格日只授予本视图，不创建永久白名单条目，也不提供防刷屏、命令、
+ * 状态查看或入群验证权限。字段顺序必须与 DEFAULT_WHITELIST_PERMISSIONS 一致，
+ * 让消息热路径的逐项权限读取保持稳定对象 shape。所属模块：
+ * packages/infra/identityPolicy/whitelist.ts。
+ */
+export const TEMPORARY_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
+  isCanMute: false,
+  isCanUnMute: false,
+  isCanGag: false,
+  isCanViewBotStatus: false,
+  isCanBlock: false,
+  isCanUnBlock: false,
+  isCanWhiteOther: false,
+  isCanSwitchMood: false,
+  isCanBypassAdDetection: true,
+  isCanBypassFloodControl: false,
+  isCanControllAIPermission: false,
+  isCanControllAdDetectPermission: false,
+  isCanControllFloodControlPermission: false,
+  isCanControllJATranslatePermission: false,
+  isCanControllAntiRaidPermission: false,
+  isCanControllQaPermission: false,
+};
+
+/**
  * 超级管理员的固定有效权限：逐项全开。
  *
  * 超级管理员的授权来自 `SUPER_ADMIN_USER_ID` 这个身份本身，不来自 SQLite

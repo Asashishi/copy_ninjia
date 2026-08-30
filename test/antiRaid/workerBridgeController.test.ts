@@ -20,6 +20,12 @@ const deletedDeferralChats: number[] = [];
 const grantedPermits: unknown[] = [];
 const telegramRequests: unknown[] = [];
 const telegramTransfers: unknown[] = [];
+const adBypassIds: Set<number> = new Set<number>();
+const permanentWhitelistIds: Set<number> = new Set<number>();
+let identityPrefetchSucceeds: boolean = true;
+const prefetchIdentityPolicies = mock(async (): Promise<boolean> =>
+  identityPrefetchSucceeds
+);
 
 /** superviseDuplexWorker 收到的 options；用来直接驱动 handleRequest 等回调。 */
 const captured: { options?: Record<string, any> } = {};
@@ -70,6 +76,25 @@ mock.module("../../packages/infra/telegram/workerRequests", () => ({
     return undefined;
   },
 }));
+const identityStorage = await import("../../packages/infra/identityStorage");
+mock.module("../../packages/infra/identityStorage", () => ({
+  ...identityStorage,
+  prefetchIdentityPolicies,
+}));
+const whitelistPolicy = await import("../../packages/infra/identityPolicy/whitelist");
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
+  ...whitelistPolicy,
+  hasWhitelistPermission: (id: number, key: string): boolean =>
+    key === "isCanBypassAdDetection" && adBypassIds.has(id),
+  isWhitelisted: (id: number): boolean => permanentWhitelistIds.has(id),
+}));
+const temporaryWhitelistPolicy = await import(
+  "../../packages/infra/identityPolicy/temporaryWhitelist"
+);
+mock.module("../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
+  ...temporaryWhitelistPolicy,
+  hasActiveTemporaryWhitelist: (id: number): boolean => adBypassIds.has(id),
+}));
 mock.module("../../packages/antiRaid/workerBridge/observers", () => ({
   registerAntiRaidBridgeObservers: (): void => {},
 }));
@@ -94,6 +119,10 @@ beforeEach(() => {
   grantedPermits.length = 0;
   telegramRequests.length = 0;
   telegramTransfers.length = 0;
+  adBypassIds.clear();
+  permanentWhitelistIds.clear();
+  identityPrefetchSucceeds = true;
+  prefetchIdentityPolicies.mockClear();
   delivery.accepts = true;
 });
 
@@ -184,6 +213,47 @@ describe("Anti-Raid 双工能力分派", () => {
     expect(value).toBe("telegram-result");
     expect(telegramRequests).toEqual([request]);
     expect(grantedPermits).toEqual([]);
+  });
+
+  test("引用广告警告发送前复查当前豁免，冷读失败同样不误警告", async () => {
+    const request = {
+      operation: "sendTemporaryMessage",
+      category: "message",
+      chatId: CHAT_ID,
+      identityId: 7,
+      text: "warning",
+      deleteAfterMs: 30_000,
+    } as never;
+
+    adBypassIds.add(7);
+    await expect(captured.options!.handleRequest(
+      request,
+      new AbortController().signal
+    )).resolves.toEqual({ suppressed: true });
+    expect(telegramRequests).toEqual([]);
+
+    adBypassIds.clear();
+    permanentWhitelistIds.add(7);
+    await expect(captured.options!.handleRequest(
+      request,
+      new AbortController().signal
+    )).resolves.toEqual({ suppressed: true });
+    expect(telegramRequests).toEqual([]);
+
+    permanentWhitelistIds.clear();
+    identityPrefetchSucceeds = false;
+    await expect(captured.options!.handleRequest(
+      request,
+      new AbortController().signal
+    )).resolves.toEqual({ suppressed: true });
+    expect(telegramRequests).toEqual([]);
+
+    identityPrefetchSucceeds = true;
+    await expect(captured.options!.handleRequest(
+      request,
+      new AbortController().signal
+    )).resolves.toBe("telegram-result");
+    expect(telegramRequests).toEqual([request]);
   });
 
   test("许可回执没有可转移缓冲；只有 Telegram 回执才问 transfer 清单", () => {

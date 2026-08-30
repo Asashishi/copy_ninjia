@@ -23,3 +23,7 @@ export {
   readIdentityPolicies,
 } from "./storageDatabase/identityPolicy";
 export { handlePendingRemovalSnapshot } from "./storageDatabase/pendingRemoval";
+export {
+  handleTemporaryWhitelistWrite,
+  sweepExpiredTemporaryWhitelistActivities,
+} from "./storageDatabase/temporaryWhitelist";

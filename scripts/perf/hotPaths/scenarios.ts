@@ -47,6 +47,7 @@ import { createLuckReceiptFastPathScenario } from "./luckReceiptScenario";
 import {
   aiMediaDirectTriggerScenario,
   incomingMessageSpineScenario,
+  selfSentActiveScenario,
   selfSentEmptyScenario,
 } from "./messageSpineScenarios";
 import {
@@ -58,6 +59,8 @@ import {
 import { prototypeProbes } from "./jitTiers";
 import { createAdCapacityRejectScenario } from "./adDetectScenarios";
 import { createIdentityPermissionReadScenario } from "./identityScenarios";
+import { createTemporaryWhitelistActivityScenario } from
+  "./temporaryWhitelistScenario";
 import type { Scenario, ScenarioName } from "./types";
 
 /** 广告无元数据路径的只读空输入，避免基准自身制造额外容器。 */
@@ -547,6 +550,8 @@ export function createScenario(name: ScenarioName): Scenario {
       return createAdCapacityRejectScenario();
     case "identity-permission-read":
       return createIdentityPermissionReadScenario();
+    case "temporary-whitelist-activity":
+      return createTemporaryWhitelistActivityScenario();
     case "join-timestamp-window":
       return joinTimestampWindowScenario();
     case "quota-timestamp-window":
@@ -559,6 +564,8 @@ export function createScenario(name: ScenarioName): Scenario {
       return chatStateMapReadScenario();
     case "self-sent-empty":
       return selfSentEmptyScenario();
+    case "self-sent-active":
+      return selfSentActiveScenario();
     case "incoming-message-spine":
       return incomingMessageSpineScenario();
     case "ai-media-direct-trigger":

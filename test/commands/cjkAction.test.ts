@@ -20,8 +20,7 @@ const {
 const { recentActionCallTimestamps } = await import("../../packages/cache/main/cjkAction");
 const { markSelfSent } = await import("../../packages/infra/selfSentTracker");
 const {
-  pendingSelfSentWaiters,
-  sentMessages,
+  resetSelfSentTracker,
 } = await import("../../packages/cache/perThread/selfSentTracker");
 const { resolveUsernameTarget } = await import("../../packages/users/senderIdentity");
 const { handleCjkActionUsageCommand } = await import("../../packages/commands/cjkAction");
@@ -50,12 +49,7 @@ beforeEach(() => {
   nextCalls = 0;
   recentActionCallTimestamps.clear();
   // 自发消息登记是模块级状态且 TTL 很长，不清会渗到后续用例里。
-  for (const timer of sentMessages.values()) clearTimeout(timer);
-  sentMessages.clear();
-  for (const waiters of pendingSelfSentWaiters.values()) {
-    for (const waiter of waiters) clearTimeout(waiter.timer);
-  }
-  pendingSelfSentWaiters.clear();
+  resetSelfSentTracker();
   sendMessage.mockClear();
   resolveCommandTarget.mockClear();
 });

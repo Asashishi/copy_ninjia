@@ -8,7 +8,6 @@ import type {
 } from "@grammyjs/types";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { adDetectConfigReadiness } from "../config/readiness";
-import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import {
   AD_DETECT_LINK_URL_MAX_CHARS,
   AD_DETECT_MAX_LINK_URLS,
@@ -26,9 +25,11 @@ import type {
   AdSampleContext,
 } from "../types/antiRaid/adDetect";
 import type { ChatState } from "../types/chatState";
+import type { TelegramIdentityMetadata } from "../types/identityPolicy";
 import { formatUserLabel } from "../users/userLabel";
 import { messageOriginIdentityId } from "../users/messageOrigin";
 import { visibleSenderChat } from "../users/visibleSender";
+import { messageIdentityMetadata } from "../users/identityMetadata";
 import { canBypassAdDetection } from "./memberFacts";
 
 /**
@@ -70,12 +71,12 @@ function replySourceIdentityId(message: Message): number | undefined {
 }
 
 /**
- * 引用来源的白名单三态。超级管理员和热白名单直接返回 true；两张策略缓存都热
+ * 引用来源的白名单三态。超级管理员和热白名单直接返回 true；三张身份缓存都热
  * 才能确证 false。冷缺失表示 update 前置预取失败，不能把未知身份送进永久封禁
  * 的升级路径。
  */
 function sourceWhitelistStatus(sourceId: number): boolean | undefined {
-  if (isWhitelisted(sourceId)) return true;
+  if (canBypassAdDetection(sourceId)) return true;
   return isIdentityPolicyCached(sourceId) ? false : undefined;
 }
 
@@ -188,21 +189,8 @@ export function buildAdCandidate(
       title: "title" in senderChat ? senderChat.title : undefined,
       isChannel: true,
     });
-  const meta: Readonly<{
-    firstName: string;
-    lastName: string;
-    username: string;
-  }> = senderChat === undefined
-    ? {
-      firstName: message.from?.first_name ?? "",
-      lastName: message.from?.last_name ?? "",
-      username: message.from?.username ?? "",
-    }
-    : {
-      firstName: "title" in senderChat ? senderChat.title ?? "" : "",
-      lastName: "",
-      username: "username" in senderChat ? senderChat.username ?? "" : "",
-    };
+  const meta: Readonly<TelegramIdentityMetadata> =
+    messageIdentityMetadata(message, senderChat);
   // 两个可选字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`
   // 会让每条开启广告检测的群消息产出四种 hidden class，把 adDetect 队列的读点与
   // structured clone 边界一起多态化。口径同 aiChat/workerBridge.ts 的「字段一律

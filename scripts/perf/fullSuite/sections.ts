@@ -96,11 +96,13 @@ export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
   "sender-no-username",
   "sender-stable-username",
   "self-sent-empty",
+  "self-sent-active",
   "chat-state-read",
   "chat-state-map-read",
   "ai-activity-window",
   "ai-activity-lru-miss",
   "identity-permission-read",
+  "temporary-whitelist-activity",
   "flood-window-hit",
   "flood-window-growth",
   "flood-window-steady",
@@ -134,10 +136,11 @@ export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "bounded-rolling-buffer",
 ];
 
-/** 八条完整生产动作的固定出数顺序：六条落盘动作与两条用户可见流程。 */
+/** 九条完整生产动作的固定出数顺序：七条落盘动作与两条用户可见流程。 */
 export const CHAIN_NAMES: readonly ChainName[] = [
   "join-log-append",
   "identity-policy-write",
+  "temporary-whitelist-write",
   "chat-state-write",
   "chat-qa-write",
   "ai-memory-snapshot",
@@ -447,7 +450,7 @@ const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   },
 ];
 
-/** 完整流程分区：六条 durable 动作与两条本地命令流程的单次耗时及吞吐。 */
+/** 完整流程分区：七条 durable 动作与两条本地命令流程的单次耗时及吞吐。 */
 export async function runChainSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {

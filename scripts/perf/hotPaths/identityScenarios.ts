@@ -1,7 +1,7 @@
 /**
  * 身份策略 LRU 的每消息热读场景。
  *
- * 每条群消息要在这两张 8,196 项缓存上读 2~3 次：`canBypassFloodControl`
+ * 每条群消息要在三张 8,192 项缓存上读 3~5 次：`canBypassFloodControl`
  * （antiRaid/floodControl.ts 的 buildFloodCandidate）、`canBypassAdDetection`
  * 与 `isUserBlocked`（antiRaid/adCandidate.ts 的 buildAdCandidate）。
  *
@@ -18,6 +18,8 @@ import {
   blocklistEntryCache,
   whitelistEntryCache,
 } from "../../../packages/cache/main/identityStorage";
+import { temporaryWhitelistActivityCache } from
+  "../../../packages/cache/main/temporaryWhitelist";
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../../packages/consts/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
@@ -89,12 +91,13 @@ export function createIdentityPermissionReadScenario(): Scenario {
     prepare: (): void => {
       for (let index: number = 0; index < ids.length; index += 1) {
         const id: number = ids[index]!;
-        // 生产上绝大多数条目是负缓存（见过、但不在任何名单里）；两张表互斥，
-        // 因此同一个 id 至多只在其中一张里有正条目。
+        // 生产上绝大多数条目是负缓存（见过、但不在任何名单里）；三张表在同一次
+        // update 前置读取中一起填充，临时白名单的常态热读也必须进入场景。
         const whitelisted: boolean = index % 50 === 0;
         const blocked: boolean = !whitelisted && index % 97 === 0;
         whitelistEntryCache.set(id, whitelisted ? WHITELIST_ENTRY : null);
         blocklistEntryCache.set(id, blocked ? BLOCKLIST_ENTRY : null);
+        temporaryWhitelistActivityCache.set(id, null);
       }
     },
     run: (iterations: number): number => {
@@ -111,6 +114,7 @@ export function createIdentityPermissionReadScenario(): Scenario {
     reset: (): void => {
       whitelistEntryCache.clear();
       blocklistEntryCache.clear();
+      temporaryWhitelistActivityCache.clear();
     },
     probes: {
       canBypassFloodControl,

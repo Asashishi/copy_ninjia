@@ -33,6 +33,7 @@ import {
   handleChatQaWrite,
   handleChatStateWrite,
   handleIdentityPolicyWrite,
+  handleTemporaryWhitelistWrite,
   handlePendingRemovalSnapshot,
   pendingStorageDatabaseDomains,
   readBlocklistIdPage,
@@ -227,7 +228,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
     // handleIdentityPolicyWrite 由 validatePolicyData / assertOppositePolicyAbsent
     // 抛。异常一旦离开 onmessage，Bun 会直接终止整条落盘线程：在途 flush 全部按
-    // 失败结算、九个领域的缓冲随线程一起没了，反复触发还会顶到重启节流把整个进程
+    // 失败结算、十二个领域的缓冲随线程一起没了，反复触发还会顶到重启节流把整个进程
     // 停掉——为了一条本来只该由自己那个领域承担的非法消息。就地拒收，并按领域
     // 留下标记，让主线程的下一次领域 flush 拿到失败回执。
     case "blocklistRemovals":
@@ -243,6 +244,15 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       handleIdentityMessage(
         msg.table,
         (): void => handleIdentityPolicyWrite(
+          msg,
+          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
+        )
+      );
+      break;
+    case "temporaryWhitelistWrite":
+      handleIdentityMessage(
+        "temporaryWhitelist",
+        (): void => handleTemporaryWhitelistWrite(
           msg,
           (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
         )
@@ -347,7 +357,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
  * joinLog 与 types/diskIO.ts 的 RecoveryReplayRequest）。
  */
 function handleIdentityMessage(
-  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa",
+  domain: "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa",
   apply: () => void
 ): void {
   try {

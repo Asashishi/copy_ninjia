@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 Developer Docs Home</a> · <b>← Prev: None</b> · <a href="02-architecture.md">Next: 02 Architecture →</a>
+  <a href="content-table.md">📚 Developer Docs Home</a> · <b>← Prev: None</b> · <a href="02-architecture.md">Next: 02 Architecture →</a>
 </p>
 
 ---
@@ -170,9 +170,9 @@ that file is covered by `.gitignore`.
     wrong path, which also logs one diagnostic pointing at `$.agent.media`) both stop further
     downloads, while transient failures only back off and never close the capability for good.
 
-Allowlist, blocklist, and pending-removal state are no longer deployment JSON. They live together
+Permanent-allowlist, blocklist, temporary-allowlist activity, and pending-removal state are no longer deployment JSON. They live together
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
-SQLite integrity, migration lineage, schema version, JSONB row shapes, and policy disjointness.
+SQLite integrity, migration lineage, schema version, JSONB/relational row shapes, and policy disjointness.
 Other inputs are validated per feature: AI chat reads stickers, reactions, moods, persona, and the
 chat section of `agent.json`; Japanese translation reads `g-auth.json`. A missing input refuses only
 that toggle and that feature's runtime path — it does not block startup. **A file that exists must
@@ -296,6 +296,6 @@ Startup failures from the data-root preflight, `bot.lock`, or state validation a
 
 <div align="center">
 
-**← Prev: None** · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#01-environment-setup-and-first-run) · [Next: 02 Architecture →](02-architecture.md)
+**← Prev: None** · [📚 Developer Docs Home](content-table.md) · [⬆️ Back to Top](#01-environment-setup-and-first-run) · [Next: 02 Architecture →](02-architecture.md)
 
 </div>

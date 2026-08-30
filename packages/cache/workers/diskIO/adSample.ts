@@ -17,9 +17,8 @@ export const adSampleFileState: { current: AppendOnlyFileState | null } = { curr
 /**
  * 本进程是否已经清扫过 memory/ad-detected/ 里的孤儿 .tmp。
  *
- * 这个领域按设计没有启动恢复钩子（进程从不读样本文件），清扫只能挂在第一次写入
- * 前，用这面旗保证一个 isolate 只做一次 readdir。Worker 重建后回到 false，重新
- * 扫一次，正好覆盖上一个 isolate 崩溃留下的残片。
+ * 启动成功后的维护或第一次写入会清扫，用这面旗保证一个 isolate 只做一次
+ * readdir。Worker 重建后回到 false，重新扫一次，覆盖上一个 isolate 崩溃留下的残片。
  */
 export const adSampleTempsSwept: { current: boolean } = { current: false };
 

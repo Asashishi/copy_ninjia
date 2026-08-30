@@ -3,6 +3,7 @@ import {
   IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
   IDENTITY_READ_CACHE_MAX_ENTRIES,
 } from "../../packages/consts/identityStorage";
+import { DAY_MS } from "../../packages/consts/diskIO/common";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 import type {
   DiskBusinessMessage,
@@ -33,7 +34,11 @@ const diskMessages: DiskBusinessMessage[] = [];
 const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
 const respawnListeners: DiskIORespawnListener[] = [];
 let readImplementation: (ids: readonly number[]) => Promise<IdentityPolicyRawReadResult> =
-  async (): Promise<IdentityPolicyRawReadResult> => ({ whitelist: [], blocklist: [] });
+  async (): Promise<IdentityPolicyRawReadResult> => ({
+    whitelist: [],
+    blocklist: [],
+    temporaryWhitelist: [],
+  });
 let pageReadImplementation: (afterId: number | null) => Promise<BlocklistIdPage> =
   async (afterId: number | null): Promise<BlocklistIdPage> => ({
     ids: [],
@@ -56,7 +61,13 @@ const flushDiskIODomainOutcome = mock(
       writes.push({ table: message.table, id: message.id, revision: message.revision });
     }
     for (const listener of persistedListeners) {
-      listener({ type: "identityStoragePersisted", writes, chatStateWrites: [], chatQaWrites: [] });
+      listener({
+        type: "identityStoragePersisted",
+        writes,
+        temporaryWhitelistWrites: [],
+        chatStateWrites: [],
+        chatQaWrites: [],
+      });
     }
     return { result: "flushed" };
   }
@@ -96,6 +107,17 @@ const {
   whitelistEntryCache,
 } = await import("../../packages/cache/main/identityStorage");
 const {
+  temporaryWhitelistActivityCache,
+  unacknowledgedTemporaryWhitelistWrites,
+} = await import(
+  "../../packages/cache/main/temporaryWhitelist"
+);
+const {
+  clearTemporaryWhitelistActivity,
+  hasActiveTemporaryWhitelist,
+  recordTemporaryWhitelistActivity,
+} = await import("../../packages/infra/identityPolicy/temporaryWhitelist");
+const {
   cachedBlocklistEntry,
   cachedWhitelistEntry,
   confirmIdentityPolicyPersisted,
@@ -109,6 +131,7 @@ const {
 function seedMissing(id: number): void {
   blocklistEntryCache.set(id, null);
   whitelistEntryCache.set(id, null);
+  temporaryWhitelistActivityCache.set(id, null);
 }
 
 function blockValue(blockedAt: string = "2026/08/11 00:00:00") {
@@ -128,6 +151,7 @@ beforeEach(() => {
   readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
     whitelist: [],
     blocklist: [],
+    temporaryWhitelist: [],
   });
   pageReadImplementation = async (
     afterId: number | null
@@ -139,6 +163,81 @@ beforeEach(() => {
 });
 
 describe("主线程身份 LRU 与数据库最终一致性", () => {
+  test("冷读填充临时白名单正缓存，已授权关系不按最后发言过期", async () => {
+    const now: number = Date.now();
+    readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
+      whitelist: [],
+      blocklist: [],
+      temporaryWhitelist: [{
+        id: 7,
+        tempWhite: true,
+        tempWhiteAt: now - DAY_MS - 1,
+        tempWhiteCount: 7,
+        sendCount: 8,
+        countedAt: now - DAY_MS - 1,
+        qualifiedAt: now - DAY_MS - 1,
+      }],
+    });
+
+    await expect(prefetchIdentityPolicies([7])).resolves.toBeTrue();
+    expect(hasActiveTemporaryWhitelist(7)).toBeTrue();
+    await expect(prefetchIdentityPolicies([7])).resolves.toBeTrue();
+    expect(readIdentityPolicies).toHaveBeenCalledTimes(1);
+  });
+
+  test("临时白名单发言写入按主键保留最新 revision 并由精确 ACK 收敛", () => {
+    const now: number = Date.now();
+    seedMissing(7);
+    expect(recordTemporaryWhitelistActivity(7, now)?.queued).toBeTrue();
+    const firstRevision: number = unacknowledgedTemporaryWhitelistWrites.get(7)!.revision;
+    expect(recordTemporaryWhitelistActivity(7, now)?.queued).toBeTrue();
+    const secondRevision: number = unacknowledgedTemporaryWhitelistWrites.get(7)!.revision;
+    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity?.sendCount).toBe(2);
+
+    for (const listener of persistedListeners) {
+      listener({
+        type: "identityStoragePersisted",
+        writes: [],
+        temporaryWhitelistWrites: [{ id: 7, revision: firstRevision }],
+        chatStateWrites: [],
+        chatQaWrites: [],
+      });
+    }
+    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.revision).toBe(secondRevision);
+    for (const listener of persistedListeners) {
+      listener({
+        type: "identityStoragePersisted",
+        writes: [],
+        temporaryWhitelistWrites: [{ id: 7, revision: secondRevision }],
+        chatStateWrites: [],
+        chatQaWrites: [],
+      });
+    }
+    expect(unacknowledgedTemporaryWhitelistWrites.has(7)).toBeFalse();
+
+    expect(clearTemporaryWhitelistActivity(7)).toBeTrue();
+    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
+    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity).toBeNull();
+  });
+
+  test("广告 true 清理在冷读失败窗口仍发布可重放墓碑", () => {
+    expect(temporaryWhitelistActivityCache.has(7)).toBeFalse();
+
+    expect(clearTemporaryWhitelistActivity(7)).toBeTrue();
+
+    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
+    expect(unacknowledgedTemporaryWhitelistWrites.get(7)).toEqual({
+      activity: null,
+      revision: 1,
+    });
+    expect(diskMessages.at(-1)).toEqual({
+      type: "temporaryWhitelistWrite",
+      id: 7,
+      activity: null,
+      revision: 1,
+    });
+  });
+
   test("未 ACK 最终值覆盖迟到数据库冷读，不能把新拉黑回滚成负缓存", async () => {
     const pendingRead: Deferred<IdentityPolicyRawReadResult> = deferred();
     readImplementation = async (): Promise<IdentityPolicyRawReadResult> => pendingRead.promise;
@@ -147,7 +246,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
 
     seedMissing(7);
     queueIdentityPolicyWrite("blocklist", 7, blockValue());
-    pendingRead.resolve({ whitelist: [], blocklist: [] });
+    pendingRead.resolve({ whitelist: [], blocklist: [], temporaryWhitelist: [] });
     await loading;
 
     expect(cachedBlocklistEntry(7)?.meta.username).toBe("alice");
@@ -168,6 +267,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: writeRevision }],
+        temporaryWhitelistWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -195,6 +295,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: firstRevision }],
+        temporaryWhitelistWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -204,6 +305,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: secondRevision }],
+        temporaryWhitelistWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -325,15 +427,18 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     expect(first.revision).toBeLessThan(second.revision);
   });
 
-  test("黑白两份正/负 LRU 各自严格限制为 IDENTITY_READ_CACHE_MAX_ENTRIES 项", () => {
+  test("三份正/负 LRU 各自严格限制为 IDENTITY_READ_CACHE_MAX_ENTRIES 项", () => {
     for (let id: number = 1; id <= IDENTITY_READ_CACHE_MAX_ENTRIES + 1; id++) {
       blocklistEntryCache.set(id, null);
       whitelistEntryCache.set(id, null);
+      temporaryWhitelistActivityCache.set(id, null);
     }
     expect(blocklistEntryCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
     expect(whitelistEntryCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
+    expect(temporaryWhitelistActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
     expect(blocklistEntryCache.has(1)).toBeFalse();
     expect(whitelistEntryCache.has(1)).toBeFalse();
+    expect(temporaryWhitelistActivityCache.has(1)).toBeFalse();
   });
 
   test("一次更新的超大身份集合按预取分块上限分成有界数据库读", async () => {
@@ -391,6 +496,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
       whitelist: [],
       blocklist: [[7, "{}"], [8, "{}"]],
+      temporaryWhitelist: [],
     });
 
     await expect(retainCurrentlyBlockedIdentityIds([7, 8, 9]))

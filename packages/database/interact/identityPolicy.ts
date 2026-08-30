@@ -2,6 +2,7 @@ import { asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../consts/identityStorage";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
 import { jsonbTextProjection } from "../schema/jsonb";
+import { temporaryWhitelistEntries } from "../schema/temporaryWhitelist";
 import type { IdentityPolicyTable } from "../../types/identityPolicy";
 import type {
   StorageDatabase,
@@ -11,7 +12,7 @@ import type {
 } from "../../types/storageDatabase";
 
 /**
- * 为一条连接建两条「主键是否已持久化」的预编译语句（白/黑名单各一）。
+ * 为一条连接建三条「主键是否已持久化」的预编译语句。
  *
  * 这个查询在写入路径上按条目调用（workers/diskIO/storageDatabase/identityPolicy.ts
  * 的 assertOppositePolicyAbsent），因此每条连接只构建一次并复用预编译语句。
@@ -28,6 +29,9 @@ export function prepareStoredIdentityIdLookups(
       .where(eq(whitelistEntries.id, sql.placeholder("id"))).prepare(),
     blocklist: database.select({ id: blocklistEntries.id }).from(blocklistEntries)
       .where(eq(blocklistEntries.id, sql.placeholder("id"))).prepare(),
+    temporaryWhitelist: database.select({ id: temporaryWhitelistEntries.id })
+      .from(temporaryWhitelistEntries)
+      .where(eq(temporaryWhitelistEntries.id, sql.placeholder("id"))).prepare(),
   };
 }
 

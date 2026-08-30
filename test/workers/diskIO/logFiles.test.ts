@@ -16,6 +16,7 @@ import {
   handleLogMessage,
   inspectLogFiles,
   maintainLogFiles,
+  maintainLogRetention,
 } from "../../../packages/workers/diskIO/logFiles";
 import { serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOnlyDayFile";
 
@@ -133,6 +134,23 @@ describe("diskIO/logFiles 启动恢复", () => {
       message: "request failed retrying",
       args: ["request failed", { code: 503 }, "retrying"],
     });
+  });
+
+  test("每日维护先提交日志缓冲，再清理新出现的临时与过期文件", () => {
+    initLogFiles();
+    const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
+    const tempPath: string = join(LOGS_DIR, `after-start${TMP_FILE_SUFFIX}`);
+    writeFileSync(stalePath, "{}");
+    writeFileSync(tempPath, "partial");
+    const timestamp: number = Date.now();
+    handleLogMessage({ timestamp, level: "error", args: ["daily maintenance"] });
+
+    maintainLogRetention();
+
+    expect(flushBuffer.entries).toHaveLength(0);
+    expect(existsSync(join(LOGS_DIR, `${getTokyoDateKey(new Date(timestamp))}.json`))).toBeTrue();
+    expect(existsSync(stalePath)).toBeFalse();
+    expect(existsSync(tempPath)).toBeFalse();
   });
 
   test("批次写入遇到不兼容文件时失败并重置游标，原文件保持不变", () => {

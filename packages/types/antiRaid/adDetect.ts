@@ -173,6 +173,16 @@ export interface AdVerdict {
   reason: string;
 }
 
+/** Worker -> 主线程：模型明确返回 ad=true；用于清空连续合格日累计。 */
+export interface AdVerdictTrueEvent {
+  type: "adVerdictTrue";
+  chatId: number;
+  senderId: number;
+}
+
+/** 广告判定流水线向主线程发布的完整事件。 */
+export type AdDetectionEvent = AdVerdictTrueEvent | AdDetectedEvent;
+
 /** 一次广告消息串送检的取舍结果。 */
 export interface AdBundleSelection {
   /** 本次真正交给模型的条目，按时间先后排列（已判上下文在前，未判内容在后）。 */

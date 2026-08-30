@@ -67,10 +67,11 @@ export interface ColdStartRound {
   readonly peakRssBytes: number;
 }
 
-/** 六条真实落盘动作与两条用户可见本地流程；全部从生产入口驱动。 */
+/** 七条真实落盘动作与两条用户可见本地流程；全部从生产入口驱动。 */
 export type ChainName =
   | "join-log-append"
   | "identity-policy-write"
+  | "temporary-whitelist-write"
   | "chat-state-write"
   | "chat-qa-write"
   | "ai-memory-snapshot"
@@ -91,7 +92,7 @@ export interface ChainRound {
   /**
    * 完整处理吞吐（ops/s）：每秒能从生产入口跑完多少次该动作。
    *
-   * 六条落盘动作的终点是 durable 回执；广告检测与 AI 回复的终点分别是处置
+   * 七条落盘动作的终点是 durable 回执；广告检测与 AI 回复的终点分别是处置
    * 排空与消息发送完成。批量动作的 `throughputPerSecond` 按记录折算，天然是它
    * 的 recordsPerOperation 倍，不能替代这一口径比较一次完整动作的成本。
    */

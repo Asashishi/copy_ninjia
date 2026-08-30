@@ -11,13 +11,15 @@ import type {
   PendingIdentityPolicyWrite,
   PendingRemovalWrite,
 } from "../../../types/identityStorage";
+import type { PendingTemporaryWhitelistWrite } from
+  "../../../types/temporaryWhitelist";
 
 /** Disk I/O Worker 独占的 SQLite 连接与业务表写缓冲。 */
 
 /**
  * Owner: Disk I/O Worker。
  *
- * 每条连接两条预编译的主键存在性语句（白/黑名单各一），首次用到时由
+ * 每条连接三条预编译的主键存在性语句（永久白/黑名单与临时白名单各一），首次由
  * workers/diskIO/storageDatabase/identityPolicy.ts 建好放进来。写入路径按条目调用
  * assertOppositePolicyAbsent，因此同一连接必须复用预编译语句。
  *
@@ -50,6 +52,16 @@ export const pendingWhitelistWrites: Map<number, PendingIdentityPolicyWrite> = n
 
 /** 黑名单未提交最终值；容量达到 128 即触发一次显式事务。 */
 export const pendingBlocklistWrites: Map<number, PendingIdentityPolicyWrite> = new Map();
+
+/**
+ * 临时白名单累计未提交最终值；消息到达时按身份合并，容量达到 128 即触发事务。
+ * 成功提交后由 flush 清理，失败时保留给 30 秒 timer 重试；Worker 重建后为空，
+ * 主线程以未 ACK revision 重放最终值。
+ */
+export const pendingTemporaryWhitelistWrites: Map<
+  number,
+  PendingTemporaryWhitelistWrite
+> = new Map();
 
 /** 待踢成员未提交行变化；容量达到 128 即触发一次显式事务。 */
 export const pendingRemovalWrites: Map<number, PendingRemovalWrite> = new Map();
@@ -93,15 +105,15 @@ export const storageWriteFlushTimer: {
 
 /**
  * 本轮未进入写缓冲的拒收领域；统一 flush 取走后清空，避免永久失败。
- * 容量最多为四个持久化领域，Worker 重建时由 reset 清空。
+ * 容量最多为六个 SQLite 持久化领域，Worker 重建时由 reset 清空。
  */
 export const rejectedStorageDomains: Set<
-  "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
 > = new Set();
 
 /** 记下某个存储领域本轮拒收的一条消息；下一次 flush 会按该领域回报失败。 */
 export function noteStorageWriteRejected(
-  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  domain: "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
 ): void {
   rejectedStorageDomains.add(domain);
 }
@@ -114,6 +126,7 @@ export function resetStorageDatabaseCache(): void {
   storageDatabaseHandle.current = null;
   pendingWhitelistWrites.clear();
   pendingBlocklistWrites.clear();
+  pendingTemporaryWhitelistWrites.clear();
   pendingRemovalWrites.clear();
   pendingChatStateWrites.clear();
   pendingChatQaWrites.clear();

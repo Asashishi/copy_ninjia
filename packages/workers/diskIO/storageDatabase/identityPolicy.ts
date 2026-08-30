@@ -6,6 +6,7 @@ import {
   pendingBlocklistWrites,
   pendingWhitelistWrites,
   storedIdentityIdLookups,
+  pendingTemporaryWhitelistWrites,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import {
@@ -18,6 +19,8 @@ import {
   readStoredBlocklistIdPage,
   readStoredIdentityPolicies,
 } from "../../../database/interact/identityPolicy";
+import { readStoredTemporaryWhitelistActivities } from
+  "../../../database/interact/temporaryWhitelist";
 import type {
   BlocklistIdPageReadReply,
   IdentityPersistenceReply,
@@ -31,6 +34,10 @@ import type {
 import type { IdentityPolicyTable } from "../../../types/identityPolicy";
 import type { PendingIdentityPolicyWrite } from "../../../types/identityStorage";
 import type {
+  PendingTemporaryWhitelistWrite,
+  StoredTemporaryWhitelistActivity,
+} from "../../../types/temporaryWhitelist";
+import type {
   StorageDatabase,
   StoredIdentityIdLookup,
   StoredIdentityIdLookups,
@@ -41,10 +48,10 @@ import { requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull } from "./flush";
 
 /**
- * 取本连接的两条预编译语句，首次用到时建好挂进连接级缓存。
+ * 取本连接的三条预编译语句，首次用到时建好挂进连接级缓存。
  *
  * 缓存住在这里而不是 database/interact：那一层是不接触任何线程独占缓存的叶子
- * 模块（AGENTS.md 的分层约定），而这两条语句只有本 Worker 用。
+ * 模块（AGENTS.md 的分层约定），而这三条语句只有本 Worker 用。
  */
 function identityIdLookups(): StoredIdentityIdLookups {
   const database: StorageDatabase = requireStorageDatabase();
@@ -152,16 +159,45 @@ function assertOppositePolicyAbsent(message: IdentityPolicyWriteDiskMessage): vo
   const pending: PendingIdentityPolicyWrite | undefined =
     pendingPolicyMap(opposite).get(message.id);
   if (pending !== undefined) {
-    if (pending.data === null) return;
+    if (pending.data !== null) {
+      throw new Error(
+        `Identity ${message.id} cannot exist in both whitelist_entries and blocklist_entries.`
+      );
+    }
+  } else if (hasStoredIdentityPolicy(opposite, message.id)) {
     throw new Error(
       `Identity ${message.id} cannot exist in both whitelist_entries and blocklist_entries.`
     );
   }
-  if (hasStoredIdentityPolicy(opposite, message.id)) {
-    throw new Error(
-      `Identity ${message.id} cannot exist in both whitelist_entries and blocklist_entries.`
-    );
+  if (message.table === "blocklist") {
+    const pendingTemporary: PendingTemporaryWhitelistWrite | undefined =
+      pendingTemporaryWhitelistWrites.get(message.id);
+    const temporaryPresent: boolean = pendingTemporary === undefined
+      ? identityIdLookups().temporaryWhitelist.get({ id: message.id }) !== undefined
+      : pendingTemporary.activity !== null;
+    if (temporaryPresent) {
+      throw new Error(
+        `Identity ${message.id} cannot exist in blocklist_entries and temporary_whitelist_entries.`
+      );
+    }
   }
+}
+
+function temporaryWhitelistRowsWithPending(
+  ids: readonly number[]
+): readonly StoredTemporaryWhitelistActivity[] {
+  const rows: readonly StoredTemporaryWhitelistActivity[] =
+    readStoredTemporaryWhitelistActivities(requireStorageDatabase(), ids);
+  const values: Map<number, StoredTemporaryWhitelistActivity> = new Map();
+  for (const row of rows) values.set(row.id, row);
+  for (const id of ids) {
+    const pending: PendingTemporaryWhitelistWrite | undefined =
+      pendingTemporaryWhitelistWrites.get(id);
+    if (pending === undefined) continue;
+    if (pending.activity === null) values.delete(id);
+    else values.set(id, { id, ...pending.activity });
+  }
+  return [...values.values()];
 }
 
 /** 收下一条黑/白名单最终值；迟到 revision 不得覆盖更新值。 */
@@ -199,7 +235,7 @@ function policyRowsWithPending(
   return [...values];
 }
 
-/** 批量读取两表；结果包含 Worker 尚未提交的最终值。 */
+/** 批量读取永久策略与临时累计；结果包含 Worker 尚未提交的最终值。 */
 export function readIdentityPolicies(
   message: ReadIdentityPoliciesRequest
 ): IdentityPoliciesReadReply {
@@ -213,6 +249,7 @@ export function readIdentityPolicies(
       requestId: message.requestId,
       whitelist: policyRowsWithPending("whitelist", ids),
       blocklist: policyRowsWithPending("blocklist", ids),
+      temporaryWhitelist: temporaryWhitelistRowsWithPending(ids),
     };
   } catch (error: unknown) {
     return {

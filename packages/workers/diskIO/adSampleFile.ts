@@ -4,7 +4,8 @@
  * appendOnlyDayFile.ts 的按位置追加（只覆写结尾的「\n}」）。
  *
  * **这是整个持久化里唯一只写不读的一类**，三条由此而来的取舍：
- * - **进程从不读它**。启动恢复不碰，Worker 重建不 hydrate，也没有任何内存镜像
+ * - **进程从不读样本内容**。启动恢复不 hydrate，也没有任何业务内存镜像；维护只
+ *   扫描目录项以清理孤儿临时文件与过期归档
  *   ——它不是运行时状态，是给人看的原始素材，用来回头调 config/ad_samples.json
  *   的判定口径。少一条、多一条、甚至整个文件被删都不影响机器人的任何行为。
  * - **不进统一 flush 的领域清单**。收到即写、失败即弃（只 console.error）。列进去
@@ -84,8 +85,8 @@ function sampleKey(msg: AdSampleDiskMessage): string {
 /**
  * 清掉这个目录里的孤儿 .tmp。原子写在 openSync 与 renameSync 之间被硬杀就会留
  * 一个残片，模块自身的 catch 只覆盖进程内错误。其余落盘领域都在启动恢复时扫
- * 自己的目录，本领域按设计没有恢复钩子（进程从不读样本文件），因此挂在第一次
- * 写入前、每个 isolate 只做一次——不扫的话没有任何代码路径能删掉它们。
+ * 自己的目录，本领域不恢复样本内容，因此挂在启动后维护或第一次写入前，每个
+ * isolate 只做一次。
  */
 function sweepOrphanedTemps(): void {
   if (adSampleTempsSwept.current) return;
@@ -184,6 +185,17 @@ export function sweepExpiredAdSampleArchives({
     while (occupiedTodayIndexes.has(nextIndex)) nextIndex++;
     adSampleArchiveCursor.current = { day: today, nextIndex };
   }
+}
+
+/**
+ * 已存在样本目录时清理孤儿临时文件与过期归档；目录尚未使用时保持按需创建语义。
+ */
+export function maintainAdSampleFiles(
+  today: string = getTokyoDateKey()
+): void {
+  if (!existsSync(AD_SAMPLE_MEMORY_DIR)) return;
+  sweepOrphanedTemps();
+  sweepExpiredAdSampleArchives({ today });
 }
 
 /**

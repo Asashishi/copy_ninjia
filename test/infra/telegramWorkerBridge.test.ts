@@ -281,6 +281,7 @@ describe("Telegram Worker 双工代理", () => {
 
     await sendTemporaryMessageFromMain({
       chatId: -1001,
+      identityId: 7,
       text: "temporary",
       deleteAfterMs: 30_000,
       signal,
@@ -291,6 +292,7 @@ describe("Telegram Worker 双工代理", () => {
         operation: "sendTemporaryMessage",
         category: "message",
         chatId: -1001,
+        identityId: 7,
         text: "temporary",
         deleteAfterMs: 30_000,
       },
@@ -456,6 +458,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
       operation: "sendTemporaryMessage",
       category: "message",
       chatId: -1001,
+      identityId: 7,
       text: "warning",
       deleteAfterMs: 30_000,
     }, signal)).resolves.toEqual({
@@ -483,6 +486,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
       operation: "sendTemporaryMessage",
       category: "message",
       chatId: -1001,
+      identityId: 7,
       text: "warning",
       deleteAfterMs: 0,
     }, signal)).rejects.toThrow("positive safe integer");
@@ -490,6 +494,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
       operation: "sendTemporaryMessage",
       category: "message",
       chatId: -1001,
+      identityId: 7,
       text: "warning",
       deleteAfterMs: 1.5,
     }, signal)).rejects.toThrow("positive safe integer");

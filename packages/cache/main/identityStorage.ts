@@ -6,6 +6,7 @@ import type {
   WhitelistEntryData,
 } from "../../types/identityPolicy";
 import type { UnacknowledgedIdentityWrite } from "../../types/identityStorage";
+import { resetTemporaryWhitelistCache } from "./temporaryWhitelist";
 
 /** 主线程身份策略 LRU 与未 ACK 写入；跨线程只通过 Disk I/O 消息同步。 */
 
@@ -70,4 +71,5 @@ export function resetIdentityStorageCache(): void {
   identityWriteRevision.current = 0;
   unacknowledgedRemovalSnapshotRevision.current = null;
   removalSnapshotRevision.current = 0;
+  resetTemporaryWhitelistCache();
 }

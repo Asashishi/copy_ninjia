@@ -11,6 +11,7 @@ import {
 } from "../../../packages/cache/workers/diskIO/adSample";
 import {
   handleAdSampleMessage,
+  maintainAdSampleFiles,
   sweepExpiredAdSampleArchives,
 } from "../../../packages/workers/diskIO/adSampleFile";
 import type { AdSampleArchiveEntry } from "../../../packages/workers/diskIO/adSampleFile";
@@ -204,22 +205,24 @@ describe("广告命中样本旁路", () => {
     logError.mockRestore();
   });
 
-  test("第一次写入前清掉孤儿 .tmp：这个领域没有启动恢复钩子能扫它们", () => {
+  test("每日维护清掉孤儿临时文件与过期归档，但不创建尚未使用的目录", () => {
+    maintainAdSampleFiles("2026-07-28");
+    expect(existsSync(AD_SAMPLE_MEMORY_DIR)).toBeFalse();
+
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     const orphan: string = join(AD_SAMPLE_MEMORY_DIR, ".sample.json.1234.abcd.tmp");
-    const unrelated: string = join(
-      AD_SAMPLE_MEMORY_DIR,
-      `sample.${getTokyoDateKey()}.json`
-    );
+    const expired: string = join(AD_SAMPLE_MEMORY_DIR, "sample.2000-01-01.json");
+    const retained: string = join(AD_SAMPLE_MEMORY_DIR, "sample.2026-07-28.json");
     writeFileSync(orphan, "{ partial");
-    writeFileSync(unrelated, "{}");
+    writeFileSync(expired, "{}");
+    writeFileSync(retained, "{}");
     adSampleTempsSwept.current = false;
 
-    handleAdSampleMessage(sample());
+    maintainAdSampleFiles("2026-07-28");
 
     expect(existsSync(orphan)).toBe(false);
-    // 归档不是残片，不能被扫掉。
-    expect(existsSync(unrelated)).toBe(true);
+    expect(existsSync(expired)).toBe(false);
+    expect(existsSync(retained)).toBe(true);
   });
 
   test("写盘失败只作废游标、不抛出：旁路绝不能拖住封禁本身", () => {

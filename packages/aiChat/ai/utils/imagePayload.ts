@@ -3,6 +3,9 @@
  * 的 b64_json 都是「模型给一串 base64」，把校验放在唯一入口才能保证换供应商
  * 不会绕过大小上限与文件签名核对。
  *
+ * 规范性与大小上限那一段与载荷类型无关，收在 ./base64Payload.ts 与生歌共用；
+ * 本文件只保留生图独有的字节签名门禁。
+ *
  * 纯函数叶子模块，不接触任何缓存与 SDK 类型（见 AGENTS.md 的「缓存与线程归属」）。
  */
 
@@ -13,34 +16,10 @@ import {
 } from "../../../consts/aiChat/imageGeneration";
 import type {
   GeneratedChatImage,
-  GeneratedImageDecodeFailure,
   GeneratedImageDecodeResult,
 } from "../../../types/aiChat/imageGeneration";
-
-/** decodeCheckedBytes 的中间结果；失败原因一路带到调用方的日志。 */
-type CheckedBytes =
-  | { readonly ok: true; readonly bytes: Uint8Array }
-  | { readonly ok: false; readonly reason: GeneratedImageDecodeFailure };
-
-/** API 约定返回无换行的标准 base64；严格校验后才交给 Bun 原生解码器。 */
-export function isCanonicalBase64(encoded: string): boolean {
-  if (encoded.length === 0 || encoded.length % 4 !== 0) return false;
-  const padding: number = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
-  for (let i: number = 0; i < encoded.length - padding; i++) {
-    const code: number = encoded.charCodeAt(i);
-    const valid: boolean =
-      (code >= 0x41 && code <= 0x5a) ||
-      (code >= 0x61 && code <= 0x7a) ||
-      (code >= 0x30 && code <= 0x39) ||
-      code === 0x2b ||
-      code === 0x2f;
-    if (!valid) return false;
-  }
-  for (let i: number = encoded.length - padding; i < encoded.length; i++) {
-    if (encoded.charCodeAt(i) !== 0x3d) return false;
-  }
-  return true;
-}
+import type { Base64PayloadDecodeResult } from "../../../types/aiChat/payload";
+import { decodeBase64Payload } from "./base64Payload";
 
 /** 字节流的起始签名是否与声明的 MIME 一致；防止拿到挂着图片 MIME 的其它载荷。 */
 function hasExpectedImageSignature(bytes: Uint8Array, mimeType: GeneratedChatImage["mimeType"]): boolean {
@@ -50,32 +29,13 @@ function hasExpectedImageSignature(bytes: Uint8Array, mimeType: GeneratedChatIma
   return bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
 }
 
-/**
- * base64 规范性与大小上限的统一门禁，通过后解码一次。
- *
- * 先按 base64 理论上限挡住异常大响应，避免解码后才发现超限而额外分配一份
- * 最多不可控大小的字节数组；解码只发生一次，签名判定复用同一份字节。
- */
-function decodeCheckedBytes(encoded: string): CheckedBytes {
-  if (typeof encoded !== "string" || encoded.length === 0) return { ok: false, reason: "empty payload" };
-  if (encoded.length > IMAGE_GENERATION_MAX_ENCODED_CHARS) {
-    return { ok: false, reason: "encoded payload exceeds the size limit" };
-  }
-  if (!isCanonicalBase64(encoded)) return { ok: false, reason: "payload is not canonical base64" };
-  let bytes: Uint8Array;
-  try {
-    bytes = Uint8Array.fromBase64(encoded, {
-      alphabet: "base64",
-      lastChunkHandling: "strict",
-    });
-  } catch (error: unknown) {
-    void error;
-    return { ok: false, reason: "payload is not canonical base64" };
-  }
-  if (bytes.byteLength === 0 || bytes.byteLength > IMAGE_GENERATION_MAX_BYTES) {
-    return { ok: false, reason: "decoded payload is empty or exceeds the size limit" };
-  }
-  return { ok: true, bytes };
+/** 按生图的两道上限跑公共解码闸。 */
+function decodeCheckedBytes(encoded: string): Base64PayloadDecodeResult {
+  return decodeBase64Payload({
+    encoded,
+    maxEncodedChars: IMAGE_GENERATION_MAX_ENCODED_CHARS,
+    maxBytes: IMAGE_GENERATION_MAX_BYTES,
+  });
 }
 
 /**
@@ -85,7 +45,7 @@ function decodeCheckedBytes(encoded: string): CheckedBytes {
  */
 export function decodeGeneratedImage(encoded: string, mimeType: string | undefined): GeneratedChatImage | null {
   if (mimeType !== "image/png" && mimeType !== "image/jpeg") return null;
-  const checked: CheckedBytes = decodeCheckedBytes(encoded);
+  const checked: Base64PayloadDecodeResult = decodeCheckedBytes(encoded);
   // Gemini 侧逐 part 扫描，一个 part 不合格就换下一个，因此这里只需要「行不行」
   // ——真正无图时的诊断由 aiChat/gemini/image.ts 按 candidate 的收尾原因给出。
   if (!checked.ok || !hasExpectedImageSignature(checked.bytes, mimeType)) return null;
@@ -101,7 +61,7 @@ export function decodeGeneratedImage(encoded: string, mimeType: string | undefin
  * 匹配与大小超限。记日志留给调用方，本模块保持纯函数叶子（见文件头注）。
  */
 export function decodeGeneratedImageBySignature(encoded: string): GeneratedImageDecodeResult {
-  const checked: CheckedBytes = decodeCheckedBytes(encoded);
+  const checked: Base64PayloadDecodeResult = decodeCheckedBytes(encoded);
   if (!checked.ok) return checked;
   if (hasExpectedImageSignature(checked.bytes, "image/png")) {
     return { ok: true, image: { bytes: checked.bytes, mimeType: "image/png" } };

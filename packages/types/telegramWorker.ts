@@ -74,16 +74,28 @@ export interface TelegramWorkerTemporaryMessageRequest {
   readonly operation: "sendTemporaryMessage";
   readonly category: "message";
   readonly chatId: number;
+  /** 引用广告警告所针对的展示身份；主线程发送前据此复查当前广告豁免。 */
+  readonly identityId: number;
   readonly text: string;
   readonly deleteAfterMs: number;
 }
 
 /** 临时群提示已经发送且被主线程删除 owner 认领后的回执。 */
-export interface TelegramWorkerTemporaryMessageResult {
+export interface TelegramWorkerTemporaryMessageSentResult {
   readonly messageId: number;
   /** 主线程收到 Telegram 成功响应的墙钟时刻。 */
   readonly sentAt: number;
 }
+
+/** 主线程发现目标当前拥有广告检测豁免，未向 Telegram 发出提示。 */
+export interface TelegramWorkerTemporaryMessageSuppressedResult {
+  readonly suppressed: true;
+}
+
+/** 引用广告警告请求的结算结果；undefined 仍表示实际发送失败。 */
+export type TelegramWorkerTemporaryMessageResult =
+  | TelegramWorkerTemporaryMessageSentResult
+  | TelegramWorkerTemporaryMessageSuppressedResult;
 
 export type TelegramWorkerDownloadFileResult =
   | { readonly status: "ok"; readonly bytes: Uint8Array }

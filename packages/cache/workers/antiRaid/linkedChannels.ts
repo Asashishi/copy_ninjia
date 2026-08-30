@@ -12,6 +12,18 @@ import {
 export const linkedChannels: Map<number, LinkedChannelCache> = new Map();
 /** 进行中的关联频道信息拉取，按 chatId 去重。 */
 export const linkedChannelFetches: Map<number, Promise<void>> = new Map();
+/**
+ * 关联频道整表世代号；只在 reset 时递增，阻止清空前的网络结果写回新一代快照。
+ * Worker 重建时从 0 开始；单个数字无容量增长，随 owner isolate 一起销毁。
+ */
+export const linkedChannelCacheGeneration: { current: number } = { current: 0 };
+
+/** 某次拉取启动时记录的关联频道缓存世代是否仍有效。 */
+export function isCurrentLinkedChannelCacheGeneration(
+  generation: number
+): boolean {
+  return linkedChannelCacheGeneration.current === generation;
+}
 
 /** 在 500 群硬顶内落一份关联频道快照。 */
 export function cacheLinkedChannel(chatId: number, hasLinked: boolean, fetchedAt: number = Date.now()): void {
@@ -25,9 +37,13 @@ export function cacheLinkedChannel(chatId: number, hasLinked: boolean, fetchedAt
 
 /** 获取或创建同群唯一一次关联频道拉取；settle 后自动释放在途槽位。 */
 export function getOrCreateLinkedChannelFetch(chatId: number, create: () => Promise<void>): Promise<void> {
-  let inFlight: Promise<void> | undefined = linkedChannelFetches.get(chatId);
-  if (inFlight) return inFlight;
-  inFlight = create().finally((): boolean => linkedChannelFetches.delete(chatId));
+  const existing: Promise<void> | undefined = linkedChannelFetches.get(chatId);
+  if (existing) return existing;
+  const inFlight: Promise<void> = create().finally((): void => {
+    if (linkedChannelFetches.get(chatId) === inFlight) {
+      linkedChannelFetches.delete(chatId);
+    }
+  });
   linkedChannelFetches.set(chatId, inFlight);
   return inFlight;
 }
@@ -46,4 +62,5 @@ export function sweepLinkedChannelCache(now: number = Date.now()): number {
 export function resetLinkedChannelCache(): void {
   linkedChannels.clear();
   linkedChannelFetches.clear();
+  linkedChannelCacheGeneration.current++;
 }

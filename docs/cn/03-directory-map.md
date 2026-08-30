@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 开发者文档首页</a> · <a href="02-architecture.md">← 上一页：02 架构总览</a> · <a href="04-invariants.md">下一页：04 权威约束 →</a>
+  <a href="content-table.md">📚 开发者文档首页</a> · <a href="02-architecture.md">← 上一页：02 架构总览</a> · <a href="04-invariants.md">下一页：04 权威约束 →</a>
 </p>
 
 ---
@@ -159,6 +159,6 @@
 
 <div align="center">
 
-[← 上一页：02 架构总览](02-architecture.md) · [📚 开发者文档首页](conntent-table.md) · [⬆️ 回到顶部](#03-目录导览与代码放置) · [下一页：04 权威约束 →](04-invariants.md)
+[← 上一页：02 架构总览](02-architecture.md) · [📚 开发者文档首页](content-table.md) · [⬆️ 回到顶部](#03-目录导览与代码放置) · [下一页：04 权威约束 →](04-invariants.md)
 
 </div>

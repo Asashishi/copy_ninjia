@@ -2,6 +2,7 @@ import type { AdSampleMessage } from "../antiRaid/adDetect";
 import type { VerificationSnapshot } from "../antiRaid/verification";
 import type { PendingBlockedRemoval } from "../blocklist";
 import type { IdentityPolicyTable } from "../identityPolicy";
+import type { TemporaryWhitelistActivity } from "../temporaryWhitelist";
 import type { LuckReceiptSecret } from "./storage";
 
 /**
@@ -136,6 +137,15 @@ export interface IdentityPolicyWriteDiskMessage {
   revision: number;
 }
 
+/** 主线程 -> Disk I/O Worker：一项临时白名单累计最终值；null 表示删除。 */
+export interface TemporaryWhitelistWriteDiskMessage {
+  type: "temporaryWhitelistWrite";
+  id: number;
+  activity: Readonly<TemporaryWhitelistActivity> | null;
+  /** 主线程同一身份累计行的单调修订号。 */
+  revision: number;
+}
+
 /** 主线程 -> Disk I/O Worker：一群最终状态；null 表示删除该主键。 */
 export interface ChatStateWriteDiskMessage {
   type: "chatStateWrite";
@@ -219,6 +229,7 @@ export type DiskBusinessMessage =
   | VerificationDeleteDiskMessage
   | BlocklistRemovalsDiskMessage
   | IdentityPolicyWriteDiskMessage
+  | TemporaryWhitelistWriteDiskMessage
   | ChatStateWriteDiskMessage
   | ChatQaWriteDiskMessage
   | JoinLogDiskMessage;
@@ -308,7 +319,7 @@ export interface ReadJoinLogRequest {
   now: number;
 }
 
-/** 主线程 -> Disk I/O Worker：按主键批量读取黑白名单，供两份 LRU 冷缺失预热。 */
+/** 主线程 -> Disk I/O Worker：按主键批量读取身份策略，供三份 LRU 冷缺失预热。 */
 export interface ReadIdentityPoliciesRequest {
   type: "readIdentityPolicies";
   requestId: number;

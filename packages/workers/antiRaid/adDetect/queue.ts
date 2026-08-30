@@ -45,6 +45,7 @@ import { deleteStragglerAdMessage } from "./disposal";
 import { freshAdminIds } from "../adminCache";
 import {
   adDetectPublishHolder,
+  adVerdictTruePublishHolder,
   adDetectQueue,
   adDetectStopping,
   adDetectTickTimer,
@@ -75,6 +76,7 @@ import {
 } from "./bundle";
 import {
   clearChatReferencedAdWarnings,
+  clearIdentityReferencedAdWarnings,
   hasActiveReferencedAdWarning,
   resetReferencedAdWarnings,
   sweepReferencedAdWarnings,
@@ -94,10 +96,15 @@ import type {
   AdCandidateEntry,
   AdCandidateMessage,
   AdDetectedEvent,
+  AdVerdictTrueEvent,
   AdMessageBundle,
   AdSampleContext,
 } from "../../../types/antiRaid/adDetect";
-import { verificationKey, verificationKeyPrefix } from "../../../libs/verificationKey";
+import {
+  parseVerificationKey,
+  verificationKey,
+  verificationKeyPrefix,
+} from "../../../libs/verificationKey";
 import type { AdCandidateDecision } from "../../../types/states/adDetectAdmission";
 
 /**
@@ -304,6 +311,27 @@ export function clearChatAdDetect(chatId: number): void {
 }
 
 /**
+ * 某身份获得临时广告检测豁免时，丢掉它在各群尚未结算的广告状态。
+ * 在途判定由 pendingAdMessages 的对象同一性复查作废。
+ */
+export function clearIdentityAdDetect(identityId: number): void {
+  const belongsToIdentity = (key: string): boolean =>
+    parseVerificationKey(key)?.userId === identityId;
+  adDetectQueue.removeWhere(belongsToIdentity);
+  for (const key of queuedAdDetectKeys) {
+    if (belongsToIdentity(key)) queuedAdDetectKeys.delete(key);
+  }
+  for (const [key, bundle] of pendingAdMessages) {
+    if (bundle.senderId === identityId) pendingAdMessages.delete(key);
+  }
+  for (const key of recentlyDisposedAdKeys.keys()) {
+    if (belongsToIdentity(key)) recentlyDisposedAdKeys.delete(key);
+  }
+  clearIdentityReferencedAdWarnings(identityId);
+  refreshAdDetectCapacitySaturation();
+}
+
+/**
  * 5 分钟一次的维护回收：裁掉窗口外已经消费完的上下文，删掉整串判完又不在
  * 排队/在途的空 bundle，并清理过期的处置抑制记录。未消费条目没有等待 TTL。
  *
@@ -332,9 +360,13 @@ export function sweepAdDetect(now: number = Date.now()): void {
 }
 
 /** Worker 启动入口：登记回投通道并挂上唯一批处理节拍。 */
-export function startAdDetectQueue(publish: (event: AdDetectedEvent) => void): void {
+export function startAdDetectQueue(
+  publish: (event: AdDetectedEvent) => void,
+  publishVerdictTrue?: (event: AdVerdictTrueEvent) => void
+): void {
   adDetectStopping.current = false;
   adDetectPublishHolder.current = publish;
+  adVerdictTruePublishHolder.current = publishVerdictTrue ?? null;
   if (adDetectTickTimer.current !== null) return;
   adDetectTickTimer.current = setInterval((): void => {
     void runAdDetectBatch();
@@ -346,6 +378,7 @@ export function startAdDetectQueue(publish: (event: AdDetectedEvent) => void): v
 export function stopAdDetectQueue(): void {
   quiesceAdDetectQueue();
   adDetectPublishHolder.current = null;
+  adVerdictTruePublishHolder.current = null;
   adDetectQueue.clear();
   queuedAdDetectKeys.clear();
   recentlyDisposedAdKeys.clear();

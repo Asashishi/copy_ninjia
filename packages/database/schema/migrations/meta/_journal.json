@@ -29,6 +29,20 @@
       "when": 20260823000000,
       "tag": "0003_chat_qa",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 20260829000000,
+      "tag": "0004_temporary_whitelist",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 20260830000000,
+      "tag": "0005_temporary_whitelist_ad_bypass",
+      "breakpoints": true
     }
   ]
 }

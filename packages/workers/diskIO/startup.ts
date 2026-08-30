@@ -22,8 +22,16 @@ import {
   inspectVerificationDay,
   maintainVerificationDay,
 } from "./verificationRecovery";
-import { scheduleVerificationRollover } from "./verificationWrites";
-import { adoptStorageDatabase, inspectStorageDatabase } from "./storageDatabase";
+import {
+  adoptStorageDatabase,
+  inspectStorageDatabase,
+  sweepExpiredTemporaryWhitelistActivities,
+} from "./storageDatabase";
+import { maintainAdSampleFiles } from "./adSampleFile";
+import {
+  registerDiskIOMaintenanceCron,
+  stopDiskIOMaintenanceCron,
+} from "./maintenanceCron";
 import { getTokyoDateKey } from "../../libs/time";
 import type { PendingBlockedRemoval } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
@@ -72,6 +80,8 @@ function runMaintenance(
     ["join logs", (): void => maintainJoinLogFiles(inspections.joinLogs)],
     ["luck", (): void => maintainLuckDayState(inspections.luck.day, inspections.luck)],
     ["verifications", (): void => maintainVerificationDay(inspections.verifications)],
+    ["ad samples", (): void => maintainAdSampleFiles()],
+    ["temporary whitelist", (): void => sweepExpiredTemporaryWhitelistActivities()],
   ];
   for (const [domain, maintain] of tasks) {
     try {
@@ -84,9 +94,10 @@ function runMaintenance(
 
 /**
  * 所有持久化域先只读严格解码；任一失败都不 adopt、chmod、rewrite、unlink 或
- * 启动 timer。全部成功后统一发布 owner，发送成功回执，再执行可重试维护。
+ * 启动维护 cron。全部成功后统一发布 owner，发送成功回执，再执行可重试维护。
  */
 export function handleDiskIOStartupLoad(postReply: DiskIOStartupReplySink): void {
+  stopDiskIOMaintenanceCron();
   let loadError: string | undefined;
   let verifications: Map<string, VerificationSnapshot> = new Map();
   let blocklistEntryCount: number = 0;
@@ -156,5 +167,5 @@ export function handleDiskIOStartupLoad(postReply: DiskIOStartupReplySink): void
   });
   if (maintenanceInspections === null) return;
   runMaintenance(maintenanceInspections);
-  scheduleVerificationRollover(postReply);
+  registerDiskIOMaintenanceCron(postReply);
 }

@@ -30,6 +30,7 @@ const flushDiskIODomainOutcome = mock(
         listener({
           type: "identityStoragePersisted",
           writes: [],
+          temporaryWhitelistWrites: [],
           chatStateWrites,
           chatQaWrites: [],
         });
@@ -130,6 +131,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [],
+        temporaryWhitelistWrites: [],
         chatStateWrites: [{ chatId: -1001, revision: firstRevision }],
         chatQaWrites: [],
       });

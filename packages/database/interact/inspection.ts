@@ -11,6 +11,10 @@ import {
   IDENTITY_DATABASE_JSONB_MIGRATION_HASH,
   IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_TEXT_MIGRATION_HASH,
+  IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_HASH,
+  IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH,
   IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH,
 } from "../../consts/identityStorage";
@@ -19,6 +23,7 @@ import {
   decodeBlocklistEntryData,
   decodeWhitelistEntryData,
 } from "../codec/identity";
+import { assertTemporaryWhitelistActivity } from "../codec/temporaryWhitelist";
 import { chatStates } from "../schema/chatState";
 import { readStoredChatQa } from "./chatQa";
 import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
@@ -29,6 +34,8 @@ import {
 } from "../schema/jsonb";
 import { storageMetadata } from "../schema/metadata";
 import { pendingBlockedRemovals } from "../schema/pendingRemoval";
+import type { StoredTemporaryWhitelistActivity } from
+  "../../types/temporaryWhitelist";
 import { readStorageDatabaseMigrationJournal } from "./migration";
 import { storageRowSource } from "../validation/storageRows";
 import type {
@@ -186,7 +193,56 @@ function hasCurrentBaseLineage(
     );
 }
 
-/** 当前 v5 只接受两条已发布基础谱系精确追加 chat state 与 chat Q&A。 */
+function hasSchemaV5MigrationLineage(
+  rows: readonly StorageDatabaseMigrationJournalEntry[]
+): boolean {
+  return rows.length >= 4 &&
+    isMigrationEntry(
+      rows.at(-1),
+      IDENTITY_DATABASE_CHAT_QA_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_CHAT_QA_MIGRATION_HASH
+    ) &&
+    isMigrationEntry(
+      rows.at(-2),
+      IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH
+    ) &&
+    hasCurrentBaseLineage(rows.slice(0, -2));
+}
+
+/** 冷迁移只接受最近一个已发布 v5 的精确 migration 谱系。 */
+export function assertStorageDatabaseSchemaV5MigrationLineage(
+  database: StorageDatabase,
+  source: string
+): void {
+  const rows: readonly StorageDatabaseMigrationJournalEntry[] =
+    readStorageDatabaseMigrationJournal(database, source);
+  if (!hasSchemaV5MigrationLineage(rows)) {
+    throw new Error(`${source}: expected the exact supported schema v5 migration lineage.`);
+  }
+}
+
+/** 冷迁移中间态 v6 只接受 v5 谱系精确追加临时白名单 migration。 */
+export function assertStorageDatabaseSchemaV6MigrationLineage(
+  database: StorageDatabase,
+  source: string
+): void {
+  const rows: readonly StorageDatabaseMigrationJournalEntry[] =
+    readStorageDatabaseMigrationJournal(database, source);
+  if (
+    rows.length < 5 ||
+    !isMigrationEntry(
+      rows.at(-1),
+      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_HASH
+    ) ||
+    !hasSchemaV5MigrationLineage(rows.slice(0, -1))
+  ) {
+    throw new Error(`${source}: expected the exact supported schema v6 migration lineage.`);
+  }
+}
+
+/** 当前 v7 只接受 v6 谱系精确追加首日临时广告免检 migration。 */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,
   source: string
@@ -194,20 +250,27 @@ export function assertStorageDatabaseMigrationLineage(
   const rows: readonly StorageDatabaseMigrationJournalEntry[] =
     readStorageDatabaseMigrationJournal(database, source);
   if (
-    rows.length < 4 ||
+    rows.length < 6 ||
     !isMigrationEntry(
       rows.at(-1),
-      IDENTITY_DATABASE_CHAT_QA_MIGRATION_CREATED_AT,
-      IDENTITY_DATABASE_CHAT_QA_MIGRATION_HASH
-    ) ||
-    !isMigrationEntry(
-      rows.at(-2),
-      IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
-      IDENTITY_DATABASE_CHAT_STATE_MIGRATION_HASH
-    ) ||
-    !hasCurrentBaseLineage(rows.slice(0, -2))
+      IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH
+    )
   ) {
-    throw new Error(`${source}: expected the exact supported schema v5 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v7 migration lineage.`);
+  }
+  const v6Rows: readonly StorageDatabaseMigrationJournalEntry[] =
+    rows.slice(0, -1);
+  if (
+    v6Rows.length < 5 ||
+    !isMigrationEntry(
+      v6Rows.at(-1),
+      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_HASH
+    ) ||
+    !hasSchemaV5MigrationLineage(v6Rows.slice(0, -1))
+  ) {
+    throw new Error(`${source}: expected the exact supported schema v7 migration lineage.`);
   }
 }
 
@@ -225,6 +288,18 @@ export function assertStoredIdentityPolicies(
   if (overlap !== null) {
     throw new Error(
       `${source}:whitelist_entries/blocklist_entries[$.id]: expected disjoint primary keys.`
+    );
+  }
+  const temporaryOverlap: { readonly id: number } | null = database.$client
+    .query<{ readonly id: number }, []>(
+      "SELECT temporary_whitelist_entries.id AS id FROM temporary_whitelist_entries " +
+      "INNER JOIN blocklist_entries USING (id) LIMIT 1;"
+    )
+    .get();
+  if (temporaryOverlap !== null) {
+    throw new Error(
+      `${source}:temporary_whitelist_entries/blocklist_entries[$.id]: ` +
+      "expected disjoint primary keys."
     );
   }
   const whitelistRows: IterableIterator<StoredIdentityPolicyRow> = database.$client
@@ -246,6 +321,45 @@ export function assertStoredIdentityPolicies(
     const path: string = storageRowSource(source, "blocklist_entries", row.id);
     assertTelegramIdentityId(row.id, path);
     decodeBlocklistEntryData(row.data, path);
+  }
+  const temporaryRows: IterableIterator<{
+    readonly id: number;
+    readonly tempWhite: number;
+    readonly tempWhiteAt: number | null;
+    readonly tempWhiteCount: number;
+    readonly sendCount: number;
+    readonly countedAt: number;
+    readonly qualifiedAt: number | null;
+  }> = database.$client.query<{
+    readonly id: number;
+    readonly tempWhite: number;
+    readonly tempWhiteAt: number | null;
+    readonly tempWhiteCount: number;
+    readonly sendCount: number;
+    readonly countedAt: number;
+    readonly qualifiedAt: number | null;
+  }, []>(
+    "SELECT id, temp_white AS tempWhite, temp_white_at AS tempWhiteAt, " +
+    "temp_white_count AS tempWhiteCount, send_count AS sendCount, " +
+    "counted_at AS countedAt, qualified_at AS qualifiedAt " +
+    "FROM temporary_whitelist_entries ORDER BY id ASC;"
+  ).iterate();
+  for (const row of temporaryRows) {
+    const path: string = `${source}:temporary_whitelist_entries[${row.id}]`;
+    assertTelegramIdentityId(row.id, path);
+    if (row.tempWhite !== 0 && row.tempWhite !== 1) {
+      throw new Error(`${path}.temp_white: expected SQLite integer 0 or 1.`);
+    }
+    const activity: StoredTemporaryWhitelistActivity = {
+      id: row.id,
+      tempWhite: row.tempWhite === 1,
+      tempWhiteAt: row.tempWhiteAt,
+      tempWhiteCount: row.tempWhiteCount,
+      sendCount: row.sendCount,
+      countedAt: row.countedAt,
+      qualifiedAt: row.qualifiedAt,
+    };
+    assertTemporaryWhitelistActivity(activity, path);
   }
 }
 

@@ -39,6 +39,7 @@ import {
   NON_WHITELIST_PERMISSIONS,
   PERMISSION_COMMAND_TEXTS,
   SUPER_ADMIN_WHITELIST_PERMISSIONS,
+  TEMPORARY_WHITELIST_PERMISSIONS,
   WHITELIST_PERMISSION_KEY_BY_LOWERCASE,
   WHITE_COMMAND_TEXTS,
 } from "../../packages/consts/whitelist";
@@ -123,6 +124,8 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   expect(() => { SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock = false; }).toBeDefined();
   // @ts-expect-error 非白名单 query 复用这份逐项 false 视图，不允许调用方改写。
   expect(() => { NON_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
+  // @ts-expect-error 临时白名单共享这份仅广告豁免视图，不允许调用方扩权。
+  expect(() => { TEMPORARY_WHITELIST_PERMISSIONS.isCanMute = true; }).toBeDefined();
   const compileOnly: () => void = (): void => {
     // @ts-expect-error 权限键规范化索引是跨命令调用共享的只读查表，不允许增删。
     WHITELIST_PERMISSION_KEY_BY_LOWERCASE.set("x", "isCanMute");
@@ -300,8 +303,17 @@ test("常量表内容本身仍可正常读取", () => {
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(false);
   expect(Object.keys(NON_WHITELIST_PERMISSIONS))
     .toEqual(Object.keys(DEFAULT_WHITELIST_PERMISSIONS));
+  expect(Object.keys(TEMPORARY_WHITELIST_PERMISSIONS))
+    .toEqual(Object.keys(DEFAULT_WHITELIST_PERMISSIONS));
+  expect(TEMPORARY_WHITELIST_PERMISSIONS).toEqual({
+    ...NON_WHITELIST_PERMISSIONS,
+    isCanBypassAdDetection: true,
+  });
   expect(NON_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(false);
   expect(NON_WHITELIST_PERMISSIONS.isCanViewBotStatus).toBe(false);
+  expect(TEMPORARY_WHITELIST_PERMISSIONS.isCanBypassAdDetection).toBe(true);
+  expect(TEMPORARY_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(false);
+  expect(TEMPORARY_WHITELIST_PERMISSIONS.isCanViewBotStatus).toBe(false);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock).toBe(true);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(true);
 });

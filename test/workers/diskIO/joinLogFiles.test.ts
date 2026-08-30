@@ -33,6 +33,7 @@ const {
   handleJoinLogMessage,
   inspectJoinLogFiles,
   maintainJoinLogFiles,
+  maintainJoinLogRetention,
   readJoinLog,
 } = await import("../../../packages/workers/diskIO/joinLogFiles");
 const {
@@ -199,6 +200,21 @@ describe("diskIO/joinLogFiles", () => {
     expect(JSON.parse(readFileSync(currentFile(-1002), "utf8"))).toEqual({
       [`${now + 1}:43`]: { userId: 43, joinedAt: now + 1 },
     });
+  });
+
+  test("每日维护先提交缓冲，再按目标东京日清理过期文件", () => {
+    recoverJoinLogFiles();
+    const now: number = todayAt();
+    const tomorrow: string = getTokyoDateKey(new Date(now + 24 * 60 * 60_000));
+    const stalePath: string = datedFile(-1001, "2000-01-01");
+    writeFileSync(stalePath, "{}");
+    handleJoinLogMessage(joinMessage(-1001, 42, now));
+
+    maintainJoinLogRetention(tomorrow);
+
+    expect(joinLogBuffer.entries).toHaveLength(0);
+    expect(existsSync(currentFile(-1001))).toBeTrue();
+    expect(existsSync(stalePath)).toBeFalse();
   });
 
   test("命令读取前刷新缓冲、按时间过滤，并把同一用户折叠到最后一次加入", () => {

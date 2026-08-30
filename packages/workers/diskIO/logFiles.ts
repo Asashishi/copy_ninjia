@@ -8,8 +8,8 @@
  *
  * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写——具体的
  * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts。
- * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO/appendOnly.ts），跨天时自动清理
- * 过期文件。日期显式按东京时区划分（同 libs/time.ts 的 getTokyoDateKey，
+ * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO/appendOnly.ts），跨天写入
+ * 与每日维护都会清理过期文件。日期显式按东京时区划分（同 libs/time.ts 的 getTokyoDateKey，
  * 与运势/AI 记忆两个同进程内子系统口径一致），不依赖部署机器自身的系统
  * 时区设置——不然一旦部署环境时区漂移，三类落盘数据会在同一次事故里表现
  * 不一致。
@@ -254,6 +254,15 @@ export function adoptLogFiles(inspection: LogFilesInspection): void {
 export function maintainLogFiles(inspection: LogFilesInspection): void {
   cleanupStaleTmpFiles(inspection.names);
   cleanupOldLogs(inspection.names);
+}
+
+/** 每日维护先提交内存日志，再清理孤儿临时文件与过期日文件。 */
+export function maintainLogRetention(): void {
+  if (!flushLogBuffer()) {
+    throw new Error("Failed to flush logs before daily retention maintenance.");
+  }
+  cleanupStaleTmpFiles();
+  cleanupOldLogs();
 }
 
 /** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */

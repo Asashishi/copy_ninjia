@@ -2,7 +2,7 @@
 
 import { deleteMessageAfter } from "./actions/messageLifecycle";
 import { sendMessage } from "./actions/messages";
-import type { TelegramWorkerTemporaryMessageResult } from "../../types/telegramWorker";
+import type { TelegramWorkerTemporaryMessageSentResult } from "../../types/telegramWorker";
 
 export interface SendTemporaryMessageOnMainParams {
   readonly chatId: number;
@@ -20,8 +20,8 @@ export async function sendTemporaryMessageOnMain({
   text,
   deleteAfterMs,
   signal,
-}: SendTemporaryMessageOnMainParams): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
-  let result: TelegramWorkerTemporaryMessageResult | undefined;
+}: SendTemporaryMessageOnMainParams): Promise<TelegramWorkerTemporaryMessageSentResult | undefined> {
+  let result: TelegramWorkerTemporaryMessageSentResult | undefined;
   const messageId: number | undefined = await sendMessage({
     chatId,
     text,

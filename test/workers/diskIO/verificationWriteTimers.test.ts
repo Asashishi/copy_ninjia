@@ -11,13 +11,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   VERIFICATION_FLUSH_INTERVAL_MS,
+  VERIFICATION_ROLLOVER_RETRY_MS,
 } from "../../../packages/consts/diskIO/verification";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
   verificationFlushTimer,
   verificationPendingChanges,
-  verificationRolloverTimer,
+  verificationRolloverRetryTimer,
   verificationWorkerCache,
 } from "../../../packages/cache/workers/diskIO/verification";
 import {
@@ -27,7 +28,7 @@ import {
 } from "../../../packages/workers/diskIO/verificationRecovery";
 import {
   handleVerificationUpsert,
-  scheduleVerificationRollover,
+  maintainVerificationDayForToday,
 } from "../../../packages/workers/diskIO/verificationWrites";
 import type {
   PendingVerificationSnapshot,
@@ -170,20 +171,16 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
       .toHaveProperty("-1001:42.revision", 1);
   });
 
-  test("午夜 timer 先发布新日快照、清理旧日，再排下一次 unref 轮换", (): void => {
+  test("每日维护发布新日快照并清理旧日，不再自行排下一次午夜 timer", (): void => {
     restartFixtureClock(BEFORE_DAY_TWO_MS);
     upsert(1, false);
-    scheduleVerificationRollover(receiveReply, dir);
-    expect(verificationRolloverTimer.timer?.hasRef()).toBeFalse();
-
-    jest.advanceTimersByTime(300);
+    maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
 
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
     expect(existsSync(join(dir, `${DAY_TWO}.json`))).toBeTrue();
     expect(verificationPendingChanges).toHaveLength(0);
     expect(verificationFlushTimer.timer).toBeNull();
-    expect(verificationRolloverTimer.timer).not.toBeNull();
-    expect(verificationRolloverTimer.timer?.hasRef()).toBeFalse();
+    expect(verificationRolloverRetryTimer.timer).toBeNull();
     expect(replies.at(-1)).toMatchObject({ revision: 1, deleted: false });
   });
 
@@ -193,23 +190,20 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     replies.length = 0;
     rmSync(dir, { recursive: true, force: true });
     writeFileSync(dir, "not-a-directory");
-    scheduleVerificationRollover(receiveReply, dir);
-
-    jest.advanceTimersByTime(200);
+    maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
 
     expect(verificationWorkerCache.get("-1001:42")?.revision).toBe(1);
-    expect(verificationRolloverTimer.timer).not.toBeNull();
-    expect(verificationRolloverTimer.timer?.hasRef()).toBeFalse();
+    expect(verificationRolloverRetryTimer.timer).not.toBeNull();
+    expect(verificationRolloverRetryTimer.timer?.hasRef()).toBeFalse();
     expect(replies).toHaveLength(0);
 
     rmSync(dir, { force: true });
     mkdirSync(dir, { recursive: true });
-    jest.advanceTimersByTime(1_000);
+    jest.advanceTimersByTime(VERIFICATION_ROLLOVER_RETRY_MS);
 
     expect(existsSync(join(dir, `${DAY_TWO}.json`))).toBeTrue();
     expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
       .toHaveProperty("-1001:42.revision", 1);
-    expect(verificationRolloverTimer.timer).not.toBeNull();
-    expect(verificationRolloverTimer.timer?.hasRef()).toBeFalse();
+    expect(verificationRolloverRetryTimer.timer).toBeNull();
   });
 });

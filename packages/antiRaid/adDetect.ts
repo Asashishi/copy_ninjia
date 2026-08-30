@@ -9,7 +9,10 @@ import {
   createMonotonicDeadline,
   remainingMonotonicTime,
 } from "../libs/monotonicDeadline";
-import { isProtectedSender } from "./memberFacts";
+import {
+  canBypassAdDetection,
+  isProtectedSender,
+} from "./memberFacts";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -33,7 +36,12 @@ import {
   runBlocklistIdentityMutation,
   runProtectedIdentityMutation,
 } from "../infra/identityPolicy/coordination";
-import type { AdDetectedEvent } from "../types/antiRaid/adDetect";
+import { clearTemporaryWhitelistActivity } from
+  "../infra/identityPolicy/temporaryWhitelist";
+import type {
+  AdDetectedEvent,
+  AdVerdictTrueEvent,
+} from "../types/antiRaid/adDetect";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
 import type { AdSampleDiskMessage } from "../types/diskIO/messages";
 import type { FlushResult } from "../types/lifecycle";
@@ -103,7 +111,7 @@ function recordAdSample(event: AdDetectedEvent): void {
 async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
   // 候选入队时虽已预热，但模型往返期间该身份可能被 8192 项 LRU 淘汰；写前重读
   // 一次，确保互斥检查与表计数建立在当前数据库最终值上。
-  await prefetchIdentityPolicies([event.senderId]);
+  if (!await prefetchIdentityPolicies([event.senderId])) return;
   const newlyBlocked: boolean | null = await runProtectedIdentityMutation(
     (): boolean | null => {
       // 判定发生在 Worker 侧，事件回投主线程后还要排过 identity 串行队列才轮到
@@ -115,10 +123,18 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       // 区内、紧挨着 blockUser：再往后就过了不可逆点，那时候撤只会留下一条既成
       // 事实的名单条目却没有任何执行。
       if (getChatState(event.chatId).isAdDetectEnabled !== true) return null;
-      // 候选入队后管理员可能刚把该身份加入白名单；而关闭广告绕过权限的白名单
-      // 成员仍可能被模型判定并清掉这批消息。两种情况都不能写进永久黑名单，
-      // 否则与启动时的 protected-identity 交集门禁自相矛盾。
+      // 候选入队与模型回投之间，发送者可能刚达到临时白名单条件。
+      // 临时白名单只提供广告绕过，因此必须在清除累计之前复查当前权限；
+      // 旧判定不得先撤权再把成员写进黑名单。
+      if (canBypassAdDetection(event.senderId)) return null;
+      // 即使白名单成员显式关掉广告绕过，模型也只能处理本批消息，
+      // 不得把成员写入永久黑名单。本检查同样要在临时累计删除之前完成。
       if (isProtectedSender(event.senderId)) return null;
+      if (!clearTemporaryWhitelistActivity(event.senderId)) {
+        throw new Error(
+          `Temporary whitelist reset for identity ${event.senderId} was rejected by the persistence Worker.`
+        );
+      }
       recordAdSample(event);
       return blockUser(event.senderId, event.meta);
     }
@@ -256,21 +272,29 @@ export function formatAdNotice({ label, reason, enforcedChats, failedChats }: Fo
  * 发在主线程而不是判定线程：文案要断言封禁结果，而结果只有这边知道（理由见
  * workers/antiRaid/adDetect/disposal.ts 的 disposeAdSender）。整段尽力而为，
  * 失败不影响已经落定的拉黑与封禁登记。
+ *
+ * 删除 owner 必须在 `onSent` 里、拿到 id 的同步时点认领，不能等 await 的返回值：
+ * runTelegramAction 先跑 map（onSent 在其中）再检查 update 取消，远端已收下却恰好
+ * 撞上停机 abort 时它抛错、返回值丢失，而这条播报已经挂在群里了——认领点写在
+ * await 之后就等于把它永久留下。口径同 infra/telegram/commandMessages.ts 与
+ * infra/telegram/temporaryMessage.ts；batchOnFlush 让同群公告合批成一次 deleteMessages。
  */
 async function announceAdDisposal(
   event: AdDetectedEvent,
   enforcedChats: number,
   failedChats: number
 ): Promise<void> {
-  const noticeMessageId: number | undefined = await sendMessage({
+  await sendMessage({
     chatId: event.chatId,
     text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats }),
-  });
-  if (noticeMessageId === undefined) return;
-  deleteMessageAfter({
-    chatId: event.chatId,
-    messageId: noticeMessageId,
-    delayMs: KICK_NOTICE_AUTO_DELETE_MS,
+    onSent: (noticeMessageId: number): void => {
+      deleteMessageAfter({
+        chatId: event.chatId,
+        messageId: noticeMessageId,
+        delayMs: KICK_NOTICE_AUTO_DELETE_MS,
+        batchOnFlush: true,
+      });
+    },
   });
 }
 
@@ -286,6 +310,28 @@ export function handleAdDetected(event: AdDetectedEvent): void {
     inFlightAdDisposals,
     disposeDetectedAd(event),
     `Failed to dispose the ad verdict for sender ${event.senderId}:`
+  );
+}
+
+async function clearAdVerdictActivity(event: AdVerdictTrueEvent): Promise<void> {
+  // 身份已经被 LRU 淘汰且冷读失败时不能按“无豁免”撤销临时成员关系。
+  if (!await prefetchIdentityPolicies([event.senderId])) return;
+  await runProtectedIdentityMutation((): void => {
+    // 判定回投时以当前权限为准：已获临时广告豁免的成员不能被旧候选撤权。
+    if (canBypassAdDetection(event.senderId)) return;
+    if (clearTemporaryWhitelistActivity(event.senderId)) return;
+    throw new Error(
+      `Temporary whitelist reset for identity ${event.senderId} was rejected by the persistence Worker.`
+    );
+  });
+}
+
+/** 模型明确返回 ad=true 时清空未授权累计；当前广告绕过权限优先。 */
+export function handleAdVerdictTrue(event: AdVerdictTrueEvent): void {
+  trackBackgroundTask(
+    inFlightAdDisposals,
+    clearAdVerdictActivity(event),
+    `Failed to clear temporary whitelist activity for sender ${event.senderId}:`
   );
 }
 

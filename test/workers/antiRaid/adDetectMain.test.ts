@@ -10,6 +10,7 @@ const activeVerificationSnapshots = new Map<string, unknown>();
 const dispatched: RemoveBlockedMembersParams[][] = [];
 const errorLogs: string[] = [];
 const blockedIds = new Set<number>();
+const temporaryWhitelistIds = new Set<number>();
 const blockUser = mock((userId: number): boolean => blockedIds.has(userId) ? false : (blockedIds.add(userId), true));
 const confirmBlocklistPersisted = mock(async (): Promise<boolean> => true);
 const isUserBlocked = mock((userId: number): boolean => blockedIds.has(userId));
@@ -25,8 +26,24 @@ const trackBlockedRemoval = mock((params: Omit<RemoveBlockedMembersParams, "remo
   ...params,
   removalId: ++removalCounter,
 }));
-const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 555);
+/** 播报消息 id；真实 sendMessage 会把它同步交给 onSent，再作为返回值交出去。 */
+const NOTICE_MESSAGE_ID: number = 555;
+interface SendMessageMockParams {
+  readonly chatId: number;
+  readonly text: string;
+  readonly onSent?: (messageId: number) => void;
+}
+/**
+ * 复刻真实 sendMessage 的 onSent 契约：远端收下的同步时点先回调 onSent，
+ * 之后才把 id 作为返回值交出。停机 abort 会吃掉返回值但吃不掉这次回调，
+ * 因此删除 owner 只能挂在 onSent 上（见 infra/telegram/actions/core.ts）。
+ */
+const sendMessage = mock(async (params: SendMessageMockParams): Promise<number | undefined> => {
+  params.onSent?.(NOTICE_MESSAGE_ID);
+  return NOTICE_MESSAGE_ID;
+});
 const deleteMessageAfter = mock((..._args: unknown[]): void => {});
+const clearTemporaryWhitelistActivity = mock((_id: number): boolean => true);
 
 mock.module("../../../packages/infra/logger", () => ({
   logger: {
@@ -44,7 +61,9 @@ mock.module("../../../packages/config/telegram", () => ({
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
-    id === 1 || ((id === 100 || id === -200) && key === "isCanBypassAdDetection"),
+    id === 1 ||
+    ((id === 100 || id === -200 || temporaryWhitelistIds.has(id)) &&
+      key === "isCanBypassAdDetection"),
   isWhitelisted: (id: number): boolean =>
     id === 1 || id === 100 || id === 101 || id === -200,
 }));
@@ -56,6 +75,13 @@ mock.module("../../../packages/infra/blocklist/membership", () => ({
   blockUser,
   confirmBlocklistPersisted,
   isUserBlocked,
+}));
+mock.module("../../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
+  clearTemporaryWhitelistActivity,
+  hasActiveTemporaryWhitelist: (id: number): boolean =>
+    temporaryWhitelistIds.has(id),
+  hydrateTemporaryWhitelistActivities: (): void => {},
+  isTemporaryWhitelistActivityCached: (): boolean => true,
 }));
 mock.module("../../../packages/infra/blocklist/outbox", () => ({
   dispatchBlockedRemovals,
@@ -70,7 +96,12 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
 }));
 
 const { buildAdCandidate } = await import("../../../packages/antiRaid/adCandidate");
-const { drainAdDisposals, formatAdNotice, handleAdDetected } =
+const {
+  drainAdDisposals,
+  formatAdNotice,
+  handleAdDetected,
+  handleAdVerdictTrue,
+} =
   await import("../../../packages/antiRaid/adDetect");
 const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
@@ -79,7 +110,7 @@ const { runBlocklistIdentityMutation } = await import("../../../packages/infra/i
 const { inlineResultSources } = await import("../../../packages/cache/main/inlineResultSources");
 const { recordInlineResultSources } = await import("../../../packages/infra/inlineResultSources");
 const { markSelfSent } = await import("../../../packages/infra/selfSentTracker");
-const { sentMessages } = await import("../../../packages/cache/perThread/selfSentTracker");
+const { resetSelfSentTracker } = await import("../../../packages/cache/perThread/selfSentTracker");
 const { blocklistEntryCache, whitelistEntryCache } =
   await import("../../../packages/cache/main/identityStorage");
 
@@ -127,6 +158,7 @@ beforeEach(() => {
     removalId: ++removalCounter,
   }));
   blockedIds.clear();
+  temporaryWhitelistIds.clear();
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
   for (const id of [7, -300, -1005]) {
@@ -134,6 +166,7 @@ beforeEach(() => {
     whitelistEntryCache.set(id, null);
   }
   blockUser.mockClear();
+  clearTemporaryWhitelistActivity.mockClear();
   confirmBlocklistPersisted.mockClear();
   confirmBlocklistPersisted.mockImplementation(async (): Promise<boolean> => true);
   isUserBlocked.mockClear();
@@ -141,13 +174,15 @@ beforeEach(() => {
   inFlightAdDisposals.clear();
   blocklistIdentityMutationQueues.clear();
   sendMessage.mockClear();
-  sendMessage.mockImplementation(async (): Promise<number | undefined> => 555);
+  sendMessage.mockImplementation(async (params: SendMessageMockParams): Promise<number | undefined> => {
+    params.onSent?.(NOTICE_MESSAGE_ID);
+    return NOTICE_MESSAGE_ID;
+  });
   deleteMessageAfter.mockClear();
   diskMessages.length = 0;
   postDiskIO.mockClear();
   postDiskIO.mockImplementation((message: unknown): boolean => (diskMessages.push(message), true));
-  for (const timer of sentMessages.values()) clearTimeout(timer);
-  sentMessages.clear();
+  resetSelfSentTracker();
   inlineResultSources.clear();
 });
 
@@ -168,6 +203,33 @@ describe("广告检测投递门禁", () => {
     });
     // 图片只看说明文字。
     expect(buildAdCandidate(message({ text: undefined, caption: "扫码进群" }), 999)?.text).toBe("扫码进群");
+  });
+
+  test("已进入临时白名单的成员回复、转发或引用广告都不生成候选", () => {
+    temporaryWhitelistIds.add(7);
+
+    expect(buildAdCandidate(message(), 999)).toBeUndefined();
+    expect(buildAdCandidate(message({
+      text: "看看",
+      reply_to_message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: -1001, type: "supergroup", title: "群" },
+        text: "日入过千 加V xxx996",
+        reply_to_message: undefined,
+      },
+    }), 999)).toBeUndefined();
+    expect(buildAdCandidate(message({
+      forward_origin: {
+        type: "user",
+        date: 1,
+        sender_user: { id: 8, is_bot: false, first_name: "Source" },
+      },
+    }), 999)).toBeUndefined();
+    expect(buildAdCandidate(message({
+      text: undefined,
+      quote: { text: "日入过千 加V xxx996", position: 0, is_manual: true },
+    }), 999)).toBeUndefined();
   });
 
   test("调用方预读的群状态直接驱动门禁，旧的双参数调用仍自行查表", () => {
@@ -211,10 +273,10 @@ describe("广告检测投递门禁", () => {
     }), 999)).toBeUndefined();
   });
 
-  test("关闭广告绕过权限的白名单成员仍可送检，但不会因此失去 protected 身份", () => {
+  test("永久白名单成员即使逐项广告权限关闭也不进入广告检测", () => {
     expect(buildAdCandidate(message({
       from: { id: 101, is_bot: false, first_name: "Audited Member" },
-    }), 999)).toMatchObject({ senderId: 101 });
+    }), 999)).toBeUndefined();
   });
 
   test("回复消息照常判定：正文在 message.text 里，回复关系不影响取值", () => {
@@ -555,6 +617,27 @@ describe("广告检测投递门禁", () => {
 });
 
 describe("广告判定命中后的处置", () => {
+  test("任何 ad=true 回投先清空连续日累计", async () => {
+    handleAdVerdictTrue({ type: "adVerdictTrue", chatId: -1001, senderId: 7 });
+    await drainAdDisposals(5_000);
+
+    expect(clearTemporaryWhitelistActivity).toHaveBeenCalledWith(7);
+    expect(blockUser).not.toHaveBeenCalled();
+  });
+
+  test("入队后才获得临时广告豁免时，旧判定不撤权也不处置", async () => {
+    temporaryWhitelistIds.add(7);
+
+    handleAdVerdictTrue({ type: "adVerdictTrue", chatId: -1001, senderId: 7 });
+    handleAdDetected(detected());
+    await drainAdDisposals(5_000);
+
+    expect(clearTemporaryWhitelistActivity).not.toHaveBeenCalled();
+    expect(blockUser).not.toHaveBeenCalled();
+    expect(dispatched).toHaveLength(0);
+    expect(diskMessages).toHaveLength(0);
+  });
+
   test("按 /block 同样的动作：先写名单落盘，再给每个在管群登记一批封禁", async () => {
     chatStates.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
     chatStates.set(-1003, {
@@ -699,8 +782,9 @@ describe("广告判定命中后的处置", () => {
     expect(notice.text).toContain("在所有盯着的群里一起封掉了");
     expect(deleteMessageAfter).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
-      messageId: 555,
+      messageId: NOTICE_MESSAGE_ID,
       delayMs: KICK_NOTICE_AUTO_DELETE_MS,
+      batchOnFlush: true,
     }));
   });
 
@@ -760,6 +844,26 @@ describe("广告判定命中后的处置", () => {
     await drainAdDisposals(5_000);
 
     expect(deleteMessageAfter).not.toHaveBeenCalled();
+  });
+
+  test("远端已收下、返回值被停机 abort 吃掉时，删除 owner 仍已认领", async () => {
+    // runTelegramAction 先跑 map（onSent 在其中）再检查 update 取消，取消时抛错、
+    // 返回值丢失。认领点若写在 await 之后，这条播报就永久留在群里——而 30 秒清理
+    // 是硬约定（见 AGENTS.md「Telegram 提示留存」）。
+    sendMessage.mockImplementation(async (params: SendMessageMockParams): Promise<number | undefined> => {
+      params.onSent?.(NOTICE_MESSAGE_ID);
+      throw new DOMException("Telegram update was aborted during shutdown.", "AbortError");
+    });
+
+    handleAdDetected(detected());
+    await drainAdDisposals(5_000);
+
+    expect(deleteMessageAfter).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: -1001,
+      messageId: NOTICE_MESSAGE_ID,
+      delayMs: KICK_NOTICE_AUTO_DELETE_MS,
+      batchOnFlush: true,
+    }));
   });
 
   test("自己人即使被判成广告也不处置", async () => {

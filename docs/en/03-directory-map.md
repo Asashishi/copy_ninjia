@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="02-architecture.md">← Prev: 02 Architecture</a> · <a href="04-invariants.md">Next: 04 Invariants →</a>
+  <a href="content-table.md">📚 Developer Docs Home</a> · <a href="02-architecture.md">← Prev: 02 Architecture</a> · <a href="04-invariants.md">Next: 04 Invariants →</a>
 </p>
 
 ---
@@ -172,6 +172,6 @@ Paths under `test/` generally mirror `packages/`; one split domain may share a d
 
 <div align="center">
 
-[← Prev: 02 Architecture](02-architecture.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#03-directory-map-and-code-placement) · [Next: 04 Invariants →](04-invariants.md)
+[← Prev: 02 Architecture](02-architecture.md) · [📚 Developer Docs Home](content-table.md) · [⬆️ Back to Top](#03-directory-map-and-code-placement) · [Next: 04 Invariants →](04-invariants.md)
 
 </div>

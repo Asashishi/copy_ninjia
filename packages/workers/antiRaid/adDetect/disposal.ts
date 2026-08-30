@@ -76,6 +76,7 @@ export function warnReferencedAdSender(
 ): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
   return sendTemporaryMessageFromMain({
     chatId: bundle.chatId,
+    identityId: bundle.senderId,
     text: formatReferencedAdWarning(bundle.label),
     deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
   });

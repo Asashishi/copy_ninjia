@@ -20,7 +20,7 @@ import type { AntiRaidWorkerMessage } from
   "../../types/antiRaid/protocol";
 import type { PersistedLockdownFingerprint } from "../../types/antiRaid/internal";
 import type { LockdownRecord } from "../../types/chatState";
-import { handleAdDetected } from "../adDetect";
+import { handleAdDetected, handleAdVerdictTrue } from "../adDetect";
 import {
   lockdownFingerprint,
   lockdownFingerprintMatches,
@@ -195,6 +195,9 @@ export function handleAntiRaidWorkerEvent(
       break;
     case "adDetected":
       handleAdDetected(event);
+      break;
+    case "adVerdictTrue":
+      handleAdVerdictTrue(event);
       break;
     case "barrierComplete":
       antiRaidBarrier.settle(event.barrierId, "flushed");

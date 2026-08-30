@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 ドキュメントホーム</a> · <a href="07-operations.md">← 前のページ：07 運用とトラブルシュート</a> · <a href="09-performance.md">次のページ：09 パフォーマンスベンチマーク →</a>
+  <a href="content-table.md">📚 ドキュメントホーム</a> · <a href="07-operations.md">← 前のページ：07 運用とトラブルシュート</a> · <a href="09-performance.md">次のページ：09 パフォーマンスベンチマーク →</a>
 </p>
 
 ---

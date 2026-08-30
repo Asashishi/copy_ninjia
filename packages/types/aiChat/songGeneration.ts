@@ -8,6 +8,8 @@
  * 的语义两边逐字相同，见 cache/workers/aiChat/songGeneration.ts。
  */
 
+import type { Base64PayloadDecodeFailure } from "./payload";
+
 /**
  * 已校验大小与 MIME 的聊天歌曲结果。
  *
@@ -27,10 +29,7 @@ export interface GeneratedChatSong {
  * 完全不同，不点名就只能从「生歌失败」四个字里猜。
  */
 export type GeneratedSongDecodeFailure =
-  | "empty payload"
-  | "encoded payload exceeds the size limit"
-  | "payload is not canonical base64"
-  | "decoded payload is empty or exceeds the size limit"
+  | Base64PayloadDecodeFailure
   | "missing audio mime type";
 
 /** 按大小与 mime 解码生歌载荷的结果；失败一律带上可记日志的原因。 */

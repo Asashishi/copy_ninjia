@@ -21,6 +21,7 @@ import { applyAdminChange } from "./antiRaid/adminCache";
 import { handleRemoveBlockedMembers } from "./antiRaid/blocklistEffects";
 import {
   clearChatAdDetect,
+  clearIdentityAdDetect,
   enqueueAdCandidate,
   quiesceAdDetectQueue,
   startAdDetectQueue,
@@ -54,7 +55,10 @@ import type {
   AntiRaidWorkerMessage,
   AntiRaidWorkerRequest,
 } from "../types/antiRaid/protocol";
-import type { AdDetectedEvent } from "../types/antiRaid/adDetect";
+import type {
+  AdDetectedEvent,
+  AdVerdictTrueEvent,
+} from "../types/antiRaid/adDetect";
 import type { BlockedMembersRemovedEvent } from
   "../types/antiRaid/events";
 import {
@@ -205,6 +209,10 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "clearFloodControl":
       clearChatFloodWindows(msg.chatId);
       break;
+    case "temporaryWhitelistGranted":
+      // 只清广告状态；临时白名单不提供防刷屏或其它权限。
+      clearIdentityAdDetect(msg.identityId);
+      break;
     case "botPermissionsChanged":
       applyBotPermissionsChange(msg.chatId, msg.permissions);
       break;
@@ -267,7 +275,10 @@ export function startAntiRaidWorker(): void {
     else self.postMessage(message, transfer);
   });
   setWorkerDuplexRequestSignal(antiRaidDispatchSignal());
-  startAdDetectQueue((event: AdDetectedEvent): void => self.postMessage(event));
+  startAdDetectQueue(
+    (event: AdDetectedEvent): void => self.postMessage(event),
+    (event: AdVerdictTrueEvent): void => self.postMessage(event)
+  );
   self.onmessage = (event: MessageEvent<unknown>): void => {
     if (acceptForwardedLogBatch(event.data)) return;
     if (isWorkerDuplexResponse(event.data)) {

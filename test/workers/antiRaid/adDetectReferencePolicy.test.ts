@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { AdVerdict } from "../../../packages/types/antiRaid/adDetect";
+import type {
+  AdVerdict,
+  AdVerdictTrueEvent,
+} from "../../../packages/types/antiRaid/adDetect";
 import type { TelegramWorkerTemporaryMessageResult } from "../../../packages/types/telegramWorker";
 import {
   cachedAdmins,
@@ -26,6 +29,7 @@ const { expireAdDetectDisposalMarkers, releaseAdDetectDedupKey } =
   await import("../../../packages/workers/antiRaid/adDetect/queueState");
 const {
   adDetectQueue,
+  adVerdictTruePublishHolder,
   inFlightAdDetectKeys,
   pendingAdMessages,
   queuedAdDetectKeys,
@@ -40,6 +44,10 @@ beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
 
 describe("引用类广告的警告升级与处置抑制", () => {
   test("引用类广告第一次只公开警告并清串，警告后下一条可立即重新判定", async () => {
+    const verdictEvents: AdVerdictTrueEvent[] = [];
+    adVerdictTruePublishHolder.current = (event: AdVerdictTrueEvent): void => {
+      verdictEvents.push(event);
+    };
     classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
       isAd: text.includes("日入过千"),
       reason: "引用内容引流",
@@ -57,6 +65,11 @@ describe("引用类广告的警告升级与处置抑制", () => {
     ]);
     expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
     expect(disposeAdSender).not.toHaveBeenCalled();
+    expect(verdictEvents).toEqual([{
+      type: "adVerdictTrue",
+      chatId: -1001,
+      senderId: 7,
+    }]);
     expect(referencedAdWarningStates.get("-1001:7")).toMatchObject({
       phase: "warned",
       warnedAt: 1_000,
@@ -215,6 +228,29 @@ describe("引用类广告的警告升级与处置抑制", () => {
     expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
     expect(disposeAdSender).not.toHaveBeenCalled();
     expect(deleteReferencedAdMessages).toHaveBeenCalledTimes(1);
+  });
+
+  test("主线程发现临时广告豁免时不警告、不删消息并丢弃旧待检串", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    warnReferencedAdSender.mockImplementationOnce(
+      async (): Promise<TelegramWorkerTemporaryMessageResult> => ({ suppressed: true })
+    );
+    enqueueAdCandidate(candidate({
+      text: "看看",
+      sampleContext: { quote: "日入过千 加V xxx996" },
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
+    expect(pendingAdMessages.has("-1001:7")).toBeFalse();
+    expect(queuedAdDetectKeys.has("-1001:7")).toBeFalse();
+    expect(deleteReferencedAdMessages).not.toHaveBeenCalled();
+    expect(deleteStaleReferencedAdWarning).not.toHaveBeenCalled();
+    expect(disposeAdSender).not.toHaveBeenCalled();
   });
 
   test("关开关时迟到的警告只撤提示，不留下窗口或继续删用户消息", async () => {

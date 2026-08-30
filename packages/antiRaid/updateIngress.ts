@@ -17,6 +17,7 @@ import {
 import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
 import { isAdminStatus } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
+import { hasUserMessageContent } from "../users/messageContent";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { getChatState } from "../infra/storage/stateStore";
@@ -34,6 +35,7 @@ import {
 } from "./memberFacts";
 import { postAntiRaidDurably } from "./durableDelivery";
 import { postAntiRaid } from "./workerBridge";
+import { recordEligibleTemporaryWhitelistActivity } from "./temporaryWhitelist";
 import type {
   AdCandidateMessage,
 } from "../types/antiRaid/adDetect";
@@ -238,18 +240,7 @@ function ingestAdmittedMessage(
   message: Message,
   botId: number
 ): boolean | Promise<boolean> {
-  // 广告检测与入群守卫共用上面那道管理员判定：不是管理员就删不掉广告也封不了
-  // 人，判一次纯属白烧额度。投递是尽力而为的——Worker 不可用只意味着它正在
-  // 重建，而待检队列本来就随 isolate 一起清空，不值得为它拒收这条 update。
   const chatState: Readonly<ChatState> = getChatState(message.chat.id);
-  const adCandidate: AdCandidateMessage | undefined =
-    buildAdCandidate(message, botId, chatState);
-  if (adCandidate !== undefined && !postAntiRaid(adCandidate)) {
-    logger.error(
-      `Anti-Raid Worker rejected an ad detection candidate from chat ${message.chat.id}.`
-    );
-  }
-
   if (
     message.new_chat_members &&
     message.new_chat_members.length > 0
@@ -307,6 +298,21 @@ function ingestAdmittedMessage(
       }]).then((): boolean => false);
     }
     return false;
+  }
+
+  if (hasUserMessageContent(message)) {
+    recordEligibleTemporaryWhitelistActivity({ message, botId, chatState });
+  }
+
+  // 临时白名单累计先于候选构建：本条消息恰好让成员获权时，
+  // buildAdCandidate 必须立即读到临时广告绕过权限，不得再把这条送检。
+  // 投递仍是尽力而为：Worker 重建时待检队列本来就会随 isolate 清空。
+  const adCandidate: AdCandidateMessage | undefined =
+    buildAdCandidate(message, botId, chatState);
+  if (adCandidate !== undefined && !postAntiRaid(adCandidate)) {
+    logger.error(
+      `Anti-Raid Worker rejected an ad detection candidate from chat ${message.chat.id}.`
+    );
   }
 
   // 刷屏计数投递：与广告检测同一形态，主线程只做同步门禁 + 一次尽力而为的

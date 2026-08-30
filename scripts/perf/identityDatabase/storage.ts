@@ -43,6 +43,13 @@ import {
 import { measuredResult } from "./measurement";
 import { assertMockRoot, isBenchmarkMockRoot } from "./roots";
 import type { ChildResult } from "./types";
+import type { PendingTemporaryWhitelistWrite } from
+  "../../../packages/types/temporaryWhitelist";
+
+const EMPTY_TEMPORARY_WHITELIST_CHANGES: ReadonlyMap<
+  number,
+  PendingTemporaryWhitelistWrite
+> = new Map();
 
 interface DatabaseFixture {
   readonly root: string;
@@ -179,6 +186,7 @@ function runWriteBatches(
     commitStorageDatabaseChanges(database, {
       whitelist,
       blocklist: EMPTY_STORAGE_CHANGES,
+      temporaryWhitelist: EMPTY_TEMPORARY_WHITELIST_CHANGES,
       removals: EMPTY_STORAGE_CHANGES,
       chatStates: EMPTY_STORAGE_CHANGES,
       chatQa: EMPTY_CHAT_QA_CHANGES,
@@ -200,6 +208,7 @@ function runColdWriteBatches(
       commitStorageDatabaseChanges(database, {
         whitelist,
         blocklist: EMPTY_STORAGE_CHANGES,
+        temporaryWhitelist: EMPTY_TEMPORARY_WHITELIST_CHANGES,
         removals: EMPTY_STORAGE_CHANGES,
         chatStates: EMPTY_STORAGE_CHANGES,
         chatQa: EMPTY_CHAT_QA_CHANGES,

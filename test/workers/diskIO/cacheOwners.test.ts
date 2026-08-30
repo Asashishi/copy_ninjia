@@ -22,7 +22,7 @@ import {
   verificationFileState,
   verificationFlushTimer,
   verificationPendingChanges,
-  verificationRolloverTimer,
+  verificationRolloverRetryTimer,
   verificationWorkerCache,
 } from "../../../packages/cache/workers/diskIO/verification";
 
@@ -86,7 +86,7 @@ describe("Disk I/O append-domain cache owners", () => {
     verificationFileState.appendedEntries = 5;
     verificationFileState.appendedBytes = 100;
     verificationFlushTimer.timer = setTimeout(() => {}, 60_000);
-    verificationRolloverTimer.timer = setTimeout(() => {}, 60_000);
+    verificationRolloverRetryTimer.timer = setTimeout(() => {}, 60_000);
 
     resetVerificationPersistenceCache();
 
@@ -94,7 +94,7 @@ describe("Disk I/O append-domain cache owners", () => {
     expect(verificationPendingChanges).toHaveLength(0);
     expect(verificationFileState).toEqual({ current: null, appendedEntries: 0, appendedBytes: 0 });
     expect(verificationFlushTimer.timer).toBeNull();
-    expect(verificationRolloverTimer.timer).toBeNull();
+    expect(verificationRolloverRetryTimer.timer).toBeNull();
   });
 
   test("入群日志 reset 同时清理缓冲、文件游标、退避与 timer", () => {

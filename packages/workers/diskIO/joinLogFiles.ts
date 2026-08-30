@@ -202,6 +202,16 @@ function ensureCurrentDayPrepared(today: string): void {
   cleanupExpiredJoinLogDays(today);
 }
 
+/** 每日维护先提交跨日前缓冲，再清理入群日志保留窗口外的文件。 */
+export function maintainJoinLogRetention(
+  today: string = getTokyoDateKey()
+): void {
+  ensureCurrentDayPrepared(today);
+  if (joinLogCleanupDay.current !== today) {
+    throw new Error("Failed to flush expiring join logs before daily retention maintenance.");
+  }
+}
+
 function writeFileEntries(
   chatId: number,
   day: string,

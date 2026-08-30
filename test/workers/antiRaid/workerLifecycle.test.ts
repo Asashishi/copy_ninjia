@@ -52,6 +52,7 @@ mock.module("../../../packages/workers/antiRaid/blocklistEffects", () => ({
 mock.module("../../../packages/workers/antiRaid/adDetect/queue", () => ({
   enqueueAdCandidate(): void { calls.push("adCandidate"); },
   clearChatAdDetect(): void { calls.push("clearAdDetect"); },
+  clearIdentityAdDetect(): void { calls.push("clearIdentityAdDetect"); },
   sweepAdDetect(): void { calls.push("sweepAdDetect"); },
   quiesceAdDetectQueue(): void { calls.push("quiesceAdDetect"); },
   startAdDetectQueue(): void { calls.push("startAdDetect"); },
@@ -91,6 +92,7 @@ const {
   chatAdmins,
 } = await import("../../../packages/cache/workers/antiRaid/admins");
 const {
+  getOrCreateLinkedChannelFetch,
   linkedChannelFetches,
   linkedChannels,
 } = await import("../../../packages/cache/workers/antiRaid/linkedChannels");
@@ -133,6 +135,38 @@ beforeEach(() => {
 });
 
 describe("Anti-Raid Worker lifecycle", () => {
+  test("stop/start 作废旧关联频道在途槽，旧 settle 不破坏新代去重", async () => {
+    let resolveStale!: () => void;
+    let resolveFresh!: () => void;
+    worker.startAntiRaidWorker();
+    const stale: Promise<void> = getOrCreateLinkedChannelFetch(
+      -1001,
+      (): Promise<void> => new Promise((resolve: () => void): void => {
+        resolveStale = resolve;
+      })
+    );
+
+    worker.stopAntiRaidWorker();
+    worker.startAntiRaidWorker();
+    const fresh: Promise<void> = getOrCreateLinkedChannelFetch(
+      -1001,
+      (): Promise<void> => new Promise((resolve: () => void): void => {
+        resolveFresh = resolve;
+      })
+    );
+    const freshSlot: Promise<void> | undefined = linkedChannelFetches.get(-1001);
+    expect(freshSlot).toBe(fresh);
+
+    resolveStale();
+    await stale;
+    expect(linkedChannelFetches.get(-1001)).toBe(freshSlot!);
+
+    resolveFresh();
+    await fresh;
+    expect(linkedChannelFetches.has(-1001)).toBeFalse();
+    worker.stopAntiRaidWorker();
+  });
+
   test("离群先删除本进程延后的持久化终态；没有延后记录才投给活动状态机", () => {
     deleteDeferredVerificationResult = true;
     worker.handleAntiRaidWorkerMessage({ type: "left", chatId: -1001, userId: 1 });
@@ -197,6 +231,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "clearAdDetect", chatId: -1001 },
       { type: "floodCandidate", chatId: -1001, userId: 1, label: "@noisy" },
       { type: "clearFloodControl", chatId: -1001 },
+      { type: "temporaryWhitelistGranted", identityId: 1 },
       { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: true, canDeleteMessages: true } },
       { type: "chatKind", chatId: -1001, isSupergroup: true },
       { type: "barrier", barrierId: 99 },
@@ -216,7 +251,8 @@ describe("Anti-Raid Worker lifecycle", () => {
       "message", "callback",
       "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
       "removeBlockedMembers", "adCandidate", "clearAdDetect",
-      "floodCandidate", "clearFloodWindows", "botPermissionsChanged", "chatKindChanged",
+      "floodCandidate", "clearFloodWindows", "clearIdentityAdDetect",
+      "botPermissionsChanged", "chatKindChanged",
     ]);
     // 配置消息不产生业务副作用，只把快照写进 holder：本线程此后不读 agent.json。
     expect(adDetectAgentConfigCache.current).toBe(injectedAdDetectConfig);

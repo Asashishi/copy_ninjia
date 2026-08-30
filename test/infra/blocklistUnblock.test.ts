@@ -41,6 +41,10 @@ const {
   unacknowledgedBlocklistWrites,
 } = await import("../../packages/cache/main/identityStorage");
 const {
+  temporaryWhitelistActivityCache,
+  unacknowledgedTemporaryWhitelistWrites,
+} = await import("../../packages/cache/main/temporaryWhitelist");
+const {
   assertSuperAdminNotBlocked,
   blockUser,
   ensureBlocklistEntryQueued,
@@ -79,6 +83,35 @@ describe("SQLite 黑名单主线程最终值", () => {
     expect(blockUser(7)).toBeFalse();
   });
 
+  test("拉黑已有临时累计时先排 tombstone，再排永久黑名单", () => {
+    const now: number = Date.now();
+    seedMissingIdentity(8);
+    temporaryWhitelistActivityCache.set(8, {
+      tempWhite: true,
+      tempWhiteAt: now,
+      tempWhiteCount: 7,
+      sendCount: 8,
+      countedAt: now,
+      qualifiedAt: now,
+    });
+
+    expect(blockUser(8)).toBeTrue();
+
+    expect(diskMessages).toEqual([
+      expect.objectContaining({
+        type: "temporaryWhitelistWrite",
+        id: 8,
+        activity: null,
+      }),
+      expect.objectContaining({
+        type: "identityPolicyWrite",
+        table: "blocklist",
+        id: 8,
+      }),
+    ]);
+    expect(unacknowledgedTemporaryWhitelistWrites.get(8)?.activity).toBeNull();
+  });
+
   test("解除拉黑发布负缓存，并裁掉冻结名单中已解除的成员", () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     const pending: PendingBlockedRemoval = {
@@ -114,6 +147,7 @@ describe("SQLite 黑名单主线程最终值", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 9, revision }],
+        temporaryWhitelistWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });

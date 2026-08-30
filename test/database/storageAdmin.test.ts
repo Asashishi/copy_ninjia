@@ -34,7 +34,7 @@ afterEach((): void => {
 });
 
 describe("共享数据库夹具辅助函数", () => {
-  test("播种和清理全部业务表时包含 chat_qa", () => {
+  test("播种和清理覆盖全部业务表", () => {
     const database: StorageDatabase = createFixture();
     try {
       initializeStorageDatabase(database);
@@ -48,6 +48,15 @@ describe("共享数据库夹具辅助函数", () => {
           q: "怎么入群？",
           data: encodeChatQaData("请阅读置顶消息。", "test:chat_qa.data"),
         }],
+        temporaryWhitelist: [{
+          id: 7,
+          tempWhite: false,
+          tempWhiteAt: null,
+          tempWhiteCount: 0,
+          sendCount: 1,
+          countedAt: Date.now(),
+          qualifiedAt: null,
+        }],
       });
       expect(readStoredChatQa(database)).toHaveLength(1);
 
@@ -59,6 +68,7 @@ describe("共享数据库夹具辅助函数", () => {
         "pending_blocked_removals",
         "chat_states",
         "chat_qa",
+        "temporary_whitelist_entries",
       ];
       for (const table of businessTables) {
         const row: { readonly count: number } | null = database.$client

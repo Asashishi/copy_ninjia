@@ -18,6 +18,7 @@ const {
   flushLuckAppends,
   handleLuckDrawMessage,
   hydrateLuckDay,
+  maintainLuckForDay,
   retryLuckFlush,
 } = await import("../../../packages/workers/diskIO/luckFiles");
 const { recoverLuckDay } = await import("../../../packages/workers/diskIO/snapshotFiles");
@@ -291,6 +292,41 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     flushLuckAppends();
     expect(existsSync(join(luckDir, "2026-07-15.json"))).toBe(false);
     expect(existsSync(join(luckDir, `${DAY}.json`))).toBe(true);
+  });
+
+  test("每日维护先提交旧日缓冲，再切换 owner 并清理旧日文件", () => {
+    handleLuckDrawMessage(luckMsg({
+      key: "111",
+      label: "大吉",
+      fortunePercent: 90.12,
+      day: "2026-07-15",
+    }));
+
+    maintainLuckForDay(DAY);
+
+    expect(existsSync(join(luckDir, "2026-07-15.json"))).toBeFalse();
+    expect(luckWorkerCache.current).toBeNull();
+    expect(luckPendingAppends).toHaveLength(0);
+  });
+
+  test("每日维护刷盘失败时不切换 owner，也不提前清理旧文件", () => {
+    mkdirSync(luckDir, { recursive: true });
+    const olderPath: string = join(luckDir, "2026-07-14.json");
+    writeFileSync(olderPath, "{}");
+    handleLuckDrawMessage(luckMsg({
+      key: "111",
+      label: "大吉",
+      fortunePercent: 90.12,
+      day: "2026-07-15",
+    }));
+    breakDayFile("2026-07-15");
+
+    expect((): void => maintainLuckForDay(DAY)).toThrow(
+      "Failed to flush luck results before daily maintenance"
+    );
+    expect(luckWorkerCache.current?.day).toBe("2026-07-15");
+    expect(luckPendingAppends).toHaveLength(1);
+    expect(existsSync(olderPath)).toBeTrue();
   });
 
   test("条数达到 FLUSH_MAX_ENTRIES 立即落盘，不等定时器", () => {

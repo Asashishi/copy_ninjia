@@ -145,12 +145,14 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "ad-wire-clone":
     case "ad-capacity-reject":
     case "identity-permission-read":
+    case "temporary-whitelist-activity":
     case "join-timestamp-window":
     case "quota-timestamp-window":
     case "bounded-rolling-buffer":
     case "chat-state-read":
     case "chat-state-map-read":
     case "self-sent-empty":
+    case "self-sent-active":
     case "incoming-message-spine":
     case "ai-media-direct-trigger":
     case "flood-window-hit":
@@ -171,6 +173,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "<sender-no-username|sender-stable-username|luck-receipt-fast-path|" +
         "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
         "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
+        "temporary-whitelist-activity|" +
         "join-timestamp-window|quota-timestamp-window|bounded-rolling-buffer|" +
         "chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
         "ai-media-direct-trigger|" +

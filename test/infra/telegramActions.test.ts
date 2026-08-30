@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { GrammyError } from "grammy";
 import type { TelegramApi } from "../../packages/types/telegramWorker";
-import { sentMessages } from "../../packages/cache/perThread/selfSentTracker";
+import {
+  resetSelfSentTracker,
+  sentMessageCount,
+} from "../../packages/cache/perThread/selfSentTracker";
 import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import {
   deleteEphemeralMessageWithOutcome,
@@ -13,14 +16,14 @@ import {
   probeChatMembership,
   sendEphemeralMessage,
   sendMessageWithResult,
+  sendAudioWithResult,
   sendPhotoWithResult,
 } from "../../packages/infra/telegram/actions";
 import { isSelfSent } from "../../packages/infra/selfSentTracker";
 import { TelegramRetryPreconditionChangedError } from "../../packages/infra/telegram/errors";
 
 afterEach(() => {
-  for (const timer of sentMessages.values()) clearTimeout(timer);
-  sentMessages.clear();
+  resetSelfSentTracker();
 });
 
 describe("Telegram 常规动作封装", () => {
@@ -119,7 +122,7 @@ describe("Telegram 常规动作封装", () => {
       receiver_user_id: 7,
       reply_markup: keyboard,
     });
-    expect(sentMessages.size).toBe(0);
+    expect(sentMessageCount()).toBe(0);
   });
 
   test("目标专属临时消息只接受群、接收者和临时 id 全部匹配的响应", async () => {
@@ -162,7 +165,7 @@ describe("Telegram 常规动作封装", () => {
         api,
       })).toBeUndefined();
     }
-    expect(sentMessages.size).toBe(0);
+    expect(sentMessageCount()).toBe(0);
   });
 
   test("目标专属临时消息按群、接收者和临时 id 定向删除", async () => {
@@ -287,6 +290,91 @@ describe("Telegram 常规动作封装", () => {
     }, {
       caption: "照着你说的画了一张 <b>不该被解析</b>",
     });
+  });
+
+  test("从内存上传歌曲：文件名、封面与音频元数据一次组装齐", async () => {
+    const sendAudioMock = mock(async (..._args: unknown[]) => ({
+      message_id: 90,
+      reply_to_message: { message_id: 42 },
+    }));
+    const api = { sendAudio: sendAudioMock } as unknown as TelegramApi;
+
+    const sent = await sendAudioWithResult({
+      chatId: -1001,
+      bytes: new Uint8Array([1, 2, 3]),
+      fileName: "generated.mp3",
+      replyToMessageId: 42,
+      caption: "写好了♡",
+      title: "夏天的味道",
+      performer: "本天才",
+      duration: 96,
+      thumbnailBytes: new Uint8Array([9, 9]),
+      messageThreadId: 7,
+      api,
+    });
+
+    expect(sent).toEqual({ messageId: 90, repliedToMessageId: 42 });
+    // Bot API 靠文件名扩展名判定容器，封面必须叫 cover.jpg；这一整组字段
+    // 少一个都会让客户端拿到一条点开就报错、或没有封面标题的音频。
+    expect(sendAudioMock).toHaveBeenCalledWith(-1001, {
+      bytes: new Uint8Array([1, 2, 3]),
+      fileName: "generated.mp3",
+    }, {
+      message_thread_id: 7,
+      caption: "写好了♡",
+      title: "夏天的味道",
+      performer: "本天才",
+      duration: 96,
+      thumbnail: { bytes: new Uint8Array([9, 9]), fileName: "cover.jpg" },
+      reply_parameters: { message_id: 42, allow_sending_without_reply: true },
+    });
+    // 自发消息必须登记，否则这首歌回投时会被自动流水线当成新内容再响应一次。
+    expect(isSelfSent(-1001, 90)).toBe(true);
+  });
+
+  test("歌曲的可选字段缺省时一个都不带，也不设置 parse_mode", async () => {
+    const sendAudioMock = mock(async (..._args: unknown[]) => ({ message_id: 91 }));
+    const api = { sendAudio: sendAudioMock } as unknown as TelegramApi;
+
+    const sent = await sendAudioWithResult({
+      chatId: -1001,
+      bytes: new Uint8Array([4]),
+      fileName: "generated.wav",
+      api,
+    });
+
+    expect(sent).toEqual({ messageId: 91 });
+    // duration 用 !== undefined 判定：0 秒是合法值，按真值判会被悄悄丢掉。
+    expect(sendAudioMock.mock.calls[0]?.[2]).toEqual({});
+  });
+
+  test("duration 为 0 仍然发出，不被真值判定吞掉", async () => {
+    const sendAudioMock = mock(async (..._args: unknown[]) => ({ message_id: 92 }));
+    const api = { sendAudio: sendAudioMock } as unknown as TelegramApi;
+
+    await sendAudioWithResult({
+      chatId: -1001,
+      bytes: new Uint8Array([4]),
+      fileName: "generated.mp3",
+      duration: 0,
+      api,
+    });
+
+    expect(sendAudioMock.mock.calls[0]?.[2]).toEqual({ duration: 0 });
+  });
+
+  test("歌曲发送失败时归一化成 undefined，不抛给调用方", async () => {
+    const sendAudioMock = mock(async (..._args: unknown[]): Promise<never> => {
+      throw new Error("413 Request Entity Too Large");
+    });
+    const api = { sendAudio: sendAudioMock } as unknown as TelegramApi;
+
+    expect(await sendAudioWithResult({
+      chatId: -1001,
+      bytes: new Uint8Array([4]),
+      fileName: "generated.mp3",
+      api,
+    })).toBeUndefined();
   });
 
   test("没有图注时不带 caption 字段", async () => {

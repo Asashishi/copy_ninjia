@@ -18,12 +18,15 @@ import { resetStorageDatabaseCache, storageDatabaseHandle } from
 import type { StorageDatabase } from "../../../packages/types/storageDatabase";
 import type { PendingBlockedRemoval } from "../../../packages/types/blocklist";
 
-/** 还原 v5 所需的原始 DDL、索引、migration 记录与 schema 版本行。 */
+interface MigrationSnapshot {
+  readonly hash: string;
+  readonly createdAt: number;
+}
+
+/** 还原 v7 所需的原始 DDL、migration 记录与 schema 版本行。 */
 interface SchemaSnapshot {
-  readonly chatQaDdl: string;
-  readonly chatQaIndexDdl: string;
-  readonly migrationHash: string;
-  readonly migrationCreatedAt: number;
+  readonly temporaryWhitelistDdl: string;
+  readonly migrations: readonly MigrationSnapshot[];
   readonly versionText: string;
 }
 
@@ -45,61 +48,57 @@ function withDatabase<T>(run: (database: StorageDatabase) => T): T {
 function readSchemaSnapshot(database: StorageDatabase): SchemaSnapshot {
   const ddl: { sql: string } | null = database.$client
     .query<{ sql: string }, []>(
-      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chat_qa';"
+      "SELECT sql FROM sqlite_master " +
+      "WHERE type = 'table' AND name = 'temporary_whitelist_entries';"
     ).get();
-  const indexDdl: { sql: string } | null = database.$client
-    .query<{ sql: string }, []>(
-      "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'chat_qa_q';"
-    ).get();
-  const migration: { hash: string; createdAt: number } | null = database.$client
+  const migrations: MigrationSnapshot[] = database.$client
     .query<{ hash: string; createdAt: number }, []>(
       "SELECT hash, created_at AS createdAt FROM __drizzle_migrations " +
-      "ORDER BY created_at DESC LIMIT 1;"
-    ).get();
+      "ORDER BY created_at DESC LIMIT 2;"
+    ).all().reverse();
   const version: { text: string } | null = database.$client
     .query<{ text: string }, []>(
       "SELECT json(data) AS text FROM storage_metadata WHERE key = 'schema-version';"
     ).get();
-  if (ddl === null || indexDdl === null || migration === null || version === null) {
-    throw new Error("test fixture expects a fully migrated v5 database");
+  if (ddl === null || migrations.length !== 2 || version === null) {
+    throw new Error("test fixture expects a fully migrated v7 database");
   }
   return {
-    chatQaDdl: ddl.sql,
-    chatQaIndexDdl: indexDdl.sql,
-    migrationHash: migration.hash,
-    migrationCreatedAt: migration.createdAt,
+    temporaryWhitelistDdl: ddl.sql,
+    migrations,
     versionText: version.text,
   };
 }
 
 let snapshot: SchemaSnapshot | null = null;
 
-/** 把本文件的测试库改成上一版 release 的 v4 形态：无 chat_qa，版本回到 4。 */
-function degradeToSchemaV4(): void {
+/** 把本文件的测试库改成上一版 release 的 v5 形态：无临时白名单表。 */
+function degradeToSchemaV5(): void {
   withDatabase((database: StorageDatabase): void => {
     // 先登记还原信息再破坏：赋值排在 DDL 之前，任何一步失败 afterEach 都能收拾。
     snapshot = readSchemaSnapshot(database);
-    database.$client.run("DROP TABLE chat_qa;");
+    database.$client.run("DROP TABLE temporary_whitelist_entries;");
     database.$client.run(
-      "DELETE FROM __drizzle_migrations WHERE created_at = ?;",
-      [snapshot.migrationCreatedAt]
+      "DELETE FROM __drizzle_migrations WHERE created_at >= ?;",
+      [snapshot.migrations[0]!.createdAt]
     );
     database.$client.run(
       "UPDATE storage_metadata SET data = jsonb(?) WHERE key = 'schema-version';",
-      ['{"version":4}']
+      ['{"version":5}']
     );
   });
 }
 
-function restoreSchemaV5(restored: SchemaSnapshot): void {
+function restoreSchemaV7(restored: SchemaSnapshot): void {
   withDatabase((database: StorageDatabase): void => {
     // DDL 取自 sqlite_master，逐字写回本库自己的建表语句。
-    database.$client.run(restored.chatQaDdl);
-    database.$client.run(restored.chatQaIndexDdl);
-    database.$client.run(
-      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?);",
-      [restored.migrationHash, restored.migrationCreatedAt]
-    );
+    database.$client.run(restored.temporaryWhitelistDdl);
+    for (const migration of restored.migrations) {
+      database.$client.run(
+        "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?);",
+        [migration.hash, migration.createdAt]
+      );
+    }
     database.$client.run(
       "UPDATE storage_metadata SET data = jsonb(?) WHERE key = 'schema-version';",
       [restored.versionText]
@@ -107,16 +106,17 @@ function restoreSchemaV5(restored: SchemaSnapshot): void {
   });
 }
 
-afterEach(() => {
+afterEach((): void => {
   const pending: SchemaSnapshot | null = snapshot;
   snapshot = null;
-  if (pending !== null) restoreSchemaV5(pending);
+  if (pending !== null) restoreSchemaV7(pending);
   withDatabase((database: StorageDatabase): void => {
     database.$client.run("DELETE FROM pending_blocked_removals;");
     database.$client.run("DELETE FROM whitelist_entries;");
     database.$client.run("DELETE FROM blocklist_entries;");
     database.$client.run("DELETE FROM chat_states;");
     database.$client.run("DELETE FROM chat_qa;");
+    database.$client.run("DELETE FROM temporary_whitelist_entries;");
   });
 });
 
@@ -150,17 +150,17 @@ function insertJsonbRow({
 }
 
 describe("共享存储库的启动 schema 闸", () => {
-  test("未迁移的 v4 库报 schema 版本，而不是 chat_qa 缺表", () => {
-    degradeToSchemaV4();
+  test("未迁移的 v5 库报 schema 版本，而不是临时白名单缺表", () => {
+    degradeToSchemaV5();
 
     // 版本判定必须先于任何按版本才存在的表：先读 startup rows 的话，这里拿到的
-    // 是 `no such table: chat_qa`，运维照着那句排查不会想到该跑冷迁移。
+    // 是临时白名单缺表，运维照着那句排查不会想到该跑冷迁移。
     expect(() => hydrateStorageDatabase()).toThrow(
-      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":5}.`
+      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":7}.`
     );
   });
 
-  test("当前 v5 库照常 hydrate", () => {
+  test("当前 v7 库照常 hydrate", () => {
     expect(hydrateStorageDatabase()).toEqual({
       blocklistEntryCount: 0,
       whitelistEntryCount: 0,
@@ -232,6 +232,60 @@ describe("共享存储库的启动 schema 闸", () => {
     expect(() => inspectStorageDatabase()).toThrow(/expected disjoint primary keys/);
   });
 
+  test("临时白名单与黑名单主键交叉时拒绝启动", () => {
+    withDatabase((database: StorageDatabase): void => {
+      insertJsonbRow({
+        database,
+        table: "blocklist_entries",
+        idColumn: "id",
+        id: 22,
+        data: encodeBlocklistEntryData({
+          blockedAt: "2026/08/27 12:00:00",
+          meta: identityMeta(),
+        }),
+      });
+      database.$client.run(
+        "INSERT INTO temporary_whitelist_entries " +
+        "(id, temp_white, temp_white_at, temp_white_count, send_count, " +
+        "counted_at, qualified_at) VALUES (?1, 0, NULL, 0, 1, ?2, NULL);",
+        [22, Date.now()]
+      );
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(
+      /temporary_whitelist_entries\/blocklist_entries.*expected disjoint primary keys/
+    );
+  });
+
+  test("墙钟回拨留下的未来活动时间不被误判为数据库字段损坏", () => {
+    const future: number = Date.now() + 60_000;
+    withDatabase((database: StorageDatabase): void => {
+      database.$client.run(
+        "INSERT INTO temporary_whitelist_entries " +
+        "(id, temp_white, temp_white_at, temp_white_count, send_count, " +
+        "counted_at, qualified_at) VALUES (?1, 0, NULL, 0, 1, ?2, NULL);",
+        [24, future]
+      );
+    });
+
+    expect(() => inspectStorageDatabase()).not.toThrow();
+  });
+
+  test("临时白名单跨东京日的合格时间损坏时拒绝启动", () => {
+    withDatabase((database: StorageDatabase): void => {
+      database.$client.run(
+        "INSERT INTO temporary_whitelist_entries " +
+        "(id, temp_white, temp_white_at, temp_white_count, send_count, " +
+        "counted_at, qualified_at) VALUES (?1, 1, ?3, 1, 8, ?2, ?3);",
+        [23, 90_000_000, 1_000]
+      );
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(
+      /temporary_whitelist_entries\[23\].*qualified_at/
+    );
+  });
+
   test("群状态字段损坏时拒绝启动而不按宽松 JSON 恢复", () => {
     withDatabase((database: StorageDatabase): void => {
       insertJsonbRow({
@@ -289,7 +343,7 @@ describe("共享存储库的启动 schema 闸", () => {
       );
     });
     try {
-      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v5 migration lineage/);
+      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v7 migration lineage/);
     } finally {
       withDatabase((database: StorageDatabase): void => {
         database.$client.run(

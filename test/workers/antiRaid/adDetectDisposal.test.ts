@@ -253,7 +253,10 @@ describe("广告处置副作用", () => {
     deleteReferencedAdMessages({
       bundle: live,
       judged: live.entries,
-      messageIdThrough: result?.messageId ?? Number.NEGATIVE_INFINITY,
+      messageIdThrough:
+        result !== undefined && "messageId" in result
+          ? result.messageId
+          : Number.NEGATIVE_INFINITY,
     });
 
     const warning: string = formatReferencedAdWarning("@spammer");
@@ -263,6 +266,7 @@ describe("广告处置副作用", () => {
     expect(warning).not.toContain("5 分钟");
     expect(sendTemporaryMessageFromMain).toHaveBeenCalledWith({
       chatId: -1001,
+      identityId: 7,
       text: warning,
       deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
     });

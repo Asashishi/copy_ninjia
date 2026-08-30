@@ -28,13 +28,17 @@ import {
 import { aiChatConfigReadinessCache } from
   "../../../packages/cache/main/configReadiness";
 import { chatStateCache } from "../../../packages/cache/main/chatState";
-import { sentMessages } from "../../../packages/cache/perThread/selfSentTracker";
+import {
+  resetSelfSentTracker,
+  sentMessages,
+} from "../../../packages/cache/perThread/selfSentTracker";
 import { isSelfSent } from "../../../packages/infra/selfSentTracker";
 import { getOrCreateChatState } from "../../../packages/infra/storage/stateStore";
 import { cacheSender } from "../../../packages/users/senderIdentity";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
 import type { Scenario } from "./types";
 
+/** 空闲机器人：15 秒内一条都没发过，isSelfSent 在外层就落空。 */
 export function selfSentEmptyScenario(): Scenario {
   return {
     iterations: 2_000_000,
@@ -46,8 +50,62 @@ export function selfSentEmptyScenario(): Scenario {
       return checksum;
     },
     reset: (): void => {
-      for (const timer of sentMessages.values()) clearTimeout(timer);
-      sentMessages.clear();
+      resetSelfSentTracker();
+    },
+    probes: { isSelfSent },
+  };
+}
+
+/** 活跃机器人在一个 TTL 窗口内的自发消息群数与每群条数，取常见群规模的稳态。 */
+const ACTIVE_SELF_SENT_CHATS: number = 12;
+const ACTIVE_SELF_SENT_PER_CHAT: number = 4;
+
+/**
+ * **活跃**机器人下的回环判定：`sentMessages` 非空，外层快速路径不再生效。
+ *
+ * 与 self-sent-empty 成对存在，缺了这一条就只量到了空闲那一半——而这条判定在
+ * 每条群消息上最多要跑 5 次（调用点清单见 infra/selfSentTracker.ts 头注），
+ * 只要机器人在 SELF_SENT_MESSAGE_TTL_MS 内发过任何一条消息，走的就全是这一支。
+ *
+ * 每轮按「一条群消息 5 次查询」计一次迭代，与生产的调用密度对齐；其中一次落在
+ * 已登记的编号上，其余全部未命中，接近真实分布（回环是少数）。
+ *
+ * 表由 reset 直接填充，**不经 markSelfSent**：那条路挂的是 SELF_SENT_MESSAGE_TTL_MS
+ * （15 秒）的真 timer，而 JIT 稳定轮 + 预热 + 多次采样的总时长会越过它，表会在测量
+ * 中途被清空——那时这个场景就静默变成了 self-sent-empty，读数还看不出异常。
+ * 占位值用一个已 clearTimeout 的真 Timeout：类型正确、永远不会触发，
+ * 被测的 isSelfSent 也只做 has()，从不读它。
+ */
+export function selfSentActiveScenario(): Scenario {
+  const chatIds: number[] = [];
+  for (let index: number = 0; index < ACTIVE_SELF_SENT_CHATS; index += 1) {
+    chatIds.push(BENCHMARK_CHAT_ID - index);
+  }
+  return {
+    iterations: 400_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        const chatId: number = chatIds[index % ACTIVE_SELF_SENT_CHATS]!;
+        if (isSelfSent(chatId, index % ACTIVE_SELF_SENT_PER_CHAT)) checksum += 1;
+        for (let probe: number = 1; probe < 5; probe += 1) {
+          if (isSelfSent(chatId, 1_000_000 + index + probe)) checksum += 1;
+        }
+      }
+      return checksum;
+    },
+    reset: (): void => {
+      resetSelfSentTracker();
+      const placeholder: ReturnType<typeof setTimeout> = setTimeout((): void => undefined, 0);
+      clearTimeout(placeholder);
+      for (const chatId of chatIds) {
+        const byMessage: Map<number, ReturnType<typeof setTimeout>> =
+          new Map<number, ReturnType<typeof setTimeout>>();
+        for (let message: number = 0; message < ACTIVE_SELF_SENT_PER_CHAT; message += 1) {
+          byMessage.set(message, placeholder);
+        }
+        sentMessages.set(chatId, byMessage);
+      }
     },
     probes: { isSelfSent },
   };

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="06-modification-guide.md">← 前のページ：06 変更レシピ</a> · <a href="08-commands.md">次のページ：08 コマンドリファレンス →</a>
+  <a href="content-table.md">📚 開発者ドキュメント TOP</a> · <a href="06-modification-guide.md">← 前のページ：06 変更レシピ</a> · <a href="08-commands.md">次のページ：08 コマンドリファレンス →</a>
 </p>
 
 ---
@@ -112,8 +112,10 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     深夜をまたぐ処理中 query のため東京暦日 3 日分を保持。完全な再配信は再追記せず、
     履歴は user ごとの最新値へ compact し、1 chat/day は最新 250,000 人まで保持。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
-  - **内容**：schema v5 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
-    allowlist / blocklist の正式表、`pending_blocked_removals` は未完了の chat 別 BAN
+  - **内容**：schema v7 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
+    恒久 allowlist / blocklist の正式表です。`temporary_whitelist_entries` は group 横断発言の
+    累計、連続 qualified day、一時 grant 時刻、最終発言時刻を relational column で保持し、
+    `pending_blocked_removals` は未完了の chat 別 BAN
     outbox、`chat_states` はグループ単位状態の正式表（最大 25 行。26 行目があれば起動を
     拒否）、`storage_metadata` は唯一の schema version を保持します。Drizzle migration
     journal は対応する lineage と厳密に一致しなければなりません。`chat_states` の 25 行枠は
@@ -126,11 +128,13 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **バックアップ**：必須です。blocklist を失えば恒久 BAN がすべて解除され、outbox を
     失えば未完了処置が抜けます。Bot 停止後、主 DB とその時点で存在する WAL/SHM を同じ
     consistency set として worktree 外へ copy し、owner/mode と SHA-256 を記録します。
-    text editor や場当たり的な SQL で業務 row を手編集してはいけません。schema migration
-    script は SQLite serialization で別の外部 backup を作成し検証します。
+    text editor や場当たり的な SQL で業務 row を手編集してはいけません。一時 allowlist の
+    schema migration script は書き込み前に主 DB と既存 sidecar を byte 単位で外部 directory へ
+    copy し、owner/mode/SHA-256 manifest を記録して読み戻し検証します。
   - **復元**：Disk I/O Worker が唯一の database owner です。起動時は integrity、JSONB、
-    schema、migration lineage、row codec、allowlist/blocklist の非交差を検証してから、
-    count と pending outbox だけを main thread へ返します。失敗時は起動を拒否し、空 DB の
+    schema、migration lineage、row codec、blocklist と 2 種類の allowlist の非交差を検証してから、
+    恒久 policy count と pending outbox だけを main thread へ返します。一時 activity は update が
+    必要とする identity だけ 8,192-entry LRU へ cold read します。失敗時は起動を拒否し、空 DB の
     作成、row の破棄、silent degradation は行いません。
 - **`memory/ad-detected/sample.json`**
   - **内容**：広告判定ヒットの生サンプル。時刻、メッセージ ID と本文、判定理由、
@@ -151,13 +155,13 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **内容**：単一インスタンスロック。
   - **バックアップ**：バックアップも手動編集もしない。
 
-`memory/` 直下にはファイルを置かず、6 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は既存の全 domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact、rollover timer は成功応答後に開始します。`ad-detected/` は最初の hit 後にだけ現れます。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。
+`memory/` 直下にはファイルを置かず、6 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は復元が必要な state domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact は成功応答後に行い、その後で `Asia/Tokyo` を明示した Bun native の東京 0 時 maintenance cron を 1 つ登録します。この cron は運勢 file、log、入室 log、広告 sample archive、認証待ちの日別 file、一時 allowlist activity をまとめて maintenance し、1 domain の失敗で残りを止めません。既存の起動時・業務 event 経路は fallback として残します。`ad-detected/` は引き続き最初の hit 後にだけ現れ、すでに directory がある場合も起動成功後の maintenance は sample 内容を読まず directory entry だけを走査します。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。実行中は統一 cron が同じ rollover を起動し、失敗時は active mirror を保持したまま unref 済み 1 秒 timer で再試行します。
 
 `joinlog/` の query は `[since, now]` を覆う最大 2 個の chat/day file を読み、window 内で user ごとの最後の入室だけを返します。3 日目の保持は 23:59 に採取され、深夜を越えて Worker が処理する in-flight query 専用です。冗長履歴 10,000 件または新規追記 4 MiB で compact を評価し、512 KiB 以上回収できる場合だけ atomic rewrite します。parse 可能でも schema が不正な file は byte を変えずその read/write を拒否し、末尾の truncate 断片だけ append layer が修復できます。
 
 ### `memory/` の補助ファイルとプロセス内限定状態
 
-- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。起動 inspect はこれらを記録するだけで削除しません。全 domain の検証と adopt が成功して成功応答を返した後、logs、`ai/`、`stickers/`、`luck/`、`joinlog/` の maintenance が対応する `*.tmp` を清掃します。`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp` を清掃し、`anti-raid/` は temporary file を復元 input から除外します。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
+- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。起動 inspect はこれらを記録するだけで削除しません。全 domain の検証と adopt が成功して成功応答を返した後、logs、`ai/`、`stickers/`、`luck/`、`joinlog/` の maintenance が対応する `*.tmp` を清掃します。既存の `ad-detected/` directory は起動成功後の maintenance で `.sample.json.*.tmp` を清掃し、最初の sample 書き込みにも同じ fallback を残します。`anti-raid/` は temporary file を復元 input から除外します。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
 - Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。
 
 Bot 停止中または storage snapshot の整合境界でデータルート全体をバックアップし、SQLite 主 DB と存在する sidecar は同一時点から取得します。`memory/` と `database/` は機密データとして扱ってください。新規 memory file は `0644`、DB と sidecar は初回作成時に `0660` が既定値で、既存 file の mode は adopt と atomic replace 後も維持されます。詳細は [04](04-invariants.md#永続化) を参照してください。
@@ -175,6 +179,36 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 `config/whitelist.json`、`config/blocklist.json`、および任意の `memory/blocklist/` を使う deployment は、**まず 9.1.5 へ上げてその版で migration を完了**させてから、現行版へ upgrade してください。
 
 `bun run migrate:identity-storage` は 9.1.5 が最後の提供版です。「cold migration script は直近の released version → 現行版のみを覆う」という規約に従い 9.2.0 で `scripts/` から削除されており、現行版はこの migration を提供せず、旧 JSON リストを input として受け付けません。現行版で空の `whitelist.json`／`blocklist.json` を作ってから空 database を作る、という手順は取らないでください。実際のリストが取り残され、空の blocklist のまま Bot が稼働します。
+
+### storage.sqlite：schema v5 → v7 一時 allowlist と広告免除
+
+直近 released version の schema v5 には `temporary_whitelist_entries` がありません。現行の
+production entry は正確な schema v7 lineage だけを受け付け、startup で table を自動追加したり
+membership を書き換えたりしません。
+新しいコードを配置した後も Bot を停止したまま、順に実行します。
+
+```bash
+bun run migrate:temporary-whitelist -- --check
+bun run migrate:temporary-whitelist -- --apply
+```
+
+両 mode とも `bot.lock` を取得するため、systemd/supervisor は停止済みで inactive と確認できなければ
+なりません。`--check` は read-only で SQLite integrity、JSONB storage class、schema version、
+正確な v5/v6/v7 migration lineage を検証します。v5 は直接移行可能、v6 は同じ migration を再開する
+ための intermediate lineage としてのみ受け付け、v7 は完了済みと報告します。その他の version や
+未知 lineage はすべて拒否します。
+
+released deployment に対して `--apply` が提供する直接 edge は v5 → v7 だけです。同じ migration が
+v6 の commit 後に中断した場合は、その intermediate lineage から再開できます。書き込み前に主 DB と
+既存 WAL/SHM を worktree 外へ byte 単位で copy し、owner/mode/SHA-256 manifest を書いて読み戻し
+検証してから、現行 Drizzle migration で v6 の strict relational table を作り、最初の qualified day で
+広告免除を付与する形へ table を再構築して `storage_metadata` を v7 に更新します。最後に完全な v7
+inspect を再実行します。backup・migration・検証のどこかが失敗した場合は外部
+backup path と元の error を保持するため、service を停止したまま同一 consistency set 全体を復元し、
+row 削除、空 replacement 作成、version をまたぐ推測 migration は行いません。成功後も backup を保持し、
+service を起動して `active/running`、2 restart interval の間 `NRestarts` が増えないこと、journal に
+新しい非ゼロ終了がないことを確認して完了です。v7 に `--apply` を再実行しても完了済みと報告するだけで、
+database は書き換えません。
 
 ### state.json：退場した `qaThumbnailUrl` を取り除く
 
@@ -225,8 +259,9 @@ bun run migrate:qa-thumbnail -- --apply
     100 以下、スタンプパックは最大 5 個。
 - **identity database が欠落、または validation failure**
   - **原因**：migration 未実行、`storage.sqlite` が書込不能、integrity/JSONB/schema/
-    migration lineage 不正、row codec failure、または同じ identity が両 list に存在。
-  - **対応**：Bot を停止したまま [Identity Storage Migration](#identity-storage-migration) に従って database を作成または
+    migration lineage 不正、row codec failure、または blocklist と恒久／一時 allowlist が交差。
+  - **対応**：error が schema v5 を示す場合は Bot を停止したまま上記 v5 → v7 cold migration を実行します。
+    それ以外は [Identity Storage Migration](#identity-storage-migration) に従って database を作成または
     rollback します。同一 consistency point の DB と sidecar を復元し、collaboration group
     permission を直してから起動します。空 DB を作ったり失敗 row を削除してはいけません。
 - **state の 2 コピーが両方無効**
@@ -292,6 +327,6 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 
 <div align="center">
 
-[← 前のページ：06 変更レシピ](06-modification-guide.md) · [📚 開発者ドキュメント TOP](conntent-table.md) · [⬆️ トップへ戻る](#07-運用とトラブルシューティング) · **次のページ：なし →**
+[← 前のページ：06 変更レシピ](06-modification-guide.md) · [📚 開発者ドキュメント TOP](content-table.md) · [⬆️ トップへ戻る](#07-運用とトラブルシューティング) · **次のページ：なし →**
 
 </div>
