@@ -425,23 +425,48 @@ commit_staged_config() {
   CONFIG_CHANGED=1
 }
 
-# 只验证候选 Telegram 文件，不读取或填充当前进程的默认配置 holder。
+# 只验证候选 Telegram 文件，不读取部署目标 config/telegram.json。
+#
+# packages/config/telegram.ts 有模块级顶层 await：import 它就会按
+# COPY_NINJIA_CONFIG_ROOT/telegram.json 严格加载一次，而那正是本函数要替换的
+# 部署文件——全新安装时它还是示例占位符，损坏时更直接抛错，两种情况都会在候选
+# 文件被看一眼之前就失败，并报成「候选校验未通过」。所以把配置根指向一个私有
+# 临时目录，用符号链接把 telegram.json 指到候选文件：token 字节仍只存在于候选
+# 文件里，不产生第二份副本，而模块自带的严格加载与随后的显式解析都作用在候选上。
 validate_staged_telegram_config() {
-  local staging_path="$1"
-  bun -e '
+  local staging_path="$1" probe_root="" probe_status=0 absolute_staging_path=""
+  # 候选路径是相对仓库根的（resolve_config_target_path 对非软链接原样返回），
+  # 而符号链接按所在目录解析，必须先转成绝对路径。
+  absolute_staging_path="$(readlink -f -- "$staging_path")" ||
+    die "无法解析 Telegram 候选文件的绝对路径。"
+  [ -n "$absolute_staging_path" ] || die "Telegram 候选文件路径为空。"
+  probe_root="$(mktemp -d)" || die "无法创建 Telegram 候选校验的临时配置根。"
+  chmod 700 -- "$probe_root" || {
+    rm -rf -- "$probe_root"
+    die "无法收紧 Telegram 候选校验临时目录权限。"
+  }
+  ln -s -- "$absolute_staging_path" "${probe_root}/telegram.json" || {
+    rm -rf -- "$probe_root"
+    die "无法在临时配置根中引用 Telegram 候选文件。"
+  }
+  COPY_NINJIA_CONFIG_ROOT="$probe_root" bun -e '
     import { parseTelegramConfig } from "./packages/config/telegram";
     import { readJsonInput } from "./packages/libs/inputValidation";
     const path = process.argv[1];
-    parseTelegramConfig(readJsonInput(path), path);
-  ' "$staging_path"
+    parseTelegramConfig(await readJsonInput(path), path);
+  ' "$staging_path" || probe_status=$?
+  rm -rf -- "$probe_root"
+  return "$probe_status"
 }
 
 # agent 总闸本身接受路径参数，候选文件验证不会触碰部署目标。
+# packages/config/agent.ts 没有顶层 await，import 无副作用；但总闸是 async，
+# 必须 await，否则 bun -e 会在校验落地前退出。
 validate_staged_agent_config() {
   local staging_path="$1"
   bun -e '
     import { validateAgentDeploymentConfig } from "./packages/config/agent";
-    validateAgentDeploymentConfig(process.argv[1]);
+    await validateAgentDeploymentConfig(process.argv[1]);
   ' "$staging_path"
 }
 
