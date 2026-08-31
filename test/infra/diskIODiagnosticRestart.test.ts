@@ -97,7 +97,7 @@ describe("Disk I/O diagnostic failure recycling", () => {
       expect(diskIORuntime.consecutiveDiagnosticWriteFailures).toBe(0);
       expect(diskIORuntime.consecutiveDiagnosticRebuilds).toBe(1);
       const second: FakeWorker = FakeWorker.instances[1]!;
-      expect(second.messages).toEqual([{ type: "load" }]);
+      expect(second.messages).toEqual([expect.objectContaining({ type: "load" })]);
 
       // 旧代际迟到回执不能确认或释放当前原批。
       first.onmessage!({ data: {

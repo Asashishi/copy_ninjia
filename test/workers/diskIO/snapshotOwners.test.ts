@@ -115,13 +115,13 @@ afterEach(() => {
 });
 
 describe("Disk I/O snapshot domain owners", () => {
-  test("贴纸目录的三阶段启动 API 走真实目录：inspect 只读、adopt 才发布、maintenance 收尾", () => {
+  test("贴纸目录的三阶段启动 API 走真实目录：inspect 只读、adopt 才发布、maintenance 收尾", async () => {
     // 生产启动只走这三个函数（见 workers/diskIO/startup.ts），此前它们在
     // diskIOWorker.test.ts 里被整份 mock 掉，一行都没真跑过。
     writeStickerCatalogFileToDisk("pack_one", stickerSnapshotJson("恢复出来的目录"));
     stickerCatalogCache.set("stale_pack", "stale-sticker");
 
-    const inspection = inspectStickerCatalogSnapshots(["pack_one"]);
+    const inspection = await inspectStickerCatalogSnapshots(["pack_one"]);
     // 第一阶段只读：owner 缓存在 adopt 之前必须原封不动。
     expect(stickerCatalogCache.get("stale_pack")).toBe("stale-sticker");
     expect(inspection.snapshots.get("pack_one")).toBe(stickerSnapshotJson("恢复出来的目录"));

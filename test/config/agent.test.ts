@@ -129,7 +129,7 @@ describe("agent capability config", () => {
     }, "agent.json")).toThrow(/agent\.text\.api_key must be a non-empty string/);
   });
 
-  test("所有能力只拒绝示例中的实际占位凭据，且错误不回显凭据", () => {
+  test("所有能力只拒绝示例中的实际占位凭据，且错误不回显凭据", async () => {
     for (const capability of ["ad_detect", "text", "summary", "media", "image", "song"] as const) {
       const exampleCapability: Readonly<Record<string, unknown>> | undefined = AGENT_EXAMPLE[capability];
       const placeholder: unknown = exampleCapability?.api_key;
@@ -140,11 +140,11 @@ describe("agent capability config", () => {
         [capability]: { ...capabilityConfig, api_key: placeholder },
       };
       const path: string = writeConfig({ agent: value });
-      const validate = (): void => validateAgentDeploymentConfig(path);
-      expect(validate).toThrow(
+      const validate: Promise<void> = validateAgentDeploymentConfig(path);
+      await expect(validate).rejects.toThrow(
         `${path}: $.agent.${capability}.api_key must be a configured non-placeholder string`
       );
-      expect(validate).not.toThrow(placeholder);
+      await expect(validate).rejects.not.toThrow(placeholder);
     }
     expect(parseAgentDeploymentConfig({
       ...AGENT,
@@ -245,32 +245,32 @@ describe("unified agent.json loading", () => {
     });
   });
 
-  test("分段加载互不解析另一段", () => {
+  test("分段加载互不解析另一段", async () => {
     const badAgentPath: string = writeConfig({ agent: { ad_detect: AD_DETECT, bad: true } });
-    expect(loadAdDetectAgentConfig(badAgentPath)).toEqual({
+    expect(await loadAdDetectAgentConfig(badAgentPath)).toEqual({
       provider: "openai",
       apiKey: "deepseek-key",
       baseUrl: "https://deepseek.example/v1",
       model: "deepseek-test",
     });
     const badAdPath: string = writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
-    expect(loadAgentDeploymentConfig(badAdPath).text.model).toBe("gemini-text");
+    expect((await loadAgentDeploymentConfig(badAdPath)).text.model).toBe("gemini-text");
   });
 
-  test("启动总闸允许功能级可选能力缺省，但拒绝已存在的非法能力", () => {
+  test("启动总闸允许功能级可选能力缺省，但拒绝已存在的非法能力", async () => {
     const validPath: string = writeConfig({ agent: AGENT });
-    expect(() => validateAgentDeploymentConfig(validPath)).not.toThrow();
+    await expect(validateAgentDeploymentConfig(validPath)).resolves.toBeUndefined();
     const withoutAdDetect: Record<string, unknown> = { ...AGENT };
     delete withoutAdDetect.ad_detect;
     const missingPath: string = writeConfig({ agent: withoutAdDetect });
-    expect(() => validateAgentDeploymentConfig(missingPath)).not.toThrow();
+    await expect(validateAgentDeploymentConfig(missingPath)).resolves.toBeUndefined();
     const adOnlyPath: string = writeConfig({ agent: { ad_detect: AD_DETECT } });
-    expect(() => validateAgentDeploymentConfig(adOnlyPath)).not.toThrow();
-    expect(() => loadAgentDeploymentConfig(adOnlyPath)).toThrow(/agent must be exactly/);
+    await expect(validateAgentDeploymentConfig(adOnlyPath)).resolves.toBeUndefined();
+    await expect(loadAgentDeploymentConfig(adOnlyPath)).rejects.toThrow(/agent must be exactly/);
     const invalidPath: string = writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
-    expect(() => validateAgentDeploymentConfig(invalidPath)).toThrow(/agent\.ad_detect/);
+    await expect(validateAgentDeploymentConfig(invalidPath)).rejects.toThrow(/agent\.ad_detect/);
     const extraPath: string = writeConfig({ agent: AGENT, gemini: {} });
-    expect(() => validateAgentDeploymentConfig(extraPath)).toThrow(/must be exactly \{ agent \}/);
+    await expect(validateAgentDeploymentConfig(extraPath)).rejects.toThrow(/must be exactly \{ agent \}/);
   });
 
   test("运行时 getter 只读 holder，取不到就 fail-closed 而不读盘", () => {
@@ -298,17 +298,17 @@ describe("unified agent.json loading", () => {
     expect(() => getAgentDeploymentConfig()).not.toThrow(/google-text-key/);
   });
 
-  test("readiness 探测入口在 holder 已填时不再解析", () => {
+  test("readiness 探测入口在 holder 已填时不再解析", async () => {
     // 启动总闸先填好两段快照，探测就只剩一次分支：已存在的文件在一个进程里
     // 只解析一次，探测与运行时读的是同一个对象。
     const agentValue: AgentDeploymentConfig = parseAgentDeploymentConfig(AGENT, "agent.json");
     adoptAgentDeploymentConfig(agentValue);
-    ensureAgentDeploymentConfig();
+    await ensureAgentDeploymentConfig();
     expect(agentDeploymentConfigCache.current).toBe(agentValue);
 
     const adValue: AdDetectAgentConfig = parseAdDetectAgentConfig(AD_DETECT, "agent.json");
     adoptAdDetectAgentConfig(adValue);
-    ensureAdDetectAgentConfig();
+    await ensureAdDetectAgentConfig();
     expect(adDetectAgentConfigSnapshot()).toBe(adValue);
   });
 });

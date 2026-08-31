@@ -75,7 +75,7 @@ async function runColdStartChild(): Promise<ColdStartRound> {
     const stateLoadMs: number = elapsedMsSince(stateStartedAtNs);
 
     const inputStartedAtNs: number = Bun.nanoseconds();
-    lifecycleDependencies.validateExistingDeploymentInputs();
+    await lifecycleDependencies.validateExistingDeploymentInputs();
     const deploymentInputMs: number = elapsedMsSince(inputStartedAtNs);
 
     const diskIOStartedAtNs: number = Bun.nanoseconds();

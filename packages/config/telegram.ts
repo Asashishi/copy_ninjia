@@ -40,20 +40,26 @@ export function parseTelegramConfig(
 }
 
 /** 从指定路径读取并严格解析 Telegram 部署配置。 */
-function loadTelegramConfig(
+async function loadTelegramConfig(
   path: string = TELEGRAM_CONFIG_PATH
-): TelegramConfig {
-  return parseTelegramConfig(readJsonInput(path), path);
+): Promise<TelegramConfig> {
+  return parseTelegramConfig(await readJsonInput(path), path);
 }
 
-/** 读取当前线程的 Telegram 配置；配置修改后必须重启进程。 */
+const INITIAL_TELEGRAM_CONFIG: TelegramConfig = await loadTelegramConfig();
+telegramConfigCache.current = INITIAL_TELEGRAM_CONFIG;
+
+/** 读取异步模块初始化已经严格校验的 Telegram 配置。 */
 export function getTelegramConfig(): TelegramConfig {
-  telegramConfigCache.current ??= loadTelegramConfig();
-  return telegramConfigCache.current;
+  const config: TelegramConfig | null = telegramConfigCache.current;
+  if (config === null) {
+    throw new Error(`Telegram configuration was not initialized from ${TELEGRAM_CONFIG_PATH}.`);
+  }
+  return config;
 }
 
 /** Telegram Bot API token；来自 config/telegram.json。 */
-export const BOT_TOKEN: string = getTelegramConfig().botToken;
+export const BOT_TOKEN: string = INITIAL_TELEGRAM_CONFIG.botToken;
 
 /** 超级管理员 Telegram 用户 ID；来自 config/telegram.json。 */
-export const SUPER_ADMIN_USER_ID: number = getTelegramConfig().superAdminUserId;
+export const SUPER_ADMIN_USER_ID: number = INITIAL_TELEGRAM_CONFIG.superAdminUserId;

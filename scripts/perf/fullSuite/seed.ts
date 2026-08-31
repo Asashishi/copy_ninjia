@@ -20,6 +20,8 @@ import {
   joinLogEvent,
 } from "./fixture";
 import { assertBenchmarkRuntimeRoot } from "./mockRoot";
+import { validateExistingDeploymentInputs } from
+  "../../../packages/config/readiness";
 import { BOT_TOKEN } from "../../../packages/config/telegram";
 import { RUNTIME_DATA_ROOT } from "../../../packages/consts/paths";
 import {
@@ -101,6 +103,10 @@ async function runSeedChild(mode: SeedMode): Promise<SeededFixtureCounts> {
   try {
     if (mode === "chain") createEmptyBenchmarkDatabase();
     else createBenchmarkDatabase();
+    // 与生产启动同序（见 coldStart.ts 的分段计时）：部署输入预检必须先于 Disk I/O
+    // 完成。贴纸配置快照由它填进本线程 holder，loadPersistedData 组装 load 请求时
+    // 要同步取用；缺了它 getStickerConfig 会按「预检未完成」当场拒绝。
+    await validateExistingDeploymentInputs();
     initDiskIO();
     try {
       await seedWorkerOwnedFiles(mode);

@@ -215,7 +215,7 @@ describe("Anti-Raid 双工能力分派", () => {
     expect(grantedPermits).toEqual([]);
   });
 
-  test("引用广告警告发送前复查当前豁免，冷读失败同样不误警告", async () => {
+  test("引用广告警告发送前复查当前单项豁免，冷读失败同样不误警告", async () => {
     const request = {
       operation: "sendTemporaryMessage",
       category: "message",
@@ -237,8 +237,8 @@ describe("Anti-Raid 双工能力分派", () => {
     await expect(captured.options!.handleRequest(
       request,
       new AbortController().signal
-    )).resolves.toEqual({ suppressed: true });
-    expect(telegramRequests).toEqual([]);
+    )).resolves.toBe("telegram-result");
+    expect(telegramRequests).toEqual([request]);
 
     permanentWhitelistIds.clear();
     identityPrefetchSucceeds = false;
@@ -246,14 +246,14 @@ describe("Anti-Raid 双工能力分派", () => {
       request,
       new AbortController().signal
     )).resolves.toEqual({ suppressed: true });
-    expect(telegramRequests).toEqual([]);
+    expect(telegramRequests).toEqual([request]);
 
     identityPrefetchSucceeds = true;
     await expect(captured.options!.handleRequest(
       request,
       new AbortController().signal
     )).resolves.toBe("telegram-result");
-    expect(telegramRequests).toEqual([request]);
+    expect(telegramRequests).toEqual([request, request]);
   });
 
   test("许可回执没有可转移缓冲；只有 Telegram 回执才问 transfer 清单", () => {

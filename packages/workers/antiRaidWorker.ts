@@ -46,6 +46,7 @@ import {
 } from "./antiRaid/chatKind";
 import { bumpBlocklistRemovalEpoch } from "../cache/workers/antiRaid/blocklist";
 import { adoptAdDetectAgentConfig } from "../config/agent";
+import { adoptAdSampleConfig } from "../config/adSamples";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
 import { resetAdminCache, sweepAdminCache } from "../cache/workers/antiRaid/admins";
 import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/workers/antiRaid/linkedChannels";
@@ -126,6 +127,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       // AntiRaidAgentConfigMessage）。本线程此后不读 config/agent.json，
       // 崩溃重建也只等主线程重放同一份快照。
       adoptAdDetectAgentConfig(msg.adDetect);
+      if (msg.adSamples !== null) adoptAdSampleConfig(msg.adSamples);
       break;
     case "join":
       handleJoin(msg);

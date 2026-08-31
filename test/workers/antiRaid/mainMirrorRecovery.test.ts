@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { adDetectAgentConfigSnapshot } from "../../../packages/config/agent";
+import { getAdSampleConfig } from "../../../packages/config/adSamples";
 
 import type {
   AntiRaidWorkerMessage,
@@ -204,7 +205,11 @@ describe("Anti-Raid main-thread persistence mirror", () => {
 
     // 配置快照永远排在第一条：广告判定逐条候选取模型名与凭据（见
     // types/antiRaid.ts 的 AntiRaidAgentConfigMessage）。
-    expect(workerPosts[0]).toEqual({ type: "agentConfig", adDetect: adDetectAgentConfigSnapshot() });
+    expect(workerPosts[0]).toEqual({
+      type: "agentConfig",
+      adDetect: adDetectAgentConfigSnapshot(),
+      adSamples: getAdSampleConfig(),
+    });
     expect(workerPosts[1]).toMatchObject({
       type: "adoptVerifications",
       generation: 1,
@@ -223,7 +228,11 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     ]);
     expect(respawnPosts).toEqual([
       // 重生同样先投配置快照，且投的是主线程那份唯一快照，不重新读盘。
-      { type: "agentConfig", adDetect: adDetectAgentConfigSnapshot() },
+      {
+        type: "agentConfig",
+        adDetect: adDetectAgentConfigSnapshot(),
+        adSamples: getAdSampleConfig(),
+      },
       expect.objectContaining({
         type: "adoptVerifications",
         generation: 2,

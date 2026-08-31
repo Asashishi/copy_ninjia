@@ -34,16 +34,6 @@ export function parseMuteDurationMs(token: string): number | undefined {
   return Math.min(MUTE_MAX_DURATION_MS, Math.max(MUTE_MIN_DURATION_MS, durationMs));
 }
 
-/**
- * 把毫秒时长念成中文。只服务本命令的战报：输入一定是整分钟，且经过
- * parseMuteDurationMs 的收敛后天然是「整天 / 整小时 / 整分钟」三档取最大
- * 整除单位——用户写 90m 就念 90 分钟，不替他换算成一个半小时。
- * 导出仅为可测试性。
- */
-export function formatMuteDuration(durationMs: number): string {
-  return formatDurationCn(durationMs);
-}
-
 /** `/mute` 的用法提示，参数缺失/不合法时统一回这一句。 */
 const MUTE_USAGE_TEXT: string =
   `笨蛋，/mute 后面要带时长：数字加 m/h/d，比如 10m、2h、1d（1 分钟~365 天）；` +
@@ -174,7 +164,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   if (outcome === "muted") {
     await sendCommandMessage({
       chatId,
-      text: `哼，${targetLabel} 被本天才捂住嘴 ${formatMuteDuration(durationMs)}，到点自动松开；等不及就找管理员 /unmute 吧♡`,
+      text: `哼，${targetLabel} 被本天才捂住嘴 ${formatDurationCn(durationMs)}，到点自动松开；等不及就找管理员 /unmute 吧♡`,
       replyToMessageId: messageId,
     });
     return;

@@ -165,8 +165,8 @@ function temporaryWhitelistWriteChain(
     chain: "temporary-whitelist-write",
     operations: dependencies.chainTemporaryWhitelistWrites,
     recordsPerOperation: 1,
-    prepare: (): void => {
-      dependencies.ensureAdDetectAgentConfig();
+    prepare: async (): Promise<void> => {
+      await dependencies.ensureAdDetectAgentConfig();
       dependencies.hydrateIdentityStorageCounts(0, 0);
       for (let sequence: number = 0; sequence < totalOperations; sequence += 1) {
         const id: number = dependencies.benchmarkUserId(sequence);

@@ -7,6 +7,8 @@ import {
   persistedVerificationRevisions,
 } from "../../cache/main/antiRaid/verificationMirror";
 import { adDetectAgentConfigSnapshot } from "../../config/agent";
+import { getAdSampleConfig } from "../../config/adSamples";
+import { adDetectConfigReadiness } from "../../config/readiness";
 import { logger } from "../../infra/logger";
 import {
   getChatState,
@@ -76,6 +78,7 @@ export function replayAdDetectAgentConfig(
   return postTo({
     type: "agentConfig",
     adDetect: adDetectAgentConfigSnapshot(),
+    adSamples: adDetectConfigReadiness().ok ? getAdSampleConfig() : null,
   });
 }
 

@@ -34,6 +34,7 @@ import {
   compactVerificationDay,
   removeOldVerificationDays,
 } from "./verificationRecovery";
+import { enqueueDiskIOOperation } from "./operationQueue";
 
 export type VerificationReplySink = (reply: VerificationPersistedReply) => void;
 
@@ -83,7 +84,9 @@ function scheduleVerificationRolloverRetry(
 ): void {
   verificationRolloverRetryTimer.timer = setTimeout((): void => {
     verificationRolloverRetryTimer.timer = null;
-    maintainVerificationDayForToday(reply, getTokyoDateKey(), dir);
+    void enqueueDiskIOOperation((): void => {
+      maintainVerificationDayForToday(reply, getTokyoDateKey(), dir);
+    });
   }, VERIFICATION_ROLLOVER_RETRY_MS);
   verificationRolloverRetryTimer.timer.unref();
 }
@@ -121,7 +124,9 @@ function scheduleVerificationFlush(
   if (verificationFlushTimer.timer !== null) return;
   verificationFlushTimer.timer = setTimeout((): void => {
     verificationFlushTimer.timer = null;
-    flushVerificationChanges(reply, dir);
+    void enqueueDiskIOOperation(async (): Promise<void> => {
+      await flushVerificationChanges(reply, dir);
+    });
   }, VERIFICATION_FLUSH_INTERVAL_MS);
   verificationFlushTimer.timer.unref();
 }
@@ -134,12 +139,12 @@ export interface HandleVerificationUpsertParams {
 }
 
 /** 新建立即追加；普通字段变化按 key 在 250ms 窗口内合并。 */
-export function handleVerificationUpsert({
+export async function handleVerificationUpsert({
   msg,
   reply,
   dir = VERIFICATION_MEMORY_DIR,
   day = getTokyoDateKey(),
-}: HandleVerificationUpsertParams): void {
+}: HandleVerificationUpsertParams): Promise<void> {
   const key: string = verificationKey(msg.record.chatId, msg.record.userId);
   const pending: VerificationFileChange | undefined =
     verificationPendingChanges.get(key);
@@ -168,7 +173,7 @@ export function handleVerificationUpsert({
     msg.critical ||
     verificationPendingChanges.size >= VERIFICATION_FLUSH_MAX_KEYS
   ) {
-    flushVerificationChanges(reply, dir, day);
+    await flushVerificationChanges(reply, dir, day);
   } else {
     scheduleVerificationFlush(reply, dir);
   }
@@ -182,12 +187,12 @@ export interface HandleVerificationDeleteParams {
 }
 
 /** 终结清掉同 key 缓冲 upsert、立即追加 durable tombstone 并回执。 */
-export function handleVerificationDelete({
+export async function handleVerificationDelete({
   msg,
   reply,
   dir = VERIFICATION_MEMORY_DIR,
   day = getTokyoDateKey(),
-}: HandleVerificationDeleteParams): void {
+}: HandleVerificationDeleteParams): Promise<void> {
   const key: string = verificationKey(msg.chatId, msg.userId);
   const pending: VerificationFileChange | undefined =
     verificationPendingChanges.get(key);
@@ -200,15 +205,15 @@ export function handleVerificationDelete({
 
   verificationWorkerCache.delete(key);
   verificationPendingChanges.set(key, { ...msg, value: null });
-  flushVerificationChanges(reply, dir, day);
+  await flushVerificationChanges(reply, dir, day);
 }
 
 /** 批量追加本窗口最终变化；仅在历史越过阈值时原子收敛 active 镜像。 */
-export function flushVerificationChanges(
+export async function flushVerificationChanges(
   reply: VerificationReplySink,
   dir: string = VERIFICATION_MEMORY_DIR,
   day: string = getTokyoDateKey()
-): boolean {
+): Promise<boolean> {
   if (verificationFlushTimer.timer !== null) {
     clearTimeout(verificationFlushTimer.timer);
     verificationFlushTimer.timer = null;
@@ -252,7 +257,7 @@ export function flushVerificationChanges(
       return true;
     }
 
-    appendToDayFile({
+    await appendToDayFile({
       dir,
       state: verificationFileState.current,
       chunk,

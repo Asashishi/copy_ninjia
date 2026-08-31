@@ -34,7 +34,7 @@ mock.module("../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
       queued: true,
     };
   },
-  hasActiveTemporaryWhitelist: (id: number): boolean => temporaryIds.has(id),
+  hasActiveTemporaryWhitelistAt: (id: number): boolean => temporaryIds.has(id),
   clearTemporaryWhitelistActivity: (id: number): boolean => {
     temporaryIds.delete(id);
     return true;
@@ -158,6 +158,7 @@ describe("临时白名单发言入口", () => {
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
+      now: 1_000,
     })).toBeFalse();
 
     readinessOk = true;
@@ -166,11 +167,13 @@ describe("临时白名单发言入口", () => {
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
+      now: 1_000,
     })).toBeFalse();
     expect(recordEligibleTemporaryWhitelistActivity({
       message: message({ from: { id: 999, is_bot: true, first_name: "Bot" } }),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
+      now: 1_000,
     })).toBeFalse();
     expect(recordEligibleTemporaryWhitelistActivity({
       message: message({
@@ -179,6 +182,7 @@ describe("临时白名单发言入口", () => {
       }),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
+      now: 1_000,
     })).toBeFalse();
     expect(recorded).toEqual([]);
   });
@@ -190,11 +194,13 @@ describe("临时白名单发言入口", () => {
       }),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
+      now: 1_000,
     })).toBeFalse();
     expect(recordEligibleTemporaryWhitelistActivity({
       message: message(),
       botId: 999,
       chatState: {} as Readonly<ChatState>,
+      now: 1_000,
     })).toBeFalse();
     expect(recorded).toEqual([]);
   });

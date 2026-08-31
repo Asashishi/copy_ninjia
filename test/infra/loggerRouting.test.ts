@@ -59,7 +59,7 @@ describe("logger persistence routing boundary", () => {
       expect(worker.messages).toHaveLength(0);
 
       const loaded = diskIO.loadPersistedData(1_000);
-      expect(worker.messages).toEqual([{ type: "load" }]);
+      expect(worker.messages).toEqual([expect.objectContaining({ type: "load" })]);
       worker.onmessage!({ data: {
         type: "loaded",
         aiMemories: new Map(),

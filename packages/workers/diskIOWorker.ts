@@ -99,6 +99,7 @@ import type {
 import type {
   JoinLogRecord,
 } from "../types/diskIO/storage";
+import { enqueueDiskIOOperation } from "./diskIO/operationQueue";
 
 declare const self: Worker;
 
@@ -107,14 +108,16 @@ declare const self: Worker;
  * 受控重建前使用。各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
  * 该刷的都立即刷。
  */
-function flushAll(scope: DiskFlushRequest["scope"]): readonly DiskIODomain[] {
+async function flushAll(
+  scope: DiskFlushRequest["scope"]
+): Promise<readonly DiskIODomain[]> {
   // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
   const failedDomains: DiskIODomain[] = [];
-  if (scope === "all" && !flushLogBuffer()) failedDomains.push("log");
+  if (scope === "all" && !await flushLogBuffer()) failedDomains.push("log");
   if (!flushAiMemorySnapshots()) failedDomains.push("aiMemory");
   if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
-  if (!flushLuckAppends()) failedDomains.push("luck");
-  if (!flushVerificationChanges(
+  if (!await flushLuckAppends()) failedDomains.push("luck");
+  if (!await flushVerificationChanges(
     (reply: VerificationPersistedReply): void => self.postMessage(reply)
   )) failedDomains.push("verification");
   if (!flushStorageDatabase(
@@ -122,21 +125,23 @@ function flushAll(scope: DiskFlushRequest["scope"]): readonly DiskIODomain[] {
   )) {
     failedDomains.push(...pendingStorageDatabaseDomains());
   }
-  if (!flushJoinLogDomain()) failedDomains.push("joinLog");
+  if (!await flushJoinLogDomain()) failedDomains.push("joinLog");
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
   // 的失败误导，而那个领域的真实错误按设计只有 console.error。
   return failedDomains;
 }
 
 /** 路由一条主线程消息；独立导出便于验证协议而不初始化真实落盘目录。 */
-export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
+export async function handleDiskIOWorkerMessage(
+  msg: DiskIOMessage
+): Promise<void> {
   switch (msg.type) {
     case "diagnosticBatch": {
       let containsLog: boolean = false;
       for (const diagnostic of msg.messages) {
-        if (handleDiskIODiagnostic(diagnostic)) containsLog = true;
+        if (await handleDiskIODiagnostic(diagnostic)) containsLog = true;
       }
-      if (containsLog && !flushLogBuffer()) {
+      if (containsLog && !await flushLogBuffer()) {
         const retry: DiskDiagnosticBatchRetryReply = {
           type: "diagnosticBatchRetry",
           batchId: msg.batchId,
@@ -177,7 +182,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       markStickerCatalogSnapshotDirty(msg.pack, msg.snapshot);
       break;
     case "luckDraw":
-      handleLuckDrawMessage(msg);
+      await handleLuckDrawMessage(msg);
       break;
     case "ensureLuckSecret": {
       let reply: LuckSecretReply;
@@ -193,17 +198,17 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
         // 尚在正常批量窗口内的旧日结果；这也让新日结果与密钥的一致性检查
         // 始终建立在已完整提交的上一日 owner 之上。
         if (currentLuckDay !== msg.day) {
-          if (!flushLuckAppends()) {
+          if (!await flushLuckAppends()) {
             throw new Error(`Failed to flush luck results before switching from ${currentLuckDay ?? "none"} to ${msg.day}.`);
           }
           // 跨日请求必须先恢复目标日结果，再决定能否轮换密钥；否则不一致备份
           // 中“结果文件存在、密钥仍是旧日”的组合会被误当成安全的新一天。
-          hydrateLuckDay(msg.day);
+          await hydrateLuckDay(msg.day);
         }
         reply = {
           type: "luckSecret",
           requestId: msg.requestId,
-          secret: recoverLuckReceiptSecret({
+          secret: await recoverLuckReceiptSecret({
             day: msg.day,
             confirmedResultCount: luckWorkerCache.current?.entries.size ?? 0,
           }),
@@ -219,10 +224,10 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       break;
     }
     case "verificationUpsert":
-      handleVerificationUpsert({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
+      await handleVerificationUpsert({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
       break;
     case "verificationDelete":
-      handleVerificationDelete({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
+      await handleVerificationDelete({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
       break;
     // 这两条与 joinLog 同理：handlePendingRemovalSnapshot 会在 removalId 重复、
     // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
@@ -281,7 +286,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       break;
     case "joinLog":
       try {
-        handleJoinLogMessage(msg);
+        await handleJoinLogMessage(msg);
       } catch (error: unknown) {
         // 缓冲满、跨日前刷盘失败、跨日清理抛错都会从这里逸出。异常一旦离开
         // onmessage，Bun 会直接终止整条落盘线程（见 infra/diskIO/host.ts 的实测
@@ -311,7 +316,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     case "readJoinLog": {
       let reply: JoinLogReadReply;
       try {
-        const records: readonly JoinLogRecord[] = readJoinLog(msg);
+        const records: readonly JoinLogRecord[] = await readJoinLog(msg);
         reply = {
           type: "joinLogRead",
           requestId: msg.requestId,
@@ -334,12 +339,13 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       self.postMessage(readBlocklistIdPage(msg));
       break;
     case "load":
-      handleDiskIOStartupLoad(
+      await handleDiskIOStartupLoad(
+        msg.stickerPacks,
         (reply: Parameters<DiskIOStartupReplySink>[0]): void => self.postMessage(reply)
       );
       break;
     case "flush": {
-      const failedDomains: readonly DiskIODomain[] = flushAll(msg.scope);
+      const failedDomains: readonly DiskIODomain[] = await flushAll(msg.scope);
       const reply: DiskFlushReply | DiskFlushFailedReply = failedDomains.length === 0
         ? { type: "flushed", flushedId: msg.flushId }
         : { type: "flushFailed", flushedId: msg.flushId, failedDomains };
@@ -347,6 +353,16 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       break;
     }
   }
+}
+
+/**
+ * 把一条 Worker 消息追加到统一操作队列；启动恢复完成前到达的业务消息只能排队，
+ * 不得与跨领域 inspect/adopt 事务交错。
+ */
+export function queueDiskIOWorkerMessage(message: DiskIOMessage): Promise<void> {
+  return enqueueDiskIOOperation(
+    async (): Promise<void> => handleDiskIOWorkerMessage(message)
+  );
 }
 
 /**
@@ -376,14 +392,16 @@ function handleIdentityMessage(
 }
 
 /** 一批中的诊断保持原始顺序同步消费；完成整批后才能向主线程回 ACK。 */
-function handleDiskIODiagnostic(message: DiskDiagnosticMessage): boolean {
+async function handleDiskIODiagnostic(
+  message: DiskDiagnosticMessage
+): Promise<boolean> {
   if (message.type === "log") {
-    handleLogMessage(message);
+    await handleLogMessage(message);
     return true;
   }
   // 纯旁路素材：收到即写，不进合并窗口、不进统一 flush、失败即弃
   // （见 diskIO/adSampleFile.ts 的文件头）。
-  handleAdSampleMessage(message);
+  await handleAdSampleMessage(message);
   return false;
 }
 
@@ -398,7 +416,7 @@ function startDiskIOWorker(): void {
   // /dev/null，这条会由主线程的运势 owner 记进统一 logs/（见 luckFiles.ts）。
   configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => self.postMessage(reply));
   self.onmessage = (event: MessageEvent<DiskIOMessage>): void => {
-    handleDiskIOWorkerMessage(event.data);
+    void queueDiskIOWorkerMessage(event.data);
   };
 }
 

@@ -38,67 +38,15 @@ import type { AdCandidateMessage, AdSampleContext } from
   "../../../packages/types/antiRaid/adDetect";
 import type { AdCandidateEntry } from "../../../packages/types/antiRaid/adDetect";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, messageFixture } from "./fixtures";
-import {
-  floodWindowGrowthScenario,
-  floodWindowHitScenario,
-  floodWindowSteadyScenario,
-} from "./floodScenarios";
-import { createLuckReceiptFastPathScenario } from "./luckReceiptScenario";
-import {
-  aiMediaDirectTriggerScenario,
-  incomingMessageSpineScenario,
-  selfSentActiveScenario,
-  selfSentEmptyScenario,
-} from "./messageSpineScenarios";
-import {
-  bufferedMessageBuildScenario,
-  mentionFactsScenario,
-  replyReferenceScenario,
-  transcriptRenderScenario,
-} from "./transcriptScenarios";
+import { AD_SAMPLE_TEXTS } from "./adFixture";
 import { prototypeProbes } from "./jitTiers";
-import { createAdCapacityRejectScenario } from "./adDetectScenarios";
-import { createIdentityPermissionReadScenario } from "./identityScenarios";
-import { createTemporaryWhitelistActivityScenario } from
-  "./temporaryWhitelistScenario";
-import type { Scenario, ScenarioName } from "./types";
+import type { Scenario } from "./types";
 
 /** 广告无元数据路径的只读空输入，避免基准自身制造额外容器。 */
 const EMPTY_LINK_URLS: readonly string[] = [];
 /** 广告无上下文路径的只读既有条目。 */
 const EMPTY_AD_ENTRIES: readonly AdCandidateEntry[] = [];
-/**
- * 送检正文样本，逐轮轮换。
- *
- * 必须换着喂：在「无元数据」这条路上两个被测函数都是立刻返回——
- * `appendLinkUrls` 遇空 URL 表原样返回入参，`boundSampleContext` 遇 undefined
- * 直接返回 undefined——若整个循环体喂的是同一个字面量，循环体就是个常量表达式，
- * JSC 会把它整体提到循环外。实测这会让读数按进程在 ~0.6 ns/op（折叠掉了）和
- * ~11.5 ns/op（没折叠）之间二值跳变，前者量到的根本不是这条路径的成本。
- * 长度也要不同，让 `text.length` 真的随轮次变化。
- *
- * **换输入之后仍有残余二值性**（实测 ~5.8 与 ~14.2 ns/op 两簇），这是这条路径
- * 的固有性质，不是还没修干净：两个函数在此都退化成恒等/立即返回，内联之后本来
- * 就没有多少可测的东西，JSC 折不折叠就决定了读数落在哪一簇。因此本场景应当读作
- * 「这条早退路径有没有变重」的哨兵，而不是一个可跨进程直接比大小的绝对成本；
- * 真要收紧，得换成能产生真实工作量的输入，那已经是另一个场景了。
- *
- * 这张表最早是全仓第一处刻意不 `Object.freeze` 的只读常量——冻结后每轮凭空多
- * 30 ns 的脚手架成本，被测函数直接被淹没（实测同样的取值循环 frozen 35.7~46.2、
- * plain 6.5 ns/op）。后来这条结论推广成了全仓约定，见 AGENTS.md 的「常量」一节。
- */
-const AD_SAMPLE_TEXTS: readonly string[] = [
-  "ordinary message",
-  "another ordinary message",
-  "hi",
-  "just a normal chat line here",
-  "ok",
-  "some slightly longer ordinary message body",
-  "yet another one",
-  "short",
-];
-
-function senderScenario(username?: string): Scenario {
+export function senderScenario(username?: string): Scenario {
   const message: Message = messageFixture(username);
   return {
     iterations: 1_000_000,
@@ -117,7 +65,7 @@ function senderScenario(username?: string): Scenario {
   };
 }
 
-function aiActivityScenario(): Scenario {
+export function aiActivityScenario(): Scenario {
   let now: number = BENCHMARK_EPOCH_MS;
   return {
     iterations: 500_000,
@@ -137,7 +85,7 @@ function aiActivityScenario(): Scenario {
   };
 }
 
-function aiActivityLruMissScenario(): Scenario {
+export function aiActivityLruMissScenario(): Scenario {
   let now: number = BENCHMARK_EPOCH_MS;
   let chatId: number = BENCHMARK_CHAT_ID;
   return {
@@ -164,7 +112,7 @@ function aiActivityLruMissScenario(): Scenario {
  * 反刷群入群窗口的完整热路径：Map owner、固定容量 TimestampDeque、饱和
  * fail-safe 与每群唯一 timer 均走生产入口。
  */
-function joinTimestampWindowScenario(): Scenario {
+export function joinTimestampWindowScenario(): Scenario {
   let now: number = BENCHMARK_EPOCH_MS;
   return {
     iterations: 1_000_000,
@@ -198,7 +146,7 @@ function joinTimestampWindowScenario(): Scenario {
  *
  * 与 join-timestamp-window 同窗口长度、同迭代数，两行读数直接可比。
  */
-function quotaTimestampWindowScenario(): Scenario {
+export function quotaTimestampWindowScenario(): Scenario {
   const timestamps: TimestampDeque =
     new TimestampDeque(CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW);
   let now: number = BENCHMARK_EPOCH_MS;
@@ -235,7 +183,7 @@ function quotaTimestampWindowScenario(): Scenario {
  * 容量与批量直接引生产常量：满 `VERBATIM_CONTEXT_MAX` 后压缩一块
  * `COMPACT_BATCH_SIZE` 再继续推入，正是生产里摘要触发前后的进出形状。
  */
-function boundedRollingBufferScenario(): Scenario {
+export function boundedRollingBufferScenario(): Scenario {
   const buffer: BoundedDeque<number> = new BoundedDeque<number>(VERBATIM_CONTEXT_MAX);
   return {
     iterations: 500_000,
@@ -265,7 +213,7 @@ function boundedRollingBufferScenario(): Scenario {
   };
 }
 
-function adEmptyMetadataScenario(): Scenario {
+export function adEmptyMetadataScenario(): Scenario {
   return {
     iterations: 1_000_000,
     run: (iterations: number): number => {
@@ -287,7 +235,7 @@ function adEmptyMetadataScenario(): Scenario {
   };
 }
 
-function adWireCloneScenario(): Scenario {
+export function adWireCloneScenario(): Scenario {
   const message: AdCandidateMessage = {
     type: "adCandidate",
     chatId: BENCHMARK_CHAT_ID,
@@ -332,7 +280,7 @@ const BENCHMARK_LOG_LINES: readonly string[] = [
   "Failed to refresh chat title for chat -1009876543210:",
 ];
 
-function redactCleanLogScenario(): Scenario {
+export function redactCleanLogScenario(): Scenario {
   return {
     iterations: 1_000_000,
     run: (iterations: number): number => {
@@ -359,7 +307,7 @@ function redactCleanLogScenario(): Scenario {
  * 存在的理由是给「常量表要不要 Object.freeze」这个决定留一把尺子：JSC 对冻结
  * 数组的下标读取和 for-of 都没有快路径，量级差一个数量级。
  */
-function luckTierTableScenario(): Scenario {
+export function luckTierTableScenario(): Scenario {
   return {
     iterations: 1_000_000,
     run: (iterations: number): number => {
@@ -381,7 +329,7 @@ function luckTierTableScenario(): Scenario {
  * gag 活动群的每消息入口计数：五条会话复刻全局容量上限，每 15 次才允许分配
  * due 数组；调用方在真实换新成功后同样把对应计数归零。
  */
-function gagSpeakCounterScenario(): Scenario {
+export function gagSpeakCounterScenario(): Scenario {
   const sessions: GagSession[] = [];
   for (let index: number = 0; index < 5; index++) {
     const targetId: number = 100 + index;
@@ -448,7 +396,7 @@ function gagSpeakCounterScenario(): Scenario {
  * fixture 只复刻七种生产形状，不包含字段删除造成的隐藏类迁移；报告仅用于本场景
  * 固定输入下的纵向门禁。
  */
-function chatStateReadScenario(): Scenario {
+export function chatStateReadScenario(): Scenario {
   const writers: readonly ((state: ChatState) => void)[] = [
     (state: ChatState): void => { state.isInitEnabled = true; },
     (state: ChatState): void => { state.isAntiRaidEnabled = true; },
@@ -499,7 +447,7 @@ function chatStateReadScenario(): Scenario {
 }
 
 /** 单独量群状态 Map accessor；探针与计时循环实际调用保持一致。 */
-function chatStateMapReadScenario(): Scenario {
+export function chatStateMapReadScenario(): Scenario {
   const chatIds: readonly number[] = [
     BENCHMARK_CHAT_ID,
     BENCHMARK_CHAT_ID - 1,
@@ -528,69 +476,4 @@ function chatStateMapReadScenario(): Scenario {
     },
     probes: { getChatState },
   };
-}
-
-export function createScenario(name: ScenarioName): Scenario {
-  switch (name) {
-    case "sender-no-username":
-      return senderScenario();
-    case "sender-stable-username":
-      return senderScenario("Stable_User");
-    case "luck-receipt-fast-path":
-      return createLuckReceiptFastPathScenario();
-    case "ai-activity-window":
-      return aiActivityScenario();
-    case "ai-activity-lru-miss":
-      return aiActivityLruMissScenario();
-    case "ad-empty-metadata":
-      return adEmptyMetadataScenario();
-    case "ad-wire-clone":
-      return adWireCloneScenario();
-    case "ad-capacity-reject":
-      return createAdCapacityRejectScenario();
-    case "identity-permission-read":
-      return createIdentityPermissionReadScenario();
-    case "temporary-whitelist-activity":
-      return createTemporaryWhitelistActivityScenario();
-    case "join-timestamp-window":
-      return joinTimestampWindowScenario();
-    case "quota-timestamp-window":
-      return quotaTimestampWindowScenario();
-    case "bounded-rolling-buffer":
-      return boundedRollingBufferScenario();
-    case "chat-state-read":
-      return chatStateReadScenario();
-    case "chat-state-map-read":
-      return chatStateMapReadScenario();
-    case "self-sent-empty":
-      return selfSentEmptyScenario();
-    case "self-sent-active":
-      return selfSentActiveScenario();
-    case "incoming-message-spine":
-      return incomingMessageSpineScenario();
-    case "ai-media-direct-trigger":
-      return aiMediaDirectTriggerScenario();
-    case "flood-window-hit":
-      return floodWindowHitScenario();
-    case "flood-window-growth":
-      return floodWindowGrowthScenario();
-    case "flood-window-steady":
-      return floodWindowSteadyScenario();
-    case "gag-speak-counter":
-      return gagSpeakCounterScenario();
-    case "buffered-message-build":
-      return bufferedMessageBuildScenario();
-    case "transcript-render":
-      return transcriptRenderScenario();
-    case "reply-reference":
-      return replyReferenceScenario();
-    case "mention-facts":
-      return mentionFactsScenario(true);
-    case "mention-facts-plain":
-      return mentionFactsScenario(false);
-    case "redact-clean-log":
-      return redactCleanLogScenario();
-    case "luck-tier-table":
-      return luckTierTableScenario();
-  }
 }

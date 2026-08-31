@@ -58,19 +58,13 @@ const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
 const PRODUCTION_NODE_IMPORTS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {
-  "packages/config/persona.ts": {
-    "node:fs": {
-      symbols: ["readFileSync"],
-      purpose: "synchronous one-time persona configuration loading",
-    },
-  },
   "packages/config/readiness.ts": {
     "node:crypto": {
       symbols: ["createPrivateKey"],
       purpose: "private-key syntax validation",
     },
-    "node:fs": {
-      symbols: ["lstatSync"],
+    "node:fs/promises": {
+      symbols: ["lstat"],
       purpose: "startup deployment-input metadata validation",
     },
   },
@@ -131,14 +125,8 @@ const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/libs/fileAccess.ts": {
     "node:fs": {
-      symbols: ["accessSync", "constants"],
-      purpose: "startup file and directory access-mode validation",
-    },
-  },
-  "packages/libs/inputValidation.ts": {
-    "node:fs": {
-      symbols: ["readFileSync"],
-      purpose: "strict synchronous startup configuration parsing",
+      symbols: ["accessSync", "constants", "lstatSync"],
+      purpose: "startup file type and access-mode validation",
     },
   },
   "packages/libs/luckReceipt.ts": {
@@ -155,8 +143,8 @@ const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/appendOnlyDayFile.ts": {
     "node:fs": {
-      symbols: ["closeSync", "existsSync", "fsyncSync", "openSync", "readFileSync", "statSync", "writeSync"],
-      purpose: "append-only descriptor recovery, bounded reads, writes, and fsync",
+      symbols: ["closeSync", "existsSync", "fsyncSync", "openSync", "statSync", "writeSync"],
+      purpose: "append-only descriptor metadata, writes, and fsync",
     },
   },
   "packages/workers/diskIO/joinLogFiles.ts": {
@@ -167,14 +155,14 @@ const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/joinLogRecovery.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readFileSync", "readdirSync", "unlinkSync"],
-      purpose: "synchronous owner-local journal recovery and stale-file cleanup",
+      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
+      purpose: "owner-local journal metadata and stale-file cleanup",
     },
   },
   "packages/workers/diskIO/logFiles.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readFileSync", "readdirSync", "statSync", "unlinkSync"],
-      purpose: "synchronous log recovery, metadata inspection, and stale-file cleanup",
+      symbols: ["existsSync", "mkdirSync", "readdirSync", "statSync", "unlinkSync"],
+      purpose: "log metadata inspection and stale-file cleanup",
     },
   },
   "packages/workers/diskIO/luckSecretFile.ts": {
@@ -185,14 +173,14 @@ const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/snapshotFiles.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readFileSync", "readdirSync", "unlinkSync"],
-      purpose: "synchronous snapshot recovery, directory traversal, and stale-file cleanup",
+      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
+      purpose: "snapshot directory traversal and stale-file cleanup",
     },
   },
   "packages/workers/diskIO/verificationRecovery.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readFileSync", "readdirSync", "unlinkSync"],
-      purpose: "synchronous verification journal recovery and retention cleanup",
+      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
+      purpose: "verification journal metadata and retention cleanup",
     },
   },
   "packages/workers/diskIO/verificationWrites.ts": {

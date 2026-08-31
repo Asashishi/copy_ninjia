@@ -19,7 +19,7 @@
  * 保留原始字节并拒绝启动，不能猜测哪条已确认结果可以丢弃。
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AiMemorySnapshot } from "../../types/aiChat/memory";
 import type { DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types/diskIO/storage";
@@ -45,7 +45,7 @@ import {
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
-import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { invalidInput, readJsonInput, readUtf8TextInput } from "../../libs/inputValidation";
 import {
   decodeAiMemorySnapshot,
   decodeStickerCatalogSnapshot,
@@ -84,7 +84,7 @@ export interface AiMemoryRecoveryInspection {
  * 文件名、schema 和容量。任一非法文件都保留原字节并拒绝恢复；成功快照
  * 重新 stringify 成与消息协议同形的 JSON 文本，直接可灌缓存/回 LoadedReply。
  */
-export function inspectAiMemories(): AiMemoryRecoveryInspection {
+export async function inspectAiMemories(): Promise<AiMemoryRecoveryInspection> {
   const result: Map<number, string> = new Map();
   const temporaryPaths: string[] = [];
   const names: readonly string[] = existsSync(AI_MEMORY_DIR)
@@ -119,7 +119,7 @@ export function inspectAiMemories(): AiMemoryRecoveryInspection {
       );
     }
     assertPersistedFileWritable(path);
-    const parsed: unknown = readJsonInput(path);
+    const parsed: unknown = await readJsonInput(path);
     const snapshot: AiMemorySnapshot = decodeAiMemorySnapshot(parsed, path);
     result.set(chatId, JSON.stringify(snapshot, null, 2));
   }
@@ -167,9 +167,9 @@ export interface StickerCatalogRecoveryInspection {
   readonly temporaryPaths: readonly string[];
 }
 
-export function inspectStickerCatalogs(
+export async function inspectStickerCatalogs(
   activePacks: readonly string[]
-): StickerCatalogRecoveryInspection {
+): Promise<StickerCatalogRecoveryInspection> {
   const activePackSet: Set<string> = new Set(activePacks);
   const result: Map<string, string> = new Map();
   const orphanPaths: string[] = [];
@@ -189,7 +189,7 @@ export function inspectStickerCatalogs(
       return invalidInput(path, "$filename", "the canonical <stickerPackShortName>.json form");
     }
     assertPersistedFileWritable(path);
-    const parsed: unknown = readJsonInput(path);
+    const parsed: unknown = await readJsonInput(path);
     const snapshot: StickerCatalogSnapshot = decodeStickerCatalogSnapshot(parsed, path);
     if (!activePackSet.has(pack)) {
       orphanPaths.push(path);
@@ -278,7 +278,9 @@ export interface LuckDayRecoveryInspection {
  * （不存在则返回 null）。先严格校验 JSON、领域 schema 与容量，再接管追加
  * 游标；任何不规范内容都阻止启动并保留原文件，等待人工处理。
  */
-export function inspectLuckDay(todayKey: string): LuckDayRecoveryInspection {
+export async function inspectLuckDay(
+  todayKey: string
+): Promise<LuckDayRecoveryInspection> {
   const names: string[] = existsSync(LUCK_MEMORY_DIR)
     ? readdirSync(LUCK_MEMORY_DIR)
     : [];
@@ -296,7 +298,7 @@ export function inspectLuckDay(todayKey: string): LuckDayRecoveryInspection {
   let content: string;
   let parsed: unknown;
   try {
-    content = readFileSync(todayPath, "utf8");
+    content = await readUtf8TextInput(todayPath);
     parsed = JSON.parse(content) as unknown;
   } catch {
     return invalidInput(todayPath, "$", "a readable valid JSON document");
@@ -378,11 +380,11 @@ export function maintainLuckDay(
 }
 
 /** 单领域恢复入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
-export function recoverLuckDay(
+export async function recoverLuckDay(
   todayKey: string,
   fileState?: LuckFileStateHolder
-): LuckDayCache | null {
-  const inspection: LuckDayRecoveryInspection = inspectLuckDay(todayKey);
+): Promise<LuckDayCache | null> {
+  const inspection: LuckDayRecoveryInspection = await inspectLuckDay(todayKey);
   maintainLuckDay(todayKey, inspection);
   if (fileState !== undefined) fileState.current = inspection.fileState;
   return inspection.cache;
@@ -395,14 +397,18 @@ export function recoverLuckDay(
  * 或刚跨天）时，先探测/接管一次对应日期的文件。pending 为空是防御性早退
  * ——调用方按 dirty 判断只在非空时才会调用，这里不该真的走到。
  */
-export function appendLuckEntries(day: string, fileState: LuckFileStateHolder, pending: LuckPendingEntry[]): void {
+export async function appendLuckEntries(
+  day: string,
+  fileState: LuckFileStateHolder,
+  pending: LuckPendingEntry[]
+): Promise<void> {
   if (pending.length === 0) return;
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
   if (fileState.current?.day !== day) {
-    fileState.current = openDayFile(LUCK_MEMORY_DIR, day, PERSISTED_FILE_MODE);
+    fileState.current = await openDayFile(LUCK_MEMORY_DIR, day, PERSISTED_FILE_MODE);
   }
   const chunk: string = pending.map((entry: LuckPendingEntry): string => serializeDayFileEntry(entry.key, entry.record)).join(",\n");
-  appendToDayFile({
+  await appendToDayFile({
     dir: LUCK_MEMORY_DIR,
     state: fileState.current,
     chunk,

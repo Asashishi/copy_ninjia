@@ -15,7 +15,7 @@
  * 不一致。
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO/messages";
 import type { DayFileState } from "../../types/diskIO/storage";
@@ -34,6 +34,7 @@ import { getTokyoDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { assertFileReadableWritable } from "../../libs/fileAccess";
+import { readUtf8TextInput } from "../../libs/inputValidation";
 import {
   AppendOnlyFileFormatError,
   appendToDayFile,
@@ -41,6 +42,7 @@ import {
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
 import type { BufferedLogEntry } from "../../types/diskIO/storage";
+import { enqueueDiskIOOperation } from "./operationQueue";
 
 interface LogRecord {
   level: string;
@@ -95,7 +97,7 @@ interface LogDayInspection {
   readonly rewriteContent: string | null;
 }
 
-function inspectLogDay(day: string): LogDayInspection {
+async function inspectLogDay(day: string): Promise<LogDayInspection> {
   const path: string = join(LOGS_DIR, `${day}.json`);
   if (!existsSync(path)) {
     return {
@@ -105,7 +107,7 @@ function inspectLogDay(day: string): LogDayInspection {
     };
   }
   assertFileReadableWritable(path);
-  const content: string = readFileSync(path, "utf8");
+  const content: string = await readUtf8TextInput(path);
   let parsed: unknown;
   let rewriteContent: string | null = null;
   try {
@@ -144,8 +146,8 @@ function adoptLogDay(inspection: LogDayInspection): DayFileState {
   return inspection.state;
 }
 
-function openLogDay(day: string): DayFileState {
-  return adoptLogDay(inspectLogDay(day));
+async function openLogDay(day: string): Promise<DayFileState> {
+  return adoptLogDay(await inspectLogDay(day));
 }
 
 /** 毫秒时间戳 → 东京时区的「YYYY-MM-DD HH:mm:ss.SSS」，用作落盘日志条目的
@@ -199,7 +201,7 @@ function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)): void 
   }
 }
 
-function writeDay(day: string, texts: string[]): boolean {
+async function writeDay(day: string, texts: string[]): Promise<boolean> {
   if (texts.length === 0) return true;
   const now: number = Date.now();
   // 上一次追加失败后还在退避窗口内：直接丢这一批，不重走 openLogDay。磁盘满、
@@ -211,10 +213,10 @@ function writeDay(day: string, texts: string[]): boolean {
   if (loggerFileState.current === null && now < loggerReopenState.retryAt) return false;
   try {
     if (loggerFileState.current?.day !== day) {
-      loggerFileState.current = openLogDay(day);
+      loggerFileState.current = await openLogDay(day);
       cleanupOldLogs();
     }
-    appendToDayFile({
+    await appendToDayFile({
       dir: LOGS_DIR,
       state: loggerFileState.current,
       chunk: texts.join(",\n"),
@@ -238,9 +240,9 @@ export interface LogFilesInspection {
 }
 
 /** 跨域启动第一阶段：只读校验当前日志，并预计算必要的规范化内容。 */
-export function inspectLogFiles(): LogFilesInspection {
+export async function inspectLogFiles(): Promise<LogFilesInspection> {
   const names: string[] = existsSync(LOGS_DIR) ? readdirSync(LOGS_DIR) : [];
-  return { names, day: inspectLogDay(dayKey(Date.now())) };
+  return { names, day: await inspectLogDay(dayKey(Date.now())) };
 }
 
 /** 全域 inspect 成功后接管日志游标；可修复尾部只在这一阶段原子发布。 */
@@ -257,8 +259,8 @@ export function maintainLogFiles(inspection: LogFilesInspection): void {
 }
 
 /** 每日维护先提交内存日志，再清理孤儿临时文件与过期日文件。 */
-export function maintainLogRetention(): void {
-  if (!flushLogBuffer()) {
+export async function maintainLogRetention(): Promise<void> {
+  if (!await flushLogBuffer()) {
     throw new Error("Failed to flush logs before daily retention maintenance.");
   }
   cleanupStaleTmpFiles();
@@ -266,7 +268,7 @@ export function maintainLogRetention(): void {
 }
 
 /** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */
-export function flushLogBuffer(): boolean {
+export async function flushLogBuffer(): Promise<boolean> {
   if (flushBuffer.timer !== null) {
     clearTimeout(flushBuffer.timer);
     flushBuffer.timer = null;
@@ -280,17 +282,17 @@ export function flushLogBuffer(): boolean {
   let clean: boolean = true;
   for (const entry of entries) {
     if (entry.day !== day) {
-      clean = writeDay(day, texts) && clean;
+      clean = await writeDay(day, texts) && clean;
       day = entry.day;
       texts = [];
     }
     texts.push(entry.text);
   }
-  return writeDay(day, texts) && clean;
+  return await writeDay(day, texts) && clean;
 }
 
 /** 处理一条日志消息：入内存 buffer，达到阈值立即落盘，否则按需启动定时器。 */
-export function handleLogMessage(msg: LogMessage): void {
+export async function handleLogMessage(msg: LogMessage): Promise<void> {
   // message 只拼字符串参数；非字符串参数（展开后的 Error 对象等）只存进
   // args，不再 stringify 一份嵌进 message——那样同一份数据会在一条记录里
   // 落两次盘（message 里一次、args 里一次），错误堆栈这种大块头尤其浪费。
@@ -310,8 +312,12 @@ export function handleLogMessage(msg: LogMessage): void {
     text: serializeDayFileEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
   if (bufferedEntries >= FLUSH_MAX_ENTRIES) {
-    flushLogBuffer();
+    await flushLogBuffer();
   } else {
-    flushBuffer.timer ??= setTimeout(flushLogBuffer, FLUSH_INTERVAL_MS);
+    flushBuffer.timer ??= setTimeout((): void => {
+      void enqueueDiskIOOperation(async (): Promise<void> => {
+        await flushLogBuffer();
+      });
+    }, FLUSH_INTERVAL_MS);
   }
 }

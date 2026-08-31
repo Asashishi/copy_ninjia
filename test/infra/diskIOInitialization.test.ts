@@ -109,7 +109,7 @@ describe("explicit Worker initialization", () => {
       const first: FakeWorker = FakeWorker.instances[0]!;
 
       const loadedPromise = diskIO.loadPersistedData(1_000);
-      expect(first.messages.at(-1)).toEqual({ type: "load" });
+      expect(first.messages.at(-1)).toEqual(expect.objectContaining({ type: "load" }));
       first.onmessage!({ data: {
         type: "loaded",
         aiMemories: new Map([[1, "memory"]]),
@@ -226,7 +226,7 @@ describe("explicit Worker initialization", () => {
       expect(FakeWorker.instances).toHaveLength(2);
       const second: FakeWorker = FakeWorker.instances[1]!;
       expect(respawns).toBe(0);
-      expect(second.messages).toEqual([{ type: "load" }]);
+      expect(second.messages).toEqual([expect.objectContaining({ type: "load" })]);
 
       // load 完整成功前镜像不重放；成功回执后才进入 writable。
       second.onmessage!({ data: {
@@ -241,7 +241,7 @@ describe("explicit Worker initialization", () => {
         whitelistEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       expect(respawns).toBe(1);
-      expect(second.messages).toEqual([{ type: "load" }, luckDraw]);
+      expect(second.messages).toEqual([expect.objectContaining({ type: "load" }), luckDraw]);
 
       first.onmessage!({ data: { ...ack, revision: 99 } } as MessageEvent<DiskIOReply>);
       expect(persisted).toEqual([ack]);
@@ -250,7 +250,7 @@ describe("explicit Worker initialization", () => {
       second.onerror!({ message: "boom again" } as ErrorEvent);
       const third: FakeWorker = FakeWorker.instances[2]!;
       diskIO.postDiskIO(luckDraw);
-      expect(third.messages).toEqual([{ type: "load" }]);
+      expect(third.messages).toEqual([expect.objectContaining({ type: "load" })]);
       third.onmessage!({ data: {
         type: "loaded",
         aiMemories: new Map(),
@@ -265,7 +265,7 @@ describe("explicit Worker initialization", () => {
       } } as MessageEvent<DiskIOReply>);
       await Promise.resolve();
       expect(respawns).toBe(1);
-      expect(third.messages).toEqual([{ type: "load" }]);
+      expect(third.messages).toEqual([expect.objectContaining({ type: "load" })]);
       expect(third.terminated).toBe(true);
       expect(await diskIO.flushDiskIO(1_000)).toBe("failed");
       expect(fatalErrors).toHaveLength(1);
@@ -383,13 +383,19 @@ describe("explicit Worker initialization", () => {
       emitSuccessfulLoad(currentRecovery);
       await Bun.sleep(0);
       expect(invocations).toBe(2);
-      expect(currentRecovery.messages).toEqual([{ type: "load" }, currentDraw]);
+      expect(currentRecovery.messages).toEqual([
+        expect.objectContaining({ type: "load" }),
+        currentDraw,
+      ]);
       expect(diskIORuntime.writable).toBeTrue();
 
       oldGate.resolve();
       await Bun.sleep(0);
-      expect(staleRecovery.messages).toEqual([{ type: "load" }]);
-      expect(currentRecovery.messages).toEqual([{ type: "load" }, currentDraw]);
+      expect(staleRecovery.messages).toEqual([expect.objectContaining({ type: "load" })]);
+      expect(currentRecovery.messages).toEqual([
+        expect.objectContaining({ type: "load" }),
+        currentDraw,
+      ]);
       expect(diskIORuntime.worker).toBe(currentRecovery as unknown as Worker);
       expect(diskIORuntime.writable).toBeTrue();
       expect(fatalErrors).toHaveLength(0);

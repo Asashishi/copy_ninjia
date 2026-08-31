@@ -1,7 +1,12 @@
 import type { MediaKind, TelegramVisionSource } from "../media";
 import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../stickers/protocol";
 import type { AiSpeakerSnapshot } from "./speaker";
-import type { AgentDeploymentConfig } from "../config";
+import type {
+  AgentDeploymentConfig,
+  MoodConfig,
+  ReactionConfig,
+  StickerConfig,
+} from "../config";
 
 /** Worker 侧自我认知所需的机器人账号身份。 */
 export interface AiBotInfo {
@@ -31,6 +36,10 @@ export interface AiInitMessage {
   /** 主线程从部署配置读取后注入；Worker 不直接加载 Telegram 配置。 */
   superAdminUserId: number;
   agent: AgentDeploymentConfig;
+  mood: MoodConfig;
+  reactions: ReactionConfig;
+  stickers: StickerConfig;
+  persona: string;
 }
 
 /** 主线程从 Telegram update 提取的原始回复引用；Worker 会清洗成持久化形态。 */

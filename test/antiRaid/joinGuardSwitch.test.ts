@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
 import type { AntiRaidWorkerMessage } from "../../packages/types";
+import type { AdDetectionMessageContext } from
+  "../../packages/types/antiRaid/adDetect";
 import type { DiskBusinessMessage } from "../../packages/types/diskIO";
 
 /**
@@ -16,6 +18,7 @@ const workerPosts: AntiRaidWorkerMessage[] = [];
 const diskPosts: DiskBusinessMessage[] = [];
 const answeredCallbacks: { callbackQueryId: string; text?: string }[] = [];
 const temporaryWhitelistActivityMessages: Message[] = [];
+const temporaryWhitelistActivityTimes: number[] = [];
 /** 逐用例可改的群状态；缺省是「已开防刷屏、未开入群守卫」。 */
 const chatState: Record<string, boolean> = {};
 
@@ -83,9 +86,10 @@ mock.module("../../packages/infra/diskIO", () => ({
 }));
 mock.module("../../packages/antiRaid/temporaryWhitelist", () => ({
   recordEligibleTemporaryWhitelistActivity(
-    options: { readonly message: Message }
+    options: AdDetectionMessageContext
   ): boolean {
     temporaryWhitelistActivityMessages.push(options.message);
+    temporaryWhitelistActivityTimes.push(options.now);
     return true;
   },
 }));
@@ -155,6 +159,7 @@ beforeEach(() => {
   diskPosts.length = 0;
   answeredCallbacks.length = 0;
   temporaryWhitelistActivityMessages.length = 0;
+  temporaryWhitelistActivityTimes.length = 0;
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
   activeVerificationSnapshots.clear();
@@ -256,6 +261,7 @@ describe("入群守卫开关（主线程投递侧）", () => {
   });
 
   test("只有用户内容消息进入临时白名单累计，平台服务事件全部跳过", () => {
+    chatState.isAdDetectEnabled = true;
     const contentMessages: readonly Partial<Message>[] = [
       { text: "text" },
       { photo: [] },
@@ -295,6 +301,26 @@ describe("入群守卫开关（主线程投递侧）", () => {
     expect(temporaryWhitelistActivityMessages.map(
       (message: Message): number => message.message_id
     )).toEqual([100, 101, 102, 103, 104]);
+  });
+
+  test("同一广告检测消息只读一次墙钟并把该值交给累计上下文", () => {
+    chatState.isAdDetectEnabled = true;
+    const now: number = 1_800_000_000_000;
+    const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now")
+      .mockReturnValue(now);
+    try {
+      handleAntiRaidMessageIngress({
+        chat: { id: -1001, type: "supergroup" },
+        message_id: 200,
+        date: 1,
+        from: { id: 42, is_bot: false, first_name: "Zako" },
+        text: "普通群消息",
+      } as Message, 999);
+      expect(nowSpy).toHaveBeenCalledTimes(1);
+      expect(temporaryWhitelistActivityTimes).toEqual([now]);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   test("关着时入群公告照样被吞掉：服务消息本来就不该进复读/AI 流水线", async () => {

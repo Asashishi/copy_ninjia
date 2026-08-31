@@ -21,6 +21,7 @@ import {
   hydrateIdentityStorageCounts,
   queueIdentityPolicyWrite,
 } from "../../../packages/infra/identityStorage";
+import { ensureStickerConfig } from "../../../packages/config/stickers";
 import type { LoadedData } from "../../../packages/types/diskIO";
 import type { WhitelistEntryData } from
   "../../../packages/types/identityPolicy";
@@ -136,6 +137,11 @@ export async function runMainWriteThroughChild(
       "Main-thread write-through benchmark requires its isolated temporary root."
     );
   }
+  // loadPersistedData 组装 load 请求时要同步取贴纸包，而 getStickerConfig 只读
+  // 已预检的本线程快照。这里只补这一份、不走 validateExistingDeploymentInputs：
+  // 本文件同时服务 `bun run perf:identity-database`，那条入口把 CONFIG_ROOT 指向
+  // `config_example/`，整份预检会在 agent.json 的占位凭据上按设计拒绝。
+  await ensureStickerConfig();
   initDiskIO();
   try {
     const loaded: LoadedData = await loadPersistedData(120_000);

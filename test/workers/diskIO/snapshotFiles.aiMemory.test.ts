@@ -24,8 +24,8 @@ const {
  * （见 workers/diskIO/startup.ts），这里把「只读扫描 + 清理临时文件」收成一行，
  * 好让每个用例只关心解码结果。
  */
-function recoverAiMemories(): Map<number, string> {
-  const inspection = inspectAiMemories();
+async function recoverAiMemories(): Promise<Map<number, string>> {
+  const inspection = await inspectAiMemories();
   maintainAiMemoryFiles(inspection);
   return inspection.snapshots;
 }
@@ -47,10 +47,10 @@ beforeEach(() => {
   mkdirSync(aiDir, { recursive: true });
 });
 
-test("没有 username 的当前 version=1 AI 记忆仍恢复无损,回写字节级一致", () => {
+test("没有 username 的当前 version=1 AI 记忆仍恢复无损,回写字节级一致", async () => {
   writeFileSync(join(aiDir, "-100123.json"), currentBytes);
 
-  const recovered = recoverAiMemories();
+  const recovered = await recoverAiMemories();
   expect(recovered.size).toBe(1);
   const json = recovered.get(-100123)!;
   expect(JSON.parse(json)).toEqual(currentSnapshot);
@@ -60,18 +60,18 @@ test("没有 username 的当前 version=1 AI 记忆仍恢复无损,回写字节�
   expect(readFileSync(join(aiDir, "-100123.json"), "utf8")).toBe(currentBytes);
 });
 
-test("接管与原子回写均保留部署方已有的 0600", () => {
+test("接管与原子回写均保留部署方已有的 0600", async () => {
   const path: string = join(aiDir, "-100123.json");
   writeFileSync(path, currentBytes);
   chmodSync(path, 0o600);
 
-  const recovered: Map<number, string> = recoverAiMemories();
+  const recovered: Map<number, string> = await recoverAiMemories();
   writeAiMemoryFile(-100123, recovered.get(-100123)!);
 
   expect(statSync(path).mode & 0o777).toBe(0o600);
 });
 
-test("新版可选 username 会随 version=1 AI 记忆恢复并回写", () => {
+test("新版可选 username 会随 version=1 AI 记忆恢复并回写", async () => {
   const snapshotWithUsername = {
     ...currentSnapshot,
     buffer: [
@@ -82,7 +82,7 @@ test("新版可选 username 会随 version=1 AI 记忆恢复并回写", () => {
   const bytes: string = JSON.stringify(snapshotWithUsername, null, 2);
   writeFileSync(join(aiDir, "-100126.json"), bytes);
 
-  const recovered = recoverAiMemories();
+  const recovered = await recoverAiMemories();
   expect(recovered.size).toBe(1);
   const json = recovered.get(-100126)!;
   expect(JSON.parse(json)).toEqual(snapshotWithUsername);
@@ -92,7 +92,7 @@ test("新版可选 username 会随 version=1 AI 记忆恢复并回写", () => {
   expect(readFileSync(join(aiDir, "-100126.json"), "utf8")).toBe(bytes);
 });
 
-test("回复对象快照会随 version=1 AI 记忆恢复并回写", () => {
+test("回复对象快照会随 version=1 AI 记忆恢复并回写", async () => {
   const snapshotWithReply = {
     ...currentSnapshot,
     buffer: [
@@ -115,13 +115,13 @@ test("回复对象快照会随 version=1 AI 记忆恢复并回写", () => {
   const bytes: string = JSON.stringify(snapshotWithReply, null, 2);
   writeFileSync(join(aiDir, "-100130.json"), bytes);
 
-  const recovered = recoverAiMemories();
+  const recovered = await recoverAiMemories();
   const json = recovered.get(-100130)!;
   expect(JSON.parse(json)).toEqual(snapshotWithReply);
   expect(json).toBe(bytes);
 });
 
-test("当前消息与回复对象的转发来源会随 version=1 AI 记忆恢复并回写", () => {
+test("当前消息与回复对象的转发来源会随 version=1 AI 记忆恢复并回写", async () => {
   const snapshotWithForwardPaths = {
     ...currentSnapshot,
     buffer: [
@@ -144,40 +144,40 @@ test("当前消息与回复对象的转发来源会随 version=1 AI 记忆恢复
   const bytes: string = JSON.stringify(snapshotWithForwardPaths, null, 2);
   writeFileSync(join(aiDir, "-100133.json"), bytes);
 
-  const recovered = recoverAiMemories();
+  const recovered = await recoverAiMemories();
   const json = recovered.get(-100133)!;
   expect(JSON.parse(json)).toEqual(snapshotWithForwardPaths);
   expect(json).toBe(bytes);
 });
 
-test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖待迁移文件", () => {
+test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖待迁移文件", async () => {
   writeFileSync(join(aiDir, "-100124.json"), JSON.stringify({
     ...currentSnapshot,
     buffer: [{ id: 111, firstName: "太郎", lastName: "", text: "旧记录", at: "2026/07/16 21:35:04" }],
   }));
-  expect(() => recoverAiMemories()).toThrow("current version=1 AI memory schema");
+  await expect(recoverAiMemories()).rejects.toThrow("current version=1 AI memory schema");
   expect(readFileSync(join(aiDir, "-100124.json"), "utf8")).not.toBe("");
 });
 
-test("username 若存在则必须为字符串", () => {
+test("username 若存在则必须为字符串", async () => {
   writeFileSync(join(aiDir, "-100127.json"), JSON.stringify({
     ...currentSnapshot,
     buffer: [{ ...currentSnapshot.buffer[0]!, username: 123 }],
   }));
 
-  expect(() => recoverAiMemories()).toThrow("current version=1 AI memory schema");
+  await expect(recoverAiMemories()).rejects.toThrow("current version=1 AI memory schema");
 });
 
-test("replyTo 若存在则必须是完整合法的回复对象", () => {
+test("replyTo 若存在则必须是完整合法的回复对象", async () => {
   writeFileSync(join(aiDir, "-100131.json"), JSON.stringify({
     ...currentSnapshot,
     buffer: [{ ...currentSnapshot.buffer[0]!, replyTo: { messageId: 7, text: "缺发送者" } }],
   }));
 
-  expect(() => recoverAiMemories()).toThrow("current version=1 AI memory schema");
+  await expect(recoverAiMemories()).rejects.toThrow("current version=1 AI memory schema");
 });
 
-test("超出冷摘要容量时拒绝恢复且不改写文件", () => {
+test("超出冷摘要容量时拒绝恢复且不改写文件", async () => {
   const summaries: string[] = Array.from({ length: MAX_SUMMARY_ROUNDS + 2 }, (_, index: number) => `摘要${index + 1}`);
   const path: string = join(aiDir, "-100128.json");
   const bytes: string = JSON.stringify({
@@ -186,11 +186,11 @@ test("超出冷摘要容量时拒绝恢复且不改写文件", () => {
   });
   writeFileSync(path, bytes);
 
-  expect(() => recoverAiMemories()).toThrow("within configured capacities");
+  await expect(recoverAiMemories()).rejects.toThrow("within configured capacities");
   expect(readFileSync(path, "utf8")).toBe(bytes);
 });
 
-test("超出逐字消息容量时拒绝恢复且不改写文件", () => {
+test("超出逐字消息容量时拒绝恢复且不改写文件", async () => {
   const buffer = Array.from({ length: AI_MEMORY_HYDRATE_BUFFER_MAX + 2 }, (_, index: number) => ({
     messageId: index + 1,
     id: index + 1,
@@ -206,7 +206,7 @@ test("超出逐字消息容量时拒绝恢复且不改写文件", () => {
   });
   writeFileSync(path, bytes);
 
-  expect(() => recoverAiMemories()).toThrow("within configured capacities");
+  await expect(recoverAiMemories()).rejects.toThrow("within configured capacities");
   expect(readFileSync(path, "utf8")).toBe(bytes);
 });
 
@@ -219,7 +219,7 @@ test("删除记忆文件幂等且不会留下快照", () => {
   expect(() => deleteAiMemoryFile(-100129)).not.toThrow();
 });
 
-test("文件名不能原样还原成 chatId 时拒绝恢复，不按目录顺序选一份", () => {
+test("文件名不能原样还原成 chatId 时拒绝恢复，不按目录顺序选一份", async () => {
   // 正则只保证「一串数字」：补零变体也匹配，Number 之后是同一个 key，于是两份
   // 快照互相覆盖、胜者取决于 readdirSync 的枚举顺序。而回写只用 `${chatId}.json`，
   // 补零那份永不被改写或删除，每次重启继续顶替（同 blocklistFile.ts 的回环校验）。
@@ -229,26 +229,26 @@ test("文件名不能原样还原成 chatId 时拒绝恢复，不按目录顺序
     summaries: ["补零文件里的旧摘要"],
   }, null, 2));
 
-  expect(() => recoverAiMemories()).toThrow("canonical <chatId>.json form");
+  await expect(recoverAiMemories()).rejects.toThrow("canonical <chatId>.json form");
   expect(readFileSync(join(aiDir, "-100123.json"), "utf8")).toBe(currentBytes);
 });
 
-test("位数超出安全整数的文件名同样拒绝恢复", () => {
+test("位数超出安全整数的文件名同样拒绝恢复", async () => {
   // 1e20 那种水合出来的 key 与任何真实 chatId 都对不上，下次落盘还会生成一个
   // 全新文件，旧文件永远留在盘上。
   writeFileSync(join(aiDir, "99999999999999999999.json"), currentBytes);
 
-  expect(() => recoverAiMemories()).toThrow("negative safe integer Telegram group or channel ID");
+  await expect(recoverAiMemories()).rejects.toThrow("negative safe integer Telegram group or channel ID");
 });
 
-test("chatId 为零的文件名拒绝恢复", () => {
+test("chatId 为零的文件名拒绝恢复", async () => {
   writeFileSync(join(aiDir, "0.json"), currentBytes);
 
-  expect(() => recoverAiMemories()).toThrow("negative safe integer Telegram group or channel ID");
+  await expect(recoverAiMemories()).rejects.toThrow("negative safe integer Telegram group or channel ID");
 });
 
-test("正数私聊 ID 的文件名拒绝恢复", () => {
+test("正数私聊 ID 的文件名拒绝恢复", async () => {
   writeFileSync(join(aiDir, "100123.json"), currentBytes);
 
-  expect(() => recoverAiMemories()).toThrow("negative safe integer Telegram group or channel ID");
+  await expect(recoverAiMemories()).rejects.toThrow("negative safe integer Telegram group or channel ID");
 });

@@ -132,7 +132,7 @@ export type ConfigReadiness =
 /** 单份部署文件的探测项：文件名 + 一次会在坏掉时抛出的加载。 */
 export interface DeploymentFileProbe {
   readonly file: string;
-  readonly load: () => unknown;
+  readonly load: () => Promise<unknown>;
 }
 
 /** 判定结论的单例缓存 holder；成功与失败都缓存，见 config/readiness.ts 头注。 */

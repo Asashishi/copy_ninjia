@@ -22,6 +22,7 @@ const flushDirtyStickerCatalogs = mock((emit: (event: unknown) => void): void =>
 });
 const hydrateStickerCatalogs = mock((_catalogs: unknown): void => { calls.push("hydrateCatalogs"); });
 const getStickerConfig = mock(() => ({ packs: ["pack"] }));
+const adoptStickerConfig = mock((_config: unknown): void => {});
 const startWeatherRefreshLoop = mock((): void => { calls.push("weather"); });
 const stopWeatherRefreshLoop = mock((): void => { calls.push("stopWeather"); });
 const sweepAiChatReplyCache = mock((_now: number): void => { calls.push("sweep"); });
@@ -52,7 +53,10 @@ mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({
   hydrateStickerCatalogs,
   retryIncompleteStickerCatalogs,
 }));
-mock.module("../../../packages/config/stickers", () => ({ getStickerConfig }));
+mock.module("../../../packages/config/stickers", () => ({
+  adoptStickerConfig,
+  getStickerConfig,
+}));
 mock.module("../../../packages/aiChat/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
 mock.module("../../../packages/cache/workers/aiChat/replies", () => ({ sweepAiChatReplyCache }));
 mock.module("../../../packages/cache/workers/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
@@ -108,6 +112,7 @@ beforeEach(() => {
     flushDirtyStickerCatalogs,
     hydrateStickerCatalogs,
     getStickerConfig,
+    adoptStickerConfig,
     startWeatherRefreshLoop,
     stopWeatherRefreshLoop,
     sweepAiChatReplyCache,
@@ -143,6 +148,10 @@ describe("AI Chat Worker lifecycle", () => {
         botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
         superAdminUserId: 1,
         agent: injectedAgentConfig,
+        mood: { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] },
+        reactions: { emotionKeywords: {} },
+        stickers: { packs: ["pack"] },
+        persona: "测试人设",
       },
       {
         type: "record",

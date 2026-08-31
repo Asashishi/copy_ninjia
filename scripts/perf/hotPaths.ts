@@ -12,7 +12,7 @@ import { installOutboundGuards } from "./outboundGuard";
 import { median } from "./statistics";
 import { collectJitTiers, diffJitTiers } from "./hotPaths/jitTiers";
 import { readInterruptibleMemory, readProcessMemoryUsage } from "./hotPaths/liveMemory";
-import { createScenario } from "./hotPaths/scenarios";
+import { createScenario } from "./hotPaths/scenarioRegistry";
 import type { HeapSnapshot } from "./heapSnapshot";
 import type { JitTierCounts, JitTierStats, Scenario, ScenarioName } from "./hotPaths/types";
 import {

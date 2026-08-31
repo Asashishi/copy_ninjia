@@ -22,12 +22,13 @@
 | `bun run test:random` | Run the whole suite in a fixed-seed random order to expose cross-test residue |
 | `bun run test:coverage` | Run tests and measure coverage across all source files |
 | `bun run check:install-script-syntax` | Parse `install.sh` with `bash -n` only; the installation script is not executed |
+| `bun run check:install-isolation` | Actually run `install.sh` inside a dedicated `copy-ninjia-install-test-*` temporary fixture root (`scripts/checkInstallIsolation.ts`) and verify staging-failure cleanup, `telegram.json` rollback, interrupted-then-resumed installs, successful replacement, symlink topology, unverified-backup retention, and credential isolation; no real deployment path is touched |
 | `bun run check:conventions` | Check repository conventions with `scripts/checkProjectConventions.ts` |
-| `bun run check` | Run conventions + lint + typecheck + coverage + the hot-path gate; **required before every commit** |
+| `bun run check` | Run all seven segments — install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + the hot-path gate; **required before every commit** |
 | `bun run check:coverage` | Measure coverage now and verify the metrics in the three README badges/alts, the three copies of this page, and both coverage images match the real reading; excluded from `check` because it runs the whole suite again |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
-| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over every hot-path scenario; already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
+| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 30; the rest only run in `perf:full`); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
 | `bun run perf:join-log` | Run the independent-process comparison of the join-log capacity, snapshot, and append-accounting paths at the 250,000-record limit |
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
 | `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
@@ -49,7 +50,7 @@ Dependency installation always uses the seven-day release-age gate in `bunfig.to
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2996 tests / 304 files / 97236 `expect()` calls**; full-source **function coverage 96.50% / line coverage 97.16%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **3025 tests / 310 files / 97583 `expect()` calls**; full-source **function coverage 96.59% / line coverage 97.16%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 

@@ -29,9 +29,9 @@ function scheduleStickerCatalogFlush(): void {
 }
 
 /** 跨域启动第一阶段：只读扫描全部目录快照，孤儿也先严格解码。 */
-export function inspectStickerCatalogSnapshots(
+export async function inspectStickerCatalogSnapshots(
   activePacks: readonly string[]
-): StickerCatalogRecoveryInspection {
+): Promise<StickerCatalogRecoveryInspection> {
   return inspectStickerCatalogs(activePacks);
 }
 

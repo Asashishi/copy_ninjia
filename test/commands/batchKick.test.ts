@@ -53,7 +53,6 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 
 const {
-  formatBatchKickDuration,
   handleBatchKickCommand,
   parseBatchKickDurationMs,
 } = await import("../../packages/commands/batchKick");
@@ -128,12 +127,6 @@ describe("parseBatchKickDurationMs", () => {
     ]) {
       expect(parseBatchKickDurationMs(invalid)).toBeUndefined();
     }
-  });
-
-  test("战报使用最大整除单位", () => {
-    expect(formatBatchKickDuration(30 * 60_000)).toBe("30 分钟");
-    expect(formatBatchKickDuration(2 * 60 * 60_000)).toBe("2 小时");
-    expect(formatBatchKickDuration(24 * 60 * 60_000)).toBe("1 天");
   });
 });
 

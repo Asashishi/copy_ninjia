@@ -6,7 +6,7 @@
  *
  * 结论按进程缓存**成功与失败两侧**：底层 loader 只缓存成功，失败会每次重新
  * 读盘解析，而判定要挂在每条群消息的门禁上（见 antiRaid/adDetect.ts）——不缓存
- * 失败就等于每条消息一次 readFileSync。修好文件后要重启才生效，与
+ * 失败就等于每条消息一次部署文件读取。修好文件后要重启才生效，与
  * `config/*.json` 一贯的「读一次、进程内不再重载」语义一致，拒绝文案里也点明了。
  *
  * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
@@ -22,18 +22,18 @@
  */
 
 import { createPrivateKey } from "node:crypto";
-import { lstatSync } from "node:fs";
-import { getAdSampleConfig } from "./adSamples";
-import { getMoodConfig } from "./mood";
-import { getReactionConfig } from "./reactions";
-import { getStickerConfig } from "./stickers";
+import { lstat } from "node:fs/promises";
+import { ensureAdSampleConfig } from "./adSamples";
+import { ensureMoodConfig } from "./mood";
+import { ensureReactionConfig } from "./reactions";
+import { ensureStickerConfig } from "./stickers";
 import { getTelegramConfig } from "./telegram";
 import {
   ensureAdDetectAgentConfig,
   ensureAgentDeploymentConfig,
   validateAgentDeploymentConfig,
 } from "./agent";
-import { getPersona } from "./persona";
+import { ensurePersona } from "./persona";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
@@ -58,10 +58,12 @@ import type {
 } from "../types/config";
 
 /** 逐份探测，返回第一份坏掉的；全通过返回 ok。 */
-function probeAll(probes: readonly DeploymentFileProbe[]): ConfigReadiness {
+async function probeAll(
+  probes: readonly DeploymentFileProbe[]
+): Promise<ConfigReadiness> {
   for (const probe of probes) {
     try {
-      probe.load();
+      await probe.load();
     } catch (error: unknown) {
       return {
         ok: false,
@@ -83,12 +85,16 @@ function probeAll(probes: readonly DeploymentFileProbe[]): ConfigReadiness {
  * 每次都要构造。因此探测表一律是模块级只读常量（见下方三张表），本函数不再
  * 参与任何分配。
  */
-function cachedReadiness(cache: ConfigReadinessCache, probes: readonly DeploymentFileProbe[]): ConfigReadiness {
+function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
   const cached: ConfigReadiness | null = cache.current;
   if (cached !== null) return cached;
-  const verdict: ConfigReadiness = probeAll(probes);
-  cache.current = verdict;
-  return verdict;
+  return {
+    ok: false,
+    failure: {
+      file: "startup",
+      reason: "deployment configuration preflight has not completed",
+    },
+  };
 }
 
 /**
@@ -106,10 +112,10 @@ function cachedReadiness(cache: ConfigReadinessCache, probes: readonly Deploymen
  * 拒绝文案。
  */
 const AI_CHAT_PROBES: readonly DeploymentFileProbe[] = [
-  { file: "config/stickers.json", load: getStickerConfig },
-  { file: "config/reactions.json", load: getReactionConfig },
-  { file: "config/mood.json", load: getMoodConfig },
-  { file: "prompt/persona.md", load: getPersona },
+  { file: "config/stickers.json", load: ensureStickerConfig },
+  { file: "config/reactions.json", load: ensureReactionConfig },
+  { file: "config/mood.json", load: ensureMoodConfig },
+  { file: "prompt/persona.md", load: ensurePersona },
   { file: "config/agent.json", load: ensureAgentDeploymentConfig },
 ];
 
@@ -125,7 +131,7 @@ const AI_CHAT_PROBES: readonly DeploymentFileProbe[] = [
  * validateExistingDeploymentInputs 的启动总闸独立保证。
  */
 const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
-  { file: "config/ad_samples.json", load: getAdSampleConfig },
+  { file: "config/ad_samples.json", load: ensureAdSampleConfig },
   { file: "config/agent.json", load: ensureAdDetectAgentConfig },
 ];
 
@@ -135,11 +141,11 @@ const JA_TRANSLATE_PROBES: readonly DeploymentFileProbe[] = [
 ];
 
 export function aiChatConfigReadiness(): ConfigReadiness {
-  return cachedReadiness(aiChatConfigReadinessCache, AI_CHAT_PROBES);
+  return cachedReadiness(aiChatConfigReadinessCache);
 }
 
 export function adDetectConfigReadiness(): ConfigReadiness {
-  return cachedReadiness(adDetectConfigReadinessCache, AD_DETECT_PROBES);
+  return cachedReadiness(adDetectConfigReadinessCache);
 }
 
 /**
@@ -148,10 +154,10 @@ export function adDetectConfigReadiness(): ConfigReadiness {
  * 字段。只判「文件在不在」是不够的——空文件与占位文本同样能通过，然后每条
  * `/ja_copy` 都会退化成原文照发，而群里看不出与「翻译服务抖了一下」的区别。
  */
-function validateGoogleServiceAccountKey(
+async function validateGoogleServiceAccountKey(
   path: string = GOOGLE_AUTH_FILE_PATH
-): void {
-  const parsed: unknown = readJsonInput(path);
+): Promise<void> {
+  const parsed: unknown = await readJsonInput(path);
   if (!isPlainRecord(parsed)) {
     return invalidInput(path, "$", "a Google service account JSON object");
   }
@@ -169,20 +175,20 @@ function validateGoogleServiceAccountKey(
 }
 
 /** 启动总闸成功校验默认密钥后同步填充 readiness，避免首次功能探测重复读盘。 */
-function validateAndCacheGoogleServiceAccountKey(): void {
-  validateGoogleServiceAccountKey();
+async function validateAndCacheGoogleServiceAccountKey(): Promise<void> {
+  await validateGoogleServiceAccountKey();
   // 失败结论一旦缓存就保持到重启；不得因进程内文件变化把它静默翻成成功。
   jaTranslateConfigReadinessCache.current ??= { ok: true };
 }
 
 export function jaTranslateConfigReadiness(): ConfigReadiness {
-  return cachedReadiness(jaTranslateConfigReadinessCache, JA_TRANSLATE_PROBES);
+  return cachedReadiness(jaTranslateConfigReadinessCache);
 }
 
 /** 只把路径真正不存在视为缺省；断链软链接和无权访问都是已配置但非法。 */
-function deploymentInputExists(path: string): boolean {
+async function deploymentInputExists(path: string): Promise<boolean> {
   try {
-    lstatSync(path);
+    await lstat(path);
     return true;
   } catch (error: unknown) {
     if (isErrno(error, "ENOENT")) return false;
@@ -194,19 +200,22 @@ function deploymentInputExists(path: string): boolean {
  * 启动阶段校验所有已经存在的可选部署输入。文件真正缺省时由功能 readiness
  * 决定能否开启；文件一旦存在，就不能因相应功能当前关闭而掩盖非法内容。
  */
-export function validateExistingDeploymentInputs(): void {
+export async function validateExistingDeploymentInputs(): Promise<void> {
   // Telegram 身份是进程级必填配置，不受任何功能开关控制。
   getTelegramConfig();
-  const probes: readonly Readonly<{ path: string; load: () => unknown }>[] = [
-    { path: STICKERS_CONFIG_PATH, load: (): unknown => getStickerConfig() },
-    { path: REACTIONS_CONFIG_PATH, load: (): unknown => getReactionConfig() },
-    { path: MOOD_CONFIG_PATH, load: (): unknown => getMoodConfig() },
-    { path: AD_SAMPLES_CONFIG_PATH, load: (): unknown => getAdSampleConfig() },
-    { path: AGENT_CONFIG_PATH, load: (): void => validateAgentDeploymentConfig() },
+  const probes: readonly Readonly<{ path: string; load: () => Promise<unknown> }>[] = [
+    { path: STICKERS_CONFIG_PATH, load: ensureStickerConfig },
+    { path: REACTIONS_CONFIG_PATH, load: ensureReactionConfig },
+    { path: MOOD_CONFIG_PATH, load: ensureMoodConfig },
+    { path: AD_SAMPLES_CONFIG_PATH, load: ensureAdSampleConfig },
+    { path: AGENT_CONFIG_PATH, load: validateAgentDeploymentConfig },
     { path: GOOGLE_AUTH_FILE_PATH, load: validateAndCacheGoogleServiceAccountKey },
-    { path: PERSONA_PATH, load: (): string => getPersona() },
+    { path: PERSONA_PATH, load: ensurePersona },
   ];
   for (const probe of probes) {
-    if (deploymentInputExists(probe.path)) probe.load();
+    if (await deploymentInputExists(probe.path)) await probe.load();
   }
+  aiChatConfigReadinessCache.current = await probeAll(AI_CHAT_PROBES);
+  adDetectConfigReadinessCache.current = await probeAll(AD_DETECT_PROBES);
+  jaTranslateConfigReadinessCache.current = await probeAll(JA_TRANSLATE_PROBES);
 }

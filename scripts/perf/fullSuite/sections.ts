@@ -5,23 +5,17 @@
  * 模块图的实现（理由见 fullSuite/mockRoot.ts 的模块头注）。
  */
 
-import { join } from "node:path";
 import { aggregateMetric, aggregateRounds } from "./aggregate";
-import { spawnJsonChild } from "./child";
-import {
-  PROJECT_ROOT,
-  createRuntimeRoot,
-  removeMockPath,
-} from "./mockRoot";
-import { measureDirectoryFootprint } from "./processIo";
 import { STORAGE_OPERATIONS } from "./storageOperations";
 import {
-  CONFIG_ROOT_ENV,
-  RUNTIME_DATA_ROOT_ENV,
-} from "../../../packages/consts/environment";
+  assertSameRuntime,
+  FULL_SUITE_ENTRY,
+  HOT_PATH_ENTRY,
+  JOIN_LOG_ENTRY,
+  runRounds,
+} from "./sectionRunner";
 import type { MetricDefinition } from "./aggregate";
-import type { SpawnChildOptions } from "./child";
-import type { DirectoryFootprint } from "./processIo";
+import type { SectionContext } from "./sectionRunner";
 import type { ScenarioName } from "../hotPaths/types";
 import type {
   BenchmarkEntry,
@@ -31,63 +25,10 @@ import type {
   ColdStartRound,
   ColdStartSummary,
   HotPathRound,
-  ProcessIoDelta,
   StorageRound,
 } from "./types";
 
-/** 本次运行的共享上下文；各分区都往同一份读写与操作数账上记。 */
-export interface SectionContext {
-  readonly runRoot: string;
-  readonly configRoot: string;
-  readonly rounds: number;
-  /** 进度只写 stderr：stdout 是给管道用的纯 JSON 报告。 */
-  readonly onProgress: (message: string) => void;
-  readonly recordIo: (io: ProcessIoDelta) => void;
-  /** 记入一轮里完成的被测操作数（不是子进程数）。 */
-  readonly recordOperations: (operations: number) => void;
-  /** 记入一个运行时数据根被删除前的落盘足迹；报告把一轮里的各份相加。 */
-  readonly recordFootprint: (footprint: DirectoryFootprint) => void;
-  /** 测试注入的子进程与临时根边界；生产缺省使用本模块下方的真实实现。 */
-  readonly dependencies?: SectionDependencies;
-}
-
-/** 父进程的全部外部动作；测试用可控实现验证聚合与失败清理。 */
-export interface SectionDependencies {
-  readonly spawnJsonChild: <TResult>(options: SpawnChildOptions) => Promise<TResult>;
-  readonly createRuntimeRoot: (runRoot: string) => string;
-  readonly measureDirectoryFootprint: (runtimeRoot: string) => DirectoryFootprint;
-  readonly removeMockPath: (runtimeRoot: string) => void;
-}
-
-const DEFAULT_SECTION_DEPENDENCIES: SectionDependencies = {
-  spawnJsonChild,
-  createRuntimeRoot,
-  measureDirectoryFootprint,
-  removeMockPath,
-};
-
-/** 播种模式；`none` 表示这项测量不需要运行时数据根里有任何东西。 */
-type SeedMode = "cold-start" | "chain" | "none";
-
-const SUITE_ENTRY: string = join(PROJECT_ROOT, "scripts", "perf", "fullSuite.ts");
-const HOT_PATH_ENTRY: string = join(PROJECT_ROOT, "scripts", "perf", "hotPaths.ts");
-const JOIN_LOG_ENTRY: string = join(PROJECT_ROOT, "scripts", "perf", "joinLog.ts");
-
-/**
- * 所有子进程统一读本次运行目录内的隔离配置副本。
- *
- * 不读部署方的 `config/`，也不直接接受 `config_example/` 的占位凭据：父进程会
- * 在 mock 根内建立严格解析可接受的副本，读数保持可比较且不会加载生产凭据。
- */
-function childEnv(
-  runtimeRoot: string,
-  configRoot: string
-): Readonly<Record<string, string>> {
-  return {
-    [RUNTIME_DATA_ROOT_ENV]: runtimeRoot,
-    [CONFIG_ROOT_ENV]: configRoot,
-  };
-}
+export type { SectionContext, SectionDependencies } from "./sectionRunner";
 
 /** 生产热路径：真实业务函数，读数直接反映线上每条消息的成本。 */
 export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
@@ -157,95 +98,6 @@ export const CHAIN_NAMES: readonly ChainName[] = [
  */
 const JOIN_LOG_OPERATIONS: readonly string[] = ["snapshot", "capacity"];
 
-/**
- * 所有子进程必须与父进程用同一个 Bun 构建。
- *
- * 混着跑出来的表面上是一份报告，实际是两个引擎的读数并排——JIT 策略、GC 与
- * SQLite 绑定都可能不同，任何一行的同比都失去意义。
- */
-function assertSameRuntime(
-  version: string,
-  revision: string,
-  label: string
-): void {
-  if (version !== Bun.version || revision !== Bun.revision) {
-    throw new Error(
-      `${label}: child ran Bun ${version} (${revision}), parent runs ` +
-      `${Bun.version} (${Bun.revision}).`
-    );
-  }
-}
-
-interface SeedRuntimeRootOptions {
-  readonly dependencies: SectionDependencies;
-  readonly runtimeRoot: string;
-  readonly configRoot: string;
-  readonly mode: "cold-start" | "chain";
-  readonly label: string;
-}
-
-async function seedRuntimeRoot({
-  dependencies,
-  runtimeRoot,
-  configRoot,
-  mode,
-  label,
-}: SeedRuntimeRootOptions): Promise<void> {
-  await dependencies.spawnJsonChild<unknown>({
-    args: [SUITE_ENTRY, "--child", "seed", mode],
-    env: childEnv(runtimeRoot, configRoot),
-    label: `${label} fixture`,
-  });
-}
-
-/** 一项测量的按轮编排参数；子进程一律从环境变量拿数据根，不从 argv 拿。 */
-interface RoundsOptions {
-  readonly label: string;
-  readonly seedMode: SeedMode;
-  readonly args: readonly string[];
-}
-
-/**
- * 按轮跑一项测量：每轮一个全新的运行时数据根，跑完整棵删掉。
- *
- * 数据根不跨轮复用：SQLite 文件长大、WAL 变脏、页缓存变热，第二轮量到的就
- * 不再是第一轮那件事了。
- */
-async function runRounds<TRound>(
-  context: SectionContext,
-  { label, seedMode, args }: RoundsOptions
-): Promise<readonly TRound[]> {
-  const rounds: TRound[] = [];
-  const dependencies: SectionDependencies =
-    context.dependencies ?? DEFAULT_SECTION_DEPENDENCIES;
-  for (let round: number = 0; round < context.rounds; round += 1) {
-    const runtimeRoot: string = dependencies.createRuntimeRoot(context.runRoot);
-    try {
-      if (seedMode !== "none") {
-        await seedRuntimeRoot({
-          dependencies,
-          runtimeRoot,
-          configRoot: context.configRoot,
-          mode: seedMode,
-          label,
-        });
-      }
-      context.onProgress(`${label} ${round + 1}/${context.rounds}`);
-      rounds.push(await dependencies.spawnJsonChild<TRound>({
-        args,
-        env: childEnv(runtimeRoot, context.configRoot),
-        label,
-      }));
-    } finally {
-      // 足迹要在删之前量：这是「跑一遍基准到底在磁盘上落了多少东西」的唯一
-      // 观测点，删完再问就只剩一个空目录。
-      context.recordFootprint(dependencies.measureDirectoryFootprint(runtimeRoot));
-      dependencies.removeMockPath(runtimeRoot);
-    }
-  }
-  return rounds;
-}
-
 /** 冷启动分区：每个启动阶段一行，单位统一是毫秒。 */
 export interface ColdStartSectionResult {
   readonly section: BenchmarkSection;
@@ -276,7 +128,7 @@ export async function runColdStartSection(
     {
       label: "cold-start",
       seedMode: "cold-start",
-      args: [SUITE_ENTRY, "--child", "cold-start"],
+      args: [FULL_SUITE_ENTRY, "--child", "cold-start"],
     }
   );
   const reference: ColdStartRound = rounds[0]!;
@@ -400,7 +252,7 @@ export async function runStorageSection(
         label: `storage:${operation}`,
         // 只有写透那一项真的在数据根里读写；其余各自在 mock 根下建临时库。
         seedMode: operation === "main-write-through-acked" ? "chain" : "none",
-        args: [SUITE_ENTRY, "--child", "storage", operation],
+        args: [FULL_SUITE_ENTRY, "--child", "storage", operation],
       }
     );
     for (const round of rounds) {
@@ -461,7 +313,7 @@ export async function runChainSection(
       {
         label: `chain:${chain}`,
         seedMode: "chain",
-        args: [SUITE_ENTRY, "--child", "chain", chain],
+        args: [FULL_SUITE_ENTRY, "--child", "chain", chain],
       }
     );
     for (const round of rounds) {

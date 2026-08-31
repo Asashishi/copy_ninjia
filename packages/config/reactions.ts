@@ -29,15 +29,28 @@ export function parseReactionConfig(
 }
 
 /** 从指定文件加载并校验；模块 import 本身不访问文件系统。 */
-export function loadReactionConfig(path: string = REACTIONS_CONFIG_PATH): ReactionConfig {
-  return parseReactionConfig(readJsonInput(path), path);
+export async function loadReactionConfig(
+  path: string = REACTIONS_CONFIG_PATH
+): Promise<ReactionConfig> {
+  return parseReactionConfig(await readJsonInput(path), path);
 }
 
-/**
- * 默认部署配置按进程/Worker 惰性缓存。主进程启动总闸会校验已存在的文件；
- * 真正缺省时仍由功能 readiness 决定该功能能否开启。
- */
+/** 接管启动预检或 Worker 初始化消息已经严格校验的反应配置快照。 */
+export function adoptReactionConfig(config: ReactionConfig): void {
+  defaultReactionConfigCache.current = config;
+}
+
+/** 启动预检填充默认路径快照；重复调用只读 holder。 */
+export async function ensureReactionConfig(): Promise<void> {
+  if (defaultReactionConfigCache.current !== null) return;
+  adoptReactionConfig(await loadReactionConfig());
+}
+
+/** 默认反应配置只读当前线程已校验的快照，不在运行期回退读盘。 */
 export function getReactionConfig(): ReactionConfig {
-  defaultReactionConfigCache.current ??= loadReactionConfig();
-  return defaultReactionConfigCache.current;
+  const config: ReactionConfig | null = defaultReactionConfigCache.current;
+  if (config === null) {
+    throw new Error(`Reaction configuration was not initialized from ${REACTIONS_CONFIG_PATH}.`);
+  }
+  return config;
 }

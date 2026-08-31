@@ -17,7 +17,7 @@
  * 攒太多时按 AD_SAMPLE_FILE_MAX_BYTES 轮转成带日期的归档；归档按文件名中的
  * 东京日期保留最近 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 个自然日。轮转是为了读回
  * 成本：追加游标在 Worker 重建后与每次追加失败后都作废，下一条命中要对整份
- * 文件重跑一次同步读 + parse，压在唯一那条串行 I/O 线程上。
+ * 文件重跑一次异步读 + parse，仍由唯一的串行 I/O owner 排队。
  */
 
 import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "node:fs";
@@ -239,7 +239,9 @@ function rotateIfOversized(state: AppendOnlyFileState): AppendOnlyFileState {
  * 追加一条命中样本。失败只 console.error 并作废游标，不重试、不缓冲、不上报
  * ——调用方（diskIOWorker 的消息路由）也不看返回值。
  */
-export function handleAdSampleMessage(msg: AdSampleDiskMessage): void {
+export async function handleAdSampleMessage(
+  msg: AdSampleDiskMessage
+): Promise<void> {
   const record: AdSampleRecord = {
     detectedAt: msg.detectedAt,
     chatId: msg.chatId,
@@ -254,7 +256,7 @@ export function handleAdSampleMessage(msg: AdSampleDiskMessage): void {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     sweepOrphanedTemps();
     sweepExpiredAdSampleArchives({ today: getTokyoDateKey() });
-    adSampleFileState.current ??= openAppendOnlyFile(
+    adSampleFileState.current ??= await openAppendOnlyFile(
       AD_SAMPLE_FILE_PATH,
       PERSISTED_FILE_MODE,
       true
@@ -263,7 +265,7 @@ export function handleAdSampleMessage(msg: AdSampleDiskMessage): void {
     // 一个长期不重启的进程永远轮转不了。
     adSampleFileState.current = rotateIfOversized(adSampleFileState.current);
     const state: AppendOnlyFileState = adSampleFileState.current;
-    appendToAppendOnlyFile({
+    await appendToAppendOnlyFile({
       path: AD_SAMPLE_FILE_PATH,
       state,
       chunk: serializeDayFileEntry(sampleKey(msg), record),

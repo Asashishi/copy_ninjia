@@ -1,10 +1,10 @@
-import type { Chat, Message } from "@grammyjs/types";
+import type { Chat } from "@grammyjs/types";
 import { adDetectConfigReadiness } from "../config/readiness";
 import { TEMPORARY_WHITELIST_REQUIRED_DAYS } from
   "../consts/temporaryWhitelist";
 import {
   clearTemporaryWhitelistActivity,
-  hasActiveTemporaryWhitelist,
+  hasActiveTemporaryWhitelistAt,
   recordTemporaryWhitelistActivity,
 } from "../infra/identityPolicy/temporaryWhitelist";
 import {
@@ -16,18 +16,12 @@ import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { visibleSenderChat } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
 import { postAntiRaid } from "./workerBridge";
-import type { ChatState } from "../types/chatState";
+import type { AdDetectionMessageContext } from
+  "../types/antiRaid/adDetect";
 import type { PromoteAdBypassWhitelistResult } from
   "../infra/identityPolicy/whitelist";
 import type { RecordedTemporaryWhitelistActivity } from
   "../types/temporaryWhitelist";
-
-export interface RecordEligibleTemporaryWhitelistActivityOptions {
-  readonly message: Message;
-  readonly botId: number;
-  readonly chatState: Readonly<ChatState>;
-  readonly now?: number;
-}
 
 /** 广告检测有效群的一条普通发言计入跨群身份累计；服务消息由调用方先行排除。 */
 export function recordEligibleTemporaryWhitelistActivity(
@@ -36,7 +30,7 @@ export function recordEligibleTemporaryWhitelistActivity(
     botId,
     chatState,
     now,
-  }: RecordEligibleTemporaryWhitelistActivityOptions
+  }: AdDetectionMessageContext
 ): boolean {
   if (
     chatState.isAdDetectEnabled !== true ||
@@ -53,11 +47,11 @@ export function recordEligibleTemporaryWhitelistActivity(
     senderChat?.id === message.chat.id ||
     isWhitelisted(senderId)
   ) return false;
-  const wasActive: boolean = hasActiveTemporaryWhitelist(senderId);
+  const wasActive: boolean = hasActiveTemporaryWhitelistAt(senderId, now);
   const recorded: RecordedTemporaryWhitelistActivity | undefined =
-    recordTemporaryWhitelistActivity(senderId, now ?? Date.now());
+    recordTemporaryWhitelistActivity(senderId, now);
   if (recorded === undefined) return false;
-  if (!wasActive && hasActiveTemporaryWhitelist(senderId)) {
+  if (!wasActive && hasActiveTemporaryWhitelistAt(senderId, now)) {
     // 状态边沿才推一次；Worker 重建时这两类非持久状态本来就是空的。
     postAntiRaid({ type: "temporaryWhitelistGranted", identityId: senderId });
   }

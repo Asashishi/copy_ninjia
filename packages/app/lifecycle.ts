@@ -139,7 +139,7 @@ export class ApplicationLifecycle {
     // 各 Worker 在自己的 isolate 中复用同一严格解析器。
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
-    this.dependencies.validateExistingDeploymentInputs();
+    await this.dependencies.validateExistingDeploymentInputs();
     // global state 主副本与部署输入都通过严格校验后，才创建本地 Disk I/O Worker。
     // SQLite 群状态只负责恢复运行时开关，不再沿用 state.json 时代的功能前提或
     // 数据正确性启动总闸；功能命令和消息入口各自在 readiness 边界拒绝不可用配置。

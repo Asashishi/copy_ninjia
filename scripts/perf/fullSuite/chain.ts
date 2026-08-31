@@ -82,6 +82,8 @@ import {
   ensureAdDetectAgentConfig,
   ensureAgentDeploymentConfig,
 } from "../../../packages/config/agent";
+import { validateExistingDeploymentInputs } from
+  "../../../packages/config/readiness";
 import { cacheAdminIds } from
   "../../../packages/cache/workers/antiRaid/admins";
 import { adDetectOpenAiClientHolder } from
@@ -277,6 +279,10 @@ async function runChainChild(chain: ChainName): Promise<ChainRound> {
   routeBusinessLogsToStderr();
   installOutboundGuards();
   if (COMMAND_CHAINS.has(chain)) installCannedTelegramOutbound();
+  // 与生产启动同序：部署输入预检填充贴纸等配置快照与三份功能 readiness。
+  // loadPersistedData 要取贴纸包，广告检测链路要读 adDetectConfigReadiness()，
+  // 两者都在这一步之后才有值。
+  await validateExistingDeploymentInputs();
   initDiskIO();
   try {
     await loadPersistedData();

@@ -25,5 +25,5 @@ export {
 export { handlePendingRemovalSnapshot } from "./storageDatabase/pendingRemoval";
 export {
   handleTemporaryWhitelistWrite,
-  sweepExpiredTemporaryWhitelistActivities,
+  maintainTemporaryWhitelistActivities,
 } from "./storageDatabase/temporaryWhitelist";

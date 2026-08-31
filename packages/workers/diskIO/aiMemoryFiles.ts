@@ -54,7 +54,7 @@ function scheduleAiMemoryFlush(): void {
 }
 
 /** 跨域启动第一阶段：只读扫描并严格解码，不改缓存或磁盘。 */
-export function inspectAiMemorySnapshots(): AiMemoryRecoveryInspection {
+export async function inspectAiMemorySnapshots(): Promise<AiMemoryRecoveryInspection> {
   return inspectAiMemories();
 }
 

@@ -37,6 +37,8 @@ import type {
 } from "../../../packages/types/antiRaid/verification";
 import type { VerificationPersistedReply } from
   "../../../packages/types/diskIO";
+import { diskIOOperationTail } from
+  "../../../packages/cache/workers/diskIO/recovery";
 
 const DAY_ONE: string = "2026-07-19";
 const DAY_TWO: string = "2026-07-20";
@@ -67,8 +69,8 @@ function receiveReply(reply: VerificationPersistedReply): void {
   replies.push(reply);
 }
 
-function upsert(revision: number, critical: boolean): void {
-  handleVerificationUpsert({
+async function upsert(revision: number, critical: boolean): Promise<void> {
+  await handleVerificationUpsert({
     msg: {
       type: "verificationUpsert",
       record: snapshot(revision),
@@ -80,11 +82,11 @@ function upsert(revision: number, critical: boolean): void {
   });
 }
 
-function restartFixtureClock(now: number): void {
+async function restartFixtureClock(now: number): Promise<void> {
   resetVerificationPersistenceCache();
   jest.useRealTimers();
   jest.useFakeTimers({ now });
-  recoverVerificationDay(DAY_ONE, dir);
+  await recoverVerificationDay(DAY_ONE, dir);
 }
 
 /**
@@ -95,11 +97,11 @@ function restartFixtureClock(now: number): void {
  * 每个领域单独 try/catch 并只记一行 console.error，不上抛、也不重置本领域缓存；
  * 这里保留旧包装的「重置后上抛」，好让维护阶段的失败在用例里可断言。
  */
-function recoverVerificationDay(
+async function recoverVerificationDay(
   day: string,
   dir: string
-): Map<string, VerificationSnapshot> {
-  const inspection = inspectVerificationDay(day, dir);
+): Promise<Map<string, VerificationSnapshot>> {
+  const inspection = await inspectVerificationDay(day, dir);
   const recovered = adoptVerificationDay(inspection);
   try {
     maintainVerificationDay(inspection);
@@ -110,12 +112,12 @@ function recoverVerificationDay(
   return recovered;
 }
 
-beforeEach((): void => {
+beforeEach(async (): Promise<void> => {
   jest.useFakeTimers({ now: DAY_ONE_START_MS });
   dir = mkdtempSync(join(tmpdir(), "verification-timer-test-"));
   replies = [];
   resetVerificationPersistenceCache();
-  recoverVerificationDay(DAY_ONE, dir);
+  await recoverVerificationDay(DAY_ONE, dir);
 });
 
 afterEach((): void => {
@@ -125,14 +127,15 @@ afterEach((): void => {
 });
 
 describe("pending verification 定时落盘与午夜轮换", (): void => {
-  test("普通变化由唯一 unref timer 自动 flush 并精确 ACK", (): void => {
-    upsert(1, false);
+  test("普通变化由唯一 unref timer 自动 flush 并精确 ACK", async (): Promise<void> => {
+    await upsert(1, false);
     const timer: ReturnType<typeof setTimeout> | null = verificationFlushTimer.timer;
     expect(timer).not.toBeNull();
     expect(timer?.hasRef()).toBeFalse();
     expect(verificationPendingChanges).toHaveLength(1);
 
     jest.advanceTimersByTime(VERIFICATION_FLUSH_INTERVAL_MS);
+    await diskIOOperationTail.current;
 
     expect(verificationFlushTimer.timer).toBeNull();
     expect(verificationPendingChanges).toHaveLength(0);
@@ -147,11 +150,11 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
       .toHaveProperty("-1001:42.revision", 1);
   });
 
-  test("append 失败保留 pending、失效文件游标并自动重试", (): void => {
+  test("append 失败保留 pending、失效文件游标并自动重试", async (): Promise<void> => {
     rmSync(dir, { recursive: true, force: true });
     writeFileSync(dir, "not-a-directory");
 
-    upsert(1, true);
+    await upsert(1, true);
 
     expect(verificationPendingChanges).toHaveLength(1);
     expect(verificationFileState.current).toBeNull();
@@ -162,6 +165,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     rmSync(dir, { force: true });
     mkdirSync(dir, { recursive: true });
     jest.advanceTimersByTime(VERIFICATION_FLUSH_INTERVAL_MS);
+    await diskIOOperationTail.current;
 
     expect(verificationPendingChanges).toHaveLength(0);
     expect(verificationFlushTimer.timer).toBeNull();
@@ -171,9 +175,9 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
       .toHaveProperty("-1001:42.revision", 1);
   });
 
-  test("每日维护发布新日快照并清理旧日，不再自行排下一次午夜 timer", (): void => {
-    restartFixtureClock(BEFORE_DAY_TWO_MS);
-    upsert(1, false);
+  test("每日维护发布新日快照并清理旧日，不再自行排下一次午夜 timer", async (): Promise<void> => {
+    await restartFixtureClock(BEFORE_DAY_TWO_MS);
+    await upsert(1, false);
     maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
 
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
@@ -184,9 +188,9 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     expect(replies.at(-1)).toMatchObject({ revision: 1, deleted: false });
   });
 
-  test("午夜发布失败按一秒重试，active 镜像不丢失", (): void => {
-    restartFixtureClock(BEFORE_DAY_TWO_MS);
-    upsert(1, true);
+  test("午夜发布失败按一秒重试，active 镜像不丢失", async (): Promise<void> => {
+    await restartFixtureClock(BEFORE_DAY_TWO_MS);
+    await upsert(1, true);
     replies.length = 0;
     rmSync(dir, { recursive: true, force: true });
     writeFileSync(dir, "not-a-directory");
@@ -200,6 +204,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     rmSync(dir, { force: true });
     mkdirSync(dir, { recursive: true });
     jest.advanceTimersByTime(VERIFICATION_ROLLOVER_RETRY_MS);
+    await diskIOOperationTail.current;
 
     expect(existsSync(join(dir, `${DAY_TWO}.json`))).toBeTrue();
     expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))

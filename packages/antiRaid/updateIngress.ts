@@ -38,6 +38,7 @@ import { postAntiRaid } from "./workerBridge";
 import { recordEligibleTemporaryWhitelistActivity } from "./temporaryWhitelist";
 import type {
   AdCandidateMessage,
+  AdDetectionMessageContext,
 } from "../types/antiRaid/adDetect";
 import type {
   AntiRaidWorkerMessage,
@@ -300,15 +301,22 @@ function ingestAdmittedMessage(
     return false;
   }
 
-  if (hasUserMessageContent(message)) {
-    recordEligibleTemporaryWhitelistActivity({ message, botId, chatState });
-  }
-
   // 临时白名单累计先于候选构建：本条消息恰好让成员获权时，
   // buildAdCandidate 必须立即读到临时广告绕过权限，不得再把这条送检。
   // 投递仍是尽力而为：Worker 重建时待检队列本来就会随 isolate 清空。
-  const adCandidate: AdCandidateMessage | undefined =
-    buildAdCandidate(message, botId, chatState);
+  let adCandidate: AdCandidateMessage | undefined;
+  if (chatState.isAdDetectEnabled === true) {
+    const adContext: AdDetectionMessageContext = {
+      message,
+      botId,
+      chatState,
+      now: Date.now(),
+    };
+    if (hasUserMessageContent(message)) {
+      recordEligibleTemporaryWhitelistActivity(adContext);
+    }
+    adCandidate = buildAdCandidate(adContext);
+  }
   if (adCandidate !== undefined && !postAntiRaid(adCandidate)) {
     logger.error(
       `Anti-Raid Worker rejected an ad detection candidate from chat ${message.chat.id}.`

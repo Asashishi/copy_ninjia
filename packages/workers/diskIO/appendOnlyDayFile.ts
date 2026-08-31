@@ -14,11 +14,12 @@
  * `<dir>/<day>.json` 命名约定上的薄封装，供按天滚动的三个领域使用。
  */
 
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { AppendOnlyFileState, DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { readUtf8TextInput } from "../../libs/inputValidation";
 import { isPlainRecord } from "../../libs/record";
 import { assertFileReadableWritable } from "../../libs/fileAccess";
 
@@ -108,13 +109,17 @@ function atomicRewrite(path: string, content: string, mode?: number): void {
  * @param repair 是否显式允许裁掉末尾残片或规范化排版；默认 false。只写诊断
  *   材料和日志可选择 true，运行时权威状态必须保持 false。
  */
-export function openAppendOnlyFile(path: string, mode?: number, repair: boolean = false): AppendOnlyFileState {
+export async function openAppendOnlyFile(
+  path: string,
+  mode?: number,
+  repair: boolean = false
+): Promise<AppendOnlyFileState> {
   const state: AppendOnlyFileState = { size: 0, empty: true };
   if (!existsSync(path)) return state;
   // mode 只用于首次创建。已有文件保留部署方权限，并在接管阶段显式确认
   // 当前进程可读写；不能靠目录 rename 权限绕过文件本身的只读策略。
   assertFileReadableWritable(path);
-  const content: string = readFileSync(path, "utf8");
+  const content: string = await readUtf8TextInput(path);
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -189,8 +194,12 @@ export function openValidatedAppendOnlyFile({
 }
 
 /** openAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装（按天滚动的三个领域用）。 */
-export function openDayFile(dir: string, day: string, mode?: number): DayFileState {
-  return { day, ...openAppendOnlyFile(join(dir, `${day}.json`), mode) };
+export async function openDayFile(
+  dir: string,
+  day: string,
+  mode?: number
+): Promise<DayFileState> {
+  return { day, ...await openAppendOnlyFile(join(dir, `${day}.json`), mode) };
 }
 
 /** 构造并复核一个顶层成员边界候选；成功时交出可直接原子发布的完整文本。 */
@@ -298,7 +307,7 @@ export interface AppendToDayFileParams extends Omit<AppendToAppendOnlyFileParams
 }
 
 /** 把一段已序列化好的条目文本追加到文件末尾（覆写结尾的「\n}」）。 */
-export function appendToAppendOnlyFile({
+export async function appendToAppendOnlyFile({
   path,
   state,
   chunk,
@@ -306,7 +315,7 @@ export function appendToAppendOnlyFile({
   repair = false,
   write = nodeWriteBuffer,
   sync = fsyncSync,
-}: AppendToAppendOnlyFileParams): void {
+}: AppendToAppendOnlyFileParams): Promise<void> {
   if (state.empty) {
     const content: string = `{\n${chunk}\n}`;
     // 首条也走原子替换；传入 mode 时临时文件会在 rename 前
@@ -336,7 +345,7 @@ export function appendToAppendOnlyFile({
     // 可能已有前缀落盘，旧 size 与物理文件都不再可信。fd 已关闭后重新
     // 探测并尽力裁掉残片；绝不能按完整 data 的长度推进游标。不允许自愈的
     // 领域这里会再抛一次，调用方据此把游标作废、条目留在缓冲里等人工恢复。
-    const recovered: AppendOnlyFileState = openAppendOnlyFile(path, mode, repair);
+    const recovered: AppendOnlyFileState = await openAppendOnlyFile(path, mode, repair);
     state.size = recovered.size;
     state.empty = recovered.empty;
     throw failure instanceof Error ? failure : new Error("Append failed with a non-Error value.");
@@ -345,8 +354,12 @@ export function appendToAppendOnlyFile({
 }
 
 /** appendToAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装。 */
-export function appendToDayFile({ dir, state, ...rest }: AppendToDayFileParams): void {
-  appendToAppendOnlyFile({ path: join(dir, `${state.day}.json`), state, ...rest });
+export async function appendToDayFile({
+  dir,
+  state,
+  ...rest
+}: AppendToDayFileParams): Promise<void> {
+  await appendToAppendOnlyFile({ path: join(dir, `${state.day}.json`), state, ...rest });
 }
 
 /**

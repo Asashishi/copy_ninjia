@@ -17,20 +17,22 @@ import { isUserBlocked } from "../infra/blocklist/membership";
 import { isIdentityPolicyCached } from "../infra/identityStorage";
 import { inlineResultSourceOf } from "../infra/inlineResultSources";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
-import { getChatState } from "../infra/storage/stateStore";
 import { sanitizeInline, truncateInline } from "../libs/text";
 import { verificationKey } from "../libs/verificationKey";
 import type {
   AdCandidateMessage,
+  AdDetectionMessageContext,
   AdSampleContext,
 } from "../types/antiRaid/adDetect";
-import type { ChatState } from "../types/chatState";
 import type { TelegramIdentityMetadata } from "../types/identityPolicy";
 import { formatUserLabel } from "../users/userLabel";
 import { messageOriginIdentityId } from "../users/messageOrigin";
 import { visibleSenderChat } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
-import { canBypassAdDetection } from "./memberFacts";
+import {
+  canBypassAdDetection,
+  isProtectedSender,
+} from "./memberFacts";
 
 /**
  * 摘出正文不可见的 text_link URL；与正文分开限额，避免超长填充文本把落地页
@@ -71,22 +73,31 @@ function replySourceIdentityId(message: Message): number | undefined {
 }
 
 /**
- * 引用来源的白名单三态。超级管理员和热白名单直接返回 true；三张身份缓存都热
- * 才能确证 false。冷缺失表示 update 前置预取失败，不能把未知身份送进永久封禁
- * 的升级路径。
+ * 引用来源的受保护身份三态。永久白名单成员不以自己的内容连坐回复者，临时广告
+ * 豁免同样跳过；三张身份缓存都热才能确证 false。冷缺失表示 update 前置预取
+ * 失败，不能把未知身份送进永久封禁的升级路径。
  */
-function sourceWhitelistStatus(sourceId: number): boolean | undefined {
-  if (canBypassAdDetection(sourceId)) return true;
+function sourceWhitelistStatus(
+  sourceId: number,
+  now: number
+): boolean | undefined {
+  if (
+    isProtectedSender(sourceId) ||
+    canBypassAdDetection(sourceId, now)
+  ) return true;
   return isIdentityPolicyCached(sourceId) ? false : undefined;
 }
 
-function buildSampleContext(message: Message): AdSampleContext | undefined {
+function buildSampleContext(
+  message: Message,
+  now: number
+): AdSampleContext | undefined {
   const replied: Message | undefined = message.reply_to_message;
   if (replied?.is_automatic_forward === true) return undefined;
   const sourceId: number | undefined = replySourceIdentityId(message);
   if (
     sourceId !== undefined &&
-    sourceWhitelistStatus(sourceId) !== false
+    sourceWhitelistStatus(sourceId, now) !== false
   ) return undefined;
   const rawQuote: string | undefined = message.quote?.text;
   const rawReplyTo: string | undefined = replied?.text ?? replied?.caption;
@@ -113,24 +124,25 @@ function buildSampleContext(message: Message): AdSampleContext | undefined {
 /**
  * 收敛一条待判定消息。配置未就绪、功能未开启、受保护身份和机器人自己的消息
  * 均返回 undefined；频道黑名单落地空档仍投递，以便 Worker 删除漏网消息。
- * @param chatState 同一同步消息入口已读取的当前群状态；缺省时本函数自行读取。
  */
 export function buildAdCandidate(
-  message: Message,
-  botId: number,
-  chatState?: Readonly<ChatState>
+  {
+    message,
+    botId,
+    chatState,
+    now,
+  }: AdDetectionMessageContext
 ): AdCandidateMessage | undefined {
   const chatId: number | undefined = message.chat?.id;
   if (chatId === undefined || message.chat.type === "private") return undefined;
   if (!adDetectConfigReadiness().ok) return undefined;
-  const currentState: Readonly<ChatState> = chatState ?? getChatState(chatId);
-  if (currentState.isAdDetectEnabled !== true) return undefined;
+  if (chatState.isAdDetectEnabled !== true) return undefined;
   if (message.is_automatic_forward === true || isBotOwnMessage(message)) return undefined;
 
   const senderChat: Chat | undefined = visibleSenderChat(message);
   const senderId: number | undefined = senderChat?.id ?? message.from?.id;
   if (senderId === undefined || senderId === botId || senderChat?.id === chatId) return undefined;
-  if (canBypassAdDetection(senderId)) return undefined;
+  if (canBypassAdDetection(senderId, now)) return undefined;
   const blocked: boolean = isUserBlocked(senderId);
   if (blocked && senderChat === undefined) return undefined;
 
@@ -156,7 +168,7 @@ export function buildAdCandidate(
     !blocked &&
     isForwarded &&
     forwardSourceId !== undefined &&
-    sourceWhitelistStatus(forwardSourceId) !== false
+    sourceWhitelistStatus(forwardSourceId, now) !== false
   ) return undefined;
 
   const text: string = sanitizeInline(
@@ -174,7 +186,7 @@ export function buildAdCandidate(
       text,
       message.entities ?? message.caption_entities
     );
-  const sampleContext: AdSampleContext | undefined = buildSampleContext(message);
+  const sampleContext: AdSampleContext | undefined = buildSampleContext(message, now);
   if (text.length === 0 && linkUrls === undefined && sampleContext === undefined) return undefined;
 
   const label: string = senderChat === undefined

@@ -6,11 +6,11 @@ import {
 import { TELEGRAM_REACTION_EMOJIS } from "../../packages/consts/reactions";
 
 describe("reaction config", () => {
-  test("严格解析标准反应，并能加载全部部署配置", () => {
+  test("严格解析标准反应，并能加载全部部署配置", async () => {
     expect(parseReactionConfig({ emotionKeywords: { "👍": ["赞"] } })).toEqual({
       emotionKeywords: { "👍": ["赞"] },
     });
-    const loaded = loadReactionConfig();
+    const loaded = await loadReactionConfig();
     const allowedEmojis: ReadonlySet<string> = new Set(TELEGRAM_REACTION_EMOJIS);
     expect(Object.keys(loaded.emotionKeywords).length).toBeGreaterThan(0);
     expect(Object.keys(loaded.emotionKeywords).every((emoji) => allowedEmojis.has(emoji))).toBe(true);

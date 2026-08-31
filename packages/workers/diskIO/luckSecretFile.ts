@@ -95,13 +95,13 @@ function assertSecretCanBeCreated(
  * 损坏、未来日期、字段异常及“已有结果但密钥缺失/过期”一律拒绝，绝不
  * 静默覆盖导致当天尚未确认的预览结果改变。
  */
-export function inspectLuckReceiptSecret(
+export async function inspectLuckReceiptSecret(
   {
     day,
     confirmedResultCount,
     path = LUCK_RECEIPT_SECRET_PATH,
   }: RecoverLuckReceiptSecretParams
-): LuckSecretRecoveryInspection {
+): Promise<LuckSecretRecoveryInspection> {
   if (!LUCK_DAY_PATTERN.test(day) || !isCanonicalDateKey(day)) {
     throw new Error("Luck receipt target day must be a canonical YYYY-MM-DD date.");
   }
@@ -116,7 +116,7 @@ export function inspectLuckReceiptSecret(
 
   let secret: LuckReceiptSecret;
   try {
-    secret = decodeLuckReceiptSecret(readJsonInput(path), path);
+    secret = decodeLuckReceiptSecret(await readJsonInput(path), path);
   } catch {
     return invalidInput(path, "$", "the current version=1 luck receipt secret schema");
   }
@@ -141,11 +141,11 @@ export function adoptLuckReceiptSecret(
 }
 
 /** 单领域恢复入口；跨域启动编排使用 inspect/adopt 两阶段 API。 */
-export function recoverLuckReceiptSecret(
+export async function recoverLuckReceiptSecret(
   params: RecoverLuckReceiptSecretParams
-): LuckReceiptSecret {
+): Promise<LuckReceiptSecret> {
   return adoptLuckReceiptSecret(
-    inspectLuckReceiptSecret(params),
+    await inspectLuckReceiptSecret(params),
     params.io ?? DEFAULT_IO
   );
 }

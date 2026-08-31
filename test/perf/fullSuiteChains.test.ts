@@ -11,8 +11,8 @@ import type { ChainDefinition } from
   "../../scripts/perf/fullSuite/chainDefinition";
 import type { StoredTemporaryWhitelistActivity } from
   "../../packages/types/temporaryWhitelist";
-import type { RecordEligibleTemporaryWhitelistActivityOptions } from
-  "../../packages/antiRaid/temporaryWhitelist";
+import type { AdDetectionMessageContext } from
+  "../../packages/types/antiRaid/adDetect";
 
 describe("全量性能链路编排", () => {
   test("临时白名单 CPU 与 durable 场景分别登记且不重名", () => {
@@ -47,7 +47,7 @@ describe("全量性能链路编排", () => {
       unacknowledgedTemporaryWhitelistWrites: unacknowledged as never,
       recordEligibleTemporaryWhitelistActivity: ({
         message,
-      }: RecordEligibleTemporaryWhitelistActivityOptions): boolean => {
+      }: AdDetectionMessageContext): boolean => {
         expect(message.text).toBe("性能基准普通群发言");
         const id: number = message.from!.id;
         unacknowledged.add(id);

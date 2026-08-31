@@ -233,13 +233,17 @@ function requireAgentRecord(
 }
 
 /** 读入统一配置并只校验顶层，具体能力由消费方严格解析。 */
-function readAgentConfigRecord(path: string): Readonly<Record<string, unknown>> {
-  return requireAgentRecord(readJsonInput(path), path);
+async function readAgentConfigRecord(
+  path: string
+): Promise<Readonly<Record<string, unknown>>> {
+  return requireAgentRecord(await readJsonInput(path), path);
 }
 
 /** 启动总闸严格校验整份已存在的 agent.json，并填充默认路径缓存。 */
-export function validateAgentDeploymentConfig(path: string = AGENT_CONFIG_PATH): void {
-  const record: Readonly<Record<string, unknown>> = readAgentConfigRecord(path);
+export async function validateAgentDeploymentConfig(
+  path: string = AGENT_CONFIG_PATH
+): Promise<void> {
+  const record: Readonly<Record<string, unknown>> = await readAgentConfigRecord(path);
   if (!hasOnlyKeys(record, ["ad_detect", "text", "summary", "media", "image", "song"])) {
     return invalidInput(
       path,
@@ -270,13 +274,18 @@ export function validateAgentDeploymentConfig(path: string = AGENT_CONFIG_PATH):
 }
 
 /** 只加载广告检测段。 */
-export function loadAdDetectAgentConfig(path: string = AGENT_CONFIG_PATH): AdDetectAgentConfig {
-  return parseAdDetectAgentConfig(readAgentConfigRecord(path).ad_detect, path);
+export async function loadAdDetectAgentConfig(
+  path: string = AGENT_CONFIG_PATH
+): Promise<AdDetectAgentConfig> {
+  const record: Readonly<Record<string, unknown>> = await readAgentConfigRecord(path);
+  return parseAdDetectAgentConfig(record.ad_detect, path);
 }
 
 /** 只加载 AI agent 段。 */
-export function loadAgentDeploymentConfig(path: string = AGENT_CONFIG_PATH): AgentDeploymentConfig {
-  return parseAgentDeploymentConfig(readAgentConfigRecord(path), path);
+export async function loadAgentDeploymentConfig(
+  path: string = AGENT_CONFIG_PATH
+): Promise<AgentDeploymentConfig> {
+  return parseAgentDeploymentConfig(await readAgentConfigRecord(path), path);
 }
 
 /**
@@ -285,15 +294,15 @@ export function loadAgentDeploymentConfig(path: string = AGENT_CONFIG_PATH): Age
  * 文件在但没有 ad_detect 段——才解析一次并让错误逃出去，由
  * config/readiness.ts 缓存成功能结论（成功与失败都缓存，见该文件头注）。
  */
-export function ensureAdDetectAgentConfig(): void {
+export async function ensureAdDetectAgentConfig(): Promise<void> {
   if (adDetectAgentConfigCache.current !== null) return;
-  adDetectAgentConfigCache.current = loadAdDetectAgentConfig();
+  adDetectAgentConfigCache.current = await loadAdDetectAgentConfig();
 }
 
 /** 主线程 readiness 探测入口（AI 对话核心能力段）；语义同上。 */
-export function ensureAgentDeploymentConfig(): void {
+export async function ensureAgentDeploymentConfig(): Promise<void> {
   if (agentDeploymentConfigCache.current !== null) return;
-  agentDeploymentConfigCache.current = loadAgentDeploymentConfig();
+  agentDeploymentConfigCache.current = await loadAgentDeploymentConfig();
 }
 
 /**

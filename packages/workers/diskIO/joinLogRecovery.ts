@@ -1,7 +1,6 @@
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
   unlinkSync,
 } from "node:fs";
@@ -17,7 +16,7 @@ import {
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
 } from "../../consts/diskIO/joinLog";
 import { JOIN_LOG_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { invalidInput } from "../../libs/inputValidation";
+import { invalidInput, readUtf8TextInput } from "../../libs/inputValidation";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import {
   getTokyoDateKey,
@@ -38,11 +37,13 @@ export interface ValidatedJoinLogFile {
 }
 
 /** 读取并严格校验一份已存在的入群日志文件。 */
-export function readValidatedJoinLogFile(path: string): ValidatedJoinLogFile {
+export async function readValidatedJoinLogFile(
+  path: string
+): Promise<ValidatedJoinLogFile> {
   let content: string;
   let candidate: unknown;
   try {
-    content = readFileSync(path, "utf8");
+    content = await readUtf8TextInput(path);
     candidate = JSON.parse(content) as unknown;
   } catch {
     return invalidInput(path, "$", "a readable valid JSON document");
@@ -90,9 +91,9 @@ export interface JoinLogRecoveryInspection {
 }
 
 /** 启动第一阶段：只读扫描保留窗口，不填充常驻 LRU 或删除文件。 */
-export function inspectJoinLogFiles(
+export async function inspectJoinLogFiles(
   today: string = getTokyoDateKey()
-): JoinLogRecoveryInspection {
+): Promise<JoinLogRecoveryInspection> {
   const retainedDays: ReadonlySet<string> =
     recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
   const names: string[] = existsSync(JOIN_LOG_MEMORY_DIR)
@@ -126,7 +127,7 @@ export function inspectJoinLogFiles(
     }
     if (!retainedDays.has(day)) continue;
     const { content, parsed }: ValidatedJoinLogFile =
-      readValidatedJoinLogFile(path);
+      await readValidatedJoinLogFile(path);
     const latest: Map<number, JoinLogRecord> = latestJoinLogRecords(parsed);
     if (latest.size > JOIN_LOG_MAX_USERS_PER_CHAT_DAY) {
       return invalidInput(

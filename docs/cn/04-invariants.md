@@ -51,11 +51,11 @@
 
   **同步鉴权只读主线程的三份有界 LRU**：永久白名单、黑名单和临时白名单活动各最多 8,192 项，`null` 是明确的负缓存；Disk I/O 启动只返回永久名单计数，不复制三张整表。每条 update 的前置边界把最终会用到的身份批量预热，单次跨线程冷读最多 4,096 个主键；命令和入群判定随后同步读缓存，不在每个判定点 request/reply。冷读失败时普通路径按缺失 fail-closed，破坏性批量路径必须取消执行，不能把未知误判成不受保护。
 
-  **临时白名单按展示身份跨群累计广告检测中的正常发言**：只有广告配置可用且本群显式开启广告检测时，真实用户或频道马甲才计数；服务消息、自动转发、机器人自身、本群匿名管理员皮套和永久白名单成员都不计。东京自然日内第 8 条发言把当天记为一次合格日，同一天只记一次；首个合格日立即授予只包含广告免检的 `TEMPORARY_WHITELIST_PERMISSIONS`。连续 7 个合格日后才写入永久白名单，永久条目仍只持有这份广告免检权限。任意符合计数条件的发言都会刷新 `counted_at`；超过 24 小时未发言或合格日中断只重置连续日计数，不撤销已经授予的临时成员关系。适用的广告 true verdict、身份拉黑或永久晋升会显式清除整条临时累计；已经授予豁免后到达的旧 verdict 不得撤权。墙钟回拨也从当前消息重新累计，不沿用未来时间轴；Disk I/O Worker 的统一 Bun 原生维护 cron 以显式 `Asia/Tokyo` 时区在东京零点清理没有临时成员关系的过期行。
+  **临时白名单按展示身份跨群累计广告检测中的正常发言**：只有广告配置可用且本群显式开启广告检测时，真实用户或频道马甲才计数；服务消息、自动转发、机器人自身、本群匿名管理员皮套和永久白名单成员都不计。东京自然日内第 8 条发言把当天记为一次合格日，同一天只记一次；首个合格日立即授予只包含广告免检的 `TEMPORARY_WHITELIST_PERMISSIONS`。连续 7 个合格日后才写入永久白名单，永久条目仍只持有这份广告免检权限。累计严格按东京自然日重算，不使用滚动 24 小时：刚结束日已经合格的行保留到新一天，以延续临时广告免检和连续日数；新一天第一条符合累计条件的发言把 `send_count` 重算为 1 并清空本日 `qualified_at`，第 8 条再标记本日合格。当天合格后同一日的后续发言不再改写该行：`send_count` 与 `counted_at` 冻结在达标那条发言上，因而 `counted_at` 与 `qualified_at` 相等；日界推进、保留判定、严格解码与零点清理读到的事实完全不变。若新一天没有再次合格，下一个东京零点删除整行及其中的发言累计；更早的行同样删除，当日行保留。午夜维护先提交共享 SQLite 的在途最终值，事务失败且临时白名单写仍在途时拒绝清理；清理后才到达的旧日写按相同日界归一化，失效值以原 revision 的墓碑 ACK，不能把旧行重新插回。主线程 LRU 的权限读取与 Worker 重建也使用同一日界，因此过期缓存不授予广告免检，过期未 ACK 最终值重放为墓碑。适用的广告 true verdict、身份拉黑或永久晋升会显式清除整条临时累计；已经授予豁免后到达的旧 verdict 不得撤权。墙钟回拨到 `counted_at` 之前时从当前消息重建计数时间轴并保留已经授予的临时资格，不沿用未来计数；当天已合格的行 `counted_at` 就是 `qualified_at`，因此回拨落在达标之后仍按同一东京日继续，两种情形都保留成员关系。
 
   **写入采用 write-through + 精确 revision ACK**：调用方先把目标主键的最终值发布到 LRU，再登记同主键最新未确认 revision 并投给 Disk I/O Worker；Worker 对永久白名单、黑名单、临时白名单和 outbox 各自按 128 个变化或首个变化等待 30 秒为界，在一个显式 SQLite 事务里提交当时全部变化。事务失败保留缓冲等待重试，成功只 ACK 精确 revision；迟到读不得覆盖未确认最终值，Worker 重建按 revision 顺序重放。`/white`、`/permission` 与 `/block` 的关键成功回执必须等待本领域 durable 确认；同步拒收、超时或未收到目标 ACK 由命令就地报告，不能让异常逃出 update handler 形成重投重启循环。
 
-  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`；其余身份先读永久白名单，未命中时才以已经授予且尚未显式清除的临时白名单返回 `TEMPORARY_WHITELIST_PERMISSIONS`。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
+  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`；其余身份先读永久白名单，未命中时才以仍处于东京日保留边界内的临时白名单返回 `TEMPORARY_WHITELIST_PERMISSIONS`。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
 
   `/permission query` 与 `/permission help` 是只读入口：`query` 可以查询自身、回复目标或显式目标，返回补齐默认值后的完整视图，不创建数据库行；两者渲染出的 JSON 都长期保留——那是要照着逐项核对的权限看板，30 秒清理会在读完之前收走它。目标解析失败、修改拒绝与用法提示仍走统一 30 秒清理。
 - **进程级 Telegram 身份严格来自 `config/telegram.json`**：`bot_token` 与 `super_admin_user_id` 联网前必检，缺失、未知字段或非法值均拒绝启动。AI key 全部属于 `config/agent.json` 中的能力配置；每项能力独立声明 provider、api_key、base_url 与 model，不存在凭据默认、跨能力回退或运行时覆盖。`base_url` 只接受 `https`，明文 `http` 仅限 `localhost`/`127.0.0.1`/`::1`，且不得带 userinfo 或 `#` 片段——它旁边就是同一项能力的 api_key。
@@ -473,7 +473,7 @@
 
   **`/unblock` 默认完整解除**：已在表中时先发布负缓存和删除 tombstone，并从 `pendingBlockedRemovals` 在途批次摘掉该 id；无论目标是否在表中，都在所有 `ChatState.botPermissions?.isAdministrator === true` 的群解除 Telegram 封禁。命令只要求 `isCanUnBlock`，旧 `all` 参数不再解析。跨群解封必须走 `unbanChatMemberIfBanned`（`only_if_banned: true`），避免把当前仍是成员的人误踢；频道身份走 `unbanChatSenderChat`。已经投进 Worker 的旧批次无法撤回，这段窗口仍是已知取舍。
 
-  **自己人不可拉黑**：`isWhitelisted` 同时覆盖永久白名单、仍有效的临时白名单与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。拉黑路径先排临时累计墓碑，再排黑名单最终值；Disk I/O 事务和启动 hydrate 复核黑名单不得与两类白名单相交，任何冲突均 fail closed。
+  **自己人不可拉黑**：`isWhitelisted` 覆盖永久白名单与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；临时白名单只授予广告免检，不进入这道永久保护边界。`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。拉黑路径先排临时累计墓碑，再排黑名单最终值；Disk I/O 事务和启动 hydrate 复核黑名单不得与两类白名单相交，任何冲突均 fail closed。
 
   启动恢复逐行验证 canonical 非零安全整数主键、严格 JSONB data 和表间引用；一条非法就拒绝整个身份库，不截断、不丢行、不猜。`memory/ai/<chatId>.json` 等仍以 id 命名的文件继续要求规范十进制文件名，避免补零变体映射到同一个运行时 key。
 

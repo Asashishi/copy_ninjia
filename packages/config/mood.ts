@@ -151,15 +151,28 @@ export function parseMoodConfig(
 }
 
 /** 从指定文件加载并校验；模块 import 本身不访问文件系统。 */
-export function loadMoodConfig(path: string = MOOD_CONFIG_PATH): MoodConfig {
-  return parseMoodConfig(readJsonInput(path), path);
+export async function loadMoodConfig(
+  path: string = MOOD_CONFIG_PATH
+): Promise<MoodConfig> {
+  return parseMoodConfig(await readJsonInput(path), path);
 }
 
-/**
- * 默认部署配置按进程/Worker 惰性缓存。主进程启动总闸会校验已存在的文件；
- * 真正缺省时仍由功能 readiness 决定该功能能否开启。
- */
+/** 接管启动预检或 Worker 初始化消息已经严格校验的心情配置快照。 */
+export function adoptMoodConfig(config: MoodConfig): void {
+  defaultMoodConfigCache.current = config;
+}
+
+/** 启动预检填充默认路径快照；重复调用只读 holder。 */
+export async function ensureMoodConfig(): Promise<void> {
+  if (defaultMoodConfigCache.current !== null) return;
+  adoptMoodConfig(await loadMoodConfig());
+}
+
+/** 默认心情配置只读当前线程已校验的快照，不在运行期回退读盘。 */
 export function getMoodConfig(): MoodConfig {
-  defaultMoodConfigCache.current ??= loadMoodConfig();
-  return defaultMoodConfigCache.current;
+  const config: MoodConfig | null = defaultMoodConfigCache.current;
+  if (config === null) {
+    throw new Error(`Mood configuration was not initialized from ${MOOD_CONFIG_PATH}.`);
+  }
+  return config;
 }

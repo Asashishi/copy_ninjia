@@ -132,9 +132,9 @@ export const TEMPORARY_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
  * 与 DEFAULT_WHITELIST_PERMISSIONS 一样跨调用方共享同一个对象，由
  * `Readonly<>` 在编译期锁住全部字段（断言在 `test/consts/immutability.test.ts`）。
  *
- * **字段顺序必须与 DEFAULT_WHITELIST_PERMISSIONS 逐字一致**：`hasWhitelistPermission`
+ * **字段顺序必须与 DEFAULT_WHITELIST_PERMISSIONS 逐字一致**：白名单权限读取边界
  * 在每条群消息的广告检测与防刷屏门禁上被调用（antiRaid/adCandidate.ts、
- * antiRaid/floodControl.ts），那里的 `permissions[key]` 取值只有在本对象与
+ * antiRaid/floodControl.ts），那里的权限字段取值只有在本对象与
  * `parseStoredPermissions`（database/codec/identity.ts）产出的条目共用同一个 JSC Structure
  * 时才保持单态。JSC 按
  * **键的插入顺序**分配 Structure，因此重排字段（哪怕键集合不变）会当场把这个

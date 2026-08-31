@@ -16,7 +16,12 @@ const maintainLogRetention = mock((): void => {});
 const inspectAiMemorySnapshots = mock((): { readonly kind: "ai" } => ({ kind: "ai" }));
 const adoptAiMemorySnapshots = mock((_inspection: unknown): Map<number, string> => new Map());
 const maintainAiMemorySnapshots = mock((_inspection: unknown): void => {});
-const inspectStickerCatalogSnapshots = mock((_packs: readonly string[]): { readonly kind: "stickers" } => ({ kind: "stickers" }));
+interface StickerInspection {
+  readonly kind: "stickers";
+}
+const inspectStickerCatalogSnapshots = mock(async (
+  _packs: readonly string[]
+): Promise<StickerInspection> => ({ kind: "stickers" }));
 const adoptStickerCatalogSnapshots = mock((_inspection: unknown): Map<string, string> => new Map());
 const maintainStickerCatalogSnapshots = mock((_inspection: unknown): void => {});
 const inspectJoinLogFiles = mock((day: string): { readonly today: string } => ({ today: day }));
@@ -80,7 +85,7 @@ const maintainVerificationDayForToday = mock((
   _day?: string
 ): void => {});
 const maintainAdSampleFiles = mock((_today?: string): void => {});
-const sweepExpiredTemporaryWhitelistActivities = mock((_now?: number): void => {});
+const maintainTemporaryWhitelistActivities = mock((_reply: unknown, _now?: number): void => {});
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
 const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
   "blocklistRemovalOutbox",
@@ -92,8 +97,6 @@ const handleChatStateWrite = mock((_message: unknown): void => {});
 const handleChatQaWrite = mock((_message: unknown): void => {});
 const handleTemporaryWhitelistWrite = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
-// Worker 重建时仍会自行复核贴纸白名单；运行期被改坏时恢复必须拒绝。
-let stickerConfigFailure: string | null = null;
 const consoleError = mock((..._args: unknown[]): void => {});
 interface HydratedStorageDatabase {
   readonly blocklistEntryCount: number;
@@ -175,12 +178,6 @@ mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
   maintainStickerCatalogSnapshots,
   markStickerCatalogSnapshotDirty,
 }));
-mock.module("../../packages/config/stickers", () => ({
-  getStickerConfig: (): { packs: readonly string[] } => {
-    if (stickerConfigFailure !== null) throw new Error(stickerConfigFailure);
-    return { packs: ["pack_a"] };
-  },
-}));
 mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   adoptStorageDatabase,
   configureStoragePersistenceReply: (): void => {},
@@ -192,7 +189,7 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
   inspectStorageDatabase,
   pendingStorageDatabaseDomains,
-  sweepExpiredTemporaryWhitelistActivities,
+  maintainTemporaryWhitelistActivities,
   readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({
     type: "blocklistIdPageRead",
     requestId: message.requestId,
@@ -209,7 +206,10 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
 const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: unknown) => void };
 const originalPostMessage = workerGlobal.postMessage;
 workerGlobal.postMessage = postMessage;
-const { handleDiskIOWorkerMessage } = await import("../../packages/workers/diskIOWorker");
+const {
+  handleDiskIOWorkerMessage,
+  queueDiskIOWorkerMessage,
+} = await import("../../packages/workers/diskIOWorker");
 const { diskIOMaintenanceCron } = await import(
   "../../packages/cache/workers/diskIO/maintenance"
 );
@@ -221,7 +221,10 @@ const { consumeJoinLogRejection } = await import("../../packages/cache/workers/d
 const {
   rejectedStorageDomains,
 } = await import("../../packages/cache/workers/diskIO/storageDatabase");
-const { resetDiskIOReplayWindow } = await import("../../packages/cache/workers/diskIO/recovery");
+const {
+  diskIOOperationTail,
+  resetDiskIOReplayWindow,
+} = await import("../../packages/cache/workers/diskIO/recovery");
 
 afterAll(() => {
   stopDiskIOMaintenanceCron();
@@ -259,7 +262,7 @@ beforeEach(() => {
     flushVerificationChanges,
     maintainVerificationDayForToday,
     maintainAdSampleFiles,
-    sweepExpiredTemporaryWhitelistActivities,
+    maintainTemporaryWhitelistActivities,
     flushBlocklistRemovalOutbox,
     pendingStorageDatabaseDomains,
     flushJoinLogDomain,
@@ -286,7 +289,7 @@ beforeEach(() => {
   // 重放窗口是 Worker 独占的模块级状态：某个用例遗留的 true 会让后面每一次
   // 写失败都误报成停机回执。
   resetDiskIOReplayWindow();
-  stickerConfigFailure = null;
+  diskIOOperationTail.current = Promise.resolve();
   luckWorkerCache.current = null;
   hydratedLuckEntries = new Map();
   recoverLuckReceiptSecret.mockReset();
@@ -308,30 +311,30 @@ beforeEach(() => {
   readJoinLog.mockImplementation(() => [{ userId: 42, joinedAt: 1_000 }]);
 });
 
-function route(message: DiskIOMessage): void {
-  handleDiskIOWorkerMessage(message);
+async function route(message: DiskIOMessage): Promise<void> {
+  await handleDiskIOWorkerMessage(message);
 }
 
 describe("Disk I/O Worker protocol router", () => {
-  test("把各业务消息准确交给唯一领域 owner", () => {
-    route({
+  test("把各业务消息准确交给唯一领域 owner", async () => {
+    await route({
       type: "diagnosticBatch",
       batchId: 7,
       messages: [{ type: "log", timestamp: 1, level: "error", args: ["boom"] }],
     });
-    route({
+    await route({
       type: "aiMemory",
       chatId: -1,
       revision: 2,
       snapshot: "memory",
       persistImmediately: true,
     });
-    route({ type: "deleteAiMemory", chatId: -1, revision: 3 });
-    route({ type: "stickerCatalog", pack: "pack", snapshot: "catalog" });
-    route({ type: "luckDraw", day: "2026-07-22", key: "42", label: "大吉", fortunePercent: 99 });
-    route({ type: "verificationDelete", chatId: -1, userId: 42, generation: 1, revision: 4 });
-    route({ type: "blocklistRemovals", revision: 1, removals: [] });
-    route({
+    await route({ type: "deleteAiMemory", chatId: -1, revision: 3 });
+    await route({ type: "stickerCatalog", pack: "pack", snapshot: "catalog" });
+    await route({ type: "luckDraw", day: "2026-07-22", key: "42", label: "大吉", fortunePercent: 99 });
+    await route({ type: "verificationDelete", chatId: -1, userId: 42, generation: 1, revision: 4 });
+    await route({ type: "blocklistRemovals", revision: 1, removals: [] });
+    await route({
       type: "joinLog",
       chatId: -1,
       userId: 42,
@@ -358,10 +361,10 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("日志批次刷盘失败时要求主线程保留原批并按退避窗口重发", () => {
+  test("日志批次刷盘失败时要求主线程保留原批并按退避窗口重发", async () => {
     flushLogBuffer.mockReturnValueOnce(false);
 
-    route({
+    await route({
       type: "diagnosticBatch",
       batchId: 9,
       messages: [{ type: "log", timestamp: 1, level: "error", args: ["retry"] }],
@@ -377,7 +380,7 @@ describe("Disk I/O Worker protocol router", () => {
     }));
   });
 
-  test("身份 SQLite 的三个 owner 抛错同样不逸出 onmessage，按领域记拒收", () => {
+  test("身份 SQLite 的三个 owner 抛错同样不逸出 onmessage，按领域记拒收", async () => {
     handleIdentityPolicyWrite.mockImplementationOnce((): void => {
       throw new Error("Identity 7 cannot exist in both whitelist_entries and blocklist_entries.");
     });
@@ -393,24 +396,24 @@ describe("Disk I/O Worker protocol router", () => {
     try {
       // 校验失败必须留在当前消息边界内；异常离开 onmessage 会让 Bun 终止落盘线程，
       // 连带丢失十二个领域的进程内缓冲并触发重启节流。
-      expect((): void => route({
+      await expect(route({
         type: "identityPolicyWrite",
         table: "whitelist",
         id: 7,
         data: null,
         revision: 1,
-      })).not.toThrow();
-      expect((): void => route({
+      })).resolves.toBeUndefined();
+      await expect(route({
         type: "blocklistRemovals",
         revision: 1,
         removals: [],
-      })).not.toThrow();
-      expect((): void => route({
+      })).resolves.toBeUndefined();
+      await expect(route({
         type: "temporaryWhitelistWrite",
         id: 8,
         activity: null,
         revision: 1,
-      })).not.toThrow();
+      })).resolves.toBeUndefined();
     } finally {
       console.error = originalConsoleError;
     }
@@ -428,7 +431,7 @@ describe("Disk I/O Worker protocol router", () => {
     rejectedStorageDomains.clear();
   });
 
-  test("恢复重放期间的身份写失败升级为停机回执，不只是记拒收", () => {
+  test("恢复重放期间的身份写失败升级为停机回执，不只是记拒收", async () => {
     handleIdentityPolicyWrite.mockImplementationOnce((): void => {
       throw new Error("revision must be a positive safe integer.");
     });
@@ -436,15 +439,15 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      route({ type: "recoveryReplay", active: true });
-      route({
+      await route({ type: "recoveryReplay", active: true });
+      await route({
         type: "identityPolicyWrite",
         table: "blocklist",
         id: 7,
         data: null,
         revision: 1,
       });
-      route({ type: "recoveryReplay", active: false });
+      await route({ type: "recoveryReplay", active: false });
     } finally {
       console.error = originalConsoleError;
     }
@@ -457,7 +460,59 @@ describe("Disk I/O Worker protocol router", () => {
     rejectedStorageDomains.clear();
   });
 
-  test("入群事实的 owner 抛错不逸出 onmessage，改记拒收让统一 flush 回报失败", () => {
+  test("群状态与问答在线拒收只标记各自领域，恢复重放时升级为 fatal", async () => {
+    for (let attempt: number = 0; attempt < 2; attempt += 1) {
+      handleChatStateWrite.mockImplementationOnce((): void => {
+        throw new Error("chat state write rejected");
+      });
+      handleChatQaWrite.mockImplementationOnce((): void => {
+        throw new Error("chat QA write rejected");
+      });
+    }
+    const stateMessage: DiskIOMessage = {
+      type: "chatStateWrite",
+      chatId: -1,
+      data: "{}",
+      revision: 1,
+    };
+    const qaMessage: DiskIOMessage = {
+      type: "chatQaWrite",
+      chatId: -1,
+      q: "question",
+      data: "answer",
+      revision: 1,
+    };
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      await route(stateMessage);
+      await route(qaMessage);
+      expect([...rejectedStorageDomains].sort()).toEqual(["chatQa", "chatState"]);
+      expect(postMessage).not.toHaveBeenCalled();
+
+      rejectedStorageDomains.clear();
+      await route({ type: "recoveryReplay", active: true });
+      await route(stateMessage);
+      await route(qaMessage);
+      await route({ type: "recoveryReplay", active: false });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "recoveryReplayFailed",
+      domain: "chatState",
+      error: "chat state write rejected",
+    }));
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "recoveryReplayFailed",
+      domain: "chatQa",
+      error: "chat QA write rejected",
+    }));
+    rejectedStorageDomains.clear();
+  });
+
+  test("入群事实的 owner 抛错不逸出 onmessage，改记拒收让统一 flush 回报失败", async () => {
     handleJoinLogMessage.mockImplementationOnce((): void => {
       throw new Error("Failed to flush join logs before day rollover cleanup.");
     });
@@ -467,13 +522,13 @@ describe("Disk I/O Worker protocol router", () => {
     try {
       // 逸出 onmessage 的异常会被 Bun 直接终止整条落盘线程：在途 flush 全按失败
       // 结算、各领域缓冲随线程一起没了，反复触发还会把整个进程停掉。
-      expect((): void => route({
+      await expect(route({
         type: "joinLog",
         chatId: -1,
         userId: 42,
         joinedAt: 1_000,
         day: "1970-01-01",
-      })).not.toThrow();
+      })).resolves.toBeUndefined();
     } finally {
       console.error = originalConsoleError;
     }
@@ -485,7 +540,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
-  test("恢复缓冲重放期间的入群写失败升级为停机回执，不只是记拒收", () => {
+  test("恢复缓冲重放期间的入群写失败升级为停机回执，不只是记拒收", async () => {
     // 重放的这条在崩溃窗口里就已经被 recordJoinLog 放行、update 也确认过了，
     // 后面没有任何 flush 会再问它写没写进去。只记拒收的话，标记会挂到某个无关的
     // 后续入群事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条毫无痕迹。
@@ -496,15 +551,15 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      route({ type: "recoveryReplay", active: true });
-      expect((): void => route({
+      await route({ type: "recoveryReplay", active: true });
+      await expect(route({
         type: "joinLog",
         chatId: -1,
         userId: 42,
         joinedAt: 1_000,
         day: "1970-01-01",
-      })).not.toThrow();
-      route({ type: "recoveryReplay", active: false });
+      })).resolves.toBeUndefined();
+      await route({ type: "recoveryReplay", active: false });
     } finally {
       console.error = originalConsoleError;
     }
@@ -519,9 +574,9 @@ describe("Disk I/O Worker protocol router", () => {
     expect(consumeJoinLogRejection()).toBeTrue();
   });
 
-  test("重放窗口关闭后写失败回到常规语义，不再升级为停机", () => {
-    route({ type: "recoveryReplay", active: true });
-    route({ type: "recoveryReplay", active: false });
+  test("重放窗口关闭后写失败回到常规语义，不再升级为停机", async () => {
+    await route({ type: "recoveryReplay", active: true });
+    await route({ type: "recoveryReplay", active: false });
     handleJoinLogMessage.mockImplementationOnce((): void => {
       throw new Error("Failed to flush join logs before day rollover cleanup.");
     });
@@ -529,7 +584,7 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      route({ type: "joinLog", chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01" });
+      await route({ type: "joinLog", chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01" });
     } finally {
       console.error = originalConsoleError;
     }
@@ -538,8 +593,8 @@ describe("Disk I/O Worker protocol router", () => {
     expect(consumeJoinLogRejection()).toBeTrue();
   });
 
-  test("入群日志查询总有显式成功或失败回执", () => {
-    route({
+  test("入群日志查询总有显式成功或失败回执", async () => {
+    await route({
       type: "readJoinLog",
       requestId: 15,
       chatId: -1,
@@ -555,7 +610,7 @@ describe("Disk I/O Worker protocol router", () => {
     readJoinLog.mockImplementationOnce(() => {
       throw new Error("corrupt join log");
     });
-    route({
+    await route({
       type: "readJoinLog",
       requestId: 16,
       chatId: -1,
@@ -569,9 +624,9 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("密钥请求总有显式成功或失败回执", () => {
+  test("密钥请求总有显式成功或失败回执", async () => {
     hydratedLuckEntries.set("confirmed", { label: "大吉", fortunePercent: 99 });
-    route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 8 });
+    await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 8 });
     expect(flushLuckAppends).toHaveBeenCalledTimes(1);
     expect(hydrateLuckDay).toHaveBeenCalledWith("2026-07-22");
     expect(recoverLuckReceiptSecret).toHaveBeenLastCalledWith({
@@ -585,7 +640,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
 
     recoverLuckReceiptSecret.mockImplementationOnce(() => { throw new Error("corrupt secret"); });
-    route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 9 });
+    await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 9 });
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "luckSecret",
       requestId: 9,
@@ -593,10 +648,10 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("跨日密钥请求先提交旧日追加缓冲，刷盘失败时不切换 owner", () => {
+  test("跨日密钥请求先提交旧日追加缓冲，刷盘失败时不切换 owner", async () => {
     luckWorkerCache.current = { day: "2026-07-21", entries: new Map() };
 
-    route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 10 });
+    await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 10 });
 
     expect(flushLuckAppends).toHaveBeenCalledTimes(1);
     expect(hydrateLuckDay).toHaveBeenCalledWith("2026-07-22");
@@ -609,7 +664,7 @@ describe("Disk I/O Worker protocol router", () => {
     luckWorkerCache.current = { day: "2026-07-21", entries: new Map() };
     flushLuckAppends.mockReturnValueOnce(false);
 
-    route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 11 });
+    await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 11 });
 
     expect(hydrateLuckDay).not.toHaveBeenCalled();
     expect(recoverLuckReceiptSecret).not.toHaveBeenCalled();
@@ -621,10 +676,10 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("启动恢复先加载当天结果，再把确认数交给密钥一致性检查", () => {
+  test("启动恢复先加载当天结果，再把确认数交给密钥一致性检查", async () => {
     hydratedLuckEntries.set("confirmed", { label: "大吉", fortunePercent: 99 });
 
-    route({ type: "load" });
+    await route({ type: "load", stickerPacks: ["pack_a"] });
 
     expect(inspectLuckDayState).toHaveBeenCalledTimes(1);
     expect(inspectLuckReceiptSecret).toHaveBeenLastCalledWith({
@@ -638,49 +693,102 @@ describe("Disk I/O Worker protocol router", () => {
     }));
   });
 
-  test("贴纸白名单写坏时拒绝启动恢复，不进入状态对账或后续 owner", () => {
-    stickerConfigFailure = "config/stickers.json: $.packs must be an array.";
-    const originalConsoleError = console.error;
-    console.error = consoleError as unknown as typeof console.error;
-    try {
-      route({ type: "load" });
-    } finally {
-      console.error = originalConsoleError;
-    }
+  test("主线程已校验的贴纸白名单快照原样用于恢复 inspect", async () => {
+    await route({ type: "load", stickerPacks: ["pack_b"] });
 
-    expect(inspectStickerCatalogSnapshots).not.toHaveBeenCalled();
-    expect(consoleError).toHaveBeenCalledTimes(1);
-    expect(inspectLuckDayState).not.toHaveBeenCalled();
-    expect(inspectJoinLogFiles).not.toHaveBeenCalled();
-    expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: "loaded",
-      error: "config/stickers.json: $.packs must be an array.",
-    }));
+    expect(inspectStickerCatalogSnapshots).toHaveBeenCalledWith(["pack_b"]);
   });
 
-  test("白名单可读时先只读 inspect，成功回执后才执行孤儿维护", () => {
-    route({ type: "load" });
+  test("白名单可读时先只读 inspect，成功回执后才执行孤儿维护", async () => {
+    await route({ type: "load", stickerPacks: ["pack_a"] });
 
     expect(inspectStickerCatalogSnapshots).toHaveBeenCalledWith(["pack_a"]);
     expect(inspectJoinLogFiles).toHaveBeenCalledTimes(1);
     expect(adoptStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
     expect(maintainStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
     expect(maintainAdSampleFiles).toHaveBeenCalledTimes(1);
-    expect(sweepExpiredTemporaryWhitelistActivities).toHaveBeenCalledTimes(1);
+    expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledTimes(1);
     expect(diskIOMaintenanceCron.current).not.toBeNull();
     expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(
       maintainStickerCatalogSnapshots.mock.invocationCallOrder[0]!
     );
   });
 
-  test("最后一个 SQLite inspect 失败时不 adopt、不维护也不注册 cron", () => {
+  test("load 未完成时后续业务写只排队，不得穿过恢复事务", async () => {
+    let releaseInspection: ((inspection: StickerInspection) => void) | null = null;
+    inspectStickerCatalogSnapshots.mockImplementationOnce(
+      (_packs: readonly string[]): Promise<StickerInspection> => new Promise<StickerInspection>(
+        (resolve: (inspection: StickerInspection) => void): void => {
+          releaseInspection = resolve;
+        }
+      )
+    );
+
+    const load: Promise<void> = queueDiskIOWorkerMessage({
+      type: "load",
+      stickerPacks: ["pack_a"],
+    });
+    const write: Promise<void> = queueDiskIOWorkerMessage({
+      type: "joinLog",
+      chatId: -1,
+      userId: 42,
+      joinedAt: 1_000,
+      day: "1970-01-01",
+    });
+    await Bun.sleep(0);
+
+    expect(inspectStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
+    expect(handleJoinLogMessage).not.toHaveBeenCalled();
+    expect(releaseInspection).not.toBeNull();
+    releaseInspection!({ kind: "stickers" });
+    await load;
+    await write;
+
+    expect(handleJoinLogMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      handleJoinLogMessage.mock.invocationCallOrder[0]!
+    );
+  });
+
+  test("任一异步内容 inspect 失败时不 adopt、不维护其它领域", async () => {
+    inspectStickerCatalogSnapshots.mockImplementationOnce(
+      async (): Promise<StickerInspection> => {
+        throw new Error("memory/sticker_catalog: $ must be readable valid JSON snapshots.");
+      }
+    );
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      await route({ type: "load", stickerPacks: ["pack_a"] });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(adoptLogFiles).not.toHaveBeenCalled();
+    expect(adoptAiMemorySnapshots).not.toHaveBeenCalled();
+    expect(adoptStickerCatalogSnapshots).not.toHaveBeenCalled();
+    expect(adoptLuckDay).not.toHaveBeenCalled();
+    expect(adoptVerificationDay).not.toHaveBeenCalled();
+    expect(adoptStorageDatabase).not.toHaveBeenCalled();
+    expect(maintainLogFiles).not.toHaveBeenCalled();
+    expect(maintainAiMemorySnapshots).not.toHaveBeenCalled();
+    expect(maintainStickerCatalogSnapshots).not.toHaveBeenCalled();
+    expect(maintainAdSampleFiles).not.toHaveBeenCalled();
+    expect(diskIOMaintenanceCron.current).toBeNull();
+    expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "loaded",
+      error: "memory/sticker_catalog: $ must be readable valid JSON snapshots.",
+    }));
+  });
+
+  test("最后一个 SQLite inspect 失败时不 adopt、不维护也不注册 cron", async () => {
     inspectStorageDatabase.mockImplementationOnce((): { readonly kind: "storage" } => {
       throw new Error("database/storage.sqlite: $.schema must be the current schema.");
     });
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      route({ type: "load" });
+      await route({ type: "load", stickerPacks: ["pack_a"] });
     } finally {
       console.error = originalConsoleError;
     }
@@ -694,7 +802,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(maintainLuckDayState).not.toHaveBeenCalled();
     expect(maintainVerificationDay).not.toHaveBeenCalled();
     expect(maintainAdSampleFiles).not.toHaveBeenCalled();
-    expect(sweepExpiredTemporaryWhitelistActivities).not.toHaveBeenCalled();
+    expect(maintainTemporaryWhitelistActivities).not.toHaveBeenCalled();
     expect(diskIOMaintenanceCron.current).toBeNull();
     expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       type: "loaded",
@@ -702,9 +810,9 @@ describe("Disk I/O Worker protocol router", () => {
     }));
   });
 
-  test("flush 不短路其它 owner，并按领域回报失败", () => {
+  test("flush 不短路其它 owner，并按领域回报失败", async () => {
     flushAiMemorySnapshots.mockReturnValueOnce(false);
-    route({ type: "flush", flushId: 11, scope: "all" });
+    await route({ type: "flush", flushId: 11, scope: "all" });
 
     for (const fn of [
       flushLogBuffer,
@@ -727,7 +835,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
 
     flushBlocklistRemovalOutbox.mockReturnValueOnce(false);
-    route({ type: "flush", flushId: 12, scope: "all" });
+    await route({ type: "flush", flushId: 12, scope: "all" });
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "flushFailed",
       flushedId: 12,
@@ -735,8 +843,8 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("诊断重建前的 business flush 跳过故障日志，但完整刷完全部权威业务领域", () => {
-    route({ type: "flush", flushId: 13, scope: "business" });
+  test("诊断重建前的 business flush 跳过故障日志，但完整刷完全部权威业务领域", async () => {
+    await route({ type: "flush", flushId: 13, scope: "business" });
 
     expect(flushLogBuffer).not.toHaveBeenCalled();
     for (const fn of [
@@ -752,8 +860,8 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 13 });
   });
 
-  test("十二个领域全部成功时回执不带失败领域", () => {
-    route({ type: "flush", flushId: 14, scope: "all" });
+  test("十二个领域全部成功时回执不带失败领域", async () => {
+    await route({ type: "flush", flushId: 14, scope: "all" });
 
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 14 });
   });

@@ -289,7 +289,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       });
       first.onerror!({ message: "runtime crash" } as ErrorEvent);
       const recovery: FakeWorker = FakeWorker.instances[1]!;
-      expect(recovery.messages).toEqual([{ type: "load" }]);
+      expect(recovery.messages).toEqual([expect.objectContaining({ type: "load" })]);
       expect(diskIO.postDiskIO(luckDraw)).toBeTrue();
       emitSuccessfulLoad(recovery);
       await Promise.resolve();

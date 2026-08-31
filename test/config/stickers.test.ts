@@ -3,11 +3,11 @@ import { loadStickerConfig, parseStickerConfig } from "../../packages/config/sti
 import { MAX_CONFIGURED_STICKER_PACKS } from "../../packages/consts/aiChat/stickers";
 
 describe("sticker config", () => {
-  test("严格解析合法白名单，并能加载部署文件", () => {
+  test("严格解析合法白名单，并能加载部署文件", async () => {
     expect(parseStickerConfig({ packs: ["pack_one", "Pack2"] })).toEqual({
       packs: ["pack_one", "Pack2"],
     });
-    expect(loadStickerConfig().packs.length).toBeGreaterThan(0);
+    expect((await loadStickerConfig()).packs.length).toBeGreaterThan(0);
   });
 
   test("拒绝重复、非法 short name 和额外字段", () => {

@@ -11,6 +11,7 @@ import * as diskIO from "../diskIO";
 import {
   advanceTemporaryWhitelistActivity,
   isTemporaryWhitelistActive,
+  isTemporaryWhitelistActivityRetained,
 } from "../../states/temporaryWhitelist";
 import type {
   DiskIORecoveryTransport,
@@ -29,12 +30,23 @@ export function isTemporaryWhitelistActivityCached(id: number): boolean {
   return temporaryWhitelistActivityCache.has(id);
 }
 
-/** 查询当前临时白名单成员关系；关系只由显式删除撤销。 */
+/** 查询墙钟当前东京日仍有效的临时白名单成员关系。 */
 export function hasActiveTemporaryWhitelist(id: number): boolean {
   const activity: Readonly<TemporaryWhitelistActivity> | null | undefined =
     temporaryWhitelistActivityCache.get(id);
   if (!activity?.tempWhite) return false;
   return isTemporaryWhitelistActive(activity);
+}
+
+/** 使用同一消息已经捕获的墙钟值查询临时白名单成员关系。 */
+export function hasActiveTemporaryWhitelistAt(
+  id: number,
+  now: number
+): boolean {
+  const activity: Readonly<TemporaryWhitelistActivity> | null | undefined =
+    temporaryWhitelistActivityCache.get(id);
+  if (!activity?.tempWhite) return false;
+  return isTemporaryWhitelistActive(activity, now);
 }
 
 /** 批量读取回执叠加主线程未 ACK 最终值后写入 8192 项正/负 LRU。 */
@@ -105,7 +117,14 @@ function queueTemporaryWhitelistWrite(
   return false;
 }
 
-/** 计入一条已通过入口门禁的群发言；冷缺失时 fail closed，不创建猜测记录。 */
+/**
+ * 计入一条已通过入口门禁的群发言；冷缺失时 fail closed，不创建猜测记录。
+ *
+ * 状态机原样返回入参（当天已达标后的稳态）时没有新事实要落盘：跳过 revision
+ * 递增、LRU 写、未 ACK 记账与一次到 Disk I/O 线程的 structured clone，`queued`
+ * 仍为 true。这一路同时跳过 `LruCache.set` 的热度刷新，因此调用方必须在同一条
+ * 消息上先经 `hasActiveTemporaryWhitelistAt` 读过该主键，由那次 `get` 维持热度。
+ */
 export function recordTemporaryWhitelistActivity(
   id: number,
   now: number = Date.now()
@@ -115,6 +134,7 @@ export function recordTemporaryWhitelistActivity(
     temporaryWhitelistActivityCache.peek(id) ?? null;
   const activity: Readonly<TemporaryWhitelistActivity> =
     advanceTemporaryWhitelistActivity(current, now);
+  if (activity === current) return { activity, queued: true };
   return {
     activity,
     queued: queueTemporaryWhitelistWrite(id, activity),
@@ -143,6 +163,7 @@ function settleTemporaryWhitelistWrites(reply: IdentityStoragePersistedReply): v
 }
 
 function replayTemporaryWhitelistWrites(transport: DiskIORecoveryTransport): boolean {
+  const now: number = Date.now();
   const writes: readonly (readonly [number, UnacknowledgedTemporaryWhitelistWrite])[] =
     [...unacknowledgedTemporaryWhitelistWrites.entries()].sort(
       (
@@ -151,10 +172,23 @@ function replayTemporaryWhitelistWrites(transport: DiskIORecoveryTransport): boo
       ): number => left[1].revision - right[1].revision
     );
   for (const [id, change] of writes) {
+    const activity: Readonly<TemporaryWhitelistActivity> | null =
+      change.activity !== null &&
+        isTemporaryWhitelistActivityRetained(change.activity, now)
+        ? change.activity
+        : null;
+    if (activity !== change.activity) {
+      const normalized: UnacknowledgedTemporaryWhitelistWrite = {
+        activity,
+        revision: change.revision,
+      };
+      unacknowledgedTemporaryWhitelistWrites.set(id, normalized);
+      temporaryWhitelistActivityCache.set(id, activity);
+    }
     if (!transport.post({
       type: "temporaryWhitelistWrite",
       id,
-      activity: change.activity,
+      activity,
       revision: change.revision,
     } satisfies TemporaryWhitelistWriteDiskMessage)) return false;
   }

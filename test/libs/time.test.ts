@@ -3,6 +3,7 @@ import {
   formatTokyoTime,
   getCurrentTime,
   getTokyoDayIndex,
+  getTokyoDayStartTimestamp,
   getTokyoHour,
 } from "../../packages/libs/time";
 import type { CurrentTimeResult } from "../../packages/libs/time";
@@ -104,6 +105,18 @@ describe("libs/time getTokyoDayIndex", () => {
     expect(() => getTokyoDayIndex(Number.MAX_SAFE_INTEGER + 1)).toThrow(
       "non-negative safe integer"
     );
+  });
+
+  test("东京日 UTC 起点在零点推进且安全整数上界不经乘法溢出", () => {
+    const beforeMidnight: number = Date.UTC(2026, 7, 30, 14, 59, 59, 999);
+    const midnight: number = beforeMidnight + 1;
+    expect(getTokyoDayStartTimestamp(beforeMidnight))
+      .toBe(Date.UTC(2026, 7, 29, 15));
+    expect(getTokyoDayStartTimestamp(midnight)).toBe(midnight);
+    const maximumStart: number = getTokyoDayStartTimestamp(Number.MAX_SAFE_INTEGER);
+    expect(Number.isSafeInteger(maximumStart)).toBeTrue();
+    expect(maximumStart).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+    expect(Number.MAX_SAFE_INTEGER - maximumStart).toBeLessThan(24 * 60 * 60 * 1_000);
   });
 });
 

@@ -21,7 +21,7 @@ const initDiskIO = mock((options?: { onFatal?: (error: Error) => void }): void =
   diskIOFatalHandler = options?.onFatal;
 });
 const cleanupOrphanedTempFiles = mock(async (): Promise<void> => { calls.push("cleanupTemps"); });
-const validateExistingDeploymentInputs = mock((): void => {
+const validateExistingDeploymentInputs = mock(async (): Promise<void> => {
   calls.push("validateDeploymentInputs");
 });
 const seedMissingAssetState = mock((): number => { calls.push("seedAssets"); return 0; });

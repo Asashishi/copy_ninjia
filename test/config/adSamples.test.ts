@@ -3,13 +3,13 @@ import { getAdSampleConfig, loadAdSampleConfig, parseAdSampleConfig } from "../.
 import { AD_SAMPLE_MAX_CHARS, MAX_CONFIGURED_AD_SAMPLES } from "../../packages/consts/antiRaid/adDetect";
 
 describe("ad samples config", () => {
-  test("顶层就是字符串数组，空白折叠成单行后原样保留", () => {
+  test("顶层就是字符串数组，空白折叠成单行后原样保留", async () => {
     // 示例按行拼进提示词；带换行的一条会被撕成看起来彼此无关的几条。
     expect(parseAdSampleConfig([" 加  微信\n拉群 ", "USDT 承兑"])).toEqual([
       "加 微信 拉群",
       "USDT 承兑",
     ]);
-    expect(loadAdSampleConfig().length).toBeGreaterThan(0);
+    expect((await loadAdSampleConfig()).length).toBeGreaterThan(0);
   });
 
   test("拒绝非数组、非字符串、空白与重复条目", () => {
@@ -43,9 +43,9 @@ describe("ad samples config", () => {
     probe[0] = "x";
   });
 
-  test("默认配置按进程惰性加载一次，之后复用同一份", () => {
+  test("默认配置由启动快照提供，之后复用同一份", async () => {
     // 提示词每次判定都要拼一遍；每次重读部署文件既慢又会让口径中途漂移。
     expect(getAdSampleConfig()).toBe(getAdSampleConfig());
-    expect(getAdSampleConfig()).toEqual(loadAdSampleConfig());
+    expect(getAdSampleConfig()).toEqual(await loadAdSampleConfig());
   });
 });

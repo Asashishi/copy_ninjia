@@ -2,8 +2,6 @@ import {
   hasWhitelistPermission,
   isWhitelisted,
 } from "../infra/identityPolicy/whitelist";
-import { hasActiveTemporaryWhitelist } from
-  "../infra/identityPolicy/temporaryWhitelist";
 import { isAdminStatus } from "../libs/chatMember";
 import type { ChatMember } from "@grammyjs/types";
 import type { AntiRaidMember } from "../types/antiRaid/protocol";
@@ -25,15 +23,22 @@ export function isProtectedSender(senderId: number): boolean {
   return isWhitelisted(senderId);
 }
 
-/** 广告检测专用豁免：永久白名单成员与持有逐项权限的临时成员都不进入检测。 */
-export function canBypassAdDetection(senderId: number): boolean {
-  return isWhitelisted(senderId) ||
-    hasActiveTemporaryWhitelist(senderId);
+/** 广告检测专用豁免：只按当前有效权限的广告检测单项决定。 */
+export function canBypassAdDetection(
+  senderId: number,
+  now?: number
+): boolean {
+  return hasWhitelistPermission(
+    senderId,
+    "isCanBypassAdDetection",
+    now
+  );
 }
 
-/** 防刷屏专用豁免：按逐项权限决定，超级管理员恒持有该权限。 */
+/** 防刷屏专用豁免：永久白名单按逐项权限决定，超级管理员恒持有该权限。 */
 export function canBypassFloodControl(senderId: number): boolean {
-  return hasWhitelistPermission(senderId, "isCanBypassFloodControl");
+  return isWhitelisted(senderId) &&
+    hasWhitelistPermission(senderId, "isCanBypassFloodControl");
 }
 
 export interface PickMemberParams {

@@ -70,6 +70,7 @@ import {
   readValidatedJoinLogFile,
 } from "./joinLogRecovery";
 import type { ValidatedJoinLogFile } from "./joinLogRecovery";
+import { enqueueDiskIOOperation } from "./operationQueue";
 export {
   inspectJoinLogFiles,
   maintainJoinLogFiles,
@@ -133,16 +134,19 @@ function maybeCompactJoinLogFile(
  * 首次接管某群某日文件时严格校验领域 schema、容量与规范追加格式；任何
  * 损坏都保留原始字节并拒绝接管。成功后恢复 latest-by-user 索引。
  */
-function openJoinLogFile(chatId: number, day: string): JoinLogFileCache {
+async function openJoinLogFile(
+  chatId: number,
+  day: string
+): Promise<JoinLogFileCache> {
   const path: string = joinLogPath(chatId, day);
   const existing: ValidatedJoinLogFile | null = existsSync(path)
-    ? readValidatedJoinLogFile(path)
+    ? await readValidatedJoinLogFile(path)
     : null;
   const parsed: Record<string, JoinLogRecord> = existing === null
     ? {}
     : existing.parsed;
   const state: AppendOnlyFileState = existing === null
-    ? openAppendOnlyFile(path, PERSISTED_FILE_MODE)
+    ? await openAppendOnlyFile(path, PERSISTED_FILE_MODE)
     : openValidatedAppendOnlyFile({
       path,
       content: existing.content,
@@ -172,22 +176,22 @@ function openJoinLogFile(chatId: number, day: string): JoinLogFileCache {
   return cache;
 }
 
-function getJoinLogFileCache(
+async function getJoinLogFileCache(
   chatId: number,
   day: string
-): JoinLogFileCache {
+): Promise<JoinLogFileCache> {
   const key: string = fileKey(chatId, day);
   const cached: JoinLogFileCache | undefined = joinLogFileCaches.get(key);
   if (cached !== undefined) return cached;
-  const cache: JoinLogFileCache = openJoinLogFile(chatId, day);
+  const cache: JoinLogFileCache = await openJoinLogFile(chatId, day);
   joinLogFileCaches.set(key, cache);
   return cache;
 }
 
-function ensureCurrentDayPrepared(today: string): void {
+async function ensureCurrentDayPrepared(today: string): Promise<void> {
   if (joinLogCleanupDay.current === today) return;
   // 先提交跨日前仍在缓冲中的记录，再清理保留窗口外文件，不能先删后刷。
-  const failedKeys: ReadonlySet<string> = flushJoinLogEntries();
+  const failedKeys: ReadonlySet<string> = await flushJoinLogEntries();
   if (failedKeys.size > 0) {
     // 但「先删后刷」只在**这次要删掉的那一天**仍有未落盘条目时才成立。任意一个
     // 群写失败就整体拒绝跨日准备的话，每一条新入群事实都会卡在同一个检查上
@@ -203,20 +207,20 @@ function ensureCurrentDayPrepared(today: string): void {
 }
 
 /** 每日维护先提交跨日前缓冲，再清理入群日志保留窗口外的文件。 */
-export function maintainJoinLogRetention(
+export async function maintainJoinLogRetention(
   today: string = getTokyoDateKey()
-): void {
-  ensureCurrentDayPrepared(today);
+): Promise<void> {
+  await ensureCurrentDayPrepared(today);
   if (joinLogCleanupDay.current !== today) {
     throw new Error("Failed to flush expiring join logs before daily retention maintenance.");
   }
 }
 
-function writeFileEntries(
+async function writeFileEntries(
   chatId: number,
   day: string,
   entries: readonly BufferedJoinLogEntry[]
-): boolean {
+): Promise<boolean> {
   if (entries.length === 0) return true;
   mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
   const key: string = fileKey(chatId, day);
@@ -226,7 +230,7 @@ function writeFileEntries(
     return false;
   }
   try {
-    const cache: JoinLogFileCache = getJoinLogFileCache(chatId, day);
+    const cache: JoinLogFileCache = await getJoinLogFileCache(chatId, day);
     const newest: BufferedJoinLogEntry[] =
       newestBufferedJoinLogRecords(entries, cache.latestByUser);
     if (newest.length === 0) {
@@ -279,7 +283,7 @@ function writeFileEntries(
       texts.push(serializeJoinLogSnapshotEntry(entry.record));
     }
     const chunk: string = texts.join(",\n");
-    appendToAppendOnlyFile({
+    await appendToAppendOnlyFile({
       path,
       state: cache.state,
       chunk,
@@ -317,7 +321,9 @@ function scheduleJoinLogFlush(delayMs: number = FLUSH_INTERVAL_MS): void {
   if (joinLogBuffer.timer !== null) return;
   joinLogBuffer.timer = setTimeout((): void => {
     joinLogBuffer.timer = null;
-    flushJoinLogBuffer();
+    void enqueueDiskIOOperation(async (): Promise<void> => {
+      await flushJoinLogBuffer();
+    });
   }, delayMs);
   joinLogBuffer.timer.unref();
 }
@@ -331,7 +337,7 @@ function scheduleJoinLogFlush(delayMs: number = FLUSH_INTERVAL_MS): void {
  * 都只关心自己那几个 `chatId:day`，用全局布尔判会让健康群的 `/batch_kick`
  * 一起失败，而它自己的日志文件完好且早已刷盘。
  */
-function flushJoinLogEntries(): ReadonlySet<string> {
+async function flushJoinLogEntries(): Promise<ReadonlySet<string>> {
   if (joinLogBuffer.timer !== null) {
     clearTimeout(joinLogBuffer.timer);
     joinLogBuffer.timer = null;
@@ -365,7 +371,7 @@ function flushJoinLogEntries(): ReadonlySet<string> {
   const failedEntries: BufferedJoinLogEntry[] = [];
   const failedKeys: Set<string> = new Set<string>();
   for (const [key, group] of groups) {
-    if (!writeFileEntries(group.chatId, group.day, group.entries)) {
+    if (!await writeFileEntries(group.chatId, group.day, group.entries)) {
       failedEntries.push(...group.entries);
       failedKeys.add(key);
     }
@@ -379,8 +385,8 @@ function flushJoinLogEntries(): ReadonlySet<string> {
 }
 
 /** 缓冲整体落盘成功；调用方只关心「有没有失败」时用它。 */
-export function flushJoinLogBuffer(): boolean {
-  return flushJoinLogEntries().size === 0;
+export async function flushJoinLogBuffer(): Promise<boolean> {
+  return (await flushJoinLogEntries()).size === 0;
 }
 
 /**
@@ -391,8 +397,8 @@ export function flushJoinLogBuffer(): boolean {
  * 这些条目写进去了没有」，不能被一条压根没进缓冲的事实反复卡住（那会让每一条
  * 新入群事件都在同一个跨日检查上抛错）。拒收标记只在这一个出口消费。
  */
-export function flushJoinLogDomain(): boolean {
-  const flushed: boolean = flushJoinLogBuffer();
+export async function flushJoinLogDomain(): Promise<boolean> {
+  const flushed: boolean = await flushJoinLogBuffer();
   return consumeJoinLogRejection() ? false : flushed;
 }
 
@@ -411,7 +417,9 @@ export function flushJoinLogDomain(): boolean {
  *   （见 infra/joinLog.ts），这条入群从此在 `/batch_kick` 里查无此人、全链路零日志。
  *   抛出去交给统一的拒收出口：update 不被确认，Telegram 重投一次即可自愈。
  */
-export function handleJoinLogMessage(msg: JoinLogDiskMessage): void {
+export async function handleJoinLogMessage(
+  msg: JoinLogDiskMessage
+): Promise<void> {
   const today: string = getTokyoDateKey();
   // YYYY-MM-DD 定宽零填充，字典序即日期序。
   if (msg.day > today) {
@@ -422,7 +430,7 @@ export function handleJoinLogMessage(msg: JoinLogDiskMessage): void {
   if (!isRecentJoinLogDay(msg.day, today, JOIN_LOG_ACCEPTED_EVENT_DAYS)) {
     return;
   }
-  ensureCurrentDayPrepared(today);
+  await ensureCurrentDayPrepared(today);
   const length: number = markJoinLogDirty({
     chatId: msg.chatId,
     day: msg.day,
@@ -432,7 +440,7 @@ export function handleJoinLogMessage(msg: JoinLogDiskMessage): void {
     },
   });
   if (length >= FLUSH_MAX_ENTRIES) {
-    flushJoinLogBuffer();
+    await flushJoinLogBuffer();
     return;
   }
   scheduleJoinLogFlush();
@@ -442,9 +450,9 @@ export function handleJoinLogMessage(msg: JoinLogDiskMessage): void {
  * 按命令读取本群滚动窗口。先刷 FIFO 中更早到达的入群消息，再读取窗口覆盖的
  * 一至两个东京日期；同一用户多次重入只返回最后一次。
  */
-export function readJoinLog(
+export async function readJoinLog(
   request: ReadJoinLogRequest
-): readonly JoinLogRecord[] {
+): Promise<readonly JoinLogRecord[]> {
   if (
     !Number.isSafeInteger(request.since) ||
     !Number.isSafeInteger(request.now) ||
@@ -455,8 +463,8 @@ export function readJoinLog(
     throw new RangeError("Join log read window must be a safe rolling interval of at most 24 hours.");
   }
   const today: string = getTokyoDateKey();
-  ensureCurrentDayPrepared(today);
-  const failedKeys: ReadonlySet<string> = flushJoinLogEntries();
+  await ensureCurrentDayPrepared(today);
+  const failedKeys: ReadonlySet<string> = await flushJoinLogEntries();
 
   const firstDay: string = getTokyoDateKey(new Date(request.since));
   const lastDay: string = getTokyoDateKey(new Date(request.now));
@@ -479,7 +487,7 @@ export function readJoinLog(
     const path: string = joinLogPath(request.chatId, day);
     if (!existsSync(path)) continue;
     const cache: JoinLogFileCache =
-      getJoinLogFileCache(request.chatId, day);
+      await getJoinLogFileCache(request.chatId, day);
     for (const record of cache.latestByUser.values()) {
       if (record.joinedAt < request.since || record.joinedAt > request.now) {
         continue;

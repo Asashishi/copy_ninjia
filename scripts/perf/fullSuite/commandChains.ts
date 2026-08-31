@@ -80,7 +80,7 @@ function adDetectCommandChain(
     operations: dependencies.chainAdDetectCommands,
     recordsPerOperation: 1,
     prepare: async (): Promise<void> => {
-      dependencies.ensureAdDetectAgentConfig();
+      await dependencies.ensureAdDetectAgentConfig();
       dependencies.adDetectOpenAiClientHolder.current = {
         chat: {
           completions: {
@@ -203,8 +203,8 @@ function aiReplyCommandChain(
     recordsPerOperation: 1,
     warmupOperations: dependencies.aiReplyWarmupOperations,
     excludedNanoseconds: (): number => pauseNs.current,
-    prepare: (): void => {
-      dependencies.ensureAgentDeploymentConfig();
+    prepare: async (): Promise<void> => {
+      await dependencies.ensureAgentDeploymentConfig();
       dependencies.botInfoState.current = {
         id: 1,
         username: "benchmark_bot",

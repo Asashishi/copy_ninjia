@@ -203,7 +203,7 @@ describe("Anti-Raid Worker lifecycle", () => {
     expect(workerSelf.onmessage).not.toBeNull();
 
     const messages: AntiRaidWorkerMessage[] = [
-      { type: "agentConfig", adDetect: injectedAdDetectConfig },
+      { type: "agentConfig", adDetect: injectedAdDetectConfig, adSamples: [] },
       {
         type: "join",
         chatId: -1001,

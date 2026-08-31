@@ -1,4 +1,5 @@
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, inArray, isNull, lt, or } from "drizzle-orm";
+import { DAY_MS } from "../../consts/diskIO/common";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../consts/identityStorage";
 import { temporaryWhitelistEntries } from "../schema/temporaryWhitelist";
 import type { StorageDatabase } from "../../types/storageDatabase";
@@ -19,17 +20,26 @@ export function readStoredTemporaryWhitelistActivities(
     .where(inArray(temporaryWhitelistEntries.id, ids)).all();
 }
 
-/** 东京零点物理删除滚动 24 小时前已停止发言的未授权累计行。 */
-export function deleteExpiredTemporaryWhitelistActivities(
+/** 删除不属于当天、也未在刚结束的东京日达标的累计行。 */
+export function deleteStaleTemporaryWhitelistActivities(
   database: StorageDatabase,
-  cutoff: number
+  currentDayStart: number,
+  previousDayStart: number
 ): void {
-  if (!Number.isSafeInteger(cutoff) || cutoff < 0) {
-    throw new RangeError("Temporary whitelist cleanup cutoff must be a non-negative safe integer.");
+  if (
+    !Number.isSafeInteger(currentDayStart) ||
+    !Number.isSafeInteger(previousDayStart) ||
+    previousDayStart < 0 ||
+    currentDayStart - previousDayStart !== DAY_MS
+  ) {
+    throw new RangeError("Temporary whitelist cleanup day bounds must be increasing non-negative safe integers.");
   }
   database.delete(temporaryWhitelistEntries)
     .where(and(
-      eq(temporaryWhitelistEntries.tempWhite, false),
-      lt(temporaryWhitelistEntries.countedAt, cutoff)
+      lt(temporaryWhitelistEntries.countedAt, currentDayStart),
+      or(
+        isNull(temporaryWhitelistEntries.qualifiedAt),
+        lt(temporaryWhitelistEntries.qualifiedAt, previousDayStart)
+      )
     )).run();
 }

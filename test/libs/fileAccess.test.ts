@@ -11,7 +11,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -53,6 +53,23 @@ describe("持久化路径的启动权限检查", () => {
     expect(() => assertFileReadableWritable(path)).toThrow(
       `${path}: $mode must be readable and writable by the runtime account ` +
       "without changing the existing mode."
+    );
+  });
+
+  test("目录与符号链接即使可读写也不能伪装成持久化普通文件", () => {
+    const root: string = tempRoot();
+    const directoryPath: string = join(root, "state.json");
+    const targetPath: string = join(root, "target.json");
+    const linkPath: string = join(root, "linked.json");
+    mkdirSync(directoryPath);
+    writeFileSync(targetPath, "{}");
+    symlinkSync(targetPath, linkPath);
+
+    expect(() => assertFileReadableWritable(directoryPath)).toThrow(
+      `${directoryPath}: $type must be a regular file without symbolic-link indirection.`
+    );
+    expect(() => assertFileReadableWritable(linkPath)).toThrow(
+      `${linkPath}: $type must be a regular file without symbolic-link indirection.`
     );
   });
 

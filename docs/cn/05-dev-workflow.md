@@ -22,12 +22,13 @@
 | `bun run test:random` | 固定种子的乱序全量测试，用于暴露测试间残留 |
 | `bun run test:coverage` | 测试 + 全源码覆盖率 |
 | `bun run check:install-script-syntax` | 只用 `bash -n` 解析 `install.sh` 的 shell 语法；不执行安装脚本 |
+| `bun run check:install-isolation` | 在 `copy-ninjia-install-test-*` 专属临时根的夹具里实跑 `install.sh`（`scripts/checkInstallIsolation.ts`），核对暂存失败清理、`telegram.json` 回滚、中断续跑、成功替换、符号链接拓扑、未校验备份保留与凭据隔离；不触碰任何真实部署路径 |
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
-| `bun run check` | conventions + lint + typecheck + coverage + 热路径门禁，**提交前必跑** |
+| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 热路径门禁，共七段，**提交前必跑** |
 | `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；因为要整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
-| `bun run perf:hot-path-gate` | 全部热路径场景的内存/GC/JIT 门禁，已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 30 个，其余只进 `perf:full`），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
@@ -49,7 +50,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2996 tests / 304 files / 97236 次 `expect()`**；全源码**函数覆盖率 96.50% / 行覆盖率 97.16%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3025 tests / 310 files / 97583 次 `expect()`**；全源码**函数覆盖率 96.59% / 行覆盖率 97.16%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 

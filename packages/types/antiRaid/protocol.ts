@@ -1,7 +1,7 @@
 import type { ChatPermissions } from "@grammyjs/types";
 import type { RemoveBlockedMembersParams } from "../blocklist";
 import type { LockdownPhase } from "../chatState";
-import type { AdDetectAgentConfig } from "../config";
+import type { AdDetectAgentConfig, AdSampleConfig } from "../config";
 import type { BotActionPermissions } from "../telegram";
 import type { TelegramWorkerRequest } from "../telegramWorker";
 import type {
@@ -222,6 +222,7 @@ export interface ChatKindChangedMessage {
 export interface AntiRaidAgentConfigMessage {
   type: "agentConfig";
   adDetect: AdDetectAgentConfig | null;
+  adSamples: AdSampleConfig | null;
 }
 
 /** 主线程 -> Worker：FIFO mailbox barrier；此前消息完成同步状态转移后回执。 */

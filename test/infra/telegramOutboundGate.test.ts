@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { RawApi, Transformer } from "grammy";
 import { settleTestBatch } from "../libs/helpers";
 import {
@@ -7,6 +7,7 @@ import {
   telegramOutboundGateState,
 } from "../../packages/cache/main/telegram";
 import type {
+  TelegramOutboundJob,
   TelegramRetryCategory,
   TelegramRetryLane,
 } from "../../packages/types/telegramOutbound";
@@ -21,6 +22,7 @@ import {
   drainTelegramOutbound,
   initTelegramOutbound,
   quiesceTelegramOutbound,
+  telegramOutboundStats,
 } from "../../packages/infra/telegram/outboundLifecycle";
 import {
   telegramRetryCategoryFor,
@@ -247,6 +249,220 @@ describe("Telegram 主线程出站总闸", () => {
       },
     })).resolves.toEqual({ ok: true });
     expect(calls).toBe(1);
+  });
+
+  test("前一生命周期任一状态未结算时拒绝重新初始化", () => {
+    const queryLane: TelegramRetryLane = telegramOutboundGateState.lanes.query;
+    const cases: readonly Readonly<{
+      name: string;
+      install: () => void;
+    }>[] = [
+      {
+        name: "active count",
+        install: (): void => { telegramOutboundGateState.activeCount = 1; },
+      },
+      {
+        name: "retry pending count",
+        install: (): void => { telegramOutboundGateState.retryPendingCount = 1; },
+      },
+      {
+        name: "active job",
+        install: (): void => {
+          telegramOutboundGateState.activeJobs.add({} as TelegramOutboundJob);
+        },
+      },
+      {
+        name: "drain waiter",
+        install: (): void => {
+          const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {}, 60_000);
+          timer.unref();
+          telegramOutboundGateState.drainWaiters.add({
+            resolve: (_drained: boolean): void => {},
+            timer,
+          });
+        },
+      },
+      {
+        name: "retry timer",
+        install: (): void => {
+          queryLane.retryTimer = setTimeout((): void => {}, 60_000);
+          queryLane.retryTimer.unref();
+        },
+      },
+    ];
+
+    for (const lifecycleCase of cases) {
+      lifecycleCase.install();
+      expect(initTelegramOutbound).toThrow(
+        "Cannot initialize Telegram outbound while the previous lifecycle is unsettled."
+      );
+      resetGateState();
+    }
+  });
+
+  test("多个 drain waiter 在最后任务结算时一起完成并清除各自 timer", async () => {
+    const response: DeferredApiResponse = deferredApiResponse();
+    const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+    const request: Promise<unknown> = runTelegramCategorizedRequest({
+      category: "query",
+      execute: (_signal: AbortSignal): Promise<unknown> => response.promise,
+    });
+    const firstDrain: Promise<"flushed" | "timedOut" | "failed"> =
+      drainTelegramOutbound(10_000, { quiesce: false });
+    const secondDrain: Promise<"flushed" | "timedOut" | "failed"> =
+      drainTelegramOutbound(10_000, { quiesce: false });
+    const waiterTimers: readonly ReturnType<typeof setTimeout>[] = [
+      ...telegramOutboundGateState.drainWaiters,
+    ].map((waiter): ReturnType<typeof setTimeout> => waiter.timer);
+
+    expect(waiterTimers).toHaveLength(2);
+    response.resolve();
+    await expect(request).resolves.toEqual({ ok: true, result: true });
+    await expect(firstDrain).resolves.toBe("flushed");
+    await expect(secondDrain).resolves.toBe("flushed");
+    expect(telegramOutboundGateState.drainWaiters.size).toBe(0);
+    for (const timer of waiterTimers) {
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(timer);
+    }
+    clearTimeoutSpy.mockRestore();
+  });
+
+  test("预算耗尽时把其余 drain waiter 一并结算并清除各自 timer", async () => {
+    const previous: PreviousCall = ((): Promise<unknown> =>
+      new Promise<unknown>(() => {})) as PreviousCall;
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const pending: Promise<unknown> = transform(previous, "sendMessage", {
+      chat_id: -1001,
+      text: "never settles",
+    }) as Promise<unknown>;
+    const outcome: Promise<unknown> = pending.catch(
+      (error: unknown): unknown => error
+    );
+
+    const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+    const expiring: Promise<"flushed" | "timedOut" | "failed"> =
+      drainTelegramOutbound(1);
+    const waiting: Promise<"flushed" | "timedOut" | "failed"> =
+      drainTelegramOutbound(60_000, { quiesce: false });
+    const waiterTimers: readonly ReturnType<typeof setTimeout>[] = [
+      ...telegramOutboundGateState.drainWaiters,
+    ].map((waiter): ReturnType<typeof setTimeout> => waiter.timer);
+    expect(waiterTimers).toHaveLength(2);
+
+    // 先到期的那个 waiter 自己出队并触发全局 abort；剩下的必须由
+    // settleAllDrainWaiters 一起结算，而不是各等各的预算。
+    await expect(expiring).resolves.toBe("timedOut");
+    await expect(waiting).resolves.toBe("timedOut");
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(waiterTimers[1]!);
+    expect(telegramOutboundGateState.drainWaiters.size).toBe(0);
+    clearTimeoutSpy.mockRestore();
+
+    expect(await outcome).toMatchObject({ name: "AbortError" });
+    expect(telegramOutboundGateState.activeCount).toBe(0);
+  });
+
+  test("停机逐条取消排队与在途任务，不依赖 abort 信号传播", async () => {
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const active: Promise<unknown> = transform(
+      ((): Promise<unknown> => new Promise<unknown>(() => {})) as PreviousCall,
+      "sendMessage",
+      { chat_id: -1001, text: "active" }
+    ) as Promise<unknown>;
+    const queued: Promise<unknown> = transform(
+      ((): Promise<unknown> => Promise.resolve({
+        ok: false,
+        error_code: 429,
+        parameters: { retry_after: 60 },
+      })) as PreviousCall,
+      "sendMessage",
+      { chat_id: -1001, text: "queued" }
+    ) as Promise<unknown>;
+    const outcomes: Promise<unknown>[] = [
+      active.catch((error: unknown): unknown => error),
+      queued.catch((error: unknown): unknown => error),
+    ];
+    await Promise.resolve();
+    await Promise.resolve();
+    const messageLane: TelegramRetryLane = telegramOutboundGateState.lanes.message;
+    expect(telegramOutboundGateState.activeJobs.size).toBe(1);
+    expect(messageLane.head).not.toBeNull();
+    expect(messageLane.retryTimer).not.toBeNull();
+
+    // 换代生命周期信号：旧任务不再挂在当前 controller 上，停机只能靠逐条遍历
+    // 队列与在途集合把它们取消掉。
+    telegramOutboundAbortController.current = new AbortController();
+
+    await expect(drainTelegramOutbound(0)).resolves.toBe("timedOut");
+
+    for (const outcome of await settleTestBatch(outcomes)) {
+      expect(outcome).toMatchObject({ name: "AbortError" });
+    }
+    expect(telegramOutboundGateState.activeCount).toBe(0);
+    expect(telegramOutboundGateState.retryPendingCount).toBe(0);
+    expect(telegramOutboundGateState.activeJobs.size).toBe(0);
+    expect(messageLane.head).toBeNull();
+    expect(messageLane.tail).toBeNull();
+    expect(messageLane.pendingCount).toBe(0);
+    expect(messageLane.retryTimer).toBeNull();
+    expect(messageLane.recovering).toBeFalse();
+    expect(messageLane.recoveryLimit).toBe(1);
+  });
+
+  test("状态快照读的是真实闸门计数与普通消息类别", async () => {
+    expect(telegramOutboundStats()).toEqual({
+      active: 0,
+      pending: 0,
+      capacity: TELEGRAM_429_RETRY_QUEUE_MAX,
+      messageActive: 0,
+      messageRetryPending: 0,
+    });
+
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const active: Promise<unknown> = transform(
+      ((): Promise<unknown> => new Promise<unknown>(() => {})) as PreviousCall,
+      "sendMessage",
+      { chat_id: -1001, text: "active" }
+    ) as Promise<unknown>;
+    expect(telegramOutboundStats()).toEqual({
+      active: 1,
+      pending: 0,
+      capacity: TELEGRAM_429_RETRY_QUEUE_MAX,
+      messageActive: 1,
+      messageRetryPending: 0,
+    });
+
+    const queued: Promise<unknown> = transform(
+      ((): Promise<unknown> => Promise.resolve({
+        ok: false,
+        error_code: 429,
+        parameters: { retry_after: 60 },
+      })) as PreviousCall,
+      "sendMessage",
+      { chat_id: -1001, text: "queued" }
+    ) as Promise<unknown>;
+    const outcomes: Promise<unknown>[] = [
+      active.catch((error: unknown): unknown => error),
+      queued.catch((error: unknown): unknown => error),
+    ];
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(telegramOutboundStats()).toEqual({
+      active: 1,
+      pending: 1,
+      capacity: TELEGRAM_429_RETRY_QUEUE_MAX,
+      messageActive: 1,
+      messageRetryPending: 1,
+    });
+
+    await expect(drainTelegramOutbound(0)).resolves.toBe("timedOut");
+    await settleTestBatch(outcomes);
+    expect(telegramOutboundStats()).toEqual({
+      active: 0,
+      pending: 0,
+      capacity: TELEGRAM_429_RETRY_QUEUE_MAX,
+      messageActive: 0,
+      messageRetryPending: 0,
+    });
   });
 
   test("非发送请求收到 429 后释放并发位并按 retry_after 重新排队", async () => {

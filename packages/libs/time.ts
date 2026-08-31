@@ -1,4 +1,5 @@
 import { DAY_MS } from "../consts/diskIO/common";
+import { TOKYO_UTC_OFFSET_MS } from "../consts/time";
 
 /**
  * 把毫秒数格式化成中文时长文案，如 90_000 -> "1分30秒"，30_000 -> "30秒"。
@@ -40,9 +41,6 @@ export function isCanonicalDateKey(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-/** 东京相对 UTC 的固定偏移；日本自 1951 年起不再实行夏令时，见 formatTokyoTime。 */
-const TOKYO_UTC_OFFSET_MS: number = 9 * 60 * 60 * 1000;
-
 /**
  * 非负 epoch 毫秒对应的东京自然日序号；用于每消息日期比较，不分配 Date 或进入 ICU。
  * 商与余数分开偏移，避免接近安全整数上限时直接相加溢出。
@@ -54,6 +52,15 @@ export function getTokyoDayIndex(timestampMs: number): number {
   const wholeDays: number = Math.floor(timestampMs / DAY_MS);
   const shiftedRemainder: number = timestampMs % DAY_MS + TOKYO_UTC_OFFSET_MS;
   return wholeDays + Math.floor(shiftedRemainder / DAY_MS);
+}
+
+/** 时间戳所在东京自然日的 UTC 起点；取余计算避免安全整数上界附近的乘法溢出。 */
+export function getTokyoDayStartTimestamp(timestampMs: number): number {
+  if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) {
+    throw new RangeError("Tokyo day timestamp must be a non-negative safe integer.");
+  }
+  const shiftedRemainder: number = timestampMs % DAY_MS + TOKYO_UTC_OFFSET_MS;
+  return timestampMs - shiftedRemainder % DAY_MS;
 }
 
 /** 两位零填充；只服务下方固定宽度的时间串。 */

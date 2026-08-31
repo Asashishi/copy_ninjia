@@ -5,6 +5,10 @@ import {
 } from "../../../packages/consts/diskIO/maintenance";
 import type { VerificationPersistedReply } from
   "../../../packages/types/diskIO";
+import type { IdentityStoragePersistedReply } from
+  "../../../packages/types/diskIO";
+import { diskIOOperationTail } from
+  "../../../packages/cache/workers/diskIO/recovery";
 
 const runDiskIOMidnightMaintenance = mock((
   _reply: (reply: VerificationPersistedReply) => void
@@ -25,7 +29,9 @@ const { diskIOMaintenanceCron } = await import(
 const BEFORE_MIDNIGHT_MS: number =
   Date.parse("2026-08-30T23:59:59+09:00");
 
-function reply(_value: VerificationPersistedReply): void {}
+function reply(
+  _value: VerificationPersistedReply | IdentityStoragePersistedReply
+): void {}
 
 beforeEach((): void => {
   stopDiskIOMaintenanceCron();
@@ -39,7 +45,7 @@ afterEach((): void => {
 });
 
 describe("Disk I/O Worker 统一维护 cron", (): void => {
-  test("按东京零点触发同一个 Bun 原生进程内任务", (): void => {
+  test("按东京零点触发同一个 Bun 原生进程内任务", async (): Promise<void> => {
     registerDiskIOMaintenanceCron(reply);
     const cron: Bun.CronJob | null = diskIOMaintenanceCron.current;
 
@@ -51,13 +57,14 @@ describe("Disk I/O Worker 统一维护 cron", (): void => {
     )?.getTime()).toBe(BEFORE_MIDNIGHT_MS + 1_000);
 
     jest.advanceTimersByTime(1_050);
+    await diskIOOperationTail.current;
 
     expect(diskIOMaintenanceCron.current).toBe(cron);
     expect(runDiskIOMidnightMaintenance).toHaveBeenCalledTimes(1);
     expect(runDiskIOMidnightMaintenance).toHaveBeenCalledWith(reply);
   });
 
-  test("重复注册替换旧任务，停止后不再触发", (): void => {
+  test("重复注册替换旧任务，停止后不再触发", async (): Promise<void> => {
     registerDiskIOMaintenanceCron(reply);
     const first: Bun.CronJob | null = diskIOMaintenanceCron.current;
     registerDiskIOMaintenanceCron(reply);
@@ -65,11 +72,13 @@ describe("Disk I/O Worker 统一维护 cron", (): void => {
 
     expect(second).not.toBe(first);
     jest.advanceTimersByTime(1_050);
+    await diskIOOperationTail.current;
     expect(runDiskIOMidnightMaintenance).toHaveBeenCalledTimes(1);
 
     stopDiskIOMaintenanceCron();
     expect(diskIOMaintenanceCron.current).toBeNull();
     jest.advanceTimersByTime(24 * 60 * 60 * 1_000);
+    await diskIOOperationTail.current;
     expect(runDiskIOMidnightMaintenance).toHaveBeenCalledTimes(1);
   });
 });

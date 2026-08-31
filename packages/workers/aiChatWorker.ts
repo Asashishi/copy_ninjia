@@ -5,7 +5,10 @@ import {
   hydrateStickerCatalogs,
   retryIncompleteStickerCatalogs,
 } from "../aiChat/ai/stickers/catalog";
-import { getStickerConfig } from "../config/stickers";
+import { adoptStickerConfig, getStickerConfig } from "../config/stickers";
+import { adoptMoodConfig } from "../config/mood";
+import { adoptPersona } from "../config/persona";
+import { adoptReactionConfig } from "../config/reactions";
 import { adoptAgentDeploymentConfig } from "../config/agent";
 import { reportUnimplementedAgentCapabilities } from "../aiChat/provider";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/weather";
@@ -159,6 +162,10 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // 就会去取 media 能力的模型名与凭据。本线程此后不再读 agent.json，
       // 崩溃重建也只等主线程重放同一条 init（见 config/agent.ts 的边界说明）。
       adoptAgentDeploymentConfig(msg.agent);
+      adoptMoodConfig(msg.mood);
+      adoptReactionConfig(msg.reactions);
+      adoptStickerConfig(msg.stickers);
+      adoptPersona(msg.persona);
       // 配置一落定就把「配了但这一家没实现」的可选能力记一次；能力配置在进程
       // 生命周期内不变，逐轮回复重复记录只会淹掉真正的故障。
       reportUnimplementedAgentCapabilities();

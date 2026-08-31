@@ -57,7 +57,9 @@ describe("project convention collectors", () => {
       projectRoot,
       inputPath,
       source(inputPath, 'import { readFileSync } from "node:fs";')
-    )).toEqual([]);
+    )).toEqual([
+      expect.stringContaining("unreviewed Node compatibility module node:fs"),
+    ]);
 
     const atomicPath: string = "/project/packages/libs/atomicFile.ts";
     const problems: readonly string[] = collectNodeCompatibilityProblems(

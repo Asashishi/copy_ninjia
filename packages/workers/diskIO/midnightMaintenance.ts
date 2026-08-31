@@ -4,20 +4,29 @@ import { maintainAdSampleFiles } from "./adSampleFile";
 import { maintainJoinLogRetention } from "./joinLogFiles";
 import { maintainLogRetention } from "./logFiles";
 import { maintainLuckForDay } from "./luckFiles";
-import { sweepExpiredTemporaryWhitelistActivities } from "./storageDatabase";
+import { maintainTemporaryWhitelistActivities } from "./storageDatabase";
 import {
   maintainVerificationDayForToday,
 } from "./verificationWrites";
 import { getTokyoDateKey } from "../../libs/time";
-import type { VerificationReplySink } from "./verificationWrites";
+import type {
+  IdentityStoragePersistedReply,
+  VerificationPersistedReply,
+} from
+  "../../types/diskIO/replies";
 
-/** 单个领域失败只写 Worker 兜底日志，后续领域继续。 */
-function runDiskIOMaintenanceTasks(
-  tasks: readonly (readonly [string, () => void])[]
-): void {
+/** 午夜维护共用的 Worker 回执出口。 */
+export type DiskIOMaintenanceReplySink = (
+  reply: IdentityStoragePersistedReply | VerificationPersistedReply
+) => void;
+
+/** 逐领域串行维护；单个领域失败只写 Worker 兜底日志，后续领域继续。 */
+async function runTasksSequentially(
+  tasks: readonly (readonly [string, () => void | Promise<void>])[]
+): Promise<void> {
   for (const [domain, maintain] of tasks) {
     try {
-      maintain();
+      await maintain();
     } catch (error: unknown) {
       console.error(`[diskIOWorker] midnight maintenance failed for ${domain}:`, error);
     }
@@ -26,15 +35,15 @@ function runDiskIOMaintenanceTasks(
 
 /** 依次维护六个按日或保留期领域。 */
 export function runDiskIOMidnightMaintenance(
-  reply: VerificationReplySink,
+  reply: DiskIOMaintenanceReplySink,
   day: string = getTokyoDateKey()
-): void {
-  runDiskIOMaintenanceTasks([
-    ["luck", (): void => maintainLuckForDay(day)],
-    ["logs", (): void => maintainLogRetention()],
-    ["join logs", (): void => maintainJoinLogRetention(day)],
+): Promise<void> {
+  return runTasksSequentially([
+    ["luck", async (): Promise<void> => maintainLuckForDay(day)],
+    ["logs", async (): Promise<void> => maintainLogRetention()],
+    ["join logs", async (): Promise<void> => maintainJoinLogRetention(day)],
     ["ad samples", (): void => maintainAdSampleFiles(day)],
     ["verifications", (): void => maintainVerificationDayForToday(reply, day)],
-    ["temporary whitelist", (): void => sweepExpiredTemporaryWhitelistActivities()],
+    ["temporary whitelist", (): void => maintainTemporaryWhitelistActivities(reply)],
   ]);
 }

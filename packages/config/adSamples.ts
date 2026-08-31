@@ -42,15 +42,28 @@ export function parseAdSampleConfig(
 }
 
 /** 从指定文件加载并校验；模块 import 本身不访问文件系统。 */
-export function loadAdSampleConfig(path: string = AD_SAMPLES_CONFIG_PATH): AdSampleConfig {
-  return parseAdSampleConfig(readJsonInput(path), path);
+export async function loadAdSampleConfig(
+  path: string = AD_SAMPLES_CONFIG_PATH
+): Promise<AdSampleConfig> {
+  return parseAdSampleConfig(await readJsonInput(path), path);
 }
 
-/**
- * 默认部署配置按进程/Worker 惰性缓存。主进程启动总闸会校验已存在的文件；
- * 真正缺省时仍由功能 readiness 决定该功能能否开启。
- */
+/** 接管启动预检或 Worker 初始化消息已经严格校验的广告示例快照。 */
+export function adoptAdSampleConfig(config: AdSampleConfig): void {
+  defaultAdSampleConfigCache.current = config;
+}
+
+/** 启动预检填充默认路径快照；重复调用只读 holder。 */
+export async function ensureAdSampleConfig(): Promise<void> {
+  if (defaultAdSampleConfigCache.current !== null) return;
+  adoptAdSampleConfig(await loadAdSampleConfig());
+}
+
+/** 默认广告示例只读当前线程已校验的快照，不在运行期回退读盘。 */
 export function getAdSampleConfig(): AdSampleConfig {
-  defaultAdSampleConfigCache.current ??= loadAdSampleConfig();
-  return defaultAdSampleConfigCache.current;
+  const config: AdSampleConfig | null = defaultAdSampleConfigCache.current;
+  if (config === null) {
+    throw new Error(`Ad sample configuration was not initialized from ${AD_SAMPLES_CONFIG_PATH}.`);
+  }
+  return config;
 }

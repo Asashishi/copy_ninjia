@@ -41,8 +41,8 @@ export async function spawnJsonChild<TResult>({
       ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
     }
   );
-  const stdoutPromise: Promise<string> = new Response(subprocess.stdout).text();
-  const stderrPromise: Promise<string> = new Response(subprocess.stderr).text();
+  const stdoutPromise: Promise<string> = subprocess.stdout.text();
+  const stderrPromise: Promise<string> = subprocess.stderr.text();
   let timedOut: boolean = false;
   const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
     timedOut = true;

@@ -1,10 +1,10 @@
 /** 临时白名单累计记录；时间列均为 Unix epoch 毫秒。 */
 export interface TemporaryWhitelistActivity {
-  /** 首个合格日后为 true，直到显式删除或晋升永久广告免检。 */
+  /** 当天或刚结束的合格东京日仍授予临时广告免检时为 true。 */
   readonly tempWhite: boolean;
   /** 首次进入临时广告免检的时刻。 */
   readonly tempWhiteAt: number | null;
-  /** 当前连续合格东京日数量；临时成员断签后允许归零。 */
+  /** 当前连续合格东京日数量；上一日未达标时随新累计归零。 */
   readonly tempWhiteCount: number;
   readonly sendCount: number;
   readonly countedAt: number;

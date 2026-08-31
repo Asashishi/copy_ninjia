@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { loadMoodConfig, parseMoodConfig } from "../../packages/config/mood";
 
 describe("mood config", () => {
-  test("严格解析心情档位，并能加载全部部署配置", () => {
+  test("严格解析心情档位，并能加载全部部署配置", async () => {
     const parsed = parseMoodConfig({
       moods: [
         { name: "开心", weight: 60, instruction: "很开心。", weatherMultipliers: { clear: 1.5 }, timeMultipliers: { night: 0.8 } },
@@ -12,7 +12,7 @@ describe("mood config", () => {
     expect(parsed.moods.map((mood) => mood.name)).toEqual(["开心", "困"]);
     expect(parsed.moods[0]!.weatherMultipliers).toEqual({ clear: 1.5 });
 
-    const loaded = loadMoodConfig();
+    const loaded = await loadMoodConfig();
     expect(loaded.moods.length).toBeGreaterThan(0);
     expect(loaded.moods.reduce((sum, mood) => sum + mood.weight, 0)).toBe(100);
   });

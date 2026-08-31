@@ -23,7 +23,7 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 
-const { handleMuteCommand, handleUnmuteCommand, parseMuteDurationMs, formatMuteDuration } =
+const { handleMuteCommand, handleUnmuteCommand, parseMuteDurationMs } =
   await import("../../packages/commands/mute");
 const originalDateNow: () => number = Date.now;
 
@@ -86,15 +86,6 @@ describe("parseMuteDurationMs", () => {
     for (const bad of ["", "10", "m", "1.5h", "0m", "-5m", "10s", "10 m", "h10", "010m"]) {
       expect(parseMuteDurationMs(bad)).toBeUndefined();
     }
-  });
-});
-
-describe("formatMuteDuration", () => {
-  test("按最大整除单位念，不替用户换算进位", () => {
-    expect(formatMuteDuration(10 * 60_000)).toBe("10 分钟");
-    expect(formatMuteDuration(90 * 60_000)).toBe("90 分钟");
-    expect(formatMuteDuration(2 * 60 * 60_000)).toBe("2 小时");
-    expect(formatMuteDuration(365 * 24 * 60 * 60_000)).toBe("365 天");
   });
 });
 

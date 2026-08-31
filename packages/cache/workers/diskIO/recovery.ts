@@ -14,6 +14,15 @@
  */
 export const diskIOReplayWindow: { current: boolean } = { current: false };
 
+/**
+ * Disk I/O Worker 的异步操作尾节点。启动 load、业务消息与维护 timer 都追加到
+ * 同一条 Promise 链；每次只保留尚未结算的尾节点，结算后不保留历史消息。
+ * Worker 重建会重新加载本 isolate，初值恢复为已结算 Promise。
+ */
+export const diskIOOperationTail: { current: Promise<void> } = {
+  current: Promise.resolve(),
+};
+
 /** 仅供单测在用例之间重置窗口状态，避免一个用例遗留的 true 影响下一个。 */
 export function resetDiskIOReplayWindow(): void {
   diskIOReplayWindow.current = false;

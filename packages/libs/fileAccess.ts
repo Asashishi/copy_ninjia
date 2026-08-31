@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, lstatSync } from "node:fs";
 import { invalidInput } from "./inputValidation";
 
 /** 只读启动检查：已有持久化文件必须允许运行账号读取和写入，不自动 chmod。 */
@@ -11,6 +11,9 @@ export function assertFileReadableWritable(path: string): void {
       "$mode",
       "readable and writable by the runtime account without changing the existing mode"
     );
+  }
+  if (!lstatSync(path).isFile()) {
+    return invalidInput(path, "$type", "a regular file without symbolic-link indirection");
   }
 }
 

@@ -74,11 +74,6 @@ export function parseBatchKickDurationMs(token: string): number | undefined {
   return durationMs;
 }
 
-/** 把已校验的回溯时长转换成战报文案。 */
-export function formatBatchKickDuration(durationMs: number): string {
-  return formatDurationCn(durationMs);
-}
-
 interface ProcessJoinRecordParams {
   chatId: number;
   record: JoinLogRecord;
@@ -312,7 +307,7 @@ export async function handleBatchKickCommand(
   if (records.length === 0) {
     await sendCommandMessage({
       chatId,
-      text: `最近 ${formatBatchKickDuration(durationMs)} 没有记录到新成员，本次没有踢人，也没有写入黑名单♡`,
+      text: `最近 ${formatDurationCn(durationMs)} 没有记录到新成员，本次没有踢人，也没有写入黑名单♡`,
       replyToMessageId: messageId,
     });
     return;
@@ -349,7 +344,7 @@ export async function handleBatchKickCommand(
   await sendCommandMessage({
     chatId,
     text:
-      `已扫描最近 ${formatBatchKickDuration(durationMs)} 的 ${records.length} 条入群记录中的 ${stats.scanned} 条：` +
+      `已扫描最近 ${formatDurationCn(durationMs)} 的 ${records.length} 条入群记录中的 ${stats.scanned} 条：` +
       `踢出 ${stats.kicked}，已不在群 ${stats.absent}，自己人跳过 ${stats.protected}，` +
       `黑名单交回封禁 ${stats.blocked}，` +
       `权限不足 ${stats.forbidden}，查询或请求失败 ${stats.failed}。只踢未拉黑♡` +

@@ -1,5 +1,15 @@
 /** 广告检测流水线的跨线程协议与 Worker 内部纯数据形状。 */
+import type { Message } from "@grammyjs/types";
+import type { ChatState } from "../chatState";
 import type { TelegramIdentityMetadata } from "../identityPolicy";
+
+/** 同一条群消息的广告累计与候选构建共用事实；构造后保持固定 shape。 */
+export interface AdDetectionMessageContext {
+  readonly message: Message;
+  readonly botId: number;
+  readonly chatState: Readonly<ChatState>;
+  readonly now: number;
+}
 
 /**
  * 广告检测向任一 provider 发送的中立结构化请求。模型与采样预算属于判定领域，

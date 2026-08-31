@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { getMoodConfig } from "../../../packages/config/mood";
+import { getPersona } from "../../../packages/config/persona";
+import { getReactionConfig } from "../../../packages/config/reactions";
+import { getStickerConfig } from "../../../packages/config/stickers";
 import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
 import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
 import type {
@@ -147,6 +151,10 @@ describe("AI main-thread persistence mirror", () => {
         // 重放的是进程启动时那条 init 本身，配置快照因此逐字节相同——新
         // isolate 不会顺手加载磁盘上已经被改过的 agent.json。
         agent: getAgentDeploymentConfig(),
+        mood: getMoodConfig(),
+        reactions: getReactionConfig(),
+        stickers: getStickerConfig(),
+        persona: getPersona(),
       },
       { type: "hydrate", memories: new Map([[-1001, "latest-memory"]]) },
       { type: "hydrateStickerCatalog", catalogs: new Map([["pack_a", "latest-catalog"]]) },

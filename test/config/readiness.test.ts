@@ -30,8 +30,8 @@ function countCall(name: string): void {
   loaderCalls.set(name, (loaderCalls.get(name) ?? 0) + 1);
 }
 
-function loaderOf(name: string, failure: () => string | null): () => object {
-  return (): object => {
+function loaderOf(name: string, failure: () => string | null): () => Promise<object> {
+  return async (): Promise<object> => {
     countCall(name);
     const message: string | null = failure();
     if (message !== null) throw new Error(message);
@@ -56,35 +56,34 @@ mock.module("../../packages/config/telegram", () => ({
   },
 }));
 mock.module("../../packages/config/stickers", () => ({
-  getStickerConfig: loaderOf("stickers", (): string | null => stickerFailure),
+  ensureStickerConfig: loaderOf("stickers", (): string | null => stickerFailure),
 }));
 mock.module("../../packages/config/reactions", () => ({
-  getReactionConfig: loaderOf("reactions", (): string | null => reactionFailure),
+  ensureReactionConfig: loaderOf("reactions", (): string | null => reactionFailure),
 }));
 mock.module("../../packages/config/mood", () => ({
-  getMoodConfig: loaderOf("mood", (): string | null => moodFailure),
+  ensureMoodConfig: loaderOf("mood", (): string | null => moodFailure),
 }));
 mock.module("../../packages/config/adSamples", () => ({
-  getAdSampleConfig: loaderOf("adSamples", (): string | null => adSampleFailure),
+  ensureAdSampleConfig: loaderOf("adSamples", (): string | null => adSampleFailure),
 }));
 mock.module("../../packages/config/agent", () => ({
-  ensureAdDetectAgentConfig: (): void => {
+  ensureAdDetectAgentConfig: async (): Promise<void> => {
     countCall("agent.ad_detect");
     if (adDetectSectionFailure !== null) throw new Error(adDetectSectionFailure);
   },
-  ensureAgentDeploymentConfig: (): void => {
+  ensureAgentDeploymentConfig: async (): Promise<void> => {
     countCall("agent");
     if (agentSectionFailure !== null) throw new Error(agentSectionFailure);
   },
-  validateAgentDeploymentConfig: (): void => {
+  validateAgentDeploymentConfig: async (): Promise<void> => {
     if (agentSectionFailure !== null) throw new Error(agentSectionFailure);
     if (adDetectSectionFailure !== null) throw new Error(adDetectSectionFailure);
   },
 }));
 mock.module("../../packages/config/persona", () => ({
-  getPersona: (): string => {
+  ensurePersona: async (): Promise<void> => {
     countCall("persona");
-    return "persona";
   },
 }));
 
@@ -120,19 +119,21 @@ beforeEach((): void => {
 });
 
 describe("deployment config readiness", () => {
-  test("Telegram 进程级配置缺失时无条件拒绝启动", () => {
+  test("Telegram 进程级配置缺失时无条件拒绝启动", async () => {
     telegramFailure = "config/telegram.json: $.bot_token must be a non-empty string";
-    expect((): void => validateExistingDeploymentInputs()).toThrow("config/telegram.json: $.bot_token");
+    await expect(validateExistingDeploymentInputs()).rejects.toThrow("config/telegram.json: $.bot_token");
   });
 
-  test("配置齐全时两项 AI 功能分别放行", () => {
+  test("配置齐全时两项 AI 功能分别放行", async () => {
+    await validateExistingDeploymentInputs();
     expect(aiChatConfigReadiness()).toEqual({ ok: true });
     expect(adDetectConfigReadiness()).toEqual({ ok: true });
   });
 
-  test("AI 闲聊按声明顺序报第一份坏文件并缓存失败", () => {
+  test("AI 闲聊按声明顺序报第一份坏文件并缓存失败", async () => {
     reactionFailure = "Invalid reactions config: boom";
     moodFailure = "Invalid mood config: also broken";
+    await validateExistingDeploymentInputs();
     const verdict: ConfigReadiness = aiChatConfigReadiness();
     if (verdict.ok) throw new Error("expected a failure verdict");
     expect(verdict.failure.file).toBe("config/reactions.json");
@@ -140,8 +141,9 @@ describe("deployment config readiness", () => {
     expect(aiChatConfigReadiness().ok).toBe(false);
   });
 
-  test("agent 与 ad_detect 分段探测互不污染", () => {
+  test("agent 与 ad_detect 分段探测互不污染", async () => {
     agentSectionFailure = "Invalid agent config";
+    await validateExistingDeploymentInputs();
     expect(aiChatConfigReadiness().ok).toBe(false);
     expect(adDetectConfigReadiness().ok).toBe(true);
 
@@ -149,12 +151,14 @@ describe("deployment config readiness", () => {
     adDetectConfigReadinessCache.current = null;
     agentSectionFailure = null;
     adDetectSectionFailure = "Invalid ad endpoint";
+    await validateExistingDeploymentInputs();
     expect(aiChatConfigReadiness().ok).toBe(true);
     const verdict: ConfigReadiness = adDetectConfigReadiness();
     expect(verdict.ok === false && verdict.failure.file).toBe("config/agent.json");
   });
 
-  test("命中缓存后不再调用 loader，且返回同一结论引用", () => {
+  test("命中缓存后不再调用 loader，且返回同一结论引用", async () => {
+    await validateExistingDeploymentInputs();
     const firstAiChat: ConfigReadiness = aiChatConfigReadiness();
     const firstAdDetect: ConfigReadiness = adDetectConfigReadiness();
     const firstJa: ConfigReadiness = jaTranslateConfigReadiness();
@@ -177,8 +181,9 @@ describe("deployment config readiness", () => {
     expect(loaderCalls.get("agent.ad_detect")).toBe(1);
   });
 
-  test("失败结论同样缓存：坏文件在同一进程内只解析一次", () => {
+  test("失败结论同样缓存：坏文件在同一进程内只解析一次", async () => {
     moodFailure = "Invalid mood config: boom";
+    await validateExistingDeploymentInputs();
     const verdict: ConfigReadiness = aiChatConfigReadiness();
     expect(verdict.ok).toBe(false);
     // 探测在第三份就停下，人设与 agent 段这一轮不该被读到。
@@ -192,30 +197,27 @@ describe("deployment config readiness", () => {
 });
 
 describe("Google service account readiness", () => {
-  test("启动总闸复用已经通过的密钥校验结论", () => {
-    validateExistingDeploymentInputs();
+  test("启动总闸复用已经通过的密钥校验结论", async () => {
+    await validateExistingDeploymentInputs();
     const cached: ConfigReadiness | null = jaTranslateConfigReadinessCache.current;
     if (cached === null) throw new Error("expected startup validation to seed readiness");
     expect(cached).toEqual({ ok: true });
     expect(jaTranslateConfigReadiness()).toBe(cached);
   });
 
-  test("非对象与空字段均拒绝", () => {
+  test("非对象与空字段均拒绝", async () => {
     writeAuthFile(JSON.stringify(["client_email"]));
-    const notObject: ConfigReadiness = jaTranslateConfigReadiness();
-    expect(notObject.ok === false && notObject.failure.reason).toContain("Google service account JSON object");
+    await expect(validateExistingDeploymentInputs()).rejects.toThrow("Google service account JSON object");
 
     jaTranslateConfigReadinessCache.current = null;
     writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: "   " }));
-    const blankKey: ConfigReadiness = jaTranslateConfigReadiness();
-    expect(blankKey.ok === false && blankKey.failure.reason).toContain("private_key");
+    await expect(validateExistingDeploymentInputs()).rejects.toThrow("private_key");
   });
 
-  test("不可解析私钥不回显原值", () => {
+  test("不可解析私钥不回显原值", async () => {
     const marker: string = "-----BEGIN-LEAK-MARKER-----";
     writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: marker }));
-    expect(jaTranslateConfigReadiness().ok).toBe(false);
-    expect(() => validateExistingDeploymentInputs()).toThrow("$.private_key");
-    expect(() => validateExistingDeploymentInputs()).not.toThrow(marker);
+    await expect(validateExistingDeploymentInputs()).rejects.toThrow("$.private_key");
+    await expect(validateExistingDeploymentInputs()).rejects.not.toThrow(marker);
   });
 });

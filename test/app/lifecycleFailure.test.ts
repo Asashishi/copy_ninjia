@@ -225,7 +225,7 @@ describe("应用启动失败与退出清理", () => {
 
   test("部署输入闸拒绝时不补齐素材直链，state.json 保持运维看到的原样", async () => {
     // 补齐是纯可读性写入；被拒绝启动的那次运行改写 state.json 只会干扰排查。
-    validateExistingDeploymentInputs.mockImplementationOnce((): void => {
+    validateExistingDeploymentInputs.mockImplementationOnce(async (): Promise<void> => {
       calls.push("validateDeploymentInputs");
       throw new Error("config/mood.json: $ must match its current schema");
     });

@@ -4,6 +4,10 @@ import { logger } from "../infra/logger";
 import { postDiskIO } from "../infra/diskIO";
 import { isAiChatConfigured } from "./availability";
 import { getAgentDeploymentConfig } from "../config/agent";
+import { getMoodConfig } from "../config/mood";
+import { getPersona } from "../config/persona";
+import { getReactionConfig } from "../config/reactions";
+import { getStickerConfig } from "../config/stickers";
 import { forgetAiMemoryRevisionCounter, nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
 import {
   aiChatWorkerState,
@@ -247,6 +251,10 @@ export function initAiChat(botInfo: AiBotInfo): void {
     botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
     superAdminUserId: SUPER_ADMIN_USER_ID,
     agent: getAgentDeploymentConfig(),
+    mood: getMoodConfig(),
+    reactions: getReactionConfig(),
+    stickers: getStickerConfig(),
+    persona: getPersona(),
   };
   postAiChatOrThrow(message);
   lastInitState.current = message;

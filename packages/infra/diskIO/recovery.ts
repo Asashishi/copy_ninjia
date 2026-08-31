@@ -23,6 +23,7 @@ import type { LoadedReply } from "../../types/diskIO/replies";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { FlushResult } from "../../types/lifecycle";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
+import { getStickerConfig } from "../../config/stickers";
 import { pauseDiskIODiagnosticChannel, resumeDiskIODiagnosticChannel } from
   "./diagnosticChannel";
 import {
@@ -228,7 +229,11 @@ function beginRuntimeRecovery(worker: Worker): void {
     );
   }, diskIORuntime.runtimeRecoveryTimeoutMs);
   diskIORuntime.runtimeRecoveryTimer.unref();
-  if (!safePostDiskIO(worker, { type: "load" } satisfies LoadRequest, "runtime load request")) {
+  const request: LoadRequest = {
+    type: "load",
+    stickerPacks: getStickerConfig().packs,
+  };
+  if (!safePostDiskIO(worker, request, "runtime load request")) {
     stopWorkerAfterLoadFailure(worker, "Worker synchronously rejected the runtime load request", true);
   }
 }

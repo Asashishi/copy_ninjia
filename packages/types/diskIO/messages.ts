@@ -274,6 +274,7 @@ export interface VerificationFileChange {
 /** 主线程 -> diskIOWorker：启动恢复（也用于本 Worker 崩溃重建后的自动重跑）。 */
 export interface LoadRequest {
   type: "load";
+  stickerPacks: readonly string[];
 }
 
 /**

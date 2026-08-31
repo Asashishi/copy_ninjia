@@ -16,6 +16,10 @@ import type {
   BlocklistIdPage,
   IdentityPolicyRawReadResult,
 } from "../../packages/types/identityStorage";
+import type {
+  RecordedTemporaryWhitelistActivity,
+  TemporaryWhitelistActivity,
+} from "../../packages/types/temporaryWhitelist";
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -163,7 +167,7 @@ beforeEach(() => {
 });
 
 describe("主线程身份 LRU 与数据库最终一致性", () => {
-  test("冷读填充临时白名单正缓存，已授权关系不按最后发言过期", async () => {
+  test("冷读填充上一东京日已达标的临时白名单正缓存", async () => {
     const now: number = Date.now();
     readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
       whitelist: [],
@@ -171,11 +175,11 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       temporaryWhitelist: [{
         id: 7,
         tempWhite: true,
-        tempWhiteAt: now - DAY_MS - 1,
+        tempWhiteAt: now - DAY_MS,
         tempWhiteCount: 7,
         sendCount: 8,
-        countedAt: now - DAY_MS - 1,
-        qualifiedAt: now - DAY_MS - 1,
+        countedAt: now - DAY_MS,
+        qualifiedAt: now - DAY_MS,
       }],
     });
 
@@ -218,6 +222,52 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     expect(clearTemporaryWhitelistActivity(7)).toBeTrue();
     expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
     expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity).toBeNull();
+  });
+
+  test("当天达标后同日发言不再产生写回，跨日恢复推进", () => {
+    const dayAt: number = new Date("2026-08-01T12:00:00+09:00").getTime();
+    seedMissing(7);
+    for (let index: number = 0; index < 8; index++) {
+      expect(recordTemporaryWhitelistActivity(7, dayAt + index)?.queued).toBeTrue();
+    }
+    const qualified: Readonly<TemporaryWhitelistActivity> | null | undefined =
+      temporaryWhitelistActivityCache.peek(7);
+    if (qualified === null || qualified === undefined) {
+      throw new Error("qualified activity must exist");
+    }
+    expect(qualified.qualifiedAt).toBe(dayAt + 7);
+    const revision: number = unacknowledgedTemporaryWhitelistWrites.get(7)!.revision;
+    const queuedWrites: number = diskMessages.length;
+
+    for (let index: number = 8; index < 64; index++) {
+      const recorded: RecordedTemporaryWhitelistActivity | undefined =
+        recordTemporaryWhitelistActivity(7, dayAt + index);
+      expect(recorded?.queued).toBeTrue();
+      expect(recorded?.activity).toBe(qualified);
+    }
+    expect(diskMessages.length).toBe(queuedWrites);
+    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.revision).toBe(revision);
+    expect(temporaryWhitelistActivityCache.peek(7)).toBe(qualified);
+
+    // 跨东京日的第一条发言仍然重置当日累计并落盘。
+    const nextDayAt: number = dayAt + DAY_MS;
+    expect(recordTemporaryWhitelistActivity(7, nextDayAt)?.activity).toMatchObject({
+      tempWhite: true,
+      tempWhiteCount: 1,
+      sendCount: 1,
+      countedAt: nextDayAt,
+      qualifiedAt: null,
+    });
+    expect(diskMessages.length).toBe(queuedWrites + 1);
+    for (let index: number = 1; index < 8; index++) {
+      expect(recordTemporaryWhitelistActivity(7, nextDayAt + index)?.queued).toBeTrue();
+    }
+    expect(temporaryWhitelistActivityCache.peek(7)).toMatchObject({
+      tempWhiteCount: 2,
+      sendCount: 8,
+      qualifiedAt: nextDayAt + 7,
+    });
+    expect(diskMessages.length).toBe(queuedWrites + 8);
   });
 
   test("广告 true 清理在冷读失败窗口仍发布可重放墓碑", () => {
@@ -386,6 +436,36 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     })]);
   });
 
+  test("Worker 重建把已经失效的临时白名单重放归一化为墓碑", async () => {
+    const staleAt: number = Date.now() - 2 * DAY_MS;
+    seedMissing(7);
+    for (let index: number = 0; index < 8; index++) {
+      expect(recordTemporaryWhitelistActivity(7, staleAt + index)?.queued).toBeTrue();
+    }
+    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity?.tempWhite)
+      .toBeTrue();
+
+    const replayed: DiskBusinessMessage[] = [];
+    const transport: DiskIORecoveryTransport = {
+      post(message: DiskBusinessMessage): boolean {
+        replayed.push(message);
+        return true;
+      },
+      ensureLuckReceiptSecret: async (): Promise<never> => {
+        throw new Error("not used");
+      },
+    };
+
+    for (const listener of respawnListeners) expect(await listener(transport)).toBeTrue();
+    expect(replayed).toEqual([expect.objectContaining({
+      type: "temporaryWhitelistWrite",
+      id: 7,
+      activity: null,
+    })]);
+    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity).toBeNull();
+    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
+  });
+
   test("黑转白在 Worker 重建后仍按全局 revision 先删后增", async () => {
     seedMissing(7);
     queueIdentityPolicyWrite("blocklist", 7, blockValue());
@@ -439,6 +519,71 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     expect(blocklistEntryCache.has(1)).toBeFalse();
     expect(whitelistEntryCache.has(1)).toBeFalse();
     expect(temporaryWhitelistActivityCache.has(1)).toBeFalse();
+  });
+
+  test("长时间取键流转下临时白名单只保留有界现场，Worker 重建按 revision 重放", async () => {
+    const dayAt: number = new Date("2026-08-01T12:00:00+09:00").getTime();
+    const churn: number = IDENTITY_READ_CACHE_MAX_ENTRIES * 2;
+
+    // 每个身份只发一条：LRU 按容量淘汰，未 ACK 表随精确回执清空。
+    let queued: number = 0;
+    for (let id: number = 1; id <= churn; id++) {
+      temporaryWhitelistActivityCache.set(id, null);
+      if (recordTemporaryWhitelistActivity(id, dayAt)?.queued === true) queued++;
+    }
+    expect(queued).toBe(churn);
+    expect(temporaryWhitelistActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
+    expect(temporaryWhitelistActivityCache.has(1)).toBeFalse();
+    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(churn);
+
+    const settled: { id: number; revision: number }[] = [];
+    for (const [id, write] of unacknowledgedTemporaryWhitelistWrites) {
+      settled.push({ id, revision: write.revision });
+    }
+    for (const listener of persistedListeners) {
+      listener({
+        type: "identityStoragePersisted",
+        writes: [],
+        temporaryWhitelistWrites: settled,
+        chatStateWrites: [],
+        chatQaWrites: [],
+      });
+    }
+    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(0);
+    expect(temporaryWhitelistActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
+
+    // 达标稳态不再产生任何未 ACK 现场：连续发言只走热度刷新。
+    const steady: number = churn;
+    for (let index: number = 1; index < 8; index++) {
+      recordTemporaryWhitelistActivity(steady, dayAt + index);
+    }
+    const qualifiedRevision: number =
+      unacknowledgedTemporaryWhitelistWrites.get(steady)!.revision;
+    let frozen: number = 0;
+    for (let index: number = 8; index < 512; index++) {
+      if (recordTemporaryWhitelistActivity(steady, dayAt + index)?.queued === true) frozen++;
+    }
+    expect(frozen).toBe(504);
+    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(1);
+    expect(unacknowledgedTemporaryWhitelistWrites.get(steady)?.revision)
+      .toBe(qualifiedRevision);
+
+    const replayed: DiskBusinessMessage[] = [];
+    const transport: DiskIORecoveryTransport = {
+      post(message: DiskBusinessMessage): boolean {
+        replayed.push(message);
+        return true;
+      },
+      ensureLuckReceiptSecret: async (): Promise<never> => {
+        throw new Error("not used");
+      },
+    };
+    for (const listener of respawnListeners) expect(await listener(transport)).toBeTrue();
+    expect(replayed).toEqual([expect.objectContaining({
+      type: "temporaryWhitelistWrite",
+      id: steady,
+      revision: qualifiedRevision,
+    })]);
   });
 
   test("一次更新的超大身份集合按预取分块上限分成有界数据库读", async () => {

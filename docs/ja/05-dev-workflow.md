@@ -22,12 +22,13 @@
 | `bun run test:random` | 固定 seed のランダム順で全テストを実行し、テスト間の残留を炙り出す |
 | `bun run test:coverage` | テスト + 全ソースコードのカバレッジ |
 | `bun run check:install-script-syntax` | `bash -n` で `install.sh` の shell 構文だけを解析し、インストール処理は実行しない |
+| `bun run check:install-isolation` | `copy-ninjia-install-test-*` 専用の一時 fixture root で `install.sh` を実際に実行し（`scripts/checkInstallIsolation.ts`）、staging 失敗時の cleanup、`telegram.json` の rollback、中断後の再開、置換成功、symlink topology、未検証 backup の保持、資格情報の分離を検査。実際の deploy path には一切触れない |
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
-| `bun run check` | conventions + lint + typecheck + coverage + hot path gate。**コミット前に必須** |
+| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + hot path gate の 7 段。**コミット前に必須** |
 | `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するため `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
-| `bun run perf:hot-path-gate` | 全 hot path シナリオの memory/GC/JIT gate。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry には 30 個あり、残りは `perf:full` のみ）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
@@ -49,7 +50,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2996 tests / 304 files / 97236 `expect()` calls**。全ソースコードの**関数カバレッジは 96.50%、行カバレッジは 97.16%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**3025 tests / 310 files / 97583 `expect()` calls**。全ソースコードの**関数カバレッジは 96.59%、行カバレッジは 97.16%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 

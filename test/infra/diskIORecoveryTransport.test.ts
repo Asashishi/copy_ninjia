@@ -134,7 +134,7 @@ describe("Disk I/O 恢复握手的 scoped transport", () => {
       expect(posted).toBeFalse();
       expect(secretError).toContain("no longer active");
       // 已死的那一代一条重放消息都不该收到。
-      expect(second.messages).toEqual([{ type: "load" }]);
+      expect(second.messages).toEqual([expect.objectContaining({ type: "load" })]);
     } finally {
       restoreListeners();
       await fixture.dispose();

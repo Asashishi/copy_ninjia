@@ -41,6 +41,7 @@ import type { LuckDrawDiskMessage } from "../../types/diskIO/messages";
 import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { DayFileState, LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
 import type { LuckDayRecoveryInspection } from "./snapshotFiles";
+import { enqueueDiskIOOperation } from "./operationQueue";
 
 /** 装上运势追加停摆诊断的投递出口（仅 Worker 线程启动时调用一次）。 */
 export function configureLuckAppendStalledReply(
@@ -54,7 +55,9 @@ export function configureLuckAppendStalledReply(
  *  flushLuckAppends 立即落盘。 */
 function scheduleLuckFlush(): void {
   if (luckFlushTimer.timer !== null) return;
-  luckFlushTimer.timer = setTimeout(retryLuckFlush, FLUSH_INTERVAL_MS);
+  luckFlushTimer.timer = setTimeout((): void => {
+    void enqueueDiskIOOperation(retryLuckFlush);
+  }, FLUSH_INTERVAL_MS);
 }
 
 /**
@@ -70,9 +73,11 @@ function scheduleLuckFlush(): void {
  * 内存里。导出是为了让单测直接驱动这一跳，不必真等 FLUSH_INTERVAL_MS，也不必去
  * 碰 Timeout 的运行时内部字段。
  */
-export function retryLuckFlush(): void {
+export async function retryLuckFlush(): Promise<void> {
   luckFlushTimer.timer = null;
-  if (flushLuckAppends() && luckDeferredDraws.length > 0) drainDeferredLuckDraws();
+  if (await flushLuckAppends() && luckDeferredDraws.length > 0) {
+    await drainDeferredLuckDraws();
+  }
 }
 
 /**
@@ -97,9 +102,9 @@ function deferLuckDraw(msg: LuckDrawDiskMessage): void {
 }
 
 /** 取走全部滞留抽签并逐条重新登记（换日判定由重新登记那一遍自己做）。 */
-function drainDeferredLuckDraws(): void {
+async function drainDeferredLuckDraws(): Promise<void> {
   const deferred: LuckDrawDiskMessage[] = luckDeferredDraws.splice(0, luckDeferredDraws.length);
-  for (const pending of deferred) handleLuckDrawMessage(pending);
+  for (const pending of deferred) await handleLuckDrawMessage(pending);
 }
 
 /**
@@ -117,7 +122,7 @@ function drainDeferredLuckDraws(): void {
  * 告警边沿触发，一次故障期只发一条（见 cache/workers/diskIO/luck.ts 的
  * luckAppendFailures）。
  */
-export function flushLuckAppends(): boolean {
+export async function flushLuckAppends(): Promise<boolean> {
   if (luckFlushTimer.timer !== null) {
     clearTimeout(luckFlushTimer.timer);
     luckFlushTimer.timer = null;
@@ -126,7 +131,7 @@ export function flushLuckAppends(): boolean {
   if (!luckWorkerCache.current) return false;
   const day: string = luckWorkerCache.current.day;
   try {
-    appendLuckEntries(day, luckFileState, luckPendingAppends);
+    await appendLuckEntries(day, luckFileState, luckPendingAppends);
     luckPendingAppends.length = 0;
     luckAppendFailures.consecutive = 0;
     luckAppendFailures.alerted = false;
@@ -171,7 +176,9 @@ export function flushLuckAppends(): boolean {
 
 /** 处理一条抽签结果消息：跨天检查 -> 去重 -> 入缓冲，达到条数阈值立即
  *  落盘，否则按需启动定时器。 */
-export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
+export async function handleLuckDrawMessage(
+  msg: LuckDrawDiskMessage
+): Promise<void> {
   // YYYY-MM-DD 可按字典序判断方向。Worker 重建后可能重放跨零点前缓冲的旧
   // 消息；它不能把已恢复的当天 owner 拍回昨日，更不能让后续清理误删当天文件。
   const current: LuckDayCache | null = luckWorkerCache.current;
@@ -181,7 +188,7 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
     // 一次都没写盘就被丢掉，而丢失是完全静默的。刷不动就不切 owner，但这条新日
     // 抽签本身要留在滞留区等补录（见 deferLuckDraw：丢掉它同样是静默丢盘，只是
     // 丢的是新一天那侧）。口径与 workers/diskIOWorker.ts 的 ensureLuckSecret 分支一致。
-    if (current !== null && !flushLuckAppends()) {
+    if (current !== null && !await flushLuckAppends()) {
       deferLuckDraw(msg);
       console.error(
         `[diskIOWorker] refused to switch the luck day from ${current.day} to ${msg.day}: ` +
@@ -199,7 +206,7 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
     startLuckDay(msg.day);
     // 滞留的那些比本条更早发生，切完先补录；此刻滞留区已空，重入不会再递归一层。
     if (deferred !== null) {
-      for (const pending of deferred) handleLuckDrawMessage(pending);
+      for (const pending of deferred) await handleLuckDrawMessage(pending);
     }
   }
 
@@ -225,23 +232,25 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
   dayCache.entries.set(msg.key, record);
   const pendingEntries: number = markLuckDirty({ key: msg.key, record });
   if (pendingEntries >= FLUSH_MAX_ENTRIES) {
-    flushLuckAppends();
+    await flushLuckAppends();
   } else {
     scheduleLuckFlush();
   }
 }
 
 /** 启动恢复边界：只读当天文件并以恢复结果整体替换内存 owner。 */
-export function hydrateLuckDay(day: string): void {
+export async function hydrateLuckDay(day: string): Promise<void> {
   const recoveredFileState: { current: DayFileState | null } = { current: null };
-  const recovered: LuckDayCache | null = recoverLuckDay(day, recoveredFileState);
+  const recovered: LuckDayCache | null = await recoverLuckDay(day, recoveredFileState);
   hydrateLuckCache(recovered);
   // hydrate 先清掉上一 owner 的游标，再接管与本次领域校验同一轮读取得到的新游标。
   luckFileState.current = recoveredFileState.current;
 }
 
 /** 跨域启动第一阶段：只读恢复当天结果与追加游标。 */
-export function inspectLuckDayState(day: string): LuckDayRecoveryInspection {
+export async function inspectLuckDayState(
+  day: string
+): Promise<LuckDayRecoveryInspection> {
   return inspectLuckDay(day);
 }
 
@@ -265,16 +274,16 @@ export function maintainLuckDayState(
  * 每日维护先提交旧 owner 与故障期滞留抽签，再严格接管目标日并清理更早文件。
  * 目标日落后于当前 owner 时拒绝回拨，避免时钟回拨误删当前数据。
  */
-export function maintainLuckForDay(day: string): void {
+export async function maintainLuckForDay(day: string): Promise<void> {
   const currentDay: string | undefined = luckWorkerCache.current?.day;
   if (currentDay !== undefined && day < currentDay) return;
-  if (!flushLuckAppends()) {
+  if (!await flushLuckAppends()) {
     throw new Error(`Failed to flush luck results before daily maintenance for ${day}.`);
   }
-  if (luckDeferredDraws.length > 0) drainDeferredLuckDraws();
-  if (!flushLuckAppends()) {
+  if (luckDeferredDraws.length > 0) await drainDeferredLuckDraws();
+  if (!await flushLuckAppends()) {
     throw new Error(`Failed to flush deferred luck results before daily maintenance for ${day}.`);
   }
   if (luckWorkerCache.current?.day !== undefined && luckWorkerCache.current.day > day) return;
-  hydrateLuckDay(day);
+  await hydrateLuckDay(day);
 }

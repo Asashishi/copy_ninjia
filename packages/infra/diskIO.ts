@@ -42,6 +42,7 @@ import {
   waitForDiskIODiagnostics,
 } from "./diskIO/diagnosticChannel";
 import { safePostDiskIO } from "./diskIO/transport";
+import { getStickerConfig } from "../config/stickers";
 export {
   onAiMemoryDeletedPersisted,
   onAiMemoryPersisted,
@@ -237,7 +238,10 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         chatQa: reply.chatQa,
       });
     };
-    const request: LoadRequest = { type: "load" };
+    const request: LoadRequest = {
+      type: "load",
+      stickerPacks: getStickerConfig().packs,
+    };
     if (!safePostDiskIO(worker, request, "startup load request")) {
       pendingLoad.resolve = null;
       pendingLoad.reject = null;

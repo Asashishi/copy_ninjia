@@ -11,7 +11,10 @@ import {
   confirmIdentityPolicyPersisted,
   queueIdentityPolicyWrite,
 } from "../identityStorage";
-import { hasActiveTemporaryWhitelist } from "./temporaryWhitelist";
+import {
+  hasActiveTemporaryWhitelist,
+  hasActiveTemporaryWhitelistAt,
+} from "./temporaryWhitelist";
 import type {
   TelegramIdentityMetadata,
   WhitelistEntryData,
@@ -56,15 +59,22 @@ export interface PromoteAdBypassWhitelistResult {
 }
 
 /**
- * 取得某身份当前完整权限；普通身份只读主线程白名单 LRU，超级管理员由身份直授。
+ * 取得某身份在指定墙钟时刻的完整权限；未传时刻则读取当前值。普通身份只读
+ * 主线程白名单 LRU，超级管理员由身份直授。
  */
 export function getEffectiveWhitelistPermissions(
-  id: number
+  id: number,
+  now?: number
 ): Readonly<WhitelistPermissions> | undefined {
   if (id === SUPER_ADMIN_USER_ID) return SUPER_ADMIN_WHITELIST_PERMISSIONS;
   const permanent: Readonly<WhitelistEntryData> | undefined = cachedWhitelistEntry(id);
   if (permanent !== undefined) return permanent.permissions;
-  return hasActiveTemporaryWhitelist(id) ? TEMPORARY_WHITELIST_PERMISSIONS : undefined;
+  const temporaryActive: boolean = now === undefined
+    ? hasActiveTemporaryWhitelist(id)
+    : hasActiveTemporaryWhitelistAt(id, now);
+  return temporaryActive
+    ? TEMPORARY_WHITELIST_PERMISSIONS
+    : undefined;
 }
 
 /**
@@ -85,12 +95,13 @@ export function isWhitelisted(id: number): boolean {
     cachedWhitelistEntry(id) !== undefined;
 }
 
-/** 身份是否拥有指定权限；白名单外身份恒为 false。 */
+/** 身份在指定墙钟时刻是否拥有单项权限；未传时刻读取当前值。 */
 export function hasWhitelistPermission(
   id: number,
-  key: WhitelistPermissionKey
+  key: WhitelistPermissionKey,
+  now?: number
 ): boolean {
-  return getEffectiveWhitelistPermissions(id)?.[key] === true;
+  return getEffectiveWhitelistPermissions(id, now)?.[key] === true;
 }
 
 /**

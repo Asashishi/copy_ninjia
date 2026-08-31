@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { VerificationPersistedReply } from
   "../../../packages/types/diskIO";
+import type { IdentityStoragePersistedReply } from
+  "../../../packages/types/diskIO";
 
 const maintainLuckForDay = mock((_day: string): void => {});
 const maintainLogRetention = mock((): void => {});
@@ -10,7 +12,9 @@ const maintainVerificationDayForToday = mock((
   _reply: (reply: VerificationPersistedReply) => void,
   _day: string
 ): void => {});
-const sweepExpiredTemporaryWhitelistActivities = mock((): void => {});
+const maintainTemporaryWhitelistActivities = mock((
+  _reply: (reply: IdentityStoragePersistedReply) => void
+): void => {});
 
 mock.module("../../../packages/workers/diskIO/luckFiles", () => ({
   maintainLuckForDay,
@@ -28,7 +32,7 @@ mock.module("../../../packages/workers/diskIO/verificationWrites", () => ({
   maintainVerificationDayForToday,
 }));
 mock.module("../../../packages/workers/diskIO/storageDatabase", () => ({
-  sweepExpiredTemporaryWhitelistActivities,
+  maintainTemporaryWhitelistActivities,
 }));
 
 const { runDiskIOMidnightMaintenance } = await import(
@@ -36,7 +40,9 @@ const { runDiskIOMidnightMaintenance } = await import(
 );
 
 const DAY: string = "2026-08-31";
-function reply(_value: VerificationPersistedReply): void {}
+function reply(
+  _value: VerificationPersistedReply | IdentityStoragePersistedReply
+): void {}
 
 beforeEach((): void => {
   for (const fn of [
@@ -45,34 +51,34 @@ beforeEach((): void => {
     maintainJoinLogRetention,
     maintainAdSampleFiles,
     maintainVerificationDayForToday,
-    sweepExpiredTemporaryWhitelistActivities,
+    maintainTemporaryWhitelistActivities,
   ]) fn.mockClear();
   maintainLuckForDay.mockImplementation((_day: string): void => {});
 });
 
 describe("Disk I/O Worker 午夜维护编排", (): void => {
-  test("同一次触发覆盖六个已登记领域", (): void => {
-    runDiskIOMidnightMaintenance(reply, DAY);
+  test("同一次触发覆盖六个已登记领域", async (): Promise<void> => {
+    await runDiskIOMidnightMaintenance(reply, DAY);
 
     expect(maintainLuckForDay).toHaveBeenCalledWith(DAY);
     expect(maintainLogRetention).toHaveBeenCalledTimes(1);
     expect(maintainJoinLogRetention).toHaveBeenCalledWith(DAY);
     expect(maintainAdSampleFiles).toHaveBeenCalledWith(DAY);
     expect(maintainVerificationDayForToday).toHaveBeenCalledWith(reply, DAY);
-    expect(sweepExpiredTemporaryWhitelistActivities).toHaveBeenCalledTimes(1);
+    expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
   });
 
-  test("单领域失败不会阻断后续维护", (): void => {
+  test("单领域失败不会阻断后续维护", async (): Promise<void> => {
     const errorLog = spyOn(console, "error").mockImplementation((): void => {});
     maintainLuckForDay.mockImplementationOnce((): void => {
       throw new Error("injected luck maintenance failure");
     });
 
-    runDiskIOMidnightMaintenance(reply, DAY);
+    await runDiskIOMidnightMaintenance(reply, DAY);
 
     expect(maintainLogRetention).toHaveBeenCalledTimes(1);
     expect(maintainVerificationDayForToday).toHaveBeenCalledTimes(1);
-    expect(sweepExpiredTemporaryWhitelistActivities).toHaveBeenCalledTimes(1);
+    expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
     expect(errorLog).toHaveBeenCalledTimes(1);
     errorLog.mockRestore();
   });

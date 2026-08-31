@@ -1,6 +1,6 @@
 /** Owner: Disk I/O Worker。负责待验证日文件的恢复、跨日合并与 compact。 */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { DAY_FILE_JSON_INDENT, DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
@@ -17,7 +17,7 @@ import {
   verificationWorkerCache,
 } from "../../cache/workers/diskIO/verification";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
-import { invalidInput } from "../../libs/inputValidation";
+import { invalidInput, readUtf8TextInput } from "../../libs/inputValidation";
 import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { VerificationSnapshot } from
   "../../types/antiRaid/verification";
@@ -185,10 +185,10 @@ export function compactVerificationDay(
 }
 
 /** 启动第一阶段：只读校验东京当天及最新旧日，构造接管与维护计划。 */
-export function inspectVerificationDay(
+export async function inspectVerificationDay(
   day: string = getTokyoDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
-): VerificationRecoveryInspection {
+): Promise<VerificationRecoveryInspection> {
   const entries: readonly Dirent<string>[] = existsSync(dir)
     ? readdirSync(dir, { withFileTypes: true })
     : [];
@@ -207,13 +207,13 @@ export function inspectVerificationDay(
     const priorPath: string = join(dir, `${priorDay}.json`);
     // 旧日是唯一恢复来源时必须严格解码；损坏时保留新旧文件并拒绝启动。
     const priorValues: Map<string, VerificationDayValue> =
-      decodeVerificationDay(priorPath, readFileSync(priorPath, "utf8"));
+      decodeVerificationDay(priorPath, await readUtf8TextInput(priorPath));
     for (const [key, value] of priorValues) {
       if (value !== null) recovered.set(key, value);
     }
 
     if (existsSync(path)) {
-      currentContent = readFileSync(path, "utf8");
+      currentContent = await readUtf8TextInput(path);
       const currentValues: Map<string, VerificationDayValue> =
         decodeVerificationDay(path, currentContent);
       decodedEntryCount = currentValues.size;
@@ -229,7 +229,7 @@ export function inspectVerificationDay(
       existsSync(path) ? path : priorPath
     );
   } else if (existsSync(path)) {
-    currentContent = readFileSync(path, "utf8");
+    currentContent = await readUtf8TextInput(path);
     const decoded: Map<string, VerificationDayValue> =
       decodeVerificationDay(path, currentContent);
     decodedEntryCount = decoded.size;

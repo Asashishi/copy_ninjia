@@ -47,8 +47,8 @@ beforeEach(() => {
 });
 
 describe("广告命中样本旁路", () => {
-  test("首条命中自建目录与文件，键是 chatId:首条 messageId", () => {
-    handleAdSampleMessage(sample());
+  test("首条命中自建目录与文件，键是 chatId:首条 messageId", async () => {
+    await handleAdSampleMessage(sample());
 
     const samples = readSamples();
     expect(Object.keys(samples)).toEqual(["-1001:11"]);
@@ -67,9 +67,9 @@ describe("广告命中样本旁路", () => {
     expect(statSync(AD_SAMPLE_FILE_PATH).mode & 0o777).toBe(PERSISTED_FILE_MODE);
   });
 
-  test("后续命中按位置追加，不整文件重写，旧条目原样保留", () => {
-    handleAdSampleMessage(sample());
-    handleAdSampleMessage(sample({
+  test("后续命中按位置追加，不整文件重写，旧条目原样保留", async () => {
+    await handleAdSampleMessage(sample());
+    await handleAdSampleMessage(sample({
       chatId: -1002,
       senderId: 8,
       messages: [{ messageId: 21, text: "日入过千" }],
@@ -80,24 +80,24 @@ describe("广告命中样本旁路", () => {
     expect(samples["-1001:11"]?.reason).toBe("引流加微信");
   });
 
-  test("被截断的旧文件按追加机制自愈，不阻塞新样本", () => {
+  test("被截断的旧文件按追加机制自愈，不阻塞新样本", async () => {
     // 样本是可丢的旁路素材：断电撕裂了末尾那条就裁掉，与日志/运势同一档取舍。
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     writeFileSync(AD_SAMPLE_FILE_PATH, '{\n  "-1001:1": {\n    "reason": "旧的"\n  },\n  "-1001:2": {\n    "rea');
 
-    handleAdSampleMessage(sample());
+    await handleAdSampleMessage(sample());
 
     const samples = readSamples();
     expect(Object.keys(samples)).toEqual(["-1001:1", "-1001:11"]);
   });
 
-  test("涨过上限就整份改名归档，新文件从空写起", () => {
-    handleAdSampleMessage(sample());
+  test("涨过上限就整份改名归档，新文件从空写起", async () => {
+    await handleAdSampleMessage(sample());
     // 撑到上限：轮转判断在每次追加前跑，不是只在重新打开游标时跑。
     adSampleFileState.current = { size: AD_SAMPLE_FILE_MAX_BYTES, empty: false };
     const archivedBytes: string = readFileSync(AD_SAMPLE_FILE_PATH, "utf8");
 
-    handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
+    await handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
 
     // 新文件只剩轮转后的这一条。
     expect(Object.keys(readSamples())).toEqual(["-1001:99"]);
@@ -108,7 +108,7 @@ describe("广告命中样本旁路", () => {
     expect(readFileSync(join(AD_SAMPLE_MEMORY_DIR, archives[0]!), "utf8")).toBe(archivedBytes);
   });
 
-  test("目录扫描缓存最小空缺归档序号，仍保持既有选名规则", () => {
+  test("目录扫描缓存最小空缺归档序号，仍保持既有选名规则", async () => {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     const today: string = getTokyoDateKey();
     writeFileSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.json`), "{}");
@@ -118,7 +118,7 @@ describe("广告命中样本旁路", () => {
     sweepExpiredAdSampleArchives({ today });
     expect(adSampleArchiveCursor.current).toEqual({ day: today, nextIndex: 2 });
     adSampleFileState.current = { size: AD_SAMPLE_FILE_MAX_BYTES, empty: true };
-    handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "gap" }] }));
+    await handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "gap" }] }));
 
     expect(existsSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.2.json`))).toBeTrue();
   });
@@ -157,7 +157,7 @@ describe("广告命中样本旁路", () => {
     expect(existsSync(matchingDirectory)).toBe(true);
   });
 
-  test("归档清扫每天至多一次，单文件删除失败会继续且不阻塞样本追加", () => {
+  test("归档清扫每天至多一次，单文件删除失败会继续且不阻塞样本追加", async () => {
     const today: string = getTokyoDateKey();
     const entries: AdSampleArchiveEntry[] = [
       { name: "sample.2000-01-01.json", isFile: true },
@@ -182,13 +182,13 @@ describe("广告命中样本旁路", () => {
     expect(removed).toHaveLength(1);
     expect(removed[0]?.endsWith("sample.2000-01-01.2.json")).toBe(true);
     expect(logError).toHaveBeenCalledTimes(1);
-    handleAdSampleMessage(sample());
+    await handleAdSampleMessage(sample());
     expect(Object.keys(readSamples())).toEqual(["-1001:11"]);
     expect(listCalls).toBe(1);
     logError.mockRestore();
   });
 
-  test("目录扫描失败也只记录一次，不阻塞同日样本追加", () => {
+  test("目录扫描失败也只记录一次，不阻塞同日样本追加", async () => {
     const today: string = getTokyoDateKey();
     const logError = spyOn(console, "error").mockImplementation((): void => {});
 
@@ -198,7 +198,7 @@ describe("广告命中样本旁路", () => {
         throw new Error("injected readdir failure");
       },
     });
-    handleAdSampleMessage(sample());
+    await handleAdSampleMessage(sample());
 
     expect(Object.keys(readSamples())).toEqual(["-1001:11"]);
     expect(logError).toHaveBeenCalledTimes(1);
@@ -225,7 +225,7 @@ describe("广告命中样本旁路", () => {
     expect(existsSync(retained)).toBe(true);
   });
 
-  test("写盘失败只作废游标、不抛出：旁路绝不能拖住封禁本身", () => {
+  test("写盘失败只作废游标、不抛出：旁路绝不能拖住封禁本身", async () => {
     // 目录被占成普通文件，mkdir 必然失败。
     //
     // 父目录必须显式建出来：本用例要造的前置条件是「ad-detected 这个名字被一个
@@ -237,7 +237,7 @@ describe("广告命中样本旁路", () => {
     rmSync(AD_SAMPLE_MEMORY_DIR, { recursive: true, force: true });
     writeFileSync(AD_SAMPLE_MEMORY_DIR, "not a directory");
 
-    expect(() => handleAdSampleMessage(sample())).not.toThrow();
+    await expect(handleAdSampleMessage(sample())).resolves.toBeUndefined();
     expect(adSampleFileState.current).toBeNull();
     expect(existsSync(AD_SAMPLE_FILE_PATH)).toBe(false);
 

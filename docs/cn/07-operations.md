@@ -105,7 +105,8 @@ WantedBy=multi-user.target
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
   - **内容**：schema v7 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是永久白名单、
     黑名单权威表；`temporary_whitelist_entries` 以关系列保存跨群发言累计、连续合格日、
-    临时授权时刻和最后发言时刻；`pending_blocked_removals` 是未完成群级封禁任务 outbox，
+    临时授权时刻，以及日切所需的 `send_count`、`counted_at`、`qualified_at`；
+    `pending_blocked_removals` 是未完成群级封禁任务 outbox，
     `chat_states` 是每群状态权威表（最多 25 行，超出即拒绝启动），
     `storage_metadata` 记录唯一 schema version；Drizzle migration journal 必须匹配受支持谱系。
     `chat_states` 的 25 行名额只在整条记录回到缺省时释放：`/init disable` 只清群名，功能开关
@@ -140,7 +141,7 @@ WantedBy=multi-user.target
   - **内容**：单实例锁。
   - **备份**：不备份、不手工编辑。
 
-`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 统一维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
+`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 统一维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。临时白名单维护会先提交共享 SQLite 的在途最终值；临时写仍未提交时拒绝删除。它保留当日行和刚结束日已经合格的行，删除刚结束日未合格及更早的整行，清理后迟到的失效旧日写会按原 revision 收敛为墓碑。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
 
 `joinlog/` 的一次查询最多读取覆盖 `[since, now]` 的两个群日文件，并按用户取窗口内最后一次入群；第三个保留日只服务于 23:59 发起、跨午夜才进入 Worker 的在途查询。文件在 10,000 条冗余历史或新增 4 MiB 后评估压缩，预计至少回收 512 KiB 才原子重写。可解析但 schema 错误的文件会原样拒绝本次读写；仅末尾截断残片可由追加层修复。
 

@@ -64,12 +64,18 @@ const receiveReply = (reply: VerificationPersistedReply): void => {
   replies.push(reply);
 };
 
-function upsert(msg: VerificationUpsertDiskMessage, day: string = DAY_ONE): void {
-  handleVerificationUpsert({ msg, reply: receiveReply, dir, day });
+async function upsert(
+  msg: VerificationUpsertDiskMessage,
+  day: string = DAY_ONE
+): Promise<void> {
+  await handleVerificationUpsert({ msg, reply: receiveReply, dir, day });
 }
 
-function deleteVerification(msg: VerificationDeleteDiskMessage, day: string = DAY_ONE): void {
-  handleVerificationDelete({ msg, reply: receiveReply, dir, day });
+async function deleteVerification(
+  msg: VerificationDeleteDiskMessage,
+  day: string = DAY_ONE
+): Promise<void> {
+  await handleVerificationDelete({ msg, reply: receiveReply, dir, day });
 }
 
 /**
@@ -80,11 +86,11 @@ function deleteVerification(msg: VerificationDeleteDiskMessage, day: string = DA
  * 每个领域单独 try/catch 并只记一行 console.error，不上抛、也不重置本领域缓存；
  * 这里保留旧包装的「重置后上抛」，好让维护阶段的失败在用例里可断言。
  */
-function recoverVerificationDay(
+async function recoverVerificationDay(
   day: string,
   dir: string
-): Map<string, VerificationSnapshot> {
-  const inspection = inspectVerificationDay(day, dir);
+): Promise<Map<string, VerificationSnapshot>> {
+  const inspection = await inspectVerificationDay(day, dir);
   const recovered = adoptVerificationDay(inspection);
   try {
     maintainVerificationDay(inspection);
@@ -95,12 +101,12 @@ function recoverVerificationDay(
   return recovered;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "verification-day-test-"));
   replies = [];
   resetVerificationPersistenceCache();
   // 生产中所有业务消息都晚于 diskIOWorker 的 load 握手；测试同样先接管当天。
-  recoverVerificationDay(DAY_ONE, dir);
+  await recoverVerificationDay(DAY_ONE, dir);
 });
 
 afterEach(() => {
@@ -109,7 +115,7 @@ afterEach(() => {
 });
 
 describe("pending verification daily append JSON", () => {
-  test("kickPending 以 critical 快照落盘并完整恢复动作代际", () => {
+  test("kickPending 以 critical 快照落盘并完整恢复动作代际", async () => {
     const { phase: _phase, ...base } = snapshot(1, {
       trackedMessageTimes: [],
       joinedAt: 2_000,
@@ -123,9 +129,9 @@ describe("pending verification daily append JSON", () => {
       countedJoinAt: 2_000,
     };
 
-    upsert({ type: "verificationUpsert", record, critical: true });
+    await upsert({ type: "verificationUpsert", record, critical: true });
 
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")).toEqual(record);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")).toEqual(record);
     expect(replies).toContainEqual({
       type: "verificationPersisted",
       key: "-1001:42",
@@ -135,10 +141,10 @@ describe("pending verification daily append JSON", () => {
     });
   });
 
-  test("新建立即写入，同一 key 高频普通更新只追加窗口内最终快照", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+  test("新建立即写入，同一 key 高频普通更新只追加窗口内最终快照", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     for (let revision = 2; revision <= 500; revision++) {
-      upsert({
+      await upsert({
         type: "verificationUpsert",
         record: snapshot(revision, { trackedMessageTimes: [revision] }),
         critical: false,
@@ -147,18 +153,18 @@ describe("pending verification daily append JSON", () => {
 
     expect(verificationPendingChanges.size).toBe(1);
     expect(replies.map((reply) => reply.revision)).toEqual([1]);
-    flushVerificationChanges(receiveReply, dir, DAY_ONE);
+    await flushVerificationChanges(receiveReply, dir, DAY_ONE);
 
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")).toMatchObject({
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")).toMatchObject({
       revision: 500,
       trackedMessageTimes: [500],
     });
     expect(replies.map((reply) => reply.revision)).toEqual([1, 500]);
   });
 
-  test("终结以 durable tombstone 覆盖尚未 flush 的旧 upsert，不会复活", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: false });
-    deleteVerification({
+  test("终结以 durable tombstone 覆盖尚未 flush 的旧 upsert，不会复活", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: false });
+    await deleteVerification({
       type: "verificationDelete",
       chatId: -1001,
       userId: 42,
@@ -166,25 +172,25 @@ describe("pending verification daily append JSON", () => {
       revision: 2,
     });
 
-    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).size).toBe(0);
     expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({ "-1001:42": null });
     expect(replies.at(-1)).toMatchObject({ revision: 2, deleted: true });
   });
 
-  test("验证终结只追加 tombstone，不因单次 delete 全量重写其它 active", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
-    upsert({
+  test("验证终结只追加 tombstone，不因单次 delete 全量重写其它 active", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    await upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 43, label: "第二位" }),
       critical: true,
     });
-    upsert({
+    await upsert({
       type: "verificationUpsert",
       record: snapshot(2, { userId: 43, label: "第二位" }),
       critical: true,
     });
 
-    deleteVerification({
+    await deleteVerification({
       type: "verificationDelete",
       chatId: -1001,
       userId: 42,
@@ -198,13 +204,13 @@ describe("pending verification daily append JSON", () => {
       "-1001:42": null,
       "-1001:43": { version: VERIFICATION_FILE_VERSION, ...snapshot(2, { userId: 43, label: "第二位" }) },
     });
-    expect(recoverVerificationDay(DAY_ONE, dir).has("-1001:42")).toBeFalse();
+    expect((await recoverVerificationDay(DAY_ONE, dir)).has("-1001:42")).toBeFalse();
   });
 
-  test("批量终结按 delete 数线性追加，不在每次终结后重置历史计数", () => {
+  test("批量终结按 delete 数线性追加，不在每次终结后重置历史计数", async () => {
     const total: number = 200;
     for (let userId = 1; userId <= total; userId++) {
-      upsert({
+      await upsert({
         type: "verificationUpsert",
         record: snapshot(1, { userId, label: `member-${userId}` }),
         critical: true,
@@ -213,7 +219,7 @@ describe("pending verification daily append JSON", () => {
     expect(verificationFileState.appendedEntries).toBe(total);
 
     for (let userId = 1; userId <= total; userId++) {
-      deleteVerification({
+      await deleteVerification({
         type: "verificationDelete",
         chatId: -1001,
         userId,
@@ -223,36 +229,36 @@ describe("pending verification daily append JSON", () => {
     }
 
     expect(verificationFileState.appendedEntries).toBe(total * 2);
-    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).size).toBe(0);
   });
 
-  test("尾部截断时拒绝恢复，并保持原始字节不变", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
-    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
+  test("尾部截断时拒绝恢复，并保持原始字节不变", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    await upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
     const path: string = join(dir, `${DAY_ONE}.json`);
     const full: string = readFileSync(path, "utf8");
     const truncated: string = full.slice(0, full.lastIndexOf('"revision": 2') + 18);
     writeFileSync(path, truncated);
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must be valid JSON");
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("must be valid JSON");
     expect(readFileSync(path, "utf8")).toBe(truncated);
   });
 
-  test("tombstone 后的尾部截断同样拒绝恢复，不猜测最后完整 revision", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
-    upsert({
+  test("tombstone 后的尾部截断同样拒绝恢复，不猜测最后完整 revision", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    await upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 43, label: "仍在验证" }),
       critical: true,
     });
-    deleteVerification({
+    await deleteVerification({
       type: "verificationDelete",
       chatId: -1001,
       userId: 42,
       generation: 1,
       revision: 2,
     });
-    upsert({
+    await upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 44, label: "写到一半" }),
       critical: true,
@@ -264,24 +270,24 @@ describe("pending verification daily append JSON", () => {
     const truncated: string = full.slice(0, tornEntryStart + 50);
     writeFileSync(path, truncated);
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must be valid JSON");
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("must be valid JSON");
     expect(readFileSync(path, "utf8")).toBe(truncated);
   });
 
-  test("跨日先复制 active 快照到新日文件，再删除旧日文件", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
-    upsert({
+  test("跨日先复制 active 快照到新日文件，再删除旧日文件", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    await upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 43, label: "第二位" }),
       critical: true,
     }, DAY_TWO);
 
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
-    const recovered = recoverVerificationDay(DAY_TWO, dir);
+    const recovered = await recoverVerificationDay(DAY_TWO, dir);
     expect([...recovered.keys()].sort()).toEqual(["-1001:42", "-1001:43"]);
   });
 
-  test("跨午夜停机后从最新旧日迁移 active，再删除旧日", () => {
+  test("跨午夜停机后从最新旧日迁移 active，再删除旧日", async () => {
     resetVerificationPersistenceCache();
     writeFileSync(
       join(dir, `${DAY_ONE}.json`),
@@ -289,7 +295,7 @@ describe("pending verification daily append JSON", () => {
     );
 
     const recovered: Map<string, VerificationSnapshot> =
-      recoverVerificationDay(DAY_TWO, dir);
+      await recoverVerificationDay(DAY_TWO, dir);
 
     expect(recovered.get("-1001:42")).toMatchObject({ revision: 1 });
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
@@ -297,7 +303,7 @@ describe("pending verification daily append JSON", () => {
       .toEqual({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } });
   });
 
-  test("跨日 inspect 不改盘，adopt 只发布内存，maintenance 才 compact 和清旧日", () => {
+  test("跨日 inspect 不改盘，adopt 只发布内存，maintenance 才 compact 和清旧日", async () => {
     resetVerificationPersistenceCache();
     const priorPath: string = join(dir, `${DAY_ONE}.json`);
     const currentPath: string = join(dir, `${DAY_TWO}.json`);
@@ -306,7 +312,7 @@ describe("pending verification daily append JSON", () => {
       JSON.stringify({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } }, null, 2)
     );
 
-    const inspection = inspectVerificationDay(DAY_TWO, dir);
+    const inspection = await inspectVerificationDay(DAY_TWO, dir);
     expect(existsSync(priorPath)).toBeTrue();
     expect(existsSync(currentPath)).toBeFalse();
     expect(verificationFileState.current).toBeNull();
@@ -320,7 +326,7 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(currentPath)).toBeTrue();
   });
 
-  test("只以最新旧日为迁移基线，不从更早残留复活已终结成员", () => {
+  test("只以最新旧日为迁移基线，不从更早残留复活已终结成员", async () => {
     resetVerificationPersistenceCache();
     writeFileSync(
       join(dir, `${DAY_ZERO}.json`),
@@ -330,7 +336,7 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({}, null, 2));
 
     const recovered: Map<string, VerificationSnapshot> =
-      recoverVerificationDay(DAY_TWO, dir);
+      await recoverVerificationDay(DAY_TWO, dir);
 
     expect(recovered.has("-1001:42")).toBeFalse();
     expect(existsSync(join(dir, `${DAY_ZERO}.json`))).toBeFalse();
@@ -339,7 +345,7 @@ describe("pending verification daily append JSON", () => {
       .toEqual({});
   });
 
-  test("时钟回拨：晚于今天的日文件一律保留，绝不未读删除", () => {
+  test("时钟回拨：晚于今天的日文件一律保留，绝不未读删除", async () => {
     resetVerificationPersistenceCache();
     // 宿主 RTC 快于真实时间（VM 恢复、NTP 同步前启动）时写出的那一份。
     // latestPriorVerificationDay 用 `candidate >= day` 明确拒绝把它并进本次恢复，
@@ -356,7 +362,7 @@ describe("pending verification daily append JSON", () => {
     );
 
     const recovered: Map<string, VerificationSnapshot> =
-      recoverVerificationDay(DAY_ONE, dir);
+      await recoverVerificationDay(DAY_ONE, dir);
 
     // 更早的旧日照常并进来并删除；未来那份原封不动留着。
     expect(recovered.has("-1001:42")).toBeTrue();
@@ -366,10 +372,10 @@ describe("pending verification daily append JSON", () => {
 
     // 时钟走到那天时它自己就是当天文件，照常恢复出来——留着不会常驻。
     resetVerificationPersistenceCache();
-    expect(recoverVerificationDay(DAY_FUTURE, dir).has("-1001:44")).toBeTrue();
+    expect((await recoverVerificationDay(DAY_FUTURE, dir)).has("-1001:44")).toBeTrue();
   });
 
-  test("没有旧日可迁移时同样不删未来日文件", () => {
+  test("没有旧日可迁移时同样不删未来日文件", async () => {
     resetVerificationPersistenceCache();
     const DAY_FUTURE: string = "2026-07-21";
     writeFileSync(
@@ -377,11 +383,11 @@ describe("pending verification daily append JSON", () => {
       JSON.stringify({ "-1001:44": { version: VERIFICATION_FILE_VERSION, ...snapshot(1, { userId: 44 }) } }, null, 2)
     );
 
-    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).size).toBe(0);
     expect(existsSync(join(dir, `${DAY_FUTURE}.json`))).toBeTrue();
   });
 
-  test("跨午夜停机恢复以新日 active 和 tombstone 覆盖旧日", () => {
+  test("跨午夜停机恢复以新日 active 和 tombstone 覆盖旧日", async () => {
     resetVerificationPersistenceCache();
     writeFileSync(
       join(dir, `${DAY_ONE}.json`),
@@ -405,7 +411,7 @@ describe("pending verification daily append JSON", () => {
     );
 
     const recovered: Map<string, VerificationSnapshot> =
-      recoverVerificationDay(DAY_TWO, dir);
+      await recoverVerificationDay(DAY_TWO, dir);
 
     expect(recovered.has("-1001:42")).toBeFalse();
     expect(recovered.get("-1001:43")).toMatchObject({
@@ -415,7 +421,7 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
   });
 
-  test("待迁移旧日损坏时不改写新旧文件，也不清理旧日", () => {
+  test("待迁移旧日损坏时不改写新旧文件，也不清理旧日", async () => {
     resetVerificationPersistenceCache();
     const oldContent: string = "{\"-1001:42\":";
     const currentContent: string = JSON.stringify({
@@ -429,63 +435,61 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(oldPath, oldContent);
     writeFileSync(currentPath, currentContent);
 
-    expect((): Map<string, VerificationSnapshot> =>
-      recoverVerificationDay(DAY_TWO, dir)
-    ).toThrow();
+    await expect(recoverVerificationDay(DAY_TWO, dir)).rejects.toThrow();
     expect(readFileSync(oldPath, "utf8")).toBe(oldContent);
     expect(readFileSync(currentPath, "utf8")).toBe(currentContent);
   });
 
-  test("压缩前后恢复结果一致，并移除重复 key 与 null 历史", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
-    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
-    upsert({
+  test("压缩前后恢复结果一致，并移除重复 key 与 null 历史", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    await upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
+    await upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 43, label: "第二位" }),
       critical: true,
     });
-    deleteVerification({ type: "verificationDelete", chatId: -1001, userId: 43, generation: 1, revision: 2 });
-    const before = recoverVerificationDay(DAY_ONE, dir);
+    await deleteVerification({ type: "verificationDelete", chatId: -1001, userId: 43, generation: 1, revision: 2 });
+    const before = await recoverVerificationDay(DAY_ONE, dir);
 
     compactVerificationDay(DAY_ONE, dir);
-    expect(recoverVerificationDay(DAY_ONE, dir)).toEqual(before);
+    expect(await recoverVerificationDay(DAY_ONE, dir)).toEqual(before);
     expect(Object.keys(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")))).toEqual(["-1001:42"]);
   });
 
-  test("增量历史达到条数阈值时自动收敛为 active 快照", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+  test("增量历史达到条数阈值时自动收敛为 active 快照", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     verificationFileState.appendedEntries = 9_999;
 
-    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
+    await upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
 
     expect(verificationFileState.appendedEntries).toBe(0);
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(2);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")?.revision).toBe(2);
     expect(Object.keys(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")))).toEqual(["-1001:42"]);
   });
 
-  test("增量历史达到字节阈值时自动收敛，但不把 active 基线反复计入历史", () => {
-    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+  test("增量历史达到字节阈值时自动收敛，但不把 active 基线反复计入历史", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     verificationFileState.appendedBytes = VERIFICATION_FILE_COMPACT_BYTES - 1;
 
-    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
+    await upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
 
     expect(verificationFileState.appendedEntries).toBe(0);
     expect(verificationFileState.appendedBytes).toBe(0);
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(2);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")?.revision).toBe(2);
   });
 
-  test("启动扫描也会收敛已达到条数阈值的当天历史", () => {
+  test("启动扫描也会收敛已达到条数阈值的当天历史", async () => {
     const entries: Record<string, null> = {};
     for (let userId = 1; userId <= 10_000; userId++) entries[`-1001:${userId}`] = null;
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify(entries, null, 2));
 
-    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).size).toBe(0);
     expect(verificationFileState.appendedEntries).toBe(0);
     expect(verificationFileState.appendedBytes).toBe(0);
     expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({});
   });
 
-  test("同一文件一条合法、一条损坏时 fail closed，且不改写原文件或清理旧日", () => {
+  test("同一文件一条合法、一条损坏时 fail closed，且不改写原文件或清理旧日", async () => {
     writeFileSync(join(dir, "2026-07-18.json"), "{}");
     writeFileSync(join(dir, "notes.txt"), "diagnostic");
     const original: string = JSON.stringify({
@@ -495,7 +499,7 @@ describe("pending verification daily append JSON", () => {
     }, null, 2);
     writeFileSync(join(dir, `${DAY_ONE}.json`), original);
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow(
       "$.<record> must be a current verification record or null tombstone"
     );
     expect(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")).toBe(original);
@@ -503,16 +507,16 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, "notes.txt"))).toBeTrue();
   });
 
-  test("顶层不是对象时 fail closed，并保持文件字节不变", () => {
+  test("顶层不是对象时 fail closed，并保持文件字节不变", async () => {
     const path: string = join(dir, `${DAY_ONE}.json`);
     const original: string = "[{\"bad\":\"shape\"}]";
     writeFileSync(path, original);
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must be a JSON object of verification records");
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("must be a JSON object of verification records");
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 
-  test("恢复 active 记录超过硬顶时 fail closed，且不截断或改写文件", () => {
+  test("恢复 active 记录超过硬顶时 fail closed，且不截断或改写文件", async () => {
     const path: string = join(dir, `${DAY_ONE}.json`);
     const records: Record<string, unknown> = {};
     for (
@@ -528,12 +532,12 @@ describe("pending verification daily append JSON", () => {
     const original: string = JSON.stringify(records);
     writeFileSync(path, original);
 
-    expect((): Map<string, VerificationSnapshot> => recoverVerificationDay(DAY_ONE, dir))
-      .toThrow(`$ must be a JSON object with at most ${VERIFICATION_RECORD_CAPACITY} active verification records`);
+    await expect(recoverVerificationDay(DAY_ONE, dir))
+      .rejects.toThrow(`$ must be a JSON object with at most ${VERIFICATION_RECORD_CAPACITY} active verification records`);
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 
-  test("正数私聊 ID 不能恢复为群级待验证状态", () => {
+  test("正数私聊 ID 不能恢复为群级待验证状态", async () => {
     const path: string = join(dir, `${DAY_ONE}.json`);
     const original: string = JSON.stringify({
       "1001:42": {
@@ -543,63 +547,63 @@ describe("pending verification daily append JSON", () => {
     }, null, 2);
     writeFileSync(path, original);
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("$.<record>");
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("$.<record>");
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 
-  test("非法日期文件名不会在启动扫描中被静默忽略", () => {
+  test("非法日期文件名不会在启动扫描中被静默忽略", async () => {
     const path: string = join(dir, "2026-02-30.json");
     writeFileSync(path, "{}");
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("$filename must be a canonical calendar date");
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("$filename must be a canonical calendar date");
     expect(readFileSync(path, "utf8")).toBe("{}");
   });
 
-  test("旧下划线键不再兼容，必须手动改成冒号格式", () => {
+  test("旧下划线键不再兼容，必须手动改成冒号格式", async () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
       "-1001_42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) },
     }, null, 2));
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow(
       "$.<record> must be a current verification record or null tombstone"
     );
   });
 
-  test("旧版验证记录不在代码中兼容，必须停机后手工迁移", () => {
+  test("旧版验证记录不在代码中兼容，必须停机后手工迁移", async () => {
     const path: string = join(dir, `${DAY_ONE}.json`);
     const original: string = JSON.stringify({
       "-1001:42": { version: 1, ...snapshot(1), messageIds: [7, 8] },
     }, null, 2);
     writeFileSync(path, original);
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow(
       "$.<record> must be a current verification record or null tombstone"
     );
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 
-  test("消息窗口随当天快照恢复，缺失当前必填字段时拒绝启动", () => {
-    upsert({
+  test("消息窗口随当天快照恢复，缺失当前必填字段时拒绝启动", async () => {
+    await upsert({
       type: "verificationUpsert",
       record: snapshot(1, { trackedMessageTimes: [10_000, 20_000] }),
       critical: true,
     });
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toEqual([10_000, 20_000]);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")?.trackedMessageTimes).toEqual([10_000, 20_000]);
 
     const incompatible: Record<string, unknown> = { version: VERIFICATION_FILE_VERSION, ...snapshot(2) };
     delete incompatible.trackedMessageTimes;
     const path: string = join(dir, `${DAY_ONE}.json`);
     const original: string = JSON.stringify({ "-1001:42": incompatible }, null, 2);
     writeFileSync(path, original);
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow(
       "$.<record> must be a current verification record or null tombstone"
     );
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 
-  test("成功播报标记只允许出现在 expelling 终态并可完整恢复", () => {
+  test("成功播报标记只允许出现在 expelling 终态并可完整恢复", async () => {
     const { phase: _phase, ...pending } = snapshot(1);
-    upsert({
+    await upsert({
       type: "verificationUpsert",
       record: {
         ...pending,
@@ -609,7 +613,7 @@ describe("pending verification daily append JSON", () => {
       },
       critical: true,
     });
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.successNoticeSent).toBe(true);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")?.successNoticeSent).toBe(true);
 
     const invalidPending: Record<string, unknown> = {
       ...snapshot(2),
@@ -618,10 +622,10 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
       "-1001:42": { version: VERIFICATION_FILE_VERSION, ...invalidPending },
     }));
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("$.<record> must be a current verification record");
+    await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("$.<record> must be a current verification record");
   });
 
-  test("checkingInviter 阶段可完整持久化并恢复", () => {
+  test("checkingInviter 阶段可完整持久化并恢复", async () => {
     const { phase: _phase, ...pending } = snapshot(1);
     const record: VerificationSnapshot = {
       ...pending,
@@ -629,12 +633,12 @@ describe("pending verification daily append JSON", () => {
       terminalInviterId: 88,
     };
 
-    upsert({
+    await upsert({
       type: "verificationUpsert",
       record,
       critical: true,
     });
 
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")).toEqual(record);
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")).toEqual(record);
   });
 });
