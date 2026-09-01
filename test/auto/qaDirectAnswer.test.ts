@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { chatQaEntries, resetChatQaCache } from "../../packages/cache/main/qa";
 import { resolveMentionFacts } from "../../packages/auto/message/facts";

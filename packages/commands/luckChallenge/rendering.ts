@@ -1,4 +1,4 @@
-import type { InlineQueryResultArticle } from "@grammyjs/types";
+import type { InlineQueryResultArticle } from "grammy/types";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import {
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,

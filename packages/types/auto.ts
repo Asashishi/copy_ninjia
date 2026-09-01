@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { TimestampDeque } from "../libs/timestampDeque";
 import type {
   AiBotInfo,

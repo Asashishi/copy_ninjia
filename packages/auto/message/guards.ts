@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { recordChatMessage } from "../../aiChat";
 import { isAiChatActiveIn } from "../../aiChat/availability";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";

@@ -1,4 +1,4 @@
-import type { MessageEntity } from "@grammyjs/types";
+import type { MessageEntity } from "grammy/types";
 import type { CommandContext, Context } from "grammy";
 import { activeGagSessionCount } from "../cache/main/gag";
 import { getAdDetectAgentConfig, getAgentDeploymentConfig } from "../config/agent";

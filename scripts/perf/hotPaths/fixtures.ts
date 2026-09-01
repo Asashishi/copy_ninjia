@@ -6,7 +6,7 @@
  * 谁都不该为了拿一个常量去 import 另一组场景。
  */
 
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 
 /** 基准群聊 id；仅用于进程内 Map，不产生任何 Telegram 或磁盘副作用。 */
 export const BENCHMARK_CHAT_ID: number = -100_000_000_000_001;

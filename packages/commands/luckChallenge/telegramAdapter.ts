@@ -1,4 +1,4 @@
-import type { InlineQueryResultArticle, ChosenInlineResult, InlineQuery, User } from "@grammyjs/types";
+import type { InlineQueryResultArticle, ChosenInlineResult, InlineQuery, User } from "grammy/types";
 import type { Context } from "grammy";
 import { formatUserLabel } from "../../users/userLabel";
 import type { LuckDraw } from "../../types/luckChallenge";

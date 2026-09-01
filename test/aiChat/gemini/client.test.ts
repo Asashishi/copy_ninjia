@@ -261,4 +261,30 @@ describe("Gemini request safety settings", () => {
       normalize: (text: string): string => text,
     })).resolves.toEqual({ ok: false, retryable: false });
   });
+
+  test("SDK 每次尝试各自的 timeout 之外，另有一份覆盖全部重试的 deadline", async () => {
+    await requestGeminiResponse("summary", (): GenerateContentParameters => ({
+      model: "gemini-test",
+      contents: "hello",
+    }), "Gemini test");
+
+    const request: GenerateContentParameters = generateContent.mock.calls[0]![0]!;
+    expect(request.config?.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(request.config?.abortSignal?.aborted).toBe(false);
+  });
+
+  test("调用方 invalidate signal 与 deadline 合成后下传，不被替换掉", async () => {
+    const controller: AbortController = new AbortController();
+    await requestGeminiResponse("summary", (): GenerateContentParameters => ({
+      model: "gemini-test",
+      contents: "hello",
+      config: { abortSignal: controller.signal },
+    }), "Gemini test");
+
+    const passed: AbortSignal | undefined = generateContent.mock.calls[0]![0]!.config?.abortSignal;
+    expect(passed).not.toBe(controller.signal);
+    expect(passed?.aborted).toBe(false);
+    controller.abort();
+    expect(passed?.aborted).toBe(true);
+  });
 });

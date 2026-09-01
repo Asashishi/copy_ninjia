@@ -5,7 +5,7 @@
  * 而它们量的都是 aiChat 那一侧的读写形状，与容器/时间窗那批叶子场景无关。
  */
 
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import {
   buildTieredVerbatimTranscript,
 } from "../../../packages/aiChat/ai/utils/chatTranscript";

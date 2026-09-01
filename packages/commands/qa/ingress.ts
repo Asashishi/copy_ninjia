@@ -16,7 +16,7 @@
  * 两边天然对得上——inline 时代对不上的是「皮套开表单、真人填表单」那两个 id。
  */
 
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { CHAT_QA_ANSWER_MAX_CHARS, CHAT_QA_QUESTION_MAX_CHARS } from "../../consts/qa";
 import { deleteMessageWithOutcome } from "../../infra/telegram";
 import {

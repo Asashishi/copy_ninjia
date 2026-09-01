@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ChatMember, ChatMemberAdministrator } from "@grammyjs/types";
+import type { ChatMember, ChatMemberAdministrator } from "grammy/types";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import { settleBackgroundWork, settleTestBatch } from "../libs/helpers";
 import { botPermissions } from "../helpers/botPermissions";

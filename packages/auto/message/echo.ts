@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { CopyMode } from "../../types/chatState";
 import { isJaTranslationActiveIn } from "../../copy/availability";
 import { activeCopyTargetIdIn } from "../../infra/storage/stateStore";

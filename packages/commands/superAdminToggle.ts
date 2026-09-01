@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { User } from "@grammyjs/types";
+import type { User } from "grammy/types";
 import { logger } from "../infra/logger";
 import {
   getOrCreateChatState,

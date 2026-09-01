@@ -226,12 +226,13 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
  *
  * **刻意不登记进 Worker 的在途任务集合**（trackAntiRaidTask）：那个集合是停机
  * drain 的等待对象，而 drain 的预算是 ANTI_RAID_DRAIN_TIMEOUT_MS 这一档的秒级
- * 数值，一次判定请求却可以耗到广告检测 provider 的 30 秒请求超时（还要乘上
- * 空正文重试）。登记进去的话，凡是停机时恰好有一次判定在途，drain 必然超时
- * ——生命周期据此拒绝确认 Telegram offset 并以非零状态退出，等于每次撞上都
- * 换来一次脏退出加一批 update 重投。判定是尽力而为的启发式，本来就不该扣着
- * 停机不放；真正不可丢的那一半（拉黑 + 各群封禁登记）在主线程，由
- * drainAntiRaid 每轮等待 inFlightAdDisposals 收口（见 antiRaid/adCandidate.ts）。
+ * 数值，一次判定请求却可以耗到分钟级——两个 provider 的 30 秒请求超时都是每次
+ * SDK 尝试各自的期限，还要乘上各自的 SDK 尝试次数与空正文重试。登记进去的话，
+ * 凡是停机时恰好有一次判定在途，drain 必然超时——生命周期据此拒绝确认 Telegram
+ * offset 并以非零状态退出，等于每次撞上都换来一次脏退出加一批 update 重投。
+ * 判定是尽力而为的启发式，本来就不该扣着停机不放；真正不可丢的那一半
+ * （拉黑 + 各群封禁登记）在主线程，由 drainAntiRaid 每轮等待
+ * inFlightAdDisposals 收口（见 antiRaid/adCandidate.ts）。
  * @returns 本批全部结算的 Promise；调用方（节拍与测试）自行决定要不要等。
  */
 export function runAdDetectBatch(now: number = Date.now()): Promise<void> {

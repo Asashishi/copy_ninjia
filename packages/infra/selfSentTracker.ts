@@ -1,4 +1,4 @@
-import type { Message, MessageOrigin } from "@grammyjs/types";
+import type { Message, MessageOrigin } from "grammy/types";
 import {
   SELF_SENT_MESSAGE_TTL_MS,
   SELF_SENT_RENDEZVOUS_TIMEOUT_MS,

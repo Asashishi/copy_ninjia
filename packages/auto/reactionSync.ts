@@ -3,7 +3,7 @@ import type { CopyableReaction } from "../types/telegram";
 import { activeCopyTargetIdIn } from "../infra/storage/stateStore";
 import { setMessageReactions } from "../infra/telegram";
 import { logger } from "../infra/logger";
-import type { MessageReactionUpdated } from "@grammyjs/types";
+import type { MessageReactionUpdated } from "grammy/types";
 
 /**
  * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义

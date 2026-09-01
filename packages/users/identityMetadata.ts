@@ -1,4 +1,4 @@
-import type { Chat, Message } from "@grammyjs/types";
+import type { Chat, Message } from "grammy/types";
 import type { TelegramIdentityMetadata } from "../types/identityPolicy";
 
 /** 把消息当前展示的用户或频道身份映射为持久化名单使用的固定字段。 */

@@ -14,7 +14,7 @@
  * 类型就保留终态退避，绝不拿「未知」猜一个破坏性 API。
  */
 
-import type { ChatFullInfo } from "@grammyjs/types";
+import type { ChatFullInfo } from "grammy/types";
 import { VERIFICATION_CHAT_KIND_FETCH_MAX } from "../../consts/antiRaid/verification";
 import {
   workerChatIsSupergroup,

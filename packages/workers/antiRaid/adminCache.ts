@@ -12,7 +12,7 @@ import {
   takePendingAdminChanges,
 } from "../../cache/workers/antiRaid/admins";
 import type { ChatAdminCache } from "../../types/antiRaid/internal";
-import type { ChatMemberAdministrator, ChatMemberOwner } from "@grammyjs/types";
+import type { ChatMemberAdministrator, ChatMemberOwner } from "grammy/types";
 import { trackAntiRaidTask } from "./taskTracker";
 
 /**

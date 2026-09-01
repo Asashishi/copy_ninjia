@@ -15,7 +15,7 @@ import { getChatState } from "../infra/storage/stateStore";
 import { canBypassFloodControl } from "./memberFacts";
 import type { FloodCandidateMessage } from "../types/antiRaid/protocol";
 import type { ChatState } from "../types/chatState";
-import type { Message, User } from "@grammyjs/types";
+import type { Message, User } from "grammy/types";
 
 /**
  * 把一条群消息收敛成刷屏计数投递。返回 undefined 表示这条不参与计数。

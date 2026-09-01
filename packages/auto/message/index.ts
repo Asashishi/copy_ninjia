@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { isAiChatConfigured } from "../../aiChat/availability";
 import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat/rateLimit";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";

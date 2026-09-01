@@ -104,6 +104,29 @@ describe("客户端构造", () => {
   });
 });
 
+describe("整次调用的 deadline", () => {
+  test("SDK 每次尝试各自的 timeout 之外，另有一份覆盖全部重试的 deadline", async () => {
+    await requestOpenAiResult({ capability: "summary", buildBody: () => BODY, errorLabel: "AI test API" });
+
+    const options = create.mock.calls[0]![1] as { readonly signal?: AbortSignal };
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(options.signal?.aborted).toBe(false);
+  });
+
+  test("调用方取消信号与 deadline 合成后下传，不被替换掉", async () => {
+    const controller: AbortController = new AbortController();
+    await requestOpenAiResult({
+      capability: "summary", buildBody: () => BODY, errorLabel: "AI test API", signal: controller.signal,
+    });
+
+    const passed: AbortSignal | undefined = (create.mock.calls[0]![1] as { readonly signal?: AbortSignal }).signal;
+    expect(passed).not.toBe(controller.signal);
+    expect(passed?.aborted).toBe(false);
+    controller.abort();
+    expect(passed?.aborted).toBe(true);
+  });
+});
+
 describe("失败分类", () => {
   test("APIError 记一行带状态码的日志，并归类成请求失败", async () => {
     create.mockRejectedValueOnce(new FakeApiError(502, "Upstream request failed"));

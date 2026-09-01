@@ -1,4 +1,4 @@
-import type { MessageEntity } from "@grammyjs/types";
+import type { MessageEntity } from "grammy/types";
 import { describe, expect, test } from "bun:test";
 import { captureFencedText, renderFencedText } from "../../packages/libs/codeFence";
 import type { RichTextMessage } from "../../packages/types/telegram";

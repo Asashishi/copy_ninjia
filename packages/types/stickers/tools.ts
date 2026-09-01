@@ -1,4 +1,4 @@
-import type { Sticker } from "@grammyjs/types";
+import type { Sticker } from "grammy/types";
 
 export interface StickerSendLockControl {
   tryAcquire(): boolean;

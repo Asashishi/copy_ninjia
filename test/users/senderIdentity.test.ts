@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { senderUsernameCache, userCache } from "../../packages/cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../../packages/consts/senderIdentity";
 import type { CachedUser } from "../../packages/types/chatState";

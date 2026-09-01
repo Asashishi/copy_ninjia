@@ -1,4 +1,4 @@
-import type { Chat, ChatFullInfo } from "@grammyjs/types";
+import type { Chat, ChatFullInfo } from "grammy/types";
 import { logger } from "./logger";
 import { bot } from "./telegram/mainClient";
 import {

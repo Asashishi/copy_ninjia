@@ -22,6 +22,7 @@ import {
   GEMINI_REQUEST_TIMEOUT_MS,
   GEMINI_SAFETY_SETTINGS,
 } from "../../consts/aiChat/gemini";
+import { signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
 import {
   isEndpointFailureStatus,
@@ -95,6 +96,11 @@ export async function requestGeminiResult(
         // 在唯一底层封装覆盖，聊天、压缩、媒体描述和未来调用方不会漏配，
         // 也不能各自悄悄恢复成更严格的档位。
         safetySettings: [...GEMINI_SAFETY_SETTINGS],
+        // 同上，deadline 也收在这里：SDK 的 httpOptions.timeout 是每次尝试各自
+        // 的期限，乘上 GEMINI_REQUEST_RETRY_ATTEMPTS 就是分钟级。合成后的 signal
+        // 一触发，SDK 的 onFailedAttempt 即短路整轮重试，最坏挂起收敛到
+        // GEMINI_REQUEST_TIMEOUT_MS。调用方的 invalidate signal 仍照常贯穿。
+        abortSignal: signalWithTimeout(body.config?.abortSignal, GEMINI_REQUEST_TIMEOUT_MS),
       },
     });
   } catch (error: unknown) {

@@ -1,4 +1,4 @@
-import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
+import type { ChatPermissions, ChatFullInfo } from "grammy/types";
 import type { TelegramApi } from "../../types/telegramWorker";
 import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
 

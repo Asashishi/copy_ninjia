@@ -13,7 +13,7 @@
  */
 
 import { InlineKeyboard, type Context } from "grammy";
-import type { CallbackQuery } from "@grammyjs/types";
+import type { CallbackQuery } from "grammy/types";
 import {
   QA_COMMAND_TEXTS,
   QA_QUERY_ANSWER_PREVIEW_MAX_CHARS,

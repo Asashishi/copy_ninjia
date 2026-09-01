@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions } from "grammy/types";
 import { restoreLockdownInvitePermission } from "../../packages/infra/telegram/lockdownPermissions";
 
 function apiWithPermissions(currentPermissions: ChatPermissions) {

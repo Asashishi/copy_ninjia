@@ -5,7 +5,7 @@ import type {
   Message,
   MessageEntity,
   MessageOrigin,
-} from "@grammyjs/types";
+} from "grammy/types";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { adDetectConfigReadiness } from "../config/readiness";
 import {

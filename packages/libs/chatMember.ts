@@ -1,4 +1,4 @@
-import type { ChatMember } from "@grammyjs/types";
+import type { ChatMember } from "grammy/types";
 import type { BotActionPermissions, BotChatPermissions } from "../types/telegram";
 import {
   BOT_ACTION_PERMISSION_KEYS,

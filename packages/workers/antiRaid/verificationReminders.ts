@@ -21,7 +21,7 @@ import type {
 } from "../../types/antiRaid/internal";
 import type { PendingState, VerificationState } from "../../types/states/verification";
 import { trackAntiRaidTask } from "./taskTracker";
-import type { InlineKeyboardMarkup } from "@grammyjs/types";
+import type { InlineKeyboardMarkup } from "grammy/types";
 
 /**
  * 待验证提醒的唯一投递 owner：发送失败时在验证期限内退避重试，状态换代

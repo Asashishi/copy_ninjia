@@ -1,4 +1,4 @@
-import type { Sticker, PhotoSize } from "@grammyjs/types";
+import type { Sticker, PhotoSize } from "grammy/types";
 import { stickerSentTagTemplate } from "../../../consts/aiChat/prompts/transcript";
 import type { TelegramVisionSource } from "../../../types/media";
 

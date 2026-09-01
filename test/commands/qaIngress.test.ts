@@ -1,4 +1,4 @@
-import type { Message, MessageEntity } from "@grammyjs/types";
+import type { Message, MessageEntity } from "grammy/types";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   CHAT_QA_ANSWER_MAX_CHARS,

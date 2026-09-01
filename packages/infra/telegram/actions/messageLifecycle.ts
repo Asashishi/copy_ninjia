@@ -1,4 +1,4 @@
-import type { ReactionTypeEmoji } from "@grammyjs/types";
+import type { ReactionTypeEmoji } from "grammy/types";
 import { telegramApi } from "../client";
 import {
   inFlightMessageDeletions,

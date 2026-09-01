@@ -1,4 +1,4 @@
-import type { Chat, Message } from "@grammyjs/types";
+import type { Chat, Message } from "grammy/types";
 
 /**
  * 群内实际展示的发送者会话：sender_chat（频道马甲/匿名管理员）优先；纯粹的

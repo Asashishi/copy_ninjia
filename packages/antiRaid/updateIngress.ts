@@ -4,7 +4,7 @@ import type {
   ChatMemberUpdated,
   Message,
   User,
-} from "@grammyjs/types";
+} from "grammy/types";
 import { logger } from "../infra/logger";
 import { recordJoinLog } from "../infra/joinLog";
 import { answerCallbackQuery } from "../infra/telegram/actions";

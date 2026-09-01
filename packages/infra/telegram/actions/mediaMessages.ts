@@ -1,4 +1,4 @@
-import type { Message, MessageId } from "@grammyjs/types";
+import type { Message, MessageId } from "grammy/types";
 import type {
   TelegramSendResult,
 } from "../../../types/telegram";

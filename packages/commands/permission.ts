@@ -1,4 +1,4 @@
-import type { MessageEntity } from "@grammyjs/types";
+import type { MessageEntity } from "grammy/types";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type {

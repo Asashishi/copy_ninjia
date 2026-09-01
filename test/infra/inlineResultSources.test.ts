@@ -1,7 +1,7 @@
 /** 全部 inline 功能共用的「结果正文 → 查询源文本」登记表。 */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { InlineQueryResult } from "@grammyjs/types";
+import type { InlineQueryResult } from "grammy/types";
 import { inlineResultSources } from "../../packages/cache/main/inlineResultSources";
 import { INLINE_RESULT_SOURCE_MAX_AUTHORS } from "../../packages/consts/telegram";
 import {

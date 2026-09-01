@@ -8,7 +8,7 @@ import {
 } from "../infra/updateContext";
 import { isSuperAdmin } from "./superAdminToggle";
 import { parseChatIdArgument } from "./targetResolution";
-import type { ChatFullInfo } from "@grammyjs/types";
+import type { ChatFullInfo } from "grammy/types";
 
 /**
  * 隐藏的超管私聊中转命令；群聊和非超管调用静默拒绝。只接受可达、且已经在

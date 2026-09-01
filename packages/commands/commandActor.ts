@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { Chat, Message } from "@grammyjs/types";
+import type { Chat, Message } from "grammy/types";
 import type { CachedUser } from "../types/chatState";
 import type { WhitelistPermissionKey } from "../types/identityPolicy";
 import { hasWhitelistPermission } from "../infra/identityPolicy/whitelist";

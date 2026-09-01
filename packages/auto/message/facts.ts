@@ -1,4 +1,4 @@
-import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User, Chat } from "@grammyjs/types";
+import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User, Chat } from "grammy/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 import { joinPersonName } from "../../libs/text";

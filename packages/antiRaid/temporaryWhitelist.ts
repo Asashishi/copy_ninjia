@@ -1,4 +1,4 @@
-import type { Chat } from "@grammyjs/types";
+import type { Chat } from "grammy/types";
 import { adDetectConfigReadiness } from "../config/readiness";
 import { TEMPORARY_WHITELIST_REQUIRED_DAYS } from
   "../consts/temporaryWhitelist";

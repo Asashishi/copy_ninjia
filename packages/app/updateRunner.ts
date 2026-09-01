@@ -1,5 +1,5 @@
 import { createUpdateFetcher, type FetchOptions } from "@grammyjs/runner";
-import type { Update } from "@grammyjs/types";
+import type { Update } from "grammy/types";
 import { BotError } from "grammy";
 import type { Bot, Context } from "grammy";
 import { logger } from "../infra/logger";

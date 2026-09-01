@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, jest, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import {
   isBotOwnMessage,
   isSelfSent,

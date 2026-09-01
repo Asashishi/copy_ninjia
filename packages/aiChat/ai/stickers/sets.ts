@@ -1,4 +1,4 @@
-import type { StickerSet } from "@grammyjs/types";
+import type { StickerSet } from "grammy/types";
 import { logger } from "../../../infra/logger";
 import { telegramApi } from "../../../infra/telegram";
 import { raceAbort } from "../../../libs/abortSignal";

@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 
 /** Telegram 消息是否承载用户主动发送的内容，而不是平台生成的服务事件。 */
 export function hasUserMessageContent(message: Message): boolean {

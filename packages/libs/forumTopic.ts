@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 
 /**
  * 论坛（topics）群里这条消息所属话题的 `message_thread_id`。

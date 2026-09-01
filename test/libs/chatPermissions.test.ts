@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions } from "grammy/types";
 import { CHAT_PERMISSION_KEYS } from "../../packages/consts/storage";
 import { normalizeChatPermissions } from "../../packages/libs/chatPermissions";
 

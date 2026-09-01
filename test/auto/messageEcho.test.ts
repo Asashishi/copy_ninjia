@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 
 /**
  * 复读边界（packages/auto/message/echo.ts）的「不回显命令」这道闸。

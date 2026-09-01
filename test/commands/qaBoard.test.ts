@@ -1,4 +1,4 @@
-import type { InlineKeyboardButton } from "@grammyjs/types";
+import type { InlineKeyboardButton } from "grammy/types";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   CHAT_QA_ANSWER_MAX_CHARS,

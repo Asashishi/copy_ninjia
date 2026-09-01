@@ -1,5 +1,5 @@
 /** 广告检测流水线的跨线程协议与 Worker 内部纯数据形状。 */
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { ChatState } from "../chatState";
 import type { TelegramIdentityMetadata } from "../identityPolicy";
 

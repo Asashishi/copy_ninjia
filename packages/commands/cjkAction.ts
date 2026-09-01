@@ -1,5 +1,5 @@
 import type { Context, NextFunction } from "grammy";
-import type { Message, MessageEntity } from "@grammyjs/types";
+import type { Message, MessageEntity } from "grammy/types";
 import type { CachedUser } from "../types/chatState";
 import {
   CJK_ACTION_COMMAND_PATTERN,

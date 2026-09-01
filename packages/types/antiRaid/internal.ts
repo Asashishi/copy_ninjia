@@ -1,4 +1,4 @@
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions } from "grammy/types";
 import type { LockdownPhase } from "../chatState";
 import type { TimestampDeque } from "../../libs/timestampDeque";
 import type { LockdownState } from "../states/lockdown";

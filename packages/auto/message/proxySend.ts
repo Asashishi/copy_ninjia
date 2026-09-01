@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
 import {
   clearChatStateField,

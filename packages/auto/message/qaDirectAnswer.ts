@@ -13,7 +13,7 @@
  * group_qa_answer。
  */
 
-import type { Message, MessageEntity } from "@grammyjs/types";
+import type { Message, MessageEntity } from "grammy/types";
 import { sendMessage } from "../../infra/telegram";
 import { getChatQa } from "../../infra/qaStore";
 import { renderFencedText } from "../../libs/codeFence";

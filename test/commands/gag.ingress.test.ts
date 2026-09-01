@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import type {
   Message,
   MessageEntity,
-} from "@grammyjs/types";
+} from "grammy/types";
 import {
   GAG_SESSION_MAX,
   GAG_SPEAK_NOTICE_MESSAGE_INTERVAL,

@@ -12,7 +12,7 @@ import {
   linkedChannels,
 } from "../../cache/workers/antiRaid/linkedChannels";
 import type { LinkedChannelCache } from "../../types/antiRaid/internal";
-import type { ChatFullInfo } from "@grammyjs/types";
+import type { ChatFullInfo } from "grammy/types";
 import { trackAntiRaidTask } from "./taskTracker";
 import { withTimeout } from "../../libs/withTimeout";
 

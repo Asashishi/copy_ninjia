@@ -1,4 +1,4 @@
-import type { Voice } from "@grammyjs/types";
+import type { Voice } from "grammy/types";
 import { recordChatMedia } from "../../aiChat";
 import { VOICE_MAX_DOWNLOAD_BYTES, VOICE_MAX_DURATION_SECONDS } from "../../consts/aiChat/voice";
 import { resolveSpeaker } from "./facts";

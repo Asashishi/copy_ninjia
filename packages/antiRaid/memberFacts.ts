@@ -3,7 +3,7 @@ import {
   isWhitelisted,
 } from "../infra/identityPolicy/whitelist";
 import { isAdminStatus } from "../libs/chatMember";
-import type { ChatMember } from "@grammyjs/types";
+import type { ChatMember } from "grammy/types";
 import type { AntiRaidMember } from "../types/antiRaid/protocol";
 
 /**

@@ -1,5 +1,5 @@
 import { logger } from "../../../infra/logger";
-import type { Sticker, StickerSet } from "@grammyjs/types";
+import type { Sticker, StickerSet } from "grammy/types";
 import { getStickerSet } from "./sets";
 import { pickStickerVisionSource } from "./describe";
 import { describeMediaForStickerCatalog } from "../imageDescription";

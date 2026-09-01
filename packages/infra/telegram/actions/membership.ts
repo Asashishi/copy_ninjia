@@ -1,4 +1,4 @@
-import type { ChatMember } from "@grammyjs/types";
+import type { ChatMember } from "grammy/types";
 import { isAdminStatus } from "../../../libs/chatMember";
 import { telegramApi } from "../client";
 import { runTelegramAction } from "./core";

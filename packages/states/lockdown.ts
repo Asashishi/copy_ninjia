@@ -3,7 +3,7 @@ import {
   LOCKDOWN_RETRIGGER_COOLDOWN_MS,
   RESTORE_RETRY_MS,
 } from "../consts/antiRaid/lockdown";
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions } from "grammy/types";
 import type {
   LockdownAbandonReason,
   LockdownAnnouncement,

@@ -1,5 +1,5 @@
 import { GrammyError, InputFile } from "grammy";
-import type { ChatFullInfo, PhotoSize, UserProfilePhotos } from "@grammyjs/types";
+import type { ChatFullInfo, PhotoSize, UserProfilePhotos } from "grammy/types";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
   AVATAR_MAX_DOWNLOAD_BYTES,

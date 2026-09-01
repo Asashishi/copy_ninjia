@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { forumTopicThreadId } from "../../packages/libs/forumTopic";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 
 const CHAT: Message["chat"] = { id: -1001, type: "supergroup", title: "论坛群" };
 

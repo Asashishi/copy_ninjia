@@ -10,7 +10,7 @@ import type {
   InlineKeyboardMarkup,
   Message,
   MessageEntity,
-} from "@grammyjs/types";
+} from "grammy/types";
 import { GAG_THUMBNAIL_URL } from "../../packages/consts/ui/assets";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";

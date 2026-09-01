@@ -1,7 +1,7 @@
 import type {
   InlineQueryResult,
   InputMessageContent,
-} from "@grammyjs/types";
+} from "grammy/types";
 import { inlineResultSources } from "../cache/main/inlineResultSources";
 import { INLINE_RESULT_SOURCE_MAX_AUTHORS } from "../consts/telegram";
 

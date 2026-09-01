@@ -174,7 +174,7 @@
   无上限地等，一次「`/ai_chat disable` 撞上镜像块轮转」就会让主线程先超时 reject，而那个异常会逃进 grammY 中间件：这条 update 判失败、最终 offset 被扣住，重启后 Telegram 重投同一条指令。到点降级放行并记一行错误日志，不影响正确性——这些任务全部按 generation 自检，失效之后跑完也不会再写任何东西。迟到任务只做无副作用 epoch 对账，条目回收或群重新启用都不能让旧 token 复活；epoch Map 因此只随当前活跃工作增长，不保留历史群。
 
   主线程必须同时等该回执与记忆删除 durable 才能宣称 `/ai_chat disable` 完成。Worker 崩溃、放弃重建、投递失败、超时或停机都必须 reject waiter。
-- 模型请求的传输、网络、429 与 5xx 重试只由所选供应商官方 SDK 自己负责（Gemini 是 `@google/genai` 的 `retryOptions`，OpenAI 是 SDK 的 `maxRetries`；两边都按「首次加最多 5 次重试」对齐）。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
+- 模型请求的传输、网络、429 与 5xx 重试只由所选供应商官方 SDK 自己负责（Gemini 是 `@google/genai` 的 `retryOptions`，OpenAI 是 SDK 的 `maxRetries`；两边都按「首次加最多 5 次重试」对齐）。两个 SDK 的 timeout 都是**每次尝试**各自的期限，因此 aiChat 的两个底层封装（`aiChat/gemini/client.ts`、`aiChat/openai/client.ts`）各自用 `libs/abortSignal.ts` 的 `signalWithTimeout` 合成一份覆盖整次调用（含全部重试与退避）的 deadline 再下传：signal 一触发 SDK 即短路整轮重试，最坏挂起因而等于 `GEMINI_REQUEST_TIMEOUT_MS` / `OPENAI_REQUEST_TIMEOUT_MS` 本身，而不是它乘上尝试次数。调用方的 invalidate signal 与这份 deadline 合成而非被替换。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
 - AI 模型调用不进入 Telegram 总闸，但必须按相同 provider、`base_url` 与 API key 合并到同一配额 lane；模型名不拆 lane。每 lane 最多 16 个真实请求在途、128 个未开始任务，其中后台最多占 32 个等待位；交互连续启动 8 项后若后台有积压至少放行一项。SDK 内部重试始终占原槽，队列满时领域结果明确失败，不得无界保留整轮提示词或媒体字节。Telegram message 类在途达到软高水位或出现真实 429 等待后，只暂停随机插话并把同群直接触发并发降为 1，不得把 AI provider 队列与 Telegram 队列合并成相互阻塞的一条总队列。
 - AI 回复只把成功的文字、贴纸、反应、图片和歌曲计入统一动作预算；模型提示上限为 8，执行侧硬顶为 11。贴纸、反应、生成图片与生成歌曲各最多成功一次；其它动作工具不设单工具调用上限。生歌消息的封面**不计入**这份预算——它是消息装帧而不是群友要的图，同理也不占生图的群冷却、不进自录记忆。贴纸包查看和服务端联网检索分别保留独立查询上限，所有自定义函数调用另有整轮防循环硬顶。仅在零成功动作时，最终正文才经 `send_message` 兜底；所有有意展示的文字必须由模型显式调用工具产出，绝不能只留在最终响应正文里。
 
@@ -650,7 +650,7 @@
 
   **这次等待和该轮其余每一步吃同一份剩余预算**，超时即结算成 `timedOut`。裸等是不行的：处置内部要走 `confirmBlocklistPersisted`（带 fsync 的领域 flush）与 `dispatchBlockedRemovals`（outbox 写前落盘 + mailbox 屏障），而异常退出那条路径把全部预算设成 0（`EMERGENCY_FLUSH_TIMEOUTS`）本该立刻结算，实际会一路拖到 15 秒强制退出线——进程带非零码死在停机中途，实例锁不释放、offset 不确认。
 
-  **反过来，Worker 侧的判定批次绝不能登记进 Anti-Raid 的在途任务集合**：那个集合是停机 drain 的等待对象，预算是 `ANTI_RAID_BARRIER_TIMEOUT_MS` 这一档的秒级数值，而一次判定请求可以耗到 `AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS` / `AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS`（各 30 秒）再乘上空正文重试。登记进去就意味着：凡是停机时恰好有一次判定在途，drain 必然超时，生命周期据此拒绝确认 Telegram offset 并非零退出——一次尽力而为的启发式换来一次脏退出加一批 update 重投。
+  **反过来，Worker 侧的判定批次绝不能登记进 Anti-Raid 的在途任务集合**：那个集合是停机 drain 的等待对象，预算是 `ANTI_RAID_DRAIN_TIMEOUT_MS` 这一档的秒级数值，而两个 provider 的超时都是**每次 SDK 尝试**各自的期限，因此一次判定请求可以耗到 `AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS` / `AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS`（各 30 秒）乘上各自的 SDK 尝试次数（`AD_DETECT_OPENAI_REQUEST_MAX_RETRIES` + 1 / `AD_DETECT_GOOGLE_REQUEST_ATTEMPTS`，均为 3 次），再乘上 `AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS` 的空正文重试——量级是分钟而非秒。登记进去就意味着：凡是停机时恰好有一次判定在途，drain 必然超时，生命周期据此拒绝确认 Telegram offset 并非零退出——一次尽力而为的启发式换来一次脏退出加一批 update 重投。
 
   drain 到达时只 quiesce 判定节拍（不再开新的请求，也不再删消息、发播报），在途那次自行收尾。
 

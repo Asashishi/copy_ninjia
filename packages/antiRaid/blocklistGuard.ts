@@ -1,4 +1,4 @@
-import type { Chat, Message } from "@grammyjs/types";
+import type { Chat, Message } from "grammy/types";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import {
   registerBlockedMemberRemover,

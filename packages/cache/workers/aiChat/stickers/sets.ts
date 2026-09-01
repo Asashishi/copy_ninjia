@@ -1,4 +1,4 @@
-import type { StickerSet } from "@grammyjs/types";
+import type { StickerSet } from "grammy/types";
 
 /** 贴纸包集合（packages/aiChat/ai/stickers/sets.ts）的权威内存缓存。
  * 仅 aiChat/ai/stickers/sets.ts 直接读写；成功结果不落盘、无 TTL，容量由有限的配置

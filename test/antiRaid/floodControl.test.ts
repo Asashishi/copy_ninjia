@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { buildFloodCandidate } from "../../packages/antiRaid/floodControl";
 import { chatStateCache } from "../../packages/cache/main/chatState";
 import { whitelistEntryCache } from "../../packages/cache/main/identityStorage";

@@ -1,5 +1,5 @@
 import type { CachedUser } from "../types/chatState";
-import type { Message, User, Chat } from "@grammyjs/types";
+import type { Message, User, Chat } from "grammy/types";
 import { senderUsernameCache, userCache } from "../cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
 import { visibleSenderChat } from "./visibleSender";

@@ -1,4 +1,4 @@
-import type { StickerSet } from "@grammyjs/types";
+import type { StickerSet } from "grammy/types";
 import type { AiToolDefinition } from "../../../types/aiChat/provider";
 import { getStickerConfig } from "../../../config/stickers";
 import { sendSticker } from "../../../infra/telegram";

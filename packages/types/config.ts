@@ -3,7 +3,7 @@
  * 缓存 holder 见 packages/cache/perThread/config.ts）。
  */
 
-import type { ReactionTypeEmoji } from "@grammyjs/types";
+import type { ReactionTypeEmoji } from "grammy/types";
 import type { MoodOption } from "./aiChat/mood";
 
 /** Telegram Bot API 标准 emoji 反应的精确联合。 */

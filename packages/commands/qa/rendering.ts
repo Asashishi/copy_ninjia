@@ -5,7 +5,7 @@
  * JSON 代码块，与这里的「把用户写的东西读出来」是相反的两个方向。
  */
 
-import type { Message, MessageEntity } from "@grammyjs/types";
+import type { Message, MessageEntity } from "grammy/types";
 import { captureFencedText } from "../../libs/codeFence";
 import {
   QA_ANSWER_LABELS,

@@ -3,7 +3,7 @@ import type {
   InlineQueryResultArticle,
   Message,
   MessageEntity,
-} from "@grammyjs/types";
+} from "grammy/types";
 import {
   InlineQueryResultBuilder,
   type Context,

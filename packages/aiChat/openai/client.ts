@@ -19,6 +19,7 @@ import {
   OPENAI_REQUEST_MAX_RETRIES,
   OPENAI_REQUEST_TIMEOUT_MS,
 } from "../../consts/aiChat/openai";
+import { signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
 import {
   isEndpointFailureStatus,
@@ -77,7 +78,8 @@ export interface OpenAiRequestOptions {
  *   会抛：构造放在调用方就意味着异常绕过本函数的 try、直接掀掉整轮回复，上层
  *   为 `ok:false` 准备的诊断与降级路径一条都走不到，运维只看得见 bot 不说话。
  * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
- * @param signal 调用方的取消信号；SDK 的请求级 signal 与 timeout 各自独立。
+ * @param signal 调用方的取消信号；与本函数合成的 deadline 一起下传，SDK 的
+ *   请求级 signal 一触发即短路整轮重试。
  */
 export async function requestOpenAiResult({
   capability,
@@ -89,7 +91,12 @@ export async function requestOpenAiResult({
   let response: OpenAI.Responses.Response;
   try {
     body = buildBody();
-    response = await getOpenAiClient(capability).responses.create(body, { signal });
+    // SDK 的 timeout 是每次尝试各自的期限，乘上 OPENAI_REQUEST_MAX_RETRIES 就是
+    // 分钟级。合成一份覆盖整次调用（含全部重试与退避）的 deadline 下传，使最坏
+    // 挂起收敛到 OPENAI_REQUEST_TIMEOUT_MS；调用方的取消信号仍照常贯穿。
+    response = await getOpenAiClient(capability).responses.create(body, {
+      signal: signalWithTimeout(signal, OPENAI_REQUEST_TIMEOUT_MS),
+    });
   } catch (error: unknown) {
     if (signal?.aborted === true) {
       return { ok: false, failureKind: "request", diagnostic: "request aborted" };

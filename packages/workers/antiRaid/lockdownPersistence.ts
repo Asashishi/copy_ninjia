@@ -1,4 +1,4 @@
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions } from "grammy/types";
 import { lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
 import type { LockdownEvent } from "../../types/antiRaid/events";
 import type { LockdownEntry } from "../../types/antiRaid/internal";

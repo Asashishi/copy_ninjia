@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { AiBotInfo } from "../../packages/types/aiChat/protocol";
 
 const sendMessageMock = mock(

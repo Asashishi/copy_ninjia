@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { getActiveProxySendTarget, getChatState } from "./storage/stateStore";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 
 /**
  * isInitEnabled 的低成本前置网关，见 app/registerHandlers.ts。未初始化群的

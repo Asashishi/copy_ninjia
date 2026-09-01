@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference } from "./facts";
 import { forumTopicThreadId } from "../../libs/forumTopic";
 import type { AiBotInfo } from "../../types/aiChat/protocol";

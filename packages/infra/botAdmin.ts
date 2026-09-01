@@ -32,7 +32,7 @@ import { teardownRegisteredChat } from "./chatTeardown";
 import type { ChatState } from "../types/chatState";
 import type { ChatTeardownReason } from "../types/chatTeardown";
 import type { BotChatPermissions } from "../types/telegram";
-import type { ChatMember, ChatMemberUpdated } from "@grammyjs/types";
+import type { ChatMember, ChatMemberUpdated } from "grammy/types";
 import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,

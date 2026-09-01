@@ -1,4 +1,4 @@
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions } from "grammy/types";
 
 /** 状态持久化实现（packages/infra/storage/statePersistence.ts）的常量。文件路径见 paths.ts。 */
 

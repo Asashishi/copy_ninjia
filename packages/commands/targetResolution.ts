@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { CachedUser } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
 import { sendCommandMessage } from "../infra/telegram";

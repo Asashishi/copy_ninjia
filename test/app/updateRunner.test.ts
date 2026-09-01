@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import type { Update } from "@grammyjs/types";
+import type { Update } from "grammy/types";
 import { BotError } from "grammy";
 import type { Bot, Context } from "grammy";
 import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";

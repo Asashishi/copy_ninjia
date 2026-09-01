@@ -5,7 +5,7 @@
  * 调用），改动它们要读的是 auto/message 那一侧，与容器/时间窗那批叶子场景无关。
  */
 
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { Context } from "grammy";
 import { resolveSpeaker } from "../../../packages/auto/message/facts";
 import { buildAiRecordMediaMessage } from "../../../packages/auto/message/recordContext";

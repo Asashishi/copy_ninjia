@@ -1,4 +1,4 @@
-import type { ChatPermissions, MessageEntity } from "@grammyjs/types";
+import type { ChatPermissions, MessageEntity } from "grammy/types";
 
 /** Telegram API 封装（packages/infra/telegram/）的调参常量。 */
 

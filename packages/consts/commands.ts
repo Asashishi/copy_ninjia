@@ -1,4 +1,4 @@
-import type { BotCommand } from "@grammyjs/types";
+import type { BotCommand } from "grammy/types";
 import type { CommandTargetMessages, ToggleCommandTexts } from "../types/commands";
 import { CHAT_QA_MAX_PER_CHAT } from "./qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "./storage";

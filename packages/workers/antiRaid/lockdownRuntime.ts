@@ -1,5 +1,5 @@
 import { logger } from "../../infra/logger";
-import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
+import type { ChatPermissions, ChatFullInfo } from "grammy/types";
 import { deleteMessage, sendMessage, telegramApi } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import {

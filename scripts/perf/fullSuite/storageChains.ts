@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { ChatState } from "../../../packages/types/chatState";
 import type { WhitelistEntryData } from
   "../../../packages/types/identityPolicy";

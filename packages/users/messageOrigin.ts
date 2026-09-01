@@ -1,4 +1,4 @@
-import type { MessageOrigin } from "@grammyjs/types";
+import type { MessageOrigin } from "grammy/types";
 
 /**
  * 取得 Telegram 消息来源对应的稳定身份 id，供白名单预热与广告引用来源判定共用。

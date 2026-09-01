@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { ChatState } from "../../../packages/types/chatState";
 import type { TelegramConfig } from "../../../packages/types/config";

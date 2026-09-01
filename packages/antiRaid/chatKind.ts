@@ -13,7 +13,7 @@
 
 import { chatIsSupergroupById } from "../cache/main/antiRaid/chatKind";
 import { postAntiRaid } from "./workerBridge";
-import type { Chat } from "@grammyjs/types";
+import type { Chat } from "grammy/types";
 
 /**
  * 记下并（仅在取值变化时）镜像一次群类型。

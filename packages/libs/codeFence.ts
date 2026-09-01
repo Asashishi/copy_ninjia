@@ -11,7 +11,7 @@
  * 单反引号不在本模块职责内，原样当普通文本处理。
  */
 
-import type { MessageEntity } from "@grammyjs/types";
+import type { MessageEntity } from "grammy/types";
 import { CODE_FENCE, EMPTY_MESSAGE_ENTITIES } from "../consts/telegram";
 import type { RichTextMessage } from "../types/telegram";
 

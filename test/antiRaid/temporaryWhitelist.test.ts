@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import type { ChatState } from "../../packages/types/chatState";
 import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid";
 

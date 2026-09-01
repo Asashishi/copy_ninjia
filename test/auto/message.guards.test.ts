@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { LUCK_RECEIPT_DISPLAY_PREFIX } from "../../packages/consts/luckReceipt";
 import type { AiBotInfo, AiRecordMessage } from "../../packages/types/aiChat/protocol";
 

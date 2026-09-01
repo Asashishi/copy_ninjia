@@ -12,7 +12,7 @@
  */
 
 import type { CommandContext, Context } from "grammy";
-import type { Message } from "@grammyjs/types";
+import type { Message } from "grammy/types";
 import { CHAT_QA_MAX_PER_CHAT, QA_COMMAND_TEXTS } from "../consts/qa";
 import { chatQaCount, getChatQa, removeChatQa, setChatQa } from "../infra/qaStore";
 import { forumTopicThreadId } from "../libs/forumTopic";

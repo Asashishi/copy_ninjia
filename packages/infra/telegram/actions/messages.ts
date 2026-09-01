@@ -2,7 +2,7 @@ import type {
   InlineKeyboardMarkup,
   Message,
   MessageEntity,
-} from "@grammyjs/types";
+} from "grammy/types";
 import { telegramApi } from "../client";
 import { telegramErrorDetails } from "../errors";
 import {

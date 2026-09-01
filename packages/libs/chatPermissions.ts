@@ -1,4 +1,4 @@
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions } from "grammy/types";
 import { CHAT_PERMISSION_KEYS } from "../consts/storage";
 
 /**
