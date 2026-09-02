@@ -4,7 +4,7 @@
  * 而是覆写文件结尾的「\n}」两字节、按位置追加，写入量只与本批条数有关，
  * 与文件大小无关。调用方是 diskIO/logFiles.ts（日志）、diskIO/snapshotFiles.ts 的
  * appendLuckEntries（每日运势）、diskIO/verificationWrites.ts（待验证）、
- * diskIO/joinLogFiles.ts（入群日志）与 diskIO/adSampleFile.ts（广告样本）；
+ * diskIO/joinLogWrites.ts（入群日志）与 diskIO/adSampleFile.ts（广告样本）；
  * 调用方各自负责 key/value 怎么序列化、
  * 多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
  * 打开、探测与追加；截断修复只供调用方显式选择的诊断材料和日志使用。

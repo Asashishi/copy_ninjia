@@ -109,32 +109,41 @@ export function handleConfirmedThreadComment(
   };
 }
 
-/** 处理验证按钮点击，并保持本人验证与白名单代机器人作保语义。 */
+/**
+ * 「通过」按钮的驳回理由；undefined 表示放行。本人不能靠它自验，
+ * 代点资格没查出来时只应答「稍后再试」。
+ */
+function approveDenial(
+  event: VerificationCallbackEvent
+): "useSelfButton" | "notApprover" | "approverUnknown" | undefined {
+  if (event.isSelf) return "useSelfButton";
+  if (event.fromCanApprove === undefined) return "approverUnknown";
+  return event.fromCanApprove ? undefined : "notApprover";
+}
+
+/**
+ * 处理两颗验证按钮：「我是良民」只认待验证真人本人，「通过」只认本群管理员
+ * 的代点。记录不在 pending 时先应答失效，不泄漏也不改变任何状态。
+ */
 export function handleCallback(
   state: VerificationState | undefined,
   event: VerificationCallbackEvent
 ): VerificationTransition {
-  const stateIsBot: boolean = state?.kind === "checkingInviter" || state?.kind === "expelling"
-    ? state.snapshot.isBot
-    : state?.isBot === true;
-  if (!event.isSelf) {
-    const vouchingForBot: boolean = stateIsBot && event.fromIsPrivileged;
-    if (!vouchingForBot) {
-      return {
-        next: state,
-        effects: [{
-          kind: "answerCallback",
-          callbackQueryId: event.callbackQueryId,
-          reply: stateIsBot ? "notYourBotButton" : "notYourButton",
-        }],
-      };
-    }
-  }
-
   if (state?.kind !== "pending") {
     return {
       next: state,
       effects: [{ kind: "answerCallback", callbackQueryId: event.callbackQueryId, reply: "invalid" }],
+    };
+  }
+
+  const denial: "notYourButton" | "useSelfButton" | "notApprover" | "approverUnknown" | undefined =
+    event.action === "self"
+      ? (event.isSelf ? undefined : "notYourButton")
+      : approveDenial(event);
+  if (denial !== undefined) {
+    return {
+      next: state,
+      effects: [{ kind: "answerCallback", callbackQueryId: event.callbackQueryId, reply: denial }],
     };
   }
 
@@ -145,7 +154,9 @@ export function handleCallback(
       remindersOf(state),
       {
         kind: "sendWelcome",
-        variant: event.isSelf ? "verified" : "vouchedBot",
+        variant: event.action === "self"
+          ? "verified"
+          : state.isBot ? "vouchedBot" : "approved",
         targetLabel: state.label,
         fromLabel: event.fromLabel,
         anchorMessageId: state.welcomeAnchorMessageId,

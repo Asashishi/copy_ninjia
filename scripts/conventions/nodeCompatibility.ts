@@ -149,8 +149,14 @@ const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/joinLogFiles.ts": {
     "node:fs": {
+      symbols: ["existsSync"],
+      purpose: "join-log read-path file presence probe",
+    },
+  },
+  "packages/workers/diskIO/joinLogWrites.ts": {
+    "node:fs": {
       symbols: ["existsSync", "mkdirSync"],
-      purpose: "join-log owner directory initialization",
+      purpose: "join-log owner directory initialization and takeover probe",
     },
   },
   "packages/workers/diskIO/joinLogRecovery.ts": {
@@ -200,7 +206,7 @@ const PRODUCTION_BUFFER_GLOBALS: Readonly<Record<string, string>> = {
   "packages/libs/atomicFile.ts": "descriptor writes require a stable byte buffer",
   "packages/libs/jsonBytes.ts": "allocation-free UTF-8 byte length on the hot serialization boundary",
   "packages/workers/diskIO/appendOnlyDayFile.ts": "descriptor append and recovery byte buffers",
-  "packages/workers/diskIO/joinLogFiles.ts": "join-log byte-capacity accounting",
+  "packages/workers/diskIO/joinLogWrites.ts": "join-log byte-capacity accounting",
   "packages/workers/diskIO/joinLogRecords.ts": "join-log serialized byte accounting",
   "packages/workers/diskIO/logFiles.ts": "log serialized byte accounting",
   "packages/workers/diskIO/verificationRecovery.ts": "verification journal byte accounting",

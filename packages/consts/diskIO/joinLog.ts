@@ -1,4 +1,7 @@
-/** 入群日志（packages/workers/diskIO/joinLogFiles.ts）的格式与生命周期常量。 */
+/**
+ * 入群日志的格式与生命周期常量。消费方是 packages/workers/diskIO/joinLogWrites.ts
+ * （接管与写入）、joinLogFiles.ts（路由与读取）与 joinLogRecovery.ts（启动恢复）。
+ */
 
 /**
  * 按群、按东京日期命名的入群日志文件。

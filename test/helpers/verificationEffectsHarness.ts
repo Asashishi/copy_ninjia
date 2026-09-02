@@ -6,6 +6,7 @@
  */
 
 import { beforeEach, mock } from "bun:test";
+import type { InlineKeyboardMarkup } from "grammy/types";
 import type {
   AntiRaidWorkerEvent,
   VerificationAttemptPermitResult,
@@ -31,6 +32,8 @@ export const kickChatKinds: (boolean | undefined)[] = [];
 export const deletedMessageIds: number[] = [];
 export const autoDeleted: { messageId: number; delayMs: number }[] = [];
 export const sentTexts: string[] = [];
+/** 与 sentTexts 同序：每次 sendMessage 带上的按钮行，没带就是 undefined。 */
+export const sentKeyboards: (InlineKeyboardMarkup | undefined)[] = [];
 export const warnings: string[] = [];
 export const loggedErrors: string[] = [];
 /** 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。 */
@@ -86,8 +89,11 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 mock.module("../../packages/infra/telegram", () => ({
   telegramApi,
-  sendMessage: async (message: { text: string }): Promise<number | undefined> => {
+  sendMessage: async (
+    message: { text: string; keyboard?: InlineKeyboardMarkup }
+  ): Promise<number | undefined> => {
     sentTexts.push(message.text);
+    sentKeyboards.push(message.keyboard);
     return testState.nextSentMessageId;
   },
   deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> => {
@@ -243,6 +249,7 @@ export function installVerificationEffectsHooks(injected: VerificationEffectsDep
     deletedMessageIds.length = 0;
     autoDeleted.length = 0;
     sentTexts.length = 0;
+    sentKeyboards.length = 0;
     warnings.length = 0;
     loggedErrors.length = 0;
     testState.nextSentMessageId = 900;

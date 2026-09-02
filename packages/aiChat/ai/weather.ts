@@ -70,14 +70,13 @@ async function refreshTokyoWeather(): Promise<void> {
     return;
   }
 
-  weatherCache.result = {
+  weatherCache.current = {
     currentTemperatureC,
     currentCondition: describeWeatherCode(currentCode),
     todayMaxC,
     todayMinC,
     todayCondition: describeWeatherCode(todayCode),
   };
-  weatherCache.at = Date.now();
 }
 
 /**
@@ -87,7 +86,7 @@ async function refreshTokyoWeather(): Promise<void> {
  * 也不应该知道背后是个可变的缓存对象。
  */
 export function currentTokyoWeather(): TokyoWeatherResult | null {
-  return weatherCache.result;
+  return weatherCache.current;
 }
 
 /**

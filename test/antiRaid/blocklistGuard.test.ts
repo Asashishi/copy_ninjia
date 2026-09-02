@@ -109,7 +109,6 @@ function joinMessage(chatId: number, userId: number): AntiRaidWorkerMessage {
     type: "join",
     chatId,
     member: { id: userId, first_name: "Joiner" },
-    actorIsWhitelisted: false,
   };
 }
 

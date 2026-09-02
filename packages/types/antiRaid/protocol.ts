@@ -18,7 +18,7 @@ export interface AntiRaidMember {
   id: number;
   username?: string;
   first_name?: string;
-  /** 是不是机器人（本机器人自身不投递）。机器人入群走白名单用户代点验证的流程。 */
+  /** 是不是机器人（本机器人自身不投递）。机器人入群只能由本群管理员代点「通过」。 */
   isBot?: boolean;
 }
 
@@ -31,10 +31,8 @@ export interface NewMemberMessage {
   announcementMessageId?: number;
   /** 管理员/群主身份入群时免验证、免刷群统计和私密模式踢出。 */
   exempt?: boolean;
-  /** 触发该入群事件的操作者 ID。 */
+  /** 触发该入群事件的操作者 ID；是否为非匿名管理员由 Worker 侧缓存判定。 */
   actorId?: number;
-  /** 投递当刻操作者是否在主线程白名单边界内。 */
-  actorIsWhitelisted: boolean;
 }
 
 /** 主线程 -> Worker：某成员离开了群聊（取消其待验证记录）。 */
@@ -78,10 +76,10 @@ export interface VerifyCallbackMessage {
   chatId?: number;
   /** callback_data 里携带的待验证成员 userId。 */
   targetUserId: number;
-  /** 实际点击按钮的用户。 */
+  /** 由 callback_data 前缀解析出的按钮：`self` = 「我是良民」，`approve` = 「通过」。 */
+  action: "self" | "approve";
+  /** 实际点击按钮的用户；「通过」的管理员身份由 Worker 按本群管理员缓存判定。 */
   from: AntiRaidMember;
-  /** 投递当刻点击者是否在主线程白名单边界内。 */
-  fromIsWhitelisted: boolean;
 }
 
 /** adopt 重放里的一条私密模式记录（见 AdoptLockdownsMessage）。 */

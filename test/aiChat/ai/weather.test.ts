@@ -44,8 +44,7 @@ beforeEach(() => {
   responses.length = 0;
   fetchJsonWithTimeout.mockClear();
   loggerError.mockClear();
-  weatherCache.result = null;
-  weatherCache.at = 0;
+  weatherCache.current = null;
 });
 
 describe("Open-Meteo 适配层", () => {
@@ -92,7 +91,7 @@ describe("Open-Meteo 适配层", () => {
       todayMinC: 18,
       todayCondition: "旧预报",
     };
-    weatherCache.result = previous;
+    weatherCache.current = previous;
     responses.push(null);
     const originalSetInterval: typeof setInterval = globalThis.setInterval;
     globalThis.setInterval = (() => ({ unref(): void {} }) as unknown as ReturnType<typeof setInterval>) as typeof setInterval;

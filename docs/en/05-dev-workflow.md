@@ -50,7 +50,7 @@ Dependency installation always uses the seven-day release-age gate in `bunfig.to
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **3029 tests / 310 files / 97593 `expect()` calls**; full-source **function coverage 96.59% / line coverage 97.16%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **3053 tests / 310 files / 97823 `expect()` calls**; full-source **function coverage 96.91% / line coverage 97.19%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 

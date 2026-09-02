@@ -96,7 +96,7 @@ describe("join：ABSENT 起步", () => {
     expect(effects).toEqual([]);
   });
 
-  test("白名单/管理员缓存命中的拉人 → EXEMPT", () => {
+  test("非匿名管理员缓存命中的拉人 → EXEMPT", () => {
     const { next } = transitionVerification(undefined, joinEvent({ actorId: 999, actorSyncExempt: true }));
     expect(next?.kind).toBe("exempt");
   });
@@ -493,10 +493,26 @@ describe("私密模式踢人结算", () => {
 });
 
 describe("callback", () => {
-  const cb = (overrides: Partial<{ isSelf: boolean; fromIsPrivileged: boolean }> = {}) =>
-    ({ type: "callback", callbackQueryId: "q1", isSelf: true, fromIsPrivileged: false, fromLabel: "点击者", ...overrides }) as const;
+  type CallbackOverrides = Partial<{
+    action: "self" | "approve";
+    isSelf: boolean;
+    fromCanApprove: boolean | undefined;
+  }>;
+  const cb = (overrides: CallbackOverrides = {}) =>
+    ({
+      type: "callback",
+      callbackQueryId: "q1",
+      action: "self",
+      isSelf: true,
+      fromCanApprove: false,
+      fromLabel: "点击者",
+      ...overrides,
+    }) as const;
+  const answer = (
+    reply: "ok" | "invalid" | "notYourButton" | "useSelfButton" | "notApprover" | "approverUnknown"
+  ) => [{ kind: "answerCallback" as const, callbackQueryId: "q1", reply }];
 
-  test("本人点击 → 通过：清记录 + 应答 + 删提醒 + 欢迎", () => {
+  test("本人点「我是良民」→ 通过：清记录 + 应答 + 删提醒 + 欢迎", () => {
     const state = pendingState({ reminderMessageId: 30, welcomeAnchorMessageId: 40 });
     const { next, effects } = transitionVerification(state, cb());
     expect(next).toBeUndefined();
@@ -507,45 +523,65 @@ describe("callback", () => {
     ]);
   });
 
-  test("别人乱点 → 驳回，状态不动", () => {
+  test("别人点「我是良民」→ 驳回，状态不动；管理员也不例外", () => {
     const state = pendingState();
-    const { next, effects } = transitionVerification(state, cb({ isSelf: false }));
-    expect(next).toBe(state);
-    expect(effects).toEqual([{ kind: "answerCallback", callbackQueryId: "q1", reply: "notYourButton" }]);
+    for (const fromCanApprove of [false, true]) {
+      const { next, effects } = transitionVerification(state, cb({ isSelf: false, fromCanApprove }));
+      expect(next).toBe(state);
+      expect(effects).toEqual(answer("notYourButton"));
+    }
   });
 
-  test("白名单也不能为真人代点", () => {
+  test("管理员点「通过」→ 以作保通过；真人与机器人各有欢迎语", () => {
+    const human = pendingState({ reminderMessageId: 30, welcomeAnchorMessageId: 40 });
+    const approvedHuman = transitionVerification(human, cb({ action: "approve", isSelf: false, fromCanApprove: true }));
+    expect(approvedHuman.next).toBeUndefined();
+    expect(approvedHuman.effects).toEqual([
+      { kind: "answerCallback", callbackQueryId: "q1", reply: "ok" },
+      { kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined },
+      { kind: "sendWelcome", variant: "approved", targetLabel: "杂鱼A", fromLabel: "点击者", anchorMessageId: 40 },
+    ]);
+
+    const bot = pendingState({ isBot: true });
+    const approvedBot = transitionVerification(bot, cb({ action: "approve", isSelf: false, fromCanApprove: true }));
+    expect(approvedBot.next).toBeUndefined();
+    expect(approvedBot.effects[2]).toMatchObject({ kind: "sendWelcome", variant: "vouchedBot" });
+  });
+
+  test("非管理员点「通过」→ 驳回，机器人目标也一样", () => {
+    for (const state of [pendingState(), pendingState({ isBot: true })]) {
+      const { next, effects } = transitionVerification(state, cb({ action: "approve", isSelf: false }));
+      expect(next).toBe(state);
+      expect(effects).toEqual(answer("notApprover"));
+    }
+  });
+
+  test("本人点「通过」→ 提示改点「我是良民」，即使本人有管理员身份", () => {
+    const state = pendingState();
+    for (const fromCanApprove of [false, true]) {
+      const { next, effects } = transitionVerification(state, cb({ action: "approve", isSelf: true, fromCanApprove }));
+      expect(next).toBe(state);
+      expect(effects).toEqual(answer("useSelfButton"));
+    }
+  });
+
+  test("管理员身份没查出来 → 只应答稍后再试，记录不动", () => {
     const state = pendingState();
     const { next, effects } = transitionVerification(
       state,
-      cb({ isSelf: false, fromIsPrivileged: true })
+      cb({ action: "approve", isSelf: false, fromCanApprove: undefined })
     );
     expect(next).toBe(state);
-    expect(effects).toEqual([
-      {
-        kind: "answerCallback",
-        callbackQueryId: "q1",
-        reply: "notYourButton",
-      },
-    ]);
+    expect(effects).toEqual(answer("approverUnknown"));
   });
 
-  test("白名单为机器人代点 → 以作保通过", () => {
-    const state = pendingState({ isBot: true });
-    const { next, effects } = transitionVerification(state, cb({ isSelf: false, fromIsPrivileged: true }));
-    expect(next).toBeUndefined();
-    expect(effects[2]).toMatchObject({ kind: "sendWelcome", variant: "vouchedBot" });
-  });
-
-  test("非白名单给机器人乱点 → 驳回（机器人专用文案）", () => {
-    const { effects } = transitionVerification(pendingState({ isBot: true }), cb({ isSelf: false }));
-    expect(effects).toEqual([{ kind: "answerCallback", callbackQueryId: "q1", reply: "notYourBotButton" }]);
-  });
-
-  test("记录已不在（已通过/已踢/已豁免）→ 已失效", () => {
+  test("记录已不在（已通过/已踢/已豁免）→ 两颗按钮都只应答失效", () => {
     for (const state of [undefined, { kind: "exempt", label: "杂鱼A", isBot: false } as VerificationState]) {
-      const { effects } = transitionVerification(state, cb());
-      expect(effects).toEqual([{ kind: "answerCallback", callbackQueryId: "q1", reply: "invalid" }]);
+      for (const event of [cb(), cb({ action: "approve", isSelf: false, fromCanApprove: true })]) {
+        const { next, effects } = transitionVerification(state, event);
+        expect(next).toBe(state);
+        expect(effects).toEqual(answer("invalid"));
+      }
     }
   });
 });

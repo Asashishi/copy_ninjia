@@ -35,7 +35,6 @@ test("触发私密模式的临界入群读取 recordJoin 建立的新占位", ()
     type: "join",
     chatId: CHAT_ID,
     member: { id: MEMBER_ID, first_name: "临界成员" },
-    actorIsWhitelisted: false,
   };
   let dispatched: VerificationEvent | null = null;
 

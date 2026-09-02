@@ -24,7 +24,7 @@ import type {
   JoinEvent,
   VerificationState,
 } from "../../types/states/verification";
-import { freshAdminIds } from "./adminCache";
+import { freshAdminIds, isChatAdmin } from "./adminCache";
 import { trackAntiRaidTask } from "./taskTracker";
 import {
   cachedChatHasLinkedChannel,
@@ -77,12 +77,11 @@ export function handleJoinEvent({
     announcementMessageId: message.announcementMessageId,
     actorId,
     identityExempt: message.exempt === true,
-    // 私密模式期间只认同步命中的白名单或新鲜管理员缓存。
+    // 拉人者豁免只认同步命中的新鲜非匿名管理员缓存；缓存冷时由状态机的
+    // startAdminCheck 异步补查（私密模式期间不补查，见 states/verification/join.ts）。
     actorSyncExempt: invitedByOther &&
-      (
-        message.actorIsWhitelisted ||
-        (actorId !== undefined && adminIds?.has(actorId) === true)
-      ),
+      actorId !== undefined &&
+      adminIds?.has(actorId) === true,
     adminCacheFresh: adminIds !== undefined,
     lockdownActive: lockdownEntries.has(chatId),
     recentComment: takeRecentComment(chatId, member.id),
@@ -290,11 +289,17 @@ export interface HandleVerificationCallbackEventParams {
   dispatchVerification: VerificationDispatcher;
 }
 
+/**
+ * 把按钮点击翻译成状态机事件。「我是良民」与本人点击同步结算；只有「别人替
+ * 目标点通过」且目标仍在 pending 时，才付一次管理员身份闸（见 adminCache.ts
+ * 的 isChatAdmin）再回投，查不出来按 undefined 回投。
+ */
 export function handleVerificationCallbackEvent({
   message,
   dispatchVerification,
 }: HandleVerificationCallbackEventParams): void {
-  if (message.chatId === undefined) {
+  const chatId: number | undefined = message.chatId;
+  if (chatId === undefined) {
     void trackAntiRaidTask({
       task: answerCallbackQuery({
         callbackQueryId: message.callbackQueryId,
@@ -305,11 +310,35 @@ export function handleVerificationCallbackEvent({
     });
     return;
   }
-  dispatchVerification(message.chatId, message.targetUserId, {
-    type: "callback",
-    callbackQueryId: message.callbackQueryId,
-    isSelf: message.from.id === message.targetUserId,
-    fromIsPrivileged: message.fromIsWhitelisted,
-    fromLabel: memberLabel(message.from),
+  const targetUserId: number = message.targetUserId;
+  const isSelf: boolean = message.from.id === targetUserId;
+  const needsAdminCheck: boolean =
+    message.action === "approve" &&
+    !isSelf &&
+    verificationEntries.get(verificationKey(chatId, targetUserId))?.state.kind === "pending";
+  if (!needsAdminCheck) {
+    dispatchVerification(chatId, targetUserId, {
+      type: "callback",
+      callbackQueryId: message.callbackQueryId,
+      action: message.action,
+      isSelf,
+      fromCanApprove: false,
+      fromLabel: memberLabel(message.from),
+    });
+    return;
+  }
+  const fromLabel: string = memberLabel(message.from);
+  void trackAntiRaidTask({
+    task: isChatAdmin(chatId, message.from.id, "verification approver")
+      .then((isAdmin: boolean | undefined): void => {
+        dispatchVerification(chatId, targetUserId, {
+          type: "callback",
+          callbackQueryId: message.callbackQueryId,
+          action: "approve",
+          isSelf: false,
+          fromCanApprove: isAdmin,
+          fromLabel,
+        });
+      }),
   });
 }

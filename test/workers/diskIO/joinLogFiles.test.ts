@@ -58,6 +58,7 @@ const {
   JOIN_LOG_MAX_BUFFERED_ENTRIES,
   JOIN_LOG_MAX_CACHED_FILES,
   JOIN_LOG_MAX_RETRY_FILES,
+  JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
   JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
 } = await import("../../../packages/consts/diskIO/joinLog");
 const { getTokyoDateKey } = await import("../../../packages/libs/time");
@@ -697,6 +698,119 @@ describe("diskIO/joinLogFiles", () => {
     expect(isRecentJoinLogDay("2026-07-31", "2026-07-31", 2)).toBeTrue();
     expect(isRecentJoinLogDay("2026-07-30", "2026-07-31", 2)).toBeTrue();
     expect(isRecentJoinLogDay("2026-07-29", "2026-07-31", 2)).toBeFalse();
+  });
+
+  test("单群单日超出容量线时原子重写权威文件，并只告警一次", async () => {
+    // 端到端造满 25 万人太贵，这里直接把 Worker 独占的 latest-by-user 索引预填到
+    // 容量线，再投一条新用户——走的仍是 writeFileEntries 里真正的溢出分支。
+    const day: string = getTokyoDateKey();
+    const key: string = `-1001:${day}`;
+    const path: string = currentFile(-1001);
+    const base: number = todayMidnight();
+    const latestByUser: Map<number, { userId: number; joinedAt: number }> =
+      new Map<number, { userId: number; joinedAt: number }>();
+    for (let userId: number = 1; userId <= JOIN_LOG_MAX_USERS_PER_CHAT_DAY; userId += 1) {
+      latestByUser.set(userId, { userId, joinedAt: base + userId });
+    }
+    const snapshotBytes: number = measureJoinLogSnapshotBytes(latestByUser);
+    // 权威文件先按这份索引落到盘上：溢出分支必须把它整个换掉，而不是往后追加。
+    mkdirSync(joinLogDir, { recursive: true });
+    writeFileSync(path, [...joinLogSnapshotChunks(latestByUser)].join(""));
+    const cache: JoinLogFileCache = {
+      state: { size: snapshotBytes, empty: false },
+      latestByUser,
+      snapshotBytes,
+      appendedBytesSinceCompaction: 0,
+      redundantEntries: 0,
+      capacityWarningEmitted: false,
+    };
+    joinLogFileCaches.set(key, cache);
+    joinLogRetryAt.set(key, Date.now() + 60_000);
+
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const newestJoinedAt: number = base + JOIN_LOG_MAX_USERS_PER_CHAT_DAY + 1;
+      const newUserId: number = JOIN_LOG_MAX_USERS_PER_CHAT_DAY + 1;
+      markJoinLogDirty({
+        chatId: -1001,
+        day,
+        record: { userId: newUserId, joinedAt: newestJoinedAt },
+      });
+
+      expect(await flushJoinLogBuffer()).toBeTrue();
+
+      // 淘汰的是 joinedAt 最旧的那一位，新记录进表，总量仍压在容量线上。
+      expect(cache.latestByUser.size).toBe(JOIN_LOG_MAX_USERS_PER_CHAT_DAY);
+      expect(cache.latestByUser.has(1)).toBeFalse();
+      expect(cache.latestByUser.get(newUserId)).toEqual({
+        userId: newUserId,
+        joinedAt: newestJoinedAt,
+      });
+
+      // 逐条增量记账必须与整表重算逐字节一致，否则 rewriteJoinLogFile 会抛
+      // size mismatch，把整个群的当日日志卡在退避里。
+      expect(cache.snapshotBytes).toBe(measureJoinLogSnapshotBytes(cache.latestByUser));
+      expect(cache.state).toEqual({ size: cache.snapshotBytes, empty: false });
+      expect(cache.appendedBytesSinceCompaction).toBe(0);
+      expect(cache.redundantEntries).toBe(0);
+
+      // 权威文件被整体重写：字节数与记账一致，被淘汰的键消失、新键在场。
+      const written: string = readFileSync(path, "utf8");
+      expect(Buffer.byteLength(written)).toBe(cache.snapshotBytes);
+      expect(written).not.toContain(`"${base + 1}:1"`);
+      expect(written).toContain(`"${newestJoinedAt}:${newUserId}"`);
+
+      // 成功落盘后退避条目必须清掉，否则同一天的后续写入会被自己的旧退避挡住。
+      expect(joinLogRetryAt.has(key)).toBeFalse();
+
+      expect(cache.capacityWarningEmitted).toBeTrue();
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(String(error.mock.calls[0]![0])).toContain(
+        `exceeded ${JOIN_LOG_MAX_USERS_PER_CHAT_DAY} users; retained the newest records and evicted 1`
+      );
+
+      // 同一份缓存再溢出一次只淘汰、不重复刷屏。
+      markJoinLogDirty({
+        chatId: -1001,
+        day,
+        record: { userId: newUserId + 1, joinedAt: newestJoinedAt + 1 },
+      });
+      expect(await flushJoinLogBuffer()).toBeTrue();
+      expect(cache.latestByUser.size).toBe(JOIN_LOG_MAX_USERS_PER_CHAT_DAY);
+      expect(cache.snapshotBytes).toBe(measureJoinLogSnapshotBytes(cache.latestByUser));
+      expect(error).toHaveBeenCalledTimes(1);
+    } finally {
+      error.mockRestore();
+    }
+  }, 30_000);
+
+  test("同一用户当日重复入群走追加路径并记入 redundantEntries", async () => {
+    const day: string = getTokyoDateKey();
+    const key: string = `-1001:${day}`;
+    const first: number = todayAt();
+    await handleJoinLogMessage(joinMessage(-1001, 42, first));
+    expect(await flushJoinLogBuffer()).toBeTrue();
+
+    const cache: JoinLogFileCache = joinLogFileCaches.get(key)!;
+    expect(cache.redundantEntries).toBe(0);
+    const bytesAfterFirst: number = cache.snapshotBytes;
+
+    // 同一个 userId、更晚的 joinedAt：折叠层放行，但索引里已经有这个人，
+    // 追加的这条在文件里是冗余历史，只有记账知道它可以被压实回收。
+    const second: number = first + 1_000;
+    await handleJoinLogMessage(joinMessage(-1001, 42, second));
+    expect(await flushJoinLogBuffer()).toBeTrue();
+
+    expect(cache.redundantEntries).toBe(1);
+    expect(cache.latestByUser.get(42)).toEqual({ userId: 42, joinedAt: second });
+    expect(cache.snapshotBytes).toBe(measureJoinLogSnapshotBytes(cache.latestByUser));
+    // 两条记录长度相同，折叠后的快照字节数不变，但物理文件已经多了一条。
+    expect(cache.snapshotBytes).toBe(bytesAfterFirst);
+    expect(cache.state.size).toBeGreaterThan(cache.snapshotBytes);
+    expect(JSON.parse(readFileSync(currentFile(-1001), "utf8"))).toEqual({
+      [`${first}:42`]: { userId: 42, joinedAt: first },
+      [`${second}:42`]: { userId: 42, joinedAt: second },
+    });
   });
 
   test("拒绝超过 24 小时或倒序的读取区间", async () => {

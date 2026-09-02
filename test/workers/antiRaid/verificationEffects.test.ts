@@ -4,6 +4,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 
 import type {
   ExpelSnapshot,
+  VerificationState,
 } from "../../../packages/types/states/verification";
 
 const {
@@ -22,6 +23,7 @@ const {
   pendingState,
   probeChatMembership,
   run,
+  sentKeyboards,
   sentTexts,
   setState,
   snapshot,
@@ -219,6 +221,25 @@ describe("同步副作用的逐条执行", () => {
       targetMessageId: 7,
     }]);
     expect(sentTexts[2]).toContain("3分钟内");
+  });
+
+  test("真人提醒带「我是良民」与「通过」两颗按钮，机器人提醒只留「通过」", async () => {
+    setState(pendingState());
+    await run([{ kind: "sendReminder", label: "真人杂鱼", isBot: false }]);
+    expect(sentKeyboards[0]?.inline_keyboard).toEqual([[
+      { text: "我是良民", callback_data: `verify:${USER_ID}` },
+      { text: "通过", callback_data: `approve:${USER_ID}` },
+    ]]);
+
+    const botState: VerificationState = pendingState();
+    if (botState.kind === "pending") botState.isBot = true;
+    setState(botState);
+    await run([{ kind: "sendReminder", label: "铁皮杂鱼", isBot: true }]);
+    expect(sentKeyboards[1]?.inline_keyboard).toEqual([[
+      { text: "通过", callback_data: `approve:${USER_ID}` },
+    ]]);
+    expect(sentTexts[1]).toContain("管理员");
+    expect(sentTexts[1]).not.toContain("白名单");
   });
 
   test("先删两条提醒再踢人，欢迎语落地后安排自动删除", async () => {

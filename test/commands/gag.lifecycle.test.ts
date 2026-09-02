@@ -3,6 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   GAG_SESSION_MAX,
+  GAG_TARGET_TEXTS,
+  UNGAG_TARGET_TEXTS,
 } from "../../packages/consts/gag";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";
@@ -91,9 +93,12 @@ describe("/gag 与 /ungag 状态机", () => {
       switch_inline_query_current_chat: "gag:7 ",
     });
     expect(sessionButton).not.toHaveProperty("callback_data");
+    // 交出去的必须是 GAG_TARGET_TEXTS 本身：解析失败的六条文案由解析器渲染并经
+    // sendCommandMessage 发出（覆盖见 test/commands/targetResolution.test.ts），
+    // 换成别的表就会答非所问。
     expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
       botUserId: 999,
-      messages: { selfTarget: "哈？还想 gag 本天才？杂鱼再做一百年梦也不可能啦♡" },
+      messages: GAG_TARGET_TEXTS,
     });
     expect(lastEphemeralText()).toContain("只有你看得到这个发言入口");
   });
@@ -209,6 +214,7 @@ describe("/gag 与 /ungag 状态机", () => {
       acceptChatId: true,
       acceptUserId: true,
       rawArgument: "@alice",
+      messages: UNGAG_TARGET_TEXTS,
     }));
     expect(sendCommandMessage).toHaveBeenCalledTimes(1);
     expect(lastCommandText()).toContain("提前解除");

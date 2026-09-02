@@ -153,7 +153,6 @@ describe("cold linked-channel verification", () => {
       type: "join",
       chatId: -1001,
       member: { id: 40, first_name: "User 40" },
-      actorIsWhitelisted: false,
     });
 
     expect(verificationEntries.get("-1001:40")?.state.kind).toBe("exempt");
@@ -263,8 +262,9 @@ describe("cold linked-channel verification", () => {
     runtime.dispatchVerification(-1001, 44, {
       type: "callback",
       callbackQueryId: "verified",
+      action: "self",
       isSelf: true,
-      fromIsPrivileged: false,
+      fromCanApprove: false,
       fromLabel: "User 44",
     });
 
@@ -287,7 +287,6 @@ describe("cold linked-channel verification", () => {
       type: "join",
       chatId: -1001,
       member: { id: 45, first_name: "User 45" },
-      actorIsWhitelisted: false,
     });
     expect(verificationEntries.get("-1001:45")?.state.kind).toBe("pending");
 

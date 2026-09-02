@@ -175,11 +175,21 @@ export interface ConfirmedThreadCommentEvent {
   allowFloodTerminalExemption: boolean;
 }
 
+/**
+ * 验证按钮点击。`action` 区分两颗按钮：`self` 是「我是良民」，只认本人；
+ * `approve` 是「通过」，只认代点资格。
+ */
 export interface VerificationCallbackEvent {
   type: "callback";
   callbackQueryId: string;
+  action: "self" | "approve";
+  /** 点击者就是待验证成员本人（由可信的 callback_query.from.id 算出）。 */
   isSelf: boolean;
-  fromIsPrivileged: boolean;
+  /**
+   * 点击者是否为本群非匿名管理员（唯一的代点资格）。
+   * `undefined` 表示身份没查出来，状态机只应答「稍后再试」，不改记录。
+   */
+  fromCanApprove: boolean | undefined;
   fromLabel: string;
 }
 
@@ -232,8 +242,8 @@ export type VerificationEffect =
   | { kind: "kickMember" }
   | { kind: "sendReminder"; label: string; isBot: boolean }
   | { kind: "sendReplyReminder"; label: string; targetMessageId: number }
-  | { kind: "sendWelcome"; variant: "verified" | "vouchedBot" | "channelComment"; targetLabel: string; fromLabel?: string; anchorMessageId?: number }
-  | { kind: "answerCallback"; callbackQueryId: string; reply: "ok" | "invalid" | "notYourButton" | "notYourBotButton" }
+  | { kind: "sendWelcome"; variant: "verified" | "approved" | "vouchedBot" | "channelComment"; targetLabel: string; fromLabel?: string; anchorMessageId?: number }
+  | { kind: "answerCallback"; callbackQueryId: string; reply: "ok" | "invalid" | "notYourButton" | "useSelfButton" | "notApprover" | "approverUnknown" }
   | { kind: "deleteReminders"; reminderMessageId?: number; replyReminderMessageId?: number }
   | { kind: "startAdminCheck"; actorId: number }
   | { kind: "logUncancelableKickExemption"; label: string }

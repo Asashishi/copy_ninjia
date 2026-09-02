@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CachedUser } from "../../packages/types";
+import type { CachedUser, CommandTargetMessages } from "../../packages/types";
 
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 let replyTarget: CachedUser | undefined;
@@ -219,5 +219,126 @@ describe("resolveCommandTarget", () => {
   test("id 参数解析出的目标是机器人自己时照样被拒", async () => {
     expect(await resolveCommandTarget(params("999", true))).toBeUndefined();
     expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "self", replyToMessageId: 7 });
+  });
+});
+
+/**
+ * 各命令实际投产的目标提示表。三条失败分支的文案函数只有真的走一遍解析器才会被
+ * 调用，`@ts-expect-error` 不可变性断言不触发调用——`packages/consts/gag.ts` 的六个
+ * 模板此前函数覆盖率为 0 就是这么来的。
+ */
+const { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } = await import("../../packages/consts/gag");
+const {
+  BLOCK_TARGET_TEXTS,
+  COPY_TARGET_TEXTS,
+  JA_COPY_TARGET_TEXTS,
+  MUTE_TARGET_TEXTS,
+  NYA_COPY_TARGET_TEXTS,
+  REVERSE_COPY_TARGET_TEXTS,
+  STEAL_ICON_TARGET_TEXTS,
+  UNBLOCK_TARGET_TEXTS,
+  UNMUTE_TARGET_TEXTS,
+} = await import("../../packages/consts/commands");
+const { PERMISSION_COMMAND_TEXTS, WHITE_COMMAND_TEXTS } =
+  await import("../../packages/consts/whitelist");
+
+interface DeployedTargetTexts {
+  /** 命令名，只用于失败输出定位。 */
+  readonly command: string;
+  readonly texts: Readonly<CommandTargetMessages>;
+  readonly acceptUserId: boolean;
+  readonly acceptChatId: boolean;
+}
+
+/** 与各命令调用点逐一对齐的开关；开关不同，同一个参数会落进不同分支。 */
+const DEPLOYED_TARGET_TEXTS: readonly DeployedTargetTexts[] = [
+  { command: "/gag", texts: GAG_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
+  { command: "/ungag", texts: UNGAG_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
+  { command: "/block", texts: BLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
+  { command: "/unblock", texts: UNBLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
+  { command: "/mute", texts: MUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
+  { command: "/unmute", texts: UNMUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
+  { command: "/copy", texts: COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/r_copy", texts: REVERSE_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/nya_copy", texts: NYA_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/ja_copy", texts: JA_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/steal_icon", texts: STEAL_ICON_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/permission", texts: PERMISSION_COMMAND_TEXTS.target, acceptUserId: true, acceptChatId: true },
+  { command: "/white", texts: WHITE_COMMAND_TEXTS.target, acceptUserId: true, acceptChatId: true },
+];
+
+/** 与 params 同形，只是把提示表换成命令实际投产的那一份。 */
+function deployedParams(
+  argument: string,
+  { texts, acceptUserId, acceptChatId }: DeployedTargetTexts
+): any {
+  return { ...params(argument, acceptUserId, acceptChatId), messages: texts };
+}
+
+function lastSentMessage(): { chatId: number; text: string; replyToMessageId: number } {
+  return sendMessageMock.mock.calls.at(-1)![0] as {
+    chatId: number;
+    text: string;
+    replyToMessageId: number;
+  };
+}
+
+describe("投产目标提示表的三条失败分支", () => {
+  beforeEach(() => {
+    replyTarget = undefined;
+    knownTargets.clear();
+    knownIdTargets.clear();
+    sendMessageMock.mockClear();
+  });
+
+  for (const entry of DEPLOYED_TARGET_TEXTS) {
+    const { command, texts } = entry;
+    test(`${command} 的目标解析失败提示逐条渲染，并统一走 sendCommandMessage`, async () => {
+      // 形态不对：把用户可控的原文回显进句子里。
+      expect(await resolveCommandTarget(deployedParams("@bad-name", entry)))
+        .toBeUndefined();
+      const malformed = lastSentMessage();
+      expect(malformed.text).toBe(texts.invalidUsername("@bad-name"));
+      expect(malformed.text).toContain("@bad-name");
+      expect(malformed).toMatchObject({ chatId: -1001, replyToMessageId: 7 });
+
+      // 合法用户名但缓存里没有这个人。
+      expect(await resolveCommandTarget(deployedParams("ghost", entry)))
+        .toBeUndefined();
+      const unknown = lastSentMessage();
+      expect(unknown.text).toBe(texts.unknownUsername("ghost"));
+      expect(unknown.text).toContain("@ghost");
+
+      // 回复目标与参数指向不同的人。
+      replyTarget = { id: 42, first_name: "Reply Target" };
+      expect(await resolveCommandTarget(deployedParams("777", entry)))
+        .toBeUndefined();
+      const conflicting = lastSentMessage();
+      expect(conflicting.text).toBe(texts.conflictingTarget("777"));
+      expect(conflicting.text).toContain("777");
+
+      // 三条分支各发且只发一条，且全部经 sendCommandMessage —— 这个边界替调用方
+      // 挂上 30 秒延迟删除（见 infra/telegram/commandMessages.ts），换成 sendMessage
+      // 就会把嘲讽永久留在群里。三句必须互不相同：两条分支共用同一个模板时，
+      // 用户收到的是一句答非所问的拒绝，而覆盖率照样是满的。
+      expect(sendMessageMock).toHaveBeenCalledTimes(3);
+      expect(new Set([malformed.text, unknown.text, conflicting.text]).size).toBe(3);
+    });
+  }
+
+  test("/gag 与 /ungag 的六条文案逐字固定", async () => {
+    expect(GAG_TARGET_TEXTS.invalidUsername("@bad-name"))
+      .toBe("噗，@bad-name 既不是合法的 Telegram 用户名，也不是用户/频道 id，连目标都写不对呀，笨蛋♡");
+    expect(GAG_TARGET_TEXTS.unknownUsername("ghost"))
+      .toBe("@ghost 还没被本天才记住哦，乖乖回复 TA 的消息或直接给用户/频道 id 啦，杂鱼♡");
+    expect(GAG_TARGET_TEXTS.conflictingTarget("777"))
+      .toBe("回复了一个身份又写 777，到底想 gag 谁呀？说话都说不明白的杂鱼♡");
+
+    expect(UNGAG_TARGET_TEXTS.invalidUsername("@bad-name"))
+      .toBe("噫，@bad-name 既不是合法的 Telegram 用户名，也不是用户/频道 id，这样可解不了哦，笨蛋♡");
+    expect(UNGAG_TARGET_TEXTS.unknownUsername("ghost"))
+      .toBe("@ghost 还没被本天才记住哦，回复 TA 的消息或直接给用户/频道 id 啦，杂鱼♡");
+    expect(UNGAG_TARGET_TEXTS.conflictingTarget("777"))
+      .toBe("回复了一个身份又写 777，到底想放谁呀？说清楚一点，杂鱼♡");
   });
 });

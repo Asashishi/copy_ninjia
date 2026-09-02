@@ -1,9 +1,24 @@
 /** 入群验证文案、时限与短期去重窗口。 */
 
-/** 验证按钮上显示的文案，新成员必须在 VERIFICATION_TIMEOUT_MS 内点击，否则会被踢出。 */
-export const VERIFICATION_BUTTON_TEXT: string = "我是新人，别搞！";
-/** 验证按钮 callback_data 的前缀，后面拼上待验证成员的 userId。 */
-export const VERIFY_CALLBACK_PREFIX: string = "verify:";
+/**
+ * 「我是良民」按钮文案：待验证的真人必须在 VERIFICATION_TIMEOUT_MS 内自己点它，
+ * 只认本人点击。机器人成员的提醒不带这颗按钮。
+ * 所属模块：workers/antiRaid/verificationReminders.ts。
+ */
+export const VERIFICATION_SELF_BUTTON_TEXT: string = "我是良民";
+/**
+ * 「通过」按钮文案：本群非匿名管理员替待验证成员（真人或机器人）代为通过；
+ * 本人、白名单与其他成员点击一律驳回。
+ * 所属模块：workers/antiRaid/verificationReminders.ts。
+ */
+export const VERIFICATION_APPROVE_BUTTON_TEXT: string = "通过";
+/**
+ * 「我是良民」按钮 callback_data 的前缀，后面拼上待验证成员的 userId。
+ * 与 VERIFY_APPROVE_CALLBACK_PREFIX、consts/qa.ts 的看板前缀互不为前缀。
+ */
+export const VERIFY_SELF_CALLBACK_PREFIX: string = "verify:";
+/** 「通过」按钮 callback_data 的前缀，后面拼上待验证成员的 userId。 */
+export const VERIFY_APPROVE_CALLBACK_PREFIX: string = "approve:";
 /** 新成员完成验证的完整时间窗口。 */
 export const VERIFICATION_TIMEOUT_MS: number = 3 * 60_000;
 /** 验证提醒投递失败后的指数退避边界；失败期间成员不会因看不到按钮被踢。 */

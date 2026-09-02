@@ -31,7 +31,7 @@ export { joinCreatesNewRecord };
  *
  * 状态图（ABSENT = Map 里没有这个 key）：
  *
- *   ABSENT ──身份豁免/白名单拉人/管理员缓存命中/评论区活动──> EXEMPT
+ *   ABSENT ──身份豁免/非匿名管理员拉人（缓存命中）/评论区活动──> EXEMPT
  *   ABSENT ──私密模式期间入群──────────────────────────> KICK_PENDING
  *   KICK_PENDING ──踢人请求结算────────────────────────────> KICKED
  *   KICK_PENDING ──请求发出前收到权威豁免──────────────────> EXEMPT

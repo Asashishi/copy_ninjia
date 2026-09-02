@@ -23,7 +23,6 @@ const {
   configureAiMemoryPersistedReply,
   flushAiMemorySnapshots,
   markAiMemorySnapshotDirty,
-  resetAiMemoryFiles,
 } = await import("../../../packages/workers/diskIO/aiMemoryFiles");
 const {
   adoptStickerCatalogSnapshots,
@@ -31,7 +30,6 @@ const {
   inspectStickerCatalogSnapshots,
   maintainStickerCatalogSnapshots,
   markStickerCatalogSnapshotDirty,
-  resetStickerCatalogFiles,
 } = await import("../../../packages/workers/diskIO/stickerCatalogFiles");
 const {
   aiMemoryCache,
@@ -42,6 +40,7 @@ const {
   deletedAiMemoryChats,
   dirtyChats,
   forgetAiMemoryChat,
+  resetAiMemoryCache,
 } = await import("../../../packages/cache/workers/diskIO/snapshots");
 const { writeStickerCatalogFile: writeStickerCatalogFileToDisk } =
   await import("../../../packages/workers/diskIO/snapshotFiles");
@@ -73,6 +72,7 @@ function stickerSnapshotJson(description: string): string {
 const {
   dirtyStickerPacks,
   hydrateStickerCatalogCache,
+  resetStickerCatalogCache,
   stickerCatalogCache,
   stickerFlushState,
 } = await import("../../../packages/cache/workers/diskIO/stickers");
@@ -94,8 +94,8 @@ function hydrateStickerCatalogs(activePacks: readonly string[]): Map<string, str
 }
 
 beforeEach(() => {
-  resetAiMemoryFiles();
-  resetStickerCatalogFiles();
+  resetAiMemoryCache();
+  resetStickerCatalogCache();
   clearStickerDirectory();
   recoverAiMemories.mockClear();
   recoverStickerCatalogs.mockClear();
@@ -109,8 +109,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  resetAiMemoryFiles();
-  resetStickerCatalogFiles();
+  resetAiMemoryCache();
+  resetStickerCatalogCache();
   clearStickerDirectory();
 });
 
@@ -280,8 +280,8 @@ describe("Disk I/O snapshot domain owners", () => {
     markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
     deletedAiMemoryChats.add(3);
 
-    resetAiMemoryFiles();
-    resetStickerCatalogFiles();
+    resetAiMemoryCache();
+    resetStickerCatalogCache();
 
     expect(aiMemoryCache).toHaveLength(0);
     expect(dirtyChats).toHaveLength(0);

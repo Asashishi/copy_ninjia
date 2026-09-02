@@ -848,7 +848,7 @@ fi
 info "校验已存在的部署输入……"
 bun -e '
   import { validateExistingDeploymentInputs } from "./packages/config/readiness";
-  validateExistingDeploymentInputs();
+  await validateExistingDeploymentInputs();
 ' || die "部署输入校验未通过。按上面报出的文件与字段路径修好后重跑本脚本。"
 info "配置校验通过。"
 

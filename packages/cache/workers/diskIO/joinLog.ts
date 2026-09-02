@@ -9,7 +9,11 @@ import type {
   JoinLogFileCache,
 } from "../../../types/diskIO/storage";
 
-/** 入群日志落盘（packages/workers/diskIO/joinLogFiles.ts）的 Worker 独占状态。 */
+/**
+ * 入群日志落盘的 Worker 独占状态。owner 线程是 Disk I/O Worker：
+ * joinLogFileCaches 与 joinLogRetryAt 由 packages/workers/diskIO/joinLogWrites.ts
+ * 填充与清理，joinLogBuffer 与 joinLogCleanupDay 由 joinLogFiles.ts 持有。
+ */
 
 /**
  * 每个已打开群日文件的追加游标与 latest-by-user 索引。权威副本只存在于

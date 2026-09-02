@@ -14,7 +14,7 @@
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
  * diskIO/verificationRecovery.ts 与 verificationWrites.ts（待验证按日增量）、
  * diskIO/storageDatabase.ts（黑白名单与未完成处置 outbox）、
- * diskIO/joinLogFiles.ts（滚动入群追写与命令按需读取）、
+ * diskIO/joinLogFiles.ts 与 joinLogWrites.ts（滚动入群追写与命令按需读取）、
  * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
  * 共用 appendOnlyDayFile.ts 的按位置追加机制；SQLite 权威状态不启用截断修复。
  *

@@ -14,12 +14,14 @@ import {
   resolveBotAdminStatus,
   markBotAdminObserved,
 } from "../infra/botAdmin";
-import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
+import {
+  VERIFY_APPROVE_CALLBACK_PREFIX,
+  VERIFY_SELF_CALLBACK_PREFIX,
+} from "../consts/antiRaid/verification";
 import { isAdminStatus } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
 import { hasUserMessageContent } from "../users/messageContent";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
-import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { getChatState } from "../infra/storage/stateStore";
 import { buildAdCandidate } from "./adCandidate";
 import { observeChatKind } from "./chatKind";
@@ -78,8 +80,8 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   // 模式这条链路跟着它一起停（见 types/chatState.ts 的 isAntiRaidEnabled）。
   const joinGuardEnabled: boolean = getChatState(chatId).isAntiRaidEnabled === true;
 
-  // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由白名单
-  // 用户代点按钮作保）。
+  // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由本群
+  // 管理员代点「通过」作保）。
   const wasActive: boolean = isActiveChatMember(update.old_chat_member);
   const isActive: boolean = isActiveChatMember(update.new_chat_member);
 
@@ -132,7 +134,6 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
         member: pickMember(user),
         exempt: isAdmin,
         actorId: update.from.id,
-        actorIsWhitelisted: isWhitelisted(update.from.id),
       }
       : undefined;
     // 黑名单优先于一切豁免，且取代 join 投递：Worker 不会为一个马上要被踢掉的人开窗口。
@@ -252,7 +253,7 @@ function ingestAdmittedMessage(
     const messages: AntiRaidWorkerMessage[] = [];
     const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
     for (const member of message.new_chat_members) {
-      // 机器人不再豁免（走白名单用户代点验证的流程），只跳过本天才自己
+      // 机器人不再豁免（由本群管理员代点「通过」作保），只跳过本天才自己
       // ——自己既不能验证自己，也不该被自己踢出去。
       if (member.id === botId) continue;
       const joinMessage: AntiRaidWorkerMessage | undefined = joinGuardEnabled
@@ -262,9 +263,6 @@ function ingestAdmittedMessage(
           member: pickMember(member),
           announcementMessageId: message.message_id,
           actorId: message.from?.id,
-          actorIsWhitelisted:
-            message.from !== undefined &&
-            isWhitelisted(message.from.id),
         }
         : undefined;
       // 与 chat_member 那一路会为同一次入群各投一次处置；重复 ban 幂等，但两条都要拦
@@ -386,15 +384,28 @@ function ingestAdmittedMessage(
 }
 
 /**
- * 处理入群验证按钮的点击（callback_query）：解析出目标成员后整体投递给
- * Worker 应答与处理。前缀不匹配的 callback_query 与本模块无关，直接放过。
+ * 处理入群验证按钮的点击（callback_query）：按前缀分辨「我是良民」与「通过」，
+ * 解析出目标成员后整体投递给 Worker 应答与处理；「通过」的管理员身份由
+ * Worker 侧的本群管理员缓存判定。前缀不匹配的 callback_query 与本模块无关，
+ * 直接放过。
  */
 export async function handleVerificationCallback(
   ctx: Context
 ): Promise<void> {
   const query: CallbackQuery | undefined = ctx.callbackQuery;
   const data: string | undefined = query?.data;
-  if (!query || !data?.startsWith(VERIFY_CALLBACK_PREFIX)) return;
+  if (!query || data === undefined) return;
+  let action: "self" | "approve";
+  let prefixLength: number;
+  if (data.startsWith(VERIFY_SELF_CALLBACK_PREFIX)) {
+    action = "self";
+    prefixLength = VERIFY_SELF_CALLBACK_PREFIX.length;
+  } else if (data.startsWith(VERIFY_APPROVE_CALLBACK_PREFIX)) {
+    action = "approve";
+    prefixLength = VERIFY_APPROVE_CALLBACK_PREFIX.length;
+  } else {
+    return;
+  }
 
   // 守卫已关的群里还可能留着一颗没被删掉的旧按钮（disable 那次 Worker 不可用
   // 就会这样）。当场应答掉、不投给 Worker：不应答的话点的人只看到按钮一直转，
@@ -412,8 +423,7 @@ export async function handleVerificationCallback(
     return;
   }
 
-  const targetUserId: number =
-    Number(data.slice(VERIFY_CALLBACK_PREFIX.length));
+  const targetUserId: number = Number(data.slice(prefixLength));
   // callback_data 属于外部输入：前缀匹配不代表后半段一定是合法整数。NaN 若
   // 进入 Worker 会生成 "chatId:NaN" 状态键，按钮只会永远转圈且留下脏状态。
   if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
@@ -430,7 +440,7 @@ export async function handleVerificationCallback(
     callbackQueryId: query.id,
     chatId: query.message?.chat.id,
     targetUserId,
+    action,
     from: pickMember(query.from),
-    fromIsWhitelisted: isWhitelisted(query.from.id),
   }]);
 }

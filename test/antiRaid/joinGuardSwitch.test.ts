@@ -363,5 +363,36 @@ describe("入群守卫开关（主线程投递侧）", () => {
     } as never);
 
     expect(typesOf()).toContain("callback");
+    expect(workerPosts).toContainEqual(expect.objectContaining({
+      type: "callback",
+      action: "self",
+      targetUserId: 42,
+    }));
+  });
+
+  test("「通过」按钮按前缀投成 approve，其它前缀的回调不认领", async () => {
+    chatState.isAntiRaidEnabled = true;
+
+    await handleVerificationCallback({
+      callbackQuery: {
+        id: "cb-3",
+        data: "approve:42",
+        from: { id: 900, is_bot: false, first_name: "Admin" },
+        message: { chat: { id: -1001 } },
+      },
+    } as never);
+    await handleVerificationCallback({
+      callbackQuery: {
+        id: "cb-4",
+        data: "qa_page:1",
+        from: { id: 900, is_bot: false, first_name: "Admin" },
+        message: { chat: { id: -1001 } },
+      },
+    } as never);
+
+    expect(workerPosts.filter((message): boolean => message.type === "callback")).toEqual([
+      expect.objectContaining({ type: "callback", action: "approve", targetUserId: 42, callbackQueryId: "cb-3" }),
+    ]);
+    expect(answeredCallbacks).toHaveLength(0);
   });
 });

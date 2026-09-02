@@ -250,7 +250,7 @@
 
   冷缓存的 `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认 `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
 - **Worker 侧的管理员豁免缓存必须按身份释放在途槽位、按世代决定写不写回**：`getOrCreateAdminFetch` 的 `.finally()` 只能在 `adminFetches.get(chatId)` 仍是自己那个 promise 时才删（同主线程侧的 `botPermissionFetches`）——`resetAdminCache()` 会在拉取在途时清空整张表，随后同群的新 fetch 会重新登记，陈旧 fetch 无条件 delete 删掉的是**新** fetch 的槽位，去重随之失效，下一个调用者会在 query 类 Telegram 通道上额外发起一次全量拉取。`resetAdminCache()` 同时自增整表世代号，在途拉取据此在 `.then` 里判断自己那份快照是否已被作废：世代对不上就只把结果交给等待者、绝不 `cacheAdminIds`，`.catch` 的 `discardPendingAdminChanges` 同样跳过。否则 reset 前的旧快照会被灌进刚清空的表，而那次 reset 一并丢掉了窗口内到达的降权——被降权者会在整个 `ADMIN_CACHE_TTL_MS` 内继续留在邀请人豁免集合里，他拉进来的人全部免入群验证。
-- 真人的入群验证只接受本人点击：Worker 必须以可信的 `callback_query.from.id === callback_data` 目标 ID 计算本人关系，不能接受调用方直接声称。即使点击者在白名单边界内（SQLite `whitelist_entries` 的条目，或恒在边界内的 `SUPER_ADMIN_USER_ID`），也不得替真人通过；唯一代点例外是当前待验证快照明确 `isBot === true` 且点击者在该边界内。无状态、已终结或目标不匹配的点击只能应答失败，不得改变验证记录。
+- 入群验证只有两颗按钮，资格各自独立：「我是良民」只接受待验证真人本人点击，Worker 必须以可信的 `callback_query.from.id === callback_data` 目标 ID 计算本人关系，不能接受调用方直接声称；「通过」只接受本群**非匿名管理员**替他人代点（真人与机器人目标一致），资格由 Worker 侧的管理员缓存（`isChatAdmin`，冷缓存时现拉一次 `getChatAdministrators`）判定，查不出来只应答「稍后再试」、不改记录。白名单边界（SQLite `whitelist_entries` 的条目，或恒在边界内的 `SUPER_ADMIN_USER_ID`）在这两条判定里**没有任何地位**：白名单成员不能替任何人通过，超级管理员也只有本身是该群管理员时才能点「通过」；目标本人点「通过」一律驳回。拉人者豁免同样只认非匿名管理员（同步缓存命中，冷缓存时由 `startAdminCheck` 异步补查），白名单拉人不免验证。无状态、已终结或目标不匹配的点击只能应答失败，不得改变验证记录。
 - 终态处置（超时/刷屏踢人）执行 `kickChatMember` 前必须用 `probeChatMembership` 现查：确认仍在群才踢，确认已离群就直接结算且不发错误战报，查询失败则不做破坏性成员操作、保留终态进入既有退避。**首发同样要付这次查询，没有豁免**：超级群的「只踢不封」映射到不带 `only_if_banned` 的 `unbanChatMember`，它会**解除已有封禁**。join update 只证明到达时在场，不能证明 kick 请求排队期间没有被人工管理员封禁；请求命中 429 时会在 kick 类独立车道等待。因此主线程每次调用这种 `unbanChatMember` 前都必须经 query 类重新 `getChatMember`：仍在群才继续，`left` / `kicked` 就取消并把业务结果归一成 `absent`。显式解封的 `only_if_banned: true` 不套用这条前置条件。否则延迟调用会解除管理员封禁，而 outcome 还报 `kicked`，当事人凭邀请链接即可回来。终态处置失败后按指数退避重试到上限，记录不因重试耗尽被删除——删了就等于把没处置的成员当成已完成。
 
   「只踢不封」还要求群类型精确：普通群使用 `banChatMember`（普通群里只移除），超级群使用 `unbanChatMember`。主线程按 update 观测 `group` / `supergroup` 并在首次启动和 Worker 重建时于终态 adopt 前整表重放；完整进程冷启动没有镜像时，Worker 以群为键复用 `getChat`，并以 `VERIFICATION_CHAT_KIND_FETCH_MAX` 限制在途查询。群类型查询失败、返回非群聊或达到背压上限时不得猜测任一 API，必须保留终态并按既有退避重试；镜像在查询期间到达时，其值优先于迟到查询结果。
@@ -263,7 +263,7 @@
   **撤销入群计数只认真正计过数的那一次**：`kickPending` 单独记 `countedJoinAt`，只有 `joinCreatesNewRecord` 为真、调用方确实 `recordJoin` 过的那次入群才填。
 
   踢完之后真的重新申请入群会补建一个 `kickPending`，但那一路状态已存在、不会再计一次数，拿它的 `requestedAt` 去撤等于按值删掉队列里第一个相等的时间戳——同一批 `new_chat_members` 在同一 tick 处理、时间戳完全相同，删掉的会是另一名合法计数成员那一格，滑动窗口因此差一个而不触发私密模式，正是这个计数要挡的事。
-- 那条诊断（`logUncancelableKickExemption`）必须走 `logger.error`：Worker 只把 error 级别的日志信封中继给主线程，warn 只留在本线程的临时 stdout 里，进不了 `logs/<day>.json`。它是「一个管理员/白名单成员被误踢了、请人工拉回来」的唯一线索，事后翻日志看不到它，那个人就一直在群外。
+- 那条诊断（`logUncancelableKickExemption`）必须走 `logger.error`：Worker 只把 error 级别的日志信封中继给主线程，warn 只留在本线程的临时 stdout 里，进不了 `logs/<day>.json`。它是「一个管理员被误踢了、请人工拉回来」的唯一线索，事后翻日志看不到它，那个人就一直在群外。
 - 验证提醒按成员只有一个投递 owner，发送失败有界退避。`reminderMessageId` / `replyReminderMessageId` 至少一个成功回填是超时踢人的前置不变量；从未落地时只续窗补发。
 
   **但续窗必须有尽头**：入群后超过 `VERIFICATION_REMINDER_UNDELIVERED_MAX_MS` 仍一条都没落地，就按普通超时结算（踢人本就只踢不封，人随时能重进）。无限续期的代价是每个入群者留下一条不朽记录——某个群 `sendMessage` 持续失败（论坛 General 话题被关闭、机器人被禁言却仍保有限制成员权限）时，那些记录常驻待验证表与主线程镜像，每 90 秒重写一次当天文件。单条记录的体积本身是有界的（`trackedMessageTimes` 按 `JOIN_WINDOW_MS` 只留最近一分钟的时间戳，且到 `ANTI_RAID_PER_MINUTE_LIMIT` 就转终态），代价出在数量上：每个进过群的人各留一条，永不退休。

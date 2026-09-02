@@ -107,10 +107,12 @@ capability reference. Put bot identity and the super administrator in `config/te
   - Token issued by BotFather.
 - **`super_admin_user_id`** (required)
   - One decimal super-administrator user ID. That identity by itself holds **every** granular
-    permission the allowlist can grant, so it does **not** need a row in the SQLite table.
-    It is also always inside the allowlist boundary, and therefore enjoys copy-cooldown
-    exemption, bot-verification vouching, and protection from automatic enforcement, and
-    cannot be targeted by `/block`, `/mute`, or `/batch_kick`.
+    permission the allowlist can grant, so it does **not** need a row in the SQLite table;
+    the copy, image-generation and song-generation cooldown exemptions belong to this
+    identity alone. It is also always inside the allowlist boundary, and therefore protected
+    from automatic enforcement, and cannot be targeted by `/block`, `/mute`, or `/batch_kick`.
+    The join-verification "通过" button recognises only non-anonymous administrators of that
+    chat, independent of allowlist or super-administrator identity.
   - `/init`, `/batch_kick`, permission mutations, `/white disable`, and `/send` depend on this
     identity alone. `isCanWhiteOther` delegates only adding another identity with defaults; it
     cannot remove a member.

@@ -11,7 +11,6 @@ import {
   hydrateAiMemoryCache,
   markAiMemoryDeleted,
   markAiMemoryDirty,
-  resetAiMemoryCache,
 } from "../../cache/workers/diskIO/snapshots";
 import {
   deleteAiMemoryFile,
@@ -175,9 +174,4 @@ export function flushAiMemorySnapshots(
   for (const chatId of dirtyChats) flushAiMemorySnapshot(chatId, files);
   if (deletedAiMemoryChats.size > 0 || dirtyChats.size > 0) scheduleAiMemoryFlush();
   return deletedAiMemoryChats.size === 0 && dirtyChats.size === 0;
-}
-
-/** reset 边界：停止 timer 并清空恢复态、dirty 与待删集合。 */
-export function resetAiMemoryFiles(): void {
-  resetAiMemoryCache();
 }

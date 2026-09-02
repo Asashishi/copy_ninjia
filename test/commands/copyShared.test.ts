@@ -10,9 +10,7 @@ const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
 const DEFAULT_AVATAR_URL: string = "https://cdn.example/default-face.jpg";
 
-mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
-  isWhitelisted: (id: number): boolean => id === 100,
-}));
+mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 100 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
@@ -128,7 +126,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(globalCopyState.lastCopyTime).toBe(1_000_000);
   });
 
-  test("白名单绕过检查但仍刷新占用；回滚只删除自己仍持有的占位", async () => {
+  test("超级管理员绕过检查但仍刷新占用；回滚只删除自己仍持有的占位", async () => {
     globalCopyState.lastCopyTime = 900_000;
     const claim = await shared.claimCopyCooldownOrReject({ id: 100 }, -1001, 10);
     expect(claim).toEqual({ rejected: false, previousLastCopyTime: 900_000, claimedAt: 1_000_000 });

@@ -4,8 +4,7 @@ import { GET_TOKYO_WEATHER_TOOL } from "../../../packages/consts/tools";
 import { callTool, TOOL_DECLARATIONS } from "../../../packages/aiChat/ai/tools";
 
 afterEach(() => {
-  weatherCache.result = null;
-  weatherCache.at = 0;
+  weatherCache.current = null;
 });
 
 describe("AI 静态查询工具", () => {
@@ -15,14 +14,14 @@ describe("AI 静态查询工具", () => {
   });
 
   test("返回已有天气快照，并拒绝未知工具名", () => {
-    weatherCache.result = {
+    weatherCache.current = {
       currentTemperatureC: 31,
       currentCondition: "晴",
       todayMaxC: 34,
       todayMinC: 25,
       todayCondition: "晴间多云",
     };
-    expect(JSON.parse(callTool(GET_TOKYO_WEATHER_TOOL))).toEqual(weatherCache.result);
+    expect(JSON.parse(callTool(GET_TOKYO_WEATHER_TOOL))).toEqual(weatherCache.current);
     expect(JSON.parse(callTool("missing_tool"))).toEqual({ error: "Unknown tool: missing_tool" });
   });
 });

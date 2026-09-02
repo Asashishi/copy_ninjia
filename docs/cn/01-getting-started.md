@@ -69,9 +69,10 @@ Bot 身份和超级管理员写入 `config/telegram.json`：
   - BotFather 下发的 token。
 - **`super_admin_user_id`**（必填）
   - 单个十进制超级管理员用户 ID。这个身份本身即持有白名单能授予的
-    **全部**逐项权限，**不需要**写入 SQLite 白名单表；它同时恒在白名单
-    边界内，因此也享有 copy 冷却豁免、验证代点与自动处置保护，并且不可被 `/block`、
-    `/mute` 或 `/batch_kick` 处置。
+    **全部**逐项权限，**不需要**写入 SQLite 白名单表；copy、生图、生歌的冷却
+    豁免只归这个身份。它同时恒在白名单边界内，因此享有自动处置保护，并且
+    不可被 `/block`、`/mute` 或 `/batch_kick` 处置。入群验证的「通过」按钮
+    只认本群非匿名管理员，与白名单和超级管理员身份无关。
   - `/init`、`/batch_kick`、`/permission` 的修改操作、`/white disable` 与 `/send`
     只认这个身份；`isCanWhiteOther` 只能把其它身份以默认权限加入白名单，不能删除成员。
   - 白名单身份可用 `/permission query` 查询自身权限，并用 `/permission help` 查看说明；
@@ -168,7 +169,7 @@ chmod 660 database/storage.sqlite
 变量和 `state.json.global.model` 运行时选择不再读取；模型切换改为停机修改对应能力配置后
 重启。示例值只保证结构正确，不保证账号具有调用权限。
 
-旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
+旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 
 **注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——AI 闲聊的 Worker 根本不启动、记忆不 hydrate（`memory/` 里那份原样留着等前提补齐），`/ja_copy` 退化成普通复制，广告检测不再送检。群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable`，或者干脆把前提补回去。
 

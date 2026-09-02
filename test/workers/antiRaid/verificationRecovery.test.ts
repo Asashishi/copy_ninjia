@@ -225,8 +225,9 @@ describe("Anti-Raid Worker verification recovery", () => {
     runtime.dispatchVerification(-1001, 44, {
       type: "callback",
       callbackQueryId: "callback-44",
+      action: "self",
       isSelf: true,
-      fromIsPrivileged: false,
+      fromCanApprove: false,
       fromLabel: "本人",
     });
     runtime.dispatchVerification(-1001, 45, { type: "left" });

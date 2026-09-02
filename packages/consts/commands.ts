@@ -56,7 +56,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
 /** `/bot_status` 展示单个 provider/model 标签的最大字符数，防止部署值撑破消息上限。 */
 export const BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS: number = 96;
 
-/** copy 类命令的公共冷却时长（白名单边界内的身份豁免，含恒在边界内的超级管理员；见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
+/** copy 类命令的公共冷却时长（只有超级管理员本人豁免，白名单不豁免；见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
 export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
 
 /**

@@ -105,7 +105,6 @@ describe("Anti-Raid Worker verification attempt budget", () => {
       type: "join",
       chatId: -1001,
       member: { id: 42, first_name: "Same member" },
-      actorIsWhitelisted: false,
     });
     expect(verificationEntries.has("-1001:42")).toBeFalse();
     expect(workerEvents).toHaveLength(1);

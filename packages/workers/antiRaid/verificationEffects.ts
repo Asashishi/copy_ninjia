@@ -170,7 +170,9 @@ export async function runVerificationEffects({
             ? `哼，${effect.targetLabel} 老实巴交的在帖子底下冒个了泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`
             : effect.variant === "vouchedBot"
               ? `哼，既然 ${effect.fromLabel} 大人愿意为机器人 ${effect.targetLabel} 作保，本天才就勉为其难放这个铁疙瘩进来啦~♡`
-              : `哼，算你机灵，${effect.fromLabel} 通过验证啦，欢迎杂鱼入群~♡`;
+              : effect.variant === "approved"
+                ? `哼，既然 ${effect.fromLabel} 大人肯为 ${effect.targetLabel} 作保，本天才就勉为其难放这条杂鱼进来啦~♡`
+                : `哼，算你机灵，${effect.fromLabel} 通过验证啦，欢迎杂鱼入群~♡`;
         const welcomeMessageId: number | undefined = await sendMessage({
           chatId,
           text: welcomeText,
@@ -193,9 +195,13 @@ export async function runVerificationEffects({
             ? "验证通过啦～"
             : effect.reply === "invalid"
               ? "验证已经失效啦，再试试重新进群吧"
-              : effect.reply === "notYourBotButton"
-                ? "帮机器人作保是白名单大人的特权，杂鱼别乱点～"
-                : "这不是你的验证按钮哦，杂鱼别乱点～";
+              : effect.reply === "useSelfButton"
+                ? "想自己过验证就点「我是良民」，「通过」是给管理员代点的～"
+                : effect.reply === "notApprover"
+                  ? "替人点「通过」是本群管理员的特权，杂鱼别乱点～"
+                  : effect.reply === "approverUnknown"
+                    ? "本天才暂时没查到你是不是管理员，稍后再点一次～"
+                    : "这不是你的验证按钮哦，杂鱼别乱点～";
         await answerCallbackQuery({
           callbackQueryId: effect.callbackQueryId,
           text: replyText,
@@ -219,7 +225,7 @@ export async function runVerificationEffects({
         // Worker 只向主线程中继 error 日志；这是误踢后唯一可供人工纠正的线索。
         logger.error(
           `The kick request for member ${effect.label} (chat ${chatId}, user ${userId}) had already been sent or completed ` +
-          "when exemption proof (admin/whitelist identity) arrived; it cannot be undone automatically — " +
+          "when exemption proof (admin identity) arrived; it cannot be undone automatically — " +
           "an admin may need to manually re-invite them if this was a false positive."
         );
         break;

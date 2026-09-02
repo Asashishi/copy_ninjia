@@ -3,7 +3,6 @@ import {
   dirtyStickerPacks,
   hydrateStickerCatalogCache,
   markStickerCatalogDirty,
-  resetStickerCatalogCache,
   stickerCatalogCache,
   stickerFlushState,
 } from "../../cache/workers/diskIO/stickers";
@@ -72,9 +71,4 @@ export function flushStickerCatalogs(
   });
   if (dirtyStickerPacks.size > 0) scheduleStickerCatalogFlush();
   return dirtyStickerPacks.size === 0;
-}
-
-/** reset 边界：停止 timer 并清空恢复态与 dirty 集合。 */
-export function resetStickerCatalogFiles(): void {
-  resetStickerCatalogCache();
 }

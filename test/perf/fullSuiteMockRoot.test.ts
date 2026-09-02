@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync, rmSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -59,6 +59,26 @@ describe("全量基准的 mock 根边界", () => {
     expect((): void => assertBenchmarkRuntimeRoot(PROJECT_ROOT))
       .toThrow("is not a benchmark runtime data root");
   });
+});
+
+/**
+ * 下面两条用例调用的是真会建目录的入口，落点只能是仓库根的 `performance/`：
+ * `assertInsidePerformanceMockRoot` 把全量基准的写入钉死在这一个常量上（见
+ * scripts/perf/fullSuite/mockRoot.ts），把根改成可注入的参数就等于把「只写这里」
+ * 这条不变量交回给调用方，而那正是这个模块存在的理由。因此不改生产签名，改为
+ * 在这里记下运行前的现场：mock 根本来不存在时，跑完把它整个撤掉，工作树不留痕。
+ */
+const mockRootExistedBeforeTests: boolean = existsSync(PERFORMANCE_MOCK_ROOT);
+
+afterAll((): void => {
+  // removeMockPath 拒绝删除 mock 根本身（那是给基准用的保护），所以这里直接调
+  // node:fs。用 rmdirSync 而不是递归删除：每条用例都在 finally 里撤掉自己那棵
+  // run-* 子树，跑完这层理应是空的；万一同一时刻真有一次全量基准在写，非空目录
+  // 会让 rmdirSync 抛错而不是把人家的运行目录连锅端走。
+  if (mockRootExistedBeforeTests || !existsSync(PERFORMANCE_MOCK_ROOT)) return;
+  if (readdirSync(PERFORMANCE_MOCK_ROOT).length === 0) {
+    rmdirSync(PERFORMANCE_MOCK_ROOT);
+  }
 });
 
 describe("mock 根的建立与清理", () => {

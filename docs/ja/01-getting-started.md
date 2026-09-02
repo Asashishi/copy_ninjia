@@ -104,9 +104,11 @@ Bot identity とスーパー管理者は `config/telegram.json` に置きます�
 - **`super_admin_user_id`**（必須）
   - スーパー管理者を表す 1 つの十進ユーザー ID。この identity 自体が
     allowlist で付与できる**すべて**の個別 permission を持つため、
-    SQLite allowlist table に row を書く必要は**ありません**。常に allowlist 境界の
-    内側にもいるので、copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護も
-    受け、`/block`、`/mute`、`/batch_kick` の対象にもできません。
+    SQLite allowlist table に row を書く必要は**ありません**。copy・画像生成・楽曲生成の
+    cooldown 免除はこの identity だけが持ちます。常に allowlist 境界の内側にもいるので、
+    自動処分からの保護も受け、`/block`、`/mute`、`/batch_kick` の対象にもできません。
+    参加認証の「通过」ボタンはそのグループの非匿名管理者だけを認め、allowlist や
+    スーパー管理者の identity とは無関係です。
   - `/init`、`/batch_kick`、`/permission` の変更操作、`/white disable`、`/send` は
     identity だけで決まります。`isCanWhiteOther` は他 identity の default permission での
     追加だけを委任し、member を削除できません。

@@ -7,7 +7,7 @@ import type {
 } from "../types/copy/cooldown";
 import { getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { isWhitelisted } from "../infra/identityPolicy/whitelist";
+import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
 import { queueAvatarUpdate } from "../copy/avatarQueue";
@@ -50,7 +50,8 @@ export async function claimCopyCooldownOrReject(
   messageId: number | undefined
 ): Promise<CopyCooldownClaim> {
   const globalCopyState: GlobalCopyState = getGlobalCopyState();
-  const isExempted: boolean = !!fromUser && isWhitelisted(fromUser.id);
+  // 只有超级管理员本人免冷却；白名单身份与其他人一样排队。
+  const isExempted: boolean = fromUser?.id === SUPER_ADMIN_USER_ID;
   if (!isExempted && globalCopyState.lastCopyTime) {
     const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
     // 墙钟回拨时 elapsed 为负；把旧时间戳视为已过期，随后本次 claim 会用
@@ -76,13 +77,13 @@ export async function claimCopyCooldownOrReject(
  * 撤销 claimCopyCooldownOrReject 占用的冷却槽——用于这次尝试最终确认不会
  * 真正触发复制的时候（解析目标失败、已经在复读别人等），避免无效尝试白白
  * 消耗掉全局冷却。只在冷却槽仍是本次占用写入的值时才回滚：占用与回滚之间
- * 隔着 await（发提示消息等），期间白名单用户（豁免冷却检查）可能已在别的群
+ * 隔着 await（发提示消息等），期间超级管理员（豁免冷却检查）可能已在别的群
  * 成功占用并触发复制，无条件回滚会把 TA 的占用抹掉、让全局冷却凭空消失。
  *
  * 回滚也要落盘：占用那一步已经把 claimedAt 写进了 state.json（见
  * claimCopyCooldownOrReject），若这里只回滚内存、不落盘，进程在“占用后已
  * 回滚、但还没被任何其它事件顺带落盘”的这段窗口内重启，state.json 上留着
- * 的仍是那个已作废的 claimedAt——重启后每个非白名单用户的下一次 /copy 都
+ * 的仍是那个已作废的 claimedAt——重启后除超级管理员外每个人的下一次 /copy 都
  * 会被这个本不该存在的冷却错误地拒绝，直到它自然过期。
  */
 export async function releaseCopyCooldownClaim(
