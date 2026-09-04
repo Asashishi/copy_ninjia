@@ -4,7 +4,7 @@ import type {
   ChatTeardownReason,
 } from "../../types/chatTeardown";
 
-/** 群 teardown 分发器（packages/infra/chatTeardown.ts）的内存状态。各 owner 注册时
+/** 群 teardown 注册表（packages/infra/chatTeardownRegistry.ts）的内存状态。各 owner 注册时
  * 填充固定槽位，运行中不清除；进程退出时整表释放，重启后从 no-op 重新注册，
  * 不淘汰单个槽位。 */
 

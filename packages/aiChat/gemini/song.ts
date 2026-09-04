@@ -20,7 +20,7 @@
  * 回复恒带 invalidate signal，于是那条 `timeout` 会被静默跳过，一次挂住的请求
  * 就再没有任何 deadline——它会一直占着这一轮的心跳与工具轮次。因此这里用
  * `AbortSignal.any` 把调用方的 signal 与一份独立的超时合成一个再传下去，口径
- * 同 aiChat/ai/telegramImage.ts 的 withTimeout。`timeout` 仍照传：没有调用方
+ * 同 libs/withTimeout.ts。`timeout` 仍照传：没有调用方
  * signal 的路径上它是有效的，两道一起兜住。
  *
  * 失败一律返回 null 并记一行英文错误日志，绝不抛错：调用方（生歌工具）要靠这个
@@ -36,6 +36,7 @@ import {
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
+import { raceAbortOrThrow } from "../../libs/abortSignal";
 import { decodeGeneratedSong } from "../ai/utils/songPayload";
 import { getGeminiClient } from "./client";
 import type { AiSongRequest } from "../../types/aiChat/provider";
@@ -71,22 +72,26 @@ export async function generateGeminiSong({ prompt, signal }: AiSongRequest): Pro
     ? timeoutSignal
     : AbortSignal.any([signal, timeoutSignal]);
   try {
+    requestSignal.throwIfAborted();
     const client: GoogleGenAI = getGeminiClient("song");
     const model: string | undefined = getAgentDeploymentConfig().song?.model;
     if (model === undefined) throw new Error('Agent capability "song" is not configured.');
     // 模型名在 try 内部求值：这份部署配置一旦写坏，getAgentDeploymentConfig()
     // 会抛，而它必须落进本函数的 catch 归一成一次普通失败（口径同 client.ts 的
     // requestGeminiResult 收闭包而不收拼好对象的理由）。
-    interaction = await client.interactions.create(
-      {
-        model,
-        input: prompt,
-      },
-      {
-        timeout: GEMINI_SONG_REQUEST_TIMEOUT_MS,
-        maxRetries: GEMINI_SONG_REQUEST_ATTEMPTS - 1,
-        signal: requestSignal,
-      }
+    interaction = await raceAbortOrThrow(
+      client.interactions.create(
+        {
+          model,
+          input: prompt,
+        },
+        {
+          timeout: GEMINI_SONG_REQUEST_TIMEOUT_MS,
+          maxRetries: GEMINI_SONG_REQUEST_ATTEMPTS - 1,
+          signal: requestSignal,
+        }
+      ),
+      requestSignal
     );
   } catch (error: unknown) {
     // 判的是**调用方**那个 signal，不是合成后的：本轮被作废（`/ai_chat disable`、

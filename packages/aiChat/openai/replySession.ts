@@ -23,12 +23,16 @@
 
 import type OpenAI from "openai";
 import {
+  OPENAI_PROMPT_CACHE_BREAKPOINT_MODEL_PREFIX,
+  OPENAI_PROMPT_CACHE_KEY_PREFIX,
+  OPENAI_PROMPT_CACHE_TTL,
   OPENAI_REPLY_ERROR_LABEL,
   OPENAI_REPLY_MAX_TOKENS,
   OPENAI_STORE_RESPONSES,
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { requestOpenAiResult } from "./client";
+import { stablePrefixFingerprint } from "./promptCacheKey";
 import {
   EMPTY_FUNCTION_CALLS,
   countWebSearchCalls,
@@ -46,6 +50,7 @@ import type {
   AiToolDefinition,
   AiToolOutput,
 } from "../../types/aiChat/provider";
+import type { AgentCapabilityConfig } from "../../types/config";
 
 /** 中立工具声明转 Responses 的 function tool。两边的参数都是 JSON Schema，
  *  直接透传；strict 必须为 false——本项目的 schema 不声明
@@ -68,6 +73,19 @@ function buildTools(request: AiReplyTurnRequest): OpenAI.Responses.Tool[] {
   if (request.webSearchEnabled) tools.push({ type: "web_search" });
   for (const definition of request.functions) tools.push(toFunctionTool(definition));
   return tools;
+}
+
+/**
+ * 判断本次请求能否使用 GPT-5.6 的 prompt cache breakpoint 协议。
+ *
+ * 只有 SDK 默认的 OpenAI 官方端点且模型属于当前已核对的 GPT-5.6 家族时启用。
+ * 自定义 base_url 代表兼容协议，不能因模型名相同就假定端点接受新字段；更早的
+ * OpenAI 模型同样保留原来的自动前缀缓存请求形态。
+ */
+function supportsPromptCacheBreakpoints(config: AgentCapabilityConfig): boolean {
+  if (config.provider !== "openai" || config.baseUrl !== undefined) return false;
+  return config.model === OPENAI_PROMPT_CACHE_BREAKPOINT_MODEL_PREFIX ||
+    config.model.startsWith(OPENAI_PROMPT_CACHE_BREAKPOINT_MODEL_PREFIX + "-");
 }
 
 /**
@@ -101,14 +119,73 @@ function toInputItems(output: readonly OpenAI.Responses.ResponseOutputItem[]): O
   return items;
 }
 
-/** 建立一轮 OpenAI 回复会话。会话随本轮结束即弃，不跨轮复用。 */
-export function createOpenAiReplySession({ promptBlocks, signal }: AiReplySessionParams): AiReplySession {
-  const input: OpenAI.Responses.ResponseInputItem[] = [{
-    role: "user",
-    content: promptBlocks.map((text: string): OpenAI.Responses.ResponseInputContent => ({ type: "input_text", text })),
-  }];
+/**
+ * 建立一轮 OpenAI 回复会话。会话随本轮结束即弃，不跨轮复用。
+ *
+ * 稳定区块与易变区块按顺序拼进同一个 user 轮次，**不合并成一段文本**：
+ * Responses 的自动前缀缓存按 instructions → tools → input 的序列比对前缀，稳定
+ * 内容排在前面才可能命中。所有模型都带按稳定前缀算出的 `prompt_cache_key`——键只
+ * 影响路由，让共享同一段前缀的请求尽量落到同一台机器上。GPT-5.6 官方端点还在最后
+ * 一个稳定区块后放显式 breakpoint，同时保留 implicit 模式：显式断点服务跨回复的
+ * 稳定前缀，隐式断点服务同一回复内持续增长的工具往返。兼容端点与更早模型不发送
+ * 这些新字段。`prompt_cache_key` 的分段哈希约定见 openai/promptCacheKey.ts。
+ */
+export function createOpenAiReplySession(
+  { stableBlocks, volatileBlocks, signal }: AiReplySessionParams
+): AiReplySession {
+  const content: OpenAI.Responses.ResponseInputContent[] = [];
+  let breakpointTarget: OpenAI.Responses.ResponseInputText | undefined;
+  for (let index: number = 0; index < stableBlocks.length; index += 1) {
+    const text: string | undefined = stableBlocks[index];
+    if (text === undefined) continue;
+    if (index === stableBlocks.length - 1) {
+      breakpointTarget = { type: "input_text", text, prompt_cache_breakpoint: undefined };
+      content.push(breakpointTarget);
+    } else {
+      content.push({ type: "input_text", text });
+    }
+  }
+  for (const text of volatileBlocks) content.push({ type: "input_text", text });
+  const input: OpenAI.Responses.ResponseInputItem[] = [{ role: "user", content }];
   // 上一次 request() 拿到的模型 output item，等 appendToolOutputs() 接回 input。
   let pendingModelItems: OpenAI.Responses.ResponseInputItem[] | undefined;
+
+  // prompt_cache_key 按工具形态记忆化：一轮回复里工具集合通常从头到尾不变（只有
+  // 动作预算或检索额度耗尽时才换一份），没必要每轮重算一次几十 KB 的 SHA-256。
+  // 指纹覆盖本端自动前缀缓存能复用的完整稳定段，包括参考记忆。
+  let cacheKey: string | undefined;
+  let keyedFunctions: readonly AiToolDefinition[] | undefined;
+  let keyedWebSearchEnabled: boolean | undefined;
+  let keyedSystemPrompt: string | undefined;
+
+  /**
+   * 取本轮请求的 prompt_cache_key，工具形态没变就复用上一次算好的。
+   *
+   * Responses 的自动前缀缓存覆盖 instructions → tools → input 的整段前缀，其中
+   * 包含按群变化的参考记忆，所以键必须**按群分**，让同一个群的请求落到同一台
+   * 机器上。键含参考记忆还顺带避免单键过热——OpenAI 文档明确要求高流量的分组
+   * 拆成更多键。
+   */
+  function promptCacheKeyFor(request: AiReplyTurnRequest, tools: readonly OpenAI.Responses.Tool[]): string {
+    if (
+      cacheKey !== undefined &&
+      keyedFunctions === request.functions &&
+      keyedWebSearchEnabled === request.webSearchEnabled &&
+      keyedSystemPrompt === request.systemPrompt
+    ) {
+      return cacheKey;
+    }
+    const fingerprint: string = stablePrefixFingerprint([
+      request.systemPrompt,
+      JSON.stringify(tools),
+      ...stableBlocks,
+    ]);
+    cacheKey = OPENAI_PROMPT_CACHE_KEY_PREFIX + ":" + fingerprint;
+    keyedFunctions = request.functions;
+    keyedWebSearchEnabled = request.webSearchEnabled;
+    keyedSystemPrompt = request.systemPrompt;
+    return cacheKey;
+  }
 
   return {
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
@@ -116,18 +193,38 @@ export function createOpenAiReplySession({ promptBlocks, signal }: AiReplySessio
       // 请求体在 requestOpenAiResult 的 try 内构造：模型名来自 config/agent.json，
       // 那份文件写坏时解析会抛，构造留在这里就等于让异常绕过整条 ok:false 通路
       // （见 client.ts 的 requestOpenAiResult 与 config/readiness.ts 的闸门）。
+      const tools: OpenAI.Responses.Tool[] = buildTools(request);
+      const promptCacheKey: string = promptCacheKeyFor(request, tools);
       const result: OpenAiRequestResult = await requestOpenAiResult({
         capability: "text",
-        buildBody: (): OpenAI.Responses.ResponseCreateParamsNonStreaming => ({
-          model: getAgentDeploymentConfig().text.model,
-          instructions: request.systemPrompt,
-          input,
-          tools: buildTools(request),
-          // 不带 temperature：GPT-5 系推理模型只接受默认值，传别的会直接
-          // 400，因此 request.grounded 在本包不影响采样（见本文件头注）。
-          max_output_tokens: OPENAI_REPLY_MAX_TOKENS,
-          store: OPENAI_STORE_RESPONSES,
-        }),
+        buildBody: (): OpenAI.Responses.ResponseCreateParamsNonStreaming => {
+          const config: AgentCapabilityConfig = getAgentDeploymentConfig().text;
+          const useBreakpoints: boolean =
+            breakpointTarget !== undefined && supportsPromptCacheBreakpoints(config);
+          if (breakpointTarget !== undefined) {
+            breakpointTarget.prompt_cache_breakpoint = useBreakpoints
+              ? { mode: "explicit" }
+              : undefined;
+          }
+          return {
+            model: config.model,
+            instructions: request.systemPrompt,
+            input,
+            tools,
+            // 只影响路由：让共享同一段稳定前缀的请求尽量落到同一台机器上，
+            // 自动前缀缓存才有机会读到那一段（见 consts/aiChat/openai.ts）。
+            prompt_cache_key: promptCacheKey,
+            // implicit 保留最新 user/tool 消息的自动断点；稳定区块末尾的显式断点
+            // 让下一轮回复即使易变后缀不同，也能复用此前缀。
+            prompt_cache_options: useBreakpoints
+              ? { mode: "implicit", ttl: OPENAI_PROMPT_CACHE_TTL }
+              : undefined,
+            // 不带 temperature：GPT-5 系推理模型只接受默认值，传别的会直接
+            // 400，因此 request.grounded 在本包不影响采样（见本文件头注）。
+            max_output_tokens: OPENAI_REPLY_MAX_TOKENS,
+            store: OPENAI_STORE_RESPONSES,
+          };
+        },
         errorLabel: OPENAI_REPLY_ERROR_LABEL,
         signal,
       });

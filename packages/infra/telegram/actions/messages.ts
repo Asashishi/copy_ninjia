@@ -6,6 +6,8 @@ import type {
 import { telegramApi } from "../client";
 import { telegramErrorDetails } from "../errors";
 import {
+  logUnlessAborted,
+  replyParametersFor,
   runBooleanTelegramAction,
   runTelegramAction,
   signalArgs,
@@ -28,6 +30,9 @@ type EphemeralSendMessageApi = Pick<TelegramApi, "sendMessage">;
 type EditMessageTextApi = Pick<TelegramApi, "editMessageText">;
 type SendChatActionApi = Pick<TelegramApi, "sendChatAction">;
 type AnswerCallbackQueryApi = Pick<TelegramApi, "answerCallbackQuery">;
+
+/** 关闭链接预览卡片的固定载荷；按引用共享，不在每条消息上重造。 */
+const DISABLED_LINK_PREVIEW: Readonly<{ is_disabled: true }> = { is_disabled: true };
 
 export interface SendMessageParams {
   chatId: number;
@@ -85,23 +90,16 @@ export async function sendMessageWithResult({
     execute: async (
       requestSignal?: AbortSignal
     ): Promise<Message.TextMessage> => {
+      // 定形一次初始化：字段齐、顺序固定，缺席用 undefined 表达。条件展开会为
+      // 每个可选字段造一个一次性 {} 并让同一个 payload 类型长出 2^5 种 shape，
+      // 而 grammY 两条序列化路径都丢弃 undefined，产出的请求体逐字节相同
+      // （对拍见 test/infra/telegramSendPayload.test.ts）。
       const other: Parameters<SendMessageApi["sendMessage"]>[2] = {
-        ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
-        ...(replyToMessageId
-          ? {
-            reply_parameters: {
-              message_id: replyToMessageId,
-              allow_sending_without_reply: true,
-            },
-          }
-          : {}),
-        ...(keyboard ? { reply_markup: keyboard } : {}),
-        ...(entities && entities.length > 0
-          ? { entities: [...entities] }
-          : {}),
-        ...(disableLinkPreview
-          ? { link_preview_options: { is_disabled: true } }
-          : {}),
+        message_thread_id: messageThreadId,
+        reply_parameters: replyParametersFor(replyToMessageId),
+        reply_markup: keyboard,
+        entities: entities && entities.length > 0 ? [...entities] : undefined,
+        link_preview_options: disableLinkPreview ? DISABLED_LINK_PREVIEW : undefined,
       };
       return api.sendMessage(
         chatId,
@@ -119,10 +117,7 @@ export async function sendMessageWithResult({
     },
     fallback: undefined,
     signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
+    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -177,11 +172,9 @@ export async function sendEphemeralMessage({
   onSent,
 }: SendEphemeralMessageParams): Promise<number | undefined> {
   const other: EphemeralSendMessageOptions = {
-    ...(messageThreadId !== undefined ? { message_thread_id: messageThreadId } : {}),
+    message_thread_id: messageThreadId,
     receiver_user_id: receiverUserId,
-    ...(callbackQueryId === undefined
-      ? {}
-      : { callback_query_id: callbackQueryId }),
+    callback_query_id: callbackQueryId,
     reply_markup: keyboard,
   };
   return runTelegramAction({
@@ -215,10 +208,7 @@ export async function sendEphemeralMessage({
     },
     fallback: undefined,
     signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
+    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -250,7 +240,7 @@ export async function sendChatAction({
       api.sendChatAction(
         chatId,
         action,
-        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
+        { message_thread_id: messageThreadId },
         ...signalArgs(requestSignal)
       ),
     signal
@@ -310,7 +300,7 @@ export async function editMessageText({
           messageId,
           text,
           {
-            ...(entities && entities.length > 0 ? { entities: [...entities] } : {}),
+            entities: entities && entities.length > 0 ? [...entities] : undefined,
             reply_markup: keyboard ?? { inline_keyboard: [] },
           },
           ...signalArgs(requestSignal)

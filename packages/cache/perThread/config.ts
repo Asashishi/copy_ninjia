@@ -62,7 +62,7 @@ export const telegramConfigCache: { current: TelegramConfig | null } = { current
  * 两段各一个 holder 而不是整份文件一个：探哪一段、运行时就只读哪一段，否则
  * 「通过启动门禁的配置」与「跑得起来的配置」是两个集合。容量恒为一个对象。
  *
- * logger 的值级脱敏逐条日志读取本 holder（见 infra/logger.ts 的 currentSecrets），
+ * logger 的值级脱敏逐条日志读取本 holder（见 infra/logger/serialization.ts 的 currentSecrets），
  * 因此它必须在**每条**持有该凭据的线程里都有一份，不能收进某个 owner 目录。
  */
 export const adDetectAgentConfigCache: { current: AdDetectAgentConfig | null } = { current: null };

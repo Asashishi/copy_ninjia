@@ -58,6 +58,7 @@ function scheduleLuckFlush(): void {
   luckFlushTimer.timer = setTimeout((): void => {
     void enqueueDiskIOOperation(retryLuckFlush);
   }, FLUSH_INTERVAL_MS);
+  luckFlushTimer.timer.unref();
 }
 
 /**

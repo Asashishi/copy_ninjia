@@ -38,7 +38,7 @@ mock.module("../../packages/infra/botAdmin", () => ({
     observer: (chatId: number, permissions: BotChatPermissions | undefined) => void
   ): void => { captured.permissions = observer; },
 }));
-mock.module("../../packages/infra/chatTeardown", () => ({
+mock.module("../../packages/infra/chatTeardownRegistry", () => ({
   registerChatTeardown: (
     _owner: string,
     observer: (chatId: number, reason: ChatTeardownReason) => void

@@ -91,10 +91,43 @@ describe("luck receipt protocol", () => {
   test("luckReceiptHashFromLine 只认标签前缀加定长摘要", () => {
     const receipt: string = createLuckReceipt(SECRET, "123");
     const receiptHash: string = luckReceiptHmacHash(receipt)!;
-    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`)).toBe(receiptHash);
-    expect(luckReceiptHashFromLine(receiptHash)).toBeUndefined();
-    expect(luckReceiptHashFromLine(receipt)).toBeUndefined();
-    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBeUndefined();
-    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash.toUpperCase()}`)).toBeUndefined();
+    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`, 0)).toBe(receiptHash);
+    expect(luckReceiptHashFromLine(receiptHash, 0)).toBeUndefined();
+    expect(luckReceiptHashFromLine(receipt, 0)).toBeUndefined();
+    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`, 0)).toBeUndefined();
+    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash.toUpperCase()}`, 0)).toBeUndefined();
+    expect(luckReceiptHashFromLine("", 0)).toBeUndefined();
+  });
+
+  test("luckReceiptHashFromLine 按末行偏移读原串，与先切末行逐字等价", () => {
+    const receipt: string = createLuckReceipt(SECRET, "123");
+    const receiptHash: string = luckReceiptHmacHash(receipt)!;
+    const bodies: readonly string[] = [
+      "运势正文",
+      "多行\n正文",
+      "带前缀的伪装行\n不是回执",
+      "",
+    ];
+    const lastLines: readonly string[] = [
+      `${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`,
+      `${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash.slice(0, 63)}`,
+      receiptHash,
+      "",
+      "普通末行",
+    ];
+    for (const body of bodies) {
+      for (const lastLine of lastLines) {
+        const text: string = `${body}\n${lastLine}`;
+        const lastLineStart: number = text.lastIndexOf("\n") + 1;
+        // 参考实现：先把末行切出来再判，等价性由这条对拍守住。
+        const reference: string | undefined = text.slice(lastLineStart)
+          .startsWith(LUCK_RECEIPT_DISPLAY_PREFIX)
+          ? text.slice(lastLineStart + LUCK_RECEIPT_DISPLAY_PREFIX.length)
+          : undefined;
+        const expected: string | undefined =
+          reference !== undefined && /^[a-f0-9]{64}$/.test(reference) ? reference : undefined;
+        expect(luckReceiptHashFromLine(text, lastLineStart)).toBe(expected);
+      }
+    }
   });
 });

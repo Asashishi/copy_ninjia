@@ -160,11 +160,23 @@ export function deriveLuckEntropy(secret: LuckReceiptSecret, cacheKey: string): 
 /**
  * 从结果消息的末行取出展示用 HMAC 摘要；可见标签不参与 HMAC。
  * 只识别当前格式：没有标签前缀、或前缀后不是合法摘要，一律不是回执。
+ *
+ * 取的是 `text` 从 `lastLineStart` 到**结尾**的那一段，因此该偏移必须是最后一行
+ * 的起点（末个换行符的下一位，或整串没有换行时的 0）。判定按偏移在原串上比
+ * 前缀，不先把末行切出来：`confirmLuckDraw` 跑在每一条带换行的 update 上
+ * （见 app/registerHandlers.ts 的第二道 middleware），而绝大多数末行都不是回执，
+ * 先切子串等于为每条多行消息白付一次子串分配。
+ *
+ * @param text 完整消息正文。
+ * @param lastLineStart 末行在 `text` 中的起始下标。
  * @returns 十六进制 HMAC 摘要；该行不是当前格式的回执时返回 undefined。
  */
-export function luckReceiptHashFromLine(line: string): string | undefined {
-  if (!line.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX)) return undefined;
-  const hash: string = line.slice(LUCK_RECEIPT_DISPLAY_PREFIX.length);
+export function luckReceiptHashFromLine(
+  text: string,
+  lastLineStart: number
+): string | undefined {
+  if (!text.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX, lastLineStart)) return undefined;
+  const hash: string = text.slice(lastLineStart + LUCK_RECEIPT_DISPLAY_PREFIX.length);
   return isLuckReceiptHash(hash) ? hash : undefined;
 }
 
@@ -172,7 +184,7 @@ export function luckReceiptHashFromLine(line: string): string | undefined {
 export function stripLuckReceipt(text: string): string {
   const lastLineBreak: number = text.lastIndexOf("\n");
   if (lastLineBreak < 0) return text;
-  return luckReceiptHashFromLine(text.slice(lastLineBreak + 1)) === undefined
+  return luckReceiptHashFromLine(text, lastLineBreak + 1) === undefined
     ? text
     : text.slice(0, lastLineBreak);
 }

@@ -50,6 +50,7 @@ function scheduleAiMemoryFlush(): void {
     aiMemoryFlushState.timer = null;
     flushAiMemorySnapshots();
   }, SNAPSHOT_FLUSH_INTERVAL_MS);
+  aiMemoryFlushState.timer.unref();
 }
 
 /** 跨域启动第一阶段：只读扫描并严格解码，不改缓存或磁盘。 */

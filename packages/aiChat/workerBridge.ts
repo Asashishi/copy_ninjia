@@ -1,5 +1,5 @@
 import { superviseDuplexWorker } from "../infra/supervisedDuplexWorker";
-import { registerChatTeardown } from "../infra/chatTeardown";
+import { registerChatTeardown } from "../infra/chatTeardownRegistry";
 import { logger } from "../infra/logger";
 import { postDiskIO } from "../infra/diskIO";
 import { isAiChatConfigured } from "./availability";

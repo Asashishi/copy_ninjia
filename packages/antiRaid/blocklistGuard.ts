@@ -222,7 +222,7 @@ export function claimBlockedJoiner({
 
 /**
  * 把「清扫某群的黑名单成员」这件事的执行 owner 注册给 infra 侧。反向注册是为了
- * 让 infra/blocklist/ 不静态依赖本领域模块（同 infra/chatTeardown.ts 的做法）。
+ * 让 infra/blocklist/ 不静态依赖本领域模块（同 infra/chatTeardownRegistry.ts 的做法）。
  * @param postDurably 通常是 antiRaid/durableDelivery.ts 的 postAntiRaidDurably。
  */
 export function registerBlocklistRemoval(postDurably: DurableAntiRaidPost): void {

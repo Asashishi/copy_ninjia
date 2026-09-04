@@ -48,6 +48,7 @@ import {
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
+import { raceAbortOrThrow } from "../../libs/abortSignal";
 import { decodeGeneratedImageBySignature } from "../ai/utils/imagePayload";
 import { getOpenAiClient } from "./client";
 import type { AiImageRequest } from "../../types/aiChat/provider";
@@ -190,10 +191,12 @@ async function requestOpenAiCompatibleImage(
     case "openai-standard": {
       const size: string = pickOpenAiImageSize(protocol, aspectRatio);
       if (referenceImage !== undefined) {
+        const upload: Uploadable = await toReferenceUpload(referenceImage);
+        signal?.throwIfAborted();
         return client.images.edit(
           {
             model,
-            image: await toReferenceUpload(referenceImage),
+            image: upload,
             prompt,
             size,
             output_format: OPENAI_IMAGE_OUTPUT_FORMAT,
@@ -252,6 +255,7 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     signal,
   }: AiImageRequest = request;
   try {
+    signal?.throwIfAborted();
     // 配置取一次就够：两条分支用的是同一个模型，分别取只会让「换模型时两边不一致」
     // 成为可能。取用放在 try 内，因为 config/agent.json 写坏时解析会抛——留在外面
     // 就等于让一次配置笔误把异常掀给调用方，而本函数的契约是「失败返回 null」。
@@ -266,10 +270,9 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     const model: string = config.model;
     const client: OpenAI = getOpenAiClient("image");
     const protocol: OpenAiImageProtocol = config.imageProtocol;
-    const response: OpenAI.Images.ImagesResponse = await requestOpenAiCompatibleImage(
-      client,
-      config,
-      request
+    const response: OpenAI.Images.ImagesResponse = await raceAbortOrThrow(
+      requestOpenAiCompatibleImage(client, config, request),
+      signal
     );
     const entry: OpenAI.Images.Image | undefined = response.data?.[0];
     const encoded: string | undefined = entry?.b64_json;

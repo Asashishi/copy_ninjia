@@ -337,7 +337,7 @@ export interface ReadBlocklistIdPageRequest {
 
 /**
  * 需要逐条回执的 main -> diskIO 请求信封。四条通道共用同一套发号、等待表与
- * 超时结算（见 infra/diskIO/host.ts 的 requestDiskIO），因此 requestId 是它们
+ * 超时结算（见 infra/diskIO/requests.ts 的 requestDiskIO），因此 requestId 是它们
  * 唯一必须共有的字段。
  */
 export type DiskIORequestMessage =

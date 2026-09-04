@@ -140,6 +140,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
             intentId: nextLockdownIntentId(),
           });
         }, effect.delayMs);
+        entry.restoreTimer.unref();
         break;
       }
       case "scheduleRestoreRetry": {
@@ -150,6 +151,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
           entry.retryTimer = undefined;
           dispatchLockdown(chatId, { type: "restoreRetryFired" });
         }, effect.delayMs);
+        entry.retryTimer.unref();
         break;
       }
       case "scheduleReapplyRetry": {
@@ -160,6 +162,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
           entry.retryTimer = undefined;
           dispatchLockdown(chatId, { type: "reapplyRetryFired" });
         }, effect.delayMs);
+        entry.retryTimer.unref();
         break;
       }
       case "prepareApply":

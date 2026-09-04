@@ -42,7 +42,7 @@ const imageGenerationStore: CooldownClaimStore = {
   tokenLabel: "image-generation-claim",
 };
 
-/** 只读取某群此刻的生图可用性；工具 schema 用它在调用前告知模型当前状态。 */
+/** 只读取某群此刻的生图可用性；工具执行器用它在解析参数之前先判一次能不能调。 */
 export interface ImageGenerationCooldownParams {
   chatId: number;
   bypassCooldown: boolean;

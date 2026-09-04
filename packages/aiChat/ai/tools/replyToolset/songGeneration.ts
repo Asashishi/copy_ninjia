@@ -57,16 +57,14 @@ import { buildSongCaption } from "../../utils/songCaption";
 import { songFileExtension } from "../../utils/songPayload";
 import type { ReplyToolContext, RoundMessageState } from "../../../../types/aiChat/replies";
 import type { AiSongProvider, AiSongRequest } from "../../../../types/aiChat/provider";
-import type { GeneratedChatSong, SongGenerationAvailability, SongGenerationClaim } from "../../../../types/aiChat/songGeneration";
+import type {
+  GeneratedChatSong,
+  SongGenerationAvailability,
+  SongGenerationClaim,
+} from "../../../../types/aiChat/songGeneration";
 import type { TelegramSendResult } from "../../../../types/telegram";
 import { cleanReply } from "../../utils/replyText";
 import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
-
-/** 本轮生歌工具需要的上下文子集；与 buildGenerateImageToolDefinition 同一写法。 */
-export type SongToolContext = Pick<
-  ReplyToolContext,
-  "chatId" | "mediaToolsRequested" | "bypassMediaToolCooldown"
->;
 
 /**
  * 模型可写的 caption 上限：Telegram 的硬顶扣掉执行侧那段元信息的预留。
@@ -85,22 +83,17 @@ function defaultPerformer(): string {
   return name ? truncateInline(sanitizeInline(name), SONG_PERFORMER_MAX_CHARS) : SONG_FALLBACK_PERFORMER;
 }
 
-export function buildGenerateSongToolDefinition(ctx: SongToolContext): AiToolDefinition {
-  const availability: SongGenerationAvailability = getSongGenerationAvailability({
-    chatId: ctx.chatId,
-    bypassCooldown: ctx.bypassMediaToolCooldown,
-  });
-  const availabilityInstruction: string = !ctx.mediaToolsRequested
-    ? "当前状态：不可生歌；当前消息不是直接回复或 @ 你的触发，本轮禁止调用。"
-    : ctx.bypassMediaToolCooldown
-    ? "当前状态：可以生歌；由你判断当前消息是否明确要求写歌或作曲。本轮由 superAdmin 触发，不受群冷却限制。"
-    : availability.allowed
-    ? "当前状态：可以生歌；由你判断当前消息是否明确要求写歌或作曲，没有明确意图就不要调用。"
-    : `当前状态：暂不可生歌，群冷却剩余约 ${Math.ceil(availability.retryAfterMs / 1_000)} 秒；本轮不要调用，` +
-      "并且必须用 send_message 明确告诉群友当前暂时不能写歌，请稍后再试。";
+/**
+ * generate_song 的工具声明。**整段逐字恒定**，不接受任何本轮上下文，理由同
+ * buildGenerateImageToolDefinition：带着每秒变化的冷却秒数的文案留在声明里，会把整段
+ * 稳定前缀的指纹打散。群冷却因此连提示词都不进，只在调用真的发生时由执行侧判定并把
+ * 剩余秒数回给模型（见 createGenerateSongExecutor 的冷却闸）；工具是否挂载仍由
+ * createReplyToolset 按 mediaToolsRequested 与供应商能力决定。
+ */
+export function buildGenerateSongToolDefinition(): AiToolDefinition {
   return {
     name: GENERATE_SONG_TOOL,
-    description: `${GENERATE_SONG_TOOL_INSTRUCTION}\n${availabilityInstruction}`,
+    description: GENERATE_SONG_TOOL_INSTRUCTION,
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -185,6 +178,25 @@ function parseArguments(argumentsJson: string): ParsedSongArguments | null {
   };
 }
 
+/**
+ * 冷却未过时回给模型的统一提示。
+ *
+ * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段：模型的提示词里
+ * 没有任何冷却状态，这条工具结果是它唯一一次知道「还要等多久」的机会，两条路径的
+ * 文案与秒数口径因此必须同源。
+ * @param retryAfterMs 冷却剩余毫秒，由生歌冷却表给出。
+ */
+function coolingDownError(retryAfterMs: number): string {
+  const retryAfterSeconds: number = Math.ceil(retryAfterMs / 1_000);
+  return toolError("Song generation is cooling down in this chat", {
+    retry_after_seconds: retryAfterSeconds,
+    retryable: false,
+    required_action:
+      `必须使用 send_message 明确告诉群友当前暂时不能写歌，请约 ${retryAfterSeconds} 秒后再试；` +
+      "本轮不要再次调用 generate_song。",
+  });
+}
+
 export function createGenerateSongExecutor(
   ctx: ReplyToolContext,
   state: RoundMessageState
@@ -216,6 +228,14 @@ export function createGenerateSongExecutor(
         { retryable: false }
       );
     }
+    // 冷却整条不进提示词，模型是在不知道本轮还剩多久的情况下调用的：因此在解析参数和
+    // 请求模型之前先做一次只读判定，冷却中直接把剩余秒数回给它。真正的原子闸仍是下面
+    // 的 claim——只读判定与 claim 之间同群另一轮可能抢先占位，那条路径回同一段文案。
+    const availability: SongGenerationAvailability = getSongGenerationAvailability({
+      chatId: ctx.chatId,
+      bypassCooldown: ctx.bypassMediaToolCooldown,
+    });
+    if (!availability.allowed) return coolingDownError(availability.retryAfterMs);
     const parsed: ParsedSongArguments | null = parseArguments(argumentsJson);
     if (!parsed) {
       return toolError(
@@ -243,16 +263,7 @@ export function createGenerateSongExecutor(
       chatId: ctx.chatId,
       bypassCooldown: ctx.bypassMediaToolCooldown,
     });
-    if (!claim.allowed) {
-      const retryAfterSeconds: number = Math.ceil(claim.retryAfterMs / 1_000);
-      return toolError("Song generation is cooling down in this chat", {
-        retry_after_seconds: retryAfterSeconds,
-        retryable: false,
-        required_action:
-          `必须使用 send_message 明确告诉群友当前暂时不能写歌，请约 ${retryAfterSeconds} 秒后再试；` +
-          "本轮不要再次调用 generate_song。",
-      });
-    }
+    if (!claim.allowed) return coolingDownError(claim.retryAfterMs);
 
     let modelRequestStarted: boolean = false;
     try {

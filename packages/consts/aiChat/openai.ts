@@ -63,6 +63,34 @@ export const OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS: number = 16_384;
 /** 单次媒体描述请求的输出 token 上限（含推理 token）。 */
 export const OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS: number = 16_384;
 
+/**
+ * `prompt_cache_key` 的命名空间前缀。
+ *
+ * Responses 的自动前缀缓存按机器分布：同一段前缀的请求落到同一台机器上才可能读到
+ * 缓存，键只影响路由、不保证命中，也不会把请求钉死在某台机器上。前缀 + 稳定前缀
+ * 指纹的组合让「同一份人设 + 同一套工具 + 同一段参考记忆」的请求聚到一起，同时把
+ * 不同群、不同工具形态分散到不同键上，避免单键过热（见 openai/replySession.ts）。
+ */
+export const OPENAI_PROMPT_CACHE_KEY_PREFIX: string = "hunhebi-reply";
+
+/**
+ * 支持显式 prompt cache breakpoint 的 OpenAI 官方模型族前缀。
+ *
+ * 只认当前官方明确支持该请求形态的 GPT-5.6 家族；兼容端点即使复用同一模型名也
+ * 不据此启用，见 aiChat/openai/replySession.ts 的协议门。新增官方模型族时必须先
+ * 核对 Responses API 与已安装 SDK 的请求声明，再扩展这里。
+ */
+export const OPENAI_PROMPT_CACHE_BREAKPOINT_MODEL_PREFIX: string = "gpt-5.6";
+
+type OpenAiPromptCacheTtl = NonNullable<
+  NonNullable<
+    OpenAI.Responses.ResponseCreateParamsNonStreaming["prompt_cache_options"]
+  >["ttl"]
+>;
+
+/** GPT-5.6 prompt cache breakpoint 当前唯一支持的最短存活时间。 */
+export const OPENAI_PROMPT_CACHE_TTL: OpenAiPromptCacheTtl = "30m";
+
 /** 回复往返在错误日志里的调用名，用于区分是哪条流水线出的错。 */
 export const OPENAI_REPLY_ERROR_LABEL: string = "OpenAI API";
 /** 生图请求在错误日志里的调用名。 */

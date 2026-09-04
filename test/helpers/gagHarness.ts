@@ -92,7 +92,7 @@ mock.module("../../packages/infra/botAdmin", () => ({
     canRestrictMembers: true,
   }),
 }));
-mock.module("../../packages/infra/chatTeardown", () => ({
+mock.module("../../packages/infra/chatTeardownRegistry", () => ({
   registerChatTeardown: (): void => undefined,
 }));
 mock.module("../../packages/infra/logger", () => ({

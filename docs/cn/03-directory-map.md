@@ -126,7 +126,7 @@
     **主线程侧的 Worker 代理与镜像**（`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **owner**：AI 闲聊 Worker。
-  - **内容**：滚动记忆、回复准入、心情、贴纸目录与集合、两家供应商的客户端单例。
+  - **内容**：滚动记忆、回复准入、心情、贴纸目录与集合，以及两家供应商的客户端单例。
 - **`workers/antiRaid/`**
   - **owner**：Anti-Raid Worker。
   - **内容**：验证/锁定状态机、刷屏窗口、广告检测队列、Google/OpenAI 客户端。

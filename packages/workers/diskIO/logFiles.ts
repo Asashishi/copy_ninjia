@@ -267,6 +267,20 @@ export async function maintainLogRetention(): Promise<void> {
   cleanupOldLogs();
 }
 
+/** 按需启动日志缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
+ *  FLUSH_MAX_ENTRIES 时不经过这个定时器，由 handleLogMessage 直接调
+ *  flushLogBuffer 立即落盘。timer 一律 unref：有序停机由统一 flush 提前兑现，
+ *  它不该单独扣住 Worker 事件循环（见 docs/cn/04-invariants.md）。 */
+function scheduleLogFlush(): void {
+  if (flushBuffer.timer !== null) return;
+  flushBuffer.timer = setTimeout((): void => {
+    void enqueueDiskIOOperation(async (): Promise<void> => {
+      await flushLogBuffer();
+    });
+  }, FLUSH_INTERVAL_MS);
+  flushBuffer.timer.unref();
+}
+
 /** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */
 export async function flushLogBuffer(): Promise<boolean> {
   if (flushBuffer.timer !== null) {
@@ -307,6 +321,8 @@ export async function handleLogMessage(msg: LogMessage): Promise<void> {
   if (hasStructuredArgs) {
     record.args = msg.args;
   }
+  // key 的顺序完全由前面的本地日期时间前缀决定，uuid 段只负责区分同一毫秒内的
+  // 多条日志，因此这里要的是随机 id、不是可排序 id。
   const bufferedEntries: number = markLogDirty({
     day: dayKey(msg.timestamp),
     text: serializeDayFileEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
@@ -314,10 +330,6 @@ export async function handleLogMessage(msg: LogMessage): Promise<void> {
   if (bufferedEntries >= FLUSH_MAX_ENTRIES) {
     await flushLogBuffer();
   } else {
-    flushBuffer.timer ??= setTimeout((): void => {
-      void enqueueDiskIOOperation(async (): Promise<void> => {
-        await flushLogBuffer();
-      });
-    }, FLUSH_INTERVAL_MS);
+    scheduleLogFlush();
   }
 }

@@ -118,7 +118,12 @@ export interface MediaInputSupportState {
 
 /** 一轮回复请求里随轮次变化的工具配置与采样语义。 */
 export interface AiReplyTurnRequest {
-  /** 本轮完整系统提示词（人设 + 运行时段落），每轮重算。 */
+  /**
+   * 系统提示词。**只含逐字恒定的段落**（人设 + 固定指令），不含当前时间、
+   * 心情这类运行时状态——那些走 AiReplySessionParams.volatileBlocks 进 user
+   * 内容。这条约束是缓存前提：混进每秒都变的时间戳会从系统提示词处切断两家
+   * 供应商的自动前缀缓存。
+   */
   readonly systemPrompt: string;
   /** 本轮允许模型调用的自定义函数；已按预算与禁用名单过滤。 */
   readonly functions: readonly AiToolDefinition[];
@@ -237,10 +242,27 @@ export interface AiSongRequest {
   readonly signal?: AbortSignal;
 }
 
-/** 创建一轮回复会话所需的初始上下文。 */
+/**
+ * 创建一轮回复会话所需的初始上下文。
+ *
+ * 区块按「跨轮回复是否逐字不变」分成两组，而不是按语义分。这条分界是给供应商
+ * 缓存用的：稳定组连同系统提示词与工具声明构成同一个群反复重发的那段前缀，
+ * 两组都进请求的 user 内容，按 stable→volatile 的顺序。稳定组排在前面是为了让
+ * 两家的自动前缀缓存有机会接住它：Gemini 的隐式缓存与 OpenAI 的 Responses 前缀
+ * 缓存都只认「从头开始逐字相同」的那一段。
+ */
 export interface AiReplySessionParams {
-  /** 有序的初始上下文区块，映射成同一个 user 轮次下的多段文本。 */
-  readonly promptBlocks: readonly string[];
+  /**
+   * 跨轮回复逐字不变的区块（当前是只读参考记忆）。内容变化只发生在冷记忆压缩
+   * 轮换或机器人账号身份变化时，因此它是 user 内容里唯一有希望被自动前缀缓存
+   * 接住的一段，必须排在易变组之前。
+   */
+  readonly stableBlocks: readonly string[];
+  /**
+   * 每轮回复都会变的区块（当前是群聊转录、本轮运行时状态与回复任务）。绝不能
+   * 混进稳定组：其中的当前时间精确到秒，混进去等于让公共缓存前缀每秒变化一次。
+   */
+  readonly volatileBlocks: readonly string[];
   readonly signal?: AbortSignal;
 }
 

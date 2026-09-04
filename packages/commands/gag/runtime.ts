@@ -7,7 +7,7 @@ import {
   GAG_CLEANUP_RETRY_DELAYS_MS,
   GAG_SESSION_MAX,
 } from "../../consts/gag";
-import { registerChatTeardown } from "../../infra/chatTeardown";
+import { registerChatTeardown } from "../../infra/chatTeardownRegistry";
 import { trackBackgroundTask } from "../../infra/backgroundTasks";
 import { logger } from "../../infra/logger";
 import {

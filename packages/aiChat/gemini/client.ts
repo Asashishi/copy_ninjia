@@ -22,14 +22,14 @@ import {
   GEMINI_REQUEST_TIMEOUT_MS,
   GEMINI_SAFETY_SETTINGS,
 } from "../../consts/aiChat/gemini";
-import { signalWithTimeout } from "../../libs/abortSignal";
+import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
 import {
   isEndpointFailureStatus,
   isEndpointMisconfiguredError,
   isExplicitUnsupportedMediaError,
 } from "../ai/utils/mediaSupportError";
-import { abnormalFinishDiagnostic } from "./response";
+import { abnormalFinishDiagnostic, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, AgentCapabilityConfig } from "../../types/config";
@@ -89,20 +89,25 @@ export async function requestGeminiResult(
   let data: GenerateContentResponse;
   try {
     body = buildBody();
-    data = await getGeminiClient(capability).models.generateContent({
+    body.config?.abortSignal?.throwIfAborted();
+    const requestSignal: AbortSignal = signalWithTimeout(
+      body.config?.abortSignal,
+      GEMINI_REQUEST_TIMEOUT_MS
+    );
+    requestSignal.throwIfAborted();
+    data = await raceAbortOrThrow(getGeminiClient(capability).models.generateContent({
       ...body,
       config: {
         ...body.config,
         // 在唯一底层封装覆盖，聊天、压缩、媒体描述和未来调用方不会漏配，
         // 也不能各自悄悄恢复成更严格的档位。
         safetySettings: [...GEMINI_SAFETY_SETTINGS],
-        // 同上，deadline 也收在这里：SDK 的 httpOptions.timeout 是每次尝试各自
-        // 的期限，乘上 GEMINI_REQUEST_RETRY_ATTEMPTS 就是分钟级。合成后的 signal
-        // 一触发，SDK 的 onFailedAttempt 即短路整轮重试，最坏挂起收敛到
-        // GEMINI_REQUEST_TIMEOUT_MS。调用方的 invalidate signal 仍照常贯穿。
-        abortSignal: signalWithTimeout(body.config?.abortSignal, GEMINI_REQUEST_TIMEOUT_MS),
+        // SDK 与外层等待共用同一份整轮 deadline：网络层据此停止后续
+        // 尝试，调用方则在到期或 invalidate 时立即结算，不受 SDK 内部退避
+        // 计时器影响。
+        abortSignal: requestSignal,
       },
-    });
+    }), requestSignal);
   } catch (error: unknown) {
     if (body?.config?.abortSignal?.aborted === true) {
       return { ok: false, failureKind: "request", diagnostic: "request aborted" };
@@ -138,7 +143,7 @@ export async function requestGeminiResult(
     // 方便观测这类「中途夭折」的频率。
     logger.error(
       `${errorLabel} response was truncated by maxOutputTokens ` +
-      `(hasPartialText=${!!data.text}, ` +
+      `(hasPartialText=${!!responseText(data)}, ` +
       `thoughts_tokens=${data.usageMetadata?.thoughtsTokenCount ?? "?"}, ` +
       `max_output_tokens=${body?.config?.maxOutputTokens ?? "?"}).`
     );
@@ -198,7 +203,9 @@ export async function requestGeminiTextResult({
 }: GeminiTextRequestOptions): Promise<AiTextResult> {
   const result: GeminiRequestResult = await requestGeminiResult(capability, buildBody, errorLabel);
   if (signal?.aborted === true) return { ok: false, retryable: false };
-  if (!result.ok) return classifyAiTextFailure(result.failureKind, capability);
-  const text: string = normalize(result.response.text ?? "");
+  if (!result.ok) {
+    return classifyAiTextFailure(result.failureKind, capability);
+  }
+  const text: string = normalize(responseText(result.response) ?? "");
   return finalizeAiTextResult(text);
 }

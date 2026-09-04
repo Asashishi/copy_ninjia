@@ -1,6 +1,6 @@
 /** 踢人失败的权限告警与验证终态的进程级尝试预算。 */
 
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 import type {
   ExpelSnapshot,
@@ -30,6 +30,7 @@ const {
   traceDeleteOutcomes,
   installVerificationEffectsHooks,
   telegramApi,
+  recordScheduledDelays,
 } = await import("../../helpers/verificationEffectsHarness");
 
 const { runVerificationEffects } = await import("../../../packages/workers/antiRaid/verificationEffects");
@@ -188,12 +189,7 @@ describe("踢人失败时的权限告警", () => {
 
   test("确证没有限制成员权限时不发踢人请求，但照常清痕迹并把原因说给群里，之后每轮只退避", async () => {
     const delays: number[] = [];
-    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
-      ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
-        delays.push(delayMs ?? 0);
-        return 1 as unknown as ReturnType<typeof setTimeout>;
-      }) as typeof globalThis.setTimeout
-    );
+    const restoreTimeouts: () => void = recordScheduledDelays(delays);
     try {
       applyBotPermissionsChange(CHAT_ID, {
         canRestrictMembers: false,
@@ -243,7 +239,7 @@ describe("踢人失败时的权限告警", () => {
       expect(kickedUserIds).toEqual([USER_ID]);
       expect(deletedMessageIds).toEqual([20, 21, 22]);
     } finally {
-      timeoutSpy.mockRestore();
+      restoreTimeouts();
     }
   });
 
@@ -469,12 +465,7 @@ describe("踢人失败时的权限告警", () => {
     // 都会永久占住一个 30 秒循环，各自不停打 deleteMessage + kickChatMember
     // 并往 logs/ 刷同一行报错，Worker 重建后还照单重新武装。
     const delays: number[] = [];
-    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
-      ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
-        delays.push(delayMs ?? 0);
-        return 0 as unknown as ReturnType<typeof setTimeout>;
-      }) as typeof globalThis.setTimeout
-    );
+    const restoreTimeouts: () => void = recordScheduledDelays(delays);
     try {
       testState.kickSucceeds = false;
       const state = expellingState();
@@ -489,7 +480,7 @@ describe("踢人失败时的权限告警", () => {
       // 退避不是放弃：记录必须留着，权限修好之后还要继续处置。
       expect(verificationEntries.has(KEY)).toBeTrue();
     } finally {
-      timeoutSpy.mockRestore();
+      restoreTimeouts();
     }
   });
 });

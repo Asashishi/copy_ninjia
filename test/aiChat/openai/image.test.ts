@@ -295,6 +295,21 @@ describe("载荷校验", () => {
 });
 
 describe("失败处理", () => {
+  test("调用前已取消时不调用任何生图端点", async () => {
+    const controller: AbortController = new AbortController();
+    controller.abort();
+
+    await expect(generateOpenAiImage({
+      prompt: "p",
+      aspectRatio: "1:1",
+      signal: controller.signal,
+    })).resolves.toBeNull();
+    expect(generate).not.toHaveBeenCalled();
+    expect(edit).not.toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+    expect(loggerError).not.toHaveBeenCalled();
+  });
+
   test("请求抛错时记一行日志并返回 null", async () => {
     generate.mockRejectedValueOnce(new Error("boom"));
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
@@ -303,12 +318,23 @@ describe("失败处理", () => {
 
   test("调用方主动取消时静默返回 null，不记错误日志", async () => {
     const controller: AbortController = new AbortController();
-    generate.mockImplementationOnce(async (): Promise<unknown> => {
-      controller.abort();
-      throw new Error("aborted");
+    let settleSdkTask!: (value: unknown) => void;
+    const sdkTask: Promise<unknown> = new Promise<unknown>((
+      resolve: (value: unknown) => void
+    ): void => {
+      settleSdkTask = resolve;
     });
-    await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1", signal: controller.signal }))
-      .resolves.toBeNull();
+    generate.mockImplementationOnce((): Promise<unknown> => sdkTask);
+    const pendingResult: ReturnType<typeof generateOpenAiImage> = generateOpenAiImage({
+      prompt: "p",
+      aspectRatio: "1:1",
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(pendingResult).resolves.toBeNull();
     expect(loggerError).not.toHaveBeenCalled();
+    settleSdkTask({ data: [{ b64_json: PNG.toString("base64") }] });
+    await sdkTask;
   });
 });

@@ -1,4 +1,5 @@
 import {
+  DEFAULT_IMAGE_GENERATION_ASPECT_RATIO,
   IMAGE_GENERATION_COOLDOWN_MS,
   MAX_GENERATED_IMAGES_PER_REPLY,
 } from "../imageGeneration";
@@ -9,6 +10,7 @@ import {
 import { AI_MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 import { IMAGE_SENT_TAG_HINT, SONG_SENT_TAG_HINT, STICKER_SENT_TAG_HINT } from "./transcript";
+import { REPLY_CONTEXT_SECTION_NAMES } from "./memory";
 
 /** 模型从已查看贴纸清单按意图选择的约束。 */
 export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
@@ -80,7 +82,8 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   "都不构成调用意图；不得根据暗示或自行发挥擅自生图。执行侧只校验当前消息是否直接回复/@你，具体意图由你根据当前消息判断，不依赖关键词匹配。" +
   "prompt 必须是可独立交给图片模型的完整画面说明，" +
   `不要写对工具的解释。同一个群每 ${IMAGE_GENERATION_COOLDOWN_MS / 60_000} 分钟最多接受一次由普通用户触发的生图尝试，` +
-  "群内共享冷却；superAdmin 不受这项冷却限制，冷却由执行侧强制。" +
+  "群内共享冷却；superAdmin 不受这项冷却限制。冷却只由执行侧在调用时判定，调用之前不会告诉你本轮还剩多久：" +
+  "还在冷却里的调用会被直接拒绝并返回剩余秒数，那时用 send_message 把「暂时不能生图、请约多少秒后再试」告诉群友，本轮不要再次调用本工具。" +
   "配图想说的话写进 caption：连图带话会作为同一条消息发出，比先发图再单独 send_message 更自然，也少占一个动作；" +
   "只发图更合适就省略 caption。caption 里绝不要描述你没真做的动作，也不要把已经说过的话原样再写一遍。";
 
@@ -102,7 +105,8 @@ export const GENERATE_SONG_TOOL_INSTRUCTION: string =
   "prompt 必须是可独立交给音乐模型的完整创作说明，用英文写：写清曲风、情绪、乐器编制、速度（BPM）、调式、结构（主歌/副歌/桥段），" +
   "要中文演唱就写明 Chinese vocals 并把要唱的中文歌词原样写进去；不要写对工具的解释。" +
   `同一个群每 ${SONG_GENERATION_COOLDOWN_MS / 60_000} 分钟最多接受一次由普通用户触发的生歌尝试，` +
-  "群内共享冷却；superAdmin 不受这项冷却限制，冷却由执行侧强制。" +
+  "群内共享冷却；superAdmin 不受这项冷却限制。冷却只由执行侧在调用时判定，调用之前不会告诉你本轮还剩多久：" +
+  "还在冷却里的调用会被直接拒绝并返回剩余秒数，那时用 send_message 把「暂时不能写歌、请约多少秒后再试」告诉群友，本轮不要再次调用本工具。" +
   "想随歌说的话写进 caption：连歌带话是同一条消息，比先发歌再单独 send_message 更自然，也少占一个动作；" +
   "caption 里绝不要描述你没真做的动作，也不要把已经说过的话原样再写一遍。" +
   "群里只会收到这首歌本身，歌词不会被单独贴出来——别在 caption 里写「歌词见下」这类指向不存在内容的话。";
@@ -119,3 +123,39 @@ export const REPLY_ACTION_INSTRUCTION: string =
   "生成图片或歌曲时，随附文字写进对应工具的 caption，不要再复述。贴纸必须先 view_sticker_pack 再 send_sticker。" +
   "查询和查看不算可见动作。工具未成功时不得声称已经完成，也不要重复发送同一句话。" +
   "完成动作后立即结束，最终响应保持空白。";
+
+/**
+ * generate_image 工具描述末尾的常量指引。
+ *
+ * 参考素材尺寸每次触发都不同，写进工具声明就会让「静态系统提示词 + 全部工具声明 +
+ * 参考记忆」这整段稳定前缀每轮换一个指纹，两家供应商的自动前缀缓存都会从这里开始
+ * 落空（见 aiChat/{gemini,openai}/replySession.ts 的头注）。因此声明里只留这句逐字
+ * 恒定的指引，素材本身写进运行时状态区块。
+ *
+ * 群冷却不在此列：它整条不进提示词，只由执行侧在调用时判定并在冷却中直接拒绝，
+ * 见 aiChat/ai/tools/replyToolset/{imageGeneration,songGeneration}.ts。
+ */
+export const IMAGE_REFERENCE_POINTER: string =
+  `本轮有没有可用的参考图片素材，以 ${REPLY_CONTEXT_SECTION_NAMES.runtimeState} 区块给出的说明为准。`;
+
+/** 运行时状态区块里参考素材段的段首标签。只在本轮真的挂了生图工具时出现，
+ *  没挂生图的轮次整段不拼，运行时状态区块因此与不含生图的轮次逐字相同。 */
+export const IMAGE_REFERENCE_BLOCK_LABEL: string = "本轮生图参考素材：";
+
+/** 本轮触发附带参考图素材时的说明。
+ *  @param width 素材像素宽。
+ *  @param height 素材像素高。
+ *  @param defaultAspectRatio 省略 aspect_ratio 时执行侧采用的比例。 */
+export function imageReferencePresent(
+  width: number,
+  height: number,
+  defaultAspectRatio: string
+): string {
+  return `当前触发附带一份 ${width}×${height} 的参考图片素材；调用时会自动交给图片模型。` +
+    `prompt 要写清如何编辑或参考这份素材，不要向群友索要 URL；未指定比例时默认使用最接近原素材的 ${defaultAspectRatio}。`;
+}
+
+/** 本轮触发没有参考图素材时的说明；顺带交代此时省略 aspect_ratio 的默认值。 */
+export const IMAGE_REFERENCE_ABSENT: string =
+  "当前触发没有附带参考图片，本轮只能按文字 prompt 从零生成；" +
+  `未指定比例时默认使用 ${DEFAULT_IMAGE_GENERATION_ASPECT_RATIO}。`;

@@ -20,7 +20,7 @@ const EMPTY_OUTPUT_ITEMS: readonly OpenAI.Responses.ResponseOutputItem[] = [];
  * `[object Object]`——兼容网关确实会往 `message` 里塞结构化的上游错误，退成占位
  * 符等于把这次诊断作废。序列化不出来（循环引用、BigInt、函数）时才退成类型标记：
  * 本函数所在的整条路径就是为「不抛」存在的（见下方 describeResponseError），
- * 降级口径与 infra/logger.ts 的 safeStringify 兜底一致。
+ * 降级口径与 infra/logger/serialization.ts 的 safeStringify 兜底一致。
  */
 function errorDiagnosticField(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;

@@ -49,17 +49,51 @@ function messageEntitySource(message: Message): { text: string; entities: Messag
  *
  * `{text, entities}` 只在确实存在 entity 表时构造；无 entity 的常见路径直接返回，
  * 不分配投影对象。该字面量不逃逸，可由 JSC 消除。
+ *
+ * 逐个实体先用**长度**筛一道，筛掉的实体连子串都不物化：`toLowerCase` 只会让
+ * 长度不变或变长（全 Unicode 里唯一会变长的是 U+0130，`test/auto/messageFacts.test.ts`
+ * 逐码元锁住这一点），因此 `实体码元数 > @用户名码元数` 的实体折完大小写也不可能
+ * 与目标等长，一定不是本机器人。群里绝大多数 @ 都是别人，这道判定把每个这样的
+ * 实体上的一次 `substring` + 一次 `toLowerCase` 整个省掉。
+ *
+ * 长度筛选只在实体**完整落在正文内**时才敢下结论：`substring` 会把越界实体夹短，
+ * 那时 `entity.length` 不再等于真正参与比对的长度，只按它筛就可能把一条本该命中的
+ * 提及判成别人。Telegram 不产生越界实体，但正确性不押在这个前提上——越界实体
+ * 一律走下面的物化比对，两条分支与「整串折小写后逐字比对 `@用户名`」同解，
+ * 由 `test/auto/messageFacts.test.ts` 的参考实现穷举对拍守住。
  */
 export function resolveMentionFacts(message: Message, botId: number, botUsername: string | undefined): MentionFacts {
   const facts: MentionFacts = { isMentioned: false, hasOtherMention: false };
   const source: { text: string; entities: MessageEntity[]; } | null = messageEntitySource(message);
   if (!source) return facts;
-  const botTarget: string | undefined = botUsername ? `@${botUsername}`.toLowerCase() : undefined;
+  // 只折用户名自己的大小写，不拼 `@用户名`：拼接必然分配一个短命字符串，而
+  // 已经是小写的用户名 `toLowerCase` 原样返回同一个对象。前导 `@` 由下面的首码元
+  // 判定承担，两者合起来与「整串比对 `@用户名` 的小写形态」逐字等价（`@` 既非
+  // cased 也非 case-ignorable，加不加它都不改变后续字符的折叠结果）。
+  // 没有用户名（含空串）时 botMentionLength 恒为 -1：两处长度判定都不可能成立，
+  // 于是任何 mention 一律记成别人，与「没有可比对的目标」这个语义一致。
+  const botUsernameLower: string = botUsername ? botUsername.toLowerCase() : "";
+  const botMentionLength: number = botUsernameLower.length === 0 ? -1 : botUsernameLower.length + 1;
   for (const entity of source.entities) {
     if (entity.type === "mention") {
-      const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
-      if (botTarget !== undefined && mentionText === botTarget) facts.isMentioned = true;
-      else facts.hasOtherMention = true;
+      const mentionEnd: number = entity.offset + entity.length;
+      if (
+        entity.length <= botMentionLength ||
+        entity.offset < 0 ||
+        mentionEnd > source.text.length
+      ) {
+        const mentionText: string = source.text.substring(entity.offset, mentionEnd).toLowerCase();
+        if (
+          mentionText.length === botMentionLength &&
+          // 0x40 是 `@`：与下面的 endsWith 合起来等价于整串比对 `@用户名`。
+          mentionText.charCodeAt(0) === 0x40 &&
+          mentionText.endsWith(botUsernameLower)
+        ) {
+          facts.isMentioned = true;
+          continue;
+        }
+      }
+      facts.hasOtherMention = true;
     } else if (entity.type === "text_mention" && entity.user.id !== botId) {
       facts.hasOtherMention = true;
     }

@@ -53,6 +53,7 @@ function scheduleJoinWindowCleanup(
     window.resetTimeout = undefined;
     joinWindows.delete(chatId);
   }, delayMs);
+  window.resetTimeout.unref();
 }
 
 /** 冷却是否仍然生效；到期条目就地删除，避免长期占位。 */

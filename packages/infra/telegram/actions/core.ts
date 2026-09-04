@@ -60,6 +60,22 @@ export async function runTelegramAction<T, R>({
   }
 }
 
+/**
+ * 默认的 `shouldLogError`：停机 abort 造成的失败不记 API 错误——它不是远端故障。
+ *
+ * 提成模块级具名函数而不是在每个调用点现写一份同样的箭头函数：口径只有一条，
+ * 六个发送入口（本文件的 runBooleanTelegramAction、actions/messages.ts 与
+ * actions/mediaMessages.ts 的各个 send*）必须逐字一致，抄开就会有一处慢慢
+ * 长出自己的判据。`actions/core.ts` 的权限感知版本另有 claimError 副作用，
+ * **不**复用本函数。
+ */
+export function logUnlessAborted(
+  _error: unknown,
+  actionSignal: AbortSignal | undefined
+): boolean {
+  return actionSignal?.aborted !== true;
+}
+
 /** 执行只关心是否成功的 Telegram 动作。 */
 export async function runBooleanTelegramAction(
   action: string,
@@ -72,10 +88,7 @@ export async function runBooleanTelegramAction(
     map: (): boolean => true,
     fallback: false,
     signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
+    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -136,17 +149,52 @@ export async function runPermissionAwareTelegramAction({
 }
 
 /**
+ * 无信号时共用的空元组；调用点一律就地展开、不持有返回值，因此可以共享一份。
+ *
+ * 口径同 aiChat/gemini/replySession.ts 的 EMPTY_FUNCTION_CALLS：类型是只读元组，
+ * 编译期就不允许写入，不需要（在 packages/ 下也不允许）运行期冻结。
+ */
+const NO_SIGNAL_ARGS: readonly [] = [];
+
+/**
  * 把 AbortSignal 接到 grammY raw API 调用的最后一个位置参数上。
  *
  * grammY 每个方法都把 signal 放在 options 之后的最后一位，而那个位置的声明类型
  * 不是 `AbortSignal`，逐个调用点各写一次
  * `signal as unknown as Parameters<Api["x"]>[n]` 就是十几份带手写下标的重复。
- * @returns 没有信号时是空元组，有信号时是单元素元组。
+ * @returns 没有信号时是共用空元组，有信号时是新建的单元素元组。
  */
 export function signalArgs(
   signal: AbortSignal | undefined
 ): readonly [] | readonly [never] {
-  return signal === undefined ? [] : [signal as unknown as never];
+  return signal === undefined ? NO_SIGNAL_ARGS : [signal as unknown as never];
+}
+
+/** 挂回复时 Telegram 要的那一段；三个发送入口共用同一份形状。 */
+export interface TelegramReplyParameters {
+  readonly message_id: number;
+  readonly allow_sending_without_reply: true;
+}
+
+/**
+ * 把可选的「回复哪一条」译成 Bot API 的 `reply_parameters`，没有回复时给
+ * `undefined`。
+ *
+ * `allow_sending_without_reply` 恒为 true：被回复的消息可能已被删除，那时这条
+ * 仍要发出去（代价是它会降级成普通发送、掉出话题，落点因此另由
+ * `message_thread_id` 兜住，见 libs/forumTopic.ts）。
+ *
+ * 返回 `undefined` 而不是让调用方条件展开：payload 按定形一次初始化，
+ * grammY 序列化时会丢掉值为 undefined 的字段（core/payload.js 的 `str()`
+ * 与 payloadToMultipartItr 各自过滤 null/undefined），产出与整个不带这个键
+ * 逐字节相同的请求体。
+ */
+export function replyParametersFor(
+  replyToMessageId: number | undefined
+): TelegramReplyParameters | undefined {
+  // 判真值而不是 `!== undefined`：Telegram 的 message_id 恒为正整数，0 不是
+  // 合法目标，挂上去只会让整条消息被拒收。与拆出本函数之前的判据逐字一致。
+  return replyToMessageId ? { message_id: replyToMessageId, allow_sending_without_reply: true } : undefined;
 }
 
 /** Telegram 是否明确拒绝了这次操作的权限，而不是偶发失败。 */

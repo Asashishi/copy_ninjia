@@ -20,7 +20,7 @@ import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
-import { registerChatTeardown } from "../infra/chatTeardown";
+import { registerChatTeardown } from "../infra/chatTeardownRegistry";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import type { CachedUser } from "../types/chatState";
 import type { QaEntry, QaFormIngressResult, QaFormSession } from "../types/qa";

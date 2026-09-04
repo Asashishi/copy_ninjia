@@ -1,4 +1,5 @@
 import {
+  hasPermanentWhitelistPermission,
   hasWhitelistPermission,
   isWhitelisted,
 } from "../infra/identityPolicy/whitelist";
@@ -37,8 +38,10 @@ export function canBypassAdDetection(
 
 /** 防刷屏专用豁免：永久白名单按逐项权限决定，超级管理员恒持有该权限。 */
 export function canBypassFloodControl(senderId: number): boolean {
-  return isWhitelisted(senderId) &&
-    hasWhitelistPermission(senderId, "isCanBypassFloodControl");
+  return hasPermanentWhitelistPermission(
+    senderId,
+    "isCanBypassFloodControl"
+  );
 }
 
 export interface PickMemberParams {

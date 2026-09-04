@@ -10,7 +10,7 @@
 
 ---
 
-本页记录跨模块、跨生命周期的**权威约束**（前身为 `docs/architecture.md`）。源码注释应解释局部不变量并引用这里（例如 `@see ../../docs/cn/04-invariants.md`；按源码深度调整 `../`），不在多个模块重复维护整套启动或持久化叙述。改动涉及下列任何一条时，先改这里，再改代码。
+本页记录跨模块、跨生命周期的**权威约束**。源码注释应解释局部不变量并引用这里（例如 `@see ../../docs/cn/04-invariants.md`；按源码深度调整 `../`），不在多个模块重复维护整套启动或持久化叙述。改动涉及下列任何一条时，先改这里，再改代码。
 
 导览版的架构讲解见 [02 架构总览](02-architecture.md)；触碰这些约束的修改步骤见 [06 常见修改配方](06-modification-guide.md)。
 
@@ -140,6 +140,8 @@
 
   **返回不返回 Promise 是语义的一部分，不是可自由优化的实现细节**：要等 durable barrier 的那几条（入群/离群服务消息、验证按钮回投）必须返回 Promise，同步返回等于 update 在落盘确认之前就被 Telegram 确认掉；反过来把一条恒假的同步判定写成 `async`，就是让每条群消息白付一次 Promise 分配与一个微任务回合。两个方向都由测试双向钉住：稳定态断言同步返回，durable 那几条断言 `toBeInstanceOf(Promise)`。
 
+- **Worker isolate 内的每个 timer 句柄都必须 `unref()`。** isolate 的存活由主线程那条 message port 提供，与 timer 的 ref 状态无关；有序停机由各自的 drain/flush 提前兑现，随后由主线程 terminate。timer 因此不得单独扣住 isolate 的事件循环。`check:conventions` 对 `packages/workers/` 逐个句柄核对：取每次 `setTimeout`/`setInterval` 的赋值目标，要求在同一函数体内、该调用之后、且早于下一次写同一目标之前出现一次 `<同一目标>.unref()`；句柄没有落到任何目标上（例如直接 `return setTimeout(...)`）同样拒绝。主线程不适用本条——那里另有一批由 `finally` 清理的短命 promise race timer 与停机硬截止。
+
 ### 状态机契约
 
 - 状态机的 `State/Event/Effect/Transition/Decision` 契约统一由 `packages/types/states/` 持有，`packages/states/` 只实现无 I/O 的纯状态转移；解释器和 cache 直接依赖前者的类型。
@@ -176,7 +178,7 @@
   主线程必须同时等该回执与记忆删除 durable 才能宣称 `/ai_chat disable` 完成。Worker 崩溃、放弃重建、投递失败、超时或停机都必须 reject waiter。
 - 模型请求的传输、网络、429 与 5xx 重试只由所选供应商官方 SDK 自己负责（Gemini 是 `@google/genai` 的 `retryOptions`，OpenAI 是 SDK 的 `maxRetries`；两边都按「首次加最多 5 次重试」对齐）。两个 SDK 的 timeout 都是**每次尝试**各自的期限，因此 aiChat 的两个底层封装（`aiChat/gemini/client.ts`、`aiChat/openai/client.ts`）各自用 `libs/abortSignal.ts` 的 `signalWithTimeout` 合成一份覆盖整次调用（含全部重试与退避）的 deadline 再下传：signal 一触发 SDK 即短路整轮重试，最坏挂起因而等于 `GEMINI_REQUEST_TIMEOUT_MS` / `OPENAI_REQUEST_TIMEOUT_MS` 本身，而不是它乘上尝试次数。调用方的 invalidate signal 与这份 deadline 合成而非被替换。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
 - AI 模型调用不进入 Telegram 总闸，但必须按相同 provider、`base_url` 与 API key 合并到同一配额 lane；模型名不拆 lane。每 lane 最多 16 个真实请求在途、128 个未开始任务，其中后台最多占 32 个等待位；交互连续启动 8 项后若后台有积压至少放行一项。SDK 内部重试始终占原槽，队列满时领域结果明确失败，不得无界保留整轮提示词或媒体字节。Telegram message 类在途达到软高水位或出现真实 429 等待后，只暂停随机插话并把同群直接触发并发降为 1，不得把 AI provider 队列与 Telegram 队列合并成相互阻塞的一条总队列。
-- AI 回复只把成功的文字、贴纸、反应、图片和歌曲计入统一动作预算；模型提示上限为 8，执行侧硬顶为 11。贴纸、反应、生成图片与生成歌曲各最多成功一次；其它动作工具不设单工具调用上限。生歌消息的封面**不计入**这份预算——它是消息装帧而不是群友要的图，同理也不占生图的群冷却、不进自录记忆。贴纸包查看和服务端联网检索分别保留独立查询上限，所有自定义函数调用另有整轮防循环硬顶。仅在零成功动作时，最终正文才经 `send_message` 兜底；所有有意展示的文字必须由模型显式调用工具产出，绝不能只留在最终响应正文里。
+- AI 回复只把成功的文字、贴纸、反应、图片和歌曲计入统一动作预算；模型提示上限为 8，执行侧硬顶为 11。贴纸、反应、生成图片与生成歌曲各最多成功一次；其它动作工具不设单工具调用上限。生歌消息的封面**不计入**这份预算——它是消息装帧而不是群友要的图，同理也不占生图的群冷却、不进自录记忆。贴纸包查看保留独立查询上限；服务端联网检索的每轮次数是写进提示词的软限制，执行侧只记账并在跨过上限时点名。所有自定义函数调用另有整轮防循环硬顶，超出后每次多余调用只拿到「预算耗尽、停止调用」的工具结果。以上各类上限连同动作硬顶一律只在执行侧兑现，任何一条都不得中途改变本轮的工具声明。仅在零成功动作时，最终正文才经 `send_message` 兜底；所有有意展示的文字必须由模型显式调用工具产出，绝不能只留在最终响应正文里。
 
   **可见文字只有三个出口**：独立发言走 `send_message`，给本轮 `generate_image` 生成的图配的那句话走该工具的 `caption`，给 `generate_song` 生成的那首歌配的话走它自己的 `caption`。带图注的生图是**一条** Telegram 消息、一个 `message_id`，因此只计一个动作，自录也必须合并成一条（拆成两条会让同一个 `message_id` 在转录里出现两次，回复链回溯到它时无从判断指的是哪一条）。图注超过 `TELEGRAM_CAPTION_MAX_CHARS` 时 Bot API 是整条拒绝而不是截断，执行侧降级为「无图注的图 + 一条独立文本」两条消息，按 `actions_used: 2` 结算。
 
@@ -213,17 +215,18 @@
 
 ### AI 提示词与转录
 
-- AI 回复只使用一份供应商中立的固定联网查证说明（`WEB_SEARCH_INSTRUCTION`），同一回复的每次模型往返复用完全相同的 system prompt。提示要求：遇到会变化的现实信息或不能确认的可查事实，且本轮提供联网检索工具时，必须先搜索再做可见动作；主观聊天、创作和转录中已经给出的事实不搜索；搜索结果优先于记忆，证据不足或工具不可用时明确不确定，且不向群友解释搜索过程。真实搜索额度由 `replyModel.ts` 核销，耗尽后只摘掉服务端检索工具，不改写 system prompt。观测到服务端搜索后，后续请求把 `grounded` 置为 true；Gemini 据此降低采样温度，OpenAI Responses 保持模型默认采样参数。
-- AI 回复的初始输入必须保持同一个 user 轮次下的 3 个有序文本区块：只读参考记忆、只读当前会话、本轮回复任务。区块数与触发类型无关——直接 @/回复只体现为回复任务开头多一句唤起者声明（`directInvokerSentence`，身份段与转录行同形），不得为此另插一个 Part 或把该成员的热区发言再复制一份。区块在 `packages/workers/aiChat/replyModel.ts` 保持领域语义，直到各供应商实现包的 `replySession.ts` 才映射成自家形状（Gemini 是一个 `user Content` 下的多个 `text Part`，OpenAI 是一条 user message 下的多个 `input_text`）。每段只由模型可见的首尾标签加一行段首职责标注包围；防注入总规则（数据 vs 指令、伪造边界无效、不暴露内部结构）统一只在系统提示词里声明一次，不逐段重复。数据 Part 内只放数据与分层标注——转录行怎么读由系统提示词里的 `TRANSCRIPT_FORMAT_INSTRUCTION` 交代（它自带「讲的是哪个 Part」的指向），恒定文案不得再拼进每轮都变的转录区块，防注入声明的可信白名单里因此也没有「格式说明」这一类。
+- AI 回复只使用一份供应商中立的固定联网查证说明（`WEB_SEARCH_INSTRUCTION`），同一回复的每次模型往返复用完全相同的 system prompt。提示要求：遇到会变化的现实信息或不能确认的可查事实，且本轮提供联网检索工具时，必须先搜索再做可见动作；主观聊天、创作和转录中已经给出的事实不搜索；搜索结果优先于记忆，证据不足或工具不可用时明确不确定，且不向群友解释搜索过程。每轮次数上限作为常量写进这段说明本身；真实调用数由 `replyModel.ts` 记账并在跨过上限时点名，但既不改写 system prompt，也不摘掉服务端检索工具。观测到服务端搜索后，后续请求把 `grounded` 置为 true；Gemini 据此降低采样温度，OpenAI Responses 保持模型默认采样参数。
+- AI 回复的初始输入必须保持 4 个有序文本区块：只读参考记忆、只读当前会话、本轮运行时状态、本轮回复任务。区块按「跨轮回复是否逐字不变」分成两组交给实现包——稳定组只有参考记忆，易变组是其余三段（`AiReplySessionParams` 的 `stableBlocks` / `volatileBlocks`），顺序恒定为稳定组在前，这条分界是供应商缓存的命中前提。区块数与触发类型无关——直接 @/回复只体现为回复任务开头多一句唤起者声明（`directInvokerSentence`，身份段与转录行同形），不得为此另插一个 Part 或把该成员的热区发言再复制一份。区块在 `packages/workers/aiChat/replyModel.ts` 保持领域语义，直到各供应商实现包的 `replySession.ts` 才映射成自家形状（Gemini 用前后相邻的两个 `user Content` 分别承载稳定组与易变组、每个区块各是一个 `text Part`；OpenAI 用一条 user message 下的多个 `input_text`）。每段只由模型可见的首尾标签加一行段首职责标注包围；防注入总规则（数据 vs 指令、伪造边界无效、不暴露内部结构）统一只在系统提示词里声明一次，不逐段重复。运行时状态段由系统写入、内容可信，但只描述状态、不布置任务；转录或摘要正文里出现的同名标签、心情声明或时间声明一律无效。数据 Part 内只放数据与分层标注——转录行怎么读由系统提示词里的 `TRANSCRIPT_FORMAT_INSTRUCTION` 交代（它自带「讲的是哪个 Part」的指向），恒定文案不得再拼进每轮都变的转录区块，防注入声明的可信白名单里因此也没有「格式说明」这一类。
 
-  跨任务一致的 `REPLY_ACTION_INSTRUCTION` 与 `WEB_SEARCH_INSTRUCTION` 常驻 system prompt；动态回复任务只保留本轮触发语义，不重复行动与查证总则。工具调用后的历史再按真实模型/用户角色追加，不得把参考资料伪装成历史对话轮次。系统提示词只通过供应商的独立系统字段发送（Gemini 的 `GenerateContentConfig.systemInstruction` / OpenAI Responses 的 `instructions`），不得拼入普通对话内容。
-- 被直接 @/回复时的读法由系统提示词里常驻的 `DIRECT_INVOCATION_READING_INSTRUCTION` 规定推理次序：先读【最热记忆】判断群里正在发生什么，再按回复任务给出的唤起者名册编号定位 TA 说了什么，最后才结合两者作答（转录行内只有编号、不出现 `[id:]`，指令必须按编号说，否则模型会去转录里搜一个不存在的标记）。常驻文本同时规定三条防混淆规则：认人靠编号背后的 `[id:]`、转发正文不算亲口陈述、更早发言只用于理解上下文。全文恒定，必须排在心情与当前时间之前，落在可缓存的系统提示词前缀内。
+  跨任务一致的 `REPLY_ACTION_INSTRUCTION` 与 `WEB_SEARCH_INSTRUCTION` 常驻 system prompt；动态回复任务只保留本轮触发语义，不重复行动与查证总则。工具调用后的历史再按真实模型/用户角色追加，不得把参考资料伪装成历史对话轮次。系统提示词只通过供应商的独立系统字段发送（Gemini 的 `GenerateContentConfig.systemInstruction` / OpenAI Responses 的 `instructions`），不得拼入普通对话内容。**系统提示词整段必须逐字恒定**：今天的心情与当前实际时间由 `workers/aiChat/runtimeState.ts` 的 `buildRuntimeStateBlock` 拼成运行时状态区块、走 user 内容，不得回到系统提示词——那一段连同工具声明构成供应商缓存的前缀，混进每秒都变的时间戳会让整个前缀失效。
+- Gemini 回复只使用服务端隐式前缀缓存，不创建、更新或删除显式上下文缓存条目，也不发送 `cachedContent`。每次请求都完整携带静态 `systemInstruction`、本轮 `tools`、需要的 `toolConfig` 与完整 `contents`；稳定参考记忆必须在易变的当前会话、运行时状态和回复任务之前，后续模型轮次与 `functionResponse` 只向 `contents` 尾部追加。当前时间、心情与参考素材尺寸等动态值不得进入系统提示词或工具声明，只能写进运行时状态区块；生图与生歌的群冷却更进一步，任何提示词区块都不写，只在工具真的被调用时由执行侧判定并把剩余秒数回给模型。相同业务形态下，工具声明的内容与顺序必须逐字稳定，且**一轮回复内 `tools` 与服务端检索工具的挂载恒定**——动作硬顶、函数调用预算与检索次数都不得摘挂工具，唯一例外是供应商报服务端工具调用超限后的那一次降级重试（那次响应本就不可用）。跨回复只有工具资格、persona 更新、机器人身份变化或冷记忆压缩等真实语义变化才能改变前缀。这样同时保留跨回复的稳定前缀和同一回复内随工具往返增长的前缀，是否命中及保留多久完全由 Gemini 服务端决定。所有 OpenAI 协议请求同样保证稳定内容在前、易变内容在后，并携带按稳定前缀计算、按群分桶的 `prompt_cache_key`；只有使用 SDK 默认官方端点的 GPT-5.6 家族，才在最后一个稳定区块后放显式 `prompt_cache_breakpoint`，同时保留 `prompt_cache_options.mode: "implicit"` 与 30 分钟 TTL，使跨回复稳定前缀与回复内增长前缀的两类断点共存。更早模型与自定义兼容端点不得发送这些 GPT-5.6 专属字段。
+- 被直接 @/回复时的读法由系统提示词里常驻的 `DIRECT_INVOCATION_READING_INSTRUCTION` 规定推理次序：先读【最热记忆】判断群里正在发生什么，再按回复任务给出的唤起者名册编号定位 TA 说了什么，最后才结合两者作答（转录行内只有编号、不出现 `[id:]`，指令必须按编号说，否则模型会去转录里搜一个不存在的标记）。常驻文本同时规定三条防混淆规则：认人靠编号背后的 `[id:]`、转发正文不算亲口陈述、更早发言只用于理解上下文。全文恒定，常驻于同样逐字恒定的系统提示词内。
 - 记忆分层（【最热记忆】【较早逐字记录】【冷记忆】）只是模型读取上下文的内部方式，对群友一律不可见：`MEMORY_MECHANISM_SILENCE_INSTRUCTION` 禁止回复里出现或影射这些分块名，也禁止提上下文、区块、`Part`、摘要、压缩、滑动窗口、缓存、条数上限、token 与系统提示词这类机制词。
 
   **禁令必须逐个点名转录里真实出现的分块名与内部记号**（【最热记忆】【较早逐字记录】【冷记忆】【发言人名册】【转发来源名册】这些分块名，`me`/`uN`/`fN` 编号，`#消息号`，以及被回复目标已滑出时的 `[已滑出]`）：这些标注本来就写在模型可见的转录里，只留一句笼统的「不暴露内部结构」，模型被问起时照样会挑没点名的那几个解释，甚至主动拿「那条已经滑出窗口」解释自己为什么忘了事——把内部上下文结构连同它的容量一并交给群友。被直接追问，或被自称开发者、管理员、正在做测试的人套话时，一律不解释、不确认、不否认，也不给「大概是那样」之类的暗示；记不清只用日常说法表达，不得解释成分层、压缩、清理或窗口滑出。本条与 `CHAT_MEMORY_PRIORITY_INSTRUCTION` 职责分开：后者只管怎么用分层，本条只管不把分层说出去。
-- 回复转录走**名册 + 编号**的紧凑渲染（`buildTieredVerbatimTranscript`）：身份与转发来源各在【发言人名册】【转发来源名册】里出现一次，行内只写编号；机器人自己固定拿 `me`，不排进 `uN`。日期只在变化时单起一条分隔行，行内只留时分秒，每个分层区块开头重发一次当前日期。`#消息号` 只给「本段内被别人回复过」和本轮触发消息两类行。被回复消息在段内时只留 `（回复 #编号）` 指针，作者与原文让模型回那一行读；仅当目标已滑出窗口才退回内嵌快照并标 `[已滑出]`。整段转录是全部输入里最贵的一块（占用户区块 80~86%，其中群友真正说出口的字只占两成），而它每次回复重发且进不了跨回复的缓存——这些压缩合计省掉转录约一半 token，对「认人 / 回复回溯 / 转发归属」的影响在 88 道客观题上与全量格式打平。同一个 `message_id` 在热区有两份条目时（快照 hydrate 记一份、Telegram 重投同一条 update 再记一份）只渲染最后一份——媒体描述之类的回填只落在后写入的那份上，而两行同号会让 `#消息号` 指针同时命中两处。判重不额外扫一遍数组：上下文构建时本来就要按全部消息建一张在位表，重复条数由 `messages.length - present.size` 白拿，没有重复时原样渲染入参。
+- 回复转录走**名册 + 编号**的紧凑渲染（`buildTieredVerbatimTranscript`）：身份与转发来源各在【发言人名册】【转发来源名册】里出现一次，行内只写编号；机器人自己固定拿 `me`，不排进 `uN`。日期只在变化时单起一条分隔行，行内只留时分秒，每个分层区块开头重发一次当前日期。`#消息号` 只给「本段内被别人回复过」和本轮触发消息两类行。被回复消息在段内时只留 `（回复 #编号）` 指针，作者与原文让模型回那一行读；仅当目标已滑出窗口才退回内嵌快照并标 `[已滑出]`。整段转录是全部输入里最贵的一块（占用户区块 80~86%，其中群友真正说出口的字只占两成），而它每次回复都要重发——这些压缩合计省掉转录约一半 token，对「认人 / 回复回溯 / 转发归属」的影响在 88 道客观题上与全量格式打平。**分层边界按 `TIER_BOUNDARY_ALIGNMENT` 向上对齐**：【较早逐字记录】的长度只取该值的整数倍，边界因此每 `TIER_BOUNDARY_ALIGNMENT` 条消息才移动一次，同一格内本轮转录相对上一轮是纯追加，名册与【较早逐字记录】能落进跨回复的前缀缓存；【最热记忆】随每条新消息变化，不进。向上取整同时保证【最热记忆】恒不超过 `COMPACT_BATCH_SIZE` 条，与该区块标题里写死的条数一致；该粒度必须能整除 `COMPACT_BATCH_SIZE`，否则窗口攒满时边界落不到两块对半的位置上。同一个 `message_id` 在热区有两份条目时（快照 hydrate 记一份、Telegram 重投同一条 update 再记一份）只渲染最后一份——媒体描述之类的回填只落在后写入的那份上，而两行同号会让 `#消息号` 指针同时命中两处。判重不额外扫一遍数组：上下文构建时本来就要按全部消息建一张在位表，重复条数由 `messages.length - present.size` 白拿，没有重复时原样渲染入参。
 - 转录之外还要点名某个人或某条消息的地方，必须与转录用同一套写法，且**绝不指向转录里不存在的编号**：唤起者声明带上 TA 的名册编号，参考记忆里的自我身份句按 `me` 认自己的发言而不是按 `[id:]` 找行，多层回复链各跳与排队补跑的回复引用同样只写编号和 `#消息号`（名册里没有的链尾快照、以及已滑出窗口的回复目标才退回完整身份段或带 `[已滑出]` 的内嵌快照）。触发消息本身已滑出渲染窗口时（排队补跑、慢媒体轮）不得写 `#消息号`，改用引述本轮回复任务里那段正文的指代，让两处引用互相指认。实测依据：只给一个转录里解析不出的编号时，模型会判定「触发消息的内容没给」，哪怕正文就在同一段的上一行——同一组 mock 问答上，紧凑化之前 8/8，只把编号换个说法 0/8，两处引用绑定后回到 8/8。渲染结果（`RenderedTranscript`）因此把行内编号表与「哪些消息号真的在转录里」一并交给调用方，让这条约束在调用点可判定，而不是各处自行推断。
-- 冷历史压缩（`summarizeBatch`）仍用**自包含**行格式（`formatBufferedMessageLine`）：那是独立一次模型调用、没有名册可查，每 `COMPACT_BATCH_SIZE` 条才跑一次，压缩它没有收益。两套格式各有各的说明常量（`TRANSCRIPT_FORMAT_INSTRUCTION` 对紧凑格式，`SUMMARY_SYSTEM_PROMPT` 对自包含格式），改其中一套不得顺手改掉另一套。
+- 冷历史压缩（`summarizeBatch`）仍用**自包含**行格式（`formatBufferedMessageLine`）：那是独立一次模型调用、没有名册可查，每 `COMPACT_BATCH_SIZE` 条才跑一次，压缩它没有收益。两套格式各有各的说明常量（`TRANSCRIPT_FORMAT_INSTRUCTION` 对紧凑格式，`SUMMARY_SYSTEM_PROMPT` 对自包含格式），改其中一套不得顺手改掉另一套。这条链路的 `systemPrompt` 只放逐字恒定的 `SUMMARY_SYSTEM_PROMPT`，当前时间拼在 `userContent` **末尾**、整批转录之后——那段常量是本请求唯一可被隐式缓存的前缀，精确到秒的时间放进 `systemPrompt` 或 `userContent` 开头都会让它从第一个字节起每次都对不上；转录行本身自带每条消息的发送时间，末尾那句只补「现在几点」。
 - 群聊转录的行内标注（回复引用/指针、指针后附的精确引用片段、转发来源、名册条目、两个名册的区块名、日期分隔行、消息号）由 `packages/consts/aiChat/prompts/transcript.ts` 的共享模板同时生成拼装文本与提示词说明里的占位形态，两侧不得各自手写同一格式；占位形态必须把占位符直接代入模板生成，不得先用一个魔数跑一遍再把数字替换掉——模板里一旦出现第二个同样的数字，替换只改第一处，说明侧就会教给模型一个渲染器从不产出的形状；转发归属按标注层级区分：回复标注外层属于当前消息本身，内层属于被回复的原消息。发言人编号回答「谁把它发到本群」，转发来源编号回答「正文原本出自谁」，两者形状一致才不会被模型混为一谈。机器人自己动作的记号（`（发了一枚贴纸：…）`、`（…生成并发送了一张图片：…）`、`（生成并发送了一首歌：…）`）同样出自这份模板，而且**只由执行侧在动作真正落地之后写入**：它是「这个动作确实发生过」的唯一凭据，模型只能读到，绝不能自己产出。
 
   生图撞上群冷却时模型有概率不说「发不了」，而是照着转录里见过的形状用 `send_message` 打一段出来——群友收到一条声称配了图、实际什么都没有的消息，记忆里还会留下一条假的动作记录，下一轮它自己也会当真。提示词里的禁令只是概率性的，因此 `send_message` 执行侧硬拦截一次，并让模型改用自己的话说明这次发不了。
@@ -375,9 +378,9 @@
 - `/steal_icon` 的 t.me 主页抓取兜底**只认 `getChat(targetId)` 现查回来的 username**，不得用调用方上下文里带的那个短路掉这次查询。命令上下文的 username 来自 `reply_to_message`（可能是几个月前的消息）或身份缓存，而 Telegram 用户名释放之后可以被任何人重新注册；抓取时的页面身份校验只能证明「这个页面属于 @name」，证明不了「@name 此刻仍指向 targetId」。短路的后果是把**现任 handle 持有者**的头像顶成机器人头像，而成功提示里写的还是原目标。
 
   provided 值只作诊断线索进日志。
-- chat runtime teardown 的五个固定 owner（`copy`、`gag`、`qa`、`aiChat`、`antiRaid`）回调由 `packages/cache/main/chatTeardown.ts` 持有，上层领域经 `packages/infra/chatTeardown.ts` 反向注册；`packages/infra/botAdmin.ts` 不得静态依赖 `commands/`、AI 或 Anti-Raid 业务模块。
+- chat runtime teardown 的五个固定 owner（`copy`、`gag`、`qa`、`aiChat`、`antiRaid`）回调由 `packages/cache/main/chatTeardown.ts` 持有，上层领域经无业务依赖的叶子模块 `packages/infra/chatTeardownRegistry.ts` 反向注册。`packages/infra/chatTeardown.ts` 只负责组合清理；`packages/infra/botAdmin.ts` 仅依赖这个组合边界，不得静态依赖 `commands/`、AI 或 Anti-Raid 业务模块。
 
-  **派发清单不得手写**：`teardownChatRuntime` 遍历 `packages/consts/chatTeardown.ts` 的 `CHAT_TEARDOWN_ORDER`，该常量由类型强制穷尽 `ChatRuntimeOwner`，少列一个就编译不过。此前那份手写的四项清单漏掉了 `qa`，`/init disable` 与失权停管因此收不走 `/set_qa` 表单——而 lint、typecheck 与约定自检都看不出来，连组合 teardown 的顺序用例也只枚举了那四个，跟着一起瞎掉。新增 owner 时只改 `ChatRuntimeOwner` 而忘了顺序表，现在是编译错误。
+  **派发清单不得在调用点手写**：`teardownChatRuntime` 遍历 `packages/consts/chatTeardown.ts` 的 `CHAT_TEARDOWN_ORDER`，该常量由类型强制穷尽 `ChatRuntimeOwner`，少列任一 owner 都会编译失败。一次 teardown 必须按该表同步启动全部 owner，再统一等待异步收尾。
 - 成员现查本身是新的异步边界：`probeChatMembership` 返回“仍在群”后、真正调用 `kickChatMember` 前必须再次确认终态对象仍是发起查询时的同一引用，而且这次确认与 API 调用之间不得再有 `await`。否则 teardown、停管或状态替换已经取消的旧处置会消费迟到查询结果，把不再属于该终态的成员踢掉。
 - `/block` 不得缓存“此前确证踢出”来替代实时成员查询：`/unblock`、外部管理员操作与重新入群都能让历史结局过期，而不同 chat lane 的命令还可交错。每次命令都必须重新调用 `isChatMember`，并无条件重发 `banChatMember`，让 Telegram 执行 `revoke_messages`；`/unblock` 因此不需要维护命令侧成员结局缓存。
 
@@ -562,7 +565,7 @@
 
   探测与封禁的业务顺序一律交给 Anti-Raid Worker，与验证超时踢人复用同一 owner；每个 Telegram 能力请求再经双工边界回到主线程，分别进入 query / kick 类 429 车道。一波黑名单账号回流和一次清扫都是 O(黑名单长度) 的成批请求，但不会因某一类别退避而暂停普通消息等其他类别。处置消息与同批 join/left 一起经 `postAntiRaidDurably` 投递，Worker 处理完 mailbox 才交接 update；
 
-  Worker 在 dispatch 后异步串行业务步骤，不阻塞 mailbox；真正的 Telegram HTTP 只由主线程唯一客户端发起，主线程 update handler 不等待整批补扫。infra 侧不得静态依赖 Anti-Raid 业务模块，执行 owner 经 `packages/cache/main/blocklist.ts` 的单槽位反向注册（同 `infra/chatTeardown.ts`）。
+  Worker 在 dispatch 后异步串行业务步骤，不阻塞 mailbox；真正的 Telegram HTTP 只由主线程唯一客户端发起，主线程 update handler 不等待整批补扫。infra 侧不得静态依赖 Anti-Raid 业务模块，执行 owner 经 `packages/cache/main/blocklist.ts` 的单槽位反向注册（同 `infra/chatTeardownRegistry.ts`）。
 
   **`/block` 命令自身的跨群连坐封禁是这条线程分工的显式例外**：它在主线程对每个群依次执行 `isChatMember` → `banChatMember`（走默认 `bot.api`），群与群之间通过 `runBoundedSettledBatch` 固定最多 5 个并发并独立结算；每项结果携带 chat id、输入下标和 attempt，意外 rejection 只把对应群记为失败并交回补扫，不得吞掉其它群已经落定的结果。回复频道消息时的已知消息清理同样独立结算。这样做是因为战报要按群区分「踢出去」和「确认封禁」，而现有 Worker 回执只带 `complete`，投给 Worker 就拿不到逐群结果。命令每次都实时查询成员状态，不保留“此前确证踢出”缓存；当前不在群只能证明本次没有执行移出动作，不能推断目标从未加入过。封禁请求无论查询结果如何都必须重发，以执行 `revoke_messages`。
 
@@ -711,7 +714,7 @@
 - 运势切换东京日 owner 前必须先 flush 旧日追加缓冲，失败则保持旧 owner 并拒绝轮换；**但触发这次轮换的那条新日抽签必须转入滞留区等待补录，不得随轮换失败一起丢弃**——主线程 `dailyLuckCache` 已经把它记成「今天抽过了」并发了回执，丢掉就等于磁盘恢复后当天文件永远缺这一条、用户当天也再抽不了第二次，而 `onDiskIORespawn` 的全量重放只覆盖 Worker 重建、覆盖不到「Worker 活着但写不进盘」。滞留区有明确上界，溢出时丢最旧的一条并记一行（不得静默）；刷盘重试成功后立刻补录，不等下一条抽签消息来推动。目标日已有确认结果时，缺失密钥或密钥日期不一致属于不一致备份，必须拒绝启动/轮换，不能静默生成新密钥。
 
   **但启动时「主线程算出的今天」与凭据日期对不上不属于这一类，不得拒绝启动**：Disk I/O Worker 在启动边界算一次东京日、主线程在 `restoreLuckState` 里再算一次，进程恰好卡在 00:00 前后启动时两者天然可能差一天。这里抛错的话异常会逸出 `ApplicationLifecycle.init()`（调用点没有 try/catch），`run()` 记一行日志并以退出码 1 结束——一次日切让 bot 起不来，靠进程管理器重启才恢复。正确处置是丢弃这份过期凭据与它那天的已确认记录：不 adopt、缓存留空，首次用到运势时由 `ensureLuckCacheFreshForToday` 向 Worker 重新取当天密钥（每个入口本来就会先 await 它）；同时标记「本进程内已跨日」，让没有当日证明的迟到确认一律 fail closed。
-- AI 记忆恢复只接受满足当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 149 条逐字消息与 5 轮冷摘要）的 version=1 快照；超限或字段非法都拒绝启动，不在恢复时截断。调整容量常量部署前，应在旧进程停止后以同一严格 codec 原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
+- AI 记忆恢复只接受满足当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 255 条逐字消息与 7 轮冷摘要）的 version=1 快照；超限或字段非法都拒绝启动，不在恢复时截断。提高容量上限与已有快照兼容；降低上限时，必须先停止旧进程，再以同一严格 codec 原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
 - 启动水合受 `AI_MEMORY_MAX_CHATS` 硬顶约束；超额快照保留在磁盘并只报告一次，不把容量判断当成删除入口。权威 `chat_states` 本身最多 25 个受管群，低于当前 AI Worker 的 100 群上限。
 - **AI Worker 耗尽重启预算放弃自愈时，必须把可重放的身份注入记录（`lastInitState.current`）一并清空**：`flushAiMemory` 正是用它判断「这条线根本没起来，没什么可刷的」并直接返回 `flushed`。留着的话停机 flush 会越过短路、进 barrier 后因 `post` 失败结算成 `failed`，于是 `flushAllToDisk` 返回 false、`wait()` 拒绝确认最终 offset，Telegram 重投上次确认点之后的全部更新，重复执行复读、命令回执这些非幂等副作用——而本功能既定的降级只是「AI 闲聊静默停用到下次重启」，不该牵连整个停机的 offset 闸门。
 - 回复链索引（`chatReplyChainIndexes`）是滚动缓存的纯派生索引，不落盘、内层值与缓存共享对象引用；登记/删除只允许发生在消息进出热区的物理位置（`rollingMemory.ts` 的 push/轮换/hydrate），任何其它模块只读。索引因此永远只覆盖仍在热区的消息，容量受滚动缓存上限约束，无独立淘汰；机器人发送自录只按 Telegram 返回的实际 `reply_to_message` 建边，目标在生成/排队期间滑出热区时使用轮次开始前捕获的有界触发快照兜底，不扩张索引覆盖范围。

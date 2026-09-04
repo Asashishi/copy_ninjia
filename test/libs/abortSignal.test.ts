@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { raceAbort, signalWithTimeout } from "../../packages/libs/abortSignal";
+import {
+  raceAbort,
+  raceAbortOrThrow,
+  signalWithTimeout,
+} from "../../packages/libs/abortSignal";
 import { deferred } from "./helpers";
 
 describe("AbortSignal 组合", () => {
@@ -25,6 +29,57 @@ describe("AbortSignal 组合", () => {
     expect(first.reason).toBeInstanceOf(DOMException);
     expect(first.reason.name).toBe("TimeoutError");
     expect(second.aborted).toBeFalse();
+  });
+});
+
+describe("raceAbortOrThrow 独占任务等待", () => {
+  test("缺省 signal 时原样返回 Promise，成功与失败都不改写", async () => {
+    const fulfilled: Promise<string> = Promise.resolve("ok");
+    expect(raceAbortOrThrow(fulfilled)).toBe(fulfilled);
+    expect(await fulfilled).toBe("ok");
+
+    const failure: Error = new Error("failed");
+    const rejected: Promise<string> = Promise.reject(failure);
+    await expect(raceAbortOrThrow(rejected, new AbortController().signal)).rejects.toBe(failure);
+
+    const invalidRejected: Promise<string> = Promise.reject("invalid rejection");
+    await expect(raceAbortOrThrow(invalidRejected, new AbortController().signal))
+      .rejects.toMatchObject({
+        message: "Abortable task rejected with a non-Error value.",
+        cause: "invalid rejection",
+      });
+  });
+
+  test("已中止的 signal 立即拒绝并保留 reason 对象", async () => {
+    const controller: AbortController = new AbortController();
+    const reason: Error = new Error("caller invalidated");
+    const taskFailure: Error = new Error("late SDK failure");
+    controller.abort(reason);
+
+    await expect(raceAbortOrThrow(Promise.reject(taskFailure), controller.signal))
+      .rejects.toBe(reason);
+
+    const invalidController: AbortController = new AbortController();
+    invalidController.abort("invalid reason");
+    await expect(raceAbortOrThrow(Promise.resolve("late result"), invalidController.signal))
+      .rejects.toMatchObject({
+        message: "AbortSignal was aborted with a non-Error reason.",
+        cause: "invalid reason",
+      });
+  });
+
+  test("底层任务不监听 signal 时，上层仍在中止时结束等待", async () => {
+    const gate = deferred();
+    const underlying: Promise<string> = gate.promise.then((): string => "late result");
+    const controller: AbortController = new AbortController();
+    const reason: Error = new Error("caller invalidated");
+    const waiting: Promise<string> = raceAbortOrThrow(underlying, controller.signal);
+
+    controller.abort(reason);
+    await expect(waiting).rejects.toBe(reason);
+
+    gate.resolve();
+    expect(await underlying).toBe("late result");
   });
 });
 

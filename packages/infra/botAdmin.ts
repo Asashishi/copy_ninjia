@@ -16,7 +16,6 @@ import {
   botPermissionRequestTokens,
 } from "../cache/main/botAdmin";
 import { BOT_PERMISSION_PROBE_RETRY_MS } from "../consts/botAdmin";
-import { CHAT_TEARDOWN_ORDER } from "../consts/chatTeardown";
 import {
   botActionPermissionsEqual,
   botChatPermissionsEqual,
@@ -28,9 +27,8 @@ import {
   noteBanPermissionObserved,
   sweepBlockedMembers,
 } from "./blocklist/sweep";
-import { teardownRegisteredChat } from "./chatTeardown";
+import { teardownChatRuntime } from "./chatTeardown";
 import type { ChatState } from "../types/chatState";
-import type { ChatTeardownReason } from "../types/chatTeardown";
 import type { BotChatPermissions } from "../types/telegram";
 import type { ChatMember, ChatMemberUpdated } from "grammy/types";
 import {
@@ -54,35 +52,6 @@ async function completeAfterTeardown(
   if (failures.length > 1) throw new AggregateError(failures, failureMessage);
 }
 
-/** 配置去留由调用入口决定；这里只停止 owner、取消计时器并发起权限恢复。 */
-export async function teardownChatRuntime(
-  chatId: number,
-  reason: ChatTeardownReason
-): Promise<void> {
-  // 先同步调用全部 owner，让跨群 copy 槽、代理入口和 Worker 闸门在第一个
-  // await 之前一起关闭；随后等待需要 durable 回执的异步 owner。
-  //
-  // 遍历 CHAT_TEARDOWN_ORDER 而不是在这里手写 owner 列表：手写过一版，五个里
-  // 只写了四个，漏掉的 `qa` 直到全仓审查才被发现。那份顺序表由类型强制穷尽
-  // ChatRuntimeOwner（见 consts/chatTeardown.ts），漏一个就编译不过。
-  //
-  // 代理入口不属于任何 owner 的回调，但同样要在这个同步段里关掉。放在循环前
-  // 与放在循环中间等价：整个循环没有 await，且没有任何 owner 的 teardown 读
-  // isProxySendEnabled。
-  clearChatStateField(chatId, "isProxySendEnabled");
-  const teardowns: Promise<void>[] = [];
-  for (const owner of CHAT_TEARDOWN_ORDER) {
-    teardowns.push(teardownRegisteredChat(owner, chatId, reason));
-  }
-  const results: PromiseSettledResult<void>[] = await Promise.allSettled(teardowns);
-  const failures: unknown[] = results.flatMap(
-    (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
-  );
-  if (failures.length > 0) {
-    throw new AggregateError(failures, `Chat runtime teardown failed for chat ${chatId}.`);
-  }
-}
-
 /**
  * 机器人自己在各群的管理员身份追踪。入群守卫（antiRaid）和 /block 都需要
  * 管理员权限才有意义：不是管理员时收不到别人的 chat_member 更新、踢不了人
@@ -102,7 +71,7 @@ export async function teardownChatRuntime(
  * 三条路径最终都经 recordBotChatPermissions 落盘。它同时是「机器人在这个群可以
  * 干活了」这个合取（是管理员 && 已 /init enable）的边沿：任一边发生变更、
  * 合取由不成立变为成立时，在那里补一次 /block 黑名单清扫。它只认已 /init enable 过
- * 的群：my_chat_member 更新会绕过 app/registerHandlers.ts 的 isInitEnabled
+ * 的群：my_chat_member 更新会绕过 infra/updateGate.ts 的 isInitEnabled
  * 网关（机器人被拉进任何群，不管有没有人 /init，Telegram 都会推送），若
  * 不在这里把关，
  * `chat_states` 就会为「只是被拉进去、从没人管过」的群凭空长出条目。
@@ -111,7 +80,7 @@ export async function teardownChatRuntime(
 /**
  * 记录一次确证的完整权限观测，与已知快照不同时才写入、落盘并广播。
  * 未初始化的群（isInitEnabled !== true）一律不落盘：my_chat_member 更新（机器人
- * 被拉进群/任免管理员）会绕过 app/registerHandlers.ts 的 isInitEnabled 网关
+ * 被拉进群/任免管理员）会绕过 infra/updateGate.ts 的 isInitEnabled 网关
  * 送到这里，若不设防，
  * 光是被拉进一个群、还没人 /init enable，`chat_states` 就会凭空多出一条只有
  * botPermissions 的记录——先于任何超级管理员操作自己"写"进去了。用 getChatState

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
 import { collectCacheOwnershipProblems } from "../../scripts/conventions/cacheOwnership";
 import { collectColdMigrationProblems } from "../../scripts/conventions/coldMigrations";
-import { collectNodeCompatibilityProblems } from "../../scripts/conventions/nodeCompatibility";
+import { collectCommentReferenceProblems } from "../../scripts/conventions/commentReferences";
+import { collectWorkerTimerProblems } from "../../scripts/conventions/workerTimers";
 import { collectTelegramMessageProblems } from "../../scripts/conventions/telegramMessages";
 import {
   collectCacheJsDocProblems,
@@ -41,83 +42,6 @@ afterEach(() => {
 });
 
 describe("project convention collectors", () => {
-  test("Node 兼容白名单只放行已核对的模块与命名导入", () => {
-    const projectRoot: string = "/project";
-    const path: string = "/project/packages/example.ts";
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      path,
-      source(path, 'import { readFileSync } from "node:fs";\nimport { join } from "node:path";')
-    )).toEqual([
-      expect.stringContaining("unreviewed Node compatibility module node:fs"),
-    ]);
-
-    const inputPath: string = "/project/packages/libs/inputValidation.ts";
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      inputPath,
-      source(inputPath, 'import { readFileSync } from "node:fs";')
-    )).toEqual([
-      expect.stringContaining("unreviewed Node compatibility module node:fs"),
-    ]);
-
-    const atomicPath: string = "/project/packages/libs/atomicFile.ts";
-    const problems: readonly string[] = collectNodeCompatibilityProblems(
-      projectRoot,
-      atomicPath,
-      source(atomicPath, 'import * as fs from "node:fs";\nimport { readFile } from "node:fs/promises";\nimport { exec } from "node:child_process";')
-    );
-    expect(problems).toEqual([
-      expect.stringContaining("must not namespace-import node:fs"),
-      expect.stringContaining("unreviewed node:fs/promises export readFile"),
-      expect.stringContaining("unreviewed Node compatibility module node:child_process"),
-    ]);
-
-    const scriptPath: string = "/project/scripts/example.ts";
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      scriptPath,
-      source(scriptPath, 'import { rmSync, symlinkSync } from "node:fs";\nimport { tmpdir } from "node:os";')
-    )).toEqual([]);
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      path,
-      source(path, 'import { rmSync } from "node:fs";\nimport { tmpdir } from "node:os";')
-    )).toEqual([
-      expect.stringContaining("unreviewed Node compatibility module node:fs"),
-      expect.stringContaining("unreviewed Node compatibility module node:os"),
-    ]);
-
-    const backupPath: string = "/project/scripts/migration/backup.ts";
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      backupPath,
-      source(backupPath, 'import { readFileSync, writeFileSync } from "node:fs";')
-    )).toEqual([]);
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      scriptPath,
-      source(scriptPath, 'import { readFileSync, writeFileSync } from "node:fs";')
-    )).toEqual([
-      expect.stringContaining("unreviewed node:fs export readFileSync"),
-      expect.stringContaining("unreviewed node:fs export writeFileSync"),
-    ]);
-
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      path,
-      source(path, "const size: number = Buffer.byteLength('x');\nconst reference = Buffer;")
-    )).toEqual([
-      expect.stringContaining("unreviewed Node compatibility global Buffer"),
-    ]);
-    const jsonBytesPath: string = "/project/packages/libs/jsonBytes.ts";
-    expect(collectNodeCompatibilityProblems(
-      projectRoot,
-      jsonBytesPath,
-      source(jsonBytesPath, "const size: number = Buffer.byteLength('x');")
-    )).toEqual([]);
-  });
-
   test("cache owner 按真实模块图拒绝跨线程读取，并尊重显式豁免", () => {
     const projectRoot: string = "/project";
     const cachePath: string = "/project/packages/cache/main/value.ts";
@@ -417,5 +341,187 @@ describe("逐文件源码规则", () => {
     const path: string = "/project/packages/workers/diskIO/files.ts";
     expect(collectDeclarationProblems(rule(path, "export function log(): void { console.error(\"x\"); }\n")))
       .toEqual([]);
+  });
+
+  test("Worker isolate 内的 timer 必须逐个句柄 unref", () => {
+    const projectRoot: string = "/project";
+    const path: string = "/project/packages/workers/antiRaid/lockdownRuntime.ts";
+    const message = (line: number, kind: string): string =>
+      `packages/workers/antiRaid/lockdownRuntime.ts:${line} installs a worker ${kind} ` +
+      "without unref(): worker timers must not hold the isolate event loop open";
+
+    // 合规形态一：装进 entry 字段后就地 unref。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function schedule(): void {\n" +
+      "  entry.timer = setTimeout((): void => { fire(); }, 1000);\n" +
+      "  entry.timer.unref();\n" +
+      "}\n"
+    ))).toEqual([]);
+
+    // 合规形态二：先落成局部变量再返回。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function start(): ReturnType<typeof setTimeout> {\n" +
+      "  const timer: ReturnType<typeof setTimeout> = setTimeout((): void => { fire(); }, 1000);\n" +
+      "  timer.unref();\n" +
+      "  return timer;\n" +
+      "}\n"
+    ))).toEqual([]);
+
+    // setInterval 与 holder 形态同样受约束。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function tick(): void {\n" +
+      "  holder.current = setInterval((): void => { sweep(); }, 1000);\n" +
+      "  holder.current.unref();\n" +
+      "}\n"
+    ))).toEqual([]);
+
+    // 漏 unref 点名到行。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function schedule(): void {\n" +
+      "  entry.timer = setTimeout((): void => { fire(); }, 1000);\n" +
+      "}\n"
+    ))).toEqual([message(2, "setTimeout")]);
+
+    // 别的函数里的 unref 不算数。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function schedule(): void {\n" +
+      "  entry.timer = setTimeout((): void => { fire(); }, 1000);\n" +
+      "}\n" +
+      "function stop(): void {\n" +
+      "  entry.timer.unref();\n" +
+      "}\n"
+    ))).toEqual([message(2, "setTimeout")]);
+
+    // 回归：同一函数里装多个 timer 时，逐个句柄核对——不得被同函数里
+    // 另一个句柄的 unref 掩盖（startVerificationTimer、runLockdownEffects 都是
+    // 这种形态）。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function startTwo(): void {\n" +
+      "  const first: ReturnType<typeof setTimeout> = setTimeout((): void => { a(); }, 1);\n" +
+      "  const second: ReturnType<typeof setTimeout> = setTimeout((): void => { b(); }, 2);\n" +
+      "  second.unref();\n" +
+      "}\n"
+    ))).toEqual([message(2, "setTimeout")]);
+
+    // 回归：同一目标被连续写两次时，前一次必须在被覆盖之前 unref。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function scheduleTwice(): void {\n" +
+      "  entry.retryTimer = setTimeout((): void => { a(); }, 1);\n" +
+      "  entry.retryTimer = setTimeout((): void => { b(); }, 2);\n" +
+      "  entry.retryTimer.unref();\n" +
+      "}\n"
+    ))).toEqual([message(2, "setTimeout")]);
+
+    // 句柄没有落点：直接 return 的写法根本无从 unref。
+    expect(collectWorkerTimerProblems(projectRoot, path, source(
+      path,
+      "function start(): ReturnType<typeof setTimeout> {\n" +
+      "  return setTimeout((): void => { fire(); }, 1000);\n" +
+      "}\n"
+    ))).toEqual([
+      "packages/workers/antiRaid/lockdownRuntime.ts:2 installs a worker setTimeout " +
+      "without keeping the handle: assign it before returning so it can be unref()ed",
+    ]);
+
+    // Worker 入口文件（直接位于 packages/workers/ 下）同样在范围内。
+    const entryPath: string = "/project/packages/workers/antiRaidWorker.ts";
+    expect(collectWorkerTimerProblems(projectRoot, entryPath, source(
+      entryPath,
+      "function startWorker(): void {\n" +
+      "  holder.current = setInterval(sweep, 1000);\n" +
+      "}\n"
+    ))).toEqual([
+      "packages/workers/antiRaidWorker.ts:2 installs a worker setInterval " +
+      "without unref(): worker timers must not hold the isolate event loop open",
+    ]);
+  });
+});
+
+describe("注释交叉引用核对", () => {
+  /** 造一棵最小的假仓库：projectRoot/packages/<相对路径>。 */
+  function fixture(files: Readonly<Record<string, string>>): {
+    readonly projectRoot: string;
+    readonly allSourceFiles: readonly string[];
+  } {
+    const projectRoot: string = temporaryRoot("comment-references-");
+    const allSourceFiles: string[] = [];
+    for (const [relativePath, text] of Object.entries(files)) {
+      const absolute: string = join(projectRoot, "packages", relativePath);
+      mkdirSync(join(absolute, ".."), { recursive: true });
+      writeFileSync(absolute, text);
+      allSourceFiles.push(absolute);
+    }
+    return { projectRoot, allSourceFiles };
+  }
+
+  test("被点名的模块没有该符号时报告", async () => {
+    const { projectRoot, allSourceFiles } = fixture({
+      "libs/time.ts": "export function formatTokyoTime(): string { return \"\"; }\n",
+    });
+    const problems: readonly string[] = await collectCommentReferenceProblems({
+      projectRoot,
+      path: join(projectRoot, "packages", "caller.ts"),
+      source: source("caller.ts", "/** 见 libs/time.ts 的 getTokyoHour。 */\nexport const x: number = 1;\n"),
+      allSourceFiles,
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain("comment references getTokyoHour in libs/time.ts");
+  });
+
+  test("符号仍在时不报告", async () => {
+    const { projectRoot, allSourceFiles } = fixture({
+      "libs/time.ts": "export function getTokyoHour(): number { return 0; }\n",
+    });
+    expect(await collectCommentReferenceProblems({
+      projectRoot,
+      path: join(projectRoot, "packages", "caller.ts"),
+      source: source("caller.ts", "/** 见 libs/time.ts 的 getTokyoHour。 */\nexport const x: number = 1;\n"),
+      allSourceFiles,
+    })).toEqual([]);
+  });
+
+  test("经 export * 兼容入口再导出的符号算数", async () => {
+    const { projectRoot, allSourceFiles } = fixture({
+      "types/diskIO/messages.ts": "export interface RecoveryReplayRequest { readonly id: number }\n",
+      "types/diskIO.ts": 'export type * from "./diskIO/messages";\n',
+    });
+    expect(await collectCommentReferenceProblems({
+      projectRoot,
+      path: join(projectRoot, "packages", "caller.ts"),
+      source: source("caller.ts", "/** 见 types/diskIO.ts 的 RecoveryReplayRequest。 */\nexport const x: number = 1;\n"),
+      allSourceFiles,
+    })).toEqual([]);
+  });
+
+  test("非注释行里的同形文本不参与判定", async () => {
+    const { projectRoot, allSourceFiles } = fixture({
+      "libs/time.ts": "export function getTokyoHour(): number { return 0; }\n",
+    });
+    expect(await collectCommentReferenceProblems({
+      projectRoot,
+      path: join(projectRoot, "packages", "caller.ts"),
+      source: source("caller.ts", 'export const note: string = "libs/time.ts 的 missingSymbol";\n'),
+      allSourceFiles,
+    })).toEqual([]);
+  });
+
+  test("解析不到唯一目标的引用一律放过", async () => {
+    const { projectRoot, allSourceFiles } = fixture({
+      "a/shared.ts": "export const a: number = 1;\n",
+      "b/shared.ts": "export const b: number = 2;\n",
+    });
+    expect(await collectCommentReferenceProblems({
+      projectRoot,
+      path: join(projectRoot, "packages", "caller.ts"),
+      source: source("caller.ts", "/** 见 shared.ts 的 whatever。 */\nexport const x: number = 1;\n"),
+      allSourceFiles,
+    })).toEqual([]);
   });
 });

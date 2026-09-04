@@ -9,12 +9,8 @@ import type { Transformer } from "grammy";
  * 都只碰进程内存和自己的 mock 数据根，这里把统一出站通道堵死，让越界变成一次
  * 响亮的失败。
  *
- * **必须装 grammY transformer，光换 globalThis.fetch 拦不住它。** grammY 在模块
- * 加载时就把 fetch 绑到内部 shim 上（`node_modules/grammy/out/core/client.js` 里
- * 的 `shim_node_js_1.fetch`），之后调用只认那个绑定；而静态 import 又先于模块体
- * 执行，赋值再早也来不及。实测靠改 globalThis.fetch「保护」的一次基准，仍然向
- * Telegram 发出了三万多次 getChatAdministrators。transformer 挂在 grammY 自己的
- * 调用层，与传输实现无关，才是可靠的拦截点。
+ * grammY 在模块加载时绑定内部 fetch；修改 `globalThis.fetch` 不覆盖这条通道。
+ * 因此 Telegram API 必须由 transformer 在 grammY 调用层拦截。
  *
  * globalThis.fetch 这道仍然保留，但它覆盖的是**另一类**调用：项目里直接写
  * `fetch(...)` 的地方（头像抓取、JSON API）在调用时才解析全局，因此拦得住。

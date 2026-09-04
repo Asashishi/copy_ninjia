@@ -11,19 +11,31 @@
  * 文本里，不会以 functionCall 形式抛回来；与函数工具混用时必须要求 SDK 把
  * 服务端工具调用记录接回 content（includeServerSideToolInvocations），否则
  * Gemini API 会拒绝该组合或丢失搜索上下文。
+ *
+ * 所有请求都发送完整的 systemInstruction、tools、toolConfig 与 contents，由
+ * Gemini 的隐式缓存按公共前缀自动命中。稳定区块排在易变区块之前，工具往返只向
+ * contents 尾部追加，因此跨回复的稳定前缀与回复内不断增长的前缀都能被复用。
  */
 
-import type { Content, FunctionCall, GenerateContentParameters, GenerateContentResponse, Part, Tool } from "@google/genai";
+import type {
+  Content,
+  FunctionCall,
+  GenerateContentParameters,
+  GenerateContentResponse,
+  Part,
+  Tool,
+} from "@google/genai";
 import {
   GEMINI_GROUNDED_REPLY_TEMPERATURE,
   GEMINI_REPLY_ERROR_LABEL,
   GEMINI_REPLY_MAX_TOKENS,
   GEMINI_REPLY_TEMPERATURE,
+  GEMINI_SERVER_TOOL_CONFIG,
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { isPlainRecord } from "../../libs/record";
 import { requestGeminiResult } from "./client";
-import { countGoogleSearchCalls } from "./response";
+import { countGoogleSearchCalls, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type {
   AiFunctionCall,
@@ -79,33 +91,46 @@ function extractFunctionCalls(data: GenerateContentResponse): readonly AiFunctio
 }
 
 /** 建立一轮 Gemini 回复会话。会话随本轮结束即弃，不跨轮复用。 */
-export function createGeminiReplySession({ promptBlocks, signal }: AiReplySessionParams): AiReplySession {
-  const contents: Content[] = [{
-    role: "user",
-    parts: promptBlocks.map((text: string): Part => ({ text })),
-  }];
+export function createGeminiReplySession(
+  { stableBlocks, volatileBlocks, signal }: AiReplySessionParams
+): AiReplySession {
+  /**
+   * 本轮会话记录。稳定区块与易变区块分成两个 user 轮次、稳定的在前：这是
+   * Gemini 与 OpenAI 自动前缀缓存共同的命中前提（见 types/aiChat/provider.ts 的
+   * AiReplySessionParams），也让参考记忆在两次压缩之间保持公共前缀。
+   */
+  const contents: Content[] = [
+    { role: "user", parts: stableBlocks.map((text: string): Part => ({ text })) },
+    { role: "user", parts: volatileBlocks.map((text: string): Part => ({ text })) },
+  ];
   // 上一次 request() 拿到的模型 content，等 appendToolOutputs() 接回 contents。
   let pendingModelContent: Content | undefined;
+
+  /** 拼一次完整请求体；Gemini 自动按公共前缀处理隐式缓存。 */
+  function buildBody(request: AiReplyTurnRequest, tools: Tool[]): GenerateContentParameters {
+    return {
+      model: getAgentDeploymentConfig().text.model,
+      contents,
+      config: {
+        abortSignal: signal,
+        // 查证过的轮次压低采样随机性，让模型照搜索结果讲；上层只给
+        // grounded 语义，取什么温度由本包决定。
+        temperature: request.grounded ? GEMINI_GROUNDED_REPLY_TEMPERATURE : GEMINI_REPLY_TEMPERATURE,
+        maxOutputTokens: GEMINI_REPLY_MAX_TOKENS,
+        systemInstruction: request.systemPrompt,
+        tools,
+        toolConfig: request.webSearchEnabled ? GEMINI_SERVER_TOOL_CONFIG : undefined,
+      },
+    };
+  }
 
   return {
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
       pendingModelContent = undefined;
+      const tools: Tool[] = buildTools(request);
       const result: GeminiRequestResult = await requestGeminiResult(
         "text",
-        (): GenerateContentParameters => ({
-          model: getAgentDeploymentConfig().text.model,
-          contents,
-          config: {
-            systemInstruction: request.systemPrompt,
-            abortSignal: signal,
-            tools: buildTools(request),
-            toolConfig: request.webSearchEnabled ? { includeServerSideToolInvocations: true } : undefined,
-            // 查证过的轮次压低采样随机性，让模型照搜索结果讲；上层只给
-            // grounded 语义，取什么温度由本包决定。
-            temperature: request.grounded ? GEMINI_GROUNDED_REPLY_TEMPERATURE : GEMINI_REPLY_TEMPERATURE,
-            maxOutputTokens: GEMINI_REPLY_MAX_TOKENS,
-          },
-        }),
+        (): GenerateContentParameters => buildBody(request, tools),
         GEMINI_REPLY_ERROR_LABEL
       );
 
@@ -130,7 +155,7 @@ export function createGeminiReplySession({ promptBlocks, signal }: AiReplySessio
       pendingModelContent = result.response.candidates?.[0]?.content;
       return {
         ok: true,
-        text: result.response.text || null,
+        text: responseText(result.response) || null,
         functionCalls: extractFunctionCalls(result.response),
         webSearchCalls,
         finishReason: undefined,

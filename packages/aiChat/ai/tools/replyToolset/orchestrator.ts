@@ -25,6 +25,7 @@ import {
   viewStickerPackTool,
 } from "../stickers";
 import { buildGenerateImageToolDefinition, createGenerateImageExecutor } from "./imageGeneration";
+import { buildImageReferenceBlock } from "./imageReference";
 import { buildGenerateSongToolDefinition, createGenerateSongExecutor } from "./songGeneration";
 import {
   buildAddReactionToolDefinition,
@@ -59,8 +60,8 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   const declarations: AiToolDefinition[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
   ];
-  if (imageEnabled) declarations.push(buildGenerateImageToolDefinition(ctx));
-  if (songEnabled) declarations.push(buildGenerateSongToolDefinition(ctx));
+  if (imageEnabled) declarations.push(buildGenerateImageToolDefinition());
+  if (songEnabled) declarations.push(buildGenerateSongToolDefinition());
   if (addReactionDefinition !== null) declarations.push(addReactionDefinition);
   if (viewDefinition !== null) declarations.push(viewDefinition);
   if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
@@ -127,15 +128,22 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
 
   return {
     functions,
-    // 服务端联网检索恒开：额度核销与耗尽后的摘挂由回复循环负责，
-    // 见 workers/aiChat/replyModel.ts 的 MAX_WEB_SEARCH_CALLS_PER_REPLY 分支。
+    // 本轮生图参考素材文案。与 declarations 同一时刻取快照，交给运行时状态区块渲染
+    // （见 imageReference.ts 与 workers/aiChat/runtimeState.ts）；没挂生图工具时是空串，
+    // 那一段因此与不含生图的轮次逐字相同。生图/生歌的群冷却不在提示词里，只由两个
+    // 执行器在调用时判定。
+    imageReference: buildImageReferenceBlock({ ctx, imageEnabled }),
+    // 服务端联网检索恒开：次数是写进提示词的软限制，回复循环只记账并在超出时
+    // 点名，不摘工具（见 workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
     webSearch: true,
     has: (name: string): boolean => names.has(name),
     execute: async (name: string, argumentsJson: string): Promise<string> => {
       if (!ctx.isActive()) {
         return toolError(REPLY_INVALIDATED_TOOL_ERROR);
       }
-      // 这道门禁只管「还有没有额度开始一次调用」。会落地第二个动作的两个工具
+      // 动作硬顶的唯一兑现点：回复循环不再按预算摘工具声明（一轮内 tools 必须逐字
+      // 恒定，见 workers/aiChat/replyModel.ts 的头注），额度用完后模型再调用只会撞在
+      // 这里。这道门禁只管「还有没有额度开始一次调用」。会落地第二个动作的两个工具
       // （send_message 的手滑补字、generate_image 的超长图注独立补发）各自在
       // 执行侧按剩余预算决定要不要发那一条，因此这里比调用前的已用数就够，不必
       // 按最坏情况预留、白白吃掉最后一格（见 typoHandling.ts 的

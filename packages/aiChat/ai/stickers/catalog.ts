@@ -56,7 +56,7 @@ interface ParsedStickerCatalog {
  * 线程，经 diskIOWorker 落盘到 memory/stickers/<pack>.json，重启后由
  * hydrateStickerCatalogs 灌回、已有描述的贴纸不重新生成。整包级别的对账
  * （白名单里整个移除了某个包）不在这里——那是启动读盘时的事，见
- * workers/diskIO/snapshotFiles.ts 的 recoverStickerCatalogs。
+ * workers/diskIO/snapshotFiles.ts 的 maintainStickerCatalogFiles。
  *
  * 内存态（catalogs/dirtyPacks/failedEntries/generatingPacks）见
  * cache/workers/aiChat/stickers/catalog.ts。本模块是这些原始集合唯一的业务写入方；外部

@@ -42,7 +42,7 @@
 - **The coverage denominator includes all source code**: `bun run check` adds every production runtime module to the denominator. Modules untouched by any test count as 0% covered. Both function and line coverage must remain at least 90%, so adding an untested module directly lowers global coverage.
 - **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled. `any` is forbidden in production code but exempted in tests.
 - **Explicit type annotations are lint-enforced**: in production code (`index.ts`, `packages/`, `scripts/`), variables, parameters, and destructuring must be annotated via `@typescript-eslint/typedef`, and function and callback return types via `@typescript-eslint/explicit-function-return-type` — neither accepts contextual inference. TypeScript forbids annotating `for...of` / `for...in` loop variables, so the rule skips them automatically; consts whose initializer is already an arrow function are also exempt. Test files are not subject to this.
-- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, executable permissions on tracked non-script files, constants, cache ownership, and Worker/Telegram boundaries against the real thread module graph. It also statically checks production Node-compatibility imports, Telegram cleanup and retention exemptions, active cold-migration entries, all 14 declared coverage locations, and the trilingual performance record. `check:coverage` performs a separate real coverage run to ensure the declarations have not drifted together.
+- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, executable permissions on tracked non-script files, constants, cache ownership, and Worker/Telegram boundaries against the real thread module graph. It also statically checks that every timer handle installed under `packages/workers/` is `unref()`ed, production Node-compatibility imports, Telegram cleanup and retention exemptions, active cold-migration entries, all 14 declared coverage locations, and the trilingual performance record. Cross-references written in comments as "see `<module>.ts`'s `<symbol>`" are checked the same way: it fails when the named module no longer declares or re-exports that symbol (`export *` compatibility entries are expanded one level). `check:coverage` performs a separate real coverage run to ensure the declarations have not drifted together.
 
 ### Dependency Release-Age Gate
 
@@ -50,7 +50,7 @@ Dependency installation always uses the seven-day release-age gate in `bunfig.to
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **3053 tests / 310 files / 97823 `expect()` calls**; full-source **function coverage 96.91% / line coverage 97.19%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **3129 tests / 314 files / 98189 `expect()` calls**; full-source **function coverage 97.04% / line coverage 97.32%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -134,7 +134,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~857 source lines across 84 files). The figures live only in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md); the “On languages” note in each README just links there and carries no numbers. Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
+- **The Chinese string-literal count**. The figures live only in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md); the “On languages” note in each README just links there and carries no numbers. Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

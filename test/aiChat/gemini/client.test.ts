@@ -273,6 +273,19 @@ describe("Gemini request safety settings", () => {
     expect(request.config?.abortSignal?.aborted).toBe(false);
   });
 
+  test("请求体携带的 signal 已取消时不调用 SDK", async () => {
+    const controller: AbortController = new AbortController();
+    controller.abort();
+
+    await expect(requestGeminiResult("summary", (): GenerateContentParameters => ({
+      model: "gemini-test",
+      contents: "hello",
+      config: { abortSignal: controller.signal },
+    }), "Gemini test")).resolves.toMatchObject({ ok: false, diagnostic: "request aborted" });
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(loggerError).not.toHaveBeenCalled();
+  });
+
   test("调用方 invalidate signal 与 deadline 合成后下传，不被替换掉", async () => {
     const controller: AbortController = new AbortController();
     await requestGeminiResponse("summary", (): GenerateContentParameters => ({
@@ -286,5 +299,38 @@ describe("Gemini request safety settings", () => {
     expect(passed?.aborted).toBe(false);
     controller.abort();
     expect(passed?.aborted).toBe(true);
+  });
+
+  test("SDK 内部等待不监听 signal 时，invalidate 仍立即结束调用", async () => {
+    const controller: AbortController = new AbortController();
+    let settleSdkTask!: (value: GenerateContentResponse) => void;
+    const sdkTask: Promise<GenerateContentResponse> = new Promise<GenerateContentResponse>((
+      resolve: (value: GenerateContentResponse) => void
+    ): void => {
+      settleSdkTask = resolve;
+    });
+    generateContent.mockImplementationOnce((): Promise<GenerateContentResponse> => sdkTask);
+
+    const pendingResult: Promise<Awaited<ReturnType<typeof requestGeminiResult>>> =
+      requestGeminiResult("summary", (): GenerateContentParameters => ({
+        model: "gemini-test",
+        contents: "hello",
+        config: { abortSignal: controller.signal },
+      }), "Gemini test");
+    controller.abort();
+
+    await expect(pendingResult).resolves.toMatchObject({
+      ok: false,
+      failureKind: "request",
+      diagnostic: "request aborted",
+    });
+    expect(loggerError).not.toHaveBeenCalled();
+    settleSdkTask(geminiResponse({
+      candidates: [{
+        finishReason: FinishReason.STOP,
+        content: { role: "model", parts: [{ text: "late" }] },
+      }],
+    }));
+    await sdkTask;
   });
 });

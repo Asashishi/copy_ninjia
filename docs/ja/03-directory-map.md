@@ -134,7 +134,7 @@
 - **`workers/aiChat/`**
   - **所有者**：AI 雑談 Worker。
   - **内容**：ローリングメモリ、返信の受理判定、機嫌、ステッカーカタログとセット、
-    両 provider のクライアント singleton。
+    および両 provider のクライアント singleton。
 - **`workers/antiRaid/`**
   - **所有者**：Anti-Raid Worker。
   - **内容**：認証/ロックダウンの状態機械、連投ウィンドウ、広告検出キュー、

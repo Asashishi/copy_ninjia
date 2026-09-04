@@ -45,6 +45,8 @@ mock.module("../../../packages/aiChat/ai/telegramImage", () => ({ downloadTelegr
 mock.module("../../../packages/aiChat/ai/mediaTaskRunner", () => ({ runMediaTask }));
 
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageGeneration");
+const { buildImageReferenceBlock } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageReference");
+const { IMAGE_REFERENCE_POINTER } = await import("../../../packages/consts/aiChat/prompts/tools");
 const { createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
 const { claimImageGeneration, resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
 const { HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
@@ -120,30 +122,57 @@ afterEach(() => {
 });
 
 describe("generate_image 工具执行器", () => {
-  test("动态工具说明告知模型当前是否可以生图", () => {
-    expect(buildGenerateImageToolDefinition(buildContext()).description).toContain("当前状态：可以生图");
-    expect(buildGenerateImageToolDefinition(buildContext()).description).toContain("每轮最多成功发送 1 张");
+  test("工具声明逐字恒定：冷却与参考素材都不进 schema", () => {
+    const baseline = JSON.stringify(buildGenerateImageToolDefinition());
+    expect(buildGenerateImageToolDefinition().description).toContain("每轮最多成功发送 1 张");
+    expect(buildGenerateImageToolDefinition().description).toContain(IMAGE_REFERENCE_POINTER);
 
-    const unauthorizedDescription = buildGenerateImageToolDefinition(buildContext(-1001, false, false)).description;
-    expect(unauthorizedDescription).toContain("当前状态：不可生图");
-    expect(unauthorizedDescription).toContain("不是直接回复或 @ 你的触发");
-    expect(buildGenerateImageToolDefinition(buildContext()).description).toContain("由你判断当前消息是否明确要求");
-
+    // 冷却推进、superAdmin 旁路、带不带参考图，都不得改变声明的任何一个字节：
+    // 这段前缀每轮重发，只要它变了供应商侧的缓存就整段落空。
     claimImageGeneration({ chatId: -1001, bypassCooldown: false });
-    const coolingDescription = buildGenerateImageToolDefinition(buildContext()).description;
-    expect(coolingDescription).toContain("当前状态：暂不可生图");
-    expect(coolingDescription).toContain("本轮不要调用");
-    expect(coolingDescription).toContain("必须用 send_message 明确告诉群友当前暂时不能使用生图");
+    expect(JSON.stringify(buildGenerateImageToolDefinition())).toBe(baseline);
+    resetImageGenerationCache();
+    expect(JSON.stringify(buildGenerateImageToolDefinition())).toBe(baseline);
+  });
 
-    const superAdminDescription = buildGenerateImageToolDefinition(buildContext(-1001, true)).description;
-    expect(superAdminDescription).toContain("当前状态：可以生图");
-    expect(superAdminDescription).toContain("superAdmin");
+  test("参考素材文案原样落在运行时状态区块里，冷却一个字都不写", () => {
+    const absent = buildImageReferenceBlock({ ctx: buildContext(), imageEnabled: true });
+    expect(absent).toContain("当前触发没有附带参考图片");
+    expect(absent).toContain("未指定比例时默认使用 1:1");
+    expect(absent).not.toContain("冷却");
 
-    const referenceDescription = buildGenerateImageToolDefinition(buildReferenceContext()).description;
-    expect(referenceDescription).toContain("参考图片素材");
-    expect(referenceDescription).toContain("1600×900");
-    expect(referenceDescription).toContain("默认使用最接近原素材的 16:9");
-    expect(referenceDescription).toContain("不要向群友索要 URL");
+    // 冷却推进与 superAdmin 旁路都不得在这一段里留下任何痕迹：本轮能不能生图只在
+    // 工具真的被调用时由执行侧判定。
+    claimImageGeneration({ chatId: -1001, bypassCooldown: false });
+    expect(buildImageReferenceBlock({ ctx: buildContext(), imageEnabled: true })).toBe(absent);
+    expect(buildImageReferenceBlock({ ctx: buildContext(-1001, true), imageEnabled: true })).toBe(absent);
+
+    const reference = buildImageReferenceBlock({ ctx: buildReferenceContext(), imageEnabled: true });
+    expect(reference).toContain("参考图片素材");
+    expect(reference).toContain("1600×900");
+    expect(reference).toContain("默认使用最接近原素材的 16:9");
+    expect(reference).toContain("不要向群友索要 URL");
+  });
+
+  test("本轮没挂生图工具时参考素材段整段不出现", () => {
+    expect(buildImageReferenceBlock({
+      ctx: buildContext(-1001, false, false),
+      imageEnabled: false,
+    })).toBe("");
+  });
+
+  test("冷却中在解析参数之前就返回提示，不请求模型", async () => {
+    claimImageGeneration({ chatId: -1001, bypassCooldown: false });
+
+    // 参数故意写坏：冷却闸排在参数解析之前，模型拿到的必须是「还要等多久」而不是一句
+    // 参数错误——提示词里没有任何冷却状态，这条工具结果是它唯一的告知渠道。
+    const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "" })));
+
+    expect(result.error).toBe("Image generation is cooling down in this chat");
+    expect(result.retry_after_seconds).toBeGreaterThan(0);
+    expect(result.retryable).toBe(false);
+    expect(result.required_action).toContain("send_message");
+    expect(generateChatImage).not.toHaveBeenCalled();
   });
 
   test("不是直接回复/@ 的触发由执行侧拒绝，且不消耗冷却", async () => {
@@ -499,7 +528,7 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("工具说明告诉模型图注与图同属一条消息、超长会被拆开", () => {
-    const definition = buildGenerateImageToolDefinition(buildContext());
+    const definition = buildGenerateImageToolDefinition();
     const schema = definition.parametersJsonSchema as {
       properties: { caption: { description: string; maxLength: number } };
       required: string[];

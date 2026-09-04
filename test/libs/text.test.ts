@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resetGraphemeSegmenterCache, sanitizeDisplayName, sanitizeInline, splitGraphemes, truncateAtClauseBoundary, truncateInline } from "../../packages/libs/text";
+import { resetGraphemeSegmenterCache, sanitizeDisplayName, sanitizeInline, splitGraphemes, stripLeadingAtSigns, truncateAtClauseBoundary, truncateInline } from "../../packages/libs/text";
 
 describe("libs/text truncateAtClauseBoundary", () => {
   test("不超限时原样返回", () => {
@@ -189,5 +189,49 @@ describe("libs/text sanitizeInline", () => {
       }
       expect(sanitizeInline(sample)).toBe(reference(sample));
     }
+  });
+});
+
+describe("libs/text stripLeadingAtSigns", () => {
+  test("与 replace(/^@+/, \"\") 逐字等价，不含 @ 的常见路径原样返回同一个对象", () => {
+    const clean: string = "alice_dev";
+    expect(stripLeadingAtSigns(clean)).toBe(clean);
+    // 首码元判定只是快路径，剥离结果必须与正则实现完全一致。
+    for (const raw of ["", "@", "@@", "@alice", "@@@alice", "a@b", "@ alice", "@@a@b", " @alice"]) {
+      expect(stripLeadingAtSigns(raw)).toBe(raw.replace(/^@+/, ""));
+    }
+  });
+});
+
+describe("libs/text sanitizeInline 字符类", () => {
+  /**
+   * 前置判定改成逐码元扫描后，它认的空白集合必须与折叠正则的字符类完全相同。
+   * 集合少一个字符，那种空白就再也不会被折叠——转录「一行 = 一条消息」的拼装
+   * 当场出缺口；多一个字符则会把正常文本判成要清洗，虽不影响正确性也白付一次
+   * 整串重建。这里对全 BMP 逐码元与参考实现对拍。
+   */
+  test("全 BMP 逐码元与折叠正则的字符类逐字一致", () => {
+    const collapse: RegExp = new RegExp("[\\s\\u0085]+", "g");
+    const reference = (raw: string): string => raw.replace(collapse, " ").trim();
+    let mismatches: number = 0;
+    let firstMismatch: string = "";
+    for (let code: number = 0; code <= 0xffff; code += 1) {
+      // 代理区单独的半个码元不构成合法字符，两条路径都当普通码元处理即可。
+      const character: string = String.fromCharCode(code);
+      // 三种位置各覆盖一条判据：孤立内部空白、首位空白、连续空白。
+      const isolated: string = `a${character}b`;
+      const leading: string = `${character}ab`;
+      const doubled: string = `a${character} b`;
+      if (
+        sanitizeInline(isolated) !== reference(isolated) ||
+        sanitizeInline(leading) !== reference(leading) ||
+        sanitizeInline(doubled) !== reference(doubled)
+      ) {
+        mismatches += 1;
+        if (mismatches === 1) firstMismatch = `U+${code.toString(16)}`;
+      }
+    }
+    expect(firstMismatch).toBe("");
+    expect(mismatches).toBe(0);
   });
 });

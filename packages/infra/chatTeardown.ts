@@ -1,29 +1,24 @@
-import { chatTeardownCallbacks } from "../cache/main/chatTeardown";
-import type {
-  ChatRuntimeOwner,
-  ChatTeardownCallback,
-  ChatTeardownReason,
-} from "../types/chatTeardown";
+import { CHAT_TEARDOWN_ORDER } from "../consts/chatTeardown";
+import { clearChatStateField } from "./storage/stateStore";
+import { teardownRegisteredChat } from "./chatTeardownRegistry";
+import type { ChatTeardownReason } from "../types/chatTeardown";
 
-/** 上层 owner 反向注册 teardown；本叶子注册表不静态依赖任何业务领域。 */
-export function registerChatTeardown(owner: ChatRuntimeOwner, callback: ChatTeardownCallback): void {
-  chatTeardownCallbacks[owner] = callback;
-}
-
-/** 执行指定 owner 当前注册的 teardown；未注册时是显式 no-op。 */
-export function teardownRegisteredChat(
-  owner: ChatRuntimeOwner,
+/** 配置去留由调用入口决定；这里只停止 owner、取消计时器并发起权限恢复。 */
+export async function teardownChatRuntime(
   chatId: number,
   reason: ChatTeardownReason
 ): Promise<void> {
-  try {
-    return Promise.resolve(chatTeardownCallbacks[owner](chatId, reason));
-  } catch (error: unknown) {
-    // owner 必须在调用栈内同步关闸；这里只把同步异常标准化为 rejected Promise，
-    // 让组合 teardown 仍能启动其余 owner 并统一等待全部结果。
-    const reason: Error = error instanceof Error
-      ? error
-      : new Error("Chat teardown callback threw a non-Error value.", { cause: error });
-    return Promise.reject(reason);
+  // 代理入口与全部 owner 必须在第一个 await 前同步关闸；异步 owner 随后统一等待。
+  clearChatStateField(chatId, "isProxySendEnabled");
+  const teardowns: Promise<void>[] = [];
+  for (const owner of CHAT_TEARDOWN_ORDER) {
+    teardowns.push(teardownRegisteredChat(owner, chatId, reason));
+  }
+  const results: PromiseSettledResult<void>[] = await Promise.allSettled(teardowns);
+  const failures: unknown[] = results.flatMap(
+    (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
+  );
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `Chat runtime teardown failed for chat ${chatId}.`);
   }
 }

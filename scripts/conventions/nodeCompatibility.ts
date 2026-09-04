@@ -199,10 +199,6 @@ const PRODUCTION_NODE_IMPORTS: Readonly<
 
 /** 生产文件中有实测或字节接口语义依据的 Node Buffer 全局调用位置。 */
 const PRODUCTION_BUFFER_GLOBALS: Readonly<Record<string, string>> = {
-  "packages/aiChat/ai/songCover.ts": "binary image payload conversion for Sharp",
-  "packages/commands/luckChallenge/draw.ts": "binary receipt payload encoding",
-  "packages/consts/diskIO/joinLog.ts": "UTF-8 byte-size capacity constants",
-  "packages/infra/image.ts": "binary Telegram image payload conversion",
   "packages/libs/atomicFile.ts": "descriptor writes require a stable byte buffer",
   "packages/libs/jsonBytes.ts": "allocation-free UTF-8 byte length on the hot serialization boundary",
   "packages/workers/diskIO/appendOnlyDayFile.ts": "descriptor append and recovery byte buffers",
@@ -248,6 +244,54 @@ function allowsImport(
   imported: string
 ): boolean {
   return allowance?.symbols === "*" || allowance?.symbols.includes(imported) === true;
+}
+
+function runtimeNodeLoad(node: ts.Node): { readonly kind: "dynamic import" | "require"; readonly moduleName: string } | undefined {
+  if (!ts.isCallExpression(node) || node.arguments.length !== 1) return undefined;
+  const argument: ts.Expression | undefined = node.arguments[0];
+  if (
+    argument === undefined ||
+    !(ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) ||
+    !argument.text.startsWith("node:")
+  ) {
+    return undefined;
+  }
+  if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+    return { kind: "dynamic import", moduleName: argument.text };
+  }
+  if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
+    return { kind: "require", moduleName: argument.text };
+  }
+  return undefined;
+}
+
+function isInsideTypeNode(node: ts.Node): boolean {
+  let parent: ts.Node | undefined = node.parent;
+  while (parent !== undefined && !ts.isSourceFile(parent)) {
+    if (ts.isTypeNode(parent)) return true;
+    parent = parent.parent;
+  }
+  return false;
+}
+
+function isBufferGlobalUse(node: ts.Node): boolean {
+  if (!ts.isIdentifier(node) || node.text !== "Buffer") return false;
+  const parent: ts.Node = node.parent;
+  if (isInsideTypeNode(node)) return false;
+  const isImportName: boolean =
+    ts.isImportClause(parent) ||
+    ts.isImportSpecifier(parent) ||
+    ts.isNamespaceImport(parent) ||
+    ts.isImportEqualsDeclaration(parent);
+  if (isImportName) return false;
+  const isPropertyName: boolean =
+    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+    (ts.isPropertyAssignment(parent) && parent.name === node) ||
+    (ts.isPropertyDeclaration(parent) && parent.name === node) ||
+    (ts.isPropertySignature(parent) && parent.name === node) ||
+    (ts.isMethodDeclaration(parent) && parent.name === node) ||
+    (ts.isMethodSignature(parent) && parent.name === node);
+  return !isPropertyName;
 }
 
 /**
@@ -313,31 +357,44 @@ export function collectNodeCompatibilityProblems(
       }
     }
   }
+
+  const visitRuntimeNodeLoads = (node: ts.Node): void => {
+    const load: { readonly kind: "dynamic import" | "require"; readonly moduleName: string } | undefined =
+      runtimeNodeLoad(node);
+    if (load !== undefined) {
+      const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+      problems.push(
+        `${relativePath}:${line} uses unreviewed runtime ${load.kind} of ${load.moduleName}; ` +
+        "use reviewed static named imports"
+      );
+    }
+    ts.forEachChild(node, visitRuntimeNodeLoads);
+  };
+  visitRuntimeNodeLoads(source);
+
   let reportedBufferGlobal: boolean = false;
+  let usesBufferGlobal: boolean = false;
+  const bufferAllowance: string | undefined = PRODUCTION_BUFFER_GLOBALS[relativePath];
   const visitBufferGlobal = (node: ts.Node): void => {
-    if (reportedBufferGlobal || PRODUCTION_BUFFER_GLOBALS[relativePath] !== undefined) return;
-    const isBuffer: boolean = ts.isIdentifier(node) && node.text === "Buffer";
-    if (isBuffer) {
-      const parent: ts.Node = node.parent;
-      const isPropertyName: boolean =
-        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-        (ts.isPropertyAssignment(parent) && parent.name === node) ||
-        (ts.isPropertyDeclaration(parent) && parent.name === node) ||
-        (ts.isPropertySignature(parent) && parent.name === node) ||
-        (ts.isMethodDeclaration(parent) && parent.name === node) ||
-        (ts.isMethodSignature(parent) && parent.name === node);
-      const isGlobalUse: boolean = !isPropertyName;
-      if (isGlobalUse) {
+    if (isBufferGlobalUse(node)) {
+      usesBufferGlobal = true;
+      if (bufferAllowance === undefined && !reportedBufferGlobal) {
         const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
         problems.push(
           `${relativePath}:${line} uses unreviewed Node compatibility global Buffer`
         );
         reportedBufferGlobal = true;
-        return;
       }
     }
     ts.forEachChild(node, visitBufferGlobal);
   };
-  if (!isScript) visitBufferGlobal(source);
+  if (!isScript) {
+    visitBufferGlobal(source);
+    if (bufferAllowance !== undefined && !usesBufferGlobal) {
+      problems.push(
+        `${relativePath}:1 retains a stale Node compatibility global Buffer allowance`
+      );
+    }
+  }
   return problems;
 }

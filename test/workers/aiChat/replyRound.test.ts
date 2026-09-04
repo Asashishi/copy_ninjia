@@ -25,6 +25,7 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
   capturedContext = ctx;
   return {
     functions: [],
+    imageReference: "",
     webSearch: true,
     has: (): boolean => true,
     execute,

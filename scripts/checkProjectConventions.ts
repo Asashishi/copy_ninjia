@@ -17,6 +17,8 @@ import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
 import { collectCacheOwnershipProblems } from "./conventions/cacheOwnership";
 import type { CacheOwnerPrefix } from "./conventions/cacheOwnership";
+import { collectWorkerTimerProblems } from "./conventions/workerTimers";
+import { collectCommentReferenceProblems } from "./conventions/commentReferences";
 import { collectNodeCompatibilityProblems } from "./conventions/nodeCompatibility";
 import { collectTelegramMessageProblems } from "./conventions/telegramMessages";
 
@@ -26,6 +28,7 @@ const CONSTS_ROOT: string = join(PROJECT_ROOT, "packages", "consts");
 const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
 const SCRIPTS_ROOT: string = join(PROJECT_ROOT, "scripts");
 const COMMANDS_ROOT: string = join(SOURCE_ROOT, "commands");
+const WORKERS_ROOT: string = join(SOURCE_ROOT, "workers");
 
 /** 读取 Git 跟踪清单；约定检查只约束会进入提交的文件。 */
 function trackedFiles(): string[] {
@@ -242,6 +245,11 @@ async function parseSourceFile(path: string): Promise<ts.SourceFile> {
  */
 const cacheSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CACHE_ROOT));
 const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_ROOT));
+/** 注释交叉引用按 basename 兜底解析时的候选集合；生产源码与入口一份就够。 */
+const referenceResolutionFiles: readonly string[] = [
+  ...sourceFilesUnder(SOURCE_ROOT),
+  THREAD_ENTRIES.main!,
+];
 // 仓库根的 index.ts 是生产入口，AGENTS.md 多条规则的适用范围写的就是「packages/ 与
 // index.ts」；它不在 sourceFilesUnder(SOURCE_ROOT) 里，必须显式并进同一趟判定，
 // 否则日志边界、Node 兼容与声明规范在这个文件上没有任何门禁。
@@ -262,6 +270,19 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
     for (const problem of collectModuleCacheProblems(params)) failures.push(problem);
   }
   for (const problem of collectDeclarationProblems(params)) failures.push(problem);
+  for (const problem of await collectCommentReferenceProblems({
+    projectRoot: PROJECT_ROOT,
+    path,
+    source,
+    allSourceFiles: referenceResolutionFiles,
+  })) {
+    failures.push(problem);
+  }
+  if (path.startsWith(WORKERS_ROOT + "/")) {
+    for (const problem of collectWorkerTimerProblems(PROJECT_ROOT, path, source)) {
+      failures.push(problem);
+    }
+  }
 }
 
 // Node 兼容 import 是唯一同时约束 scripts/ 的规则，其余判定只针对 packages/。

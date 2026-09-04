@@ -1,5 +1,5 @@
 import { REPLY_REFERENCE_MAX_CHARS } from "../../consts/aiChat/memory";
-import { sanitizeInline, truncateInline } from "../../libs/text";
+import { sanitizeInline, stripLeadingAtSigns, truncateInline } from "../../libs/text";
 import { formatTokyoTime } from "../../libs/time";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AiRecordContext, AiReplyReference } from "../../types/aiChat/protocol";
@@ -13,7 +13,7 @@ import type { AiRecordContext, AiReplyReference } from "../../types/aiChat/proto
  * 的判断逐字不变；落盘也不变——JSON.stringify 本来就丢弃值为 undefined 的键。
  */
 export function sanitizeReplyReference(reference: AiReplyReference): BufferedReplyReference {
-  const sanitizedUsername: string = sanitizeInline(reference.username ?? "").replace(/^@+/, "");
+  const sanitizedUsername: string = stripLeadingAtSigns(sanitizeInline(reference.username ?? ""));
   const sanitizedQuote: string = truncateInline(sanitizeInline(reference.quote ?? ""), REPLY_REFERENCE_MAX_CHARS);
   const sanitizedForwardedFrom: string = sanitizeInline(reference.forwardedFrom ?? "");
   return {
@@ -42,7 +42,7 @@ export function buildBufferedMessage(
 ): BufferedMessage | null {
   const sanitizedText: string = sanitizeInline(text);
   if (!sanitizedText) return null;
-  const sanitizedUsername: string = sanitizeInline(source.username ?? "").replace(/^@+/, "");
+  const sanitizedUsername: string = stripLeadingAtSigns(sanitizeInline(source.username ?? ""));
   const sanitizedForwardedFrom: string = sanitizeInline(source.forwardedFrom ?? "");
   return {
     messageId: source.messageId,

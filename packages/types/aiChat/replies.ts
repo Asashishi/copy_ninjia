@@ -36,9 +36,13 @@ export interface QueuedReplyTrigger {
 
 /** 一轮回复交给模型的有序初始上下文区块。三段恒定出现——触发类型只改变
  * replyTask 的内容（直接触发时它开头多一句唤起者声明），不改变区块数量，
- * 因此本接口没有可选字段，构造点也不会分出第二种 shape。区块保持领域语义，
- * 直到各供应商实现包的 replySession.ts 边界，才映射成同一个 user 轮次下的
- * 多段文本。 */
+ * 因此本接口没有可选字段，构造点也不会分出第二种 shape。
+ *
+ * 本接口只管这三段；模型实际收到的第四段「本轮运行时状态」（心情与当前时间）
+ * 由 workers/aiChat/runtimeState.ts 在 replyModel 里补在转录与回复任务之间——它
+ * 不来自聊天记忆，也不参与本接口的构造。区块保持领域语义，直到各供应商实现包的
+ * replySession.ts 边界，才按稳定/易变两组映射成同一个 user 轮次下的多段文本
+ * （见 types/aiChat/provider.ts 的 AiReplySessionParams）。 */
 export interface ReplyPromptSections {
   readonly referenceMemory: string;
   readonly currentConversation: string;
@@ -94,6 +98,11 @@ export interface ReplyToolset {
   /** 本轮全部自定义函数声明（静态查询工具 + 现组装的行动工具）。中立
    *  JSON Schema 表达，两家供应商实现包各自转成自家形状。 */
   functions: readonly AiToolDefinition[];
+  /** 本轮生图参考素材文案，拼进运行时状态区块（见
+   *  aiChat/ai/tools/replyToolset/imageReference.ts）。没挂生图工具时为空串。
+   *  文案不进工具声明：素材尺寸每次触发都不同，会打散供应商侧缓存的稳定前缀。
+   *  群冷却连这里都不进，只由执行器在调用时判定并直接拒绝。 */
+  imageReference: string;
   /** 本轮是否挂载供应商的服务端联网检索工具（Gemini 的 googleSearch /
    *  OpenAI 的 hosted web_search）。 */
   webSearch: boolean;

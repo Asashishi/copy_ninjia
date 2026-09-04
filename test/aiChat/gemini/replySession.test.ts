@@ -62,8 +62,8 @@ beforeEach(() => {
 });
 
 describe("Gemini 回复会话的请求映射", () => {
-  test("初始上下文区块映射成同一个 user 轮次下的多段 text", async () => {
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块一", "区块二", "区块三"] });
+  test("初始上下文按稳定区块在前、易变区块在后的两个 user 轮次映射", async () => {
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["区块一"], volatileBlocks: ["区块二", "区块三"] });
     await session.request({
       systemPrompt: "系统提示词",
       functions: [SEND_MESSAGE],
@@ -74,15 +74,15 @@ describe("Gemini 回复会话的请求映射", () => {
     const body: GenerateContentParameters = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
     expect(requestGeminiResult.mock.calls[0]![0]).toBe("text");
     expect(body.model).toBe(getAgentDeploymentConfig().text.model);
-    expect(body.contents).toEqual([{
-      role: "user",
-      parts: [{ text: "区块一" }, { text: "区块二" }, { text: "区块三" }],
-    }]);
+    expect(body.contents).toEqual([
+      { role: "user", parts: [{ text: "区块一" }] },
+      { role: "user", parts: [{ text: "区块二" }, { text: "区块三" }] },
+    ]);
     expect(body.config?.systemInstruction).toBe("系统提示词");
   });
 
   test("采样温度与 token 上限取自本包 consts，未查证轮用常规温度", async () => {
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -96,7 +96,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("已查证轮压低采样随机性，让模型照搜索结果讲", async () => {
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -109,7 +109,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("开检索时挂 googleSearch 并要求接回服务端调用记录", async () => {
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -132,7 +132,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("关检索时摘掉 googleSearch，也不再要求接回服务端调用记录", async () => {
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -156,7 +156,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("函数全被摘掉时不挂空的 functionDeclarations", async () => {
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [],
@@ -174,7 +174,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
     const content: Content = modelContent();
     requestGeminiResult.mockResolvedValueOnce(okResult(content));
 
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     const turn = await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -197,14 +197,42 @@ describe("Gemini 回复会话的对话记录累积", () => {
     });
     const body = (requestGeminiResult.mock.calls[1]![1] as () => GenerateContentParameters)();
     const contents = body.contents as Content[];
-    expect(contents).toHaveLength(3);
+    // 稳定前缀排在最前，随后是易变区块、模型轮与函数结果。
+    expect(contents).toHaveLength(4);
+    expect(contents[0]).toEqual({ role: "user", parts: [{ text: "参考记忆" }] });
     // 模型轮次原样接回：thought signature 必须还在。
-    expect(contents[1]).toBe(content);
-    expect(contents[1]?.parts?.[0]?.thoughtSignature).toBe("sig-abc");
-    expect(contents[2]).toEqual({
+    expect(contents[2]).toBe(content);
+    expect(contents[2]?.parts?.[0]?.thoughtSignature).toBe("sig-abc");
+    expect(contents[3]).toEqual({
       role: "user",
       parts: [{ functionResponse: { id: "call-1", name: "send_message", response: { success: true } } }],
     });
+  });
+
+  test("每轮都发送完整前缀并只使用 Gemini 隐式缓存", async () => {
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录", "运行时状态", "回复任务"] });
+    for (let round: number = 0; round < 2; round += 1) {
+      await session.request({
+        systemPrompt: "系统提示词",
+        functions: [SEND_MESSAGE],
+        webSearchEnabled: true,
+        grounded: false,
+      });
+    }
+
+    for (const call of requestGeminiResult.mock.calls) {
+      const body: GenerateContentParameters = (call[1] as () => GenerateContentParameters)();
+      expect(body.config?.cachedContent).toBeUndefined();
+      expect(body.config?.systemInstruction).toBe("系统提示词");
+      expect(body.config?.tools).toBeDefined();
+      expect(body.config?.toolConfig).toEqual({ includeServerSideToolInvocations: true });
+      expect(body.contents).toEqual([
+        { role: "user", parts: [{ text: "参考记忆" }] },
+        { role: "user", parts: [{ text: "转录" }, { text: "运行时状态" }, { text: "回复任务" }] },
+      ]);
+      expect(body.config?.temperature).toBe(GEMINI_REPLY_TEMPERATURE);
+      expect(body.config?.maxOutputTokens).toBe(GEMINI_REPLY_MAX_TOKENS);
+    }
   });
 
   test("响应缺 content 时交不出可续接的轮次", async () => {
@@ -217,7 +245,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
       },
     } as unknown as GeminiRequestResult);
 
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -231,7 +259,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
 
   test("工具返回非对象 JSON 时按不变量抛错", async () => {
     requestGeminiResult.mockResolvedValueOnce(okResult(modelContent()));
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -255,7 +283,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
       },
     } as unknown as GeminiRequestResult);
 
-    const session: AiReplySession = createGeminiReplySession({ promptBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     const turn = await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],

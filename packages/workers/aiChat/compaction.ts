@@ -160,6 +160,13 @@ function promotePendingSummary(chatId: number): void {
  * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
  *
+ * systemPrompt 只放逐字恒定的 SUMMARY_SYSTEM_PROMPT，当前时间拼在 userContent
+ * **末尾**、整批转录之后。两家供应商都按 systemInstruction/instructions → 输入
+ * 的顺序比对前缀，这一段常量因此是本请求唯一可被隐式缓存的前缀；时间精确到秒，
+ * 放进 systemPrompt 或 userContent 开头都会让它从第一个字节起每次都对不上。
+ * 转录行自带每条消息的发送时间（见 chatTranscript.ts 的 formatBufferedMessageLine），
+ * 末尾这句只补「现在几点」。
+ *
  * 截断用子句边界而不是硬切：各实现包的摘要 token 上限（GEMINI_/OPENAI_CHAT_SUMMARY_MAX_TOKENS）
  * 远大于 SUMMARY_MAX_CHARS，
  * 上游不会把长度约束到这个量级附近，硬切留下的半句会被 buildMemorySnapshot
@@ -172,8 +179,8 @@ async function summarizeBatch(batch: BufferedMessage[], signal: AbortSignal): Pr
     : "";
   return summaryAiProvider().generateText({
     purpose: "chatSummary",
-    systemPrompt: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
-    userContent: selfNote + batch.map(formatBufferedMessageLine).join("\n"),
+    systemPrompt: SUMMARY_SYSTEM_PROMPT,
+    userContent: selfNote + batch.map(formatBufferedMessageLine).join("\n") + "\n\n" + currentTimeSentence(),
     signal,
     errorLabel: CHAT_SUMMARY_ERROR_LABEL,
     normalize: (text: string): string => {

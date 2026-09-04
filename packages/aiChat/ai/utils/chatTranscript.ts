@@ -1,7 +1,7 @@
 import type { BufferedMessage, BufferedReplyReference, ReplyChainLink } from "../../../types/aiChat/memory";
 import type { AiSpeakerSnapshot } from "../../../types/aiChat/speaker";
 import { FALLBACK_SPEAKER_NAME } from "../../../consts/auto";
-import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from "../../../consts/aiChat/memory";
+import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS, TIER_BOUNDARY_ALIGNMENT } from "../../../consts/aiChat/memory";
 import {
   FORWARD_ROSTER_BLOCK_NAME,
   forwardTagTemplate,
@@ -19,7 +19,7 @@ import {
   transcriptDateHeader,
   TRIGGER_NOT_IN_TRANSCRIPT_LABEL,
 } from "../../../consts/aiChat/prompts/transcript";
-import { truncateInline } from "../../../libs/text";
+import { stripLeadingAtSigns, truncateInline } from "../../../libs/text";
 
 /**
  * 发言人的显示名：first/last 拼接，都没有则给个占位。
@@ -51,7 +51,7 @@ export function displayBufferedMessageName(message: BufferedMessage): string {
  * 最多调用一次，形状一致由测试守住。
  */
 export function formatSpeakerIdentity(speaker: AiSpeakerSnapshot): string {
-  const usernameTag: string = speaker.username ? ` [username:@${speaker.username.replace(/^@+/, "")}]` : "";
+  const usernameTag: string = speaker.username ? ` [username:@${stripLeadingAtSigns(speaker.username)}]` : "";
   return `[id:${speaker.id}]${usernameTag} ${displaySpeakerName(speaker)}`;
 }
 
@@ -63,7 +63,7 @@ function formatForwardTag(forwardedFrom: string | undefined): string {
 
 /** 回复关系以内嵌元数据呈现，模型无需靠相邻消息猜测被回复对象。 */
 function formatReplyReference(reference: BufferedReplyReference): string {
-  const usernameTag: string = reference.username ? ` [username:@${reference.username.replace(/^@+/, "")}]` : "";
+  const usernameTag: string = reference.username ? ` [username:@${stripLeadingAtSigns(reference.username)}]` : "";
   const quote: string = reference.quote ? replyQuoteInlineTemplate(reference.quote) : "";
   return replyTagTemplate({
     target: `[message_id:${reference.messageId}] [id:${reference.id}]${usernameTag} ${displaySpeakerName(reference)}`,
@@ -123,7 +123,7 @@ export function formatBufferedMessageLine(message: BufferedMessage): string {
   // message_id 段直接写进最终模板，不先物化 messageIdTag 中间串。usernameTag /
   // replyTag 仍留变量——它们是条件分支，
   // 内联成三元反而让这行长到读不动，且省不掉那次物化。
-  const usernameTag: string = message.username ? ` [username:@${message.username.replace(/^@+/, "")}]` : "";
+  const usernameTag: string = message.username ? ` [username:@${stripLeadingAtSigns(message.username)}]` : "";
   const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo) : "";
   return `[${message.at}] [message_id:${message.messageId}] [id:${message.id}]${usernameTag} ${displayBufferedMessageName(message)}${formatForwardTag(message.forwardedFrom)}${replyTag}：${message.text}`;
 }
@@ -360,7 +360,14 @@ export function buildTieredVerbatimTranscript(
   const context: TranscriptContext = scanned.duplicates === 0
     ? scanned
     : buildTranscriptContext(deduped, options);
-  const hotStart: number = Math.max(0, deduped.length - COMPACT_BATCH_SIZE);
+  // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐，不取 `length - COMPACT_BATCH_SIZE`
+  // 的精确值：后者每来一条消息就把边界前移一条，整段【最热记忆】相对上一轮
+  // 必然错位，自动前缀缓存从边界处就断掉。向上取整让【最热记忆】恒不超过
+  // COMPACT_BATCH_SIZE 条，与该区块标题写死的条数一致。
+  const overflow: number = deduped.length - COMPACT_BATCH_SIZE;
+  const hotStart: number = overflow <= 0
+    ? 0
+    : Math.ceil(overflow / TIER_BOUNDARY_ALIGNMENT) * TIER_BOUNDARY_ALIGNMENT;
   const text: string =
     buildRosterBlock(context) + "\n\n" +
     (hotStart > 0

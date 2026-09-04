@@ -18,11 +18,13 @@ import type { Uploadable } from "openai";
 import {
   OPENAI_CHAT_SUMMARY_MAX_TOKENS,
   OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS,
+  OPENAI_REQUEST_TIMEOUT_MS,
   OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
   OPENAI_STORE_RESPONSES,
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
+import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { finalizeAiTextResult } from "../ai/utils/textResult";
 import {
   isEndpointFailureStatus,
@@ -106,15 +108,24 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
     const upload: Uploadable = await toFile(request.clip.bytes, "voice.ogg", {
       type: request.clip.mime,
     });
+    if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
+    const requestSignal: AbortSignal = signalWithTimeout(
+      request.signal,
+      OPENAI_REQUEST_TIMEOUT_MS
+    );
+    requestSignal.throwIfAborted();
     const response: OpenAI.Audio.Transcriptions.TranscriptionCreateResponse =
-      await getOpenAiClient("media").audio.transcriptions.create(
-        {
-          file: upload,
-          model,
-          prompt: request.prompt,
-          response_format: "json",
-        },
-        { signal: request.signal }
+      await raceAbortOrThrow(
+        getOpenAiClient("media").audio.transcriptions.create(
+          {
+            file: upload,
+            model,
+            prompt: request.prompt,
+            response_format: "json",
+          },
+          { signal: requestSignal }
+        ),
+        requestSignal
       );
     return finalizeAiTextResult(request.normalize(response.text));
   } catch (error: unknown) {

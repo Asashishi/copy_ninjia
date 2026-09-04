@@ -9,7 +9,14 @@
 
 /** 告知模型的单轮动作上限；低于执行硬顶，为模型偏离提示留出安全余量。 */
 export const AI_MAX_ACTIONS_PER_REPLY: number = 8;
-/** 一轮所有可见动作与表情反应的执行侧硬顶。 */
+/**
+ * 一轮所有可见动作与表情反应的执行侧硬顶。
+ *
+ * 必须**大于** AI_MAX_ACTIONS_PER_REPLY：模型按提示词收在 8 个以内，正常轮次根本
+ * 摸不到这个数，它只兜住模型偏离提示的情况。兑现只发生在 toolset.execute 的门禁上
+ * （见 aiChat/ai/tools/replyToolset/orchestrator.ts），达到后**不摘工具声明**——一轮
+ * 内的 tools 必须逐字恒定，否则从这一轮起整段前缀缓存全部落空。
+ */
 export const HARD_MAX_ACTIONS_PER_REPLY: number = 11;
 /** 单轮回复允许执行的表情反应次数。 */
 export const MAX_REACTIONS_PER_REPLY: number = 1;
@@ -23,13 +30,26 @@ export const TYPING_DELAY_JITTER_MS: number = 400;
 export const TYPING_DELAY_MAX_MS: number = 7_500;
 
 /** 工具对话往返硬顶，防止模型工具调用死循环。 */
-export const MAX_TOOL_ROUNDS: number = 35;
-/** 单轮回复累计允许的服务端联网检索调用数；达到后续轮次移除检索工具。
- *  两家供应商的检索工具真名不同，预算口径与提示词称呼都保持中立，见
- *  consts/aiChat/prompts/search.ts 的 WEB_SEARCH_TOOL_LABEL。 */
+export const MAX_TOOL_ROUNDS: number = 45;
+/**
+ * 单轮回复累计允许的服务端联网检索调用数。
+ *
+ * **软限制**：这个数逐字写进 WEB_SEARCH_INSTRUCTION 交给模型自己收敛，执行侧只由
+ * replyModel.ts 记账并在跨过上限时点名。服务端检索工具在一轮内恒挂——它排在两家
+ * tools 数组的首位，中途摘掉会让整段前缀缓存从第一个字节起对不上。
+ *
+ * 两家供应商的检索工具真名不同，预算口径与提示词称呼都保持中立，见
+ * consts/aiChat/prompts/search.ts 的 WEB_SEARCH_TOOL_LABEL。
+ */
 export const MAX_WEB_SEARCH_CALLS_PER_REPLY: number = 5;
-/** 所有自定义函数调用（含查询、查看、失败/拒绝调用）的整轮硬顶。 */
-export const MAX_CUSTOM_TOOL_CALLS_PER_REPLY: number = 25;
+/**
+ * 所有自定义函数调用（含查询、查看、失败/拒绝调用）的整轮硬顶。
+ *
+ * 纯代码侧限制，不进提示词。超出后 replyModel.ts 对每次调用回一条「预算耗尽、
+ * 停止调用工具」的工具结果，**不摘函数声明**：一轮内的 tools 必须逐字恒定。
+ * 真正的止损是 MAX_TOOL_ROUNDS。
+ */
+export const MAX_CUSTOM_TOOL_CALLS_PER_REPLY: number = 35;
 /** Telegram chat action 的心跳间隔与连续失败止损阈值。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 /** 连续发送 chat action 失败后的止损阈值。 */

@@ -9,7 +9,7 @@ import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
 import { getChatState, getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { registerChatTeardown } from "../infra/chatTeardown";
+import { registerChatTeardown } from "../infra/chatTeardownRegistry";
 import { isJaTranslationConfigured } from "../copy/availability";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { jaTranslateConfigReadiness } from "../config/readiness";

@@ -17,7 +17,11 @@ import {
   UNMUTE_TARGET_TEXTS,
 } from "../../packages/consts/commands";
 import { CHAT_TEARDOWN_ORDER } from "../../packages/consts/chatTeardown";
-import { AGENT_API_KEY_PLACEHOLDERS } from "../../packages/consts/agent";
+import {
+  AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
+  AGENT_API_KEY_PLACEHOLDERS,
+  AGENT_CAPABILITY_NAMES,
+} from "../../packages/consts/agent";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
 import {
   GAG_MIN_OPERATION_TIERS,
@@ -66,6 +70,10 @@ import { getChatState } from "../../packages/infra/storage/stateStore";
 test("常量表本身不可整体替换或就地增删", () => {
   // @ts-expect-error Agent 示例占位凭据表由配置严格解析共享，不允许追加。
   expect(() => AGENT_API_KEY_PLACEHOLDERS.push("replace-with-extra-api-key")).toBeDefined();
+  // @ts-expect-error 只读数组不允许就地追加
+  expect(() => AGENT_CAPABILITY_NAMES.push("video")).toBeDefined();
+  // @ts-expect-error 只读数组不允许按下标改写
+  expect(() => { AGENT_AI_CHAT_REQUIRED_CAPABILITIES[0] = "image"; }).toBeDefined();
   // @ts-expect-error 只读数组不允许就地追加
   expect(() => BOT_COMMANDS.push({ command: "x", description: "x" })).toBeDefined();
   // @ts-expect-error 只读数组不允许按下标改写

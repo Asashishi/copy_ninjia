@@ -55,6 +55,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 const botAdmin = await import("../../packages/infra/botAdmin");
 const botAdminCache = await import("../../packages/cache/main/botAdmin");
 const chatTeardown = await import("../../packages/infra/chatTeardown");
+const chatTeardownRegistry = await import("../../packages/infra/chatTeardownRegistry");
 const { CHAT_TEARDOWN_ORDER } = await import("../../packages/consts/chatTeardown");
 
 function memberContext(newStatus: string, oldStatus: string = "administrator"): never {
@@ -75,25 +76,22 @@ beforeEach(() => {
   getChatMember.mockImplementation(async (): Promise<{ status: string }> => ({ status: "administrator" }));
   botAdminCache.botPermissionFetches.clear();
   botAdminCache.botPermissionRequestTokens.clear();
-  chatTeardown.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
-  chatTeardown.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
-  chatTeardown.registerChatTeardown("qa", (chatId: number): void => { calls.push(`qa:${chatId}`); });
-  chatTeardown.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
-  chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
+  chatTeardownRegistry.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
+  chatTeardownRegistry.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
+  chatTeardownRegistry.registerChatTeardown("qa", (chatId: number): void => { calls.push(`qa:${chatId}`); });
+  chatTeardownRegistry.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
+  chatTeardownRegistry.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
 });
 
 describe("chat runtime teardown", () => {
-  // 这条用例是本文件的回归防线：组合 teardown 曾手写五个 owner 里的四个，漏掉的
-  // `qa` 让 `/set_qa` 表单在停管后继续留在群里，而当时的顺序断言只列了那四个，
-  // 于是测试也跟着看不见。改为从 CHAT_TEARDOWN_ORDER 取 owner 清单后，新增 owner
-  // 时忘记接线会在这里失败（漏进顺序表则先在编译期失败）。
+  // 从穷尽顺序表生成期望；新增 owner 时，顺序表与运行时派发必须同时覆盖。
   test("ChatRuntimeOwner 的每个 owner 都被组合 teardown 派发到", async () => {
     const dispatched: string[] = [];
     for (const owner of CHAT_TEARDOWN_ORDER) {
-      chatTeardown.registerChatTeardown(owner, (): void => { dispatched.push(owner); });
+      chatTeardownRegistry.registerChatTeardown(owner, (): void => { dispatched.push(owner); });
     }
 
-    await botAdmin.teardownChatRuntime(-1001, "explicitDisable");
+    await chatTeardown.teardownChatRuntime(-1001, "explicitDisable");
 
     expect(dispatched).toEqual([...CHAT_TEARDOWN_ORDER]);
     expect(new Set(dispatched).size).toBe(CHAT_TEARDOWN_ORDER.length);
@@ -101,19 +99,19 @@ describe("chat runtime teardown", () => {
 
   test("teardown 原因原样传给 owner，用于区分显式清理与失权停管", async () => {
     const reasons: string[] = [];
-    chatTeardown.registerChatTeardown("antiRaid", (_chatId: number, reason): void => {
+    chatTeardownRegistry.registerChatTeardown("antiRaid", (_chatId: number, reason): void => {
       reasons.push(reason);
     });
 
-    await botAdmin.teardownChatRuntime(-1001, "explicitDisable");
-    await botAdmin.teardownChatRuntime(-1001, "lostAuthority");
+    await chatTeardown.teardownChatRuntime(-1001, "explicitDisable");
+    await chatTeardown.teardownChatRuntime(-1001, "lostAuthority");
 
     expect(reasons).toEqual(["explicitDisable", "lostAuthority"]);
   });
 
   test("按 proxy、copy、gag、qa、AI、Anti-Raid 顺序拆除组合运行态", async () => {
     states.set(-1001, { isProxySendEnabled: true });
-    await botAdmin.teardownChatRuntime(-1001, "explicitDisable");
+    await chatTeardown.teardownChatRuntime(-1001, "explicitDisable");
     expect(calls).toEqual([
       "clear:isProxySendEnabled",
       "copy:-1001",
@@ -129,12 +127,13 @@ describe("chat runtime teardown", () => {
     const copyError = new Error("copy teardown failed");
     const aiError = new Error("AI teardown failed");
     states.set(-1001, { isProxySendEnabled: true });
-    chatTeardown.registerChatTeardown("copy", (): never => { throw copyError; });
-    chatTeardown.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
-    chatTeardown.registerChatTeardown("aiChat", async (): Promise<void> => { throw aiError; });
-    chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
+    chatTeardownRegistry.registerChatTeardown("copy", (): never => { throw copyError; });
+    chatTeardownRegistry.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
+    chatTeardownRegistry.registerChatTeardown("aiChat", async (): Promise<void> => { throw aiError; });
+    chatTeardownRegistry.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
 
-    const error = await botAdmin.teardownChatRuntime(-1001, "lostAuthority").catch((reason: unknown) => reason);
+    const error = await chatTeardown.teardownChatRuntime(-1001, "lostAuthority")
+      .catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual([copyError, aiError]);
@@ -188,7 +187,7 @@ describe("chat runtime teardown", () => {
       botPermissions: botPermissions(),
       isProxySendEnabled: true,
     });
-    chatTeardown.registerChatTeardown("antiRaid", async (): Promise<void> => { throw teardownError; });
+    chatTeardownRegistry.registerChatTeardown("antiRaid", async (): Promise<void> => { throw teardownError; });
 
     const error = await botAdmin.handleMyChatMemberUpdate(memberContext("left"))
       .catch((reason: unknown) => reason);
@@ -225,7 +224,7 @@ describe("chat runtime teardown", () => {
       botPermissions: botPermissions(),
       isProxySendEnabled: true,
     });
-    chatTeardown.registerChatTeardown("aiChat", async (): Promise<void> => { throw teardownError; });
+    chatTeardownRegistry.registerChatTeardown("aiChat", async (): Promise<void> => { throw teardownError; });
 
     const error = await botAdmin.handleMyChatMemberUpdate(memberContext("member"))
       .catch((reason: unknown) => reason);

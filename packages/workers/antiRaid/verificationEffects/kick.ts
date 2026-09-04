@@ -47,6 +47,7 @@ function scheduleKickRetry({
       VERIFICATION_TERMINAL_RETRY_MAX_MS
     )
   );
+  entry.timer.unref();
 }
 
 interface RunKickMemberEffectParams {

@@ -377,7 +377,7 @@ describe("Telegram 常规动作封装", () => {
     })).toBeUndefined();
   });
 
-  test("没有图注时不带 caption 字段", async () => {
+  test("没有图注时 caption 不带值，也不退化成空串", async () => {
     const sendPhotoMock = mock(async (..._args: unknown[]) => ({ message_id: 81 }));
     const api = { sendPhoto: sendPhotoMock } as unknown as TelegramApi;
 
@@ -388,7 +388,13 @@ describe("Telegram 常规动作封装", () => {
       api,
     });
 
-    expect(sendPhotoMock.mock.calls[0]?.[2]).not.toHaveProperty("caption");
+    // payload 按定形一次初始化，可选字段恒定出现、缺席时取值 undefined，因此
+    // 这里判的是**取值**而不是「有没有这个键」。要守住的事实没变：空图注绝不能
+    // 变成空串发出去。「undefined 不会进请求体」由
+    // test/infra/telegramSendPayload.test.ts 直接对着 grammY 的序列化边界钉住。
+    const other: Readonly<Record<string, unknown>> =
+      sendPhotoMock.mock.calls[0]?.[2] as Readonly<Record<string, unknown>>;
+    expect(other.caption).toBeUndefined();
   });
 
   test("正确区分当前成员、受限成员和已离开成员", async () => {

@@ -5,7 +5,7 @@
  * 工厂与 beforeEach 复位两份用例都要用。
  */
 
-import { beforeEach, mock } from "bun:test";
+import { beforeEach, mock, spyOn } from "bun:test";
 import type { InlineKeyboardMarkup } from "grammy/types";
 import type {
   AntiRaidWorkerEvent,
@@ -149,6 +149,30 @@ function requireDeps(): VerificationEffectsDeps {
     throw new Error("installVerificationEffectsHooks must run before the harness helpers.");
   }
   return deps.current;
+}
+
+/**
+ * 把 setTimeout 换成只记录延时的桩，返回**带 unref 的**假句柄。
+ *
+ * Worker 内的 timer 装完一律 unref（门禁见 scripts/conventions/workerTimers.ts）。
+ * 桩既然宣称满足 `ReturnType<typeof setTimeout>`，就必须给出这个类型真正有的
+ * 方法；只返回一个裸数字会让生产侧的 unref 那一行抛 TypeError。
+ *
+ * @param delays 承接每次排期延时的数组，按调用顺序追加。
+ * @returns 还原 setTimeout 的函数，调用方在 finally 里执行。
+ */
+export function recordScheduledDelays(delays: number[]): () => void {
+  const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+    ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
+      delays.push(delayMs ?? 0);
+      const handle: { unref: () => unknown; ref: () => unknown } = {
+        unref: (): unknown => handle,
+        ref: (): unknown => handle,
+      };
+      return handle as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof globalThis.setTimeout
+  );
+  return (): void => { timeoutSpy.mockRestore(); };
 }
 
 export const CHAT_ID: number = -1001;

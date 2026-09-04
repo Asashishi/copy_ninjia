@@ -1,6 +1,6 @@
 /** 踢人前的拉人者身份核查，以及同步副作用的逐条执行。 */
 
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 import type {
   ExpelSnapshot,
@@ -31,6 +31,7 @@ const {
   warnings,
   installVerificationEffectsHooks,
   telegramApi,
+  recordScheduledDelays,
 } = await import("../../helpers/verificationEffectsHarness");
 
 const { runVerificationEffects } = await import("../../../packages/workers/antiRaid/verificationEffects");
@@ -284,12 +285,7 @@ describe("同步副作用的逐条执行", () => {
 
   test("私密模式踢人失败且成员仍在群时保留 KICK_PENDING 并退避重试", async () => {
     const delays: number[] = [];
-    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
-      ((...args: Parameters<typeof setTimeout>): ReturnType<typeof setTimeout> => {
-        delays.push(args[1] ?? 0);
-        return 1 as unknown as ReturnType<typeof setTimeout>;
-      }) as typeof setTimeout
-    );
+    const restoreTimeouts: () => void = recordScheduledDelays(delays);
     testState.kickSucceeds = false;
     testState.membershipPresent = true;
     const state = kickPendingState();
@@ -302,17 +298,12 @@ describe("同步副作用的逐条执行", () => {
     expect(state.executionStarted).toBeFalse();
     expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
     expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
-    timeoutSpy.mockRestore();
+    restoreTimeouts();
   });
 
   test("私密模式确证没有限制成员权限时本轮零请求，权限恢复后下一轮继续踢人", async () => {
     const delays: number[] = [];
-    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
-      ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
-        delays.push(delayMs ?? 0);
-        return 1 as unknown as ReturnType<typeof setTimeout>;
-      }) as typeof globalThis.setTimeout
-    );
+    const restoreTimeouts: () => void = recordScheduledDelays(delays);
     try {
       applyBotPermissionsChange(CHAT_ID, {
         canRestrictMembers: false,
@@ -338,7 +329,7 @@ describe("同步副作用的逐条执行", () => {
       expect(kickedUserIds).toEqual([USER_ID]);
       expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeTrue();
     } finally {
-      timeoutSpy.mockRestore();
+      restoreTimeouts();
     }
   });
 

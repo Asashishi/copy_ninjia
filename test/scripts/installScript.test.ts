@@ -2,9 +2,32 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
+  AGENT_CAPABILITY_NAMES,
+} from "../../packages/consts/agent";
+import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 
 const INSTALL_SCRIPT_PATH: string = join(import.meta.dir, "..", "..", "install.sh");
 const INSTALL_SCRIPT: string = readFileSync(INSTALL_SCRIPT_PATH, "utf8");
+
+/** 从 install.sh 原文取一个 `readonly NAME=(a b c)` 数组的元素。 */
+function extractShellArray(name: string): readonly string[] {
+  const match: RegExpMatchArray | null = INSTALL_SCRIPT.match(
+    new RegExp(`^readonly ${name}=\\(([^)]*)\\)$`, "m")
+  );
+  expect(match).not.toBeNull();
+  return (match?.[1] ?? "").trim().split(/\s+/);
+}
+
+/** 从 install.sh 原文取一个 `readonly NAME=值` 标量。 */
+function extractShellScalar(name: string): string {
+  const match: RegExpMatchArray | null = INSTALL_SCRIPT.match(
+    new RegExp(`^readonly ${name}=(\\S+)$`, "m")
+  );
+  expect(match).not.toBeNull();
+  return match?.[1] ?? "";
+}
 
 describe("install.sh 静态 systemd 数据根边界", () => {
   test("脚本通过 bash 语法检查", () => {
@@ -138,6 +161,50 @@ function runWithInstallFunctions(
 
 afterEach(() => {
   for (const root of shellRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+/**
+ * install.sh 里那几组硬编码必须跟着代码走。
+ *
+ * 安装器是 `curl | bash` 的一次性入口，装完就没了，没有任何运行时会去核对它
+ * 抄下来的这些值。加一项 AI 能力却忘了改问卷，表现是新部署**静默**配不出那项
+ * 能力——不报错、不缺文件，只是问卷少问一句。三组值各自与权威源对拍。
+ */
+describe("install.sh 与代码共享同一份事实", () => {
+  test("问卷的能力全集与 AGENT_CAPABILITY_NAMES 逐项一致（含顺序）", () => {
+    expect(extractShellArray("AGENT_CAPABILITIES")).toEqual([...AGENT_CAPABILITY_NAMES]);
+  });
+
+  test("问卷的必备能力与 AGENT_AI_CHAT_REQUIRED_CAPABILITIES 逐项一致", () => {
+    expect(extractShellArray("AGENT_REQUIRED_CAPABILITIES"))
+      .toEqual([...AGENT_AI_CHAT_REQUIRED_CAPABILITIES]);
+  });
+
+  test("Bun 版本下限不高于本仓库固定的 @types/bun 版本", () => {
+    const major: number = Number(extractShellScalar("REQUIRED_BUN_MAJOR"));
+    const minor: number = Number(extractShellScalar("REQUIRED_BUN_MINOR"));
+    expect(Number.isSafeInteger(major)).toBe(true);
+    expect(Number.isSafeInteger(minor)).toBe(true);
+    // @types/bun 钉死在一个精确版本，它就是本仓库实际测过的运行时。
+    // 安装器要求的下限高于它，等于门禁跑的和装机跑的不是同一档 Bun。
+    const typesVersion: string = (
+      JSON.parse(
+        readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")
+      ) as { readonly devDependencies: Readonly<Record<string, string>> }
+    ).devDependencies["@types/bun"] ?? "";
+    const parts: readonly string[] = typesVersion.replace(/^[^0-9]*/, "").split(".");
+    const typesMajor: number = Number(parts[0]);
+    const typesMinor: number = Number(parts[1]);
+    expect(Number.isSafeInteger(typesMajor)).toBe(true);
+    expect(Number.isSafeInteger(typesMinor)).toBe(true);
+    expect(major * 1_000 + minor).toBeLessThanOrEqual(typesMajor * 1_000 + typesMinor);
+  });
+
+  test("重填问卷的判据用的就是 TELEGRAM_BOT_TOKEN_PLACEHOLDER", () => {
+    // install.sh 靠 grep 这个串判断「telegram.json 还是示例值、需要问」。
+    // 常量改了而这里没改，安装器会把已填好的配置当成没填，反复追问。
+    expect(INSTALL_SCRIPT).toContain(`'${TELEGRAM_BOT_TOKEN_PLACEHOLDER}'`);
+  });
 });
 
 describe("install.sh 启动后核对 journal 非零退出", () => {

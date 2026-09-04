@@ -137,7 +137,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
     (`main/aiChat.ts`, `main/antiRaid/`).
 - **`workers/aiChat/`**
   - **Owner**: AI chat Worker.
-  - **Contents**: rolling memory, reply admission, mood, sticker catalog and sets, both providers' client singletons.
+  - **Contents**: rolling memory, reply admission, mood, sticker catalog and sets, and both providers' client singletons.
 - **`workers/antiRaid/`**
   - **Owner**: Anti-Raid Worker.
   - **Contents**: verification/lockdown state machines, flood windows, ad-detection queue,

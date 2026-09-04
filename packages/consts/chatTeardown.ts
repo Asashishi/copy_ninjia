@@ -21,7 +21,7 @@ function completeOwnerOrder<T extends readonly ChatRuntimeOwner[]>(
  * 异步 owner。`qa` 排在 `gag` 之后：两者都只做进程内状态收尾，不产生远端等待。
  *
  * 新增 owner 时把它加进 `ChatRuntimeOwner` 就必须同时加到这里，否则编译不过。
- * 所属模块：infra/botAdmin.ts 的 teardownChatRuntime。
+ * 所属模块：infra/chatTeardown.ts 的 teardownChatRuntime。
  */
 export const CHAT_TEARDOWN_ORDER: readonly ChatRuntimeOwner[] = completeOwnerOrder([
   "copy",

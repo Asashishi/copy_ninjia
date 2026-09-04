@@ -88,12 +88,34 @@ describe("Gemini 生歌适配器", () => {
     expect(combined?.aborted).toBe(true);
   });
 
-  test("本轮作废后的失败不记日志；判的是调用方那个 signal 而不是合成后的", async () => {
+  test("本轮作废立即结束等待且不记日志", async () => {
     const controller: AbortController = new AbortController();
-    create.mockRejectedValueOnce(new Error("aborted"));
+    let settleSdkTask!: (value: unknown) => void;
+    const sdkTask: Promise<unknown> = new Promise<unknown>((
+      resolve: (value: unknown) => void
+    ): void => {
+      settleSdkTask = resolve;
+    });
+    create.mockImplementationOnce((): Promise<unknown> => sdkTask);
+    const pendingResult: ReturnType<typeof generateGeminiSong> = generateGeminiSong({
+      prompt: "p",
+      signal: controller.signal,
+    });
     controller.abort();
 
-    await expect(generateGeminiSong({ prompt: "p", signal: controller.signal })).resolves.toBeNull();
+    await expect(pendingResult).resolves.toBeNull();
+    expect(loggerError).not.toHaveBeenCalled();
+    settleSdkTask(audioInteraction());
+    await sdkTask;
+  });
+
+  test("调用前已作废时不调用生歌端点", async () => {
+    const controller: AbortController = new AbortController();
+    controller.abort();
+
+    await expect(generateGeminiSong({ prompt: "p", signal: controller.signal }))
+      .resolves.toBeNull();
+    expect(create).not.toHaveBeenCalled();
     expect(loggerError).not.toHaveBeenCalled();
   });
 

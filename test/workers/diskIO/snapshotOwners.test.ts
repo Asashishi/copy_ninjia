@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
@@ -18,10 +19,13 @@ const deleteReplies: AiMemoryDeletedPersistedReply[] = [];
 const persistedReplies: AiMemoryPersistedReply[] = [];
 
 const {
+  adoptAiMemorySnapshots,
   deleteAiMemorySnapshot,
   configureAiMemoryDeletePersistedReply,
   configureAiMemoryPersistedReply,
   flushAiMemorySnapshots,
+  inspectAiMemorySnapshots,
+  maintainAiMemorySnapshots,
   markAiMemorySnapshotDirty,
 } = await import("../../../packages/workers/diskIO/aiMemoryFiles");
 const {
@@ -35,6 +39,7 @@ const {
   aiMemoryCache,
   hydrateAiMemoryCache,
   aiMemoryFlushState,
+  aiMemoryImmediateRevisions,
   aiMemoryOperations,
   aiMemoryRevisions,
   deletedAiMemoryChats,
@@ -42,11 +47,17 @@ const {
   forgetAiMemoryChat,
   resetAiMemoryCache,
 } = await import("../../../packages/cache/workers/diskIO/snapshots");
-const { writeStickerCatalogFile: writeStickerCatalogFileToDisk } =
-  await import("../../../packages/workers/diskIO/snapshotFiles");
+const {
+  writeAiMemoryFile: writeAiMemoryFileToDisk,
+  writeStickerCatalogFile: writeStickerCatalogFileToDisk,
+} = await import("../../../packages/workers/diskIO/snapshotFiles");
 const { SNAPSHOT_FLUSH_INTERVAL_MS } =
   await import("../../../packages/consts/diskIO/snapshots");
-const { STICKER_MEMORY_DIR } = await import("../../../packages/consts/paths");
+const { AI_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } =
+  await import("../../../packages/consts/paths");
+
+/** 本文件里真实落盘的那个 AI 记忆群；必须是合法的负数 Telegram 群 ID。 */
+const REAL_AI_CHAT_ID: number = -1001234567890;
 
 /**
  * 清空隔离数据根下的贴纸目录。
@@ -57,6 +68,22 @@ const { STICKER_MEMORY_DIR } = await import("../../../packages/consts/paths");
  */
 function clearStickerDirectory(): void {
   rmSync(STICKER_MEMORY_DIR, { recursive: true, force: true });
+}
+
+/** 清空隔离数据根下的 AI 记忆目录；理由同上，inspect 会严格解码目录里的每个文件。 */
+function clearAiMemoryDirectory(): void {
+  rmSync(AI_MEMORY_DIR, { recursive: true, force: true });
+}
+
+/** 一份合法的 version=1 AI 记忆快照文本，供三阶段恢复用例写进真实目录。 */
+function aiMemorySnapshotJson(summary: string): string {
+  return JSON.stringify({
+    version: 1,
+    buffer: [],
+    summaries: [summary],
+    pendingSummary: null,
+    savedAt: 1_700_000_000_000,
+  }, null, 2);
 }
 
 /** 一份合法的 version=1 贴纸目录快照文本，供三阶段恢复用例写进真实目录。 */
@@ -97,6 +124,7 @@ beforeEach(() => {
   resetAiMemoryCache();
   resetStickerCatalogCache();
   clearStickerDirectory();
+  clearAiMemoryDirectory();
   recoverAiMemories.mockClear();
   recoverStickerCatalogs.mockClear();
   writeAiMemoryFile.mockClear();
@@ -112,6 +140,7 @@ afterEach(() => {
   resetAiMemoryCache();
   resetStickerCatalogCache();
   clearStickerDirectory();
+  clearAiMemoryDirectory();
 });
 
 describe("Disk I/O snapshot domain owners", () => {
@@ -132,6 +161,70 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(stickerCatalogCache.get("pack_one")).toBe(stickerSnapshotJson("恢复出来的目录"));
 
     expect(() => maintainStickerCatalogSnapshots(inspection)).not.toThrow();
+  });
+
+  test("AI 记忆的三阶段启动 API 走真实目录：inspect 只读、adopt 才发布、maintenance 清临时文件", async () => {
+    // 与上面那条贴纸用例对称。生产启动只走这三个函数（见 workers/diskIO/startup.ts），
+    // 此前 AI 记忆这一份只在 diskIOWorker.test.ts 里被整份 mock 掉，一行都没真跑过。
+    writeAiMemoryFileToDisk(REAL_AI_CHAT_ID, aiMemorySnapshotJson("恢复出来的记忆"));
+    // 上一轮写到一半留下的临时文件：inspect 只登记不删，maintenance 才清。
+    mkdirSync(AI_MEMORY_DIR, { recursive: true });
+    const leftover: string = join(AI_MEMORY_DIR, `stale${TMP_FILE_SUFFIX}`);
+    writeFileSync(leftover, "half-written", "utf8");
+    aiMemoryCache.set(-1009999999999, "stale-memory");
+
+    const inspection = await inspectAiMemorySnapshots();
+    // 第一阶段只读：owner 缓存与临时文件在 adopt/maintenance 之前都必须原封不动。
+    expect(aiMemoryCache.get(-1009999999999)).toBe("stale-memory");
+    expect(existsSync(leftover)).toBeTrue();
+    expect(inspection.snapshots.get(REAL_AI_CHAT_ID))
+      .toBe(aiMemorySnapshotJson("恢复出来的记忆"));
+    expect(inspection.temporaryPaths).toEqual([leftover]);
+
+    expect(adoptAiMemorySnapshots(inspection)).toBe(aiMemoryCache);
+    // 整体替换：adopt 之后旧 owner 内容不得残留。
+    expect(aiMemoryCache.has(-1009999999999)).toBeFalse();
+    expect(aiMemoryCache.get(REAL_AI_CHAT_ID)).toBe(aiMemorySnapshotJson("恢复出来的记忆"));
+
+    maintainAiMemorySnapshots(inspection);
+    expect(existsSync(leftover)).toBeFalse();
+  });
+
+  test("dirty 项的快照在落盘前消失时只摘标记，不再写盘", () => {
+    // 两个 owner 走的是各自的循环（AI 记忆自己那份还要顺带结算即时回执），
+    // 因此这条「标了 dirty 但快照已被删掉」的分支要各测一次。
+    markStickerCatalogSnapshotDirty("pack_gone", "sticker-gone");
+    stickerCatalogCache.delete("pack_gone");
+    flushStickerCatalogs(stickerFiles);
+    expect(dirtyStickerPacks.size).toBe(0);
+    expect(writeStickerCatalogFile).not.toHaveBeenCalled();
+
+    // AI 记忆侧先制造一次即时写盘失败，让 dirty 与即时 revision 同时留下来。
+    writeAiMemoryFile.mockImplementationOnce((): void => { throw new Error("disk full"); });
+    const errors = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      markAiMemorySnapshotDirty({
+        chatId: 42,
+        revision: 1,
+        snapshot: "memory-gone",
+        persistImmediately: true,
+        files: aiFiles,
+      });
+    } finally {
+      errors.mockRestore();
+    }
+    expect(dirtyChats.has(42)).toBeTrue();
+    expect(aiMemoryImmediateRevisions.get(42)).toBe(1);
+
+    aiMemoryCache.delete(42);
+    writeAiMemoryFile.mockClear();
+    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
+    expect(dirtyChats.size).toBe(0);
+    // 即时 revision 必须一并摘掉：快照已经不存在，那份「purge 后首份新记忆已
+    // durable」的回执永远不该再发出去。
+    expect(aiMemoryImmediateRevisions.has(42)).toBeFalse();
+    expect(writeAiMemoryFile).not.toHaveBeenCalled();
+    expect(persistedReplies).toEqual([]);
   });
 
   test("markDirty 排的定时 flush 到点后真的落盘并交回 timer 槽", () => {

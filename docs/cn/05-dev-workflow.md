@@ -42,7 +42,7 @@
 - **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 90%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
-- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；生产代码的 Node 兼容 import、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
+- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码的 Node 兼容 import、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
 
 ### 依赖冷却期
 
@@ -50,7 +50,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3053 tests / 310 files / 97823 次 `expect()`**；全源码**函数覆盖率 96.91% / 行覆盖率 97.19%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3129 tests / 314 files / 98189 次 `expect()`**；全源码**函数覆盖率 97.04% / 行覆盖率 97.32%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -134,7 +134,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 857 处 / 84 个文件）：数值只写在三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节；三语 README 的「关于语言」注只链到那一节，不重复数值。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
+- **中文字符串统计**：数值只写在三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节；三语 README 的「关于语言」注只链到那一节，不重复数值。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布

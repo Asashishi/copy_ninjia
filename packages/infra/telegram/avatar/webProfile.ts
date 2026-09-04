@@ -6,6 +6,7 @@ import {
 import { runTelegramCategorizedRequest } from "../outboundGate";
 import { readBoundedResponseBytes, readBoundedResponseText, type BoundedResponseResult } from "../../../libs/boundedResponse";
 import { parseAllowedHttpsUrl } from "../../../libs/httpUrlPolicy";
+import { stripLeadingAtSigns } from "../../../libs/text";
 import { logger } from "../../logger";
 import { avatarFetchSignal } from "./shared";
 
@@ -14,9 +15,12 @@ interface ParsedHtmlTag {
   attributes: ReadonlyMap<string, string>;
 }
 
-/** 去掉首尾空白和多余的 @，空结果视为没有公开用户名。 */
+/** 去掉首尾空白和多余的 @（剥离规则与转录、逐字缓存共用 libs/text.ts 的那一份），
+ *  空结果视为没有公开用户名。 */
 export function normalizePublicUsername(username: string | undefined): string | undefined {
-  const normalized: string | undefined = username?.trim().replace(/^@+/, "");
+  const normalized: string | undefined = username === undefined
+    ? undefined
+    : stripLeadingAtSigns(username.trim());
   return normalized || undefined;
 }
 

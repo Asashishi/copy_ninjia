@@ -5,7 +5,12 @@ import type {
 import type { TelegramApi } from "../../../types/telegramWorker";
 import { markSelfSent } from "../../selfSentTracker";
 import { telegramApi } from "../client";
-import { runTelegramAction, signalArgs } from "./core";
+import {
+  logUnlessAborted,
+  replyParametersFor,
+  runTelegramAction,
+  signalArgs,
+} from "./core";
 import { toTelegramSendResult } from "./sendResult";
 
 type SendStickerApi = Pick<TelegramApi, "sendSticker">;
@@ -36,7 +41,7 @@ export async function sendSticker({
       api.sendSticker(
         chatId,
         fileId,
-        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
+        { message_thread_id: messageThreadId },
         ...signalArgs(requestSignal)
       ),
     map: (sent: Message.StickerMessage): number | undefined => {
@@ -45,10 +50,7 @@ export async function sendSticker({
     },
     fallback: undefined,
     signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
+    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -83,19 +85,11 @@ export async function sendPhotoWithResult({
       requestSignal?: AbortSignal
     ): Promise<Message.PhotoMessage> => {
       const extension: string = mimeType === "image/jpeg" ? "jpg" : "png";
+      // 定形一次初始化，理由同 actions/messages.ts 的 sendMessageWithResult。
       const other: Parameters<SendPhotoApi["sendPhoto"]>[2] = {
-        ...(messageThreadId !== undefined
-          ? { message_thread_id: messageThreadId }
-          : {}),
-        ...(caption ? { caption } : {}),
-        ...(replyToMessageId
-          ? {
-            reply_parameters: {
-              message_id: replyToMessageId,
-              allow_sending_without_reply: true,
-            },
-          }
-          : {}),
+        message_thread_id: messageThreadId,
+        caption: caption ? caption : undefined,
+        reply_parameters: replyParametersFor(replyToMessageId),
       };
       return api.sendPhoto(
         chatId,
@@ -108,10 +102,7 @@ export async function sendPhotoWithResult({
       toTelegramSendResult(chatId, sent),
     fallback: undefined,
     signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
+    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -155,25 +146,18 @@ export async function sendAudioWithResult({
     execute: async (
       requestSignal?: AbortSignal
     ): Promise<Message.AudioMessage> => {
+      // 定形一次初始化，理由同 actions/messages.ts 的 sendMessageWithResult；
+      // 这里七个可选字段，条件展开会长出 2^7 = 128 种 shape。
       const other: Parameters<SendAudioApi["sendAudio"]>[2] = {
-        ...(messageThreadId !== undefined
-          ? { message_thread_id: messageThreadId }
-          : {}),
-        ...(caption ? { caption } : {}),
-        ...(title ? { title } : {}),
-        ...(performer ? { performer } : {}),
-        ...(duration !== undefined ? { duration } : {}),
-        ...(thumbnailBytes
-          ? { thumbnail: { bytes: thumbnailBytes, fileName: "cover.jpg" } }
-          : {}),
-        ...(replyToMessageId
-          ? {
-            reply_parameters: {
-              message_id: replyToMessageId,
-              allow_sending_without_reply: true,
-            },
-          }
-          : {}),
+        message_thread_id: messageThreadId,
+        caption: caption ? caption : undefined,
+        title: title ? title : undefined,
+        performer: performer ? performer : undefined,
+        duration,
+        thumbnail: thumbnailBytes
+          ? { bytes: thumbnailBytes, fileName: "cover.jpg" }
+          : undefined,
+        reply_parameters: replyParametersFor(replyToMessageId),
       };
       return api.sendAudio(
         chatId,
@@ -186,10 +170,7 @@ export async function sendAudioWithResult({
       toTelegramSendResult(chatId, sent),
     fallback: undefined,
     signal,
-    shouldLogError: (
-      _error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => actionSignal?.aborted !== true,
+    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -215,7 +196,7 @@ export async function copyMessage({
         chatId,
         fromChatId,
         messageId,
-        messageThreadId === undefined ? {} : { message_thread_id: messageThreadId },
+        { message_thread_id: messageThreadId },
         ...signalArgs(signal)
       ),
     map: (copied: MessageId): number | undefined => {

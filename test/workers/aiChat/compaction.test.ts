@@ -34,6 +34,7 @@ const { replyAbortControllers, resetAiChatReplyCache } = await import("../../../
 const { resetAiChatCompactionCache } = await import("../../../packages/cache/workers/aiChat/compaction");
 const { resetAiChatMemoryCache } = await import("../../../packages/cache/workers/aiChat/memory");
 const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../packages/consts/aiChat/memory");
+const { SUMMARY_SYSTEM_PROMPT } = await import("../../../packages/consts/aiChat/prompts/memory");
 const { invalidateChatReplies } = await import("../../../packages/workers/aiChat/replyGeneration");
 
 const batch: BufferedMessage[] = [bufferedMessageFixture({
@@ -76,6 +77,25 @@ afterEach(() => {
 });
 
 describe("AI 中期记忆压缩", () => {
+  test("当前时间拼在 userContent 末尾，systemPrompt 逐字恒定", async () => {
+    responses.push(response("摘要"));
+
+    scheduleRotation(-1009, batch, false);
+    await waitForRotation(-1009);
+
+    const request: { systemPrompt: string; userContent: string } =
+      generateText.mock.calls[0]?.[0] as { systemPrompt: string; userContent: string };
+    // systemPrompt 是这次请求唯一可被隐式缓存的前缀段：掺进精确到秒的时间就会
+    // 让它从第一个字节起每次都对不上（见 compaction.ts 的 summarizeBatch）。
+    expect(request.systemPrompt).toBe(SUMMARY_SYSTEM_PROMPT);
+    expect(request.systemPrompt).not.toContain("当前实际时间");
+    // 落在整批转录之后：那一段本来就每次都变，时间排在它后面不再多断一次前缀。
+    expect(request.userContent.endsWith("当前实际时间：测试。")).toBe(true);
+    expect(request.userContent.indexOf("当前实际时间")).toBeGreaterThan(
+      request.userContent.indexOf("今天继续测试压缩")
+    );
+  });
+
   test("同群轮换串行晋升上一轮摘要，并把新摘要留作待晋升项", async () => {
     responses.push(response("第一轮摘要 仍是一行"), response("第二轮摘要"));
 

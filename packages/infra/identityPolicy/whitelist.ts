@@ -105,6 +105,20 @@ export function hasWhitelistPermission(
 }
 
 /**
+ * 永久白名单身份是否持有单项权限；超级管理员按身份直授，临时白名单不进入本边界。
+ * 一次缓存读取同时完成成员关系与权限判断，供明确排除临时授权的消息热路径使用。
+ */
+export function hasPermanentWhitelistPermission(
+  id: number,
+  key: WhitelistPermissionKey
+): boolean {
+  if (id === SUPER_ADMIN_USER_ID) {
+    return SUPER_ADMIN_WHITELIST_PERMISSIONS[key];
+  }
+  return cachedWhitelistEntry(id)?.permissions[key] === true;
+}
+
+/**
  * 等目标白名单最终值落盘；幂等命中时补投仍未 ACK 的上一版最终值。
  * 命令据此才能把“缓存里已经如此”与“SQLite 已经如此”分开。
  */

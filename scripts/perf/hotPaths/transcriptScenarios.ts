@@ -117,10 +117,8 @@ export function transcriptRenderScenario(): Scenario {
         // **必须强制展平**，不能只读 `.length`：JSC 的 rope 自带长度，`.length` 不会让它
         // materialize。渲染侧逐行 `+=` 累加（见 chatTranscript.ts 的 renderRange），返回的
         // 是一棵几百个节点的 rope；只读长度的话这条场景量到的是「建了棵树」而不是「拿到
-        // 一个可用的字符串」——同一份实现、同一份输入，两种收口口径实测 42.0 vs 57.5 µs/op。
-        // 生产里这段转录一定会被展平（拼进提示词、跨线程 clone、送上网络），因此展平成本
-        // 属于本场景；不强制的话，一次把展平从链路里摘掉的回归会表现成读数变快而不是失败。
-        // charCodeAt 是最便宜的强制解析。
+        // 一个可用的字符串」。生产里这段转录会在拼提示词、跨线程 clone 或网络发送时
+        // 展平，因此展平成本属于本场景；charCodeAt 负责以固定方式触发解析。
         checksum += text.charCodeAt(text.length - 1);
       }
       return checksum;

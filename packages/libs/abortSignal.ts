@@ -20,6 +20,73 @@ export function signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: nu
   return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
 }
 
+/** 取消原因必须以 Error 传播；标准 AbortController 的 DOMException 原样保留。 */
+function abortSignalError(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason as unknown;
+  return reason instanceof Error
+    ? reason
+    : new Error("AbortSignal was aborted with a non-Error reason.", { cause: reason });
+}
+
+/** Promise 违反 Error rejection 约定时在本边界归一化，原值保留为 cause。 */
+function taskRejectionError(reason: unknown): Error {
+  return reason instanceof Error
+    ? reason
+    : new Error("Abortable task rejected with a non-Error value.", { cause: reason });
+}
+
+/**
+ * 让独占下游任务的等待在 signal 中止时立即 reject。
+ *
+ * 调用方仍须把同一个 signal 交给下游，让网络请求和后续尝试真正停止；本函数负责
+ * 收紧调用方可见的结算时机，即使下游库的内部退避等待不监听 signal，也不会把
+ * 已取消的上层任务继续挂到退避结束。底层 Promise 的最终 rejection 始终有监听，
+ * 不会在调用方提前离场后变成未处理 rejection。
+ *
+ * @param promise 独占于本次调用、不会被其他等待者复用的下游任务。
+ * @param signal 本次调用的取消源；缺省时原样返回 promise，不额外分配包装 Promise。
+ */
+export function raceAbortOrThrow<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  if (signal === undefined) return promise;
+  const activeSignal: AbortSignal = signal;
+  if (activeSignal.aborted) {
+    // 下游任务在调用本函数前已经创建；即使 signal 预先中止，也必须接住它稍后的
+    // rejection，避免 SDK 在检查已中止 signal 后产生未处理 rejection。
+    void promise.catch((_error: unknown): void => undefined);
+    return Promise.reject<T>(abortSignalError(activeSignal));
+  }
+  return new Promise<T>((
+    resolve: (value: T | PromiseLike<T>) => void,
+    reject: (reason?: unknown) => void
+  ): void => {
+    let finished: boolean = false;
+
+    function claimSettlement(): boolean {
+      if (finished) return false;
+      finished = true;
+      activeSignal.removeEventListener("abort", onAbort);
+      return true;
+    }
+
+    function onAbort(): void {
+      if (claimSettlement()) reject(abortSignalError(activeSignal));
+    }
+
+    activeSignal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(
+      (value: T): void => {
+        if (claimSettlement()) resolve(value);
+      },
+      (error: unknown): void => {
+        if (claimSettlement()) reject(taskRejectionError(error));
+      }
+    );
+  });
+}
+
 /** raceAbort 的回退值与收尾钩子。同一份共享工作的各个等待者回退值不同，故按调用点传入。 */
 export interface RaceAbortOptions<T> {
   /** 本等待者自己的取消源；缺省表示一直等到 promise 结算（此时原样返回 promise）。 */

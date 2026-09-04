@@ -45,7 +45,8 @@ mock.module("../../packages/antiRaid", () => ({ clearAdDetection, clearFloodCont
 // /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」
 // 那道边沿触发黑名单清扫（见 infra/botAdmin.ts）。
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
-mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, resolveBotAdminStatus, teardownChatRuntime }));
+mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, resolveBotAdminStatus }));
+mock.module("../../packages/infra/chatTeardown", () => ({ teardownChatRuntime }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getOrCreateChatState(chatId: number): Record<string, unknown> {
     let state = states.get(chatId);

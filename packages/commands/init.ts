@@ -16,7 +16,8 @@ import {
 } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
-import { invalidateBotAdminStatus, resolveBotAdminStatus, teardownChatRuntime } from "../infra/botAdmin";
+import { invalidateBotAdminStatus, resolveBotAdminStatus } from "../infra/botAdmin";
+import { teardownChatRuntime } from "../infra/chatTeardown";
 
 /**
  * 处理 /init enable|disable 指令：按群开关机器人是否处理这个群的更新（见

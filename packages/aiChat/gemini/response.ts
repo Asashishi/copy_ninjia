@@ -2,9 +2,9 @@ import { FinishReason, ToolType } from "@google/genai";
 import type { Candidate, GenerateContentResponse, Part } from "@google/genai";
 
 /**
- * Gemini generateContent 响应里的项目级诊断：正文与自定义函数调用直接使用
- * SDK 的 response.text / response.functionCalls，本文件只保留 SDK 没有提供的
- * 异常收尾诊断与服务端 Google Search 预算统计。
+ * Gemini generateContent 响应的读取辅助：自定义函数调用直接使用 SDK 的
+ * response.functionCalls，本文件保留正文读取、异常收尾诊断与服务端 Google Search
+ * 预算统计。三者都只看第一个 candidate（请求不设 candidateCount，恒为 1）。
  */
 
 function firstCandidate(data: GenerateContentResponse): Candidate | undefined {
@@ -13,6 +13,28 @@ function firstCandidate(data: GenerateContentResponse): Candidate | undefined {
 
 function responseParts(data: GenerateContentResponse): readonly Part[] {
   return firstCandidate(data)?.content?.parts ?? [];
+}
+
+/**
+ * 第一个 candidate 的正文：所有非 thought 文本 part 的拼接；一个文本 part 都没有时
+ * 返回 undefined（与「有文本 part 但内容是空串」区分开）。取值语义与 SDK 的
+ * `GenerateContentResponse.text` 逐项一致。
+ *
+ * 不直接用那个 getter，是因为它带一个绕不开的副作用：响应里只要出现任何非文本
+ * part，它就 `console.warn` 一行「there are non-text parts ... in the response」。而带
+ * functionCall 的响应正是工具轮的常态，于是每一个工具轮都往 stderr 刷一行——那行
+ * 既不经 infra/logger.ts，也不指向任何需要处理的异常。这里只去掉那个副作用，取值
+ * 一个字都不改。
+ */
+export function responseText(data: GenerateContentResponse): string | undefined {
+  let text: string = "";
+  let hasTextPart: boolean = false;
+  for (const part of responseParts(data)) {
+    if (typeof part.text !== "string" || part.thought === true) continue;
+    hasTextPart = true;
+    text += part.text;
+  }
+  return hasTextPart ? text : undefined;
 }
 
 /** 响应在 HTTP 层成功、内容却不可用时的诊断串：candidates 缺失（附上

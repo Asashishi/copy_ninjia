@@ -7,12 +7,13 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 
 const requestOpenAiTextResult = mock(async (..._args: unknown[]): Promise<AiTextResult> => ({ ok: true, text: "ok" }));
 const createTranscription = mock(async (..._args: unknown[]): Promise<{ text: string }> => ({ text: "  你好\n世界  " }));
+const loggerError = mock((..._args: unknown[]): void => {});
 const getOpenAiClient = mock((): unknown => ({
   audio: { transcriptions: { create: createTranscription } },
 }));
@@ -20,6 +21,9 @@ const getOpenAiClient = mock((): unknown => ({
 mock.module("../../../packages/aiChat/openai/client", () => ({
   getOpenAiClient,
   requestOpenAiTextResult,
+}));
+mock.module("../../../packages/infra/logger", () => ({
+  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
 
 const {
@@ -30,6 +34,7 @@ const {
 const {
   OPENAI_CHAT_SUMMARY_MAX_TOKENS,
   OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS,
+  OPENAI_REQUEST_TIMEOUT_MS,
   OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
 } = await import("../../../packages/consts/aiChat/openai");
 
@@ -41,10 +46,15 @@ function capturedBody(): ResponseBody {
   return (requestOpenAiTextResult.mock.calls[0]![0] as { buildBody: () => ResponseBody }).buildBody();
 }
 
+function apiError(status: number, message: string): Error {
+  return new OpenAI.APIError(status, { message }, undefined, new Headers());
+}
+
 beforeEach(() => {
   requestOpenAiTextResult.mockClear();
   createTranscription.mockClear();
   getOpenAiClient.mockClear();
+  loggerError.mockClear();
   createTranscription.mockImplementation(async (): Promise<{ text: string }> => ({ text: "  你好\n世界  " }));
 });
 
@@ -172,6 +182,125 @@ describe("语音转写", () => {
     expect(body.response_format).toBe("json");
     expect(body.file.name).toBe("voice.ogg");
     expect(body.file.type).toBe("audio/ogg");
-    expect(createTranscription.mock.calls[0]?.[1]).toEqual({ signal: controller.signal });
+    const passed: AbortSignal | undefined = (createTranscription.mock.calls[0]?.[1] as {
+      readonly signal?: AbortSignal;
+    }).signal;
+    expect(passed).toBeInstanceOf(AbortSignal);
+    expect(passed).not.toBe(controller.signal);
+    expect(passed?.aborted).toBe(false);
+    controller.abort();
+    expect(passed?.aborted).toBe(true);
+    expect(OPENAI_REQUEST_TIMEOUT_MS).toBe(150_000);
+  });
+
+  test("没有调用方 signal 时仍下传覆盖整轮重试的 deadline", async () => {
+    await transcribeOpenAiVoice({
+      prompt: "逐字转写",
+      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      errorLabel: "AI voice transcription API",
+      normalize: (text: string): string => text,
+    });
+
+    const passed: AbortSignal | undefined = (createTranscription.mock.calls[0]?.[1] as {
+      readonly signal?: AbortSignal;
+    }).signal;
+    expect(passed).toBeInstanceOf(AbortSignal);
+    expect(passed?.aborted).toBe(false);
+  });
+
+  test("调用前已经取消时不构造客户端或上传文件", async () => {
+    const controller: AbortController = new AbortController();
+    controller.abort();
+
+    await expect(transcribeOpenAiVoice({
+      prompt: "逐字转写",
+      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      errorLabel: "AI voice transcription API",
+      signal: controller.signal,
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false });
+    expect(getOpenAiClient).not.toHaveBeenCalled();
+    expect(createTranscription).not.toHaveBeenCalled();
+  });
+
+  test("调用中由上游取消时安静结束，不把主动取消记成端点故障", async () => {
+    const controller: AbortController = new AbortController();
+    let markStarted!: () => void;
+    let settleSdkTask!: (value: { text: string }) => void;
+    const started: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      markStarted = resolve;
+    });
+    const sdkTask: Promise<{ text: string }> = new Promise<{ text: string }>((
+      resolve: (value: { text: string }) => void
+    ): void => {
+      settleSdkTask = resolve;
+    });
+    createTranscription.mockImplementationOnce((): Promise<{ text: string }> => {
+      markStarted();
+      return sdkTask;
+    });
+
+    const pendingResult: Promise<AiTextResult> = transcribeOpenAiVoice({
+      prompt: "逐字转写",
+      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      errorLabel: "AI voice transcription API",
+      signal: controller.signal,
+      normalize: (text: string): string => text,
+    });
+    await started;
+    controller.abort();
+    await expect(pendingResult).resolves.toEqual({ ok: false, retryable: false });
+    expect(loggerError).not.toHaveBeenCalled();
+    settleSdkTask({ text: "late" });
+    await sdkTask;
+  });
+
+  test("404 与 405 归为端点或模型配置错误", async () => {
+    for (const status of [404, 405]) {
+      createTranscription.mockRejectedValueOnce(apiError(status, "endpoint unavailable"));
+      await expect(transcribeOpenAiVoice({
+        prompt: "逐字转写",
+        clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+        errorLabel: "AI voice transcription API",
+        normalize: (text: string): string => text,
+      })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "misconfigured" });
+    }
+  });
+
+  test("明确拒绝音频模态时才记为不支持", async () => {
+    createTranscription.mockRejectedValueOnce(apiError(415, "model does not support audio input"));
+    await expect(transcribeOpenAiVoice({
+      prompt: "逐字转写",
+      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      errorLabel: "AI voice transcription API",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "unsupported" });
+  });
+
+  test("普通 4xx 只拒绝这一份音频，不推动端点退避", async () => {
+    createTranscription.mockRejectedValueOnce(apiError(422, "invalid audio payload"));
+    await expect(transcribeOpenAiVoice({
+      prompt: "逐字转写",
+      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      errorLabel: "AI voice transcription API",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false });
+  });
+
+  test("429、5xx 与网络错误归为瞬时端点故障", async () => {
+    const failures: readonly Error[] = [
+      apiError(429, "rate limited"),
+      apiError(502, "upstream unavailable"),
+      new Error("socket hang up"),
+    ];
+    for (const failure of failures) {
+      createTranscription.mockRejectedValueOnce(failure);
+      await expect(transcribeOpenAiVoice({
+        prompt: "逐字转写",
+        clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+        errorLabel: "AI voice transcription API",
+        normalize: (text: string): string => text,
+      })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "transient" });
+    }
   });
 });

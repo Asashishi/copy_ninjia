@@ -8,7 +8,7 @@ import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import {
   registerBotPermissionObserver,
 } from "../../infra/botAdmin";
-import { registerChatTeardown } from "../../infra/chatTeardown";
+import { registerChatTeardown } from "../../infra/chatTeardownRegistry";
 import { projectBotActionPermissions } from "../../libs/chatMember";
 import {
   onDiskIORespawn,

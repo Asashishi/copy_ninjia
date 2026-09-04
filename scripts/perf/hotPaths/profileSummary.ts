@@ -35,7 +35,8 @@ function tierPercent(bytecodes: string, tier: string): number {
 }
 
 /**
- * 解析 Bun 1.3.14 `bun:jsc.profile` 的稳定文本字段。采样只包住正式稳态循环，
+ * 解析当前 Bun `bun:jsc.profile` 输出的采样总数、GC 栈与字节码分层字段。
+ * 采样只包住正式稳态循环，
  * 因此这里的 gc 不包含脚本加载、预热或 retained-heap 两侧的强制 GC。
  */
 export function summarizeHotPathSamplingProfile(

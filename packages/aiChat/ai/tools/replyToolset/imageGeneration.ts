@@ -13,7 +13,11 @@ import {
   IMAGE_GENERATION_PROMPT_MAX_CHARS,
   MAX_GENERATED_IMAGES_PER_REPLY,
 } from "../../../../consts/aiChat/imageGeneration";
-import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
+import {
+  GENERATE_IMAGE_TOOL_INSTRUCTION,
+  IMAGE_REFERENCE_POINTER,
+} from "../../../../consts/aiChat/prompts/tools";
+import { REPLY_CONTEXT_SECTION_NAMES } from "../../../../consts/aiChat/prompts/memory";
 import { imageSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
 import {
   HARD_MAX_ACTIONS_PER_REPLY,
@@ -43,34 +47,25 @@ import { typingDelayMs } from "../../utils/timing";
 import { sendDirectMessage } from "./messageState";
 import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
 
-function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
+/** 省略 aspect_ratio 时执行侧采用的比例：有参考素材就取最接近它的官方比例。
+ *  参考素材文案与执行侧解析共用这一个函数，两处默认值不会漂移（见 imageReference.ts）。 */
+export function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
   if (!reference || reference.width <= 0 || reference.height <= 0) return DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
   return normalizeImageAspectRatio(`${reference.width}:${reference.height}`) ?? DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
 }
 
-export function buildGenerateImageToolDefinition(
-  ctx: Pick<ReplyToolContext, "chatId" | "mediaToolsRequested" | "imageGenerationReference" | "bypassMediaToolCooldown">
-): AiToolDefinition {
-  const availability: ImageGenerationAvailability = getImageGenerationAvailability({
-    chatId: ctx.chatId,
-    bypassCooldown: ctx.bypassMediaToolCooldown,
-  });
-  const availabilityInstruction: string = !ctx.mediaToolsRequested
-    ? "当前状态：不可生图；当前消息不是直接回复或 @ 你的触发，本轮禁止调用。"
-    : ctx.bypassMediaToolCooldown
-    ? "当前状态：可以生图；由你判断当前消息是否明确要求生成或编辑图片。本轮由 superAdmin 触发，不受群冷却限制。"
-    : availability.allowed
-    ? "当前状态：可以生图；由你判断当前消息是否明确要求生成或编辑图片，没有明确意图就不要调用。"
-    : `当前状态：暂不可生图，群冷却剩余约 ${Math.ceil(availability.retryAfterMs / 1_000)} 秒；本轮不要调用，` +
-      "并且必须用 send_message 明确告诉群友当前暂时不能使用生图，请稍后再试。";
-  const defaultAspectRatio: ImageGenerationAspectRatio = defaultAspectRatioFor(ctx.imageGenerationReference);
-  const referenceInstruction: string = ctx.imageGenerationReference
-    ? `当前触发附带一份 ${ctx.imageGenerationReference.width}×${ctx.imageGenerationReference.height} 的参考图片素材；调用时会自动交给图片模型。` +
-      `prompt 要写清如何编辑或参考这份素材，不要向群友索要 URL；未指定比例时默认使用最接近原素材的 ${defaultAspectRatio}。`
-    : "当前触发没有附带参考图片，本轮只能按文字 prompt 从零生成。";
+/**
+ * generate_image 的工具声明。**整段逐字恒定**，不接受任何本轮上下文。
+ *
+ * 参考素材尺寸随轮变化，写进声明会让整段稳定前缀每轮换一个指纹、把供应商侧的前缀
+ * 缓存打穿；那段文案住在运行时状态区块，见 imageReference.ts。群冷却连提示词都不进：
+ * 剩余秒数只在调用真的发生时由执行侧算给模型（见 createGenerateImageExecutor 的冷却
+ * 闸）。工具是否挂载仍由 createReplyToolset 按 mediaToolsRequested 决定。
+ */
+export function buildGenerateImageToolDefinition(): AiToolDefinition {
   return {
     name: GENERATE_IMAGE_TOOL,
-    description: `${GENERATE_IMAGE_TOOL_INSTRUCTION}\n${availabilityInstruction}\n${referenceInstruction}`,
+    description: `${GENERATE_IMAGE_TOOL_INSTRUCTION}\n${IMAGE_REFERENCE_POINTER}`,
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -82,7 +77,8 @@ export function buildGenerateImageToolDefinition(
         aspect_ratio: {
           type: "string",
           description:
-            `群友要求的宽高比，例如 16:9、7:5 或 1920x1080；省略则为 ${defaultAspectRatio}。官方比例为 ${IMAGE_GENERATION_ASPECT_RATIOS.join("、")}，` +
+            `群友要求的宽高比，例如 16:9、7:5 或 1920x1080；省略则按 ${REPLY_CONTEXT_SECTION_NAMES.runtimeState} 区块给出的默认比例。` +
+            `官方比例为 ${IMAGE_GENERATION_ASPECT_RATIOS.join("、")}，` +
             "其它有效比例会由执行侧自动换成最接近的官方比例。",
         },
         caption: {
@@ -131,6 +127,25 @@ function parseArguments(
   return aspectRatio ? { prompt, aspectRatio, caption } : null;
 }
 
+/**
+ * 冷却未过时回给模型的统一提示。
+ *
+ * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段：模型的提示词里
+ * 没有任何冷却状态，这条工具结果是它唯一一次知道「还要等多久」的机会，两条路径的
+ * 文案与秒数口径因此必须同源。
+ * @param retryAfterMs 冷却剩余毫秒，由生图冷却表给出。
+ */
+function coolingDownError(retryAfterMs: number): string {
+  const retryAfterSeconds: number = Math.ceil(retryAfterMs / 1_000);
+  return toolError("Image generation is cooling down in this chat", {
+    retry_after_seconds: retryAfterSeconds,
+    retryable: false,
+    required_action:
+      `必须使用 send_message 明确告诉群友当前暂时不能使用生图，请约 ${retryAfterSeconds} 秒后再试；` +
+      "本轮不要再次调用 generate_image。",
+  });
+}
+
 export function createGenerateImageExecutor(
   ctx: ReplyToolContext,
   state: RoundMessageState,
@@ -152,6 +167,15 @@ export function createGenerateImageExecutor(
         { retryable: false }
       );
     }
+    // 冷却整条不进提示词，模型是在不知道本轮还剩多久的情况下调用的：因此在解析参数、
+    // 下载参考图和请求模型之前先做一次只读判定，冷却中直接把剩余秒数回给它。真正的
+    // 原子闸仍是下面的 claim——只读判定与 claim 之间同群另一轮可能抢先占位，那条路径
+    // 回同一段文案。
+    const availability: ImageGenerationAvailability = getImageGenerationAvailability({
+      chatId: ctx.chatId,
+      bypassCooldown: ctx.bypassMediaToolCooldown,
+    });
+    if (!availability.allowed) return coolingDownError(availability.retryAfterMs);
     const parsed: ParsedImageArguments | null = parseArguments(argumentsJson, defaultAspectRatioFor(ctx.imageGenerationReference));
     if (!parsed) {
       return toolError(
@@ -176,16 +200,7 @@ export function createGenerateImageExecutor(
       chatId: ctx.chatId,
       bypassCooldown: ctx.bypassMediaToolCooldown,
     });
-    if (!claim.allowed) {
-      const retryAfterSeconds: number = Math.ceil(claim.retryAfterMs / 1_000);
-      return toolError("Image generation is cooling down in this chat", {
-        retry_after_seconds: retryAfterSeconds,
-        retryable: false,
-        required_action:
-          `必须使用 send_message 明确告诉群友当前暂时不能使用生图，请约 ${retryAfterSeconds} 秒后再试；` +
-          "本轮不要再次调用 generate_image。",
-      });
-    }
+    if (!claim.allowed) return coolingDownError(claim.retryAfterMs);
 
     let modelRequestStarted: boolean = false;
     try {

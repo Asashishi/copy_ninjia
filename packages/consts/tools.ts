@@ -73,6 +73,18 @@ export const ACTION_TOOL_NAMES: readonly string[] = [
  */
 export const REPLY_INVALIDATED_TOOL_ERROR: string = "Reply invalidated because AI chat was disabled";
 
+/**
+ * 整轮自定义函数调用预算（MAX_CUSTOM_TOOL_CALLS_PER_REPLY）耗尽后，每一次多余调用
+ * 统一拿到的工具结果，已序列化好。
+ *
+ * 预算耗尽**不摘工具声明**（一轮内 tools 必须逐字恒定，见 workers/aiChat/replyModel.ts
+ * 的头注），因此模型仍看得见全部工具、还可能接着调；这段文案要把「别再调了，直接
+ * 收尾」说清楚，否则它会一路撞到 MAX_TOOL_ROUNDS。
+ */
+export const TOOL_BUDGET_EXHAUSTED_RESULT: string = JSON.stringify({
+  unavailable: "Tool budget exhausted for this reply; stop calling tools and finish now",
+});
+
 /** 模型调用了本轮工具集之外的名字时的统一错误文案（静态与按次组装的两个 dispatch 共用）。 */
 export function unknownToolError(name: string): string {
   return `Unknown tool: ${name}`;

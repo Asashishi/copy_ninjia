@@ -105,6 +105,7 @@ function scheduleExpelRetry({
       VERIFICATION_TERMINAL_RETRY_MAX_MS
     )
   );
+  entry.timer.unref();
 }
 
 /** 执行仍匹配快照的处置终态，并为未结算动作安排有上限的指数退避。 */

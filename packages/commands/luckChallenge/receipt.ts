@@ -74,11 +74,13 @@ export function confirmLuckDraw(
   if (typeof messageText !== "string") return;
   const lastLineBreak: number = messageText.lastIndexOf("\n");
   if (lastLineBreak < 0) return;
-  const receiptLine: string = messageText.slice(lastLineBreak + 1);
-  if (!receiptLine) return;
   // 只认当前格式：标签前缀 + 定长摘要，原回执由同范围的 text_link 实体携带。
-  // 普通多行消息不能因此进入跨日密钥刷新与磁盘 Worker 往返。
-  const receiptHash: string | undefined = luckReceiptHashFromLine(receiptLine);
+  // 普通多行消息不能因此进入跨日密钥刷新与磁盘 Worker 往返。判定按偏移直接读
+  // 原串，末行不是回执时连子串都不物化（见 libs/luckReceipt.ts 的头注）。
+  const receiptHash: string | undefined = luckReceiptHashFromLine(
+    messageText,
+    lastLineBreak + 1
+  );
   if (receiptHash === undefined) return;
   const receipt: string | undefined = receiptFromLinkEntity(
     receiptHash,

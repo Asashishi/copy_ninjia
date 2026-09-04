@@ -7,11 +7,22 @@ export const CHAT_SUMMARY_ERROR_LABEL: string = "AI summarize API";
 export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 
 /** 压缩块 = 热窗口 = 镜像窗口；逐字上下文最多保留两块。 */
-export const COMPACT_BATCH_SIZE: number = 75;
+export const COMPACT_BATCH_SIZE: number = 128;
 /** 模型请求中保留的逐字消息最大数量。 */
 export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
+/**
+ * 逐字转录分层边界的对齐粒度（条）。
+ *
+ * 【较早逐字记录】的长度只取本值的整数倍，因此边界每 TIER_BOUNDARY_ALIGNMENT
+ * 条消息才移动一次；其余各轮转录相对上一轮是纯追加，两家供应商的自动前缀缓存
+ * 能一路命中到边界处（见 aiChat/ai/utils/chatTranscript.ts 的
+ * buildTieredVerbatimTranscript）。向上取整保证【最热记忆】恒不超过
+ * COMPACT_BATCH_SIZE 条，与该区块标题里写死的条数一致。
+ * 必须能整除 COMPACT_BATCH_SIZE，否则窗口攒满时边界落不到两块对半的位置上。
+ */
+export const TIER_BOUNDARY_ALIGNMENT: number = 32;
 /** 每群保留的冷摘要轮数。 */
-export const MAX_SUMMARY_ROUNDS: number = 5;
+export const MAX_SUMMARY_ROUNDS: number = 7;
 /** 单群执行中 + 排队中的压缩任务硬顶。 */
 export const COMPACTION_MAX_PENDING_PER_CHAT: number = 25;
 /** dirty AI 记忆快照上报主线程的周期。 */

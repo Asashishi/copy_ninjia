@@ -111,44 +111,18 @@ beforeEach(() => {
 });
 
 describe("generate_song 工具声明", () => {
-  test("没有直接触发资格时明说本轮禁止调用", () => {
-    const definition = buildGenerateSongToolDefinition({
-      chatId: -1001,
-      mediaToolsRequested: false,
-      bypassMediaToolCooldown: false,
-    });
-    expect(definition.name).toBe("generate_song");
-    expect(definition.description).toContain("不可生歌");
-  });
-
-  test("冷却中时把剩余秒数写进说明，并要求用 send_message 告知群友", () => {
+  test("工具声明逐字恒定：冷却剩余秒数不进 schema", () => {
+    const baseline = JSON.stringify(buildGenerateSongToolDefinition());
+    expect(buildGenerateSongToolDefinition().name).toBe("generate_song");
+    // 冷却推进不得改变声明的任何一个字节：剩余秒数只在调用真的发生时由执行侧回给模型，
+    // 整条提示词里都没有它。
     claimSongGeneration({ chatId: -1001, bypassCooldown: false });
-    const definition = buildGenerateSongToolDefinition({
-      chatId: -1001,
-      mediaToolsRequested: true,
-      bypassMediaToolCooldown: false,
-    });
-    expect(definition.description).toContain("群冷却剩余约");
-    expect(definition.description).toContain("send_message");
-  });
-
-  test("superAdmin 触发时说明里点出不受群冷却限制", () => {
-    claimSongGeneration({ chatId: -1001, bypassCooldown: false });
-    const definition = buildGenerateSongToolDefinition({
-      chatId: -1001,
-      mediaToolsRequested: true,
-      bypassMediaToolCooldown: true,
-    });
-    expect(definition.description).toContain("superAdmin");
-    expect(definition.description).not.toContain("群冷却剩余约");
+    expect(JSON.stringify(buildGenerateSongToolDefinition())).toBe(baseline);
+    expect(buildGenerateSongToolDefinition().description).not.toContain("群冷却剩余约");
   });
 
   test("说明里写明 15 分钟的群共享冷却口径", () => {
-    const definition = buildGenerateSongToolDefinition({
-      chatId: -1001,
-      mediaToolsRequested: true,
-      bypassMediaToolCooldown: false,
-    });
+    const definition = buildGenerateSongToolDefinition();
     expect(definition.description).toContain(`每 ${SONG_GENERATION_COOLDOWN_MS / 60_000} 分钟`);
   });
 });
@@ -371,6 +345,18 @@ describe("generate_song 执行器", () => {
     expect(result.retryable).toBe(false);
     expect(result.retry_after_seconds).toBeGreaterThan(0);
     expect(result.required_action).toContain("send_message");
+    expect(generateSong).not.toHaveBeenCalled();
+  });
+
+  test("冷却中在解析参数之前就返回提示", async () => {
+    claimSongGeneration({ chatId: -1001, bypassCooldown: false });
+    const execute = createGenerateSongExecutor(buildContext(), createRoundMessageState());
+
+    // 参数故意写坏：冷却闸排在参数解析之前，模型拿到的必须是「还要等多久」而不是一句
+    // 参数错误——提示词里没有任何冷却状态，这条工具结果是它唯一的告知渠道。
+    const result = JSON.parse(await execute(call({ prompt: "" })));
+    expect(result.error).toBe("Song generation is cooling down in this chat");
+    expect(result.retry_after_seconds).toBeGreaterThan(0);
     expect(generateSong).not.toHaveBeenCalled();
   });
 

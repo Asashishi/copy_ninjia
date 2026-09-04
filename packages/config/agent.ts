@@ -2,7 +2,11 @@ import {
   adDetectAgentConfigCache,
   agentDeploymentConfigCache,
 } from "../cache/perThread/config";
-import { AGENT_API_KEY_PLACEHOLDERS } from "../consts/agent";
+import {
+  AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
+  AGENT_API_KEY_PLACEHOLDERS,
+  AGENT_CAPABILITY_NAMES,
+} from "../consts/agent";
 import { AGENT_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/record";
@@ -191,8 +195,8 @@ export function parseAgentDeploymentConfig(
 ): AgentDeploymentConfig {
   if (
     !isPlainRecord(value) ||
-    !hasOnlyKeys(value, ["ad_detect", "text", "summary", "media", "image", "song"]) ||
-    !["text", "summary", "media"].every(
+    !hasOnlyKeys(value, AGENT_CAPABILITY_NAMES) ||
+    !AGENT_AI_CHAT_REQUIRED_CAPABILITIES.every(
       (key: string): boolean => Object.hasOwn(value, key)
     )
   ) {
@@ -244,7 +248,7 @@ export async function validateAgentDeploymentConfig(
   path: string = AGENT_CONFIG_PATH
 ): Promise<void> {
   const record: Readonly<Record<string, unknown>> = await readAgentConfigRecord(path);
-  if (!hasOnlyKeys(record, ["ad_detect", "text", "summary", "media", "image", "song"])) {
+  if (!hasOnlyKeys(record, AGENT_CAPABILITY_NAMES)) {
     return invalidInput(
       path,
       "$.agent",
@@ -261,7 +265,7 @@ export async function validateAgentDeploymentConfig(
   if (record.song !== undefined) {
     parseCapability(record.song, "$.agent.song", path);
   }
-  const hasAiChatCore: boolean = ["text", "summary", "media"].every(
+  const hasAiChatCore: boolean = AGENT_AI_CHAT_REQUIRED_CAPABILITIES.every(
     (key: string): boolean => Object.hasOwn(record, key)
   );
   const agentConfig: AgentDeploymentConfig | undefined = hasAiChatCore

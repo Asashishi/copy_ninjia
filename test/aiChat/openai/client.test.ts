@@ -105,6 +105,22 @@ describe("客户端构造", () => {
 });
 
 describe("整次调用的 deadline", () => {
+  test("调用前已取消时不构造请求体或调用 SDK", async () => {
+    const controller: AbortController = new AbortController();
+    const buildBody = mock((): OpenAI.Responses.ResponseCreateParamsNonStreaming => BODY);
+    controller.abort();
+
+    await expect(requestOpenAiResult({
+      capability: "summary",
+      buildBody,
+      errorLabel: "AI test API",
+      signal: controller.signal,
+    })).resolves.toMatchObject({ ok: false, diagnostic: "request aborted" });
+    expect(buildBody).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(loggerError).not.toHaveBeenCalled();
+  });
+
   test("SDK 每次尝试各自的 timeout 之外，另有一份覆盖全部重试的 deadline", async () => {
     await requestOpenAiResult({ capability: "summary", buildBody: () => BODY, errorLabel: "AI test API" });
 
@@ -148,19 +164,32 @@ describe("失败分类", () => {
 
   test("调用方主动取消时不记错误日志", async () => {
     const controller: AbortController = new AbortController();
-    create.mockImplementationOnce(async (): Promise<unknown> => {
-      controller.abort();
-      throw new Error("aborted");
+    let settleSdkTask!: (value: unknown) => void;
+    const sdkTask: Promise<unknown> = new Promise<unknown>((
+      resolve: (value: unknown) => void
+    ): void => {
+      settleSdkTask = resolve;
     });
-    const result = await requestOpenAiResult({
+    create.mockImplementationOnce((): Promise<unknown> => sdkTask);
+    const pendingResult: Promise<Awaited<ReturnType<typeof requestOpenAiResult>>> = requestOpenAiResult({
       capability: "summary",
       buildBody: () => BODY,
       errorLabel: "AI test API",
       signal: controller.signal,
     });
+    controller.abort();
+    const result: Awaited<ReturnType<typeof requestOpenAiResult>> = await pendingResult;
 
     expect(result.ok === false && result.diagnostic).toBe("request aborted");
     expect(loggerError).not.toHaveBeenCalled();
+    settleSdkTask({
+      status: "completed",
+      error: null,
+      incomplete_details: null,
+      output: [{ type: "message", content: [] }],
+      output_text: "late",
+    });
+    await sdkTask;
   });
 
   test("HTTP 成功但产出不可用时归类成响应失败并带上收尾原因", async () => {

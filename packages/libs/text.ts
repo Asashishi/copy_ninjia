@@ -21,19 +21,56 @@ import { neutralizeRenderableCommands } from "./renderableCommand";
 const INLINE_WHITESPACE_PATTERN: RegExp = /[\s\u0085]+/g;
 
 /**
+ * 单个码元是否属于 `INLINE_WHITESPACE_PATTERN` 的字符类。
+ *
+ * 取值集合就是 ECMAScript 的 `\s`（WhiteSpace、LineTerminator 与 Zs 的并集）
+ * 外加 NEL，与上面那个正则的字符类**必须逐字相同**：这里说「不用改」而 `replace`
+ * 其实会改的话，未折叠的换行就原样活到转录里，下面 sanitizeInline 的防注入契约
+ * 当场失效。这份等价性由 test/libs/text.test.ts 对全 BMP 逐码元与正则对拍锁住。
+ *
+ * 先判普通空格，再判 ASCII 控制段，最后才进 0x85 之上那批稀疏取值：正常文本里
+ * 出现的空白几乎全是普通空格，而绝大多数码元在第二个比较处就走开。
+ */
+function isInlineWhitespaceCode(code: number): boolean {
+  if (code === 0x20) return true;
+  if (code >= 0x09 && code <= 0x0d) return true;
+  if (code < 0x85) return false;
+  return code === 0x85 || code === 0xa0 || code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) || code === 0x2028 || code === 0x2029 ||
+    code === 0x202f || code === 0x205f || code === 0x3000 || code === 0xfeff;
+}
+
+/**
  * 「这串还需要规范化吗」的前置判定，命中任一条即说明 sanitizeInline 会改动它：
- * 首空白、尾空白、连续空白、非普通空格的 `\s` 空白（换行/制表等）、NEL。
+ * 首空白、尾空白、连续空白、非普通空格的空白（换行/制表等）、NEL。
  *
  * 前置判定用于省掉规范文本的整串重建：`INLINE_WHITESPACE_PATTERN`
  * 连单个空格也匹配，因此任何含空格的正常文本都会被 `replace` 整串重建一遍，
  * 哪怕把空格换成空格是个空操作。规范输入原样返回，不分配新字符串。
  * 这个函数在每条消息上要跑 4~5 次（见 workers/aiChat/bufferedMessage.ts）。
  *
- * **不能带 `g` 标志**：`RegExp.prototype.test` 对全局正则是有状态的（`lastIndex`
- * 会推进），同一个串连续判定会交替返回真假。上面那个 `INLINE_WHITESPACE_PATTERN`
- * 带 `g` 是安全的，因为 `replace` 每次都会重置 `lastIndex`。
+ * 四条判据合在同一趟码元扫描里收口：
+ * - 空白且不是普通空格（换行、制表、NEL 等）一命中就返回，这一支同时兜住 NEL；
+ * - 普通空格落在首位或末位，即首空白与尾空白；
+ * - 普通空格紧跟另一个空白，即连续空白（此时两者必然都是普通空格，只要有一个
+ *   不是，上一支已经先命中了）。
  */
-const INLINE_NEEDS_SANITIZE_PATTERN: RegExp = /^[\s\u0085]|[\s\u0085]$|[\s\u0085]{2}|[^\S ]|\u0085/;
+function needsInlineSanitize(raw: string): boolean {
+  const length: number = raw.length;
+  let previousWasWhitespace: boolean = false;
+  for (let index: number = 0; index < length; index += 1) {
+    const code: number = raw.charCodeAt(index);
+    if (!isInlineWhitespaceCode(code)) {
+      previousWasWhitespace = false;
+      continue;
+    }
+    if (code !== 0x20) return true;
+    if (index === 0 || index === length - 1) return true;
+    if (previousWasWhitespace) return true;
+    previousWasWhitespace = true;
+  }
+  return false;
+}
 
 /**
  * 把要写进转录的文本压成单行：所有空白串（含换行）折叠为一个空格。
@@ -45,7 +82,7 @@ const INLINE_NEEDS_SANITIZE_PATTERN: RegExp = /^[\s\u0085]|[\s\u0085]$|[\s\u0085
  * 已经是规范形态的串原样返回（同一个字符串对象，不重建），见上方前置判定。
  */
 export function sanitizeInline(raw: string): string {
-  if (!INLINE_NEEDS_SANITIZE_PATTERN.test(raw)) return raw;
+  if (!needsInlineSanitize(raw)) return raw;
   return raw.replace(INLINE_WHITESPACE_PATTERN, " ").trim();
 }
 
@@ -73,6 +110,28 @@ const BIDI_CONTROL_PATTERN: RegExp = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2
  */
 export function sanitizeDisplayName(raw: string): string {
   return sanitizeInline(neutralizeRenderableCommands(raw.replace(BIDI_CONTROL_PATTERN, "")));
+}
+
+/** 前导 `@` 串；只服务下方 stripLeadingAtSigns，提到模块级不在调用点重建。 */
+const LEADING_AT_SIGNS_PATTERN: RegExp = /^@+/;
+
+/**
+ * 去掉用户名前导的 `@`，供转录行、回复标注与逐字缓存条目共用同一份归一规则。
+ *
+ * Telegram 的 username 字段本身不含 `@`，剥离是给「用户手打进来的 @名字」和
+ * 「从 mention 实体里切出来的片段」兜底，正常路径一个字符都不用改。因此先看
+ * 首码元、只有真的带 `@` 时才走正则：`String.prototype.replace` 不匹配时虽然
+ * 返回同一个字符串对象，仍要完整跑一遍匹配。这条判定落在每条进滚动记忆的
+ * 群消息（workers/aiChat/bufferedMessage.ts）和每次转录渲染的名册与回复标注
+ * （aiChat/ai/utils/chatTranscript.ts）上。
+ *
+ * 空串的 `charCodeAt(0)` 是 NaN，比较为假，原样返回。
+ */
+export function stripLeadingAtSigns(username: string): string {
+  // 0x40 是 `@`。
+  return username.charCodeAt(0) === 0x40
+    ? username.replace(LEADING_AT_SIGNS_PATTERN, "")
+    : username;
 }
 
 /**

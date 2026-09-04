@@ -99,6 +99,9 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   saveChatStateInBackground: (): void => {},
 }));
 mock.module("../../packages/infra/chatTeardown", () => ({
+  teardownChatRuntime: async (): Promise<void> => {},
+}));
+mock.module("../../packages/infra/chatTeardownRegistry", () => ({
   teardownRegisteredChat: async (): Promise<void> => {},
   registerChatTeardown: (): void => {},
 }));

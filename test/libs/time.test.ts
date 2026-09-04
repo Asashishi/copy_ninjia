@@ -121,10 +121,11 @@ describe("libs/time getTokyoDayIndex", () => {
 });
 
 /**
- * getCurrentTime 拼进**每一次**模型请求的系统提示词（workers/aiChat/replyModel.ts
- * 与 compaction.ts），getTokyoHour 则是心情分档的输入。两者都没有调用方会去校验
- * 返回值形状——时区写错、字段少一个，表现只是模型答出来的时间不对，没有任何一条
- * 断言会响。这里把三个字段与时区口径钉住。
+ * getCurrentTime 拼进**每一次**模型请求：回复链路进 user 内容的运行时状态区块
+ * （workers/aiChat/runtimeState.ts），压缩链路进 systemPrompt
+ * （workers/aiChat/compaction.ts）；getTokyoHour 则是心情分档的输入。两者都没有
+ * 调用方会去校验返回值形状——时区写错、字段少一个，表现只是模型答出来的时间不对，
+ * 没有任何一条断言会响。这里把三个字段与时区口径钉住。
  */
 describe("libs/time getCurrentTime 与 getTokyoHour", () => {
   test("三个字段齐备，时区恒为 Asia/Tokyo，iso 可被解析回同一时刻", () => {
@@ -159,6 +160,45 @@ describe("libs/time getCurrentTime 与 getTokyoHour", () => {
       expect(hour).toBeGreaterThanOrEqual(0);
       expect(hour).toBeLessThanOrEqual(23);
       expect(hour).toBe((utcHour + 9) % 24);
+    }
+  });
+
+  /**
+   * 拿不到 hour 段时的兜底必须仍是**东京**小时。
+   *
+   * 判据不能只比对数值：`date.getHours()` 给的是**宿主本地**小时，而本仓库的
+   * 部署机恰好是 JST，两者恰好相等，光比数字这条分支在这台机器上永远测不出
+   * 差别。因此这里把 `getHours` 换成一个会抛的桩——兜底一旦碰它就当场失败，
+   * 与宿主时区无关。心情分档（aiChat/ai/mood.ts）是唯一消费方，选错档不报错，
+   * 只会让群里心情长期偏一个时段。
+   */
+  test("formatToParts 取不到 hour 时，兜底走 UTC+9 算术且不碰宿主本地时间", () => {
+    const originalParts: typeof Intl.DateTimeFormat.prototype.formatToParts =
+      Intl.DateTimeFormat.prototype.formatToParts;
+    const originalGetHours: typeof Date.prototype.getHours = Date.prototype.getHours;
+    // 只清掉 hour 段，其余照常：模拟 ICU 数据缺失而不是整个 Intl 不可用。
+    Intl.DateTimeFormat.prototype.formatToParts = function formatToPartsWithoutHour(
+      this: Intl.DateTimeFormat,
+      date?: Date | number
+    ): Intl.DateTimeFormatPart[] {
+      return originalParts.call(this, date).filter(
+        (part: Intl.DateTimeFormatPart): boolean => part.type !== "hour"
+      );
+    };
+    Date.prototype.getHours = function forbiddenHostLocalHours(this: Date): number {
+      throw new Error("getTokyoHour must not fall back to host-local hours");
+    };
+    try {
+      for (const utcHour of [0, 8, 14, 15, 23]) {
+        const date: Date = new Date(Date.UTC(2026, 0, 15, utcHour, 30, 0));
+        expect(getTokyoHour(date)).toBe((utcHour + 9) % 24);
+      }
+      // 1970 之前时间戳为负，取余会得到负数；兜底必须归一回 0~23。
+      const beforeEpoch: Date = new Date(Date.UTC(1969, 11, 31, 20, 0, 0));
+      expect(getTokyoHour(beforeEpoch)).toBe(5);
+    } finally {
+      Intl.DateTimeFormat.prototype.formatToParts = originalParts;
+      Date.prototype.getHours = originalGetHours;
     }
   });
 });

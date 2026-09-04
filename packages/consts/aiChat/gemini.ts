@@ -11,7 +11,7 @@
  */
 
 import { HarmBlockThreshold, HarmCategory } from "@google/genai";
-import type { SafetySetting } from "@google/genai";
+import type { SafetySetting, ToolConfig } from "@google/genai";
 
 /** 生图请求固定的分辨率档位；该模型只支持这一档，不做成可变参数。 */
 export const GEMINI_IMAGE_SIZE: string = "1K";
@@ -90,7 +90,7 @@ export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 6;
 
 /**
  * 所有 Gemini 请求统一携带的内容过滤设置；应用不按可调概率等级主动拒绝，
- * 仍受 API 不可关闭的核心安全策略约束。数组与条目字段都由只读类型锁住，避免
+ * 仍受 API 不可关闭的核心安全策略约束。数组与元素字段都由只读类型锁住，避免
  * 调用方漂移（不可变性只在编译期表达，见 AGENTS.md 的「常量」一节）。
  *
  * 这一档没有跨供应商对等物：OpenAI 侧的文本安全策略不可调（见
@@ -102,3 +102,16 @@ export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
   { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
+
+/**
+ * 服务端检索工具与函数调用混用时必须携带的 toolConfig。
+ *
+ * 缺了它，Gemini 会以 `Please enable tool_config.include_server_side_tool_invocations
+ * to use Built-in tools with Function calling` 拒绝整个请求。因此它与 googleSearch
+ * 同进同出，由每次完整请求直接填进 config。
+ *
+ * 定成模块级常量而不是每轮现拼一个对象字面量：这一句跑在每轮工具往返上。
+ */
+export const GEMINI_SERVER_TOOL_CONFIG: Readonly<ToolConfig> = {
+  includeServerSideToolInvocations: true,
+};

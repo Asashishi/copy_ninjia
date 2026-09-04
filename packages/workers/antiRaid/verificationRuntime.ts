@@ -77,7 +77,7 @@ function startVerificationTimer(
   state: VerificationState
 ): ReturnType<typeof setTimeout> | undefined {
   if (state.kind === "pending") {
-    return setTimeout(
+    const expiryTimer: ReturnType<typeof setTimeout> = setTimeout(
       (): void => dispatchVerification(
         chatId,
         userId,
@@ -85,6 +85,8 @@ function startVerificationTimer(
       ),
       Math.max(0, state.expiresAt - Date.now())
     );
+    expiryTimer.unref();
+    return expiryTimer;
   }
   if (
     state.kind === "kickPending" ||
@@ -93,10 +95,12 @@ function startVerificationTimer(
   ) {
     return undefined;
   }
-  return setTimeout(
+  const dedupeTimer: ReturnType<typeof setTimeout> = setTimeout(
     (): void => dispatchVerification(chatId, userId, { type: "dedupeExpired" }),
     LOCKDOWN_KICK_DEDUPE_MS
   );
+  dedupeTimer.unref();
+  return dedupeTimer;
 }
 
 /**

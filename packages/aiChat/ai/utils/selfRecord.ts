@@ -6,7 +6,7 @@ import type {
 
 /**
  * 机器人把自己刚发出的消息写回滚动记忆时的公共载荷。主线程侧与 AI Worker 侧
- * 的六个调用点共用同一份完整 AiRecordMessage 构造；转录依赖 `[id:]` 识别自己，
+ * 的四个调用点共用同一份完整 AiRecordMessage 构造；转录依赖 `[id:]` 识别自己，
  * senderId 与 username 必须统一。builder 一次写齐固定字段，不创建投影或对象展开。
  *
  * lastName 固定空串：机器人账号只有 first_name，Telegram 不提供姓氏。

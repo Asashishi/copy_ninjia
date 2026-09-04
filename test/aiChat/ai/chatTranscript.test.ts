@@ -6,7 +6,7 @@ import {
   formatReplyChain,
   formatSpeakerIdentity,
 } from "../../../packages/aiChat/ai/utils/chatTranscript";
-import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from
+import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS, TIER_BOUNDARY_ALIGNMENT } from
   "../../../packages/consts/aiChat/memory";
 import {
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
@@ -187,7 +187,12 @@ describe("AI 群聊转录身份格式", () => {
     expect(transcript).toContain("【较早逐字记录（次要背景）】");
     expect(transcript).toContain("u1：消息 1");
     expect(transcript).toContain(`【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】`);
-    expect(transcript.indexOf("【最热记忆")).toBeLessThan(transcript.indexOf("u2：消息 2"));
+    // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐：超出一块 1 条时较早区就取满
+    // 一个对齐格，第 33 条起才进最热区。
+    expect(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT}：消息 ${TIER_BOUNDARY_ALIGNMENT}`))
+      .toBeLessThan(transcript.indexOf("【最热记忆"));
+    expect(transcript.indexOf("【最热记忆"))
+      .toBeLessThan(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT + 1}`));
     expect(transcript).toEndWith(`u${COMPACT_BATCH_SIZE + 1}：消息 ${COMPACT_BATCH_SIZE + 1}`);
     // 每个分层区块开头都要重发一次当前日期，否则跳进最热区块就看不到日期。
     const dateHeaders: number = transcript.split("── 2026/07/17 ──").length - 1;
@@ -195,6 +200,47 @@ describe("AI 群聊转录身份格式", () => {
     // 没有人被回复过，触发消息之外一个消息号都不该出现。
     expect(transcript).not.toContain("#1 ");
     expect(transcript).toContain(`#${COMPACT_BATCH_SIZE + 1} `);
+  });
+
+  test("分层边界按对齐粒度跳变：同一格内追加消息不移动边界", () => {
+    // 边界不动 = 本轮转录相对上一轮是纯追加，两家供应商的自动前缀缓存才能一路
+    // 命中到边界处。边界若逐条前移，整段【最热记忆】每轮都错位，从边界起全部落空。
+    function hotLineCount(transcript: string): number {
+      return transcript.slice(transcript.indexOf("【最热记忆"))
+        .split("\n")
+        .filter((line: string): boolean => line.startsWith("[")).length;
+    }
+    function renderWithExtra(extra: number): string {
+      const messages: BufferedMessage[] = Array.from({ length: COMPACT_BATCH_SIZE + extra }, (_, index: number) => ({
+        ...message,
+        messageId: index + 1,
+        id: index + 1,
+        text: `消息 ${index + 1}`,
+      }));
+      return renderTranscript(messages, { selfId: -1, triggerMessageId: COMPACT_BATCH_SIZE + extra });
+    }
+
+    for (let extra: number = 1; extra <= TIER_BOUNDARY_ALIGNMENT; extra += 1) {
+      const transcript: string = renderWithExtra(extra);
+      // 整格之内较早区恒为一个对齐格：边界两侧的消息号逐条固定。
+      expect(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT}：消息 ${TIER_BOUNDARY_ALIGNMENT}`))
+        .toBeLessThan(transcript.indexOf("【最热记忆"));
+      expect(transcript.indexOf("【最热记忆"))
+        .toBeLessThan(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT + 1}`));
+      // 向上取整的用处：最热区永远不超过标题里写死的那个条数。
+      expect(hotLineCount(transcript)).toBeLessThanOrEqual(COMPACT_BATCH_SIZE);
+    }
+
+    // 跨过一格就整格跳一次：较早区变成两个对齐格。
+    const crossed: string = renderWithExtra(TIER_BOUNDARY_ALIGNMENT + 1);
+    expect(crossed.indexOf(`u${TIER_BOUNDARY_ALIGNMENT * 2}：消息 ${TIER_BOUNDARY_ALIGNMENT * 2}`))
+      .toBeLessThan(crossed.indexOf("【最热记忆"));
+    expect(crossed.indexOf("【最热记忆"))
+      .toBeLessThan(crossed.indexOf(`u${TIER_BOUNDARY_ALIGNMENT * 2 + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT * 2 + 1}`));
+    expect(hotLineCount(crossed)).toBeLessThanOrEqual(COMPACT_BATCH_SIZE);
+
+    // 窗口攒满时边界正好落在两块对半处，与压缩轮换的块边界一致。
+    expect(hotLineCount(renderWithExtra(COMPACT_BATCH_SIZE))).toBe(COMPACT_BATCH_SIZE);
   });
 
   test("消息数不超过一个压缩块时只出最热记忆，不产生空的「较早」区块", () => {

@@ -9,10 +9,8 @@ import { heapStats } from "bun:jsc";
 /**
  * 一次堆快照。
  *
- * **`heapStats()` 的计数只在 GC 边界更新**，不是实时的：把 5 万个确定存活的对象
- * 分配出来后立刻读，obj/heap 增量都是 0；同一批对象在 `Bun.gc(true)` 之后再读，
- * 才如实显示 134367 个对象、4601132 字节（Bun 1.3.14 控制组实测）。因此两次快照
- * 之间**必须隔一次 GC**，否则读到的恒为 0，而不是「没有分配」。
+ * `heapStats()` 的计数只在 GC 边界更新，不是实时值。两次用于比较的快照之间必须
+ * 执行一次 GC，使新分配且仍存活的对象进入本次堆统计。
  */
 export interface HeapSnapshot {
   readonly heapSize: number;
