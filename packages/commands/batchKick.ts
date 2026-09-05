@@ -1,3 +1,4 @@
+import { BATCH_KICK_USAGE_TEXT } from "../consts/commandUsage";
 import type { CommandContext, Context } from "grammy";
 import {
   BATCH_KICK_CONCURRENCY,
@@ -35,10 +36,6 @@ import type {
   BoundedBatchResult,
 } from "../libs/boundedSettledBatch";
 import { isSuperAdminActor } from "./commandActor";
-
-const BATCH_KICK_USAGE_TEXT: string =
-  "笨蛋，/batch_kick 后面只带一个回溯时长：数字加 m/h/d，比如 30m、2h、1d；" +
-  "最多回溯滚动 24 小时。这个命令只踢人，不会加入黑名单♡";
 
 interface BatchKickStats {
   kicked: number;

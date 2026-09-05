@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3129_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.32%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3179_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：3129 项测试全部通过 / 314 个测试文件 / 98,189 次 expect() 调用 / 函数覆盖率 97.04% / 行覆盖率 97.32%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：3179 项测试全部通过 / 321 个测试文件 / 123,010 次 expect() 调用 / 函数覆盖率 97.12% / 行覆盖率 97.38%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -107,7 +107,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🧠 群聊记忆</b></p>
-  <p>滚动维护有界逐字上下文与多轮压缩摘要，追踪有界多层回复链，并通过原子落盘可靠恢复。</p>
+  <p>滚动维护有界逐字上下文与多轮压缩摘要，保留消息中的回复关系、转发来源和精确引用，并通过原子落盘可靠恢复。</p>
 </td>
 </tr>
 <tr>
@@ -162,7 +162,7 @@
 
 ## 🚀 快速开始
 
-需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.4+、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/ja_copy` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
+需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.4.1、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/ja_copy` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
 
 一键安装（缺什么装什么，问完配置直接启动）：
 
@@ -170,7 +170,7 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-按顺序做四件事：配好环境（补齐 `git`/`curl`/`unzip`、装 Bun、`bun install`）、把 **GitHub 上的 Latest Release** clone 到 `./copy_ninjia`、交互问 Telegram 与 AI 配置、建空身份数据库并注册 systemd 服务后启动。装的是已发布版本而不是 master HEAD；tag 现问 `releases/latest`，问不到就当场失败，不会悄悄退回 master。不动既有配置，已存在的 systemd unit 会先问再覆盖，重跑安全。已经 clone 过就在仓库根跑 `bash install.sh`，会跳过 clone 并保留该工作树当前的 checkout。源码若是解压发布包得到的（有源码、没有 `.git`），会就地补出 git 仓库并把 `HEAD` 指到与现有文件逐字一致的那个 tag，好让此后能用 git 更新；补仓库不写工作树里任何文件，也不会把部署数据收进对象库。
+安装器取得 **GitHub Latest Release** 后，转交目标工作树自己的脚本；已有工作树保持 checkout 不变。它按目标代码校验 Bun 精确版本并安装锁定依赖，然后交互配置 Telegram 与 AI、初始化缺少的身份数据库。既有配置仅在明确重填时经备份、校验和原子替换更新。最后注册或复用 systemd unit 并观察运行状态；无 systemd 时以前台运行。目录参数与备份留存规则见 [环境搭建](docs/cn/01-getting-started.md)。
 
 手工安装：
 

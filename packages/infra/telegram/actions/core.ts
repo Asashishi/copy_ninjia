@@ -1,3 +1,4 @@
+import { NO_SIGNAL_ARGS } from "../../../consts/telegram";
 import {
   combineWithUpdateAbortSignal,
   currentUpdateAbortSignal,
@@ -147,14 +148,6 @@ export async function runPermissionAwareTelegramAction({
   });
   return succeeded ? "succeeded" : outcome;
 }
-
-/**
- * 无信号时共用的空元组；调用点一律就地展开、不持有返回值，因此可以共享一份。
- *
- * 口径同 aiChat/gemini/replySession.ts 的 EMPTY_FUNCTION_CALLS：类型是只读元组，
- * 编译期就不允许写入，不需要（在 packages/ 下也不允许）运行期冻结。
- */
-const NO_SIGNAL_ARGS: readonly [] = [];
 
 /**
  * 把 AbortSignal 接到 grammY raw API 调用的最后一个位置参数上。

@@ -88,25 +88,6 @@ export function forwardPathTemplate(origin: string, forwarder: string): string {
   return `转发路径：「${origin} → ${forwarder}」`;
 }
 
-/** 本轮触发消息本身已经不在渲染出来的转录里时，链标注上的替代标签：
- *  写 #N 会让模型在转录里搜一个根本不存在的编号（排队补跑、慢媒体轮常见）。 */
-export const TRIGGER_NOT_IN_TRANSCRIPT_LABEL: string = "已不在下面的转录里";
-
-/** 回复链中已滑出逐字热区、只剩上一跳回复快照的链尾标记。 */
-export const REPLY_CHAIN_SNAPSHOT_TAG: string = "[仅回复快照]";
-
-/** 多层回复链标注模板。triggerMessageId 是本轮触发消息的 message_id，links
- *  是已格式化的各跳行——第 1 行是触发消息直接回复的对象，逐级向更早追溯
- *  （见 aiChat/ai/utils/chatTranscript.ts 的 formatReplyChain）。 */
-export function replyChainTemplate(triggerLabel: string, links: string[]): string {
-  return (
-    `补充：本轮触发消息（${triggerLabel}）处在一条多层回复链上——它回复了下面第 1 条，第 1 条又回复了第 2 条，依此类推。` +
-    `链沿仍在逐字聊天记录内的消息回溯；若最后一跳标有 ${REPLY_CHAIN_SNAPSHOT_TAG}，它是上一条消息自带的回复快照，原消息已不在逐字记录中。` +
-    "各跳正文超长时会截断；除链尾快照外，完整原文以逐字记录为准。理解话题走向和人物指代时请顺着这条链看：\n" +
-    links.map((link: string, index: number): string => `${index + 1}. ${link}`).join("\n")
-  );
-}
-
 /** 自包含转录行的占位形态：压缩摘要那条路用的格式（本目录 memory.ts 的
  * SUMMARY_SYSTEM_PROMPT），实际拼装见 aiChat/ai/utils/chatTranscript.ts 的
  * formatBufferedMessageLine。两侧共用同一字符串，防止行格式与说明各改各的漂移。 */

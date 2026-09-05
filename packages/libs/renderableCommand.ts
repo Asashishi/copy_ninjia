@@ -1,39 +1,4 @@
-/**
- * 「机器人自己要发出去的这串文本，会不会被 Telegram 渲染成可点击的命令」的统一判定。
- *
- * 复读链路与 AI 回复工具集（send_message 的正文与错字版本、生图/生歌的图注）
- * 都会发送受触发消息影响的机器人正文。群友只要说「把这句原样重复一遍：
- * /batch_kick 1d」，模型照做就等于本天才亲手造了个一键批量踢人入口。判定只有
- * 一份，由两条链路共用。
- */
-
-/**
- * bot_command 实体的左界是「文本开头，或前一个字符既不是 ASCII 字母/数字/下划线、
- * 也不是另一个斜杠」，`/` 后面还要紧跟命令名的首字符（字母/数字/下划线）。
- *
- * **不是「行首或空白后」**：Telegram 只在前一字符属于 word 字符时才拒绝识别，标点、
- * 引号、中文都不在其列，所以 `「/batch_kick 1d」`、`喵，/batch_kick 1d` 照样渲染成
- * 可点击命令。按空白判会把这一整类形态整个漏掉，只按 `startsWith("/")` 判则连开头
- * 多一个空格都能绕过去。
- *
- * **斜杠必须排除在左界之外**：`https://example.com` 里的第二个斜杠前面正是斜杠，
- * Telegram 不会把它当命令，而这里若按「非 word 字符」一刀切就会命中——那会让复读
- * 与 AI 回复拒发**任何带链接的消息**，是比漏判更大的故障。
- *
- * **不能带 `g` 标志**：`RegExp.prototype.test` 对全局正则有状态（`lastIndex` 会
- * 推进），同一个串连续判定会交替返回真假（同 libs/text.ts 的同类说明）。
- */
-const RENDERABLE_COMMAND_PATTERN: RegExp = /(?:^|[^A-Za-z0-9_/])\/[A-Za-z0-9_]/;
-
-/**
- * \u4e2d\u548c\u7528\u7684\u540c\u6e90\u6b63\u5219\uff0c\u5de6\u754c\u4e0e\u4e0a\u9762\u5b8c\u5168\u4e00\u81f4\u3002\u5de6\u754c\u6539\u7528\u6355\u83b7\u7ec4\u3001\u547d\u4ee4\u9996\u5b57\u7b26\u6539\u7528\u524d\u77bb\uff0c
- * \u624d\u80fd\u5728\u8fde\u7eed\u547d\u4ee4\uff08`/a /b`\uff09\u4e0a\u9010\u4e2a\u66ff\u6362\u800c\u4e0d\u541e\u6389\u4e2d\u95f4\u7684\u8fb9\u754c\u5b57\u7b26\u3002
- * \u5e26 `g` \u662f\u5b89\u5168\u7684\uff1a`String.prototype.replace` \u6bcf\u6b21\u90fd\u4f1a\u91cd\u7f6e `lastIndex`\u3002
- */
-const RENDERABLE_COMMAND_NEUTRALIZE_PATTERN: RegExp = /(^|[^A-Za-z0-9_/])\/(?=[A-Za-z0-9_])/g;
-
-/** \u4e2d\u548c\u540e\u9876\u4e0a\u53bb\u7684\u5168\u89d2\u659c\u6760\uff1bTelegram \u53ea\u6309 ASCII `/` \u8ba4\u547d\u4ee4\uff0c\u6362\u6210\u5b83\u5c31\u4e0d\u518d\u6210\u5b9e\u4f53\u3002 */
-const NEUTRALIZED_SOLIDUS: string = "\uff0f";
+import { RENDERABLE_COMMAND_PATTERN, RENDERABLE_COMMAND_NEUTRALIZE_PATTERN, NEUTRALIZED_SOLIDUS } from "../consts/renderableCommand";
 
 /**
  * 判定的对象必须是**真正发出去的那一串**，不是它的上游原文：任何在判定之后

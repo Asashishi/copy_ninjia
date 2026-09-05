@@ -50,6 +50,13 @@ import {
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
 import { BOT_STATUS_PERMISSION_LABELS } from "../../packages/consts/botStatus";
 import { getChatState } from "../../packages/infra/storage/stateStore";
+import * as Admission from "../../packages/consts/antiRaid/admission";
+import * as Media from "../../packages/consts/aiChat/media";
+import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
+import { EMPTY_OUTPUT_ITEMS, OPENAI_EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/openai";
+import { GEMINI_EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/gemini";
+import { EMPTY_STICKER_MENU } from "../../packages/consts/aiChat/stickers";
+import { DISABLED_LINK_PREVIEW, NO_SIGNAL_ARGS } from "../../packages/consts/telegram";
 
 /**
  * 共享常量表的不可变性回归测试。
@@ -94,6 +101,48 @@ test("常量表本身不可整体替换或就地增删", () => {
   expect(() => CHAT_TEARDOWN_ORDER.push("copy")).toBeDefined();
   // @ts-expect-error 同上，也不允许按下标换掉某个 owner
   expect(() => { CHAT_TEARDOWN_ORDER[0] = "qa"; }).toBeDefined();
+});
+
+test("准入、媒体、Telegram 固定载荷和各领域空列表均不可写", () => {
+  const assertReadonly = (): void => {
+    // @ts-expect-error 广告准入结果必须只读。
+    Admission.ACCEPT_CANDIDATE.action = "ignore";
+    // @ts-expect-error 广告忽略结果必须只读。
+    Admission.IGNORE_CANDIDATE.action = "accept";
+    // @ts-expect-error 频道残留处置结果必须只读。
+    Admission.DELETE_STRAGGLER.action = "ignore";
+    // @ts-expect-error 入队结果必须只读。
+    Admission.ENQUEUE_KEY.action = "skip";
+    // @ts-expect-error 跳过结果必须只读。
+    Admission.SKIP_ENQUEUE.action = "enqueue";
+    // @ts-expect-error 派发结果必须只读。
+    Admission.DISPATCH.action = "saturated";
+    // @ts-expect-error 满载结果必须只读。
+    Admission.SATURATED.action = "dispatch";
+    // @ts-expect-error 模态关闭结果必须只读。
+    Media.MEDIA_CLOSED_RESULT.ok = false;
+    // @ts-expect-error 退避结果必须只读。
+    Media.MEDIA_BACKOFF_RESULT.ok = false;
+    // @ts-expect-error 拒绝结果必须只读。
+    Media.MEDIA_TASK_REJECTED_RESULT.ok = false;
+    // @ts-expect-error 取消结果必须只读。
+    Media.MEDIA_CANCELLED_RESULT.ok = false;
+    // @ts-expect-error 禁用链接预览的共享载荷必须只读。
+    DISABLED_LINK_PREVIEW.is_disabled = true;
+    // @ts-expect-error 信号适配的共享空元组不得追加。
+    NO_SIGNAL_ARGS.push(undefined);
+    // @ts-expect-error 广告候选的共享空列表不得追加。
+    EMPTY_AD_CANDIDATE_ENTRIES.push({});
+    // @ts-expect-error OpenAI 输出的共享空列表不得追加。
+    EMPTY_OUTPUT_ITEMS.push({});
+    // @ts-expect-error OpenAI 调用的共享空列表不得追加。
+    OPENAI_EMPTY_FUNCTION_CALLS.push({});
+    // @ts-expect-error Gemini 调用的共享空列表不得追加。
+    GEMINI_EMPTY_FUNCTION_CALLS.push({});
+    // @ts-expect-error 贴纸共享空菜单不得追加。
+    EMPTY_STICKER_MENU.push({});
+  };
+  expect(assertReadonly).toBeFunction();
 });
 
 test("对象元素的字段同样不可写", () => {

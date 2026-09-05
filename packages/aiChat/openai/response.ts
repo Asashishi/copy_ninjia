@@ -1,3 +1,4 @@
+import { EMPTY_OUTPUT_ITEMS, OPENAI_EMPTY_FUNCTION_CALLS as EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/openai";
 /**
  * OpenAI Responses 响应里的项目级诊断与 output item 解析。正文直接读 SDK 的
  * `output_text` 访问器，本文件只补 SDK 没有提供的异常收尾诊断、函数调用抽取
@@ -8,9 +9,6 @@ import { OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS } from "../../consts/aiChat/openai";
 import { isPlainRecord } from "../../libs/record";
 import type OpenAI from "openai";
 import type { AiFunctionCall } from "../../types/aiChat/provider";
-
-/** 无 output item 时共用的空数组；理由同下方 EMPTY_FUNCTION_CALLS。 */
-const EMPTY_OUTPUT_ITEMS: readonly OpenAI.Responses.ResponseOutputItem[] = [];
 
 /**
  * 诊断串里的一个字段：缺省返回 undefined（JSON.stringify 会把这个键整个略掉），
@@ -120,9 +118,6 @@ export function normalizedFinishReason(response: OpenAI.Responses.Response): str
 export function isTruncatedByTokenLimit(response: OpenAI.Responses.Response): boolean {
   return response.incomplete_details?.reason === "max_output_tokens";
 }
-
-/** 无函数调用时共用的空数组：调用方只读，不必每轮新建一个空数组。 */
-export const EMPTY_FUNCTION_CALLS: readonly AiFunctionCall[] = [];
 
 /**
  * 这个 output item 是不是一次**可续接**的函数调用。

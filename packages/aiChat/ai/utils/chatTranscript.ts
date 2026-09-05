@@ -1,14 +1,12 @@
-import type { BufferedMessage, BufferedReplyReference, ReplyChainLink } from "../../../types/aiChat/memory";
+import type { BufferedMessage, BufferedReplyReference } from "../../../types/aiChat/memory";
 import type { AiSpeakerSnapshot } from "../../../types/aiChat/speaker";
 import { FALLBACK_SPEAKER_NAME } from "../../../consts/auto";
-import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS, TIER_BOUNDARY_ALIGNMENT } from "../../../consts/aiChat/memory";
+import { COMPACT_BATCH_SIZE, TIER_BOUNDARY_ALIGNMENT } from "../../../consts/aiChat/memory";
 import {
   FORWARD_ROSTER_BLOCK_NAME,
   forwardTagTemplate,
   messageNumberTag,
-  REPLY_CHAIN_SNAPSHOT_TAG,
   REPLY_TARGET_EVICTED_TAG,
-  replyChainTemplate,
   replyPointerTemplate,
   replyQuoteInlineTemplate,
   replyQuoteTemplate,
@@ -17,14 +15,13 @@ import {
   SELF_ROSTER_CODE,
   SPEAKER_ROSTER_BLOCK_NAME,
   transcriptDateHeader,
-  TRIGGER_NOT_IN_TRANSCRIPT_LABEL,
 } from "../../../consts/aiChat/prompts/transcript";
-import { stripLeadingAtSigns, truncateInline } from "../../../libs/text";
+import { stripLeadingAtSigns } from "../../../libs/text";
 
 /**
  * 发言人的显示名：first/last 拼接，都没有则给个占位。
  *
- * 这是转录热函数：每条转录行、回复标注和回复链节点都会调用。直接分支拼接，
+ * 这是转录热函数：每条转录行与回复标注都会调用。直接分支拼接，
  * 不创建临时数组或过滤结果；全空白字段与两者皆空时回退到占位符。
  */
 function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
@@ -43,11 +40,11 @@ export function displayBufferedMessageName(message: BufferedMessage): string {
 
 /**
  * 一个人的完整身份段：`[id:…] [username:@…] 显示名`，公开 username 缺席时省略
- * 中段。转录行、回复标注和回复链里的同一段身份是逐字同形的，因此提示词里点名
+ * 中段。转录行与回复标注里的同一段身份是逐字同形的，因此提示词里点名
  * 某个人（目前是回复任务开头的唤起者声明，见 workers/aiChat/promptContext.ts）
  * 用这个函数生成，模型不必在两种身份写法之间二次对齐。
  *
- * 高频转录行与回复链继续内联拼接，避免先物化完整身份中间串；本函数每轮回复
+ * 高频转录行与回复标注继续内联拼接，避免先物化完整身份中间串；本函数每轮回复
  * 最多调用一次，形状一致由测试守住。
  */
 export function formatSpeakerIdentity(speaker: AiSpeakerSnapshot): string {
@@ -71,42 +68,6 @@ function formatReplyReference(reference: BufferedReplyReference): string {
     forwardTag: formatForwardTag(reference.forwardedFrom),
     quote,
   });
-}
-
-/** formatReplyChain 的渲染上下文。 */
-export interface ReplyChainOptions {
-  /** 本轮转录的渲染结果：各跳身份取行内编号，触发消息还在不在转录里也看它。 */
-  readonly rendered: RenderedTranscript;
-  /** 触发消息不在渲染窗口里时改用的指代。默认只说「不在转录里」——那等于告诉
-   *  模型「找不到」，调用方手上有正文时应当传入引述式指代，让两处引用互相指认
-   *  （见 workers/aiChat/promptContext.ts 的 absentTriggerLabel）。 */
-  readonly absentTriggerLabel?: string;
-}
-
-/**
- * 多层回复链标注：单跳回复标注只覆盖第一跳，链 ≥2 跳时在回复任务区块补
- * 全路径（见 workers/aiChat/promptContext.ts）。各跳身份与转发来源标记和
- * 转录行一致，正文按 REPLY_CHAIN_NODE_MAX_CHARS 截断。已滑出热区、仅靠
- * 上一跳回复快照保留的链尾显式标记；不足 2 跳时返回空串。
- */
-export function formatReplyChain(
-  triggerMessageId: number,
-  chain: ReplyChainLink[],
-  { rendered, absentTriggerLabel = TRIGGER_NOT_IN_TRANSCRIPT_LABEL }: ReplyChainOptions
-): string {
-  if (chain.length < 2) return "";
-  const links: string[] = chain.map((link: ReplyChainLink): string => {
-    const snapshotTag: string = link.snapshotOnly ? ` ${REPLY_CHAIN_SNAPSHOT_TAG}` : "";
-    // 身份写法与转录行对齐：人在名册里就只写编号，模型顺着链回转录找那一行时
-    // 不必在两种身份形态之间换算；链尾快照那种名册里没有的人才退回完整身份段。
-    const speaker: string = rendered.codeOf.get(link.id) ?? formatSpeakerIdentity(link);
-    return `${messageNumberTag(link.messageId)} ${speaker}${formatForwardTag(link.forwardedFrom)}${snapshotTag}：「${truncateInline(link.text, REPLY_CHAIN_NODE_MAX_CHARS)}」`;
-  });
-  // 触发消息本身已经滑出渲染窗口时写 #N，等于让模型去转录里搜一个不存在的编号。
-  return replyChainTemplate(
-    rendered.present.has(triggerMessageId) ? messageNumberTag(triggerMessageId) : absentTriggerLabel,
-    links
-  );
 }
 
 /**
@@ -158,8 +119,8 @@ interface TranscriptRange {
 }
 
 /**
- * 渲染结果。除了拼好的文本，还把「行内编号」和「哪些消息号真的在转录里」交出来：
- * 转录之外还要点名某个人或某条消息的地方（唤起者声明、回复链、排队补跑的回复
+ * 渲染结果包含转录文本、行内编号和同源的单跳引用渲染函数：
+ * 转录之外还要点名某个人或某条消息的地方（唤起者声明、排队补跑的回复
  * 引用）因此能用与转录行同一套写法，模型不必在两种身份/消息号形态之间做连接，
  * 也不会被指向一个转录里根本不存在的编号。
  */
@@ -167,10 +128,6 @@ export interface RenderedTranscript {
   readonly text: string;
   /** 发送者 id → 行内编号（uN / me）。名册里没有的人查不到，由调用方退回完整身份段。 */
   readonly codeOf: ReadonlyMap<number, string>;
-  /** 真正出现在渲染出来的转录里的 message_id。直接把内部那张表以只读形态交出去，
-   *  不包一层 `has(id)` 闭包：那是每轮渲染都要新分配一个的一次性闭包，而调用方
-   *  要的语义 `Set.has` 本来就有。 */
-  readonly present: ReadonlySet<number>;
   /** 转录之外引用某条被回复消息时的紧凑写法：在窗口内就给指针，否则退回内嵌快照。 */
   readonly replyReference: (reference: BufferedReplyReference) => string;
 }
@@ -178,8 +135,7 @@ export interface RenderedTranscript {
 export interface TieredTranscriptOptions {
   /** 机器人自己的账号 id：它在名册里固定拿 SELF_ROSTER_CODE。 */
   readonly selfId: number;
-  /** 本轮触发消息的 message_id：回复任务里的多层回复链标注会点名它，
-   *  因此即使没人回复过它也要保留消息号，否则那段标注指向一个转录里找不到的编号。 */
+  /** 本轮触发消息的 message_id；即使尚未被回复也保留消息号，供模型定位当前触发。 */
   readonly triggerMessageId: number;
 }
 
@@ -381,14 +337,13 @@ export function buildTieredVerbatimTranscript(
   return {
     text,
     codeOf: context.speakers,
-    present: context.present,
     replyReference: (reference: BufferedReplyReference): string => formatCompactReplyTag(reference, context),
   };
 }
 
 /**
  * 同一个 message_id 完全可能有两份条目同时在热区（快照 hydrate 出来一份，
- * Telegram 又重投了同一条 update 再记一份，见 workers/aiChat/replyChain.ts 的
+ * Telegram 又重投了同一条 update 再记一份，见 workers/aiChat/bufferedMessageIndex.ts 的
  * 注释），而紧凑转录拿 #N 当指针——两行同号，指针就指不准了。
  *
  * 保留最后一份：媒体描述之类的回填只会落在后写入的那份上。只在 duplicates>0

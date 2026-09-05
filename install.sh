@@ -12,8 +12,8 @@
 # 装的是 GitHub 上的 Latest Release：tag 取自 releases/latest 接口，取不到即失败退出。
 # 已存在的工作树保持原有 checkout 不动，只报告当前版本。
 #
-# `curl | bash` 取到的脚本来自 master，代码来自 release tag；脚本跑完，装出来的代码
-# 是该 release 的。
+# `curl | bash` 取到的入口来自 master；找到工作树后转交该树的 install.sh，
+# 运行时版本、配置问卷和初始化逻辑均使用目标代码对应的版本。
 #
 # 假设机器上什么都没装：缺 git/curl/unzip 会用系统包管理器补齐，缺仓库会 clone，
 # 缺 Bun 会装官方发行版。唯一不代劳的是 /ja_copy 用的 g-auth.json：那是 GCP 服务
@@ -35,9 +35,11 @@ readonly SERVICE_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 # clone 落地目录；已在仓库内运行时用不到。可用环境变量覆盖。
 readonly CLONE_TARGET="${COPY_NINJIA_DIR:-copy_ninjia}"
 
-# Bun 官方发行版当前要求的最低版本；低于它启动会因 API 缺失而失败。
+# Bun 精确版本与本工作树的 packageManager 一致。
 readonly REQUIRED_BUN_MAJOR=1
 readonly REQUIRED_BUN_MINOR=4
+readonly REQUIRED_BUN_PATCH=1
+readonly REQUIRED_BUN_VERSION="${REQUIRED_BUN_MAJOR}.${REQUIRED_BUN_MINOR}.${REQUIRED_BUN_PATCH}"
 
 # config_example/agent.json 里的六项 AI 能力，顺序与示例一致。
 readonly AGENT_CAPABILITIES=(ad_detect text summary media image song)
@@ -452,7 +454,7 @@ validate_staged_telegram_config() {
   COPY_NINJIA_CONFIG_ROOT="$probe_root" bun -e '
     import { parseTelegramConfig } from "./packages/config/telegram";
     import { readJsonInput } from "./packages/libs/inputValidation";
-    const path = process.argv[1];
+    const path = Bun.argv[1];
     parseTelegramConfig(await readJsonInput(path), path);
   ' "$staging_path" || probe_status=$?
   rm -rf -- "$probe_root"
@@ -466,7 +468,7 @@ validate_staged_agent_config() {
   local staging_path="$1"
   bun -e '
     import { validateAgentDeploymentConfig } from "./packages/config/agent";
-    await validateAgentDeploymentConfig(process.argv[1]);
+    await validateAgentDeploymentConfig(Bun.argv[1]);
   ' "$staging_path"
 }
 
@@ -529,7 +531,7 @@ step "2/8 获取仓库"
 # 当前目录 -> clone」的顺序找工作树，不猜。
 SCRIPT_DIRECTORY=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
-  SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 fi
 
 if [ -n "$SCRIPT_DIRECTORY" ] && is_repository_root "$SCRIPT_DIRECTORY"; then
@@ -537,11 +539,11 @@ if [ -n "$SCRIPT_DIRECTORY" ] && is_repository_root "$SCRIPT_DIRECTORY"; then
   info "在脚本所在目录找到工作树：$(pwd)$(worktree_version_suffix)"
 elif is_repository_root "$PWD"; then
   info "在当前目录找到工作树：$(pwd)$(worktree_version_suffix)"
-elif is_repository_root "$PWD/$CLONE_TARGET"; then
+elif is_repository_root "$CLONE_TARGET"; then
   cd -- "$CLONE_TARGET"
   info "复用已存在的工作树：$(pwd)$(worktree_version_suffix)"
 elif [ -e "$CLONE_TARGET" ]; then
-  die "${PWD}/${CLONE_TARGET} 已存在但不是 Copy Ninjia 工作树。挪开它，或设 COPY_NINJIA_DIR 指定别的目录。"
+  die "${CLONE_TARGET} 已存在但不是 Copy Ninjia 工作树。挪开它，或设 COPY_NINJIA_DIR 指定别的目录。"
 else
   require_command git git
   require_command curl curl
@@ -555,6 +557,12 @@ else
   cd -- "$CLONE_TARGET"
   is_repository_root "$PWD" || die "clone 出来的目录不像 Copy Ninjia 工作树。"
   info "工作树就绪：$(pwd)（${RELEASE_TAG}）"
+fi
+
+# 下载入口只负责定位工作树；后续步骤使用目标树自己的安装器。
+if [ "$SCRIPT_DIRECTORY" != "$(pwd -P)" ]; then
+  [ -f install.sh ] || die "目标工作树缺少 install.sh，无法继续安装。"
+  exec bash ./install.sh
 fi
 
 # clone 那条分支天然带 .git，这里立刻返回；只有「解压发布包」那几种到达方式
@@ -573,10 +581,10 @@ if ! command -v bun >/dev/null 2>&1 && [ -x "${BUN_INSTALL:-$HOME/.bun}/bin/bun"
 fi
 
 if ! command -v bun >/dev/null 2>&1; then
-  info "未检测到 Bun，准备安装官方发行版。"
+  info "未检测到 Bun，准备安装官方发行版 ${REQUIRED_BUN_VERSION}。"
   require_command curl curl
   require_command unzip unzip
-  curl -fsSL https://bun.sh/install | bash ||
+  curl -fsSL https://bun.sh/install | bash -s "bun-v${REQUIRED_BUN_VERSION}" ||
     die "Bun 安装脚本执行失败。"
   export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
   export PATH="$BUN_INSTALL/bin:$PATH"
@@ -585,15 +593,18 @@ if ! command -v bun >/dev/null 2>&1; then
   info "Bun 已安装到 ${BUN_INSTALL}。新开的终端需要重新加载 shell 配置才能直接用 bun。"
 fi
 
-BUN_VERSION="$(bun --version)"
-BUN_MAJOR="${BUN_VERSION%%.*}"
-BUN_VERSION_REST="${BUN_VERSION#*.}"
-BUN_MINOR="${BUN_VERSION_REST%%.*}"
-if [ "$BUN_MAJOR" -lt "$REQUIRED_BUN_MAJOR" ] ||
-   { [ "$BUN_MAJOR" -eq "$REQUIRED_BUN_MAJOR" ] && [ "$BUN_MINOR" -lt "$REQUIRED_BUN_MINOR" ]; }; then
-  die "需要 Bun ${REQUIRED_BUN_MAJOR}.${REQUIRED_BUN_MINOR}+，当前是 ${BUN_VERSION}。请升级后重跑：curl -fsSL https://bun.sh/install | bash"
+BUN_VERSION="$(bun --version)" || die "无法读取 Bun 版本。"
+if [ "$BUN_VERSION" != "$REQUIRED_BUN_VERSION" ]; then
+  die "需要 Bun ${REQUIRED_BUN_VERSION}，当前是 ${BUN_VERSION}。请手工安装对应版本后重跑：curl -fsSL https://bun.sh/install | bash -s bun-v${REQUIRED_BUN_VERSION}"
 fi
-info "Bun ${BUN_VERSION}，满足 ${REQUIRED_BUN_MAJOR}.${REQUIRED_BUN_MINOR}+ 要求。"
+# 安装器与 manifest 必须在安装依赖和写入配置之前完成一致性核验。
+bun -e '
+  const manifest = await Bun.file("package.json").json();
+  if (manifest?.packageManager !== `bun@${Bun.argv[1]}`) {
+    throw new Error(`package.json: $.packageManager must equal bun@${Bun.argv[1]}.`);
+  }
+' "$REQUIRED_BUN_VERSION" || die "安装器与 package.json 的 Bun 版本不一致。"
+info "Bun ${BUN_VERSION}，与 packageManager 一致。"
 
 # --------------------------------------------------------------------------
 step "4/8 安装依赖"

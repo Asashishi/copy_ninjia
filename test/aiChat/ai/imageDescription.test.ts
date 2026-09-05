@@ -10,7 +10,7 @@ const describeVision = mock(async (..._args: unknown[]): Promise<AiTextResult> =
   ok: true,
   text: "一只挥手的猫",
 }));
-const prepareVisionImage = mock(async (..._args: unknown[]) => ({ bytes: Buffer.from([1, 2, 3]), mime: "image/png" as const }));
+const prepareVisionImage = mock(async (..._args: unknown[]) => ({ bytes: new Uint8Array([1, 2, 3]), mime: "image/png" as const }));
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/infra/telegram/workerClient", () => ({
@@ -54,7 +54,7 @@ beforeEach(() => {
     ok: true,
     text: "一只挥手的猫",
   }));
-  prepareVisionImage.mockImplementation(async () => ({ bytes: Buffer.from([1, 2, 3]), mime: "image/png" as const }));
+  prepareVisionImage.mockImplementation(async () => ({ bytes: new Uint8Array([1, 2, 3]), mime: "image/png" as const }));
 });
 
 afterEach(() => {
@@ -474,7 +474,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     await expect(describeMedia({ kind: "animation", fileId: "bad-image", fileUniqueId: "u4", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
 
     prepareVisionImage.mockResolvedValueOnce({
-      bytes: Buffer.alloc(MEDIA_MAX_DOWNLOAD_BYTES + 1),
+      bytes: new Uint8Array(MEDIA_MAX_DOWNLOAD_BYTES + 1),
       mime: "image/png" as const,
     });
     await expect(describeMedia({ kind: "photo", fileId: "expanded", fileUniqueId: "u5", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();

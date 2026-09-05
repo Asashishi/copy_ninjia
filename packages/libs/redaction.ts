@@ -1,5 +1,4 @@
-/** 日志等诊断文本中的敏感值占位符。 */
-export const REDACTED_SECRET: string = "[REDACTED]";
+import { REDACTED_SECRET, REDACTED_URL } from "../consts/redaction";
 
 /**
  * 从一段文本中移除所有已知敏感值。用字面量替换而不是动态正则，避免 token 里的
@@ -16,9 +15,6 @@ export function redactSecretsInText(text: string, secrets: readonly string[]): s
   }
   return redacted;
 }
-
-/** 地址无法解析成 URL 时日志里代替原串的占位符：原串同样可能带着密钥，不能原样打出去。 */
-export const REDACTED_URL: string = "[unparsable URL]";
 
 /**
  * 把一个地址收敛成能安全写进 `logs/` 的形态：只留 origin 与 pathname，丢掉查询串、

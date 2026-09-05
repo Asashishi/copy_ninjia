@@ -42,15 +42,16 @@
 - **The coverage denominator includes all source code**: `bun run check` adds every production runtime module to the denominator. Modules untouched by any test count as 0% covered. Both function and line coverage must remain at least 90%, so adding an untested module directly lowers global coverage.
 - **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled. `any` is forbidden in production code but exempted in tests.
 - **Explicit type annotations are lint-enforced**: in production code (`index.ts`, `packages/`, `scripts/`), variables, parameters, and destructuring must be annotated via `@typescript-eslint/typedef`, and function and callback return types via `@typescript-eslint/explicit-function-return-type` — neither accepts contextual inference. TypeScript forbids annotating `for...of` / `for...in` loop variables, so the rule skips them automatically; consts whose initializer is already an arrow function are also exempt. Test files are not subject to this.
-- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, executable permissions on tracked non-script files, constants, cache ownership, and Worker/Telegram boundaries against the real thread module graph. It also statically checks that every timer handle installed under `packages/workers/` is `unref()`ed, production Node-compatibility imports, Telegram cleanup and retention exemptions, active cold-migration entries, all 14 declared coverage locations, and the trilingual performance record. Cross-references written in comments as "see `<module>.ts`'s `<symbol>`" are checked the same way: it fails when the named module no longer declares or re-exports that symbol (`export *` compatibility entries are expanded one level). `check:coverage` performs a separate real coverage run to ensure the declarations have not drifted together.
+- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, executable permissions on tracked non-script files, constants, cache ownership, and Worker/Telegram boundaries against the real thread module graph. It also statically checks that every timer handle installed under `packages/workers/` is `unref()`ed, Node-compatibility imports in production code and scripts, the allowed `Buffer` methods, process arguments that must use `Bun.argv`, Telegram cleanup and retention exemptions, active cold-migration entries, all 14 declared coverage locations, and the trilingual performance record. Cross-references written in comments as "see `<module>.ts`'s `<symbol>`" are checked the same way: it fails when the named module no longer declares or re-exports that symbol (`export *` compatibility entries are expanded one level). `check:coverage` performs a separate real coverage run to ensure the declarations have not drifted together.
+  Module-level literal constants and literal combinations belong in domain `consts`; function composition and cache ownership are checked separately. Builtin Node modules share one allowlist with or without the `node:` prefix. Dynamic loading, re-exports, `require`, `process.hrtime` / `nextTick`, and destructuring are checked too; type-only declarations are excluded from runtime checks.
 
 ### Dependency Release-Age Gate
 
-Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The current Bun runtime and `@types/bun` are both 1.4.0.
+Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The Bun runtime is pinned to 1.4.1 and `@types/bun` to 1.4.0; the version gate requires the same major and minor versions, while `packageManager` and `install.sh` jointly pin the runtime patch version.
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **3129 tests / 314 files / 98189 `expect()` calls**; full-source **function coverage 97.04% / line coverage 97.32%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **3179 tests / 321 files / 123010 `expect()` calls**; full-source **function coverage 97.12% / line coverage 97.38%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -77,7 +78,7 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 `bun run perf:hot-path-gate` is the final stage of `bun run check`, so it runs before every commit. For each scenario in `HOT_PATH_PROFILE_SCENARIOS` (`packages/consts/performance.ts`) and each repeat it spawns two independent children: `steadyProfile` judges only GC and JIT during the formal loop, while `retained` judges RSS, the heapUsed peak, and post-full-GC retention without the profiler's own memory interfering.
 
-The criteria themselves are **not written in TypeScript**. The Bun version and revision anchor, the hard GC/RSS/retention limits, the per-scenario ns/op soft-report thresholds, and the measurements behind each number (slowest median, sampling process count, comparison against the previous Bun release) all live in the repository-root, version-tracked `performance-result.json`, parsed strictly by `scripts/perf/hotPaths/gateResult.ts`: unknown keys, missing fields, type mismatches, and a threshold that sits below its own source measurement are all rejected before a single child process starts. `packages/consts/performance.ts` keeps only the measurement-independent sampling knobs and the scenario list — recalibrating a runtime means editing that JSON, not the code.
+`scripts/perf/hotPaths/gateResult.ts` strictly parses the calibration stored in [`performance-result.json`](../../performance-result.json). Before convention checks proceed or hot-path children start, `gateRuntime.ts` compares `packageManager`, the current Bun version/revision, and the calibrated build; mismatches require remeasurement. The record contains process counts, per-scenario latency sources, and hard GC/RSS/retention limits. Historical `fullSuite` results retain their own timestamps and Bun builds.
 
 The `hotPathProfileGate` section is bidirectional, but the two halves have different owners. `calibration` is edited by hand after a recalibration and is read-only to the gate. `lastRun` records the most recent gate readings and is only overwritten when you explicitly pass `bun run perf:hot-path-gate -- --write-result`, so a plain `bun run check` leaves the working tree clean. The write-back never touches a byte of `calibration` — letting the gate rewrite its own criteria from one run would weld the gate shut at today's performance.
 
@@ -141,7 +142,14 @@ Two more sets of measured figures drift just as silently, independently of cover
 
 This repository does not rely on GitHub Actions. Release environments should make `bun run release:check` an explicit build or pre-deploy step. Networked environments should additionally run `bun run audit:release`; network failure means the audit was not completed, not that there are zero vulnerabilities. Any ignored CVE needs a recorded reason and expiration date. For releases with persistence-structure changes, first follow the migration process in [06 Common Modification Recipes](06-modification-guide.md#changing-a-persistence-schema).
 
-Every release starts by running `bun run perf:full -- --write-doc` on `dev`, updating the trilingual [09 Performance Benchmark](09-performance.md) with the current figures and committing it alongside the code.
+After the gates pass on `dev`, stop the service and other heavy workloads, wait for the machine to
+be idle, and run `bun run perf:full -- --write-doc` with the default three rounds. The command updates
+both the trilingual [09 Performance Benchmark](09-performance.md) and `fullSuite.lastRun` in
+`performance-result.json`; commit both with the code. Do not run the full benchmark alongside or
+immediately before or after `bun run check`; wait for the machine to become idle between them.
+Performance comparisons require the same machine and Bun build. Figures after a runtime upgrade
+establish the baseline for that build; cross-build differences do not measure code optimization.
+Investigate failures or abnormal readings and rerun before publishing.
 
 Every squash merge into `master` must produce one GitHub Release:
 

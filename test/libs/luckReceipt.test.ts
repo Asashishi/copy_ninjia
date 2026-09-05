@@ -15,12 +15,35 @@ import {
 import type { LuckReceiptSecret } from "../../packages/types";
 
 const DAY = "2026-07-19";
-const SECRET: LuckReceiptSecret = { version: 1, day: DAY, key: Buffer.alloc(32, 7).toString("base64url") };
-const OTHER_SECRET: LuckReceiptSecret = { version: 1, day: DAY, key: Buffer.alloc(32, 8).toString("base64url") };
+const SECRET: LuckReceiptSecret = {
+  version: 1,
+  day: DAY,
+  key: new Uint8Array(32).fill(7).toBase64({ alphabet: "base64url", omitPadding: true }),
+};
+const OTHER_SECRET: LuckReceiptSecret = {
+  version: 1,
+  day: DAY,
+  key: new Uint8Array(32).fill(8).toBase64({ alphabet: "base64url", omitPadding: true }),
+};
 const EXPECTED_123_HMAC: string =
   "916338242888c03e98e3d6efaaaba002b26adffee09afeb8bd963cd67102fb5a";
 
 describe("luck receipt protocol", () => {
+  test("签名的每个字节参与验证，替换 cache key 也不能复用原签名", () => {
+    const receipt: string = createLuckReceipt(SECRET, "123");
+    const [unsigned, encoded] = receipt.split(".");
+    const signature: Uint8Array = Uint8Array.fromBase64(encoded!, { alphabet: "base64url" });
+    for (let index: number = 0; index < signature.length; index++) {
+      const modified: Uint8Array = signature.slice();
+      modified[index] = modified[index]! ^ 1;
+      const tampered: string = `${unsigned}.${modified.toBase64({ alphabet: "base64url", omitPadding: true })}`;
+      expect(verifyLuckReceipt(tampered, DAY, SECRET)).toBeUndefined();
+    }
+    const other: string = createLuckReceipt(SECRET, "124").split(".")[0]!;
+    expect(verifyLuckReceipt(`${other}.${encoded}`, DAY, SECRET)).toBeUndefined();
+    expect(verifyLuckReceipt(receipt, DAY, SECRET)).toBe("123");
+  });
+
   test("自描述回执往返默认 key 与带文本摘要 key", () => {
     for (const cacheKey of ["123", `123:${"a".repeat(64)}`]) {
       const receipt: string = createLuckReceipt(SECRET, cacheKey);

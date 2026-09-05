@@ -69,11 +69,11 @@ import {
   appendLinkUrls,
   boundSampleContext,
   claimSampleContextParts,
-  EMPTY_AD_CANDIDATE_ENTRIES,
   enforceBundleCapacity,
   latestSeq,
   pruneConsumedContext,
 } from "./bundle";
+import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../../consts/antiRaid/adDetect";
 import {
   clearChatReferencedAdWarnings,
   clearIdentityReferencedAdWarnings,

@@ -34,13 +34,13 @@ import { getAgentDeploymentConfig } from "../../config/agent";
 import { requestOpenAiResult } from "./client";
 import { stablePrefixFingerprint } from "./promptCacheKey";
 import {
-  EMPTY_FUNCTION_CALLS,
   countWebSearchCalls,
   extractFunctionCalls,
   isPairableFunctionCall,
   responseOutputItems,
   responseOutputText,
 } from "./response";
+import { OPENAI_EMPTY_FUNCTION_CALLS as EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/openai";
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
 import type {
   AiReplySession,

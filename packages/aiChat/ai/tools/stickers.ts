@@ -1,3 +1,4 @@
+import { EMPTY_STICKER_MENU } from "../../../consts/aiChat/stickers";
 import type { StickerSet } from "grammy/types";
 import type { AiToolDefinition } from "../../../types/aiChat/provider";
 import { getStickerConfig } from "../../../config/stickers";
@@ -59,10 +60,6 @@ import type { StickerCandidate, StickerPackCandidate, StickerRoundState, Sticker
 export function createStickerRoundState(): StickerRoundState {
   return { viewedPackIntents: new Map(), sentStickerUids: new Set() };
 }
-
-/** 本轮回复不取菜单（已失效或等待被取消）时复用的空菜单，避免每次各分配一个数组。
- *  调用方只读遍历，不写回，理由同 consts 的只读容器约定。 */
-const EMPTY_STICKER_MENU: readonly StickerPackCandidate[] = [];
 
 /**
  * 组装当前可选的贴纸包菜单：每个白名单包收整包简介 + 包内已经生成过画面

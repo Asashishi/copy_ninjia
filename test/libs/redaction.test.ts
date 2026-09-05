@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { REDACTED_SECRET, REDACTED_URL, redactSecretsInText, redactUrlForLog } from "../../packages/libs/redaction";
+import { REDACTED_SECRET, REDACTED_URL } from "../../packages/consts/redaction";
+import { redactSecretsInText, redactUrlForLog } from "../../packages/libs/redaction";
 
 describe("日志敏感值脱敏", () => {
   test("会清除 Bun fetch Error 的 path/message/stack 中完整 token，且忽略空 secret", () => {

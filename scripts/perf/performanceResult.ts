@@ -1,23 +1,13 @@
 /**
  * 仓库根 `performance-result.json` 的共享写入边界。
  *
- * 两套基准各写自己那一节，互不相识：
+ * 两套基准各自写入对应节：
  * - `hotPathProfileGate` —— `bun run perf:hot-path-gate -- --write-result`
  * - `fullSuite` —— `bun run perf:full -- --write-doc`
  *
- * 它们在不同进程、不同时刻运行，所以写入一律「读整份 → 只换自己那一格 → 整份
- * 写回」，绝不按解析结果重建文档。重建会把另一节连同 `calibration` 下那些给人
- * 看的长段说明一起抹掉——那些说明在任何一方的解析结果里都不存在。
- *
- * 「不同时刻」是前提而非保障：这里没有文件锁，两侧真同时写会后写者覆盖先写者
- * 那一格。两条命令都是发布期手动执行、且全量基准要跑几分钟，AGENTS.md 也要求
- * 它别和 `bun run check` 连着跑，因此没有为此引入锁——真要并发，代价是丢一次
- * 记录，重跑即可，不会损坏文件结构。
- *
- * 本模块**不 import `packages/` 下的任何实现模块**。全量基准的父进程要 import
- * 它，而那个进程按 AGENTS.md「全量性能基准」的约定必须与生产模块完全隔离——正
- * 因为隔离，它自己没有能力写到真实数据根。下面那个三行的 plain-record 判断是为
- * 这条隔离重写的，不是忘了复用 `packages/libs/record`。
+ * 两条命令必须串行运行；写入边界没有文件锁。每次读取完整 JSON，只替换指定节内
+ * 的目标字段，再序列化写回；其他字段及 calibration 内容保留。
+ * 本模块供全量基准父进程使用，必须与 packages/ 实现模块隔离，不访问部署数据。
  */
 
 import { join } from "node:path";
@@ -30,7 +20,7 @@ export const PERFORMANCE_RESULT_PATH: string = join(
   "performance-result.json"
 );
 
-/** 非数组对象判断；见文件头注为什么不复用 packages/libs/record。 */
+/** 在基准父进程的模块隔离边界内判断非数组对象。 */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -48,7 +38,7 @@ export interface WritePerformanceResultEntryParams {
 }
 
 /**
- * 覆盖记录文件里的一格，其余内容一个字节都不动。
+ * 替换记录文件中的指定字段，保留其他字段的值并统一序列化。
  *
  * 节不存在时创建；存在但不是对象则直接失败，不猜、不覆盖——那说明这份文件已经
  * 被改坏，静默重建只会把坏掉的地方藏起来。

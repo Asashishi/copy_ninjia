@@ -1,3 +1,4 @@
+import { FENCE_LANGUAGE_REJECT } from "../consts/text";
 /**
  * Telegram `pre` 代码块与 ``` 围栏文本之间的双向转换。
  *
@@ -14,15 +15,6 @@
 import type { MessageEntity } from "grammy/types";
 import { CODE_FENCE, EMPTY_MESSAGE_ENTITIES } from "../consts/telegram";
 import type { RichTextMessage } from "../types/telegram";
-
-/**
- * 语言标记里不允许出现的字符：空白与反引号。
- *
- * 两个方向共用同一条判定，围栏才能原样读回——写入侧放进一个带空格的语言标记，
- * 读取侧就不再认它是开栏，那条答案会连着可见的反引号一起发出去。
- * 不带 `g` 标志：`RegExp.prototype.test` 对全局正则是有状态的。
- */
-const FENCE_LANGUAGE_REJECT: RegExp = /[\s`]/;
 
 /** 可原样读回的语言标记；读不回的一律丢弃，退化成裸围栏而不是坏掉的开栏。 */
 function storableFenceLanguage(language: string | undefined): string {

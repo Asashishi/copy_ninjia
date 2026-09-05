@@ -196,7 +196,11 @@
 
   成功 action が 0 件の場合だけ、最終本文を `send_message` から fallback 送信します。意図的に表示するすべての文字列は、モデルがツールを明示的に呼び出して produce しなければならず、最終応答本文に置いたままにしてはいけません。
 
-  **可視テキストの出口はちょうど 3 つです**：単独の発言は `send_message`、そのラウンドの `generate_image` が生成した画像に添える一言は同ツールの `caption`、`generate_song` が生成した楽曲に添える一言はそれ自身の `caption` を通ります。caption 付きの生成は Telegram 上**1 通**のメッセージ（`message_id` も 1 つ）なので action も 1 つだけ計上し、自己記録も 1 件に統合しなければなりません（分けると同じ `message_id` が transcript に 2 度現れ、リプライチェーンを辿ったときにどちらを指すのか判定できなくなります）。caption が `TELEGRAM_CAPTION_MAX_CHARS` を超えた場合、Bot API は truncate ではなく送信ごと拒否するため、実行側は「caption なしの画像 + 独立したテキスト 1 通」に降格し、`actions_used: 2` として精算します。
+  **可視テキストの出口はちょうど 3 つです**：単独の発言は `send_message`、そのラウンドの `generate_image` が生成した画像に添える一言は同ツールの `caption`、`generate_song` が生成した楽曲に添える一言はそれ自身の `caption` を通ります。caption 付きの生成は Telegram 上**1 通**のメッセージ（`message_id` も 1 つ）なので action も 1 つだけ計上し、自己記録も 1 件に統合しなければなりません。caption が `TELEGRAM_CAPTION_MAX_CHARS` を超えた場合、Bot API は truncate ではなく送信ごと拒否するため、実行側は「caption なしの画像 + 独立したテキスト 1 通」に降格し、`actions_used: 2` として精算します。
+
+  **同じ返信ラウンド内の重複テキストは送信前に静かにスキップします。** `send_message` の本文と `generate_image` / `generate_song` のモデル caption は `modelAuthoredTextPolicyResult` を共有します。通常のテキスト整形後、比較時だけ空白をまとめ Unicode NFC で正規化し、そのラウンドで送信に成功したモデル本文・caption・実行側が予約した訂正文字と全文一致で判定します。語句・大文字小文字・句読点は区別し、意味の類似度による強制拒否は行いません。一致時は `{"success":true,"skipped":"duplicate","actions_used":0}` を返し、入力状態・生成要求・cooldown の取得・Telegram 送信・メモリへの自己記録を開始しません。送信に失敗した内容は再試行でき、重複判定の状態はラウンド間で共有しません。
+
+  system prompt は同じ内容を一度だけ表現し、言い換えやアクション数合わせで繰り返さないよう要求します。現在の trigger に既に応答済みで新しい内容がなければ終了し、queue 再実行にも同じ規則を適用します。スキップ結果も call ID と対応させて SDK 会話へ返します。モデル出力とツール結果は末尾への追記だけとし、履歴・暗号化された推論・思考署名・そのラウンドのツール宣言を保持します。
 
   **楽曲側はこの降格を使わず、schema の時点で予約分を引きます。**実行側が caption の末尾に曲情報（曲名/演奏者/container/サイズ/bitrate）を付けるため、モデルが書ける部分の上限は「Telegram の hard limit から metadata 予約分を引いた値」で、超えた場合は引数 error として書き直させます。判断が分かれるのはコストが非対称だからです。画像側の追送は画像が生成済みの後にしか起きませんが、こちらの「画像」は数分待って 1 曲ごとに課金される楽曲であり、失敗し得る追送分岐を増やしても得るものがなく、最も高価な呼び出しに終わり方をもう 1 通り足すだけです。予約は必ず**モデルが書く側**から引きます——連結してから超過に気づいた時点で失うのは、すでに課金済みの 1 曲です。thumbnail（カバー画像）の 3 つの必須条件（JPEG・長辺 320 以下・200 kB 未満）も同じで、どれか 1 つでも満たさないとカバーが出ないのではなく送信ごと拒否されるため、圧縮は送信境界の手前で終えておく必要があります。
 
@@ -225,6 +229,8 @@
   **1 件のグループメッセージにつき壁時計を読むのは 1 回だけ**：`handleIncomingMessageMiddleware` が入口で `Date.now()` を 1 回だけ取得し、活動量ウィンドウへの記録・沈黙期間の判定・ランダム返信のクールダウン確保はすべてこの値を使います（`MessageTriggerContext.now` で下流へ渡します）。Anti-Raid 側も同様で、`enqueueAdCandidate` が受け取った `now` はそのまま管理者キャッシュの TTL 判定まで届きます。`now` を取る関数は必ず明示的な実引数を受け付け、メッセージごとに通る呼び出し点では値を渡し、デフォルト実引数は低頻度のコマンド経路にのみ残します。理由は 2 つあり、どちらも欠かせません。意味論上、同じ 1 件のメッセージに対する各判定は同一の時刻へ揃っていなければならず、別々に時計を読むとミリ秒境界をまたいで矛盾した結論に達します。工学上、壁時計読み取りのコストはホストの clocksource に完全に依存します。VM が vDSO の高速経路を持たないソースへフォールバックすると 1 回の読み取りがマイクロ秒に達し、判定そのものより 2 桁高くつくうえ、syscall によるキャッシュ汚染が同じ関数内の他の処理まで遅くします。
 - **4 種類のメディア（画像 / スタンプ / GIF / 音声メッセージ）は 1 本の「プレースホルダー → 非同期解析 → その場で書き戻し」パイプラインを共有します**。重複排除 cache、有界 executor、書き戻しの順序はいずれも 1 つしか存在せず、種類ごとの差分は「vision 記述か音声文字起こしか」という 1 か所の分岐だけに落ちます（`packages/aiChat/ai/imageDescription.ts` の `resolveMedia`）。音声に別のパイプラインを立てると、同一メディアの並行マージ、容量による追い出し、executor スロットの競合をもう一度書くことになり、そこはまさに test で押さえるのが最も難しい部分です。
 
+  カタログ外のメディア説明は AI Worker の `transientDescriptionCache` を共有し、`file_unique_id` ごとに最大 4,096 件の Promise を保存します（`MEDIA_DESCRIPTION_CACHE_MAX`）。ヒット時は LRU 順序を更新し、容量超過時は最も長く未使用の項目だけを追い出します。失敗結果は削除し、TTL は設定しません。同じメディアの処理中要求は Promise を共有し、Worker 再生成時は空の cache から始めます。許可済みスタンプのカタログは独立して復元し、この LRU の枠を使わず、その追い出しによって削除されることもありません。
+
   **音声の 2 つの上限（長さ・申告サイズ）はダウンロードの前に判定しなければなりません。**Telegram の update には最初から `duration` と `file_size` が載っている一方、ダウンロード側の byte gate は全体を引き終えてからでないと超過を知れません——1 時間の音声メッセージは media executor のスロットと帯域を丸ごと空費した挙げ句、得られるのは fallback placeholder 1 行だけです。弾かれた音声は時間付きの `[语音 N 秒]` の平文 1 行に退避します。**弾いているのは文字起こしであって返信ではありません**——直接トリガーには必ず何か返します。既読スルーは「長すぎて聞けなかった」と言うより悪いからです。音声 byte は transcode しません（voice note は常に OGG/Opus で、multimodal endpoint は `audio/ogg` を受け取ります）が、byte 上限は vision 側よりはるかに小さくする必要があります：音声は base64 として request に inline され 4/3 に膨らむため、16 MiB を流用すると 20 MB を超えて encode され、request ごとサーバー側で拒否されます。文字起こしの切り詰め上限もメディア記述より緩めです——それはモデルの要約ではなくメンバーの**発言そのもの**であり、途中で切るとモデルが見当違いの返事をします。
 
 - ホワイトリストのスタンプパック目録の突き合わせを、Worker の `init` 受信時 1 回だけにしてはいけません。
@@ -249,7 +255,9 @@
 
   **禁止対象は transcript に実際に現れる階層名と行内 marker を 1 つずつ名指しする必要があります**（階層名と名簿の区画名、`me`/`uN`/`fN` の番号、`#メッセージ番号`、そして返信先が流れ出たときの `[已滑出]`）。 これらの marker はもともとモデルから見える transcript に書かれているため、「内部構造を露出しない」という一般論だけでは、名指しされなかった階層をモデルが説明してしまいます。さらに「あれはもう window から流れ出た」と自分から言い出して、なぜ忘れたのかを説明することさえあり、内部の context 構造をその容量ごとメンバーへ渡すことになります。直接問われた場合も、開発者・管理者・テスト中を自称するメンバーに探りを入れられた場合も、説明せず、肯定せず、否定せず、「だいたいそんな感じ」といった示唆も与えません。思い出せないときは、階層・圧縮・クリーンアップ・window からの流出としてではなく、日常的な言い方で表します。本項は `CHAT_MEMORY_PRIORITY_INSTRUCTION` と責務を分けます。後者は階層をどう使うかだけを扱い、本項は階層を口に出さないことだけを扱います。
 - 返信用 transcript は**名簿 + 番号**の圧縮描画（`buildTieredVerbatimTranscript`）を使います。発言者と転送元の身元は【发言人名册】【转发来源名册】に一度だけ載せ、行内には番号しか書きません。bot 自身は `uN` に混ぜず常に `me` を使います。日付は変わったときだけ区切り行を出し、行内は時刻のみ。各記憶階層の先頭では現在の日付を再掲します。`#メッセージ番号` は「この区間内で誰かに返信された行」と今回の trigger メッセージにだけ付けます。返信先が区間内にある場合は `（回复 #番号）` という pointer だけを残し、作者と本文はその行を読ませます。区間から流れ出た場合のみ `[已滑出]` を付けた inline snapshot に戻します。transcript は入力全体で最も高価な部分（user ブロックの 80〜86%、そのうちメンバーが実際に打った文字は 2 割だけ）であり、返信のたびに再送されます。これらの圧縮で transcript の token を約半分削り、人物同定・返信追跡・転送帰属に関する 88 問の客観テストでは完全形式と同点でした。**階層の境界は `TIER_BOUNDARY_ALIGNMENT` の倍数へ切り上げます**。【较早逐字记录】の長さは常にその倍数になるため境界は `TIER_BOUNDARY_ALIGNMENT` 件ごとにしか動かず、同じ刻みの中では今回の transcript が前回に対する純粋な追記になります。名簿と【较早逐字记录】は返信をまたぐ prefix cache に乗り、【最热记忆】は新しいメッセージのたびに変わるため乗りません。切り上げにより【最热记忆】は常に `COMPACT_BATCH_SIZE` 件以下に保たれ、そのブロック見出しに書かれた件数と一致します。この粒度は `COMPACT_BATCH_SIZE` を割り切れなければならず、さもないと窓が満杯になったとき境界が 2 ブロックの中央に落ちません。同一の `message_id` が hot 区間に 2 件ある場合（snapshot の hydrate で 1 件、Telegram が同じ update を再投函して 1 件）は最後の 1 件だけを描画します。メディア説明などの後埋めは後に書かれた側にしか載らず、同じ番号の行が 2 本あると `#メッセージ番号` の pointer が両方に当たってしまうためです。重複判定に走査は増やしません。context 構築で全メッセージ分の在席集合をどのみち作るので、重複件数は `messages.length - present.size` からただで得られ、重複がなければ入力配列をそのまま描画します。
-- transcript の外で人やメッセージを名指しする箇所は、transcript と同じ書き方を使い、**transcript に存在しない番号を指してはいけません**。呼びかけ者の宣言にはその人の名簿番号を添え、参照メモリの自己同定文は `[id:]` の行を探すのではなく `me` で自分の発言を認識し、多層返信チェーンの各 hop と queue 再実行時の返信引用も番号と `#メッセージ番号` だけを書きます（名簿にない chain 末尾の snapshot は完全な identity 部分へ、流れ出た返信先は `[已滑出]` 付きの inline snapshot へ戻します）。trigger メッセージ自体が描画 window から流れ出ている場合（queue 再実行、遅いメディアラウンド）は `#メッセージ番号` を書かず、その round の返信タスクに既に引用されている本文を引く形で参照し、2 か所の参照が互いを指し示すようにします。実測の根拠：transcript から解決できない番号だけを与えると、本文がすぐ上の行にあってもモデルは trigger の内容が「与えられていない」と判断します——同一の mock 問題集で、圧縮前は 8/8、番号の言い換えだけでは 0/8、2 か所の参照を結び付けて 8/8 に戻りました。したがって描画結果（`RenderedTranscript`）は行内番号表と「実際に transcript にあるメッセージ番号」の集合を呼び出し側へ併せて渡し、この制約を呼び出し地点で判定できるようにします。
+- transcript 外で人やメッセージを参照する場合も同じ表記を使い、**存在しないメッセージ番号を指してはいけません**。呼びかけ者の宣言には名簿番号を使い、参照メモリは `me` で Bot 自身の発言を識別します。queue 再実行の単一 hop 返信引用には `RenderedTranscript.replyReference` を使い、対象が window 内なら `#メッセージ番号`、範囲外なら `[已滑出]` 付きの inline snapshot を返します。`RenderedTranscript` が公開するのは transcript 本文、`codeOf`、単一 hop 引用の描画関数だけです。
+
+  返信 context はメッセージ記録内の単一 hop の返信関係・転送元・Telegram の正確な引用片を保持し、返信タスクへ独立した多層チェーンを再帰的に追加しません。queue 待ちや遅いメディア trigger は取得済みの本文と単一 hop 引用で特定し、存在しない原文やメッセージ番号を補いません。
 - 冷履歴の圧縮（`summarizeBatch`）は**自己完結型**の行形式（`formatBufferedMessageLine`）のままにします。あちらは名簿を参照できない独立した 1 回のモデル呼び出しで、`COMPACT_BATCH_SIZE` 件ごとにしか走らないため圧縮しても得がありません。2 つの形式は説明用の定数も別々です（圧縮形式は `TRANSCRIPT_FORMAT_INSTRUCTION`、自己完結形式は `SUMMARY_SYSTEM_PROMPT`）。片方を変えたついでにもう片方を変えてはいけません。この経路の `systemPrompt` には逐語的に不変な `SUMMARY_SYSTEM_PROMPT` だけを置き、現在時刻は transcript 一括分の後ろ、`userContent` の**末尾**に連結します。あの定数はこのリクエストで暗黙 cache に乗り得る唯一の prefix であり、秒精度の時刻を `systemPrompt` や `userContent` の先頭に混ぜると毎回 1 バイト目から食い違います。transcript の行自体が各メッセージの送信時刻を持つため、末尾の 1 文は「今が何時か」だけを補います。
 - グループチャット transcript の行内 marker（返信引用と pointer、pointer の後ろに付く厳密な引用断片、転送元、名簿の項目、2 つの名簿の区画名、日付区切り行、メッセージ番号）は、`packages/consts/aiChat/prompts/transcript.ts` の共通 template が、組み立てる本文と prompt の形式説明にある placeholder の両方を生成します。同じ形式を両側で個別に手書きしてはいけません。placeholder の形は placeholder を template に通して生成しなければならず、魔法の数値で一度 template を走らせてからその数字を置換して作ってはいけません。template に同じ数字がもう 1 つ現れた時点で置換は最初の 1 か所しか書き換えず、説明側は renderer が決して出さない形をモデルに教えることになります。転送元の帰属は marker の入れ子で区別し、外側は現在のメッセージ、内側は返信先の元メッセージに属します。
 
@@ -261,9 +269,8 @@
 
   **拒否は裸の語句ではなく template 全体の形に錨を打つ必要があります**（`SELF_ACTION_TAG_PATTERNS`：marker が全角括弧の対の中にあり、直後が `：` か閉じ `）` であること。間には `）` をまたがない短い前置きだけを許し、モデルが「参考素材」を「参考上传的素材」のように書き換えても捕まえます）。**この RegExp 群は module レベルの singleton で、いまや 2 つの executor が共有しているため、`g`/`y` フラグを付けてはいけません**——フラグ付きの `.test()` は `lastIndex` を保持し、2 つの呼び出し箇所が互いを汚染します。症状は caption 側で偽造記号の検出がまれに漏れることで、しかも「直前の呼び出しがたまたま一致していた」ときにしか再現しません。裸の部分文字列では不十分です——「发了一枚贴纸」「生成并发送了一张图片」自体が日常的な中国語で、メンバーが「你刚刚生成并发送了一张图片吗？」
 
-  と尋ねただけでモデルの通常の返答が拒否され、そのラウンドの最終テキストも同じ executor を通ってもう一度拒否され、結果として直接の @ メンションに完全な沈黙で応じることになります。3 つの利用側（実行側の書き込み、prompt の placeholder、拒否判定）は同一のリテラルを共有し、どこか 1 か所でも手書きすると証跡が無効になります。複数階層の返信チェーンにおける各 hop の形式、転送元、`[仅回复快照]` marker も同じドメイン template を再利用し、各 hop の発言者も名簿番号だけを書きます（名簿にない chain 末尾の snapshot のみ完全な identity 部分へ戻します）。転写行と同じ形になります。
+  と尋ねただけでモデルの通常の返答が拒否され、そのラウンドの最終テキストも同じ executor を通ってもう一度拒否され、結果として直接の @ メンションに完全な沈黙で応じることになります。3 つの利用側（実行側の書き込み、prompt の placeholder、拒否判定）は同一のリテラルを共有し、どこか 1 か所でも手書きすると証跡が無効になります。
 
-  返信タスクにチェーンを追加するのは 2 階層以上の場合だけです。snapshot-only の末尾では、元メッセージが逐語 transcript から既に外れていることを明示し、完全な原文をモデルが参照できると示唆してはいけません。
 
 ### 参加認証と終端処置
 
@@ -471,7 +478,7 @@
 
   確認済み delete または LRU eviction 後の最初の新 snapshot は直ちに保存し、対応する durable upsert 応答を受けるまでメインスレッドが revision marker を保持して、Disk I/O Worker 再構築後に最新ミラーを replay します。起動復元では SQLite `chat_states` を正本とし、AI が明示的に有効なグループだけを hydrate し、無効グループの残存 snapshot は削除予定にします。
 
-  現行 snapshot の hot message はすべて正の `messageId` を持ち、返信チェーン index はそこから再構築して別途永続化しません。
+  現行 snapshot の hot message はすべて正の `messageId` を持ち、メッセージ index はそこから再構築して別途永続化しません。
 
 - `chat_member` の入室事実に対応する update を確認してよいのは、`flushDiskIODomain("joinLog")` が `flushed` を返した後だけです。post 成功は durable を意味しません。**ただし「buffer 済みで未書き込み」は「書き込み失敗」と分けて報告しなければなりません。** 永続化 Worker の自己修復中は `diskIORuntime.writable` が false で、`postDiskIO` はメッセージを上限付きの再生 FIFO へ積んで true を返す一方、同じ窓の `requestDiskIOFlush` は書き込み可能な Worker が存在しないというだけで `failed` へ短絡します——それは「今は誰も flush できない」であって「書き込みが壊れた」ではありません。したがって `recordJoinLog` は post の **前に** `isDiskIOBuffering()` を採取し、それを根拠に通します（post の後で尋ねると「buffer に入った」を「送信済み」と読み違えます）。そうしないと、この窓で入室が 1 件あるだけで `updateIngress` が throw し、`bot.catch` が rethrow して `handleUpdate` が reject し、自己修復可能な一過性障害がプロセス全体の非ゼロ終了と一連の update 再配信にまで拡大します。buffer は黙って捨てることではありません。handshake が終われば `activateDiskIOWorker` が順序どおり再生し、再生失敗も buffer 飽和も `stopWorkerAfterLoadFailure` の統一 fatal 停止経路を通ります。
 
@@ -831,11 +838,11 @@
 - AI メモリ復元は現在の `AI_MEMORY_HYDRATE_BUFFER_MAX` と `MAX_SUMMARY_ROUNDS`（現在は逐語メッセージ 255 件と cold summary 7 round）以内の version=1 snapshot だけを受け入れます。超過または field 不正は復元時に切り詰めず起動を拒否します。上限を増やす変更は既存 snapshot と互換です。上限を減らす場合は、先に旧プロセスを停止し、同じ厳格 codec で既存の `memory/ai/` をアトミックに書き換え、旧プロセスの停止時 flush が migration 結果を上書きしないようにします。
 - 起動 hydrate は `AI_MEMORY_MAX_CHATS` で有界です。超過分は容量判定の副作用で削除せず disk に残して 1 回だけ報告します。正式な `chat_states` table 自体が最大 25 群で、現行 AI Worker の 100 群上限を下回ります。
 - **AI Worker が再起動予算を使い切って自己修復を諦めたときは、再生可能な identity 注入レコード（`lastInitState.current`）も一緒に消さなければなりません。** `flushAiMemory` はまさにそれを見て「この系統はそもそも起動していないので flush するものはない」と判断し、即座に `flushed` を返します。残したままだと停止時 flush は短絡を通り越して barrier に入り、`post` の失敗で `failed` として決着します。その結果 `flushAllToDisk` は false を返し、`wait()` は最終 offset の確認を拒否し、Telegram は最後の確認以降の update をすべて再配信します——オウム返しやコマンド受領のような非冪等な副作用が二重に走ります。この機能の既定の縮退は「AI 雑談が次の再起動まで静かに止まる」だけであり、停止全体の offset ゲートを巻き添えにしてはいけません。
-- 返信チェーン index（`chatReplyChainIndexes`）は rolling memory から完全に導出する index で、永続化せず、内側の値は cache と同じ object reference を共有します。登録と削除は、メッセージが hot region に出入りする物理位置、すなわち `rollingMemory.ts` の push・rotation・hydrate でだけ行えます。ほかのモジュールは read-only です。
+- メッセージ index（`chatMessageIndexes`）は rolling memory から完全に導出する index で、永続化せず、内側の値は cache と同じ object reference を共有します。登録と削除は、メッセージが hot region に出入りする物理位置、すなわち `rollingMemory.ts` の push・rotation・hydrate でだけ行えます。ほかのモジュールは read-only です。
 
   そのため index は hot region に残るメッセージだけを常に対象とし、rolling cache 上限で制約され、独立 eviction はありません。Bot 自身が送ったテキストと画像の返信 edge は Telegram が返した実際の `reply_to_message` だけから記録します。生成中またはキュー待ちの間に対象が hot region から外れた場合は、round 開始前に取得した上限付き trigger snapshot を fallback に使い、index の範囲を拡張しません。
 
-  モデルに見せる追跡深度、各 chain node の本文、trigger snapshot はそれぞれ `REPLY_CHAIN_MAX_DEPTH`、`REPLY_CHAIN_NODE_MAX_CHARS`、`REPLY_REFERENCE_MAX_CHARS` で制限され、現在は 15 hop、500 文字、500 文字です。
+  単一 hop の返信と trigger snapshot の本文は `REPLY_REFERENCE_MAX_CHARS` で制限し、現在は最大 500 文字です。正確な引用片と転送元は既存のメッセージフィールドに保持します。
 
 ### 確認境界と停止
 
@@ -845,6 +852,8 @@
 
   lifecycle は最終 offset を確認する前にこれを読み、立っていれば offset を確認せず非ゼロで終了して、再起動後に Telegram から再送させます。`task()` が正常に resolve したかだけで判断すると、一度も成功していない update をまとめて確認してしまいます。
 - runner の各 `getUpdates` は `limit: 1` に固定し、現在の middleware が成功した後だけ、より高い offset の次 fetch を始めます。後の update が失敗しても、前の非冪等 side effect は独立した確認境界の内側ですでに確定しており、sibling として再配信されません。取得元が limit に反して複数 update を返した場合は、handler を 1 つも実行せず fail closed します。失敗後は次の update を fetch せず、offset も進めません。
+- `app/updateFetcher.ts` は公開 `api.getUpdates` を使い、long poll は 30 秒、1 回の取得の再試行窓は 15 時間、指数 backoff は 100 ms から開始し、429 の `retry_after` も待ちます。401/409 は即時失敗です。要求と全 backoff は同じ取消 signal を継承します。runner は現在の middleware の停止 waiter だけを保持し、完了時に解除します。`stop()` は取得を終え、`size()` と `abortActive()` が実行中処理の drain 境界を提供します。
+- 関連チャンネルの照会には 15 秒の取消 signal を渡します。Telegram duplex proxy が実行中要求を取り消し、waiter を確定します。失敗・timeout は `undefined` を返し、cache へ書かず、免除を与えません。同一 chat の重複抑制、cache TTL、世代分離はそれぞれの境界を維持します。
 - 最終 offset の `getUpdates(timeout: 0)` も network request です。`timeout: 0` が無効にするのは Telegram server 側の long polling だけで、DNS、connection、response read は制限しません。そのため `FINAL_OFFSET_CONFIRM_TIMEOUT_MS` の local `AbortSignal` も必須です。
 
   確認の reject・timeout、または runner / maintenance / persistence の前提が未完了で skip した場合、この lifecycle gate はプロセス終了まで失敗のまま保持し、非ゼロ終了とします。

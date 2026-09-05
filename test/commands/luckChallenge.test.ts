@@ -21,7 +21,7 @@ const ensureLuckReceiptSecretMock = mock(async (day: string) => {
   return {
     version: 1 as const,
     day,
-    key: Buffer.alloc(32, 7).toString("base64url"),
+    key: new Uint8Array(32).fill(7).toBase64({ alphabet: "base64url", omitPadding: true }),
   };
 });
 
@@ -72,7 +72,11 @@ const {
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,
 } = await import("../../packages/consts/luckChallenge");
 const { getTokyoDateKey } = await import("../../packages/libs/time");
-const TEST_SECRET = { version: 1 as const, day: getTokyoDateKey(), key: Buffer.alloc(32, 7).toString("base64url") };
+const TEST_SECRET = {
+  version: 1 as const,
+  day: getTokyoDateKey(),
+  key: new Uint8Array(32).fill(7).toBase64({ alphabet: "base64url", omitPadding: true }),
+};
 
 function makeInlineCtx(userId: number, query: string) {
   const results: any[] = [];
@@ -178,9 +182,10 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     // ≡ 1 (mod 4) 的值，`Uint8Array.fromBase64` 对它抛 SyntaxError。这条 promise
     // 一旦 reject，中间件会把异常交给 bot.catch 重抛，acknowledged runner 带着
     // 未确认的 offset 退出，Telegram 重投同一条消息——进程再也起不来。
-    const signaturePart: string = Buffer.alloc(32, 0xab).toString("base64url");
+    const signaturePart: string = new Uint8Array(32).fill(0xab)
+      .toBase64({ alphabet: "base64url", omitPadding: true });
     const receipt: string = `luck:v1:${getTokyoDateKey()}:AAAAA.${signaturePart}`;
-    const receiptHash: string = Buffer.alloc(32, 0xab).toString("hex");
+    const receiptHash: string = new Uint8Array(32).fill(0xab).toHex();
     const body: string = "随便一段正文";
     const text: string = `${body}\n防伪标记: ${receiptHash}`;
     const entities = [{

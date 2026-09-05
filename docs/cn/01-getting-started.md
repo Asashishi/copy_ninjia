@@ -15,7 +15,7 @@
 ## 前置条件
 
 - **Linux（带可读的 `/proc`）**：实例锁依赖 `/proc/<pid>/stat` 与 boot ID；其它平台会 fail-closed 拒绝启动。
-- **Bun 1.4+**：`curl -fsSL https://bun.sh/install | bash`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
+- **Bun 1.4.1**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.1`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
 - **（可选）Google Cloud 服务账号 JSON**：只有 `/ja_copy` 日语翻译需要，存为项目根的 `g-auth.json`。缺失时 `/ja_copy` 直接拒绝并点名这个文件，自动复读的 ja 变换退化成普通复制，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
@@ -30,6 +30,8 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
+下载入口找到工作树后，使用该树自己的 `install.sh` 完成后续步骤。`COPY_NINJIA_DIR` 支持相对路径和绝对路径。当前代码要求 Bun **1.4.1**；已有 Bun 版本不匹配时，安装器在安装依赖和写配置前退出并提示手工安装，不自动覆盖已有 Bun。
+
 不用先 clone：脚本自己会把 **GitHub 上的 Latest Release** clone 到当前目录下的 `copy_ninjia/`（想换目录设 `COPY_NINJIA_DIR`），落在该 tag 上（detached HEAD）。装的是已发布版本而不是 `master` HEAD——tag 由 `releases/latest` 接口现问，问不到就当场失败，不会退回 `master`：那等于把一台生产机装成还没公告过的代码。
 
 已经有工作树时，在仓库根跑 `bash install.sh` 等价，会跳过 clone，并且**不改动那棵树的 checkout**（它可能有本地改动或有意停在某个版本），只报一句当前版本。
@@ -42,13 +44,14 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 
 管道运行下 fd 0 是脚本正文本身，所以所有问答都从 `/dev/tty` 读——拿不到控制终端时脚本直接退出，不会读到半截脚本当答案。
 
-它按顺序做三件事，之外什么都不做（不注册 systemd、不拉 release tag、不备份、不迁移）：
+安装流程包括以下步骤：
 
-1. **配环境**：自检 Linux、可读 `/proc` 与可用控制终端；缺 `git`/`curl`/`unzip` 用系统包管理器补齐（root 直跑，否则 `sudo`，两者都没有就打出该跑的命令后退出）；取得工作树；缺 Bun 装官方发行版并校验 ≥1.4；`bun install --frozen-lockfile`。
-2. **问配置**：从 `config_example/` 补齐 `config/`，**已存在的一律不覆盖**；交互询问 `bot_token`（不回显）与 `super_admin_user_id`，六项 AI 能力逐项可选；写出的 `telegram.json`、`agent.json` 权限为 `600`。一项 AI 都没配时删掉示例 `agent.json`——占位 key 留着只会让人以为配好了。
-3. **建库并启动**：`database/storage.sqlite` 不存在时建一份空库，跑一次和启动总闸同一份配置校验，然后 `bun run start`。
+1. **环境与代码**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有工作树。缺少 Bun 时安装目标代码指定的精确版本，核对 `packageManager` 后执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期。
+2. **部署配置**：只补缺少的示例文件，跳过 `agent.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
+3. **身份数据库与校验**：按生产路径解析结果检查 `database/storage.sqlite`，只在不存在时创建当前 schema 的空库，再校验部署输入。
+4. **服务与观察**：有 systemd 时注册或复用 unit，启动服务并检查状态、重启计数和 journal；没有 systemd 时以前台运行。只有全部稳定性核验通过才清理配置备份，前台运行或 journal 无法核对时保留备份。
 
-脚本可以重跑：既有配置、既有数据库都原样保留。`/ja_copy` 需要的 `g-auth.json` 是 GCP 服务账号密钥，只能从控制台下载后带外传到机器上，因此是脚本的**前置条件**而不是其中一步；缺它只是 `/ja_copy` 不可用，不影响启动。
+脚本重跑时保留既有数据库，配置仅在明确重填时替换。`g-auth.json` 由部署方带外提供；缺少它时日语翻译不可用，已有但非法时拒绝启动。
 
 ### 手工安装
 

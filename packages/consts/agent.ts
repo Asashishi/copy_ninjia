@@ -38,3 +38,11 @@ export const AGENT_API_KEY_PLACEHOLDERS: readonly string[] = [
   "replace-with-openai-api-key",
   "replace-with-xai-api-key",
 ];
+
+/** Agent 配置允许使用明文 HTTP 的回环主机闭集。 */
+export const LOOPBACK_HOSTS: readonly string[] = ["localhost", "127.0.0.1", "[::1]"];
+
+/** Agent base_url 严格校验的期望形态，不含用户配置值。 */
+export const EXPECTED_BASE_URL: string =
+  "an absolute https URL without credentials or a fragment " +
+  "(plain http is allowed only for localhost, 127.0.0.1, and ::1)";

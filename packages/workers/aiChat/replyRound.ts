@@ -25,7 +25,7 @@ import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { generateReply } from "./replyModel";
 import { buildReplyPromptSections } from "./promptContext";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
-import { replyReferenceForBufferedMessage } from "./replyChain";
+import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 import {
   currentReplyGeneration,
   isReplyGenerationCurrent,
@@ -153,7 +153,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         ): void => {
           if (!isActive()) return;
           // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言在转录里
-          // 同样带「回复了谁」，回复链也能穿过机器人的消息。请求侧固定指向触发
+          // 同样带「回复了谁」。请求侧固定指向触发
           // 消息，因此只采信服务端实际返回的回复关系。
           const selfReplyTo: BufferedReplyReference | undefined =
             selfReplyReferenceFor(repliedToMessageId);

@@ -85,12 +85,12 @@ describe("语音转写", () => {
     expect(transcribeVoice).toHaveBeenCalledTimes(1);
     const request = transcribeVoice.mock.calls[0]![0] as {
       prompt: string;
-      clip: { mime: string; durationSeconds: number; bytes: Buffer };
+      clip: { mime: string; durationSeconds: number; bytes: Uint8Array };
       errorLabel: string;
     };
     expect(request.clip.mime).toBe("audio/ogg");
     expect(request.clip.durationSeconds).toBe(12);
-    expect(Buffer.from(request.clip.bytes).equals(Buffer.from([1, 2, 3]))).toBe(true);
+    expect(request.clip.bytes).toEqual(new Uint8Array([1, 2, 3]));
     expect(request.errorLabel).toBe("AI voice transcription API");
     // 指令必须要原话而不是概括：这一行会被当成群友说过的话读。
     expect(request.prompt).toContain("逐字");

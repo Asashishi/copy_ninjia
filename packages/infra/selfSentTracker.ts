@@ -17,16 +17,14 @@ import type { SelfSentWaiter } from "../types/telegram";
  * 用法）；这类回环若被当成新内容处理，会被 AI 随机回复/随机复读/洗澡触发
  * 等自动流水线再次响应，形成自说自话的循环。
  *
- * 本模块只在各自的线程内生效（Worker 各自持有独立的模块实例，见
- * infra/telegram/ 入口注释）：Worker 里发送的消息要让主线程的自动流水线
- * 认出来，得由 Worker 经 postMessage 把 chatId/messageId 报回主线程，主线程
- * 收到后再调用这里的 markSelfSent（见 aiChat/workerBridge.ts 的 onEvent）。
+ * 各线程持有独立实例。Worker 的发送请求由主线程 workerRequests.ts 执行，
+ * 成功后在主线程登记 markSelfSent，再向 Worker 返回回执。
+ * @see ../../docs/cn/04-invariants.md
  *
  * **isBotOwnMessage 是每条群消息都要走的判定，且一条消息会走多次**：
  * antiRaid/temporaryWhitelist.ts、antiRaid/adCandidate.ts、commands/qa/ingress.ts、
  * commands/cjkAction.ts、auto/message/index.ts 各查一次，自动转发那条还会查第二次。
- * 因此这里一律按 (chatId, messageId) 两级整数键直查，不拼复合串——分层的理由与
- * 实测差距写在 cache/perThread/selfSentTracker.ts 的头注里。
+ * 这里按 (chatId, messageId) 两级整数键直查。
  */
 
 /** TTL 到期：摘掉这一条，并在该群最后一条消失时把内层表一并删除。 */

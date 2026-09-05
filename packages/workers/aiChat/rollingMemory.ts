@@ -28,7 +28,7 @@ interface ParsedChatMemory {
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
 import { buildBufferedMessage, normalizeHydratedBufferedMessage } from "./bufferedMessage";
 import { scheduleRotation } from "./compaction";
-import { indexBufferedMessage, unindexBufferedMessage } from "./replyChain";
+import { indexBufferedMessage, unindexBufferedMessage } from "./bufferedMessageIndex";
 
 declare const self: Worker;
 

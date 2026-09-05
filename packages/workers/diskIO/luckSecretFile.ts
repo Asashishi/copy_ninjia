@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { LUCK_DAY_PATTERN, LUCK_RECEIPT_SECRET_PATTERN } from "../../consts/luckReceipt";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
@@ -108,7 +108,7 @@ export async function inspectLuckReceiptSecret(
   if (!Number.isSafeInteger(confirmedResultCount) || confirmedResultCount < 0) {
     throw new Error(`Invalid confirmed luck result count for ${day}: ${confirmedResultCount}`);
   }
-  if (!existsSync(path)) {
+  if (!await Bun.file(path).exists()) {
     assertSecretCanBeCreated(confirmedResultCount, path);
     return { day, path, secret: null };
   }

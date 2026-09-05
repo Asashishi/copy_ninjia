@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3129_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.32%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3179_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 3129 tests passed, 314 test files, 98,189 expect() calls, 97.04% function coverage, 97.32% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 3179 tests passed, 321 test files, 123,010 expect() calls, 97.12% function coverage, 97.38% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -107,7 +107,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top">
   <p><b>🧠 Group-chat memory</b></p>
-  <p>Maintains bounded verbatim context and multi-round compressed summaries, tracks bounded multi-level reply chains, and recovers reliably through atomic persistence.</p>
+  <p>Maintains bounded verbatim context and multi-round compressed summaries, preserves message reply relationships, forward origins, and exact quotes, and recovers reliably through atomic persistence.</p>
 </td>
 </tr>
 <tr>
@@ -162,7 +162,7 @@ The full command table, permission semantics and per-command behaviour live in *
 
 ## 🚀 Quick Start
 
-You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.4+, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/ja_copy` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
+You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.4.1, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/ja_copy` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
 
 One-shot install (installs whatever is missing, asks for config, then starts):
 
@@ -170,17 +170,7 @@ One-shot install (installs whatever is missing, asks for config, then starts):
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-It does four things in order: set up the environment (add `git`/`curl`/`unzip`, install Bun, run
-`bun install`), clone **the Latest Release on GitHub** into `./copy_ninjia`, ask interactively for the
-Telegram and AI configuration, then create the empty identity database, register a systemd unit and
-start. It installs a published release rather than `master` HEAD — the tag comes from
-`releases/latest` at run time, and a lookup failure stops the install instead of quietly falling back
-to `master`. It never overwrites existing configuration, asks before replacing an existing systemd
-unit, and is safe to re-run. If you already have a clone, run `bash install.sh` from the repository
-root: it skips the clone and leaves that work tree's checkout alone. If the source came from an
-extracted release archive (source present, no `.git`), it creates the git repository in place and points
-`HEAD` at the tag matching the files already on disk, so you can update with git afterwards; doing so
-writes no file in the working tree and never takes deployment data into the object store.
+The installer obtains **GitHub's Latest Release** and hands control to the target tree's own script; an existing tree keeps its checkout. It verifies the exact Bun version and installs locked dependencies, then asks for Telegram and AI configuration and initializes a missing identity database. Existing configuration is replaced only after an explicit request to re-enter it, with backup, validation, and atomic replacement. Finally, it registers or reuses a systemd unit and observes the running service, or runs in the foreground without systemd. See [Getting Started](01-getting-started.md) for directory options and backup retention.
 
 Manual install:
 

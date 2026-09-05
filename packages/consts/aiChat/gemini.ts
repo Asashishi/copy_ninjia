@@ -115,3 +115,6 @@ export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
 export const GEMINI_SERVER_TOOL_CONFIG: Readonly<ToolConfig> = {
   includeServerSideToolInvocations: true,
 };
+
+/** 模型回复没有工具调用时复用的只读空列表，每个 provider 独立持有。 */
+export const GEMINI_EMPTY_FUNCTION_CALLS: readonly [] = [];

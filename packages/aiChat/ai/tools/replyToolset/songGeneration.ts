@@ -64,7 +64,7 @@ import type {
 } from "../../../../types/aiChat/songGeneration";
 import type { TelegramSendResult } from "../../../../types/telegram";
 import { cleanReply } from "../../utils/replyText";
-import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
+import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
 
 /**
  * 模型可写的 caption 上限：Telegram 的硬顶扣掉执行侧那段元信息的预留。
@@ -248,8 +248,8 @@ export function createGenerateSongExecutor(
     const modelCaption: string | null = parsed.caption;
     if (modelCaption !== null) {
       // 在实际生成和 claim 冷却前完成硬校验，拒绝的 caption 不产生账单或冷却。
-      const policyError: string | null = modelAuthoredTextPolicyError(modelCaption, state, "song");
-      if (policyError !== null) return policyError;
+      const policyResult: string | null = modelAuthoredTextPolicyResult(modelCaption, state, "song");
+      if (policyResult !== null) return policyResult;
     }
 
     if (consecutiveFailures >= SONG_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {

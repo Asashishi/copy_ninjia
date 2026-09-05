@@ -55,7 +55,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 882 source lines containing Chinese string or template literals across 87 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 858 source lines containing Chinese string or template literals across 85 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -136,7 +136,7 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 3. **Stop the old process** and confirm `bot.lock` has been released.
 4. Manually migrate `state.json`, `state.json.bak`, and affected snapshots under `memory/` to the new format. Copy backups before migration.
 5. Deploy and start the new version. If both state copies are reported invalid, the migration is incomplete. The program does not modify the originals; fix them before restarting.
-6. Inspect quarantined `.corrupt` files and `logs/`. Delete temporary backups only after recovery is confirmed clean.
+6. Verify deployment hashes and strict parsing, then confirm active/running status for at least two restart intervals, no increase in NRestarts, and no new non-zero exits in the journal before deleting temporary backups.
 
 **Adding an optional block can skip steps 3–4**, provided "missing" is defined precisely: the decoder accepts both the absent block and absent fields (follow `globalAssets` in `libs/stateFileCodec.ts` — both branches return the same field set so the self-check inside `save` never sees two shapes), and the accessors collapse the default into a single fallback value. `state.global.assets` is the worked example: existing files decode unchanged and behave exactly as they did without the block. If the block is a knob meant to be hand-edited, add a startup seed (`seedMissingAssetState`) that writes the missing entries with their currently effective values so the keys show up in the file; the seed must run after **every `await` that can abort startup**, fill gaps only, and persist in the background — see [04](04-invariants.md#durability-and-snapshot-contracts). Conversely, **any change that makes an existing file fail to decode still goes through the full steps 3–4**.
 

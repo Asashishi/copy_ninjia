@@ -18,7 +18,7 @@
   - **职责**：启动/退出生命周期、已存在部署输入的启动校验出口、handler 注册、命令菜单
     与 update runner，以及生命周期副作用依赖装配。
   - **典型文件**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、
-    `registerHandlers.ts`、`updateRunner.ts`。`ApplicationLifecycleDependencies` 从装配对象
+    `registerHandlers.ts`、`updateRunner.ts` / `updateFetcher.ts`。`ApplicationLifecycleDependencies` 从装配对象
     推导并与其同住，避免共享类型层反向依赖 `app/`。
 - **`packages/commands/`**
   - **职责**：显式命令处理，一命令一文件；开关命令共用的权限与配置门禁另成文件。

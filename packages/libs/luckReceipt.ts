@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import {
   LUCK_CACHE_KEY_PATTERN,
   LUCK_RECEIPT_DISPLAY_PREFIX,
@@ -141,7 +140,7 @@ export function verifyLuckReceipt(
   const actual: Uint8Array | undefined = decodeBase64UrlOrUndefined(match[3]!);
   if (
     actual?.length !== expected.length ||
-    !timingSafeEqual(actual, expected)
+    !crypto.timingSafeEqual(actual, expected)
   ) return undefined;
   return cacheKey;
 }

@@ -18,7 +18,7 @@
   - **責務**：起動・終了ライフサイクル、すでに存在するデプロイ入力の起動時検証入口、handler
     登録、コマンドメニュー、update runner、ライフサイクル副作用の composition。
   - **代表的なファイル**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、
-    `registerHandlers.ts`、`updateRunner.ts`。`ApplicationLifecycleDependencies` は composition object
+    `registerHandlers.ts`、`updateRunner.ts` / `updateFetcher.ts`。`ApplicationLifecycleDependencies` は composition object
     から推論して同じ場所に置き、共有型レイヤーから `app/` への逆依存を避けます。
 - **`packages/commands/`**
   - **責務**：明示的なコマンド処理。1 コマンド 1 ファイル。トグル系コマンドが

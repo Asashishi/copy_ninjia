@@ -1,3 +1,8 @@
+import type { Update } from "grammy/types";
+
+/** 单条确认 runner 订阅的 Telegram 更新类型；调用方只读共享列表。 */
+export type TelegramAllowedUpdates = readonly Exclude<keyof Update, "update_id">[];
+
 /** 生命周期排空阶段的统一结果。 */
 export type FlushResult = "flushed" | "timedOut" | "failed";
 

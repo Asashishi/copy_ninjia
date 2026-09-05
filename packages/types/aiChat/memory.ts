@@ -18,12 +18,6 @@ export interface BufferedReplyReference extends AiSpeakerSnapshot {
   forwardedFrom: string | undefined;
 }
 
-/** 回复链回溯的一跳：除回复快照的身份、正文和转发来源外，显式区分它是
- * 当前热区条目还是上一跳附带的链尾快照（见 workers/aiChat/replyChain.ts）。 */
-export interface ReplyChainLink extends BufferedReplyReference {
-  snapshotOnly: boolean;
-}
-
 /**
  * 逐字缓存里的一条消息。字段顺序即构造顺序，可选字段同样是 `T | undefined`
  * ——这一族对象在缓存里长期存活，每次拼提示词都要被 formatBufferedMessageLine

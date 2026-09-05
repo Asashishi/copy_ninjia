@@ -583,14 +583,15 @@ describe("send_message 重复消息去重", () => {
     };
   }
 
-  test("同一轮内容完全相同的第二次调用被拒绝，不重复发送", async () => {
+  test("同一轮内容完全相同的第二次调用静默跳过，不重复发送", async () => {
     const toolset = await createReplyToolset(buildContext(false));
 
     const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
     const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
 
     expect(first.success).toBe(true);
-    expect(second.error).toContain("identical message");
+    expect(second).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
+    expect(toolset.actionsUsed()).toBe(1);
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
   });
 
@@ -634,7 +635,7 @@ describe("send_message 重复消息去重", () => {
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
   });
 
-  test("错字轮按本意文本判重：可见消息是错字版本，重发同一句正确原文仍被拒绝", async () => {
+  test("错字轮按本意文本判重：可见消息是错字版本，重发同一句正确原文仍静默跳过", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -653,14 +654,14 @@ describe("send_message 重复消息去重", () => {
 
       // 快速补字：可见消息是「天汽」+ 纠正字「气」，本意文本「天气」已登记。
       expect(first.typo?.mode).toBe("quick");
-      expect(second.error).toContain("identical message");
+      expect(second).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
     } finally {
       Math.random = originalRandom;
     }
   });
 
-  test("快速补字的纠正单字也参与判重，模型再发同一个字被拒绝", async () => {
+  test("快速补字的纠正单字也参与判重，模型再发同一个字静默跳过", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -673,7 +674,7 @@ describe("send_message 重复消息去重", () => {
       }));
       const duplicateCorrection = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
 
-      expect(duplicateCorrection.error).toContain("identical message");
+      expect(duplicateCorrection).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
     } finally {
       Math.random = originalRandom;
@@ -694,9 +695,9 @@ describe("send_message 重复消息去重", () => {
       expect(first.typo).toBeUndefined();
 
       const dup = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "天气" })));
-      expect(dup.error).toContain("identical message");
+      expect(dup).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
       const correction = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
-      expect(correction.error).toContain("identical message");
+      expect(correction).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
 
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
       expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -100800, text: "天汽", replyToMessageId: undefined });

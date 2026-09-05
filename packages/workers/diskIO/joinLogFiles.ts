@@ -4,7 +4,6 @@
  * 过期清理在 diskIO/joinLogRecovery.ts。
  */
 
-import { existsSync } from "node:fs";
 import {
   consumeJoinLogRejection,
   joinLogBuffer,
@@ -246,7 +245,7 @@ export async function readJoinLog(
       continue;
     }
     const path: string = joinLogPath(request.chatId, day);
-    if (!existsSync(path)) continue;
+    if (!await Bun.file(path).exists()) continue;
     const cache: JoinLogFileCache =
       await getJoinLogFileCache(request.chatId, day);
     for (const record of cache.latestByUser.values()) {

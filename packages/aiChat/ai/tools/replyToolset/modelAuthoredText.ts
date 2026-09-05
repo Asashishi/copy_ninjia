@@ -2,23 +2,13 @@ import {
   SELF_ACTION_TAG_MARKERS,
   SELF_ACTION_TAG_PATTERNS,
 } from "../../../../consts/aiChat/prompts/transcript";
+import { DUPLICATE_REPLY_RESULT } from "../../../../consts/aiChat/tools";
 import { containsRenderableCommand } from "../../../../libs/renderableCommand";
 import type { RoundMessageState } from "../../../../types/aiChat/replies";
 import { toolError } from "../../utils/toolResult";
 import { isDuplicateOfSentMessage } from "./messageState";
 
 type ModelAuthoredTextSurface = "message" | "picture" | "song";
-
-function duplicateError(surface: ModelAuthoredTextSurface): string {
-  if (surface === "message") {
-    return toolError(
-      "An identical message was already sent in this round; do not repeat yourself. Say something new, or use add_reaction / send_sticker instead"
-    );
-  }
-  return toolError(
-    `An identical message was already sent in this round; write a different caption, or omit it and send the ${surface} alone`
-  );
-}
 
 function forgedActionError(surface: ModelAuthoredTextSurface, marker: string): string {
   if (surface === "message") {
@@ -47,18 +37,16 @@ function renderableCommandError(surface: ModelAuthoredTextSurface): string {
  * 统一校验模型即将对外发送的正文或 caption。
  *
  * 执行侧转录记号只能由真实动作回执写入；机器人自身消息中的命令不能被
- * Telegram 渲染成可点击入口；同轮文本不能重复发送。返回值已经编码为统一的
- * 工具错误 wire 格式，null 表示允许继续执行。
+ * Telegram 渲染成可点击入口；同轮重复文本静默丢弃。返回值是工具错误或零动作
+ * 的跳过回执，null 表示允许继续执行。
  */
-export function modelAuthoredTextPolicyError(
+export function modelAuthoredTextPolicyResult(
   text: string,
   state: RoundMessageState,
   surface: "message" | "picture" | "song"
 ): string | null {
-  // 保留 send_message 原有的判定顺序，避免同一输入同时命中多条规则时改变
-  // 模型收到的纠错指令；媒体 caption 原有顺序则是先拒绝伪造动作记号。
-  if (surface === "message" && isDuplicateOfSentMessage(state, text)) {
-    return duplicateError(surface);
+  if (isDuplicateOfSentMessage(state, text)) {
+    return DUPLICATE_REPLY_RESULT;
   }
 
   const forgedIndex: number = SELF_ACTION_TAG_PATTERNS.findIndex(
@@ -69,9 +57,6 @@ export function modelAuthoredTextPolicyError(
     return forgedActionError(surface, forgedMarker);
   }
 
-  if (surface !== "message" && isDuplicateOfSentMessage(state, text)) {
-    return duplicateError(surface);
-  }
   if (containsRenderableCommand(text)) {
     return renderableCommandError(surface);
   }

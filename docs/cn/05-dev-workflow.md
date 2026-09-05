@@ -42,15 +42,16 @@
 - **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 90%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
-- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码的 Node 兼容 import、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
+- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码与脚本的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
+  模块级纯字面量及其组合必须放在领域 `consts`，函数装配和缓存 owner 单独核对。Node 内建模块带或不带 `node:` 前缀使用同一白名单；动态加载、重导出、`require`、`process.hrtime` / `nextTick` 和解构入口同样检查，类型专用声明不进入运行时检查。
 
 ### 依赖冷却期
 
-依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时与 `@types/bun` 均为 1.4.0。
+依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时固定为 1.4.1，`@types/bun` 固定为 1.4.0；版本门禁要求两者主、次版本一致，运行时补丁版本由 `packageManager` 与 `install.sh` 共同锁定。
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3129 tests / 314 files / 98189 次 `expect()`**；全源码**函数覆盖率 97.04% / 行覆盖率 97.32%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3179 tests / 321 files / 123010 次 `expect()`**；全源码**函数覆盖率 97.12% / 行覆盖率 97.38%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -77,7 +78,7 @@
 
 `bun run perf:hot-path-gate` 是 `bun run check` 的最后一段，因此每次提交前都会跑。它按 `packages/consts/performance.ts` 的 `HOT_PATH_PROFILE_SCENARIOS` 逐场景、逐次重复各起两个独立子进程：`steadyProfile` 只判断正式循环的 GC 与 JIT，`retained` 在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC 后留存。
 
-判据本身**不写在 TypeScript 里**。Bun 版本与 revision 锚点、GC/RSS/常驻增长的硬上限、逐场景 ns/op 软上报阈值，以及每个数字背后的实测读数（最慢中位数、采样进程数、与上一个 Bun 版本的对比），全部放在仓库根被跟踪的 `performance-result.json`，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析：未知键、缺字段、类型不符，以及「阈值低于它自己的来源读数」一律在起子进程之前就拒绝。`packages/consts/performance.ts` 只留与测量无关的采样旋钮和场景表——重标运行时改那份 JSON，不改代码。
+校准记录保存在 [`performance-result.json`](../../performance-result.json)，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。`gateRuntime.ts` 在约定检查和热路径子进程启动前核对 `packageManager`、当前 Bun version/revision 与校准构建；不一致时先重新实测校准。记录保留采样进程数、逐场景延迟来源和 GC/RSS/留存硬上限。历史 `fullSuite` 全量读数保留各自的运行时间和 Bun 构建。
 
 `hotPathProfileGate` 这一节是双向的，但两半 owner 不同：`calibration` 由人重标后手工修改，门禁只读；`lastRun` 记录最近一次门禁读数，只有显式传 `bun run perf:hot-path-gate -- --write-result` 才覆盖写，因此 `bun run check` 跑完不会产生工作树改动。回写一个字节都不碰 `calibration`——让门禁拿一次运行的读数自动改自己的判据，等于把闸门焊死在当前性能上。
 
@@ -141,7 +142,12 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 本仓库不依赖 GitHub Actions。发布环境把 `bun run release:check` 作为显式构建或 pre-deploy 步骤；联网环境追加 `bun run audit:release`（网络失败只表示审计未完成，不等于零漏洞；忽略 CVE 要记录原因与到期时间）。包含持久化结构变更的版本，先走 [06 常见修改配方](06-modification-guide.md#变更持久化-schema) 的迁移流程。
 
-每次发布先在 `dev` 上跑 `bun run perf:full -- --write-doc`，把三语 [09 性能基准](09-performance.md) 更新到本次读数并与代码改动一起提交。
+在 `dev` 完成门禁后，停止服务与其他重负载，等待机器空闲，再运行默认三轮的
+`bun run perf:full -- --write-doc`。该命令同时更新三语 [09 性能基准](09-performance.md)
+与 `performance-result.json` 的 `fullSuite.lastRun`，两者与代码改动一起提交。
+全量基准与 `bun run check` 不得连续或同时运行；后续检查须等机器恢复空闲。
+性能对照须使用同一机器、同一 Bun 构建；运行时升级后的读数作为当前构建的基准，
+不得把跨构建差异归为代码优化收益。失败或异常读数查清并重跑后才能发布。
 
 每次 squash 合并进 `master` 都要创建一个 GitHub Release：
 

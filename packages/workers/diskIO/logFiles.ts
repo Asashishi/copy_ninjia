@@ -99,7 +99,7 @@ interface LogDayInspection {
 
 async function inspectLogDay(day: string): Promise<LogDayInspection> {
   const path: string = join(LOGS_DIR, `${day}.json`);
-  if (!existsSync(path)) {
+  if (!await Bun.file(path).exists()) {
     return {
       path,
       rewriteContent: null,

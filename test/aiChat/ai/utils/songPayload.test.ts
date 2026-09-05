@@ -14,7 +14,7 @@ import {
 } from "../../../../packages/consts/aiChat/songGeneration";
 import { decodeGeneratedSong, songFileExtension } from "../../../../packages/aiChat/ai/utils/songPayload";
 
-const AUDIO: string = Buffer.from([0x49, 0x44, 0x33, 4, 0, 0]).toString("base64");
+const AUDIO: string = new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0]).toBase64();
 
 describe("生歌载荷解码", () => {
   test("合法载荷只带回字节与容器——歌词整个不采，见 GeneratedChatSong", () => {
@@ -22,7 +22,7 @@ describe("生歌载荷解码", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.song.mimeType).toBe("audio/mp3");
-    expect(Buffer.from(result.song.bytes).equals(Buffer.from([0x49, 0x44, 0x33, 4, 0, 0]))).toBe(true);
+    expect(result.song.bytes).toEqual(new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0]));
     expect(Object.keys(result.song).sort()).toEqual(["bytes", "mimeType"]);
   });
 
@@ -35,13 +35,13 @@ describe("生歌载荷解码", () => {
     expect(decodeGeneratedSong("", "audio/mp3")).toEqual({ ok: false, reason: "empty payload" });
     expect(decodeGeneratedSong("not base64!!", "audio/mp3"))
       .toEqual({ ok: false, reason: "payload is not canonical base64" });
-    // 超限在**解码之前**就被挡住，不为一个必然超限的载荷分配那份 Buffer——整首歌
+    // 超限在**解码之前**就被挡住，不为一个必然超限的载荷分配字节数组——整首歌
     // 本来就有几 MB，这一步不是可省的保险。超一个字节的真实载荷同样落在这条
     // 分支上（编码长度随字节数单调增长，因此解码后的那道上限判定是纯防御，
     // 正常输入走不到）。
     expect(decodeGeneratedSong("A".repeat(SONG_GENERATION_MAX_ENCODED_CHARS + 4), "audio/mp3"))
       .toEqual({ ok: false, reason: "encoded payload exceeds the size limit" });
-    expect(decodeGeneratedSong(Buffer.alloc(SONG_GENERATION_MAX_BYTES + 1).toString("base64"), "audio/mp3"))
+    expect(decodeGeneratedSong(new Uint8Array(SONG_GENERATION_MAX_BYTES + 1).toBase64(), "audio/mp3"))
       .toEqual({ ok: false, reason: "encoded payload exceeds the size limit" });
   });
 });

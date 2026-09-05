@@ -1,3 +1,4 @@
+import type { AiTextResult } from "./../../types/aiChat/provider";
 /** 媒体视觉描述请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
 export const MEDIA_DESCRIPTION_ERROR_LABEL: string = "AI image understanding API";
 
@@ -31,7 +32,7 @@ export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
 /** 单个媒体下载允许读入内存的最大字节数。 */
 export const MEDIA_MAX_DOWNLOAD_BYTES: number = 16 * 1024 * 1024;
 /** 非目录媒体描述的全局 LRU 上限。 */
-export const MEDIA_DESCRIPTION_CACHE_MAX: number = 1_500;
+export const MEDIA_DESCRIPTION_CACHE_MAX: number = 4_096;
 /** 下载、转码、视觉 API 共用执行器的并发与排队硬顶。 */
 export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 25;
 /** 媒体执行器等待队列的硬顶，超出立即拒绝。 */
@@ -60,3 +61,15 @@ export const MEDIA_PROBE_BACKOFF_MAX_MS: number = 10 * 60_000;
  * 留着只会让一个永远不清零的整数无声地涨下去。
  */
 export const MEDIA_PROBE_MAX_TRANSIENT_FAILURES: number = 6;
+
+/** AI 模态已关闭时的共享不可重试结果，不产生新的模态故障。 */
+export const MEDIA_CLOSED_RESULT: Readonly<AiTextResult> = { ok: false, retryable: false };
+
+/** AI 模态探测退避期间的共享可重试结果。 */
+export const MEDIA_BACKOFF_RESULT: Readonly<AiTextResult> = { ok: false, retryable: true };
+
+/** AI 媒体执行器拒绝接纳时的共享可重试结果。 */
+export const MEDIA_TASK_REJECTED_RESULT: Readonly<AiTextResult> = { ok: false, retryable: true };
+
+/** AI 媒体主动取消时的共享不可重试结果，不归因于供应商。 */
+export const MEDIA_CANCELLED_RESULT: Readonly<AiTextResult> = { ok: false, retryable: false };

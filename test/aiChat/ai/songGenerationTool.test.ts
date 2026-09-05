@@ -27,8 +27,8 @@ const generateSong = mock(async (..._args: unknown[]): Promise<GeneratedChatSong
   mimeType: "audio/mp3",
 }));
 const songAiProvider = mock((): unknown => ({ name: "google", generateSong }));
-const coverBytes: Buffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
-const generateSongCover = mock(async (..._args: unknown[]): Promise<Buffer | null> => coverBytes);
+const coverBytes: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+const generateSongCover = mock(async (..._args: unknown[]): Promise<Uint8Array | null> => coverBytes);
 const sendAudioWithResult = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
   messageId: 88,
   repliedToMessageId: 42,
@@ -98,7 +98,7 @@ beforeEach(() => {
   // 演唱者缺省署机器人自己的显示名；有用例会把它清空验证兜底，逐条恢复。
   botInfoState.current = { id: 999_999, username: "test_bot", first_name: "小忍" };
   for (const mocked of [generateSong, songAiProvider, sendAudioWithResult, generateSongCover]) mocked.mockClear();
-  generateSongCover.mockImplementation(async (): Promise<Buffer | null> => coverBytes);
+  generateSongCover.mockImplementation(async (): Promise<Uint8Array | null> => coverBytes);
   generateSong.mockImplementation(async (): Promise<GeneratedChatSong | null> => ({
     bytes: songBytes,
     mimeType: "audio/mp3",
@@ -317,14 +317,15 @@ describe("generate_song 执行器", () => {
     expect(getSongGenerationAvailability({ chatId: -1001, bypassCooldown: false })).toEqual({ allowed: true });
   });
 
-  test("与本轮已发消息重复的 caption 被拦下", async () => {
+  test("与本轮已发消息重复的 caption 静默跳过且不占冷却", async () => {
     const state: RoundMessageState = createRoundMessageState();
     state.sentCanonicalTexts.set(1, "写好啦");
     const execute = createGenerateSongExecutor(buildContext(), state);
 
     const result = JSON.parse(await execute(call({ prompt: "p", caption: "写好啦" })));
-    expect(result.error).toContain("identical message was already sent");
+    expect(result).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
     expect(generateSong).not.toHaveBeenCalled();
+    expect(getSongGenerationAvailability({ chatId: -1001, bypassCooldown: false })).toEqual({ allowed: true });
   });
 
   test("caption 里的可点击命令在生歌与占冷却之前被拒绝", async () => {
@@ -430,7 +431,7 @@ describe("generate_song 执行器", () => {
   });
 
   test("封面画不出来照样发歌：歌才是这次调用的主体", async () => {
-    generateSongCover.mockImplementationOnce(async (): Promise<Buffer | null> => null);
+    generateSongCover.mockImplementationOnce(async (): Promise<Uint8Array | null> => null);
     const execute = createGenerateSongExecutor(buildContext(), createRoundMessageState());
 
     const result = JSON.parse(await execute(call({ prompt: "p" })));

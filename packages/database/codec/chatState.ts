@@ -1,3 +1,4 @@
+import { CHAT_STATE_KEYS, LOCKDOWN_KEYS } from "../../consts/storageSchema";
 import type { ChatPermissions } from "grammy/types";
 import { BOT_CHAT_PERMISSION_KEYS } from "../../consts/botAdmin";
 import { CHAT_PERMISSION_KEYS } from "../../consts/storage";
@@ -7,21 +8,6 @@ import { hasOnlyKeys, isPlainRecord } from "../../libs/record";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type { ChatState, LockdownPhase, LockdownRecord } from "../../types/chatState";
 import type { BotChatPermissions } from "../../types/telegram";
-
-/** SQLite `chat_states.data` 允许的完整字段集合。 */
-const CHAT_STATE_KEYS: readonly string[] = [
-  "quietUntil",
-  "lockdown",
-  "isAIChatEnabled",
-  "isJATranslationEnabled",
-  "isAdDetectEnabled",
-  "isFloodControlEnabled",
-  "isAntiRaidEnabled",
-  "isInitEnabled",
-  "botPermissions",
-  "title",
-  "isProxySendEnabled",
-];
 
 interface DecodeFieldContext {
   readonly source: string;
@@ -145,16 +131,6 @@ function decodeBotPermissions(
   }
   return permissions;
 }
-
-/** 落盘 lockdown 记录允许出现的全部键；多一个就是格式不认识的行。 */
-const LOCKDOWN_KEYS: readonly string[] = [
-  "phase",
-  "intentId",
-  "originalPermissions",
-  "announced",
-  "announcementMessageId",
-  "expiresAt",
-];
 
 function decodeLockdown(
   value: unknown,

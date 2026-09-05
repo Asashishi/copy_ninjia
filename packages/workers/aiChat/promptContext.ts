@@ -3,7 +3,6 @@ import type { BoundedDeque } from "../../libs/boundedDeque";
 import {
   buildColdMemoryBlock,
   buildTieredVerbatimTranscript,
-  formatReplyChain,
   formatSpeakerIdentity,
 } from "../../aiChat/ai/utils/chatTranscript";
 import {
@@ -18,16 +17,13 @@ import {
 import {
   forwardPathTemplate,
   SELF_ROSTER_CODE,
-  TRIGGER_NOT_IN_TRANSCRIPT_LABEL,
 } from "../../consts/aiChat/prompts/transcript";
-import { REPLY_CHAIN_NODE_MAX_CHARS } from "../../consts/aiChat/memory";
-import { truncateInline } from "../../libs/text";
 import { TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/workers/aiChat/memory";
-import { collectReplyChain, lookupBufferedMessage } from "./replyChain";
+import { lookupBufferedMessage } from "./bufferedMessageIndex";
 import { resolvedTagFor } from "./mediaText";
 import type { RenderedTranscript } from "../../aiChat/ai/utils/chatTranscript";
-import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
+import type { BufferedMessage } from "../../types/aiChat/memory";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type {
@@ -86,27 +82,11 @@ function resolveInvoker(
   return undefined;
 }
 
-/**
- * 触发消息已经滑出渲染窗口时，回复链标注该拿什么指代它。
- *
- * 正文本轮回复任务里已经引述过（排队补跑的入队快照、媒体轮的描述），因此这里
- * 复述同一段正文把两处引用绑在一起；两边都没有正文时才退回「不在转录里」。
- */
-function absentTriggerLabel(
-  queuedTrigger: QueuedReplyTrigger | undefined,
-  mediaComment: MediaCommentContext | undefined
-): string {
-  const text: string | undefined = queuedTrigger?.text || mediaComment?.description;
-  return text
-    ? `就是本段上面引述的那条「${truncateInline(text, REPLY_CHAIN_NODE_MAX_CHARS)}」`
-    : TRIGGER_NOT_IN_TRANSCRIPT_LABEL;
-}
-
 /** buildReplyPromptSections 的可选附加上下文，按需组合，见各字段说明。 */
 export interface UserContentOptions {
   /** 本轮触发消息的 message_id（即工具挂回复引用的目标，见 replyRound.ts
-   *  的 replyToMessageId）：用于从热区索引回溯它所在的多层回复链，并在链
-   *  标注里点名触发消息本身。 */
+   *  的 replyToMessageId）：用于从热区索引定位触发消息的身份，
+   *  并在转录中保留触发消息的消息号。 */
   triggerMessageId: number;
   /** 明确 @/回复机器人的唤起者 id。仅直接触发传入；随机文字插话和随机媒体
    *  评价省略。用于在回复任务开头声明「正在跟你说话的是谁」——身份段按这个
@@ -123,8 +103,7 @@ export interface UserContentOptions {
   mediaComment?: MediaCommentContext;
   /** 若本次是排队补跑的直接触发（见 replyQueue.ts 的 drainReplyQueue），
    *  入队时的触发消息快照——回复指令改为点名回复那条具体消息（此刻它已不
-   *  在转录尾部）；自己后来的发言已覆盖过它时换个说法简短接一句、或至少
-   *  扣个反应，不允许沉默。 */
+   *  在转录尾部）；自己后来的发言已覆盖过它且没有新内容时直接结束。 */
   queuedTrigger?: QueuedReplyTrigger;
   /** 本轮是否走「出错」分支：由 replyRound.ts 的 startReplyRound 在请求
    *  模型之前掷一次骰子决定（见 consts/aiChat/tools.ts 的 AI_TEXT_TYPO_PROBABILITY）。
@@ -160,25 +139,12 @@ export function buildReplyPromptSections(
 
   const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
   // selfId 让机器人自己的行拿到固定编号（不必回名册查自己是谁）；triggerMessageId
-  // 保住触发消息的消息号，多层回复链标注会点名它。
+  // 保住触发消息的消息号。
   const rendered: RenderedTranscript = buildTieredVerbatimTranscript(recent, {
     selfId: selfInfo.id,
     triggerMessageId,
   });
-  // 多层回复链：触发消息还在热区就用它当前的 replyTo 起跳；排队补跑/媒体
-  // 触发时它可能已滑出，退回入队时保存的回复快照。链 ≥2 跳才拼标注（第一
-  // 跳转录行内的单跳标注已覆盖），见 formatReplyChain。
   const triggerMessage: BufferedMessage | undefined = lookupBufferedMessage(chatId, triggerMessageId);
-  const chainFirstHop: BufferedReplyReference | undefined =
-    triggerMessage?.replyTo ?? queuedTrigger?.replyTo ?? mediaComment?.replyTo;
-  const replyChainBlock: string = chainFirstHop
-    ? formatReplyChain(triggerMessageId, collectReplyChain(chatId, chainFirstHop), {
-      rendered,
-      // 触发消息滑出窗口时（排队补跑、慢媒体轮）转录里没有它的行，写 #N 等于
-      // 让模型去搜一个不存在的编号。正文本轮任务里就有，直接引述它。
-      absentTriggerLabel: absentTriggerLabel(queuedTrigger, mediaComment),
-    })
-    : "";
   const queuedReplyReference: string = queuedTrigger?.replyTo
     ? `；那条消息${rendered.replyReference(queuedTrigger.replyTo)}`
     : "";
@@ -206,8 +172,7 @@ export function buildReplyPromptSections(
   //   评不出花来就简短一句、或至少扣个表情反应，不允许沉默。
   // - 排队补跑：点名回复入队时快照下来的那条具体消息（此刻转录尾部早已
   //   是别的消息，不能说「最新这条」）；上一轮的回复可能已顺带覆盖它，
-  //   覆盖过就换个说法简短接一句、或至少扣个表情反应表示看到了，不允许
-  //   沉默、也别原样重复自己说过的话。
+  //   覆盖过且没有新内容就直接结束。
   // - 随机插话：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、要不要
   //   称呼对方）由模型自主判断，但必须留下回应；触发者身份从转录最后一行读取。
   // - 回复/@ 触发：对方明确在跟机器人说话，别已读不回，建议第一条挂引用。
@@ -218,7 +183,7 @@ export function buildReplyPromptSections(
     : mediaComment
     ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}。${mediaForwardNotice}内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。`
     : queuedTrigger
-    ? `刚才你忙着回别的消息的时候，${queuedTriggerDescription}，这条是排队等到现在才轮到处理的。请针对这条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让对方知道你在回哪条；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给那条消息扣个表情反应表示看到了，别原样重复自己说过的话。`
+    ? `刚才你忙着回别的消息的时候，${queuedTriggerDescription}，这条是排队等到现在才轮到处理的。请针对这条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让对方知道你在回哪条；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，且没有新内容，就直接结束，不要换个说法再答一次，也不要为补回应额外发言或扣反应。`
     : isRandomTrigger
     ? "群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。"
     : "请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。";
@@ -278,9 +243,6 @@ export function buildReplyPromptSections(
     "\n" +
     invokerLine +
     replyInstruction +
-    // 触发消息带着 ≥2 跳的回复链时补全路径标注，帮模型免于在整段转录里
-    // 自行追 message_id；单跳或无回复时该段为空串，完全不出现。
-    (replyChainBlock ? "\n\n" + replyChainBlock : "") +
     // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到
     // 「本来可能出错」这件事（见 consts/aiChat/prompts/tools.ts）。
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +

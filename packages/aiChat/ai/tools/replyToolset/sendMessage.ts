@@ -11,7 +11,7 @@ import { parseBooleanField } from "../../utils/toolArgs";
 import {
   recordSentMessage,
 } from "./messageState";
-import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
+import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
 import {
   applyQuickTypoCorrection,
   decideMessageTypo,
@@ -37,8 +37,8 @@ export function createSendMessageExecutor(
         "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead"
       );
     }
-    const policyError: string | null = modelAuthoredTextPolicyError(text, state, "message");
-    if (policyError !== null) return policyError;
+    const policyResult: string | null = modelAuthoredTextPolicyResult(text, state, "message");
+    if (policyResult !== null) return policyResult;
 
     const typo: TypoDecision = decideMessageTypo({
       argumentsJson,

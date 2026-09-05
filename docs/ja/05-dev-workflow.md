@@ -42,15 +42,16 @@
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production の Node compatibility import、Telegram の cleanup／長期保持例外、現在の cold migration 入口、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コードと script の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+  module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
 
 ### 依存関係の release-age gate
 
-依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。現在の Bun runtime と `@types/bun` はどちらも 1.4.0 です。
+依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。Bun runtime は 1.4.1、`@types/bun` は 1.4.0 に固定します。version gate は major/minor の一致を要求し、runtime の patch version は `packageManager` と `install.sh` が共同で固定します。
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**3129 tests / 314 files / 98189 `expect()` calls**。全ソースコードの**関数カバレッジは 97.04%、行カバレッジは 97.32%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**3179 tests / 321 files / 123010 `expect()` calls**。全ソースコードの**関数カバレッジは 97.12%、行カバレッジは 97.38%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -77,7 +78,7 @@
 
 `bun run perf:hot-path-gate` は `bun run check` の最終段で、コミットのたびに実行されます。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` の各シナリオ・各繰り返しごとに独立した子プロセスを 2 つ起動します。`steadyProfile` は正式ループの GC と JIT だけを判定し、`retained` は profiler 自身のメモリ干渉がない状態で RSS、heapUsed のピーク、full GC 後の残存を判定します。
 
-判定基準そのものは **TypeScript に書きません**。Bun の version と revision の anchor、GC／RSS／常駐増加のハード上限、シナリオごとの ns/op ソフト報告閾値、そして各数値の根拠となる実測値（最遅 median、sampling process 数、前 Bun version との比較）は、すべて repository root の版管理された `performance-result.json` に置き、`scripts/perf/hotPaths/gateResult.ts` が厳格に parse します。未知の key、欠落 field、型不一致、そして「閾値が自身の根拠実測値を下回る」ケースは、子プロセスを 1 つも起動する前に拒否されます。`packages/consts/performance.ts` に残るのは測定に依存しない sampling ノブとシナリオ表だけで、runtime の再校正はコードではなくその JSON を編集します。
+校準記録を [`performance-result.json`](../../performance-result.json) に保存し、`scripts/perf/hotPaths/gateResult.ts` が厳密に解析します。`gateRuntime.ts` は規約検査と hot-path 子 process の開始前に `packageManager`、現在の Bun version/revision、校準 build を照合し、不一致なら再測定を要求します。記録には process 数、各場面の遅延測定値、GC/RSS/保持量の hard limit を含みます。過去の `fullSuite` 結果は各回の時刻と Bun build を維持します。
 
 `hotPathProfileGate` の節は双方向ですが、2 つの半分は owner が異なります。`calibration` は再校正後に人が手で編集し、gate からは read-only です。`lastRun` は直近の gate 読数を記録し、`bun run perf:hot-path-gate -- --write-result` を明示的に渡したときだけ上書きされるため、通常の `bun run check` は working tree を汚しません。write-back は `calibration` を 1 byte も触りません。gate が 1 回の実行結果から自身の判定基準を書き換えられるようにすることは、現在の性能で gate を溶接してしまうのと同じだからです。
 
@@ -141,7 +142,13 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 このリポジトリは GitHub Actions に依存しません。リリース環境では `bun run release:check` を明示的な build または pre-deploy step としてください。ネットワーク接続可能な環境では `bun run audit:release` も実行します。ネットワーク失敗は監査未完了を意味し、脆弱性が 0 件という意味ではありません。CVE を無視する場合は理由と期限を記録します。永続化構造を変更するリリースでは、先に [06 よくある変更手順](06-modification-guide.md#永続化-schema-の変更) の migration を実行してください。
 
-リリースはまず `dev` で `bun run perf:full -- --write-doc` を実行し、3 言語の [09 パフォーマンスベンチマーク](09-performance.md) を今回の計測値に更新してコード変更と一緒にコミットするところから始めます。
+`dev` で gate が通過した後、サービスとほかの高負荷処理を停止してマシンが空くのを待ち、
+`bun run perf:full -- --write-doc` を既定の 3 ラウンドで実行します。3 言語の
+[09 パフォーマンスベンチマーク](09-performance.md) と `performance-result.json` の
+`fullSuite.lastRun` を同時に更新し、両方をコード変更と一緒にコミットします。
+全量 benchmark と `bun run check` は同時または連続して実行せず、間にマシンが空くのを待ちます。
+性能比較は同一マシン・同一 Bun build で行います。ランタイム更新後の読数はその build の基準値であり、
+build 間の差をコード最適化の効果として扱いません。失敗や異常値は原因を確認して再実行してから公開します。
 
 `master` への squash merge ごとに GitHub Release を 1 つ作成します。
 

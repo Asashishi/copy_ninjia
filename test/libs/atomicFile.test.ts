@@ -22,6 +22,7 @@ const realFsyncSync = realFsSnapshot.fsyncSync;
 const realCloseSync = realFsSnapshot.closeSync;
 const realRenameSync = realFsSnapshot.renameSync;
 const realUnlinkSync = realFsSnapshot.unlinkSync;
+const UTF8_ENCODER: TextEncoder = new TextEncoder();
 
 interface InjectedFailure {
   error: Error;
@@ -120,7 +121,7 @@ mock.module("node:fs", () => ({
     if (lengthLimit === 0) return 0;
     return realWriteSync(
       fd as number,
-      buffer as Buffer,
+      buffer as Uint8Array,
       offset as number,
       Math.min(length as number, lengthLimit ?? Number.POSITIVE_INFINITY),
       position as number | null
@@ -322,7 +323,7 @@ describe("atomicWriteTextChunksSync 的分块与失败清理", () => {
     const chunks: readonly string[] = ["{\n", "  \"值\": 1", "\n}"];
 
     expect(atomicWriteTextChunksSync(targetPath, chunks)).toBe(
-      Buffer.byteLength(chunks.join(""))
+      UTF8_ENCODER.encode(chunks.join("")).byteLength
     );
 
     expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe(

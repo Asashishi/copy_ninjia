@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3129_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.32%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3179_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 3129 件のテストが全て成功 / テストファイル 314 件 / expect() 呼び出し 98,189 回 / 関数カバレッジ 97.04% / 行カバレッジ 97.32%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 3179 件のテストが全て成功 / テストファイル 321 件 / expect() 呼び出し 123,010 回 / 関数カバレッジ 97.12% / 行カバレッジ 97.38%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -111,7 +111,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🧠 コンテキスト記憶</b></p>
-  <p>上限付きの逐語コンテキストと複数ラウンドの圧縮要約を保持し、多層の返信チェーンを追跡します。アトミックな永続化により確実に復元できます。</p>
+  <p>上限付きの逐語コンテキストと複数ラウンドの圧縮要約を保持し、メッセージの返信関係・転送元・正確な引用片を残します。アトミックな永続化により確実に復元できます。</p>
 </td>
 </tr>
 <tr>
@@ -170,7 +170,7 @@ Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンド�
 
 ## 🚀 クイックスタート
 
-必要なものは Linux（`/proc` が読めること。他の OS ではインスタンスロックが fail closed になります）、Bun 1.4+、Bot Token、スーパー管理者のユーザー ID です。有効化する AI 機能ごとにその provider の API Key が要り、`/ja_copy` には Google Cloud サービスアカウント JSON も必要です。ハードウェアの目安は [07 運用とトラブルシュート](07-operations.md#ハードウェアの目安) を参照してください。
+必要なものは Linux（`/proc` が読めること。他の OS ではインスタンスロックが fail closed になります）、Bun 1.4.1、Bot Token、スーパー管理者のユーザー ID です。有効化する AI 機能ごとにその provider の API Key が要り、`/ja_copy` には Google Cloud サービスアカウント JSON も必要です。ハードウェアの目安は [07 運用とトラブルシュート](07-operations.md#ハードウェアの目安) を参照してください。
 
 ワンショット install（足りないものを導入し、設定を尋ねてそのまま起動）：
 
@@ -178,16 +178,7 @@ Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンド�
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-順に 4 つ行います。環境の準備（`git`/`curl`/`unzip` の補完、Bun の導入、`bun install`）、**GitHub の
-Latest Release** を `./copy_ninjia` へ clone、Telegram と AI 設定の対話的な入力、そして空の identity
-database 作成と systemd unit の登録・起動。入れるのは `master` HEAD ではなく公開済み release です。
-tag は実行時に `releases/latest` へ問い合わせ、取得できなければその場で失敗します（`master` へ黙って
-フォールバックしません）。既存の設定は上書きせず、既存の systemd unit は上書き前に確認するため、再実行
-しても安全です。すでに clone 済みなら repository root で `bash install.sh` を実行すれば clone を飛ばし、
-その work tree の checkout はそのまま残します。ソースが release アーカイブの展開（ソースはあるが `.git`
-が無い）の場合は、その場に git repository を作り、現在のファイルと一致する tag に `HEAD` を向けるので、
-以後 git で更新できます。この作成は work tree のファイルを一切書かず、deployment データを object store に
-取り込むこともありません。
+installer は **GitHub Latest Release** を取得して対象 tree 自身の script に処理を渡し、既存 tree の checkout は保持します。指定された Bun 版と lock 済み依存関係を確認し、Telegram・AI の設定入力と、不足する身分 database の初期化を行います。既存設定は明示的な再入力時だけ、バックアップと検証を経て原子的に置換します。最後に systemd unit を登録または再利用して稼働を観察し、systemd が無い場合は前面実行します。ディレクトリ指定とバックアップ保持は [環境構築](01-getting-started.md) を参照してください。
 
 手動 install：
 

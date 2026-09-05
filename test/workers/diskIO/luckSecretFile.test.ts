@@ -41,10 +41,22 @@ describe("daily luck receipt secret file", () => {
   test("损坏 JSON、错误 schema、非法 key 和未来日期均拒绝且不覆盖原文件", async () => {
     const invalidContents = [
       "{broken",
-      JSON.stringify({ version: 2, day: "2026-07-19", key: Buffer.alloc(32).toString("base64url") }),
-      JSON.stringify({ version: 1, day: "2026-02-30", key: Buffer.alloc(32).toString("base64url") }),
+      JSON.stringify({
+        version: 2,
+        day: "2026-07-19",
+        key: new Uint8Array(32).toBase64({ alphabet: "base64url", omitPadding: true }),
+      }),
+      JSON.stringify({
+        version: 1,
+        day: "2026-02-30",
+        key: new Uint8Array(32).toBase64({ alphabet: "base64url", omitPadding: true }),
+      }),
       JSON.stringify({ version: 1, day: "2026-07-19", key: "short" }),
-      JSON.stringify({ version: 1, day: "2026-07-20", key: Buffer.alloc(32).toString("base64url") }),
+      JSON.stringify({
+        version: 1,
+        day: "2026-07-20",
+        key: new Uint8Array(32).toBase64({ alphabet: "base64url", omitPadding: true }),
+      }),
     ];
     for (const content of invalidContents) {
       writeFileSync(path, content);
@@ -55,7 +67,7 @@ describe("daily luck receipt secret file", () => {
 
   test("首次原子写失败时明确抛错，不留下伪成功文件", async () => {
     const io: LuckSecretFileIO = {
-      generateKey: () => Buffer.alloc(32, 1),
+      generateKey: () => new Uint8Array(32).fill(1),
       writeText: () => { throw new Error("disk full"); },
     };
     await expect(recoverLuckReceiptSecret({

@@ -180,24 +180,31 @@ describe("install.sh 与代码共享同一份事实", () => {
       .toEqual([...AGENT_AI_CHAT_REQUIRED_CAPABILITIES]);
   });
 
-  test("Bun 版本下限不高于本仓库固定的 @types/bun 版本", () => {
+  test("Bun 精确版本与 packageManager 一致，类型声明覆盖同一主次版本", () => {
     const major: number = Number(extractShellScalar("REQUIRED_BUN_MAJOR"));
     const minor: number = Number(extractShellScalar("REQUIRED_BUN_MINOR"));
+    const patch: number = Number(extractShellScalar("REQUIRED_BUN_PATCH"));
     expect(Number.isSafeInteger(major)).toBe(true);
     expect(Number.isSafeInteger(minor)).toBe(true);
-    // @types/bun 钉死在一个精确版本，它就是本仓库实际测过的运行时。
-    // 安装器要求的下限高于它，等于门禁跑的和装机跑的不是同一档 Bun。
-    const typesVersion: string = (
-      JSON.parse(
-        readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")
-      ) as { readonly devDependencies: Readonly<Record<string, string>> }
-    ).devDependencies["@types/bun"] ?? "";
+    expect(Number.isSafeInteger(patch)).toBe(true);
+    const manifest: {
+      readonly packageManager?: string;
+      readonly devDependencies: Readonly<Record<string, string>>;
+    } = JSON.parse(
+      readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")
+    ) as {
+      readonly packageManager?: string;
+      readonly devDependencies: Readonly<Record<string, string>>;
+    };
+    const runtimeVersion: string = manifest.packageManager?.replace(/^bun@/, "") ?? "";
+    expect(runtimeVersion).toBe(`${major}.${minor}.${patch}`);
+    const typesVersion: string = manifest.devDependencies["@types/bun"] ?? "";
     const parts: readonly string[] = typesVersion.replace(/^[^0-9]*/, "").split(".");
     const typesMajor: number = Number(parts[0]);
     const typesMinor: number = Number(parts[1]);
     expect(Number.isSafeInteger(typesMajor)).toBe(true);
     expect(Number.isSafeInteger(typesMinor)).toBe(true);
-    expect(major * 1_000 + minor).toBeLessThanOrEqual(typesMajor * 1_000 + typesMinor);
+    expect([typesMajor, typesMinor]).toEqual([major, minor]);
   });
 
   test("重填问卷的判据用的就是 TELEGRAM_BOT_TOKEN_PLACEHOLDER", () => {

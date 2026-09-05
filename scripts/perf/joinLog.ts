@@ -354,8 +354,9 @@ function runIndependentChild(
   operation: Operation,
   variant: Variant
 ): ChildResult {
+  const decoder: TextDecoder = new TextDecoder();
   const result: Bun.ReadableSyncSubprocess = Bun.spawnSync([
-    process.execPath,
+    Bun.argv[0]!,
     import.meta.path,
     "--child",
     operation,
@@ -363,10 +364,10 @@ function runIndependentChild(
   ]);
   if (!result.success) {
     throw new Error(
-      `Join log benchmark child failed: ${result.stderr.toString()}`
+      `Join log benchmark child failed: ${decoder.decode(result.stderr)}`
     );
   }
-  return JSON.parse(result.stdout.toString()) as ChildResult;
+  return JSON.parse(decoder.decode(result.stdout)) as ChildResult;
 }
 
 function runParent(): BenchmarkReport {

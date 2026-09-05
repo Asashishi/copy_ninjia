@@ -89,7 +89,7 @@ export function lastDiskIOMessage<TType extends DiskIOMessage["type"]>(
 export const TEST_LUCK_RECEIPT_SECRET: LuckReceiptSecret = {
   version: 1,
   day: "2026-07-19",
-  key: Buffer.alloc(32, 7).toString("base64url"),
+  key: new Uint8Array(32).fill(7).toBase64({ alphabet: "base64url", omitPadding: true }),
 };
 
 /** 向指定替身投递一份最小成功恢复载荷。 */

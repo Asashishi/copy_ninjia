@@ -13,6 +13,33 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe("acknowledgement-safe update runner", () => {
+  test("middleware 同步调用 stop 后悬挂也不会漏掉停机唤醒", async () => {
+    const held = deferred();
+    let stopped: boolean = false;
+    const offsets: number[] = [];
+    const bot = {
+      api: { getUpdates: async (args: { offset: number }): Promise<Update[]> => {
+        offsets.push(args.offset);
+        return [{ update_id: 100 }];
+      } },
+      handleUpdate: async (): Promise<void> => {
+        void runner.stop().then((): void => { stopped = true; });
+        await held.promise;
+      },
+      errorHandler: (): void => {},
+    };
+    const runner = runAcknowledgedUpdateBatches(bot as unknown as Bot, ["message"]);
+    try {
+      await Bun.sleep(0);
+      expect(stopped).toBeTrue();
+      expect(runner.size()).toBe(1);
+      expect(offsets).toEqual([0]);
+    } finally {
+      held.resolve();
+      await runner.stop();
+    }
+  });
+
   test("每次只取一条，middleware 完成前不发起携带更高 offset 的下一次 getUpdates", async () => {
     const first = deferred();
     const fetchOffsets: number[] = [];

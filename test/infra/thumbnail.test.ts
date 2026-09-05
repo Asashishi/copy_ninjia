@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { prepareThumbnailJpeg, sniffImageFormat } from "../../packages/infra/image";
 
 /** 造一张指定尺寸的 PNG，用来模拟生图模型交回来的原始封面。 */
-async function makePng(width: number, height: number): Promise<Buffer> {
+async function makePng(width: number, height: number): Promise<Uint8Array> {
   const { default: sharp } = await import("sharp");
   return sharp({
     create: {
@@ -27,7 +27,7 @@ async function makePng(width: number, height: number): Promise<Buffer> {
 
 describe("Telegram 缩略图压缩", () => {
   test("大图被缩到长边上限内，产出确实是 JPEG", async () => {
-    const source: Buffer = await makePng(1_024, 1_024);
+    const source: Uint8Array = await makePng(1_024, 1_024);
 
     const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
@@ -47,7 +47,7 @@ describe("Telegram 缩略图压缩", () => {
   });
 
   test("非正方形保持原始比例，不裁切也不拉伸", async () => {
-    const source: Buffer = await makePng(1_600, 900);
+    const source: Uint8Array = await makePng(1_600, 900);
 
     const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
@@ -64,7 +64,7 @@ describe("Telegram 缩略图压缩", () => {
   });
 
   test("本来就小于上限的图不会被放大成插值噪点", async () => {
-    const source: Buffer = await makePng(64, 64);
+    const source: Uint8Array = await makePng(64, 64);
 
     const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
@@ -79,7 +79,7 @@ describe("Telegram 缩略图压缩", () => {
   });
 
   test("所有质量档都压不进上限时返回 null，不交出一张会被拒的图", async () => {
-    const source: Buffer = await makePng(1_024, 1_024);
+    const source: Uint8Array = await makePng(1_024, 1_024);
 
     const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
       bytes: source,
@@ -94,7 +94,7 @@ describe("Telegram 缩略图压缩", () => {
 
   test("认不出的字节不抛错，归一成一次普通失败", async () => {
     const thumbnail: Uint8Array | null = await prepareThumbnailJpeg({
-      bytes: Buffer.from("definitely not an image"),
+      bytes: new TextEncoder().encode("definitely not an image"),
       maxEdge: 320,
       maxBytes: 180 * 1024,
       qualities: [88],

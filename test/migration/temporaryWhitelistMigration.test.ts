@@ -424,7 +424,7 @@ describe("临时白名单 SQLite 冷迁移", () => {
     );
     const runCli = (argument: string): CliResult => {
       const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
-        cmd: [process.execPath, scriptPath, argument],
+        cmd: [Bun.argv[0]!, scriptPath, argument],
         cwd: join(import.meta.dir, "../.."),
         env: {
           ...process.env,

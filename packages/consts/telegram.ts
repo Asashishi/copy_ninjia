@@ -218,3 +218,12 @@ export const CODE_FENCE: string = "```";
  * 所属模块：packages/libs/codeFence.ts。
  */
 export const EMPTY_MESSAGE_ENTITIES: readonly MessageEntity[] = [];
+
+/** Telegram 发送边界关闭链接预览的共享只读载荷。 */
+export const DISABLED_LINK_PREVIEW: Readonly<{ is_disabled: true }> = { is_disabled: true };
+
+/** Telegram 编辑边界识别目标内容已经相同的拒绝语。 */
+export const MESSAGE_NOT_MODIFIED: string = "message is not modified";
+
+/** Telegram 信号适配边界在无信号时共享的只读空元组。 */
+export const NO_SIGNAL_ARGS: readonly [] = [];

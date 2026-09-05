@@ -222,7 +222,7 @@ export interface SuiteEnvironment {
   readonly totalMemoryBytes: number;
 }
 
-/** 全量基准的最终报告；`--markdown` 与 `--write-readme` 都从它渲染。 */
+/** 全量基准的最终报告；`--markdown` 与 `--write-doc` 共用这一份读数。 */
 export interface FullSuiteReport {
   readonly generatedAt: string;
   readonly rounds: number;

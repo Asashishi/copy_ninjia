@@ -33,7 +33,7 @@ export async function spawnJsonChild<TResult>({
   timeoutMs = CHILD_TIMEOUT_MS,
 }: SpawnChildOptions): Promise<TResult> {
   const subprocess: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn(
-    [process.execPath, ...args],
+    [Bun.argv[0]!, ...args],
     {
       stdin: "ignore",
       stdout: "pipe",

@@ -15,7 +15,7 @@ import {
   replyGenerationSignal,
   trackReplyGenerationTask,
 } from "./replyPipeline";
-import { replyReferenceForBufferedEntry } from "./replyChain";
+import { replyReferenceForBufferedEntry } from "./bufferedMessageIndex";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 
 /**

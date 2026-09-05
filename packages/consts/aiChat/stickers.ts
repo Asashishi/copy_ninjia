@@ -50,3 +50,6 @@ export const STICKER_PACK_SUMMARY_ERROR_LABEL: string = "AI sticker pack summary
 export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成中，可进包内查看具体贴纸）";
 /** 模型选择贴纸意图文本的最大字符数。 */
 export const STICKER_INTENT_MAX_CHARS: number = 80;
+
+/** 贴纸工具没有候选包时共享的只读空菜单。 */
+export const EMPTY_STICKER_MENU: readonly [] = [];

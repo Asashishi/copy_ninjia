@@ -17,8 +17,8 @@ const generateChatImage = mock(async (..._args: unknown[]): Promise<GeneratedCha
   bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
   mimeType: "image/png",
 }));
-const prepareThumbnailJpeg = mock(async (..._args: unknown[]): Promise<Buffer | null> =>
-  Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+const prepareThumbnailJpeg = mock(async (..._args: unknown[]): Promise<Uint8Array | null> =>
+  new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
 const loggerError = mock((..._args: unknown[]): void => {});
 const realImage = await import("../../../packages/infra/image");
 
@@ -62,8 +62,8 @@ beforeEach(() => {
     bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
     mimeType: "image/png",
   }));
-  prepareThumbnailJpeg.mockImplementation(async (): Promise<Buffer | null> =>
-    Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+  prepareThumbnailJpeg.mockImplementation(async (): Promise<Uint8Array | null> =>
+    new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
 });
 
 describe("生歌封面", () => {
@@ -117,7 +117,7 @@ describe("生歌封面", () => {
   });
 
   test("压不进体积上限时交回 null，绝不上传一张会被整条拒绝的缩略图", async () => {
-    prepareThumbnailJpeg.mockImplementationOnce(async (): Promise<Buffer | null> => null);
+    prepareThumbnailJpeg.mockImplementationOnce(async (): Promise<Uint8Array | null> => null);
 
     await expect(generateSongCover(coverParams())).resolves.toBeNull();
   });
@@ -135,7 +135,7 @@ describe("生歌封面", () => {
   });
 
   test("压缩这一步抛错也照样只交回 null", async () => {
-    prepareThumbnailJpeg.mockImplementationOnce(async (): Promise<Buffer | null> => {
+    prepareThumbnailJpeg.mockImplementationOnce(async (): Promise<Uint8Array | null> => {
       throw new Error("sharp exploded");
     });
 

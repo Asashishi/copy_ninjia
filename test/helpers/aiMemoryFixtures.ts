@@ -1,7 +1,6 @@
 import type {
   BufferedMessage,
   BufferedReplyReference,
-  ReplyChainLink,
 } from "../../packages/types/aiChat/memory";
 import type {
   AiRecordMediaMessage,
@@ -54,13 +53,6 @@ export function bufferedReplyReferenceFixture(
     forwardedFrom: undefined,
     ...overrides,
   };
-}
-
-/** 回复链上的一跳。 */
-export function replyChainLinkFixture(
-  overrides: Partial<ReplyChainLink> = {}
-): ReplyChainLink {
-  return { ...bufferedReplyReferenceFixture(), snapshotOnly: false, ...overrides };
 }
 
 /** 主线程投给 Worker 的原始回复引用（尚未清洗）。 */

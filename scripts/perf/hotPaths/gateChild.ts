@@ -270,7 +270,7 @@ export async function runHotPathGateChild({
   calibration,
 }: RunHotPathGateChildOptions): Promise<ChildProfileResult> {
   const args: string[] = [
-    process.execPath,
+    Bun.argv[0]!,
     join(projectRoot, "scripts/perf/hotPaths.ts"),
     scenario,
   ];

@@ -34,6 +34,7 @@ import type {
   JitProbeResult,
 } from "./hotPaths/gateChild";
 import { PERFORMANCE_RESULT_PATH } from "./performanceResult";
+import { collectRuntimeCalibrationProblems } from "./hotPaths/gateRuntime";
 
 interface ScenarioGateResult {
   readonly scenario: string;
@@ -59,6 +60,8 @@ interface ScenarioGateResult {
 }
 
 const projectRoot: string = join(import.meta.dir, "../..");
+const runtimeProblems: readonly string[] = await collectRuntimeCalibrationProblems({ projectRoot });
+if (runtimeProblems.length > 0) throw new Error(runtimeProblems.join("\n"));
 const calibration: HotPathGateCalibration = await readHotPathGateCalibration(
   PERFORMANCE_RESULT_PATH
 );

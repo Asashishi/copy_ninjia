@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { REDACTED_SECRET } from "../../packages/libs/redaction";
+import { REDACTED_SECRET } from "../../packages/consts/redaction";
 import type {
   DiskDiagnosticBatchRequest,
   DiskIOMessage,
@@ -68,7 +68,8 @@ describe("logger persistence routing boundary", () => {
         luckReceiptSecret: {
           version: 1,
           day: "2026-07-20",
-          key: Buffer.alloc(32, 1).toString("base64url"),
+          key: new Uint8Array(32).fill(1)
+            .toBase64({ alphabet: "base64url", omitPadding: true }),
         },
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),

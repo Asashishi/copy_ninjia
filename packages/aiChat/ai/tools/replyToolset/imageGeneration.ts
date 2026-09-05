@@ -45,7 +45,7 @@ import type { VisionImage } from "../../../../types/media";
 import { cleanReply } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
 import { sendDirectMessage } from "./messageState";
-import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
+import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
 
 /** 省略 aspect_ratio 时执行侧采用的比例：有参考素材就取最接近它的官方比例。
  *  参考素材文案与执行侧解析共用这一个函数，两处默认值不会漂移（见 imageReference.ts）。 */
@@ -185,8 +185,8 @@ export function createGenerateImageExecutor(
     const caption: string | null = parsed.caption;
     if (caption !== null) {
       // 在实际生成和 claim 冷却前完成硬校验，拒绝的 caption 不产生账单或冷却。
-      const policyError: string | null = modelAuthoredTextPolicyError(caption, state, "picture");
-      if (policyError !== null) return policyError;
+      const policyResult: string | null = modelAuthoredTextPolicyResult(caption, state, "picture");
+      if (policyResult !== null) return policyResult;
     }
 
     if (consecutiveFailures >= IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {
@@ -278,9 +278,7 @@ export function createGenerateImageExecutor(
       consecutiveFailures = 0;
       generatedImages++;
       const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
-      // 带图注时图和话是同一条消息（同一个 message_id），自录也必须是同一条：
-      // 拆成 onImageSent + onMessageSent 会让一个 message_id 在转录里出现两次，
-      // 回复链回溯到它时无从判断指的是哪一条。
+      // 图和图注以同一个 message_id 自录为一条消息，回复指针指向这条完整记录。
       const imageTag: string = imageSentTagTemplate(memoryPrompt, ctx.imageGenerationReference !== undefined);
       // allow_sending_without_reply 可能让图片在目标已删除时退化为普通消息，
       // 自录只采用 Telegram 返回的实际回复关系。

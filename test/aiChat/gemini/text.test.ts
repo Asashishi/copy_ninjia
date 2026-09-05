@@ -78,7 +78,7 @@ describe("纯文本生成", () => {
 
 describe("视觉描述", () => {
   test("图片以 inlineData 内联，描述指令跟在图片之后", async () => {
-    const bytes: Buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const bytes: Uint8Array = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     await describeGeminiVision({
       prompt: "用一句中文描述这张贴纸",
       image: { bytes, mime: "image/png" },
@@ -91,7 +91,7 @@ describe("视觉描述", () => {
     expect(body.contents).toEqual([{
       role: "user",
       parts: [
-        { inlineData: { mimeType: "image/png", data: bytes.toString("base64") } },
+        { inlineData: { mimeType: "image/png", data: bytes.toBase64() } },
         { text: "用一句中文描述这张贴纸" },
       ],
     }]);
@@ -99,7 +99,7 @@ describe("视觉描述", () => {
   });
 
   test("JPEG 走同一条路径，inlineData 的 MIME 跟随实际字节格式", async () => {
-    const bytes: Buffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+    const bytes: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
     await describeGeminiVision({
       prompt: "描述",
       image: { bytes, mime: "image/jpeg" },
@@ -115,7 +115,7 @@ describe("视觉描述", () => {
 
 describe("语音转写", () => {
   test("音频以 inlineData 内联，转写指令跟在音频之后，与视觉共用 media 模型档", async () => {
-    const bytes: Buffer = Buffer.from([0x4f, 0x67, 0x67, 0x53]);
+    const bytes: Uint8Array = new Uint8Array([0x4f, 0x67, 0x67, 0x53]);
     await transcribeGeminiVoice({
       prompt: "把这条语音逐字转写成文字",
       clip: { bytes, mime: "audio/ogg", durationSeconds: 9 },
@@ -129,7 +129,7 @@ describe("语音转写", () => {
     expect(body.contents).toEqual([{
       role: "user",
       parts: [
-        { inlineData: { mimeType: "audio/ogg", data: bytes.toString("base64") } },
+        { inlineData: { mimeType: "audio/ogg", data: bytes.toBase64() } },
         { text: "把这条语音逐字转写成文字" },
       ],
     }]);
@@ -140,7 +140,7 @@ describe("语音转写", () => {
   test("转写档的 token 上限高于媒体描述档：逐字还原比概括长得多", async () => {
     await transcribeGeminiVoice({
       prompt: "p",
-      clip: { bytes: Buffer.from([1]), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new Uint8Array([1]), mime: "audio/ogg", durationSeconds: 1 },
       errorLabel: "label",
       normalize: (text: string): string => text,
     });
@@ -153,7 +153,7 @@ describe("语音转写", () => {
   test("不传采样温度：转写要忠实还原，随机性只会让模型润色群友的原话", async () => {
     await transcribeGeminiVoice({
       prompt: "p",
-      clip: { bytes: Buffer.from([1]), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new Uint8Array([1]), mime: "audio/ogg", durationSeconds: 1 },
       errorLabel: "label",
       normalize: (text: string): string => text,
     });

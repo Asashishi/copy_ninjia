@@ -292,7 +292,7 @@ export async function inspectLuckDay(
   }
   inspectStaleLuckFiles(todayKey, names);
   const todayPath: string = join(LUCK_MEMORY_DIR, `${todayKey}.json`);
-  if (!existsSync(todayPath)) {
+  if (!await Bun.file(todayPath).exists()) {
     return { day: todayKey, cache: null, fileState: null, names, temporaryPaths };
   }
   let content: string;

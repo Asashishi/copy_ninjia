@@ -15,6 +15,8 @@ import { TMP_FILE_SUFFIX } from "../consts/paths";
 import { isErrno } from "./errno";
 import type { FileHandle } from "node:fs/promises";
 
+const UTF8_ENCODER: TextEncoder = new TextEncoder();
+
 /**
  * 可持久化的原子文件操作。写入遵循“同目录唯一临时文件 -> fsync -> rename ->
  * 父目录 fsync”，避免进程崩溃后留下半份目标文件，并保证目录项已落盘。
@@ -195,7 +197,7 @@ export function atomicWriteTextSync(path: string, content: string, mode?: number
 
 /**
  * 逐块原子替换文本文件，并返回最终字节数。调用方必须让 iterable 可完整重放
- * 一次；本函数不把所有 chunk 汇总成一个大字符串，单次只保留当前块的 Buffer。
+ * 一次；本函数不把所有 chunk 汇总成一个大字符串，单次只保留当前块的字节数组。
  */
 export function atomicWriteTextChunksSync(
   path: string,
@@ -206,7 +208,7 @@ export function atomicWriteTextChunksSync(
     let writtenBytes: number = 0;
     for (const chunk of chunks) {
       if (chunk.length === 0) continue;
-      const buffer: Buffer = Buffer.from(chunk);
+      const buffer: Uint8Array = UTF8_ENCODER.encode(chunk);
       let offset: number = 0;
       while (offset < buffer.length) {
         const written: number = writeSync(

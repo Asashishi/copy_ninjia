@@ -16,7 +16,7 @@ import type { TriggerKind } from "../../types/states/replyAdmission";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
 import { resolvedTagFor } from "./mediaText";
 import { notifyRateLimited } from "./replyState";
-import { lookupBufferedMessage, replyReferenceForBufferedEntry } from "./replyChain";
+import { lookupBufferedMessage, replyReferenceForBufferedEntry } from "./bufferedMessageIndex";
 
 /** 分类顺序与原短路判断一致：随机触发优先于媒体触发。 */
 export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaCommentContext | undefined): TriggerKind {

@@ -7,7 +7,7 @@
 
 import type { SectionId } from "./types";
 
-/** README 的三种语言；对应根 README.md 与 docs/{en,ja}/README.md。 */
+/** 性能文档的三种语言；对应 docs/{cn,en,ja}/09-performance.md。 */
 export type Language = "zh" | "en" | "ja";
 
 /** 一份语言的完整文案。 */

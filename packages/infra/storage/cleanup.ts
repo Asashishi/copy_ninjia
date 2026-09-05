@@ -1,3 +1,4 @@
+import { CANDIDATE_OWNER_PID_PATTERN } from "../../consts/storage";
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
@@ -14,13 +15,6 @@ export interface StorageCleanupOptions {
   removeFile?: (path: string) => Promise<void>;
   isInactiveLockOwner?: (path: string) => Promise<boolean>;
 }
-
-/**
- * guard candidate 文件名尾部带着创建者的 PID：`<lock>.guard.candidate.<pid>.<uuid>`。
- * 只在文件里连一行身份都没有时用它兜底，见 hasInactiveCurrentFormatOwner。
- */
-const CANDIDATE_OWNER_PID_PATTERN: RegExp =
-  /\.guard\.candidate\.([1-9]\d*)\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /**
  * 按 guard candidate 文件名里的 PID 判定属主是否已死：只有 /proc 下查不到这个

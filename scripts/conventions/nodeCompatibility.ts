@@ -1,243 +1,16 @@
 import { relative } from "node:path";
+import { isBuiltin } from "node:module";
 import ts from "typescript";
 
-type NodeImportSymbols = "*" | readonly string[];
-
-interface NodeImportAllowance {
-  readonly symbols: NodeImportSymbols;
-  readonly purpose: string;
-}
-
-/** 脚本可复用的 Node 兼容接口；生产模块必须再按精确文件登记。 */
-const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
-  "node:async_hooks": {
-    symbols: ["AsyncLocalStorage"],
-    purpose: "per-update asynchronous log context",
-  },
-  "node:crypto": {
-    symbols: ["createPrivateKey", "timingSafeEqual"],
-    purpose: "private-key parsing and constant-time credential comparison",
-  },
-  "node:fs": {
-    symbols: [
-      "accessSync",
-      "chmodSync",
-      "closeSync",
-      "constants",
-      "existsSync",
-      "fchmodSync",
-      "fsyncSync",
-      "lstatSync",
-      "mkdirSync",
-      "openSync",
-      "readFileSync",
-      "readdirSync",
-      "renameSync",
-      "statSync",
-      "unlinkSync",
-      "writeFileSync",
-      "writeSync",
-    ],
-    purpose: "synchronous metadata, descriptor, durability, directory, and atomic-file operations",
-  },
-  "node:fs/promises": {
-    symbols: ["link", "lstat", "mkdir", "open", "readdir", "rename"],
-    purpose: "asynchronous metadata, descriptor, hard-link, directory, and atomic rename operations",
-  },
-  "node:os": {
-    symbols: ["availableParallelism", "totalmem"],
-    purpose: "runtime capacity limits derived from host resources",
-  },
-  "node:path": {
-    symbols: "*",
-    purpose: "portable lexical path construction and normalization",
-  },
-};
-
-/** 生产模块中 Bun 原生能力未覆盖的精确 Node 兼容调用位置。 */
-const PRODUCTION_NODE_IMPORTS: Readonly<
-  Record<string, Readonly<Record<string, NodeImportAllowance>>>
-> = {
-  "packages/config/readiness.ts": {
-    "node:crypto": {
-      symbols: ["createPrivateKey"],
-      purpose: "private-key syntax validation",
-    },
-    "node:fs/promises": {
-      symbols: ["lstat"],
-      purpose: "startup deployment-input metadata validation",
-    },
-  },
-  "packages/database/interact/connection.ts": {
-    "node:fs": {
-      symbols: ["existsSync"],
-      purpose: "rejecting a missing SQLite file before opening without create semantics",
-    },
-  },
-  "packages/database/interact/migration.ts": {
-    "node:fs": {
-      symbols: ["existsSync"],
-      purpose: "cold database creation precondition",
-    },
-  },
-  "packages/infra/processStatus.ts": {
-    "node:os": {
-      symbols: ["availableParallelism", "totalmem"],
-      purpose: "runtime capacity limits derived from host resources",
-    },
-  },
-  "packages/infra/storage/cleanup.ts": {
-    "node:fs/promises": {
-      symbols: ["readdir"],
-      purpose: "runtime data-root directory traversal",
-    },
-  },
-  "packages/infra/storage/dataRoot.ts": {
-    "node:fs/promises": {
-      symbols: ["link", "lstat", "mkdir", "open", "rename"],
-      purpose: "data-root metadata, exclusive create, hard-link, directory, and atomic rename operations",
-    },
-  },
-  "packages/infra/storage/instanceLock.ts": {
-    "node:fs/promises": {
-      symbols: ["link", "open"],
-      purpose: "single-instance exclusive create and hard-link publication",
-    },
-  },
-  "packages/infra/updateContext.ts": {
-    "node:async_hooks": {
-      symbols: ["AsyncLocalStorage"],
-      purpose: "per-update asynchronous log context",
-    },
-  },
-  "packages/libs/atomicFile.ts": {
-    "node:fs": {
-      symbols: [
-        "closeSync", "fchmodSync", "fsyncSync", "openSync", "renameSync",
-        "statSync", "unlinkSync", "writeFileSync", "writeSync",
-      ],
-      purpose: "descriptor durability, permissions, exclusive writes, cleanup, and atomic publication",
-    },
-    "node:fs/promises": {
-      symbols: ["open", "rename"],
-      purpose: "asynchronous descriptor durability and atomic publication",
-    },
-  },
-  "packages/libs/fileAccess.ts": {
-    "node:fs": {
-      symbols: ["accessSync", "constants", "lstatSync"],
-      purpose: "startup file type and access-mode validation",
-    },
-  },
-  "packages/libs/luckReceipt.ts": {
-    "node:crypto": {
-      symbols: ["timingSafeEqual"],
-      purpose: "constant-time receipt authentication comparison",
-    },
-  },
-  "packages/workers/diskIO/adSampleFile.ts": {
-    "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "renameSync", "unlinkSync"],
-      purpose: "Disk I/O owner directory maintenance and atomic archive publication",
-    },
-  },
-  "packages/workers/diskIO/appendOnlyDayFile.ts": {
-    "node:fs": {
-      symbols: ["closeSync", "existsSync", "fsyncSync", "openSync", "statSync", "writeSync"],
-      purpose: "append-only descriptor metadata, writes, and fsync",
-    },
-  },
-  "packages/workers/diskIO/joinLogFiles.ts": {
-    "node:fs": {
-      symbols: ["existsSync"],
-      purpose: "join-log read-path file presence probe",
-    },
-  },
-  "packages/workers/diskIO/joinLogWrites.ts": {
-    "node:fs": {
-      symbols: ["existsSync", "mkdirSync"],
-      purpose: "join-log owner directory initialization and takeover probe",
-    },
-  },
-  "packages/workers/diskIO/joinLogRecovery.ts": {
-    "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
-      purpose: "owner-local journal metadata and stale-file cleanup",
-    },
-  },
-  "packages/workers/diskIO/logFiles.ts": {
-    "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "statSync", "unlinkSync"],
-      purpose: "log metadata inspection and stale-file cleanup",
-    },
-  },
-  "packages/workers/diskIO/luckSecretFile.ts": {
-    "node:fs": {
-      symbols: ["existsSync", "mkdirSync"],
-      purpose: "luck-secret owner directory initialization",
-    },
-  },
-  "packages/workers/diskIO/snapshotFiles.ts": {
-    "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
-      purpose: "snapshot directory traversal and stale-file cleanup",
-    },
-  },
-  "packages/workers/diskIO/verificationRecovery.ts": {
-    "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
-      purpose: "verification journal metadata and retention cleanup",
-    },
-  },
-  "packages/workers/diskIO/verificationWrites.ts": {
-    "node:fs": {
-      symbols: ["mkdirSync"],
-      purpose: "verification journal owner directory initialization",
-    },
-  },
-};
-
-/** 生产文件中有实测或字节接口语义依据的 Node Buffer 全局调用位置。 */
-const PRODUCTION_BUFFER_GLOBALS: Readonly<Record<string, string>> = {
-  "packages/libs/atomicFile.ts": "descriptor writes require a stable byte buffer",
-  "packages/libs/jsonBytes.ts": "allocation-free UTF-8 byte length on the hot serialization boundary",
-  "packages/workers/diskIO/appendOnlyDayFile.ts": "descriptor append and recovery byte buffers",
-  "packages/workers/diskIO/joinLogWrites.ts": "join-log byte-capacity accounting",
-  "packages/workers/diskIO/joinLogRecords.ts": "join-log serialized byte accounting",
-  "packages/workers/diskIO/logFiles.ts": "log serialized byte accounting",
-  "packages/workers/diskIO/verificationRecovery.ts": "verification journal byte accounting",
-  "packages/workers/diskIO/verificationWrites.ts": "verification descriptor write buffers",
-};
-
-/** 一次性脚本为同步编排、临时根和机器信息额外使用的 Node 兼容接口。 */
-const SCRIPT_ONLY_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
-  "node:fs": {
-    symbols: ["mkdtempSync", "rmSync", "symlinkSync"],
-    purpose: "isolated temporary-root lifecycle and fixture topology for one-shot scripts and benchmarks",
-  },
-  "node:os": {
-    symbols: ["arch", "cpus", "platform", "release", "tmpdir"],
-    purpose: "benchmark machine identity and temporary-root placement",
-  },
-};
-
-/** 同步内容 I/O 仅保留 Bun 原生 API 无法覆盖的精确语义与调用位置。 */
-const SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS: Readonly<
-  Record<string, Readonly<Record<string, NodeImportAllowance>>>
-> = {
-  "scripts/migration/backup.ts": {
-    "node:fs": {
-      symbols: ["readFileSync", "writeFileSync"],
-      purpose: "exclusive-create backup writes followed by same-boundary fsync and byte verification",
-    },
-  },
-  "scripts/perf/fullSuite/processIo.ts": {
-    "node:fs": {
-      symbols: ["readFileSync"],
-      purpose: "synchronous /proc I/O counter snapshots bracketing measured work",
-    },
-  },
-};
+import {
+  SCRIPT_NODE_IMPORTS,
+  PRODUCTION_NODE_IMPORTS,
+  PRODUCTION_BUFFER_GLOBALS,
+  SCRIPT_BUFFER_GLOBALS,
+  SCRIPT_ONLY_NODE_IMPORTS,
+  SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS,
+} from "./nodeAllowances";
+import type { NodeImportAllowance, BufferGlobalAllowance } from "./nodeAllowances";
 
 function allowsImport(
   allowance: NodeImportAllowance | undefined,
@@ -246,21 +19,29 @@ function allowsImport(
   return allowance?.symbols === "*" || allowance?.symbols.includes(imported) === true;
 }
 
+/** Bun 自有模块直接放行；Node 内建模块无论是否带前缀都进入同一白名单。 */
+function nodeModuleName(name: string): string | undefined {
+  if (name.startsWith("node:")) return name;
+  if (name === "bun" || name.startsWith("bun:")) return undefined;
+  return isBuiltin(name) ? `node:${name}` : undefined;
+}
+
 function runtimeNodeLoad(node: ts.Node): { readonly kind: "dynamic import" | "require"; readonly moduleName: string } | undefined {
-  if (!ts.isCallExpression(node) || node.arguments.length !== 1) return undefined;
+  if (!ts.isCallExpression(node) || node.arguments.length === 0) return undefined;
   const argument: ts.Expression | undefined = node.arguments[0];
   if (
     argument === undefined ||
-    !(ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) ||
-    !argument.text.startsWith("node:")
+    !(ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))
   ) {
     return undefined;
   }
+  const moduleName: string | undefined = nodeModuleName(argument.text);
+  if (moduleName === undefined) return undefined;
   if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-    return { kind: "dynamic import", moduleName: argument.text };
+    return { kind: "dynamic import", moduleName };
   }
   if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
-    return { kind: "require", moduleName: argument.text };
+    return { kind: "require", moduleName };
   }
   return undefined;
 }
@@ -294,6 +75,36 @@ function isBufferGlobalUse(node: ts.Node): boolean {
   return !isPropertyName;
 }
 
+function bufferGlobalMethod(node: ts.Identifier): string | undefined {
+  const parent: ts.Node = node.parent;
+  if (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === node
+  ) {
+    return parent.name.text;
+  }
+  return undefined;
+}
+
+function discouragedProcessProperty(node: ts.Node): string | undefined {
+  if (!ts.isIdentifier(node) || node.text !== "process" || isInsideTypeNode(node)) return undefined;
+  const parent: ts.Node = node.parent;
+  const property: string | undefined = ts.isPropertyAccessExpression(parent) && parent.expression === node
+    ? parent.name.text
+    : ts.isElementAccessExpression(parent) && parent.expression === node && ts.isStringLiteral(parent.argumentExpression)
+      ? parent.argumentExpression.text
+      : undefined;
+  return property !== undefined && Object.hasOwn(PROCESS_REPLACEMENTS, property) ? property : undefined;
+}
+
+/** 需要原生替换或先核对调度语义的 process 入口。 */
+const PROCESS_REPLACEMENTS: Readonly<Record<string, string>> = {
+  argv: "Bun.argv",
+  execPath: "Bun.argv",
+  hrtime: "Bun.nanoseconds() after checking the time origin",
+  nextTick: "queueMicrotask after checking scheduling and cancellation semantics",
+};
+
 /**
  * 核对一个生产模块的 Node 兼容 import。未登记模块、namespace/default import 与
  * 未登记符号都拒绝；第三方依赖和测试文件不进入本检查。
@@ -309,10 +120,10 @@ export function collectNodeCompatibilityProblems(
   for (const statement of source.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier) ||
-      !statement.moduleSpecifier.text.startsWith("node:")
+      !ts.isStringLiteral(statement.moduleSpecifier)
     ) continue;
-    const moduleName: string = statement.moduleSpecifier.text;
+    const moduleName: string | undefined = nodeModuleName(statement.moduleSpecifier.text);
+    if (moduleName === undefined) continue;
     const allowed: NodeImportAllowance | undefined = moduleName === "node:path"
       ? SCRIPT_NODE_IMPORTS[moduleName]
       : isScript
@@ -325,6 +136,9 @@ export function collectNodeCompatibilityProblems(
     const location: string = `${relativePath}:${line}`;
     const clause: ts.ImportClause | undefined = statement.importClause;
     if (clause?.phaseModifier === ts.SyntaxKind.TypeKeyword) continue;
+    if (clause?.name === undefined && clause?.namedBindings !== undefined &&
+      ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.length > 0 &&
+      clause.namedBindings.elements.every((element: ts.ImportSpecifier): boolean => element.isTypeOnly)) continue;
     if (allowed === undefined && scriptAllowed === undefined) {
       problems.push(`${location} uses unreviewed Node compatibility module ${moduleName}`);
       continue;
@@ -368,33 +182,75 @@ export function collectNodeCompatibilityProblems(
         "use reviewed static named imports"
       );
     }
+    if (ts.isExportDeclaration(node) && !node.isTypeOnly &&
+      !(node.exportClause !== undefined && ts.isNamedExports(node.exportClause) &&
+        node.exportClause.elements.length > 0 &&
+        node.exportClause.elements.every((element: ts.ExportSpecifier): boolean => element.isTypeOnly)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier)) {
+      const moduleName: string | undefined = nodeModuleName(node.moduleSpecifier.text);
+      if (moduleName !== undefined) {
+        problems.push(`${relativePath}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
+          `uses unreviewed runtime re-export of ${moduleName}; use reviewed static named imports`);
+      }
+    }
+    if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly &&
+      ts.isExternalModuleReference(node.moduleReference) && node.moduleReference.expression !== undefined &&
+      ts.isStringLiteral(node.moduleReference.expression)) {
+      const moduleName: string | undefined = nodeModuleName(node.moduleReference.expression.text);
+      if (moduleName !== undefined) {
+        problems.push(`${relativePath}:${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
+          `uses unreviewed runtime require of ${moduleName}; use reviewed static named imports`);
+      }
+    }
     ts.forEachChild(node, visitRuntimeNodeLoads);
   };
   visitRuntimeNodeLoads(source);
 
-  let reportedBufferGlobal: boolean = false;
   let usesBufferGlobal: boolean = false;
-  const bufferAllowance: string | undefined = PRODUCTION_BUFFER_GLOBALS[relativePath];
+  const bufferAllowance: BufferGlobalAllowance | undefined = isScript
+    ? SCRIPT_BUFFER_GLOBALS[relativePath]
+    : PRODUCTION_BUFFER_GLOBALS[relativePath];
   const visitBufferGlobal = (node: ts.Node): void => {
     if (isBufferGlobalUse(node)) {
       usesBufferGlobal = true;
-      if (bufferAllowance === undefined && !reportedBufferGlobal) {
+      const method: string | undefined = bufferGlobalMethod(node as ts.Identifier);
+      if (bufferAllowance === undefined || method === undefined || !bufferAllowance.methods.includes(method)) {
         const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
         problems.push(
-          `${relativePath}:${line} uses unreviewed Node compatibility global Buffer`
+          `${relativePath}:${line} uses unreviewed Node compatibility global Buffer` +
+          (method === undefined ? "" : `.${method}`)
         );
-        reportedBufferGlobal = true;
       }
     }
     ts.forEachChild(node, visitBufferGlobal);
   };
-  if (!isScript) {
-    visitBufferGlobal(source);
-    if (bufferAllowance !== undefined && !usesBufferGlobal) {
+  visitBufferGlobal(source);
+  if (bufferAllowance !== undefined && !usesBufferGlobal) {
+    problems.push(
+      `${relativePath}:1 retains a stale Node compatibility global Buffer allowance`
+    );
+  }
+
+  const visitDiscouragedProcessProperties = (node: ts.Node): void => {
+    const property: string | undefined = discouragedProcessProperty(node);
+    if (property !== undefined) {
+      const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
       problems.push(
-        `${relativePath}:1 retains a stale Node compatibility global Buffer allowance`
+        `${relativePath}:${line} uses process.${property}; use ${PROCESS_REPLACEMENTS[property]}`
       );
     }
-  }
+    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) &&
+      node.initializer !== undefined && ts.isIdentifier(node.initializer) && node.initializer.text === "process") {
+      for (const element of node.name.elements) {
+        const name: ts.PropertyName | ts.BindingName = element.propertyName ?? element.name;
+        if ((!ts.isIdentifier(name) && !ts.isStringLiteral(name)) || !(Object.hasOwn(PROCESS_REPLACEMENTS, name.text))) continue;
+        problems.push(`${relativePath}:${source.getLineAndCharacterOfPosition(element.getStart()).line + 1} ` +
+          `uses process.${name.text}; use ${PROCESS_REPLACEMENTS[name.text]}`);
+      }
+    }
+    ts.forEachChild(node, visitDiscouragedProcessProperties);
+  };
+  visitDiscouragedProcessProperties(source);
   return problems;
 }

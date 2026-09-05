@@ -8,7 +8,6 @@
  */
 
 import {
-  existsSync,
   mkdirSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -113,7 +112,7 @@ async function openJoinLogFile(
   day: string
 ): Promise<JoinLogFileCache> {
   const path: string = joinLogPath(chatId, day);
-  const existing: ValidatedJoinLogFile | null = existsSync(path)
+  const existing: ValidatedJoinLogFile | null = await Bun.file(path).exists()
     ? await readValidatedJoinLogFile(path)
     : null;
   const parsed: Record<string, JoinLogRecord> = existing === null

@@ -3,16 +3,16 @@ import sharp from "sharp";
 
 const { prepareVisionImage, sniffImageFormat } = await import("../../packages/infra/image");
 
-async function tinyPng(): Promise<Buffer> {
+async function tinyPng(): Promise<Uint8Array> {
   return sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();
 }
-async function tinyJpeg(): Promise<Buffer> {
+async function tinyJpeg(): Promise<Uint8Array> {
   return sharp({ create: { width: 2, height: 2, channels: 3, background: "blue" } }).jpeg().toBuffer();
 }
-async function tinyWebp(): Promise<Buffer> {
+async function tinyWebp(): Promise<Uint8Array> {
   return sharp({ create: { width: 2, height: 2, channels: 3, background: "green" } }).webp().toBuffer();
 }
-async function tinyGif(): Promise<Buffer> {
+async function tinyGif(): Promise<Uint8Array> {
   return sharp({ create: { width: 2, height: 2, channels: 3, background: "yellow" } }).gif().toBuffer();
 }
 
@@ -25,9 +25,9 @@ describe("infra/image sniffImageFormat", () => {
   });
 
   test("不认识的字节返回 unknown", () => {
-    expect(sniffImageFormat(Buffer.from("not an image, just text"))).toBe("unknown");
-    expect(sniffImageFormat(Buffer.alloc(0))).toBe("unknown");
-    expect(sniffImageFormat(Buffer.from([0x01, 0x02]))).toBe("unknown");
+    expect(sniffImageFormat(new TextEncoder().encode("not an image, just text"))).toBe("unknown");
+    expect(sniffImageFormat(new Uint8Array(0))).toBe("unknown");
+    expect(sniffImageFormat(new Uint8Array([0x01, 0x02]))).toBe("unknown");
   });
 
   test("Uint8Array 子视图只读取可见区间", () => {
@@ -50,12 +50,12 @@ describe("infra/image sniffImageFormat", () => {
 
 describe("infra/image prepareVisionImage", () => {
   test("jpeg/png 原样直通，不经过 sharp 转码", async () => {
-    const jpeg: Buffer = await tinyJpeg();
+    const jpeg: Uint8Array = await tinyJpeg();
     const jpegResult = await prepareVisionImage(jpeg);
     expect(jpegResult?.mime).toBe("image/jpeg");
     expect(jpegResult?.bytes).toBe(jpeg); // 同一个引用，说明没有走转码分支
 
-    const png: Buffer = await tinyPng();
+    const png: Uint8Array = await tinyPng();
     const pngResult = await prepareVisionImage(png);
     expect(pngResult?.mime).toBe("image/png");
     expect(pngResult?.bytes).toBe(png);
@@ -74,7 +74,7 @@ describe("infra/image prepareVisionImage", () => {
   });
 
   test("不支持/无法识别的格式返回 null", async () => {
-    expect(await prepareVisionImage(Buffer.from("garbage"))).toBeNull();
+    expect(await prepareVisionImage(new TextEncoder().encode("garbage"))).toBeNull();
   });
 });
 

@@ -1,3 +1,4 @@
+import { MUTE_USAGE_TEXT } from "../consts/commandUsage";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type { MuteChatMemberOutcome, UnmuteChatMemberOutcome } from "../infra/telegram";
@@ -33,11 +34,6 @@ export function parseMuteDurationMs(token: string): number | undefined {
   if (durationMs === undefined) return undefined;
   return Math.min(MUTE_MAX_DURATION_MS, Math.max(MUTE_MIN_DURATION_MS, durationMs));
 }
-
-/** `/mute` 的用法提示，参数缺失/不合法时统一回这一句。 */
-const MUTE_USAGE_TEXT: string =
-  `笨蛋，/mute 后面要带时长：数字加 m/h/d，比如 10m、2h、1d（1 分钟~365 天）；` +
-  `回复 TA 的消息发 /mute 10m，或者 /mute @username 10m、/mute 用户id 10m♡`;
 
 /**
  * /mute 与 /unmute 共用的入口校验：发起人持有对应权限、且本群是超级群。

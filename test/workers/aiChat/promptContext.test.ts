@@ -13,7 +13,7 @@ import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
 import type { ReplyPromptSections } from "../../../packages/types/aiChat/replies";
 import { buildReplyPromptSections } from "../../../packages/workers/aiChat/promptContext";
-import { indexBufferedMessage } from "../../../packages/workers/aiChat/replyChain";
+import { indexBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessageIndex";
 
 beforeEach(resetAiChatMemoryCache);
 
@@ -233,12 +233,12 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
   // 那条排队消息要自己认领「本轮触发消息」这个身份：它已经滑出窗口，转录里
   // 没有它的行，不点明模型就会把转录最后一行当成触发消息。
   expect(sections.replyTask).toContain("那条就是本轮的触发消息");
-  // 被回复的原消息已不在热区索引里，链只有单跳快照，不拼多层回复链标注。
+  // 原消息不在热区时只使用入队快照里的单跳引用。
   expect(sections.replyTask).not.toContain("多层回复链");
   expect(sections.replyTask).toEndWith(`\n[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`);
 });
 
-test("触发消息处在多层回复链上时回复任务补全链标注", () => {
+test("多层回复仅保留转录中的单跳关系、转发和精确引用", () => {
   const root: BufferedMessage = bufferedMessageFixture({
     messageId: 70,
     id: 2,
@@ -253,7 +253,8 @@ test("触发消息处在多层回复链上时回复任务补全链标注", () =>
     firstName: "Alice",
     lastName: "",
     text: "接着追问",
-    replyTo: bufferedReplyReferenceFixture({ messageId: 70, id: 2, firstName: "Bob", lastName: "", text: "最早的问题" }),
+    replyTo: bufferedReplyReferenceFixture({ messageId: 70, id: 2, firstName: "Bob", lastName: "", text: "最早的问题", quote: "最早" }),
+    forwardedFrom: "东京日报",
     at: "2026/07/22 11:59:00",
   });
   const trigger: BufferedMessage = bufferedMessageFixture({
@@ -278,19 +279,17 @@ test("触发消息处在多层回复链上时回复任务补全链标注", () =>
     { triggerMessageId: 90, isRandomTrigger: false, roundHasTypo: false }
   )!;
 
-  expect(sections.replyTask).toContain("本轮触发消息（#90）处在一条多层回复链上");
-  // 链上的消息号与身份都与转录行、回复指针同一种写法，模型顺着链回转录找那一行
-  // 不必在两种消息号或两种身份形态之间换算。
-  expect(sections.replyTask).toContain("1. #81 u2：「接着追问」");
-  expect(sections.replyTask).toContain("2. #70 u1：「最早的问题」");
-  expect(sections.replyTask).not.toContain("[id:1] Alice：「接着追问」");
-  expect(sections.currentConversation).toContain("#81 u2（回复 #70）：接着追问");
+  expect(sections.replyTask).not.toContain("多层回复链");
+  expect(sections.replyTask).not.toContain("接着追问");
+  expect(sections.replyTask).not.toContain("最早的问题");
+  expect(sections.currentConversation).toContain("（回复 #70）");
+  expect(sections.currentConversation).toContain("（回复 #81）");
+  expect(sections.currentConversation).toContain("东京日报");
+  expect(sections.currentConversation).toContain("（转发自 f1）");
+  expect(sections.currentConversation).toContain("（精确引用片段：「最早」）");
 });
 
-test("触发消息已滑出窗口时，链标注改用引述式指代而不是一个转录里搜不到的消息号", () => {
-  // 排队补跑与慢媒体轮的触发消息按定义已经不在转录里。实测：链标注写 #N 时
-  // 模型会去转录里搜那个编号，搜不到就判定「触发消息的内容没给」——哪怕正文
-  // 就在回复任务的上一行（mock 8/8 → 0/8，绑定两处引用后回到 8/8）。
+test("排队触发滑出窗口后保留入队正文与单跳引用，不追加多层回复链", () => {
   const root: BufferedMessage = bufferedMessageFixture({
     messageId: 70,
     id: 2,
@@ -332,10 +331,11 @@ test("触发消息已滑出窗口时，链标注改用引述式指代而不是�
     { triggerMessageId: 2000, isRandomTrigger: false, queuedTrigger, roundHasTypo: false }
   )!;
 
-  expect(sections.replyTask).toContain("本轮触发消息（就是本段上面引述的那条「所以到底几点集合」）处在一条多层回复链上");
+  expect(sections.replyTask).not.toContain("多层回复链");
+  expect(sections.replyTask).toContain("（回复 #81）");
   // 那个编号在转录里不存在，一个字都不该出现。
   expect(sections.replyTask).not.toContain("#2000");
-  // 上面那句引述与链标注互相指认，模型不必自己猜哪条才是触发消息。
+  // 任务保留触发时的正文，避免把当前转录尾部当成待回答的消息。
   expect(sections.replyTask).toContain("那条就是本轮的触发消息（TA 说的是：「所以到底几点集合」");
 });
 

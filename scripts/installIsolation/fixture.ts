@@ -12,7 +12,7 @@ import { copyFixtureTree } from "../fixtures/copyTree";
 const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 const INSTALL_SCRIPT_PATH: string = join(PROJECT_ROOT, "install.sh");
 const CONFIG_EXAMPLE_ROOT: string = join(PROJECT_ROOT, "config_example");
-const REAL_BUN_PATH: string = process.execPath;
+const REAL_BUN_PATH: string = Bun.argv[0]!;
 
 export interface InstallerFixture {
   readonly root: string;
@@ -69,7 +69,7 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "}",
     "case \"$command_name\" in",
     "  --version)",
-    "    printf '1.4.0\\n'",
+    "    printf '%s\\n' \"${FAKE_BUN_VERSION-1.4.1}\"",
     "    exit 0",
     "    ;;",
     "  install)",
@@ -87,6 +87,10 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "  printf 'bun:unexpected:%s\\n' \"$*\" >> \"$FAKE_CALL_LOG\"",
     "  exit 91",
     "fi",
+    "if [[ \"$inline_source\" == *\"manifest?.packageManager\"* ]]; then",
+    "  printf 'manifest:check\\n' >> \"$FAKE_CALL_LOG\"",
+    "  exec \"$REAL_BUN_PATH\" \"$@\"",
+    "fi",
     "if [[ \"$inline_source\" == *\"invalid agent config field stream\"* ]]; then",
     "  secret_env_state generator",
     "  exec \"$REAL_BUN_PATH\" \"$@\"",
@@ -94,11 +98,11 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "if [[ \"$inline_source\" == *\"parseTelegramConfig\"* ]]; then",
     "  printf 'validate:telegram\\n' >> \"$FAKE_CALL_LOG\"",
     "  [ \"${FAKE_TELEGRAM_VALIDATION_FAIL:-0}\" = \"1\" ] && exit 41",
-    "  exec \"$REAL_BUN_PATH\" -e 'JSON.parse(await Bun.file(process.argv[1]).text())' \"${3:?}\"",
+    "  exec \"$REAL_BUN_PATH\" -e 'JSON.parse(await Bun.file(Bun.argv[1]).text())' \"${3:?}\"",
     "fi",
     "if [[ \"$inline_source\" == *\"validateAgentDeploymentConfig\"* ]]; then",
     "  printf 'validate:agent\\n' >> \"$FAKE_CALL_LOG\"",
-    "  exec \"$REAL_BUN_PATH\" -e 'JSON.parse(await Bun.file(process.argv[1]).text())' \"${3:?}\"",
+    "  exec \"$REAL_BUN_PATH\" -e 'JSON.parse(await Bun.file(Bun.argv[1]).text())' \"${3:?}\"",
     "fi",
     "if [[ \"$inline_source\" == *\"createStorageDatabase\"* ]]; then",
     "  mkdir -p -- \"$(dirname -- \"$FAKE_IDENTITY_DATABASE\")\"",
@@ -268,7 +272,7 @@ export async function createFixture(): Promise<InstallerFixture> {
   mkdirSync(join(root, "home"), { mode: 0o700 });
   await Bun.write(join(fixture.worktree, "install.sh"), Bun.file(INSTALL_SCRIPT_PATH));
   await copyFixtureTree(CONFIG_EXAMPLE_ROOT, join(fixture.worktree, "config_example"));
-  await writeText(join(fixture.worktree, "package.json"), "{}\n");
+  await Bun.write(join(fixture.worktree, "package.json"), Bun.file(join(PROJECT_ROOT, "package.json")));
   await writeText(join(fixture.worktree, "index.ts"), "");
   await writeText(fixture.callLog, "");
   await writeText(fixture.outboundLog, "");

@@ -72,3 +72,7 @@ export const CHAT_PERMISSION_KEYS: readonly (keyof ChatPermissions)[] = [
   "can_pin_messages",
   "can_manage_topics",
 ];
+
+/** 存储候选文件名中的 owner PID 与 UUID 格式。 */
+export const CANDIDATE_OWNER_PID_PATTERN: RegExp =
+  /\.guard\.candidate\.([1-9]\d*)\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

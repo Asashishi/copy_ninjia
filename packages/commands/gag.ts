@@ -1,3 +1,4 @@
+import { GAG_USAGE_TEXT } from "../consts/commandUsage";
 import type { CommandContext, Context } from "grammy";
 import { gagSessionCount } from "../cache/main/gag";
 import {
@@ -43,12 +44,6 @@ import {
 } from "./gag/runtime";
 import type { GagReservationOutcome } from "./gag/runtime";
 import { resolveCommandTarget } from "./targetResolution";
-
-/** `/gag` 的固定用法提示；目标可由回复消息提供。 */
-const GAG_USAGE_TEXT: string =
-  "哈？连怎么给杂鱼戴东西都不会吗♡ 用法是 /gag <@username|用户/频道id> [5|10|15] [用具]；" +
-  "回复目标消息时只写 /gag [5|10|15] [用具] 就行，" +
-  "没写时长就罚 5 分钟，没写用具就赏个口塞，记住了吗，笨蛋♡";
 
 /** `/gag`、`/ungag` 共用的身份、群状态与机器人删除权限门禁。 */
 async function passesGagCommandGate(

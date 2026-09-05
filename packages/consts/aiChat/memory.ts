@@ -35,9 +35,3 @@ export const AI_MEMORY_MAX_CHATS: number = 100;
 export const SUMMARY_MAX_CHARS: number = 500;
 /** 回复引用只保留足以辨认原消息的单行片段，避免重复整条长消息撑大上下文。 */
 export const REPLY_REFERENCE_MAX_CHARS: number = 500;
-/** 多层回复链回溯的最大跳数（不含触发消息本身），见 workers/aiChat/
- *  replyChain.ts；同时兜住异常数据成环时的遍历上限。 */
-export const REPLY_CHAIN_MAX_DEPTH: number = 15;
-/** 回复链标注里单跳正文的截断长度；链只需辨认各跳，不需要全文，全文在
- *  逐字转录里本来就有。 */
-export const REPLY_CHAIN_NODE_MAX_CHARS: number = 500;

@@ -21,6 +21,7 @@ import { join } from "node:path";
 
 const testRoot: string = mkdtempSync(join(tmpdir(), "join-log-files-test-"));
 const joinLogDir: string = join(testRoot, "joinlog");
+const UTF8_ENCODER: TextEncoder = new TextEncoder();
 const realPaths = await import("../../../packages/consts/paths");
 mock.module("../../../packages/consts/paths", () => ({
   ...realPaths,
@@ -390,7 +391,7 @@ describe("diskIO/joinLogFiles", () => {
     const content: string = `{\n${parts.join(",\n")}\n}`;
     mkdirSync(joinLogDir, { recursive: true });
     writeFileSync(currentFile(chatId), content, "utf8");
-    return Buffer.byteLength(content);
+    return UTF8_ENCODER.encode(content).byteLength;
   }
 
   test("载入超过评估门槛的历史文件时当场压实，只留每人最后一次入群", async () => {
@@ -413,13 +414,14 @@ describe("diskIO/joinLogFiles", () => {
     const content: string = readFileSync(currentFile(-1001), "utf8");
     const parsed: Record<string, { userId: number; joinedAt: number }> = JSON.parse(content);
     expect(Object.keys(parsed)).toHaveLength(40);
-    expect(Buffer.byteLength(content)).toBeLessThan(written - JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES);
+    expect(UTF8_ENCODER.encode(content).byteLength)
+      .toBeLessThan(written - JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES);
     // 压实后计数归零，下一段增量重新累计。
     const cache: JoinLogFileCache | undefined =
       joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
     expect(cache?.appendedBytesSinceCompaction).toBe(0);
     expect(cache?.redundantEntries).toBe(0);
-    expect(cache?.state.size).toBe(Buffer.byteLength(content));
+    expect(cache?.state.size).toBe(UTF8_ENCODER.encode(content).byteLength);
   });
 
   test("冗余条数够了但收不回空间时不重写，只重新开始累计", async () => {
@@ -530,11 +532,11 @@ describe("diskIO/joinLogFiles", () => {
 
     expect(chunks.length).toBeGreaterThan(1);
     for (const chunk of chunks) {
-      expect(Buffer.byteLength(chunk)).toBeLessThanOrEqual(
+      expect(UTF8_ENCODER.encode(chunk).byteLength).toBeLessThanOrEqual(
         JOIN_LOG_SNAPSHOT_CHUNK_BYTES + 2
       );
     }
-    expect(Buffer.byteLength(content)).toBe(
+    expect(UTF8_ENCODER.encode(content).byteLength).toBe(
       measureJoinLogSnapshotBytes(records)
     );
     const parsed: Record<string, { userId: number; joinedAt: number }> =
@@ -756,7 +758,7 @@ describe("diskIO/joinLogFiles", () => {
 
       // 权威文件被整体重写：字节数与记账一致，被淘汰的键消失、新键在场。
       const written: string = readFileSync(path, "utf8");
-      expect(Buffer.byteLength(written)).toBe(cache.snapshotBytes);
+      expect(UTF8_ENCODER.encode(written).byteLength).toBe(cache.snapshotBytes);
       expect(written).not.toContain(`"${base + 1}:1"`);
       expect(written).toContain(`"${newestJoinedAt}:${newUserId}"`);
 

@@ -43,8 +43,8 @@ const {
 } = await import("../../../packages/consts/aiChat/openai");
 const { IMAGE_GENERATION_MAX_BYTES } = await import("../../../packages/consts/aiChat/imageGeneration");
 
-const PNG: Buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
-const JPEG: Buffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+const PNG: Uint8Array = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+const JPEG: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
 
 function respondWith(encoded: string): void {
   generate.mockResolvedValueOnce({ data: [{ b64_json: encoded }] });
@@ -72,7 +72,7 @@ describe("OpenAI 官方 gpt-image-2 画幅", () => {
       ["9:16", "864x1536"],
       ["21:9", "1568x672"],
     ] as const) {
-      respondWith(PNG.toString("base64"));
+      respondWith(PNG.toBase64());
       await generateOpenAiImage({ prompt: "p", aspectRatio });
       expect((generate.mock.calls.at(-1)![0] as { size: string }).size).toBe(expectedSize);
     }
@@ -89,7 +89,7 @@ describe("OpenAI 官方 GPT Image 通用画幅", () => {
       ["4:5", "1024x1536"],
       ["9:16", "1024x1536"],
     ] as const) {
-      respondWith(PNG.toString("base64"));
+      respondWith(PNG.toBase64());
       await generateOpenAiImage({ prompt: "p", aspectRatio });
       expect((generate.mock.calls.at(-1)![0] as { size: string }).size).toBe(expectedSize);
     }
@@ -97,7 +97,7 @@ describe("OpenAI 官方 GPT Image 通用画幅", () => {
 
   test("标准尺寸档的参考图仍走 SDK 原生 edit", async () => {
     imageProtocol = "openai-standard";
-    edit.mockResolvedValueOnce({ data: [{ b64_json: PNG.toString("base64") }] });
+    edit.mockResolvedValueOnce({ data: [{ b64_json: PNG.toBase64() }] });
 
     await generateOpenAiImage({
       prompt: "改成水彩",
@@ -112,7 +112,7 @@ describe("OpenAI 官方 GPT Image 通用画幅", () => {
 
 describe("请求分流", () => {
   test("无参考图走 images.generate，并使用独立的生图超时", async () => {
-    respondWith(PNG.toString("base64"));
+    respondWith(PNG.toBase64());
     await generateOpenAiImage({ prompt: "一只纸飞机", aspectRatio: "16:9" });
 
     expect(edit).not.toHaveBeenCalled();
@@ -130,7 +130,7 @@ describe("请求分流", () => {
   });
 
   test("有参考图走 images.edit，并把字节转成可上传文件", async () => {
-    edit.mockResolvedValueOnce({ data: [{ b64_json: PNG.toString("base64") }] });
+    edit.mockResolvedValueOnce({ data: [{ b64_json: PNG.toBase64() }] });
     await generateOpenAiImage({
       prompt: "把原图改成水彩",
       aspectRatio: "1:1",
@@ -164,7 +164,7 @@ describe("请求分流", () => {
 describe("api.x.ai 的 Grok Imagine 兼容请求", () => {
   test("生成请求改传 xAI aspect_ratio 与 base64 信封，不夹带 OpenAI 专属尺寸和档位", async () => {
     imageProtocol = "xai";
-    respondWith(JPEG.toString("base64"));
+    respondWith(JPEG.toBase64());
 
     await generateOpenAiImage({ prompt: "超宽海报", aspectRatio: "21:9" });
 
@@ -191,7 +191,7 @@ describe("api.x.ai 的 Grok Imagine 兼容请求", () => {
       ["4:5", "3:4"],
       ["16:9", "16:9"],
     ] as const) {
-      respondWith(PNG.toString("base64"));
+      respondWith(PNG.toBase64());
       await generateOpenAiImage({ prompt: "p", aspectRatio: requested });
       expect((generate.mock.calls.at(-1)![0] as { aspect_ratio: string }).aspect_ratio).toBe(expected);
     }
@@ -199,7 +199,7 @@ describe("api.x.ai 的 Grok Imagine 兼容请求", () => {
 
   test("参考图改走同一 SDK 客户端的 JSON post，并且只产生协议要求的 base64 字符串", async () => {
     imageProtocol = "xai";
-    post.mockResolvedValueOnce({ data: [{ b64_json: JPEG.toString("base64") }] });
+    post.mockResolvedValueOnce({ data: [{ b64_json: JPEG.toBase64() }] });
 
     await generateOpenAiImage({
       prompt: "改成铅笔画",
@@ -214,7 +214,7 @@ describe("api.x.ai 的 Grok Imagine 兼容请求", () => {
       body: {
         model: IMAGE_MODEL,
         prompt: "改成铅笔画",
-        image: { type: "image_url", url: `data:image/jpeg;base64,${JPEG.toString("base64")}` },
+        image: { type: "image_url", url: `data:image/jpeg;base64,${JPEG.toBase64()}` },
         resolution: XAI_IMAGE_RESOLUTION,
         response_format: "b64_json",
       },
@@ -242,17 +242,17 @@ describe("api.x.ai 的 Grok Imagine 兼容请求", () => {
 
 describe("载荷校验", () => {
   test("按字节签名判定 MIME：PNG 与 JPEG 都接受", async () => {
-    respondWith(PNG.toString("base64"));
+    respondWith(PNG.toBase64());
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" }))
       .resolves.toEqual({ bytes: PNG, mimeType: "image/png" });
 
-    respondWith(JPEG.toString("base64"));
+    respondWith(JPEG.toBase64());
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" }))
       .resolves.toEqual({ bytes: JPEG, mimeType: "image/jpeg" });
   });
 
   test("签名认不出 png/jpeg 时不做猜测性放行，且点名记下原因", async () => {
-    respondWith(Buffer.from("RIFF????WEBP").toString("base64"));
+    respondWith(new TextEncoder().encode("RIFF????WEBP").toBase64());
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
     // 静默返回 null 的话，图照样计费而日志里没有一行指向格式不匹配。
     expect(loggerError).toHaveBeenCalledWith(
@@ -268,7 +268,7 @@ describe("载荷校验", () => {
     );
   });
 
-  test("编码长度已证明解码后可能超限时不分配图片 Buffer，并如实记为超限", async () => {
+  test("编码长度已证明解码后可能超限时不分配图片字节数组，并如实记为超限", async () => {
     respondWith("A".repeat(Math.ceil(IMAGE_GENERATION_MAX_BYTES / 3) * 4 + 4));
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
     expect(loggerError).toHaveBeenCalledWith(
@@ -334,7 +334,7 @@ describe("失败处理", () => {
 
     await expect(pendingResult).resolves.toBeNull();
     expect(loggerError).not.toHaveBeenCalled();
-    settleSdkTask({ data: [{ b64_json: PNG.toString("base64") }] });
+    settleSdkTask({ data: [{ b64_json: PNG.toBase64() }] });
     await sdkTask;
   });
 });

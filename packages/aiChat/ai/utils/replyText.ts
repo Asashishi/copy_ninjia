@@ -1,3 +1,4 @@
+import { KEYCAP_SEQUENCE, EMOJI_ATTACHMENT, REGIONAL_INDICATOR } from "../../../consts/aiChat/replyText";
 import { truncateInline } from "../../../libs/text";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../../consts/telegram";
 
@@ -61,33 +62,6 @@ export function cleanReply(raw: string): string | null {
   if (!text) return null;
   return truncateInline(text, TELEGRAM_MESSAGE_MAX_CHARS);
 }
-
-/**
- * keycap 序列：`1️⃣` = `1` + 变体选择符 + 结合用括围记号。基字是普通 ASCII
- * 数字/`#`/`*`，判定前必须整体剥掉，否则「含图形 emoji」那一半永远不成立。
- */
-const KEYCAP_SEQUENCE: RegExp = /[0-9#*]️?⃣/gu;
-
-/**
- * emoji 的附属码点：肤色修饰符、变体选择符、ZWJ。
- *
- * 这里刻意不用 `\p{Emoji_Component}`——按 Unicode 定义它**包含 ASCII 数字
- * `0-9` 与 `#`、`*`**，于是 `🎉2026`、`🎂 30`、`👍 #1`、`😂233` 这类完全正常
- * 的回复全被判成纯表情。后果有两级：send_message 拒绝这类回复；更糟的是
- * workers/aiChat/replyRound.ts 的最终正文兜底走同一个执行器，模型的全部输出
- * 正好是这样一句时工具报错、actionsUsed() 停在 0，机器人对着一条 @ 提及
- * 完全沉默。
- */
-const EMOJI_ATTACHMENT: string = "\\p{Emoji_Modifier}\\uFE0F\\u200D";
-
-/**
- * 旗帜的区域指示符（U+1F1E6–U+1F1FF）。它既**不是** `Extended_Pictographic`、
- * 也不属于上面那批附属码点，因此必须单独列进「算 emoji 本体」的那一半：漏掉
- * 它时 `🇯🇵`、`👍🇯🇵` 全都判不成纯表情，send_message 的拦截失效，机器人直接
- * 发出一条纯表情文本——那正是这条拦截要防的输出。它不含 ASCII 数字，因此补进
- * 来不会把上面 `\p{Emoji_Component}` 的误判重新引进来。
- */
-const REGIONAL_INDICATOR: string = "\\p{Regional_Indicator}";
 
 /** 「至少含一个图形 emoji」那一半：图形 emoji 本体，或组成旗帜的区域指示符。 */
 const GRAPHIC_EMOJI: RegExp = new RegExp(`[\\p{Extended_Pictographic}${REGIONAL_INDICATOR}]`, "u");

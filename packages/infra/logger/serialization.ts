@@ -7,7 +7,8 @@ import {
 } from "../../cache/perThread/config";
 import { loggerSecretsMemo } from "../../cache/perThread/logger";
 import { LOGGER_UNSERIALIZABLE_VALUE } from "../../consts/logger";
-import { REDACTED_SECRET, redactSecretsInText } from "../../libs/redaction";
+import { REDACTED_SECRET } from "../../consts/redaction";
+import { redactSecretsInText } from "../../libs/redaction";
 import type {
   AdDetectAgentConfig,
   AgentDeploymentConfig,

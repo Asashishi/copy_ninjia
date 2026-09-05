@@ -49,7 +49,7 @@ describe("冷迁移外部备份原语", () => {
     );
     writeVerifiedBackupManifest(root, [entry]);
 
-    expect(readFileSync(join(root, "state.json"))).toEqual(Buffer.from(bytes));
+    expect(Bun.deepEquals(readFileSync(join(root, "state.json")), bytes)).toBeTrue();
     expect(statSync(join(root, "state.json")).mode & 0o777).toBe(0o600);
     expect(statSync(join(root, "manifest.json")).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(join(root, "manifest.json"), "utf8"))).toEqual([{

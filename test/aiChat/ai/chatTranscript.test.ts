@@ -3,10 +3,9 @@ import {
   buildColdMemoryBlock,
   buildTieredVerbatimTranscript,
   formatBufferedMessageLine,
-  formatReplyChain,
   formatSpeakerIdentity,
 } from "../../../packages/aiChat/ai/utils/chatTranscript";
-import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS, TIER_BOUNDARY_ALIGNMENT } from
+import { COMPACT_BATCH_SIZE, TIER_BOUNDARY_ALIGNMENT } from
   "../../../packages/consts/aiChat/memory";
 import {
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
@@ -22,7 +21,6 @@ import {
   forwardTagTemplate,
   MESSAGE_NUMBER_HINT,
   messageNumberTag,
-  REPLY_CHAIN_SNAPSHOT_TAG,
   REPLY_EVICTED_HINT,
   REPLY_POINTER_HINT,
   REPLY_QUOTE_HINT,
@@ -34,14 +32,12 @@ import {
   SPEAKER_ROSTER_BLOCK_NAME,
   TRANSCRIPT_LINE_FORMAT_HINT,
   transcriptDateHeader,
-  TRIGGER_NOT_IN_TRANSCRIPT_LABEL,
 } from "../../../packages/consts/aiChat/prompts/transcript";
 import { FALLBACK_SPEAKER_NAME } from "../../../packages/consts/auto";
 import type { BufferedMessage } from "../../../packages/types";
 import {
   bufferedMessageFixture,
   bufferedReplyReferenceFixture,
-  replyChainLinkFixture,
 } from "../../helpers/aiMemoryFixtures";
 
 const message: BufferedMessage = bufferedMessageFixture({
@@ -444,7 +440,7 @@ describe("AI 群聊转录身份格式", () => {
 
   test("同一个 message_id 有两份条目时只保留最后一份，指针不再指向两行", () => {
     // 快照 hydrate 出来一份、Telegram 又重投同一条 update 再记一份，全链路没有
-    // message_id 去重（见 workers/aiChat/replyChain.ts）。两行同号时 #N 指针就
+    // message_id 去重（见 workers/aiChat/bufferedMessageIndex.ts）。两行同号时 #N 指针就
     // 指不准了，而媒体描述之类的回填只落在后写入的那份上。
     const messages: BufferedMessage[] = [
       { ...message, messageId: 10, id: 1, text: "看这个" },
@@ -498,8 +494,8 @@ describe("AI 群聊转录身份格式", () => {
     expect(REPLY_POINTER_HINT).toContain(MESSAGE_NUMBER_HINT);
   });
 
-  test("渲染结果一并交出行内编号与消息号在位判定，供转录之外点名同一个人/同一条消息", () => {
-    // 转录之外还要点名的地方（唤起者声明、回复链、排队补跑的回复引用）必须能
+  test("渲染结果提供行内编号与单跳引用，供转录之外点名同一个人/同一条消息", () => {
+    // 转录之外还要点名的地方（唤起者声明、排队补跑的回复引用）必须能
     // 拿到与转录行同一套写法，否则同一个人在同一次请求里出现两种身份形态。
     const rendered: RenderedTranscript = buildTieredVerbatimTranscript(
       [
@@ -512,8 +508,6 @@ describe("AI 群聊转录身份格式", () => {
     expect(rendered.codeOf.get(42)).toBe("u1");
     expect(rendered.codeOf.get(99)).toBe(SELF_ROSTER_CODE);
     expect(rendered.codeOf.get(12345)).toBeUndefined();
-    expect(rendered.present.has(10)).toBe(true);
-    expect(rendered.present.has(2000)).toBe(false);
     // 目标还在窗口里就给指针；滑出了才退回内嵌快照。
     expect(rendered.replyReference(bufferedReplyReferenceFixture({
       messageId: 10,
@@ -531,83 +525,4 @@ describe("AI 群聊转录身份格式", () => {
     }))).toContain(REPLY_TARGET_EVICTED_TAG);
   });
 
-  test("多层回复链标注按编号列出各跳并截断超长正文", () => {
-    // 触发消息在转录里，链标注就用它的消息号点名它。
-    const rendered: RenderedTranscript = buildTieredVerbatimTranscript(
-      [{ ...message, messageId: 90, id: 5 }],
-      { selfId: -1, triggerMessageId: 90 }
-    );
-    const longText: string = "长".repeat(REPLY_CHAIN_NODE_MAX_CHARS + 20);
-    const block: string = formatReplyChain(90, [
-      replyChainLinkFixture({
-        messageId: 81,
-        id: 1,
-        firstName: "Alice",
-        lastName: "",
-        username: "alice_dev",
-        text: "第一跳原文",
-        forwardedFrom: "频道 [id:-100666] 东京日报",
-        snapshotOnly: false,
-      }),
-      replyChainLinkFixture({ messageId: 70, id: 2, firstName: "Bob", lastName: "", text: longText, snapshotOnly: true }),
-    ], { rendered });
-    expect(block).toContain("本轮触发消息（#90）处在一条多层回复链上");
-    expect(block).toContain("1. #81 [id:1] [username:@alice_dev] Alice（转发自 频道 [id:-100666] 东京日报）：「第一跳原文」");
-    expect(block).toContain(`2. #70 [id:2] Bob ${REPLY_CHAIN_SNAPSHOT_TAG}：「${"长".repeat(REPLY_CHAIN_NODE_MAX_CHARS)}」`);
-    expect(block).toContain(`${REPLY_CHAIN_SNAPSHOT_TAG}，它是上一条消息自带的回复快照`);
-    expect(block).toContain("除链尾快照外，完整原文以逐字记录为准");
-    expect(block).not.toContain(longText);
-  });
-
-  test("回复链不足 2 跳时返回空串，不产生重复标注", () => {
-    const rendered: RenderedTranscript = buildTieredVerbatimTranscript([], TRANSCRIPT_OPTIONS);
-    expect(formatReplyChain(90, [], { rendered })).toBe("");
-    expect(formatReplyChain(90, [
-      replyChainLinkFixture({ messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "只有单跳", snapshotOnly: false }),
-    ], { rendered })).toBe("");
-  });
-
-  test("链上的人在名册里就只写编号，与转录行同形；名册外的人才退回完整身份", () => {
-    // 名册内身份沿用转录编号，保证同一请求中的指代形态一致。
-    const rendered: RenderedTranscript = buildTieredVerbatimTranscript(
-      [
-        { ...message, messageId: 90, id: 5, text: "触发消息" },
-        { ...message, messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "第一跳原文" },
-      ],
-      { selfId: -1, triggerMessageId: 90 }
-    );
-    const block: string = formatReplyChain(90, [
-      replyChainLinkFixture({ messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "第一跳原文", snapshotOnly: false }),
-      // 链尾快照的作者早就滑出窗口，名册里没有它，只能退回完整身份段。
-      replyChainLinkFixture({ messageId: 70, id: 2, firstName: "Bob", lastName: "", text: "链尾", snapshotOnly: true }),
-    ], { rendered });
-
-    expect(block).toContain("1. #81 u2：「第一跳原文」");
-    expect(block).toContain(`2. #70 [id:2] Bob ${REPLY_CHAIN_SNAPSHOT_TAG}：「链尾」`);
-  });
-
-  test("触发消息不在转录里时不写悬空消息号，改用调用方给出的引述式指代", () => {
-    // 排队补跑与慢媒体轮里触发消息早已滑出窗口。写 #N 等于让模型去转录里搜一个
-    // 根本不存在的编号——实测它会就此判定「触发消息的内容没给」，哪怕正文就写在
-    // 回复任务的上一行（见 workers/aiChat/promptContext.ts 的 absentTriggerLabel）。
-    const rendered: RenderedTranscript = buildTieredVerbatimTranscript(
-      [{ ...message, messageId: 81, id: 1, text: "还在窗口里的那条" }],
-      { selfId: -1, triggerMessageId: 2000 }
-    );
-    const chain = [
-      replyChainLinkFixture({ messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "第一跳", snapshotOnly: false }),
-      replyChainLinkFixture({ messageId: 70, id: 2, firstName: "Bob", lastName: "", text: "第二跳", snapshotOnly: true }),
-    ];
-
-    expect(formatReplyChain(2000, chain, { rendered })).toContain(
-      `本轮触发消息（${TRIGGER_NOT_IN_TRANSCRIPT_LABEL}）处在一条多层回复链上`
-    );
-    expect(formatReplyChain(2000, chain, { rendered })).not.toContain(messageNumberTag(2000));
-    expect(formatReplyChain(2000, chain, {
-      rendered,
-      absentTriggerLabel: "就是上面那条「所以到底几点集合」",
-    })).toContain(
-      "本轮触发消息（就是上面那条「所以到底几点集合」）处在一条多层回复链上"
-    );
-  });
 });

@@ -41,7 +41,7 @@ export function writeVerifiedBackup(root: string, backupFile: string, bytes: Uin
   const path: string = join(root, backupFile);
   writeFileSync(path, bytes, { flag: "wx", mode: 0o600 });
   fsyncPath(path);
-  const persisted: Buffer = readFileSync(path);
+  const persisted: Uint8Array = readFileSync(path);
   if (persisted.byteLength !== bytes.byteLength || sha256(persisted) !== sha256(bytes)) {
     throw new Error(`${path}: external migration backup hash verification failed.`);
   }

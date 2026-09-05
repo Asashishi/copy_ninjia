@@ -23,6 +23,8 @@ import { readUtf8TextInput } from "../../libs/inputValidation";
 import { isPlainRecord } from "../../libs/record";
 import { assertFileReadableWritable } from "../../libs/fileAccess";
 
+const UTF8_ENCODER: TextEncoder = new TextEncoder();
+
 // serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态
 // （indent 为 0 时输出单行，掐头去尾会切进内容本身）；启动即断言，不让
 // 一次误改常量静默产出坏文件。
@@ -32,7 +34,7 @@ if (DAY_FILE_JSON_INDENT < 1) {
 
 export interface SyncWriteRequest {
   fd: number;
-  buffer: Buffer;
+  buffer: Uint8Array;
   offset: number;
   length: number;
   position: number;
@@ -66,10 +68,10 @@ export class AppendOnlyFileFormatError extends Error {
 const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }: SyncWriteRequest): number =>
   writeSync(fd, buffer, offset, length, position);
 
-/** write(2) 允许成功但只写一部分；只有整段 Buffer 落下才算 append 成功。 */
+/** write(2) 允许成功但只写一部分；只有整段字节落下才算 append 成功。 */
 function writeBufferFully(
   fd: number,
-  buffer: Buffer,
+  buffer: Uint8Array,
   { position, write = nodeWriteBuffer }: WriteBufferFullyParams
 ): void {
   let offset: number = 0;
@@ -115,7 +117,7 @@ export async function openAppendOnlyFile(
   repair: boolean = false
 ): Promise<AppendOnlyFileState> {
   const state: AppendOnlyFileState = { size: 0, empty: true };
-  if (!existsSync(path)) return state;
+  if (!await Bun.file(path).exists()) return state;
   // mode 只用于首次创建。已有文件保留部署方权限，并在接管阶段显式确认
   // 当前进程可读写；不能靠目录 rename 权限绕过文件本身的只读策略。
   assertFileReadableWritable(path);
@@ -325,7 +327,7 @@ export async function appendToAppendOnlyFile({
     state.empty = false;
     return;
   }
-  const data: Buffer = Buffer.from(`,\n${chunk}\n}`, "utf8");
+  const data: Uint8Array = UTF8_ENCODER.encode(`,\n${chunk}\n}`);
   const fd: number = openSync(path, "r+");
   let failure: unknown = null;
   try {

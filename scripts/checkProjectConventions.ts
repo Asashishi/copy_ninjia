@@ -7,6 +7,7 @@ import { sourceFilesUnder } from "./conventions/sourceAnalysis";
 import {
   collectCacheJsDocProblems,
   collectConstantProblems,
+  collectConstantLocationProblems,
   collectDeclarationProblems,
   collectModuleCacheProblems,
   collectObjectFreezeProblems,
@@ -15,6 +16,7 @@ import type { SourceFileRuleParams } from "./conventions/sourceRules";
 import { collectColdMigrationProblems } from "./conventions/coldMigrations";
 import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
+import { collectRuntimeCalibrationProblems } from "./perf/hotPaths/gateRuntime";
 import { collectCacheOwnershipProblems } from "./conventions/cacheOwnership";
 import type { CacheOwnerPrefix } from "./conventions/cacheOwnership";
 import { collectWorkerTimerProblems } from "./conventions/workerTimers";
@@ -154,6 +156,7 @@ const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
 ];
 
 const failures: string[] = [];
+failures.push(...await collectRuntimeCalibrationProblems({ projectRoot: PROJECT_ROOT }));
 for (const problem of await collectColdMigrationProblems(PROJECT_ROOT)) {
   failures.push(`cold migration: ${problem}`);
 }
@@ -256,6 +259,9 @@ const referenceResolutionFiles: readonly string[] = [
 for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   const params: SourceFileRuleParams = { projectRoot: PROJECT_ROOT, path, source };
+  if (!cacheSourceFiles.has(path) && !constsSourceFiles.has(path)) {
+    failures.push(...collectConstantLocationProblems(params));
+  }
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
     failures.push(problem);
   }

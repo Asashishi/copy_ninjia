@@ -135,16 +135,6 @@ function entriesClaimContextPart(
 }
 
 /**
- * 「这个发送者还没有任何待检条目」时传给 claimSampleContextParts 的空条目串。
- *
- * 共享一份而不是在调用点写 `?? []`，避免每个发送者的第一条带引用候选消息都
- * 创建空数组。只读用途、生命周期与模块同寿，
- * 不可变性由 readonly 在编译期表达（见 AGENTS.md 的「常量与不可变性」，
- * 不用 Object.freeze）。
- */
-export const EMPTY_AD_CANDIDATE_ENTRIES: readonly AdCandidateEntry[] = [];
-
-/**
  * 把被引用段与被回复原文接到已截断的正文后面，一并交给模型判定。
  *
  * **这两样是「别人的内容」，但必须参与判定。** 现实里大量广告正是这么发的：先发一条

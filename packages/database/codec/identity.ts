@@ -1,3 +1,4 @@
+import { IDENTITY_META_KEYS, WHITELIST_DATA_KEYS, BLOCKLIST_DATA_KEYS, TOKYO_TIMESTAMP_PATTERN } from "../../consts/storageSchema";
 import {
   BLOCKLIST_REMOVAL_ENTRY_KEYS,
   BLOCKLIST_REMOVAL_FAILURE_TYPES,
@@ -18,16 +19,6 @@ import type {
   WhitelistEntryData,
   WhitelistPermissions,
 } from "../../types/identityPolicy";
-
-const IDENTITY_META_KEYS: readonly string[] = [
-  "firstName",
-  "lastName",
-  "username",
-];
-const WHITELIST_DATA_KEYS: readonly string[] = ["permissions", "meta"];
-const BLOCKLIST_DATA_KEYS: readonly string[] = ["blockedAt", "meta"];
-const TOKYO_TIMESTAMP_PATTERN: Readonly<RegExp> =
-  /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/;
 
 /** 严格校验 SQLite 主键可直接表示 Telegram 用户或频道 ID。 */
 export function assertTelegramIdentityId(id: number, source: string): void {

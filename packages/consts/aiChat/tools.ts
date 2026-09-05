@@ -79,3 +79,9 @@ export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.9;
 export const TYPO_QUICK_CORRECTION_MIN_MS: number = 1_500;
 /** 手滑后快速补字停顿的最大值。 */
 export const TYPO_QUICK_CORRECTION_MAX_MS: number = 7_500;
+/** AI 回复工具对同轮重复文本的静默回执；不发送、不报错、不占用可见动作额度。 */
+export const DUPLICATE_REPLY_RESULT: string = JSON.stringify({
+  success: true,
+  skipped: "duplicate",
+  actions_used: 0,
+});

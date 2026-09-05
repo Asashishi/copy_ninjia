@@ -212,3 +212,9 @@ export const OPENAI_STORE_RESPONSES: boolean = false;
  * 单条日志的可读上限。
  */
 export const OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS: number = 500;
+
+/** OpenAI 响应缺省 output 时复用的只读空列表。 */
+export const EMPTY_OUTPUT_ITEMS: readonly [] = [];
+
+/** 模型回复没有工具调用时复用的只读空列表，每个 provider 独立持有。 */
+export const OPENAI_EMPTY_FUNCTION_CALLS: readonly [] = [];

@@ -1,3 +1,4 @@
+import { MEDIA_CLOSED_RESULT, MEDIA_BACKOFF_RESULT, MEDIA_TASK_REJECTED_RESULT, MEDIA_CANCELLED_RESULT } from "../../consts/aiChat/media";
 /**
  * 群聊媒体的异步解析入口，四种媒体共用：图片/贴纸/GIF 走视觉描述（下载 Telegram
  * 文件，按需转码成视觉接口通吃的 jpg/png，见 infra/image.ts），语音走转写（原样把
@@ -54,27 +55,6 @@ import type {
   MediaInputCapability,
   MediaInputSupport,
 } from "../../types/aiChat/provider";
-
-/**
- * 模态已被判定为不可用（明确不支持或端点配置错误）时的共享结果。
- *
- * 不带 mediaFailure：它不是一次新的真实调用的结论，只是把已有结论复述给调用方。
- * 带上去只会让状态机对同一个结论反复落库。retryable=false 让贴纸目录那条路知道
- * 「再采样一次也是同一个结果」。
- */
-const MEDIA_CLOSED_RESULT: AiTextResult = { ok: false, retryable: false };
-
-/**
- * 探测退避期内的共享结果。retryable=true：这是端点抖动，不是终局结论，贴纸目录
- * 的定期补跑（retryIncompleteStickerCatalogs）应当在退避到期后重新采样。
- */
-const MEDIA_BACKOFF_RESULT: AiTextResult = { ok: false, retryable: true };
-
-/** 执行器拒绝接纳任务时的共享瞬时失败结果。 */
-const MEDIA_TASK_REJECTED_RESULT: AiTextResult = { ok: false, retryable: true };
-
-/** 主动取消不属于供应商或模态故障，也不允许业务层重采样。 */
-const MEDIA_CANCELLED_RESULT: AiTextResult = { ok: false, retryable: false };
 
 /** 模态不可用时复用同一个已完成 Promise，避免每条后续媒体都分配新 Promise。 */
 const MEDIA_CLOSED_PROMISE: Promise<AiTextResult> = Promise.resolve(MEDIA_CLOSED_RESULT);

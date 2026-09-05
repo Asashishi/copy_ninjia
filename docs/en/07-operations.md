@@ -228,8 +228,9 @@ bun run migrate:qa-thumbnail -- --apply
 ```
 
 Both modes acquire `bot.lock` first (so the service must already be stopped). The script handles
-**both copies** — `state.json` and the sibling `state.json.bak` — because they share the same strict
-schema: patching only the main file still leaves a startup failure on the fallback path.
+**both copies**, `state.json` and the sibling `state.json.bak`. Startup strictly parses every existing
+copy and refuses to start if either is invalid. A missing copy is recreated only from a valid sibling;
+when both are valid but differ, the primary is copied to the backup.
 
 **Run this only after the new code is already in place** — the order is stop the service, swap the code, run the migration, start the service. Doing it the other way round and starting the *old* version after migrating lets that version's startup seeding write `qaThumbnailUrl` straight back into `state.json` (it counts the key among the five entries it seeds), silently undoing the migration with no error to warn you.
 
@@ -278,13 +279,11 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
     points, or only one was restored.
   - **Action**: stop the bot and restore the complete `memory/luck/` directory from one
     consistency point; do not delete or regenerate only the key.
-- **A `*.corrupt` file appears**
-  - **Cause**: a damaged state backup copy was quarantined.
-  - **Action**: identify the original name and investigate the damage first.
-    State self-recovers only when the **backup** copy is the broken one (the bad backup is
-    quarantined and rebuilt from the primary, with a log line); an unreadable **primary** always
-    refuses startup and leaves both files untouched — fix the field named in the error and start
-    again.
+- **The primary state file or its backup is invalid**
+  - **Cause**: `state.json` or `state.json.bak` cannot be parsed or does not match the current schema.
+  - **Action**: keep the service stopped, back up both originals, and correct the input using the
+    file path, field path, and expected shape in the error. Validate again before starting.
+    The runtime preserves invalid files byte for byte, refuses startup, and creates no `*.corrupt` files.
 
 ### `bot.lock` Refuses Startup
 

@@ -1,3 +1,4 @@
+import { ACCEPT_CANDIDATE, IGNORE_CANDIDATE, DELETE_STRAGGLER, ENQUEUE_KEY, SKIP_ENQUEUE, DISPATCH, SATURATED } from "../consts/antiRaid/admission";
 import {
   AD_DETECT_MAX_IN_FLIGHT,
   AD_DETECT_MAX_PENDING_SENDERS,
@@ -10,48 +11,6 @@ import type {
   AdRequeueDecision,
   AdRequeueInput,
 } from "../types/states/adDetectAdmission";
-
-/**
- * 广告检测待检队列的纯准入规则（不做任何 I/O、不持有计时器，也不碰
- * pendingAdMessages / adDetectQueue / queuedAdDetectKeys 这几张表）。
- *
- * 本模块集中定义四道闸：
- *
- * - admitAdCandidate：投递闸，一条新消息该不该进这个人的消息串。
- * - admitAdRequeue：排队闸，这个键该不该（重新）排进队列。
- * - isNewAdBundleAtCapacity：容量闸，接不接纳一个**新**发送者。
- * - admitAdDispatch：在途闸，这一拍还能不能再起一次判定。
- *
- * 采用 states/replyAdmission.ts 的形态（一组吃标量的纯函数），而不是
- * verification/lockdown 那种 transition(state, event)：每个键的「状态」挂着
- * 一串容量受限但结构可变的消息（AdMessageBundle），而三道容量闸算的都是**全局**
- * 数字（待检表键数、去重表键数、全局在途数），不按键分配。硬塞进单机形态，
- * 状态对象里会同时出现「我这一串」和「全线程一共多少」，两者的生命周期完全
- * 不同，反而比现在更难读。
- *
- * `docs/cn/04-invariants.md` 要求「待检所有权由
- * pendingAdMessages、adDetectQueue 与 queuedAdDetectKeys 共同表达，三者必须
- * 同步增删」；「该不该动这三张表」由这些纯规则给出唯一答案，运行时只执行结论。
- */
-
-/**
- * 三道返回决策对象的闸取值集合是封闭的，决策对象因此按取值共享一份，不逐次
- * 分配。容量闸只回一个布尔，不进这份表。
- *
- * 判定跑在每条开着广告检测的群消息上（admitAdCandidate），以及每个 1 秒节拍
- * 最多 35 次的派发循环里（admitAdDispatch，见 workers/antiRaid/adDetect/queue.ts
- * 的 runAdDetectBatch）。
- *
- * 共享是安全的：`action` 在类型上是 `readonly`，全部调用点只读它一次就丢，
- * 不留存、不改写（不可变性按项目约定在编译期表达，不用 Object.freeze）。
- */
-const ACCEPT_CANDIDATE: AdCandidateDecision = { action: "accept" };
-const IGNORE_CANDIDATE: AdCandidateDecision = { action: "ignore" };
-const DELETE_STRAGGLER: AdCandidateDecision = { action: "deleteStraggler" };
-const ENQUEUE_KEY: AdRequeueDecision = { action: "enqueue" };
-const SKIP_ENQUEUE: AdRequeueDecision = { action: "skip" };
-const DISPATCH: AdDispatchDecision = { action: "dispatch" };
-const SATURATED: AdDispatchDecision = { action: "saturated" };
 
 /**
  * 投递闸：一条新到的候选消息该不该并进这个发送者的消息串。

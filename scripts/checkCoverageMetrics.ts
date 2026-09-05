@@ -27,7 +27,8 @@ function measuredCoverageMetrics(): CoverageMetrics {
     stderr: "pipe",
   });
   // bun test 把摘要与覆盖率表都写到 stderr；两股都读，不依赖它写在哪一股。
-  const output: string = `${result.stdout.toString()}\n${result.stderr.toString()}`;
+  const decoder: TextDecoder = new TextDecoder();
+  const output: string = `${decoder.decode(result.stdout)}\n${decoder.decode(result.stderr)}`;
   if (result.exitCode !== 0) {
     throw new Error(
       "bun test --coverage failed; fix the suite before syncing the metrics."

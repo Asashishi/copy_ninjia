@@ -10,7 +10,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type OpenAI from "openai";
 import type { OpenAiRequestResult } from "../../../packages/types/aiChat/openai";
-import type { AiReplySession, AiToolDefinition } from "../../../packages/types/aiChat/provider";
+import type { AiReplySession, AiReplyTurn, AiReplyTurnRequest, AiToolDefinition } from "../../../packages/types/aiChat/provider";
+import { DUPLICATE_REPLY_RESULT } from "../../../packages/consts/aiChat/tools";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { agentDeploymentConfigCache } from "../../../packages/cache/perThread/config";
 import type { AgentDeploymentConfig, OpenAiAgentCapabilityConfig } from "../../../packages/types/config";
@@ -295,6 +296,28 @@ describe("OpenAI 回复会话的产出解析", () => {
 });
 
 describe("OpenAI 回复会话的对话记录累积", () => {
+  test("重复跳过回执只追加，稳定前缀、缓存键和模型历史保持不变", async () => {
+    useOpenAiTextConfig({ provider: "openai", apiKey: "test-key", baseUrl: undefined, model: "gpt-5.6" });
+    requestOpenAiResult.mockResolvedValueOnce(okResult(modelOutput()));
+    const session: AiReplySession = createOpenAiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["当前会话"] });
+    const request: AiReplyTurnRequest = baseRequest({ webSearchEnabled: true });
+    const turn: AiReplyTurn = await session.request(request);
+    const before: ResponseBody = structuredClone(capturedBody(0));
+    expect(session.appendToolOutputs([{ call: turn.functionCalls[0]!, responseJson: DUPLICATE_REPLY_RESULT }])).toBe(true);
+
+    await session.request(request);
+    const after: ResponseBody = capturedBody(1);
+    expect(after.instructions).toBe(before.instructions);
+    expect(after.tools).toEqual(before.tools);
+    expect(after.prompt_cache_key).toBe(before.prompt_cache_key);
+    expect(after.prompt_cache_options).toEqual(before.prompt_cache_options);
+    expect(after.input as unknown[]).toEqual([
+      ...before.input as OpenAI.Responses.ResponseInputItem[],
+      ...modelOutput(),
+      { type: "function_call_output", call_id: "call-1", output: DUPLICATE_REPLY_RESULT },
+    ]);
+  });
+
   test("模型 output item 原样接回，函数结果按 call_id 配对附在其后", async () => {
     requestOpenAiResult.mockResolvedValueOnce(okResult(modelOutput()));
 

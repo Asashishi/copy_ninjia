@@ -75,7 +75,7 @@ function parseRounds(value: string | undefined): number {
  * 解析父进程参数。
  *
  * `--rounds` 只为本地排查而存在；发布必须用默认的三轮，别的轮数出来的数不进
- * README（口径见 AGENTS.md 的发布流程）。
+ * 三份性能文档与结构化报告（见 docs/cn/05-dev-workflow.md 的发布流程）。
  */
 export function parseOptions(argv: readonly string[]): SuiteOptions {
   let rounds: number = FULL_SUITE_ROUNDS;
@@ -112,7 +112,7 @@ function suiteEnvironment(): SuiteEnvironment {
   };
 }
 
-/** 去掉毫秒的 ISO 时间戳；README 的 diff 不该因为毫秒位每次都变。 */
+/** 基准报告使用精确到秒的 ISO 时间戳。 */
 function generatedAt(): string {
   return `${new Date().toISOString().slice(0, 19)}Z`;
 }
@@ -144,8 +144,7 @@ async function runSuite(options: SuiteOptions): Promise<FullSuiteReport> {
       operations += count;
     },
     recordFootprint: (measured: DirectoryFootprint): void => {
-      // 累加而不是取最大：这一项回答的是「跑一遍基准总共在 mock 根里落了多少
-      // 东西」，各分区的数据根是先后建删的，只报其中最大的那个会漏掉其余全部。
+      // 各分区的数据根依次创建和删除；累计每个分区的落盘规模。
       footprint = {
         bytes: footprint.bytes + measured.bytes,
         files: footprint.files + measured.files,
@@ -189,7 +188,7 @@ async function runSuite(options: SuiteOptions): Promise<FullSuiteReport> {
       },
     };
   } finally {
-    // 本次运行目录整棵删掉；`performance/` 本身保留，方便并存历史运行的残留。
+    // 删除本次运行的全部夹具，只保留空的 performance/ 根目录。
     removeMockPath(runRoot);
   }
 }

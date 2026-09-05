@@ -61,16 +61,8 @@ async function readExistingText(path: string): Promise<string | null> {
 }
 
 /**
- * 把解码失败翻译成运维能直接照着改的一句话。
- *
- * 统一换成 `$ must match the current state schema.` 等于把解码器已经算出来的
- * 字段路径与期望形态全丢掉：运维手改坏一个字段后，只能得到「整份文件不符合
- * schema」，而这份文件正是他唯一能手工编辑的旋钮。AGENTS.md 要求错误必须写明
- * 文件路径、字段路径和期望形态——三者都在原异常里，缺的只有文件路径前缀。
- *
- * 两类异常的形状不同：`parseJsonInput` 抛的 InputValidationError 自带来源路径，
- * 原样保留；`decodeStateFile` 抛的只有「字段路径 + 期望形态」，补上文件名。
- * 两者按构造都不携带实际值，不会把状态内容泄进日志。
+ * 保留解析错误的文件路径、字段路径和期望形态；为解码错误补齐文件路径。
+ * 两类错误均不携带状态值，见 docs/cn/04-invariants.md 的严格解析约束。
  */
 function describeStateDecodeFailure(path: string, error: unknown): Error {
   if (error instanceof InputValidationError) return error;
@@ -150,8 +142,7 @@ export class StateStore {
   }
 
   async load(): Promise<DecodedStateFile | null> {
-    // 两份副本必须先全部读完、严格解码，再做任何隔离或修复。这样两份都
-    // 不可用时能原样保留现场，绝不把可能含 lockdown 的状态静默变为空。
+    // 两份副本全部读完并严格解码后，才允许补齐缺失副本或同步合法副本。
     const copies: [PromiseSettledResult<StateCopy>, PromiseSettledResult<StateCopy>] = await Promise.allSettled([
       this.readCopy(this.stateFilePath),
       this.readCopy(this.backupFilePath),
@@ -164,12 +155,7 @@ export class StateStore {
     }
     const primary: StateCopy = (copies[0] as PromiseFulfilledResult<StateCopy>).value;
     const backup: StateCopy = (copies[1] as PromiseFulfilledResult<StateCopy>).value;
-    // 主文件在但解不开 = 拒绝启动，**不管 LKG 有多健康**。落盘走临时文件 + 原子
-    // rename，不会留下半份文件，所以这里只剩两种来源：手工改错，或介质损坏。
-    // 拿备份顶上去就是把运维刚编辑过的文件改名成 .corrupt、用上一次落盘的陈旧
-    // 内容盖回去，然后一切正常启动——改动消失、零日志、零诊断，而这个文件正是
-    // 运维唯一能手工编辑的旋钮（素材直链）。不隔离、不改写，原样保留现场，
-    // error 里已点名文件路径与字段路径（见 AGENTS.md「不为用户行为兜底」）。
+    // 存在但非法的主文件必须原样保留并拒绝启动，见 docs/cn/04-invariants.md。
     if (primary.kind === "invalid") throw primary.error;
     if (primary.kind === "missing" && backup.kind === "missing") return null;
 
@@ -184,8 +170,7 @@ export class StateStore {
       return primary.schema;
     }
 
-    // 主文件缺失（被删或还没写出来）时才允许用 LKG 重建：那不是「改错了」，
-    // 而是这份冗余副本存在的全部理由。
+    // 仅在主文件真正缺失且备份合法时重建主文件。
     if (backup.kind === "valid") {
       logger.log(`Restoring ${this.stateFilePath} from the last known good copy ${this.backupFilePath}.`);
       await this.writeText(this.stateFilePath, backup.content);

@@ -19,7 +19,7 @@ import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
 import { drainReplyQueue, pushReplyTrigger, triggerKindFor } from "../../../packages/workers/aiChat/replyQueue";
-import { indexBufferedMessage } from "../../../packages/workers/aiChat/replyChain";
+import { indexBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessageIndex";
 
 afterEach(() => {
   resetAiChatReplyCache();

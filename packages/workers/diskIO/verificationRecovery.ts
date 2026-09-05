@@ -203,6 +203,7 @@ export async function inspectVerificationDay(
   const recovered: Map<string, VerificationSnapshot> = new Map();
   let currentContent: string | null = null;
   let decodedEntryCount: number = 0;
+  const currentFileExists: boolean = await Bun.file(path).exists();
   if (priorDay !== undefined) {
     const priorPath: string = join(dir, `${priorDay}.json`);
     // 旧日是唯一恢复来源时必须严格解码；损坏时保留新旧文件并拒绝启动。
@@ -212,7 +213,7 @@ export async function inspectVerificationDay(
       if (value !== null) recovered.set(key, value);
     }
 
-    if (existsSync(path)) {
+    if (currentFileExists) {
       currentContent = await readUtf8TextInput(path);
       const currentValues: Map<string, VerificationDayValue> =
         decodeVerificationDay(path, currentContent);
@@ -226,9 +227,9 @@ export async function inspectVerificationDay(
 
     assertRecoveredVerificationCapacity(
       recovered,
-      existsSync(path) ? path : priorPath
+      currentFileExists ? path : priorPath
     );
-  } else if (existsSync(path)) {
+  } else if (currentFileExists) {
     currentContent = await readUtf8TextInput(path);
     const decoded: Map<string, VerificationDayValue> =
       decodeVerificationDay(path, currentContent);

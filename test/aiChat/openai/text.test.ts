@@ -120,7 +120,7 @@ describe("纯文本生成", () => {
 
 describe("视觉描述", () => {
   test("描述指令进 instructions，图片以 data URI 内联进 input", async () => {
-    const bytes: Buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const bytes: Uint8Array = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
     await describeOpenAiVision({
       prompt: "用一句中文描述这张贴纸",
       image: { bytes, mime: "image/png" },
@@ -135,7 +135,7 @@ describe("视觉描述", () => {
       role: "user",
       content: [{
         type: "input_image",
-        image_url: `data:image/png;base64,${bytes.toString("base64")}`,
+        image_url: `data:image/png;base64,${bytes.toBase64()}`,
         detail: "auto",
       }],
     }]);
@@ -144,7 +144,7 @@ describe("视觉描述", () => {
   });
 
   test("JPEG 走同一条路径，data URI 的 MIME 跟随实际字节格式", async () => {
-    const bytes: Buffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+    const bytes: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
     await describeOpenAiVision({
       prompt: "描述",
       image: { bytes, mime: "image/jpeg" },
@@ -161,7 +161,7 @@ describe("视觉描述", () => {
 describe("语音转写", () => {
   test("首次真实请求把 OGG 文件交给 media 模型并清洗结果", async () => {
     const controller: AbortController = new AbortController();
-    const bytes: Buffer = Buffer.from([0x4f, 0x67, 0x67, 0x53]);
+    const bytes: Uint8Array = new Uint8Array([0x4f, 0x67, 0x67, 0x53]);
     await expect(transcribeOpenAiVoice({
       prompt: "逐字转写",
       clip: { bytes, mime: "audio/ogg", durationSeconds: 3 },
@@ -196,7 +196,7 @@ describe("语音转写", () => {
   test("没有调用方 signal 时仍下传覆盖整轮重试的 deadline", async () => {
     await transcribeOpenAiVoice({
       prompt: "逐字转写",
-      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
       errorLabel: "AI voice transcription API",
       normalize: (text: string): string => text,
     });
@@ -214,7 +214,7 @@ describe("语音转写", () => {
 
     await expect(transcribeOpenAiVoice({
       prompt: "逐字转写",
-      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
       errorLabel: "AI voice transcription API",
       signal: controller.signal,
       normalize: (text: string): string => text,
@@ -242,7 +242,7 @@ describe("语音转写", () => {
 
     const pendingResult: Promise<AiTextResult> = transcribeOpenAiVoice({
       prompt: "逐字转写",
-      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
       errorLabel: "AI voice transcription API",
       signal: controller.signal,
       normalize: (text: string): string => text,
@@ -260,7 +260,7 @@ describe("语音转写", () => {
       createTranscription.mockRejectedValueOnce(apiError(status, "endpoint unavailable"));
       await expect(transcribeOpenAiVoice({
         prompt: "逐字转写",
-        clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+        clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
         errorLabel: "AI voice transcription API",
         normalize: (text: string): string => text,
       })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "misconfigured" });
@@ -271,7 +271,7 @@ describe("语音转写", () => {
     createTranscription.mockRejectedValueOnce(apiError(415, "model does not support audio input"));
     await expect(transcribeOpenAiVoice({
       prompt: "逐字转写",
-      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
       errorLabel: "AI voice transcription API",
       normalize: (text: string): string => text,
     })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "unsupported" });
@@ -281,7 +281,7 @@ describe("语音转写", () => {
     createTranscription.mockRejectedValueOnce(apiError(422, "invalid audio payload"));
     await expect(transcribeOpenAiVoice({
       prompt: "逐字转写",
-      clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
       errorLabel: "AI voice transcription API",
       normalize: (text: string): string => text,
     })).resolves.toEqual({ ok: false, retryable: false });
@@ -297,7 +297,7 @@ describe("语音转写", () => {
       createTranscription.mockRejectedValueOnce(failure);
       await expect(transcribeOpenAiVoice({
         prompt: "逐字转写",
-        clip: { bytes: Buffer.from("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+        clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
         errorLabel: "AI voice transcription API",
         normalize: (text: string): string => text,
       })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "transient" });

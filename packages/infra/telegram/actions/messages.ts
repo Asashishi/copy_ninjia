@@ -1,3 +1,4 @@
+import { DISABLED_LINK_PREVIEW, MESSAGE_NOT_MODIFIED } from "../../../consts/telegram";
 import type {
   InlineKeyboardMarkup,
   Message,
@@ -30,9 +31,6 @@ type EphemeralSendMessageApi = Pick<TelegramApi, "sendMessage">;
 type EditMessageTextApi = Pick<TelegramApi, "editMessageText">;
 type SendChatActionApi = Pick<TelegramApi, "sendChatAction">;
 type AnswerCallbackQueryApi = Pick<TelegramApi, "answerCallbackQuery">;
-
-/** 关闭链接预览卡片的固定载荷；按引用共享，不在每条消息上重造。 */
-const DISABLED_LINK_PREVIEW: Readonly<{ is_disabled: true }> = { is_disabled: true };
 
 export interface SendMessageParams {
   chatId: number;
@@ -246,14 +244,6 @@ export async function sendChatAction({
     signal
   );
 }
-
-/**
- * 「消息内容没有变化」的 Bot API 拒绝语。
- *
- * 翻页按钮把同一页再点一次就会撞上它。这不是故障：目标状态已经达成，按错误
- * 记一笔只会让日志被正常操作刷满，因此在错误边界里静默掉，对调用方仍报成功。
- */
-const MESSAGE_NOT_MODIFIED: string = "message is not modified";
 
 /** 这次拒绝是否就是「内容本就相同」。 */
 function isMessageNotModified(error: unknown): boolean {

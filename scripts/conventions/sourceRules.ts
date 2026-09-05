@@ -5,20 +5,14 @@ import {
   declarationName,
   hasJsDoc,
   isExported,
+  isLiteralConstant,
   isObjectFreezeCall,
   moduleCacheInitializerKind,
 } from "./sourceAnalysis";
 
 /**
- * 逐文件的源码约定判定。
- *
- * 这些规则原先散在 checkProjectConventions.ts 的四遍 `sourceFilesUnder(SOURCE_ROOT)`
- * 循环里，每遍各自重读、重解析同一批文件。收进本模块后，编排器对每个文件只解析
- * 一次就能把适用于它的全部判定跑完；副产品是这些规则第一次可以单独测（见
- * test/scripts/conventions.test.ts）。
- *
- * 判定口径与合并前逐字一致，只改了调用方式：调用方按路径前缀决定哪几条适用，
- * 各函数自己不再做目录判断。
+ * 逐文件判定源码的放置、常量、缓存生命周期和声明约定。
+ * 编排器每个文件只解析一次，按路径选择规则并传入同一份 AST。
  */
 
 /** 逐文件判定的公共入参。 */
@@ -29,6 +23,26 @@ export interface SourceFileRuleParams {
   readonly path: string;
   /** 该文件**唯一一次**解析得到的 AST；调用方负责用它跑完所有适用规则。 */
   readonly source: ts.SourceFile;
+}
+
+/** 普通生产模块的纯字面量常量统一归入 consts；调用方排除缓存 owner 与常量模块。 */
+export function collectConstantLocationProblems({
+  projectRoot,
+  path,
+  source,
+}: SourceFileRuleParams): readonly string[] {
+  const problems: string[] = [];
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement) || (statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (declaration.initializer === undefined || !isLiteralConstant(declaration.initializer)) continue;
+      problems.push(
+        `${relative(projectRoot, path)}:${lineOf(source, declaration)} literal constant ` +
+        `${declarationName(declaration)} must live in packages/consts/`
+      );
+    }
+  }
+  return problems;
 }
 
 /** 节点所在行号（1 起）。 */

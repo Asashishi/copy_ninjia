@@ -105,7 +105,7 @@ function runIndependentChild(
     : null;
   try {
     const child: ReturnType<typeof Bun.spawnSync> = Bun.spawnSync({
-      cmd: [process.execPath, import.meta.path, "--child", operation, mockRoot],
+      cmd: [Bun.argv[0]!, import.meta.path, "--child", operation, mockRoot],
       stdout: "pipe",
       stderr: "inherit",
       ...(temporaryRoot === null
@@ -172,7 +172,7 @@ function runSingleProcessParent(mockRoot: string): BenchmarkReport {
   try {
     const child: ReturnType<typeof Bun.spawnSync> = Bun.spawnSync({
       cmd: [
-        process.execPath,
+        Bun.argv[0]!,
         import.meta.path,
         "--single-process-child",
         mockRoot,

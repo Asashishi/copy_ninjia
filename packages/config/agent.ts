@@ -1,3 +1,4 @@
+import { LOOPBACK_HOSTS, EXPECTED_BASE_URL } from "../consts/agent";
 import {
   adDetectAgentConfigCache,
   agentDeploymentConfigCache,
@@ -63,20 +64,6 @@ function requiredApiKey(value: unknown, context: string, sourcePath: string): st
   }
   return apiKey;
 }
-
-/**
- * 允许走明文 HTTP 的本机主机名；本机代理与测试端点用得到。
- *
- * `[::1]` 带方括号是因为 `URL.hostname` 对 IPv6 字面量就是这么给的。三项穷举、
- * 只在启动解析时线性比对一次，不用 Set：那会撞上「模块级 Set 必须落在
- * packages/cache/<owner>/」的归属规则，而这里根本不是缓存。
- */
-const LOOPBACK_HOSTS: readonly string[] = ["localhost", "127.0.0.1", "[::1]"];
-
-/** base_url 的期望形态；解析失败与各条拒绝共用同一句，不回显被拒的值。 */
-const EXPECTED_BASE_URL: string =
-  "an absolute https URL without credentials or a fragment " +
-  "(plain http is allowed only for localhost, 127.0.0.1, and ::1)";
 
 /**
  * 解码可选的绝对端点；缺省交给对应 SDK 的官方地址。

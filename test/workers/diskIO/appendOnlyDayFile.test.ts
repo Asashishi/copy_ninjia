@@ -13,6 +13,7 @@ import { PERSISTED_FILE_MODE } from
 import type { DayFileState } from "../../../packages/types";
 
 let dir: string;
+const UTF8_ENCODER: TextEncoder = new TextEncoder();
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "luck-append-test-"));
@@ -110,7 +111,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     });
   });
 
-  test("底层分段 short write 会循环到完整 Buffer 后才推进游标", async () => {
+  test("底层分段 short write 会循环到完整字节数组后才推进游标", async () => {
     const state: DayFileState = await openDayFile(dir, "2026-07-16");
     await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", { label: "大吉" }) });
     const writes: number[] = [];
@@ -167,7 +168,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     })).rejects.toThrow("injected fsync failure");
 
     expect(state.size).toBe(statSync(join(dir, "2026-07-16.json")).size);
-    expect(() => writeSync(capturedFd!, Buffer.from("x"), 0, 1, 0)).toThrow();
+    expect(() => writeSync(capturedFd!, new TextEncoder().encode("x"), 0, 1, 0)).toThrow();
     await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("C", 3) });
     expect(readDay("2026-07-16")).toEqual({ A: 1, B: 2, C: 3 });
   });
@@ -190,7 +191,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
 
     expect(state.size).toBe(originalSize);
     expect(readDay("2026-07-16")).toEqual({ A: 1 });
-    expect(() => writeSync(capturedFd!, Buffer.from("x"), 0, 1, 0)).toThrow();
+    expect(() => writeSync(capturedFd!, new TextEncoder().encode("x"), 0, 1, 0)).toThrow();
   });
 
   test("中途写异常会重新探测并修复文件，后续 append 不从虚假 offset 开始", async () => {
@@ -249,7 +250,9 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     });
     // state.size 全程只靠算术更新、从不重新 statSync；这里额外校验它确实
     // 跟物理文件字节数（而非字符数）保持一致。
-    const physicalSize: number = Buffer.byteLength(readFileSync(join(dir, "2026-07-16.json"), "utf8"));
+    const physicalSize: number = UTF8_ENCODER.encode(
+      readFileSync(join(dir, "2026-07-16.json"), "utf8")
+    ).byteLength;
     expect(state.size).toBe(physicalSize);
   });
 

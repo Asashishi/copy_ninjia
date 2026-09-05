@@ -11,6 +11,7 @@ import { collectTelegramMessageProblems } from "../../scripts/conventions/telegr
 import {
   collectCacheJsDocProblems,
   collectConstantProblems,
+  collectConstantLocationProblems,
   collectDeclarationProblems,
   collectModuleCacheProblems,
   collectObjectFreezeProblems,
@@ -291,6 +292,23 @@ describe("逐文件源码规则", () => {
       "packages/consts/example.ts:1 constant badName lacks an explicit type",
       "packages/consts/example.ts:1 constant badName lacks JSDoc",
     ]);
+  });
+
+  test("模块级纯字面量归入 consts，函数装配与局部取值不误报", () => {
+    const path: string = "/project/packages/example.ts";
+    const problems = collectConstantLocationProblems(rule(path,
+      'const TEXT: string = "a" + "b"; const PATTERN = /a/g; ' +
+      "const TABLE = [{ value: -1, enabled: true }, null] as const; " +
+      "const EMPTY: readonly [] = [];"
+    ));
+    expect(problems).toHaveLength(4);
+    expect(problems.every((problem) => problem.includes("must live in packages/consts/"))).toBeTrue();
+    expect(collectConstantLocationProblems(rule(path,
+      "const HANDLERS = { invoke }; const CONTEXT = { ...context }; " +
+      "const ROUTES = { [key]: 1 }; const HANDLE = new TextEncoder(); " +
+      "const RESOLVED = Promise.resolve(undefined); let count = 0; " +
+      "function read(): number { const local: number = 1; return local; }"
+    ))).toEqual([]);
   });
 
   test("Object.freeze 在 packages/ 下一处都不许有", () => {

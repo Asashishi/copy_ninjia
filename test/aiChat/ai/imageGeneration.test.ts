@@ -47,7 +47,7 @@ describe("图片比例归一化", () => {
 
 describe("生图领域入口", () => {
   test("原样转发给当前供应商，不在入口层改写任何字段", async () => {
-    const referenceImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
+    const referenceImage = { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
     const signal: AbortSignal = new AbortController().signal;
     await generateChatImage({ prompt: "一只纸飞机", aspectRatio: "16:9", referenceImage, signal });
 

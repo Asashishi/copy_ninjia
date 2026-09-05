@@ -288,3 +288,6 @@ export function buildAdDetectSystemPrompt(samples: readonly string[], justJoined
   const lines: string = samples.map((sample: string): string => `- ${sample}`).join("\n");
   return `${AD_DETECT_SYSTEM_PROMPT}\n${AD_DETECT_SAMPLES_HEADER}\n${lines}\n${fact}`;
 }
+
+/** 广告检测没有可消费条目时复用的只读空列表。 */
+export const EMPTY_AD_CANDIDATE_ENTRIES: readonly [] = [];

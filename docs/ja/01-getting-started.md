@@ -15,7 +15,7 @@
 ## 前提条件
 
 - **`/proc` を読み取れる Linux**：インスタンスロックは `/proc/<pid>/stat` と boot ID に依存します。ほかのプラットフォームでは fail-closed で起動を拒否します。
-- **Bun 1.4+**：`curl -fsSL https://bun.sh/install | bash` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
+- **Bun 1.4.1**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.1` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
 - **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/ja_copy` がこのファイルを名指しして拒否し、自動 copy の ja 変換は通常の copy に退化しますが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
@@ -30,6 +30,8 @@
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
+
+download 入口は work tree を見つけた後、その tree 自身の `install.sh` に後続処理を渡します。`COPY_NINJIA_DIR` は相対・絶対パスの両方を受け付けます。現在のコードは Bun **1.4.1** を要求します。既存 Bun が一致しない場合、依存関係の導入や設定の書き込み前に終了し、手動導入コマンドを表示します。既存 Bun の自動置換は行いません。
 
 事前の clone は不要です。script 自身が **GitHub の Latest Release** をカレントディレクトリ直下の
 `copy_ninjia/` へ clone し、その tag（detached HEAD）に着地します（変更したい場合は `COPY_NINJIA_DIR`
@@ -64,24 +66,14 @@ repository path）、再起動ループに入っていないことを再起動�
 pipe 実行では fd 0 が script 本文そのものなので、すべての問い合わせは `/dev/tty` から読みます。
 制御端末が使えない場合は、script 本文の続きを回答として読んでしまう前に終了します。
 
-順に 3 つのことだけを行い、それ以外はしません（systemd unit の登録、release tag の取得、backup、
-migration はいずれも行いません）。
+インストールは次の順に進みます。
 
-1. **環境の準備**：Linux、読み取り可能な `/proc`、使用可能な制御端末を自己確認。`git`/`curl`/`unzip`
-   が無ければ system の package manager で補完（root ならそのまま、そうでなければ `sudo`。どちらも
-   無い場合は実行すべきコマンドを表示して終了）。work tree を取得。Bun が無ければ公式配布版を導入し
-   1.4 以上を検証。`bun install --frozen-lockfile` を実行。
-2. **設定の入力**：`config_example/` から `config/` を補完し、**既存ファイルは一切上書きしません**。
-   `bot_token`（非表示入力）と `super_admin_user_id` を対話的に尋ね、6 つの AI 能力は個別に任意。
-   書き出す `telegram.json`・`agent.json` の権限は `600`。AI 能力を 1 つも設定しなかった場合は
-   サンプルの `agent.json` を削除します。placeholder の key を残すと設定済みに見えてしまうためです。
-3. **database 作成と起動**：`database/storage.sqlite` が無ければ空 database を作成し、起動時の総
-   ゲートと同じ deployment input 検証を 1 回実行してから `bun run start`。
+1. **環境とコード**：Linux、読み取り可能な `/proc`、制御端末を確認し、不足するツールと Latest Release を取得するか、既存 tree を再利用します。Bun が無ければ対象コードの指定版を導入し、`packageManager` を照合してから `bun install --frozen-lockfile` を実行します。依存関係の 7 日間の公開待機期間を維持します。
+2. **デプロイ設定**：欠けているサンプルだけを補い、`agent.json` サンプルは除外します。Telegram 身分は対話で再入力でき、既存ファイルを tree 外へバックアップしてから候補を検証し、原子的に置換します。AI 未設定時は `agent.json` を作成せず、既存 AI 設定は保持します。生成する身分・AI 設定の mode は `600` です。
+3. **身分 database と検証**：production コードで保存先を解決し、`database/storage.sqlite` が無い場合だけ現在の空 schema を作成して、デプロイ入力を検証します。
+4. **サービスと観察**：systemd unit を登録または再利用して起動し、状態・再起動回数・journal を確認します。systemd が無い場合は前面実行します。全安定性検証が成功した場合だけ設定バックアップを削除し、前面実行や journal を確認できない場合は保持します。
 
-再実行しても安全です。既存の設定と既存の database はそのまま保持されます。`/ja_copy` が必要とする
-`g-auth.json` は GCP サービスアカウント鍵で、コンソールから download して帯域外で転送するしかない
-ため、script の**前提条件**であって手順の一部ではありません。無くても `/ja_copy` が使えなくなるだけ
-で、起動には影響しません。
+再実行時も既存 database は保持し、設定は明示的な再入力時だけ置換します。`g-auth.json` はデプロイ側が帯域外で提供します。欠落時は日本語翻訳が利用不可となり、存在して不正な場合は起動を拒否します。
 
 ### 手動 install
 

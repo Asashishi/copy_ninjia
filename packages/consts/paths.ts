@@ -22,16 +22,11 @@ function optionalRootPath(name: string): string | undefined {
   return trimmed;
 }
 
-/**
- * 所有运行时生成数据的根目录。生产默认保持项目根目录；测试 preload 必须在
- * 任何生产模块加载前注入独立临时目录，从源头隔离真实 I/O，而非依赖每个
- * 测试都记得 mock 路径。
- */
 /** 环境变量解析出的可选数据根；仅真正缺省时使用项目根目录。 */
 const CONFIGURED_DATA_ROOT: string | undefined = optionalRootPath(RUNTIME_DATA_ROOT_ENV);
 /** 是否由部署者显式配置了独立运行时数据根；用于启用生产权限门禁。 */
 export const RUNTIME_DATA_ROOT_IS_CONFIGURED: boolean = CONFIGURED_DATA_ROOT !== undefined;
-/** 当前进程实际使用的运行时数据根目录。 */
+/** 当前进程的数据根，缺省为项目根；测试 preload 在加载生产模块前注入独立临时目录。 */
 export const RUNTIME_DATA_ROOT: string = CONFIGURED_DATA_ROOT === undefined
   ? PROJECT_ROOT
   : resolve(CONFIGURED_DATA_ROOT);
@@ -125,9 +120,6 @@ export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
  * 原子重写（写 tmp、rename 覆盖目标路径）统一使用的临时后缀，全项目落盘复用，
  * 见 infra/storage/statePersistence.ts、workers/diskIO/snapshotFiles.ts 的快照
  * 恢复、workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite。
- *
- * 没有与之配套的「损坏文件隔离」后缀：本项目的设计是解析失败即致命、原地保留
- * 原文件等人来看，从不改名隔离（见 test/infra/storage/stateStore.test.ts 与
- * test/workers/diskIO/luckFiles.test.ts 里「从不产生 .corrupt」的断言）。
+ * 严格解析失败时原样保留文件并拒绝启动，见 docs/cn/04-invariants.md。
  */
 export const TMP_FILE_SUFFIX: string = ".tmp";

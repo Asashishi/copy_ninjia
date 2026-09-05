@@ -9,7 +9,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Content, GenerateContentParameters } from "@google/genai";
 import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
-import type { AiReplySession, AiToolDefinition } from "../../../packages/types/aiChat/provider";
+import type { AiReplySession, AiReplyTurn, AiReplyTurnRequest, AiToolDefinition } from "../../../packages/types/aiChat/provider";
+import { DUPLICATE_REPLY_RESULT } from "../../../packages/consts/aiChat/tools";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 
 const requestGeminiResult = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => ({
@@ -170,6 +171,33 @@ describe("Gemini 回复会话的请求映射", () => {
 });
 
 describe("Gemini 回复会话的对话记录累积", () => {
+  test("重复跳过回执只追加，隐式缓存前缀和思考签名保持不变", async () => {
+    const content: Content = modelContent();
+    requestGeminiResult.mockResolvedValueOnce(okResult(content));
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["当前会话"] });
+    const request: AiReplyTurnRequest = {
+      systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: true, grounded: false,
+    };
+    const turn: AiReplyTurn = await session.request(request);
+    const before: GenerateContentParameters = structuredClone(
+      (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)()
+    );
+    expect(session.appendToolOutputs([{ call: turn.functionCalls[0]!, responseJson: DUPLICATE_REPLY_RESULT }])).toBe(true);
+
+    await session.request(request);
+    const after: GenerateContentParameters = (requestGeminiResult.mock.calls[1]![1] as () => GenerateContentParameters)();
+    expect(after.config).toEqual(before.config);
+    expect(after.config?.cachedContent).toBeUndefined();
+    expect(after.contents).toEqual([
+      ...before.contents as Content[],
+      content,
+      { role: "user", parts: [{ functionResponse: {
+        id: "call-1", name: "send_message", response: { success: true, skipped: "duplicate", actions_used: 0 },
+      } }] },
+    ]);
+    expect((after.contents as Content[])[2]).toBe(content);
+  });
+
   test("上一轮模型 content 连同 thought signature 原样接回，函数结果附在其后", async () => {
     const content: Content = modelContent();
     requestGeminiResult.mockResolvedValueOnce(okResult(content));

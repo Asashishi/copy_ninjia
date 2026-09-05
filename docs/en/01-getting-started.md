@@ -15,7 +15,7 @@ This page takes a clean environment all the way to “the bot works normally in 
 ## Prerequisites
 
 - **Linux with a readable `/proc`**: the instance lock depends on `/proc/<pid>/stat` and the boot ID. It fails closed on other platforms.
-- **Bun 1.4+**: install it with `curl -fsSL https://bun.sh/install | bash`. Every project script, test, and runtime path uses Bun; Node.js is not required.
+- **Bun 1.4.1**: install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.1`. Every project script, test, and runtime path uses Bun; Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
 - **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation; store it as `g-auth.json` in the project root. When it is missing, `/ja_copy` refuses and names the file and the ja transform on the automatic copy path falls back to a plain copy, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
@@ -30,6 +30,8 @@ of this page:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
+
+After locating the work tree, the downloaded entry point hands control to that tree's own `install.sh`. `COPY_NINJIA_DIR` accepts relative and absolute paths. The current code requires Bun **1.4.1**. A mismatched existing Bun stops installation before dependencies or configuration are written and reports the manual installation command; the installer does not automatically replace it.
 
 No prior clone is needed: the script clones **the Latest Release on GitHub** into `copy_ninjia/`
 under the current directory (set `COPY_NINJIA_DIR` to change that), landing on that tag as a detached
@@ -67,26 +69,14 @@ distributions) skip registration and run in the foreground instead.
 Under a pipe, fd 0 is the script text itself, so every prompt reads from `/dev/tty` — without a
 usable controlling terminal the script exits rather than consuming half of its own body as answers.
 
-It does three things in order and nothing else — no systemd unit, no release-tag fetch, no backup,
-no migration:
+The installation follows these steps:
 
-1. **Set up the environment**: check for Linux, a readable `/proc`, and a usable controlling
-   terminal; add `git`/`curl`/`unzip` through the system package manager when missing (directly as
-   root, otherwise via `sudo`; with neither, it prints the command to run and exits); obtain the work
-   tree; install the official Bun release when missing and verify ≥1.4; run
-   `bun install --frozen-lockfile`.
-2. **Ask for configuration**: fill `config/` from `config_example/`, **never overwriting anything
-   that already exists**; ask interactively for `bot_token` (not echoed) and `super_admin_user_id`,
-   with each of the six AI capabilities individually optional. The `telegram.json` and `agent.json`
-   it writes get mode `600`. When no AI capability is configured it deletes the example
-   `agent.json` — leaving placeholder keys behind only makes it look configured.
-3. **Create the database and start**: create an empty `database/storage.sqlite` when absent, run the
-   same deployment-input validation as the startup gate, then `bun run start`.
+1. **Environment and code**: check Linux, readable `/proc`, and the controlling terminal; obtain missing tools and the Latest Release or reuse the existing tree. Install the target code's exact Bun version when absent, verify `packageManager`, and run `bun install --frozen-lockfile` with the seven-day dependency cooldown.
+2. **Deployment configuration**: copy only missing examples, excluding `agent.json`. Telegram identity can be re-entered interactively; an existing file is backed up outside the tree before candidate validation and atomic replacement. No AI configuration creates no `agent.json`; an existing AI configuration is retained. Generated identity and AI configuration files use mode `600`.
+3. **Identity database and validation**: resolve the database location through production code, create the current empty schema only when `database/storage.sqlite` is absent, then validate deployment inputs.
+4. **Service and observation**: register or reuse the systemd unit, start it, and check state, restart counts, and journal; run in the foreground when systemd is unavailable. Configuration backups are removed only after every stability check succeeds; foreground execution or an unreadable journal retains them.
 
-The script is safe to re-run: existing configuration and an existing database are left untouched.
-The `g-auth.json` that `/ja_copy` needs is a GCP service-account key that can only be downloaded from
-the console and transferred out of band, so it is a **precondition** of the script rather than a step
-inside it; without it only `/ja_copy` is unavailable, and startup is unaffected.
+Reruns retain existing databases and replace configuration only after an explicit request to re-enter it. The operator supplies `g-auth.json` out of band. Its absence disables Japanese translation; malformed existing credentials refuse startup.
 
 ### Manual install
 

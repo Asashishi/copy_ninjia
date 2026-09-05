@@ -10,8 +10,8 @@ const openAiGenerateImage = mock(async (..._args: unknown[]): Promise<GeneratedC
   bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]),
   mimeType: "image/jpeg",
 }));
-const prepareThumbnailJpeg = mock(async (..._args: unknown[]): Promise<Buffer | null> =>
-  Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+const prepareThumbnailJpeg = mock(async (..._args: unknown[]): Promise<Uint8Array | null> =>
+  new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
 const realImage = await import("../../../packages/infra/image");
 
 let agentConfig: AgentDeploymentConfig;

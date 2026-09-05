@@ -1,4 +1,4 @@
-/** 非本地贴纸目录媒体描述（packages/aiChat/ai/imageDescription.ts）的临时内存缓存。 */
+/** owner: workers/aiChat。非本地贴纸目录媒体描述的临时内存缓存。 */
 
 import { LruCache } from "../../../libs/lruCache";
 import { MEDIA_DESCRIPTION_CACHE_MAX } from "../../../consts/aiChat/media";
@@ -12,8 +12,8 @@ import { MEDIA_DESCRIPTION_CACHE_MAX } from "../../../consts/aiChat/media";
  * 合并掉。解析失败（resolve 为 null）就把条目摘掉，下次这份媒体重发时重试，
  * 不把一次偶发失败钉死成永久失败。淘汰：超 MEDIA_DESCRIPTION_CACHE_MAX 条
  * 淘汰最久未使用的一个（真 LRU——命中即续命，见 libs/lruCache.ts），热门
- * 媒体不会被刷屏之外的新条目挤掉；不再另设 TTL，容量本身足够小
- * （上限 * 一行短描述可忽略不计），没必要为「长期占内存」多开一层定时器。
+ * 媒体命中时更新使用顺序；最多保存 4,096 项，不设 TTL。Worker 崩溃后从空
+ * 缓存重建，媒体再次使用时重新描述。
  *
  * config/stickers.json 白名单包的描述不属于这份缓存：它们从
  * memory/stickers/ 恢复进 stickerCatalog 的常驻内存目录，只有线上贴纸包

@@ -22,7 +22,7 @@ import {
 } from "./replyQueue";
 import { startReplyRound } from "./replyRound";
 import { currentReplyGeneration } from "./replyState";
-import { replyReferenceForBufferedMessage } from "./replyChain";
+import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 
 export {
   currentReplyGeneration,

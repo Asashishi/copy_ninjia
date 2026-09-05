@@ -1,3 +1,4 @@
+import { BUFFERED_REPLY_REFERENCE_KEYS, BUFFERED_MESSAGE_KEYS, AI_MEMORY_SNAPSHOT_KEYS } from "../consts/aiChat/persistence";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   MAX_SUMMARY_ROUNDS,
@@ -30,46 +31,6 @@ function isAiSpeakerSnapshot(
     typeof value.lastName === "string" &&
     (value.username === undefined || typeof value.username === "string");
 }
-
-/**
- * 落盘的被回复引用允许出现的全部键（AI 记忆快照格式的一部分，本模块解码用）。
- *
- * 三张键名表都提到模块级：解码要对滚动缓存里的**每一条**记录各调一次，写在
- * 函数体里就是每条记录新建一个数组；内容是落盘格式本身，不随调用变化。
- * 校验函数只读不改这些数组（见 libs/record.ts）。
- */
-const BUFFERED_REPLY_REFERENCE_KEYS: readonly string[] = [
-  "id",
-  "firstName",
-  "lastName",
-  "username",
-  "messageId",
-  "text",
-  "quote",
-  "forwardedFrom",
-];
-
-/** 落盘的滚动缓存单条消息允许出现的全部键；理由同上。 */
-const BUFFERED_MESSAGE_KEYS: readonly string[] = [
-  "id",
-  "firstName",
-  "lastName",
-  "username",
-  "messageId",
-  "text",
-  "replyTo",
-  "forwardedFrom",
-  "at",
-];
-
-/** version=1 AI 记忆快照顶层必须**恰好**具备的键；理由同上。 */
-const AI_MEMORY_SNAPSHOT_KEYS: readonly string[] = [
-  "version",
-  "buffer",
-  "summaries",
-  "pendingSummary",
-  "savedAt",
-];
 
 function isBufferedReplyReference(value: unknown): value is BufferedReplyReference {
   return isAiSpeakerSnapshot(value) &&

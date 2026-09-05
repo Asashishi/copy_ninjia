@@ -162,7 +162,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
           if (
             typeof parsed.actions_used === "number" &&
             Number.isFinite(parsed.actions_used) &&
-            parsed.actions_used > 0
+            parsed.actions_used >= 0
           ) {
             actionsUsed += Math.floor(parsed.actions_used);
           } else if (parsed.success) {

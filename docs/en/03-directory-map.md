@@ -18,7 +18,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: startup/shutdown lifecycle, the startup validation entry point for deployment
     inputs that already exist, handler registration, command menu, update runner, and lifecycle side-effect composition.
   - **Representative files**: `lifecycle.ts`, `lifecycleDependencies.ts`, `featurePreflight.ts`,
-    `registerHandlers.ts`, and `updateRunner.ts`. `ApplicationLifecycleDependencies` is inferred
+    `registerHandlers.ts`, and `updateRunner.ts` / `updateFetcher.ts`. `ApplicationLifecycleDependencies` is inferred
     from and colocated with the composition object, avoiding a reverse dependency from shared types into `app/`.
 - **`packages/commands/`**
   - **Responsibility**: explicit command handling, one command per file; shared permission and

@@ -1,10 +1,8 @@
+import { CHAT_QA_DATA_KEYS } from "../../consts/storageSchema";
 import { CHAT_QA_ANSWER_MAX_CHARS, CHAT_QA_QUESTION_MAX_CHARS } from "../../consts/qa";
 import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
 import type { ChatQaEntryData } from "../../types/qa";
-
-/** SQLite `chat_qa.data` 允许的完整字段集合。 */
-const CHAT_QA_DATA_KEYS: readonly string[] = ["a"];
 
 /**
  * 校验问题文本可以作为主键落库。

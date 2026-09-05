@@ -37,6 +37,25 @@ function unwrapTypeWrappers(expression: ts.Expression): ts.Expression {
   return current;
 }
 
+/** 模块级纯字面量及其组合；含函数、句柄、变量引用或展开的装配表达式不属于此类。 */
+export function isLiteralConstant(expression: ts.Expression): boolean {
+  const value: ts.Expression = unwrapTypeWrappers(expression);
+  if (ts.isLiteralExpression(value) ||
+    value.kind === ts.SyntaxKind.TrueKeyword || value.kind === ts.SyntaxKind.FalseKeyword ||
+    value.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (ts.isPrefixUnaryExpression(value)) return isLiteralConstant(value.operand);
+  if (ts.isBinaryExpression(value)) return isLiteralConstant(value.left) && isLiteralConstant(value.right);
+  if (ts.isArrayLiteralExpression(value)) return value.elements.every(isLiteralConstant);
+  if (ts.isObjectLiteralExpression(value)) {
+    return value.properties.every((property: ts.ObjectLiteralElementLike): boolean =>
+      ts.isPropertyAssignment(property) &&
+      !ts.isComputedPropertyName(property.name) &&
+      isLiteralConstant(property.initializer)
+    );
+  }
+  return false;
+}
+
 /** 判断表达式是否为 `Object.freeze(...)` 调用。 */
 export function isObjectFreezeCall(expression: ts.Expression): boolean {
   return ts.isCallExpression(expression) &&

@@ -1,3 +1,4 @@
+import { INLINE_WHITESPACE_PATTERN, BIDI_CONTROL_PATTERN, LEADING_AT_SIGNS_PATTERN } from "../consts/text";
 /**
  * 拼进机器人自己文案的那些文本的共用处理：清洗（压成单行、剥双向控制符、
  * 中和可点击命令）、按字形簇切分，以及把 Telegram 的姓名字段拼成展示名。
@@ -9,16 +10,6 @@
 
 import { graphemeSegmenterHolder } from "../cache/perThread/text";
 import { neutralizeRenderableCommands } from "./renderableCommand";
-
-/**
- * 折叠为一个空格的「空白」集合：JS 的 `\s`，外加 U+0085 (NEL)。
- *
- * `\s` 是 ECMAScript 自己的定义，**不含 U+0085**，而 Unicode 把 NEL 列为强制
- * 换行符（UAX #14 的 BK 类）。也就是说光靠 `\s` 折叠，NEL 会原样活到下游：
- * 转录与广告判定的提示词都按 `\n` 拼行，模型侧的规范化又把 NEL 当换行读，
- * 于是一条消息还是能撑成两行。补进来才对得上 sanitizeInline 的契约。
- */
-const INLINE_WHITESPACE_PATTERN: RegExp = /[\s\u0085]+/g;
 
 /**
  * 单个码元是否属于 `INLINE_WHITESPACE_PATTERN` 的字符类。
@@ -87,13 +78,6 @@ export function sanitizeInline(raw: string): string {
 }
 
 /**
- * Unicode 双向格式控制符：ALM、LRM/RLM、LRE/RLE/PDF/LRO/RLO 与隔离符
- * LRI/RLI/FSI/PDI。刻意**不**包含同属 Cf 的 ZWJ(U+200D)/ZWNJ(U+200C)——它们是
- * 🏳️‍🌈 这类 emoji 组合序列和部分文字的正常组成部分，剥掉会把昵称里的 emoji 拆碎。
- */
-const BIDI_CONTROL_PATTERN: RegExp = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
-
-/**
  * 显示名清洗：剥掉双向控制符、中和可点击命令，再压成单行。
  *
  * 昵称由用户自己设置，却会被拼进机器人撰写的句子、并作为 text_link 的锚文本
@@ -111,9 +95,6 @@ const BIDI_CONTROL_PATTERN: RegExp = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2
 export function sanitizeDisplayName(raw: string): string {
   return sanitizeInline(neutralizeRenderableCommands(raw.replace(BIDI_CONTROL_PATTERN, "")));
 }
-
-/** 前导 `@` 串；只服务下方 stripLeadingAtSigns，提到模块级不在调用点重建。 */
-const LEADING_AT_SIGNS_PATTERN: RegExp = /^@+/;
 
 /**
  * 去掉用户名前导的 `@`，供转录行、回复标注与逐字缓存条目共用同一份归一规则。

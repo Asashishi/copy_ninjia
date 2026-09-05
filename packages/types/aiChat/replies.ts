@@ -85,7 +85,7 @@ export interface ReplyToolContext {
   /** repliedToMessageId 是这次发送实际挂上的回复目标（send_message 由模型的
    *  reply_to_trigger 决定、图片请求固定指向触发消息）；Telegram 因目标已删除
    *  而退化为普通发送时省略。供 Worker 自录记忆时带上「回复了谁」，让机器
-   *  人自己的发言也能被回复链回溯。 */
+   *  人自己的发言同样保留上下文中的回复关系。 */
   onMessageSent: (text: string, messageId: number, repliedToMessageId?: number) => void;
   onStickerSent: (stickerDescription: string, messageId: number) => void;
   onImageSent: (imageDescription: string, messageId: number, repliedToMessageId?: number) => void;

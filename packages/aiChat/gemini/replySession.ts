@@ -1,3 +1,4 @@
+import { GEMINI_EMPTY_FUNCTION_CALLS as EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/gemini";
 /**
  * Gemini 侧的一轮回复会话：把中立的 AiReplySession 契约落到 generateContent
  * 的 contents 累积上。
@@ -45,9 +46,6 @@ import type {
   AiReplyTurnRequest,
   AiToolOutput,
 } from "../../types/aiChat/provider";
-
-/** 无函数调用时共用的空数组：调用方只读，不必每轮新建一个空数组。 */
-const EMPTY_FUNCTION_CALLS: readonly AiFunctionCall[] = [];
 
 /**
  * 按本轮配置拼请求要挂的工具集合。

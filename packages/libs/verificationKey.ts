@@ -1,14 +1,4 @@
-/**
- * 跨主线程、Anti-Raid Worker 与 Disk I/O Worker 共用的待验证序列化键
- * （`chatId:userId`）。广告检测队列复用同一格式（见
- * workers/antiRaid/adDetect/queue.ts）。
- *
- * 生成、解析和归属判定都收在本文件；任何格式变更必须同时维护这里的往返校验，
- * 避免调用点静默丢弃或错投验证条目。
- */
-
-/** chatId 与 userId 之间的分隔符；生成与解析共用同一个事实源。 */
-const KEY_SEPARATOR: string = ":";
+import { KEY_SEPARATOR } from "../consts/verificationKey";
 
 export function verificationKey(chatId: number, userId: number): string {
   return `${chatId}${KEY_SEPARATOR}${userId}`;

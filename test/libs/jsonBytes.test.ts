@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { jsonSerializedBytes } from "../../packages/libs/jsonBytes";
 
+const UTF8_ENCODER: TextEncoder = new TextEncoder();
+
 /**
  * 跨线程诊断载荷的容量单位。
  *
@@ -10,10 +12,10 @@ import { jsonSerializedBytes } from "../../packages/libs/jsonBytes";
  */
 describe("jsonSerializedBytes", () => {
   test("常规值按 UTF-8 字节数计量", () => {
-    expect(jsonSerializedBytes("ab")).toBe(Buffer.byteLength(JSON.stringify("ab")));
-    expect(jsonSerializedBytes({ a: 1 })).toBe(Buffer.byteLength('{"a":1}'));
+    expect(jsonSerializedBytes("ab")).toBe(UTF8_ENCODER.encode(JSON.stringify("ab")).byteLength);
+    expect(jsonSerializedBytes({ a: 1 })).toBe(UTF8_ENCODER.encode('{"a":1}').byteLength);
     // 中文按 UTF-8 计三字节，不能按码元数算。
-    expect(jsonSerializedBytes("中")).toBe(Buffer.byteLength('"中"'));
+    expect(jsonSerializedBytes("中")).toBe(UTF8_ENCODER.encode('"中"').byteLength);
   });
 
   test("永远不返回 0：空串也占一个字节的容量额度", () => {

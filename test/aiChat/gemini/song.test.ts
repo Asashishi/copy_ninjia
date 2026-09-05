@@ -27,11 +27,11 @@ const {
 } = await import("../../../packages/consts/aiChat/gemini");
 
 /** 一段合法的 base64 音频载荷。 */
-const AUDIO_BYTES: Buffer = Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 1, 2, 3]);
+const AUDIO_BYTES: Uint8Array = new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, 1, 2, 3]);
 
 function audioInteraction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    output_audio: { type: "audio", data: AUDIO_BYTES.toString("base64"), mime_type: "audio/mp3" },
+    output_audio: { type: "audio", data: AUDIO_BYTES.toBase64(), mime_type: "audio/mp3" },
     // Lyria 会一并回歌词；本项目刻意不采，用例里保留它正是为了断言这一点。
     output_text: "第一段歌词",
     ...overrides,
@@ -54,7 +54,7 @@ describe("Gemini 生歌适配器", () => {
       input: "a lo-fi ballad",
     });
     expect(song?.mimeType).toBe("audio/mp3");
-    expect(Buffer.from(song?.bytes ?? []).equals(AUDIO_BYTES)).toBe(true);
+    expect(song?.bytes).toEqual(AUDIO_BYTES);
     // 歌词不进结果：群里只发这首歌本身，采回来存着不用就是一份没有消费方的状态。
     expect(Object.keys(song ?? {}).sort()).toEqual(["bytes", "mimeType"]);
   });
@@ -151,14 +151,14 @@ describe("Gemini 生歌适配器", () => {
     create.mockResolvedValueOnce(audioInteraction({
       output_audio: {
         type: "audio",
-        data: Buffer.alloc(SONG_GENERATION_MAX_BYTES + 1).toString("base64"),
+        data: new Uint8Array(SONG_GENERATION_MAX_BYTES + 1).toBase64(),
         mime_type: "audio/mp3",
       },
     }));
     await expect(generateGeminiSong({ prompt: "p" })).resolves.toBeNull();
 
     create.mockResolvedValueOnce(audioInteraction({
-      output_audio: { type: "audio", data: AUDIO_BYTES.toString("base64") },
+      output_audio: { type: "audio", data: AUDIO_BYTES.toBase64() },
     }));
     await expect(generateGeminiSong({ prompt: "p" })).resolves.toBeNull();
 

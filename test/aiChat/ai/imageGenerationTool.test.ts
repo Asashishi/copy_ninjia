@@ -14,7 +14,7 @@ const normalizeImageAspectRatio = mock((requested: string | undefined) => {
   if (requested === "16:9") return "16:9" as const;
   return null;
 });
-const referenceVisionImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
+const referenceVisionImage = { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
 const downloadTelegramVisionImage = mock(async (..._args: unknown[]): Promise<typeof referenceVisionImage | null> => referenceVisionImage);
 const runMediaTask = mock(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
 const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
@@ -463,7 +463,7 @@ describe("generate_image 工具执行器", () => {
     });
   });
 
-  test("图注与本轮已发消息完全相同时拒绝，且不消耗冷却", async () => {
+  test("图注与本轮已发消息相同时静默跳过，且不消耗冷却", async () => {
     const state: RoundMessageState = createRoundMessageState();
     state.sentCanonicalTexts.set(70, "画好了");
 
@@ -472,7 +472,8 @@ describe("generate_image 工具执行器", () => {
       caption: "画好了",
     })));
 
-    expect(result.error).toContain("already sent in this round");
+    expect(result).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
+    expect(sendPhotoWithResult).not.toHaveBeenCalled();
     expect(generateChatImage).not.toHaveBeenCalled();
     expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "换一句" }))).success).toBe(true);
   });

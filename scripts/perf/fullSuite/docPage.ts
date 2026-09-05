@@ -1,9 +1,7 @@
 /**
  * 把基准区块写回三语性能基准文档页。
  *
- * 只做「标记之间整块替换」，从不猜插入位置：页标题、语言切换、上下页导航都是
- * 手写的，让脚本去猜该往哪儿插，早晚会把它插进导航中间。标记不在就直接失败，
- * 并说清楚该怎么补——那是一次性的人工动作。
+ * 按显式标记整块替换，保留标记之外的标题与导航；标记缺失或顺序非法时拒绝写入。
  */
 
 import { join } from "node:path";
@@ -30,10 +28,7 @@ export const DOC_PAGE_TARGETS: readonly DocPageTarget[] = [
 ];
 
 /**
- * 按标记整块替换。
- *
- * 导出是为了让替换语义能被单测钉住：这段逻辑一旦写错，改的是三份手写 README，
- * 而错误要等到有人肉眼发现才暴露。
+ * 返回按标记替换后的整页内容；错误信息携带目标路径和所需标记。
  */
 export function replaceBlock(source: string, block: string, path: string): string {
   const start: number = source.indexOf(README_BLOCK_START);
