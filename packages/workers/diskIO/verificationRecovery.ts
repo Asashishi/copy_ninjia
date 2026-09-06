@@ -1,6 +1,6 @@
 /** Owner: Disk I/O Worker。负责待验证日文件的恢复、跨日合并与 compact。 */
 
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { DAY_FILE_JSON_INDENT, DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
@@ -105,11 +105,11 @@ function assertRecoveredVerificationCapacity(
  * 同步前启动）时写出的那份就是这种文件。
  * 留着它不会常驻：时钟走到那天时，它自己就是当天文件并被正常恢复。
  */
-export function removeOldVerificationDays(
+export async function removeOldVerificationDays(
   day: string,
   dir: string = VERIFICATION_MEMORY_DIR
-): void {
-  removeOldVerificationDaysFromEntries(
+): Promise<void> {
+  await removeOldVerificationDaysFromEntries(
     day,
     dir,
     readdirSync(dir, { withFileTypes: true })
@@ -117,11 +117,11 @@ export function removeOldVerificationDays(
 }
 
 /** rollover 独立扫描时只规划严格日期文件；未知资产仍按既有语义忽略。 */
-function removeOldVerificationDaysFromEntries(
+async function removeOldVerificationDaysFromEntries(
   day: string,
   dir: string,
   entries: readonly Dirent<string>[]
-): void {
+): Promise<void> {
   const oldDays: string[] = [];
   let futureDays: number = 0;
   for (const entry of entries) {
@@ -142,15 +142,15 @@ function removeOldVerificationDaysFromEntries(
     );
   }
   oldDays.sort();
-  for (const name of oldDays) unlinkSync(join(dir, name));
+  for (const name of oldDays) await Bun.file(join(dir, name)).delete();
 }
 
 /** 在领域文件全部校验成功后应用预先计算的计划；失败前不会删除任何旧日。 */
-function applyVerificationDirectoryRecoveryPlan(
+async function applyVerificationDirectoryRecoveryPlan(
   day: string,
   dir: string,
   plan: VerificationDirectoryRecoveryPlan
-): void {
+): Promise<void> {
   if (plan.futureDayCount > 0) {
     console.error(
       `[diskIOWorker] kept ${plan.futureDayCount} verification day file(s) dated after ${day}: ` +
@@ -159,7 +159,7 @@ function applyVerificationDirectoryRecoveryPlan(
     );
   }
   const oldDayNames: string[] = [...plan.oldDayNames].sort();
-  for (const name of oldDayNames) unlinkSync(join(dir, name));
+  for (const name of oldDayNames) await Bun.file(join(dir, name)).delete();
 }
 
 /** 把当前 active 镜像原子写成指定日期的规范对象；维护路径才整份重写。 */
@@ -282,15 +282,15 @@ export function adoptVerificationDay(
 }
 
 /** 启动成功后执行 compact 与旧日清理；compact 失败时不删除恢复基线。 */
-export function maintainVerificationDay(
+export async function maintainVerificationDay(
   inspection: VerificationRecoveryInspection
-): void {
+): Promise<void> {
   try {
     mkdirSync(inspection.dir, { recursive: true });
     if (inspection.shouldCompact) {
       compactVerificationDay(inspection.day, inspection.dir);
     }
-    applyVerificationDirectoryRecoveryPlan(
+    await applyVerificationDirectoryRecoveryPlan(
       inspection.day,
       inspection.dir,
       inspection.directoryPlan

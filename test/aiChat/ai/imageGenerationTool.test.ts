@@ -60,7 +60,11 @@ function buildExecutor(
   state: RoundMessageState = createRoundMessageState(),
   actionsUsed: number = 0
 ): (argumentsJson: string) => Promise<string> {
-  return createGenerateImageExecutor(ctx, state, (): number => actionsUsed);
+  const prepare = createGenerateImageExecutor(ctx, state, (): number => actionsUsed);
+  return async (argumentsJson: string): Promise<string> => {
+    const execution = prepare(argumentsJson);
+    return typeof execution === "string" ? execution : execution.run(ctx.chatAction);
+  };
 }
 
 function buildContext(
@@ -276,7 +280,7 @@ describe("generate_image 工具执行器", () => {
     expect(generateChatImage).not.toHaveBeenCalled();
   });
 
-  test("普通用户在参考图前置阶段失败时回滚冷却，下一次可以立即重试", async () => {
+  test("参考图前置阶段失败时回滚群冷却，本轮仍保留接纳限额", async () => {
     runMediaTask.mockResolvedValueOnce(undefined);
     const execute = buildExecutor(buildReferenceContext());
 
@@ -284,8 +288,8 @@ describe("generate_image 工具执行器", () => {
     const retried = JSON.parse(await execute(JSON.stringify({ prompt: "立即重试" })));
 
     expect(failed.error).toContain("reference image");
-    expect(retried.success).toBe(true);
-    expect(generateChatImage).toHaveBeenCalledTimes(1);
+    expect(retried.error).toContain("Image limit reached");
+    expect(generateChatImage).not.toHaveBeenCalled();
   });
 
   test("Telegram 发送失败不登记图片记忆", async () => {
@@ -335,7 +339,7 @@ describe("generate_image 工具执行器", () => {
     expect(ctx.onMessageSent).not.toHaveBeenCalled();
     expect(sendMessageWithResult).not.toHaveBeenCalled();
     // 图注计入本轮已说过的话，模型随后复述会被 send_message 的去重拦下。
-    expect(state.sentCanonicalTexts.get(77)).toBe("照着你说的画了一张");
+    expect(state.acceptedCanonicalTexts.has("照着你说的画了一张")).toBe(true);
   });
 
   test("超过 caption 上限时降级成图片加独立文本两条消息，并结算两个动作", async () => {
@@ -368,7 +372,7 @@ describe("generate_image 工具执行器", () => {
     });
     expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：超长图注）", 77, 42);
     expect(ctx.onMessageSent).toHaveBeenCalledWith(longCaption, 78, 42);
-    expect(state.sentCanonicalTexts.get(78)).toBe(longCaption);
+    expect(state.acceptedCanonicalTexts.has(longCaption)).toBe(true);
   });
 
   test("整轮只剩一个动作预算时不补发超长图注，图照发，硬顶不被顶破", async () => {
@@ -465,7 +469,7 @@ describe("generate_image 工具执行器", () => {
 
   test("图注与本轮已发消息相同时静默跳过，且不消耗冷却", async () => {
     const state: RoundMessageState = createRoundMessageState();
-    state.sentCanonicalTexts.set(70, "画好了");
+    state.acceptedCanonicalTexts.add("画好了");
 
     const result = JSON.parse(await buildExecutor(buildContext(), state)(JSON.stringify({
       prompt: "重复图注",
@@ -608,7 +612,7 @@ describe("generate_image 工具执行器", () => {
     generateChatImage.mockResolvedValueOnce(null);
     const normal = buildExecutor(buildContext(-1001));
     expect(JSON.parse(await normal(JSON.stringify({ prompt: "failed" }))).error).toContain("failed");
-    expect(JSON.parse(await normal(JSON.stringify({ prompt: "retry" }))).error).toContain("cooling down");
+    expect(JSON.parse(await normal(JSON.stringify({ prompt: "retry" }))).error).toContain("Image limit reached");
 
     const superAdmin = buildExecutor(buildContext(-1001, true));
     expect(JSON.parse(await superAdmin(JSON.stringify({ prompt: "admin one" }))).success).toBe(true);
@@ -618,17 +622,17 @@ describe("generate_image 工具执行器", () => {
     expect(generateChatImage).toHaveBeenCalledTimes(2);
   });
 
-  test("superAdmin 连续失败两次后本轮止损", async () => {
+  test("superAdmin 接纳一次后本轮不再生成，失败也不重投", async () => {
     generateChatImage
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
     const execute = buildExecutor(buildContext(-1001, true));
 
     expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail one" }))).error).toContain("failed");
-    expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail two" }))).error).toContain("failed");
+    expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail two" }))).error).toContain("Image limit reached");
     const stopped = JSON.parse(await execute(JSON.stringify({ prompt: "must not call upstream" })));
-    expect(stopped.error).toContain("remainder of this reply");
+    expect(stopped.error).toContain("Image limit reached");
     expect(stopped.retryable).toBe(false);
-    expect(generateChatImage).toHaveBeenCalledTimes(2);
+    expect(generateChatImage).toHaveBeenCalledTimes(1);
   });
 });

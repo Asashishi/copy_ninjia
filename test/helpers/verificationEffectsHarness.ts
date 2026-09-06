@@ -1,3 +1,5 @@
+import { installTemporaryMessageWorkerMock } from "./temporaryMessageWorkerMock";
+installTemporaryMessageWorkerMock();
 /**
  * 验证副作用解释器用例共用的替身、状态与隔离钩子。
  *

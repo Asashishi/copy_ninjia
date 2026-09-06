@@ -15,10 +15,12 @@
 ## 前置条件
 
 - **Linux（带可读的 `/proc`）**：实例锁依赖 `/proc/<pid>/stat` 与 boot ID；其它平台会 fail-closed 拒绝启动。
-- **Bun 1.4.1**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.1`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
+- **Bun 1.4.2**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
 - **（可选）Google Cloud 服务账号 JSON**：只有 `/ja_copy` 日语翻译需要，存为项目根的 `g-auth.json`。缺失时 `/ja_copy` 直接拒绝并点名这个文件，自动复读的 ja 变换退化成普通复制，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
+
+`g-auth.json` 由 `packages/config/googleAuth.ts` 严格解析：`client_email` 为非空字符串，`private_key` 为可解析的非空 PEM 私钥；`type` 可省略，存在时只能为 `service_account`。SDK 消费的 `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` 可省略，存在时必须为非空字符串。其余元数据原样保留。校验发生在创建 Worker 和连接 Telegram 之前，错误仅包含文件路径、字段路径与期望，不输出凭据值。
 
 ## 安装
 
@@ -30,7 +32,7 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-下载入口找到工作树后，使用该树自己的 `install.sh` 完成后续步骤。`COPY_NINJIA_DIR` 支持相对路径和绝对路径。当前代码要求 Bun **1.4.1**；已有 Bun 版本不匹配时，安装器在安装依赖和写配置前退出并提示手工安装，不自动覆盖已有 Bun。
+下载入口找到工作树后，使用该树自己的 `install.sh` 完成后续步骤。`COPY_NINJIA_DIR` 支持相对路径和绝对路径。当前代码要求 Bun **1.4.2**；已有 Bun 版本不匹配时，安装器在安装依赖和写配置前退出并提示手工安装，不自动覆盖已有 Bun。
 
 不用先 clone：脚本自己会把 **GitHub 上的 Latest Release** clone 到当前目录下的 `copy_ninjia/`（想换目录设 `COPY_NINJIA_DIR`），落在该 tag 上（detached HEAD）。装的是已发布版本而不是 `master` HEAD——tag 由 `releases/latest` 接口现问，问不到就当场失败，不会退回 `master`：那等于把一台生产机装成还没公告过的代码。
 
@@ -40,7 +42,9 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 
 补仓库这一步**不写工作树里的任何文件**，也不会把 `config/`、`state.json`、`g-auth.json` 这类部署数据收进对象库——它只用 `read-tree`/`diff-index` 比对 tag 自带的对象，未跟踪文件完全不参与，因此不依赖 `.gitignore` 是否完整。对不上任何已发布 tag 时（改过，或根本不是发布包）**不猜版本**：仓库、`origin` 和 tag 都给到位，但 `HEAD` 不指向任何版本，由你核对后自行 `git checkout <tag>`。装不上 `git`、拉不到 tag 也只是跳过这一步并提示，不会中断安装。
 
-装完会注册并启用 `copy-ninjia.service`（`User` 与 `WorkingDirectory` 取当前用户和当前仓库路径），随后观察两个重启间隔确认它没有进重启循环才算成功。已存在的 unit 会先问再覆盖；选择保留时脚本会打印那份 unit 实际的 `WorkingDirectory` 与 `ExecStart`，避免出现「装在 A、跑起来的是 B」。没有 systemd 的机器（容器、非 systemd 发行版）跳过注册，改为前台运行。
+安装器在依赖安装、配置或数据库写入前核对既有服务：必须为 `inactive/dead`，`WorkingDirectory` 必须指向目标工作树，`ExecStart` 必须是唯一一条 Bun 项目入口。运行中、状态未知或归属不符时拒绝修改；请先按 [07 运维](07-operations.md) 的流程停机并确认。安装器不会自动停掉既有服务。
+
+配置校验完成后注册或复用 `copy-ninjia.service`，覆盖既有 unit 前先备份。启动后按实际重启等待上限（包括生效的退避与随机延迟）观察两倍时长，再加两秒；要求 `active/running`、重启计数不变且 journal 无新增非零退出。查询失败或 journal 不可读时非零退出并保留备份。没有 systemd 且没有既有 unit 时进入前台运行，备份留待人工核验。
 
 管道运行下 fd 0 是脚本正文本身，所以所有问答都从 `/dev/tty` 读——拿不到控制终端时脚本直接退出，不会读到半截脚本当答案。
 
@@ -49,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 1. **环境与代码**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有工作树。缺少 Bun 时安装目标代码指定的精确版本，核对 `packageManager` 后执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期。
 2. **部署配置**：只补缺少的示例文件，跳过 `agent.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
 3. **身份数据库与校验**：按生产路径解析结果检查 `database/storage.sqlite`，只在不存在时创建当前 schema 的空库，再校验部署输入。
-4. **服务与观察**：有 systemd 时注册或复用 unit，启动服务并检查状态、重启计数和 journal；没有 systemd 时以前台运行。只有全部稳定性核验通过才清理配置备份，前台运行或 journal 无法核对时保留备份。
+4. **服务与观察**：在已确认停止的部署上注册或复用 unit，启动并完成状态、动态观察时长、重启计数与 journal 核验。仅全部通过才清理配置和 unit 备份；验证失败非零退出，前台运行保留备份。
 
 脚本重跑时保留既有数据库，配置仅在明确重填时替换。`g-auth.json` 由部署方带外提供；缺少它时日语翻译不可用，已有但非法时拒绝启动。
 
@@ -94,7 +98,7 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
   - **校验**：纯文本，无 schema。
 - **`config/telegram.json`**（[示例](../../config_example/telegram.json)）
   - **内容**：Bot API token 与唯一超级管理员用户 ID。
-  - **校验**：[`packages/config/telegram.ts`](../../packages/config/telegram.ts)；联网前严格
+  - **校验**：[`packages/config/telegramInput.ts`](../../packages/config/telegramInput.ts)；联网前严格
     加载，缺失、未知字段、空 token 或非法 ID 均拒绝启动。
 - **`config/stickers.json`**（[示例](../../config_example/stickers.json)）
   - **内容**：AI 可用的贴纸包，最多 5 个。

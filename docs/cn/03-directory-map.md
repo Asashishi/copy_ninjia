@@ -53,7 +53,7 @@
     四段生命周期）、`lockdown.ts`、`replyAdmission.ts`、`adDetectAdmission.ts`。
 - **`packages/config/`**
   - **职责**：部署 `config/*.json` 的严格 schema、进程快照与按功能聚合的可用性判定；身份策略不在这里。
-  - **典型文件**：`telegram.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
+  - **典型文件**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
 - **`packages/database/`**
   - **职责**：共享 SQLite（身份策略 + 群状态）的 schema、codec、行校验与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
   - **典型目录**：`schema/`（含 `migrations/`）、`codec/identity.ts`、`codec/chatState.ts`、
@@ -103,6 +103,10 @@
 - **`scripts/`**
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
   - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`migrateQaThumbnail.ts` 与 `qaThumbnailMigration/`、冷迁移共用的 `migration/backup.ts` 与 `migration/lifecycle.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
+
+`telegramInput.ts` 提供安装器和运行时共用的严格读取、解析入口，导入时不读部署文件或填充缓存；`telegram.ts` 负责运行时快照。`libs/inflight.ts` 统一在途任务的有界等待，领域 owner 保留自己的接纳、取消和零预算策略；`infra/backgroundTasks.ts` 负责后台任务错误记录和结算后摘除。群开关命令共用 `commands/superAdminToggle.ts` 的授权、配置门禁、写入、持久化与回执顺序。
+
+`commands/wed.ts` 持有交互状态机，`wed/dispatch.ts` 负责接纳，`wed/runtime.ts` 将共用有界执行器接入应用生命周期，`wed/rendering.ts` 保持纯渲染。交互状态与执行器句柄放在 `cache/main/wed.ts`；每群长期成员集合与 dirty 窗口放在 `cache/main/wedMembers.ts`，由 `wed/persistence.ts` 负责启动接管、批量投递和 Worker 重建重放。`workers/diskIO/wedMemberFiles.ts` 负责文件严格校验与原子替换，待写快照只放在 `cache/workers/diskIO/wed.ts`。头像读取和出站复用 `infra/telegram/`。
 
 ## 新代码放置决策
 

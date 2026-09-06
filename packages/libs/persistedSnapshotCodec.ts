@@ -1,16 +1,16 @@
-import { BUFFERED_REPLY_REFERENCE_KEYS, BUFFERED_MESSAGE_KEYS, AI_MEMORY_SNAPSHOT_KEYS } from "../consts/aiChat/persistence";
+import { AI_MEMORY_NON_SPACE_WHITESPACE_PATTERN, AI_MEMORY_TIME_PATTERN, BUFFERED_REPLY_REFERENCE_KEYS, BUFFERED_MESSAGE_KEYS, AI_MEMORY_SNAPSHOT_KEYS } from "../consts/aiChat/persistence";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   MAX_SUMMARY_ROUNDS,
+  REPLY_REFERENCE_MAX_CHARS,
 } from "../consts/aiChat/memory";
 import { invalidInput, parseJsonInput } from "./inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "./record";
 import type {
   AiMemorySnapshot,
   BufferedMessage,
-  BufferedReplyReference,
 } from "../types/aiChat/memory";
-import type { AiSpeakerSnapshot } from "../types/aiChat/speaker";
+import { formatTokyoTime } from "./time";
 import type {
   StickerCatalogEntry,
   StickerCatalogSnapshot,
@@ -22,37 +22,56 @@ import type {
  * 在两条线程边界上得到不同的校验结论。
  */
 
-function isAiSpeakerSnapshot(
-  value: unknown
-): value is Record<string, unknown> & AiSpeakerSnapshot {
-  return isPlainRecord(value) &&
-    typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id !== 0 &&
-    typeof value.firstName === "string" &&
-    typeof value.lastName === "string" &&
-    (value.username === undefined || typeof value.username === "string");
+function validateInline(value: unknown, source: string, field: string): asserts value is string {
+  if (typeof value !== "string" || AI_MEMORY_NON_SPACE_WHITESPACE_PATTERN.test(value)) {
+    invalidInput(source, field, "a single-line string containing only ordinary spaces as whitespace");
+  }
 }
 
-function isBufferedReplyReference(value: unknown): value is BufferedReplyReference {
-  return isAiSpeakerSnapshot(value) &&
-    hasOnlyKeys(value, BUFFERED_REPLY_REFERENCE_KEYS) &&
-    typeof value.messageId === "number" &&
-    Number.isSafeInteger(value.messageId) &&
-    value.messageId > 0 &&
-    typeof value.text === "string" &&
-    (value.quote === undefined || typeof value.quote === "string") &&
-    (value.forwardedFrom === undefined || typeof value.forwardedFrom === "string");
+function validateSpeaker(value: Record<string, unknown>, source: string, field: string): void {
+  if (typeof value.id !== "number" || !Number.isSafeInteger(value.id) || value.id === 0) {
+    invalidInput(source, `${field}.id`, "a nonzero safe integer");
+  }
+  if (typeof value.messageId !== "number" || !Number.isSafeInteger(value.messageId) || value.messageId <= 0) {
+    invalidInput(source, `${field}.messageId`, "a positive safe integer");
+  }
+  validateInline(value.firstName, source, `${field}.firstName`);
+  validateInline(value.lastName, source, `${field}.lastName`);
+  if (value.username !== undefined) validateInline(value.username, source, `${field}.username`);
+  if (value.forwardedFrom !== undefined) validateInline(value.forwardedFrom, source, `${field}.forwardedFrom`);
+  validateInline(value.text, source, `${field}.text`);
+  if (value.text.length === 0) invalidInput(source, `${field}.text`, "a non-empty single-line string");
 }
 
-function isBufferedMessage(value: unknown): value is BufferedMessage {
-  return isAiSpeakerSnapshot(value) &&
-    hasOnlyKeys(value, BUFFERED_MESSAGE_KEYS) &&
-    typeof value.messageId === "number" &&
-    Number.isSafeInteger(value.messageId) &&
-    value.messageId > 0 &&
-    typeof value.text === "string" &&
-    (value.replyTo === undefined || isBufferedReplyReference(value.replyTo)) &&
-    (value.forwardedFrom === undefined || typeof value.forwardedFrom === "string") &&
-    typeof value.at === "string";
+function validateReplyReference(value: unknown, source: string, field: string): void {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, BUFFERED_REPLY_REFERENCE_KEYS)) {
+    invalidInput(source, field, "the current buffered reply reference object");
+  }
+  validateSpeaker(value, source, field);
+  if ((value.text as string).length > REPLY_REFERENCE_MAX_CHARS) {
+    invalidInput(source, `${field}.text`, `at most ${REPLY_REFERENCE_MAX_CHARS} UTF-16 code units`);
+  }
+  if (value.quote !== undefined) {
+    validateInline(value.quote, source, `${field}.quote`);
+    if (value.quote.length > REPLY_REFERENCE_MAX_CHARS) {
+      invalidInput(source, `${field}.quote`, `at most ${REPLY_REFERENCE_MAX_CHARS} UTF-16 code units`);
+    }
+  }
+}
+
+function validateBufferedMessage(value: unknown, source: string, field: string): void {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, BUFFERED_MESSAGE_KEYS)) {
+    invalidInput(source, field, "the current buffered message object");
+  }
+  validateSpeaker(value, source, field);
+  if (value.replyTo !== undefined) validateReplyReference(value.replyTo, source, `${field}.replyTo`);
+  if (typeof value.at !== "string" || !AI_MEMORY_TIME_PATTERN.test(value.at)) {
+    invalidInput(source, `${field}.at`, "a valid Tokyo local time in YYYY/MM/DD HH:mm:ss format");
+  }
+  const timestamp: number = Date.parse(value.at.replaceAll("/", "-").replace(" ", "T") + "+09:00");
+  if (!Number.isFinite(timestamp) || formatTokyoTime(timestamp) !== value.at) {
+    invalidInput(source, `${field}.at`, "a valid Tokyo local time in YYYY/MM/DD HH:mm:ss format");
+  }
 }
 
 /** 解码已经解析的当前 version=1 AI 记忆快照；非法输入只报告来源与期望。 */
@@ -72,7 +91,6 @@ export function decodeAiMemorySnapshot(
     !hasExactKeys(raw, AI_MEMORY_SNAPSHOT_KEYS) ||
     raw.version !== 1 ||
     !Array.isArray(raw.buffer) ||
-    !raw.buffer.every(isBufferedMessage) ||
     raw.buffer.length > AI_MEMORY_HYDRATE_BUFFER_MAX ||
     !Array.isArray(raw.summaries) ||
     !raw.summaries.every((summary: unknown): summary is string => typeof summary === "string") ||
@@ -88,7 +106,10 @@ export function decodeAiMemorySnapshot(
       "the current version=1 AI memory schema within configured capacities"
     );
   }
-  const buffer: BufferedMessage[] = raw.buffer;
+  for (let index: number = 0; index < raw.buffer.length; index++) {
+    validateBufferedMessage(raw.buffer[index], source, `$.buffer[${index}]`);
+  }
+  const buffer: BufferedMessage[] = raw.buffer as BufferedMessage[];
   const summaries: string[] = raw.summaries;
   const pendingSummary: string | null = raw.pendingSummary;
   const savedAt: number = raw.savedAt;

@@ -1,6 +1,9 @@
 /** 热路径场景名到独立领域夹具的唯一注册表。 */
 
 import { createAdCapacityRejectScenario } from "./adDetectScenarios";
+import { storageFlushScenario } from "./storageFlushScenario";
+import { wedMemberChatSwitchScenario, wedMemberScenario } from "./wedMemberScenarios";
+import { registeredMiddlewareScenario } from "./registeredMiddlewareScenario";
 import {
   floodWindowGrowthScenario,
   floodWindowHitScenario,
@@ -44,6 +47,12 @@ import type { Scenario, ScenarioName } from "./types";
 /** 按稳定名称建立一份独立场景；每个子进程只调用一次。 */
 export function createScenario(name: ScenarioName): Scenario {
   switch (name) {
+    case "storage-sqlite-flush": return storageFlushScenario();
+    case "wed-member-hit": return wedMemberScenario("hit");
+    case "wed-member-growth": return wedMemberScenario("growth");
+    case "wed-member-churn": return wedMemberScenario("churn");
+    case "wed-member-chat-switch": return wedMemberChatSwitchScenario();
+    case "registered-middleware": return registeredMiddlewareScenario();
     case "sender-no-username": return senderScenario();
     case "sender-stable-username": return senderScenario("Stable_User");
     case "luck-receipt-fast-path": return createLuckReceiptFastPathScenario();

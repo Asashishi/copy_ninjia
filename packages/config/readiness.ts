@@ -4,10 +4,8 @@
  * 主进程启动总闸先校验全部已存在的部署输入；真正缺省的可选文件再由相关功能
  * （`/ai_chat enable`、`/ad_detect enable`、`/ja_copy enable`）按需判定。
  *
- * 结论按进程缓存**成功与失败两侧**：底层 loader 只缓存成功，失败会每次重新
- * 读盘解析，而判定要挂在每条群消息的门禁上（见 antiRaid/adDetect.ts）——不缓存
- * 失败就等于每条消息一次部署文件读取。修好文件后要重启才生效，与
- * `config/*.json` 一贯的「读一次、进程内不再重载」语义一致，拒绝文案里也点明了。
+ * 结论按进程缓存成功与缺省两侧；运行时只检查已校验配置 holder，不重新读取文件。
+ * 补齐可选配置后必须重启，由启动总闸严格解析并发布新的配置快照。
  *
  * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
  * 投喂门禁，全在主线程；Worker 不问「这个功能能不能开」。
@@ -21,7 +19,7 @@
  * 每条群消息都要走的路上不再构造数组与 probe 对象。
  */
 
-import { createPrivateKey } from "node:crypto";
+import { validateGoogleServiceAccountKey } from "./googleAuth";
 import { lstat } from "node:fs/promises";
 import { ensureAdSampleConfig } from "./adSamples";
 import { ensureMoodConfig } from "./mood";
@@ -49,8 +47,7 @@ import {
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
 import { isErrno } from "../libs/errno";
-import { invalidInput, readJsonInput } from "../libs/inputValidation";
-import { isPlainRecord } from "../libs/record";
+import { invalidInput } from "../libs/inputValidation";
 import type {
   ConfigReadiness,
   ConfigReadinessCache,
@@ -135,7 +132,7 @@ const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
   { file: "config/agent.json", load: ensureAdDetectAgentConfig },
 ];
 
-/** 日语翻译只探一份服务账号密钥；就地校验见 validateGoogleServiceAccountKey。 */
+/** 日语翻译只探一份服务账号密钥；严格解析见 config/googleAuth.ts。 */
 const JA_TRANSLATE_PROBES: readonly DeploymentFileProbe[] = [
   { file: "g-auth.json", load: validateGoogleServiceAccountKey },
 ];
@@ -146,32 +143,6 @@ export function aiChatConfigReadiness(): ConfigReadiness {
 
 export function adDetectConfigReadiness(): ConfigReadiness {
   return cachedReadiness(adDetectConfigReadinessCache);
-}
-
-/**
- * 日语翻译要读的服务账号密钥。这一份不像 config/*.json 有解析器，因此在这里
- * 就地做最小校验：能读、是 JSON 对象、带着 gRPC 客户端鉴权真正要用的那两个
- * 字段。只判「文件在不在」是不够的——空文件与占位文本同样能通过，然后每条
- * `/ja_copy` 都会退化成原文照发，而群里看不出与「翻译服务抖了一下」的区别。
- */
-async function validateGoogleServiceAccountKey(
-  path: string = GOOGLE_AUTH_FILE_PATH
-): Promise<void> {
-  const parsed: unknown = await readJsonInput(path);
-  if (!isPlainRecord(parsed)) {
-    return invalidInput(path, "$", "a Google service account JSON object");
-  }
-  if (typeof parsed.client_email !== "string" || parsed.client_email.trim().length === 0) {
-    return invalidInput(path, "$.client_email", "a non-empty string");
-  }
-  if (typeof parsed.private_key !== "string" || parsed.private_key.trim().length === 0) {
-    return invalidInput(path, "$.private_key", "a parseable non-empty PEM private key");
-  }
-  try {
-    createPrivateKey(parsed.private_key);
-  } catch {
-    return invalidInput(path, "$.private_key", "a parseable non-empty PEM private key");
-  }
 }
 
 /** 启动总闸成功校验默认密钥后同步填充 readiness，避免首次功能探测重复读盘。 */

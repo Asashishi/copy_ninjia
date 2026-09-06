@@ -18,7 +18,7 @@ interface WeightedMood {
  * 是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
  * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等）。心情档位
  * 的文案、base weight 与倍率来自部署配置 config/mood.json（严格解码见
- * config/mood.ts，主进程持锁后预热、Worker 首次抽取时惰性加载）。两个内存缓存
+ * config/mood.ts，主进程启动时严格解析、Worker 初始化消息接管快照）。两个内存缓存
  * （chatMoods/chatMoodExpiresAts，见 cache/workers/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
  *

@@ -4,7 +4,6 @@ import {
   TELEGRAM_429_RETRY_QUEUE_MAX,
 } from "../../consts/telegram";
 import type { TelegramRetryCategory } from "../../types/telegramOutbound";
-import type { TelegramProjectRawMethod } from "../../types/telegramWorker";
 import { isTelegramMessageRequest } from "./messageThrottler";
 
 /** 429 退避队列拒绝错误；安全动作的 durable owner 收到后保留原任务并重投。 */
@@ -20,7 +19,7 @@ export class TelegramRetryQueueFullError extends Error {
  * 服务未在项目调用面出现的新 Bot API，避免它意外与已有安全动作共享冷却。
  */
 export function telegramRetryCategoryFor(
-  method: keyof RawApi | TelegramProjectRawMethod
+  method: keyof RawApi
 ): TelegramRetryCategory {
   if (method === "deleteEphemeralMessage") return "delete";
   if (isTelegramMessageRequest(method)) return "message";

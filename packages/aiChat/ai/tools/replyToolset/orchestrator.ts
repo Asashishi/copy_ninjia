@@ -13,7 +13,7 @@ import {
   unknownToolError,
   VIEW_STICKER_PACK_TOOL,
 } from "../../../../consts/tools";
-import type { ReplyToolContext, ReplyToolset } from "../../../../types/aiChat/replies";
+import type { ReplyActionChains, ReplyToolContext, ReplyToolExecution, ReplyToolset } from "../../../../types/aiChat/replies";
 import type { StickerPackCandidate, StickerRoundState } from "../../../../types/stickers/tools";
 import { TOOL_DECLARATIONS } from "../index";
 import {
@@ -42,13 +42,15 @@ import {
 import { toolError } from "../../utils/toolResult";
 import { imageAiProvider, songAiProvider } from "../../../provider";
 import type { RoundMessageState } from "../../../../types/aiChat/replies";
+import { createReplyActionChains, toolResultActions } from "./actionChains";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
-export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
+export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: Promise<void>): Promise<ReplyToolset> {
   const menu: readonly StickerPackCandidate[] = await buildStickerPackMenu(ctx.signal);
   const stickerState: StickerRoundState = createStickerRoundState();
   const messageState: RoundMessageState = createRoundMessageState();
   let actionsUsed: number = 0;
+  const chains: ReplyActionChains = createReplyActionChains(ctx, deliveryReady);
 
   const viewDefinition: AiToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: AiToolDefinition | null = buildSendStickerToolDefinition(menu);
@@ -73,16 +75,16 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   for (const declaration of declarations) names.add(declaration.name);
   const functions: readonly AiToolDefinition[] = [...TOOL_DECLARATIONS, ...declarations];
 
-  const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
-  const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
-  const executeGenerateImage: ((argumentsJson: string) => Promise<string>) | null = imageEnabled
+  const executeSendMessage: (argumentsJson: string) => ReplyToolExecution = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
+  const executeAddReaction: (argumentsJson: string) => ReplyToolExecution = createAddReactionExecutor(ctx);
+  const executeGenerateImage: ((argumentsJson: string) => ReplyToolExecution) | null = imageEnabled
     ? createGenerateImageExecutor(ctx, messageState, (): number => actionsUsed)
     : null;
   // 生歌执行器只与已挂载的工具一同创建；未挂载的名称按未知工具处理。
-  const executeGenerateSong: ((argumentsJson: string) => Promise<string>) | null =
+  const executeGenerateSong: ((argumentsJson: string) => ReplyToolExecution) | null =
     songEnabled ? createGenerateSongExecutor(ctx, messageState) : null;
 
-  async function dispatch(name: string, argumentsJson: string): Promise<string> {
+  function dispatch(name: string, argumentsJson: string): ReplyToolExecution {
     switch (name) {
       case SEND_MESSAGE_TOOL:
         return executeSendMessage(argumentsJson);
@@ -137,44 +139,28 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     // 点名，不摘工具（见 workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
     webSearch: true,
     has: (name: string): boolean => names.has(name),
-    execute: async (name: string, argumentsJson: string): Promise<string> => {
+    execute: (name: string, argumentsJson: string): Promise<string> => {
       if (!ctx.isActive()) {
-        return toolError(REPLY_INVALIDATED_TOOL_ERROR);
+        return Promise.resolve(toolError(REPLY_INVALIDATED_TOOL_ERROR));
       }
-      // 动作硬顶的唯一兑现点：回复循环不再按预算摘工具声明（一轮内 tools 必须逐字
-      // 恒定，见 workers/aiChat/replyModel.ts 的头注），额度用完后模型再调用只会撞在
-      // 这里。这道门禁只管「还有没有额度开始一次调用」。会落地第二个动作的两个工具
-      // （send_message 的手滑补字、generate_image 的超长图注独立补发）各自在
-      // 执行侧按剩余预算决定要不要发那一条，因此这里比调用前的已用数就够，不必
-      // 按最坏情况预留、白白吃掉最后一格（见 typoHandling.ts 的
-      // TYPO_MIN_REMAINING_ACTIONS 与 imageGeneration.ts 的同名口径）。
+      // 校验和接纳同步执行，正文与附加动作先占额度再让模型继续。
+      // 已接纳动作由独立调用链执行，失败不退额度给模型重复投递。
       const isActionTool: boolean = ACTION_TOOL_NAMES.includes(name);
       if (isActionTool && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
-        return toolError(
-          `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`
-        );
+        return Promise.resolve(toolError(
+          `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images + songs) per reply`
+        ));
       }
 
-      const result: string = await dispatch(name, argumentsJson);
-      if (isActionTool) {
-        try {
-          const parsed: { success?: boolean; actions_used?: unknown; } = JSON.parse(result) as { success?: boolean; actions_used?: unknown };
-          if (
-            typeof parsed.actions_used === "number" &&
-            Number.isFinite(parsed.actions_used) &&
-            parsed.actions_used >= 0
-          ) {
-            actionsUsed += Math.floor(parsed.actions_used);
-          } else if (parsed.success) {
-            actionsUsed++;
-          }
-        } catch {
-          // 所有领域执行器都返回本地生成的 JSON；这里只做防御性兜底。
-        }
-      }
-      return result;
+      const execution: ReplyToolExecution = dispatch(name, argumentsJson);
+      const result: string = typeof execution === "string" ? execution : execution.result;
+      if (isActionTool) actionsUsed += toolResultActions(result);
+      if (typeof execution !== "string") chains.start(name, execution);
+      return Promise.resolve(result);
     },
     actionsUsed: (): number => actionsUsed,
+    settle: (): Promise<void> => chains.settle(),
+    actionsCompleted: (): number => chains.completed(),
     isActive: ctx.isActive,
     signal: ctx.signal,
   };

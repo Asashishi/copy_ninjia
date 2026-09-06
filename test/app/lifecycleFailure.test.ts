@@ -21,6 +21,7 @@ const {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
+  drainWedRuntime,
   drainTelegramOutbound,
   drainTranslate,
   flushAiMemory,
@@ -42,6 +43,7 @@ const {
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
+  quiesceWedRuntime,
   quiesceTranslate,
   realDrainDependencies,
   refreshAllChatTitles,
@@ -65,6 +67,22 @@ const {
 installLifecycleFixtureHooks();
 
 describe("应用启动失败与退出清理", () => {
+  test("wed 集合必须在 Telegram 客户端初始化前恢复，门禁失败以非零码退出", async () => {
+    const hydrate = spyOn(testDependencies, "hydrateWedMembers").mockImplementationOnce((): never => {
+      throw new Error("memory/wed/-1001.json: $ must be an array of unique user IDs.");
+    });
+    try {
+      const lifecycle = new ApplicationLifecycle(testDependencies);
+      await lifecycle.run("main");
+      expect(hydrate).toHaveBeenCalledTimes(1);
+      expect(initTelegramClients).not.toHaveBeenCalled();
+      expect(botInit).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    } finally {
+      hydrate.mockRestore();
+    }
+  });
+
   // 部署配置不再在这里预热（见 config/readiness.ts），因此这条「持锁之后 init
   // 抛错」的路径改由临时文件清理注入失败——它是持锁与 initDiskIO 之间仍然存在的
   // 那一步，断言的收尾语义与原来完全一致。
@@ -329,6 +347,8 @@ describe("应用启动失败与退出清理", () => {
     expect(initTranslate).toHaveBeenCalledTimes(1);
     expect(quiesceTranslate).toHaveBeenCalledTimes(1);
     expect(quiesceGagRuntime).toHaveBeenCalledTimes(1);
+    expect(quiesceWedRuntime).toHaveBeenCalledTimes(1);
+    expect(drainWedRuntime).toHaveBeenCalledTimes(1);
     expect(drainTranslate).toHaveBeenCalledTimes(1);
     expect(closeTranslate).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
@@ -336,6 +356,8 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("quiesceTranslate")).toBeLessThan(calls.indexOf("drainTranslate"));
     expect(calls.indexOf("drainTranslate")).toBeLessThan(calls.indexOf("closeTranslate"));
     expect(calls.indexOf("drainGag")).toBeLessThan(calls.indexOf("drainTelegramOutbound"));
+    expect(calls.indexOf("quiesceWed")).toBeLessThan(calls.indexOf("drainWed"));
+    expect(calls.indexOf("drainWed")).toBeLessThan(calls.indexOf("drainMessageDeletions"));
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
     expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateDiskIO"));
   });
@@ -562,6 +584,19 @@ describe("应用启动失败与退出清理", () => {
     expect(process.exitCode).toBe(1);
     expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("gag=failed"));
+  });
+
+  test("wed 任务未排空时保留诊断并继续磁盘收尾，不能宣称干净退出", async () => {
+    drainWedRuntime.mockResolvedValueOnce("timedOut");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+    await lifecycle.dispose();
+    expect(drainTelegramOutbound).toHaveBeenCalledTimes(1);
+    expect(flushDiskIO).toHaveBeenCalledTimes(1);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("wed=timedOut"));
   });
 
   test("翻译 drain 超时仍关闭 gRPC 客户端，并保留实例锁", async () => {

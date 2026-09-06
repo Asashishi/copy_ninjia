@@ -1,11 +1,22 @@
 /** Telegram 动作适配层与业务调用方共享的发送结果。 */
 
 import type {
+  Chat,
   MessageEntity,
   ReactionTypeCustomEmoji,
   ReactionTypeEmoji,
+  User,
 } from "grammy/types";
 import type { TelegramApi } from "./telegramWorker";
+
+/** 头像交互可使用的用户或频道身份；发起身份来自更新，候选身份来自本轮查询。 */
+export type AvatarIdentity = User | Chat.ChannelChat;
+
+/** 当前候选身份与发送源一起返回；字符串为可复用 file_id，下载字节仅供本轮上传。 */
+export interface CurrentAvatar {
+  readonly identity: AvatarIdentity;
+  readonly photo: string | Uint8Array;
+}
 
 /**
  * 本项目会发出的 Telegram 聊天状态取值。
@@ -131,3 +142,8 @@ export interface BotActionPermissions {
   /** 能否删除别人的消息。 */
   readonly canDeleteMessages: boolean;
 }
+
+/** 有界头像下载结果；成功时字节只由当前操作持有，不进入持久化状态。 */
+export type AvatarDownloadResult =
+  | { readonly status: "ok"; readonly bytes: Uint8Array }
+  | { readonly status: "permanent-failure" | "transient-failure" };

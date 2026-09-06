@@ -27,6 +27,7 @@ function adminMember(
     can_post_stories: false,
     can_edit_stories: false,
     can_delete_stories: false,
+    can_send_welcome_messages: false,
     ...overrides,
   };
 }

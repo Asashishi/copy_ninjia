@@ -9,6 +9,12 @@ import type { HotPathProfileScenarioName } from "../../../packages/types/perform
 
 export type ScenarioName =
   | HotPathProfileScenarioName
+  | "storage-sqlite-flush"
+  | "wed-member-hit"
+  | "wed-member-growth"
+  | "wed-member-churn"
+  | "wed-member-chat-switch"
+  | "registered-middleware"
   | "sender-no-username"
   | "ai-activity-lru-miss"
   | "temporary-whitelist-activity"

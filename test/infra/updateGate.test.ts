@@ -28,10 +28,25 @@ describe("shouldPassInitGate", () => {
 
   test("未初始化的群拦下普通消息和除 /init 外的各类命令入口", () => {
     const chatId = -1001111111111;
-    for (const text of ["随便说点什么", "/copy", "/permission", "/white", "/send", "/咬 @someone"]) {
+    for (const text of ["随便说点什么", "/copy", "/permission", "/white", "/send", "/wed", "/咬 @someone"]) {
       const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text } });
       expect(shouldPassInitGate(ctx)).toBe(false);
     }
+  });
+
+  test("/wed 按钮只有群已启用时放行，disable 后旧按钮也被拦下", () => {
+    const chatId: number = -1001111111120;
+    const chat = { id: chatId, type: "supergroup" };
+    const message = { message_id: 7, chat, date: 1, caption: "你的群友老婆是 群友!" };
+    const ctx = fakeCtx({
+      chat, msg: message, from: { id: SUPER_ADMIN_USER_ID },
+      callbackQuery: { data: `wed:${SUPER_ADMIN_USER_ID}:2:change`, message },
+    });
+    expect(shouldPassInitGate(ctx)).toBeFalse();
+    getOrCreateChatState(chatId).isInitEnabled = true;
+    expect(shouldPassInitGate(ctx)).toBeTrue();
+    getOrCreateChatState(chatId).isInitEnabled = false;
+    expect(shouldPassInitGate(ctx)).toBeFalse();
   });
 
   test("未初始化的群 + /init 指令本身：放行（否则永远没法首次初始化）", () => {

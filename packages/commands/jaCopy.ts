@@ -2,11 +2,9 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { jaTranslateConfigReadiness } from "../config/readiness";
 import { JA_COPY_TOGGLE_TEXTS } from "../consts/commands";
-import { getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
-import { sendCommandMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
 import { handleCopyCommand } from "./copy";
-import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
+import { runChatToggleCommand } from "./superAdminToggle";
 
 /**
  * 处理 /ja_copy 指令：不带参数就是普通的 /copy（复读并翻译成日语，见
@@ -26,37 +24,23 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
     return;
   }
 
-  const toggleArg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
+  await runChatToggleCommand({
+    ctx,
     texts: JA_COPY_TOGGLE_TEXTS,
     permission: "isCanControllJATranslatePermission",
+    persistReason: "ja_copy toggled",
+    runtimeLabel: "Japanese translation runtime",
+    read: (state: ChatState): boolean => state.isJATranslationEnabled === true,
+    write: (state: ChatState, isEnabled: boolean): void => {
+      state.isJATranslationEnabled = isEnabled;
+    },
+    refuseEnable: (chatId: number, messageId: number | undefined): Promise<boolean> =>
+      refuseIfConfigBroken({
+        readiness: jaTranslateConfigReadiness(),
+        chatId,
+        messageId,
+        feature: "Japanese translation",
+        text: (file: string): string => `本天才的 ${file} 不见了或写坏了，拿什么翻日语呀？补好再重启，笨蛋♡`,
+      }),
   });
-  if (!toggleArg) return;
-
-  const chatId: number = ctx.chat.id;
-  const messageId: number | undefined = ctx.msgId;
-  // 服务账号密钥缺席或写坏时拒绝开启（同 /ai_chat、/ad_detect 的前提判定）：
-  // 翻译失败会静默退化成原文照发，群里看不出与「翻译服务抖了一下」的区别，
-  // 开着就是一个看着已生效、实际只会复读原文的开关。关闭方向不拦。
-  if (toggleArg === "enable") {
-    const refused: boolean = await refuseIfConfigBroken({
-      readiness: jaTranslateConfigReadiness(),
-      chatId,
-      messageId,
-      feature: "Japanese translation",
-      text: (file: string): string => `本天才的 ${file} 不见了或写坏了，拿什么翻日语呀？补好再重启，笨蛋♡`,
-    });
-    if (refused) return;
-  }
-  const state: ChatState = getOrCreateChatState(chatId);
-  const wasEnabled: boolean = state.isJATranslationEnabled === true;
-  const isEnabled: boolean = toggleArg === "enable";
-  state.isJATranslationEnabled = isEnabled;
-  await persistChatState(chatId, "ja_copy toggled");
-
-  const replyText: string = toggleReplyText({
-    isEnabled,
-    wasEnabled,
-    texts: JA_COPY_TOGGLE_TEXTS,
-  });
-  await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

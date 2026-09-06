@@ -162,7 +162,7 @@ export async function prepareRuntimeDataRoot(
     }
 
     sourceHandle = await fs.open(sourcePath, "wx", 0o600);
-    await sourceHandle.writeFile("copy-ninjia data root preflight\n");
+    await Bun.write(Bun.file(sourceHandle.fd), "copy-ninjia data root preflight\n");
     await sourceHandle.sync();
     await sourceHandle.close();
     sourceHandle = null;

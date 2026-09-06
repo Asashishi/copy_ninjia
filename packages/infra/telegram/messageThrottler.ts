@@ -65,16 +65,14 @@ export function telegramMessageThrottler(): Transformer<RawApi> {
       strategy: BottleneckStrategy.OVERFLOW,
     },
     group: {
-      // 单群只主动保证每秒至多发起一次发送；不配置 reservoir，
-      // 故不叠加插件默认的 20/min 窗口。服务端 429 由后续统一出站闸处理。
+      // 单聊天只串行保序，不设置发送间隔或独立速率窗口；
+      // 全局桶控制发送速率，服务端 429 由主线程统一出站闸处理。
       maxConcurrent: 1,
-      minTime: 1_000,
       highWater: TELEGRAM_MESSAGE_GROUP_PENDING_MAX,
       strategy: BottleneckStrategy.OVERFLOW,
     },
     out: {
       maxConcurrent: 1,
-      minTime: 1_000,
       highWater: TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX,
       strategy: BottleneckStrategy.OVERFLOW,
     },

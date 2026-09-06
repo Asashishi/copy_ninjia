@@ -1,3 +1,5 @@
+import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
+installTemporaryMessageWorkerMock();
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 

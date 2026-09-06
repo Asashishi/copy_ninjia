@@ -42,8 +42,8 @@ export function runDiskIOMidnightMaintenance(
     ["luck", async (): Promise<void> => maintainLuckForDay(day)],
     ["logs", async (): Promise<void> => maintainLogRetention()],
     ["join logs", async (): Promise<void> => maintainJoinLogRetention(day)],
-    ["ad samples", (): void => maintainAdSampleFiles(day)],
-    ["verifications", (): void => maintainVerificationDayForToday(reply, day)],
+    ["ad samples", (): Promise<void> => maintainAdSampleFiles(day)],
+    ["verifications", (): Promise<void> => maintainVerificationDayForToday(reply, day)],
     ["temporary whitelist", (): void => maintainTemporaryWhitelistActivities(reply)],
   ]);
 }

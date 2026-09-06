@@ -4,6 +4,7 @@ import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
 import { translateParentCache, translateRuntime } from "../cache/main/translate";
 import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
 import { withTimeout } from "../libs/withTimeout";
+import { settleWithinBudget } from "../libs/inflight";
 import type { FlushResult } from "../types/lifecycle";
 
 // Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
@@ -142,15 +143,7 @@ export async function drainTranslate(timeoutMs: number): Promise<FlushResult> {
   if (translateRuntime.tasks.size === 0) return "flushed";
   if (timeoutMs === 0) return "timedOut";
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const drained: boolean = await Promise.race([
-    Promise.allSettled([...translateRuntime.tasks]).then((): boolean => true),
-    new Promise<boolean>((resolve: (value: boolean | PromiseLike<boolean>) => void): void => {
-      timer = setTimeout((): void => resolve(false), timeoutMs);
-      timer.unref();
-    }),
-  ]);
-  if (timer !== undefined) clearTimeout(timer);
+  const drained: boolean = await settleWithinBudget(translateRuntime.tasks, timeoutMs);
   return drained ? "flushed" : "timedOut";
 }
 

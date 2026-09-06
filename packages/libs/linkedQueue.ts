@@ -54,6 +54,11 @@ export class LinkedQueue<T> {
     return this.tail ? this.tail.value : undefined;
   }
 
+  /** 只读遍历当前 FIFO；遍历期间调用方不得修改队列，用于恢复时核对已有事实。 */
+  *values(): IterableIterator<T> {
+    for (let node: QueueNode<T> | null = this.head; node !== null; node = node.next) yield node.value;
+  }
+
   /** 整体清空。摘掉 head/tail 让整条链一起变成垃圾，O(1)，不逐个 shift。 */
   clear(): void {
     this.head = null;

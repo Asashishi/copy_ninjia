@@ -86,6 +86,14 @@ export interface StickerCatalogDiskMessage {
   snapshot: string;
 }
 
+/** 主线程按统一 TTL/条数窗口投递成员最终数组；DiskIO 接收后全量原子替换。 */
+export interface WedMembersDiskMessage {
+  readonly type: "wedMembers";
+  readonly chatId: number;
+  readonly revision: number;
+  readonly members: readonly number[];
+}
+
 /** 主线程 -> diskIOWorker：一次抽签结果的增量写入。 */
 export interface LuckDrawDiskMessage {
   type: "luckDraw";
@@ -224,6 +232,7 @@ export type DiskBusinessMessage =
   | AiMemoryDeleteDiskMessage
   | AiMemoryForgetDiskMessage
   | StickerCatalogDiskMessage
+  | WedMembersDiskMessage
   | LuckDrawDiskMessage
   | VerificationUpsertDiskMessage
   | VerificationDeleteDiskMessage
@@ -274,7 +283,8 @@ export interface VerificationFileChange {
 /** 主线程 -> diskIOWorker：启动恢复（也用于本 Worker 崩溃重建后的自动重跑）。 */
 export interface LoadRequest {
   type: "load";
-  stickerPacks: readonly string[];
+  /** null 表示可选配置缺省；仍校验目录内容，但不判定孤儿文件。 */
+  stickerPacks: readonly string[] | null;
 }
 
 /**
@@ -352,10 +362,20 @@ export type DiskIORequestMessage =
  * 前两组直接复用 DiskBusinessMessage 与 DiskIORequestMessage；新增消息必须先归入
  * 对应领域联合类型，路由与可重放清单由同一事实源展开。
  */
-export type DiskIOMessage =
+export type DiskIOOperationMessage =
   | DiskDiagnosticBatchRequest
   | DiskBusinessMessage
   | DiskIORequestMessage
   | LoadRequest
   | RecoveryReplayRequest
   | DiskFlushRequest;
+
+/** 主线程单批在途的业务及有序读取；确认仅表示消费完成，不代表落盘。 */
+export interface DiskOperationBatchRequest {
+  readonly type: "operationBatch";
+  readonly batchId: number;
+  readonly messages: readonly DiskIOOperationMessage[];
+}
+
+/** Disk I/O Worker 接受单条控制消息或有界操作批次。 */
+export type DiskIOMessage = DiskIOOperationMessage | DiskOperationBatchRequest;

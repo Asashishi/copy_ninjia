@@ -1,3 +1,5 @@
+import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 /**
  * 刷屏禁言的执行侧（入群守卫线程）：一分钟内同一个人发言达到阈值，就地禁言
  * 几分钟并在群里说明一句。
@@ -14,9 +16,7 @@
  */
 
 import {
-  deleteMessageAfter,
   muteChatMemberWithOutcome,
-  sendMessage,
   telegramApi,
 } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
@@ -254,27 +254,12 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
   // 事实收不回来，到点由 Telegram 自行解除），但不该再往一个已经不管的群里发言。
   if (!stillManaged()) return;
 
-  const noticeMessageId: number | undefined = await sendMessage({
+  await sendTemporaryMessageFromMain({
+    purpose: "notice",
     chatId: message.chatId,
     text: formatFloodMuteNotice(message.label),
-    api: telegramApi,
-    // 公告仍带派发截止时间：消息发送与踢人虽然已分属独立 429 队列，消息本身
-    // 仍可能等待 grammY 的群聊限流。停管后再补发一条过期公告没有业务价值，也
-    // 不该让它长期占住停机 drain（见 FLOOD_NOTICE_DISPATCH_TIMEOUT_MS）。
-    // 停机信号一并接上：这条公告同样在 drain 的等待集合里。
+    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     signal: AbortSignal.any([dispatchAbort, AbortSignal.timeout(FLOOD_NOTICE_DISPATCH_TIMEOUT_MS)]),
-  });
-  if (noticeMessageId === undefined) return;
-  // 公告活到禁言解除那一刻为止：不给群里留永久公告（同踢人战报的约定），
-  // 又不至于在人还被按着的时候就先撤掉、让后来的人看不懂他为什么不说话。
-  // 统一延迟删除 owner 会在有序停机时提前兑现；batchOnFlush 让同群公告只占
-  // 一次 deleteMessages 请求。硬崩溃仍会丢失纯内存 timer，这是明确取舍。
-  deleteMessageAfter({
-    chatId: message.chatId,
-    messageId: noticeMessageId,
-    delayMs: FLOOD_MUTE_DURATION_MS,
-    api: telegramApi,
-    batchOnFlush: true,
   });
 }
 

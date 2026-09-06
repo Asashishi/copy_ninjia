@@ -1,3 +1,5 @@
+import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
+installTemporaryMessageWorkerMock();
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { BotActionPermissions } from "../../../packages/types/telegram";
 import type { FloodCandidateMessage } from "../../../packages/types/antiRaid";
@@ -307,7 +309,7 @@ describe("机器人自身权限镜像", () => {
 });
 
 describe("刷屏禁言的处置", () => {
-  test("越过阈值即禁言并播报，公告活到禁言解除那一刻", async () => {
+  test("越过阈值即禁言并播报，公告三十秒后由主线程删除", async () => {
     await flood(FLOOD_MESSAGE_LIMIT);
 
     expect(muteCalls).toHaveLength(1);
@@ -317,7 +319,7 @@ describe("刷屏禁言的处置", () => {
     expect(deleteAfterCalls).toEqual([{
       chatId: -1001,
       messageId: 500,
-      delayMs: FLOOD_MUTE_DURATION_MS,
+      delayMs: 30_000,
       api: { kind: "guard-api" },
       batchOnFlush: true,
     }]);

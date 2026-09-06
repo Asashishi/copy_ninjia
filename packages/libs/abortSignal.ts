@@ -123,6 +123,7 @@ export function raceAbort<T>(promise: Promise<T>, options: RaceAbortOptions<T>):
   if (signal === undefined) return promise;
   const cancelled: T = options.cancelled;
   if (signal.aborted) {
+    void promise.catch((_error: unknown): void => undefined);
     options.onSettle?.();
     options.onCancel?.();
     return Promise.resolve(cancelled);

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -39,6 +39,8 @@ import type { VerificationPersistedReply } from
   "../../../packages/types/diskIO";
 import { diskIOOperationTail } from
   "../../../packages/cache/workers/diskIO/recovery";
+import { enqueueDiskIOOperation } from
+  "../../../packages/workers/diskIO/operationQueue";
 
 const DAY_ONE: string = "2026-07-19";
 const DAY_TWO: string = "2026-07-20";
@@ -104,7 +106,7 @@ async function recoverVerificationDay(
   const inspection = await inspectVerificationDay(day, dir);
   const recovered = adoptVerificationDay(inspection);
   try {
-    maintainVerificationDay(inspection);
+    await maintainVerificationDay(inspection);
   } catch (error: unknown) {
     resetVerificationPersistenceCache();
     throw error;
@@ -127,6 +129,70 @@ afterEach((): void => {
 });
 
 describe("pending verification 定时落盘与午夜轮换", (): void => {
+  test.each([false, true])("异步删旧日结束前不 ACK 或推进队列，删除失败=%s", async (failDeletion: boolean): Promise<void> => {
+    await upsert(1, true);
+    replies.length = 0;
+    await upsert(2, false);
+    const entered = Promise.withResolvers<void>();
+    const deletion = Promise.withResolvers<void>();
+    const oldPath: string = join(dir, `${DAY_ONE}.json`);
+    const originalFile = Bun.file;
+    const fileSpy = spyOn(Bun, "file").mockImplementation(((path: any, options?: any): any => {
+      const file = originalFile(path, options);
+      if (path !== oldPath) return file;
+      return new Proxy(file, {
+        get(target: any, property: string | symbol): unknown {
+          if (property === "delete") {
+            return async (): Promise<void> => {
+              entered.resolve();
+              await deletion.promise;
+              await target.delete();
+            };
+          }
+          const value: unknown = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    }) as typeof Bun.file);
+    let followingOperationRan: boolean = false;
+    const rollover: Promise<void> = enqueueDiskIOOperation(
+      (): Promise<void> => maintainVerificationDayForToday(receiveReply, DAY_TWO, dir)
+    );
+    const following: Promise<void> = enqueueDiskIOOperation((): void => {
+      followingOperationRan = true;
+    });
+    try {
+      await entered.promise;
+      expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
+        .toHaveProperty("-1001:42.revision", 2);
+      expect(replies).toHaveLength(0);
+      expect(verificationPendingChanges).toHaveLength(1);
+      expect(followingOperationRan).toBeFalse();
+      if (failDeletion) deletion.reject(new Error("injected async old-day deletion failure"));
+      else deletion.resolve();
+      await rollover;
+      await following;
+      expect(followingOperationRan).toBeTrue();
+      expect(existsSync(oldPath)).toBe(failDeletion);
+      expect(replies).toHaveLength(failDeletion ? 0 : 1);
+      expect(verificationPendingChanges).toHaveLength(failDeletion ? 1 : 0);
+      if (failDeletion) {
+        expect(verificationRolloverRetryTimer.timer?.hasRef()).toBeFalse();
+        fileSpy.mockRestore();
+        jest.setSystemTime(Date.parse(`${DAY_TWO}T00:00:00+09:00`));
+        jest.advanceTimersByTime(VERIFICATION_ROLLOVER_RETRY_MS);
+        await diskIOOperationTail.current;
+        expect(existsSync(oldPath)).toBeFalse();
+        expect(replies.at(-1)).toMatchObject({ revision: 2, deleted: false });
+        expect(verificationPendingChanges).toHaveLength(0);
+      }
+    } finally {
+      deletion.resolve();
+      await following;
+      fileSpy.mockRestore();
+    }
+  });
+
   test("普通变化由唯一 unref timer 自动 flush 并精确 ACK", async (): Promise<void> => {
     await upsert(1, false);
     const timer: ReturnType<typeof setTimeout> | null = verificationFlushTimer.timer;
@@ -178,7 +244,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
   test("每日维护发布新日快照并清理旧日，不再自行排下一次午夜 timer", async (): Promise<void> => {
     await restartFixtureClock(BEFORE_DAY_TWO_MS);
     await upsert(1, false);
-    maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
+    await maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
 
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
     expect(existsSync(join(dir, `${DAY_TWO}.json`))).toBeTrue();
@@ -194,7 +260,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     replies.length = 0;
     rmSync(dir, { recursive: true, force: true });
     writeFileSync(dir, "not-a-directory");
-    maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
+    await maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
 
     expect(verificationWorkerCache.get("-1001:42")?.revision).toBe(1);
     expect(verificationRolloverRetryTimer.timer).not.toBeNull();

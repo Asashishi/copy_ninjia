@@ -136,6 +136,8 @@ function toolset(overrides: Partial<ReplyToolset> = {}): ReplyToolset {
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
     actionsUsed: (): number => 0,
+    settle: async (): Promise<void> => {},
+    actionsCompleted: (): number => 0,
     isActive: (): boolean => true,
     ...overrides,
   };

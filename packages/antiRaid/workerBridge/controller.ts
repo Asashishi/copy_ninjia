@@ -67,7 +67,7 @@ async function handleAntiRaidWorkerRequest(
   if (request.operation === "verificationAttemptPermit") {
     return grantVerificationAttempt(request);
   }
-  if (request.operation === "sendTemporaryMessage") {
+  if (request.operation === "sendTemporaryMessage" && request.purpose === "adWarning") {
     // 引用警告晚于候选入队和模型判定；发送前必须以主线程当前权限为准。
     // 冷读失败时不拿未知身份冒充无豁免，避免错误警告或删除临时成员消息。
     const prefetched: boolean = await prefetchIdentityPolicies([request.identityId]);

@@ -1,3 +1,5 @@
+import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
+installTemporaryMessageWorkerMock();
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ANTI_RAID_CHAT_CACHE_MAX } from
   "../../../packages/consts/antiRaid/cache";

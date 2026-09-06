@@ -5,6 +5,7 @@ import { createFlushBarrier } from "../../libs/flushBarrier";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { createRestartThrottle } from "../../libs/restartThrottle";
 import { AcknowledgedBatchQueue } from "../../libs/acknowledgedBatchQueue";
+import { DISK_OPERATION_CONTROL_RESERVE, DISK_BUSINESS_BATCH_MAX_MESSAGES, DISK_OPERATION_MAX_RETAINED_BYTES } from "../../consts/diskIO/business";
 import {
   DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES,
   DISK_DIAGNOSTIC_MAX_PENDING_MESSAGES,
@@ -14,6 +15,7 @@ import type {
   DiskBusinessMessage,
   DiskIORespawnRegistration,
   DiskDiagnosticMessage,
+  DiskIOOperationMessage,
 } from "../../types/diskIO/messages";
 import type {
   AiMemoryDeletedPersistedReply,
@@ -126,6 +128,9 @@ interface DiskIORuntime {
   fatalHandler: ((error: Error) => void) | undefined;
   fatalSignaled: boolean;
   pendingBusinessMessages: LinkedQueue<DiskBusinessMessage>;
+  pendingBusinessBytes: number;
+  operationQueue: AcknowledgedBatchQueue<DiskIOOperationMessage>;
+  operationTimer: ReturnType<typeof setTimeout> | null;
   diagnosticQueue: AcknowledgedBatchQueue<DiskDiagnosticMessage>;
   diagnosticDroppedMessages: number;
   diagnosticDroppedSerializedBytes: number;
@@ -153,6 +158,9 @@ interface DiskIORuntime {
  * 单批在途并保留到 ACK，Worker 崩溃后原批重发。总消息数与 JSON 载荷字节均有
  * 硬顶；越界项只累加两个标量，队列重新有空间后追加一条汇总日志。terminate 时
  * 队列与丢弃计数一起清空。
+ * operationQueue 保存业务与读取的单批在途 FIFO；消费 ACK 后释放，崩溃时业务
+ * 转交恢复 FIFO，查询由宿主拒绝。两份 FIFO 共用条数与字节上限，单批 timer
+ * 超时通知 fatal。terminate 清理全部队列和 timer，Worker 重建按原序重放。
  * diagnosticDrainWaiters 只由并发的进程级 flush 填充，ACK、超时或 terminate
  * 结算清理，容量受同时在途的 shutdown flush 数约束；Worker 重建期间原样等待重放。
  */
@@ -168,6 +176,13 @@ export const diskIORuntime: DiskIORuntime = {
   fatalHandler: undefined,
   fatalSignaled: false,
   pendingBusinessMessages: new LinkedQueue<DiskBusinessMessage>(),
+  pendingBusinessBytes: 0,
+  operationQueue: new AcknowledgedBatchQueue<DiskIOOperationMessage>({
+    maxBatchMessages: DISK_BUSINESS_BATCH_MAX_MESSAGES,
+    maxMessages: DEFAULT_MAX_PENDING_BUSINESS_MESSAGES + DISK_OPERATION_CONTROL_RESERVE,
+    maxCost: DISK_OPERATION_MAX_RETAINED_BYTES,
+  }),
+  operationTimer: null,
   diagnosticQueue: new AcknowledgedBatchQueue<DiskDiagnosticMessage>({
     maxBatchMessages: DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES,
     maxMessages: DISK_DIAGNOSTIC_MAX_PENDING_MESSAGES,

@@ -1,3 +1,7 @@
+[run]
+# 开发命令及依赖 CLI 的 Node shebang 统一由当前 Bun 执行。
+bun = true
+
 [test]
 preload = ["./test/preload.ts"]
 coverageSkipTestFiles = true

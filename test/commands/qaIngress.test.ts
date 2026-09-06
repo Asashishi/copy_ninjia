@@ -1,11 +1,15 @@
 import type { Message, MessageEntity } from "grammy/types";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { Mock } from "bun:test";
+import type { QaFormIngressResult, QaFormSession } from "../../packages/types/qa";
+import type * as QaSession from "../../packages/commands/qa/session";
+import type { DeleteMessageOutcome } from "../../packages/infra/telegram/actions/messageLifecycle";
 import {
   CHAT_QA_ANSWER_MAX_CHARS,
   CHAT_QA_QUESTION_MAX_CHARS,
 } from "../../packages/consts/qa";
 
-const deleteMessageWithOutcome = mock(async (): Promise<unknown> => ({ deleted: true }));
+const deleteMessageWithOutcome: Mock<() => Promise<DeleteMessageOutcome>> = mock(async (): Promise<DeleteMessageOutcome> => "deleted");
 mock.module("../../packages/infra/telegram", () => ({
   deleteMessageWithOutcome,
   logApiError: (): void => {},
@@ -13,14 +17,15 @@ mock.module("../../packages/infra/telegram", () => ({
 let botOwnMessage: boolean = false;
 /** 同步标记还没到、但有界 rendezvous 等到了它——Worker 发送的固有时序。 */
 let lateBotOwnMessage: boolean = false;
+const waitForBotOwnMessage: Mock<() => Promise<boolean>> = mock(async (): Promise<boolean> => botOwnMessage || lateBotOwnMessage);
 mock.module("../../packages/infra/selfSentTracker", () => ({
   isBotOwnMessage: (): boolean => botOwnMessage,
   needsBotOwnMessageWait: (message: Message): boolean => message.chat.type === "channel",
-  waitForBotOwnMessage: async (): Promise<boolean> => botOwnMessage || lateBotOwnMessage,
+  waitForBotOwnMessage,
 }));
 
 const { claimQaFieldMessage } = await import("../../packages/commands/qa/ingress");
-const { openQaFormSession } = await import("../../packages/commands/qa/session");
+const { closeQaFormSession, openQaFormSession }: typeof QaSession = await import("../../packages/commands/qa/session");
 const { resetChatQaCache, qaFormSessions } = await import("../../packages/cache/main/qa");
 
 const CHAT_ID: number = -1001;
@@ -74,10 +79,26 @@ function openForm(openedById: number): void {
 }
 
 beforeEach((): void => {
+  waitForBotOwnMessage.mockClear();
   deleteMessageWithOutcome.mockClear();
   botOwnMessage = false;
   lateBotOwnMessage = false;
   resetChatQaCache();
+});
+
+afterEach((): void => { resetChatQaCache(); });
+
+test("等待频道自发标记期间会话关闭，消息尚未认领且不删除", async (): Promise<void> => {
+  openForm(CHAT_ID);
+  const session: QaFormSession = qaFormSessions.get(CHAT_ID)!;
+  const pending: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
+  waitForBotOwnMessage.mockImplementationOnce((): Promise<boolean> => pending.promise);
+  const task: Promise<QaFormIngressResult | null> = claimQaFieldMessage(channelPost("回答:点置顶"));
+  closeQaFormSession(session);
+  pending.resolve(false);
+  expect(await task).toBeNull();
+  expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
+  expect(session.a).toBeUndefined();
 });
 
 describe("表单投递的认领判据", () => {

@@ -68,6 +68,7 @@ export function setAdDetectWarningNow(value: number): void {
   warningNow = value;
 }
 
+/** 默认空姓名用于单独验证正文、引用与队列语义；姓名用例显式传入 meta。 */
 export function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMessage {
   return {
     type: "adCandidate",
@@ -77,7 +78,7 @@ export function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandid
     text: "随便聊聊",
     linkUrls: [],
     label: "@spammer",
-    meta: { firstName: "Spammer", lastName: "", username: "spammer" },
+    meta: { firstName: "", lastName: "", username: "spammer" },
     isChannel: false,
     isForwarded: false,
     blocked: false,

@@ -90,7 +90,8 @@ function sendStickerForTest({
   state?: any;
   onSent?: (stickerDescription: string, messageId: number) => void;
 }): Promise<string> {
-  return sendStickerTool({ chatAction, stickerLock, chatId, messageThreadId: undefined, menu, argumentsJson, state, onSent });
+  const execution = sendStickerTool({ chatAction, stickerLock, chatId, messageThreadId: undefined, menu, argumentsJson, state, onSent });
+  return Promise.resolve(typeof execution === "string" ? execution : execution.run(chatAction));
 }
 
 describe("aiChat/ai/stickers parseIndexField", () => {
@@ -317,7 +318,7 @@ describe("aiChat/ai/stickers sendStickerTool", () => {
     });
 
     expect(result).toBe(JSON.stringify({ success: true }));
-    expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["choose_sticker", "idle"]);
+    expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["idle", "choose_sticker", "idle"]);
     expect(chatAction.settle).toHaveBeenCalled();
     expect(sendStickerMock).toHaveBeenCalledWith({
       chatId: 123,
@@ -345,7 +346,7 @@ describe("aiChat/ai/stickers sendStickerTool", () => {
     expect(sendStickerMock).toHaveBeenCalledTimes(1);
   });
 
-  test("Telegram 发送失败（sendSticker 返回 undefined）时不回调 onSent、不计入限额、挡位停在 idle 不续回", async () => {
+  test("Telegram 发送失败（sendSticker 返回 undefined）时不回调 onSent、保留预占限额、挡位停在 idle 不续回", async () => {
     sendStickerMock.mockClear();
     sendStickerMock.mockImplementationOnce(async () => undefined);
     const chatAction = chatActionMock();
@@ -363,7 +364,7 @@ describe("aiChat/ai/stickers sendStickerTool", () => {
 
     expect(result).toBe(JSON.stringify({ error: "Failed to send sticker" }));
     expect(called).toBe(false);
-    expect(state.sentStickerUids.size).toBe(0);
+    expect(state.acceptedStickerUids.size).toBe(1);
     // 失败不把挡位续回选择贴纸：模型重试时发送路径会自己重新拉起，就此
     // 放弃时也不留下等不来贴纸的状态。
     expect(chatAction.set).toHaveBeenLastCalledWith("idle");
@@ -404,7 +405,7 @@ describe("aiChat/ai/stickers 同群并发轮的发贴纸锁", () => {
     expect(sendStickerMock).toHaveBeenCalledTimes(1);
   });
 
-  test("发送失败后同一轮换一枚重试：锁已持有直接通过，不被自己挡住", async () => {
+  test("发送失败后同一轮不能绕过预占限额换贴纸重投", async () => {
     sendStickerMock.mockClear();
     sendStickerMock.mockImplementationOnce(async () => undefined);
     const lock = freshLock();
@@ -419,8 +420,8 @@ describe("aiChat/ai/stickers 同群并发轮的发贴纸锁", () => {
       argumentsJson: '{"pack_index": 1, "sticker_index": 2}',
       stickerLock: lock,
       state,
-    })).success).toBe(true);
-    expect(sendStickerMock).toHaveBeenCalledTimes(2);
+    })).error).toContain("Sticker limit reached");
+    expect(sendStickerMock).toHaveBeenCalledTimes(1);
   });
 
   test("锁按群隔离：别的群持锁不影响本群发送", async () => {

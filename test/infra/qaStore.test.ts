@@ -119,7 +119,7 @@ describe("群问答主线程持久化边界", () => {
   test("投递失败仍保留未确认 revision，等重建重放", () => {
     postSucceeds = false;
 
-    setChatQa(CHAT_ID, "怎么入群？", "点置顶");
+    expect((): unknown => setChatQa(CHAT_ID, "怎么入群？", "点置顶")).toThrow("persistence");
 
     expect(unacknowledgedChatQaWrites.get(CHAT_ID)?.has("怎么入群？")).toBeTrue();
     expect(getChatQa(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");

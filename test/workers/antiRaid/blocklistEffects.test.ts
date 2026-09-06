@@ -177,7 +177,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     // 权限变了」——那件事根本不会发生。
     banChatMemberWithOutcome.mockImplementation(async (..._args: unknown[]): Promise<string> =>
       _args[1] === 7 ? "forbidden" : "banned");
-    probeChatAdmin.mockImplementation(async (..._args: unknown[]): Promise<boolean | undefined> => _args[1] === 7);
+    probeChatAdmin.mockImplementation(async (...args: unknown[]): Promise<boolean | undefined> => (args[0] as { userId: number }).userId === 7);
 
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8], probeMembership: false, removalId: 41 },
@@ -185,7 +185,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(probeChatAdmin).toHaveBeenCalledWith(-1001, 7, guardApi);
+    expect(probeChatAdmin).toHaveBeenCalledWith({ chatId: -1001, userId: 7, api: guardApi });
     // 同批其余 id 照常处置完，整批就此落定——不留给按时间的重试，也不闩住群。
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 8, guardApi);
     expect(events).toEqual([

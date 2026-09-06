@@ -20,7 +20,7 @@
  * 文件重跑一次异步读 + parse，仍由唯一的串行 I/O owner 排队。
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { basename, join } from "node:path";
 import type { AdSampleDiskMessage } from "../../types/diskIO/messages";
@@ -69,7 +69,7 @@ export interface AdSampleArchiveEntry {
 export interface SweepExpiredAdSampleArchivesParams {
   today: string;
   listEntries?: () => AdSampleArchiveEntry[];
-  removeFile?: (path: string) => void;
+  removeFile?: (path: string) => Promise<void>;
 }
 
 /**
@@ -88,7 +88,7 @@ function sampleKey(msg: AdSampleDiskMessage): string {
  * 自己的目录，本领域不恢复样本内容，因此挂在启动后维护或第一次写入前，每个
  * isolate 只做一次。
  */
-function sweepOrphanedTemps(): void {
+async function sweepOrphanedTemps(): Promise<void> {
   if (adSampleTempsSwept.current) return;
   adSampleTempsSwept.current = true;
   const prefix: string = `.${basename(AD_SAMPLE_FILE_PATH)}.`;
@@ -96,7 +96,7 @@ function sweepOrphanedTemps(): void {
     for (const name of readdirSync(AD_SAMPLE_MEMORY_DIR)) {
       if (!name.startsWith(prefix) || !name.endsWith(TMP_FILE_SUFFIX)) continue;
       try {
-        unlinkSync(join(AD_SAMPLE_MEMORY_DIR, name));
+        await Bun.file(join(AD_SAMPLE_MEMORY_DIR, name)).delete();
       } catch (error: unknown) {
         console.error(`[diskIOWorker] failed to remove orphaned ad sample temp ${name}:`, error);
       }
@@ -138,11 +138,11 @@ function earliestRetainedArchiveDay(today: string): string {
  * 按归档名里的东京日期清理过期普通文件。清扫和单文件删除都 best effort；
  * 日期先记账，保证失败不会让后续每条样本反复扫描目录。
  */
-export function sweepExpiredAdSampleArchives({
+export async function sweepExpiredAdSampleArchives({
   today,
   listEntries = listAdSampleArchiveEntries,
-  removeFile = unlinkSync,
-}: SweepExpiredAdSampleArchivesParams): void {
+  removeFile = (path: string): Promise<void> => Bun.file(path).delete(),
+}: SweepExpiredAdSampleArchivesParams): Promise<void> {
   const previousDay: string | null = adSampleArchiveSweepDay.current;
   if (previousDay !== null && today <= previousDay) return;
   adSampleArchiveSweepDay.current = today;
@@ -170,7 +170,7 @@ export function sweepExpiredAdSampleArchives({
     }
     if (archiveDay === null || archiveDay >= earliestRetainedDay) continue;
     try {
-      removeFile(join(AD_SAMPLE_MEMORY_DIR, entry.name));
+      await removeFile(join(AD_SAMPLE_MEMORY_DIR, entry.name));
     } catch (error: unknown) {
       console.error(
         `[diskIOWorker] failed to remove expired ad sample archive ${entry.name}:`,
@@ -190,12 +190,12 @@ export function sweepExpiredAdSampleArchives({
 /**
  * 已存在样本目录时清理孤儿临时文件与过期归档；目录尚未使用时保持按需创建语义。
  */
-export function maintainAdSampleFiles(
+export async function maintainAdSampleFiles(
   today: string = getTokyoDateKey()
-): void {
+): Promise<void> {
   if (!existsSync(AD_SAMPLE_MEMORY_DIR)) return;
-  sweepOrphanedTemps();
-  sweepExpiredAdSampleArchives({ today });
+  await sweepOrphanedTemps();
+  await sweepExpiredAdSampleArchives({ today });
 }
 
 /**
@@ -254,8 +254,8 @@ export async function handleAdSampleMessage(
     // 目录在这里按需建：本文件没有启动恢复阶段可以顺带建目录，而首次命中
     // 可能发生在部署后的任何时候。recursive 让它幂等。
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
-    sweepOrphanedTemps();
-    sweepExpiredAdSampleArchives({ today: getTokyoDateKey() });
+    await sweepOrphanedTemps();
+    await sweepExpiredAdSampleArchives({ today: getTokyoDateKey() });
     adSampleFileState.current ??= await openAppendOnlyFile(
       AD_SAMPLE_FILE_PATH,
       PERSISTED_FILE_MODE,

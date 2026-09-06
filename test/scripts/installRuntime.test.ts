@@ -46,16 +46,26 @@ function runFragment(
 
 afterEach(cleanupFixtures);
 
+async function installationCalls(fixture: InstallerFixture): Promise<string> {
+  return (await readText(fixture.callLog)).replaceAll("systemctl-secret-env=absent\n", "");
+}
+
+async function expectReadOnlyServiceQueries(fixture: InstallerFixture): Promise<void> {
+  const calls: string[] = (await readText(fixture.outboundLog)).trim().split("\n");
+  expect(calls.length).toBeGreaterThan(0);
+  for (const call of calls) expect(call).toStartWith("systemctl:guarded:show ");
+}
+
 describe("安装器精确运行时边界", () => {
-  test.each(["1.4.0", "1.4.2", "1.5.0", "2.0.0", "1.4.1-canary.1", "invalid", ""])(
+  test.each(["1.4.0", "1.4.1", "1.5.0", "2.0.0", "1.4.2-canary.1", "invalid", ""])(
     "拒绝不匹配的 Bun %s，并在依赖安装和配置写入前退出",
     async (version: string): Promise<void> => {
       const fixture: InstallerFixture = await createFixture();
       const result: InstallerRunResult = runInstaller(fixture, [], { FAKE_BUN_VERSION: version });
       expect(result.exitCode).not.toBe(0);
       expect(result.output).toContain(`需要 Bun ${REQUIRED_VERSION}`);
-      expect(await readText(fixture.callLog)).toBe("");
-      expect(await readText(fixture.outboundLog)).toBe("");
+      expect(await installationCalls(fixture)).toBe("");
+      await expectReadOnlyServiceQueries(fixture);
       expect(await Bun.file(join(fixture.configRoot, "telegram.json")).exists()).toBe(false);
       expect(await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists()).toBe(false);
     }
@@ -72,8 +82,8 @@ describe("安装器精确运行时边界", () => {
     await writeText(join(fixture.worktree, "package.json"), manifest);
     const result: InstallerRunResult = runInstaller(fixture, []);
     expect(result.exitCode).not.toBe(0);
-    expect(await readText(fixture.callLog)).toBe("manifest:check\n");
-    expect(await readText(fixture.outboundLog)).toBe("");
+    expect(await installationCalls(fixture)).toBe("manifest:check\n");
+    await expectReadOnlyServiceQueries(fixture);
     expect(await Bun.file(join(fixture.configRoot, "telegram.json")).exists()).toBe(false);
   });
 
@@ -86,7 +96,7 @@ describe("安装器精确运行时边界", () => {
       systemdPrompt(),
     ]);
     expect(result.exitCode).toBe(0);
-    expect(await readText(fixture.callLog)).toStartWith("manifest:check\nbun:install\n");
+    expect(await installationCalls(fixture)).toStartWith("manifest:check\nbun:install\n");
   });
 
   test("缺少 Bun 时把精确发行 tag 传给官方安装脚本", async (): Promise<void> => {
@@ -124,7 +134,7 @@ describe("安装器精确运行时边界", () => {
 describe("下载入口转交目标工作树", () => {
   const handoff: string = scriptRange(
     'if [ "$SCRIPT_DIRECTORY" != "$(pwd -P)" ]; then',
-    "\n# clone 那条分支天然带 .git"
+    '\nverify_service_target "$PWD"'
   );
 
   test.each([false, true])(

@@ -26,6 +26,8 @@ export class FakeDiskIOWorker {
   onmessage: ((event: MessageEvent<DiskIOReply>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   readonly messages: DiskIOMessage[] = [];
+  readonly operationBatches: Extract<DiskIOMessage, { type: "operationBatch" }>[] = [];
+  autoAcknowledgeOperations: boolean = true;
   readonly rejectedTypes: Set<DiskIOMessage["type"]> = new Set<DiskIOMessage["type"]>();
   terminated: boolean = false;
   terminateBehavior: FakeDiskIOTerminateBehavior;
@@ -42,6 +44,17 @@ export class FakeDiskIOWorker {
 
   postMessage(message: DiskIOMessage): void {
     if (this.rejectedTypes.has(message.type)) throw new Error(`rejected ${message.type}`);
+    if (message.type === "operationBatch") {
+      for (const operation of message.messages) {
+        if (this.rejectedTypes.has(operation.type)) throw new Error(`rejected ${operation.type}`);
+      }
+      this.operationBatches.push(message);
+      this.messages.push(...message.messages);
+      if (this.autoAcknowledgeOperations) {
+        this.onmessage?.({ data: { type: "operationBatchAccepted", batchId: message.batchId } } as MessageEvent<DiskIOReply>);
+      }
+      return;
+    }
     this.messages.push(message);
   }
 

@@ -1,4 +1,7 @@
+/** Owner: Disk I/O Worker。独占的 SQLite 连接与业务表写缓冲。 */
+
 import { closeStorageDatabase } from "../../../database/interact/connection";
+import { StorageWriteBudget } from "../../../libs/storageWriteBudget";
 import type { PendingBlockedRemoval } from "../../../types/blocklist";
 import type { IdentityPersistenceReply } from "../../../types/diskIO/replies";
 import type {
@@ -14,7 +17,16 @@ import type {
 import type { PendingTemporaryWhitelistWrite } from
   "../../../types/temporaryWhitelist";
 
-/** Disk I/O Worker 独占的 SQLite 连接与业务表写缓冲。 */
+/** Owner: Disk I/O Worker。六表共同的条目与字节预算；写前预约、事务成功清空，重建由主线程重放。 */
+export const storagePendingBudget: StorageWriteBudget = new StorageWriteBudget();
+
+/** Owner: Disk I/O Worker。连续失败与重试截止；成功或重建复位，达到失败上限通知宿主一次。 */
+export const storageWriteRetry: { failures: number; retryAt: number; signaled: boolean } = {
+  failures: 0, retryAt: 0, signaled: false,
+};
+
+/** Owner: Disk I/O Worker。启动安装的容量/持续失败通知；容量一项，isolate 销毁后重新安装。 */
+export const storageWriteFatalReply: { current: (() => void) | null } = { current: null };
 
 /**
  * Owner: Disk I/O Worker。
@@ -72,8 +84,8 @@ export const pendingChatStateWrites: Map<number, PendingChatStateWrite> = new Ma
 /**
  * 群问答未提交最终值，外层按群、内层按问题文本。
  *
- * 容量天然有界：受管群不超过 STATE_MANAGED_CHAT_LIMIT，每群问答不超过
- * CHAT_QA_MAX_PER_CHAT，因此整个缓冲恒定不超过 375 条，不需要额外淘汰策略。
+ * 活跃问答受群数和每群容量限制；删除墓碑与正文共同占用 storagePendingBudget，
+ * 超限拒收新事实，提交成功后才释放，Worker 重建由主线程重放未 ACK 最终值。
  * 一群的最后一条被提交或删除后，外层那一项随之移除，空 Map 不留存。
  */
 export const pendingChatQaWrites: Map<number, Map<string, PendingChatQaWrite>> = new Map();
@@ -120,6 +132,10 @@ export function noteStorageWriteRejected(
 
 /** Worker load/重建前重置同 isolate 状态，避免重复显式 hydrate 污染。 */
 export function resetStorageDatabaseCache(): void {
+  storagePendingBudget.reset();
+  storageWriteRetry.failures = 0;
+  storageWriteRetry.retryAt = 0;
+  storageWriteRetry.signaled = false;
   if (storageDatabaseHandle.current !== null) {
     closeStorageDatabase(storageDatabaseHandle.current);
   }

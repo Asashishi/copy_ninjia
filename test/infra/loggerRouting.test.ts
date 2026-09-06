@@ -62,6 +62,7 @@ describe("logger persistence routing boundary", () => {
       expect(worker.messages).toEqual([expect.objectContaining({ type: "load" })]);
       worker.onmessage!({ data: {
         type: "loaded",
+        wedMembers: new Map(),
         aiMemories: new Map(),
         stickerCatalogs: new Map(),
         luckDay: null,
@@ -77,7 +78,7 @@ describe("logger persistence routing boundary", () => {
         whitelistEntryCount: 0,
         chatStates: new Map(),
         chatQa: new Map(),
-      } satisfies DiskIOReply } as MessageEvent<DiskIOReply>);
+      } satisfies DiskIOReply } as unknown as MessageEvent<DiskIOReply>);
       await loaded;
       worker.messages.length = 0;
 

@@ -2,16 +2,16 @@ import { MAX_REACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
 import { setMessageReaction } from "../../../../infra/telegram";
-import type { ReplyToolContext } from "../../../../types/aiChat/replies";
+import type { ReplyToolContext, ReplyToolExecution } from "../../../../types/aiChat/replies";
 import { getReactionEmojis } from "../../reactions";
 import { parseStringField } from "../../utils/toolArgs";
 
 export function createAddReactionExecutor(
   ctx: ReplyToolContext
-): (argumentsJson: string) => Promise<string> {
+): (argumentsJson: string) => ReplyToolExecution {
   const reactionEmojis: readonly string[] = getReactionEmojis();
   let reactionCount: number = 0;
-  return async (argumentsJson: string): Promise<string> => {
+  return (argumentsJson: string): ReplyToolExecution => {
     if (!ctx.isActive()) {
       return toolError(REPLY_INVALIDATED_TOOL_ERROR);
     }
@@ -24,14 +24,20 @@ export function createAddReactionExecutor(
         `Reaction limit reached: at most ${MAX_REACTIONS_PER_REPLY} reaction per reply`
       );
     }
-    const sent: boolean = await setMessageReaction({
-      chatId: ctx.chatId,
-      messageId: ctx.replyToMessageId,
-      emoji,
-      signal: ctx.signal,
-    });
-    if (!sent) return toolError("Failed to set reaction");
     reactionCount++;
-    return JSON.stringify({ success: true });
+    return {
+      result: JSON.stringify({ success: true, queued: true, actions_used: 1 }),
+      run: async (): Promise<string> => {
+        if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
+        const sent: boolean = await setMessageReaction({
+          chatId: ctx.chatId,
+          messageId: ctx.replyToMessageId,
+          emoji,
+          signal: ctx.signal,
+        });
+        if (!sent) return toolError("Failed to set reaction");
+        return JSON.stringify({ success: true });
+      },
+    };
   };
 }

@@ -2,7 +2,7 @@
  * `/set_qa` 表单的会话状态机。
  *
  * 会话**按群唯一**，只活在主线程内存里。两项填齐即结算：写进热表并排进 SQLite，
- * 然后删掉表单消息。到期由自己的 timer 结算，不留半张表单。
+ * 然后删掉表单消息。到期由自己的 timer 关闭并交出删除责任。
  *
  * 表里按群索引、按 `openedById` 鉴权：同一群同时只有一张表单，而只有开表单的
  * 那个可见身份能往里填（见 types/qa.ts 的 QaFormSession 与 qa/ingress.ts）。
@@ -20,17 +20,17 @@ export function findQaFormSession(chatId: number): QaFormSession | undefined {
 /**
  * 结束一张表单：停掉 timer 并从表里摘掉。
  *
- * 幂等：摘除前先确认表里那一项仍然是同一个对象，因此「两项填齐」与 TTL 到期
- * 撞在一起也不会重复摘除。表单消息的删除由调用方负责。
+ * 返回是否关闭了当前会话；旧会话不能删除重开的新会话，也不能再次结算。
+ * 表单消息的删除由调用方负责。
  */
-export function closeQaFormSession(session: QaFormSession): void {
+export function closeQaFormSession(session: QaFormSession): boolean {
   if (session.timer !== null) {
     clearTimeout(session.timer);
     session.timer = null;
   }
-  if (qaFormSessions.get(session.chatId) === session) {
-    qaFormSessions.delete(session.chatId);
-  }
+  if (qaFormSessions.get(session.chatId) !== session) return false;
+  qaFormSessions.delete(session.chatId);
+  return true;
 }
 
 /** 建立一张新表单的入参。 */

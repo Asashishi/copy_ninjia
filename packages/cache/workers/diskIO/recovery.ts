@@ -23,6 +23,9 @@ export const diskIOOperationTail: { current: Promise<void> } = {
   current: Promise.resolve(),
 };
 
+/** Owner: Disk I/O Worker。入队自增、结算递减，最多八项；isolate 重建从零开始。 */
+export const diskIOOperationCount: { current: number } = { current: 0 };
+
 /** 仅供单测在用例之间重置窗口状态，避免一个用例遗留的 true 影响下一个。 */
 export function resetDiskIOReplayWindow(): void {
   diskIOReplayWindow.current = false;

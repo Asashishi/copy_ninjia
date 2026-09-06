@@ -18,6 +18,7 @@ import { chatQaCount, getChatQa, removeChatQa, setChatQa } from "../infra/qaStor
 import { forumTopicThreadId } from "../libs/forumTopic";
 import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
+import { throwIfUpdateAborted } from "../infra/updateContext";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
@@ -87,9 +88,7 @@ export async function handleSetQaCommand(ctx: CommandContext<Context>): Promise<
   }
   const openedById: number | undefined = resolveCommandActor(ctx)?.id;
   if (openedById === undefined) return;
-  // 表单按群唯一，因此「重开」有两种：同一个人重来一次（旧表单连同它那条消息
-  // 一起作废，从两项皆空开始），和另一个人来抢——后者当场拒绝，不悄悄顶掉别人
-  // 填了一半的那张，理由同 formBusy：被顶掉的人只会看到表单突然消失。
+  // 同一发起人可重开；其他身份不能替换当前会话。
   const existing: QaFormSession | undefined = findQaFormSession(chatId);
   if (existing !== undefined && existing.openedById !== openedById) {
     await sendCommandMessage({
@@ -113,61 +112,63 @@ export async function handleSetQaCommand(ctx: CommandContext<Context>): Promise<
     });
     return;
   }
-  await sendQaForm({
-    chatId,
-    text: renderQaFormPrompt(undefined, undefined),
-    replyToMessageId: messageId,
-    messageThreadId: forumTopicThreadId(ctx.msg),
-    // 拿到 id 的同步时点就登记：停机 abort 会丢掉返回值，但不能丢掉这条
-    // 已发消息的删除责任。
-    onSent: (formMessageId: number): void => {
-      session.formMessageId = formMessageId;
-    },
-  });
+  try {
+    const formMessageId: number | undefined = await sendQaForm({
+      chatId,
+      text: renderQaFormPrompt(undefined, undefined),
+      replyToMessageId: messageId,
+      messageThreadId: forumTopicThreadId(ctx.msg),
+      // 拿到 id 的同步时点就登记：停机 abort 会丢掉返回值，但不能丢掉这条
+      // 已发消息的删除责任。
+      onSent: (formMessageId: number): void => {
+        session.formMessageId = formMessageId;
+        if (findQaFormSession(chatId) !== session) discardQaForm(session);
+      },
+    });
+    if (formMessageId === undefined) {
+      closeQaFormSession(session);
+      discardQaForm(session);
+    }
+  } catch (error: unknown) {
+    closeQaFormSession(session);
+    discardQaForm(session);
+    throw error;
+  }
 }
 
 /** 两项填齐后落库并回执；表单在回执之后才删。 */
 async function settleQaForm(session: QaFormSession, q: string, a: string): Promise<void> {
   const chatId: number = session.chatId;
   const formMessageId: number | undefined = session.formMessageId;
-  // 先结算会话——落库期间没人能再往这张表单里投东西。但**先别删表单消息**：
-  // 回执要回复到它身上才能留在同一个话题里，而回复一条已删除的消息会被
-  // Telegram 降级成普通发送，于是又落回 General。删除排在回执之后。
-  closeQaFormSession(session);
-  let outcome: "created" | "replaced";
+  // 同步取得结算资格后写入；表单保留到回执完成，以维持话题内的回复关系。
+  throwIfUpdateAborted();
+  if (!closeQaFormSession(session)) return;
   try {
-    outcome = setChatQa(chatId, q, a);
-  } catch (error: unknown) {
-    logger.error(`Failed to record the qa entry for chat ${chatId}:`, error);
-    // 容量拒绝时那条根本没进热表，落盘失败时已经进了——回执必须按这个分，
-    // 把「盘写不进去」说成「满了」会让人去删别的问答，白删还是写不进。
-    const landed: boolean = getChatQa(chatId)?.get(q) === a;
+    let outcome: "created" | "replaced";
+    try {
+      outcome = setChatQa(chatId, q, a);
+    } catch (error: unknown) {
+      logger.error(`Failed to record the qa entry for chat ${chatId}:`, error);
+      await sendCommandMessage({
+        chatId,
+        text: error instanceof ChatQaCapacityError ? QA_COMMAND_TEXTS.full : QA_COMMAND_TEXTS.persistFailed,
+        replyToMessageId: formMessageId,
+      });
+      return;
+    }
     await sendCommandMessage({
       chatId,
-      text: landed ? QA_COMMAND_TEXTS.persistFailed : QA_COMMAND_TEXTS.full,
+      text: outcome === "replaced" ? QA_COMMAND_TEXTS.replaced : QA_COMMAND_TEXTS.created,
       replyToMessageId: formMessageId,
     });
+  } finally {
     discardQaForm(session);
-    return;
   }
-  await sendCommandMessage({
-    chatId,
-    text: outcome === "replaced" ? QA_COMMAND_TEXTS.replaced : QA_COMMAND_TEXTS.created,
-    replyToMessageId: formMessageId,
-  });
-  discardQaForm(session);
 }
 
 /**
- * 表单投递消息的入口；必须排在命令与消息流水线之前。
- *
- * **常态同步返回 false**：绝大多数群任何时刻都没有未完成的表单，判定就是一次
- * 以群 id 为键的 Map.get。本 handler 挂在每条群消息与频道帖之前（见
- * app/registerHandlers.ts），不能为这条恒假的判定给每条消息分配一个 Promise。
- * 判据顺序与 qa/ingress.ts 的 claimQaFieldMessage 一致：最便宜的那道排最前。
- *
- * @returns 是否已认领这条消息。认领后调用方必须终止本条 update 的后续处理——
- *   那条投递消息已经被删掉，再喂给 AI 或复读链路只会处理一个不存在的东西。
+ * 消息流水线前置认领入口，无会话时同步返回 false，不分配 Promise。
+ * 进入删除流程后返回 true，禁止下游再次处理该消息；见 docs/cn/04-invariants.md。
  */
 export function handleQaMessageIngress(message: Message): boolean | Promise<boolean> {
   if (findQaFormSession(message.chat.id) === undefined) return false;
@@ -180,6 +181,8 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
   if (claimed === null) return false;
   const session: QaFormSession = claimed.session;
   const chatId: number = session.chatId;
+  throwIfUpdateAborted();
+  if (findQaFormSession(chatId) !== session) return true;
 
   // 超长的那一项没写进会话，先把它说清楚；表单留着等一条合规的重发。同一条
   // 消息里另一项合规时它已经进了会话，表单要跟上；两项都被挡下时会话一个字
@@ -188,6 +191,7 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
     if (claimed.accepted.q !== undefined || claimed.accepted.a !== undefined) {
       await editQaForm(session, renderQaFormPrompt(session.q, session.a));
     }
+    if (findQaFormSession(chatId) !== session) return true;
     await sendCommandMessage({
       chatId,
       text: claimed.questionTooLong
@@ -206,6 +210,7 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
     // 还差一项：表单先跟上，再告诉用户已经收下哪一样。回执 30 秒后就自删，
     // 之后只有表单还说得出这张单子填到了哪（见 qa/notices.ts 的 editQaForm）。
     await editQaForm(session, renderQaFormPrompt(q, a));
+    if (findQaFormSession(chatId) !== session) return true;
     await sendCommandMessage({
       chatId,
       text: claimed.accepted.q !== undefined
@@ -315,3 +320,4 @@ export function teardownQaInChat(chatId: number): void {
 }
 
 registerChatTeardown("qa", teardownQaInChat);
+import { ChatQaCapacityError } from "../infra/qaStore";

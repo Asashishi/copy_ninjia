@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
+import type { GenerateAndSendReplyParams } from "../../../packages/workers/aiChat/replyPipeline";
 import type { StickerCatalogEntry } from "../../../packages/types/stickers/catalog";
 
 const describeMedia = mock(async (..._args: unknown[]): Promise<string | null> => "一只戴帽子的猫");
@@ -84,20 +85,19 @@ describe("AI 媒体触发的生图参考图", () => {
         width: 1600,
         height: 900,
       },
-      mediaComment: expect.objectContaining({
-        senderId: 7,
-        triggerText: "[图片：一只戴帽子的猫] @bot 把它画成油画",
-        forwardedFrom: "频道 [id:-100666] 东京日报",
-        triggerReference: {
-          messageId: 10,
-          id: 7,
-          firstName: "Alice",
-          lastName: "",
-          text: "[图片：一只戴帽子的猫] @bot 把它画成油画",
-          forwardedFrom: "频道 [id:-100666] 东京日报",
-        },
-      }),
+      mediaPreparation: expect.any(Promise),
     }));
+    const params = generateAndSendReply.mock.calls[0]![0] as GenerateAndSendReplyParams;
+    expect(await params.mediaPreparation).toMatchObject({
+      senderId: 7,
+      triggerText: "[图片：一只戴帽子的猫] @bot 把它画成油画",
+      forwardedFrom: "频道 [id:-100666] 东京日报",
+      triggerReference: {
+        messageId: 10, id: 7, firstName: "Alice", lastName: "",
+        text: "[图片：一只戴帽子的猫] @bot 把它画成油画",
+        forwardedFrom: "频道 [id:-100666] 东京日报",
+      },
+    });
     const bufferedEntry = pushBufferedMessage.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(bufferedEntry.messageId).toBe(10);
     expect(bufferedEntry.fileId).toBeUndefined();
@@ -145,5 +145,20 @@ describe("AI 媒体触发的生图参考图", () => {
 
     expect(generateAndSendReply).toHaveBeenCalledTimes(1);
     expect(generateAndSendReply.mock.calls[0]?.[0]).not.toHaveProperty("imageGenerationReference");
+  });
+
+  test("识别开始前已准入占位，直接触发失败提供兜底，随机评价失败完成空占位", async () => {
+    describeMedia.mockImplementationOnce(async (): Promise<null> => {
+      expect(generateAndSendReply).toHaveBeenCalledTimes(1);
+      return null;
+    });
+    recordChatMedia(photoMessage());
+    const direct = generateAndSendReply.mock.calls[0]![0] as GenerateAndSendReplyParams;
+    expect(await direct.mediaPreparation).toMatchObject({ directTriggerReason: "mention" });
+    expect((await direct.mediaPreparation)?.description).not.toBe("");
+    describeMedia.mockResolvedValueOnce(null);
+    recordChatMedia({ ...photoMessage(), directTriggerReason: undefined, commentOnResolve: true });
+    const random = generateAndSendReply.mock.calls[1]![0] as GenerateAndSendReplyParams;
+    expect(await random.mediaPreparation).toBeNull();
   });
 });

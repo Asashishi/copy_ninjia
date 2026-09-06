@@ -70,8 +70,8 @@ describe("/set_qa 表单会话", () => {
       onDiscard: noop,
     })!;
 
-    closeQaFormSession(session);
-    closeQaFormSession(session);
+    expect(closeQaFormSession(session)).toBeTrue();
+    expect(closeQaFormSession(session)).toBeFalse();
 
     expect(qaFormSessions.size).toBe(0);
     expect(findQaFormSession(CHAT_ID)).toBeUndefined();

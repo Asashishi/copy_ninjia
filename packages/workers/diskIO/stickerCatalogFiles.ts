@@ -30,7 +30,7 @@ function scheduleStickerCatalogFlush(): void {
 
 /** 跨域启动第一阶段：只读扫描全部目录快照，孤儿也先严格解码。 */
 export async function inspectStickerCatalogSnapshots(
-  activePacks: readonly string[]
+  activePacks: readonly string[] | null
 ): Promise<StickerCatalogRecoveryInspection> {
   return inspectStickerCatalogs(activePacks);
 }
@@ -44,10 +44,10 @@ export function adoptStickerCatalogSnapshots(
 }
 
 /** 跨域启动成功后的临时文件与已验证孤儿清理。 */
-export function maintainStickerCatalogSnapshots(
+export async function maintainStickerCatalogSnapshots(
   inspection: StickerCatalogRecoveryInspection
-): void {
-  maintainStickerCatalogFiles(inspection);
+): Promise<void> {
+  await maintainStickerCatalogFiles(inspection);
 }
 
 /** 覆盖式目录的 markDirty 边界。 */

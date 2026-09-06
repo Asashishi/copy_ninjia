@@ -28,7 +28,7 @@ import { serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOn
 async function initLogFiles(): Promise<void> {
   const inspection = await inspectLogFiles();
   adoptLogFiles(inspection);
-  maintainLogFiles(inspection);
+  await maintainLogFiles(inspection);
 }
 
 beforeEach(() => {
@@ -77,7 +77,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     expect(existsSync(stalePath)).toBeTrue();
     expect(existsSync(tempPath)).toBeTrue();
 
-    maintainLogFiles(inspection);
+    await maintainLogFiles(inspection);
     expect(existsSync(stalePath)).toBeFalse();
     expect(existsSync(tempPath)).toBeFalse();
   });

@@ -46,7 +46,7 @@ import { buildRuntimeStateBlock } from "./runtimeState";
  *
  * toolset 包含 packages/aiChat/ai/tools 的静态查询函数（当前为东京天气）和
  * 按轮组装的行动工具（发言、反应、两层贴纸及符合资格时的生图/生歌）；可见
- * 副作用在工具执行时发生。服务端检索工具由 toolset.webSearch 单独声明，并由
+ * 副作用在接纳后的独立调用链内发生。服务端检索工具由 toolset.webSearch 单独声明，并由
  * 供应商执行。
  *
  * 查时间不走工具：当前时间与今天的心情拼进 user 内容的运行时状态区块（见
@@ -80,7 +80,7 @@ function systemPrompt(): string {
  *   直接传给供应商会话。
  * @returns 模型最后一轮的正文文本（正常情况下模型已通过工具把话说完、正文
  *   为空）；请求失败、超时、被 token 上限腰斩或空输出时返回 null。调用方
- *   只在模型没有成功执行任何可见动作时才把它经 send_message 当兜底回复用。
+ *   只在模型没有接纳任何可见动作时才把它经 send_message 当兜底回复用。
  */
 export async function generateReply(
   chatId: number,
@@ -175,9 +175,8 @@ export async function generateReply(
 
     const functionCalls: readonly AiFunctionCall[] = turn.functionCalls;
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
-      // 同一轮的多个调用按序执行——模型并行抛出「先发言后贴纸」时，落地
-      // 顺序与它给出的顺序一致。结果攒齐后一次性喂回会话（会话自己负责把
-      // 模型这一轮的输出原样接回，见各实现包的 appendToolOutputs）。
+      // 按模型顺序校验与接纳；发送回乐观结果，查看与查询回真实数据。
+      // 实际调用链和 Telegram 排队不参与本次模型往返的等待。
       const outputs: AiToolOutput[] = [];
       for (const call of functionCalls) {
         if (!toolset.isActive()) return null;

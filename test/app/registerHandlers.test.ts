@@ -81,6 +81,7 @@ describe("application handler registration", () => {
       "nya_copy",
       "ja_copy",
       "steal_icon",
+      "wed",
       "reset_icon",
       "stop_copy",
       "block",

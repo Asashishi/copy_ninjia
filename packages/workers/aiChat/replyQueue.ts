@@ -26,8 +26,8 @@ export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaComm
 }
 
 /**
- * 保存直接触发的必要快照。媒体解析可能异步完成，直接使用已解析的发送人和
- * 描述；文本触发按 replyToMessageId 到热区索引里取那一条。
+ * 保存直接触发的必要快照。媒体同步保存入站身份、占位正文和解析 Promise，
+ * 补跑时使用解析结果；文本触发按 replyToMessageId 到热区索引里取那一条。
  *
  * **不能取缓冲区尾条**：主线程把 `record` 与 `trigger` 作为两条独立消息投过来，
  * 两者之间在途轮次的 `onMessageSent` 完全可能把机器人自己的消息推进 chatBuffers。
@@ -49,6 +49,7 @@ export interface PushReplyTriggerParams {
   /** 触发消息所在的论坛话题；补跑那一轮仍然回到当初那个话题。 */
   messageThreadId: number | undefined;
   mediaTrigger?: MediaCommentContext;
+  mediaPreparation?: Promise<MediaCommentContext | null>;
 }
 
 /**
@@ -70,6 +71,7 @@ export function pushReplyTrigger({
   chatQa,
   messageThreadId,
   mediaTrigger,
+  mediaPreparation,
 }: PushReplyTriggerParams): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) {
@@ -95,6 +97,7 @@ export function pushReplyTrigger({
         mediaTrigger.triggerText ?? resolvedTagFor(mediaTrigger.kind, mediaTrigger.description),
         QUEUED_TRIGGER_SNIPPET_MAX_CHARS
       ),
+      mediaPreparation,
     });
     return;
   }
@@ -115,6 +118,7 @@ export function pushReplyTrigger({
     messageThreadId,
     senderName: triggerEntry ? displayBufferedMessageName(triggerEntry) : "",
     text: triggerEntry ? truncateInline(triggerEntry.text, QUEUED_TRIGGER_SNIPPET_MAX_CHARS) : "",
+    mediaPreparation,
   });
 }
 
@@ -136,15 +140,10 @@ export function flushOverflowNotice(chatId: number): void {
 }
 
 /**
- * 在并发位空出后按 FIFO 补跑直接触发。启动回调会同步占用并发位，并回报本次
- * 是否真的开了一轮；没开成就停下，把这条留在队首。
- *
- * 「没开成就继续看下一项」是错的：限频闸只看这个群 5 分钟窗口内的轮数，与
- * 具体是哪一条触发无关（见 states/replyAdmission.ts 的 admitRound），第一条被
- * 拒就意味着后面每一条都会被拒。而被拒时并发计数不增长，循环条件永远为真——
- * 一次 drain 会在同一个同步 tick 里把队列上限 25 条 @提及/回复整队 shift 掉
- * 全部丢弃，那 25 个人一句回复都收不到，还只收得到一条限频提示（提示本身有
- * 60 秒冷却）。留在队首则等窗口空出来后由下一轮结束时的 drain 补跑。
+ * 按 FIFO 逐个调用启动回调；回调同步占用模型并发位并预留发送顺位后，
+ * 立即移除待处理项，再按剩余模型位派发下一项，不等待发送链的结果。
+ * 启动被限频拒绝时保留队首并停止派发；取消与收尾由轮次的代际任务持有。
+ * 具体生命周期约束见 docs/cn/04-invariants.md。
  */
 export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: QueuedReplyTrigger) => boolean): void {
   const queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
@@ -157,7 +156,7 @@ export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: Queu
       : REPLY_ROUND_MAX_CONCURRENT;
     if ((activeReplyCounts.get(chatId) ?? 0) >= maxConcurrent) break;
     // 先 peek、开成了再出队：拒绝的那一条不能被吞掉。回调是同步的（真正的
-    // 生成发送 fire-and-forget，onFinished 至少晚一个微任务），因此这里不会
+    // 模型任务异步执行，完成回调至少晚一个微任务），因此这里不会
     // 被自己重入。
     if (!startQueuedRound(trigger)) break;
     queue.shift();

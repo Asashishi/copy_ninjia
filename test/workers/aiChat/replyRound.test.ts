@@ -19,6 +19,7 @@ const createStickerSendLock = mock((_chatId: number) => ({
   release: stickerLockRelease,
 }));
 const execute = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
+const settleActions = mock(async (): Promise<void> => {});
 let actionsUsed: number = 1;
 let capturedContext: ReplyToolContext | null = null;
 const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyToolset> => {
@@ -30,6 +31,8 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
     has: (): boolean => true,
     execute,
     actionsUsed: (): number => actionsUsed,
+    settle: settleActions,
+    actionsCompleted: (): number => actionsUsed,
     isActive: ctx.isActive,
   };
 });
@@ -68,6 +71,7 @@ const {
   longTriggerTimes,
   rateLimitNoticeTimes,
   replyGenerations,
+  replyGenerationTasks,
   resetAiChatReplyCache,
 } = await import("../../../packages/cache/workers/aiChat/replies");
 const { invalidateChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
@@ -75,8 +79,8 @@ const { TimestampDeque } = await import("../../../packages/libs/timestampDeque")
 const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../packages/consts/aiChat/rateLimit");
 const { SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
 
-function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}): Promise<number> {
-  return new Promise((resolve) => {
+async function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}): Promise<number> {
+  const chatId: number = await new Promise<number>((resolve) => {
     startReplyRound({
       chatId: -1001,
       triggerSenderId: 7,
@@ -87,6 +91,13 @@ function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}
       ...overrides,
     }, resolve);
   });
+  for (const tasks of replyGenerationTasks.values()) await Promise.allSettled(tasks);
+  return chatId;
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt: number = 0; attempt < 100 && !predicate(); attempt++) await Bun.sleep(1);
+  expect(predicate()).toBe(true);
 }
 
 beforeEach(() => {
@@ -102,6 +113,7 @@ beforeEach(() => {
   createStickerSendLock.mockClear();
   createReplyToolset.mockClear();
   execute.mockClear();
+  settleActions.mockReset().mockResolvedValue();
   execute.mockImplementation(async (): Promise<string> => JSON.stringify({ success: true }));
   generateReply.mockClear();
   generateReply.mockImplementation(async (): Promise<string | null> => "最终正文");
@@ -117,6 +129,73 @@ afterEach(() => {
 });
 
 describe("AI 单轮回复生命周期", () => {
+  test.each(["模型完成", "发送收尾"])("%s 通知抛错仍等待发送链、心跳与贴纸锁释放", async (phase) => {
+    const pending = Promise.withResolvers<void>();
+    const notified = Promise.withResolvers<void>();
+    settleActions.mockImplementationOnce(() => pending.promise);
+    const failure = new Error("reply completion notification failed");
+    const fail = (): void => { throw failure; };
+    startReplyRound({
+      chatId: -1001,
+      triggerSenderId: 7,
+      replyToMessageId: 10,
+      messageThreadId: undefined,
+      imageGenerationRequested: false,
+      isRandomTrigger: false,
+    }, (): void => {
+      notified.resolve();
+      if (phase === "发送收尾") fail();
+    }, phase === "模型完成" ? fail : undefined);
+    try {
+      await waitUntil(() => settleActions.mock.calls.length === 1);
+      expect(settleActions).toHaveBeenCalledTimes(1);
+      expect(activeReplyCounts.has(-1001)).toBe(false);
+      expect(replyGenerationTasks.size).toBe(1);
+      expect(heartbeatStop).not.toHaveBeenCalled();
+      expect(stickerLockRelease).not.toHaveBeenCalled();
+      pending.resolve();
+      await notified.promise;
+      for (const tasks of replyGenerationTasks.values()) await Promise.allSettled(tasks);
+      expect(heartbeatStop).toHaveBeenCalledTimes(1);
+      expect(stickerLockRelease).toHaveBeenCalledTimes(1);
+      expect(logError).toHaveBeenCalledWith("Error in AI reply task:", failure);
+    } finally {
+      pending.resolve();
+      for (const tasks of replyGenerationTasks.values()) await Promise.allSettled(tasks);
+    }
+  });
+
+  test("模型完成释放并发位，发送顺位与资源仍持有到实际发送收尾", async () => {
+    const pending = Promise.withResolvers<void>();
+    settleActions.mockImplementationOnce(() => pending.promise);
+    const finished = Promise.withResolvers<number>();
+    expect(startReplyRound({
+      chatId: -1001,
+      triggerSenderId: 7,
+      replyToMessageId: 10,
+      messageThreadId: undefined,
+      imageGenerationRequested: false,
+      isRandomTrigger: false,
+    }, finished.resolve)).toBe(true);
+    try {
+      await waitUntil(() => settleActions.mock.calls.length === 1);
+      expect(activeReplyCounts.has(-1001)).toBe(false);
+      expect(replyGenerationTasks.size).toBe(1);
+      expect(heartbeatStop).not.toHaveBeenCalled();
+      expect(stickerLockRelease).not.toHaveBeenCalled();
+      const tasks: Promise<void>[] = [...replyGenerationTasks.values()].flatMap((entries) => [...entries]);
+      pending.resolve();
+      await Promise.allSettled(tasks);
+      expect(await finished.promise).toBe(-1001);
+      expect(activeReplyCounts.has(-1001)).toBe(false);
+      expect(heartbeatStop).toHaveBeenCalledTimes(1);
+      expect(stickerLockRelease).toHaveBeenCalledTimes(1);
+    } finally {
+      pending.resolve();
+      for (const tasks of replyGenerationTasks.values()) await Promise.allSettled(tasks);
+    }
+  });
+
   test("模型只返回最终正文时统一走 send_message 兜底，并成对释放资源", async () => {
     actionsUsed = 0;
     execute.mockImplementationOnce(async (): Promise<string> => {

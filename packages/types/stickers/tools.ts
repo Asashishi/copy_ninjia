@@ -20,5 +20,5 @@ export interface StickerPackCandidate {
 
 export interface StickerRoundState {
   viewedPackIntents: Map<number, string>;
-  sentStickerUids: Set<string>;
+  acceptedStickerUids: Set<string>;
 }

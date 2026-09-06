@@ -280,6 +280,7 @@ describe("Telegram Worker 双工代理", () => {
     const signal: AbortSignal = new AbortController().signal;
 
     await sendTemporaryMessageFromMain({
+      purpose: "adWarning",
       chatId: -1001,
       identityId: 7,
       text: "temporary",
@@ -290,6 +291,7 @@ describe("Telegram Worker 双工代理", () => {
     expect(duplexRequests).toEqual([{
       request: {
         operation: "sendTemporaryMessage",
+        purpose: "adWarning",
         category: "message",
         chatId: -1001,
         identityId: 7,
@@ -456,6 +458,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
 
     await expect(handleAntiRaidWorkerTelegramRequest({
       operation: "sendTemporaryMessage",
+      purpose: "adWarning",
       category: "message",
       chatId: -1001,
       identityId: 7,
@@ -484,6 +487,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
     const signal: AbortSignal = new AbortController().signal;
     await expect(handleAntiRaidWorkerTelegramRequest({
       operation: "sendTemporaryMessage",
+      purpose: "adWarning",
       category: "message",
       chatId: -1001,
       identityId: 7,
@@ -492,6 +496,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
     }, signal)).rejects.toThrow("positive safe integer");
     await expect(handleAntiRaidWorkerTelegramRequest({
       operation: "sendTemporaryMessage",
+      purpose: "adWarning",
       category: "message",
       chatId: -1001,
       identityId: 7,
@@ -646,4 +651,32 @@ describe("主线程 Telegram Worker 能力边界", () => {
     }, signal)).rejects.toThrow("category does not match");
     expect(rawSendMessage).not.toHaveBeenCalled();
   });
+});
+
+test("AI 普通群提示带话题进入主线程清理，广告豁免能力仍不可用", async (): Promise<void> => {
+  const signal: AbortSignal = new AbortController().signal;
+  await expect(handleAiWorkerTelegramRequest({
+    operation: "sendTemporaryMessage", purpose: "notice", category: "message",
+    chatId: -1001, text: "限频", messageThreadId: 23, deleteAfterMs: 30_000,
+  }, signal)).resolves.toEqual({ messageId: 88, sentAt: expect.any(Number) });
+  expect(actionSendMessage).toHaveBeenCalledWith(expect.objectContaining({ messageThreadId: 23 }));
+  expect(deleteMessageAfter).toHaveBeenCalledTimes(1);
+  await expect(handleAiWorkerTelegramRequest({
+    operation: "sendTemporaryMessage", purpose: "adWarning", category: "message",
+    chatId: -1001, identityId: 7, text: "广告", deleteAfterMs: 30_000,
+  }, signal)).rejects.toThrow("unsupported Telegram capability");
+});
+
+test("远端发送成功后取消结果仍保留删除任务，发送失败不创建任务", async (): Promise<void> => {
+  const controller: AbortController = new AbortController();
+  actionSendMessage.mockImplementationOnce(async (params: { onSent?: (id: number) => void }): Promise<number> => {
+    params.onSent?.(88); controller.abort(); return 88;
+  });
+  const request: TelegramWorkerRequest = { operation: "sendTemporaryMessage", purpose: "notice", category: "message", chatId: -1001, text: "操作回执", deleteAfterMs: 30_000 };
+  await handleAntiRaidWorkerTelegramRequest(request, controller.signal).catch((): undefined => undefined);
+  expect(deleteMessageAfter).toHaveBeenCalledTimes(1);
+  deleteMessageAfter.mockClear();
+  actionSendMessage.mockImplementationOnce(async (): Promise<number> => { throw new Error("send failed"); });
+  await expect(handleAntiRaidWorkerTelegramRequest(request, new AbortController().signal)).rejects.toThrow("send failed");
+  expect(deleteMessageAfter).not.toHaveBeenCalled();
 });

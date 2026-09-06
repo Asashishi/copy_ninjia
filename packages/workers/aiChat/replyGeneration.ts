@@ -4,10 +4,12 @@ import {
   replyGenerations,
   replyAbortControllers,
   replyGenerationTasks,
+  activeReplyCounts,
 } from "../../cache/workers/aiChat/replies";
 import { invalidateChatRuntimeCache } from "../../cache/workers/aiChat/index";
 import { AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS } from "../../consts/lifecycle";
 import { logger } from "../../infra/logger";
+import { settleWithinBudget } from "../../libs/inflight";
 
 /**
  * AI 回复 epoch 与其异步任务的统一生命周期边界。回复轮、限频提示、媒体描述和
@@ -24,6 +26,13 @@ export function isReplyGenerationCurrent(chatId: number, generation: number): bo
 
 function generationKey(chatId: number, generation: number): string {
   return `${chatId}:${generation}`;
+}
+
+/** 记忆淘汰优先保护在途模型和当前代际尚未结算的任务，包含独立发送链。 */
+export function hasActiveAiChatTasks(chatId: number): boolean {
+  if ((activeReplyCounts.get(chatId) ?? 0) > 0) return true;
+  const generation: number | undefined = replyGenerations.get(chatId);
+  return generation !== undefined && (replyGenerationTasks.get(generationKey(chatId, generation))?.size ?? 0) > 0;
 }
 
 /** 取得本轮 generation 的唯一取消信号。 */
@@ -110,16 +119,7 @@ export function invalidateChatReplies(chatId: number): Promise<void> {
     return Promise.resolve();
   }
   const pending: number = tasks.size;
-  const drained: Promise<boolean> = Promise.allSettled([...tasks]).then((): boolean => true);
-  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
-  const expired: Promise<boolean> = new Promise((resolve: (value: boolean) => void): void => {
-    expiryTimer = setTimeout(
-      (): void => resolve(false),
-      AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS
-    );
-    expiryTimer.unref();
-  });
-  return Promise.race([drained, expired]).then((settled: boolean): void => {
+  return settleWithinBudget(tasks, AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS).then((settled: boolean): void => {
     if (!settled) {
       logger.error(
         `AI chat invalidation for chat ${chatId} gave up waiting on ${pending} generation task(s) ` +
@@ -128,7 +128,5 @@ export function invalidateChatReplies(chatId: number): Promise<void> {
     }
     replyGenerationTasks.delete(key);
     replyAbortControllers.delete(key);
-  }).finally((): void => {
-    if (expiryTimer !== undefined) clearTimeout(expiryTimer);
   });
 }

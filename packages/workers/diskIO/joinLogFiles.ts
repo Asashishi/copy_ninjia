@@ -64,7 +64,7 @@ async function ensureCurrentDayPrepared(today: string): Promise<void> {
       if (!retainedDays.has(dayOfFileKey(key))) return;
     }
   }
-  cleanupExpiredJoinLogDays(today);
+  await cleanupExpiredJoinLogDays(today);
 }
 
 /** 每日维护先提交跨日前缓冲，再清理入群日志保留窗口外的文件。 */

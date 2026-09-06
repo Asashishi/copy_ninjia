@@ -95,8 +95,7 @@ export function buildAiRecordMediaMessage({
     voiceMime: media.voiceMime,
     voiceDurationSeconds: media.voiceDurationSeconds,
     directTriggerReason: context.directTriggerReason,
-    // 媒体轮的回复在 Worker 侧异步发起（describeMedia 解析完才触发），那时手上
-    // 只剩这条载荷；话题落点必须随载荷一起过去。
+    // Worker 按入站占位并异步解析媒体；话题落点随载荷保留到该轮实际发送。
     messageThreadId: context.messageThreadId,
   };
 }

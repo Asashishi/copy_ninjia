@@ -136,6 +136,12 @@ function productionJitTiersAreStable(
 
 function parseScenarioName(value: string | undefined): ScenarioName {
   switch (value) {
+    case "storage-sqlite-flush":
+    case "wed-member-hit":
+    case "wed-member-growth":
+    case "wed-member-churn":
+    case "wed-member-chat-switch":
+    case "registered-middleware":
     case "sender-no-username":
     case "sender-stable-username":
     case "luck-receipt-fast-path":
@@ -176,6 +182,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "temporary-whitelist-activity|" +
         "join-timestamp-window|quota-timestamp-window|bounded-rolling-buffer|" +
         "chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
+        "wed-member-hit|wed-member-growth|wed-member-churn|wed-member-chat-switch|registered-middleware|storage-sqlite-flush|" +
         "ai-media-direct-trigger|" +
         "flood-window-hit|flood-window-growth|flood-window-steady|" +
         "gag-speak-counter|" +

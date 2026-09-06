@@ -90,7 +90,7 @@ interface ShutdownDrainOwner {
  * flush，就可能在数据尚未落盘时推进最终 Telegram offset。
  *
  * 顺序本身是约束，不能随手调整（见 docs/cn/04-invariants.md）：
- * - gag 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发 Telegram
+ * - wed、gag 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发 Telegram
  *   请求，闸门一关就再也发不出去。
  * - 延迟删除排在 anti-raid 之后：广告处置会在 anti-raid 排空期间补发 30 秒公告，
  *   排在后面才能把最后一条也提前兑现。
@@ -136,6 +136,14 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
     initFlag: null,
     drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
       dependencies.drainGagRuntime(timeoutMs),
+  },
+  {
+    result: "wed",
+    label: "wed drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainWedRuntime(timeoutMs),
   },
   {
     // 删除失败/超时有自己的统一日志，但不属于共享数据落盘闸门。
@@ -221,6 +229,7 @@ async function drainOwners({
     avatar: "flushed",
     translate: "flushed",
     gag: "flushed",
+    wed: "flushed",
     antiRaid: "flushed",
     ai: "flushed",
     telegram: "flushed",
@@ -321,6 +330,7 @@ function allOwnersSettled(results: ShutdownResults): boolean {
     results.avatar === "flushed" &&
     results.translate === "flushed" &&
     results.gag === "flushed" &&
+    results.wed === "flushed" &&
     results.antiRaid === "flushed" &&
     results.ai === "flushed" &&
     results.telegram === "flushed" &&
@@ -348,7 +358,7 @@ export function classifyShutdown(results: ShutdownResults): ShutdownOutcome {
 export function formatShutdownResults(results: ShutdownResults): string {
   return `runner=${results.runnerDrained}, maintenance=${results.maintenanceSettled}, ` +
     `offset=${results.offsetConfirmed}, ` +
-    `avatar=${results.avatar}, translate=${results.translate}, gag=${results.gag}, ` +
+    `avatar=${results.avatar}, translate=${results.translate}, gag=${results.gag}, wed=${results.wed}, ` +
     `antiRaid=${results.antiRaid}, ai=${results.ai}, telegram=${results.telegram}, disk=${results.disk}, ` +
     `terminate=${results.terminate}, state=${results.state}`;
 }
@@ -392,7 +402,7 @@ export async function flushAllToDisk({
     process.exitCode = 1;
     dependencies.logger.error(
       `Pre-confirmation drain/flush results: avatar=${results.avatar}, antiRaid=${results.antiRaid}, ` +
-      `translate=${results.translate}, gag=${results.gag}, ai=${results.ai}, ` +
+      `translate=${results.translate}, gag=${results.gag}, wed=${results.wed}, ai=${results.ai}, ` +
       `telegram=${results.telegram}, disk=${results.disk}, state=${state}; ` +
       "the final Telegram update offset will not be confirmed."
     );

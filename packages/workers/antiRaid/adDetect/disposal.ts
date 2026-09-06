@@ -75,6 +75,7 @@ export function warnReferencedAdSender(
   bundle: AdMessageBundle
 ): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
   return sendTemporaryMessageFromMain({
+    purpose: "adWarning",
     chatId: bundle.chatId,
     identityId: bundle.senderId,
     text: formatReferencedAdWarning(bundle.label),

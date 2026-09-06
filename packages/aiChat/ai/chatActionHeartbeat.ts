@@ -182,13 +182,13 @@ export function startChatActionHeartbeat({
     dependencies.entries.set(chatId, entry);
   }
 
-  // 心跳条目按群共享并用 refCount 记持有轮数，最后一个 stop 才拆表；同群
-  // 多轮回复可同时在途，refCount/owner 与按轮收挡共同防止一轮迟到 stop
-  // 误拆仍由其它轮使用的条目。
-  // 非 idle 挡按轮记归属（owner）：后切非 idle 挡的轮盖掉前一轮的挡位仍是
+  // 心跳条目按群共享并用 refCount 记持有句柄数，最后一个 stop 才拆表；轮次
+  // 与各独立调用链分别持有句柄，refCount/owner 防止迟到 stop
+  // 误拆仍由其它句柄使用的条目。
+  // 非 idle 挡按句柄记归属（owner）：后切非 idle 挡的句柄盖掉此前的挡位仍是
   // 后写覆盖（Telegram 一个聊天同时只显示一种状态，接受），但收挡只认持有
-  // 轮——切 idle/停止只收回自己拉起的挡位，并发轮的窗口不会被别的轮掐灭，
-  // 先结束的轮也不会把「正在选择贴纸…」遗留给还在跑的轮一直重发。
+  // 句柄——切 idle/停止只收回自己拉起的挡位，其它调用链的窗口不受影响，
+  // 先结束的句柄也不会把「正在选择贴纸…」遗留给还在跑的任务一直重发。
   entry.refCount++;
 
   const acquired: ChatActionHeartbeatEntry = entry;

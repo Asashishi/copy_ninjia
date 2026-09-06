@@ -23,30 +23,23 @@ import type { LoadedReply } from "../../types/diskIO/replies";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { FlushResult } from "../../types/lifecycle";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
-import { getStickerConfig } from "../../config/stickers";
+import { stickerPacksForRecovery } from "../../config/stickers";
 import { pauseDiskIODiagnosticChannel, resumeDiskIODiagnosticChannel } from
   "./diagnosticChannel";
 import {
   rejectAllPendingDiskIORequests,
   requestLuckSecretFromWorker,
 } from "./requests";
-import { safePostDiskIO } from "./transport";
+import { pauseDiskIOOperations, postBufferedDiskIOBusiness, safePostDiskIO } from "./transport";
+import { signalDiskIOFatal } from "./fatal";
+import { DiskIORecoveryRevisions } from "../../libs/diskIORecoveryRevisions";
+import { diskIOMessageCost } from "../../libs/diskIOMessageCost";
 
 /** 清除运行时恢复握手的超时 timer；重复调用安全。 */
 export function clearRuntimeRecoveryTimer(): void {
   if (diskIORuntime.runtimeRecoveryTimer === null) return;
   clearTimeout(diskIORuntime.runtimeRecoveryTimer);
   diskIORuntime.runtimeRecoveryTimer = null;
-}
-
-function signalDiskIOFatal(error: Error): void {
-  if (diskIORuntime.fatalSignaled) return;
-  diskIORuntime.fatalSignaled = true;
-  if (diskIORuntime.fatalHandler !== undefined) {
-    diskIORuntime.fatalHandler(error);
-  } else {
-    writeDiskIODiagnostic("[diskIO] fatal persistence failure requires process restart:", error.message);
-  }
 }
 
 /**
@@ -56,6 +49,7 @@ function signalDiskIOFatal(error: Error): void {
 export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal: boolean): void {
   if (diskIORuntime.worker !== worker) return;
   clearRuntimeRecoveryTimer();
+  pauseDiskIOOperations();
   writeDiskIODiagnostic(
     `[diskIO] persistence recovery failed; keeping storage unavailable and refusing writes: ${reason}`
   );
@@ -63,7 +57,6 @@ export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal
   diskIORuntime.runtimeRecoveryWorker = null;
   diskIORuntime.writable = false;
   pauseDiskIODiagnosticChannel();
-  diskIORuntime.pendingBusinessMessages.clear();
   diskIOFlushBarrier.settleAll("failed");
   rejectAllPendingDiskIORequests((): string =>
     `Persistence Worker became unavailable during recovery: ${reason}`);
@@ -93,7 +86,7 @@ interface RecoveryTransportScope {
   failed(): boolean;
 }
 
-function createRecoveryTransportScope(worker: Worker): RecoveryTransportScope {
+function createRecoveryTransportScope(worker: Worker, revisions: DiskIORecoveryRevisions): RecoveryTransportScope {
   let active: boolean = true;
   let transportFailed: boolean = false;
   const isUsable = (): boolean => active && isCurrentRecoveryWorker(worker);
@@ -108,6 +101,7 @@ function createRecoveryTransportScope(worker: Worker): RecoveryTransportScope {
         message,
         `recovery replay ${message.type}`
       );
+      if (posted) revisions.record(message, diskIORuntime.pendingBusinessMessages);
       if (!posted) transportFailed = true;
       return posted;
     },
@@ -162,11 +156,12 @@ function postRecoveryReplayMark(worker: Worker, active: boolean): boolean {
 
 export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): Promise<void> {
   if (diskIORuntime.worker !== worker) return;
+  const revisions: DiskIORecoveryRevisions = new DiskIORecoveryRevisions();
   if (replayMirrors) {
     // 按显式优先级等待各领域镜像；整个握手保持不可写，恢复 timer 继续覆盖
     // 异步 listener，普通业务增量则留在有硬顶的 FIFO 缓冲里。
     for (const registration of diskIORuntime.respawnListeners) {
-      const scope: RecoveryTransportScope = createRecoveryTransportScope(worker);
+      const scope: RecoveryTransportScope = createRecoveryTransportScope(worker, revisions);
       let replayed: boolean;
       try {
         replayed = await registration.listener(scope.transport);
@@ -201,11 +196,15 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
       if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
       if (!replayMirrors && diskIORuntime.worker !== worker) return;
       const message: DiskBusinessMessage = diskIORuntime.pendingBusinessMessages.peek()!;
-      if (!safePostDiskIO(worker, message, `replay ${message.type}`)) {
+      if (revisions.covers(message)) {
+        diskIORuntime.pendingBusinessMessages.shift();
+        diskIORuntime.pendingBusinessBytes -= diskIOMessageCost(message);
+        continue;
+      }
+      if (!postBufferedDiskIOBusiness(worker)) {
         stopWorkerAfterLoadFailure(worker, `Worker rejected ${message.type} during recovery replay`, true);
         return;
       }
-      diskIORuntime.pendingBusinessMessages.shift();
     }
     if (!postRecoveryReplayMark(worker, false)) return;
   }
@@ -231,7 +230,7 @@ function beginRuntimeRecovery(worker: Worker): void {
   diskIORuntime.runtimeRecoveryTimer.unref();
   const request: LoadRequest = {
     type: "load",
-    stickerPacks: getStickerConfig().packs,
+    stickerPacks: stickerPacksForRecovery(),
   };
   if (!safePostDiskIO(worker, request, "runtime load request")) {
     stopWorkerAfterLoadFailure(worker, "Worker synchronously rejected the runtime load request", true);
@@ -258,6 +257,7 @@ export function recoverDiskIOWorker({
   cause,
 }: RecoverDiskIOWorkerOptions): void {
   if (diskIORuntime.worker !== worker) return;
+  pauseDiskIOOperations();
   if (terminateWorker) {
     writeDiskIODiagnostic(`[diskIO] recycling persistence Worker after ${reason}.`);
   } else {
@@ -308,7 +308,6 @@ export function recoverDiskIOWorker({
           `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing and forcing a supervised process restart ` +
           "before any more updates are accepted."
     );
-    diskIORuntime.pendingBusinessMessages.clear();
     for (const listener of diskIORuntime.giveUpListeners) listener();
     signalDiskIOFatal(new Error("Persistence Worker exhausted its runtime restart budget."));
     return;

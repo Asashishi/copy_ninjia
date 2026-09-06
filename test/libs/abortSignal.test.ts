@@ -196,3 +196,16 @@ describe("raceAbort 共享等待", () => {
     expect(started).toBeTrue();
   });
 });
+
+for (const mode of ["immediate", "later"]) {
+  test(`预取消共享任务在独立 Bun 进程中观察 ${mode} rejection`, async (): Promise<void> => {
+    const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn({
+      cmd: [Bun.argv[0]!, `${import.meta.dir}/../fixtures/preAbortedSharedTask.ts`, mode],
+      stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    });
+    const output: string = await new Response(child.stdout).text();
+    const errors: string = await new Response(child.stderr).text();
+    expect(await child.exited, errors).toBe(0);
+    expect(JSON.parse(output)).toEqual({ unhandled: 0, result: "cancelled", order: ["settle", "cancel"] });
+  });
+}

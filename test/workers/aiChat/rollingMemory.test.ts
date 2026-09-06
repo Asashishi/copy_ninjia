@@ -27,6 +27,7 @@ const {
   resetAiChatMemoryCache,
 } = await import("../../../packages/cache/workers/aiChat/memory");
 const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
+const { currentReplyGeneration, trackReplyGenerationTask } = await import("../../../packages/workers/aiChat/replyGeneration");
 const {
   AI_MEMORY_MAX_CHATS,
   VERBATIM_CONTEXT_MAX,
@@ -142,6 +143,29 @@ describe("AI rolling-memory capacity", () => {
     expect(chatBuffers.has(oldestIdleChatId)).toBe(false);
     expect(chatBuffers.has(-20_000)).toBe(true);
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: oldestIdleChatId });
+  });
+
+  test("模型已结束但发送链未完成时保留记忆，链结束后恢复 LRU 淘汰", async () => {
+    for (let index: number = 0; index < AI_MEMORY_MAX_CHATS; index++) {
+      const chatId: number = -10_000 - index;
+      chatBuffers.set(chatId, new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX));
+      chatLastActivityTimes.set(chatId, index);
+    }
+    const pending = Promise.withResolvers<void>();
+    trackReplyGenerationTask(-10_000, currentReplyGeneration(-10_000), pending.promise);
+    try {
+      expect(activeReplyCounts.has(-10_000)).toBe(false);
+      pushBufferedMessage(-20_000, entry("new chat"));
+      expect(chatBuffers.has(-10_000)).toBe(true);
+      expect(chatBuffers.has(-10_001)).toBe(false);
+      pending.resolve();
+      await pending.promise;
+      pushBufferedMessage(-20_001, entry("another chat"));
+      expect(chatBuffers.has(-10_000)).toBe(false);
+    } finally {
+      pending.resolve();
+      await pending.promise;
+    }
   });
 
   test("所有候选群都有在途回复时退化为淘汰最老群", () => {

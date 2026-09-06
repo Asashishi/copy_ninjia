@@ -18,17 +18,9 @@ import { initTelegramOutbound } from "./outboundLifecycle";
 import type {
   TelegramApi,
   TelegramDeleteEphemeralMessageParams,
-  TelegramDeleteEphemeralMessagePayload,
   TelegramMemoryFile,
   TelegramSendAudioOptions,
 } from "../../types/telegramWorker";
-
-interface TelegramRawEphemeralApi {
-  deleteEphemeralMessage(
-    payload: TelegramDeleteEphemeralMessagePayload,
-    signal?: AbortSignal
-  ): Promise<true>;
-}
 
 type FirstOverloadReturn<T> = T extends {
   (...args: never[]): infer FirstReturn;
@@ -41,9 +33,6 @@ export type HydratedTelegramFile = Awaited<FirstOverloadReturn<FileApiFlavor<Api
 /** 主线程唯一的真实 grammY Bot；所有 Bot API HTTP 最终都由它发起。 */
 export const bot: Bot<Context, FileApiFlavor<Api>> =
   new Bot<Context, FileApiFlavor<Api>>(BOT_TOKEN);
-
-const rawEphemeralApi: TelegramRawEphemeralApi =
-  bot.api.raw as unknown as TelegramRawEphemeralApi;
 
 /**
  * 主线程项目能力面。JSON 方法原样转交 grammY；内存文件在这里才转换成
@@ -69,11 +58,11 @@ const mainTelegramApi: TelegramApi = {
     receiverUserId,
     ephemeralMessageId,
   }: TelegramDeleteEphemeralMessageParams, signal?: AbortSignal): Promise<true> =>
-    rawEphemeralApi.deleteEphemeralMessage({
+    bot.api.raw.deleteEphemeralMessage({
       chat_id: chatId,
       receiver_user_id: receiverUserId,
       ephemeral_message_id: ephemeralMessageId,
-    }, signal),
+    }, signal as never),
   getChat: (...args: Parameters<TelegramApi["getChat"]>): ReturnType<TelegramApi["getChat"]> =>
     bot.api.getChat(...args),
   getChatAdministrators: (...args: Parameters<TelegramApi["getChatAdministrators"]>): ReturnType<TelegramApi["getChatAdministrators"]> =>

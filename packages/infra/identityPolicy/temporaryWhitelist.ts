@@ -1,3 +1,6 @@
+import { assertStorageAdmission } from "../diskIO/storageAdmission";
+import { canQueueDiskIOBusiness } from "../diskIO/transport";
+import { storageWriteCost } from "../../libs/storageWriteBudget";
 import {
   temporaryWhitelistActivityCache,
   temporaryWhitelistWriteRevision,
@@ -91,7 +94,7 @@ function queueTemporaryWhitelistWrite(
   activity: Readonly<TemporaryWhitelistActivity> | null
 ): boolean {
   assertTelegramIdentityId(id, "temporary whitelist write");
-  if (!temporaryWhitelistActivityCache.has(id)) {
+  if (activity !== null && !temporaryWhitelistActivityCache.has(id)) {
     throw new Error(`Identity ${id} must be prefetched before a temporary whitelist mutation.`);
   }
   if (activity !== null) {
@@ -100,16 +103,15 @@ function queueTemporaryWhitelistWrite(
   if (!Number.isSafeInteger(temporaryWhitelistWriteRevision.current + 1)) {
     throw new Error("Temporary whitelist revision space is exhausted.");
   }
-  temporaryWhitelistWriteRevision.current++;
-  const revision: number = temporaryWhitelistWriteRevision.current;
+  const revision: number = temporaryWhitelistWriteRevision.current + 1;
+  const message: TemporaryWhitelistWriteDiskMessage = { type: "temporaryWhitelistWrite", id, activity, revision };
+  const entries: number = unacknowledgedTemporaryWhitelistWrites.size +
+    (unacknowledgedTemporaryWhitelistWrites.has(id) ? 0 : 1);
+  assertStorageAdmission(entries, entries * storageWriteCost(null));
+  if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused temporary whitelist state publication.");
+  temporaryWhitelistWriteRevision.current = revision;
   temporaryWhitelistActivityCache.set(id, activity);
   unacknowledgedTemporaryWhitelistWrites.set(id, { activity, revision });
-  const message: TemporaryWhitelistWriteDiskMessage = {
-    type: "temporaryWhitelistWrite",
-    id,
-    activity,
-    revision,
-  };
   if (diskIO.postDiskIO(message)) return true;
   logger.error(
     `Failed to queue temporary whitelist identity ${id}; retaining revision ${revision} for replay.`
@@ -147,7 +149,6 @@ export function clearTemporaryWhitelistActivity(id: number): boolean {
   if (cached && temporaryWhitelistActivityCache.peek(id) === null) return true;
   // 删除不依赖旧值。冷读失败时仍发布墓碑并保留到 ACK，避免一次 Disk I/O
   // 自愈窗口让已经确证的 ad=true 累计继续存活。
-  if (!cached) temporaryWhitelistActivityCache.set(id, null);
   return queueTemporaryWhitelistWrite(id, null);
 }
 

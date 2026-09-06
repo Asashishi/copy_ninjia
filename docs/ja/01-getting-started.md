@@ -15,10 +15,12 @@
 ## 前提条件
 
 - **`/proc` を読み取れる Linux**：インスタンスロックは `/proc/<pid>/stat` と boot ID に依存します。ほかのプラットフォームでは fail-closed で起動を拒否します。
-- **Bun 1.4.1**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.1` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
+- **Bun 1.4.2**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
 - **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/ja_copy` がこのファイルを名指しして拒否し、自動 copy の ja 変換は通常の copy に退化しますが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
+
+`g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない PEM 秘密鍵です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
 
 ## インストール
 
@@ -31,7 +33,7 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-download 入口は work tree を見つけた後、その tree 自身の `install.sh` に後続処理を渡します。`COPY_NINJIA_DIR` は相対・絶対パスの両方を受け付けます。現在のコードは Bun **1.4.1** を要求します。既存 Bun が一致しない場合、依存関係の導入や設定の書き込み前に終了し、手動導入コマンドを表示します。既存 Bun の自動置換は行いません。
+download 入口は work tree を見つけた後、その tree 自身の `install.sh` に後続処理を渡します。`COPY_NINJIA_DIR` は相対・絶対パスの両方を受け付けます。現在のコードは Bun **1.4.2** を要求します。既存 Bun が一致しない場合、依存関係の導入や設定の書き込み前に終了し、手動導入コマンドを表示します。既存 Bun の自動置換は行いません。
 
 事前の clone は不要です。script 自身が **GitHub の Latest Release** をカレントディレクトリ直下の
 `copy_ninjia/` へ clone し、その tag（detached HEAD）に着地します（変更したい場合は `COPY_NINJIA_DIR`
@@ -57,11 +59,9 @@ tag 自身が持つ object とだけ突き合わせ、未追跡ファイルは�
 `git checkout <tag>` してください。`git` を導入できない、tag を取得できない場合もこの手順を飛ばして
 通知するだけで、インストール自体は中断しません。
 
-その後 `copy-ninjia.service` を登録・有効化し（`User` と `WorkingDirectory` は現在のユーザーと
-repository path）、再起動ループに入っていないことを再起動間隔 2 回分観察して確認してから成功とします。
-既存 unit は確認してからでなければ上書きしません。残す選択をした場合は、その unit の実際の
-`WorkingDirectory` と `ExecStart` を表示するので、「A に入れたのに動いているのは B」を防げます。systemd の
-無いホスト（コンテナ、非 systemd ディストリビューション）では登録を飛ばし、フォアグラウンド実行にします。
+依存関係のインストールや設定・database の書き込み前に既存サービスを照合します。状態は `inactive/dead`、`WorkingDirectory` は対象 tree の実体パス、`ExecStart` は単一の Bun プロジェクト入口でなければなりません。稼働中、状態不明、対象不一致の場合は変更を拒否します。[07 運用](07-operations.md) の手順で先に停止と状態確認を行ってください。インストーラーは既存サービスを自動停止しません。
+
+設定検証後に `copy-ninjia.service` を登録または再利用し、既存 unit の上書き前にバックアップします。有効な backoff とランダム追加遅延を含む再起動待機上限の 2 倍に 2 秒を加えた期間を観察し、`active/running`、再起動回数の不変、journal の新規非ゼロ終了なしを確認します。問い合わせ失敗や journal 読み取り不能時は非ゼロ終了し、バックアップを保持します。systemd も既存 unit もない環境では前面実行し、バックアップは手動確認まで保持します。
 
 pipe 実行では fd 0 が script 本文そのものなので、すべての問い合わせは `/dev/tty` から読みます。
 制御端末が使えない場合は、script 本文の続きを回答として読んでしまう前に終了します。
@@ -71,7 +71,7 @@ pipe 実行では fd 0 が script 本文そのものなので、すべての問�
 1. **環境とコード**：Linux、読み取り可能な `/proc`、制御端末を確認し、不足するツールと Latest Release を取得するか、既存 tree を再利用します。Bun が無ければ対象コードの指定版を導入し、`packageManager` を照合してから `bun install --frozen-lockfile` を実行します。依存関係の 7 日間の公開待機期間を維持します。
 2. **デプロイ設定**：欠けているサンプルだけを補い、`agent.json` サンプルは除外します。Telegram 身分は対話で再入力でき、既存ファイルを tree 外へバックアップしてから候補を検証し、原子的に置換します。AI 未設定時は `agent.json` を作成せず、既存 AI 設定は保持します。生成する身分・AI 設定の mode は `600` です。
 3. **身分 database と検証**：production コードで保存先を解決し、`database/storage.sqlite` が無い場合だけ現在の空 schema を作成して、デプロイ入力を検証します。
-4. **サービスと観察**：systemd unit を登録または再利用して起動し、状態・再起動回数・journal を確認します。systemd が無い場合は前面実行します。全安定性検証が成功した場合だけ設定バックアップを削除し、前面実行や journal を確認できない場合は保持します。
+4. **サービスと観察**：停止を確認済みのデプロイで unit を登録または再利用して起動し、状態・計算済み観察期間・再起動回数・journal を検証します。全検証成功時だけ設定と unit のバックアップを削除します。検証失敗は非ゼロ終了し、前面実行時もバックアップを保持します。
 
 再実行時も既存 database は保持し、設定は明示的な再入力時だけ置換します。`g-auth.json` はデプロイ側が帯域外で提供します。欠落時は日本語翻訳が利用不可となり、存在して不正な場合は起動を拒否します。
 
@@ -123,7 +123,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
   - **検証**：プレーンテキスト、schema なし。
 - **`config/telegram.json`**（[example](../../config_example/telegram.json)）
   - **内容**：Bot API token と唯一のスーパー管理者 user ID。
-  - **検証**：[`packages/config/telegram.ts`](../../packages/config/telegram.ts)。network
+  - **検証**：[`packages/config/telegramInput.ts`](../../packages/config/telegramInput.ts)。network
     接続前に厳密ロードし、欠落、未知 field、空 token、不正な ID は startup を拒否します。
 - **`config/stickers.json`**（[example](../../config_example/stickers.json)）
   - **内容**：AI が使えるスタンプパック、最大 5 個。

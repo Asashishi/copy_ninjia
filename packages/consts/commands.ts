@@ -22,6 +22,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "ja_copy", description: "复读并翻成日语；enable/disable 开关本群功能，只有获授权者配碰，杂鱼别乱按♡" },
   { command: "stop_copy", description: "停掉当前复读，终于发现自己很吵了吗，杂鱼♡" },
   { command: "steal_icon", description: "偷取目标头像给本天才换上，连自己的头像都拿不出手吗，杂鱼♡" },
+  { command: "wed", description: "让本天才随机抽取群友老婆；支持确认、换一只和移除，再发 /wed 可重抽♡" },
   { command: "reset_icon", description: "把本天才的头像换回原装那张脸，戴腻别人的脸了吗，杂鱼♡" },
   // 占位说明项：命令名 x 就是那个「变量」，提示用户把它换成任意 1~2 个中文字。
   // 它存在的唯一目的是让中文动作命令在菜单里可见——那类命令名进不了菜单，

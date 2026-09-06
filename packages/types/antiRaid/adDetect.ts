@@ -55,7 +55,7 @@ export interface AdCandidateMessage {
   linkUrls?: string[];
   /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
   label: string;
-  /** 拉黑落库需要的 Telegram 展示元数据。 */
+  /** Telegram 展示元数据；用户的 firstName、lastName 同时参与当次广告检测。 */
   meta: Readonly<TelegramIdentityMetadata>;
   /** 发送者是频道马甲（sender_chat）而非真人。 */
   isChannel: boolean;
@@ -73,10 +73,10 @@ export interface ClearAdDetectMessage {
   chatId: number;
 }
 
-/** 命中样本里的一条消息：判定读到的正文，以及只给人看的上下文。 */
+/** 命中样本里的一条消息：判定读到的内容，以及单独保留的引用上下文。 */
 export interface AdSampleMessage extends AdSampleContext {
   messageId: number;
-  /** 送检时的正文（已截断、已补上 text_link 落地页），与模型读到的完全一致。 */
+  /** 送检时的内容（当次用户姓名、已截断正文与 text_link 落地页），与模型读到的完全一致。 */
   text: string;
 }
 
@@ -99,9 +99,9 @@ export interface AdCandidateEntry extends AdSampleContext {
   messageId: number;
   /** 本串内单调递增的序号，判定进度按它记账（见 AdMessageBundle.checkedSeq）。 */
   seq: number;
-  /** 已按 AD_DETECT_MESSAGE_MAX_CHARS 截断的正文（文本或图片说明）。 */
+  /** 当次用户姓名与已限长的正文、落地页、引用上下文；参与整串送检预算。 */
   text: string;
-  /** 只含当前发送者本人写下的内容；用于命中后区分直接广告与引用类广告。 */
+  /** 当前发送者本人的姓名与正文；转发消息只保留转发者姓名，用于直接广告归因。 */
   directText: string;
   /** Worker 观测时刻；只用于回收去重窗口外已经消费过的上下文。 */
   receivedAt: number;

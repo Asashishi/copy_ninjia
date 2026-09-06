@@ -8,7 +8,7 @@ let decision: AdmitDecision = { action: "startRound" };
 const admitTrigger = mock((_input: unknown): AdmitDecision => decision);
 let roundDecision: RoundDecision = { action: "run" };
 const admitRound = mock((_input: unknown): RoundDecision => roundDecision);
-const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void): void => {});
+const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void, _modelFinished: (chatId: number) => void): void => {});
 const pushReplyTrigger = mock((_input: unknown): void => {});
 const drainQueuedReplies = mock((_chatId: number, _start: (trigger: unknown) => void): void => {});
 const flushOverflowNotice = mock((chatId: number): void => { pendingOverflowNotices.delete(chatId); });
@@ -89,11 +89,31 @@ beforeEach(() => {
 });
 
 describe("AI reply admission pipeline", () => {
+  test("模型完成只补跑待处理队列，溢出提示留到发送收尾且仍遵守窗口限频", () => {
+    generateAndSendReply(baseRequest);
+    pendingOverflowNotices.set(-1001, 17);
+    const onModelFinished = startReplyRound.mock.calls[0]![2];
+    onModelFinished(-1001);
+    expect(drainQueuedReplies).toHaveBeenCalledTimes(1);
+    expect(flushOverflowNotice).not.toHaveBeenCalled();
+    expect(pendingOverflowNotices.get(-1001)).toBe(17);
+    const times = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
+    times.push(Date.now());
+    longTriggerTimes.set(-1001, times);
+    roundDecision = { action: "rateLimited" };
+    onModelFinished(-1001);
+    expect(drainQueuedReplies).toHaveBeenCalledTimes(1);
+    startReplyRound.mock.calls[0]![1](-1001);
+    expect(flushOverflowNotice).toHaveBeenCalledTimes(1);
+    expect(pendingOverflowNotices.has(-1001)).toBe(false);
+  });
+
   test("立即执行时携带当前 generation，并把轮结束回调接回排队器", () => {
     generateAndSendReply(baseRequest);
 
     expect(startReplyRound).toHaveBeenCalledWith(
       expect.objectContaining({ ...baseRequest, triggerReference, generation: 17 }),
+      expect.any(Function),
       expect.any(Function)
     );
     expect(replyReferenceForBufferedMessage).toHaveBeenCalledWith(-1001, 7);
@@ -148,7 +168,7 @@ describe("AI reply admission pipeline", () => {
       triggerReference,
       isRandomTrigger: false,
       queuedTrigger: queued,
-    }, expect.any(Function));
+    }, expect.any(Function), expect.any(Function));
 
     startReplyRound.mock.calls[1]![1](-1001);
     expect(drainQueuedReplies).toHaveBeenCalledTimes(2);
@@ -185,6 +205,7 @@ describe("AI reply admission pipeline", () => {
       "imageGenerationRequested",
       "isRandomTrigger",
       "mediaComment",
+      "mediaPreparation",
       "messageThreadId",
       "queuedTrigger",
       "replyToMessageId",

@@ -1,3 +1,6 @@
+import type { TelegramWorkerTemporaryMessageResult } from "../../types/telegramWorker";
+import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import {
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_NOTICE_TEXT,
@@ -7,7 +10,6 @@ import {
 } from "../../cache/workers/aiChat/replies";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
-import { sendMessage } from "../../infra/telegram";
 import { recordChatMessage } from "./rollingMemory";
 import {
   currentReplyGeneration,
@@ -52,13 +54,16 @@ export function notifyRateLimited({
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
   const signal: AbortSignal = replyGenerationSignal(chatId, generation);
-  const task: Promise<void> = sendMessage({
+  const task: Promise<void> = sendTemporaryMessageFromMain({
+    purpose: "notice",
+    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     chatId,
     text: RATE_LIMIT_NOTICE_TEXT,
     signal,
     messageThreadId,
-  }).then((sentMessageId: number | undefined): void => {
-    if (sentMessageId === undefined) return;
+  }).then((result: TelegramWorkerTemporaryMessageResult | undefined): void => {
+    if (result === undefined || !("messageId" in result)) return;
+    const sentMessageId: number = result.messageId;
     if (botInfoState.current && isReplyGenerationCurrent(chatId, generation)) {
       recordChatMessage(buildSelfRecordMessage({
         chatId,

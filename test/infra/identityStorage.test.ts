@@ -108,6 +108,7 @@ const {
   resetIdentityStorageCache,
   unacknowledgedBlocklistWrites,
   unacknowledgedWhitelistWrites,
+  unacknowledgedIdentityBytes,
   whitelistEntryCache,
 } = await import("../../packages/cache/main/identityStorage");
 const {
@@ -340,6 +341,8 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     const firstRevision: number = unacknowledgedBlocklistWrites.get(7)!.revision;
     queueIdentityPolicyWrite("blocklist", 7, blockValue("2026/08/11 00:00:01"));
     const secondRevision: number = unacknowledgedBlocklistWrites.get(7)!.revision;
+    const bytes: number = 256 + unacknowledgedBlocklistWrites.get(7)!.data!.length * 2;
+    expect(unacknowledgedIdentityBytes.current.blocklist).toBe(bytes);
 
     for (const listener of persistedListeners) {
       listener({
@@ -351,6 +354,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       });
     }
     expect(unacknowledgedBlocklistWrites.get(7)?.revision).toBe(secondRevision);
+    expect(unacknowledgedIdentityBytes.current.blocklist).toBe(bytes);
     for (const listener of persistedListeners) {
       listener({
         type: "identityStoragePersisted",
@@ -361,6 +365,30 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       });
     }
     expect(unacknowledgedBlocklistWrites.has(7)).toBeFalse();
+    expect(unacknowledgedIdentityBytes.current.blocklist).toBe(0);
+  });
+
+  test("未确认身份字节只保留最终值，删除墓碑仍记费，重置同时清除额度", () => {
+    seedMissing(7);
+    seedMissing(8);
+    queueIdentityPolicyWrite("blocklist", 7, blockValue());
+    queueIdentityPolicyWrite("blocklist", 8, blockValue());
+    const otherBytes: number = 256 + unacknowledgedBlocklistWrites.get(8)!.data!.length * 2;
+    queueIdentityPolicyWrite("blocklist", 7, null);
+    expect(unacknowledgedIdentityBytes.current.blocklist).toBe(otherBytes + 256);
+    expect(unacknowledgedIdentityBytes.current.whitelist).toBe(0);
+    const revision: number = unacknowledgedBlocklistWrites.get(7)!.revision;
+    for (const listener of persistedListeners) {
+      listener({
+        type: "identityStoragePersisted",
+        writes: [{ table: "blocklist", id: 7, revision }],
+        temporaryWhitelistWrites: [], chatStateWrites: [], chatQaWrites: [],
+      });
+    }
+    expect(unacknowledgedIdentityBytes.current.blocklist).toBe(otherBytes);
+    resetIdentityStorageCache();
+    expect(unacknowledgedIdentityBytes.current).toEqual({ whitelist: 0, blocklist: 0 });
+    expect(unacknowledgedBlocklistWrites.size).toBe(0);
   });
 
   test("白名单事务确认等待精确 ACK，幂等重试会补投缓存里的未确认最终值", async () => {
@@ -525,16 +553,21 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     const dayAt: number = new Date("2026-08-01T12:00:00+09:00").getTime();
     const churn: number = IDENTITY_READ_CACHE_MAX_ENTRIES * 2;
 
-    // 每个身份只发一条：LRU 按容量淘汰，未 ACK 表随精确回执清空。
+    // 消费者持续提交，主线程仅保留最新批次的未 ACK 最终值。
     let queued: number = 0;
     for (let id: number = 1; id <= churn; id++) {
       temporaryWhitelistActivityCache.set(id, null);
       if (recordTemporaryWhitelistActivity(id, dayAt)?.queued === true) queued++;
+      if (id % 128 === 0) {
+        const writes: { id: number; revision: number }[] = [];
+        for (const [key, write] of unacknowledgedTemporaryWhitelistWrites) writes.push({ id: key, revision: write.revision });
+        for (const listener of persistedListeners) listener({ type: "identityStoragePersisted", writes: [], temporaryWhitelistWrites: writes, chatStateWrites: [], chatQaWrites: [] });
+      }
     }
     expect(queued).toBe(churn);
     expect(temporaryWhitelistActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
     expect(temporaryWhitelistActivityCache.has(1)).toBeFalse();
-    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(churn);
+    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(0);
 
     const settled: { id: number; revision: number }[] = [];
     for (const [id, write] of unacknowledgedTemporaryWhitelistWrites) {

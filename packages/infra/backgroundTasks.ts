@@ -1,13 +1,8 @@
 import { logger } from "./logger";
 
 /**
- * 「登记在途后台任务 + 自摘除 + 有界等待排空」的公共骨架。
- *
- * 广告处置、延迟删除、gag 提示共用这一登记与排空骨架。两处细节是语义：
- * `finally` 里的摘除必须挂在
- * catch 之后（否则一次异常就把条目永久留在集合里，停机 drain 从此恒判超时），
- * 而等待用的 timer 必须 unref（任务提前结算时，一个还没到点的 timer 会把进程按
- * 在事件循环里，停机路径上纯属浪费）。
+ * 广告处置、延迟删除与 gag 提示共用的后台任务错误边界。
+ * 错误归一化后摘除任务；有界等待由 libs/inflight.ts 负责。
  */
 
 /**
@@ -31,25 +26,4 @@ export function trackBackgroundTask(
       tasks.delete(observed);
     });
   tasks.add(observed);
-}
-
-/**
- * 在预算内等待一批已经在途的任务结算。
- * @returns 全部结算为 true；预算耗尽为 false（任务本身不会被中断）。
- */
-export function settleWithinBudget(
-  tasks: readonly Promise<unknown>[],
-  timeoutMs: number
-): Promise<boolean> {
-  return new Promise((resolve: (settled: boolean) => void): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout(
-      (): void => resolve(false),
-      timeoutMs
-    );
-    timer.unref();
-    void Promise.allSettled(tasks).then((): void => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
 }

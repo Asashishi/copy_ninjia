@@ -15,10 +15,12 @@ This page takes a clean environment all the way to “the bot works normally in 
 ## Prerequisites
 
 - **Linux with a readable `/proc`**: the instance lock depends on `/proc/<pid>/stat` and the boot ID. It fails closed on other platforms.
-- **Bun 1.4.1**: install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.1`. Every project script, test, and runtime path uses Bun; Node.js is not required.
+- **Bun 1.4.2**: install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Every project script, test, and runtime path uses Bun; Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
 - **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation; store it as `g-auth.json` in the project root. When it is missing, `/ja_copy` refuses and names the file and the ja transform on the automatic copy path falls back to a plain copy, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
+
+`packages/config/googleAuth.ts` strictly parses `g-auth.json`: `client_email` must be a non-empty string and `private_key` a parseable, non-empty PEM private key. `type` is optional; when present it must equal `service_account`. The SDK-consumed `private_key_id`, `project_id`, `quota_project_id`, and `universe_domain` fields are optional non-empty strings. Other metadata is retained verbatim. Validation precedes Worker creation and Telegram connections; errors contain only the file path, field path, and expected form, never credential values.
 
 ## Installation
 
@@ -31,7 +33,7 @@ of this page:
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-After locating the work tree, the downloaded entry point hands control to that tree's own `install.sh`. `COPY_NINJIA_DIR` accepts relative and absolute paths. The current code requires Bun **1.4.1**. A mismatched existing Bun stops installation before dependencies or configuration are written and reports the manual installation command; the installer does not automatically replace it.
+After locating the work tree, the downloaded entry point hands control to that tree's own `install.sh`. `COPY_NINJIA_DIR` accepts relative and absolute paths. The current code requires Bun **1.4.2**. A mismatched existing Bun stops installation before dependencies or configuration are written and reports the manual installation command; the installer does not automatically replace it.
 
 No prior clone is needed: the script clones **the Latest Release on GitHub** into `copy_ninjia/`
 under the current directory (set `COPY_NINJIA_DIR` to change that), landing on that tag as a detached
@@ -59,12 +61,9 @@ in place, but `HEAD` points at no version and you pick one with `git checkout <t
 Failing to install `git` or to fetch the tags only skips this step with a notice; it never aborts the
 install.
 
-The install then registers and enables `copy-ninjia.service` (`User` and `WorkingDirectory` taken from
-the current user and repository path) and watches two restart intervals to confirm it is not in a
-restart loop before reporting success. An existing unit is replaced only after you confirm; if you
-keep it, the script prints that unit's actual `WorkingDirectory` and `ExecStart` so you never end up
-installing into one directory while another one runs. Hosts without systemd (containers, non-systemd
-distributions) skip registration and run in the foreground instead.
+Before dependency installation or configuration/database writes, the installer checks any existing service: it must be `inactive/dead`, its `WorkingDirectory` must resolve to the target tree, and `ExecStart` must contain exactly one Bun project entry point. A running service, unknown state, or mismatched ownership refuses modification. Follow [07 Operations](07-operations.md) to stop and verify the service first; the installer does not stop it automatically.
+
+After configuration validation, it registers or reuses `copy-ninjia.service`, backing up an existing unit before replacement. It observes twice the effective restart-delay upper bound, including active backoff and randomized delay, plus two seconds. Success requires `active/running`, an unchanged restart count, and no new nonzero exits in the journal. Failed queries or an unreadable journal exit nonzero and retain backups. A host without systemd and without an existing unit runs in the foreground, retaining backups for manual verification.
 
 Under a pipe, fd 0 is the script text itself, so every prompt reads from `/dev/tty` — without a
 usable controlling terminal the script exits rather than consuming half of its own body as answers.
@@ -74,7 +73,7 @@ The installation follows these steps:
 1. **Environment and code**: check Linux, readable `/proc`, and the controlling terminal; obtain missing tools and the Latest Release or reuse the existing tree. Install the target code's exact Bun version when absent, verify `packageManager`, and run `bun install --frozen-lockfile` with the seven-day dependency cooldown.
 2. **Deployment configuration**: copy only missing examples, excluding `agent.json`. Telegram identity can be re-entered interactively; an existing file is backed up outside the tree before candidate validation and atomic replacement. No AI configuration creates no `agent.json`; an existing AI configuration is retained. Generated identity and AI configuration files use mode `600`.
 3. **Identity database and validation**: resolve the database location through production code, create the current empty schema only when `database/storage.sqlite` is absent, then validate deployment inputs.
-4. **Service and observation**: register or reuse the systemd unit, start it, and check state, restart counts, and journal; run in the foreground when systemd is unavailable. Configuration backups are removed only after every stability check succeeds; foreground execution or an unreadable journal retains them.
+4. **Service and observation**: register or reuse the unit for a deployment already confirmed stopped, then start and verify state, the calculated observation window, restart count, and journal. Remove configuration and unit backups only after every check succeeds. Verification failures exit nonzero; foreground execution retains backups.
 
 Reruns retain existing databases and replace configuration only after an explicit request to re-enter it. The operator supplies `g-auth.json` out of band. Its absence disables Japanese translation; malformed existing credentials refuse startup.
 
@@ -124,7 +123,7 @@ that file is covered by `.gitignore`.
   - **Validation**: plain text; no schema.
 - **`config/telegram.json`** ([example](../../config_example/telegram.json))
   - **Contents**: Bot API token and the sole super-administrator user ID.
-  - **Validation**: [`packages/config/telegram.ts`](../../packages/config/telegram.ts), loaded
+  - **Validation**: [`packages/config/telegramInput.ts`](../../packages/config/telegramInput.ts), loaded
     strictly before network access; missing files, unknown fields, blank tokens, and invalid IDs
     abort startup.
 - **`config/stickers.json`** ([example](../../config_example/stickers.json))

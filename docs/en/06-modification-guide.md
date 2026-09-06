@@ -28,7 +28,7 @@ Each recipe names the files to touch and the order to follow. The universal prer
 5. **Menu**: add an entry to `BOT_COMMANDS` in [`packages/consts/commands.ts`](../../packages/consts/commands.ts) if the command should appear in Telegram's command menu. Hidden commands such as `/send` stay out.
 6. **Parameter constants**: cooldowns, thresholds, and similar values belong in `packages/consts/commands.ts` or the relevant domain constants, with Chinese JSDoc.
 7. **Tests**: add `test/commands/xxx.test.ts`, covering at least authorization rejection, argument parsing, and the main path.
-8. **Documentation**: add a row to the root README's “Commands and Permissions” table in every language.
+8. **Documentation**: add an entry to the command tables in `docs/{cn,en,ja}/08-commands.md`, and describe the interactions and permission boundaries.
 
 ### Non-ASCII Command Names
 
@@ -55,7 +55,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 858 source lines containing Chinese string or template literals across 85 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 887 source lines containing Chinese string or template literals across 87 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 

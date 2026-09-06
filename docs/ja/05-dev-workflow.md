@@ -24,11 +24,11 @@
 | `bun run check:install-script-syntax` | `bash -n` で `install.sh` の shell 構文だけを解析し、インストール処理は実行しない |
 | `bun run check:install-isolation` | `copy-ninjia-install-test-*` 専用の一時 fixture root で `install.sh` を実際に実行し（`scripts/checkInstallIsolation.ts`）、staging 失敗時の cleanup、`telegram.json` の rollback、中断後の再開、置換成功、symlink topology、未検証 backup の保持、資格情報の分離を検査。実際の deploy path には一切触れない |
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
-| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + hot path gate の 7 段。**コミット前に必須** |
+| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + hot path gate の 7 段。**master へのマージ前に必須** |
 | `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するため `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry には 30 個あり、残りは `perf:full` のみ）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 36 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
@@ -45,13 +45,23 @@
 - **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コードと script の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
   module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
 
+  Node API 検査は `process.getBuiltinModule`、`globalThis.Buffer` とリテラル添字形式を対象にします。`Buffer.byteLength` などの例外は module・symbol・用途ごとに登録します。`@grammyjs/runner` は SDK 対照テスト用の開発依存で、production の取得処理はプロジェクトの offset 確認境界を使います。
+
 ### 依存関係の release-age gate
 
-依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。Bun runtime は 1.4.1、`@types/bun` は 1.4.0 に固定します。version gate は major/minor の一致を要求し、runtime の patch version は `packageManager` と `install.sh` が共同で固定します。
+依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。Bun runtime は 1.4.2、`@types/bun` は 1.4.0 に固定します。version gate は major/minor の一致を要求し、runtime の patch version は `packageManager` と `install.sh` が共同で固定します。
+
+### Bun の実行境界
+
+`bunfig.toml` の `run.bun = true` により、Node shebang を持つ依存 CLI も現在の Bun で実行します。画像変換は `packages/infra/image.ts` が必要なときに `sharp` を読み込みます。視覚入力の JPEG/PNG はそのまま渡し、WebP/GIF は PNG に変換します。アニメーションは透明度を保った先頭フレームだけを読みます。サムネイルは縦横比を保ち、小さい画像の拡大や EXIF 方向による自動回転を行わず、透明な画素を黒い背景に合成したうえで、寸法と容量の上限を満たすまで JPEG の品質を順に試します。ネイティブ API への置き換えでは、同じ入力形式・透明度・アニメーションフレーム・失敗時の意味論を満たす必要があります。
+
+ファイル内容の書き込みと通常ファイルの削除には [`Bun.write` と `Bun.file`](https://bun.com/docs/runtime/file-io) を使用します。排他的作成後の書き込みは `Bun.write(Bun.file(handle.fd), content)` で行い、元のハンドルで fsync、close、原子的公開を完了します。ディレクトリ走査、パス、同期永続化、権限、hard link など Bun のネイティブ API が必要な意味論を提供しない操作には `node:` API を使用します。`AsyncLocalStorage`、PEM 秘密鍵の解析、割り当てを伴わない UTF-8 バイト数の計算にも Bun 対応の互換 API を使用します。Disk I/O の起動時・深夜・日付切り替え時の保守は、各非同期削除を待ってから次の領域へ進み、永続化の応答を返します。
+
+ランタイムの更新後は、同じ Bun version/revision で性能校正を再測定する必要があります。それまでは規約チェックとホットパスゲートが以前の校正記録を拒否します。ベンチマークなしで更新を検証する場合は、インストール隔離、lint、typecheck、カバレッジ、障害注入テストを個別に実行します。これは完全な `check` の成功には該当せず、以前の性能測定値も更新しません。
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**3179 tests / 321 files / 123010 `expect()` calls**。全ソースコードの**関数カバレッジは 97.12%、行カバレッジは 97.38%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**3469 tests / 344 files / 125771 `expect()` calls**。全ソースコードの**関数カバレッジは 97.18%、行カバレッジは 97.36%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -61,6 +71,8 @@
 2. **一時データルート**：`test/preloadEnv.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` には触れません。終了後に一時ディレクトリを削除します。**path 注入を別 file に分けている**のは、ESM が import を同 file の文より先に評価するためです。`test/preload.ts` が production モジュールを static import した時点で、file 内に書いた環境変数の代入はすでに手遅れになり、`CONFIG_ROOT` は開発機の実デプロイディレクトリを指してしまいます。
 3. **読み取り専用の設定ルート**：同じ注入は `COPY_NINJIA_CONFIG_ROOT` をリポジトリ内の `config_example/` に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実 Telegram / feature 設定を読むのを防ぎます。identity database は前項の一時 data root で隔離されます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
 4. **agent 設定 snapshot**：`agent.json` は runtime path が disk から読まない唯一のデプロイ入力です（実 process では main thread が parse し、各 Worker へ init message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はその message を受け取らないため、`test/preload.ts` が同じ `config_example/agent.json` を isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
+
+`test/scripts/installStartup.test.ts` は installer の隔離 fixture を再利用し、独立した一時設定・データルートで `install.sh`、`bun run start`、実際の Worker を動かします。Telegram 応答とシステムサービスコマンドはテスト用の代替処理が担当します。AI 無効、有効な AI 設定、再インストールと再起動、不正な任意設定の接続前拒否を検証し、正常停止とインスタンスロック解放も確認します。
 
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
 
@@ -74,9 +86,11 @@
 
 `bun run test:fault-injection` は crash recovery と永続化境界を重点的に検証します。ライフサイクル失敗、update runner の確認境界、StateStore と cleanup、AI/Anti-Raid Worker のミラーとライフサイクル、Disk I/O の追記・snapshot・ログファイル、flush barrier などが対象です。完全な一覧は [`package.json`](../../package.json) の script 定義を参照してください。[04 実行時の正式な不変条件](04-invariants.md) に関わる経路を変更した場合、この suite は必ず成功しなければなりません。
 
+`/wed` の永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
+
 ## Hot path gate
 
-`bun run perf:hot-path-gate` は `bun run check` の最終段で、コミットのたびに実行されます。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` の各シナリオ・各繰り返しごとに独立した子プロセスを 2 つ起動します。`steadyProfile` は正式ループの GC と JIT だけを判定し、`retained` は profiler 自身のメモリ干渉がない状態で RSS、heapUsed のピーク、full GC 後の残存を判定します。
+`bun run perf:hot-path-gate` は `bun run check` の最終段で、`master` へのマージ前に実行する必要があります。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` の各シナリオ・各繰り返しごとに独立した子プロセスを 2 つ起動します。`steadyProfile` は正式ループの GC と JIT だけを判定し、`retained` は profiler 自身のメモリ干渉がない状態で RSS、heapUsed のピーク、full GC 後の残存を判定します。
 
 校準記録を [`performance-result.json`](../../performance-result.json) に保存し、`scripts/perf/hotPaths/gateResult.ts` が厳密に解析します。`gateRuntime.ts` は規約検査と hot-path 子 process の開始前に `packageManager`、現在の Bun version/revision、校準 build を照合し、不一致なら再測定を要求します。記録には process 数、各場面の遅延測定値、GC/RSS/保持量の hard limit を含みます。過去の `fullSuite` 結果は各回の時刻と Bun build を維持します。
 
@@ -100,6 +114,16 @@ gate を設けている項目：GC sample 比率、sampling RSS ピークとプ�
 
 `bun run perf:identity-database` は一時 data root / SQLite で 6 つの production operation を測ります。identity 8 件単位の 2 table read（同一接続の hot read と、batch ごとに接続を開き直す cold read）、128 row の明示 transaction write（同じく hot 接続と cold 接続の 2 種）、main thread の 8,192-entry LRU hot read、Worker・JSONB transaction・exact ACK を通る write-through です。「cold」は接続の page cache と statement cache が空という意味で、OS の page cache を破棄したという意味ではありません。各 operation を warm-up してから 5 個の独立 Bun process で sample し、Bun version/revision、throughput、batch latency、sample range / coefficient of variation、強制 GC 前後の JSC heap・extra memory・object・GC time を報告します。`--single-process` は同じ measurement process 内で各 operation を 3 回反復し、round 間の retained growth を調べますが、独立 process 比較の代わりではありません。`Bun.gc(true)` は計時外の診断専用です。identity LRU、cold prefetch、encoding、transaction batch、ACK、Worker replay を変えた場合に実行し、同じ Bun build の差を sample noise と heap/GC の両方で判断します。
 
+write-through scenario は 4,096 key の working set に対して 65,536 operation を実行します。各 working set の終了時に durable flush を待って次へ進み、最後に全 operation の ACK と checksum を照合します。
+
+## 個別シナリオと伝送ストレス検証
+
+registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware`、`storage-sqlite-flush` を含みます。最初の 4 項目はメンバー集合の hit・充填・満杯時の拒否・chat 切替を検証します。middleware は実際の登録 chain と活動経路を検証します。SQLite は空 DB に 128 delete を送るため、主に transaction scheduling の測定であり、disk throughput の値ではありません。
+
+`bun scripts/perf/isolatedHotPath.ts <scenario>` を実行し、別の sampling には `--profile` を付けます。この入口は `gateFixture.ts` で独立した設定・data root を作り、3 回の独立子 process に渡して、終了後に run directory を削除します。外部送信は基準用の固定応答が受け持ちます。Bun と入力を固定し、warm-up 後に retained と profile を別々に観測します。sample 不足時の GC 0 件から GC 不在を断定してはいけません。
+
+`bun scripts/perf/diskTransport.ts` は独立 mock process を 3 回実行し、単一 batch ACK・通常排出・ACK 停止後の容量拒否を検証して latency・heap・GC・JIT を出力します。同一の不変 payload を再利用する queue/ACK の測定であり、Worker clone・実 payload の個別容量・disk wait は含みません。
+
 ## 全量パフォーマンス benchmark
 
 `bun run perf:full` はリリース時と明示的な指示があったときにのみ実行します。`bun run check` には含めず、失敗閾値も設けません。ホットパスのハードゲートは上記の `perf:hot-path-gate` のままです。6 つのセクションをそれぞれ独立プロセスで 3 ラウンド実行し、平均を報告します。コールドスタート、本番ホットパス、エンドツーエンドの永続化チェーン、SQLite とメインスレッドキャッシュ、コンテナとアルゴリズム、参加ログ容量線の 6 つです。各項目には平均に加えて最小値・最大値・変動係数も付き、CV が大きく跳ねた行は履歴と比較できません。
@@ -110,12 +134,11 @@ gate を設けている項目：GC sample 比率、sampling RSS ピークとプ�
 
 ## コミット手順
 
-1. 開発は `dev` ブランチで行い、`master` へ直接コミットしません。`master` へのマージは squash のみで、1 つの変更セットを 1 コミットにまとめます。ブランチ規約は [`AGENTS.md`](../../AGENTS.md) の「分支与提交」を参照してください（ここでは繰り返しません）。
+1. 開発は `dev` ブランチで行い、`master` へ直接コミットしません。`master` へのマージは squash のみで、1 つの変更セットを 1 コミットにまとめます。ブランチ規約は [`AGENTS.md`](../../AGENTS.md) の「分支、验证、提交与发布」を参照してください（ここでは繰り返しません）。
 2. 開発中にユーザーがパラメータを変更する場合があります。編集直前にファイルを再度読み、未コミットの変更を上書きしないでください。
 3. コミット前に `git diff --stat` 全体を確認し、無関係なファイルを混ぜません。
-4. `bun run check` がすべて成功することを確認します。
+4. 各コミット前に `git branch --show-current` で `dev` を確認し、`bun run lint && bun run typecheck` または完全な `bun run check` を通します。`master` へのマージ前は完全な `check` が必須です。永続化・停止・Worker ライフサイクルの変更には `bun run test:fault-injection` も必要です。
 5. Conventional Commits 形式（`feat(ai): ...`、`fix(runtime): ...`、`docs: ...`）を使い、subject は英語にします。
-6. 各コミットは人間と AI の共同レビュー後にだけリポジトリへ入れます。ルート README の「Pure AI Development」で説明するプロジェクト規約です。
 
 ### README 指標の更新
 
@@ -129,7 +152,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 以下はいずれも同じ実測値なので、1 か所直したら全部直します。
 
 - **3 言語の README にある Tests / Coverage badge。** Coverage badge は常に `All files` の行カバレッジを使います。
-- **カバレッジ図**：各 README「純 AI 開発」節の「プロジェクト品質」が参照する [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) と [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg)。banner と同様、1 組を 3 言語の README が共用するため、両テーマのファイルの数値を一緒に更新します。
+- **カバレッジ図**：各 README の「プロジェクト品質」節が参照する [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) と [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg)。banner と同様、1 組を 3 言語の README が共用するため、両テーマのファイルの数値を一緒に更新します。
 - **3 つの README の `<img alt>` 内の同等の文言。** 図は画像として読み込まれるため SVG 内部の `<title>` / `aria-label` は読み上げに届かず、alt が唯一の入口です。
 - **3 言語の本文にある「このドキュメント版の実測値」。**
 

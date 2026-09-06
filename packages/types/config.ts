@@ -39,6 +39,17 @@ export interface TelegramConfig {
   readonly superAdminUserId: number;
 }
 
+/** Google 翻译 SDK 实际消费的服务账号字段；官方密钥的其它元数据由 SDK 保留。 */
+export interface GoogleServiceAccountKey {
+  readonly type?: "service_account";
+  readonly client_email: string;
+  readonly private_key: string;
+  readonly private_key_id?: string;
+  readonly project_id?: string;
+  readonly quota_project_id?: string;
+  readonly universe_domain?: string;
+}
+
 /**
  * ad_detect 能力配置。与其他能力一样显式选择 Google 或 OpenAI 协议；端点缺省
  * 时跟随对应 SDK 的官方地址，兼容端点必须在该能力自己的 base_url 显式声明。

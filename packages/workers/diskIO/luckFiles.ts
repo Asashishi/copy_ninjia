@@ -168,7 +168,7 @@ export async function flushLuckAppends(): Promise<boolean> {
     return false;
   }
   try {
-    cleanupStaleLuckFiles(day);
+    await cleanupStaleLuckFiles(day);
   } catch (error: unknown) {
     console.error(`[diskIOWorker] failed to clean up stale luck files for ${day}:`, error);
   }
@@ -264,11 +264,11 @@ export function adoptLuckDay(
 }
 
 /** 跨域启动成功后清理临时与过期日文件。 */
-export function maintainLuckDayState(
+export async function maintainLuckDayState(
   day: string,
   inspection: LuckDayRecoveryInspection
-): void {
-  maintainLuckDay(day, inspection);
+): Promise<void> {
+  await maintainLuckDay(day, inspection);
 }
 
 /**

@@ -25,7 +25,7 @@ async function recoverStickerCatalogs(
   activePacks: readonly string[]
 ): Promise<Map<string, string>> {
   const inspection = await inspectStickerCatalogs(activePacks);
-  maintainStickerCatalogFiles(inspection);
+  await maintainStickerCatalogFiles(inspection);
   return inspection.snapshots;
 }
 
@@ -80,7 +80,7 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(existsSync(orphanPath)).toBeTrue();
     expect(existsSync(temporaryPath)).toBeTrue();
 
-    maintainStickerCatalogFiles(inspection);
+    await maintainStickerCatalogFiles(inspection);
     expect(existsSync(orphanPath)).toBeFalse();
     expect(existsSync(temporaryPath)).toBeFalse();
   });
@@ -184,4 +184,16 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(existsSync(join(stickerDir, "pack_a.json"))).toBe(false);
     expect(existsSync(join(stickerDir, "pack_b.json"))).toBe(false);
   });
+});
+
+test("未配置包列表仍严格校验全部快照，并保留合法包文件", async (): Promise<void> => {
+  writeStickerCatalogFile("valid_pack", snapshot("猫猫"));
+  const inspection = await inspectStickerCatalogs(null);
+  expect(inspection.orphanPaths).toHaveLength(0);
+  await maintainStickerCatalogFiles(inspection);
+  expect(inspection.snapshots.has("valid_pack")).toBeTrue();
+  expect(existsSync(join(stickerDir, "valid_pack.json"))).toBeTrue();
+  await Bun.write(join(stickerDir, "invalid_pack.json"), "{broken");
+  await expect(inspectStickerCatalogs(null)).rejects.toThrow();
+  expect(existsSync(join(stickerDir, "valid_pack.json"))).toBeTrue();
 });

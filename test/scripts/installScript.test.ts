@@ -262,7 +262,7 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
   test("取得游标后只读它之后的条目", () => {
     const path: string = `${fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
     const result = runWithInstallFunctions(
-      `CURSOR="$(service_journal_cursor)"; echo "cursor=$CURSOR"; service_journal_since "$CURSOR"`,
+      `CURSOR="$(service_journal_cursor)"; echo "cursor=$CURSOR"; service_journal_since "$CURSOR" "2026-09-06 04:00:00 UTC"`,
       { PATH: path, FAKE_JOURNAL_CURSOR: "s=abc;i=7", FAKE_JOURNAL_BODY: "after-cursor line" }
     );
     expect(result.exitCode).toBe(0);
@@ -273,32 +273,32 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     const path: string = `${fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
     const result = runWithInstallFunctions(
       `CURSOR="$(service_journal_cursor)"; echo "cursor=[$CURSOR]"; ` +
-      `if service_journal_since "$CURSOR" >/dev/null; then echo read-ok; else echo degraded; fi`,
+      `if service_journal_since "$CURSOR" "2026-09-06 04:00:00 UTC" >/dev/null; then echo read-ok; else echo unavailable; fi`,
       { PATH: path, FAKE_JOURNAL_FAIL: "1" }
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("cursor=[]\ndegraded\n");
+    expect(result.stdout).toBe("cursor=[]\nunavailable\n");
   });
 
-  test("机器上没有 journalctl 时降级成提示而不是失败", () => {
+  test("机器上没有 journalctl 时读取函数返回失败", () => {
     const result = runWithInstallFunctions(
-      `PATH=/nonexistent; if service_journal_since "" >/dev/null 2>&1; then echo read-ok; else echo degraded; fi`
+      `PATH=/nonexistent; if service_journal_since "" "2026-09-06 04:00:00 UTC" >/dev/null 2>&1; then echo read-ok; else echo unavailable; fi`
     );
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe("degraded\n");
+    expect(result.stdout).toBe("unavailable\n");
   });
 
-  test("核对不成时收尾文案不得宣称 journal 无非零退出", () => {
-    // 跳过了核对却写成「journal 无非零退出」，等于把没做过的检查报成通过。
-    expect(INSTALL_SCRIPT).toContain('JOURNAL_VERDICT="、journal 无非零退出"');
-    expect(INSTALL_SCRIPT).toContain('JOURNAL_VERDICT="、journal 未能核对"');
-    expect(INSTALL_SCRIPT).toContain("观察窗口内未重启${JOURNAL_VERDICT}");
-    expect(INSTALL_SCRIPT).not.toContain("观察窗口内未重启、journal 无非零退出");
+  test("没有 journal 游标时按本次观察开始时间查询", (): void => {
+    const result: ReturnType<typeof runWithInstallFunctions> = runWithInstallFunctions(
+      'journalctl() { printf "%s\\n" "$@"; }; service_journal_since "" "2026-09-06 04:00:00 UTC"'
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("-u\ncopy-ninjia.service\n--since\n2026-09-06 04:00:00 UTC\n--output=cat\n--no-pager\n");
   });
 
-  test("journal 未核对时保留配置备份，只有成功分支允许清理", () => {
+  test("journal 未核对时保留配置备份，只有成功分支允许清理", (): void => {
     const journalCheckIndex: number = INSTALL_SCRIPT.indexOf(
-      'if JOURNAL_TAIL="$(service_journal_since "$JOURNAL_CURSOR")"; then'
+      'if JOURNAL_TAIL="$(service_journal_since "$JOURNAL_CURSOR" "$JOURNAL_SINCE")"; then'
     );
     const cleanupIndex: number = INSTALL_SCRIPT.indexOf("  finalize_config_backup", journalCheckIndex);
     const failureBranchIndex: number = INSTALL_SCRIPT.indexOf("\nelse\n", journalCheckIndex);
@@ -308,13 +308,4 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     expect(INSTALL_SCRIPT.indexOf("\nfinalize_config_backup\n", failureBranchIndex)).toBe(-1);
   });
 
-  test("读不到 journal 时脚本不 die，只 warn 并提示手动确认", () => {
-    expect(INSTALL_SCRIPT).toContain("本次跳过非零退出核对");
-    expect(INSTALL_SCRIPT).toContain("请手动确认：journalctl -u ${SERVICE_NAME} -n 50");
-    // 降级分支必须是 warn，不能是 die：读不到 journal 不等于装失败。
-    const degradedLine: string | undefined = INSTALL_SCRIPT.split("\n").find(
-      (line: string): boolean => line.includes("本次跳过非零退出核对")
-    );
-    expect(degradedLine?.trimStart().startsWith("warn ")).toBe(true);
-  });
 });

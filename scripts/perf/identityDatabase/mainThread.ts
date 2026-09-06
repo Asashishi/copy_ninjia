@@ -73,12 +73,15 @@ function seedMainWriteThroughCache(): void {
   }
 }
 
-function runMainWriteThroughOperations(
+async function runMainWriteThroughOperations(
   operations: number,
   startingOperation: number
-): number {
+): Promise<number> {
   let checksum: number = 0;
   for (let offset: number = 0; offset < operations; offset += 1) {
+    if (offset > 0 && offset % MAIN_WRITE_THROUGH_WORKING_SET === 0) {
+      await flushMainWriteThrough("Working set");
+    }
     const operation: number = startingOperation + offset;
     const id: number = operation % MAIN_WRITE_THROUGH_WORKING_SET + 1;
     const cycle: number = Math.floor(operation / MAIN_WRITE_THROUGH_WORKING_SET);
@@ -137,10 +140,8 @@ export async function runMainWriteThroughChild(
       "Main-thread write-through benchmark requires its isolated temporary root."
     );
   }
-  // loadPersistedData 组装 load 请求时要同步取贴纸包，而 getStickerConfig 只读
-  // 已预检的本线程快照。这里只补这一份、不走 validateExistingDeploymentInputs：
-  // 本文件同时服务 `bun run perf:identity-database`，那条入口把 CONFIG_ROOT 指向
-  // `config_example/`，整份预检会在 agent.json 的占位凭据上按设计拒绝。
+  // 本基准显式采用 config_example 的贴纸清单执行目录对账；其他可选功能
+  // 不参与身份写透，配置预热只读取贴纸文件。
   await ensureStickerConfig();
   initDiskIO();
   try {
@@ -151,7 +152,7 @@ export async function runMainWriteThroughChild(
     );
     seedMainWriteThroughCache();
     const warmupOperations: number = MAIN_WRITE_THROUGH_WORKING_SET * 2;
-    const warmupChecksum: number = runMainWriteThroughOperations(
+    const warmupChecksum: number = await runMainWriteThroughOperations(
       warmupOperations,
       0
     );
@@ -168,7 +169,7 @@ export async function runMainWriteThroughChild(
       batches: MAIN_WRITE_THROUGH_OPERATION_COUNT /
         IDENTITY_WRITE_BATCH_MAX_ENTRIES,
       run: async (): Promise<number> => {
-        const checksum: number = runMainWriteThroughOperations(
+        const checksum: number = await runMainWriteThroughOperations(
           MAIN_WRITE_THROUGH_OPERATION_COUNT,
           warmupOperations
         );

@@ -24,11 +24,11 @@
 | `bun run check:install-script-syntax` | Parse `install.sh` with `bash -n` only; the installation script is not executed |
 | `bun run check:install-isolation` | Actually run `install.sh` inside a dedicated `copy-ninjia-install-test-*` temporary fixture root (`scripts/checkInstallIsolation.ts`) and verify staging-failure cleanup, `telegram.json` rollback, interrupted-then-resumed installs, successful replacement, symlink topology, unverified-backup retention, and credential isolation; no real deployment path is touched |
 | `bun run check:conventions` | Check repository conventions with `scripts/checkProjectConventions.ts` |
-| `bun run check` | Run all seven segments — install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + the hot-path gate; **required before every commit** |
+| `bun run check` | Run all seven segments — install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + the hot-path gate; **required before merging into master** |
 | `bun run check:coverage` | Measure coverage now and verify the metrics in the three README badges/alts, the three copies of this page, and both coverage images match the real reading; excluded from `check` because it runs the whole suite again |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
-| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 30; the rest only run in `perf:full`); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
+| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 36; other scenarios run through the full-suite manifest or targeted commands); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
 | `bun run perf:join-log` | Run the independent-process comparison of the join-log capacity, snapshot, and append-accounting paths at the 250,000-record limit |
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
 | `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
@@ -45,13 +45,23 @@
 - **Convention checks**: `check:conventions` checks code placement, local Markdown targets, executable permissions on tracked non-script files, constants, cache ownership, and Worker/Telegram boundaries against the real thread module graph. It also statically checks that every timer handle installed under `packages/workers/` is `unref()`ed, Node-compatibility imports in production code and scripts, the allowed `Buffer` methods, process arguments that must use `Bun.argv`, Telegram cleanup and retention exemptions, active cold-migration entries, all 14 declared coverage locations, and the trilingual performance record. Cross-references written in comments as "see `<module>.ts`'s `<symbol>`" are checked the same way: it fails when the named module no longer declares or re-exports that symbol (`export *` compatibility entries are expanded one level). `check:coverage` performs a separate real coverage run to ensure the declarations have not drifted together.
   Module-level literal constants and literal combinations belong in domain `consts`; function composition and cache ownership are checked separately. Builtin Node modules share one allowlist with or without the `node:` prefix. Dynamic loading, re-exports, `require`, `process.hrtime` / `nextTick`, and destructuring are checked too; type-only declarations are excluded from runtime checks.
 
+  Node API checks cover `process.getBuiltinModule`, `globalThis.Buffer`, and literal bracket access. Exceptions such as `Buffer.byteLength` remain registered by module, symbol, and purpose. `@grammyjs/runner` is a development dependency used for SDK comparison tests; production fetching uses the project's offset-acknowledgement boundary.
+
 ### Dependency Release-Age Gate
 
-Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The Bun runtime is pinned to 1.4.1 and `@types/bun` to 1.4.0; the version gate requires the same major and minor versions, while `packageManager` and `install.sh` jointly pin the runtime patch version.
+Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The Bun runtime is pinned to 1.4.2 and `@types/bun` to 1.4.0; the version gate requires the same major and minor versions, while `packageManager` and `install.sh` jointly pin the runtime patch version.
+
+### Bun Runtime Boundaries
+
+The project sets `run.bun = true` in `bunfig.toml`, so dependency CLIs with a Node shebang also run under the current Bun. Image transcoding in `packages/infra/image.ts` loads `sharp` on demand: vision JPEG/PNG inputs pass through, WebP/GIF become PNG, and animation uses only the first frame while preserving transparency. Thumbnails retain their aspect ratio without enlarging small images or applying EXIF rotation, composite transparent pixels against black, and try JPEG quality levels until both size limits are met. Native API replacements must cover the same input formats, transparency, animation frames, and failure semantics.
+
+File content writes and ordinary file deletion use [`Bun.write` and `Bun.file`](https://bun.com/docs/runtime/file-io). Writes after exclusive creation use `Bun.write(Bun.file(handle.fd), content)`; the original handle owns fsync, closing, and atomic publication. Directory traversal, paths, synchronous durability, permissions, and hard links use `node:` APIs where native Bun APIs do not cover the required semantics. Bun-supported compatibility APIs also provide `AsyncLocalStorage`, PEM private-key parsing, and allocation-free UTF-8 byte counting. Disk I/O startup, midnight, and day rollover maintenance await each deletion before advancing to another domain or acknowledging persistence.
+
+After a runtime update, performance calibration must be measured again with the same Bun version/revision. Convention checks and the hot-path gate reject the previous calibration until then. To validate an update without benchmarking, run installation isolation, lint, typecheck, coverage, and fault-injection tests separately; this does not constitute a passing full `check` and does not update previous performance measurements.
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **3179 tests / 321 files / 123010 `expect()` calls**; full-source **function coverage 97.12% / line coverage 97.38%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **3469 tests / 344 files / 125771 `expect()` calls**; full-source **function coverage 97.18% / line coverage 97.36%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -61,6 +71,8 @@ Tests must run through `bun run test`, which invokes `bun test --isolate`, with 
 2. **Temporary data root**: before any production module loads, `test/preloadEnv.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, `memory/`, or `database/`. The directory is removed afterward. **The path injection lives in its own file** because ESM evaluates imports before any statement in the importing file: the moment `test/preload.ts` statically imports a production module, an environment assignment written inside that file is already too late and `CONFIG_ROOT` resolves to the developer's real deployment directory.
 3. **Read-only configuration root**: the same injection also points `COPY_NINJIA_CONFIG_ROOT` at the in-repo `config_example/` (see `CONFIG_ROOT` in `packages/consts/paths.ts`). The deployed `config/` is not version-controlled, so this layer both keeps a clean checkout runnable and stops tests and test Workers from reading a developer's real Telegram and feature configuration. The preceding temporary-data-root layer isolates the identity database. That variable exists for tests only — it is not a deployment switch, which is why the README environment table omits it.
 4. **Agent configuration snapshot**: `agent.json` is the one deployment input no runtime path reads from disk (in a real process the main thread parses it and hands it to each Worker in an init message, see [04 Runtime Invariants](04-invariants.md)). Test isolates never receive those messages, so `test/preload.ts` adopts the same `config_example/agent.json` into the isolate's holder once — equivalent to "the snapshot already arrived". Tests that need the unconfigured path clear the holder themselves.
+
+`test/scripts/installStartup.test.ts` reuses the installer isolation fixture to run `install.sh`, `bun run start`, and real Workers with independent temporary configuration and data roots. Test doubles own Telegram responses and system-service commands. It covers AI disabled, valid AI configuration, repeated installation and startup, and rejection of malformed optional configuration before networking, including graceful shutdown and instance-lock release checks.
 
 Direct `bun test` runs are acceptable for debugging a single file, but the complete `bun run check` must pass before merge.
 
@@ -74,9 +86,11 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 `bun run test:fault-injection` concentrates on crash recovery and persistence boundaries: lifecycle failure, update-runner acknowledgement boundaries, StateStore and cleanup, AI/Anti-Raid Worker mirrors and lifecycles, Disk I/O append/snapshot/log files, flush barriers, and more. See the scripts in [`package.json`](../../package.json) for the complete list. This suite must pass whenever a changed path is covered by [04 Authoritative Runtime Invariants](04-invariants.md).
 
+`/wed` persistence regressions cover per-group set identity, the 150,000-member cap, departure capacity reuse, dirty TTL/count thresholds, silent no-ops, delivery failures, Worker recovery watermarks, shutdown flush, and invalid files refusing startup before networking while retaining their bytes. `test/app/registerHandlersDispatch.test.ts` also verifies that rejected initialization gates still remove departed IDs without admitting business handlers. Performance checks reuse `wed-member-hit`, `wed-member-growth`, `wed-member-churn`, `wed-member-chat-switch`, and `registered-middleware`; `wed-member-churn` checks that full sets reject new IDs and retain existing members.
+
 ## Hot-Path Gate
 
-`bun run perf:hot-path-gate` is the final stage of `bun run check`, so it runs before every commit. For each scenario in `HOT_PATH_PROFILE_SCENARIOS` (`packages/consts/performance.ts`) and each repeat it spawns two independent children: `steadyProfile` judges only GC and JIT during the formal loop, while `retained` judges RSS, the heapUsed peak, and post-full-GC retention without the profiler's own memory interfering.
+`bun run perf:hot-path-gate` is the final stage of `bun run check`, and is required before merging into `master`. For each scenario in `HOT_PATH_PROFILE_SCENARIOS` (`packages/consts/performance.ts`) and each repeat it spawns two independent children: `steadyProfile` judges only GC and JIT during the formal loop, while `retained` judges RSS, the heapUsed peak, and post-full-GC retention without the profiler's own memory interfering.
 
 `scripts/perf/hotPaths/gateResult.ts` strictly parses the calibration stored in [`performance-result.json`](../../performance-result.json). Before convention checks proceed or hot-path children start, `gateRuntime.ts` compares `packageManager`, the current Bun version/revision, and the calibrated build; mismatches require remeasurement. The record contains process counts, per-scenario latency sources, and hard GC/RSS/retention limits. Historical `fullSuite` results retain their own timestamps and Bun builds.
 
@@ -100,6 +114,16 @@ There is one **mandatory sink rule** when adding or rewriting a scenario: when t
 
 `bun run perf:identity-database` uses temporary data roots and SQLite databases to measure six production operations: two-table reads in batches of 8 identities (hot on one connection, cold with a fresh connection per batch), explicit 128-row transaction writes (again split into hot and cold connections), hot reads through the main-thread 8,192-entry LRU, and write-through that crosses the Worker, JSONB transaction, and exact ACK boundary. "Cold" only means an empty connection page cache and statement cache, not a dropped OS page cache. Each operation warms up before five independent Bun processes are sampled. The report fixes Bun version/revision and records throughput, batch latency, sample range/coefficient of variation, retained JSC heap/extra memory/object counts, and GC time. `--single-process` repeats each operation three times in one measurement process to investigate retained growth across rounds; it does not replace independent-process performance comparison. `Bun.gc(true)` remains outside timed regions and diagnostic-only. Run this benchmark when identity LRU, cold prefetch, encoding, transaction batching, acknowledgements, or Worker replay changes, and judge the same-Bun-build difference together with sample noise and heap/GC results.
 
+The write-through scenario executes 65,536 operations over a 4,096-key working set. Each working set waits for a durable flush before the next round, and final checks cover all operation ACKs and the checksum.
+
+## Targeted Scenarios and Transport Stress Validation
+
+The registry includes `wed-member-hit`, `wed-member-growth`, `wed-member-churn`, `wed-member-chat-switch`, `registered-middleware`, and `storage-sqlite-flush`. The first four cover member-set hits, filling, rejection at capacity, and chat switching. The middleware scenario runs the actual registered chain and asserts activity. The SQLite scenario submits 128 deletions against an empty database, primarily measuring transaction scheduling rather than disk throughput.
+
+Run `bun scripts/perf/isolatedHotPath.ts <scenario>` and add `--profile` for separate sampling. This entry reuses `gateFixture.ts` to create isolated configuration and data roots for three independent child processes, then removes the run directory. Benchmark canned replies own outbound calls. Fix Bun and inputs, warm up, and inspect retained and profile outputs separately. Insufficient samples cannot establish absence of GC.
+
+`bun scripts/perf/diskTransport.ts` runs three independent mock processes to validate single-batch ACKs, normal draining, and capacity rejection when ACKs stop, reporting latency, heap, GC, and JIT. It reuses one immutable payload and measures queue/acknowledgement overhead; Worker cloning, distinct real payload sizes, and disk waits are outside this measurement.
+
 ## Full Performance Benchmark
 
 `bun run perf:full` runs on release and on explicit request only. It is not part of `bun run check` and sets no failure threshold — the hard gate for hot paths is still `perf:hot-path-gate` above. It runs six sections for three independent-process rounds each and reports the mean: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, containers and algorithms, and the join-log capacity line. Every item also carries min, max, and coefficient of variation; a row whose CV jumps cannot be compared against history.
@@ -110,12 +134,11 @@ All data is written under the repository-root `performance/` directory (already 
 
 ## Commit Workflow
 
-1. Develop on the `dev` branch and never commit straight to `master`; merge into `master` with a squash so one change set becomes one commit. See “分支与提交” in [`AGENTS.md`](../../AGENTS.md) for the branch rules, which are not repeated here.
+1. Develop on the `dev` branch and never commit straight to `master`; merge into `master` with a squash so one change set becomes one commit. See “分支、验证、提交与发布” in [`AGENTS.md`](../../AGENTS.md) for the branch rules, which are not repeated here.
 2. Users may adjust parameters while development is in progress. Reread files before editing so uncommitted work is not overwritten.
 3. Review the complete `git diff --stat` before committing, and keep unrelated files out of the commit.
-4. Make sure `bun run check` passes.
+4. Before each commit, run `git branch --show-current` and confirm `dev`, then pass `bun run lint && bun run typecheck` or the full `bun run check`. Merging into `master` requires the full `check`; persistence, shutdown, or Worker lifecycle changes also require `bun run test:fault-injection`.
 5. Use Conventional Commits style—`feat(ai): ...`, `fix(runtime): ...`, `docs: ...`—with an English subject line.
-6. Every commit is stored only after joint human/AI review, following the project convention described in the root README's “Pure AI Development” section.
 
 ### Updating README Metrics
 
@@ -129,7 +152,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 These places all carry the same measured figures, so updating one obliges updating every one:
 
 - **The Tests/Coverage badges in all three READMEs.** The Coverage badge always uses the `All files` line-coverage value.
-- **The coverage graphics**: [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) and [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg), referenced from the “Project Quality” block in each README's “Pure AI Development” section. One pair is shared by all three READMEs (like the banner), so both theme files need the new figures.
+- **The coverage graphics**: [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) and [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg), referenced from each README's “Project Quality” section. One pair is shared by all three READMEs (like the banner), so both theme files need the new figures.
 - **The equivalent `<img alt>` text in all three READMEs.** The graphic loads as an image, so the SVG's own `<title>` / `aria-label` never reaches a screen reader and the alt is the only accessible path.
 - **“Measurements for This Documentation Version” in all three workflow documents.**
 

@@ -8,10 +8,13 @@ import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
 import {
   RATE_LIMIT_LONG_MAX_TRIGGERS,
   RATE_LIMIT_LONG_WINDOW_MS,
+  QUEUED_TRIGGER_SNIPPET_MAX_CHARS,
 } from "../../consts/aiChat/rateLimit";
 import { SEND_MESSAGE_TOOL } from "../../consts/tools";
 import { logger } from "../../infra/logger";
 import { TimestampDeque } from "../../libs/timestampDeque";
+import { raceAbort } from "../../libs/abortSignal";
+import { truncateInline } from "../../libs/text";
 import { admitRound } from "../../states/replyAdmission";
 import type { AiBotInfo, ImageGenerationReference } from "../../types/aiChat/protocol";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
@@ -20,9 +23,11 @@ import type {
   ReplyPromptSections,
   ReplyToolContext,
   ReplyToolset,
+  ReplyDeliveryTurn,
 } from "../../types/aiChat/replies";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { generateReply } from "./replyModel";
+import { reserveReplyDelivery } from "./replyDelivery";
 import { buildReplyPromptSections } from "./promptContext";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
@@ -50,6 +55,7 @@ export interface ReplyRoundRequest {
   /** 本轮全部发送要落进的论坛话题；General、非论坛群为 undefined。 */
   messageThreadId: number | undefined;
   mediaComment?: MediaCommentContext;
+  mediaPreparation?: Promise<MediaCommentContext | null>;
   queuedTrigger?: QueuedReplyTrigger;
   /** 直接触发在准入时捕获代数；排队补跑省略并使用出队时的当前代数。 */
   generation?: number;
@@ -57,11 +63,15 @@ export interface ReplyRoundRequest {
 
 /**
  * 过滑动窗口限频闸并启动一轮异步回复。占位、贴纸锁和聊天状态心跳均在
- * 本函数内成对获取/释放；完成回调用于让编排层继续排空等候队列。
+ * 本函数内成对获取/释放；模型交付完整链后释放并发位并通知补跑，整轮发送按入站顺序串行。
  * @returns 本次真的开了一轮为 true；被代际失效或限频闸拒绝为 false。
  *   排队补跑那一路据此决定要不要把这条触发留在队首（见 replyQueue.ts）。
  */
-export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId: number) => void): boolean {
+export function startReplyRound(
+  request: ReplyRoundRequest,
+  onFinished: (chatId: number) => void,
+  onModelFinished?: (chatId: number) => void
+): boolean {
   const {
     chatId,
     triggerSenderId,
@@ -73,6 +83,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     chatQa,
     messageThreadId,
     mediaComment,
+    mediaPreparation,
     queuedTrigger,
   }: ReplyRoundRequest = request;
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
@@ -112,19 +123,41 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   activeReplyCounts.set(chatId, (activeReplyCounts.get(chatId) ?? 0) + 1);
 
   const signal: AbortSignal = replyGenerationSignal(chatId, generation);
-  const task: Promise<void> = (async (): Promise<void> => {
+  const delivery: ReplyDeliveryTurn = reserveReplyDelivery(chatId);
+  const task: Promise<void> = Promise.resolve().then(async (): Promise<void> => {
+    let modelFinished: boolean = false;
+    const finishModel = (): void => {
+      if (modelFinished) return;
+      modelFinished = true;
+      const remaining: number = (activeReplyCounts.get(chatId) ?? 1) - 1;
+      if (remaining > 0) activeReplyCounts.set(chatId, remaining);
+      else activeReplyCounts.delete(chatId);
+      onModelFinished?.(chatId);
+    };
     const isActive = (): boolean =>
       !signal.aborted && isReplyGenerationCurrent(chatId, generation);
     const stickerLock: StickerSendLockControl = createStickerSendLock(chatId);
     // 提示词和工具 schema 必须共用同一次抽签，否则配置概率不等于实际错字概率。
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
+      const resolvedMedia: MediaCommentContext | null | undefined = mediaPreparation
+        ? await raceAbort(mediaPreparation, { signal, cancelled: null, rejected: null })
+        : mediaComment;
+      if (!isActive() || resolvedMedia === null) return;
+      // 排队媒体使用入站快照的身份与回复边，只将占位正文替换为解析结果。
+      const resolvedQueuedTrigger: QueuedReplyTrigger | undefined = queuedTrigger && resolvedMedia
+        ? {
+          ...queuedTrigger,
+          triggerReference: resolvedMedia.triggerReference ?? queuedTrigger.triggerReference,
+          text: truncateInline(resolvedMedia.triggerText ?? resolvedMedia.description, QUEUED_TRIGGER_SNIPPET_MAX_CHARS),
+        }
+        : queuedTrigger;
       const promptSections: ReplyPromptSections | null = buildReplyPromptSections(chatId, selfInfo, {
         triggerMessageId: replyToMessageId,
         ...(directInvokerId !== undefined ? { directInvokerId } : {}),
         isRandomTrigger,
-        mediaComment,
-        queuedTrigger,
+        mediaComment: queuedTrigger ? undefined : resolvedMedia,
+        queuedTrigger: resolvedQueuedTrigger,
         roundHasTypo,
       });
       if (!promptSections) return;
@@ -140,6 +173,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         ): BufferedReplyReference | undefined => repliedToMessageId === undefined
           ? undefined
           : replyReferenceForBufferedMessage(chatId, repliedToMessageId) ??
+            (resolvedMedia?.triggerReference?.messageId === repliedToMessageId ? resolvedMedia.triggerReference : undefined) ??
             (triggerReference?.messageId === repliedToMessageId ? triggerReference : undefined);
         /** 四个自发消息回调唯一的差别是文案来源，贴纸没有回复关系可还原。
          * 主线程认自己的消息不靠这里回投——代理边界在把 id 交回本线程之前就已
@@ -185,31 +219,37 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           onImageSent: recordSelfSent,
           onSongSent: recordSelfSent,
         };
-        const toolset: ReplyToolset = await createReplyToolset(ctx);
-        const finalText: string | null = await generateReply(chatId, promptSections, toolset);
+        const toolset: ReplyToolset = await createReplyToolset(ctx, delivery.ready);
+        let finalText: string | null = null;
+        try {
+          finalText = await generateReply(chatId, promptSections, toolset);
 
-        // 模型没有成功执行任何可见动作、却把正文留在最终响应时，仍走
-        // send_message 兜底。若贴纸、图片、反应或文字已经成功落地，尾随正文
-        // 不再形成额外发言；模型真想补充文字就必须显式调用 send_message。
-        if (finalText && toolset.actionsUsed() === 0) {
-          const fallbackResult: string = await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
-          let fallbackError: string | null = null;
-          try {
-            const parsed: { error?: unknown; } = JSON.parse(fallbackResult) as { error?: unknown };
-            if (typeof parsed.error === "string") fallbackError = parsed.error;
-          } catch {
-            // 工具结果都是 replyToolset 自己拼的 JSON，解析不会失败；防御性兜底。
+          // 仅在没有接纳任何动作时兜底发送最终正文；排队中的动作同样阻止重复兜底。
+          if (finalText && toolset.actionsUsed() === 0) {
+            const fallbackResult: string = await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
+            let fallbackError: string | null = null;
+            try {
+              const parsed: { error?: unknown; } = JSON.parse(fallbackResult) as { error?: unknown };
+              if (typeof parsed.error === "string") fallbackError = parsed.error;
+            } catch {
+              // 工具结果由本地执行器构造。
+            }
+            if (fallbackError !== null) {
+              logger.error(`AI reply fallback send failed (chat ${chatId}): ${fallbackError}`);
+            }
           }
-          if (fallbackError !== null) {
-            logger.error(`AI reply fallback send failed (chat ${chatId}): ${fallbackError}`);
+        } finally {
+          delivery.commit();
+          heartbeat.set("idle");
+          try {
+            finishModel();
+          } finally {
+            await toolset.settle();
           }
         }
 
-        // 零动作轮点名记录：直接触发的「已读不回」只能靠这条日志观测——
-        // 模型违背「必须回应」指令、generateReply 的各条失败路径、兜底发送
-        // 失败都会落进来。被 invalidate 的轮除外（/ai_chat disable 的预期
-        // 沉默，不算失踪）。
-        if (isActive() && toolset.actionsUsed() === 0) {
+        // 全部发送链收尾后按真实落地数记录零动作；已作废轮次保持静默。
+        if (isActive() && toolset.actionsCompleted() === 0) {
           const triggerKind: string = queuedTrigger
             ? "queued"
             : mediaComment?.directTriggerReason
@@ -225,13 +265,18 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         await heartbeat.stop();
       }
     } finally {
-      stickerLock.release();
-      const remaining: number = (activeReplyCounts.get(chatId) ?? 1) - 1;
-      if (remaining > 0) activeReplyCounts.set(chatId, remaining);
-      else activeReplyCounts.delete(chatId);
-      onFinished(chatId);
+      try {
+        stickerLock.release();
+      } finally {
+        try {
+          finishModel();
+        } finally {
+          await delivery.finish();
+          onFinished(chatId);
+        }
+      }
     }
-  })().catch((error: unknown): void => {
+  }).catch((error: unknown): void => {
     if (signal.aborted) return;
     logger.error("Error in AI reply task:", error);
   });

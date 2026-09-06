@@ -162,7 +162,7 @@ export function hydrateBlocklist(
 
 /**
  * 把主线程权威镜像完整投给 Disk I/O Worker。写入端逐字段重建并标脏，紧随
- * 其后的领域 flush 才是 durable 边界；这里不做 structured clone 之外的深拷贝。
+ * 其后的领域 flush 才是 durable 边界；排队快照与可变失败诊断字段分离。
  * @internal 供同目录 sweep owner 合并权威变更。
  */
 type BlocklistSnapshotPoster = (message: BlocklistRemovalsDiskMessage) => boolean;
@@ -178,9 +178,18 @@ export function queuePendingBlockedRemovalsSnapshot(
   unacknowledgedRemovalSnapshotRevision.current = revision;
   return postMessage({
     type: "blocklistRemovals",
-    removals: [...pendingBlockedRemovals],
+    removals: pendingRemovalSnapshot(),
     revision,
   } satisfies BlocklistRemovalsDiskMessage);
+}
+
+/** 传输队列保留到消费 ACK；快照拥有独立诊断字段，params 只由整条记录替换。 */
+function pendingRemovalSnapshot(): readonly (readonly [number, PendingBlockedRemoval])[] {
+  const snapshot: (readonly [number, PendingBlockedRemoval])[] = [];
+  for (const [id, pending] of pendingBlockedRemovals) {
+    snapshot.push([id, { ...pending }]);
+  }
+  return snapshot;
 }
 
 /** Anti-Raid 投递前的 write-ahead 边界。 */
@@ -356,7 +365,7 @@ onDiskIORespawn("blocklist outbox", DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST + 1, (
   if (revision === null) return true;
   return transport.post({
     type: "blocklistRemovals",
-    removals: [...pendingBlockedRemovals],
+    removals: pendingRemovalSnapshot(),
     revision,
   } satisfies BlocklistRemovalsDiskMessage);
 });

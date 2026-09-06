@@ -27,10 +27,8 @@ import { postDiskIODiagnostic } from "../infra/diskIO";
 import { deleteMessageAfter, sendMessage } from "../infra/telegram/actions";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
-import {
-  settleWithinBudget,
-  trackBackgroundTask,
-} from "../infra/backgroundTasks";
+import { trackBackgroundTask } from "../infra/backgroundTasks";
+import { settleWithinBudget } from "../libs/inflight";
 import { formatTokyoTime } from "../libs/time";
 import {
   runBlocklistIdentityMutation,

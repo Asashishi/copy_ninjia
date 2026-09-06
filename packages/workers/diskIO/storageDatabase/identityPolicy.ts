@@ -1,3 +1,5 @@
+import { storagePendingBudget } from "../../../cache/workers/diskIO/storageDatabase";
+import { storageWriteCost } from "../../../libs/storageWriteBudget";
 import {
   BLOCKLIST_SWEEP_PAGE_SIZE,
   BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES,
@@ -210,6 +212,7 @@ export function handleIdentityPolicyWrite(
   const current: PendingIdentityPolicyWrite | undefined = pending.get(message.id);
   if (current !== undefined && current.revision >= message.revision) return;
   assertOppositePolicyAbsent(message);
+  storagePendingBudget.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data) - (current === undefined ? 0 : storageWriteCost(current.data)));
   pending.set(message.id, { data: message.data, revision: message.revision });
   flushIfStorageFull(reply);
 }

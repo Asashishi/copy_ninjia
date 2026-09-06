@@ -19,6 +19,7 @@ export const DISK_IO_RESPAWN_PRIORITIES: Readonly<{
   AI_MEMORY: number;
   ANTI_RAID_VERIFICATION: number;
   DAILY_LUCK: number;
+  WED_MEMBERS: number;
 }> = {
   CHAT_STATE: 50,
   // 排在群状态之后：问答挂在群上，先让那一群的状态回到位再重放它的问答，
@@ -30,6 +31,7 @@ export const DISK_IO_RESPAWN_PRIORITIES: Readonly<{
   AI_MEMORY: 200,
   ANTI_RAID_VERIFICATION: 300,
   DAILY_LUCK: 400,
+  WED_MEMBERS: 500,
 };
 
 /** 公历日的固定毫秒数；只与固定 UTC+9 偏移配合，不用于有夏令时的时区。 */

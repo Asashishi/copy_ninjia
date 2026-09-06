@@ -60,11 +60,13 @@ export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> 
 export const PRODUCTION_NODE_IMPORTS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {
-  "packages/config/readiness.ts": {
+  "packages/config/googleAuth.ts": {
     "node:crypto": {
       symbols: ["createPrivateKey"],
       purpose: "private-key syntax validation",
     },
+  },
+  "packages/config/readiness.ts": {
     "node:fs/promises": {
       symbols: ["lstat"],
       purpose: "startup deployment-input metadata validation",
@@ -133,7 +135,7 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/adSampleFile.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "renameSync", "unlinkSync"],
+      symbols: ["existsSync", "mkdirSync", "readdirSync", "renameSync"],
       purpose: "Disk I/O owner directory maintenance and atomic archive publication",
     },
   },
@@ -151,13 +153,13 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/joinLogRecovery.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
+      symbols: ["existsSync", "mkdirSync", "readdirSync"],
       purpose: "owner-local journal metadata and stale-file cleanup",
     },
   },
   "packages/workers/diskIO/logFiles.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "statSync", "unlinkSync"],
+      symbols: ["existsSync", "mkdirSync", "readdirSync"],
       purpose: "log metadata inspection and stale-file cleanup",
     },
   },
@@ -169,13 +171,19 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/snapshotFiles.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
+      symbols: ["existsSync", "mkdirSync", "readdirSync"],
       purpose: "snapshot directory traversal and stale-file cleanup",
+    },
+  },
+  "packages/workers/diskIO/wedMemberFiles.ts": {
+    "node:fs": {
+      symbols: ["mkdirSync", "readdirSync"],
+      purpose: "wed member snapshot directory inspection and initialization",
     },
   },
   "packages/workers/diskIO/verificationRecovery.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync", "unlinkSync"],
+      symbols: ["existsSync", "mkdirSync", "readdirSync"],
       purpose: "verification journal metadata and retention cleanup",
     },
   },

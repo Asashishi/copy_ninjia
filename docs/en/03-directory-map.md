@@ -58,7 +58,7 @@ This page answers “where does this code live, and where should new code go?”
     `adDetectAdmission.ts`.
 - **`packages/config/`**
   - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
-  - **Representative files**: `telegram.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
+  - **Representative files**: `telegram.ts`, `telegramInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
 - **`packages/database/`**
   - **Responsibility**: the shared SQLite (identity policy plus chat state) schema, codecs, row validation, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
   - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `migration.ts`, `inspection.ts`, `admin.ts`), and `validation/storageRows.ts`.
@@ -113,6 +113,10 @@ This page answers “where does this code live, and where should new code go?”
 - **`scripts/`**
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
   - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `migrateQaThumbnail.ts` with `qaThumbnailMigration/`, the shared cold-migration boundaries `migration/backup.ts` and `migration/lifecycle.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), plus the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`.
+
+`telegramInput.ts` provides strict reading and parsing shared by the installer and runtime, without reading deployment files or populating caches on import; `telegram.ts` owns the runtime snapshot. `libs/inflight.ts` provides bounded waits for in-flight tasks while domain owners retain admission, cancellation, and zero-budget policies. `infra/backgroundTasks.ts` logs background-task errors and removes settled tasks. Group toggles share the authorization, configuration gate, write, persistence, and receipt sequence in `commands/superAdminToggle.ts`.
+
+`commands/wed.ts` owns the interaction state machine, `wed/dispatch.ts` handles admission, `wed/runtime.ts` connects the shared bounded executor to application lifecycle, and `wed/rendering.ts` stays pure. Interaction state and executor handles live in `cache/main/wed.ts`. Persistent per-group member sets and the dirty window live in `cache/main/wedMembers.ts`; `wed/persistence.ts` handles startup adoption, batched delivery, and Worker recovery replay. `workers/diskIO/wedMemberFiles.ts` strictly validates files and replaces them atomically, with pending snapshots owned by `cache/workers/diskIO/wed.ts`. Avatar reads and outbound calls reuse `infra/telegram/`.
 
 ## Deciding Where New Code Belongs
 

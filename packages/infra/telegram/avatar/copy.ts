@@ -2,17 +2,15 @@ import { GrammyError, InputFile } from "grammy";
 import type { ChatFullInfo, PhotoSize, UserProfilePhotos } from "grammy/types";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
-  AVATAR_MAX_DOWNLOAD_BYTES,
   BOT_PROFILE_PHOTO_FILE_NAME,
   USER_PROFILE_PHOTOS_LIMIT,
 } from "../../../consts/telegram";
-import { readBoundedResponseBytes, type BoundedResponseResult } from "../../../libs/boundedResponse";
 import { logger } from "../../logger";
 import { logApiError } from "../client";
 import { bot } from "../mainClient";
-import type { HydratedTelegramFile } from "../mainClient";
-import { runTelegramCategorizedRequest } from "../outboundGate";
-import { avatarFetchSignal, telegramSignal } from "./shared";
+import { telegramSignal } from "./shared";
+import { downloadAvatarFile } from "./download";
+import type { AvatarDownloadResult } from "../../../types/telegram";
 import type { AvatarOperationAttemptResult } from "./shared";
 import {
   extractPublicUsername,
@@ -90,31 +88,8 @@ async function attemptCopyUserProfilePhoto(
       fileId = matchedPhoto.file_id;
     }
 
-    const file: HydratedTelegramFile = await bot.api.getFile(fileId, telegramSignal(signal));
-    if (!file.file_path) {
-      logger.error(`getFile for target ${targetId}'s avatar returned no file_path`);
-      return "permanent-failure";
-    }
-
-    const downloadUrl: string = file.getUrl();
-    const downloadSignal: AbortSignal = avatarFetchSignal(signal);
-    const imgRes: Response = await runTelegramCategorizedRequest({
-      category: "download",
-      signal: downloadSignal,
-      execute: (requestSignal: AbortSignal): Promise<Response> => fetch(downloadUrl, {
-        redirect: "error",
-        signal: requestSignal,
-      }),
-    });
-    if (!imgRes.ok) {
-      logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
-      return "transient-failure";
-    }
-    const download: BoundedResponseResult = await readBoundedResponseBytes(imgRes, AVATAR_MAX_DOWNLOAD_BYTES);
-    if (!download.ok) {
-      logger.error(`Avatar file exceeded the download limit (${download.observedBytes} bytes): ${file.file_path}`);
-      return "permanent-failure";
-    }
+    const download: AvatarDownloadResult = await downloadAvatarFile(fileId, targetId, signal);
+    if (download.status !== "ok") return download.status;
 
     await bot.api.setMyProfilePhoto(
       { type: "static", photo: new InputFile(download.bytes, BOT_PROFILE_PHOTO_FILE_NAME) },

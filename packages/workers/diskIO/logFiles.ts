@@ -15,7 +15,7 @@
  * 不一致。
  */
 
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO/messages";
 import type { DayFileState } from "../../types/diskIO/storage";
@@ -132,7 +132,7 @@ async function inspectLogDay(day: string): Promise<LogDayInspection> {
       size: empty
         ? 0
         : rewriteContent === null
-          ? statSync(path).size
+          ? (await Bun.file(path).stat()).size
           : Buffer.byteLength(rewriteContent),
       empty,
     },
@@ -175,11 +175,11 @@ function dayKey(timestamp: number): string {
  * <day>.json.tmp，保留期清理天然覆盖不到，得单独扫一遍删掉——对齐
  * snapshotFiles.ts 的 recoverAiMemories/recoverLuckDay 同样的清理。
  */
-function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): void {
+async function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
   for (const name of names) {
     if (!name.endsWith(TMP_FILE_SUFFIX)) continue;
     try {
-      unlinkSync(join(LOGS_DIR, name));
+      await Bun.file(join(LOGS_DIR, name)).delete();
     } catch {
       // 删除失败（权限问题等）不影响主流程，下次启动同样的清理还会再试一次。
     }
@@ -187,13 +187,13 @@ function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)):
 }
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
-function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)): void {
+async function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
   const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
   for (const name of names) {
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     if (match && match[1]! < oldestKept) {
       try {
-        unlinkSync(join(LOGS_DIR, name));
+        await Bun.file(join(LOGS_DIR, name)).delete();
       } catch {
         // 删除失败（例如权限问题）不影响写入，下次跨天再试。
       }
@@ -214,7 +214,7 @@ async function writeDay(day: string, texts: string[]): Promise<boolean> {
   try {
     if (loggerFileState.current?.day !== day) {
       loggerFileState.current = await openLogDay(day);
-      cleanupOldLogs();
+      await cleanupOldLogs();
     }
     await appendToDayFile({
       dir: LOGS_DIR,
@@ -253,9 +253,9 @@ export function adoptLogFiles(inspection: LogFilesInspection): void {
 }
 
 /** 启动成功后清理日志临时文件与过期日。 */
-export function maintainLogFiles(inspection: LogFilesInspection): void {
-  cleanupStaleTmpFiles(inspection.names);
-  cleanupOldLogs(inspection.names);
+export async function maintainLogFiles(inspection: LogFilesInspection): Promise<void> {
+  await cleanupStaleTmpFiles(inspection.names);
+  await cleanupOldLogs(inspection.names);
 }
 
 /** 每日维护先提交内存日志，再清理孤儿临时文件与过期日文件。 */
@@ -263,8 +263,8 @@ export async function maintainLogRetention(): Promise<void> {
   if (!await flushLogBuffer()) {
     throw new Error("Failed to flush logs before daily retention maintenance.");
   }
-  cleanupStaleTmpFiles();
-  cleanupOldLogs();
+  await cleanupStaleTmpFiles();
+  await cleanupOldLogs();
 }
 
 /** 按需启动日志缓冲的定时落盘；已有定时器在跑就不重复排。条数达到

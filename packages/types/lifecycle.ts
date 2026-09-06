@@ -63,6 +63,7 @@ export interface ShutdownResults {
   avatar: FlushResult;
   translate: FlushResult;
   gag: FlushResult;
+  wed: FlushResult;
   antiRaid: FlushResult;
   ai: FlushResult;
   telegram: FlushResult;

@@ -93,7 +93,7 @@ async function recoverVerificationDay(
   const inspection = await inspectVerificationDay(day, dir);
   const recovered = adoptVerificationDay(inspection);
   try {
-    maintainVerificationDay(inspection);
+    await maintainVerificationDay(inspection);
   } catch (error: unknown) {
     resetVerificationPersistenceCache();
     throw error;
@@ -321,7 +321,7 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(priorPath)).toBeTrue();
     expect(existsSync(currentPath)).toBeFalse();
 
-    maintainVerificationDay(inspection);
+    await maintainVerificationDay(inspection);
     expect(existsSync(priorPath)).toBeFalse();
     expect(existsSync(currentPath)).toBeTrue();
   });

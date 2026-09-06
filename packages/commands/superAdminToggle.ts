@@ -100,7 +100,7 @@ export interface ChatToggleCommandParams {
  * 按群开关命令的统一编排：解析授权与参数 → 开启前的配置总闸 → 写入并落盘 →
  * 关闭方向尽力而为地拆除运行时 → 回执。
  *
- * 四条命令（/ad_detect、/ai_chat、/flood_control、/antiraid）共用这一编排。
+ * /ad_detect、/ai_chat、/flood_control、/antiraid 与 /ja_copy 开关共用这一编排。
  * 其中两处顺序是语义，不能由调用方自由发挥：
  * - 落盘**先于**运行时拆除。反过来的话，拆干净了却没落盘，重启后开关又是开的。
  * - 拆除异常只记日志、绝不外抛。开关本身已经落盘；放它逃出 handler 就是这条

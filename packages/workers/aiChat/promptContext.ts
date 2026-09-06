@@ -18,7 +18,7 @@ import {
   forwardPathTemplate,
   SELF_ROSTER_CODE,
 } from "../../consts/aiChat/prompts/transcript";
-import { TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
+import { SILENT_REPLY_END_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/workers/aiChat/memory";
 import { lookupBufferedMessage } from "./bufferedMessageIndex";
 import { resolvedTagFor } from "./mediaText";
@@ -183,7 +183,7 @@ export function buildReplyPromptSections(
     : mediaComment
     ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}。${mediaForwardNotice}内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。`
     : queuedTrigger
-    ? `刚才你忙着回别的消息的时候，${queuedTriggerDescription}，这条是排队等到现在才轮到处理的。请针对这条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让对方知道你在回哪条；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，且没有新内容，就直接结束，不要换个说法再答一次，也不要为补回应额外发言或扣反应。`
+    ? `刚才你忙着回别的消息的时候，${queuedTriggerDescription}，这条是排队等到现在才轮到处理的。请针对这条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让对方知道你在回哪条；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，且没有新内容，就直接结束，不要换个说法再答一次，也不要为补回应额外发言或扣反应。${SILENT_REPLY_END_INSTRUCTION}`
     : isRandomTrigger
     ? "群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。"
     : "请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。";

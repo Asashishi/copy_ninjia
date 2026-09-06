@@ -6,7 +6,7 @@
  * 谁都不该为了拿一个常量去 import 另一组场景。
  */
 
-import type { Message } from "grammy/types";
+import type { Message, UserFromGetMe } from "grammy/types";
 
 /** 基准群聊 id；仅用于进程内 Map，不产生任何 Telegram 或磁盘副作用。 */
 export const BENCHMARK_CHAT_ID: number = -100_000_000_000_001;
@@ -39,3 +39,11 @@ export function messageFixture(username?: string): Message {
     },
   };
 }
+
+/** 注册链与成员观察共用的罐头机器人身份。 */
+export const BENCHMARK_BOT_INFO: Readonly<UserFromGetMe> = {
+  id: 1, is_bot: true, first_name: "perf", username: "perf_bot",
+  can_join_groups: true, can_read_all_group_messages: true, supports_inline_queries: true,
+  can_connect_to_business: false, has_main_web_app: false, has_topics_enabled: false,
+  allows_users_to_create_topics: false, can_manage_bots: false, supports_join_request_queries: false,
+};

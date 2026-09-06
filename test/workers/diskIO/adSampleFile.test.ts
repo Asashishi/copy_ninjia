@@ -115,7 +115,7 @@ describe("广告命中样本旁路", () => {
     writeFileSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.3.json`), "{}");
     writeFileSync(AD_SAMPLE_FILE_PATH, "{}");
 
-    sweepExpiredAdSampleArchives({ today });
+    await sweepExpiredAdSampleArchives({ today });
     expect(adSampleArchiveCursor.current).toEqual({ day: today, nextIndex: 2 });
     adSampleFileState.current = { size: AD_SAMPLE_FILE_MAX_BYTES, empty: true };
     await handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "gap" }] }));
@@ -123,7 +123,7 @@ describe("广告命中样本旁路", () => {
     expect(existsSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.2.json`))).toBeTrue();
   });
 
-  test("归档只按严格文件名保留最近 15 个东京自然日，不误删当前文件、未知项或目录", () => {
+  test("归档只按严格文件名保留最近 15 个东京自然日，不误删当前文件、未知项或目录", async () => {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     const removedNames: string[] = [
       "sample.2026-07-13.json",
@@ -146,7 +146,7 @@ describe("广告命中样本旁路", () => {
     const matchingDirectory: string = join(AD_SAMPLE_MEMORY_DIR, "sample.2026-07-01.4.json");
     mkdirSync(matchingDirectory);
 
-    sweepExpiredAdSampleArchives({ today: "2026-07-28" });
+    await sweepExpiredAdSampleArchives({ today: "2026-07-28" });
 
     for (const name of removedNames) {
       expect(existsSync(join(AD_SAMPLE_MEMORY_DIR, name))).toBe(false);
@@ -170,13 +170,13 @@ describe("广告命中样本旁路", () => {
       listCalls += 1;
       return entries;
     };
-    const removeFile = (path: string): void => {
+    const removeFile = async (path: string): Promise<void> => {
       if (path.endsWith("sample.2000-01-01.json")) throw new Error("injected unlink failure");
       removed.push(path);
     };
 
-    sweepExpiredAdSampleArchives({ today, listEntries, removeFile });
-    sweepExpiredAdSampleArchives({ today, listEntries, removeFile });
+    await sweepExpiredAdSampleArchives({ today, listEntries, removeFile });
+    await sweepExpiredAdSampleArchives({ today, listEntries, removeFile });
 
     expect(listCalls).toBe(1);
     expect(removed).toHaveLength(1);
@@ -192,7 +192,7 @@ describe("广告命中样本旁路", () => {
     const today: string = getTokyoDateKey();
     const logError = spyOn(console, "error").mockImplementation((): void => {});
 
-    sweepExpiredAdSampleArchives({
+    await sweepExpiredAdSampleArchives({
       today,
       listEntries: (): AdSampleArchiveEntry[] => {
         throw new Error("injected readdir failure");
@@ -205,8 +205,8 @@ describe("广告命中样本旁路", () => {
     logError.mockRestore();
   });
 
-  test("每日维护清掉孤儿临时文件与过期归档，但不创建尚未使用的目录", () => {
-    maintainAdSampleFiles("2026-07-28");
+  test("每日维护清掉孤儿临时文件与过期归档，但不创建尚未使用的目录", async () => {
+    await maintainAdSampleFiles("2026-07-28");
     expect(existsSync(AD_SAMPLE_MEMORY_DIR)).toBeFalse();
 
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
@@ -218,7 +218,7 @@ describe("广告命中样本旁路", () => {
     writeFileSync(retained, "{}");
     adSampleTempsSwept.current = false;
 
-    maintainAdSampleFiles("2026-07-28");
+    await maintainAdSampleFiles("2026-07-28");
 
     expect(existsSync(orphan)).toBe(false);
     expect(existsSync(expired)).toBe(false);

@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ const CONFIG_EXAMPLE_ROOT: string = join(PROJECT_ROOT, "config_example");
 const REAL_BUN_PATH: string = Bun.argv[0]!;
 
 export interface InstallerFixture {
+  readonly realRuntime: boolean;
   readonly root: string;
   readonly worktree: string;
   readonly configRoot: string;
@@ -25,7 +27,7 @@ export interface InstallerFixture {
   readonly outboundLog: string;
 }
 
-interface PromptReply {
+export interface PromptReply {
   readonly prompt: string;
   readonly reply?: string;
   readonly close?: boolean;
@@ -69,7 +71,7 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "}",
     "case \"$command_name\" in",
     "  --version)",
-    "    printf '%s\\n' \"${FAKE_BUN_VERSION-1.4.1}\"",
+    "    printf '%s\\n' \"${FAKE_BUN_VERSION-1.4.2}\"",
     "    exit 0",
     "    ;;",
     "  install)",
@@ -79,6 +81,13 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "  run)",
     "    if [ \"${2:-}\" = \"start\" ]; then",
     "      secret_env_state start",
+    "      if [ \"$FAKE_REAL_RUNTIME\" = \"1\" ]; then",
+    "        printf '%s\\n' 'preload = [\"./test/helpers/installedApplication.ts\"]' > bunfig.toml",
+    "        runtime_status=0",
+    "        \"$REAL_BUN_PATH\" run --no-orphans start || runtime_status=$?",
+    "        rm -- bunfig.toml",
+    "        exit \"$runtime_status\"",
+    "      fi",
     "      exit 0",
     "    fi",
     "    ;;",
@@ -87,15 +96,17 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "  printf 'bun:unexpected:%s\\n' \"$*\" >> \"$FAKE_CALL_LOG\"",
     "  exit 91",
     "fi",
+    "if [ \"$FAKE_REAL_RUNTIME\" = \"1\" ]; then exec \"$REAL_BUN_PATH\" \"$@\"; fi",
     "if [[ \"$inline_source\" == *\"manifest?.packageManager\"* ]]; then",
     "  printf 'manifest:check\\n' >> \"$FAKE_CALL_LOG\"",
     "  exec \"$REAL_BUN_PATH\" \"$@\"",
     "fi",
+    "if [[ \"$inline_source\" == *\"RestartUSec must\"* ]]; then exec \"$REAL_BUN_PATH\" \"$@\"; fi",
     "if [[ \"$inline_source\" == *\"invalid agent config field stream\"* ]]; then",
     "  secret_env_state generator",
     "  exec \"$REAL_BUN_PATH\" \"$@\"",
     "fi",
-    "if [[ \"$inline_source\" == *\"parseTelegramConfig\"* ]]; then",
+    "if [[ \"$inline_source\" == *\"loadTelegramConfig\"* ]]; then",
     "  printf 'validate:telegram\\n' >> \"$FAKE_CALL_LOG\"",
     "  [ \"${FAKE_TELEGRAM_VALIDATION_FAIL:-0}\" = \"1\" ] && exit 41",
     "  exec \"$REAL_BUN_PATH\" -e 'JSON.parse(await Bun.file(Bun.argv[1]).text())' \"${3:?}\"",
@@ -204,6 +215,12 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
     "#!/usr/bin/env bash",
     "set -Eeuo pipefail",
     "printf 'systemctl:guarded:%s\\n' \"$*\" >> \"$FAKE_OUTBOUND_LOG\"",
+    "[ \"${FAKE_SYSTEMCTL_FAIL:-0}\" = 1 ] && exit 46",
+    "case \"${1:-}\" in start|restart) : > \"$FAKE_RUNTIME_ROOT/service-started\" ;; esac",
+    "[ \"${1:-}\" != daemon-reload ] || : > \"$FAKE_BIN_ROOT/service-loaded\"",
+    "if [ \"$FAKE_REAL_RUNTIME\" = \"1\" ]; then",
+    "  case \"${1:-}\" in start|restart) exec \"$FAKE_BIN_ROOT/bun\" run start ;; esac",
+    "fi",
     "if env | grep -Eq '^CN_.*_API_KEY='; then",
     "  printf 'systemctl-secret-env=present\\n' >> \"$FAKE_CALL_LOG\"",
     "else",
@@ -211,11 +228,19 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
     "fi",
     "if [ \"${1:-}\" = \"show\" ]; then",
     "  case \"$*\" in",
-    "    *ActiveState*) printf 'active\\n' ;;",
-    "    *SubState*) printf 'running\\n' ;;",
-    "    *NRestarts*) printf '0\\n' ;;",
-    "    *WorkingDirectory*) printf '%s\\n' \"$FAKE_WORKTREE\" ;;",
-    "    *ExecStart*) printf '/guarded/bun start\\n' ;;",
+    "    *LoadState*) if [ -e \"$FAKE_BIN_ROOT/service-loaded\" ]; then printf 'loaded\\n'; else printf '%s\\n' \"${FAKE_SERVICE_LOAD_STATE-loaded}\"; fi ;;",
+    "    *ActiveState*) if [ -e \"$FAKE_RUNTIME_ROOT/service-started\" ]; then printf '%s\\n' \"${FAKE_STARTED_STATE-active}\"; else printf '%s\\n' \"${FAKE_SERVICE_STATE-inactive}\"; fi ;;",
+    "    *SubState*) if [ -e \"$FAKE_RUNTIME_ROOT/service-started\" ]; then printf 'running\\n'; else printf 'dead\\n'; fi ;;",
+    "    *NRestarts*)",
+    "      if [ -e \"$FAKE_RUNTIME_ROOT/service-started\" ]; then printf '%s\\n' \"${FAKE_RESTARTS_AFTER-0}\";",
+    "      elif [ \"${FAKE_SERVICE_LOAD_STATE-loaded}\" = not-found ] && [ ! -e \"$FAKE_BIN_ROOT/service-loaded\" ]; then printf '\\n';",
+    "      else printf '%s\\n' \"${FAKE_RESTARTS_BEFORE-0}\"; fi ;;",
+    "    *WorkingDirectory*) printf '%s\\n' \"${FAKE_SERVICE_WORKDIR-$FAKE_WORKTREE}\" ;;",
+    "    *ExecStart*) printf '%s\\n' \"${FAKE_SERVICE_ENTRY-{ path=/guarded/bun ; argv[]=/guarded/bun start ; ignore_errors=no ; }}\" ;;",
+    "    *RestartUSec*) printf '%s\\n' \"${FAKE_RESTART_INTERVAL-5s}\" ;;",
+    "    *RestartSteps*) printf '%s\\n' \"${FAKE_RESTART_STEPS-0}\" ;;",
+    "    *RestartMaxDelayUSec*) printf '%s\\n' \"${FAKE_RESTART_MAX-infinity}\" ;;",
+    "    *RestartRandomizedDelayUSec*) printf '%s\\n' \"${FAKE_RESTART_RANDOMIZED-}\" ;;",
     "  esac",
     "fi",
     "exit 0",
@@ -225,6 +250,7 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
     "[ \"${FAKE_JOURNAL_FAIL:-0}\" = \"1\" ] && exit 43",
     "printf 'journalctl:guarded\\n' >> \"$FAKE_OUTBOUND_LOG\"",
     "case \"$*\" in *--show-cursor*) printf -- '-- cursor: fixture-cursor\\n' ;; esac",
+    "printf '%s\\n' \"${FAKE_JOURNAL_BODY-}\"",
   ]);
   await executable(join(fixture.binRoot, "tee"), [
     "#!/usr/bin/env bash",
@@ -233,7 +259,7 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
   ]);
   await executable(join(fixture.binRoot, "sleep"), [
     "#!/usr/bin/env bash",
-    "printf 'sleep:guarded\\n' >> \"$FAKE_OUTBOUND_LOG\"",
+    "printf 'sleep:guarded:%s\\n' \"$*\" >> \"$FAKE_OUTBOUND_LOG\"",
   ]);
 }
 
@@ -252,10 +278,11 @@ function validateGuardScripts(fixture: InstallerFixture): void {
   }
 }
 
-export async function createFixture(): Promise<InstallerFixture> {
+export async function createFixture(realRuntime: boolean = false): Promise<InstallerFixture> {
   const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-install-test-"));
   fixtureRoots.push(root);
   const fixture: InstallerFixture = {
+    realRuntime,
     root,
     worktree: join(root, "repository"),
     configRoot: join(root, "repository", "config"),
@@ -270,10 +297,25 @@ export async function createFixture(): Promise<InstallerFixture> {
   mkdirSync(fixture.runtimeRoot, { mode: 0o700 });
   mkdirSync(fixture.binRoot, { mode: 0o700 });
   mkdirSync(join(root, "home"), { mode: 0o700 });
-  await Bun.write(join(fixture.worktree, "install.sh"), Bun.file(INSTALL_SCRIPT_PATH));
+  // 只在夹具副本替换系统路径，所有宿主都执行同一条 systemd 分支。
+  const systemdRoot: string = join(root, "systemd");
+  mkdirSync(systemdRoot);
+  await writeText(join(systemdRoot, "copy-ninjia.service"), "[Service]\n");
+  const installer: string = (await readText(INSTALL_SCRIPT_PATH))
+    .replaceAll("/run/systemd/system", systemdRoot)
+    .replace("/etc/systemd/system/${SERVICE_NAME}.service", `${systemdRoot}/\u0024{SERVICE_NAME}.service`);
+  await writeText(join(fixture.worktree, "install.sh"), installer);
   await copyFixtureTree(CONFIG_EXAMPLE_ROOT, join(fixture.worktree, "config_example"));
   await Bun.write(join(fixture.worktree, "package.json"), Bun.file(join(PROJECT_ROOT, "package.json")));
   await writeText(join(fixture.worktree, "index.ts"), "");
+  if (realRuntime) {
+    for (const relativePath of ["packages", "prompt", "index.ts", "tsconfig.json", "bun.lock"]) {
+      await copyFixtureTree(join(PROJECT_ROOT, relativePath), join(fixture.worktree, relativePath));
+    }
+    symlinkSync(join(PROJECT_ROOT, "node_modules"), join(fixture.worktree, "node_modules"));
+    const preload: string = "test/helpers/installedApplication.ts";
+    await copyFixtureTree(join(PROJECT_ROOT, preload), join(fixture.worktree, preload));
+  }
   await writeText(fixture.callLog, "");
   await writeText(fixture.outboundLog, "");
   await installBunGuard(fixture);
@@ -300,6 +342,7 @@ function installerEnvironment(
     FAKE_BIN_ROOT: fixture.binRoot,
     FAKE_IDENTITY_DATABASE: join(fixture.runtimeRoot, "database", "storage.sqlite"),
     FAKE_CALL_LOG: fixture.callLog,
+    FAKE_REAL_RUNTIME: fixture.realRuntime ? "1" : "0",
     FAKE_OUTBOUND_LOG: fixture.outboundLog,
     ...extra,
   };
@@ -324,8 +367,12 @@ export function runInstaller(
     stdout: "pipe",
     stderr: "pipe",
     maxBuffer: 2 * 1024 * 1024,
+    timeout: 30_000,
+    killSignal: "SIGKILL",
   });
   const rawOutput: string = decoder.decode(result.stdout) + decoder.decode(result.stderr);
+  // 真实应用夹具已自行完成 SIGTERM 排空，下次安装从已停止状态开始。
+  if (fixture.realRuntime) rmSync(join(fixture.runtimeRoot, "service-started"), { force: true });
   let output: string = rawOutput;
   for (const prompt of prompts) {
     if (prompt.secret === true && prompt.reply !== undefined) {

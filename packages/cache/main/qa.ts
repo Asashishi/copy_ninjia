@@ -41,8 +41,8 @@ export const qaFormSessions: Map<number, QaFormSession> = new Map();
  * 已投给 Disk I/O Worker 但尚未收到精确 ACK 的问答写入，按 (群, 问题) 记 revision。
  *
  * 与白名单同一套 write-through 语义：命令回执要等本领域 durable 确认，未确认的
- * 最终值留在这里，Worker 重建后按 revision 顺序重放。容量与 chatQaEntries 同阶，
- * 且每条被 ACK 后立即移除。
+ * 最终值留在这里，Worker 重建后重放。问题、正文和墓碑在发布前共同检查
+ * STORAGE_PENDING_MAX_ENTRIES / STORAGE_PENDING_MAX_BYTES；精确 ACK 后移除。
  */
 export const unacknowledgedChatQaWrites: Map<number, Map<string, number>> = new Map();
 

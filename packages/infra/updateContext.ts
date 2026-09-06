@@ -1,14 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
- * 主线程 update handler 的异步上下文。owner 是 app/updateRunner.ts：每个
- * Telegram update 进入 middleware 前填入独立 signal，handler 完成后由
- * AsyncLocalStorage 自动退出；Worker isolate 与后台维护任务不会继承它。
+ * 主线程异步取消上下文。app/updateRunner.ts 为每条 update 填入独立 signal；
+ * wed/runtime.ts 在交互出队时恢复接纳时的信号并合入自己的停机边界。
+ * run 返回后退出调用方上下文，异步子任务继续持有各自的 signal；Worker isolate 不共享本存储。
  */
 const updateAbortSignalStorage: AsyncLocalStorage<AbortSignal> =
   new AsyncLocalStorage<AbortSignal>();
 
-/** 在指定 update 的取消上下文中执行完整 middleware 链。 */
+/** 在指定取消上下文中执行 middleware 或已经接纳的异步交互。 */
 export function runWithUpdateAbortSignal<T>(
   signal: AbortSignal,
   run: () => Promise<T>

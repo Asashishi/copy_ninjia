@@ -42,7 +42,7 @@ mock.module("../../../packages/aiChat/provider", () => ({ ...realProvider, songA
 mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendAudioWithResult }));
 mock.module("../../../packages/aiChat/ai/songCover", () => ({ generateSongCover }));
 
-const { buildGenerateSongToolDefinition, createGenerateSongExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/songGeneration");
+const { buildGenerateSongToolDefinition, createGenerateSongExecutor: prepareSongExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/songGeneration");
 const { createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
 const {
   claimSongGeneration,
@@ -62,6 +62,14 @@ const { botInfoState } = await import("../../../packages/cache/workers/aiChat/id
 
 /** 模型可写的 caption 上限：Telegram 硬顶扣掉执行侧那段曲目信息的预留。 */
 const MODEL_CAPTION_MAX_CHARS: number = TELEGRAM_CAPTION_MAX_CHARS - SONG_CAPTION_METADATA_RESERVED_CHARS;
+
+function createGenerateSongExecutor(ctx: ReplyToolContext, state: RoundMessageState): (argumentsJson: string) => Promise<string> {
+  const prepare = prepareSongExecutor(ctx, state);
+  return async (argumentsJson: string): Promise<string> => {
+    const execution = prepare(argumentsJson);
+    return typeof execution === "string" ? execution : execution.run(ctx.chatAction);
+  };
+}
 
 function buildContext(
   chatId: number = -1001,
@@ -172,7 +180,7 @@ describe("generate_song 执行器", () => {
       42
     );
     // 说明文字计入本轮已说过的话，随后 send_message 复述会被去重拦下。
-    expect(state.sentCanonicalTexts.get(88)).toBe("给你写了一首");
+    expect(state.acceptedCanonicalTexts.has("给你写了一首")).toBe(true);
   });
 
   test("容器决定上传扩展名，WAV 不会被当成 mp3 发出去", async () => {
@@ -319,7 +327,7 @@ describe("generate_song 执行器", () => {
 
   test("与本轮已发消息重复的 caption 静默跳过且不占冷却", async () => {
     const state: RoundMessageState = createRoundMessageState();
-    state.sentCanonicalTexts.set(1, "写好啦");
+    state.acceptedCanonicalTexts.add("写好啦");
     const execute = createGenerateSongExecutor(buildContext(), state);
 
     const result = JSON.parse(await execute(call({ prompt: "p", caption: "写好啦" })));
@@ -402,7 +410,7 @@ describe("generate_song 执行器", () => {
 
     JSON.parse(await execute(call({ prompt: "p" })));
     const second = JSON.parse(await execute(call({ prompt: "p" })));
-    expect(second.error).toContain("disabled for the remainder of this reply");
+    expect(second.error).toContain("Song limit reached");
     expect(generateSong).toHaveBeenCalledTimes(1);
   });
 

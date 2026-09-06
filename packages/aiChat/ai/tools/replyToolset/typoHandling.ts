@@ -7,7 +7,6 @@ import {
 } from "../../../../consts/aiChat/tools";
 import type {
   ReplyToolContext,
-  RoundMessageState,
 } from "../../../../types/aiChat/replies";
 import type {
   CharacterTypo,
@@ -85,7 +84,6 @@ export function decideMessageTypo({
 
 export async function applyQuickTypoCorrection(
   ctx: ReplyToolContext,
-  state: RoundMessageState,
   correctionText: string
 ): Promise<boolean> {
   try {
@@ -95,11 +93,9 @@ export async function applyQuickTypoCorrection(
     );
     const correctionMessageId: number | undefined = await sendDirectMessage({
       ctx,
-      state,
       text: correctionText,
     });
     if (correctionMessageId === undefined) return false;
-    state.sentCanonicalTexts.set(correctionMessageId, correctionText);
     return true;
   } catch (error: unknown) {
     if (ctx.signal?.aborted === true) return false;

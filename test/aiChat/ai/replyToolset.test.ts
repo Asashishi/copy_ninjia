@@ -1,3 +1,4 @@
+import { executeAndSettle } from "../../helpers/replyToolExecution";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanReply, isEmojiOnly } from "../../../packages/aiChat/ai/utils/replyText";
 import { buildCharacterTypo, pickTypoCorrectionMode } from "../../../packages/aiChat/ai/utils/typo";
@@ -104,30 +105,26 @@ describe("add_reaction 成功动作计数", () => {
     };
   }
 
-  test("Telegram 反应成功后才返回成功并占用一个动作", async () => {
+  test("反应接纳时占动作，真实完成后计入已完成动作", async () => {
     const toolset = await createReplyToolset(buildContext());
 
-    const result = JSON.parse(await toolset.execute(ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
+    const result = JSON.parse(await executeAndSettle(toolset, ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
 
-    expect(result).toEqual({ success: true });
+    expect(result).toEqual({ success: true, queued: true, actions_used: 1 });
     expect(setMessageReactionMock).toHaveBeenCalledWith({ chatId: -100800, messageId: 10, emoji: "👍" });
     expect(toolset.actionsUsed()).toBe(1);
   });
 
-  test("Telegram 反应失败不占动作，也不消耗成功反应限额", async () => {
-    setMessageReactionMock
-      .mockImplementationOnce(async (): Promise<boolean> => false)
-      .mockImplementationOnce(async (): Promise<boolean> => true);
+  test("反应发送失败不再让模型重投，预占限额保持有效", async () => {
+    setMessageReactionMock.mockImplementationOnce(async (): Promise<boolean> => false);
     const toolset = await createReplyToolset(buildContext());
-
-    const failed = JSON.parse(await toolset.execute(ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
-    expect(failed.error).toContain("Failed to set reaction");
-    expect(toolset.actionsUsed()).toBe(0);
-
-    const retried = JSON.parse(await toolset.execute(ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
-    expect(retried).toEqual({ success: true });
-    expect(setMessageReactionMock).toHaveBeenCalledTimes(2);
+    const accepted = JSON.parse(await executeAndSettle(toolset, ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
+    expect(accepted.queued).toBe(true);
     expect(toolset.actionsUsed()).toBe(1);
+    expect(toolset.actionsCompleted()).toBe(0);
+    const retried = JSON.parse(await executeAndSettle(toolset, ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
+    expect(retried.error).toContain("Reaction limit reached");
+    expect(setMessageReactionMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -167,13 +164,13 @@ test("模型提示限制为 8 个动作，执行侧留余量到 11 个动作才�
   });
 
   for (let action: number = 1; action <= HARD_MAX_ACTIONS_PER_REPLY; action++) {
-    const result = JSON.parse(await toolset.execute(
+    const result = JSON.parse(await executeAndSettle(toolset,
       SEND_MESSAGE_TOOL,
       JSON.stringify({ text: `第 ${action} 个动作` })
     ));
     expect(result.success).toBe(true);
   }
-  const overflow = JSON.parse(await toolset.execute(
+  const overflow = JSON.parse(await executeAndSettle(toolset,
     SEND_MESSAGE_TOOL,
     JSON.stringify({ text: "第 12 个动作" })
   ));
@@ -206,7 +203,7 @@ test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回
     onSongSent: mock((..._args: unknown[]): void => {}),
   });
 
-  const result = JSON.parse(await toolset.execute(
+  const result = JSON.parse(await executeAndSettle(toolset,
     SEND_MESSAGE_TOOL,
     JSON.stringify({ text: "目标已删除也照常发", reply_to_trigger: true })
   ));
@@ -240,7 +237,7 @@ test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不
     onSongSent: mock((..._args: unknown[]): void => {}),
   });
 
-  const result = JSON.parse(await toolset.execute(
+  const result = JSON.parse(await executeAndSettle(toolset,
     SEND_MESSAGE_TOOL,
     JSON.stringify({ text: "本天才自己插一句", reply_to_trigger: false })
   ));
@@ -371,8 +368,9 @@ describe("send_message typo correction", () => {
       onSongSent: mock((..._args: unknown[]): void => {}),
     });
 
-    const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "不该发出" })));
-    expect(result.error).toContain("disabled");
+    const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "不该发出" })));
+    expect(result.queued).toBe(true);
+    expect(toolset.actionsCompleted()).toBe(0);
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
@@ -404,15 +402,15 @@ describe("send_message typo correction", () => {
         onSongSent: mock((..._args: unknown[]): void => {}),
       });
 
-      const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
 
       expect(result.success).toBe(true);
-      expect(result.typo.mode).toBe("quick");
-      expect(result.typo.correction).toBe("sent");
+      expect(result.actions_used).toBe(2);
+      expect(toolset.actionsCompleted()).toBe(2);
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
       expect(sendMessageMock).toHaveBeenNthCalledWith(1, { chatId: -100800, text: "天汽", replyToMessageId: undefined });
       expect(sendMessageMock).toHaveBeenNthCalledWith(2, { chatId: -100800, text: "气", replyToMessageId: undefined });
@@ -452,7 +450,7 @@ describe("send_message typo correction", () => {
         onSongSent: mock((..._args: unknown[]): void => {}),
       });
 
-      const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
@@ -496,18 +494,18 @@ describe("send_message typo correction", () => {
         onSongSent: mock((..._args: unknown[]): void => {}),
       });
 
-      const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
-      const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const second = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "还好吧",
         typo_original_char: "好",
         typo_replacement_char: "号",
       })));
 
-      expect(first.typo?.mode).toBe("quick");
+      expect(first.actions_used).toBe(2);
       expect(second.typo).toBeUndefined();
       expect(sendMessageMock).toHaveBeenNthCalledWith(3, { chatId: -100800, text: "还好吧", replyToMessageId: undefined });
     } finally {
@@ -515,7 +513,7 @@ describe("send_message typo correction", () => {
     }
   });
 
-  test("快速补字等待期间 AI 被禁用时不再落地，且不额外占动作数", async () => {
+  test("快速补字等待期间 AI 被禁用时不再落地，保留预占额度", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     let active: boolean = true;
@@ -545,15 +543,16 @@ describe("send_message typo correction", () => {
         onSongSent: mock((..._args: unknown[]): void => {}),
       });
 
-      const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
 
-      expect(result.typo).toEqual({ mode: "quick", correction: "failed" });
+      expect(result.actions_used).toBe(2);
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
-      expect(toolset.actionsUsed()).toBe(1);
+      expect(toolset.actionsUsed()).toBe(2);
+      expect(toolset.actionsCompleted()).toBe(1);
     } finally {
       Math.random = originalRandom;
     }
@@ -586,8 +585,8 @@ describe("send_message 重复消息去重", () => {
   test("同一轮内容完全相同的第二次调用静默跳过，不重复发送", async () => {
     const toolset = await createReplyToolset(buildContext(false));
 
-    const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
-    const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
+    const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
+    const second = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
 
     expect(first.success).toBe(true);
     expect(second).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
@@ -601,10 +600,10 @@ describe("send_message 重复消息去重", () => {
     // 的消息，记忆里还会留下一条假的动作记录，下一轮它自己也会当真。
     const toolset = await createReplyToolset(buildContext(false));
 
-    const forgedImage = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+    const forgedImage = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "（参考上传的素材生成并发送了一张图片：橙色云朵弧线加蓝色光纤流光）",
     })));
-    const forgedSticker = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+    const forgedSticker = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "（发了一枚贴纸：情绪含义 😂）",
     })));
 
@@ -614,7 +613,7 @@ describe("send_message 重复消息去重", () => {
     expect(toolset.actionsUsed()).toBe(0);
 
     // 老老实实说发不了的那句话照发不误。
-    const honest = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+    const honest = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "生图还在冷却，等会儿再帮你画喵~",
     })));
     expect(honest.success).toBe(true);
@@ -627,7 +626,7 @@ describe("send_message 重复消息去重", () => {
     // 再拒一次——结果是对着一条 @ 提及完全沉默。
     const toolset = await createReplyToolset(buildContext(false));
 
-    const answer = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+    const answer = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "本天才才没有生成并发送了一张图片呢，笨蛋♡",
     })));
 
@@ -641,19 +640,19 @@ describe("send_message 重复消息去重", () => {
     try {
       const toolset = await createReplyToolset(buildContext(true));
 
-      const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
-      const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const second = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
 
       // 快速补字：可见消息是「天汽」+ 纠正字「气」，本意文本「天气」已登记。
-      expect(first.typo?.mode).toBe("quick");
+      expect(first.actions_used).toBe(2);
       expect(second).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
     } finally {
@@ -667,12 +666,12 @@ describe("send_message 重复消息去重", () => {
     try {
       const toolset = await createReplyToolset(buildContext(true));
 
-      await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
       }));
-      const duplicateCorrection = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
+      const duplicateCorrection = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
 
       expect(duplicateCorrection).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
@@ -687,16 +686,16 @@ describe("send_message 重复消息去重", () => {
     try {
       const toolset = await createReplyToolset(buildContext(true));
 
-      const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
       expect(first.typo).toBeUndefined();
 
-      const dup = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "天气" })));
+      const dup = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "天气" })));
       expect(dup).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
-      const correction = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
+      const correction = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
       expect(correction).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
 
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -736,10 +735,10 @@ describe("send_message 可点击命令守卫", () => {
     // 复读链路早就守了这一道（auto/message/echo.ts），AI 这侧不能是个缺口。
     const toolset = await createReplyToolset(buildContext(false));
 
-    const atStart = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+    const atStart = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "/batch_kick 1d",
     })));
-    const midText = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+    const midText = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "好的喵 /batch_kick 1d",
     })));
 
@@ -752,7 +751,7 @@ describe("send_message 可点击命令守卫", () => {
   test("斜杠不构成命令的正常正文照发", async () => {
     const toolset = await createReplyToolset(buildContext(false));
 
-    const answer = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+    const answer = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "要么 a/b 要么 c，笨蛋♡",
     })));
 
@@ -769,7 +768,7 @@ describe("send_message 可点击命令守卫", () => {
     try {
       const toolset = await createReplyToolset(buildContext(true));
 
-      const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "喵 xbatch_kick",
         typo_original_char: "x",
         typo_replacement_char: "/",
@@ -833,12 +832,12 @@ describe("群问答工具在按次工具集里的接线", () => {
 
     // 直接断言 ReplyToolContext.chatQa 被交给执行器，而不只依赖类型保证。
     const listed: { questions: string[] } = JSON.parse(
-      await toolset.execute(GROUP_QA_QUERY_TOOL, "{}")
+      await executeAndSettle(toolset, GROUP_QA_QUERY_TOOL, "{}")
     );
     expect(listed.questions).toEqual(["怎么入群？"]);
 
     const answered: { found: boolean; answer?: string } = JSON.parse(
-      await toolset.execute(GROUP_QA_ANSWER_TOOL, JSON.stringify({ question: "怎么入群？" }))
+      await executeAndSettle(toolset, GROUP_QA_ANSWER_TOOL, JSON.stringify({ question: "怎么入群？" }))
     );
     expect(answered.found).toBe(true);
     expect(answered.answer).toBe("点置顶那条链接");
@@ -853,10 +852,10 @@ describe("群问答工具在按次工具集里的接线", () => {
     // 预算耗尽后动作工具会被拒，查询工具必须照常可用——否则模型查一次清单
     // 就少发一条消息。
     for (let index: number = 0; index < HARD_MAX_ACTIONS_PER_REPLY + 1; index++) {
-      await toolset.execute(GROUP_QA_QUERY_TOOL, "{}");
+      await executeAndSettle(toolset, GROUP_QA_QUERY_TOOL, "{}");
     }
     const listed: { questions: string[] } = JSON.parse(
-      await toolset.execute(GROUP_QA_QUERY_TOOL, "{}")
+      await executeAndSettle(toolset, GROUP_QA_QUERY_TOOL, "{}")
     );
     expect(listed.questions).toEqual(["a"]);
   });
@@ -917,14 +916,14 @@ describe("工具分派", () => {
     const context = stickerContext();
     const toolset = await createReplyToolset(context);
 
-    const viewed = JSON.parse(await toolset.execute(
+    const viewed = JSON.parse(await executeAndSettle(toolset,
       VIEW_STICKER_PACK_TOOL,
       JSON.stringify({ pack_index: 1, intent: "想表达好笑" })
     ));
     expect(viewed.pack).toBe("甲包");
     expect(viewed.stickers).toContain("😂");
 
-    const sent = JSON.parse(await toolset.execute(
+    const sent = JSON.parse(await executeAndSettle(toolset,
       SEND_STICKER_TOOL,
       JSON.stringify({ pack_index: 1, sticker_index: 1 })
     ));
@@ -939,7 +938,7 @@ describe("工具分派", () => {
     seedStickerMenu();
     const toolset = await createReplyToolset(stickerContext());
 
-    const sent = JSON.parse(await toolset.execute(
+    const sent = JSON.parse(await executeAndSettle(toolset,
       SEND_STICKER_TOOL,
       JSON.stringify({ pack_index: 1, sticker_index: 1 })
     ));
@@ -952,7 +951,7 @@ describe("工具分派", () => {
     seedStickerMenu();
     const toolset = await createReplyToolset(stickerContext());
 
-    const result = JSON.parse(await toolset.execute("no_such_tool", "{}"));
+    const result = JSON.parse(await executeAndSettle(toolset, "no_such_tool", "{}"));
 
     expect(result.error).toBeDefined();
     expect(toolset.actionsUsed()).toBe(0);

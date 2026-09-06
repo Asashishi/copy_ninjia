@@ -15,11 +15,12 @@ import type { Bot, Context } from "grammy";
 /** 本次 update 命中的 handler 名，按调用顺序。 */
 const calls: string[] = [];
 /** 三条 ingress 是否认领本条 update；每个用例自行设置。 */
-const claims: { antiRaid: boolean; gag: boolean; qa: boolean; qaBoard: boolean } = {
+const claims: { antiRaid: boolean; gag: boolean; qa: boolean; qaBoard: boolean; wed: boolean } = {
   antiRaid: false,
   gag: false,
   qa: false,
   qaBoard: false,
+  wed: false,
 };
 /** 两道前置网关的判定；缺省全放行。 */
 const gates: { init: boolean; privateCommand: boolean; privateProxy: boolean } = {
@@ -44,6 +45,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   nya_copy: "handleCopyCommand",
   ja_copy: "handleJaCopyCommand",
   steal_icon: "handleStealIconCommand",
+  wed: "dispatchWedCommand",
   reset_icon: "handleResetIconCommand",
   stop_copy: "handleStopCommand",
   block: "handleBlockCommand",
@@ -84,6 +86,10 @@ const commandsModule: Record<string, unknown> = {
   handleQaMessageIngress: (): Promise<boolean> => {
     calls.push("handleQaMessageIngress");
     return Promise.resolve(claims.qa);
+  },
+  dispatchWedCallback: (): Promise<boolean> => {
+    calls.push("dispatchWedCallback");
+    return Promise.resolve(claims.wed);
   },
   handleQaBoardCallback: (): Promise<boolean> => {
     calls.push("handleQaBoardCallback");
@@ -138,6 +144,8 @@ mock.module("../../packages/users/messageOrigin", () => ({
 
 const { Bot: RealBot } = await import("grammy");
 const { registerHandlers } = await import("../../packages/app/registerHandlers");
+const { wedMemberStates, resetWedMemberStates } = await import("../../packages/cache/main/wedMembers");
+const { getOrCreateChatState } = await import("../../packages/infra/storage/stateStore");
 
 const BOT_ID: number = 4242;
 const BOT_USERNAME: string = "tensai_bot";
@@ -195,17 +203,20 @@ async function dispatch(update: unknown): Promise<readonly string[]> {
 }
 
 beforeEach((): void => {
+  resetWedMemberStates();
+  getOrCreateChatState(CHAT.id).isInitEnabled = true;
   claims.antiRaid = false;
   claims.gag = false;
   claims.qa = false;
   claims.qaBoard = false;
+  claims.wed = false;
   gates.init = true;
   gates.privateCommand = true;
   gates.privateProxy = false;
 });
 
 describe("registerHandlers 分发", () => {
-  test("31 条命令全部经 :entities:bot_command 子链落到各自 handler，且不再进消息兜底", async () => {
+  test("全部命令经 :entities:bot_command 子链落到各自 handler，且不再进消息兜底", async () => {
     for (const [command, handler] of Object.entries(COMMAND_HANDLERS)) {
       const observed: readonly string[] = await dispatch(commandMessage(`/${command}`));
       // 命令消息同样要先过三条 ingress：待验证成员发的命令必须计入刷屏窗口、
@@ -298,10 +309,58 @@ describe("registerHandlers 分发", () => {
   test("init 网关拒绝时命令与消息流水线都不执行", async () => {
     gates.init = false;
     expect(await dispatch(commandMessage("/permission"))).toEqual([]);
+    expect(await dispatch(commandMessage("/wed"))).toEqual([]);
     expect(await dispatch(groupMessage("普通群消息"))).toEqual([]);
+    expect(await dispatch({
+      update_id: ++nextUpdateId,
+      callback_query: {
+        id: "wed-uninitialized", from: FROM, chat_instance: "ci", data: `wed:${FROM.id}:2:change`,
+        message: { message_id: 7, date: 1, chat: CHAT },
+      },
+    })).toEqual([]);
+    expect(wedMemberStates.size).toBe(0);
   });
 
-  test("翻页看板先认领 callback_query，未认领才交给入群验证", async () => {
+  test("发言更新填充 /wed 成员缓存，/wed 命令同样经过消息保护链", async () => {
+    await dispatch(groupMessage("普通群消息"));
+    expect([...wedMemberStates.get(CHAT.id)!.members.keys()]).toEqual([FROM.id]);
+    expect(await dispatch(commandMessage("/wed"))).toEqual([
+      "handleAntiRaidMessageIngress", "handleGagMessageIngress", "handleQaMessageIngress", "dispatchWedCommand",
+    ]);
+    claims.antiRaid = true;
+    expect(await dispatch(commandMessage("/wed"))).toEqual(["handleAntiRaidMessageIngress"]);
+  });
+
+  test.each(["chat_member", "left_chat_member"])("停用群仍通过 %s 清理退群 ID，且不放行其他业务", async (kind: string) => {
+    await dispatch(groupMessage("普通群消息"));
+    const state = wedMemberStates.get(CHAT.id)!;
+    const members = state.members;
+    gates.init = false;
+    getOrCreateChatState(CHAT.id).isInitEnabled = false;
+    const departure = kind === "chat_member" ? {
+      chat_member: {
+        chat: CHAT, from: FROM, date: 1,
+        old_chat_member: { status: "member", user: FROM },
+        new_chat_member: { status: "left", user: FROM },
+      },
+    } : {
+      message: { message_id: 7, chat: CHAT, from: FROM, date: 1, left_chat_member: FROM },
+    };
+    expect(await dispatch({ update_id: ++nextUpdateId, ...departure })).toEqual([]);
+    expect(state.members).toBe(members);
+    expect(members.size).toBe(0);
+    expect(state.revision).toBe(2);
+    expect(state.dirty).toBeTrue();
+    expect(await dispatch(groupMessage("停用期间的发言"))).toEqual([]);
+    expect(await dispatch({ update_id: ++nextUpdateId, ...departure })).toEqual([]);
+    expect(state.revision).toBe(2);
+    expect(members.size).toBe(0);
+    resetWedMemberStates();
+    expect(await dispatch({ update_id: ++nextUpdateId, ...departure })).toEqual([]);
+    expect(wedMemberStates.size).toBe(0);
+  });
+
+  test("/wed 与翻页看板先认领 callback_query，未认领才交给入群验证", async () => {
     nextUpdateId += 1;
     const query = {
       id: "q1",
@@ -312,11 +371,15 @@ describe("registerHandlers 分发", () => {
     };
     claims.qaBoard = true;
     expect(await dispatch({ update_id: nextUpdateId, callback_query: query }))
-      .toEqual(["handleQaBoardCallback"]);
+      .toEqual(["dispatchWedCallback", "handleQaBoardCallback"]);
     claims.qaBoard = false;
+    claims.wed = false;
     nextUpdateId += 1;
     expect(await dispatch({ update_id: nextUpdateId, callback_query: query }))
-      .toEqual(["handleQaBoardCallback", "handleVerificationCallback"]);
+      .toEqual(["dispatchWedCallback", "handleQaBoardCallback", "handleVerificationCallback"]);
+    claims.wed = true;
+    expect(await dispatch({ update_id: ++nextUpdateId, callback_query: { ...query, data: "wed:42:2:change" } }))
+      .toEqual(["dispatchWedCallback"]);
   });
 
   test("非消息 update 各自落到对应 handler", async () => {

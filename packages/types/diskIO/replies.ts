@@ -15,6 +15,8 @@ import type { StoredTemporaryWhitelistActivity } from "../temporaryWhitelist";
  * 见 workers/diskIO/snapshotFiles.ts），供 hydrate 链路直接透传。 */
 export interface LoadedReply {
   type: "loaded";
+  /** /wed 已发言成员集合；DiskIO 校验时建立，经消息复制后由主线程直接接管。 */
+  wedMembers: ReadonlyMap<number, Set<number>>;
   aiMemories: Map<number, string>;
   stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
@@ -39,6 +41,7 @@ export interface LoadedReply {
  * 序列化的 JSON 文本；SQLite 群状态信任当前写入格式，只恢复进热缓存。
  */
 export interface LoadedData {
+  wedMembers: ReadonlyMap<number, Set<number>>;
   aiMemories: Map<number, string>;
   stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
@@ -132,7 +135,7 @@ export type IdentityPersistenceReply = (
 ) => void;
 
 /**
- * 统一 flush 覆盖的十二个落盘领域。回执按领域拆开，是为了让「等自己这条记录
+ * 统一 flush 覆盖的落盘领域。回执按领域拆开，是为了让「等自己这条记录
  * 落盘」的调用方（典型是 /block）不会因为无关领域失败而误报——那会把运维
  * 引向一个其实没坏的文件，而真正坏掉的领域按设计只有 console.error，
  * 永远进不了 logs/（见 workers/diskIOWorker.ts 的 flushAll）。
@@ -141,6 +144,7 @@ export type DiskIODomain =
   | "log"
   | "aiMemory"
   | "stickerCatalog"
+  | "wedMembers"
   | "luck"
   | "verification"
   | "whitelist"
@@ -163,7 +167,7 @@ export interface DomainFlushOutcome {
   failedDomains?: readonly DiskIODomain[];
 }
 
-/** diskIOWorker -> 主线程：flush 已完成，十二个领域全部落盘。 */
+/** diskIOWorker -> 主线程：flush 已完成，各领域全部落盘。 */
 export interface DiskFlushReply {
   type: "flushed";
   flushedId: number;
@@ -254,7 +258,20 @@ export interface RecoveryReplayFailedReply {
   error: string;
 }
 
+/** 操作批次已顺序执行；SQLite 和快照 durable ACK 仍使用各自回执。 */
+export interface DiskOperationBatchAcceptedReply {
+  readonly type: "operationBatchAccepted";
+  readonly batchId: number;
+}
+
+/** SQLite 连续失败或容量耗尽；宿主停止新业务，仍保留已接收事实供最终 flush。 */
+export interface StorageWriteStalledReply {
+  readonly type: "storageWriteStalled";
+}
+
 export type DiskIOReply =
+  | DiskOperationBatchAcceptedReply
+  | StorageWriteStalledReply
   | LoadedReply
   | DiskDiagnosticBatchAcceptedReply
   | DiskDiagnosticBatchRetryReply

@@ -2,7 +2,6 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  unlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import {
@@ -53,10 +52,10 @@ export async function readValidatedJoinLogFile(
 }
 
 /** 按文件名清掉保留窗口以外的入群日志和遗留临时文件，不读取日志内容。 */
-export function cleanupExpiredJoinLogDays(
+export async function cleanupExpiredJoinLogDays(
   today: string,
   knownNames?: readonly string[]
-): void {
+): Promise<void> {
   mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
   const names: readonly string[] = knownNames ?? readdirSync(JOIN_LOG_MEMORY_DIR);
   const retainedDays: ReadonlySet<string> =
@@ -65,7 +64,7 @@ export function cleanupExpiredJoinLogDays(
     const path: string = join(JOIN_LOG_MEMORY_DIR, name);
     if (name.endsWith(TMP_FILE_SUFFIX)) {
       try {
-        unlinkSync(path);
+        await Bun.file(path).delete();
       } catch {
         // 权限异常不阻断当天记录；下一次跨日清理仍会重试。
       }
@@ -74,7 +73,7 @@ export function cleanupExpiredJoinLogDays(
     const match: RegExpExecArray | null = JOIN_LOG_FILE_PATTERN.exec(name);
     if (match === null || retainedDays.has(match[2]!) || match[2]! > today) continue;
     try {
-      unlinkSync(path);
+      await Bun.file(path).delete();
       const key: string = `${Number(match[1]!)}:${match[2]!}`;
       joinLogFileCaches.delete(key);
       joinLogRetryAt.delete(key);
@@ -146,8 +145,8 @@ export async function inspectJoinLogFiles(
 }
 
 /** 全域启动成功后清理过期日与临时文件。 */
-export function maintainJoinLogFiles(
+export async function maintainJoinLogFiles(
   inspection: JoinLogRecoveryInspection
-): void {
-  cleanupExpiredJoinLogDays(inspection.today, inspection.names);
+): Promise<void> {
+  await cleanupExpiredJoinLogDays(inspection.today, inspection.names);
 }

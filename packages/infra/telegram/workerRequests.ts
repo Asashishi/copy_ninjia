@@ -1,4 +1,5 @@
 import { InputFile } from "grammy";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { bot } from "./mainClient";
 import type { HydratedTelegramFile } from "./mainClient";
 import type { SendTemporaryMessageOnMainParams } from "./temporaryMessage";
@@ -12,7 +13,6 @@ import {
 import { VOICE_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/voice";
 import type { BoundedResponseResult } from "../../libs/boundedResponse";
 import type {
-  TelegramDeleteEphemeralMessagePayload,
   TelegramWorkerDownloadFileResult,
   TelegramWorkerJsonCall,
   TelegramWorkerRequest,
@@ -33,6 +33,9 @@ async function sendTemporaryMessage(
   ) {
     throw new Error("Telegram temporary message deletion delay must be a positive safe integer.");
   }
+  if (request.purpose === "notice" && request.deleteAfterMs !== COMMAND_MESSAGE_AUTO_DELETE_MS) {
+    throw new Error("Telegram group notices must use the standard deletion delay.");
+  }
   // 组合能力会拉入线程内 Telegram 动作层；只在真正执行时加载，避免普通 Worker
   // 协议导入反向装载全部消息生命周期实现。
   const temporarySender: (
@@ -43,6 +46,7 @@ async function sendTemporaryMessage(
     chatId: request.chatId,
     text: request.text,
     deleteAfterMs: request.deleteAfterMs,
+    messageThreadId: request.messageThreadId,
     signal,
   });
 }
@@ -65,12 +69,7 @@ function executeJsonCall(
     case "deleteMessages":
       return bot.api.raw.deleteMessages(call.payload, signal as never);
     case "deleteEphemeralMessage":
-      return (bot.api.raw as unknown as {
-        deleteEphemeralMessage(
-          payload: TelegramDeleteEphemeralMessagePayload,
-          requestSignal: AbortSignal
-        ): Promise<true>;
-      }).deleteEphemeralMessage(call.payload, signal);
+      return bot.api.raw.deleteEphemeralMessage(call.payload, signal as never);
     case "editMessageText":
       return bot.api.raw.editMessageText(call.payload, signal as never);
     case "getChat":
@@ -241,7 +240,8 @@ async function executeTelegramWorkerRequest(
 
 function aiAllows(request: TelegramWorkerRequest): boolean {
   if (request.operation !== "call") {
-    return request.operation === "downloadFile" ||
+    return (request.operation === "sendTemporaryMessage" && request.purpose === "notice") ||
+      request.operation === "downloadFile" ||
       request.operation === "sendPhoto" ||
       request.operation === "sendAudio";
   }

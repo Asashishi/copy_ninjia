@@ -12,6 +12,13 @@ import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../sti
 import { IMAGE_SENT_TAG_HINT, SONG_SENT_TAG_HINT, STICKER_SENT_TAG_HINT } from "./transcript";
 import { REPLY_CONTEXT_SECTION_NAMES } from "./memory";
 
+/** AI 回复判定无需回应时的输出约束；系统停止指令与排队任务共用。 */
+export const SILENT_REPLY_END_INSTRUCTION: string =
+  "判定无需回应时，直接静默结束：不调用任何回复类工具，最终响应正文必须为空，不输出任何字符。" +
+  "是否需要回复及其理由只用于内部判断，不要输出判断过程、历史发言回顾、时间对照、停止规则解释或结束声明。" +
+  "最终响应正文也属于对外输出，不能当作内部备注；不要写「本轮无需回复」「已经回应过」「按停止规则结束」等说明，" +
+  "也不要用括号、列表、引号、代码块、占位符或省略号来表示沉默。";
+
 /** 模型从已查看贴纸清单按意图选择的约束。 */
 export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
   "严格按 intent 选择最合适的贴纸；没有符合意图的贴纸就不要发送。";
@@ -38,7 +45,9 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
  * workers/aiChat/promptContext.ts 的 roundHasTypo），手滑相关文案只存在于
  * TYPO_REQUIRED_INSTRUCTION 和 roundHasTypo 分支追加的字段说明里。 */
 export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
-  "把一条独立的文字消息发到群里。要说的话基本都走本工具——主回复、贴纸说明、动作之后的补充文字都必须显式调用；" +
+  "把一条独立的文字消息发到群里。只有确实有内容需要对群友说时才调用；" +
+  "判断无需再发言时不要调用本工具，也不要发送空消息。不要把用于判断是否结束的内部分析、历史回应回顾或「本轮结束」「无需回复」等结束说明发到群里。" +
+  "要说的话基本都走本工具——主回复、贴纸说明、动作之后的补充文字都必须显式调用；" +
   "绝不能把想说的话只留在最终响应正文里。唯一的例外是给本轮 generate_image 生成的那张图配的话：" +
   "它写进 generate_image 的 caption 随图一起发出，不要再用本工具复述一遍。" +
   "想连发几条短句就多调用几次（像真人打字那样" +
@@ -60,6 +69,7 @@ export const TYPO_SUBSTITUTION_RULE: string =
 
 /** 本轮抽中手滑时追加到模型上下文的必做要求。 */
 export const TYPO_REQUIRED_INSTRUCTION: string =
+  "仅在本轮确实需要回应时执行以下手滑要求；判断无需再发言时，直接静默结束，不调用回复工具，也不为满足动作数继续发言。" +
   "【本轮手滑】这一轮抽中了「出错」：这一轮 send_message 的 typo_original_char 和 typo_replacement_char 是必填字段。" +
   "挑一条自然的短句，从 text 里原样抄一个已有字填进 typo_original_char（只写这一个字，不要写整句话），再把它要被换成的" +
   `错字填进 typo_replacement_char（同样只写一个字，${TYPO_SUBSTITUTION_RULE}）——执行侧会自动把这个字在 text 里替换掉，` +
@@ -118,11 +128,16 @@ export const GENERATE_SONG_TOOL_INSTRUCTION: string =
  * 工具按轮裁剪，模型以本轮实际清单为准。
  */
 export const REPLY_ACTION_INSTRUCTION: string =
-  "如果本轮触发已被你回应且没有新内容，直接结束；否则" +
+  "先判断本轮是否仍需要回应。若触发消息已被你实质回应且没有新内容，或你判断话题已经结束、无需再发言，" +
+  "就适用静默结束规则。" + SILENT_REPLY_END_INSTRUCTION +
+  "结束不需要通过工具确认，不要用 send_message、caption、贴纸、反应或其他回复工具宣布结束，也不要复述先前已经给出的回应。" +
+  "这项停止规则优先于最低动作数要求。只有确实需要回应时，" +
   `本轮至少完成一个群友可见动作，通常 1～3 个，最多 ${AI_MAX_ACTIONS_PER_REPLY} 个。` +
   "所有可见动作只调用本轮工具清单中的工具；清单没有的不得调用。独立文字只用 send_message；" +
   "生成图片或歌曲时，随附文字写进对应工具的 caption，不要再复述。贴纸必须先 view_sticker_pack 再 send_sticker。" +
   "查询和查看不算可见动作。工具未成功时不得声称已经完成。" +
+  "发送工具返回 success: true、queued: true 表示动作已接纳，执行侧负责排队、发送和重试；不要重复提交、查询发送进度或等候发送完成，可以继续处理其它任务或结束本轮。" +
+  "查看与查询工具直接返回真实数据，按返回清单或数据继续判断，不要把发送接纳回执当成已经取得消息编号。" +
   "同一轮中同一内容只表达一次，正文、图片和歌曲的 caption 共用这条规则；不要靠改标点、空格、换行或换个说法重复已经表达的意思。" +
   "发送前检查本轮已成功的工具结果和上下文里自己的发言，已经回答过的内容不要再发，也不要为凑动作数补一句。" +
   "工具返回 skipped: duplicate 表示重复内容已静默丢弃，不算新动作；不要重试、解释丢弃或补发，已有回应就直接结束。" +

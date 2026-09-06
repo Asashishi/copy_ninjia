@@ -53,10 +53,7 @@ mock.module("node:fs/promises", () => ({
   open: async (path: unknown, flags: unknown, mode?: unknown) => {
     const handle = await realOpen(path as string, flags as string, mode as number | undefined);
     return {
-      writeFile: async (data: unknown): Promise<void> => {
-        step("writeFile");
-        await handle.writeFile(data as string);
-      },
+      fd: handle.fd,
       sync: async (): Promise<void> => {
         step("sync");
         await handle.sync();
@@ -83,9 +80,20 @@ mock.module("node:fs/promises", () => ({
 // "unlink" 记名并可注入失败，其余属性绑回真实 BunFile，不影响同 isolate 的其它读写。
 // 与摘不掉的 mock.module 不同，Bun.file 是普通可写属性，afterAll 里原样还原——
 // 否则非隔离运行时这层包装会带着注入的 unlink 失败泄漏进后续测试文件。
+const fdFiles = new WeakSet<Bun.BunFile>();
+const realBunWrite = Bun.write;
+Bun.write = (async (target: any, input: any, options?: any): Promise<number> => {
+  if (fdFiles.has(target)) step("write");
+  return realBunWrite(target, input, options);
+}) as typeof Bun.write;
+
 const realBunFile = Bun.file;
 Bun.file = ((path: any, options?: any): any => {
   const file = realBunFile(path, options);
+  if (typeof path === "number") {
+    fdFiles.add(file);
+    return file;
+  }
   return new Proxy(file, {
     get(target: any, property: string | symbol): unknown {
       if (property === "delete" || property === "unlink") {
@@ -173,12 +181,13 @@ afterEach(() => {
 });
 
 afterAll(() => {
+  Bun.write = realBunWrite;
   Bun.file = realBunFile;
 });
 
 describe("atomicWriteText 的失败清理", () => {
   test("写入失败时删除临时文件、保留原始错误且不 rename", async () => {
-    injectFailure("writeFile", "injected write failure");
+    injectFailure("write", "injected write failure");
 
     await expect(atomicWriteText(targetPath, "payload")).rejects.toThrow("injected write failure");
 
@@ -220,7 +229,7 @@ describe("atomicWriteText 的失败清理", () => {
   });
 
   test("清理本身失败时不掩盖原始写入错误", async () => {
-    injectFailure("writeFile", "injected write failure");
+    injectFailure("write", "injected write failure");
     injectFailure("unlink", "injected unlink failure");
 
     await expect(atomicWriteText(targetPath, "payload")).rejects.toThrow("injected write failure");

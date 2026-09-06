@@ -65,16 +65,16 @@ function acknowledge(
 }
 
 /** 跨日先发布新日 active 快照，成功后才删旧日文件，跨午夜 pending 不逃逸。 */
-function rolloverVerificationDay(
+async function rolloverVerificationDay(
   day: string,
   reply: VerificationReplySink,
   dir: string
-): void {
+): Promise<void> {
   const changes: [string, VerificationFileChange][] = [
     ...verificationPendingChanges.entries(),
   ];
   compactVerificationDay(day, dir);
-  removeOldVerificationDays(day, dir);
+  await removeOldVerificationDays(day, dir);
   acknowledge(changes, reply);
 }
 
@@ -84,8 +84,8 @@ function scheduleVerificationRolloverRetry(
 ): void {
   verificationRolloverRetryTimer.timer = setTimeout((): void => {
     verificationRolloverRetryTimer.timer = null;
-    void enqueueDiskIOOperation((): void => {
-      maintainVerificationDayForToday(reply, getTokyoDateKey(), dir);
+    void enqueueDiskIOOperation(async (): Promise<void> => {
+      await maintainVerificationDayForToday(reply, getTokyoDateKey(), dir);
     });
   }, VERIFICATION_ROLLOVER_RETRY_MS);
   verificationRolloverRetryTimer.timer.unref();
@@ -95,11 +95,11 @@ function scheduleVerificationRolloverRetry(
  * 发布目标东京日 active 快照并清理旧日；失败时保留镜像并安装唯一 unref 重试。
  * 正常的每日调用由 Disk I/O Worker 统一维护 cron 负责。
  */
-export function maintainVerificationDayForToday(
+export async function maintainVerificationDayForToday(
   reply: VerificationReplySink,
   day: string = getTokyoDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
-): void {
+): Promise<void> {
   if (verificationFlushTimer.timer !== null) {
     clearTimeout(verificationFlushTimer.timer);
     verificationFlushTimer.timer = null;
@@ -109,7 +109,7 @@ export function maintainVerificationDayForToday(
     verificationRolloverRetryTimer.timer = null;
   }
   try {
-    rolloverVerificationDay(day, reply, dir);
+    await rolloverVerificationDay(day, reply, dir);
   } catch (error: unknown) {
     console.error("[diskIOWorker] failed to roll pending verification day:", error);
     // 整晚没有新验证消息时也要尽快重试旧日清理，而不是拖到下一午夜。
@@ -222,7 +222,7 @@ export async function flushVerificationChanges(
   try {
     mkdirSync(dir, { recursive: true });
     if (verificationFileState.current?.day !== day) {
-      rolloverVerificationDay(day, reply, dir);
+      await rolloverVerificationDay(day, reply, dir);
       if (verificationRolloverRetryTimer.timer !== null) {
         clearTimeout(verificationRolloverRetryTimer.timer);
         verificationRolloverRetryTimer.timer = null;

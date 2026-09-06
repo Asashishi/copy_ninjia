@@ -57,3 +57,8 @@ export function getStickerConfig(): StickerConfig {
   }
   return config;
 }
+
+/** 启动恢复读取已校验快照；真正缺省时跳过贴纸目录白名单对账。 */
+export function stickerPacksForRecovery(): readonly string[] | null {
+  return defaultStickerConfigCache.current?.packs ?? null;
+}

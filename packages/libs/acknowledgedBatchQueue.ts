@@ -62,8 +62,8 @@ export class AcknowledgedBatchQueue<T> {
     return this.queue.size + (this.inFlight?.values.length ?? 0);
   }
 
-  /** 排队与在途值合计占用的领域成本，只供内部容量判定。 */
-  private get retainedCost(): number {
+  /** 排队与在途值合计占用的领域成本，供同一 owner 的组合预算判定。 */
+  get retainedCost(): number {
     return this.queuedCost + this.inFlightCost;
   }
 
@@ -90,7 +90,7 @@ export class AcknowledgedBatchQueue<T> {
 
   /**
    * 返回下一批需要投递的值。同步拒绝或代际崩溃后返回同一批；成功提交且尚未
-   * ACK 时返回 null，保证 mailbox 里最多只有一个诊断批次。
+   * ACK 时返回 null，保证 mailbox 里最多只有一个本通道批次。
    */
   nextDelivery(): AcknowledgedBatch<T> | null {
     if (this.inFlight !== null) return this.delivered ? null : this.inFlight;
@@ -138,6 +138,18 @@ export class AcknowledgedBatchQueue<T> {
     this.inFlightCost = 0;
     this.delivered = false;
     return true;
+  }
+
+  /** 代际失效时按原序交出全部未确认值；领域 owner 决定恢复与请求取消。 */
+  takeAll(): readonly T[] {
+    const values: T[] = [];
+    if (this.inFlight !== null) {
+      for (const value of this.inFlight.values) values.push(value);
+    }
+    let entry: CostedQueueValue<T> | undefined;
+    while ((entry = this.queue.shift()) !== undefined) values.push(entry.value);
+    this.reset();
+    return values;
   }
 
   /** owner 生命周期结束时 O(1) 释放全部引用并恢复初始协议状态。 */

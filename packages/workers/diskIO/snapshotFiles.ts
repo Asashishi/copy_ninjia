@@ -19,7 +19,7 @@
  * 保留原始字节并拒绝启动，不能猜测哪条已确认结果可以丢弃。
  */
 
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AiMemorySnapshot } from "../../types/aiChat/memory";
 import type { DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types/diskIO/storage";
@@ -55,16 +55,10 @@ import { isTelegramGroupChatId } from "../../libs/telegramId";
 import { isCanonicalDateKey } from "../../libs/time";
 import { assertFileReadableWritable } from "../../libs/fileAccess";
 
-/**
- * tmp + fsync + rename 的原子覆盖写。rename 前的 fsync 不能省：rename 只
- * 保证目录项切换原子，不保证数据块已落盘——断电时改名可能已提交而数据还
- * 在页缓存里，目标文件变成空文件/半截内容，恰好是这套机制要防的事（进程
- * 被杀不经过这个风险，只有断电经过）。content 是快照序列化好的 JSON 文本，
- * 序列化在源头（aiChatWorker 侧）只做一次，这里原样写入。
- */
-function tryUnlink(path: string): void {
+/** 清理已确认无用的文件；删除失败保留现场，由下一轮维护重试。 */
+async function tryUnlink(path: string): Promise<void> {
   try {
-    unlinkSync(path);
+    await Bun.file(path).delete();
   } catch {
     // 删除失败（权限问题等）不影响主流程，下次同样的清理还会再试一次。
   }
@@ -127,11 +121,11 @@ export async function inspectAiMemories(): Promise<AiMemoryRecoveryInspection> {
 }
 
 /** 全域校验成功后清理本轮 inspect 识别出的 AI 临时文件。 */
-export function maintainAiMemoryFiles(
+export async function maintainAiMemoryFiles(
   inspection: AiMemoryRecoveryInspection
-): void {
+): Promise<void> {
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) tryUnlink(path);
+  for (const path of inspection.temporaryPaths) await tryUnlink(path);
 }
 
 /**
@@ -168,9 +162,9 @@ export interface StickerCatalogRecoveryInspection {
 }
 
 export async function inspectStickerCatalogs(
-  activePacks: readonly string[]
+  activePacks: readonly string[] | null
 ): Promise<StickerCatalogRecoveryInspection> {
-  const activePackSet: Set<string> = new Set(activePacks);
+  const activePackSet: Set<string> | null = activePacks === null ? null : new Set(activePacks);
   const result: Map<string, string> = new Map();
   const orphanPaths: string[] = [];
   const temporaryPaths: string[] = [];
@@ -191,7 +185,7 @@ export async function inspectStickerCatalogs(
     assertPersistedFileWritable(path);
     const parsed: unknown = await readJsonInput(path);
     const snapshot: StickerCatalogSnapshot = decodeStickerCatalogSnapshot(parsed, path);
-    if (!activePackSet.has(pack)) {
+    if (activePackSet !== null && !activePackSet.has(pack)) {
       orphanPaths.push(path);
       continue;
     }
@@ -201,12 +195,12 @@ export async function inspectStickerCatalogs(
 }
 
 /** 全域校验成功后清理临时文件与已退出白名单的严格合法快照。 */
-export function maintainStickerCatalogFiles(
+export async function maintainStickerCatalogFiles(
   inspection: StickerCatalogRecoveryInspection
-): void {
+): Promise<void> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) tryUnlink(path);
-  for (const path of inspection.orphanPaths) tryUnlink(path);
+  for (const path of inspection.temporaryPaths) await tryUnlink(path);
+  for (const path of inspection.orphanPaths) await tryUnlink(path);
 }
 
 /** 覆盖式写入某个白名单贴纸包的目录快照（tmp + fsync + rename 原子落盘），
@@ -253,11 +247,11 @@ function inspectStaleLuckFiles(
   return stalePaths;
 }
 
-export function cleanupStaleLuckFiles(
+export async function cleanupStaleLuckFiles(
   todayKey: string,
   names: readonly string[] = readdirSync(LUCK_MEMORY_DIR)
-): void {
-  for (const path of inspectStaleLuckFiles(todayKey, names)) tryUnlink(path);
+): Promise<void> {
+  for (const path of inspectStaleLuckFiles(todayKey, names)) await tryUnlink(path);
 }
 
 export interface LuckFileStateHolder {
@@ -370,13 +364,13 @@ export async function inspectLuckDay(
 }
 
 /** 全域校验成功后创建目录，并清理临时文件与过期日文件。 */
-export function maintainLuckDay(
+export async function maintainLuckDay(
   todayKey: string,
   inspection: LuckDayRecoveryInspection
-): void {
+): Promise<void> {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) tryUnlink(path);
-  cleanupStaleLuckFiles(todayKey, inspection.names);
+  for (const path of inspection.temporaryPaths) await tryUnlink(path);
+  await cleanupStaleLuckFiles(todayKey, inspection.names);
 }
 
 /** 单领域恢复入口；跨域启动编排使用 inspect/adopt/maintenance 三阶段 API。 */
@@ -385,7 +379,7 @@ export async function recoverLuckDay(
   fileState?: LuckFileStateHolder
 ): Promise<LuckDayCache | null> {
   const inspection: LuckDayRecoveryInspection = await inspectLuckDay(todayKey);
-  maintainLuckDay(todayKey, inspection);
+  await maintainLuckDay(todayKey, inspection);
   if (fileState !== undefined) fileState.current = inspection.fileState;
   return inspection.cache;
 }

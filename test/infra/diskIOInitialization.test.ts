@@ -457,7 +457,7 @@ describe("explicit Worker initialization", () => {
 
           expect(worker.terminated).toBeTrue();
           expect(diskIORuntime.writable).toBeFalse();
-          expect(diskIORuntime.pendingBusinessMessages.size).toBe(0);
+          expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);
           expect(fatalErrors).toHaveLength(1);
           expect(fatalErrors[0]?.message).toContain(scenario.owner);
           expect(fatalErrors[0]?.message).toContain(scenario.expected);

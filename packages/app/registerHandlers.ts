@@ -30,6 +30,8 @@ import {
   handleSendCommand,
   handleResetIconCommand,
   handleStealIconCommand,
+  dispatchWedCommand,
+  dispatchWedCallback,
   handleStopCommand,
   handleSwitchMoodCommand,
   handleUnblockCommand,
@@ -44,6 +46,7 @@ import {
   handleVerificationCallback,
 } from "../antiRaid";
 import { handleMyChatMemberUpdate } from "../infra/botAdmin";
+import { observeWedMemberDeparture, observeWedMembers } from "../commands/wed/members";
 import { CJK_ACTION_COMMAND_PATTERN } from "../consts/commands";
 import { logger } from "../infra/logger";
 import {
@@ -128,9 +131,14 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 未初始化群和不允许的私聊命令在这里终止，避免继续进入授权维护、身份预热、
   // 验证、命令与 AI 链路。群内只有首次 /init 与 my_chat_member 等网关自身
   // 明确放行的更新能越过初始化状态；私聊只接受超级管理员的 /send。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined =>
-    shouldPassInitGate(ctx) && shouldPassPrivateCommandGate(ctx) ? next() : undefined
-  );
+  // 网关拒绝时仍摘除已保存的退群成员，不新增候选或放行业务处理。
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+    if (!shouldPassInitGate(ctx)) {
+      observeWedMemberDeparture(ctx);
+      return undefined;
+    }
+    return shouldPassPrivateCommandGate(ctx) ? next() : undefined;
+  });
 
   // 黑白名单判断保持同步 LRU 读取；每个 update 在进入 Anti-Raid 和命令前，一次性
   // 补齐可见身份的冷缺失。热命中不跨线程，冷读同时查询三张关系并写入正/负缓存。
@@ -141,6 +149,8 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // **不写成 async**：全热 update 的 ids 恒为 null，不应为每条 update 无条件创建
   // promise 与 async 帧；只有冷读分支返回实际 Promise。
   bot.use((ctx: Context, next: NextFunction): Promise<void> => {
+    // 成员集合只消费通过初始化网关的主线程更新，实际增删由 wed owner 合并落盘。
+    observeWedMembers(ctx);
     let ids: number[] | null = null;
     if (ctx.from !== undefined) ids = appendColdIdentityId(ids, ctx.from.id);
     if (ctx.msg?.sender_chat !== undefined) {
@@ -237,6 +247,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("nya_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "nya"));
   commands.command("ja_copy", (ctx: CommandContext<Context>): Promise<void> => handleJaCopyCommand(ctx));
   commands.command("steal_icon", (ctx: CommandContext<Context>): Promise<void> => handleStealIconCommand(ctx));
+  commands.command("wed", (ctx: CommandContext<Context>): void | Promise<void> => dispatchWedCommand(ctx));
   commands.command("reset_icon", (ctx: CommandContext<Context>): Promise<void> => handleResetIconCommand(ctx));
   commands.command("stop_copy", (ctx: CommandContext<Context>): Promise<void> => handleStopCommand(ctx));
   commands.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
@@ -273,12 +284,13 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.on("message_reaction", (ctx: Filter<Context, "message_reaction">): Promise<void> => handleReaction(ctx));
   bot.on("chat_member", (ctx: Filter<Context, "chat_member">): Promise<void> => handleChatMemberUpdate(ctx));
   bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx));
-  // /query_qa 看板的翻页按钮排在入群验证之前：两者前缀互不为前缀，认领了就
+  // /wed 结果和 /query_qa 翻页按钮排在入群验证之前：前缀各自独立，认领了就
   // 不再往下走，没认领的原样交给验证按钮。
   bot.on("callback_query:data", async (
     ctx: Filter<Context, "callback_query:data">,
     next: NextFunction
   ): Promise<void> => {
+    if (await dispatchWedCallback(ctx)) return;
     if (await handleQaBoardCallback(ctx)) return;
     return next();
   });

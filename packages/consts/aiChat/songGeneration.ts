@@ -31,10 +31,7 @@ export const SONG_GENERATION_MAX_BYTES: number = 24 * 1_024 * 1_024;
 /** 标准 base64 对二进制上限的理论编码长度，用于在解码分配内存前拒绝超大响应。 */
 export const SONG_GENERATION_MAX_ENCODED_CHARS: number = Math.ceil(SONG_GENERATION_MAX_BYTES / 3) * 4;
 
-/** 防止不受群冷却限制的 superAdmin 在同一回复轮里反复重试模型/发送失败。 */
-export const SONG_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY: number = 1;
-
-/** 单轮回复最多成功生成并发送一首歌；该歌曲同时占用一个共享可见动作。 */
+/** 生歌工具单轮最多接纳一首歌曲；接纳时同时预占一个共享可见动作。 */
 export const MAX_GENERATED_SONGS_PER_REPLY: number = 1;
 
 /** 发送到 Telegram 的音频文件名前缀；Bot API 靠扩展名判定容器。 */

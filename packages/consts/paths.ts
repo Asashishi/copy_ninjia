@@ -71,7 +71,7 @@ export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
  * 运势缓存（luck/ 下按东京日期一个文件，只留当天）、白名单贴纸包的目录快照
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 aiChat/ai/stickers/catalog.ts）、
  * 待验证当日增量（anti-raid/ 下只保留东京当天），以及滚动 24 小时入群事实
- * （joinlog/），均由 diskIOWorker 落盘，见
+ * （joinlog/）和每群已发言成员集合（wed/），均由 diskIOWorker 落盘，见
  * packages/workers/diskIOWorker.ts。每一类数据各占一个子目录，顶层不放单个
  * 文件。不进 git，与 logs/ 同级对待；AI 记忆快照含群聊逐字明文，部署时应按
  * 敏感数据保护。
@@ -85,6 +85,8 @@ export const DATABASE_DIR: string = join(RUNTIME_DATA_ROOT, "database");
 export const IDENTITY_DATABASE_PATH: string = join(DATABASE_DIR, "storage.sqlite");
 /** 每群 AI 记忆原子快照目录。 */
 export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");
+/** /wed 已发言成员集合目录；Disk I/O Worker 按 <chatId>.json 原子替换数字数组。 */
+export const WED_MEMORY_DIR: string = join(MEMORY_DIR, "wed");
 /** 当日运势追加文件与签名密钥目录。 */
 export const LUCK_MEMORY_DIR: string = join(MEMORY_DIR, "luck");
 /** 当日运势确定性派生与回执签名共用的敏感密钥文件。 */

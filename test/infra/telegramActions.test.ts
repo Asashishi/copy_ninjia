@@ -96,7 +96,7 @@ describe("Telegram 常规动作封装", () => {
     expect(sendMessageMock).toHaveBeenCalledWith(-1001, "普通群", {});
   });
 
-  test("目标专属临时消息透传 Bot API 10.2 字段且不登记 message_id 0", async () => {
+  test("目标专属临时消息透传 Bot API 10.3 嵌套字段且不登记 message_id 0", async () => {
     const sendMessageMock = mock(async (..._args: unknown[]) => ({
       message_id: 0,
       chat: { id: -1001 },
@@ -114,12 +114,13 @@ describe("Telegram 常规动作封装", () => {
     expect(await sendEphemeralMessage({
       chatId: -1001,
       receiverUserId: 7,
+      callbackQueryId: "callback-id",
       text: "只给目标看的入口",
       keyboard,
       api,
     })).toBe(71);
     expect(sendMessageMock).toHaveBeenCalledWith(-1001, "只给目标看的入口", {
-      receiver_user_id: 7,
+      ephemeral_message_parameters: { receiver_user_id: 7, callback_query_id: "callback-id" },
       reply_markup: keyboard,
     });
     expect(sentMessageCount()).toBe(0);
@@ -419,11 +420,11 @@ describe("Telegram 常规动作封装", () => {
 
     expect(await probeChatMembership(-1001, 1, apiFor({ status: "member" }))).toBe(true);
     expect(await probeChatMembership(-1001, 2, apiFor({ status: "left" }))).toBe(false);
-    expect(await probeChatAdmin(-1001, 3, apiFor({ status: "creator" }))).toBe(true);
-    expect(await probeChatAdmin(-1001, 4, apiFor({ status: "administrator" }))).toBe(true);
-    expect(await probeChatAdmin(-1001, 5, apiFor({ status: "member" }))).toBe(false);
+    expect(await probeChatAdmin({ chatId: -1001, userId: 3, api: apiFor({ status: "creator" }) })).toBe(true);
+    expect(await probeChatAdmin({ chatId: -1001, userId: 4, api: apiFor({ status: "administrator" }) })).toBe(true);
+    expect(await probeChatAdmin({ chatId: -1001, userId: 5, api: apiFor({ status: "member" }) })).toBe(false);
     expect(await probeChatMembership(-1001, 6, failedApi)).toBeUndefined();
-    expect(await probeChatAdmin(-1001, 6, failedApi)).toBeUndefined();
+    expect(await probeChatAdmin({ chatId: -1001, userId: 6, api: failedApi })).toBeUndefined();
     expect(await isChatMember(-1001, 6, failedApi)).toBe(false);
   });
 

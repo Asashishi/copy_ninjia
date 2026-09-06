@@ -1,9 +1,14 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import type { Mock } from "bun:test";
+import type { DeleteMessageOutcome } from "../../packages/infra/telegram/actions/messageLifecycle";
+import type { QaFormSession } from "../../packages/types/qa";
+import { runWithUpdateAbortSignal, throwIfUpdateAborted } from "../../packages/infra/updateContext";
 import {
   CHAT_QA_MAX_PER_CHAT,
   CHAT_QA_QUESTION_MAX_CHARS,
   QA_COMMAND_TEXTS,
   QA_FORM_SESSION_MAX,
+  QA_FORM_SESSION_TTL_MS,
 } from "../../packages/consts/qa";
 
 interface SentMessage {
@@ -14,6 +19,10 @@ interface SentMessage {
   replyToMessageId?: number;
 }
 
+const realDiskIO = await import("../../packages/infra/diskIO");
+const postDiskIO: Mock<(message: unknown) => boolean> = mock((_message: unknown): boolean => true);
+mock.module("../../packages/infra/diskIO", (): Record<string, unknown> => ({ ...realDiskIO, postDiskIO }));
+
 const sendCommandMessage = mock(async (_message: SentMessage): Promise<number | undefined> => 1);
 // 与真实 sendMessage 同构：拿到 id 的同步时点回调 onSent，表单 id 才登记得上。
 const sendMessage = mock(
@@ -22,7 +31,7 @@ const sendMessage = mock(
     return 55;
   }
 );
-const deleteMessageWithOutcome = mock(async (): Promise<unknown> => ({ deleted: true }));
+const deleteMessageWithOutcome: Mock<(chatId: number, messageId: number) => Promise<DeleteMessageOutcome>> = mock(async (_chatId: number, _messageId: number): Promise<DeleteMessageOutcome> => "deleted");
 const answerCallbackQuery = mock(async (): Promise<void> => {});
 
 /** 表单就地改写的入参；只断言领域关心的三项。 */
@@ -77,6 +86,7 @@ const {
   handleQueryQaCommand,
   handleRemoveQaCommand,
   handleSetQaCommand,
+  teardownQaInChat,
 } = await import("../../packages/commands/qa");
 const { renderQaFormPrompt } = await import("../../packages/commands/qa/rendering");
 const { chatQaEntries, nextChatQaRevision, qaFormSessions, resetChatQaCache } =
@@ -148,6 +158,7 @@ function lastText(): string {
 }
 
 beforeEach((): void => {
+  postDiskIO.mockClear();
   sendCommandMessage.mockClear();
   sendMessage.mockClear();
   deleteMessageWithOutcome.mockClear();
@@ -157,6 +168,11 @@ beforeEach((): void => {
   permitted.clear();
   permitted.add(OWNER);
   resetChatQaCache();
+});
+
+afterEach((): void => {
+  resetChatQaCache();
+  jest.useRealTimers();
 });
 
 describe("/set_qa", () => {
@@ -375,18 +391,17 @@ describe("表单填齐后的结算", () => {
     expect(lastText()).toBe(QA_COMMAND_TEXTS.questionTooLong);
   });
 
-  test("表单 id 还没登记上时不发编辑请求", async () => {
-    // 发送成功但停机 abort 吃掉了返回值：onSent 没跑过，这条表单没有 id 可改。
+  test("发送失败且没有消息 id 时关闭会话，不再认领投递", async () => {
     sendMessage.mockImplementationOnce(
       async (_message: { onSent?: (id: number) => void }): Promise<number | undefined> => undefined
     );
     await handleSetQaCommand(context(OWNER, ""));
     editMessageText.mockClear();
 
-    await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
+    expect(handleQaMessageIngress(delivered("问题:\n怎么入群？"))).toBeFalse();
 
     expect(editMessageText).not.toHaveBeenCalled();
-    expect(qaFormSessions.get(CHAT_ID)?.q).toBe("怎么入群？");
+    expect(qaFormSessions.has(CHAT_ID)).toBeFalse();
   });
 
   test("两项填齐时不改表单——它紧接着就被删掉了", async () => {
@@ -495,17 +510,17 @@ describe("落盘失败与容量拒绝的回执分流", () => {
     expect(qaFormSessions.size).toBe(QA_FORM_SESSION_MAX);
   });
 
-  test("已经进了热表却排不进硬盘时说「没写进硬盘」，不谎称满了", async () => {
+  test("发布前 revision 耗尽时报告持久化失败，保持热表原值", async () => {
     await handleSetQaCommand(context(OWNER, ""));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
-    // revision 空间耗尽会让排队那一步抛错，此时条目已经写进热表。
+    // revision 空间耗尽在发布前拒绝，不能把它解释为条数已满。
     nextChatQaRevision.current = Number.MAX_SAFE_INTEGER;
     sendCommandMessage.mockClear();
 
     await handleQaMessageIngress(delivered("回答:\n点置顶"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.persistFailed);
-    expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
+    expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBeUndefined();
     expect(qaFormSessions.get(CHAT_ID)).toBeUndefined();
   });
 
@@ -592,5 +607,131 @@ describe("填到一半时重来", () => {
 
     expect(await handleQaMessageIngress(delivered("回答:\n改主意了"))).toBeFalse();
     expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
+  });
+});
+
+describe("表单异步生命周期", (): void => {
+  for (const close of ["ttl", "reopen", "teardown"] as const) {
+    test(`${close} 发生在删除等待期间：保持认领且禁止旧会话写入`, async (): Promise<void> => {
+      jest.useFakeTimers();
+      await handleSetQaCommand(context(OWNER, ""));
+      const old: QaFormSession = qaFormSessions.get(CHAT_ID)!;
+      const pending: PromiseWithResolvers<DeleteMessageOutcome> = Promise.withResolvers<DeleteMessageOutcome>();
+      const started: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+      deleteMessageWithOutcome.mockImplementationOnce((): Promise<DeleteMessageOutcome> => {
+        started.resolve();
+        return pending.promise;
+      });
+      const task: boolean | Promise<boolean> = handleQaMessageIngress(delivered("问题:问\n回答:答"));
+      await started.promise;
+      if (close === "ttl") jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS);
+      else if (close === "reopen") await handleSetQaCommand(context(OWNER, ""));
+      else teardownQaInChat(CHAT_ID);
+      const current: QaFormSession | undefined = qaFormSessions.get(CHAT_ID);
+      expect(current).not.toBe(old);
+      pending.resolve("deleted");
+      expect(await task).toBeTrue();
+      expect(old.q).toBeUndefined();
+      expect(old.a).toBeUndefined();
+      expect(qaFormSessions.get(CHAT_ID)).toBe(current);
+      expect(current?.q).toBeUndefined();
+      expect(current?.a).toBeUndefined();
+      expect(postDiskIO).not.toHaveBeenCalled();
+      expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
+      expect(sendCommandMessage).not.toHaveBeenCalled();
+    });
+
+    test(`${close} 发生在发送等待期间：迟到表单只删除一次`, async (): Promise<void> => {
+      jest.useFakeTimers();
+      const pending: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+      const started: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+      sendMessage.mockImplementationOnce(async (message: { readonly onSent?: (id: number) => void }): Promise<number> => {
+        started.resolve();
+        await pending.promise;
+        message.onSent?.(88);
+        return 88;
+      });
+      const task: Promise<void> = handleSetQaCommand(context(OWNER, ""));
+      await started.promise;
+      const old: QaFormSession = qaFormSessions.get(CHAT_ID)!;
+      if (close === "ttl") jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS);
+      else if (close === "reopen") await handleSetQaCommand(context(OWNER, ""));
+      else teardownQaInChat(CHAT_ID);
+      const current: QaFormSession | undefined = qaFormSessions.get(CHAT_ID);
+      pending.resolve();
+      await task;
+      expect(deleteMessageWithOutcome.mock.calls).toEqual([[CHAT_ID, 88]]);
+      expect(old.formMessageId).toBeUndefined();
+      expect(qaFormSessions.get(CHAT_ID)).toBe(current);
+      expect(current?.formMessageId).toBe(close === "reopen" ? 55 : undefined);
+    });
+  }
+
+  for (const text of ["问题:问", `问题:${"长".repeat(CHAT_QA_QUESTION_MAX_CHARS + 1)}\n回答:答`]) {
+    test("TTL 发生在表单编辑等待期间，不再发送字段回执", async (): Promise<void> => {
+      jest.useFakeTimers();
+      await handleSetQaCommand(context(OWNER, ""));
+      const pending: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
+      const started: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+      editMessageText.mockImplementationOnce((): Promise<boolean> => {
+        started.resolve();
+        return pending.promise;
+      });
+      const task: boolean | Promise<boolean> = handleQaMessageIngress(delivered(text));
+      await started.promise;
+      jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS);
+      pending.resolve(true);
+      expect(await task).toBeTrue();
+      expect(sendCommandMessage).not.toHaveBeenCalled();
+      expect(postDiskIO).not.toHaveBeenCalled();
+    });
+  }
+
+  test("删除等待期间取消 update，不修改会话或提交写请求", async (): Promise<void> => {
+    await handleSetQaCommand(context(OWNER, ""));
+    const session: QaFormSession = qaFormSessions.get(CHAT_ID)!;
+    const controller: AbortController = new AbortController();
+    const pending: PromiseWithResolvers<DeleteMessageOutcome> = Promise.withResolvers<DeleteMessageOutcome>();
+    const started: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    deleteMessageWithOutcome.mockImplementationOnce((): Promise<DeleteMessageOutcome> => {
+      started.resolve();
+      return pending.promise;
+    });
+    const task: Promise<boolean> = runWithUpdateAbortSignal(controller.signal,
+      async (): Promise<boolean> => handleQaMessageIngress(delivered("问题:问\n回答:答")));
+    await started.promise;
+    controller.abort();
+    pending.resolve("deleted");
+    await expect(task).rejects.toBe(controller.signal.reason);
+    expect(session.q).toBeUndefined();
+    expect(session.a).toBeUndefined();
+    expect(postDiskIO).not.toHaveBeenCalled();
+  });
+
+  test("发送成功登记 id 后取消，关闭会话并保留取消异常", async (): Promise<void> => {
+    const controller: AbortController = new AbortController();
+    const reason: DOMException = new DOMException("shutdown", "AbortError");
+    sendMessage.mockImplementationOnce(async (message: { readonly onSent?: (id: number) => void }): Promise<number> => {
+      message.onSent?.(88);
+      controller.abort(reason);
+      throwIfUpdateAborted();
+      return 88;
+    });
+    const task: Promise<void> = runWithUpdateAbortSignal(controller.signal,
+      (): Promise<void> => handleSetQaCommand(context(OWNER, "")));
+    await expect(task).rejects.toBe(reason);
+    expect(qaFormSessions.has(CHAT_ID)).toBeFalse();
+    expect(deleteMessageWithOutcome.mock.calls).toEqual([[CHAT_ID, 88]]);
+    expect(postDiskIO).not.toHaveBeenCalled();
+  });
+
+  test("结算后的回执抛出取消异常，仍交回表单清理且只提交一次", async (): Promise<void> => {
+    await handleSetQaCommand(context(OWNER, ""));
+    const error: DOMException = new DOMException("shutdown", "AbortError");
+    sendCommandMessage.mockImplementationOnce(async (): Promise<never> => { throw error; });
+    await expect(handleQaMessageIngress(delivered("问题:问\n回答:答")) as Promise<boolean>).rejects.toBe(error);
+    expect(qaFormSessions.has(CHAT_ID)).toBeFalse();
+    expect(deleteMessageWithOutcome.mock.calls).toEqual([[CHAT_ID, 77], [CHAT_ID, 55]]);
+    expect(postDiskIO).toHaveBeenCalledTimes(1);
   });
 });

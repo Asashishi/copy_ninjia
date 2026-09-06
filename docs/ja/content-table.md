@@ -37,7 +37,7 @@
 ## 📑 ページ一覧と概要
 
 1. **[01 環境構築と初回実行](01-getting-started.md)**
-   - 依存関係（Bun 1.4.1 / Linux / Bot Token / AI provider API Key）
+   - 依存関係（Bun 1.4.2 / Linux / Bot Token / AI provider API Key）
    - `config/telegram.json` など deployment 設定の必須項目
    - Telegram BotFather 設定（Privacy Mode / 管理者権限 / Inline Mode）
    - 初回起動と `/init enable` のハンドシェイク

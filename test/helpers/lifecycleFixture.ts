@@ -28,6 +28,7 @@ const seedMissingAssetState = mock((): number => { calls.push("seedAssets"); ret
 const loadState = mock(async (): Promise<void> => { calls.push("loadState"); });
 const refreshAllChatTitles = mock(async (): Promise<void> => { calls.push("refreshTitles"); });
 const loadPersistedData = mock(async () => ({
+  wedMembers: new Map<number, Set<number>>(),
   aiMemories: new Map<number, string>(),
   stickerCatalogs: new Map<string, string>(),
   luckDay: null,
@@ -48,6 +49,7 @@ const terminateAntiRaid = mock(async (): Promise<void> => { calls.push("terminat
 const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drainAntiRaid"); return "flushed"; });
 const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
 const drainGagRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainGag"); return "flushed"; });
+const drainWedRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainWed"); return "flushed"; });
 const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
 const drainPendingMessageDeletions = mock(async (): Promise<FlushResult> => {
   calls.push("drainMessageDeletions");
@@ -60,18 +62,21 @@ const drainTelegramOutbound = mock(async (): Promise<FlushResult> => {
 const closeTranslate = mock(async (): Promise<FlushResult> => { calls.push("closeTranslate"); return "flushed"; });
 const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
 const initGagRuntime = mock((): void => { calls.push("initGag"); });
+const initWedRuntime = mock((): void => { calls.push("initWed"); });
 const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
 const initTranslate = mock((): void => { calls.push("initTranslate"); });
 const quiesceAvatarUpdates = mock((): void => { calls.push("quiesceAvatar"); });
 const quiesceChatTitleRefresh = mock((): void => { calls.push("quiesceTitles"); });
 const quiesceTranslate = mock((): void => { calls.push("quiesceTranslate"); });
 const quiesceGagRuntime = mock((): void => { calls.push("quiesceGag"); });
+const quiesceWedRuntime = mock((): void => { calls.push("quiesceWed"); });
 const abortChatTitleRefresh = mock((): void => { calls.push("abortTitles"); });
 const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
 const hydratePendingVerifications = mock((_value: unknown): void => { calls.push("hydrateVerifications"); });
 const hydrateChatStateCache = mock((_value: unknown): void => { calls.push("hydrateChatStates"); });
+const hydrateWedMembers = mock((_value: unknown): void => { calls.push("hydrateWedMembers"); });
 const hydrateChatQaCache = mock((_value: unknown): void => { calls.push("hydrateChatQa"); });
 const hydrateIdentityStorageCounts = mock((..._args: unknown[]): void => { calls.push("hydrateIdentityCounts"); });
 const assertSuperAdminNotBlocked = mock(async (..._args: unknown[]): Promise<void> => { calls.push("assertSuperAdminNotBlocked"); });
@@ -136,6 +141,7 @@ const testDependencies = {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
+  drainWedRuntime,
   drainTranslate,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
@@ -148,12 +154,14 @@ const testDependencies = {
   hydrateIdentityStorageCounts,
   hydrateChatStateCache,
   hydrateChatQaCache,
+  hydrateWedMembers,
   hydrateAiMemory,
   hydratePendingVerifications,
   hydrateBlocklist,
   hydrateStickerCatalog,
   initAvatarUpdates,
   initGagRuntime,
+  initWedRuntime,
   initAiChat,
   initDiskIO,
   initTelegramClients,
@@ -182,6 +190,7 @@ const testDependencies = {
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
+  quiesceWedRuntime,
   quiesceTranslate,
   seedSenderCache,
   setBusinessWorkerFatalHandler,
@@ -252,12 +261,14 @@ export function installLifecycleFixtureHooks(): void {
       drainAntiRaid,
       drainAvatarUpdates,
       drainGagRuntime,
+      drainWedRuntime,
       drainTranslate,
       drainPendingMessageDeletions,
       drainTelegramOutbound,
       closeTranslate,
       initAvatarUpdates,
       initGagRuntime,
+      initWedRuntime,
       initChatTitleRefresh,
       initTranslate,
       quiesceAvatarUpdates,
@@ -265,7 +276,9 @@ export function installLifecycleFixtureHooks(): void {
       quiesceChatTitleRefresh,
       quiesceTranslate,
       quiesceGagRuntime,
+      quiesceWedRuntime,
       abortChatTitleRefresh,
+      hydrateWedMembers,
       hydrateAiMemory,
       hydrateStickerCatalog,
       initAiChat,
@@ -303,6 +316,7 @@ export function installLifecycleFixtureHooks(): void {
     flushAiMemory.mockImplementation(async () => { calls.push("flushAiMemory"); return "flushed" as const; });
     drainAntiRaid.mockImplementation(async () => { calls.push("drainAntiRaid"); return "flushed" as const; });
     drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
+    drainWedRuntime.mockImplementation(async () => { calls.push("drainWed"); return "flushed" as const; });
     drainGagRuntime.mockImplementation(async () => { calls.push("drainGag"); return "flushed" as const; });
     drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
     drainPendingMessageDeletions.mockImplementation(async () => {
@@ -343,6 +357,7 @@ export const lifecycleFixture = {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
+  drainWedRuntime,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -360,6 +375,7 @@ export const lifecycleFixture = {
   initBlocklistSweepScheduler,
   initAvatarUpdates,
   initGagRuntime,
+  initWedRuntime,
   initChatTitleRefresh,
   initDiskIO,
   initTelegramClients,
@@ -373,6 +389,7 @@ export const lifecycleFixture = {
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
+  quiesceWedRuntime,
   quiesceTranslate,
   realDrainDependencies,
   refreshAllChatTitles,

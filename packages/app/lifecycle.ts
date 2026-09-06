@@ -133,6 +133,7 @@ export class ApplicationLifecycle {
     this.dependencies.initChatTitleRefresh();
     this.dependencies.initTranslate();
     this.dependencies.initGagRuntime();
+    this.dependencies.initWedRuntime();
     this.flags.translateInitialized = true;
 
     // 配置文件和持久化状态都是不可信部署输入。已有部署输入不受功能开关影响，
@@ -155,6 +156,7 @@ export class ApplicationLifecycle {
     }
     this.dependencies.hydrateChatStateCache(loaded.chatStates);
     this.dependencies.hydrateChatQaCache(loaded.chatQa);
+    this.dependencies.hydrateWedMembers(loaded.wedMembers);
     this.dependencies.initTelegramClients();
     this.dependencies.hydrateIdentityStorageCounts(
       loaded.whitelistEntryCount,
@@ -472,7 +474,7 @@ export class ApplicationLifecycle {
   }
 
   /**
-   * 让五个后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
+   * 让后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
    * init() 里的各 init 会把 accepting 重新置真，启动期到达的停止信号若把成功
    * 记成一次性完成，此后 wait()/dispose() 的每一次调用都会被短路——owner
    * 整个停机期间继续收活，

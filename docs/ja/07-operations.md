@@ -85,6 +85,11 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     過去の要約、要約待ち内容、保存時刻を保持。
   - **バックアップ**：機密のグループチャット本文を含む。チャットのメモリ purge 時に
     削除し、起動時は chat ID ごとに復元。
+  - **検証**：本文・名前・参照は単一行、参照 text/quote は最大 500 UTF-16 code unit、`at` は実在する東京ローカル時刻 `YYYY/MM/DD HH:mm:ss` です。要約は改行可能です。不正フィールドがあれば復元を拒否し、ネストしたパスを示して原本を保持します。
+- **`memory/wed/<chatId>.json`**
+  - **内容**：各群の発言済みメンバー ID の数値配列（例：`[5974478892]`）。主スレッドは各群で同じ長期 `Set<number>` を再利用します。最大 25 群、各群 150,000 ID です。満杯では既存 ID を保持し、退室で空きができると追加を再開します。
+  - **検証**：ファイル名は正規形の負の安全整数グループ ID、要素は重複のない正の安全整数です。不正 JSON、重複、型や容量の違反は原本を切り詰めたり修復したりせず起動を拒否します。ディレクトリやファイルの欠落は許可し、必要時に作成します。
+  - **保存とバックアップ**：実際の変更を累計 300 件または最初の変更から 30 秒で DiskIO に送り、全体を原子置換します。変更がなければ書き込みません。無効化や再起動後も記録を保持し、日次の期限はありません。データルートの整合バックアップに含め、突然の終了では未保存変更を失う場合があります。
 - **`memory/stickers/<pack>.json`**
   - **内容**：allowlist 対象スタンプパック 1 件の version=1 カタログ。
     `file_unique_id` ごとの emoji/説明とパック要約を保持。
@@ -156,13 +161,13 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **内容**：単一インスタンスロック。
   - **バックアップ**：バックアップも手動編集もしない。
 
-`memory/` 直下にはファイルを置かず、6 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は復元が必要な state domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact は成功応答後に行い、その後で `Asia/Tokyo` を明示した Bun native の東京 0 時 maintenance cron を 1 つ登録します。この cron は運勢 file、log、入室 log、広告 sample archive、認証待ちの日別 file、一時 allowlist activity をまとめて maintenance し、1 domain の失敗で残りを止めません。既存の起動時・業務 event 経路は fallback として残します。一時 allowlist maintenance は shared SQLite の pending final value を先に commit し、一時 write が未 commit のままなら削除を拒否します。当日 row と終了したばかりの日に qualified だった row を保持し、その日の unqualified row とさらに古い row は全体を削除します。cleanup 後に到着した失効済み旧日 write は元の revision の tombstone に正規化します。`ad-detected/` は引き続き最初の hit 後にだけ現れ、すでに directory がある場合も起動成功後の maintenance は sample 内容を読まず directory entry だけを走査します。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。実行中は統一 cron が同じ rollover を起動し、失敗時は active mirror を保持したまま unref 済み 1 秒 timer で再試行します。
+`memory/` 直下にはファイルを置かず、7 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は復元が必要な state domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact は成功応答後に行い、その後で `Asia/Tokyo` を明示した Bun native の東京 0 時 maintenance cron を 1 つ登録します。この cron は運勢 file、log、入室 log、広告 sample archive、認証待ちの日別 file、一時 allowlist activity をまとめて maintenance し、1 domain の失敗で残りを止めません。既存の起動時・業務 event 経路は fallback として残します。一時 allowlist maintenance は shared SQLite の pending final value を先に commit し、一時 write が未 commit のままなら削除を拒否します。当日 row と終了したばかりの日に qualified だった row を保持し、その日の unqualified row とさらに古い row は全体を削除します。cleanup 後に到着した失効済み旧日 write は元の revision の tombstone に正規化します。`ad-detected/` は引き続き最初の hit 後にだけ現れ、すでに directory がある場合も起動成功後の maintenance は sample 内容を読まず directory entry だけを走査します。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。実行中は統一 cron が同じ rollover を起動し、失敗時は active mirror を保持したまま unref 済み 1 秒 timer で再試行します。
 
 `joinlog/` の query は `[since, now]` を覆う最大 2 個の chat/day file を読み、window 内で user ごとの最後の入室だけを返します。3 日目の保持は 23:59 に採取され、深夜を越えて Worker が処理する in-flight query 専用です。冗長履歴 10,000 件または新規追記 4 MiB で compact を評価し、512 KiB 以上回収できる場合だけ atomic rewrite します。parse 可能でも schema が不正な file は byte を変えずその read/write を拒否し、末尾の truncate 断片だけ append layer が修復できます。
 
 ### `memory/` の補助ファイルとプロセス内限定状態
 
-- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。起動 inspect はこれらを記録するだけで削除しません。全 domain の検証と adopt が成功して成功応答を返した後、logs、`ai/`、`stickers/`、`luck/`、`joinlog/` の maintenance が対応する `*.tmp` を清掃します。既存の `ad-detected/` directory は起動成功後の maintenance で `.sample.json.*.tmp` を清掃し、最初の sample 書き込みにも同じ fallback を残します。`anti-raid/` は temporary file を復元 input から除外します。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
+- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。起動 inspect はこれらを記録するだけで削除しません。全 domain の検証と adopt が成功して成功応答を返した後、logs、`ai/`、`stickers/`、`luck/`、`joinlog/`、`wed/` の maintenance が対応する `*.tmp` を清掃します。既存の `ad-detected/` directory は起動成功後の maintenance で `.sample.json.*.tmp` を清掃し、最初の sample 書き込みにも同じ fallback を残します。`anti-raid/` は temporary file を復元 input から除外します。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
 - Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。
 
 Bot 停止中または storage snapshot の整合境界でデータルート全体をバックアップし、SQLite 主 DB と存在する sidecar は同一時点から取得します。`memory/` と `database/` は機密データとして扱ってください。新規 memory file は `0644`、DB と sidecar は初回作成時に `0660` が既定値で、既存 file の mode は adopt と atomic replace 後も維持されます。詳細は [04](04-invariants.md#永続化) を参照してください。
@@ -316,6 +321,14 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
    `SubState=running` を確認し、少なくとも 2 回の `RestartSec` 間隔を観測します。
    `NRestarts` が増えず、journal に新しい非ゼロ終了がないことまで確認し、すべて
    完了するまで外部 backup を保持します。
+
+### インストーラーのサービスとバックアップ境界
+
+`install.sh` は最初のインプレース書き込み前に、既存サービスの `inactive/dead`、対象の実体作業ディレクトリ、単一の Bun 入口を確認します。状態問い合わせ失敗・パス不一致・複数の `ExecStart` は処理を拒否します。稼働中のデプロイは先に上記の運用手順で停止してください。
+
+既存 unit と置換するデプロイ設定は共通の外部バックアップ一覧に原パス・mode・所有者・SHA-256 を記録します。失敗時は原本と現場を保持します。一覧に従って個別に復元し、ハッシュ・mode・所有者を照合したうえで、全検証成功後にだけバックアップを削除します。
+
+観察期間は有効な再起動待機上限の 2 倍に 2 秒を加えた値です。基準の `RestartUSec` に、有効な指数 backoff の `RestartMaxDelayUSec` と `RestartRandomizedDelayUSec` を反映します。`RestartMaxDelayUSec=infinity` は backoff を無効にし、基準間隔がゼロの場合も backoff は無効です。古い systemd にない backoff・ランダム遅延属性は加算せず、存在して不正な値は拒否します。unit 読み込み後かつ起動前に `NRestarts` 基準値を取得し、観察後の同一回数と `active/running` を要求します。journal は起動前 cursor より後を読み、cursor がない場合は今回の開始時刻以降を読みます。読み取り不能・異常終了・状態不正は非ゼロ終了し、外部バックアップを保持します。
 
 ## 日常の監視項目
 

@@ -119,16 +119,14 @@ describe("Telegram 客户端初始化", () => {
       }),
       group: {
         maxConcurrent: 1,
-        minTime: 1_000,
         highWater: 128,
         strategy: OVERFLOW_STRATEGY,
       },
-      out: expect.objectContaining({
+      out: {
         maxConcurrent: 1,
-        minTime: 1_000,
         highWater: 256,
         strategy: OVERFLOW_STRATEGY,
-      }),
+      },
     });
     expect(telegramOutboundGate).toHaveBeenCalledTimes(1);
     expect(initTelegramOutbound).toHaveBeenCalledTimes(1);

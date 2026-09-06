@@ -1,3 +1,5 @@
+import { storagePendingBudget } from "../../../cache/workers/diskIO/storageDatabase";
+import { storageWriteCost } from "../../../libs/storageWriteBudget";
 import { pendingTemporaryWhitelistWrites } from
   "../../../cache/workers/diskIO/storageDatabase";
 import { DAY_MS } from "../../../consts/diskIO/common";
@@ -48,6 +50,7 @@ export function handleTemporaryWhitelistWrite(
   const current: PendingTemporaryWhitelistWrite | undefined =
     pendingTemporaryWhitelistWrites.get(message.id);
   if (current !== undefined && current.revision >= message.revision) return;
+  storagePendingBudget.reserve(current === undefined ? 1 : 0, current === undefined ? storageWriteCost(null) : 0);
   pendingTemporaryWhitelistWrites.set(message.id, {
     activity,
     revision: message.revision,

@@ -1,3 +1,5 @@
+/** Owner: Main thread。身份策略 LRU 与未 ACK 写入；跨线程只通过 Disk I/O 消息同步。 */
+
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../consts/identityStorage";
 import { LruCache } from "../../libs/lruCache";
 import type {
@@ -7,8 +9,6 @@ import type {
 } from "../../types/identityPolicy";
 import type { UnacknowledgedIdentityWrite } from "../../types/identityStorage";
 import { resetTemporaryWhitelistCache } from "./temporaryWhitelist";
-
-/** 主线程身份策略 LRU 与未 ACK 写入；跨线程只通过 Disk I/O 消息同步。 */
 
 /** 白名单热查询缓存；null 是已确认不存在的负缓存，容量严格为 8192。 */
 export const whitelistEntryCache: LruCache<
@@ -40,6 +40,14 @@ export const unacknowledgedBlocklistWrites: Map<
   UnacknowledgedIdentityWrite
 > = new Map();
 
+/**
+ * 两表各一项未 ACK 字节总数；发布最终值时按差额更新，精确 ACK 释放，reset 清零。
+ * Disk I/O Worker 重建时与主线程未 ACK 表一起保留，重放不重复记账。
+ */
+export const unacknowledgedIdentityBytes: { current: Record<IdentityPolicyTable, number> } = {
+  current: { whitelist: 0, blocklist: 0 },
+};
+
 /** 身份策略写入 revision 发号器；只在主线程同步自增。 */
 export const identityWriteRevision: { current: number } = { current: 0 };
 
@@ -68,6 +76,8 @@ export function resetIdentityStorageCache(): void {
   identityEntryCounts.blocklist = 0;
   unacknowledgedWhitelistWrites.clear();
   unacknowledgedBlocklistWrites.clear();
+  unacknowledgedIdentityBytes.current.whitelist = 0;
+  unacknowledgedIdentityBytes.current.blocklist = 0;
   identityWriteRevision.current = 0;
   unacknowledgedRemovalSnapshotRevision.current = null;
   removalSnapshotRevision.current = 0;

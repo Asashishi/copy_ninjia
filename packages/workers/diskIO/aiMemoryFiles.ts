@@ -67,10 +67,10 @@ export function adoptAiMemorySnapshots(
 }
 
 /** 跨域启动成功后的临时文件清理。 */
-export function maintainAiMemorySnapshots(
+export async function maintainAiMemorySnapshots(
   inspection: AiMemoryRecoveryInspection
-): void {
-  maintainAiMemoryFiles(inspection);
+): Promise<void> {
+  await maintainAiMemoryFiles(inspection);
 }
 
 export interface MarkAiMemorySnapshotDirtyParams {

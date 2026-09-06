@@ -24,11 +24,11 @@
 | `bun run check:install-script-syntax` | 只用 `bash -n` 解析 `install.sh` 的 shell 语法；不执行安装脚本 |
 | `bun run check:install-isolation` | 在 `copy-ninjia-install-test-*` 专属临时根的夹具里实跑 `install.sh`（`scripts/checkInstallIsolation.ts`），核对暂存失败清理、`telegram.json` 回滚、中断续跑、成功替换、符号链接拓扑、未校验备份保留与凭据隔离；不触碰任何真实部署路径 |
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
-| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 热路径门禁，共七段，**提交前必跑** |
+| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 热路径门禁，共七段，**合入 master 前必跑** |
 | `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；因为要整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 30 个，其余只进 `perf:full`），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 36 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
@@ -45,13 +45,23 @@
 - **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码与脚本的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
   模块级纯字面量及其组合必须放在领域 `consts`，函数装配和缓存 owner 单独核对。Node 内建模块带或不带 `node:` 前缀使用同一白名单；动态加载、重导出、`require`、`process.hrtime` / `nextTick` 和解构入口同样检查，类型专用声明不进入运行时检查。
 
+  Node API 检查覆盖 `process.getBuiltinModule`、`globalThis.Buffer` 及字面量下标形式；`Buffer.byteLength` 等例外仍按模块、符号和用途登记。`@grammyjs/runner` 仅作为开发依赖用于 SDK 对照测试，生产取数使用项目的 offset 确认边界。
+
 ### 依赖冷却期
 
-依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时固定为 1.4.1，`@types/bun` 固定为 1.4.0；版本门禁要求两者主、次版本一致，运行时补丁版本由 `packageManager` 与 `install.sh` 共同锁定。
+依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时固定为 1.4.2，`@types/bun` 固定为 1.4.0；版本门禁要求两者主、次版本一致，运行时补丁版本由 `packageManager` 与 `install.sh` 共同锁定。
+
+### Bun 运行边界
+
+项目在 `bunfig.toml` 中设置 `run.bun = true`，依赖 CLI 的 Node shebang 也由当前 Bun 执行。图片转码在 `packages/infra/image.ts` 中按需加载 `sharp`：视觉输入的 JPEG/PNG 原样传递，WebP/GIF 转为 PNG，动画只读取首帧并保留透明度；缩略图保持比例且不放大小图，不按 EXIF 方向自动旋转，透明像素按黑色背景合成，再按质量档生成满足尺寸与体积上限的 JPEG。原生 API 替换必须覆盖相同的输入格式、透明度、动画帧与失败语义。
+
+文件内容写入和普通文件删除使用 [`Bun.write`、`Bun.file`](https://bun.com/docs/runtime/file-io)。独占创建后的写入使用 `Bun.write(Bun.file(handle.fd), content)`，由原句柄完成 fsync、关闭及原子发布；目录遍历、路径、同步持久化、权限与 hard link 等原生文件 API 未覆盖的操作使用 `node:` 接口。`AsyncLocalStorage`、PEM 私钥解析和无分配 UTF-8 字节计数保留 Bun 支持的兼容接口。Disk I/O 启动、午夜与跨日维护逐项等待异步删除，删除完成后才进入后续领域或发送持久化回执。
+
+运行时升级后，性能校准必须针对相同 Bun version/revision 重新实测；在完成前，约定检查与热路径门禁会拒绝旧校准记录。只验证更新而不运行基准时，分别执行安装隔离检查、lint、typecheck、覆盖率与故障注入测试，不宣称完整 `check` 通过，也不改写旧性能读数。
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3179 tests / 321 files / 123010 次 `expect()`**；全源码**函数覆盖率 97.12% / 行覆盖率 97.38%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3469 tests / 344 files / 125771 次 `expect()`**；全源码**函数覆盖率 97.18% / 行覆盖率 97.36%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -61,6 +71,8 @@
 2. **临时数据根**：`test/preloadEnv.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`、`database/`；结束后临时目录被清理。**路径注入单独成文件**是因为 ESM 的 import 一律先于同文件语句求值：只要 `test/preload.ts` 静态 import 了任何生产模块，写在文件里的环境变量赋值就已经晚了一步，`CONFIG_ROOT` 会指向开发机上的真实部署目录。
 3. **只读配置根**：同一份注入还把 `COPY_NINJIA_CONFIG_ROOT` 指向仓库内的 `config_example/`（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读开发机上的真实 Telegram 与功能配置；身份策略数据库已由上一层临时数据根隔离。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
 4. **agent 配置快照**：`agent.json` 是唯一不由运行时读盘取得的部署配置（真实进程里由主线程解析后经 Worker 初始化消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到那两条消息，因此 `test/preload.ts` 把同一份 `config_example/agent.json` 一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
+
+`test/scripts/installStartup.test.ts` 复用安装隔离夹具，在独立临时配置和数据根中运行 `install.sh`、`bun run start` 及真实 Worker；Telegram 应答和系统服务命令由测试替身接管。它覆盖不启用 AI、正常 AI 配置、重复安装启动，以及非法可选配置在联网前拒绝，核对正常停机和实例锁释放。
 
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
 
@@ -74,9 +86,11 @@
 
 `bun run test:fault-injection` 重点回归崩溃恢复与持久化边界：生命周期失败、update runner 确认边界、StateStore 与清理、AI/Anti-Raid Worker 的镜像恢复与生命周期、Disk I/O 的追加/快照/日志文件、flush barrier 等（完整清单见 [`package.json`](../../package.json) 的脚本定义）。改动 [04 运行时权威约束](04-invariants.md) 涉及的路径时，本套件必须绿。
 
+`/wed` 持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
+
 ## 热路径门禁
 
-`bun run perf:hot-path-gate` 是 `bun run check` 的最后一段，因此每次提交前都会跑。它按 `packages/consts/performance.ts` 的 `HOT_PATH_PROFILE_SCENARIOS` 逐场景、逐次重复各起两个独立子进程：`steadyProfile` 只判断正式循环的 GC 与 JIT，`retained` 在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC 后留存。
+`bun run perf:hot-path-gate` 是 `bun run check` 的最后一段，合入 `master` 前必须执行。它按 `packages/consts/performance.ts` 的 `HOT_PATH_PROFILE_SCENARIOS` 逐场景、逐次重复各起两个独立子进程：`steadyProfile` 只判断正式循环的 GC 与 JIT，`retained` 在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC 后留存。
 
 校准记录保存在 [`performance-result.json`](../../performance-result.json)，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。`gateRuntime.ts` 在约定检查和热路径子进程启动前核对 `packageManager`、当前 Bun version/revision 与校准构建；不一致时先重新实测校准。记录保留采样进程数、逐场景延迟来源和 GC/RSS/留存硬上限。历史 `fullSuite` 全量读数保留各自的运行时间和 Bun 构建。
 
@@ -100,6 +114,16 @@
 
 `bun run perf:identity-database` 在临时数据根和临时 SQLite 中测六项真实操作：8 个身份一批的双表读（同一连接的热读、每批换新连接的冷读）、128 行显式事务写入（同样分热连接与冷连接两种）、主线程 8,192 项 LRU 热读，以及经过 Worker、JSONB transaction 与精确 ACK 的写透。「冷」只表示连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。每项先预热，再跑 5 个独立 Bun 进程；报告固定 Bun version/revision、吞吐、批延迟、样本范围/变异系数，以及强制 GC 前后的 JSC heap、extra memory、object 与 GC 耗时。`--single-process` 让每项在同一测量进程内连续复测 3 次，用于排查跨轮 retained growth，不替代独立进程性能对照。`Bun.gc(true)` 只在计时边界外诊断，生产代码不得调用。改动身份 LRU、冷预取、编码、事务批量、ACK 或 Worker 重放时必须运行，并把同一 Bun build 的差异与样本噪声、heap/GC 一起判断。
 
+写透场景固定执行 65,536 次操作，工作集为 4,096 个主键；每个工作集完成后等待 durable flush，再进入下一轮，最终核对全部操作的 ACK 和 checksum。
+
+## 专项场景与传输压力验证
+
+注册表包含 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` 和 `storage-sqlite-flush`。前四项覆盖成员集合命中、填充、满额拒绝和切群；middleware 场景运行真实注册链并断言活动路径；SQLite 场景对空库提交 128 个删除，主要衡量事务调度，不能作为磁盘吞吐读数。
+
+运行 `bun scripts/perf/isolatedHotPath.ts <场景>`，加 `--profile` 单独采样。该入口复用 `gateFixture.ts` 建立独立配置和数据根，注入三个独立子进程并在结束后清理 run 目录；出站由基准罐头接管。固定 Bun 与输入、完成预热，分别观察 retained 与 profile 输出；采样数不足时不得用零 GC 样本断言没有 GC。
+
+`bun scripts/perf/diskTransport.ts` 跑三轮独立 mock 进程，验证单批 ACK、正常排空和停止 ACK 后的容量拒收，并报告延迟、堆、GC 与 JIT。它复用同一份不可变载荷，只测队列与确认开销，不包含 Worker clone、真实负载载荷体积或磁盘等待。
+
 ## 全量性能基准
 
 `bun run perf:full` 只在发布和明确指令时运行，不进 `bun run check`，也不设失败阈值——热路径的硬门禁仍是上面的 `perf:hot-path-gate`。它把六个分区各跑三轮独立子进程再取平均：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线。每一项除平均值外还给最小值、最大值与变异系数，CV 明显变大的那一行不能拿去和历史比。
@@ -110,12 +134,11 @@
 
 ## 提交流程
 
-1. 开发在 `dev` 分支上进行，不直接提交 `master`；合并进 `master` 只用 squash，一次改动一个提交。分支约定见 [`AGENTS.md`](../../AGENTS.md) 的「分支与提交」，此处不重复。
+1. 开发在 `dev` 分支上进行，不直接提交 `master`；合并进 `master` 只用 squash，一次改动一个提交。分支约定见 [`AGENTS.md`](../../AGENTS.md) 的「分支、验证、提交与发布」，此处不重复。
 2. 开发中用户可能随手改参——编辑前重读文件，别覆盖未提交的现场改动。
 3. 提交前 `git diff --stat` 全量过一遍，无关文件不混进本次提交。
-4. `bun run check` 全绿。
+4. 每次提交前运行 `git branch --show-current`，确认位于 `dev`；通过 `bun run lint && bun run typecheck` 或完整 `bun run check`。合入 `master` 前必须通过完整 `check`，涉及持久化、停机或 Worker 生命周期时同时通过 `bun run test:fault-injection`。
 5. 提交信息用 conventional commits 风格（`feat(ai): ...`、`fix(runtime): ...`、`docs: ...`），主题行英文。
-6. 每次提交经人机共同审查后才落库（项目惯例，见根 README「纯 AI 开发」节）。
 
 ### 同步 README 指标
 

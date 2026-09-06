@@ -36,11 +36,11 @@ export {
 /**
  * AI 回复准入编排。并发闸决定立即执行、排队或丢弃；滑动窗口计数和单轮
  * 工具生命周期分别由 replyRound.ts 管理，队列快照与 FIFO 由 replyQueue.ts
- * 管理。本文件保留 Worker 对外调用入口，并桥接“轮结束后继续排队补跑”。
+ * 管理。本文件保留 Worker 对外调用入口，并在模型完成时补跑、发送完成时结算提示。
  */
 
 /**
- * 启动一条排队触发，并在该轮结束时继续排空同群队列。
+ * 启动一条排队触发，并在模型处理结束时继续排空同群待处理队列。
  * @returns 本次真的开了一轮为 true；被限频闸拒绝为 false，此时这条触发要留在
  *   队首等下一次 drain（见 replyQueue.ts）。
  */
@@ -61,15 +61,17 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean 
       chatQa: trigger.chatQa,
       messageThreadId: trigger.messageThreadId,
       mediaComment: undefined,
+      mediaPreparation: trigger.mediaPreparation,
       queuedTrigger: trigger,
       generation: undefined,
     },
-    onReplyRoundFinished
+    onReplyRoundFinished,
+    onReplyModelFinished
   );
 }
 
 /**
- * 只在 5 分钟窗口确实有余量时推一次队列。**队列的三处推力都只能走这里。**
+ * 只在 5 分钟窗口确实有余量时推一次队列。所有补跑入口都只能走这里。
  *
  * 窗口仍然满的群直接跳过，不做无用的尝试：startReplyRound 每被拒一次就会发一条
  * 限频提示（自带 60 秒冷却），空转就等于每分钟往群里刷一句。撞满窗口的群里轮次
@@ -83,6 +85,12 @@ function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
     if (admitRound({ windowCount: times.size }).action === "rateLimited") return;
   }
   drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
+}
+
+/** 模型交付完整链即补跑下一条，发送积压不占模型位；五分钟限频仍在入口判定。 */
+function onReplyModelFinished(chatId: number): void {
+  if (aiChatWorkerQuiescing.current) return;
+  drainReplyQueueIfWindowAllows(chatId, Date.now());
 }
 
 /**
@@ -100,9 +108,8 @@ function onReplyRoundFinished(chatId: number): void {
 /**
  * 维护节拍的兜底排空（由 aiChatWorker.ts 的 runAiChatWorkerMaintenance 调用）。
  *
- * 队列的推力有两处：轮次结束时的 onFinished，以及新触发入队后立刻试的那一次。
- * 两处都可能推不动——限频闸拒绝时 startReplyRound 根本没建任务，也就永远不会有
- * onFinished；而入队那一次撞上仍然满的窗口同样只会跳过。没有这道兜底，撞上
+ * 模型完成、发送收尾及新触发入队均尝试补跑；限频闸拒绝时 startReplyRound
+ * 没有建任务，不会有完成回调，入队尝试也可能仍撞满窗口。没有这道兜底，撞上
  * 5 分钟窗口上限的群会把最多 REPLY_TRIGGER_QUEUE_MAX 条 @提及连同它们的快照
  * （正文片段、图片引用）无限期扣在内存里，直到某次无关触发恰好完整跑完一轮
  * 才被顺带带出来。
@@ -131,6 +138,8 @@ export interface GenerateAndSendReplyParams {
   /** 触发消息所在的论坛话题；本轮全部发送据此落回原话题。 */
   messageThreadId: number | undefined;
   mediaComment?: MediaCommentContext;
+  /** 媒体入站即准入；模型等待真实描述，发送顺位不受解析完成顺序影响。 */
+  mediaPreparation?: Promise<MediaCommentContext | null>;
 }
 
 export function generateAndSendReply({
@@ -144,6 +153,7 @@ export function generateAndSendReply({
   chatQa,
   messageThreadId,
   mediaComment,
+  mediaPreparation,
 }: GenerateAndSendReplyParams): void {
   if (aiChatWorkerQuiescing.current) return;
   const generation: number = currentReplyGeneration(chatId);
@@ -174,10 +184,12 @@ export function generateAndSendReply({
           chatQa,
           messageThreadId,
           mediaComment,
+          mediaPreparation,
           queuedTrigger: undefined,
           generation,
         },
-        onReplyRoundFinished
+        onReplyRoundFinished,
+        onReplyModelFinished
       );
       break;
     case "dropSilently":
@@ -194,6 +206,7 @@ export function generateAndSendReply({
         chatQa,
         messageThreadId,
         mediaTrigger: mediaComment,
+        mediaPreparation,
       });
       // 入队之后立刻按 FIFO 试着推一次：并发位可能本来就是空的（上一批轮次
       // 结束时 drain 撞上限频闸停了下来，此后就没人再碰过这个队列），那时不推

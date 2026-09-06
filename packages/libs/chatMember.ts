@@ -95,3 +95,13 @@ export function botActionPermissionsEqual(
   }
   return true;
 }
+
+/** 当前成员状态判定：restricted 必须同时满足 is_member。 */
+export function isPresentMember(member: ChatMember): boolean {
+  if (member.status === "restricted") return member.is_member;
+  return (
+    member.status === "creator" ||
+    member.status === "administrator" ||
+    member.status === "member"
+  );
+}

@@ -11,7 +11,7 @@ const handleVerificationDelete = mock((_input: unknown): void => {});
 const handleJoinLogMessage = mock((_message: unknown): void => {});
 const inspectLogFiles = mock((): { readonly kind: "logs" } => ({ kind: "logs" }));
 const adoptLogFiles = mock((_inspection: unknown): void => {});
-const maintainLogFiles = mock((_inspection: unknown): void => {});
+const maintainLogFiles = mock(async (_inspection: unknown): Promise<void> => {});
 const maintainLogRetention = mock((): void => {});
 const inspectAiMemorySnapshots = mock((): { readonly kind: "ai" } => ({ kind: "ai" }));
 const adoptAiMemorySnapshots = mock((_inspection: unknown): Map<number, string> => new Map());
@@ -395,7 +395,7 @@ describe("Disk I/O Worker protocol router", () => {
     console.error = consoleError as unknown as typeof console.error;
     try {
       // 校验失败必须留在当前消息边界内；异常离开 onmessage 会让 Bun 终止落盘线程，
-      // 连带丢失十二个领域的进程内缓冲并触发重启节流。
+      // 连带丢失各领域的进程内缓冲并触发重启节流。
       await expect(route({
         type: "identityPolicyWrite",
         table: "whitelist",
@@ -750,6 +750,35 @@ describe("Disk I/O Worker protocol router", () => {
     );
   });
 
+  test("loaded 已回执但异步维护未完成时，后续写入仍等待且 cron 尚未注册", async () => {
+    const entered = Promise.withResolvers<void>();
+    const maintenance = Promise.withResolvers<void>();
+    maintainLogFiles.mockImplementationOnce(async (): Promise<void> => {
+      entered.resolve();
+      await maintenance.promise;
+    });
+    const load: Promise<void> = queueDiskIOWorkerMessage({ type: "load", stickerPacks: [] });
+    const write: Promise<void> = queueDiskIOWorkerMessage({
+      type: "joinLog", chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01",
+    });
+    try {
+      await entered.promise;
+      expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "loaded" }));
+      expect(maintainAiMemorySnapshots).not.toHaveBeenCalled();
+      expect(handleJoinLogMessage).not.toHaveBeenCalled();
+      expect(diskIOMaintenanceCron.current).toBeNull();
+      maintenance.resolve();
+      await load;
+      await write;
+      expect(maintainAiMemorySnapshots).toHaveBeenCalledTimes(1);
+      expect(handleJoinLogMessage).toHaveBeenCalledTimes(1);
+      expect(diskIOMaintenanceCron.current).not.toBeNull();
+    } finally {
+      maintenance.resolve();
+      await write;
+    }
+  });
+
   test("任一异步内容 inspect 失败时不 adopt、不维护其它领域", async () => {
     inspectStickerCatalogSnapshots.mockImplementationOnce(
       async (): Promise<StickerInspection> => {
@@ -860,7 +889,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 13 });
   });
 
-  test("十二个领域全部成功时回执不带失败领域", async () => {
+  test("各领域全部成功时回执不带失败领域", async () => {
     await route({ type: "flush", flushId: 14, scope: "all" });
 
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 14 });

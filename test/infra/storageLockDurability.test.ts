@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import * as realFsPromises from "node:fs/promises";
@@ -13,6 +13,26 @@ import type { ProcessIdentity } from "../../packages/types/storage";
  * 否则掉电会留下内容为空/撕裂的 guard，只能人工 rm 才能重新启动。
  */
 const operations: string[] = [];
+const openNames = new Map<number, string>();
+const fdFiles = new WeakMap<Bun.BunFile, number>();
+const realBunFile = Bun.file;
+Bun.file = ((path: any, options?: any): any => {
+  const file = realBunFile(path, options);
+  if (typeof path === "number") fdFiles.set(file, path);
+  return file;
+}) as typeof Bun.file;
+const realBunWrite = Bun.write;
+Bun.write = (async (target: any, input: any, options?: any): Promise<number> => {
+  const fd: number | undefined = fdFiles.get(target);
+  if (fd !== undefined && openNames.has(fd)) {
+    operations.push(`write:${openNames.get(fd)}`);
+  }
+  return realBunWrite(target, input, options);
+}) as typeof Bun.write;
+afterAll((): void => {
+  Bun.write = realBunWrite;
+  Bun.file = realBunFile;
+});
 
 // mock.module 会就地改写 node:fs/promises 的命名空间对象；真实实现必须在打桩
 // 之前快照下来，否则包装函数会调回自己造成无限递归。
@@ -31,11 +51,9 @@ mock.module("node:fs/promises", () => ({
   open: async (path: unknown, flags: unknown, mode?: unknown) => {
     const handle = await realOpen(path as string, flags as string, mode as number | undefined);
     const name: string = basename(String(path));
+    openNames.set(handle.fd, name);
     return {
-      writeFile: async (data: unknown): Promise<void> => {
-        operations.push(`write:${name}`);
-        await handle.writeFile(data as string);
-      },
+      fd: handle.fd,
       sync: async (): Promise<void> => {
         operations.push(`sync:${name}`);
         if (failCandidateSync && name.startsWith("bot.lock.guard.candidate.")) {
@@ -52,6 +70,7 @@ mock.module("node:fs/promises", () => ({
       },
       close: async (): Promise<void> => {
         operations.push(`close:${name}`);
+        openNames.delete(handle.fd);
         await handle.close();
       },
     };

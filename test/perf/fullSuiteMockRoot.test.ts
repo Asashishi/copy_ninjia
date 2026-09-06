@@ -20,7 +20,7 @@ import {
   parseAdDetectAgentConfig,
   parseAgentDeploymentConfig,
 } from "../../packages/config/agent";
-import { parseTelegramConfig } from "../../packages/config/telegram";
+import { parseTelegramConfig } from "../../packages/config/telegramInput";
 
 describe("全量基准的 mock 根边界", () => {
   test("mock 根只覆盖仓库下的 performance/", () => {

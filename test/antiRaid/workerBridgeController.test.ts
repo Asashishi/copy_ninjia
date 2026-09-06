@@ -218,6 +218,7 @@ describe("Anti-Raid 双工能力分派", () => {
   test("引用广告警告发送前复查当前单项豁免，冷读失败同样不误警告", async () => {
     const request = {
       operation: "sendTemporaryMessage",
+      purpose: "adWarning",
       category: "message",
       chatId: CHAT_ID,
       identityId: 7,

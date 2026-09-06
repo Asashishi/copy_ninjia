@@ -160,7 +160,7 @@ export async function atomicWriteText(path: string, content: string, mode?: numb
   const tmpPath: string = temporaryPath(path);
   const handle: FileHandle = await open(tmpPath, "wx", targetMode);
   try {
-    await handle.writeFile(content);
+    await Bun.write(Bun.file(handle.fd), content);
     // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前显式
     // 设回要求的最终权限，理由同 atomicWriteSync。
     if (targetMode !== undefined) await handle.chmod(targetMode);

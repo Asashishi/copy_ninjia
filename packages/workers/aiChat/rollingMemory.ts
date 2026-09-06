@@ -17,7 +17,7 @@ import {
 } from "../../cache/workers/aiChat/memory";
 import { clearChatMoodCache } from "../../cache/workers/aiChat/mood";
 import { invalidateChatRuntimeCache } from "../../cache/workers/aiChat/index";
-import { activeReplyCounts } from "../../cache/workers/aiChat/replies";
+import { hasActiveAiChatTasks } from "./replyGeneration";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
 
 /** 启动恢复时解析成功、等待按 savedAt 排序的一条群快照。 */
@@ -94,7 +94,7 @@ export function purgeChatMemory(chatId: number): void {
 
 /**
  * 为一份新群记忆腾出容量；excludeChatId 永不作为本次淘汰对象。优先跳过
- * 仍有回复轮次在途的群，仅当所有候选都活跃时才退化为按原始 LRU 淘汰。
+ * 仍有模型、发送链或其它代际任务在途的群，仅当所有候选都活跃时才按原始 LRU 淘汰。
  */
 function ensureMemoryCapacity(excludeChatId: number): void {
   for (;;) {
@@ -106,7 +106,7 @@ function ensureMemoryCapacity(excludeChatId: number): void {
       let oldestActivity: number = Number.POSITIVE_INFINITY;
       for (const candidate of memoryIds) {
         if (candidate === excludeChatId) continue;
-        if (excludeActiveReplies && (activeReplyCounts.get(candidate) ?? 0) > 0) continue;
+        if (excludeActiveReplies && hasActiveAiChatTasks(candidate)) continue;
         const activity: number = chatLastActivityTimes.get(candidate) ?? 0;
         if (activity < oldestActivity) {
           oldestActivity = activity;

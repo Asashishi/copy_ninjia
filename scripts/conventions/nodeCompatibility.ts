@@ -26,7 +26,24 @@ function nodeModuleName(name: string): string | undefined {
   return isBuiltin(name) ? `node:${name}` : undefined;
 }
 
-function runtimeNodeLoad(node: ts.Node): { readonly kind: "dynamic import" | "require"; readonly moduleName: string } | undefined {
+/** 属性名仅接收直接属性和字面量下标，不追踪动态表达式或别名。 */
+function staticPropertyName(node: ts.Node): string | undefined {
+  if (ts.isPropertyAccessExpression(node)) return node.name.text;
+  if (ts.isElementAccessExpression(node) &&
+    (ts.isStringLiteral(node.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(node.argumentExpression))) {
+    return node.argumentExpression.text;
+  }
+  return undefined;
+}
+
+function isGlobalReference(node: ts.Node, name: string): boolean {
+  if (ts.isIdentifier(node)) return node.text === name;
+  return (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    ts.isIdentifier(node.expression) && node.expression.text === "globalThis" &&
+    staticPropertyName(node) === name;
+}
+
+function runtimeNodeLoad(node: ts.Node): { readonly kind: string; readonly moduleName: string } | undefined {
   if (!ts.isCallExpression(node) || node.arguments.length === 0) return undefined;
   const argument: ts.Expression | undefined = node.arguments[0];
   if (
@@ -43,6 +60,10 @@ function runtimeNodeLoad(node: ts.Node): { readonly kind: "dynamic import" | "re
   if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
     return { kind: "require", moduleName };
   }
+  if ((ts.isPropertyAccessExpression(node.expression) || ts.isElementAccessExpression(node.expression)) &&
+    isGlobalReference(node.expression.expression, "process") && staticPropertyName(node.expression) === "getBuiltinModule") {
+    return { kind: "process.getBuiltinModule", moduleName };
+  }
   return undefined;
 }
 
@@ -56,9 +77,11 @@ function isInsideTypeNode(node: ts.Node): boolean {
 }
 
 function isBufferGlobalUse(node: ts.Node): boolean {
+  if (isInsideTypeNode(node)) return false;
+  if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    isGlobalReference(node, "Buffer")) return true;
   if (!ts.isIdentifier(node) || node.text !== "Buffer") return false;
   const parent: ts.Node = node.parent;
-  if (isInsideTypeNode(node)) return false;
   const isImportName: boolean =
     ts.isImportClause(parent) ||
     ts.isImportSpecifier(parent) ||
@@ -75,13 +98,13 @@ function isBufferGlobalUse(node: ts.Node): boolean {
   return !isPropertyName;
 }
 
-function bufferGlobalMethod(node: ts.Identifier): string | undefined {
+function bufferGlobalMethod(node: ts.Node): string | undefined {
   const parent: ts.Node = node.parent;
   if (
-    ts.isPropertyAccessExpression(parent) &&
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
     parent.expression === node
   ) {
-    return parent.name.text;
+    return staticPropertyName(parent);
   }
   return undefined;
 }
@@ -173,7 +196,7 @@ export function collectNodeCompatibilityProblems(
   }
 
   const visitRuntimeNodeLoads = (node: ts.Node): void => {
-    const load: { readonly kind: "dynamic import" | "require"; readonly moduleName: string } | undefined =
+    const load: { readonly kind: string; readonly moduleName: string } | undefined =
       runtimeNodeLoad(node);
     if (load !== undefined) {
       const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
@@ -214,7 +237,7 @@ export function collectNodeCompatibilityProblems(
   const visitBufferGlobal = (node: ts.Node): void => {
     if (isBufferGlobalUse(node)) {
       usesBufferGlobal = true;
-      const method: string | undefined = bufferGlobalMethod(node as ts.Identifier);
+      const method: string | undefined = bufferGlobalMethod(node);
       if (bufferAllowance === undefined || method === undefined || !bufferAllowance.methods.includes(method)) {
         const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
         problems.push(

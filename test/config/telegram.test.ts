@@ -3,8 +3,8 @@ import {
   BOT_TOKEN,
   SUPER_ADMIN_USER_ID,
   getTelegramConfig,
-  parseTelegramConfig,
 } from "../../packages/config/telegram";
+import { parseTelegramConfig } from "../../packages/config/telegramInput";
 import { TELEGRAM_CONFIG_PATH } from "../../packages/consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { telegramConfigCache } from "../../packages/cache/perThread/config";

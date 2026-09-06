@@ -27,6 +27,7 @@ export const CHAT_TEARDOWN_ORDER: readonly ChatRuntimeOwner[] = completeOwnerOrd
   "copy",
   "gag",
   "qa",
+  "wed",
   "aiChat",
   "antiRaid",
 ] as const);

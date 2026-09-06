@@ -7,7 +7,7 @@ import type { IdentityStoragePersistedReply } from
 const maintainLuckForDay = mock((_day: string): void => {});
 const maintainLogRetention = mock((): void => {});
 const maintainJoinLogRetention = mock((_day: string): void => {});
-const maintainAdSampleFiles = mock((_day: string): void => {});
+const maintainAdSampleFiles = mock(async (_day: string): Promise<void> => {});
 const maintainVerificationDayForToday = mock((
   _reply: (reply: VerificationPersistedReply) => void,
   _day: string
@@ -54,9 +54,34 @@ beforeEach((): void => {
     maintainTemporaryWhitelistActivities,
   ]) fn.mockClear();
   maintainLuckForDay.mockImplementation((_day: string): void => {});
+  maintainAdSampleFiles.mockImplementation(async (_day: string): Promise<void> => {});
 });
 
 describe("Disk I/O Worker 午夜维护编排", (): void => {
+  test("异步删除完成后才进入下一领域，删除失败仍继续后续维护", async (): Promise<void> => {
+    const entered = Promise.withResolvers<void>();
+    const deletion = Promise.withResolvers<void>();
+    const errorLog = spyOn(console, "error").mockImplementation((): void => {});
+    maintainAdSampleFiles.mockImplementationOnce(async (): Promise<void> => {
+      entered.resolve();
+      await deletion.promise;
+    });
+    const maintenance: Promise<void> = runDiskIOMidnightMaintenance(reply, DAY);
+    try {
+      await entered.promise;
+      expect(maintainVerificationDayForToday).not.toHaveBeenCalled();
+      deletion.reject(new Error("injected async deletion failure"));
+      await maintenance;
+      expect(maintainVerificationDayForToday).toHaveBeenCalledTimes(1);
+      expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+    } finally {
+      deletion.resolve();
+      await maintenance;
+      errorLog.mockRestore();
+    }
+  });
+
   test("同一次触发覆盖六个已登记领域", async (): Promise<void> => {
     await runDiskIOMidnightMaintenance(reply, DAY);
 

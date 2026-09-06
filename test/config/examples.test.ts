@@ -18,7 +18,7 @@ import { loadAdSampleConfig } from "../../packages/config/adSamples";
 import { loadMoodConfig } from "../../packages/config/mood";
 import { loadReactionConfig } from "../../packages/config/reactions";
 import { loadStickerConfig } from "../../packages/config/stickers";
-import { parseTelegramConfig } from "../../packages/config/telegram";
+import { parseTelegramConfig } from "../../packages/config/telegramInput";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { readJsonInput } from "../../packages/libs/inputValidation";
 

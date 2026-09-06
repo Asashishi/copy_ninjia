@@ -9,10 +9,8 @@ import {
   createMonotonicDeadline,
   remainingMonotonicTime,
 } from "../../../libs/monotonicDeadline";
-import {
-  settleWithinBudget,
-  trackBackgroundTask,
-} from "../../backgroundTasks";
+import { trackBackgroundTask } from "../../backgroundTasks";
+import { settleWithinBudget } from "../../../libs/inflight";
 import {
   isPermissionDenied,
   runBooleanTelegramAction,

@@ -1,7 +1,7 @@
 /**
  * 磁盘 IO 线程（Bun Worker）：共享业务数据的磁盘 IO 收在这一条线程里串行执行——
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
- * 目录快照、每日运势缓存、待验证当日增量 JSON、身份策略 SQLite 与入群日志都由
+ * 目录快照、每日运势缓存、待验证当日增量 JSON、身份策略 SQLite、入群日志与 wed 成员集合都由
  * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
  * 互相踩坏。群状态也进入同一 SQLite；只有 global-only `state.json` 是明确例外，
  * 由主线程 StateStore 独立异步维护。
@@ -15,6 +15,7 @@
  * diskIO/verificationRecovery.ts 与 verificationWrites.ts（待验证按日增量）、
  * diskIO/storageDatabase.ts（黑白名单与未完成处置 outbox）、
  * diskIO/joinLogFiles.ts 与 joinLogWrites.ts（滚动入群追写与命令按需读取）、
+ * diskIO/wedMemberFiles.ts（每群已发言成员数组的启动校验与全量替换）、
  * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
  * 共用 appendOnlyDayFile.ts 的按位置追加机制；SQLite 权威状态不启用截断修复。
  *
@@ -69,12 +70,15 @@ import {
   markStickerCatalogSnapshotDirty,
 } from "./diskIO/stickerCatalogFiles";
 import { handleDiskIOStartupLoad } from "./diskIO/startup";
+import { flushWedMemberFiles, handleWedMembersMessage } from "./diskIO/wedMemberFiles";
 import type { DiskIOStartupReplySink } from "./diskIO/startup";
 import { LOG_REOPEN_RETRY_MS } from "../consts/diskIO/appendOnly";
+import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../consts/diskIO/business";
 import { forgetAiMemoryChat } from "../cache/workers/diskIO/snapshots";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
-import { noteStorageWriteRejected } from "../cache/workers/diskIO/storageDatabase";
+import { noteStorageWriteRejected, storageWriteFatalReply } from "../cache/workers/diskIO/storageDatabase";
+import { StorageWriteCapacityError } from "../libs/storageWriteBudget";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type {
   DiskFlushRequest,
@@ -116,6 +120,7 @@ async function flushAll(
   if (scope === "all" && !await flushLogBuffer()) failedDomains.push("log");
   if (!flushAiMemorySnapshots()) failedDomains.push("aiMemory");
   if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
+  if (!flushWedMemberFiles()) failedDomains.push("wedMembers");
   if (!await flushLuckAppends()) failedDomains.push("luck");
   if (!await flushVerificationChanges(
     (reply: VerificationPersistedReply): void => self.postMessage(reply)
@@ -136,6 +141,14 @@ export async function handleDiskIOWorkerMessage(
   msg: DiskIOMessage
 ): Promise<void> {
   switch (msg.type) {
+    case "operationBatch":
+      if (!Number.isSafeInteger(msg.batchId) || msg.batchId < 1 ||
+        msg.messages.length < 1 || msg.messages.length > DISK_BUSINESS_BATCH_MAX_MESSAGES) {
+        throw new Error("Invalid Disk I/O operation batch.");
+      }
+      for (const message of msg.messages) await handleDiskIOWorkerMessage(message);
+      self.postMessage({ type: "operationBatchAccepted", batchId: msg.batchId });
+      break;
     case "diagnosticBatch": {
       let containsLog: boolean = false;
       for (const diagnostic of msg.messages) {
@@ -180,6 +193,9 @@ export async function handleDiskIOWorkerMessage(
       break;
     case "stickerCatalog":
       markStickerCatalogSnapshotDirty(msg.pack, msg.snapshot);
+      break;
+    case "wedMembers":
+      handleWedMembersMessage(msg);
       break;
     case "luckDraw":
       await handleLuckDrawMessage(msg);
@@ -233,7 +249,7 @@ export async function handleDiskIOWorkerMessage(
     // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
     // handleIdentityPolicyWrite 由 validatePolicyData / assertOppositePolicyAbsent
     // 抛。异常一旦离开 onmessage，Bun 会直接终止整条落盘线程：在途 flush 全部按
-    // 失败结算、十二个领域的缓冲随线程一起没了，反复触发还会顶到重启节流把整个进程
+    // 失败结算、各领域的缓冲随线程一起没了，反复触发还会顶到重启节流把整个进程
     // 停掉——为了一条本来只该由自己那个领域承担的非法消息。就地拒收，并按领域
     // 留下标记，让主线程的下一次领域 flush 拿到失败回执。
     case "blocklistRemovals":
@@ -380,6 +396,7 @@ function handleIdentityMessage(
     apply();
   } catch (error: unknown) {
     noteStorageWriteRejected(domain);
+    if (error instanceof StorageWriteCapacityError) self.postMessage({ type: "storageWriteStalled" });
     console.error(`[diskIOWorker] rejected an identity ${domain} message:`, error);
     if (!diskIOReplayWindow.current) return;
     const reply: RecoveryReplayFailedReply = {
@@ -407,6 +424,7 @@ async function handleDiskIODiagnostic(
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 function startDiskIOWorker(): void {
+  storageWriteFatalReply.current = (): void => self.postMessage({ type: "storageWriteStalled" });
   configureStoragePersistenceReply(
     (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
   );

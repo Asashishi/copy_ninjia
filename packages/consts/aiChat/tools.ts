@@ -65,11 +65,7 @@ export const TYPO_MIN_REMAINING_ACTIONS: number = 2;
  * 超长图注改用独立文本消息补发时要求的最少剩余动作预算：图片本体之外还得给
  * 那条文本留一个动作。
  *
- * 口径与 TYPO_MIN_REMAINING_ACTIONS 相同，理由也相同——编排器的门禁只判断
- * 「还有没有额度开始这次调用」，一次返回 actions_used: 2 的调用若不在执行侧
- * 自己按剩余预算收敛，就会把整轮顶过 HARD_MAX_ACTIONS_PER_REPLY，而那个数正是
- * 工具错误文案对模型承诺的硬顶。预算不够时宁可丢掉图注也要把图发出去：图才是
- * 这次调用的主体，整条拒掉等于连图一起丢。
+ * 接纳时预留图片与补发文本的两格额度；不足时只接纳图片，回执标记图注未接纳。
  * 所属模块：aiChat/ai/tools/replyToolset/imageGeneration.ts。
  */
 export const IMAGE_SEPARATE_CAPTION_MIN_REMAINING_ACTIONS: number = 2;

@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  rmSync,
   statSync,
   symlinkSync,
 } from "node:fs";
@@ -149,14 +150,9 @@ async function checkSuccessfulReplacement(): Promise<void> {
   assertCondition(!result.output.includes(replacementToken), "安装输出不得回显 Telegram token");
   const calls: string = await readText(fixture.callLog);
   const outbound: string = await readText(fixture.outboundLog);
-  if (calls.includes("systemctl-secret-env=")) {
-    assertContains(calls, "systemctl-secret-env=absent", "systemd 环境不得含 AI 凭据");
-    assertContains(outbound, "systemctl:guarded:restart", "配置变化后必须重启既有服务");
-    assertEqual(readdirSync(fixture.backupRoot).length, 0, "稳定性核验通过后必须清理外部备份");
-  } else {
-    assertContains(calls, "start-secret-env=absent", "前台启动环境不得含 AI 凭据");
-    assertEqual(readdirSync(fixture.backupRoot).length, 1, "前台启动无法观察稳定性，必须保留备份");
-  }
+  assertContains(calls, "systemctl-secret-env=absent", "必须实测 systemd 分支且环境不得含 AI 凭据");
+  assertContains(outbound, "systemctl:guarded:start", "只能启动已确认停止的服务");
+  assertEqual(readdirSync(fixture.backupRoot).length, 0, "稳定性核验通过后必须清理外部备份");
 }
 
 async function checkSymlinkTopologyPreserved(): Promise<void> {
@@ -200,11 +196,10 @@ async function checkUnverifiedJournalBackupRetention(): Promise<void> {
     systemdPrompt(),
   ], { FAKE_JOURNAL_FAIL: "1" });
 
-  assertEqual(result.exitCode, 0, "journal 不可读时服务状态核验仍按既有降级语义完成");
+  assertCondition(result.exitCode !== 0, "journal 不可读时必须拒绝确认稳定");
   const calls: string = await readText(fixture.callLog);
-  if (calls.includes("systemctl-secret-env=")) {
-    assertContains(result.output, "journal 未能核对", "journal 失败必须明确降级而非伪报成功");
-  }
+  assertContains(calls, "systemctl-secret-env=", "必须进入 systemd 分支");
+  assertContains(result.output, "journal 未能核对", "journal 失败必须明确报告");
   assertEqual(readdirSync(fixture.backupRoot).length, 1, "journal 未确认时必须保留外部备份");
 }
 
@@ -235,11 +230,7 @@ async function checkCredentialIsolation(): Promise<void> {
   const calls: string = await readText(fixture.callLog);
   assertContains(calls, "generator-secret-env=absent", "生成器环境不得继承 AI 凭据");
   assertContains(calls, "validation-secret-env=absent", "校验器环境不得继承 AI 凭据");
-  if (calls.includes("systemctl-secret-env=")) {
-    assertContains(calls, "systemctl-secret-env=absent", "systemd 环境不得继承 AI 凭据");
-  } else {
-    assertContains(calls, "start-secret-env=absent", "启动环境不得继承 AI 凭据");
-  }
+  assertContains(calls, "systemctl-secret-env=absent", "必须实测 systemd 分支且环境不得继承 AI 凭据");
   assertCondition(!calls.includes("secret-env=present"), "任何后续子进程都不得继承 AI 凭据");
   assertCondition(!result.output.includes(apiKey), "安装输出不得回显 AI 凭据");
   assertCondition(
@@ -267,7 +258,92 @@ async function checkFixtureRoots(): Promise<void> {
   );
 }
 
+async function checkServiceProtection(): Promise<void> {
+  const rejected: readonly Readonly<Record<string, string>>[] = [
+    { FAKE_SERVICE_STATE: "active" },
+    { FAKE_SERVICE_STATE: "activating" },
+    { FAKE_SERVICE_STATE: "" },
+    { FAKE_SYSTEMCTL_FAIL: "1" },
+    { FAKE_SERVICE_LOAD_STATE: "masked" },
+    { FAKE_SERVICE_WORKDIR: "/tmp" },
+    { FAKE_SERVICE_ENTRY: "{ path=/bin/node ; argv[]=/bin/node index.ts ; ignore_errors=no ; }" },
+    { FAKE_SERVICE_ENTRY: "{ path=/guarded/bun ; argv[]=/guarded/bun other.ts ; ignore_errors=no ; }" },
+    { FAKE_SERVICE_ENTRY: "{ path=/guarded/bun ; argv[]=/guarded/bun start ; ignore_errors=no ; }\n{ path=/bin/false ; argv[]=/bin/false ; ignore_errors=no ; }" },
+    { FAKE_SERVICE_ENTRY: "{ path=/guarded/bun ; argv[]=/guarded/bun start ; ignore_errors=no ; } ; { path=/bin/false ; argv[]=/bin/false ; ignore_errors=no ; }" },
+  ];
+  for (const environment of rejected) {
+    const fixture: InstallerFixture = await createFixture();
+    mkdirSync(fixture.configRoot);
+    const telegram: string = validTelegram();
+    await writeText(join(fixture.configRoot, "telegram.json"), telegram, 0o600);
+    const result: InstallerRunResult = runInstaller(fixture, [], environment);
+    assertCondition(result.exitCode !== 0, "运行中、未知状态或路径不符时必须失败");
+    assertEqual(await readText(join(fixture.configRoot, "telegram.json")), telegram, "拒绝时不得修改配置");
+    assertEqual(readdirSync(fixture.configRoot).length, 1, "拒绝时不得创建配置");
+    assertEqual(readdirSync(fixture.runtimeRoot).length, 0, "拒绝时不得写入运行时数据");
+    assertEqual(readdirSync(fixture.backupRoot).length, 0, "拒绝时不得开始部署备份");
+    assertCondition(!(await readText(fixture.callLog)).includes("bun:install"), "拒绝必须早于依赖安装");
+    const calls: string = await readText(fixture.outboundLog);
+    assertContains(calls, "systemctl:guarded:show", "服务保护必须实际查询 fake systemctl");
+    assertCondition(!/systemctl:guarded:(start|restart|enable|daemon-reload)|tee:guarded/.test(calls), "拒绝时不得执行服务写操作");
+  }
+}
+
+async function checkServiceObservation(): Promise<void> {
+  const cases: readonly Readonly<{
+    environment: Readonly<Record<string, string>>;
+    fresh?: boolean;
+    overwriteUnit?: boolean;
+    seconds?: number;
+    success: boolean;
+  }>[] = [
+    { environment: { FAKE_SERVICE_LOAD_STATE: "not-found" }, fresh: true, seconds: 12, success: true },
+    { environment: { FAKE_RESTART_INTERVAL: "1min 500ms" }, seconds: 123, success: true },
+    { environment: { FAKE_RESTART_STEPS: "3", FAKE_RESTART_MAX: "2min" }, seconds: 242, success: true },
+    { environment: { FAKE_RESTART_STEPS: "3", FAKE_RESTART_MAX: "infinity" }, seconds: 12, success: true },
+    { environment: { FAKE_RESTART_INTERVAL: "0", FAKE_RESTART_STEPS: "3", FAKE_RESTART_MAX: "2min" }, seconds: 2, success: true },
+    { environment: { FAKE_RESTART_RANDOMIZED: "1min" }, seconds: 132, success: true },
+    { environment: { FAKE_RESTART_STEPS: "3", FAKE_RESTART_MAX: "2min", FAKE_RESTART_RANDOMIZED: "1min" }, seconds: 362, success: true },
+    { environment: { FAKE_RESTART_INTERVAL: "", FAKE_RESTART_STEPS: "3", FAKE_RESTART_MAX: "2min" }, success: false },
+    { environment: { FAKE_RESTART_RANDOMIZED: "invalid" }, success: false },
+    { environment: { FAKE_RESTART_INTERVAL: "unknown" }, success: false },
+    { environment: { FAKE_RESTARTS_BEFORE: "" }, success: false },
+    { environment: { FAKE_RESTARTS_AFTER: "1" }, seconds: 12, success: false },
+    { environment: { FAKE_RESTARTS_AFTER: "" }, seconds: 12, success: false },
+    { environment: { FAKE_STARTED_STATE: "failed" }, seconds: 12, success: false },
+    { environment: { FAKE_JOURNAL_BODY: "Main process exited, code=exited, status=1/FAILURE" }, seconds: 12, success: false },
+    { environment: { FAKE_JOURNAL_FAIL: "1" }, overwriteUnit: true, seconds: 12, success: false },
+  ];
+  for (const scenario of cases) {
+    const fixture: InstallerFixture = await createFixture();
+    if (scenario.fresh === true) rmSync(join(fixture.root, "systemd/copy-ninjia.service"));
+    mkdirSync(fixture.configRoot);
+    await writeText(join(fixture.configRoot, "telegram.json"), validTelegram(), 0o600);
+    const result: InstallerRunResult = runInstaller(fixture, [
+      { prompt: "是否重新填写？", reply: "y" },
+      { prompt: "Telegram bot token", reply: "987654321:observation_test_token", secret: true },
+      { prompt: "超级管理员用户 ID", reply: "987654321" },
+      { prompt: "现在配置 AI 能力", reply: "n" },
+      scenario.overwriteUnit === true ? { prompt: "覆盖它？", reply: "y" } : systemdPrompt(),
+    ], scenario.environment);
+    assertEqual(result.exitCode === 0, scenario.success, `服务观察结果不符：${result.output}`);
+    const calls: string = await readText(fixture.outboundLog);
+    assertContains(calls, "systemctl:guarded:show", "必须执行 systemd 分支");
+    if (scenario.seconds !== undefined) {
+      assertContains(calls, `sleep:guarded:${scenario.seconds}\n`, "观察必须覆盖两个实际重启间隔");
+    }
+    assertEqual(readdirSync(fixture.backupRoot).length, scenario.success ? 0 : 1, "仅完整确认稳定后才能清理备份");
+    if (scenario.overwriteUnit === true) {
+      const backup: string = join(fixture.backupRoot, readdirSync(fixture.backupRoot)[0]!);
+      assertContains(await readText(join(backup, "manifest.tsv")), "copy-ninjia.service", "覆盖 unit 前必须记录备份清单");
+      assertEqual(await readText(join(backup, "original-1.json")), "[Service]\n", "失败时必须保留 unit 原文");
+    }
+  }
+}
+
 try {
+  await checkServiceProtection();
+  await checkServiceObservation();
   await checkStagingPermissionFailureCleanup();
   await checkTelegramRollback();
   await checkInterruptedResume();

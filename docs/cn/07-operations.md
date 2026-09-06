@@ -79,6 +79,11 @@ WantedBy=multi-user.target
   - **内容**：每群 AI 记忆的 version=1 原子快照，包括最近逐字消息、历史摘要、
     待合并摘要与保存时间。
   - **备份**：含群聊逐字内容，属于敏感数据；清空该群记忆时删除，启动按 chatId 恢复。
+  - **校验**：正文、名称和引用字段遵守单行约束，引用 text/quote 不超过 500 个 UTF-16 码元，`at` 是有效的东京本地时间 `YYYY/MM/DD HH:mm:ss`；摘要允许换行。任一字段非法都拒绝恢复，指出嵌套字段路径并保持原文件不变。
+- **`memory/wed/<chatId>.json`**
+  - **内容**：每群已发言成员 ID 的纯数字数组，例如 `[5974478892]`；主线程每群长期复用一个 `Set<number>`。最多 25 群，每群最多 150,000 个 ID，满额保留已有成员，退群后可继续新增。
+  - **校验**：文件名必须是规范负安全整数群 ID，数组元素必须是唯一的正安全整数；非法 JSON、重复、类型或容量错误拒绝启动，不截断或修复原文件。目录和文件缺失允许启动，由程序按需创建。
+  - **落盘与备份**：实际增删按累计 300 条或首条变更后 30 秒经 DiskIO 全量原子替换，无变化不写。停用群保留记录，重启恢复；没有按日过期。纳入数据根的一致性备份，突然退出可能丢失尚未落盘的变更。
 - **`memory/stickers/<pack>.json`**
   - **内容**：每个白名单贴纸包的 version=1 描述目录，按 `file_unique_id` 保存
     emoji/描述及整包摘要。
@@ -141,13 +146,13 @@ WantedBy=multi-user.target
   - **内容**：单实例锁。
   - **备份**：不备份、不手工编辑。
 
-`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 统一维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。临时白名单维护会先提交共享 SQLite 的在途最终值；临时写仍未提交时拒绝删除。它保留当日行和刚结束日已经合格的行，删除刚结束日未合格及更早的整行，清理后迟到的失效旧日写会按原 revision 收敛为墓碑。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
+`memory/` 顶层不直接放文件，上述七个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 统一维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。临时白名单维护会先提交共享 SQLite 的在途最终值；临时写仍未提交时拒绝删除。它保留当日行和刚结束日已经合格的行，删除刚结束日未合格及更早的整行，清理后迟到的失效旧日写会按原 revision 收敛为墓碑。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
 
 `joinlog/` 的一次查询最多读取覆盖 `[since, now]` 的两个群日文件，并按用户取窗口内最后一次入群；第三个保留日只服务于 23:59 发起、跨午夜才进入 Worker 的在途查询。文件在 10,000 条冗余历史或新增 4 MiB 后评估压缩，预计至少回收 512 KiB 才原子重写。可解析但 schema 错误的文件会原样拒绝本次读写；仅末尾截断残片可由追加层修复。
 
 ### `memory/` 辅助文件与纯内存状态
 
-- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。启动 inspect 只登记这些文件，不删除；所有领域校验与 adopt 成功并发出成功回执后，日志、`ai/`、`stickers/`、`luck/` 与 `joinlog/` 的 maintenance 才清理对应 `*.tmp`。已有的 `ad-detected/` 目录在启动成功后的 maintenance 清理 `.sample.json.*.tmp`，首次写样本仍执行同一兜底；`anti-raid/` 不把临时文件当恢复输入。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
+- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。启动 inspect 只登记这些文件，不删除；所有领域校验与 adopt 成功并发出成功回执后，日志、`ai/`、`stickers/`、`luck/`、`joinlog/` 与 `wed/` 的 maintenance 才清理对应 `*.tmp`。已有的 `ad-detected/` 目录在启动成功后的 maintenance 清理 `.sample.json.*.tmp`，首次写样本仍执行同一兜底；`anti-raid/` 不把临时文件当恢复输入。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
 - Challenge timer、广告检测待判队列/去重 Set、Telegram 成员/管理员短缓存都只存在于进程内，没有对应文件。
 
 备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成；SQLite 主库与存在的 sidecar 必须来自同一时点。`memory/` 与 `database/` 都视为敏感数据：新建 memory 文件默认 `0644`，数据库及 sidecar 首次创建默认 `0660`；已有文件的 mode 会在接管和原子替换后保留（见 [04](04-invariants.md#持久化)）。
@@ -283,6 +288,14 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
    至少确认 `ActiveState=active`、`SubState=running`，观察不少于两个
    `RestartSec` 间隔，并确认 `NRestarts` 不再增长、journal 没有新的非零退出。
    所有检查完成前保留外部备份。
+
+### 安装器的服务与备份边界
+
+`install.sh` 在首次原地写入前要求既有服务为 `inactive/dead`，并核对真实工作目录和唯一 Bun 入口。状态查询失败、路径不符或多条 `ExecStart` 均拒绝继续；运行中的部署须先按上述运维流程停止。
+
+覆盖现有 unit 与替换部署配置共用工作树外备份清单，记录原路径、权限、属主和 SHA-256。失败时保留原件与现场；恢复时按清单逐文件核对哈希并恢复权限和属主，完成全部验证后才能手工清理。
+
+启动观察窗口是两倍的有效重启等待上限加两秒：基础值来自 `RestartUSec`，生效的指数退避计入 `RestartMaxDelayUSec`，并加上 `RestartRandomizedDelayUSec`。`RestartMaxDelayUSec=infinity` 关闭退避；基础间隔为零时不启用退避。旧 systemd 不提供退避或随机延迟属性时不计该项，存在但非法的值拒绝确认。unit 加载后、启动前读取 `NRestarts` 基线，观察后必须保持相同计数及 `active/running`。journal 使用启动前游标；没有游标时按本次开始时间查询。journal 不可读、异常退出或状态校验失败时非零退出，外部备份保持不动。
 
 ## 日常观察点
 

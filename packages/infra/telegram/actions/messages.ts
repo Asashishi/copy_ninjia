@@ -24,8 +24,10 @@ type SendMessageApi = Pick<TelegramApi, "sendMessage">;
 type EphemeralSendMessageOptions = NonNullable<
   Parameters<TelegramApi["sendMessage"]>[2]
 > & {
-  readonly receiver_user_id: number;
-  readonly callback_query_id?: string;
+  readonly ephemeral_message_parameters: Readonly<{
+    receiver_user_id: number;
+    callback_query_id?: string;
+  }>;
 };
 type EphemeralSendMessageApi = Pick<TelegramApi, "sendMessage">;
 type EditMessageTextApi = Pick<TelegramApi, "editMessageText">;
@@ -153,10 +155,8 @@ export interface SendEphemeralMessageParams {
 }
 
 /**
- * 发送目标专属临时消息。群管理员机器人可直接指定 receiver_user_id；普通机器人
- * 回应 callback 时再携带 callback_query_id。grammY 1.44 的调用器会原样透传
- * payload，但其 3.28 类型尚未声明 Bot API 10.2 的字段，因此差异只收口在这个
- * 薄适配层。返回的 ephemeral_message_id 交给业务状态机做定向删除。
+ * 通过 Bot API 10.3 ephemeral_message_parameters 发送目标专属消息；只补充
+ * 已安装 SDK 尚未声明的请求字段。响应身份校验后交给业务状态机定向删除。
  */
 export async function sendEphemeralMessage({
   chatId,
@@ -171,8 +171,10 @@ export async function sendEphemeralMessage({
 }: SendEphemeralMessageParams): Promise<number | undefined> {
   const other: EphemeralSendMessageOptions = {
     message_thread_id: messageThreadId,
-    receiver_user_id: receiverUserId,
-    callback_query_id: callbackQueryId,
+    ephemeral_message_parameters: {
+      receiver_user_id: receiverUserId,
+      callback_query_id: callbackQueryId,
+    },
     reply_markup: keyboard,
   };
   return runTelegramAction({
@@ -185,16 +187,12 @@ export async function sendEphemeralMessage({
         ...signalArgs(requestSignal)
       ),
     map: (sent: Message.TextMessage): number => {
-      const ephemeral: Message.TextMessage & Readonly<{
-        receiver_user?: Readonly<{ id: number }>;
-        ephemeral_message_id?: number;
-      }> = sent;
       const ephemeralMessageId: number | undefined =
-        ephemeral.ephemeral_message_id;
+        sent.ephemeral_message_id;
       if (
         sent.message_id !== 0 ||
         sent.chat.id !== chatId ||
-        ephemeral.receiver_user?.id !== receiverUserId ||
+        sent.receiver_user?.id !== receiverUserId ||
         ephemeralMessageId === undefined ||
         !Number.isSafeInteger(ephemeralMessageId) ||
         ephemeralMessageId <= 0
@@ -246,7 +244,7 @@ export async function sendChatAction({
 }
 
 /** 这次拒绝是否就是「内容本就相同」。 */
-function isMessageNotModified(error: unknown): boolean {
+export function isMessageNotModified(error: unknown): boolean {
   return telegramErrorDetails(error)?.description.includes(MESSAGE_NOT_MODIFIED) === true;
 }
 

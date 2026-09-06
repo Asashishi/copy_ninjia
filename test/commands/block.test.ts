@@ -55,7 +55,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   onIdentityStoragePersisted: (): void => {},
   // infra/logger.ts 从同一模块取它；整份模块被替换掉时缺了会在 import 阶段报错。
   relayLogMessage: (): boolean => true,
-  // /block 只等黑名单这一个领域的落盘回执：统一 flush 是十二个领域的合取，
+  // /block 只等黑名单这一个领域的落盘回执：统一 flush 是各领域的合取，
   // 无关领域失败不该让它报「小本本没能写进硬盘」（见 confirmBlocklistPersisted）。
   flushDiskIODomain: flushDiskIO,
   // confirmBlocklistPersisted 改用带回执的出口：失败领域名必须来自本次 flush。

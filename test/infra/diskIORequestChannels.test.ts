@@ -255,7 +255,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
     }
   });
 
-  test("运行时恢复 timer 覆盖永不结束的异步镜像并清空业务缓冲", async () => {
+  test("运行时恢复 timer 覆盖永不结束的异步镜像并保留未确认业务", async () => {
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
@@ -298,7 +298,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       await Bun.sleep(10);
 
       expect(recovery.terminated).toBe(true);
-      expect(diskIORuntime.pendingBusinessMessages.size).toBe(0);
+      expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);
       expect(fatalErrors).toHaveLength(1);
       expect(fatalErrors[0]?.message).toContain("timed out");
       expect(await diskIO.flushDiskIO(10)).toBe("failed");

@@ -41,8 +41,12 @@ import {
   resetDiskIODiagnosticChannel,
   waitForDiskIODiagnostics,
 } from "./diskIO/diagnosticChannel";
-import { safePostDiskIO } from "./diskIO/transport";
-import { getStickerConfig } from "../config/stickers";
+import { canQueueDiskIOBusiness, resetDiskIOOperations, safePostDiskIO } from "./diskIO/transport";
+import { AcknowledgedBatchQueue } from "../libs/acknowledgedBatchQueue";
+import { diskIOMessageCost } from "../libs/diskIOMessageCost";
+import { DISK_OPERATION_CONTROL_RESERVE, DISK_BUSINESS_BATCH_MAX_MESSAGES, DISK_OPERATION_MAX_RETAINED_BYTES } from "../consts/diskIO/business";
+import type { DiskIOOperationMessage } from "../types/diskIO/messages";
+import { stickerPacksForRecovery } from "../config/stickers";
 export {
   onAiMemoryDeletedPersisted,
   onAiMemoryPersisted,
@@ -79,7 +83,7 @@ export interface DiskIOInitOptions {
   onFatal?: (error: Error) => void;
   /** 仅供测试缩短；生产默认与启动 load 握手使用同一预算。 */
   runtimeRecoveryTimeoutMs?: number;
-  /** 恢复窗口内的业务增量硬顶，避免失联 Worker 造成无界内存增长。 */
+  /** 排队、在途与恢复窗口合计的业务硬顶，避免失联 Worker 造成无界内存增长。 */
   maxPendingBusinessMessages?: number;
 }
 
@@ -114,6 +118,11 @@ export function initDiskIO({
   diskIORuntime.fatalHandler = onFatal;
   diskIORuntime.runtimeRecoveryTimeoutMs = nextRuntimeRecoveryTimeoutMs;
   diskIORuntime.maxPendingBusinessMessages = maxPendingBusinessMessages;
+  diskIORuntime.operationQueue = new AcknowledgedBatchQueue<DiskIOOperationMessage>({
+    maxBatchMessages: DISK_BUSINESS_BATCH_MAX_MESSAGES,
+    maxMessages: maxPendingBusinessMessages + DISK_OPERATION_CONTROL_RESERVE,
+    maxCost: DISK_OPERATION_MAX_RETAINED_BYTES,
+  });
   diskIORuntime.fatalSignaled = false;
   diskIORuntime.consecutiveDiagnosticWriteFailures = 0;
   diskIORuntime.consecutiveDiagnosticRebuilds = 0;
@@ -161,16 +170,10 @@ export function postDiskIO(
 ): boolean {
   const worker: Worker | null = diskIORuntime.worker;
   if (worker === null) return false;
+  if (!canQueueDiskIOBusiness(message)) return false;
   if (!diskIORuntime.writable) {
-    if (diskIORuntime.pendingBusinessMessages.size >= diskIORuntime.maxPendingBusinessMessages) {
-      stopWorkerAfterLoadFailure(
-        worker,
-        `buffered business message limit (${diskIORuntime.maxPendingBusinessMessages}) exceeded during recovery`,
-        true
-      );
-      return false;
-    }
     diskIORuntime.pendingBusinessMessages.push(message);
+    diskIORuntime.pendingBusinessBytes += diskIOMessageCost(message);
     return true;
   }
   if (safePostDiskIO(worker, message, `${message.type} business message`)) return true;
@@ -207,6 +210,7 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
   if (!worker) {
     return Promise.reject(new Error("Persistence Worker is unavailable; refusing to start with empty persisted state."));
   }
+  const request: LoadRequest = { type: "load", stickerPacks: stickerPacksForRecovery() };
   return new Promise((resolve: (value: LoadedData | PromiseLike<LoadedData>) => void, reject: (reason?: unknown) => void): void => {
     const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
       pendingLoad.resolve = null;
@@ -226,6 +230,7 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         return;
       }
       resolve({
+        wedMembers: reply.wedMembers,
         aiMemories: reply.aiMemories,
         stickerCatalogs: reply.stickerCatalogs,
         luckDay: reply.luckDay,
@@ -237,10 +242,6 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         chatStates: reply.chatStates,
         chatQa: reply.chatQa,
       });
-    };
-    const request: LoadRequest = {
-      type: "load",
-      stickerPacks: getStickerConfig().packs,
     };
     if (!safePostDiskIO(worker, request, "startup load request")) {
       pendingLoad.resolve = null;
@@ -376,9 +377,9 @@ async function requestDiskIOFlush(
 
 /**
  * 只关心某一个领域有没有落盘的 flush。仍然触发统一 flush（Worker 那边本来
- * 就是十二个领域一起刷），但把「无关领域失败」判成成功。
+ * 就是各领域一起刷），但把「无关领域失败」判成成功。
  *
- * 存在的理由：`flushAll` 是十二个领域的合取，任何一个失败（典型是某群
+ * 存在的理由：`flushAll` 是各领域的合取，任何一个失败（典型是某群
  * `memory/ai/<chat>.json` 部署后属主不对）都会让 /block 报「小本本没能写进
  * 硬盘」，把运维引向一个其实没坏的文件。
  * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
@@ -422,6 +423,7 @@ function narrowFlushResultToDomain(
 
 /** 终止落盘 Worker；返回后旧实例不可能再 rename/append 共享文件。 */
 export function terminateDiskIO(): Promise<void> {
+  resetDiskIOOperations();
   const worker: Worker | null = diskIORuntime.worker;
   diskIORuntime.worker = null;
   diskIORuntime.initialized = false;

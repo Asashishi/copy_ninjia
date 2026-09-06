@@ -265,6 +265,7 @@ describe("广告处置副作用", () => {
     expect(warning).not.toContain("五分钟");
     expect(warning).not.toContain("5 分钟");
     expect(sendTemporaryMessageFromMain).toHaveBeenCalledWith({
+      purpose: "adWarning",
       chatId: -1001,
       identityId: 7,
       text: warning,

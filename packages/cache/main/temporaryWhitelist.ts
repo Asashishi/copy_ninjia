@@ -20,7 +20,8 @@ export const temporaryWhitelistActivityCache: LruCache<
 /**
  * SQLite 尚未精确 ACK 的主线程最终值；同一身份原地合并，ACK 后删除。
  * 本表不淘汰未落盘事实；健康态由 128 条/30 秒事务持续收敛，Worker 重建时按
- * revision 顺序重放，进程全新初始化才整体清空。
+ * revision 顺序重放，进程全新初始化才整体清空。新主键在发布前受
+ * STORAGE_PENDING_MAX_ENTRIES / STORAGE_PENDING_MAX_BYTES 限制，超限停止入口。
  */
 export const unacknowledgedTemporaryWhitelistWrites: Map<
   number,

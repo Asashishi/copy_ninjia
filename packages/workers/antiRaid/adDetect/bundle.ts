@@ -144,7 +144,7 @@ function entriesClaimContextPart(
  * 对广告检测完全免疫，而它恰恰是当前最主流的形态。
  *
  * 引用内容仍会让整串命中，但命中不再等于立即 block：主线程已排除白名单来源，
- * Worker 再用 directText 做归因；只有发送者本人正文是广告时直接 block，广告只
+ * Worker 再用 directText 做归因；发送者本人姓名或正文是广告时直接 block，广告只
  * 来自非白名单回复、引用或转发时先公开警告，五分钟内再次命中才升级。
  *
  * 接法与 appendLinkUrls 完全一致，两条理由同样成立：
@@ -290,7 +290,7 @@ export function formatAdBundleText(entries: readonly AdCandidateEntry[]): string
 }
 
 /**
- * 拼出只含当前发送者本人正文的清单；空行跳过后重新连续编号，避免把转发内容
+ * 拼出只含当前发送者本人姓名与正文的清单；空行跳过后重新连续编号，避免把转发内容
  * 误当成转发者自己写下的直接广告。
  */
 export function formatDirectAdBundleText(entries: readonly AdCandidateEntry[]): string {

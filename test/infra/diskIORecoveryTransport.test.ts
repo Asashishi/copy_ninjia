@@ -282,9 +282,8 @@ describe("Disk I/O 恢复期的缓冲重放", () => {
 
       expect(diskIORuntime.writable).toBeFalse();
       expect(fixture.fatals[0]?.message).toContain("rejected luckDraw during recovery replay");
-      // 收口是「整代作废 + 监督重启」，缓冲随之清空——这批事实就此声明丢失，
-      // 不留给下一代去重放：那一代凭什么认为这条比别的更该补，没有任何依据。
-      expect(diskIORuntime.pendingBusinessMessages.size).toBe(0);
+      // 未确认事实保留到最终 terminate；失败本身不等于确认。
+      expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);
       expect(second.terminated).toBeTrue();
     } finally {
       restoreListeners();
@@ -502,4 +501,40 @@ describe("Disk I/O 诊断受控重建", () => {
       await fixture.dispose();
     }
   });
+});
+
+test("镜像已消费的 revision 覆盖旧 FIFO，镜像之后的新写仍按序重放", async (): Promise<void> => {
+  const fixture: RecoveryFixture = await startDiskIO();
+  const restoreListeners: () => void = withOnlyRespawnListener((transport: DiskIORecoveryTransport): boolean => {
+    if (!transport.post({ type: "temporaryWhitelistWrite", id: 7, activity: null, revision: 2 })) return false;
+    return diskIO.postDiskIO({ type: "temporaryWhitelistWrite", id: 7, activity: null, revision: 3 });
+  });
+  try {
+    fixture.first.autoAcknowledgeOperations = false;
+    expect(diskIO.postDiskIO({ type: "temporaryWhitelistWrite", id: 7, activity: null, revision: 1 })).toBeTrue();
+    const second: FakeWorker = crashDiskIOWorker(fixture.first);
+    emitSuccessfulLoad(second); await Bun.sleep(0);
+    const revisions: number[] = [];
+    for (const message of second.messages) if (message.type === "temporaryWhitelistWrite") revisions.push(message.revision);
+    expect(revisions).toEqual([2, 3]);
+    expect(diskIORuntime.writable).toBeTrue();
+  } finally { restoreListeners(); await fixture.dispose(); }
+});
+
+test("贴纸镜像覆盖发送前的旧快照，发送后到达的新快照仍会落盘", async (): Promise<void> => {
+  const fixture: RecoveryFixture = await startDiskIO();
+  const restoreListeners: () => void = withOnlyRespawnListener((transport: DiskIORecoveryTransport): boolean => {
+    if (!transport.post({ type: "stickerCatalog", pack: "test_pack", snapshot: "mirror" })) return false;
+    return diskIO.postDiskIO({ type: "stickerCatalog", pack: "test_pack", snapshot: "newest" });
+  });
+  try {
+    fixture.first.autoAcknowledgeOperations = false;
+    diskIO.postDiskIO({ type: "stickerCatalog", pack: "test_pack", snapshot: "old" });
+    const second: FakeWorker = crashDiskIOWorker(fixture.first);
+    emitSuccessfulLoad(second); await Bun.sleep(0);
+    const snapshots: string[] = [];
+    for (const message of second.messages) if (message.type === "stickerCatalog") snapshots.push(message.snapshot);
+    expect(snapshots).toEqual(["mirror", "newest"]);
+    expect(diskIORuntime.writable).toBeTrue();
+  } finally { restoreListeners(); await fixture.dispose(); }
 });

@@ -9,21 +9,8 @@
 # 不迁移、不卸载；重新填写部署配置时会在工作树外保留可核验备份，见
 # docs/cn/07-operations.md。
 #
-# 装的是 GitHub 上的 Latest Release：tag 取自 releases/latest 接口，取不到即失败退出。
-# 已存在的工作树保持原有 checkout 不动，只报告当前版本。
-#
-# `curl | bash` 取到的入口来自 master；找到工作树后转交该树的 install.sh，
-# 运行时版本、配置问卷和初始化逻辑均使用目标代码对应的版本。
-#
-# 假设机器上什么都没装：缺 git/curl/unzip 会用系统包管理器补齐，缺仓库会 clone，
-# 缺 Bun 会装官方发行版。唯一不代劳的是 /ja_copy 用的 g-auth.json：那是 GCP 服务
-# 账号密钥，只能从控制台下载后带外传到机器上，问答里没法「输入」，因此当成前置
-# 条件而不是脚本里的一步。
-#
-# 已经 clone 过仓库时，在仓库根跑 `bash install.sh` 等价，会跳过 clone 那一步。
-# 源码若是解压发布包得到的（有源码、没有 .git），会就地补出 git 仓库并把 HEAD
-# 指到与现有文件逐字一致的那个 tag，好让此后能用 git 更新；补仓库只动 .git 与
-# 索引，不改工作树里任何已有文件。
+# 新工作树使用 GitHub Latest Release；既有工作树保持 checkout，执行目标树的安装器。
+# 依赖工具按需安装；g-auth.json 由部署方带外提供。
 
 set -Eeuo pipefail
 
@@ -38,7 +25,7 @@ readonly CLONE_TARGET="${COPY_NINJIA_DIR:-copy_ninjia}"
 # Bun 精确版本与本工作树的 packageManager 一致。
 readonly REQUIRED_BUN_MAJOR=1
 readonly REQUIRED_BUN_MINOR=4
-readonly REQUIRED_BUN_PATCH=1
+readonly REQUIRED_BUN_PATCH=2
 readonly REQUIRED_BUN_VERSION="${REQUIRED_BUN_MAJOR}.${REQUIRED_BUN_MINOR}.${REQUIRED_BUN_PATCH}"
 
 # config_example/agent.json 里的六项 AI 能力，顺序与示例一致。
@@ -57,7 +44,6 @@ CONFIG_BACKUP_TARGETS=()
 CONFIG_CREATED_PATHS=()
 CONFIG_BACKUP_DIRECTORY=""
 CONFIG_BACKUP_MANIFEST=""
-CONFIG_CHANGED=0
 
 step() { printf '\n==> %s\n' "$1"; }
 info() { printf '    %s\n' "$1"; }
@@ -95,16 +81,16 @@ service_journal_cursor() {
 }
 
 # 观察窗口内该 unit 的新增 journal 正文。读不到（没有 journalctl、journald 未启用、
-# 权限不足）时返回非零，调用方据此降级成提示，绝不把「读不到」判成「失败」。
+# 权限不足）时返回非零，调用方拒绝确认稳定并保留备份。
 service_journal_since() {
-  local cursor="$1"
+  local cursor="$1" since="$2"
   command -v journalctl >/dev/null 2>&1 || return 1
   if [ -n "$cursor" ]; then
     run_privileged journalctl -u "${SERVICE_NAME}.service" \
       --after-cursor "$cursor" --output=cat --no-pager 2>/dev/null
   else
     run_privileged journalctl -u "${SERVICE_NAME}.service" \
-      --output=cat --no-pager 2>/dev/null
+      --since "$since" --output=cat --no-pager 2>/dev/null
   fi
 }
 
@@ -126,6 +112,75 @@ run_privileged() {
   else
     return 127
   fi
+}
+
+# 原地写入前核对服务归属及停止状态；运维边界见 docs/cn/07-operations.md。
+verify_service_target() {
+  local target="$1" load="" active="" sub="" workdir="" entry="" executable="" arguments=""
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    [ ! -e "$SERVICE_UNIT_PATH" ] || die "无法确认既有服务状态，拒绝修改部署。请按运维流程确认服务 inactive 后更新。"
+    return 0
+  fi
+  load="$(systemctl show "${SERVICE_NAME}.service" -p LoadState --value)" ||
+    die "无法查询服务状态，拒绝修改部署。请按运维流程确认服务 inactive 后更新。"
+  active="$(systemctl show "${SERVICE_NAME}.service" -p ActiveState --value)" || die "无法确认服务 inactive，拒绝修改部署。"
+  sub="$(systemctl show "${SERVICE_NAME}.service" -p SubState --value)" || die "无法确认服务 dead，拒绝修改部署。"
+  [ "$active" = inactive ] && [ "$sub" = dead ] ||
+    die "服务尚未确认 inactive/dead，拒绝修改部署。请按运维流程停机并确认 inactive 后更新。"
+  if [ "$load" = not-found ]; then
+    [ ! -e "$SERVICE_UNIT_PATH" ] || die "既有 unit 尚未加载，拒绝修改部署。请先按运维流程核对 unit。"
+    return 0
+  fi
+  [ "$load" = loaded ] || die "服务 unit 状态无法确认，拒绝修改部署。"
+  workdir="$(systemctl show "${SERVICE_NAME}.service" -p WorkingDirectory --value)" || die "无法读取服务 WorkingDirectory。"
+  [ -n "$workdir" ] && [ -d "$workdir" ] && [ -d "$target" ] || die "服务 WorkingDirectory 与目标工作树不符。"
+  [ "$(cd -- "$workdir" && pwd -P)" = "$(cd -- "$target" && pwd -P)" ] || die "服务 WorkingDirectory 与目标工作树不符。"
+  entry="$(systemctl show "${SERVICE_NAME}.service" -p ExecStart --value)" || die "无法读取服务 ExecStart。"
+  [[ "$entry" == '{ path='*' ; argv[]='*' ; '*' }' ]] && [[ "${entry:1}" != *'{'* ]] && [[ "$entry" != *$'\n'* ]] || die "服务 ExecStart 形态无法确认。"
+  executable="${entry#'{ path='}"
+  executable="${executable%% ;*}"
+  [[ "$executable" = /*/bun ]] || die "服务 ExecStart 必须使用 Bun 运行当前工作树入口。"
+  arguments="${entry#*' ; argv[]='}"
+  arguments="${arguments%% ;*}"
+  case "$arguments" in
+    "$executable start"|"$executable run start"|"$executable index.ts"|"$executable run index.ts"|"$executable $workdir/index.ts"|"$executable run $workdir/index.ts") ;;
+    *) die "服务 ExecStart 必须使用 Bun 运行当前工作树入口。" ;;
+  esac
+}
+
+# 观察覆盖两次重启等待上限（含退避与随机延迟），另留两秒。
+service_observation_seconds() {
+  local interval="" steps="" maximum="" randomized=""
+  interval="$(systemctl show "${SERVICE_NAME}.service" -p RestartUSec --value)" || return 1
+  [ -n "$interval" ] || return 1
+  steps="$(systemctl show "${SERVICE_NAME}.service" -p RestartSteps --value)" || return 1
+  randomized="$(systemctl show "${SERVICE_NAME}.service" -p RestartRandomizedDelayUSec --value)" || return 1
+  if [ -n "$steps" ] && [ "$steps" != 0 ]; then
+    [[ "$steps" =~ ^[0-9]+$ ]] || return 1
+    maximum="$(systemctl show "${SERVICE_NAME}.service" -p RestartMaxDelayUSec --value)" || return 1
+    [ -n "$maximum" ] || return 1
+  fi
+  bun -e '
+    const units = { us: 0.000001, "μs": 0.000001, ms: 0.001, s: 1, min: 60, h: 3600, d: 86400, w: 604800, month: 2629800, y: 31557600 };
+    function seconds(input) {
+      if (input === "0") return 0;
+      let rest = input.trim(), total = 0;
+      if (!rest) throw new Error("RestartUSec must be a finite systemd duration.");
+      while (rest) {
+        const part = /^(\d+(?:\.\d+)?)\s*(us|μs|ms|min|month|s|h|d|w|y)(?:\s*|$)/.exec(rest);
+        if (!part) throw new Error("RestartUSec must be a finite systemd duration.");
+        total += Number(part[1]) * units[part[2]];
+        rest = rest.slice(part[0].length);
+      }
+      return total;
+    }
+    const base = seconds(Bun.argv[1]), maximum = Bun.argv[2], randomized = Bun.argv[3];
+    const ceiling = maximum && maximum !== "infinity" ? seconds(maximum) : base;
+    const bound = base > 0 ? Math.max(base, ceiling) : base;
+    const delay = Math.ceil(2 * (bound + (randomized ? seconds(randomized) : 0))) + 2;
+    if (!Number.isSafeInteger(delay)) throw new Error("RestartUSec must fit a safe observation duration.");
+    console.log(delay);
+  ' "$interval" "$maximum" "$randomized"
 }
 
 # 用系统包管理器补齐基础工具。装不了就把该跑的命令原样打出来，不猜、不硬来。
@@ -350,7 +405,6 @@ create_config_from_example() {
   chmod "$target_mode" -- "$staging_path" || die "无法设置 ${target_path} 权限。"
   mv -- "$staging_path" "$resolved_target_path" || die "建立 ${target_path} 失败。"
   CONFIG_CREATED_PATHS+=("$resolved_target_path")
-  CONFIG_CHANGED=1
 }
 
 # 第一次覆盖部署配置前，在工作树外留一份带清单的原件；无法保留属主时仍逐份
@@ -424,46 +478,18 @@ commit_staged_config() {
     fi
   fi
   mv -- "$staging_path" "$target_path" || die "原子替换 ${target_path} 失败。"
-  CONFIG_CHANGED=1
 }
 
-# 只验证候选 Telegram 文件，不读取部署目标 config/telegram.json。
-#
-# packages/config/telegram.ts 有模块级顶层 await：import 它就会按
-# COPY_NINJIA_CONFIG_ROOT/telegram.json 严格加载一次，而那正是本函数要替换的
-# 部署文件——全新安装时它还是示例占位符，损坏时更直接抛错，两种情况都会在候选
-# 文件被看一眼之前就失败，并报成「候选校验未通过」。所以把配置根指向一个私有
-# 临时目录，用符号链接把 telegram.json 指到候选文件：token 字节仍只存在于候选
-# 文件里，不产生第二份副本，而模块自带的严格加载与随后的显式解析都作用在候选上。
+# 只验证候选 Telegram 文件；无导入副作用的读取入口与运行时共用严格解析器。
 validate_staged_telegram_config() {
-  local staging_path="$1" probe_root="" probe_status=0 absolute_staging_path=""
-  # 候选路径是相对仓库根的（resolve_config_target_path 对非软链接原样返回），
-  # 而符号链接按所在目录解析，必须先转成绝对路径。
-  absolute_staging_path="$(readlink -f -- "$staging_path")" ||
-    die "无法解析 Telegram 候选文件的绝对路径。"
-  [ -n "$absolute_staging_path" ] || die "Telegram 候选文件路径为空。"
-  probe_root="$(mktemp -d)" || die "无法创建 Telegram 候选校验的临时配置根。"
-  chmod 700 -- "$probe_root" || {
-    rm -rf -- "$probe_root"
-    die "无法收紧 Telegram 候选校验临时目录权限。"
-  }
-  ln -s -- "$absolute_staging_path" "${probe_root}/telegram.json" || {
-    rm -rf -- "$probe_root"
-    die "无法在临时配置根中引用 Telegram 候选文件。"
-  }
-  COPY_NINJIA_CONFIG_ROOT="$probe_root" bun -e '
-    import { parseTelegramConfig } from "./packages/config/telegram";
-    import { readJsonInput } from "./packages/libs/inputValidation";
-    const path = Bun.argv[1];
-    parseTelegramConfig(await readJsonInput(path), path);
-  ' "$staging_path" || probe_status=$?
-  rm -rf -- "$probe_root"
-  return "$probe_status"
+  local staging_path="$1"
+  bun -e '
+    import { loadTelegramConfig } from "./packages/config/telegramInput";
+    await loadTelegramConfig(Bun.argv[1]);
+  ' "$staging_path"
 }
 
-# agent 总闸本身接受路径参数，候选文件验证不会触碰部署目标。
-# packages/config/agent.ts 没有顶层 await，import 无副作用；但总闸是 async，
-# 必须 await，否则 bun -e 会在校验落地前退出。
+# 等待 agent 总闸验证候选文件，不触碰部署目标。
 validate_staged_agent_config() {
   local staging_path="$1"
   bun -e '
@@ -526,9 +552,7 @@ info "Linux + 可读 /proc + 可用控制终端，均满足。"
 step "2/8 获取仓库"
 # --------------------------------------------------------------------------
 
-# 三种到达方式：仓库根跑 `bash install.sh`、仓库外跑一份下载好的脚本、以及
-# `curl | bash`。后者拿不到 BASH_SOURCE 对应的真实文件，所以按「脚本所在目录 ->
-# 当前目录 -> clone」的顺序找工作树，不猜。
+# 按脚本所在目录、当前目录、clone 目标的顺序定位工作树。
 SCRIPT_DIRECTORY=""
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -545,6 +569,7 @@ elif is_repository_root "$CLONE_TARGET"; then
 elif [ -e "$CLONE_TARGET" ]; then
   die "${CLONE_TARGET} 已存在但不是 Copy Ninjia 工作树。挪开它，或设 COPY_NINJIA_DIR 指定别的目录。"
 else
+  verify_service_target "$CLONE_TARGET"
   require_command git git
   require_command curl curl
   RELEASE_TAG="$(latest_release_tag)" ||
@@ -565,8 +590,8 @@ if [ "$SCRIPT_DIRECTORY" != "$(pwd -P)" ]; then
   exec bash ./install.sh
 fi
 
-# clone 那条分支天然带 .git，这里立刻返回；只有「解压发布包」那几种到达方式
-# 会真的走进去补仓库。放在链尾统一调用，四条分支就不会各写一份。
+# 原地写入前核验既有服务。
+verify_service_target "$PWD"
 ensure_git_repository
 
 # --------------------------------------------------------------------------
@@ -611,6 +636,7 @@ step "4/8 安装依赖"
 # --------------------------------------------------------------------------
 
 # 用锁文件安装：bun.lock 已进版本库，装出来的树必须和门禁跑过的那棵一致。
+verify_service_target "$PWD"
 bun install --frozen-lockfile || die "bun install 失败。"
 info "依赖安装完成。"
 
@@ -888,6 +914,8 @@ BUN_BINARY="$(command -v bun)" || die "找不到 bun 可执行文件。"
 SERVICE_USER="$(id -un)"
 SERVICE_WORKDIR="$(pwd)"
 
+verify_service_target "$SERVICE_WORKDIR"
+
 # 已存在的 unit 先问再覆盖。
 WRITE_UNIT=1
 if [ -e "$SERVICE_UNIT_PATH" ]; then
@@ -901,14 +929,12 @@ if [ "$WRITE_UNIT" -eq 0 ]; then
   info "                 $(systemctl show "${SERVICE_NAME}.service" -p ExecStart --value | head -c 160)"
 fi
 
-# NRestarts 是该 unit 的累计值，daemon-reload 不清零；这里记基线，后面比增量。
-# 全新安装时 unit 还不存在，NRestarts 取回空串，补成 0 参与后面的比较。
-RESTARTS_BEFORE="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value 2>/dev/null)"
-: "${RESTARTS_BEFORE:=0}"
-# 与 NRestarts 基线同一时刻取 journal 游标，让两条判据覆盖同一个观察窗口。
+# journal 游标覆盖 unit 写入与启动观察窗口。
 JOURNAL_CURSOR="$(service_journal_cursor)"
+JOURNAL_SINCE="$(date -u '+%Y-%m-%d %H:%M:%S.%6N UTC')"
 
 if [ "$WRITE_UNIT" -eq 1 ]; then
+  backup_deployment_config "$SERVICE_UNIT_PATH"
   # 经 tee 写入，使 run_privileged 的提权作用于写文件的那个进程。
   printf '%s\n' \
     "[Unit]" \
@@ -933,19 +959,16 @@ if [ "$WRITE_UNIT" -eq 1 ]; then
 fi
 
 run_privileged systemctl daemon-reload || die "systemctl daemon-reload 失败。"
+RESTARTS_BEFORE="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value 2>/dev/null)"
+[[ "$RESTARTS_BEFORE" =~ ^[0-9]+$ ]] || die "无法确认服务重启计数。"
 run_privileged systemctl enable "${SERVICE_NAME}.service" ||
   die "启用 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
-if [ "$CONFIG_CHANGED" -eq 1 ] || [ "$WRITE_UNIT" -eq 1 ]; then
-  run_privileged systemctl restart "${SERVICE_NAME}.service" ||
-    die "重启 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
-else
-  run_privileged systemctl start "${SERVICE_NAME}.service" ||
-    die "启动 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
-fi
+OBSERVATION_SECONDS="$(service_observation_seconds)" || die "无法确认服务实际重启间隔。"
+run_privileged systemctl start "${SERVICE_NAME}.service" ||
+  die "启动 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
 
-# 观察至少两个重启间隔（RestartSec=5）后再判定，口径见 docs/cn/07-operations.md。
-info "观察 ${SERVICE_NAME}.service 是否稳定（约 12 秒）……"
-sleep 12
+info "观察 ${SERVICE_NAME}.service 是否稳定（${OBSERVATION_SECONDS} 秒）……"
+sleep "$OBSERVATION_SECONDS"
 # systemctl show 是只读查询，不提权。
 ACTIVE_STATE="$(systemctl show "${SERVICE_NAME}.service" -p ActiveState --value)"
 SUB_STATE="$(systemctl show "${SERVICE_NAME}.service" -p SubState --value)"
@@ -953,28 +976,23 @@ RESTARTS_AFTER="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value)
 if [ "$ACTIVE_STATE" != "active" ] || [ "$SUB_STATE" != "running" ]; then
   die "${SERVICE_NAME}.service 状态是 ${ACTIVE_STATE}/${SUB_STATE}，没有正常跑起来。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
 fi
-if [ "$RESTARTS_AFTER" -gt "$RESTARTS_BEFORE" ]; then
+[[ "$RESTARTS_AFTER" =~ ^[0-9]+$ ]] || die "无法确认服务观察后的重启计数。"
+if [ "$RESTARTS_AFTER" != "$RESTARTS_BEFORE" ]; then
   die "${SERVICE_NAME}.service 在观察窗口内重启了 $((RESTARTS_AFTER - RESTARTS_BEFORE)) 次，说明启动后随即退出。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
 fi
 
-# NRestarts 只在 systemd 真的拉起下一次时才涨；启动后非零退出却没被拉起来（比如
-# 配置校验失败被 Restart=on-failure 的次数上限挡住）不会改动那个计数，只在 journal
-# 里留痕。两条判据都要过，口径见 docs/cn/07-operations.md。
-# 收尾那行只能说这一轮真做过的事：核对不成时不得写成「journal 无非零退出」。
-JOURNAL_VERDICT="、journal 无非零退出"
-if JOURNAL_TAIL="$(service_journal_since "$JOURNAL_CURSOR")"; then
+# 重启计数与新增非零退出必须同时通过；失败保留备份。
+if JOURNAL_TAIL="$(service_journal_since "$JOURNAL_CURSOR" "$JOURNAL_SINCE")"; then
   NONZERO_EXITS="$(printf '%s\n' "$JOURNAL_TAIL" | journal_nonzero_exit_lines)"
   if [ -n "$NONZERO_EXITS" ]; then
     die "${SERVICE_NAME}.service 在观察窗口内记录了非零退出：${NONZERO_EXITS%%$'\n'*}。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
   fi
   finalize_config_backup
 else
-  JOURNAL_VERDICT="、journal 未能核对"
-  warn "读不到 ${SERVICE_NAME}.service 的 journal（没有 journalctl、journald 未启用或权限不足），本次跳过非零退出核对。"
-  info "请手动确认：journalctl -u ${SERVICE_NAME} -n 50"
+  die "journal 未能核对，无法确认服务稳定；保留配置备份与现场。请按运维流程核验。"
 fi
 
 printf '\n'
-info "${SERVICE_NAME}.service 运行中（${ACTIVE_STATE}/${SUB_STATE}，观察窗口内未重启${JOURNAL_VERDICT}），已设为开机自启。"
+info "${SERVICE_NAME}.service 运行中（${ACTIVE_STATE}/${SUB_STATE}，观察窗口内未重启、journal 无非零退出），已设为开机自启。"
 info "看日志：journalctl -u ${SERVICE_NAME} -f"
 info "停止 / 重启：systemctl stop ${SERVICE_NAME} / systemctl restart ${SERVICE_NAME}"

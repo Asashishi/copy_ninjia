@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -8,8 +8,10 @@ import type {
   TelegramConfig,
 } from "../../packages/types/config";
 
-const authFilePath: string = join(mkdtempSync(join(tmpdir(), "copy-ninjia-readiness-")), "g-auth.json");
-const personaPath: string = join(tmpdir(), "unused-persona.md");
+const testRoot: string = mkdtempSync(join(tmpdir(), "copy-ninjia-readiness-"));
+const authFilePath: string = join(testRoot, "g-auth.json");
+afterAll((): void => { rmSync(testRoot, { recursive: true, force: true }); });
+const personaPath: string = join(testRoot, "unused-persona.md");
 const testPrivateKey: string = generateKeyPairSync("rsa", {
   modulusLength: 2_048,
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -41,12 +43,12 @@ function loaderOf(name: string, failure: () => string | null): () => Promise<obj
 
 mock.module("../../packages/consts/paths", () => ({
   GOOGLE_AUTH_FILE_PATH: authFilePath,
-  TELEGRAM_CONFIG_PATH: join(tmpdir(), "unused-telegram.json"),
-  AGENT_CONFIG_PATH: join(tmpdir(), "unused-agent.json"),
-  STICKERS_CONFIG_PATH: join(tmpdir(), "unused-stickers.json"),
-  REACTIONS_CONFIG_PATH: join(tmpdir(), "unused-reactions.json"),
-  MOOD_CONFIG_PATH: join(tmpdir(), "unused-mood.json"),
-  AD_SAMPLES_CONFIG_PATH: join(tmpdir(), "unused-ad-samples.json"),
+  TELEGRAM_CONFIG_PATH: join(testRoot, "unused-telegram.json"),
+  AGENT_CONFIG_PATH: join(testRoot, "unused-agent.json"),
+  STICKERS_CONFIG_PATH: join(testRoot, "unused-stickers.json"),
+  REACTIONS_CONFIG_PATH: join(testRoot, "unused-reactions.json"),
+  MOOD_CONFIG_PATH: join(testRoot, "unused-mood.json"),
+  AD_SAMPLES_CONFIG_PATH: join(testRoot, "unused-ad-samples.json"),
   PERSONA_PATH: personaPath,
 }));
 mock.module("../../packages/config/telegram", () => ({
@@ -220,4 +222,20 @@ describe("Google service account readiness", () => {
     await expect(validateExistingDeploymentInputs()).rejects.toThrow("$.private_key");
     await expect(validateExistingDeploymentInputs()).rejects.not.toThrow(marker);
   });
+});
+
+for (const type of ["authorized_user", "external_account", null, 7]) {
+  test("显式错误凭据类型在启动总闸拒绝且不改写原文件", async () => {
+    const content: string = JSON.stringify({ type, client_email: "bot@example.com", private_key: testPrivateKey });
+    writeAuthFile(content);
+    await expect(validateExistingDeploymentInputs()).rejects.toThrow(authFilePath + ': $.type must be "service_account".');
+    expect(await Bun.file(authFilePath).text()).toBe(content);
+    expect(jaTranslateConfigReadinessCache.current).toBeNull();
+  });
+}
+
+test("显式 service_account 与缺省 type 均保持可用", async () => {
+  writeAuthFile(JSON.stringify({ type: "service_account", client_email: "bot@example.com", private_key: testPrivateKey }));
+  await validateExistingDeploymentInputs();
+  expect(jaTranslateConfigReadiness()).toEqual({ ok: true });
 });

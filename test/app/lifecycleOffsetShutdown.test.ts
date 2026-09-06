@@ -13,6 +13,7 @@ const {
   closeTranslate,
   deferred,
   drainAntiRaid,
+  drainWedRuntime,
   drainTelegramOutbound,
   flushAiMemory,
   flushDiskIO,
@@ -32,6 +33,25 @@ const {
 installLifecycleFixtureHooks();
 
 describe("应用最终 offset 确认与排空", () => {
+  test("最终确认等待已接纳 wed 任务结算，超时不发送最终 offset", async () => {
+    const gate = deferred<FlushResult>();
+    drainWedRuntime.mockImplementationOnce(() => gate.promise);
+    setLastSeenUpdateId(650);
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+    const waiting = lifecycle.wait();
+    await Bun.sleep(0);
+    expect(drainWedRuntime).toHaveBeenCalledTimes(1);
+    expect(getUpdates).not.toHaveBeenCalled();
+    expect(drainTelegramOutbound).not.toHaveBeenCalled();
+    gate.resolve("timedOut");
+    await waiting;
+    expect(getUpdates).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("wed=timedOut"));
+    await lifecycle.dispose();
+    expect(process.exitCode).toBe(1);
+  });
+
   test("正常 wait 会等待 runner 排空并确认最后 update offset", async () => {
     runnerSize.mockReturnValueOnce(1).mockReturnValue(0);
     setLastSeenUpdateId(321);

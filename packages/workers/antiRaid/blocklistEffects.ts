@@ -95,7 +95,7 @@ async function removeOne({ chatId, userId, probeMembership }: RemoveOneParams): 
       // 管理员」，那是一个 id 的事，不该闩住整个群（见 RemovalOutcome）。
       // 查不出身份时维持原判——没有确证就不把群级闩锁降级成逐个重试。
       if (outcome === "forbidden") {
-        return await probeChatAdmin(chatId, userId, telegramApi) === true
+        return await probeChatAdmin({ chatId, userId, api: telegramApi }) === true
           ? "targetIsAdmin"
           : "forbidden";
       }

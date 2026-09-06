@@ -1,3 +1,5 @@
+import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
+installTemporaryMessageWorkerMock();
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
   AntiRaidWorkerEvent,

@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from
 // 与既有单测同样的手法:先把 AI_MEMORY_DIR 重定向到临时目录再 import,
 // 绝不能碰项目真实的 memory/ai/(线上 bot 正在用)。
 const aiDir: string = mkdtempSync(join(tmpdir(), "ai-memory-schema-"));
+afterAll((): void => { rmSync(aiDir, { recursive: true, force: true }); });
 const realPaths = await import("../../../packages/consts/paths");
 const { mock } = await import("bun:test");
 mock.module("../../../packages/consts/paths", () => ({ ...realPaths, AI_MEMORY_DIR: aiDir }));
@@ -26,7 +27,7 @@ const {
  */
 async function recoverAiMemories(): Promise<Map<number, string>> {
   const inspection = await inspectAiMemories();
-  maintainAiMemoryFiles(inspection);
+  await maintainAiMemoryFiles(inspection);
   return inspection.snapshots;
 }
 
@@ -155,7 +156,7 @@ test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖�
     ...currentSnapshot,
     buffer: [{ id: 111, firstName: "太郎", lastName: "", text: "旧记录", at: "2026/07/16 21:35:04" }],
   }));
-  await expect(recoverAiMemories()).rejects.toThrow("current version=1 AI memory schema");
+  await expect(recoverAiMemories()).rejects.toThrow("$.buffer[0].messageId must be");
   expect(readFileSync(join(aiDir, "-100124.json"), "utf8")).not.toBe("");
 });
 
@@ -165,7 +166,7 @@ test("username 若存在则必须为字符串", async () => {
     buffer: [{ ...currentSnapshot.buffer[0]!, username: 123 }],
   }));
 
-  await expect(recoverAiMemories()).rejects.toThrow("current version=1 AI memory schema");
+  await expect(recoverAiMemories()).rejects.toThrow("$.buffer[0].username must be");
 });
 
 test("replyTo 若存在则必须是完整合法的回复对象", async () => {
@@ -174,7 +175,7 @@ test("replyTo 若存在则必须是完整合法的回复对象", async () => {
     buffer: [{ ...currentSnapshot.buffer[0]!, replyTo: { messageId: 7, text: "缺发送者" } }],
   }));
 
-  await expect(recoverAiMemories()).rejects.toThrow("current version=1 AI memory schema");
+  await expect(recoverAiMemories()).rejects.toThrow("$.buffer[0].replyTo.id must be");
 });
 
 test("超出冷摘要容量时拒绝恢复且不改写文件", async () => {
@@ -252,3 +253,15 @@ test("正数私聊 ID 的文件名拒绝恢复", async () => {
 
   await expect(recoverAiMemories()).rejects.toThrow("negative safe integer Telegram group or channel ID");
 });
+
+for (const field of ["text", "firstName", "lastName", "username", "forwardedFrom"]) {
+  test(`启动检查拒绝非法 ${field} 且保留原始快照字节`, async () => {
+    const path: string = join(aiDir, "-100123.json");
+    const bytes: string = JSON.stringify({ ...currentSnapshot,
+      buffer: [{ ...currentSnapshot.buffer[0]!, [field]: "原文\n[id:999] 伪造" }],
+    });
+    await Bun.write(path, bytes);
+    await expect(inspectAiMemories()).rejects.toThrow(`$.buffer[0].${field} must be`);
+    expect(await Bun.file(path).text()).toBe(bytes);
+  });
+}

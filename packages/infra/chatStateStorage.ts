@@ -5,6 +5,9 @@
  * Map；Disk I/O Worker 崩溃后从 LRU 重编码并重放未 ACK revision。
  */
 
+import { assertStorageAdmission } from "./diskIO/storageAdmission";
+import { canQueueDiskIOBusiness } from "./diskIO/transport";
+import { storageWriteCost } from "../libs/storageWriteBudget";
 import {
   chatStateCache,
   chatStateWriteRevision,
@@ -112,18 +115,23 @@ export function queueChatStateWrite(chatId: number): number {
     throw new Error("Chat-state revision space is exhausted.");
   }
   const encoded: EncodedChatStateWrite = encodeCurrentChatState(chatId);
-  chatStateWriteRevision.current++;
-  const revision: number = chatStateWriteRevision.current;
-  unacknowledgedChatStateWrites.set(chatId, {
-    revision,
-    deleted: encoded.deleted,
-  });
+  const revision: number = chatStateWriteRevision.current + 1;
   const message: ChatStateWriteDiskMessage = {
     type: "chatStateWrite",
     chatId,
     data: encoded.data,
     revision,
   };
+  let bytes: number = storageWriteCost(encoded.data);
+  for (const pendingChatId of unacknowledgedChatStateWrites.keys()) {
+    if (pendingChatId === chatId) continue;
+    const state: ChatState | undefined = chatStateCache.peek(pendingChatId);
+    bytes += storageWriteCost(state === undefined ? null : encodeChatStateData(state, "chat state admission"));
+  }
+  assertStorageAdmission(unacknowledgedChatStateWrites.size + (unacknowledgedChatStateWrites.has(chatId) ? 0 : 1), bytes);
+  if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat state publication.");
+  chatStateWriteRevision.current = revision;
+  unacknowledgedChatStateWrites.set(chatId, { revision, deleted: encoded.deleted });
   if (!postChatStateWrite(message)) {
     logger.error(
       `Failed to queue chat state ${chatId}; retaining revision ${revision} for replay.`

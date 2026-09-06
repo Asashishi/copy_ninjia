@@ -1,16 +1,6 @@
 import type { Api, RawApi } from "grammy";
 import type { TelegramRetryCategory } from "./telegramOutbound";
 
-/** grammY 1.44 尚未声明的 Bot API 10.2 临时消息删除载荷。 */
-export interface TelegramDeleteEphemeralMessagePayload {
-  readonly chat_id: number | string;
-  readonly receiver_user_id: number;
-  readonly ephemeral_message_id: number;
-}
-
-/** 项目在已安装 grammY 类型之外薄适配的 Bot API 方法名。 */
-export type TelegramProjectRawMethod = "deleteEphemeralMessage";
-
 /** 指定 grammY RawApi 方法的 JSON payload。 */
 export type TelegramRawPayload<M extends keyof RawApi> = Parameters<RawApi[M]>[0];
 
@@ -22,7 +12,7 @@ export type TelegramWorkerJsonCall =
   | { readonly method: "copyMessage"; readonly payload: TelegramRawPayload<"copyMessage"> }
   | { readonly method: "deleteMessage"; readonly payload: TelegramRawPayload<"deleteMessage"> }
   | { readonly method: "deleteMessages"; readonly payload: TelegramRawPayload<"deleteMessages"> }
-  | { readonly method: "deleteEphemeralMessage"; readonly payload: TelegramDeleteEphemeralMessagePayload }
+  | { readonly method: "deleteEphemeralMessage"; readonly payload: TelegramRawPayload<"deleteEphemeralMessage"> }
   | { readonly method: "editMessageText"; readonly payload: TelegramRawPayload<"editMessageText"> }
   | { readonly method: "getChat"; readonly payload: TelegramRawPayload<"getChat"> }
   | { readonly method: "getChatAdministrators"; readonly payload: TelegramRawPayload<"getChatAdministrators"> }
@@ -70,15 +60,20 @@ export interface TelegramWorkerDownloadFileRequest {
  * Worker 请求主线程发送一条固定期限的群提示。发送成功与登记延迟删除由主线程
  * 同步完成，避免远端已经建消息、Worker 却在拿到 message_id 前退出而遗留提示。
  */
-export interface TelegramWorkerTemporaryMessageRequest {
+interface TelegramWorkerTemporaryMessageBase {
   readonly operation: "sendTemporaryMessage";
   readonly category: "message";
   readonly chatId: number;
-  /** 引用广告警告所针对的展示身份；主线程发送前据此复查当前广告豁免。 */
-  readonly identityId: number;
+  readonly messageThreadId?: number;
   readonly text: string;
   readonly deleteAfterMs: number;
 }
+
+/** 广告提示保留身份复查，其余群提示仅请求发送与清理。 */
+export type TelegramWorkerTemporaryMessageRequest = TelegramWorkerTemporaryMessageBase & (
+  | { readonly purpose: "adWarning"; readonly identityId: number }
+  | { readonly purpose: "notice" }
+);
 
 /** 临时群提示已经发送且被主线程删除 owner 认领后的回执。 */
 export interface TelegramWorkerTemporaryMessageSentResult {

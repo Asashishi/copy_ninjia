@@ -1,3 +1,5 @@
+import { storagePendingBudget } from "../../../cache/workers/diskIO/storageDatabase";
+import { storageWriteCost } from "../../../libs/storageWriteBudget";
 import { pendingChatQaWrites } from
   "../../../cache/workers/diskIO/storageDatabase";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
@@ -72,6 +74,7 @@ export function handleChatQaWrite(
     );
   }
 
+  storagePendingBudget.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data, message.q) - (current === undefined ? 0 : storageWriteCost(current.data, message.q)));
   questions.set(message.q, { data: message.data, revision: message.revision });
   pendingChatQaWrites.set(message.chatId, questions);
   flushIfStorageFull(reply);

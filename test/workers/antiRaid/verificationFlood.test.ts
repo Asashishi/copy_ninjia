@@ -1,3 +1,5 @@
+import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
+installTemporaryMessageWorkerMock();
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from
   "../../../packages/consts/antiRaid/lockdown";

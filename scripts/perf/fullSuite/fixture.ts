@@ -47,7 +47,7 @@ import { encodePendingBlockedRemovalData } from
   "../../../packages/database/codec/identity";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { createChatState } from "../../../packages/libs/chatState";
-import { getTokyoDateKey } from "../../../packages/libs/time";
+import { formatTokyoTime, getTokyoDateKey } from "../../../packages/libs/time";
 import { BLACK_DATA, WHITE_DATA } from "../identityDatabase/fixtures";
 import type { ChatState } from "../../../packages/types/chatState";
 import type { PendingBlockedRemoval } from
@@ -115,6 +115,7 @@ function buildChatState(index: number): ChatState {
 
 /** 一份撑满生产恢复上限的 AI 记忆快照；正文长度随下标变化，避免整表同形。 */
 export function buildAiMemorySnapshot(chatIndex: number): string {
+  const at: string = formatTokyoTime(FIXTURE_EPOCH_MS);
   const buffer: BufferedMessage[] = new Array<BufferedMessage>(
     COLD_START_AI_MEMORY_MESSAGES
   );
@@ -130,7 +131,7 @@ export function buildAiMemorySnapshot(chatIndex: number): string {
       ),
       replyTo: undefined,
       forwardedFrom: undefined,
-      at: "2026-01-01 09:00:00",
+      at,
     };
   }
   const summaries: string[] = new Array<string>(COLD_START_AI_MEMORY_SUMMARIES);

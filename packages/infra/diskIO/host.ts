@@ -24,6 +24,8 @@ import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 import { acceptDiskIODiagnosticBatch, retryDiskIODiagnosticBatch } from
   "./diagnosticChannel";
 import { settleDiskIOReply } from "./requests";
+import { acceptDiskIOOperationBatch } from "./transport";
+import { signalDiskIOFatal } from "./fatal";
 import {
   activateDiskIOWorker,
   beginDiagnosticWorkerRecycle,
@@ -48,6 +50,14 @@ export function createDiskIOWorker(): Worker {
   w.onmessage = (event: MessageEvent<DiskIOReply>): void => {
     if (diskIORuntime.worker !== w) return;
     const data: DiskIOReply = event.data;
+    if (data.type === "operationBatchAccepted") {
+      acceptDiskIOOperationBatch(w, data.batchId);
+      return;
+    }
+    if (data.type === "storageWriteStalled") {
+      signalDiskIOFatal(new Error("Storage database writes stalled; refusing new business writes."));
+      return;
+    }
     if (data.type === "diagnosticBatchAccepted") {
       if (acceptDiskIODiagnosticBatch(w, data.batchId)) {
         diskIORuntime.consecutiveDiagnosticWriteFailures = 0;

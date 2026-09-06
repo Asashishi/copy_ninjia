@@ -1,3 +1,6 @@
+import type { PendingRemovalWrite } from "../../../types/identityStorage";
+import { storagePendingBudget } from "../../../cache/workers/diskIO/storageDatabase";
+import { storageWriteCost } from "../../../libs/storageWriteBudget";
 import {
   latestRemovalSnapshotRevision,
   pendingRemovalSnapshotRevision,
@@ -80,6 +83,21 @@ export function handlePendingRemovalSnapshot(
       );
     }
   }
+  let entryDelta: number = 0;
+  let byteDelta: number = 0;
+  for (const removalId of removalSnapshot.keys()) {
+    if (next.has(removalId)) continue;
+    const previous: PendingRemovalWrite | undefined = pendingRemovalWrites.get(removalId);
+    if (previous === undefined) entryDelta++;
+    byteDelta += storageWriteCost(null) - (previous === undefined ? 0 : storageWriteCost(previous.data));
+  }
+  for (const [removalId, data] of encoded) {
+    if (removalSnapshotData.get(removalId) === data) continue;
+    const previous: PendingRemovalWrite | undefined = pendingRemovalWrites.get(removalId);
+    if (previous === undefined) entryDelta++;
+    byteDelta += storageWriteCost(data) - (previous === undefined ? 0 : storageWriteCost(previous.data));
+  }
+  storagePendingBudget.reserve(entryDelta, byteDelta);
   for (const removalId of removalSnapshot.keys()) {
     if (!next.has(removalId)) pendingRemovalWrites.set(removalId, { data: null });
   }

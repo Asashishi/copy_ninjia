@@ -173,6 +173,15 @@ beforeEach(() => {
   inlineResultSources.clear();
 });
 
+test("姓名中的广告随候选原样传给 Worker，正常正文仍参与判定", (): void => {
+  const result: ReturnType<typeof buildAdCandidate> = buildAdCandidate(message({
+    from: { id: 7, is_bot: false, first_name: "日入过千", last_name: "加V xxx996" },
+    text: "大家早上好",
+  }), 999);
+  expect(result?.meta).toEqual({ firstName: "日入过千", lastName: "加V xxx996", username: "" });
+  expect(result?.text).toBe("大家早上好");
+});
+
 describe("广告检测投递门禁", () => {
   test("开了开关的群里的普通消息才生成待判定投递", () => {
     expect(buildAdCandidate(message(), 999)).toEqual({

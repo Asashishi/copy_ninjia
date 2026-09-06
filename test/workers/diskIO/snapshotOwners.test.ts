@@ -160,7 +160,7 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(stickerCatalogCache.has("stale_pack")).toBeFalse();
     expect(stickerCatalogCache.get("pack_one")).toBe(stickerSnapshotJson("恢复出来的目录"));
 
-    expect(() => maintainStickerCatalogSnapshots(inspection)).not.toThrow();
+    await expect(maintainStickerCatalogSnapshots(inspection)).resolves.toBeUndefined();
   });
 
   test("AI 记忆的三阶段启动 API 走真实目录：inspect 只读、adopt 才发布、maintenance 清临时文件", async () => {
@@ -186,7 +186,7 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(aiMemoryCache.has(-1009999999999)).toBeFalse();
     expect(aiMemoryCache.get(REAL_AI_CHAT_ID)).toBe(aiMemorySnapshotJson("恢复出来的记忆"));
 
-    maintainAiMemorySnapshots(inspection);
+    await maintainAiMemorySnapshots(inspection);
     expect(existsSync(leftover)).toBeFalse();
   });
 

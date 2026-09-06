@@ -14,6 +14,8 @@ import {
   quiesceGagRuntime,
 } from "../commands/gag/runtime";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
+import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../commands/wed/runtime";
+import { hydrateWedMembers } from "../commands/wed/persistence";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../copy/translate";
 import {
   abortChatTitleRefresh,
@@ -71,6 +73,7 @@ export const lifecycleDependencies = {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
+  drainWedRuntime,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -82,12 +85,14 @@ export const lifecycleDependencies = {
   hydrateIdentityStorageCounts,
   hydrateChatStateCache,
   hydrateChatQaCache,
+  hydrateWedMembers,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,
   hydrateStickerCatalog,
   initAvatarUpdates,
   initGagRuntime,
+  initWedRuntime,
   initAiChat,
   initAntiRaid,
   initBlocklistSweepScheduler,
@@ -110,6 +115,7 @@ export const lifecycleDependencies = {
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
+  quiesceWedRuntime,
   quiesceBlocklistSweepScheduler,
   quiesceTranslate,
   seedSenderCache,

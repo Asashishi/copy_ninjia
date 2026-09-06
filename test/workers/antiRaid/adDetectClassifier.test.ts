@@ -92,6 +92,10 @@ describe("广告判定请求", () => {
     expect(params.systemPrompt).toContain("一律判 false");
     // 兼容端点即使无视 JSON mode，也被提示词明确禁止返回 Markdown 围栏。
     expect(params.systemPrompt).toContain("禁止 Markdown 代码块");
+    expect(params.systemPrompt).toContain("first_name、last_name 和正文");
+    expect(params.systemPrompt).toContain("即使正文是正常闲聊");
+    expect(params.systemPrompt).toContain("普通姓名本身不构成广告");
+    expect(params.systemPrompt).toContain("姓名和正文都没有推广、招募或交易文案");
     expect(params.userContent).toBe("1. 在吗");
   });
 

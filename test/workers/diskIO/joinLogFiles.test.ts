@@ -105,7 +105,7 @@ async function recoverJoinLogFiles(today?: string): Promise<void> {
   const inspection = today === undefined
     ? await inspectJoinLogFiles(getTokyoDateKey())
     : await inspectJoinLogFiles(today);
-  maintainJoinLogFiles(inspection);
+  await maintainJoinLogFiles(inspection);
 }
 
 beforeEach(() => {
@@ -149,7 +149,7 @@ describe("diskIO/joinLogFiles", () => {
     const inspection = await inspectJoinLogFiles();
     expect(existsSync(stalePath)).toBeTrue();
 
-    maintainJoinLogFiles(inspection);
+    await maintainJoinLogFiles(inspection);
     expect(existsSync(stalePath)).toBeFalse();
   });
 

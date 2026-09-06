@@ -6,7 +6,7 @@ import { DUPLICATE_REPLY_RESULT } from "../../../../consts/aiChat/tools";
 import { containsRenderableCommand } from "../../../../libs/renderableCommand";
 import type { RoundMessageState } from "../../../../types/aiChat/replies";
 import { toolError } from "../../utils/toolResult";
-import { isDuplicateOfSentMessage } from "./messageState";
+import { isDuplicateOfAcceptedText } from "./messageState";
 
 type ModelAuthoredTextSurface = "message" | "picture" | "song";
 
@@ -45,7 +45,7 @@ export function modelAuthoredTextPolicyResult(
   state: RoundMessageState,
   surface: "message" | "picture" | "song"
 ): string | null {
-  if (isDuplicateOfSentMessage(state, text)) {
+  if (isDuplicateOfAcceptedText(state, text)) {
     return DUPLICATE_REPLY_RESULT;
   }
 

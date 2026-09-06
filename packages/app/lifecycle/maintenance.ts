@@ -28,6 +28,7 @@ export function quiesceLifecycleMaintenance(
   quiesceOwner("chat-title", (): void => dependencies.quiesceChatTitleRefresh());
   quiesceOwner("translate", (): void => dependencies.quiesceTranslate());
   quiesceOwner("gag", (): void => dependencies.quiesceGagRuntime());
+  quiesceOwner("wed", (): void => dependencies.quiesceWedRuntime());
   // 补扫 timer 能启动 Anti-Raid 网络任务与 outbox 写入，必须在确认最终 offset
   // 前与其它 maintenance owner 一起关闸；只在 dispose() 终局关会在前置 drain
   // 已完成后重新制造工作，破坏“排空后不再有生产者”的边界。

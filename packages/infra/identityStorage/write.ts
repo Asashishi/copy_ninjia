@@ -1,9 +1,13 @@
+import { assertStorageAdmission } from "../diskIO/storageAdmission";
+import { canQueueDiskIOBusiness } from "../diskIO/transport";
+import { storageWriteCost } from "../../libs/storageWriteBudget";
 import {
   blocklistEntryCache,
   identityEntryCounts,
   identityWriteRevision,
   unacknowledgedBlocklistWrites,
   unacknowledgedIdentityWrites,
+  unacknowledgedIdentityBytes,
   unacknowledgedWhitelistWrites,
   whitelistEntryCache,
 } from "../../cache/main/identityStorage";
@@ -52,7 +56,7 @@ function oppositeCache(
 }
 
 /**
- * 先发布 LRU 最终值，再登记未 ACK revision 并投给 Disk I/O；数据库读回不能覆盖它。
+ * 容量准入后发布 LRU 最终值，登记未 ACK revision 并投给 Disk I/O；迟到读不能覆盖它。
  * 调用前必须预热该 ID 的正/负结论，才能准确维护表计数与互斥边界。
  */
 export function queueIdentityPolicyWrite(
@@ -84,6 +88,20 @@ export function queueIdentityPolicyWrite(
     : table === "whitelist"
       ? encodeWhitelistEntryData(value as Readonly<WhitelistEntryData>)
       : encodeBlocklistEntryData(value as Readonly<BlocklistEntryData>);
+  const revision: number = identityWriteRevision.current + 1;
+  const message: IdentityPolicyWriteDiskMessage = {
+    type: "identityPolicyWrite",
+    table,
+    id,
+    data,
+    revision,
+  };
+  const pendingWrites: Map<number, UnacknowledgedIdentityWrite> = unacknowledgedIdentityWrites(table);
+  const pendingPrevious: UnacknowledgedIdentityWrite | undefined = pendingWrites.get(id);
+  const bytes: number = unacknowledgedIdentityBytes.current[table] + storageWriteCost(data) -
+    (pendingPrevious === undefined ? 0 : storageWriteCost(pendingPrevious.data));
+  assertStorageAdmission(pendingWrites.size + (pendingPrevious === undefined ? 1 : 0), bytes);
+  if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused identity state publication.");
   if (table === "whitelist") {
     whitelistEntryCache.set(id, value as Readonly<WhitelistEntryData> | null);
   } else {
@@ -94,15 +112,8 @@ export function queueIdentityPolicyWrite(
     identityEntryCounts[table]--;
   }
   identityWriteRevision.current++;
-  const revision: number = identityWriteRevision.current;
-  unacknowledgedIdentityWrites(table).set(id, { data, revision });
-  const message: IdentityPolicyWriteDiskMessage = {
-    type: "identityPolicyWrite",
-    table,
-    id,
-    data,
-    revision,
-  };
+  pendingWrites.set(id, { data, revision });
+  unacknowledgedIdentityBytes.current[table] = bytes;
   if (identityDiskIOApi.postDiskIO?.(message) === true) return true;
   logger.error(
     `Failed to queue ${table} identity ${id}; retaining revision ${revision} for replay.`
@@ -176,8 +187,10 @@ function settleIdentityStorageWrite(
   for (const persisted of reply.writes) {
     const pending: Map<number, UnacknowledgedIdentityWrite> =
       unacknowledgedIdentityWrites(persisted.table);
-    if (pending.get(persisted.id)?.revision === persisted.revision) {
+    const change: UnacknowledgedIdentityWrite | undefined = pending.get(persisted.id);
+    if (change?.revision === persisted.revision) {
       pending.delete(persisted.id);
+      unacknowledgedIdentityBytes.current[persisted.table] -= storageWriteCost(change.data);
     }
   }
 }

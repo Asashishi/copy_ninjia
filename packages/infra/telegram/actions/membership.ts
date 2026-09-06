@@ -1,5 +1,5 @@
-import type { ChatMember } from "grammy/types";
-import { isAdminStatus } from "../../../libs/chatMember";
+import type { ChatMember, User } from "grammy/types";
+import { isAdminStatus, isPresentMember } from "../../../libs/chatMember";
 import { telegramApi } from "../client";
 import { runTelegramAction } from "./core";
 import type { TelegramApi } from "../../../types/telegramWorker";
@@ -31,15 +31,6 @@ function getChatMember({
       userId,
       signal as unknown as Parameters<TelegramApi["getChatMember"]>[2]
     );
-}
-
-function isPresentMember(member: ChatMember): boolean {
-  if (member.status === "restricted") return member.is_member;
-  return (
-    member.status === "creator" ||
-    member.status === "administrator" ||
-    member.status === "member"
-  );
 }
 
 /** 查询失败按非成员处理，避免在未确认时生成“已踢出”的错误战报。 */
@@ -75,21 +66,46 @@ export async function probeChatMembership(
   });
 }
 
+/** 管理员探测共用客户端与请求取消边界。 */
+export interface ProbeChatAdminOptions {
+  readonly chatId: number;
+  readonly userId: number;
+  readonly api?: ChatMemberApi;
+  readonly signal?: AbortSignal;
+}
+
 /**
- * 目标此刻是不是这个群的管理员/群主。
+ * 目标此刻是不是这个群或频道的管理员/所有者。
  * @returns 确认是管理员 true、确认不是 false、查询失败 undefined。
  */
 export async function probeChatAdmin(
-  chatId: number,
-  userId: number,
-  api: ChatMemberApi = telegramApi
+  { chatId, userId, api = telegramApi, signal }: ProbeChatAdminOptions
 ): Promise<boolean | undefined> {
   return runTelegramAction<ChatMember, boolean | undefined>({
     action: `probe chat admin (chat ${chatId}, user ${userId})`,
-    execute: (signal?: AbortSignal): Promise<ChatMember> =>
-      getChatMember({ api, chatId, userId, signal }),
+    execute: (requestSignal?: AbortSignal): Promise<ChatMember> =>
+      getChatMember({ api, chatId, userId, signal: requestSignal }),
     map: (member: ChatMember): boolean =>
       isAdminStatus(member.status),
     fallback: undefined,
+    signal,
+  });
+}
+
+export interface ReadPresentChatUserOptions {
+  readonly chatId: number;
+  readonly userId: number;
+  readonly signal?: AbortSignal;
+}
+
+/** 返回此刻在群内的用户；null 表示已离群，undefined 表示查询失败。 */
+export function readPresentChatUser({ chatId, userId, signal }: ReadPresentChatUserOptions): Promise<User | null | undefined> {
+  return runTelegramAction<ChatMember, User | null | undefined>({
+    action: `read chat member (chat ${chatId}, user ${userId})`,
+    execute: (requestSignal?: AbortSignal): Promise<ChatMember> =>
+      getChatMember({ api: telegramApi, chatId, userId, signal: requestSignal }),
+    map: (member: ChatMember): User | null => isPresentMember(member) ? member.user : null,
+    fallback: undefined,
+    signal,
   });
 }

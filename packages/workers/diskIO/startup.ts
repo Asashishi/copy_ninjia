@@ -2,6 +2,9 @@
 
 import { aiMemoryCache } from "../../cache/workers/diskIO/snapshots";
 import { stickerCatalogCache } from "../../cache/workers/diskIO/stickers";
+import { resetWedFileWrites } from "../../cache/workers/diskIO/wed";
+import { inspectWedMemberFiles, maintainWedMemberFiles } from "./wedMemberFiles";
+import type { WedMemberInspection } from "./wedMemberFiles";
 import { inspectLogFiles, adoptLogFiles, maintainLogFiles } from "./logFiles";
 import {
   adoptAiMemorySnapshots,
@@ -63,25 +66,27 @@ interface StartupMaintenanceInspections {
   readonly joinLogs: JoinLogRecoveryInspection;
   readonly luck: LuckDayRecoveryInspection;
   readonly verifications: VerificationRecoveryInspection;
+  readonly wedMembers: WedMemberInspection;
 }
 
-function runMaintenance(
+async function runMaintenance(
   inspections: StartupMaintenanceInspections,
   reply: DiskIOStartupReplySink
-): void {
-  const tasks: readonly (readonly [string, () => void])[] = [
-    ["logs", (): void => maintainLogFiles(inspections.logs)],
-    ["AI memories", (): void => maintainAiMemorySnapshots(inspections.aiMemories)],
-    ["sticker catalogs", (): void => maintainStickerCatalogSnapshots(inspections.stickerCatalogs)],
-    ["join logs", (): void => maintainJoinLogFiles(inspections.joinLogs)],
-    ["luck", (): void => maintainLuckDayState(inspections.luck.day, inspections.luck)],
-    ["verifications", (): void => maintainVerificationDay(inspections.verifications)],
-    ["ad samples", (): void => maintainAdSampleFiles()],
+): Promise<void> {
+  const tasks: readonly (readonly [string, () => void | Promise<void>])[] = [
+    ["logs", (): Promise<void> => maintainLogFiles(inspections.logs)],
+    ["AI memories", (): Promise<void> => maintainAiMemorySnapshots(inspections.aiMemories)],
+    ["wed members", (): Promise<void> => maintainWedMemberFiles(inspections.wedMembers)],
+    ["sticker catalogs", (): Promise<void> => maintainStickerCatalogSnapshots(inspections.stickerCatalogs)],
+    ["join logs", (): Promise<void> => maintainJoinLogFiles(inspections.joinLogs)],
+    ["luck", (): Promise<void> => maintainLuckDayState(inspections.luck.day, inspections.luck)],
+    ["verifications", (): Promise<void> => maintainVerificationDay(inspections.verifications)],
+    ["ad samples", (): Promise<void> => maintainAdSampleFiles()],
     ["temporary whitelist", (): void => maintainTemporaryWhitelistActivities(reply)],
   ];
   for (const [domain, maintain] of tasks) {
     try {
-      maintain();
+      await maintain();
     } catch (error: unknown) {
       console.error(`[diskIOWorker] startup maintenance failed for ${domain}:`, error);
     }
@@ -93,7 +98,7 @@ function runMaintenance(
  * 启动维护 cron。全部成功后统一发布 owner，发送成功回执，再执行可重试维护。
  */
 export async function handleDiskIOStartupLoad(
-  stickerPacks: readonly string[],
+  stickerPacks: readonly string[] | null,
   postReply: DiskIOStartupReplySink
 ): Promise<void> {
   stopDiskIOMaintenanceCron();
@@ -121,11 +126,13 @@ export async function handleDiskIOStartupLoad(
     const verificationState: VerificationRecoveryInspection =
       await inspectVerificationDay(today);
     const storage: StorageDatabaseInspection = inspectStorageDatabase();
+    const wedMembers: WedMemberInspection = await inspectWedMemberFiles();
 
     // 可写 SQLite 连接先接管；文件 adopt 才可能创建或规范化内容。
     const identityStorage: ReturnType<typeof adoptStorageDatabase> =
       adoptStorageDatabase(storage);
     adoptLogFiles(logs);
+    resetWedFileWrites();
     adoptAiMemorySnapshots(aiMemories);
     adoptStickerCatalogSnapshots(stickerCatalogs);
     adoptLuckDay(luck);
@@ -143,6 +150,7 @@ export async function handleDiskIOStartupLoad(
       joinLogs,
       luck,
       verifications: verificationState,
+      wedMembers,
     };
   } catch (error: unknown) {
     loadError = error instanceof Error ? error.message : String(error);
@@ -161,9 +169,10 @@ export async function handleDiskIOStartupLoad(
     whitelistEntryCount,
     chatStates,
     chatQa,
+    wedMembers: maintenanceInspections?.wedMembers.snapshots ?? new Map(),
     error: loadError,
   });
   if (maintenanceInspections === null) return;
-  runMaintenance(maintenanceInspections, postReply);
+  await runMaintenance(maintenanceInspections, postReply);
   registerDiskIOMaintenanceCron(postReply);
 }

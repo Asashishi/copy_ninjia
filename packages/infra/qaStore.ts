@@ -1,11 +1,14 @@
 /**
  * 主线程群问答持久化边界：内存 Map 是唯一热读副本，SQLite 是权威落盘源。
  *
- * 写入先发布内存最终值，再只保留 revision，正文不复制到第二张主线程表；
+ * 写入在容量准入后发布内存最终值，再只保留 revision，正文不复制到第二张主线程表；
  * Disk I/O Worker 崩溃后从内存重编码并重放未 ACK 的 revision。语义与
  * infra/chatStateStorage.ts 一致，只是主键换成 (chatId, q) 复合键。
  */
 
+import { assertStorageAdmission } from "./diskIO/storageAdmission";
+import { canQueueDiskIOBusiness } from "./diskIO/transport";
+import { storageWriteCost } from "../libs/storageWriteBudget";
 import {
   chatQaEntries,
   nextChatQaRevision,
@@ -33,6 +36,9 @@ interface ChatQaDiskIOApi {
 
 // 叶子单测可只替换实际观察的出口；生产装配始终提供完整接口。
 const chatQaDiskIOApi: ChatQaDiskIOApi = diskIO;
+
+/** 问答条数达到上限；命令回执只把这一类失败解释为业务容量已满。 */
+export class ChatQaCapacityError extends Error {}
 
 /** 启动恢复信任 SQLite 当前写入边界，只把持久化值搬进内存。 */
 export function hydrateChatQaCache(
@@ -78,24 +84,34 @@ function trackUnacknowledged(chatId: number, q: string, revision: number): void 
   questions.set(q, revision);
 }
 
-/** 把一条问答的当前最终值排进 SQLite；返回本次 revision 供 durability barrier 核对。 */
-function queueChatQaWrite(chatId: number, q: string): number {
-  if (!Number.isSafeInteger(nextChatQaRevision.current + 1)) {
-    throw new Error("Chat-qa revision space is exhausted.");
+/** 发布前验证未 ACK 的问题、墓碑和正文预算；低频命令直接核对现有表。 */
+function prepareChatQaWrite(chatId: number, q: string, answer: string | undefined): ChatQaWriteDiskMessage {
+  const revision: number = nextChatQaRevision.current + 1;
+  if (!Number.isSafeInteger(revision)) throw new Error("Chat-qa revision space is exhausted.");
+  const data: string | null = answer === undefined ? null : encodeChatQaData(answer, `${IDENTITY_DATABASE_PATH}:chat_qa[${chatId}]`);
+  let entries: number = 1;
+  let bytes: number = storageWriteCost(data, q);
+  for (const [pendingChatId, questions] of unacknowledgedChatQaWrites) {
+    for (const pendingQ of questions.keys()) {
+      if (pendingChatId === chatId && pendingQ === q) continue;
+      entries++;
+      const previous: string | undefined = chatQaEntries.get(pendingChatId)?.get(pendingQ);
+      bytes += storageWriteCost(previous === undefined ? null : encodeChatQaData(previous, "chat qa admission"), pendingQ);
+    }
   }
-  const answer: string | undefined = chatQaEntries.get(chatId)?.get(q);
-  const data: string | null = answer === undefined
-    ? null
-    : encodeChatQaData(answer, `${IDENTITY_DATABASE_PATH}:chat_qa[${chatId}]`);
-  nextChatQaRevision.current++;
-  const revision: number = nextChatQaRevision.current;
-  trackUnacknowledged(chatId, q, revision);
-  if (!postChatQaWrite({ type: "chatQaWrite", chatId, q, data, revision })) {
-    logger.error(
-      `Failed to queue chat qa for chat ${chatId}; retaining revision ${revision} for replay.`
-    );
+  assertStorageAdmission(entries, bytes);
+  const message: ChatQaWriteDiskMessage = { type: "chatQaWrite", chatId, q, data, revision };
+  if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat qa state publication.");
+  return message;
+}
+
+function queueChatQaWrite(message: ChatQaWriteDiskMessage): void {
+  nextChatQaRevision.current = message.revision;
+  trackUnacknowledged(message.chatId, message.q, message.revision);
+  if (!postChatQaWrite(message)) {
+    logger.error("Failed to queue chat qa; retaining its revision for replay.");
+    throw new Error("Failed to queue chat qa persistence.");
   }
-  return revision;
 }
 
 /**
@@ -110,25 +126,28 @@ export function setChatQa(chatId: number, q: string, a: string): "created" | "re
   const questions: Map<string, string> = existing ?? new Map<string, string>();
   const replaced: boolean = questions.has(q);
   if (!replaced && questions.size >= CHAT_QA_MAX_PER_CHAT) {
-    throw new Error(
+    throw new ChatQaCapacityError(
       `${IDENTITY_DATABASE_PATH}:chat_qa must contain at most ` +
       `${CHAT_QA_MAX_PER_CHAT} entries per chat; remove one before adding another.`
     );
   }
+  const message: ChatQaWriteDiskMessage = prepareChatQaWrite(chatId, q, a);
   questions.set(q, a);
   if (existing === undefined) chatQaEntries.set(chatId, questions);
-  queueChatQaWrite(chatId, q);
+  queueChatQaWrite(message);
   return replaced ? "replaced" : "created";
 }
 
 /** 删除一条问答；返回是否真的删掉了，用于让回执如实措辞。 */
 export function removeChatQa(chatId: number, q: string): boolean {
   const questions: Map<string, string> | undefined = chatQaEntries.get(chatId);
-  if (questions?.delete(q) !== true) return false;
+  if (questions?.has(q) !== true) return false;
+  const message: ChatQaWriteDiskMessage = prepareChatQaWrite(chatId, q, undefined);
+  questions.delete(q);
   // 空表不留存，否则每个曾登记过问答的群都会在热表里留一项空壳，而直答路径
   // 第一步的 `get(chatId)` 就再也不能靠 undefined 短路。
   if (questions.size === 0) chatQaEntries.delete(chatId);
-  queueChatQaWrite(chatId, q);
+  queueChatQaWrite(message);
   return true;
 }
 

@@ -40,3 +40,5 @@ export { handleSendCommand } from "./send";
 export { handlePermissionCommand } from "./permission";
 export { handleWhiteCommand } from "./white";
 export { confirmLuckDraw, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, restoreLuckState } from "./luckChallenge/index";
+
+export { dispatchWedCommand, dispatchWedCallback } from "./wed/dispatch";

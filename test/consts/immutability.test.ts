@@ -1,4 +1,11 @@
 import { expect, test } from "bun:test";
+import { DISK_IO_RESPAWN_PRIORITIES } from "../../packages/consts/diskIO/common";
+
+function assertWedRecoveryPriorityReadonly(): void {
+  // @ts-expect-error 恢复顺序常量不得由调用方改写。
+  DISK_IO_RESPAWN_PRIORITIES.WED_MEMBERS = 0;
+}
+void assertWedRecoveryPriorityReadonly;
 import {
   AD_DETECT_TOGGLE_TEXTS,
   AI_CHAT_TOGGLE_TEXTS,

@@ -4,6 +4,7 @@ import type { ChatActionControl } from "./chatAction";
 import type { AiDirectTriggerReason, ImageGenerationReference } from "./protocol";
 import type { BufferedReplyReference } from "./memory";
 import type { MediaKind } from "../media";
+import type { LinkedQueue } from "../../libs/linkedQueue";
 
 /** 同群并发位占满时排队补跑的直接触发快照。 */
 export interface QueuedReplyTrigger {
@@ -32,6 +33,8 @@ export interface QueuedReplyTrigger {
   messageThreadId: number | undefined;
   senderName: string;
   text: string;
+  /** 入站媒体解析结果；占位期间保留顺位，出队后先等解析再构造提示词。 */
+  mediaPreparation?: Promise<MediaCommentContext | null>;
 }
 
 /** 一轮回复交给模型的有序初始上下文区块。三段恒定出现——触发类型只改变
@@ -97,28 +100,71 @@ export interface ReplyToolContext {
 export interface ReplyToolset {
   /** 本轮全部自定义函数声明（静态查询工具 + 现组装的行动工具）。中立
    *  JSON Schema 表达，两家供应商实现包各自转成自家形状。 */
-  functions: readonly AiToolDefinition[];
+  readonly functions: readonly AiToolDefinition[];
   /** 本轮生图参考素材文案，拼进运行时状态区块（见
    *  aiChat/ai/tools/replyToolset/imageReference.ts）。没挂生图工具时为空串。
    *  文案不进工具声明：素材尺寸每次触发都不同，会打散供应商侧缓存的稳定前缀。
    *  群冷却连这里都不进，只由执行器在调用时判定并直接拒绝。 */
-  imageReference: string;
+  readonly imageReference: string;
   /** 本轮是否挂载供应商的服务端联网检索工具（Gemini 的 googleSearch /
    *  OpenAI 的 hosted web_search）。 */
-  webSearch: boolean;
-  has(name: string): boolean;
-  execute(name: string, argumentsJson: string): Promise<string>;
-  actionsUsed(): number;
-  isActive(): boolean;
+  readonly webSearch: boolean;
+  readonly has: (name: string) => boolean;
+  readonly execute: (name: string, argumentsJson: string) => Promise<string>;
+  /** 已接纳动作的预占额度；失败或取消不退回给模型重复提交。 */
+  readonly actionsUsed: () => number;
+  /** 等待已接纳调用链及其发送回调全部结算；调用前须结束模型工具派发。 */
+  readonly settle: () => Promise<void>;
+  /** 实际成功落地的动作数，不含乐观接纳或失败的调用。 */
+  readonly actionsCompleted: () => number;
+  readonly isActive: () => boolean;
   /** 与 ReplyToolContext 相同的 generation 取消信号。 */
-  signal?: AbortSignal;
+  readonly signal?: AbortSignal;
 }
 
-/** 一轮行动工具内的已发送消息与错字占用状态。 */
+/** 行动工具校验后的独立调用链；result 是接纳回执，run 返回实际执行结果。 */
+export interface PreparedReplyAction {
+  readonly result: string;
+  readonly run: (chatAction: ChatActionControl) => Promise<string>;
+}
+
+/** 本轮独立调用链的接纳、等待和真实完成计数。 */
+export interface ReplyActionChains {
+  readonly start: (name: string, action: PreparedReplyAction) => void;
+  readonly settle: () => Promise<void>;
+  readonly completed: () => number;
+}
+
+/** 字符串表示立即可用的查询结果或拒绝；行动链交给本轮生命周期持有。 */
+export type ReplyToolExecution = string | PreparedReplyAction;
+
+/** 同群入站顺位句柄；模型结束后 commit 并释放模型位，动作等待 ready，收尾必须 await finish。 */
+export interface ReplyDeliveryTurn {
+  readonly ready: Promise<void>;
+  readonly commit: () => void;
+  readonly finish: () => Promise<void>;
+}
+
+/** 发送桶中的入站占位；完成项按顺位回收，不占模型并发位。 */
+export interface ReplyDeliverySlot {
+  readonly ready: PromiseWithResolvers<void>;
+  readonly released: PromiseWithResolvers<void>;
+  state: "pending" | "ready" | "done";
+}
+
+/** 单群定长发送桶数组；每桶可追加多轮，head/tail 按入站顺位循环，桶数不限制积压轮数。 */
+export interface ReplyDeliveryWindow {
+  readonly slots: readonly LinkedQueue<ReplyDeliverySlot>[];
+  head: number;
+  tail: number;
+  size: number;
+}
+
+/** 一轮行动工具内的已接纳文本与错字占用状态。 */
 export interface RoundMessageState {
-  messageCount: number;
   typoUsedThisRound: boolean;
-  sentCanonicalTexts: Map<number, string>;
+  /** 接纳时登记正文及媒体附言，容量受本轮动作硬顶约束，随轮次释放。 */
+  acceptedCanonicalTexts: Set<string>;
   /** 执行侧已接管的错字纠正单字；防止模型从工具结果自行补发。 */
   reservedCorrectionText: string | null;
 }

@@ -37,7 +37,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 ## 📑 Page Index & Summary
 
 1. **[01 Environment Setup and First Run](01-getting-started.md)**
-   - Dependencies (Bun 1.4.1 / Linux / Bot Token / AI provider API Key)
+   - Dependencies (Bun 1.4.2 / Linux / Bot Token / AI provider API Key)
    - Required fields in `config/telegram.json` and other deployment configuration
    - Telegram BotFather setup (Privacy Mode / Admin permissions / Inline Mode)
    - First launch and the `/init enable` handshake after the bot joins a group

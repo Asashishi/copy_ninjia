@@ -56,7 +56,7 @@
     `adDetectAdmission.ts`。
 - **`packages/config/`**
   - **責務**：deployment `config/*.json` の厳密 schema と process snapshot、feature 単位の readiness 判定。identity policy はここに置きません。
-  - **代表的なファイル**：`telegram.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
+  - **代表的なファイル**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
 - **`packages/database/`**
   - **責務**：共有 SQLite（identity policy と chat state）の schema、codec、行検証、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
   - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`chatQa.ts`、`migration.ts`、`inspection.ts`、`admin.ts`）、`validation/storageRows.ts`。
@@ -109,6 +109,10 @@
 - **`scripts/`**
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
   - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`migrateQaThumbnail.ts` と `qaThumbnailMigration/`、cold migration が共用する `migration/backup.ts` と `migration/lifecycle.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
+
+`telegramInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`telegram.ts` は runtime snapshot を担当します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
+
+`commands/wed.ts` は操作の状態機械、`wed/dispatch.ts` は受理、`wed/runtime.ts` は共用有界実行器とアプリケーション lifecycle の接続を担当し、`wed/rendering.ts` は純粋な描画処理です。操作状態と実行器 handle は `cache/main/wed.ts`、各グループの長期メンバー集合と dirty window は `cache/main/wedMembers.ts` に置きます。`wed/persistence.ts` が起動時の接管、バッチ送信、Worker 再構築時の replay を担当します。`workers/diskIO/wedMemberFiles.ts` はファイルの厳格検証と原子置換を行い、書き込み待ち snapshot は `cache/workers/diskIO/wed.ts` が所有します。アバター読み取りと出力は `infra/telegram/` を再利用します。
 
 ## 新しいコードの配置判断
 

@@ -22,7 +22,7 @@ flowchart TD
     MAIN["🧵 主线程<br/>确认式 update runner（逐条串行取数）<br/>唯一 Telegram 客户端 + 出站总闸<br/>state 门面 + StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>多轮工具调用（可替换 provider）<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
-    DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 身份数据库 / 运势 / 验证文件 / 入群日志"]:::worker
+    DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 身份数据库 / 运势 / 验证文件 / 入群日志 / wed 成员"]:::worker
 
     MAIN <-->|双工消息| AI
     MAIN <-->|双工消息| RAID
@@ -34,7 +34,7 @@ flowchart TD
 - **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及两份权威内存镜像：`cache/main/storage.ts` 的 `state.json` 全局镜像（copy 状态与素材直链），和 `cache/main/chatState.ts` 的 `chat_states` 群状态热读副本（群开关、锁定记录、权限快照、群名与中转标记，容量恰为 25）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
 - **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 SQLite `pending_blocked_removals` 表；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
-- **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/` 六个领域目录的串行读写；`state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
+- **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/`、`wed/` 七个领域目录的串行读写；`state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
 
 [`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) 都只是稳定公开面的薄显式导出，不再持有实现或状态。AI 的监督生命周期与跨线程代理归 [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)，每消息入口归 [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts)；Anti-Raid 的监督生命周期归 [`workerBridge.ts`](../../packages/antiRaid/workerBridge.ts)，durable 投递归 [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)，update 路由归 [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts)。广告检测继续按「主线程投递门禁与候选字段投影、Worker 判定与副作用、不可丢的拉黑与封禁回主线程」分工，候选构造见 [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts)，投递与排空见 [`adDetect.ts`](../../packages/antiRaid/adDetect.ts)，Worker 流水线见 [`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/)。
 
@@ -90,15 +90,17 @@ flowchart TD
 - **图片 / 贴纸 / GIF** 同样先占位入队，再异步下载并调用视觉模型生成描述，解析完成后原地回填同一条目的文本字段；命中贴纸白名单目录时跳过异步解析，直接写入目录里的现成描述。
 - **语音**走同一条占位—回填管线，只是把视觉描述换成逐字转写（使用 `config/agent.json` 的 `media` 能力）。转录行由 `[语音]` 变成 `[语音：<原话>]`。超过时长或体积上限的语音在下载之前就被拦掉；视觉与语音支持度分别由首次真实请求探测：明确不支持、或端点以 404/405 表明模型/路径不存在（记一行指向 `$.agent.media` 的诊断）之后都不再下载该模态；超时、429、5xx 这类端点故障只按连续次数做有限指数退避，退避期内直接降级为占位、不下载也不占执行器槽位，一次成功即清零。单份媒体自身的问题不改变模态结论。
 
-触发回复时，滚动记忆被组装成上一节所述的四段式模型输入，随服务端联网检索工具与自定义工具一并发给 `agent.text` 配置的 provider；摘要、媒体、生图与生歌各自读取自己的能力配置，不做运行时故障切换。检索在 provider 服务端执行（Gemini 的 `googleSearch` / OpenAI 的 hosted `web_search`）；同一回复始终使用固定的联网规则，每轮次数上限作为软限制写在那份规则里；真实调用数由回复循环记账并在跨过上限时点名，但检索工具在一轮内恒挂（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用，均经主线程代理执行而非直接操作 Telegram：
+触发回复时，滚动记忆被组装成上一节所述的四段式模型输入，随服务端联网检索工具与自定义工具一并发给 `agent.text` 配置的 provider；摘要、媒体、生图与生歌各自读取自己的能力配置，不做运行时故障切换。检索在 provider 服务端执行（Gemini 的 `googleSearch` / OpenAI 的 hosted `web_search`）；同一回复始终使用固定的联网规则，每轮次数上限作为软限制写在那份规则里；真实调用数由回复循环记账并在跨过上限时点名，但检索工具在一轮内恒挂（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用。发送类工具先校验并返回乐观接纳回执，每次调用的生成、停顿、主线程 Telegram 代理和真实发送回调由独立链持有；模型可继续查询、调用其它工具或结束。查看与查询直接返回真实数据，不等待发送队列：
 
-- 💬 **发文字消息**——正文必须由模型显式调用发送工具；仅当整轮零成功动作时，系统才会兜底发送。
-- 👍 **添加反应**——从白名单 emoji 中选择，一轮最多成功一次。
-- 🔍 **查看贴纸包**——按需检索贴纸目录，调用次数独立计数。
-- 🎟️ **发送贴纸**——一轮最多成功一次。
-- 🎨 **生成图片**、🎵 **生成歌曲**——只在群友直接 @/回复机器人或用媒体直接唤起时，按对应供应商能力挂进工具集；随机插话与非直接媒体评价不暴露这两个工具。两者各自一轮最多成功一次。生歌使用群内共享的 15 分钟冷却，superAdmin 不受限；发出去的是一条带曲名/演唱者/时长的音乐消息，封面由生图侧的 provider 另画一张（那是消息装帧，不占生图冷却、不计动作预算）。
+- 💬 **发文字消息**——正文必须由模型显式调用发送工具；仅当整轮零接纳动作时，系统才会兜底发送。
+- 👍 **添加反应**——从白名单 emoji 中选择，一轮最多接纳一次。
+- 🔍 **查看贴纸包**——同步返回本轮真实贴纸清单，调用次数独立计数，发送必须先查看对应包。
+- 🎟️ **发送贴纸**——一轮最多接纳一次。
+- 🎨 **生成图片**、🎵 **生成歌曲**——只在群友直接 @/回复机器人或用媒体直接唤起时，按对应供应商能力挂进工具集；随机插话与非直接媒体评价不暴露这两个工具。两者各自一轮最多接纳一次。生歌使用群内共享的 15 分钟冷却，superAdmin 不受限；发出去的是一条带曲名/演唱者/时长的音乐消息，封面由生图侧的 provider 另画一张（那是消息装帧，不占生图冷却、不计动作预算）。
 
-本轮产生的文字、贴纸、反应、图片与歌曲结果会写回滚动记忆，并按策略周期性快照落盘；单轮动作次数上限与防循环规则见 [04 运行时权威约束](04-invariants.md)。
+文字、贴纸、图片与歌曲只在真实发送成功后写回滚动记忆，并按策略周期性快照落盘；单轮动作次数上限与防循环规则见 [04 运行时权威约束](04-invariants.md)。
+
+同群最多同时处理 `REPLY_ROUND_MAX_CONCURRENT`（当前为 5）轮 AI 请求，尚未开始处理的直接触发保留在容量为 `REPLY_TRIGGER_QUEUE_MAX`（当前为 15）的 FIFO 中，开始轮次即出队。每轮启动时按入站顺序预留发送位置，媒体在异步识别前占位。发送侧使用 5 个固定桶，每桶可追加多条链，积压链数不参与模型并发准入。模型结束时 commit 完整动作链并立即释放模型位、补跑待处理请求；发送只执行最前面的就绪轮次，等待未就绪占位，跳过已完成项。同轮动作按工具调用顺序串联，附加动作等待真实结果。发送、心跳与贴纸锁仍由该轮任务持有至实际收尾，之后回收发送顺位。触发限频、供应商配额、Telegram 控流、429 重试和取消边界继续生效。
 
 ## 启动顺序
 
@@ -109,7 +111,7 @@ flowchart TD
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
 3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，出口在 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。
-4. 初始化 **Disk I/O Worker**。日志、AI、贴纸、运势、待验证、入群日志与 `database/storage.sqlite` 先完成全域只读 inspect 和严格解码；全部成功后才统一 adopt owner，成功回执之后再清理临时/孤儿/过期文件、执行 compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 统一维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计；各领域原有的启动或业务事件触发清理继续作为兜底，待验证轮换失败只保留不阻止退出的一秒重试 timer。任何 inspect 失败都保留所有领域现场，不 chmod、rewrite、unlink，也不留下维护 cron。主线程只接收 `chat_states`、永久名单计数和未完成处置，不复制永久白名单、黑名单或临时白名单活动整表。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
+4. 初始化 **Disk I/O Worker**。日志、AI、贴纸、运势、待验证、入群日志、wed 成员与 `database/storage.sqlite` 先完成全域只读 inspect 和严格解码；全部成功后才统一 adopt owner，成功回执之后再清理临时/孤儿/过期文件、执行 compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 统一维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计；各领域原有的启动或业务事件触发清理继续作为兜底，待验证轮换失败只保留不阻止退出的一秒重试 timer。任何 inspect 失败都保留所有领域现场，不 chmod、rewrite、unlink，也不留下维护 cron。主线程接管 wed 成员集合，并接收 `chat_states`、永久名单计数和未完成处置，不复制永久白名单、黑名单或临时白名单活动整表。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
 6. 初始化 **AI Worker**（AI 配置不可用时这一步只记一行日志并整体跳过），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker** 与黑名单补扫调度，并对已托管的群补扫一轮黑名单。
 7. 把 `state.global.assets` 的缺项补成内置缺省值（后台落盘，不阻塞启动），启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。

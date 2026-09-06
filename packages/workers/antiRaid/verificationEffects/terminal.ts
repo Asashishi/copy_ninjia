@@ -1,17 +1,17 @@
+import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
+import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
 import { verificationEntries } from "../../../cache/workers/antiRaid/verification";
 import {
   VERIFICATION_TERMINAL_RETRY_MAX_MS,
   VERIFICATION_TERMINAL_RETRY_MS,
   VERIFICATION_TIMEOUT_MS,
 } from "../../../consts/antiRaid/verification";
-import { KICK_NOTICE_AUTO_DELETE_MS } from "../../../consts/telegram";
 import { logger } from "../../../infra/logger";
 import {
-  deleteMessageAfter,
   deleteMessageWithOutcome,
   kickChatMemberWithOutcome,
   probeChatMembership,
-  sendMessage,
   telegramApi,
 } from "../../../infra/telegram";
 import { formatMinSec } from "../../../libs/time";
@@ -378,13 +378,15 @@ async function expelMember({
     : removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown"
       ? expectedState.unconfirmedNoticeSent !== true
       : expectedState.failureNoticeSent !== true;
-  const noticeMessageId: number | undefined = shouldSendNotice
-    ? await sendMessage({
+  const notice: TelegramWorkerTemporaryMessageResult | undefined = shouldSendNotice
+    ? await sendTemporaryMessageFromMain({
+      purpose: "notice",
+      deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       chatId,
       text: noticeText,
-      api: telegramApi,
     })
     : undefined;
+  const noticeMessageId: number | undefined = notice !== undefined && "messageId" in notice ? notice.messageId : undefined;
   if (!kicked && shouldSendNotice && noticeMessageId !== undefined) {
     if (removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown") {
       expectedState.unconfirmedNoticeSent = true;
@@ -392,12 +394,6 @@ async function expelMember({
     publishVerificationChange(chatId, userId, true);
   }
   if (noticeMessageId !== undefined && kicked) {
-    deleteMessageAfter({
-      chatId,
-      messageId: noticeMessageId,
-      delayMs: KICK_NOTICE_AUTO_DELETE_MS,
-      api: telegramApi,
-    });
     expectedState.successNoticeSent = true;
     publishVerificationChange(chatId, userId, true);
     return false;

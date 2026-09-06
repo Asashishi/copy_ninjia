@@ -1,4 +1,8 @@
+import { STORAGE_WRITE_MAX_FAILURES } from "../../../consts/diskIO/business";
 import {
+  storagePendingBudget,
+  storageWriteRetry,
+  storageWriteFatalReply,
   pendingBlocklistWrites,
   pendingChatQaWrites,
   pendingChatStateWrites,
@@ -44,7 +48,7 @@ export function hasPendingStorageWrites(): boolean {
 }
 
 function armStorageFlushTimer(): void {
-  if (!hasPendingStorageWrites() || storageWriteFlushTimer.current !== null) return;
+  if (!hasPendingStorageWrites() || storageWriteFlushTimer.current !== null || storageWriteRetry.signaled) return;
   storageWriteFlushTimer.current = setTimeout((): void => {
     storageWriteFlushTimer.current = null;
     const reply: IdentityPersistenceReply | null = storagePersistenceReplyHolder.current;
@@ -59,22 +63,22 @@ function armStorageFlushTimer(): void {
       );
       armStorageFlushTimer();
     }
-  }, IDENTITY_WRITE_FLUSH_INTERVAL_MS);
+  }, Math.max(IDENTITY_WRITE_FLUSH_INTERVAL_MS, storageWriteRetry.retryAt - performance.now()));
   storageWriteFlushTimer.current.unref();
 }
 
 /**
- * 任一领域达到容量即提交全部领域，否则为首条变化建立固定截止 timer。
- *
- * 问答不进这道闸：它的外层键是群，受管群上限远低于批量阈值，凑不满也撑不大，
- * 到点由 timer 一并提交即可。
+ * 任一领域达到批次阈值即提交全部领域，否则为首条变化建立固定截止 timer。
+ * 事务失败后新输入仅合并最终值，由有界退避 timer 重试；条目和字节预算独立执行。
  */
 export function flushIfStorageFull(reply: IdentityPersistenceReply): void {
+  if (storageWriteRetry.failures > 0) { armStorageFlushTimer(); return; }
   if (
     pendingWhitelistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingBlocklistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingTemporaryWhitelistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingRemovalWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
+    pendingChatQaWrites.size >= STATE_MANAGED_CHAT_LIMIT ||
     pendingChatStateWrites.size >= STATE_MANAGED_CHAT_LIMIT
   ) {
     if (!flushStorageDatabase(reply)) armStorageFlushTimer();
@@ -108,18 +112,13 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
     clearTimeout(storageWriteFlushTimer.current);
     storageWriteFlushTimer.current = null;
   }
-  const whitelist: Map<number, PendingIdentityPolicyWrite> = new Map(pendingWhitelistWrites);
-  const blocklist: Map<number, PendingIdentityPolicyWrite> = new Map(pendingBlocklistWrites);
-  const temporaryWhitelist: Map<number, PendingTemporaryWhitelistWrite> =
-    new Map(pendingTemporaryWhitelistWrites);
-  const removals: Map<number, PendingRemovalWrite> = new Map(pendingRemovalWrites);
-  const chatStates: Map<number, PendingChatStateWrite> = new Map(pendingChatStateWrites);
-  // 内层 Map 也要复制：外层浅拷贝之后两边仍共享同一批内层 Map，提交期间
-  // 主线程再写一条问答就会混进本轮事务，而它的 ACK 不在本轮的确认清单里。
-  const chatQaChanges: Map<number, Map<string, PendingChatQaWrite>> = new Map();
-  for (const [chatId, questions] of pendingChatQaWrites) {
-    chatQaChanges.set(chatId, new Map(questions));
-  }
+  // Bun SQLite 事务同步执行；清空与 ACK 回调之间不让出本 isolate。
+  const whitelist: Map<number, PendingIdentityPolicyWrite> = pendingWhitelistWrites;
+  const blocklist: Map<number, PendingIdentityPolicyWrite> = pendingBlocklistWrites;
+  const temporaryWhitelist: Map<number, PendingTemporaryWhitelistWrite> = pendingTemporaryWhitelistWrites;
+  const removals: Map<number, PendingRemovalWrite> = pendingRemovalWrites;
+  const chatStates: Map<number, PendingChatStateWrite> = pendingChatStateWrites;
+  const chatQaChanges: Map<number, Map<string, PendingChatQaWrite>> = pendingChatQaWrites;
   const removalRevision: number | null = pendingRemovalSnapshotRevision.current;
   try {
     commitStorageDatabaseChanges(requireStorageDatabase(), {
@@ -132,9 +131,19 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
     });
   } catch (error: unknown) {
     console.error("[diskIOWorker] storage database transaction failed:", error);
+    storageWriteRetry.failures++;
+    storageWriteRetry.retryAt = performance.now() + IDENTITY_WRITE_FLUSH_INTERVAL_MS * storageWriteRetry.failures;
+    if (storageWriteRetry.failures >= STORAGE_WRITE_MAX_FAILURES && !storageWriteRetry.signaled) {
+      storageWriteRetry.signaled = true;
+      storageWriteFatalReply.current?.();
+    }
     armStorageFlushTimer();
     return false;
   }
+  storagePendingBudget.reset();
+  storageWriteRetry.failures = 0;
+  storageWriteRetry.retryAt = 0;
+  storageWriteRetry.signaled = false;
   const acknowledgements: IdentityPolicyPersistedRevision[] = [];
   const temporaryWhitelistAcknowledgements: TemporaryWhitelistPersistedRevision[] = [];
   const chatStateAcknowledgements: ChatStatePersistedRevision[] = [];

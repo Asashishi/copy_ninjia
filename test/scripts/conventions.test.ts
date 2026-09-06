@@ -140,18 +140,24 @@ describe("project convention collectors", () => {
     for (const directory of [
       join(commandsRoot, "gag"),
       join(commandsRoot, "qa"),
+      join(commandsRoot, "wed"),
       join(commandsRoot, "luckChallenge"),
       join(sourceRoot, "copy"),
+      join(sourceRoot, "antiRaid"),
+      join(sourceRoot, "auto"),
       join(sourceRoot, "workers", "antiRaid"),
     ]) mkdirSync(directory, { recursive: true });
     await Bun.write(join(commandsRoot, "gag.ts"), "");
     await Bun.write(join(commandsRoot, "gag", "notices.ts"), "");
     await Bun.write(join(commandsRoot, "qa", "notices.ts"), "");
+    await Bun.write(join(commandsRoot, "wed", "messages.ts"),
+      "export function sendWedResult() { return bot.api.sendPhoto(1, image); }");
     await Bun.write(join(sourceRoot, "copy", "avatarQueue.ts"), "");
     await Bun.write(
       join(commandsRoot, "bad.ts"),
       'import { sendMessage } from "../infra/telegram";\n' +
-      "const options = { preserveInGroup: true };"
+      "const options = { preserveInGroup: true };\n" +
+      "function wrong() { return bot.api.sendPhoto(1, image); }"
     );
     await Bun.write(
       join(commandsRoot, "luckChallenge", "inline.ts"),
@@ -161,6 +167,8 @@ describe("project convention collectors", () => {
       join(sourceRoot, "workers", "antiRaid", "verificationReminders.ts"),
       'import { sendCommandMessage } from "../../../infra/telegram";'
     );
+    await Bun.write(join(sourceRoot, "workers", "antiRaid", "badNotice.ts"),
+      'import { sendMessage as send } from "../../../infra/telegram"; function notice() { return send({chatId: 1, text: "notice"}); }');
 
     const problems: readonly string[] = await collectTelegramMessageProblems(
       root,
@@ -168,11 +176,13 @@ describe("project convention collectors", () => {
       commandsRoot
     );
     expect(problems).toEqual(expect.arrayContaining([
+      expect.stringContaining("bad.ts: state-owned command photos must use sendWedResult"),
       expect.stringContaining("command text must use sendCommandMessage"),
       expect.stringContaining("must also pass messageThreadId"),
       expect.stringContaining("state-owned button messages"),
     ]));
-    expect(problems).toHaveLength(4);
+    expect(problems).toContainEqual(expect.stringContaining("ordinary Worker/group notices"));
+    expect(problems).toHaveLength(6);
   });
 
   test("冷迁移命令、入口与当前 schema 边必须同步", async () => {

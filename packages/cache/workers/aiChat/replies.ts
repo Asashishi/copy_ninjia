@@ -4,13 +4,13 @@ import {
   RATE_LIMIT_LONG_WINDOW_MS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
 } from "../../../consts/aiChat/rateLimit";
-import type { QueuedReplyTrigger } from "../../../types/aiChat/replies";
+import type { QueuedReplyTrigger, ReplyDeliveryWindow } from "../../../types/aiChat/replies";
 
 /**
- * AI 回复调度的内存状态，由回复流水线的多个子模块共同驱动，没有单一 owner：
+ * owner：AI Worker。回复调度的内存状态由本线程的回复流水线共同驱动：
  * packages/workers/aiChat/replyQueue.ts（排队/溢出提示消费）、replyRound.ts
  * （并发位与长窗口触发时刻）、replyPipeline.ts（在途计数读取/溢出提示登记）、
- * replyState.ts（代际读取、限频提示冷却）；失效与整体重置经
+ * replyDelivery.ts（发送顺位桶）、replyState.ts（代际读取、限频提示冷却）；失效与整体重置经
  * cache/workers/aiChat/index.ts 的门面函数，由 replyState.ts/rollingMemory.ts 调用。
  */
 
@@ -37,9 +37,22 @@ export const rateLimitNoticeTimes: Map<number, number> = new Map();
  * workers/aiChat/replyRound.ts），永远撑不满。
  */
 export const longTriggerTimes: Map<number, TimestampDeque> = new Map();
-/** 每群当前在途回复数；回复 finally 递减，Worker 重建后归零。 */
+/**
+ * 每群正在处理的模型轮数，准入上限为 REPLY_ROUND_MAX_CONCURRENT，高压时为 1。
+ * 启动时递增，模型结束并交付完整链时递减，归零时删除；发送等待不计入，Worker 重建后清空。
+ */
 export const activeReplyCounts: Map<number, number> = new Map();
-/** 同群并发满载后的直接触发有界队列；轮次接纳或群失效时消费/清除。 */
+/**
+ * owner：AI Worker。入站准入时创建同群发送桶数组，桶数为 REPLY_ROUND_MAX_CONCURRENT。
+ * 每桶可持有多轮；积压量随已准入未结算的轮次增长，不以模型并发数封顶，也不参与模型准入。
+ * 完成项按入站顺位回收，全部排空时删除；群失效或 reset 清空，Worker 重建从空表开始。
+ * 旧代迟到收尾不得删除新代条目，入站限频与 Telegram 控流各自生效。
+ */
+export const replyDeliveryWindows: Map<number, ReplyDeliveryWindow> = new Map();
+/**
+ * 每群尚未开始处理的直接触发 FIFO，上限为 REPLY_TRIGGER_QUEUE_MAX（15）。
+ * 准入时入队，轮次启动时出队，排空时删除；群失效、reset 或 Worker 重建时清空。
+ */
 export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
 /**
  * 已安排溢出提示的群 -> 那条被丢掉的触发所在的论坛话题（General/非论坛群为
@@ -55,7 +68,7 @@ export const pendingOverflowNotices: Map<number, number | undefined> = new Map()
  * 同步 abort 旧代；该代任务全部 settle 后删除。
  */
 export const replyAbortControllers: Map<string, AbortController> = new Map();
-/** 每个 chat:generation 尚未 settle 的回复、提示、媒体描述与记忆压缩任务。 */
+/** 每个 chat:generation 尚未 settle 的回复及其发送链、提示、媒体描述与记忆压缩任务。 */
 export const replyGenerationTasks: Map<string, Set<Promise<void>>> = new Map();
 
 /** 读取某群当前回复 epoch；未登记时分配一个本 isolate 内唯一的新值。 */
@@ -77,10 +90,10 @@ export function isCachedReplyGenerationCurrent(chatId: number, generation: numbe
 }
 
 /** 使旧异步工作失效，并清理尚未启动的工作与本群限频历史。activeReplyCounts
- * 刻意保留到各在途轮 finally 自行释放，避免禁用/重启用之间复用并发位时，
- * 旧轮的迟到 finally 把新轮计数误减掉。 */
+ * 保留到各模型处理结束时自行释放；旧代和新代分别释放自己认领的并发位。 */
 export function invalidateChatReplyCache(chatId: number): void {
   replyGenerations.delete(chatId);
+  replyDeliveryWindows.delete(chatId);
   pendingReplyTriggers.delete(chatId);
   pendingOverflowNotices.delete(chatId);
   longTriggerTimes.delete(chatId);
@@ -104,6 +117,7 @@ export function resetAiChatReplyCache(): void {
   rateLimitNoticeTimes.clear();
   longTriggerTimes.clear();
   activeReplyCounts.clear();
+  replyDeliveryWindows.clear();
   pendingReplyTriggers.clear();
   pendingOverflowNotices.clear();
   for (const controller of replyAbortControllers.values()) controller.abort();

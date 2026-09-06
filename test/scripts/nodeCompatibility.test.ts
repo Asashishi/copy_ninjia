@@ -216,3 +216,30 @@ describe("Node 兼容约定", () => {
     )).toEqual([]);
   });
 });
+
+test("getBuiltinModule 的直接调用与字面量下标都进入静态导入门禁", (): void => {
+  for (const expression of ["process.getBuiltinModule", 'process["getBuiltinModule"]', 'globalThis["process"][`getBuiltinModule`]']) {
+    const path: string = "/project/packages/example.ts";
+    for (const module of ["fs", "node:fs", "path"]) {
+      expect(collectNodeCompatibilityProblems("/project", path, source(path, `${expression}("${module}");`)))
+        .toEqual([expect.stringContaining("unreviewed runtime process.getBuiltinModule")]);
+    }
+  }
+});
+
+test("globalThis.Buffer 和字面量下标复用方法白名单", (): void => {
+  for (const expression of ["Buffer", "globalThis.Buffer", 'globalThis["Buffer"]', "globalThis[`Buffer`]"]) {
+    for (const method of [".byteLength", '["byteLength"]', "[`byteLength`]"]) {
+      const path: string = "/project/packages/libs/jsonBytes.ts";
+      expect(collectNodeCompatibilityProblems("/project", path, source(path, `${expression}${method}("x");`))).toEqual([]);
+      const unknown: string = "/project/packages/example.ts";
+      expect(collectNodeCompatibilityProblems("/project", unknown, source(unknown, `${expression}${method}("x");`)))
+        .toEqual([expect.stringContaining("global Buffer.byteLength")]);
+    }
+    const path: string = "/project/packages/libs/jsonBytes.ts";
+    expect(collectNodeCompatibilityProblems("/project", path, source(path, `${expression}.from("x");`)))
+      .toEqual([expect.stringContaining("global Buffer.from")]);
+  }
+  const path: string = "/project/packages/example.ts";
+  expect(collectNodeCompatibilityProblems("/project", path, source(path, "const x = { Buffer: 1 }; x.Buffer; type B = typeof globalThis.Buffer;"))).toEqual([]);
+});

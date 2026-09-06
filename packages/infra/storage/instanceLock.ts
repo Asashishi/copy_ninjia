@@ -187,7 +187,7 @@ async function acquirePidFileLock(
   const handle: FileHandle = await open(candidatePath, "wx");
   try {
     try {
-      await handle.writeFile(serializeProcessIdentity(currentIdentity));
+      await Bun.write(Bun.file(handle.fd), serializeProcessIdentity(currentIdentity));
       // candidate 会被 link() 直接发布成 guard 本体，没有 rename 兜底，因此这里
       // 必须先把数据和目录项都落盘。否则掉电可能留下内容为空或撕裂的
       // bot.lock.guard——它既不在 cleanupOrphanedTempFiles 的清扫范围内，

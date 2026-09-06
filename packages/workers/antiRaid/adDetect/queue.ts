@@ -92,6 +92,7 @@ import {
   storeBundle,
 } from "./queueState";
 import { detectOne } from "./verdict";
+import { formatAdSenderName } from "./senderName";
 import type {
   AdCandidateEntry,
   AdCandidateMessage,
@@ -161,18 +162,27 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     truncateInline(sanitizeInline(message.text), AD_DETECT_MESSAGE_MAX_CHARS),
     message.linkUrls
   );
-  const text: string = context === undefined
+  const senderName: string = message.isChannel ? "" : formatAdSenderName(message.meta);
+  const senderText: string = senderName.length === 0
     ? textWithLinks
+    : textWithLinks.length === 0 ? senderName : `${senderName} ${textWithLinks}`;
+  const text: string = context === undefined
+    ? senderText
     : claimSampleContextParts(
-      textWithLinks,
+      senderText,
       context,
       existing?.entries ?? EMPTY_AD_CANDIDATE_ENTRIES
     );
-  const directText: string = message.isForwarded ? "" : textWithLinks;
+  const directText: string = message.isForwarded ? senderName : senderText;
+  // 只重复已认领引文且姓名未变时没有新内容；改名则必须留下当次姓名重新送检。
+  const onlyKnownName: boolean = text === senderName &&
+    existing !== undefined && existing.entries.length > 0 &&
+    existing.meta.firstName === message.meta.firstName &&
+    existing.meta.lastName === message.meta.lastName;
   // 三道投递闸（没有可判定正文、已知管理员、自己的 TTL 内刚处置过）收在
   // states/adDetectAdmission.ts 里；这里只执行结论。
   const decision: AdCandidateDecision = admitAdCandidate({
-    textLength: text.length,
+    textLength: onlyKnownName ? 0 : text.length,
     isChannel: message.isChannel,
     knownAdmin,
     recentlyDisposed,
