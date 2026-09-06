@@ -67,6 +67,29 @@ const {
 installLifecycleFixtureHooks();
 
 describe("应用启动失败与退出清理", () => {
+  test("每日成员复核只在 Bot 握手及启动补扫成功后启用", async () => {
+    const gate = deferred<void>();
+    botInit.mockImplementationOnce((): Promise<void> => {
+      calls.push("botInit");
+      return gate.promise;
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    const initialized: Promise<void> = lifecycle.init();
+    try {
+      await Bun.sleep(0);
+      expect(botInit).toHaveBeenCalledTimes(1);
+      expect(testDependencies.enableWedMemberReview).not.toHaveBeenCalled();
+      gate.resolve();
+      await initialized;
+      expect(testDependencies.enableWedMemberReview).toHaveBeenCalledTimes(1);
+      expect(calls.indexOf("enableWedMemberReview")).toBeGreaterThan(calls.indexOf("sweepBlocklist"));
+    } finally {
+      gate.resolve();
+      await initialized;
+      await lifecycle.dispose();
+    }
+  });
+
   test("wed 集合必须在 Telegram 客户端初始化前恢复，门禁失败以非零码退出", async () => {
     const hydrate = spyOn(testDependencies, "hydrateWedMembers").mockImplementationOnce((): never => {
       throw new Error("memory/wed/-1001.json: $ must be an array of unique user IDs.");
@@ -77,6 +100,7 @@ describe("应用启动失败与退出清理", () => {
       expect(hydrate).toHaveBeenCalledTimes(1);
       expect(initTelegramClients).not.toHaveBeenCalled();
       expect(botInit).not.toHaveBeenCalled();
+      expect(testDependencies.enableWedMemberReview).not.toHaveBeenCalled();
       expect(process.exitCode).toBe(1);
     } finally {
       hydrate.mockRestore();

@@ -8,6 +8,7 @@ import type {
   AiMemoryPersistedReply,
   IdentityStoragePersistedReply,
   LuckAppendStalledReply,
+  MidnightMaintenanceReply,
   VerificationPersistedReply,
 } from "../../types/diskIO/replies";
 
@@ -40,6 +41,11 @@ export function onDiskIORespawn(
     return;
   }
   diskIORuntime.respawnListeners.splice(insertionIndex, 0, registration);
+}
+
+/** 模块初始化时注册主线程午夜维护入口；回调只接纳任务，不等待整轮完成。 */
+export function onMidnightMaintenance(callback: (reply: MidnightMaintenanceReply) => void): void {
+  diskIORuntime.midnightMaintenanceListeners.push(callback);
 }
 
 /** 注册待验证增量 JSON 真正写入后的确认回调。 */

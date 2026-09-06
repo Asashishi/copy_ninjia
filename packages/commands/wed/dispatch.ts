@@ -4,7 +4,7 @@ import { WED_CALLBACK_PREFIX, WED_TEXTS } from "../../consts/wed";
 import { answerCallbackQuery, sendCommandMessage } from "../../infra/telegram";
 import type { WedChat } from "../../types/wed";
 import { handleWedCallback, handleWedCommand } from "../wed";
-import { getOrCreateWedChat } from "./members";
+import { getOrCreateWedChat } from "./chats";
 import { submitWedTask } from "./runtime";
 
 /** 纯内存 /wed 在接纳后释放 update；完整交互由主线程执行器及其停机边界持有。 */

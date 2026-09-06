@@ -24,6 +24,7 @@ import type {
   LoadedReply,
   LuckAppendStalledReply,
   IdentityStoragePersistedReply,
+  MidnightMaintenanceReply,
   VerificationPersistedReply,
 } from "../../types/diskIO/replies";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
@@ -142,6 +143,7 @@ interface DiskIORuntime {
     timer: ReturnType<typeof setTimeout>;
   }>;
   respawnListeners: DiskIORespawnRegistration[];
+  midnightMaintenanceListeners: ((reply: MidnightMaintenanceReply) => void)[];
   verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
@@ -154,6 +156,8 @@ interface DiskIORuntime {
  * 主线程 Disk I/O Worker 的完整运行态。initDiskIO 填充 Worker/配置，恢复
  * 窗口暂存有硬顶的业务消息；terminateDiskIO 结算等待、清 timer 并恢复默认值。
  * Worker 崩溃后保留监听器并从主线程镜像重建，业务队列容量由配置硬顶约束。
+ * midnightMaintenanceListeners 仅模块初始化登记，容量由主线程维护领域数约束；
+ * Worker 重建保留监听器且不重放午夜通知，进程退出时随 owner 释放。
  * diagnosticQueue 由 relayLogMessage/postDiskIODiagnostic 填充、DiskIO ACK 排空；
  * 单批在途并保留到 ACK，Worker 崩溃后原批重发。总消息数与 JSON 载荷字节均有
  * 硬顶；越界项只累加两个标量，队列重新有空间后追加一条汇总日志。terminate 时
@@ -195,6 +199,7 @@ export const diskIORuntime: DiskIORuntime = {
   consecutiveDiagnosticRebuilds: 0,
   diagnosticDrainWaiters: new Set(),
   respawnListeners: [],
+  midnightMaintenanceListeners: [],
   verificationPersistedListeners: [],
   aiMemoryDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],

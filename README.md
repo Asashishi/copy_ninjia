@@ -31,8 +31,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3469_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.36%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3495_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.37%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -52,7 +52,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：3469 项测试全部通过 / 344 个测试文件 / 125,771 次 expect() 调用 / 函数覆盖率 97.18% / 行覆盖率 97.36%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：3495 项测试全部通过 / 345 个测试文件 / 125,930 次 expect() 调用 / 函数覆盖率 97.17% / 行覆盖率 97.37%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 

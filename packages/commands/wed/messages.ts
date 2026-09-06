@@ -1,6 +1,6 @@
 /**
  * /wed 状态消息的唯一发送边界。可操作的图片结果只由移除、
- * 重开和群 teardown 清理，不挂固定延迟删除。豁免登记于 conventions/telegramMessages。
+ * 重开、LRU 淘汰和群 teardown 清理，不挂固定延迟删除。豁免登记于 conventions/telegramMessages。
  * 发送、取消和自发消息登记遵守 docs/cn/04-invariants.md 的 Telegram 出站约束。
  */
 import { InputFile } from "grammy";

@@ -61,7 +61,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3469 tests / 344 files / 125771 次 `expect()`**；全源码**函数覆盖率 97.18% / 行覆盖率 97.36%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3495 tests / 345 files / 125930 次 `expect()`**；全源码**函数覆盖率 97.17% / 行覆盖率 97.37%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -86,7 +86,7 @@
 
 `bun run test:fault-injection` 重点回归崩溃恢复与持久化边界：生命周期失败、update runner 确认边界、StateStore 与清理、AI/Anti-Raid Worker 的镜像恢复与生命周期、Disk I/O 的追加/快照/日志文件、flush barrier 等（完整清单见 [`package.json`](../../package.json) 的脚本定义）。改动 [04 运行时权威约束](04-invariants.md) 涉及的路径时，本套件必须绿。
 
-`/wed` 持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
+`/wed` 交互回归覆盖 1,024 项 LRU 容量、命令和按钮命中续期、淘汰取消排队与在途交互、迟到结果清理、单条删除失败后的继续清理、update 取消隔离和停机排空；成员权威表单独验证 25 群满额拒绝。持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
 
 ## 热路径门禁
 

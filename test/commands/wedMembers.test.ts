@@ -2,8 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { ChatMember } from "grammy/types";
 import { wedChats } from "../../packages/cache/main/wed";
 import { resetWedMemberStates, wedMemberStates } from "../../packages/cache/main/wedMembers";
-import { getOrCreateWedChat, observeWedMembers } from "../../packages/commands/wed/members";
-import { WED_MEMBER_LIMIT } from "../../packages/consts/wed";
+import { getOrCreateWedChat } from "../../packages/commands/wed/chats";
+import { observeWedMembers } from "../../packages/commands/wed/members";
+import { WED_CHAT_CACHE_MAX_ENTRIES, WED_MEMBER_LIMIT } from "../../packages/consts/wed";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { isPresentMember } from "../../packages/libs/chatMember";
 import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
@@ -89,9 +90,29 @@ test("离群服务消息和 chat_member 移除 ID，restricted 只有 is_member 
   expect(isPresentMember({ status: "administrator" } as ChatMember)).toBeTrue();
 });
 
-test("群数也有硬上限，满额不淘汰已经有结果的群", () => {
+test("成员权威表满额时拒绝建立新群交互，已有群仍可命中", () => {
   for (let id = 1; id <= STATE_MANAGED_CHAT_LIMIT; id++) getOrCreateWedChat(-id);
   expect(getOrCreateWedChat(-1000)).toBeUndefined();
   expect(wedChats.size).toBe(STATE_MANAGED_CHAT_LIMIT);
   expect(getOrCreateWedChat(-1)).toBe(wedChats.get(-1));
+});
+
+test("群交互缓存容量为 1024，命中刷新 LRU，未命中不淘汰", () => {
+  const first = getOrCreateWedChat(-1)!;
+  const second = getOrCreateWedChat(-2)!;
+  for (let id = 3; id <= WED_CHAT_CACHE_MAX_ENTRIES; id++) {
+    wedChats.set(-id, { controller: new AbortController(), members: new Set(), sessions: new Map() });
+  }
+  expect(wedChats.size).toBe(1_024);
+  expect(getOrCreateWedChat(-1)).toBe(first);
+  expect(wedChats.get(-10_000)).toBeUndefined();
+  expect(wedChats.size).toBe(1_024);
+  const newest = getOrCreateWedChat(-10_000)!;
+  expect(newest).toBeDefined();
+  expect(wedChats.size).toBe(1_024);
+  expect(wedChats.has(-1)).toBeTrue();
+  expect(wedChats.has(-2)).toBeFalse();
+  expect(second.controller.signal.aborted).toBeTrue();
+  expect(first.controller.signal.aborted).toBeFalse();
+  expect(wedMemberStates.get(-2)!.members).toBe(second.members);
 });

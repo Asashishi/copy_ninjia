@@ -61,7 +61,7 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **3469 tests / 344 files / 125771 `expect()` calls**; full-source **function coverage 97.18% / line coverage 97.36%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **3495 tests / 345 files / 125930 `expect()` calls**; full-source **function coverage 97.17% / line coverage 97.37%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -86,7 +86,7 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 `bun run test:fault-injection` concentrates on crash recovery and persistence boundaries: lifecycle failure, update-runner acknowledgement boundaries, StateStore and cleanup, AI/Anti-Raid Worker mirrors and lifecycles, Disk I/O append/snapshot/log files, flush barriers, and more. See the scripts in [`package.json`](../../package.json) for the complete list. This suite must pass whenever a changed path is covered by [04 Authoritative Runtime Invariants](04-invariants.md).
 
-`/wed` persistence regressions cover per-group set identity, the 150,000-member cap, departure capacity reuse, dirty TTL/count thresholds, silent no-ops, delivery failures, Worker recovery watermarks, shutdown flush, and invalid files refusing startup before networking while retaining their bytes. `test/app/registerHandlersDispatch.test.ts` also verifies that rejected initialization gates still remove departed IDs without admitting business handlers. Performance checks reuse `wed-member-hit`, `wed-member-growth`, `wed-member-churn`, `wed-member-chat-switch`, and `registered-middleware`; `wed-member-churn` checks that full sets reject new IDs and retain existing members.
+`/wed` interaction regressions cover the 1,024-entry LRU, command and button recency, cancellation of queued and active interactions on eviction, late-result cleanup, continued cleanup after individual deletion failures, isolation from update cancellation, and shutdown draining. The authoritative member table separately verifies rejection at 25 groups. Persistence regressions cover per-group set identity, the 150,000-member cap, departure capacity reuse, dirty TTL/count thresholds, silent no-ops, delivery failures, Worker recovery watermarks, shutdown flush, and invalid files refusing startup before networking while retaining their bytes. `test/app/registerHandlersDispatch.test.ts` also verifies that rejected initialization gates still remove departed IDs without admitting business handlers. Performance checks reuse `wed-member-hit`, `wed-member-growth`, `wed-member-churn`, `wed-member-chat-switch`, and `registered-middleware`; `wed-member-churn` checks that full sets reject new IDs and retain existing members.
 
 ## Hot-Path Gate
 

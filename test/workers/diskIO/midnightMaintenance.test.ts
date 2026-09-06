@@ -3,6 +3,7 @@ import type { VerificationPersistedReply } from
   "../../../packages/types/diskIO";
 import type { IdentityStoragePersistedReply } from
   "../../../packages/types/diskIO";
+import type { DiskIOMaintenanceReplySink } from "../../../packages/workers/diskIO/midnightMaintenance";
 
 const maintainLuckForDay = mock((_day: string): void => {});
 const maintainLogRetention = mock((): void => {});
@@ -40,12 +41,11 @@ const { runDiskIOMidnightMaintenance } = await import(
 );
 
 const DAY: string = "2026-08-31";
-function reply(
-  _value: VerificationPersistedReply | IdentityStoragePersistedReply
-): void {}
+const reply = mock((_value: Parameters<DiskIOMaintenanceReplySink>[0]): void => {});
 
 beforeEach((): void => {
   for (const fn of [
+    reply,
     maintainLuckForDay,
     maintainLogRetention,
     maintainJoinLogRetention,
@@ -82,15 +82,33 @@ describe("Disk I/O Worker 午夜维护编排", (): void => {
     }
   });
 
-  test("同一次触发覆盖六个已登记领域", async (): Promise<void> => {
+  test("同一次触发通知主线程并覆盖六个磁盘领域", async (): Promise<void> => {
     await runDiskIOMidnightMaintenance(reply, DAY);
 
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(reply).toHaveBeenCalledWith({ type: "midnightMaintenance", day: DAY });
     expect(maintainLuckForDay).toHaveBeenCalledWith(DAY);
     expect(maintainLogRetention).toHaveBeenCalledTimes(1);
     expect(maintainJoinLogRetention).toHaveBeenCalledWith(DAY);
     expect(maintainAdSampleFiles).toHaveBeenCalledWith(DAY);
     expect(maintainVerificationDayForToday).toHaveBeenCalledWith(reply, DAY);
     expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
+  });
+
+  test("主线程通知先于磁盘维护，通知失败仍维护磁盘领域", async (): Promise<void> => {
+    const errorLog = spyOn(console, "error").mockImplementation((): void => {});
+    reply.mockImplementationOnce((): void => {
+      expect(maintainLuckForDay).not.toHaveBeenCalled();
+      throw new Error("injected notification failure");
+    });
+    try {
+      await runDiskIOMidnightMaintenance(reply, DAY);
+      expect(maintainLuckForDay).toHaveBeenCalledWith(DAY);
+      expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   test("单领域失败不会阻断后续维护", async (): Promise<void> => {

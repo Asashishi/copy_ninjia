@@ -6,10 +6,10 @@ export interface BotProcessStatus {
   readonly averageCpuPercent: number;
   /** OS 报告给进程的可用逻辑核数。 */
   readonly availableCpuCount: number;
-  /** 当前进程常驻内存字节数。 */
-  readonly rssBytes: number;
+  /** Bun 原生当前进程内存占用字节数；Linux 使用 PSS，无法采样时为 null。 */
+  readonly memoryFootprintBytes: number | null;
   /** 容器/OS 约束下的内存上限；取不到约束时为物理内存。 */
   readonly memoryLimitBytes: number;
-  /** RSS 占上述内存上限的比例。 */
+  /** 当前占用相对于上述内存上限的百分比；采样或上限不可用时为零。 */
   readonly memoryPercent: number;
 }

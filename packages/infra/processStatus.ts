@@ -11,7 +11,7 @@ export interface CalculateBotProcessStatusOptions {
   readonly cpuUserMicroseconds: number;
   readonly cpuSystemMicroseconds: number;
   readonly availableCpuCount: number;
-  readonly rssBytes: number;
+  readonly memoryFootprintBytes: number | null;
   readonly constrainedMemoryBytes: number;
   readonly totalMemoryBytes: number;
 }
@@ -29,7 +29,7 @@ export function calculateBotProcessStatus({
   cpuUserMicroseconds,
   cpuSystemMicroseconds,
   availableCpuCount,
-  rssBytes,
+  memoryFootprintBytes,
   constrainedMemoryBytes,
   totalMemoryBytes,
 }: CalculateBotProcessStatusOptions): BotProcessStatus {
@@ -45,25 +45,27 @@ export function calculateBotProcessStatus({
       BOT_STATUS_PERCENT_SCALE,
       cpuMicroseconds / elapsedCpuCapacity * BOT_STATUS_PERCENT_SCALE
     );
-  const safeRssBytes: number = finiteNonNegative(rssBytes);
+  const safeMemoryBytes: number | null = memoryFootprintBytes !== null &&
+    Number.isFinite(memoryFootprintBytes) && memoryFootprintBytes >= 0
+    ? memoryFootprintBytes : null;
   const constrainedBytes: number = finiteNonNegative(constrainedMemoryBytes);
   const memoryLimitBytes: number = constrainedBytes > 0
     ? constrainedBytes
     : finiteNonNegative(totalMemoryBytes);
-  const memoryPercent: number = memoryLimitBytes === 0
+  const memoryPercent: number = memoryLimitBytes === 0 || safeMemoryBytes === null
     ? 0
-    : safeRssBytes / memoryLimitBytes * BOT_STATUS_PERCENT_SCALE;
+    : safeMemoryBytes / memoryLimitBytes * BOT_STATUS_PERCENT_SCALE;
   return {
     uptimeSeconds: safeUptimeSeconds,
     averageCpuPercent,
     availableCpuCount: safeCpuCount,
-    rssBytes: safeRssBytes,
+    memoryFootprintBytes: safeMemoryBytes,
     memoryLimitBytes,
     memoryPercent,
   };
 }
 
-/** 同步读取当前 Bot 进程指标；不创建 timer、缓存或后台采样任务。 */
+/** 同步读取进程指标与 Bun 原生当前内存占用；无法采样时保留 null，不创建后台采样。 */
 export function readBotProcessStatus(): BotProcessStatus {
   const cpuUsage: NodeJS.CpuUsage = process.cpuUsage();
   return calculateBotProcessStatus({
@@ -71,7 +73,7 @@ export function readBotProcessStatus(): BotProcessStatus {
     cpuUserMicroseconds: cpuUsage.user,
     cpuSystemMicroseconds: cpuUsage.system,
     availableCpuCount: availableParallelism(),
-    rssBytes: process.memoryUsage.rss(),
+    memoryFootprintBytes: Bun.unsafe.memoryFootprint() ?? null,
     constrainedMemoryBytes: process.constrainedMemory(),
     totalMemoryBytes: totalmem(),
   });

@@ -30,14 +30,14 @@ const readBotProcessStatus = mock((): Readonly<{
   uptimeSeconds: number;
   averageCpuPercent: number;
   availableCpuCount: number;
-  rssBytes: number;
+  memoryFootprintBytes: number;
   memoryLimitBytes: number;
   memoryPercent: number;
 }> => ({
   uptimeSeconds: 1,
   averageCpuPercent: 2,
   availableCpuCount: 3,
-  rssBytes: 4,
+  memoryFootprintBytes: 4,
   memoryLimitBytes: 5,
   memoryPercent: 80,
 }));

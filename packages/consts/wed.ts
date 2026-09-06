@@ -1,5 +1,9 @@
+/** /wed 主线程群交互缓存容量；命中刷新顺序，满额淘汰最久未使用的群。 */
+export const WED_CHAT_CACHE_MAX_ENTRIES: number = 1_024;
 /** /wed 每群已发言成员集合的硬上限；满额保留已有 ID，退群腾位后才接纳新 ID。 */
 export const WED_MEMBER_LIMIT: number = 150_000;
+/** /wed 成员复核跨群共用的请求起始间隔；全局每秒最多检查 5 个 ID，不补发积压。 */
+export const WED_MEMBER_REVIEW_INTERVAL_MS: number = 200;
 /** /wed 每群并存的发起人会话上限，每位用户只保留一张结果。 */
 export const WED_SESSION_LIMIT: number = 512;
 /** /wed 主线程交互的全局并发上限，出站等待仍占用原执行槽。 */

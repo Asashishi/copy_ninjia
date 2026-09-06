@@ -2,7 +2,7 @@
 import type { WedMemberState } from "../../types/wed";
 
 /**
- * init 从 DiskIO 严格校验的快照恢复；实际个人发言新增，退群移除。
+ * init 从 DiskIO 严格校验的快照恢复；实际个人发言新增，退群或每日复核确认离群时移除。
  * 每群最多 WED_MEMBER_LIMIT 个 number，群数受 STATE_MANAGED_CHAT_LIMIT 限制；满额拒绝新增。
  * 群交互 teardown 保留成员，进程初始化清空后从文件恢复。
  * 本表是权威 owner；DiskIO 崩溃后由主线程全量重放，缺失条目表示没有候选。

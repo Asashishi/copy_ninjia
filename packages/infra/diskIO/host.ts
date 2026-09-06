@@ -50,6 +50,10 @@ export function createDiskIOWorker(): Worker {
   w.onmessage = (event: MessageEvent<DiskIOReply>): void => {
     if (diskIORuntime.worker !== w) return;
     const data: DiskIOReply = event.data;
+    if (data.type === "midnightMaintenance") {
+      for (const listener of diskIORuntime.midnightMaintenanceListeners) listener(data);
+      return;
+    }
     if (data.type === "operationBatchAccepted") {
       acceptDiskIOOperationBatch(w, data.batchId);
       return;

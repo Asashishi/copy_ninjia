@@ -63,6 +63,7 @@ const closeTranslate = mock(async (): Promise<FlushResult> => { calls.push("clos
 const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
 const initGagRuntime = mock((): void => { calls.push("initGag"); });
 const initWedRuntime = mock((): void => { calls.push("initWed"); });
+const enableWedMemberReview = mock((): void => { calls.push("enableWedMemberReview"); });
 const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
 const initTranslate = mock((): void => { calls.push("initTranslate"); });
 const quiesceAvatarUpdates = mock((): void => { calls.push("quiesceAvatar"); });
@@ -162,6 +163,7 @@ const testDependencies = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
+  enableWedMemberReview,
   initAiChat,
   initDiskIO,
   initTelegramClients,
@@ -269,6 +271,7 @@ export function installLifecycleFixtureHooks(): void {
       initAvatarUpdates,
       initGagRuntime,
       initWedRuntime,
+      enableWedMemberReview,
       initChatTitleRefresh,
       initTranslate,
       quiesceAvatarUpdates,

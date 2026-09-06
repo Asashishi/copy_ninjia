@@ -16,6 +16,7 @@ import {
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../commands/wed/runtime";
 import { hydrateWedMembers } from "../commands/wed/persistence";
+import { enableWedMemberReview } from "../commands/wed/memberReview";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../copy/translate";
 import {
   abortChatTitleRefresh,
@@ -108,6 +109,7 @@ export const lifecycleDependencies = {
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,
+  enableWedMemberReview,
   releaseSingleInstanceLock,
   restoreLuckState,
   runAcknowledgedUpdateBatches,

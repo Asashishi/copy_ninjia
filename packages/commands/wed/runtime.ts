@@ -8,6 +8,7 @@ import type { FlushResult } from "../../types/lifecycle";
 import type { WedChat, WedRuntime } from "../../types/wed";
 import { resetWedMemberStates } from "../../cache/main/wedMembers";
 import { flushWedMembers } from "./persistence";
+import { initWedMemberReview, stopWedMemberReview } from "./memberReview";
 
 /** 启动时创建唯一执行器；上一代还有任务时禁止重建。 */
 export function initWedRuntime(): void {
@@ -16,7 +17,8 @@ export function initWedRuntime(): void {
     throw new Error("Cannot initialize wed while tasks are unsettled.");
   }
   previous?.controller.abort();
-  for (const chat of wedChats.values()) chat.controller.abort();
+  initWedMemberReview();
+  for (const [, chat] of wedChats) chat.controller.abort();
   wedChats.clear();
   resetWedMemberStates();
   wedRuntime.current = {
@@ -53,12 +55,13 @@ export function submitWedTask(chat: WedChat, task: () => Promise<unknown>): bool
   return true;
 }
 
-/** 停机关闭接纳；已经接纳的任务仍在原执行器中按序排空。 */
+/** 停机关闭接纳并取消成员复核；已接纳的交互仍在原执行器中按序排空。 */
 export function quiesceWedRuntime(): void {
   if (wedRuntime.current !== null) wedRuntime.current.accepting = false;
+  stopWedMemberReview();
 }
 
-/** 等待已接纳交互全部结算；预算耗尽时取消排队和在途请求，零预算可用于紧急停机。 */
+/** 等待交互与成员复核结算；预算耗尽时取消排队和在途请求，零预算可用于紧急停机。 */
 export async function drainWedRuntime(timeoutMs: number): Promise<FlushResult> {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new RangeError("Wed drain timeout must be finite and non-negative.");
   quiesceWedRuntime();

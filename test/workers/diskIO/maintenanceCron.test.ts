@@ -3,15 +3,12 @@ import {
   DISK_IO_MAINTENANCE_CRON,
   DISK_IO_MAINTENANCE_TIME_ZONE,
 } from "../../../packages/consts/diskIO/maintenance";
-import type { VerificationPersistedReply } from
-  "../../../packages/types/diskIO";
-import type { IdentityStoragePersistedReply } from
-  "../../../packages/types/diskIO";
+import type { DiskIOMaintenanceReplySink } from "../../../packages/workers/diskIO/midnightMaintenance";
 import { diskIOOperationTail } from
   "../../../packages/cache/workers/diskIO/recovery";
 
 const runDiskIOMidnightMaintenance = mock((
-  _reply: (reply: VerificationPersistedReply) => void
+  _reply: DiskIOMaintenanceReplySink
 ): void => {});
 
 mock.module("../../../packages/workers/diskIO/midnightMaintenance", () => ({
@@ -30,7 +27,7 @@ const BEFORE_MIDNIGHT_MS: number =
   Date.parse("2026-08-30T23:59:59+09:00");
 
 function reply(
-  _value: VerificationPersistedReply | IdentityStoragePersistedReply
+  _value: Parameters<DiskIOMaintenanceReplySink>[0]
 ): void {}
 
 beforeEach((): void => {

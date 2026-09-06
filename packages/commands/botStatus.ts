@@ -147,11 +147,13 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     `• CPU：${formatPercent(snapshot.processStatus.averageCpuPercent)}` +
       ` (${snapshot.processStatus.availableCpuCount} Core)`,
     `• Bot 运行时长：${formatBotUptime(snapshot.processStatus.uptimeSeconds)}`,
-    snapshot.processStatus.memoryLimitBytes > 0
-      ? `• 内存 RSS：${formatBotMemory(snapshot.processStatus.rssBytes)} / ` +
+    snapshot.processStatus.memoryFootprintBytes === null
+      ? "• 当前内存占用：不可用"
+      : snapshot.processStatus.memoryLimitBytes > 0
+      ? `• 当前内存占用：${formatBotMemory(snapshot.processStatus.memoryFootprintBytes)} / ` +
         `${formatBotMemory(snapshot.processStatus.memoryLimitBytes)}` +
         `（${formatPercent(snapshot.processStatus.memoryPercent)}）`
-      : `• 内存 RSS：${formatBotMemory(snapshot.processStatus.rssBytes)}（本机上限不可用）`,
+      : `• 当前内存占用：${formatBotMemory(snapshot.processStatus.memoryFootprintBytes)}（本机上限不可用）`,
     "",
     "全局模型能力，本天才会的可多着呢♡：",
   ];

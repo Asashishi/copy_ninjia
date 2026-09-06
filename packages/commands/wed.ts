@@ -8,7 +8,7 @@ import { combineWithUpdateAbortSignal } from "../infra/updateContext";
 import { forumTopicThreadId } from "../libs/forumTopic";
 import type { WedCandidate, WedChat, WedSession } from "../types/wed";
 import { drawWedCandidate } from "./wed/draw";
-import { getOrCreateWedChat } from "./wed/members";
+import { getOrCreateWedChat, teardownWedChat } from "./wed/chats";
 import { confirmWedResult, removeWedResult, replaceWedResult, sendWedResult } from "./wed/messages";
 
 /** 单次交互同时服从群 teardown、update 取消与总耗时限制。 */
@@ -21,14 +21,10 @@ function operationSignal(session: WedSession): AbortSignal {
 
 /** 群关闭先同步关闸，再删除状态机拥有的结果；重启不恢复这些会话。 */
 export async function teardownWedInChat(chatId: number): Promise<void> {
-  const chat: WedChat | undefined = wedChats.get(chatId);
+  const chat: WedChat | undefined = wedChats.peek(chatId);
   if (chat === undefined) return;
   wedChats.delete(chatId);
-  chat.controller.abort();
-  for (const session of chat.sessions.values()) session.controller.abort();
-  for (const session of chat.sessions.values()) {
-    if (!session.busy) await removeWedResult(session);
-  }
+  await teardownWedChat(chat);
 }
 
 /** 每位用户在群里保留一张结果；重复命令重新抽取并回复新命令。 */

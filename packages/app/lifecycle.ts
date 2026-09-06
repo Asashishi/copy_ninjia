@@ -227,6 +227,7 @@ export class ApplicationLifecycle {
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
     // getChat 扫描加批量落盘。
     if (this.stopRequested) this.stopAfterSignal();
+    this.dependencies.enableWedMemberReview();
     // 关键 Bot API 握手、Worker hydrate 和 runner 入口全部就绪后，才让低优先级
     // 标题维护进入 Telegram query 类别的 429 队列；小并发池由 chatTitle owner 自己保证。
     this.chatTitleRefreshSettled = false;

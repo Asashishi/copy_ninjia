@@ -112,7 +112,9 @@
 
 `telegramInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`telegram.ts` は runtime snapshot を担当します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
 
-`commands/wed.ts` は操作の状態機械、`wed/dispatch.ts` は受理、`wed/runtime.ts` は共用有界実行器とアプリケーション lifecycle の接続を担当し、`wed/rendering.ts` は純粋な描画処理です。操作状態と実行器 handle は `cache/main/wed.ts`、各グループの長期メンバー集合と dirty window は `cache/main/wedMembers.ts` に置きます。`wed/persistence.ts` が起動時の接管、バッチ送信、Worker 再構築時の replay を担当します。`workers/diskIO/wedMemberFiles.ts` はファイルの厳格検証と原子置換を行い、書き込み待ち snapshot は `cache/workers/diskIO/wed.ts` が所有します。アバター読み取りと出力は `infra/telegram/` を再利用します。
+`commands/wed.ts` は操作の状態機械、`wed/dispatch.ts` は受理、`wed/chats.ts` はグループ操作キャッシュの作成・LRU eviction・session 清掃、`wed/members.ts` はメンバー変更の観測、`wed/runtime.ts` は共用有界実行器とアプリケーション lifecycle の接続を担当し、`wed/rendering.ts` は純粋な描画処理です。操作状態と実行器 handle は `cache/main/wed.ts`、各グループの長期メンバー集合と dirty window は `cache/main/wedMembers.ts` に置きます。`wed/persistence.ts` が起動時の接管、バッチ送信、Worker 再構築時の replay を担当します。`workers/diskIO/wedMemberFiles.ts` はファイルの厳格検証と原子置換を行い、書き込み待ち snapshot は `cache/workers/diskIO/wed.ts` が所有します。アバター読み取りと出力は `infra/telegram/` を再利用します。
+
+`wed/memberReview.ts` は Disk I/O Worker の共通深夜通知を受け、Bot の準備完了後に全メンバー集合を順番に再確認します。起動時の受理状態、1 回分の進捗、照会中の対象は `cache/main/wedMemberReview.ts` が保持します。再確認 task は既存の wed runtime に登録し、停止時は取消後に drain します。削除と永続化は `wed/persistence.ts` を再利用します。
 
 ## 新しいコードの配置判断
 

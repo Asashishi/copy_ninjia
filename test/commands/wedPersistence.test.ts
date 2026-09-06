@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, jest, spyOn, test } from "bun:test";
 import { resetWedMemberStates, wedMemberFlushState, wedMemberStates } from "../../packages/cache/main/wedMembers";
 import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../packages/consts/diskIO/appendOnly";
-import { getOrCreateWedChat, observeWedMembers } from "../../packages/commands/wed/members";
+import { getOrCreateWedChat } from "../../packages/commands/wed/chats";
+import { observeWedMembers } from "../../packages/commands/wed/members";
 import { flushWedMembers, hydrateWedMembers, removeWedMember, replayWedMembers } from "../../packages/commands/wed/persistence";
 import { drainWedRuntime, initWedRuntime } from "../../packages/commands/wed/runtime";
 import { teardownWedInChat } from "../../packages/commands/wed";

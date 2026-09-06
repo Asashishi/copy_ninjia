@@ -56,7 +56,7 @@ function statusSnapshot(): BotStatusSnapshot {
       uptimeSeconds: 183_845,
       averageCpuPercent: 12.345,
       availableCpuCount: 6,
-      rssBytes: 512 * 1_024 * 1_024,
+      memoryFootprintBytes: 512 * 1_024 * 1_024,
       memoryLimitBytes: 8 * 1_024 * 1_024 * 1_024,
       memoryPercent: 6.25,
     },
@@ -79,7 +79,7 @@ describe("/bot_status", () => {
     expect(text).toContain("Bot 运行时长：2 天 03:04:05");
     expect(text).toContain("CPU：12.35% (6 Core)");
     expect(text).not.toContain("运行期平均");
-    expect(text).toContain("内存 RSS：512.00 MiB / 8.00 GiB（6.25%）");
+    expect(text).toContain("当前内存占用：512.00 MiB / 8.00 GiB（6.25%）");
     expect(text).toContain("• AI 闲聊");
     expect(text).toContain("• 入群验证与防冲群");
     expect(text).not.toContain("secret-");
@@ -192,12 +192,24 @@ describe("/bot_status", () => {
         uptimeSeconds: 0,
         averageCpuPercent: Number.NaN,
         availableCpuCount: 1,
-        rssBytes: 0,
+        memoryFootprintBytes: 0,
         memoryLimitBytes: 0,
         memoryPercent: Number.NaN,
       },
     }).text;
     expect(text).toContain("CPU：0.00% (1 Core)");
-    expect(text).toContain("内存 RSS：0 B（本机上限不可用）");
+    expect(text).toContain("当前内存占用：0 B（本机上限不可用）");
+  });
+
+  test("无法采样当前内存占用时显示不可用，其他状态仍完整展示", () => {
+    const snapshot: BotStatusSnapshot = statusSnapshot();
+    const text: string = buildBotStatusMessage({
+      ...snapshot,
+      processStatus: { ...snapshot.processStatus, memoryFootprintBytes: null },
+    }).text;
+    expect(text).toContain("当前内存占用：不可用");
+    expect(text).not.toContain("RSS");
+    expect(text).toContain("Bot 运行时长");
+    expect(text).toContain("全局模型能力");
   });
 });

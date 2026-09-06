@@ -33,6 +33,18 @@ export interface WedMemberState {
   dirty: boolean;
 }
 
+/** 主线程每日成员复核的调度与当前探测；新在群观察可否决迟到的离群结果。 */
+export interface WedMemberReview {
+  readonly controller: AbortController;
+  ready: boolean;
+  pendingDay: string | null;
+  lastDay: string | null;
+  running: boolean;
+  chatId: number | null;
+  userId: number | null;
+  observed: boolean;
+}
+
 /** 主线程 /wed 执行器的一代运行状态；排队与在途任务都由停机边界观察。 */
 export interface WedRuntime {
   readonly runner: PrioritizedBoundedTaskRunner;

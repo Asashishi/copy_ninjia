@@ -41,6 +41,7 @@ import type { VerificationSnapshot } from "../../types/antiRaid/verification";
 import type {
   IdentityStoragePersistedReply,
   LoadedReply,
+  MidnightMaintenanceReply,
   VerificationPersistedReply,
 } from "../../types/diskIO/replies";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
@@ -56,7 +57,7 @@ import type { VerificationRecoveryInspection } from "./verificationRecovery";
 import type { StorageDatabaseInspection } from "./storageDatabase/hydration";
 
 export type DiskIOStartupReplySink = (
-  reply: LoadedReply | VerificationPersistedReply | IdentityStoragePersistedReply
+  reply: LoadedReply | VerificationPersistedReply | IdentityStoragePersistedReply | MidnightMaintenanceReply
 ) => void;
 
 interface StartupMaintenanceInspections {

@@ -269,7 +269,14 @@ export interface StorageWriteStalledReply {
   readonly type: "storageWriteStalled";
 }
 
+/** 统一东京午夜 cron 通知主线程启动日级维护；不携带成员集合，不在 Worker 重建时重放。 */
+export interface MidnightMaintenanceReply {
+  readonly type: "midnightMaintenance";
+  readonly day: string;
+}
+
 export type DiskIOReply =
+  | MidnightMaintenanceReply
   | DiskOperationBatchAcceptedReply
   | StorageWriteStalledReply
   | LoadedReply

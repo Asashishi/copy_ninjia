@@ -62,7 +62,7 @@ export function flushWedMembers(): boolean {
   return accepted;
 }
 
-/** 先删除集合中的 ID，再登记落盘；退群事件和候选核实共用此边界。 */
+/** 先删除集合中的 ID，再登记落盘；退群事件、候选核实和每日复核共用此边界。 */
 export function removeWedMember(chatId: number, userId: number): void {
   const state: WedMemberState | undefined = wedMemberStates.get(chatId);
   if (state?.members.delete(userId)) markWedMembersDirty(state);

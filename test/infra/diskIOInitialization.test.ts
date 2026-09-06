@@ -7,6 +7,7 @@ import type {
   VerificationPersistedReply,
 } from "../../packages/types";
 import { diskIORuntime } from "../../packages/cache/main/diskIO";
+import { onMidnightMaintenance } from "../../packages/infra/diskIO/observers";
 import {
   DEFAULT_MAX_PENDING_BUSINESS_MESSAGES,
   LOAD_TIMEOUT_MS,
@@ -40,6 +41,32 @@ beforeEach(() => {
 });
 
 describe("explicit Worker initialization", () => {
+  test("午夜通知只路由当前 Worker，旧实例和终止后的通知无效", async () => {
+    const originalWorker: typeof Worker = globalThis.Worker;
+    const count: number = diskIORuntime.midnightMaintenanceListeners.length;
+    const days: string[] = [];
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      onMidnightMaintenance((reply): void => { days.push(reply.day); });
+      diskIO.initDiskIO();
+      const first: FakeWorker = FakeWorker.instances[0]!;
+      const event = { data: { type: "midnightMaintenance", day: "2026-09-07" } } as MessageEvent<DiskIOReply>;
+      first.onmessage!(event);
+      expect(days).toEqual(["2026-09-07"]);
+      await diskIO.terminateDiskIO();
+      first.onmessage!(event);
+      diskIO.initDiskIO();
+      first.onmessage!(event);
+      expect(days).toEqual(["2026-09-07"]);
+      FakeWorker.instances[1]!.onmessage!(event);
+      expect(days).toEqual(["2026-09-07", "2026-09-07"]);
+    } finally {
+      await diskIO.terminateDiskIO();
+      diskIORuntime.midnightMaintenanceListeners.length = count;
+      globalThis.Worker = originalWorker;
+    }
+  });
+
   test("全量恢复采用三十秒读取预算和四万五千条待写上限", () => {
     expect(LOAD_TIMEOUT_MS).toBe(30_000);
     expect(DEFAULT_MAX_PENDING_BUSINESS_MESSAGES).toBe(45_000);
