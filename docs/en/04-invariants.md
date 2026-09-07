@@ -471,6 +471,11 @@ This section covers [counting and enforcement boundaries](#counting-and-enforcem
 
 <p align="right"><a href="#quick-navigation">↑ Back to quick navigation</a></p>
 
+### Reply and Response-Body Resource Boundaries
+
+- **Bounded reads control both bytes and retained chunk references.** `libs/boundedResponse.ts` checks accumulated bytes before accepting each chunk, skips empty chunks, and aggregates with `Bun.ArrayBufferSink` when the reference budget is exceeded. Successful output owns its bytes. This limit does not control producer allocations made before delivery. One reader boundary handles oversize cancellation, read errors, and lock release; unsuccessful avatar HTTP responses cancel their unconsumed bodies.
+- **AI model concurrency and ordered send slots settle separately.** Model completion may release model capacity while tool context remains alive until asynchronous sends settle. Per-chat sends preserve admission order. If the first send waits indefinitely while admission continues, the send backlog has no total cap. Chat invalidation and shutdown cancel work through the owner lifecycle; model concurrency is not a send-queue capacity. `test/workers/aiChat/replyOrder.test.ts` covers draining, invalidation, and shutdown cancellation across 600 rounds and four rate-limit windows.
+
 ## Persistence
 
 ### Durability and Snapshot Contracts

@@ -4,7 +4,7 @@ import type { BotChatPermissions } from "../../types/telegram";
  * 机器人自身权限现查的主线程短期协调状态。
  *
  * 权限值本身不在这里再存一份；主线程唯一快照是
- * `packages/cache/main/storage.ts` 持有的 `ChatState.botPermissions`。本文件只保留
+ * `packages/cache/main/chatState.ts` 持有的 `ChatState.botPermissions`。本文件只保留
  * 在途请求、失效标记、失败退避与 Worker 观察者槽位，它们都不是业务快照。
  * 进程重启后全部恢复为空，由后续现查与 Worker 注册重新建立。
  */

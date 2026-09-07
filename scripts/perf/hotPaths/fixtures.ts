@@ -21,7 +21,25 @@ export const BENCHMARK_CHAT_ID: number = -100_000_000_000_001;
  */
 export const BENCHMARK_EPOCH_MS: number = 1_767_225_600_000;
 
-export function messageFixture(username?: string): Message {
+/**
+ * 基准发送者 id，取真实 Telegram 用户 id 的量级。
+ *
+ * 本夹具覆盖超出 int32 的用户 id，避免只测量小整数输入；生产用户 id 也可能落在
+ * int32 范围内。数值表示影响 JSC 的 Map 键、比较与跨函数传递，判读时必须连同
+ * 输入量级一起核对，见 `BENCHMARK_EPOCH_MS`。
+ *
+ * 同一场景要多个不同发送者时按 `+1` 递增，量级不变。
+ */
+export const BENCHMARK_SENDER_ID: number = 7_123_456_789;
+
+/**
+ * 一条普通用户消息。`senderId` 只在同一场景要喂**多个不同发送者**时才传：
+ * 同 id 换 username 会被 cacheSender 判成改名并走写入路径，那不是稳态热路径。
+ */
+export function messageFixture(
+  username?: string,
+  senderId: number = BENCHMARK_SENDER_ID
+): Message {
   return {
     message_id: 1,
     date: 1,
@@ -31,10 +49,35 @@ export function messageFixture(username?: string): Message {
       title: "Performance fixture",
     },
     from: {
-      id: 42,
+      id: senderId,
       is_bot: false,
       first_name: "Stable",
       last_name: "Sender",
+      username,
+    },
+  };
+}
+
+/**
+ * 频道马甲 / 匿名管理员皮套发的那条消息：只有 `sender_chat`，没有 `from`。
+ *
+ * 与 `messageFixture` 配对使用，喂出生产里两种身份形态混着到达同一个调用点的输入；
+ * 两种形态在 `users/senderIdentity.ts` 的 `resolveSenderIdentity` 里各产出一个
+ * `CachedUser` shape。`index` 只用于区分不同频道，量级与 `BENCHMARK_CHAT_ID` 一致。
+ */
+export function channelMessageFixture(index: number, username?: string): Message {
+  return {
+    message_id: 1,
+    date: 1,
+    chat: {
+      id: BENCHMARK_CHAT_ID,
+      type: "supergroup",
+      title: "Performance fixture",
+    },
+    sender_chat: {
+      id: -1_000_000_000_000 - index,
+      type: "channel",
+      title: `Channel ${index}`,
       username,
     },
   };

@@ -14,8 +14,8 @@ export interface DownloadTelegramVisionImageParams {
 
 /**
  * 通过 Telegram file_id 现取一张图片并规范成两家视觉接口都能接收的 jpeg/png。
- * getFile 与下载均由主线程能力边界完成，Worker 只收到受上限约束的字节；下载、
- * 转码前后都沿用媒体描述管线的 8 MiB 硬上限。
+ * getFile 与下载均由主线程能力边界完成，Worker 只收到受上限约束的字节；
+ * 下载与转码后的体积由 MEDIA_MAX_DOWNLOAD_BYTES 统一约束。
  */
 export async function downloadTelegramVisionImage({
   fileId,

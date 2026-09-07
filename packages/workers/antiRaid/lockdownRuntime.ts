@@ -51,7 +51,7 @@ function nextLockdownIntentId(): number {
 }
 
 /**
- * 反刷群私密模式状态机（packages/states/lockdown.ts）的解释器：把每条投递翻译成
+ * 反刷群私密模式状态机（packages/states/lockdown.ts 与同名目录）的解释器：把每条投递翻译成
  * 状态机事件、同步落下一状态、管理恢复计时器、把返回的副作用列表逐个执行。
  * thresholdExceeded 的占位同步生效——recordJoin 调用 dispatchLockdown 后，
  * 同一批投递里紧随其后的入群立刻就能在 verificationRuntime.ts 的 handleJoin
@@ -218,7 +218,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
  *
  * 落盘是「崩溃后还有人能恢复这条限制」的唯一凭据。写不进去还继续锁着群，就是
  * 今天这条故障的形态：占位永远停在 APPLYING，秒踢不停、5 分钟的倒计时压根
- * 没被安排过（见 states/lockdown.ts 的 persistFailed 分支）。
+ * 没被安排过（见 states/lockdown/persistence.ts 的 handlePersistFailed）。
  */
 export function handleLockdownPersistFailed(msg: LockdownPersistFailedMessage): void {
   dispatchLockdown(msg.chatId, {
@@ -255,8 +255,8 @@ function restrictedPermissions(permissions: ChatPermissions): ChatPermissions {
  * 串行链上：保证这三类调用严格按 dispatch 顺序一个个执行完，不会因为各自
  * 独立发起的网络往返乱序，让后发起的调用比先发起的调用更早/更晚落地在
  * Telegram 上（比如纠偏的加锁比它之后才发起的解锁更晚生效，两者都是各自
- * 独立的 fire-and-forget 调用时就可能发生，见 states/lockdown.ts
- * restoreResult 分支的类头注释）。链的机制见 libs/keyedSerialTaskRunner.ts；
+ * 独立的 fire-and-forget 调用时就可能发生，见 docs/cn/04-invariants.md中
+ * restoreResult 的那一段）。链的机制见 libs/keyedSerialTaskRunner.ts；
  * task 自身兜错，链永不因此中断。
  */
 function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {

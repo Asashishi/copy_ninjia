@@ -58,7 +58,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 
 ## データルート
 
-`COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。空の場合はプロジェクトルートです。
+`COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。未設定時はプロジェクトルートを使用し、明示的な空白値は起動時に拒否します。
 
 - **`state.json` + `state.json.bak`**
   - **内容**：グローバルな状態だけ——copy の対象と、`global.assets` の素材直リンク 4 本
@@ -159,7 +159,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **バックアップ**：必要に応じて。
 - **`bot.lock` と `.guard` / `.recovery`**
   - **内容**：単一インスタンスロック。
-  - **バックアップ**：バックアップも手動編集もしない。
+  - **バックアップ**：停止時の snapshot とともに保全し、手動編集や実行中 process への lock 復元は行いません。
 
 `memory/` 直下にはファイルを置かず、7 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は復元が必要な state domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact は成功応答後に行い、その後で `Asia/Tokyo` を明示した Bun native の東京 0 時 maintenance cron を 1 つ登録します。この cron は最初に主スレッドへ `/wed` の日次メンバー再確認を通知し、その後で運勢 file、log、入室 log、広告 sample archive、認証待ちの日別 file、一時 allowlist activity をまとめて maintenance し、1 domain の失敗で残りを止めません。既存の起動時・業務 event 経路は fallback として残します。一時 allowlist maintenance は shared SQLite の pending final value を先に commit し、一時 write が未 commit のままなら削除を拒否します。当日 row と終了したばかりの日に qualified だった row を保持し、その日の unqualified row とさらに古い row は全体を削除します。cleanup 後に到着した失効済み旧日 write は元の revision の tombstone に正規化します。`ad-detected/` は引き続き最初の hit 後にだけ現れ、すでに directory がある場合も起動成功後の maintenance は sample 内容を読まず directory entry だけを走査します。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。実行中は統一 cron が同じ rollover を起動し、失敗時は active mirror を保持したまま unref 済み 1 秒 timer で再試行します。
 
@@ -180,71 +180,17 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 起動は database 欠落を「空 policy」と推測しないため、新規 deployment は現行 schema の空 database を明示的に一度作成する必要があります。手順は [01 セットアップ](01-getting-started.md#identity-storage-の初期化) にあり、`install.sh` にも含まれています。作成 entry point は既存 target の上書きを拒否します。
 
-### 旧 JSON → SQLite（9.1.5 以前）
+### upgrade input と段階的 migration
 
-`config/whitelist.json`、`config/blocklist.json`、および任意の `memory/blocklist/` を使う deployment は、**まず 9.1.5 へ上げてその版で migration を完了**させてから、現行版へ upgrade してください。
+`10.5.1` から `10.5.2` への upgrade に data format migration は不要です。現行 runtime は厳密な schema v7 lineage と検証済み `state.json` のみを受け付け、現行 `package.json` は `migrate:*` command を提供しません。
 
-`bun run migrate:identity-storage` は 9.1.5 が最後の提供版です。「cold migration script は直近の released version → 現行版のみを覆う」という規約に従い 9.2.0 で `scripts/` から削除されており、現行版はこの migration を提供せず、旧 JSON リストを input として受け付けません。現行版で空の `whitelist.json`／`blocklist.json` を作ってから空 database を作る、という手順は取らないでください。実際のリストが取り残され、空の blocklist のまま Bot が稼働します。
+古い deployment は各 version の運用手順に従って中間 upgrade を完了します。
 
-### storage.sqlite：schema v5 → v7 一時 allowlist と広告免除
+- `config/whitelist.json`、`config/blocklist.json`、`memory/blocklist/` を使う場合、`9.1.5` で identity-storage migration を行い、version ごとの upgrade 手順を進めます。
+- database が schema v5、または `state.json` が `global.assets.qaThumbnailUrl` を含む場合、`10.5.1` で対応する cold migration と検証を完了してから現行版へ進みます。
 
-直近 released version の schema v5 には `temporary_whitelist_entries` がありません。現行の
-production entry は正確な schema v7 lineage だけを受け付け、startup で table を自動追加したり
-membership を書き換えたりしません。
-新しいコードを配置した後も Bot を停止したまま、順に実行します。
+各段階で service を停止し、deployment input と runtime dataset 全体を worktree 外へ backup して、file 一覧・permission・owner・SHA-256 を記録します。SQLite 本体と存在する WAL/SHM は同じ停止時点の snapshot とします。その version の手順で migration、厳格な読み戻し、service 安定性確認を完了するまで backup を保持します。未知の lineage は拒否し、空 database、手動の key 削除、example 設定による迂回を禁止します。
 
-```bash
-bun run migrate:temporary-whitelist -- --check
-bun run migrate:temporary-whitelist -- --apply
-```
-
-両 mode とも `bot.lock` を取得するため、systemd/supervisor は停止済みで inactive と確認できなければ
-なりません。`--check` は read-only で SQLite integrity、JSONB storage class、schema version、
-正確な v5/v6/v7 migration lineage を検証します。v5 は直接移行可能、v6 は同じ migration を再開する
-ための intermediate lineage としてのみ受け付け、v7 は完了済みと報告します。その他の version や
-未知 lineage はすべて拒否します。
-
-released deployment に対して `--apply` が提供する直接 edge は v5 → v7 だけです。同じ migration が
-v6 の commit 後に中断した場合は、その intermediate lineage から再開できます。書き込み前に主 DB と
-既存 WAL/SHM を worktree 外へ byte 単位で copy し、owner/mode/SHA-256 manifest を書いて読み戻し
-検証してから、現行 Drizzle migration で v6 の strict relational table を作り、最初の qualified day で
-広告免除を付与する形へ table を再構築して `storage_metadata` を v7 に更新します。最後に完全な v7
-inspect を再実行します。backup・migration・検証のどこかが失敗した場合は外部
-backup path と元の error を保持するため、service を停止したまま同一 consistency set 全体を復元し、
-row 削除、空 replacement 作成、version をまたぐ推測 migration は行いません。成功後も backup を保持し、
-service を起動して `active/running`、2 restart interval の間 `NRestarts` が増えないこと、journal に
-新しい非ゼロ終了がないことを確認して完了です。v7 に `--apply` を再実行しても完了済みと報告するだけで、
-database は書き換えません。
-
-### state.json：退場した `qaThumbnailUrl` を取り除く
-
-`/set_qa` が「問題:」「回答:」形式の message でテキストを集めるようになり、inline 結果の
-サムネイルは消費者を失ったため、`global.assets.qaThumbnailUrl` を schema から削除しました。
-`state.json` は**厳格に解析**されます。キーが残っていると新しい版は起動段階で非ゼロ終了し、
-黙って無視することはありません。アップグレード前に、Bot を停止してから実行します。
-
-```bash
-bun run migrate:qa-thumbnail -- --check
-bun run migrate:qa-thumbnail -- --apply
-```
-
-どちらの mode も先に `bot.lock` を取得します（したがってサービスは停止済みである必要があります）。
-このスクリプトは `state.json` と同じディレクトリの `state.json.bak` の**両方**を処理します。
-起動時には存在する両方のファイルを厳格に解析し、片方でも不正なら起動を拒否します。
-片方が存在せず、もう片方が有効な場合だけ補完します。両方が有効で内容が異なる場合は、
-主ファイルの内容をバックアップへ同期します。
-
-**新しい版のコードが配置済みになってから実行してください**。順序は「サービス停止 → コード入れ替え → migration 実行 → サービス起動」です。逆に migration を先に済ませて*古い*版を起動すると、その版の起動時補完が `qaThumbnailUrl` を `state.json` に書き戻し（その版は補完対象 5 項目の 1 つとして数えます）、警告も出ないまま今回の migration が黙って取り消されます。
-
-`--check` は deployment のデータを一切変更せず、どの副本にまだキーが残っているかを報告するだけです。
-`--apply` はまず作業ツリー外に mode / owner / SHA-256 の manifest 付きで原文の snapshot を残し
-（書き込み後すぐ読み戻してハッシュを照合）、その上でキーをその場で取り除きます。元の permission bit を
-保ち、書き込み後に読み戻して検証し、さらに起動時と同じ厳格 codec で再度 decode します——書き出すものは
-新しい版が読み戻せるものでなければなりません。同じファイルに他の不正フィールドがある場合は、
-中途半端に完了させず、その場で書き込みを拒否します。
-
-キーの除去は冪等です。すでに実行済みの deployment は「完了済み」と報告するだけで、何も変更しません。
-`state.json` が無い新規 deployment も migration は不要です。
 ## 起動失敗の調査
 
 起動失敗は**意図的な fail-fast**で、原因を含みます。検査を迂回せず、原因に合わせて対応してください。

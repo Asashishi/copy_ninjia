@@ -28,12 +28,11 @@
 | `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；因为要整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 36 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 44 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
-| `bun run migrate:qa-thumbnail` | 从 `state.json` 摘掉退场的 `global.assets.qaThumbnailUrl` 的停机冷迁移 |
-| `bun run migrate:temporary-whitelist` | 将共享 SQLite 按 v5 → v7 直接边迁移到当前 schema；只在停服时运行，v6 仅作为同次迁移可续跑的 intermediate 谱系 |
+| `bun run perf:review` | 专项复核：12 个热点的普通测量与 profile、两条完整命令链、真实 Disk I/O Worker 压力及重建；每项三轮独立进程，可按 `--hot-paths` / `--chains` / `--worker` 选择 |
 | `bun run release:check` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
 
@@ -61,7 +60,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3495 tests / 345 files / 125930 次 `expect()`**；全源码**函数覆盖率 97.17% / 行覆盖率 97.37%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3509 tests / 346 files / 129696 次 `expect()`**；全源码**函数覆盖率 97.21% / 行覆盖率 97.45%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -104,7 +103,7 @@
 
 `profile` / `retained` 前缀标明读数取自哪个子进程；两者预热轮数相差一个数量级（profiler 场景要多跑 JIT 稳定轮），不能混读。
 
-新增或改写场景时有一条**必须守住的收口口径**：被测函数返回字符串时，基准不能只读 `.length` 收口。JSC 的 rope 自带长度，读长度不会让它 materialize——那样量到的是「建了一棵拼接树」而不是「拿到一个可用的字符串」。实测同一份输入下，转录渲染改用逐行 `+=` 之后两种口径差着 42.0 vs 57.5 µs/op（27%），而改之前只差 3.1%：只读长度的基准会把那次改动量成快 42%，其中一多半是还没做的活。收口一律用 `charCodeAt(length - 1)` 之类强制解析（见 `scripts/perf/hotPaths/transcriptScenarios.ts` 的 `transcript-render`）。同一条理由也适用于任何「攒起来最后才用」的惰性结构：**基准必须把生产真正会付的那一步付掉**，否则一次把该步骤从链路里摘掉的回归会表现成读数变快而不是失败。
+新增或重写字符串场景时，必须消费生产实际使用的字符串内容；仅读取 `.length` 无法保证 JSC rope 已展开。转录场景使用 `charCodeAt(length - 1)` 触发解析，见 `scripts/perf/hotPaths/transcriptScenarios.ts`。其他惰性结构同样必须包含生产消费时所需的步骤。
 
 ## 入群日志性能基准
 
@@ -118,6 +117,12 @@
 
 ## 专项场景与传输压力验证
 
+`bun run perf:review` 复用全量基准的隔离根、配置夹具、进程编排及出站罐头，输出 JSON 并清理本轮数据根。`--hot-paths` 覆盖发送者、消息滑窗、权限读取、AI 活跃窗口、待验证快照及 clone、空块/细碎块/1 KiB/1 MiB/16 MiB 响应读取和注册链；12 项各三轮普通测量与三轮 profile。完整异步读取按场景显式预热并记录实际 JIT 层级，其余场景沿用优化层级稳定性检查。
+
+`--chains` 运行启用功能的 `ad-detect-command` 与 `ai-reply-command`，逐轮断言 Telegram 罐头调用及处置排空。`--worker` 经真实 Disk I/O Worker 每轮写入 400 批、每批 128 条消息；每批等待最终 revision ACK，每轮执行两次优雅停机重建并核对 25 群恢复值。该项包含 clone、事务及落盘等待，报告吞吐、延迟、堆留存与 RSS；它不替代故障注入。以上模式各跑三轮，不改全量基准和默认十场景硬门禁的阈值。
+
+`sender-mixed-identity` 交替输入普通用户与频道身份，观察稳态读数和 JIT 重新优化；发送者数量与单用户场景不同，两者的耗时差不能单独解释为 shape 混合成本。基准用户 ID 覆盖超出 int32 的数值，生产中也允许较小 ID。
+
 注册表包含 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` 和 `storage-sqlite-flush`。前四项覆盖成员集合命中、填充、满额拒绝和切群；middleware 场景运行真实注册链并断言活动路径；SQLite 场景对空库提交 128 个删除，主要衡量事务调度，不能作为磁盘吞吐读数。
 
 运行 `bun scripts/perf/isolatedHotPath.ts <场景>`，加 `--profile` 单独采样。该入口复用 `gateFixture.ts` 建立独立配置和数据根，注入三个独立子进程并在结束后清理 run 目录；出站由基准罐头接管。固定 Bun 与输入、完成预热，分别观察 retained 与 profile 输出；采样数不足时不得用零 GC 样本断言没有 GC。
@@ -130,7 +135,7 @@
 
 被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。另有两条**完整命令**链路：`ad-detect-command` 走 `enqueueAdCandidate` 到 `runAdDetectBatch` 再到主线程 `handleAdDetected` 的处置排空，`ai-reply-command` 走 `recordChatMessage` 与 `generateAndSendReply` 到回复真的发出。这两条的模型调用与 Telegram 出站由 `scripts/perf/outboundGuard.ts` 的进程内罐头就地应答——基准从不发起真实请求，也不产生任何调用费用；`ai-reply-command` 另外按实测扣掉发送前的拟人停顿，口径见 [09 性能基准](09-performance.md)。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
 
-数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此它没有能力写到真实数据根。加 `--write-doc` 会把三语区块写回 `docs/{cn,en,ja}/09-performance.md`；读数与各分区口径见 [09 性能基准](09-performance.md)。
+数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此它没有能力写到真实数据根。加 `--write-doc` 同时写回 `docs/{cn,en,ja}/09-performance.md` 的三语区块和 `performance-result.json` 的 `fullSuite.lastRun`；读数与各分区口径见 [09 性能基准](09-performance.md)。
 
 ## 提交流程
 

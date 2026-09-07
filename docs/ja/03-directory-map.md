@@ -52,7 +52,7 @@
 - **`packages/states/`**
   - **責務**：**I/O を行わない**純粋な状態遷移と、認証・ロックダウン・AI 返信・
     広告検出の受け入れ規則。
-  - **代表的なファイル**：`verification.ts` と `verification/`（`join`/`pending`/`terminal`/`disable` の 4 区分）、`lockdown.ts`、`replyAdmission.ts`、
+  - **代表的なファイル**：`verification.ts` と `verification/`（`join`/`pending`/`terminal`/`disable` の 4 区分）、`lockdown.ts` と `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt` の 5 区分）、`replyAdmission.ts`、
     `adDetectAdmission.ts`。
 - **`packages/config/`**
   - **責務**：deployment `config/*.json` の厳密 schema と process snapshot、feature 単位の readiness 判定。identity policy はここに置きません。
@@ -64,7 +64,7 @@
   - **責務**：アトミックファイル、上限付き I/O、並行処理ツールなど、
     ドメイン非依存の基盤。
   - **代表的なファイル**：`flushBarrier.ts`、`linkedQueue.ts`、`acknowledgedBatchQueue.ts`、
-    `boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`。
+    `boundedResponse.ts`、`boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`。
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
@@ -108,7 +108,7 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
-  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`migrateQaThumbnail.ts` と `qaThumbnailMigration/`、cold migration が共用する `migration/backup.ts` と `migration/lifecycle.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
+  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
 
 `telegramInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`telegram.ts` は runtime snapshot を担当します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
 

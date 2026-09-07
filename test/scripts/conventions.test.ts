@@ -185,66 +185,23 @@ describe("project convention collectors", () => {
     expect(problems).toHaveLength(6);
   });
 
-  test("冷迁移命令、入口与当前 schema 边必须同步", async () => {
+  test("没有活动冷迁移边时 package.json 不得暴露任何 migrate: 命令", async () => {
     const root: string = temporaryRoot("copy-ninjia-conventions-");
     mkdirSync(join(root, "scripts"), { recursive: true });
-    mkdirSync(join(root, "packages", "consts"), { recursive: true });
-    for (const locale of ["cn", "en", "ja"] as const) {
-      mkdirSync(join(root, "docs", locale), { recursive: true });
-    }
-    await Bun.write(join(root, "scripts", "migrateQaThumbnail.ts"), "");
-    await Bun.write(
-      join(root, "scripts", "migrateTemporaryWhitelist.ts"),
-      "// v5 → v7\n" +
-      "function inspect(): 5 | 6 | 7 {\n" +
-      "  const version: number = 7;\n" +
-      "  if (version === 5) { return 5; }\n" +
-      "  if (version === 6) { return 6; }\n" +
-      "  if (version === 7) { return 7; }\n" +
-      "  throw new Error();\n" +
-      "}\n"
-    );
-    await Bun.write(
-      join(root, "packages", "consts", "identityStorage.ts"),
-      "export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 7;\n"
-    );
-    for (const locale of ["cn", "en", "ja"] as const) {
-      await Bun.write(
-        join(root, "docs", locale, "05-dev-workflow.md"),
-        "temporary allowlist schema v5 → v7\n"
-      );
-      await Bun.write(
-        join(root, "docs", locale, "07-operations.md"),
-        "current schema v7; direct v5 → v7; v6 is a resumable intermediate lineage\n"
-      );
-    }
+
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: {
-        "migrate:qa-thumbnail": "bun scripts/migrateQaThumbnail.ts",
-        "migrate:temporary-whitelist": "bun scripts/migrateTemporaryWhitelist.ts",
-      },
+      scripts: { test: "bun test" },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
-    await Bun.write(
-      join(root, "docs", "cn", "07-operations.md"),
-      "current schema v6; direct v5 → v6\n"
-    );
-    expect(await collectColdMigrationProblems(root)).toEqual(expect.arrayContaining([
-      expect.stringContaining("docs/cn/07-operations.md must document schema v7"),
-    ]));
-
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: {
-        "migrate:qa-thumbnail": "node scripts/migrateQaThumbnail.ts",
-        "migrate:legacy": "bun scripts/legacy.ts",
-      },
+      scripts: { "migrate:legacy": "bun scripts/legacy.ts" },
     }));
-    const problems: readonly string[] = await collectColdMigrationProblems(root);
-    expect(problems).toEqual(expect.arrayContaining([
-      expect.stringContaining("exactly the declared active cold migration commands"),
-      expect.stringContaining("migrate:qa-thumbnail must invoke bun scripts/migrateQaThumbnail.ts"),
-    ]));
+    expect(await collectColdMigrationProblems(root)).toEqual([
+      expect.stringContaining(
+        "package.json must expose exactly the declared active cold migration commands (none)"
+      ),
+    ]);
   });
 });
 

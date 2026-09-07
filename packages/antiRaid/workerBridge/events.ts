@@ -111,7 +111,7 @@ function persistCurrentLockdown(
  * 内存里那条记录必须清掉——它写不进 SQLite，留着会让本群此后每一次状态写入
  * 一起失败。磁盘上那条同样要删：留着它，下次进程启动会 adopt 出一个没人在
  * 恢复的私密模式，把新进群的人继续踢掉。真正的权限恢复由 Worker 收到
- * lockdownPersistFailed 后立刻发起（见 states/lockdown.ts 的 persistFailed）。
+ * lockdownPersistFailed 后立刻发起（见 states/lockdown/persistence.ts 的 handlePersistFailed）。
  */
 function abandonLockdownPersistence(
   chatId: number,

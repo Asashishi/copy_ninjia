@@ -28,12 +28,11 @@
 | `bun run check:coverage` | Measure coverage now and verify the metrics in the three README badges/alts, the three copies of this page, and both coverage images match the real reading; excluded from `check` because it runs the whole suite again |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
-| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 36; other scenarios run through the full-suite manifest or targeted commands); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
+| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 44; other scenarios run through the full-suite manifest or targeted commands); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
 | `bun run perf:join-log` | Run the independent-process comparison of the join-log capacity, snapshot, and append-accounting paths at the 250,000-record limit |
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
 | `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
-| `bun run migrate:qa-thumbnail` | Offline cold migration dropping the retired `global.assets.qaThumbnailUrl` from `state.json` |
-| `bun run migrate:temporary-whitelist` | Stopped-service cold migration over the direct v5 → v7 edge; v6 is only the resumable intermediate lineage of that migration |
+| `bun run perf:review` | Targeted review: normal/profile runs of 12 hot paths, two complete command chains, and real Disk I/O Worker pressure/rebuilds; three independent rounds per item, selectable with `--hot-paths` / `--chains` / `--worker` |
 | `bun run release:check` | Run frozen-lockfile install + check + coverage-metric verification + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
 
@@ -61,7 +60,7 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **3495 tests / 345 files / 125930 `expect()` calls**; full-source **function coverage 97.17% / line coverage 97.37%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **3509 tests / 346 files / 129696 `expect()` calls**; full-source **function coverage 97.21% / line coverage 97.45%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -104,7 +103,7 @@ Fields suffixed with `Diagnostic` are reported but not gated. The aggregate FTL 
 
 The `profile` / `retained` prefixes record which child a reading came from; their warmup iteration counts differ by an order of magnitude (profiled scenarios run extra JIT stabilization rounds), so the two must not be read together.
 
-There is one **mandatory sink rule** when adding or rewriting a scenario: when the function under test returns a string, the benchmark must not sink it by reading `.length` alone. A JSC rope carries its own length, so reading it never materializes the string — that measures "a concatenation tree was built", not "a usable string was produced". On identical input, after transcript rendering switched to per-line `+=` the two sinks differ by 42.0 vs 57.5 µs/op (27%), whereas before the change they differed by only 3.1%: a length-only benchmark would have scored that change as 42% faster, more than half of which is work not yet done. Always sink through a forced resolution such as `charCodeAt(length - 1)` (see `transcript-render` in `scripts/perf/hotPaths/transcriptScenarios.ts`). The same reasoning applies to any lazy structure that is only realized later: **a benchmark must pay the step production actually pays**, otherwise a regression that drops that step from the chain shows up as a faster reading instead of a failure.
+String scenarios must consume the contents used by production. Reading `.length` alone does not require JSC to flatten a rope. The transcript scenario uses `charCodeAt(length - 1)` to force resolution; see `scripts/perf/hotPaths/transcriptScenarios.ts`. Other lazy structures must likewise include the work required when production consumes them.
 
 ## Join-Log Performance Benchmark
 
@@ -118,6 +117,12 @@ The write-through scenario executes 65,536 operations over a 4,096-key working s
 
 ## Targeted Scenarios and Transport Stress Validation
 
+`bun run perf:review` reuses the full suite’s isolated roots, configuration fixtures, process runner, and canned outbound calls. It emits JSON and removes each run’s data root. `--hot-paths` covers sender identity, message windows, permission reads, AI activity, verification snapshots with and without clone, empty/tiny/1 KiB/1 MiB/16 MiB response reads, and registered middleware: 12 scenarios, each with three normal and three profile rounds. Complete asynchronous reads use explicit warmup counts and report actual JIT tiers; other scenarios retain optimized-tier stabilization checks.
+
+`--chains` runs enabled `ad-detect-command` and `ai-reply-command` flows and asserts Telegram canned-call counts and completed disposal. `--worker` sends 400 batches of 128 messages through a real Disk I/O Worker per round, waiting for final-revision ACKs after every batch. Each round performs two graceful Worker shutdown/rebuild cycles and verifies recovered values for 25 chats. This includes cloning, transactions, and disk waits, and reports throughput, latency, retained heap, and RSS; it does not replace fault injection. Each mode uses three rounds without changing the full-suite or default ten-scenario hard-gate thresholds.
+
+`sender-mixed-identity` alternates user and channel identities to observe steady behavior and JIT reoptimization. Its sender count differs from the single-user scenario, so latency differences do not isolate shape-mixing cost. Benchmark user IDs cover values beyond int32; smaller IDs remain valid production inputs.
+
 The registry includes `wed-member-hit`, `wed-member-growth`, `wed-member-churn`, `wed-member-chat-switch`, `registered-middleware`, and `storage-sqlite-flush`. The first four cover member-set hits, filling, rejection at capacity, and chat switching. The middleware scenario runs the actual registered chain and asserts activity. The SQLite scenario submits 128 deletions against an empty database, primarily measuring transaction scheduling rather than disk throughput.
 
 Run `bun scripts/perf/isolatedHotPath.ts <scenario>` and add `--profile` for separate sampling. This entry reuses `gateFixture.ts` to create isolated configuration and data roots for three independent child processes, then removes the run directory. Benchmark canned replies own outbound calls. Fix Bun and inputs, warm up, and inspect retained and profile outputs separately. Insufficient samples cannot establish absence of GC.
@@ -130,7 +135,7 @@ Run `bun scripts/perf/isolatedHotPath.ts <scenario>` and add `--profile` for sep
 
 Everything measured reuses existing code: hot paths run the `perf:hot-paths` scenarios at their own iteration counts, storage calls the `perf:identity-database` implementations, the capacity line calls the `perf:join-log` children, and the chains drive a real Disk I/O Worker through the main-thread production entries `recordJoinLog`, `persistChatState`, `queueIdentityPolicyWrite`, `postDiskIO`, and `relayLogMessage`, timed until the durable acknowledgement. Two further chains time a **whole command**: `ad-detect-command` runs `enqueueAdCandidate` through `runAdDetectBatch` into the main-thread `handleAdDetected` disposal drain, and `ai-reply-command` runs `recordChatMessage` and `generateAndSendReply` until the reply is actually sent. Their model calls and Telegram traffic are answered by the in-process canned replies in `scripts/perf/outboundGuard.ts` — the benchmark never issues a real request and never incurs API cost; `ai-reply-command` additionally subtracts the measured human-like pause before sending, documented in [09 Performance](09-performance.md). Cold start times a fully seeded fixture phase by phase in the order of `packages/app/lifecycle.ts`, excluding networked handshakes and the two business Workers.
 
-All data is written under the repository-root `performance/` directory (already in `.gitignore`), configuration is read from `config_example/`, and each round's tree is removed afterwards; nothing should remain there once the run ends. The parent process imports no production implementation module, so it has no way to write to the real data root. Adding `--write-doc` rewrites the trilingual block in `docs/{cn,en,ja}/09-performance.md`; the figures and the meaning of each section live in [09 Performance Benchmark](09-performance.md).
+All data is written under the repository-root `performance/` directory (already in `.gitignore`), configuration is read from `config_example/`, and each round's tree is removed afterwards; nothing should remain there once the run ends. The parent process imports no production implementation module, so it has no way to write to the real data root. Adding `--write-doc` writes both the blocks in `docs/{cn,en,ja}/09-performance.md` and `fullSuite.lastRun` in `performance-result.json`; the figures and the meaning of each section live in [09 Performance Benchmark](09-performance.md).
 
 ## Commit Workflow
 

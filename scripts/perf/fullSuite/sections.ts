@@ -1,8 +1,8 @@
 /**
  * 各分区的父进程编排：建根、播种、按轮 spawn 子进程、聚合成分区。
  *
- * 本文件属于父进程，因此**只 import 常量和类型**，不 import 任何会拉起生产
- * 模块图的实现（理由见 fullSuite/mockRoot.ts 的模块头注）。
+ * 本文件属于父进程，可复用基准编排模块；从 packages/ 只导入纯常量和类型，
+ * 不引入生产实现模块。隔离边界见 fullSuite/mockRoot.ts 的模块头注。
  */
 
 import { aggregateMetric, aggregateRounds } from "./aggregate";
@@ -36,6 +36,7 @@ export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
   "ai-media-direct-trigger",
   "sender-no-username",
   "sender-stable-username",
+  "sender-mixed-identity",
   "self-sent-empty",
   "self-sent-active",
   "chat-state-read",

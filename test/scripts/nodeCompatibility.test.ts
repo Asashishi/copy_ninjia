@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import ts from "typescript";
-import { collectNodeCompatibilityProblems } from "../../scripts/conventions/nodeCompatibility";
+import {
+  collectNodeCompatibilityProblems,
+  collectStaleNodeAllowanceProblems,
+} from "../../scripts/conventions/nodeCompatibility";
 
 function source(path: string, text: string): ts.SourceFile {
   return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -92,12 +95,20 @@ describe("Node 兼容约定", () => {
       expect.stringContaining("unreviewed Node compatibility module node:os"),
     ]);
 
-    const backupPath: string = "/project/scripts/migration/backup.ts";
+    const processIoPath: string = "/project/scripts/perf/fullSuite/processIo.ts";
     expect(collectNodeCompatibilityProblems(
       projectRoot,
-      backupPath,
-      source(backupPath, 'import { readFileSync, writeFileSync } from "node:fs";')
+      processIoPath,
+      source(processIoPath, 'import { readFileSync } from "node:fs";')
     )).toEqual([]);
+    // 豁免逐符号生效：同一个文件也拿不到它没登记的 writeFileSync。
+    expect(collectNodeCompatibilityProblems(
+      projectRoot,
+      processIoPath,
+      source(processIoPath, 'import { readFileSync, writeFileSync } from "node:fs";')
+    )).toEqual([
+      expect.stringContaining("unreviewed node:fs export writeFileSync"),
+    ]);
     expect(collectNodeCompatibilityProblems(
       projectRoot,
       scriptPath,
@@ -242,4 +253,21 @@ test("globalThis.Buffer 和字面量下标复用方法白名单", (): void => {
   }
   const path: string = "/project/packages/example.ts";
   expect(collectNodeCompatibilityProblems("/project", path, source(path, "const x = { Buffer: 1 }; x.Buffer; type B = typeof globalThis.Buffer;"))).toEqual([]);
+});
+
+describe("Node 兼容登记的陈旧条目", () => {
+  test("仓库现有登记全部指向真实文件", () => {
+    expect(collectStaleNodeAllowanceProblems(process.cwd())).toEqual([]);
+  });
+
+  test("登记指向已删除文件时逐表报出", () => {
+    const problems: readonly string[] = collectStaleNodeAllowanceProblems("/nonexistent-root");
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems).toEqual(expect.arrayContaining([
+      expect.stringContaining("PRODUCTION_NODE_IMPORTS retains an allowance for a file that no longer exists"),
+      expect.stringContaining("SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS retains an allowance for a file that no longer exists"),
+      expect.stringContaining("PRODUCTION_BUFFER_GLOBALS retains an allowance for a file that no longer exists"),
+      expect.stringContaining("SCRIPT_BUFFER_GLOBALS retains an allowance for a file that no longer exists"),
+    ]));
+  });
 });

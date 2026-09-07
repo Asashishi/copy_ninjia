@@ -10,12 +10,20 @@ import type { HotPathProfileScenarioName } from "../../../packages/types/perform
 export type ScenarioName =
   | HotPathProfileScenarioName
   | "storage-sqlite-flush"
+  | "verification-snapshot"
+  | "verification-snapshot-clone"
+  | "bounded-response-empty"
+  | "bounded-response-tiny"
+  | "bounded-response-small"
+  | "bounded-response-normal"
+  | "bounded-response-large"
   | "wed-member-hit"
   | "wed-member-growth"
   | "wed-member-churn"
   | "wed-member-chat-switch"
   | "registered-middleware"
   | "sender-no-username"
+  | "sender-mixed-identity"
   | "ai-activity-lru-miss"
   | "temporary-whitelist-activity"
   | "ad-empty-metadata"
@@ -67,6 +75,10 @@ export interface JitTierStats extends JitTierCounts {
 
 export interface Scenario {
   iterations: number;
+  /** 异步或 I/O 场景可显式指定完整操作的预热次数；缺省沿用热点默认值。 */
+  warmupIterations?: number;
+  /** 完整 I/O 操作可只观察实际 JIT 层级；缺省要求生产探针进入 DFG 并稳定。 */
+  profileRequiresOptimizedJit?: boolean;
   /**
    * 跑 iterations 轮并返回校验和。允许返回 Promise：编排层入口本身是 async，
    * 只能连同它的 promise 开销一起量——生产里每条消息付的也正是这份开销。

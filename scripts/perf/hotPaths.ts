@@ -137,6 +137,13 @@ function productionJitTiersAreStable(
 function parseScenarioName(value: string | undefined): ScenarioName {
   switch (value) {
     case "storage-sqlite-flush":
+    case "verification-snapshot":
+    case "verification-snapshot-clone":
+    case "bounded-response-empty":
+    case "bounded-response-tiny":
+    case "bounded-response-small":
+    case "bounded-response-normal":
+    case "bounded-response-large":
     case "wed-member-hit":
     case "wed-member-growth":
     case "wed-member-churn":
@@ -144,6 +151,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "registered-middleware":
     case "sender-no-username":
     case "sender-stable-username":
+    case "sender-mixed-identity":
     case "luck-receipt-fast-path":
     case "ai-activity-window":
     case "ai-activity-lru-miss":
@@ -176,7 +184,10 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     default:
       throw new Error(
         "Usage: bun run perf:hot-paths -- " +
-        "<sender-no-username|sender-stable-username|luck-receipt-fast-path|" +
+        "<verification-snapshot|verification-snapshot-clone|" +
+        "bounded-response-empty|bounded-response-tiny|bounded-response-small|bounded-response-normal|bounded-response-large|" +
+        "sender-no-username|sender-stable-username|sender-mixed-identity|" +
+        "luck-receipt-fast-path|" +
         "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
         "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
         "temporary-whitelist-activity|" +
@@ -205,10 +216,13 @@ async function runBenchmark(
   steadyProfile: boolean
 ): Promise<BenchmarkResult> {
   const scenario: Scenario = createScenario(name);
-  let warmupIterations: number = Math.max(
+  let warmupIterations: number = scenario.warmupIterations ?? Math.max(
     10_000,
     Math.floor(scenario.iterations / WARMUP_DIVISOR)
   );
+  if (!Number.isSafeInteger(warmupIterations) || warmupIterations < 1) {
+    throw new Error(`${name}: warmup iterations must be a positive safe integer.`);
+  }
   const sampleIterations: number = steadyProfile &&
     name === "mention-facts-plain"
     ? scenario.iterations * HOT_PATH_PROFILE_FAST_SCENARIO_ITERATION_MULTIPLIER
@@ -217,7 +231,7 @@ async function runBenchmark(
   scenario.prepare?.();
   let checksum: number = await runOnce(scenario, warmupIterations);
   let tiersAfterWarmup: Record<string, JitTierCounts> = collectJitTiers(scenario);
-  if (steadyProfile) {
+  if (steadyProfile && scenario.profileRequiresOptimizedJit !== false) {
     let stableRounds: number = 0;
     for (
       let round: number = 0;

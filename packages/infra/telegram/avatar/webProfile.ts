@@ -4,7 +4,8 @@ import {
   TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES,
 } from "../../../consts/telegram";
 import { runTelegramCategorizedRequest } from "../outboundGate";
-import { readBoundedResponseBytes, readBoundedResponseText, type BoundedResponseResult } from "../../../libs/boundedResponse";
+import { readBoundedResponseBytes, readBoundedResponseText } from "../../../libs/boundedResponse";
+import type { BoundedResponseResult } from "../../../libs/boundedResponse";
 import { parseAllowedHttpsUrl } from "../../../libs/httpUrlPolicy";
 import { stripLeadingAtSigns } from "../../../libs/text";
 import { logger } from "../../logger";
@@ -202,6 +203,7 @@ export async function fetchAvatarFromWebProfile(username: string, signal?: Abort
       }),
     });
     if (!pageRes.ok) {
+      void pageRes.body?.cancel().catch((): undefined => undefined);
       logger.error(`Failed to fetch telegram.me profile page for @${username}: ${pageRes.status}`);
       return null;
     }
@@ -227,6 +229,7 @@ export async function fetchAvatarFromWebProfile(username: string, signal?: Abort
       }),
     });
     if (!imgRes.ok) {
+      void imgRes.body?.cancel().catch((): undefined => undefined);
       logger.error(`Failed to download avatar from ${photoUrl}: ${imgRes.status}`);
       return null;
     }

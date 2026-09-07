@@ -6,26 +6,26 @@ import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import { observeWedMembers } from "../../../packages/commands/wed/members";
 import { getOrCreateChatState } from "../../../packages/infra/storage/stateStore";
 import { bot } from "../../../packages/infra/telegram/mainClient";
-import { BENCHMARK_BOT_INFO, BENCHMARK_CHAT_ID } from "./fixtures";
+import { BENCHMARK_BOT_INFO, BENCHMARK_CHAT_ID, BENCHMARK_SENDER_ID } from "./fixtures";
 import type { Scenario } from "./types";
 
-/** 成员观察实际入口；增长、已有键命中和满容量拒收分别测量。 */
+/** 成员观察实际入口；预热与采样均使用生产量级用户 ID，新增 ID 位于预热区间之后。 */
 export function wedMemberScenario(mode: "hit" | "growth" | "churn"): Scenario {
-  const user: User = { id: 1, is_bot: false, first_name: "member" };
+  const user: User = { id: BENCHMARK_SENDER_ID, is_bot: false, first_name: "member" };
   const update: Update = { update_id: 1, message: {
     message_id: 1, date: 1, chat: { id: BENCHMARK_CHAT_ID, type: "supergroup", title: "Performance fixture" },
     from: user, text: "普通群消息",
   } };
   const ctx: Context = new Context(update, bot.api, BENCHMARK_BOT_INFO);
-  let nextId: number = WED_MEMBER_LIMIT + 1;
+  let nextId: number = BENCHMARK_SENDER_ID + WED_MEMBER_LIMIT;
   return {
     iterations: mode === "growth" ? WED_MEMBER_LIMIT : 500_000,
     resetBeforeSample: mode === "growth",
     prepare: (): void => {
       getOrCreateChatState(BENCHMARK_CHAT_ID).isInitEnabled = true;
       if (mode !== "growth") {
-        for (let id: number = 1; id <= WED_MEMBER_LIMIT; id++) {
-          user.id = id;
+        for (let index: number = 0; index < WED_MEMBER_LIMIT; index++) {
+          user.id = BENCHMARK_SENDER_ID + index;
           observeWedMembers(ctx);
         }
       }
@@ -34,7 +34,7 @@ export function wedMemberScenario(mode: "hit" | "growth" | "churn"): Scenario {
       const previousSize: number = wedMemberStates.get(BENCHMARK_CHAT_ID)?.members.size ?? 0;
       const previousRevision: number = wedMemberStates.get(BENCHMARK_CHAT_ID)?.revision ?? 0;
       for (let index: number = 0; index < iterations; index++) {
-        user.id = mode === "hit" ? 1 + (index % WED_MEMBER_LIMIT) : nextId++;
+        user.id = mode === "hit" ? BENCHMARK_SENDER_ID + (index % WED_MEMBER_LIMIT) : nextId++;
         observeWedMembers(ctx);
       }
       const size: number = wedMemberStates.get(BENCHMARK_CHAT_ID)?.members.size ?? 0;
@@ -45,7 +45,7 @@ export function wedMemberScenario(mode: "hit" | "growth" | "churn"): Scenario {
       }
       return size;
     },
-    reset: (): void => { resetWedMemberStates(); nextId = WED_MEMBER_LIMIT + 1; },
+    reset: (): void => { resetWedMemberStates(); nextId = BENCHMARK_SENDER_ID + WED_MEMBER_LIMIT; },
     probes: { observeWedMembers },
   };
 }
@@ -57,7 +57,7 @@ export function wedMemberChatSwitchScenario(): Scenario {
     const update: Update = { update_id: index + 1, message: {
       message_id: 1, date: 1,
       chat: { id: BENCHMARK_CHAT_ID - index, type: "supergroup", title: "Performance fixture" },
-      from: { id: index + 1, is_bot: false, first_name: "member" }, text: "普通群消息",
+      from: { id: BENCHMARK_SENDER_ID + index, is_bot: false, first_name: "member" }, text: "普通群消息",
     } };
     contexts.push(new Context(update, bot.api, BENCHMARK_BOT_INFO));
   }

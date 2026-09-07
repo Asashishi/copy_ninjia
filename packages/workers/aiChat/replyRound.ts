@@ -112,7 +112,7 @@ export function startReplyRound(
     longTimes = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     longTriggerTimes.set(chatId, longTimes);
   }
-  // 回拨会破坏 FIFO 时间队列的单调性；丢弃旧时间轴的整个窗口，
+  // 回拨时仅裁掉未来时间戳，保留仍在窗口内的已用配额。
   longTimes.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
   if (admitRound({ windowCount: longTimes.size }).action === "rateLimited") {
     notifyRateLimited({ chatId, now, generation, messageThreadId });

@@ -50,7 +50,8 @@
   - **职责**：**无 I/O** 的纯状态转移与准入规则，包括验证、锁定、AI 回复准入和
     广告检测准入。
   - **典型文件**：`verification.ts` 与 `verification/`（`join`/`pending`/`terminal`/`disable`
-    四段生命周期）、`lockdown.ts`、`replyAdmission.ts`、`adDetectAdmission.ts`。
+    四段生命周期）、`lockdown.ts` 与 `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt`
+    五段生命周期）、`replyAdmission.ts`、`adDetectAdmission.ts`。
 - **`packages/config/`**
   - **职责**：部署 `config/*.json` 的严格 schema、进程快照与按功能聚合的可用性判定；身份策略不在这里。
   - **典型文件**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
@@ -63,7 +64,7 @@
 - **`packages/libs/`**
   - **职责**：领域无关的基础设施，包括原子文件、有界 I/O 与并发工具。
   - **典型文件**：`flushBarrier.ts`、`linkedQueue.ts`、`acknowledgedBatchQueue.ts`、
-    `boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`。
+    `boundedResponse.ts`、`boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`。
 - **`packages/workers/`**
   - **职责**：三个 Worker 的线程内实现。
   - **典型文件**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`，以及
@@ -102,7 +103,7 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
-  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`migrateQaThumbnail.ts` 与 `qaThumbnailMigration/`、冷迁移共用的 `migration/backup.ts` 与 `migration/lifecycle.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
+  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
 
 `telegramInput.ts` 提供安装器和运行时共用的严格读取、解析入口，导入时不读部署文件或填充缓存；`telegram.ts` 负责运行时快照。`libs/inflight.ts` 统一在途任务的有界等待，领域 owner 保留自己的接纳、取消和零预算策略；`infra/backgroundTasks.ts` 负责后台任务错误记录和结算后摘除。群开关命令共用 `commands/superAdminToggle.ts` 的授权、配置门禁、写入、持久化与回执顺序。
 

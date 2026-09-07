@@ -54,7 +54,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/states/`**
   - **Responsibility**: **I/O-free** state transitions and admission rules for verification,
     lockdown, AI replies, and ad detection.
-  - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts`, `replyAdmission.ts`,
+  - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts` plus `lockdown/` (the `apply`/`persistence`/`restore`/`announcement`/`adopt` lifecycle segments), `replyAdmission.ts`,
     `adDetectAdmission.ts`.
 - **`packages/config/`**
   - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
@@ -66,7 +66,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
   - **Representative files**: `flushBarrier.ts`, `linkedQueue.ts`, `acknowledgedBatchQueue.ts`,
-    `boundedSettledBatch.ts`, `monotonicDeadline.ts`, `text.ts`.
+    `boundedResponse.ts`, `boundedSettledBatch.ts`, `monotonicDeadline.ts`, `text.ts`.
 - **`packages/workers/`**
   - **Responsibility**: in-thread implementations for all three Workers.
   - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
@@ -112,7 +112,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
-  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `migrateQaThumbnail.ts` with `qaThumbnailMigration/`, the shared cold-migration boundaries `migration/backup.ts` and `migration/lifecycle.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), plus the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`.
+  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), plus the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`.
 
 `telegramInput.ts` provides strict reading and parsing shared by the installer and runtime, without reading deployment files or populating caches on import; `telegram.ts` owns the runtime snapshot. `libs/inflight.ts` provides bounded waits for in-flight tasks while domain owners retain admission, cancellation, and zero-budget policies. `infra/backgroundTasks.ts` logs background-task errors and removes settled tasks. Group toggles share the authorization, configuration gate, write, persistence, and receipt sequence in `commands/superAdminToggle.ts`.
 

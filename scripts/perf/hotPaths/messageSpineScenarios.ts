@@ -35,7 +35,7 @@ import {
 import { isSelfSent } from "../../../packages/infra/selfSentTracker";
 import { getOrCreateChatState } from "../../../packages/infra/storage/stateStore";
 import { cacheSender } from "../../../packages/users/senderIdentity";
-import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
+import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, BENCHMARK_SENDER_ID } from "./fixtures";
 import type { Scenario } from "./types";
 
 /** 空闲机器人：15 秒内一条都没发过，isSelfSent 在外层就落空。 */
@@ -116,7 +116,7 @@ export function selfSentActiveScenario(): Scenario {
  *
  * 其余场景量的都是叶子工具，而叶子各自快不等于串起来快；这一条量的是真正跑在
  * 每条消息上的那串固定调用：getChatState → recordChatTitleFromChat → cacheSender
- * → observeGroupMessageForAiReply → getActiveCopyIn → isQuietUntilActive →
+ * → observeGroupMessageForAiReply → activeCopyTargetIdIn → isQuietUntilActive →
  * isAiChatConfigured → handleProactiveMessageActions。
  *
  * **fixture 必须是「无可复制内容」的消息**，这是本场景零副作用的依据，不是随手
@@ -143,7 +143,7 @@ export function incomingMessageSpineScenario(): Scenario {
     message_id: 1,
     date: 1,
     chat,
-    from: { id: 42, is_bot: false, first_name: "Stable", last_name: "Sender" },
+    from: { id: BENCHMARK_SENDER_ID, is_bot: false, first_name: "Stable", last_name: "Sender" },
     pinned_message: { message_id: 0, date: 0, chat },
   };
   const ctx: Context = {
@@ -220,7 +220,7 @@ export function aiMediaDirectTriggerScenario(): Scenario {
     message_id: 42,
     date: 1,
     chat,
-    from: { id: 7, is_bot: false, first_name: "Stable", last_name: "Sender", username: "stable_user" },
+    from: { id: BENCHMARK_SENDER_ID, is_bot: false, first_name: "Stable", last_name: "Sender", username: "stable_user" },
     caption: "看看这张",
     photo: [{ file_id: "AgACAgUAAx", file_unique_id: "AQADu", width: 1280, height: 720, file_size: 90_000 }],
     reply_to_message: repliedTo,

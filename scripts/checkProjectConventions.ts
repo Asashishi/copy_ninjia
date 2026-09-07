@@ -21,7 +21,10 @@ import { collectCacheOwnershipProblems } from "./conventions/cacheOwnership";
 import type { CacheOwnerPrefix } from "./conventions/cacheOwnership";
 import { collectWorkerTimerProblems } from "./conventions/workerTimers";
 import { collectCommentReferenceProblems } from "./conventions/commentReferences";
-import { collectNodeCompatibilityProblems } from "./conventions/nodeCompatibility";
+import {
+  collectNodeCompatibilityProblems,
+  collectStaleNodeAllowanceProblems,
+} from "./conventions/nodeCompatibility";
 import { collectTelegramMessageProblems } from "./conventions/telegramMessages";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
@@ -157,6 +160,7 @@ const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
 
 const failures: string[] = [];
 failures.push(...await collectRuntimeCalibrationProblems({ projectRoot: PROJECT_ROOT }));
+failures.push(...collectStaleNodeAllowanceProblems(PROJECT_ROOT));
 for (const problem of await collectColdMigrationProblems(PROJECT_ROOT)) {
   failures.push(`cold migration: ${problem}`);
 }
@@ -237,14 +241,8 @@ async function parseSourceFile(path: string): Promise<ts.SourceFile> {
 /**
  * 逐文件的源码约定：每个文件**只读一次、只解析一次**，适用的规则全在这一趟里跑完。
  *
- * 合并前这里是六趟独立循环（cache JSDoc、consts 常量、Object.freeze、模块级缓存、
- * Node 兼容 import、声明规范），同一个文件被重复读盘与重复建 AST 五到六次。判定
- * 口径与适用集合都没有变化，只是把「按检查分组遍历」换成了「按文件分组遍历」——
- * 因此失败列表现在按文件聚在一起，而不是按检查聚在一起。
- *
- * cache/consts 两条规则按**同一份 sourceFilesUnder 结果**判定适用范围，而不是按路径
- * 前缀猜：`packages/cacheX.ts` 这种同前缀但不在目录里的文件，前缀写法会把它误判进去。
- * 模块级缓存那条的排除条件保持合并前的裸前缀写法，一个字不动。
+ * cache/consts 规则按 sourceFilesUnder 的真实文件集合判定适用范围；
+ * 模块级缓存规则由 collectSourceConventionProblems 判定。失败列表按文件汇总。
  */
 const cacheSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CACHE_ROOT));
 const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_ROOT));

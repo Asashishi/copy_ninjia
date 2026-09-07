@@ -475,6 +475,11 @@
 
 <p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
 
+### 返信と response body のリソース境界
+
+- **有界読み取りは byte 数と保持 chunk 参照の両方を制御します。** `libs/boundedResponse.ts` は各 chunk の受入前に累積 byte を検査し、空 chunk を無視し、参照 budget を超えると `Bun.ArrayBufferSink` へ集約します。成功時の出力 byte は独立しています。この上限は producer が受渡し前に確保するメモリを制御しません。超過時の cancel、読取 error、lock 解放は同じ境界で処理し、avatar HTTP の非成功 response は未読 body を cancel します。
+- **AI model の同時実行枠と順序付き送信 slot は別々に精算します。** model 完了時に model 枠を解放できても、tool context は非同期送信の完了まで保持します。同じ chat の送信は受入順序を守ります。先頭送信が無期限に待ち続け、後続の受入が継続すると、送信 backlog に総量上限はありません。chat 無効化と shutdown は owner lifecycle を通じて cancel します。model の同時実行上限を送信 queue の容量とは解釈しません。`test/workers/aiChat/replyOrder.test.ts` は 4 つの rate-limit window、600 round にわたる排出・無効化・shutdown cancel を検証します。
+
 ## 永続化
 
 ### 永続化と snapshot の contract

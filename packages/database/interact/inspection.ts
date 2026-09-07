@@ -210,38 +210,6 @@ function hasSchemaV5MigrationLineage(
     hasCurrentBaseLineage(rows.slice(0, -2));
 }
 
-/** 冷迁移只接受最近一个已发布 v5 的精确 migration 谱系。 */
-export function assertStorageDatabaseSchemaV5MigrationLineage(
-  database: StorageDatabase,
-  source: string
-): void {
-  const rows: readonly StorageDatabaseMigrationJournalEntry[] =
-    readStorageDatabaseMigrationJournal(database, source);
-  if (!hasSchemaV5MigrationLineage(rows)) {
-    throw new Error(`${source}: expected the exact supported schema v5 migration lineage.`);
-  }
-}
-
-/** 冷迁移中间态 v6 只接受 v5 谱系精确追加临时白名单 migration。 */
-export function assertStorageDatabaseSchemaV6MigrationLineage(
-  database: StorageDatabase,
-  source: string
-): void {
-  const rows: readonly StorageDatabaseMigrationJournalEntry[] =
-    readStorageDatabaseMigrationJournal(database, source);
-  if (
-    rows.length < 5 ||
-    !isMigrationEntry(
-      rows.at(-1),
-      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_CREATED_AT,
-      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_HASH
-    ) ||
-    !hasSchemaV5MigrationLineage(rows.slice(0, -1))
-  ) {
-    throw new Error(`${source}: expected the exact supported schema v6 migration lineage.`);
-  }
-}
-
 /** 当前 v7 只接受 v6 谱系精确追加首日临时广告免检 migration。 */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,

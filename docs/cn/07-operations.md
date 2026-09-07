@@ -58,7 +58,7 @@ WantedBy=multi-user.target
 
 ## 数据根
 
-`COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（留空则为项目根目录）：
+`COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（未设置时使用项目根目录；显式空白值拒绝启动）：
 
 - **`state.json` + `state.json.bak`**
   - **内容**：只剩全局状态——copy 目标，以及 `global.assets` 的四条素材直链
@@ -144,7 +144,7 @@ WantedBy=multi-user.target
   - **备份**：按需。
 - **`bot.lock`**（及 `.guard`/`.recovery`）
   - **内容**：单实例锁。
-  - **备份**：不备份、不手工编辑。
+  - **备份**：随停机快照保留，不手工编辑或向运行中的进程回放锁。
 
 `memory/` 顶层不直接放文件，上述七个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 先通知主线程接纳 `/wed` 每日成员复核，再维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。临时白名单维护会先提交共享 SQLite 的在途最终值；临时写仍未提交时拒绝删除。它保留当日行和刚结束日已经合格的行，删除刚结束日未合格及更早的整行，清理后迟到的失效旧日写会按原 revision 收敛为墓碑。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
 
@@ -165,61 +165,17 @@ WantedBy=multi-user.target
 
 启动不会凭缺失数据库猜测「空名单」，所以全新部署必须显式建一次当前 schema 的空库。步骤见 [01 环境搭建](01-getting-started.md#初始化身份数据库)，`install.sh` 也已包含。目标库已存在时建库入口直接拒绝覆盖。
 
-### 旧 JSON → SQLite（9.1.5 及更早）
+### 升级输入与分阶段迁移
 
-仍使用 `config/whitelist.json`、`config/blocklist.json`，以及可选 `memory/blocklist/` 的部署，必须**先升到 9.1.5 并在那个版本上完成迁移**，再继续升级到当前版本。
+从 `10.5.1` 升到 `10.5.2` 不需要数据格式迁移；当前运行时只接受精确的 schema v7 谱系和通过严格解析的 `state.json`，当前 `package.json` 不提供 `migrate:*` 命令。
 
-`bun run migrate:identity-storage` 最后一次随 9.1.5 发布；按「冷迁移脚本只覆盖最近一个已发布版本 → 当前版本」的约定，它已在 9.2.0 从 `scripts/` 删除，当前版本不再提供这条迁移，也不接受旧 JSON 名单作为输入。不要在当前版本上创建空的 `whitelist.json`／`blocklist.json` 后建空库——那会把真实名单丢在原地，机器人带着一份空黑名单上线。
+更旧部署先按对应版本的操作文档完成中间升级：
 
-### storage.sqlite：schema v5 → v7 临时白名单与广告免检
+- 使用 `config/whitelist.json`、`config/blocklist.json` 或 `memory/blocklist/` 的部署，在 `9.1.5` 上完成身份存储迁移，再按版本步骤升级。
+- 数据库仍为 schema v5，或 `state.json` 含 `global.assets.qaThumbnailUrl` 时，在 `10.5.1` 上完成对应冷迁移并校验，再升级到当前版本。
 
-最近发布版本的 schema v5 缺少 `temporary_whitelist_entries`，当前生产入口只接受精确的
-schema v7 谱系，不会在启动时自动加表或改写成员关系。升级代码后保持 Bot 停止，依次执行：
+每一步均先停服务，在工作树外备份部署输入与整个运行时数据集，记录文件清单、权限、属主和 SHA-256；SQLite 主库及存在的 WAL/SHM 必须来自同一停机时点。按该版本文档迁移、严格回读并验证服务稳定后才能清理备份。未知谱系必须拒绝；不得建空库、手工删键或用示例配置绕过迁移。
 
-```bash
-bun run migrate:temporary-whitelist -- --check
-bun run migrate:temporary-whitelist -- --apply
-```
-
-两种模式都先取得 `bot.lock`，所以 systemd/supervisor 必须已经停止且确认 inactive。
-`--check` 只读核对 SQLite integrity、JSONB storage class、schema version 与精确 v5/v6/v7
-migration 谱系；v5 报告可直迁，v6 只作为这次迁移可续跑的 intermediate 谱系，v7 报告已经完成，
-其它版本或未知谱系一律拒绝。
-
-对已发布部署，`--apply` 只提供 v5 → v7 这一条直接边；若同一次迁移在 v6 提交后中断，也可从该
-intermediate 谱系续跑。脚本先把主库及现存 WAL/SHM 逐字节复制到工作树外，
-写入 owner/mode/SHA-256 清单并读回校验，再由当前 Drizzle migration 新建严格关系表并把
-`storage_metadata` 依次推进到 v6，再重建关系表以授予首个合格日广告免检并推进到 v7。迁移后
-重新执行完整 v7 inspect；任何备份、迁移或复核失败都保留
-外部备份路径和原始错误，必须继续停服并从同一一致性集合恢复，不能删行、建空替代库或跨版本猜迁。
-成功后保留外部备份，启动服务并确认 `active/running`、两个 restart interval 内
-`NRestarts` 不增长且 journal 无新增非零退出，才算迁移完成。重复执行 `--apply` 对 v7 只报告
-已经完成，不再改写数据库。
-
-### state.json：摘掉退场的 `qaThumbnailUrl`
-
-`/set_qa` 改成按「问题:」「回答:」格式收消息之后，inline 结果缩略图没有了消费方，
-`global.assets.qaThumbnailUrl` 随之从 schema 里删除。`state.json` 走**严格解析**：文件里
-残留这个键会让新版本在启动阶段以非零码退出，而不是静默忽略。升级前在 Bot 停止后执行：
-
-```bash
-bun run migrate:qa-thumbnail -- --check
-bun run migrate:qa-thumbnail -- --apply
-```
-
-两种模式都先取 `bot.lock`（因此必须先停服务）。脚本处理 `state.json` 与同目录的
-`state.json.bak` **两份副本**；启动会严格解析两份已存在的文件，任一副本非法都会拒绝启动。
-仅在一份副本真正缺失且另一份合法时补齐；两份都合法但内容不同时，以主文件同步备份。
-
-**必须在新版本代码已经就位之后再跑**，顺序是「停服务 → 换代码 → 跑迁移 → 起服务」。反过来先迁移再用旧版本启动，旧版本的启动补齐会把 `qaThumbnailUrl` 原样写回 `state.json`（那一版把它算进缺省补齐的五项之一），这次迁移就被静默撤销了，而且不会有任何报错提示你。
-
-`--check` 不改任何部署数据，只报告哪几份副本还带着那个键。`--apply` 先在工作树外留下带
-mode/owner/SHA-256 清单的原文快照（写完立刻读回比对哈希），再就地摘键：保留原有权限位，
-写完读回复核内容，并按启动期那套严格 codec 再解析一遍——写出去的必须是新版本读得回来的。
-文件里另有非法字段时当场拒绝写出，而不是摘完了事。
-
-摘键幂等：已经跑过的部署再跑一次只报「已完成」，不碰任何文件。没有 `state.json` 的全新
-部署同样无需迁移。
 ## 启动失败排查
 
 程序的启动失败都是**有意的快速失败**，报错自带原因；对照处理，不要绕过：

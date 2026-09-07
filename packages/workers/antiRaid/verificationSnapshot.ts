@@ -2,7 +2,7 @@ import { verificationGeneration } from
   "../../cache/workers/antiRaid/verification";
 import type {
   VerificationSnapshot,
-  VerificationSnapshotBase,
+  PendingVerificationSnapshot,
 } from "../../types/antiRaid/verification";
 import type {
   ExpelSnapshot,
@@ -48,7 +48,7 @@ export function verificationSnapshot({
       : state.kind === "kickPending"
         ? undefined
         : state.snapshot;
-  const base: VerificationSnapshotBase = {
+  const base: PendingVerificationSnapshot = {
     chatId,
     userId,
     generation: verificationGeneration.current,
@@ -74,8 +74,9 @@ export function verificationSnapshot({
       state.kind === "kickPending" ? state.requestedAt : source!.joinedAt,
     expiresAt:
       state.kind === "kickPending" ? state.requestedAt : source!.expiresAt,
+    phase: "pending",
   };
-  if (state.kind === "pending") return { ...base, phase: "pending" };
+  if (state.kind === "pending") return base;
   if (state.kind === "kickPending") {
     return {
       ...base,

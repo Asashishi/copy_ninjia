@@ -163,7 +163,7 @@ export interface LockdownPersistedMessage {
  *
  * 落盘是私密模式「跨进程可恢复」的唯一凭据。失去它以后再维持限制，就等于把
  * 一条没人能恢复的限制留在群里；Worker 收到后按阶段 fail-safe 打开（见
- * states/lockdown.ts 的 persistFailed 分支），并进入重触发冷却。
+ * states/lockdown/persistence.ts 的 handlePersistFailed），并进入重触发冷却。
  */
 export interface LockdownPersistFailedMessage {
   type: "lockdownPersistFailed";

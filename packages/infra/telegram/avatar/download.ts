@@ -29,6 +29,7 @@ export async function downloadAvatarFile(
     }),
   });
   if (!imgRes.ok) {
+    void imgRes.body?.cancel().catch((): undefined => undefined);
     logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
     return { status: "transient-failure" };
   }

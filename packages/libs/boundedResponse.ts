@@ -1,3 +1,5 @@
+import { BOUNDED_RESPONSE_CHUNK_THRESHOLD, BOUNDED_RESPONSE_COALESCE_BYTES } from "../consts/streams";
+
 /** 有界响应读取结果；失败时返回实际观察到的大小，不保留部分响应体。 */
 export type BoundedResponseResult =
   | { readonly ok: true; readonly bytes: Uint8Array }
@@ -15,7 +17,8 @@ interface ByteStreamReader {
 
 /**
  * 在读取过程中强制限制响应体大小。Content-Length 只用于提前拒绝，真正的
- * 上限由流式累计保证，因此缺失或伪造响应头也不能触发无界内存分配。
+ * 在接纳每个非空块前累计检查字节上限；跳过空块并按字节预算限制暂存块引用。
+ * 细碎输入由原生缓冲聚合，成功结果独占输出字节；输入生产者自身的分配不受本函数控制。
  */
 export async function readBoundedResponseBytes(response: Response, maxBytes: number): Promise<BoundedResponseResult> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
@@ -38,6 +41,8 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
 
   const reader: ByteStreamReader = body.getReader();
   const chunks: Uint8Array[] = [];
+  let sink: Bun.ArrayBufferSink | undefined;
+  let combined: Uint8Array | undefined;
   let totalBytes: number = 0;
   try {
     while (true) {
@@ -49,18 +54,29 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
         await reader.cancel().catch((): undefined => undefined);
         return { ok: false, reason: "too-large", observedBytes: totalBytes };
       }
-      chunks.push(value);
+      // 块引用数由阈值与已读字节预算共同约束；细碎流转交原生缓冲。
+      if (value.byteLength === 0) continue;
+      if (sink !== undefined) {
+        sink.write(value);
+      } else if (
+        chunks.length < BOUNDED_RESPONSE_CHUNK_THRESHOLD ||
+        totalBytes >= chunks.length * BOUNDED_RESPONSE_COALESCE_BYTES
+      ) {
+        chunks.push(value);
+      } else {
+        sink = new Bun.ArrayBufferSink();
+        sink.start({ asUint8Array: true, highWaterMark: Math.min(maxBytes, Math.max(totalBytes, BOUNDED_RESPONSE_COALESCE_BYTES)) });
+        for (const chunk of chunks) sink.write(chunk);
+        chunks.length = 0;
+        sink.write(value);
+      }
     }
   } finally {
     reader.releaseLock();
+    if (sink !== undefined) combined = sink.end() as Uint8Array;
   }
 
-  const bytes: Uint8Array = new Uint8Array(totalBytes);
-  let offset: number = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+  const bytes: Uint8Array = combined ?? Bun.concatArrayBuffers(chunks, totalBytes, true);
   return { ok: true, bytes };
 }
 

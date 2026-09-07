@@ -28,12 +28,11 @@
 | `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するため `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 36 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 44 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
-| `bun run migrate:qa-thumbnail` | `state.json` から退場した `global.assets.qaThumbnailUrl` を取り除く停止時 cold migration |
-| `bun run migrate:temporary-whitelist` | 停止中の共有 SQLite を v5 → v7 の直接 edge で移行する cold migration。v6 は同じ migration の再開可能な intermediate lineage のみ |
+| `bun run perf:review` | 12 個の hot path の通常測定と profile、2 本の完全 command chain、実 Disk I/O Worker の負荷と再構築を各 3 独立ラウンドで検証。`--hot-paths` / `--chains` / `--worker` で選択 |
 | `bun run release:check` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
 
@@ -61,7 +60,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**3495 tests / 345 files / 125930 `expect()` calls**。全ソースコードの**関数カバレッジは 97.17%、行カバレッジは 97.37%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**3509 tests / 346 files / 129696 `expect()` calls**。全ソースコードの**関数カバレッジは 97.21%、行カバレッジは 97.45%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -104,7 +103,7 @@ gate を設けている項目：GC sample 比率、sampling RSS ピークとプ�
 
 `profile` / `retained` の接頭辞は、その読み取り値がどちらの子プロセス由来かを示します。両者の warmup 回数は一桁違う（profile 側は JIT 安定ラウンドを追加で回す）ため、混ぜて読んではいけません。
 
-シナリオを追加・書き換えるときに**必ず守る収束ルール**が 1 つあります。被測定関数が文字列を返す場合、benchmark を `.length` だけで収束させてはいけません。JSC の rope は自身の長さを持つため、長さを読んでも materialize されません。それでは「連結ツリーを組んだ」ことを測っているだけで、「使える文字列を得た」ことにはなりません。同一入力で実測すると、転写レンダリングを行ごとの `+=` に変えた後は 2 つの収束方法で 42.0 対 57.5 µs/op（27%）の差が出ますが、変更前は 3.1% しか違いませんでした。長さだけで収束させる benchmark は、この変更を「42% 高速化」と読んでしまい、その半分以上はまだ実行していない作業です。収束は必ず `charCodeAt(length - 1)` のような強制解決で行ってください（`scripts/perf/hotPaths/transcriptScenarios.ts` の `transcript-render` を参照）。同じ理屈は「後でまとめて実体化する」あらゆる遅延構造に当てはまります。**benchmark は本番が実際に支払う工程を支払わなければなりません。** さもないと、その工程を経路から外してしまう regression が、失敗ではなく読み取り値の高速化として現れます。
+文字列 scenario は production が利用する内容を実際に読み取る必要があります。`.length` だけでは JSC rope の展開は保証されません。transcript scenario は `charCodeAt(length - 1)` で解析を発生させます。`scripts/perf/hotPaths/transcriptScenarios.ts` を参照してください。他の遅延構造も production が内容を利用する時の処理を含めます。
 
 ## 入室ログ性能 benchmark
 
@@ -118,6 +117,12 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 
 ## 個別シナリオと伝送ストレス検証
 
+`bun run perf:review` は全量基準と同じ隔離 root、設定 fixture、process runner、出力先の canned reply を使い、JSON を出力して各実行の data root を削除します。`--hot-paths` は sender、message window、permission read、AI activity、認証 snapshot と clone、空/微小 chunk および 1 KiB/1 MiB/16 MiB response、登録 middleware の 12 scenario を、それぞれ通常測定 3 回と profile 3 回で検証します。完全な非同期読み取りは明示した回数で warmup し、実際の JIT tier を記録します。他の scenario は最適化 tier の安定性検査を維持します。
+
+`--chains` は機能を有効にした `ad-detect-command` と `ai-reply-command` を実行し、Telegram canned call 数と処理完了を検証します。`--worker` は各 round で実 Disk I/O Worker に 128 message × 400 batch を渡し、batch ごとに最終 revision の ACK を待ちます。各 round で 2 回の graceful shutdown と Worker 再構築を行い、25 chat の復旧値を照合します。clone、transaction、disk wait を含め、throughput、latency、retained heap、RSS を記録しますが、fault injection の代用にはなりません。各 mode は 3 round で、全量基準と既定 10 scenario の hard gate 閾値は変更しません。
+
+`sender-mixed-identity` は user と channel の identity を交互に入力して steady behavior と JIT 再最適化を観測します。単一 user scenario とは sender 数が異なるため、時間差を shape 混在だけのコストとは解釈しません。benchmark の user ID は int32 を超える値を扱い、production では小さい ID も有効です。
+
 registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware`、`storage-sqlite-flush` を含みます。最初の 4 項目はメンバー集合の hit・充填・満杯時の拒否・chat 切替を検証します。middleware は実際の登録 chain と活動経路を検証します。SQLite は空 DB に 128 delete を送るため、主に transaction scheduling の測定であり、disk throughput の値ではありません。
 
 `bun scripts/perf/isolatedHotPath.ts <scenario>` を実行し、別の sampling には `--profile` を付けます。この入口は `gateFixture.ts` で独立した設定・data root を作り、3 回の独立子 process に渡して、終了後に run directory を削除します。外部送信は基準用の固定応答が受け持ちます。Bun と入力を固定し、warm-up 後に retained と profile を別々に観測します。sample 不足時の GC 0 件から GC 不在を断定してはいけません。
@@ -130,7 +135,7 @@ registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-
 
 計測対象はすべて既存コードの再利用です。ホットパスは `perf:hot-paths` のシナリオと反復数をそのまま使い、ストレージは `perf:identity-database` の実装を呼び、容量線は `perf:join-log` の子プロセスを呼びます。チェーンは `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` というメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測します。さらに**コマンド全体**を計測する 2 本があります。`ad-detect-command` は `enqueueAdCandidate` から `runAdDetectBatch`、そしてメインスレッドの `handleAdDetected` による処理の排出まで、`ai-reply-command` は `recordChatMessage` と `generateAndSendReply` から返信が実際に送信されるまでです。この 2 本のモデル呼び出しと Telegram 送信は `scripts/perf/outboundGuard.ts` のプロセス内固定応答が返します——ベンチマークは実際のリクエストを一切発行せず、API 費用も発生しません。`ai-reply-command` はさらに送信前の擬人的な間を実測して差し引きます（基準は [09 パフォーマンス](09-performance.md)）。コールドスタートは満載のフィクスチャ上で `packages/app/lifecycle.ts` の init 順に段階ごとに計測し、通信を伴う処理と 2 つの業務 Worker の生成は含みません。
 
-データはすべてリポジトリ直下の `performance/`（`.gitignore` 済み）に書き、設定は `config_example/` から読み、各ラウンドの終了後にツリーごと削除します。実行が終わればこのディレクトリには何も残りません。親プロセスは production の実装モジュールを一切 import しないため、実データルートへ書き込む手段を持ちません。`--write-doc` を付けると `docs/{cn,en,ja}/09-performance.md` の 3 言語ブロックを書き換えます。計測値と各セクションの定義は [09 パフォーマンスベンチマーク](09-performance.md) を参照してください。
+データはすべてリポジトリ直下の `performance/`（`.gitignore` 済み）に書き、設定は `config_example/` から読み、各ラウンドの終了後にツリーごと削除します。実行が終わればこのディレクトリには何も残りません。親プロセスは production の実装モジュールを一切 import しないため、実データルートへ書き込む手段を持ちません。`--write-doc` は `docs/{cn,en,ja}/09-performance.md` の 3 言語 block と `performance-result.json` の `fullSuite.lastRun` を同時に書き換えます。計測値と各セクションの定義は [09 パフォーマンスベンチマーク](09-performance.md) を参照してください。
 
 ## コミット手順
 

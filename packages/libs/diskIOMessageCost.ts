@@ -49,6 +49,17 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
     case "readBlocklistIdPage":
     case "recoveryReplay":
       break;
+    default: {
+      // 穷尽性断言：新增 DiskIOOperationMessage 变体时这一行编译失败，必须为它显式定价。
+      // 计价是跨线程传输预算与背压的唯一容量单位（见 infra/diskIO/transport.ts），漏掉
+      // 的变体只按 DISK_BUSINESS_MESSAGE_BASE_BYTES 计入，队列水位随之失真。
+      // 运行期不可达：调用方只对本线程构造的消息记账，不解析外部输入。
+      const unhandled: never = message;
+      throw new Error(
+        "Unsupported Disk I/O operation message type: " +
+        String((unhandled as DiskIOOperationMessage).type)
+      );
+    }
   }
   return Math.min(Number.MAX_SAFE_INTEGER, DISK_BUSINESS_MESSAGE_BASE_BYTES + payloadBytes);
 }

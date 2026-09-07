@@ -1,4 +1,5 @@
-import { relative } from "node:path";
+import { existsSync } from "node:fs";
+import { join, relative } from "node:path";
 import { isBuiltin } from "node:module";
 import ts from "typescript";
 
@@ -275,5 +276,34 @@ export function collectNodeCompatibilityProblems(
     ts.forEachChild(node, visitDiscouragedProcessProperties);
   };
   visitDiscouragedProcessProperties(source);
+  return problems;
+}
+
+/**
+ * 逐文件登记表里指向**已不存在文件**的条目。
+ *
+ * `collectNodeCompatibilityProblems` 只在遍历到某个文件时才查它的登记，文件一旦删除，
+ * 它留下的登记就再也不会被访问到，会作为一条永不过期的豁免留在表里。本函数在逐文件
+ * 遍历之外整表核对一次路径存在性，四张登记表各查一遍。
+ */
+export function collectStaleNodeAllowanceProblems(
+  projectRoot: string
+): readonly string[] {
+  const problems: string[] = [];
+  const tables: readonly (readonly [string, Readonly<Record<string, unknown>>])[] = [
+    ["PRODUCTION_NODE_IMPORTS", PRODUCTION_NODE_IMPORTS],
+    ["SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS", SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS],
+    ["PRODUCTION_BUFFER_GLOBALS", PRODUCTION_BUFFER_GLOBALS],
+    ["SCRIPT_BUFFER_GLOBALS", SCRIPT_BUFFER_GLOBALS],
+  ];
+  for (const [table, entries] of tables) {
+    for (const relativePath of Object.keys(entries)) {
+      if (!existsSync(join(projectRoot, relativePath))) {
+        problems.push(
+          `${table} retains an allowance for a file that no longer exists: ${relativePath}`
+        );
+      }
+    }
+  }
   return problems;
 }

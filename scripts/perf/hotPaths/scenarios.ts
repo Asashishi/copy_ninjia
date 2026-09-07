@@ -37,7 +37,13 @@ import type { GagSession } from "../../../packages/types/gag";
 import type { AdCandidateMessage, AdSampleContext } from
   "../../../packages/types/antiRaid/adDetect";
 import type { AdCandidateEntry } from "../../../packages/types/antiRaid/adDetect";
-import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, messageFixture } from "./fixtures";
+import {
+  BENCHMARK_CHAT_ID,
+  BENCHMARK_EPOCH_MS,
+  BENCHMARK_SENDER_ID,
+  channelMessageFixture,
+  messageFixture,
+} from "./fixtures";
 import { AD_SAMPLE_TEXTS } from "./adFixture";
 import { prototypeProbes } from "./jitTiers";
 import type { Scenario } from "./types";
@@ -54,6 +60,46 @@ export function senderScenario(username?: string): Scenario {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
         checksum += cacheSender(message) ?? 0;
+      }
+      return checksum;
+    },
+    reset: (): void => {
+      userCache.clear();
+      senderUsernameCache.clear();
+    },
+    probes: { cacheSender },
+  };
+}
+
+/**
+ * 同一个群里真实用户与频道马甲混着发言时的 cacheSender 稳态。
+ *
+ * `sender-no-username` 与 `sender-stable-username` 各只喂一种身份形态，`message` 与
+ * `userCache` 里的 `CachedUser` 都恒是同一个 shape，整条判定是单态读取。生产的群同时
+ * 有真实用户、频道马甲和匿名管理员皮套，`from` 与 `sender_chat` 两种消息形态交替进入
+ * 同一个调用点，本场景补的就是这个观测点。
+ *
+ * 本场景记录 `cacheSender` 的 `reoptRetries`，用于观察混合输入下的重新优化次数；
+ * 具体计数由当前 Bun/JSC 构建及预热决定（判读见 hotPaths/types.ts 的 JitTierCounts）。
+ * 绝对 ns/op **不可与 `sender-stable-username` 直接相比**：那个场景只有一个发送者，
+ * 差值里混着发送者基数，不是形态混合的代价。
+ *
+ * 两种形态交替喂入，发送者 id 各不相同且资料保持不变：命中的是「发送者资料没变、
+ * 逐字段比对后提前返回」那条稳态热路径，不是写入路径。
+ */
+export function senderMixedIdentityScenario(): Scenario {
+  const messages: readonly Message[] = [
+    messageFixture("stable_user", BENCHMARK_SENDER_ID),
+    channelMessageFixture(1, "channel_one"),
+    messageFixture("second_user", BENCHMARK_SENDER_ID + 1),
+    channelMessageFixture(2, "channel_two"),
+  ];
+  return {
+    iterations: 1_000_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        checksum += cacheSender(messages[index % messages.length]!) ?? 0;
       }
       return checksum;
     },
@@ -239,7 +285,7 @@ export function adWireCloneScenario(): Scenario {
   const message: AdCandidateMessage = {
     type: "adCandidate",
     chatId: BENCHMARK_CHAT_ID,
-    senderId: 42,
+    senderId: BENCHMARK_SENDER_ID,
     messageId: 1,
     text: "ordinary message",
     label: "@stable_user",

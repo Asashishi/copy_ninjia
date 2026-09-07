@@ -2,6 +2,8 @@
 
 import { createAdCapacityRejectScenario } from "./adDetectScenarios";
 import { storageFlushScenario } from "./storageFlushScenario";
+import { verificationSnapshotScenario } from "./verificationSnapshotScenario";
+import { boundedResponseScenario } from "./boundedResponseScenario";
 import { wedMemberChatSwitchScenario, wedMemberScenario } from "./wedMemberScenarios";
 import { registeredMiddlewareScenario } from "./registeredMiddlewareScenario";
 import {
@@ -32,6 +34,7 @@ import {
   luckTierTableScenario,
   quotaTimestampWindowScenario,
   redactCleanLogScenario,
+  senderMixedIdentityScenario,
   senderScenario,
 } from "./scenarios";
 import { createTemporaryWhitelistActivityScenario } from
@@ -48,6 +51,13 @@ import type { Scenario, ScenarioName } from "./types";
 export function createScenario(name: ScenarioName): Scenario {
   switch (name) {
     case "storage-sqlite-flush": return storageFlushScenario();
+    case "verification-snapshot": return verificationSnapshotScenario(false);
+    case "verification-snapshot-clone": return verificationSnapshotScenario(true);
+    case "bounded-response-empty": return boundedResponseScenario("empty");
+    case "bounded-response-tiny": return boundedResponseScenario("tiny");
+    case "bounded-response-small": return boundedResponseScenario("small");
+    case "bounded-response-normal": return boundedResponseScenario("normal");
+    case "bounded-response-large": return boundedResponseScenario("large");
     case "wed-member-hit": return wedMemberScenario("hit");
     case "wed-member-growth": return wedMemberScenario("growth");
     case "wed-member-churn": return wedMemberScenario("churn");
@@ -55,6 +65,7 @@ export function createScenario(name: ScenarioName): Scenario {
     case "registered-middleware": return registeredMiddlewareScenario();
     case "sender-no-username": return senderScenario();
     case "sender-stable-username": return senderScenario("Stable_User");
+    case "sender-mixed-identity": return senderMixedIdentityScenario();
     case "luck-receipt-fast-path": return createLuckReceiptFastPathScenario();
     case "ai-activity-window": return aiActivityScenario();
     case "ai-activity-lru-miss": return aiActivityLruMissScenario();

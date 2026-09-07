@@ -259,12 +259,6 @@ export const SCRIPT_ONLY_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowan
 export const SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {
-  "scripts/migration/backup.ts": {
-    "node:fs": {
-      symbols: ["readFileSync", "writeFileSync"],
-      purpose: "exclusive-create backup writes followed by same-boundary fsync and byte verification",
-    },
-  },
   "scripts/perf/fullSuite/processIo.ts": {
     "node:fs": {
       symbols: ["readFileSync"],

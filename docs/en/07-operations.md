@@ -58,7 +58,7 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 
 ## Data Root
 
-`COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When empty, it defaults to the project root:
+`COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When unset, it defaults to the project root; an explicitly blank value is rejected at startup:
 
 - **`state.json` + `state.json.bak`**
   - **Contents**: global state only — the copy target, plus the four asset URLs under
@@ -162,7 +162,7 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
   - **Backup**: as needed.
 - **`bot.lock` and `.guard` / `.recovery`**
   - **Contents**: single-instance lock.
-  - **Backup**: do not back up or edit manually.
+  - **Backup**: retain with the stopped-service snapshot; do not edit manually or restore locks into a running process.
 
 No files live directly at the top of `memory/`; each of the seven domains owns one subdirectory, while identity policy lives separately under `database/`. Startup first scans the state domains that require recovery read-only, including the `joinlog/` retention window, and strictly decodes all inputs. Owners are adopted only after every domain succeeds; directory creation, temporary/orphan/expired-file cleanup, and compaction run after the success reply, followed by one Bun-native midnight maintenance cron with an explicit `Asia/Tokyo` timezone. The cron first notifies the main thread to admit the daily `/wed` membership review, then maintains fortune files, logs, join logs, ad-sample archives, pending-verification day files, and temporary-allowlist activity, isolating one domain's failure from the rest; existing startup and business-event paths remain fallbacks. Temporary-allowlist maintenance first commits pending final values in shared SQLite and refuses deletion while temporary writes remain uncommitted. It retains current-day rows and rows that qualified on the day that just ended, deletes unqualified rows from that day and every older row in full, and normalizes an expired old-day write arriving after cleanup into a tombstone at its original revision. `ad-detected/` still appears only after the first hit; when the directory already exists, post-startup maintenance scans directory entries without reading sample contents. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges. If downtime crosses Tokyo midnight, startup strictly reads the latest prior day and overlays today's newer records; corrupt prior data fails recovery without rewriting either file, and maintenance publishes today's atomic snapshot and removes old days only after startup succeeds. At runtime the unified cron triggers the same rollover; failure retains the active mirror and retries through an unref'ed one-second timer.
 
@@ -183,71 +183,17 @@ The runtime has no old-format compatibility path and never creates this database
 
 Startup never guesses that a missing database means empty policy, so a fresh deployment must explicitly create one empty database at the current schema. The steps are in [01 Setup](01-getting-started.md#initializing-identity-storage), and `install.sh` already includes them. The creation entry point refuses to overwrite an existing target.
 
-### Legacy JSON → SQLite (9.1.5 and earlier)
+### Upgrade Inputs and Staged Migration
 
-Deployments still using `config/whitelist.json`, `config/blocklist.json`, and optional `memory/blocklist/` must **first upgrade to 9.1.5 and complete the migration on that version**, then continue upgrading to the current release.
+Upgrading from `10.5.1` to `10.5.2` requires no data-format migration. The current runtime accepts only the exact schema v7 lineage and a strictly validated `state.json`; the current `package.json` exposes no `migrate:*` commands.
 
-`bun run migrate:identity-storage` last shipped in 9.1.5. Under the rule that cold-migration scripts only cover "most recent released version → current version", it was removed from `scripts/` in 9.2.0; the current release neither offers that migration nor accepts legacy JSON lists as input. Do not create empty `whitelist.json`/`blocklist.json` files on the current release and then create an empty database — that leaves the real lists behind and puts the bot online with an empty blocklist.
+Older deployments must complete the intermediate upgrades using the operations guide for each version:
 
-### storage.sqlite: schema v5 → v7 temporary allowlist and ad bypass
+- Deployments using `config/whitelist.json`, `config/blocklist.json`, or `memory/blocklist/` complete identity-storage migration on `9.1.5`, then follow the version-by-version upgrade steps.
+- Deployments still using schema v5 or a `state.json` containing `global.assets.qaThumbnailUrl` complete the corresponding cold migration and validation on `10.5.1` before upgrading to the current version.
 
-The most recently released schema v5 has no `temporary_whitelist_entries` table. The current
-production entry accepts only the exact schema v7 lineage and never adds the table or rewrites
-membership at startup.
-After placing the new code, keep the bot stopped and run:
+At every step, stop the service, back up deployment inputs and the complete runtime dataset outside the worktree, and record file manifests, permissions, owners, and SHA-256 hashes. SQLite and any WAL/SHM files must come from the same stopped-service snapshot. Follow that version’s migration guide, strictly read back the results, and verify service stability before removing backups. Reject unknown lineage; do not bypass migration with an empty database, manual key deletion, or example configuration.
 
-```bash
-bun run migrate:temporary-whitelist -- --check
-bun run migrate:temporary-whitelist -- --apply
-```
-
-Both modes acquire `bot.lock`, so systemd/supervisor must already be stopped and confirmed inactive.
-`--check` read-only validates SQLite integrity, JSONB storage classes, schema version, and the exact
-v5/v6/v7 migration lineage. It reports v5 as directly migratable, accepts v6 only as the resumable
-intermediate lineage of this migration, and reports v7 as complete. Every other version or unknown
-lineage is refused.
-
-For released deployments, `--apply` exposes only the direct v5 → v7 edge. If the same migration was
-interrupted after committing v6, it may resume from that intermediate lineage. Before writing, the
-script copies the main database and any existing WAL/SHM sidecars byte for byte outside the worktree,
-writes and reads back an owner/mode/SHA-256 manifest, then runs the current Drizzle migrations. They
-create the strict relational table at v6, rebuild it so the first qualified day grants ad bypass,
-and set `storage_metadata` to v7. The script finishes with the complete v7 inspection.
-Any backup, migration, or verification failure retains the external backup path and original error;
-keep the service stopped and restore the whole consistency set instead of deleting rows, creating an
-empty replacement, or guessing across versions. After success, retain the backup, start the service,
-and confirm `active/running`, unchanged `NRestarts` across two restart intervals, and no new non-zero
-journal exit. Re-running `--apply` against v7 only reports that migration is complete and does not
-rewrite the database.
-
-### state.json: drop the retired `qaThumbnailUrl`
-
-Once `/set_qa` started collecting text from `问题:` / `回答:` messages, the inline result
-thumbnail lost its only consumer and `global.assets.qaThumbnailUrl` was removed from the schema.
-`state.json` is parsed **strictly**: a leftover key makes the new version exit non-zero during
-startup rather than ignoring it silently. Run this with the bot stopped, before upgrading:
-
-```bash
-bun run migrate:qa-thumbnail -- --check
-bun run migrate:qa-thumbnail -- --apply
-```
-
-Both modes acquire `bot.lock` first (so the service must already be stopped). The script handles
-**both copies**, `state.json` and the sibling `state.json.bak`. Startup strictly parses every existing
-copy and refuses to start if either is invalid. A missing copy is recreated only from a valid sibling;
-when both are valid but differ, the primary is copied to the backup.
-
-**Run this only after the new code is already in place** — the order is stop the service, swap the code, run the migration, start the service. Doing it the other way round and starting the *old* version after migrating lets that version's startup seeding write `qaThumbnailUrl` straight back into `state.json` (it counts the key among the five entries it seeds), silently undoing the migration with no error to warn you.
-
-`--check` changes no deployment data; it only reports which copies still carry the key. `--apply`
-first writes an external snapshot of the originals with a mode/owner/SHA-256 manifest (reading each
-one back to compare hashes), then drops the key in place: the original permission bits are kept, the
-result is read back and verified, and it is decoded once more through the startup codec — what gets
-written must be what the new version can read. If the same file carries another invalid field, the
-write is refused outright rather than completed halfway.
-
-Dropping the key is idempotent: a deployment that already ran it just reports "already complete" and
-touches nothing. A fresh deployment with no `state.json` needs no migration either.
 ## Startup Failures
 
 Startup failures are **deliberately fail-fast** and include their cause. Resolve the issue rather than bypassing the check:

@@ -4,7 +4,8 @@ import {
   AVATAR_MAX_DOWNLOAD_BYTES,
   BOT_PROFILE_PHOTO_FILE_NAME,
 } from "../../../consts/telegram";
-import { readBoundedResponseBytes, type BoundedResponseResult } from "../../../libs/boundedResponse";
+import { readBoundedResponseBytes } from "../../../libs/boundedResponse";
+import type { BoundedResponseResult } from "../../../libs/boundedResponse";
 import { sniffImageFormat, type SniffedImageFormat } from "../../image";
 import { redactUrlForLog } from "../../../libs/redaction";
 import { logger } from "../../logger";
@@ -69,6 +70,7 @@ async function attemptRestoreDefaultProfilePhoto(
       signal: avatarFetchSignal(signal),
     });
     if (!response.ok) {
+      void response.body?.cancel().catch((): undefined => undefined);
       logger.error(`Failed to download the default avatar (${response.status}) from ${redactUrlForLog(url)} (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`);
       return "transient-failure";
     }

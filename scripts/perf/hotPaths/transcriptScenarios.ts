@@ -15,7 +15,7 @@ import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import type { AiRecordContext } from "../../../packages/types/aiChat/protocol";
 import type { MentionFacts } from "../../../packages/types/auto";
 import { buildBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessage";
-import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
+import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, BENCHMARK_SENDER_ID } from "./fixtures";
 import type { Scenario } from "./types";
 
 /**
@@ -39,7 +39,7 @@ const RECORD_SOURCES: readonly AiRecordContext[] = [
     chatId: BENCHMARK_CHAT_ID, senderId: 103, firstName: "Carol", lastName: "T",
     username: "carol", messageId: 3,
     replyTo: {
-      messageId: 2, id: 102, firstName: "Bob", lastName: "", username: undefined,
+      messageId: 2, id: BENCHMARK_SENDER_ID + 2, firstName: "Bob", lastName: "", username: undefined,
       text: "被回复的原文", quote: undefined, forwardedFrom: undefined,
     },
     forwardedFrom: undefined, persistImmediately: false,
@@ -136,14 +136,14 @@ export function replyReferenceScenario(): Scenario {
   // 别让 Message 的自嵌套字段污染这份 fixture 的类型。
   const replied: NonNullable<Message["reply_to_message"]> = {
     message_id: 40, date: 1, chat,
-    from: { id: 456, is_bot: false, first_name: "Bob", username: "bob_dev" },
+    from: { id: BENCHMARK_SENDER_ID + 2, is_bot: false, first_name: "Bob", username: "bob_dev" },
     text: "被回复的原文",
     reply_to_message: undefined,
   };
   const messages: readonly Message[] = [
-    { message_id: 41, date: 1, chat, from: { id: 123, is_bot: false, first_name: "Alice" }, text: "回复一句", reply_to_message: replied },
-    { message_id: 42, date: 1, chat, from: { id: 123, is_bot: false, first_name: "Alice" }, text: "带引用", reply_to_message: replied, quote: { text: "原文", position: 0, is_manual: true } },
-    { message_id: 43, date: 1, chat, from: { id: 123, is_bot: false, first_name: "Alice" }, text: "没有回复" },
+    { message_id: 41, date: 1, chat, from: { id: BENCHMARK_SENDER_ID, is_bot: false, first_name: "Alice" }, text: "回复一句", reply_to_message: replied },
+    { message_id: 42, date: 1, chat, from: { id: BENCHMARK_SENDER_ID, is_bot: false, first_name: "Alice" }, text: "带引用", reply_to_message: replied, quote: { text: "原文", position: 0, is_manual: true } },
+    { message_id: 43, date: 1, chat, from: { id: BENCHMARK_SENDER_ID, is_bot: false, first_name: "Alice" }, text: "没有回复" },
   ];
   return {
     iterations: 500_000,
