@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
+import { TEST_DATA_ROOT } from "../preloadEnv";
 import {
   readHotPathGateCalibration,
   writeHotPathGateLastRun,
@@ -13,7 +13,7 @@ import { assertHotPathMedianPolicyCoverage } from "../../scripts/perf/hotPaths/g
 /** 仓库根那份真实记录；门禁每次运行读的就是它。 */
 const REPOSITORY_RESULT_PATH: string = join(import.meta.dir, "../../performance-result.json");
 
-const scratchRoot: string = mkdtempSync(join(tmpdir(), "hot-path-gate-result-"));
+const scratchRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "hot-path-gate-result-"));
 afterAll((): void => {
   rmSync(scratchRoot, { recursive: true, force: true });
 });

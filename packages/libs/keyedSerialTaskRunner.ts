@@ -18,7 +18,7 @@ export interface KeyedSerialTaskRunner<K> {
    * 不需要在任务完成时机附加额外逻辑（如计数器维护）的调用方可以直接
    * 丢弃返回值。
    */
-  run(key: K, task: () => Promise<void>): Promise<void>;
+  readonly run: (key: K, task: () => Promise<void>) => Promise<void>;
 }
 
 export function createKeyedSerialTaskRunner<K>(chains: Map<K, Promise<void>>): KeyedSerialTaskRunner<K> {

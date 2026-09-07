@@ -182,7 +182,7 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 ### upgrade input と段階的 migration
 
-`10.5.1` から `10.5.2` への upgrade に data format migration は不要です。現行 runtime は厳密な schema v7 lineage と検証済み `state.json` のみを受け付け、現行 `package.json` は `migrate:*` command を提供しません。
+`10.5.2` から `10.5.3` への upgrade に data format migration は不要です。現行 runtime は厳密な schema v7 lineage と検証済み `state.json` のみを受け付け、現行 `package.json` は `migrate:*` command を提供しません。
 
 古い deployment は各 version の運用手順に従って中間 upgrade を完了します。
 

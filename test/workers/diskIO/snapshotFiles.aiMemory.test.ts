@@ -1,13 +1,12 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEST_DATA_ROOT } from "../../preloadEnv";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from
   "../../../packages/consts/aiChat/memory";
 
-// 与既有单测同样的手法:先把 AI_MEMORY_DIR 重定向到临时目录再 import,
-// 绝不能碰项目真实的 memory/ai/(线上 bot 正在用)。
-const aiDir: string = mkdtempSync(join(tmpdir(), "ai-memory-schema-"));
+// 在生产模块 import 之前将 AI_MEMORY_DIR 指向 preload 数据根下的独占目录。
+const aiDir: string = mkdtempSync(join(TEST_DATA_ROOT, "ai-memory-schema-"));
 afterAll((): void => { rmSync(aiDir, { recursive: true, force: true }); });
 const realPaths = await import("../../../packages/consts/paths");
 const { mock } = await import("bun:test");

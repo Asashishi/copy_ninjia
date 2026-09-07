@@ -1,15 +1,14 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEST_DATA_ROOT } from "../../preloadEnv";
 
 /**
- * mock.module 必须在任何真实 import 之前调用（理由同 test/workers/diskIO/
- * luckFiles.test.ts 的模块头注释）：snapshotFiles.ts 从 consts/paths 取
- * STICKER_MEMORY_DIR，指向项目真实的 memory/stickers/ 目录——单测里绝不能
- * 往那里写，整体重定向到临时目录。
+ * mock.module 在生产模块 import 之前将 STICKER_MEMORY_DIR 指向本文件独占目录。
+ * 该目录位于 preload 的测试数据根内，由文件与全局 afterAll 清理。
  */
-const stickerDir: string = mkdtempSync(join(tmpdir(), "sticker-catalog-test-"));
+const stickerDir: string = mkdtempSync(join(TEST_DATA_ROOT, "sticker-catalog-test-"));
+afterAll((): void => { rmSync(stickerDir, { recursive: true, force: true }); });
 const realPaths = await import("../../../packages/consts/paths");
 const { mock } = await import("bun:test");
 mock.module("../../../packages/consts/paths", () => ({ ...realPaths, STICKER_MEMORY_DIR: stickerDir }));

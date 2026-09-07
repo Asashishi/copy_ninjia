@@ -1,13 +1,13 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
+import { TEST_DATA_ROOT } from "../preloadEnv";
 import {
   PERFORMANCE_RESULT_PATH,
   writePerformanceResultEntry,
 } from "../../scripts/perf/performanceResult";
 
-const scratchRoot: string = mkdtempSync(join(tmpdir(), "performance-result-"));
+const scratchRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "performance-result-"));
 afterAll((): void => {
   rmSync(scratchRoot, { recursive: true, force: true });
 });

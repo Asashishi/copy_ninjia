@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,14 +14,24 @@ import { personaCache } from "../../packages/cache/perThread/config";
 // 否则后续文件里读 getPersona 的用例会看到本文件留下的值。
 const PRELOADED_PERSONA: string | null = personaCache.current;
 
+/** 各用例独占的临时目录；afterEach 整棵删掉，不给 tmpdir 留残留。 */
+const tempDirs: string[] = [];
+
 afterEach((): void => {
   personaCache.current = PRELOADED_PERSONA;
+  for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
+
+/** 开一个用例独占的临时目录并登记，返回其中尚未创建的人设文件路径。 */
+function personaPath(): string {
+  const directory: string = mkdtempSync(join(tmpdir(), "copy-ninjia-persona-"));
+  tempDirs.push(directory);
+  return join(directory, "persona.md");
+}
 
 describe("persona deployment input", () => {
   test("缺失与空白文件都安全地拒绝", async () => {
-    const directory: string = mkdtempSync(join(tmpdir(), "copy-ninjia-persona-"));
-    const path: string = join(directory, "persona.md");
+    const path: string = personaPath();
 
     await expect(loadPersona(path)).rejects.toThrow(`${path}: $ must be a readable non-empty UTF-8 text file`);
     writeFileSync(path, " \n\t ", "utf8");
@@ -29,8 +39,7 @@ describe("persona deployment input", () => {
   });
 
   test("非空内容去掉边界空白后复用", async () => {
-    const directory: string = mkdtempSync(join(tmpdir(), "copy-ninjia-persona-"));
-    const path: string = join(directory, "persona.md");
+    const path: string = personaPath();
     writeFileSync(path, "  stable persona  \n", "utf8");
 
     expect(await loadPersona(path)).toBe("stable persona");
@@ -55,8 +64,7 @@ describe("persona deployment input", () => {
   });
 
   test("非法 UTF-8 不得被替换字符掩盖", async () => {
-    const directory: string = mkdtempSync(join(tmpdir(), "copy-ninjia-persona-"));
-    const path: string = join(directory, "persona.md");
+    const path: string = personaPath();
     writeFileSync(path, new Uint8Array([0xff]));
 
     await expect(loadPersona(path)).rejects.toThrow(

@@ -6,7 +6,7 @@
  * 合并掉：正在写的不能撤销，写入期间到达的更新只保留最后一份。
  */
 export interface LatestValueRunner<T> {
-  push(value: T): Promise<void>;
+  readonly push: (value: T) => Promise<void>;
 }
 
 export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>): LatestValueRunner<T> {

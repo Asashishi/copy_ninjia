@@ -16,10 +16,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEST_DATA_ROOT } from "../../preloadEnv";
 
-const testRoot: string = mkdtempSync(join(tmpdir(), "join-log-files-test-"));
+const testRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "join-log-files-test-"));
 const joinLogDir: string = join(testRoot, "joinlog");
 const UTF8_ENCODER: TextEncoder = new TextEncoder();
 const realPaths = await import("../../../packages/consts/paths");

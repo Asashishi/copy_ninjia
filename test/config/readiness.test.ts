@@ -1,14 +1,14 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEST_DATA_ROOT } from "../preloadEnv";
 import type {
   ConfigReadiness,
   TelegramConfig,
 } from "../../packages/types/config";
 
-const testRoot: string = mkdtempSync(join(tmpdir(), "copy-ninjia-readiness-"));
+const testRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "copy-ninjia-readiness-"));
 const authFilePath: string = join(testRoot, "g-auth.json");
 afterAll((): void => { rmSync(testRoot, { recursive: true, force: true }); });
 const personaPath: string = join(testRoot, "unused-persona.md");

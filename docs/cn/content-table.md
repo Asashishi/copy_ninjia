@@ -59,7 +59,7 @@
    - 持久化：落盘与快照契约、群状态与 `chat_states`、黑名单与广告检测、确认边界与停机、文件权限
 
 5. **[05 开发流程与质量门禁](05-dev-workflow.md)**
-   - `bun run check` 5 级串行流水线：规范检查 + Lint + Typecheck + 带覆盖率统计的全量测试 + 热路径门禁
+   - `bun run check` 7 级串行流水线：install 脚本语法 + 安装隔离 + 规范检查 + Lint + Typecheck + 带覆盖率统计的全量测试 + 热路径门禁
    - 测试环境隔离机制与临时数据根沙盒
    - 提交规范与发布前故障注入测试 `bun run test:fault-injection`
 

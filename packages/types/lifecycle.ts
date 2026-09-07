@@ -19,17 +19,17 @@ export interface FlushTimeouts {
 
 /** grammY handler 安装后供生命周期读取的最终 update 边界。 */
 export interface HandlerRegistration {
-  getLastSeenUpdateId(): number;
+  readonly getLastSeenUpdateId: () => number;
 }
 
 /** acknowledgement-safe Telegram update runner 的生命周期控制面。 */
 export interface AcknowledgedUpdateRunner {
   /** 停止继续取数；已开始的 middleware 留给生命周期按 size() 做有界排空。 */
-  stop(): Promise<void>;
+  readonly stop: () => Promise<void>;
   /** 取数循环结束（不代表已开始的 middleware 全部结束）。 */
-  task(): Promise<void>;
+  readonly task: () => Promise<void>;
   /** 当前仍在执行的 middleware 数。 */
-  size(): number;
+  readonly size: () => number;
   /**
    * 是否有 update 以抛错结束。为真时**不得**确认最终 Telegram offset：那条
    * update 必须留给 Telegram 在重启后重投。
@@ -38,9 +38,9 @@ export interface AcknowledgedUpdateRunner {
    * 退出状态；正常路径则由 task() 的 rejection 表达失败。标记在
    * handleUpdate 抛错的同一个同步段里写下，因此 size() 归零时它必然已生效。
    */
-  hasFailedUpdate(): boolean;
+  readonly hasFailedUpdate: () => boolean;
   /** 中止全部活跃 update，并返回这次实际发出取消信号的数量。 */
-  abortActive(): number;
+  readonly abortActive: () => number;
 }
 
 /** 各 owner 是否已初始化；停机据此跳过未启动的步骤，并在终止后就地置回 false。 */
@@ -93,9 +93,9 @@ export type OwnerShutdownResults = Omit<
 /** 把单个 owner 的异常折算成兜底值并记录，绝不让它中断整段停机。 */
 export interface OwnerSettler {
   /** 返回 FlushResult 的 owner；抛错记为 `"failed"`。 */
-  flush(owner: string, run: () => Promise<FlushResult>): Promise<FlushResult>;
+  readonly flush: (owner: string, run: () => Promise<FlushResult>) => Promise<FlushResult>;
   /** 返回布尔门控的步骤（runner 排空、后台维护）；抛错记为 `false`。 */
-  gate(owner: string, run: () => Promise<boolean>): Promise<boolean>;
+  readonly gate: (owner: string, run: () => Promise<boolean>) => Promise<boolean>;
   /** 返回 void 的终止型 owner；成功记为 `"flushed"`，抛错记为 `"failed"`。 */
-  terminate(owner: string, run: () => Promise<void>): Promise<FlushResult>;
+  readonly terminate: (owner: string, run: () => Promise<void>) => Promise<FlushResult>;
 }

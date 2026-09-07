@@ -53,11 +53,11 @@ export interface SupervisedWorkerEventContext<TMessage> {
 
 export interface SupervisedWorkerHandle<TMessage> {
   /** 显式启动 Worker；重复调用幂等。 */
-  init: () => void;
+  readonly init: () => void;
   /** 只向已初始化且仍可用的 Worker 投递；已提交返回 true，不可用或同步拒绝时返回 false。 */
-  post: (message: TMessage, transfer?: Bun.Transferable[]) => boolean;
+  readonly post: (message: TMessage, transfer?: Bun.Transferable[]) => boolean;
   /** 停止当前实例并阻止迟到 onerror 触发自愈；重复调用幂等。 */
-  terminate: () => Promise<void>;
+  readonly terminate: () => Promise<void>;
 }
 
 /**

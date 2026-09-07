@@ -60,7 +60,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**3509 tests / 346 files / 129696 `expect()` calls**。全ソースコードの**関数カバレッジは 97.21%、行カバレッジは 97.45%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**3513 tests / 347 files / 129700 `expect()` calls**。全ソースコードの**関数カバレッジは 97.21%、行カバレッジは 97.45%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -68,8 +68,8 @@
 
 1. **ファイル分離**：Bun はテストファイルごとに新しい global object を作成するため、`mock.module` とモジュールレベル状態がほかのテストファイルを汚染しません。`--parallel` は有効にしていないので、各ファイルが別プロセスを占有するとは説明しません。
 2. **一時データルート**：`test/preloadEnv.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` には触れません。終了後に一時ディレクトリを削除します。**path 注入を別 file に分けている**のは、ESM が import を同 file の文より先に評価するためです。`test/preload.ts` が production モジュールを static import した時点で、file 内に書いた環境変数の代入はすでに手遅れになり、`CONFIG_ROOT` は開発機の実デプロイディレクトリを指してしまいます。
-3. **読み取り専用の設定ルート**：同じ注入は `COPY_NINJIA_CONFIG_ROOT` をリポジトリ内の `config_example/` に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実 Telegram / feature 設定を読むのを防ぎます。identity database は前項の一時 data root で隔離されます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
-4. **agent 設定 snapshot**：`agent.json` は runtime path が disk から読まない唯一のデプロイ入力です（実 process では main thread が parse し、各 Worker へ init message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はその message を受け取らないため、`test/preload.ts` が同じ `config_example/agent.json` を isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
+3. **専用の設定ルート**：同じ注入は `config_example/` をその data root 下の `config/` へ丸ごと複製し、`COPY_NINJIA_CONFIG_ROOT` をその複製に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。`agent.json` と `telegram.json` の placeholder 資格情報は複製の中だけテスト専用値に置き換えられ、厳格な parser はこれを受け付けます。複製は data root ごと削除されます。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実 Telegram / feature 設定を読んだり書き換えたりするのを防ぎます。identity database は前項の一時 data root で隔離されます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
+4. **agent 設定 snapshot**：`agent.json` は runtime path が disk から読まない唯一のデプロイ入力です（実 process では main thread が parse し、各 Worker へ init message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はその message を受け取らないため、`test/preload.ts` が前項の `agent.json` 複製を isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
 
 `test/scripts/installStartup.test.ts` は installer の隔離 fixture を再利用し、独立した一時設定・データルートで `install.sh`、`bun run start`、実際の Worker を動かします。Telegram 応答とシステムサービスコマンドはテスト用の代替処理が担当します。AI 無効、有効な AI 設定、再インストールと再起動、不正な任意設定の接続前拒否を検証し、正常停止とインスタンスロック解放も確認します。
 

@@ -167,7 +167,7 @@ WantedBy=multi-user.target
 
 ### 升级输入与分阶段迁移
 
-从 `10.5.1` 升到 `10.5.2` 不需要数据格式迁移；当前运行时只接受精确的 schema v7 谱系和通过严格解析的 `state.json`，当前 `package.json` 不提供 `migrate:*` 命令。
+从 `10.5.2` 升到 `10.5.3` 不需要数据格式迁移；当前运行时只接受精确的 schema v7 谱系和通过严格解析的 `state.json`，当前 `package.json` 不提供 `migrate:*` 命令。
 
 更旧部署先按对应版本的操作文档完成中间升级：
 

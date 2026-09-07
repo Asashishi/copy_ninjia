@@ -60,7 +60,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3509 tests / 346 files / 129696 次 `expect()`**；全源码**函数覆盖率 97.21% / 行覆盖率 97.45%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3513 tests / 347 files / 129700 次 `expect()`**；全源码**函数覆盖率 97.21% / 行覆盖率 97.45%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -68,8 +68,8 @@
 
 1. **文件隔离**：Bun 为每个测试文件创建新的 global object；`mock.module` 与模块级状态不会污染其它测试文件。这里没有启用 `--parallel`，因此不宣称每个文件各占一个进程。
 2. **临时数据根**：`test/preloadEnv.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`、`database/`；结束后临时目录被清理。**路径注入单独成文件**是因为 ESM 的 import 一律先于同文件语句求值：只要 `test/preload.ts` 静态 import 了任何生产模块，写在文件里的环境变量赋值就已经晚了一步，`CONFIG_ROOT` 会指向开发机上的真实部署目录。
-3. **只读配置根**：同一份注入还把 `COPY_NINJIA_CONFIG_ROOT` 指向仓库内的 `config_example/`（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读开发机上的真实 Telegram 与功能配置；身份策略数据库已由上一层临时数据根隔离。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
-4. **agent 配置快照**：`agent.json` 是唯一不由运行时读盘取得的部署配置（真实进程里由主线程解析后经 Worker 初始化消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到那两条消息，因此 `test/preload.ts` 把同一份 `config_example/agent.json` 一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
+3. **独占配置根**：同一份注入把 `config_example/` 整棵复制到该数据根下的 `config/`，再把 `COPY_NINJIA_CONFIG_ROOT` 指向这份副本（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）；`agent.json` 与 `telegram.json` 的占位凭据只在副本里换成测试专用值，严格解析器才收得下，副本随数据根一起删除。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读或改写开发机上的真实 Telegram 与功能配置；身份策略数据库已由上一层临时数据根隔离。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
+4. **agent 配置快照**：`agent.json` 是唯一不由运行时读盘取得的部署配置（真实进程里由主线程解析后经 Worker 初始化消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到那两条消息，因此 `test/preload.ts` 把上一层那份 `agent.json` 副本一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
 
 `test/scripts/installStartup.test.ts` 复用安装隔离夹具，在独立临时配置和数据根中运行 `install.sh`、`bun run start` 及真实 Worker；Telegram 应答和系统服务命令由测试替身接管。它覆盖不启用 AI、正常 AI 配置、重复安装启动，以及非法可选配置在联网前拒绝，核对正常停机和实例锁释放。
 

@@ -7,13 +7,13 @@ interface PendingFlush {
 
 export interface FlushBarrier {
   /** 建立一次等待；post 返回 false 或同步抛错时立即按 failed 结算。 */
-  begin: (post: (id: number) => boolean | void, timeoutMs?: number) => Promise<FlushResult>;
+  readonly begin: (post: (id: number) => boolean | void, timeoutMs?: number) => Promise<FlushResult>;
   /** 结算指定回执；迟到或重复回执返回 false 且不产生副作用。 */
-  settle: (id: number, result: FlushResult) => boolean;
+  readonly settle: (id: number, result: FlushResult) => boolean;
   /** Worker 崩溃/终止时一次性结算所有在途等待。 */
-  settleAll: (result: FlushResult) => void;
+  readonly settleAll: (result: FlushResult) => void;
   /** 仅供故障日志和测试观察，不暴露 resolver 所有权。 */
-  pendingCount: () => number;
+  readonly pendingCount: () => number;
 }
 
 export interface CreateFlushBarrierParams {

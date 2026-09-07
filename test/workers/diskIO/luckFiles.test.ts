@@ -1,15 +1,14 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TEST_DATA_ROOT } from "../../preloadEnv";
 
 /**
- * mock.module 必须在任何真实 import 之前调用（理由同 test/commands/
- * luckChallenge.test.ts 的模块头注释）：snapshotFiles.ts 从 consts/paths
- * 取 LUCK_MEMORY_DIR，指向项目真实的 memory/luck/ 目录——单测里绝不能往
- * 那里写（会跟正在跑的 bot 进程并发读写同一批文件），整体重定向到临时目录。
+ * mock.module 在生产模块 import 之前将 LUCK_MEMORY_DIR 指向本文件独占目录。
+ * 该目录位于 preload 的测试数据根内，由文件与全局 afterAll 清理。
  */
-const luckDir: string = mkdtempSync(join(tmpdir(), "luck-files-test-"));
+const luckDir: string = mkdtempSync(join(TEST_DATA_ROOT, "luck-files-test-"));
+afterAll((): void => { rmSync(luckDir, { recursive: true, force: true }); });
 const realPaths = await import("../../../packages/consts/paths");
 mock.module("../../../packages/consts/paths", () => ({ ...realPaths, LUCK_MEMORY_DIR: luckDir }));
 

@@ -19,7 +19,7 @@ import {
 export const PREVIOUS_DATA_ROOT: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV];
 export const PREVIOUS_CONFIG_ROOT: string | undefined = process.env[CONFIG_ROOT_ENV];
 
-/** 本次测试进程独占的运行时数据根；afterAll 整棵删掉。 */
+/** 测试进程独占的数据根；模块加载时创建的临时目录放在其下，由 preload 的全局 afterAll 整棵删除。 */
 export const TEST_DATA_ROOT: string = mkdtempSync(join(tmpdir(), "copy-ninjia-test-data-"));
 
 /** 本次测试进程独占的部署配置根；示例占位凭据只在这份副本里替换。 */

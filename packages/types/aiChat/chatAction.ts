@@ -7,9 +7,9 @@ import type { TelegramChatAction } from "../telegram";
 export type ChatActionPhase = TelegramChatAction | "idle";
 
 export interface ChatActionControl {
-  current(): ChatActionPhase;
-  set(phase: ChatActionPhase): void;
-  settle(): Promise<void>;
+  readonly current: () => ChatActionPhase;
+  readonly set: (phase: ChatActionPhase) => void;
+  readonly settle: () => Promise<void>;
 }
 
 /** 单个群共享的聊天状态心跳运行态。 */
@@ -38,5 +38,5 @@ export interface ChatActionHeartbeatEntry {
 
 /** 一轮回复持有的完整心跳句柄。 */
 export interface ChatActionHeartbeatControl extends ChatActionControl {
-  stop(): Promise<void>;
+  readonly stop: () => Promise<void>;
 }

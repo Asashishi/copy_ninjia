@@ -185,7 +185,7 @@ Startup never guesses that a missing database means empty policy, so a fresh dep
 
 ### Upgrade Inputs and Staged Migration
 
-Upgrading from `10.5.1` to `10.5.2` requires no data-format migration. The current runtime accepts only the exact schema v7 lineage and a strictly validated `state.json`; the current `package.json` exposes no `migrate:*` commands.
+Upgrading from `10.5.2` to `10.5.3` requires no data-format migration. The current runtime accepts only the exact schema v7 lineage and a strictly validated `state.json`; the current `package.json` exposes no `migrate:*` commands.
 
 Older deployments must complete the intermediate upgrades using the operations guide for each version:
 

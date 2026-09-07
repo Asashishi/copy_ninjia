@@ -59,7 +59,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Persistence: durability and snapshot contracts, chat state and `chat_states`, blocklist and ad detection, acknowledgement boundary and shutdown, file permissions
 
 5. **[05 Development Workflow and Quality Gates](05-dev-workflow.md)**
-   - `bun run check` 5-stage validation: conventions + lint + typecheck + full test suite with coverage + the hot-path gate
+   - `bun run check` 7-stage validation: install-script syntax + install isolation + conventions + lint + typecheck + full test suite with coverage + the hot-path gate
    - Test isolation mechanism and temporary data root sandbox
    - Commit standards and pre-release fault injection suite `bun run test:fault-injection`
 

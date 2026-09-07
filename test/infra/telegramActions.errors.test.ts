@@ -428,7 +428,7 @@ describe("editMessageText 的失败分档", () => {
 
   test("调用方 signal 已 abort 时与同类动作一样不记 API 错误", async () => {
     // 本文件其余动作全部按 `actionSignal?.aborted !== true` 判定；editMessageText
-    // 曾经是唯一的例外，把停机/取消造成的失败记成 Telegram API 错误。
+    // 与它们同口径：停机/取消造成的失败不计入 Telegram API 错误。
     const controller: AbortController = new AbortController();
     controller.abort();
     const abortRejection = (): never => { throw new DOMException("aborted", "AbortError"); };

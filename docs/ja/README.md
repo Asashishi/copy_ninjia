@@ -31,7 +31,7 @@
 </p>
 
 <p align="center">
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3509_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3513_Passed-2ea44f?style=flat-square" alt="Tests"></a>
   <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.45%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
@@ -52,7 +52,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 3509 件のテストが全て成功 / テストファイル 346 件 / expect() 呼び出し 129,696 回 / 関数カバレッジ 97.21% / 行カバレッジ 97.45%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 3513 件のテストが全て成功 / テストファイル 347 件 / expect() 呼び出し 129,700 回 / 関数カバレッジ 97.21% / 行カバレッジ 97.45%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 

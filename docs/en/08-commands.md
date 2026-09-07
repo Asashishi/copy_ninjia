@@ -98,7 +98,7 @@ Choose a target by replying to their message or providing `@username`:
 > - Precisely because anyone can invent one without registering it, these commands share a global sliding-window limit of 450 responses per 90 seconds, counted across all groups and users; anything over the quota is dropped silently with no notice.
 
 > [!TIP]
-> **`/luck_challenge` is not a slash command**: type `@bot_username [query]` in any chat to use Inline Mode. Enable Inline Mode in BotFather; 100% result feedback is recommended. Inline queries share a global sliding-window limit of 300 responses per 90 seconds.
+> **`/luck_challenge` is not a slash command**: type `@bot_username [query]` in any chat to use Inline Mode. Enable Inline Mode in BotFather, and enabling 100% result feedback through `/setinlinefeedback` is recommended. Inline queries share a global sliding-window limit of 300 responses per 90 seconds.
 
 ## 💍 Random Group Partner: `/wed`
 

@@ -16,12 +16,12 @@ interface LruNode<K, V> {
 }
 
 /** 只暴露读取与迭代能力的 LRU 视图；调用方不能绕过 owner 改写缓存。 */
-export interface ReadonlyLruCache<K, V> extends Iterable<readonly [K, V]> {
+export interface ReadonlyLruCache<K, V> extends Readonly<Iterable<readonly [K, V]>> {
   readonly size: number;
-  has(key: K): boolean;
-  get(key: K): V | undefined;
-  peek(key: K): V | undefined;
-  keys(): IterableIterator<K>;
+  readonly has: (key: K) => boolean;
+  readonly get: (key: K) => V | undefined;
+  readonly peek: (key: K) => V | undefined;
+  readonly keys: () => IterableIterator<K>;
 }
 
 export class LruCache<K, V> implements ReadonlyLruCache<K, V> {

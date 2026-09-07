@@ -11,11 +11,11 @@ export interface PrioritizedBoundedTaskRunner {
   readonly activeCount: number;
   readonly pendingCount: number;
   readonly backgroundPendingCount: number;
-  run<T>(
+  readonly run: <T>(
     priority: TaskPriority,
     task: () => Promise<T>,
     signal?: AbortSignal
-  ): Promise<T | undefined>;
+  ) => Promise<T | undefined>;
 }
 
 /** 创建优先级执行器的容量与公平参数。 */

@@ -41,7 +41,7 @@ export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
 /** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 
-/** 部署配置目录；测试会显式指向受版本控制的 config_example/。 */
+/** 部署配置目录；测试显式指向临时数据根下的 config_example/ 副本。 */
 export const CONFIG_ROOT: string = resolve(
   optionalRootPath(CONFIG_ROOT_ENV) ?? join(PROJECT_ROOT, "config")
 );

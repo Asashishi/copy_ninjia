@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ReplyToolContext, RoundMessageState } from "../../../packages/types/aiChat/replies";
+import type { ChatActionPhase } from "../../../packages/types/aiChat/chatAction";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
@@ -549,13 +550,18 @@ describe("generate_image 工具执行器", () => {
 
   test("实际生图期间显示正在发送图片，并在发送图片前切回 idle、等待状态收敛", async () => {
     const events: string[] = [];
-    const ctx: ReplyToolContext = buildContext();
-    ctx.chatAction.set = mock((phase: "idle" | "typing" | "upload_photo" | "choose_sticker"): void => {
-      events.push(phase);
-    });
-    ctx.chatAction.settle = mock(async (): Promise<void> => {
-      events.push("settled");
-    });
+    const ctx: ReplyToolContext = {
+      ...buildContext(),
+      chatAction: {
+        current: (): ChatActionPhase => "idle",
+        set: mock((phase: ChatActionPhase): void => {
+          events.push(phase);
+        }),
+        settle: mock(async (): Promise<void> => {
+          events.push("settled");
+        }),
+      },
+    };
     generateChatImage.mockImplementationOnce(async () => {
       events.push("generated");
       return { bytes: generatedBytes, mimeType: "image/png" };
@@ -573,13 +579,18 @@ describe("generate_image 工具执行器", () => {
 
   test("生图失败时同样收起正在发送图片并等待状态收敛", async () => {
     const events: string[] = [];
-    const ctx: ReplyToolContext = buildContext();
-    ctx.chatAction.set = mock((phase: "idle" | "typing" | "upload_photo" | "choose_sticker"): void => {
-      events.push(phase);
-    });
-    ctx.chatAction.settle = mock(async (): Promise<void> => {
-      events.push("settled");
-    });
+    const ctx: ReplyToolContext = {
+      ...buildContext(),
+      chatAction: {
+        current: (): ChatActionPhase => "idle",
+        set: mock((phase: ChatActionPhase): void => {
+          events.push(phase);
+        }),
+        settle: mock(async (): Promise<void> => {
+          events.push("settled");
+        }),
+      },
+    };
     generateChatImage.mockImplementationOnce(async () => {
       events.push("failed");
       return null;
