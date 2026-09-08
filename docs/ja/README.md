@@ -90,75 +90,77 @@
 <table width="100%">
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🪞 高精度な復唱</b></p>
-  <p>ユーザーやチャンネルを指定して、そのまま・反転・「nya~」追加で 1 件ずつ復唱し、アバターも同期します。復唱対象は全体で同時に 1 つだけで、コマンドを打った群で復唱します。</p>
+  <p><b>🪞 高精度な復唱</b><br>
+  <sub>指定した対象を 1 件ずつ復唱し、アバターも同期</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🌐 多言語翻訳</b></p>
-  <p>復唱とは独立した <code>/translate</code> の群ごと session です。各群で最大 5 人を対象にでき、日本語・簡体字中国語・米国英語・ウクライナ語・ロシア語へそれぞれ翻訳します（英語は Google の地域翻訳 model を使用）。扱うのは文字のみ——同一言語・記号のみ・entity 付きの message はそのままコピーし、API 失敗時もそのままコピーします。媒体と caption は送りません。各群で既定は無効、<code>/translate enable</code> で有効化、<code>list</code> で一覧、<code>stop</code> で群全体または指定した 1 人を停止します。session は <code>state.json</code> に永続化され、再起動後も継続します。</p>
+  <p><b>🌐 多言語翻訳</b><br>
+  <sub>群ごとの session で 5 言語へ翻訳</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🥷 アバター盗用</b></p>
-  <p><code>/copy</code> は対象のアバターを自動同期します。<code>/icon steal</code> なら復唱を開始せずアバターだけコピーします。</p>
+  <p><b>🥷 アバター盗用</b><br>
+  <sub>復唱を始めずアバターだけコピー</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🤖 AI チャット</b></p>
-  <p>人格に基づき自律的に判断します：発言・sticker・リアクション・画像生成・作曲はすべて tool で、その turn で何をいくつどの順で行うかは model が決めます。画像生成と作曲の tool は、群のメンバーが直接 @ するか bot に返信したときだけ、設定された capability に応じて開放されます。model 層は差し替え可能な provider で、<code>config/agent.json</code> が capability ごとに <code>google</code> か <code>openai</code> を宣言します。capability 間で継承はせず、実行時の failover も行いません。</p>
+  <p><b>🤖 AI チャット</b><br>
+  <sub>その turn で何をするかは人格が決める</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>👁️ マルチモーダル &amp; 創作</b></p>
-  <p>画像・動く sticker・GIF フレーム・音声 message（文字起こしして context へ）を認識し、必要に応じて新しい画像を生成したり既存素材を編集したりします。Gemini 側ではリクエストに応じてボーカル入りの楽曲を 1 曲書き上げ、ジャケットと一緒に群へ投稿できます。</p>
+  <p><b>👁️ マルチモーダル &amp; 創作</b><br>
+  <sub>画像と音声を理解し、画像と楽曲を生成</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🔎 リアルタイム事実確認</b></p>
-  <p>provider の server side web 検索や東京の天気などの tool に接続します。固定の確認 rule により、時事的な事実はまず検索し、結果を記憶より優先し、根拠が不十分なら不確実だと明示します。Gemini は確認済みの後続 tool turn でより低い sampling temperature を使います。</p>
-</td>
-</tr>
-<tr>
-<td align="left" valign="top">
-  <p><b>🧠 コンテキスト記憶</b></p>
-  <p>有界の逐語 context と複数 round の圧縮要約を継続的に維持し、返信関係・転送元・正確な引用を保持します。atomic な書き込みにより確実に復元します。</p>
-</td>
-<td align="left" valign="top">
-  <p><b>🎭 気分と人間らしさ</b></p>
-  <p>群の気分は 2〜4 時間ごとにランダムで切り替わり、重みは東京の天気と時間帯の影響を受けます。発言前は文字数に応じて入力の間を再現し、たまに打ち間違えてから訂正します。</p>
-</td>
-<td align="left" valign="top">
-  <p><b>💒 グループ内抽選</b></p>
-  <p><code>/wed</code> は初期化済みの群でメンバーを 1 人ランダムに選び、アバターと確認・引き直し・解除の button を表示します。使えるのは個人 identity のみで、チャンネル名義や bot は利用できません。1 人につき 1 群で結果を 1 つ保持し、もう一度実行すると引き直します。発言済みメンバー ID は 1 群あたり最大 15 万件まで <code>memory/wed/&lt;chatId&gt;.json</code> へまとめて書き込むため、再起動後も候補は復元されます（結果 session は memory 上のみ）。深夜メンテナンスでメンバー集合を再点検します。</p>
+  <p><b>🔎 リアルタイム事実確認</b><br>
+  <sub>web 検索と天気などの tool に接続</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🛡️ 参加認証</b></p>
-  <p>新規メンバーには 3 分の button 認証を出します。「私は良民です」は本人だけが押せ、「承認」はその群の非匿名 admin だけが代理で押せます（bot account にはこの経路しかありません）。帰属が確認できる非匿名 admin による招待と、連携チャンネルのコメント欄での活動は免除されます。各群で既定は無効、<code>/antiraid enable</code> で有効化します。</p>
+  <p><b>🧠 コンテキスト記憶</b><br>
+  <sub>逐語 context と圧縮要約を維持</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🚨 Anti-Raid</b></p>
-  <p>参加頻度を監視し、閾値に達したら群の招待を閉じて異常な参加メンバーを処理します。再起動後も状態を復元でき、参加認証と <code>/antiraid</code> という 1 つの switch を共有します。</p>
+  <p><b>🎭 気分と人間らしさ</b><br>
+  <sub>気分の切り替えと入力の間</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>📮 広告検出</b></p>
-  <p>送信者ごとに message を束ねて継続的に判定へ送り、設定した広告検出 model が判断します。保護対象でない identity が該当した場合は <code>/block</code> と同じ権限で処理し、発生した群に BAN 理由を通知します。</p>
+  <p><b>💒 グループ内抽選</b><br>
+  <sub>メンバーを 1 人選びアバターを表示</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🎲 今日のおみくじ</b></p>
-  <p>Inline Mode による決定的な抽選です。日ごとに rotate する HMAC 署名鍵により、再起動後も状態と署名付きの receipt が一致します。</p>
+  <p><b>🛡️ 参加認証</b><br>
+  <sub>新規メンバーへ時間制限付き button 認証</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🌐 複数グループ連携</b></p>
-  <p><code>/block</code> 一つで管理下の全群を横断して BAN し、永続 blocklist に書き込みます。以後どの監視対象の群に入っても即 kick され、新しく管理下に入った群も自動で洗い直します。</p>
+  <p><b>🚨 Anti-Raid</b><br>
+  <sub>参加頻度が異常なら群を閉じる</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>💬 chat Q&amp;A</b></p>
-  <p><code>/qa set</code> で form を開き、実行者が「問題:」「回答:」の 2 通の message で Q&amp;A を登録します。1 群あたり最大 15 件で、回答には <code>```json</code> code block をそのまま入れられます。一字一句同じ質問が来れば AI を通さず直接答え、意味は近いが字面が異なる質問だけ model の 2 つの照会 tool に委ねます。</p>
+  <p><b>📮 広告検出</b><br>
+  <sub>message を束ねて判定し、該当なら即処理</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>🎲 今日のおみくじ</b><br>
+  <sub>Inline Mode による決定的な抽選</sub></p>
+</td>
+<td align="left" valign="top">
+  <p><b>🌐 複数グループ連携</b><br>
+  <sub>1 つの command で全群を横断 BAN</sub></p>
+</td>
+<td align="left" valign="top">
+  <p><b>💬 chat Q&amp;A</b><br>
+  <sub>登録済みの Q&amp;A は AI を通さず即答</sub></p>
 </td>
 </tr>
 </table>
+
+各機能の挙動・設定・境界は **[📚 開発者ドキュメント](content-table.md)** を参照してください。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 

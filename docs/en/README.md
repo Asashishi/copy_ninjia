@@ -86,75 +86,77 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 <table width="100%">
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🪞 Precise copying</b></p>
-  <p>Lock onto a user or channel and copy each message unchanged, reversed, or suffixed with &ldquo;nya~,&rdquo; while syncing their avatar. Only one copy target exists globally at a time, and copying happens in the group where the command was issued.</p>
+  <p><b>🪞 Precise copying</b><br>
+  <sub>Copies a locked target message by message, avatar included</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🌐 Multilingual translation</b></p>
-  <p><code>/translate</code> runs per-chat sessions independent of copying: up to five targets per group, each translated into Japanese, Simplified Chinese, American English, Ukrainian or Russian &mdash; English goes through Google&rsquo;s regional translation model. Text only: same-language, symbol-only and entity-bearing messages are copied verbatim, a failed API call also falls back to a verbatim copy, and media and captions are never sent. Disabled per group by default; <code>/translate enable</code> turns it on, <code>list</code> shows the sessions, and <code>stop</code> ends them for the whole group or one named target. Sessions persist in <code>state.json</code> and survive a restart.</p>
+  <p><b>🌐 Multilingual translation</b><br>
+  <sub>Per-chat sessions into five target languages</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🥷 Avatar theft</b></p>
-  <p><code>/copy</code> syncs the target&rsquo;s avatar automatically, or <code>/icon steal</code> copies just the avatar without starting a copy session.</p>
+  <p><b>🥷 Avatar theft</b><br>
+  <sub>Takes the avatar without starting a copy session</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🤖 AI group chat</b></p>
-  <p>The persona decides on its own: speaking, stickers, reactions, image generation and songwriting are all tools, and the model chooses how many to use in a turn and in what order. Image and song tools open only when someone @-mentions or replies to the bot, subject to configured capabilities. The model layer is a swappable provider: <code>config/agent.json</code> declares <code>google</code> or <code>openai</code> per capability, with no inheritance between capabilities and no runtime failover.</p>
+  <p><b>🤖 AI group chat</b><br>
+  <sub>The persona decides what to do each turn</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>👁️ Multimodal understanding and creation</b></p>
-  <p>Understands photos, animated stickers, GIF frames and voice messages (transcribed verbatim into context), generates new images on demand or edits existing material. On Gemini it can also write a complete song with vocals from a request and post it with cover art.</p>
+  <p><b>👁️ Multimodal understanding and creation</b><br>
+  <sub>Reads images and voice, makes images and songs</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🔎 Live fact-checking</b></p>
-  <p>Wired to provider-side web search and tools such as Tokyo weather. A fixed verification rule requires searching first for time-sensitive facts, prefers results over memory, and states uncertainty when the evidence is thin. Gemini uses a lower sampling temperature on tool turns that follow a verified result.</p>
-</td>
-</tr>
-<tr>
-<td align="left" valign="top">
-  <p><b>🧠 Group-chat memory</b></p>
-  <p>Maintains a bounded verbatim rolling context plus multi-round compacted summaries, preserving reply relationships, forward origins and exact quotes, and recovers reliably through atomic writes.</p>
-</td>
-<td align="left" valign="top">
-  <p><b>🎭 Mood and human touches</b></p>
-  <p>Group mood rotates randomly every 2&ndash;4 hours, weighted by Tokyo weather and time of day. Typing pauses scale with message length, and the bot occasionally makes a typo and corrects itself.</p>
-</td>
-<td align="left" valign="top">
-  <p><b>💒 Partner draws</b></p>
-  <p><code>/wed</code> draws a random member in an initialized group and shows their avatar with confirm, redraw and remove buttons. Personal identities only &mdash; channel aliases and bots cannot use it. Each person keeps one result per group, and running it again redraws. Up to 150,000 seen member IDs per group are batched into <code>memory/wed/&lt;chatId&gt;.json</code>, so candidates survive a restart while result sessions stay in memory; a midnight maintenance pass reviews the member sets.</p>
+  <p><b>🔎 Live fact-checking</b><br>
+  <sub>Provider-side web search plus weather tools</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🛡️ Join verification</b></p>
-  <p>New members get a 3-minute button challenge: &ldquo;I&rsquo;m legit&rdquo; can only be pressed by the joiner, and &ldquo;Approve&rdquo; only by a non-anonymous admin of that group (the only path available to bot accounts). Attributable non-anonymous admin invites and activity in the linked channel&rsquo;s comment thread are exempt. Disabled per group by default; <code>/antiraid enable</code> turns it on.</p>
+  <p><b>🧠 Group-chat memory</b><br>
+  <sub>Verbatim rolling context plus compacted summaries</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🚨 Anti-Raid</b></p>
-  <p>Watches the join rate, closes group invites past the threshold and handles abnormal joiners, restoring state after a restart. Shares the single <code>/antiraid</code> switch with join verification.</p>
+  <p><b>🎭 Mood and human touches</b><br>
+  <sub>Rotating group mood and typing pauses</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>📮 Ad detection</b></p>
-  <p>Groups messages per sender into a running thread and keeps submitting it to the configured ad-detection model. A hit on a non-protected identity is handled with the same authority as <code>/block</code>, and the ban reason is announced in the triggering group.</p>
+  <p><b>💒 Partner draws</b><br>
+  <sub>Draws a random member and shows their avatar</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🎲 Daily fortune</b></p>
-  <p>Deterministic draws over Inline Mode, with a daily-rotating HMAC signing key that keeps state and signed receipts consistent across restarts.</p>
+  <p><b>🛡️ Join verification</b><br>
+  <sub>Timed button challenge for new members</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🌐 Cross-group moderation</b></p>
-  <p>One <code>/block</code> bans across every managed group and writes a persistent blocklist entry, so the target is kicked on sight in any listening group. Newly adopted groups are swept automatically.</p>
+  <p><b>🚨 Anti-Raid</b><br>
+  <sub>Closes the group when joins spike</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>💬 Chat Q&amp;A</b></p>
-  <p><code>/qa set</code> opens a form where the initiator registers a pair over two messages prefixed &ldquo;问题:&rdquo; and &ldquo;回答:&rdquo;, up to 15 per group, and answers may embed a <code>```json</code> block. An exact-match question is answered directly without touching the AI; only differently worded questions go to the model&rsquo;s two lookup tools.</p>
+  <p><b>📮 Ad detection</b><br>
+  <sub>Screens message threads and acts on a hit</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>🎲 Daily fortune</b><br>
+  <sub>Deterministic draws over Inline Mode</sub></p>
+</td>
+<td align="left" valign="top">
+  <p><b>🌐 Cross-group moderation</b><br>
+  <sub>One command bans across every managed group</sub></p>
+</td>
+<td align="left" valign="top">
+  <p><b>💬 Chat Q&amp;A</b><br>
+  <sub>Registered pairs answered without the AI</sub></p>
 </td>
 </tr>
 </table>
+
+Behavior details, configuration and boundaries for each feature live in the **[📚 developer docs](content-table.md)**.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

@@ -86,75 +86,77 @@
 <table width="100%">
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🪞 精准复读</b></p>
-  <p>锁定用户或频道后逐条复读，支持原样、反转和追加「喵~」，并同步目标头像。全局同一时刻只有一个复读目标，命令在哪个群发就在哪个群复读。</p>
+  <p><b>🪞 精准复读</b><br>
+  <sub>逐条复读锁定目标，并同步头像</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🌐 多语翻译</b></p>
-  <p>独立于复读的 <code>/translate</code> 按群会话，每群最多 5 个目标，各自可翻成日语、简体中文、美式英语、乌克兰语或俄语；英语走 Google 的区域翻译模型。只处理纯文字——同语种、纯符号与带实体的消息按原样复制，翻译失败也原样复制，媒体和图注一律不发。每群缺省关闭，<code>/translate enable</code> 打开，<code>list</code> 查清单，<code>stop</code> 停全群或指定单人；会话随 <code>state.json</code> 持久化，重启后继续。</p>
+  <p><b>🌐 多语翻译</b><br>
+  <sub>按群会话，翻成五种目标语言</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🥷 偷头像</b></p>
-  <p><code>/copy</code> 自动同步目标头像，或通过 <code>/icon steal</code> 仅复制头像而不启动复读状态。</p>
+  <p><b>🥷 偷头像</b><br>
+  <sub>只取头像，不进复读状态</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🤖 AI 群聊</b></p>
-  <p>基于人设自主决策：发言、贴纸、表情反应、生图、写歌都是工具，由模型自行决定这一轮做几件事、按什么顺序做；生图与写歌工具只在群友直接 @ 或回复机器人时按配置能力开放。模型层是可替换的 provider：<code>config/agent.json</code> 按能力各自声明 <code>google</code> 或 <code>openai</code>，能力之间不继承、也不做运行时故障切换。</p>
+  <p><b>🤖 AI 群聊</b><br>
+  <sub>人设自主决定这一轮做什么</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>👁️ 多模态与创作</b></p>
-  <p>识别图片、动态贴纸、GIF 帧与语音消息（逐字转写进上下文），能按需生成新图片或对现有素材智能编辑；Gemini 侧还能按点歌写一首带人声的完整歌曲，连封面一起发进群。</p>
+  <p><b>👁️ 多模态与创作</b><br>
+  <sub>看图、听语音、生图、写歌</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🔎 实时查证</b></p>
-  <p>接入 provider 服务端联网检索与东京天气等工具；固定查证规则要求时效事实先检索、结果优先于记忆，证据不足时明确不确定。Gemini 在已查证的后续工具轮使用较低采样温度。</p>
-</td>
-</tr>
-<tr>
-<td align="left" valign="top">
-  <p><b>🧠 群聊记忆</b></p>
-  <p>滚动维护有界逐字上下文与多轮压缩摘要，保留消息中的回复关系、转发来源和精确引用，并通过原子落盘可靠恢复。</p>
-</td>
-<td align="left" valign="top">
-  <p><b>🎭 心情与拟人化</b></p>
-  <p>群心情每 2~4 小时随机轮换，权重受东京天气与时段影响；发言前按字数模拟打字停顿，偶尔还会打错字再补正。</p>
-</td>
-<td align="left" valign="top">
-  <p><b>💒 群友抽取</b></p>
-  <p><code>/wed</code> 在已初始化的群里随机抽一位群友并展示头像，附确认、换一只和移除按钮；仅限个人身份，频道马甲与机器人都用不了。每人每群保留一张结果，再发一次就重抽。每群最多记 15 万个已发言成员 ID，批量写入 <code>memory/wed/&lt;chatId&gt;.json</code>，重启后候选可恢复，结果会话只在内存里；午夜维护会复核成员集合。</p>
+  <p><b>🔎 实时查证</b><br>
+  <sub>联网检索与天气等工具</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🛡️ 入群验证</b></p>
-  <p>新成员 3 分钟限时按钮验证：「我是良民」只能本人点击，「通过」只能由本群非匿名管理员代点（机器人账号只有这一条路）；可归属的非匿名管理员邀请与关联频道评论区活动免验。每群缺省关闭，<code>/antiraid enable</code> 打开。</p>
+  <p><b>🧠 群聊记忆</b><br>
+  <sub>逐字上下文与多轮压缩摘要</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🚨 Anti-Raid</b></p>
-  <p>监测入群频率，达到阈值后关闭群组邀请并处置异常入群成员，重启后可恢复状态。与入群验证合用 <code>/antiraid</code> 这一个开关。</p>
+  <p><b>🎭 心情与拟人化</b><br>
+  <sub>心情轮换与打字停顿</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>📮 广告检测</b></p>
-  <p>按发送者归并消息串持续送检，交配置的广告检测模型判定；非受保护身份命中后按 <code>/block</code> 同权处置，并在触发群播报封禁理由。</p>
+  <p><b>💒 群友抽取</b><br>
+  <sub>随机抽一位群友并展示头像</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>🎲 今日运势</b></p>
-  <p>采用 Inline Mode 实现确定性抽签，通过每日轮换的 HMAC 签名密钥保证重启后状态与签名回执一致。</p>
+  <p><b>🛡️ 入群验证</b><br>
+  <sub>新成员限时按钮验证</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>🌐 跨群管理</b></p>
-  <p><code>/block</code> 一条命令即可在所有管理群联动封禁并写入持久化黑名单，之后进任何监听群都会被秒踢；新接管的群还会自动补扫。</p>
+  <p><b>🚨 Anti-Raid</b><br>
+  <sub>入群频率异常时自动收口</sub></p>
 </td>
 <td align="left" valign="top">
-  <p><b>💬 群问答</b></p>
-  <p><code>/qa set</code> 开一张表单，由发起者按「问题:」「回答:」分两条消息登记问答，每群最多 15 条，答案里可以直接塞 <code>```json</code> 代码块。有人一字不差地问出来就直接答，不经过 AI；意思相近但字面不同的问法才交给模型的两个查询工具判断。</p>
+  <p><b>📮 广告检测</b><br>
+  <sub>消息串送检，命中即处置</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>🎲 今日运势</b><br>
+  <sub>Inline Mode 确定性抽签</sub></p>
+</td>
+<td align="left" valign="top">
+  <p><b>🌐 跨群管理</b><br>
+  <sub>一条命令全群联动封禁</sub></p>
+</td>
+<td align="left" valign="top">
+  <p><b>💬 群问答</b><br>
+  <sub>预登记问答，命中直答</sub></p>
 </td>
 </tr>
 </table>
+
+每项功能的行为细节、配置与边界见 **[📚 开发者文档](docs/cn/content-table.md)**。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
