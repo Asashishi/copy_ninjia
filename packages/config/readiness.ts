@@ -2,7 +2,7 @@
  * 按功能聚合部署配置的可用性判定。
  *
  * 主进程启动总闸先校验全部已存在的部署输入；真正缺省的可选文件再由相关功能
- * （`/ai_chat enable`、`/ad_detect enable`、`/ja_copy enable`）按需判定。
+ * （`/ai_chat enable`、`/ad_detect enable`、`/translate enable`）按需判定。
  *
  * 结论按进程缓存成功与缺省两侧；运行时只检查已校验配置 holder，不重新读取文件。
  * 补齐可选配置后必须重启，由启动总闸严格解析并发布新的配置快照。
@@ -35,7 +35,7 @@ import { ensurePersona } from "./persona";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
-  jaTranslateConfigReadinessCache,
+  translateConfigReadinessCache,
 } from "../cache/main/configReadiness";
 import {
   AD_SAMPLES_CONFIG_PATH,
@@ -132,8 +132,8 @@ const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
   { file: "config/agent.json", load: ensureAdDetectAgentConfig },
 ];
 
-/** 日语翻译只探一份服务账号密钥；严格解析见 config/googleAuth.ts。 */
-const JA_TRANSLATE_PROBES: readonly DeploymentFileProbe[] = [
+/** 翻译只探一份服务账号密钥；严格解析见 config/googleAuth.ts。 */
+const TRANSLATE_PROBES: readonly DeploymentFileProbe[] = [
   { file: "g-auth.json", load: validateGoogleServiceAccountKey },
 ];
 
@@ -149,11 +149,11 @@ export function adDetectConfigReadiness(): ConfigReadiness {
 async function validateAndCacheGoogleServiceAccountKey(): Promise<void> {
   await validateGoogleServiceAccountKey();
   // 失败结论一旦缓存就保持到重启；不得因进程内文件变化把它静默翻成成功。
-  jaTranslateConfigReadinessCache.current ??= { ok: true };
+  translateConfigReadinessCache.current ??= { ok: true };
 }
 
-export function jaTranslateConfigReadiness(): ConfigReadiness {
-  return cachedReadiness(jaTranslateConfigReadinessCache);
+export function translateConfigReadiness(): ConfigReadiness {
+  return cachedReadiness(translateConfigReadinessCache);
 }
 
 /** 只把路径真正不存在视为缺省；断链软链接和无权访问都是已配置但非法。 */
@@ -188,5 +188,5 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
   }
   aiChatConfigReadinessCache.current = await probeAll(AI_CHAT_PROBES);
   adDetectConfigReadinessCache.current = await probeAll(AD_DETECT_PROBES);
-  jaTranslateConfigReadinessCache.current = await probeAll(JA_TRANSLATE_PROBES);
+  translateConfigReadinessCache.current = await probeAll(TRANSLATE_PROBES);
 }

@@ -13,7 +13,7 @@ let upload = Promise.withResolvers<void>();
 const partner: User = { id: 999, is_bot: false, first_name: "群友" };
 const avatar = mock(async () => {
   await download.promise;
-  return { identity: partner, photo: "current-avatar" };
+  return { status: "ok" as const, identity: partner, photo: "current-avatar" };
 });
 mock.module("../../packages/infra/telegram/avatar/read", () => ({ readCurrentAvatar: avatar }));
 
@@ -167,7 +167,7 @@ test("达到停机预算时取消真实交互的出站上下文，新命令不�
   avatar.mockImplementationOnce(async () => {
     observed = currentUpdateAbortSignal();
     await download.promise;
-    return { identity: partner, photo: "current-avatar" };
+    return { status: "ok" as const, identity: partner, photo: "current-avatar" };
   });
   dispatchWedCommand(command(1));
   await Bun.sleep(0);

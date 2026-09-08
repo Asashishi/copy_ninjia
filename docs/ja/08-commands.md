@@ -16,34 +16,72 @@
 
 ## 🎭 Copy モード
 
-copy 対象はグローバルで唯一です。1 つのインスタンスは同時に 1 つの対象にしか「変身」できませんが、copy 自体はコマンドを実行したグループでのみ発生します。`/stop_copy` は任意のグループから停止できます。
+copy 対象はグローバルで唯一です。1 つのインスタンスは同時に 1 つの対象にしか「変身」できませんが、copy 自体はコマンドを実行したグループでのみ発生します。`/copy stop` は任意のグループから停止できます。
 
 | コマンド | 挙動 |
 | :---: | :--- |
 | `/copy` | メッセージをそのまま復唱 |
-| `/r_copy` | 書記素クラスタ単位でテキストを反転 |
-| `/nya_copy` | テキストの末尾に「nya~」を追加 |
-| `/ja_copy` | Google Cloud Translate で日本語翻訳してから復唱 |
-| `/steal_icon` | アバターのみコピー |
-| `/reset_icon` | bot 本来のアバターに戻す |
-| `/stop_copy` | グローバル copy 状態を停止し、アバターも元に戻す |
+| `/copy reverse` | 書記素クラスタ単位でテキストを反転 |
+| `/copy nya` | テキストの末尾に「喵~」を追加 |
+| `/icon steal` | アバターのみコピー |
+| `/icon reset` | bot 本来のアバターに戻す |
+| `/copy stop` | グローバル copy 状態を停止し、アバターも元に戻す |
 
-対象は「メッセージへの返信」または `@username` で指定します。
+対象は「メッセージへの返信」または `@username` で指定します。モードは対象の前に置き、`/copy reverse @username`、`/copy nya @username` のように書きます。アバターだけを変更する場合は `/icon steal @username` を使います。`/copy stop` と `/icon reset` は追加引数を受け付けません。
+
+対象の解決規則は次のとおりです。
 
 - **ユーザー名での検索には、Bot がそのアカウントを以前に観測している必要があります。** 改名、ユーザー名の削除、ユーザー名の再割り当てが行われると、古い別名は直ちに無効になります。`/block` や `/unblock` のような破壊的操作では、過去のユーザー名に頼らず、対象メッセージへの返信か、ユーザー id の直接指定（この 2 つのコマンドは裸の id も受け付けます）を優先してください。
 - **匿名管理者が現在のグループとして発言した場合、そのグループ自体が copy 対象**となるため、グループのアバターを取得してその「外見」を再現できます。`/block` は現在のグループをメンバー対象として扱うことを拒否します。
-- **一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり**、allowlist 境界の内側にいる identity は対象外です（SQLite allowlist table の entry と、常に内側にいる `SUPER_ADMIN_USER_ID`）。
+- **`/copy`、`/copy reverse`、`/copy nya`、`/icon steal`、`/icon reset` は 5 分間のグローバル cooldown を共有します**。免除されるのは `SUPER_ADMIN_USER_ID` 本人だけで、allowlist の identity も cooldown の対象です。`/copy stop` は cooldown を消費しません。
 
 <a id="commands-and-permissions"></a>
+
+## 🌐 群ごとの翻訳
+
+翻訳は文字メッセージだけを扱い、全体の copy 対象、5 分間のクールダウン、アバター操作から独立しています。`isCanControllTranslatePermission` を持つ identity が先に `/translate enable` を実行します（既定は無効）。有効な `g-auth.json` が必要です。
+
+| コマンド | 動作 |
+| :--- | :--- |
+| `/translate ja` | 対象のメッセージに返信し、以降の文字を日本語へ翻訳 |
+| `/translate cn @username` | 観測済みのユーザー名で指定し、簡体字中国語へ翻訳 |
+| `/translate en` | 対象に返信し、米国英語へ翻訳 |
+| `/translate uk` | 対象に返信し、ウクライナ語へ翻訳 |
+| `/translate ru` | 対象に返信し、ロシア語へ翻訳 |
+| `/translate list` | 正規表現による判定に対応する言語を JSON コードブロックで表示 |
+| `/translate stop` | 返信・対象指定がなければ本グループの全セッションを停止し、スイッチを保持 |
+| `/translate stop @username` または `/translate stop 123456789` | 指定対象だけを停止。返信とチャンネルの負数 ID も使用可能 |
+| `/translate disable` | 本グループの全セッションを削除して無効化。翻訳管理権限が必要 |
+
+全方向で返信または `@username` を使い、ユーザー・チャンネルを指定できます。群メンバーが開始・停止でき、1 群につき異なる identity を最大 5 件、全体で最大 25 群保持します。各対象の方向は独立しています。上限では新規開始を拒否し、既存対象は追い出しません。同じ対象の方向を変える前にその対象を停止してください。返信と引数が衝突した場合は拒否し、全群停止にはしません。`/copy stop` は翻訳を停止しません。同一対象では翻訳が copy より優先し、別の copy 対象は独立して動作します。
+
+`/translate list` は以下を Telegram の `pre` entity、言語 `json` として表示し、群内では 30 秒後に削除します。
+
+```json
+{
+  "ja": "日语",
+  "cn": "简体中文",
+  "en": "美式英语",
+  "uk": "乌克兰语",
+  "ru": "俄语"
+}
+```
+
+翻訳 API に渡すのは entity のない文字だけです。対象の文字種に一致する文字や数字・句読点・絵文字だけの文字は API を使わずコピーします。日本語は仮名を必須とし、簡体字中国語は Unicode Unihan に簡化変体がある繁体字を除外し、英語は ASCII 字母を受け入れます。ウクライナ語は自国の字母とアポストロフィを受け入れてロシア語の `ёъыэ` を除外し、ロシア語は `Ё/ё` を含めウクライナ語の `єіїґ` を除外します。共通漢字、無アクセントのラテン文字、共通キリル文字の短文には曖昧さが残り、正規表現は意味による言語判定ではありません。
+
+entity 付き文字は書式を保持してコピーし、API 失敗時も元の文字をコピーします。画像・スタンプ・動画・音声・ファイルなどの非文字メッセージと caption は送信せず、同じ対象の copy にも回しません。米国英語は `en-US` 対応の [Google Translation LLM](https://docs.cloud.google.com/translate/docs/languages#translation-llm) を使います。出力は topic を保持し、表示可能なコマンドを拒否します。コマンド通知は 30 秒後に削除します。
+
+セッションは `state.json.translate` の群別配列に保存します。形式と cold migration は [07 運用](07-operations.md) を参照してください。単独停止はその対象だけを取り消し、別の対象の追加・停止は処理中の翻訳を取り消しません。無効化と群 teardown は全対象を削除し、非同期結果は送信前に自分のセッションオブジェクトを再確認します。`/bot_status` は本グループの翻訳人数を `人数/5` で表示します。
 
 ## 🎮 コマンドと権限
 
 <table width="100%">
 <tr><th width="26%" align="left">コマンド</th><th width="19%" align="center">権限</th><th width="55%" align="left">説明</th></tr>
-<tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">メンバー</td><td>各 copy モードを開始</td></tr>
-<tr><td><code>/stop_copy</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止し、アバターも復元</td></tr>
-<tr><td><code>/steal_icon</code></td><td align="center">メンバー</td><td>アバターのみ取得</td></tr>
-<tr><td><code>/reset_icon</code></td><td align="center">メンバー</td><td>既定アバターに戻す</td></tr>
+<tr><td><code>/copy</code> <code>/copy reverse</code> <code>/copy nya</code></td><td align="center">メンバー</td><td>各 copy モードを開始</td></tr>
+<tr><td><code>/translate ja|cn|en|uk|ru [@username]</code><br><code>/translate list</code><br><code>/translate stop [@username/id]</code></td><td align="center">メンバー</td><td>文字翻訳の方向選択、言語一覧、全群または指定対象の停止</td></tr>
+<tr><td><code>/copy stop</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止し、アバターも復元</td></tr>
+<tr><td><code>/icon steal</code></td><td align="center">メンバー</td><td>アバターのみ取得</td></tr>
+<tr><td><code>/icon reset</code></td><td align="center">メンバー</td><td>既定アバターに戻す</td></tr>
 <tr><td><code>/wed</code></td><td align="center">メンバー</td><td>アバター付きでグループの相手を抽選。確定・変更・削除に対応し、<code>/init enable</code> が必要</td></tr>
 <tr><td><code>/&lt;漢字 1~2 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> や <code>/揪住</code> で「実行者 咬了 対象！」と応答し、成功結果は長期保持</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">メンバー</td><td>自発的発言を N 分間停止（既定 3 分）</td></tr>
@@ -56,20 +94,22 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>このグループの広告検出を切り替え。protected identity 以外の命中時は <code>/block</code> と同じ処分</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>このグループの連投ミュートを切り替え（既定で無効）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>このグループの参加認証と Anti-Raid の非公開モードを切り替え（既定で無効）</td></tr>
-<tr><td><code>/bot_status</code></td><td align="center">メンバー</td><td>ローカルプロセス指標、グローバル model capability、Telegram 429 outbound queue、有効な gag 数、このグループで Bot が現在持つ権限（JSON ブロック）、このグループで有効な機能を表示</td></tr>
-<tr><td><code>/query_mood</code></td><td align="center">メンバー</td><td>このグループで現在有効な AI の気分を、再抽選せずに表示</td></tr>
-<tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>AI 有効グループの気分を即時再抽選</td></tr>
-<tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>日本語翻訳機能を切り替え（既定 OFF）</td></tr>
+<tr><td><code>/bot_status</code></td><td align="center">メンバー</td><td>ローカルプロセス指標、グローバル model capability、Telegram 429 outbound queue、有効な gag 数、本群の翻訳人数（最大 5 人）、このグループで Bot が現在持つ権限（JSON ブロック）、このグループで有効な機能を表示</td></tr>
+<tr><td><code>/mood query</code></td><td align="center">メンバー</td><td>このグループで現在有効な AI の気分を、再抽選せずに表示</td></tr>
+<tr><td><code>/mood switch</code></td><td align="center"><code>isCanSwitchMood</code></td><td>AI 有効グループの気分を即時再抽選</td></tr>
+<tr><td><code>/translate enable|disable</code></td><td align="center"><code>isCanControllTranslatePermission</code></td><td>翻訳機能を切り替え（既定 OFF）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの主要処理ゲートを切り替え</td></tr>
 <tr><td><code>/batch_kick &lt;Nm|Nh|Nd&gt;</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>スーパーグループで、rolling 24 時間以内の指定 window に入室し、まだ在室しているメンバーを kick。blocklist には追加しません</td></tr>
 <tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">allowlist identity</td><td>呼び出し元自身の全 permission を表示、または permission 説明を JSON で一覧表示。どちらも描画した board を長期保持</td></tr>
 <tr><td><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>既存 allowlist user/channel の個別 permission を変更。<code>all</code> ですべて有効化</td></tr>
 <tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>返信、<code>@username</code>、user id、channel id で allowlist identity を追加・削除</td></tr>
-<tr><td><code>/set_qa</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>form を開き、開いた本人が「问题:」「回答:」の 2 通に分けて送信。両方揃うとこの chat の Q&amp;A を 1 件登録（最大 15 件、質問 256 文字・回答 3840 文字まで）</td></tr>
-<tr><td><code>/query_qa</code><br><code>/query_qa &lt;質問文&gt;</code></td><td align="center">グループメンバー</td><td>この chat の Q&amp;A を JSON code block で一覧表示、または 1 件だけ照会。board 上の回答は 256 文字で切り詰め、質問は切り詰めません。収まらない場合はページ送りボタンを表示。board は長期保持し、該当なしの通知は 30 秒後に削除</td></tr>
-<tr><td><code>/remove_qa &lt;質問文&gt;</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>指定の Q&amp;A を削除。削除対象が無かった場合はその旨を正直に返す</td></tr>
+<tr><td><code>/qa set</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>form を開き、開いた本人が「问题:」「回答:」の 2 通に分けて送信。両方揃うとこの chat の Q&amp;A を 1 件登録（最大 15 件、質問 256 文字・回答 3840 文字まで）</td></tr>
+<tr><td><code>/qa query</code><br><code>/qa query &lt;質問文&gt;</code></td><td align="center">グループメンバー</td><td>この chat の Q&amp;A を JSON code block で一覧表示、または 1 件だけ照会。board 上の回答は 256 文字で切り詰め、質問は切り詰めません。収まらない場合はページ送りボタンを表示。board は長期保持し、該当なしの通知は 30 秒後に削除</td></tr>
+<tr><td><code>/qa remove &lt;質問文&gt;</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>指定の Q&amp;A を削除。削除対象が無かった場合はその旨を正直に返す</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（PM 限定）</td><td>Bot との個人チャットから指定グループへの転送セッションを開始/終了</td></tr>
 </table>
+
+この 4 系統の機能はチャットのメニューでそれぞれ `/copy`、`/qa`、`/mood`、`/icon` を入口とし、説明に引数を記載します。入口ゲートを通過した後、`/qa`、`/mood`、`/icon` のサブコマンドが欠けているか不正な場合は使い方だけを返します。`/qa set`、`/mood query`、`/mood switch` は追加引数を受け付けません。`/qa query` は質問を省略すると全件を表示し、`/qa remove` は質問を必須とします。検索と削除では質問内の空白と改行を保持します。
 
 > **permission 列の読み方**：`isCanXxx` を挙げた行はその permission key で認可されます。`SUPER_ADMIN_USER_ID` という identity 自体が**すべて**の permission key を持つため、SQLite allowlist table に entry がなくてもこれらの行はすべて使えます。`SUPER_ADMIN_USER_ID` を挙げた行だけが identity のみで決まり、allowlist では付与できません。
 
@@ -78,11 +118,11 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 - **`/bot_status` のメモリ**：コマンド受信時に `Bun.unsafe.memoryFootprint()` を呼び、Worker を含む Bot プロセス全体の現在のメモリ使用量を表示します。Linux では共有常駐ページをプロセス間で按分する PSS を使います。使用率の分母はコンテナのメモリ制限、制限が無ければホストの物理メモリ総量です。測定できない場合は「不可用」と表示します。
 - **コマンドの入口ゲート**：グループコマンドは一律 `/init` ゲートを通ります。未初期化グループで受け付けるのはスーパー管理者の `/init` だけなので、`/permission` と `/white` も初期化済みグループで使う必要があります。private chat で許可される slash command は `/send` だけです。
 - **アクションコマンド**：名前は `first_name last_name` 形式で、公開ユーザー名があればプロフィールへリンクします。対象の指定方法は他のコマンドと同じで、返信または `@username` です。成功したアクション結果は `/permission help`・`/permission query` と同様に長期保持し、対象不足・引数エラー・`/x` の使い方提示は引き続き 30 秒後に削除します。
-- **chat Q&A**：`/set_qa` の form は**書式付き message** でテキストを集めます。form を開く段階で `isCanControllQaPermission` を確認し、その後は「form を開いた身分本人か」だけを見ます。これにより **channel の皮（sender_chat）や匿名管理者でも Q&A を設定できます**——command 側と投稿側が見るのは同じ `sender_chat` なので、2 つの id は構造上必ず一致します。投稿の書式は行頭の `问题:` または `回答:`（半角・全角コロンどちらも可、`答案:` も同義）。値は改行を含んでよく、通常は 2 通に分けて送りますが、1 通にまとめても受け付けます。回答内の ```` ```json ```` block は**リテラルの fence のまま**保存し、直答時に code block へ戻して原文どおり送出します。したがって fence 自体も 3840 文字の上限に数えます。認識された投稿 message は削除され、AI や echo の pipeline には流れません。続いて form 本文をその場で書き換え、「已收到的问题」「已收到的回答」の 2 行が現在の状態を示します（同じ message 内の項目がすべて長さ超過で弾かれた場合は session が変わらないため、書き換えません）。2 項目の合計が Telegram の 1 通 4096 文字を超える場合は、**表示側の回答**を残り予算に合わせて切り詰めて省略記号を付け、質問はそのまま並べます——切り詰められるのはこの form 上の表示だけで、database に登録されるのは完全な原文です。form は chat ごとに 1 つ、15 分で失効します。**途中でやり直す**場合は 3 通りあります。同じ項目を送り直すと前の値を上書きし、form はもう一方を待ち続けます。**同じ人**がもう一度 `/set_qa` を送ると、古い form はその message ごと破棄され、両項目が空の状態から始まります。**別の人**が誰かの記入中に `/set_qa` を送った場合はその場で拒否し、他人の form を黙って奪いません——奪われた側には form が突然消えたようにしか見えず、追跡できないからです。form が確定した後に書式付き message を送っても認識されず、通常の message pipeline に流れます。`/init disable` と chat teardown が片付けるのは未完了の form だけで、**登録済みの Q&A は database に残ります**。運用者が登録した設定だからです。`/init enable` し直せばそのまま有効で、削除するには `/remove_qa` を使います。
+- **chat Q&A**：`/qa set` の form は**書式付き message** でテキストを集めます。form を開く段階で `isCanControllQaPermission` を確認し、その後は「form を開いた身分本人か」だけを見ます。これにより **channel の皮（sender_chat）や匿名管理者でも Q&A を設定できます**——command 側と投稿側が見るのは同じ `sender_chat` なので、2 つの id は構造上必ず一致します。投稿の書式は行頭の `问题:` または `回答:`（半角・全角コロンどちらも可、`答案:` も同義）。値は改行を含んでよく、通常は 2 通に分けて送りますが、1 通にまとめても受け付けます。回答内の ```` ```json ```` block は**リテラルの fence のまま**保存し、直答時に code block へ戻して原文どおり送出します。したがって fence 自体も 3840 文字の上限に数えます。認識された投稿 message は削除され、AI や echo の pipeline には流れません。続いて form 本文をその場で書き換え、「已收到的问题」「已收到的回答」の 2 行が現在の状態を示します（同じ message 内の項目がすべて長さ超過で弾かれた場合は session が変わらないため、書き換えません）。2 項目の合計が Telegram の 1 通 4096 文字を超える場合は、**表示側の回答**を残り予算に合わせて切り詰めて省略記号を付け、質問はそのまま並べます——切り詰められるのはこの form 上の表示だけで、database に登録されるのは完全な原文です。form は chat ごとに 1 つ、15 分で失効します。**途中でやり直す**場合は 3 通りあります。同じ項目を送り直すと前の値を上書きし、form はもう一方を待ち続けます。**同じ人**がもう一度 `/qa set` を送ると、古い form はその message ごと破棄され、両項目が空の状態から始まります。**別の人**が誰かの記入中に `/qa set` を送った場合はその場で拒否し、他人の form を黙って奪いません——奪われた側には form が突然消えたようにしか見えず、追跡できないからです。form が確定した後に書式付き message を送っても認識されず、通常の message pipeline に流れます。`/init disable` と chat teardown が片付けるのは未完了の form だけで、**登録済みの Q&A は database に残ります**。運用者が登録した設定だからです。`/init enable` し直せばそのまま有効で、削除するには `/qa remove` を使います。
 
   フォーム送信失敗時は session を終了します。TTL・再作成・teardown 後に完了した古い入力は問答を登録できません。削除開始済みの入力はフォーム入口が引き続き所有し、終了後に返ったフォーム message ID は状態機械の後処理へ渡します。
 
-- **Q&A board のページ送り**：`/query_qa` の board は 1 ページ 3 件で詰めます。2 ページ以上になると「‹ 前へ / ページ番号 / 次へ ›」の 3 ボタンを付け、同じ message をその場で書き換えます。ページ番号はどの session 状態にも入りません——クリックのたびに `callback_data` のページ番号で hot table から詰め直すため、再起動後も、`/remove_qa` で件数が変わった後も、全件削除後でさえ、古い board をもう一度押せば現在の事実に収束します。board 上の回答は 256 文字で切り詰めて省略記号を付けますが、**質問は決して切り詰めません**。質問は `/remove_qa` の引数であり、切り詰めた質問をそのまま渡しても何も削除できないからです。
+- **Q&A board のページ送り**：`/qa query` の board は 1 ページ 3 件で詰めます。2 ページ以上になると「‹ 前へ / ページ番号 / 次へ ›」の 3 ボタンを付け、同じ message をその場で書き換えます。ページ番号はどの session 状態にも入りません——クリックのたびに `callback_data` のページ番号で hot table から詰め直すため、再起動後も、`/qa remove` で件数が変わった後も、全件削除後でさえ、古い board をもう一度押せば現在の事実に収束します。board 上の回答は 256 文字で切り詰めて省略記号を付けますが、**質問は決して切り詰めません**。質問は `/qa remove` の引数であり、切り詰めた質問をそのまま渡しても何も削除できないからです。
 - **Q&A の直接応答**：chat が `/init enable` 済みで、メッセージ本文が登録済みの質問と**一字一句同じ**場合、Bot は AI を介さず即座に回答します。@ / 返信 / ランダム発言といった通常のトリガー条件にも縛られません（Bot への返信や @ mention を含む）。先頭の `@bot ` は比較前に取り除きます。username の照合は大文字小文字を区別しません（Telegram 自体と同じ）が、質問文そのものは一字一句同じである必要があります。意味は近いが文字列が異なる質問はこの経路を通らず、AI ラウンド内の `group_qa_query` と `group_qa_answer` という 2 つの照会 tool に委ねます。どちらもラウンドの可視アクション予算を消費せず、chat に登録が無ければ tool 自体が存在しません。
 - **`/gag` の発言制限**：グローバルで同時に有効な対象は最大 5 件です。同一 chat に複数対象を置けますが、同じ identity は重複できません。入口は初期化済みで Bot がメッセージを削除できるグループだけに作成します。通常 user には、まずボタンなしの公開 status を送り、続いて `ephemeral_message_parameters.receiver_user_id` で限定された「发言」ボタン付きの一時入口を送ります。channel にはボタン付きの公開 status を 1 通だけ送ります。通常の `@bot` query は常におみくじだけへ進みます。user と channel のボタンはいずれも `gag:<対象 Telegram id>`（user は正数、channel は負数）だけを prefill します。最初の空白より前に MD5、digest、random token、group id、その他の metadata を追加してはいけません。Telegram の inline query は現在の具体的な chat id を公開せず、Bot が送信前に遮断できる hook もないため、そのような追加フィールドでは実際の入力 chat を認証できません。通常入口は current-chat button を使います。生成結果は hidden text link に `<対象プロフィール>#<セッション chat id>` を保持します。この公開 URL は検証材料であり、秘密や認証 token ではありません。着地後は、リンク内の対象とセッション chat、実際の `from.id`/`sender_chat.id`、実際の `message.chat.id` を同時に検証し、identity または chat が不一致なら直ちに削除します。channel 候補の title にグループ名は表示しません。`gag:` を持つ query はすべて gag domain が排他的に処理し、不正・期限切れ・identity 不一致では空結果だけを返して、おみくじへ fallback しません。開始 status は 30 秒の command cleanup を通らず、対象指定の `/ungag`、timeout、chat-runtime teardown のいずれかで各 message id を使って削除します。いずれかの削除失敗時は上限付き ending state を保持して有限回 retry し、すべての status が実際に消えるまで同じ対象を再 gag できません。そのため `/ungag` には返信、`@username`、identity id のいずれかが必須です。発言 rendering は grapheme ごとに抽選します：75% は filler 分岐で、その grapheme の後ろへ 3〜6 個の点を追加し（点の間には各 1/3 の確率で ASCII 空白を挟みます）、残り 25% は grapheme 全体を六つの filler のいずれかへ等確率で置き換えます。同種の操作は隣接する 2 つの grapheme までで、3 つ目の候補は gate が弾くため、75% は抽選確率であって最終テキストにおける filler の比率を約束しません。短いテキストには最低操作数の段階もあります（grapheme 2〜3、4〜7、8〜31、32〜64 でそれぞれ最低 2、3、7、15 回）。
 - **`/block` ブロックリスト**：対象は返信・`@username`・ユーザー id の直接指定（正の整数。グループやチャンネルの負の id は対象外）で指名できます。id が最も確実です——手放されたユーザー名は他人が再登録でき、一方このコマンドは取り消せません。id が永続ブロックリストに入ると、監視中のどのグループの入室更新でも即 kick されます。あるグループで「管理者権限がある」と「`/init enable` 済み」が揃った瞬間には（どちらが先でも）、すでに在室しているリスト該当者もまとめて掃除します。`/unblock` は正式な SQLite ブロックリストから対象を transaction で削除し、既定で Bot が管理する全グループの BAN も解除します。対象が動的リストにいなくてもチャット横断解除は実行します。`/unblock` は `/block` にはない指定方法をもう 1 つ受け付けます——**チャンネルの負の id** です。チャンネル被りは `sender_chat` としてリストに入りますが（チャンネルのメッセージへ返信しての `/block`、広告検出の命中）、広告検出は元メッセージを削除し、公開 username の無いチャンネルはキャッシュにも載りません。負の id を拒否したままだと、そうした項目は二度と消せなくなります。逆方向を開かないのは、`/block` で会話 id を貼り間違えると会話 identity 全体を、しかも取り消せない形で BAN してしまうからです。
@@ -113,9 +153,9 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 
 結果は実行者本人だけが操作できます。相手の変更前に押された古いボタンは、新しい相手には作用しません。再度 `/wed` を送ると再抽選し、旧結果を削除して新しいコマンドへ返信します。各グループでユーザー一人につき一つの結果を保持し、フォーラムでは元のコマンドと同じトピックに送信します。チャンネル名義、匿名グループ管理者、個人チャット、チャンネル投稿には対応しません。
 
-各グループで独立した同じ **`Set<number>` を長期再利用し、最大 15 万人**を保持します。初期化済みグループで個人アカウントから実際に発言した ID だけを追加し、チャンネルの発言、返信先、転送元、自動転送、匿名グループ名義からは候補を追加しません。再発言では集合を変えません。満杯では既存メンバーを保持して追加を止め、退室で空きができると再開します。退室更新は先に ID を削除し、グループ無効化中に受信した退室も既存記録へ反映します。候補は `getChatMember` で在室と非 Bot を確認し、不在と確認した ID は集合から削除します。実行者は自分の抽選から除外します。一回に最大 8 候補を確認し、候補不足やアバター取得不可の場合は再試行を案内します。
+各グループで独立した同じ **`Set<number>` を長期再利用し、最大 15 万人**を保持します。初期化済みグループで個人アカウントから実際に発言した ID だけを追加し、チャンネルの発言、返信先、転送元、自動転送、匿名グループ名義からは候補を追加しません。再発言では集合を変えません。満杯では既存メンバーを保持して追加を止め、退室で空きができると再開します。退室更新は先に ID を削除し、グループ無効化中に受信した退室も既存記録へ反映します。抽選した候補には `getChatMember` を 1 回だけ発行して身分を取得します。在室判定は行わず、集合へ書き戻しもしません。退室したメンバーは退室更新と日次再確認が整理します。実行者は自分の抽選から除外します。一回に確認するのは「利用可能なアバターが無いと確定した」候補が最大 8 件で、完了しなかった照会は枠を消費せず 3 回積み上がった時点でその回を諦めます。候補不足やアバター取得不可の場合は再試行を案内します。
 
-アバターは `getChat` で現在の画像を確認し、`getUserProfilePhotos` が返す先頭 100 枚の各サイズから `big_file_unique_id` に一致するものを探します。一致すれば送信・変更とも `PhotoSize.file_id` を再利用し、Bot ホストで画像をダウンロード・アップロードしません。一致しない場合や画像一覧の照会に失敗した場合は、現在の ChatPhoto をダウンロードします。必要な場合は今回の照会で得た公開 username を使い、`/steal_icon` と同じ公開プロフィール取得処理を呼びます。図注の二人の名前はユーザーメンションのエンティティで表示します。ダウンロードにはサイズ上限と取消境界があります。Bot 自身のアバターや copy 系コマンドの cooldown は変更しません。
+アバターは `getChat` で現在の画像を確認し、`getUserProfilePhotos` が返す先頭 100 枚の各サイズから `big_file_unique_id` に一致するものを探します。一致すれば送信・変更とも `PhotoSize.file_id` を再利用し、Bot ホストで画像をダウンロード・アップロードしません。一致しない場合や画像一覧の照会に失敗した場合は、現在の ChatPhoto をダウンロードします。必要な場合は今回の照会で得た公開 username を使い、`/icon steal` と同じ公開プロフィール取得処理を呼びます。図注の二人の名前はユーザーメンションのエンティティで表示します。ダウンロードにはサイズ上限と取消境界があります。Bot 自身のアバターや copy 系コマンドの cooldown は変更しません。
 
 コマンドとボタンは主スレッドの実行器を共有し、全体で同時に **32 件**まで処理します。照会、ダウンロード、画像の送信要求が完了するまで実行枠を保持します。追加の **512 件**は FIFO で待機し、満杯なら再試行を案内します。受理後は直列の update 処理を解放するため、ほかの更新も進行できます。待機中の画像取得は行いません。画像、テキスト、ボタン API は共通の Telegram 出力キューと種類別の 429 待機を使い、`/wed` 専用の出力制限はありません。通常の停止では受理を閉じて処理を drain してから出力を閉じます。グループの teardown はそのグループの待機項目と実行中 session を取り消します。
 

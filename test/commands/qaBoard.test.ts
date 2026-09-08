@@ -155,7 +155,7 @@ describe("看板装页", () => {
     const pages = buildQaBoardPages([{ q: question, a: answer }]);
     const parsed = parsePage(pages[0]!.text, pages[0]!.entities[0]!) as { q: string; a: string }[];
 
-    // 问题是 /remove_qa 的入参，截断过的照抄回去什么也删不掉。
+    // 问题是 /qa remove 的入参，截断过的照抄回去什么也删不掉。
     expect(parsed[0]!.q).toBe(question);
     expect(parsed[0]!.a).toHaveLength(QA_QUERY_ANSWER_PREVIEW_MAX_CHARS);
     expect(parsed[0]!.a.endsWith(QA_TRUNCATION_MARK)).toBeTrue();

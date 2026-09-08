@@ -3,7 +3,7 @@ import {
   VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
   VERIFICATION_TIMEOUT_MS,
 } from "../../consts/antiRaid/verification";
-import { trimSlidingWindowArray } from "../../libs/slidingWindowRateLimit";
+import { trimSlidingWindowArrayInPlace } from "../../libs/slidingWindowRateLimit";
 import type {
   ConfirmedThreadCommentEvent,
   ExpelSnapshot,
@@ -41,11 +41,14 @@ export function handleTrackedMessage(
   }
 
   // 频道评论区活动已提前豁免；其余消息按成员自己的滑动窗口统计。
-  state.trackedMessageTimes = trimSlidingWindowArray({
-    timestamps: state.trackedMessageTimes,
-    windowMs: JOIN_WINDOW_MS,
-    now: event.now,
-  });
+  //
+  // 就地修剪而不是「filter 出新数组再赋回」：这条判定跑在待验证成员的每一条
+  // 消息上，正是刷屏防御最吃紧的路径，窗口又铺得满（上限
+  // ANTI_RAID_PER_MINUTE_LIMIT），每条消息现造一个临时数组是纯浪费。
+  // 状态机独占这份数组（下一行本来就在 push 它），全部消费方都 `[...]` 复制
+  // 出去，没有第二处别名；边界判据与 filter 版由同一组对拍锁住，见
+  // libs/slidingWindowRateLimit.ts 的 trimSlidingWindowArrayInPlace。
+  trimSlidingWindowArrayInPlace(state.trackedMessageTimes, JOIN_WINDOW_MS, event.now);
   state.trackedMessageTimes.push(event.now);
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
     return {
@@ -219,4 +222,27 @@ export function handleReminderLanded(
   else state.replyReminderMessageId = event.messageId;
   state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
   return pendingUpdated(state, [], true);
+}
+
+/**
+ * 处理异步管理员核查返回的通过结论。
+ *
+ * 只对 pending 生效：核查是为待验证记录发起的，结论回来时记录若已不是 pending
+ * （按钮已通过、已离群、已进终态），这条迟到结论必须原样放过，不得把已经收摊的
+ * 记录重新拉回 EXEMPT。
+ *
+ * 通过时删掉两条验证提醒，并撤销这次入群在反刷群滑动窗口里的计数——被确认是
+ * 管理员拉进来的人不该算进冲群统计。
+ */
+export function handleAdminCheckResolved(
+  state: VerificationState | undefined
+): VerificationTransition {
+  if (state?.kind !== "pending") return { next: state, effects: [] };
+  return {
+    next: { kind: "exempt", label: state.label, isBot: state.isBot },
+    effects: [
+      remindersOf(state),
+      { kind: "retractJoinCount", joinedAt: state.joinedAt },
+    ],
+  };
 }

@@ -183,3 +183,27 @@ export function handleJoin(
   effects.push({ kind: "sendReminder", label: event.label, isBot: event.isBot });
   return { next: pending, effects };
 }
+
+/**
+ * 处理成员离群。
+ *
+ * pending 直接回到 ABSENT，并删掉两条带按钮的验证提醒——人已经不在群里，
+ * 那些按钮永远不会再被按，留着只是噪声。
+ *
+ * 两个终态**保持原状不动**：正在执行的踢人可能就是本机器人自己发起的，
+ * 这条 left 正是它的结果。此时清掉记录会让随后的处置结算事件找不到状态，
+ * 落盘回执与去重窗口一起丢失（结算路径见 verificationRuntime.ts 的
+ * dispatchVerification）。其余状态（EXEMPT / KICK_PENDING / KICKED）随离群
+ * 一并作废。
+ */
+export function handleLeft(
+  state: VerificationState | undefined
+): VerificationTransition {
+  if (state?.kind === "pending") {
+    return { next: undefined, effects: [remindersOf(state)] };
+  }
+  if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
+    return { next: state, effects: [] };
+  }
+  return { next: undefined, effects: [] };
+}

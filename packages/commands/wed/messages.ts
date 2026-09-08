@@ -13,8 +13,8 @@ import {
   logUnlessAborted,
   replyParametersFor,
   runTelegramAction,
-  signalArgs,
 } from "../../infra/telegram/actions/core";
+import { signalArgs } from "../../libs/telegramSignalArgs";
 import { isMessageNotModified } from "../../infra/telegram/actions/messages";
 import type { RichTextMessage } from "../../types/telegram";
 import type { WedCandidate, WedSession } from "../../types/wed";

@@ -25,7 +25,7 @@ export const AD_DETECT_BATCH_SIZE: number = 35;
  * 同时在途的判定请求上限——整条入群守卫线程的总量闸，不按群分配。
  *
  * 没有这道闸时，provider 一变慢在途请求就按「派发速率 × 单次耗时」堆积：
- * 35 × `AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS`(30 秒) ≈ 1050 个，算上重试还要翻几倍，
+ * 35 × `AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS`(60 秒) ≈ 2100 个，算上重试还要翻几倍，
  * 每个都钉住自己那一串消息。provider socket 池、Worker 在途集合与堆一起涨，
  * 验证状态机和封禁业务调度也会受累——广告判定只是尽力而为的启发式，不该拖它下水。
  *
@@ -160,13 +160,13 @@ export const AD_DETECT_MAX_OUTPUT_TOKENS: number = 16_384;
 export const AD_DETECT_TEMPERATURE: number = 0.5;
 
 /** OpenAI 兼容广告检测每次 SDK 尝试的超时。 */
-export const AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS: number = 30_000;
+export const AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS: number = 60_000;
 
 /** OpenAI SDK 的重试次数（不含首次）；请求异常不再由业务层重试。 */
 export const AD_DETECT_OPENAI_REQUEST_MAX_RETRIES: number = 2;
 
 /** Google 广告检测请求每次 SDK 尝试的超时；所属模块：antiRaid/ai/google.ts。 */
-export const AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS: number = 30_000;
+export const AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS: number = 60_000;
 
 /** Google SDK 的总尝试次数（含首次）；所属模块：antiRaid/ai/google.ts。 */
 export const AD_DETECT_GOOGLE_REQUEST_ATTEMPTS: number = 3;

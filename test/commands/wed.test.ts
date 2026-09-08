@@ -3,17 +3,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Chat, User } from "grammy/types";
 import { GrammyError } from "grammy";
 import type { Mock } from "bun:test";
-import type { CurrentAvatar } from "../../packages/types/telegram";
+import type { CurrentAvatarResult } from "../../packages/types/telegram";
 
 mock.module("../../packages/infra/logger", () => ({ logger: { error(): void {}, warn(): void {}, info(): void {}, log(): void {} } }));
-const avatar: Mock<(user: User, signal: AbortSignal) => Promise<string | Uint8Array | undefined>> =
-  mock(async (_user: User, _signal: AbortSignal): Promise<Uint8Array> => new Uint8Array([1, 2, 3]));
-mock.module("../../packages/infra/telegram/avatar/read", () => ({
-  async readCurrentAvatar(target: User, signal: AbortSignal): Promise<CurrentAvatar | undefined> {
-    const photo: string | Uint8Array | undefined = await avatar(target, signal);
-    return photo === undefined ? undefined : { identity: target, photo };
-  },
-}));
+const avatar: Mock<(user: User, signal: AbortSignal) => Promise<CurrentAvatarResult>> =
+  mock(async (user: User, _signal: AbortSignal): Promise<CurrentAvatarResult> =>
+    ({ status: "ok", identity: user, photo: new Uint8Array([1, 2, 3]) }));
+mock.module("../../packages/infra/telegram/avatar/read", () => ({ readCurrentAvatar: avatar }));
 
 const { bot } = await import("../../packages/infra/telegram/mainClient");
 const { telegramApiState } = await import("../../packages/cache/perThread/telegramApi");
@@ -22,7 +18,8 @@ const { resetPendingMessageDeletions } = await import("../../packages/infra/tele
 const { wedChats } = await import("../../packages/cache/main/wed");
 const { getOrCreateWedChat } = await import("../../packages/commands/wed/chats");
 const { handleWedCommand, handleWedCallback, teardownWedInChat } = await import("../../packages/commands/wed");
-const { WED_BUTTON_TEXTS, WED_MEMBER_LIMIT, WED_SESSION_LIMIT, WED_TEXTS } = await import("../../packages/consts/wed");
+const { WED_BUTTON_TEXTS, WED_DRAW_TRANSIENT_LIMIT, WED_MEMBER_LIMIT, WED_SESSION_LIMIT, WED_TEXTS } =
+  await import("../../packages/consts/wed");
 const { renderWedCaption } = await import("../../packages/commands/wed/rendering");
 
 const chat = { id: -1001, type: "supergroup", title: "群" } as const;
@@ -59,7 +56,8 @@ beforeEach(() => {
   resetPendingMessageDeletions();
   sentId = 100;
   for (const fn of [member, avatar, photo, edit, markup, remove, notice, answer, setProfile]) fn.mockClear();
-  avatar.mockImplementation(async (): Promise<Uint8Array> => new Uint8Array([1, 2, 3]));
+  avatar.mockImplementation(async (user: User): Promise<CurrentAvatarResult> =>
+    ({ status: "ok", identity: user, photo: new Uint8Array([1, 2, 3]) }));
   member.mockImplementation(async (_chatId: number, id: number): Promise<any> => ({ status: "member", user: id === 2 ? partner : nextPartner }));
   photo.mockImplementation(async (): Promise<any> => ({ message_id: ++sentId, chat, date: 1, photo: [] }));
   edit.mockImplementation(async (): Promise<any> => true);
@@ -130,7 +128,8 @@ describe("/wed 图片和按钮交互", () => {
   });
 
   test("可复用头像直接发送 file_id，更换沿用图注、按钮与清理边界", async (): Promise<void> => {
-    avatar.mockImplementation(async (user: User): Promise<string> => `avatar-${user.id}`);
+    avatar.mockImplementation(async (user: User): Promise<CurrentAvatarResult> =>
+      ({ status: "ok", identity: user, photo: `avatar-${user.id}` }));
     await handleWedCommand(command());
     expect(photo.mock.calls[0]![1]).toBe("avatar-2");
     expect(photo.mock.calls[0]![2].reply_parameters.message_id).toBe(10);
@@ -151,7 +150,8 @@ describe("/wed 图片和按钮交互", () => {
   });
 
   test("file_id 更换失败保留旧目标和确认状态", async (): Promise<void> => {
-    avatar.mockImplementation(async (user: User): Promise<string> => `avatar-${user.id}`);
+    avatar.mockImplementation(async (user: User): Promise<CurrentAvatarResult> =>
+      ({ status: "ok", identity: user, photo: `avatar-${user.id}` }));
     await handleWedCommand(command());
     await handleWedCallback(callback("marry"));
     wedChats.get(chat.id)!.members.add(3);
@@ -249,19 +249,46 @@ describe("/wed 图片和按钮交互", () => {
     expect(await handleWedCallback({ callbackQuery: { data: "qa:next" } } as never)).toBeFalse();
   });
 
-  test("不存在替换候选时保留图片；无头像、离群和查询失败不发错误图片", async () => {
+  test("不存在替换候选时保留图片；无可用头像不发错误图片，离群不回写集合", async () => {
     await handleWedCommand(command());
     await handleWedCallback(callback("change"));
     expect(edit).not.toHaveBeenCalled();
     expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.unavailable);
-    avatar.mockImplementation(async (): Promise<undefined> => undefined);
+    avatar.mockImplementation(async (): Promise<CurrentAvatarResult> => ({ status: "permanent-failure" }));
     await handleWedCommand(command());
     expect(remove).not.toHaveBeenCalled();
     expect(wedChats.get(chat.id)!.sessions.get(1)!.messageId).toBe(101);
     member.mockImplementation(async (): Promise<any> => ({ status: "left", user: partner }));
     await handleWedCommand(command());
-    expect(wedChats.get(chat.id)!.members.has(2)).toBeFalse();
+    expect(wedChats.get(chat.id)!.members.has(2)).toBeTrue();
     expect(photo).toHaveBeenCalledTimes(1);
+  });
+
+  test("离群成员照常抽中并发图，成员查询不判在不在", async () => {
+    member.mockImplementation(async (): Promise<any> => ({ status: "left", user: partner }));
+    await handleWedCommand(command());
+    expect(member).toHaveBeenCalledTimes(1);
+    expect(photo).toHaveBeenCalledTimes(1);
+    expect(photo.mock.calls[0]![2].caption).toBe("小🌸，你的群友老婆是 <b>群友<／b>!");
+    expect(wedChats.get(chat.id)!.members.has(2)).toBeTrue();
+  });
+
+  test("查询没跑完不占探测配额，累计到上限才放弃本轮", async () => {
+    for (let id = 3; id <= 40; id++) wedChats.get(chat.id)!.members.add(id);
+    member.mockImplementation(async (_chatId: number, id: number): Promise<any> => ({ status: "member", user: { ...partner, id } }));
+    for (let attempt = 1; attempt < WED_DRAW_TRANSIENT_LIMIT; attempt++) {
+      avatar.mockImplementationOnce(async (): Promise<CurrentAvatarResult> => ({ status: "transient-failure" }));
+    }
+    await handleWedCommand(command());
+    expect(avatar).toHaveBeenCalledTimes(WED_DRAW_TRANSIENT_LIMIT);
+    expect(photo).toHaveBeenCalledTimes(1);
+    avatar.mockClear();
+    photo.mockClear();
+    avatar.mockImplementation(async (): Promise<CurrentAvatarResult> => ({ status: "transient-failure" }));
+    await handleWedCommand(command());
+    expect(avatar).toHaveBeenCalledTimes(WED_DRAW_TRANSIENT_LIMIT);
+    expect(photo).not.toHaveBeenCalled();
+    expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.unavailable);
   });
 
   test("发送、编辑、删除失败均归一化，失败更换不改变原结果，删除可重试", async () => {
@@ -281,8 +308,8 @@ describe("/wed 图片和按钮交互", () => {
   });
 
   test("在途请求占住会话；重复点击和命令不并发下载，群 teardown 取消且不发送迟到图片", async () => {
-    let finish!: (bytes: Uint8Array) => void;
-    avatar.mockImplementationOnce((_user: User, _signal: AbortSignal): Promise<Uint8Array> => new Promise((resolve) => { finish = resolve; }));
+    let finish!: (result: CurrentAvatarResult) => void;
+    avatar.mockImplementationOnce((_user: User, _signal: AbortSignal): Promise<CurrentAvatarResult> => new Promise((resolve) => { finish = resolve; }));
     const pending = handleWedCommand(command());
     for (let i = 0; i < 50 && avatar.mock.calls.length === 0; i++) await Promise.resolve();
     expect(avatar).toHaveBeenCalledTimes(1);
@@ -291,7 +318,7 @@ describe("/wed 图片和按钮交互", () => {
     const signal = avatar.mock.calls[0]![1];
     await teardownWedInChat(chat.id);
     expect(signal.aborted).toBeTrue();
-    finish(new Uint8Array([1]));
+    finish({ status: "ok", identity: partner, photo: new Uint8Array([1]) });
     await pending;
     expect(photo).not.toHaveBeenCalled();
     expect(wedChats.has(chat.id)).toBeFalse();
@@ -313,34 +340,31 @@ describe("/wed 图片和按钮交互", () => {
   test("更换进行中拒绝重复按钮；群关闭阻止迟到的编辑并删除原图片", async () => {
     await handleWedCommand(command());
     wedChats.get(chat.id)!.members.add(3);
-    let finish!: (bytes: Uint8Array) => void;
-    avatar.mockImplementationOnce((): Promise<Uint8Array> => new Promise((resolve) => { finish = resolve; }));
+    let finish!: (result: CurrentAvatarResult) => void;
+    avatar.mockImplementationOnce((): Promise<CurrentAvatarResult> => new Promise((resolve) => { finish = resolve; }));
     const pending = handleWedCallback(callback("change"));
     for (let i = 0; i < 50 && avatar.mock.calls.length < 2; i++) await Promise.resolve();
     expect(avatar).toHaveBeenCalledTimes(2);
     await handleWedCallback(callback("change"));
     expect(answer.mock.calls.at(-1)![1].text).toBe(WED_TEXTS.busy);
     await teardownWedInChat(chat.id);
-    finish(new Uint8Array([2]));
+    finish({ status: "ok", identity: nextPartner, photo: new Uint8Array([2]) });
     await pending;
     expect(edit).not.toHaveBeenCalled();
     expect(remove).toHaveBeenCalledWith(chat.id, 101);
   });
 
-  test("查询故障保留候选；查询发现机器人则移除；不可用头像探测次数有界", async () => {
+  test("成员查询故障不回写集合；不可用头像探测次数有界", async () => {
     member.mockImplementationOnce(async (): Promise<any> => { throw new Error("query failed"); });
     await handleWedCommand(command());
     expect(wedChats.get(chat.id)!.members.has(2)).toBeTrue();
     expect(photo).not.toHaveBeenCalled();
-    member.mockImplementationOnce(async (): Promise<any> => ({ status: "member", user: { ...partner, is_bot: true } }));
-    await handleWedCommand(command());
-    expect(wedChats.get(chat.id)!.members.has(2)).toBeFalse();
     for (let id = 2; id <= WED_MEMBER_LIMIT; id++) wedChats.get(chat.id)!.members.add(id);
     member.mockImplementation(async (_chatId: number, id: number): Promise<any> => ({ status: "member", user: { ...partner, id } }));
-    avatar.mockImplementation(async (): Promise<undefined> => undefined);
+    avatar.mockImplementation(async (): Promise<CurrentAvatarResult> => ({ status: "permanent-failure" }));
     await handleWedCommand(command());
     expect(avatar).toHaveBeenCalledTimes(8);
-    expect(new Set(member.mock.calls.slice(2).map((call) => call[1])).size).toBe(8);
+    expect(new Set(member.mock.calls.slice(1).map((call) => call[1])).size).toBe(8);
   });
 
   test("普通 teardown 删除结果；会话满额不淘汰别人的按钮", async () => {

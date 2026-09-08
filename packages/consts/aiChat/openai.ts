@@ -96,8 +96,21 @@ export const OPENAI_REPLY_ERROR_LABEL: string = "OpenAI API";
 /** 生图请求在错误日志里的调用名。 */
 export const OPENAI_IMAGE_ERROR_LABEL: string = "OpenAI image generation API";
 
-/** 单次 OpenAI 请求的 per-attempt 超时上限；与 Gemini 侧同口径。 */
-export const OPENAI_REQUEST_TIMEOUT_MS: number = 150_000;
+/**
+ * text（闲聊回复）与 summary（冷消息压缩、贴纸整包简介）两档能力的 per-attempt
+ * 超时上限；与 Gemini 侧同口径。media 与 image 各有独立档位，见下两个常量。
+ */
+export const OPENAI_REQUEST_TIMEOUT_MS: number = 180_000;
+/**
+ * media 能力（视觉描述与语音转写）的独立超时。
+ *
+ * 这一档必须宽于纯文本往返：服务端要先把整份图片或整段音频解码进上下文才开始
+ * 出字，端到端耗时本就长一截，套用通用档会在模型还在读媒体时把连接掐掉——而
+ * 掐断发生在服务端已经出账之后，等于花钱换一条
+ * `[图片：解析失败，请无视此消息]`。视觉与语音共用 config/agent.json 的
+ * `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
+ */
+export const OPENAI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
 /**
  * 生图请求的独立超时：gpt-image 的一次 1024px 生成常年跑到分钟级，套用聊天
  * 那份预算会在模型还在画的时候把连接掐掉。

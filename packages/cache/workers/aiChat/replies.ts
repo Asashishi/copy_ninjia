@@ -11,7 +11,7 @@ import type { QueuedReplyTrigger, ReplyDeliveryWindow } from "../../../types/aiC
  * packages/workers/aiChat/replyQueue.ts（排队/溢出提示消费）、replyRound.ts
  * （并发位与长窗口触发时刻）、replyPipeline.ts（在途计数读取/溢出提示登记）、
  * replyDelivery.ts（发送顺位桶）、replyState.ts（代际读取、限频提示冷却）；失效与整体重置经
- * cache/workers/aiChat/index.ts 的门面函数，由 replyState.ts/rollingMemory.ts 调用。
+ * cache/workers/aiChat/index.ts 的门面函数，由 replyState.ts 与 rollingMemory.ts 调用。
  */
 
 /**

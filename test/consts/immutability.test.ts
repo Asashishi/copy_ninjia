@@ -1,5 +1,20 @@
+import { TRANSLATE_TARGET_TEXTS, TRANSLATE_TOGGLE_TEXTS, TRANSLATE_LANGUAGE_CODES, TRANSLATE_LANGUAGE_LABELS } from "../../packages/consts/translate";
 import { expect, test } from "bun:test";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../packages/consts/diskIO/common";
+
+function assertTranslateConstantsReadonly(): void {
+  // @ts-expect-error 翻译方向代码表由常量模块持有。
+  TRANSLATE_LANGUAGE_CODES.en = "en";
+  // @ts-expect-error 翻译方向显示表不得由调用方改写。
+  TRANSLATE_LANGUAGE_LABELS.cn = "中文";
+  // @ts-expect-error 乌克兰语代码不得由调用方改写。
+  TRANSLATE_LANGUAGE_CODES.uk = "ua";
+  // @ts-expect-error 俄语显示标签不得由调用方改写。
+  TRANSLATE_LANGUAGE_LABELS.ru = "changed";
+  // @ts-expect-error 翻译命令目标提示只读。
+  TRANSLATE_TARGET_TEXTS.missingTarget = "changed";
+}
+void assertTranslateConstantsReadonly;
 
 function assertWedRecoveryPriorityReadonly(): void {
   // @ts-expect-error 恢复顺序常量不得由调用方改写。
@@ -14,8 +29,6 @@ import {
   COPY_TARGET_TEXTS,
   FLOOD_CONTROL_TOGGLE_TEXTS,
   INIT_TOGGLE_TEXTS,
-  JA_COPY_TOGGLE_TEXTS,
-  JA_COPY_TARGET_TEXTS,
   MUTE_TARGET_TEXTS,
   NYA_COPY_TARGET_TEXTS,
   REVERSE_COPY_TARGET_TEXTS,
@@ -256,7 +269,7 @@ test("各命令的目标解析文案表不可写入", () => {
   // @ts-expect-error CommandTargetMessages.selfTarget 只读
   expect(() => { NYA_COPY_TARGET_TEXTS.selfTarget = "篡改"; }).toBeDefined();
   // @ts-expect-error CommandTargetMessages.unknownUsername 只读
-  expect(() => { JA_COPY_TARGET_TEXTS.unknownUsername = (): string => "篡改"; }).toBeDefined();
+  expect(() => { TRANSLATE_TARGET_TEXTS.unknownUsername = (): string => "篡改"; }).toBeDefined();
   // @ts-expect-error CommandTargetMessages.missingTarget 只读
   expect(() => { STEAL_ICON_TARGET_TEXTS.missingTarget = "篡改"; }).toBeDefined();
   // @ts-expect-error gag 的目标文案表同样跨调用共享，不允许改写
@@ -276,10 +289,10 @@ test("目标解析文案念的是各自的命令名", () => {
     ["/mute", MUTE_TARGET_TEXTS],
     ["/unmute", UNMUTE_TARGET_TEXTS],
     ["/copy", COPY_TARGET_TEXTS],
-    ["/r_copy", REVERSE_COPY_TARGET_TEXTS],
-    ["/nya_copy", NYA_COPY_TARGET_TEXTS],
-    ["/ja_copy", JA_COPY_TARGET_TEXTS],
-    ["/steal_icon", STEAL_ICON_TARGET_TEXTS],
+    ["/copy reverse", REVERSE_COPY_TARGET_TEXTS],
+    ["/copy nya", NYA_COPY_TARGET_TEXTS],
+    ["/translate", TRANSLATE_TARGET_TEXTS],
+    ["/icon steal", STEAL_ICON_TARGET_TEXTS],
   ] as const) {
     expect(texts.missingTarget).toContain(command);
   }
@@ -300,7 +313,7 @@ test("开关命令文案表不可写入", () => {
   // @ts-expect-error ToggleCommandTexts.alreadyDisabled 只读
   expect(() => { FLOOD_CONTROL_TOGGLE_TEXTS.alreadyDisabled = "篡改"; }).toBeDefined();
   // @ts-expect-error ToggleCommandTexts.usage 只读
-  expect(() => { JA_COPY_TOGGLE_TEXTS.usage = "篡改"; }).toBeDefined();
+  expect(() => { TRANSLATE_TOGGLE_TEXTS.usage = "篡改"; }).toBeDefined();
   // @ts-expect-error ToggleCommandTexts.rejection 只读
   expect(() => { INIT_TOGGLE_TEXTS.rejection = (): string => "篡改"; }).toBeDefined();
 });
@@ -310,7 +323,7 @@ test("开关命令文案表四种结局齐备且互不相同", () => {
     AI_CHAT_TOGGLE_TEXTS,
     AD_DETECT_TOGGLE_TEXTS,
     FLOOD_CONTROL_TOGGLE_TEXTS,
-    JA_COPY_TOGGLE_TEXTS,
+    TRANSLATE_TOGGLE_TEXTS,
     INIT_TOGGLE_TEXTS,
   ]) {
     const outcomes: readonly string[] = [

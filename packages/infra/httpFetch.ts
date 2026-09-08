@@ -8,6 +8,9 @@ import { readBoundedResponseBytes } from "../libs/boundedResponse";
 import { parseAllowedHttpsUrl } from "../libs/httpUrlPolicy";
 import type { BoundedResponseResult } from "../libs/boundedResponse";
 
+/** 复用同一个非 fatal 解码器，理由同 libs/boundedResponse.ts 的 UTF8_DECODER。 */
+const UTF8_DECODER: TextDecoder = new TextDecoder();
+
 function boundedErrorPreview(text: string): string {
   if (text.length <= JSON_API_ERROR_LOG_MAX_CHARS) return text;
   return `${text.slice(0, JSON_API_ERROR_LOG_MAX_CHARS)}…`;
@@ -60,7 +63,7 @@ export async function fetchJsonWithTimeout({
       logger.error(`${errorLabel} response exceeded ${JSON_API_MAX_RESPONSE_BYTES} bytes (observed ${body.observedBytes}).`);
       return null;
     }
-    const text: string = new TextDecoder().decode(body.bytes);
+    const text: string = UTF8_DECODER.decode(body.bytes);
     if (!response.ok) {
       logger.error(`${errorLabel} error: ${response.status} ${boundedErrorPreview(text)}`);
       return null;

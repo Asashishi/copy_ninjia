@@ -61,6 +61,13 @@ describe("身份主键的严格校验", () => {
 });
 
 describe("白名单行的严格解码", () => {
+  test.each([false, true])("运行时拒绝旧翻译权限名称，旧新字段并存为 %s 也拒绝", (keepNew: boolean) => {
+    const permissions: Record<string, boolean> = allPermissions(true);
+    permissions.isCanControllJATranslatePermission = false;
+    if (!keepNew) delete permissions.isCanControllTranslatePermission;
+    expectRejected((): unknown => decodeWhitelistEntryData(JSON.stringify({ permissions, meta: VALID_META }), SOURCE), "$.permissions");
+  });
+
   function whitelistJson(
     override: Readonly<Record<string, unknown>> = {}
   ): string {

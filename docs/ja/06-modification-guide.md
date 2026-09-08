@@ -55,7 +55,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 90 ファイルに約 910 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 88 ファイルに約 969 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -156,7 +156,7 @@
 
 ## Worker 間 protocol の変更
 
-スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/query_mood` と `/switch_mood` が共有する mood handshake が実装例です。
+スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/mood query` と `/mood switch` が共有する mood handshake が実装例です。
 
 ---
 

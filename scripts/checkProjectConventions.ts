@@ -22,6 +22,11 @@ import type { CacheOwnerPrefix } from "./conventions/cacheOwnership";
 import { collectWorkerTimerProblems } from "./conventions/workerTimers";
 import { collectCommentReferenceProblems } from "./conventions/commentReferences";
 import {
+  collectMarkdownModuleListProblems,
+  collectSourceDirectories,
+} from "./conventions/markdownModuleLists";
+import { withoutMarkdownCodeFences } from "./conventions/markdownSource";
+import {
   collectNodeCompatibilityProblems,
   collectStaleNodeAllowanceProblems,
 } from "./conventions/nodeCompatibility";
@@ -62,14 +67,6 @@ function trackedFiles(): string[] {
     : new TextDecoder().decode(result.stdout);
   return stdout.split("\0").filter(
     (path: string): boolean => path.length > 0
-  );
-}
-
-/** 去掉 fenced code block 内容但保留换行和下标，避免把示例语法当成真实链接。 */
-function withoutMarkdownCodeFences(source: string): string {
-  return source.replace(
-    /(^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\2(?=\n|$)/g,
-    (block: string): string => block.replace(/[^\n]/g, " ")
   );
 }
 
@@ -171,6 +168,13 @@ for (const problem of await collectCoverageMetricProblems(PROJECT_ROOT)) {
 for (const problem of await collectPerformanceRecordProblems(PROJECT_ROOT)) {
   failures.push(`performance record: ${problem}`);
 }
+// 目录清单核对要按真实目录解析文档里的目录名；整趟只遍历一次，且只走源码根
+// （理由见 collectSourceDirectories：仓库根下有部署方数据目录，不能碰）。
+const sourceDirectories: readonly string[] = collectSourceDirectories([
+  SOURCE_ROOT,
+  SCRIPTS_ROOT,
+  join(PROJECT_ROOT, "test"),
+]);
 const tracked: string[] = trackedFiles();
 for (const trackedPath of tracked) {
   const path: string = join(PROJECT_ROOT, trackedPath);
@@ -178,6 +182,13 @@ for (const trackedPath of tracked) {
   if (!existsSync(path)) continue;
   if (extname(path) === ".md") {
     await checkMarkdownLocalLinks(path, failures);
+    for (const problem of await collectMarkdownModuleListProblems(
+      PROJECT_ROOT,
+      path,
+      sourceDirectories
+    )) {
+      failures.push(problem);
+    }
   }
   const extension: string = extname(path);
   if (![".ts", ".json", ".md", ".yaml", ".yml"].includes(extension)) continue;

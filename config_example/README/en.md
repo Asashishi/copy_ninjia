@@ -105,10 +105,10 @@ or process rebuild clears the probe result and applies the new configuration.
 If a capability is still switched on in some chat and you remove its API key or configuration, the
 process **still starts** and that `true` is restored as usual, but the capability is judged
 unavailable at its single decision entry point: the AI chat Worker never starts and memory is not
-hydrated (the on-disk snapshots stay untouched), `/ja_copy` degrades to a plain copy, and ad
+hydrated (the on-disk snapshots stay untouched), `/translate` sessions stop processing messages, and ad
 detection stops submitting bundles. The chat simply sees the bot stop working from one restart
 onward, with a single line in `logs/` as the only trace. The correct order is `/ai_chat disable`,
-`/ad_detect disable` or `/ja_copy disable` in the chat first, then remove the configuration — or
+`/ad_detect disable` or `/translate disable` in the chat first, then remove the configuration — or
 restore the prerequisite.
 
 **Note the direction**: this applies only when the file is **genuinely absent**. A file that is

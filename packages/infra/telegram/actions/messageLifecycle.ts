@@ -15,8 +15,8 @@ import {
   isPermissionDenied,
   runBooleanTelegramAction,
   runTelegramAction,
-  signalArgs,
 } from "./core";
+import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type {
   CopyableReaction,
   PendingMessageDeletion,

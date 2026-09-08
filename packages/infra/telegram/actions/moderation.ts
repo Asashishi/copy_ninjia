@@ -7,8 +7,8 @@ import { telegramApi } from "../client";
 import {
   runBooleanTelegramAction,
   runPermissionAwareTelegramAction,
-  signalArgs,
 } from "./core";
+import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type { PermissionAwareOutcome } from "./core";
 import { isTelegramRetryPreconditionChanged } from "../errors";
 

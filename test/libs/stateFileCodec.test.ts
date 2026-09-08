@@ -13,6 +13,7 @@ describe("decodeStateFile", () => {
       global: { copy: { copiedUser: null, lastCopyTime: 1_000_000 } },
     })).toEqual({
       global: { copy: { copiedUser: null, lastCopyTime: 1_000_000 }, assets: {} },
+      translate: {},
     });
   });
 

@@ -1,17 +1,17 @@
-import { GrammyError, InputFile } from "grammy";
+import { GrammyError } from "grammy";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
+  AVATAR_FETCH_TIMEOUT_MS,
   AVATAR_MAX_DOWNLOAD_BYTES,
-  BOT_PROFILE_PHOTO_FILE_NAME,
 } from "../../../consts/telegram";
+import { signalWithTimeout } from "../../../libs/abortSignal";
 import { readBoundedResponseBytes } from "../../../libs/boundedResponse";
 import type { BoundedResponseResult } from "../../../libs/boundedResponse";
 import { sniffImageFormat, type SniffedImageFormat } from "../../image";
 import { redactUrlForLog } from "../../../libs/redaction";
 import { logger } from "../../logger";
 import { logApiError } from "../client";
-import { bot } from "../mainClient";
-import { avatarFetchSignal, telegramSignal } from "./shared";
+import { setBotProfilePhoto } from "./shared";
 import type { AvatarOperationAttemptResult } from "./shared";
 
 /**
@@ -32,7 +32,7 @@ import type { AvatarOperationAttemptResult } from "./shared";
  * Drive 链接就是如此）。逼配置者自己解析出终点地址只会把一个必然踩到的坑变成必须
  * 写进文档的注意事项。
  *
- * /copy、/steal_icon 那三条禁用 redirect 是另一条约束，不是这一条的强化版：那些
+ * /copy、/icon steal 那三条禁用 redirect 是另一条约束，不是这一条的强化版：那些
  * 地址来自 Bot API 的 file_path 与 t.me 主页的 HTML，归 Telegram 自有资产域
  * allowlist 管（见 docs/cn/04-invariants.md 的「出站请求与消息安全」），本函数不在其列。
  *
@@ -67,7 +67,7 @@ async function attemptRestoreDefaultProfilePhoto(
       // 跟随重定向：地址是部署配置，而图床与对象存储的直链先跳一次到存储域名是
       // 常态（理由见 restoreDefaultProfilePhoto）。
       redirect: "follow",
-      signal: avatarFetchSignal(signal),
+      signal: signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {
       void response.body?.cancel().catch((): undefined => undefined);
@@ -95,10 +95,7 @@ async function attemptRestoreDefaultProfilePhoto(
       );
       return "permanent-failure";
     }
-    await bot.api.setMyProfilePhoto(
-      { type: "static", photo: new InputFile(download.bytes, BOT_PROFILE_PHOTO_FILE_NAME) },
-      telegramSignal(signal)
-    );
+    await setBotProfilePhoto(download.bytes, signal);
     return "ok";
   } catch (error: unknown) {
     if (signal?.aborted) return "permanent-failure";

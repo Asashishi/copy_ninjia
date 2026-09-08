@@ -120,6 +120,20 @@ function removal(removalId: number): PendingBlockedRemoval {
   };
 }
 
+/** 补扫形态：不冻结 id 列表，落盘校验改看名单里还有没有有效身份。 */
+function sweepRemoval(removalId: number): PendingBlockedRemoval {
+  return {
+    params: {
+      chatId: -1001,
+      probeMembership: true,
+      removalId,
+    },
+    createdAt: 1_000,
+    attempts: 0,
+    lastFailure: null,
+  };
+}
+
 function chatStateWrite(
   chatId: number,
   revision: number,
@@ -308,6 +322,84 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       revision: 4,
     }, reply)).toThrow("absent from the effective blocklist");
     expect(acknowledgements).toHaveLength(0);
+  });
+
+  test("补扫条目要求名单里至少还有一个有效身份，否则拒绝落盘", () => {
+    // 补扫（probeMembership）不冻结 id 列表，它欠的活是「拿当前名单扫这个群」。
+    // 名单一个人都不剩时这条任务已经没有意义，写进去只会在重放时扫一次空名单；
+    // 按「不为用户行为兜底」，这里直接拒绝而不是静默丢弃这一条。
+    expect(() => handlePendingRemovalSnapshot({
+      type: "blocklistRemovals",
+      removals: [[9, sweepRemoval(9)]],
+      revision: 4,
+    }, reply)).toThrow("requires at least one effective blocklist entry");
+    expect(acknowledgements).toHaveLength(0);
+
+    // 名单里有人之后，同一条补扫可以正常落盘。
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    handlePendingRemovalSnapshot({
+      type: "blocklistRemovals",
+      removals: [[9, sweepRemoval(9)]],
+      revision: 4,
+    }, reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    resetStorageDatabaseCache();
+    expect(hydrateStorageDatabase().pendingBlockedRemovals)
+      .toEqual(new Map([[9, sweepRemoval(9)]]));
+  });
+
+  test("快照 revision 必须是正安全整数", () => {
+    for (const revision of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 2]) {
+      expect(() => handlePendingRemovalSnapshot({
+        type: "blocklistRemovals",
+        removals: [],
+        revision,
+      }, reply)).toThrow("revision must be a positive safe integer");
+    }
+    expect(acknowledgements).toHaveLength(0);
+  });
+
+  test("同一份快照里出现重复 removalId 时整份拒绝", () => {
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    expect(() => handlePendingRemovalSnapshot({
+      type: "blocklistRemovals",
+      removals: [[9, removal(9)], [9, removal(9)]],
+      revision: 4,
+    }, reply)).toThrow("duplicate removalId 9");
+  });
+
+  test("行主键与 params.removalId 不一致时整份拒绝", () => {
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    expect(() => handlePendingRemovalSnapshot({
+      type: "blocklistRemovals",
+      removals: [[9, removal(10)]],
+      revision: 4,
+    }, reply)).toThrow("does not match params.removalId");
+  });
+
+  test("下一份快照里消失的条目落成删除行，并从内存快照一并摘掉", () => {
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    handlePendingRemovalSnapshot({
+      type: "blocklistRemovals",
+      removals: [[9, removal(9)], [10, removal(10)]],
+      revision: 4,
+    }, reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    resetStorageDatabaseCache();
+    expect(hydrateStorageDatabase().pendingBlockedRemovals.size).toBe(2);
+
+    // 9 号销账之后的下一份完整快照里只剩 10 号：9 号必须落成删除行，
+    // 而不是靠下次启动恢复时「读不到就当没有」。
+    handlePendingRemovalSnapshot({
+      type: "blocklistRemovals",
+      removals: [[10, removal(10)]],
+      revision: 5,
+    }, reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+
+    resetStorageDatabaseCache();
+    expect(hydrateStorageDatabase().pendingBlockedRemovals)
+      .toEqual(new Map([[10, removal(10)]]));
   });
 
   test("同一主键迟到 revision 不能覆盖更新值，删除也覆盖数据库冷读", () => {

@@ -1,6 +1,8 @@
 import type { MessageEntity } from "grammy/types";
 import type { CommandContext, Context } from "grammy";
 import { activeGagSessionCount } from "../cache/main/gag";
+import { translateStates } from "../cache/main/translateState";
+import { TRANSLATE_CHAT_USER_LIMIT } from "../consts/translate";
 import { getAdDetectAgentConfig, getAgentDeploymentConfig } from "../config/agent";
 import { adDetectConfigReadiness, aiChatConfigReadiness } from "../config/readiness";
 import { BOT_CHAT_PERMISSION_KEYS } from "../consts/botAdmin";
@@ -49,6 +51,7 @@ export interface BotStatusSnapshot {
   readonly telegramPending: number;
   readonly telegramCapacity: number;
   readonly activeGagSessions: number;
+  readonly activeTranslateSessions: number;
   readonly processStatus: Readonly<BotProcessStatus>;
 }
 
@@ -70,7 +73,7 @@ function enabledGroupFeatures(chatState: Readonly<ChatState>): string[] {
   const features: string[] = [];
   if (chatState.isInitEnabled === true) features.push("机器人监听");
   if (chatState.isAIChatEnabled === true) features.push("AI 闲聊");
-  if (chatState.isJATranslationEnabled === true) features.push("日语翻译");
+  if (chatState.isTranslationEnabled === true) features.push("翻译");
   if (chatState.isAdDetectEnabled === true) features.push("广告检测");
   if (chatState.isFloodControlEnabled === true) features.push("防刷屏禁言");
   if (chatState.isAntiRaidEnabled === true) features.push("入群验证与防冲群");
@@ -178,6 +181,7 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     `• 429 退避排队 ${snapshot.telegramPending}/${snapshot.telegramCapacity}`,
     "",
     `正在被本天才调教的杂鱼：${snapshot.activeGagSessions}/${GAG_SESSION_MAX}`,
+    `本群正赖着本天才翻译的杂鱼：${snapshot.activeTranslateSessions}/${TRANSLATE_CHAT_USER_LIMIT} 人♡`,
     "",
     "本天才在这个群的权柄："
   );
@@ -234,6 +238,7 @@ export async function handleBotStatusCommand(
     telegramPending: stats.pending,
     telegramCapacity: stats.capacity,
     activeGagSessions: activeGagSessionCount(),
+    activeTranslateSessions: translateStates.get(ctx.chat.id)?.length ?? 0,
     processStatus: readBotProcessStatus(),
   });
   await sendCommandMessage({

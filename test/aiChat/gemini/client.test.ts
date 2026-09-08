@@ -7,6 +7,7 @@ import type {
 } from "@google/genai";
 import { geminiResponse } from "../../helpers/geminiResponse";
 import {
+  GEMINI_MEDIA_REQUEST_TIMEOUT_MS,
   GEMINI_REQUEST_RETRY_ATTEMPTS,
   GEMINI_REQUEST_TIMEOUT_MS,
 } from "../../../packages/consts/aiChat/gemini";
@@ -88,6 +89,20 @@ describe("Gemini request safety settings", () => {
       { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
       { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
     ]);
+  });
+
+  test("media 客户端按更宽的一档构造，text/summary 走通用档", async () => {
+    // 两个数一起断言，改单边时这里立刻红。
+    expect(GEMINI_REQUEST_TIMEOUT_MS).toBe(180_000);
+    expect(GEMINI_MEDIA_REQUEST_TIMEOUT_MS).toBe(240_000);
+
+    await requestGeminiResponse("media", (): GenerateContentParameters => ({
+      model: "gemini-test",
+      contents: "hello",
+    }), "Gemini test");
+
+    expect(createdClientOptions).toHaveLength(1);
+    expect(createdClientOptions[0]?.httpOptions?.timeout).toBe(GEMINI_MEDIA_REQUEST_TIMEOUT_MS);
   });
 
   test("systemInstruction 保持在 config 独立字段，不拼入普通对话 contents", async () => {

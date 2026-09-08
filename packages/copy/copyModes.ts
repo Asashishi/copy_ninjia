@@ -1,5 +1,4 @@
 import type { CopyMode } from "../types/chatState";
-import { translateToJapanese } from "./translate";
 import { NYA_SUFFIX } from "../consts/copyModes";
 import { splitGraphemes } from "../libs/text";
 
@@ -24,19 +23,17 @@ function appendNyaSuffix(text: string): string {
 
 /**
  * 对纯文本消息应用当前激活的 copy mode 文本变换。
- * 没有模式、或变换本身失败（比如 "ja" 翻译调用报错）时返回 null——调用方此时应
+ * 没有模式时返回 null，调用方此时应
  * 退化为通过 copyMessage() 原样转发消息，而不是直接丢弃它。
  * @param text 待变换的纯文本消息。
  * @param mode 当前激活的 copy mode（如果有）。
  */
-export async function applyCopyModeTransform(text: string, mode: CopyMode | undefined): Promise<string | null> {
+export function applyCopyModeTransform(text: string, mode: CopyMode | undefined): string | null {
   switch (mode) {
     case "reverse":
       return reverseText(text);
     case "nya":
       return appendNyaSuffix(text);
-    case "ja":
-      return await translateToJapanese(text);
     default:
       return null;
   }
@@ -53,8 +50,6 @@ export function describeCopyModeEffect(mode: CopyMode | undefined): string {
       return "，之后 TA 说的纯文字都会被本天才倒过来念";
     case "nya":
       return "，之后 TA 说的纯文字后面本天才都会给它加上喵~";
-    case "ja":
-      return "，之后 TA 说的纯文字都会被本天才翻译成日语哦";
     default:
       return "";
   }

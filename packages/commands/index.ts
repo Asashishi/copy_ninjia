@@ -3,9 +3,8 @@
  * app/registerHandlers.ts 只从这里接线，不直接触及内部模块。
  */
 export { handleCjkActionCommand, handleCjkActionUsageCommand } from "./cjkAction";
-export { handleCopyCommand, handleStopCommand } from "./copy";
-export { handleResetIconCommand } from "./resetIcon";
-export { handleStealIconCommand } from "./stealIcon";
+export { handleCopyCommand } from "./copy";
+export { handleIconCommand } from "./icon";
 export { handleQuietCommand, handleUnquietCommand } from "./quiet";
 export { handleMuteCommand, handleUnmuteCommand } from "./mute";
 export {
@@ -19,9 +18,7 @@ export {
 export {
   handleQaBoardCallback,
   handleQaMessageIngress,
-  handleQueryQaCommand,
-  handleRemoveQaCommand,
-  handleSetQaCommand,
+  handleQaCommand,
   teardownQaInChat,
 } from "./qa";
 export { handleInlineQuery } from "./inline";
@@ -33,8 +30,8 @@ export { handleAdDetectCommand } from "./adDetect";
 export { handleFloodControlCommand } from "./floodControl";
 export { handleAntiRaidCommand } from "./antiRaid";
 export { handleBotStatusCommand } from "./botStatus";
-export { handleQueryMoodCommand, handleSwitchMoodCommand } from "./mood";
-export { handleJaCopyCommand } from "./jaCopy";
+export { handleMoodCommand } from "./mood";
+export { handleTranslateCommand } from "./translate";
 export { handleInitCommand } from "./init";
 export { handleSendCommand } from "./send";
 export { handlePermissionCommand } from "./permission";

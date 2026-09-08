@@ -3,10 +3,10 @@ import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser, CopyMode } from "../../packages/types/chatState";
 import {
   COPY_TARGET_TEXTS,
-  JA_COPY_TARGET_TEXTS,
   NYA_COPY_TARGET_TEXTS,
   REVERSE_COPY_TARGET_TEXTS,
 } from "../../packages/consts/commands";
+import { COPY_USAGE_TEXT, ICON_USAGE_TEXT } from "../../packages/consts/commandUsage";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
@@ -21,8 +21,6 @@ const globalCopy: {
   copyMode?: string;
   copyChatId?: number;
 } = { copiedUser: null };
-let jaEnabled: boolean = true;
-// g-auth.json 的可用性；坏掉时 /ja_copy 必须点名文件而不是让翻译静默失败。
 let jaReadiness: { ok: true } | { ok: false; failure: { file: string; reason: string } } = { ok: true };
 
 const claimCopyCooldownOrReject = mock(async () => cooldownRejected ? { rejected: true as const } : claim);
@@ -31,13 +29,12 @@ const resolveCopyCommandTarget = mock(async (..._args: unknown[]): Promise<Cache
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/config/readiness", () => ({
-  jaTranslateConfigReadiness: () => jaReadiness,
+  translateConfigReadiness: () => jaReadiness,
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: () => ({ isJATranslationEnabled: jaEnabled }),
   getGlobalCopyState: () => globalCopy,
   persistGlobalState: async (context: string): Promise<void> => { saveStateInBackground(context); },
 }));
@@ -49,11 +46,10 @@ mock.module("../../packages/commands/copyShared", () => ({
   restoreAvatarInBackground,
 }));
 
-const { handleCopyCommand, handleStopCommand } = await import("../../packages/commands/copy");
-const { handleStealIconCommand } = await import("../../packages/commands/stealIcon");
-const { handleResetIconCommand } = await import("../../packages/commands/resetIcon");
+const { handleCopyCommand } = await import("../../packages/commands/copy");
+const { handleIconCommand } = await import("../../packages/commands/icon");
 
-function context(chatId: number = -1001, replyToUserId?: number): never {
+function context(chatId: number = -1001, replyToUserId?: number, argument: string = ""): never {
   return {
     chat: { id: chatId },
     from: { id: 8, first_name: "Caller" },
@@ -71,14 +67,13 @@ function context(chatId: number = -1001, replyToUserId?: number): never {
         from: { id: replyToUserId, is_bot: false, first_name: `User${replyToUserId}` },
       },
     },
-    match: "",
+    match: argument,
   } as never;
 }
 
 beforeEach(() => {
   cooldownRejected = false;
   target = { id: 7, first_name: "Alice", username: "alice" };
-  jaEnabled = true;
   jaReadiness = { ok: true };
   loggerError.mockClear();
   globalCopy.copiedUser = null;
@@ -96,36 +91,45 @@ beforeEach(() => {
 });
 
 describe("copy 类命令生命周期", () => {
-  test("日语功能关闭或全局冷却拒绝时不解析目标", async () => {
-    jaEnabled = false;
-    await handleCopyCommand(context(), "ja");
-    expect(claimCopyCooldownOrReject).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+  test.each([
+    ["", undefined, ""],
+    ["@alice", undefined, "@alice"],
+    ["reverse", "reverse", ""],
+    ["  reverse\t@alice  ", "reverse", "@alice"],
+    ["nya", "nya", ""],
+    ["nya\n@alice", "nya", "@alice"],
+    ["@reverse", undefined, "@reverse"],
+    ["reverse_alice", undefined, "reverse_alice"],
+  ] as const)("/copy 参数 %s 分派模式并保留目标", async (argument, mode, targetArgument) => {
+    const ctx = context(-1001, 7, argument);
+    await handleCopyCommand(ctx);
+    expect(globalCopy.copyMode).toBe(mode);
+    expect(resolveCopyCommandTarget.mock.calls[0]?.[2]).toBe(targetArgument);
+    expect(stealAvatarInBackground).toHaveBeenCalledTimes(1);
+  });
 
-    jaEnabled = true;
+  test.each(["stop @alice", "stop reverse", "stop\nnya"])("/copy %s 不停止会话也不占冷却", async (argument) => {
+    globalCopy.copiedUser = { id: 7, first_name: "Alice" };
+    globalCopy.copyMode = "nya";
+    globalCopy.copyChatId = -1001;
+    await handleCopyCommand(context(-1001, undefined, argument));
+    expect(globalCopy.copyMode).toBe("nya");
+    expect(globalCopy.copiedUser?.id).toBe(7);
+    expect(saveStateInBackground).not.toHaveBeenCalled();
+    expect(claimCopyCooldownOrReject).not.toHaveBeenCalled();
+    expect(restoreAvatarInBackground).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: COPY_USAGE_TEXT, replyToMessageId: 9 });
+  });
+
+  test("全局冷却拒绝时不解析目标", async () => {
     cooldownRejected = true;
     await handleCopyCommand(context());
     expect(resolveCopyCommandTarget).not.toHaveBeenCalled();
   });
 
-  test("服务账号密钥坏掉时 /ja_copy 点名文件，而不是让翻译静默退化成原文", async () => {
-    // 本群开着（密钥是后来才坏的）：仍必须拒绝。翻译失败的降级是静默的
-    // ——原样发出未翻译的原文，群里看不出与「翻译服务抖了一下」的区别。
-    jaReadiness = { ok: false, failure: { file: "g-auth.json", reason: "Invalid g-auth.json: boom" } };
-    await handleCopyCommand(context(), "ja");
-
-    expect(claimCopyCooldownOrReject).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("g-auth.json"),
-      replyToMessageId: 9,
-    });
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Invalid g-auth.json"));
-  });
-
   test("密钥可用时其余 copy 模式不受这道判定影响", async () => {
     jaReadiness = { ok: false, failure: { file: "g-auth.json", reason: "Invalid g-auth.json: boom" } };
-    await handleCopyCommand(context(), "nya");
+    await handleCopyCommand(context(-1001, undefined, "nya"));
 
     expect(claimCopyCooldownOrReject).toHaveBeenCalledTimes(1);
   });
@@ -136,10 +140,9 @@ describe("copy 类命令生命周期", () => {
       [undefined, COPY_TARGET_TEXTS],
       ["reverse", REVERSE_COPY_TARGET_TEXTS],
       ["nya", NYA_COPY_TARGET_TEXTS],
-      ["ja", JA_COPY_TARGET_TEXTS],
     ] as const satisfies readonly (readonly [CopyMode | undefined, typeof COPY_TARGET_TEXTS])[]) {
       resolveCopyCommandTarget.mockClear();
-      await handleCopyCommand(context(), mode);
+      await handleCopyCommand(context(-1001, undefined, mode ?? ""));
       expect(resolveCopyCommandTarget.mock.calls[0]?.[1]).toBe(texts);
     }
   });
@@ -163,7 +166,7 @@ describe("copy 类命令生命周期", () => {
     await handleCopyCommand(context(-1001, 8));
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("先 /stop_copy"),
+      text: expect.stringContaining("先 /copy stop"),
       replyToMessageId: 9,
     });
   });
@@ -180,13 +183,13 @@ describe("copy 类命令生命周期", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("先 /stop_copy"),
+      text: expect.stringContaining("先 /copy stop"),
       replyToMessageId: 9,
     });
   });
 
   test("成功启动立即写全局状态，头像更新留在受控后台任务", async () => {
-    await handleCopyCommand(context(), "reverse");
+    await handleCopyCommand(context(-1001, undefined, "reverse"));
 
     expect(globalCopy).toEqual({
       copiedUser: { id: 7, first_name: "Alice", username: "alice" },
@@ -202,8 +205,8 @@ describe("copy 类命令生命周期", () => {
     });
   });
 
-  test("/stop_copy 对空状态只提示，对活动状态清空全部复制字段", async () => {
-    await handleStopCommand(context());
+  test("/copy stop 对空状态只提示，对活动状态清空全部复制字段", async () => {
+    await handleCopyCommand(context(-1001, undefined, "stop"));
     expect(saveStateInBackground).not.toHaveBeenCalled();
     // 什么都没在复读时不该动脸：没偷过就没什么可复原的。
     expect(restoreAvatarInBackground).not.toHaveBeenCalled();
@@ -211,56 +214,73 @@ describe("copy 类命令生命周期", () => {
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     globalCopy.copyMode = "nya";
     globalCopy.copyChatId = -1001;
-    await handleStopCommand(context());
+    await handleCopyCommand(context(-1001, undefined, "stop"));
     expect(globalCopy).toEqual({ copiedUser: null });
     expect(saveStateInBackground).toHaveBeenCalledWith("copy stopped");
   });
 
-  test("/stop_copy 停掉复读后顺带把头像复原", async () => {
+  test("/copy stop 停掉复读后顺带把头像复原", async () => {
     // /copy 会偷目标头像，只停复读不复原会留下「已经不复读了、却还顶着别人脸」。
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     globalCopy.copyChatId = -1001;
-    await handleStopCommand(context());
+    await handleCopyCommand(context(-1001, undefined, "stop"));
     expect(restoreAvatarInBackground).toHaveBeenCalledTimes(1);
   });
 
-  test("/stop_copy 的复原不占全局冷却：被冷却挡住就成了「停不掉」", async () => {
+  test("/copy stop 的复原不占全局冷却：被冷却挡住就成了「停不掉」", async () => {
     cooldownRejected = true;
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     globalCopy.copyChatId = -1001;
-    await handleStopCommand(context());
+    await handleCopyCommand(context(-1002, undefined, "  stop\n"));
     expect(globalCopy).toEqual({ copiedUser: null });
     expect(restoreAvatarInBackground).toHaveBeenCalledTimes(1);
+    expect(claimCopyCooldownOrReject).not.toHaveBeenCalled();
     cooldownRejected = false;
   });
 
-  test("/steal_icon 失败回滚冷却，成功只更新头像、不触碰复制状态", async () => {
+  test("/icon steal 失败回滚冷却，成功只更新头像、不触碰复制状态", async () => {
     target = undefined;
-    await handleStealIconCommand(context());
+    await handleIconCommand(context(-1001, undefined, "steal"));
     expect(releaseCopyCooldownClaim).toHaveBeenCalledWith(claim);
 
     target = { id: 7, first_name: "Alice" };
-    await handleStealIconCommand(context());
+    await handleIconCommand(context(-1001, undefined, "steal"));
     expect(stealAvatarInBackground).toHaveBeenCalledTimes(1);
     expect(globalCopy).toEqual({ copiedUser: null });
   });
 
-  test("/reset_icon 复原头像、占用全局冷却，且不触碰复读状态", async () => {
+  test.each(["steal", "steal @alice", "  steal\t@alice  "])("/icon %s 只把目标参数交给解析器", async (argument) => {
+    await handleIconCommand(context(-1001, 7, argument));
+    expect(resolveCopyCommandTarget.mock.calls[0]?.[2]).toBe(argument.includes("@alice") ? "@alice" : "");
+    expect(stealAvatarInBackground).toHaveBeenCalledTimes(1);
+    expect(globalCopy.copiedUser).toBeNull();
+  });
+
+  test.each(["", "unknown", "reset @alice", "reset steal", "stealer"])("/icon %s 只提示用法，不占冷却或换头像", async (argument) => {
+    await handleIconCommand(context(-1001, undefined, argument));
+    expect(claimCopyCooldownOrReject).not.toHaveBeenCalled();
+    expect(resolveCopyCommandTarget).not.toHaveBeenCalled();
+    expect(stealAvatarInBackground).not.toHaveBeenCalled();
+    expect(restoreAvatarInBackground).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: ICON_USAGE_TEXT, replyToMessageId: 9 });
+  });
+
+  test("/icon reset 复原头像、占用全局冷却，且不触碰复读状态", async () => {
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     globalCopy.copyChatId = -1001;
 
-    await handleResetIconCommand(context());
+    await handleIconCommand(context(-1001, undefined, "reset"));
 
     expect(claimCopyCooldownOrReject).toHaveBeenCalledTimes(1);
     expect(restoreAvatarInBackground).toHaveBeenCalledTimes(1);
-    // 与 /steal_icon 对称：这条命令只管脸，正在复读谁保持原样。
+    // 与 /icon steal 对称：这条命令只管脸，正在复读谁保持原样。
     expect(globalCopy.copiedUser).toEqual({ id: 7, first_name: "Alice" });
     expect(saveStateInBackground).not.toHaveBeenCalled();
   });
 
-  test("/reset_icon 被冷却挡住时不换脸：它和 /steal_icon 抢同一份限流资源", async () => {
+  test("/icon reset 被冷却挡住时不换脸：它和 /icon steal 抢同一份限流资源", async () => {
     cooldownRejected = true;
-    await handleResetIconCommand(context());
+    await handleIconCommand(context(-1001, undefined, "reset"));
     expect(restoreAvatarInBackground).not.toHaveBeenCalled();
     cooldownRejected = false;
   });

@@ -1,27 +1,15 @@
 import type { Message } from "grammy/types";
 import type { CopyMode } from "../../types/chatState";
-import { isJaTranslationActiveIn } from "../../copy/availability";
 import { activeCopyTargetIdIn } from "../../infra/storage/stateStore";
-import { copyMessage, sendMessage } from "../../infra/telegram";
+import { sendMessage } from "../../infra/telegram";
+import { copyEchoMessage } from "../../copy/echo";
 import { applyCopyModeTransform } from "../../copy/copyModes";
 import { containsRenderableCommand } from "../../libs/renderableCommand";
 
 /**
- * ja 模式跑不起来时只取消翻译变换，复读本身仍退化为原样复制。
- *
- * 「跑不起来」含本群没开和进程侧密钥不可用两种（见 copy/availability.ts）：
- * 后者若不在这里挡住，翻译会在底层静默失败并原样发出中文原文——那与
- * 「翻译服务抖了一下」不可区分，而这里退化成普通复制至少行为是确定的。
- */
-export function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefined): CopyMode | undefined {
-  if (mode === "ja" && !isJaTranslationActiveIn(chatId)) return undefined;
-  return mode;
-}
-
-/**
  * 将消息复读回所在聊天。只有无 entity 的纯文本会执行文本变换，避免变换后
- * entity 偏移量失效；其余消息一律 copyMessage。锁定目标路径会在异步翻译
- * 返回后重新核对目标，防止另一群已经结束全局复读会话后仍迟到补发。
+ * entity 偏移量失效；其余消息一律走普通复制出口。发送前核对锁定目标，
+ * 只允许当前 copy 会话继续发送。
  */
 export interface EchoMessageParams {
   chatId: number;
@@ -38,13 +26,8 @@ export interface EchoMessageParams {
   messageThreadId?: number;
 }
 
-export async function echoMessage({
-  chatId,
-  message,
-  mode,
-  expectedTargetId,
-  messageThreadId,
-}: EchoMessageParams): Promise<string | undefined> {
+export async function echoMessage(params: EchoMessageParams): Promise<string | undefined> {
+  const { chatId, message, mode, expectedTargetId, messageThreadId }: EchoMessageParams = params;
   // caption 也要看：只读 message.text 的话，图片/动画/文件消息在这里恒为空串，
   // 一条 caption 写着 `/batch_kick 1d` 的图片会一路走到下面的 copyMessage 被
   // 原样重发，而 Telegram 会把机器人自己发出的那句 caption 渲染成可点击的命令
@@ -63,7 +46,7 @@ export async function echoMessage({
       ? message.text
       : undefined;
   const transformed: string | null = plainText !== undefined
-    ? await applyCopyModeTransform(plainText, mode)
+    ? applyCopyModeTransform(plainText, mode)
     : null;
 
   if (expectedTargetId !== undefined && activeCopyTargetIdIn(chatId) !== expectedTargetId) {
@@ -86,11 +69,5 @@ export async function echoMessage({
     return sentMessageId !== undefined ? transformed : undefined;
   }
 
-  const copiedMessageId: number | undefined = await copyMessage({
-    chatId,
-    fromChatId: chatId,
-    messageId: message.message_id,
-    messageThreadId,
-  });
-  return copiedMessageId !== undefined && typeof message.text === "string" ? message.text : undefined;
+  return copyEchoMessage(params);
 }

@@ -146,7 +146,7 @@ async function downloadTelegramFile(
  * `sendMessage` 在自己的 isolate 里 `markSelfSent`，而真正的 Bot API 调用发生在
  * 下面的 `bot.api.raw.*`——那条路绕开了共享动作层的登记。主线程因此认不出这条
  * 消息是自己发的，频道帖回投时会被当成新内容喂进 AI/复读流水线，或被
- * `/set_qa` 的投递入口认领（三个入口的判定见 auto/message/index.ts、
+ * `/qa set` 的投递入口认领（三个入口的判定见 auto/message/index.ts、
  * commands/cjkAction.ts、commands/qa/ingress.ts）。
  *
  * 登记发生在**响应回传给 Worker 之前**，也就是早于 Worker 拿到 message id 的那一

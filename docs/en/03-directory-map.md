@@ -14,6 +14,8 @@ This page answers “where does this code live, and where should new code go?”
 
 ## Directory Responsibilities
 
+- **`LICENSES/`**
+  - **Contents**: the project’s MIT [`LICENSE`](../../LICENSES/LICENSE) and [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt) for the Han variant data.
 - **`packages/app/`**
   - **Responsibility**: startup/shutdown lifecycle, the startup validation entry point for deployment
     inputs that already exist, handler registration, command menu, update runner, and lifecycle side-effect composition.
@@ -21,9 +23,9 @@ This page answers “where does this code live, and where should new code go?”
     `registerHandlers.ts`, and `updateRunner.ts` / `updateFetcher.ts`. `ApplicationLifecycleDependencies` is inferred
     from and colocated with the composition object, avoiding a reverse dependency from shared types into `app/`.
 - **`packages/commands/`**
-  - **Responsibility**: explicit command handling, one command per file; shared permission and
+  - **Responsibility**: explicit commands organized by command family, with subcommands dispatched within that domain; shared permission and
     configuration gates for toggle commands live in separate files.
-  - **Representative files**: `copy.ts`, `block.ts`, `mute.ts`, `batchKick.ts`,
+  - **Representative files**: `copy.ts`, `icon.ts`, `mood.ts`, `qa.ts`, `block.ts`, `mute.ts`, `batchKick.ts`,
     `targetResolution.ts`, and `configGate.ts`. The larger gag domain keeps command admission in
     `gag.ts`, with lifecycle, inline handling, and pure rendering split into `gag/runtime.ts`,
     `gag/inline.ts`, and `gag/rendering.ts`.
@@ -44,9 +46,11 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `workerBridge.ts`, `durableDelivery.ts`, `updateIngress.ts`,
     `adCandidate.ts`, and `ai/`; `index.ts` is only a thin public entry point.
 - **`packages/copy/`**
-  - **Responsibility**: copy-mode transformations, execution queues for avatars and translation,
-    plus the single decision point for whether Japanese translation is live.
-  - **Representative files**: `copyModes.ts`, `avatarQueue.ts`, `translate.ts`, `availability.ts`.
+  - **Responsibility**: ordinary copying, text transformations, and the avatar update queue.
+  - **Representative files**: `echo.ts`, `copyModes.ts`, `avatarQueue.ts`.
+- **`packages/translate/`**
+  - **Responsibility**: per-group sessions, target recovery, regex language checks, and the lazy Google translation client.
+  - **Representative files**: `state.ts`, `recovery.ts`, `message.ts`, `language.ts`, `client.ts`; ordinary copying reuses `copy/echo.ts`.
 - **`packages/users/`**
   - **Responsibility**: sender-identity cache, visible-sender resolution, and user-label
     generation.
@@ -61,7 +65,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `telegram.ts`, `telegramInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
 - **`packages/database/`**
   - **Responsibility**: the shared SQLite (identity policy plus chat state) schema, codecs, row validation, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
-  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `migration.ts`, `inspection.ts`, `admin.ts`), and `validation/storageRows.ts`.
+  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `temporaryWhitelist.ts`, `migration.ts`, `initialization.ts`, `inspection.ts`), and `validation/storageRows.ts`.
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
@@ -111,8 +115,9 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: Bun unit tests mirroring `packages/`.
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
+  - **Cold migration**: `migrateTranslate.ts` validates backup input and produces isolated output; `migrations/translate/` separates source-version constraints, state conversion and the SQLite transaction. These modules are outside the application startup graph.
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
-  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), plus the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`.
+  - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`, plus `fixtures/copyTree.ts` (directory-tree copying) and `fixtures/pathBoundary.ts` (real path-component checks for the write boundary), both shared by the two benchmark roots.
 
 `telegramInput.ts` provides strict reading and parsing shared by the installer and runtime, without reading deployment files or populating caches on import; `telegram.ts` owns the runtime snapshot. `libs/inflight.ts` provides bounded waits for in-flight tasks while domain owners retain admission, cancellation, and zero-budget policies. `infra/backgroundTasks.ts` logs background-task errors and removes settled tasks. Group toggles share the authorization, configuration gate, write, persistence, and receipt sequence in `commands/superAdminToggle.ts`.
 
@@ -138,7 +143,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
 
 - **`main/`**
   - **Owner**: main thread.
-  - **Contents**: command and automatic-pipeline state, the global `state.json` mirror managed through the `stateStore.ts` facade plus the `chat_states` LRU in `chatState.ts` (capacity 25), the
+  - **Contents**: command and automatic-pipeline state, the `state.json` global mirror and per-group sessions in `translateState.ts` managed through the `stateStore.ts` facade plus the `chat_states` LRU in `chatState.ts` (capacity 25), the
     Disk I/O host, and the **main-thread proxies and mirrors of the Workers**
     (`main/aiChat.ts`, `main/antiRaid/`).
 - **`workers/aiChat/`**

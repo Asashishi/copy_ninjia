@@ -35,7 +35,7 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
 mock.module("../../packages/config/readiness", () => ({
   adDetectConfigReadiness: (): { ok: true } => ({ ok: true }),
   aiChatConfigReadiness: (): { ok: true } => ({ ok: true }),
-  jaTranslateConfigReadiness: (): { ok: true } => ({ ok: true }),
+  translateConfigReadiness: (): { ok: true } => ({ ok: true }),
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
@@ -78,13 +78,14 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     return true;
   },
   persistChatState,
+  persistGlobalState: async (): Promise<void> => {},
 }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));
 
 const { handleAdDetectCommand } = await import("../../packages/commands/adDetect");
 const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
 const { handleInitCommand } = await import("../../packages/commands/init");
-const { handleJaCopyCommand } = await import("../../packages/commands/jaCopy");
+const { handleTranslateCommand } = await import("../../packages/commands/translate");
 const { handleFloodControlCommand } = await import("../../packages/commands/floodControl");
 const { handleAntiRaidCommand } = await import("../../packages/commands/antiRaid");
 const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
@@ -387,15 +388,14 @@ describe("超级管理员开关命令", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("/ja_copy 非开关参数交给复制命令，开关参数只修改日语状态", async () => {
-    const targetContext = context("@alice");
-    await handleJaCopyCommand(targetContext);
-    expect(handleCopyCommand).toHaveBeenCalledWith(targetContext, "ja");
+  test("/translate 缺方向参数提示用法，开关参数只修改翻译状态", async () => {
+    await handleTranslateCommand(context("@alice"));
+    expect(handleCopyCommand).not.toHaveBeenCalled();
 
-    await handleJaCopyCommand(context("enable"));
-    expect(states.get(-1001)?.isJATranslationEnabled).toBe(true);
-    await handleJaCopyCommand(context("disable"));
-    expect(states.get(-1001)?.isJATranslationEnabled).toBe(false);
+    await handleTranslateCommand(context("enable"));
+    expect(states.get(-1001)?.isTranslationEnabled).toBe(true);
+    await handleTranslateCommand(context("disable"));
+    expect(states.get(-1001)?.isTranslationEnabled).toBe(false);
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
   });
 
@@ -450,9 +450,9 @@ const TOGGLE_CASES: readonly ToggleCase[] = [
     run: (argument: string): Promise<void> => handleFloodControlCommand(context(argument)),
   },
   {
-    name: "/ja_copy",
-    field: "isJATranslationEnabled",
-    run: (argument: string): Promise<void> => handleJaCopyCommand(context(argument)),
+    name: "/translate",
+    field: "isTranslationEnabled",
+    run: (argument: string): Promise<void> => handleTranslateCommand(context(argument)),
   },
   {
     name: "/init",

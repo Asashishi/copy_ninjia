@@ -7,6 +7,7 @@ import {
   WED_OPERATION_TIMEOUT_MS,
 } from "../../consts/wed";
 import { trackBackgroundTask } from "../../infra/backgroundTasks";
+import { signalWithTimeout } from "../../libs/abortSignal";
 import { onMidnightMaintenance } from "../../infra/diskIO/observers";
 import { readPresentChatUser } from "../../infra/telegram/actions/membership";
 import { monotonicNow } from "../../libs/monotonicDeadline";
@@ -36,10 +37,8 @@ async function reviewWedMembers(review: WedMemberReview): Promise<void> {
         review.userId = userId;
         review.observed = false;
         nextCheckAt = monotonicNow() + WED_MEMBER_REVIEW_INTERVAL_MS;
-        const signal: AbortSignal = AbortSignal.any([
-          review.controller.signal,
-          AbortSignal.timeout(WED_OPERATION_TIMEOUT_MS),
-        ]);
+        const signal: AbortSignal =
+          signalWithTimeout(review.controller.signal, WED_OPERATION_TIMEOUT_MS);
         const user: User | null | undefined = await readPresentChatUser({ chatId, userId, signal });
         if (wedMemberStates.get(chatId) !== state) return;
         if (user === null && !signal.aborted && !review.observed) {

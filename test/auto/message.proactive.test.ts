@@ -9,9 +9,6 @@ const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const echoMessageMock = mock(
   async (..._args: unknown[]): Promise<string | undefined> => "echoed"
 );
-const resolveEffectiveCopyModeMock = mock(
-  (..._args: unknown[]): undefined => undefined
-);
 
 mock.module("../../packages/infra/telegram", () => ({
   sendMessage: sendMessageMock,
@@ -21,7 +18,6 @@ mock.module("../../packages/aiChat", () => ({
 }));
 mock.module("../../packages/auto/message/echo", () => ({
   echoMessage: echoMessageMock,
-  resolveEffectiveCopyMode: resolveEffectiveCopyModeMock,
 }));
 
 const { handleProactiveMessageActions } =
@@ -47,7 +43,6 @@ beforeEach((): void => {
   sendMessageMock.mockClear();
   recordChatMessageMock.mockClear();
   echoMessageMock.mockClear();
-  resolveEffectiveCopyModeMock.mockClear();
 });
 
 describe("群消息主动行为", () => {
@@ -137,7 +132,6 @@ describe("群消息主动行为", () => {
 
       expect(action).toBeInstanceOf(Promise);
       await action;
-      expect(resolveEffectiveCopyModeMock).toHaveBeenCalledTimes(1);
       expect(echoMessageMock).toHaveBeenCalledWith({
         chatId: CHAT_ID,
         message,

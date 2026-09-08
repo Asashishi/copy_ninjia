@@ -61,7 +61,7 @@ describe("chat_qa codec", () => {
       rows.push(row(-1001, `问题${index}`, "答案"));
     }
 
-    // 手工改库或从别处恢复的备份都可能带进越界数据，而那会让 /set_qa 从此
+    // 手工改库或从别处恢复的备份都可能带进越界数据，而那会让 /qa set 从此
     // 永远拒绝新增却看不出原因。
     expect(() => decodeStoredChatQa(rows, SOURCE))
       .toThrow(`at most ${CHAT_QA_MAX_PER_CHAT} entries per chat`);

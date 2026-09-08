@@ -9,7 +9,7 @@
  *
  * 两处必须显式传参、不能沿用客户端默认值：
  * - 超时。SDK 的 next-gen 客户端只继承构造期的 `httpOptions.timeout`（本仓是
- *   150 秒，见 consts/aiChat/gemini.ts），而整曲合成是分钟级；不显式加长就等于
+ *   180 秒，见 consts/aiChat/gemini.ts），而整曲合成是分钟级；不显式加长就等于
  *   每次都在服务端已经开始出账之后自己挂断。
  * - 重试。`httpOptions.retryOptions` 根本不传递到这条端点，这里按
  *   GEMINI_SONG_REQUEST_ATTEMPTS 显式声明为「不重试」，理由见该常量注释。
@@ -19,8 +19,8 @@
  * 启用自己那份超时（`if (!fetchOptions?.signal && conf.timeout_ms > 0)`）。本轮
  * 回复恒带 invalidate signal，于是那条 `timeout` 会被静默跳过，一次挂住的请求
  * 就再没有任何 deadline——它会一直占着这一轮的心跳与工具轮次。因此这里用
- * `AbortSignal.any` 把调用方的 signal 与一份独立的超时合成一个再传下去，口径
- * 同 libs/withTimeout.ts。`timeout` 仍照传：没有调用方
+ * libs/abortSignal.ts 的 signalWithTimeout 把调用方的 signal 与一份独立的超时合成
+ * 一个再传下去。`timeout` 仍照传：没有调用方
  * signal 的路径上它是有效的，两道一起兜住。
  *
  * 失败一律返回 null 并记一行英文错误日志，绝不抛错：调用方（生歌工具）要靠这个
@@ -36,7 +36,7 @@ import {
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
-import { raceAbortOrThrow } from "../../libs/abortSignal";
+import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { decodeGeneratedSong } from "../ai/utils/songPayload";
 import { getGeminiClient } from "./client";
 import type { AiSongRequest } from "../../types/aiChat/provider";
@@ -67,10 +67,7 @@ interface SongInteractionOutput {
 export async function generateGeminiSong({ prompt, signal }: AiSongRequest): Promise<GeneratedChatSong | null> {
   let interaction: SongInteractionOutput;
   // 每次调用现取一份独立的超时预算再与调用方的 signal 合成，理由见模块头注。
-  const timeoutSignal: AbortSignal = AbortSignal.timeout(GEMINI_SONG_REQUEST_TIMEOUT_MS);
-  const requestSignal: AbortSignal = signal === undefined
-    ? timeoutSignal
-    : AbortSignal.any([signal, timeoutSignal]);
+  const requestSignal: AbortSignal = signalWithTimeout(signal, GEMINI_SONG_REQUEST_TIMEOUT_MS);
   try {
     requestSignal.throwIfAborted();
     const client: GoogleGenAI = getGeminiClient("song");

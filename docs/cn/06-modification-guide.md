@@ -55,7 +55,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 910 处、分布在 90 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 969 处、分布在 88 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 
@@ -156,7 +156,7 @@
 
 ## 改动 Worker 间协议
 
-`packages/types/` 持有跨线程消息协议。改协议时同步三处：类型定义、主线程侧代理（`packages/infra/` 或 `packages/cache/main/` 对应模块）、Worker 侧处理（`packages/workers/<domain>/`）。请求/回执式交互遵循 [04](04-invariants.md#worker-与状态所有权) 的 waiter 先登记再投递、超时/崩溃统一结算模式（现成范例：`/query_mood` 与 `/switch_mood` 共用的心情握手）。
+`packages/types/` 持有跨线程消息协议。改协议时同步三处：类型定义、主线程侧代理（`packages/infra/` 或 `packages/cache/main/` 对应模块）、Worker 侧处理（`packages/workers/<domain>/`）。请求/回执式交互遵循 [04](04-invariants.md#worker-与状态所有权) 的 waiter 先登记再投递、超时/崩溃统一结算模式（现成范例：`/mood query` 与 `/mood switch` 共用的心情握手）。
 
 ---
 

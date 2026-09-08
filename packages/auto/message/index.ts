@@ -13,10 +13,12 @@ import { isQuietUntilActive } from "../../libs/chatState";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type { MessageTriggerContext } from "../../types/auto";
 import type { ChatState } from "../../types/chatState";
+import type { TranslateState } from "../../types/translate";
+import { activeTranslateStateIn, translateMessage } from "../../translate/message";
 import { cacheSender } from "../../users/senderIdentity";
 import { handleAnimationMessage } from "./animation";
 import { observeGroupMessageForAiReply } from "./aiReplyActivity";
-import { echoMessage, resolveEffectiveCopyMode } from "./echo";
+import { echoMessage } from "./echo";
 import {
   isBotOwnMessage,
   needsBotOwnMessageWait,
@@ -34,7 +36,7 @@ import { handleVoiceMessage } from "./voice";
 
 /**
  * 消息自动流水线的编排层。各载荷 handler 只负责自己的记录与触发语义；这里
- * 保留跨领域的固定顺序：标题/自回弹门禁 → 活跃度 → 复制目标 → 私聊中转 →
+ * 保留跨领域的固定顺序：标题/自回弹门禁 → 活跃度 → 翻译目标 → 复制目标 → 私聊中转 →
  * 问答直答 → AI 文本或媒体 → 群聊主动行为。
  *
  * 媒体 handler 的分派顺序按「一条消息只可能是其中一种载荷」写成 else-if 链；
@@ -63,12 +65,21 @@ function handleAcceptedIncomingMessage(
       : 1 / AI_REPLY_PROBABILITY_BASE_INITIAL;
 
   const copyTargetId: number | undefined = activeCopyTargetIdIn(chatId);
+  const translation: TranslateState | undefined = senderId === undefined ? undefined : activeTranslateStateIn(chatId, senderId);
+  if (translation !== undefined) {
+    return translateMessage({
+      chatId,
+      message,
+      state: translation,
+      messageThreadId: forumTopicThreadId(message),
+    });
+  }
   if (copyTargetId !== undefined && senderId === copyTargetId) {
     return echoMessage({
       chatId,
       message,
       // 上一行已确认本群确有目标，这里取模式才有意义（见 activeCopyModeIn）。
-      mode: resolveEffectiveCopyMode(chatId, activeCopyModeIn(chatId)),
+      mode: activeCopyModeIn(chatId),
       expectedTargetId: copyTargetId,
       messageThreadId: forumTopicThreadId(message),
     }).then((): void => undefined);

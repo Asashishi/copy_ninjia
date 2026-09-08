@@ -34,8 +34,8 @@ const DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION: boolean = false;
 const DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION: boolean = false;
 /** 白名单条目缺省不可开关防刷屏禁言。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION: boolean = false;
-/** 白名单条目缺省不可开关日语翻译。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
-const DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION: boolean = false;
+/** 白名单条目缺省不可开关翻译功能。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
+const DEFAULT_IS_CAN_CONTROLL_TRANSLATE_PERMISSION: boolean = false;
 /** 白名单条目缺省不可开关入群守卫。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION: boolean = false;
 /** 白名单条目缺省不可维护本群问答。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
@@ -61,7 +61,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllAIPermission: DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION,
   isCanControllAdDetectPermission: DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION,
   isCanControllFloodControlPermission: DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION,
-  isCanControllJATranslatePermission: DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION,
+  isCanControllTranslatePermission: DEFAULT_IS_CAN_CONTROLL_TRANSLATE_PERMISSION,
   isCanControllAntiRaidPermission: DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION,
   isCanControllQaPermission: DEFAULT_IS_CAN_CONTROLL_QA_PERMISSION,
 };
@@ -87,7 +87,7 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllAIPermission: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
-  isCanControllJATranslatePermission: false,
+  isCanControllTranslatePermission: false,
   isCanControllAntiRaidPermission: false,
   isCanControllQaPermission: false,
 };
@@ -114,7 +114,7 @@ export const TEMPORARY_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllAIPermission: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
-  isCanControllJATranslatePermission: false,
+  isCanControllTranslatePermission: false,
   isCanControllAntiRaidPermission: false,
   isCanControllQaPermission: false,
 };
@@ -154,7 +154,7 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
   isCanControllAIPermission: true,
   isCanControllAdDetectPermission: true,
   isCanControllFloodControlPermission: true,
-  isCanControllJATranslatePermission: true,
+  isCanControllTranslatePermission: true,
   isCanControllAntiRaidPermission: true,
   isCanControllQaPermission: true,
 };
@@ -174,7 +174,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanControllAIPermission",
   "isCanControllAdDetectPermission",
   "isCanControllFloodControlPermission",
-  "isCanControllJATranslatePermission",
+  "isCanControllTranslatePermission",
   "isCanControllAntiRaidPermission",
   "isCanControllQaPermission",
 ];
@@ -217,15 +217,15 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanBlock: "让这号杂鱼能用 /block 把目标记进永久黑名单，还会在托管群里一起封掉哦♡",
   isCanUnBlock: "让这号杂鱼能用 /unblock 把目标移出永久黑名单，并解除所有托管群里的封禁哦♡",
   isCanWhiteOther: "让这号杂鱼能用 /white 给其它身份添加一套默认白名单权限；不能删除成员，也不能借此授予更多权限♡",
-  isCanSwitchMood: "让这号杂鱼能用 /switch_mood 重新抽取本天才现在的心情，可别把本天才折腾坏了♡",
+  isCanSwitchMood: "让这号杂鱼能用 /mood switch 重新抽取本天才现在的心情，可别把本天才折腾坏了♡",
   isCanBypassAdDetection: "让这个身份绕过广告检测与自动处置，本天才会当作没看见，别放广告杂鱼进来哦♡",
   isCanBypassFloodControl: "让这个身份绕过防刷屏计数与自动禁言，本天才不会按住 TA，别给刷屏杂鱼哦♡",
   isCanControllAIPermission: "让这号杂鱼能用 /ai_chat enable|disable 开关 AI 闲聊，别乱按呀♡",
   isCanControllAdDetectPermission: "让这号杂鱼能用 /ad_detect enable|disable 开关广告检测，抓漏了就怪你哦♡",
   isCanControllFloodControlPermission: "让这号杂鱼能用 /flood_control enable|disable 开关防刷屏禁言，别乱按呀♡",
-  isCanControllJATranslatePermission: "让这号杂鱼能用 /ja_copy enable|disable 开关日语翻译，这点小事总看得懂吧♡",
+  isCanControllTranslatePermission: "让这号杂鱼能用 /translate enable|disable 开关翻译功能，这点小事总看得懂吧♡",
   isCanControllAntiRaidPermission: "让这号杂鱼能用 /antiraid enable|disable 开关入群验证与防冲群私密模式，关掉可就没人拦僵尸了哦♡",
-  isCanControllQaPermission: "让这号杂鱼能用 /set_qa 与 /remove_qa 维护本群问答，答错了可别赖本天才♡",
+  isCanControllQaPermission: "让这号杂鱼能用 /qa set 与 /qa remove 维护本群问答，答错了可别赖本天才♡",
 };
 
 /**

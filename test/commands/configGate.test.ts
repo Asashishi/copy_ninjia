@@ -1,5 +1,5 @@
 /**
- * 部署配置写坏时开关命令与 /switch_mood 的统一拒绝。这些文件不再在启动时预热
+ * 部署配置写坏时开关命令与 /mood switch 的统一拒绝。这些文件不再在启动时预热
  * （见 config/readiness.ts），判定挪到了这里——覆盖不上就等于把「一份坏文件
  * 关掉整个进程」换成了「一个看着已生效、实际什么都不做的开关」。
  */
@@ -28,7 +28,7 @@ let jaTranslateVerdict: ConfigReadiness = { ok: true };
 mock.module("../../packages/config/readiness", () => ({
   aiChatConfigReadiness: (): ConfigReadiness => aiChatVerdict,
   adDetectConfigReadiness: (): ConfigReadiness => adDetectVerdict,
-  jaTranslateConfigReadiness: (): ConfigReadiness => jaTranslateVerdict,
+  translateConfigReadiness: (): ConfigReadiness => jaTranslateVerdict,
 }));
 mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
@@ -51,12 +51,13 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   },
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   persistChatState,
+  persistGlobalState: async (): Promise<void> => {},
 }));
 
 const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
 const { handleAdDetectCommand } = await import("../../packages/commands/adDetect");
-const { handleJaCopyCommand } = await import("../../packages/commands/jaCopy");
-const { handleQueryMoodCommand, handleSwitchMoodCommand } = await import("../../packages/commands/mood");
+const { handleTranslateCommand } = await import("../../packages/commands/translate");
+const { handleMoodCommand } = await import("../../packages/commands/mood");
 
 function context(argument: string): never {
   return {
@@ -118,9 +119,9 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     });
   });
 
-  test("/ja_copy enable 点名服务账号密钥", async () => {
+  test("/translate enable 点名服务账号密钥", async () => {
     jaTranslateVerdict = broken("g-auth.json");
-    await handleJaCopyCommand(context("enable"));
+    await handleTranslateCommand(context("enable"));
 
     expect(states.size).toBe(0);
     expect(persistChatState).not.toHaveBeenCalled();
@@ -131,12 +132,12 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     });
   });
 
-  test("/switch_mood 也点名坏掉的心情表，不投递重抽请求", async () => {
+  test("/mood switch 也点名坏掉的心情表，不投递重抽请求", async () => {
     // 本群开着 AI 闲聊（配置是后来才被改坏的）：拒绝理由必须是那份文件，
     // 而不是「Worker 没回话」那条兜底文案。
     aiChatVerdict = broken("config/mood.json");
     states.set(-1001, { isAIChatEnabled: true });
-    await handleSwitchMoodCommand(context(""));
+    await handleMoodCommand(context("switch"));
 
     expect(switchAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -146,10 +147,10 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     });
   });
 
-  test("/query_mood 也点名坏掉的心情表，不投递查询请求", async () => {
+  test("/mood query 也点名坏掉的心情表，不投递查询请求", async () => {
     aiChatVerdict = broken("config/mood.json");
     states.set(-1001, { isAIChatEnabled: true });
-    await handleQueryMoodCommand(context(""));
+    await handleMoodCommand(context("query"));
 
     expect(queryAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -159,23 +160,23 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     });
   });
 
-  test("/ja_copy 不带参数仍是普通复读命令，不碰这道判定", async () => {
+  test("/translate 不带方向参数只提示用法", async () => {
     jaTranslateVerdict = broken("g-auth.json");
-    await handleJaCopyCommand(context(""));
+    await handleTranslateCommand(context(""));
 
-    expect(handleCopyCommand).toHaveBeenCalledTimes(1);
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(handleCopyCommand).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   test("配置都读得动时三个开关照常写状态", async () => {
     await handleAiChatCommand(context("enable"));
     await handleAdDetectCommand(context("enable"));
-    await handleJaCopyCommand(context("enable"));
+    await handleTranslateCommand(context("enable"));
 
     expect(states.get(-1001)).toEqual({
       isAIChatEnabled: true,
       isAdDetectEnabled: true,
-      isJATranslationEnabled: true,
+      isTranslationEnabled: true,
     });
     expect(loggerError).not.toHaveBeenCalled();
   });

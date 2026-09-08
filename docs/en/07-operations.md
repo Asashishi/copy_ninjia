@@ -61,13 +61,9 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 `COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When unset, it defaults to the project root; an explicitly blank value is rejected at startup:
 
 - **`state.json` + `state.json.bak`**
-  - **Contents**: global state only — the copy target, plus the four asset URLs under
-    `global.assets` (the two fortune thumbnails, the gag inline-result thumbnail, and the bot's
-    default avatar). Per-chat state —
-    group switches (including `isAntiRaidEnabled`, the single switch for join verification plus
-    the anti-raid private mode, off by default), lockdown records and permission snapshots —
-    now lives in `chat_states` inside `database/storage.sqlite`. Model selection is no longer
-    runtime state.
+  - **Contents**: global copying in `global.copy`, four asset URLs in `global.assets`, and per-group translation sessions in `translate`. Group switches, lockdown records and permission snapshots live in `chat_states` inside `database/storage.sqlite`.
+  - **Translation format**: optional top-level `translate` defaults to `{}`. Keys are canonical negative integer group IDs; each value is a nonempty array of 1–5 sessions. Example: `"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`. At most 25 groups are allowed, identities must be unique within each group, and directions are exactly `ja`, `cn`, `en`, `uk`, or `ru`, with strict `CachedUser` validation. `global.copy.copyMode` accepts omission, `reverse`, or `nya`. An invalid primary or LKG, including an old single-session object, refuses startup; runtime never upgrades or discards entries.
+  - **Manual state editing**: stop the service and confirm inactive, then use `mktemp -d` outside the worktree to back up both state copies and deployment data with modes, owners and SHA-256 hashes. Edit both copies, retain untouched `global` fields, strictly decode both with `decodeStateFile`, and verify intended differences and permissions before startup. Follow the cold-migration procedure below for upgrades; examples and Git content must never replace deployment state.
   - **Backup**: back up the primary and backup together.
   - **Asset URLs can only be edited while stopped**: the process holds the authoritative state in
     memory and rewrites the whole file, so an edit made while running is erased by the next save.
@@ -121,7 +117,7 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
     again, history compacts to the latest record per user, and each chat/day retains at most the
     newest 250,000 users.
 - **`database/storage.sqlite`** (with possible runtime `-wal` / `-shm` sidecars)
-  - **Contents**: schema-v7 shared storage database. `whitelist_entries` and `blocklist_entries` are the
+  - **Contents**: schema-v8 shared storage database. `whitelist_entries` and `blocklist_entries` are the
     authoritative permanent allowlist and blocklist. `temporary_whitelist_entries` stores cross-chat
     message accumulation, consecutive qualifying days, temporary grant time, and the day-rollover
     columns `send_count`, `counted_at`, and `qualified_at`; `pending_blocked_removals` is the unfinished per-chat
@@ -131,15 +127,13 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
     back to its defaults: `/init disable` clears the chat title alone and deliberately keeps the
     feature switches (so a later `/init enable` needs no reconfiguration), which means a chat whose
     main gate is off while `/ai_chat` and friends are still on keeps holding one of the 25 rows.
-    To free a slot, disable `/ai_chat`, `/ad_detect`, `/flood_control`, `/antiraid` and `/ja_copy`
+    To free a slot, disable `/ai_chat`, `/ad_detect`, `/flood_control`, `/antiraid` and `/translate`
     one by one in that chat, or remove the bot from it — leaving deletes the row unless it still
     carries a lockdown record awaiting recovery.
   - **Backup**: mandatory. Losing the blocklist removes every permanent ban; losing the outbox
     loses unfinished enforcement. With the bot stopped, copy the main database and any WAL/SHM
     present at that point as one consistency set outside the worktree, recording owner/mode and
-    SHA-256. Never hand-edit business rows with a text editor or ad-hoc SQL. Before writing, the
-    temporary-allowlist schema migration copies the main database and existing sidecars byte for byte,
-    records an owner/mode/SHA-256 manifest in an external directory, and reads the copies back to verify them.
+    SHA-256. Never hand-edit business rows with a text editor or ad-hoc SQL. Translation migration writes only an isolated staging copy, retaining the source backup and verifying hashes and metadata.
   - **Recovery**: Disk I/O Worker is the sole database owner. Before returning permanent-policy
     counts and the pending outbox to the main thread, startup validates integrity,
     JSONB, schema, migration lineage, row codecs, and disjointness between the blocklist and both
@@ -183,16 +177,27 @@ The runtime has no old-format compatibility path and never creates this database
 
 Startup never guesses that a missing database means empty policy, so a fresh deployment must explicitly create one empty database at the current schema. The steps are in [01 Setup](01-getting-started.md#initializing-identity-storage), and `install.sh` already includes them. The creation entry point refuses to overwrite an existing target.
 
-### Upgrade Inputs and Staged Migration
+### Cold migration from 10.5.4
 
-Upgrading from `10.5.2` to `10.5.3` requires no data-format migration. The current runtime accepts only the exact schema v7 lineage and a strictly validated `state.json`; the current `package.json` exposes no `migrate:*` commands.
+The sole cold-migration entry point is [`scripts/migrateTranslate.ts`](../../scripts/migrateTranslate.ts). It accepts only the exact schema v7 lineage and global-only state from `10.5.4`, producing schema v8 and per-group session arrays. Older deployments must first upgrade in stages to `10.5.4` using each version's guide. Unknown lineage and unpublished dev state formats are rejected. Runtime accepts only the current format.
 
-Older deployments must complete the intermediate upgrades using the operations guide for each version:
+1. Stop the service and confirm inactive with no remaining process. Create an external backup using `mktemp -d`, copying real configuration, credentials and runtime data. Both state files, SQLite and any WAL/SHM must come from the same stopped-service snapshot. Record and verify file manifests, modes, owners and SHA-256 hashes.
 
-- Deployments using `config/whitelist.json`, `config/blocklist.json`, or `memory/blocklist/` complete identity-storage migration on `9.1.5`, then follow the version-by-version upgrade steps.
-- Deployments still using schema v5 or a `state.json` containing `global.assets.qaThumbnailUrl` complete the corresponding cold migration and validation on `10.5.1` before upgrading to the current version.
+2. Run the command below against the backup, using a new output directory outside the source backup with an existing parent. The script does not modify the source, manage services or replace deployment files.
 
-At every step, stop the service, back up deployment inputs and the complete runtime dataset outside the worktree, and record file manifests, permissions, owners, and SHA-256 hashes. SQLite and any WAL/SHM files must come from the same stopped-service snapshot. Follow that version’s migration guide, strictly read back the results, and verify service stability before removing backups. Reject unknown lineage; do not bypass migration with an empty database, manual key deletion, or example configuration.
+```bash
+bun run migrate:translate --from 10.5.4 \
+  --source-root /absolute/cold-backup \
+  --output-root /absolute/new-staging-directory
+```
+
+3. SQLite permission `isCanControllJATranslatePermission` becomes `isCanControllTranslatePermission`; chat switch `isJATranslationEnabled` becomes `isTranslationEnabled`. Boolean values and absent optional switches are preserved. Missing permissions, invalid values and conflicting old/new fields are rejected. A `copyMode: "ja"` target becomes a Japanese session in its group; the corresponding copy target, mode and group ID are cleared while cooldown time and assets remain. Other copy modes are preserved. Primary and LKG are converted separately.
+
+4. Only `ready.json` marks completed conversion, strict validation, SQLite checkpoint, connection closure and source verification. Verify hashes and metadata in its `sourceFiles` and `outputFiles`. On failure or interruption, retain source and partial output and rerun from the original backup into a new output directory; existing output cannot be overwritten.
+
+5. While stopped, manually replace both state files and SQLite. Remove old deployment WAL/SHM only after backing them up and confirming no database handles remain; never combine them with the new main database. Restore original ownership and modes from the manifest. The service account must be able to write both state files, SQLite and its parent directory; `config/` may remain read-only.
+
+6. Strictly validate configuration and both state files and verify installed hashes before startup. Confirm `active/running` over at least two supervisor restart intervals, with unchanged `NRestarts` and no new nonzero exits in the journal. Retain the external backup until all checks pass. On failure stop further work; rollback must restore the matching program and the entire consistent backup set.
 
 ## Startup Failures
 
@@ -216,8 +221,7 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
   - **Cause**: migration has not run; `storage.sqlite` is not writable; integrity, JSONB, schema,
     or migration lineage is invalid; a row codec fails; or the blocklist intersects the permanent
     or temporary allowlist.
-  - **Action**: if the error names schema v5, keep the bot stopped and run the v5 → v7 cold migration
-    above. Otherwise create the database or roll back per [Identity Storage Migration](#identity-storage-migration).
+  - **Action**: for confirmed 10.5.4 schema v7, keep the bot stopped and run the cold migration above; older versions must first upgrade in stages to 10.5.4. Otherwise create the database or roll back per [Identity Storage Migration](#identity-storage-migration).
     Restore the database and sidecars from one consistency point and repair collaboration-group
     permissions before starting. Never create an empty replacement or delete failing rows.
 - **Both state copies are invalid**

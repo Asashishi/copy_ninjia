@@ -1,4 +1,5 @@
 import {
+  AVATAR_FETCH_TIMEOUT_MS,
   AVATAR_MAX_DOWNLOAD_BYTES,
   PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES,
   TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES,
@@ -9,7 +10,7 @@ import type { BoundedResponseResult } from "../../../libs/boundedResponse";
 import { parseAllowedHttpsUrl } from "../../../libs/httpUrlPolicy";
 import { stripLeadingAtSigns } from "../../../libs/text";
 import { logger } from "../../logger";
-import { avatarFetchSignal } from "./shared";
+import { signalWithTimeout } from "../../../libs/abortSignal";
 
 interface ParsedHtmlTag {
   name: string;
@@ -193,7 +194,7 @@ export function extractAvatarUrlFromProfileHtml(html: string, expectedUsername?:
 /** 从 t.me 公开主页下载头像，页面或图片异常时返回 null。 */
 export async function fetchAvatarFromWebProfile(username: string, signal?: AbortSignal): Promise<Uint8Array | null> {
   try {
-    const pageSignal: AbortSignal = avatarFetchSignal(signal);
+    const pageSignal: AbortSignal = signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS);
     const pageRes: Response = await runTelegramCategorizedRequest({
       category: "download",
       signal: pageSignal,
@@ -219,7 +220,7 @@ export async function fetchAvatarFromWebProfile(username: string, signal?: Abort
       return null;
     }
 
-    const imageSignal: AbortSignal = avatarFetchSignal(signal);
+    const imageSignal: AbortSignal = signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS);
     const imgRes: Response = await runTelegramCategorizedRequest({
       category: "download",
       signal: imageSignal,

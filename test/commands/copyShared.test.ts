@@ -152,16 +152,16 @@ describe("copy 命令共享冷却与头像串行器", () => {
   });
 
   test("目标解析器原样转交调用方给的文案表，不再每次现造", async () => {
-    const ctx = { chat: { id: -1001 }, msg: { message_id: 9 }, me: { id: 999 }, match: "@alice" } as never;
+    const ctx = { chat: { id: -1001 }, msg: { message_id: 9 }, me: { id: 999 }, match: "steal @alice" } as never;
     await expect(
-      shared.resolveCopyCommandTarget(ctx, STEAL_ICON_TARGET_TEXTS)
+      shared.resolveCopyCommandTarget(ctx, STEAL_ICON_TARGET_TEXTS, "@alice")
     ).resolves.toEqual({ id: 7, first_name: "Alice" });
     const params = resolveCommandTarget.mock.calls[0]![0] as {
       rawArgument: string;
       messages: { missingTarget: string; selfTarget: string };
     };
     expect(params.rawArgument).toBe("@alice");
-    expect(params.messages.missingTarget).toContain("/steal_icon");
+    expect(params.messages.missingTarget).toContain("/icon steal");
     expect(params.messages.selfTarget).toContain("自己");
     // 转交的必须就是那张模块级单例，不是每次调用现造的副本。
     expect(params.messages).toBe(STEAL_ICON_TARGET_TEXTS);

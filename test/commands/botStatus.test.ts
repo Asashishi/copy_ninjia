@@ -52,6 +52,7 @@ function statusSnapshot(): BotStatusSnapshot {
     telegramPending: 1_024,
     telegramCapacity: 81_920,
     activeGagSessions: 3,
+    activeTranslateSessions: 2,
     processStatus: {
       uptimeSeconds: 183_845,
       averageCpuPercent: 12.345,
@@ -84,7 +85,7 @@ describe("/bot_status", () => {
     expect(text).toContain("• 入群验证与防冲群");
     expect(text).not.toContain("secret-");
     expect(text).not.toContain("example/v1");
-    expect(text).not.toContain("日语翻译");
+    expect(text).toContain("本群正赖着本天才翻译的杂鱼：2/5 人♡");
   });
 
   test("部署能力不可用和群功能全关时给出明确状态", () => {

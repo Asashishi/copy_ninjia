@@ -59,7 +59,7 @@ function viewedState(): any {
   return state;
 }
 
-/** 聊天状态心跳挡位句柄的假实现（见 types/aiChatWorker.ts 的
+/** 聊天状态心跳挡位句柄的假实现（见 types/aiChat/chatAction.ts 的
  *  ChatActionControl），只记录 set 调用供断言，settle 立即落定。current 默认
  *  报告 choose_sticker（模拟 view 过包、选择状态未被打断的正常链路），传
  *  "idle" 可模拟挡位已被中途的消息打断。 */

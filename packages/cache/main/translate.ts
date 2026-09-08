@@ -1,6 +1,6 @@
 import type { v3 as GoogleTranslate } from "@google-cloud/translate";
 
-/** Google 翻译客户端（packages/copy/translate.ts）的进程内运行态。 */
+/** Google 翻译客户端（packages/translate/client.ts）的进程内运行态。 */
 
 interface TranslateRuntime {
   client: GoogleTranslate.TranslationServiceClient | null;

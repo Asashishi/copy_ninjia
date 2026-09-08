@@ -117,13 +117,18 @@ export class LruCache<K, V> implements ReadonlyLruCache<K, V> {
    *
    * 追加、删除与 touch 尚未访问或已访问条目时按当前链表位置继续。改写**正停在
    * 的那一条**时靠上方的让位单槽前进，不漏掉它后面的条目；该条目被移到最新端
-   * 时最多再产出一次，然后迭代正常结束。`antiRaid/lockdownMirror.ts` 的
-   * recoverAbandonedLockdowns 依赖这一语义。
+   * 后会在末尾再产出一次。
+   *
+   * **只有「每条至多被移到最新端一次」才保证终止**：每次产出都把当前条目重新
+   * 排到最新端时链表被持续重排，迭代不会结束，容量和条目数都保持不变，也不是
+   * 泄漏。`antiRaid/lockdownMirror.ts` 的 recoverAbandonedLockdowns 正落在受支持
+   * 的那一侧——同一群第二次产出时恢复已在册，直接返回而不再读缓存。要在遍历中
+   * 反复重排，先取快照（`[...cache]`）。
    *
    * 让位槽只有一格，两种情形下会失效并让本次迭代提前结束：一次推进之间摘掉了
    * 不止一条链（后者覆盖前者），以及在遍历体里又起一次对同一份缓存的嵌套遍历
-   * （内层会作废外层的让位）。真要在遍历中批量删除或嵌套遍历，先取快照
-   * （`[...cache]`）——全仓当前没有这样的调用点。
+   * （内层会作废外层的让位）。真要在遍历中批量删除或嵌套遍历，同样先取快照
+   * ——全仓当前没有这样的调用点。
    */
   *[Symbol.iterator](): IterableIterator<[K, V]> {
     let node: LruNode<K, V> | null = this.oldest;

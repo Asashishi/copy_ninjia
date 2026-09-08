@@ -3,6 +3,7 @@ import type { CallbackQuery, User } from "grammy/types";
 import { wedChats } from "../cache/main/wed";
 import { WED_CALLBACK_PREFIX, WED_OPERATION_TIMEOUT_MS, WED_SESSION_LIMIT, WED_TEXTS } from "../consts/wed";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
+import { signalWithTimeout } from "../libs/abortSignal";
 import { answerCallbackQuery, sendCommandMessage } from "../infra/telegram";
 import { combineWithUpdateAbortSignal } from "../infra/updateContext";
 import { forumTopicThreadId } from "../libs/forumTopic";
@@ -13,10 +14,9 @@ import { confirmWedResult, removeWedResult, replaceWedResult, sendWedResult } fr
 
 /** 单次交互同时服从群 teardown、update 取消与总耗时限制。 */
 function operationSignal(session: WedSession): AbortSignal {
-  return combineWithUpdateAbortSignal(AbortSignal.any([
-    session.controller.signal,
-    AbortSignal.timeout(WED_OPERATION_TIMEOUT_MS),
-  ]))!;
+  return combineWithUpdateAbortSignal(
+    signalWithTimeout(session.controller.signal, WED_OPERATION_TIMEOUT_MS)
+  )!;
 }
 
 /** 群关闭先同步关闸，再删除状态机拥有的结果；重启不恢复这些会话。 */

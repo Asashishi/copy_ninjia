@@ -186,7 +186,7 @@ export interface AiInvalidateChatMessage {
   requestId: number;
 }
 
-/** /switch_mood 的重抽请求：未过 deadlineAt 时 Worker 调 aiChat/ai/mood.ts 的
+/** /mood switch 的重抽请求：未过 deadlineAt 时 Worker 调 aiChat/ai/mood.ts 的
  *  switchMood，再以同 requestId 的 moodSwitched 回执带回结果；过期请求
  *  不得产生副作用，回复由主线程命令处理器发出。 */
 export interface AiSwitchMoodMessage {
@@ -198,7 +198,7 @@ export interface AiSwitchMoodMessage {
   deadlineAt: number;
 }
 
-/** /query_mood 的查询请求：未过 deadlineAt 时 Worker 读取本群当前有效心情，
+/** /mood query 的查询请求：未过 deadlineAt 时 Worker 读取本群当前有效心情，
  * 再以同 requestId 的 moodQueried 回执带回结果；不得强制重抽未到期心情。 */
 export interface AiQueryMoodMessage {
   type: "queryMood";

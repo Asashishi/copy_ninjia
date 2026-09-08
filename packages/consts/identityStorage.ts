@@ -38,7 +38,7 @@ export const BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES: number =
 export const IDENTITY_WRITE_FLUSH_INTERVAL_MS: number = 30_000;
 
 /** SQLite 当前唯一受支持的 schema 版本。 */
-export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 7;
+export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 8;
 
 /** 历史文本初始 migration 的时间戳；用于核验当前库的已发布谱系。 */
 export const IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT: number =
@@ -99,6 +99,13 @@ export const IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_CREATED_AT: number 
 /** 首日临时免检与连续七日永久免检 migration 的 SHA-256。 */
 export const IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH: string =
   "6e1d6777fdc2f7cac747be2c6f6e0b2ca7a2ce30dab8d7cd8dcdb33866391528";
+
+/** 翻译权限和群开关名称迁移的时间戳；当前数据库必须包含这条迁移。 */
+export const IDENTITY_DATABASE_TRANSLATE_MIGRATION_CREATED_AT: number = 20_260_908_000_000;
+
+/** 翻译权限和群开关名称迁移的 SHA-256；启动据此核验当前谱系。 */
+export const IDENTITY_DATABASE_TRANSLATE_MIGRATION_HASH: string =
+  "f36aba558a2b386c784140e85f5181d08e6909466181e253ea1cc77da88661c5";
 
 /** SQLite 表级 CHECK 对自产 JSONB 做常数时间外壳校验的标志位。 */
 export const IDENTITY_DATABASE_JSONB_VALIDATION_FLAG: number = 0x04;

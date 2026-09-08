@@ -26,7 +26,7 @@ async function consumeAvatarUpdates(): Promise<void> {
       try {
         // 偷脸与复原共用这一个执行槽：两者抢的是同一份「换头像」限流资源，
         // 分开跑只会让 Telegram 两边都限流。latest-only 语义也因此对两类目标
-        // 通用——连点 /steal_icon 再 /reset_icon，最终生效的是最后那个。
+        // 通用——连点 /icon steal 再 /icon reset，最终生效的是最后那个。
         // 默认头像的直链在这里取：state 内存只属于主线程，而 avatar/restore.ts
         // 被两条 Worker 一并 import（见 stateStore.ts 的 getBotDefaultAvatarUrl）。
         const updated: boolean = task.target.kind === "default"

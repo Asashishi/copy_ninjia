@@ -14,7 +14,7 @@ import { queueAvatarUpdate } from "../copy/avatarQueue";
 import { resolveCommandTarget } from "./targetResolution";
 
 /**
- * copy 类命令（/copy 系与 /steal_icon）的公共零件：共享冷却检查、
+ * copy 类命令（/copy 系与 /icon steal）的公共零件：共享冷却检查、
  * 目标解析（回复消息优先于 @username 参数）、后台偷头像任务。
  */
 
@@ -101,17 +101,19 @@ export async function releaseCopyCooldownClaim(
  * 优先于 @username）。解析失败（没给目标、@username 没缓存、目标是机器人
  * 自己）时反馈已发送。
  * @param messages 触发命令自己的目标解析文案表（见 consts/commands.ts）。
+ * @param rawArgument 去掉子命令后的目标参数。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */
 export async function resolveCopyCommandTarget(
   ctx: CommandContext<Context>,
-  messages: CommandTargetMessages
+  messages: CommandTargetMessages,
+  rawArgument: string
 ): Promise<CachedUser | undefined> {
   return resolveCommandTarget({
     chatId: ctx.chat.id,
     message: ctx.msg,
     botUserId: ctx.me.id,
-    rawArgument: ctx.match,
+    rawArgument,
     messages,
   });
 }

@@ -61,11 +61,9 @@ WantedBy=multi-user.target
 `COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（未设置时使用项目根目录；显式空白值拒绝启动）：
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：只剩全局状态——copy 目标，以及 `global.assets` 的四条素材直链
-    （运势的「未卜先知」「概率论」两张缩略图、gag 发言 inline 结果的缩略图，以及机器人
-    默认头像）。群开关（含 `isAntiRaidEnabled`：入群验证 +
-    防冲群私密模式的总开关，缺省关闭）、锁定记录、权限快照等按群状态已迁入
-    `database/storage.sqlite` 的 `chat_states`。模型选择不再属于运行时状态。
+  - **内容**：`global.copy` 的全局复读状态、`global.assets` 的四条素材直链，以及 `translate` 的按群翻译会话。群开关、锁定记录和权限快照保存在 `database/storage.sqlite` 的 `chat_states`。
+  - **翻译格式**：顶层可选 `translate` 缺省为 `{}`；键必须是规范负整数群 ID，值为 1–5 个会话的非空数组。例如 `"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`。最多 25 群，同群身份 ID 不得重复，方向仅允许 `ja`、`cn`、`en`、`uk`、`ru`，身份按 `CachedUser` 严格校验。`global.copy.copyMode` 仅接受缺省、`reverse`、`nya`。非法主文件或 LKG、单会话对象等旧形态均拒绝启动，不自动升级或丢弃条目。
+  - **手工修改状态**：停服务并确认 inactive，在工作树外用 `mktemp -d` 备份主备及部署数据，记录权限、属主和 SHA-256，再编辑两份状态。保留未修改的 `global` 字段，并用 `decodeStateFile` 严格解析主备、核对预期差异和权限后启动。版本升级按下方冷迁移流程执行，不用示例或 Git 内容覆盖部署状态。
   - **备份**：主备一起备份。
   - **改素材直链只能停机改**：进程持有权威内存并会整份覆写这个文件，运行中编辑会被
     下次落盘抹掉。停服务 → 改 `global.assets` → 起服务；缺项会在启动成功后被自动
@@ -108,7 +106,7 @@ WantedBy=multi-user.target
     跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
     最新 250,000 人。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
-  - **内容**：schema v7 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是永久白名单、
+  - **内容**：schema v8 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是永久白名单、
     黑名单权威表；`temporary_whitelist_entries` 以关系列保存跨群发言累计、连续合格日、
     临时授权时刻，以及日切所需的 `send_count`、`counted_at`、`qualified_at`；
     `pending_blocked_removals` 是未完成群级封禁任务 outbox，
@@ -117,13 +115,11 @@ WantedBy=multi-user.target
     `chat_states` 的 25 行名额只在整条记录回到缺省时释放：`/init disable` 只清群名，功能开关
     按设计保留（重新 `/init enable` 不必重配），因此关掉总开关、却还开着 `/ai_chat` 之类的群
     仍占一行。要腾出名额，得在那个群把 `/ai_chat`、`/ad_detect`、`/flood_control`、
-    `/antiraid`、`/ja_copy` 逐条 disable，或把 Bot 移出该群——离群会删掉该行，除非它还挂着
+    `/antiraid`、`/translate` 逐条 disable，或把 Bot 移出该群——离群会删掉该行，除非它还挂着
     待恢复的 lockdown。
   - **备份**：必须备份，丢失黑名单等于解除全部永久封禁，丢失 outbox 则会漏掉未完成处置。
     停止 Bot 后，把主库及当时存在的 WAL/SHM 作为同一一致性集合复制到工作树外，并记录
-    owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。临时白名单 schema
-    migration 脚本会在写库前逐字节复制主库及现存 sidecar，在外部目录记录
-    owner/mode/SHA-256 清单并读回校验。
+    owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。翻译冷迁移只在独立暂存副本上写库，保留源备份并核对哈希与元数据。
   - **恢复**：Disk I/O Worker 是唯一数据库 owner；启动先做 integrity、JSONB、schema、
     migration lineage、行 codec、黑名单与两类白名单互斥校验，再只把永久名单计数和
     pending outbox 交回主线程；临时累计按 update 所需身份冷读进 8,192 项 LRU。
@@ -165,16 +161,27 @@ WantedBy=multi-user.target
 
 启动不会凭缺失数据库猜测「空名单」，所以全新部署必须显式建一次当前 schema 的空库。步骤见 [01 环境搭建](01-getting-started.md#初始化身份数据库)，`install.sh` 也已包含。目标库已存在时建库入口直接拒绝覆盖。
 
-### 升级输入与分阶段迁移
+### 从 10.5.4 冷迁移
 
-从 `10.5.2` 升到 `10.5.3` 不需要数据格式迁移；当前运行时只接受精确的 schema v7 谱系和通过严格解析的 `state.json`，当前 `package.json` 不提供 `migrate:*` 命令。
+当前唯一冷迁移入口是 [`scripts/migrateTranslate.ts`](../../scripts/migrateTranslate.ts)，仅接受 `10.5.4` 的 schema v7 精确谱系和 global-only 状态，输出 schema v8 与每群会话数组。更旧部署须先按对应版本文档分阶段升级到 `10.5.4`；未知谱系及未发布 dev 的状态形态均拒绝。运行时只接受当前格式。
 
-更旧部署先按对应版本的操作文档完成中间升级：
+1. 停止服务并确认 inactive、相关进程已退出。在工作树外用 `mktemp -d` 建立备份，复制真实配置、凭据和运行数据；`state.json`、`state.json.bak`、SQLite 主库及存在的 WAL/SHM 必须来自同一停机时点。记录文件清单、权限、属主和 SHA-256，核对复制结果。
 
-- 使用 `config/whitelist.json`、`config/blocklist.json` 或 `memory/blocklist/` 的部署，在 `9.1.5` 上完成身份存储迁移，再按版本步骤升级。
-- 数据库仍为 schema v5，或 `state.json` 含 `global.assets.qaThumbnailUrl` 时，在 `10.5.1` 上完成对应冷迁移并校验，再升级到当前版本。
+2. 用下方命令从备份生成全新暂存目录。输出目录必须在源备份外，父目录须存在。脚本不修改源文件、不控制服务、不替换部署文件。
 
-每一步均先停服务，在工作树外备份部署输入与整个运行时数据集，记录文件清单、权限、属主和 SHA-256；SQLite 主库及存在的 WAL/SHM 必须来自同一停机时点。按该版本文档迁移、严格回读并验证服务稳定后才能清理备份。未知谱系必须拒绝；不得建空库、手工删键或用示例配置绕过迁移。
+```bash
+bun run migrate:translate --from 10.5.4 \
+  --source-root /absolute/cold-backup \
+  --output-root /absolute/new-staging-directory
+```
+
+3. 脚本把 SQLite 权限 `isCanControllJATranslatePermission` 改为 `isCanControllTranslatePermission`，群开关 `isJATranslationEnabled` 改为 `isTranslationEnabled`，保留原布尔值及可选开关的缺省。权限缺失、非法值、旧新字段冲突均拒绝。`copyMode: "ja"` 的目标转为该群的日语会话，清除对应 copy 目标/模式/群 ID，保留冷却时间和素材；其他 copy 模式原样保留。主备分别转换。
+
+4. 仅 `ready.json` 表示转换、严格校验、SQLite 检查点、连接关闭和源文件复核全部成功。按其中 `sourceFiles`、`outputFiles` 核对哈希和元数据。失败或中断时保留源备份与暂存现场，从原备份向新的输出目录重跑，禁止覆盖已有输出。
+
+5. 保持停机，手工替换两份状态和 SQLite 主库。旧部署 WAL/SHM 仅在已备份且确认没有数据库占用后清理，不与新主库混用。按清单恢复原属主和 mode，确保服务账号可读写主备、SQLite 及其父目录；`config/` 可保持只读。
+
+6. 严格校验配置和主备、核对部署文件哈希后才启动。确认 `active/running`，观察至少两个 supervisor 重启间隔，确保 `NRestarts` 不增长、journal 无新增非零退出。完成所有验证前保留外部备份；失败时停止后续操作，回滚须恢复与旧数据匹配的程序和同一备份集。
 
 ## 启动失败排查
 
@@ -196,7 +203,7 @@ WantedBy=multi-user.target
 - **身份数据库缺失或校验失败**
   - **原因**：尚未建立身份数据库，`storage.sqlite` 不可写，integrity/JSONB/schema/
     migration lineage 不合法，行 codec 失败，或黑名单与永久/临时白名单相交。
-  - **处理**：若错误点名 schema v5，保持 Bot 停止并按上面的 v5 → v7 冷迁移执行；其余情况按
+  - **处理**：若为已确认的 10.5.4 schema v7，保持停机并执行上述冷迁移；更旧版本先分阶段升级到 10.5.4。其余情况按
     [身份存储迁移](#身份存储迁移)建库或回滚。从同一一致性
     备份恢复主库与 sidecar，修正目录协作组权限后再启动。不要创建空库或删除失败行。
 - **两份 state 副本均无效**

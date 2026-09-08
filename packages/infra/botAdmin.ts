@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import { logger } from "./logger";
 import { bot } from "./telegram/mainClient";
+import { signalArgs } from "../libs/telegramSignalArgs";
 import {
   clearChatStateField,
   getChatState,
@@ -394,13 +395,7 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
   const request: Promise<BotChatPermissions | undefined> = (async (): Promise<BotChatPermissions | undefined> => {
     let member: ChatMember;
     try {
-      member = signal === undefined
-        ? await bot.api.getChatMember(chatId, bot.botInfo.id)
-        : await bot.api.getChatMember(
-          chatId,
-          bot.botInfo.id,
-          signal as unknown as Parameters<typeof bot.api.getChatMember>[2]
-        );
+      member = await bot.api.getChatMember(chatId, bot.botInfo.id, ...signalArgs(signal));
     } catch (error: unknown) {
       // update 已被取消时不记日志、原样上抛，与其余 Telegram 调用同一约定。
       throwIfUpdateAborted(signal);

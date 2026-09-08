@@ -16,6 +16,7 @@ const noChatTeardown: ChatTeardownCallback = (
 /** 上层运行态固定 owner 的 teardown；槽位数恒定，不随聊天或事件增长。 */
 export const chatTeardownCallbacks: Record<ChatRuntimeOwner, ChatTeardownCallback> = {
   copy: noChatTeardown,
+  translate: noChatTeardown,
   gag: noChatTeardown,
   aiChat: noChatTeardown,
   antiRaid: noChatTeardown,

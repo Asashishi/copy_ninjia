@@ -63,7 +63,7 @@ export function getChatQa(chatId: number): ReadonlyMap<string, string> | undefin
   return chatQaEntries.get(chatId);
 }
 
-/** 本群已登记条数；`/set_qa` 的容量闸与 `/query_qa` 的渲染共用。 */
+/** 本群已登记条数；`/qa set` 的容量闸与 `/qa query` 的渲染共用。 */
 export function chatQaCount(chatId: number): number {
   return chatQaEntries.get(chatId)?.size ?? 0;
 }

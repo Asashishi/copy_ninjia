@@ -6,6 +6,7 @@ import {
   GAG_TARGET_TEXTS,
   UNGAG_TARGET_TEXTS,
 } from "../../packages/consts/gag";
+import { GAG_USAGE_TEXT } from "../../packages/consts/commandUsage";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";
 import { settleTestBatch } from "../libs/helpers";
@@ -42,6 +43,41 @@ const gag = await import("../../packages/commands/gag");
 installGagTestHooks();
 
 describe("/gag 与 /ungag 状态机", () => {
+  /**
+   * 三条命令拒绝分支：走到它们时命令都还没解析出目标，因此断言口径统一是
+   * 「回一条固定文案 + 绝不进入目标解析」。文案本身按 AGENTS.md 的
+   * 「Telegram 提示留存」走 sendCommandMessage 这一个统一边界（由它挂 30 秒延迟
+   * 删除），所以这里同时钉住「用的就是这个边界」，而不是各自现发一条。
+   */
+  test("私聊里用 /gag 只回一条提示，不解析目标", async () => {
+    await gag.handleGagCommand(commandContext({ chatType: "private" }));
+
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+    expect(sendCommandMessage).toHaveBeenCalledTimes(1);
+    expect(lastCommandText()).toContain("只能在群里用");
+  });
+
+  test("参数解析不出来时回用法提示，不解析目标", async () => {
+    // 既没有 @目标 也没有回复：parseGagCommand 给不出结果。
+    await gag.handleGagCommand(commandContext({ match: "" }));
+
+    expect(sendCommandMessage).toHaveBeenCalledTimes(1);
+    expect(lastCommandText()).toBe(GAG_USAGE_TEXT);
+    expect(gagSessionCount()).toBe(0);
+  });
+
+  test("用具名过长撑爆 inline 消息时拒绝，不预约会话", async () => {
+    // 目标解析得出来、权限也够，卡住它的只有渲染上限本身：单条 inline 应答的
+    // 预算是 TELEGRAM_MESSAGE_MAX_CHARS - GAG_INLINE_QUERY_MAX_CHARS × (1 +
+    // GAG_FILLER_MAX_CHARS) = 1024 字符，全部留给「（透过<用具>）」这个前缀。
+    // 取 1_100 是为了在这三个常量任一被调小时仍然稳稳越线。
+    await gag.handleGagCommand(commandContext({ match: `@alice 5 ${"用".repeat(1_100)}` }));
+
+    expect(sendCommandMessage).toHaveBeenCalledTimes(1);
+    expect(lastCommandText()).toContain("inline 消息都塞不下");
+    expect(gagSessionCount()).toBe(0);
+  });
+
   test("权限、初始化和删除权限逐层 fail closed", async () => {
     gagTestSwitches.permissionAllowed = false;
     await gag.handleGagCommand(commandContext());

@@ -103,7 +103,7 @@ function pickMood(): MoodOption {
 
 /**
  * 立即重抽某群的心情并写回缓存：无视剩余寿命强制换一次，给新心情掷一个
- * 新的随机寿命。自然到期重抽（下方 currentMood）与 /switch_mood
+ * 新的随机寿命。自然到期重抽（下方 currentMood）与 /mood switch
  * 手动切换（aiChatWorker.ts 的 switchMood 消息路由）共用这一条路径。
  * @param chatId 群聊 ID。
  * @param moods/expiresAts 可注入仅为单测隔离；生产调用共享 Worker 内的

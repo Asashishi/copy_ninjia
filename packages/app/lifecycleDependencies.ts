@@ -17,7 +17,8 @@ import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../commands/wed/runtime";
 import { hydrateWedMembers } from "../commands/wed/persistence";
 import { enableWedMemberReview } from "../commands/wed/memberReview";
-import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../copy/translate";
+import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../translate/client";
+import { seedTranslateTargets } from "../translate/recovery";
 import {
   abortChatTitleRefresh,
   initChatTitleRefresh,
@@ -121,6 +122,7 @@ export const lifecycleDependencies = {
   quiesceBlocklistSweepScheduler,
   quiesceTranslate,
   seedSenderCache,
+  seedTranslateTargets,
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,

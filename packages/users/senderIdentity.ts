@@ -2,7 +2,7 @@ import type { CachedUser } from "../types/chatState";
 import type { Message, User, Chat } from "grammy/types";
 import { senderUsernameCache, userCache } from "../cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
-import { visibleSenderChat } from "./visibleSender";
+import { channelIdentity, userIdentity, visibleSenderChat } from "./visibleSender";
 
 /**
  * 消息发送者的身份解析与缓存。自动流程（packages/auto/message/ 靠 cacheSender
@@ -23,19 +23,9 @@ export function resolveSenderIdentity(message: Message): CachedUser | undefined 
   const senderChat: Chat | undefined = visibleSenderChat(message);
 
   if (senderChat) {
-    return {
-      id: senderChat.id,
-      username: "username" in senderChat ? senderChat.username : undefined,
-      title: "title" in senderChat ? senderChat.title : undefined,
-      isChannel: true,
-    };
+    return channelIdentity(senderChat);
   } else if (fromUser) {
-    return {
-      id: fromUser.id,
-      username: fromUser.username,
-      first_name: fromUser.first_name,
-      last_name: fromUser.last_name,
-    };
+    return userIdentity(fromUser);
   }
 
   return undefined;
@@ -142,8 +132,10 @@ export function cacheSender(message: Message): number | undefined {
     return identityId;
   }
 
-  // 只有确实要写入时才构造，且一律走 resolveSenderIdentity：两种身份形态的构造
-  // 只此一处，不再各写一份可能悄悄漂移的字面量。这条路只在资料真的变了时才走到。
+  // 只有确实要写入时才构造，且一律走 resolveSenderIdentity：两种身份形态的字面量
+  // 只在 users/visibleSender.ts 的 channelIdentity / userIdentity 各一处，本文件与
+  // commands/commandActor.ts 都调它们，不再各写一份可能悄悄漂移的字面量。
+  // 这条路只在资料真的变了时才走到。
   const identity: CachedUser | undefined = resolveSenderIdentity(message);
   if (identity !== undefined) updateCachedIdentity(identity);
   return identityId;
@@ -185,7 +177,7 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
  * **与 @username 那条路的关键差别：查不到不是失败。** id 本身就是权威目标，
  * 缓存只用来给回执配一个人类可读的标签；而用户名是会被释放、被别人重新注册的
  * ——那正是「破坏性操作优先回复消息、别信历史用户名」这条建议的由来（同
- * `/steal_icon` 的现查要求，见 docs/cn/04-invariants.md）。按 id 下的命令没有这个
+ * `/icon steal` 的现查要求，见 docs/cn/04-invariants.md）。按 id 下的命令没有这个
  * 问题，因此这里在缓存落空时返回只带 id 的最小身份，让命令照常执行。
  *
  * 负数 id 一律标成频道身份。这不是猜的：负 id 只可能来自 `sender_chat`，处置侧

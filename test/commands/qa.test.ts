@@ -10,6 +10,7 @@ import {
   QA_FORM_SESSION_MAX,
   QA_FORM_SESSION_TTL_MS,
 } from "../../packages/consts/qa";
+import { QA_USAGE_TEXT } from "../../packages/consts/commandUsage";
 
 interface SentMessage {
   chatId: number;
@@ -83,9 +84,7 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
 
 const {
   handleQaMessageIngress,
-  handleQueryQaCommand,
-  handleRemoveQaCommand,
-  handleSetQaCommand,
+  handleQaCommand,
   teardownQaInChat,
 } = await import("../../packages/commands/qa");
 const { renderQaFormPrompt } = await import("../../packages/commands/qa/rendering");
@@ -175,13 +174,23 @@ afterEach((): void => {
   jest.useRealTimers();
 });
 
-describe("/set_qa", () => {
+test.each(["", "unknown", "set extra", "set query", "setter"])("/qa %s 不创建表单或修改问答", async (argument) => {
+  chatQaEntries.set(CHAT_ID, new Map([["问题", "回答"]]));
+  await handleQaCommand(context(OWNER, argument));
+  expect(lastText()).toBe(QA_USAGE_TEXT);
+  expect(sendCommandMessage.mock.calls.at(-1)?.[0].preserveInGroup).toBeUndefined();
+  expect(sendMessage).not.toHaveBeenCalled();
+  expect(qaFormSessions.size).toBe(0);
+  expect(chatQaEntries.get(CHAT_ID)?.get("问题")).toBe("回答");
+});
+
+describe("/qa set", () => {
   test("未接管的群一律拒绝，三条命令同一句", async () => {
     chatStates.set(CHAT_ID, {});
 
-    await handleSetQaCommand(context(OWNER, ""));
-    await handleQueryQaCommand(context(OWNER, ""));
-    await handleRemoveQaCommand(context(OWNER, "x"));
+    await handleQaCommand(context(OWNER, "set"));
+    await handleQaCommand(context(OWNER, "query"));
+    await handleQaCommand(context(OWNER, "remove x"));
 
     expect(sendCommandMessage).toHaveBeenCalledTimes(3);
     for (const call of sendCommandMessage.mock.calls) {
@@ -193,21 +202,21 @@ describe("/set_qa", () => {
   test("持权限的频道身份也能开表单——命令侧与投递侧是同一个 sender_chat", async () => {
     permitted.add(CHANNEL_ID);
 
-    await handleSetQaCommand(channelContext(""));
+    await handleQaCommand(channelContext("set"));
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(qaFormSessions.get(CHAT_ID)?.openedById).toBe(CHANNEL_ID);
   });
 
   test("没有权限的频道身份同样拿不到表单", async () => {
-    await handleSetQaCommand(channelContext(""));
+    await handleQaCommand(channelContext("set"));
 
     expect(lastText()).toContain("isCanControllQaPermission");
     expect(qaFormSessions.size).toBe(0);
   });
 
   test("没有 isCanControllQaPermission 的身份拿不到表单", async () => {
-    await handleSetQaCommand(context(7, ""));
+    await handleQaCommand(context(7, "set"));
 
     expect(lastText()).toContain("isCanControllQaPermission");
     expect(qaFormSessions.size).toBe(0);
@@ -215,7 +224,7 @@ describe("/set_qa", () => {
   });
 
   test("获授权者拿到一张表单，会话按群建立并记下发起者", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "  set\n"));
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(qaFormSessions.get(CHAT_ID)?.openedById).toBe(OWNER);
@@ -224,14 +233,14 @@ describe("/set_qa", () => {
   test("话题群里 General 与其它话题一样发表单", async () => {
     const forum: ChatShape = { id: CHAT_ID, type: "supergroup", title: "T", is_forum: true };
 
-    await handleSetQaCommand(context(OWNER, "", { chat: forum }));
+    await handleQaCommand(context(OWNER, "set", { chat: forum }));
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(qaFormSessions.get(CHAT_ID)).toBeDefined();
     // General 不带 message_thread_id：Bot API 里「没有话题」与 General 同义。
     expect(sendMessage.mock.calls[0]?.[0]).toMatchObject({ messageThreadId: undefined });
 
     sendMessage.mockClear();
-    await handleSetQaCommand(context(OWNER, "", {
+    await handleQaCommand(context(OWNER, "set", {
       chat: forum,
       msg: { is_topic_message: true, message_thread_id: 77 },
     }));
@@ -248,16 +257,31 @@ describe("/set_qa", () => {
     }
     chatQaEntries.set(CHAT_ID, entries);
 
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.full);
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
 
-describe("/query_qa", () => {
+describe("/qa query", () => {
+  test.each(["how to join", "第一行\n第二行", "set", "query 问题"])("query 与 remove 保留完整问题：%s", async (question) => {
+    chatQaEntries.set(CHAT_ID, new Map([[question, "回答"]]));
+    await handleQaCommand(context(7, `  query\t${question}  `));
+    const sent: SentMessage = sendCommandMessage.mock.calls.at(-1)![0];
+    const entity = sent.entities![0]!;
+    expect(JSON.parse(sent.text.slice(entity.offset, entity.offset + entity.length)))
+      .toEqual([{ q: question, a: "回答" }]);
+    expect(sent.preserveInGroup).toBeTrue();
+
+    await handleQaCommand(context(OWNER, `  remove\t${question}\n`));
+    expect(lastText()).toBe(QA_COMMAND_TEXTS.removed(question));
+    expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
+    expect(sendCommandMessage.mock.calls.at(-1)?.[0].preserveInGroup).toBeUndefined();
+  });
+
   test("一条都没有时如实说空，且不是长期保留的看板", async () => {
-    await handleQueryQaCommand(context(7, ""));
+    await handleQaCommand(context(7, "query"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.queryEmpty);
     expect(sendCommandMessage.mock.calls.at(-1)?.[0].preserveInGroup).toBeUndefined();
@@ -267,7 +291,7 @@ describe("/query_qa", () => {
     chatQaEntries.set(CHAT_ID, new Map([["a", "1"], ["b", "2"]]));
 
     // 群成员都能查：这里故意用一个没有维护权限的身份。
-    await handleQueryQaCommand(context(7, ""));
+    await handleQaCommand(context(7, "query"));
 
     const sent: SentMessage = sendCommandMessage.mock.calls.at(-1)![0];
     expect(sent.preserveInGroup).toBeTrue();
@@ -279,7 +303,7 @@ describe("/query_qa", () => {
   test("带参数只查那一条，形状仍是数组——看板的结构必须稳定", async () => {
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
 
-    await handleQueryQaCommand(context(7, "怎么入群？"));
+    await handleQaCommand(context(7, "query 怎么入群？"));
 
     const sent: SentMessage = sendCommandMessage.mock.calls.at(-1)![0];
     const entity = sent.entities![0]!;
@@ -290,16 +314,16 @@ describe("/query_qa", () => {
   test("查不到那条时点名它，并走默认 30 秒清理", async () => {
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
 
-    await handleQueryQaCommand(context(7, "不存在的"));
+    await handleQaCommand(context(7, "query 不存在的"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.queryMissing("不存在的"));
     expect(sendCommandMessage.mock.calls.at(-1)?.[0].preserveInGroup).toBeUndefined();
   });
 });
 
-describe("/remove_qa", () => {
+describe("/qa remove", () => {
   test("缺参数时给用法", async () => {
-    await handleRemoveQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "remove"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.removeUsage);
   });
@@ -307,7 +331,7 @@ describe("/remove_qa", () => {
   test("没有权限的身份删不掉", async () => {
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
 
-    await handleRemoveQaCommand(context(7, "怎么入群？"));
+    await handleQaCommand(context(7, "remove 怎么入群？"));
 
     expect(lastText()).toContain("isCanControllQaPermission");
     expect(chatQaEntries.get(CHAT_ID)?.has("怎么入群？")).toBeTrue();
@@ -316,10 +340,10 @@ describe("/remove_qa", () => {
   test("回执如实：删到了说删了，没删到说本来就没有", async () => {
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
 
-    await handleRemoveQaCommand(context(OWNER, "不存在的"));
+    await handleQaCommand(context(OWNER, "remove 不存在的"));
     expect(lastText()).toBe(QA_COMMAND_TEXTS.removeMissing("不存在的"));
 
-    await handleRemoveQaCommand(context(OWNER, "怎么入群？"));
+    await handleQaCommand(context(OWNER, "remove 怎么入群？"));
     expect(lastText()).toBe(QA_COMMAND_TEXTS.removed("怎么入群？"));
     expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
   });
@@ -335,7 +359,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("只填一项时留着表单，回执说明已记下哪一项", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     sendCommandMessage.mockClear();
 
     const claimed: boolean = await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
@@ -348,7 +372,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("收下一项后表单就地改写成当前状态，而不是永远显示两项皆空", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     editMessageText.mockClear();
 
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
@@ -362,7 +386,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("一项超长、另一项合规时，表单跟上合规的那一项", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     editMessageText.mockClear();
     sendCommandMessage.mockClear();
 
@@ -379,7 +403,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("整条都被挡下时不改表单——会话一个字都没变", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     editMessageText.mockClear();
 
     await handleQaMessageIngress(
@@ -395,7 +419,7 @@ describe("表单填齐后的结算", () => {
     sendMessage.mockImplementationOnce(
       async (_message: { onSent?: (id: number) => void }): Promise<number | undefined> => undefined
     );
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     editMessageText.mockClear();
 
     expect(handleQaMessageIngress(delivered("问题:\n怎么入群？"))).toBeFalse();
@@ -405,7 +429,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("两项填齐时不改表单——它紧接着就被删掉了", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     editMessageText.mockClear();
 
@@ -416,7 +440,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("两项齐了就落库、收走表单，并按新增/覆盖如实回执", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     sendCommandMessage.mockClear();
 
@@ -432,7 +456,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("两项写在同一条消息里也能一次结算", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     sendCommandMessage.mockClear();
 
     await handleQaMessageIngress(delivered("问题:\n怎么入群？\n回答:\n点置顶"));
@@ -443,7 +467,7 @@ describe("表单填齐后的结算", () => {
 
   test("覆盖同一问题时回执说覆盖，不谎称新增", async () => {
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "旧答案"]]));
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     sendCommandMessage.mockClear();
 
@@ -455,7 +479,7 @@ describe("表单填齐后的结算", () => {
 
   test("频道身份开的表单由同一张皮填齐", async () => {
     permitted.add(CHANNEL_ID);
-    await handleSetQaCommand(channelContext(""));
+    await handleQaCommand(channelContext("set"));
 
     await handleQaMessageIngress(delivered("问题:\n怎么入群？", CHANNEL_ID));
     await handleQaMessageIngress(delivered("回答:\n点置顶", CHANNEL_ID));
@@ -464,7 +488,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("超长的那一项不写进会话，表单留着等重发", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     sendCommandMessage.mockClear();
 
     const claimed: boolean = await handleQaMessageIngress(
@@ -481,7 +505,7 @@ describe("表单填齐后的结算", () => {
   });
 
   test("不是发起者发的同格式消息不认领", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
 
     const other = { ...delivered("问题:\n怎么入群？") as object } as never;
     (other as { from: { id: number } }).from = { id: 7 };
@@ -496,14 +520,14 @@ describe("落盘失败与容量拒绝的回执分流", () => {
     for (let index: number = 0; index < QA_FORM_SESSION_MAX; index++) {
       const otherChatId: number = -2000 - index;
       chatStates.set(otherChatId, { isInitEnabled: true });
-      await handleSetQaCommand(context(OWNER, "", {
+      await handleQaCommand(context(OWNER, "set", {
         chat: { id: otherChatId, type: "supergroup", title: "T" },
       }));
     }
     sendCommandMessage.mockClear();
     sendMessage.mockClear();
 
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.formBusy);
     expect(sendMessage).not.toHaveBeenCalled();
@@ -511,7 +535,7 @@ describe("落盘失败与容量拒绝的回执分流", () => {
   });
 
   test("发布前 revision 耗尽时报告持久化失败，保持热表原值", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     // revision 空间耗尽在发布前拒绝，不能把它解释为条数已满。
     nextChatQaRevision.current = Number.MAX_SAFE_INTEGER;
@@ -525,7 +549,7 @@ describe("落盘失败与容量拒绝的回执分流", () => {
   });
 
   test("填表期间被别的路径填满时说满了，而不是说盘写不进去", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     const entries = new Map<string, string>();
     for (let index: number = 0; index < CHAT_QA_MAX_PER_CHAT; index++) {
@@ -541,11 +565,11 @@ describe("落盘失败与容量拒绝的回执分流", () => {
     expect(chatQaEntries.get(CHAT_ID)?.has("怎么入群？")).toBeFalse();
   });
 
-  test("/remove_qa 排不进硬盘时如实说没写进去", async () => {
+  test("/qa remove 排不进硬盘时如实说没写进去", async () => {
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
     nextChatQaRevision.current = Number.MAX_SAFE_INTEGER;
 
-    await handleRemoveQaCommand(context(OWNER, "怎么入群？"));
+    await handleQaCommand(context(OWNER, "remove 怎么入群？"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.persistFailed);
   });
@@ -553,7 +577,7 @@ describe("落盘失败与容量拒绝的回执分流", () => {
 
 describe("填到一半时重来", () => {
   test("重发同一字段直接覆盖，表单仍等另一项", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n打错的问题"));
     sendCommandMessage.mockClear();
 
@@ -565,13 +589,13 @@ describe("填到一半时重来", () => {
     expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
   });
 
-  test("同一个人重开 /set_qa：旧表单消息被删掉，已填的两项一并作废", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+  test("同一个人重开 /qa set：旧表单消息被删掉，已填的两项一并作废", async () => {
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     const first: number | undefined = qaFormSessions.get(CHAT_ID)?.formMessageId;
     deleteMessageWithOutcome.mockClear();
 
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
 
     // 旧那条表单消息不挂固定延迟清理，重开时不删就永远留在群里。
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(CHAT_ID, first);
@@ -583,14 +607,14 @@ describe("填到一半时重来", () => {
 
   test("别人正在填时拒绝抢占，原表单原样留着", async () => {
     permitted.add(7);
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     const original = qaFormSessions.get(CHAT_ID);
     sendCommandMessage.mockClear();
     sendMessage.mockClear();
     deleteMessageWithOutcome.mockClear();
 
-    await handleSetQaCommand(context(7, ""));
+    await handleQaCommand(context(7, "set"));
 
     expect(lastText()).toBe(QA_COMMAND_TEXTS.formTaken);
     expect(sendMessage).not.toHaveBeenCalled();
@@ -601,7 +625,7 @@ describe("填到一半时重来", () => {
   });
 
   test("表单结算之后再发格式消息不再被认领，交回下游流水线", async () => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
     await handleQaMessageIngress(delivered("回答:\n点置顶"));
 
@@ -614,7 +638,7 @@ describe("表单异步生命周期", (): void => {
   for (const close of ["ttl", "reopen", "teardown"] as const) {
     test(`${close} 发生在删除等待期间：保持认领且禁止旧会话写入`, async (): Promise<void> => {
       jest.useFakeTimers();
-      await handleSetQaCommand(context(OWNER, ""));
+      await handleQaCommand(context(OWNER, "set"));
       const old: QaFormSession = qaFormSessions.get(CHAT_ID)!;
       const pending: PromiseWithResolvers<DeleteMessageOutcome> = Promise.withResolvers<DeleteMessageOutcome>();
       const started: PromiseWithResolvers<void> = Promise.withResolvers<void>();
@@ -625,7 +649,7 @@ describe("表单异步生命周期", (): void => {
       const task: boolean | Promise<boolean> = handleQaMessageIngress(delivered("问题:问\n回答:答"));
       await started.promise;
       if (close === "ttl") jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS);
-      else if (close === "reopen") await handleSetQaCommand(context(OWNER, ""));
+      else if (close === "reopen") await handleQaCommand(context(OWNER, "set"));
       else teardownQaInChat(CHAT_ID);
       const current: QaFormSession | undefined = qaFormSessions.get(CHAT_ID);
       expect(current).not.toBe(old);
@@ -651,11 +675,11 @@ describe("表单异步生命周期", (): void => {
         message.onSent?.(88);
         return 88;
       });
-      const task: Promise<void> = handleSetQaCommand(context(OWNER, ""));
+      const task: Promise<void> = handleQaCommand(context(OWNER, "set"));
       await started.promise;
       const old: QaFormSession = qaFormSessions.get(CHAT_ID)!;
       if (close === "ttl") jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS);
-      else if (close === "reopen") await handleSetQaCommand(context(OWNER, ""));
+      else if (close === "reopen") await handleQaCommand(context(OWNER, "set"));
       else teardownQaInChat(CHAT_ID);
       const current: QaFormSession | undefined = qaFormSessions.get(CHAT_ID);
       pending.resolve();
@@ -670,7 +694,7 @@ describe("表单异步生命周期", (): void => {
   for (const text of ["问题:问", `问题:${"长".repeat(CHAT_QA_QUESTION_MAX_CHARS + 1)}\n回答:答`]) {
     test("TTL 发生在表单编辑等待期间，不再发送字段回执", async (): Promise<void> => {
       jest.useFakeTimers();
-      await handleSetQaCommand(context(OWNER, ""));
+      await handleQaCommand(context(OWNER, "set"));
       const pending: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
       const started: PromiseWithResolvers<void> = Promise.withResolvers<void>();
       editMessageText.mockImplementationOnce((): Promise<boolean> => {
@@ -688,7 +712,7 @@ describe("表单异步生命周期", (): void => {
   }
 
   test("删除等待期间取消 update，不修改会话或提交写请求", async (): Promise<void> => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     const session: QaFormSession = qaFormSessions.get(CHAT_ID)!;
     const controller: AbortController = new AbortController();
     const pending: PromiseWithResolvers<DeleteMessageOutcome> = Promise.withResolvers<DeleteMessageOutcome>();
@@ -718,7 +742,7 @@ describe("表单异步生命周期", (): void => {
       return 88;
     });
     const task: Promise<void> = runWithUpdateAbortSignal(controller.signal,
-      (): Promise<void> => handleSetQaCommand(context(OWNER, "")));
+      (): Promise<void> => handleQaCommand(context(OWNER, "set")));
     await expect(task).rejects.toBe(reason);
     expect(qaFormSessions.has(CHAT_ID)).toBeFalse();
     expect(deleteMessageWithOutcome.mock.calls).toEqual([[CHAT_ID, 88]]);
@@ -726,7 +750,7 @@ describe("表单异步生命周期", (): void => {
   });
 
   test("结算后的回执抛出取消异常，仍交回表单清理且只提交一次", async (): Promise<void> => {
-    await handleSetQaCommand(context(OWNER, ""));
+    await handleQaCommand(context(OWNER, "set"));
     const error: DOMException = new DOMException("shutdown", "AbortError");
     sendCommandMessage.mockImplementationOnce(async (): Promise<never> => { throw error; });
     await expect(handleQaMessageIngress(delivered("问题:问\n回答:答")) as Promise<boolean>).rejects.toBe(error);

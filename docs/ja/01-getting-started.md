@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
-- **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/ja_copy` がこのファイルを名指しして拒否し、自動 copy の ja 変換は通常の copy に退化しますが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
+- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
 
 `g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない PEM 秘密鍵です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
 
@@ -73,7 +73,7 @@ pipe 実行では fd 0 が script 本文そのものなので、すべての問�
 3. **身分 database と検証**：production コードで保存先を解決し、`database/storage.sqlite` が無い場合だけ現在の空 schema を作成して、デプロイ入力を検証します。
 4. **サービスと観察**：停止を確認済みのデプロイで unit を登録または再利用して起動し、状態・計算済み観察期間・再起動回数・journal を検証します。全検証成功時だけ設定と unit のバックアップを削除します。検証失敗は非ゼロ終了し、前面実行時もバックアップを保持します。
 
-再実行時も既存 database は保持し、設定は明示的な再入力時だけ置換します。`g-auth.json` はデプロイ側が帯域外で提供します。欠落時は日本語翻訳が利用不可となり、存在して不正な場合は起動を拒否します。
+再実行時も既存 database は保持し、設定は明示的な再入力時だけ置換します。`g-auth.json` はデプロイ側が帯域外で提供します。欠落時は翻訳が利用不可となり、存在して不正な場合は起動を拒否します。
 
 ### 手動 install
 
@@ -111,7 +111,7 @@ AI の provider、API key、endpoint、model は能力ごとに `config/agent.js
 runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` を設定し、
 未指定ならプロジェクトルートを使います。詳細は
 [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください。
-日本語翻訳を使う場合は、サービスアカウントキーをプロジェクトルートの
+翻訳を使う場合は、サービスアカウントキーをプロジェクトルートの
 `g-auth.json` に保存します。この file は `.gitignore` の対象です。
 
 ## プロジェクト側の設定ファイル
@@ -163,7 +163,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
 恒久 allowlist、blocklist、一時 allowlist activity、未完了 removal は deployment JSON ではなく、runtime data root の
 `database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、
 migration lineage、schema version、JSONB / relational row shape、policy の非重複を検証します。その他は
-feature 単位で検証し、日本語翻訳は `g-auth.json` を読みます。欠落は対応 toggle とその機能の
+feature 単位で検証し、翻訳は `g-auth.json` を読みます。欠落は対応 toggle とその機能の
 実行経路だけを拒否し、起動は妨げません。ただし**ファイルが存在する限り厳密なパースを
 通らなければならず**、対応機能が今オフでも不正な内容は起動を拒否します
 （[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の
@@ -222,11 +222,11 @@ sidecar が同じ協働 group を継承します。
 
 旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、**9.1.5 上で** identity storage migration を実行します（この script は 9.2.0 で削除済み。[運用文書](07-operations.md#identity-storage-migration) を参照）。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/telegram.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
 
-**注意：資格情報を外しても起動は拒否されませんが、そのグループは静かに止まります。** 起動時の総ゲートが検証するのは**すでに存在する**デプロイ入力だけです（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照。現在は `packages/config/readiness.ts` の `validateExistingDeploymentInputs` を再 export するだけです）。存在するファイルは厳密なパースを通らなければならず、本当に存在しないファイルは起動を妨げません。`chat_states` の `true` は従来どおり復元されますが、対応機能は唯一の判定入口で利用不可と判定されます——AI 雑談の Worker はそもそも起動せずメモリも hydrate されず（`memory/` のスナップショットは前提が戻るまでそのまま保持されます）、`/ja_copy` は通常コピーへ退化し、広告検出は bundle を送らなくなります。グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えず、痕跡は `logs/` の 1 行だけです。したがって資格情報を外す前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行するか、前提そのものを復旧してください。
+**注意：資格情報を外しても起動は拒否されませんが、そのグループは静かに止まります。** 起動時の総ゲートが検証するのは**すでに存在する**デプロイ入力だけです（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照。現在は `packages/config/readiness.ts` の `validateExistingDeploymentInputs` を再 export するだけです）。存在するファイルは厳密なパースを通らなければならず、本当に存在しないファイルは起動を妨げません。`chat_states` の `true` は従来どおり復元されますが、対応機能は唯一の判定入口で利用不可と判定されます——AI 雑談の Worker はそもそも起動せずメモリも hydrate されず（`memory/` のスナップショットは前提が戻るまでそのまま保持されます）、`/translate` のセッションは動作せず、広告検出は bundle を送らなくなります。グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えず、痕跡は `logs/` の 1 行だけです。したがって資格情報を外す前に `/ai_chat disable`、`/ad_detect disable`、`/translate disable` を実行するか、前提そのものを復旧してください。
 
 ### インラインサムネイルと Bot 既定アバターの差し替え
 
-インライン結果のサムネイル 4 枚（`/luck_challenge` の 2 枚、gag 発言入口、`/set_qa` フォーム）と、`/reset_icon`・`/stop_copy` で復元する既定アバターの直リンクは、いずれも `state.json` の `global.assets` にあります。
+インライン結果のサムネイル 3 枚（`/luck_challenge` の 2 枚と gag 発言入口）と、`/icon reset`・`/copy stop` で復元する既定アバターの直リンクは、いずれも `state.json` の `global.assets` にあります。
 
 ```json
 "global": {
@@ -243,7 +243,7 @@ sidecar が同じ協働 group を継承します。
 
 4 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
 
-> `state.global.assets` が導入される前のバージョンから上げる場合は、**起動前にこの 4 項目を確認**してください：サムネイル 3 枚は現在 `https` のみを受け付けるため、以前 `http://` で設定していたものはデコード時に起動を拒否し、フィールドパスを示します。
+> 起動前に `state.global.assets` の 4 つの URL を確認してください。サムネイル 3 枚は `https` が必須で、不正な URL はデコード時に起動を拒否し、フィールドパスを示します。
 
 **変更は停止中に行います**：稼働中のプロセスは正式な状態をメモリに保持しファイル全体を上書きするため、`systemctl stop` → 編集 → `systemctl start` の順です（[07 運用とトラブルシューティング](07-operations.md) を参照）。
 

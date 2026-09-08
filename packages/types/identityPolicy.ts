@@ -20,7 +20,7 @@ export interface WhitelistPermissions {
   isCanControllAIPermission: boolean;
   isCanControllAdDetectPermission: boolean;
   isCanControllFloodControlPermission: boolean;
-  isCanControllJATranslatePermission: boolean;
+  isCanControllTranslatePermission: boolean;
   isCanControllAntiRaidPermission: boolean;
   isCanControllQaPermission: boolean;
 }

@@ -13,7 +13,7 @@ import { forumTopicThreadId } from "../../libs/forumTopic";
 import { pickRandom } from "../../libs/random";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type { CopyMode } from "../../types/chatState";
-import { echoMessage, resolveEffectiveCopyMode } from "./echo";
+import { echoMessage } from "./echo";
 import { hasCopyableContent } from "./facts";
 
 /**
@@ -89,7 +89,7 @@ export function handleProactiveMessageActions({
     hasCopyableContent(message) &&
     Math.random() < RANDOM_ECHO_PROBABILITY
   ) {
-    const mode: CopyMode | undefined = resolveEffectiveCopyMode(chatId, pickRandom(RANDOM_ECHO_MODES));
+    const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
     return performRandomEcho(chatId, message, mode);
   }
   return undefined;

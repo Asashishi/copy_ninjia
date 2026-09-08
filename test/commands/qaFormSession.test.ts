@@ -23,7 +23,7 @@ afterEach((): void => {
   resetChatQaCache();
 });
 
-describe("/set_qa 表单会话", () => {
+describe("/qa set 表单会话", () => {
   test("按群唯一：同一群重开会替换掉旧的那张", () => {
     const first: QaFormSession | null = openQaFormSession({
       chatId: CHAT_ID,

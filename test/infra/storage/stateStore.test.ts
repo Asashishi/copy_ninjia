@@ -1,5 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -33,6 +42,7 @@ import {
   PROBABILITY_THUMBNAIL_URL,
 } from "../../../packages/consts/ui/assets";
 import { DEFAULT_CHAT_STATE } from "../../../packages/libs/chatState";
+import { decodeStateFile } from "../../../packages/libs/stateFileCodec";
 import type {
   ChatState,
   DecodedStateFile,
@@ -41,9 +51,46 @@ import type {
 } from "../../../packages/types/chatState";
 import { botPermissions } from "../../helpers/botPermissions";
 
+/**
+ * 让某一条路径的 stat 或 bytes 以给定 errno 失败，其余路径走真实 Bun.file。
+ * 测试账号常为 root，chmod 挡不住读取，权限类失败只能在这一层注入。
+ */
+function failBunFile(target: string, stage: "stat" | "bytes", error: Error): () => void {
+  const original = Bun.file.bind(Bun);
+  const spy = spyOn(Bun, "file");
+  spy.mockImplementation(((path: string) => {
+    const file = original(path);
+    if (path !== target) return file;
+    return new Proxy(file, {
+      get(source: object, prop: string | symbol): unknown {
+        if (prop === stage) return async (): Promise<never> => { throw error; };
+        const value = Reflect.get(source, prop, source);
+        return typeof value === "function" ? value.bind(source) : value;
+      },
+    });
+  }) as typeof Bun.file);
+  return (): void => { spy.mockRestore(); };
+}
+
+/**
+ * 收集一次被拒绝的加载里，读取边界点名了哪些副本路径。聚合错误的成员各自是
+ * InputValidationError，消息形如 `<path>: $ must be ...`。
+ */
+async function rejectedReadPaths(load: Promise<unknown>): Promise<string[]> {
+  const error: unknown = await load.then(
+    (): null => null,
+    (reason: unknown): unknown => reason
+  );
+  if (error === null) throw new Error("expected the load to be rejected");
+  const members: unknown[] = error instanceof AggregateError ? error.errors : [error];
+  return members.map((member: unknown): string =>
+    member instanceof Error ? member.message.split(": ")[0]! : String(member));
+}
+
 function schema(chatId: number): DecodedStateFile {
   return {
     global: { copy: { copiedUser: null, lastCopyTime: chatId }, assets: {} },
+    translate: {},
   };
 }
 
@@ -414,6 +461,228 @@ describe("StateStore", () => {
 });
 
 /**
+ * 默认读取边界：状态副本必须是普通文件且是严格 UTF-8，否则拒绝启动。
+ *
+ * 一律使用真实临时文件和默认 reader；注入 readText 只能测到已经解码成合法字符串
+ * 的内容，测不到非法字节和非文件路径。写入统一注入 mock 计数，用来断言被拒绝的
+ * 加载一次都没有回写。
+ */
+describe("StateStore 默认读取边界", () => {
+  const legal: string = '{"global":{"copy":{"copiedUser":{"id":1,"first_name":"X"},"copyChatId":-1}}}';
+
+  let dir: string;
+  let statePath: string;
+  let backupPath: string;
+  let writes: { path: string; content: string }[];
+
+  function storeAt(): StateStore {
+    return new StateStore({
+      stateFilePath: statePath,
+      writeText: async (path: string, content: string): Promise<void> => { writes.push({ path, content }); },
+    });
+  }
+
+  /** 把合法样本里 first_name 的那个 `X` 换成裸 0xff，其余字节保持不变。 */
+  function invalidBytes(): Uint8Array {
+    const bytes: Uint8Array = new TextEncoder().encode(legal);
+    const marker: number = legal.indexOf('"X"') + 1;
+    bytes[marker] = 0xff;
+    return bytes;
+  }
+
+  /** 截断的多字节序列：合法前缀加一个孤立的 UTF-8 首字节。 */
+  function truncatedBytes(): Uint8Array {
+    const head: Uint8Array = new TextEncoder().encode('{"global":{"copy":{"copiedUser":null}}}');
+    const bytes: Uint8Array = new Uint8Array(head.length + 1);
+    bytes.set(head, 0);
+    bytes[head.length] = 0xe4;
+    return bytes;
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "state-read-boundary-"));
+    statePath = join(dir, "state.json");
+    backupPath = `${statePath}.bak`;
+    writes = [];
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  for (const [label, make] of [["非法字节", invalidBytes], ["截断多字节", truncatedBytes]] as const) {
+    for (const side of ["primary", "backup"] as const) {
+      for (const other of ["missing", "valid"] as const) {
+        test(`${label}在${side === "primary" ? "主" : "备"}文件、另一侧${other === "valid" ? "合法" : "缺失"}时拒绝且零回写`, async () => {
+          const badPath: string = side === "primary" ? statePath : backupPath;
+          const goodPath: string = side === "primary" ? backupPath : statePath;
+          const bad: Uint8Array = make();
+          writeFileSync(badPath, bad);
+          if (other === "valid") writeFileSync(goodPath, legal);
+          const store = storeAt();
+
+          try {
+            expect(await rejectedReadPaths(store.load())).toContain(badPath);
+            expect(writes).toEqual([]);
+            expect(Array.from(readFileSync(badPath))).toEqual(Array.from(bad));
+            if (other === "valid") expect(readFileSync(goodPath, "utf8")).toBe(legal);
+          } finally {
+            store.dispose();
+          }
+        });
+      }
+    }
+  }
+
+  for (const kind of ["directory", "dirLink", "danglingLink"] as const) {
+    for (const side of ["primary", "backup"] as const) {
+      test(`${kind} 出现在${side === "primary" ? "主" : "备"}路径时拒绝，不因另一侧合法而覆盖`, async () => {
+        const badPath: string = side === "primary" ? statePath : backupPath;
+        const goodPath: string = side === "primary" ? backupPath : statePath;
+        if (kind === "directory") mkdirSync(badPath);
+        if (kind === "dirLink") {
+          const target: string = join(dir, "target-dir");
+          mkdirSync(target);
+          symlinkSync(target, badPath);
+        }
+        if (kind === "danglingLink") symlinkSync(join(dir, "absent-target"), badPath);
+        writeFileSync(goodPath, legal);
+        const store = storeAt();
+
+        try {
+          expect(await rejectedReadPaths(store.load())).toContain(badPath);
+          expect(writes).toEqual([]);
+          expect(readFileSync(goodPath, "utf8")).toBe(legal);
+          expect(lstatSync(badPath).isSymbolicLink() || lstatSync(badPath).isDirectory()).toBeTrue();
+        } finally {
+          store.dispose();
+        }
+      });
+    }
+  }
+
+  test("stat 报权限失败时是安全错误而不是缺失", async () => {
+    writeFileSync(backupPath, legal);
+    const denied: Error & { code?: string } = new Error("EACCES: permission denied, stat");
+    denied.code = "EACCES";
+    const restore: () => void = failBunFile(statePath, "stat", denied);
+    const store = storeAt();
+
+    try {
+      expect(await rejectedReadPaths(store.load())).toContain(statePath);
+      expect(writes).toEqual([]);
+    } finally {
+      restore();
+      store.dispose();
+    }
+  });
+
+  test("stat 通过后读取阶段文件消失同样报错，不降级为缺失", async () => {
+    writeFileSync(statePath, legal);
+    writeFileSync(backupPath, legal);
+    const vanished: Error & { code?: string } = new Error("ENOENT: no such file or directory, read");
+    vanished.code = "ENOENT";
+    const restore: () => void = failBunFile(statePath, "bytes", vanished);
+    const store = storeAt();
+
+    try {
+      expect(await rejectedReadPaths(store.load())).toContain(statePath);
+      expect(writes).toEqual([]);
+    } finally {
+      restore();
+      store.dispose();
+    }
+  });
+
+  test("两份都缺失时返回 null，不写盘", async () => {
+    const store = storeAt();
+    try {
+      await expect(store.load()).resolves.toBeNull();
+      expect(writes).toEqual([]);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test("主合法、备缺失时补齐备份", async () => {
+    writeFileSync(statePath, legal);
+    const store = storeAt();
+    try {
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      expect(writes).toEqual([{ path: backupPath, content: legal }]);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test("主缺失、备合法时重建主文件", async () => {
+    writeFileSync(backupPath, legal);
+    const store = storeAt();
+    try {
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      expect(writes).toEqual([{ path: statePath, content: legal }]);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test("两侧都合法但不同时仍以主文件为准同步备份", async () => {
+    const stale: string = '{"global":{"copy":{"copiedUser":null}}}';
+    writeFileSync(statePath, legal);
+    writeFileSync(backupPath, stale);
+    const store = storeAt();
+    try {
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      expect(writes).toEqual([{ path: backupPath, content: legal }]);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test("中文与 emoji 正常加载", async () => {
+    const content: string = '{"global":{"copy":{"copiedUser":{"id":7,"first_name":"忍者🥷"},"copyChatId":-9}}}';
+    writeFileSync(statePath, content);
+    writeFileSync(backupPath, content);
+    const store = storeAt();
+    try {
+      const loaded: DecodedStateFile | null = await store.load();
+      expect(loaded?.global.copy.copiedUser?.first_name).toBe("忍者🥷");
+      expect(writes).toEqual([]);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test("指向普通文件的软链接继续接受", async () => {
+    const target: string = join(dir, "real-state.json");
+    writeFileSync(target, legal);
+    symlinkSync(target, statePath);
+    writeFileSync(backupPath, legal);
+    const store = storeAt();
+    try {
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      expect(writes).toEqual([]);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  test("UTF-8 BOM 被剥离后正常解析", async () => {
+    const bytes: Uint8Array = new TextEncoder().encode(`\uFEFF${legal}`);
+    writeFileSync(statePath, bytes);
+    writeFileSync(backupPath, bytes);
+    const store = storeAt();
+    try {
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      // 两份副本剥离 BOM 后内容一致，不触发同步写入。
+      expect(writes).toEqual([]);
+    } finally {
+      store.dispose();
+    }
+  });
+});
+
+/**
  * 内存镜像上的纯查询/裁剪门面。业务侧测试普遍 mock 掉这些函数，这里直接打
  * 真实现，避免各处替身与真语义悄悄漂移。
  */
@@ -564,6 +833,7 @@ describe("素材直链的加载接线", () => {
     // 也看不出来。
     const statePath: string = join(dir, "state.json");
     const stored: DecodedStateFile = {
+      translate: {},
       global: {
         copy: { copiedUser: null },
         assets: {
@@ -602,6 +872,7 @@ describe("素材直链的加载接线", () => {
   test("复读目标、模式、所属群与冷却时间按判别联合完整恢复", async () => {
     const statePath: string = join(dir, "state-with-copy.json");
     const stored: DecodedStateFile = {
+      translate: {},
       global: {
         copy: {
           copiedUser: { id: 42, first_name: "Target" },

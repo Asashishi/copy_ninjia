@@ -12,6 +12,6 @@ export const PROBABILITY_THUMBNAIL_URL: string =
 export const GAG_THUMBNAIL_URL: string =
   "https://drive.google.com/uc?export=view&id=1AhvfdbcwQnUBBk86yEafb_G3gZOWXim2";
 
-/** `/reset_icon`、`/stop_copy` 复原机器人头像时下载的缺省直链。 */
+/** `/icon reset`、`/copy stop` 复原机器人头像时下载的缺省直链。 */
 export const BOT_DEFAULT_AVATAR_URL: string =
   "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci";

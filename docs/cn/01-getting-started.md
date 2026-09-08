@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
-- **（可选）Google Cloud 服务账号 JSON**：只有 `/ja_copy` 日语翻译需要，存为项目根的 `g-auth.json`。缺失时 `/ja_copy` 直接拒绝并点名这个文件，自动复读的 ja 变换退化成普通复制，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
+- **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为项目根的 `g-auth.json`。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
 
 `g-auth.json` 由 `packages/config/googleAuth.ts` 严格解析：`client_email` 为非空字符串，`private_key` 为可解析的非空 PEM 私钥；`type` 可省略，存在时只能为 `service_account`。SDK 消费的 `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` 可省略，存在时必须为非空字符串。其余元数据原样保留。校验发生在创建 Worker 和连接 Telegram 之前，错误仅包含文件路径、字段路径与期望，不输出凭据值。
 
@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 3. **身份数据库与校验**：按生产路径解析结果检查 `database/storage.sqlite`，只在不存在时创建当前 schema 的空库，再校验部署输入。
 4. **服务与观察**：在已确认停止的部署上注册或复用 unit，启动并完成状态、动态观察时长、重启计数与 journal 核验。仅全部通过才清理配置和 unit 备份；验证失败非零退出，前台运行保留备份。
 
-脚本重跑时保留既有数据库，配置仅在明确重填时替换。`g-auth.json` 由部署方带外提供；缺少它时日语翻译不可用，已有但非法时拒绝启动。
+脚本重跑时保留既有数据库，配置仅在明确重填时替换。`g-auth.json` 由部署方带外提供；缺少它时翻译不可用，已有但非法时拒绝启动。
 
 ### 手工安装
 
@@ -86,7 +86,7 @@ Bot 身份和超级管理员写入 `config/telegram.json`：
     超级管理员的 `query` 返回那份逐项全开的视图。
 AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`。如需改变运行时
 数据目录，可在进程环境中设置 `COPY_NINJIA_DATA_ROOT`；缺省时数据落在项目根，详见
-[07 运维与排障](07-operations.md#数据根)。如需日语翻译，把服务账号密钥存为项目根目录
+[07 运维与排障](07-operations.md#数据根)。如需翻译，把服务账号密钥存为项目根目录
 的 `g-auth.json`；该文件已加入 `.gitignore`。
 
 ## 项目侧配置文件
@@ -131,7 +131,7 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
     以 404/405 表明模型/路径不存在时都停止下载该类媒体（后者另记一行指向
     `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力。
 
-永久白名单、黑名单、临时白名单累计与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB/关系列结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/ja_copy enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。结论按进程缓存，修好文件后必须重启。
+永久白名单、黑名单、临时白名单累计与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB/关系列结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/translate enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。结论按进程缓存，修好文件后必须重启。
 
 ### 初始化身份数据库
 
@@ -178,11 +178,11 @@ chmod 660 database/storage.sqlite
 
 旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 
-**注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——AI 闲聊的 Worker 根本不启动、记忆不 hydrate（`memory/` 里那份原样留着等前提补齐），`/ja_copy` 退化成普通复制，广告检测不再送检。群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable`，或者干脆把前提补回去。
+**注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——AI 闲聊的 Worker 根本不启动、记忆不 hydrate（`memory/` 里那份原样留着等前提补齐），`/translate` 会话不执行，广告检测不再送检。群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/translate disable`，或者干脆把前提补回去。
 
 ### 换掉内联缩略图与机器人默认头像
 
-三张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」，以及 gag 发言入口）和 `/reset_icon`、`/stop_copy` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
+三张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」，以及 gag 发言入口）和 `/icon reset`、`/copy stop` 复原用的默认头像，直链都放在 `state.json` 的 `global.assets`：
 
 ```json
 "global": {
@@ -199,7 +199,7 @@ chmod 660 database/storage.sqlite
 
 四项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
 
-> 从 `state.global.assets` 早于本节的版本升级上来时，**先看一眼这五项再启动**：四张缩略图现在只认 `https`，此前配成 `http://` 的会在解码期拒绝启动并点名字段路径。
+> 启动前核对 `state.global.assets` 的四项地址：三张缩略图只接受 `https`，非法地址会在解码期拒绝启动并点名字段路径。
 
 **改法是停机改**：运行中的进程持有权威内存，会整份覆写这个文件，改完必须 `systemctl stop` → 编辑 → `systemctl start`（同 [07 运维与排障](07-operations.md)）。
 

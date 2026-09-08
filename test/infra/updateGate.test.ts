@@ -234,13 +234,13 @@ describe("shouldRoutePrivateProxyMessage", () => {
     try {
       const base = { chat: { id: SUPER_ADMIN_USER_ID, type: "private" }, from: { id: SUPER_ADMIN_USER_ID } };
       expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "普通文本" } }))).toBe(true);
-      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/stop_copy" } }))).toBe(false);
+      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/copy stop" } }))).toBe(false);
       expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { photo: [{}] } }))).toBe(true);
       expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/send finish" } }))).toBe(false);
       expect(shouldRoutePrivateProxyMessage(fakeCtx({
         chat: { id: SUPER_ADMIN_USER_ID + 1, type: "private" },
         from: { id: SUPER_ADMIN_USER_ID + 1 },
-        message: { text: "/stop_copy" },
+        message: { text: "/copy stop" },
       }))).toBe(false);
     } finally {
       getOrCreateChatState(targetChatId).isProxySendEnabled = false;

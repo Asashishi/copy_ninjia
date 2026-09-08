@@ -2,6 +2,7 @@ import type { BotCommand } from "grammy/types";
 import type { CommandTargetMessages, ToggleCommandTexts } from "../types/commands";
 import { CHAT_QA_MAX_PER_CHAT } from "./qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "./storage";
+import { TRANSLATE_CHAT_USER_LIMIT } from "./translate";
 
 /** 群聊命令文本发送后自动清理的最长保留时间。 */
 export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
@@ -16,14 +17,10 @@ export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
  * 这一条纯占位说明项来曝光用法，见 commands/cjkAction.ts。
  */
 export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
-  { command: "copy", description: "让本天才复读你的消息，连这都要点菜单吗，杂鱼♡" },
-  { command: "r_copy", description: "让本天才反转文本再复读，倒着看可别把自己绕晕哦，杂鱼♡" },
-  { command: "nya_copy", description: "让本天才复读并加上喵~，这点可爱也要来蹭吗，杂鱼♡" },
-  { command: "ja_copy", description: "复读并翻成日语；enable/disable 开关本群功能，只有获授权者配碰，杂鱼别乱按♡" },
-  { command: "stop_copy", description: "停掉当前复读，终于发现自己很吵了吗，杂鱼♡" },
-  { command: "steal_icon", description: "偷取目标头像给本天才换上，连自己的头像都拿不出手吗，杂鱼♡" },
+  { command: "copy", description: "让本天才复读；reverse 倒序 / nya 加喵~ / stop 停止，回复 TA 或加 @username 指定目标，连这都要点菜单吗，杂鱼♡" },
+  { command: "translate", description: `ja 日语 / cn 简体中文 / en 美式英语 / uk 乌克兰语 / ru 俄语；回复目标或加 @username，每群最多 ${TRANSLATE_CHAT_USER_LIMIT} 人，list 看清单，stop 停全群、加目标停单人，enable/disable 开关功能，杂鱼看好参数♡` },
+  { command: "icon", description: "用 steal 偷目标头像，回复 TA 或加 @username；reset 换回本天才原装脸，连自己的头像都拿不出手吗，杂鱼♡" },
   { command: "wed", description: "让本天才随机抽取群友老婆；支持确认、换一只和移除，再发 /wed 可重抽♡" },
-  { command: "reset_icon", description: "把本天才的头像换回原装那张脸，戴腻别人的脸了吗，杂鱼♡" },
   // 占位说明项：命令名 x 就是那个「变量」，提示用户把它换成任意 1~2 个中文字。
   // 它存在的唯一目的是让中文动作命令在菜单里可见——那类命令名进不了菜单，
   // 见上方说明。收到时由 commands/cjkAction.ts 的 handleCjkActionUsageCommand
@@ -37,8 +34,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "flood_control", description: "用 enable/disable 开关本群防刷屏禁言，只有获授权者配碰，刷屏杂鱼可别手抖哦♡" },
   { command: "antiraid", description: "用 enable/disable 开关本群入群验证与防冲群私密模式，只有获授权者配碰，关掉就没人替你拦僵尸了哦杂鱼♡" },
   { command: "bot_status", description: "查看本机进程、全局模型能力、Telegram 出站、本群权限与已开启功能，连本天才会什么都记不住吗，笨蛋♡" },
-  { command: "query_mood", description: "偷看本群 AI 当前心情，群成员都能问，连本天才的脸色都不会看吗，杂鱼♡" },
-  { command: "switch_mood", description: "重新抽取本群 AI 心情，只有获授权者配左右本天才，杂鱼别得意♡" },
+  { command: "mood", description: "query 偷看本群 AI 当前心情，群成员都能问；switch 重抽心情，只有获授权者配左右本天才，杂鱼别得意♡" },
   { command: "init", description: "用 enable/disable 开关本群机器人监听/初始化，只有超级管理员配决定本天才管不管，杂鱼♡" },
   { command: "quiet", description: "让本天才安静 1~15 分钟，默认 3 分钟；嫌吵就自己说清楚呀，笨蛋♡" },
   { command: "unquiet", description: "提前解除 /quiet，让本天才重新开口；这么快就想我了吗，杂鱼♡" },
@@ -48,9 +44,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "ungag", description: "定向解除目标 gag；必须回复、写 @username 或用户/频道 id，同样需要 isCanGag，笨蛋♡" },
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
   { command: "permission", description: "用 help 看说明、query 查权限，所有杂鱼都能用；修改权限仅限超级管理员，杂鱼别乱碰♡" },
-  { command: "set_qa", description: `给本群登记一条问答：照提示分两条消息发「问题:」和「回答:」，最多 ${CHAT_QA_MAX_PER_CHAT} 条；以后有人一字不差地问，本天才直接答，仅持有 isCanControllQaPermission 的身份配用♡` },
-  { command: "query_qa", description: "看看本群登记了哪些问答，写 /query_qa <问题文本> 只查那一条，群成员都能看，杂鱼♡" },
-  { command: "remove_qa", description: "删掉本群指定问答，写成 /remove_qa <问题文本>，同样需要 isCanControllQaPermission，别手滑，笨蛋♡" },
+  { command: "qa", description: `set 开表单登记问答（最多 ${CHAT_QA_MAX_PER_CHAT} 条），remove <问题> 删除，均需 isCanControllQaPermission；query [问题] 查一条或全部，群成员都能看，杂鱼♡` },
   { command: "white", description: "新增或删除白名单用户/频道；isCanWhiteOther 只能代加默认权限，删除仍只有超级管理员配碰，杂鱼别乱伸手♡" },
 ];
 
@@ -291,20 +285,6 @@ export const ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT: string =
   `守门是不守了——不过本天才的守门小弟这会儿不在，已经开着的验证窗口和私密模式` +
   `没能当场收掉，日志里写着呢，杂鱼管理员待会儿再关一次♡`;
 
-/**
- * `/ja_copy enable|disable` 的全部文案。用法提示要额外说清不带参数是复读翻译：
- * 这条命令的两种用法共用同一个命令名，靠有没有参数区分（见 commands/jaCopy.ts）。
- */
-export const JA_COPY_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
-  rejection: (mockerLabel: string): string =>
-    `就 ${mockerLabel} 也想管本天才要不要翻译日语？哪来的资格呀，笨蛋♡`,
-  usage: `笨蛋，/ja_copy 不带参数是复读翻译，要开关这个功能就 /ja_copy enable 或 /ja_copy disable，说清楚呀♡`,
-  enabled: `哼，那本天才就赏脸继续在这个群用 /ja_copy 翻译日语吧，杂鱼们好好珍惜♡`,
-  disabled: `本天才不想再给你们这群杂鱼翻译日语了，/ja_copy 到此为止♡`,
-  alreadyEnabled: `笨蛋，本天才本来就在这个群翻日语呀，直接用 /ja_copy 不就好了♡`,
-  alreadyDisabled: `本天才本来就没在这个群翻日语呀，笨蛋要关什么呢♡`,
-};
-
 /** `/init enable|disable` 的全部文案；这条是超级管理员独占的群总开关。 */
 export const INIT_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
   rejection: (mockerLabel: string): string =>
@@ -342,7 +322,7 @@ export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
 export const INIT_CHAT_LIMIT_TEXT: string =
   `State 最多只能管理 ${STATE_MANAGED_CHAT_LIMIT} 个群，现在已经满了。` +
   `/init disable 只关总开关，功能开关还开着的群仍占着名额：` +
-  `去那个群把 /ai_chat、/ad_detect、/flood_control、/antiraid、/ja_copy 逐条 disable，` +
+  `去那个群把 /ai_chat、/ad_detect、/flood_control、/antiraid、/translate 逐条 disable，` +
   `或者把本天才移出那个群，再回来启用本群。`;
 
 /**
@@ -396,9 +376,9 @@ export const UNMUTE_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
 /**
  * 共用同一套目标提示文案的命令名；限定集合避免提示与实际入口再次漂移。
  *
- * `/steal_icon` 也在列：它的五条文案与 copy 类逐字相同，只差命令名。
+ * `/icon steal` 也在列：它的五条文案与 copy 类逐字相同，只差命令名。
  */
-type SharedTargetTextCommand = "copy" | "r_copy" | "nya_copy" | "ja_copy" | "steal_icon";
+type SharedTargetTextCommand = "copy" | "copy reverse" | "copy nya" | "icon steal";
 
 /** 为一条命令创建模块级目标提示；只在模块初始化时调用。 */
 function createSharedTargetTexts(command: SharedTargetTextCommand): Readonly<CommandTargetMessages> {
@@ -417,13 +397,11 @@ function createSharedTargetTexts(command: SharedTargetTextCommand): Readonly<Com
 
 /** `/copy` 的目标解析提示。 */
 export const COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("copy");
-/** `/r_copy` 的目标解析提示。 */
-export const REVERSE_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("r_copy");
-/** `/nya_copy` 的目标解析提示。 */
-export const NYA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("nya_copy");
-/** `/ja_copy` 复读分支的目标解析提示。 */
-export const JA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("ja_copy");
+/** `/copy reverse` 的目标解析提示。 */
+export const REVERSE_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("copy reverse");
+/** `/copy nya` 的目标解析提示。 */
+export const NYA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createSharedTargetTexts("copy nya");
 
-/** `/steal_icon` 的目标解析提示；与 copy 类共用同一套文案，只差命令名。 */
+/** `/icon steal` 的目标解析提示；与 copy 类共用同一套文案，只差命令名。 */
 export const STEAL_ICON_TARGET_TEXTS: Readonly<CommandTargetMessages> =
-  createSharedTargetTexts("steal_icon");
+  createSharedTargetTexts("icon steal");

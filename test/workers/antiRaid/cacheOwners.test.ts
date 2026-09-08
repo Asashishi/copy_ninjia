@@ -636,6 +636,43 @@ describe("Lockdown write-ahead runtime", () => {
     expect(permissionWrites[0]?.can_invite_users).toBeTrue();
   });
 
+  /**
+   * `scheduleRestoreRetry` 这条 effect 此前**整条 case 从没被派发过**——连
+   * 「entry 已消失就 break」和「已有 timer 先 clearTimeout」都没进过。这里补上
+   * 它唯一的来源：RESTORING 阶段恢复失败（states/lockdown/restore.ts 的
+   * handleRestoreResult）。
+   *
+   * 三个 schedule* 排的 timer 都 unref() 且延迟按分钟计，用例不推进时钟就不会
+   * 执行，因此这里只钉「排了、没误判成已解除」，不断言回调体。
+   */
+  test("恢复失败时保留 RESTORING 并排一个重试 timer", async () => {
+    const chatId = -1007;
+    currentPermissions = { can_invite_users: false, can_send_messages: true };
+    // 第一次恢复失败：状态留在 restoring，并排一个重试 timer。
+    setChatPermissions.mockRejectedValueOnce(new Error("restore failed"));
+
+    lockdownRuntime.adoptLockdowns([{
+      chatId,
+      phase: "restoring",
+      intentId: 21,
+      originalPermissions: { can_invite_users: true, can_send_messages: true },
+      announced: false,
+      remainingMs: 0,
+    }]);
+    await Bun.sleep(0);
+
+    expect(lockdownEntries.get(chatId)?.state.kind).toBe("restoring");
+    const retryTimer = lockdownEntries.get(chatId)?.retryTimer;
+    expect(retryTimer).toBeDefined();
+
+    // timer 必须 unref：停机时它不能把进程钉住。
+    expect(lockdownEntries.get(chatId)?.restoreTimer).toBeUndefined();
+    // 恢复没成功，状态和权限都不得被当成已解除。
+    expect(lockdownEvents.some((event) =>
+      event.type === "unlock" && event.chatId === chatId
+    )).toBeFalse();
+  });
+
   test("重建 RECONCILING 时纠偏失败保留状态并安排重试", async () => {
     const chatId = -1006;
     currentPermissions = { can_invite_users: true, can_send_messages: true };

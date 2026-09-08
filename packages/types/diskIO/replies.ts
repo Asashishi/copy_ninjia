@@ -227,7 +227,7 @@ export interface AiMemoryPersistedReply {
  * 在别处完全无迹可寻（主线程 dailyLuckCache 照常命中，用户看不出异常）。
  * 递归风险为零：主线程据此记的日志走 log 领域，log 领域自己写失败只 console.error，
  * 不会再产生第二条 logger 调用。
- * @see ../../docs/cn/04-invariants.md
+ * @see ../../../docs/cn/04-invariants.md
  */
 export interface LuckAppendStalledReply {
   type: "luckAppendStalled";

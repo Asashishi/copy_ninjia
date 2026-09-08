@@ -32,6 +32,7 @@ import {
   floodWindowCacheStateHolder,
   floodWindowsByChat,
 } from "../../cache/workers/antiRaid/flood";
+import { signalWithTimeout } from "../../libs/abortSignal";
 import { TimestampDeque } from "../../libs/timestampDeque";
 import { botCanRestrictIn } from "./botPermissions";
 import { isChatAdmin } from "./adminCache";
@@ -228,7 +229,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     // - 停机：这个任务登记在 drain 的等待集合里，而上面那个超时是 2 分钟量级、
     //   drain 的预算是秒级。不撤掉的话，凡是停机恰好落在排队期间就换来一次脏
     //   退出加一批 update 重投（见 taskTracker 的 antiRaidDispatchSignal）。
-    signal: AbortSignal.any([dispatchAbort, AbortSignal.timeout(FLOOD_MUTE_DISPATCH_TIMEOUT_MS)]),
+    signal: signalWithTimeout(dispatchAbort, FLOOD_MUTE_DISPATCH_TIMEOUT_MS),
   });
   if (outcome !== "muted") {
     // forbidden 是 Telegram 明确的拒绝（机器人缺权限，或目标其实是管理员而
@@ -259,7 +260,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     chatId: message.chatId,
     text: formatFloodMuteNotice(message.label),
     deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
-    signal: AbortSignal.any([dispatchAbort, AbortSignal.timeout(FLOOD_NOTICE_DISPATCH_TIMEOUT_MS)]),
+    signal: signalWithTimeout(dispatchAbort, FLOOD_NOTICE_DISPATCH_TIMEOUT_MS),
   });
 }
 

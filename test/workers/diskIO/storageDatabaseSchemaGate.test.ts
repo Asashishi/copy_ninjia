@@ -23,7 +23,7 @@ interface MigrationSnapshot {
   readonly createdAt: number;
 }
 
-/** 还原 v7 所需的原始 DDL、migration 记录与 schema 版本行。 */
+/** 还原 v8 所需的原始 DDL、migration 记录与 schema 版本行。 */
 interface SchemaSnapshot {
   readonly temporaryWhitelistDdl: string;
   readonly migrations: readonly MigrationSnapshot[];
@@ -54,14 +54,14 @@ function readSchemaSnapshot(database: StorageDatabase): SchemaSnapshot {
   const migrations: MigrationSnapshot[] = database.$client
     .query<{ hash: string; createdAt: number }, []>(
       "SELECT hash, created_at AS createdAt FROM __drizzle_migrations " +
-      "ORDER BY created_at DESC LIMIT 2;"
+      "ORDER BY created_at DESC LIMIT 3;"
     ).all().reverse();
   const version: { text: string } | null = database.$client
     .query<{ text: string }, []>(
       "SELECT json(data) AS text FROM storage_metadata WHERE key = 'schema-version';"
     ).get();
-  if (ddl === null || migrations.length !== 2 || version === null) {
-    throw new Error("test fixture expects a fully migrated v7 database");
+  if (ddl === null || migrations.length !== 3 || version === null) {
+    throw new Error("test fixture expects a fully migrated v8 database");
   }
   return {
     temporaryWhitelistDdl: ddl.sql,
@@ -89,7 +89,7 @@ function degradeToSchemaV5(): void {
   });
 }
 
-function restoreSchemaV7(restored: SchemaSnapshot): void {
+function restoreSchemaV8(restored: SchemaSnapshot): void {
   withDatabase((database: StorageDatabase): void => {
     // DDL 取自 sqlite_master，逐字写回本库自己的建表语句。
     database.$client.run(restored.temporaryWhitelistDdl);
@@ -109,7 +109,7 @@ function restoreSchemaV7(restored: SchemaSnapshot): void {
 afterEach((): void => {
   const pending: SchemaSnapshot | null = snapshot;
   snapshot = null;
-  if (pending !== null) restoreSchemaV7(pending);
+  if (pending !== null) restoreSchemaV8(pending);
   withDatabase((database: StorageDatabase): void => {
     database.$client.run("DELETE FROM pending_blocked_removals;");
     database.$client.run("DELETE FROM whitelist_entries;");
@@ -156,11 +156,11 @@ describe("共享存储库的启动 schema 闸", () => {
     // 版本判定必须先于任何按版本才存在的表：先读 startup rows 的话，这里拿到的
     // 是临时白名单缺表，运维照着那句排查不会想到该跑冷迁移。
     expect(() => hydrateStorageDatabase()).toThrow(
-      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":7}.`
+      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":8}.`
     );
   });
 
-  test("当前 v7 库照常 hydrate", () => {
+  test("当前 v8 库照常 hydrate", () => {
     expect(hydrateStorageDatabase()).toEqual({
       blocklistEntryCount: 0,
       whitelistEntryCount: 0,
@@ -343,7 +343,7 @@ describe("共享存储库的启动 schema 闸", () => {
       );
     });
     try {
-      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v7 migration lineage/);
+      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v8 migration lineage/);
     } finally {
       withDatabase((database: StorageDatabase): void => {
         database.$client.run(

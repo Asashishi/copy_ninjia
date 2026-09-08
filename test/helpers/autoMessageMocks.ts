@@ -37,6 +37,7 @@ export const waitForBotOwnMessageMock = mock(
  */
 export const autoMessageChatState: {
   isAIChatEnabled: boolean;
+  isTranslationEnabled: boolean;
   /**
    * 本群是否已接管。缺省 false：问答直答那条分支只对已接管的群生效，不关心它的
    * 用例保持原有走向（见 auto/message/index.ts）。
@@ -44,7 +45,9 @@ export const autoMessageChatState: {
   isInitEnabled: boolean;
   /** 距现在的静默剩余毫秒；undefined 表示从没设过静默。 */
   quietUntilOffsetMs: number | undefined;
-} = { isAIChatEnabled: true, isInitEnabled: false, quietUntilOffsetMs: 60_000 };
+} = { isAIChatEnabled: true, isTranslationEnabled: false, isInitEnabled: false, quietUntilOffsetMs: 60_000 };
+
+export const autoMessageCopyState: { targetId: number | undefined } = { targetId: undefined };
 
 /**
  * 本群已登记的问答；空表等价于「这个群没开问答」，`getChatQa` 返回 undefined，
@@ -60,11 +63,13 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
-  activeCopyTargetIdIn: (): undefined => undefined,
+  activeCopyTargetIdIn: (): number | undefined => autoMessageCopyState.targetId,
+  persistGlobalState: async (): Promise<void> => {},
   activeCopyModeIn: (): undefined => undefined,
   getActiveProxySendTarget: (): undefined => undefined,
   getChatState: (): Record<string, unknown> => ({
     isAIChatEnabled: autoMessageChatState.isAIChatEnabled,
+    isTranslationEnabled: autoMessageChatState.isTranslationEnabled,
     isInitEnabled: autoMessageChatState.isInitEnabled,
     quietUntil: autoMessageChatState.quietUntilOffsetMs === undefined
       ? undefined
@@ -114,6 +119,8 @@ export function resetAutoMessageMocks(): void {
   waitForBotOwnMessageMock.mockClear();
   waitForBotOwnMessageMock.mockImplementation(async (): Promise<boolean> => false);
   autoMessageChatState.isAIChatEnabled = true;
+  autoMessageChatState.isTranslationEnabled = false;
+  autoMessageCopyState.targetId = undefined;
   autoMessageChatState.isInitEnabled = false;
   autoMessageChatState.quietUntilOffsetMs = 60_000;
   autoMessageQaEntries.clear();

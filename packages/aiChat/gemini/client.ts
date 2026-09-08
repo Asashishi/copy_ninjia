@@ -19,20 +19,25 @@ import { logger } from "../../infra/logger";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import {
   GEMINI_REQUEST_RETRY_ATTEMPTS,
+  GEMINI_MEDIA_REQUEST_TIMEOUT_MS,
   GEMINI_REQUEST_TIMEOUT_MS,
   GEMINI_SAFETY_SETTINGS,
 } from "../../consts/aiChat/gemini";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
-import {
-  isEndpointFailureStatus,
-  isEndpointMisconfiguredError,
-  isExplicitUnsupportedMediaError,
-} from "../ai/utils/mediaSupportError";
+import { classifyProviderApiFailure } from "../ai/utils/mediaSupportError";
 import { abnormalFinishDiagnostic, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, AgentCapabilityConfig } from "../../types/config";
+
+/**
+ * 该能力单次请求的超时预算：media（视觉描述与语音转写）比纯文本往返宽一档，
+ * 其余能力走通用档。生歌由 aiChat/gemini/song.ts 在每次调用上另行覆盖。
+ */
+function geminiRequestTimeoutMs(capability: AgentCapability): number {
+  return capability === "media" ? GEMINI_MEDIA_REQUEST_TIMEOUT_MS : GEMINI_REQUEST_TIMEOUT_MS;
+}
 
 /**
  * 取得线程内唯一 Gemini 客户端。timeout 是每次 SDK 尝试各自的预算，重试总数
@@ -57,7 +62,7 @@ export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
     apiKey: config.apiKey,
     httpOptions: {
       baseUrl: config.baseUrl,
-      timeout: GEMINI_REQUEST_TIMEOUT_MS,
+      timeout: geminiRequestTimeoutMs(capability),
       retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
     },
   });
@@ -92,7 +97,7 @@ export async function requestGeminiResult(
     body.config?.abortSignal?.throwIfAborted();
     const requestSignal: AbortSignal = signalWithTimeout(
       body.config?.abortSignal,
-      GEMINI_REQUEST_TIMEOUT_MS
+      geminiRequestTimeoutMs(capability)
     );
     requestSignal.throwIfAborted();
     data = await raceAbortOrThrow(getGeminiClient(capability).models.generateContent({
@@ -115,19 +120,17 @@ export async function requestGeminiResult(
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${error.status} ${error.message}`);
-      // 路径级 404/405 与模态被拒是两回事，对任何能力都先判前者：它说明这条
-      // 能力的 model 或 base_url 写错了，与「这个模型不支持读图」不该混在一起。
-      if (isEndpointMisconfiguredError(error.status)) {
-        return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
-      }
-      if (
-        capability === "media" &&
-        isExplicitUnsupportedMediaError(error.status, error.message)
-      ) {
-        return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
-      }
-      if (!isEndpointFailureStatus(error.status)) {
-        return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
+      // 归因级联（含各档先后顺序的理由）收在 ai/utils/mediaSupportError.ts，
+      // 三个模型客户端共用同一条，只有返回形态各自映射。
+      switch (classifyProviderApiFailure(error.status, error.message, capability === "media")) {
+        case "misconfigured":
+          return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
+        case "unsupported":
+          return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
+        case "rejected":
+          return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
+        case "endpointFailure":
+          break;
       }
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);

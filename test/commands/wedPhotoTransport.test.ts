@@ -4,7 +4,7 @@ import type { PhotoSize, User } from "grammy/types";
 import type * as AvatarReader from "../../packages/infra/telegram/avatar/read";
 import type * as WedMessages from "../../packages/commands/wed/messages";
 import { WED_MAX_CONCURRENT } from "../../packages/consts/wed";
-import type { CurrentAvatar } from "../../packages/types/telegram";
+import type { CurrentAvatarResult } from "../../packages/types/telegram";
 import type { WedCandidate, WedSession } from "../../packages/types/wed";
 
 interface RecordedRequest {
@@ -67,8 +67,8 @@ test("真实头像读取与 grammY 出站在并发上限内只传 JSON，不下�
         controller: new AbortController(), messageId: undefined, targetId: undefined,
         confirmed: false, busy: true,
       };
-      const avatar: CurrentAvatar | undefined = await readCurrentAvatar(user, session.controller.signal);
-      if (avatar === undefined) throw new Error("Missing current avatar");
+      const avatar: CurrentAvatarResult = await readCurrentAvatar(user, session.controller.signal);
+      if (avatar.status !== "ok") throw new Error("Missing current avatar");
       expect(avatar.photo).toBe(current.file_id);
       const candidate: WedCandidate = { identity: user, photo: avatar.photo };
       expect(await sendWedResult({ session, candidate, replyToMessageId: 50, signal: session.controller.signal })).toBeTrue();

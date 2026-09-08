@@ -37,6 +37,21 @@ export function claimRandomMediaTrigger(
 }
 
 /**
+ * 一个媒体 handler 是否已经接管这条消息（= 不再往下走复读/主动行为）。
+ *
+ * 四个媒体 handler（photo/animation/voice/sticker）的收尾判据完全相同，收在这里
+ * 一处：直接回复或 @ 机器人一定接管；否则只有随机触发真的成立（`claimed` 或
+ * `candidate`，见 claimRandomMediaTrigger 的三态）才算接管。
+ * 解析不出可用媒体而走 replyToUnresolvableMedia 的分支不经过本函数。
+ */
+export function mediaTriggerHandled(
+  context: MessageTriggerContext,
+  randomTrigger: RandomMediaTrigger
+): boolean {
+  return context.directTriggerReason !== undefined || randomTrigger !== "none";
+}
+
+/**
  * 删除已到期或因系统时钟回拨落到未来的冷却。统一 timer 与容量边界共用，
  * 导出以便验证精确到期和异常时间轴。
  */

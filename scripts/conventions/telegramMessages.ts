@@ -125,7 +125,7 @@ export async function collectTelegramMessageProblems(
           problems.push(
             `${relative(projectRoot, path)}:` +
             `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
-            "only the state-owned gag notices and the /set_qa form boundary may " +
+            "only the state-owned gag notices and the /qa set form boundary may " +
             "bypass sendCommandMessage"
           );
         }

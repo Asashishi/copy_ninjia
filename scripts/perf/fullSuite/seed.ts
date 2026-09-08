@@ -97,8 +97,9 @@ async function runSeedChild(mode: SeedMode): Promise<SeededFixtureCounts> {
   installOutboundGuards();
   // 先取实例锁，顺序与生产启动一致。这一步不只是仪式：数据根预检会按生产口径
   // 建出 logs/、memory/、database/ 并钉住权限，跳过它的话这三个目录会由落盘
-  // Worker 用默认 umask 建成 0755，随后真正的冷启动会因为「目录比 0750 宽」
-  // 拒绝启动——那是一次 fixture 造错了，不是被测代码的问题。
+  // Worker 用默认 umask 建成 0755，随后真正的冷启动会判 `database/` 的 0755
+  // 宽于 IDENTITY_DATABASE_DIRECTORY_MODE 的 0770（other 位不允许）而拒绝启动
+  // ——那是一次 fixture 造错了，不是被测代码的问题。
   await acquireSingleInstanceLock(BOT_TOKEN);
   try {
     if (mode === "chain") createEmptyBenchmarkDatabase();

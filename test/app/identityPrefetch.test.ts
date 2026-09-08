@@ -89,7 +89,7 @@ describe("update 前置身份预热", () => {
       ...botContext,
       update: { update_id: 2 },
       chat: { id: -1002233445566, type: "channel" },
-      msg: { text: "/query_mood" },
+      msg: { text: "/mood query" },
     });
 
     // users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts 都

@@ -15,7 +15,7 @@ export interface SendQaFormParams {
   readonly text: string;
   readonly replyToMessageId?: number;
   /**
-   * `/set_qa` 所在的论坛话题。
+   * `/qa set` 所在的论坛话题。
    *
    * 表单不挂固定延迟清理（见文件头注），会一直留到填齐、TTL 到期或群 teardown，
    * 因此必须自己带话题：只靠 reply_parameters 的话，命令消息被删掉时这张正在

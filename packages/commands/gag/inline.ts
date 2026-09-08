@@ -14,6 +14,7 @@ import {
   GAG_INLINE_QUERY_PREFIX,
 } from "../../consts/gag";
 import { recordInlineResultSources } from "../../infra/inlineResultSources";
+import { signalArgs } from "../../libs/telegramSignalArgs";
 import { getGagThumbnailUrl } from "../../infra/storage/stateStore";
 import {
   deleteMessageWithOutcome,
@@ -486,8 +487,7 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
         cache_time: 0,
         is_personal: true,
       },
-      currentUpdateAbortSignal() as unknown as
-        Parameters<Context["answerInlineQuery"]>[2]
+      ...signalArgs(currentUpdateAbortSignal())
     );
   } catch (error: unknown) {
     throwIfUpdateAborted();

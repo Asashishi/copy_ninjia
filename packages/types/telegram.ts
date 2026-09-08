@@ -19,6 +19,15 @@ export interface CurrentAvatar {
 }
 
 /**
+ * 当前头像读取结局，划分与 AvatarDownloadResult 一致：permanent-failure 表示
+ * 确认没有可用头像，transient-failure 表示这次没查成、调用方可以另找候选或重试。
+ * 两者不得混用——/wed 的抽取配额只由前者消耗，见 commands/wed/draw.ts。
+ */
+export type CurrentAvatarResult =
+  | (CurrentAvatar & { readonly status: "ok" })
+  | { readonly status: "permanent-failure" | "transient-failure" };
+
+/**
  * 本项目会发出的 Telegram 聊天状态取值。
  *
  * 单点定义：AI 回复心跳的挡位类型（types/aiChat/chatAction.ts 的

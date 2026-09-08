@@ -1,3 +1,4 @@
+import { TRANSLATE_TARGET_TEXTS } from "../../packages/consts/translate";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser, CommandTargetMessages } from "../../packages/types";
 
@@ -231,7 +232,6 @@ const { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } = await import("../../packages/co
 const {
   BLOCK_TARGET_TEXTS,
   COPY_TARGET_TEXTS,
-  JA_COPY_TARGET_TEXTS,
   MUTE_TARGET_TEXTS,
   NYA_COPY_TARGET_TEXTS,
   REVERSE_COPY_TARGET_TEXTS,
@@ -259,10 +259,10 @@ const DEPLOYED_TARGET_TEXTS: readonly DeployedTargetTexts[] = [
   { command: "/mute", texts: MUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
   { command: "/unmute", texts: UNMUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
   { command: "/copy", texts: COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
-  { command: "/r_copy", texts: REVERSE_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
-  { command: "/nya_copy", texts: NYA_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
-  { command: "/ja_copy", texts: JA_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
-  { command: "/steal_icon", texts: STEAL_ICON_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/copy reverse", texts: REVERSE_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/copy nya", texts: NYA_COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/translate", texts: TRANSLATE_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
+  { command: "/icon steal", texts: STEAL_ICON_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },
   { command: "/permission", texts: PERMISSION_COMMAND_TEXTS.target, acceptUserId: true, acceptChatId: true },
   { command: "/white", texts: WHITE_COMMAND_TEXTS.target, acceptUserId: true, acceptChatId: true },
 ];

@@ -41,7 +41,7 @@
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コードと script の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コードと script の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
   module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
 
   Node API 検査は `process.getBuiltinModule`、`globalThis.Buffer` とリテラル添字形式を対象にします。`Buffer.byteLength` などの例外は module・symbol・用途ごとに登録します。`@grammyjs/runner` は SDK 対照テスト用の開発依存で、production の取得処理はプロジェクトの offset 確認境界を使います。
@@ -60,7 +60,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**3513 tests / 347 files / 129700 `expect()` calls**。全ソースコードの**関数カバレッジは 97.21%、行カバレッジは 97.45%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**3817 tests / 357 files / 157155 `expect()` calls**。全ソースコードの**関数カバレッジは 97.39%、行カバレッジは 97.65%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -135,7 +135,7 @@ registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-
 
 計測対象はすべて既存コードの再利用です。ホットパスは `perf:hot-paths` のシナリオと反復数をそのまま使い、ストレージは `perf:identity-database` の実装を呼び、容量線は `perf:join-log` の子プロセスを呼びます。チェーンは `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` というメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測します。さらに**コマンド全体**を計測する 2 本があります。`ad-detect-command` は `enqueueAdCandidate` から `runAdDetectBatch`、そしてメインスレッドの `handleAdDetected` による処理の排出まで、`ai-reply-command` は `recordChatMessage` と `generateAndSendReply` から返信が実際に送信されるまでです。この 2 本のモデル呼び出しと Telegram 送信は `scripts/perf/outboundGuard.ts` のプロセス内固定応答が返します——ベンチマークは実際のリクエストを一切発行せず、API 費用も発生しません。`ai-reply-command` はさらに送信前の擬人的な間を実測して差し引きます（基準は [09 パフォーマンス](09-performance.md)）。コールドスタートは満載のフィクスチャ上で `packages/app/lifecycle.ts` の init 順に段階ごとに計測し、通信を伴う処理と 2 つの業務 Worker の生成は含みません。
 
-データはすべてリポジトリ直下の `performance/`（`.gitignore` 済み）に書き、設定は `config_example/` から読み、各ラウンドの終了後にツリーごと削除します。実行が終わればこのディレクトリには何も残りません。親プロセスは production の実装モジュールを一切 import しないため、実データルートへ書き込む手段を持ちません。`--write-doc` は `docs/{cn,en,ja}/09-performance.md` の 3 言語 block と `performance-result.json` の `fullSuite.lastRun` を同時に書き換えます。計測値と各セクションの定義は [09 パフォーマンスベンチマーク](09-performance.md) を参照してください。
+データはすべてリポジトリ直下の `performance/`（`.gitignore` 済み）に書き、設定は `config_example/` から読み、各ラウンドの終了後にツリーごと削除します。実行が終わればこのディレクトリには何も残りません。親プロセスは production の実装モジュールを一切 import しないため、production の書き込み経路から実データルートへ到達することはありません。加えてディレクトリ作成、コピー、ファイル書き込み、削除は共通の境界（`scripts/perf/fullSuite/mockRoot.ts`）を通ります：まずパスが字句的に `performance/` 配下かを判定し、次にリポジトリルートから対象までの**すでに存在する**パス構成要素を 1 つずつ検査し、いずれかがシンボリックリンクなら拒否します。削除は親チェーンだけを検査するため、末端自体がシンボリックリンクの場合はリンクだけを外し、リンク先には触れません。mock ルート自体は決して削除しません。`--write-doc` は `docs/{cn,en,ja}/09-performance.md` の 3 言語 block と `performance-result.json` の `fullSuite.lastRun` を同時に書き換えます。計測値と各セクションの定義は [09 パフォーマンスベンチマーク](09-performance.md) を参照してください。
 
 ## コミット手順
 

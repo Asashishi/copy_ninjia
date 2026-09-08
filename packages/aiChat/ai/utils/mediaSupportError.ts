@@ -70,3 +70,43 @@ export function isExplicitUnsupportedMediaError(
     normalized.includes("input type") ||
     normalized.includes("content type");
 }
+
+/** 一次供应商 API 失败的归因档位；`endpointFailure` 表示端点在故障，交给调用方兜底。 */
+export type ProviderApiFailureKind =
+  | "misconfigured"
+  | "unsupported"
+  | "rejected"
+  | "endpointFailure";
+
+/**
+ * 供应商 API 错误的归因级联。**判定顺序本身是语义**，三个模型客户端
+ * （aiChat/gemini/client.ts、aiChat/openai/client.ts、aiChat/openai/text.ts）
+ * 必须走同一条，否则同一个 HTTP 状态在不同供应商上会得出不同结论：
+ *
+ * 1. `misconfigured`——路径级 404/405 最先判。它说明这条能力的 model 或 base_url
+ *    写错了，与「这个模型不支持读图」不该混在一起；先判它才不会把部署笔误记成
+ *    模态缺失，把运维引去换模型。
+ * 2. `unsupported`——仅媒体能力，且错误正文同时表达「不支持」和「媒体输入」。
+ * 3. `rejected`——不是端点故障的其余状态：这一份输入不合适，换一份多半就成了，
+ *    不推动模态退避。
+ * 4. `endpointFailure`——408/429/5xx 与拿不到状态码的网络层失败。
+ *
+ * 本函数**不记日志**：三个调用点的日志各自带着不同的 errorLabel 与状态码渲染
+ * 口径（gemini 的 `ApiError.status` 恒为 number，OpenAI 侧是 `number | undefined`
+ * 且要渲染成 `?`），合并会改变已有的日志文本。返回值形态同理留在调用点，
+ * 各自映射成自己的 `failureKind` / `mediaFailure`。
+ *
+ * @param isMediaCapability 本次请求是否属于媒体能力；只有它为真才可能得出 unsupported。
+ */
+export function classifyProviderApiFailure(
+  status: number | undefined,
+  message: string,
+  isMediaCapability: boolean
+): ProviderApiFailureKind {
+  if (isEndpointMisconfiguredError(status)) return "misconfigured";
+  if (isMediaCapability && isExplicitUnsupportedMediaError(status, message)) {
+    return "unsupported";
+  }
+  if (!isEndpointFailureStatus(status)) return "rejected";
+  return "endpointFailure";
+}

@@ -28,8 +28,11 @@ export function createStorageDatabase(path: string): void {
   }
 }
 
-/** 新建空库或冷迁移脚本应用当前 schema；生产启动路径不得调用。 */
-export function migrateStorageDatabaseSchema(database: StorageDatabase): void {
+/**
+ * 给刚建出来的空库应用当前 schema；只有 createStorageDatabase 调用，生产启动不得调用。
+ * 既有库的冷迁移由 scripts/migrateTranslate.ts 在独立暂存副本中直接调用 Drizzle API。
+ */
+function migrateStorageDatabaseSchema(database: StorageDatabase): void {
   migrate(database, { migrationsFolder: IDENTITY_DATABASE_MIGRATIONS_DIR });
 }
 

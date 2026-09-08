@@ -35,9 +35,9 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3513_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.45%25-2ea44f?style=flat-square" alt="Coverage"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3817_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.65%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
 复读与人格模仿只是表面；其下是一套由多个 Worker 协作、支持故障恢复、采用有界缓存并具备竞态防护的群聊自动化系统。
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：3513 项测试全部通过 / 347 个测试文件 / 129,700 次 expect() 调用 / 函数覆盖率 97.21% / 行覆盖率 97.45%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：3817 项测试全部通过 / 357 个测试文件 / 157,155 次 expect() 调用 / 函数覆盖率 97.39% / 行覆盖率 97.65%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -87,11 +87,11 @@
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 精准复读</b></p>
-  <p>锁定用户或频道后逐条复读，支持原样、反转、追加「喵~」和日语翻译四种模式。</p>
+  <p>锁定用户或频道后逐条复读，支持原样、反转和追加「喵~」。独立的 <code>/translate</code> 每群最多支持 5 人，将文字翻成日语、简体中文、美式英语、乌克兰语或俄语；只处理文字，不复制媒体或更换头像。每群缺省关闭，<code>/translate enable</code> 打开，<code>list</code> 查当前清单。</p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 偷头像</b></p>
-  <p><code>/copy</code> 自动同步目标头像，或通过 <code>/steal_icon</code> 仅复制头像而不启动复读状态。</p>
+  <p><code>/copy</code> 自动同步目标头像，或通过 <code>/icon steal</code> 仅复制头像而不启动复读状态。</p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI 群聊</b></p>
@@ -143,7 +143,7 @@
 <tr>
 <td align="left" valign="top">
   <p><b>💬 群问答</b></p>
-  <p><code>/set_qa</code> 开一张表单，由发起者按「问题:」「回答:」分两条消息登记问答，每群最多 15 条，答案里可以直接塞 <code>```json</code> 代码块。有人一字不差地问出来就直接答，不经过 AI；意思相近但字面不同的问法才交给模型的两个查询工具判断。</p>
+  <p><code>/qa set</code> 开一张表单，由发起者按「问题:」「回答:」分两条消息登记问答，每群最多 15 条，答案里可以直接塞 <code>```json</code> 代码块。有人一字不差地问出来就直接答，不经过 AI；意思相近但字面不同的问法才交给模型的两个查询工具判断。</p>
 </td>
 <td align="left" valign="top"></td>
 <td align="left" valign="top"></td>
@@ -166,7 +166,7 @@
 
 ## 🚀 快速开始
 
-需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.4.2、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/ja_copy` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
+需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.4.2、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/translate` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
 
 一键安装（缺什么装什么，问完配置直接启动）：
 

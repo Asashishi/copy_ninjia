@@ -5,6 +5,7 @@ import type { LuckDraw } from "../../types/luckChallenge";
 import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
 import { recordInlineResultSources } from "../../infra/inlineResultSources";
 import { logApiError } from "../../infra/telegram";
+import { signalArgs } from "../../libs/telegramSignalArgs";
 import { logger } from "../../infra/logger";
 import {
   currentUpdateAbortSignal,
@@ -52,8 +53,7 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
       await ctx.answerInlineQuery(
         [buildRateLimitedResult()],
         { cache_time: 1, is_personal: true },
-        currentUpdateAbortSignal() as unknown as
-          Parameters<Context["answerInlineQuery"]>[2]
+        ...signalArgs(currentUpdateAbortSignal())
       );
     } catch (error: unknown) {
       throwIfUpdateAborted();
@@ -93,8 +93,7 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     await ctx.answerInlineQuery(
       results,
       { cache_time: 0, is_personal: true },
-      currentUpdateAbortSignal() as unknown as
-        Parameters<Context["answerInlineQuery"]>[2]
+      ...signalArgs(currentUpdateAbortSignal())
     );
   } catch (error: unknown) {
     throwIfUpdateAborted();

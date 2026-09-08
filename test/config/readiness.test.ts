@@ -92,13 +92,13 @@ mock.module("../../packages/config/persona", () => ({
 const {
   adDetectConfigReadiness,
   aiChatConfigReadiness,
-  jaTranslateConfigReadiness,
+  translateConfigReadiness,
   validateExistingDeploymentInputs,
 } = await import("../../packages/config/readiness");
 const {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
-  jaTranslateConfigReadinessCache,
+  translateConfigReadinessCache,
 } = await import("../../packages/cache/main/configReadiness");
 
 function writeAuthFile(content: string): void {
@@ -116,7 +116,7 @@ beforeEach((): void => {
   telegramFailure = null;
   aiChatConfigReadinessCache.current = null;
   adDetectConfigReadinessCache.current = null;
-  jaTranslateConfigReadinessCache.current = null;
+  translateConfigReadinessCache.current = null;
   writeAuthFile(JSON.stringify({ client_email: "bot@example.iam.gserviceaccount.com", private_key: testPrivateKey }));
 });
 
@@ -163,7 +163,7 @@ describe("deployment config readiness", () => {
     await validateExistingDeploymentInputs();
     const firstAiChat: ConfigReadiness = aiChatConfigReadiness();
     const firstAdDetect: ConfigReadiness = adDetectConfigReadiness();
-    const firstJa: ConfigReadiness = jaTranslateConfigReadiness();
+    const firstJa: ConfigReadiness = translateConfigReadiness();
     expect(loaderCalls.get("stickers")).toBe(1);
     expect(loaderCalls.get("agent")).toBe(1);
     expect(loaderCalls.get("agent.ad_detect")).toBe(1);
@@ -171,7 +171,7 @@ describe("deployment config readiness", () => {
     for (let round: number = 0; round < 3; round++) {
       expect(aiChatConfigReadiness()).toBe(firstAiChat);
       expect(adDetectConfigReadiness()).toBe(firstAdDetect);
-      expect(jaTranslateConfigReadiness()).toBe(firstJa);
+      expect(translateConfigReadiness()).toBe(firstJa);
     }
     // 热路径每条群消息都会问一次；命中缓存的那一路不得重新探测任何一份文件。
     expect(loaderCalls.get("stickers")).toBe(1);
@@ -201,17 +201,17 @@ describe("deployment config readiness", () => {
 describe("Google service account readiness", () => {
   test("启动总闸复用已经通过的密钥校验结论", async () => {
     await validateExistingDeploymentInputs();
-    const cached: ConfigReadiness | null = jaTranslateConfigReadinessCache.current;
+    const cached: ConfigReadiness | null = translateConfigReadinessCache.current;
     if (cached === null) throw new Error("expected startup validation to seed readiness");
     expect(cached).toEqual({ ok: true });
-    expect(jaTranslateConfigReadiness()).toBe(cached);
+    expect(translateConfigReadiness()).toBe(cached);
   });
 
   test("非对象与空字段均拒绝", async () => {
     writeAuthFile(JSON.stringify(["client_email"]));
     await expect(validateExistingDeploymentInputs()).rejects.toThrow("Google service account JSON object");
 
-    jaTranslateConfigReadinessCache.current = null;
+    translateConfigReadinessCache.current = null;
     writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: "   " }));
     await expect(validateExistingDeploymentInputs()).rejects.toThrow("private_key");
   });
@@ -230,12 +230,12 @@ for (const type of ["authorized_user", "external_account", null, 7]) {
     writeAuthFile(content);
     await expect(validateExistingDeploymentInputs()).rejects.toThrow(authFilePath + ': $.type must be "service_account".');
     expect(await Bun.file(authFilePath).text()).toBe(content);
-    expect(jaTranslateConfigReadinessCache.current).toBeNull();
+    expect(translateConfigReadinessCache.current).toBeNull();
   });
 }
 
 test("显式 service_account 与缺省 type 均保持可用", async () => {
   writeAuthFile(JSON.stringify({ type: "service_account", client_email: "bot@example.com", private_key: testPrivateKey }));
   await validateExistingDeploymentInputs();
-  expect(jaTranslateConfigReadiness()).toEqual({ ok: true });
+  expect(translateConfigReadiness()).toEqual({ ok: true });
 });

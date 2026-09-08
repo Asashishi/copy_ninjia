@@ -10,11 +10,11 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 
 const targetChatId = -1001234567890;
-let chatState: { isJATranslationEnabled?: boolean } = {};
+let chatState: { isTranslationEnabled?: boolean } = {};
 // g-auth.json 的可用性；坏掉时自动复读必须退化成普通复制，不能假装翻译过。
 let jaReadiness: { ok: true } | { ok: false; failure: { file: string; reason: string } } = { ok: true };
 mock.module("../../packages/config/readiness", () => ({
-  jaTranslateConfigReadiness: () => jaReadiness,
+  translateConfigReadiness: () => jaReadiness,
   // 自动流水线同一条路径上还挂着 AI 闲聊的判定；这个文件只考 ja，让它恒通过。
   aiChatConfigReadiness: () => ({ ok: true }),
   adDetectConfigReadiness: () => ({ ok: true }),
@@ -24,6 +24,7 @@ const persistChatStateMock = mock(async (..._args: unknown[]): Promise<void> => 
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: clearChatStateFieldMock,
   activeCopyTargetIdIn: (): undefined => undefined,
+  persistGlobalState: async (): Promise<void> => {},
   activeCopyModeIn: (): undefined => undefined,
   getActiveProxySendTarget: () => targetChatId,
   getChatState: () => chatState,
@@ -42,7 +43,6 @@ mock.module("../../packages/infra/selfSentTracker", () => ({
 }));
 
 const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
-const { resolveEffectiveCopyMode } = await import("../../packages/auto/message/echo");
 const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/telegram");
 
 function privateMessageCtx(userId: number): any {
@@ -80,24 +80,6 @@ describe("/send 私聊中转权限", () => {
       fromChatId: SUPER_ADMIN_USER_ID,
       messageId: 7,
     });
-  });
-
-  test("日语翻译缺省关闭，只有显式 true 才保留 ja 模式", () => {
-    expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBeUndefined();
-    chatState.isJATranslationEnabled = false;
-    expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBeUndefined();
-    chatState.isJATranslationEnabled = true;
-    expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBe("ja");
-    expect(resolveEffectiveCopyMode(targetChatId, "nya")).toBe("nya");
-  });
-
-  test("服务账号密钥坏掉时 ja 退化成普通复制，其余模式照旧", () => {
-    // 不挡的话翻译会在底层静默失败并原样发出中文原文——那与「翻译服务抖了
-    // 一下」不可区分，而退化成普通复制至少行为是确定的。
-    chatState.isJATranslationEnabled = true;
-    jaReadiness = { ok: false, failure: { file: "g-auth.json", reason: "missing" } };
-    expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBeUndefined();
-    expect(resolveEffectiveCopyMode(targetChatId, "nya")).toBe("nya");
   });
 
   /**

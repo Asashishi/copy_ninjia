@@ -3,7 +3,7 @@
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
  * 目录快照、每日运势缓存、待验证当日增量 JSON、身份策略 SQLite、入群日志与 wed 成员集合都由
  * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
- * 互相踩坏。群状态也进入同一 SQLite；只有 global-only `state.json` 是明确例外，
+ * 互相踩坏。群状态也进入同一 SQLite；只有 主线程持有的 `state.json` 是明确例外，
  * 由主线程 StateStore 独立异步维护。
  * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *

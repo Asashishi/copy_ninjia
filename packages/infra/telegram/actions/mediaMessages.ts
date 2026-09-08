@@ -9,8 +9,8 @@ import {
   logUnlessAborted,
   replyParametersFor,
   runTelegramAction,
-  signalArgs,
 } from "./core";
+import { signalArgs } from "../../../libs/telegramSignalArgs";
 import { toTelegramSendResult } from "./sendResult";
 
 type SendStickerApi = Pick<TelegramApi, "sendSticker">;

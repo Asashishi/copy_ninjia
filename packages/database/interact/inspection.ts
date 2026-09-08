@@ -15,6 +15,8 @@ import {
   IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_HASH,
   IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH,
+  IDENTITY_DATABASE_TRANSLATE_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_TRANSLATE_MIGRATION_HASH,
   IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_HASH,
 } from "../../consts/identityStorage";
@@ -210,7 +212,7 @@ function hasSchemaV5MigrationLineage(
     hasCurrentBaseLineage(rows.slice(0, -2));
 }
 
-/** 当前 v7 只接受 v6 谱系精确追加首日临时广告免检 migration。 */
+/** 当前 v8 必须包含完整的已发布谱系和翻译字段名称迁移，不接受缺项或额外项。 */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,
   source: string
@@ -218,17 +220,22 @@ export function assertStorageDatabaseMigrationLineage(
   const rows: readonly StorageDatabaseMigrationJournalEntry[] =
     readStorageDatabaseMigrationJournal(database, source);
   if (
-    rows.length < 6 ||
+    rows.length < 7 ||
     !isMigrationEntry(
       rows.at(-1),
+      IDENTITY_DATABASE_TRANSLATE_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_TRANSLATE_MIGRATION_HASH
+    ) ||
+    !isMigrationEntry(
+      rows.at(-2),
       IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_CREATED_AT,
       IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH
     )
   ) {
-    throw new Error(`${source}: expected the exact supported schema v7 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v8 migration lineage.`);
   }
   const v6Rows: readonly StorageDatabaseMigrationJournalEntry[] =
-    rows.slice(0, -1);
+    rows.slice(0, -2);
   if (
     v6Rows.length < 5 ||
     !isMigrationEntry(
@@ -238,7 +245,7 @@ export function assertStorageDatabaseMigrationLineage(
     ) ||
     !hasSchemaV5MigrationLineage(v6Rows.slice(0, -1))
   ) {
-    throw new Error(`${source}: expected the exact supported schema v7 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v8 migration lineage.`);
   }
 }
 

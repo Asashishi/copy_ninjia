@@ -54,7 +54,7 @@ export async function prepareVisionImage(bytes: Uint8Array): Promise<VisionImage
     //
     // 模块注册表会缓存首次加载；不得后台预热，避免从不处理 webp/gif 的进程承担
     // 原生绑定常驻内存。
-    // 只声明本文件用到的那一路重载（Uint8Array 入参），理由同 copy/translate.ts：
+    // 只声明本文件用到的那一路重载（Uint8Array 入参），类型边界见 translate/client.ts：
     // `typeof import(...)` 标注被 lint 禁止，而顶层只能拿到类型侧的 Sharp。
     const { default: sharp }: { default: (input: Uint8Array) => Sharp } = await import("sharp");
     const png: Uint8Array = await sharp(bytes).png().toBuffer();

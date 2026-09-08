@@ -1,6 +1,7 @@
 import type { Chat, ChatFullInfo } from "grammy/types";
 import { logger } from "./logger";
 import { bot } from "./telegram/mainClient";
+import { signalArgs } from "../libs/telegramSignalArgs";
 import {
   getChatStateCache,
   getChatState,
@@ -91,10 +92,7 @@ export async function refreshAllChatTitles(
         if (index >= total) return;
         const chatId: number = chatIds[index]!;
         try {
-          const chat: ChatFullInfo = await bot.api.getChat(
-            chatId,
-            signal as unknown as Parameters<typeof bot.api.getChat>[1]
-          );
+          const chat: ChatFullInfo = await bot.api.getChat(chatId, ...signalArgs(signal));
           if (!signal.aborted && (chat.type === "group" || chat.type === "supergroup")) {
             if (applyChatTitle(chatId, chat.title, getChatState(chatId))) {
               saveChatStateInBackground(chatId, "chat title refresh");

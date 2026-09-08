@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
+import { translateStates } from "../../packages/cache/main/translateState";
 
 interface SentCommandMessage {
   readonly chatId: number;
@@ -80,6 +81,7 @@ function context(): never {
 }
 
 beforeEach(() => {
+  translateStates.clear();
   permissionAllowed = false;
   for (const mocked of [
     hasCommandPermission,
@@ -115,7 +117,12 @@ describe("/bot_status 白名单权限", () => {
 
   test("获授权身份照常读取状态并返回统一临时命令消息", async () => {
     permissionAllowed = true;
+    translateStates.set(-1001, [
+      { translatedUser: { id: 7 }, language: "uk" }, { translatedUser: { id: 8 }, language: "ru" },
+    ]);
+    translateStates.set(-2002, [{ translatedUser: { id: 9 }, language: "ja" }]);
     await handleBotStatusCommand(context());
+    expect(sendCommandMessage.mock.calls[0]?.[0].text).toContain("本群正赖着本天才翻译的杂鱼：2/5 人♡");
 
     expect(aiChatConfigReadiness).toHaveBeenCalledTimes(1);
     expect(adDetectConfigReadiness).toHaveBeenCalledTimes(1);

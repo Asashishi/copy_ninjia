@@ -1,9 +1,16 @@
-import type { BunFile } from "bun";
+import { lstat } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import { STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
 import { STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
 import { atomicWriteText } from "../../libs/atomicFile";
-import { InputValidationError, parseJsonInput } from "../../libs/inputValidation";
+import { isErrno } from "../../libs/errno";
+import {
+  InputValidationError,
+  invalidInput,
+  parseJsonInput,
+  readUtf8TextInput,
+} from "../../libs/inputValidation";
 import { createLatestValueRunner, type LatestValueRunner } from "../../libs/latestValueRunner";
 import { decodeStateFile } from "../../libs/stateFileCodec";
 import type { FlushResult } from "../../types/lifecycle";
@@ -55,9 +62,46 @@ interface PersistenceWaiter {
   reject: (error: Error) => void;
 }
 
+/**
+ * 叶子路径本身是否真的不存在。`BunFile.stat()` 跟随软链接，悬空链接和缺失文件
+ * 同样报 ENOENT；只有 `lstat` 也报 ENOENT 才算「从没写过这份副本」。
+ */
+async function isMissingLeaf(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return false;
+  } catch (error: unknown) {
+    return isErrno(error, "ENOENT");
+  }
+}
+
+/**
+ * 状态副本的默认读取边界：目标必须是普通文件，内容必须是严格 UTF-8。
+ *
+ * 用 `BunFile.stat()` 而不是 `exists()`：后者对目录返回 false，会把「路径被占成
+ * 目录」误判成缺省。目录、指向目录的链接、其它非普通文件、悬空链接以及
+ * EACCES/ELOOP/ENOTDIR 等访问失败一律是已配置但非法，按 AGENTS.md 的
+ * 「不为用户行为兜底」拒绝启动；stat 成功之后的读取或解码失败也不降级为缺失。
+ * 指向普通文件的软链接继续接受。
+ *
+ * 错误统一收敛为 InputValidationError，只带文件路径、字段路径和期望形态，不回显
+ * 底层异常与状态内容（见 docs/cn/04-invariants.md 的严格解析约束）。
+ * @returns 副本文本；叶子路径真正缺失时为 null。
+ */
 async function readExistingText(path: string): Promise<string | null> {
-  const file: BunFile = Bun.file(path);
-  return await file.exists() ? file.text() : null;
+  let stats: Stats;
+  try {
+    stats = await Bun.file(path).stat();
+  } catch (error: unknown) {
+    if (isErrno(error, "ENOENT") && await isMissingLeaf(path)) return null;
+    return invalidInput(path, "$", "an accessible regular file");
+  }
+  if (!stats.isFile()) return invalidInput(path, "$", "a regular file");
+  try {
+    return await readUtf8TextInput(path);
+  } catch {
+    return invalidInput(path, "$", "a regular file readable as strictly valid UTF-8 text");
+  }
 }
 
 /**
@@ -73,8 +117,8 @@ function describeStateDecodeFailure(path: string, error: unknown): Error {
 }
 
 /**
- * state.json 的可注入持久化边界：只负责 global schema 解码/序列化、latest-only
- * 串行写、失败退避和退出 flush；群状态由 SQLite 独立持久化。
+ * state.json 的可注入持久化边界：负责 global/translate schema 解码/序列化、latest-only
+ * 串行写、失败退避和退出 flush；群功能开关由 SQLite 独立持久化。
  */
 export class StateStore {
   private readonly stateFilePath: string;
@@ -151,7 +195,11 @@ export class StateStore {
       .filter((result: PromiseSettledResult<StateCopy>): result is PromiseRejectedResult => result.status === "rejected")
       .map((result: PromiseRejectedResult): unknown => result.reason as unknown);
     if (readFailures.length > 0) {
-      throw new AggregateError(readFailures, "Failed to read all persisted state copies.");
+      // 聚合消息点名两条副本路径；每条成员错误再各自带上失败的那一份。
+      throw new AggregateError(
+        readFailures,
+        `Failed to read ${this.stateFilePath} or ${this.backupFilePath}.`
+      );
     }
     const primary: StateCopy = (copies[0] as PromiseFulfilledResult<StateCopy>).value;
     const backup: StateCopy = (copies[1] as PromiseFulfilledResult<StateCopy>).value;

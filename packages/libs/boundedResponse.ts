@@ -1,5 +1,9 @@
 import { BOUNDED_RESPONSE_CHUNK_THRESHOLD, BOUNDED_RESPONSE_COALESCE_BYTES } from "../consts/streams";
 
+/** 全模块共用一个非 fatal 解码器；口径同 libs/atomicFile.ts 的 UTF8_ENCODER，
+ *  不为每次解码新建一个（宽松解码，非法字节仍替换成 U+FFFD，与逐次新建同解）。 */
+const UTF8_DECODER: TextDecoder = new TextDecoder();
+
 /** 有界响应读取结果；失败时返回实际观察到的大小，不保留部分响应体。 */
 export type BoundedResponseResult =
   | { readonly ok: true; readonly bytes: Uint8Array }
@@ -83,5 +87,5 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
 /** 按 UTF-8 解码有界响应；超过上限时返回 null。 */
 export async function readBoundedResponseText(response: Response, maxBytes: number): Promise<string | null> {
   const result: BoundedResponseResult = await readBoundedResponseBytes(response, maxBytes);
-  return result.ok ? new TextDecoder().decode(result.bytes) : null;
+  return result.ok ? UTF8_DECODER.decode(result.bytes) : null;
 }

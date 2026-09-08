@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DiskIOMessage } from "../../packages/types";
+import type { DiskIOMessage, DiskIOOperationMessage } from "../../packages/types";
+import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../../packages/consts/diskIO/business";
 
 const handleLogMessage = mock((_message: unknown): void => {});
 const markAiMemorySnapshotDirty = mock((_input: unknown): void => {});
@@ -359,6 +360,49 @@ describe("Disk I/O Worker protocol router", () => {
       type: "diagnosticBatchAccepted",
       batchId: 7,
     });
+  });
+
+  /**
+   * 业务批次分派此前一行没跑过（既有用例全部逐条 route 单条消息）。这里把
+   * 「批内逐条派发 + 回执」与三条入参校验一起钉住：批号与批长都是协议不变量，
+   * 越界必须当场抛，不能吞掉半个批次再回一个 accepted。
+   */
+  test("业务批次逐条派发并回一条 accepted", async () => {
+    await route({
+      type: "operationBatch",
+      batchId: 11,
+      messages: [
+        { type: "aiMemory", chatId: -1, revision: 1, snapshot: "a", persistImmediately: false },
+        { type: "deleteAiMemory", chatId: -2, revision: 2 },
+      ],
+    });
+
+    expect(markAiMemorySnapshotDirty).toHaveBeenCalledTimes(1);
+    expect(deleteAiMemorySnapshot).toHaveBeenCalledWith(-2, 2);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "operationBatchAccepted",
+      batchId: 11,
+    });
+  });
+
+  test("批号或批长越界一律当场抛，不发回执", async () => {
+    const invalid: readonly { readonly batchId: number; readonly count: number }[] = [
+      { batchId: 0, count: 1 },
+      { batchId: 1.5, count: 1 },
+      { batchId: 1, count: 0 },
+      { batchId: 1, count: DISK_BUSINESS_BATCH_MAX_MESSAGES + 1 },
+    ];
+    for (const { batchId, count } of invalid) {
+      const messages: DiskIOOperationMessage[] = Array.from(
+        { length: count },
+        (): DiskIOOperationMessage => ({ type: "deleteAiMemory", chatId: -1, revision: 1 })
+      );
+      await expect(route({ type: "operationBatch", batchId, messages }))
+        .rejects.toThrow("Invalid Disk I/O operation batch.");
+    }
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: "operationBatchAccepted",
+    }));
   });
 
   test("日志批次刷盘失败时要求主线程保留原批并按退避窗口重发", async () => {

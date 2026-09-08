@@ -1,5 +1,6 @@
 import type { ChatPermissions } from "grammy/types";
 import type { BotChatPermissions } from "./telegram";
+import type { TranslateState } from "./translate";
 
 /** 反刷群锁定跨 Worker 与持久化共用的离散阶段。 */
 export type LockdownPhase = "applying" | "active" | "reconciling" | "restoring";
@@ -37,7 +38,7 @@ export interface CachedUser {
 }
 
 /** 在复读复制目标的纯文本消息前对其应用的文本变换。 */
-export type CopyMode = "reverse" | "nya" | "ja";
+export type CopyMode = "reverse" | "nya";
 
 /**
  * 单个群聊各自独立的状态。机器人可能同时在多个群里运行，每个群各自维护一份，
@@ -61,13 +62,13 @@ export interface ChatState {
    */
   isAIChatEnabled?: boolean;
   /**
-   * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为禁用，需通过
-   * /ja_copy enable 显式开启（仅持有 isCanControllJATranslatePermission 的
-   * 身份可用，超级管理员恒持有，见 commands/jaCopy.ts）。
+   * 本群 /translate 翻译功能是否启用。缺省视为禁用，需通过
+   * /translate enable 显式开启（仅持有 isCanControllTranslatePermission 的
+   * 身份可用，超级管理员恒持有，见 commands/translate.ts）。
    * 判断时必须使用 === true；false 与缺省等价，
    * 保存时会被规范化删除。
    */
-  isJATranslationEnabled?: boolean;
+  isTranslationEnabled?: boolean;
   /**
    * 本群是否启用广告检测（消息串经配置的 provider 判定，命中即按 /block 处置）。
    * 缺省视为禁用，需通过 /ad_detect enable 显式开启（仅持有
@@ -134,7 +135,7 @@ export interface ChatState {
  * copy 类功能的全局状态：复读目标和冷却时钟所有群共用同一份（消耗的是机器人
  * 自己头像这一份全局资源，同一时刻只能"变成"一个人，不按群分别维护）。
  * 复读行为本身只发生在发起 /copy 的那个群里（copyChatId），但"手上有没有
- * 猎物"的判定是全局的——别的群想 /copy 得先 /stop_copy（任何群都可以停）。
+ * 猎物"的判定是全局的——别的群想 /copy 得先 /copy stop（任何群都可以停）。
  */
 export interface GlobalCopyState {
   lastCopyTime?: number;
@@ -169,7 +170,7 @@ export interface GlobalAssetState {
   probabilityThumbnailUrl?: string;
   /** gag 发言内联结果的缩略图直链；缺省用 GAG_THUMBNAIL_URL。 */
   gagThumbnailUrl?: string;
-  /** `/reset_icon`、`/stop_copy` 复原机器人默认头像时抓的图；缺省用 BOT_DEFAULT_AVATAR_URL。 */
+  /** `/icon reset`、`/copy stop` 复原机器人默认头像时抓的图；缺省用 BOT_DEFAULT_AVATAR_URL。 */
   botDefaultAvatarUrl?: string;
 }
 
@@ -183,15 +184,13 @@ export interface GlobalState {
 }
 
 /**
- * state.json 的整体结构只保留所有群共用的 global。群级状态由
- * `database/storage.sqlite` 的 `chat_states` 表持久化，不在这里保留镜像。
- *
- * 结构变更只做手工迁移，解码器里不留旧形状的兼容分支：顶层出现 `globalCopy`
- * 这类旧键会被 knownKeys 当场拒绝，让运维照着报错迁移，而不是静默把复读状态
- * 读成空。
+ * state.json 保存 global 与按群的 translate 会话。群功能开关仍由
+ * `database/storage.sqlite` 的 `chat_states` 表持久化。
+ * translate 缺省表示从未设置翻译会话；每群为非空数组，最多五个不同身份，逐条严格校验。
  */
 export interface StateFileSchema {
   global: GlobalState;
+  translate?: Readonly<Record<string, readonly TranslateState[]>>;
 }
 
 /**
@@ -228,4 +227,5 @@ export interface DecodedGlobalState {
 /** decodeStateFile 与 StateStore.load 的返回形态；落盘侧仍用 StateFileSchema。 */
 export interface DecodedStateFile {
   global: DecodedGlobalState;
+  translate: Readonly<Record<string, readonly TranslateState[]>>;
 }

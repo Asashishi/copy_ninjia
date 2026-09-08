@@ -7,6 +7,7 @@ import {
   UPDATE_POLL_TIMEOUT_SECONDS,
 } from "../consts/updateRunner";
 import { logger } from "../infra/logger";
+import { signalArgs } from "../libs/telegramSignalArgs";
 import { sleep } from "../libs/sleep";
 import type { TelegramAllowedUpdates } from "../types/lifecycle";
 
@@ -33,10 +34,7 @@ export function createAcknowledgedUpdateFetcher(
       signal.throwIfAborted();
       try {
         // SDK 声明引用 abort-controller shim；运行时只传递 Bun 原生信号。
-        const updates: Update[] = await api.getUpdates(
-          payload,
-          signal as unknown as Parameters<Api["getUpdates"]>[1]
-        );
+        const updates: Update[] = await api.getUpdates(payload, ...signalArgs(signal));
         const last: Update | undefined = updates[updates.length - 1];
         if (last !== undefined) offset = last.update_id + 1;
         return updates;

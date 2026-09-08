@@ -14,6 +14,8 @@ import type { Bot, Context } from "grammy";
 
 /** 本次 update 命中的 handler 名，按调用顺序。 */
 const calls: string[] = [];
+/** 统一命令入口从 grammY 收到的参数，保留子命令和目标原文。 */
+const commandArguments: { handler: string; argument: string }[] = [];
 /** 三条 ingress 是否认领本条 update；每个用例自行设置。 */
 const claims: { antiRaid: boolean; gag: boolean; qa: boolean; qaBoard: boolean; wed: boolean } = {
   antiRaid: false,
@@ -29,9 +31,12 @@ const gates: { init: boolean; privateCommand: boolean; privateProxy: boolean } =
   privateProxy: false,
 };
 
-function record(name: string): () => Promise<void> {
-  return (): Promise<void> => {
+function record(name: string): (ctx?: Context) => Promise<void> {
+  return (ctx?: Context): Promise<void> => {
     calls.push(name);
+    if (ctx !== undefined && typeof ctx.match === "string") {
+      commandArguments.push({ handler: name, argument: ctx.match });
+    }
     return Promise.resolve();
   };
 }
@@ -41,13 +46,9 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   permission: "handlePermissionCommand",
   white: "handleWhiteCommand",
   copy: "handleCopyCommand",
-  r_copy: "handleCopyCommand",
-  nya_copy: "handleCopyCommand",
-  ja_copy: "handleJaCopyCommand",
-  steal_icon: "handleStealIconCommand",
+  translate: "handleTranslateCommand",
+  icon: "handleIconCommand",
   wed: "dispatchWedCommand",
-  reset_icon: "handleResetIconCommand",
-  stop_copy: "handleStopCommand",
   block: "handleBlockCommand",
   batch_kick: "handleBatchKickCommand",
   unblock: "handleUnblockCommand",
@@ -56,8 +57,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   flood_control: "handleFloodControlCommand",
   antiraid: "handleAntiRaidCommand",
   bot_status: "handleBotStatusCommand",
-  query_mood: "handleQueryMoodCommand",
-  switch_mood: "handleSwitchMoodCommand",
+  mood: "handleMoodCommand",
   init: "handleInitCommand",
   quiet: "handleQuietCommand",
   unquiet: "handleUnquietCommand",
@@ -66,9 +66,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   gag: "handleGagCommand",
   ungag: "handleUngagCommand",
   send: "handleSendCommand",
-  set_qa: "handleSetQaCommand",
-  query_qa: "handleQueryQaCommand",
-  remove_qa: "handleRemoveQaCommand",
+  qa: "handleQaCommand",
   x: "handleCjkActionUsageCommand",
 };
 
@@ -198,6 +196,7 @@ function commandMessage(text: string): unknown {
 
 async function dispatch(update: unknown): Promise<readonly string[]> {
   calls.length = 0;
+  commandArguments.length = 0;
   await bot.handleUpdate(update as Parameters<Bot["handleUpdate"]>[0]);
   return [...calls];
 }
@@ -216,11 +215,39 @@ beforeEach((): void => {
 });
 
 describe("registerHandlers 分发", () => {
+  test.each([
+    ["copy", "", "handleCopyCommand"],
+    ["copy", "stop", "handleCopyCommand"],
+    ["copy", "reverse @alice", "handleCopyCommand"],
+    ["copy", "nya", "handleCopyCommand"],
+    ["qa", "set", "handleQaCommand"],
+    ["qa", "query 问题 含空格", "handleQaCommand"],
+    ["qa", "remove 第一行\n第二行", "handleQaCommand"],
+    ["mood", "query", "handleMoodCommand"],
+    ["mood", "switch", "handleMoodCommand"],
+    ["icon", "steal @alice", "handleIconCommand"],
+    ["icon", "reset", "handleIconCommand"],
+  ])("/%s %s 与定向命令均保留完整参数", async (command, argument, handler) => {
+    for (const suffix of ["", `@${BOT_USERNAME}`]) {
+      const observed: readonly string[] = await dispatch(commandMessage(`/${command}${suffix} ${argument}`));
+      expect(observed).toContain(handler);
+      expect(observed).not.toContain("handleIncomingMessageMiddleware");
+      expect(commandArguments).toContainEqual({ handler, argument });
+    }
+  });
+
+  test.each(["r_copy", "nya_copy", "stop_copy", "set_qa", "query_qa", "remove_qa", "query_mood", "switch_mood", "steal_icon", "reset_icon"])("/%s 不触发统一命令处理器", async (command) => {
+    const observed: readonly string[] = await dispatch(commandMessage(`/${command}`));
+    for (const handler of ["handleCopyCommand", "handleQaCommand", "handleMoodCommand", "handleIconCommand"]) {
+      expect(observed).not.toContain(handler);
+    }
+  });
+
   test("全部命令经 :entities:bot_command 子链落到各自 handler，且不再进消息兜底", async () => {
     for (const [command, handler] of Object.entries(COMMAND_HANDLERS)) {
       const observed: readonly string[] = await dispatch(commandMessage(`/${command}`));
       // 命令消息同样要先过三条 ingress：待验证成员发的命令必须计入刷屏窗口、
-      // 被 gag 的命令消息不得继续，`/set_qa` 表单投递也要先被认领。
+      // 被 gag 的命令消息不得继续，`/qa set` 表单投递也要先被认领。
       expect(observed).toEqual([
         "handleAntiRaidMessageIngress",
         "handleGagMessageIngress",
@@ -249,7 +276,7 @@ describe("registerHandlers 分发", () => {
   });
 
   test("没有 bot_command 实体的消息一次跳过整组命令，直达 hears 与消息兜底", async () => {
-    // 这条正是分组的收益点：整组 31 层 lazy 一次都不走。
+    // 这条正是分组的收益点：整组命令 handler 都不执行。
     expect(await dispatch(groupMessage("普通群消息"))).toEqual([
       "handleAntiRaidMessageIngress",
       "handleGagMessageIngress",
@@ -273,11 +300,11 @@ describe("registerHandlers 分发", () => {
         message_id: nextUpdateId,
         date: 1,
         chat: CHANNEL,
-        text: "/set_qa",
-        entities: [{ type: "bot_command", offset: 0, length: 7 }],
+        text: "/qa set",
+        entities: [{ type: "bot_command", offset: 0, length: 3 }],
       },
     });
-    expect(observed).toContain("handleSetQaCommand");
+    expect(observed).toContain("handleQaCommand");
     // 频道帖不进 Anti-Raid / gag 那两条只挂在 message 上的 ingress。
     expect(observed).not.toContain("handleAntiRaidMessageIngress");
     expect(observed).toContain("handleQaMessageIngress");
@@ -297,7 +324,7 @@ describe("registerHandlers 分发", () => {
     ]);
   });
 
-  test("/set_qa 表单投递认领后整条 update 终止", async () => {
+  test("/qa set 表单投递认领后整条 update 终止", async () => {
     claims.qa = true;
     expect(await dispatch(groupMessage("回答: 一段答案"))).toEqual([
       "handleAntiRaidMessageIngress",

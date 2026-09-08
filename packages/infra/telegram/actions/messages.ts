@@ -11,8 +11,8 @@ import {
   replyParametersFor,
   runBooleanTelegramAction,
   runTelegramAction,
-  signalArgs,
 } from "./core";
+import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type {
   TelegramChatAction,
   TelegramSendResult,
@@ -57,7 +57,7 @@ export interface SendMessageParams {
    * - **长期留存的必须带**——会话性输出（复读、AI 回复、洗澡回复、问答直答）、
    *   `AGENTS.md`「Telegram 提示留存」列举的长期保留例外（两块权限看板、问答
    *   看板、成功的中文动作结果），以及不由固定延迟清理持有的按钮消息
-   *   （`/set_qa` 表单、gag 发言提示）。它们不会自己消失，落错话题就是永久错位。
+   *   （`/qa set` 表单、gag 发言提示）。它们不会自己消失，落错话题就是永久错位。
    *   `preserveInGroup` 那一档由 `bun run check:conventions` 强制。
    * - **到期自删的不带**——命令回执与用法提示（30 秒清理，见 commandMessages.ts）、
    *   广告封禁播报与刷屏禁言公告，以及入群验证提醒（理由见 libs/forumTopic.ts

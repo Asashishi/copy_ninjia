@@ -35,9 +35,9 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3513_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.45%25-2ea44f?style=flat-square" alt="Coverage"></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3817_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.65%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
 メッセージの復唱と人格模倣は表面にすぎません。その下では、複数の Worker が、障害復旧、上限付きキャッシュ、競合対策を備えたグループチャット自動化システムを支えています。
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 3513 件のテストが全て成功 / テストファイル 347 件 / expect() 呼び出し 129,700 回 / 関数カバレッジ 97.21% / 行カバレッジ 97.45%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 3817 件のテストが全て成功 / テストファイル 357 件 / expect() 呼び出し 157,155 回 / 関数カバレッジ 97.39% / 行カバレッジ 97.65%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -91,11 +91,11 @@
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 高精度な復唱</b></p>
-  <p>ユーザーやチャンネルを指定してメッセージを復唱します。そのまま、反転、「nya~」追加、日本語翻訳の 4 モードに対応します。</p>
+  <p>ユーザーやチャンネルを指定して、そのまま・反転・「nya~」追加で復唱します。独立した <code>/translate</code> は各群で最大 5 人の文字を日本語・簡体字中国語・米国英語・ウクライナ語・ロシア語へ翻訳します。文字のみを扱い、媒体のコピーやアバター変更は行いません。各群で既定は無効、<code>/translate enable</code> で有効化し、<code>list</code> で現在の一覧を確認できます。</p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 アバター盗用</b></p>
-  <p><code>/copy</code> でアバターを自動同期。<code>/steal_icon</code> で copy 状態に入らずアバターのみ複製も可能。</p>
+  <p><code>/copy</code> でアバターを自動同期。<code>/icon steal</code> で copy 状態に入らずアバターのみ複製も可能。</p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI チャット</b></p>
@@ -147,7 +147,7 @@
 <tr>
 <td align="left" valign="top">
   <p><b>💬 chat Q&amp;A</b></p>
-  <p><code>/set_qa</code> は form を開き、開いた本人が「問題:」「回答:」の 2 通で質問と回答を登録します（chat ごとに最大 15 件、回答には <code>```json</code> block も入れられます）。一字一句同じ質問が来れば AI を介さず即答し、登録文と字面が異なる言い回しだけを model の 2 つの照会 tool に委ねます。</p>
+  <p><code>/qa set</code> は form を開き、開いた本人が「問題:」「回答:」の 2 通で質問と回答を登録します（chat ごとに最大 15 件、回答には <code>```json</code> block も入れられます）。一字一句同じ質問が来れば AI を介さず即答し、登録文と字面が異なる言い回しだけを model の 2 つの照会 tool に委ねます。</p>
 </td>
 <td align="left" valign="top"></td>
 <td align="left" valign="top"></td>
@@ -174,7 +174,7 @@ Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンド�
 
 ## 🚀 クイックスタート
 
-必要なものは Linux（`/proc` が読めること。他の OS ではインスタンスロックが fail closed になります）、Bun 1.4.2、Bot Token、スーパー管理者のユーザー ID です。有効化する AI 機能ごとにその provider の API Key が要り、`/ja_copy` には Google Cloud サービスアカウント JSON も必要です。ハードウェアの目安は [07 運用とトラブルシュート](07-operations.md#ハードウェアの目安) を参照してください。
+必要なものは Linux（`/proc` が読めること。他の OS ではインスタンスロックが fail closed になります）、Bun 1.4.2、Bot Token、スーパー管理者のユーザー ID です。有効化する AI 機能ごとにその provider の API Key が要り、`/translate` には Google Cloud サービスアカウント JSON も必要です。ハードウェアの目安は [07 運用とトラブルシュート](07-operations.md#ハードウェアの目安) を参照してください。
 
 ワンショット install（足りないものを導入し、設定を尋ねてそのまま起動）：
 

@@ -4,13 +4,13 @@ import { resolveSpeaker } from "./facts";
 import { buildAiRecordMediaMessage } from "./recordContext";
 import { replyToUnresolvableMedia } from "./mediaFallback";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
-import { claimRandomMediaTrigger } from "./triggerPolicy";
+import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { TelegramVisionSource } from "../../types/media";
 
 /** 记录贴纸元数据/视觉描述并调度直接回复或随机评价。 */
 export function handleStickerMessage(context: MessageTriggerContext): boolean {
-  const { message, directTriggerReason }: MessageTriggerContext = context;
+  const { message }: MessageTriggerContext = context;
   if (!message.sticker) return false;
 
   const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
@@ -37,5 +37,5 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
       voiceDurationSeconds: 0,
     },
   }));
-  return directTriggerReason !== undefined || randomTrigger !== "none";
+  return mediaTriggerHandled(context, randomTrigger);
 }

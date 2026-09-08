@@ -1,8 +1,8 @@
 /**
- * 群问答的三条命令：`/set_qa`、`/query_qa`、`/remove_qa`。
+ * 群问答的三个子命令：`/qa set`、`/qa query`、`/qa remove`。
  *
- * `/set_qa` 与 `/remove_qa` 需要 `isCanControllQaPermission`（超级管理员恒持有）；
- * `/query_qa` 是只读看板，群成员都能用。三条都要求本群已 `/init enable`——问答
+ * `/qa set` 与 `/qa remove` 需要 `isCanControllQaPermission`（超级管理员恒持有）；
+ * `/qa query` 是只读看板，群成员都能用。三条都要求本群已 `/init enable`——问答
  * 直答挂在消息主干上，没接管的群本来就不该有本天才的动静。
  *
  * **频道身份可用**：表单靠「问题:」「回答:」两条格式消息收文本，而不是 inline，
@@ -13,7 +13,8 @@
 
 import type { CommandContext, Context } from "grammy";
 import type { Message } from "grammy/types";
-import { CHAT_QA_MAX_PER_CHAT, QA_COMMAND_TEXTS } from "../consts/qa";
+import { CHAT_QA_MAX_PER_CHAT, QA_COMMAND_TEXTS, QA_SUBCOMMAND_PATTERN } from "../consts/qa";
+import { QA_USAGE_TEXT } from "../consts/commandUsage";
 import { chatQaCount, getChatQa, removeChatQa, setChatQa } from "../infra/qaStore";
 import { forumTopicThreadId } from "../libs/forumTopic";
 import { getChatState } from "../infra/storage/stateStore";
@@ -39,6 +40,23 @@ import {
 
 export { handleQaBoardCallback } from "./qa/board";
 
+/** /qa 统一入口；先检查本群接管状态，再分派表单、查询或删除。 */
+export async function handleQaCommand(ctx: CommandContext<Context>): Promise<void> {
+  if (!await requiresInitialized(ctx.chat.id, ctx.msgId)) return;
+  const match: RegExpExecArray | null = QA_SUBCOMMAND_PATTERN.exec(ctx.match.trim());
+  const subcommand: string | undefined = match?.[1];
+  const argument: string = match?.[2] ?? "";
+  if (subcommand === "set" && argument.length === 0) {
+    await setQa(ctx);
+  } else if (subcommand === "query") {
+    await queryQa(ctx, argument);
+  } else if (subcommand === "remove") {
+    await removeQa(ctx, argument);
+  } else {
+    await sendCommandMessage({ chatId: ctx.chat.id, text: QA_USAGE_TEXT, replyToMessageId: ctx.msgId });
+  }
+}
+
 /** 本群是否已接管；未接管时统一回同一句，不区分命令。 */
 async function requiresInitialized(
   chatId: number,
@@ -53,7 +71,7 @@ async function requiresInitialized(
   return false;
 }
 
-/** 维护类命令的权限闸；`/query_qa` 不走这里。 */
+/** 维护类命令的权限闸；`/qa query` 不走这里。 */
 async function requiresQaPermission(ctx: CommandContext<Context>): Promise<boolean> {
   if (hasCommandPermission(ctx, "isCanControllQaPermission")) return true;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
@@ -72,11 +90,10 @@ function discardQaForm(session: QaFormSession): void {
   });
 }
 
-/** 处理 `/set_qa`：开一张表单，等发起者按格式把问题和回答发进来。 */
-export async function handleSetQaCommand(ctx: CommandContext<Context>): Promise<void> {
+/** 处理 `/qa set`：开一张表单，等发起者按格式把问题和回答发进来。 */
+async function setQa(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  if (!await requiresInitialized(chatId, messageId)) return;
   if (!await requiresQaPermission(ctx)) return;
   if (chatQaCount(chatId) >= CHAT_QA_MAX_PER_CHAT) {
     await sendCommandMessage({
@@ -224,12 +241,10 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
   return true;
 }
 
-/** 处理 `/query_qa`：不带参数列全部，带参数查一条；两者都长期保留。 */
-export async function handleQueryQaCommand(ctx: CommandContext<Context>): Promise<void> {
+/** 处理 `/qa query`：不带参数列全部，带参数查一条；两者都长期保留。 */
+async function queryQa(ctx: CommandContext<Context>, wanted: string): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  if (!await requiresInitialized(chatId, messageId)) return;
-  const wanted: string = ctx.match.trim();
   const entries: ReadonlyMap<string, string> | undefined = getChatQa(chatId);
   if (entries === undefined || entries.size === 0) {
     await sendCommandMessage({
@@ -271,13 +286,11 @@ export async function handleQueryQaCommand(ctx: CommandContext<Context>): Promis
   });
 }
 
-/** 处理 `/remove_qa <问题文本>`：删掉本群指定问答。 */
-export async function handleRemoveQaCommand(ctx: CommandContext<Context>): Promise<void> {
+/** 处理 `/qa remove <问题文本>`：删掉本群指定问答。 */
+async function removeQa(ctx: CommandContext<Context>, wanted: string): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  if (!await requiresInitialized(chatId, messageId)) return;
   if (!await requiresQaPermission(ctx)) return;
-  const wanted: string = ctx.match.trim();
   if (wanted.length === 0) {
     await sendCommandMessage({
       chatId,
@@ -313,7 +326,7 @@ export async function handleRemoveQaCommand(ctx: CommandContext<Context>): Promi
  *
  * 只清表单，**不删已登记的问答**：teardown 的语义是「本天才不再管这个群」，
  * 而问答是部署方登记的配置，重新 /init enable 之后应当照旧生效。真要删得走
- * /remove_qa。
+ * /qa remove。
  */
 export function teardownQaInChat(chatId: number): void {
   closeQaFormSessionsInChat(chatId, discardQaForm);

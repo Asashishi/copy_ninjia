@@ -346,6 +346,60 @@ describe("同步副作用的逐条执行", () => {
     });
   });
 
+  test("踢人请求失败后的复探发现人已离群：结算，不再退避重试", async () => {
+    // 与上一条的区别在**哪一次探测**说人不在：这里首发前的探测说在场，请求真
+    // 发出去了才失败，随后的复探才发现人已经不在——响应可能只是丢了。这条路
+    // 必须结算，否则一个已经离群的记录会一直退避到重试上限，群里那条验证提示
+    // 也跟着挂到最后。
+    testState.kickSucceeds = false;
+    testState.membershipPresent = true;
+    probeChatMembership.mockImplementationOnce(async (): Promise<boolean> => true);
+    probeChatMembership.mockImplementationOnce(async (): Promise<boolean> => false);
+    const state = kickPendingState();
+    setState(state);
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(probeChatMembership).toHaveBeenCalledTimes(2);
+    expect(state.executionStarted).toBeFalse();
+    expect(dispatched).toContainEqual({
+      userId: USER_ID,
+      event: { type: "kickSettled", now: expect.any(Number) },
+    });
+    // 结算掉的记录不排重试，也不记那行「踢不动」诊断。
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBeUndefined();
+    expect(loggedErrors.some((line: string): boolean => line.includes("Lockdown kick"))).toBeFalse();
+  });
+
+  test("判不出群还是超级群时零踢人请求，保留待处置并退避", async () => {
+    // 超级群走 unbanChatMember、普通群走 banChatMember + unban，两者不可互换：
+    // 猜错一边就等于用一个会解封的请求去踢人。查不出来时宁可什么都不发。
+    const delays: number[] = [];
+    const restoreTimeouts: () => void = recordScheduledDelays(delays);
+    try {
+      testState.fetchedChatType = undefined;
+      const state = kickPendingState();
+      setState(state);
+
+      await run([{ kind: "kickMember" }]);
+
+      expect(kickedUserIds).toEqual([]);
+      // 群类型都判不出来，就不该再去问成员在不在。
+      expect(probeChatMembership).not.toHaveBeenCalled();
+      expect(state.executionStarted).toBeFalse();
+      expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeFalse();
+      expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
+      expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
+      // 这条分支一个 Telegram 请求都不发，诊断必须由它自己记出来。
+      expect(loggedErrors.some((line: string): boolean =>
+        line.includes("could not resolve whether the chat is a group or supergroup")
+      )).toBeTrue();
+    } finally {
+      restoreTimeouts();
+    }
+  });
+
   test("私密模式纯踢出在 429 重放前发现目标已离群时直接结算", async () => {
     testState.kickTargetAbsent = true;
     setState(kickPendingState());

@@ -35,9 +35,9 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3513_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.45%25-2ea44f?style=flat-square" alt="Coverage"></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3817_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.65%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
 Message copying and personality mimicry are only the surface. Underneath is a multi-Worker group-chat automation system with recovery, bounded caches, and race protection.
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 3513 tests passed, 347 test files, 129,700 expect() calls, 97.21% function coverage, 97.45% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 3817 tests passed, 357 test files, 157,155 expect() calls, 97.39% function coverage, 97.65% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -87,11 +87,11 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 Precise copying</b></p>
-  <p>Lock onto a user or channel and reproduce every message in one of four modes: unchanged, reversed, suffixed with “nya~,” or translated into Japanese.</p>
+  <p>Lock onto a user or channel and copy messages unchanged, reversed, or suffixed with “nya~.” Independent <code>/translate</code> sessions handle text for up to five identities per group in Japanese, Simplified Chinese, American English, Ukrainian or Russian — text only, without copying media or changing the avatar. Disabled per group by default; <code>/translate enable</code> turns it on and <code>list</code> shows the current sessions.</p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 Avatar theft</b></p>
-  <p><code>/copy</code> synchronizes the target avatar automatically, while <code>/steal_icon</code> copies only the avatar without enabling copy state.</p>
+  <p><code>/copy</code> synchronizes the target avatar automatically, while <code>/icon steal</code> copies only the avatar without enabling copy state.</p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI group chat</b></p>
@@ -143,7 +143,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 <tr>
 <td align="left" valign="top">
   <p><b>💬 Chat Q&amp;A</b></p>
-  <p><code>/set_qa</code> opens a form, and the opener registers the pair as two messages prefixed <code>问题:</code> / <code>回答:</code>, up to fifteen per chat, with a <code>```json</code> block allowed in the answer. Ask one verbatim and the bot answers immediately without involving the AI; only wordings that differ from the registered text go to the model's two query tools.</p>
+  <p><code>/qa set</code> opens a form, and the opener registers the pair as two messages prefixed <code>问题:</code> / <code>回答:</code>, up to fifteen per chat, with a <code>```json</code> block allowed in the answer. Ask one verbatim and the bot answers immediately without involving the AI; only wordings that differ from the registered text go to the model's two query tools.</p>
 </td>
 <td align="left" valign="top"></td>
 <td align="left" valign="top"></td>
@@ -166,7 +166,7 @@ The full command table, permission semantics and per-command behaviour live in *
 
 ## 🚀 Quick Start
 
-You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.4.2, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/ja_copy` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
+You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.4.2, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/translate` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
 
 One-shot install (installs whatever is missing, asks for config, then starts):
 

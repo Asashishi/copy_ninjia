@@ -97,12 +97,12 @@ describe("LruCache", () => {
     expect([...iterator]).toEqual([["b", 2], ["c", 3]]);
   });
 
-  // 下面四条锁住「一边遍历、一边改写同一份缓存」的语义。实现从「Map 删了再插」
-  // 换成侵入式双向链表时，这一族是唯一可能悄悄改掉行为的地方：
-  // antiRaid/lockdownMirror.ts 的 recoverAbandonedLockdowns 正是这样用的——遍历
-  // chatStateCache，就地为每个仍挂着 lockdown 的群发起权限恢复，而那条链路第一句
-  // 同步就要 getChatStateCache().get(同一个 chatId)。一旦迭代在那里提前结束，
-  // 排在后面的群会一个都恢复不到，而且没有任何报错。
+  // 下面六条锁住「一边遍历、一边改写同一份缓存」的语义，也划出受支持与不受支持
+  // 的分界：antiRaid/lockdownMirror.ts 的 recoverAbandonedLockdowns 正是这样用的
+  // ——遍历 chatStateCache，就地为每个仍挂着 lockdown 的群发起权限恢复，而那条链
+  // 路第一句同步就要 getChatStateCache().get(同一个 chatId)。一旦迭代在那里提前
+  // 结束，排在后面的群会一个都恢复不到，而且没有任何报错；反过来，每次产出都重排
+  // 当前条目则不保证终止，最后一条把这一侧钉住。
   test("迭代中删除当前停留的这一条：其余条目照常遍历完，不会提前结束", () => {
     const cache = new LruCache<string, number>(8);
     cache.set("a", 1);
@@ -148,7 +148,7 @@ describe("LruCache", () => {
     expect(seen).toEqual(["a", "b", "d", "c"]);
   });
 
-  test("迭代中 get 当前停留的这一条：不漏掉后面的条目，且迭代必须终止", () => {
+  test("迭代中把正停留的这一条挪到最新端一次：不漏后面的条目，且迭代终止", () => {
     const cache = new LruCache<string, number>(8);
     cache.set("a", 1);
     cache.set("b", 2);
@@ -156,8 +156,9 @@ describe("LruCache", () => {
     cache.set("d", 4);
 
     const seen: string[] = [];
-    // 每次产出都把它挪到最新端。哨兵防止实现回退成死循环时把测试挂住——
-    // 旧的 Map 实现在这里就是无限产出同一条。
+    // 只在 "b" 这一次 get 自己：这正是 recoverAbandonedLockdowns 的形状——同一条
+    // 目第二次产出时恢复已在册，不再读缓存，因此至多重排一次。哨兵防止实现回退
+    // 成死循环时把测试挂住。
     for (const [key] of cache) {
       seen.push(key);
       if (key === "b") cache.get("b");
@@ -166,6 +167,51 @@ describe("LruCache", () => {
     expect(seen).toEqual(["a", "b", "c", "d", "b"]);
     // 四条都至少访问到了一次，这才是 recoverAbandonedLockdowns 依赖的性质。
     expect(new Set(seen)).toEqual(new Set(["a", "b", "c", "d"]));
+  });
+
+  test("keys() 在同一条被挪到最新端一次时的产出与 entries 一致", () => {
+    const cache = new LruCache<string, number>(8);
+    cache.set("a", 1);
+    cache.set("b", 2);
+    cache.set("c", 3);
+    cache.set("d", 4);
+
+    const seen: string[] = [];
+    for (const key of cache.keys()) {
+      seen.push(key);
+      if (key === "b") cache.get("b");
+      if (seen.length > 32) break;
+    }
+    expect(seen).toEqual(["a", "b", "c", "d", "b"]);
+  });
+
+  test("每次产出都重排当前条目时迭代不终止；这不是受支持的用法", () => {
+    const cache = new LruCache<string, number>(3);
+    cache.set("1", 1);
+    cache.set("2", 2);
+    cache.set("3", 3);
+
+    // 契约只覆盖「每条至多被移到最新端一次」。连续重排已访问条目时链表被遍历体
+    // 持续重排，迭代不会自己结束——诊断这种用法必须限步，而不是等它跑完。条目数
+    // 与容量全程不变，因此也不是内存泄漏。
+    const entries: string[] = [];
+    for (const [key] of cache) {
+      entries.push(key);
+      cache.get(key);
+      if (entries.length === 12) break;
+    }
+    expect(entries).toEqual(["1", "2", "3", "1", "2", "3", "1", "2", "3", "1", "2", "3"]);
+    expect(cache.size).toBe(3);
+
+    const keys: string[] = [];
+    for (const key of cache.keys()) {
+      keys.push(key);
+      cache.get(key);
+      if (keys.length === 12) break;
+    }
+    expect(keys).toHaveLength(12);
+    expect(new Set(keys)).toEqual(new Set(["1", "2", "3"]));
+    expect(cache.size).toBe(3);
   });
 
   test("回归：get 命中一个值为 undefined 的键时不当成未命中，且照常续命", () => {

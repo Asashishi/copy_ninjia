@@ -61,12 +61,9 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 `COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。未設定時はプロジェクトルートを使用し、明示的な空白値は起動時に拒否します。
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：グローバルな状態だけ——copy の対象と、`global.assets` の素材直リンク 4 本
-    （運勢サムネイル 2 枚、gag 発言 inline 結果のサムネイル、Bot 既定アバター）。
-    グループ単位の状態——グループスイッチ
-    （参加認証と対レイド private mode をまとめて制御する `isAntiRaidEnabled` を含む。
-    既定で無効）、ロックダウン記録、権限スナップショット——は `database/storage.sqlite` の
-    `chat_states` に移りました。model 選択は runtime state ではなくなりました。
+  - **内容**：`global.copy` の全体復唱状態、`global.assets` の 4 本の素材 URL、`translate` の群別翻訳セッション。グループスイッチ・ロックダウン記録・権限スナップショットは `database/storage.sqlite` の `chat_states` に保持します。
+  - **翻訳形式**：任意のトップレベル `translate` は欠落時 `{}`。キーは正規形の負整数グループ ID、値は 1–5 セッションの空でない配列です。例：`"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`。最大 25 群、同群内の identity ID は一意で、方向は `ja`・`cn`・`en`・`uk`・`ru` のみ。identity は `CachedUser` として厳密検証します。`global.copy.copyMode` は欠落・`reverse`・`nya` だけを受け入れます。主ファイルまたは LKG の不正、単独オブジェクトなどの旧形式は起動を拒否し、自動更新や項目破棄をしません。
+  - **状態の手動編集**：サービスを停止して inactive を確認し、作業ツリー外の `mktemp -d` に主備とデプロイデータをバックアップして mode・所有者・SHA-256 を記録します。両方を編集し、変更対象外の `global` を保持して `decodeStateFile` で厳密検証し、差分と権限を確認してから起動します。アップグレードは下記 cold migration に従い、サンプルや Git の内容でデプロイ状態を置き換えてはいけません。
   - **バックアップ**：主・副を同時にバックアップ。
   - **素材直リンクの変更は停止中のみ**：プロセスは正式な状態をメモリに保持しファイル全体を
     上書きするため、稼働中の編集は次回の保存で消えます。サービス停止 → `global.assets` を編集
@@ -117,7 +114,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     深夜をまたぐ処理中 query のため東京暦日 3 日分を保持。完全な再配信は再追記せず、
     履歴は user ごとの最新値へ compact し、1 chat/day は最新 250,000 人まで保持。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
-  - **内容**：schema v7 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
+  - **内容**：schema v8 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
     恒久 allowlist / blocklist の正式表です。`temporary_whitelist_entries` は group 横断発言の
     累計、連続 qualified day、一時 grant 時刻、日次 rollover に必要な `send_count`、
     `counted_at`、`qualified_at` を relational column で保持し、
@@ -128,15 +125,13 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     record 全体が既定値へ戻ったときだけ解放されます：`/init disable` が消すのはグループ名
     だけで、機能スイッチは設計上そのまま残るため（`/init enable` し直しても再設定不要）、
     主ゲートを切っても `/ai_chat` などが有効なグループは 1 行を占め続けます。枠を空けるには、
-    そのグループで `/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/ja_copy` を
+    そのグループで `/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/translate` を
     1 つずつ disable にするか、Bot をそのグループから外します——退出時にその row は削除
     されます（復旧待ちの lockdown が残っている場合を除く）。
   - **バックアップ**：必須です。blocklist を失えば恒久 BAN がすべて解除され、outbox を
     失えば未完了処置が抜けます。Bot 停止後、主 DB とその時点で存在する WAL/SHM を同じ
     consistency set として worktree 外へ copy し、owner/mode と SHA-256 を記録します。
-    text editor や場当たり的な SQL で業務 row を手編集してはいけません。一時 allowlist の
-    schema migration script は書き込み前に主 DB と既存 sidecar を byte 単位で外部 directory へ
-    copy し、owner/mode/SHA-256 manifest を記録して読み戻し検証します。
+    text editor や場当たり的な SQL で業務 row を手編集してはいけません。翻訳の cold migration は独立したコピーだけを書き換え、ソースを保持してハッシュと metadata を確認します。
   - **復元**：Disk I/O Worker が唯一の database owner です。起動時は integrity、JSONB、
     schema、migration lineage、row codec、blocklist と 2 種類の allowlist の非交差を検証してから、
     恒久 policy count と pending outbox だけを main thread へ返します。一時 activity は update が
@@ -180,16 +175,27 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 起動は database 欠落を「空 policy」と推測しないため、新規 deployment は現行 schema の空 database を明示的に一度作成する必要があります。手順は [01 セットアップ](01-getting-started.md#identity-storage-の初期化) にあり、`install.sh` にも含まれています。作成 entry point は既存 target の上書きを拒否します。
 
-### upgrade input と段階的 migration
+### 10.5.4 からの cold migration
 
-`10.5.2` から `10.5.3` への upgrade に data format migration は不要です。現行 runtime は厳密な schema v7 lineage と検証済み `state.json` のみを受け付け、現行 `package.json` は `migrate:*` command を提供しません。
+唯一の cold migration 入口は [`scripts/migrateTranslate.ts`](../../scripts/migrateTranslate.ts) です。`10.5.4` の厳密な schema v7 系譜と global-only 状態だけを受け入れ、schema v8 と群別セッション配列を出力します。古い版は各版の手順で先に `10.5.4` まで段階的に更新してください。未知の系譜と未公開 dev の状態形式は拒否し、runtime は現行形式だけを扱います。
 
-古い deployment は各 version の運用手順に従って中間 upgrade を完了します。
+1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、実際の設定・資格情報・実行データをコピーします。主備状態、SQLite 本体、存在する WAL/SHM は同一停止時点のものを使い、ファイル一覧・mode・所有者・SHA-256 を記録して検証します。
 
-- `config/whitelist.json`、`config/blocklist.json`、`memory/blocklist/` を使う場合、`9.1.5` で identity-storage migration を行い、version ごとの upgrade 手順を進めます。
-- database が schema v5、または `state.json` が `global.assets.qaThumbnailUrl` を含む場合、`10.5.1` で対応する cold migration と検証を完了してから現行版へ進みます。
+2. 下記コマンドでバックアップから新しい出力ディレクトリを生成します。出力はソースの外に置き、親ディレクトリは事前に存在する必要があります。スクリプトはソース、サービス、実際のデプロイファイルを変更しません。
 
-各段階で service を停止し、deployment input と runtime dataset 全体を worktree 外へ backup して、file 一覧・permission・owner・SHA-256 を記録します。SQLite 本体と存在する WAL/SHM は同じ停止時点の snapshot とします。その version の手順で migration、厳格な読み戻し、service 安定性確認を完了するまで backup を保持します。未知の lineage は拒否し、空 database、手動の key 削除、example 設定による迂回を禁止します。
+```bash
+bun run migrate:translate --from 10.5.4 \
+  --source-root /absolute/cold-backup \
+  --output-root /absolute/new-staging-directory
+```
+
+3. SQLite 権限 `isCanControllJATranslatePermission` を `isCanControllTranslatePermission`、群スイッチ `isJATranslationEnabled` を `isTranslationEnabled` に改名し、真偽値と任意スイッチの欠落を保持します。必須権限の欠落、不正値、旧新キーの衝突は拒否します。`copyMode: "ja"` の対象をその群の日本語セッションへ移し、対応する copy 対象・モード・群 ID を消去してクールダウン時刻と素材を保持します。他の copy モードは保持し、主備を別々に変換します。
+
+4. 変換、厳密検証、SQLite checkpoint、接続の完全終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata を検証します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行してください。既存出力は上書きできません。
+
+5. 停止状態を保って主備状態と SQLite 本体を手動で置換します。旧 WAL/SHM はバックアップ済みで DB を開くプロセスがない場合だけ消去し、新本体と混在させません。一覧から元の所有者と mode を復元し、サービスアカウントが主備状態、SQLite と親ディレクトリへ書けることを確認します。`config/` は読み取り専用でも構いません。
+
+6. 設定と主備を厳密検証し、設置後ハッシュを確認してから起動します。最低 2 回の supervisor 再起動間隔にわたって `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認します。全検証完了まで外部バックアップを保持します。失敗したら以降を停止し、rollback は旧データに対応するプログラムと同一時点のバックアップ全体を復元します。
 
 ## 起動失敗の調査
 
@@ -213,7 +219,7 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 - **identity database が欠落、または validation failure**
   - **原因**：migration 未実行、`storage.sqlite` が書込不能、integrity/JSONB/schema/
     migration lineage 不正、row codec failure、または blocklist と恒久／一時 allowlist が交差。
-  - **対応**：error が schema v5 を示す場合は Bot を停止したまま上記 v5 → v7 cold migration を実行します。
+  - **対応**：確認済み 10.5.4 schema v7 は停止状態で上記 cold migration を実行し、古い版は先に 10.5.4 まで段階的に更新します。
     それ以外は [Identity Storage Migration](#identity-storage-migration) に従って database を作成または
     rollback します。同一 consistency point の DB と sidecar を復元し、collaboration group
     permission を直してから起動します。空 DB を作ったり失敗 row を削除してはいけません。

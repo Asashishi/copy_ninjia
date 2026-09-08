@@ -1,6 +1,7 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import type { FlushResult } from "../../types/lifecycle";
 import { chatStateCache } from "../../cache/main/chatState";
+import { translateStates } from "../../cache/main/translateState";
 import { globalAssetState, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
 import {
   BOT_DEFAULT_AVATAR_URL,
@@ -133,6 +134,10 @@ export async function loadState(): Promise<void> {
   try {
     const decoded: DecodedStateFile | null = await sharedStateStore().load();
     if (decoded === null) return;
+    translateStates.clear();
+    for (const [chatId, state] of Object.entries(decoded.translate)) {
+      translateStates.set(Number(chatId), state);
+    }
     if (decoded.global.copy.lastCopyTime !== undefined) {
       globalCopyState.lastCopyTime = decoded.global.copy.lastCopyTime;
     }
@@ -191,7 +196,10 @@ export function seedMissingAssetState(): number {
 }
 
 function currentGlobalState(): StateFileSchema {
-  return { global: { copy: globalCopyState, assets: globalAssetState } };
+  return {
+    global: { copy: globalCopyState, assets: globalAssetState },
+    translate: Object.fromEntries(translateStates),
+  };
 }
 
 /**

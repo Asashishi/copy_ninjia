@@ -3,7 +3,7 @@
  *
  * 重点守五条：
  * 1. **跟随重定向**：地址是部署配置的一部分，而图床与对象存储的直链先跳一次到存储
- *    域名是常态（内置缺省那条 Drive 链接即是）。/copy、/steal_icon 那三条的
+ *    域名是常态（内置缺省那条 Drive 链接即是）。/copy、/icon steal 那三条的
  *    `redirect: "error"`（见 telegramAvatar / telegram.copyAvatar 两份用例）归
  *    Telegram 自有资产域 allowlist 那条约束管，与这一条不是一回事。
  * 2. 响应仍走有界读取，第三方响应撑不爆内存。

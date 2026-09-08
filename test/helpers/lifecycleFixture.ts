@@ -151,6 +151,7 @@ const testDependencies = {
   flushStateToDisk,
   getChatStateCache,
   getGlobalCopyState,
+  seedTranslateTargets: (): void => {},
   assertSuperAdminNotBlocked,
   hydrateIdentityStorageCounts,
   hydrateChatStateCache,

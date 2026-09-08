@@ -18,7 +18,7 @@ import type { Uploadable } from "openai";
 import {
   OPENAI_CHAT_SUMMARY_MAX_TOKENS,
   OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS,
-  OPENAI_REQUEST_TIMEOUT_MS,
+  OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
   OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
   OPENAI_STORE_RESPONSES,
 } from "../../consts/aiChat/openai";
@@ -27,9 +27,7 @@ import { logger } from "../../infra/logger";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { finalizeAiTextResult } from "../ai/utils/textResult";
 import {
-  isEndpointFailureStatus,
-  isEndpointMisconfiguredError,
-  isExplicitUnsupportedMediaError,
+  classifyProviderApiFailure,
   numericErrorStatus,
 } from "../ai/utils/mediaSupportError";
 import { getOpenAiClient, requestOpenAiTextResult } from "./client";
@@ -111,7 +109,7 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
     if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
     const requestSignal: AbortSignal = signalWithTimeout(
       request.signal,
-      OPENAI_REQUEST_TIMEOUT_MS
+      OPENAI_MEDIA_REQUEST_TIMEOUT_MS
     );
     requestSignal.throwIfAborted();
     const response: OpenAI.Audio.Transcriptions.TranscriptionCreateResponse =
@@ -133,16 +131,19 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
     if (error instanceof OpenAI.APIError) {
       const status: number | undefined = numericErrorStatus(error);
       logger.error(`${request.errorLabel} error: ${status ?? "?"} ${error.message}`);
-      // 归因口径与 aiChat/openai/client.ts 一致：路径级 404/405 是配置错误，
-      // 正文明确拒绝模态才是能力缺失，其余按瞬时故障交给探测退避。
-      if (isEndpointMisconfiguredError(status)) {
-        return { ok: false, retryable: false, mediaFailure: "misconfigured" };
+      // 归因级联与两个 client 共用 ai/utils/mediaSupportError.ts 的同一条判定。
+      // 本入口恒为媒体能力（语音转写），因此 isMediaCapability 直接传 true。
+      switch (classifyProviderApiFailure(status, error.message, true)) {
+        case "misconfigured":
+          return { ok: false, retryable: false, mediaFailure: "misconfigured" };
+        case "unsupported":
+          return { ok: false, retryable: false, mediaFailure: "unsupported" };
+        // 普通 4xx 只说明这一份音频不合适：不下模态结论，也不推动退避。
+        case "rejected":
+          return { ok: false, retryable: false };
+        case "endpointFailure":
+          break;
       }
-      if (isExplicitUnsupportedMediaError(status, error.message)) {
-        return { ok: false, retryable: false, mediaFailure: "unsupported" };
-      }
-      // 普通 4xx 只说明这一份音频不合适：不下模态结论，也不推动退避。
-      if (!isEndpointFailureStatus(status)) return { ok: false, retryable: false };
     } else {
       logger.error(`Error calling ${request.errorLabel}:`, error);
     }

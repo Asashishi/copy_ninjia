@@ -64,7 +64,7 @@ export const GEMINI_SONG_ERROR_LABEL: string = "Gemini song generation API";
  * 单次生歌请求的超时上限。
  *
  * 独立于 GEMINI_REQUEST_TIMEOUT_MS：生歌走的是 Interactions API 的另一条端点，
- * 一首整曲要合成几分钟量级的 44.1 kHz 立体声音频，按常规请求那 150 秒的预算发
+ * 一首整曲要合成几分钟量级的 44.1 kHz 立体声音频，按常规请求那 180 秒的预算发
  * 会稳定超时——而超时是在**服务端已经开始出账**之后发生的，等于每次都花钱换一次
  * 失败。SDK 的 next-gen 客户端只继承构造期的 `httpOptions.timeout`，因此这一档
  * 必须在每次调用时显式传入（见 aiChat/gemini/song.ts）。
@@ -80,8 +80,22 @@ export const GEMINI_SONG_REQUEST_TIMEOUT_MS: number = 600_000;
  */
 export const GEMINI_SONG_REQUEST_ATTEMPTS: number = 1;
 
-/** 单次 Gemini 请求的 per-attempt 超时上限。 */
-export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
+/**
+ * text（闲聊回复）与 summary（冷消息压缩、贴纸整包简介）两档能力的 per-attempt
+ * 超时上限。media 有独立档位，见下一个常量；生歌另见
+ * GEMINI_SONG_REQUEST_TIMEOUT_MS。
+ */
+export const GEMINI_REQUEST_TIMEOUT_MS: number = 180_000;
+/**
+ * media 能力（视觉描述与语音转写）的独立超时。
+ *
+ * 这一档必须宽于纯文本往返：服务端要先把整份图片或整段音频解码进上下文才开始
+ * 出字，端到端耗时本就长一截，套用通用档会在模型还在读媒体时把连接掐掉——而
+ * 掐断发生在服务端已经出账之后，等于花钱换一条
+ * `[图片：解析失败，请无视此消息]`。视觉与语音共用 config/agent.json 的
+ * `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
+ */
+export const GEMINI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
 /**
  * Gemini SDK 对 408/429/5xx 的总尝试次数（首次加最多五次重试）；显式传入才能
  * 启用 SDK 2.12.0 的 retryOptions，所有调用方不得再重试这类请求失败。

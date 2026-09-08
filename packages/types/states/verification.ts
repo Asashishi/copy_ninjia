@@ -102,7 +102,9 @@ export interface ExpellingState {
    * 与 unconfirmedNoticeSent 分开记：两条文案指向完全不同的原因，共用一个名额
    * 时，先发出去的那条会把另一条永久顶掉——探测抖动先占了名额，之后每次重试
    * 都不再发那条唯一点名「去检查封禁权限」的诊断，人留在群里而管理员被引向
-   * 网络问题。随快照持久化，Worker 重生/进程重启后不重发（这条告警不自删）。
+   * 网络问题。随快照持久化，Worker 重生/进程重启后不重发；发出去的那条消息本身
+   * 走统一临时发送边界，30 秒后自删（见 workers/antiRaid/verificationEffects/
+   * terminal.ts 的 sendTemporaryMessageFromMain）。
    */
   failureNoticeSent?: boolean;
   /** 「没能确认成员是否仍在群里或群类型」告警已发送；理由同 failureNoticeSent。 */

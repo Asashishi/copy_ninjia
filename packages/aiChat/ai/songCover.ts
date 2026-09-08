@@ -16,7 +16,7 @@
  *
  * 两家实现包的 generateImage 都自己兜住异常只返回 null，但**选取那一步会抛**：
  * imageAiProvider() 在「选过的那一家缺配置」时按设计抛错（见 aiChat/provider.ts 的
- * resolveCapability / capabilityConfig）。这个 reject 若逃出去，展开的不是这一次封面，而是
+ * capabilityConfig）。这个 reject 若逃出去，展开的不是这一次封面，而是
  * `toolset.execute()` 外面整个工具循环（口径同 aiChat/ai/utils/toolPause.ts 的
  * 模块头注）——歌已经生成、账已经出，群里却什么都收不到。因此这里必须整段
  * try/catch，而不是依赖下层的契约。

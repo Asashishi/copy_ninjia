@@ -30,7 +30,7 @@ async function recoverStickerCatalogs(
 
 import type { StickerCatalogSnapshot } from "../../../packages/types";
 
-/** 快照在管线上以序列化 JSON 文本流转（见 types/aiChat.ts 的
+/** 快照在管线上以序列化 JSON 文本流转（见 types/stickers/protocol.ts 的
  *  AiStickerCatalogEvent.snapshot），写入接口也吃字符串。 */
 function snapshot(description: string): string {
   const value: StickerCatalogSnapshot = { version: 1, entries: { "file-uid-1": { emoji: "😂", description } }, summary: "一包搞笑猫猫贴纸", savedAt: 1700000000000 };

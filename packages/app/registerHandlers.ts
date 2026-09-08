@@ -16,24 +16,19 @@ import {
   handleGagMessageIngress,
   handleQaBoardCallback,
   handleQaMessageIngress,
-  handleQueryQaCommand,
-  handleRemoveQaCommand,
-  handleSetQaCommand,
+  handleQaCommand,
   handleInitCommand,
-  handleJaCopyCommand,
+  handleTranslateCommand,
   handleInlineQuery,
   handleLuckChosenInlineResult,
   handleMuteCommand,
   handlePermissionCommand,
-  handleQueryMoodCommand,
+  handleMoodCommand,
   handleQuietCommand,
   handleSendCommand,
-  handleResetIconCommand,
-  handleStealIconCommand,
+  handleIconCommand,
   dispatchWedCommand,
   dispatchWedCallback,
-  handleStopCommand,
-  handleSwitchMoodCommand,
   handleUnblockCommand,
   handleUngagCommand,
   handleUnmuteCommand,
@@ -68,6 +63,7 @@ import type {
   HearsContext,
   NextFunction,
 } from "grammy";
+import type { Chat, Message } from "grammy/types";
 import type { HandlerRegistration } from "../types/lifecycle";
 
 /** 仅把冷身份加入预热批次；全热 update 不分配临时数组。 */
@@ -85,7 +81,7 @@ function appendColdIdentityId(
  * 把三条「认领即终止、否则放行」的 ingress 收敛成同一条 MaybePromise 边界。
  *
  * 三条 ingress 的常态都是同步返回 false（本群没有活动 gag 会话、没有未完成的
- * `/set_qa` 表单、机器人管理员身份已确证且这条不是黑名单频道消息）。这里因此
+ * `/qa set` 表单、机器人管理员身份已确证且这条不是黑名单频道消息）。这里因此
  * 不写成 `async`：普通群消息一条都不为这三道判定分配 Promise，只有真正认领或
  * 需要出站 I/O 的那条 update 才等一次。
  *
@@ -121,9 +117,13 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
   // 因此必须在 isInit 网关前检查。
   bot.use((ctx: Context, next: NextFunction): Promise<void> => {
+    // `ctx.msg` 是每次求值的 getter 链（grammy/out/context.js 的 `get msg()` 串
+    // 八个 update 字段），本条链上凡是要多次读取的地方一律先取成局部变量：
+    // `ctx.update` 在一条 update 的处理期内不可变，派生值读一次即可。
+    const message: Message | undefined = ctx.msg;
     const confirmation: Promise<void> | undefined = confirmLuckDraw(
-      ctx.msg?.text,
-      ctx.msg?.entities
+      message?.text,
+      message?.entities
     );
     return confirmation === undefined ? next() : confirmation.then(next);
   });
@@ -134,7 +134,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 网关拒绝时仍摘除已保存的退群成员，不新增候选或放行业务处理。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     if (!shouldPassInitGate(ctx)) {
-      observeWedMemberDeparture(ctx);
+      observeWedMemberDeparture(ctx, ctx.chat);
       return undefined;
     }
     return shouldPassPrivateCommandGate(ctx) ? next() : undefined;
@@ -151,46 +151,51 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.use((ctx: Context, next: NextFunction): Promise<void> => {
     // 成员集合只消费通过初始化网关的主线程更新，实际增删由 wed owner 合并落盘。
     observeWedMembers(ctx);
+    // 同上：`ctx.msg` 与它的 `reply_to_message` 在本段里各要读七八次，先各取一次。
+    const message: Message | undefined = ctx.msg;
+    const repliedTo: Message | undefined = message?.reply_to_message;
     let ids: number[] | null = null;
     if (ctx.from !== undefined) ids = appendColdIdentityId(ids, ctx.from.id);
-    if (ctx.msg?.sender_chat !== undefined) {
-      ids = appendColdIdentityId(ids, ctx.msg.sender_chat.id);
-    } else if (ctx.chat?.type === "channel") {
+    if (message?.sender_chat !== undefined) {
+      ids = appendColdIdentityId(ids, message.sender_chat.id);
+    } else {
       // 纯粹的频道帖没有 from、也没有 sender_chat：频道自己就是 ctx.chat，
       // 而 users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts
       // 都按这个 id 解析行为主体。漏掉它的话，已在 whitelist_entries 里的频道
-      // 在自己频道发 /query_mood、/bot_status 会撞上冷 LRU 的 fail-closed 判定，
+      // 在自己频道发 /mood query、/bot_status 会撞上冷 LRU 的 fail-closed 判定，
       // 被当成未授权拒绝，直到别的 update 偶然把这个 id 预热进来。
-      ids = appendColdIdentityId(ids, ctx.chat.id);
+      // `ctx.chat` 只在这条分支需要，因此留在分支内读一次，不提到函数头。
+      const chat: Chat | undefined = ctx.chat;
+      if (chat?.type === "channel") ids = appendColdIdentityId(ids, chat.id);
     }
-    if (ctx.msg?.reply_to_message?.from !== undefined) {
-      ids = appendColdIdentityId(ids, ctx.msg.reply_to_message.from.id);
+    if (repliedTo?.from !== undefined) {
+      ids = appendColdIdentityId(ids, repliedTo.from.id);
     }
-    if (ctx.msg?.reply_to_message?.sender_chat !== undefined) {
-      ids = appendColdIdentityId(ids, ctx.msg.reply_to_message.sender_chat.id);
+    if (repliedTo?.sender_chat !== undefined) {
+      ids = appendColdIdentityId(ids, repliedTo.sender_chat.id);
     }
     const forwardOriginId: number | undefined =
-      messageOriginIdentityId(ctx.msg?.forward_origin);
+      messageOriginIdentityId(message?.forward_origin);
     if (forwardOriginId !== undefined) {
       ids = appendColdIdentityId(ids, forwardOriginId);
     }
     const repliedForwardOriginId: number | undefined =
-      messageOriginIdentityId(ctx.msg?.reply_to_message?.forward_origin);
+      messageOriginIdentityId(repliedTo?.forward_origin);
     if (repliedForwardOriginId !== undefined) {
       ids = appendColdIdentityId(ids, repliedForwardOriginId);
     }
     const externalReplyOriginId: number | undefined =
-      messageOriginIdentityId(ctx.msg?.external_reply?.origin);
+      messageOriginIdentityId(message?.external_reply?.origin);
     if (externalReplyOriginId !== undefined) {
       ids = appendColdIdentityId(ids, externalReplyOriginId);
     }
-    if (ctx.msg?.new_chat_members !== undefined) {
-      for (const member of ctx.msg.new_chat_members) {
+    if (message?.new_chat_members !== undefined) {
+      for (const member of message.new_chat_members) {
         ids = appendColdIdentityId(ids, member.id);
       }
     }
-    if (ctx.msg?.left_chat_member !== undefined) {
-      ids = appendColdIdentityId(ids, ctx.msg.left_chat_member.id);
+    if (message?.left_chat_member !== undefined) {
+      ids = appendColdIdentityId(ids, message.left_chat_member.id);
     }
     if (ctx.chatMember !== undefined) {
       ids = appendColdIdentityId(ids, ctx.chatMember.new_chat_member.user.id);
@@ -215,7 +220,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.on("message", (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> | undefined =>
     claimOrContinue(handleGagMessageIngress(ctx.message, ctx.me.id), next));
 
-  // /set_qa 表单投递同样要覆盖命令消息，且必须终止本条 update：那条投递消息
+  // /qa set 表单投递同样要覆盖命令消息，且必须终止本条 update：那条投递消息
   // 已经被认领并删除，再放进 AI、复读或命令链路只会处理一个不存在的东西。
   // 必须同时挂在 channel_post 上——频道里的「问题:」「回答:」是频道帖，只监听
   // message 的话频道根本填不了表单，而频道能设置问答正是本轮改动的目的。
@@ -243,13 +248,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("permission", (ctx: CommandContext<Context>): Promise<void> => handlePermissionCommand(ctx));
   commands.command("white", (ctx: CommandContext<Context>): Promise<void> => handleWhiteCommand(ctx));
   commands.command("copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx));
-  commands.command("r_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "reverse"));
-  commands.command("nya_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "nya"));
-  commands.command("ja_copy", (ctx: CommandContext<Context>): Promise<void> => handleJaCopyCommand(ctx));
-  commands.command("steal_icon", (ctx: CommandContext<Context>): Promise<void> => handleStealIconCommand(ctx));
+  commands.command("translate", (ctx: CommandContext<Context>): Promise<void> => handleTranslateCommand(ctx));
+  commands.command("icon", (ctx: CommandContext<Context>): Promise<void> => handleIconCommand(ctx));
   commands.command("wed", (ctx: CommandContext<Context>): void | Promise<void> => dispatchWedCommand(ctx));
-  commands.command("reset_icon", (ctx: CommandContext<Context>): Promise<void> => handleResetIconCommand(ctx));
-  commands.command("stop_copy", (ctx: CommandContext<Context>): Promise<void> => handleStopCommand(ctx));
   commands.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
   commands.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
   commands.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
@@ -258,8 +259,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("flood_control", (ctx: CommandContext<Context>): Promise<void> => handleFloodControlCommand(ctx));
   commands.command("antiraid", (ctx: CommandContext<Context>): Promise<void> => handleAntiRaidCommand(ctx));
   commands.command("bot_status", (ctx: CommandContext<Context>): Promise<void> => handleBotStatusCommand(ctx));
-  commands.command("query_mood", (ctx: CommandContext<Context>): Promise<void> => handleQueryMoodCommand(ctx));
-  commands.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
+  commands.command("mood", (ctx: CommandContext<Context>): Promise<void> => handleMoodCommand(ctx));
   commands.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
   commands.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));
   commands.command("unquiet", (ctx: CommandContext<Context>): Promise<void> => handleUnquietCommand(ctx));
@@ -268,9 +268,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("gag", (ctx: CommandContext<Context>): Promise<void> => handleGagCommand(ctx));
   commands.command("ungag", (ctx: CommandContext<Context>): Promise<void> => handleUngagCommand(ctx));
   commands.command("send", (ctx: CommandContext<Context>): Promise<void> => handleSendCommand(ctx));
-  commands.command("set_qa", (ctx: CommandContext<Context>): Promise<void> => handleSetQaCommand(ctx));
-  commands.command("query_qa", (ctx: CommandContext<Context>): Promise<void> => handleQueryQaCommand(ctx));
-  commands.command("remove_qa", (ctx: CommandContext<Context>): Promise<void> => handleRemoveQaCommand(ctx));
+  commands.command("qa", (ctx: CommandContext<Context>): Promise<void> => handleQaCommand(ctx));
   // 菜单占位项：它只为在命令菜单里曝光「/<1~2 个中文字>」这个用法（那类命令名
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
   // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
@@ -284,7 +282,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.on("message_reaction", (ctx: Filter<Context, "message_reaction">): Promise<void> => handleReaction(ctx));
   bot.on("chat_member", (ctx: Filter<Context, "chat_member">): Promise<void> => handleChatMemberUpdate(ctx));
   bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx));
-  // /wed 结果和 /query_qa 翻页按钮排在入群验证之前：前缀各自独立，认领了就
+  // /wed 结果和 /qa query 翻页按钮排在入群验证之前：前缀各自独立，认领了就
   // 不再往下走，没认领的原样交给验证按钮。
   bot.on("callback_query:data", async (
     ctx: Filter<Context, "callback_query:data">,

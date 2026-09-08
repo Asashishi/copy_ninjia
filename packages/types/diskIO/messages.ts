@@ -9,8 +9,8 @@ import type { LuckReceiptSecret } from "./storage";
  * 磁盘 IO 线程（packages/workers/diskIOWorker.ts）统一的消息协议与快照类型：
  * 日志、AI/贴纸快照、每日运势、待验证当日增量与身份 SQLite 共用同一个
  * Worker。快照的结构
- * 类型（AiMemorySnapshot/StickerCatalogSnapshot）见 types/aiChat.ts——
- * 消息里只带它们序列化后的 JSON 文本。
+ * 类型见 types/aiChat/memory.ts 的 AiMemorySnapshot 与 types/stickers/catalog.ts 的
+ * StickerCatalogSnapshot——消息里只带它们序列化后的 JSON 文本。
  */
 
 export type LogLevel = "log" | "info" | "warn" | "error";
@@ -42,7 +42,7 @@ export interface LogEnvelope extends LogMessage {
 
 /** 主线程 -> diskIOWorker：覆盖式写入某群的 AI 记忆快照。snapshot 是
  * AiMemorySnapshot 序列化后的 JSON 文本（源头一次 stringify、全程字符串
- * 流转，见 types/aiChat.ts 的 AiMemoryEvent.snapshot），落盘端原样写文件。 */
+ * 流转，见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），落盘端原样写文件。 */
 export interface AiMemoryDiskMessage {
   type: "aiMemory";
   chatId: number;

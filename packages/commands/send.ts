@@ -2,6 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import { clearChatStateField, getActiveProxySendTarget, getChatStateCache, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { logApiError, sendCommandMessage } from "../infra/telegram";
 import { bot } from "../infra/telegram/mainClient";
+import { signalArgs } from "../libs/telegramSignalArgs";
 import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,
@@ -63,12 +64,8 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
 
   try {
     const signal: AbortSignal | undefined = currentUpdateAbortSignal();
-    const targetChat: ChatFullInfo = signal === undefined
-      ? await bot.api.getChat(targetChatId)
-      : await bot.api.getChat(
-        targetChatId,
-        signal as unknown as Parameters<typeof bot.api.getChat>[1]
-      );
+    const targetChat: ChatFullInfo =
+      await bot.api.getChat(targetChatId, ...signalArgs(signal));
     if (targetChat.type !== "group" && targetChat.type !== "supergroup") {
       await sendCommandMessage({ chatId, text: `只能转发进群组呀，${targetChatId} 不是群组，检查一下 id♡`, replyToMessageId: messageId });
       return;

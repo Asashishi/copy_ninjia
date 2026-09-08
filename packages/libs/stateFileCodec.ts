@@ -1,5 +1,8 @@
 import { isPlainRecord } from "./record";
+import { TRANSLATE_CHAT_USER_LIMIT } from "../consts/translate";
 import { isTelegramGroupChatId } from "./telegramId";
+import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
+import type { TranslateState } from "../types/translate";
 import type {
   CachedUser,
   CopyMode,
@@ -50,8 +53,8 @@ function optionalTimestamp(value: Record<string, unknown>, key: string, path: st
 
 function copyMode(value: unknown, path: string): CopyMode | undefined {
   if (value === undefined) return undefined;
-  if (value === "reverse" || value === "nya" || value === "ja") return value;
-  throw new Error(`${path} must be one of reverse, nya or ja`);
+  if (value === "reverse" || value === "nya") return value;
+  throw new Error(`${path} must be one of reverse or nya`);
 }
 
 /**
@@ -172,12 +175,55 @@ function globalState(value: unknown): DecodedGlobalState {
   };
 }
 
+/** 每群保存非空会话数组；身份不得重复，方向与容量均严格校验。 */
+function translationChat(value: unknown, path: string): readonly TranslateState[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > TRANSLATE_CHAT_USER_LIMIT) {
+    throw new Error(`${path} must be an array containing 1 to ${TRANSLATE_CHAT_USER_LIMIT} translation sessions`);
+  }
+  const result: TranslateState[] = [];
+  const userIds: Set<number> = new Set();
+  for (let index: number = 0; index < value.length; index++) {
+    const entryPath: string = `${path}[${index}]`;
+    const entry: Record<string, unknown> = record(value[index], entryPath);
+    knownKeys(entry, ["translatedUser", "language"], entryPath);
+    if (entry.language !== "ja" && entry.language !== "cn" && entry.language !== "en" &&
+      entry.language !== "uk" && entry.language !== "ru") {
+      throw new Error(`${entryPath}.language must be one of ja, cn, en, uk or ru`);
+    }
+    const translatedUser: CachedUser = cachedUser(entry.translatedUser, `${entryPath}.translatedUser`);
+    if (userIds.has(translatedUser.id)) throw new Error(`${entryPath}.translatedUser.id must be unique within the chat`);
+    userIds.add(translatedUser.id);
+    result.push({ translatedUser, language: entry.language });
+  }
+  return result;
+}
+
+/** 翻译会话按规范负整数群 ID 索引；缺省为空，不接受空条目或非法方向。 */
+function translationStates(value: unknown): Readonly<Record<string, readonly TranslateState[]>> {
+  if (value === undefined) return {};
+  const path: string = "state.translate";
+  const raw: Record<string, unknown> = record(value, path);
+  const entries: string[] = Object.keys(raw);
+  if (entries.length > STATE_MANAGED_CHAT_LIMIT) {
+    throw new Error(`${path} must contain at most ${STATE_MANAGED_CHAT_LIMIT} groups`);
+  }
+  const result: Record<string, readonly TranslateState[]> = {};
+  for (const key of entries) {
+    const chatId: number = Number(key);
+    if (!isTelegramGroupChatId(chatId) || String(chatId) !== key) {
+      throw new Error(`${path} keys must be canonical negative safe integer Telegram group IDs`);
+    }
+    result[key] = translationChat(raw[key], `${path}.${key}`);
+  }
+  return result;
+}
+
 /** 解码完整 state.json；任何存在但非法的字段都会拒绝整个文件。 */
 export function decodeStateFile(value: unknown): DecodedStateFile {
   const raw: Record<string, unknown> = record(value, "state");
   // 旧顶层键（globalCopy/imageProvider/chatProvider）会在这里被当场拒绝：结构
   // 变更只做手工迁移，解码器不留兼容分支（见 types/chatState.ts 的 StateFileSchema）。
-  knownKeys(raw, ["global"], "state");
+  knownKeys(raw, ["global", "translate"], "state");
   if (!("global" in raw)) throw new Error("state.global is required");
-  return { global: globalState(raw.global) };
+  return { global: globalState(raw.global), translate: translationStates(raw.translate) };
 }

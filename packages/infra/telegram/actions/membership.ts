@@ -2,6 +2,7 @@ import type { ChatMember, User } from "grammy/types";
 import { isAdminStatus, isPresentMember } from "../../../libs/chatMember";
 import { telegramApi } from "../client";
 import { runTelegramAction } from "./core";
+import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type { TelegramApi } from "../../../types/telegramWorker";
 
 type ChatMemberApi = Pick<TelegramApi, "getChatMember">;
@@ -24,13 +25,7 @@ function getChatMember({
   userId,
   signal,
 }: GetChatMemberOptions): Promise<ChatMember> {
-  return signal === undefined
-    ? api.getChatMember(chatId, userId)
-    : api.getChatMember(
-      chatId,
-      userId,
-      signal as unknown as Parameters<TelegramApi["getChatMember"]>[2]
-    );
+  return api.getChatMember(chatId, userId, ...signalArgs(signal));
 }
 
 /** 查询失败按非成员处理，避免在未确认时生成“已踢出”的错误战报。 */
@@ -92,14 +87,32 @@ export async function probeChatAdmin(
   });
 }
 
-export interface ReadPresentChatUserOptions {
+/** 取成员身份的两条路共用的查询边界：是否解释成员状态由各自的 map 决定。 */
+export interface ChatMemberUserOptions {
   readonly chatId: number;
   readonly userId: number;
   readonly signal?: AbortSignal;
 }
 
+/**
+ * 取本轮查询到的成员身份，不解释成员状态，离群与被踢同样返回身份。
+ * /wed 的候选信源只有 memory/wed 的已发言成员集合，抽中后只用这一次查询拿到
+ * 图注和公开头像兜底所需的身份，见 commands/wed/draw.ts。
+ * @returns 查询成功返回身份，查询失败返回 undefined。
+ */
+export function readChatMemberUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<User | undefined> {
+  return runTelegramAction<ChatMember, User | undefined>({
+    action: `read chat member identity (chat ${chatId}, user ${userId})`,
+    execute: (requestSignal?: AbortSignal): Promise<ChatMember> =>
+      getChatMember({ api: telegramApi, chatId, userId, signal: requestSignal }),
+    map: (member: ChatMember): User => member.user,
+    fallback: undefined,
+    signal,
+  });
+}
+
 /** 返回此刻在群内的用户；null 表示已离群，undefined 表示查询失败。 */
-export function readPresentChatUser({ chatId, userId, signal }: ReadPresentChatUserOptions): Promise<User | null | undefined> {
+export function readPresentChatUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<User | null | undefined> {
   return runTelegramAction<ChatMember, User | null | undefined>({
     action: `read chat member (chat ${chatId}, user ${userId})`,
     execute: (requestSignal?: AbortSignal): Promise<ChatMember> =>

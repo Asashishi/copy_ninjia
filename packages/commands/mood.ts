@@ -8,6 +8,19 @@ import { formatUserLabel } from "../users/userLabel";
 import { refuseIfConfigBroken } from "./configGate";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import type { CachedUser } from "../types/chatState";
+import { MOOD_USAGE_TEXT } from "../consts/commandUsage";
+
+/** /mood 只分派 query 与 switch；非法参数不触发 Worker 请求。 */
+export async function handleMoodCommand(ctx: CommandContext<Context>): Promise<void> {
+  const argument: string = ctx.match.trim();
+  if (argument === "query") {
+    await queryMood(ctx);
+  } else if (argument === "switch") {
+    await switchMood(ctx);
+  } else {
+    await sendCommandMessage({ chatId: ctx.chat.id, text: MOOD_USAGE_TEXT, replyToMessageId: ctx.msgId });
+  }
+}
 
 interface MoodAvailabilityOptions {
   chatId: number;
@@ -48,11 +61,11 @@ async function isMoodAvailable({
 }
 
 /**
- * 处理 /query_mood 指令：任意群成员均可查询本群 AI 当前有效心情。主线程
+ * 处理 /mood query 指令：任意群成员均可查询本群 AI 当前有效心情。主线程
  * 只向 AI Worker 投递 queryMood 并等待 moodQueried 回执；不经过权限系统，
  * 也不强制重抽尚未自然到期的心情。
  */
-export async function handleQueryMoodCommand(ctx: CommandContext<Context>): Promise<void> {
+async function queryMood(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const available: boolean = await isMoodAvailable({
@@ -85,13 +98,13 @@ export async function handleQueryMoodCommand(ctx: CommandContext<Context>): Prom
 }
 
 /**
- * 处理 /switch_mood 指令：立即重抽本群 AI 的当前心情并回复结果。心情缓存
+ * 处理 /mood switch 指令：立即重抽本群 AI 的当前心情并回复结果。心情缓存
  * 在 AI Worker 线程内（cache/workers/aiChat/mood.ts），主线程只 post 一条 switchMood
  * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/index.ts 的 switchAiMood），
  * 回复固定从这里发出，不走 AI 回复流水线。仅持有 isCanSwitchMood 的身份可用；
  * 超级管理员恒持有该权限（见 whitelist.ts），白名单身份可由 /permission 单独获权；其他人尝试只会被嘲讽。
  */
-export async function handleSwitchMoodCommand(ctx: CommandContext<Context>): Promise<void> {
+async function switchMood(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 

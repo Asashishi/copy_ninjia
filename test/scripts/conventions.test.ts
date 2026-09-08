@@ -185,21 +185,23 @@ describe("project convention collectors", () => {
     expect(problems).toHaveLength(6);
   });
 
-  test("没有活动冷迁移边时 package.json 不得暴露任何 migrate: 命令", async () => {
+  test("package.json 只允许当前翻译冷迁移边并要求入口存在", async () => {
     const root: string = temporaryRoot("copy-ninjia-conventions-");
     mkdirSync(join(root, "scripts"), { recursive: true });
 
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { test: "bun test" },
+      scripts: { "migrate:translate": "bun scripts/migrateTranslate.ts" },
     }));
+    expect(await collectColdMigrationProblems(root)).toContainEqual(expect.stringContaining("active cold migration entry does not exist"));
+    await Bun.write(join(root, "scripts/migrateTranslate.ts"), "export {};\n");
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:legacy": "bun scripts/legacy.ts" },
+      scripts: { "migrate:translate": "bun scripts/migrateTranslate.ts", "migrate:legacy": "bun scripts/legacy.ts" },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands (none)"
+        "package.json must expose exactly the declared active cold migration commands migrate:translate"
       ),
     ]);
   });

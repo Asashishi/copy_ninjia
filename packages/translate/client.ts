@@ -1,3 +1,5 @@
+import { TRANSLATE_LANGUAGE_CODES, TRANSLATE_REGIONAL_MODEL } from "../consts/translate";
+import type { TranslateLanguage } from "../types/translate";
 import { logger } from "../infra/logger";
 import type { v3 as GoogleTranslate, protos } from "@google-cloud/translate";
 import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
@@ -8,8 +10,7 @@ import { settleWithinBudget } from "../libs/inflight";
 import type { FlushResult } from "../types/lifecycle";
 
 // Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
-// 密钥完成鉴权——供 copyMode "ja" 使用，用于在复读复制目标的纯文本消息前
-// 先将其翻译成日语。
+// 密钥完成鉴权，供 /translate 的按群翻译会话使用。
 
 /**
  * 动态 import 回来的 SDK 里，本模块唯一用到的那部分。
@@ -54,8 +55,8 @@ function ensureTranslateGeneration(expectedGeneration: number): void {
 /**
  * gRPC 客户端构造会注册退避 timer；延迟到首次真实翻译，保持模块导入无副作用。
  *
- * **SDK 本身也是动态 import 的**，不能写成顶层 `import`。本模块经 copyModes 与
- * lifecycleDependencies 挂在启动路径上，只有真实启用日语翻译时才加载 gRPC 模块图。
+ * **SDK 本身也是动态 import 的**，不能写成顶层 `import`。本模块经翻译消息处理与
+ * lifecycleDependencies 挂在启动路径上，只有真实请求翻译时才加载 gRPC 模块图。
  *
  * 生命周期钩子（initTranslate/quiesceTranslate/closeTranslate/drainTranslate）
  * 只碰 translateRuntime 上的标志与已有实例，都不需要 SDK，因此这条惰性边界
@@ -96,11 +97,11 @@ async function getTranslateParent(expectedGeneration: number): Promise<string> {
 }
 
 /**
- * 通过 Google Cloud Translation API 将文本翻译成日语。
+ * 通过 Google Cloud Translation API 将文本翻译成指定语言。
  * 失败时返回 null，让调用方可以退化为发送未翻译的原文，而不是直接丢弃消息。
  * @param text 待翻译的文本。
  */
-async function runTranslation(text: string, expectedGeneration: number): Promise<string | null> {
+async function runTranslation(text: string, language: TranslateLanguage, expectedGeneration: number): Promise<string | null> {
   try {
     const parent: string = await getTranslateParent(expectedGeneration);
     ensureTranslateGeneration(expectedGeneration);
@@ -114,7 +115,8 @@ async function runTranslation(text: string, expectedGeneration: number): Promise
       parent,
       contents: [text],
       mimeType: "text/plain",
-      targetLanguageCode: "ja",
+      targetLanguageCode: TRANSLATE_LANGUAGE_CODES[language],
+      model: language === "en" ? `${parent}/models/${TRANSLATE_REGIONAL_MODEL}` : undefined,
     }, { timeout: TRANSLATE_REQUEST_TIMEOUT_MS });
     // 空字符串和 null/undefined 同等对待：调用方靠 null 判断"翻译失败，退化
     // 发原文"，空字符串若被当成"翻译成功"会尝试发一条空消息，被 Telegram
@@ -122,14 +124,14 @@ async function runTranslation(text: string, expectedGeneration: number): Promise
     const translated: string | null | undefined = response.translations?.[0]?.translatedText;
     return translated ? translated : null;
   } catch (error: unknown) {
-    logger.error("Error translating text to Japanese:", error);
+    logger.error("Error translating text:", error);
     return null;
   }
 }
 
-export function translateToJapanese(text: string): Promise<string | null> {
+export function translateText(text: string, language: TranslateLanguage): Promise<string | null> {
   if (!translateRuntime.accepting) return Promise.resolve(null);
-  const task: Promise<string | null> = runTranslation(text, translateRuntime.generation);
+  const task: Promise<string | null> = runTranslation(text, language, translateRuntime.generation);
   translateRuntime.tasks.add(task);
   void task.finally((): void => { translateRuntime.tasks.delete(task); });
   return task;

@@ -1,6 +1,6 @@
 import { logger } from "../../infra/logger";
 import { telegramApi } from "../../infra/telegram";
-import { signalArgs } from "../../infra/telegram/actions/core";
+import { signalArgs } from "../../libs/telegramSignalArgs";
 import {
   LINKED_CHANNEL_FETCH_TIMEOUT_MS,
   LINKED_CHANNEL_TTL_MS,

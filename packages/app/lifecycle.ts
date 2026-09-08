@@ -18,6 +18,7 @@ import type {
   ShutdownOutcome,
   ShutdownResults,
 } from "../types/lifecycle";
+import { signalArgs } from "../libs/telegramSignalArgs";
 import { lifecycleDependencies } from "./lifecycleDependencies";
 import type { ApplicationLifecycleDependencies } from "./lifecycleDependencies";
 import {
@@ -171,6 +172,7 @@ export class ApplicationLifecycle {
     );
     const restoredCopiedUser: CachedUser | null = this.dependencies.getGlobalCopyState().copiedUser;
     if (restoredCopiedUser) this.dependencies.seedSenderCache(restoredCopiedUser);
+    this.dependencies.seedTranslateTargets();
 
     this.handlers = this.dependencies.registerHandlers(this.dependencies.bot);
     await this.dependencies.registerCommandMenu(this.dependencies.bot);
@@ -290,8 +292,7 @@ export class ApplicationLifecycle {
       try {
         await this.dependencies.bot.api.getUpdates(
           { offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 },
-          AbortSignal.timeout(FINAL_OFFSET_CONFIRM_TIMEOUT_MS) as unknown as
-            Parameters<typeof this.dependencies.bot.api.getUpdates>[1]
+          ...signalArgs(AbortSignal.timeout(FINAL_OFFSET_CONFIRM_TIMEOUT_MS))
         );
       } catch (error: unknown) {
         this.finalOffsetGateSucceeded = false;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { TelegramConfig } from "../../packages/types/config";
+import { MOOD_USAGE_TEXT } from "../../packages/consts/commandUsage";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const queryAiMood = mock(async (_chatId: number): Promise<string> => "平静");
@@ -26,13 +27,14 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
 }));
 
-const { handleQueryMoodCommand, handleSwitchMoodCommand } = await import("../../packages/commands/mood");
+const { handleMoodCommand } = await import("../../packages/commands/mood");
 
-function context(userId: number | undefined = 100): never {
+function context(argument: string, userId: number | undefined = 100): never {
   return {
     chat: { id: -1001 },
     from: userId === undefined ? undefined : { id: userId, first_name: "Admin", username: "admin" },
     msgId: 7,
+    match: argument,
   } as never;
 }
 
@@ -47,10 +49,18 @@ beforeEach(() => {
   loggerError.mockClear();
 });
 
-describe("mood commands: /query_mood", () => {
-  test("普通群成员可查询当前心情，不经过 switch_mood 权限", async () => {
+test.each(["", "unknown", "query extra", "switch extra", "query switch"])("/mood %s 不发起查询或重抽", async (argument) => {
+  states.set(-1001, { isAIChatEnabled: true });
+  await handleMoodCommand(context(argument));
+  expect(queryAiMood).not.toHaveBeenCalled();
+  expect(switchAiMood).not.toHaveBeenCalled();
+  expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: MOOD_USAGE_TEXT, replyToMessageId: 7 });
+});
+
+describe("mood commands: /mood query", () => {
+  test("普通群成员可查询当前心情，不经过 isCanSwitchMood 权限", async () => {
     states.set(-1001, { isAIChatEnabled: true });
-    await handleQueryMoodCommand(context(101));
+    await handleMoodCommand(context("  query\n", 101));
 
     expect(queryAiMood).toHaveBeenCalledWith(-1001);
     expect(switchAiMood).not.toHaveBeenCalled();
@@ -62,7 +72,7 @@ describe("mood commands: /query_mood", () => {
   });
 
   test("本群未开 AI 闲聊时不投递查询请求", async () => {
-    await handleQueryMoodCommand(context(101));
+    await handleMoodCommand(context("query", 101));
 
     expect(queryAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -77,7 +87,7 @@ describe("mood commands: /query_mood", () => {
     const failure = new Error("AI Worker is unavailable.");
     queryAiMood.mockImplementation(async (): Promise<string> => { throw failure; });
 
-    await handleQueryMoodCommand(context(101));
+    await handleMoodCommand(context("query", 101));
 
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Failed to confirm AI mood query"), failure);
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -88,10 +98,10 @@ describe("mood commands: /query_mood", () => {
   });
 });
 
-describe("mood commands: /switch_mood", () => {
+describe("mood commands: /mood switch", () => {
   test("非超级管理员只被嘲讽，不触发重抽", async () => {
     states.set(-1001, { isAIChatEnabled: true });
-    await handleSwitchMoodCommand(context(101));
+    await handleMoodCommand(context("switch", 101));
 
     expect(switchAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -103,7 +113,7 @@ describe("mood commands: /switch_mood", () => {
   });
 
   test("本群未开 AI 闲聊时就地回复，不投递请求", async () => {
-    await handleSwitchMoodCommand(context());
+    await handleMoodCommand(context("switch"));
 
     expect(switchAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -115,7 +125,7 @@ describe("mood commands: /switch_mood", () => {
 
   test("重抽成功后回复带回执的新心情名", async () => {
     states.set(-1001, { isAIChatEnabled: true });
-    await handleSwitchMoodCommand(context());
+    await handleMoodCommand(context("switch"));
 
     expect(switchAiMood).toHaveBeenCalledWith(-1001);
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -131,7 +141,7 @@ describe("mood commands: /switch_mood", () => {
     const failure = new Error("AI Worker is unavailable.");
     switchAiMood.mockImplementation(async (): Promise<string> => { throw failure; });
 
-    await handleSwitchMoodCommand(context());
+    await handleMoodCommand(context("switch"));
 
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Failed to confirm AI mood switch"), failure);
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -146,7 +156,7 @@ describe("mood commands: /switch_mood", () => {
     const failure = new Error("Telegram unavailable.");
     sendMessage.mockImplementationOnce(async (): Promise<never> => { throw failure; });
 
-    await expect(handleSwitchMoodCommand(context())).rejects.toBe(failure);
+    await expect(handleMoodCommand(context("switch"))).rejects.toBe(failure);
 
     expect(switchAiMood).toHaveBeenCalledWith(-1001);
     expect(sendMessage).toHaveBeenCalledTimes(1);

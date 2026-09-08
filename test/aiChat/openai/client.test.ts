@@ -54,6 +54,7 @@ const {
 const { openAiClientCache } = await import("../../../packages/cache/workers/aiChat/openai");
 const {
   OPENAI_REQUEST_MAX_RETRIES,
+  OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
   OPENAI_REQUEST_TIMEOUT_MS,
 } = await import("../../../packages/consts/aiChat/openai");
 
@@ -84,6 +85,9 @@ afterEach(() => {
 describe("客户端构造", () => {
   test("超时与重试次数由 consts 固定，baseURL 取自 config/agent.json 的对应能力", () => {
     expect(OPENAI_REQUEST_MAX_RETRIES).toBe(5);
+    // media 比纯文本往返宽一档；两个数一起断言，改单边时这里立刻红。
+    expect(OPENAI_REQUEST_TIMEOUT_MS).toBe(180_000);
+    expect(OPENAI_MEDIA_REQUEST_TIMEOUT_MS).toBe(240_000);
     getOpenAiClient("summary");
     // 每项能力独立持有认证；即使端点相同也不能误用另一项的 key。
     getOpenAiClient("media");
@@ -98,7 +102,7 @@ describe("客户端构造", () => {
     expect(createdOptions[1]).toEqual({
       apiKey: "media-key",
       baseURL: "https://gateway.invalid/v1",
-      timeout: OPENAI_REQUEST_TIMEOUT_MS,
+      timeout: OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
       maxRetries: OPENAI_REQUEST_MAX_RETRIES,
     });
   });

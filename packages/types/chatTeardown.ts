@@ -1,4 +1,4 @@
-export type ChatRuntimeOwner = "copy" | "gag" | "aiChat" | "antiRaid" | "qa" | "wed";
+export type ChatRuntimeOwner = "copy" | "translate" | "gag" | "aiChat" | "antiRaid" | "qa" | "wed";
 export type ChatTeardownReason = "explicitDisable" | "lostAuthority";
 export type ChatTeardownCallback = (
   chatId: number,

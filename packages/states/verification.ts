@@ -4,15 +4,15 @@ import type {
   VerificationTransition,
 } from "../types/states/verification";
 import { handleGuardDisabled } from "./verification/disable";
-import { handleJoin, joinCreatesNewRecord } from "./verification/join";
+import { handleJoin, handleLeft, joinCreatesNewRecord } from "./verification/join";
 import {
+  handleAdminCheckResolved,
   handleCallback,
   handleConfirmedThreadComment,
   handleReminderLanded,
   handleTrackedMessage,
   handleVerifyTimeout,
 } from "./verification/pending";
-import { remindersOf } from "./verification/shared";
 import {
   handleDedupeExpired,
   handleExpelSettled,
@@ -58,14 +58,7 @@ export function transitionVerification(
     case "join":
       return handleJoin(state, event);
     case "left":
-      // 带按钮提醒必须删；终态可能正因本机器人踢人收到 left，需等副作用结算。
-      if (state?.kind === "pending") {
-        return { next: undefined, effects: [remindersOf(state)] };
-      }
-      if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
-        return { next: state, effects: [] };
-      }
-      return { next: undefined, effects: [] };
+      return handleLeft(state);
     case "trackedMessage":
       return handleTrackedMessage(state, event);
     case "confirmedThreadComment":
@@ -75,14 +68,7 @@ export function transitionVerification(
     case "guardDisabled":
       return handleGuardDisabled(state);
     case "adminCheckResolved":
-      if (state?.kind !== "pending") return { next: state, effects: [] };
-      return {
-        next: { kind: "exempt", label: state.label, isBot: state.isBot },
-        effects: [
-          remindersOf(state),
-          { kind: "retractJoinCount", joinedAt: state.joinedAt },
-        ],
-      };
+      return handleAdminCheckResolved(state);
     case "verifyTimeout":
       return handleVerifyTimeout(state, event);
     case "terminalPersisted":

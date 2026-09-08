@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { getActiveProxySendTarget, getChatState } from "./storage/stateStore";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
-import type { Message } from "grammy/types";
+import type { Chat, Message } from "grammy/types";
 
 /**
  * isInitEnabled 的低成本前置网关，见 app/registerHandlers.ts。未初始化群的
@@ -16,15 +16,19 @@ import type { Message } from "grammy/types";
  */
 export function shouldPassInitGate(ctx: Context): boolean {
   if (ctx.myChatMember) return true;
-  if (!ctx.chat || ctx.chat.type === "private") return true;
-  if (getChatState(ctx.chat.id).isInitEnabled === true) return true;
+  // `ctx.chat` 是每次求值的 getter 链（先跑一遍 `ctx.msg` 再串九个 update 字段），
+  // 而本函数要读四次；`ctx.update` 在一条 update 的处理期内不可变，读一次即可。
+  // 取值放在 myChatMember 判定之后：那条分支根本用不到 chat。
+  const chat: Chat | undefined = ctx.chat;
+  if (!chat || chat.type === "private") return true;
+  if (getChatState(chat.id).isInitEnabled === true) return true;
   // 未初始化群的低成本网关必须在进入身份预热/入群守卫之前完成权限
   // 与目标 bot 校验。否则任意用户可用 /init（甚至 /init@OtherBot）反复触发
   // 管理员 API 查询；真正的命令处理器虽会拒绝权限，却已经太晚。
   const message: Message | undefined = ctx.msg ?? ctx.message;
   const actorId: number | undefined =
     message?.sender_chat?.id ??
-    (ctx.chat.type === "channel" ? ctx.chat.id : ctx.from?.id);
+    (chat.type === "channel" ? chat.id : ctx.from?.id);
   // 身份判定排在全部字符串工作之前；未初始化群的普通消息无需切词、大小写归一
   // 或模板拼接。
   if (actorId !== SUPER_ADMIN_USER_ID) return false;
@@ -57,9 +61,10 @@ export function isSendCommandText(text: string, botUsername: string): boolean {
  */
 export function shouldPassPrivateCommandGate(ctx: Context): boolean {
   if (ctx.chat?.type !== "private") return true;
-  const text: string | undefined = ctx.message?.text ?? ctx.message?.caption;
+  const message: Message | undefined = ctx.message;
+  const text: string | undefined = message?.text ?? message?.caption;
   if (!text?.startsWith("/")) return true;
-  if (typeof ctx.message?.text !== "string") return false;
+  if (typeof message?.text !== "string") return false;
   return ctx.from?.id === SUPER_ADMIN_USER_ID && isSendCommandText(text, ctx.me.username);
 }
 
@@ -69,8 +74,9 @@ export function shouldPassPrivateCommandGate(ctx: Context): boolean {
  * 处理器，供超管切换目标或结束会话。
  */
 export function shouldRoutePrivateProxyMessage(ctx: Context): boolean {
-  if (!ctx.message || ctx.chat?.type !== "private" || ctx.from?.id !== SUPER_ADMIN_USER_ID) return false;
-  const text: string | undefined = ctx.message.text ?? ctx.message.caption;
+  const message: Message | undefined = ctx.message;
+  if (!message || ctx.chat?.type !== "private" || ctx.from?.id !== SUPER_ADMIN_USER_ID) return false;
+  const text: string | undefined = message.text ?? message.caption;
   if (text?.startsWith("/")) return false;
   return getActiveProxySendTarget() !== undefined;
 }

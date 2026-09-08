@@ -55,7 +55,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 910 source lines containing Chinese string or template literals across 90 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 969 source lines containing Chinese string or template literals across 88 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -156,7 +156,7 @@ The repository keeps only the migration entry from the latest released version t
 
 ## Changing an Inter-Worker Protocol
 
-`packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the shared `/query_mood` and `/switch_mood` mood handshake is the reference implementation.
+`packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the shared `/mood query` and `/mood switch` mood handshake is the reference implementation.
 
 ---
 

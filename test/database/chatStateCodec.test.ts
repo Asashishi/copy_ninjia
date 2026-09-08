@@ -9,6 +9,16 @@ import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "../helpers/botPermissions";
 
 describe("chat_states codec", () => {
+  test("当前翻译开关严格往返，运行时拒绝旧开关名称", () => {
+    const text: string = encodeChatStateData({ isTranslationEnabled: true }, "chat_states[-1001].data");
+    expect(decodeChatStateData(text, "chat_states[-1001].data").isTranslationEnabled).toBe(true);
+    for (const value of [
+      { isJATranslationEnabled: true },
+      { isJATranslationEnabled: true, isTranslationEnabled: true },
+      { isTranslationEnabled: "true" },
+    ]) expect(() => decodeChatStateData(JSON.stringify(value), "chat_states[-1001].data")).toThrow();
+  });
+
   test("完整权限、功能开关和 lockdown 严格往返", () => {
     const permissions: BotChatPermissions = botPermissions({
       canDeleteMessages: true,
@@ -37,7 +47,7 @@ describe("chat_states codec", () => {
         expiresAt: 3_000,
       },
       isAIChatEnabled: undefined,
-      isJATranslationEnabled: undefined,
+      isTranslationEnabled: undefined,
       isAdDetectEnabled: undefined,
       isFloodControlEnabled: true,
       isAntiRaidEnabled: undefined,

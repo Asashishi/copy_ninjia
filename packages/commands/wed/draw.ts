@@ -1,12 +1,19 @@
 import type { User } from "grammy/types";
-import { WED_DRAW_ATTEMPTS } from "../../consts/wed";
-import { readPresentChatUser } from "../../infra/telegram/actions/membership";
+import { WED_DRAW_ATTEMPTS, WED_DRAW_TRANSIENT_LIMIT } from "../../consts/wed";
+import { readChatMemberUser } from "../../infra/telegram/actions/membership";
 import { readCurrentAvatar } from "../../infra/telegram/avatar/read";
-import type { CurrentAvatar } from "../../types/telegram";
+import type { CurrentAvatarResult } from "../../types/telegram";
 import type { WedCandidate, WedChat, WedSession } from "../../types/wed";
-import { removeWedMember } from "./persistence";
 
-/** 在有界候选快照中无放回随机抽取；更换时排除当前结果，失败不改写会话。 */
+/**
+ * 在有界候选快照中无放回随机抽取；更换时排除当前结果，失败不改写会话。
+ *
+ * 候选信源只有 memory/wed 的已发言成员集合：抽中后只发一次成员查询取身份，
+ * 不判断是否仍在群，也不回写集合——离群成员由退群事件和每日复核清理，见
+ * commands/wed/members.ts 与 commands/wed/memberReview.ts。
+ * 只有确认没有可用头像才消耗 WED_DRAW_ATTEMPTS；成员查询或头像查询没跑完
+ * 不占配额，累计 WED_DRAW_TRANSIENT_LIMIT 次即放弃本轮。
+ */
 export async function drawWedCandidate(
   session: WedSession,
   chat: WedChat,
@@ -16,20 +23,26 @@ export async function drawWedCandidate(
   for (const id of chat.members.keys()) {
     if (id !== session.actor.id && id !== session.targetId) candidates.push(id);
   }
-  for (let attempt: number = 0; attempt < WED_DRAW_ATTEMPTS && candidates.length > 0; attempt++) {
+  let examined: number = 0;
+  let unfinished: number = 0;
+  while (examined < WED_DRAW_ATTEMPTS && candidates.length > 0) {
     if (signal.aborted) return undefined;
     const index: number = Math.floor(Math.random() * candidates.length);
     const userId: number = candidates[index]!;
     candidates[index] = candidates[candidates.length - 1]!;
     candidates.pop();
-    const user: User | null | undefined = await readPresentChatUser({ chatId: session.chatId, userId, signal });
-    if (user === undefined) return undefined;
-    if (user === null || user.is_bot) {
-      removeWedMember(session.chatId, userId);
+    const user: User | undefined = await readChatMemberUser({ chatId: session.chatId, userId, signal });
+    if (user === undefined) {
+      if (++unfinished >= WED_DRAW_TRANSIENT_LIMIT) return undefined;
       continue;
     }
-    const avatar: CurrentAvatar | undefined = await readCurrentAvatar(user, signal);
-    if (avatar !== undefined && !signal.aborted && chat.members.has(userId)) return { identity: user, photo: avatar.photo };
+    const avatar: CurrentAvatarResult = await readCurrentAvatar(user, signal);
+    if (avatar.status === "ok") return signal.aborted ? undefined : { identity: user, photo: avatar.photo };
+    if (avatar.status === "transient-failure") {
+      if (++unfinished >= WED_DRAW_TRANSIENT_LIMIT) return undefined;
+      continue;
+    }
+    examined++;
   }
   return undefined;
 }

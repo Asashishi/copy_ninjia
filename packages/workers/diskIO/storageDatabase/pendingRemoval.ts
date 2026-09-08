@@ -27,6 +27,20 @@ import {
   hasEffectiveBlocklistIdentity,
 } from "./identityPolicy";
 
+/**
+ * 一行待踢任务的解码结果与它的落盘文本。
+ *
+ * 两者**必须成对**：本函数后面每一段都要同时用到「解出来的任务」和「要写进
+ * BLOB 的那段文本」。曾经用 next / encoded 两张平行 Map 承载，键集合靠同一个
+ * 循环同时 set 来保证一致，于是写入段不得不再 `encoded.get()` 取一次并为
+ * `undefined` 补一条永远走不到的抛错。合成一条记录后这个配对由类型表达，
+ * 那条不可达分支随之消失。
+ */
+interface EncodedPendingRemovalRow {
+  readonly pending: PendingBlockedRemoval;
+  readonly data: string;
+}
+
 function clonePendingRemoval(pending: PendingBlockedRemoval): PendingBlockedRemoval {
   return {
     params: pending.params.probeMembership
@@ -47,8 +61,7 @@ export function handlePendingRemovalSnapshot(
     throw new Error("Pending removal snapshot revision must be a positive safe integer.");
   }
   if (message.revision <= latestRemovalSnapshotRevision.current) return;
-  const next: Map<number, PendingBlockedRemoval> = new Map();
-  const encoded: Map<number, string> = new Map();
+  const next: Map<number, EncodedPendingRemovalRow> = new Map();
   for (const [removalId, raw] of message.removals) {
     if (next.has(removalId)) {
       throw new Error(`Pending removal snapshot contains duplicate removalId ${removalId}.`);
@@ -61,11 +74,10 @@ export function handlePendingRemovalSnapshot(
     if (pending.params.removalId !== removalId) {
       throw new Error(`Pending removal row ${removalId} does not match params.removalId.`);
     }
-    next.set(removalId, pending);
-    encoded.set(removalId, data);
+    next.set(removalId, { pending, data });
   }
   let hasAnyBlockedIdentity: boolean | undefined;
-  for (const [removalId, pending] of next) {
+  for (const [removalId, { pending }] of next) {
     if (pending.params.probeMembership) {
       hasAnyBlockedIdentity ??= hasAnyEffectiveBlocklistIdentity();
       if (!hasAnyBlockedIdentity) {
@@ -91,7 +103,7 @@ export function handlePendingRemovalSnapshot(
     if (previous === undefined) entryDelta++;
     byteDelta += storageWriteCost(null) - (previous === undefined ? 0 : storageWriteCost(previous.data));
   }
-  for (const [removalId, data] of encoded) {
+  for (const [removalId, { data }] of next) {
     if (removalSnapshotData.get(removalId) === data) continue;
     const previous: PendingRemovalWrite | undefined = pendingRemovalWrites.get(removalId);
     if (previous === undefined) entryDelta++;
@@ -101,11 +113,7 @@ export function handlePendingRemovalSnapshot(
   for (const removalId of removalSnapshot.keys()) {
     if (!next.has(removalId)) pendingRemovalWrites.set(removalId, { data: null });
   }
-  for (const [removalId, pending] of next) {
-    const data: string | undefined = encoded.get(removalId);
-    if (data === undefined) {
-      throw new Error(`Pending removal row ${removalId} is missing its encoded value.`);
-    }
+  for (const [removalId, { pending, data }] of next) {
     if (removalSnapshotData.get(removalId) !== data) {
       pendingRemovalWrites.set(removalId, { data });
     }

@@ -10,8 +10,10 @@ export const WED_SESSION_LIMIT: number = 512;
 export const WED_MAX_CONCURRENT: number = 32;
 /** /wed 尚未开始的交互全局上限；队列只保留交互上下文，不预取头像。 */
 export const WED_MAX_PENDING: number = 512;
-/** /wed 每轮最多核实的候选用户数，限制不可用头像造成的请求量。 */
+/** /wed 每轮最多核实的候选用户数；只有确认没有可用头像才计入，限制请求量。 */
 export const WED_DRAW_ATTEMPTS: number = 8;
+/** /wed 每轮允许的查询未完成次数；不计入 WED_DRAW_ATTEMPTS，累计到上限即放弃本轮。 */
+export const WED_DRAW_TRANSIENT_LIMIT: number = 3;
 /** /wed 按钮回调所属领域前缀。 */
 export const WED_CALLBACK_PREFIX: string = "wed:";
 /** /wed 候选查询、头像下载与图片发送/编辑的请求预算；删除和提示复用统一出站生命周期。 */

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { TranslateLanguage } from "../../packages/types/translate";
 
 const getProjectId = mock(async (): Promise<string> => "project-123");
 const translateText = mock(async (..._args: unknown[]) => [{ translations: [{ translatedText: "こんにちは" }] }]);
@@ -31,8 +32,8 @@ const {
   drainTranslate,
   initTranslate,
   quiesceTranslate,
-  translateToJapanese,
-} = await import("../../packages/copy/translate");
+  translateText: requestTranslation,
+} = await import("../../packages/translate/client");
 const { translateParentCache } = await import("../../packages/cache/main/translate");
 
 beforeEach(async () => {
@@ -50,9 +51,29 @@ beforeEach(async () => {
 });
 
 describe("Google Translation 适配层", () => {
+  test.each(["uk", "ru"] as const)("%s 使用对应语言代码和默认翻译模型", async (language: TranslateLanguage) => {
+    await expect(requestTranslation("你好", language)).resolves.toBe("こんにちは");
+    expect(translateText).toHaveBeenCalledTimes(1);
+    expect(translateText.mock.calls[0]?.[0]).toMatchObject({
+      contents: ["你好"],
+      mimeType: "text/plain",
+      targetLanguageCode: language,
+      model: undefined,
+    });
+  });
+
+  test("简体中文使用 zh-CN，美式英语显式使用 en-US 与地区变体模型", async () => {
+    await requestTranslation("こんにちは", "cn");
+    expect(translateText.mock.calls[0]?.[0]).toMatchObject({ targetLanguageCode: "zh-CN" });
+    await requestTranslation("你好", "en");
+    expect(translateText.mock.calls[1]?.[0]).toMatchObject({
+      targetLanguageCode: "en-US",
+      model: "projects/project-123/locations/global/models/general/translation-llm",
+    });
+  });
   test("缓存 project parent，并发送固定的日语纯文本请求", async () => {
-    await expect(translateToJapanese("你好")).resolves.toBe("こんにちは");
-    await expect(translateToJapanese("早上好")).resolves.toBe("こんにちは");
+    await expect(requestTranslation("你好", "ja")).resolves.toBe("こんにちは");
+    await expect(requestTranslation("早上好", "ja")).resolves.toBe("こんにちは");
 
     expect(getProjectId).toHaveBeenCalledTimes(1);
     expect(translateText).toHaveBeenNthCalledWith(
@@ -69,27 +90,27 @@ describe("Google Translation 适配层", () => {
 
   test("空 translations、空字符串和 API 异常均返回 null", async () => {
     translateText.mockResolvedValueOnce([{}] as never);
-    await expect(translateToJapanese("empty")).resolves.toBeNull();
+    await expect(requestTranslation("empty", "ja")).resolves.toBeNull();
     translateText.mockResolvedValueOnce([{ translations: [{ translatedText: "" }] }]);
-    await expect(translateToJapanese("blank")).resolves.toBeNull();
+    await expect(requestTranslation("blank", "ja")).resolves.toBeNull();
 
     translateText.mockRejectedValueOnce(new Error("quota"));
-    await expect(translateToJapanese("failed")).resolves.toBeNull();
-    expect(loggerError).toHaveBeenLastCalledWith("Error translating text to Japanese:", expect.any(Error));
+    await expect(requestTranslation("failed", "ja")).resolves.toBeNull();
+    expect(loggerError).toHaveBeenLastCalledWith("Error translating text:", expect.any(Error));
   });
 
   test("project ID 获取失败不写缓存，下次调用仍可重试", async () => {
     getProjectId.mockRejectedValueOnce(new Error("auth failed"));
-    await expect(translateToJapanese("first")).resolves.toBeNull();
+    await expect(requestTranslation("first", "ja")).resolves.toBeNull();
     expect(translateParentCache.parent).toBeNull();
 
-    await expect(translateToJapanese("second")).resolves.toBe("こんにちは");
+    await expect(requestTranslation("second", "ja")).resolves.toBe("こんにちは");
     expect(getProjectId).toHaveBeenCalledTimes(2);
   });
 
   test("quiesce 后拒绝新翻译且不构造客户端", async () => {
     quiesceTranslate();
-    await expect(translateToJapanese("不应发出")).resolves.toBeNull();
+    await expect(requestTranslation("不应发出", "ja")).resolves.toBeNull();
     expect(constructedClients).toBe(0);
     expect(getProjectId).not.toHaveBeenCalled();
   });
@@ -97,7 +118,7 @@ describe("Google Translation 适配层", () => {
   test("在途请求可排空，超时会报告但仍能关闭客户端", async () => {
     let release!: (value: { translations: { translatedText: string }[] }[]) => void;
     translateText.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    const translating = translateToJapanese("pending");
+    const translating = requestTranslation("pending", "ja");
     await Bun.sleep(0);
 
     await expect(drainTranslate(1)).resolves.toBe("timedOut");
@@ -112,7 +133,7 @@ describe("Google Translation 适配层", () => {
   test("getProjectId 在 close 后迟到不会回填 parent 或重建客户端", async () => {
     let releaseProject!: (projectId: string) => void;
     getProjectId.mockImplementationOnce(() => new Promise((resolve) => { releaseProject = resolve; }));
-    const translating = translateToJapanese("pending project");
+    const translating = requestTranslation("pending project", "ja");
     await Bun.sleep(0);
 
     await expect(drainTranslate(1)).resolves.toBe("timedOut");
@@ -133,7 +154,7 @@ describe("Google Translation 适配层", () => {
     //
     // 时序靠 closeTranslate 的同步前缀成立：它一进函数就 `generation += 1`，
     // 发生在任何微任务排空之前，因此 import resolve 时看到的必然是新世代。
-    const translating = translateToJapanese("during dynamic import");
+    const translating = requestTranslation("during dynamic import", "ja");
     await expect(closeTranslate()).resolves.toBe("flushed");
 
     await expect(translating).resolves.toBeNull();
@@ -144,18 +165,18 @@ describe("Google Translation 适配层", () => {
   });
 
   test("close 释放客户端和 parent，再次 init 创建全新客户端", async () => {
-    await translateToJapanese("first");
+    await requestTranslation("first", "ja");
     await expect(closeTranslate()).resolves.toBe("flushed");
     expect(translateParentCache.parent).toBeNull();
 
     initTranslate();
-    await translateToJapanese("second");
+    await requestTranslation("second", "ja");
     expect(constructedClients).toBe(2);
     expect(getProjectId).toHaveBeenCalledTimes(2);
   });
 
   test("close 失败返回非成功结果并仍释放客户端引用", async () => {
-    await translateToJapanese("create client");
+    await requestTranslation("create client", "ja");
     close.mockRejectedValueOnce(new Error("close failed"));
 
     await expect(closeTranslate(20)).resolves.toBe("failed");
@@ -165,7 +186,7 @@ describe("Google Translation 适配层", () => {
     );
 
     initTranslate();
-    await translateToJapanese("new client");
+    await requestTranslation("new client", "ja");
     expect(constructedClients).toBe(2);
   });
 });

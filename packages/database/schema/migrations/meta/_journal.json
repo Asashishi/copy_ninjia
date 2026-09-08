@@ -43,6 +43,13 @@
       "when": 20260830000000,
       "tag": "0005_temporary_whitelist_ad_bypass",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 20260908000000,
+      "tag": "0006_translate_sessions",
+      "breakpoints": true
     }
   ]
 }

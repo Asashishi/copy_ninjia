@@ -128,7 +128,7 @@ function ensureMemoryCapacity(excludeChatId: number): void {
  *  JSON 文本。stringify 只在这里做一次：此后「Worker -> 主线程 ->
  *  diskIOWorker」两跳 postMessage 克隆的都是字符串（近乎 memcpy，对象图
  *  则要走两次深克隆），落盘端原样写文件、不再重复序列化（见
- *  types/aiChat.ts 的 AiMemoryEvent.snapshot）。缩进固定 2 空格，与磁盘
+ *  types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot）。缩进固定 2 空格，与磁盘
  *  文件历史格式逐字节一致。 */
 function buildMemorySnapshot(chatId: number): string {
   const buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);

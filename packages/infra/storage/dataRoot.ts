@@ -91,8 +91,9 @@ function currentProcessGroupIds(): readonly number[] {
 /**
  * 在实例锁和任何联网/Worker 初始化之前验证数据根真正支持本仓库依赖的
  * durability 原语：可创建/写入、同目录 hard link、原子 rename 与目录 fsync。
- * 显式配置的生产数据根还必须是 0750 或更严格；已有目录只校验、不自动
- * chmod，避免进程替部署者改变共享主机上的访问策略。
+ * 显式配置的生产数据根还必须不宽于 RUNTIME_DATA_ROOT_MAX_MODE（0755，见
+ * consts/storage.ts）；已有目录只校验、不自动 chmod，避免进程替部署者改变共享
+ * 主机上的访问策略。
  */
 export async function prepareRuntimeDataRoot(
   dataRoot: string,

@@ -46,7 +46,7 @@ function permissions(
     isCanControllAIPermission: false,
     isCanControllAdDetectPermission: false,
     isCanControllFloodControlPermission: false,
-    isCanControllJATranslatePermission: false,
+    isCanControllTranslatePermission: false,
     isCanControllAntiRaidPermission: false,
     isCanControllQaPermission: false,
     ...overrides,
@@ -67,7 +67,7 @@ function allEnabledPermissions(): Record<string, boolean> {
     isCanControllAIPermission: true,
     isCanControllAdDetectPermission: true,
     isCanControllFloodControlPermission: true,
-    isCanControllJATranslatePermission: true,
+    isCanControllTranslatePermission: true,
     isCanControllAntiRaidPermission: true,
     isCanControllQaPermission: true,
   });

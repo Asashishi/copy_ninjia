@@ -13,6 +13,7 @@ import {
   deleteStaleReferencedAdWarning,
   deleteStragglerAdMessage,
   disposeAdSender,
+  errorLogs,
   fetchedAdmins,
   resetAdDetectQueueHarness,
   setAdDetectWarningNow,
@@ -34,11 +35,19 @@ const {
   pendingAdMessages,
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
+  referencedAdWarningGeneration,
   referencedAdWarningStates,
 } = await import("../../../packages/cache/workers/antiRaid/adDetect");
 const {
+  AD_DETECT_MAX_PENDING_SENDERS,
   AD_REFERENCE_WARNING_WINDOW_MS,
 } = await import("../../../packages/consts/antiRaid/adDetect");
+const {
+  beginReferencedAdWarning,
+  clearIdentityReferencedAdWarnings,
+  completeReferencedAdWarning,
+  sweepReferencedAdWarnings,
+} = await import("../../../packages/workers/antiRaid/adDetect/referencePolicy");
 
 beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
 
@@ -470,5 +479,112 @@ describe("引用类广告的警告升级与处置抑制", () => {
     cachedAdmins.clear();
     enqueueAdCandidate(candidate({ messageId: 2, text: "   " }), 1_000);
     expect(pendingAdMessages.size).toBe(0);
+  });
+});
+
+/**
+ * 上面那组走的是队列集成路径，因此 referencePolicy 的容量闸、按身份清理和周期
+ * 回收这三段**函数体一次都没被执行过**（表在被调用时恒为空）。这里直接驱动这些
+ * 纯函数，把它们各自的不变量钉住。
+ *
+ * 每条都先把表填成**真的有匹配条目**的样子再调用——只调不填等于复制出上面那种
+ * 「函数进得去、循环体没跑」的假覆盖。
+ */
+describe("引用广告警告状态表自身的容量与回收", () => {
+  /**
+   * attempt 序号按设计**只增不减**（resetReferencedAdWarnings 刻意不碰它，见该函数
+   * 头注），因此「序号耗尽」这一条会把它留在 MAX_SAFE_INTEGER 上污染后续用例。
+   * 这里在每条之前把它退回初始值——这是测试自己的隔离需要，不改变生产语义。
+   */
+  beforeEach((): void => {
+    referencedAdWarningGeneration.current = 0;
+    referencedAdWarningStates.clear();
+  });
+
+  /** 造一条已进入五分钟窗口的 warned 记录，绕开发送链路直接落表。 */
+  function warned(key: string, warnedAt: number): void {
+    const generation: number | undefined = beginReferencedAdWarning(key);
+    expect(generation).toBeDefined();
+    expect(completeReferencedAdWarning(key, generation!, warnedAt)).toBeTrue();
+  }
+
+  test("attempt 序号耗尽时拒绝建立新警告，并记一条错误", () => {
+    referencedAdWarningGeneration.current = Number.MAX_SAFE_INTEGER;
+
+    expect(beginReferencedAdWarning("-1001:7")).toBeUndefined();
+
+    // 既不占表，也不把序号推过安全整数边界。
+    expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
+    expect(referencedAdWarningGeneration.current).toBe(Number.MAX_SAFE_INTEGER);
+    expect(errorLogs).toContain("Referenced ad warning generation space is exhausted.");
+  });
+
+  test("表满时按插入序淘汰最早一条，为新警告腾出名额", () => {
+    for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS; index += 1) {
+      expect(beginReferencedAdWarning(`-1001:${index}`)).toBeDefined();
+    }
+    expect(referencedAdWarningStates.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
+
+    expect(beginReferencedAdWarning("-1001:newcomer")).toBeDefined();
+
+    // 淘汰的是插入序最早的那条，而不是随便一条；总量不越硬顶。
+    expect(referencedAdWarningStates.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
+    expect(referencedAdWarningStates.has("-1001:0")).toBeFalse();
+    expect(referencedAdWarningStates.has("-1001:1")).toBeTrue();
+    expect(referencedAdWarningStates.has("-1001:newcomer")).toBeTrue();
+  });
+
+  test("同一个 key 重新警告不占新名额，也不淘汰别人", () => {
+    for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS; index += 1) {
+      expect(beginReferencedAdWarning(`-1001:${index}`)).toBeDefined();
+    }
+
+    // 表满 + 已存在：先 delete 再 set，净增为零，淘汰分支不该开火。
+    expect(beginReferencedAdWarning("-1001:0")).toBeDefined();
+
+    expect(referencedAdWarningStates.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
+    expect(referencedAdWarningStates.has("-1001:0")).toBeTrue();
+    expect(referencedAdWarningStates.has("-1001:1")).toBeTrue();
+  });
+
+  test("身份获得白名单后清掉它在各群的警告，只动这一个 id", () => {
+    warned("-1001:7", 1_000);
+    warned("-2002:7", 1_000);
+    warned("-1001:8", 1_000);
+
+    clearIdentityReferencedAdWarnings(7);
+
+    expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
+    expect(referencedAdWarningStates.has("-2002:7")).toBeFalse();
+    // 同群别人的窗口不受影响。
+    expect(referencedAdWarningStates.has("-1001:8")).toBeTrue();
+  });
+
+  test("周期回收丢掉过期窗口，保留仍在窗口内的", () => {
+    warned("-1001:expired", 1_000);
+    warned("-1001:fresh", 1_000 + AD_REFERENCE_WARNING_WINDOW_MS);
+
+    sweepReferencedAdWarnings(1_000 + AD_REFERENCE_WARNING_WINDOW_MS);
+
+    // 半开窗口：now 恰好等于 expiresAt 即已出局。
+    expect(referencedAdWarningStates.has("-1001:expired")).toBeFalse();
+    expect(referencedAdWarningStates.has("-1001:fresh")).toBeTrue();
+  });
+
+  test("墙钟回拨到警告之前时也回收，不把五分钟窗口拉长", () => {
+    warned("-1001:7", 5_000);
+
+    sweepReferencedAdWarnings(4_000);
+
+    expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
+  });
+
+  test("周期回收不碰仍在发送中的 attempt", () => {
+    // sending 态由发送结算、清群或 Worker 停止负责，回收路径必须原样放过。
+    expect(beginReferencedAdWarning("-1001:sending")).toBeDefined();
+
+    sweepReferencedAdWarnings(Number.MAX_SAFE_INTEGER);
+
+    expect(referencedAdWarningStates.get("-1001:sending")).toMatchObject({ phase: "sending" });
   });
 });

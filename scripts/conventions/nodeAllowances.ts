@@ -43,8 +43,8 @@ export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> 
     purpose: "synchronous metadata, descriptor, durability, directory, and atomic-file operations",
   },
   "node:fs/promises": {
-    symbols: ["link", "lstat", "mkdir", "open", "readdir", "rename"],
-    purpose: "asynchronous metadata, descriptor, hard-link, directory, and atomic rename operations",
+    symbols: ["link", "lstat", "mkdir", "open", "readdir", "realpath", "rename"],
+    purpose: "asynchronous metadata, descriptor, hard-link, directory, canonical filesystem path, and atomic rename operations",
   },
   "node:os": {
     symbols: ["availableParallelism", "totalmem"],
@@ -106,6 +106,12 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
     "node:fs/promises": {
       symbols: ["link", "open"],
       purpose: "single-instance exclusive create and hard-link publication",
+    },
+  },
+  "packages/infra/storage/statePersistence.ts": {
+    "node:fs/promises": {
+      symbols: ["lstat"],
+      purpose: "distinguishing a truly missing state copy from a dangling symbolic link",
     },
   },
   "packages/infra/updateContext.ts": {

@@ -20,7 +20,7 @@ export function createChatState(): ChatState {
     quietUntil: undefined,
     lockdown: undefined,
     isAIChatEnabled: undefined,
-    isJATranslationEnabled: undefined,
+    isTranslationEnabled: undefined,
     isAdDetectEnabled: undefined,
     isFloodControlEnabled: undefined,
     isAntiRaidEnabled: undefined,
@@ -52,7 +52,7 @@ export function adoptChatState(decoded: Readonly<ChatState>): ChatState {
   chatState.quietUntil = decoded.quietUntil;
   chatState.lockdown = decoded.lockdown;
   chatState.isAIChatEnabled = decoded.isAIChatEnabled;
-  chatState.isJATranslationEnabled = decoded.isJATranslationEnabled;
+  chatState.isTranslationEnabled = decoded.isTranslationEnabled;
   chatState.isAdDetectEnabled = decoded.isAdDetectEnabled;
   chatState.isFloodControlEnabled = decoded.isFloodControlEnabled;
   chatState.isAntiRaidEnabled = decoded.isAntiRaidEnabled;
@@ -78,7 +78,7 @@ export function isQuietUntilActive(quietUntil: number | undefined, now: number =
 
 /**
  * 把单群状态收敛到唯一的持久化表示。布尔开关统一只保存偏离缺省值的状态：
- * AI、初始化、日语翻译、广告检测、防刷屏、入群守卫和中转均缺省关闭，因此
+ * AI、初始化、翻译、广告检测、防刷屏、入群守卫和中转均缺省关闭，因此
  * false 不落盘。机器人权限快照始终整块保留：`isAdministrator: false`
  * 是「已确认不是管理员」，与未知状态不同。
  *
@@ -109,7 +109,7 @@ export function normalizeChatState(chatState: ChatState, now: number = Date.now(
   // 调用新建一个数组，而按变量取属性（chatState[toggle]）也把这七次读写变成
   // 多态访问。字段清单与 createChatState / isEmptyChatState 保持一致。
   if (chatState.isAIChatEnabled === false) chatState.isAIChatEnabled = undefined;
-  if (chatState.isJATranslationEnabled === false) chatState.isJATranslationEnabled = undefined;
+  if (chatState.isTranslationEnabled === false) chatState.isTranslationEnabled = undefined;
   if (chatState.isAdDetectEnabled === false) chatState.isAdDetectEnabled = undefined;
   if (chatState.isFloodControlEnabled === false) chatState.isFloodControlEnabled = undefined;
   if (chatState.isAntiRaidEnabled === false) chatState.isAntiRaidEnabled = undefined;
@@ -129,7 +129,7 @@ export function isEmptyChatState(chatState: ChatState): boolean {
   return chatState.quietUntil === undefined &&
     chatState.lockdown === undefined &&
     chatState.isAIChatEnabled === undefined &&
-    chatState.isJATranslationEnabled === undefined &&
+    chatState.isTranslationEnabled === undefined &&
     chatState.isAdDetectEnabled === undefined &&
     chatState.isFloodControlEnabled === undefined &&
     chatState.isAntiRaidEnabled === undefined &&

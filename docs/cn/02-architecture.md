@@ -31,7 +31,7 @@ flowchart TD
 
 分工原则是**状态独占**：每份运行时状态只有一个 owner，跨线程只传消息不共享内存。
 
-- **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及两份权威内存镜像：`cache/main/storage.ts` 的 `state.json` 全局镜像（copy 状态与素材直链），和 `cache/main/chatState.ts` 的 `chat_states` 群状态热读副本（群开关、锁定记录、权限快照、群名与中转标记，容量恰为 25）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
+- **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及权威内存镜像：`cache/main/storage.ts` 的 `state.json` 全局镜像（copy 状态与素材直链）、`cache/main/translateState.ts` 的按群翻译会话，以及 `cache/main/chatState.ts` 的 `chat_states` 群状态热读副本（群开关、锁定记录、权限快照、群名与中转标记，容量恰为 25）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
 - **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 SQLite `pending_blocked_removals` 表；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
 - **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/`、`wed/` 七个领域目录的串行读写；`state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。

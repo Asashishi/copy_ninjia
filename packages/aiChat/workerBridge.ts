@@ -391,7 +391,7 @@ function requestAiMood(
 }
 
 /**
- * /query_mood：读取某群当前有效心情；自然到期仍由 Worker 的 currentMood
+ * /mood query：读取某群当前有效心情；自然到期仍由 Worker 的 currentMood
  * 统一处理，但不会强制切换尚未到期的心情。
  */
 export function queryAiMood(chatId: number): Promise<string> {
@@ -399,7 +399,7 @@ export function queryAiMood(chatId: number): Promise<string> {
 }
 
 /**
- * /switch_mood：要求 Worker 无视剩余寿命立即重抽，并带回新心情名。
+ * /mood switch：要求 Worker 无视剩余寿命立即重抽，并带回新心情名。
  */
 export function switchAiMood(chatId: number): Promise<string> {
   return requestAiMood(chatId, "switchMood");

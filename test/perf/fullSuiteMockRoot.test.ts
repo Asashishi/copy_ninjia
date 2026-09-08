@@ -1,5 +1,15 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, rmdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  rmdirSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,8 +24,14 @@ import {
   isInsidePerformanceMockRoot,
   removeMockPath,
 } from "../../scripts/perf/fullSuite/mockRoot";
-import { isBenchmarkMockRoot } from "../../scripts/perf/identityDatabase/roots";
+import {
+  createMockRoot,
+  isBenchmarkMockRoot,
+  removeMainBenchmarkRoot,
+  removeMockRoot,
+} from "../../scripts/perf/identityDatabase/roots";
 import { MOCK_ROOT_PREFIX } from "../../scripts/perf/identityDatabase/constants";
+import { BENCHMARK_CONFIG_ROOT_NAME } from "../../scripts/perf/fullSuite/constants";
 import {
   parseAdDetectAgentConfig,
   parseAgentDeploymentConfig,
@@ -128,6 +144,100 @@ describe("mock 根的建立与清理", () => {
   test("拿 mock 根之外的目录当运行目录时拒绝建根", () => {
     expect((): string => createRuntimeRoot(join(PROJECT_ROOT, "memory")))
       .toThrow("every benchmark file must live under");
+  });
+});
+
+/**
+ * 词法前缀判定挡不住软链接：`resolve()` 不读文件系统，运行目录下的一段 `bridge`
+ * 指向仓库外时，字符串仍然「在 mock 根内」，而真正的建目录、复制和删除全部落到
+ * 链接目标上。下面每条都用自建的外部夹具当哨兵，断言越界操作被拒绝且外部字节
+ * 一个都没变。
+ */
+describe("mock 根的文件系统边界", () => {
+  function withExternalFixture(
+    body: (external: string, runRoot: string) => void | Promise<void>
+  ): Promise<void> {
+    const runRoot: string = createRunRoot();
+    const external: string = mkdtempSync(join(tmpdir(), "perf-boundary-external-"));
+    return (async (): Promise<void> => {
+      try {
+        await body(external, runRoot);
+      } finally {
+        rmSync(external, { recursive: true, force: true });
+        removeMockPath(runRoot);
+      }
+    })();
+  }
+
+  test("经中间软链接建运行时数据根被拒绝，外部夹具保持为空", async () => {
+    await withExternalFixture((external: string, runRoot: string): void => {
+      const bridge: string = join(runRoot, "bridge");
+      symlinkSync(external, bridge);
+
+      expect((): string => createRuntimeRoot(bridge)).toThrow("symbolic link");
+      expect(readdirSync(external)).toEqual([]);
+    });
+  });
+
+  test("经中间软链接删除被拒绝，外部哨兵字节不变", async () => {
+    await withExternalFixture((external: string, runRoot: string): void => {
+      const victim: string = join(external, "victim");
+      writeFileSync(victim, "sentinel");
+      symlinkSync(external, join(runRoot, "bridge"));
+
+      expect((): void => removeMockPath(join(runRoot, "bridge", "victim")))
+        .toThrow("symbolic link");
+      expect(readFileSync(victim, "utf8")).toBe("sentinel");
+    });
+  });
+
+  test("末端本身是软链接时只摘链接，目标目录保持原样", async () => {
+    await withExternalFixture((external: string, runRoot: string): void => {
+      writeFileSync(join(external, "sentinel"), "keep");
+      const directLink: string = join(runRoot, "directLink");
+      symlinkSync(external, directLink);
+
+      removeMockPath(directLink);
+
+      expect(existsSync(directLink)).toBe(false);
+      expect(readFileSync(join(external, "sentinel"), "utf8")).toBe("keep");
+    });
+  });
+
+  test("配置目标树里的外部文件链接不会被复制覆盖", async () => {
+    await withExternalFixture(async (external: string, runRoot: string): Promise<void> => {
+      const victim: string = join(external, "agent.json");
+      writeFileSync(victim, "external agent config");
+      const configRoot: string = join(runRoot, BENCHMARK_CONFIG_ROOT_NAME);
+      mkdirSync(configRoot, { recursive: true });
+      symlinkSync(victim, join(configRoot, "agent.json"));
+
+      await expect(createBenchmarkConfigRoot(runRoot)).rejects.toThrow("symbolic link");
+      expect(readFileSync(victim, "utf8")).toBe("external agent config");
+    });
+  });
+
+  test("mock 根内尚不存在的子路径删除仍是 no-op", async () => {
+    await withExternalFixture((_external: string, runRoot: string): void => {
+      expect((): void => removeMockPath(join(runRoot, "absent", "deeper"))).not.toThrow();
+    });
+  });
+
+  test("身份基准的失败清理分支同样拒绝经链接逃逸的路径", () => {
+    const mockRoot: string = createMockRoot();
+    const external: string = mkdtempSync(join(tmpdir(), "perf-boundary-external-"));
+    try {
+      const victim: string = join(external, "victim");
+      writeFileSync(victim, "sentinel");
+      symlinkSync(external, join(mockRoot, "bridge"));
+
+      expect((): void => removeMainBenchmarkRoot(join(mockRoot, "bridge", "victim"), mockRoot))
+        .toThrow("symbolic link");
+      expect(readFileSync(victim, "utf8")).toBe("sentinel");
+    } finally {
+      rmSync(external, { recursive: true, force: true });
+      removeMockRoot(mockRoot);
+    }
   });
 });
 

@@ -22,7 +22,7 @@ export const aiMemoryFlushBarrier: ReturnType<typeof createFlushBarrier> = creat
 export const lastInitState: { current: AiInitMessage | null } = { current: null };
 
 /** 各群最新的 AI 记忆快照镜像（值是序列化 JSON 文本，与消息协议同形态，
- *  见 types/aiChat.ts 的 AiMemoryEvent.snapshot），见 aiChat/index.ts 模块头注
+ *  见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），见 aiChat/index.ts 模块头注
  *  「AI 记忆持久化」。 */
 export const latestAiMemories: Map<number, string> = new Map();
 /** latestAiMemories 中每份快照对应的运行时 revision。启动恢复快照统一从 0 开始。 */
@@ -64,7 +64,7 @@ export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Ma
 export const purgedAiMemoryChats: Set<number> = new Set();
 /** 在途心情查询/重抽请求的等待表（requestId → waiter）：成功回执、超时或
  *  Worker 崩溃/终止时结算并删除（见 aiChat/index.ts），容量受并发
- *  /query_mood 与 /switch_mood 命令数约束。 */
+ *  /mood query 与 /mood switch 命令数约束。 */
 export const moodRequestWaiters: Map<number, MoodRequestWaiter> = new Map();
 /** 本进程内已分配的最高心情请求 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
 export const moodRequestCounter: { current: number } = { current: 0 };

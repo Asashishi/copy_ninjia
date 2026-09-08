@@ -25,6 +25,7 @@ function completeOwnerOrder<T extends readonly ChatRuntimeOwner[]>(
  */
 export const CHAT_TEARDOWN_ORDER: readonly ChatRuntimeOwner[] = completeOwnerOrder([
   "copy",
+  "translate",
   "gag",
   "qa",
   "wed",

@@ -3,13 +3,13 @@ import { pickAnimationVisionSource, resolveSpeaker } from "./facts";
 import { buildAiRecordMediaMessage } from "./recordContext";
 import { replyToUnresolvableMedia } from "./mediaFallback";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
-import { claimRandomMediaTrigger } from "./triggerPolicy";
+import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { TelegramVisionSource } from "../../types/media";
 
 /** 记录 GIF 缩略图描述；无缩略图时退回纯文本上下文。 */
 export function handleAnimationMessage(context: MessageTriggerContext): boolean {
-  const { message, directTriggerReason }: MessageTriggerContext = context;
+  const { message }: MessageTriggerContext = context;
   if (!message.animation) return false;
 
   const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
@@ -40,5 +40,5 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
       voiceDurationSeconds: 0,
     },
   }));
-  return directTriggerReason !== undefined || randomTrigger !== "none";
+  return mediaTriggerHandled(context, randomTrigger);
 }

@@ -20,7 +20,7 @@ export const CHAT_STATE_KEYS: readonly string[] = [
   "quietUntil",
   "lockdown",
   "isAIChatEnabled",
-  "isJATranslationEnabled",
+  "isTranslationEnabled",
   "isAdDetectEnabled",
   "isFloodControlEnabled",
   "isAntiRaidEnabled",

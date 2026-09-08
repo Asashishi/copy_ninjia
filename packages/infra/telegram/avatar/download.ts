@@ -1,12 +1,16 @@
 import type { AvatarDownloadResult } from "../../../types/telegram";
-import { AVATAR_MAX_DOWNLOAD_BYTES } from "../../../consts/telegram";
+import {
+  AVATAR_FETCH_TIMEOUT_MS,
+  AVATAR_MAX_DOWNLOAD_BYTES,
+} from "../../../consts/telegram";
+import { signalWithTimeout } from "../../../libs/abortSignal";
 import { readBoundedResponseBytes } from "../../../libs/boundedResponse";
 import type { BoundedResponseResult } from "../../../libs/boundedResponse";
 import { logger } from "../../logger";
 import { bot } from "../mainClient";
 import type { HydratedTelegramFile } from "../mainClient";
 import { runTelegramCategorizedRequest } from "../outboundGate";
-import { avatarFetchSignal, telegramSignal } from "./shared";
+import { signalArgs } from "../../../libs/telegramSignalArgs";
 
 /** 下载头像到有界内存；复用 Telegram 下载闸、取消和超时，不创建本地文件。 */
 export async function downloadAvatarFile(
@@ -14,7 +18,7 @@ export async function downloadAvatarFile(
   targetId: number,
   signal?: AbortSignal
 ): Promise<AvatarDownloadResult> {
-  const file: HydratedTelegramFile = await bot.api.getFile(fileId, telegramSignal(signal));
+  const file: HydratedTelegramFile = await bot.api.getFile(fileId, ...signalArgs(signal));
   if (!file.file_path) {
     logger.error(`getFile for target ${targetId}'s avatar returned no file_path`);
     return { status: "permanent-failure" };
@@ -22,7 +26,7 @@ export async function downloadAvatarFile(
   const downloadUrl: string = file.getUrl();
   const imgRes: Response = await runTelegramCategorizedRequest({
     category: "download",
-    signal: avatarFetchSignal(signal),
+    signal: signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS),
     execute: (requestSignal: AbortSignal): Promise<Response> => fetch(downloadUrl, {
       redirect: "error",
       signal: requestSignal,

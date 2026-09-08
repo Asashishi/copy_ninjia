@@ -18,7 +18,7 @@ This page takes a clean environment all the way to “the bot works normally in 
 - **Bun 1.4.2**: install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Every project script, test, and runtime path uses Bun; Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
-- **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation; store it as `g-auth.json` in the project root. When it is missing, `/ja_copy` refuses and names the file and the ja transform on the automatic copy path falls back to a plain copy, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
+- **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `g-auth.json` in the project root. When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
 
 `packages/config/googleAuth.ts` strictly parses `g-auth.json`: `client_email` must be a non-empty string and `private_key` a parseable, non-empty PEM private key. `type` is optional; when present it must equal `service_account`. The SDK-consumed `private_key_id`, `project_id`, `quota_project_id`, and `universe_domain` fields are optional non-empty strings. Other metadata is retained verbatim. Validation precedes Worker creation and Telegram connections; errors contain only the file path, field path, and expected form, never credential values.
 
@@ -75,7 +75,7 @@ The installation follows these steps:
 3. **Identity database and validation**: resolve the database location through production code, create the current empty schema only when `database/storage.sqlite` is absent, then validate deployment inputs.
 4. **Service and observation**: register or reuse the unit for a deployment already confirmed stopped, then start and verify state, the calculated observation window, restart count, and journal. Remove configuration and unit backups only after every check succeeds. Verification failures exit nonzero; foreground execution retains backups.
 
-Reruns retain existing databases and replace configuration only after an explicit request to re-enter it. The operator supplies `g-auth.json` out of band. Its absence disables Japanese translation; malformed existing credentials refuse startup.
+Reruns retain existing databases and replace configuration only after an explicit request to re-enter it. The operator supplies `g-auth.json` out of band. Its absence disables translation; malformed existing credentials refuse startup.
 
 ### Manual install
 
@@ -111,7 +111,7 @@ capability reference. Put bot identity and the super administrator in `config/te
 Configure AI providers, API keys, endpoints, and models per capability in `config/agent.json`.
 To relocate runtime data, set `COPY_NINJIA_DATA_ROOT` in the process environment; when omitted,
 data stays under the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root).
-For Japanese translation, save the service-account key as `g-auth.json` in the project root;
+For translation, save the service-account key as `g-auth.json` in the project root;
 that file is covered by `.gitignore`.
 
 ## Project Configuration Files
@@ -165,7 +165,7 @@ Permanent-allowlist, blocklist, temporary-allowlist activity, and pending-remova
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
 SQLite integrity, migration lineage, schema version, JSONB/relational row shapes, and policy disjointness.
 Other inputs are validated per feature: AI chat reads stickers, reactions, moods, persona, and the
-chat section of `agent.json`; Japanese translation reads `g-auth.json`. A missing input refuses only
+chat section of `agent.json`; translation reads `g-auth.json`. A missing input refuses only
 that toggle and that feature's runtime path — it does not block startup. **A file that exists must
 still parse strictly**, though: invalid content refuses startup even when the matching feature is
 currently off (see `validateExistingDeploymentInputs` in
@@ -225,11 +225,11 @@ Model changes now require editing the relevant capability while stopped and rest
 
 Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration **on 9.1.5** (that script was removed in 9.2.0, see [Operations](07-operations.md#identity-storage-migration)); never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/telegram.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
 
-**Careful: removing a credential does not fail startup, but that chat goes quiet.** The startup gate validates only deployment inputs that **already exist** (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts), now just an export of `validateExistingDeploymentInputs` from `packages/config/readiness.ts`): a present file must parse strictly, while a genuinely absent one does not block startup. The `true` in `chat_states` is restored as usual, but the matching feature is judged unavailable at its single decision entry point — the AI chat Worker never starts and memory is not hydrated (the snapshots under `memory/` stay untouched until the prerequisite returns), `/ja_copy` degrades to a plain copy, and ad detection stops submitting bundles. The group simply sees the bot stop chatting, stop catching ads, or stop translating from one restart onward, with a single line in `logs/` as the only trace. So run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing a credential — or restore the prerequisite instead.
+**Careful: removing a credential does not fail startup, but that chat goes quiet.** The startup gate validates only deployment inputs that **already exist** (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts), now just an export of `validateExistingDeploymentInputs` from `packages/config/readiness.ts`): a present file must parse strictly, while a genuinely absent one does not block startup. The `true` in `chat_states` is restored as usual, but the matching feature is judged unavailable at its single decision entry point — the AI chat Worker never starts and memory is not hydrated (the snapshots under `memory/` stay untouched until the prerequisite returns), `/translate` sessions remain inactive, and ad detection stops submitting bundles. The group simply sees the bot stop chatting, stop catching ads, or stop translating from one restart onward, with a single line in `logs/` as the only trace. So run `/ai_chat disable`, `/ad_detect disable`, or `/translate disable` before removing a credential — or restore the prerequisite instead.
 
 ### Replacing the Inline Thumbnails and the Default Avatar
 
-The four inline thumbnails (the two `/luck_challenge` results, the gag speech entry, and the `/set_qa` form) and the default avatar restored by `/reset_icon` and `/stop_copy` are all configured under `global.assets` in `state.json`:
+The three inline thumbnails (the two `/luck_challenge` results and the gag speech entry) and the default avatar restored by `/icon reset` and `/copy stop` are all configured under `global.assets` in `state.json`:
 
 ```json
 "global": {
@@ -246,7 +246,7 @@ The four keys are, in order, the thumbnail for the fortune result, the thumbnail
 
 All four are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
 
-> Upgrading from a version older than this section's `state.global.assets`? **Check the four entries before starting**: the three thumbnails now accept `https` only, and one previously configured as `http://` will refuse to start at decode time and name the field path.
+> Check the four `state.global.assets` URLs before starting: all three thumbnails require `https`; an invalid URL fails startup during decoding and identifies the field path.
 
 **Edit it while stopped**: the running process holds the authoritative state in memory and rewrites the whole file, so `systemctl stop` → edit → `systemctl start` (see [07 Operations and Troubleshooting](07-operations.md)).
 

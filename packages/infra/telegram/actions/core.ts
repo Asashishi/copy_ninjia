@@ -1,4 +1,3 @@
-import { NO_SIGNAL_ARGS } from "../../../consts/telegram";
 import {
   combineWithUpdateAbortSignal,
   currentUpdateAbortSignal,
@@ -147,20 +146,6 @@ export async function runPermissionAwareTelegramAction({
     },
   });
   return succeeded ? "succeeded" : outcome;
-}
-
-/**
- * 把 AbortSignal 接到 grammY raw API 调用的最后一个位置参数上。
- *
- * grammY 每个方法都把 signal 放在 options 之后的最后一位，而那个位置的声明类型
- * 不是 `AbortSignal`，逐个调用点各写一次
- * `signal as unknown as Parameters<Api["x"]>[n]` 就是十几份带手写下标的重复。
- * @returns 没有信号时是共用空元组，有信号时是新建的单元素元组。
- */
-export function signalArgs(
-  signal: AbortSignal | undefined
-): readonly [] | readonly [never] {
-  return signal === undefined ? NO_SIGNAL_ARGS : [signal as unknown as never];
 }
 
 /** 挂回复时 Telegram 要的那一段；三个发送入口共用同一份形状。 */

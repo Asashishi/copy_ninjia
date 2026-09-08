@@ -14,6 +14,8 @@
 
 ## 目录职责
 
+- **`LICENSES/`**
+  - **内容**：项目 MIT 许可证 [`LICENSE`](../../LICENSES/LICENSE)，以及汉字变体数据使用的 [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt)。
 - **`packages/app/`**
   - **职责**：启动/退出生命周期、已存在部署输入的启动校验出口、handler 注册、命令菜单
     与 update runner，以及生命周期副作用依赖装配。
@@ -21,8 +23,8 @@
     `registerHandlers.ts`、`updateRunner.ts` / `updateFetcher.ts`。`ApplicationLifecycleDependencies` 从装配对象
     推导并与其同住，避免共享类型层反向依赖 `app/`。
 - **`packages/commands/`**
-  - **职责**：显式命令处理，一命令一文件；开关命令共用的权限与配置门禁另成文件。
-  - **典型文件**：`copy.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
+  - **职责**：显式命令按命令族组织，同一入口的子命令在该领域内分派；开关命令共用的权限与配置门禁另成文件。
+  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`；较大的 gag 领域以 `gag.ts` 保留命令入口，
     `gag/runtime.ts`、`gag/inline.ts`、`gag/rendering.ts` 分别承接生命周期、inline 与纯渲染。
 - **`packages/auto/`**
@@ -40,9 +42,11 @@
   - **典型文件**：`workerBridge.ts`、`durableDelivery.ts`、`updateIngress.ts`、
     `adCandidate.ts`、`ai/`；`index.ts` 只提供薄公开入口。
 - **`packages/copy/`**
-  - **职责**：复读模式变换、头像与翻译执行队列，以及日语翻译“此刻跑不跑”的
-    唯一判定。
-  - **典型文件**：`copyModes.ts`、`avatarQueue.ts`、`translate.ts`、`availability.ts`。
+  - **职责**：普通复制、复读文本变换与头像更新队列。
+  - **典型文件**：`echo.ts`、`copyModes.ts`、`avatarQueue.ts`。
+- **`packages/translate/`**
+  - **职责**：按群翻译会话、恢复目标、正则语言识别与惰性 Google 翻译客户端。
+  - **典型文件**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`；普通复制复用 `copy/echo.ts`。
 - **`packages/users/`**
   - **职责**：发送者身份缓存、可见发送者判定、用户标签生成。
   - **典型文件**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`。
@@ -59,7 +63,8 @@
   - **职责**：共享 SQLite（身份策略 + 群状态）的 schema、codec、行校验与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
   - **典型目录**：`schema/`（含 `migrations/`）、`codec/identity.ts`、`codec/chatState.ts`、
     `codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、
-    `chatState.ts`、`chatQa.ts`、`migration.ts`、`inspection.ts`、`admin.ts`）、
+    `chatState.ts`、`chatQa.ts`、`temporaryWhitelist.ts`、`migration.ts`、`initialization.ts`、
+    `inspection.ts`）、
     `validation/storageRows.ts`。
 - **`packages/libs/`**
   - **职责**：领域无关的基础设施，包括原子文件、有界 I/O 与并发工具。
@@ -102,8 +107,9 @@
   - **职责**：与 `packages/` 镜像的 Bun 单元测试。
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
+  - **冷迁移**：`migrateTranslate.ts` 负责备份输入校验与独立产物，`migrations/translate/` 分开保存源版本约束、状态转换和 SQLite 事务；不进入应用启动依赖图。
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
-  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），以及只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`。
+  - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`，以及两套基准根共用的 `fixtures/copyTree.ts`（目录树复制）与 `fixtures/pathBoundary.ts`（写入边界的真实路径分量核对）。
 
 `telegramInput.ts` 提供安装器和运行时共用的严格读取、解析入口，导入时不读部署文件或填充缓存；`telegram.ts` 负责运行时快照。`libs/inflight.ts` 统一在途任务的有界等待，领域 owner 保留自己的接纳、取消和零预算策略；`infra/backgroundTasks.ts` 负责后台任务错误记录和结算后摘除。群开关命令共用 `commands/superAdminToggle.ts` 的授权、配置门禁、写入、持久化与回执顺序。
 
@@ -129,7 +135,7 @@
 
 - **`main/`**
   - **owner**：主线程。
-  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像与 `chatState.ts` 的 `chat_states` 群状态 LRU（容量 25）、Disk I/O 宿主，以及
+  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像与 `translateState.ts` 的按群翻译会话、`chatState.ts` 的 `chat_states` 群状态 LRU（容量 25）、Disk I/O 宿主，以及
     **主线程侧的 Worker 代理与镜像**（`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **owner**：AI 闲聊 Worker。

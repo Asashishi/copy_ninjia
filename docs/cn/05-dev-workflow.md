@@ -41,7 +41,7 @@
 - **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 90%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
-- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码与脚本的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
+- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、Markdown 里「`<目录>/`（`a.ts`、`b.ts`）」这类目录清单点名的文件是否仍然存在（目录名解析不唯一时跳过）、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码与脚本的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
   模块级纯字面量及其组合必须放在领域 `consts`，函数装配和缓存 owner 单独核对。Node 内建模块带或不带 `node:` 前缀使用同一白名单；动态加载、重导出、`require`、`process.hrtime` / `nextTick` 和解构入口同样检查，类型专用声明不进入运行时检查。
 
   Node API 检查覆盖 `process.getBuiltinModule`、`globalThis.Buffer` 及字面量下标形式；`Buffer.byteLength` 等例外仍按模块、符号和用途登记。`@grammyjs/runner` 仅作为开发依赖用于 SDK 对照测试，生产取数使用项目的 offset 确认边界。
@@ -60,7 +60,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3513 tests / 347 files / 129700 次 `expect()`**；全源码**函数覆盖率 97.21% / 行覆盖率 97.45%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**3817 tests / 357 files / 157155 次 `expect()`**；全源码**函数覆盖率 97.39% / 行覆盖率 97.65%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -135,7 +135,7 @@
 
 被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。另有两条**完整命令**链路：`ad-detect-command` 走 `enqueueAdCandidate` 到 `runAdDetectBatch` 再到主线程 `handleAdDetected` 的处置排空，`ai-reply-command` 走 `recordChatMessage` 与 `generateAndSendReply` 到回复真的发出。这两条的模型调用与 Telegram 出站由 `scripts/perf/outboundGuard.ts` 的进程内罐头就地应答——基准从不发起真实请求，也不产生任何调用费用；`ai-reply-command` 另外按实测扣掉发送前的拟人停顿，口径见 [09 性能基准](09-performance.md)。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
 
-数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此它没有能力写到真实数据根。加 `--write-doc` 同时写回 `docs/{cn,en,ja}/09-performance.md` 的三语区块和 `performance-result.json` 的 `fullSuite.lastRun`；读数与各分区口径见 [09 性能基准](09-performance.md)。
+数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此不会经生产写路径落到真实数据根；建目录、复制、写文件与删除另有一道共用边界（`scripts/perf/fullSuite/mockRoot.ts`）：先按词法判定路径落在 `performance/` 内，再逐段核对仓库根到目标之间**已经存在**的真实路径分量，任何一段是软链接即拒绝。删除只核对父链，末端本身是软链接时只摘链接、不动目标；mock 根本身永不删除。加 `--write-doc` 同时写回 `docs/{cn,en,ja}/09-performance.md` 的三语区块和 `performance-result.json` 的 `fullSuite.lastRun`；读数与各分区口径见 [09 性能基准](09-performance.md)。
 
 ## 提交流程
 

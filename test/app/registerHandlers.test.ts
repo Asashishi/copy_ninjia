@@ -77,13 +77,9 @@ describe("application handler registration", () => {
       "permission",
       "white",
       "copy",
-      "r_copy",
-      "nya_copy",
-      "ja_copy",
-      "steal_icon",
+      "translate",
+      "icon",
       "wed",
-      "reset_icon",
-      "stop_copy",
       "block",
       "batch_kick",
       "unblock",
@@ -92,8 +88,7 @@ describe("application handler registration", () => {
       "flood_control",
       "antiraid",
       "bot_status",
-      "query_mood",
-      "switch_mood",
+      "mood",
       "init",
       "quiet",
       "unquiet",
@@ -102,9 +97,7 @@ describe("application handler registration", () => {
       "gag",
       "ungag",
       "send",
-      "set_qa",
-      "query_qa",
-      "remove_qa",
+      "qa",
       "x",
     ]);
     // use:3 同时承载 init 与私聊命令门禁；全部命令都必须注册在它之后，避免
@@ -131,7 +124,7 @@ describe("application handler registration", () => {
     expect(messageIngressIndices).toHaveLength(2);
     const gagIngressIndex: number = messageIngressIndices[1]!;
     expect(gagIngressIndex).toBeGreaterThan(antiRaidIngressIndex);
-    // /set_qa 的表单投递排在两者之后，且必须同时覆盖 channel_post：频道里的
+    // /qa set 的表单投递排在两者之后，且必须同时覆盖 channel_post：频道里的
     // 「问题:」「回答:」是频道帖，只监听 message 的话频道根本填不了表单。
     // 它认领后会删掉那条投递消息，再放行只会让下游处理一个不存在的东西。
     const bothUpdates: string = `on:${JSON.stringify(["message", "channel_post"])}`;
@@ -174,7 +167,7 @@ describe("application handler registration", () => {
     expect(registrationOrder.indexOf("hears")).toBeLessThan(messageFallbackIndex);
     // /x 占位项同理：它也终止链路，必须先于消息兜底注册。
     expect(registrationOrder.indexOf("command:x")).toBeLessThan(messageFallbackIndex);
-    // 两条 callback_query:data：/query_qa 翻页先认领，没认领的才交给入群验证。
+    // 两条 callback_query:data：/qa query 翻页先认领，没认领的才交给入群验证。
     // 前者不认领时会 next()，后者不调 next()，顺序反了翻页按钮就永远转圈。
     const callbackIndices: number[] = [];
     for (let index: number = 0; index < registrationOrder.length; index++) {

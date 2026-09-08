@@ -211,7 +211,7 @@ export function decodeChatStateData(text: string, source: string): ChatState {
       ? undefined
       : decodeLockdown(value.lockdown, source, "$.lockdown"),
     isAIChatEnabled: optionalBoolean(value, "isAIChatEnabled", rootContext),
-    isJATranslationEnabled: optionalBoolean(value, "isJATranslationEnabled", rootContext),
+    isTranslationEnabled: optionalBoolean(value, "isTranslationEnabled", rootContext),
     isAdDetectEnabled: optionalBoolean(value, "isAdDetectEnabled", rootContext),
     isFloodControlEnabled: optionalBoolean(value, "isFloodControlEnabled", rootContext),
     isAntiRaidEnabled: optionalBoolean(value, "isAntiRaidEnabled", rootContext),

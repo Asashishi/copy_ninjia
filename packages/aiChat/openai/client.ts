@@ -16,15 +16,14 @@ import { openAiClientCache } from "../../cache/workers/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
 import {
+  OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
   OPENAI_REQUEST_MAX_RETRIES,
   OPENAI_REQUEST_TIMEOUT_MS,
 } from "../../consts/aiChat/openai";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
 import {
-  isEndpointFailureStatus,
-  isEndpointMisconfiguredError,
-  isExplicitUnsupportedMediaError,
+  classifyProviderApiFailure,
   numericErrorStatus,
 } from "../ai/utils/mediaSupportError";
 import {
@@ -36,6 +35,14 @@ import {
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
 import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, AgentCapabilityConfig } from "../../types/config";
+
+/**
+ * 该能力单次请求的超时预算：media（视觉描述与语音转写）比纯文本往返宽一档，
+ * 其余能力走通用档。image 由 aiChat/openai/image.ts 在每次请求上另行覆盖。
+ */
+function openAiRequestTimeoutMs(capability: AgentCapability): number {
+  return capability === "media" ? OPENAI_MEDIA_REQUEST_TIMEOUT_MS : OPENAI_REQUEST_TIMEOUT_MS;
+}
 
 /**
  * 按能力取得 OpenAI 客户端。每项能力的 api_key/base_url 独立，避免同端点但不同
@@ -53,7 +60,7 @@ export function getOpenAiClient(capability: AgentCapability): OpenAI {
   const client: OpenAI = new OpenAI({
     apiKey: config.apiKey,
     baseURL: config.baseUrl,
-    timeout: OPENAI_REQUEST_TIMEOUT_MS,
+    timeout: openAiRequestTimeoutMs(capability),
     maxRetries: OPENAI_REQUEST_MAX_RETRIES,
   });
   clients.set(capability, client);
@@ -95,7 +102,7 @@ export async function requestOpenAiResult({
     // SDK 的 timeout 是每次尝试各自的期限。同一份合成 signal 同时交给
     // SDK 与外层等待：网络层据此停止后续尝试，调用方则在整轮 deadline
     // 到期或上游取消时立即结算，不受 SDK 内部退避计时器影响。
-    const requestSignal: AbortSignal = signalWithTimeout(signal, OPENAI_REQUEST_TIMEOUT_MS);
+    const requestSignal: AbortSignal = signalWithTimeout(signal, openAiRequestTimeoutMs(capability));
     requestSignal.throwIfAborted();
     response = await raceAbortOrThrow(
       getOpenAiClient(capability).responses.create(body, { signal: requestSignal }),
@@ -109,19 +116,17 @@ export async function requestOpenAiResult({
       const status: number | undefined = numericErrorStatus(error);
       // APIError 自带状态码与服务端错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${status ?? "?"} ${error.message}`);
-      // 路径级 404/405 先判：口径同 aiChat/gemini/client.ts，写错 model 或
-      // base_url 不该被记成模型缺少某项模态能力。
-      if (isEndpointMisconfiguredError(status)) {
-        return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
-      }
-      if (
-        capability === "media" &&
-        isExplicitUnsupportedMediaError(status, error.message)
-      ) {
-        return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
-      }
-      if (!isEndpointFailureStatus(status)) {
-        return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
+      // 归因级联与 aiChat/gemini/client.ts 共用 ai/utils/mediaSupportError.ts 的
+      // 同一条判定，只有返回形态各自映射。
+      switch (classifyProviderApiFailure(status, error.message, capability === "media")) {
+        case "misconfigured":
+          return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
+        case "unsupported":
+          return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
+        case "rejected":
+          return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
+        case "endpointFailure":
+          break;
       }
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);

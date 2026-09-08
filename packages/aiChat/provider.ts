@@ -57,19 +57,12 @@ const AI_CHAT_PROVIDERS: Readonly<Record<AgentCapabilityConfig["provider"], AiCh
 };
 
 /**
- * 按能力配置解析 provider；不做凭据或故障回退。
+ * 读取一项能力的部署配置；不做凭据或故障回退。
  *
- * 内部保留完整实现，返回类型由下面五个导出各自收窄：映射穷举要的是「这一家把
- * 五项能力都装配齐了」，调用点要的是「这一次只许用这一项」，两件事分开表达。
+ * 五个导出各自拿到 config 后直接索引 AI_CHAT_PROVIDERS：映射穷举要的是「这一家
+ * 把五项能力都装配齐了」，门面构造要的是「这一次只许用这一项」，两件事由构造
+ * 函数的返回类型分开表达，不必为同一份配置读两遍。
  */
-function resolveCapability(capability: AgentCapability): AiChatProvider {
-  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
-  if (config === undefined) {
-    throw new Error(`Agent capability "${capability}" is not configured.`);
-  }
-  return AI_CHAT_PROVIDERS[config.provider];
-}
-
 function capabilityConfig(capability: AgentCapability): AgentCapabilityConfig {
   const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
   if (config === undefined) {
@@ -105,22 +98,6 @@ function quotaRunnerFor(config: AgentCapabilityConfig): PrioritizedBoundedTaskRu
   return lane.runner;
 }
 
-interface ScheduleProviderTaskOptions<T> {
-  readonly runner: PrioritizedBoundedTaskRunner;
-  readonly priority: AiProviderTaskPriority;
-  readonly task: () => Promise<T>;
-  readonly signal?: AbortSignal;
-}
-
-function scheduleProviderTask<T>({
-  runner,
-  priority,
-  task,
-  signal,
-}: ScheduleProviderTaskOptions<T>): Promise<T | undefined> {
-  return runner.run(priority, task, signal);
-}
-
 function queueRejectedReplyTurn(): AiReplyTurn {
   return {
     ok: false,
@@ -144,12 +121,11 @@ function createTextFacade(
       const session: AiReplySession = provider.createReplySession(params);
       return {
         async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
-          const result: AiReplyTurn | undefined = await scheduleProviderTask({
-            runner,
-            priority: "interactive",
-            task: (): Promise<AiReplyTurn> => session.request(request),
-            signal: params.signal,
-          });
+          const result: AiReplyTurn | undefined = await runner.run(
+            "interactive",
+            (): Promise<AiReplyTurn> => session.request(request),
+            params.signal
+          );
           return result ?? queueRejectedReplyTurn();
         },
         appendToolOutputs: session.appendToolOutputs.bind(session),
@@ -166,12 +142,11 @@ function createSummaryFacade(
   return {
     name: provider.name,
     async generateText(request: AiTextRequest): Promise<AiTextResult> {
-      const result: AiTextResult | undefined = await scheduleProviderTask({
-        runner,
-        priority: "background",
-        task: (): Promise<AiTextResult> => provider.generateText(request),
-        signal: request.signal,
-      });
+      const result: AiTextResult | undefined = await runner.run(
+        "background",
+        (): Promise<AiTextResult> => provider.generateText(request),
+        request.signal
+      );
       return result ?? { ok: false, retryable: false };
     },
   };
@@ -187,12 +162,11 @@ function createMediaFacade(
   const describeVision: AiMediaProvider["describeVision"] = async (
     request: AiVisionRequest
   ): Promise<AiTextResult> => {
-    const result: AiTextResult | undefined = await scheduleProviderTask({
-      runner,
+    const result: AiTextResult | undefined = await runner.run(
       priority,
-      task: (): Promise<AiTextResult> => provider.describeVision(request),
-      signal: request.signal,
-    });
+      (): Promise<AiTextResult> => provider.describeVision(request),
+      request.signal
+    );
     return result ?? { ok: false, retryable: false };
   };
   if (transcribeVoice === undefined) return { name: provider.name, describeVision };
@@ -200,12 +174,11 @@ function createMediaFacade(
     name: provider.name,
     describeVision,
     async transcribeVoice(request: AiVoiceRequest): Promise<AiTextResult> {
-      const result: AiTextResult | undefined = await scheduleProviderTask({
-        runner,
+      const result: AiTextResult | undefined = await runner.run(
         priority,
-        task: (): Promise<AiTextResult> => transcribeVoice(request),
-        signal: request.signal,
-      });
+        (): Promise<AiTextResult> => transcribeVoice(request),
+        request.signal
+      );
       return result ?? { ok: false, retryable: false };
     },
   };
@@ -225,12 +198,11 @@ function scheduleMediaGeneration<
   generate: (request: TRequest) => Promise<TResult | null>
 ): (request: TRequest) => Promise<TResult | null> {
   return async (request: TRequest): Promise<TResult | null> => {
-    const result: TResult | null | undefined = await scheduleProviderTask({
-      runner,
-      priority: "interactive",
-      task: (): Promise<TResult | null> => generate(request),
-      signal: request.signal,
-    });
+    const result: TResult | null | undefined = await runner.run(
+      "interactive",
+      (): Promise<TResult | null> => generate(request),
+      request.signal
+    );
     return result ?? null;
   };
 }
@@ -270,7 +242,7 @@ function createSongFacade(
 export function textAiProvider(): AiTextProvider {
   if (aiProviderFacades.text !== undefined) return aiProviderFacades.text;
   const config: AgentCapabilityConfig = capabilityConfig("text");
-  const facade: AiTextProvider = createTextFacade(resolveCapability("text"), config);
+  const facade: AiTextProvider = createTextFacade(AI_CHAT_PROVIDERS[config.provider], config);
   aiProviderFacades.text = facade;
   return facade;
 }
@@ -279,7 +251,7 @@ export function textAiProvider(): AiTextProvider {
 export function summaryAiProvider(): AiSummaryProvider {
   if (aiProviderFacades.summary !== undefined) return aiProviderFacades.summary;
   const config: AgentCapabilityConfig = capabilityConfig("summary");
-  const facade: AiSummaryProvider = createSummaryFacade(resolveCapability("summary"), config);
+  const facade: AiSummaryProvider = createSummaryFacade(AI_CHAT_PROVIDERS[config.provider], config);
   aiProviderFacades.summary = facade;
   return facade;
 }
@@ -293,7 +265,11 @@ export function mediaAiProvider(
     : aiProviderFacades.mediaBackground;
   if (cached !== undefined) return cached;
   const config: AgentCapabilityConfig = capabilityConfig("media");
-  const facade: AiMediaProvider = createMediaFacade(resolveCapability("media"), config, priority);
+  const facade: AiMediaProvider = createMediaFacade(
+    AI_CHAT_PROVIDERS[config.provider],
+    config,
+    priority
+  );
   if (priority === "interactive") aiProviderFacades.media = facade;
   else aiProviderFacades.mediaBackground = facade;
   return facade;
@@ -339,7 +315,7 @@ export function imageAiProvider(): AiImageProvider | null {
     capability: "image",
     cached: aiProviderFacades.image,
     create: (config: AgentCapabilityConfig): AiImageProvider =>
-      createImageFacade(resolveCapability("image"), config),
+      createImageFacade(AI_CHAT_PROVIDERS[config.provider], config),
     store: (facade: AiImageProvider | null): void => { aiProviderFacades.image = facade; },
   });
 }
@@ -350,7 +326,7 @@ export function songAiProvider(): AiSongProvider | null {
     capability: "song",
     cached: aiProviderFacades.song,
     create: (config: AgentCapabilityConfig): AiSongProvider =>
-      createSongFacade(resolveCapability("song"), config),
+      createSongFacade(AI_CHAT_PROVIDERS[config.provider], config),
     store: (facade: AiSongProvider | null): void => { aiProviderFacades.song = facade; },
   });
 }

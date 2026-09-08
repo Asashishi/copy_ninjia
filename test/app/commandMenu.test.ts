@@ -5,6 +5,23 @@ import { BOT_COMMANDS } from "../../packages/consts/commands";
 import { logger } from "../../packages/infra/logger";
 
 describe("application command menu", () => {
+  test("copy、qa、mood、icon 只展示统一入口并说明子命令", () => {
+    const names: readonly string[] = BOT_COMMANDS.map(({ command }) => command);
+    for (const command of ["copy", "qa", "mood", "icon"]) expect(names).toContain(command);
+    for (const command of ["r_copy", "nya_copy", "stop_copy", "set_qa", "query_qa", "remove_qa", "query_mood", "switch_mood", "steal_icon", "reset_icon"]) {
+      expect(names).not.toContain(command);
+    }
+    for (const [command, parameters] of [
+      ["copy", ["reverse", "nya", "stop"]],
+      ["qa", ["set", "query", "remove", "isCanControllQaPermission"]],
+      ["mood", ["query", "switch"]],
+      ["icon", ["steal", "reset"]],
+    ] as const) {
+      const description: string | undefined = BOT_COMMANDS.find((entry) => entry.command === command)?.description;
+      for (const parameter of parameters) expect(description).toContain(parameter);
+    }
+  });
+
   test("命令名全部满足 Telegram 的字符集与长度限制", () => {
     // setMyCommands 是整体提交：任何一项非法都会让整份菜单以
     // BOT_COMMAND_INVALID 失败，而注册失败只记日志、不阻断启动，
@@ -19,7 +36,7 @@ describe("application command menu", () => {
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("x");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("white");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("batch_kick");
-    expect(BOT_COMMANDS.map(({ command }) => command)).toContain("query_mood");
+    expect(BOT_COMMANDS.map(({ command }) => command)).toContain("mood");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("flood_control");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("bot_status");
     const permissionDescription: string | undefined =

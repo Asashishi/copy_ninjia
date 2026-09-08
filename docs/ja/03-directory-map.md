@@ -14,6 +14,8 @@
 
 ## ディレクトリの責務
 
+- **`LICENSES/`**
+  - **内容**：プロジェクトの MIT [`LICENSE`](../../LICENSES/LICENSE) と、漢字変体データの [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt)。
 - **`packages/app/`**
   - **責務**：起動・終了ライフサイクル、すでに存在するデプロイ入力の起動時検証入口、handler
     登録、コマンドメニュー、update runner、ライフサイクル副作用の composition。
@@ -21,9 +23,9 @@
     `registerHandlers.ts`、`updateRunner.ts` / `updateFetcher.ts`。`ApplicationLifecycleDependencies` は composition object
     から推論して同じ場所に置き、共有型レイヤーから `app/` への逆依存を避けます。
 - **`packages/commands/`**
-  - **責務**：明示的なコマンド処理。1 コマンド 1 ファイル。トグル系コマンドが
+  - **責務**：明示的なコマンドを機能ごとにまとめ、同じ入口のサブコマンドをその領域内で分岐します。トグル系コマンドが
     共有する権限・設定ゲートは別ファイル。
-  - **代表的なファイル**：`copy.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
+  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`。規模の大きい gag domain は command admission を
     `gag.ts` に残し、lifecycle、inline、純粋 rendering を `gag/runtime.ts`、
     `gag/inline.ts`、`gag/rendering.ts` に分割します。
@@ -43,9 +45,11 @@
   - **代表的なファイル**：`workerBridge.ts`、`durableDelivery.ts`、`updateIngress.ts`、
     `adCandidate.ts`、`ai/`。`index.ts` は薄い公開入口だけを提供。
 - **`packages/copy/`**
-  - **責務**：copy モード変換、アバター・翻訳の実行キュー、
-    および日本語翻訳が「いま動いているか」の唯一の判定。
-  - **代表的なファイル**：`copyModes.ts`、`avatarQueue.ts`、`translate.ts`、`availability.ts`。
+  - **責務**：通常コピー、テキスト変換、アバター更新キュー。
+  - **代表的なファイル**：`echo.ts`、`copyModes.ts`、`avatarQueue.ts`。
+- **`packages/translate/`**
+  - **責務**：群別セッション、対象復元、正規表現による文字種判定、遅延 Google 翻訳クライアント。
+  - **代表的なファイル**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`。通常コピーは `copy/echo.ts` を再利用。
 - **`packages/users/`**
   - **責務**：送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成。
   - **代表的なファイル**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`。
@@ -59,7 +63,7 @@
   - **代表的なファイル**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
 - **`packages/database/`**
   - **責務**：共有 SQLite（identity policy と chat state）の schema、codec、行検証、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
-  - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`chatQa.ts`、`migration.ts`、`inspection.ts`、`admin.ts`）、`validation/storageRows.ts`。
+  - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`chatQa.ts`、`temporaryWhitelist.ts`、`migration.ts`、`initialization.ts`、`inspection.ts`）、`validation/storageRows.ts`。
 - **`packages/libs/`**
   - **責務**：アトミックファイル、上限付き I/O、並行処理ツールなど、
     ドメイン非依存の基盤。
@@ -107,8 +111,9 @@
   - **責務**：`packages/` と対応する Bun 単体テスト。
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
+  - **Cold migration**：`migrateTranslate.ts` はバックアップ入力を検証して独立した出力を作り、`migrations/translate/` はソース版制約・状態変換・SQLite トランザクションを分離します。アプリ起動の依存グラフには入りません。
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
-  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、およびリリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`。
+  - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、リリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`、および 2 つの benchmark ルートが共用する `fixtures/copyTree.ts`（ディレクトリツリーの複製）と `fixtures/pathBoundary.ts`（書き込み境界の実パス構成要素の検査）。
 
 `telegramInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`telegram.ts` は runtime snapshot を担当します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
 
@@ -134,7 +139,7 @@
 
 - **`main/`**
   - **所有者**：メインスレッド。
-  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラーと `chatState.ts` の `chat_states` LRU（容量 25）、
+  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラーと `translateState.ts` の群別翻訳セッション、`chatState.ts` の `chat_states` LRU（容量 25）、
     Disk I/O ホスト、および **Worker のメインスレッド側プロキシとミラー**
     （`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**

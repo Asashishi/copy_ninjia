@@ -5,7 +5,7 @@ import { resolveSpeaker } from "./facts";
 import { buildAiRecordMediaMessage } from "./recordContext";
 import { replyToUnresolvableMedia } from "./mediaFallback";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
-import { claimRandomMediaTrigger } from "./triggerPolicy";
+import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 
 /**
@@ -29,7 +29,7 @@ function isTranscribable(voice: Voice): boolean {
  * 「已读不回」比回一句「这条语音太长了没听」更糟。
  */
 export function handleVoiceMessage(context: MessageTriggerContext): boolean {
-  const { message, directTriggerReason }: MessageTriggerContext = context;
+  const { message }: MessageTriggerContext = context;
   const voice: Voice | undefined = message.voice;
   if (!voice) return false;
 
@@ -66,5 +66,5 @@ export function handleVoiceMessage(context: MessageTriggerContext): boolean {
       voiceDurationSeconds: voice.duration,
     },
   }));
-  return directTriggerReason !== undefined || randomTrigger !== "none";
+  return mediaTriggerHandled(context, randomTrigger);
 }

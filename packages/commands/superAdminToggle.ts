@@ -86,6 +86,8 @@ export interface ChatToggleCommandParams {
    * 省略表示这个开关没有「开着也永远不会生效」的前提。
    */
   readonly refuseEnable?: (chatId: number, messageId: number | undefined) => Promise<boolean>;
+  /** 关闭开关前必须完成的持久化前置操作；失败原样上抛，不确认本条 update。 */
+  readonly beforeDisable?: (chatId: number) => Promise<void>;
   /** 关闭方向的运行时拆除；省略表示没有需要就地收掉的运行时状态。 */
   readonly teardown?: (chatId: number) => void | Promise<void>;
   /**
@@ -97,10 +99,10 @@ export interface ChatToggleCommandParams {
 }
 
 /**
- * 按群开关命令的统一编排：解析授权与参数 → 开启前的配置总闸 → 写入并落盘 →
+ * 按群开关命令的统一编排：解析授权与参数 → 配置总闸或关闭前的持久化前置操作 → 写入并落盘 →
  * 关闭方向尽力而为地拆除运行时 → 回执。
  *
- * /ad_detect、/ai_chat、/flood_control、/antiraid 与 /ja_copy 开关共用这一编排。
+ * /ad_detect、/ai_chat、/flood_control、/antiraid 与 /translate 开关共用这一编排。
  * 其中两处顺序是语义，不能由调用方自由发挥：
  * - 落盘**先于**运行时拆除。反过来的话，拆干净了却没落盘，重启后开关又是开的。
  * - 拆除异常只记日志、绝不外抛。开关本身已经落盘；放它逃出 handler 就是这条
@@ -116,6 +118,7 @@ export async function runChatToggleCommand({
   read,
   write,
   refuseEnable,
+  beforeDisable,
   teardown,
   teardownFailedText,
 }: ChatToggleCommandParams): Promise<void> {
@@ -129,6 +132,7 @@ export async function runChatToggleCommand({
   if (isEnabled && refuseEnable !== undefined && await refuseEnable(chatId, messageId)) {
     return;
   }
+  if (!isEnabled && beforeDisable !== undefined) await beforeDisable(chatId);
 
   const state: ChatState = getOrCreateChatState(chatId);
   const wasEnabled: boolean = read(state);
@@ -158,7 +162,7 @@ export async function runChatToggleCommand({
 }
 
 /**
- * /ai_chat、/ja_copy（开关分支）、/init、/ad_detect、/flood_control 共用的权限与参数校验。
+ * /ai_chat、/translate（开关分支）、/init、/ad_detect、/flood_control 共用的权限与参数校验。
  *
  * 提供 permission 时按该权限键授权；超级管理员恒持有全部权限键（见
  * whitelist.ts），因此不必也不该在这里再判一次身份。省略 permission 则是

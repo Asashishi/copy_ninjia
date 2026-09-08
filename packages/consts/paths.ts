@@ -115,7 +115,7 @@ export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
  */
 export const AD_SAMPLE_FILE_PATH: string = join(AD_SAMPLE_MEMORY_DIR, "sample.json");
 
-/** Google Cloud 服务账号密钥（/ja_copy 日语翻译用，已进 .gitignore）。 */
+/** Google Cloud 服务账号密钥（/translate 翻译用，已进 .gitignore）。 */
 export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
 
 /**

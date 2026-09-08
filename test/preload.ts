@@ -21,7 +21,7 @@ import { adoptStickerConfig, parseStickerConfig } from "../packages/config/stick
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
-  jaTranslateConfigReadinessCache,
+  translateConfigReadinessCache,
 } from "../packages/cache/main/configReadiness";
 import {
   IDENTITY_DATABASE_DIRECTORY_MODE,
@@ -87,7 +87,7 @@ adoptStickerConfig(parseStickerConfig(JSON.parse(readFileSync(STICKERS_CONFIG_PA
 adoptPersona(readFileSync(PERSONA_PATH, "utf8").trim());
 aiChatConfigReadinessCache.current = { ok: true };
 adDetectConfigReadinessCache.current = { ok: true };
-jaTranslateConfigReadinessCache.current = { ok: true };
+translateConfigReadinessCache.current = { ok: true };
 
 afterAll(() => {
   rmSync(TEST_DATA_ROOT, { recursive: true, force: true });

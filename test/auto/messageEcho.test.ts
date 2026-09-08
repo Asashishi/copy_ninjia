@@ -18,9 +18,6 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   activeCopyTargetIdIn: (): undefined => undefined,
   activeCopyModeIn: (): undefined => undefined,
 }));
-mock.module("../../packages/copy/availability", () => ({
-  isJaTranslationActiveIn: (): boolean => false,
-}));
 
 const { echoMessage } = await import("../../packages/auto/message/echo");
 
