@@ -87,71 +87,71 @@
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 精准复读</b><br>
-  <sub>逐条复读锁定目标，并同步头像</sub></p>
+  <sub>锁定一个目标后，逐条复读 TA 的消息并同步头像。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🌐 多语翻译</b><br>
-  <sub>按群会话，翻成五种目标语言</sub></p>
+  <sub>在本群开一个翻译会话，把消息翻成五种目标语言。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 偷头像</b><br>
-  <sub>只取头像，不进复读状态</sub></p>
+  <sub>只把对方的头像换到自己身上，不进入复读状态。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🤖 AI 群聊</b><br>
-  <sub>人设自主决定这一轮做什么</sub></p>
+  <sub>这一轮开不开口、说什么、用什么工具都由人设决定。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>👁️ 多模态与创作</b><br>
-  <sub>看图、听语音、生图、写歌</sub></p>
+  <sub>看得懂图片和语音，也能画图、写歌发回群里。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🔎 实时查证</b><br>
-  <sub>联网检索与天气等工具</sub></p>
+  <sub>需要事实时自己联网检索，也能查天气等实时信息。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🧠 群聊记忆</b><br>
-  <sub>逐字上下文与多轮压缩摘要</sub></p>
+  <sub>保留逐字上下文，超出部分压成摘要接着聊。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🎭 心情与拟人化</b><br>
-  <sub>心情轮换与打字停顿</sub></p>
+  <sub>心情会自己轮换，回话前还带一段打字停顿。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>💒 群友抽取</b><br>
-  <sub>随机抽一位群友并展示头像</sub></p>
+  <sub>从发过言的群友里随机抽一位，并展示 TA 的头像。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🛡️ 入群验证</b><br>
-  <sub>新成员限时按钮验证</sub></p>
+  <sub>新成员要在限时内点按钮，超时自动踢出。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🚨 Anti-Raid</b><br>
-  <sub>入群频率异常时自动收口</sub></p>
+  <sub>入群频率异常时自动切私密模式，收回邀请权限。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>📮 广告检测</b><br>
-  <sub>消息串送检，命中即处置</sub></p>
+  <sub>把连续消息串起来送检，命中广告立即删除并处置。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🎲 今日运势</b><br>
-  <sub>Inline Mode 确定性抽签</sub></p>
+  <sub>Inline Mode 抽签，同一个人当天结果固定不变。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🌐 跨群管理</b><br>
-  <sub>一条命令全群联动封禁</sub></p>
+  <sub>一条命令在已接管的多个群里同步封禁同一身份。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>💬 群问答</b><br>
-  <sub>预登记问答，命中直答</sub></p>
+  <sub>预先登记的问题命中后直接作答，不经过 AI。</sub></p>
 </td>
 </tr>
 </table>

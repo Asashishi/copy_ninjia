@@ -91,71 +91,71 @@
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 高精度な復唱</b><br>
-  <sub>指定した対象を 1 件ずつ復唱し、アバターも同期</sub></p>
+  <sub>対象を 1 つ固定し、その発言を 1 件ずつ復唱してアバターも同期。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🌐 多言語翻訳</b><br>
-  <sub>群ごとの session で 5 言語へ翻訳</sub></p>
+  <sub>群ごとに翻訳 session を開き、以後の発言を 5 言語へ翻訳。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 アバター盗用</b><br>
-  <sub>復唱を始めずアバターだけコピー</sub></p>
+  <sub>復唱は始めず、相手のアバターだけを自分に写します。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🤖 AI チャット</b><br>
-  <sub>その turn で何をするかは人格が決める</sub></p>
+  <sub>話すかどうかも何の tool を使うかも人格が自分で決めます。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>👁️ マルチモーダル &amp; 創作</b><br>
-  <sub>画像と音声を理解し、画像と楽曲を生成</sub></p>
+  <sub>画像と音声を理解し、画像や楽曲を作って群へ返します。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🔎 リアルタイム事実確認</b><br>
-  <sub>web 検索と天気などの tool に接続</sub></p>
+  <sub>事実が要るときは web 検索や天気 tool を自分で呼びます。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🧠 コンテキスト記憶</b><br>
-  <sub>逐語 context と圧縮要約を維持</sub></p>
+  <sub>逐語 context を保ち、溢れた分は圧縮要約にして引き継ぎます。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🎭 気分と人間らしさ</b><br>
-  <sub>気分の切り替えと入力の間</sub></p>
+  <sub>気分が時間で切り替わり、入力中の間を置いてから返します。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>💒 グループ内抽選</b><br>
-  <sub>メンバーを 1 人選びアバターを表示</sub></p>
+  <sub>発言したことのあるメンバーを 1 人選び、アバターを表示。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🛡️ 参加認証</b><br>
-  <sub>新規メンバーへ時間制限付き button 認証</sub></p>
+  <sub>新規メンバーは制限時間内に button を押さないと退出させます。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🚨 Anti-Raid</b><br>
-  <sub>参加頻度が異常なら群を閉じる</sub></p>
+  <sub>参加頻度が異常なら私密モードへ切り替え、招待権限を回収。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>📮 広告検出</b><br>
-  <sub>message を束ねて判定し、該当なら即処理</sub></p>
+  <sub>連続する message を束ねて判定し、広告なら即削除して処理。</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🎲 今日のおみくじ</b><br>
-  <sub>Inline Mode による決定的な抽選</sub></p>
+  <sub>Inline Mode で抽選し、同じ人の同じ日は結果が変わりません。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🌐 複数グループ連携</b><br>
-  <sub>1 つの command で全群を横断 BAN</sub></p>
+  <sub>1 つの command で、管理下の複数の群を横断して BAN します。</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>💬 chat Q&amp;A</b><br>
-  <sub>登録済みの Q&amp;A は AI を通さず即答</sub></p>
+  <sub>登録済みの質問に当たれば、AI を通さずそのまま答えます。</sub></p>
 </td>
 </tr>
 </table>

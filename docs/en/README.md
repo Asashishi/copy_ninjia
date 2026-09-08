@@ -87,71 +87,71 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 Precise copying</b><br>
-  <sub>Copies a locked target message by message, avatar included</sub></p>
+  <sub>Locks one target and echoes its messages one by one, avatar included.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🌐 Multilingual translation</b><br>
-  <sub>Per-chat sessions into five target languages</sub></p>
+  <sub>Opens a per-chat session that renders messages into five languages.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 Avatar theft</b><br>
-  <sub>Takes the avatar without starting a copy session</sub></p>
+  <sub>Takes only the target's avatar, without starting a copy session.</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🤖 AI group chat</b><br>
-  <sub>The persona decides what to do each turn</sub></p>
+  <sub>The persona decides whether to speak, what to say, and which tool to use.</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>👁️ Multimodal understanding and creation</b><br>
-  <sub>Reads images and voice, makes images and songs</sub></p>
+  <sub>Reads images and voice notes, and replies with pictures or songs.</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🔎 Live fact-checking</b><br>
-  <sub>Provider-side web search plus weather tools</sub></p>
+  <sub>Reaches for web search and weather tools when an answer needs facts.</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🧠 Group-chat memory</b><br>
-  <sub>Verbatim rolling context plus compacted summaries</sub></p>
+  <sub>Keeps verbatim context and compacts older turns into summaries.</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🎭 Mood and human touches</b><br>
-  <sub>Rotating group mood and typing pauses</sub></p>
+  <sub>Rotates the group mood and pauses as if it were typing the reply.</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>💒 Partner draws</b><br>
-  <sub>Draws a random member and shows their avatar</sub></p>
+  <sub>Draws a random member who has spoken and shows their avatar.</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🛡️ Join verification</b><br>
-  <sub>Timed button challenge for new members</sub></p>
+  <sub>New members must press a button in time, or they are kicked out.</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🚨 Anti-Raid</b><br>
-  <sub>Closes the group when joins spike</sub></p>
+  <sub>Flips the group into private mode when the join rate spikes.</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>📮 Ad detection</b><br>
-  <sub>Screens message threads and acts on a hit</sub></p>
+  <sub>Screens threads of messages and acts the moment one is an ad.</sub></p>
 </td>
 </tr>
 <tr>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🎲 Daily fortune</b><br>
-  <sub>Deterministic draws over Inline Mode</sub></p>
+  <sub>Draws over Inline Mode, fixed for the same person on the same day.</sub></p>
 </td>
-<td align="left" valign="top">
+<td align="left" valign="top" width="33%">
   <p><b>🌐 Cross-group moderation</b><br>
-  <sub>One command bans across every managed group</sub></p>
+  <sub>One command bans the same identity across several managed groups.</sub></p>
 </td>
-<td align="left" valign="top">
-  <p><b>💬 Chat Q&amp;A</b><br>
-  <sub>Registered pairs answered without the AI</sub></p>
+<td align="left" valign="top" width="33%">
+  <p><b>💬 Group Q&amp;A</b><br>
+  <sub>Answers pre-registered questions directly, without going through the AI.</sub></p>
 </td>
 </tr>
 </table>
