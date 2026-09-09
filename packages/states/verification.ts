@@ -24,6 +24,8 @@ import {
 } from "./verification/terminal";
 
 export { joinCreatesNewRecord };
+/** 终态构造：adopt 重建与状态机新建共用，保证两条路产出同一个对象形状。 */
+export { checkingInviterOf, expellingOf } from "./verification/shared";
 
 /**
  * 入群验证生命周期的显式状态机入口（纯逻辑，不做 I/O、不持有计时器）。

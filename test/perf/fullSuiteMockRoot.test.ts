@@ -1,15 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  rmdirSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, rmdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -180,40 +170,40 @@ describe("mock 根的文件系统边界", () => {
   });
 
   test("经中间软链接删除被拒绝，外部哨兵字节不变", async () => {
-    await withExternalFixture((external: string, runRoot: string): void => {
+    await withExternalFixture(async (external: string, runRoot: string): Promise<void> => {
       const victim: string = join(external, "victim");
-      writeFileSync(victim, "sentinel");
+      await Bun.write(victim, "sentinel");
       symlinkSync(external, join(runRoot, "bridge"));
 
       expect((): void => removeMockPath(join(runRoot, "bridge", "victim")))
         .toThrow("symbolic link");
-      expect(readFileSync(victim, "utf8")).toBe("sentinel");
+      expect(await Bun.file(victim).text()).toBe("sentinel");
     });
   });
 
   test("末端本身是软链接时只摘链接，目标目录保持原样", async () => {
-    await withExternalFixture((external: string, runRoot: string): void => {
-      writeFileSync(join(external, "sentinel"), "keep");
+    await withExternalFixture(async (external: string, runRoot: string): Promise<void> => {
+      await Bun.write(join(external, "sentinel"), "keep");
       const directLink: string = join(runRoot, "directLink");
       symlinkSync(external, directLink);
 
       removeMockPath(directLink);
 
       expect(existsSync(directLink)).toBe(false);
-      expect(readFileSync(join(external, "sentinel"), "utf8")).toBe("keep");
+      expect(await Bun.file(join(external, "sentinel")).text()).toBe("keep");
     });
   });
 
   test("配置目标树里的外部文件链接不会被复制覆盖", async () => {
     await withExternalFixture(async (external: string, runRoot: string): Promise<void> => {
       const victim: string = join(external, "agent.json");
-      writeFileSync(victim, "external agent config");
+      await Bun.write(victim, "external agent config");
       const configRoot: string = join(runRoot, BENCHMARK_CONFIG_ROOT_NAME);
       mkdirSync(configRoot, { recursive: true });
       symlinkSync(victim, join(configRoot, "agent.json"));
 
       await expect(createBenchmarkConfigRoot(runRoot)).rejects.toThrow("symbolic link");
-      expect(readFileSync(victim, "utf8")).toBe("external agent config");
+      expect(await Bun.file(victim).text()).toBe("external agent config");
     });
   });
 
@@ -223,17 +213,17 @@ describe("mock 根的文件系统边界", () => {
     });
   });
 
-  test("身份基准的失败清理分支同样拒绝经链接逃逸的路径", () => {
+  test("身份基准的失败清理分支同样拒绝经链接逃逸的路径", async () => {
     const mockRoot: string = createMockRoot();
     const external: string = mkdtempSync(join(tmpdir(), "perf-boundary-external-"));
     try {
       const victim: string = join(external, "victim");
-      writeFileSync(victim, "sentinel");
+      await Bun.write(victim, "sentinel");
       symlinkSync(external, join(mockRoot, "bridge"));
 
       expect((): void => removeMainBenchmarkRoot(join(mockRoot, "bridge", "victim"), mockRoot))
         .toThrow("symbolic link");
-      expect(readFileSync(victim, "utf8")).toBe("sentinel");
+      expect(await Bun.file(victim).text()).toBe("sentinel");
     } finally {
       rmSync(external, { recursive: true, force: true });
       removeMockRoot(mockRoot);

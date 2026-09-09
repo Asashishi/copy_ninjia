@@ -4,7 +4,7 @@ import type {
   VerificationState,
   VerificationTransition,
 } from "../../types/states/verification";
-import { remindersOf } from "./shared";
+import { expellingOf, remindersOf } from "./shared";
 
 /** 处理拉人者终核结果，管理员豁免，否则切换到可重放处置终态。 */
 export function handleTimeoutInviterVerdict(
@@ -14,7 +14,7 @@ export function handleTimeoutInviterVerdict(
   if (state?.kind !== "checkingInviter") return { next: state, effects: [] };
   if (!event.inviterIsAdmin) {
     return {
-      next: { kind: "expelling", reason: "timeout", snapshot: state.snapshot },
+      next: expellingOf("timeout", state.snapshot),
       effects: [],
     };
   }

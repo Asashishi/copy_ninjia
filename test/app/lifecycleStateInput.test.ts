@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { StateStore } from "../../packages/infra/storage/statePersistence";
@@ -69,8 +69,8 @@ describe("启动总闸的 state 输入判定", () => {
   test("主副本含非法 UTF-8 时以非零码退出，且不建立任何对外连接", async () => {
     const bytes: Uint8Array = new TextEncoder().encode(legal);
     bytes[legal.indexOf('"X"') + 1] = 0xff;
-    writeFileSync(statePath, bytes);
-    writeFileSync(backupPath, legal);
+    await Bun.write(statePath, bytes);
+    await Bun.write(backupPath, legal);
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run("main");
@@ -85,14 +85,14 @@ describe("启动总闸的 state 输入判定", () => {
     expect(seedMissingAssetState).not.toHaveBeenCalled();
     expect(writes).toEqual([]);
     // 运维接着要排查的就是这两份文件：字节保持原样，也不产生隔离件。
-    expect(Array.from(readFileSync(statePath))).toEqual(Array.from(bytes));
-    expect(readFileSync(backupPath, "utf8")).toBe(legal);
+    expect(Array.from(await Bun.file(statePath).bytes())).toEqual(Array.from(bytes));
+    expect(await Bun.file(backupPath).text()).toBe(legal);
     expect(readdirSync(dir)).toEqual(["state.json", "state.json.bak"]);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
   test("备份路径被占成目录时同样拒绝启动，不因主副本合法而放行", async () => {
-    writeFileSync(statePath, legal);
+    await Bun.write(statePath, legal);
     // 备份路径被占成目录：exists() 对目录返回 false，只有 stat 能识别。
     mkdirSync(backupPath);
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -105,7 +105,7 @@ describe("启动总闸的 state 输入判定", () => {
     expect(initTelegramClients).not.toHaveBeenCalled();
     expect(seedMissingAssetState).not.toHaveBeenCalled();
     expect(writes).toEqual([]);
-    expect(readFileSync(statePath, "utf8")).toBe(legal);
+    expect(await Bun.file(statePath).text()).toBe(legal);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanupOrphanedTempFiles } from "../../../packages/infra/storage/cleanup";
@@ -102,8 +102,8 @@ describe("guard 归属判定的真实实现", () => {
     return `bot.lock.guard.candidate.${pid}.${uuid}`;
   }
 
-  function writeCandidate(name: string, content: string): void {
-    writeFileSync(join(testDir, name), content);
+  async function writeCandidate(name: string, content: string): Promise<void> {
+    await Bun.write(join(testDir, name), content);
   }
 
   beforeEach(() => {
@@ -125,15 +125,15 @@ describe("guard 归属判定的真实实现", () => {
     const recycledPid: string = candidateName(46, "55555555-5555-4555-8555-555555555555");
 
     // 旧格式/损坏内容：认不出归属，绝不能删。
-    writeCandidate(unparseable, "legacy-owner-format");
+    await writeCandidate(unparseable, "legacy-owner-format");
     // pid 超出安全整数范围：同样拒绝。
-    writeCandidate(unsafePid, `v2:99999999999999999999:1234:${BOOT_ID}`);
+    await writeCandidate(unsafePid, `v2:99999999999999999999:1234:${BOOT_ID}`);
     // 归属进程就是当前测试进程，仍然活着。
-    writeCandidate(liveOwner, `v2:${current.pid}:${current.startTimeTicks}:${current.bootId}`);
+    await writeCandidate(liveOwner, `v2:${current.pid}:${current.startTimeTicks}:${current.bootId}`);
     // 归属进程已经不存在。
-    writeCandidate(deadOwner, `v2:${DEAD_PID}:1234:${BOOT_ID}`);
+    await writeCandidate(deadOwner, `v2:${DEAD_PID}:1234:${BOOT_ID}`);
     // pid 还在，但 starttime 对不上——是被复用的 pid，原归属进程已消失。
-    writeCandidate(recycledPid, `v2:${current.pid}:1:${current.bootId}`);
+    await writeCandidate(recycledPid, `v2:${current.pid}:1:${current.bootId}`);
 
     await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
 
@@ -150,8 +150,8 @@ describe("guard 归属判定的真实实现", () => {
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
     const deadOwner: string = candidateName(DEAD_PID, "66666666-6666-4666-8666-666666666666");
     const liveOwner: string = candidateName(current.pid, "77777777-7777-4777-8777-777777777777");
-    writeCandidate(deadOwner, "");
-    writeCandidate(liveOwner, "");
+    await writeCandidate(deadOwner, "");
+    await writeCandidate(liveOwner, "");
 
     await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
 
@@ -164,7 +164,7 @@ describe("guard 归属判定的真实实现", () => {
     // recovery 是从已经写好并 fsync 过的 candidate hard link 出来的，本来不会
     // 是 0 字节；真出现了也没有第二个身份来源，只能维持 fail-closed。
     const recoveryPath: string = join(testDir, "bot.lock.guard.recovery");
-    writeFileSync(recoveryPath, "");
+    await Bun.write(recoveryPath, "");
 
     await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
 
@@ -173,13 +173,13 @@ describe("guard 归属判定的真实实现", () => {
 
   test("bot.lock.guard.recovery 同样按归属判定，读不出内容时保留", async () => {
     const recoveryPath: string = join(testDir, "bot.lock.guard.recovery");
-    writeFileSync(recoveryPath, `v2:${DEAD_PID}:1234:${BOOT_ID}`);
+    await Bun.write(recoveryPath, `v2:${DEAD_PID}:1234:${BOOT_ID}`);
 
     await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
     expect(existsSync(recoveryPath)).toBe(false);
 
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
-    writeFileSync(recoveryPath, `v2:${current.pid}:${current.startTimeTicks}:${current.bootId}`);
+    await Bun.write(recoveryPath, `v2:${current.pid}:${current.startTimeTicks}:${current.bootId}`);
 
     await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
     expect(existsSync(recoveryPath)).toBe(true);

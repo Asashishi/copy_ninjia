@@ -7,6 +7,7 @@ import type {
 } from "../types/identityPolicy";
 import type { SetWhitelistPermissionResult } from "../infra/identityPolicy/whitelist";
 import { forumTopicThreadId } from "../libs/forumTopic";
+import { commandArgumentTokens } from "./arguments";
 import {
   PERMISSION_COMMAND_TEXTS,
   WHITELIST_PERMISSION_ALL_COMMAND,
@@ -179,9 +180,7 @@ export async function handlePermissionCommand(
   // 直接比对上面已经解析出来的发起身份，不再调 isSuperAdminActor 重解析一遍：
   // resolveCommandActor 对同一个 ctx 是纯函数，第二次调用只多造一个 CachedUser。
   const actorIsSuperAdmin: boolean = actor?.id === SUPER_ADMIN_USER_ID;
-  const tokens: string[] = ctx.match.trim()
-    .split(/\s+/)
-    .filter((token: string): boolean => token.length > 0);
+  const tokens: string[] = commandArgumentTokens(ctx.match);
   const isHelp: boolean =
     tokens.length === 1 &&
     tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_HELP_COMMAND;

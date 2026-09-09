@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InstanceLockOptions } from "../../packages/infra/storage/instanceLock";
@@ -62,8 +62,8 @@ describe("single instance lock registry", () => {
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
 
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
-    expect(readFileSync(lockFilePath, "utf8")).not.toContain(TOKEN_A);
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).not.toContain(TOKEN_A);
     expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
   });
 
@@ -71,7 +71,7 @@ describe("single instance lock registry", () => {
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
     await expect(acquireSingleInstanceLock(TOKEN_B, lockFilePath)).rejects.toThrow("different token");
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
   });
 
   test("相同 token 已有活 owner 时拒绝重复启动", async () => {
@@ -81,22 +81,22 @@ describe("single instance lock registry", () => {
 
   test("下一次操作清理当前 v2 格式中已不存在的进程身份", async () => {
     const stalePid = 2_147_483_647;
-    writeFileSync(lockFilePath, registryText(identity(stalePid, "10"), TOKEN_A));
+    await Bun.write(lockFilePath, registryText(identity(stalePid, "10"), TOKEN_A));
 
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
 
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
   });
 
   test("PID 相同但 starttime 不同视为 stale owner，而完整身份相同仍拒绝抢锁", async () => {
     const oldOwner: ProcessIdentity = identity(process.pid, "100");
     const current: ProcessIdentity = identity(process.pid, "200");
     const options: InstanceLockOptions = lockOptions(current, [current]);
-    writeFileSync(lockFilePath, registryText(oldOwner, TOKEN_A));
+    await Bun.write(lockFilePath, registryText(oldOwner, TOKEN_A));
 
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath, options);
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("same token");
   });
 
@@ -104,50 +104,50 @@ describe("single instance lock registry", () => {
     const oldOwner: ProcessIdentity = identity(process.pid, "300", BOOT_A);
     const current: ProcessIdentity = identity(process.pid, "300", BOOT_B);
     const options: InstanceLockOptions = lockOptions(current, [current]);
-    writeFileSync(lockFilePath, registryText(oldOwner, TOKEN_A));
+    await Bun.write(lockFilePath, registryText(oldOwner, TOKEN_A));
 
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath, options);
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
   });
 
   test("guard/recovery 的 PID 被复用时按完整身份回收，不被同 PID 新进程阻塞", async () => {
     const staleOwner: ProcessIdentity = identity(process.pid, "700");
     const current: ProcessIdentity = identity(process.pid, "800");
     const options: InstanceLockOptions = lockOptions(current, [current]);
-    writeFileSync(`${lockFilePath}.guard`, ownerText(staleOwner));
-    writeFileSync(`${lockFilePath}.guard.recovery`, ownerText(staleOwner));
+    await Bun.write(`${lockFilePath}.guard`, ownerText(staleOwner));
+    await Bun.write(`${lockFilePath}.guard.recovery`, ownerText(staleOwner));
 
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath, options);
 
     expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
     expect(existsSync(`${lockFilePath}.guard.recovery`)).toBe(false);
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
   });
 
   test("完整身份仍活跃的 v2 guard 原样保留并拒绝抢锁", async () => {
     const current: ProcessIdentity = identity(process.pid, "900");
     const guardPath: string = `${lockFilePath}.guard`;
     const options: InstanceLockOptions = lockOptions(current, [current]);
-    writeFileSync(guardPath, ownerText(current));
+    await Bun.write(guardPath, ownerText(current));
 
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("updating");
-    expect(readFileSync(guardPath, "utf8")).toBe(ownerText(current));
+    expect(await Bun.file(guardPath).text()).toBe(ownerText(current));
   });
 
   test("旧 pid:tokenFingerprint registry 原样保留并要求人工处理，不检查 PID 生死", async () => {
     const oldContent: string = `2147483647:${getBotTokenFingerprint(TOKEN_A)}\n`;
-    writeFileSync(lockFilePath, oldContent);
+    await Bun.write(lockFilePath, oldContent);
 
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath)).rejects.toThrow("repair it manually");
-    expect(readFileSync(lockFilePath, "utf8")).toBe(oldContent);
+    expect(await Bun.file(lockFilePath).text()).toBe(oldContent);
   });
 
   test("旧纯 PID guard 原样保留并要求人工处理", async () => {
     const guardPath: string = `${lockFilePath}.guard`;
-    writeFileSync(guardPath, "2147483647");
+    await Bun.write(guardPath, "2147483647");
 
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath)).rejects.toThrow("repair it manually");
-    expect(readFileSync(guardPath, "utf8")).toBe("2147483647");
+    expect(await Bun.file(guardPath).text()).toBe("2147483647");
     expect(existsSync(lockFilePath)).toBe(false);
   });
 
@@ -155,20 +155,20 @@ describe("single instance lock registry", () => {
     const staleOwner: ProcessIdentity = identity(2_147_483_647, "10");
     const guardPath: string = `${lockFilePath}.guard`;
     const recoveryPath: string = `${guardPath}.recovery`;
-    writeFileSync(guardPath, ownerText(staleOwner));
-    writeFileSync(recoveryPath, String(staleOwner.pid));
+    await Bun.write(guardPath, ownerText(staleOwner));
+    await Bun.write(recoveryPath, String(staleOwner.pid));
 
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath)).rejects.toThrow("repair it manually");
-    expect(readFileSync(guardPath, "utf8")).toBe(ownerText(staleOwner));
-    expect(readFileSync(recoveryPath, "utf8")).toBe(String(staleOwner.pid));
+    expect(await Bun.file(guardPath).text()).toBe(ownerText(staleOwner));
+    expect(await Bun.file(recoveryPath).text()).toBe(String(staleOwner.pid));
   });
 
   test("损坏或空 registry 原样保留并要求人工处理", async () => {
     for (const content of ["broken\n", ""]) {
-      writeFileSync(lockFilePath, content);
+      await Bun.write(lockFilePath, content);
 
       await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath)).rejects.toThrow("repair it manually");
-      expect(readFileSync(lockFilePath, "utf8")).toBe(content);
+      expect(await Bun.file(lockFilePath).text()).toBe(content);
     }
   });
 
@@ -176,10 +176,10 @@ describe("single instance lock registry", () => {
     const releasingOwner: ProcessIdentity = identity(process.pid, "400");
     const replacementOwner: ProcessIdentity = identity(process.pid, "500");
     const replacementOptions: InstanceLockOptions = lockOptions(releasingOwner, [replacementOwner]);
-    writeFileSync(lockFilePath, registryText(replacementOwner, TOKEN_A));
+    await Bun.write(lockFilePath, registryText(replacementOwner, TOKEN_A));
 
     await releaseSingleInstanceLock(TOKEN_A, lockFilePath, replacementOptions);
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(replacementOwner, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(replacementOwner, TOKEN_A));
 
     await releaseSingleInstanceLock(TOKEN_A, lockFilePath, lockOptions(replacementOwner, [replacementOwner]));
     expect(existsSync(lockFilePath)).toBe(false);
@@ -187,19 +187,19 @@ describe("single instance lock registry", () => {
 
   test("进程身份读取异常时 fail-closed，不清理当前 v2 owner", async () => {
     const current: ProcessIdentity = identity(process.pid, "600");
-    writeFileSync(lockFilePath, registryText(current, TOKEN_A));
+    await Bun.write(lockFilePath, registryText(current, TOKEN_A));
     const options: InstanceLockOptions = {
       currentIdentity: current,
       readProcessIdentity: async () => { throw new Error("proc unavailable"); },
     };
 
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("proc unavailable");
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
   });
 
   test("释放时身份读取异常向调用方传播，并原样保留 owner", async () => {
     const current: ProcessIdentity = identity(process.pid, "601");
-    writeFileSync(lockFilePath, registryText(current, TOKEN_A));
+    await Bun.write(lockFilePath, registryText(current, TOKEN_A));
     const options: InstanceLockOptions = {
       currentIdentity: current,
       readProcessIdentity: async (): Promise<never> => {
@@ -209,7 +209,7 @@ describe("single instance lock registry", () => {
 
     await expect(releaseSingleInstanceLock(TOKEN_A, lockFilePath, options))
       .rejects.toThrow("release proc unavailable");
-    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
   });
 
   test("/proc stat 解析兼容 comm 中的空格和右括号，并拒绝缺字段内容", () => {

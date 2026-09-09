@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
 
@@ -71,7 +71,7 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     writeStickerCatalogFile("removed_pack", snapshot("待清理的包"));
     const orphanPath: string = join(stickerDir, "removed_pack.json");
     const temporaryPath: string = join(stickerDir, ".removed_pack.json.partial.tmp");
-    writeFileSync(temporaryPath, "partial");
+    await Bun.write(temporaryPath, "partial");
 
     const inspection = await inspectStickerCatalogs([]);
 
@@ -91,7 +91,7 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     mkdirSync(stickerDir, { recursive: true });
     // 只能写字面 JSON 文本：对象字面量里的 `__proto__:` 同样会被当成设原型，
     // 用 JSON.stringify 造出来的夹具压根不含这个键。
-    writeFileSync(join(stickerDir, "pack_a.json"), [
+    await Bun.write(join(stickerDir, "pack_a.json"), [
       "{",
       "  \"version\": 1,",
       "  \"entries\": {",
@@ -113,7 +113,7 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
 
   test("缺少当前必填 summary 字段的文件不自动迁移", async () => {
     mkdirSync(stickerDir, { recursive: true });
-    writeFileSync(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));
+    await Bun.write(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));
     await expect(recoverStickerCatalogs(["pack_a"])).rejects.toThrow("current version=1 sticker catalog schema");
     expect(existsSync(join(stickerDir, "pack_a.json"))).toBe(true);
   });
@@ -143,10 +143,10 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     mkdirSync(stickerDir, { recursive: true });
     const path: string = join(stickerDir, "pack_a.json");
     const bytes: string = "{not valid json";
-    writeFileSync(path, bytes);
+    await Bun.write(path, bytes);
 
     await expect(recoverStickerCatalogs(["pack_a"])).rejects.toThrow("readable valid JSON document");
-    expect(readFileSync(path, "utf8")).toBe(bytes);
+    expect(await Bun.file(path).text()).toBe(bytes);
   });
 
   test("未知字段不在恢复时被重建丢弃", async () => {
@@ -159,20 +159,20 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
       savedAt: 1,
       futureField: "must not disappear",
     });
-    writeFileSync(sourcePath, bytes);
+    await Bun.write(sourcePath, bytes);
 
     await expect(recoverStickerCatalogs(["pack_a"])).rejects.toThrow("current version=1 sticker catalog schema");
-    expect(readFileSync(sourcePath, "utf8")).toBe(bytes);
+    expect(await Bun.file(sourcePath).text()).toBe(bytes);
   });
 
   test("非法贴纸包文件名不会被当作已下架孤儿静默删除", async () => {
     mkdirSync(stickerDir, { recursive: true });
     const sourcePath: string = join(stickerDir, "bad-pack.json");
     const bytes: string = snapshot("文件名不合法但内容完整");
-    writeFileSync(sourcePath, bytes);
+    await Bun.write(sourcePath, bytes);
 
     await expect(recoverStickerCatalogs(["pack_a"])).rejects.toThrow("canonical <stickerPackShortName>.json form");
-    expect(readFileSync(sourcePath, "utf8")).toBe(bytes);
+    expect(await Bun.file(sourcePath).text()).toBe(bytes);
   });
 
   test("空白名单时所有持久化包都被当孤儿清掉", async () => {

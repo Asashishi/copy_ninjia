@@ -19,6 +19,16 @@ export const VERIFICATION_APPROVE_BUTTON_TEXT: string = "通过";
 export const VERIFY_SELF_CALLBACK_PREFIX: string = "verify:";
 /** 「通过」按钮 callback_data 的前缀，后面拼上待验证成员的 userId。 */
 export const VERIFY_APPROVE_CALLBACK_PREFIX: string = "approve:";
+/**
+ * 守卫已关的群里还留着旧按钮时的 callback 应答文案。当场应答掉、不投给 Worker，
+ * 否则点的人只看到按钮一直转。所属模块：antiRaid/updateIngress.ts。
+ */
+export const VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT: string = "本天才已经不守这个群的门啦♡";
+/**
+ * callback_data 后半段不是合法正整数时的应答文案。这是外部输入，前缀匹配不代表
+ * 目标 id 合法。所属模块：antiRaid/updateIngress.ts。
+ */
+export const VERIFICATION_INVALID_CALLBACK_TEXT: string = "验证请求无效";
 /** 新成员完成验证的完整时间窗口。 */
 export const VERIFICATION_TIMEOUT_MS: number = 3 * 60_000;
 /** 验证提醒投递失败后的指数退避边界；失败期间成员不会因看不到按钮被踢。 */

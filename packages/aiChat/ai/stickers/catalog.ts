@@ -224,8 +224,8 @@ export async function drainStickerCatalogTasks(): Promise<void> {
  * （memory/stickers/ 为空）撞上一次几秒的网络抖动，`catalogs` 就永久为空：
  * `buildStickerPackMenu` 每个包都在「没有贴纸」处丢掉，view_sticker_pack 与
  * send_sticker 两个工具对所有回复返回 null，而 systemd 托管的进程可能几周都
- * 不重启。整包简介缺失同理——那条日志自己写着「等下次对账」，可下次对账
- * 在改这里之前根本不存在。
+ * 不重启。整包简介缺失同理——那条日志写着「等下次对账」，本函数就是它等的
+ * 那一次。
  *
  * 只挑「目录为空或没有简介」的包重试：正常跑起来之后这里每轮都是一次
  * O(包数) 的判空，不打任何请求（贴纸集合在本进程内是无 TTL 缓存）。

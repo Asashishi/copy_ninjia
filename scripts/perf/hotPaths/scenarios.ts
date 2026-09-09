@@ -287,6 +287,7 @@ export function adWireCloneScenario(): Scenario {
     chatId: BENCHMARK_CHAT_ID,
     senderId: BENCHMARK_SENDER_ID,
     messageId: 1,
+    observedAt: BENCHMARK_EPOCH_MS,
     text: "ordinary message",
     label: "@stable_user",
     meta: { firstName: "Stable", lastName: "", username: "stable_user" },

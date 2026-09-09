@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,7 +9,7 @@ import {
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 
 const INSTALL_SCRIPT_PATH: string = join(import.meta.dir, "..", "..", "install.sh");
-const INSTALL_SCRIPT: string = readFileSync(INSTALL_SCRIPT_PATH, "utf8");
+const INSTALL_SCRIPT: string = await Bun.file(INSTALL_SCRIPT_PATH).text();
 
 /** 从 install.sh 原文取一个 `readonly NAME=(a b c)` 数组的元素。 */
 function extractShellArray(name: string): readonly string[] {
@@ -111,11 +111,11 @@ function extractShellFunctions(names: readonly string[]): string {
 const shellRoots: string[] = [];
 
 /** 造一个假的 journalctl，让判定逻辑可以在没有 systemd 的机器上跑完整分支。 */
-function fakeJournalDirectory(): string {
+async function fakeJournalDirectory(): Promise<string> {
   const root: string = mkdtempSync(join(tmpdir(), "install-journal-"));
   shellRoots.push(root);
   const stub: string = join(root, "journalctl");
-  writeFileSync(stub, [
+  await Bun.write(stub, [
     "#!/usr/bin/env bash",
     'if [ "${FAKE_JOURNAL_FAIL:-0}" = "1" ]; then exit 1; fi',
     'for arg in "$@"; do',
@@ -180,7 +180,7 @@ describe("install.sh 与代码共享同一份事实", () => {
       .toEqual([...AGENT_AI_CHAT_REQUIRED_CAPABILITIES]);
   });
 
-  test("Bun 精确版本与 packageManager 一致，类型声明覆盖同一主次版本", () => {
+  test("Bun 精确版本与 packageManager 一致，类型声明覆盖同一主次版本", async () => {
     const major: number = Number(extractShellScalar("REQUIRED_BUN_MAJOR"));
     const minor: number = Number(extractShellScalar("REQUIRED_BUN_MINOR"));
     const patch: number = Number(extractShellScalar("REQUIRED_BUN_PATCH"));
@@ -191,7 +191,7 @@ describe("install.sh 与代码共享同一份事实", () => {
       readonly packageManager?: string;
       readonly devDependencies: Readonly<Record<string, string>>;
     } = JSON.parse(
-      readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")
+      await Bun.file(join(import.meta.dir, "..", "..", "package.json")).text()
     ) as {
       readonly packageManager?: string;
       readonly devDependencies: Readonly<Record<string, string>>;
@@ -259,8 +259,8 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     )).toEqual({ stdout: "survived\n", exitCode: 0 });
   });
 
-  test("取得游标后只读它之后的条目", () => {
-    const path: string = `${fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
+  test("取得游标后只读它之后的条目", async () => {
+    const path: string = `${await fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
     const result = runWithInstallFunctions(
       `CURSOR="$(service_journal_cursor)"; echo "cursor=$CURSOR"; service_journal_since "$CURSOR" "2026-09-06 04:00:00 UTC"`,
       { PATH: path, FAKE_JOURNAL_CURSOR: "s=abc;i=7", FAKE_JOURNAL_BODY: "after-cursor line" }
@@ -269,8 +269,8 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     expect(result.stdout).toBe("cursor=s=abc;i=7\nafter-cursor line\n");
   });
 
-  test("journalctl 失败时游标为空且脚本存活——不能被 set -e 打死", () => {
-    const path: string = `${fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
+  test("journalctl 失败时游标为空且脚本存活——不能被 set -e 打死", async () => {
+    const path: string = `${await fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
     const result = runWithInstallFunctions(
       `CURSOR="$(service_journal_cursor)"; echo "cursor=[$CURSOR]"; ` +
       `if service_journal_since "$CURSOR" "2026-09-06 04:00:00 UTC" >/dev/null; then echo read-ok; else echo unavailable; fi`,

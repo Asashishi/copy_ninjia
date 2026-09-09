@@ -25,7 +25,7 @@
 - **`packages/commands/`**
   - **职责**：显式命令按命令族组织，同一入口的子命令在该领域内分派；开关命令共用的权限与配置门禁另成文件。
   - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
-    `targetResolution.ts`、`configGate.ts`；较大的 gag 领域以 `gag.ts` 保留命令入口，
+    `targetResolution.ts`、`configGate.ts`、`arguments.ts`；较大的 gag 领域以 `gag.ts` 保留命令入口，
     `gag/runtime.ts`、`gag/inline.ts`、`gag/rendering.ts` 分别承接生命周期、inline 与纯渲染。
 - **`packages/auto/`**
   - **职责**：非命令的自动行为，包括复读、AI 转录与触发、反应同步。
@@ -48,14 +48,14 @@
   - **职责**：按群翻译会话、恢复目标、正则语言识别与惰性 Google 翻译客户端。
   - **典型文件**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`；普通复制复用 `copy/echo.ts`。
 - **`packages/users/`**
-  - **职责**：发送者身份缓存、可见发送者判定、用户标签生成。
-  - **典型文件**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`。
+  - **职责**：发送者身份缓存、可见发送者判定、用户标签生成，以及名单与广告判定共用的身份元数据、消息内容与来源解析。
+  - **典型文件**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`、`identityMetadata.ts`、`messageContent.ts`、`messageOrigin.ts`。
 - **`packages/states/`**
-  - **职责**：**无 I/O** 的纯状态转移与准入规则，包括验证、锁定、AI 回复准入和
-    广告检测准入。
+  - **职责**：**无 I/O** 的纯状态转移与准入规则，包括验证、锁定、AI 回复准入、
+    广告检测准入和临时白名单累计。
   - **典型文件**：`verification.ts` 与 `verification/`（`join`/`pending`/`terminal`/`disable`
     四段生命周期）、`lockdown.ts` 与 `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt`
-    五段生命周期）、`replyAdmission.ts`、`adDetectAdmission.ts`。
+    五段生命周期）、`replyAdmission.ts`、`adDetectAdmission.ts`、`temporaryWhitelist.ts`。
 - **`packages/config/`**
   - **职责**：部署 `config/*.json` 的严格 schema、进程快照与按功能聚合的可用性判定；身份策略不在这里。
   - **典型文件**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
@@ -91,8 +91,8 @@
   - **典型文件**：`membership.ts`、`outbox.ts`、`sweep.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
   - **职责**：数据根预检、实例锁、业务状态门面、可注入的 `state.json` 持久化边界与启动清理。
-  - **典型文件**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`。
-    前者负责业务内存与快照，后者负责严格解码、latest-only 写入、重试与 flush。
+  - **典型文件**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`、`cleanup.ts`。
+    `stateStore.ts` 负责业务内存与快照，`statePersistence.ts` 负责严格解码、latest-only 写入、重试与 flush。
 - **`packages/cache/`**
   - **职责**：进程内可变状态容器，**第一层目录就是 owner 线程**。
   - **典型目录**：`main/`、`workers/aiChat/`、`workers/antiRaid/`、

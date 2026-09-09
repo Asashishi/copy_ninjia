@@ -12,7 +12,7 @@ import type {
 /**
  * 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat/tools.ts
  * 的 TYPO_QUICK_CORRECTION_PROBABILITY 注释）：90% 补发正确单字，
- * 剩余 10% 即「没发现」；不再存在撤回后重发正确全文的分支。
+ * 剩余 10% 即「没发现」；没有撤回后重发正确全文这条分支。
  */
 export function pickTypoCorrectionMode(): TypoCorrectionMode {
   const roll: number = Math.random();
@@ -22,11 +22,9 @@ export function pickTypoCorrectionMode(): TypoCorrectionMode {
 
 /**
  * 把 originalChar 在 text 里的第一个出现位置换成 replacementChar，构造出
- * 错字版本的整句话。不再要求模型把整句话重新打一遍、再靠 diff 两个模型
- * 各自生成的完整字符串来验证只有一处差异；长句复现可能缩短或改写正文，
- * 使正确的错字意图被长度/diff 校验误拒。只问模型要「原字」「错字」两个
- * 孤立单字后，替换在结构上
- * 必然只有一处、必然和 text 等长，不再依赖模型的长句复现保真度。
+ * 错字版本的整句话。模型只提供「原字」「错字」两个孤立单字，整句由本函数就地
+ * 替换：结果在结构上必然只差一处、必然和 text 等长，不依赖模型对长句的复现
+ * 保真度。
  * @returns 两个字长度不为 1、彼此相同、含空白、含 emoji，或 originalChar
  *   压根不在 text 里时返回 null。
  */

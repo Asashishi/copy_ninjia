@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +31,7 @@ describe("runtime data root preflight", () => {
 
   test("普通文件占位时给出包含实际路径的可操作错误", async () => {
     const occupied: string = join(testDir, "not-a-directory");
-    writeFileSync(occupied, "occupied");
+    await Bun.write(occupied, "occupied");
 
     await expect(prepareRuntimeDataRoot(occupied)).rejects.toThrow(occupied);
     await expect(prepareRuntimeDataRoot(occupied)).rejects.toThrow("writable directory");

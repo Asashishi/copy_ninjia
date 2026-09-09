@@ -101,6 +101,7 @@ const {
 } = await import("../../packages/antiRaid");
 const { blocklistEntryCache, whitelistEntryCache } =
   await import("../../packages/cache/main/identityStorage");
+const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
 const { chatIsSupergroupById } = await import("../../packages/cache/main/antiRaid/chatKind");
 const { activeVerificationSnapshots } = await import("../../packages/cache/main/antiRaid/verificationMirror");
 
@@ -303,21 +304,38 @@ describe("入群守卫开关（主线程投递侧）", () => {
     )).toEqual([100, 101, 102, 103, 104]);
   });
 
-  test("同一广告检测消息只读一次墙钟并把该值交给累计上下文", () => {
+  test("同一条 update 只读一次墙钟，累计上下文与刷屏投递共用那一个时刻", async () => {
     chatState.isAdDetectEnabled = true;
     const now: number = 1_800_000_000_000;
     const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now")
       .mockReturnValue(now);
     try {
-      handleAntiRaidMessageIngress({
-        chat: { id: -1001, type: "supergroup" },
-        message_id: 200,
-        date: 1,
-        from: { id: 42, is_bot: false, first_name: "Zako" },
-        text: "普通群消息",
-      } as Message, 999);
+      // 生产里 bot.handleUpdate 一定跑在这个作用域内（见 app/updateRunner.ts），
+      // 广告判定上下文与刷屏候选因此共用 updateNow 那唯一一次读取。
+      await runWithUpdateAbortSignal(
+        new AbortController().signal,
+        async (): Promise<void> => {
+          await handleAntiRaidMessageIngress({
+            chat: { id: -1001, type: "supergroup" },
+            message_id: 200,
+            date: 1,
+            from: { id: 42, is_bot: false, first_name: "Zako" },
+            text: "普通群消息",
+          } as Message, 999);
+        }
+      );
       expect(nowSpy).toHaveBeenCalledTimes(1);
       expect(temporaryWhitelistActivityTimes).toEqual([now]);
+      const flood: AntiRaidWorkerMessage | undefined = workerPosts.find(
+        (message: AntiRaidWorkerMessage): boolean => message.type === "floodCandidate"
+      );
+      expect(flood).toEqual({
+        type: "floodCandidate",
+        chatId: -1001,
+        userId: 42,
+        observedAt: now,
+        label: "Zako",
+      });
     } finally {
       nowSpy.mockRestore();
     }

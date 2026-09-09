@@ -12,6 +12,7 @@ import {
 import { logger } from "../logger";
 import { getChatStateCache } from "../storage/stateStore";
 import { hasAnyBlockedIdentity } from "../identityStorage";
+import { isManagedAdminChat, isSweepSlotFree } from "./sweepEligibility";
 import type { ChatState } from "../../types/chatState";
 import type { BlocklistSweepRunner } from "../../types/blocklist";
 
@@ -28,13 +29,9 @@ function nextBlocklistSweepAt(): number | null {
   let earliest: number | null = null;
   for (const [chatId, progress] of blocklistSweepState) {
     const chatState: ChatState | undefined = getChatStateCache().get(chatId);
-    if (
-      chatState?.isInitEnabled !== true ||
-      chatState.botPermissions?.isAdministrator !== true ||
-      progress.sweptAt !== null ||
-      progress.removalId !== null ||
-      progress.permissionBlocked
-    ) {
+    // 只判「槽位空不空」，不带 now：本函数要回答的正是「什么时候能扫」，
+    // 退避截止时刻由下面挑最早的那一个（判据来源见 sweepEligibility.ts）。
+    if (!isManagedAdminChat(chatState) || !isSweepSlotFree(progress)) {
       continue;
     }
     if (earliest === null || progress.nextRetryAt < earliest) {

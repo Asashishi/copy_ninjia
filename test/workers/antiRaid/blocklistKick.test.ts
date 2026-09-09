@@ -416,7 +416,7 @@ describe("刷屏计数的主线程投递接线", () => {
     } as never, 999);
 
     expect(floodCandidates()).toEqual([
-      { type: "floodCandidate", chatId: -1001, userId: 7, label: "@noisy" },
+      { type: "floodCandidate", chatId: -1001, userId: 7, observedAt: expect.any(Number), label: "@noisy" },
     ]);
     // Worker 侧的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程
     // 生命周期内到过这个群。

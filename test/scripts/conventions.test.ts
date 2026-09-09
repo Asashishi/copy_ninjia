@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
@@ -433,23 +433,23 @@ describe("逐文件源码规则", () => {
 
 describe("注释交叉引用核对", () => {
   /** 造一棵最小的假仓库：projectRoot/packages/<相对路径>。 */
-  function fixture(files: Readonly<Record<string, string>>): {
+  async function fixture(files: Readonly<Record<string, string>>): Promise<{
     readonly projectRoot: string;
     readonly allSourceFiles: readonly string[];
-  } {
+  }> {
     const projectRoot: string = temporaryRoot("comment-references-");
     const allSourceFiles: string[] = [];
     for (const [relativePath, text] of Object.entries(files)) {
       const absolute: string = join(projectRoot, "packages", relativePath);
       mkdirSync(join(absolute, ".."), { recursive: true });
-      writeFileSync(absolute, text);
+      await Bun.write(absolute, text);
       allSourceFiles.push(absolute);
     }
     return { projectRoot, allSourceFiles };
   }
 
   test("被点名的模块没有该符号时报告", async () => {
-    const { projectRoot, allSourceFiles } = fixture({
+    const { projectRoot, allSourceFiles } = await fixture({
       "libs/time.ts": "export function formatTokyoTime(): string { return \"\"; }\n",
     });
     const problems: readonly string[] = await collectCommentReferenceProblems({
@@ -463,7 +463,7 @@ describe("注释交叉引用核对", () => {
   });
 
   test("符号仍在时不报告", async () => {
-    const { projectRoot, allSourceFiles } = fixture({
+    const { projectRoot, allSourceFiles } = await fixture({
       "libs/time.ts": "export function getTokyoHour(): number { return 0; }\n",
     });
     expect(await collectCommentReferenceProblems({
@@ -475,7 +475,7 @@ describe("注释交叉引用核对", () => {
   });
 
   test("经 export * 兼容入口再导出的符号算数", async () => {
-    const { projectRoot, allSourceFiles } = fixture({
+    const { projectRoot, allSourceFiles } = await fixture({
       "types/diskIO/messages.ts": "export interface RecoveryReplayRequest { readonly id: number }\n",
       "types/diskIO.ts": 'export type * from "./diskIO/messages";\n',
     });
@@ -488,7 +488,7 @@ describe("注释交叉引用核对", () => {
   });
 
   test("非注释行里的同形文本不参与判定", async () => {
-    const { projectRoot, allSourceFiles } = fixture({
+    const { projectRoot, allSourceFiles } = await fixture({
       "libs/time.ts": "export function getTokyoHour(): number { return 0; }\n",
     });
     expect(await collectCommentReferenceProblems({
@@ -500,7 +500,7 @@ describe("注释交叉引用核对", () => {
   });
 
   test("解析不到唯一目标的引用一律放过", async () => {
-    const { projectRoot, allSourceFiles } = fixture({
+    const { projectRoot, allSourceFiles } = await fixture({
       "a/shared.ts": "export const a: number = 1;\n",
       "b/shared.ts": "export const b: number = 2;\n",
     });

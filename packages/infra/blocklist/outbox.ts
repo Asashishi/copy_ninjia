@@ -30,6 +30,7 @@ import {
 import { logger } from "../logger";
 import { getChatStateCache } from "../storage/stateStore";
 import { hasAnyBlockedIdentity } from "../identityStorage";
+import { isManagedAdminChat } from "./sweepEligibility";
 import type {
   BlockedMemberRemover,
   PendingBlockedRemoval,
@@ -110,7 +111,7 @@ export function hydrateBlocklist(
   for (const [removalId, pending] of recoveredRemovals) {
     blocklistRemovalCounter.current = Math.max(blocklistRemovalCounter.current, removalId);
     const state: ChatState | undefined = getChatStateCache().get(pending.params.chatId);
-    if (state?.isInitEnabled !== true || state.botPermissions?.isAdministrator !== true) {
+    if (!isManagedAdminChat(state)) {
       filtered = true;
       continue;
     }

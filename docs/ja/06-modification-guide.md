@@ -96,7 +96,7 @@
 ## AI ツールの追加
 
 1. **名前定数**：[`packages/consts/tools.ts`](../../packages/consts/tools.ts) にツール名を定義します。目に見える副作用がある場合は `ACTION_TOOL_NAMES` に含めるべきか確認します。
-2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
+2. **定義**：stateless な静的 query tool の `AiToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
 3. **実装**：`packages/aiChat/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
 4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
 5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、サーバー側ウェブ検索、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像・生成楽曲です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
@@ -147,7 +147,7 @@
 1. `packages/database/schema/<domain>.ts` で table を宣言し、`schema/storage.ts` に登録します。`data` 列は他の業務 table と同じく `jsonbText` と `jsonDataCheck` を使います。
 2. `schema/migrations/000N_<name>.sql` を書き、`migrations/meta/_journal.json` に entry を追加します。
 3. **hash は計算せず実測します**：使い捨ての database を作って migration を 1 回実行し、`__drizzle_migrations` から `created_at` と `hash` を読み戻して `packages/consts/identityStorage.ts` に書きます。同時に `IDENTITY_DATABASE_SCHEMA_VERSION` を 1 つ上げます。
-4. cold migration script を書き、`scripts/conventions/coldMigrations.ts` の唯一の edge を**置き換え**ます。規約は「直前の release → 現行版」の 1 本だけを許すため、旧 script はその test ごと削除します。
+4. cold migration script を書き、`scripts/conventions/coldMigrations.ts` の唯一の edge を**置き換え**ます。規約は release ではなく migration で数え、「直前の migration が出力した形式 → 今回の migration が出力する形式」の 1 本だけを許すため、旧 script はその test ごと削除します。
 5. migration **前**の検証はその version の歴史的な形態で行います。今回の変更が table の閉じた field 集合を変える場合（permission key の追加など）、事前に production decoder は使えません。新 version の field が存在することを既に要求しているため、移行待ちの deployment はすべて migration 開始前に破損と判定され、運用者が書いたことのない field を名指しされます。歴史的な key 一覧は migration script 内に固定し、現行定数から導出しないでください。導出は、次に key を追加したときこの歴史的 edge の判定を静かに書き換えます。
 6. version に依存しない部分（`meta` など）は production の parser を使います。`--check` は `--apply` が拒否するものをすべて拒否しなければならず、さもないと不正な row は database が書き換えられた後にしか露見しません。
 7. 永続化は既存の write-through を再利用します：main thread が memory 上の最終値を publish し、Disk I/O Worker へ post、明示 transaction で commit、正確な revision を ACK、再構築後は memory から replay します。

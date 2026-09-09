@@ -22,8 +22,11 @@ export function numericErrorStatus(error: unknown): number | undefined {
  *
  * 与模态无关，因此不限于 media 能力：任何能力配错 model 或 base_url 都会撞上
  * 同一个 404/405。
+ *
+ * 与下面两个判据一样**不导出**：级联顺序本身是语义（见
+ * classifyProviderApiFailure），单拿一档出去判就绕开了那个顺序。
  */
-export function isEndpointMisconfiguredError(status: number | undefined): boolean {
+function isEndpointMisconfiguredError(status: number | undefined): boolean {
   return status === 404 || status === 405;
 }
 
@@ -34,7 +37,7 @@ export function isEndpointMisconfiguredError(status: number | undefined): boolea
  * 已经耗尽，还是拿不到 HTTP 响应。408/429/5xx 同理。其余 4xx 是「这一份输入不
  * 合适」，换一份多半就成了——把它算成端点故障会让一张坏图把整条模态推进退避。
  */
-export function isEndpointFailureStatus(status: number | undefined): boolean {
+function isEndpointFailureStatus(status: number | undefined): boolean {
   if (status === undefined) return true;
   if (status === 408 || status === 429) return true;
   return status >= 500;
@@ -46,7 +49,7 @@ export function isEndpointFailureStatus(status: number | undefined): boolean {
  * 常见 4xx 必须由错误正文同时命中“不支持”和“媒体输入”两类语义，不能仅凭状态码
  * 猜测；路径级的 404/405 由 isEndpointMisconfiguredError 单独归类。
  */
-export function isExplicitUnsupportedMediaError(
+function isExplicitUnsupportedMediaError(
   status: number | undefined,
   message: string
 ): boolean {
@@ -109,4 +112,45 @@ export function classifyProviderApiFailure(
   }
   if (!isEndpointFailureStatus(status)) return "rejected";
   return "endpointFailure";
+}
+
+/**
+ * 两个模型客户端共用的失败结果形态。
+ *
+ * `GeminiRequestResult` 与 `OpenAiRequestResult` 的这三个 `ok: false` 成员逐字段
+ * 同构（其余字段都是可选的 `undefined` 占位），因此同一个对象对两个联合都可赋值。
+ */
+export interface ProviderApiFailureResult {
+  readonly ok: false;
+  readonly failureKind: Exclude<ProviderApiFailureKind, "endpointFailure">;
+  readonly diagnostic: string;
+}
+
+/**
+ * 把归因档位映射成两个模型客户端共用的失败结果。
+ *
+ * 诊断串是运维读日志时的唯一线索，也是三档结论对外的名字：抄在两个 client 里
+ * 的话，改其中一处就会让同一档结论在两家供应商上写出两种说法。级联判定
+ * （classifyProviderApiFailure）与这一步映射因此收在同一个叶子模块。
+ *
+ * `endpointFailure` 不在这里映射：它不是一个可直接返回的结果，而是「继续走
+ * 调用点自己的兜底路径」的信号（两个 client 都在那之后统一记一行日志并返回
+ * `failureKind: "request"`）。返回 `undefined` 让调用点显式接住这一档。
+ *
+ * `aiChat/openai/text.ts` 的语音探测不走这里：它映射的是 `mediaFailure` 而不是
+ * 结果联合，形态本来就不同（见该文件那处 switch）。
+ */
+export function providerApiFailureResult(
+  kind: ProviderApiFailureKind
+): ProviderApiFailureResult | undefined {
+  switch (kind) {
+    case "misconfigured":
+      return { ok: false, failureKind: kind, diagnostic: "endpoint or model is unavailable" };
+    case "unsupported":
+      return { ok: false, failureKind: kind, diagnostic: "media input is unsupported" };
+    case "rejected":
+      return { ok: false, failureKind: kind, diagnostic: "request was rejected" };
+    case "endpointFailure":
+      return undefined;
+  }
 }

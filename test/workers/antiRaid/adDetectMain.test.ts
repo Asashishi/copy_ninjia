@@ -189,6 +189,7 @@ describe("广告检测投递门禁", () => {
       chatId: -1001,
       senderId: 7,
       messageId: 10,
+      observedAt: expect.any(Number),
       text: "加我微信",
       label: "@spammer",
       meta: { firstName: "Spammer", lastName: "", username: "spammer" },

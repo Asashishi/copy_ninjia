@@ -25,7 +25,11 @@ import {
 } from "../../consts/aiChat/gemini";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
-import { classifyProviderApiFailure } from "../ai/utils/mediaSupportError";
+import {
+  classifyProviderApiFailure,
+  providerApiFailureResult,
+} from "../ai/utils/mediaSupportError";
+import type { ProviderApiFailureResult } from "../ai/utils/mediaSupportError";
 import { abnormalFinishDiagnostic, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiTextResult } from "../../types/aiChat/provider";
@@ -120,18 +124,13 @@ export async function requestGeminiResult(
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${error.status} ${error.message}`);
-      // 归因级联（含各档先后顺序的理由）收在 ai/utils/mediaSupportError.ts，
-      // 三个模型客户端共用同一条，只有返回形态各自映射。
-      switch (classifyProviderApiFailure(error.status, error.message, capability === "media")) {
-        case "misconfigured":
-          return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
-        case "unsupported":
-          return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
-        case "rejected":
-          return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
-        case "endpointFailure":
-          break;
-      }
+      // 归因级联与它到失败结果的映射都收在 ai/utils/mediaSupportError.ts：
+      // 三个模型客户端共用同一条级联，两个 client 再共用同一份诊断串。
+      // undefined 就是 endpointFailure 那一档，落到下面的统一兜底。
+      const failure: ProviderApiFailureResult | undefined = providerApiFailureResult(
+        classifyProviderApiFailure(error.status, error.message, capability === "media")
+      );
+      if (failure !== undefined) return failure;
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }

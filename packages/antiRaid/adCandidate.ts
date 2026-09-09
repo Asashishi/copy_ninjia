@@ -189,12 +189,14 @@ export function buildAdCandidate(
   const sampleContext: AdSampleContext | undefined = buildSampleContext(message, now);
   if (text.length === 0 && linkUrls === undefined && sampleContext === undefined) return undefined;
 
+  // 真人那一支直接把 `message.from` 交进去，不再现造投影：formatUserLabel 只读
+  // username / isChannel / title / first_name，grammY 的 `User` 在这四项上与
+  // CachedUser 逐字兼容，而这条路跑在每条开着广告检测的群消息上。
+  // `senderChat === undefined` 时 senderId 只能来自 `message.from.id`，上面那道
+  // `senderId === undefined` 早退已经证明它在；频道那一支仍要投影，它得合成
+  // `isChannel: true` 与 title。
   const label: string = senderChat === undefined
-    ? formatUserLabel({
-      id: senderId,
-      username: message.from?.username,
-      first_name: message.from?.first_name,
-    })
+    ? formatUserLabel(message.from!)
     : formatUserLabel({
       id: senderId,
       username: "username" in senderChat ? senderChat.username : undefined,
@@ -212,6 +214,7 @@ export function buildAdCandidate(
     chatId,
     senderId,
     messageId: message.message_id,
+    observedAt: now,
     text,
     label,
     meta,

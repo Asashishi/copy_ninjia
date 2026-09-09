@@ -14,8 +14,13 @@ export function verificationSnapshotScenario(clone: boolean): Scenario {
     (_: unknown, size: number): Parameters<typeof verificationSnapshot>[0] => {
       const state: PendingState = {
         kind: "pending", label: "待验证成员", isBot: false,
+        announcementMessageId: undefined,
         trackedMessageTimes: Array.from({ length: size }, (_: unknown, index: number): number => BENCHMARK_EPOCH_MS + index),
-        replyReminderRequested: false, reminderSuperseded: false,
+        invitedBy: undefined,
+        reminderMessageId: undefined, replyReminderMessageId: undefined,
+        replyReminderRequested: false,
+        welcomeAnchorMessageId: undefined,
+        reminderSuperseded: false,
         joinedAt: BENCHMARK_EPOCH_MS, expiresAt: BENCHMARK_EPOCH_MS + VERIFICATION_TIMEOUT_MS,
       };
       return { chatId: BENCHMARK_CHAT_ID, userId: BENCHMARK_SENDER_ID, state, revision: 1 };

@@ -8,13 +8,17 @@ const generateChatImage = mock(async (..._args: unknown[]): Promise<{
   bytes: Uint8Array;
   mimeType: "image/png";
 } | null> => ({ bytes: generatedBytes, mimeType: "image/png" }));
-const normalizeImageAspectRatio = mock((requested: string | undefined) => {
-  if (requested === undefined || requested.trim() === "") return "1:1" as const;
-  if (requested === "7:5") return "4:3" as const;
-  if (requested === "1600:900") return "16:9" as const;
-  if (requested === "16:9") return "16:9" as const;
+/** 宽高比归一的桩实现；beforeEach 的 mockReset 之后按这一份原样装回。 */
+function normalizeAspectRatioStub(
+  requested: string | undefined
+): "1:1" | "4:3" | "16:9" | null {
+  if (requested === undefined || requested.trim() === "") return "1:1";
+  if (requested === "7:5") return "4:3";
+  if (requested === "1600:900") return "16:9";
+  if (requested === "16:9") return "16:9";
   return null;
-});
+}
+const normalizeImageAspectRatio = mock(normalizeAspectRatioStub);
 const referenceVisionImage = { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
 const downloadTelegramVisionImage = mock(async (..._args: unknown[]): Promise<typeof referenceVisionImage | null> => referenceVisionImage);
 const runMediaTask = mock(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
@@ -30,7 +34,9 @@ const sendMessageWithResult = mock(async (..._args: unknown[]): Promise<Telegram
 }));
 // 超长图注降级会走一次拟人停顿；停顿本身是 send_message 已覆盖的行为，这里
 // 只关心两条消息的落地顺序和结算，因此按 replyToolset 用例的惯例把 sleep 打掉。
-const sleepMock = mock(async (..._args: unknown[]): Promise<void> => {});
+/** 拟人停顿的桩实现；beforeEach 的 mockReset 之后按这一份原样装回。 */
+async function sleepStub(..._args: unknown[]): Promise<void> {}
+const sleepMock = mock(sleepStub);
 const realImageGeneration = await import("../../../packages/aiChat/ai/imageGeneration");
 const realTelegram = await import("../../../packages/infra/telegram");
 
@@ -106,20 +112,25 @@ function buildReferenceContext(chatId: number = -1001, bypass: boolean = false):
   };
 }
 
+// 一律用 mockReset：mockClear 只清调用记录，`mockResolvedValueOnce` 排进队列却没被
+// 消费的那一份会活到下一个用例，用例顺序一变就是跨用例污染。mockReset 连同 once
+// 队列、调用记录和实现一起清掉，因此下面每个桩都必须在这里重新装回实现。
 beforeEach(() => {
   resetImageGenerationCache();
-  generateChatImage.mockClear();
+  generateChatImage.mockReset();
   generateChatImage.mockResolvedValue({ bytes: generatedBytes, mimeType: "image/png" });
-  normalizeImageAspectRatio.mockClear();
-  downloadTelegramVisionImage.mockClear();
+  normalizeImageAspectRatio.mockReset();
+  normalizeImageAspectRatio.mockImplementation(normalizeAspectRatioStub);
+  downloadTelegramVisionImage.mockReset();
   downloadTelegramVisionImage.mockResolvedValue(referenceVisionImage);
-  runMediaTask.mockClear();
+  runMediaTask.mockReset();
   runMediaTask.mockImplementation(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
-  sendPhotoWithResult.mockClear();
+  sendPhotoWithResult.mockReset();
   sendPhotoWithResult.mockResolvedValue({ messageId: 77, repliedToMessageId: 42 });
-  sendMessageWithResult.mockClear();
+  sendMessageWithResult.mockReset();
   sendMessageWithResult.mockResolvedValue({ messageId: 78, repliedToMessageId: 42 });
-  sleepMock.mockClear();
+  sleepMock.mockReset();
+  sleepMock.mockImplementation(sleepStub);
 });
 
 afterEach(() => {

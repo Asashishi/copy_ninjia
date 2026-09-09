@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
 import { TEST_DATA_ROOT } from "../preloadEnv";
@@ -14,15 +14,15 @@ afterAll((): void => {
 
 let documentIndex: number = 0;
 /** 把一份记录写进独立临时文件，返回路径；用例之间不共享文件。 */
-function writeDocument(document: unknown): string {
+async function writeDocument(document: unknown): Promise<string> {
   documentIndex++;
   const path: string = join(scratchRoot, `result-${documentIndex}.json`);
-  writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  await Bun.write(path, `${JSON.stringify(document, null, 2)}\n`);
   return path;
 }
 
-function reload(path: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(path, "utf8"));
+async function reload(path: string): Promise<Record<string, unknown>> {
+  return JSON.parse(await Bun.file(path).text());
 }
 
 describe("performance-result.json 的共享写入边界", () => {
@@ -32,7 +32,7 @@ describe("performance-result.json 的共享写入边界", () => {
   });
 
   test("只换自己那一格，另一节与其中的人写说明原样保留", async () => {
-    const path: string = writeDocument({
+    const path: string = await writeDocument({
       hotPathProfileGate: {
         calibration: { runtime: { notes: ["给人看的说明"] } },
         lastRun: { marker: "gate" },
@@ -47,7 +47,7 @@ describe("performance-result.json 的共享写入边界", () => {
       value: { rounds: 3 },
     });
 
-    const document: Record<string, unknown> = reload(path);
+    const document: Record<string, unknown> = await reload(path);
     const gate = document.hotPathProfileGate as Record<string, unknown>;
     const calibration = gate.calibration as Record<string, unknown>;
     const runtime = calibration.runtime as Record<string, unknown>;
@@ -58,7 +58,7 @@ describe("performance-result.json 的共享写入边界", () => {
   });
 
   test("节还不存在时创建它，不动其余内容", async () => {
-    const path: string = writeDocument({ hotPathProfileGate: { lastRun: null } });
+    const path: string = await writeDocument({ hotPathProfileGate: { lastRun: null } });
 
     await writePerformanceResultEntry({
       path,
@@ -67,13 +67,13 @@ describe("performance-result.json 的共享写入边界", () => {
       value: { rounds: 1 },
     });
 
-    const document: Record<string, unknown> = reload(path);
+    const document: Record<string, unknown> = await reload(path);
     expect(document.fullSuite).toEqual({ lastRun: { rounds: 1 } });
     expect(document.hotPathProfileGate).toEqual({ lastRun: null });
   });
 
   test("节存在但不是对象时失败，不覆盖也不重建", async () => {
-    const path: string = writeDocument({ hotPathProfileGate: {}, fullSuite: 42 });
+    const path: string = await writeDocument({ hotPathProfileGate: {}, fullSuite: 42 });
 
     await expect(writePerformanceResultEntry({
       path,
@@ -82,12 +82,12 @@ describe("performance-result.json 的共享写入边界", () => {
       value: {},
     })).rejects.toThrow("$.fullSuite must be an object");
     // 失败后原文不变：写坏的地方留在原地等人看，不被静默重建掩盖。
-    expect(reload(path).fullSuite).toBe(42);
+    expect((await reload(path)).fullSuite).toBe(42);
   });
 
   test("非严格 JSON 与非对象顶层都直接失败", async () => {
     const brokenPath: string = join(scratchRoot, "broken.json");
-    writeFileSync(brokenPath, "{ not json }\n", "utf8");
+    await Bun.write(brokenPath, "{ not json }\n");
     await expect(writePerformanceResultEntry({
       path: brokenPath,
       section: "fullSuite",
@@ -95,7 +95,7 @@ describe("performance-result.json 的共享写入边界", () => {
       value: {},
     })).rejects.toThrow("could not be read as strict JSON");
 
-    const arrayPath: string = writeDocument([]);
+    const arrayPath: string = await writeDocument([]);
     await expect(writePerformanceResultEntry({
       path: arrayPath,
       section: "fullSuite",

@@ -355,6 +355,8 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
+    // 本群没有活动代发会话，disable 只写一次总开关；enable 一次。补写
+    // isProxySendEnabled 的第二次落盘只在真的开着代发时发生，见下一条用例。
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
     // enable 必须立刻重新判定管理员身份：作废之后不重判，「是管理员 && 已初始化」
     // 那道边沿就永远等不到，「先给管理员、后 /init enable」的群不会被补扫黑名单。
@@ -377,6 +379,51 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
     expect(lastReplyText()).toContain("没能拆干净");
+  });
+
+  test("/init disable 的总开关先落盘，再拆运行态", async () => {
+    // teardownChatRuntime 里有不可逆的持久化动作（aiChat owner 的 durable 记忆
+    // 删除、translate owner 的会话删除）。反过来做的话，落盘一旦失败就是「磁盘上
+    // 开关还开着、本群的 AI 记忆已经没了」。口径同 runChatToggleCommand。
+    const order: string[] = [];
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
+      order.push(`persist:${context}`);
+      saveStateInBackground(context);
+    });
+    teardownChatRuntime.mockImplementationOnce(async (): Promise<void> => {
+      order.push("teardown");
+    });
+
+    await handleInitCommand(context("disable"));
+
+    expect(order).toEqual(["persist:init toggled", "teardown"]);
+  });
+
+  test("本群开着代发会话时补一次落盘，把 teardown 清掉的 isProxySendEnabled 写下去", async () => {
+    // teardownChatRuntime 同步清掉的持久字段只有它；只清内存的话，重启后代发
+    // 会话会连同一个已经不再接管的群一起复活。
+    const order: string[] = [];
+    states.set(-1001, {
+      isInitEnabled: true,
+      isProxySendEnabled: true,
+      botPermissions: botPermissions(),
+    });
+    persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
+      order.push(`persist:${context}`);
+      saveStateInBackground(context);
+    });
+    teardownChatRuntime.mockImplementationOnce(async (): Promise<void> => {
+      order.push("teardown");
+    });
+
+    await handleInitCommand(context("disable"));
+
+    expect(order).toEqual([
+      "persist:init toggled",
+      "teardown",
+      "persist:init teardown settled",
+    ]);
   });
 
   test("/init disable 落盘失败仍原样上抛，不确认这条 update", async () => {

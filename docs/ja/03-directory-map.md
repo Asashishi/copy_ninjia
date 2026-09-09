@@ -51,13 +51,13 @@
   - **責務**：群別セッション、対象復元、正規表現による文字種判定、遅延 Google 翻訳クライアント。
   - **代表的なファイル**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`。通常コピーは `copy/echo.ts` を再利用。
 - **`packages/users/`**
-  - **責務**：送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成。
-  - **代表的なファイル**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`。
+  - **責務**：送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成、および名簿と広告判定が共用する identity metadata・メッセージ内容・発信元の解決。
+  - **代表的なファイル**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`、`identityMetadata.ts`、`messageContent.ts`、`messageOrigin.ts`。
 - **`packages/states/`**
   - **責務**：**I/O を行わない**純粋な状態遷移と、認証・ロックダウン・AI 返信・
-    広告検出の受け入れ規則。
+    広告検出の受け入れ規則、および一時 allowlist の累計。
   - **代表的なファイル**：`verification.ts` と `verification/`（`join`/`pending`/`terminal`/`disable` の 4 区分）、`lockdown.ts` と `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt` の 5 区分）、`replyAdmission.ts`、
-    `adDetectAdmission.ts`。
+    `adDetectAdmission.ts`、`temporaryWhitelist.ts`。
 - **`packages/config/`**
   - **責務**：deployment `config/*.json` の厳密 schema と process snapshot、feature 単位の readiness 判定。identity policy はここに置きません。
   - **代表的なファイル**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
@@ -94,8 +94,8 @@
   - **代表的なファイル**：`membership.ts`、`outbox.ts`、`sweep.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
   - **責務**：データルート事前検査、インスタンスロック、業務 state facade、注入可能な `state.json` 永続化境界、起動時の清掃。
-  - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`。
-    前者は業務メモリと snapshot、後者は厳密 decode、latest-only write、retry、flush を担当します。
+  - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`、`cleanup.ts`。
+    `stateStore.ts` は業務メモリと snapshot、`statePersistence.ts` は厳密 decode、latest-only write、retry、flush を担当します。
 - **`packages/cache/`**
   - **責務**：プロセス内可変状態コンテナ。**第 1 階層のディレクトリが
     所有スレッドを表す**。

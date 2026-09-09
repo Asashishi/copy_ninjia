@@ -12,15 +12,16 @@ import { hasExactKeys, isPlainRecord } from "../libs/record";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood";
 import type { MoodConfig } from "../types/config";
 
-/** 解码倍率表：键必须是对应维度的合法桶名，倍率必须是正有限数——
- *  computeAdjustedWeight 假定倍率乘完权重仍为正（见 aiChat/ai/mood.ts）。
- *  @param context 报错定位串，如 `weatherMultipliers of "开心"`。 */
+/** parseMultipliers 的入参：允许的桶名全集，以及报错要点名的字段路径与文件路径。 */
 interface MultiplierParseOptions<Bucket extends string> {
   readonly allowedBuckets: readonly Bucket[];
   readonly fieldPath: string;
   readonly sourcePath: string;
 }
 
+/** 解码倍率表：键必须是对应维度的合法桶名，倍率必须是正有限数——
+ *  computeAdjustedWeight 假定倍率乘完权重仍为正（见 aiChat/ai/mood.ts）。
+ *  非法键与非法值分别以 `<fieldPath>.<key>`、`<fieldPath>.<value>` 报出。 */
 function parseMultipliers<Bucket extends string>(
   value: unknown,
   { allowedBuckets, fieldPath, sourcePath }: MultiplierParseOptions<Bucket>

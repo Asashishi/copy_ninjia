@@ -8,11 +8,10 @@ import {
 } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
-import { BLOCK_COMMAND_CONCURRENCY, BLOCK_TARGET_TEXTS } from "../consts/commands";
+import { BLOCK_TARGET_TEXTS } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import { resolveBotAdminStatus } from "../infra/botAdmin";
-import { logger } from "../infra/logger";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
 import { identityMetadataFromCachedUser } from "../infra/identityStorage";
 import {
@@ -20,13 +19,10 @@ import {
   confirmBlocklistPersisted,
   ensureBlocklistEntryQueued,
   managedAdminChatIds,
+  runManagedChatBatch,
 } from "../infra/blocklist/membership";
+import type { ManagedChatOutcome } from "../infra/blocklist/membership";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
-import { runBoundedSettledBatch } from "../libs/boundedSettledBatch";
-import type {
-  BoundedBatchExecution,
-  BoundedBatchResult,
-} from "../libs/boundedSettledBatch";
 
 type PerChatBlockOutcome = "kicked" | "confirmedBanned" | "failed";
 
@@ -165,19 +161,15 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 永不重扫，而入群秒踢只对之后的入群更新生效——被拉黑的人就这么在那个群里
   // 待到进程结束（见 infra/blocklist/ 的 requestBlocklistResweep）。
   const resweepChatIds: number[] = [];
-  // 各群之间固定小并发：群内那两步是真实依赖（先查在不在，再封），群与群之间不是，
-  // 而它们共用主线程 Telegram 总闸，实际 429 会把原任务退回自适应队列。逐群串行
-  // 的话 40 个群就是 80 次串行往返、约 16 秒里 update 中间件一直不返回，ack 边界
-  // 被推后，停机时更容易把 runner drain 拖超时。
-  // 个别群失败（管理员身份记录过时、缺封禁权限）不中断其余群：常规 API 错误
-  // 由适配层归一化；意外 rejection 也按群独立结算并交给既有补扫。
-  const perChatOutcomes: BoundedBatchResult<number, PerChatBlockOutcome>[] =
-    await runBoundedSettledBatch<number, PerChatBlockOutcome>({
-      items: targetChatIds,
-      maxConcurrent: BLOCK_COMMAND_CONCURRENCY,
-      execute: async ({
-        item: targetChatId,
-      }: BoundedBatchExecution<number>): Promise<PerChatBlockOutcome> => {
+  // 群内那两步是真实依赖（先查在不在，再封），群与群之间不是；扇出与逐项结算
+  // 收在 runManagedChatBatch，与 `/unblock` 的跨群解封共用同一份清单和同一个
+  // 并发上限（见 infra/blocklist/membership.ts）。
+  const perChatOutcomes: readonly ManagedChatOutcome<PerChatBlockOutcome>[] =
+    await runManagedChatBatch<PerChatBlockOutcome>({
+      chatIds: targetChatIds,
+      action: `ban blocked identity ${targetUser.id}`,
+      onUnexpectedFailure: "failed",
+      execute: async (targetChatId: number): Promise<PerChatBlockOutcome> => {
         if (targetUser.isChannel) {
           return await banChatSenderChat(targetChatId, targetUser.id)
             ? "confirmedBanned"
@@ -192,20 +184,11 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
         return wasMember ? "kicked" : "confirmedBanned";
       },
     });
-  // settlement 携带原 chatId 与输入下标，单群异常不会吞掉其它已经落定的封禁。
-  for (const settlement of perChatOutcomes) {
-    if (settlement.status === "rejected") {
-      logger.error(
-        `Unexpected error while banning blocked identity ${targetUser.id} in chat ${settlement.item} ` +
-        `(batch index ${settlement.index}, attempt ${settlement.attempt}):`,
-        settlement.reason
-      );
-    }
-    const outcome: PerChatBlockOutcome =
-      settlement.status === "fulfilled" ? settlement.value : "failed";
-    if (outcome === "kicked") kickedCount++;
-    else if (outcome === "confirmedBanned") confirmedBannedCount++;
-    else resweepChatIds.push(settlement.item);
+  // 结算保留原 chatId 且与输入同序，单群异常不会吞掉其它已经落定的封禁。
+  for (const outcome of perChatOutcomes) {
+    if (outcome.value === "kicked") kickedCount++;
+    else if (outcome.value === "confirmedBanned") confirmedBannedCount++;
+    else resweepChatIds.push(outcome.chatId);
   }
   // 权限恢复后由下一次管理员身份观测把这些群重扫一遍，不用管理员再跑一次 /block。
   for (const resweepChatId of resweepChatIds) requestBlocklistResweep(resweepChatId);

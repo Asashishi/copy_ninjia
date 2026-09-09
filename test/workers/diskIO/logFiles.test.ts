@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   flushBuffer,
@@ -47,8 +47,8 @@ describe("diskIO/logFiles 启动恢复", () => {
     const today: string = getTokyoDateKey();
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const tempPath: string = join(LOGS_DIR, `orphan${TMP_FILE_SUFFIX}`);
-    writeFileSync(stalePath, "{}");
-    writeFileSync(tempPath, "partial");
+    await Bun.write(stalePath, "{}");
+    await Bun.write(tempPath, "partial");
 
     await initLogFiles();
 
@@ -63,17 +63,17 @@ describe("diskIO/logFiles 启动恢复", () => {
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const tempPath: string = join(LOGS_DIR, `orphan${TMP_FILE_SUFFIX}`);
     const original: string = '{"entry":{"level":"error","message":"boom"}}';
-    writeFileSync(todayPath, original);
-    writeFileSync(stalePath, "{}");
-    writeFileSync(tempPath, "partial");
+    await Bun.write(todayPath, original);
+    await Bun.write(stalePath, "{}");
+    await Bun.write(tempPath, "partial");
 
     const inspection = await inspectLogFiles();
-    expect(readFileSync(todayPath, "utf8")).toBe(original);
+    expect(await Bun.file(todayPath).text()).toBe(original);
     expect(existsSync(stalePath)).toBeTrue();
     expect(existsSync(tempPath)).toBeTrue();
 
     adoptLogFiles(inspection);
-    expect(readFileSync(todayPath, "utf8").endsWith("\n}")).toBeTrue();
+    expect((await Bun.file(todayPath).text()).endsWith("\n}")).toBeTrue();
     expect(existsSync(stalePath)).toBeTrue();
     expect(existsSync(tempPath)).toBeTrue();
 
@@ -87,11 +87,11 @@ describe("diskIO/logFiles 启动恢复", () => {
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const original: string = "[{\"bad\":\"shape\"}]";
-    writeFileSync(todayPath, original);
-    writeFileSync(stalePath, "{}");
+    await Bun.write(todayPath, original);
+    await Bun.write(stalePath, "{}");
 
     await expect(initLogFiles()).rejects.toThrow("must contain a top-level JSON object");
-    expect(readFileSync(todayPath, "utf8")).toBe(original);
+    expect(await Bun.file(todayPath).text()).toBe(original);
     expect(existsSync(stalePath)).toBeTrue();
     expect(loggerFileState.current).toBeNull();
   });
@@ -101,11 +101,11 @@ describe("diskIO/logFiles 启动恢复", () => {
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const original: string = '{"entry":{"level":"error","message":42}}';
-    writeFileSync(todayPath, original);
-    writeFileSync(stalePath, "{}");
+    await Bun.write(todayPath, original);
+    await Bun.write(stalePath, "{}");
 
     await expect(initLogFiles()).rejects.toThrow("contains an invalid log record for key entry");
-    expect(readFileSync(todayPath, "utf8")).toBe(original);
+    expect(await Bun.file(todayPath).text()).toBe(original);
     expect(existsSync(stalePath)).toBeTrue();
     expect(loggerFileState.current).toBeNull();
   });
@@ -122,7 +122,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     expect(await flushLogBuffer()).toBeTrue();
     expect(flushBuffer.entries).toHaveLength(0);
     expect(flushBuffer.timer).toBeNull();
-    const parsed = JSON.parse(readFileSync(join(LOGS_DIR, `${day}.json`), "utf8")) as Record<string, {
+    const parsed = JSON.parse(await Bun.file(join(LOGS_DIR, `${day}.json`)).text()) as Record<string, {
       level: string;
       message: string;
       args?: unknown[];
@@ -140,8 +140,8 @@ describe("diskIO/logFiles 启动恢复", () => {
     await initLogFiles();
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const tempPath: string = join(LOGS_DIR, `after-start${TMP_FILE_SUFFIX}`);
-    writeFileSync(stalePath, "{}");
-    writeFileSync(tempPath, "partial");
+    await Bun.write(stalePath, "{}");
+    await Bun.write(tempPath, "partial");
     const timestamp: number = Date.now();
     await handleLogMessage({ timestamp, level: "error", args: ["daily maintenance"] });
 
@@ -157,7 +157,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     const today: string = getTokyoDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const original: string = "[]";
-    writeFileSync(todayPath, original);
+    await Bun.write(todayPath, original);
     markLogDirty({
       day: today,
       text: serializeDayFileEntry("entry", { level: "error", message: "boom" }),
@@ -166,32 +166,32 @@ describe("diskIO/logFiles 启动恢复", () => {
     expect(await flushLogBuffer()).toBeFalse();
     expect(flushBuffer.entries).toHaveLength(0);
     expect(loggerFileState.current).toBeNull();
-    expect(readFileSync(todayPath, "utf8")).toBe(original);
+    expect(await Bun.file(todayPath).text()).toBe(original);
   });
 
   test("追加失败后按退避间隔才重开日文件，而不是每次 flush 都整文件重读", async () => {
-    // 重开一次要把整个日文件 readFileSync + JSON.parse 两遍、逐条走 schema 校验、
+    // 重开一次要把整个日文件整份读回 + JSON.parse 两遍、逐条走 schema 校验、
     // 再扫一遍目录，而磁盘满/卷转只读这类故障不会在一个 flush 周期内自愈。不退避
     // 的话每个周期都按日文件大小付一次这个代价，而这条线程同时持有 state.json、
     // 黑名单、移除 outbox 与 AI 记忆快照。
     const today: string = getTokyoDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
-    writeFileSync(todayPath, "[]");
+    await Bun.write(todayPath, "[]");
     markLogDirty({ day: today, text: serializeDayFileEntry("a", { level: "error", message: "boom" }) });
     expect(await flushLogBuffer()).toBeFalse();
     expect(loggerReopenState.retryAt).toBeGreaterThan(0);
 
     // 文件此刻已经修好，但仍在退避窗口内：这一批照样丢弃，不去重开。
-    writeFileSync(todayPath, "{}");
+    await Bun.write(todayPath, "{}");
     markLogDirty({ day: today, text: serializeDayFileEntry("b", { level: "error", message: "again" }) });
     expect(await flushLogBuffer()).toBeFalse();
-    expect(readFileSync(todayPath, "utf8")).toBe("{}");
+    expect(await Bun.file(todayPath).text()).toBe("{}");
 
     // 退避到期后才重试；接管成功即清掉退避标记。
     loggerReopenState.retryAt = Date.now() - 1;
     markLogDirty({ day: today, text: serializeDayFileEntry("c", { level: "error", message: "recovered" }) });
     expect(await flushLogBuffer()).toBeTrue();
     expect(loggerReopenState.retryAt).toBe(0);
-    expect(Object.keys(JSON.parse(readFileSync(todayPath, "utf8")) as Record<string, unknown>)).toEqual(["c"]);
+    expect(Object.keys(JSON.parse(await Bun.file(todayPath).text()) as Record<string, unknown>)).toEqual(["c"]);
   });
 });

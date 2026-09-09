@@ -1,3 +1,18 @@
+/**
+ * 入群验证状态机的契约：状态、事件、效果与转移结果。
+ *
+ * **状态对象的缺省字段一律写成 `T | undefined` 而不是 `field?:`**：这些对象活到
+ * 整条验证生命周期结束，期间 verificationSnapshot 与解释器要反复读它们。写成可选
+ * 就允许构造点各写一部分字段、之后再补上，同一个 kind 因此分出多个 hidden class，
+ * 而后补字段本身就是一次形状变更（见 AGENTS.md「性能、内存与 Bun/JSC JIT」，
+ * 口径同 types/aiChat/speaker.ts 与 workers/aiChat/bufferedMessage.ts）。改成必填之后，
+ * 漏写字段是编译错误，构造顺序由声明顺序固定；终态两个 kind 的构造统一收在
+ * states/verification/shared.ts 的 checkingInviterOf / expellingOf，adopt 重建与状态机
+ * 新建共用同一份。缺省值仍是 undefined，`JSON.stringify` 照常省略，落盘格式不变。
+ *
+ * 事件与 VerificationTransition 是每次转移现造现用的短命对象，不适用本条。
+ */
+
 /** 早于入群更新到达、被暂存下来的评论区留言。 */
 export interface RecentComment {
   messageId: number;
@@ -11,15 +26,15 @@ export interface PendingState {
   /**
    * 入群公告的消息 id（机器人自己制造的那条痕迹）。
    */
-  announcementMessageId?: number;
+  announcementMessageId: number | undefined;
   /** 最近 JOIN_WINDOW_MS 内由该成员发送的消息时间。 */
   trackedMessageTimes: number[];
   /** 被他人拉入群时的拉人者 ID；超时前要做最终管理员核查。 */
-  invitedBy?: number;
-  reminderMessageId?: number;
-  replyReminderMessageId?: number;
+  invitedBy: number | undefined;
+  reminderMessageId: number | undefined;
+  replyReminderMessageId: number | undefined;
   replyReminderRequested: boolean;
-  welcomeAnchorMessageId?: number;
+  welcomeAnchorMessageId: number | undefined;
   reminderSuperseded: boolean;
   /** 创建记录的入群时刻，也是刷群窗口中待精确撤销的时间戳。 */
   joinedAt: number;
@@ -50,9 +65,9 @@ export interface KickPendingState {
    * 多名入群成员时间戳完全相同，拿一个从未计数的值去撤，删掉的就是另一名
    * 合法计数成员那一格（见 packages/libs/linkedQueue.ts 的 removeValue）。
    */
-  countedJoinAt?: number;
+  countedJoinAt: number | undefined;
   /** 入群公告 id；首次动作须在落盘回执后先清理该痕迹再踢人。 */
-  announcementMessageId?: number;
+  announcementMessageId: number | undefined;
   /** Worker 本地的 effect 幂等门；不持久化，重建后允许安全重放。 */
   effectStarted: boolean;
   /** Telegram 请求已同步发出，之后到达的豁免已无法撤销这次调用。 */
@@ -73,9 +88,9 @@ export interface ExpelSnapshot {
   readonly label: string;
   readonly isBot: boolean;
   /** 入群公告 id；只清理机器人/Telegram 制造的验证痕迹，不删除成员发言。 */
-  readonly announcementMessageId?: number;
-  readonly reminderMessageId?: number;
-  readonly replyReminderMessageId?: number;
+  readonly announcementMessageId: number | undefined;
+  readonly reminderMessageId: number | undefined;
+  readonly replyReminderMessageId: number | undefined;
   readonly joinedAt: number;
   readonly expiresAt: number;
 }
@@ -86,7 +101,7 @@ export interface CheckingInviterState {
   inviterId: number;
   snapshot: ExpelSnapshot;
   /** Worker 本地幂等门；不持久化，Worker 重建后允许安全重放。 */
-  executionStarted?: boolean;
+  executionStarted: boolean | undefined;
 }
 
 /** 已持久化后才可执行验证痕迹清理/踢人；这些 API 均按幂等方式重放。 */
@@ -95,7 +110,7 @@ export interface ExpellingState {
   reason: "timeout" | "flood";
   snapshot: ExpelSnapshot;
   /** Worker 本地幂等门；不持久化，Worker 重建后允许安全重放。 */
-  executionStarted?: boolean;
+  executionStarted: boolean | undefined;
   /**
    * 「想踢却踢不动」（缺 can_restrict_members）这条告警已发送。
    *
@@ -106,14 +121,14 @@ export interface ExpellingState {
    * 走统一临时发送边界，30 秒后自删（见 workers/antiRaid/verificationEffects/
    * terminal.ts 的 sendTemporaryMessageFromMain）。
    */
-  failureNoticeSent?: boolean;
+  failureNoticeSent: boolean | undefined;
   /** 「没能确认成员是否仍在群里或群类型」告警已发送；理由同 failureNoticeSent。 */
-  unconfirmedNoticeSent?: boolean;
+  unconfirmedNoticeSent: boolean | undefined;
   /**
    * 成功播报已经发出并进入持久化快照。落盘确认后可直接结束终态，Worker
    * 重建不再重放踢人、删消息和成功播报。
    */
-  successNoticeSent?: boolean;
+  successNoticeSent: boolean | undefined;
   /**
    * 踢人请求已被 Telegram 确认成功，但那条成功播报还没发出去。
    *
@@ -122,7 +137,7 @@ export interface ExpellingState {
    * 来路：没有它的话，重试时的成员探测只会答「不在群里」，终态直接静默结算，
    * 群里看着一个成员凭空消失，而那条唯一的说明再也不会出现。
    */
-  removalConfirmed?: boolean;
+  removalConfirmed: boolean | undefined;
   /**
    * 机器人自己的验证消息已经一条不剩地清理完毕。
    *
@@ -132,7 +147,7 @@ export interface ExpellingState {
    * 短路加一个前提——清理还欠着账时不能短路，否则一条删除失败过的验证公告会
    * 带着可点击的按钮永远挂在群里，再也没有任何一轮会重试它。
    */
-  cleanupSettled?: boolean;
+  cleanupSettled: boolean | undefined;
 }
 
 export type VerificationTerminalState = CheckingInviterState | ExpellingState;

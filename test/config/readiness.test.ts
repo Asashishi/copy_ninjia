@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../preloadEnv";
 import type {
@@ -101,11 +101,11 @@ const {
   translateConfigReadinessCache,
 } = await import("../../packages/cache/main/configReadiness");
 
-function writeAuthFile(content: string): void {
-  writeFileSync(authFilePath, content, "utf8");
+async function writeAuthFile(content: string): Promise<void> {
+  await Bun.write(authFilePath, content);
 }
 
-beforeEach((): void => {
+beforeEach(async (): Promise<void> => {
   loaderCalls.clear();
   stickerFailure = null;
   reactionFailure = null;
@@ -117,7 +117,7 @@ beforeEach((): void => {
   aiChatConfigReadinessCache.current = null;
   adDetectConfigReadinessCache.current = null;
   translateConfigReadinessCache.current = null;
-  writeAuthFile(JSON.stringify({ client_email: "bot@example.iam.gserviceaccount.com", private_key: testPrivateKey }));
+  await writeAuthFile(JSON.stringify({ client_email: "bot@example.iam.gserviceaccount.com", private_key: testPrivateKey }));
 });
 
 describe("deployment config readiness", () => {
@@ -208,17 +208,17 @@ describe("Google service account readiness", () => {
   });
 
   test("非对象与空字段均拒绝", async () => {
-    writeAuthFile(JSON.stringify(["client_email"]));
+    await writeAuthFile(JSON.stringify(["client_email"]));
     await expect(validateExistingDeploymentInputs()).rejects.toThrow("Google service account JSON object");
 
     translateConfigReadinessCache.current = null;
-    writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: "   " }));
+    await writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: "   " }));
     await expect(validateExistingDeploymentInputs()).rejects.toThrow("private_key");
   });
 
   test("不可解析私钥不回显原值", async () => {
     const marker: string = "-----BEGIN-LEAK-MARKER-----";
-    writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: marker }));
+    await writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: marker }));
     await expect(validateExistingDeploymentInputs()).rejects.toThrow("$.private_key");
     await expect(validateExistingDeploymentInputs()).rejects.not.toThrow(marker);
   });
@@ -227,7 +227,7 @@ describe("Google service account readiness", () => {
 for (const type of ["authorized_user", "external_account", null, 7]) {
   test("显式错误凭据类型在启动总闸拒绝且不改写原文件", async () => {
     const content: string = JSON.stringify({ type, client_email: "bot@example.com", private_key: testPrivateKey });
-    writeAuthFile(content);
+    await writeAuthFile(content);
     await expect(validateExistingDeploymentInputs()).rejects.toThrow(authFilePath + ': $.type must be "service_account".');
     expect(await Bun.file(authFilePath).text()).toBe(content);
     expect(translateConfigReadinessCache.current).toBeNull();
@@ -235,7 +235,7 @@ for (const type of ["authorized_user", "external_account", null, 7]) {
 }
 
 test("显式 service_account 与缺省 type 均保持可用", async () => {
-  writeAuthFile(JSON.stringify({ type: "service_account", client_email: "bot@example.com", private_key: testPrivateKey }));
+  await writeAuthFile(JSON.stringify({ type: "service_account", client_email: "bot@example.com", private_key: testPrivateKey }));
   await validateExistingDeploymentInputs();
   expect(translateConfigReadiness()).toEqual({ ok: true });
 });

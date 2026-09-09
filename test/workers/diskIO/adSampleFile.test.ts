@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AD_SAMPLE_FILE_PATH, AD_SAMPLE_MEMORY_DIR } from "../../../packages/consts/paths";
 import { AD_SAMPLE_FILE_MAX_BYTES, PERSISTED_FILE_MODE } from "../../../packages/consts/diskIO/common";
@@ -34,8 +34,8 @@ function sample(overrides: Partial<AdSampleDiskMessage> = {}): AdSampleDiskMessa
   };
 }
 
-function readSamples(): Record<string, Record<string, unknown>> {
-  return JSON.parse(readFileSync(AD_SAMPLE_FILE_PATH, "utf8")) as Record<string, Record<string, unknown>>;
+async function readSamples(): Promise<Record<string, Record<string, unknown>>> {
+  return JSON.parse(await Bun.file(AD_SAMPLE_FILE_PATH).text()) as Record<string, Record<string, unknown>>;
 }
 
 beforeEach(() => {
@@ -50,7 +50,7 @@ describe("广告命中样本旁路", () => {
   test("首条命中自建目录与文件，键是 chatId:首条 messageId", async () => {
     await handleAdSampleMessage(sample());
 
-    const samples = readSamples();
+    const samples = await readSamples();
     expect(Object.keys(samples)).toEqual(["-1001:11"]);
     expect(samples["-1001:11"]).toEqual({
       detectedAt: "2026/07/28 11:44:01",
@@ -75,7 +75,7 @@ describe("广告命中样本旁路", () => {
       messages: [{ messageId: 21, text: "日入过千" }],
     }));
 
-    const samples = readSamples();
+    const samples = await readSamples();
     expect(Object.keys(samples)).toEqual(["-1001:11", "-1002:21"]);
     expect(samples["-1001:11"]?.reason).toBe("引流加微信");
   });
@@ -83,11 +83,11 @@ describe("广告命中样本旁路", () => {
   test("被截断的旧文件按追加机制自愈，不阻塞新样本", async () => {
     // 样本是可丢的旁路素材：断电撕裂了末尾那条就裁掉，与日志/运势同一档取舍。
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
-    writeFileSync(AD_SAMPLE_FILE_PATH, '{\n  "-1001:1": {\n    "reason": "旧的"\n  },\n  "-1001:2": {\n    "rea');
+    await Bun.write(AD_SAMPLE_FILE_PATH, '{\n  "-1001:1": {\n    "reason": "旧的"\n  },\n  "-1001:2": {\n    "rea');
 
     await handleAdSampleMessage(sample());
 
-    const samples = readSamples();
+    const samples = await readSamples();
     expect(Object.keys(samples)).toEqual(["-1001:1", "-1001:11"]);
   });
 
@@ -95,25 +95,25 @@ describe("广告命中样本旁路", () => {
     await handleAdSampleMessage(sample());
     // 撑到上限：轮转判断在每次追加前跑，不是只在重新打开游标时跑。
     adSampleFileState.current = { size: AD_SAMPLE_FILE_MAX_BYTES, empty: false };
-    const archivedBytes: string = readFileSync(AD_SAMPLE_FILE_PATH, "utf8");
+    const archivedBytes: string = await Bun.file(AD_SAMPLE_FILE_PATH).text();
 
     await handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
 
     // 新文件只剩轮转后的这一条。
-    expect(Object.keys(readSamples())).toEqual(["-1001:99"]);
+    expect(Object.keys(await readSamples())).toEqual(["-1001:99"]);
     // 当天新归档在 15 个东京自然日的保留窗口内，内容应原样保留。
     const archives: string[] = readdirSync(AD_SAMPLE_MEMORY_DIR)
       .filter((name: string): boolean => name !== "sample.json");
     expect(archives).toHaveLength(1);
-    expect(readFileSync(join(AD_SAMPLE_MEMORY_DIR, archives[0]!), "utf8")).toBe(archivedBytes);
+    expect(await Bun.file(join(AD_SAMPLE_MEMORY_DIR, archives[0]!)).text()).toBe(archivedBytes);
   });
 
   test("目录扫描缓存最小空缺归档序号，仍保持既有选名规则", async () => {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     const today: string = getTokyoDateKey();
-    writeFileSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.json`), "{}");
-    writeFileSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.3.json`), "{}");
-    writeFileSync(AD_SAMPLE_FILE_PATH, "{}");
+    await Bun.write(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.json`), "{}");
+    await Bun.write(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.3.json`), "{}");
+    await Bun.write(AD_SAMPLE_FILE_PATH, "{}");
 
     await sweepExpiredAdSampleArchives({ today });
     expect(adSampleArchiveCursor.current).toEqual({ day: today, nextIndex: 2 });
@@ -141,7 +141,7 @@ describe("广告命中样本旁路", () => {
       ".sample.json.1234.abcd.tmp",
     ];
     for (const name of [...removedNames, ...retainedNames]) {
-      writeFileSync(join(AD_SAMPLE_MEMORY_DIR, name), "{}");
+      await Bun.write(join(AD_SAMPLE_MEMORY_DIR, name), "{}");
     }
     const matchingDirectory: string = join(AD_SAMPLE_MEMORY_DIR, "sample.2026-07-01.4.json");
     mkdirSync(matchingDirectory);
@@ -183,7 +183,7 @@ describe("广告命中样本旁路", () => {
     expect(removed[0]?.endsWith("sample.2000-01-01.2.json")).toBe(true);
     expect(logError).toHaveBeenCalledTimes(1);
     await handleAdSampleMessage(sample());
-    expect(Object.keys(readSamples())).toEqual(["-1001:11"]);
+    expect(Object.keys(await readSamples())).toEqual(["-1001:11"]);
     expect(listCalls).toBe(1);
     logError.mockRestore();
   });
@@ -200,7 +200,7 @@ describe("广告命中样本旁路", () => {
     });
     await handleAdSampleMessage(sample());
 
-    expect(Object.keys(readSamples())).toEqual(["-1001:11"]);
+    expect(Object.keys(await readSamples())).toEqual(["-1001:11"]);
     expect(logError).toHaveBeenCalledTimes(1);
     logError.mockRestore();
   });
@@ -213,9 +213,9 @@ describe("广告命中样本旁路", () => {
     const orphan: string = join(AD_SAMPLE_MEMORY_DIR, ".sample.json.1234.abcd.tmp");
     const expired: string = join(AD_SAMPLE_MEMORY_DIR, "sample.2000-01-01.json");
     const retained: string = join(AD_SAMPLE_MEMORY_DIR, "sample.2026-07-28.json");
-    writeFileSync(orphan, "{ partial");
-    writeFileSync(expired, "{}");
-    writeFileSync(retained, "{}");
+    await Bun.write(orphan, "{ partial");
+    await Bun.write(expired, "{}");
+    await Bun.write(retained, "{}");
     adSampleTempsSwept.current = false;
 
     await maintainAdSampleFiles("2026-07-28");
@@ -231,11 +231,11 @@ describe("广告命中样本旁路", () => {
     // 父目录必须显式建出来：本用例要造的前置条件是「ad-detected 这个名字被一个
     // 普通文件占着」，而不是「memory/ 也不存在」。beforeEach 只删 ad-detected，
     // memory/ 一直是别的用例调 handleAdSampleMessage 时 recursive mkdir 顺带建的
-    // ——`bun test --randomize` 把本用例排到文件里第一个时，writeFileSync 会先
-    // 撞 ENOENT，用例还没开始就失败。
+    // ——`bun test --randomize` 把本用例排到文件里第一个时，占位写入会先撞
+    // ENOENT，用例还没开始就失败。
     mkdirSync(dirname(AD_SAMPLE_MEMORY_DIR), { recursive: true });
     rmSync(AD_SAMPLE_MEMORY_DIR, { recursive: true, force: true });
-    writeFileSync(AD_SAMPLE_MEMORY_DIR, "not a directory");
+    await Bun.write(AD_SAMPLE_MEMORY_DIR, "not a directory");
 
     await expect(handleAdSampleMessage(sample())).resolves.toBeUndefined();
     expect(adSampleFileState.current).toBeNull();

@@ -53,12 +53,31 @@ describe("黑名单主键读失败的降级边界", () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     initBlocklistSweepScheduler();
-    requestBlocklistResweep(-1001, Date.now() + 60_000);
+    const retryAt: number = Date.now() + 60_000;
+    requestBlocklistResweep(-1001, retryAt);
     failBlocklistIdReads();
 
+    // 名单页读排在 claim 资格闸之后，因此这一轮的 now 必须已越过退避截止，
+    // 否则本次调用会在读盘之前就早退（见 sweep.ts 的 canClaimSweep 那道闸）。
     // 读落在 try/finally 之外时这次 reject 会整体跳过 finally，
     // armBlocklistSweepScheduler 本次不执行，周期补扫在本进程里再也不触发。
-    await expect(sweepBlockedMembers(-1001)).rejects.toThrow("cannot read blocklist IDs");
+    await expect(sweepBlockedMembers(-1001, retryAt + 1_000))
+      .rejects.toThrow("cannot read blocklist IDs");
+    expect(blocklistSweepSchedulerState.timer).not.toBeNull();
+    quiesceBlocklistSweepScheduler();
+  });
+
+  test("退避未到期时连名单页都不读：那一次读是跨线程全领域 flush", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    initBlocklistSweepScheduler();
+    const retryAt: number = Date.now() + 60_000;
+    requestBlocklistResweep(-1001, retryAt);
+    failBlocklistIdReads();
+
+    // 读注定会被 prepareBlocklistSweep 原样丢掉，因此这一轮一个字节都不该读；
+    // 读失败也就不会冒充成一次真实故障。
+    await expect(sweepBlockedMembers(-1001, retryAt - 1_000)).resolves.toBeUndefined();
     expect(blocklistSweepSchedulerState.timer).not.toBeNull();
     quiesceBlocklistSweepScheduler();
   });

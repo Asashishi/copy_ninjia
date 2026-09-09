@@ -24,6 +24,7 @@ import {
   needsBotOwnMessageWait,
   waitForBotOwnMessage,
 } from "../../infra/selfSentTracker";
+import { refreshUpdateNow, updateNow } from "../../infra/updateContext";
 import { recordSelfInlineResult } from "./guards";
 import { handlePhotoMessage } from "./photo";
 import { handleProactiveMessageActions } from "./proactive";
@@ -55,8 +56,12 @@ function handleAcceptedIncomingMessage(
    *
    * 活跃度入窗与安静期判定必须使用同一时刻，不能因两次 Date.now() 横跨毫秒边界。
    * 两个热函数都显式接收 now，避免在被调方默认参数中重复读取墙钟。
+   *
+   * 取值经 updateNow 而不是直接读墙钟：开了广告检测或防刷屏的群里，入群守卫
+   * 入口已经在本条 update 上问过同一个问题，两处共用那一次读取；没问过时本处
+   * 就是首个提问者，读一次墙钟并留给后续调用点（见 infra/updateContext.ts）。
    */
-  const now: number = Date.now();
+  const now: number = updateNow();
 
   // 所有可见群消息都先计入一小时滑动活跃度，即使当前正在复读或 AI 已关闭。
   const aiReplyProbability: number =
@@ -170,12 +175,15 @@ export function handleIncomingMessageMiddleware(ctx: Context): Promise<void> | u
   if (isBotOwnMessage(message)) return undefined;
   if (needsBotOwnMessageWait(message)) {
     return waitForBotOwnMessage(message).then(
-      (matched: boolean): Promise<void> | undefined =>
-        matched
-          ? undefined
-          // 自动转发会在超级群进入这条异步路径；等待期间开关可能变化，恢复处理
-          // 必须读取当时现值，不能把等待前的状态带过异步边界。
-          : handleAcceptedIncomingMessage(message, botIdentity, undefined)
+      (matched: boolean): Promise<void> | undefined => {
+        if (matched) return undefined;
+        // 自动转发会在超级群进入这条异步路径；等待期间开关可能变化，恢复处理
+        // 必须读取当时现值，不能把等待前的状态带过异步边界。时刻同理：这条
+        // rendezvous 最长等 SELF_SENT_RENDEZVOUS_TIMEOUT_MS，等待前那次读取到这里
+        // 已经过期，必须重新取一次并让后续调用点改用新值。
+        refreshUpdateNow();
+        return handleAcceptedIncomingMessage(message, botIdentity, undefined);
+      }
     );
   }
 

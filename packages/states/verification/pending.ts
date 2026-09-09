@@ -15,7 +15,13 @@ import type {
   VerificationTransition,
   VerifyTimeoutEvent,
 } from "../../types/states/verification";
-import { pendingUpdated, remindersOf, snapshotOf } from "./shared";
+import {
+  checkingInviterOf,
+  expellingOf,
+  pendingUpdated,
+  remindersOf,
+  snapshotOf,
+} from "./shared";
 
 /** 处理待验证成员发言、评论区豁免与刷屏终态切换。 */
 export function handleTrackedMessage(
@@ -52,7 +58,7 @@ export function handleTrackedMessage(
   state.trackedMessageTimes.push(event.now);
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
     return {
-      next: { kind: "expelling", reason: "flood", snapshot: snapshotOf(state) },
+      next: expellingOf("flood", snapshotOf(state)),
       effects: [],
     };
   }
@@ -200,11 +206,11 @@ export function handleVerifyTimeout(
   const snapshot: ExpelSnapshot = snapshotOf(state);
   if (state.invitedBy !== undefined) {
     return {
-      next: { kind: "checkingInviter", inviterId: state.invitedBy, snapshot },
+      next: checkingInviterOf(state.invitedBy, snapshot),
       effects: [],
     };
   }
-  return { next: { kind: "expelling", reason: "timeout", snapshot }, effects: [] };
+  return { next: expellingOf("timeout", snapshot), effects: [] };
 }
 
 /** 回填真正落地的提醒，并从按钮可见时重新给满验证窗口。 */

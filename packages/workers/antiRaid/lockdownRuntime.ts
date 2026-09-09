@@ -96,6 +96,33 @@ function clearRetryTimer(entry: LockdownEntry): void {
   entry.retryTimer = undefined;
 }
 
+/**
+ * 排一次重试节拍：换掉这个群仍在等的那颗重试 timer，到点把 `event` 投回状态机。
+ *
+ * 恢复重试（restoreRetryFired）与重新收紧重试（reapplyRetryFired）共用
+ * `entry.retryTimer` 一个字段——状态机保证同一时刻只有一个阶段在等重试，因此两条
+ * 副作用只差事件类型。两个事件都只带 `type`，可以在排程时就定形；`scheduleRestore`
+ * 不能这样收，它的 `intentId` 必须在**触发那一刻**才铸出来。
+ *
+ * 回调先把句柄归零再派发，`reconcileLockdownEntryTimers` 之后就不会去 clear 一颗
+ * 已经触发过的 timer。timer 不阻止线程退出，Worker 停止时由 stopLockdownRuntime
+ * 统一清理。
+ */
+function scheduleLockdownRetry(
+  chatId: number,
+  delayMs: number,
+  event: LockdownMachineEvent
+): void {
+  const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+  if (entry === undefined) return;
+  if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
+  entry.retryTimer = setTimeout((): void => {
+    entry.retryTimer = undefined;
+    dispatchLockdown(chatId, event);
+  }, delayMs);
+  entry.retryTimer.unref();
+}
+
 function clearLockdownEntryTimers(entry: LockdownEntry): void {
   clearRestoreTimer(entry);
   clearRetryTimer(entry);
@@ -145,28 +172,12 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         entry.restoreTimer.unref();
         break;
       }
-      case "scheduleRestoreRetry": {
-        const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
-        if (!entry) break;
-        if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
-        entry.retryTimer = setTimeout((): void => {
-          entry.retryTimer = undefined;
-          dispatchLockdown(chatId, { type: "restoreRetryFired" });
-        }, effect.delayMs);
-        entry.retryTimer.unref();
+      case "scheduleRestoreRetry":
+        scheduleLockdownRetry(chatId, effect.delayMs, { type: "restoreRetryFired" });
         break;
-      }
-      case "scheduleReapplyRetry": {
-        const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
-        if (!entry) break;
-        if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
-        entry.retryTimer = setTimeout((): void => {
-          entry.retryTimer = undefined;
-          dispatchLockdown(chatId, { type: "reapplyRetryFired" });
-        }, effect.delayMs);
-        entry.retryTimer.unref();
+      case "scheduleReapplyRetry":
+        scheduleLockdownRetry(chatId, effect.delayMs, { type: "reapplyRetryFired" });
         break;
-      }
       case "prepareApply":
         prepareApplyLockdown(chatId, effect.joinCount);
         break;

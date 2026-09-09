@@ -57,27 +57,13 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // getChatMember 压进验证队列）。disable 一律作废——关掉之后这份权限记录
   // 本来就不该继续被信任。
   if (!(isEnabled && wasEnabled)) invalidateBotAdminStatus(chatId);
-  // 拆运行态失败**不上抛**。落盘就在下面、总开关照样 durable 地关掉，异常
-  // 逸出只会让 acknowledged runner 带非零码退出且不确认 offset：Telegram 重投
-  // 同一条 /init disable，而那时 wasEnabled 已经是 false，管理员第一次什么回执
-  // 都没收到、第二次却被告知「本来就关着」——正是这条命令要消除的那种歧义。
-  // 这里就地降级：记一行错误日志，回执如实说「关是关了，有几样没拆干净」。
-  let teardownFailed: boolean = false;
-  let teardownError: unknown;
   if (arg === "disable") {
-    try {
-      await teardownChatRuntime(chatId, "explicitDisable");
-    } catch (error: unknown) {
-      teardownFailed = true;
-      teardownError = error;
-    }
     // 群名只为「在管的群」而记（infra/chatTitle.ts 的 applyChatTitle 同样只认
     // isInitEnabled === true），关掉之后它就是一条没有任何人会读的残留。而它偏偏是
     // isEmptyChatState 的判据之一：不清的话，这条记录既不空、也不再被管理，却继续占着
     // STATE_MANAGED_CHAT_LIMIT 的一个名额——25 轮「启用又关掉」之后，/init enable 对任何
     // 新群都只回 INIT_CHAT_LIMIT_TEXT，而实际在管的群可能是零个，且没有任何命令能删掉
-    // 这些残留行。teardown 失败也照清：总开关下面就 durable 地关掉了，「不再管这个群」
-    // 已经成立。清完若整条状态回到缺省，clearChatStateField 会顺手删掉 LRU 条目，下面
+    // 这些残留行。清完若整条状态回到缺省，clearChatStateField 会顺手删掉 LRU 条目，下面
     // 那次 persistChatState 写出的就是删除墓碑，SQLite 行一并消失。
     //
     // **只清 title，功能开关一律保留**：那几个开关是运维按下的决策，title 只是
@@ -88,14 +74,43 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
     // 这条代价由 INIT_CHAT_LIMIT_TEXT 如实告诉撞上上限的人，不靠删配置掩盖。
     clearChatStateField(chatId, "title");
   }
-  // 落盘失败照旧原样上抛：那是 fatal durability failure，这条 update 不能被确认
-  // （见 docs/cn/04-invariants.md）。
+  // **落盘先于运行时拆除**，与 commands/superAdminToggle.ts 的 runChatToggleCommand
+  // 同序：teardownChatRuntime 里有不可逆的持久化动作（aiChat owner 的 durable 记忆
+  // 删除、translate owner 的会话删除），反过来做的话，落盘一旦失败就是「磁盘上开关
+  // 还开着、本群的 AI 记忆已经没了」。
+  //
+  // 这一次失败照旧原样上抛：那是 fatal durability failure，这条 update 不能被确认
+  // （见 docs/cn/04-invariants.md）。此刻还什么都没写进去，因此重投那一轮读到的
+  // wasEnabled 仍是 true，回执不会出现「本来就关着」那种歧义。
   await persistChatState(chatId, "init toggled");
-  if (teardownFailed) {
-    logger.error(
-      `Failed to tear down the chat runtime for chat ${chatId}; the init gate is already persisted as disabled:`,
-      teardownError
-    );
+
+  // 拆运行态失败**不上抛**。总开关上面已经 durable 地关掉，异常逸出只会让
+  // acknowledged runner 带非零码退出且不确认 offset：Telegram 重投同一条
+  // /init disable，而那时 wasEnabled 已经是 false，管理员第一次什么回执都没收到、
+  // 第二次却被告知「本来就关着」——正是这条命令要消除的那种歧义。这里就地降级：
+  // 记一行错误日志，回执如实说「关是关了，有几样没拆干净」。
+  let teardownFailed: boolean = false;
+  if (arg === "disable") {
+    // teardownChatRuntime 同步清掉的持久字段只有 isProxySendEnabled（见
+    // infra/chatTeardown.ts；其余 owner 要么只动进程内状态，要么像 translate 那样
+    // 自己落盘）。只清内存的话，重启后代发会话会连同一个已经不再接管的群一起
+    // 复活，因此本群此刻真的开着代发会话时要补一次落盘——没开就不写，否则每条
+    // /init disable 都白付一次 SQLite 事务加 flush。取值在拆除之前读：
+    // clearChatStateField 是 teardownChatRuntime 的第一条语句，拆完就看不出来了。
+    const hadProxySend: boolean = state.isProxySendEnabled === true;
+    try {
+      await teardownChatRuntime(chatId, "explicitDisable");
+      // 这一次跟着拆除一起降级——总开关那一次已经 durable，这里只补收尾，失败按
+      // 「有几样没拆干净」如实回执，不再扣住 offset 制造上面那种歧义。
+      if (hadProxySend) await persistChatState(chatId, "init teardown settled");
+    } catch (error: unknown) {
+      teardownFailed = true;
+      logger.error(
+        `Failed to settle the chat runtime teardown for chat ${chatId}; ` +
+        "the init gate is already persisted as disabled:",
+        error
+      );
+    }
   }
 
   // enable 之后立刻把管理员身份重新判定一次。上面的 invalidateBotAdminStatus 刚把

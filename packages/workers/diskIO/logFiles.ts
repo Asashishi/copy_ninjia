@@ -173,7 +173,7 @@ function dayKey(timestamp: number): string {
  * 进程恰好在 writeFileSync 与 renameSync 之间被杀、或 rename 本身失败（磁盘
  * 满等）才会留下孤儿文件。DAY_FILE_PATTERN 只匹配 <day>.json，不匹配
  * <day>.json.tmp，保留期清理天然覆盖不到，得单独扫一遍删掉——对齐
- * snapshotFiles.ts 的 recoverAiMemories/recoverLuckDay 同样的清理。
+ * snapshotFiles.ts 的 maintainAiMemoryFiles/maintainLuckDay 同样的清理。
  */
 async function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
   for (const name of names) {

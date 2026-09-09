@@ -8,7 +8,8 @@ import type {
 
 /**
  * AI 回复准入控制的纯决策规则（不做任何 I/O、不持有计时器，也不碰任何
- * Map/LinkedQueue/Date.now()）。对应原揉在 aiChatWorker.ts 里的两道闸：
+ * Map/LinkedQueue/Date.now()）。容器与计时留在 workers/aiChat/replyPipeline.ts
+ * 与 replyRound.ts，本模块只出这两道闸的判定：
  *
  * - admitTrigger：并发闸，在触发到达时判定。
  * - admitRound：限频闸，在真正开始一轮前判定。

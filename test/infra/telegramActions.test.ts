@@ -434,11 +434,52 @@ describe("Telegram 常规动作封装", () => {
 
     // 1500 ms 落在两秒之间：向下取整会把时长抹短，而 Bot API 把「距现在不足
     // 30 秒」的 until_date 当成永久限制，边界上宁可多一秒。
-    expect(await muteChatMemberWithOutcome({ chatId: -1001, userId: 7, mutedUntil: 1_500, api })).toBe("muted");
-    expect(restrictMock).toHaveBeenCalledWith(-1001, 7, MUTED_CHAT_PERMISSIONS, { until_date: 2 });
+    expect(await muteChatMemberWithOutcome({
+      chatId: -1001, userId: 7, mutedUntil: 1_500, dispatchTimeoutMs: 60_000, api,
+    })).toBe("muted");
+    // 第五个实参是派发截止合成出来的 signal：它必须一路下传到真实请求，
+    // 否则 429 车道里排队的那一份不会因超时被撤销（见 MuteChatMemberParams）。
+    expect(restrictMock).toHaveBeenCalledWith(
+      -1001,
+      7,
+      MUTED_CHAT_PERMISSIONS,
+      { until_date: 2 },
+      expect.any(AbortSignal)
+    );
     // 权限集里不允许有任何一项为真，否则那不叫禁言。
     expect(Object.values(MUTED_CHAT_PERMISSIONS).every((allowed: boolean | undefined): boolean => allowed === false))
       .toBe(true);
+  });
+
+  test("派发截止到期即放弃这次禁言，不让它变成永久限制", async () => {
+    // 请求排在 restrict 类 429 车道里迟迟发不出去：until_date 是入队前算好的
+    // 绝对时刻，排到它距当下不足 30 秒时 Bot API 会当成永久限制，而两条禁言
+    // 路径都不排恢复计时器。到期必须放弃，并归到可重试的 failed 一档。
+    //
+    // 替身照生产形态消费最后那个 signal：真实链路上它由 signalArgs 交给 grammY，
+    // 再由出站总闸挂成 job 的 abort 监听（infra/telegram/outboundGate.ts 的
+    // createOutboundJob），排在 429 队列里的那一份因此会被取消而不是一直等下去。
+    const api = {
+      restrictChatMember: mock((
+        ..._args: readonly unknown[]
+      ): Promise<true> => new Promise<true>((
+        _resolve: (value: true) => void,
+        reject: (reason?: unknown) => void
+      ): void => {
+        const signal: AbortSignal | undefined = _args.at(-1) instanceof AbortSignal
+          ? _args.at(-1) as AbortSignal
+          : undefined;
+        signal?.addEventListener(
+          "abort",
+          (): void => { reject(new Error("Telegram outbound request was aborted.")); },
+          { once: true }
+        );
+      })),
+    } as unknown as TelegramApi;
+
+    expect(await muteChatMemberWithOutcome({
+      chatId: -1001, userId: 7, mutedUntil: Date.now() + 60_000, dispatchTimeoutMs: 5, api,
+    })).toBe("failed");
   });
 
   test("明确的拒绝与偶发失败分成两档，调用方据此决定要不要重试", async () => {
@@ -446,7 +487,9 @@ describe("Telegram 常规动作封装", () => {
       restrictChatMember: mock(async (..._args: unknown[]) => { throw error; }),
     }) as unknown as TelegramApi;
     const mute = (api: TelegramApi): Promise<string> =>
-      muteChatMemberWithOutcome({ chatId: -1001, userId: 7, mutedUntil: 60_000, api });
+      muteChatMemberWithOutcome({
+        chatId: -1001, userId: 7, mutedUntil: 60_000, dispatchTimeoutMs: 30_000, api,
+      });
 
     // 缺 can_restrict_members 与「目标本身是管理员」共用这一句 400；两者都是
     // 「再试一次也一样」，归到 forbidden。

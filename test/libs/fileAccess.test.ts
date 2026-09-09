@@ -11,7 +11,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -35,10 +35,10 @@ afterEach(() => {
 });
 
 describe("持久化路径的启动权限检查", () => {
-  test("可读写的既有文件通过，不改动权限位", () => {
+  test("可读写的既有文件通过，不改动权限位", async () => {
     const root: string = tempRoot();
     const path: string = join(root, "state.json");
-    writeFileSync(path, "{}", { mode: 0o600 });
+    await Bun.write(path, "{}", { mode: 0o600 });
 
     expect(() => assertFileReadableWritable(path)).not.toThrow();
   });
@@ -56,13 +56,13 @@ describe("持久化路径的启动权限检查", () => {
     );
   });
 
-  test("目录与符号链接即使可读写也不能伪装成持久化普通文件", () => {
+  test("目录与符号链接即使可读写也不能伪装成持久化普通文件", async () => {
     const root: string = tempRoot();
     const directoryPath: string = join(root, "state.json");
     const targetPath: string = join(root, "target.json");
     const linkPath: string = join(root, "linked.json");
     mkdirSync(directoryPath);
-    writeFileSync(targetPath, "{}");
+    await Bun.write(targetPath, "{}");
     symlinkSync(targetPath, linkPath);
 
     expect(() => assertFileReadableWritable(directoryPath)).toThrow(

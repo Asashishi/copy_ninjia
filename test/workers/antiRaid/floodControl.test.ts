@@ -1,6 +1,6 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { BotActionPermissions } from "../../../packages/types/telegram";
 import type { FloodCandidateMessage } from "../../../packages/types/antiRaid";
 import type { FloodWindowEntry } from "../../../packages/types/antiRaid/internal";
@@ -133,8 +133,12 @@ const {
 
 const FULL_RIGHTS: BotActionPermissions = { canRestrictMembers: true, canDeleteMessages: true };
 
-function candidate(chatId: number = -1001, userId: number = 7): FloodCandidateMessage {
-  return { type: "floodCandidate", chatId, userId, label: "刷屏怪" };
+function candidate(
+  chatId: number = -1001,
+  userId: number = 7,
+  observedAt: number = Date.now()
+): FloodCandidateMessage {
+  return { type: "floodCandidate", chatId, userId, observedAt, label: "刷屏怪" };
 }
 
 /** 测试读取分层数值索引，不在断言里重新引入生产已移除的复合字符串键。 */
@@ -185,6 +189,21 @@ describe("刷屏发言窗口", () => {
     }
     expect(observeMemberMessage(-1001, 7, 1_000 + FLOOD_MESSAGE_LIMIT))
       .toBe(floodEntry(-1001, 7)!);
+  });
+
+  test("投递自带主线程观测时刻，本线程不为每条候选再读一次墙钟", () => {
+    const observedAt: number = 1_800_000_000_000;
+    // 夹具先造好：candidate() 的默认时刻自己会读一次钟，那次不算本用例。
+    const message: FloodCandidateMessage = candidate(-1001, 7, observedAt);
+    const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now");
+    try {
+      handleFloodCandidate(message);
+      expect(nowSpy).not.toHaveBeenCalled();
+      expect(floodEntry(-1001, 7)?.lastObservedAt).toBe(observedAt);
+      expect(floodEntry(-1001, 7)?.timestamps.peek()).toBe(observedAt);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   test("命中后窗口整体清空：禁言没打成时也要再刷满一整个窗口才会重来", () => {

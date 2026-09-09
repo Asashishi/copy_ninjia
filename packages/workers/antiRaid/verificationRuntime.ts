@@ -27,6 +27,8 @@ import type {
   VerificationUpsertEvent,
 } from "../../types/antiRaid/events";
 import {
+  checkingInviterOf,
+  expellingOf,
   transitionVerification,
 } from "../../states/verification";
 import type {
@@ -285,21 +287,9 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
         executionStarted: false,
       }
       : record.phase === "checkingInviter"
-      ? {
-        kind: "checkingInviter",
-        inviterId: record.terminalInviterId,
-        snapshot: expelSnapshot,
-      }
+      ? checkingInviterOf(record.terminalInviterId, expelSnapshot)
       : record.phase === "expelling"
-        ? {
-          kind: "expelling",
-          reason: record.expelReason,
-          snapshot: expelSnapshot,
-          successNoticeSent: record.successNoticeSent,
-          failureNoticeSent: record.failureNoticeSent,
-          unconfirmedNoticeSent: record.unconfirmedNoticeSent,
-          removalConfirmed: record.removalConfirmed,
-        }
+        ? expellingOf(record.expelReason, expelSnapshot, record)
         : {
           kind: "pending",
           label: record.label,

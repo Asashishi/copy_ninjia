@@ -1,14 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import {
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -394,15 +385,15 @@ describe("StateStore", () => {
     const statePath: string = join(dir, "state.json");
     const backupPath: string = `${statePath}.bak`;
     const backup: string = JSON.stringify(schema(57), null, 2);
-    writeFileSync(statePath, "{broken");
-    writeFileSync(backupPath, backup);
+    await Bun.write(statePath, "{broken");
+    await Bun.write(backupPath, backup);
     const store = new StateStore({ stateFilePath: statePath });
 
     try {
       await expect(store.load()).rejects.toThrow(`${statePath}: $ must be valid JSON.`);
       // 运维要接着排查的就是这份文件：既不改名也不覆盖。
-      expect(readFileSync(statePath, "utf8")).toBe("{broken");
-      expect(readFileSync(backupPath, "utf8")).toBe(backup);
+      expect(await Bun.file(statePath).text()).toBe("{broken");
+      expect(await Bun.file(backupPath).text()).toBe(backup);
       expect(readdirSync(dir).some((entry) => entry.endsWith(".corrupt"))).toBeFalse();
     } finally {
       store.dispose();
@@ -414,12 +405,12 @@ describe("StateStore", () => {
     const dir: string = mkdtempSync(join(tmpdir(), "state-lkg-test-"));
     const statePath: string = join(dir, "state.json");
     const backup: string = JSON.stringify(schema(59), null, 2);
-    writeFileSync(`${statePath}.bak`, backup);
+    await Bun.write(`${statePath}.bak`, backup);
     const store = new StateStore({ stateFilePath: statePath });
 
     try {
       await expect(store.load()).resolves.toEqual(schema(59));
-      expect(readFileSync(statePath, "utf8")).toBe(backup);
+      expect(await Bun.file(statePath).text()).toBe(backup);
       expect(readdirSync(dir).some((entry) => entry.endsWith(".corrupt"))).toBeFalse();
     } finally {
       store.dispose();
@@ -517,15 +508,15 @@ describe("StateStore 默认读取边界", () => {
           const badPath: string = side === "primary" ? statePath : backupPath;
           const goodPath: string = side === "primary" ? backupPath : statePath;
           const bad: Uint8Array = make();
-          writeFileSync(badPath, bad);
-          if (other === "valid") writeFileSync(goodPath, legal);
+          await Bun.write(badPath, bad);
+          if (other === "valid") await Bun.write(goodPath, legal);
           const store = storeAt();
 
           try {
             expect(await rejectedReadPaths(store.load())).toContain(badPath);
             expect(writes).toEqual([]);
-            expect(Array.from(readFileSync(badPath))).toEqual(Array.from(bad));
-            if (other === "valid") expect(readFileSync(goodPath, "utf8")).toBe(legal);
+            expect(Array.from(await Bun.file(badPath).bytes())).toEqual(Array.from(bad));
+            if (other === "valid") expect(await Bun.file(goodPath).text()).toBe(legal);
           } finally {
             store.dispose();
           }
@@ -546,13 +537,13 @@ describe("StateStore 默认读取边界", () => {
           symlinkSync(target, badPath);
         }
         if (kind === "danglingLink") symlinkSync(join(dir, "absent-target"), badPath);
-        writeFileSync(goodPath, legal);
+        await Bun.write(goodPath, legal);
         const store = storeAt();
 
         try {
           expect(await rejectedReadPaths(store.load())).toContain(badPath);
           expect(writes).toEqual([]);
-          expect(readFileSync(goodPath, "utf8")).toBe(legal);
+          expect(await Bun.file(goodPath).text()).toBe(legal);
           expect(lstatSync(badPath).isSymbolicLink() || lstatSync(badPath).isDirectory()).toBeTrue();
         } finally {
           store.dispose();
@@ -562,7 +553,7 @@ describe("StateStore 默认读取边界", () => {
   }
 
   test("stat 报权限失败时是安全错误而不是缺失", async () => {
-    writeFileSync(backupPath, legal);
+    await Bun.write(backupPath, legal);
     const denied: Error & { code?: string } = new Error("EACCES: permission denied, stat");
     denied.code = "EACCES";
     const restore: () => void = failBunFile(statePath, "stat", denied);
@@ -578,8 +569,8 @@ describe("StateStore 默认读取边界", () => {
   });
 
   test("stat 通过后读取阶段文件消失同样报错，不降级为缺失", async () => {
-    writeFileSync(statePath, legal);
-    writeFileSync(backupPath, legal);
+    await Bun.write(statePath, legal);
+    await Bun.write(backupPath, legal);
     const vanished: Error & { code?: string } = new Error("ENOENT: no such file or directory, read");
     vanished.code = "ENOENT";
     const restore: () => void = failBunFile(statePath, "bytes", vanished);
@@ -605,7 +596,7 @@ describe("StateStore 默认读取边界", () => {
   });
 
   test("主合法、备缺失时补齐备份", async () => {
-    writeFileSync(statePath, legal);
+    await Bun.write(statePath, legal);
     const store = storeAt();
     try {
       await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
@@ -616,7 +607,7 @@ describe("StateStore 默认读取边界", () => {
   });
 
   test("主缺失、备合法时重建主文件", async () => {
-    writeFileSync(backupPath, legal);
+    await Bun.write(backupPath, legal);
     const store = storeAt();
     try {
       await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
@@ -628,8 +619,8 @@ describe("StateStore 默认读取边界", () => {
 
   test("两侧都合法但不同时仍以主文件为准同步备份", async () => {
     const stale: string = '{"global":{"copy":{"copiedUser":null}}}';
-    writeFileSync(statePath, legal);
-    writeFileSync(backupPath, stale);
+    await Bun.write(statePath, legal);
+    await Bun.write(backupPath, stale);
     const store = storeAt();
     try {
       await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
@@ -641,8 +632,8 @@ describe("StateStore 默认读取边界", () => {
 
   test("中文与 emoji 正常加载", async () => {
     const content: string = '{"global":{"copy":{"copiedUser":{"id":7,"first_name":"忍者🥷"},"copyChatId":-9}}}';
-    writeFileSync(statePath, content);
-    writeFileSync(backupPath, content);
+    await Bun.write(statePath, content);
+    await Bun.write(backupPath, content);
     const store = storeAt();
     try {
       const loaded: DecodedStateFile | null = await store.load();
@@ -655,9 +646,9 @@ describe("StateStore 默认读取边界", () => {
 
   test("指向普通文件的软链接继续接受", async () => {
     const target: string = join(dir, "real-state.json");
-    writeFileSync(target, legal);
+    await Bun.write(target, legal);
     symlinkSync(target, statePath);
-    writeFileSync(backupPath, legal);
+    await Bun.write(backupPath, legal);
     const store = storeAt();
     try {
       await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
@@ -669,8 +660,8 @@ describe("StateStore 默认读取边界", () => {
 
   test("UTF-8 BOM 被剥离后正常解析", async () => {
     const bytes: Uint8Array = new TextEncoder().encode(`\uFEFF${legal}`);
-    writeFileSync(statePath, bytes);
-    writeFileSync(backupPath, bytes);
+    await Bun.write(statePath, bytes);
+    await Bun.write(backupPath, bytes);
     const store = storeAt();
     try {
       await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
@@ -844,7 +835,7 @@ describe("素材直链的加载接线", () => {
         },
       },
     };
-    writeFileSync(statePath, JSON.stringify(stored, null, 2));
+    await Bun.write(statePath, JSON.stringify(stored, null, 2));
     stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
 
     await loadState();
@@ -857,7 +848,7 @@ describe("素材直链的加载接线", () => {
 
   test("文件里没有 assets 块时四项都回退到内置常量", async () => {
     const statePath: string = join(dir, "state-without-assets.json");
-    writeFileSync(statePath, JSON.stringify({ global: { copy: { copiedUser: null } } }, null, 2));
+    await Bun.write(statePath, JSON.stringify({ global: { copy: { copiedUser: null } } }, null, 2));
     stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
 
     await loadState();
@@ -883,7 +874,7 @@ describe("素材直链的加载接线", () => {
         assets: {},
       },
     };
-    writeFileSync(statePath, JSON.stringify(stored, null, 2));
+    await Bun.write(statePath, JSON.stringify(stored, null, 2));
     stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
 
     await loadState();

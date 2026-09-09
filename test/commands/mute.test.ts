@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
-import { MUTE_MAX_DURATION_MS, MUTE_MIN_DURATION_MS } from "../../packages/consts/commands";
+import {
+  MUTE_DISPATCH_MIN_REMAINING_MS,
+  MUTE_MAX_DURATION_MS,
+  MUTE_MIN_DURATION_MS,
+} from "../../packages/consts/commands";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const muteChatMemberWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "muted");
@@ -123,6 +127,7 @@ describe("/mute 手动禁言", () => {
       chatId: -1001,
       userId: 7,
       mutedUntil: 1_000_000 + 10 * 60_000,
+      dispatchTimeoutMs: 10 * 60_000 - MUTE_DISPATCH_MIN_REMAINING_MS,
     });
     expect(lastReplyText()).toContain("10 分钟");
 
@@ -133,6 +138,7 @@ describe("/mute 手动禁言", () => {
       chatId: -1001,
       userId: 7,
       mutedUntil: 1_000_000 + 2 * 60 * 60_000,
+      dispatchTimeoutMs: 2 * 60 * 60_000 - MUTE_DISPATCH_MIN_REMAINING_MS,
     });
   });
 
@@ -160,6 +166,7 @@ describe("/mute 手动禁言", () => {
       chatId: -1001,
       userId: 7,
       mutedUntil: 1_000_000 + 10 * 60_000,
+      dispatchTimeoutMs: 10 * 60_000 - MUTE_DISPATCH_MIN_REMAINING_MS,
     });
   });
 

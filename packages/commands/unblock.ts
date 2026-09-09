@@ -12,8 +12,10 @@ import { resolveBotAdminStatus } from "../infra/botAdmin";
 import {
   confirmBlocklistPersisted,
   managedAdminChatIds,
+  runManagedChatBatch,
   unblockUser,
 } from "../infra/blocklist/membership";
+import type { ManagedChatOutcome } from "../infra/blocklist/membership";
 import { runBlocklistIdentityMutation } from "../infra/identityPolicy/coordination";
 
 interface UnblockExecutionOutcome extends UnbanOutcome {
@@ -136,23 +138,32 @@ interface UnbanOutcome {
 
 /**
  * 在所有「本天才是管理员」的群里解除该目标的封禁。群清单与 /block 的连坐封禁
- * 读同一个 `managedAdminChatIds`（见 infra/blocklist/membership.ts），不是各自
- * 遍历一遍再声明同源；串行执行，避免一次命令制造突发请求，也让计数按确定顺序收敛。
+ * 读同一个 `managedAdminChatIds`，扇出也走同一个 `runManagedChatBatch`（都见
+ * infra/blocklist/membership.ts）：两条命令是同一处置的正反面，清单同源而形态
+ * 分叉的话，早晚会长出「封的时候有界并发、解的时候逐群串行」这种不对称，而
+ * 后者在几十个群时会让 update 中间件几十次往返都不返回。结算与输入同序，
+ * 计数仍按确定顺序收敛。
  */
 async function unbanEverywhereFor(targetUser: CachedUser, chatId: number): Promise<UnbanOutcome> {
   const isAdminHere: boolean = await resolveBotAdminStatus(chatId);
   const targetChatIds: number[] = managedAdminChatIds(chatId, isAdminHere);
 
-  let unbannedCount: number = 0;
-  let failedCount: number = 0;
-  for (const targetChatId of targetChatIds) {
+  const outcomes: readonly ManagedChatOutcome<boolean>[] = await runManagedChatBatch<boolean>({
+    chatIds: targetChatIds,
+    action: `lift the ban on identity ${targetUser.id}`,
+    onUnexpectedFailure: false,
     // 频道马甲走 unbanChatSenderChat；真实用户必须走带 only_if_banned 的那个
     // helper，否则「当前就在群里」的人会被 unbanChatMember 直接踢出去
     // （见 infra/telegram/actions/moderation.ts）。
-    const lifted: boolean = targetUser.isChannel === true
-      ? await unbanChatSenderChat(targetChatId, targetUser.id)
-      : await unbanChatMemberIfBanned(targetChatId, targetUser.id);
-    if (lifted) unbannedCount++;
+    execute: (targetChatId: number): Promise<boolean> => targetUser.isChannel === true
+      ? unbanChatSenderChat(targetChatId, targetUser.id)
+      : unbanChatMemberIfBanned(targetChatId, targetUser.id),
+  });
+
+  let unbannedCount: number = 0;
+  let failedCount: number = 0;
+  for (const outcome of outcomes) {
+    if (outcome.value) unbannedCount++;
     else failedCount++;
   }
   return { unbannedCount, failedCount };

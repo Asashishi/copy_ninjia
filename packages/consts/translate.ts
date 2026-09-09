@@ -80,6 +80,13 @@ export const TRANSLATE_CAPACITY_TEXT: string = "翻译群数已满啦，先在�
 /** 本群翻译人数已满时拒绝新增；提示通过停止单人释放名额。 */
 export const TRANSLATE_CHAT_CAPACITY_TEXT: string = `本群已经有 ${TRANSLATE_CHAT_USER_LIMIT} 个杂鱼等本天才翻译啦，回复目标用 /translate stop 腾个位置再来♡`;
 
+/** `/translate stop` 不带目标时的全群停止回执；所属模块：翻译命令。 */
+export const TRANSLATE_STOP_ALL_TEXT: string = "本群所有杂鱼的翻译都停止啦，需要时再来求本天才♡";
+
+/** 本群翻译开关关闭时拒绝设置方向；所属模块：翻译命令。 */
+export const TRANSLATE_DISABLED_TEXT: string =
+  "本群翻译功能还没开启，找有翻译管理权限的人 /translate enable 一下吧♡";
+
 /** /translate 开关文案；使用现有翻译功能授权，不占用 copy 冷却。 */
 export const TRANSLATE_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
   rejection: (label: string): string => `就 ${label} 也想管本天才要不要翻译？没这项权限呀，笨蛋♡`,

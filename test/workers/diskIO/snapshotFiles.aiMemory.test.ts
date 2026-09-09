@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from
@@ -48,7 +48,7 @@ beforeEach(() => {
 });
 
 test("没有 username 的当前 version=1 AI 记忆仍恢复无损,回写字节级一致", async () => {
-  writeFileSync(join(aiDir, "-100123.json"), currentBytes);
+  await Bun.write(join(aiDir, "-100123.json"), currentBytes);
 
   const recovered = await recoverAiMemories();
   expect(recovered.size).toBe(1);
@@ -57,12 +57,12 @@ test("没有 username 的当前 version=1 AI 记忆仍恢复无损,回写字节�
   expect(json).toBe(currentBytes);
 
   writeAiMemoryFile(-100123, json);
-  expect(readFileSync(join(aiDir, "-100123.json"), "utf8")).toBe(currentBytes);
+  expect(await Bun.file(join(aiDir, "-100123.json")).text()).toBe(currentBytes);
 });
 
 test("接管与原子回写均保留部署方已有的 0600", async () => {
   const path: string = join(aiDir, "-100123.json");
-  writeFileSync(path, currentBytes);
+  await Bun.write(path, currentBytes);
   chmodSync(path, 0o600);
 
   const recovered: Map<number, string> = await recoverAiMemories();
@@ -80,7 +80,7 @@ test("新版可选 username 会随 version=1 AI 记忆恢复并回写", async ()
     ],
   };
   const bytes: string = JSON.stringify(snapshotWithUsername, null, 2);
-  writeFileSync(join(aiDir, "-100126.json"), bytes);
+  await Bun.write(join(aiDir, "-100126.json"), bytes);
 
   const recovered = await recoverAiMemories();
   expect(recovered.size).toBe(1);
@@ -89,7 +89,7 @@ test("新版可选 username 会随 version=1 AI 记忆恢复并回写", async ()
   expect(json).toBe(bytes);
 
   writeAiMemoryFile(-100126, json);
-  expect(readFileSync(join(aiDir, "-100126.json"), "utf8")).toBe(bytes);
+  expect(await Bun.file(join(aiDir, "-100126.json")).text()).toBe(bytes);
 });
 
 test("回复对象快照会随 version=1 AI 记忆恢复并回写", async () => {
@@ -113,7 +113,7 @@ test("回复对象快照会随 version=1 AI 记忆恢复并回写", async () => 
     ],
   };
   const bytes: string = JSON.stringify(snapshotWithReply, null, 2);
-  writeFileSync(join(aiDir, "-100130.json"), bytes);
+  await Bun.write(join(aiDir, "-100130.json"), bytes);
 
   const recovered = await recoverAiMemories();
   const json = recovered.get(-100130)!;
@@ -142,7 +142,7 @@ test("当前消息与回复对象的转发来源会随 version=1 AI 记忆恢复
     ],
   };
   const bytes: string = JSON.stringify(snapshotWithForwardPaths, null, 2);
-  writeFileSync(join(aiDir, "-100133.json"), bytes);
+  await Bun.write(join(aiDir, "-100133.json"), bytes);
 
   const recovered = await recoverAiMemories();
   const json = recovered.get(-100133)!;
@@ -151,16 +151,16 @@ test("当前消息与回复对象的转发来源会随 version=1 AI 记忆恢复
 });
 
 test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖待迁移文件", async () => {
-  writeFileSync(join(aiDir, "-100124.json"), JSON.stringify({
+  await Bun.write(join(aiDir, "-100124.json"), JSON.stringify({
     ...currentSnapshot,
     buffer: [{ id: 111, firstName: "太郎", lastName: "", text: "旧记录", at: "2026/07/16 21:35:04" }],
   }));
   await expect(recoverAiMemories()).rejects.toThrow("$.buffer[0].messageId must be");
-  expect(readFileSync(join(aiDir, "-100124.json"), "utf8")).not.toBe("");
+  expect(await Bun.file(join(aiDir, "-100124.json")).text()).not.toBe("");
 });
 
 test("username 若存在则必须为字符串", async () => {
-  writeFileSync(join(aiDir, "-100127.json"), JSON.stringify({
+  await Bun.write(join(aiDir, "-100127.json"), JSON.stringify({
     ...currentSnapshot,
     buffer: [{ ...currentSnapshot.buffer[0]!, username: 123 }],
   }));
@@ -169,7 +169,7 @@ test("username 若存在则必须为字符串", async () => {
 });
 
 test("replyTo 若存在则必须是完整合法的回复对象", async () => {
-  writeFileSync(join(aiDir, "-100131.json"), JSON.stringify({
+  await Bun.write(join(aiDir, "-100131.json"), JSON.stringify({
     ...currentSnapshot,
     buffer: [{ ...currentSnapshot.buffer[0]!, replyTo: { messageId: 7, text: "缺发送者" } }],
   }));
@@ -184,10 +184,10 @@ test("超出冷摘要容量时拒绝恢复且不改写文件", async () => {
     ...currentSnapshot,
     summaries,
   });
-  writeFileSync(path, bytes);
+  await Bun.write(path, bytes);
 
   await expect(recoverAiMemories()).rejects.toThrow("within configured capacities");
-  expect(readFileSync(path, "utf8")).toBe(bytes);
+  expect(await Bun.file(path).text()).toBe(bytes);
 });
 
 test("超出逐字消息容量时拒绝恢复且不改写文件", async () => {
@@ -204,51 +204,51 @@ test("超出逐字消息容量时拒绝恢复且不改写文件", async () => {
     ...currentSnapshot,
     buffer,
   });
-  writeFileSync(path, bytes);
+  await Bun.write(path, bytes);
 
   await expect(recoverAiMemories()).rejects.toThrow("within configured capacities");
-  expect(readFileSync(path, "utf8")).toBe(bytes);
+  expect(await Bun.file(path).text()).toBe(bytes);
 });
 
-test("删除记忆文件幂等且不会留下快照", () => {
+test("删除记忆文件幂等且不会留下快照", async () => {
   const path: string = join(aiDir, "-100129.json");
-  writeFileSync(path, currentBytes);
+  await Bun.write(path, currentBytes);
 
   deleteAiMemoryFile(-100129);
-  expect(() => readFileSync(path, "utf8")).toThrow();
+  await expect(Bun.file(path).text()).rejects.toThrow();
   expect(() => deleteAiMemoryFile(-100129)).not.toThrow();
 });
 
 test("文件名不能原样还原成 chatId 时拒绝恢复，不按目录顺序选一份", async () => {
   // 正则只保证「一串数字」：补零变体也匹配，Number 之后是同一个 key，于是两份
   // 快照互相覆盖、胜者取决于 readdirSync 的枚举顺序。而回写只用 `${chatId}.json`，
-  // 补零那份永不被改写或删除，每次重启继续顶替（同 blocklistFile.ts 的回环校验）。
-  writeFileSync(join(aiDir, "-100123.json"), currentBytes);
-  writeFileSync(join(aiDir, "-0100123.json"), JSON.stringify({
+  // 补零那份永不被改写或删除，每次重启继续顶替（同 wedMemberFiles.ts 的回环校验）。
+  await Bun.write(join(aiDir, "-100123.json"), currentBytes);
+  await Bun.write(join(aiDir, "-0100123.json"), JSON.stringify({
     ...currentSnapshot,
     summaries: ["补零文件里的旧摘要"],
   }, null, 2));
 
   await expect(recoverAiMemories()).rejects.toThrow("canonical <chatId>.json form");
-  expect(readFileSync(join(aiDir, "-100123.json"), "utf8")).toBe(currentBytes);
+  expect(await Bun.file(join(aiDir, "-100123.json")).text()).toBe(currentBytes);
 });
 
 test("位数超出安全整数的文件名同样拒绝恢复", async () => {
   // 1e20 那种水合出来的 key 与任何真实 chatId 都对不上，下次落盘还会生成一个
   // 全新文件，旧文件永远留在盘上。
-  writeFileSync(join(aiDir, "99999999999999999999.json"), currentBytes);
+  await Bun.write(join(aiDir, "99999999999999999999.json"), currentBytes);
 
   await expect(recoverAiMemories()).rejects.toThrow("negative safe integer Telegram group or channel ID");
 });
 
 test("chatId 为零的文件名拒绝恢复", async () => {
-  writeFileSync(join(aiDir, "0.json"), currentBytes);
+  await Bun.write(join(aiDir, "0.json"), currentBytes);
 
   await expect(recoverAiMemories()).rejects.toThrow("negative safe integer Telegram group or channel ID");
 });
 
 test("正数私聊 ID 的文件名拒绝恢复", async () => {
-  writeFileSync(join(aiDir, "100123.json"), currentBytes);
+  await Bun.write(join(aiDir, "100123.json"), currentBytes);
 
   await expect(recoverAiMemories()).rejects.toThrow("negative safe integer Telegram group or channel ID");
 });

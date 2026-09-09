@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type {
   AdCandidateMessage,
   AdDetectedEvent,
@@ -89,6 +89,20 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
       senderId: 7,
     }]);
     expect(disposeAdSender).not.toHaveBeenCalled();
+  });
+
+  test("不传 now 时按候选自带的主线程观测时刻记账，本线程不读墙钟", () => {
+    const observedAt: number = 1_800_000_000_000;
+    // 夹具先造好：harness 的 candidate() 默认值自己会读一次钟，那次不算本用例。
+    const message: AdCandidateMessage = candidate({ messageId: 1, observedAt });
+    const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now");
+    try {
+      enqueueAdCandidate(message);
+      expect(nowSpy).not.toHaveBeenCalled();
+      expect(pendingAdMessages.get("-1001:7")?.entries[0]?.receivedAt).toBe(observedAt);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   test("队列只排键，同一个人的多条消息并进同一串", () => {

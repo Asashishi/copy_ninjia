@@ -12,6 +12,7 @@ const {
   persistChatState,
   postDiskIO,
   promotion,
+  readBlocklistIdPage,
   remover,
   settleLast,
   settleLastAsForbidden,
@@ -82,8 +83,14 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     settleLast(true);
 
     remover.mockClear();
+    readBlocklistIdPage.mockClear();
     await handleMyChatMemberUpdate(promotion("administrator", "administrator"));
     expect(remover).not.toHaveBeenCalled();
+    // 「不重复扫」必须在**读名单页之前**成立：那一次读先向 Disk I/O Worker 请求
+    // 一次全领域 flush 再跨线程取一页主键（infra/identityStorage/sweep.ts），而本
+    // 触发点挂在每条 chat_member 更新的管理员身份观测上。放在读之后早退的话，
+    // 每个进群/退群的人都要付一次往返，并把当时所有脏领域的攒批窗口一并作废。
+    expect(readBlocklistIdPage).not.toHaveBeenCalled();
   });
 
   test("没扫完不算扫过：退避窗口过去后再试一次", async () => {

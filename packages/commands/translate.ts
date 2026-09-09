@@ -7,6 +7,8 @@ import {
   TRANSLATE_ARGUMENT_PATTERN,
   TRANSLATE_CAPACITY_TEXT,
   TRANSLATE_CHAT_CAPACITY_TEXT,
+  TRANSLATE_DISABLED_TEXT,
+  TRANSLATE_STOP_ALL_TEXT,
   TRANSLATE_STOP_ARGUMENT_PATTERN,
   TRANSLATE_LANGUAGE_LABELS,
   TRANSLATE_LIST_JSON_INDENT,
@@ -76,7 +78,7 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (stopMatch !== null) {
     if (stopMatch[1] === undefined && ctx.msg.reply_to_message === undefined && ctx.msg.external_reply === undefined) {
       await stopTranslation(chatId);
-      await sendCommandMessage({ chatId, text: "本群所有杂鱼的翻译都停止啦，需要时再来求本天才♡", replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: TRANSLATE_STOP_ALL_TEXT, replyToMessageId: messageId });
       return;
     }
     const target: CachedUser | undefined = await resolveCommandTarget({
@@ -106,7 +108,7 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (getChatState(chatId).isTranslationEnabled !== true) {
     await sendCommandMessage({
       chatId,
-      text: "本群翻译功能还没开启，找有翻译管理权限的人 /translate enable 一下吧♡",
+      text: TRANSLATE_DISABLED_TEXT,
       replyToMessageId: messageId,
     });
     return;

@@ -7,6 +7,7 @@ import {
   setWhitelistMembership,
 } from "../infra/identityPolicy/whitelist";
 import { WHITE_COMMAND_TEXTS } from "../consts/whitelist";
+import { commandArgumentTokens } from "./arguments";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
@@ -67,9 +68,7 @@ export async function handleWhiteCommand(
     return;
   }
 
-  const tokens: string[] = ctx.match.trim()
-    .split(/\s+/)
-    .filter((token: string): boolean => token.length > 0);
+  const tokens: string[] = commandArgumentTokens(ctx.match);
   const rawAction: string | undefined = tokens.at(-1);
   const action: WhiteAction | undefined = rawAction === undefined
     ? undefined

@@ -17,16 +17,27 @@ import type { FloodCandidateMessage } from "../types/antiRaid/protocol";
 import type { ChatState } from "../types/chatState";
 import type { Message, User } from "grammy/types";
 
-/**
- * 把一条群消息收敛成刷屏计数投递。返回 undefined 表示这条不参与计数。
- * @param botId 本机器人的用户 id；自己发的消息不计数。
- * @param chatState 同一同步消息入口已读取的当前群状态；缺省时本函数自行读取。
- */
-export function buildFloodCandidate(
-  message: Message,
-  botId: number,
-  chatState?: Readonly<ChatState>
-): FloodCandidateMessage | undefined {
+/** buildFloodCandidate 的入参；四项越过位置参数上限，故收成 options。 */
+export interface BuildFloodCandidateParams {
+  readonly message: Message;
+  /** 本机器人的用户 id；自己发的消息不计数。 */
+  readonly botId: number;
+  /**
+   * 本条 update 统一的「现在」，随候选发给 Worker 当作窗口时刻。
+   * 调用方一律传 updateNow() 的返回值，见 infra/updateContext.ts。
+   */
+  readonly now: number;
+  /** 同一同步消息入口已读取的当前群状态；缺省时本函数自行读取。 */
+  readonly chatState?: Readonly<ChatState>;
+}
+
+/** 把一条群消息收敛成刷屏计数投递。返回 undefined 表示这条不参与计数。 */
+export function buildFloodCandidate({
+  message,
+  botId,
+  now,
+  chatState,
+}: BuildFloodCandidateParams): FloodCandidateMessage | undefined {
   // 只在超级群计数：`restrictChatMember` 按 Bot API 的定义只对超级群有效，
   // 普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和
   // 一行把运维引向权限配置的报错。普通群升级成超级群之后消息自带新的
@@ -49,12 +60,14 @@ export function buildFloodCandidate(
     type: "floodCandidate",
     chatId: message.chat.id,
     userId: sender.id,
+    observedAt: now,
     // 昵称是用户可控内容，清洗与退化都收在 formatUserLabel 里；Worker 侧只把
     // 它当纯文本拼进通知，出站消息一律不设 parse_mode（见 docs/cn/04-invariants.md）。
-    label: formatUserLabel({
-      id: sender.id,
-      username: sender.username,
-      first_name: sender.first_name,
-    }),
+    //
+    // 直接把 `sender` 交进去，不再现造一个 `{ id, username, first_name }` 投影：
+    // formatUserLabel 只读 username / isChannel / title / first_name，grammY 的
+    // `User` 在这四项上与 CachedUser 逐字兼容（没有 isChannel 即按真人分支走），
+    // 而这条路跑在每条计入刷屏窗口的群消息上，投影对象是一次纯浪费的分配。
+    label: formatUserLabel(sender),
   };
 }

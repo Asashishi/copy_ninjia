@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -19,7 +19,7 @@ describe("Bun 原生不可信输入读取", () => {
     const directory: string = mkdtempSync(join(tmpdir(), "copy-ninjia-json-input-"));
     tempDirs.push(directory);
     const path: string = join(directory, "input.json");
-    writeFileSync(path, new Uint8Array([0x5b, 0x22, 0xff, 0x22, 0x5d]));
+    await Bun.write(path, new Uint8Array([0x5b, 0x22, 0xff, 0x22, 0x5d]));
 
     await expect(readJsonInput(path)).rejects.toThrow(
       `${path}: $ must be a readable valid JSON document.`
@@ -30,7 +30,7 @@ describe("Bun 原生不可信输入读取", () => {
     const directory: string = mkdtempSync(join(tmpdir(), "copy-ninjia-text-input-"));
     tempDirs.push(directory);
     const path: string = join(directory, "input.txt");
-    writeFileSync(path, "ready", "utf8");
+    await Bun.write(path, "ready");
     rmSync(path);
 
     await expect(readUtf8TextInput(path)).rejects.toThrow();

@@ -18,7 +18,8 @@ export const aiMemoryFlushBarrier: ReturnType<typeof createFlushBarrier> = creat
 });
 
 /** 最近一次注入 AI Worker 的 init 消息，供 Worker 崩溃重启后重放（新 Worker
- *  不知道机器人自己的账号身份），见 aiChat/index.ts 的 initAiChat/onRespawn。 */
+ *  不知道机器人自己的账号身份），见 aiChat/workerBridge.ts 的 initAiChat 与
+ *  onRespawn。 */
 export const lastInitState: { current: AiInitMessage | null } = { current: null };
 
 /** 各群最新的 AI 记忆快照镜像（值是序列化 JSON 文本，与消息协议同形态，

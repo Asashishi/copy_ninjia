@@ -25,7 +25,9 @@ import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textRes
 import {
   classifyProviderApiFailure,
   numericErrorStatus,
+  providerApiFailureResult,
 } from "../ai/utils/mediaSupportError";
+import type { ProviderApiFailureResult } from "../ai/utils/mediaSupportError";
 import {
   abnormalResponseDiagnostic,
   isTruncatedByTokenLimit,
@@ -116,18 +118,13 @@ export async function requestOpenAiResult({
       const status: number | undefined = numericErrorStatus(error);
       // APIError 自带状态码与服务端错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${status ?? "?"} ${error.message}`);
-      // 归因级联与 aiChat/gemini/client.ts 共用 ai/utils/mediaSupportError.ts 的
-      // 同一条判定，只有返回形态各自映射。
-      switch (classifyProviderApiFailure(status, error.message, capability === "media")) {
-        case "misconfigured":
-          return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
-        case "unsupported":
-          return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
-        case "rejected":
-          return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
-        case "endpointFailure":
-          break;
-      }
+      // 归因级联与失败结果映射都与 aiChat/gemini/client.ts 共用
+      // ai/utils/mediaSupportError.ts 的同一份实现；undefined 是 endpointFailure
+      // 那一档，落到下面的统一兜底。
+      const failure: ProviderApiFailureResult | undefined = providerApiFailureResult(
+        classifyProviderApiFailure(status, error.message, capability === "media")
+      );
+      if (failure !== undefined) return failure;
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }

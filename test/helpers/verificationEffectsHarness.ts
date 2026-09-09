@@ -8,6 +8,7 @@ installTemporaryMessageWorkerMock();
  */
 
 import { beforeEach, mock, spyOn } from "bun:test";
+import { checkingInviterOf } from "../../packages/states/verification";
 import type { InlineKeyboardMarkup } from "grammy/types";
 import type {
   AntiRaidWorkerEvent,
@@ -187,9 +188,13 @@ export function pendingState(): VerificationState {
     kind: "pending",
     label: "待验证成员",
     isBot: false,
+    announcementMessageId: undefined,
     trackedMessageTimes: [],
     invitedBy: INVITER_ID,
+    reminderMessageId: undefined,
+    replyReminderMessageId: undefined,
     replyReminderRequested: false,
+    welcomeAnchorMessageId: undefined,
     reminderSuperseded: false,
     joinedAt: 1_000,
     expiresAt: 1_000 + 90_000,
@@ -200,6 +205,9 @@ export function snapshot(overrides: Partial<ExpelSnapshot> = {}): ExpelSnapshot 
   return {
     label: "待验证成员",
     isBot: false,
+    announcementMessageId: undefined,
+    reminderMessageId: undefined,
+    replyReminderMessageId: undefined,
     joinedAt: 1_000,
     expiresAt: 1_000 + 90_000,
     ...overrides,
@@ -207,7 +215,7 @@ export function snapshot(overrides: Partial<ExpelSnapshot> = {}): ExpelSnapshot 
 }
 
 export function checkingInviterState(expelSnapshot: ExpelSnapshot): VerificationState {
-  return { kind: "checkingInviter", inviterId: INVITER_ID, snapshot: expelSnapshot };
+  return checkingInviterOf(INVITER_ID, expelSnapshot);
 }
 
 export function kickPendingState(): VerificationState & { kind: "kickPending" } {
@@ -216,6 +224,8 @@ export function kickPendingState(): VerificationState & { kind: "kickPending" } 
     label: "待验证成员",
     isBot: false,
     requestedAt: 1_000,
+    countedJoinAt: undefined,
+    announcementMessageId: undefined,
     effectStarted: false,
     executionStarted: false,
   };

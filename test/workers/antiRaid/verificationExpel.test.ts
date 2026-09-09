@@ -1,6 +1,7 @@
 /** 踢人失败的权限告警与验证终态的进程级尝试预算。 */
 
 import { describe, expect, test } from "bun:test";
+import { expellingOf } from "../../../packages/states/verification";
 
 import type {
   ExpelSnapshot,
@@ -75,11 +76,7 @@ describe("踢人失败时的权限告警", () => {
   function expellingState(
     snapshotOverrides: Partial<ExpelSnapshot> = {}
   ): VerificationState & { kind: "expelling" } {
-    return {
-      kind: "expelling",
-      reason: "timeout",
-      snapshot: snapshot(snapshotOverrides),
-    };
+    return expellingOf("timeout", snapshot(snapshotOverrides));
   }
 
   test("已有镜像直接使用；冷启动未知时 getChat 确证普通群或超级群", async () => {

@@ -19,7 +19,7 @@
 | `bun run lint:fast` | `--cache` 付きの ESLint。ローカルの編集ループ専用です。型を見る rule はファイルを跨ぐ一方 ESLint の cache はファイル単位で無効化されるため、依存先だけを変更しても依存元の警告は再報告されません。**gate では必ず cache なしの `lint` を使います** |
 | `bun run typecheck` | 完全 strict mode で `tsc --noEmit --incremental` を実行。増分情報は `tsconfig.tsbuildinfo`（gitignore 済み）に置かれます。tsconfig や依存の型を変えると丸ごと無効化されるため、gate に入れても安全です |
 | `bun run test` | ファイル分離を強制して全テストを実行 |
-| `bun run test:random` | 固定 seed のランダム順で全テストを実行し、テスト間の残留を炙り出す |
+| `bun run test:random` | 固定 seed のランダム順で全テストを実行し、テスト間の残留を炙り出す。スタブの復位には `mockReset()` を使う。`mockClear()` は `mockResolvedValueOnce` のキューを消さないため、消費されなかった分が次のテストに漏れる。復位後は各スタブに実装を入れ直す |
 | `bun run test:coverage` | テスト + 全ソースコードのカバレッジ |
 | `bun run check:install-script-syntax` | `bash -n` で `install.sh` の shell 構文だけを解析し、インストール処理は実行しない |
 | `bun run check:install-isolation` | `copy-ninjia-install-test-*` 専用の一時 fixture root で `install.sh` を実際に実行し（`scripts/checkInstallIsolation.ts`）、staging 失敗時の cleanup、`telegram.json` の rollback、中断後の再開、置換成功、symlink topology、未検証 backup の保持、資格情報の分離を検査。実際の deploy path には一切触れない |
@@ -41,7 +41,7 @@
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コードと script の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コードと script の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、fault injection suite の一覧、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
   module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
 
   Node API 検査は `process.getBuiltinModule`、`globalThis.Buffer` とリテラル添字形式を対象にします。`Buffer.byteLength` などの例外は module・symbol・用途ごとに登録します。`@grammyjs/runner` は SDK 対照テスト用の開発依存で、production の取得処理はプロジェクトの offset 確認境界を使います。
@@ -60,7 +60,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**3817 tests / 357 files / 157155 `expect()` calls**。全ソースコードの**関数カバレッジは 97.39%、行カバレッジは 97.65%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**3865 tests / 363 files / 157287 `expect()` calls**。全ソースコードの**関数カバレッジは 97.54%、行カバレッジは 97.7%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -83,7 +83,7 @@
 
 ## Fault injection suite
 
-`bun run test:fault-injection` は crash recovery と永続化境界を重点的に検証します。ライフサイクル失敗、update runner の確認境界、StateStore と cleanup、AI/Anti-Raid Worker のミラーとライフサイクル、Disk I/O の追記・snapshot・ログファイル、flush barrier などが対象です。完全な一覧は [`package.json`](../../package.json) の script 定義を参照してください。[04 実行時の正式な不変条件](04-invariants.md) に関わる経路を変更した場合、この suite は必ず成功しなければなりません。
+`bun run test:fault-injection` は crash recovery と永続化境界を重点的に検証します。ライフサイクル失敗、update runner の確認境界、StateStore と cleanup、AI/Anti-Raid Worker のミラーとライフサイクル、Disk I/O の追記・snapshot・ログファイル、flush barrier などが対象です。完全な一覧は [`package.json`](../../package.json) の script 定義を参照してください。この一覧は `check:conventions` が担保します。Disk I/O Worker・Anti-Raid ミラー・blocklist 補走査・ライフサイクルの harness を import する test file は、一覧に登録されるまで失敗します。[04 実行時の正式な不変条件](04-invariants.md) に関わる経路を変更した場合、この suite は必ず成功しなければなりません。
 
 `/wed` の操作回帰は 1,024 件の LRU 容量、コマンドとボタン参照による利用順更新、eviction 時の待機・実行中操作の取消、遅着結果の清掃、個別削除失敗後の継続、update 取消からの独立性、停止時 drain を検証します。メンバー正本では 25 群の満杯時拒否を別途検証します。永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
 

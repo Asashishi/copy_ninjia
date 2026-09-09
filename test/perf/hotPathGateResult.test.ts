@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "bun:test";
 import { TEST_DATA_ROOT } from "../preloadEnv";
@@ -55,10 +55,10 @@ function validDocument(): Record<string, unknown> {
 
 let documentIndex: number = 0;
 /** 把一份记录写进独立临时文件，返回路径；用例之间不共享文件。 */
-function writeDocument(document: unknown): string {
+async function writeDocument(document: unknown): Promise<string> {
   documentIndex++;
   const path: string = join(scratchRoot, `result-${documentIndex}.json`);
-  writeFileSync(path, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  await Bun.write(path, `${JSON.stringify(document, null, 2)}\n`);
   return path;
 }
 
@@ -99,30 +99,30 @@ describe("热路径门禁记录 performance-result.json", () => {
     // 存在——否则全量基准跑完一次，热路径门禁就会整份拒绝解析。
     const withFullSuite: Record<string, unknown> = validDocument();
     withFullSuite.fullSuite = { lastRun: { rounds: 3 } };
-    await expect(readHotPathGateCalibration(writeDocument(withFullSuite)))
+    await expect(readHotPathGateCalibration(await writeDocument(withFullSuite)))
       .resolves.toBeDefined();
 
     const unknownSection: Record<string, unknown> = validDocument();
     unknownSection.somethingElse = {};
-    await expect(readHotPathGateCalibration(writeDocument(unknownSection)))
+    await expect(readHotPathGateCalibration(await writeDocument(unknownSection)))
       .rejects.toThrow("$. must declare only these keys: hotPathProfileGate, fullSuite");
 
     const missingGate: Record<string, unknown> = { fullSuite: { lastRun: null } };
-    await expect(readHotPathGateCalibration(writeDocument(missingGate)))
+    await expect(readHotPathGateCalibration(await writeDocument(missingGate)))
       .rejects.toThrow("$.hotPathProfileGate must be an object");
   });
 
   test("未知键、缺字段与类型不符一律拒绝，并点名字段路径", async () => {
     const unknownKey: Record<string, unknown> = validDocument();
     (unknownKey.hotPathProfileGate as Record<string, unknown>).extra = 1;
-    await expect(readHotPathGateCalibration(writeDocument(unknownKey)))
+    await expect(readHotPathGateCalibration(await writeDocument(unknownKey)))
       .rejects.toThrow("$.hotPathProfileGate must declare exactly these keys");
 
     const missingRevision: Record<string, unknown> = validDocument();
     const runtime = ((missingRevision.hotPathProfileGate as Record<string, unknown>)
       .calibration as Record<string, unknown>).runtime as Record<string, unknown>;
     runtime.bunRevision = "";
-    await expect(readHotPathGateCalibration(writeDocument(missingRevision)))
+    await expect(readHotPathGateCalibration(await writeDocument(missingRevision)))
       .rejects.toThrow(
         "$.hotPathProfileGate.calibration.runtime.bunRevision must be a non-empty string"
       );
@@ -131,7 +131,7 @@ describe("热路径门禁记录 performance-result.json", () => {
     const limits = ((badLimit.hotPathProfileGate as Record<string, unknown>)
       .calibration as Record<string, unknown>).limits as Record<string, unknown>;
     limits.maxRssBytes = 0;
-    await expect(readHotPathGateCalibration(writeDocument(badLimit)))
+    await expect(readHotPathGateCalibration(await writeDocument(badLimit)))
       .rejects.toThrow(
         "$.hotPathProfileGate.calibration.limits.maxRssBytes must be a finite number greater than 0"
       );
@@ -144,13 +144,13 @@ describe("热路径门禁记录 performance-result.json", () => {
     (scenarios["only-scenario"] as Record<string, unknown>)
       .medianNsPerOpReportThreshold = 79;
 
-    await expect(readHotPathGateCalibration(writeDocument(document)))
+    await expect(readHotPathGateCalibration(await writeDocument(document)))
       .rejects.toThrow("must be at least its own measured.slowestMedianNsPerOp (80)");
   });
 
   test("非严格 JSON 直接失败，不退回默认值", async () => {
     const path: string = join(scratchRoot, "broken.json");
-    writeFileSync(path, "{ not json }\n", "utf8");
+    await Bun.write(path, "{ not json }\n");
 
     await expect(readHotPathGateCalibration(path))
       .rejects.toThrow("could not be read as strict JSON");
@@ -159,7 +159,7 @@ describe("热路径门禁记录 performance-result.json", () => {
   test("回写只覆盖 lastRun，calibration 与 fullSuite 节都原样保留", async () => {
     const document: Record<string, unknown> = validDocument();
     document.fullSuite = { lastRun: { rounds: 3 } };
-    const path: string = writeDocument(document);
+    const path: string = await writeDocument(document);
 
     await writeHotPathGateLastRun(
       path,
@@ -170,7 +170,7 @@ describe("热路径门禁记录 performance-result.json", () => {
     expect(reloaded.runtime.bunRevision).toBe("revision-test");
     expect(reloaded.limits.maxRssBytes).toBe(402_653_184);
     // 说明字段与另一套基准的记录都不在解析结果里，只能从原文确认没被回写抹掉。
-    const raw: Record<string, unknown> = JSON.parse(readFileSync(path, "utf8"));
+    const raw: Record<string, unknown> = JSON.parse(await Bun.file(path).text());
     const gate = raw.hotPathProfileGate as Record<string, unknown>;
     const calibration = gate.calibration as Record<string, unknown>;
     const runtime = calibration.runtime as Record<string, unknown>;

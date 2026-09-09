@@ -221,15 +221,17 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     userId: message.userId,
     mutedUntil,
     api: telegramApi,
-    // 两个取消源合起来：
-    // - 超时：until_date 是这一刻算好的绝对时刻，请求命中 429 后还可能在 restrict 类退避车道排队。
-    //   太久时它会在发出那一刻落进 Bot API 的「不足 30 秒即永久」区间——本模块
-    //   不排恢复计时器，那就是一次只能人工解除的永久禁言。宁可放弃这次禁言：
-    //   抑制位由下面的 failed 分支回滚，下一个满窗口重来。
-    // - 停机：这个任务登记在 drain 的等待集合里，而上面那个超时是 2 分钟量级、
+    // 两个取消源由 muteChatMemberWithOutcome 合起来：
+    // - 派发截止：until_date 是这一刻算好的绝对时刻，请求命中 429 后还可能在
+    //   restrict 类退避车道排队。太久时它会在发出那一刻落进 Bot API 的
+    //   「不足 30 秒即永久」区间——本模块不排恢复计时器，那就是一次只能人工解除
+    //   的永久禁言。宁可放弃这次禁言：抑制位由下面的 failed 分支回滚，下一个
+    //   满窗口重来。
+    // - 停机：这个任务登记在 drain 的等待集合里，而上面那个截止是 2 分钟量级、
     //   drain 的预算是秒级。不撤掉的话，凡是停机恰好落在排队期间就换来一次脏
     //   退出加一批 update 重投（见 taskTracker 的 antiRaidDispatchSignal）。
-    signal: signalWithTimeout(dispatchAbort, FLOOD_MUTE_DISPATCH_TIMEOUT_MS),
+    dispatchTimeoutMs: FLOOD_MUTE_DISPATCH_TIMEOUT_MS,
+    signal: dispatchAbort,
   });
   if (outcome !== "muted") {
     // forbidden 是 Telegram 明确的拒绝（机器人缺权限，或目标其实是管理员而
@@ -272,8 +274,14 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
  * `getChatAdministrators` 都不必付。权限位由主线程按变更镜像过来（见
  * ./botPermissions.ts），而它是三态——「没观测到」不当成没权限，照常往下走，
  * 由 Telegram 的回应当裁判，见 muteFlooder 对 `forbidden` / `failed` 的分档。
+ *
+ * @param now 缺省取候选自带的主线程观测时刻（见 FloodCandidateMessage.observedAt）；
+ *   本线程不为每条候选另读一次墙钟。只有单测显式覆盖它。
  */
-export function handleFloodCandidate(message: FloodCandidateMessage, now: number = Date.now()): void {
+export function handleFloodCandidate(
+  message: FloodCandidateMessage,
+  now: number = message.observedAt
+): void {
   const entry: FloodWindowEntry | undefined =
     observeMemberMessage(message.chatId, message.userId, now);
   if (entry === undefined) return;

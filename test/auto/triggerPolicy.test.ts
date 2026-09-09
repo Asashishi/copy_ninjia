@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import {
   userReplyTriggerSweepState,
   userReplyTriggerTimes,
@@ -29,7 +29,10 @@ function triggerContextAt(now: number, chatId: number = -1001): MessageTriggerCo
   } as unknown as MessageTriggerContext;
 }
 
-afterEach(clearUserReplyTriggerTimes);
+afterEach((): void => {
+  clearUserReplyTriggerTimes();
+  jest.useRealTimers();
+});
 
 describe("随机回复个人冷却", () => {
   test("小回拨立即失效未来点，新冷却仍按正常时长恢复", () => {
@@ -119,5 +122,25 @@ describe("随机回复个人冷却", () => {
 
     expect(claimRandomMediaTrigger(context, 7)).toBe("none");
     expect(userReplyTriggerTimes.size).toBe(0);
+  });
+
+  test("唯一清扫 timer 到点后重排下一次：先到期的名额被删，后到期的等到它自己那一刻", (): void => {
+    const base: number = Date.parse("2026-03-01T00:00:00Z");
+    jest.useFakeTimers({ now: base });
+
+    expect(tryClaimUserReplyTrigger(-1001, 1, Date.now())).toBeTrue();
+    jest.advanceTimersByTime(500);
+    expect(tryClaimUserReplyTrigger(-1001, 2, Date.now())).toBeTrue();
+    expect(userReplyTriggerSweepState.timer).not.toBeNull();
+
+    jest.advanceTimersByTime(USER_REPLY_TRIGGER_COOLDOWN_MS - 500);
+    expect(userReplyTriggerTimes.has("-1001:1")).toBeFalse();
+    expect(userReplyTriggerTimes.has("-1001:2")).toBeTrue();
+
+    // 回调必须把 holder 归零再重排，否则 scheduleUserReplyTriggerSweep 第一行
+    // 就返回，此后只剩逼近硬顶时那一次热路径补扫在收拾这张表。
+    jest.advanceTimersByTime(500);
+    expect(userReplyTriggerTimes.size).toBe(0);
+    expect(userReplyTriggerSweepState.timer).toBeNull();
   });
 });

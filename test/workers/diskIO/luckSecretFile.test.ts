@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
 import { recoverLuckReceiptSecret, type LuckSecretFileIO } from "../../../packages/workers/diskIO/luckSecretFile";
@@ -22,7 +22,7 @@ describe("daily luck receipt secret file", () => {
     }
     const loaded = await recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 3, path });
     expect(loaded).toEqual(created);
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(created);
+    expect(JSON.parse(await Bun.file(path).text())).toEqual(created);
     expect(statSync(path).mode & 0o777).toBe(0o644);
 
     chmodSync(path, 0o600);
@@ -35,7 +35,7 @@ describe("daily luck receipt secret file", () => {
     const next = await recoverLuckReceiptSecret({ day: "2026-07-20", confirmedResultCount: 0, path });
     expect(next.day).toBe("2026-07-20");
     expect(next.key).not.toBe(previous.key);
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(next);
+    expect(JSON.parse(await Bun.file(path).text())).toEqual(next);
   });
 
   test("损坏 JSON、错误 schema、非法 key 和未来日期均拒绝且不覆盖原文件", async () => {
@@ -59,9 +59,9 @@ describe("daily luck receipt secret file", () => {
       }),
     ];
     for (const content of invalidContents) {
-      writeFileSync(path, content);
+      await Bun.write(path, content);
       await expect(recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path })).rejects.toThrow();
-      expect(readFileSync(path, "utf8")).toBe(content);
+      expect(await Bun.file(path).text()).toBe(content);
     }
   });
 
@@ -90,14 +90,14 @@ describe("daily luck receipt secret file", () => {
 
   test("当天已有确认结果时，旧日密钥会拒绝轮换并保留原文件", async () => {
     const previous = await recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path });
-    const original: string = readFileSync(path, "utf8");
+    const original: string = await Bun.file(path).text();
 
     await expect(recoverLuckReceiptSecret({
       day: "2026-07-20",
       confirmedResultCount: 1,
       path,
     })).rejects.toThrow("must be present for the same day as the confirmed luck state");
-    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(await Bun.file(path).text()).toBe(original);
     expect(JSON.parse(original)).toEqual(previous);
   });
 });

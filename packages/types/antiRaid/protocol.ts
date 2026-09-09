@@ -182,6 +182,13 @@ export interface FloodCandidateMessage {
   type: "floodCandidate";
   chatId: number;
   userId: number;
+  /**
+   * 主线程观测到这条 update 的时刻，发言窗口按它计数。
+   *
+   * 口径与 AdCandidateMessage.observedAt 完全一致，两条候选走同一条判定的
+   * 「本条消息统一的现在」，也同样省掉 Worker 侧的逐条时钟读取。
+   */
+  observedAt: number;
   /** 禁言通知里的展示标签。 */
   label: string;
 }

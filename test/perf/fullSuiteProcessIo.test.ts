@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -67,12 +67,12 @@ describe("基准的读写计量", () => {
 });
 
 describe("mock 根落盘足迹", () => {
-  test("递归统计普通文件，跳过符号链接与目录本身", () => {
+  test("递归统计普通文件，跳过符号链接与目录本身", async () => {
     const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-footprint-"));
     try {
       mkdirSync(join(root, "nested"));
-      writeFileSync(join(root, "a.json"), "0123456789");
-      writeFileSync(join(root, "nested", "b.json"), "01234");
+      await Bun.write(join(root, "a.json"), "0123456789");
+      await Bun.write(join(root, "nested", "b.json"), "01234");
       symlinkSync(join(root, "a.json"), join(root, "link.json"));
       const footprint: DirectoryFootprint = measureDirectoryFootprint(root);
       expect(footprint).toEqual({ bytes: 15, files: 2 });

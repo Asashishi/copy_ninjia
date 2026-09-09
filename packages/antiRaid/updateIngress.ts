@@ -15,6 +15,8 @@ import {
   markBotAdminObserved,
 } from "../infra/botAdmin";
 import {
+  VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT,
+  VERIFICATION_INVALID_CALLBACK_TEXT,
   VERIFY_APPROVE_CALLBACK_PREFIX,
   VERIFY_SELF_CALLBACK_PREFIX,
 } from "../consts/antiRaid/verification";
@@ -23,6 +25,7 @@ import { verificationKey } from "../libs/verificationKey";
 import { hasUserMessageContent } from "../users/messageContent";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { getChatState } from "../infra/storage/stateStore";
+import { updateNow } from "../infra/updateContext";
 import { buildAdCandidate } from "./adCandidate";
 import { observeChatKind } from "./chatKind";
 import {
@@ -308,7 +311,9 @@ function ingestAdmittedMessage(
       message,
       botId,
       chatState,
-      now: Date.now(),
+      // 与自动流水线主干共用本条 update 唯一的一次时钟读取；两条 middleware
+      // 判定同一条消息，本来就该落在同一时刻（见 infra/updateContext.ts）。
+      now: updateNow(),
     };
     if (hasUserMessageContent(message)) {
       recordEligibleTemporaryWhitelistActivity(adContext);
@@ -324,8 +329,9 @@ function ingestAdmittedMessage(
   // 刷屏计数投递：与广告检测同一形态，主线程只做同步门禁 + 一次尽力而为的
   // post，窗口与禁言都在 Worker 侧（见 workers/antiRaid/floodControl.ts）。排在
   // 服务消息两条分支之后——入群/离群公告不是谁的「发言」，不该计进那个人的窗口。
+  // now 与上面广告判定上下文取的是同一个值：updateNow 每条 update 只读一次墙钟。
   const floodCandidate: FloodCandidateMessage | undefined =
-    buildFloodCandidate(message, botId, chatState);
+    buildFloodCandidate({ message, botId, now: updateNow(), chatState });
   if (floodCandidate !== undefined) {
     // 顺手把这个群的权限位补齐一次（已知或已在途时是一次 Map 查找）：Worker 侧
     // 的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程生命周期内到过。
@@ -417,7 +423,7 @@ export async function handleVerificationCallback(
   ) {
     await answerCallbackQuery({
       callbackQueryId: query.id,
-      text: "本天才已经不守这个群的门啦♡",
+      text: VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT,
       showAlert: true,
     });
     return;
@@ -429,7 +435,7 @@ export async function handleVerificationCallback(
   if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
     await answerCallbackQuery({
       callbackQueryId: query.id,
-      text: "验证请求无效",
+      text: VERIFICATION_INVALID_CALLBACK_TEXT,
       showAlert: true,
     });
     return;

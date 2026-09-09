@@ -5,10 +5,16 @@ import {
 import { getTokyoDayIndex } from "../libs/time";
 import type { TemporaryWhitelistActivity } from "../types/temporaryWhitelist";
 
-/** 记录是否尚未越过保留边界；未来时间轴留给下一条发言显式收敛。 */
+/**
+ * 记录是否尚未越过保留边界；未来时间轴留给下一条发言显式收敛。
+ *
+ * `now` 必填：本模块与同目录其余判定一样不读时钟，墙钟由调用方一次取好传进来
+ * （见 infra/identityPolicy/temporaryWhitelist.ts），同一条消息的多次判定因此用
+ * 同一个时刻。
+ */
 export function isTemporaryWhitelistActivityRetained(
   activity: Readonly<TemporaryWhitelistActivity>,
-  now: number = Date.now()
+  now: number
 ): boolean {
   if (!Number.isSafeInteger(now) || now < 0) {
     throw new RangeError("Temporary whitelist activity time must be a non-negative safe integer.");
@@ -21,10 +27,10 @@ export function isTemporaryWhitelistActivityRetained(
     getTokyoDayIndex(activity.qualifiedAt) === countedDay;
 }
 
-/** 当前记录是否仍提供临时广告检测豁免。 */
+/** 当前记录是否仍提供临时广告检测豁免；`now` 由调用方给出，理由同上。 */
 export function isTemporaryWhitelistActive(
   activity: Readonly<TemporaryWhitelistActivity>,
-  now: number = Date.now()
+  now: number
 ): boolean {
   return activity.tempWhite &&
     isTemporaryWhitelistActivityRetained(activity, now);

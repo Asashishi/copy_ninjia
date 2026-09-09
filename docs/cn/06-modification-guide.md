@@ -96,7 +96,7 @@
 ## 新增一个 AI 工具
 
 1. **名称常量**：在 [`packages/consts/tools.ts`](../../packages/consts/tools.ts) 定义工具名；若工具产生可见副作用，确认是否应加入 `ACTION_TOOL_NAMES`。
-2. **定义**：无状态的静态查询工具把 `ToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一收敛成中立的 `AiToolDefinition`（JSON Schema 参数），再由各供应商实现包的 `replySession.ts` 转成自家形状——新增工具不需要碰任何一家 SDK 的类型。
+2. **定义**：无状态的静态查询工具把 `AiToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一收敛成中立的 `AiToolDefinition`（JSON Schema 参数），再由各供应商实现包的 `replySession.ts` 转成自家形状——新增工具不需要碰任何一家 SDK 的类型。
 3. **实现**：在 `packages/aiChat/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
 4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
 5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、服务端联网检索，以及贴纸/反应/生成图片/生成歌曲各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
@@ -147,7 +147,7 @@
 1. `packages/database/schema/<domain>.ts` 声明表并注册进 `schema/storage.ts`；`data` 列沿用 `jsonbText` + `jsonDataCheck`，与其余业务表同一口径。
 2. 写 `schema/migrations/000N_<name>.sql`，并把条目补进 `migrations/meta/_journal.json`。
 3. **hash 要实测，不能算**：建一个临时库跑一次 migration，从 `__drizzle_migrations` 读回 `created_at` 与 `hash`，再写进 `packages/consts/identityStorage.ts`。同时把 `IDENTITY_DATABASE_SCHEMA_VERSION` 加一。
-4. 写冷迁移脚本，并**替换** `scripts/conventions/coldMigrations.ts` 里那条唯一的边——约定只允许存在「上一版 → 当前版」一条，旧脚本连同它的测试一起删掉。
+4. 写冷迁移脚本，并**替换** `scripts/conventions/coldMigrations.ts` 里那条唯一的边——约定按迁移计数、与 Release 数量无关：只允许存在「上一次迁移产出的格式 → 本次迁移产出的格式」一条，旧脚本连同它的测试一起删掉。
 5. 迁移**前**的校验必须用那一版的历史形态。若本次改动了某张表的字段闭集（例如给白名单加一个权限键），迁移前不能用生产解码器：它已经按新版要求那个字段存在，拿它去校验待迁库会让每个部署在迁移开始前就被判成损坏，报错还指向部署方从没写过的字段。历史键集合写死在迁移脚本里，不从当前常量推导——推导会在下次加键时悄悄改写这条历史边的判定。
 6. 不随版本变的部分（如 `meta`）仍用生产解析器：`--check` 必须拦下 `--apply` 会拒绝的一切，否则坏行要等库已经被改过之后才暴露。
 7. 落盘沿用既有 write-through：主线程发布内存最终值 → 投给 Disk I/O Worker → 显式事务 → 精确 revision ACK → Worker 重建后从内存重放。

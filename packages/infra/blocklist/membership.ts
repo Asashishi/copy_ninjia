@@ -9,6 +9,12 @@
  */
 
 import { formatTokyoTime } from "../../libs/time";
+import { MANAGED_CHAT_BATCH_CONCURRENCY } from "../../consts/commands";
+import { runBoundedSettledBatch } from "../../libs/boundedSettledBatch";
+import type {
+  BoundedBatchExecution,
+  BoundedBatchResult,
+} from "../../libs/boundedSettledBatch";
 import { getChatStateCache } from "../storage/stateStore";
 import { flushDiskIODomainOutcome } from "../diskIO";
 import { logger } from "../logger";
@@ -32,8 +38,9 @@ import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
  * `/block` 与 `/unblock` 必须读同一份：两条命令是同一个处置的正反面，清单一旦
  * 分叉就会出现「封的时候算上了 A 群、解封时漏掉 A 群」。
  *
- * 发起群排最前是语义不是顺手：处置发起群里的目标最紧迫，而两条命令都按这个顺序
- * 串行执行、按确定顺序收敛计数。发起群不是管理员时不进清单——试也没用。
+ * 发起群排最前是语义不是顺手：处置发起群里的目标最紧迫，而两条命令都把这份清单
+ * 交给同一个 `runManagedChatBatch`——它按输入顺序取任务、按输入顺序结算，因此
+ * 计数与并发度无关。发起群不是管理员时不进清单——试也没用。
  * @param isAdminHere 由调用方现查（`resolveBotAdminStatus`）：发起群的权限值得一次
  *   实时确认，其余群只能读已落盘的权限快照。
  */
@@ -45,6 +52,67 @@ export function managedAdminChatIds(chatId: number, isAdminHere: boolean): numbe
     }
   }
   return targetChatIds;
+}
+
+/** 单群处置的结算：`value` 已把意外 rejection 折算成调用方给的失败取值。 */
+export interface ManagedChatOutcome<T> {
+  readonly chatId: number;
+  readonly value: T;
+}
+
+/** runManagedChatBatch 的入参。 */
+export interface RunManagedChatBatchParams<T> {
+  /** 目标群清单，必须来自 managedAdminChatIds（发起群排最前）。 */
+  readonly chatIds: readonly number[];
+  /** 意外 rejection 日志里的英文动作名，如 `ban blocked identity 7`。 */
+  readonly action: string;
+  /** 单群处置；常规 API 错误已由适配层归一化，这里只产出业务结果。 */
+  readonly execute: (chatId: number) => Promise<T>;
+  /** 单群意外 rejection 折算成的结果；调用方据此把这个群计进失败一侧。 */
+  readonly onUnexpectedFailure: T;
+}
+
+/**
+ * 对 `managedAdminChatIds` 的清单做有界并发处置，并按输入顺序逐项结算。
+ *
+ * `/block` 的连坐封禁与 `/unblock` 的跨群解封是同一处置的正反面：清单同源，
+ * 扇出形态也必须同源。逐群串行的话，40 个群就是几十次串行往返、十几秒里 update
+ * 中间件一直不返回，ack 边界被推后，停机时更容易把 runner drain 拖超时；而各群
+ * 之间本来没有依赖，它们共用主线程 Telegram 总闸，真实 429 会把原任务退回自适应
+ * 队列。个别群失败（管理员身份记录过时、缺权限）不中断其余群。
+ *
+ * 结果数组与输入同序，因此计数仍按确定顺序收敛，与并发度无关。
+ */
+export async function runManagedChatBatch<T>({
+  chatIds,
+  action,
+  execute,
+  onUnexpectedFailure,
+}: RunManagedChatBatchParams<T>): Promise<readonly ManagedChatOutcome<T>[]> {
+  const settlements: BoundedBatchResult<number, T>[] =
+    await runBoundedSettledBatch<number, T>({
+      items: chatIds,
+      maxConcurrent: MANAGED_CHAT_BATCH_CONCURRENCY,
+      execute: ({ item: targetChatId }: BoundedBatchExecution<number>): Promise<T> =>
+        execute(targetChatId),
+    });
+  const outcomes: ManagedChatOutcome<T>[] = [];
+  for (const settlement of settlements) {
+    if (settlement.status === "rejected") {
+      // 常规 API 错误早已在适配层归一化成业务结果；能走到这里的是意外异常，
+      // 逐项记下来而不是让它掀掉整条命令的其余群。
+      logger.error(
+        `Unexpected error while running ${action} in chat ${settlement.item} ` +
+        `(batch index ${settlement.index}, attempt ${settlement.attempt}):`,
+        settlement.reason
+      );
+    }
+    outcomes.push({
+      chatId: settlement.item,
+      value: settlement.status === "fulfilled" ? settlement.value : onUnexpectedFailure,
+    });
+  }
+  return outcomes;
 }
 
 /**

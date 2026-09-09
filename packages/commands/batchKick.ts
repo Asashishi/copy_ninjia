@@ -1,4 +1,5 @@
 import { BATCH_KICK_USAGE_TEXT } from "../consts/commandUsage";
+import { commandArgumentTokens } from "./arguments";
 import type { CommandContext, Context } from "grammy";
 import {
   BATCH_KICK_CONCURRENCY,
@@ -256,10 +257,7 @@ export async function handleBatchKickCommand(
     });
     return;
   }
-  const tokens: string[] = ctx.match
-    .trim()
-    .split(/\s+/)
-    .filter((token: string): boolean => token.length > 0);
+  const tokens: string[] = commandArgumentTokens(ctx.match);
   const durationMs: number | undefined = tokens.length === 1
     ? parseBatchKickDurationMs(tokens[0]!)
     : undefined;

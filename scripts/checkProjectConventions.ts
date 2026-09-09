@@ -15,6 +15,7 @@ import {
 import type { SourceFileRuleParams } from "./conventions/sourceRules";
 import { collectColdMigrationProblems } from "./conventions/coldMigrations";
 import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
+import { collectFaultInjectionSuiteProblems } from "./conventions/faultInjectionSuite";
 import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
 import { collectRuntimeCalibrationProblems } from "./perf/hotPaths/gateRuntime";
 import { collectCacheOwnershipProblems } from "./conventions/cacheOwnership";
@@ -163,6 +164,9 @@ for (const problem of await collectColdMigrationProblems(PROJECT_ROOT)) {
 }
 for (const problem of await collectCoverageMetricProblems(PROJECT_ROOT)) {
   failures.push(problem);
+}
+for (const problem of await collectFaultInjectionSuiteProblems(PROJECT_ROOT)) {
+  failures.push(`fault injection suite: ${problem}`);
 }
 
 for (const problem of await collectPerformanceRecordProblems(PROJECT_ROOT)) {

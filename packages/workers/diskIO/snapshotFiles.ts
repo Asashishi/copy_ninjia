@@ -145,22 +145,25 @@ export function deleteAiMemoryFile(chatId: number): void {
   durableUnlinkSync(join(AI_MEMORY_DIR, `${chatId}.json`));
 }
 
-/**
- * 启动恢复：建目录、清 memory/stickers/ 下的 *.tmp 残留，校验/重建每个
- * 白名单贴纸包的目录快照。机制与 recoverAiMemories 基本一致，只是文件名
- * 使用 pack short name；多一步 activePacks 对账——config/stickers.json 的白名单
- * 已经不包含的包，其持久化文件视为孤儿，直接删除、不载入内存，既不再占
- * 磁盘空间，也不会让 aiChat/ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个
- * 已下架包的旧描述去匹配群友发的贴纸。
- * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
- *   config/stickers.ts），用于判定哪些持久化文件已经是孤儿。
- */
+/** 贴纸目录快照的 inspect 结果：待载入的快照、孤儿快照与 *.tmp 残留三类路径。 */
 export interface StickerCatalogRecoveryInspection {
   readonly snapshots: Map<string, string>;
   readonly orphanPaths: readonly string[];
   readonly temporaryPaths: readonly string[];
 }
 
+/**
+ * 启动恢复的只读阶段：严格校验 memory/stickers/ 下每个贴纸包的目录快照，把它们
+ * 归类成待载入快照、孤儿快照与临时文件残留。本函数不写盘、不删除。机制与
+ * inspectAiMemories 基本一致，只是文件名使用 pack short name；多一步 activePacks
+ * 对账——config/stickers.json 的白名单已经不包含的包记为孤儿，不载入内存，
+ * 也就不会让 aiChat/ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个已下架包的
+ * 旧描述去匹配群友发的贴纸。删除由全域校验成功后的 maintainStickerCatalogFiles
+ * 执行。
+ * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
+ *   config/stickers.ts），用于判定哪些持久化文件已经是孤儿；null 表示白名单缺省，
+ *   全部现存快照照常载入，不判孤儿。
+ */
 export async function inspectStickerCatalogs(
   activePacks: readonly string[] | null
 ): Promise<StickerCatalogRecoveryInspection> {

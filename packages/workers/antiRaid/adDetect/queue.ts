@@ -111,8 +111,14 @@ import type { AdCandidateDecision } from "../../../types/states/adDetectAdmissio
 /**
  * 收下一条待判定消息：并进该发送者的消息串，并保证他在队列里排着。
  * 判定本身是异步的，这里只做同步记账，不阻塞 mailbox。
+ *
+ * @param now 缺省取候选自带的主线程观测时刻（见 AdCandidateMessage.observedAt）；
+ *   本线程不为每条候选另读一次墙钟。只有基准与单测显式覆盖它。
  */
-export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Date.now()): void {
+export function enqueueAdCandidate(
+  message: AdCandidateMessage,
+  now: number = message.observedAt
+): void {
   const key: string = verificationKey(message.chatId, message.senderId);
   const existing: AdMessageBundle | undefined = pendingAdMessages.get(key);
   // 普通账号没有频道尾随消息要删：pending 已满时接不进新 bundle，先于处置抑制

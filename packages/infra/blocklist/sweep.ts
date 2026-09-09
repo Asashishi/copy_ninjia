@@ -19,9 +19,10 @@ import {
   readBlocklistSweepPage,
 } from "../identityStorage";
 import {
-  armBlocklistSweepScheduler as armSweepScheduler,
+  armBlocklistSweepScheduler,
   initBlocklistSweepScheduler as initSweepScheduler,
 } from "./sweepScheduler";
+import { canClaimSweep, isManagedAdminChat } from "./sweepEligibility";
 import {
   forgetSupersededChatSweepBatches,
   materializeRemovalParams,
@@ -54,10 +55,6 @@ export { quiesceBlocklistSweepScheduler } from "./sweepScheduler";
 
 const runScheduledBlocklistSweep: () => Promise<void> = (): Promise<void> =>
   sweepManagedBlocklistChats(Date.now());
-
-function armBlocklistSweepScheduler(): void {
-  armSweepScheduler();
-}
 
 /** 启动恢复完成后武装补扫时钟；重复初始化只重算最近截止时间。 */
 export function initBlocklistSweepScheduler(): void {
@@ -129,14 +126,9 @@ function prepareBlocklistSweep(
   page: BlocklistIdPage
 ): PreparedBlocklistSweep | null {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-  if (progress !== undefined && (
-    progress.sweptAt !== null ||
-    progress.removalId !== null ||
-    progress.permissionBlocked ||
-    now < progress.nextRetryAt
-  )) {
-    return null;
-  }
+  // 读盘期间状态可能已经变化（新 claim 落地、权限闩锁置真、`/unblock` 清空名单），
+  // 因此调用方在 await 之前的同口径预判不能替代这一次复查。
+  if (!canClaimSweep(progress, now)) return null;
   if (!hasAnyBlockedIdentity()) return null;
   const failedSweeps: number = progress?.failedSweeps ?? 0;
   let params: RemoveBlockedMembersParams;
@@ -243,6 +235,15 @@ export async function sweepBlockedMembers(
   // 路径是 recordBotChatPermissions 在权限恢复时调用本函数而 Disk I/O 正在 recycle，
   // 于是周期性补扫在本进程生命周期内不再被武装。
   try {
+    // 建不了 claim 就不能付这次名单页读。它不是本地读：先向 Disk I/O Worker 请求
+    // 一次**全领域** flush，再跨线程取一页主键（见 infra/identityStorage/sweep.ts
+    // 与 workers/diskIOWorker.ts 的 flushAll——那一次 flush 明确不看各领域的攒批
+    // 阈值，会把当时所有脏领域立刻写盘）。而本函数挂在每条 chat_member 更新的
+    // 管理员身份观测上（infra/botAdmin.ts 的 recordBotChatPermissions），稳定态
+    // 下这个群早就 `sweptAt !== null`，读回来的那一页只会被下面的
+    // prepareBlocklistSweep 原样丢掉。判据与它同源；读盘期间状态仍可能变化，
+    // 那边照旧复查一次，这里只去掉注定空转的那一趟 I/O。
+    if (!canClaimSweep(blocklistSweepState.get(chatId), now)) return;
     const page: BlocklistIdPage = hasAnyBlockedIdentity()
       ? await readBlocklistSweepPage(null)
       : { ids: [], nextCursor: null, done: true };
@@ -266,21 +267,26 @@ export async function sweepBlockedMembers(
 function deferManagedBlocklistSweeps(now: number): void {
   for (const [chatId, state] of getChatStateCache()) {
     const chatState: ChatState = state;
-    if (
-      chatState.isInitEnabled !== true ||
-      chatState.botPermissions?.isAdministrator !== true
-    ) continue;
+    if (!isManagedAdminChat(chatState)) continue;
     const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-    if (progress !== undefined && (
-      progress.sweptAt !== null ||
-      progress.removalId !== null ||
-      progress.permissionBlocked ||
-      now < progress.nextRetryAt
-    )) {
-      continue;
-    }
+    if (!canClaimSweep(progress, now)) continue;
     noteSweepAttemptFailed(chatId, progress?.failedSweeps ?? 0, now);
   }
+}
+
+/**
+ * 本轮是否至少有一个受管群还能建立 claim；判据与 prepareBlocklistSweep 同源。
+ *
+ * 只用来决定「要不要付那次名单页读」，命中即停。全表都扫不动时读回来的页
+ * 只会被逐群的 prepareBlocklistSweep 原样丢掉，理由同 sweepBlockedMembers。
+ */
+function hasClaimableManagedChat(now: number): boolean {
+  for (const [chatId, state] of getChatStateCache()) {
+    const chatState: ChatState = state;
+    if (!isManagedAdminChat(chatState)) continue;
+    if (canClaimSweep(blocklistSweepState.get(chatId), now)) return true;
+  }
+  return false;
 }
 
 /**
@@ -292,6 +298,10 @@ export async function sweepManagedBlocklistChats(
 ): Promise<void> {
   try {
     if (!hasAnyBlockedIdentity()) return;
+    // 与 sweepBlockedMembers 同一道闸：一个群都扫不动时不付那次全领域 flush 加
+    // 分页读。下面的逐群循环仍照旧遍历整张表，因此读盘期间新变得可扫的群依然
+    // 会被这一轮带上。
+    if (!hasClaimableManagedChat(now)) return;
     let page: BlocklistIdPage;
     try {
       page = await readBlocklistSweepPage(null);
@@ -304,12 +314,7 @@ export async function sweepManagedBlocklistChats(
     const sweeps: PreparedBlocklistSweep[] = [];
     for (const [chatId, state] of getChatStateCache()) {
       const chatState: ChatState = state;
-      if (
-        chatState.isInitEnabled !== true ||
-        chatState.botPermissions?.isAdministrator !== true
-      ) {
-        continue;
-      }
+      if (!isManagedAdminChat(chatState)) continue;
       const sweep: PreparedBlocklistSweep | null =
         prepareBlocklistSweep(chatId, now, page);
       if (sweep !== null) sweeps.push(sweep);

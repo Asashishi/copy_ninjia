@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ApplicationRunMode } from "../../packages/types/lifecycle";
 
 // index.ts 在模块加载时就构造一次 ApplicationLifecycle；替身必须先于 import
@@ -17,9 +17,24 @@ mock.module("../../packages/app/lifecycle", () => ({
 
 const { runApplication, runTest } = await import("../../index");
 
+/**
+ * import 刚完成、任何用例开跑之前的运行记录快照。
+ *
+ * 「import 本身不启动任何东西」只有这一刻能作证：`runs` 是模块级共享数组，
+ * 用例调一次入口就往里推一条，`bun test --randomize` 下先跑的用例已经把它写脏了。
+ */
+const RUNS_AFTER_IMPORT: readonly ApplicationRunMode[] = [...runs];
+
+// 两个用例都调运行入口，共享的 runs 必须逐例清空；runResult 一并复位，避免
+// 「原样交还异常」那条留下的 reject 实现漏给随机顺序里排在它后面的用例。
+beforeEach(() => {
+  runs.length = 0;
+  runResult = async (): Promise<void> => {};
+});
+
 describe("嵌入式与生产入口", () => {
   test("两个入口只选运行模式，import 本身不启动任何东西", async () => {
-    expect(runs).toEqual([]);
+    expect(RUNS_AFTER_IMPORT).toEqual([]);
 
     await runTest();
     expect(runs).toEqual(["test"]);

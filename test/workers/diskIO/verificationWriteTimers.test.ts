@@ -1,12 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -163,7 +156,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     });
     try {
       await entered.promise;
-      expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
+      expect(JSON.parse(await Bun.file(join(dir, `${DAY_TWO}.json`)).text()))
         .toHaveProperty("-1001:42.revision", 2);
       expect(replies).toHaveLength(0);
       expect(verificationPendingChanges).toHaveLength(1);
@@ -212,13 +205,13 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
       revision: 1,
       deleted: false,
     }]);
-    expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")))
+    expect(JSON.parse(await Bun.file(join(dir, `${DAY_ONE}.json`)).text()))
       .toHaveProperty("-1001:42.revision", 1);
   });
 
   test("append 失败保留 pending、失效文件游标并自动重试", async (): Promise<void> => {
     rmSync(dir, { recursive: true, force: true });
-    writeFileSync(dir, "not-a-directory");
+    await Bun.write(dir, "not-a-directory");
 
     await upsert(1, true);
 
@@ -237,7 +230,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     expect(verificationFlushTimer.timer).toBeNull();
     expect(verificationFileState.current?.day).toBe(DAY_ONE);
     expect(replies).toHaveLength(1);
-    expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")))
+    expect(JSON.parse(await Bun.file(join(dir, `${DAY_ONE}.json`)).text()))
       .toHaveProperty("-1001:42.revision", 1);
   });
 
@@ -259,7 +252,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     await upsert(1, true);
     replies.length = 0;
     rmSync(dir, { recursive: true, force: true });
-    writeFileSync(dir, "not-a-directory");
+    await Bun.write(dir, "not-a-directory");
     await maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
 
     expect(verificationWorkerCache.get("-1001:42")?.revision).toBe(1);
@@ -273,7 +266,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     await diskIOOperationTail.current;
 
     expect(existsSync(join(dir, `${DAY_TWO}.json`))).toBeTrue();
-    expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
+    expect(JSON.parse(await Bun.file(join(dir, `${DAY_TWO}.json`)).text()))
       .toHaveProperty("-1001:42.revision", 1);
     expect(verificationRolloverRetryTimer.timer).toBeNull();
   });

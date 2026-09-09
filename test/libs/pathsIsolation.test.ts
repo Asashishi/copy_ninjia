@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   AD_SAMPLES_CONFIG_PATH,
@@ -20,7 +20,7 @@ import {
 } from "../../packages/consts/paths";
 import { TEST_CONFIG_ROOT } from "../preloadEnv";
 
-test("测试环境的真实运行时文件与生产数据根完全隔离", () => {
+test("测试环境的真实运行时文件与生产数据根完全隔离", async () => {
   expect(RUNTIME_DATA_ROOT).not.toBe(PROJECT_ROOT);
   for (const path of [
     STATE_FILE_PATH,
@@ -40,9 +40,9 @@ test("测试环境的真实运行时文件与生产数据根完全隔离", () =>
   const isolatedMarker: string = join(AI_MEMORY_DIR, markerName);
   const productionMarker: string = join(PROJECT_ROOT, "memory", "ai", markerName);
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  writeFileSync(isolatedMarker, "real test cache");
+  await Bun.write(isolatedMarker, "real test cache");
 
-  expect(readFileSync(isolatedMarker, "utf8")).toBe("real test cache");
+  expect(await Bun.file(isolatedMarker).text()).toBe("real test cache");
   expect(existsSync(productionMarker)).toBeFalse();
 });
 

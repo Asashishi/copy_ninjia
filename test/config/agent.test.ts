@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -46,17 +46,17 @@ const AGENT: Readonly<Record<string, unknown>> = {
 
 const AGENT_EXAMPLE: Readonly<Record<string, Readonly<Record<string, unknown>>>> = (
   JSON.parse(
-    readFileSync(join(import.meta.dir, "..", "..", "config_example", "agent.json"), "utf8")
+    await Bun.file(join(import.meta.dir, "..", "..", "config_example", "agent.json")).text()
   ) as { readonly agent: Readonly<Record<string, Readonly<Record<string, unknown>>>> }
 ).agent;
 
 const tempDirs: string[] = [];
 
-function writeConfig(value: unknown): string {
+async function writeConfig(value: unknown): Promise<string> {
   const directory: string = mkdtempSync(join(tmpdir(), "agent-config-test-"));
   tempDirs.push(directory);
   const path: string = join(directory, "agent.json");
-  writeFileSync(path, JSON.stringify(value));
+  await Bun.write(path, JSON.stringify(value));
   return path;
 }
 
@@ -139,7 +139,7 @@ describe("agent capability config", () => {
         ...AGENT,
         [capability]: { ...capabilityConfig, api_key: placeholder },
       };
-      const path: string = writeConfig({ agent: value });
+      const path: string = await writeConfig({ agent: value });
       const validate: Promise<void> = validateAgentDeploymentConfig(path);
       await expect(validate).rejects.toThrow(
         `${path}: $.agent.${capability}.api_key must be a configured non-placeholder string`
@@ -246,30 +246,30 @@ describe("unified agent.json loading", () => {
   });
 
   test("分段加载互不解析另一段", async () => {
-    const badAgentPath: string = writeConfig({ agent: { ad_detect: AD_DETECT, bad: true } });
+    const badAgentPath: string = await writeConfig({ agent: { ad_detect: AD_DETECT, bad: true } });
     expect(await loadAdDetectAgentConfig(badAgentPath)).toEqual({
       provider: "openai",
       apiKey: "deepseek-key",
       baseUrl: "https://deepseek.example/v1",
       model: "deepseek-test",
     });
-    const badAdPath: string = writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
+    const badAdPath: string = await writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
     expect((await loadAgentDeploymentConfig(badAdPath)).text.model).toBe("gemini-text");
   });
 
   test("启动总闸允许功能级可选能力缺省，但拒绝已存在的非法能力", async () => {
-    const validPath: string = writeConfig({ agent: AGENT });
+    const validPath: string = await writeConfig({ agent: AGENT });
     await expect(validateAgentDeploymentConfig(validPath)).resolves.toBeUndefined();
     const withoutAdDetect: Record<string, unknown> = { ...AGENT };
     delete withoutAdDetect.ad_detect;
-    const missingPath: string = writeConfig({ agent: withoutAdDetect });
+    const missingPath: string = await writeConfig({ agent: withoutAdDetect });
     await expect(validateAgentDeploymentConfig(missingPath)).resolves.toBeUndefined();
-    const adOnlyPath: string = writeConfig({ agent: { ad_detect: AD_DETECT } });
+    const adOnlyPath: string = await writeConfig({ agent: { ad_detect: AD_DETECT } });
     await expect(validateAgentDeploymentConfig(adOnlyPath)).resolves.toBeUndefined();
     await expect(loadAgentDeploymentConfig(adOnlyPath)).rejects.toThrow(/agent must be exactly/);
-    const invalidPath: string = writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
+    const invalidPath: string = await writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
     await expect(validateAgentDeploymentConfig(invalidPath)).rejects.toThrow(/agent\.ad_detect/);
-    const extraPath: string = writeConfig({ agent: AGENT, gemini: {} });
+    const extraPath: string = await writeConfig({ agent: AGENT, gemini: {} });
     await expect(validateAgentDeploymentConfig(extraPath)).rejects.toThrow(/must be exactly \{ agent \}/);
   });
 

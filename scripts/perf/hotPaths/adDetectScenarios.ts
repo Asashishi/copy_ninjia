@@ -66,6 +66,7 @@ const SATURATED_CANDIDATE: AdCandidateMessage = {
   chatId: BENCHMARK_CHAT_ID,
   senderId: Number.MAX_SAFE_INTEGER,
   messageId: 1,
+  observedAt: BENCHMARK_EPOCH_MS,
   text: "广".repeat(AD_DETECT_MESSAGE_MAX_CHARS),
   linkUrls: Array.from(
     { length: AD_DETECT_MAX_LINK_URLS },
@@ -129,7 +130,8 @@ export function createAdCapacityRejectScenario(): Scenario {
           ? -1 - (index & 1_023)
           : Number.MAX_SAFE_INTEGER - (index & 1_023);
         SATURATED_CANDIDATE.isChannel = isChannel;
-        enqueueAdCandidate(SATURATED_CANDIDATE, BENCHMARK_EPOCH_MS);
+        // 不显式传 now：生产走的就是载荷自带的 observedAt 默认值。
+        enqueueAdCandidate(SATURATED_CANDIDATE);
         checksum += pendingAdMessages.size + (isChannel ? 1 : 0);
       }
       return checksum;

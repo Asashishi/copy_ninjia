@@ -6,6 +6,7 @@ import { muteChatMemberWithOutcome, sendCommandMessage, unmuteChatMemberWithOutc
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import {
+  MUTE_DISPATCH_MIN_REMAINING_MS,
   MUTE_MAX_DURATION_MS,
   MUTE_MIN_DURATION_MS,
   MUTE_TARGET_TEXTS,
@@ -15,6 +16,7 @@ import {
   formatDurationCn,
   parseDurationTokenMs,
 } from "../libs/durationToken";
+import { commandArgumentTokens } from "./arguments";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 
@@ -92,7 +94,10 @@ async function rejectUnrestrictableTarget(
  * 处理 /mute 指令：临时收走目标在本群的全部发言权限，到点由 Telegram 按
  * `until_date` 自动恢复——与刷屏禁言（workers/antiRaid/floodControl.ts）复用
  * 同一个 API 封装与权限集，本进程不排恢复计时器、不写任何持久化状态，提前
- * 解除走 /unmute。
+ * 解除走 /unmute。**派发截止也共用同一条契约**：`until_date` 是入队前算好的
+ * 绝对时刻，排队太久会被 Bot API 当成永久限制，因此两条路径都必须给
+ * `muteChatMemberWithOutcome` 传 `dispatchTimeoutMs`，各自的预算见
+ * MUTE_DISPATCH_MIN_REMAINING_MS 与 FLOOD_MUTE_DISPATCH_TIMEOUT_MS。
  *
  * 参数形态：时长必填且必须是最后一个 token（`数字+m/h/d`，见
  * parseMuteDurationMs），目标用回复消息、@username 或用户 id 指定（时长带
@@ -118,7 +123,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   // 时长永远取最后一个 token：前面剩下的整段是目标参数（可以为空，此时目标
   // 来自回复）。先验时长再解析目标——时长格式错误时目标是谁根本无关紧要，
   // 一句用法提示比「@x 不合法」更接近用户真正打错的地方。
-  const tokens: string[] = ctx.match.trim().split(/\s+/).filter((token: string): boolean => token.length > 0);
+  const tokens: string[] = commandArgumentTokens(ctx.match);
   const durationToken: string | undefined = tokens.at(-1);
   const durationMs: number | undefined = durationToken === undefined ? undefined : parseMuteDurationMs(durationToken);
   if (durationMs === undefined) {
@@ -156,6 +161,12 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     chatId,
     userId: targetUser.id,
     mutedUntil: Date.now() + durationMs,
+    // 与刷屏禁言同一条契约：`until_date` 是入队前算好的绝对时刻，请求命中
+    // restrict 类 429 后还会在独立车道按 retry_after 排队。排太久时 Bot API 会
+    // 把它当成永久限制，而本命令不排恢复计时器——那就是一次只能人工 /unmute 的
+    // 永久禁言，而下面的成功文案还写着「到点自动松开」。到期即放弃，走 failed
+    // 那一句如实回执（见 consts/commands.ts 的 MUTE_DISPATCH_MIN_REMAINING_MS）。
+    dispatchTimeoutMs: durationMs - MUTE_DISPATCH_MIN_REMAINING_MS,
   });
   if (outcome === "muted") {
     await sendCommandMessage({

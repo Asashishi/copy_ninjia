@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { joinCreatesNewRecord, transitionVerification } from "../../packages/states/verification";
+import {
+  checkingInviterOf,
+  expellingOf,
+  joinCreatesNewRecord,
+  transitionVerification,
+} from "../../packages/states/verification";
 import type { JoinEvent, PendingState, VerificationState } from "../../packages/types/states/verification";
 import {
   ANTI_RAID_PER_MINUTE_LIMIT,
@@ -38,6 +43,8 @@ function kickPendingState(
     label: "杂鱼A",
     isBot: false,
     requestedAt: 0,
+    countedJoinAt: undefined,
+    announcementMessageId: undefined,
     effectStarted: false,
     executionStarted: false,
     ...overrides,
@@ -49,7 +56,12 @@ function pendingState(overrides: Partial<PendingState> = {}): PendingState {
     kind: "pending",
     label: "杂鱼A",
     isBot: false,
+    announcementMessageId: undefined,
+    invitedBy: undefined,
+    reminderMessageId: undefined,
+    replyReminderMessageId: undefined,
     replyReminderRequested: false,
+    welcomeAnchorMessageId: undefined,
     reminderSuperseded: false,
     joinedAt: 0,
     expiresAt: 120_000,
@@ -646,8 +658,8 @@ describe("超时与拉人者终核", () => {
   });
 
   test("终核：拉人者确是管理员 → 补豁免占位，只删提醒不踢人，且按精确时刻撤销此前记的那次刷群计数", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 54_321, expiresAt: 120_000 };
-    const checking: VerificationState = { kind: "checkingInviter", inviterId: 999, snapshot };
+    const snapshot = { label: "杂鱼A", isBot: false, announcementMessageId: undefined, reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 54_321, expiresAt: 120_000 };
+    const checking: VerificationState = checkingInviterOf(999, snapshot);
     const { next, effects } = transitionVerification(checking, { type: "timeoutInviterVerdict", inviterIsAdmin: true });
     expect(next?.kind).toBe("exempt");
     expect(effects).toEqual([
@@ -663,8 +675,8 @@ describe("超时与拉人者终核", () => {
   });
 
   test("终核：拉人者不是管理员 → 先持久化 expelling，再收尾踢人", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0, expiresAt: 120_000 };
-    const checking: VerificationState = { kind: "checkingInviter", inviterId: 999, snapshot };
+    const snapshot = { label: "杂鱼A", isBot: false, announcementMessageId: undefined, reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0, expiresAt: 120_000 };
+    const checking: VerificationState = checkingInviterOf(999, snapshot);
     const { next, effects } = transitionVerification(checking, { type: "timeoutInviterVerdict", inviterIsAdmin: false });
     expect(next).toMatchObject({ kind: "expelling", reason: "timeout", snapshot });
     expect(effects).toEqual([]);
@@ -768,6 +780,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     const snapshot = {
       label: "杂鱼A",
       isBot: false,
+      announcementMessageId: undefined,
       reminderMessageId: 21,
       replyReminderMessageId: 22,
       joinedAt: 0,
@@ -775,9 +788,9 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     };
 
     for (const state of [
-      { kind: "checkingInviter", inviterId: 7, snapshot },
-      { kind: "expelling", reason: "timeout", snapshot },
-    ] as const) {
+      checkingInviterOf(7, snapshot),
+      expellingOf("timeout", snapshot),
+    ]) {
       const { next, effects } = transitionVerification(state, { type: "guardDisabled" });
 
       expect(next).toBeUndefined();
@@ -796,6 +809,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     const snapshot = {
       label: "杂鱼A",
       isBot: false,
+      announcementMessageId: undefined,
       reminderMessageId: 21,
       replyReminderMessageId: 22,
       joinedAt: 0,
@@ -803,9 +817,9 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     };
 
     for (const state of [
-      { kind: "checkingInviter", inviterId: 7, snapshot },
-      { kind: "expelling", reason: "timeout", snapshot },
-    ] as const) {
+      checkingInviterOf(7, snapshot),
+      expellingOf("timeout", snapshot),
+    ]) {
       const { next, effects } = transitionVerification(state, joinEvent({ now: 500_000 }));
 
       expect(next?.kind).toBe("pending");

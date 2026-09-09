@@ -47,6 +47,17 @@ export interface AdCandidateMessage {
   /** 用户 id；频道马甲发言时是该频道的负数 id。 */
   senderId: number;
   messageId: number;
+  /**
+   * 主线程观测到这条 update 的时刻，本条消息在 Worker 侧的全部时间判定都用它。
+   *
+   * 由主线程按 update 唯一的那次时钟读取填入（见 infra/updateContext.ts 的
+   * updateNow），Worker 因此不必为每条候选再读一次墙钟——在时钟读取不走 vDSO
+   * 快路径的部署机上，那一次读取本身就比整段同步记账还贵。
+   *
+   * 语义上它是「主线程收到这条消息的时刻」，比「Worker 从 mailbox 取到它的时刻」
+   * 更贴近事实：Worker 积压时后者会把同一批消息的间隔压短，让判定偏严。
+   */
+  observedAt: number;
   /** 已清洗成单行的正文（文本或图片说明）。 */
   text: string;
   /** 被引用段与被回复原文；与 text 一起参与判定并留进命中样本。 */

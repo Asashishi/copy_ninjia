@@ -52,14 +52,14 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: per-group sessions, target recovery, regex language checks, and the lazy Google translation client.
   - **Representative files**: `state.ts`, `recovery.ts`, `message.ts`, `language.ts`, `client.ts`; ordinary copying reuses `copy/echo.ts`.
 - **`packages/users/`**
-  - **Responsibility**: sender-identity cache, visible-sender resolution, and user-label
-    generation.
-  - **Representative files**: `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts`.
+  - **Responsibility**: sender-identity cache, visible-sender resolution, user-label
+    generation, plus the identity metadata, message-content and message-origin resolution shared by the allow/block lists and ad detection.
+  - **Representative files**: `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts`, `identityMetadata.ts`, `messageContent.ts`, `messageOrigin.ts`.
 - **`packages/states/`**
   - **Responsibility**: **I/O-free** state transitions and admission rules for verification,
-    lockdown, AI replies, and ad detection.
+    lockdown, AI replies, ad detection, and temporary-allowlist accrual.
   - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts` plus `lockdown/` (the `apply`/`persistence`/`restore`/`announcement`/`adopt` lifecycle segments), `replyAdmission.ts`,
-    `adDetectAdmission.ts`.
+    `adDetectAdmission.ts`, `temporaryWhitelist.ts`.
 - **`packages/config/`**
   - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
   - **Representative files**: `telegram.ts`, `telegramInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
@@ -97,8 +97,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `membership.ts`, `outbox.ts`, `sweep.ts`, and `sweepScheduler.ts`.
 - **`packages/infra/storage/`**
   - **Responsibility**: data-root preflight, instance lock, the business-state facade, the injectable `state.json` persistence boundary, and startup cleanup.
-  - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`, and `statePersistence.ts`.
-    The facade owns business memory and snapshots; the persistence boundary owns strict decoding, latest-only writes, retries, and flush.
+  - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`, `statePersistence.ts`, and `cleanup.ts`.
+    `stateStore.ts` owns business memory and snapshots; `statePersistence.ts` owns strict decoding, latest-only writes, retries, and flush.
 - **`packages/cache/`**
   - **Responsibility**: containers for mutable in-process state; **the first directory level
     names the owning thread**.

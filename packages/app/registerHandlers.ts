@@ -237,8 +237,8 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 待验证成员发的更不会产生 trackedMessage。
   // 全部命令收在一层 `:entities:bot_command` 子链后面，而不是逐条挂在 bot 上。
   // grammY 的 command/on/hears 都经 filter -> branch -> lazy 注册，而 lazy 每条
-  // update 都要 await 一次工厂、建一个数组并 new 一个 Composer；31 条命令平铺
-  // 就是每条 update 付 31 次，普通群消息一次都用不上。外闸判据与
+  // update 都要 await 一次工厂、建一个数组并 new 一个 Composer；25 条命令平铺
+  // 就是每条 update 付 25 次，普通群消息一次都用不上。外闸判据与
   // Context.has.command() 自己的第一步完全相同（都是 `:entities:bot_command`），
   // 因此它是每条命令判据的严格超集：命中集合、相对顺序和「命中即终止」的语义
   // 都不变，只是让不带 bot_command 实体的消息一次跳过整组。

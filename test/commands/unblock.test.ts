@@ -20,10 +20,14 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => {
   if (target !== undefined) seedMissingIdentity(target.id);
   return target;
 });
+const loggerError = mock((..._args: unknown[]): void => {});
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 const flushDiskIO = mock(async (): Promise<string> => "flushed");
 
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/infra/logger", () => ({
+  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+}));
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
   hasWhitelistPermission: (id: number, key: string): boolean =>
@@ -78,6 +82,7 @@ beforeEach(() => {
     unbanChatMemberIfBanned,
     unbanChatSenderChat,
     resolveBotAdminStatus,
+    loggerError,
   ]) mocked.mockClear();
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);
   postDiskIO.mockImplementation((): boolean => true);
@@ -131,6 +136,28 @@ describe("/unblock", () => {
 
     expect(blockedUserIds.has(-1001)).toBeTrue();
     expect(unbanChatSenderChat).not.toHaveBeenCalled();
+  });
+
+  test("单群意外 rejection 只算这一个群失败，不掀掉其余群的解封", async () => {
+    // 扇出与 /block 共用 runManagedChatBatch：常规 API 错误已由适配层归一化成
+    // false，能抛到这里的是意外异常，逐项结算而不是让整条命令连同战报一起失败。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    chatStates.set(-2002, { botPermissions: botPermissions() });
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
+    unbanChatMemberIfBanned
+      .mockRejectedValueOnce(new Error("unexpected adapter rejection"))
+      .mockResolvedValueOnce(true);
+
+    await handleUnblockCommand(context());
+
+    expect(unbanChatMemberIfBanned).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringMatching(/在 1 个群把封禁一并解开了.*还有 1 个群没解开/),
+    }));
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringContaining("Unexpected error while running lift the ban on identity 7 in chat -1001"),
+      expect.any(Error)
+    );
   });
 
   test("名单原本不存在仍执行 Telegram 解封，但不排队数据库 tombstone", async () => {

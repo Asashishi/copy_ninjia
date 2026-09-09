@@ -7,9 +7,8 @@ import { withoutMarkdownCodeFences } from "./markdownSource";
  *
  * `docs/<lang>/03-directory-map.md` 用「`<目录>/`（`a.ts`、`b.ts`）」列一个目录的代表文件。
  * 这些名字既不是 Markdown 链接（`checkMarkdownLocalLinks` 看不到），也不在源码注释里
- * （`collectCommentReferenceProblems` 看不到），于是文件删掉之后清单会静默留旧名——
- * `packages/database/interact/admin.ts` 就这样在 release 里被删掉后继续挂在三份
- * 文档里，一路走过了每一次 `bun run check`。
+ * （`collectCommentReferenceProblems` 看不到），于是文件删掉之后清单会静默留旧名，
+ * 三份文档一起过期而 `bun run check` 的其余各段都发现不了。
  *
  * 判据只做一件事：括号里点名的文件在那个目录下还在不在。**歧义一律放过**，
  * 本检查的价值在于零误报：

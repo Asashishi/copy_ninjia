@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
 
@@ -55,8 +55,8 @@ function luckMsg({
   return { type: "luckDraw", day, key, label, fortunePercent };
 }
 
-function readDayFile(day: string = DAY): Record<string, unknown> {
-  return JSON.parse(readFileSync(join(luckDir, `${day}.json`), "utf8"));
+async function readDayFile(day: string = DAY): Promise<Record<string, unknown>> {
+  return JSON.parse(await Bun.file(join(luckDir, `${day}.json`)).text());
 }
 
 beforeEach(() => {
@@ -99,7 +99,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(await flushLuckAppends()).toBeTrue();
     expect(luckPendingAppends.length).toBe(0);
     expect(luckFlushTimer.timer).toBeNull();
-    expect(readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(await readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
   });
 
   test("同 key 同值重放（Worker 崩溃重建后的全量重放）不重复入缓冲", async () => {
@@ -120,7 +120,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     await flushLuckAppends();
 
     // 文件里 key 出现两次（重复 key 追加是安全的），恢复语义取最后一次出现
-    expect(readDayFile()).toEqual({ "111": { label: "小凶", fortunePercent: 39.99 } });
+    expect(await readDayFile()).toEqual({ "111": { label: "小凶", fortunePercent: 39.99 } });
     const recovered = await recoverLuckDay(DAY);
     expect(recovered?.entries.get("111")).toEqual({ label: "小凶", fortunePercent: 39.99 });
   });
@@ -135,10 +135,10 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
   },
   "222": {
     "label": "写到一半`;
-    writeFileSync(path, original);
+    await Bun.write(path, original);
 
     await expect(recoverLuckDay(DAY)).rejects.toThrow("must be a readable valid JSON document");
-    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(await Bun.file(path).text()).toBe(original);
   });
 
   test("启动恢复遇到不兼容结构时阻止启动，不改写当天文件或清理旧日", async () => {
@@ -146,11 +146,11 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     const todayPath: string = join(luckDir, `${DAY}.json`);
     const stalePath: string = join(luckDir, "2026-07-15.json");
     const original: string = "[{\"bad\":\"shape\"}]";
-    writeFileSync(todayPath, original);
-    writeFileSync(stalePath, "{}");
+    await Bun.write(todayPath, original);
+    await Bun.write(stalePath, "{}");
 
     await expect(recoverLuckDay(DAY)).rejects.toThrow("must be a JSON object keyed by canonical luck cache keys");
-    expect(readFileSync(todayPath, "utf8")).toBe(original);
+    expect(await Bun.file(todayPath).text()).toBe(original);
     expect(existsSync(`${todayPath}.corrupt`)).toBe(false);
     expect(existsSync(stalePath)).toBe(true);
   });
@@ -161,10 +161,10 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     const original: string = JSON.stringify({
       "111": { label: 123, fortunePercent: 90.12 },
     }, null, 2);
-    writeFileSync(path, original);
+    await Bun.write(path, original);
 
     await expect(recoverLuckDay(DAY)).rejects.toThrow("$.<record> must be exactly");
-    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(await Bun.file(path).text()).toBe(original);
   });
 
   test("启动恢复仍让容量错误优先于记录错误", async () => {
@@ -175,7 +175,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
       records[String(index)] = { label: "大吉", fortunePercent: 90.12 };
     }
     records["1"] = { label: 123, fortunePercent: 90.12 };
-    writeFileSync(path, JSON.stringify(records, null, 2));
+    await Bun.write(path, JSON.stringify(records, null, 2));
 
     await expect(recoverLuckDay(DAY)).rejects.toThrow(
       `at most ${DAILY_LUCK_CACHE_MAX} confirmed luck records`
@@ -185,30 +185,30 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
   test("启动清理拒绝非法或未来日期文件，不把时钟回拨产生的状态当过期项删除", async () => {
     mkdirSync(luckDir, { recursive: true });
     const invalidPath: string = join(luckDir, "2026-02-30.json");
-    writeFileSync(invalidPath, "{}");
+    await Bun.write(invalidPath, "{}");
     await expect(recoverLuckDay(DAY)).rejects.toThrow("$filename must be a canonical calendar date");
-    expect(readFileSync(invalidPath, "utf8")).toBe("{}");
+    expect(await Bun.file(invalidPath).text()).toBe("{}");
 
     rmSync(invalidPath);
     const futurePath: string = join(luckDir, "2026-07-17.json");
-    writeFileSync(futurePath, "{}");
+    await Bun.write(futurePath, "{}");
     await expect(recoverLuckDay(DAY)).rejects.toThrow("a date no later than the current Tokyo day");
-    expect(readFileSync(futurePath, "utf8")).toBe("{}");
+    expect(await Bun.file(futurePath).text()).toBe("{}");
   });
 
   test("启动扫描放行由独立 owner 校验的回执密钥，但仍拒绝其他非日期 JSON", async () => {
     mkdirSync(luckDir, { recursive: true });
     const secretPath: string = join(luckDir, "receipt-secret.json");
     const secretContent: string = JSON.stringify({ version: 1, day: DAY, key: "owned-elsewhere" });
-    writeFileSync(secretPath, secretContent);
+    await Bun.write(secretPath, secretContent);
 
     expect(await recoverLuckDay(DAY)).toBeNull();
-    expect(readFileSync(secretPath, "utf8")).toBe(secretContent);
+    expect(await Bun.file(secretPath).text()).toBe(secretContent);
 
     const unknownPath: string = join(luckDir, "manual.json");
-    writeFileSync(unknownPath, "{}");
+    await Bun.write(unknownPath, "{}");
     await expect(recoverLuckDay(DAY)).rejects.toThrow("$filename must be the canonical <YYYY-MM-DD>.json form");
-    expect(readFileSync(unknownPath, "utf8")).toBe("{}");
+    expect(await Bun.file(unknownPath).text()).toBe("{}");
   });
 
   test("追加失败：缓冲保留、定时器重排、文件探测状态重置；故障排除后重试成功且不丢条目", async () => {
@@ -224,7 +224,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     rmSync(join(luckDir, `${DAY}.json`), { recursive: true, force: true });
     expect(await flushLuckAppends()).toBeTrue();
     expect(luckPendingAppends.length).toBe(0);
-    expect(readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(await readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
   });
 
   test("跨天：旧 day 尚未刷的缓冲先落盘再切，之后运行态整体换成新 day", async () => {
@@ -234,13 +234,13 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     await handleLuckDrawMessage(luckMsg({ key: "222", label: "小凶", fortunePercent: 39.99, day: DAY }));
     // startLuckDay 会把 luckPendingAppends 整个清零；不先刷盘，那条 2026-07-15
     // 的已确认结果就一次都没写盘地静默消失了。
-    expect(readDayFile("2026-07-15")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(await readDayFile("2026-07-15")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
     expect(luckWorkerCache.current?.day).toBe(DAY);
     expect(luckPendingAppends.length).toBe(1);
     expect(luckPendingAppends[0]!.key).toBe("222");
 
     await flushLuckAppends();
-    expect(readDayFile()).toEqual({ "222": { label: "小凶", fortunePercent: 39.99 } });
+    expect(await readDayFile()).toEqual({ "222": { label: "小凶", fortunePercent: 39.99 } });
     // 当日 flush 之后的 cleanupStaleLuckFiles 才回收旧日文件。
     expect(existsSync(join(luckDir, "2026-07-15.json"))).toBe(false);
   });
@@ -259,7 +259,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     // 故障排除后旧日照常刷盘，条目一条都没丢。
     rmSync(join(luckDir, "2026-07-15.json"), { recursive: true, force: true });
     expect(await flushLuckAppends()).toBeTrue();
-    expect(readDayFile("2026-07-15")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(await readDayFile("2026-07-15")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
   });
 
   test("恢复当天文件后重放昨日消息会丢弃旧消息，不倒退缓存或误删当天文件", async () => {
@@ -278,7 +278,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(luckWorkerCache.current?.day).toBe(DAY);
     expect(luckPendingAppends).toEqual([]);
     expect(await flushLuckAppends()).toBeTrue();
-    expect(readDayFile()).toEqual({ "222": { label: "小凶", fortunePercent: 39.99 } });
+    expect(await readDayFile()).toEqual({ "222": { label: "小凶", fortunePercent: 39.99 } });
     expect(existsSync(join(luckDir, "2026-07-15.json"))).toBe(false);
   });
 
@@ -311,7 +311,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
   test("每日维护刷盘失败时不切换 owner，也不提前清理旧文件", async () => {
     mkdirSync(luckDir, { recursive: true });
     const olderPath: string = join(luckDir, "2026-07-14.json");
-    writeFileSync(olderPath, "{}");
+    await Bun.write(olderPath, "{}");
     await handleLuckDrawMessage(luckMsg({
       key: "111",
       label: "大吉",
@@ -334,7 +334,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     }
     // 最后一条触发了立即 flush：缓冲已清空，文件条目齐全
     expect(luckPendingAppends.length).toBe(0);
-    expect(Object.keys(readDayFile()).length).toBe(FLUSH_MAX_ENTRIES);
+    expect(Object.keys(await readDayFile()).length).toBe(FLUSH_MAX_ENTRIES);
   });
 });
 
@@ -385,7 +385,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
     // 故障排除：条目一条不丢地补写进去，计数与告警标记一起归零。
     repairDayFile();
     expect(await flushLuckAppends()).toBeTrue();
-    expect(readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(await readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
     expect(luckAppendFailures.consecutive).toBe(0);
     expect(luckAppendFailures.alerted).toBeFalse();
 
@@ -460,10 +460,10 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
     await handleLuckDrawMessage(luckMsg({ key: "444", label: "中吉", fortunePercent: 70, day: "2026-07-17" }));
     expect(luckWorkerCache.current?.day).toBe("2026-07-17");
     expect(luckDeferredDraws.length).toBe(0);
-    expect(readDayFile(DAY)).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(await readDayFile(DAY)).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
 
     expect(await flushLuckAppends()).toBeTrue();
-    expect(readDayFile("2026-07-17")).toEqual({
+    expect(await readDayFile("2026-07-17")).toEqual({
       "222": { label: "凶", fortunePercent: 10.5 },
       "333": { label: "吉", fortunePercent: 55 },
       "444": { label: "中吉", fortunePercent: 70 },
@@ -484,9 +484,9 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
 
     expect(luckDeferredDraws.length).toBe(0);
     expect(luckWorkerCache.current?.day).toBe("2026-07-17");
-    expect(readDayFile(DAY)).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(await readDayFile(DAY)).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
     expect(await flushLuckAppends()).toBeTrue();
-    expect(readDayFile("2026-07-17")).toEqual({ "222": { label: "凶", fortunePercent: 10.5 } });
+    expect(await readDayFile("2026-07-17")).toEqual({ "222": { label: "凶", fortunePercent: 10.5 } });
   });
 
   test("滞留区有上界：满了丢最旧的一条并记一行，绝不静默", async () => {

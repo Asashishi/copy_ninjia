@@ -62,6 +62,15 @@ export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
 export const TELEGRAM_USERNAME_MIN_LENGTH: number = 5;
 /** Telegram 用户名允许的最大长度。 */
 export const TELEGRAM_USERNAME_MAX_LENGTH: number = 32;
+/**
+ * 命令参数按空白切分的规则；消费方是 commands/arguments.ts 的
+ * commandArgumentTokens，全仓只此一处切分口径。
+ *
+ * 非全局正则，`String.prototype.split` 也不读写 `lastIndex`，因此可以安全地共用
+ * 这一个模块级实例；所属模块：命令参数解析。
+ */
+export const COMMAND_ARGUMENT_SEPARATOR_PATTERN: RegExp = /\s+/;
+
 /** 命令参数中裸用户名的完整匹配规则。 */
 export const USERNAME_ARG_PATTERN: RegExp = new RegExp(
   `^@?([a-zA-Z][a-zA-Z0-9_]{${TELEGRAM_USERNAME_MIN_LENGTH - 2},${TELEGRAM_USERNAME_MAX_LENGTH - 2}}[a-zA-Z0-9])$`
@@ -154,10 +163,29 @@ export const DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = {
 /**
  * `/mute` 允许的最短时长。Bot API 对 restrictChatMember 的约定是 `until_date`
  * 距现在不足 30 秒按永久禁言处理；时长单位最小是分钟，1 分钟天然越过这条
- * 线，同时给「命令处理到请求真正发出」之间的排队留出余量——被收成永久禁言
- * 的话本进程不排恢复计时器，只能人工解除。所属模块：commands/mute.ts。
+ * 线——被收成永久禁言的话本进程不排恢复计时器，只能人工解除。
+ *
+ * 「命令处理到请求真正发出」之间的排队不由这条下限兜：那段等待没有上界
+ * （restrict 类 429 按 `retry_after` 排队），只能由派发截止兑现，见
+ * MUTE_DISPATCH_MIN_REMAINING_MS。所属模块：commands/mute.ts。
  */
 export const MUTE_MIN_DURATION_MS: number = 60_000;
+
+/**
+ * `/mute` 的请求真正发出时，`until_date` 距当下必须仍然剩下的时长。
+ *
+ * 派发截止取「本次时长 − 本常量」：超时即放弃这次禁言，按「Telegram 这会儿
+ * 不理本天才」如实回执。不设它的话，一条 `/mute @x 1m` 撞上 restrict 类 429
+ * 退避就会在发出那一刻落进「不足 30 秒即永久」区间，被静默升级成只能人工
+ * `/unmute` 的永久禁言，而战报照常念「到点自动松开」。
+ *
+ * 取 45 秒而不是刷屏禁言那侧的 60 秒（FLOOD_MUTE_DISPATCH_TIMEOUT_MS）：那边
+ * 的时长恒为 3 分钟，这边的下限是 MUTE_MIN_DURATION_MS（1 分钟），留 60 秒
+ * 等于把 1 分钟那一档的派发窗口压成 0，`/mute @x 1m` 从此永远发不出去。45 秒
+ * 仍比那条 30 秒红线宽出半程，1 分钟那一档也还剩 15 秒可以排队。
+ * 所属模块：commands/mute.ts。
+ */
+export const MUTE_DISPATCH_MIN_REMAINING_MS: number = 45_000;
 
 /**
  * `/mute` 允许的最长时长。Bot API 同一条约定的另一头：`until_date` 距现在
@@ -186,10 +214,15 @@ export const BATCH_KICK_MAX_DURATION_MS: number = 24 * 60 * 60_000;
 export const BATCH_KICK_CONCURRENCY: number = 5;
 
 /**
- * `/block` 跨群封禁同时运行的群数。单租户通常只有约 15 个群，但配置状态仍可能
- * 长期增长；固定小并发避免一次命令把全部群同时展开成 Telegram 请求和闭包。
+ * 跨托管群处置同时运行的群数（`/block` 的连坐封禁与 `/unblock` 的跨群解封）。
+ *
+ * 单租户通常只有约 15 个群，但配置状态仍可能长期增长；固定小并发避免一次命令
+ * 把全部群同时展开成 Telegram 请求和闭包，也避免逐群串行让 update 中间件几十次
+ * 往返都不返回。两条命令是同一处置的正反面，读同一份群清单、用同一个上限——
+ * 拆成两个数值早晚会漂移出「封的时候并发、解的时候串行」这种不对称。
+ * 所属模块：infra/blocklist/membership.ts 的 runManagedChatBatch。
  */
-export const BLOCK_COMMAND_CONCURRENCY: number = 5;
+export const MANAGED_CHAT_BATCH_CONCURRENCY: number = 5;
 
 /** /quiet 未传时长时使用的分钟数。 */
 export const QUIET_DEFAULT_MINUTES: number = 3;
@@ -217,7 +250,9 @@ export const QUIET_CLOCK_SKEW_TOLERANCE_MS: number = 60_000;
 /**
  * enable/disable 开关命令的对外文案表。
  *
- * 五条命令各一张，字段口径见 packages/types/commands.ts 的 ToggleCommandTexts：
+ * 本文件收 `/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/init` 五张；
+ * `/translate` 的那张随领域放在 consts/translate.ts 的 TRANSLATE_TOGGLE_TEXTS。
+ * 字段口径见 packages/types/commands.ts 的 ToggleCommandTexts：
  * 拒绝、用法、以及四种状态结局各自的回执。它们跨调用方共享同一个对象，由
  * `Readonly<>` 在编译期锁住全部字段（不可变性只在编译期表达，见 AGENTS.md 的
  * 「常量」一节；断言在 `test/consts/immutability.test.ts`）。

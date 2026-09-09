@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -34,13 +34,13 @@ describe("persona deployment input", () => {
     const path: string = personaPath();
 
     await expect(loadPersona(path)).rejects.toThrow(`${path}: $ must be a readable non-empty UTF-8 text file`);
-    writeFileSync(path, " \n\t ", "utf8");
+    await Bun.write(path, " \n\t ");
     await expect(loadPersona(path)).rejects.toThrow(`${path}: $ must be a readable non-empty UTF-8 text file`);
   });
 
   test("非空内容去掉边界空白后复用", async () => {
     const path: string = personaPath();
-    writeFileSync(path, "  stable persona  \n", "utf8");
+    await Bun.write(path, "  stable persona  \n");
 
     expect(await loadPersona(path)).toBe("stable persona");
   });
@@ -65,7 +65,7 @@ describe("persona deployment input", () => {
 
   test("非法 UTF-8 不得被替换字符掩盖", async () => {
     const path: string = personaPath();
-    writeFileSync(path, new Uint8Array([0xff]));
+    await Bun.write(path, new Uint8Array([0xff]));
 
     await expect(loadPersona(path)).rejects.toThrow(
       `${path}: $ must be a readable non-empty UTF-8 text file`

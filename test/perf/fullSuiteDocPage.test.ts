@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   README_BLOCK_END,
@@ -40,7 +39,7 @@ describe("基准区块替换", () => {
 });
 
 describe("三份性能基准页的区块", () => {
-  test("三种语言各一份，且都已经放好标记对", () => {
+  test("三种语言各一份，且都已经放好标记对", async () => {
     expect(DOC_PAGE_TARGETS.map((target: DocPageTarget): string => target.language))
       .toEqual(["zh", "en", "ja"]);
     expect(DOC_PAGE_TARGETS.map((target: DocPageTarget): string => target.path))
@@ -50,7 +49,7 @@ describe("三份性能基准页的区块", () => {
         join("docs", "ja", "09-performance.md"),
       ]);
     for (const target of DOC_PAGE_TARGETS) {
-      const source: string = readFileSync(join(PROJECT_ROOT, target.path), "utf8");
+      const source: string = await Bun.file(join(PROJECT_ROOT, target.path)).text();
       const start: number = source.indexOf(README_BLOCK_START);
       const end: number = source.indexOf(README_BLOCK_END);
       expect(start).toBeGreaterThanOrEqual(0);

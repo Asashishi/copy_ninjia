@@ -8,14 +8,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
 
@@ -132,11 +125,11 @@ describe("diskIO/joinLogFiles", () => {
     const stalePath: string = datedFile(-1001, "2000-01-01");
     const original: string = "{\"bad\":{\"userId\":42,\"joinedAt\":\"now\"}}";
     mkdirSync(joinLogDir, { recursive: true });
-    writeFileSync(currentPath, original);
-    writeFileSync(stalePath, "{}");
+    await Bun.write(currentPath, original);
+    await Bun.write(stalePath, "{}");
 
     await expect(recoverJoinLogFiles()).rejects.toThrow("$.<record> must be exactly");
-    expect(readFileSync(currentPath, "utf8")).toBe(original);
+    expect(await Bun.file(currentPath).text()).toBe(original);
     expect(existsSync(stalePath)).toBeTrue();
     expect(joinLogFileCaches.size).toBe(0);
   });
@@ -144,7 +137,7 @@ describe("diskIO/joinLogFiles", () => {
   test("inspect 保留过期文件，maintenance 才执行清理", async () => {
     const stalePath: string = datedFile(-1001, "2000-01-01");
     mkdirSync(joinLogDir, { recursive: true });
-    writeFileSync(stalePath, "{}");
+    await Bun.write(stalePath, "{}");
 
     const inspection = await inspectJoinLogFiles();
     expect(existsSync(stalePath)).toBeTrue();
@@ -156,32 +149,32 @@ describe("diskIO/joinLogFiles", () => {
   test("启动恢复拒绝非法或未来文件名，不把它们当成可忽略资产", async () => {
     const invalidPath: string = join(joinLogDir, "bad.json");
     mkdirSync(joinLogDir, { recursive: true });
-    writeFileSync(invalidPath, "{}");
+    await Bun.write(invalidPath, "{}");
 
     await expect(recoverJoinLogFiles()).rejects.toThrow("canonical <chatId>.<YYYY-MM-DD>.json form");
-    expect(readFileSync(invalidPath, "utf8")).toBe("{}");
+    expect(await Bun.file(invalidPath).text()).toBe("{}");
 
     rmSync(invalidPath);
     const invalidDayPath: string = datedFile(-1001, "2026-02-30");
-    writeFileSync(invalidDayPath, "{}");
+    await Bun.write(invalidDayPath, "{}");
     await expect(recoverJoinLogFiles()).rejects.toThrow("a canonical calendar date");
-    expect(readFileSync(invalidDayPath, "utf8")).toBe("{}");
+    expect(await Bun.file(invalidDayPath).text()).toBe("{}");
 
     rmSync(invalidDayPath);
     const futureDay: string = getTokyoDateKey(new Date(todayAt() + 2 * 24 * 60 * 60_000));
     const futurePath: string = datedFile(-1001, futureDay);
-    writeFileSync(futurePath, "{}");
+    await Bun.write(futurePath, "{}");
     await expect(recoverJoinLogFiles()).rejects.toThrow("a date no later than the current Tokyo day");
-    expect(readFileSync(futurePath, "utf8")).toBe("{}");
+    expect(await Bun.file(futurePath).text()).toBe("{}");
   });
 
   test("启动恢复拒绝以正数私聊 ID 命名的入群日志", async () => {
     const path: string = currentFile(1001);
     mkdirSync(joinLogDir, { recursive: true });
-    writeFileSync(path, "{}");
+    await Bun.write(path, "{}");
 
     await expect(recoverJoinLogFiles()).rejects.toThrow("negative safe-integer Telegram group or channel ID");
-    expect(readFileSync(path, "utf8")).toBe("{}");
+    expect(await Bun.file(path).text()).toBe("{}");
   });
 
   test("入群先进入内存批次，flush 后按群追写当天 JSON 文件", async () => {
@@ -196,10 +189,10 @@ describe("diskIO/joinLogFiles", () => {
     expect(await flushJoinLogBuffer()).toBeTrue();
     expect(joinLogBuffer.entries).toHaveLength(0);
     expect(joinLogBuffer.timer).toBeNull();
-    expect(JSON.parse(readFileSync(currentFile(-1001), "utf8"))).toEqual({
+    expect(JSON.parse(await Bun.file(currentFile(-1001)).text())).toEqual({
       [`${now}:42`]: { userId: 42, joinedAt: now },
     });
-    expect(JSON.parse(readFileSync(currentFile(-1002), "utf8"))).toEqual({
+    expect(JSON.parse(await Bun.file(currentFile(-1002)).text())).toEqual({
       [`${now + 1}:43`]: { userId: 43, joinedAt: now + 1 },
     });
   });
@@ -209,7 +202,7 @@ describe("diskIO/joinLogFiles", () => {
     const now: number = todayAt();
     const tomorrow: string = getTokyoDateKey(new Date(now + 24 * 60 * 60_000));
     const stalePath: string = datedFile(-1001, "2000-01-01");
-    writeFileSync(stalePath, "{}");
+    await Bun.write(stalePath, "{}");
     await handleJoinLogMessage(joinMessage(-1001, 42, now));
 
     await maintainJoinLogRetention(tomorrow);
@@ -279,11 +272,11 @@ describe("diskIO/joinLogFiles", () => {
       join(joinLogDir, `-1002.${today}.json`);
     const tmpPath: string = join(joinLogDir, "orphan.json.tmp");
     const unrelatedPath: string = join(joinLogDir, "notes.txt");
-    writeFileSync(stalePath, "{}");
-    writeFileSync(retainedPath, "{}");
-    writeFileSync(currentOtherChatPath, "{}");
-    writeFileSync(tmpPath, "partial");
-    writeFileSync(unrelatedPath, "keep");
+    await Bun.write(stalePath, "{}");
+    await Bun.write(retainedPath, "{}");
+    await Bun.write(currentOtherChatPath, "{}");
+    await Bun.write(tmpPath, "partial");
+    await Bun.write(unrelatedPath, "keep");
 
     expect(await readJoinLog({
       type: "readJoinLog",
@@ -304,7 +297,7 @@ describe("diskIO/joinLogFiles", () => {
     const path: string = currentFile(-1001);
     mkdirSync(joinLogDir, { recursive: true });
     const original: string = "{\"bad\":{\"userId\":42,\"joinedAt\":\"now\"}}";
-    writeFileSync(path, original);
+    await Bun.write(path, original);
 
     await expect(readJoinLog({
       type: "readJoinLog",
@@ -313,7 +306,7 @@ describe("diskIO/joinLogFiles", () => {
       since: todayAt() - 60_000,
       now: todayAt(),
     })).rejects.toThrow("$.<record> must be exactly");
-    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(await Bun.file(path).text()).toBe(original);
   });
 
   test("跨日重投的旧事件不重新创建历史文件", async () => {
@@ -342,12 +335,12 @@ describe("diskIO/joinLogFiles", () => {
     const message: JoinLogDiskMessage = joinMessage(-1001, 42, now);
     await handleJoinLogMessage(message);
     expect(await flushJoinLogBuffer()).toBeTrue();
-    const firstContent: string = readFileSync(currentFile(-1001), "utf8");
+    const firstContent: string = await Bun.file(currentFile(-1001)).text();
 
     await handleJoinLogMessage(message);
     expect(await flushJoinLogBuffer()).toBeTrue();
 
-    expect(readFileSync(currentFile(-1001), "utf8")).toBe(firstContent);
+    expect(await Bun.file(currentFile(-1001)).text()).toBe(firstContent);
     const cache: JoinLogFileCache | undefined =
       joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
     expect(cache).toBeDefined();
@@ -365,7 +358,7 @@ describe("diskIO/joinLogFiles", () => {
     }
     expect(await flushJoinLogBuffer()).toBeTrue();
 
-    const content: string = readFileSync(currentFile(-1001), "utf8");
+    const content: string = await Bun.file(currentFile(-1001)).text();
     expect(JSON.parse(content)).toEqual({
       [`${now}:42`]: { userId: 42, joinedAt: now },
     });
@@ -377,7 +370,11 @@ describe("diskIO/joinLogFiles", () => {
    * 用户，每人反复重新入群。`latestJoinLogRecords` 折叠之后活的就那么几条，
    * 文件里剩下的全是可回收的字节。
    */
-  function writeRedundantJoinLogFile(chatId: number, userCount: number, targetBytes: number): number {
+  async function writeRedundantJoinLogFile(
+    chatId: number,
+    userCount: number,
+    targetBytes: number
+  ): Promise<number> {
     const parts: string[] = [];
     let bytes: number = 2;
     let joinedAt: number = todayMidnight();
@@ -390,7 +387,7 @@ describe("diskIO/joinLogFiles", () => {
     }
     const content: string = `{\n${parts.join(",\n")}\n}`;
     mkdirSync(joinLogDir, { recursive: true });
-    writeFileSync(currentFile(chatId), content, "utf8");
+    await Bun.write(currentFile(chatId), content);
     return UTF8_ENCODER.encode(content).byteLength;
   }
 
@@ -398,7 +395,8 @@ describe("diskIO/joinLogFiles", () => {
     // 追加型文件只增不减：一个群反复有人重新入群，文件会一直涨，而真正有效的
     // 只是每人最后那一条。没有这次压实，`/batch_kick` 的按需读取要把整份几 MB
     // 的历史重新解析一遍，且磁盘占用永不回落。
-    const written: number = writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_CHECK_BYTES + 64 * 1_024);
+    const written: number =
+      await writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_CHECK_BYTES + 64 * 1_024);
     expect(written).toBeGreaterThanOrEqual(JOIN_LOG_COMPACT_CHECK_BYTES);
 
     // 压实挂在「第一次真正打开这份文件」上，不在启动扫描里；按需读取就是那一刻。
@@ -411,7 +409,7 @@ describe("diskIO/joinLogFiles", () => {
       now: todayMidnight() + 12 * 60 * 60_000,
     })).toHaveLength(40);
 
-    const content: string = readFileSync(currentFile(-1001), "utf8");
+    const content: string = await Bun.file(currentFile(-1001)).text();
     const parsed: Record<string, { userId: number; joinedAt: number }> = JSON.parse(content);
     expect(Object.keys(parsed)).toHaveLength(40);
     expect(UTF8_ENCODER.encode(content).byteLength)
@@ -429,7 +427,7 @@ describe("diskIO/joinLogFiles", () => {
     const now: number = todayAt();
     await handleJoinLogMessage(joinMessage(-1001, 1, now));
     expect(await flushJoinLogBuffer()).toBeTrue();
-    const before: string = readFileSync(currentFile(-1001), "utf8");
+    const before: string = await Bun.file(currentFile(-1001)).text();
 
     const cache: JoinLogFileCache | undefined =
       joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
@@ -440,7 +438,7 @@ describe("diskIO/joinLogFiles", () => {
     await handleJoinLogMessage(joinMessage(-1001, 2, now + 1));
     expect(await flushJoinLogBuffer()).toBeTrue();
 
-    const after: string = readFileSync(currentFile(-1001), "utf8");
+    const after: string = await Bun.file(currentFile(-1001)).text();
     expect(after.startsWith(before.slice(0, before.length - 2))).toBeTrue();
     expect(cache!.redundantEntries).toBe(0);
     expect(cache!.appendedBytesSinceCompaction).toBe(0);
@@ -466,7 +464,7 @@ describe("diskIO/joinLogFiles", () => {
       joinLogRetryAt.clear();
       expect(await flushJoinLogBuffer()).toBeTrue();
       expect(joinLogBuffer.entries).toHaveLength(0);
-      expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+      expect(JSON.parse(await Bun.file(path).text())).toEqual({
         [`${now}:42`]: { userId: 42, joinedAt: now },
       });
     } finally {
@@ -574,7 +572,7 @@ describe("diskIO/joinLogFiles", () => {
       index <= JOIN_LOG_MAX_CACHED_FILES;
       index += 1
     ) {
-      writeFileSync(datedFile(-10_000 - index, day), "{}");
+      await Bun.write(datedFile(-10_000 - index, day), "{}");
     }
     const readEmpty: (chatId: number) => Promise<void> = async (chatId: number): Promise<void> => {
       expect(await readJoinLog({
@@ -717,7 +715,7 @@ describe("diskIO/joinLogFiles", () => {
     const snapshotBytes: number = measureJoinLogSnapshotBytes(latestByUser);
     // 权威文件先按这份索引落到盘上：溢出分支必须把它整个换掉，而不是往后追加。
     mkdirSync(joinLogDir, { recursive: true });
-    writeFileSync(path, [...joinLogSnapshotChunks(latestByUser)].join(""));
+    await Bun.write(path, [...joinLogSnapshotChunks(latestByUser)].join(""));
     const cache: JoinLogFileCache = {
       state: { size: snapshotBytes, empty: false },
       latestByUser,
@@ -757,7 +755,7 @@ describe("diskIO/joinLogFiles", () => {
       expect(cache.redundantEntries).toBe(0);
 
       // 权威文件被整体重写：字节数与记账一致，被淘汰的键消失、新键在场。
-      const written: string = readFileSync(path, "utf8");
+      const written: string = await Bun.file(path).text();
       expect(UTF8_ENCODER.encode(written).byteLength).toBe(cache.snapshotBytes);
       expect(written).not.toContain(`"${base + 1}:1"`);
       expect(written).toContain(`"${newestJoinedAt}:${newUserId}"`);
@@ -809,7 +807,7 @@ describe("diskIO/joinLogFiles", () => {
     // 两条记录长度相同，折叠后的快照字节数不变，但物理文件已经多了一条。
     expect(cache.snapshotBytes).toBe(bytesAfterFirst);
     expect(cache.state.size).toBeGreaterThan(cache.snapshotBytes);
-    expect(JSON.parse(readFileSync(currentFile(-1001), "utf8"))).toEqual({
+    expect(JSON.parse(await Bun.file(currentFile(-1001)).text())).toEqual({
       [`${first}:42`]: { userId: 42, joinedAt: first },
       [`${second}:42`]: { userId: 42, joinedAt: second },
     });

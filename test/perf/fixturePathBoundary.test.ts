@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -23,12 +23,12 @@ describe("脚本夹具的写入边界", () => {
   let external: string;
   let boundary: FixturePathBoundary;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     anchor = mkdtempSync(join(tmpdir(), "fixture-boundary-anchor-"));
     root = join(anchor, "root");
     mkdirSync(root);
     external = mkdtempSync(join(tmpdir(), "fixture-boundary-external-"));
-    writeFileSync(join(external, "sentinel"), "keep");
+    await Bun.write(join(external, "sentinel"), "keep");
     boundary = { anchor, root, subject };
   });
 
@@ -71,8 +71,8 @@ describe("脚本夹具的写入边界", () => {
     expect((): void => assertUnlinkedFixtureParent(leaf, boundary)).not.toThrow();
   });
 
-  test("中间分量是普通文件时按 ENOTDIR 拒绝，不当作缺失", () => {
-    writeFileSync(join(root, "occupied"), "");
+  test("中间分量是普通文件时按 ENOTDIR 拒绝，不当作缺失", async () => {
+    await Bun.write(join(root, "occupied"), "");
     expect((): void => assertUnlinkedFixturePath(join(root, "occupied", "child"), boundary))
       .toThrow("could not be inspected");
   });

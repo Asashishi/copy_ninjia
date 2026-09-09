@@ -5,7 +5,7 @@ import { getStickerConfig } from "../../../config/stickers";
 import { sendSticker } from "../../../infra/telegram";
 import { logger } from "../../../infra/logger";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
-import { parseIndexField } from "../utils/toolArgs";
+import { parseIndexField, parseToolArguments } from "../utils/toolArgs";
 import { raceAbort } from "../../../libs/abortSignal";
 import {
   MAX_STICKER_PACK_VIEWS_PER_REPLY,
@@ -200,13 +200,9 @@ export function buildSendStickerToolDefinition(menu: readonly StickerPackCandida
 /** 解析查看贴纸包时必填的表达意图：必须是去除首尾空白后的非空单行文本，
  * 且不能超过 STICKER_INTENT_MAX_CHARS，避免把大段推理带进工具往返。 */
 export function parseStickerIntent(argumentsJson: string): string | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  const value: unknown = (parsed as Record<string, unknown> | null)?.intent;
+  // 解析样板收在 utils/toolArgs.ts：本文件另一处工具参数也走那里，两处各写一份
+  // try/catch 会让「顶层不是对象」这类形态在同一个工具集里有两种判法。
+  const value: unknown = parseToolArguments(argumentsJson)?.intent;
   if (typeof value !== "string") return null;
   const intent: string = value.replace(/\s+/g, " ").trim();
   if (!intent || intent.length > STICKER_INTENT_MAX_CHARS) return null;

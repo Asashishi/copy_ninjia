@@ -121,6 +121,7 @@ function adDetectCommandChain(
         chatId,
         senderId: dependencies.benchmarkUserId(sequence),
         messageId: sequence + 1,
+        observedAt: Date.now(),
         text: `性能基准广告文本 ${sequence}：加我微信 benchmark`,
         label: `Member${sequence}`,
         meta: { firstName: `Member${sequence}`, lastName: "", username: "" },
@@ -128,7 +129,7 @@ function adDetectCommandChain(
         isForwarded: false,
         blocked: false,
         justJoined: true,
-      }, Date.now());
+      });
       await dependencies.runAdDetectBatch(Date.now());
       if (
         await dependencies.drainAdDisposals(

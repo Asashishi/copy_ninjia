@@ -38,7 +38,7 @@ export function hasActiveTemporaryWhitelist(id: number): boolean {
   const activity: Readonly<TemporaryWhitelistActivity> | null | undefined =
     temporaryWhitelistActivityCache.get(id);
   if (!activity?.tempWhite) return false;
-  return isTemporaryWhitelistActive(activity);
+  return isTemporaryWhitelistActive(activity, Date.now());
 }
 
 /** 使用同一消息已经捕获的墙钟值查询临时白名单成员关系。 */

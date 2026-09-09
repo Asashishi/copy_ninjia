@@ -9,6 +9,7 @@ import {
   runPermissionAwareTelegramAction,
 } from "./core";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { signalWithTimeout } from "../../../libs/abortSignal";
 import type { PermissionAwareOutcome } from "./core";
 import { isTelegramRetryPreconditionChanged } from "../errors";
 
@@ -24,7 +25,22 @@ export interface MuteChatMemberParams {
   userId: number;
   /** 禁言结束的绝对时刻（ms）；这里换算成 Bot API 的 until_date（秒）。 */
   mutedUntil: number;
+  /**
+   * 从算好 `mutedUntil` 到请求真正发出的容忍上限；到期即放弃这次禁言。
+   *
+   * **必填，不设缺省**：`until_date` 是入队前算好的绝对时刻，而 restrict 请求
+   * 命中 429 后会在独立车道按 `retry_after` 无上界等待。排到 `until_date` 距当下
+   * 不足 30 秒时 Bot API 把它当成**永久限制**，而本仓库两条禁言路径都不排恢复
+   * 计时器、不写任何持久化状态——那就是一次只能人工 `/unmute` 的永久禁言，
+   * 回执却照常念「到点自动松开」。放弃这次禁言的代价远小于此。
+   *
+   * 具体预算按各自的最短时长由调用方给出：刷屏禁言用
+   * `FLOOD_MUTE_DISPATCH_TIMEOUT_MS`，`/mute` 用
+   * `时长 - MUTE_DISPATCH_MIN_REMAINING_MS`（两处常量各自写明取值理由）。
+   */
+  dispatchTimeoutMs: number;
   api?: RestrictMemberApi;
+  /** 调用方自己的取消源（停机、update 取消等）；与上面的派发截止合成后下传。 */
   signal?: AbortSignal;
 }
 
@@ -36,16 +52,21 @@ export type MuteChatMemberOutcome =
 /**
  * 临时收走一名成员在本群的全部发言权限（到点由 Telegram 自动恢复）。
  *
- * `until_date` 向上取整到秒，护的是**下**边界：Bot API 把「距现在不足 30 秒」
- * 当永久限制，向下取整会把亚秒余数抹掉、让时长比调用方要的更短。上边界
- * （超过 366 天同样按永久处理）不靠这里的取整方式兜，而由
- * MUTE_MAX_DURATION_MS 留出的一整天余量兜——取整最多加 1 秒，排队和往返
- * 的耗时也远小于那道余量，两头都不会滑出合法区间。
+ * `until_date` 向上取整到秒，护的是**下**边界的亚秒那一头：Bot API 把「距现在
+ * 不足 30 秒」当永久限制，向下取整会把亚秒余数抹掉、让时长比调用方要的更短。
+ * 同一条下边界的**排队**那一头由 `dispatchTimeoutMs` 兜（见该字段）。上边界
+ * （超过 366 天同样按永久处理）由 MUTE_MAX_DURATION_MS 留出的一整天余量兜
+ * ——取整最多加 1 秒，排队和往返的耗时也远小于那道余量，两头都不会滑出合法区间。
+ *
+ * 派发截止在本函数内与调用方 signal 合成，不由调用点各自 `signalWithTimeout`：
+ * 「带 until_date 的禁言必须有派发截止」是这个操作本身的契约，写在类型上才不会
+ * 有第三个调用点漏掉它。
  */
 export async function muteChatMemberWithOutcome({
   chatId,
   userId,
   mutedUntil,
+  dispatchTimeoutMs,
   api = telegramApi,
   signal,
 }: MuteChatMemberParams): Promise<MuteChatMemberOutcome> {
@@ -59,7 +80,7 @@ export async function muteChatMemberWithOutcome({
         { until_date: Math.ceil(mutedUntil / 1000) },
         ...signalArgs(requestSignal)
       ),
-    signal,
+    signal: signalWithTimeout(signal, dispatchTimeoutMs),
   });
   if (outcome === "succeeded") return "muted";
   return outcome === "forbidden" ? "forbidden" : "failed";

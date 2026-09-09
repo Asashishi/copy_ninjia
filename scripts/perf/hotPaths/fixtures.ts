@@ -6,7 +6,7 @@
  * 谁都不该为了拿一个常量去 import 另一组场景。
  */
 
-import type { Message, UserFromGetMe } from "grammy/types";
+import type { ChatMemberAdministrator, Message, UserFromGetMe } from "grammy/types";
 
 /** 基准群聊 id；仅用于进程内 Map，不产生任何 Telegram 或磁盘副作用。 */
 export const BENCHMARK_CHAT_ID: number = -100_000_000_000_001;
@@ -89,4 +89,28 @@ export const BENCHMARK_BOT_INFO: Readonly<UserFromGetMe> = {
   can_join_groups: true, can_read_all_group_messages: true, supports_inline_queries: true,
   can_connect_to_business: false, has_main_web_app: false, has_topics_enabled: false,
   allows_users_to_create_topics: false, can_manage_bots: false, supports_join_request_queries: false,
+};
+
+/**
+ * 本机器人在基准群里的管理员身份，喂给 `readBotChatPermissions` 生成权限快照。
+ *
+ * 受管群的常态就是它已经是管理员，各条 ingress 的稳定态判定全建立在这上面
+ * （见 registeredMiddlewareScenario.ts 的场景头注）。权限逐项给全，不留三态未知。
+ */
+export const BENCHMARK_BOT_ADMIN_MEMBER: Readonly<ChatMemberAdministrator> = {
+  status: "administrator",
+  user: BENCHMARK_BOT_INFO,
+  can_be_edited: false,
+  is_anonymous: false,
+  can_manage_chat: true,
+  can_delete_messages: true,
+  can_manage_video_chats: true,
+  can_restrict_members: true,
+  can_promote_members: false,
+  can_change_info: true,
+  can_invite_users: true,
+  can_post_stories: false,
+  can_edit_stories: false,
+  can_delete_stories: false,
+  can_send_welcome_messages: false,
 };

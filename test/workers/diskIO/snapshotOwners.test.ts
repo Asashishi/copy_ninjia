@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AiMemoryDeletedPersistedReply,
@@ -170,7 +170,7 @@ describe("Disk I/O snapshot domain owners", () => {
     // 上一轮写到一半留下的临时文件：inspect 只登记不删，maintenance 才清。
     mkdirSync(AI_MEMORY_DIR, { recursive: true });
     const leftover: string = join(AI_MEMORY_DIR, `stale${TMP_FILE_SUFFIX}`);
-    writeFileSync(leftover, "half-written", "utf8");
+    await Bun.write(leftover, "half-written");
     aiMemoryCache.set(-1009999999999, "stale-memory");
 
     const inspection = await inspectAiMemorySnapshots();

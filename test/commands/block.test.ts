@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { BotChatPermissions } from "../../packages/types/telegram";
-import { BLOCK_COMMAND_CONCURRENCY } from "../../packages/consts/commands";
+import { MANAGED_CHAT_BATCH_CONCURRENCY } from "../../packages/consts/commands";
 import { botPermissions } from "../helpers/botPermissions";
 import {
   blockedIdentityTestView as blockedUserIds,
@@ -198,14 +198,14 @@ describe("/block 跨群封禁与黑名单", () => {
       replyToMessageId: 10,
     });
     expect(loggerError).toHaveBeenCalledWith(
-      expect.stringContaining("Unexpected error while banning blocked identity 7 in chat -1001"),
+      expect.stringContaining("Unexpected error while running ban blocked identity 7 in chat -1001"),
       expect.any(Error)
     );
   });
 
   test("跨群封禁只启动固定小并发，完成项释放槽位后才取下一群", async () => {
     resolveBotAdminStatus.mockResolvedValueOnce(true);
-    for (let index: number = 0; index < BLOCK_COMMAND_CONCURRENCY + 3; index++) {
+    for (let index: number = 0; index < MANAGED_CHAT_BATCH_CONCURRENCY + 3; index++) {
       chatStates.set(-2000 - index, { botPermissions: botPermissions() });
     }
     let active: number = 0;
@@ -225,18 +225,18 @@ describe("/block 跨群封禁与黑名单", () => {
     const command: Promise<void> = handleBlockCommand(context());
     for (
       let step: number = 0;
-      step < 10 && banChatMember.mock.calls.length < BLOCK_COMMAND_CONCURRENCY;
+      step < 10 && banChatMember.mock.calls.length < MANAGED_CHAT_BATCH_CONCURRENCY;
       step++
     ) {
       await Promise.resolve();
     }
-    expect(banChatMember).toHaveBeenCalledTimes(BLOCK_COMMAND_CONCURRENCY);
-    expect(peak).toBe(BLOCK_COMMAND_CONCURRENCY);
+    expect(banChatMember).toHaveBeenCalledTimes(MANAGED_CHAT_BATCH_CONCURRENCY);
+    expect(peak).toBe(MANAGED_CHAT_BATCH_CONCURRENCY);
 
     release!();
     await command;
-    expect(banChatMember).toHaveBeenCalledTimes(BLOCK_COMMAND_CONCURRENCY + 4);
-    expect(peak).toBe(BLOCK_COMMAND_CONCURRENCY);
+    expect(banChatMember).toHaveBeenCalledTimes(MANAGED_CHAT_BATCH_CONCURRENCY + 4);
+    expect(peak).toBe(MANAGED_CHAT_BATCH_CONCURRENCY);
   });
 
   test("重复 /block 仍实时查询成员并重新封禁", async () => {

@@ -229,7 +229,17 @@ async function runBenchmark(
     : scenario.iterations;
   scenario.reset?.();
   scenario.prepare?.();
-  let checksum: number = await runOnce(scenario, warmupIterations);
+  const warmupResult: number | Promise<number> = scenario.run(warmupIterations);
+  /**
+   * 本场景是不是同步的。由第一次预热的返回值判定，供下面挑采样驱动。
+   *
+   * `Scenario.run` 的同步/异步是场景自己的固定属性（同一个闭包，分支不随迭代
+   * 次数变），因此判定一次即可，正式采样不再重复探测。
+   */
+  const scenarioIsSynchronous: boolean = typeof warmupResult === "number";
+  let checksum: number = typeof warmupResult === "number"
+    ? warmupResult
+    : await warmupResult;
   let tiersAfterWarmup: Record<string, JitTierCounts> = collectJitTiers(scenario);
   if (steadyProfile && scenario.profileRequiresOptimizedJit !== false) {
     let stableRounds: number = 0;
@@ -266,36 +276,71 @@ async function runBenchmark(
   let processPeakRssBytes: number = liveBefore.processPeakRssBytes;
   const samplesNsPerOp: number[] = [];
 
-  async function sampleScenario(): Promise<void> {
+  /** 一个样本的计时起点；`resetBeforeSample` 的相变准备不计入本样本耗时。 */
+  function beginSample(): number {
+    if (scenario.resetBeforeSample === true) {
+      scenario.reset?.();
+      scenario.prepare?.();
+    }
+    return Bun.nanoseconds();
+  }
+
+  /** 收下一个样本的耗时与本节拍的内存水位；两种驱动共用同一套记账。 */
+  function endSample(startedAt: number, result: number): void {
+    checksum += result;
+    samplesNsPerOp.push((Bun.nanoseconds() - startedAt) / sampleIterations);
+    const memory: LiveMemorySnapshot = snapshotLiveMemory();
+    peakSampledHeapUsed = Math.max(peakSampledHeapUsed, memory.heapUsed);
+    peakSampledRss = Math.max(peakSampledRss, memory.rss);
+    processPeakRssBytes = Math.max(
+      processPeakRssBytes,
+      memory.processPeakRssBytes
+    );
+  }
+
+  /**
+   * 同步场景的采样驱动。
+   *
+   * **分层统计按栈顶帧归属，因此 profile 的回调里不能出现只跑几次的 async 壳。**
+   * 那种壳永远进不了 DFG/FTL，用它驱动同步场景时本该记在生产帧上的样本会整段
+   * 落到壳自己身上，把「热路径 99% FTL」报成「99% LLInt」——同一份代码换成同步
+   * 驱动即为 99% FTL，两者逐样本耗时一致，可见差的只是归属而不是速度。
+   * 同步场景一律走本函数，异步场景没有这个选择，其分层读数只作参考。
+   */
+  function sampleScenarioSync(): void {
     for (let sample: number = 0; sample < SAMPLE_COUNT; sample += 1) {
-      if (scenario.resetBeforeSample === true) {
-        scenario.reset?.();
-        scenario.prepare?.();
+      const startedAt: number = beginSample();
+      const result: number | Promise<number> = scenario.run(sampleIterations);
+      if (typeof result !== "number") {
+        throw new Error(
+          `${name}: the synchronous sampling driver received an asynchronous scenario result.`
+        );
       }
-      const startedAt: number = Bun.nanoseconds();
-      checksum += await runOnce(scenario, sampleIterations);
-      samplesNsPerOp.push(
-        (Bun.nanoseconds() - startedAt) / sampleIterations
-      );
-      const memory: LiveMemorySnapshot = snapshotLiveMemory();
-      peakSampledHeapUsed = Math.max(peakSampledHeapUsed, memory.heapUsed);
-      peakSampledRss = Math.max(peakSampledRss, memory.rss);
-      processPeakRssBytes = Math.max(
-        processPeakRssBytes,
-        memory.processPeakRssBytes
-      );
+      endSample(startedAt, result);
+    }
+  }
+
+  /** 异步场景的采样驱动；编排壳的开销本来就是生产每条消息要付的那一份。 */
+  async function sampleScenarioAsync(): Promise<void> {
+    for (let sample: number = 0; sample < SAMPLE_COUNT; sample += 1) {
+      const startedAt: number = beginSample();
+      endSample(startedAt, await runOnce(scenario, sampleIterations));
     }
   }
 
   let samplingProfile: HotPathSamplingProfileSummary | null = null;
   if (steadyProfile) {
-    const sampled: HotPathSamplingProfileText = await profile(
-      async (): Promise<void> => sampleScenario(),
-      HOT_PATH_PROFILE_SAMPLE_INTERVAL_US
-    );
+    const sampled: HotPathSamplingProfileText = scenarioIsSynchronous
+      ? profile(sampleScenarioSync, HOT_PATH_PROFILE_SAMPLE_INTERVAL_US)
+      : await profile(
+        async (): Promise<void> => sampleScenarioAsync(),
+        HOT_PATH_PROFILE_SAMPLE_INTERVAL_US
+      );
     samplingProfile = summarizeHotPathSamplingProfile(sampled);
+  } else if (scenarioIsSynchronous) {
+    sampleScenarioSync();
   } else {
-    await sampleScenario();
+    await sampleScenarioAsync();
   }
   const tiersAfterSampling: Record<string, JitTierCounts> =
     collectJitTiers(scenario);

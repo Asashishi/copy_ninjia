@@ -12,7 +12,6 @@
 
 import { beforeEach, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
-import { readFileSync } from "node:fs";
 import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/agent";
 import {
   CHAT_INTERACTION_INSTRUCTION,
@@ -261,13 +260,13 @@ test("同一轮回复的多次工具往返复用同一个运行时状态区块�
   expect(sessionParams?.volatileBlocks?.[1]).toContain("当前实际时间：");
 });
 
-test("agent 身份权限边界与上下文协议由代码注入，不混入可编辑的人设文件", () => {
+test("agent 身份权限边界与上下文协议由代码注入，不混入可编辑的人设文件", async () => {
   expect(AI_CHAT_AGENT_ROLE_INSTRUCTION).toContain("只以普通群友身份参与闲聊");
   expect(AI_CHAT_AGENT_ROLE_INSTRUCTION).toContain("不具备直接调度、授予、撤销或修改任何权限的能力");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("[username:@用户名]");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("消息明确回复了你发出的某条消息");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("别把别人互相 at 错认成在叫你");
-  const persona: string = readFileSync(PERSONA_PATH, "utf8");
+  const persona: string = await Bun.file(PERSONA_PATH).text();
   expect(persona).not.toContain("## Agent 身份与权限边界");
   expect(persona).not.toContain("## 上下文与互动规则");
 });
