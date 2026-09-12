@@ -139,6 +139,12 @@ export type IdentityPersistenceReply = (
  * 落盘」的调用方（典型是 /block）不会因为无关领域失败而误报——那会把运维
  * 引向一个其实没坏的文件，而真正坏掉的领域按设计只有 console.error，
  * 永远进不了 logs/（见 workers/diskIOWorker.ts 的 flushAll）。
+ *
+ * 入群日志占两格，`joinLog` 是追写、`joinLogPurge` 是群 teardown 的整群删除。
+ * **必须分开**：追写那一格由每一条入群事实的 durable 屏障消费（见
+ * infra/joinLog.ts 的 recordJoinLog），把一个已停管群删不掉的文件算进去，等于让
+ * 那一个文件把所有群的入群 update 全部判成未确认、无限重投，而 joinLogFiles.ts
+ * 的分组失败语义本来就是为了不让一个群连坐其它群。
  */
 export type DiskIODomain =
   | "log"
@@ -153,7 +159,8 @@ export type DiskIODomain =
   | "blocklistRemovalOutbox"
   | "chatState"
   | "chatQa"
-  | "joinLog";
+  | "joinLog"
+  | "joinLogPurge";
 
 /**
  * 单领域 flush 的结局，附带**发起这一次请求所收到的**失败领域名。
@@ -275,7 +282,15 @@ export interface MidnightMaintenanceReply {
   readonly day: string;
 }
 
+/** 成员文件及目录项已 durable 删除；只结算相同删除编号的主线程责任。 */
+export interface WedMembersDeletedPersistedReply {
+  readonly type: "wedMembersDeletedPersisted";
+  readonly chatId: number;
+  readonly revision: number;
+}
+
 export type DiskIOReply =
+  | WedMembersDeletedPersistedReply
   | MidnightMaintenanceReply
   | DiskOperationBatchAcceptedReply
   | StorageWriteStalledReply

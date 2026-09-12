@@ -84,6 +84,7 @@ describe("application handler registration", () => {
       "batch_kick",
       "unblock",
       "ai_chat",
+      "clear_context",
       "ad_detect",
       "flood_control",
       "antiraid",

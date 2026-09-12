@@ -40,7 +40,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     delete state[field];
     return true;
   },
-  pruneDepartedChatState: (chatId: number): void => {
+  purgeChatStateExceptLockdown: (chatId: number): void => {
     calls.push(`prune:${chatId}`);
     const lockdown = states.get(chatId)?.lockdown;
     if (lockdown === undefined) states.delete(chatId);
@@ -57,6 +57,7 @@ const botAdminCache = await import("../../packages/cache/main/botAdmin");
 const chatTeardown = await import("../../packages/infra/chatTeardown");
 const chatTeardownRegistry = await import("../../packages/infra/chatTeardownRegistry");
 const { CHAT_TEARDOWN_ORDER } = await import("../../packages/consts/chatTeardown");
+const { purgesChatData } = await import("../../packages/libs/chatTeardown");
 
 function memberContext(newStatus: string, oldStatus: string = "administrator"): never {
   return {
@@ -81,6 +82,7 @@ beforeEach(() => {
   chatTeardownRegistry.registerChatTeardown("qa", (chatId: number): void => { calls.push(`qa:${chatId}`); });
   chatTeardownRegistry.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
   chatTeardownRegistry.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
+  chatTeardownRegistry.registerChatTeardown("joinLog", (chatId: number): void => { calls.push(`joinlog:${chatId}`); });
 });
 
 describe("chat runtime teardown", () => {
@@ -97,19 +99,28 @@ describe("chat runtime teardown", () => {
     expect(new Set(dispatched).size).toBe(CHAT_TEARDOWN_ORDER.length);
   });
 
-  test("teardown 原因原样传给 owner，用于区分显式清理与失权停管", async () => {
+  test("teardown 原因原样传给 owner，用于区分删数据与只停运行态", async () => {
     const reasons: string[] = [];
     chatTeardownRegistry.registerChatTeardown("antiRaid", (_chatId: number, reason): void => {
       reasons.push(reason);
     });
 
     await chatTeardown.teardownChatRuntime(-1001, "explicitDisable");
+    await chatTeardown.teardownChatRuntime(-1001, "departed");
     await chatTeardown.teardownChatRuntime(-1001, "lostAuthority");
 
-    expect(reasons).toEqual(["explicitDisable", "lostAuthority"]);
+    expect(reasons).toEqual(["explicitDisable", "departed", "lostAuthority"]);
   });
 
-  test("按 proxy、copy、gag、qa、AI、Anti-Raid 顺序拆除组合运行态", async () => {
+  // 各 owner 一律走这个判定，不在自己那里手写字面量比较；漏掉一个起因就等于
+  // 那个 owner 悄悄留下了一份本该删掉的群数据。
+  test("只有失权停管不删数据，另外两条起因都删", () => {
+    expect(purgesChatData("explicitDisable")).toBeTrue();
+    expect(purgesChatData("departed")).toBeTrue();
+    expect(purgesChatData("lostAuthority")).toBeFalse();
+  });
+
+  test("按 proxy、copy、gag、qa、AI、Anti-Raid、入群日志顺序拆除组合运行态", async () => {
     states.set(-1001, { isProxySendEnabled: true });
     await chatTeardown.teardownChatRuntime(-1001, "explicitDisable");
     expect(calls).toEqual([
@@ -119,6 +130,7 @@ describe("chat runtime teardown", () => {
       "qa:-1001",
       "ai:-1001:true",
       "anti:-1001",
+      "joinlog:-1001",
     ]);
     expect(states.get(-1001)?.isProxySendEnabled).toBeUndefined();
   });
@@ -142,6 +154,7 @@ describe("chat runtime teardown", () => {
       "gag:-1001",
       "qa:-1001",
       "anti:-1001",
+      "joinlog:-1001",
     ]);
     expect(states.get(-1001)?.isProxySendEnabled).toBeUndefined();
   });
@@ -160,13 +173,21 @@ describe("chat runtime teardown", () => {
       isProxySendEnabled: true,
       lockdown,
     });
+    const reasons: string[] = [];
+    chatTeardownRegistry.registerChatTeardown("wed", (_chatId: number, reason): void => {
+      reasons.push(reason);
+    });
+
     await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"));
+    // 离群按 departed 派发：人已经不在这个群里，本群的记忆、奖池、入群日志与
+    // 问答一并删除；被撤管理员那一路仍是 lostAuthority，一条数据都不动。
+    expect(reasons).toEqual(["departed"]);
     expect(states.get(-1001)).toEqual({ lockdown });
     // 第二条是权限快照被丢掉时顺手排的后台写：botPermissions 是持久字段，只清内存
     // 会让磁盘继续留着一份已经作废的快照（见 infra/botAdmin.ts 的
     // forgetBotChatPermissions）。这一路后面那次 persistChatState 会以更高 revision
     // 盖过它，多出来的这次写是 teardown 每群一次的固定成本，不进任何热路径。
-    expect(calls.slice(0, 10)).toEqual([
+    expect(calls.slice(0, 11)).toEqual([
       "clear:botPermissions",
       "save:bot permissions forgotten",
       "clear:isProxySendEnabled",
@@ -175,6 +196,7 @@ describe("chat runtime teardown", () => {
       "qa:-1001",
       "ai:-1001:true",
       "anti:-1001",
+      "joinlog:-1001",
       "prune:-1001",
       "save:chat -1001 state pruned after bot left/kicked",
     ]);
@@ -199,20 +221,26 @@ describe("chat runtime teardown", () => {
     expect(calls).toContain("save:chat -1001 state pruned after bot left/kicked");
   });
 
-  test("管理员降级调用同一 teardown，并记录完整非管理员权限快照", async () => {
+  test("管理员降级调用同一 teardown，按 lostAuthority 保留数据并记录完整非管理员权限快照", async () => {
+    const reasons: string[] = [];
+    chatTeardownRegistry.registerChatTeardown("wed", (_chatId: number, reason): void => {
+      reasons.push(reason);
+    });
     states.set(-1001, {
       isInitEnabled: true,
       botPermissions: botPermissions(),
       isProxySendEnabled: true,
     });
     await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
-    expect(calls.slice(0, 6)).toEqual([
+    expect(reasons).toEqual(["lostAuthority"]);
+    expect(calls.slice(0, 7)).toEqual([
       "clear:isProxySendEnabled",
       "copy:-1001",
       "gag:-1001",
       "qa:-1001",
       "ai:-1001:true",
       "anti:-1001",
+      "joinlog:-1001",
     ]);
     expect((states.get(-1001)?.botPermissions as { isAdministrator?: boolean })?.isAdministrator).toBe(false);
   });

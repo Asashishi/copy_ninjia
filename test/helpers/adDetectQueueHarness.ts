@@ -95,10 +95,12 @@ export function resetAdDetectQueueHarness(stopAdDetectQueue: () => void): void {
   errorLogs.length = 0;
   classifiedTexts.length = 0;
   classifiedFacts.length = 0;
-  classifyAdText.mockClear();
+  // 用 mockReset 而不是 mockClear：mockClear 只清调用记录，不会丢掉某条用例装上
+  // 却没来得及消费的 mockImplementationOnce，那份「一次性实现」会漏进下一条用例。
+  classifyAdText.mockReset();
   classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => ({ isAd: false, reason: "" }));
   disposeAdSender.mockClear();
-  warnReferencedAdSender.mockClear();
+  warnReferencedAdSender.mockReset();
   warningNow = 1_000;
   warnReferencedAdSender.mockImplementation(async (): Promise<TelegramWorkerTemporaryMessageResult> => ({
     messageId: 555,

@@ -8,13 +8,14 @@ import { getMoodConfig } from "../config/mood";
 import { getPersona } from "../config/persona";
 import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
-import { forgetAiMemoryRevisionCounter, nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
+import { beginAiMemoryTeardown, finishAiMemoryTeardown, nextAiMemoryRevision, requestAiMemoryDelete, settleAiMemoryTeardownWorker } from "./memoryMirror";
 import {
   aiChatWorkerState,
   aiChatInvalidateRequestCounter,
   aiChatInvalidateWaiters,
   aiMemoryFlushBarrier,
   aiMemoryRevisionCounters,
+  aiMemoryUsages,
   lastInitState,
   latestAiMemories,
   latestAiMemoryRevisions,
@@ -23,6 +24,7 @@ import {
   moodRequestWaiters,
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
+  pendingAiMemoryTeardowns,
 } from "../cache/main/aiChat";
 import {
   AI_CHAT_INVALIDATE_TIMEOUT_MS,
@@ -42,6 +44,7 @@ import type {
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import type {
   AiChatInvalidateWaiter,
+  AiMemoryTeardown,
   MoodRequestWaiter,
 } from "../types/aiChat/waiters";
 import type { SupervisedWorkerHandle } from "../infra/supervisedWorker";
@@ -117,6 +120,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
           }
           latestAiMemories.set(event.chatId, event.snapshot);
           latestAiMemoryRevisions.set(event.chatId, revision);
+          aiMemoryUsages.set(event.chatId, event.usage);
           // 字段一律发出，不用条件展开：这是上一跳（workers/aiChat/rollingMemory.ts
           // 的 memory 事件）的同一个字段再转投一手，两跳的产生频率完全相同。只修
           // 前一跳等于把形状发散往后挪了一格。落盘侧判的是 `=== true`，语义不变。
@@ -127,6 +131,15 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
             snapshot: event.snapshot,
             persistImmediately,
           });
+        }
+        break;
+      case "memoryUsages":
+        // hydrate 播种的占用量（见 workers/aiChat/rollingMemory.ts 的
+        // hydrateMemories）。正在等待 purge 确认的群一律跳过：那一份记忆已经
+        // 判了死刑，镜像不能被恢复出来的旧计数重新点亮。
+        for (const [chatId, usage] of event.usages) {
+          if (purgedAiMemoryChats.has(chatId)) continue;
+          aiMemoryUsages.set(chatId, usage);
         }
         break;
       case "memoryDeleted":
@@ -142,6 +155,11 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
         break;
       }
       case "chatInvalidated": {
+        const teardown: AiMemoryTeardown | undefined = pendingAiMemoryTeardowns.get(event.chatId);
+        if (teardown?.requestId === event.requestId) {
+          teardown.workerSettled = true;
+          finishAiMemoryTeardown(event.chatId);
+        }
         const waiter: AiChatInvalidateWaiter | undefined =
           aiChatInvalidateWaiters.get(event.requestId);
         if (!waiter) break;
@@ -173,6 +191,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodRequestWaiters("AI Worker crashed before acknowledging the mood request.");
     rejectAllAiChatInvalidateWaiters("AI Worker crashed before completing chat invalidation.");
+    settleAiMemoryTeardownWorker();
     // 新 Worker 重新走一遍身份注入与配置快照投递，FIFO 保证它先于任何
     // record/trigger 到达。重放的是**进程启动时那条 init 消息本身**，因此新
     // isolate 拿到的配置与旧实例逐字节相同——重建不会顺手加载磁盘上已经被改过
@@ -215,6 +234,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     for (const [chatId, revision] of postPurgeAiMemoryPersistRevisions) {
       if (revision === null) postPurgeAiMemoryPersistRevisions.delete(chatId);
     }
+    settleAiMemoryTeardownWorker();
   },
 });
 
@@ -353,6 +373,7 @@ export async function terminateAiChat(): Promise<void> {
   purgedAiMemoryChats.clear();
   postPurgeAiMemoryPersistRevisions.clear();
   await terminateAiChatWorker();
+  settleAiMemoryTeardownWorker();
 }
 
 /**
@@ -418,6 +439,8 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
   let workerInvalidated: Promise<void> | undefined;
   if (aiChatWorkerState.available) {
     const requestId: number = ++aiChatInvalidateRequestCounter.current;
+    const teardown: AiMemoryTeardown | undefined = pendingAiMemoryTeardowns.get(chatId);
+    if (teardown !== undefined) teardown.requestId = requestId;
     workerInvalidated = new Promise(
       (resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
         const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
@@ -460,7 +483,10 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
 }
 
 registerChatTeardown("aiChat", async (chatId: number): Promise<void> => {
-  await invalidateAiChat(chatId, true);
-  // revision 计数器不能按 LRU 淘汰，只在本群 teardown 且无在途状态后归零。
-  forgetAiMemoryRevisionCounter(chatId);
+  beginAiMemoryTeardown(chatId);
+  try {
+    await invalidateAiChat(chatId, true);
+  } finally {
+    finishAiMemoryTeardown(chatId);
+  }
 });

@@ -1,5 +1,24 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { TEST_DATA_ROOT } from "../preloadEnv";
 import type { TranslateLanguage } from "../../packages/types/translate";
+
+const root: string = mkdtempSync(join(TEST_DATA_ROOT, "translate-credentials-"));
+const authFilePath: string = join(root, "g-auth.json");
+afterAll((): void => { rmSync(root, { recursive: true, force: true }); });
+const credentialInput = {
+  client_email: "bot@example.iam.gserviceaccount.com",
+  private_key: generateKeyPairSync("rsa", {
+    modulusLength: 2_048,
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  }).privateKey,
+  project_id: "project", quota_project_id: "quota", universe_domain: "googleapis.com",
+  private_key_id: "key", client_id: "123", auth_uri: "https://accounts.google.com/o/oauth2/auth",
+};
+const clientOptions: unknown[] = [];
 
 const getProjectId = mock(async (): Promise<string> => "project-123");
 const translateText = mock(async (..._args: unknown[]) => [{ translations: [{ translatedText: "こんにちは" }] }]);
@@ -11,13 +30,13 @@ class TranslationServiceClient {
   getProjectId = getProjectId;
   translateText = translateText;
   close = close;
-  constructor(_options: unknown) { constructedClients++; }
+  constructor(options: unknown) { constructedClients++; clientOptions.push(options); }
 }
 
 mock.module("@google-cloud/translate", () => ({
   v3: { TranslationServiceClient },
 }));
-mock.module("../../packages/consts/paths", () => ({ GOOGLE_AUTH_FILE_PATH: "/tmp/test-g-auth.json" }));
+mock.module("../../packages/consts/paths", () => ({ GOOGLE_AUTH_FILE_PATH: authFilePath }));
 mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
@@ -34,12 +53,16 @@ const {
   quiesceTranslate,
   translateText: requestTranslation,
 } = await import("../../packages/translate/client");
-const { translateParentCache } = await import("../../packages/cache/main/translate");
+const { googleServiceAccountKey, translateParentCache } = await import("../../packages/cache/main/translate");
+const { validateGoogleServiceAccountKey } = await import("../../packages/config/googleAuth");
 
 beforeEach(async () => {
   await closeTranslate();
   translateParentCache.parent = null;
   constructedClients = 0;
+  clientOptions.length = 0;
+  await Bun.write(authFilePath, JSON.stringify(credentialInput));
+  googleServiceAccountKey.current = await validateGoogleServiceAccountKey();
   getProjectId.mockClear();
   translateText.mockClear();
   close.mockClear();
@@ -51,6 +74,27 @@ beforeEach(async () => {
 });
 
 describe("Google Translation 适配层", () => {
+  test("预检后改写与删除文件不影响鉴权，close 后重开复用完整凭据快照", async () => {
+    const snapshot = googleServiceAccountKey.current;
+    await Bun.write(authFilePath, "invalid");
+    await expect(requestTranslation("首次", "ja")).resolves.toBe("こんにちは");
+    expect(clientOptions[0]).toEqual({ credentials: credentialInput });
+    expect((clientOptions[0] as { credentials: unknown }).credentials).toBe(snapshot);
+    await closeTranslate();
+    await Bun.file(authFilePath).delete();
+    initTranslate();
+    await expect(requestTranslation("重开", "ja")).resolves.toBe("こんにちは");
+    expect(clientOptions[1]).toEqual({ credentials: credentialInput });
+    expect((clientOptions[1] as { credentials: unknown }).credentials).toBe(snapshot);
+  });
+
+  test("启动凭据快照缺省时不创建 SDK 客户端", async () => {
+    googleServiceAccountKey.current = null;
+    await expect(requestTranslation("拒绝", "ja")).resolves.toBeNull();
+    expect(constructedClients).toBe(0);
+    expect(getProjectId).not.toHaveBeenCalled();
+  });
+
   test.each(["uk", "ru"] as const)("%s 使用对应语言代码和默认翻译模型", async (language: TranslateLanguage) => {
     await expect(requestTranslation("你好", language)).resolves.toBe("こんにちは");
     expect(translateText).toHaveBeenCalledTimes(1);
@@ -127,7 +171,7 @@ describe("Google Translation 适配层", () => {
 
     release([{ translations: [{ translatedText: "完了" }] }]);
     await expect(translating).resolves.toBe("完了");
-    await expect(drainTranslate(20)).resolves.toBe("flushed");
+    await expect(drainTranslate(1_000)).resolves.toBe("flushed");
   });
 
   test("getProjectId 在 close 后迟到不会回填 parent 或重建客户端", async () => {

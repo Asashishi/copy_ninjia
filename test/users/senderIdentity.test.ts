@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "grammy/types";
-import { senderUsernameCache, userCache } from "../../packages/cache/main/senderIdentity";
+import { identityById, senderUsernameCache, userCache } from "../../packages/cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../../packages/consts/senderIdentity";
 import type { CachedUser } from "../../packages/types/chatState";
 import {
@@ -35,7 +35,26 @@ function senderChatMessage(id: number, username?: string): Message {
 beforeEach(() => {
   userCache.clear();
   senderUsernameCache.clear();
+  identityById.clear();
 });
+
+/**
+ * identityById 必须恒等于「按 alias 回查 userCache」的结果：cacheSender 的稳态
+ * 判定直接读它，任一条写入路径漏同步都会让每条群消息读到作废身份。
+ */
+function expectIdentityIndexInLockstep(): void {
+  // 逐条 expect 会按 USER_CACHE_MAX 把公开的 expect() 计数灌成几万次，指标就不再
+  // 反映测试广度；这里先收集不一致项，再用固定两次断言报出来。
+  const mismatches: string[] = [];
+  for (const [id, username] of senderUsernameCache) {
+    if (identityById.get(id) !== userCache.get(username)) mismatches.push(`alias:${id}`);
+  }
+  for (const [id, identity] of identityById) {
+    if (identity.id !== id) mismatches.push(`self:${id}`);
+  }
+  expect(mismatches).toEqual([]);
+  expect(identityById.size).toBe(senderUsernameCache.size);
+}
 
 describe("sender identity cache", () => {
   test("回复当前群组皮套消息时保留群身份，供 copy 复制头像并复读", () => {
@@ -191,21 +210,57 @@ describe("sender identity cache", () => {
     expect(senderUsernameCache.has(7)).toBe(false);
   });
 
-  test("达到容量上限后淘汰正向条目及对应反向索引", () => {
+  test("达到容量上限后淘汰正向条目及两份按 id 的索引", () => {
     for (let index = 0; index < USER_CACHE_MAX; index++) {
       seedSenderCache({ id: 10_000 + index, username: `user_${index}` });
     }
+    expectIdentityIndexInLockstep();
 
     seedSenderCache({ id: 99_999, username: "overflow_user" });
 
     expect(userCache.size).toBe(USER_CACHE_MAX);
     expect(senderUsernameCache.size).toBe(USER_CACHE_MAX);
+    expect(identityById.size).toBe(USER_CACHE_MAX);
     expect(resolveUsernameTarget("user_0")).toBeUndefined();
     expect(senderUsernameCache.has(10_000)).toBe(false);
+    expect(identityById.has(10_000)).toBe(false);
     expect(resolveUsernameTarget("overflow_user")?.id).toBe(99_999);
+    expect(identityById.get(99_999)).toBe(userCache.get("overflow_user"));
     for (const [username, identity] of userCache) {
       expect(senderUsernameCache.get(identity.id)).toBe(username);
     }
+    expectIdentityIndexInLockstep();
+  });
+
+  test("改名、去名、换绑与容量淘汰后 identityById 与另外两张表始终同步", () => {
+    // 新增：三张表一起建立。
+    cacheSender(userMessage(1, "first_name_alias"));
+    expect(identityById.get(1)).toBe(userCache.get("first_name_alias"));
+    expectIdentityIndexInLockstep();
+
+    // 改名：旧 alias 连同索引一起换成新的那份对象。
+    cacheSender(userMessage(1, "second_name_alias"));
+    expect(identityById.get(1)).toBe(userCache.get("second_name_alias"));
+    expect(identityById.get(1)?.username).toBe("second_name_alias");
+    expectIdentityIndexInLockstep();
+
+    // 去名：这个 id 不再有缓存身份，索引必须一起摘掉，不能留着旧对象。
+    cacheSender(userMessage(1));
+    expect(identityById.has(1)).toBe(false);
+    expectIdentityIndexInLockstep();
+
+    // username 换绑到另一个 sender：旧 sender 的索引条目必须同步撤销。
+    cacheSender(userMessage(2, "shared_alias"));
+    expect(identityById.get(2)).toBe(userCache.get("shared_alias"));
+    cacheSender(userMessage(3, "shared_alias"));
+    expect(identityById.has(2)).toBe(false);
+    expect(identityById.get(3)).toBe(userCache.get("shared_alias"));
+    expectIdentityIndexInLockstep();
+
+    // 频道形态走同一条写入路径，索引跟着换形状。
+    cacheSender(senderChatMessage(-1009, "channel_alias"));
+    expect(identityById.get(-1009)).toMatchObject({ isChannel: true });
+    expectIdentityIndexInLockstep();
   });
 
   test("解析拒绝并清理缺少匹配反向索引的已知不一致 alias", () => {

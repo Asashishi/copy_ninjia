@@ -14,14 +14,14 @@
  * `<dir>/<day>.json` 命名约定上的薄封装，供按天滚动的三个领域使用。
  */
 
-import { closeSync, existsSync, fsyncSync, openSync, statSync, writeSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { AppendOnlyFileState, DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { readUtf8TextInput } from "../../libs/inputValidation";
 import { isPlainRecord } from "../../libs/record";
-import { assertFileReadableWritable } from "../../libs/fileAccess";
+import { inspectOptionalFile } from "../../libs/fileAccess";
 
 const UTF8_ENCODER: TextEncoder = new TextEncoder();
 
@@ -117,10 +117,9 @@ export async function openAppendOnlyFile(
   repair: boolean = false
 ): Promise<AppendOnlyFileState> {
   const state: AppendOnlyFileState = { size: 0, empty: true };
-  if (!await Bun.file(path).exists()) return state;
+  if (!inspectOptionalFile(path)) return state;
   // mode 只用于首次创建。已有文件保留部署方权限，并在接管阶段显式确认
   // 当前进程可读写；不能靠目录 rename 权限绕过文件本身的只读策略。
-  assertFileReadableWritable(path);
   const content: string = await readUtf8TextInput(path);
   let parsed: unknown;
   try {
@@ -181,8 +180,7 @@ export function openValidatedAppendOnlyFile({
   empty,
 }: OpenValidatedAppendOnlyFileOptions): AppendOnlyFileState {
   const state: AppendOnlyFileState = { size: 0, empty: true };
-  if (!existsSync(path)) return state;
-  assertFileReadableWritable(path);
+  if (!inspectOptionalFile(path)) return state;
   if (empty) return state;
   if (!content.endsWith("\n}")) {
     throw new AppendOnlyFileFormatError(

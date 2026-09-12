@@ -19,6 +19,8 @@ function completeOwnerOrder<T extends readonly ChatRuntimeOwner[]>(
  * 顺序是承重的：全部回调必须在第一个 `await` 之前同步发出，让跨群 copy 槽、
  * gag 会话、问答表单与两条 Worker 闸门一起关掉，随后才等待需要 durable 回执的
  * 异步 owner。`qa` 排在 `gag` 之后：两者都只做进程内状态收尾，不产生远端等待。
+ * `joinLog` 排在最后：它只有一次投递加一次领域 flush，没有任何进程内闸门要抢在
+ * 别的 owner 之前关掉。
  *
  * 新增 owner 时把它加进 `ChatRuntimeOwner` 就必须同时加到这里，否则编译不过。
  * 所属模块：infra/chatTeardown.ts 的 teardownChatRuntime。
@@ -31,4 +33,5 @@ export const CHAT_TEARDOWN_ORDER: readonly ChatRuntimeOwner[] = completeOwnerOrd
   "wed",
   "aiChat",
   "antiRaid",
+  "joinLog",
 ] as const);

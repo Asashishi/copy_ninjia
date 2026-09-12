@@ -53,6 +53,7 @@ function statusSnapshot(): BotStatusSnapshot {
     telegramCapacity: 81_920,
     activeGagSessions: 3,
     activeTranslateSessions: 2,
+    aiContextUsage: { bufferedCount: 128, summaryCount: 3 },
     processStatus: {
       uptimeSeconds: 183_845,
       averageCpuPercent: 12.345,
@@ -75,7 +76,12 @@ describe("/bot_status", () => {
     expect(text).toContain("歌曲生成：未配置");
     expect(text).toContain("广告检测：已配置 · openai / ad-model");
     expect(text).toContain("Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/81920");
-    expect(text).toContain("正在被本天才调教的杂鱼：3/5");
+    // 三行同属「本群此刻的占用」一组：逐条带项目符号，上下文容量排在最前。
+    expect(text).toContain(
+      "• 猫脑子利用率：47.86%\n" +
+      "• 正在被本天才调教的杂鱼：3/5\n" +
+      "• 本群正赖着本天才翻译的杂鱼：2/5 人♡"
+    );
     expect(text).toContain("本机进程，本天才当然精神得很♡：");
     expect(text).toContain("Bot 运行时长：2 天 03:04:05");
     expect(text).toContain("CPU：12.35% (6 Core)");
@@ -85,7 +91,10 @@ describe("/bot_status", () => {
     expect(text).toContain("• 入群验证与防冲群");
     expect(text).not.toContain("secret-");
     expect(text).not.toContain("example/v1");
-    expect(text).toContain("本群正赖着本天才翻译的杂鱼：2/5 人♡");
+    // 上下文容量 = 0.7 × 128/256 + 0.3 × 3/7 = 47.86%；只给百分比，两段记忆的
+    // 原始条数属于记忆分层的内部机制，不对群友外露。
+    expect(text).not.toContain("滑动热记忆");
+    expect(text).not.toContain("冷记忆摘要");
   });
 
   test("部署能力不可用和群功能全关时给出明确状态", () => {
@@ -98,10 +107,13 @@ describe("/bot_status", () => {
       chatState: {},
       telegramActive: 0,
       telegramPending: 0,
+      aiContextUsage: undefined,
     }).text;
 
     expect(text).toContain("AI 对话能力：不可用（部署配置未就绪）");
     expect(text).toContain("广告检测：不可用（部署配置未就绪）");
+    // 镜像没有条目就是「此刻没有可展示的上下文」，按 0 展示而不是沿用旧值。
+    expect(text).toContain("• 猫脑子利用率：0.00%");
     expect(text).toEndWith("本群已开启，连这个都记不住吗，笨蛋♡：\n• 无");
   });
 

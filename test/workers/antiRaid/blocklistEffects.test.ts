@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { waitUntil } from "../../helpers/waitUntil";
 import type { BlockedMembersRemovedEvent } from "../../../packages/types/antiRaid";
 
 const probeChatMembership = mock(async (..._args: unknown[]): Promise<boolean | undefined> => true);
@@ -53,8 +54,7 @@ const SETTLE_TIMEOUT_MS: number = 2_000;
 
 /** 轮询等到条件成立；到点仍不成立就返回，让后面的断言给出真正的失败信息。 */
 async function until(ready: () => boolean): Promise<void> {
-  const deadline: number = Date.now() + SETTLE_TIMEOUT_MS;
-  while (!ready() && Date.now() < deadline) await Bun.sleep(1);
+  await waitUntil(ready, SETTLE_TIMEOUT_MS);
 }
 
 /**

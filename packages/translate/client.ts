@@ -2,15 +2,14 @@ import { TRANSLATE_LANGUAGE_CODES, TRANSLATE_REGIONAL_MODEL } from "../consts/tr
 import type { TranslateLanguage } from "../types/translate";
 import { logger } from "../infra/logger";
 import type { v3 as GoogleTranslate, protos } from "@google-cloud/translate";
-import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
-import { translateParentCache, translateRuntime } from "../cache/main/translate";
+import { googleServiceAccountKey, translateParentCache, translateRuntime } from "../cache/main/translate";
+import type { GoogleServiceAccountKey } from "../types/config";
 import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
 import { withTimeout } from "../libs/withTimeout";
 import { settleWithinBudget } from "../libs/inflight";
 import type { FlushResult } from "../types/lifecycle";
 
-// Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
-// 密钥完成鉴权，供 /translate 的按群翻译会话使用。
+// Google Cloud Translation - Advanced (v3) 客户端使用启动时发布的凭据快照。
 
 /**
  * 动态 import 回来的 SDK 里，本模块唯一用到的那部分。
@@ -21,8 +20,8 @@ import type { FlushResult } from "../types/lifecycle";
  * 一旦漂移就在编译期暴露。
  */
 interface TranslateClientParams {
-  /** 服务账号密钥文件路径；见 consts/paths.ts 的 GOOGLE_AUTH_FILE_PATH。 */
-  keyFilename: string;
+  /** 启动总闸严格解析的完整服务账号快照。 */
+  credentials: GoogleServiceAccountKey;
   /**
    * SDK 真实的 `ClientOptions`（来自传递依赖 google-gax）带索引签名，少了它
    * 本接口就不满足构造器形参的逆变要求。不从 google-gax 直接引类型：那是传递
@@ -69,11 +68,13 @@ function ensureTranslateGeneration(expectedGeneration: number): void {
  */
 async function getTranslateClient(expectedGeneration: number): Promise<GoogleTranslate.TranslationServiceClient> {
   if (translateRuntime.client !== null) return translateRuntime.client;
+  const credentials: GoogleServiceAccountKey | null = googleServiceAccountKey.current;
+  if (credentials === null) throw new Error("Google Translation credentials were not configured at startup");
   const { v3 }: { v3: TranslateSdkV3 } = await import("@google-cloud/translate");
   ensureTranslateGeneration(expectedGeneration);
   // 并发首次翻译可能都走到这里；`??=` 保证只有先到的那个实例被留下。
   translateRuntime.client ??= new v3.TranslationServiceClient({
-    keyFilename: GOOGLE_AUTH_FILE_PATH,
+    credentials,
   });
   return translateRuntime.client;
 }

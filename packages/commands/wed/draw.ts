@@ -13,6 +13,9 @@ import type { WedCandidate, WedChat, WedSession } from "../../types/wed";
  * commands/wed/members.ts 与 commands/wed/memberReview.ts。
  * 只有确认没有可用头像才消耗 WED_DRAW_ATTEMPTS；成员查询或头像查询没跑完
  * 不占配额，累计 WED_DRAW_TRANSIENT_LIMIT 次即放弃本轮。
+ * signal 是**抽取阶段**自己的预算，与投递阶段各算各的，见 commands/wed.ts 的
+ * operationSignal。预算耗尽、群 teardown 和停机取消同样返回 undefined，调用方按
+ * signal 的取消来源决定回执还是静默。
  */
 export async function drawWedCandidate(
   session: WedSession,

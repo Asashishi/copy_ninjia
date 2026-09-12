@@ -28,11 +28,11 @@
 | `bun run check:coverage` | Measure coverage now and verify the metrics in the three README badges/alts, the three copies of this page, and both coverage images match the real reading; excluded from `check` because it runs the whole suite again |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
-| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 44; other scenarios run through the full-suite manifest or targeted commands); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
+| `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 51; other scenarios run through the full-suite manifest or targeted commands); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
 | `bun run perf:join-log` | Run the independent-process comparison of the join-log capacity, snapshot, and append-accounting paths at the 250,000-record limit |
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
 | `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
-| `bun run perf:review` | Targeted review: normal/profile runs of 12 hot paths, two complete command chains, and real Disk I/O Worker pressure/rebuilds; three independent rounds per item, selectable with `--hot-paths` / `--chains` / `--worker` |
+| `bun run perf:review` | Targeted review: 12 existing hot paths, 7 AI reply/payload scenarios, two complete command chains, and real Disk I/O Worker pressure; three independent rounds per item, selected with `--hot-paths` / `--ai` / `--chains` / `--worker` |
 | `bun run release:check` | Run frozen-lockfile install + check + coverage-metric verification + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
 
@@ -48,7 +48,9 @@
 
 ### Dependency Release-Age Gate
 
-Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The Bun runtime is pinned to 1.4.2 and `@types/bun` to 1.4.0; the version gate requires the same major and minor versions, while `packageManager` and `install.sh` jointly pin the runtime patch version.
+Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The Bun runtime is pinned to 1.4.2 and `@types/bun` to 1.4.1; both use the same major and minor versions, while `packageManager` and `install.sh` jointly pin the runtime patch version.
+
+The TypeScript dependency range is `~6.0.3` (6.0.x), with `6.0.3` recorded in the lockfile. The current `typescript-eslint` package declares a TypeScript compatibility range of `>=4.8.4 <6.1.0`.
 
 ### Bun Runtime Boundaries
 
@@ -60,7 +62,7 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **3865 tests / 363 files / 157287 `expect()` calls**; full-source **function coverage 97.54% / line coverage 97.7%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **4076 tests / 367 files / 155855 `expect()` calls**; full-source **function coverage 97.64% / line coverage 97.78%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -83,7 +85,7 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 ## Fault-Injection Suite
 
-`bun run test:fault-injection` concentrates on crash recovery and persistence boundaries: lifecycle failure, update-runner acknowledgement boundaries, StateStore and cleanup, AI/Anti-Raid Worker mirrors and lifecycles, Disk I/O append/snapshot/log files, flush barriers, and more. See the scripts in [`package.json`](../../package.json) for the complete list. `check:conventions` guards that manifest: any test file importing the Disk I/O Worker, Anti-Raid mirror, blocklist sweep, or lifecycle harness fails until it is listed. This suite must pass whenever a changed path is covered by [04 Authoritative Runtime Invariants](04-invariants.md).
+`bun run test:fault-injection` covers application/Worker lifecycles, lockdown restoration, reply capacity and cancellation, credential snapshots, and Disk I/O inspection, atomic writes, and recovery failures. The full manifest is the script in [`package.json`](../../package.json). `check:conventions` detects missing tests through resolved references to registered harnesses and production recovery/lifecycle boundaries, including static value imports, dynamic imports, and value re-exports. Type-only references are excluded; empty declarations retain their side effects, and unrelated same-name modules do not match. Changes to persistence, shutdown, or Worker lifecycles in [04 Runtime invariants](04-invariants.md) must pass this suite.
 
 `/wed` interaction regressions cover the 1,024-entry LRU, command and button recency, cancellation of queued and active interactions on eviction, late-result cleanup, continued cleanup after individual deletion failures, isolation from update cancellation, and shutdown draining. The authoritative member table separately verifies rejection at 25 groups. Persistence regressions cover per-group set identity, the 150,000-member cap, departure capacity reuse, dirty TTL/count thresholds, silent no-ops, delivery failures, Worker recovery watermarks, shutdown flush, and invalid files refusing startup before networking while retaining their bytes. `test/app/registerHandlersDispatch.test.ts` also verifies that rejected initialization gates still remove departed IDs without admitting business handlers. Performance checks reuse `wed-member-hit`, `wed-member-growth`, `wed-member-churn`, `wed-member-chat-switch`, and `registered-middleware`; `wed-member-churn` checks that full sets reject new IDs and retain existing members.
 
@@ -119,15 +121,19 @@ The write-through scenario executes 65,536 operations over a 4,096-key working s
 
 `bun run perf:review` reuses the full suite’s isolated roots, configuration fixtures, process runner, and canned outbound calls. It emits JSON and removes each run’s data root. `--hot-paths` covers sender identity, message windows, permission reads, AI activity, verification snapshots with and without clone, empty/tiny/1 KiB/1 MiB/16 MiB response reads, and registered middleware: 12 scenarios, each with three normal and three profile rounds. Complete asynchronous reads use explicit warmup counts and report actual JIT tiers; other scenarios retain optimized-tier stabilization checks.
 
+`--ai` measures admission, normal delivery, capacity/reopening pressure, and Base64 payloads at 1 MiB, 8 MiB, with an invalid head, and with an invalid tail. Each of the seven scenarios runs three independent timing and three profile processes and calls production functions. Delivery scenarios assert per-chat/global capacity, real completion, and cleanup, and require stable production JIT probes. One pressure iteration includes 128 live slots and capacity-rejection checks; its latency describes the whole batch. Base64 keeps encoded/decoded limits, the standard alphabet, strict tail-bit checks, a non-g/y regular expression, and one decode. Fixed input and warmup measure local work, excluding real model/Telegram networks and a complete production-payload memory budget. No sampled GC frames does not imply no GC.
+
 `--chains` runs enabled `ad-detect-command` and `ai-reply-command` flows and asserts Telegram canned-call counts and completed disposal. `--worker` sends 400 batches of 128 messages through a real Disk I/O Worker per round, waiting for final-revision ACKs after every batch. Each round performs two graceful Worker shutdown/rebuild cycles and verifies recovered values for 25 chats. This includes cloning, transactions, and disk waits, and reports throughput, latency, retained heap, and RSS; it does not replace fault injection. Each mode uses three rounds without changing the full-suite or default ten-scenario hard-gate thresholds.
 
 `sender-mixed-identity` alternates user and channel identities to observe steady behavior and JIT reoptimization. Its sender count differs from the single-user scenario, so latency differences do not isolate shape-mixing cost. Benchmark user IDs cover values beyond int32; smaller IDs remain valid production inputs.
 
 The registry includes `wed-member-hit`, `wed-member-growth`, `wed-member-churn`, `wed-member-chat-switch`, `registered-middleware`, and `storage-sqlite-flush`. The first four cover member-set hits, filling, rejection at capacity, and chat switching. The middleware scenario runs the actual registered chain and asserts activity. The SQLite scenario submits 128 deletions against an empty database, primarily measuring transaction scheduling rather than disk throughput.
 
-Run `bun scripts/perf/isolatedHotPath.ts <scenario>` and add `--profile` for separate sampling. This entry reuses `gateFixture.ts` to create isolated configuration and data roots for three independent child processes, then removes the run directory. Benchmark canned replies own outbound calls. Fix Bun and inputs, warm up, and inspect retained and profile outputs separately. Insufficient samples cannot establish absence of GC.
+Run `bun run perf:isolated-hot-path <scenario>` and add `--profile` for separate sampling. This entry reuses `gateFixture.ts` to create isolated configuration and data roots for three independent child processes, then removes the run directory. Benchmark canned replies own outbound calls. Fix Bun and inputs, warm up, and inspect retained and profile outputs separately. Insufficient samples cannot establish absence of GC.
 
-`bun scripts/perf/diskTransport.ts` runs three independent mock processes to validate single-batch ACKs, normal draining, and capacity rejection when ACKs stop, reporting latency, heap, GC, and JIT. It reuses one immutable payload and measures queue/acknowledgement overhead; Worker cloning, distinct real payload sizes, and disk waits are outside this measurement.
+`luck-tier-table` supplies fixed rolls directly to production `drawLuckTier`, checksums the returned tiers, and registers the function as a JIT probe. `gag-speak-counter` reads its session count from `GAG_SESSION_MAX` and calls the production speech counter. When these boundaries change, run both scenarios in default and `--profile` modes to check checksums, cleanup, retained heap, and GC/JIT. Neither scenario is included in the default ten-scenario gate.
+
+`bun run perf:disk-transport` runs three independent mock processes to validate single-batch ACKs, normal draining, and capacity rejection when ACKs stop, reporting latency, heap, GC, and JIT. It reuses one immutable payload and measures queue/acknowledgement overhead; Worker cloning, distinct real payload sizes, and disk waits are outside this measurement.
 
 ## Full Performance Benchmark
 

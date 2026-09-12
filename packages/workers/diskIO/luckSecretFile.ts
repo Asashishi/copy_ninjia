@@ -5,7 +5,7 @@ import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
-import { assertFileReadableWritable } from "../../libs/fileAccess";
+import { inspectOptionalFile } from "../../libs/fileAccess";
 import { isCanonicalDateKey } from "../../libs/time";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 
@@ -108,11 +108,10 @@ export async function inspectLuckReceiptSecret(
   if (!Number.isSafeInteger(confirmedResultCount) || confirmedResultCount < 0) {
     throw new Error(`Invalid confirmed luck result count for ${day}: ${confirmedResultCount}`);
   }
-  if (!await Bun.file(path).exists()) {
+  if (!inspectOptionalFile(path)) {
     assertSecretCanBeCreated(confirmedResultCount, path);
     return { day, path, secret: null };
   }
-  assertFileReadableWritable(path);
 
   let secret: LuckReceiptSecret;
   try {

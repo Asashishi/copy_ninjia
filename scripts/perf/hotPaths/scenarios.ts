@@ -1,5 +1,6 @@
 import type { Message } from "grammy/types";
 import {
+  identityById,
   senderUsernameCache,
   userCache,
 } from "../../../packages/cache/main/senderIdentity";
@@ -26,7 +27,8 @@ import {
   claimSampleContextParts,
 } from "../../../packages/workers/antiRaid/adDetect/bundle";
 import { redactSecretsInText } from "../../../packages/libs/redaction";
-import { LUCK_TIERS } from "../../../packages/consts/luckChallenge";
+import { drawLuckTier } from "../../../packages/commands/luckChallenge/draw";
+import { GAG_SESSION_MAX } from "../../../packages/consts/gag";
 import {
   COMPACT_BATCH_SIZE,
   VERBATIM_CONTEXT_MAX,
@@ -66,6 +68,7 @@ export function senderScenario(username?: string): Scenario {
     reset: (): void => {
       userCache.clear();
       senderUsernameCache.clear();
+      identityById.clear();
     },
     probes: { cacheSender },
   };
@@ -106,6 +109,7 @@ export function senderMixedIdentityScenario(): Scenario {
     reset: (): void => {
       userCache.clear();
       senderUsernameCache.clear();
+      identityById.clear();
     },
     probes: { cacheSender },
   };
@@ -344,16 +348,7 @@ export function redactCleanLogScenario(): Scenario {
   };
 }
 
-/**
- * 共享常量表的读取代价，以 LUCK_TIERS 为样本。
- *
- * 循环体逐字照抄 commands/luckChallenge/draw.ts 的 drawLuckTier（那个函数没有
- * 导出，但它就是这张表在生产上唯一的读法：按权重累加线性扫），读的也是生产
- * 那一份常量本体，不另造 fixture。
- *
- * 存在的理由是给「常量表要不要 Object.freeze」这个决定留一把尺子：JSC 对冻结
- * 数组的下标读取和 for-of 都没有快路径，量级差一个数量级。
- */
+/** 固定 roll 输入直接调用生产抽签查表函数，校验和与 JIT 探针均覆盖该入口。 */
 export function luckTierTableScenario(): Scenario {
   return {
     iterations: 1_000_000,
@@ -361,24 +356,21 @@ export function luckTierTableScenario(): Scenario {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
         const roll: number = index % 100;
-        let cumulative: number = 0;
-        for (const tier of LUCK_TIERS) {
-          cumulative += tier.weight;
-          if (roll < cumulative) { checksum += tier.label.length; break; }
-        }
+        checksum += drawLuckTier(roll).label.length;
       }
       return checksum;
     },
+    probes: { drawLuckTier },
   };
 }
 
 /**
- * gag 活动群的每消息入口计数：五条会话复刻全局容量上限，每 15 次才允许分配
+ * gag 活动群的每消息入口计数：会话数量读取生产容量上限，每 15 次才允许分配
  * due 数组；调用方在真实换新成功后同样把对应计数归零。
  */
 export function gagSpeakCounterScenario(): Scenario {
   const sessions: GagSession[] = [];
-  for (let index: number = 0; index < 5; index++) {
+  for (let index: number = 0; index < GAG_SESSION_MAX; index++) {
     const targetId: number = 100 + index;
     const session: GagSession = {
       chatId: BENCHMARK_CHAT_ID,

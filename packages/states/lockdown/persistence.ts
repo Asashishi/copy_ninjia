@@ -19,8 +19,7 @@ export function handleStatePersisted(
     if (
       state.stage !== "prepared" ||
       state.intentId !== event.intentId ||
-      // 同一份 intent 的落盘回执可能到达多次（公告结果落盘、主线程对账
-      // 重跑），但 commitApply 是一次真实的 setChatPermissions。
+      // 公告落盘与主线程对账可重复确认同一 intent，提交仅派发一次。
       state.commitStarted
     ) {
       return { next: state, effects: [] };
@@ -45,7 +44,7 @@ export function handleStatePersisted(
 
 /**
  * 本轮 intent 确定写不进 SQLite：一律 fail-safe 打开。
- * 占位阶段直接撤销，已经落地的限制立刻发起恢复，不再等落盘回执。
+ * 提交未派发时撤销占位；可能在途或已生效的限制立刻恢复，不再等落盘回执。
  */
 export function handlePersistFailed(
   state: LockdownState | undefined,
@@ -56,17 +55,18 @@ export function handlePersistFailed(
     if (state.stage !== "prepared" || state.intentId !== event.intentId) {
       return { next: state, effects: [] };
     }
-    // intent 写不进 SQLite，而 Telegram 还没被改过：这一轮当作从未发生。
-    return {
-      next: undefined,
-      effects: [
-        { kind: "reportUnlock" },
-        ...announcementCleanupEffects(state),
-        suppressRetrigger("persistFailed"),
-      ],
-    };
+    if (!state.commitStarted) {
+      return {
+        next: undefined,
+        effects: [
+          { kind: "reportUnlock" },
+          ...announcementCleanupEffects(state),
+          suppressRetrigger("persistFailed"),
+        ],
+      };
+    }
   }
-  if (state.intentId !== event.intentId) return { next: state, effects: [] };
+  if (!("intentId" in state) || state.intentId !== event.intentId) return { next: state, effects: [] };
   if (state.kind === "restoring") {
     // 本来就等着落盘回执去恢复：回执永远不会来了，直接恢复。
     if (!state.restoreAfterPersist) return { next: state, effects: [] };
@@ -78,8 +78,7 @@ export function handlePersistFailed(
       ],
     };
   }
-  // ACTIVE / RECONCILING：限制已经落在群上，却再也无法跨进程恢复——
-  // 立刻恢复原权限，绝不留一条没人能解除的限制（见 docs/cn/04-invariants.md）。
+  // 已派发的提交可能在途；恢复沿同一 API 串行链排在提交后面。
   return {
     next: {
       kind: "restoring",
@@ -89,6 +88,7 @@ export function handlePersistFailed(
       ...announcementOf(state),
     },
     effects: [
+      { kind: "persistState" },
       { kind: "beginRestore", originalPermissions: state.originalPermissions },
       suppressRetrigger("persistFailed"),
     ],

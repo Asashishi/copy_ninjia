@@ -1,6 +1,7 @@
 /** Anti-Raid 镜像的落盘屏障、lockdown 持久化排队与放弃自愈后的恢复。 */
 
 import { describe, expect, test } from "bun:test";
+import { waitUntil } from "../../helpers/waitUntil";
 
 import type {
   AntiRaidWorkerEvent,
@@ -92,7 +93,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
     ]);
   });
 
-  test("intent 落不了盘 → 清掉内存与磁盘记录，并让 Worker fail-safe 打开", async () => {
+  test("intent 落不了盘时保留恢复记录，Worker 确认解锁后才删除", async () => {
     workerPosts.length = 0;
     saveState.mockClear();
     saveStateInBackground.mockClear();
@@ -112,8 +113,8 @@ describe("Anti-Raid mirror persistence barriers", () => {
     await Bun.sleep(0);
     await Bun.sleep(0);
 
-    expect(chatStates.get(-2006)?.lockdown).toBeUndefined();
-    expect(saveStateInBackground).toHaveBeenCalledWith("anti-raid lockdown persist failure");
+    expect(chatStates.get(-2006)?.lockdown?.intentId).toBe(92);
+    expect(saveStateInBackground).not.toHaveBeenCalled();
     expect(workerPosts.filter((message) => message.type === "lockdownPersistFailed")).toEqual([
       { type: "lockdownPersistFailed", chatId: -2006, phase: "active", intentId: 92 },
     ]);
@@ -121,6 +122,9 @@ describe("Anti-Raid mirror persistence barriers", () => {
     expect(workerPosts.some((message) =>
       message.type === "lockdownPersisted" && message.chatId === -2006
     )).toBeFalse();
+    workerHooks.supervisorOptions!.onEvent({ type: "unlock", chatId: -2006 });
+    expect(chatStates.get(-2006)?.lockdown).toBeUndefined();
+    expect(saveStateInBackground).toHaveBeenCalledWith("anti-raid unlock");
   });
 
   test("落盘失败期间意图已经换代 → 不动更新的那份，只把作废通知发回 Worker", async () => {
@@ -530,7 +534,10 @@ describe("Anti-Raid mirror persistence barriers", () => {
       expiresAt: 99_999,
     };
     changedRestore.resolve(undefined);
-    await Bun.sleep(20);
+    await waitUntil((): boolean =>
+      chatStates.get(successfulChatId)?.lockdown === undefined &&
+      chatStates.get(retryChatId)?.lockdown === undefined &&
+      saveStateInBackground.mock.calls.length >= 2);
 
     expect(chatStates.get(successfulChatId)?.lockdown).toBeUndefined();
     expect(chatStates.get(retryChatId)?.lockdown).toBeUndefined();
@@ -557,7 +564,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
     await Bun.sleep(0);
     const terminationResult = await Promise.race([
       antiRaid.terminateAntiRaid().then(() => "terminated" as const),
-      Bun.sleep(50).then(() => "timedOut" as const),
+      Bun.sleep(1_000).then(() => "timedOut" as const),
     ]);
 
     expect(terminationResult).toBe("terminated");

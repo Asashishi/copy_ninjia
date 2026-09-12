@@ -5,6 +5,7 @@ import type {
 } from "../../types/diskIO/messages";
 import type {
   AiMemoryDeletedPersistedReply,
+  WedMembersDeletedPersistedReply,
   AiMemoryPersistedReply,
   IdentityStoragePersistedReply,
   LuckAppendStalledReply,
@@ -56,6 +57,11 @@ export function onVerificationPersisted(callback: (reply: VerificationPersistedR
 /** 注册 AI 记忆删除真正 durable（或被更新 revision 覆盖）的确认回调。 */
 export function onAiMemoryDeletedPersisted(callback: (reply: AiMemoryDeletedPersistedReply) => void): void {
   diskIORuntime.aiMemoryDeletedPersistedListeners.push(callback);
+}
+
+/** 注册成员文件及目录项真正 durable 删除后的回执。 */
+export function onWedMembersDeletedPersisted(callback: (reply: WedMembersDeletedPersistedReply) => void): void {
+  diskIORuntime.wedMembersDeletedPersistedListeners.push(callback);
 }
 
 /** 注册 purge 后首份新 AI 记忆真正 durable 的确认回调。 */

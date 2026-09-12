@@ -8,18 +8,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { collectFaultInjectionSuiteProblems } from "../../scripts/conventions/faultInjectionSuite";
+import { basename, join } from "node:path";
+import { collectFaultInjectionSuiteProblems, FAULT_INJECTION_BOUNDARIES } from "../../scripts/conventions/faultInjectionSuite";
 
 const roots: string[] = [];
-
-/** 门禁依据的四个 harness；夹具默认全部建出来，单独用例再删其中一个。 */
-const HARNESSES: readonly string[] = [
-  "diskIOWorkerHarness",
-  "antiRaidMirrorHarness",
-  "blocklistSweepHarness",
-  "lifecycleFixture",
-];
 
 interface FixtureOptions {
   /** `test:fault-injection` 声明的路径；`undefined` 表示整条脚本缺失。 */
@@ -42,9 +34,9 @@ async function fixture({
     scripts["test:fault-injection"] = `bun test --isolate ${listed.join(" ")}`;
   }
   await Bun.write(join(root, "package.json"), JSON.stringify({ scripts }));
-  for (const harness of HARNESSES) {
-    if (omitHarnesses.includes(harness)) continue;
-    await Bun.write(join(root, "test", "helpers", `${harness}.ts`), "export const marker: number = 1;\n");
+  for (const harness of FAULT_INJECTION_BOUNDARIES) {
+    if (omitHarnesses.includes(basename(harness.path, ".ts"))) continue;
+    await Bun.write(join(root, harness.path), "export const marker: number = 1;\n");
   }
   for (const [path, source] of Object.entries(tests)) {
     await Bun.write(join(root, path), source);
@@ -58,6 +50,33 @@ afterEach((): void => {
 });
 
 describe("fault-injection 清单门禁", (): void => {
+  test.each([
+    'import { marker } from "../../packages/workers/aiChat/replyDelivery";',
+    'const { marker } = await import("../../packages/workers/aiChat/replyDelivery");',
+    'export { marker } from "../../packages/workers/aiChat/replyDelivery";',
+    'import {} from "../../packages/workers/aiChat/replyDelivery";',
+    'export {} from "../../packages/workers/aiChat/replyDelivery";',
+    'import marker, { type Shape } from "../../packages/workers/aiChat/replyDelivery";',
+    'export { marker, type Shape } from "../../packages/workers/aiChat/replyDelivery";',
+  ])("直接使用生产生命周期边界必须登记：%s", async (source) => {
+    const path: string = "test/infra/direct.test.ts";
+    const root: string = await fixture({ tests: { [path]: source } });
+    expect(await collectFaultInjectionSuiteProblems(root)).toEqual([
+      expect.stringContaining(`${path} uses packages/workers/aiChat/replyDelivery.ts`),
+    ]);
+  });
+
+  test.each([
+    'import type { marker } from "../../packages/workers/aiChat/replyDelivery";',
+    'import { type marker } from "../../packages/workers/aiChat/replyDelivery";',
+    'export type { marker } from "../../packages/workers/aiChat/replyDelivery";',
+    'export { type marker } from "../../packages/workers/aiChat/replyDelivery";',
+    'import { marker } from "./support/replyDelivery";',
+  ])("纯类型与同名其它模块不扩大专项：%s", async (source) => {
+    const root: string = await fixture({ tests: { "test/infra/types.test.ts": source } });
+    expect(await collectFaultInjectionSuiteProblems(root)).toEqual([]);
+  });
+
   test("真实仓库的清单已覆盖全部受约束 harness 的使用者", async (): Promise<void> => {
     expect(await collectFaultInjectionSuiteProblems(process.cwd())).toEqual([]);
   });
@@ -119,7 +138,7 @@ describe("fault-injection 清单门禁", (): void => {
   test("harness 被改名或删除时判定失败，不静默放过", async (): Promise<void> => {
     const root: string = await fixture({ omitHarnesses: ["lifecycleFixture"] });
     expect(await collectFaultInjectionSuiteProblems(root)).toEqual([
-      "declared fault-injection harness does not exist: test/helpers/lifecycleFixture.ts",
+      "declared fault-injection boundary does not exist: test/helpers/lifecycleFixture.ts",
     ]);
   });
 
@@ -154,10 +173,7 @@ describe("fault-injection 清单门禁", (): void => {
       JSON.stringify({ scripts: { "test:fault-injection": "bun test --isolate" } })
     );
     expect(await collectFaultInjectionSuiteProblems(root)).toEqual([
-      "declared fault-injection harness does not exist: test/helpers/diskIOWorkerHarness.ts",
-      "declared fault-injection harness does not exist: test/helpers/antiRaidMirrorHarness.ts",
-      "declared fault-injection harness does not exist: test/helpers/blocklistSweepHarness.ts",
-      "declared fault-injection harness does not exist: test/helpers/lifecycleFixture.ts",
+      ...FAULT_INJECTION_BOUNDARIES.map((entry): string => `declared fault-injection boundary does not exist: ${entry.path}`),
       "test directory does not exist; the fault-injection suite cannot be verified",
     ]);
   });

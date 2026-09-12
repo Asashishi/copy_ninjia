@@ -1,20 +1,23 @@
+import {
+  nextLockdownIntentId,
+  beginLockdownAnnouncement,
+  deleteLockdownAnnouncement,
+  prepareApplyLockdown,
+  commitApplyLockdown,
+  beginRestoreLockdown,
+  reapplyLockdownRestriction,
+} from "./lockdownApi";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { logger } from "../../infra/logger";
-import type { ChatPermissions, ChatFullInfo } from "grammy/types";
-import { deleteMessage, sendMessage, telegramApi } from "../../infra/telegram";
-import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import {
   LOCKDOWN_MS,
 } from "../../consts/antiRaid/lockdown";
-import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
 import {
   lastLockdownIntentId,
   lockdownApiChains,
-  lockdownApiRunner,
   lockdownEntries,
 } from "../../cache/workers/antiRaid/lockdown";
-import { normalizeChatPermissions } from "../../libs/chatPermissions";
 import type { UnlockEvent } from
   "../../types/antiRaid/events";
 import type {
@@ -36,7 +39,6 @@ import {
   beginLockdownRetriggerCooldown,
   clearJoinWindow,
   clearJoinWindowCooldown,
-  lockdownAnnouncementText,
   recordJoinWindow,
   retractJoinWindow,
   stopJoinWindowRuntime,
@@ -44,11 +46,6 @@ import {
 import { publishLockdownState } from "./lockdownPersistence";
 
 declare const self: Worker;
-
-function nextLockdownIntentId(): number {
-  lastLockdownIntentId.current = Math.max(Date.now(), lastLockdownIntentId.current + 1);
-  return lastLockdownIntentId.current;
-}
 
 /**
  * 反刷群私密模式状态机（packages/states/lockdown.ts 与同名目录）的解释器：把每条投递翻译成
@@ -179,19 +176,19 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         scheduleLockdownRetry(chatId, effect.delayMs, { type: "reapplyRetryFired" });
         break;
       case "prepareApply":
-        prepareApplyLockdown(chatId, effect.joinCount);
+        prepareApplyLockdown(chatId, effect.joinCount, dispatchLockdown);
         break;
       case "persistState":
         publishLockdownState(chatId);
         break;
       case "commitApply":
-        commitApplyLockdown(chatId);
+        commitApplyLockdown(chatId, dispatchLockdown);
         break;
       case "beginRestore":
-        beginRestoreLockdown(chatId, effect.originalPermissions);
+        beginRestoreLockdown(chatId, effect.originalPermissions, dispatchLockdown);
         break;
       case "beginReapply":
-        reapplyLockdownRestriction(chatId);
+        reapplyLockdownRestriction(chatId, dispatchLockdown);
         break;
       case "reportUnlock":
         // 本轮已经处理过的入群不再为下一轮计数：窗口里那 45+ 个时间戳是刚被
@@ -202,7 +199,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
         break;
       case "beginLockdownAnnouncement":
-        beginLockdownAnnouncement(chatId, effect.joinCount);
+        beginLockdownAnnouncement(chatId, effect.joinCount, dispatchLockdown);
         break;
       case "deleteLockdownAnnouncement":
         deleteLockdownAnnouncement(chatId, effect.messageId);
@@ -227,9 +224,8 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
 /**
  * 主线程报告这一轮意图写不进 SQLite：按阶段 fail-safe 打开，并进入重触发冷却。
  *
- * 落盘是「崩溃后还有人能恢复这条限制」的唯一凭据。写不进去还继续锁着群，就是
- * 今天这条故障的形态：占位永远停在 APPLYING，秒踢不停、5 分钟的倒计时压根
- * 没被安排过（见 states/lockdown/persistence.ts 的 handlePersistFailed）。
+ * 未派发的提交撤销占位；可能在途的权限写入沿原串行链补偿，恢复失败仍保留
+ * 状态与重试计时器。阶段转移见 states/lockdown/persistence.ts。
  */
 export function handleLockdownPersistFailed(msg: LockdownPersistFailedMessage): void {
   dispatchLockdown(msg.chatId, {
@@ -254,192 +250,6 @@ export function deactivateLockdownChat(chatId: number): void {
   // 守卫都关了，重新开启时不该背着上一次的作废冷却继续不设防。
   clearJoinWindowCooldown(chatId);
   dispatchLockdown(chatId, { type: "deactivate", intentId: nextLockdownIntentId() });
-}
-
-/** 私密模式加锁/纠偏共用：在给定权限上关闭 can_invite_users，其余字段原样保留。 */
-function restrictedPermissions(permissions: ChatPermissions): ChatPermissions {
-  return { ...permissions, can_invite_users: false };
-}
-
-/**
- * 把一次私密模式相关的 setChatPermissions 调用（加锁/恢复/纠偏）挂到该群的
- * 串行链上：保证这三类调用严格按 dispatch 顺序一个个执行完，不会因为各自
- * 独立发起的网络往返乱序，让后发起的调用比先发起的调用更早/更晚落地在
- * Telegram 上（比如纠偏的加锁比它之后才发起的解锁更晚生效，两者都是各自
- * 独立的 fire-and-forget 调用时就可能发生，见 docs/cn/04-invariants.md中
- * restoreResult 的那一段）。链的机制见 libs/keyedSerialTaskRunner.ts；
- * task 自身兜错，链永不因此中断。
- */
-function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
-  void trackAntiRaidTask({ task: lockdownApiRunner.run(chatId, task) });
-}
-
-/**
- * 占位一落地就发封锁公告（新进群的人从这一刻起被直接请出去），并把发送结果
- * 连同 message ID 回投状态机。与权限调用共用群级串行链，确保显式解除不会越过
- * 仍在途的公告后先行落地。
- *
- * message ID 走 onSent 同步登记：停机 abort 可能恰好落在「远端已经收下、await
- * 还没解开」的窗口里，返回值会连同 ID 一起丢失，本轮结束时就再也删不掉群里
- * 那条公告（见 infra/telegram/actions/messages.ts 的 onSent 注释）。
- */
-function beginLockdownAnnouncement(chatId: number, joinCount?: number): void {
-  runLockdownApiCall(chatId, async (): Promise<void> => {
-    let messageId: number | undefined;
-    try {
-      const sentMessageId: number | undefined = await sendMessage({
-        chatId,
-        text: lockdownAnnouncementText(joinCount),
-        api: telegramApi,
-        onSent: (pendingMessageId: number): void => {
-          messageId = pendingMessageId;
-        },
-      });
-      if (sentMessageId !== undefined) messageId = sentMessageId;
-    } catch (error: unknown) {
-      logger.error(`Error sending anti-raid lockdown announcement for chat ${chatId}:`, error);
-    }
-    dispatchLockdown(chatId, {
-      type: "announcementResult",
-      ok: messageId !== undefined,
-      messageId,
-    });
-  });
-}
-
-/**
- * 本轮封锁结束，撤掉群里那条封锁公告。
- *
- * 删不掉只记日志：解除的关键动作是把邀请权限还回去，不能让一条留在群里的
- * 旧公告把恢复链带崩（串行链要求 task 自身兜错，见 runLockdownApiCall）。
- */
-function deleteLockdownAnnouncement(chatId: number, messageId: number): void {
-  runLockdownApiCall(chatId, async (): Promise<void> => {
-    try {
-      await deleteMessage(chatId, messageId, telegramApi);
-    } catch (error: unknown) {
-      logger.error(
-        `Error deleting the anti-raid lockdown announcement in chat ${chatId}:`,
-        error
-      );
-    }
-  });
-}
-
-/**
- * 异步执行加锁：取当前默认权限、把 can_invite_users 关掉，结果以 applyResult
- * 回投。真实刷群下这两个调用可能在限流队列里排几分钟，期间占位状态挡住
- * 重复触发（见状态机注释）。
- */
-function prepareApplyLockdown(chatId: number, joinCount: number): void {
-  runLockdownApiCall(chatId, async (): Promise<void> => {
-    try {
-      const chat: ChatFullInfo = await telegramApi.getChat(chatId);
-      if (!("permissions" in chat) || !chat.permissions) {
-        // permissions 字段对群/超级群实际总会返回，缺失多半是异常响应——
-        // 放弃这次锁定（入群验证的逐个踢人仍在兜底），也不能拿 {} 当"原始
-        // 权限"存进 ACTIVE：到期恢复会把所有省略字段当 false，整群被永久禁言。
-        logger.error(`Chat ${chatId} getChat response missing permissions field, skipping anti-raid lockdown`);
-        dispatchLockdown(chatId, { type: "applyPreparationFailed" });
-        return;
-      }
-      // 只留持久化 schema 认识的字段：平台新增一个权限键，原样存下去会在落盘
-      // 自检处变成致命错误（见 libs/chatPermissions.ts）。写回 Telegram 的那两
-      // 处仍用当场读回的原始对象，不能拿这份收敛过的快照去覆盖群权限。
-      const originalPermissions: ChatPermissions = normalizeChatPermissions(chat.permissions);
-      dispatchLockdown(chatId, {
-        type: "applyPrepared",
-        originalPermissions,
-        joinCount,
-        intentId: nextLockdownIntentId(),
-      });
-    } catch (error: unknown) {
-      logger.error("Error preparing anti-raid lockdown:", error);
-      dispatchLockdown(chatId, { type: "applyPreparationFailed" });
-    }
-  });
-}
-
-/**
- * applying intent 已落盘后才真正修改 Telegram。先重新读取最新权限，只合并
- * invite 限制，避免 T0 快照覆盖落盘窗口内的管理员修改。读取失败发生在写
- * 操作之前，可安全撤销 intent；set 失败的远端结果不确定，仍需恢复协调。
- */
-function commitApplyLockdown(chatId: number): void {
-  runLockdownApiCall(chatId, async (): Promise<void> => {
-    let currentPermissions: ChatPermissions;
-    try {
-      const chat: ChatFullInfo = await telegramApi.getChat(chatId);
-      if (!("permissions" in chat) || !chat.permissions) {
-        logger.error(
-          `Chat ${chatId} commit getChat response missing permissions field, abandoning anti-raid lockdown`
-        );
-        dispatchLockdown(chatId, { type: "applyCommitPreparationFailed" });
-        return;
-      }
-      currentPermissions = chat.permissions;
-    } catch (error: unknown) {
-      logger.error(
-        "Error refreshing chat permissions before anti-raid lockdown; abandoning unapplied intent:",
-        error
-      );
-      dispatchLockdown(chatId, { type: "applyCommitPreparationFailed" });
-      return;
-    }
-    try {
-      await telegramApi.setChatPermissions(
-        chatId,
-        restrictedPermissions(currentPermissions),
-        INDEPENDENT_CHAT_PERMISSIONS_OTHER
-      );
-      dispatchLockdown(chatId, { type: "applyResult", ok: true });
-    } catch (error: unknown) {
-      logger.error("Error applying anti-raid lockdown; scheduling a restorative reconciliation:", error);
-      dispatchLockdown(chatId, { type: "applyResult", ok: false, restoreIntentId: nextLockdownIntentId() });
-    }
-  });
-}
-
-/** 异步恢复群组原本的默认权限，结果以 restoreResult 回投（失败由状态机安排重试）。 */
-function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions): void {
-  runLockdownApiCall(chatId, async (): Promise<void> => {
-    try {
-      await restoreLockdownInvitePermission({
-        chatId,
-        originalPermissions,
-        api: telegramApi,
-      });
-      dispatchLockdown(chatId, { type: "restoreResult", ok: true });
-    } catch (error: unknown) {
-      logger.error(`Failed to restore chat permissions for ${chatId}, retrying shortly:`, error);
-      dispatchLockdown(chatId, { type: "restoreResult", ok: false });
-    }
-  });
-}
-
-/**
- * 迟到的旧 beginRestore 成功回执撞上新峰值重新给满的 ACTIVE 时用来纠偏：
- * 重新读取当前权限，只把 invite 字段补回限制，保留管理员并发修改的其它字段。
- * 结果必须回投状态机：成功后才能从 RECONCILING 回到 ACTIVE；失败由状态机
- * 安排退避重试。挂在同一条 runLockdownApiCall 串行链上，保证不会比它之后才
- * 发起的一次恢复更晚落地。
- */
-function reapplyLockdownRestriction(chatId: number): void {
-  runLockdownApiCall(chatId, async (): Promise<void> => {
-    try {
-      const chat: ChatFullInfo = await telegramApi.getChat(chatId);
-      if (!("permissions" in chat) || !chat.permissions) throw new Error("getChat response missing permissions");
-      await telegramApi.setChatPermissions(
-        chatId,
-        restrictedPermissions(chat.permissions),
-        INDEPENDENT_CHAT_PERMISSIONS_OTHER
-      );
-      dispatchLockdown(chatId, { type: "reapplyResult", ok: true });
-    } catch (error: unknown) {
-      logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded; retrying shortly:`, error);
-      dispatchLockdown(chatId, { type: "reapplyResult", ok: false });
-    }
-  });
 }
 
 /**

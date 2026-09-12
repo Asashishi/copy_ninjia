@@ -15,6 +15,10 @@ const HOT_PATHS: readonly ScenarioName[] = [
   "registered-middleware",
 ];
 const CHAINS: readonly ChainName[] = ["ad-detect-command", "ai-reply-command"];
+const AI_REPLIES: readonly ScenarioName[] = [
+  "reply-admission", "reply-delivery-normal", "reply-delivery-capacity",
+  "base64-normal", "base64-large", "base64-head", "base64-tail",
+];
 interface ReviewRound {
   readonly bunVersion: string;
   readonly bunRevision: string;
@@ -25,7 +29,7 @@ interface ReviewResult {
 }
 
 const mode: string | undefined = Bun.argv[2];
-if (Bun.argv.length > 3 || (mode !== undefined && mode !== "--hot-paths" && mode !== "--chains" && mode !== "--worker")) throw new Error("Usage: bun run perf:review [--hot-paths|--chains|--worker]");
+if (Bun.argv.length > 3 || (mode !== undefined && mode !== "--hot-paths" && mode !== "--chains" && mode !== "--worker" && mode !== "--ai")) throw new Error("Usage: bun run perf:review [--hot-paths|--chains|--worker|--ai]");
 const runRoot: string = createRunRoot();
 try {
   const context: SectionContext = {
@@ -43,6 +47,12 @@ try {
   }
   if (mode === undefined || mode === "--chains") {
     for (const name of CHAINS) tasks.push({ label: name, seedMode: "chain", args: [FULL_SUITE_ENTRY, "--child", "chain", name] });
+  }
+  if (mode === undefined || mode === "--ai") {
+    for (const name of AI_REPLIES) {
+      tasks.push({ label: name, seedMode: "none", args: [HOT_PATH_ENTRY, name] });
+      tasks.push({ label: `${name}:profile`, seedMode: "none", args: [HOT_PATH_ENTRY, name, "--profile"] });
+    }
   }
   if (mode === undefined || mode === "--worker") tasks.push({ label: "disk-worker-pressure", seedMode: "chain", args: [join(import.meta.dir, "review", "diskPressure.ts")] });
   for (const task of tasks) {

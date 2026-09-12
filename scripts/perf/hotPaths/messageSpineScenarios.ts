@@ -22,6 +22,7 @@ import {
 import { handleIncomingMessageMiddleware } from "../../../packages/auto/message";
 import { handleProactiveMessageActions } from "../../../packages/auto/message/proactive";
 import {
+  identityById,
   senderUsernameCache,
   userCache,
 } from "../../../packages/cache/main/senderIdentity";
@@ -171,6 +172,7 @@ export function incomingMessageSpineScenario(): Scenario {
       clearAiReplyActivity();
       userCache.clear();
       senderUsernameCache.clear();
+      identityById.clear();
       chatStateCache.delete(BENCHMARK_CHAT_ID);
       aiChatConfigReadinessCache.current = null;
     },

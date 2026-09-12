@@ -33,10 +33,11 @@ import type {
  *   APPLYING preparing ──applyPrepared──> APPLYING prepared
  *   APPLYING prepared ──落盘回执、加锁成功──> ACTIVE
  *   APPLYING prepared ──加锁结果不确定──> RESTORING
- *   APPLYING ──准备或持久化失败──> INACTIVE
+ *   APPLYING ──提交未派发、准备或持久化失败──> INACTIVE
+ *   APPLYING ──提交已派发、持久化失败──> RESTORING
  *   ACTIVE / RECONCILING ──到期或解除──> RESTORING
  *   RESTORING ──恢复成功──> INACTIVE
- *   RESTORING ──再次超阈值──> ACTIVE
+ *   RESTORING ──再次超阈值──> RESTORING
  *   ACTIVE ──迟到恢复成功──> RECONCILING
  *   RECONCILING ──重新收紧成功──> ACTIVE
  *

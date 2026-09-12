@@ -1,5 +1,6 @@
 import type { MediaKind, TelegramVisionSource } from "../media";
 import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../stickers/protocol";
+import type { AiMemoryUsage } from "./memory";
 import type { AiSpeakerSnapshot } from "./speaker";
 import type {
   AgentDeploymentConfig,
@@ -227,6 +228,28 @@ export interface AiMemoryEvent {
   snapshot: string;
   /** purge 后首份新快照；主线程须要求 Disk I/O 立即写盘并等待 revision 回执。 */
   persistImmediately?: boolean;
+  /**
+   * 本群此刻的上下文占用量，供主线程的只读镜像展示（见 cache/main/aiChat.ts 的
+   * aiMemoryUsages）。
+   *
+   * 挂在这条已有事件上而不是另起一路上报：接收方所需的最终字段放进现有消息，
+   * 就不必为它单独维护推送时机（见 AGENTS.md 的「缓存与线程归属」）。这里用
+   * 一个对象而不是摊平成两个数字——本事件每群每 AI_SNAPSHOT_INTERVAL_MS 才走
+   * 一次，不在任何逐条消息的热路径上，而接收侧原样存进镜像、不再重建对象。
+   */
+  usage: AiMemoryUsage;
+}
+
+/**
+ * hydrate 完成后一次性回传各群的上下文占用量，用于播种主线程镜像。
+ *
+ * 启动恢复与 Worker 崩溃重建走的都是 hydrate（重建时由 aiChat/workerBridge.ts 的
+ * onRespawn 重放），恢复出来的群在下一条新消息之前不 dirty、不会产生 memory
+ * 事件；没有这条事件，那些群的占用量要一直缺到它们重新说话为止。
+ */
+export interface AiMemoryUsagesEvent {
+  type: "memoryUsages";
+  usages: Map<number, AiMemoryUsage>;
 }
 
 export interface AiMemoryDeletedEvent {
@@ -266,6 +289,7 @@ export interface AiMoodQueriedEvent {
 
 export type AiChatWorkerEvent =
   | AiMemoryEvent
+  | AiMemoryUsagesEvent
   | AiMemoryDeletedEvent
   | AiMemoryFlushedEvent
   | AiChatInvalidatedEvent

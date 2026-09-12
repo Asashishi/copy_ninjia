@@ -217,31 +217,29 @@ export async function drainStickerCatalogTasks(): Promise<void> {
 }
 
 /**
- * 维护节拍上的补账：把还没建起来的包再对账一次。
- *
- * `ensureStickerCatalogs` 生产路径上只有 Worker 收到 init 那一次调用，而
- * `generatePackCatalog` 在 `getStickerSet` 失败时是整包放弃的——首次部署
- * （memory/stickers/ 为空）撞上一次几秒的网络抖动，`catalogs` 就永久为空：
- * `buildStickerPackMenu` 每个包都在「没有贴纸」处丢掉，view_sticker_pack 与
- * send_sticker 两个工具对所有回复返回 null，而 systemd 托管的进程可能几周都
- * 不重启。整包简介缺失同理——那条日志写着「等下次对账」，本函数就是它等的
- * 那一次。
- *
- * 只挑「目录为空或没有简介」的包重试：正常跑起来之后这里每轮都是一次
- * O(包数) 的判空，不打任何请求（贴纸集合在本进程内是无 TTL 缓存）。
+ * 维护节拍按重试间隔选择目录为空、简介缺失或单枚失败负缓存到期的包。
+ * 复用 ensureStickerCatalogs 的包级并发去重；完整且无失败记录的包不请求出站。
+ * 缺项由目录生成循环按既有 TTL 补齐，取消与持久化约束见 docs/cn/04-invariants.md。
  * @param now 注入时钟，便于测试。
  */
 export function retryIncompleteStickerCatalogs(packs: readonly string[], now: number = Date.now()): void {
-  // 0 表示本进程还没在这条路上试过（init 那次不算）：第一个维护节拍就补一次，
-  // 不等满一个间隔——启动时整包失败的话，那一个间隔全程两个贴纸工具都是废的。
+  // 0 表示尚无维护重试，第一个节拍可立即接纳；init 生成不占用维护重试间隔。
   if (
     stickerCatalogRetryState.lastAttemptAt !== 0 &&
     now - stickerCatalogRetryState.lastAttemptAt < STICKER_CATALOG_RETRY_INTERVAL_MS
   ) {
     return;
   }
-  const incomplete: string[] = packs.filter((pack: string): boolean =>
-    (catalogs.get(pack)?.size ?? 0) === 0 || !packSummaries.has(pack));
+  const incomplete: string[] = packs.filter((pack: string): boolean => {
+    if ((catalogs.get(pack)?.size ?? 0) === 0 || !packSummaries.has(pack)) return true;
+    const failed: ReadonlyMap<string, number> | undefined = failedEntries.get(pack);
+    if (failed !== undefined) {
+      for (const retryAt of failed.values()) {
+        if (now >= retryAt) return true;
+      }
+    }
+    return false;
+  });
   if (incomplete.length === 0) return;
   stickerCatalogRetryState.lastAttemptAt = now;
   ensureStickerCatalogs(incomplete);

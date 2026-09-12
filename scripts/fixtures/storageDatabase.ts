@@ -1,3 +1,7 @@
+import {
+  IDENTITY_DATABASE_SCHEMA_DATA,
+  IDENTITY_DATABASE_SCHEMA_KEY,
+} from "../../packages/consts/identityStorage";
 import { chatQa } from "../../packages/database/schema/chatQa";
 import { chatStates } from "../../packages/database/schema/chatState";
 import {
@@ -23,6 +27,19 @@ import type {
 type StorageDatabaseTransaction = Parameters<
   Parameters<StorageDatabase["transaction"]>[0]
 >[0];
+
+/**
+ * 当前 schema 版本行，夹具与基准建库时的唯一来源。
+ *
+ * 生产建库由 install.sh 调 packages/database/interact/initialization.ts 的
+ * initializeStorageDatabase 写这一笔；夹具走 seedStorageDatabase，要和业务行
+ * 在同一个事务里落。两条路写的必须是同一行，因此这里只留一份字面量，
+ * 版本变更时不会漏改某个夹具。缺这一行时启动恢复会拒绝加载整个库。
+ */
+export const CURRENT_STORAGE_METADATA_ROWS: readonly Readonly<StoredStorageMetadataRow>[] = [{
+  key: IDENTITY_DATABASE_SCHEMA_KEY,
+  data: IDENTITY_DATABASE_SCHEMA_DATA,
+}];
 
 export interface SeedStorageDatabaseOptions {
   readonly metadata: readonly StoredStorageMetadataRow[];

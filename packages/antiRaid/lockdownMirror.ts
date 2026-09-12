@@ -38,10 +38,9 @@ export function lockdownFingerprint(record: LockdownRecord): PersistedLockdownFi
 }
 
 /**
- * 这条记录是否已按当前恢复语义落盘。比较 phase、intentId 与 announced；倒计时
- * （expiresAt）在私密模式生效期间每来一条越阈值的入群就会刷新一次，把它算进
- * 来只会让「快照没变」永远不成立，理由见
- * types/antiRaid/internal.ts 的 PersistedLockdownFingerprint 说明。
+ * 比较 phase、intentId 与 announced 是否已落盘；ACTIVE/RECONCILING 的截止时刻
+ * 在激活时确定，后续入群不刷新。APPLYING/RESTORING 发布时使用当前时间，
+ * 因此 expiresAt 不参与恢复语义指纹，见 types/antiRaid/internal.ts。
  */
 export function lockdownFingerprintMatches(
   record: LockdownRecord,

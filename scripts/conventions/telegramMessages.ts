@@ -30,7 +30,7 @@ export async function collectTelegramMessageProblems(
 
   // 状态机按钮及功能性正文只有下列命名边界能够直接发送；普通提示统一交给主线程清理。
   const directBoundaries: Readonly<Record<string, string>> = {
-    "workers/antiRaid/lockdownRuntime.ts": "beginLockdownAnnouncement",
+    "workers/antiRaid/lockdownApi.ts": "beginLockdownAnnouncement",
     "workers/antiRaid/verificationReminders.ts": "attemptReminderDelivery",
     "workers/antiRaid/verificationEffects.ts": "runVerificationEffects",
     "antiRaid/adDetect.ts": "announceAdDisposal",

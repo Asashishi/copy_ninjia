@@ -349,6 +349,32 @@ describe("/qa remove", () => {
   });
 });
 
+describe("群 teardown 对已登记问答的处置", () => {
+  test.each(["explicitDisable", "departed"] as const)(
+    "%s 连问答一并删掉：本天才不再管这个群，数据一样不留",
+    (reason): void => {
+      chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"], ["在哪充值？", "不充"]]));
+
+      teardownQaInChat(CHAT_ID, reason);
+
+      expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
+      expect(postDiskIO).toHaveBeenCalledTimes(2);
+      for (const call of postDiskIO.mock.calls) {
+        expect(call[0]).toMatchObject({ type: "chatQaWrite", chatId: CHAT_ID, data: null });
+      }
+    }
+  );
+
+  test("失权停管保留问答：权限加回来之后直答要照旧生效", () => {
+    chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
+
+    teardownQaInChat(CHAT_ID, "lostAuthority");
+
+    expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
+    expect(postDiskIO).not.toHaveBeenCalled();
+  });
+});
+
 describe("表单填齐后的结算", () => {
   test("本群没有未完成表单时同步返回 false，不为每条群消息分配 Promise", () => {
     // 绝大多数群任何时刻都没有开着的表单，判定只有一次以群 id 为键的 Map.get。
@@ -650,7 +676,7 @@ describe("表单异步生命周期", (): void => {
       await started.promise;
       if (close === "ttl") jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS);
       else if (close === "reopen") await handleQaCommand(context(OWNER, "set"));
-      else teardownQaInChat(CHAT_ID);
+      else teardownQaInChat(CHAT_ID, "explicitDisable");
       const current: QaFormSession | undefined = qaFormSessions.get(CHAT_ID);
       expect(current).not.toBe(old);
       pending.resolve("deleted");
@@ -680,7 +706,7 @@ describe("表单异步生命周期", (): void => {
       const old: QaFormSession = qaFormSessions.get(CHAT_ID)!;
       if (close === "ttl") jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS);
       else if (close === "reopen") await handleQaCommand(context(OWNER, "set"));
-      else teardownQaInChat(CHAT_ID);
+      else teardownQaInChat(CHAT_ID, "explicitDisable");
       const current: QaFormSession | undefined = qaFormSessions.get(CHAT_ID);
       pending.resolve();
       await task;

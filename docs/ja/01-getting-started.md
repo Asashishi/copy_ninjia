@@ -20,7 +20,9 @@
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
 - **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
 
-`g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない PEM 秘密鍵です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
+`g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない RS256 用 RSA PEM 秘密鍵（EC、Ed25519、RSA-PSS は拒否）です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
+
+完全な資格情報を起動時に読み取り専用の process snapshot として保持し、翻訳 SDK は `credentials` で使用します。初回要求や client の close 後の再開でも再読込しません。変更または追加した資格情報の反映には process の再起動が必要です。
 
 ## インストール
 

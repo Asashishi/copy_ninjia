@@ -3,6 +3,7 @@ import {
   latestAiMemories,
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
+  pendingAiMemoryTeardowns,
 } from "../cache/main/aiChat";
 import type {
   AiRecordMediaMessage,
@@ -31,6 +32,7 @@ function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage): void
     // persistImmediately: false），这里补一个键会把它换成另一个隐藏类。
     if (shouldArm || armedRevision === null) message.persistImmediately = true;
     postAiChatOrThrow(message);
+    if (shouldArm) pendingAiMemoryTeardowns.delete(message.chatId);
   } catch (error: unknown) {
     if (shouldArm) postPurgeAiMemoryPersistRevisions.delete(message.chatId);
     throw error;

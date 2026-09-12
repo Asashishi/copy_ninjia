@@ -8,7 +8,7 @@ let decision: AdmitDecision = { action: "startRound" };
 const admitTrigger = mock((_input: unknown): AdmitDecision => decision);
 let roundDecision: RoundDecision = { action: "run" };
 const admitRound = mock((_input: unknown): RoundDecision => roundDecision);
-const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void, _modelFinished: (chatId: number) => void): void => {});
+const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void, _modelFinished: (chatId: number) => void): boolean => true);
 const pushReplyTrigger = mock((_input: unknown): void => {});
 const drainQueuedReplies = mock((_chatId: number, _start: (trigger: unknown) => void): void => {});
 const flushOverflowNotice = mock((chatId: number): void => { pendingOverflowNotices.delete(chatId); });
@@ -26,6 +26,8 @@ const triggerReference = {
 const replyReferenceForBufferedMessage = mock((_chatId: number, _messageId: number) => triggerReference);
 const botInfo = { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" };
 const botInfoState: { current: typeof botInfo | null } = { current: botInfo };
+const hasReplyDeliveryCapacity = mock((_chatId: number): boolean => true);
+mock.module("../../../packages/workers/aiChat/replyDelivery", () => ({ hasReplyDeliveryCapacity }));
 
 mock.module("../../../packages/cache/workers/aiChat/identity", () => ({ botInfoState }));
 mock.module("../../../packages/cache/workers/aiChat/replies", () => ({
@@ -76,6 +78,8 @@ beforeEach(() => {
   pendingOverflowNotices.clear();
   pendingReplyTriggers.clear();
   longTriggerTimes.clear();
+  hasReplyDeliveryCapacity.mockReset().mockReturnValue(true);
+  startReplyRound.mockReset().mockReturnValue(true);
   for (const fn of [
     admitTrigger,
     startReplyRound,
@@ -89,6 +93,16 @@ beforeEach(() => {
 });
 
 describe("AI reply admission pipeline", () => {
+  test("准入携带发送容量，容量不足的直接触发按排队决策处理", () => {
+    hasReplyDeliveryCapacity.mockReturnValue(false);
+    decision = { action: "enqueue" };
+    generateAndSendReply(baseRequest);
+    expect(admitTrigger).toHaveBeenCalledWith(expect.objectContaining({ deliveryAvailable: false }));
+    expect(pushReplyTrigger).toHaveBeenCalledTimes(1);
+    expect(pushReplyTrigger).toHaveBeenCalledWith(expect.objectContaining({ replyToMessageId: 7 }));
+    expect(startReplyRound).not.toHaveBeenCalled();
+  });
+
   test("模型完成只补跑待处理队列，溢出提示留到发送收尾且仍遵守窗口限频", () => {
     generateAndSendReply(baseRequest);
     pendingOverflowNotices.set(-1001, 17);
@@ -118,6 +132,7 @@ describe("AI reply admission pipeline", () => {
     );
     expect(replyReferenceForBufferedMessage).toHaveBeenCalledWith(-1001, 7);
     const drain = startReplyRound.mock.calls[0]![1];
+    pendingReplyTriggers.set(-1001, { size: 1 });
     drain(-1001);
     expect(drainQueuedReplies).toHaveBeenCalledWith(-1001, expect.any(Function));
   });
@@ -142,6 +157,7 @@ describe("AI reply admission pipeline", () => {
 
   test("排空队列时按原样启动排队触发，并在该轮结束后继续排空同群队列", () => {
     generateAndSendReply(baseRequest);
+    pendingReplyTriggers.set(-1001, { size: 1 });
     startReplyRound.mock.calls[0]![1](-1001);
     const startQueuedRound = drainQueuedReplies.mock.calls[0]![1];
     const queued = {
@@ -182,6 +198,7 @@ describe("AI reply admission pipeline", () => {
   // 键集合仍然逐字校验，误加或漏字段照样测得出来。
   test("轮次参数保持单一 shape：缺席的可选字段显式写成 undefined", () => {
     generateAndSendReply(baseRequest);
+    pendingReplyTriggers.set(-1001, { size: 1 });
     startReplyRound.mock.calls[0]![1](-1001);
     const startQueuedRound = drainQueuedReplies.mock.calls[0]![1];
 

@@ -9,6 +9,13 @@ import type { HotPathProfileScenarioName } from "../../../packages/types/perform
 
 export type ScenarioName =
   | HotPathProfileScenarioName
+  | "reply-admission"
+  | "reply-delivery-normal"
+  | "reply-delivery-capacity"
+  | "base64-normal"
+  | "base64-large"
+  | "base64-head"
+  | "base64-tail"
   | "storage-sqlite-flush"
   | "verification-snapshot"
   | "verification-snapshot-clone"

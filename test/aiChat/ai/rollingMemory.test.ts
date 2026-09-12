@@ -107,6 +107,33 @@ test("严格 hydrate 后恢复合法快照", () => {
   expect(memoryCache.chatBuffers.size).toBe(1);
 });
 
+test("hydrate 完成后回传各群占用量，播种主线程展示镜像", () => {
+  hydrateMemories(new Map<number, string>([
+    [-7, JSON.stringify({
+      version: 1,
+      buffer: [
+        { messageId: 1, id: 1, firstName: "用户", lastName: "", text: "消息一", at: "2026/07/18 00:00:00" },
+        { messageId: 2, id: 1, firstName: "用户", lastName: "", text: "消息二", at: "2026/07/18 00:00:01" },
+      ],
+      summaries: ["摘要一", "摘要二"],
+      // 待晋升摘要的原文此刻仍在逐字热区里，不计进冷区，否则同一段消息数两次。
+      pendingSummary: "还没晋升的摘要",
+      savedAt: 7,
+    })],
+  ]));
+
+  expect(postMessageMock).toHaveBeenCalledWith({
+    type: "memoryUsages",
+    usages: new Map([[-7, { bufferedCount: 2, summaryCount: 2 }]]),
+  });
+});
+
+test("hydrate 没恢复出任何群时不发占用量事件", () => {
+  hydrateMemories(new Map<number, string>());
+
+  expect(postMessageMock).not.toHaveBeenCalled();
+});
+
 test("hydrate 以快照 savedAt 播种 chatLastActivityTimes 供 LRU 淘汰排序；心情不在 hydrate 播种", () => {
   const memories = new Map<number, string>([
     [-42, JSON.stringify({

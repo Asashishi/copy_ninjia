@@ -94,7 +94,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     return current;
   },
   clearChatStateField: (): boolean => false,
-  pruneDepartedChatState: (): void => {},
+  purgeChatStateExceptLockdown: (): void => {},
   persistChatState,
   saveChatStateInBackground: (): void => {},
 }));

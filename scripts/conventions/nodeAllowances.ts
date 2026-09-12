@@ -135,7 +135,7 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/libs/fileAccess.ts": {
     "node:fs": {
-      symbols: ["accessSync", "constants", "lstatSync"],
+      symbols: ["accessSync", "constants", "lstatSync", "statSync"],
       purpose: "startup file type and access-mode validation",
     },
   },
@@ -147,7 +147,7 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/appendOnlyDayFile.ts": {
     "node:fs": {
-      symbols: ["closeSync", "existsSync", "fsyncSync", "openSync", "statSync", "writeSync"],
+      symbols: ["closeSync", "fsyncSync", "openSync", "statSync", "writeSync"],
       purpose: "append-only descriptor metadata, writes, and fsync",
     },
   },
@@ -159,13 +159,13 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/joinLogRecovery.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync"],
+      symbols: ["mkdirSync", "readdirSync"],
       purpose: "owner-local journal metadata and stale-file cleanup",
     },
   },
   "packages/workers/diskIO/logFiles.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync"],
+      symbols: ["mkdirSync", "readdirSync"],
       purpose: "log metadata inspection and stale-file cleanup",
     },
   },
@@ -177,7 +177,7 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/snapshotFiles.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync"],
+      symbols: ["mkdirSync", "readdirSync"],
       purpose: "snapshot directory traversal and stale-file cleanup",
     },
   },
@@ -189,7 +189,7 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/verificationRecovery.ts": {
     "node:fs": {
-      symbols: ["existsSync", "mkdirSync", "readdirSync"],
+      symbols: ["mkdirSync", "readdirSync"],
       purpose: "verification journal metadata and retention cleanup",
     },
   },

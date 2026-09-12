@@ -10,9 +10,11 @@ import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
 import { logger } from "../infra/logger";
 import {
   clearChatStateField,
+  getChatState,
   getChatStateCache,
   getOrCreateChatState,
   persistChatState,
+  purgeChatStateExceptLockdown,
 } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
@@ -47,33 +49,22 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
     });
     return;
   }
-  const state: ChatState = getOrCreateChatState(chatId);
-  const wasEnabled: boolean = state.isInitEnabled === true;
+  const wasEnabled: boolean = getChatState(chatId).isInitEnabled === true;
   const isEnabled: boolean = arg === "enable";
-  state.isInitEnabled = isEnabled;
+  // **只有 enable 建条目**。disable 的终点是把这个群的记录整行删掉，为它先现建
+  // 一条既没有意义，又会在别处已经管着 STATE_MANAGED_CHAT_LIMIT 个群时让
+  // assertChatStateCapacity 抛错——那会把「关掉之后再关一次」这条
+  // docs/cn/04-invariants.md 点名的手工重试路径变成一次带非零码的进程退出。
+  // clearChatStateField 对没有条目的群是显式 no-op，随后那次 persistChatState
+  // 照样写出删除墓碑，重复 disable 仍会重跑清理。
+  if (isEnabled) getOrCreateChatState(chatId).isInitEnabled = true;
+  else clearChatStateField(chatId, "isInitEnabled");
   // 唯一不作废的情形：对已经启用的群重复 /init enable。那是一次空操作，若
   // 照样作废，随后的重新判定会让 recordBotChatPermissions 看到未知 -> 管理员，
   // 被当成一次全新的边沿，把整份黑名单再清扫一遍（名单几百条时就是几百次
   // getChatMember 压进验证队列）。disable 一律作废——关掉之后这份权限记录
   // 本来就不该继续被信任。
   if (!(isEnabled && wasEnabled)) invalidateBotAdminStatus(chatId);
-  if (arg === "disable") {
-    // 群名只为「在管的群」而记（infra/chatTitle.ts 的 applyChatTitle 同样只认
-    // isInitEnabled === true），关掉之后它就是一条没有任何人会读的残留。而它偏偏是
-    // isEmptyChatState 的判据之一：不清的话，这条记录既不空、也不再被管理，却继续占着
-    // STATE_MANAGED_CHAT_LIMIT 的一个名额——25 轮「启用又关掉」之后，/init enable 对任何
-    // 新群都只回 INIT_CHAT_LIMIT_TEXT，而实际在管的群可能是零个，且没有任何命令能删掉
-    // 这些残留行。清完若整条状态回到缺省，clearChatStateField 会顺手删掉 LRU 条目，下面
-    // 那次 persistChatState 写出的就是删除墓碑，SQLite 行一并消失。
-    //
-    // **只清 title，功能开关一律保留**：那几个开关是运维按下的决策，title 只是
-    // 每条群消息顺手刷回来的派生值。清开关等于让一次 /init disable 静默丢掉本群的
-    // AI、广告检测、防刷屏配置，重新 enable 时既恢复不了也不会有任何提示。代价是
-    // 「总开关关了、功能开关还开着」的群继续占一个 STATE_MANAGED_CHAT_LIMIT 名额，
-    // 直到那几个开关被逐条关掉、或机器人被移出该群（离群走 pruneDepartedChatState）。
-    // 这条代价由 INIT_CHAT_LIMIT_TEXT 如实告诉撞上上限的人，不靠删配置掩盖。
-    clearChatStateField(chatId, "title");
-  }
   // **落盘先于运行时拆除**，与 commands/superAdminToggle.ts 的 runChatToggleCommand
   // 同序：teardownChatRuntime 里有不可逆的持久化动作（aiChat owner 的 durable 记忆
   // 删除、translate owner 的会话删除），反过来做的话，落盘一旦失败就是「磁盘上开关
@@ -91,18 +82,25 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // 记一行错误日志，回执如实说「关是关了，有几样没拆干净」。
   let teardownFailed: boolean = false;
   if (arg === "disable") {
-    // teardownChatRuntime 同步清掉的持久字段只有 isProxySendEnabled（见
-    // infra/chatTeardown.ts；其余 owner 要么只动进程内状态，要么像 translate 那样
-    // 自己落盘）。只清内存的话，重启后代发会话会连同一个已经不再接管的群一起
-    // 复活，因此本群此刻真的开着代发会话时要补一次落盘——没开就不写，否则每条
-    // /init disable 都白付一次 SQLite 事务加 flush。取值在拆除之前读：
-    // clearChatStateField 是 teardownChatRuntime 的第一条语句，拆完就看不出来了。
-    const hadProxySend: boolean = state.isProxySendEnabled === true;
     try {
       await teardownChatRuntime(chatId, "explicitDisable");
+      // 拆完才删这一行：本群的 AI 记忆、`/wed` 奖池、入群日志与问答都由各 owner
+      // 在上面那一步删掉，`chat_states` 是最后一样。删除排在总开关那次 durable
+      // 落盘**之后**，理由同上——它自己也是不可逆的持久化动作。
+      //
+      // 功能开关一并删掉（lockdown 除外，它还要用来解锁）。留着的话，这条记录
+      // 既不空、也不再被管理，却继续占着 STATE_MANAGED_CHAT_LIMIT 的一个名额，
+      // 而没有任何命令能删掉它——25 轮「启用又关掉」之后，/init enable 对任何新群
+      // 都只回 INIT_CHAT_LIMIT_TEXT，实际在管的群却可能是零个。
+      purgeChatStateExceptLockdown(chatId);
+      // 无条件补这一次落盘：teardownChatRuntime 同步清掉的 isProxySendEnabled 与
+      // 上面那次整行删除都只动了内存，不写盘的话，重启后代发会话和整套开关会连同
+      // 一个已经不再接管的群一起复活。整条状态回到缺省时这次写出的是删除墓碑，
+      // SQLite 行一并消失（见 infra/chatStateStorage.ts 的 encodeCurrentChatState）。
+      //
       // 这一次跟着拆除一起降级——总开关那一次已经 durable，这里只补收尾，失败按
       // 「有几样没拆干净」如实回执，不再扣住 offset 制造上面那种歧义。
-      if (hadProxySend) await persistChatState(chatId, "init teardown settled");
+      await persistChatState(chatId, "init teardown settled");
     } catch (error: unknown) {
       teardownFailed = true;
       logger.error(
@@ -126,7 +124,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // /init enable 时 wasEnabled 已经是 true；而作废过的权限记录仍是空的，按
   // botPermissions 判定才能继续管理员身份重判与它要触发的黑名单清扫。
   // 记录已知的重复 enable 照旧跳过：那一刻合取没有发生任何变化。
-  if (isEnabled && state.botPermissions === undefined) await resolveBotAdminStatus(chatId);
+  if (isEnabled && getChatState(chatId).botPermissions === undefined) await resolveBotAdminStatus(chatId);
 
   const replyText: string = teardownFailed
     ? INIT_DISABLE_TEARDOWN_FAILED_TEXT

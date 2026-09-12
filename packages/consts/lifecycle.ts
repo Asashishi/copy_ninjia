@@ -37,8 +37,8 @@ export const AI_CHAT_INVALIDATE_TIMEOUT_MS: number = 10_000;
  *
  * 降级是安全的：登记进来的任务全部按 generation 自检（见 compaction.ts 的
  * rotateCompaction），失效之后即使跑完也不会再写任何东西；等待只是想让停顿
- * 看起来干净，不是正确性前提。记忆压缩的业务重采样链仍拿不到 AbortSignal，
- * 候选为空时的退避加请求超时最坏能跑数分钟。
+ * 看起来干净，不是正确性前提。记忆压缩把同代 AbortSignal 传给摘要请求和
+ * 退避等待；代际失效后停止后续重采样，已返回的结果仍需通过代际检查。
  * 所属模块：workers/aiChat/replyGeneration.ts。
  */
 export const AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS: number = 7_000;

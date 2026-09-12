@@ -1,6 +1,7 @@
 /** 黑名单补扫的退避、claim、回执结算与 outbox 交互。 */
 
 import { describe, expect, test } from "bun:test";
+import { waitUntil } from "../helpers/waitUntil";
 import { botPermissions } from "../helpers/botPermissions";
 import { settleBackgroundWork } from "../libs/helpers";
 const {
@@ -69,7 +70,7 @@ describe("黑名单清扫", () => {
     initBlocklistSweepScheduler();
     requestBlocklistResweep(-1001, Date.now() + 5);
 
-    await Bun.sleep(20);
+    await waitUntil((): boolean => remover.mock.calls.length > 0);
 
     expect(remover).toHaveBeenCalledTimes(1);
     expectLastRemoval({ chatId: -1001, userIds: [7], probeMembership: true });

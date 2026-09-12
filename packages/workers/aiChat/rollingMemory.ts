@@ -18,14 +18,19 @@ import {
 import { clearChatMoodCache } from "../../cache/workers/aiChat/mood";
 import { invalidateChatRuntimeCache } from "../../cache/workers/aiChat/index";
 import { hasActiveAiChatTasks } from "./replyGeneration";
-import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
+import type { AiMemorySnapshot, AiMemoryUsage, BufferedMessage } from "../../types/aiChat/memory";
 
 /** 启动恢复时解析成功、等待按 savedAt 排序的一条群快照。 */
 interface ParsedChatMemory {
   chatId: number;
   snapshot: AiMemorySnapshot;
 }
-import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
+import type {
+  AiMemoryDeletedEvent,
+  AiMemoryEvent,
+  AiMemoryUsagesEvent,
+  AiRecordMessage,
+} from "../../types/aiChat/protocol";
 import { buildBufferedMessage, normalizeHydratedBufferedMessage } from "./bufferedMessage";
 import { scheduleRotation } from "./compaction";
 import { indexBufferedMessage, unindexBufferedMessage } from "./bufferedMessageIndex";
@@ -144,6 +149,17 @@ function buildMemorySnapshot(chatId: number): string {
 }
 
 /**
+ * 取某群此刻的上下文占用量。两个计数直接读所属容器的 size，不遍历、不复制；
+ * pendingSummaries 不计入冷区（理由见 types/aiChat/memory.ts 的 AiMemoryUsage）。
+ */
+function buildMemoryUsage(chatId: number): AiMemoryUsage {
+  return {
+    bufferedCount: chatBuffers.get(chatId)?.size ?? 0,
+    summaryCount: chatSummaries.get(chatId)?.size ?? 0,
+  };
+}
+
+/**
  * 上报单群当前快照；只有 dirty 时发送，成功交给主线程后清除 dirty。用于
  * purge 后第一条新记录的即时上报，也由普通批量 flush 复用。
  */
@@ -158,6 +174,7 @@ export function flushMemorySnapshot(chatId: number, persistImmediately: boolean 
     chatId,
     snapshot: buildMemorySnapshot(chatId),
     persistImmediately,
+    usage: buildMemoryUsage(chatId),
   } satisfies AiMemoryEvent);
   dirtyMemoryChats.delete(chatId);
 }
@@ -186,6 +203,9 @@ export function flushDirtyMemories(): void {
  * chatLastActivityTimes 以快照的 savedAt 近似播种，让恢复出来的群在 LRU
  * 淘汰排序里保持合理的新旧顺序；心情不落盘也不在这里播种，下次拼系统
  * 提示词时由 aiChat/ai/mood.ts 的 currentMoodInstruction 现抽。
+ *
+ * 恢复完成后一次性回传各群占用量（memoryUsages 事件），播种主线程展示用的
+ * 只读镜像（见 cache/main/aiChat.ts 的 aiMemoryUsages）。
  */
 export function hydrateMemories(memories: Map<number, string>): void {
   const parsedMemories: ParsedChatMemory[] = [];
@@ -211,6 +231,9 @@ export function hydrateMemories(memories: Map<number, string>): void {
   // 都要新建一个 Set 并完整遍历 chatBuffers / chatSummaries / pendingSummaries，
   // 逐群调用就把启动恢复变成 O(n²)（同 ensureMemoryCapacity 已经写下的取舍）。
   let memoryChatCount: number = chatMemoryIds().size;
+  // 恢复出来的群在下一条新消息之前都不 dirty，不会产生 memory 事件；主线程的
+  // 占用量镜像因此只能由本次 hydrate 播种（见下方那条 memoryUsages）。
+  const usages: Map<number, AiMemoryUsage> = new Map();
   for (const { chatId, snapshot } of parsedMemories) {
     if (hasChatMemory(chatId)) continue;
     if (memoryChatCount >= AI_MEMORY_MAX_CHATS) {
@@ -252,12 +275,16 @@ export function hydrateMemories(memories: Map<number, string>): void {
       // 只有真正留下了内容才算占一个名额——下面那条分支什么都没装进来。
       memoryChatCount++;
       chatLastActivityTimes.set(chatId, snapshot.savedAt);
+      usages.set(chatId, buildMemoryUsage(chatId));
     } else {
       // 与上面的超容量分支不同：这份快照解析、校验都过了，装进来却什么都没
       // 留下（buffer 空、无摘要、无待处理摘要），文件本身已经没有内容可恢复，
       // 删掉不损失任何东西。
       self.postMessage({ type: "memoryDeleted", chatId } satisfies AiMemoryDeletedEvent);
     }
+  }
+  if (usages.size > 0) {
+    self.postMessage({ type: "memoryUsages", usages } satisfies AiMemoryUsagesEvent);
   }
   if (skippedOverCapacity > 0) {
     logger.error(

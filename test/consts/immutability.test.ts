@@ -71,6 +71,23 @@ import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
 import { BOT_STATUS_PERMISSION_LABELS } from "../../packages/consts/botStatus";
 import { getChatState } from "../../packages/infra/storage/stateStore";
 import * as Admission from "../../packages/consts/antiRaid/admission";
+import * as ReplyAdmission from "../../packages/consts/aiChat/admission";
+
+const assertReplyAdmissionReadonly = (): void => {
+  // @ts-expect-error 共享的启动决策只读。
+  ReplyAdmission.START_REPLY_ROUND.action = "enqueue";
+  // @ts-expect-error 共享的排队决策只读。
+  ReplyAdmission.ENQUEUE_REPLY.action = "startRound";
+  // @ts-expect-error 共享的丢弃决策只读。
+  ReplyAdmission.DROP_REPLY_SILENTLY.action = "enqueue";
+  // @ts-expect-error 共享的溢出决策只读。
+  ReplyAdmission.REPLY_QUEUE_OVERFLOW.action = "enqueue";
+  // @ts-expect-error 共享的运行决策只读。
+  ReplyAdmission.RUN_REPLY_ROUND.action = "rateLimited";
+  // @ts-expect-error 共享的限频决策只读。
+  ReplyAdmission.REPLY_ROUND_RATE_LIMITED.action = "run";
+};
+void assertReplyAdmissionReadonly;
 import * as Media from "../../packages/consts/aiChat/media";
 import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
 import { EMPTY_OUTPUT_ITEMS, OPENAI_EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/openai";

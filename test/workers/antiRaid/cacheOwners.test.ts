@@ -40,6 +40,7 @@ const sentMessages: { chatId: number; text: string }[] = [];
 const deletedMessages: { chatId: number; messageId: number }[] = [];
 let currentPermissions: Record<string, boolean | undefined> = {};
 let sendMessageResult: number | undefined = 700;
+let deleteMessageResult: boolean = true;
 const getChat = mock(async (): Promise<{ permissions?: Record<string, boolean | undefined> }> => ({
   permissions: { ...currentPermissions },
 }));
@@ -73,7 +74,7 @@ mock.module("../../../packages/infra/telegram", () => ({
   },
   deleteMessage: async (chatId: number, messageId: number): Promise<boolean> => {
     deletedMessages.push({ chatId, messageId });
-    return true;
+    return deleteMessageResult;
   },
 }));
 
@@ -97,6 +98,7 @@ beforeEach(() => {
   deletedMessages.length = 0;
   currentPermissions = {};
   sendMessageResult = 700;
+  deleteMessageResult = true;
   getChat.mockClear();
   getChat.mockImplementation(async () => ({ permissions: { ...currentPermissions } }));
   getChatAdministrators.mockClear();
@@ -490,6 +492,44 @@ describe("Lockdown write-ahead runtime", () => {
 
     expect(lockdownEvents.some((event) => event.type === "unlock" && event.chatId === chatId)).toBeTrue();
     expect(joinWindows.has(chatId)).toBeFalse();
+  });
+
+  test("恢复 API 在途遇到入群峰值仍完成本轮，公告删除失败也不阻塞下一轮", async () => {
+    const chatId: number = -1099;
+    const restored = Promise.withResolvers<void>();
+    currentPermissions = { can_invite_users: false, can_send_messages: true };
+    deleteMessageResult = false;
+    setChatPermissions.mockImplementationOnce(async (_chatId, permissions): Promise<void> => {
+      permissionWrites.push({ ...permissions });
+      await restored.promise;
+      currentPermissions = { ...permissions };
+    });
+    lockdownRuntime.adoptLockdowns([{
+      chatId, phase: "restoring", intentId: 20,
+      originalPermissions: { can_invite_users: true, can_send_messages: true },
+      announced: true, announcementMessageId: 640, remainingMs: 0,
+    }]);
+    try {
+      await settleLockdownCalls();
+      expect(permissionWrites).toHaveLength(1);
+      for (let index: number = 0; index < 60; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+      expect(lockdownEntries.get(chatId)?.state.kind).toBe("restoring");
+      restored.resolve();
+      await settleLockdownCalls();
+      expect(currentPermissions.can_invite_users).toBe(true);
+      expect(lockdownEntries.has(chatId)).toBe(false);
+      expect(joinWindows.has(chatId)).toBe(false);
+      expect(deletedMessages).toEqual([{ chatId, messageId: 640 }]);
+      for (let index: number = 0; index < 45; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+      expect(lockdownEntries.has(chatId)).toBe(false);
+      lockdownRuntime.recordJoin(chatId, Date.now());
+      await settleLockdownCalls();
+      expect(lockdownEntries.get(chatId)?.state.kind).toBe("applying");
+      expect(permissionWrites).toHaveLength(1);
+    } finally {
+      restored.resolve();
+      await settleLockdownCalls();
+    }
   });
 
   test("解除封锁 → 删掉群里那条封锁公告，再发解除通知", async () => {

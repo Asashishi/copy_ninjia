@@ -1,6 +1,6 @@
 import type { CachedUser } from "../types/chatState";
 import type { Message, User, Chat } from "grammy/types";
-import { senderUsernameCache, userCache } from "../cache/main/senderIdentity";
+import { identityById, senderUsernameCache, userCache } from "../cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
 import { channelIdentity, userIdentity, visibleSenderChat } from "./visibleSender";
 
@@ -31,18 +31,26 @@ export function resolveSenderIdentity(message: Message): CachedUser | undefined 
   return undefined;
 }
 
-/** 删除正向 alias，并仅在反向索引仍指向该 alias 时同步删除反向记录。 */
+/**
+ * 删除正向 alias，并仅在反向索引仍指向该 alias 时同步删除两份按 id 的记录。
+ * 反向索引与 identityById 的键集恒等，因此两者必须在同一个条件分支里一起摘除。
+ */
 function deleteAlias(username: string): void {
   const cached: CachedUser | undefined = userCache.get(username);
   userCache.delete(username);
   if (cached && senderUsernameCache.get(cached.id) === username) {
     senderUsernameCache.delete(cached.id);
+    identityById.delete(cached.id);
   }
 }
 
 /**
- * 原子维护 username <-> sender id 双向缓存。所有身份写入（消息观察与启动预热）
- * 都必须走这里，避免改名、去名、username 换绑和容量淘汰产生悬空映射。
+ * 原子维护 username <-> sender id 双向缓存，以及按 id 直查身份的 identityById。
+ * 所有身份写入（消息观察与启动预热）都必须走这里，避免改名、去名、username 换绑
+ * 和容量淘汰产生悬空映射。
+ *
+ * identityById 的每一次写入和删除都紧贴同一条 senderUsernameCache 语句：两张表
+ * 的键集恒等是 cacheSender 直查的前提，漏掉一侧会让稳态判定读到已经作废的身份。
  */
 function updateCachedIdentity(identity: CachedUser): void {
   const username: string | undefined = identity.username
@@ -56,6 +64,7 @@ function updateCachedIdentity(identity: CachedUser): void {
       userCache.delete(previousUsername);
     }
     senderUsernameCache.delete(identity.id);
+    identityById.delete(identity.id);
   }
 
   if (username === undefined) return;
@@ -65,12 +74,13 @@ function updateCachedIdentity(identity: CachedUser): void {
   if (previousIdentity && previousIdentity.id !== identity.id &&
     senderUsernameCache.get(previousIdentity.id) === username) {
     senderUsernameCache.delete(previousIdentity.id);
+    identityById.delete(previousIdentity.id);
   }
 
   // 只有新增正向 key 才占容量。同名资料刷新和 username 换绑都不增长条数。
   // 这里不能换成 libs/boundedMap.ts 的 setBoundedMapValue：淘汰要连带摘掉
-  // senderUsernameCache 里的反向索引（deleteAlias），而共享实现只认识单张 Map，
-  // 用它会留下一批指向已淘汰 username 的悬空反查项。
+  // senderUsernameCache 与 identityById 两份按 id 的索引（deleteAlias），而共享
+  // 实现只认识单张 Map，用它会留下一批指向已淘汰 username 的悬空反查项。
   if (!previousIdentity && userCache.size >= USER_CACHE_MAX) {
     const oldestUsername: string | undefined = userCache.keys().next().value;
     if (oldestUsername !== undefined) deleteAlias(oldestUsername);
@@ -78,6 +88,7 @@ function updateCachedIdentity(identity: CachedUser): void {
 
   userCache.set(username, identity);
   senderUsernameCache.set(identity.id, username);
+  identityById.set(identity.id, identity);
 }
 
 /**
@@ -94,14 +105,13 @@ export function cacheSender(message: Message): number | undefined {
   const username: string | undefined = senderChat !== undefined
     ? ("username" in senderChat ? senderChat.username : undefined)
     : fromUser!.username;
-  const previousUsername: string | undefined =
-    senderUsernameCache.get(identityId);
-  if (username === undefined && previousUsername === undefined) {
+  // 直查按 id 的身份，而不是先取 alias 再用字符串键回查 userCache：两张表的键集
+  // 恒等（见 cache/main/senderIdentity.ts 的 identityById），这里只是同一个结果的
+  // 一次查找形式。这条判定跑在每条群消息上，省下的正是那次字符串键查找。
+  const cached: CachedUser | undefined = identityById.get(identityId);
+  if (username === undefined && cached === undefined) {
     return identityId;
   }
-  const cached: CachedUser | undefined = previousUsername === undefined
-    ? undefined
-    : userCache.get(previousUsername);
   // 逐字段比对而不是先构造一个 CachedUser 再比：每条群消息都会走到这里，绝大多数
   // 消息的发送者资料没变，构造一个只为比较的临时对象等于白付一次分配。两种身份形态
   // 缺席的字段也要比（频道没有 first/last_name，用户没有 title/isChannel），否则同一

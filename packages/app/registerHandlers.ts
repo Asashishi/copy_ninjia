@@ -9,6 +9,7 @@ import {
   handleBotStatusCommand,
   handleCjkActionCommand,
   handleCjkActionUsageCommand,
+  handleClearContextCommand,
   handleCopyCommand,
   handleAntiRaidCommand,
   handleFloodControlCommand,
@@ -255,6 +256,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
   commands.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
   commands.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
+  commands.command("clear_context", (ctx: CommandContext<Context>): Promise<void> => handleClearContextCommand(ctx));
   commands.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));
   commands.command("flood_control", (ctx: CommandContext<Context>): Promise<void> => handleFloodControlCommand(ctx));
   commands.command("antiraid", (ctx: CommandContext<Context>): Promise<void> => handleAntiRaidCommand(ctx));

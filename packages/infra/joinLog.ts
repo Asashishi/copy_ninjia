@@ -1,10 +1,14 @@
 /**
  * 滚动 24 小时入群日志的主线程入口。写入只投递最小事件给 Disk I/O Worker，
- * 主线程不保留成员列表；读取仅由 `/batch_kick` 发起。
+ * 主线程不保留成员列表；读取仅由 `/batch_kick` 发起，整群删除由群 teardown 的
+ * `joinLog` owner 发起（本模块在加载时反向注册那个 owner）。
  */
 
 import { getTokyoDateKey } from "../libs/time";
+import { purgesChatData } from "../libs/chatTeardown";
+import type { ChatTeardownReason } from "../types/chatTeardown";
 import type { JoinLogRecord } from "../types/diskIO/storage";
+import { registerChatTeardown } from "./chatTeardownRegistry";
 import * as diskIO from "./diskIO";
 
 export interface RecordJoinLogParams {
@@ -74,3 +78,32 @@ export function readRecentJoinLog({
     now,
   });
 }
+
+/**
+ * 群 teardown 的整群删除：删掉本群保留窗口内的全部入群日志文件。
+ *
+ * 只在本次 teardown 要删数据时发出（见 libs/chatTeardown.ts 的 purgesChatData）；
+ * 被撤管理员那一路不动日志，权限加回来之后 `/batch_kick` 仍要查得到这 24 小时。
+ *
+ * 等 durable 回执而不是投完就走：入群日志是 `/batch_kick` 的唯一信源，删除没落盘
+ * 就重启，一个已经不再接管的群的成员名单会继续躺在 `memory/joinlog/` 里，直到
+ * 保留窗口自然过期。失败原样上抛，由 teardown 的组合边界汇总（见
+ * infra/chatTeardown.ts），`/init disable` 据此回执「有几样没拆干净」。
+ *
+ * 等的是 `joinLogPurge` 而不是追写那一格 `joinLog`：删除失败只该让这一次 teardown
+ * 如实回报，绝不能让 recordJoinLog 把所有群的入群 update 一起判成未落盘
+ * （见 types/diskIO/replies.ts 的 DiskIODomain）。
+ */
+export async function purgeChatJoinLog(chatId: number): Promise<void> {
+  if (!diskIO.postDiskIO({ type: "deleteJoinLog", chatId })) {
+    throw new Error(`Disk I/O refused the join log deletion for chat ${chatId}.`);
+  }
+  if (await diskIO.flushDiskIODomain("joinLogPurge") !== "flushed") {
+    throw new Error(`Failed to delete the join logs for chat ${chatId}.`);
+  }
+}
+
+registerChatTeardown("joinLog", (
+  chatId: number,
+  reason: ChatTeardownReason
+): Promise<void> | undefined => purgesChatData(reason) ? purgeChatJoinLog(chatId) : undefined);

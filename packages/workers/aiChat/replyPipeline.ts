@@ -21,6 +21,7 @@ import {
   triggerKindFor,
 } from "./replyQueue";
 import { startReplyRound } from "./replyRound";
+import { hasReplyDeliveryCapacity } from "./replyDelivery";
 import { currentReplyGeneration } from "./replyState";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 
@@ -41,7 +42,7 @@ export {
 
 /**
  * 启动一条排队触发，并在模型处理结束时继续排空同群待处理队列。
- * @returns 本次真的开了一轮为 true；被限频闸拒绝为 false，此时这条触发要留在
+ * @returns 本次真的开了一轮为 true；被容量或限频闸拒绝为 false，此时这条触发要留在
  *   队首等下一次 drain（见 replyQueue.ts）。
  */
 function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean {
@@ -102,7 +103,7 @@ function onReplyModelFinished(chatId: number): void {
 function onReplyRoundFinished(chatId: number): void {
   if (aiChatWorkerQuiescing.current) return;
   flushOverflowNotice(chatId);
-  drainReplyQueueIfWindowAllows(chatId, Date.now());
+  drainPendingReplyQueues();
 }
 
 /**
@@ -117,7 +118,14 @@ function onReplyRoundFinished(chatId: number): void {
 export function drainPendingReplyQueues(now: number = Date.now()): void {
   if (aiChatWorkerQuiescing.current) return;
   for (const chatId of [...pendingReplyTriggers.keys()]) {
+    const queue: ReturnType<typeof pendingReplyTriggers.get> = pendingReplyTriggers.get(chatId);
+    const previousSize: number = queue?.size ?? 0;
     drainReplyQueueIfWindowAllows(chatId, now);
+    // 已取得全局空位且仍有排队项的群移到末尾，下次回收优先补跑其它群。
+    if (queue && queue.size > 0 && queue.size < previousSize) {
+      pendingReplyTriggers.delete(chatId);
+      pendingReplyTriggers.set(chatId, queue);
+    }
   }
 }
 
@@ -169,6 +177,7 @@ export function generateAndSendReply({
     queueSize: pendingReplyTriggers.get(chatId)?.size ?? 0,
     kind: triggerKindFor(isRandomTrigger, mediaComment),
     telegramBackpressured,
+    deliveryAvailable: hasReplyDeliveryCapacity(chatId),
   });
   switch (decision.action) {
     case "startRound":
@@ -192,8 +201,6 @@ export function generateAndSendReply({
         onReplyModelFinished
       );
       break;
-    case "dropSilently":
-      break;
     case "enqueue":
       pushReplyTrigger({
         chatId,
@@ -208,16 +215,15 @@ export function generateAndSendReply({
         mediaTrigger: mediaComment,
         mediaPreparation,
       });
-      // 入队之后立刻按 FIFO 试着推一次：并发位可能本来就是空的（上一批轮次
-      // 结束时 drain 撞上限频闸停了下来，此后就没人再碰过这个队列），那时不推
-      // 的话队首那些人要一直等到 30 秒的维护节拍才轮得上。先入队再推，顺序仍
-      // 是先来先跑，新触发不会插到等了更久的人前面。
+      // 入队后按 FIFO 补跑；限频或容量仍满时由收尾和维护节拍继续推动。
       drainReplyQueueIfWindowAllows(chatId, Date.now());
       break;
     case "enqueueOverflow":
       // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。话题一并记下：
       // 提示是对这条被丢掉的触发的回应，得落回它所在的话题。
       pendingOverflowNotices.set(chatId, messageThreadId);
+      break;
+    case "dropSilently":
       break;
   }
 }

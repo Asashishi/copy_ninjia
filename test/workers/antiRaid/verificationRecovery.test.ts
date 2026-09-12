@@ -1,6 +1,7 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { waitUntil } from "../../helpers/waitUntil";
 import type {
   AntiRaidWorkerEvent,
   PendingVerificationSnapshot,
@@ -345,14 +346,20 @@ describe("Anti-Raid Worker verification recovery", () => {
       generation: 9,
       verifications: [pendingWithoutReminder],
     });
-    await Bun.sleep(20);
+    await waitUntil((): boolean => reminderAttempts >= baselineAttempts + 1);
     expect(reminderAttempts).toBe(baselineAttempts + 1);
     expect(verificationEntries.get("-1001:70")?.state).toMatchObject({
       kind: "pending",
       reminderMessageId: undefined,
     });
 
-    await Bun.sleep(1_050);
+    // 重试节拍是 VERIFICATION_REMINDER_RETRY_INITIAL_MS（1 秒）；等的是「补发已经落地
+    // 并回填了 messageId」这个终态。预算要盖住那一秒并留出调度余量，又必须低于 bun 的
+    // 单用例超时（5 秒），否则条件不成立时报出来的是超时而不是下面那条断言。
+    await waitUntil((): boolean => {
+      const state = verificationEntries.get("-1001:70")?.state;
+      return state?.kind === "pending" && state.reminderMessageId === 701;
+    }, 3_000);
     const recovered = verificationEntries.get("-1001:70")?.state;
     expect(reminderAttempts).toBe(baselineAttempts + 2);
     expect(recovered).toMatchObject({ kind: "pending", reminderMessageId: 701 });

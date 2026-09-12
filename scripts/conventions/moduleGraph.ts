@@ -1,21 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
-
-/**
- * 一条 import/export 说明符是不是运行时依赖边。类型专用 import 会被
- * TypeScript 擦掉，不会让目标模块在本线程里求值；副作用 import 永远算。
- */
-function isRuntimeModuleEdge(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
-  if (ts.isExportDeclaration(node)) return !node.isTypeOnly;
-  const clause: ts.ImportClause | undefined = node.importClause;
-  if (clause === undefined) return true;
-  if (clause.phaseModifier === ts.SyntaxKind.TypeKeyword) return false;
-  if (clause.name !== undefined) return true;
-  const bindings: ts.NamedImportBindings | undefined = clause.namedBindings;
-  if (bindings === undefined || !ts.isNamedImports(bindings)) return true;
-  return bindings.elements.some((element: ts.ImportSpecifier): boolean => !element.isTypeOnly);
-}
+import { isRuntimeModuleEdge } from "./sourceAnalysis";
 
 /** 把相对说明符解析成仓库内的 .ts 文件；解析不到（npm 包等）返回 undefined。 */
 function resolveRelativeModule(specifier: string, fromFile: string): string | undefined {

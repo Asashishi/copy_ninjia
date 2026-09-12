@@ -43,3 +43,20 @@ export interface AiMemorySnapshot {
   pendingSummary: string | null;
   savedAt: number;
 }
+
+/**
+ * 某群 AI 上下文此刻的占用量：滑动热记忆条数与冷记忆摘要轮数。
+ *
+ * 权威值在 AI Worker 的滚动记忆容器里（见 cache/workers/aiChat/memory.ts 的
+ * chatBuffers 与 chatSummaries），随记忆快照上报和 hydrate 完成过线到主线程只读
+ * 镜像（见 cache/main/aiChat.ts 的 aiMemoryUsages），供 `/bot_status` 展示。
+ *
+ * 两个计数都不含 pendingSummaries：那一轮摘要的原文此刻仍在逐字热区里，把它
+ * 记进冷区等于同一段消息数两次。
+ */
+export interface AiMemoryUsage {
+  /** 滚动缓存中的逐字消息条数，上限 VERBATIM_CONTEXT_MAX。 */
+  readonly bufferedCount: number;
+  /** 已晋升的冷记忆摘要轮数，上限 MAX_SUMMARY_ROUNDS。 */
+  readonly summaryCount: number;
+}

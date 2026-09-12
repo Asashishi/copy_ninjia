@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { waitUntil } from "../../helpers/waitUntil";
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +18,7 @@ import {
   getGlobalCopyState,
   getOrCreateChatState,
   loadState,
-  pruneDepartedChatState,
+  purgeChatStateExceptLockdown,
   seedMissingAssetState,
 } from "../../../packages/infra/storage/stateStore";
 import { chatStateCache } from "../../../packages/cache/main/chatState";
@@ -144,7 +145,7 @@ describe("StateStore", () => {
     await retryCompleted;
     await expect(saved).resolves.toBeUndefined();
     expect(attempts).toBe(3);
-    await store.flush(20);
+    await store.flush(1_000);
     store.dispose();
   });
 
@@ -159,13 +160,11 @@ describe("StateStore", () => {
     });
 
     await expect(store.save(schema(40), { waitForPersistence: false })).resolves.toBeUndefined();
-    // 等的这条链只有 `retryDelaysMs` 那 1 毫秒是设计延迟，其余是调度延迟：
+    // 等的这条链只有 `retryDelaysMs` 那 1 毫秒是设计延迟，其余全是调度延迟：
     // save 返回 → writer 异步 reject → handleWriteFailure → scheduleRetry 的
-    // setTimeout(1) → 触发后再 push 一次 writeText。事件循环繁忙时 timer 会晚触发，
-    // 实测（300 次采样）空载 p99 2.4ms / max 2.8ms，而 6 个忙循环争用 CPU 时
-    // p99 8.3ms / max 9.3ms——`bun test --isolate --coverage` 跑 260 个文件时正是
-    // 后一种条件，5ms 预算下约 3% 的运行会误报。15ms 在实测最大值上留了约 60% 余量。
-    await Bun.sleep(15);
+    // setTimeout(1) → 触发后再 push 一次 writeText。要等的是「第二次 writeText
+    // 已经发生」这个可观测事实，直接等它，不猜 timer 在繁忙事件循环里晚多久触发。
+    await waitUntil((): boolean => attempts > 1);
     expect(attempts).toBeGreaterThan(1);
     await expect(store.flush(20, true)).resolves.toBe("failed");
     store.dispose();
@@ -694,10 +693,10 @@ describe("群级状态门面", () => {
     chatStateCache.set(-1001, { isAIChatEnabled: true, botPermissions: permissions });
     chatStateCache.set(-1002, { isAIChatEnabled: true, botPermissions: permissions, lockdown });
 
-    pruneDepartedChatState(-1001);
-    pruneDepartedChatState(-1002);
+    purgeChatStateExceptLockdown(-1001);
+    purgeChatStateExceptLockdown(-1002);
     // 没有任何记录的群不应被凭空建出条目。
-    pruneDepartedChatState(-1003);
+    purgeChatStateExceptLockdown(-1003);
 
     expect(chatStateCache.has(-1001)).toBeFalse();
     expect(chatStateCache.get(-1002)).toEqual({ lockdown });

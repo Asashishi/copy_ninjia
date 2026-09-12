@@ -106,12 +106,9 @@ function persistCurrentLockdown(
 }
 
 /**
- * 这一轮意图确定落不了盘：清掉内存与磁盘上的记录，并通知 Worker fail-safe 打开。
- *
- * 内存里那条记录必须清掉——它写不进 SQLite，留着会让本群此后每一次状态写入
- * 一起失败。磁盘上那条同样要删：留着它，下次进程启动会 adopt 出一个没人在
- * 恢复的私密模式，把新进群的人继续踢掉。真正的权限恢复由 Worker 收到
- * lockdownPersistFailed 后立刻发起（见 states/lockdown/persistence.ts 的 handlePersistFailed）。
+ * 落盘失败时保留已通过 schema 校验的恢复记录，并通知 Worker fail-safe 打开。
+ * Worker 发布恢复意图后继续对账，只有恢复完成的 unlock 才清记录。
+ * 跨线程恢复约束见 docs/cn/04-invariants.md。
  */
 function abandonLockdownPersistence(
   chatId: number,
@@ -122,10 +119,6 @@ function abandonLockdownPersistence(
     getChatStateCache().get(chatId)?.lockdown;
   if (current !== undefined && lockdownFingerprintMatches(current, fingerprint)) {
     persistedLockdownFingerprints.delete(chatId);
-    if (clearChatStateField(chatId, "lockdown")) {
-      saveChatStateInBackground(chatId, "anti-raid lockdown persist failure");
-      antiRaidRuntimeState.persistenceVersion++;
-    }
   }
   postToWorker({
     type: "lockdownPersistFailed",

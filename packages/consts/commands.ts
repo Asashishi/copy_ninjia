@@ -30,6 +30,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "block", description: "把目标写进永久黑名单并在所有托管群封禁，之后再进群也秒踢；支持回复、@username 或用户 id，仅持有 isCanBlock 的身份配用，杂鱼别乱碰♡" },
   { command: "unblock", description: "把目标移出永久黑名单并解除所有托管群封禁；支持回复、@username、用户 id 或频道负数 id，仅持有 isCanUnBlock 的身份配用，笨蛋♡" },
   { command: "ai_chat", description: "用 enable/disable 开关本群 AI 闲聊，只有获授权者配使唤本天才，杂鱼别乱按♡" },
+  { command: "clear_context", description: "把本天才在这个群攒下的 AI 上下文记忆全忘光，内存里的和存档里的一起清，之后从零重新记；不带参数，只有超级管理员配下这种命令，杂鱼别乱按♡" },
   { command: "ad_detect", description: "用 enable/disable 开关本群广告检测；命中就拉黑并全群封禁删消息，只有获授权者配碰，杂鱼♡" },
   { command: "flood_control", description: "用 enable/disable 开关本群防刷屏禁言，只有获授权者配碰，刷屏杂鱼可别手抖哦♡" },
   { command: "antiraid", description: "用 enable/disable 开关本群入群验证与防冲群私密模式，只有获授权者配碰，关掉就没人替你拦僵尸了哦杂鱼♡" },
@@ -347,18 +348,21 @@ export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
 /**
  * `/init enable` 在 State 已达群数上限时的拒绝提示。
  *
- * 必须点名**怎么才能腾出一格**：`/init disable` 只清 `title`，功能开关按设计
- * 保留（重新启用不用重配，见 commands/init.ts），因此一个关了总开关、却还开着
- * `/ai_chat` 之类的群仍占着名额；而 `chat_states` 是权威表，没有任何命令能直接
- * 删行，运维也不得手改 SQLite（见 docs/cn/07-operations.md）。只写「请先删除
- * 不再管理的群状态」等于指向一条不存在的操作。
+ * 必须点名**怎么才能腾出一格**：`chat_states` 是权威表，没有任何命令能直接删行，
+ * 运维也不得手改 SQLite（见 docs/cn/07-operations.md），只写「请先删除不再管理的
+ * 群状态」等于指向一条不存在的操作。能腾格子的只有两条路——去那个群
+ * `/init disable`，或者把机器人移出那个群；两者都会整行删掉本群状态（见
+ * infra/storage/stateStore.ts 的 purgeChatStateExceptLockdown）。
+ *
+ * 唯一腾不出来的是仍卡在反刷群私密模式里的群：那条 lockdown write-ahead 记录要
+ * 留到邀请权限恢复为止，删了那个群的权限就永久卡住。这一条如实说出来，撞上限的人
+ * 才不会对着一个「已经 disable 了却还占着名额」的群反复试。
  * 所属模块：packages/commands/init.ts。
  */
 export const INIT_CHAT_LIMIT_TEXT: string =
   `State 最多只能管理 ${STATE_MANAGED_CHAT_LIMIT} 个群，现在已经满了。` +
-  `/init disable 只关总开关，功能开关还开着的群仍占着名额：` +
-  `去那个群把 /ai_chat、/ad_detect、/flood_control、/antiraid、/translate 逐条 disable，` +
-  `或者把本天才移出那个群，再回来启用本群。`;
+  `去不再需要的那个群 /init disable，或者把本天才移出那个群，那一格就腾出来了，再回来启用本群。` +
+  `只有仍在私密模式里的群腾不出来——那条记录要留到邀请权限恢复为止。`;
 
 /**
  * 各命令的目标解析提示文案表。

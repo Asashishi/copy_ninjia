@@ -20,7 +20,9 @@
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
 - **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为项目根的 `g-auth.json`。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
 
-`g-auth.json` 由 `packages/config/googleAuth.ts` 严格解析：`client_email` 为非空字符串，`private_key` 为可解析的非空 PEM 私钥；`type` 可省略，存在时只能为 `service_account`。SDK 消费的 `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` 可省略，存在时必须为非空字符串。其余元数据原样保留。校验发生在创建 Worker 和连接 Telegram 之前，错误仅包含文件路径、字段路径与期望，不输出凭据值。
+`g-auth.json` 由 `packages/config/googleAuth.ts` 严格解析：`client_email` 为非空字符串，`private_key` 为可解析的非空 RSA PEM 私钥（用于 RS256，不接受 EC、Ed25519 或 RSA-PSS）；`type` 可省略，存在时只能为 `service_account`。SDK 消费的 `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` 可省略，存在时必须为非空字符串。其余元数据原样保留。校验发生在创建 Worker 和连接 Telegram 之前，错误仅包含文件路径、字段路径与期望，不输出凭据值。
+
+完整凭据在启动阶段保存为进程级只读快照；翻译 SDK 通过 `credentials` 使用它，首次请求和客户端关闭后重开均不再读盘。修改或补齐凭据后须重启进程。
 
 ## 安装
 

@@ -1,6 +1,7 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { waitUntil } from "../../helpers/waitUntil";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from
   "../../../packages/consts/antiRaid/lockdown";
 import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../packages/types";
@@ -120,7 +121,7 @@ describe("Anti-Raid pending-member flood handling", () => {
     await Bun.sleep(0);
     expect(actions[0]).toBe("kick");
 
-    await Bun.sleep(10);
+    await waitUntil((): boolean => actions.length >= 4);
     expect(actions).toEqual([
       "kick",
       "delete:900",

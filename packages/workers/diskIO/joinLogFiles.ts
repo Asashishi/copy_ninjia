@@ -8,6 +8,7 @@ import {
   consumeJoinLogRejection,
   joinLogBuffer,
   joinLogCleanupDay,
+  joinLogDeletions,
   markJoinLogDirty,
 } from "../../cache/workers/diskIO/joinLog";
 import {
@@ -22,6 +23,7 @@ import {
 import { DAY_MS } from "../../consts/diskIO/common";
 import { getTokyoDateKey } from "../../libs/time";
 import type {
+  JoinLogDeleteDiskMessage,
   JoinLogDiskMessage,
   ReadJoinLogRequest,
 } from "../../types/diskIO/messages";
@@ -34,7 +36,10 @@ import {
   isRecentJoinLogDay,
   recentJoinLogDayKeys,
 } from "./joinLogRecords";
-import { cleanupExpiredJoinLogDays } from "./joinLogRecovery";
+import {
+  cleanupExpiredJoinLogDays,
+  purgeChatJoinLogFiles,
+} from "./joinLogRecovery";
 import {
   dayOfFileKey,
   fileKey,
@@ -46,6 +51,7 @@ import { enqueueDiskIOOperation } from "./operationQueue";
 export {
   inspectJoinLogFiles,
   maintainJoinLogFiles,
+  purgeJoinLogDeletions,
 } from "./joinLogRecovery";
 export type { JoinLogRecoveryInspection } from "./joinLogRecovery";
 
@@ -160,6 +166,22 @@ export async function flushJoinLogBuffer(): Promise<boolean> {
 export async function flushJoinLogDomain(): Promise<boolean> {
   const flushed: boolean = await flushJoinLogBuffer();
   return consumeJoinLogRejection() ? false : flushed;
+}
+
+/**
+ * 群 teardown 的整群删除：先丢掉这个群仍在缓冲里的待写事实，再删它的全部日志文件。
+ *
+ * 缓冲必须同步丢掉——留着的话，本条之后的任何一次 flush 都会把属于已停管群的入群
+ * 事实重新写回一份刚被删掉的文件。删除失败保留待删标记，由 `joinLogPurge` 领域
+ * 的每一次 flush 重试并回报；那一格与追写的 `joinLog` 分开记，理由见
+ * types/diskIO/replies.ts 的 DiskIODomain。
+ */
+export function handleJoinLogDeleteMessage(msg: JoinLogDeleteDiskMessage): void {
+  joinLogBuffer.entries = joinLogBuffer.entries.filter(
+    (entry: BufferedJoinLogEntry): boolean => entry.chatId !== msg.chatId
+  );
+  joinLogDeletions.add(msg.chatId);
+  purgeChatJoinLogFiles(msg.chatId);
 }
 
 /**

@@ -2,6 +2,23 @@ import { readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import ts from "typescript";
 
+/** import/export 是否在运行时求值目标模块；空声明仍保留副作用，纯类型引用被擦除。 */
+export function isRuntimeModuleEdge(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
+  if (ts.isExportDeclaration(node)) {
+    if (node.isTypeOnly) return false;
+    const clause: ts.NamedExportBindings | undefined = node.exportClause;
+    return clause === undefined || !ts.isNamedExports(clause) || clause.elements.length === 0 ||
+      clause.elements.some((element: ts.ExportSpecifier): boolean => !element.isTypeOnly);
+  }
+  const clause: ts.ImportClause | undefined = node.importClause;
+  if (clause === undefined) return true;
+  if (clause.phaseModifier === ts.SyntaxKind.TypeKeyword) return false;
+  if (clause.name !== undefined) return true;
+  const bindings: ts.NamedImportBindings | undefined = clause.namedBindings;
+  return bindings === undefined || !ts.isNamedImports(bindings) || bindings.elements.length === 0 ||
+    bindings.elements.some((element: ts.ImportSpecifier): boolean => !element.isTypeOnly);
+}
+
 /** 递归读取目录下的 TypeScript 源文件。 */
 export function sourceFilesUnder(root: string): string[] {
   const files: string[] = [];

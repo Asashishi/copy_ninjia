@@ -151,6 +151,40 @@ export function removeChatQa(chatId: number, q: string): boolean {
   return true;
 }
 
+/**
+ * 群 teardown 的整群删除：删掉本群全部已登记问答。
+ *
+ * 逐条发墓碑而不是一条「删掉这个群」的批量消息：`chat_qa` 的主键是 (chatId, q)
+ * 复合键，逐条删除复用现成的准入、revision 与重放路径，不必为一个每群至多
+ * CHAT_QA_MAX_PER_CHAT 条的冷路径再造一套批量协议。
+ *
+ * 与 `/qa remove` 同样只排进事务缓冲、不在这里等 durable 回执：调用方
+ * （commands/qa.ts 的 teardownQaInChat）后面紧跟着 `/init disable` 自己那次
+ * persistChatState，两者共用同一个 SQLite 事务与 flush。
+ *
+ * @returns 实际删掉的条数；没有登记过问答的群为 0，且不产生任何投递。
+ */
+export function removeAllChatQa(chatId: number): number {
+  const questions: Map<string, string> | undefined = chatQaEntries.get(chatId);
+  if (questions === undefined) return 0;
+  let removed: number = 0;
+  try {
+    // 先取一份键快照：下面的循环会就地改 questions，直接迭代它是在改集合的同时遍历。
+    for (const q of [...questions.keys()]) {
+      const message: ChatQaWriteDiskMessage = prepareChatQaWrite(chatId, q, undefined);
+      questions.delete(q);
+      queueChatQaWrite(message);
+      removed++;
+    }
+  } finally {
+    // 空表不留存，理由同 removeChatQa：直答路径第一步要能靠 undefined 短路。
+    // 收在 finally 里：中途抛错时已经摘走的那几条不能再回到表里，而剩下的必须
+    // 原样留着等重试，两者都要求按此刻的 size 判定。
+    if (questions.size === 0) chatQaEntries.delete(chatId);
+  }
+  return removed;
+}
+
 /** 收到精确 ACK 后清掉对应未确认 revision；迟到的 ACK 不得清掉更新的写。 */
 function settleChatQaWrites(reply: IdentityStoragePersistedReply): void {
   for (const write of reply.chatQaWrites) {

@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegistry";
+import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
+import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { getMoodConfig } from "../../../packages/config/mood";
@@ -28,6 +31,8 @@ type AiDiskMessage =
 const workerPosts: AiChatWorkerMessage[] = [];
 const diskPosts: AiDiskMessage[] = [];
 const initWorker = mock((): void => {});
+const teardownFatal = mock((_error: Error): void => {});
+mock.module("../../../packages/infra/diskIO/fatal", () => ({ signalDiskIOFatal: teardownFatal }));
 let workerPostAccepted: boolean = true;
 let supervisorOptions: {
   onEvent: (event: AiChatWorkerEvent) => void;
@@ -91,9 +96,12 @@ const {
   aiChatWorkerState,
   aiMemoryDeleteWaiters,
   aiMemoryRevisionCounters,
+  aiMemoryRevisionFloor,
+  pendingAiMemoryTeardowns,
   aiChatInvalidateRequestCounter,
   aiChatInvalidateWaiters,
   latestAiMemoryRevisions,
+  aiMemoryUsages,
   pendingAiMemoryDeletes,
   postPurgeAiMemoryPersistRevisions,
 } = await import("../../../packages/cache/main/aiChat");
@@ -105,7 +113,11 @@ beforeEach(() => {
   lastInitState.current = null;
   latestAiMemories.clear();
   latestAiMemoryRevisions.clear();
+  aiMemoryUsages.clear();
   aiMemoryRevisionCounters.clear();
+  aiMemoryRevisionFloor.current = 0;
+  pendingAiMemoryTeardowns.clear();
+  teardownFatal.mockClear();
   pendingAiMemoryDeletes.clear();
   postPurgeAiMemoryPersistRevisions.clear();
   for (const waiters of aiMemoryDeleteWaiters.values()) {
@@ -125,6 +137,139 @@ beforeEach(() => {
   knownChats.clear();
   workerPostAccepted = true;
 });
+afterEach((): void => { jest.useRealTimers(); });
+
+async function timeoutTeardown(chatId: number, timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): Promise<void> {
+  const task: Promise<unknown> = teardownRegisteredChat("aiChat", chatId, "explicitDisable").catch((error: unknown): unknown => error);
+  jest.advanceTimersByTime(timeoutMs + 1);
+  expect(await task).toBeInstanceOf(Error);
+}
+
+test("400 个不同群超时后收到 durable 回执，计数与收尾表回到零", async () => {
+  jest.useFakeTimers();
+  for (let index: number = 1; index <= STATE_MANAGED_CHAT_LIMIT * 16; index++) {
+    await timeoutTeardown(-index);
+    const revision: number = pendingAiMemoryDeletes.get(-index)!;
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -index, revision });
+    expect(aiMemoryRevisionCounters.size).toBe(0);
+    expect(pendingAiMemoryTeardowns.size).toBe(0);
+  }
+  expect(aiMemoryDeleteWaiters.size).toBe(0);
+  expect(diskPosts.filter((message) => message.type === "forgetAiMemory")).toHaveLength(STATE_MANAGED_CHAT_LIMIT * 16);
+});
+
+test.each(["receipt", "respawn", "giveUp", "terminate"] as const)("删除已 durable 时仍等待旧 AI Worker，%s 后释放", async (settlement) => {
+  jest.useFakeTimers();
+  aiChatWorkerState.available = true;
+  const task = teardownRegisteredChat("aiChat", -1001, "explicitDisable").catch((error: unknown): unknown => error);
+  const requestId: number = pendingAiMemoryTeardowns.get(-1001)!.requestId!;
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+  jest.advanceTimersByTime(AI_CHAT_INVALIDATE_TIMEOUT_MS + 1);
+  expect(await task).toBeInstanceOf(Error);
+  expect(aiMemoryRevisionCounters.has(-1001)).toBe(true);
+  if (settlement === "receipt") {
+    supervisorOptions!.onEvent({ type: "chatInvalidated", chatId: -1001, requestId: requestId + 1 });
+    expect(aiMemoryRevisionCounters.has(-1001)).toBe(true);
+    supervisorOptions!.onEvent({ type: "chatInvalidated", chatId: -1001, requestId });
+  } else if (settlement === "respawn") supervisorOptions!.onRespawn((): boolean => true);
+  else if (settlement === "giveUp") supervisorOptions!.onGiveUp();
+  else await aiChat.terminateAiChat();
+  expect(aiMemoryRevisionCounters.has(-1001)).toBe(false);
+  expect(pendingAiMemoryTeardowns.size).toBe(0);
+});
+
+test("重新产生记忆后旧 teardown 回执只收尾旧删除，不重置新代计数", async () => {
+  jest.useFakeTimers();
+  await timeoutTeardown(-1001);
+  aiChatWorkerState.available = true;
+  aiChat.recordChatMessage(aiRecordMessageFixture({ chatId: -1001 }));
+  expect(pendingAiMemoryTeardowns.size).toBe(0);
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+  expect(aiMemoryRevisionCounters.get(-1001)).toBe(1);
+  expect(diskPosts.some((message) => message.type === "forgetAiMemory")).toBe(false);
+});
+
+test("首条删除先确认时，Worker 的 memoryDeleted 补删仍持有收尾责任", async () => {
+  aiChatWorkerState.available = true;
+  const teardown = teardownRegisteredChat("aiChat", -1001, "explicitDisable");
+  const requestId: number = pendingAiMemoryTeardowns.get(-1001)!.requestId!;
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+  supervisorOptions!.onEvent({ type: "memoryDeleted", chatId: -1001 });
+  const revision: number = pendingAiMemoryDeletes.get(-1001)!;
+  expect(revision).toBeGreaterThan(1);
+  supervisorOptions!.onEvent({ type: "chatInvalidated", chatId: -1001, requestId });
+  await teardown;
+  expect(pendingAiMemoryTeardowns.has(-1001)).toBe(true);
+  expect(aiMemoryRevisionCounters.get(-1001)).toBe(revision);
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision });
+  expect(pendingAiMemoryTeardowns.size).toBe(0);
+  expect(aiMemoryRevisionCounters.size).toBe(0);
+  expect(diskPosts.at(-1)).toEqual({ type: "forgetAiMemory", chatId: -1001 });
+});
+
+test("新快照已接管时迟到的 Worker 和删除回执不能忘记新水位", async () => {
+  jest.useFakeTimers();
+  aiChatWorkerState.available = true;
+  await timeoutTeardown(-1001, AI_CHAT_INVALIDATE_TIMEOUT_MS);
+  const requestId: number = pendingAiMemoryTeardowns.get(-1001)!.requestId!;
+  supervisorOptions!.onEvent({ type: "memoryDeleted", chatId: -1001 });
+  const deletedRevision: number = pendingAiMemoryDeletes.get(-1001)!;
+  aiChat.recordChatMessage(aiRecordMessageFixture({ chatId: -1001 }));
+  supervisorOptions!.onEvent({
+    type: "memory", chatId: -1001, snapshot: "new-memory", persistImmediately: true,
+    usage: { bufferedCount: 1, summaryCount: 0 },
+  });
+  const revision: number = latestAiMemoryRevisions.get(-1001)!;
+  expect(revision).toBeGreaterThan(deletedRevision);
+  supervisorOptions!.onEvent({ type: "chatInvalidated", chatId: -1001, requestId });
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: deletedRevision });
+  diskMemoryPersisted!({ type: "aiMemoryPersisted", chatId: -1001, revision });
+  expect(pendingAiMemoryTeardowns.size).toBe(0);
+  expect(latestAiMemories.get(-1001)).toBe("new-memory");
+  expect(aiMemoryRevisionCounters.get(-1001)).toBe(revision);
+  expect(diskPosts.some((message) => message.type === "forgetAiMemory")).toBe(false);
+});
+
+test("同群重复 teardown 共用删除，下一生命周期不会复用旧回执编号", async () => {
+  jest.useFakeTimers();
+  const first = teardownRegisteredChat("aiChat", -1001, "explicitDisable");
+  const second = teardownRegisteredChat("aiChat", -1001, "explicitDisable");
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+  expect((await Promise.allSettled([first, second])).map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+  expect(aiMemoryRevisionCounters.size).toBe(0);
+  const next = teardownRegisteredChat("aiChat", -1001, "explicitDisable");
+  const revision: number = pendingAiMemoryDeletes.get(-1001)!;
+  expect(revision).toBeGreaterThan(1);
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+  expect(pendingAiMemoryDeletes.get(-1001)).toBe(revision);
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision });
+  await next;
+  expect(aiMemoryRevisionCounters.size).toBe(0);
+});
+
+test("超时后 DiskIO 重建重放删除，普通 disable 不授权 teardown 收尾", async () => {
+  jest.useFakeTimers();
+  await timeoutTeardown(-1001);
+  const replayed: DiskBusinessMessage[] = [];
+  await diskRespawn!({ post: (message): boolean => { replayed.push(message); return true; } } as DiskIORecoveryTransport);
+  expect(replayed).toContainEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+  expect(pendingAiMemoryTeardowns.size).toBe(0);
+  const disable = aiChat.invalidateAiChat(-1002, true);
+  const revision: number = pendingAiMemoryDeletes.get(-1002)!;
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision });
+  await disable;
+  expect(aiMemoryRevisionCounters.get(-1002)).toBe(revision);
+});
+
+test("未完成收尾达到容量时显式 fatal，不丢已有责任或继续增长", async () => {
+  jest.useFakeTimers();
+  for (let index: number = 1; index <= STATE_MANAGED_CHAT_LIMIT; index++) await timeoutTeardown(-index);
+  await expect(teardownRegisteredChat("aiChat", -9999, "explicitDisable")).rejects.toThrow("capacity");
+  expect(teardownFatal).toHaveBeenCalledTimes(1);
+  expect(pendingAiMemoryTeardowns.size).toBe(STATE_MANAGED_CHAT_LIMIT);
+  expect(aiMemoryRevisionCounters.size).toBe(STATE_MANAGED_CHAT_LIMIT);
+});
 
 describe("AI main-thread persistence mirror", () => {
   test("AI 与 Disk I/O Worker 重建时重放最新镜像，清除后的迟到快照不会复活", async () => {
@@ -133,7 +278,12 @@ describe("AI main-thread persistence mirror", () => {
     aiChat.hydrateAiMemory(new Map([[-1001, "restored-memory"]]));
     aiChat.hydrateStickerCatalog(new Map([["pack_a", "restored-catalog"]]));
 
-    supervisorOptions!.onEvent({ type: "memory", chatId: -1001, snapshot: "latest-memory" });
+    supervisorOptions!.onEvent({
+      type: "memory",
+      chatId: -1001,
+      snapshot: "latest-memory",
+      usage: { bufferedCount: 12, summaryCount: 2 },
+    });
     supervisorOptions!.onEvent({ type: "stickerCatalog", pack: "pack_a", snapshot: "latest-catalog" });
 
     const aiRespawnPosts: AiChatWorkerMessage[] = [];
@@ -180,11 +330,20 @@ describe("AI main-thread persistence mirror", () => {
       { type: "aiMemory", chatId: -1001, revision: 1, snapshot: "latest-memory" },
       { type: "stickerCatalog", pack: "pack_a", snapshot: "latest-catalog" },
     ]);
+    expect(aiMemoryUsages.get(-1001)).toEqual({ bufferedCount: 12, summaryCount: 2 });
 
     const invalidated = aiChat.invalidateAiChat(-1001, true);
-    supervisorOptions!.onEvent({ type: "memory", chatId: -1001, snapshot: "stale-memory" });
+    supervisorOptions!.onEvent({
+      type: "memory",
+      chatId: -1001,
+      snapshot: "stale-memory",
+      usage: { bufferedCount: 40, summaryCount: 3 },
+    });
 
     expect(latestAiMemories.has(-1001)).toBeFalse();
+    // 展示用的占用量镜像与快照镜像同生共死：清除之后 `/bot_status` 必须按
+    // 「无条目 = 0」显示，绝不能留着 purge 前的旧计数。
+    expect(aiMemoryUsages.has(-1001)).toBeFalse();
     expect(purgedAiMemoryChats.has(-1001)).toBeTrue();
     expect(diskPosts.slice(-2)).toEqual([
       { type: "deleteAiMemory", chatId: -1001, revision: 2 },
@@ -282,6 +441,7 @@ describe("AI main-thread persistence mirror", () => {
       chatId: -1001,
       snapshot: "post-purge-memory",
       persistImmediately: true,
+      usage: { bufferedCount: 1, summaryCount: 0 },
     });
     expect(diskPosts.at(-1)).toEqual({
       type: "aiMemory",
@@ -487,6 +647,30 @@ describe("AI main-thread persistence mirror", () => {
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1002, revision: 1 });
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision: 1 });
     await secondDelete;
+  });
+
+  test("hydrate 回传的占用量播种展示镜像，正在等待 purge 确认的群不被点亮", () => {
+    aiEnabledChats.add(-1001);
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    aiChat.hydrateAiMemory(new Map([[-1001, "restored-memory"]]));
+    // 恢复出来的群在下一条新消息之前不 dirty，没有 memory 事件可搭；占用量只能
+    // 由 hydrate 完成后的这条事件播种（见 workers/aiChat/rollingMemory.ts 的
+    // hydrateMemories）。
+    expect(aiMemoryUsages.has(-1001)).toBeFalse();
+
+    // -1002 正在等待 purge 确认：它那份记忆已经判了死刑，重建出来的旧计数不得
+    // 把镜像重新点亮。
+    purgedAiMemoryChats.add(-1002);
+    supervisorOptions!.onEvent({
+      type: "memoryUsages",
+      usages: new Map([
+        [-1001, { bufferedCount: 255, summaryCount: 7 }],
+        [-1002, { bufferedCount: 8, summaryCount: 0 }],
+      ]),
+    });
+
+    expect(aiMemoryUsages.get(-1001)).toEqual({ bufferedCount: 255, summaryCount: 7 });
+    expect(aiMemoryUsages.has(-1002)).toBeFalse();
   });
 
   test("Worker 放弃自愈后停机 flush 直接短路，不扣住最终 offset", async () => {

@@ -94,6 +94,10 @@ export function createDiskIOWorker(): Worker {
       for (const listener of diskIORuntime.aiMemoryDeletedPersistedListeners) listener(data);
       return;
     }
+    if (data.type === "wedMembersDeletedPersisted") {
+      for (const listener of diskIORuntime.wedMembersDeletedPersistedListeners) listener(data);
+      return;
+    }
     if (data.type === "aiMemoryPersisted") {
       for (const listener of diskIORuntime.aiMemoryPersistedListeners) listener(data);
       return;

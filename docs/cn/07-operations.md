@@ -81,7 +81,7 @@ WantedBy=multi-user.target
 - **`memory/wed/<chatId>.json`**
   - **内容**：每群已发言成员 ID 的纯数字数组，例如 `[5974478892]`；主线程每群长期复用一个 `Set<number>`。最多 25 群，每群最多 150,000 个 ID，满额保留已有成员，退群后可继续新增。
   - **校验**：文件名必须是规范负安全整数群 ID，数组元素必须是唯一的正安全整数；非法 JSON、重复、类型或容量错误拒绝启动，不截断或修复原文件。目录和文件缺失允许启动，由程序按需创建。
-  - **落盘与备份**：实际增删按累计 300 条或首条变更后 30 秒经 DiskIO 全量原子替换，无变化不写。停用群保留记录，重启恢复；没有按日过期。纳入数据根的一致性备份，突然退出可能丢失尚未落盘的变更。
+  - **落盘与备份**：实际增删按累计 300 条或首条变更后 30 秒经 DiskIO 全量原子替换，无变化不写。没有按日过期，重启按文件恢复；`/init disable` 与机器人被移出群会连文件一起删掉（被撤管理员不删，权限加回来还要用）。纳入数据根的一致性备份，突然退出可能丢失尚未落盘的变更。
 - **`memory/stickers/<pack>.json`**
   - **内容**：每个白名单贴纸包的 version=1 描述目录，按 `file_unique_id` 保存
     emoji/描述及整包摘要。
@@ -104,7 +104,8 @@ WantedBy=multi-user.target
   - **内容**：权威 `chat_member` 入群事实；`/batch_kick` 按滚动窗口读取。
   - **备份**：含用户 id 与时间戳，按敏感数据备份；保留最近三个东京自然日以覆盖
     跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
-    最新 250,000 人。
+    最新 250,000 人。`/init disable` 与机器人被移出群会把该群保留窗口内外的全部
+    日志一并删掉，不等自然过期（被撤管理员不删）。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
   - **内容**：schema v8 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是永久白名单、
     黑名单权威表；`temporary_whitelist_entries` 以关系列保存跨群发言累计、连续合格日、
@@ -112,11 +113,10 @@ WantedBy=multi-user.target
     `pending_blocked_removals` 是未完成群级封禁任务 outbox，
     `chat_states` 是每群状态权威表（最多 25 行，超出即拒绝启动），
     `storage_metadata` 记录唯一 schema version；Drizzle migration journal 必须匹配受支持谱系。
-    `chat_states` 的 25 行名额只在整条记录回到缺省时释放：`/init disable` 只清群名，功能开关
-    按设计保留（重新 `/init enable` 不必重配），因此关掉总开关、却还开着 `/ai_chat` 之类的群
-    仍占一行。要腾出名额，得在那个群把 `/ai_chat`、`/ad_detect`、`/flood_control`、
-    `/antiraid`、`/translate` 逐条 disable，或把 Bot 移出该群——离群会删掉该行，除非它还挂着
-    待恢复的 lockdown。
+    `chat_states` 的 25 行名额只在整条记录回到缺省时释放，两条路各自能腾出一格：在那个群
+    `/init disable`，或者把 Bot 移出该群——两者都会整行删掉群名、权限快照与全部功能开关，
+    唯一保留的是还挂着待恢复 lockdown 的行（删了那个群的邀请权限会永久卡住）。因此重新
+    `/init enable` 之后功能开关要逐条重开，那是「不再管这个群就一样不留」的另一面。
   - **备份**：必须备份，丢失黑名单等于解除全部永久封禁，丢失 outbox 则会漏掉未完成处置。
     停止 Bot 后，把主库及当时存在的 WAL/SHM 作为同一一致性集合复制到工作树外，并记录
     owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。翻译冷迁移只在独立暂存副本上写库，保留源备份并核对哈希与元数据。

@@ -1,4 +1,8 @@
 import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../consts/aiChat/rateLimit";
+import {
+  DROP_REPLY_SILENTLY, ENQUEUE_REPLY, REPLY_QUEUE_OVERFLOW,
+  REPLY_ROUND_RATE_LIMITED, RUN_REPLY_ROUND, START_REPLY_ROUND,
+} from "../consts/aiChat/admission";
 import type {
   AdmitDecision,
   AdmitRoundInput,
@@ -27,10 +31,10 @@ import type {
  */
 
 /**
- * 并发闸判定：按同群正在处理的模型轮数决定启动、排队或丢弃。
+ * 按模型并发、存活容量、等待队列及触发种类决定启动、排队或丢弃。
  * 队列非空时，即使有空模型位也先入队；补跑按 FIFO 消费空位。
  * 模型完成、发送收尾、入队后及维护节拍均由 replyPipeline.ts 驱动补跑。
- * 完整发送链不参与并发计数；生命周期约束见 docs/cn/04-invariants.md。
+ * 完整发送链有独立容量闸；生命周期约束见 docs/cn/04-invariants.md。
  * @param input.activeRounds 该群当前模型处理尚未完成的回复轮数。
  * @param input.queueSize 该群当前排队等待补跑的直接触发数。
  * @param input.kind 本次触发的种类。
@@ -39,16 +43,16 @@ export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
   if (
     input.telegramBackpressured &&
     (input.kind === "random" || input.kind === "mediaRandom")
-  ) return { action: "dropSilently" };
+  ) return DROP_REPLY_SILENTLY;
   const maxConcurrent: number = input.telegramBackpressured
     ? 1
     : REPLY_ROUND_MAX_CONCURRENT;
-  if (input.queueSize === 0 && input.activeRounds < maxConcurrent) {
-    return { action: "startRound" };
+  if (input.deliveryAvailable && input.queueSize === 0 && input.activeRounds < maxConcurrent) {
+    return START_REPLY_ROUND;
   }
-  if (input.kind === "random" || input.kind === "mediaRandom") return { action: "dropSilently" };
-  if (input.queueSize >= REPLY_TRIGGER_QUEUE_MAX) return { action: "enqueueOverflow" };
-  return { action: "enqueue" };
+  if (input.kind === "random" || input.kind === "mediaRandom") return DROP_REPLY_SILENTLY;
+  if (input.queueSize >= REPLY_TRIGGER_QUEUE_MAX) return REPLY_QUEUE_OVERFLOW;
+  return ENQUEUE_REPLY;
 }
 
 /**
@@ -57,6 +61,6 @@ export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
  * @param input.windowCount 挤掉过期项之后，窗口内剩余的触发数。
  */
 export function admitRound(input: AdmitRoundInput): RoundDecision {
-  if (input.windowCount >= RATE_LIMIT_LONG_MAX_TRIGGERS) return { action: "rateLimited" };
-  return { action: "run" };
+  if (input.windowCount >= RATE_LIMIT_LONG_MAX_TRIGGERS) return REPLY_ROUND_RATE_LIMITED;
+  return RUN_REPLY_ROUND;
 }

@@ -86,7 +86,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 - **`memory/wed/<chatId>.json`**
   - **内容**：各群の発言済みメンバー ID の数値配列（例：`[5974478892]`）。主スレッドは各群で同じ長期 `Set<number>` を再利用します。最大 25 群、各群 150,000 ID です。満杯では既存 ID を保持し、退室で空きができると追加を再開します。
   - **検証**：ファイル名は正規形の負の安全整数グループ ID、要素は重複のない正の安全整数です。不正 JSON、重複、型や容量の違反は原本を切り詰めたり修復したりせず起動を拒否します。ディレクトリやファイルの欠落は許可し、必要時に作成します。
-  - **保存とバックアップ**：実際の変更を累計 300 件または最初の変更から 30 秒で DiskIO に送り、全体を原子置換します。変更がなければ書き込みません。無効化や再起動後も記録を保持し、日次の期限はありません。データルートの整合バックアップに含め、突然の終了では未保存変更を失う場合があります。
+  - **保存とバックアップ**：実際の変更を累計 300 件または最初の変更から 30 秒で DiskIO に送り、全体を原子置換します。変更がなければ書き込みません。日次の期限は無く再起動時はファイルから復元しますが、`/init disable` と Bot のグループ退出ではファイルごと削除します（管理者権限の剥奪だけでは削除しません。権限が戻れば再び必要になるためです）。データルートの整合バックアップに含め、突然の終了では未保存変更を失う場合があります。
 - **`memory/stickers/<pack>.json`**
   - **内容**：allowlist 対象スタンプパック 1 件の version=1 カタログ。
     `file_unique_id` ごとの emoji/説明とパック要約を保持。
@@ -113,6 +113,8 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **バックアップ**：user ID と timestamp を含むため機密データとして扱う。
     深夜をまたぐ処理中 query のため東京暦日 3 日分を保持。完全な再配信は再追記せず、
     履歴は user ごとの最新値へ compact し、1 chat/day は最新 250,000 人まで保持。
+    `/init disable` と Bot のグループ退出では、保持 window の内外を問わずその chat の
+    ファイルをすべて削除し、自然な期限切れを待ちません（管理者権限の剥奪では削除しません）。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
   - **内容**：schema v8 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
     恒久 allowlist / blocklist の正式表です。`temporary_whitelist_entries` は group 横断発言の
@@ -122,12 +124,12 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     outbox、`chat_states` はグループ単位状態の正式表（最大 25 行。26 行目があれば起動を
     拒否）、`storage_metadata` は唯一の schema version を保持します。Drizzle migration
     journal は対応する lineage と厳密に一致しなければなりません。`chat_states` の 25 行枠は
-    record 全体が既定値へ戻ったときだけ解放されます：`/init disable` が消すのはグループ名
-    だけで、機能スイッチは設計上そのまま残るため（`/init enable` し直しても再設定不要）、
-    主ゲートを切っても `/ai_chat` などが有効なグループは 1 行を占め続けます。枠を空けるには、
-    そのグループで `/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/translate` を
-    1 つずつ disable にするか、Bot をそのグループから外します——退出時にその row は削除
-    されます（復旧待ちの lockdown が残っている場合を除く）。
+    record 全体が既定値へ戻ったときだけ解放され、空ける方法は 2 つあります：そのグループで
+    `/init disable` を実行するか、Bot をそのグループから外します。どちらもグループ名・権限
+    スナップショット・全機能スイッチを含む row 全体を削除します。残るのは復旧待ちの
+    lockdown を抱えた row だけで、消すとそのグループの招待権限が永久に固まるからです。
+    したがって `/init enable` し直した後は各機能を 1 つずつ入れ直すことになります。それが
+    「管理をやめたグループには何も残さない」ことの裏返しです。
   - **バックアップ**：必須です。blocklist を失えば恒久 BAN がすべて解除され、outbox を
     失えば未完了処置が抜けます。Bot 停止後、主 DB とその時点で存在する WAL/SHM を同じ
     consistency set として worktree 外へ copy し、owner/mode と SHA-256 を記録します。

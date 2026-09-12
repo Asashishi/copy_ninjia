@@ -1,9 +1,11 @@
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import { createFlushBarrier } from "../../libs/flushBarrier";
+import type { AiMemoryUsage } from "../../types/aiChat/memory";
 import type { AiInitMessage } from "../../types/aiChat/protocol";
 import type {
   AiChatInvalidateWaiter,
   AiMemoryDeleteWaiter,
+  AiMemoryTeardown,
   MoodRequestWaiter,
 } from "../../types/aiChat/waiters";
 
@@ -26,6 +28,27 @@ export const lastInitState: { current: AiInitMessage | null } = { current: null 
  *  见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），见 aiChat/index.ts 模块头注
  *  「AI 记忆持久化」。 */
 export const latestAiMemories: Map<number, string> = new Map();
+/**
+ * 各群 AI 上下文占用量的只读镜像，供 `/bot_status` 展示本群上下文容量。
+ *
+ * 权威线程是 AI Worker 的滚动记忆容器（cache/workers/aiChat/memory.ts 的
+ * chatBuffers / chatSummaries），主线程只接收、不推算。
+ *
+ * 推送时机与模式：owner 每次上报 dirty 记忆快照时随 memory 事件带上本群最新
+ * 计数（按群增量覆盖，周期见 consts/aiChat/memory.ts 的 AI_SNAPSHOT_INTERVAL_MS）；
+ * hydrate 完成后另有一次 memoryUsages 事件，把被恢复的群全量播种进来。
+ * 重放方：AI Worker 崩溃重建后由 aiChat/workerBridge.ts 的 onRespawn 重放
+ * hydrate，新 isolate 恢复完照样回一次 memoryUsages，镜像自愈。
+ *
+ * 清除：与 latestAiMemories 同一时刻，即 aiChat/memoryMirror.ts 的
+ * requestAiMemoryDelete（`/clear_context`、`/ai_chat disable`、群 teardown 与
+ * Worker 侧 LRU 淘汰都经它）。
+ *
+ * 「无条目」的含义是**此刻本群没有可展示的上下文**，一律按 0 展示，绝不沿用
+ * 旧值；刚开始累积、还没赶上第一次上报的群同样按 0 算，最多滞后一个上报周期。
+ * 容量与 latestAiMemories 同界，最多 AI_MEMORY_MAX_CHATS 个群。
+ */
+export const aiMemoryUsages: Map<number, AiMemoryUsage> = new Map();
 /** latestAiMemories 中每份快照对应的运行时 revision。启动恢复快照统一从 0 开始。 */
 export const latestAiMemoryRevisions: Map<number, number> = new Map();
 /**
@@ -35,12 +58,21 @@ export const latestAiMemoryRevisions: Map<number, number> = new Map();
  * forgetAiMemoryRevisionCounter 删除；Worker 崩溃重启**不重建也不清空**——它描述
  * 的是本主线程进程内已分配到哪一号，与 Worker 存活无关。
  *
- * 不能按容量淘汰，也不能在 `/ai_chat disable` 时删：重置后的 revision 1 会与在途
- * 墓碑撞号，一条过期的删除回执就能把新记忆判成已删；postMemoryRecord 还用
+ * 不能按容量淘汰，也不能在 `/ai_chat disable` 时删：postMemoryRecord 用
  * 「计数器还在」表示「刚被 purge、下一条新记录要立刻落盘」。本表没有独立淘汰，
- * 上界由最多 25 个受管群约束；teardown 会同步移除对应条目。
+ * 已退出群在 durable 删除与 Worker 失效都完成后清理，超时后的责任由
+ * pendingAiMemoryTeardowns 保留；容量由受管群准入和未完成 teardown 的上限共同约束。
  */
 export const aiMemoryRevisionCounters: Map<number, number> = new Map();
+/** teardown 忘记过的最高 revision；新生命周期从其后分配，旧回执不会撞号。进程重启归零，Worker 重建保留，容量一个标量。 */
+export const aiMemoryRevisionFloor: { current: number } = { current: 0 };
+/**
+ * teardown 开始登记，durable 删除与 Worker 失效完成后清理；新记录接管时撤销旧收尾。
+ * 主线程权威，最多 STATE_MANAGED_CHAT_LIMIT 项，满额触发存储 fatal 并拒绝新增责任。
+ * AI Worker 重建令旧请求完成；DiskIO 重建重放原删除，收到 durable 回执后继续收尾。
+ * 无条目不授权忘记 revision；进程重启不恢复此纯内存表。
+ */
+export const pendingAiMemoryTeardowns: Map<number, AiMemoryTeardown> = new Map();
 /** 已投递但尚未收到 durable delete 回执的最新墓碑。 */
 export const pendingAiMemoryDeletes: Map<number, number> = new Map();
 /**

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
   INIT_CHAT_LIMIT_TEXT,
+  INIT_TOGGLE_TEXTS,
 } from "../../packages/consts/commands";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { botPermissions } from "../helpers/botPermissions";
@@ -76,6 +77,13 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     }
     if (Object.keys(state).length === 0) states.delete(chatId);
     return true;
+  },
+  // /init disable 整行删除，仍未恢复的 lockdown 除外（真实实现同名函数）。
+  purgeChatStateExceptLockdown(chatId: number): void {
+    const state = states.get(chatId);
+    if (state === undefined) return;
+    if (state.lockdown === undefined) states.delete(chatId);
+    else states.set(chatId, { lockdown: state.lockdown });
   },
   persistChatState,
   persistGlobalState: async (): Promise<void> => {},
@@ -339,25 +347,23 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isAdDetectEnabled).toBe(true);
   });
 
-  test("/init disable 同时失效 AI，enable 恢复群更新入口", async () => {
-    states.set(-1001, { botPermissions: botPermissions() });
+  test("/init disable 同时失效 AI 并整行删除群状态，enable 恢复群更新入口", async () => {
+    states.set(-1001, { botPermissions: botPermissions(), isAIChatEnabled: true });
     await handleInitCommand(context("disable"));
-    expect(states.get(-1001)?.isInitEnabled).toBe(false);
-    expect(states.get(-1001)?.botPermissions).toBeUndefined();
+    // 整行没了：功能开关、权限快照与总开关一起删掉，这个群不再占
+    // STATE_MANAGED_CHAT_LIMIT 的名额（见 commands/init.ts）。
+    expect(states.has(-1001)).toBeFalse();
     expect(invalidateBotAdminStatus).toHaveBeenLastCalledWith(-1001);
     expect(teardownChatRuntime).toHaveBeenCalledWith(-1001, "explicitDisable");
 
-    states.get(-1001)!.botPermissions = botPermissions({
-      isAdministrator: false,
-      canManageChat: false,
-    });
     await handleInitCommand(context("enable"));
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
+    // 重新启用不恢复任何功能开关：那一行已经删掉了，要用哪个功能逐条重开。
+    expect(states.get(-1001)?.isAIChatEnabled).toBeUndefined();
     expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
-    // 本群没有活动代发会话，disable 只写一次总开关；enable 一次。补写
-    // isProxySendEnabled 的第二次落盘只在真的开着代发时发生，见下一条用例。
-    expect(saveStateInBackground).toHaveBeenCalledTimes(2);
+    // disable 写两次（总开关一次、拆完的整行删除一次），enable 一次。
+    expect(saveStateInBackground).toHaveBeenCalledTimes(3);
     // enable 必须立刻重新判定管理员身份：作废之后不重判，「是管理员 && 已初始化」
     // 那道边沿就永远等不到，「先给管理员、后 /init enable」的群不会被补扫黑名单。
     expect(resolveBotAdminStatus).toHaveBeenCalledWith(-1001);
@@ -365,9 +371,24 @@ describe("超级管理员开关命令", () => {
     expect(resolveBotAdminStatus).toHaveBeenCalledTimes(1);
   });
 
+  test("/init disable 保留仍未恢复的 lockdown，只删其余群配置", async () => {
+    // 删了它那个群的邀请权限就永久卡住：反刷群恢复流程还要用 originalPermissions
+    // 解锁（见 infra/storage/stateStore.ts 的 purgeChatStateExceptLockdown）。
+    const lockdown = { phase: "active", intentId: 7, originalPermissions: {}, announced: true, expiresAt: 9_000 };
+    states.set(-1001, { isInitEnabled: true, isAdDetectEnabled: true, lockdown });
+
+    await handleInitCommand(context("disable"));
+
+    expect(states.get(-1001)).toEqual({ lockdown });
+  });
+
   test("/init disable 拆运行态失败仍持久化禁用状态，回执如实说没拆干净", async () => {
     const teardownError = new Error("chat teardown failed");
-    states.set(-1001, { botPermissions: botPermissions() });
+    states.set(-1001, {
+      isInitEnabled: true,
+      isAdDetectEnabled: true,
+      botPermissions: botPermissions(),
+    });
     teardownChatRuntime.mockRejectedValueOnce(teardownError);
 
     // 不上抛：异常逸出会让 acknowledged runner 带非零码退出且不确认 offset，
@@ -375,10 +396,25 @@ describe("超级管理员开关命令", () => {
     // 管理员反而会收到一句「本来就关着」（见 commands/init.ts）。
     await handleInitCommand(context("disable"));
 
-    expect(states.get(-1001)?.isInitEnabled).toBe(false);
+    // 总开关已经 durable 地关掉（缺省即禁用）；整行删除排在 teardown 之后，这一轮
+    // 没跑到，功能开关还留着，由管理员照回执再关一次补做（同状态重复 disable
+    // 照常重跑清理）。
+    expect(states.get(-1001)?.isInitEnabled).toBeUndefined();
+    expect(states.get(-1001)?.isAdDetectEnabled).toBe(true);
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
+    expect(saveStateInBackground).not.toHaveBeenCalledWith("init teardown settled");
     expect(lastReplyText()).toContain("没能拆干净");
+  });
+
+  test("/init disable 不为没有记录的群建条目，重复关掉不撞群数上限", async () => {
+    // disable 的终点是整行删掉这个群；先现建一条的话，别处已经管满
+    // STATE_MANAGED_CHAT_LIMIT 个群时 assertChatStateCapacity 会抛错，把「关掉之后
+    // 再关一次」这条手工重试路径变成一次带非零码的进程退出（见 commands/init.ts）。
+    await handleInitCommand(context("disable"));
+
+    expect(states.has(-1001)).toBeFalse();
+    expect(lastReplyText()).toBe(INIT_TOGGLE_TEXTS.alreadyDisabled);
   });
 
   test("/init disable 的总开关先落盘，再拆运行态", async () => {
@@ -397,12 +433,18 @@ describe("超级管理员开关命令", () => {
 
     await handleInitCommand(context("disable"));
 
-    expect(order).toEqual(["persist:init toggled", "teardown"]);
+    // 整行删除与它那次落盘都排在 teardown 之后：删行本身也是不可逆的持久化动作。
+    expect(order).toEqual([
+      "persist:init toggled",
+      "teardown",
+      "persist:init teardown settled",
+    ]);
   });
 
-  test("本群开着代发会话时补一次落盘，把 teardown 清掉的 isProxySendEnabled 写下去", async () => {
-    // teardownChatRuntime 同步清掉的持久字段只有它；只清内存的话，重启后代发
-    // 会话会连同一个已经不再接管的群一起复活。
+  test("拆完无条件补一次落盘，把整行删除与 teardown 清掉的 isProxySendEnabled 一起写下去", async () => {
+    // teardownChatRuntime 同步清掉的持久字段只有 isProxySendEnabled，整行删除
+    // 同样只动内存；不写盘的话，重启后代发会话与整套开关会连同一个已经不再接管
+    // 的群一起复活。
     const order: string[] = [];
     states.set(-1001, {
       isInitEnabled: true,
@@ -478,6 +520,12 @@ interface ToggleCase {
   readonly name: string;
   readonly field: string;
   readonly run: (argument: string) => Promise<void>;
+  /**
+   * disable 之后该字段读出来是什么。功能开关落成 false（规范化后等价于「没设过」，
+   * 但记录本身还在）；`/init` 的 disable 会整行删掉这个群，因此读出来是 undefined。
+   * 逐条写死而不给默认值：`undefined` 在这里是一个有意义的期望，不是「没配」。
+   */
+  readonly disabledValue: boolean | undefined;
 }
 
 const TOGGLE_CASES: readonly ToggleCase[] = [
@@ -485,26 +533,31 @@ const TOGGLE_CASES: readonly ToggleCase[] = [
     name: "/ai_chat",
     field: "isAIChatEnabled",
     run: (argument: string): Promise<void> => handleAiChatCommand(context(argument)),
+    disabledValue: false,
   },
   {
     name: "/ad_detect",
     field: "isAdDetectEnabled",
     run: (argument: string): Promise<void> => handleAdDetectCommand(context(argument)),
+    disabledValue: false,
   },
   {
     name: "/flood_control",
     field: "isFloodControlEnabled",
     run: (argument: string): Promise<void> => handleFloodControlCommand(context(argument)),
+    disabledValue: false,
   },
   {
     name: "/translate",
     field: "isTranslationEnabled",
     run: (argument: string): Promise<void> => handleTranslateCommand(context(argument)),
+    disabledValue: false,
   },
   {
     name: "/init",
     field: "isInitEnabled",
     run: (argument: string): Promise<void> => handleInitCommand(context(argument)),
+    disabledValue: undefined,
   },
 ];
 
@@ -516,10 +569,10 @@ describe("开关命令的同状态重复执行", () => {
   for (const toggle of TOGGLE_CASES) {
     test(`${toggle.name} 同状态重复执行说破「本来就是」，不复用刚改完那句`, async () => {
       for (const action of ["enable", "disable"] as const) {
-        const target: boolean = action === "enable";
+        const target: boolean | undefined = action === "enable" ? true : toggle.disabledValue;
         states.clear();
         // 先把状态推到相反一侧，保证紧接着那一次调用一定是真实变化。
-        if (!target) await toggle.run("enable");
+        if (action === "disable") await toggle.run("enable");
         sendMessage.mockClear();
 
         await toggle.run(action);

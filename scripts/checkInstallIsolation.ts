@@ -9,6 +9,10 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import {
+  IDENTITY_DATABASE_DIRECTORY_MODE,
+  IDENTITY_DATABASE_FILE_MODE,
+} from "../packages/consts/identityStorage";
+import {
   cleanupFixtures,
   createFixture,
   readText,
@@ -150,6 +154,23 @@ async function checkSuccessfulReplacement(): Promise<void> {
   assertCondition(!result.output.includes(replacementToken), "安装输出不得回显 Telegram token");
   const calls: string = await readText(fixture.callLog);
   const outbound: string = await readText(fixture.outboundLog);
+  // install.sh 里那两行 chmod 是 consts/identityStorage.ts 两个常量的镜像：
+  // 建库本身在夹具里被替身接管，但收紧权限的 shell 语句照原样执行，因此这里核对
+  // 的是真正落到磁盘的模式。漂移若不在这里拦住，只会等到部署启动时由
+  // infra/storage/dataRoot.ts 的数据根校验 fail closed，那时故障点已经离改错的
+  // 地方很远了。目录带 setgid，按 0o7777 取位。
+  assertContains(calls, "database:create", "全新部署必须走建库分支");
+  const databaseDirectory: string = join(fixture.runtimeRoot, "database");
+  assertEqual(
+    statSync(databaseDirectory).mode & 0o7777,
+    IDENTITY_DATABASE_DIRECTORY_MODE,
+    "database/ 权限必须与 IDENTITY_DATABASE_DIRECTORY_MODE 一致"
+  );
+  assertEqual(
+    statSync(join(databaseDirectory, "storage.sqlite")).mode & 0o777,
+    IDENTITY_DATABASE_FILE_MODE,
+    "storage.sqlite 权限必须与 IDENTITY_DATABASE_FILE_MODE 一致"
+  );
   assertContains(calls, "systemctl-secret-env=absent", "必须实测 systemd 分支且环境不得含 AI 凭据");
   assertContains(outbound, "systemctl:guarded:start", "只能启动已确认停止的服务");
   assertEqual(readdirSync(fixture.backupRoot).length, 0, "稳定性核验通过后必须清理外部备份");

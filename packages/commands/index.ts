@@ -26,6 +26,7 @@ export { handleBlockCommand } from "./block";
 export { handleBatchKickCommand } from "./batchKick";
 export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
+export { handleClearContextCommand } from "./clearContext";
 export { handleAdDetectCommand } from "./adDetect";
 export { handleFloodControlCommand } from "./floodControl";
 export { handleAntiRaidCommand } from "./antiRaid";

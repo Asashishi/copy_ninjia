@@ -28,11 +28,11 @@
 | `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；因为要整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 44 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 51 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
-| `bun run perf:review` | 专项复核：12 个热点的普通测量与 profile、两条完整命令链、真实 Disk I/O Worker 压力及重建；每项三轮独立进程，可按 `--hot-paths` / `--chains` / `--worker` 选择 |
+| `bun run perf:review` | 专项复核：12 个既有热点、7 个 AI 回复/载荷场景、两条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择 |
 | `bun run release:check` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
 
@@ -48,7 +48,9 @@
 
 ### 依赖冷却期
 
-依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时固定为 1.4.2，`@types/bun` 固定为 1.4.0；版本门禁要求两者主、次版本一致，运行时补丁版本由 `packageManager` 与 `install.sh` 共同锁定。
+依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时固定为 1.4.2，`@types/bun` 固定为 1.4.1；两者使用相同的主、次版本，运行时补丁版本由 `packageManager` 与 `install.sh` 共同锁定。
+
+TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；当前 `typescript-eslint` 声明的 TypeScript 兼容范围为 `>=4.8.4 <6.1.0`。
 
 ### Bun 运行边界
 
@@ -60,7 +62,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**3865 tests / 363 files / 157287 次 `expect()`**；全源码**函数覆盖率 97.54% / 行覆盖率 97.7%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**4076 tests / 367 files / 155855 次 `expect()`**；全源码**函数覆盖率 97.64% / 行覆盖率 97.78%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -83,7 +85,7 @@
 
 ## 故障注入套件
 
-`bun run test:fault-injection` 重点回归崩溃恢复与持久化边界：生命周期失败、update runner 确认边界、StateStore 与清理、AI/Anti-Raid Worker 的镜像恢复与生命周期、Disk I/O 的追加/快照/日志文件、flush barrier 等（完整清单见 [`package.json`](../../package.json) 的脚本定义）。清单由 `check:conventions` 兜底：凡 import Disk I/O Worker、Anti-Raid 镜像、黑名单补扫或生命周期 harness 的用例文件，未登记在清单里即失败。改动 [04 运行时权威约束](04-invariants.md) 涉及的路径时，本套件必须绿。
+`bun run test:fault-injection` 覆盖应用/Worker 生命周期、锁定恢复、回复容量与取消、凭据快照，以及 Disk I/O 的检查、原子写入和恢复故障；完整清单见 [`package.json`](../../package.json)。`check:conventions` 对登记的 harness 和生产恢复/生命周期边界按真实引用路径检查漏列，包含静态值导入、动态 import 和值重导出；纯类型引用排除，空声明的副作用保留。同名其它模块不匹配。涉及 [04 运行时权威约束](04-invariants.md) 的持久化、停机或 Worker 生命周期改动必须通过本套件。
 
 `/wed` 交互回归覆盖 1,024 项 LRU 容量、命令和按钮命中续期、淘汰取消排队与在途交互、迟到结果清理、单条删除失败后的继续清理、update 取消隔离和停机排空；成员权威表单独验证 25 群满额拒绝。持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
 
@@ -119,15 +121,19 @@
 
 `bun run perf:review` 复用全量基准的隔离根、配置夹具、进程编排及出站罐头，输出 JSON 并清理本轮数据根。`--hot-paths` 覆盖发送者、消息滑窗、权限读取、AI 活跃窗口、待验证快照及 clone、空块/细碎块/1 KiB/1 MiB/16 MiB 响应读取和注册链；12 项各三轮普通测量与三轮 profile。完整异步读取按场景显式预热并记录实际 JIT 层级，其余场景沿用优化层级稳定性检查。
 
+`--ai` 测量准入判定、正常发送、容量/重开压力，以及 Base64 1 MiB、8 MiB、异常首部和尾部。7 个场景各三轮独立计时与三轮 profile，直接调用生产函数；发送场景断言单群/全局容量、真实收尾和清理，并要求生产 JIT 探针稳定。容量压力每批包含 128 个存活槽位及容量拒收检查，耗时按整批报告。Base64 保留编码/解码大小上限、标准字母表与严格尾部位检查，正则不带 g/y，解码仅一次。固定输入与预热用于局部测量，不包含真实模型、Telegram 网络或完整生产载荷的内存预算；profile 没采到 GC 不等于无 GC。
+
 `--chains` 运行启用功能的 `ad-detect-command` 与 `ai-reply-command`，逐轮断言 Telegram 罐头调用及处置排空。`--worker` 经真实 Disk I/O Worker 每轮写入 400 批、每批 128 条消息；每批等待最终 revision ACK，每轮执行两次优雅停机重建并核对 25 群恢复值。该项包含 clone、事务及落盘等待，报告吞吐、延迟、堆留存与 RSS；它不替代故障注入。以上模式各跑三轮，不改全量基准和默认十场景硬门禁的阈值。
 
 `sender-mixed-identity` 交替输入普通用户与频道身份，观察稳态读数和 JIT 重新优化；发送者数量与单用户场景不同，两者的耗时差不能单独解释为 shape 混合成本。基准用户 ID 覆盖超出 int32 的数值，生产中也允许较小 ID。
 
 注册表包含 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` 和 `storage-sqlite-flush`。前四项覆盖成员集合命中、填充、满额拒绝和切群；middleware 场景运行真实注册链并断言活动路径；SQLite 场景对空库提交 128 个删除，主要衡量事务调度，不能作为磁盘吞吐读数。
 
-运行 `bun scripts/perf/isolatedHotPath.ts <场景>`，加 `--profile` 单独采样。该入口复用 `gateFixture.ts` 建立独立配置和数据根，注入三个独立子进程并在结束后清理 run 目录；出站由基准罐头接管。固定 Bun 与输入、完成预热，分别观察 retained 与 profile 输出；采样数不足时不得用零 GC 样本断言没有 GC。
+运行 `bun run perf:isolated-hot-path <场景>`，加 `--profile` 单独采样。该入口复用 `gateFixture.ts` 建立独立配置和数据根，注入三个独立子进程并在结束后清理 run 目录；出站由基准罐头接管。固定 Bun 与输入、完成预热，分别观察 retained 与 profile 输出；采样数不足时不得用零 GC 样本断言没有 GC。
 
-`bun scripts/perf/diskTransport.ts` 跑三轮独立 mock 进程，验证单批 ACK、正常排空和停止 ACK 后的容量拒收，并报告延迟、堆、GC 与 JIT。它复用同一份不可变载荷，只测队列与确认开销，不包含 Worker clone、真实负载载荷体积或磁盘等待。
+`luck-tier-table` 用固定 roll 直接调用生产 `drawLuckTier`，校验和覆盖返回档位，并登记该函数的 JIT 探针；`gag-speak-counter` 的会话数读取 `GAG_SESSION_MAX`，调用生产发言计数入口。修改这些边界时，两场景都运行默认模式和 `--profile`，分别核对校验和、清理、留存堆与 GC/JIT；它们不在默认十场景门禁中。
+
+`bun run perf:disk-transport` 跑三轮独立 mock 进程，验证单批 ACK、正常排空和停止 ACK 后的容量拒收，并报告延迟、堆、GC 与 JIT。它复用同一份不可变载荷，只测队列与确认开销，不包含 Worker clone、真实负载载荷体积或磁盘等待。
 
 ## 全量性能基准
 

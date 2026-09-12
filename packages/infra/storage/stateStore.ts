@@ -281,10 +281,21 @@ export function clearChatStateField(chatId: number, field: keyof ChatState): boo
 }
 
 /**
- * 机器人离群时删除普通配置，但保留尚需恢复的 lockdown write-ahead 记录。
- * 无记录时不做任何事；调用方负责在同一 teardown 尾部统一落盘。
+ * 停管一个群时删除它的全部配置，但保留尚需恢复的 lockdown write-ahead 记录。
+ *
+ * 两条路共用：`/init disable`（见 commands/init.ts）与机器人被移出群（见
+ * infra/botAdmin.ts）。功能开关一并删掉——「本天才不再管这个群」之后，一份没有
+ * 任何人会读的开关既占着 STATE_MANAGED_CHAT_LIMIT 的名额，又没有任何命令能删掉
+ * 它；重新 `/init enable` 时逐条重配，比留一堆看不见的残留开关清楚。
+ *
+ * lockdown 是唯一的例外：反刷群恢复流程仍要用它的 originalPermissions 解锁，
+ * 删掉等于让那个群的邀请权限永久卡住（同 libs/chatState.ts 的 normalizeChatState）。
+ *
+ * 无记录时不做任何事；调用方负责在同一 teardown 尾部统一落盘——清完若整条状态
+ * 回到缺省，这里会删掉 LRU 条目，那次 persistChatState 写出的就是删除墓碑，
+ * SQLite 行一并消失（见 infra/chatStateStorage.ts 的 encodeCurrentChatState）。
  */
-export function pruneDepartedChatState(chatId: number): void {
+export function purgeChatStateExceptLockdown(chatId: number): void {
   const current: ChatState | undefined = chatStateCache.get(chatId);
   if (!current) return;
   if (current.lockdown === undefined) {

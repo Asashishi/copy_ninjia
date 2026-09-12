@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3865_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.7%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4076_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 3865 件のテストが全て成功 / テストファイル 363 件 / expect() 呼び出し 157,287 回 / 関数カバレッジ 97.54% / 行カバレッジ 97.7%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4076 件のテストが全て成功 / テストファイル 367 件 / expect() 呼び出し 155,855 回 / 関数カバレッジ 97.64% / 行カバレッジ 97.78%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -168,7 +168,7 @@
 
 ## 🎮 コマンドと権限
 
-コマンドは 4 段階です：**グループメンバー**（Copy 系、アクションコマンド、静音モード、`/bot_status` など）、**ホワイトリストの権限キー**（`/mute`、`/gag`、`/block`、各機能スイッチ）、**`SUPER_ADMIN_USER_ID` 専用**（`/init`、`/white`、`/permission`、`/batch_kick`）、そして個人チャットでのみ動作する `/send`。
+コマンドは 4 段階です：**グループメンバー**（Copy 系、アクションコマンド、静音モード、`/bot_status` など）、**ホワイトリストの権限キー**（`/mute`、`/gag`、`/block`、各機能スイッチ）、**`SUPER_ADMIN_USER_ID` 専用**（`/init`、`/white`、`/permission`、`/batch_kick`、`/clear_context`）、そして個人チャットでのみ動作する `/send`。
 
 Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンドを実行したグループで 1 通ずつ復唱しアイコンも同期します。`/luck_challenge` は Inline Mode、中国語のアクションコマンド（`/咬`、`/揪住`）は事前登録不要です。
 

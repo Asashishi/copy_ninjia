@@ -5,7 +5,6 @@ import {
   suppressRetrigger,
 } from "./shared";
 import type {
-  LockdownEffect,
   LockdownMachineEvent,
   LockdownState,
   LockdownTransition,
@@ -33,25 +32,9 @@ export function handleThresholdExceeded(
       ],
     };
   }
-  const effects: LockdownEffect[] = [{ kind: "prefetchAdmins", onlyIfCold: true }];
-  if (state.kind === "restoring") {
-    // 恢复已经在跑（到期或显式解除），新峰值把它拉回 ACTIVE：这是新的一轮，
-    // 重新给满一个 LOCKDOWN_MS 并落盘新的截止时刻。回到 ACTIVE 不重发封锁
-    // 公告（下面没有 beginLockdownAnnouncement），公告记账原样带过来。
-    effects.push({ kind: "scheduleRestore", delayMs: LOCKDOWN_MS }, { kind: "persistState" });
-    return {
-      next: {
-        kind: "active",
-        originalPermissions: state.originalPermissions,
-        intentId: state.intentId,
-        ...announcementOf(state),
-      },
-      effects,
-    };
-  }
-  // ACTIVE / RECONCILING / APPLYING 期间再次超阈值只预热管理员表：本轮的
-  // 恢复时刻在进入 ACTIVE 时就定死了，倒计时既不重排也不重新落盘。
-  return { next: state, effects };
+  // 本轮状态与恢复意图保持不变，恢复成功后由 owner 清空入群窗口。
+  // 生命周期约束见 docs/cn/04-invariants.md。
+  return { next: state, effects: [{ kind: "prefetchAdmins", onlyIfCold: true }] };
 }
 
 /** 原权限读取完成：形成本轮 intent 并落盘，落盘回执才允许改 Telegram。 */

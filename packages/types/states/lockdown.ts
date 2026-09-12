@@ -39,12 +39,9 @@ export interface LockdownPreparedState extends LockdownAnnouncement {
   joinCount?: number;
   intentId: number;
   /**
-   * 本轮 intent 的 commitApply 已经发出过一次。
-   *
-   * 同一份 applying intent 的落盘回执可能到达多次——公告结果落盘、主线程对账
-   * 循环重跑都会为同一个 phase+intentId 再发一次回执——而 commitApply 是一次
-   * 真实的 setChatPermissions。没有这面旗就会对同一轮重复写 Telegram：结果虽
-   * 然幂等，却是白付的往返，也让「落盘回执后恰好 commit 一次」这条契约名存实亡。
+   * 本轮已派发 commitApply，重复落盘回执不得再次派发。
+   * 任务可能仍在串行链或权限查询中；该标志不代表 Telegram 已提交。
+   * 持久化失败按可能在途处理，保留恢复责任；取消后的任务在写入前复核身份。
    * 只活在内存里；接管一份已确认落盘的 intent 时随 commitApply 一起置位。
    */
   commitStarted: boolean;

@@ -152,7 +152,7 @@ export interface ReplyDeliverySlot {
   state: "pending" | "ready" | "done";
 }
 
-/** 单群定长发送桶数组；每桶可追加多轮，head/tail 按入站顺位循环，桶数不限制积压轮数。 */
+/** 单群定长发送桶数组；head/tail 按入站顺位循环，存活轮次由跨代际容量计数约束。 */
 export interface ReplyDeliveryWindow {
   readonly slots: readonly LinkedQueue<ReplyDeliverySlot>[];
   head: number;

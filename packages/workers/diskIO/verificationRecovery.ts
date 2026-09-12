@@ -1,6 +1,7 @@
+import { inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
 /** Owner: Disk I/O Worker。负责待验证日文件的恢复、跨日合并与 compact。 */
 
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { DAY_FILE_JSON_INDENT, DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
@@ -60,10 +61,10 @@ function inspectVerificationDirectory(
   const oldDayNames: string[] = [];
   let futureDayCount: number = 0;
   for (const entry of entries) {
-    if (!entry.isFile()) continue;
     const name: string = entry.name;
     if (!name.endsWith(".json")) continue;
     const path: string = join(dir, name);
+    if (!entry.isFile()) return invalidInput(path, "$type", "a regular file without symbolic-link indirection");
     const candidate: string | undefined = DAY_FILE_PATTERN.exec(name)?.[1];
     if (candidate === undefined) {
       return invalidInput(path, "$filename", "the canonical <YYYY-MM-DD>.json form");
@@ -189,7 +190,7 @@ export async function inspectVerificationDay(
   day: string = getTokyoDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
 ): Promise<VerificationRecoveryInspection> {
-  const entries: readonly Dirent<string>[] = existsSync(dir)
+  const entries: readonly Dirent<string>[] = inspectOptionalDirectory(dir)
     ? readdirSync(dir, { withFileTypes: true })
     : [];
   const directoryPlan: VerificationDirectoryRecoveryPlan = inspectVerificationDirectory(
@@ -203,7 +204,7 @@ export async function inspectVerificationDay(
   const recovered: Map<string, VerificationSnapshot> = new Map();
   let currentContent: string | null = null;
   let decodedEntryCount: number = 0;
-  const currentFileExists: boolean = await Bun.file(path).exists();
+  const currentFileExists: boolean = inspectOptionalFile(path);
   if (priorDay !== undefined) {
     const priorPath: string = join(dir, `${priorDay}.json`);
     // 旧日是唯一恢复来源时必须严格解码；损坏时保留新旧文件并拒绝启动。

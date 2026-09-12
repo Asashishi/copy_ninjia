@@ -1,5 +1,5 @@
-import { replyDeliveryWindows } from "../../cache/workers/aiChat/replies";
-import { REPLY_ROUND_MAX_CONCURRENT } from "../../consts/aiChat/rateLimit";
+import { replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows } from "../../cache/workers/aiChat/replies";
+import { REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT } from "../../consts/aiChat/rateLimit";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { ReplyDeliverySlot, ReplyDeliveryTurn, ReplyDeliveryWindow } from "../../types/aiChat/replies";
 
@@ -16,6 +16,10 @@ function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
     bucket.shift();
     window.head = (window.head + 1) % window.slots.length;
     window.size--;
+    const remaining: number = (replyDeliveryCounts.get(chatId) ?? 0) - 1;
+    if (remaining > 0) replyDeliveryCounts.set(chatId, remaining);
+    else replyDeliveryCounts.delete(chatId);
+    replyDeliveryTotal.current--;
     slot.released.resolve();
   }
   if (replyDeliveryWindows.get(chatId) === window) replyDeliveryWindows.delete(chatId);
@@ -23,11 +27,12 @@ function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
 
 /**
  * 同步按入站顺序追加发送占位；媒体解析和模型请求均在占位后进行。
- * 固定数组只决定桶数，每桶用 FIFO 追加多轮；发送积压不参与模型并发准入。
+ * 固定数组只决定桶数，每桶用 FIFO 追加多轮；存活容量独立于模型并发计数。
  * commit 标记完整动作链就绪，finish 标记发送完成并等待按序回收。
  * 生命周期约束见 docs/cn/04-invariants.md。
  */
-export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn {
+export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefined {
+  if (!hasReplyDeliveryCapacity(chatId)) return undefined;
   let window: ReplyDeliveryWindow | undefined = replyDeliveryWindows.get(chatId);
   if (!window) {
     window = {
@@ -49,6 +54,8 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn {
   bucket.push(slot);
   window.tail = (window.tail + 1) % window.slots.length;
   window.size++;
+  replyDeliveryCounts.set(chatId, (replyDeliveryCounts.get(chatId) ?? 0) + 1);
+  replyDeliveryTotal.current++;
   return {
     ready: slot.ready.promise,
     commit: (): void => {
@@ -62,4 +69,10 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn {
       return slot.released.promise;
     },
   };
+}
+
+/** 同步查询所有仍存活代际的单群与全线程预算，不创建窗口或修改计数。 */
+export function hasReplyDeliveryCapacity(chatId: number): boolean {
+  return replyDeliveryTotal.current < REPLY_DELIVERY_MAX_TOTAL &&
+    (replyDeliveryCounts.get(chatId) ?? 0) < REPLY_DELIVERY_MAX_PER_CHAT;
 }

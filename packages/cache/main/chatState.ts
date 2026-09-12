@@ -12,7 +12,7 @@ import type { UnacknowledgedChatStateWrite } from "../../types/identityStorage";
  * `infra/chatStateStorage.ts` 的 `assertChatStateCapacity`，第 26 个群直接抛错，
  * 因此链表永远不会因超容量摘节点。每条消息的读取也都走 `peek` 不刷新热度，
  * 只有 `infra/storage/stateStore.ts` 的 `clearChatStateField` 与
- * `pruneDepartedChatState` 两处用 `get`。侵入式链表在这份缓存上实际承担的是
+ * `purgeChatStateExceptLockdown` 两处用 `get`。侵入式链表在这份缓存上实际承担的是
  * **有序迭代**：`getActiveProxySendTarget`、`refreshAllChatTitles` 与
  * `antiRaid/lockdownMirror.ts` 的 `recoverAbandonedLockdowns` 都按它遍历，
  * 迭代期改写的语义见 `libs/lruCache.ts` 的 `LruCache`。

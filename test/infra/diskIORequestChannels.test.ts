@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { waitUntil } from "../helpers/waitUntil";
 import type {
   DiskIOMessage,
   DiskIOReply,
@@ -9,6 +10,8 @@ import type {
   BlocklistIdPage,
   IdentityPolicyRawReadResult,
 } from "../../packages/types/identityStorage";
+import type { WedMembersDeletedPersistedReply } from "../../packages/types/diskIO/replies";
+import { onWedMembersDeletedPersisted } from "../../packages/infra/diskIO/observers";
 import {
   blocklistIdPageReadRequests,
   diskIORuntime,
@@ -51,6 +54,31 @@ beforeEach(() => {
 });
 
 describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
+  test("成员删除 durable 回执转交 owner，终止后的旧 Worker 回执被丢弃", async () => {
+    const originalWorker: typeof Worker = globalThis.Worker;
+    const originalListeners = [...diskIORuntime.wedMembersDeletedPersistedListeners];
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loading = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loading;
+      const seen: WedMembersDeletedPersistedReply[] = [];
+      onWedMembersDeletedPersisted((reply: WedMembersDeletedPersistedReply): void => { seen.push(reply); });
+      const reply: WedMembersDeletedPersistedReply = { type: "wedMembersDeletedPersisted", chatId: -1001, revision: 9 };
+      worker.onmessage!({ data: reply } as MessageEvent<DiskIOReply>);
+      expect(seen).toEqual([reply]);
+      await diskIO.terminateDiskIO();
+      worker.onmessage!({ data: reply } as MessageEvent<DiskIOReply>);
+      expect(seen).toEqual([reply]);
+    } finally {
+      await diskIO.terminateDiskIO();
+      diskIORuntime.wedMembersDeletedPersistedListeners.splice(0, diskIORuntime.wedMembersDeletedPersistedListeners.length, ...originalListeners);
+      globalThis.Worker = originalWorker;
+    }
+  });
+
   test("终止 Worker 会立即拒绝在途运势密钥请求并清理其超时计时器", async () => {
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;
@@ -295,7 +323,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       await Promise.resolve();
       expect(diskIORuntime.writable).toBeFalse();
       expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);
-      await Bun.sleep(10);
+      await waitUntil((): boolean => recovery.terminated && fatalErrors.length > 0);
 
       expect(recovery.terminated).toBe(true);
       expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);

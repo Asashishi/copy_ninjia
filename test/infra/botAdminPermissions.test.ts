@@ -107,7 +107,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     delete state[field];
     return true;
   },
-  pruneDepartedChatState: (chatId: number): void => { states.delete(chatId); },
+  purgeChatStateExceptLockdown: (chatId: number): void => { states.delete(chatId); },
   persistChatState: async (): Promise<void> => {},
   saveChatStateInBackground: (chatId: number, context: string): void => {
     backgroundSaves.push({ chatId, context });

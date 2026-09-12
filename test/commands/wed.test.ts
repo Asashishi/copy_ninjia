@@ -10,6 +10,20 @@ const avatar: Mock<(user: User, signal: AbortSignal) => Promise<CurrentAvatarRes
   mock(async (user: User, _signal: AbortSignal): Promise<CurrentAvatarResult> =>
     ({ status: "ok", identity: user, photo: new Uint8Array([1, 2, 3]) }));
 mock.module("../../packages/infra/telegram/avatar/read", () => ({ readCurrentAvatar: avatar }));
+// mock.module 会就地改写模块记录，命名空间对象随之指向替身；真实实现必须先拷出来。
+const abortSignals = { ...await import("../../packages/libs/abortSignal") };
+/** 每次 operationSignal 取阶段预算时按队列改写本次预算，队列空则照常取 30 秒。 */
+const budgets: (number | "expired")[] = [];
+mock.module("../../packages/libs/abortSignal", () => ({
+  ...abortSignals,
+  signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+    const budget: number | "expired" | undefined = budgets.shift();
+    if (budget !== "expired") return abortSignals.signalWithTimeout(signal, budget ?? timeoutMs);
+    const expired: AbortController = new AbortController();
+    expired.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    return signal === undefined ? expired.signal : AbortSignal.any([signal, expired.signal]);
+  },
+}));
 
 const { bot } = await import("../../packages/infra/telegram/mainClient");
 const { telegramApiState } = await import("../../packages/cache/perThread/telegramApi");
@@ -18,8 +32,8 @@ const { resetPendingMessageDeletions } = await import("../../packages/infra/tele
 const { wedChats } = await import("../../packages/cache/main/wed");
 const { getOrCreateWedChat } = await import("../../packages/commands/wed/chats");
 const { handleWedCommand, handleWedCallback, teardownWedInChat } = await import("../../packages/commands/wed");
-const { WED_BUTTON_TEXTS, WED_DRAW_TRANSIENT_LIMIT, WED_MEMBER_LIMIT, WED_SESSION_LIMIT, WED_TEXTS } =
-  await import("../../packages/consts/wed");
+const { WED_BUTTON_TEXTS, WED_DRAW_TRANSIENT_LIMIT, WED_MEMBER_LIMIT, WED_OPERATION_TIMEOUT_MS,
+  WED_SESSION_LIMIT, WED_TEXTS } = await import("../../packages/consts/wed");
 const { renderWedCaption } = await import("../../packages/commands/wed/rendering");
 
 const chat = { id: -1001, type: "supergroup", title: "群" } as const;
@@ -51,6 +65,7 @@ function callback(action: string, overrides: Record<string, unknown> = {}): neve
 }
 
 beforeEach(() => {
+  budgets.length = 0;
   wedChats.clear();
   resetWedMemberStates();
   resetPendingMessageDeletions();
@@ -72,6 +87,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  expect(budgets).toBeEmpty();
   expect(setProfile).not.toHaveBeenCalled();
   resetPendingMessageDeletions();
   wedChats.clear();
@@ -316,7 +332,7 @@ describe("/wed 图片和按钮交互", () => {
     await handleWedCommand(command());
     expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.busy);
     const signal = avatar.mock.calls[0]![1];
-    await teardownWedInChat(chat.id);
+    await teardownWedInChat(chat.id, "lostAuthority");
     expect(signal.aborted).toBeTrue();
     finish({ status: "ok", identity: partner, photo: new Uint8Array([1]) });
     await pending;
@@ -330,7 +346,7 @@ describe("/wed 图片和按钮交互", () => {
     const pending = handleWedCommand(command());
     for (let i = 0; i < 50 && photo.mock.calls.length === 0; i++) await Promise.resolve();
     expect(photo).toHaveBeenCalledTimes(1);
-    await teardownWedInChat(chat.id);
+    await teardownWedInChat(chat.id, "lostAuthority");
     finish({ message_id: 200, chat, date: 1, photo: [] });
     await pending;
     expect(remove).toHaveBeenCalledWith(chat.id, 200);
@@ -347,7 +363,7 @@ describe("/wed 图片和按钮交互", () => {
     expect(avatar).toHaveBeenCalledTimes(2);
     await handleWedCallback(callback("change"));
     expect(answer.mock.calls.at(-1)![1].text).toBe(WED_TEXTS.busy);
-    await teardownWedInChat(chat.id);
+    await teardownWedInChat(chat.id, "lostAuthority");
     finish({ status: "ok", identity: nextPartner, photo: new Uint8Array([2]) });
     await pending;
     expect(edit).not.toHaveBeenCalled();
@@ -376,8 +392,77 @@ describe("/wed 图片和按钮交互", () => {
     expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.full);
     state.sessions.clear();
     state.sessions.set(1, session);
-    await teardownWedInChat(chat.id);
+    await teardownWedInChat(chat.id, "lostAuthority");
     expect(remove).toHaveBeenCalledWith(chat.id, 101);
+  });
+
+  test("抽取阶段预算耗尽回执操作失败，不误报没有可用头像", async () => {
+    budgets.push(0);
+    avatar.mockImplementation(async (user: User): Promise<CurrentAvatarResult> => {
+      await Bun.sleep(5);
+      return { status: "ok", identity: user, photo: new Uint8Array([1, 2, 3]) };
+    });
+    await handleWedCommand(command());
+    expect(photo).not.toHaveBeenCalled();
+    expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.failed);
+    expect(wedChats.get(chat.id)!.sessions.size).toBe(0);
+  });
+
+  test("投递预算在删除旧结果前耗尽时，旧图和原会话原样保留并回执失败", async () => {
+    await handleWedCommand(command());
+    const previous = wedChats.get(chat.id)!.sessions.get(1)!;
+    remove.mockClear();
+    budgets.push(WED_OPERATION_TIMEOUT_MS, "expired");
+    await handleWedCommand(command({ msgId: 11 }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(photo).toHaveBeenCalledTimes(1);
+    expect(wedChats.get(chat.id)!.sessions.get(1)).toBe(previous);
+    expect(previous.messageId).toBe(101);
+    expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.failed);
+  });
+
+  test("群 teardown 取消的投递保持静默，不发失败回执", async () => {
+    let fail!: (error: Error) => void;
+    photo.mockImplementationOnce((): Promise<any> => new Promise((_resolve, reject) => { fail = reject; }));
+    const pending = handleWedCommand(command());
+    for (let i = 0; i < 50 && photo.mock.calls.length === 0; i++) await Promise.resolve();
+    await teardownWedInChat(chat.id, "lostAuthority");
+    fail(new Error("fixture send cancelled"));
+    await pending;
+    expect(notice).not.toHaveBeenCalled();
+    expect(wedChats.has(chat.id)).toBeFalse();
+  });
+
+  test("抽取与投递各持一份预算，抽取耗时不从投递里扣", async () => {
+    budgets.push(150);
+    avatar.mockImplementation(async (user: User): Promise<CurrentAvatarResult> => {
+      await Bun.sleep(50);
+      return { status: "ok", identity: user, photo: new Uint8Array([1, 2, 3]) };
+    });
+    photo.mockImplementationOnce(async (...args: any[]): Promise<any> => {
+      await Bun.sleep(150);
+      const signal = args.at(-1);
+      if (!(signal instanceof AbortSignal) || signal.aborted) throw new Error("delivery reused the draw budget");
+      return { message_id: ++sentId, chat, date: 1, photo: [] };
+    });
+    await handleWedCommand(command());
+    expect(photo).toHaveBeenCalledTimes(1);
+    expect(notice).not.toHaveBeenCalled();
+    expect(wedChats.get(chat.id)!.sessions.get(1)!.messageId).toBe(101);
+  });
+
+  test("「换一只」抽取预算耗尽时回执操作失败，原结果不变", async () => {
+    await handleWedCommand(command());
+    wedChats.get(chat.id)!.members.add(3);
+    budgets.push(0);
+    avatar.mockImplementation(async (user: User): Promise<CurrentAvatarResult> => {
+      await Bun.sleep(5);
+      return { status: "ok", identity: user, photo: new Uint8Array([1, 2, 3]) };
+    });
+    await handleWedCallback(callback("change"));
+    expect(edit).not.toHaveBeenCalled();
+    expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.failed);
+    expect(wedChats.get(chat.id)!.sessions.get(1)!.targetId).toBe(2);
   });
 
   test("空缓存、匿名、私聊和参数均给出提示；昵称实体偏移可覆盖 emoji", async () => {

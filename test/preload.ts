@@ -26,8 +26,6 @@ import {
 import {
   IDENTITY_DATABASE_DIRECTORY_MODE,
   IDENTITY_DATABASE_FILE_MODE,
-  IDENTITY_DATABASE_SCHEMA_DATA,
-  IDENTITY_DATABASE_SCHEMA_KEY,
 } from "../packages/consts/identityStorage";
 import {
   DATABASE_DIR,
@@ -39,7 +37,10 @@ import {
   REACTIONS_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../packages/consts/paths";
-import { seedStorageDatabase } from "../scripts/fixtures/storageDatabase";
+import {
+  CURRENT_STORAGE_METADATA_ROWS,
+  seedStorageDatabase,
+} from "../scripts/fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   openStorageDatabase,
@@ -58,10 +59,7 @@ const identityDatabase: StorageDatabase = openStorageDatabase({
   path: IDENTITY_DATABASE_PATH,
 });
 seedStorageDatabase(identityDatabase, {
-  metadata: [{
-    key: IDENTITY_DATABASE_SCHEMA_KEY,
-    data: IDENTITY_DATABASE_SCHEMA_DATA,
-  }],
+  metadata: CURRENT_STORAGE_METADATA_ROWS,
   whitelist: [],
   blocklist: [],
   removals: [],

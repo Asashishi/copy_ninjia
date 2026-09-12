@@ -89,10 +89,11 @@
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完整解除拉黑：把 id 从动态黑名单里划掉，并在所有机器人管理的群中解除封禁；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id。静态黑名单身份拒绝解除</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊</td></tr>
+<tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，连同 <code>memory/ai/&lt;chatId&gt;.json</code> 一并删除，并使本群在途回复代数失效；不接受参数，部署配置写坏或 AI Worker 没起来时同样执行</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，非受保护身份命中后按 <code>/block</code> 同权处置</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>开关本群防刷屏禁言（默认关闭）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>开关本群入群验证与防冲群私密模式（默认关闭）</td></tr>
-<tr><td><code>/bot_status</code></td><td align="center">群成员</td><td>查看本机进程指标、全局模型能力、Telegram 429 出站队列、正在生效的 gag 数量、本群翻译人数（最多 5 人）、本天才在本群已拥有的权限（JSON 块）和本群已开启功能</td></tr>
+<tr><td><code>/bot_status</code></td><td align="center">群成员</td><td>查看本机进程指标、全局模型能力、Telegram 429 出站队列、本群 AI 上下文容量、正在生效的 gag 数量、本群翻译人数（最多 5 人）、本天才在本群已拥有的权限（JSON 块）和本群已开启功能</td></tr>
 <tr><td><code>/mood query</code></td><td align="center">群成员</td><td>查询本群 AI 当前有效心情，不触发重抽</td></tr>
 <tr><td><code>/mood switch</code></td><td align="center"><code>isCanSwitchMood</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名</td></tr>
 <tr><td><code>/translate enable|disable</code></td><td align="center"><code>isCanControllTranslatePermission</code></td><td>开关本群翻译能力（默认关闭）</td></tr>
@@ -114,9 +115,10 @@
 ### 行为细节
 
 - **`/bot_status` 内存**：在收到命令时调用 `Bun.unsafe.memoryFootprint()`，展示整个 Bot 进程（含 Worker）的当前内存占用；Linux 使用 PSS，共享驻留页按进程分摊。百分比以容器内存约束为分母，无约束时使用本机物理内存总量；无法采样时显示「不可用」。
+- **`/bot_status` 本群上下文容量**：滑动热记忆按 `VERBATIM_CONTEXT_MAX`（256 条）、冷记忆摘要按 `MAX_SUMMARY_ROUNDS`（7 轮）各算占用率，再按 7:3 加权求和，**只展示这一个百分比**——两段的原始条数属于记忆分层的内部机制，对群友一律不可见（见 [04 权威约束](04-invariants.md)）。两个计数由 AI Worker 随记忆快照上报（周期 `AI_SNAPSHOT_INTERVAL_MS`，30 秒）带过来，并在 hydrate 完成后全量播种，主线程只持有只读镜像。待晋升摘要不计入冷区（原文此刻仍在逐字热区里），镜像没有条目一律按 0 展示，因此读数最多滞后一个上报周期。
 - **命令入口**：群命令统一经过 `/init` 网关；未初始化群只接受超级管理员的 `/init`，所以 `/permission`、`/white` 也必须在已初始化群中使用。私聊斜杠命令只放行 `/send`。
 - **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。成功的动作结果与 `/permission help`、`/permission query` 一样长期保留；目标缺失、参数错误和 `/x` 用法提示仍在 30 秒后删除。
-- **群问答**：`/qa set` 的表单靠**格式消息**收文本。开表单那一步按 `isCanControllQaPermission` 把关，随后只认「是不是开表单的那个身份」——**频道马甲与匿名管理员因此也能设置问答**：命令侧与投递侧看到的都是同一个 `sender_chat`，两边天然对得上。投递格式是行首的 `问题:` 或 `回答:`（半角、全角冒号都收，`答案:` 同义），取值可以换行，两条消息各带一样；写在同一条里也照收。答案里的 ```` ```json ```` 代码块会以**字面围栏**存下来，直答时再拆回代码块原样发出，因此围栏本身也算进 3840 字的上限。认领后那条投递消息会被删掉，不进 AI 或复读流水线；表单正文随即就地改写，「已收到的问题」「已收到的回答」两行跟着变成当前状态（同一条消息里两项都因超长被挡下时会话没有变化，不做改写）；两项加起来撑破 Telegram 单条 4096 字符时，**回显里的回答**按剩余预算截断并补省略号，问题原样摆出——截掉的只是这张表单上的显示，登记进库的仍是完整原文。表单按群唯一、15 分钟到期自动收走。**填到一半时重来**分三种：重发同一个字段直接覆盖上一次的值，表单继续等另一样；**同一个人**再发一次 `/qa set` 会把旧表单连同那条表单消息一起作废，从两项皆空重新开始；**另一个人**在别人填到一半时发 `/qa set` 会被当场拒绝，不悄悄顶掉别人那张——被顶掉的人只会看到表单凭空消失，无从排查。表单结算之后再发格式消息就不再被认领，会照常进消息流水线。`/init disable` 与群 teardown 只收走未填完的表单，**已登记的问答留在库里**——那是部署方登记的配置，重新 `/init enable` 后照旧生效，真要删得走 `/qa remove`。
+- **群问答**：`/qa set` 的表单靠**格式消息**收文本。开表单那一步按 `isCanControllQaPermission` 把关，随后只认「是不是开表单的那个身份」——**频道马甲与匿名管理员因此也能设置问答**：命令侧与投递侧看到的都是同一个 `sender_chat`，两边天然对得上。投递格式是行首的 `问题:` 或 `回答:`（半角、全角冒号都收，`答案:` 同义），取值可以换行，两条消息各带一样；写在同一条里也照收。答案里的 ```` ```json ```` 代码块会以**字面围栏**存下来，直答时再拆回代码块原样发出，因此围栏本身也算进 3840 字的上限。认领后那条投递消息会被删掉，不进 AI 或复读流水线；表单正文随即就地改写，「已收到的问题」「已收到的回答」两行跟着变成当前状态（同一条消息里两项都因超长被挡下时会话没有变化，不做改写）；两项加起来撑破 Telegram 单条 4096 字符时，**回显里的回答**按剩余预算截断并补省略号，问题原样摆出——截掉的只是这张表单上的显示，登记进库的仍是完整原文。表单按群唯一、15 分钟到期自动收走。**填到一半时重来**分三种：重发同一个字段直接覆盖上一次的值，表单继续等另一样；**同一个人**再发一次 `/qa set` 会把旧表单连同那条表单消息一起作废，从两项皆空重新开始；**另一个人**在别人填到一半时发 `/qa set` 会被当场拒绝，不悄悄顶掉别人那张——被顶掉的人只会看到表单凭空消失，无从排查。表单结算之后再发格式消息就不再被认领，会照常进消息流水线。未填完的表单被任何一次群 teardown 收走。**已登记的问答跟着这个群一起走**：`/init disable` 与「机器人被移出群」会把本群全部问答从库里删掉，重新 `/init enable` 之后要重新登记；只是被撤了管理员则一条都不删，权限加回来直答照旧生效。单条删除仍走 `/qa remove`。
 
   表单发送失败会关闭会话。TTL、重开或 teardown 后完成的旧投递不会登记问答；已进入删除流程的投递仍由表单入口认领。关闭后才返回的表单消息 id 会交回状态机清理。
 
@@ -161,4 +163,4 @@
 
 每天东京时间 00:00，统一 Bun cron 通知主线程复核全部已保存的成员集合，所有群合计每秒最多查询 5 个 ID。确认不在对应群的 ID 从原 Set 删除，并按上述批量路径保存；查询失败或超时保留记录。整轮未完成时不叠加新一轮，停机取消复核并提交剩余变更；进程重启后等待下一次零点通知。
 
-结果会话和图片不落盘，图片只在本次操作中持有，会话每群最多 512 张。交互群缓存采用 1,024 项 LRU，命令和按钮访问刷新顺序，满额淘汰最久未使用群的交互并清理其结果；被淘汰的旧按钮失效。成员记录独立保留，成员表仍限 25 群且满额拒绝新群，所以正常业务仍受 25 群上限约束。结果由按钮、LRU 淘汰和群 teardown 管理，不挂固定 30 秒删除；用法、失败等文字提示仍在 30 秒后统一删除。`/init disable` 或群运行时清理会取消交互并保留成员记录；重启后旧按钮提示重新发送 `/wed`。
+结果会话和图片不落盘，图片只在本次操作中持有，会话每群最多 512 张。交互群缓存采用 1,024 项 LRU，命令和按钮访问刷新顺序，满额淘汰最久未使用群的交互并清理其结果；被淘汰的旧按钮失效。成员记录独立保留，成员表仍限 25 群且满额拒绝新群，所以正常业务仍受 25 群上限约束。结果由按钮、LRU 淘汰和群 teardown 管理，不挂固定 30 秒删除；用法、失败等文字提示仍在 30 秒后统一删除。`/init disable` 或机器人离群时会取消交互并删除本群成员记录及持久化文件；仅撤销管理员权限时保留成员记录。重启后旧按钮提示重新发送 `/wed`。

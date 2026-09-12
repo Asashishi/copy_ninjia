@@ -10,6 +10,7 @@
 import type {
   Base64PayloadDecodeResult,
 } from "../../../types/aiChat/payload";
+import { BASE64_NON_ALPHABET_PATTERN } from "../../../consts/aiChat/payload";
 
 /**
  * API 约定返回无换行的标准 base64；严格校验后才交给 Bun 原生解码器。
@@ -20,20 +21,8 @@ import type {
 function isCanonicalBase64(encoded: string): boolean {
   if (encoded.length === 0 || encoded.length % 4 !== 0) return false;
   const padding: number = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
-  for (let i: number = 0; i < encoded.length - padding; i++) {
-    const code: number = encoded.charCodeAt(i);
-    const valid: boolean =
-      (code >= 0x41 && code <= 0x5a) ||
-      (code >= 0x61 && code <= 0x7a) ||
-      (code >= 0x30 && code <= 0x39) ||
-      code === 0x2b ||
-      code === 0x2f;
-    if (!valid) return false;
-  }
-  for (let i: number = encoded.length - padding; i < encoded.length; i++) {
-    if (encoded.charCodeAt(i) !== 0x3d) return false;
-  }
-  return true;
+  const firstNonAlphabet: number = encoded.search(BASE64_NON_ALPHABET_PATTERN);
+  return firstNonAlphabet === (padding === 0 ? -1 : encoded.length - padding);
 }
 
 export interface DecodeBase64PayloadOptions {

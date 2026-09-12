@@ -212,7 +212,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(sendMessage.mock.calls).toEqual([
       [{ chatId: -1003, text: "latest-fail", signal: expect.any(AbortSignal) }],
     ]);
-    await expect(drainAvatarUpdates(100)).resolves.toBe("flushed");
+    await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
   });
 
   test("头像任务抛错由串行器记录，后续任务仍可继续", async () => {

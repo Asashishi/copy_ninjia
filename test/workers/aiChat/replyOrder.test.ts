@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { waitUntil as pollUntil } from "../../helpers/waitUntil";
 import type { AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
 import type { MediaCommentContext, ReplyPromptSections, ReplyToolset } from "../../../packages/types/aiChat/replies";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 import type { UserContentOptions } from "../../../packages/workers/aiChat/promptContext";
+import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
+import type { ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
 import {
   RATE_LIMIT_LONG_MAX_TRIGGERS, RATE_LIMIT_LONG_WINDOW_MS,
   REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX,
+  REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL,
 } from "../../../packages/consts/aiChat/rateLimit";
 
 const sent: string[] = [];
@@ -52,13 +56,15 @@ mock.module("../../../packages/workers/aiChat/replyModel", () => ({
   },
 }));
 mock.module("../../../packages/infra/logger", () => ({ logger: { error: logError, info: (): void => {}, log: (): void => {} } }));
+const sendNotice = mock(async (): Promise<undefined> => undefined);
+mock.module("../../../packages/infra/telegram/workerClient", () => ({ sendTemporaryMessageFromMain: sendNotice }));
 
 const { generateAndSendReply, invalidateChatReplies, quiesceAiChatReplies } = await import("../../../packages/workers/aiChat/replyPipeline");
 const { recordChatMedia } = await import("../../../packages/workers/aiChat/mediaIngest");
 const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 const { aiChatWorkerQuiescing } = await import("../../../packages/cache/workers/aiChat/worker");
 const {
-  activeReplyCounts, pendingReplyTriggers, replyDeliveryWindows, replyGenerationTasks, resetAiChatReplyCache,
+  activeReplyCounts, pendingReplyTriggers, replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows, replyGenerationTasks, resetAiChatReplyCache,
 } = await import("../../../packages/cache/workers/aiChat/replies");
 
 function trigger(id: number, options: { chatId?: number; telegramBackpressured?: boolean; mediaPreparation?: Promise<MediaCommentContext | null> } = {}): void {
@@ -69,9 +75,12 @@ function trigger(id: number, options: { chatId?: number; telegramBackpressured?:
   });
 }
 
+/**
+ * 条件在预算内未成立就当场失败，而不是静默继续：本文件后面的 settleTasks 会
+ * `await` 回复任务结算，条件没成立时那些任务永远不会结算，静默继续等于挂死。
+ */
 async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let attempt: number = 0; attempt < 200 && !predicate(); attempt++) await Bun.sleep(1);
-  expect(predicate()).toBe(true);
+  expect(await pollUntil(predicate)).toBe(true);
 }
 
 async function settleTasks(): Promise<void> {
@@ -87,6 +96,7 @@ beforeEach(() => {
   models.clear(); toolsets.clear(); contexts.clear(); sent.length = 0;
   describeMedia.mockReset().mockResolvedValue("图片描述");
   sendMessage.mockClear(); logError.mockClear();
+  sendNotice.mockClear();
   spyOn(Math, "random").mockReturnValue(1);
 });
 
@@ -102,7 +112,7 @@ afterEach(async () => {
   mock.restore();
 });
 
-test.each(["drain", "invalidate", "quiesce"] as const)("跨四个限频窗口的发送积压按 %s 收尾", async (finish) => {
+test.each(["drain", "invalidate", "quiesce"] as const)("跨四个限频窗口的发送积压有界并按 %s 收尾", async (finish) => {
   let now: number = Date.now();
   spyOn(Date, "now").mockImplementation((): number => now);
   const blocked = Promise.withResolvers<TelegramSendResult>();
@@ -121,21 +131,29 @@ test.each(["drain", "invalidate", "quiesce"] as const)("跨四个限频窗口的
       for (let offset: number = 0; offset < RATE_LIMIT_LONG_MAX_TRIGGERS; offset++) {
         const id: number = window * RATE_LIMIT_LONG_MAX_TRIGGERS + offset + 1;
         trigger(id, { telegramBackpressured: true });
+        if (id > REPLY_DELIVERY_MAX_PER_CHAT) continue;
         await waitUntil((): boolean => models.has(id));
         models.get(id)!.resolve(`回复${id}`);
         await waitUntil((): boolean => !activeReplyCounts.has(-1001));
         models.delete(id); toolsets.delete(id); contexts.delete(id);
       }
-      expect(pendingReplyTriggers.size).toBe(0);
-      expect(replyDeliveryWindows.get(-1001)?.size).toBe((window + 1) * RATE_LIMIT_LONG_MAX_TRIGGERS);
+      expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
+      expect(replyDeliveryWindows.get(-1001)?.size).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
+      expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
+      expect(activeReplyCounts.size).toBe(0);
       expect(sent).toEqual(["回复1"]);
     }
-    expect([...replyGenerationTasks.values()][0]?.size).toBe(total);
+    expect([...replyGenerationTasks.values()][0]?.size).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
     expect(sendSignal).toBeDefined();
     if (finish === "drain") {
       blocked.resolve({ messageId: 1 });
+      for (let id: number = REPLY_DELIVERY_MAX_PER_CHAT + 1; id <= REPLY_DELIVERY_MAX_PER_CHAT + REPLY_TRIGGER_QUEUE_MAX; id++) {
+        await waitUntil((): boolean => models.has(id));
+        models.get(id)!.resolve(`回复${id}`);
+      }
       await settleTasks();
-      expect(sent).toEqual(Array.from({ length: total }, (_: unknown, index: number): string => `回复${index + 1}`));
+      expect(sent).toEqual(Array.from({ length: REPLY_DELIVERY_MAX_PER_CHAT + REPLY_TRIGGER_QUEUE_MAX }, (_: unknown, index: number): string => `回复${index + 1}`));
+      expect(sendNotice).toHaveBeenCalledTimes(1);
     } else {
       if (finish === "quiesce") {
         aiChatWorkerQuiescing.current = true;
@@ -158,10 +176,44 @@ test.each(["drain", "invalidate", "quiesce"] as const)("跨四个限频窗口的
     expect(replyDeliveryWindows.size).toBe(0);
     expect(replyGenerationTasks.size).toBe(0);
     expect(activeReplyCounts.size).toBe(0);
+    expect(replyDeliveryCounts.size).toBe(0);
+    expect(replyDeliveryTotal.current).toBe(0);
   } finally {
     blocked.resolve({ messageId: 1 });
   }
 }, 15_000);
+
+test("全局容量归还唤醒其它群，持续有队列的群轮流取得空位", async () => {
+  const blocked = Promise.withResolvers<TelegramSendResult>();
+  const held: ReplyDeliveryTurn[] = [];
+  sendMessage.mockImplementationOnce((params) => { sent.push(params.text); return blocked.promise; });
+  trigger(1000);
+  try {
+    await waitUntil(() => models.has(1000));
+    models.get(1000)!.resolve("占位回复");
+    await waitUntil(() => !activeReplyCounts.has(-1001));
+    for (let index: number = 0; index < REPLY_DELIVERY_MAX_TOTAL - 1; index++) {
+      held.push(reserveReplyDelivery(100 + Math.floor(index / REPLY_DELIVERY_MAX_PER_CHAT))!);
+    }
+    trigger(1); trigger(2); trigger(3, { chatId: -1002 });
+    expect(pendingReplyTriggers.get(-1001)?.size).toBe(2);
+    expect(pendingReplyTriggers.get(-1002)?.size).toBe(1);
+    expect(models.size).toBe(1);
+    blocked.resolve({ messageId: 1 });
+    for (const id of [1, 3, 2]) {
+      await waitUntil(() => models.has(id));
+      expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_TOTAL);
+      models.get(id)!.resolve(`回复${id}`);
+    }
+    await settleTasks();
+    expect(sent).toEqual(["占位回复", "回复1", "回复3", "回复2"]);
+    expect(pendingReplyTriggers.size).toBe(0);
+  } finally {
+    blocked.resolve({ messageId: 1 });
+    for (const turn of held) await turn.finish();
+  }
+  expect(replyDeliveryTotal.current).toBe(0);
+});
 
 test("模型按 3、1、2 完成，整轮回复仍严格按入站 1、2、3 出站", async () => {
   for (let i: number = 1; i <= 3; i++) trigger(i);

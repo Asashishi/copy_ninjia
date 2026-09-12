@@ -5,7 +5,7 @@ import {
   resetSelfSentTracker,
   sentMessageCount,
 } from "../../packages/cache/perThread/selfSentTracker";
-import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
+import { MUTED_CHAT_PERMISSIONS, UNMUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import {
   deleteEphemeralMessageWithOutcome,
   editMessageText,
@@ -18,6 +18,7 @@ import {
   sendMessageWithResult,
   sendAudioWithResult,
   sendPhotoWithResult,
+  unmuteChatMemberWithOutcome,
 } from "../../packages/infra/telegram/actions";
 import { isSelfSent } from "../../packages/infra/selfSentTracker";
 import { TelegramRetryPreconditionChangedError } from "../../packages/infra/telegram/errors";
@@ -509,6 +510,63 @@ describe("Telegram 常规动作封装", () => {
     // 限流/网络抖动值得等一等再来，不能和上面混成一档。
     expect(await mute(failWith(new Error("socket hang up")))).toBe("failed");
     expect(await mute(failWith(new GrammyError(
+      "Too Many Requests",
+      { ok: false, error_code: 429, description: "Too Many Requests: retry after 3" },
+      "restrictChatMember",
+      {}
+    )))).toBe("failed");
+  });
+
+  test("解除禁言发还全部发言权限，不带 until_date", async () => {
+    const restrictMock = mock(async (..._args: unknown[]) => true as const);
+    const api = { restrictChatMember: restrictMock } as unknown as TelegramApi;
+
+    expect(await unmuteChatMemberWithOutcome({ chatId: -1001, userId: 7, api })).toBe("unmuted");
+    // 第四个实参必须是空 other：带上 until_date 会把「恢复」又变成一次限时限制。
+    // 这条路径没有派发截止，不传 signal 时 signalArgs 也不补位，实参恰好四个。
+    expect(restrictMock).toHaveBeenCalledWith(-1001, 7, UNMUTED_CHAT_PERMISSIONS, {});
+
+    // 调用方给了 signal 就必须一路下传到真实请求，否则 429 车道里排队的那一份
+    // 不会因停机或 update 取消被撤销。
+    const controller: AbortController = new AbortController();
+    expect(await unmuteChatMemberWithOutcome({
+      chatId: -1001, userId: 7, api, signal: controller.signal,
+    })).toBe("unmuted");
+    expect(restrictMock).toHaveBeenLastCalledWith(
+      -1001,
+      7,
+      UNMUTED_CHAT_PERMISSIONS,
+      {},
+      controller.signal
+    );
+    // 权限集里不允许有任何一项为假，否则那不叫解除禁言。
+    expect(Object.values(UNMUTED_CHAT_PERMISSIONS).every((allowed: boolean | undefined): boolean => allowed === true))
+      .toBe(true);
+  });
+
+  test("解除禁言的明确拒绝与偶发失败同样分成两档", async () => {
+    const failWith = (error: unknown): TelegramApi => ({
+      restrictChatMember: mock(async (..._args: unknown[]) => { throw error; }),
+    }) as unknown as TelegramApi;
+    const unmute = (api: TelegramApi): Promise<string> =>
+      unmuteChatMemberWithOutcome({ chatId: -1001, userId: 7, api });
+
+    // 与禁言同一判据：400「权限不足」和 403 都是再试一次也一样，归 forbidden。
+    expect(await unmute(failWith(new GrammyError(
+      "Bad Request: not enough rights",
+      { ok: false, error_code: 400, description: "Bad Request: not enough rights" },
+      "restrictChatMember",
+      {}
+    )))).toBe("forbidden");
+    expect(await unmute(failWith(new GrammyError(
+      "Forbidden: bot was kicked",
+      { ok: false, error_code: 403, description: "Forbidden: bot was kicked" },
+      "restrictChatMember",
+      {}
+    )))).toBe("forbidden");
+    // 限流与网络抖动值得重试，必须和上面分开。
+    expect(await unmute(failWith(new Error("socket hang up")))).toBe("failed");
+    expect(await unmute(failWith(new GrammyError(
       "Too Many Requests",
       { ok: false, error_code: 429, description: "Too Many Requests: retry after 3" },
       "restrictChatMember",

@@ -10,9 +10,9 @@ import type { AdmitDecision, AdmitTriggerInput, TriggerKind } from "../../packag
 const ALL_KINDS: TriggerKind[] = ["direct", "random", "mediaDirect", "mediaRandom"];
 
 function admitTrigger(
-  input: Omit<AdmitTriggerInput, "telegramBackpressured">
+  input: Omit<AdmitTriggerInput, "telegramBackpressured" | "deliveryAvailable">
 ): AdmitDecision {
-  return decideTrigger({ ...input, telegramBackpressured: false });
+  return decideTrigger({ ...input, telegramBackpressured: false, deliveryAvailable: true });
 }
 
 describe("admitTrigger：并发未满且队列已空", () => {
@@ -29,9 +29,7 @@ describe("admitTrigger：并发未满且队列已空", () => {
 });
 
 describe("admitTrigger：并发未满但队列非空", () => {
-  // 队列非空只可能是限频闸拦下过补跑。让新触发抢在队里那些人前面，就把队列的
-  // FIFO 语义整个反过来了——窗口一放开，先跑的会是刚到的这条，而队里的人已经
-  // 等了几分钟。空并发位由补跑消费。
+  // 容量或限频闸可留下等待队列；已有排队项时，空位始终由 FIFO 补跑消费。
   test("kind=direct → enqueue，不插队", () => {
     expect(admitTrigger({ activeRounds: 0, queueSize: 1, kind: "direct" })).toEqual({ action: "enqueue" });
   });
@@ -101,6 +99,7 @@ describe("admitTrigger：Telegram 发送面软背压", () => {
       queueSize: 0,
       kind: "random",
       telegramBackpressured: true,
+      deliveryAvailable: true,
     })).toEqual({ action: "dropSilently" });
   });
 
@@ -110,8 +109,18 @@ describe("admitTrigger：Telegram 发送面软背压", () => {
       queueSize: 0,
       kind: "direct",
       telegramBackpressured: true,
+      deliveryAvailable: true,
     })).toEqual({ action: "enqueue" });
   });
+});
+
+test.each(ALL_KINDS)("存活轮次容量耗尽时 %s 不继续调用模型", (kind) => {
+  for (const queueSize of [0, REPLY_TRIGGER_QUEUE_MAX - 1, REPLY_TRIGGER_QUEUE_MAX]) {
+    expect(decideTrigger({ activeRounds: 0, queueSize, kind, telegramBackpressured: false, deliveryAvailable: false })).toEqual({
+      action: kind === "random" || kind === "mediaRandom"
+        ? "dropSilently" : queueSize >= REPLY_TRIGGER_QUEUE_MAX ? "enqueueOverflow" : "enqueue",
+    });
+  }
 });
 
 describe("admitRound：限频闸", () => {

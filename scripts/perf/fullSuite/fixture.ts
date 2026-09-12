@@ -23,15 +23,15 @@ import {
 import {
   IDENTITY_DATABASE_DIRECTORY_MODE,
   IDENTITY_DATABASE_FILE_MODE,
-  IDENTITY_DATABASE_SCHEMA_DATA,
-  IDENTITY_DATABASE_SCHEMA_KEY,
 } from "../../../packages/consts/identityStorage";
 import {
   DATABASE_DIR,
   IDENTITY_DATABASE_PATH,
 } from "../../../packages/consts/paths";
-import { seedStorageDatabase } from
-  "../../fixtures/storageDatabase";
+import {
+  CURRENT_STORAGE_METADATA_ROWS,
+  seedStorageDatabase,
+} from "../../fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,
@@ -62,7 +62,6 @@ import type {
   StoredChatStateRow,
   StoredIdentityPolicyRow,
   StoredPendingRemovalRow,
-  StoredStorageMetadataRow,
 } from "../../../packages/types/storageDatabase";
 import type {
   AiMemorySnapshot,
@@ -219,12 +218,6 @@ function removalRows(): readonly StoredPendingRemovalRow[] {
   return rows;
 }
 
-/** schema 版本元数据行；两种建库方式都要写，缺它启动恢复会拒绝加载。 */
-const SCHEMA_METADATA_ROW: Readonly<StoredStorageMetadataRow> = {
-  key: IDENTITY_DATABASE_SCHEMA_KEY,
-  data: IDENTITY_DATABASE_SCHEMA_DATA,
-};
-
 /**
  * 在当前进程的运行时数据根下建库并写入给定业务行。
  *
@@ -254,7 +247,7 @@ function createDatabase(rows: SeedStorageDatabaseOptions): void {
 /** 满库：冷启动分区要量的是「读到一份生产量级的部署数据」的成本。 */
 export function createBenchmarkDatabase(): void {
   createDatabase({
-    metadata: [SCHEMA_METADATA_ROW],
+    metadata: CURRENT_STORAGE_METADATA_ROWS,
     whitelist: identityRows(WHITE_DATA, 1),
     blocklist: identityRows(BLACK_DATA, BENCHMARK_BLOCKLIST_ID_BASE),
     removals: removalRows(),
@@ -266,7 +259,7 @@ export function createBenchmarkDatabase(): void {
 /** 空库，只带 schema 元数据；链路分区从零开始写，不受 fixture 体量干扰。 */
 export function createEmptyBenchmarkDatabase(): void {
   createDatabase({
-    metadata: [SCHEMA_METADATA_ROW],
+    metadata: CURRENT_STORAGE_METADATA_ROWS,
     whitelist: [],
     blocklist: [],
     removals: [],

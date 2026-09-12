@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
-import { sourceFilesUnder } from "./sourceAnalysis";
+import { isRuntimeModuleEdge, sourceFilesUnder } from "./sourceAnalysis";
 
 /**
  * `bun run test:fault-injection` 的清单必须覆盖全部持久化 / 停机 / Worker 生命周期用例。
@@ -10,21 +10,19 @@ import { sourceFilesUnder } from "./sourceAnalysis";
  * `05-dev-workflow.md` 都写「完整清单见 package.json 的脚本定义」）。漏登记不会让任何
  * 门禁变红，套件却在无声中变窄——合入前跑的那一套不再覆盖新写的落盘或重建用例。
  *
- * 本模块按**测试 harness 归属**给出机器可判的下界：凡 import 下面这几个 harness 的
- * 用例文件都必须出现在清单里。harness 是可靠信号——它们各自装配的正是落盘、启动恢复
- * 与 Worker 重建的替身。归属按**解析后的路径**判定，因此用例文件改名或换目录都照样
- * 认得出来，而同名不同目录的模块不会被误判。
+ * 本模块按测试 harness 与生产恢复/生命周期边界的值导入给出机器可判的下界。
+ * 归属按解析后的路径判定，包含动态 import，忽略纯类型引用。
  *
  * 判定只做下界，不禁止清单里出现别的文件：不依赖 harness 的故障注入用例（例如
  * readiness mock 整文件生效的那种）同样该进清单，但没有机器可判的特征，仍由维护者
  * 按 AGENTS.md 的「涉及持久化、停机或 Worker 生命周期」自行判断。
  */
 
-/** 受约束的 harness：模块路径，以及它的使用者为什么属于这套套件。 */
-interface FaultInjectionHarness {
+/** 受约束的恢复和生命周期边界，包含生产模块及测试 harness。 */
+interface FaultInjectionBoundary {
   /** 仓库相对路径；缺失即判失败，避免改名后判定静默失效。 */
   readonly path: string;
-  /** 该 harness 装配的故障面，用于失败文案。 */
+  /** 该边界覆盖的故障面，用于失败文案。 */
   readonly purpose: string;
 }
 
@@ -33,7 +31,7 @@ interface ProjectPackageJson {
 }
 
 /**
- * 判定所依据的 harness 清单。
+ * 判定所依据的恢复和生命周期边界清单。
  *
  * 只收「主题就是持久化 / 停机 / Worker 生命周期」的那几个。刻意不收
  * `verificationEffectsHarness`（验证副作用解释器，主题是踢人与删消息）和
@@ -41,7 +39,7 @@ interface ProjectPackageJson {
  * `packages/cache/workers/antiRaid/adDetect.ts` 的模块头注）：它们不落盘，
  * 进这套套件只会拖长发布前的必跑面而换不到恢复能力。
  */
-const FAULT_INJECTION_HARNESSES: readonly FaultInjectionHarness[] = [
+export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   {
     path: "test/helpers/diskIOWorkerHarness.ts",
     purpose: "Disk I/O Worker initialization, backpressure, diagnostic restart and give-up",
@@ -58,6 +56,14 @@ const FAULT_INJECTION_HARNESSES: readonly FaultInjectionHarness[] = [
     path: "test/helpers/lifecycleFixture.ts",
     purpose: "application startup and shutdown lifecycle failure injection",
   },
+  { path: "packages/workers/diskIO/luckSecretFile.ts", purpose: "luck secret atomic publication and recovery" },
+  { path: "packages/workers/diskIO/snapshotFiles.ts", purpose: "snapshot inspect, adoption and recovery maintenance" },
+  { path: "packages/workers/aiChat/replyPipeline.ts", purpose: "reply admission, draining and cancellation" },
+  { path: "packages/workers/aiChat/replyRound.ts", purpose: "reply model, action and resource lifecycle" },
+  { path: "packages/workers/aiChat/replyDelivery.ts", purpose: "reply delivery capacity and generation cleanup" },
+  { path: "packages/workers/antiRaid/lockdownRuntime.ts", purpose: "lockdown durable acknowledgements, restore and teardown" },
+  { path: "packages/workers/antiRaid/lockdownApi.ts", purpose: "lockdown API ownership and permission compensation" },
+  { path: "packages/states/lockdown.ts", purpose: "lockdown recovery and durable state transitions" },
 ];
 
 /** 静态字符串字面量说明符；模板与动态表达式不参与判定。 */
@@ -81,6 +87,7 @@ function importSpecifiers(source: ts.SourceFile): readonly string[] {
   const specifiers: string[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      if (!isRuntimeModuleEdge(node)) return;
       const specifier: string | undefined = literalSpecifier(node.moduleSpecifier);
       if (specifier !== undefined) specifiers.push(specifier);
     } else if (
@@ -128,7 +135,7 @@ function collectListedPathProblems(
 
 /**
  * 核对 `test:fault-injection` 的清单：声明的路径都存在且不重复，且每个使用受约束
- * harness 的用例文件都已登记。
+ * 恢复和生命周期边界的用例文件都已登记。
  */
 export async function collectFaultInjectionSuiteProblems(
   projectRoot: string
@@ -145,11 +152,11 @@ export async function collectFaultInjectionSuiteProblems(
   );
   const problems: string[] = [...collectListedPathProblems(projectRoot, listed)];
   const listedSet: ReadonlySet<string> = new Set<string>(listed);
-  const requiredModules: Map<string, FaultInjectionHarness> = new Map();
-  for (const harness of FAULT_INJECTION_HARNESSES) {
+  const requiredModules: Map<string, FaultInjectionBoundary> = new Map();
+  for (const harness of FAULT_INJECTION_BOUNDARIES) {
     const harnessPath: string = join(projectRoot, harness.path);
     if (!existsSync(harnessPath)) {
-      problems.push(`declared fault-injection harness does not exist: ${harness.path}`);
+      problems.push(`declared fault-injection boundary does not exist: ${harness.path}`);
       continue;
     }
     requiredModules.set(harnessPath, harness);
@@ -173,7 +180,7 @@ export async function collectFaultInjectionSuiteProblems(
     for (const specifier of importSpecifiers(source)) {
       const resolved: string | undefined = resolvedSpecifierPath(path, specifier);
       if (resolved === undefined) continue;
-      const harness: FaultInjectionHarness | undefined = requiredModules.get(resolved);
+      const harness: FaultInjectionBoundary | undefined = requiredModules.get(resolved);
       if (harness === undefined) continue;
       problems.push(
         `${relativePath} uses ${harness.path} (${harness.purpose}) ` +

@@ -40,6 +40,8 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
       payloadBytes = message.day.length * 2;
       break;
     case "joinLog":
+    case "deleteJoinLog":
+    case "deleteWedMembers":
     case "deleteAiMemory":
     case "forgetAiMemory":
     case "verificationDelete":

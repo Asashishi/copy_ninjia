@@ -62,6 +62,22 @@ export const BOT_STATUS_PERMISSION_LABELS: Readonly<
   canManageDirectMessages: "管理频道私信",
 };
 
+/**
+ * 本群上下文容量里滑动热记忆占的比重。
+ *
+ * `/bot_status` 的上下文容量是两段记忆各自占用率的加权和：滑动热记忆按
+ * VERBATIM_CONTEXT_MAX 算占用率，冷记忆摘要按 MAX_SUMMARY_ROUNDS 算（两个上限
+ * 都在 consts/aiChat/memory.ts）。**本值与 BOT_STATUS_COLD_MEMORY_WEIGHT 之和
+ * 恒为 1**，否则两段都满时给不出 100%。所属模块：packages/commands/botStatus.ts。
+ */
+export const BOT_STATUS_HOT_MEMORY_WEIGHT: number = 0.7;
+
+/**
+ * 本群上下文容量里冷记忆摘要占的比重；与 BOT_STATUS_HOT_MEMORY_WEIGHT 之和恒为 1。
+ * 所属模块：packages/commands/botStatus.ts。
+ */
+export const BOT_STATUS_COLD_MEMORY_WEIGHT: number = 0.3;
+
 /** 权限块的 JSON 缩进空格数；两格让 Telegram 代码块里逐行可读。 */
 export const BOT_STATUS_PERMISSION_JSON_INDENT: number = 2;
 /** 权限块 `pre` 实体的语言标签，让客户端按 JSON 高亮。 */

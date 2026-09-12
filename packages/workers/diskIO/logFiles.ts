@@ -15,7 +15,7 @@
  * 不一致。
  */
 
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO/messages";
 import type { DayFileState } from "../../types/diskIO/storage";
@@ -33,7 +33,7 @@ import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLog
 import { getTokyoDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
-import { assertFileReadableWritable } from "../../libs/fileAccess";
+import { inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
 import { readUtf8TextInput } from "../../libs/inputValidation";
 import {
   AppendOnlyFileFormatError,
@@ -99,14 +99,13 @@ interface LogDayInspection {
 
 async function inspectLogDay(day: string): Promise<LogDayInspection> {
   const path: string = join(LOGS_DIR, `${day}.json`);
-  if (!await Bun.file(path).exists()) {
+  if (!inspectOptionalFile(path)) {
     return {
       path,
       rewriteContent: null,
       state: { day, size: 0, empty: true },
     };
   }
-  assertFileReadableWritable(path);
   const content: string = await readUtf8TextInput(path);
   let parsed: unknown;
   let rewriteContent: string | null = null;
@@ -241,7 +240,7 @@ export interface LogFilesInspection {
 
 /** 跨域启动第一阶段：只读校验当前日志，并预计算必要的规范化内容。 */
 export async function inspectLogFiles(): Promise<LogFilesInspection> {
-  const names: string[] = existsSync(LOGS_DIR) ? readdirSync(LOGS_DIR) : [];
+  const names: string[] = inspectOptionalDirectory(LOGS_DIR) ? readdirSync(LOGS_DIR) : [];
   return { names, day: await inspectLogDay(dayKey(Date.now())) };
 }
 

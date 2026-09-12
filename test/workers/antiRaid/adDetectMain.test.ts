@@ -117,13 +117,25 @@ function message(overrides: Partial<Message> = {}): Message {
     ...overrides,
   } as Message;
 }
+/**
+ * 本文件全部候选共用的观测时刻。
+ *
+ * 生产侧每条 update 只读一次墙钟（infra/updateContext.ts 的 updateNow），
+ * buildAdCandidate 把它原样写进 observedAt。助手若每次调用现读一次 Date.now()，
+ * 同一条消息的两次构建就会各拿一个时刻，跨毫秒边界时逐字段比对在 observedAt
+ * 上失败。固定成常量既守住「一次 update 一个时刻」的口径，也让 observedAt 可比对。
+ *
+ * 本文件把临时白名单整层 mock 成纯集合判断，now 的唯一可观测去向就是 observedAt。
+ */
+const OBSERVED_AT_MS: number = Date.parse("2026-03-01T00:00:00Z");
+
 function buildAdCandidate(
   candidateMessage: Message,
   botId: number,
   chatState: Readonly<ChatState> = chatStates.get(candidateMessage.chat.id) ?? {}
 ): ReturnType<typeof buildAdCandidateFromContext> {
   return buildAdCandidateFromContext({
-    message: candidateMessage, botId, chatState, now: Date.now(),
+    message: candidateMessage, botId, chatState, now: OBSERVED_AT_MS,
   });
 }
 beforeEach(() => {

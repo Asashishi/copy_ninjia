@@ -1,17 +1,60 @@
 import { afterEach, expect, test } from "bun:test";
-import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
-import { invalidateChatReplyCache, replyDeliveryWindows, resetAiChatReplyCache } from "../../../packages/cache/workers/aiChat/replies";
-import { REPLY_ROUND_MAX_CONCURRENT } from "../../../packages/consts/aiChat/rateLimit";
+import { hasReplyDeliveryCapacity, reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
+import { invalidateChatReplyCache, replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows, resetAiChatReplyCache } from "../../../packages/cache/workers/aiChat/replies";
+import { REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT } from "../../../packages/consts/aiChat/rateLimit";
 import type { ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
 
 afterEach(resetAiChatReplyCache);
+
+test.each(["invalidate", "reset"])("%s 不清掉旧代存活容量，按序完成与重复 finish 只释放一次", async (mode) => {
+  const turns = Array.from({ length: REPLY_DELIVERY_MAX_PER_CHAT }, () => reserveReplyDelivery(1)!);
+  expect(hasReplyDeliveryCapacity(1)).toBe(false);
+  expect(reserveReplyDelivery(1)).toBeUndefined();
+  if (mode === "reset") resetAiChatReplyCache();
+  else invalidateChatReplyCache(1);
+  expect(reserveReplyDelivery(1)).toBeUndefined();
+  const last = turns.at(-1)!;
+  const lastFinished = last.finish();
+  expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
+  await turns[0]!.finish();
+  const fresh = reserveReplyDelivery(1)!;
+  expect(fresh).toBeDefined();
+  const freshWindow = replyDeliveryWindows.get(1);
+  for (const turn of turns) await turn.finish();
+  await lastFinished;
+  expect(replyDeliveryCounts.get(1)).toBe(1);
+  expect(replyDeliveryTotal.current).toBe(1);
+  expect(replyDeliveryWindows.get(1)).toBe(freshWindow);
+  await fresh.finish();
+  expect(replyDeliveryCounts.size).toBe(0);
+  expect(replyDeliveryTotal.current).toBe(0);
+});
+
+test("Worker 总预算限制多群及不断重开的旧代", async () => {
+  const turns: ReplyDeliveryTurn[] = [];
+  for (let index: number = 0; index < REPLY_DELIVERY_MAX_TOTAL; index++) {
+    const chatId: number = index % 8;
+    turns.push(reserveReplyDelivery(chatId)!);
+    invalidateChatReplyCache(chatId);
+  }
+  expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_TOTAL);
+  expect(hasReplyDeliveryCapacity(99)).toBe(false);
+  expect(reserveReplyDelivery(99)).toBeUndefined();
+  await turns[0]!.finish();
+  const fresh = reserveReplyDelivery(99)!;
+  expect(fresh).toBeDefined();
+  for (const turn of turns) await turn.finish();
+  await fresh.finish();
+  expect(replyDeliveryCounts.size).toBe(0);
+  expect(replyDeliveryTotal.current).toBe(0);
+});
 
 test("固定桶容纳多轮链，后轮先就绪也必须按入站顺位执行", async () => {
   const order: number[] = [];
   const turns: ReplyDeliveryTurn[] = [];
   const total: number = REPLY_ROUND_MAX_CONCURRENT * 3 + 1;
   for (let i: number = 0; i < total; i++) {
-    const turn = reserveReplyDelivery(1);
+    const turn = reserveReplyDelivery(1)!;
     turns.push(turn);
     void turn.ready.then(() => { order.push(i); });
   }
@@ -34,9 +77,9 @@ test("固定桶容纳多轮链，后轮先就绪也必须按入站顺位执行",
 });
 
 test("空轮提前完成不放行更晚回复，轮到完成项时直接跳过", async () => {
-  const first = reserveReplyDelivery(1);
-  const empty = reserveReplyDelivery(1);
-  const third = reserveReplyDelivery(1);
+  const first = reserveReplyDelivery(1)!;
+  const empty = reserveReplyDelivery(1)!;
+  const third = reserveReplyDelivery(1)!;
   let thirdStarted: boolean = false;
   void third.ready.then(() => { thirdStarted = true; });
   const emptyReleased = empty.finish();
@@ -56,13 +99,13 @@ test("空轮提前完成不放行更晚回复，轮到完成项时直接跳过",
 });
 
 test("群之间独立，旧代迟到回收不能删除新窗口", async () => {
-  const old = reserveReplyDelivery(1);
-  const other = reserveReplyDelivery(2);
+  const old = reserveReplyDelivery(1)!;
+  const other = reserveReplyDelivery(2)!;
   other.commit();
   await other.ready;
   await other.finish();
   invalidateChatReplyCache(1);
-  const fresh = reserveReplyDelivery(1);
+  const fresh = reserveReplyDelivery(1)!;
   const window = replyDeliveryWindows.get(1);
   await old.finish();
   expect(replyDeliveryWindows.get(1)).toBe(window);
@@ -73,7 +116,7 @@ test("群之间独立，旧代迟到回收不能删除新窗口", async () => {
 });
 
 test("顺位句柄在编译期不可替换", async () => {
-  const turn = reserveReplyDelivery(1);
+  const turn = reserveReplyDelivery(1)!;
   const window = replyDeliveryWindows.get(1)!;
   const assertReadonly = (): void => {
     // @ts-expect-error 顺位等待句柄只读。

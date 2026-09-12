@@ -44,14 +44,27 @@ export const longTriggerTimes: Map<number, TimestampDeque> = new Map();
 export const activeReplyCounts: Map<number, number> = new Map();
 /**
  * owner：AI Worker。入站准入时创建同群发送桶数组，桶数为 REPLY_ROUND_MAX_CONCURRENT。
- * 每桶可持有多轮；积压量随已准入未结算的轮次增长，不以模型并发数封顶，也不参与模型准入。
+ * 每桶可持有多轮；存活轮次受单群与 Worker 容量闸限制，模型并发独立计数。
  * 完成项按入站顺位回收，全部排空时删除；群失效或 reset 清空，Worker 重建从空表开始。
  * 旧代迟到收尾不得删除新代条目，入站限频与 Telegram 控流各自生效。
  */
 export const replyDeliveryWindows: Map<number, ReplyDeliveryWindow> = new Map();
 /**
+ * owner：AI Worker。各群全部代际尚未按序回收的发送槽位数；reserve 填充、
+ * advanceDelivery 逐项释放并在归零时删除。invalidate/reset 不提前清空，
+ * Worker 销毁后自然释放；群数不超过 REPLY_DELIVERY_MAX_TOTAL。
+ */
+export const replyDeliveryCounts: Map<number, number> = new Map();
+/**
+ * owner：AI Worker。reserve 增加、按序释放时减少的全线程存活轮次；
+ * 上限 REPLY_DELIVERY_MAX_TOTAL。reset 保留仍存活的任务记账，Worker 重建从零开始。
+ */
+export const replyDeliveryTotal: { current: number } = { current: 0 };
+/**
  * 每群尚未开始处理的直接触发 FIFO，上限为 REPLY_TRIGGER_QUEUE_MAX（15）。
  * 准入时入队，轮次启动时出队，排空时删除；群失效、reset 或 Worker 重建时清空。
+ * 主线程只给启用 AI 的受管群投递触发，受 STATE_MANAGED_CHAT_LIMIT 限制，
+ * 因此全线程待处理项最多 STATE_MANAGED_CHAT_LIMIT × REPLY_TRIGGER_QUEUE_MAX。
  */
 export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
 /**
@@ -111,7 +124,7 @@ export function sweepAiChatReplyCache(now: number = Date.now()): void {
   }
 }
 
-/** Worker dispose/测试隔离时清空全部回复运行时状态。 */
+/** Worker dispose/测试隔离时撤销回复状态；存活发送槽位的容量记账保留到自行结算。 */
 export function resetAiChatReplyCache(): void {
   replyGenerations.clear();
   rateLimitNoticeTimes.clear();

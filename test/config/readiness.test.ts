@@ -100,6 +100,7 @@ const {
   aiChatConfigReadinessCache,
   translateConfigReadinessCache,
 } = await import("../../packages/cache/main/configReadiness");
+const { googleServiceAccountKey } = await import("../../packages/cache/main/translate");
 
 async function writeAuthFile(content: string): Promise<void> {
   await Bun.write(authFilePath, content);
@@ -117,6 +118,7 @@ beforeEach(async (): Promise<void> => {
   aiChatConfigReadinessCache.current = null;
   adDetectConfigReadinessCache.current = null;
   translateConfigReadinessCache.current = null;
+  googleServiceAccountKey.current = null;
   await writeAuthFile(JSON.stringify({ client_email: "bot@example.iam.gserviceaccount.com", private_key: testPrivateKey }));
 });
 
@@ -199,6 +201,30 @@ describe("deployment config readiness", () => {
 });
 
 describe("Google service account readiness", () => {
+  test("预检发布一次快照，改写或删除文件均不影响运行期读取", async () => {
+    await validateExistingDeploymentInputs();
+    const snapshot = googleServiceAccountKey.current;
+    expect(snapshot?.private_key).toBe(testPrivateKey);
+    await writeAuthFile("invalid");
+    expect(translateConfigReadiness()).toEqual({ ok: true });
+    expect(googleServiceAccountKey.current).toBe(snapshot);
+    await Bun.file(authFilePath).delete();
+    expect(translateConfigReadiness()).toEqual({ ok: true });
+    expect(googleServiceAccountKey.current).toBe(snapshot);
+  });
+
+  test("缺省时发布不可用结论，进程内补文件和重复 preflight 都不启用翻译", async () => {
+    await Bun.file(authFilePath).delete();
+    await validateExistingDeploymentInputs();
+    const result = translateConfigReadiness();
+    expect(result.ok).toBe(false);
+    expect(googleServiceAccountKey.current).toBeNull();
+    await writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: testPrivateKey }));
+    await validateExistingDeploymentInputs();
+    expect(translateConfigReadiness()).toBe(result);
+    expect(googleServiceAccountKey.current).toBeNull();
+  });
+
   test("启动总闸复用已经通过的密钥校验结论", async () => {
     await validateExistingDeploymentInputs();
     const cached: ConfigReadiness | null = translateConfigReadinessCache.current;

@@ -15,11 +15,12 @@
  * 「holder 空不空」的一次分支，已存在文件在一个进程里只解析一次。运行时那一侧
  * 只读 holder，Worker 的那份由初始化消息投递（见 config/agent.ts 的边界说明）。
  *
- * 三张探测表都是模块级只读常量：判定命中缓存后只剩一次 holder 读取和一次分支，
+ * AI 探测表都是模块级只读常量，翻译直接消费启动快照：命中缓存只读 holder，
  * 每条群消息都要走的路上不再构造数组与 probe 对象。
  */
 
 import { validateGoogleServiceAccountKey } from "./googleAuth";
+import { googleServiceAccountKey } from "../cache/main/translate";
 import { lstat } from "node:fs/promises";
 import { ensureAdSampleConfig } from "./adSamples";
 import { ensureMoodConfig } from "./mood";
@@ -52,6 +53,7 @@ import type {
   ConfigReadiness,
   ConfigReadinessCache,
   DeploymentFileProbe,
+  GoogleServiceAccountKey,
 } from "../types/config";
 
 /** 逐份探测，返回第一份坏掉的；全通过返回 ok。 */
@@ -79,7 +81,7 @@ async function probeAll(
  *
  * 命中缓存的那一路只有一次 holder 读取加一次分支：三条 readiness 全部挂在每条
  * 群消息的门禁上，`??=` 虽然短路了 probeAll，调用方为它准备的 probe 表却仍然
- * 每次都要构造。因此探测表一律是模块级只读常量（见下方三张表），本函数不再
+ * 每次都要构造。因此 AI 探测表一律是模块级只读常量，本函数不再
  * 参与任何分配。
  */
 function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
@@ -132,11 +134,6 @@ const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
   { file: "config/agent.json", load: ensureAdDetectAgentConfig },
 ];
 
-/** 翻译只探一份服务账号密钥；严格解析见 config/googleAuth.ts。 */
-const TRANSLATE_PROBES: readonly DeploymentFileProbe[] = [
-  { file: "g-auth.json", load: validateGoogleServiceAccountKey },
-];
-
 export function aiChatConfigReadiness(): ConfigReadiness {
   return cachedReadiness(aiChatConfigReadinessCache);
 }
@@ -147,9 +144,11 @@ export function adDetectConfigReadiness(): ConfigReadiness {
 
 /** 启动总闸成功校验默认密钥后同步填充 readiness，避免首次功能探测重复读盘。 */
 async function validateAndCacheGoogleServiceAccountKey(): Promise<void> {
-  await validateGoogleServiceAccountKey();
-  // 失败结论一旦缓存就保持到重启；不得因进程内文件变化把它静默翻成成功。
-  translateConfigReadinessCache.current ??= { ok: true };
+  const validated: GoogleServiceAccountKey = await validateGoogleServiceAccountKey();
+  if (translateConfigReadinessCache.current === null) {
+    googleServiceAccountKey.current = validated;
+    translateConfigReadinessCache.current = { ok: true };
+  }
 }
 
 export function translateConfigReadiness(): ConfigReadiness {
@@ -188,5 +187,11 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
   }
   aiChatConfigReadinessCache.current = await probeAll(AI_CHAT_PROBES);
   adDetectConfigReadinessCache.current = await probeAll(AD_DETECT_PROBES);
-  translateConfigReadinessCache.current = await probeAll(TRANSLATE_PROBES);
+  translateConfigReadinessCache.current ??= {
+    ok: false,
+    failure: {
+      file: "g-auth.json",
+      reason: `${GOOGLE_AUTH_FILE_PATH}: $ must be a configured Google service account JSON file.`,
+    },
+  };
 }

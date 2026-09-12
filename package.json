@@ -16,10 +16,12 @@
     "test": "bun test --isolate",
     "test:random": "bun test --isolate --randomize --seed=20260802",
     "test:coverage": "bun test --isolate --coverage --coverage-reporter=text",
-    "test:fault-injection": "bun test --isolate test/app/lifecycleFailure.test.ts test/app/lifecycleStateInput.test.ts test/app/lifecycleOptionalConfig.test.ts test/app/lifecycleOffsetShutdown.test.ts test/app/updateRunner.test.ts test/app/updateRunnerResources.test.ts test/app/updateFetcher.test.ts test/workers/antiRaid/linkedChannelCancellation.test.ts test/workers/antiRaid/lockdownJoinWindow.test.ts test/auto/reactionSync.test.ts test/infra/storage/stateStore.test.ts test/infra/storage/cleanup.test.ts test/infra/storageLockDurability.test.ts test/libs/atomicFile.test.ts test/infra/diskIOInitialization.test.ts test/infra/diskIORequestChannels.test.ts test/infra/diskIOBackpressure.test.ts test/infra/diskIORecoveryTransport.test.ts test/infra/diskIODiagnosticRestart.test.ts test/infra/diskIOGiveUp.test.ts test/infra/qaStore.test.ts test/infra/identityStorage.test.ts test/infra/blocklistSweep.test.ts test/infra/blocklistSweepTriggers.test.ts test/infra/blocklistSweepReadFailure.test.ts test/infra/blocklistOutbox.test.ts test/workers/aiChat/mainMirrorRecovery.test.ts test/workers/aiChat/mainMirrorUnconfigured.test.ts test/workers/aiChat/replyPipeline.test.ts test/workers/aiChat/workerLifecycle.test.ts test/workers/antiRaid/mainMirrorRecovery.test.ts test/workers/antiRaid/mainMirrorPersistence.test.ts test/workers/antiRaid/workerLifecycle.test.ts test/workers/diskIO/appendOnlyDayFile.test.ts test/workers/diskIO/blocklistRemovalOutbox.test.ts test/workers/diskIO/chatQaWrite.test.ts test/workers/diskIO/maintenanceCron.test.ts test/workers/diskIO/midnightMaintenance.test.ts test/workers/diskIO/storageDatabaseFlush.test.ts test/workers/diskIO/storageBackpressure.test.ts test/workers/diskIO/operationQueue.test.ts test/workers/diskIO/temporaryWhitelist.test.ts test/workers/diskIO/joinLogFiles.test.ts test/workers/diskIO/logFiles.test.ts test/workers/diskIO/luckFiles.test.ts test/workers/diskIO/snapshotOwners.test.ts test/workers/diskIO/verificationFiles.test.ts test/workers/diskIO/verificationWriteTimers.test.ts test/workers/diskIOWorker.test.ts test/commands/luckChallenge.test.ts test/commands/copyShared.test.ts test/commands/wedRuntime.test.ts test/commands/wedMemberReview.test.ts test/commands/wedDispatch.test.ts test/commands/wedMembers.test.ts test/commands/wedPersistence.test.ts test/workers/diskIO/wedMemberFiles.test.ts test/infra/chatTitle.test.ts test/infra/storage/dataRoot.test.ts test/libs/flushBarrier.test.ts test/libs/supervisedWorker.test.ts test/libs/sleep.test.ts test/translate/state.test.ts test/translate/client.test.ts test/translate/message.test.ts test/commands/translate.test.ts test/scripts/migrateTranslate.test.ts test/workers/diskIO/storageDatabaseSchemaGate.test.ts",
+    "test:fault-injection": "bun test --isolate test/app/lifecycleFailure.test.ts test/app/lifecycleStateInput.test.ts test/app/lifecycleOptionalConfig.test.ts test/app/lifecycleOffsetShutdown.test.ts test/app/updateRunner.test.ts test/app/updateRunnerResources.test.ts test/app/updateFetcher.test.ts test/workers/antiRaid/linkedChannelCancellation.test.ts test/workers/antiRaid/lockdownJoinWindow.test.ts test/auto/reactionSync.test.ts test/infra/storage/stateStore.test.ts test/infra/storage/cleanup.test.ts test/infra/storageLockDurability.test.ts test/libs/atomicFile.test.ts test/infra/diskIOInitialization.test.ts test/infra/diskIORequestChannels.test.ts test/infra/diskIOBackpressure.test.ts test/infra/diskIORecoveryTransport.test.ts test/infra/diskIODiagnosticRestart.test.ts test/infra/diskIOGiveUp.test.ts test/infra/qaStore.test.ts test/infra/identityStorage.test.ts test/infra/blocklistSweep.test.ts test/infra/blocklistSweepTriggers.test.ts test/infra/blocklistSweepReadFailure.test.ts test/infra/blocklistOutbox.test.ts test/workers/aiChat/mainMirrorRecovery.test.ts test/workers/aiChat/mainMirrorUnconfigured.test.ts test/workers/aiChat/replyPipeline.test.ts test/workers/aiChat/workerLifecycle.test.ts test/workers/antiRaid/mainMirrorRecovery.test.ts test/workers/antiRaid/mainMirrorPersistence.test.ts test/workers/antiRaid/workerLifecycle.test.ts test/workers/diskIO/appendOnlyDayFile.test.ts test/workers/diskIO/blocklistRemovalOutbox.test.ts test/workers/diskIO/chatQaWrite.test.ts test/workers/diskIO/maintenanceCron.test.ts test/workers/diskIO/midnightMaintenance.test.ts test/workers/diskIO/storageDatabaseFlush.test.ts test/workers/diskIO/storageBackpressure.test.ts test/workers/diskIO/operationQueue.test.ts test/workers/diskIO/temporaryWhitelist.test.ts test/workers/diskIO/joinLogFiles.test.ts test/workers/diskIO/logFiles.test.ts test/workers/diskIO/luckFiles.test.ts test/workers/diskIO/snapshotOwners.test.ts test/workers/diskIO/verificationFiles.test.ts test/workers/diskIO/verificationWriteTimers.test.ts test/workers/diskIOWorker.test.ts test/commands/luckChallenge.test.ts test/commands/copyShared.test.ts test/commands/wedRuntime.test.ts test/commands/wedMemberReview.test.ts test/commands/wedDispatch.test.ts test/commands/wedMembers.test.ts test/commands/wedPersistence.test.ts test/workers/diskIO/wedMemberFiles.test.ts test/infra/chatTitle.test.ts test/infra/storage/dataRoot.test.ts test/libs/flushBarrier.test.ts test/libs/supervisedWorker.test.ts test/libs/sleep.test.ts test/translate/state.test.ts test/translate/client.test.ts test/translate/message.test.ts test/commands/translate.test.ts test/scripts/migrateTranslate.test.ts test/workers/diskIO/storageDatabaseSchemaGate.test.ts test/workers/diskIO/luckSecretFile.test.ts test/workers/diskIO/snapshotFiles.aiMemory.test.ts test/workers/diskIO/snapshotFiles.stickerCatalog.test.ts test/workers/aiChat/replyOrder.test.ts test/workers/aiChat/replyRound.test.ts test/workers/aiChat/replyDelivery.test.ts test/workers/antiRaid/lockdownTimers.test.ts test/workers/antiRaid/lockdownOwnership.test.ts test/workers/antiRaid/cacheOwners.test.ts test/states/lockdown.test.ts test/workers/diskIO/recoveryInputTopology.test.ts test/libs/fileAccess.test.ts test/config/googleAuth.test.ts test/config/readiness.test.ts test/workers/aiChat/replyState.test.ts",
     "perf:full": "bun scripts/perf/fullSuite.ts",
     "perf:review": "bun scripts/perf/review.ts",
     "perf:hot-paths": "bun scripts/perf/hotPaths.ts",
+    "perf:isolated-hot-path": "bun scripts/perf/isolatedHotPath.ts",
+    "perf:disk-transport": "bun scripts/perf/diskTransport.ts",
     "perf:hot-path-gate": "bun scripts/perf/hotPathProfileGate.ts",
     "perf:identity-database": "bun scripts/perf/identityDatabase.ts",
     "perf:join-log": "bun scripts/perf/joinLog.ts",
@@ -33,19 +35,19 @@
     "@eslint/js": "^10.0.1",
     "@grammyjs/runner": "^2.0.3",
     "@stylistic/eslint-plugin": "^5.10.0",
-    "@types/bun": "1.4.0",
-    "eslint": "^10.9.1",
-    "typescript": "^5",
-    "typescript-eslint": "^8.68.0"
+    "@types/bun": "1.4.1",
+    "eslint": "^10.10.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.69.0"
   },
   "dependencies": {
     "@google-cloud/translate": "^10.0.1",
-    "@google/genai": "^2.18.0",
+    "@google/genai": "^2.21.0",
     "@grammyjs/files": "^1.2.0",
     "@grammyjs/transformer-throttler": "^1.2.1",
     "drizzle-orm": "0.45.2",
     "grammy": "^1.46.0",
-    "openai": "^7.5.0",
-    "sharp": "^0.35.3"
+    "openai": "^7.10.0",
+    "sharp": "^0.35.4"
   }
 }

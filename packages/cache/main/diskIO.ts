@@ -19,6 +19,7 @@ import type {
 } from "../../types/diskIO/messages";
 import type {
   AiMemoryDeletedPersistedReply,
+  WedMembersDeletedPersistedReply,
   AiMemoryPersistedReply,
   DiskIODomain,
   LoadedReply,
@@ -146,6 +147,7 @@ interface DiskIORuntime {
   midnightMaintenanceListeners: ((reply: MidnightMaintenanceReply) => void)[];
   verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
+  wedMembersDeletedPersistedListeners: ((reply: WedMembersDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
   luckAppendStalledListeners: ((reply: LuckAppendStalledReply) => void)[];
   identityStoragePersistedListeners: ((reply: IdentityStoragePersistedReply) => void)[];
@@ -158,6 +160,8 @@ interface DiskIORuntime {
  * Worker 崩溃后保留监听器并从主线程镜像重建，业务队列容量由配置硬顶约束。
  * midnightMaintenanceListeners 仅模块初始化登记，容量由主线程维护领域数约束；
  * Worker 重建保留监听器且不重放午夜通知，进程退出时随 owner 释放。
+ * wedMembersDeletedPersistedListeners 由成员 owner 在模块初始化时登记一次，
+ * Worker 重建保留，进程退出释放；只结算本代 Worker 的 durable 删除回执。
  * diagnosticQueue 由 relayLogMessage/postDiskIODiagnostic 填充、DiskIO ACK 排空；
  * 单批在途并保留到 ACK，Worker 崩溃后原批重发。总消息数与 JSON 载荷字节均有
  * 硬顶；越界项只累加两个标量，队列重新有空间后追加一条汇总日志。terminate 时
@@ -202,6 +206,7 @@ export const diskIORuntime: DiskIORuntime = {
   midnightMaintenanceListeners: [],
   verificationPersistedListeners: [],
   aiMemoryDeletedPersistedListeners: [],
+  wedMembersDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],
   luckAppendStalledListeners: [],
   identityStoragePersistedListeners: [],

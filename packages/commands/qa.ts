@@ -15,7 +15,7 @@ import type { CommandContext, Context } from "grammy";
 import type { Message } from "grammy/types";
 import { CHAT_QA_MAX_PER_CHAT, QA_COMMAND_TEXTS, QA_SUBCOMMAND_PATTERN } from "../consts/qa";
 import { QA_USAGE_TEXT } from "../consts/commandUsage";
-import { chatQaCount, getChatQa, removeChatQa, setChatQa } from "../infra/qaStore";
+import { chatQaCount, getChatQa, removeAllChatQa, removeChatQa, setChatQa } from "../infra/qaStore";
 import { forumTopicThreadId } from "../libs/forumTopic";
 import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
@@ -23,8 +23,10 @@ import { throwIfUpdateAborted } from "../infra/updateContext";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
+import { purgesChatData } from "../libs/chatTeardown";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import type { CachedUser } from "../types/chatState";
+import type { ChatTeardownReason } from "../types/chatTeardown";
 import type { QaEntry, QaFormIngressResult, QaFormSession } from "../types/qa";
 import type { RichTextMessage } from "../types/telegram";
 import { buildQaBoardKeyboard, buildQaBoardPages } from "./qa/board";
@@ -322,14 +324,16 @@ async function removeQa(ctx: CommandContext<Context>, wanted: string): Promise<v
 }
 
 /**
- * 群 teardown / `/init disable`：收走该群全部未完成表单。
+ * 群 teardown / `/init disable`：收走该群全部未完成表单，并删掉已登记的问答。
  *
- * 只清表单，**不删已登记的问答**：teardown 的语义是「本天才不再管这个群」，
- * 而问答是部署方登记的配置，重新 /init enable 之后应当照旧生效。真要删得走
- * /qa remove。
+ * 表单一律收走；问答只在本次 teardown 要删数据时删（见 libs/chatTeardown.ts 的
+ * purgesChatData）。被撤管理员那一路只是暂时干不了活，问答必须原样留着——权限
+ * 加回来之后直答要照旧生效；而 `/init disable` 与离群的语义是「本天才不再管这个
+ * 群」，本群的数据一样不留。
  */
-export function teardownQaInChat(chatId: number): void {
+export function teardownQaInChat(chatId: number, reason: ChatTeardownReason): void {
   closeQaFormSessionsInChat(chatId, discardQaForm);
+  if (purgesChatData(reason)) removeAllChatQa(chatId);
 }
 
 registerChatTeardown("qa", teardownQaInChat);

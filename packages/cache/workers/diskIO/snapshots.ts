@@ -101,7 +101,7 @@ export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
 /**
  * 丢弃某群的 revision 水位线；只由 forgetAiMemory 消息触发。
  *
- * 调用前提由主线程负责：该群已 durable 删除，且没有任何在途快照、墓碑与
+ * 调用前提由主线程负责：该群已 durable 删除、AI Worker 失效，且没有在途快照、墓碑与
  * waiter（见 aiChat/memoryMirror.ts 的 forgetAiMemoryRevisionCounter）。没有
  * 这个前提就不能删水位线——它正是用来挡迟到 upsert 的。
  *

@@ -74,10 +74,8 @@ export function handleRestoreResult(
   if (state === undefined || state.kind === "applying") return { next: state, effects: [] };
   if (event.ok) {
     if (state.kind === "active") {
-      // 迟到的旧恢复尝试成功了：真实权限刚被这次旧尝试恢复成「未限制」，
-      // 但新峰值已经要求继续锁定（见 docs/cn/04-invariants.md）——原地补一次限制，
-      // 先把「远端现在已开放、需要重新收紧」持久化；落盘回执后才执行纠偏，
-      // Worker 或进程在两步之间崩溃也能从 RECONCILING 幂等接上。
+      // ACTIVE 收到恢复成功回执时，先持久化远端权限与当前意图的差异，
+      // 再重新收紧；RECONCILING 在 Worker 重建后仍可幂等接管。
       return {
         next: {
           kind: "reconciling",
@@ -102,10 +100,7 @@ export function handleRestoreResult(
     };
   }
   if (state.kind === "active" || state.kind === "reconciling") {
-    // 这次失败回执对应的是旧的恢复尝试：它在途期间新峰值已把状态从
-    // RESTORING 推回 ACTIVE/RECONCILING 并给满新倒计时（见 thresholdExceeded）。
-    // 权限现在按锁定意图仍应保持限制，忽略这条迟到的失败——
-    // 不打断刚延长的倒计时，到期后会自然重新发起一次恢复。
+    // 当前意图仍为锁定，迟到的失败回执不改变它的倒计时或纠偏阶段。
     return { next: state, effects: [] };
   }
   return { next: state, effects: [{ kind: "scheduleRestoreRetry", delayMs: RESTORE_RETRY_MS }] };

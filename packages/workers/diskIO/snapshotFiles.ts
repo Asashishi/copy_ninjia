@@ -19,7 +19,7 @@
  * 保留原始字节并拒绝启动，不能猜测哪条已确认结果可以丢弃。
  */
 
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AiMemorySnapshot } from "../../types/aiChat/memory";
 import type { DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types/diskIO/storage";
@@ -53,7 +53,7 @@ import {
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import { isCanonicalDateKey } from "../../libs/time";
-import { assertFileReadableWritable } from "../../libs/fileAccess";
+import { assertFileReadableWritable, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
 
 /** 清理已确认无用的文件；删除失败保留现场，由下一轮维护重试。 */
 async function tryUnlink(path: string): Promise<void> {
@@ -81,7 +81,7 @@ export interface AiMemoryRecoveryInspection {
 export async function inspectAiMemories(): Promise<AiMemoryRecoveryInspection> {
   const result: Map<number, string> = new Map();
   const temporaryPaths: string[] = [];
-  const names: readonly string[] = existsSync(AI_MEMORY_DIR)
+  const names: readonly string[] = inspectOptionalDirectory(AI_MEMORY_DIR)
     ? readdirSync(AI_MEMORY_DIR)
     : [];
   for (const name of names) {
@@ -171,7 +171,7 @@ export async function inspectStickerCatalogs(
   const result: Map<string, string> = new Map();
   const orphanPaths: string[] = [];
   const temporaryPaths: string[] = [];
-  const names: readonly string[] = existsSync(STICKER_MEMORY_DIR)
+  const names: readonly string[] = inspectOptionalDirectory(STICKER_MEMORY_DIR)
     ? readdirSync(STICKER_MEMORY_DIR)
     : [];
   for (const name of names) {
@@ -278,7 +278,7 @@ export interface LuckDayRecoveryInspection {
 export async function inspectLuckDay(
   todayKey: string
 ): Promise<LuckDayRecoveryInspection> {
-  const names: string[] = existsSync(LUCK_MEMORY_DIR)
+  const names: string[] = inspectOptionalDirectory(LUCK_MEMORY_DIR)
     ? readdirSync(LUCK_MEMORY_DIR)
     : [];
   const temporaryPaths: string[] = [];
@@ -289,7 +289,7 @@ export async function inspectLuckDay(
   }
   inspectStaleLuckFiles(todayKey, names);
   const todayPath: string = join(LUCK_MEMORY_DIR, `${todayKey}.json`);
-  if (!await Bun.file(todayPath).exists()) {
+  if (!inspectOptionalFile(todayPath)) {
     return { day: todayKey, cache: null, fileState: null, names, temporaryPaths };
   }
   let content: string;

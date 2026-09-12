@@ -22,7 +22,8 @@ mock.module("../../packages/infra/diskIO", () => ({
   readJoinLog,
 }));
 
-const { readRecentJoinLog, recordJoinLog } = await import("../../packages/infra/joinLog");
+const { purgeChatJoinLog, readRecentJoinLog, recordJoinLog } = await import("../../packages/infra/joinLog");
+const { teardownRegisteredChat } = await import("../../packages/infra/chatTeardownRegistry");
 
 const PARAMS = { chatId: -1001, userId: 42, joinedAt: 1_753_000_000_000 };
 
@@ -110,5 +111,43 @@ describe("readRecentJoinLog 的读取转发", () => {
       since: 1,
       now: 2,
     })).resolves.toEqual([]);
+  });
+});
+
+/**
+ * 群 teardown 的整群删除。它是 `/init disable` 与离群这两条路上唯一会动
+ * `memory/joinlog/` 的入口；不删的话，一个已经不再接管的群的成员名单会一直躺在
+ * 那里，直到保留窗口自然过期。
+ */
+describe("purgeChatJoinLog 的整群删除", () => {
+  test("投递删除并以 joinLog 领域的 flush 回执为准", async () => {
+    await purgeChatJoinLog(-1001);
+
+    expect(postDiskIO).toHaveBeenCalledWith({ type: "deleteJoinLog", chatId: -1001 });
+    // 等的是删除那一格：删不掉的文件不得让每一条入群事实的屏障一起报失败。
+    expect(flushDiskIODomain).toHaveBeenCalledWith("joinLogPurge");
+  });
+
+  test("投递被拒时上抛，且不再问 flush", async () => {
+    postDiskIO.mockImplementation((): boolean => false);
+
+    await expect(purgeChatJoinLog(-1001)).rejects.toThrow("refused the join log deletion");
+    expect(flushDiskIODomain).not.toHaveBeenCalled();
+  });
+
+  test("没落盘就上抛，不把日志还在报成删干净了", async () => {
+    flushDiskIODomain.mockImplementation(async (): Promise<string> => "failed");
+
+    await expect(purgeChatJoinLog(-1001)).rejects.toThrow("Failed to delete the join logs");
+  });
+
+  test("teardown owner 只在要删数据的两条路上发出删除，失权停管一条都不发", async () => {
+    await teardownRegisteredChat("joinLog", -1001, "explicitDisable");
+    await teardownRegisteredChat("joinLog", -1001, "departed");
+    expect(postDiskIO).toHaveBeenCalledTimes(2);
+
+    postDiskIO.mockClear();
+    await teardownRegisteredChat("joinLog", -1001, "lostAuthority");
+    expect(postDiskIO).not.toHaveBeenCalled();
   });
 });

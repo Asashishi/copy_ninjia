@@ -5,6 +5,8 @@ import {
   bufferedReplyReferenceFixture,
 } from "../../helpers/aiMemoryFixtures";
 import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../../packages/types/aiChat/replies";
+import { REPLY_DELIVERY_MAX_PER_CHAT } from "../../../packages/consts/aiChat/rateLimit";
+import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 
 const heartbeatStop = mock(async (): Promise<void> => {});
 const startChatActionHeartbeat = mock((_chatId: number) => ({
@@ -129,6 +131,23 @@ afterEach(() => {
 });
 
 describe("AI 单轮回复生命周期", () => {
+  test("容量拒绝不扣限频额度、不构造提示词也不启动模型", async () => {
+    const held = Array.from({ length: REPLY_DELIVERY_MAX_PER_CHAT }, () => reserveReplyDelivery(-1001)!);
+    try {
+      const accepted: boolean = startReplyRound({
+        chatId: -1001, triggerSenderId: 7, replyToMessageId: 10,
+        messageThreadId: undefined, imageGenerationRequested: false, isRandomTrigger: false,
+      }, (): void => {});
+      expect(accepted).toBe(false);
+      expect(longTriggerTimes.get(-1001)?.size ?? 0).toBe(0);
+      expect(activeReplyCounts.size).toBe(0);
+      expect(buildReplyPromptSections).not.toHaveBeenCalled();
+      expect(generateReply).not.toHaveBeenCalled();
+    } finally {
+      for (const turn of held) await turn.finish();
+    }
+  });
+
   test.each(["模型完成", "发送收尾"])("%s 通知抛错仍等待发送链、心跳与贴纸锁释放", async (phase) => {
     const pending = Promise.withResolvers<void>();
     const notified = Promise.withResolvers<void>();

@@ -86,7 +86,7 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 - **`memory/wed/<chatId>.json`**
   - **Contents**: a plain numeric array of speaking-member IDs per group, such as `[5974478892]`; the main thread reuses one long-lived `Set<number>` per group. Up to 25 groups and 150,000 IDs per group are accepted. Full sets retain existing members and accept new IDs once departures free space.
   - **Validation**: filenames use canonical negative safe-integer group IDs; entries are unique positive safe integers. Invalid JSON, duplicates, types, or capacity refuse startup without truncating or repairing files. Missing directories or files are allowed and created as needed.
-  - **Writes and backup**: actual changes trigger a full atomic replacement through DiskIO after 300 changes or 30 seconds from the first change. Unchanged sets do not write. Records survive group disablement and process restarts, with no daily expiry. Include them in consistent data-root backups; abrupt termination may lose changes not yet written.
+  - **Writes and backup**: actual changes trigger a full atomic replacement through DiskIO after 300 changes or 30 seconds from the first change. Unchanged sets do not write. There is no daily expiry and restarts restore from the file, but `/init disable` and the bot being removed from the group delete it (an admin demotion does not, since the set is needed again once the rights return). Include them in consistent data-root backups; abrupt termination may lose changes not yet written.
 - **`memory/stickers/<pack>.json`**
   - **Contents**: version=1 catalog for one allowlisted sticker pack, with emoji/description
     entries keyed by `file_unique_id` plus a pack summary.
@@ -112,7 +112,10 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 - **`memory/joinlog/<chatId>.<YYYY-MM-DD>.json`**
   - **Contents**: authoritative `chat_member` join facts read by `/batch_kick` over a rolling
     window.
-  - **Backup**: contains user IDs and timestamps, so treat it as sensitive. Three Tokyo calendar
+  - **Backup**: contains user IDs and timestamps, so treat it as sensitive. `/init disable` and
+    the bot being removed from the group delete every file named for that chat, inside the
+    retention window or not, rather than waiting for natural expiry (an admin demotion does not).
+    Three Tokyo calendar
     days are retained for midnight-crossing in-flight reads. Exact redeliveries are not appended
     again, history compacts to the latest record per user, and each chat/day retains at most the
     newest 250,000 users.
@@ -124,12 +127,12 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
     ban outbox; `chat_states` is the authoritative per-chat state table (at most 25 rows — a 26th
     refuses startup); `storage_metadata` carries the one schema version. The Drizzle migration journal
     must match a supported lineage. A `chat_states` slot is released only when the whole record falls
-    back to its defaults: `/init disable` clears the chat title alone and deliberately keeps the
-    feature switches (so a later `/init enable` needs no reconfiguration), which means a chat whose
-    main gate is off while `/ai_chat` and friends are still on keeps holding one of the 25 rows.
-    To free a slot, disable `/ai_chat`, `/ad_detect`, `/flood_control`, `/antiraid` and `/translate`
-    one by one in that chat, or remove the bot from it — leaving deletes the row unless it still
-    carries a lockdown record awaiting recovery.
+    back to its defaults, and two routes do that: run `/init disable` in the chat, or remove the
+    bot from it. Both delete the entire row — chat title, permission snapshot and every feature
+    switch — and the only row that survives is one still carrying a lockdown record awaiting
+    recovery, because dropping it would wedge that group's invite permission forever. A later
+    `/init enable` therefore starts from scratch and each feature has to be switched on again;
+    that is the other side of "nothing is kept once the chat is no longer managed".
   - **Backup**: mandatory. Losing the blocklist removes every permanent ban; losing the outbox
     loses unfinished enforcement. With the bot stopped, copy the main database and any WAL/SHM
     present at that point as one consistency set outside the worktree, recording owner/mode and

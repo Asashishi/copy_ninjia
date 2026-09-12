@@ -49,7 +49,16 @@ const {
   sweepReferencedAdWarnings,
 } = await import("../../../packages/workers/antiRaid/adDetect/referencePolicy");
 
-beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
+/**
+ * attempt 序号按设计只增不减（resetReferencedAdWarnings 刻意不碰它，见该函数头注），
+ * 「序号耗尽」那条用例会把它留在 MAX_SAFE_INTEGER 上。随机顺序下它可能排在本文件
+ * 任何一条之前，因此复位必须放在顶层 beforeEach，不能只放在它所在的 describe 里——
+ * 这是测试自己的隔离需要，不改变生产语义。
+ */
+beforeEach((): void => {
+  resetAdDetectQueueHarness(stopAdDetectQueue);
+  referencedAdWarningGeneration.current = 0;
+});
 
 describe("引用类广告的警告升级与处置抑制", () => {
   test("引用类广告第一次只公开警告并清串，警告后下一条可立即重新判定", async () => {
@@ -491,16 +500,6 @@ describe("引用类广告的警告升级与处置抑制", () => {
  * 「函数进得去、循环体没跑」的假覆盖。
  */
 describe("引用广告警告状态表自身的容量与回收", () => {
-  /**
-   * attempt 序号按设计**只增不减**（resetReferencedAdWarnings 刻意不碰它，见该函数
-   * 头注），因此「序号耗尽」这一条会把它留在 MAX_SAFE_INTEGER 上污染后续用例。
-   * 这里在每条之前把它退回初始值——这是测试自己的隔离需要，不改变生产语义。
-   */
-  beforeEach((): void => {
-    referencedAdWarningGeneration.current = 0;
-    referencedAdWarningStates.clear();
-  });
-
   /** 造一条已进入五分钟窗口的 warned 记录，绕开发送链路直接落表。 */
   function warned(key: string, warnedAt: number): void {
     const generation: number | undefined = beginReferencedAdWarning(key);

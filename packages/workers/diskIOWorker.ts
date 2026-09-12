@@ -50,7 +50,9 @@ import {
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import {
   flushJoinLogDomain,
+  handleJoinLogDeleteMessage,
   handleJoinLogMessage,
+  purgeJoinLogDeletions,
   readJoinLog,
 } from "./diskIO/joinLogFiles";
 import {
@@ -70,7 +72,11 @@ import {
   markStickerCatalogSnapshotDirty,
 } from "./diskIO/stickerCatalogFiles";
 import { handleDiskIOStartupLoad } from "./diskIO/startup";
-import { flushWedMemberFiles, handleWedMembersMessage } from "./diskIO/wedMemberFiles";
+import {
+  flushWedMemberFiles,
+  handleWedMembersDeleteMessage,
+  handleWedMembersMessage,
+} from "./diskIO/wedMemberFiles";
 import type { DiskIOStartupReplySink } from "./diskIO/startup";
 import { LOG_REOPEN_RETRY_MS } from "../consts/diskIO/appendOnly";
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../consts/diskIO/business";
@@ -104,6 +110,8 @@ import type {
   JoinLogRecord,
 } from "../types/diskIO/storage";
 import { enqueueDiskIOOperation } from "./diskIO/operationQueue";
+import { wedMemberDeletePersistedNotifier } from "../cache/workers/diskIO/wed";
+import type { WedMembersDeletedPersistedReply } from "../types/diskIO/replies";
 
 declare const self: Worker;
 
@@ -131,6 +139,9 @@ async function flushAll(
     failedDomains.push(...pendingStorageDatabaseDomains());
   }
   if (!await flushJoinLogDomain()) failedDomains.push("joinLog");
+  // 整群删除单独占一格：一个已停管群删不掉的文件不能把所有群的入群事实一起
+  // 判成未落盘（见 types/diskIO/replies.ts 的 DiskIODomain）。
+  if (!purgeJoinLogDeletions()) failedDomains.push("joinLogPurge");
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
   // 的失败误导，而那个领域的真实错误按设计只有 console.error。
   return failedDomains;
@@ -196,6 +207,11 @@ export async function handleDiskIOWorkerMessage(
       break;
     case "wedMembers":
       handleWedMembersMessage(msg);
+      break;
+    case "deleteWedMembers":
+      // 群 teardown 的整群删除：同步丢掉待写快照后立即 unlink，失败保留待删标记，
+      // 由 wedMembers 领域共用的重试 timer 继续尝试（见 diskIO/wedMemberFiles.ts）。
+      handleWedMembersDeleteMessage(msg);
       break;
     case "luckDraw":
       await handleLuckDrawMessage(msg);
@@ -329,6 +345,12 @@ export async function handleDiskIOWorkerMessage(
         }
       }
       break;
+    case "deleteJoinLog":
+      // 与 joinLog 分支不同，这条不记拒收：目录列举与逐个 unlink 的失败都由
+      // purgeChatJoinLogFiles 自己收在 try 内并保留待删标记，删除结果经
+      // `joinLogPurge` 领域 flush 回报给发起 teardown 的调用方，不连坐无关的入群事实。
+      handleJoinLogDeleteMessage(msg);
+      break;
     case "readJoinLog": {
       let reply: JoinLogReadReply;
       try {
@@ -424,6 +446,7 @@ async function handleDiskIODiagnostic(
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 function startDiskIOWorker(): void {
+  wedMemberDeletePersistedNotifier.current = (reply: WedMembersDeletedPersistedReply): void => self.postMessage(reply);
   storageWriteFatalReply.current = (): void => self.postMessage({ type: "storageWriteStalled" });
   configureStoragePersistenceReply(
     (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)

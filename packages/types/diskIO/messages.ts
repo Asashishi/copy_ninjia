@@ -63,15 +63,11 @@ export interface AiMemoryDeleteDiskMessage {
 /**
  * 主线程 -> diskIOWorker：丢弃某群 AI 记忆的 revision 水位线。
  *
- * 只在主线程自己的 revision 计数器归零的同一时刻发出（chat teardown，且已确认
- * 该群没有任何在途快照、墓碑与 waiter，见 aiChat/memoryMirror.ts 的
- * forgetAiMemoryRevisionCounter）。少了这条消息，两侧的水位线作用域就不一致：
- * 主线程从 revision 1 重新开始，Worker 侧还停在删除时的高水位，重新启用后的
- * 快照会被 `revision < currentRevision` 判成迟到消息**静默丢弃**，一直丢到
- * 计数器重新爬过旧水位为止。
- *
- * 不带 revision：它表达的正是「这个 chat 的 revision 序列到此为止」，
- * 而不是某一次状态变更。
+ * teardown 在 durable 删除、AI Worker 失效及在途状态全部结算后发送，
+ * 与删除共用 FIFO；主线程同时释放该群计数，并保留全局 revision 下界。
+ * 新生命周期从该下界之后分配编号，旧回执不与新编号重叠。
+ * 本消息只释放 Worker 水位，不删除文件；边界见 aiChat/memoryMirror.ts 的
+ * forgetAiMemoryRevisionCounter。
  */
 export interface AiMemoryForgetDiskMessage {
   type: "forgetAiMemory";
@@ -84,6 +80,19 @@ export interface StickerCatalogDiskMessage {
   type: "stickerCatalog";
   pack: string;
   snapshot: string;
+}
+
+/**
+ * 主线程 -> diskIOWorker：彻底删除某群 `/wed` 成员集合快照文件。
+ *
+ * 只在群 teardown 且本次 teardown 要删数据时发出（见 libs/chatTeardown.ts 的
+ * purgesChatData）。revision 为主线程本进程内唯一删除编号，durable 回执按它结算。
+ * 删除与重新启用后的新快照共用 FIFO；恢复重放覆盖更早的缓冲操作。
+ */
+export interface WedMembersDeleteDiskMessage {
+  readonly type: "deleteWedMembers";
+  readonly chatId: number;
+  readonly revision: number;
 }
 
 /** 主线程按统一 TTL/条数窗口投递成员最终数组；DiskIO 接收后全量原子替换。 */
@@ -226,6 +235,18 @@ export interface JoinLogDiskMessage {
   day: string;
 }
 
+/**
+ * 主线程 -> diskIOWorker：删除某群保留窗口内的全部入群日志文件。
+ *
+ * 起因与 WedMembersDeleteDiskMessage 相同。落盘端按 `<chatId>.<东京日期>.json`
+ * 前缀匹配整群删除，并丢掉该群仍在缓冲里的待写事实——那些事实属于一个已经不再
+ * 接管的群，写进去只会在下一次跨日清理前一直留着。
+ */
+export interface JoinLogDeleteDiskMessage {
+  type: "deleteJoinLog";
+  chatId: number;
+}
+
 /** 运行时恢复窗口允许暂存并按序重放的业务持久化消息。 */
 export type DiskBusinessMessage =
   | AiMemoryDiskMessage
@@ -233,6 +254,7 @@ export type DiskBusinessMessage =
   | AiMemoryForgetDiskMessage
   | StickerCatalogDiskMessage
   | WedMembersDiskMessage
+  | WedMembersDeleteDiskMessage
   | LuckDrawDiskMessage
   | VerificationUpsertDiskMessage
   | VerificationDeleteDiskMessage
@@ -241,7 +263,8 @@ export type DiskBusinessMessage =
   | TemporaryWhitelistWriteDiskMessage
   | ChatStateWriteDiskMessage
   | ChatQaWriteDiskMessage
-  | JoinLogDiskMessage;
+  | JoinLogDiskMessage
+  | JoinLogDeleteDiskMessage;
 
 /**
  * Disk I/O Worker 运行时重建期间的代际限定投递器。

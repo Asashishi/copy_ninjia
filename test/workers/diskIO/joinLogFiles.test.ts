@@ -24,7 +24,9 @@ mock.module("../../../packages/consts/paths", () => ({
 const {
   flushJoinLogBuffer,
   flushJoinLogDomain,
+  handleJoinLogDeleteMessage,
   handleJoinLogMessage,
+  purgeJoinLogDeletions,
   inspectJoinLogFiles,
   maintainJoinLogFiles,
   maintainJoinLogRetention,
@@ -39,6 +41,7 @@ const {
 } = await import("../../../packages/workers/diskIO/joinLogRecords");
 const {
   joinLogBuffer,
+  joinLogDeletions,
   joinLogFileCaches,
   joinLogRetryAt,
   markJoinLogDirty,
@@ -811,6 +814,63 @@ describe("diskIO/joinLogFiles", () => {
       [`${first}:42`]: { userId: 42, joinedAt: first },
       [`${second}:42`]: { userId: 42, joinedAt: second },
     });
+  });
+
+  test("整群删除清掉本群保留窗口内外的全部日志、接管游标与待写事实", async () => {
+    const today: string = getTokyoDateKey();
+    const yesterday: string = getTokyoDateKey(new Date(todayAt(-24 * 60 * 60_000)));
+    await handleJoinLogMessage(joinMessage(-1001, 42, todayAt()));
+    await flushJoinLogBuffer();
+    mkdirSync(joinLogDir, { recursive: true });
+    await Bun.write(datedFile(-1001, yesterday), "{}");
+    await Bun.write(datedFile(-2002, today), "{}");
+    // 删除之前又来了一条本群的入群事实：它属于一个已经不再接管的群，不能被写回去。
+    markJoinLogDirty({ chatId: -1001, day: today, record: { userId: 43, joinedAt: todayAt(1) } });
+    markJoinLogDirty({ chatId: -2002, day: today, record: { userId: 44, joinedAt: todayAt(2) } });
+    expect(joinLogFileCaches.has(`-1001:${today}`)).toBeTrue();
+
+    handleJoinLogDeleteMessage({ type: "deleteJoinLog", chatId: -1001 });
+
+    expect(existsSync(currentFile(-1001))).toBeFalse();
+    expect(existsSync(datedFile(-1001, yesterday))).toBeFalse();
+    expect(joinLogFileCaches.has(`-1001:${today}`)).toBeFalse();
+    expect(joinLogRetryAt.has(`-1001:${today}`)).toBeFalse();
+    expect(joinLogDeletions.size).toBe(0);
+    // 只删这一个群：别的群的文件与待写事实都留着。
+    expect(existsSync(datedFile(-2002, today))).toBeTrue();
+    expect(joinLogBuffer.entries).toEqual([
+      { chatId: -2002, day: today, record: { userId: 44, joinedAt: todayAt(2) } },
+    ]);
+    expect(purgeJoinLogDeletions()).toBeTrue();
+    expect(existsSync(currentFile(-1001))).toBeFalse();
+  });
+
+  test("没有日志的群照常删成功，不留待删标记", () => {
+    handleJoinLogDeleteMessage({ type: "deleteJoinLog", chatId: -3003 });
+    expect(joinLogDeletions.size).toBe(0);
+    expect(purgeJoinLogDeletions()).toBeTrue();
+  });
+
+  test("删除失败只让 joinLogPurge 回报失败，追写那一格不被连坐", async () => {
+    mkdirSync(joinLogDir, { recursive: true });
+    // 目录占住文件名：删除对目录失败，本群因此留在待删集合里。
+    mkdirSync(currentFile(-1001), { recursive: true });
+    const diagnostic = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      handleJoinLogDeleteMessage({ type: "deleteJoinLog", chatId: -1001 });
+      expect(joinLogDeletions.has(-1001)).toBeTrue();
+      expect(purgeJoinLogDeletions()).toBeFalse();
+      // 别的群的入群事实照常落盘并回报成功：一个删不掉的文件不得让每一条入群
+      // update 都被判成未确认、无限重投（见 types/diskIO/replies.ts 的 DiskIODomain）。
+      await handleJoinLogMessage(joinMessage(-2002, 42, todayAt()));
+      expect(await flushJoinLogDomain()).toBeTrue();
+
+      rmSync(currentFile(-1001), { recursive: true, force: true });
+      expect(purgeJoinLogDeletions()).toBeTrue();
+      expect(joinLogDeletions.size).toBe(0);
+    } finally {
+      diagnostic.mockRestore();
+    }
   });
 
   test("拒绝超过 24 小时或倒序的读取区间", async () => {

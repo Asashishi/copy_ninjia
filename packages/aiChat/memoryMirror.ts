@@ -8,15 +8,21 @@ import {
 import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
 import {
   aiMemoryDeleteWaiters,
+  aiChatWorkerState,
   aiMemoryRevisionCounters,
+  aiMemoryRevisionFloor,
+  aiMemoryUsages,
   latestAiMemories,
   latestAiMemoryRevisions,
   latestStickerCatalogs,
   pendingAiMemoryDeletes,
+  pendingAiMemoryTeardowns,
   postPurgeAiMemoryPersistRevisions,
 } from "../cache/main/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
-import type { AiMemoryDeleteWaiter } from "../types/aiChat/waiters";
+import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
+import { signalDiskIOFatal } from "../infra/diskIO/fatal";
+import type { AiMemoryDeleteWaiter, AiMemoryTeardown } from "../types/aiChat/waiters";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
@@ -37,27 +43,16 @@ import type { DiskIORecoveryTransport } from "../types/diskIO/messages";
 
 /** 取该群下一个记忆 revision；镜像与 tombstone 都以它判定新旧。 */
 export function nextAiMemoryRevision(chatId: number): number {
-  const revision: number = (aiMemoryRevisionCounters.get(chatId) ?? 0) + 1;
+  const revision: number = (aiMemoryRevisionCounters.get(chatId) ?? aiMemoryRevisionFloor.current) + 1;
   aiMemoryRevisionCounters.set(chatId, revision);
   return revision;
 }
 
 /**
- * 群彻底不再由本机器人看管之后，丢掉它的 revision 计数器，并让 Disk I/O Worker
- * 同步丢掉自己那份水位线。
- *
- * 只有 teardown 能做，`/ai_chat disable` 不行：计数器要在一个 chat 的整个生命
- * 周期里单调递增，归零后的 revision 1 会与在途墓碑撞号；postMemoryRecord 还用
- * 「计数器还在」表示「刚被 purge、下一条新记录要立刻落盘」，disable 后重新开启
- * 正需要它。teardown 时调用方已 await 过 durable 删除，群再回来等同于新群。
- *
- * **两侧必须同一时刻归零**：Worker 侧的 `aiMemoryRevisions` 停在删除时的高水位，
- * 而这里从 1 重新开始，重新入群/重新授权后的每一份快照都会被判成迟到消息静默
- * 丢弃，一直丢到计数器重新爬过旧水位为止（期间进程重启即全丢，且零日志）。
- * 这条 forgetAiMemory 与前面的删除同走 postDiskIO 的 FIFO，顺序天然在删除之后。
- *
- * 还有任何在途状态就跳过，留给下一次：它们都按 revision 比大小，而这四项为空
- * 正是「此刻没有任何在途操作、丢掉水位线不会放行迟到 upsert」的判据。
+ * teardown 在 durable 删除与 AI Worker 失效均完成后释放两侧水位。
+ * 任一新快照、首份持久化标志、墓碑或 waiter 仍在时保留计数。
+ * 全局标量记录已释放的最高 revision，新生命周期从其后分配，拒绝旧回执撞号；
+ * DiskIO forget 沿删除所在 FIFO 投递。普通禁用仍保留计数以武装首份快照。
  */
 export function forgetAiMemoryRevisionCounter(chatId: number): void {
   if (
@@ -68,10 +63,41 @@ export function forgetAiMemoryRevisionCounter(chatId: number): void {
   ) {
     return;
   }
+  aiMemoryRevisionFloor.current = Math.max(aiMemoryRevisionFloor.current, aiMemoryRevisionCounters.get(chatId) ?? 0);
   aiMemoryRevisionCounters.delete(chatId);
-  // 投递失败无需补偿：Worker 不可用意味着它即将重建，而重建后的 hydrate 只按
-  // 磁盘现存快照重算水位线——该群的快照已经删了，水位线自然也不会再出现。
+  // forget 与已确认删除共用 FIFO；拒收由 DiskIO fatal/重建边界处理。
   postDiskIO({ type: "forgetAiMemory", chatId });
+}
+
+/** 开始彻底清理并保留超时后的收尾责任，普通禁用不建立此身份。 */
+export function beginAiMemoryTeardown(chatId: number): void {
+  if (!pendingAiMemoryTeardowns.has(chatId) && pendingAiMemoryTeardowns.size >= STATE_MANAGED_CHAT_LIMIT) {
+    const error: Error = new Error("AI memory teardown capacity was exhausted.");
+    signalDiskIOFatal(error);
+    throw error;
+  }
+  pendingAiMemoryTeardowns.set(chatId, { requestId: null, workerSettled: !aiChatWorkerState.available });
+}
+
+/** 在回执或 teardown 结算点检查收尾；新记忆接管时只撤销旧身份，不改新代水位。 */
+export function finishAiMemoryTeardown(chatId: number): void {
+  const teardown: AiMemoryTeardown | undefined = pendingAiMemoryTeardowns.get(chatId);
+  if (teardown === undefined) return;
+  if (latestAiMemories.has(chatId) || postPurgeAiMemoryPersistRevisions.has(chatId)) {
+    pendingAiMemoryTeardowns.delete(chatId);
+    return;
+  }
+  if (!teardown.workerSettled || pendingAiMemoryDeletes.has(chatId) || aiMemoryDeleteWaiters.has(chatId)) return;
+  forgetAiMemoryRevisionCounter(chatId);
+  pendingAiMemoryTeardowns.delete(chatId);
+}
+
+/** 旧 AI Worker 已终止，其 invalidate 请求不再等待；durable 删除仍由 DiskIO 回执拥有。 */
+export function settleAiMemoryTeardownWorker(): void {
+  for (const [chatId, teardown] of pendingAiMemoryTeardowns) {
+    teardown.workerSettled = true;
+    finishAiMemoryTeardown(chatId);
+  }
 }
 
 function removeDeleteWaiter(chatId: number, waiter: AiMemoryDeleteWaiter): void {
@@ -110,6 +136,9 @@ export function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<vo
   postPurgeAiMemoryPersistRevisions.delete(chatId);
   const hadLatestSnapshot: boolean = latestAiMemories.delete(chatId);
   latestAiMemoryRevisions.delete(chatId);
+  // 展示用的占用量镜像与快照镜像同生共死：这一刻起本群没有可展示的上下文，
+  // `/bot_status` 按「无条目 = 0」如实显示（见 cache/main/aiChat.ts 的 aiMemoryUsages）。
+  aiMemoryUsages.delete(chatId);
   let revision: number | undefined = pendingAiMemoryDeletes.get(chatId);
   if (revision === undefined || hadLatestSnapshot) {
     revision = nextAiMemoryRevision(chatId);
@@ -155,6 +184,7 @@ onAiMemoryDeletedPersisted((reply: AiMemoryDeletedPersistedReply): void => {
     removeDeleteWaiter(reply.chatId, waiter);
     waiter.resolve();
   }
+  finishAiMemoryTeardown(reply.chatId);
 });
 
 onAiMemoryPersisted((reply: AiMemoryPersistedReply): void => {

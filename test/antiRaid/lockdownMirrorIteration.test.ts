@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { waitUntil } from "../helpers/waitUntil";
 import { LruCache } from "../../packages/libs/lruCache";
 import type { ChatState, LockdownRecord } from "../../packages/types/chatState";
 
@@ -89,7 +90,9 @@ describe("主线程紧急恢复遍历真实群状态 LRU", () => {
     expect(chatStates.size).toBe(chatIds.length);
 
     for (const resolve of pending) resolve();
-    await Bun.sleep(5);
+    await waitUntil((): boolean =>
+      emergencyLockdownRecoveries.size === 0 &&
+      saveChatStateInBackground.mock.calls.length >= chatIds.length);
 
     for (const chatId of chatIds) {
       expect(chatStates.get(chatId)?.lockdown).toBeUndefined();

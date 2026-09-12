@@ -136,6 +136,13 @@ function productionJitTiersAreStable(
 
 function parseScenarioName(value: string | undefined): ScenarioName {
   switch (value) {
+    case "reply-admission":
+    case "reply-delivery-normal":
+    case "reply-delivery-capacity":
+    case "base64-normal":
+    case "base64-large":
+    case "base64-head":
+    case "base64-tail":
     case "storage-sqlite-flush":
     case "verification-snapshot":
     case "verification-snapshot-clone":
@@ -185,6 +192,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
       throw new Error(
         "Usage: bun run perf:hot-paths -- " +
         "<verification-snapshot|verification-snapshot-clone|" +
+        "reply-admission|reply-delivery-normal|reply-delivery-capacity|base64-normal|base64-large|base64-head|base64-tail|" +
         "bounded-response-empty|bounded-response-tiny|bounded-response-small|bounded-response-normal|bounded-response-large|" +
         "sender-no-username|sender-stable-username|sender-mixed-identity|" +
         "luck-receipt-fast-path|" +

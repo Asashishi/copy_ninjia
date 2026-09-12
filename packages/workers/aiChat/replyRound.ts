@@ -64,7 +64,7 @@ export interface ReplyRoundRequest {
 /**
  * 过滑动窗口限频闸并启动一轮异步回复。占位、贴纸锁和聊天状态心跳均在
  * 本函数内成对获取/释放；模型交付完整链后释放并发位并通知补跑，整轮发送按入站顺序串行。
- * @returns 本次真的开了一轮为 true；被代际失效或限频闸拒绝为 false。
+ * @returns 本次真的开了一轮为 true；被代际失效、容量或限频闸拒绝为 false。
  *   排队补跑那一路据此决定要不要把这条触发留在队首（见 replyQueue.ts）。
  */
 export function startReplyRound(
@@ -119,11 +119,12 @@ export function startReplyRound(
     return false;
   }
 
+  const delivery: ReplyDeliveryTurn | undefined = reserveReplyDelivery(chatId);
+  if (!delivery) return false;
   longTimes.push(now);
   activeReplyCounts.set(chatId, (activeReplyCounts.get(chatId) ?? 0) + 1);
 
   const signal: AbortSignal = replyGenerationSignal(chatId, generation);
-  const delivery: ReplyDeliveryTurn = reserveReplyDelivery(chatId);
   const task: Promise<void> = Promise.resolve().then(async (): Promise<void> => {
     let modelFinished: boolean = false;
     const finishModel = (): void => {

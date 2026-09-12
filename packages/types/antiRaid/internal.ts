@@ -1,12 +1,16 @@
 import type { ChatPermissions } from "grammy/types";
 import type { LockdownPhase } from "../chatState";
 import type { TimestampDeque } from "../../libs/timestampDeque";
-import type { LockdownState } from "../states/lockdown";
+import type { LockdownMachineEvent, LockdownState } from "../states/lockdown";
+
 import type {
   PendingState,
   VerificationEvent,
   VerificationState,
 } from "../states/verification";
+
+/** 私密模式 API 与计时器回投状态机的同步入口。 */
+export type LockdownDispatcher = (chatId: number, event: LockdownMachineEvent) => void;
 
 /** Worker 侧验证运行时各职责模块回投纯状态机事件的统一入口。 */
 export type VerificationDispatcher = (

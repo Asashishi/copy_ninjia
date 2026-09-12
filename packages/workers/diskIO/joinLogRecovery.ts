@@ -1,11 +1,13 @@
+import { durableUnlinkSync } from "../../libs/atomicFile";
+import { inspectOptionalDirectory } from "../../libs/fileAccess";
 import {
-  existsSync,
   mkdirSync,
   readdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import {
   joinLogCleanupDay,
+  joinLogDeletions,
   joinLogFileCaches,
   joinLogRetryAt,
 } from "../../cache/workers/diskIO/joinLog";
@@ -84,6 +86,61 @@ export async function cleanupExpiredJoinLogDays(
   joinLogCleanupDay.current = today;
 }
 
+/**
+ * 删除一个群在保留窗口内外的全部入群日志文件，并丢掉它们的接管游标与退避。
+ *
+ * 不看日期：本函数的起因是这个群不再被接管（`/init disable` 或机器人离群），
+ * 保留窗口对它已经没有意义，目录里叫得上它名字的文件一个都不留。整群删干净才
+ * 摘除待删标记，任一文件失败都保留，由下一次统一 flush 经 `joinLogPurge` 领域重试。
+ */
+export function purgeChatJoinLogFiles(chatId: number): void {
+  let names: readonly string[];
+  try {
+    // 目录创建与列举收在同一个 try 里：本函数的调用点（diskIOWorker 的
+    // deleteJoinLog 分支）不做兜底，异常逸出 onmessage 会被 Bun 直接终止整条落盘
+    // 线程。这里两样失败的收场相同——保留待删标记，等下一次领域 flush 重试。
+    mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
+    names = readdirSync(JOIN_LOG_MEMORY_DIR);
+  } catch (error: unknown) {
+    console.error(`[diskIOWorker] failed to list join logs while purging chat ${chatId}:`, error);
+    return;
+  }
+  let purged: boolean = true;
+  for (const name of names) {
+    const match: RegExpExecArray | null = JOIN_LOG_FILE_PATTERN.exec(name);
+    if (match === null || Number(match[1]!) !== chatId) continue;
+    try {
+      // 用带目录 fsync 的删除，而不是保留窗口清理那条 `Bun.file().delete()`：这一次
+      // 的结果要经 `joinLogPurge` 领域 flush 当成 durable 回执交给 teardown，掉电后
+      // 文件不能再出现（同 snapshotFiles.ts 的 deleteAiMemoryFile）。窗口清理没有这个
+      // 承诺——那边漏删一次，下一次跨日清理照样会删掉。
+      durableUnlinkSync(join(JOIN_LOG_MEMORY_DIR, name));
+    } catch (error: unknown) {
+      console.error(`[diskIOWorker] failed to delete join log ${name}:`, error);
+      purged = false;
+      continue;
+    }
+    const key: string = `${chatId}:${match[2]!}`;
+    joinLogFileCaches.delete(key);
+    joinLogRetryAt.delete(key);
+  }
+  if (purged) joinLogDeletions.delete(chatId);
+}
+
+/**
+ * 逐群重试仍未删净的入群日志；空集表示本领域没有待删的群。
+ *
+ * 空集先早退：本函数挂在统一 flush 上，而那条路径由每一条入群事实的 durable
+ * 屏障走过（见 infra/joinLog.ts 的 recordJoinLog）。稳定态下待删集合恒为空，早退
+ * 让这条高频路径连那份键快照都不分配（见 AGENTS.md 的「高频路径不得创建临时
+ * 数组」）。键快照只在真的有待删群时才取：purgeChatJoinLogFiles 会就地删集合里的项。
+ */
+export function purgeJoinLogDeletions(): boolean {
+  if (joinLogDeletions.size === 0) return true;
+  for (const chatId of [...joinLogDeletions]) purgeChatJoinLogFiles(chatId);
+  return joinLogDeletions.size === 0;
+}
+
 export interface JoinLogRecoveryInspection {
   readonly today: string;
   readonly names: readonly string[];
@@ -95,7 +152,7 @@ export async function inspectJoinLogFiles(
 ): Promise<JoinLogRecoveryInspection> {
   const retainedDays: ReadonlySet<string> =
     recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
-  const names: string[] = existsSync(JOIN_LOG_MEMORY_DIR)
+  const names: string[] = inspectOptionalDirectory(JOIN_LOG_MEMORY_DIR)
     ? readdirSync(JOIN_LOG_MEMORY_DIR)
     : [];
   for (const name of names) {

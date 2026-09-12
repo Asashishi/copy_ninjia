@@ -10,6 +10,8 @@ const handleLuckDrawMessage = mock((_message: unknown): void => {});
 const handleVerificationUpsert = mock((_input: unknown): void => {});
 const handleVerificationDelete = mock((_input: unknown): void => {});
 const handleJoinLogMessage = mock((_message: unknown): void => {});
+const handleJoinLogDeleteMessage = mock((_message: unknown): void => {});
+const purgeJoinLogDeletions = mock((): boolean => true);
 const inspectLogFiles = mock((): { readonly kind: "logs" } => ({ kind: "logs" }));
 const adoptLogFiles = mock((_inspection: unknown): void => {});
 const maintainLogFiles = mock(async (_inspection: unknown): Promise<void> => {});
@@ -156,7 +158,9 @@ mock.module("../../packages/workers/diskIO/adSampleFile", () => ({
 }));
 mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
   flushJoinLogDomain,
+  handleJoinLogDeleteMessage,
   handleJoinLogMessage,
+  purgeJoinLogDeletions,
   inspectJoinLogFiles,
   maintainJoinLogFiles,
   maintainJoinLogRetention,

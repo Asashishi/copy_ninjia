@@ -105,19 +105,31 @@ describe("触发与占位", () => {
     expect(effects).toEqual([{ kind: "prefetchAdmins", onlyIfCold: true }]);
   });
 
-  test("RESTORING 期间再次超阈值 → 新一轮：回到 ACTIVE 并重新给满倒计时", () => {
+  test("RESTORING 期间再次超阈值保留恢复意图，不重排倒计时", () => {
     const { next, effects } = transitionLockdown(RESTORING, { type: "thresholdExceeded", joinCount: 50 });
-    expect(next).toEqual({
-      kind: "active",
-      originalPermissions: PERMS,
-      intentId: 2,
-      ...ANNOUNCED,
-    });
-    expect(effects).toEqual([
-      { kind: "prefetchAdmins", onlyIfCold: true },
-      { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
-      { kind: "persistState" },
-    ]);
+    expect(next).toBe(RESTORING);
+    expect(effects).toEqual([{ kind: "prefetchAdmins", onlyIfCold: true }]);
+  });
+
+  test("到期后持续越阈不吞 durable ACK，重复与迟到 ACK 不重复恢复", () => {
+    let state: LockdownState | undefined = transitionLockdown(ACTIVE, {
+      type: "restoreTimerFired", intentId: 3,
+    }).next;
+    for (let index: number = 0; index < 3; index++) {
+      const exceeded = transitionLockdown(state, { type: "thresholdExceeded", joinCount: 90 });
+      expect(exceeded.next).toBe(state);
+      expect(exceeded.effects).toEqual([{ kind: "prefetchAdmins", onlyIfCold: true }]);
+      state = exceeded.next;
+    }
+    expect(transitionLockdown(state, { type: "statePersisted", phase: "restoring", intentId: 2 }).effects).toEqual([]);
+    const acknowledged = transitionLockdown(state, { type: "statePersisted", phase: "restoring", intentId: 3 });
+    expect(acknowledged.effects).toEqual([{ kind: "beginRestore", originalPermissions: PERMS }]);
+    expect(transitionLockdown(acknowledged.next, { type: "statePersisted", phase: "restoring", intentId: 3 }).effects).toEqual([]);
+    const inFlight = transitionLockdown(acknowledged.next, { type: "thresholdExceeded", joinCount: 100 });
+    expect(inFlight.next).toBe(acknowledged.next);
+    const failed = transitionLockdown(inFlight.next, { type: "restoreResult", ok: false });
+    expect(failed.effects).toEqual([{ kind: "scheduleRestoreRetry", delayMs: RESTORE_RETRY_MS }]);
+    expect(transitionLockdown(failed.next, { type: "restoreResult", ok: true }).next).toBeUndefined();
   });
 });
 
@@ -339,6 +351,7 @@ describe("落盘失败一律 fail-safe 打开", () => {
       ...ANNOUNCED,
     });
     expect(effects).toEqual([
+      { kind: "persistState" },
       { kind: "beginRestore", originalPermissions: PERMS },
       suppression("persistFailed"),
     ]);
@@ -365,6 +378,7 @@ describe("落盘失败一律 fail-safe 打开", () => {
       ...ANNOUNCED,
     });
     expect(effects).toEqual([
+      { kind: "persistState" },
       { kind: "beginRestore", originalPermissions: PERMS },
       suppression("persistFailed"),
     ]);
@@ -457,27 +471,11 @@ describe("到期恢复", () => {
     expect(effects).toEqual([{ kind: "reportUnlock" }]);
   });
 
-  test("未公告的 RESTORING 被新峰值推回 ACTIVE 后，仍然不会凭空发出解锁公告", () => {
-    // 回到 ACTIVE 那一步不重发封锁公告，因此公告记账必须原样带过去；
-    // 否则这条回头路会把「没公告过」洗成「公告过」。
+  test("未公告的 RESTORING 遇到新峰值仍不补发封锁或解锁公告", () => {
     const silent: LockdownState = { ...RESTORING, ...SILENT };
-    const active = transitionLockdown(silent, { type: "thresholdExceeded", joinCount: 50 });
-    expect(active.next).toEqual({
-      kind: "active",
-      originalPermissions: PERMS,
-      intentId: 2,
-      ...SILENT,
-    });
-
-    const back = transitionLockdown(active.next, { type: "restoreTimerFired", intentId: 9 });
-    expect(back.next).toEqual({
-      kind: "restoring",
-      originalPermissions: PERMS,
-      intentId: 9,
-      restoreAfterPersist: true,
-      ...SILENT,
-    });
-    expect(transitionLockdown(back.next, { type: "restoreResult", ok: true }).effects).toEqual([
+    const exceeded = transitionLockdown(silent, { type: "thresholdExceeded", joinCount: 50 });
+    expect(exceeded.next).toBe(silent);
+    expect(transitionLockdown(exceeded.next, { type: "restoreResult", ok: true }).effects).toEqual([
       { kind: "reportUnlock" },
     ]);
   });
@@ -509,7 +507,7 @@ describe("到期恢复", () => {
     expect(effects).toEqual([{ kind: "scheduleRestoreRetry", delayMs: RESTORE_RETRY_MS }]);
   });
 
-  test("恢复在途期间被新峰值推回 ACTIVE，迟到的成功回执先持久化 RECONCILING", () => {
+  test("ACTIVE 收到恢复成功回执时先持久化 RECONCILING", () => {
     const state: LockdownState = ACTIVE;
     const { next, effects } = transitionLockdown(state, { type: "restoreResult", ok: true });
     expect(next).toEqual({
@@ -556,7 +554,7 @@ describe("到期恢复", () => {
     expect(succeeded.effects).toEqual([{ kind: "persistState" }]);
   });
 
-  test("恢复在途期间被新峰值推回 ACTIVE，迟到的失败回执被忽略（权限从未恢复过，别打断刚延长的倒计时）", () => {
+  test("ACTIVE 收到迟到的恢复失败回执时保持当前意图", () => {
     const state: LockdownState = ACTIVE;
     const { next, effects } = transitionLockdown(state, { type: "restoreResult", ok: false });
     expect(next).toBe(state);

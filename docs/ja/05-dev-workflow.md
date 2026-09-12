@@ -28,11 +28,11 @@
 | `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するため `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 44 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 51 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
-| `bun run perf:review` | 12 個の hot path の通常測定と profile、2 本の完全 command chain、実 Disk I/O Worker の負荷と再構築を各 3 独立ラウンドで検証。`--hot-paths` / `--chains` / `--worker` で選択 |
+| `bun run perf:review` | 既存の 12 hot path、AI 返信・payload の 7 シナリオ、2 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択 |
 | `bun run release:check` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
 
@@ -48,7 +48,9 @@
 
 ### 依存関係の release-age gate
 
-依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。Bun runtime は 1.4.2、`@types/bun` は 1.4.0 に固定します。version gate は major/minor の一致を要求し、runtime の patch version は `packageManager` と `install.sh` が共同で固定します。
+依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。Bun runtime は 1.4.2、`@types/bun` は 1.4.1 に固定します。両者の major/minor は同じで、runtime の patch version は `packageManager` と `install.sh` が共同で固定します。
+
+TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョンは `6.0.3` です。現在の `typescript-eslint` が宣言する TypeScript の互換範囲は `>=4.8.4 <6.1.0` です。
 
 ### Bun の実行境界
 
@@ -60,7 +62,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**3865 tests / 363 files / 157287 `expect()` calls**。全ソースコードの**関数カバレッジは 97.54%、行カバレッジは 97.7%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**4076 tests / 367 files / 155855 `expect()` calls**。全ソースコードの**関数カバレッジは 97.64%、行カバレッジは 97.78%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -83,7 +85,7 @@
 
 ## Fault injection suite
 
-`bun run test:fault-injection` は crash recovery と永続化境界を重点的に検証します。ライフサイクル失敗、update runner の確認境界、StateStore と cleanup、AI/Anti-Raid Worker のミラーとライフサイクル、Disk I/O の追記・snapshot・ログファイル、flush barrier などが対象です。完全な一覧は [`package.json`](../../package.json) の script 定義を参照してください。この一覧は `check:conventions` が担保します。Disk I/O Worker・Anti-Raid ミラー・blocklist 補走査・ライフサイクルの harness を import する test file は、一覧に登録されるまで失敗します。[04 実行時の正式な不変条件](04-invariants.md) に関わる経路を変更した場合、この suite は必ず成功しなければなりません。
+`bun run test:fault-injection` は application / Worker lifecycle、封鎖復元、返信容量と取消、資格情報 snapshot、Disk I/O の inspect・原子的書込・復旧障害を検証します。完全な一覧は [`package.json`](../../package.json) の script が正本です。`check:conventions` は登録 harness と production 復旧/lifecycle 境界への実 path 参照から登録漏れを検出します。静的な値 import、dynamic import、値の再 export を含み、型だけの参照は除外します。空宣言の副作用は保持し、別 path の同名 module は一致させません。[04 実行時の不変条件](04-invariants.md) の永続化・停止・Worker lifecycle を変更する場合、この suite を通します。
 
 `/wed` の操作回帰は 1,024 件の LRU 容量、コマンドとボタン参照による利用順更新、eviction 時の待機・実行中操作の取消、遅着結果の清掃、個別削除失敗後の継続、update 取消からの独立性、停止時 drain を検証します。メンバー正本では 25 群の満杯時拒否を別途検証します。永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
 
@@ -119,15 +121,19 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 
 `bun run perf:review` は全量基準と同じ隔離 root、設定 fixture、process runner、出力先の canned reply を使い、JSON を出力して各実行の data root を削除します。`--hot-paths` は sender、message window、permission read、AI activity、認証 snapshot と clone、空/微小 chunk および 1 KiB/1 MiB/16 MiB response、登録 middleware の 12 scenario を、それぞれ通常測定 3 回と profile 3 回で検証します。完全な非同期読み取りは明示した回数で warmup し、実際の JIT tier を記録します。他の scenario は最適化 tier の安定性検査を維持します。
 
+`--ai` は受付判定、通常送信、容量・再開負荷、Base64 の 1 MiB / 8 MiB / 異常先頭 / 異常末尾を測定します。7 シナリオで各 3 回の独立 process による計時と 3 回の profile を実行し、production 関数を直接使います。送信シナリオは chat 別/全体容量、実完了、後処理を断言し、production JIT probe の安定を要求します。負荷の 1 iteration は 128 存続 slot と容量拒否検証を含み、遅延は batch 全体の値です。Base64 は符号化後と復号後のサイズ上限、標準 alphabet、末尾 bit の厳密検査、g/y なしの正規表現、1 回だけの decode を維持します。固定入力と warmupによる局所測定であり、実 model / Telegram network や全 production payload の memory 予算は含みません。GC sample がゼロでも GC 不在を意味しません。
+
 `--chains` は機能を有効にした `ad-detect-command` と `ai-reply-command` を実行し、Telegram canned call 数と処理完了を検証します。`--worker` は各 round で実 Disk I/O Worker に 128 message × 400 batch を渡し、batch ごとに最終 revision の ACK を待ちます。各 round で 2 回の graceful shutdown と Worker 再構築を行い、25 chat の復旧値を照合します。clone、transaction、disk wait を含め、throughput、latency、retained heap、RSS を記録しますが、fault injection の代用にはなりません。各 mode は 3 round で、全量基準と既定 10 scenario の hard gate 閾値は変更しません。
 
 `sender-mixed-identity` は user と channel の identity を交互に入力して steady behavior と JIT 再最適化を観測します。単一 user scenario とは sender 数が異なるため、時間差を shape 混在だけのコストとは解釈しません。benchmark の user ID は int32 を超える値を扱い、production では小さい ID も有効です。
 
 registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware`、`storage-sqlite-flush` を含みます。最初の 4 項目はメンバー集合の hit・充填・満杯時の拒否・chat 切替を検証します。middleware は実際の登録 chain と活動経路を検証します。SQLite は空 DB に 128 delete を送るため、主に transaction scheduling の測定であり、disk throughput の値ではありません。
 
-`bun scripts/perf/isolatedHotPath.ts <scenario>` を実行し、別の sampling には `--profile` を付けます。この入口は `gateFixture.ts` で独立した設定・data root を作り、3 回の独立子 process に渡して、終了後に run directory を削除します。外部送信は基準用の固定応答が受け持ちます。Bun と入力を固定し、warm-up 後に retained と profile を別々に観測します。sample 不足時の GC 0 件から GC 不在を断定してはいけません。
+`bun run perf:isolated-hot-path <scenario>` を実行し、別の sampling には `--profile` を付けます。この入口は `gateFixture.ts` で独立した設定・data root を作り、3 回の独立子 process に渡して、終了後に run directory を削除します。外部送信は基準用の固定応答が受け持ちます。Bun と入力を固定し、warm-up 後に retained と profile を別々に観測します。sample 不足時の GC 0 件から GC 不在を断定してはいけません。
 
-`bun scripts/perf/diskTransport.ts` は独立 mock process を 3 回実行し、単一 batch ACK・通常排出・ACK 停止後の容量拒否を検証して latency・heap・GC・JIT を出力します。同一の不変 payload を再利用する queue/ACK の測定であり、Worker clone・実 payload の個別容量・disk wait は含みません。
+`luck-tier-table` は固定 roll から本番の `drawLuckTier` を直接呼び、返されたランクの checksum と同関数の JIT probe を記録します。`gag-speak-counter` は `GAG_SESSION_MAX` から session 数を読み、本番の発言カウンターを呼びます。これらの境界を変更した場合、両シナリオを通常と `--profile` の両モードで実行し、checksum、清掃、保持 heap、GC/JIT を確認します。両シナリオは標準の十シナリオ gate に含まれません。
+
+`bun run perf:disk-transport` は独立 mock process を 3 回実行し、単一 batch ACK・通常排出・ACK 停止後の容量拒否を検証して latency・heap・GC・JIT を出力します。同一の不変 payload を再利用する queue/ACK の測定であり、Worker clone・実 payload の個別容量・disk wait は含みません。
 
 ## 全量パフォーマンス benchmark
 

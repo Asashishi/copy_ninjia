@@ -6,11 +6,9 @@ import {
   RUNTIME_DATA_ROOT_ENV,
 } from "../../../packages/consts/environment";
 import {
-  IDENTITY_DATABASE_SCHEMA_DATA,
-  IDENTITY_DATABASE_SCHEMA_KEY,
-} from "../../../packages/consts/identityStorage";
-import { seedStorageDatabase } from
-  "../../fixtures/storageDatabase";
+  CURRENT_STORAGE_METADATA_ROWS,
+  seedStorageDatabase,
+} from "../../fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,
@@ -116,10 +114,7 @@ export function createMainBenchmarkRoot(mockRoot: string): string {
     const database: StorageDatabase = openStorageDatabase({ path });
     try {
       seedStorageDatabase(database, {
-        metadata: [{
-          key: IDENTITY_DATABASE_SCHEMA_KEY,
-          data: IDENTITY_DATABASE_SCHEMA_DATA,
-        }],
+        metadata: CURRENT_STORAGE_METADATA_ROWS,
         whitelist: [],
         blocklist: [],
         removals: [],

@@ -15,17 +15,19 @@ export interface AdmitTriggerInput {
   queueSize: number;
   kind: TriggerKind;
   telegramBackpressured: boolean;
+  /** 当前群与 Worker 的存活回复轮次均未耗尽容量。 */
+  deliveryAvailable: boolean;
 }
 
 export type AdmitDecision =
-  /** 并发未满（或补跑腾出了空位）：立即开新轮。 */
-  | { action: "startRound" }
-  /** 并发已满、是真人在等的直接触发、队列还有空位：入队等补跑。 */
-  | { action: "enqueue" }
-  /** 并发已满、是随机插话/随机媒体评价：静默丢弃，不入队也不提示。 */
-  | { action: "dropSilently" }
-  /** 并发已满、是直接触发、但队列也满了：丢弃并欠一条限频提示。 */
-  | { action: "enqueueOverflow" };
+  /** 模型与存活容量均允许且等待队列为空：立即开新轮。 */
+  | { readonly action: "startRound" }
+  /** 直接触发暂不能启动且队列有空位：入队等补跑。 */
+  | { readonly action: "enqueue" }
+  /** 随机触发因并发、容量、排队或出站压力受阻：静默丢弃。 */
+  | { readonly action: "dropSilently" }
+  /** 直接触发的等待队列已满：丢弃并登记溢出提示。 */
+  | { readonly action: "enqueueOverflow" };
 
 export interface AdmitRoundInput {
   windowCount: number;
@@ -33,6 +35,6 @@ export interface AdmitRoundInput {
 
 export type RoundDecision =
   /** 窗口未满：调用方记账后执行。 */
-  | { action: "run" }
-  /** 窗口已满：通知（带自身冷却）并丢弃，不记账。 */
-  | { action: "rateLimited" };
+  | { readonly action: "run" }
+  /** 窗口已满：不记账，调用方按触发来源通知或保留队首。 */
+  | { readonly action: "rateLimited" };

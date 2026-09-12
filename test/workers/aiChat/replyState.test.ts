@@ -9,12 +9,14 @@ import {
   replyAbortControllers,
   replyGenerationTasks,
   replyGenerations,
+  replyDeliveryTotal,
   sweepAiChatReplyCache,
 } from "../../../packages/cache/workers/aiChat/replies";
 import {
   RATE_LIMIT_LONG_MAX_TRIGGERS,
   RATE_LIMIT_LONG_WINDOW_MS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
+  REPLY_DELIVERY_MAX_PER_CHAT,
 } from "../../../packages/consts/aiChat/rateLimit";
 import { typingHeartbeats } from "../../../packages/cache/workers/aiChat/heartbeat";
 import { resetAiChatWorkerCache } from "../../../packages/cache/workers/aiChat/index";
@@ -27,6 +29,7 @@ import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import { timestampDequeContents, timestampDequeOf } from "../../helpers/timestampDeque";
 import { logger } from "../../../packages/infra/logger";
 import { VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
+import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../packages/types";
 import {
   currentReplyGeneration,
@@ -109,14 +112,18 @@ describe("AI 回复代际状态", () => {
     }
   });
 
-  test("失效等待到期时保留诊断并清理已经触发的 timer", async () => {
+  test("失效等待到期仍保留旧代发送容量，真实收尾后才释放", async () => {
     const chatId: number = -1007;
     const generation: number = currentReplyGeneration(chatId);
+    const turns = Array.from({ length: REPLY_DELIVERY_MAX_PER_CHAT }, () => reserveReplyDelivery(chatId)!);
     let settleTask: (() => void) | undefined;
     const task: Promise<void> = new Promise<void>((resolve: () => void): void => {
       settleTask = resolve;
     });
-    trackReplyGenerationTask(chatId, generation, task);
+    const cleanup = task.then(async () => {
+      for (const turn of turns) await turn.finish();
+    });
+    trackReplyGenerationTask(chatId, generation, cleanup);
 
     const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
     const originalClearTimeout: typeof clearTimeout = globalThis.clearTimeout;
@@ -143,12 +150,18 @@ describe("AI 回复代际状态", () => {
         expect.stringContaining(`AI chat invalidation for chat ${chatId} gave up waiting`)
       );
       expect(timerCleared).toBeTrue();
+      expect(replyGenerationTasks.size).toBe(0);
+      expect(currentReplyGeneration(chatId)).not.toBe(generation);
+      expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
+      expect(reserveReplyDelivery(chatId)).toBeUndefined();
     } finally {
       settleTask?.();
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
       loggerErrorSpy.mockRestore();
+      await cleanup;
     }
+    expect(replyDeliveryTotal.current).toBe(0);
   });
 
   test("Worker 排空会中止全部代次并等待所有 generation-sensitive 任务", async () => {

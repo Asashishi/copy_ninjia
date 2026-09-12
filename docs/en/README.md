@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-3865_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.7%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4076_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 3865 tests passed, 363 test files, 157,287 expect() calls, 97.54% function coverage, 97.7% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4076 tests passed, 367 test files, 155,855 expect() calls, 97.64% function coverage, 97.78% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -162,7 +162,7 @@ Behavior details, configuration and boundaries for each feature live in the **[�
 
 ## 🎮 Commands and Permissions
 
-Commands come in four tiers: **group members** (copy modes, action commands, quiet mode, `/bot_status`), **whitelist permission keys** (`/mute`, `/gag`, `/block`, the per-feature switches), **`SUPER_ADMIN_USER_ID` only** (`/init`, `/white`, `/permission`, `/batch_kick`), and `/send`, which works in private chat only.
+Commands come in four tiers: **group members** (copy modes, action commands, quiet mode, `/bot_status`), **whitelist permission keys** (`/mute`, `/gag`, `/block`, the per-feature switches), **`SUPER_ADMIN_USER_ID` only** (`/init`, `/white`, `/permission`, `/batch_kick`, `/clear_context`), and `/send`, which works in private chat only.
 
 The copy target is globally unique: the `/copy` family echoes message by message in the chat where the command was issued and syncs the avatar. `/luck_challenge` runs through Inline Mode, and Chinese action commands (`/咬`, `/揪住`) need no registration.
 

@@ -46,10 +46,18 @@ import {
   transcriptRenderScenario,
 } from "./transcriptScenarios";
 import type { Scenario, ScenarioName } from "./types";
+import { base64PayloadScenario, replyAdmissionScenario, replyDeliveryScenario } from "./replyScenarios";
 
 /** 按稳定名称建立一份独立场景；每个子进程只调用一次。 */
 export function createScenario(name: ScenarioName): Scenario {
   switch (name) {
+    case "reply-admission": return replyAdmissionScenario();
+    case "reply-delivery-normal": return replyDeliveryScenario(false);
+    case "reply-delivery-capacity": return replyDeliveryScenario(true);
+    case "base64-normal": return base64PayloadScenario("normal");
+    case "base64-large": return base64PayloadScenario("large");
+    case "base64-head": return base64PayloadScenario("head");
+    case "base64-tail": return base64PayloadScenario("tail");
     case "storage-sqlite-flush": return storageFlushScenario();
     case "verification-snapshot": return verificationSnapshotScenario(false);
     case "verification-snapshot-clone": return verificationSnapshotScenario(true);

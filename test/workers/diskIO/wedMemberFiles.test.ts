@@ -1,17 +1,53 @@
 import { afterEach, beforeEach, expect, jest, mock, spyOn, test } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { dirtyWedChats, pendingWedMembers, resetWedFileWrites, wedFileFlushTimer } from "../../../packages/cache/workers/diskIO/wed";
+import { deletedWedChats, dirtyWedChats, pendingWedMembers, resetWedFileWrites, wedFileFlushTimer, wedMemberDeletePersistedNotifier } from "../../../packages/cache/workers/diskIO/wed";
 import { FLUSH_INTERVAL_MS } from "../../../packages/consts/diskIO/appendOnly";
 import { WED_MEMORY_DIR } from "../../../packages/consts/paths";
 import { WED_MEMBER_LIMIT } from "../../../packages/consts/wed";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
-import { flushWedMemberFiles, handleWedMembersMessage, inspectWedMemberFiles, maintainWedMemberFiles, writeWedMemberFile } from "../../../packages/workers/diskIO/wedMemberFiles";
+import { deleteWedMemberFile, flushWedMemberFiles, handleWedMembersDeleteMessage, handleWedMembersMessage, inspectWedMemberFiles, maintainWedMemberFiles, writeWedMemberFile } from "../../../packages/workers/diskIO/wedMemberFiles";
 import { handleDiskIOStartupLoad } from "../../../packages/workers/diskIO/startup";
 import { handleDiskIOWorkerMessage } from "../../../packages/workers/diskIOWorker";
 import { stopDiskIOMaintenanceCron } from "../../../packages/workers/diskIO/maintenanceCron";
 
 const path: string = join(WED_MEMORY_DIR, "-1001.json");
+
+test("旧删除失败后新快照取消删除，后续 flush 不擦除新文件", () => {
+  let diskMembers: readonly number[] | undefined = [1];
+  let attempts: number = 0;
+  const remove = (): void => { attempts++; throw new Error("mock unlink failure"); };
+  const diagnostic = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    handleWedMembersDeleteMessage({ type: "deleteWedMembers", chatId: -1001, revision: 1 }, remove);
+    handleWedMembersMessage({ type: "wedMembers", chatId: -1001, revision: 2, members: [2] });
+    const write = (_chatId: number, members: readonly number[]): void => { diskMembers = members; };
+    expect(flushWedMemberFiles(write, remove)).toBe(true);
+    expect(flushWedMemberFiles(write, (): void => { diskMembers = undefined; })).toBe(true);
+    expect(diskMembers).toEqual([2]);
+    expect(attempts).toBe(1);
+    expect(deletedWedChats.size).toBe(0);
+  } finally { diagnostic.mockRestore(); }
+});
+
+test("仅在 durable 删除成功后发送同编号回执，新删除丢弃旧快照", () => {
+  const original = wedMemberDeletePersistedNotifier.current;
+  const notify = mock();
+  const diagnostic = spyOn(console, "error").mockImplementation(() => {});
+  wedMemberDeletePersistedNotifier.current = notify;
+  try {
+    pendingWedMembers.set(-1001, [2]);
+    dirtyWedChats.add(-1001);
+    handleWedMembersDeleteMessage({ type: "deleteWedMembers", chatId: -1001, revision: 9 }, (): never => { throw new Error("mock unlink failure"); });
+    expect(notify).not.toHaveBeenCalled();
+    expect(pendingWedMembers.size).toBe(0);
+    expect(dirtyWedChats.size).toBe(0);
+    const write = mock();
+    expect(flushWedMemberFiles(write, (): void => {})).toBe(true);
+    expect(write).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith({ type: "wedMembersDeletedPersisted", chatId: -1001, revision: 9 });
+  } finally { wedMemberDeletePersistedNotifier.current = original; diagnostic.mockRestore(); }
+});
 
 beforeEach(() => {
   resetWedFileWrites();
@@ -36,7 +72,7 @@ test("启动 load 通过全部门禁后回传已建立的成员 Set", async () =
 
 test("成员目录被普通文件占用时拒绝加载", async () => {
   await Bun.write(WED_MEMORY_DIR, "[]");
-  await expect(inspectWedMemberFiles()).rejects.toThrow(`${WED_MEMORY_DIR}: $ must be a readable directory`);
+  await expect(inspectWedMemberFiles()).rejects.toThrow(`${WED_MEMORY_DIR}: $type must be an accessible directory`);
 });
 
 test("文件缺省恢复为空；首次写自动建目录和文件，重启加载数字 ID", async () => {
@@ -154,4 +190,79 @@ test("统一 flush 包含 wed 失败领域，其余领域继续排空", async ()
     workerGlobal.self = original;
     diagnostic.mockRestore();
   }
+});
+
+test("整群删除立即 unlink，并丢掉这个群仍未落盘的快照", async () => {
+  writeWedMemberFile(-1001, [1]);
+  writeWedMemberFile(-2002, [2]);
+  pendingWedMembers.set(-1001, [1, 3]);
+  dirtyWedChats.add(-1001);
+
+  await handleDiskIOWorkerMessage({ type: "deleteWedMembers", chatId: -1001, revision: 1 });
+
+  expect(await Bun.file(path).exists()).toBeFalse();
+  // 待写快照必须一起丢掉：留着的话下一次 flush 会把文件重新写回来。
+  expect(pendingWedMembers.has(-1001)).toBeFalse();
+  expect(dirtyWedChats.has(-1001)).toBeFalse();
+  expect(deletedWedChats.size).toBe(0);
+  // 别的群一个字节都不动。
+  expect(await Bun.file(join(WED_MEMORY_DIR, "-2002.json")).json()).toEqual([2]);
+});
+
+test("文件本来就不存在时删除照常成功，不留待删标记", async () => {
+  mkdirSync(WED_MEMORY_DIR, { recursive: true });
+  handleWedMembersDeleteMessage({ type: "deleteWedMembers", chatId: -1001, revision: 1 });
+  expect(deletedWedChats.size).toBe(0);
+  expect(flushWedMemberFiles()).toBeTrue();
+});
+
+test("删除失败保留待删标记并让本领域回报失败，重试成功后才放行", async () => {
+  writeWedMemberFile(-1001, [1]);
+  const diagnostic = spyOn(console, "error").mockImplementation(() => {});
+  jest.useFakeTimers();
+  try {
+    handleWedMembersDeleteMessage(
+      { type: "deleteWedMembers", chatId: -1001, revision: 1 },
+      (): never => { throw new Error("permission denied"); }
+    );
+    expect(deletedWedChats.has(-1001)).toBeTrue();
+    expect(await Bun.file(path).exists()).toBeTrue();
+    // 领域 flush 必须照实回报失败，否则 teardown 会把「文件还在」报成删干净了。
+    expect(flushWedMemberFiles(writeWedMemberFile, (): never => { throw new Error("permission denied"); })).toBeFalse();
+    expect(wedFileFlushTimer.current).not.toBeNull();
+
+    jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+    expect(await Bun.file(path).exists()).toBeFalse();
+    expect(deletedWedChats.size).toBe(0);
+    expect(flushWedMemberFiles()).toBeTrue();
+  } finally {
+    diagnostic.mockRestore();
+  }
+});
+
+test("统一 flush 把仍未删净的群算进 wed 失败领域", async () => {
+  const workerGlobal = globalThis as typeof globalThis & { self: Worker };
+  const original = workerGlobal.self;
+  const reply = mock();
+  workerGlobal.self = { postMessage: reply } as never;
+  const diagnostic = spyOn(console, "error").mockImplementation(() => {});
+  // 目录占住文件名：unlink 对目录报 EISDIR，删除因此失败并保留待删标记。
+  mkdirSync(path, { recursive: true });
+  try {
+    handleWedMembersDeleteMessage({ type: "deleteWedMembers", chatId: -1001, revision: 1 });
+    expect(deletedWedChats.has(-1001)).toBeTrue();
+    await handleDiskIOWorkerMessage({ type: "flush", scope: "all", flushId: 77 });
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      type: "flushFailed", flushedId: 77, failedDomains: expect.arrayContaining(["wedMembers"]),
+    }));
+  } finally {
+    workerGlobal.self = original;
+    diagnostic.mockRestore();
+  }
+});
+
+test("删除边界本身幂等：删掉之后再删一次不抛错", () => {
+  writeWedMemberFile(-1001, [1]);
+  deleteWedMemberFile(-1001);
+  expect(() => deleteWedMemberFile(-1001)).not.toThrow();
 });

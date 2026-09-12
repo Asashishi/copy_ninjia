@@ -10,7 +10,10 @@ import {
   BOT_STATUS_BYTES_PER_GIB,
   BOT_STATUS_BYTES_PER_KIB,
   BOT_STATUS_BYTES_PER_MIB,
+  BOT_STATUS_COLD_MEMORY_WEIGHT,
   BOT_STATUS_DECIMAL_PLACES,
+  BOT_STATUS_HOT_MEMORY_WEIGHT,
+  BOT_STATUS_PERCENT_SCALE,
   BOT_STATUS_PERMISSION_JSON_INDENT,
   BOT_STATUS_PERMISSION_JSON_LANGUAGE,
   BOT_STATUS_PERMISSION_LABELS,
@@ -19,11 +22,14 @@ import {
   BOT_STATUS_SECONDS_PER_MINUTE,
 } from "../consts/botStatus";
 import { BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS } from "../consts/commands";
+import { MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../consts/aiChat/memory";
+import { aiMemoryUsages } from "../cache/main/aiChat";
 import { GAG_SESSION_MAX } from "../consts/gag";
 import { readBotProcessStatus } from "../infra/processStatus";
 import { getChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { telegramOutboundStats } from "../infra/telegram/outboundLifecycle";
+import type { AiMemoryUsage } from "../types/aiChat/memory";
 import type { CachedUser, ChatState } from "../types/chatState";
 import type { BotProcessStatus } from "../types/botStatus";
 import type { BotChatPermissions } from "../types/telegram";
@@ -52,6 +58,8 @@ export interface BotStatusSnapshot {
   readonly telegramCapacity: number;
   readonly activeGagSessions: number;
   readonly activeTranslateSessions: number;
+  /** 本群 AI 上下文占用量镜像；无条目表示此刻没有可展示的上下文。 */
+  readonly aiContextUsage: Readonly<AiMemoryUsage> | undefined;
   readonly processStatus: Readonly<BotProcessStatus>;
 }
 
@@ -119,6 +127,27 @@ function formatPercent(value: number): string {
 }
 
 /**
+ * 本群上下文容量：两段记忆各自的占用率按 BOT_STATUS_HOT_MEMORY_WEIGHT /
+ * BOT_STATUS_COLD_MEMORY_WEIGHT 加权求和，只给这一个百分比。
+ *
+ * 分母是两段记忆各自的领域上限（consts/aiChat/memory.ts 的 VERBATIM_CONTEXT_MAX
+ * 与 MAX_SUMMARY_ROUNDS），不是模型的 token 预算：这一行（展示名「猫脑子利用率」）
+ * 回答的是「本天才还记着这个群多少东西」，而轮换与摘要晋升都按条数触发。
+ * 两段的原始条数不外露——
+ * 那是记忆分层的内部机制，对群友一律不可见（见 docs/cn/04-invariants.md）。
+ *
+ * 没有镜像条目就是没有可展示的上下文，按 0 展示而不是沿用旧值（见
+ * cache/main/aiChat.ts 的 aiMemoryUsages）。
+ */
+function contextCapacityLine(usage: Readonly<AiMemoryUsage> | undefined): string {
+  const percent: number = (
+    BOT_STATUS_HOT_MEMORY_WEIGHT * ((usage?.bufferedCount ?? 0) / VERBATIM_CONTEXT_MAX) +
+    BOT_STATUS_COLD_MEMORY_WEIGHT * ((usage?.summaryCount ?? 0) / MAX_SUMMARY_ROUNDS)
+  ) * BOT_STATUS_PERCENT_SCALE;
+  return `• 猫脑子利用率：${formatPercent(percent)}`;
+}
+
+/**
  * 权限快照的展示体：**只列这个群里已经拥有的权限位**，键沿用 Bot API 的英文字段
  * 名，值给该位的中文名。没有的位不出现——「有什么」才是这块要回答的问题，逐项列
  * 出十八个「否」只会把真正有的那几条淹掉。
@@ -180,8 +209,9 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     `• 处理中 ${snapshot.telegramActive}`,
     `• 429 退避排队 ${snapshot.telegramPending}/${snapshot.telegramCapacity}`,
     "",
-    `正在被本天才调教的杂鱼：${snapshot.activeGagSessions}/${GAG_SESSION_MAX}`,
-    `本群正赖着本天才翻译的杂鱼：${snapshot.activeTranslateSessions}/${TRANSLATE_CHAT_USER_LIMIT} 人♡`,
+    contextCapacityLine(snapshot.aiContextUsage),
+    `• 正在被本天才调教的杂鱼：${snapshot.activeGagSessions}/${GAG_SESSION_MAX}`,
+    `• 本群正赖着本天才翻译的杂鱼：${snapshot.activeTranslateSessions}/${TRANSLATE_CHAT_USER_LIMIT} 人♡`,
     "",
     "本天才在这个群的权柄："
   );
@@ -239,6 +269,7 @@ export async function handleBotStatusCommand(
     telegramCapacity: stats.capacity,
     activeGagSessions: activeGagSessionCount(),
     activeTranslateSessions: translateStates.get(ctx.chat.id)?.length ?? 0,
+    aiContextUsage: aiMemoryUsages.get(ctx.chat.id),
     processStatus: readBotProcessStatus(),
   });
   await sendCommandMessage({

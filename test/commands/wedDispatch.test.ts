@@ -21,10 +21,13 @@ const { bot } = await import("../../packages/infra/telegram/mainClient");
 const { telegramApiState } = await import("../../packages/cache/perThread/telegramApi");
 const { resetPendingMessageDeletions } = await import("../../packages/infra/telegram");
 const { getOrCreateWedChat } = await import("../../packages/commands/wed/chats");
+const { getOrCreateWedMemberState } = await import("../../packages/commands/wed/persistence");
 const { handleWedCommand, teardownWedInChat } = await import("../../packages/commands/wed");
 const { dispatchWedCallback, dispatchWedCommand } = await import("../../packages/commands/wed/dispatch");
 const { drainWedRuntime, initWedRuntime, submitWedTask } = await import("../../packages/commands/wed/runtime");
-const { WED_CHAT_CACHE_MAX_ENTRIES, WED_TEXTS, WED_MAX_CONCURRENT } = await import("../../packages/consts/wed");
+const { WED_CHAT_CACHE_MAX_ENTRIES, WED_TEXTS, WED_MAX_CONCURRENT, WED_MAX_PENDING } =
+  await import("../../packages/consts/wed");
+const { STATE_MANAGED_CHAT_LIMIT } = await import("../../packages/consts/storage");
 const chat = { id: -1001, type: "supergroup", title: "群" } as const;
 let nextMessageId: number = 100;
 const photo = mock(async (..._args: any[]): Promise<any> => {
@@ -34,6 +37,7 @@ const photo = mock(async (..._args: any[]): Promise<any> => {
 const answer = mock(async (..._args: any[]) => true);
 const edit = mock(async (..._args: any[]) => true);
 const remove = mock(async (..._args: any[]) => true);
+const send = mock(async (..._args: any[]): Promise<any> => ({ message_id: ++nextMessageId, chat, date: 1 }));
 
 function command(id: number): never {
   const from: User = { id, is_bot: false, first_name: `发起人${id}` };
@@ -53,11 +57,11 @@ beforeEach(() => {
   download = Promise.withResolvers<void>();
   upload = Promise.withResolvers<void>();
   nextMessageId = 100;
-  for (const fn of [avatar, photo, answer, edit, remove, logError]) fn.mockClear();
+  for (const fn of [avatar, photo, answer, edit, remove, send, logError]) fn.mockClear();
   Object.assign(bot.api, {
     getChatMember: async () => ({ status: "member", user: partner }),
     sendPhoto: photo, answerCallbackQuery: answer, editMessageMedia: edit, deleteMessage: remove,
-    sendMessage: async () => ({ message_id: ++nextMessageId, chat, date: 1 }),
+    sendMessage: send,
   });
   telegramApiState.current = bot.api as never;
 });
@@ -82,6 +86,60 @@ test("频道命令不创建群缓存或进入交互执行器", async () => {
   expect(wedRuntime.current!.tasks.size).toBe(0);
   expect(avatar).not.toHaveBeenCalled();
   expect(photo).not.toHaveBeenCalled();
+});
+
+test("执行槽与排队全满时命令回执 queueFull，不进入执行器", async () => {
+  const state = wedChats.get(chat.id)!;
+  const held = Promise.withResolvers<void>();
+  try {
+    for (let id = 0; id < WED_MAX_CONCURRENT + WED_MAX_PENDING; id++) submitWedTask(state, () => held.promise);
+    expect(wedRuntime.current!.runner.pendingCount).toBe(WED_MAX_PENDING);
+    await dispatchWedCommand(command(1));
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls.at(-1)![1]).toBe(WED_TEXTS.queueFull);
+    expect(avatar).not.toHaveBeenCalled();
+    expect(state.sessions.size).toBe(0);
+  } finally {
+    held.resolve();
+  }
+});
+
+test("成员表容量满时新群命令回执 full，不建立交互缓存", async () => {
+  wedChats.clear();
+  resetWedMemberStates();
+  for (let index = 0; index < STATE_MANAGED_CHAT_LIMIT; index++) {
+    expect(getOrCreateWedMemberState(-20_000 - index)).toBeDefined();
+  }
+  const other = { id: -1009, type: "supergroup", title: "新群" } as const;
+  const from: User = { id: 1, is_bot: false, first_name: "发起人1" };
+  const msg = { message_id: 1, chat: other, from, text: "/wed" };
+  await dispatchWedCommand({ chat: other, msg, from, msgId: 1, match: "" } as never);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls.at(-1)![1]).toBe(WED_TEXTS.full);
+  expect(wedChats.has(other.id)).toBeFalse();
+  expect(wedRuntime.current!.tasks.size).toBe(0);
+  expect(avatar).not.toHaveBeenCalled();
+});
+
+test("执行槽与排队全满时按钮回执 queueFull，不重新进入交互", async () => {
+  download.resolve();
+  upload.resolve();
+  await handleWedCommand(command(1));
+  const state = wedChats.get(chat.id)!;
+  const messageId = state.sessions.get(1)!.messageId;
+  const held = Promise.withResolvers<void>();
+  try {
+    for (let id = 0; id < WED_MAX_CONCURRENT + WED_MAX_PENDING; id++) submitWedTask(state, () => held.promise);
+    expect(await dispatchWedCallback({ callbackQuery: {
+      id: "queue-full-button", data: "wed:1:999:change", from: { id: 1 },
+      message: { message_id: messageId, chat, date: 1 },
+    } } as never)).toBe(true);
+    expect(answer.mock.calls.at(-1)![1].text).toBe(WED_TEXTS.queueFull);
+    expect(edit).not.toHaveBeenCalled();
+    expect(avatar).toHaveBeenCalledTimes(1);
+  } finally {
+    held.resolve();
+  }
 });
 
 test("真实 update runner 超过 /wed 并发上限后仍处理普通更新，查询和发图期间持续占槽", async () => {
@@ -129,7 +187,7 @@ test("群 teardown 取消在途交互与等待命令，迟到头像不能发图�
   await Bun.sleep(0);
   expect(avatar).toHaveBeenCalledTimes(WED_MAX_CONCURRENT);
   expect(wedRuntime.current!.runner.pendingCount).toBe(2);
-  await teardownWedInChat(chat.id);
+  await teardownWedInChat(chat.id, "lostAuthority");
   expect(wedRuntime.current!.runner.pendingCount).toBe(0);
   download.resolve();
   upload.resolve();

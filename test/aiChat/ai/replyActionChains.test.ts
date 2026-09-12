@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { waitUntil as pollUntil } from "../../helpers/waitUntil";
 import type { ReplyToolContext } from "../../../packages/types/aiChat/replies";
 import type { StickerPackCandidate } from "../../../packages/types/stickers/tools";
 import type { ChatActionHeartbeatControl } from "../../../packages/types/aiChat/chatAction";
@@ -90,9 +91,12 @@ function context(controller: AbortController = new AbortController()): ReplyTool
   };
 }
 
+/**
+ * 条件在预算内未成立就当场失败，而不是静默继续：条件没成立时后面 `await` 的
+ * 工具链结果永远不会到来，静默继续等于挂死。
+ */
 async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let attempt: number = 0; attempt < 100 && !predicate(); attempt++) await Bun.sleep(1);
-  expect(predicate()).toBe(true);
+  expect(await pollUntil(predicate)).toBe(true);
 }
 
 beforeEach(() => {

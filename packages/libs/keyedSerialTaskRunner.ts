@@ -7,7 +7,7 @@
  *
  * prev.then(task, task) 让上一项失败或成功都能推进链。这里刻意没有全局
  * onError——现有调用方（
- * workers/antiRaid/lockdownRuntime.ts 的 runLockdownApiCall、
+ * workers/antiRaid/lockdownApi.ts 的 runLockdownApiCall、
  * workers/aiChat/compaction.ts 的 scheduleRotation）的 task 自身都已经
  * try/catch 到底、从不真正 reject，若换成全局 onError 反而会丢失各自的
  * 错误上下文（哪个 chatId、在做哪一步）。

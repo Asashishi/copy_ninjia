@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { aiChatWorkerAbortController } from "../../../../packages/cache/workers/aiChat/worker";
 import type { AiTextResult } from "../../../../packages/types/aiChat/provider";
 
 function generatedText(text: string): AiTextResult {
@@ -90,6 +91,58 @@ function sticker(fileUniqueId: string, emoji: string): any {
 function persisted(pack: string, entries: Record<string, { emoji: string; description: string }>, summary: string | null = null): Map<string, string> {
   return new Map([[pack, JSON.stringify({ version: 1, entries, summary, savedAt: 0 })]]);
 }
+
+test.each(["complete", "removed", "abort"] as const)("部分目录已有简介时到期维护补缺，结果=%s", async (outcome) => {
+  const pack: string = `partial_${outcome}`;
+  const good: string = `${pack}_good`;
+  const bad: string = `${pack}_bad`;
+  let now: number = 1_800_000_000_000;
+  const clock = spyOn(Date, "now").mockImplementation((): number => now);
+  const previous: AbortController = aiChatWorkerAbortController.current;
+  const controller: AbortController = new AbortController();
+  aiChatWorkerAbortController.current = controller;
+  stickerCatalogRetryState.lastAttemptAt = 0;
+  try {
+    getStickerSetMock.mockResolvedValue({ title: pack, stickers: [sticker(good, "👍"), sticker(bad, "👎")] });
+    describeMediaForStickerCatalogMock.mockResolvedValueOnce(generatedText("成功项")).mockResolvedValueOnce(requestFailure);
+    await generatePackCatalog(pack);
+    expect(getPackSummary(pack)).toBe("一包默认简介");
+    const retryAt: number = failedEntries.get(pack)!.get(bad)!;
+    now = retryAt - 1;
+    retryIncompleteStickerCatalogs([pack], now);
+    await drainStickerCatalogTasks();
+    expect(getStickerSetMock).toHaveBeenCalledTimes(1);
+    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(2);
+    now = retryAt;
+    const result = Promise.withResolvers<AiTextResult>();
+    if (outcome === "removed") getStickerSetMock.mockResolvedValue({ title: pack, stickers: [sticker(good, "👍")] });
+    else describeMediaForStickerCatalogMock.mockImplementationOnce((): Promise<AiTextResult> => result.promise);
+    retryIncompleteStickerCatalogs([pack], now);
+    retryIncompleteStickerCatalogs([pack], now + STICKER_CATALOG_RETRY_INTERVAL_MS);
+    await Promise.resolve();
+    if (outcome === "abort") controller.abort();
+    result.resolve(generatedText("补齐项"));
+    await drainStickerCatalogTasks();
+    expect(getStickerSetMock).toHaveBeenCalledTimes(2);
+    expect(generatingPacks.has(pack)).toBe(false);
+    expect(getCatalogEntry(good)?.description).toBe("成功项");
+    if (outcome === "complete") {
+      expect(getCatalogEntry(bad)?.description).toBe("补齐项");
+      expect(failedEntries.has(pack)).toBe(false);
+      now += STICKER_CATALOG_RETRY_INTERVAL_MS * 2;
+      retryIncompleteStickerCatalogs([pack], now);
+      await drainStickerCatalogTasks();
+      expect(getStickerSetMock).toHaveBeenCalledTimes(2);
+      expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(3);
+    } else {
+      expect(getCatalogEntry(bad)).toBeUndefined();
+      if (outcome === "removed") expect(failedEntries.has(pack)).toBe(false);
+    }
+  } finally {
+    clock.mockRestore();
+    aiChatWorkerAbortController.current = previous;
+  }
+});
 
 describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   test("停机排空等待后台目录任务结算，不会在最终快照之后继续改写", async () => {

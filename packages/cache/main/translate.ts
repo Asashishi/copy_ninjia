@@ -1,6 +1,13 @@
 import type { v3 as GoogleTranslate } from "@google-cloud/translate";
+import type { GoogleServiceAccountKey } from "../../types/config";
 
-/** Google 翻译客户端（packages/translate/client.ts）的进程内运行态。 */
+/** owner：main。Google 翻译客户端与进程级凭据快照。 */
+
+/**
+ * owner：main。启动总闸严格解析后发布唯一凭据快照；缺省为 null，
+ * closeTranslate 不清除，进程重启重新读取；Worker 不引入，容量为一份部署配置。
+ */
+export const googleServiceAccountKey: { current: GoogleServiceAccountKey | null } = { current: null };
 
 interface TranslateRuntime {
   client: GoogleTranslate.TranslationServiceClient | null;

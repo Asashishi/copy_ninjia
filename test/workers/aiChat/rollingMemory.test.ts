@@ -119,6 +119,9 @@ describe("AI rolling-memory capacity", () => {
       chatId: -1001,
       snapshot: expect.any(String),
       persistImmediately: true,
+      // 主线程展示 `/bot_status` 的上下文容量只认这两个计数，快照 JSON 不在
+      // 主线程解析（见 cache/main/aiChat.ts 的 aiMemoryUsages）。
+      usage: { bufferedCount: 1, summaryCount: 0 },
     });
     expect(chatBuffers.get(-1001)?.size).toBe(1);
     expect(dirtyMemoryChats.has(-1001)).toBeFalse();

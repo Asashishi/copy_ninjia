@@ -120,7 +120,7 @@ describe("AI main-thread proxy with unavailable agent config", () => {
   test("停机 flush 直接结算成 flushed，不因线程没起而卡住预算", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
-    await expect(aiChat.flushAiMemory(50)).resolves.toBe("flushed");
+    await expect(aiChat.flushAiMemory(1_000)).resolves.toBe("flushed");
     await expect(aiChat.terminateAiChat()).resolves.toBeUndefined();
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isTimeoutAbort,
   raceAbort,
   raceAbortOrThrow,
   signalWithTimeout,
@@ -29,6 +30,28 @@ describe("AbortSignal 组合", () => {
     expect(first.reason).toBeInstanceOf(DOMException);
     expect(first.reason.name).toBe("TimeoutError");
     expect(second.aborted).toBeFalse();
+  });
+
+  test("isTimeoutAbort 只认预算耗尽，调用方取消与未中止都为假", async () => {
+    const controller: AbortController = new AbortController();
+    const live: AbortSignal = signalWithTimeout(controller.signal, 60_000);
+    expect(isTimeoutAbort(live)).toBeFalse();
+
+    controller.abort();
+    expect(controller.signal.reason).toBeInstanceOf(DOMException);
+    expect(controller.signal.reason.name).toBe("AbortError");
+    expect(isTimeoutAbort(controller.signal)).toBeFalse();
+    // 组合信号按实际触发源判定：这里先到的是调用方取消。
+    expect(live.aborted).toBeTrue();
+    expect(isTimeoutAbort(live)).toBeFalse();
+
+    const budget: AbortSignal = AbortSignal.timeout(1);
+    const combined: AbortSignal = signalWithTimeout(new AbortController().signal, 1);
+    await new Promise<void>((resolve: () => void): void => {
+      combined.addEventListener("abort", resolve, { once: true });
+    });
+    expect(isTimeoutAbort(budget)).toBeTrue();
+    expect(isTimeoutAbort(combined)).toBeTrue();
   });
 });
 

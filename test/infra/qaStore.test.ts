@@ -31,6 +31,7 @@ const {
   chatQaCount,
   getChatQa,
   hydrateChatQaCache,
+  removeAllChatQa,
   removeChatQa,
   setChatQa,
 } = await import("../../packages/infra/qaStore");
@@ -86,6 +87,28 @@ describe("群问答主线程持久化边界", () => {
     // 空表不留存，否则直答路径第一步的 get(chatId) 再也不能靠 undefined 短路。
     expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
     expect(getChatQa(CHAT_ID)).toBeUndefined();
+  });
+
+  test("整群删除逐条发墓碑并把该群从热表移除；没登记过的群零投递", () => {
+    setChatQa(CHAT_ID, "怎么入群？", "点置顶");
+    setChatQa(CHAT_ID, "在哪充值？", "不充");
+    setChatQa(-2002, "别的群？", "不动它");
+    posted.length = 0;
+
+    expect(removeAllChatQa(CHAT_ID)).toBe(2);
+
+    expect(posted).toHaveLength(2);
+    for (const message of posted) {
+      expect(message).toMatchObject({ type: "chatQaWrite", chatId: CHAT_ID, data: null });
+    }
+    expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
+    expect(getChatQa(CHAT_ID)).toBeUndefined();
+    // 只删这一个群。
+    expect(getChatQa(-2002)?.get("别的群？")).toBe("不动它");
+
+    posted.length = 0;
+    expect(removeAllChatQa(CHAT_ID)).toBe(0);
+    expect(posted).toHaveLength(0);
   });
 
   test("精确 ACK 只清对应 revision，迟到的 ACK 不清更新的写", () => {

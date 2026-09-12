@@ -142,7 +142,7 @@ export function flushOverflowNotice(chatId: number): void {
 /**
  * 按 FIFO 逐个调用启动回调；回调同步占用模型并发位并预留发送顺位后，
  * 立即移除待处理项，再按剩余模型位派发下一项，不等待发送链的结果。
- * 启动被限频拒绝时保留队首并停止派发；取消与收尾由轮次的代际任务持有。
+ * 启动被容量或限频拒绝时保留队首并停止派发；取消与收尾由轮次的代际任务持有。
  * 具体生命周期约束见 docs/cn/04-invariants.md。
  */
 export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: QueuedReplyTrigger) => boolean): void {

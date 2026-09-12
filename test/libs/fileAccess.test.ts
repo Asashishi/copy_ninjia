@@ -10,13 +10,16 @@
  * （以 root 跑时 chmod 0 仍然可读写，那种夹具在 CI 与本机会给出不同结论）。
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertDirectoryReadableWritable,
   assertFileReadableWritable,
+  inspectOptionalDirectory,
+  inspectOptionalFile,
 } from "../../packages/libs/fileAccess";
 import { InputValidationError } from "../../packages/libs/inputValidation";
 
@@ -35,6 +38,90 @@ afterEach(() => {
 });
 
 describe("持久化路径的启动权限检查", () => {
+  test("文件在可选检查与权限复核之间变得不可访问时仍返回安全输入错误", async () => {
+    const root: string = tempRoot();
+    const path: string = join(root, "state.json");
+    await Bun.write(path, "{}");
+    const parent = fs.lstatSync(root);
+    const file = fs.lstatSync(path);
+    const stat = spyOn(fs, "lstatSync")
+      .mockReturnValueOnce(parent)
+      .mockReturnValueOnce(file)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("private_marker"), { code: "EACCES" });
+      });
+    try {
+      expect(() => inspectOptionalFile(path)).toThrow(
+        `${path}: $type must be an accessible filesystem entry.`
+      );
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
+  test.each(["directory", "file"])("%s 的 EACCES 拒绝且不泄露底层错误", async (kind) => {
+    const root: string = tempRoot();
+    const path: string = kind === "file" ? join(root, "state.json") : root;
+    if (kind === "file") await Bun.write(path, "{}");
+    const originalAccess = fs.accessSync;
+    const access = spyOn(fs, "accessSync").mockImplementation((target, mode) => {
+      if (target === path) throw Object.assign(new Error("private_marker"), { code: "EACCES" });
+      originalAccess(target, mode);
+    });
+    try {
+      const inspect = (): boolean => kind === "file" ? inspectOptionalFile(path) : inspectOptionalDirectory(path);
+      expect(inspect).toThrow(InputValidationError);
+      expect(inspect).toThrow(`${path}: $mode must be `);
+      expect(inspect).not.toThrow("private_marker");
+    } finally {
+      access.mockRestore();
+    }
+  });
+
+  test("目录 stat 的 EACCES 不能被视为缺省", () => {
+    const root: string = tempRoot();
+    const stat = spyOn(fs, "lstatSync").mockImplementation(() => {
+      throw Object.assign(new Error("private_marker"), { code: "EACCES" });
+    });
+    try {
+      expect(() => inspectOptionalDirectory(root)).toThrow(
+        `${root}: $type must be an accessible filesystem entry.`
+      );
+    } finally {
+      stat.mockRestore();
+    }
+  });
+
+  test("可选输入只有真正缺省才返回 false，缺省检查不创建目录", () => {
+    const root: string = tempRoot();
+    expect(inspectOptionalDirectory(join(root, "missing", "nested"))).toBe(false);
+    expect(inspectOptionalFile(join(root, "missing", "nested", "state.json"))).toBe(false);
+    expect(inspectOptionalDirectory(join(root, "missing"))).toBe(false);
+  });
+
+  test.each(["dangling", "loop", "file"])("缺省文件的祖先为 %s 时拒绝，不能被 ENOENT 掩盖", async (kind) => {
+    const root: string = tempRoot();
+    const ancestor: string = join(root, "memory");
+    if (kind === "file") await Bun.write(ancestor, "private_marker");
+    else symlinkSync(kind === "loop" ? ancestor : join(root, "missing"), ancestor);
+    const leaf: string = join(ancestor, "domain", "state.json");
+    expect(() => inspectOptionalFile(leaf)).toThrow(InputValidationError);
+    expect(() => inspectOptionalDirectory(join(ancestor, "domain"))).toThrow(InputValidationError);
+  });
+
+  test("有效的领域目录链接沿用目录语义，叶子文件链接仍拒绝", async () => {
+    const root: string = tempRoot();
+    const actual: string = join(root, "actual");
+    const linked: string = join(root, "linked");
+    mkdirSync(actual);
+    symlinkSync(actual, linked);
+    await Bun.write(join(actual, "state.json"), "{}");
+    expect(inspectOptionalDirectory(linked)).toBe(true);
+    expect(inspectOptionalFile(join(linked, "state.json"))).toBe(true);
+    symlinkSync(join(actual, "state.json"), join(root, "state.json"));
+    expect(() => inspectOptionalFile(join(root, "state.json"))).toThrow(InputValidationError);
+  });
+
   test("可读写的既有文件通过，不改动权限位", async () => {
     const root: string = tempRoot();
     const path: string = join(root, "state.json");

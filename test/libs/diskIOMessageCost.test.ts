@@ -127,6 +127,11 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     payloadBytes: 4 * 8,
     business: true,
   },
+  deleteWedMembers: {
+    message: { type: "deleteWedMembers", chatId: -1001, revision: 1 },
+    payloadBytes: 0,
+    business: true,
+  },
   blocklistRemovals: {
     message: BLOCKLIST_REMOVALS,
     payloadBytes: serializedBytes(BLOCKLIST_REMOVALS) * 2,
@@ -160,6 +165,11 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
       joinedAt: 1_700_000_000_000,
       day: "2026-09-07",
     },
+    payloadBytes: 0,
+    business: true,
+  },
+  deleteJoinLog: {
+    message: { type: "deleteJoinLog", chatId: -1001 },
     payloadBytes: 0,
     business: true,
   },
@@ -245,8 +255,9 @@ describe("Disk I/O 消息计价", () => {
       .sort();
     expect(business).toEqual([
       "aiMemory", "blocklistRemovals", "chatQaWrite", "chatStateWrite", "deleteAiMemory",
-      "forgetAiMemory", "identityPolicyWrite", "joinLog", "luckDraw", "stickerCatalog",
-      "temporaryWhitelistWrite", "verificationDelete", "verificationUpsert", "wedMembers",
+      "deleteJoinLog", "deleteWedMembers", "forgetAiMemory", "identityPolicyWrite", "joinLog",
+      "luckDraw", "stickerCatalog", "temporaryWhitelistWrite", "verificationDelete",
+      "verificationUpsert", "wedMembers",
     ]);
   });
 

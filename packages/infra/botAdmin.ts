@@ -7,7 +7,7 @@ import {
   getChatState,
   getOrCreateChatState,
   persistChatState,
-  pruneDepartedChatState,
+  purgeChatStateExceptLockdown,
   saveChatStateInBackground,
 } from "./storage/stateStore";
 import {
@@ -156,13 +156,17 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   if (update.new_chat_member.status === "left" || update.new_chat_member.status === "kicked") {
     // 人都不在这个群了，权限位当场作废；重新入群走按需现查重建。
     forgetBotChatPermissions(update.chat.id);
+    // 起因是 `departed` 而不是 `lostAuthority`：人已经不在这个群里，本群的
+    // AI 记忆、`/wed` 成员集合、入群日志与问答一并删除（见 libs/chatTeardown.ts
+    // 的 purgesChatData）。只是被撤管理员的那一路仍走 lostAuthority，一条数据
+    // 都不动——权限随时可能加回来。
     await completeAfterTeardown(
-      teardownChatRuntime(update.chat.id, "lostAuthority"),
+      teardownChatRuntime(update.chat.id, "departed"),
       async (): Promise<void> => {
         // 普通配置删除；若 lockdown 尚未恢复则保留 write-ahead owner，避免群权限
         // 因退群而永久卡住。重新入群后 initAntiRaid/Worker 重建会继续接管。
         forgetChatBlocklistWork(update.chat.id);
-        pruneDepartedChatState(update.chat.id);
+        purgeChatStateExceptLockdown(update.chat.id);
         await persistChatState(
           update.chat.id,
           `chat ${update.chat.id} state pruned after bot left/kicked`

@@ -20,6 +20,20 @@ export function signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: nu
   return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
 }
 
+/**
+ * 判定一个 signal 的中止是否来自**本次调用的超时预算**耗尽。
+ *
+ * 用来把「预算用完」与「群 teardown、停机取消」分开：前者是普通业务失败，调用方
+ * 可以照常给用户回执；后者必须静默收场。判据是 `AbortSignal.timeout` 的取消原因为
+ * name 是 `"TimeoutError"` 的 `DOMException`，而 `AbortController.abort()` 无参时给
+ * 的是 `AbortError`。`AbortSignal.any` 原样透传首个触发源的 reason，signalWithTimeout
+ * 合成出来的信号因此同样可判；未中止的 signal 一律为 false。
+ */
+export function isTimeoutAbort(signal: AbortSignal): boolean {
+  const reason: unknown = signal.reason as unknown;
+  return reason instanceof DOMException && reason.name === "TimeoutError";
+}
+
 /** 取消原因必须以 Error 传播；标准 AbortController 的 DOMException 原样保留。 */
 function abortSignalError(signal: AbortSignal): Error {
   const reason: unknown = signal.reason as unknown;
