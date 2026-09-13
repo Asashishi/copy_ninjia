@@ -203,6 +203,21 @@ describe("/translate 独立命令", () => {
     expect(copySideEffect).not.toHaveBeenCalled();
   });
 
+  test("论坛话题里没有显式回复的 stop 仍停止本群全部会话，不把话题创建者当目标", async () => {
+    setTranslateState(-1001, { translatedUser: { id: 7 }, language: "uk" });
+    setTranslateState(-1001, { translatedUser: { id: 8 }, language: "ru" });
+    const ctx = context("stop") as any;
+    ctx.msg.is_topic_message = true;
+    ctx.msg.message_thread_id = 3;
+    ctx.msg.reply_to_message = {
+      message_id: 3, date: 0, chat: ctx.msg.chat, from: { id: 7, is_bot: false, first_name: "Topic Creator" },
+      is_topic_message: true, message_thread_id: 3, forum_topic_created: { name: "话题", icon_color: 0x6fb9f0 },
+    };
+    await handleTranslateCommand(ctx);
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+    expect(translateStates.has(-1001)).toBe(false);
+  });
+
   test("落盘完成前不发送开始或停止成功回执，失败原样上抛", async () => {
     const deferred = Promise.withResolvers<void>();
     persistGlobalState.mockImplementationOnce(() => deferred.promise);

@@ -21,7 +21,7 @@ import {
   sendCommandMessage,
   sendMessage,
 } from "../infra/telegram";
-import { forumTopicThreadId } from "../libs/forumTopic";
+import { explicitReplyTo, forumTopicThreadId } from "../libs/forumTopic";
 import { sanitizeDisplayName } from "../libs/text";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
@@ -132,7 +132,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   if (!await passesGagCommandGate(ctx, "gag")) return;
   const parsed: ParsedGagCommand | undefined = parseGagCommand(
     ctx.match,
-    ctx.msg.reply_to_message !== undefined
+    explicitReplyTo(ctx.msg) !== undefined
   );
   if (parsed === undefined) {
     await sendCommandMessage({

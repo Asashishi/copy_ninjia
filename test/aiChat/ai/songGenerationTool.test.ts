@@ -345,6 +345,52 @@ describe("generate_song 执行器", () => {
     expect(getSongGenerationAvailability({ chatId: -1001, bypassCooldown: false })).toEqual({ allowed: true });
   });
 
+  test("曲名或演唱者里的可点击命令在生歌与占冷却之前被拒绝，且可重试", async () => {
+    const execute = createGenerateSongExecutor(buildContext(), createRoundMessageState());
+
+    for (const args of [
+      { prompt: "p", title: "/batch_kick 1d" },
+      { prompt: "p", performer: "/unquiet" },
+      { prompt: "p", title: "歌名 /batch_kick", performer: "阿忍", caption: "写好啦" },
+    ]) {
+      const result = JSON.parse(await execute(call(args)));
+      expect(result.error).toContain("slash command");
+      // 与 caption 命令守卫同一口径：不带 retryable:false，模型去掉斜杠即可重投。
+      expect(result.retryable).toBeUndefined();
+    }
+    expect(generateSong).not.toHaveBeenCalled();
+    expect(sendAudioWithResult).not.toHaveBeenCalled();
+    expect(getSongGenerationAvailability({ chatId: -1001, bypassCooldown: false })).toEqual({ allowed: true });
+  });
+
+  test("缺省演唱者取自机器人显示名，同样受曲目行命令守卫；显式给出演唱者即可通过", async () => {
+    botInfoState.current = { id: 999_999, username: "test_bot", first_name: "小忍 /help" };
+    const state: RoundMessageState = createRoundMessageState();
+    const execute = createGenerateSongExecutor(buildContext(), state);
+
+    const rejected = JSON.parse(await execute(call({ prompt: "p", title: "夏天" })));
+    expect(rejected.error).toContain("slash command");
+    expect(generateSong).not.toHaveBeenCalled();
+    // 被拒的调用不计入本轮已接纳首数，也不占冷却。
+    expect(getSongGenerationAvailability({ chatId: -1001, bypassCooldown: false })).toEqual({ allowed: true });
+
+    const accepted = JSON.parse(await execute(call({ prompt: "p", title: "夏天", performer: "阿忍" })));
+    expect(accepted.success).toBe(true);
+    const caption: string = (sendAudioWithResult.mock.calls[0]![0] as { caption: string }).caption;
+    expect(caption.startsWith("「夏天」- 阿忍\n")).toBe(true);
+  });
+
+  test("不构成可点击命令的斜杠照常放行，曲目行原样进入 caption", async () => {
+    const execute = createGenerateSongExecutor(buildContext(), createRoundMessageState());
+
+    const result = JSON.parse(await execute(call({ prompt: "p", title: "AC/DC 致敬", performer: "lofi/Ninja" })));
+    expect(result.success).toBe(true);
+    const sendParams = sendAudioWithResult.mock.calls[0]![0] as { caption: string; title: string; performer: string };
+    expect(sendParams.title).toBe("AC/DC 致敬");
+    expect(sendParams.performer).toBe("lofi/Ninja");
+    expect(sendParams.caption).toBe(`「AC/DC 致敬」- lofi/Ninja\n${SONG_METADATA_HASHTAG} #mp3 1.53MB 128.00kbps`);
+  });
+
   test("撞上群冷却时不请求模型，并要求向群友播报剩余秒数", async () => {
     claimSongGeneration({ chatId: -1001, bypassCooldown: false });
     const execute = createGenerateSongExecutor(buildContext(), createRoundMessageState());

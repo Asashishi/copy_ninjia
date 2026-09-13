@@ -658,23 +658,84 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     expect(pendingAdMessages.size).toBe(0);
   });
 
-  test("墙钟回拨时处置抑制强制失效，不拉长成「回拨幅度 + 窗口」", () => {
+  test("处置抑制按单调时钟到期，不受墙钟回拨影响", () => {
     recentlyDisposedAdKeys.set("-1001:9", 10_000);
-
-    // NTP 把钟往回拨。按失效时刻比较的话这条记录会多活「回拨幅度 + 90 秒」，
-    // 期间这个人的消息一律 ignore，判定对他静默停摆。
-    expireAdDetectDisposalMarkers(9_000);
-
-    expect(recentlyDisposedAdKeys.has("-1001:9")).toBe(false);
+    const wall = spyOn(Date, "now").mockReturnValue(9_000);
+    const monotonic = spyOn(performance, "now").mockReturnValue(10_001);
+    try {
+      expireAdDetectDisposalMarkers();
+      expect(recentlyDisposedAdKeys.has("-1001:9")).toBeTrue();
+      monotonic.mockReturnValue(100_000);
+      expireAdDetectDisposalMarkers();
+      expect(recentlyDisposedAdKeys.has("-1001:9")).toBeFalse();
+    } finally {
+      monotonic.mockRestore();
+      wall.mockRestore();
+    }
   });
 
-  test("回拨后处置抑制立即解除，同一个人的新消息照常收下", () => {
+  test("抑制窗口到期后，同一个人的新消息照常收下", () => {
     recentlyDisposedAdKeys.set("-1001:7", 10_000);
+    const monotonic = spyOn(performance, "now").mockReturnValue(100_000);
+    try {
+      enqueueAdCandidate(candidate({ messageId: 1, text: "换个号继续" }), 9_000);
+      expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(false);
+      expect(pendingAdMessages.has("-1001:7")).toBe(true);
+    } finally {
+      monotonic.mockRestore();
+    }
+  });
 
-    enqueueAdCandidate(candidate({ messageId: 1, text: "换个号继续" }), 9_000);
+  test("处置前已观测、仍在 mailbox 的消息照常被抑制", async () => {
+    const observedAt: number = 1_700_000_000_000;
+    const first: AdCandidateMessage = candidate({ messageId: 1, text: "USDT 承兑加我", observedAt });
+    const merged: AdCandidateMessage = candidate({ messageId: 2, text: "微信同号", observedAt: observedAt + 500 });
+    const queued: AdCandidateMessage = candidate({ messageId: 3, text: "私聊", observedAt: observedAt + 800 });
+    let release!: (verdict: AdVerdict) => void;
+    classifyAdText.mockImplementationOnce((): Promise<AdVerdict> => new Promise<AdVerdict>((resolve) => {
+      release = resolve;
+    }));
+    enqueueAdCandidate(first);
+    const running: Promise<void> = runAdDetectBatch(observedAt);
+    enqueueAdCandidate(merged);
 
-    expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(false);
-    expect(pendingAdMessages.has("-1001:7")).toBe(true);
+    const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now").mockReturnValue(observedAt + 5_000);
+    const monotonic = spyOn(performance, "now").mockReturnValue(10_000);
+    try {
+      release({ isAd: true, reason: "引流" });
+      await running;
+      expect(disposeAdSender).toHaveBeenCalledTimes(1);
+      expect(recentlyDisposedAdKeys.get("-1001:7")).toBe(10_000);
+
+      enqueueAdCandidate(queued);
+    } finally {
+      nowSpy.mockRestore();
+      monotonic.mockRestore();
+    }
+
+    expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(true);
+    expect(pendingAdMessages.has("-1001:7")).toBe(false);
+    expect(adDetectQueue.size).toBe(0);
+  });
+
+  test("消息排队超过 90 秒后完成处置，仍保留完整抑制窗口", async () => {
+    const observedAt: number = 1_700_000_000_000;
+    enqueueAdCandidate(candidate({ messageId: 1, observedAt }));
+    classifyAdText.mockResolvedValueOnce({ isAd: true, reason: "引流" });
+    const wall = spyOn(Date, "now").mockReturnValue(observedAt + 120_000);
+    const monotonic = spyOn(performance, "now").mockReturnValue(200_000);
+    try {
+      await runAdDetectBatch(observedAt + 120_000);
+      expect(disposeAdSender).toHaveBeenCalledTimes(1);
+      monotonic.mockReturnValue(200_001);
+      enqueueAdCandidate(candidate({ messageId: 2, observedAt: observedAt + 120_001 }));
+      expect(recentlyDisposedAdKeys.has("-1001:7")).toBeTrue();
+      expect(pendingAdMessages.has("-1001:7")).toBeFalse();
+      expect(adDetectQueue.size).toBe(0);
+    } finally {
+      monotonic.mockRestore();
+      wall.mockRestore();
+    }
   });
 
   test("sweep 补排失去调度位置的未判消息串，接手旧窗口轮换的自愈职责", () => {
@@ -707,7 +768,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   test("处置去重表撞顶时淘汰最早处置的键，不无限增长", async () => {
     // 这张表只由处置路径写入，没有任何入口闸替它把关；节拍停掉或处置快过回收
     // 时它是整条流水线里唯一一张会无限长的表。
-    const disposedAt: number = Date.now();
+    const disposedAt: number = performance.now();
     for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS; index++) {
       recentlyDisposedAdKeys.set(`-1002:${index}`, disposedAt);
     }

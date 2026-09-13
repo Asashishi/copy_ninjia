@@ -1,4 +1,6 @@
 import type { PendingRemovalWrite } from "../../../types/identityStorage";
+import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../../consts/antiRaid/blocklist";
+import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import { storagePendingBudget } from "../../../cache/workers/diskIO/storageDatabase";
 import { storageWriteCost } from "../../../libs/storageWriteBudget";
 import {
@@ -59,6 +61,12 @@ export function handlePendingRemovalSnapshot(
     throw new Error("Pending removal snapshot revision must be a positive safe integer.");
   }
   if (message.revision <= latestRemovalSnapshotRevision.current) return;
+  if (message.removals.length > BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES) {
+    throw new Error(
+      `${IDENTITY_DATABASE_PATH}:pending_blocked_removals: ` +
+      `expected at most ${BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES} rows.`
+    );
+  }
   const next: Map<number, EncodedPendingRemovalRow> = new Map();
   for (const [removalId, raw] of message.removals) {
     if (next.has(removalId)) {

@@ -326,7 +326,7 @@ describe("AI 缓存发送者 username 传递", () => {
       fileUniqueId: "photo-unique",
       width: 640,
       height: 480,
-      commentOnResolve: false,
+      replyTelegramBackpressured: undefined,
       stickerFallbackText: undefined,
       voiceMime: undefined,
       voiceDurationSeconds: 0,

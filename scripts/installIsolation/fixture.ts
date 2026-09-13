@@ -14,6 +14,8 @@ const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 const INSTALL_SCRIPT_PATH: string = join(PROJECT_ROOT, "install.sh");
 const CONFIG_EXAMPLE_ROOT: string = join(PROJECT_ROOT, "config_example");
 const REAL_BUN_PATH: string = Bun.argv[0]!;
+/** 替身 bun 解析数据根时直接加载的生产路径模块。 */
+const PATHS_MODULE_PATH: string = join(PROJECT_ROOT, "packages", "consts", "paths.ts");
 
 export interface InstallerFixture {
   readonly realRuntime: boolean;
@@ -102,6 +104,7 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "  exec \"$REAL_BUN_PATH\" \"$@\"",
     "fi",
     "if [[ \"$inline_source\" == *\"RestartUSec must\"* ]]; then exec \"$REAL_BUN_PATH\" \"$@\"; fi",
+    "if [[ \"$inline_source\" == *\"systemd Environment property\"* ]]; then exec \"$REAL_BUN_PATH\" \"$@\"; fi",
     "if [[ \"$inline_source\" == *\"invalid agent config field stream\"* ]]; then",
     "  secret_env_state generator",
     "  exec \"$REAL_BUN_PATH\" \"$@\"",
@@ -126,8 +129,7 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "  exit 0",
     "fi",
     "if [[ \"$inline_source\" == *\"RUNTIME_DATA_ROOT\"* ]]; then",
-    "  printf '%s' \"$FAKE_RUNTIME_ROOT\"",
-    "  exit 0",
+    "  exec \"$REAL_BUN_PATH\" -e 'const paths = await import(Bun.argv[1]); await Bun.write(Bun.stdout, paths.RUNTIME_DATA_ROOT);' \"$FAKE_PATHS_MODULE\"",
     "fi",
     "if [[ \"$inline_source\" == *\"validateExistingDeploymentInputs\"* ]]; then",
     "  secret_env_state validation",
@@ -173,12 +175,13 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
     "    shift",
     "    exec \"$FAKE_BIN_ROOT/$guarded_command\" \"$@\"",
     "    ;;",
-    "  chown)",
+    "  chown|chmod)",
+    "    privileged_command=\"$1\"",
     "    target_path=\"${@: -1}\"",
     "    case \"$target_path\" in",
     "      \"$FAKE_WORKTREE\"/config/.telegram.json.install.*)",
     "        shift",
-    "        exec /bin/chown \"$@\"",
+    "        exec \"/bin/$privileged_command\" \"$@\"",
     "        ;;",
     "    esac",
     "    ;;",
@@ -216,7 +219,7 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
     "set -Eeuo pipefail",
     "printf 'systemctl:guarded:%s\\n' \"$*\" >> \"$FAKE_OUTBOUND_LOG\"",
     "[ \"${FAKE_SYSTEMCTL_FAIL:-0}\" = 1 ] && exit 46",
-    "case \"${1:-}\" in start|restart) : > \"$FAKE_RUNTIME_ROOT/service-started\" ;; esac",
+    "case \"${1:-}\" in start|restart) rm -f -- \"$FAKE_RUNTIME_ROOT/service-observed\"; : > \"$FAKE_RUNTIME_ROOT/service-started\" ;; esac",
     "[ \"${1:-}\" != daemon-reload ] || : > \"$FAKE_BIN_ROOT/service-loaded\"",
     "if [ \"$FAKE_REAL_RUNTIME\" = \"1\" ]; then",
     "  case \"${1:-}\" in start|restart) exec \"$FAKE_BIN_ROOT/bun\" run start ;; esac",
@@ -231,8 +234,13 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
     "    *LoadState*) if [ -e \"$FAKE_BIN_ROOT/service-loaded\" ]; then printf 'loaded\\n'; else printf '%s\\n' \"${FAKE_SERVICE_LOAD_STATE-loaded}\"; fi ;;",
     "    *ActiveState*) if [ -e \"$FAKE_RUNTIME_ROOT/service-started\" ]; then printf '%s\\n' \"${FAKE_STARTED_STATE-active}\"; else printf '%s\\n' \"${FAKE_SERVICE_STATE-inactive}\"; fi ;;",
     "    *SubState*) if [ -e \"$FAKE_RUNTIME_ROOT/service-started\" ]; then printf 'running\\n'; else printf 'dead\\n'; fi ;;",
+    "    *EnvironmentFiles*) printf '%s\\n' \"${FAKE_SERVICE_ENVIRONMENT_FILES-}\" ;;",
+    "    *PassEnvironment*) printf '%s\\n' \"${FAKE_SERVICE_PASS_ENVIRONMENT-}\" ;;",
+    "    *UnsetEnvironment*) printf '%s\\n' \"${FAKE_SERVICE_UNSET_ENVIRONMENT-}\" ;;",
+    "    *Environment*) printf '%s\\n' \"${FAKE_SERVICE_ENVIRONMENT-COPY_NINJIA_DATA_ROOT=$FAKE_RUNTIME_ROOT}\" ;;",
     "    *NRestarts*)",
-    "      if [ -e \"$FAKE_RUNTIME_ROOT/service-started\" ]; then printf '%s\\n' \"${FAKE_RESTARTS_AFTER-0}\";",
+    "      if [ -e \"$FAKE_RUNTIME_ROOT/service-observed\" ]; then printf '%s\\n' \"${FAKE_RESTARTS_AFTER-${FAKE_RESTARTS_STARTED-0}}\";",
+    "      elif [ -e \"$FAKE_RUNTIME_ROOT/service-started\" ]; then printf '%s\\n' \"${FAKE_RESTARTS_STARTED-0}\";",
     "      elif [ \"${FAKE_SERVICE_LOAD_STATE-loaded}\" = not-found ] && [ ! -e \"$FAKE_BIN_ROOT/service-loaded\" ]; then printf '\\n';",
     "      else printf '%s\\n' \"${FAKE_RESTARTS_BEFORE-0}\"; fi ;;",
     "    *WorkingDirectory*) printf '%s\\n' \"${FAKE_SERVICE_WORKDIR-$FAKE_WORKTREE}\" ;;",
@@ -260,6 +268,7 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
   await executable(join(fixture.binRoot, "sleep"), [
     "#!/usr/bin/env bash",
     "printf 'sleep:guarded:%s\\n' \"$*\" >> \"$FAKE_OUTBOUND_LOG\"",
+    ": > \"$FAKE_RUNTIME_ROOT/service-observed\"",
   ]);
 }
 
@@ -325,11 +334,12 @@ export async function createFixture(realRuntime: boolean = false): Promise<Insta
   return fixture;
 }
 
+/** 夹具默认环境叠加用例覆盖项；覆盖值为 undefined 的变量从环境中移除。 */
 function installerEnvironment(
   fixture: InstallerFixture,
-  extra: Readonly<Record<string, string>> = {}
+  extra: Readonly<Record<string, string | undefined>> = {}
 ): Readonly<Record<string, string>> {
-  return {
+  const environment: Record<string, string> = {
     PATH: [fixture.binRoot, "/usr/bin", "/bin"].join(":"),
     HOME: join(fixture.root, "home"),
     LANG: "C.UTF-8",
@@ -344,14 +354,22 @@ function installerEnvironment(
     FAKE_CALL_LOG: fixture.callLog,
     FAKE_REAL_RUNTIME: fixture.realRuntime ? "1" : "0",
     FAKE_OUTBOUND_LOG: fixture.outboundLog,
-    ...extra,
+    FAKE_PATHS_MODULE: PATHS_MODULE_PATH,
   };
+  for (const [name, value] of Object.entries(extra)) {
+    if (value === undefined) {
+      delete environment[name];
+    } else {
+      environment[name] = value;
+    }
+  }
+  return environment;
 }
 
 export function runInstaller(
   fixture: InstallerFixture,
   prompts: readonly PromptReply[],
-  extraEnvironment: Readonly<Record<string, string>> = {}
+  extraEnvironment: Readonly<Record<string, string | undefined>> = {}
 ): InstallerRunResult {
   const decoder: TextDecoder = new TextDecoder();
   const inputLines: string[] = [];
@@ -372,7 +390,10 @@ export function runInstaller(
   });
   const rawOutput: string = decoder.decode(result.stdout) + decoder.decode(result.stderr);
   // 真实应用夹具已自行完成 SIGTERM 排空，下次安装从已停止状态开始。
-  if (fixture.realRuntime) rmSync(join(fixture.runtimeRoot, "service-started"), { force: true });
+  if (fixture.realRuntime) {
+    rmSync(join(fixture.runtimeRoot, "service-started"), { force: true });
+    rmSync(join(fixture.runtimeRoot, "service-observed"), { force: true });
+  }
   let output: string = rawOutput;
   for (const prompt of prompts) {
     if (prompt.secret === true && prompt.reply !== undefined) {

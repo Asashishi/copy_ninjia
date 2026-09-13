@@ -89,26 +89,30 @@ entity 付き文字は書式を保持してコピーし、API 失敗時も元の
 <tr><td><code>/mute … &lt;期間&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>スーパーグループで一時ミュート／早期解除。返信、<code>@username</code>、user id を対象にでき、期間は <code>m/h/d</code> で指定します</td></tr>
 <tr><td><code>/gag … [5|10|15] [道具]</code><br><code>/ungag …</code></td><td align="center"><code>isCanGag</code></td><td>user/channel identity の発言を Bot の inline 経路だけに制限、または対象を指定して早期解除。返信、<code>@username</code>、user id、channel の負の id を指定できます</td></tr>
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>ブロックリスト登録：永続的に記録し、全管理グループで BAN。対象はメッセージへの返信・<code>@username</code>・ユーザー id のいずれでも指定できます</td></tr>
-<tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完全解除：動的ブロックリストから id を削除し、Bot が管理する全グループの BAN を解除します。対象指定は <code>/block</code> と同じで、チャンネルの負の id も受け付けます。静的ブロックリストの identity は拒否します</td></tr>
+<tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>SQLite の正式 blocklist から対象を transaction で削除し、Bot が管理する全群の BAN を解除。<code>/block</code> の指定に加えて負の channel id も受理し、本群自身の identity は拒否</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>このグループの AI チャットを切り替え</td></tr>
 <tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの AI コンテキスト記憶を消去：Worker 側のローリング逐語バッファ、中期要約、未昇格の要約、mood と <code>memory/ai/&lt;chatId&gt;.json</code> をまとめて削除し、処理中の返信 generation を無効化します。引数は取らず、デプロイ設定が壊れていても AI Worker が起動していなくても実行します</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>このグループの広告検出を切り替え。protected identity 以外の命中時は <code>/block</code> と同じ処分</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>このグループの連投ミュートを切り替え（既定で無効）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>このグループの参加認証と Anti-Raid の非公開モードを切り替え（既定で無効）</td></tr>
-<tr><td><code>/bot_status</code></td><td align="center">メンバー</td><td>ローカルプロセス指標、グローバル model capability、Telegram 429 outbound queue、このグループの AI コンテキスト容量、有効な gag 数、本群の翻訳人数（最大 5 人）、このグループで Bot が現在持つ権限（JSON ブロック）、このグループで有効な機能を表示</td></tr>
+<tr><td><code>/bot_status</code></td><td align="center"><code>isCanViewBotStatus</code></td><td>ローカルプロセス指標、グローバル model capability、Telegram 429 outbound queue、このグループの AI コンテキスト容量、有効な gag 数、本群の翻訳人数（最大 5 人）、このグループで Bot が現在持つ権限（JSON ブロック）、このグループで有効な機能を表示</td></tr>
 <tr><td><code>/mood query</code></td><td align="center">メンバー</td><td>このグループで現在有効な AI の気分を、再抽選せずに表示</td></tr>
 <tr><td><code>/mood switch</code></td><td align="center"><code>isCanSwitchMood</code></td><td>AI 有効グループの気分を即時再抽選</td></tr>
 <tr><td><code>/translate enable|disable</code></td><td align="center"><code>isCanControllTranslatePermission</code></td><td>翻訳機能を切り替え（既定 OFF）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの主要処理ゲートを切り替え</td></tr>
 <tr><td><code>/batch_kick &lt;Nm|Nh|Nd&gt;</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>スーパーグループで、rolling 24 時間以内の指定 window に入室し、まだ在室しているメンバーを kick。blocklist には追加しません</td></tr>
-<tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">allowlist identity</td><td>呼び出し元自身の全 permission を表示、または permission 説明を JSON で一覧表示。どちらも描画した board を長期保持</td></tr>
+<tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">user/channel identity</td><td>自分・返信先・明示対象の全権限を照会、または権限説明を JSON 表示。成功 board は長期保持し、読み取り失敗は 30 秒通知のみ</td></tr>
 <tr><td><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>既存 allowlist user/channel の個別 permission を変更。<code>all</code> ですべて有効化</td></tr>
-<tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>返信、<code>@username</code>、user id、channel id で allowlist identity を追加・削除</td></tr>
+<tr><td><code>/white … enable|disable</code></td><td align="center">追加：<code>isCanWhiteOther</code><br>削除：<code>SUPER_ADMIN_USER_ID</code></td><td>返信・<code>@username</code>・user id・channel id に対応。委任による追加は既定権限のみ付与し、既存権限の変更はスーパー管理者が実行</td></tr>
 <tr><td><code>/qa set</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>form を開き、開いた本人が「问题:」「回答:」の 2 通に分けて送信。両方揃うとこの chat の Q&amp;A を 1 件登録（最大 15 件、質問 256 文字・回答 3840 文字まで）</td></tr>
 <tr><td><code>/qa query</code><br><code>/qa query &lt;質問文&gt;</code></td><td align="center">グループメンバー</td><td>この chat の Q&amp;A を JSON code block で一覧表示、または 1 件だけ照会。board 上の回答は 256 文字で切り詰め、質問は切り詰めません。収まらない場合はページ送りボタンを表示。board は長期保持し、該当なしの通知は 30 秒後に削除</td></tr>
 <tr><td><code>/qa remove &lt;質問文&gt;</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>指定の Q&amp;A を削除。削除対象が無かった場合はその旨を正直に返す</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（PM 限定）</td><td>Bot との個人チャットから指定グループへの転送セッションを開始/終了</td></tr>
 </table>
+
+forum topic の自動補完された作成メッセージは明示返信なしとして扱い、command 引数で対象を指定できます。その作成メッセージ自体への明示返信も同じ扱いです。連携 channel の discussion thread の返信は保持します。対象 policy に依存する identity 変更とメンバー操作は prefetch 成功が必須で、失敗時は一時通知を送って終了します。
+
+`/qa set` の質問は元メッセージを trim した文字列で、Telegram の `pre` 書式から字面の fence は追加しません。回答の code-block fence は保持します。照会・削除・直接回答は同じ質問文字列で照合します。
 
 この 4 系統の機能はチャットのメニューでそれぞれ `/copy`、`/qa`、`/mood`、`/icon` を入口とし、説明に引数を記載します。入口ゲートを通過した後、`/qa`、`/mood`、`/icon` のサブコマンドが欠けているか不正な場合は使い方だけを返します。`/qa set`、`/mood query`、`/mood switch` は追加引数を受け付けません。`/qa query` は質問を省略すると全件を表示し、`/qa remove` は質問を必須とします。検索と削除では質問内の空白と改行を保持します。
 

@@ -50,11 +50,13 @@ export const telegramOutboundAbortController: { current: AbortController } = {
  * 主线程唯一 Telegram 出站 429 队列的计数、active 对象、类别状态与排空等待者。
  * activeJobs 只保存已开始且未结算的现有 job，预算耗尽时用于同步取消；正常或
  * 取消结算立即删除。容量为 active 请求数加 81,920 条 pending 硬顶，进程重启
- * 从空状态开始。
+ * 从空状态开始。nextAdmissionSeq 是下一条 job 的接纳序号，每构造一条 job 加一，
+ * 跨出站生命周期代际不清零。
  */
 export const telegramOutboundGateState: {
   activeCount: number;
   retryPendingCount: number;
+  nextAdmissionSeq: number;
   aborting: boolean;
   readonly activeJobs: Set<TelegramOutboundJob>;
   readonly lanes: Readonly<Record<TelegramRetryCategory, TelegramRetryLane>>;
@@ -62,6 +64,7 @@ export const telegramOutboundGateState: {
 } = {
   activeCount: 0,
   retryPendingCount: 0,
+  nextAdmissionSeq: 0,
   aborting: false,
   activeJobs: new Set(),
   lanes: {

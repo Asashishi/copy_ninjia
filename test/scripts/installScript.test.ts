@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
   AGENT_CAPABILITY_NAMES,
@@ -296,6 +296,16 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     expect(result.stdout).toBe("-u\ncopy-ninjia.service\n--since\n2026-09-06 04:00:00 UTC\n--output=cat\n--no-pager\n");
   });
 
+  test("重启计数基线在 systemctl start 返回之后读取，回落时拒绝确认", (): void => {
+    const startIndex: number = INSTALL_SCRIPT.indexOf('run_privileged systemctl start "${SERVICE_NAME}.service"');
+    const baselineIndex: number = INSTALL_SCRIPT.indexOf('RESTARTS_BEFORE="$(systemctl show');
+    const sleepIndex: number = INSTALL_SCRIPT.indexOf('sleep "$OBSERVATION_SECONDS"');
+    expect(startIndex).toBeGreaterThan(-1);
+    expect(baselineIndex).toBeGreaterThan(startIndex);
+    expect(sleepIndex).toBeGreaterThan(baselineIndex);
+    expect(INSTALL_SCRIPT).toContain("if (( 10#$RESTARTS_AFTER < 10#$RESTARTS_BEFORE )); then");
+  });
+
   test("journal 未核对时保留配置备份，只有成功分支允许清理", (): void => {
     const journalCheckIndex: number = INSTALL_SCRIPT.indexOf(
       'if JOURNAL_TAIL="$(service_journal_since "$JOURNAL_CURSOR" "$JOURNAL_SINCE")"; then'
@@ -308,4 +318,125 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     expect(INSTALL_SCRIPT.indexOf("\nfinalize_config_backup\n", failureBranchIndex)).toBe(-1);
   });
 
+});
+
+/** 在指定服务状态与环境来源的 systemctl 替身下执行数据根核对。 */
+async function runServiceDataRootCheck(options: {
+  readonly environment: string;
+  readonly installerRoot: string;
+  readonly loadState?: string;
+  readonly environmentFiles?: string;
+  readonly passEnvironment?: string;
+  readonly unsetEnvironment?: string;
+}): Promise<{ readonly exitCode: number; readonly output: string }> {
+  const root: string = mkdtempSync(join(tmpdir(), "install-data-root-"));
+  shellRoots.push(root);
+  const bin: string = join(root, "bin");
+  const systemdRoot: string = join(root, "systemd");
+  await Bun.write(join(systemdRoot, ".keep"), "");
+  await Bun.write(join(bin, "systemctl"), [
+    "#!/usr/bin/env bash",
+    'case "$*" in',
+    '  *LoadState*) printf "%s\\n" "$FAKE_LOAD_STATE" ;;',
+    '  *EnvironmentFiles*) printf "%s\\n" "$FAKE_ENVIRONMENT_FILES" ;;',
+    '  *PassEnvironment*) printf "%s\\n" "$FAKE_PASS_ENVIRONMENT" ;;',
+    '  *UnsetEnvironment*) printf "%s\\n" "$FAKE_UNSET_ENVIRONMENT" ;;',
+    '  *Environment*) printf "%s\\n" "$FAKE_ENVIRONMENT" ;;',
+    "  *) exit 64 ;;",
+    "esac",
+    "",
+  ].join("\n"));
+  chmodSync(join(bin, "systemctl"), 0o755);
+  const functions: string = extractShellFunctions(["resolve_runtime_data_root", "verify_service_data_root"])
+    .replaceAll("/run/systemd/system", systemdRoot);
+  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+    cmd: [
+      "bash",
+      "-c",
+      [
+        "set -Eeuo pipefail",
+        'readonly SERVICE_NAME="copy-ninjia"',
+        'readonly SERVICE_UNIT_PATH="/etc/systemd/system/copy-ninjia.service"',
+        'die() { printf "%s\\n" "$1" >&2; exit 1; }',
+        functions,
+        'verify_service_data_root "$INSTALLER_ROOT"',
+        "printf 'accepted\\n'",
+      ].join("\n"),
+    ],
+    cwd: join(import.meta.dir, "..", ".."),
+    env: {
+      PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      FAKE_LOAD_STATE: options.loadState ?? "loaded",
+      FAKE_ENVIRONMENT: options.environment,
+      FAKE_ENVIRONMENT_FILES: options.environmentFiles ?? "",
+      FAKE_PASS_ENVIRONMENT: options.passEnvironment ?? "",
+      FAKE_UNSET_ENVIRONMENT: options.unsetEnvironment ?? "",
+      INSTALLER_ROOT: options.installerRoot,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const decoder: TextDecoder = new TextDecoder();
+  return {
+    exitCode: result.exitCode,
+    output: decoder.decode(result.stdout) + decoder.decode(result.stderr),
+  };
+}
+
+describe("install.sh 覆盖前核对既有 unit 的数据根", () => {
+  test("数据根核对先于依赖安装与任何部署写入", (): void => {
+    const checkIndex: number = INSTALL_SCRIPT.indexOf('\nverify_service_data_root "$RESOLVED_RUNTIME_DATA_ROOT"\n');
+    expect(checkIndex).toBeGreaterThan(-1);
+    for (const write of [
+      "bun install --frozen-lockfile",
+      'create_config_from_example "$example_file"',
+      'commit_staged_config \\\n    "$TELEGRAM_CONFIG_STAGING_PATH"',
+      'mkdir -p -- "$IDENTITY_DATABASE_DIR"',
+      'run_privileged tee "$SERVICE_UNIT_PATH"',
+    ]) {
+      expect(INSTALL_SCRIPT.indexOf(write)).toBeGreaterThan(checkIndex);
+    }
+  });
+
+  test.each([
+    ["COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia", "/srv/copy-ninjia"],
+    ["LANG=C.UTF-8 COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia/", "/srv/copy-ninjia"],
+    ['"COPY_NINJIA_DATA_ROOT=/srv/copy ninjia \\"q\\" \\$v \\`x\\` 日本"', '/srv/copy ninjia "q" $v `x` 日本'],
+    ['LANG=C.UTF-8 "NOTE=a\\tb"', ""],
+    ["", ""],
+  ])("一致时放行：%s", async (environment: string, installerRoot: string): Promise<void> => {
+    expect(await runServiceDataRootCheck({ environment, installerRoot }))
+      .toEqual({ exitCode: 0, output: "accepted\n" });
+  });
+
+  test("unit 未加载时不核对", async (): Promise<void> => {
+    expect(await runServiceDataRootCheck({
+      environment: "COPY_NINJIA_DATA_ROOT=/srv/other",
+      installerRoot: "",
+      loadState: "not-found",
+    })).toEqual({ exitCode: 0, output: "accepted\n" });
+  });
+
+  test.each([
+    ["COPY_NINJIA_DATA_ROOT=/srv/other", "/srv/copy-ninjia", "必须同时缺省或显式解析为同一数据根"],
+    ["COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia", "", "必须同时缺省或显式解析为同一数据根"],
+    ["LANG=C.UTF-8", "/srv/copy-ninjia", "必须同时缺省或显式解析为同一数据根"],
+    ["COPY_NINJIA_DATA_ROOT=", "/srv/copy-ninjia", "必须是非空路径"],
+    ['"COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia\\001"', "/srv/copy-ninjia", "不含控制字符"],
+    ['"COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia', "/srv/copy-ninjia", "可解析的环境列表"],
+    ["LANG=C.UTF-8  COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia", "/srv/copy-ninjia", "可解析的环境列表"],
+    ["COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia COPY_NINJIA_DATA_ROOT=/srv/copy-ninjia", "/srv/copy-ninjia", "可解析的环境列表"],
+  ])("不一致或无法解析时拒绝：%s", async (
+    environment: string,
+    installerRoot: string,
+    expected: string
+  ): Promise<void> => {
+    const result: { readonly exitCode: number; readonly output: string } =
+      await runServiceDataRootCheck({ environment, installerRoot });
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("/etc/systemd/system/copy-ninjia.service: Environment");
+    expect(result.output).toContain(expected);
+    expect(result.output).not.toContain("accepted");
+    expect(result.output).not.toContain("/srv/");
+  });
 });

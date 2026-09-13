@@ -118,6 +118,20 @@ export const CHAT_ID_ARG_PATTERN: RegExp = /^-[1-9]\d*$/;
 export const INVALID_USERNAME_ECHO_MAX_CHARS: number = TELEGRAM_USERNAME_MAX_LENGTH * 2;
 
 /**
+ * 黑白名单冷读失败、本次命令放弃执行时的提示；经 sendCommandMessage 发送，
+ * 群内 30 秒后删除。
+ *
+ * 用于依赖名单判定做保护或破坏性决策的路径：`/block`、`/unblock`、`/mute`、
+ * `/white` 与 `/permission` 修改路径的目标预热（commands/targetResolution.ts 的
+ * requireIdentityPolicies），以及 `/batch_kick` 首批预热失败（commands/batchKick.ts）。
+ * 说的是「一个都没动」，只能在尚未产生任何处置或名单写入时发送。
+ */
+export const IDENTITY_POLICY_UNAVAILABLE_TEXT: string = "呜……黑白名单暂时读不出来，本次一个人都没动，稍后再试吧♡";
+
+/** 权限看板读取失败时的临时提示；commands/permission 不得把未知权限展示为全关。 */
+export const IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT: string = "呜……权限暂时读不出来，稍后再查吧♡";
+
+/**
  * 中文动作命令（`/咬`、`/贴贴` 等）的匹配规则，见 commands/cjkAction.ts。
  * Telegram 只为 ASCII 命令生成 bot_command 实体，`/咬` 拿不到实体、
  * grammY 的 bot.command 匹配不到，因此改由 bot.hears 直接匹配消息原文。

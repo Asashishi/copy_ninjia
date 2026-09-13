@@ -282,7 +282,9 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 
 既存 unit と置換するデプロイ設定は共通の外部バックアップ一覧に原パス・mode・所有者・SHA-256 を記録します。失敗時は原本と現場を保持します。一覧に従って個別に復元し、ハッシュ・mode・所有者を照合したうえで、全検証成功後にだけバックアップを削除します。
 
-観察期間は有効な再起動待機上限の 2 倍に 2 秒を加えた値です。基準の `RestartUSec` に、有効な指数 backoff の `RestartMaxDelayUSec` と `RestartRandomizedDelayUSec` を反映します。`RestartMaxDelayUSec=infinity` は backoff を無効にし、基準間隔がゼロの場合も backoff は無効です。古い systemd にない backoff・ランダム遅延属性は加算せず、存在して不正な値は拒否します。unit 読み込み後かつ起動前に `NRestarts` 基準値を取得し、観察後の同一回数と `active/running` を要求します。journal は起動前 cursor より後を読み、cursor がない場合は今回の開始時刻以降を読みます。読み取り不能・異常終了・状態不正は非ゼロ終了し、外部バックアップを保持します。
+設定・unit・データへの書き込み前に既存 unit の data root を照合します。`Environment` の `COPY_NINJIA_DATA_ROOT` は厳密に解析でき、今回の installer の有効 root と一致する必要があります。空でない `EnvironmentFiles` と、この変数を含む `PassEnvironment` / `UnsetEnvironment` は拒否します。それらを利用する deployment は、先にバックアップと停止の手順を実施し、対応する明示的な `Environment` 設定へ手動で整理してください。installer は有効値を推測・移行しません。既存 deployment JSON の再入力は元の mode を保持し、新規 file は `0600` を使います。
+
+観察期間は有効な再起動待機上限の 2 倍に 2 秒を加えた値です。基準の `RestartUSec` に、有効な指数 backoff の `RestartMaxDelayUSec` と `RestartRandomizedDelayUSec` を反映します。`RestartMaxDelayUSec=infinity` は backoff を無効にし、基準間隔がゼロの場合も backoff は無効です。古い systemd にない backoff・ランダム遅延属性は加算せず、存在して不正な値は拒否します。unit 起動後に `NRestarts` 基準値を取得し、観察中の増加・減少はどちらも拒否し、観察後の同一回数と `active/running` を要求します。journal は起動前 cursor より後を読み、cursor がない場合は今回の開始時刻以降を読みます。読み取り不能・異常終了・状態不正は非ゼロ終了し、外部バックアップを保持します。
 
 ## 日常の監視項目
 

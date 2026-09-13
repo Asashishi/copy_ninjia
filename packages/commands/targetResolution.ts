@@ -6,6 +6,7 @@ import { resolveIdTarget, resolveReplyTarget, resolveUsernameTarget } from "../u
 import { sanitizeDisplayName, truncateInline } from "../libs/text";
 import {
   CHAT_ID_ARG_PATTERN,
+  IDENTITY_POLICY_UNAVAILABLE_TEXT,
   INVALID_USERNAME_ECHO_MAX_CHARS,
   USERNAME_ARG_PATTERN,
   USER_ID_ARG_PATTERN,
@@ -62,6 +63,17 @@ export interface ResolveCommandTargetParams {
    * 可恢复的运行时或配置操作。详见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN。
    */
   acceptChatId?: boolean;
+  /**
+   * 目标的黑白名单预热失败时是否拒绝执行（缺省不拒绝）。
+   *
+   * 预热失败时主线程 LRU 仍是冷的，isWhitelisted、isUserBlocked 等同步判定按
+   * fail-closed 读成「不在名单」，名单写入也要求先预热（见
+   * infra/identityStorage/read.ts 的 prefetchIdentityPolicies）。依赖这些判定做保护或
+   * 破坏性决策的命令（`/block`、`/unblock`、`/mute`、`/white`、`/permission` 修改
+   * 路径）必须开启：此时发送 IDENTITY_POLICY_UNAVAILABLE_TEXT 并返回 undefined。
+   * 不读名单做决策的命令保持缺省，预热结果不影响目标解析。
+   */
+  requireIdentityPolicies?: boolean;
 }
 
 /**
@@ -159,6 +171,8 @@ export function peekCommandTarget(message: Message, rawArgument: string): Cached
  * 同事的名字，读起来像一次成功确认——「对着别人贴出的 id 动手」本来就是 id 那条
  * 路被引入的场景（见 acceptUserId）。参数解析不出目标时同样按冲突报错，不再说
  * 「这不是合法用户名」：那句话会让人以为参数被忽略掉、回复目标生效了。
+ *
+ * 目标确定后预热它的黑白名单；开启 requireIdentityPolicies 时预热失败按解析失败处理。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */
 export async function resolveCommandTarget({
@@ -169,6 +183,7 @@ export async function resolveCommandTarget({
   messages,
   acceptUserId = false,
   acceptChatId = false,
+  requireIdentityPolicies = false,
 }: ResolveCommandTargetParams): Promise<CachedUser | undefined> {
   const messageId: number = message.message_id;
   const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
@@ -218,6 +233,10 @@ export async function resolveCommandTarget({
   // sender_chat 时，/copy 必须保留该身份来复制群头像并复读同一皮套的消息。
   // Telegram 不会提供皮套背后的真实用户；/block 等破坏性命令应在调用处
   // 按自己的语义拒绝，避免误把整个群组身份当作那名管理员。
-  await prefetchIdentityPolicies([targetUser.id]);
+  const prefetched: boolean = await prefetchIdentityPolicies([targetUser.id]);
+  if (!prefetched && requireIdentityPolicies) {
+    await sendCommandMessage({ chatId, text: IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: messageId });
+    return undefined;
+  }
   return targetUser;
 }

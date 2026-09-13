@@ -1,4 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import {
+  LOGGER_CIRCULAR_ERROR_VALUE,
+  LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE,
+  LOGGER_NESTED_ERROR_MAX_DEPTH,
+} from "../../packages/consts/logger";
 import { REDACTED_SECRET } from "../../packages/consts/redaction";
 import type {
   DiskDiagnosticBatchRequest,
@@ -384,6 +389,109 @@ describe("logger persistence routing boundary", () => {
       });
       // 原型没有被换掉：记录仍是普通对象。
       expect(Object.getPrototypeOf(serialized as object)).toBe(Object.prototype);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  test("cause、AggregateError.errors 与值为 Error 的字段递归展开，嵌套层同样脱敏", () => {
+    const originalTelegram: TelegramConfig | null = telegramConfigCache.current;
+    const token: string = "nested-cause-telegram-token";
+    telegramConfigCache.current = { botToken: token, superAdminUserId: 1 };
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fetchFailure = Object.assign(new TypeError("fetch failed"), {
+        path: `https://api.telegram.org/file/bot${token}/photo.jpg`,
+        headers: { authorization: "Bearer nested-upstream-bearer" },
+      });
+      const wrapped: Error = new Error("download wrapper", { cause: fetchFailure });
+      const httpLike = Object.assign(new Error("Network request failed"), { error: wrapped });
+      const departure: AggregateError = new AggregateError(
+        [httpLike, "plain reason"],
+        "Failed to complete departure"
+      );
+
+      logger.error("teardown failed", departure);
+
+      const serialized: unknown = consoleError.mock.calls.at(-1)![1];
+      expect(serialized).toMatchObject({
+        name: "AggregateError",
+        message: "Failed to complete departure",
+        errors: [
+          {
+            name: "Error",
+            message: "Network request failed",
+            error: {
+              name: "Error",
+              message: "download wrapper",
+              cause: {
+                name: "TypeError",
+                message: "fetch failed",
+                path: `https://api.telegram.org/file/bot${REDACTED_SECRET}/photo.jpg`,
+                headers: { authorization: REDACTED_SECRET },
+              },
+            },
+          },
+          "plain reason",
+        ],
+      });
+      const text: string = JSON.stringify(serialized);
+      expect(text).not.toContain(token);
+      expect(text).not.toContain("nested-upstream-bearer");
+    } finally {
+      consoleError.mockRestore();
+      telegramConfigCache.current = originalTelegram;
+    }
+  });
+
+  test("嵌套 Error 有深度上限、循环引用只输出占位符，且不执行嵌套 getter", () => {
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const looping: Error = new Error("self loop");
+      const middle: Error = new Error("middle", { cause: looping });
+      Object.defineProperty(looping, "cause", {
+        value: middle,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+      let getterCalls: number = 0;
+      Object.defineProperty(middle, "response", {
+        enumerable: true,
+        get(): unknown {
+          getterCalls++;
+          return new Error("from getter");
+        },
+      });
+      expect((): void => logger.error(looping)).not.toThrow();
+      expect(consoleError.mock.calls.at(-1)![0]).toMatchObject({
+        message: "self loop",
+        cause: {
+          message: "middle",
+          cause: LOGGER_CIRCULAR_ERROR_VALUE,
+          response: "[unserializable value]",
+        },
+      });
+      expect(getterCalls).toBe(0);
+
+      let deepest: Error = new Error("level 0");
+      for (let level: number = 1; level <= LOGGER_NESTED_ERROR_MAX_DEPTH + 1; level++) {
+        deepest = new Error(`level ${level}`, { cause: deepest });
+      }
+      logger.error(deepest);
+      let record: unknown = consoleError.mock.calls.at(-1)![0];
+      for (let level: number = 0; level < LOGGER_NESTED_ERROR_MAX_DEPTH; level++) {
+        expect(record).toMatchObject({ message: `level ${LOGGER_NESTED_ERROR_MAX_DEPTH + 1 - level}` });
+        record = (record as { cause: unknown }).cause;
+      }
+      expect(record).toMatchObject({
+        message: "level 1",
+        cause: LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE,
+      });
+
+      // 无嵌套的普通 Error 输出形态不变：不凭空多出 cause/errors 字段。
+      logger.error(new Error("plain"));
+      expect(Object.keys(consoleError.mock.calls.at(-1)![0] as object)).toEqual(["name", "message", "stack"]);
     } finally {
       consoleError.mockRestore();
     }

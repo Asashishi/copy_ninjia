@@ -239,6 +239,20 @@ describe("代码块投递", () => {
     expect(qaFormSessions.get(CHAT_ID)?.a).toBe(`\`\`\`json\n${JSON_BODY}\n\`\`\``);
   });
 
+  test("问题里的代码块按原文存进会话，长度上限不含围栏", async () => {
+    openForm(OWNER);
+    // 与直答比对的 message.text、/qa remove 的 ctx.match 同一口径：只有块内正文。
+    const body: string = "长".repeat(CHAT_QA_QUESTION_MAX_CHARS);
+    const text: string = `问题:\n${body}`;
+
+    const claimed = await claimQaFieldMessage(delivered(text, {
+      entities: [{ type: "pre", offset: 4, length: body.length }],
+    }));
+
+    expect(claimed?.questionTooLong).toBeFalse();
+    expect(qaFormSessions.get(CHAT_ID)?.q).toBe(body);
+  });
+
   test("围栏本身也算进答案长度", async () => {
     openForm(OWNER);
     // 块内正文刚好卡满上限时，补上的围栏会把它顶出去。

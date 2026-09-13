@@ -87,26 +87,30 @@
 <tr><td><code>/mute … &lt;时长&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>在超级群临时禁言或提前解除；目标支持回复、<code>@username</code>、用户 id，时长支持 <code>m/h/d</code></td></tr>
 <tr><td><code>/gag … [5|10|15] [用具]</code><br><code>/ungag …</code></td><td align="center"><code>isCanGag</code></td><td>让用户或频道身份只能经 Bot 的 inline 入口发言，或定向提前解除；目标支持回复、<code>@username</code>、用户 id 与频道负数 id</td></tr>
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
-<tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完整解除拉黑：把 id 从动态黑名单里划掉，并在所有机器人管理的群中解除封禁；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id。静态黑名单身份拒绝解除</td></tr>
+<tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>从 SQLite 权威黑名单事务删除目标，并在机器人管理的全部群解除封禁；目标方式同 <code>/block</code>，也接受频道负数 id，拒绝本群自己的身份</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊</td></tr>
 <tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，连同 <code>memory/ai/&lt;chatId&gt;.json</code> 一并删除，并使本群在途回复代数失效；不接受参数，部署配置写坏或 AI Worker 没起来时同样执行</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，非受保护身份命中后按 <code>/block</code> 同权处置</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>开关本群防刷屏禁言（默认关闭）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>开关本群入群验证与防冲群私密模式（默认关闭）</td></tr>
-<tr><td><code>/bot_status</code></td><td align="center">群成员</td><td>查看本机进程指标、全局模型能力、Telegram 429 出站队列、本群 AI 上下文容量、正在生效的 gag 数量、本群翻译人数（最多 5 人）、本天才在本群已拥有的权限（JSON 块）和本群已开启功能</td></tr>
+<tr><td><code>/bot_status</code></td><td align="center"><code>isCanViewBotStatus</code></td><td>查看本机进程指标、全局模型能力、Telegram 429 出站队列、本群 AI 上下文容量、正在生效的 gag 数量、本群翻译人数（最多 5 人）、本天才在本群已拥有的权限（JSON 块）和本群已开启功能</td></tr>
 <tr><td><code>/mood query</code></td><td align="center">群成员</td><td>查询本群 AI 当前有效心情，不触发重抽</td></tr>
 <tr><td><code>/mood switch</code></td><td align="center"><code>isCanSwitchMood</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名</td></tr>
 <tr><td><code>/translate enable|disable</code></td><td align="center"><code>isCanControllTranslatePermission</code></td><td>开关本群翻译能力（默认关闭）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群的业务处理总入口</td></tr>
 <tr><td><code>/batch_kick &lt;Nm|Nh|Nd&gt;</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>在超级群中踢出滚动 24 小时内指定时间窗加入且仍在群内的成员；只踢不拉黑</td></tr>
-<tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">白名单身份</td><td>查询发起用户/频道自己的完整权限，或以 JSON 列出权限说明；两者渲染出的看板都长期保留</td></tr>
+<tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">用户/频道身份</td><td>查询自身、回复目标或显式目标的完整权限，或以 JSON 列出权限说明；成功看板长期保留，读取失败只发送 30 秒提示</td></tr>
 <tr><td><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>修改已有白名单用户/频道的一项权限；<code>all</code> 可全部打开</td></tr>
-<tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>新增或删除白名单用户/频道；支持回复、<code>@username</code>、用户 id 与频道 id</td></tr>
+<tr><td><code>/white … enable|disable</code></td><td align="center">新增：<code>isCanWhiteOther</code><br>删除：<code>SUPER_ADMIN_USER_ID</code></td><td>支持回复、<code>@username</code>、用户 id 与频道 id；委托新增只授予默认权限，修改已有权限由超级管理员执行</td></tr>
 <tr><td><code>/qa set</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>开一张表单，由发起者按「问题:」「回答:」分两条消息发进本群，两样齐了即登记一条本群问答；每群最多 15 条，问题 ≤ 256 字、回答 ≤ 3840 字</td></tr>
 <tr><td><code>/qa query</code><br><code>/qa query &lt;问题文本&gt;</code></td><td align="center">群成员</td><td>以 JSON 代码块列出本群全部问答，或只查那一条；答案在看板上截断到 256 字，问题不截断；3 条一页，超过一页给翻页按钮。看板长期保留，查不到的提示 30 秒后删除</td></tr>
 <tr><td><code>/qa remove &lt;问题文本&gt;</code></td><td align="center"><code>isCanControllQaPermission</code></td><td>删除本群指定问答；没删到会如实说本来就没有</td></tr>
 <tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束向目标群的中转</td></tr>
 </table>
+
+论坛话题自动填入的创建消息按“未显式回复”处理，命令仍可按参数指定目标；显式回复该创建消息本身也按同一规则处理。关联频道讨论组的评论回复正常保留。所有依赖目标黑白名单的身份修改与成员操作须先完成策略预热，失败只回复短时提示，不继续执行。
+
+`/qa set` 的问题字段取消息原文并 trim，Telegram `pre` 格式不增加字面围栏；回答字段保留代码块围栏。查询、删除和直答均以同一问题文本匹配。
 
 这四组功能在聊天框菜单中分别使用 `/copy`、`/qa`、`/mood`、`/icon` 作为统一入口，描述中列出各自参数。通过入口门禁后，`/qa`、`/mood`、`/icon` 缺少或使用非法子命令时只回复用法。`/qa set`、`/mood query`、`/mood switch` 不接受额外参数；`/qa query` 省略问题时列全部，`/qa remove` 必须带问题。查询和删除保留问题内部的空格与换行。
 

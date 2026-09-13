@@ -87,6 +87,7 @@ export async function runVerificationEffects({
   const transitionState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
   let grantedAttempt: number = 0;
+  let grantedRevision: number = 0;
   if (includesTerminalAttempt(effects)) {
     const generation: number = verificationGeneration.current;
     const revision: number | undefined = verificationRevisions.get(key)?.revision;
@@ -106,6 +107,7 @@ export async function runVerificationEffects({
       return;
     }
     grantedAttempt = permit.attempt;
+    grantedRevision = revision;
   }
   for (const effect of effects) {
     switch (effect.kind) {
@@ -231,8 +233,13 @@ export async function runVerificationEffects({
         break;
     }
   }
+  // 本进程最后一次许可用完仍停在终态时，只有本轮没有发布新 revision 才就地判耗尽。
+  // 本轮已发布新 revision（置位 successNoticeSent、removalConfirmed 等持久化标志，或
+  // 终态换代）时，由该 revision 的落盘回执继续驱动：成功战报据此结算，仍需执行的
+  // 终态再次申请许可时由主线程判 exhausted。
   if (
     grantedAttempt >= VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS &&
+    verificationRevisions.get(key)?.revision === grantedRevision &&
     isTerminalState(verificationEntries.get(key)?.state)
   ) {
     dispatchVerification(chatId, userId, {

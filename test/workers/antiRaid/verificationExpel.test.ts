@@ -5,9 +5,11 @@ import { expellingOf } from "../../../packages/states/verification";
 
 import type {
   ExpelSnapshot,
+  VerificationEffect,
   VerificationEvent,
   VerificationState,
 } from "../../../packages/types/states/verification";
+import type { VerificationAttemptPermitResult } from "../../../packages/types";
 
 const {
   CHAT_ID,
@@ -513,5 +515,91 @@ describe("验证终态进程级尝试预算", () => {
       ({ event }: { event: VerificationEvent }): boolean =>
         event.type === "terminalAttemptBudgetExhausted"
     )).toBeTrue();
+  });
+
+  /** 与生产 publishVerificationChange 一样，每次发布都把本 key 的 revision 推进一格。 */
+  function runPublishingRevisions(
+    effects: VerificationEffect[],
+    permit: VerificationAttemptPermitResult
+  ): Promise<void> {
+    verificationGeneration.current = 1;
+    if (!verificationRevisions.has(KEY)) verificationRevisions.set(KEY, { revision: 1 });
+    return runVerificationEffects({
+      chatId: CHAT_ID,
+      userId: USER_ID,
+      effects,
+      dispatchVerification: (_chatId: number, userId: number, event: VerificationEvent): void => {
+        dispatched.push({ userId, event });
+      },
+      publishVerificationChange: (): void => {
+        testState.publishedChanges++;
+        verificationRevisions.set(KEY, {
+          revision: (verificationRevisions.get(KEY)?.revision ?? 0) + 1,
+        });
+      },
+      requestTerminalAttempt: async (): Promise<VerificationAttemptPermitResult> => permit,
+    });
+  }
+
+  function budgetExhaustedDispatched(): boolean {
+    return dispatched.some(
+      ({ event }: { event: VerificationEvent }): boolean =>
+        event.type === "terminalAttemptBudgetExhausted"
+    );
+  }
+
+  test("第 15 次许可内踢出并发出成功战报、正在等落盘回执时不判耗尽", async () => {
+    // 判成耗尽会把记录延后卸载：随后到达的落盘回执找不到条目，expelSettled 永远
+    // 不会发生，而延后索引让同一成员重新入群时直接跳过验证。
+    const state = expellingOf("timeout", snapshot());
+    setState(state);
+
+    await runPublishingRevisions([{ kind: "expel", snapshot: state.snapshot }], {
+      status: "granted",
+      attempt: 15,
+    });
+
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(state.successNoticeSent).toBeTrue();
+    expect(testState.publishedChanges).toBe(1);
+    expect(budgetExhaustedDispatched()).toBeFalse();
+    expect(verificationEntries.get(KEY)?.state).toBe(state);
+  });
+
+  test("第 15 次许可内踢出成功但战报没发出、已落账 removalConfirmed 时同样不就地判耗尽", async () => {
+    testState.nextSentMessageId = undefined;
+    const state = expellingOf("timeout", snapshot());
+    setState(state);
+
+    await runPublishingRevisions([{ kind: "expel", snapshot: state.snapshot }], {
+      status: "granted",
+      attempt: 15,
+    });
+
+    expect(state.removalConfirmed).toBeTrue();
+    expect(testState.publishedChanges).toBe(1);
+    // 该 revision 的落盘回执会再申请许可，届时由主线程按预算判 exhausted。
+    expect(budgetExhaustedDispatched()).toBeFalse();
+    const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
+    if (timer !== undefined) clearTimeout(timer);
+  });
+
+  test("第 15 次许可内没有任何新落账的处置失败仍立即判耗尽", async () => {
+    testState.kickSucceeds = false;
+    const state = expellingOf("timeout", snapshot());
+    // 权限告警在更早的轮次已经发过：本轮只剩一次失败的踢人，没有新 revision。
+    state.failureNoticeSent = true;
+    setState(state);
+
+    await runPublishingRevisions([{ kind: "expel", snapshot: state.snapshot }], {
+      status: "granted",
+      attempt: 15,
+    });
+
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(testState.publishedChanges).toBe(0);
+    expect(budgetExhaustedDispatched()).toBeTrue();
+    const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
+    if (timer !== undefined) clearTimeout(timer);
   });
 });

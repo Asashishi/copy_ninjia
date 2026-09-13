@@ -6,14 +6,30 @@ import {
   telegramConfigCache,
 } from "../../cache/perThread/config";
 import { loggerSecretsMemo } from "../../cache/perThread/logger";
-import { LOGGER_UNSERIALIZABLE_VALUE } from "../../consts/logger";
-import { REDACTED_SECRET } from "../../consts/redaction";
+import {
+  LOGGER_CIRCULAR_ERROR_VALUE,
+  LOGGER_MAX_ERROR_NODES,
+  LOGGER_MAX_SERIALIZED_BYTES,
+  LOGGER_MAX_SERIALIZED_ITEMS,
+  LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE,
+  LOGGER_NESTED_ERROR_MAX_DEPTH,
+  LOGGER_SERIALIZATION_LIMIT_VALUE,
+  LOGGER_UNSERIALIZABLE_VALUE,
+} from "../../consts/logger";
+import { redactSensitiveFieldsInText, safeStringify } from "./redaction";
 import { redactSecretsInText } from "../../libs/redaction";
+import { jsonSerializedBytes } from "../../libs/jsonBytes";
 import type {
   AdDetectAgentConfig,
   AgentDeploymentConfig,
   TelegramConfig,
 } from "../../types/config";
+
+/** 一次 emit 内共享的展开预算，调用结束即丢弃，不保存到线程缓存。 */
+interface SerializationBudget {
+  errors: number;
+  items: number;
+}
 
 /**
  * 本次调用要脱敏的敏感值。每条日志取一次而不是每个参数取一次；不提到模块
@@ -53,14 +69,15 @@ function currentSecrets(): readonly string[] {
 
 /**
  * 把任意日志参数转成可 JSON 序列化的值。Error（含 GrammyError 等子类）
- * 展开为 name/message/stack 加自有可枚举属性；其余对象尝试 JSON 序列化，
+ * 由 serializeError 展开（含嵌套 Error）；其余对象尝试 JSON 序列化，
  * 失败（循环引用等）则退化为字符串。
  *
  * Bun 的 fetch 网络异常会把完整请求 URL 放进 Error 的可枚举 path 字段；
- * Telegram 文件下载 URL 内嵌 BOT_TOKEN。对象先序列化成稳定 JSON，再对整份
- * 文本做值级脱敏，确保 message/stack/path/cause 任一位置都不会漏。
+ * Telegram 文件下载 URL 内嵌 BOT_TOKEN。展开后的整棵结构整体序列化成稳定 JSON，
+ * 字段名脱敏由 replacer 覆盖每一层，再对整份文本做值级脱敏，确保任一层嵌套 Error
+ * 的 message/stack/path/cause 都不会漏。
  */
-function serializeArg(arg: unknown, secrets: readonly string[]): unknown {
+function serializeArg(arg: unknown, secrets: readonly string[], budget: SerializationBudget): unknown {
   // 绝大多数日志参数是拼好的字符串（本项目的 logger.log/info/warn 全部如此）。
   // 字符串直接脱敏即可，不必走 stringify -> 脱敏 -> parse 的往返：两条路径对
   // 字符串的结果逐字符相同，唯一的差异是敏感值自身含 JSON 转义字符时，往返
@@ -71,12 +88,7 @@ function serializeArg(arg: unknown, secrets: readonly string[]): unknown {
 
   const error: Error | null = asError(arg);
   const serializable: unknown = error !== null
-    ? {
-      name: readErrorString(error, "name", "Error"),
-      message: readErrorString(error, "message", LOGGER_UNSERIALIZABLE_VALUE),
-      stack: readErrorString(error, "stack", undefined),
-      ...ownEnumerableProperties(error),
-    }
+    ? serializeError(error, null, budget)
     // 非 Error 不预先做一轮 stringify/parse：下面那一轮的结果与先往返一次
     // 完全相同（safeStringify 的兜底对两条路径同样降级），白付一次全量序列化。
     : arg;
@@ -118,10 +130,50 @@ function readErrorString(
   }
 }
 
+/** `instanceof AggregateError` 同样可能触发 Proxy trap；失败时按普通 Error 处理。 */
+function isAggregateError(error: Error): boolean {
+  try {
+    return error instanceof AggregateError;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Error 自有的可枚举属性（GrammyError.payload、Bun fetch 的 code/path 等），
- * 逐个属性独立降级：某个值不可序列化（循环引用、BigInt）时只让它自己退化成
- * 字符串，不会连累整条记录。不能整体 `{...JSON.parse(safeStringify({...arg}))}`
+ * 正在展开的 Error 祖先链节点。只在某个 Error 真正含有嵌套 Error 时才为它分配，
+ * 顶层 Error 深度为 0；用于深度上限判定与循环引用识别。
+ */
+interface ErrorExpansionFrame {
+  readonly error: Error;
+  readonly parent: ErrorExpansionFrame | null;
+  readonly depth: number;
+}
+
+/**
+ * 把一个 Error 展开为 name/message/stack 加 ownErrorProperties 的结果。
+ * `parent` 是它的展开链父节点，顶层 Error 传 null。
+ */
+function serializeError(
+  error: Error,
+  parent: ErrorExpansionFrame | null,
+  budget: SerializationBudget
+): Record<string, unknown> | string {
+  if (budget.errors === 0) return LOGGER_SERIALIZATION_LIMIT_VALUE;
+  budget.errors--;
+  return {
+    name: readErrorString(error, "name", "Error"),
+    message: readErrorString(error, "message", LOGGER_UNSERIALIZABLE_VALUE),
+    stack: readErrorString(error, "stack", undefined),
+    ...ownErrorProperties(error, parent, budget),
+  };
+}
+
+/**
+ * Error 自有的可枚举属性（GrammyError.payload、Bun fetch 的 code/path 等），外加
+ * 不可枚举的 `cause` 与 AggregateError 的 `errors`。只读取数据描述符，不执行 getter。
+ * 值为 Error 的字段、`cause` 与 `errors` 数组中的 Error 元素经 serializeNestedError
+ * 递归展开；其余值逐个属性独立降级：某个值不可序列化（循环引用、BigInt）时只让它
+ * 自己退化成字符串，不会连累整条记录。不能整体 `{...JSON.parse(safeStringify({...arg}))}`
  * ——safeStringify 走 `String(value)` 兜底时返回的是字符串，展开进对象字面量
  * 会炸成 `{"0":"[","1":"o",...}` 一串下标键，把真正要看的 code/path 冲掉。
  *
@@ -131,7 +183,11 @@ function readErrorString(
  * logs/ 的错误记录里，运维排查时看不到唯一能解释这次故障的诊断。外层的对象
  * 展开与 JSON.parse 都按数据属性定义，不吃这个亏，只有这里的下标赋值会。
  */
-function ownEnumerableProperties(error: Error): Record<string, unknown> {
+function ownErrorProperties(
+  error: Error,
+  parent: ErrorExpansionFrame | null,
+  budget: SerializationBudget
+): Record<string, unknown> {
   const own: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   let descriptors: PropertyDescriptorMap;
   try {
@@ -139,8 +195,16 @@ function ownEnumerableProperties(error: Error): Record<string, unknown> {
   } catch {
     return own;
   }
+  const aggregate: boolean = isAggregateError(error);
+  let frame: ErrorExpansionFrame | null = null;
   for (const [key, descriptor] of Object.entries(descriptors)) {
-    if (!descriptor.enumerable) continue;
+    const aggregateErrors: boolean = aggregate && key === "errors";
+    if (!descriptor.enumerable && key !== "cause" && !aggregateErrors) continue;
+    if (budget.items === 0) {
+      own[key] = LOGGER_SERIALIZATION_LIMIT_VALUE;
+      break;
+    }
+    budget.items--;
     if (!("value" in descriptor)) {
       // 日志不能为了取诊断字段执行依赖对象的 getter；它可能正是原始故障源。
       own[key] = LOGGER_UNSERIALIZABLE_VALUE;
@@ -149,248 +213,114 @@ function ownEnumerableProperties(error: Error): Record<string, unknown> {
     const value: unknown = descriptor.value;
     // JSON 不能表达 undefined；逐个降级时显式跳过，避免凭空生成 null 字段。
     if (value === undefined) continue;
-    own[key] = JSON.parse(safeStringify(value));
+    const nested: Error | null = asError(value);
+    if (nested === null && !aggregateErrors) {
+      own[key] = JSON.parse(safeStringify(value));
+      continue;
+    }
+    frame ??= {
+      error,
+      parent,
+      depth: parent === null ? 0 : parent.depth + 1,
+    };
+    own[key] = nested !== null
+      ? serializeNestedError(nested, frame, budget)
+      : serializeAggregateErrors(value, frame, budget);
   }
   return own;
 }
 
 /**
- * 判断一个 JSON 字段名是否直接承载凭据。
- *
- * 这里不能只依赖配置值级替换：OpenAI/xAI SDK 的错误对象会附带上游响应头，
- * Cloudflare 的 `set-cookie` 值不是本进程配置的密钥，却同样不能进入 journal 或
- * logs/。精确匹配字段名，不把 `output_tokens`、request id 等正常诊断一并抹掉。
+ * 展开 `owner` 的一个嵌套 Error。超过 LOGGER_NESTED_ERROR_MAX_DEPTH，或它已经在
+ * 展开链上（循环引用）时返回静态占位符。
  */
-function isSensitiveLogField(key: string): boolean {
-  switch (key.toLowerCase()) {
-    case "authorization":
-    case "proxy-authorization":
-    case "cookie":
-    case "set-cookie":
-    case "x-api-key":
-    case "api-key":
-    case "apikey":
-    case "api_key":
-    case "token":
-    case "access-token":
-    case "access_token":
-    case "accesstoken":
-    case "refresh-token":
-    case "refresh_token":
-    case "refreshtoken":
-    case "client-secret":
-    case "client_secret":
-    case "clientsecret":
-    case "password":
-    case "passwd":
-    case "secret":
-      return true;
-    default:
-      return false;
+function serializeNestedError(nested: Error, owner: ErrorExpansionFrame, budget: SerializationBudget): unknown {
+  if (owner.depth >= LOGGER_NESTED_ERROR_MAX_DEPTH) {
+    return LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE;
   }
-}
-
-/** JSON/HTTP 字段名允许的 ASCII 字符；只用于向前界定冒号左侧的候选键。 */
-function isLogFieldNameCharacter(code: number): boolean {
-  return (
-    (code >= 0x30 && code <= 0x39) ||
-    (code >= 0x41 && code <= 0x5a) ||
-    code === 0x2d ||
-    code === 0x5f ||
-    (code >= 0x61 && code <= 0x7a)
-  );
-}
-
-/** 跳过 JSON 与常见 HTTP 诊断格式在分隔符两侧使用的 ASCII 空白。 */
-function skipLogWhitespace(text: string, start: number): number {
-  let index: number = start;
-  while (index < text.length) {
-    const code: number = text.charCodeAt(index);
-    if (code !== 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) break;
-    index++;
+  for (
+    let ancestor: ErrorExpansionFrame | null = owner;
+    ancestor !== null;
+    ancestor = ancestor.parent
+  ) {
+    if (ancestor.error === nested) return LOGGER_CIRCULAR_ERROR_VALUE;
   }
-  return index;
+  return serializeError(nested, owner, budget);
 }
 
 /**
- * 判断 `:`/`=` 左侧是否是完整的敏感字段名。先按字符边界筛选长度，只有候选键
- * 才切片并做大小写归一化，避免普通日志里的 URL、时间戳为每个分隔符制造字符串。
+ * AggregateError 的 `errors`：数组按下标逐个读取数据描述符，Error 元素递归展开，
+ * 其余元素按 JSON 语义降级（空洞与 undefined 为 null，访问器为占位符）；
+ * 非数组值按普通字段处理。读取失败只降级这一个字段。
  */
-function hasSensitiveLogFieldBefore(text: string, separator: number): boolean {
-  let end: number = separator;
-  while (end > 0) {
-    const code: number = text.charCodeAt(end - 1);
-    if (code !== 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) break;
-    end--;
-  }
-  if (end > 0) {
-    const quote: number = text.charCodeAt(end - 1);
-    if (quote === 0x22 || quote === 0x27) end--;
-  }
-
-  let start: number = end;
-  while (start > 0 && isLogFieldNameCharacter(text.charCodeAt(start - 1))) start--;
-  const length: number = end - start;
-  // 当前敏感键最短 token、最长 proxy-authorization；先筛掉绝大多数普通字段。
-  if (length < 5 || length > 19) return false;
-  return isSensitiveLogField(text.slice(start, end));
-}
-
-/**
- * 找到字符串或容器形态字段值的末尾。引号内的逗号与括号不结束扫描，保证
- * `set-cookie` 中的 Expires 日期不会被截断；格式残缺时宁可脱敏到文本结尾。
- */
-function findStructuredLogValueEnd(text: string, start: number): number {
-  const opening: number = text.charCodeAt(start);
-  if (opening === 0x22 || opening === 0x27) {
-    let escaped: boolean = false;
-    for (let index: number = start + 1; index < text.length; index++) {
-      const code: number = text.charCodeAt(index);
-      if (escaped) {
-        escaped = false;
-      } else if (code === 0x5c) {
-        escaped = true;
-      } else if (code === opening) {
-        return index + 1;
-      }
-    }
-    return text.length;
-  }
-
-  if (opening !== 0x5b && opening !== 0x7b) {
-    let index: number = start;
-    while (index < text.length) {
-      const code: number = text.charCodeAt(index);
-      if (code === 0x0a || code === 0x0d) break;
-      index++;
-    }
-    return index;
-  }
-
-  let squareDepth: number = 0;
-  let objectDepth: number = 0;
-  let quote: number = 0;
-  let escaped: boolean = false;
-  for (let index: number = start; index < text.length; index++) {
-    const code: number = text.charCodeAt(index);
-    if (quote !== 0) {
-      if (escaped) {
-        escaped = false;
-      } else if (code === 0x5c) {
-        escaped = true;
-      } else if (code === quote) {
-        quote = 0;
-      }
-      continue;
-    }
-    if (code === 0x22 || code === 0x27) {
-      quote = code;
-    } else if (code === 0x5b) {
-      squareDepth++;
-    } else if (code === 0x5d) {
-      squareDepth--;
-    } else if (code === 0x7b) {
-      objectDepth++;
-    } else if (code === 0x7d) {
-      objectDepth--;
-    }
-    if (squareDepth === 0 && objectDepth === 0) return index + 1;
-  }
-  return text.length;
-}
-
-/**
- * 脱敏已经被 SDK/代理拼进字符串的凭据字段，例如错误 message 内嵌的
- * `{"set-cookie":[...]}`。未命中时原样返回且不建立中间数组；命中后仅构造最终
- * 字符串。结构化对象仍由下方 stringify replacer 处理，两条路径共用字段名判定。
- */
-function redactSensitiveFieldsInText(text: string): string {
-  let searchFrom: number = 0;
-  let copyFrom: number = 0;
-  let redacted: string | null = null;
-  while (searchFrom < text.length) {
-    let separator: number = searchFrom;
-    while (separator < text.length) {
-      const code: number = text.charCodeAt(separator);
-      if (code === 0x3a || code === 0x3d) break;
-      separator++;
-    }
-    if (separator >= text.length) break;
-    searchFrom = separator + 1;
-    if (!hasSensitiveLogFieldBefore(text, separator)) continue;
-
-    const valueStart: number = skipLogWhitespace(text, searchFrom);
-    if (valueStart >= text.length) break;
-    const valueEnd: number = findStructuredLogValueEnd(text, valueStart);
-    const prefix: string = text.slice(copyFrom, valueStart);
-    redacted = redacted === null
-      ? prefix + REDACTED_SECRET
-      : redacted + prefix + REDACTED_SECRET;
-    copyFrom = valueEnd;
-    searchFrom = valueEnd;
-  }
-  return redacted === null ? text : redacted + text.slice(copyFrom);
-}
-
-/**
- * JSON.stringify 的无状态脱敏 replacer。
- *
- * 除对象字段外，也覆盖二元 header tuple 与 Node 风格扁平 rawHeaders；字符串值
- * 继续检查 SDK 已经预格式化进去的字段。全部复用既有序列化遍历，避免为每条错误
- * 日志深拷贝整棵 SDK 错误对象。函数不闭包捕获本次调用数据，调用 shape 固定，也
- * 没有可增长的敏感字段注册表。
- */
-function redactSensitiveLogField(
-  this: unknown,
-  key: string,
-  value: unknown
-): unknown {
-  if (isSensitiveLogField(key)) return REDACTED_SECRET;
-  if (key.length > 0 && Array.isArray(this)) {
-    const index: number = Number(key);
-    if (Number.isInteger(index) && index > 0 && (index & 1) === 1) {
-      const headerKey: unknown = this[index - 1];
-      if (typeof headerKey === "string" && isSensitiveLogField(headerKey)) {
-        return REDACTED_SECRET;
-      }
-    }
-  }
-  if (typeof value === "string") {
-    const redacted: string = redactSensitiveFieldsInText(value);
-    return redacted;
-  }
-  return value;
-}
-
-function safeStringify(value: unknown): string {
+function serializeAggregateErrors(value: unknown, owner: ErrorExpansionFrame, budget: SerializationBudget): unknown {
   try {
-    return JSON.stringify(value, redactSensitiveLogField) ?? "null";
-  } catch {
-    try {
-      return JSON.stringify(String(value), redactSensitiveLogField);
-    } catch {
-      // 最后一层必须是静态文本：再次读取 value 只会让 logger 重演原始异常。
-      return JSON.stringify(LOGGER_UNSERIALIZABLE_VALUE);
+    if (!Array.isArray(value)) return JSON.parse(safeStringify(value));
+    const length: number = value.length;
+    const serialized: unknown[] = [];
+    for (let index: number = 0; index < length; index++) {
+      if (budget.items === 0) {
+        serialized.push(LOGGER_SERIALIZATION_LIMIT_VALUE);
+        break;
+      }
+      budget.items--;
+      const descriptor: PropertyDescriptor | undefined =
+        Object.getOwnPropertyDescriptor(value, index);
+      if (descriptor === undefined) {
+        serialized[index] = null;
+        continue;
+      }
+      if (!("value" in descriptor)) {
+        serialized[index] = LOGGER_UNSERIALIZABLE_VALUE;
+        continue;
+      }
+      const element: unknown = descriptor.value;
+      const nested: Error | null = asError(element);
+      serialized[index] = nested !== null
+        ? serializeNestedError(nested, owner, budget)
+        : JSON.parse(safeStringify(element));
     }
+    return serialized;
+  } catch {
+    return LOGGER_UNSERIALIZABLE_VALUE;
   }
 }
 
 /** 单个参数的任何意外失败都只降级该参数，不能替换调用方正在汇报的异常。 */
 function serializeArgSafely(
   arg: unknown,
-  secrets: readonly string[]
+  secrets: readonly string[],
+  budget: SerializationBudget
 ): unknown {
   try {
-    return serializeArg(arg, secrets);
+    return serializeArg(arg, secrets, budget);
   } catch {
     return LOGGER_UNSERIALIZABLE_VALUE;
   }
 }
 
-/** 每次 emit 只读取一次配置快照，并把全部参数变为已脱敏可序列化值。 */
+/** 每次 emit 共用配置快照与展开预算，输出只包含已脱敏值及显式截断标记。 */
 export function serializeLogArgs(args: readonly unknown[]): unknown[] {
   const secrets: readonly string[] = currentSecrets();
-  return args.map(
-    (arg: unknown): unknown => serializeArgSafely(arg, secrets)
-  );
+  const budget: SerializationBudget = { errors: LOGGER_MAX_ERROR_NODES, items: LOGGER_MAX_SERIALIZED_ITEMS };
+  const serialized: unknown[] = [];
+  // 为数组括号、最后一个逗号和截断标记预留空间。
+  let remainingBytes: number = LOGGER_MAX_SERIALIZED_BYTES -
+    jsonSerializedBytes(LOGGER_SERIALIZATION_LIMIT_VALUE) - 3;
+  for (const arg of args) {
+    if (budget.items === 0) {
+      serialized.push(LOGGER_SERIALIZATION_LIMIT_VALUE);
+      break;
+    }
+    budget.items--;
+    const value: unknown = serializeArgSafely(arg, secrets, budget);
+    const bytes: number = jsonSerializedBytes(value) + 1;
+    if (bytes > remainingBytes) {
+      serialized.push(LOGGER_SERIALIZATION_LIMIT_VALUE);
+      break;
+    }
+    serialized.push(value);
+    remainingBytes -= bytes;
+  }
+  return serialized;
 }

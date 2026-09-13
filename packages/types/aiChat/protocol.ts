@@ -93,7 +93,19 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   /** 实际传给视觉管线的本体/缩略图尺寸；语音恒为 0。 */
   width: number;
   height: number;
-  commentOnResolve: boolean;
+  /**
+   * 本条媒体要发起回复轮时的 Telegram 发送面高压快照；不发起回复为 undefined。
+   *
+   * 发起回复指直接触发，或非直接触发但已占到随机评价名额（解析完成后评价），
+   * 直接触发恒为 boolean。Worker 以是否为 undefined 决定是否进入回复准入，以取值
+   * 决定随机评价丢弃与同群并发上限（见 workers/aiChat/mediaIngest.ts）；不要再增加
+   * 表达「是否评价」的重复字段。
+   *
+   * 构造值由 auto/message/recordContext.ts 的 mediaReplyBackpressurePlaceholder 给出
+   * （要回复的媒体先写 false），aiChat/messageIngress.ts 在投递时刻覆写为与 trigger
+   * 消息同源的快照；键恒发。
+   */
+  replyTelegramBackpressured: boolean | undefined;
   /** 贴纸取不到视觉源时的兜底文案；其余媒体为 undefined。 */
   stickerFallbackText: string | undefined;
   /**
@@ -127,10 +139,6 @@ export interface AiRecordMediaMessage extends AiRecordContext {
    * 与提取见 libs/forumTopic.ts。键恒发、缺省显式 undefined——理由同上面
    * directTriggerReason 那段：本协议每条媒体消息走一次，两种形状轮着产生会让
    * Worker 侧的读取点多态。
-   *
-   * **本接口的字段数是 22，这是硬上限，加字段前必须先删一个。** JSC 的
-   * JSFinalObject 内联容量到 22 槽为止；第 23 个属性会把对象挤出内联存储、改走
-   * butterfly。`buildAiRecordMediaMessage` 在每条媒体消息上构造此对象。
    */
   messageThreadId: number | undefined;
 }
@@ -141,7 +149,10 @@ export interface AiTriggerMessage {
   triggerSenderId: number;
   replyToMessageId: number;
   isRandomTrigger: boolean;
-  /** 主线程发送面高压快照；随机触发据此丢弃，直接触发据此串行生成。 */
+  /**
+   * 主线程发送面高压快照；随机触发据此丢弃，直接触发据此串行生成。判定与
+   * AiRecordMediaMessage.replyTelegramBackpressured 同源（见 aiChat/messageIngress.ts）。
+   */
   telegramBackpressured: boolean;
   /** 当前触发是否具备图片工具资格；具体生成/编辑意图由模型判断。 */
   imageGenerationRequested: boolean;

@@ -38,7 +38,7 @@ function photoMessage(): AiRecordMediaMessage {
     width: 1600,
     height: 900,
     messageId: 10,
-    commentOnResolve: false,
+    replyTelegramBackpressured: false,
     stickerFallbackText: undefined,
     voiceMime: undefined,
     voiceDurationSeconds: 0,
@@ -139,7 +139,7 @@ describe("AI 媒体触发的生图参考图", () => {
     recordChatMedia({
       ...stickerMessage(),
       directTriggerReason: undefined,
-      commentOnResolve: true,
+      replyTelegramBackpressured: false,
     });
     await Promise.resolve();
 
@@ -157,8 +157,32 @@ describe("AI 媒体触发的生图参考图", () => {
     expect(await direct.mediaPreparation).toMatchObject({ directTriggerReason: "mention" });
     expect((await direct.mediaPreparation)?.description).not.toBe("");
     describeMedia.mockResolvedValueOnce(null);
-    recordChatMedia({ ...photoMessage(), directTriggerReason: undefined, commentOnResolve: true });
+    recordChatMedia({ ...photoMessage(), directTriggerReason: undefined, replyTelegramBackpressured: false });
     const random = generateAndSendReply.mock.calls[1]![0] as GenerateAndSendReplyParams;
     expect(await random.mediaPreparation).toBeNull();
+  });
+});
+
+describe("AI 媒体触发的 Telegram 背压快照", () => {
+  test.each([false, true])("直接触发（含贴纸目录快路径）与随机评价都把随媒体投递的快照 %s 交给准入", (replyTelegramBackpressured) => {
+    getCatalogEntry.mockReturnValueOnce({ emoji: "🐱", description: "一只猫向前挥爪" });
+    recordChatMedia({ ...stickerMessage(), replyTelegramBackpressured });
+    recordChatMedia({ ...photoMessage(), replyTelegramBackpressured });
+    recordChatMedia({ ...photoMessage(), directTriggerReason: undefined, replyTelegramBackpressured });
+
+    expect(generateAndSendReply).toHaveBeenCalledTimes(3);
+    for (const [params] of generateAndSendReply.mock.calls) {
+      expect(params).toMatchObject({ isRandomTrigger: false, telegramBackpressured: replyTelegramBackpressured });
+    }
+    expect(pushBufferedMessage).toHaveBeenCalledTimes(3);
+  });
+
+  test("不发起回复的媒体只记进上下文并照常解析，不进入准入", async () => {
+    recordChatMedia({ ...photoMessage(), directTriggerReason: undefined, replyTelegramBackpressured: undefined });
+    await Promise.resolve();
+
+    expect(pushBufferedMessage).toHaveBeenCalledTimes(1);
+    expect(describeMedia).toHaveBeenCalledTimes(1);
+    expect(generateAndSendReply).not.toHaveBeenCalled();
   });
 });

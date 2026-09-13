@@ -1,8 +1,6 @@
-/** JSC 稳态采样中与 GC 和优化分层有关的机器可判摘要。 */
+/** JSC 稳态栈采样与优化分层摘要；GC 暂停由 gcProfile 独立计量。 */
 export interface HotPathSamplingProfileSummary {
   readonly totalSamples: number;
-  readonly gcSamples: number;
-  readonly gcPercent: number;
   readonly llintPercent: number;
   readonly baselinePercent: number;
   readonly dfgPercent: number;
@@ -35,9 +33,7 @@ function tierPercent(bytecodes: string, tier: string): number {
 }
 
 /**
- * 解析当前 Bun `bun:jsc.profile` 输出的采样总数、GC 栈与字节码分层字段。
- * 采样只包住正式稳态循环，
- * 因此这里的 gc 不包含脚本加载、预热或 retained-heap 两侧的强制 GC。
+ * 解析当前 Bun `bun:jsc.profile` 正式稳态循环中的采样总数与字节码分层字段。
  */
 export function summarizeHotPathSamplingProfile(
   profile: HotPathSamplingProfileText
@@ -47,14 +43,8 @@ export function summarizeHotPathSamplingProfile(
     /Total samples:\s*(\d+)/,
     "total sample count"
   );
-  const gcMatch: RegExpExecArray | null = /^\s*(\d+)\s+'gc#/m.exec(
-    profile.functions
-  );
-  const gcSamples: number = gcMatch === null ? 0 : Number(gcMatch[1]);
   return {
     totalSamples,
-    gcSamples,
-    gcPercent: totalSamples === 0 ? 0 : (gcSamples / totalSamples) * 100,
     llintPercent: tierPercent(profile.bytecodes, "LLInt"),
     baselinePercent: tierPercent(profile.bytecodes, "Baseline"),
     dfgPercent: tierPercent(profile.bytecodes, "DFG"),

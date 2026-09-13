@@ -23,7 +23,11 @@ import type { PromoteAdBypassWhitelistResult } from
 import type { RecordedTemporaryWhitelistActivity } from
   "../types/temporaryWhitelist";
 
-/** 广告检测有效群的一条普通发言计入跨群身份累计；服务消息由调用方先行排除。 */
+/**
+ * 广告检测有效群的一条普通发言计入跨群身份累计；服务消息由调用方先行排除。
+ * 黑名单身份与黑名单视图冷缺失的身份由 `recordTemporaryWhitelistActivity` 拒绝累计，
+ * 不会走到下方的授予边沿与永久晋升。
+ */
 export function recordEligibleTemporaryWhitelistActivity(
   {
     message,

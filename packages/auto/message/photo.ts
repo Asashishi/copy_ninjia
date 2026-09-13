@@ -1,6 +1,6 @@
 import { recordChatMedia } from "../../aiChat";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
-import { buildAiRecordMediaMessage } from "./recordContext";
+import { buildAiRecordMediaMessage, mediaReplyBackpressurePlaceholder } from "./recordContext";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
@@ -25,7 +25,7 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
       fileUniqueId: photoFile.fileUniqueId,
       width: photoFile.width,
       height: photoFile.height,
-      commentOnResolve: randomTrigger === "claimed",
+      replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
       // 直接回复/@ 只开放工具资格，具体是否要编辑图片交给模型判断。
       stickerFallbackText: undefined,
       voiceMime: undefined,

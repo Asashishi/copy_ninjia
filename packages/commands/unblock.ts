@@ -73,6 +73,8 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     acceptUserId: true,
     // 只有这条命令认负数 id，理由见函数顶部说明与 targetResolution.ts。
     acceptChatId: true,
+    // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不能当成「不在名单」。
+    requireIdentityPolicies: true,
     messages: UNBLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;

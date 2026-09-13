@@ -1,6 +1,7 @@
 import { assertStorageAdmission } from "../diskIO/storageAdmission";
 import { canQueueDiskIOBusiness } from "../diskIO/transport";
 import { storageWriteCost } from "../../libs/storageWriteBudget";
+import { blocklistEntryCache } from "../../cache/main/identityStorage";
 import {
   temporaryWhitelistActivityCache,
   temporaryWhitelistWriteRevision,
@@ -122,6 +123,10 @@ function queueTemporaryWhitelistWrite(
 /**
  * 计入一条已通过入口门禁的群发言；冷缺失时 fail closed，不创建猜测记录。
  *
+ * 临时累计与黑名单互斥（见 docs/cn/04-invariants.md）：黑名单 LRU 命中或冷缺失
+ * 时同样返回 undefined，只有确认不在黑名单的身份才推进累计，Disk I/O 因此不会
+ * 收到与黑名单相交的累计写。
+ *
  * 状态机原样返回入参（当天已达标后的稳态）时没有新事实要落盘：跳过 revision
  * 递增、LRU 写、未 ACK 记账与一次到 Disk I/O 线程的 structured clone，`queued`
  * 仍为 true。这一路同时跳过 `LruCache.set` 的热度刷新，因此调用方必须在同一条
@@ -131,7 +136,10 @@ export function recordTemporaryWhitelistActivity(
   id: number,
   now: number = Date.now()
 ): RecordedTemporaryWhitelistActivity | undefined {
-  if (!temporaryWhitelistActivityCache.has(id)) return undefined;
+  if (
+    !temporaryWhitelistActivityCache.has(id) ||
+    blocklistEntryCache.peek(id) !== null
+  ) return undefined;
   const current: Readonly<TemporaryWhitelistActivity> | null =
     temporaryWhitelistActivityCache.peek(id) ?? null;
   const activity: Readonly<TemporaryWhitelistActivity> =

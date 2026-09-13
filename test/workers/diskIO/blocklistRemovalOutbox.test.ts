@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { statSync } from "node:fs";
 import {
   BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE,
+  BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
 } from "../../../packages/consts/antiRaid/blocklist";
 import {
   IDENTITY_DATABASE_DIRECTORY_MODE,
@@ -33,6 +34,7 @@ import type {
 import {
   encodeBlocklistEntryData,
   encodeWhitelistEntryData,
+  encodePendingBlockedRemovalData,
 } from "../../../packages/database/codec/identity";
 import {
   pendingBlocklistWrites,
@@ -287,6 +289,50 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(restored.pendingBlockedRemovals).toHaveLength(
       BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE + 1
     );
+  });
+
+  test("待踢启动恢复在行数超过 outbox 硬顶时拒绝启动，恰好满额照常恢复", () => {
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    const persist = (count: number, revision: number): void => {
+      const removals: [number, PendingBlockedRemoval][] = Array.from(
+        { length: count },
+        (_value: unknown, index: number): [number, PendingBlockedRemoval] =>
+          [index + 1, removal(index + 1)]
+      );
+      handlePendingRemovalSnapshot({
+        type: "blocklistRemovals",
+        removals,
+        revision,
+      }, reply);
+      expect(flushStorageDatabase(reply)).toBeTrue();
+    };
+    persist(BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES, 4);
+
+    resetStorageDatabaseCache();
+    expect(hydrateStorageDatabase().pendingBlockedRemovals).toHaveLength(
+      BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES
+    );
+    const acknowledgementsBefore: number = acknowledgements.length;
+    expect((): void => persist(BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES + 1, 5))
+      .toThrow(`expected at most ${BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES} rows.`);
+    expect(acknowledgements).toHaveLength(acknowledgementsBefore);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    resetStorageDatabaseCache();
+    expect(hydrateStorageDatabase().pendingBlockedRemovals).toHaveLength(BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES);
+
+    resetStorageDatabaseCache();
+    const database: StorageDatabase = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
+    const extraId: number = BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES + 1;
+    database.$client.query("INSERT INTO pending_blocked_removals (removal_id, data) VALUES (?, jsonb(?))")
+      .run(extraId, encodePendingBlockedRemovalData(removal(extraId), "test").text);
+    closeStorageDatabase(database);
+
+    resetStorageDatabaseCache();
+    expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
+      .toThrow(
+        `${IDENTITY_DATABASE_PATH}:pending_blocked_removals: ` +
+        `expected at most ${BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES} rows.`
+      );
   });
 
   test("待踢损坏 BLOB 在整表存储形态闸被拒绝", () => {

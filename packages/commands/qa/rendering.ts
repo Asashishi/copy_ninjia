@@ -88,8 +88,10 @@ function findQaLabels(
 /**
  * 从一条投递消息里解析出表单字段。
  *
- * 取值范围是「本标签之后到下一个标签之前」，两端 trim；范围内的 `pre` 实体会被
- * 还原成字面 ``` 围栏，因此用户直接粘一整块 ```json 也能原样存下来。
+ * 取值范围是「本标签之后到下一个标签之前」，两端 trim。回答里范围内的 `pre` 实体
+ * 会被还原成字面 ``` 围栏，因此用户直接粘一整块 ```json 也能原样存下来；问题取
+ * 原文切片，与问答直答（auto/message/qaDirectAnswer.ts）比对的 `message.text`、
+ * `/qa remove`、`/qa query <问题>` 读到的 `ctx.match` 同一口径。
  *
  * @returns 一个字段都解析不出（含取值为空）时是 undefined——那条消息与本领域
  *   无关，调用方必须原样放回消息流水线，不能当成填错格式的表单吞掉。
@@ -107,12 +109,10 @@ export function parseQaFieldMessage(message: Message): QaFieldInput | undefined 
     // 同一字段写了两次时以先出现的为准：后一段多半是用户重写时忘了删的草稿，
     // 静默用后者覆盖会让人看不出到底存了哪一段。
     if (hit.field === "q" ? question !== undefined : answer !== undefined) continue;
-    const value: string = captureFencedText({
-      text,
-      entities: message.entities,
-      start: hit.valueStart,
-      end: hits[index + 1]?.labelStart ?? text.length,
-    }).trim();
+    const end: number = hits[index + 1]?.labelStart ?? text.length;
+    const value: string = (hit.field === "q"
+      ? text.slice(hit.valueStart, end)
+      : captureFencedText({ text, entities: message.entities, start: hit.valueStart, end })).trim();
     if (value.length === 0) continue;
     if (hit.field === "q") question = value;
     else answer = value;

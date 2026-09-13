@@ -1,6 +1,7 @@
 import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User, Chat } from "grammy/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
+import { explicitReplyTo } from "../../libs/forumTopic";
 import { joinPersonName } from "../../libs/text";
 import { visibleSenderChat } from "../../users/visibleSender";
 import type { TelegramVisionSource } from "../../types/media";
@@ -106,9 +107,9 @@ function visibleSenderId(message: Message): number | undefined {
   return visibleSenderChat(message)?.id ?? message.from?.id;
 }
 
-/** 判断当前消息是否回复同一个可见发送者先前的消息。 */
+/** 判断当前消息是否显式回复同一个可见发送者先前的消息（判定见 libs/forumTopic.ts 的 explicitReplyTo）。 */
 export function isReplyToSelf(message: Message): boolean {
-  const repliedTo: Message | undefined = message.reply_to_message;
+  const repliedTo: Message | undefined = explicitReplyTo(message);
   if (!repliedTo) return false;
   const senderId: number | undefined = visibleSenderId(message);
   return senderId !== undefined && senderId === visibleSenderId(repliedTo);
@@ -168,9 +169,10 @@ function replyReferenceText(message: Message): string {
 }
 
 /** 提取当前消息的显式回复关系。Telegram 已在 reply_to_message 中附带原消息，
- * 因此无需额外 API 请求；quote 则保留用户选中的精确引用片段。 */
+ * 因此无需额外 API 请求；论坛话题自动填入的话题创建消息不算回复（见
+ * libs/forumTopic.ts 的 explicitReplyTo）；quote 则保留用户选中的精确引用片段。 */
 export function resolveReplyReference(message: Message): AiReplyReference | undefined {
-  const repliedTo: Message | undefined = message.reply_to_message;
+  const repliedTo: Message | undefined = explicitReplyTo(message);
   if (!repliedTo) return undefined;
   const speaker: AiSpeakerSnapshot = resolveSpeaker(repliedTo);
   // 三个可选字段一律写出来（缺省即 undefined），让进入 Worker 与逐字缓存的引用

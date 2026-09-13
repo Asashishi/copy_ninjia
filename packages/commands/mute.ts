@@ -139,6 +139,8 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     // 禁言可逆，但目标照样用 id 指定最准（同 /block 的理由：用户名会被释放后
     // 重新注册）；时长 token 带单位字母，纯数字的 id 不会被它接住。
     acceptUserId: true,
+    // 下面的自己人闸读 isWhitelisted，冷读失败时不能当成「不受保护」。
+    requireIdentityPolicies: true,
     messages: MUTE_TARGET_TEXTS,
   });
   if (!targetUser) return;

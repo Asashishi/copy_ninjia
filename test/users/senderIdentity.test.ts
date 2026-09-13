@@ -78,6 +78,36 @@ describe("sender identity cache", () => {
     });
   });
 
+  test("论坛话题里自动填入的话题创建消息不是回复目标，显式回复话题内消息照常解析", () => {
+    const forumChat = { ...chat, is_forum: true };
+    const topicCreated = {
+      message_id: 3,
+      date: 0,
+      chat: forumChat,
+      from: { id: 555, is_bot: false, first_name: "Topic Creator" },
+      is_topic_message: true,
+      message_thread_id: 3,
+      forum_topic_created: { name: "话题", icon_color: 0x6fb9f0 },
+    };
+    const topicCommand = {
+      message_id: 9,
+      date: 1,
+      chat: forumChat,
+      from: { id: 1, is_bot: false, first_name: "Admin" },
+      text: "/copy",
+      is_topic_message: true,
+      message_thread_id: 3,
+      reply_to_message: topicCreated,
+    } as unknown as Message;
+    expect(resolveReplyTarget(topicCommand)).toBeUndefined();
+
+    const explicitReply = {
+      ...topicCommand,
+      reply_to_message: { ...topicCreated, message_id: 7, forum_topic_created: undefined, from: { id: 42, is_bot: false, first_name: "Alice" } },
+    } as unknown as Message;
+    expect(resolveReplyTarget(explicitReply)?.id).toBe(42);
+  });
+
   test("用户改名、去名和恢复 username 时只有当前 alias 可解析", () => {
     cacheSender(userMessage(1, "OldName"));
     expect(resolveUsernameTarget("OLDNAME")?.id).toBe(1);

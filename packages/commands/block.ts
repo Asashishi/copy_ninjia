@@ -79,6 +79,8 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     // 处置的对象本来就是一个 id，用 id 指定比 @username 更准（用户名会被释放
     // 后重新注册，而这条命令不可逆），见 targetResolution.ts 的 acceptUserId。
     acceptUserId: true,
+    // 自己人闸与 blockUser 都读目标的名单结论，冷读失败时不能当成「不受保护」。
+    requireIdentityPolicies: true,
     messages: BLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;

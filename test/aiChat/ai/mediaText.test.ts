@@ -22,7 +22,7 @@ const stickerMessage: AiRecordMediaMessage = {
   width: 512,
   height: 512,
   messageId: 10,
-  commentOnResolve: false,
+  replyTelegramBackpressured: undefined,
   stickerFallbackText: "[贴纸：🙂，来自 pack]",
   voiceMime: undefined,
   voiceDurationSeconds: 0,

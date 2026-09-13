@@ -1,6 +1,6 @@
 import type { Message } from "grammy/types";
 import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference } from "./facts";
-import { forumTopicThreadId } from "../../libs/forumTopic";
+import { explicitReplyTo, forumTopicThreadId } from "../../libs/forumTopic";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type { MentionFacts, MessageTriggerContext } from "../../types/auto";
 import type { AiDirectTriggerReason } from "../../types/aiChat/protocol";
@@ -22,7 +22,7 @@ export function createMessageTriggerContext({
   isQuiet,
   aiReplyProbability,
 }: CreateMessageTriggerContextParams): MessageTriggerContext {
-  const repliedTo: Message | undefined = message.reply_to_message;
+  const repliedTo: Message | undefined = explicitReplyTo(message);
   const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === bot.id;
   // 两个提及事实一次遍历解析（见 facts.ts 的 resolveMentionFacts）。
   const mentionFacts: MentionFacts = resolveMentionFacts(message, bot.id, bot.username);

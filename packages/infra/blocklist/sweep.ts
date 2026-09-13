@@ -62,7 +62,8 @@ export function initBlocklistSweepScheduler(): void {
 }
 
 /**
- * 记下缺封禁权限，并把对应 outbox 批次标成 missing-permission。没有既有 sweep
+ * 记下缺封禁权限，并把对应 outbox 批次标成 missing-permission；标记变化时同步排入
+ * durable outbox 快照，重启后由 hydrateBlocklist 恢复闩锁。没有既有 sweep
  * 记录时也建立最小闩锁，确保 Worker 重建不会反复重投同一批注定失败的任务。
  */
 function notePermissionBlocked(chatId: number, removalId: number): void {

@@ -15,10 +15,11 @@ let messageRetryPending: number = 0;
 const postAiChatOrThrow = mock((message: AiChatWorkerMessage): void => {
   workerPosts.push(message);
 });
+const telegramOutboundStats = mock(() => ({ messageActive, messageRetryPending }));
 
 mock.module("../../packages/aiChat/workerBridge", () => ({ postAiChatOrThrow }));
 mock.module("../../packages/infra/telegram/outboundLifecycle", () => ({
-  telegramOutboundStats: () => ({ messageActive, messageRetryPending }),
+  telegramOutboundStats,
 }));
 
 const {
@@ -38,6 +39,7 @@ beforeEach((): void => {
   messageActive = 0;
   messageRetryPending = 0;
   postAiChatOrThrow.mockClear();
+  telegramOutboundStats.mockClear();
   postAiChatOrThrow.mockImplementation((message: AiChatWorkerMessage): void => {
     workerPosts.push(message);
   });
@@ -152,5 +154,35 @@ describe("AI 主线程消息入口", () => {
         imageGenerationReference: undefined,
       },
     ]);
+  });
+
+  test("要发起回复轮的媒体在投递时刻写入与文字触发同源的发送面高压快照", () => {
+    const snapshots: (boolean | undefined)[] = [];
+    for (const [active, retryPending] of [
+      [AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER, 0],
+      [0, AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER],
+      [AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER - 1, AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER - 1],
+    ] as const) {
+      messageActive = active;
+      messageRetryPending = retryPending;
+      const message = aiRecordMediaMessageFixture({ replyTelegramBackpressured: false });
+      recordChatMedia(message);
+      expect(workerPosts.at(-1)).toBe(message);
+      snapshots.push(message.replyTelegramBackpressured);
+    }
+
+    expect(snapshots).toEqual([true, true, false]);
+    expect(telegramOutboundStats).toHaveBeenCalledTimes(3);
+  });
+
+  test("不发起回复的媒体不读取发送面，快照保持 undefined", () => {
+    messageActive = AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER;
+    const message = aiRecordMediaMessageFixture({ replyTelegramBackpressured: undefined });
+
+    recordChatMedia(message);
+
+    expect(workerPosts).toEqual([message]);
+    expect(message.replyTelegramBackpressured).toBeUndefined();
+    expect(telegramOutboundStats).not.toHaveBeenCalled();
   });
 });

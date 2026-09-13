@@ -80,6 +80,7 @@ describe("群聊语音消息", () => {
       voiceDurationSeconds: 12,
       stickerFallbackText: undefined,
       directTriggerReason: "reply",
+      replyTelegramBackpressured: false,
     });
     // 语音不作为生图参考素材，但直接触发仍开放重媒体工具资格——这一条事实就是
     // directTriggerReason 本身，不再有单独的布尔字段重复它

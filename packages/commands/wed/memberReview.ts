@@ -16,7 +16,11 @@ import type { MidnightMaintenanceReply } from "../../types/diskIO/replies";
 import type { WedMemberReview, WedRuntime } from "../../types/wed";
 import { removeWedMember } from "./persistence";
 
-/** 逐群快照，串行查询并限制全局起始频率；只删除确认离群且没有新在群观察的成员。 */
+/**
+ * 逐群快照，串行查询并限制全局起始频率；只删除确认离群且没有新在群观察的成员。
+ * 某群集合在复核期间被替换或清除时只结束该群，继续下一个群；整轮只因
+ * `review.controller` 取消而提前结束。
+ */
 async function reviewWedMembers(review: WedMemberReview): Promise<void> {
   let nextCheckAt: number = 0;
   try {
@@ -24,14 +28,16 @@ async function reviewWedMembers(review: WedMemberReview): Promise<void> {
       if (review.controller.signal.aborted) return;
       const members: readonly number[] = [...state.members];
       for (const userId of members) {
-        if (review.controller.signal.aborted || wedMemberStates.get(chatId) !== state) return;
+        if (review.controller.signal.aborted) return;
+        if (wedMemberStates.get(chatId) !== state) break;
         if (!state.members.has(userId)) continue;
         let delay: number = nextCheckAt - monotonicNow();
         while (delay > 0) {
           await sleep(Math.ceil(delay), review.controller.signal);
           delay = nextCheckAt - monotonicNow();
         }
-        if (review.controller.signal.aborted || wedMemberStates.get(chatId) !== state) return;
+        if (review.controller.signal.aborted) return;
+        if (wedMemberStates.get(chatId) !== state) break;
         if (!state.members.has(userId)) continue;
         review.chatId = chatId;
         review.userId = userId;
@@ -40,13 +46,14 @@ async function reviewWedMembers(review: WedMemberReview): Promise<void> {
         const signal: AbortSignal =
           signalWithTimeout(review.controller.signal, WED_OPERATION_TIMEOUT_MS);
         const user: User | null | undefined = await readPresentChatUser({ chatId, userId, signal });
-        if (wedMemberStates.get(chatId) !== state) return;
-        if (user === null && !signal.aborted && !review.observed) {
-          removeWedMember(chatId, userId);
-        }
+        const observed: boolean = review.observed;
         review.chatId = null;
         review.userId = null;
         review.observed = false;
+        if (wedMemberStates.get(chatId) !== state) break;
+        if (user === null && !signal.aborted && !observed) {
+          removeWedMember(chatId, userId);
+        }
       }
     }
   } finally {

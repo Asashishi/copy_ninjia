@@ -9,8 +9,10 @@
 
 import {
   mkdirSync,
+  statSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { BigIntStats } from "node:fs";
 import {
   joinLogFileCaches,
   joinLogRetryAt,
@@ -25,7 +27,7 @@ import {
 } from "../../consts/diskIO/joinLog";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { JOIN_LOG_MEMORY_DIR } from "../../consts/paths";
-import { atomicWriteTextChunksSync } from "../../libs/atomicFile";
+import { atomicWriteTextChunksSync, syncDirectorySync } from "../../libs/atomicFile";
 import { invalidInput } from "../../libs/inputValidation";
 import type {
   AppendOnlyFileState,
@@ -82,15 +84,44 @@ function rewriteJoinLogFile(path: string, cache: JoinLogFileCache): void {
   cache.redundantEntries = 0;
 }
 
+/** 目标路径当前目录项指向的文件；不存在时为 undefined。 */
+function statJoinLogFile(path: string): BigIntStats | undefined {
+  return statSync(path, { bigint: true, throwIfNoEntry: false });
+}
+
+/**
+ * 判断原子重写失败后目标路径是否已换成另一个文件（新快照已 rename 上去）。
+ * 无法重新 stat 时按已替换处理。
+ */
+function joinLogFileReplaced(path: string, before: BigIntStats | undefined): boolean {
+  let after: BigIntStats | undefined;
+  try {
+    after = statJoinLogFile(path);
+  } catch {
+    return true;
+  }
+  if (before === undefined || after === undefined) return before !== after;
+  return before.ino !== after.ino || before.dev !== after.dev;
+}
+
+/**
+ * 按累计计数评估并执行压缩。替换前失败只记录日志并重新累计增量；已替换时
+ * 必须补齐父目录同步，失败则交由写入边界拒绝确认。持久化约束见 docs/cn/04-invariants.md。
+ *
+ * 原子重写在 rename 之前失败时，目标文件与 cache 均未改变，cache 继续有效；
+ * rename 之后失败（目录 fsync、快照字节数不符）时目标路径已是新快照，
+ * cache.state 描述的是被替换掉的文件，补齐目录同步后仍需重新接管。
+ * @returns cache 是否仍描述目标路径上的文件；false 时调用方必须丢弃 cache 并从磁盘重建。
+ */
 function maybeCompactJoinLogFile(
   path: string,
   cache: JoinLogFileCache
-): void {
+): boolean {
   if (
     cache.redundantEntries < JOIN_LOG_COMPACT_REDUNDANT_ENTRIES &&
     cache.appendedBytesSinceCompaction < JOIN_LOG_COMPACT_CHECK_BYTES
   ) {
-    return;
+    return true;
   }
   const reclaimableBytes: number =
     cache.state.size - cache.snapshotBytes;
@@ -98,23 +129,41 @@ function maybeCompactJoinLogFile(
     // 本轮多数是不同用户，重写收不回空间；重新累计一段增量后再评估。
     cache.appendedBytesSinceCompaction = 0;
     cache.redundantEntries = 0;
-    return;
+    return true;
   }
-  rewriteJoinLogFile(path, cache);
+  let sampled: boolean = false;
+  let before: BigIntStats | undefined;
+  try {
+    before = statJoinLogFile(path);
+    sampled = true;
+    rewriteJoinLogFile(path, cache);
+    return true;
+  } catch (error: unknown) {
+    cache.appendedBytesSinceCompaction = 0;
+    cache.redundantEntries = 0;
+    const replaced: boolean = sampled && joinLogFileReplaced(path, before);
+    if (replaced) syncDirectorySync(path);
+    console.error(
+      `[diskIOWorker] failed to compact join log ${path}; ` +
+      (replaced
+        ? "the snapshot was already published, so the file will be reopened:"
+        : "keeping the current file and re-evaluating after more appends:"),
+      error
+    );
+    return !replaced;
+  }
 }
 
 /**
- * 首次接管某群某日文件时严格校验领域 schema、容量与规范追加格式；任何
- * 损坏都保留原始字节并拒绝接管。成功后恢复 latest-by-user 索引。
+ * 严格校验领域 schema、容量与规范追加格式后接管文件，不评估压缩；任何
+ * 损坏都保留原始字节并拒绝接管。已有文件先同步父目录，再恢复 latest-by-user
+ * 索引；包括此前原子替换已发布、目录同步失败后丢弃缓存的重试接管。
  */
-async function openJoinLogFile(
-  chatId: number,
-  day: string
-): Promise<JoinLogFileCache> {
-  const path: string = joinLogPath(chatId, day);
+async function takeOverJoinLogFile(path: string): Promise<JoinLogFileCache> {
   const existing: ValidatedJoinLogFile | null = await Bun.file(path).exists()
     ? await readValidatedJoinLogFile(path)
     : null;
+  if (existing !== null) syncDirectorySync(path);
   const parsed: Record<string, JoinLogRecord> = existing === null
     ? {}
     : existing.parsed;
@@ -145,8 +194,21 @@ async function openJoinLogFile(
     redundantEntries: 0,
     capacityWarningEmitted: false,
   };
-  maybeCompactJoinLogFile(path, cache);
   return cache;
+}
+
+/**
+ * 首次接管某群某日文件，并按接管时的文件大小评估一次压缩。替换前的压缩失败
+ * 不阻止接管；新快照已持久发布时再接管一次，这次不再评估压缩。
+ */
+async function openJoinLogFile(
+  chatId: number,
+  day: string
+): Promise<JoinLogFileCache> {
+  const path: string = joinLogPath(chatId, day);
+  const cache: JoinLogFileCache = await takeOverJoinLogFile(path);
+  if (maybeCompactJoinLogFile(path, cache)) return cache;
+  return takeOverJoinLogFile(path);
 }
 
 /** 取该群该日的接管缓存；未接管过时先按磁盘现状严格重建。 */
@@ -256,7 +318,8 @@ export async function writeFileEntries(
       }
       cache.latestByUser.set(record.userId, record);
     }
-    maybeCompactJoinLogFile(path, cache);
+    // 追加和可能发生的快照替换均已持久化后才确认；替换后缓存需重新接管。
+    if (!maybeCompactJoinLogFile(path, cache)) joinLogFileCaches.delete(key);
     joinLogRetryAt.delete(key);
     return true;
   } catch (error: unknown) {

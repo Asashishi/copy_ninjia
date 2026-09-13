@@ -66,6 +66,14 @@ systemd_environment_assignment() {
   printf 'Environment="%s=%s"' "$variable_name" "$escaped_value"
 }
 
+# 按 packages/consts/paths.ts 解析当前进程环境下的运行时数据根。
+resolve_runtime_data_root() {
+  bun -e '
+    import { RUNTIME_DATA_ROOT } from "./packages/consts/paths";
+    await Bun.write(Bun.stdout, RUNTIME_DATA_ROOT);
+  '
+}
+
 # 观察窗口开始处的 journal 游标；后面只读这一点之后新增的条目。
 # unit 从来没写过日志（全新安装）时没有游标可取，返回空串——那种情况下这条 unit
 # 的**全部**条目都是本次装出来的，调用方读全量即可，不会把旧崩溃算到本次头上。
@@ -145,6 +153,115 @@ verify_service_target() {
   case "$arguments" in
     "$executable start"|"$executable run start"|"$executable index.ts"|"$executable run index.ts"|"$executable $workdir/index.ts"|"$executable run $workdir/index.ts") ;;
     *) die "服务 ExecStart 必须使用 Bun 运行当前工作树入口。" ;;
+  esac
+}
+
+# 原地写入前核对既有 unit 生效的 COPY_NINJIA_DATA_ROOT（含 drop-in）与安装器环境一致；
+# 身份库、部署输入校验和重写的 unit 都按安装器环境定位数据根。两侧同时缺省，或
+# 都设置且经 packages/consts/paths.ts 解析为同一路径时放行，其余情况拒绝继续。
+# 参数是安装器环境已解析的数据根，未设置该变量时传空串。
+# `systemctl show -p Environment --value` 以单个空格分隔各项；含空白或 shell 特殊
+# 字符的项整体加双引号，其中 " \ ` $ 前加反斜线，控制字符与非法 UTF-8 字节写成
+# C 转义。解析器按这一格式逐项还原，格式不符或该变量值含控制字符时拒绝继续。
+verify_service_data_root() {
+  local installer_root="$1" load="" environment="" unit_entry="" unit_value="" unit_root=""
+  local property="" value=""
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    return 0
+  fi
+  load="$(systemctl show "${SERVICE_NAME}.service" -p LoadState --value)" ||
+    die "无法查询服务状态，拒绝修改部署。请按运维流程确认服务 inactive 后更新。"
+  if [ "$load" = not-found ]; then
+    return 0
+  fi
+  # 环境文件可能覆盖 Environment，传入与删除规则也会改变最终数据根。
+  # 无法从静态 Environment 证明一致的 unit 必须先由部署方整理环境来源。
+  for property in EnvironmentFiles PassEnvironment UnsetEnvironment; do
+    value="$(systemctl show "${SERVICE_NAME}.service" -p "$property" --value)" ||
+      die "${SERVICE_UNIT_PATH}: ${property} 必须可读取，拒绝修改部署。"
+    case "$property:$value" in
+      EnvironmentFiles:?*|PassEnvironment:*COPY_NINJIA_DATA_ROOT*|UnsetEnvironment:*COPY_NINJIA_DATA_ROOT*)
+        die "${SERVICE_UNIT_PATH}: ${property} 必须不参与 COPY_NINJIA_DATA_ROOT 解析；请先将数据根明确配置在 Environment 中。"
+        ;;
+    esac
+  done
+  environment="$(systemctl show "${SERVICE_NAME}.service" -p Environment --value)" ||
+    die "无法读取 ${SERVICE_UNIT_PATH} 的 Environment，拒绝修改部署。"
+  unit_entry="$(bun -e '
+    const input = Bun.argv[1];
+    const prefix = `${Bun.argv[2]}=`;
+    const escapes = { "\"": "\"", "\\": "\\", "`": "`", "$": "$", a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v" };
+    let offset = 0;
+    let value;
+    while (offset < input.length) {
+      let item = "";
+      if (input[offset] === "\"") {
+        offset += 1;
+        while (input[offset] !== "\"") {
+          if (offset >= input.length) throw new Error("systemd Environment property has an unterminated quoted item.");
+          if (input[offset] !== "\\") {
+            item += input[offset];
+            offset += 1;
+            continue;
+          }
+          const escaped = input[offset + 1];
+          if (escaped !== undefined && Object.hasOwn(escapes, escaped)) {
+            item += escapes[escaped];
+            offset += 2;
+            continue;
+          }
+          if (!/^[0-7]{3}$/.test(input.slice(offset + 1, offset + 4))) {
+            throw new Error("systemd Environment property has an invalid escape sequence.");
+          }
+          item += "\0";
+          offset += 4;
+        }
+        offset += 1;
+      } else {
+        const end = input.indexOf(" ", offset);
+        item = input.slice(offset, end === -1 ? input.length : end);
+        if (item.length === 0 || /["\\]/.test(item)) {
+          throw new Error("systemd Environment property has an invalid unquoted item.");
+        }
+        offset += item.length;
+      }
+      if (offset < input.length) {
+        if (input[offset] !== " " || offset + 1 === input.length) {
+          throw new Error("systemd Environment property items must be separated by single spaces.");
+        }
+        offset += 1;
+      }
+      if (item.startsWith(prefix)) {
+        if (value !== undefined) throw new Error(`systemd Environment property repeats ${prefix}`);
+        value = item.slice(prefix.length);
+      }
+    }
+    if (value === undefined) {
+      await Bun.write(Bun.stdout, "unset");
+    } else if (/[\u0000-\u001f\u007f]/.test(value)) {
+      throw new Error(`systemd Environment ${prefix} must not contain control characters.`);
+    } else {
+      await Bun.write(Bun.stdout, `=${value}`);
+    }
+  ' "$environment" COPY_NINJIA_DATA_ROOT)" ||
+    die "${SERVICE_UNIT_PATH}: Environment 必须是 systemctl show 可解析的环境列表，且 COPY_NINJIA_DATA_ROOT 不含控制字符；拒绝修改部署。"
+  case "$unit_entry" in
+    unset)
+      [ -z "$installer_root" ] ||
+        die "${SERVICE_UNIT_PATH}: Environment.COPY_NINJIA_DATA_ROOT 与安装环境必须同时缺省或显式解析为同一数据根。"
+      ;;
+    =*)
+      unit_value="${unit_entry#=}"
+      [ -n "$installer_root" ] ||
+        die "${SERVICE_UNIT_PATH}: Environment.COPY_NINJIA_DATA_ROOT 与安装环境必须同时缺省或显式解析为同一数据根。"
+      unit_root="$(COPY_NINJIA_DATA_ROOT="$unit_value" resolve_runtime_data_root)" ||
+        die "${SERVICE_UNIT_PATH}: Environment 的 COPY_NINJIA_DATA_ROOT 必须是非空路径；拒绝修改部署。"
+      [ "$unit_root" = "$installer_root" ] ||
+        die "${SERVICE_UNIT_PATH}: Environment.COPY_NINJIA_DATA_ROOT 与安装环境必须同时缺省或显式解析为同一数据根。"
+      ;;
+    *)
+      die "${SERVICE_UNIT_PATH}: Environment 的 COPY_NINJIA_DATA_ROOT 无法确认；拒绝修改部署。"
+      ;;
   esac
 }
 
@@ -461,11 +578,17 @@ backup_deployment_config() {
   info "已备份 ${target_path} 到 ${CONFIG_BACKUP_DIRECTORY}，SHA-256 已核对。"
 }
 
-# 目标内容已严格解析后才走这里；既有配置保持属主/属组，新文件固定为 0600，
-# 原子替换时不会让服务账号失去原有读取能力，也没有宽权限窗口。
+# 目标内容已严格解析后才走这里。第三个参数为 preserve 时替换部署方已填写过的既有
+# 配置：候选文件在 0600 下先改成原属主/属组，mv 前才改成原文件 mode，因此候选内容
+# 的可读范围从不超过原文件，服务账号也保留原有读取能力。为 new 时文件固定 0600，
+# 目标已存在则只保留属主/属组。
 commit_staged_config() {
-  local staging_path="$1" target_path="$2" target_uid="" target_gid=""
-  local staging_uid="" staging_gid=""
+  local staging_path="$1" target_path="$2" mode_policy="$3" target_uid="" target_gid=""
+  local target_mode="" staging_uid="" staging_gid="" owner_changed=0
+  case "$mode_policy" in
+    preserve|new) ;;
+    *) die "无法确认 ${target_path} 的权限策略。" ;;
+  esac
   chmod 600 -- "$staging_path" || die "无法收紧 ${target_path} 候选文件权限。"
   if [ -e "$target_path" ]; then
     target_uid="$(stat -c '%u' -- "$target_path")" || die "无法读取 ${target_path} 属主。"
@@ -475,6 +598,17 @@ commit_staged_config() {
     if [ "$staging_uid" != "$target_uid" ] || [ "$staging_gid" != "$target_gid" ]; then
       run_privileged chown "${target_uid}:${target_gid}" "$staging_path" ||
         die "无法保持 ${target_path} 的属主与属组，原文件未改动。"
+      owner_changed=1
+    fi
+    if [ "$mode_policy" = preserve ]; then
+      target_mode="$(stat -c '%a' -- "$target_path")" || die "无法读取 ${target_path} 权限。"
+      if [ "$owner_changed" -eq 1 ]; then
+        run_privileged chmod "$target_mode" "$staging_path" ||
+          die "无法保持 ${target_path} 的权限，原文件未改动。"
+      else
+        chmod "$target_mode" -- "$staging_path" ||
+          die "无法保持 ${target_path} 的权限，原文件未改动。"
+      fi
     fi
   fi
   mv -- "$staging_path" "$target_path" || die "原子替换 ${target_path} 失败。"
@@ -635,8 +769,23 @@ info "Bun ${BUN_VERSION}，与 packageManager 一致。"
 step "4/8 安装依赖"
 # --------------------------------------------------------------------------
 
-# 用锁文件安装：bun.lock 已进版本库，装出来的树必须和门禁跑过的那棵一致。
 verify_service_target "$PWD"
+
+# systemd 的系统服务不会继承运行安装脚本的 shell 环境。只有部署方显式设置了
+# COPY_NINJIA_DATA_ROOT 时才写 Environment=：缺省时继续让生产代码使用项目根，
+# 不能把缺省根也写进去，否则会把 RUNTIME_DATA_ROOT_IS_CONFIGURED 错置为 true。
+# 数据根在任何部署写入之前解析，并与既有 unit 的同名环境项核对。
+SYSTEMD_DATA_ROOT_ENVIRONMENT=""
+RESOLVED_RUNTIME_DATA_ROOT=""
+if [ "${COPY_NINJIA_DATA_ROOT+x}" = "x" ]; then
+  RESOLVED_RUNTIME_DATA_ROOT="$(resolve_runtime_data_root)" || die "无法解析运行时数据根。"
+  SYSTEMD_DATA_ROOT_ENVIRONMENT="$(
+    systemd_environment_assignment COPY_NINJIA_DATA_ROOT "$RESOLVED_RUNTIME_DATA_ROOT"
+  )"
+fi
+verify_service_data_root "$RESOLVED_RUNTIME_DATA_ROOT"
+
+# 用锁文件安装：bun.lock 已进版本库，装出来的树必须和门禁跑过的那棵一致。
 bun install --frozen-lockfile || die "bun install 失败。"
 info "依赖安装完成。"
 
@@ -664,10 +813,16 @@ done
 step "6/8 填写配置"
 # --------------------------------------------------------------------------
 
+# 首次填写（含仍是示例占位值的文件）固定 0600；重新填写已填过的文件沿用原 mode。
 CONFIGURE_TELEGRAM=1
+TELEGRAM_CONFIG_MODE_POLICY=new
 if [ -e config/telegram.json ] &&
    ! grep -q 'replace-with-telegram-bot-token' config/telegram.json; then
-  confirm "config/telegram.json 已经填过，是否重新填写？" n || CONFIGURE_TELEGRAM=0
+  if confirm "config/telegram.json 已经填过，是否重新填写？" n; then
+    TELEGRAM_CONFIG_MODE_POLICY=preserve
+  else
+    CONFIGURE_TELEGRAM=0
+  fi
 fi
 
 if [ "$CONFIGURE_TELEGRAM" -eq 1 ]; then
@@ -699,8 +854,11 @@ JSON
   backup_deployment_config "$TELEGRAM_CONFIG_TARGET_PATH"
   validate_staged_telegram_config "$TELEGRAM_CONFIG_STAGING_PATH" ||
     die "候选 config/telegram.json 严格校验未通过，原文件未改动。"
-  commit_staged_config "$TELEGRAM_CONFIG_STAGING_PATH" "$TELEGRAM_CONFIG_TARGET_PATH"
-  info "已写入 config/telegram.json（权限 600）。"
+  commit_staged_config \
+    "$TELEGRAM_CONFIG_STAGING_PATH" "$TELEGRAM_CONFIG_TARGET_PATH" "$TELEGRAM_CONFIG_MODE_POLICY"
+  TELEGRAM_CONFIG_MODE="$(stat -c '%a' -- "$TELEGRAM_CONFIG_TARGET_PATH")" ||
+    die "无法读取 config/telegram.json 权限。"
+  info "已写入 config/telegram.json（权限 ${TELEGRAM_CONFIG_MODE}）。"
 fi
 
 if [ -e config/agent.json ]; then
@@ -803,7 +961,7 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
     clear_agent_config_inputs
     validate_staged_agent_config "$AGENT_CONFIG_STAGING_PATH" ||
       die "候选 config/agent.json 严格校验未通过，未建立部署文件。"
-    commit_staged_config "$AGENT_CONFIG_STAGING_PATH" "$AGENT_CONFIG_TARGET_PATH"
+    commit_staged_config "$AGENT_CONFIG_STAGING_PATH" "$AGENT_CONFIG_TARGET_PATH" new
     info "已写入 config/agent.json（权限 600）：${CONFIGURED_CAPABILITIES[*]}"
     for required_capability in "${AGENT_REQUIRED_CAPABILITIES[@]}"; do
       case " ${CONFIGURED_CAPABILITIES[*]} " in
@@ -825,26 +983,12 @@ step "7/8 初始化身份数据库"
 # 身份库的真实位置由 packages/consts/paths.ts 决定：缺省是仓库根，设了
 # COPY_NINJIA_DATA_ROOT 就在那个根下。这里向它要一次，不自己拼相对路径——
 # 拼死的话，配了独立数据根的部署会在错误的目录上做存在性判断、建目录和 chmod，
-# 而库其实建到了别处。顺带：那个变量存在但为空时，这一步就会当场报错。
+# 而库其实建到了别处。
 IDENTITY_DATABASE_FILE="$(bun -e '
   import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
   await Bun.write(Bun.stdout, IDENTITY_DATABASE_PATH);
 ')" || die "无法解析身份数据库路径。"
 IDENTITY_DATABASE_DIR="$(dirname -- "$IDENTITY_DATABASE_FILE")"
-
-# systemd 的系统服务不会继承运行安装脚本的 shell 环境。只有部署方显式设置了
-# COPY_NINJIA_DATA_ROOT 时才写 Environment=：缺省时继续让生产代码使用项目根，
-# 不能把缺省根也写进去，否则会把 RUNTIME_DATA_ROOT_IS_CONFIGURED 错置为 true。
-SYSTEMD_DATA_ROOT_ENVIRONMENT=""
-if [ "${COPY_NINJIA_DATA_ROOT+x}" = "x" ]; then
-  RESOLVED_RUNTIME_DATA_ROOT="$(bun -e '
-    import { RUNTIME_DATA_ROOT } from "./packages/consts/paths";
-    await Bun.write(Bun.stdout, RUNTIME_DATA_ROOT);
-  ')" || die "无法解析运行时数据根。"
-  SYSTEMD_DATA_ROOT_ENVIRONMENT="$(
-    systemd_environment_assignment COPY_NINJIA_DATA_ROOT "$RESOLVED_RUNTIME_DATA_ROOT"
-  )"
-fi
 
 if [ -e "$IDENTITY_DATABASE_FILE" ]; then
   info "${IDENTITY_DATABASE_FILE} 已存在，不动它。"
@@ -959,13 +1103,14 @@ if [ "$WRITE_UNIT" -eq 1 ]; then
 fi
 
 run_privileged systemctl daemon-reload || die "systemctl daemon-reload 失败。"
-RESTARTS_BEFORE="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value 2>/dev/null)"
-[[ "$RESTARTS_BEFORE" =~ ^[0-9]+$ ]] || die "无法确认服务重启计数。"
 run_privileged systemctl enable "${SERVICE_NAME}.service" ||
   die "启用 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
 OBSERVATION_SECONDS="$(service_observation_seconds)" || die "无法确认服务实际重启间隔。"
 run_privileged systemctl start "${SERVICE_NAME}.service" ||
   die "启动 ${SERVICE_NAME}.service 失败。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+# 手动 start 会清零停机前累计的 NRestarts，基线在 start 成功返回后读取。
+RESTARTS_BEFORE="$(systemctl show "${SERVICE_NAME}.service" -p NRestarts --value 2>/dev/null)"
+[[ "$RESTARTS_BEFORE" =~ ^[0-9]+$ ]] || die "无法确认服务重启计数。"
 
 info "观察 ${SERVICE_NAME}.service 是否稳定（${OBSERVATION_SECONDS} 秒）……"
 sleep "$OBSERVATION_SECONDS"
@@ -977,8 +1122,11 @@ if [ "$ACTIVE_STATE" != "active" ] || [ "$SUB_STATE" != "running" ]; then
   die "${SERVICE_NAME}.service 状态是 ${ACTIVE_STATE}/${SUB_STATE}，没有正常跑起来。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
 fi
 [[ "$RESTARTS_AFTER" =~ ^[0-9]+$ ]] || die "无法确认服务观察后的重启计数。"
-if [ "$RESTARTS_AFTER" != "$RESTARTS_BEFORE" ]; then
-  die "${SERVICE_NAME}.service 在观察窗口内重启了 $((RESTARTS_AFTER - RESTARTS_BEFORE)) 次，说明启动后随即退出。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+if (( 10#$RESTARTS_AFTER < 10#$RESTARTS_BEFORE )); then
+  die "${SERVICE_NAME}.service 的重启计数在观察窗口内从 ${RESTARTS_BEFORE} 回落到 ${RESTARTS_AFTER}，无法确认启动后是否重启。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
+fi
+if (( 10#$RESTARTS_AFTER != 10#$RESTARTS_BEFORE )); then
+  die "${SERVICE_NAME}.service 在观察窗口内重启了 $((10#$RESTARTS_AFTER - 10#$RESTARTS_BEFORE)) 次，说明启动后随即退出。用 journalctl -u ${SERVICE_NAME} -n 50 看原因。"
 fi
 
 # 重启计数与新增非零退出必须同时通过；失败保留备份。

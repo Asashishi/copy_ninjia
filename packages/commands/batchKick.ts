@@ -5,6 +5,7 @@ import {
   BATCH_KICK_CONCURRENCY,
   BATCH_KICK_MAX_DURATION_MS,
   BATCH_KICK_MIN_DURATION_MS,
+  IDENTITY_POLICY_UNAVAILABLE_TEXT,
 } from "../consts/commands";
 import {
   formatDurationCn,
@@ -312,7 +313,7 @@ export async function handleBatchKickCommand(
   if (stats.aborted && stats.scanned === 0) {
     await sendCommandMessage({
       chatId,
-      text: "呜……黑白名单暂时读不出来，本次一个人都没动，稍后再试吧♡",
+      text: IDENTITY_POLICY_UNAVAILABLE_TEXT,
       replyToMessageId: messageId,
     });
     return;

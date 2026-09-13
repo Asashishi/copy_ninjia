@@ -117,6 +117,19 @@ describe("/unblock", () => {
     }));
   });
 
+  test("目标名单预热失败由解析层拒绝：不回「本来就不在小本本上」，也不跨群解封", async () => {
+    // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不能当成「不在名单」。
+    target = undefined;
+    resolveBotAdminStatus.mockResolvedValue(true);
+
+    await handleUnblockCommand(context(1, "777"));
+
+    expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({ requireIdentityPolicies: true }));
+    expect(postDiskIO).not.toHaveBeenCalled();
+    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("频道身份使用 unbanChatSenderChat，裸负 ID 可直接解除", async () => {
     target = { id: -4004, title: "Channel", isChannel: true };
     blockedUserIds.set(-4004, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });

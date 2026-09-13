@@ -140,6 +140,10 @@ export interface GenerateAndSendReplyParams {
   imageGenerationRequested: boolean;
   imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
   isRandomTrigger: boolean;
+  /**
+   * 主线程投递时刻的 Telegram 发送面高压快照：trigger 消息的 telegramBackpressured，
+   * 或媒体记录的 replyTelegramBackpressured；缺省按未高压。
+   */
   telegramBackpressured?: boolean;
   /** 主线程随 trigger 消息附带的本群问答；本群没有时是 undefined。 */
   chatQa?: ReadonlyMap<string, string>;

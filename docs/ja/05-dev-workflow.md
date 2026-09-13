@@ -62,7 +62,7 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**4076 tests / 367 files / 155855 `expect()` calls**。全ソースコードの**関数カバレッジは 97.64%、行カバレッジは 97.78%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**4180 tests / 370 files / 156432 `expect()` calls**。全ソースコードの**関数カバレッジは 97.56%、行カバレッジは 97.76%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -74,6 +74,8 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 4. **agent 設定 snapshot**：`agent.json` は runtime path が disk から読まない唯一のデプロイ入力です（実 process では main thread が parse し、各 Worker へ init message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はその message を受け取らないため、`test/preload.ts` が前項の `agent.json` 複製を isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
 
 `test/scripts/installStartup.test.ts` は installer の隔離 fixture を再利用し、独立した一時設定・データルートで `install.sh`、`bun run start`、実際の Worker を動かします。Telegram 応答とシステムサービスコマンドはテスト用の代替処理が担当します。AI 無効、有効な AI 設定、再インストールと再起動、不正な任意設定の接続前拒否を検証し、正常停止とインスタンスロック解放も確認します。
+
+installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFiles` と関連する `PassEnvironment` / `UnsetEnvironment` の拒否、起動後の `NRestarts` 基準値と減少拒否、既存設定再入力時の mode 保持も検証します。system command はすべて fixture が受け持ち、preflight 失敗は設定・unit・実行データへの書き込みより前に発生する必要があります。
 
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
 
@@ -95,11 +97,15 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 校準記録を [`performance-result.json`](../../performance-result.json) に保存し、`scripts/perf/hotPaths/gateResult.ts` が厳密に解析します。`gateRuntime.ts` は規約検査と hot-path 子 process の開始前に `packageManager`、現在の Bun version/revision、校準 build を照合し、不一致なら再測定を要求します。記録には process 数、各場面の遅延測定値、GC/RSS/保持量の hard limit を含みます。過去の `fullSuite` 結果は各回の時刻と Bun build を維持します。
 
+`steadyProfile` 子プロセスは `BUN_JSC_logGC=1` を明示的に有効化します。`hotPaths/gcProfile.ts` は正式ループの境界内にある JSC の `p=…ms` 停止区間だけを合計し、同じ窓の単調経過時間で割って GC 停止時間比率を得ます。起動 handshake、唯一の完全な窓、停止ログ形式の一致が必須で、欠落・未知形式は失敗です。完全な有効ログで停止がなかった場合だけ 0 を記録します。JIT 層は sampling profiler で集計します。`retained` の強制 GC は計時境界外で、この比率には含めません。シナリオ別 calibration は最低 3 個の独立プロセスの停止データと `maxPausePercent` を保存します。現在の上限は媒体直接発火 29%、flood window 19%、その他の gate シナリオ 5% で、各上限は calibration 最大値を覆います。
+
+`perf:isolated-hot-path --profile` と `perf:review` の profile 出力は JIT・sampling 診断用で、GC 停止比率は提供しません。GC 計測には `perf:hot-path-gate` を使います。`perf:disk-transport` も親プロセスで GC ログを解析し、各ラウンドに独立した `gcProfile` を返します。
+
 `hotPathProfileGate` の節は双方向ですが、2 つの半分は owner が異なります。`calibration` は再校正後に人が手で編集し、gate からは read-only です。`lastRun` は直近の gate 読数を記録し、`bun run perf:hot-path-gate -- --write-result` を明示的に渡したときだけ上書きされるため、通常の `bun run check` は working tree を汚しません。write-back は `calibration` を 1 byte も触りません。gate が 1 回の実行結果から自身の判定基準を書き換えられるようにすることは、現在の性能で gate を溶接してしまうのと同じだからです。
 
 同じ file のもう一つの節 `fullSuite.lastRun` は[全量 benchmark](#全量パフォーマンス-benchmark) のもので、`bun run perf:full -- --write-doc` が書き込みます。2 つの benchmark は別プロセス・別タイミングで走るため、書き込みはどちらも `scripts/perf/performanceResult.ts` の「全体を読む → 自分の枠だけ差し替える → 全体を書き戻す」を通ります。parse 結果から document を再構築する方式は取りません。そうすると後に走った方が、もう一方の節を `calibration` 配下の人間向け説明ごと消してしまうからです。
 
-gate を設けている項目：GC sample 比率、sampling RSS ピークとプロセス生涯 RSS 高水位（同一上限を共有。後者は 2 つの tick の間に完全に収まる一時的な確保を捕捉できます）、sampling heapUsed 増加、full GC 後の JSC heap／heap 外メモリ／object 数の残存、最小 sample 数、そして production probe ごとの「warmup 後に DFG 到達済み」と「sampling 中に再コンパイルや脱最適化なし」。
+gate を設けている項目：GC 停止時間比率、sampling RSS ピークとプロセス生涯 RSS 高水位（同一上限を共有。後者は 2 つの tick の間に完全に収まる一時的な確保を捕捉できます）、sampling heapUsed 増加、full GC 後の JSC heap／heap 外メモリ／object 数の残存、最小 sample 数、そして production probe ごとの「warmup 後に DFG 到達済み」と「sampling 中に再コンパイルや脱最適化なし」。
 
 出力のうち `Diagnostic` 接尾辞が付く項目は報告のみで gate しません。集計 FTL 比率はその一つで、純粋な leaf シナリオでは 100% 近く、非同期の主経路では一桁に留まります（sample に native Promise とスケジューラのフレームが混ざるため）。単一の閾値は両者に共通の意味を持ちません。`reoptRetries` の絶対値も同様で、sampling 開始前の JIT 安定ラウンドが既に連続ラウンドでの不変を要求しているため、残るのは warmup 期の履歴だけです。
 
@@ -121,7 +127,7 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 
 `bun run perf:review` は全量基準と同じ隔離 root、設定 fixture、process runner、出力先の canned reply を使い、JSON を出力して各実行の data root を削除します。`--hot-paths` は sender、message window、permission read、AI activity、認証 snapshot と clone、空/微小 chunk および 1 KiB/1 MiB/16 MiB response、登録 middleware の 12 scenario を、それぞれ通常測定 3 回と profile 3 回で検証します。完全な非同期読み取りは明示した回数で warmup し、実際の JIT tier を記録します。他の scenario は最適化 tier の安定性検査を維持します。
 
-`--ai` は受付判定、通常送信、容量・再開負荷、Base64 の 1 MiB / 8 MiB / 異常先頭 / 異常末尾を測定します。7 シナリオで各 3 回の独立 process による計時と 3 回の profile を実行し、production 関数を直接使います。送信シナリオは chat 別/全体容量、実完了、後処理を断言し、production JIT probe の安定を要求します。負荷の 1 iteration は 128 存続 slot と容量拒否検証を含み、遅延は batch 全体の値です。Base64 は符号化後と復号後のサイズ上限、標準 alphabet、末尾 bit の厳密検査、g/y なしの正規表現、1 回だけの decode を維持します。固定入力と warmupによる局所測定であり、実 model / Telegram network や全 production payload の memory 予算は含みません。GC sample がゼロでも GC 不在を意味しません。
+`--ai` は受付判定、通常送信、容量・再開負荷、Base64 の 1 MiB / 8 MiB / 異常先頭 / 異常末尾を測定します。7 シナリオで各 3 回の独立 process による計時と 3 回の profile を実行し、production 関数を直接使います。送信シナリオは chat 別/全体容量、実完了、後処理を断言し、production JIT probe の安定を要求します。負荷の 1 iteration は 128 存続 slot と容量拒否検証を含み、遅延は batch 全体の値です。Base64 は符号化後と復号後のサイズ上限、標準 alphabet、末尾 bit の厳密検査、g/y なしの正規表現、1 回だけの decode を維持します。固定入力と warmupによる局所測定であり、実 model / Telegram network や全 production payload の memory 予算は含みません。JIT sampling summary は GC 停止時間を提供しません。
 
 `--chains` は機能を有効にした `ad-detect-command` と `ai-reply-command` を実行し、Telegram canned call 数と処理完了を検証します。`--worker` は各 round で実 Disk I/O Worker に 128 message × 400 batch を渡し、batch ごとに最終 revision の ACK を待ちます。各 round で 2 回の graceful shutdown と Worker 再構築を行い、25 chat の復旧値を照合します。clone、transaction、disk wait を含め、throughput、latency、retained heap、RSS を記録しますが、fault injection の代用にはなりません。各 mode は 3 round で、全量基準と既定 10 scenario の hard gate 閾値は変更しません。
 
@@ -129,9 +135,9 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 
 registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware`、`storage-sqlite-flush` を含みます。最初の 4 項目はメンバー集合の hit・充填・満杯時の拒否・chat 切替を検証します。middleware は実際の登録 chain と活動経路を検証します。SQLite は空 DB に 128 delete を送るため、主に transaction scheduling の測定であり、disk throughput の値ではありません。
 
-`bun run perf:isolated-hot-path <scenario>` を実行し、別の sampling には `--profile` を付けます。この入口は `gateFixture.ts` で独立した設定・data root を作り、3 回の独立子 process に渡して、終了後に run directory を削除します。外部送信は基準用の固定応答が受け持ちます。Bun と入力を固定し、warm-up 後に retained と profile を別々に観測します。sample 不足時の GC 0 件から GC 不在を断定してはいけません。
+`bun run perf:isolated-hot-path <scenario>` を実行し、別の sampling には `--profile` を付けます。この入口は `gateFixture.ts` で独立した設定・data root を作り、3 回の独立子 process に渡して、終了後に run directory を削除します。外部送信は基準用の固定応答が受け持ちます。Bun と入力を固定し、warm-up 後に retained と profile を別々に観測します。JIT sample が不足する場合は tier の安定を判断できません。
 
-`luck-tier-table` は固定 roll から本番の `drawLuckTier` を直接呼び、返されたランクの checksum と同関数の JIT probe を記録します。`gag-speak-counter` は `GAG_SESSION_MAX` から session 数を読み、本番の発言カウンターを呼びます。これらの境界を変更した場合、両シナリオを通常と `--profile` の両モードで実行し、checksum、清掃、保持 heap、GC/JIT を確認します。両シナリオは標準の十シナリオ gate に含まれません。
+`luck-tier-table` は固定 roll から本番の `drawLuckTier` を直接呼び、返されたランクの checksum と同関数の JIT probe を記録します。`gag-speak-counter` は `GAG_SESSION_MAX` から session 数を読み、本番の発言カウンターを呼びます。これらの境界を変更した場合、両シナリオを通常と `--profile` の両モードで実行し、checksum、清掃、保持 heap、JIT を確認します。両シナリオは標準の十シナリオ gate に含まれません。
 
 `bun run perf:disk-transport` は独立 mock process を 3 回実行し、単一 batch ACK・通常排出・ACK 停止後の容量拒否を検証して latency・heap・GC・JIT を出力します。同一の不変 payload を再利用する queue/ACK の測定であり、Worker clone・実 payload の個別容量・disk wait は含みません。
 

@@ -119,6 +119,19 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(blockedUserIds.has(7)).toBeTrue();
   });
 
+  test("目标名单预热失败由解析层拒绝：不写黑名单、不封禁、不追加回执", async () => {
+    // 自己人闸与 blockUser 都读目标的名单结论，冷读失败时不能当成「不受保护」。
+    target = undefined;
+
+    await handleBlockCommand(context(1));
+
+    expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({ requireIdentityPolicies: true }));
+    expect(blockedUserIds.size).toBe(0);
+    expect(banChatMember).not.toHaveBeenCalled();
+    expect(postDiskIO).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("频道白名单按 sender_chat 身份授权，不误用附带的 from 用户", async () => {
     const ctx = context(101) as unknown as {
       msg: { message_id: number; sender_chat?: object };

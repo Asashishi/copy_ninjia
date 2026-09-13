@@ -114,7 +114,10 @@ export interface AdCandidateEntry extends AdSampleContext {
   text: string;
   /** 当前发送者本人的姓名与正文；转发消息只保留转发者姓名，用于直接广告归因。 */
   directText: string;
-  /** Worker 观测时刻；只用于回收去重窗口外已经消费过的上下文。 */
+  /**
+   * 主线程观测时刻（入队时的 now，缺省即 AdCandidateMessage.observedAt）；用于回收
+   * 去重窗口外已经消费过的上下文与冻结引用广告警告窗口；处置抑制另用 Worker 单调时钟。
+   */
   receivedAt: number;
   /**
    * 本条到达时是否处于已经公开的引用广告警告窗口。判定可能排队超过五分钟，

@@ -48,7 +48,7 @@ import {
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
-import { raceAbortOrThrow } from "../../libs/abortSignal";
+import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { decodeGeneratedImageBySignature } from "../ai/utils/imagePayload";
 import { getOpenAiClient } from "./client";
 import type { AiImageRequest } from "../../types/aiChat/provider";
@@ -143,17 +143,19 @@ function toXAiReferenceDataUri(referenceImage: VisionImage): string {
  * 按已缓存的线协议分派一次网络请求。switch 保持有限、无运行期注册表和增长型缓存；
  * OpenAiImageProtocol 新增成员时，never 断言会强制实现对应适配分支。直接传现有
  * config 与 request 上下文，避免为适配层另建投影 options 对象。
+ * @param signal 调用方合成好的整次调用 deadline；每个分支都把它与每次尝试的
+ *   timeout 一起交给 SDK，request 自带的调用方 signal 不在这里读取。
  */
 async function requestOpenAiCompatibleImage(
-  client: OpenAI,
   config: OpenAiAgentImageCapabilityConfig,
   {
     prompt,
     aspectRatio,
     referenceImage,
-    signal,
-  }: AiImageRequest
+  }: AiImageRequest,
+  signal: AbortSignal
 ): Promise<OpenAI.Images.ImagesResponse> {
+  const client: OpenAI = getOpenAiClient("image");
   const protocol: OpenAiImageProtocol = config.imageProtocol;
   const model: string = config.model;
   switch (protocol) {
@@ -192,7 +194,7 @@ async function requestOpenAiCompatibleImage(
       const size: string = pickOpenAiImageSize(protocol, aspectRatio);
       if (referenceImage !== undefined) {
         const upload: Uploadable = await toReferenceUpload(referenceImage);
-        signal?.throwIfAborted();
+        signal.throwIfAborted();
         return client.images.edit(
           {
             model,
@@ -245,8 +247,11 @@ function imageCanvasForLog(
  * 调 OpenAI 生图接口生成一张图片；请求失败或无可用载荷时返回 null（已记日志）。
  *
  * 超时用独立的 OPENAI_IMAGE_REQUEST_TIMEOUT_MS：一次 1024px 生成常年跑到分钟
- * 级，套用聊天那份预算会在模型还在画的时候把连接掐掉。SDK 已按 maxRetries
- * 重试过这类请求失败，调用方不得再套一层完整请求。
+ * 级，套用聊天那份预算会在模型还在画的时候把连接掐掉。它同时是每次尝试的
+ * timeout 与整次调用（含 SDK 全部重试与退避）的 deadline，见
+ * docs/cn/04-invariants.md「AI 闲聊运行时」。deadline 到期按普通请求失败记日志；
+ * 只有调用方 signal 中止才静默返回。SDK 已按 maxRetries 重试过这类请求失败，
+ * 调用方不得再套一层完整请求。
  */
 export async function generateOpenAiImage(request: AiImageRequest): Promise<GeneratedChatImage | null> {
   const {
@@ -268,11 +273,15 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     }
     const config: OpenAiAgentImageCapabilityConfig = capabilityConfig;
     const model: string = config.model;
-    const client: OpenAI = getOpenAiClient("image");
     const protocol: OpenAiImageProtocol = config.imageProtocol;
+    // SDK 的 timeout 是每次尝试各自的期限。同一份合成 signal 同时交给 SDK 与外层
+    // 等待：网络层据此停止后续尝试，调用方则在整次 deadline 到期或上游取消时立即
+    // 结算，不受 SDK 内部退避计时器影响。
+    const requestSignal: AbortSignal = signalWithTimeout(signal, OPENAI_IMAGE_REQUEST_TIMEOUT_MS);
+    requestSignal.throwIfAborted();
     const response: OpenAI.Images.ImagesResponse = await raceAbortOrThrow(
-      requestOpenAiCompatibleImage(client, config, request),
-      signal
+      requestOpenAiCompatibleImage(config, request, requestSignal),
+      requestSignal
     );
     const entry: OpenAI.Images.Image | undefined = response.data?.[0];
     const encoded: string | undefined = entry?.b64_json;

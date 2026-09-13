@@ -58,6 +58,28 @@ describe("表单字段解析", () => {
     expect(parsed?.a).toBe(`\`\`\`json\n${JSON_BODY}\n\`\`\``);
   });
 
+  test("问题里的 pre 实体不还原围栏，取原文与直答、/qa remove 的比对口径一致", () => {
+    // 客户端把「问题:\n```\nnpm i\n```」折成正文 npm i 加一条 pre 实体；群友原样
+    // 提问时直答比对的 message.text、/qa remove 读到的 ctx.match 都只有 npm i。
+    const text: string = "问题:\nnpm i\n回答:\n{\"a\":1}";
+    const parsed: QaFieldInput | undefined = parseQaFieldMessage(groupMessage(text, [
+      { type: "pre", offset: 4, length: 5 },
+      { type: "pre", offset: 14, length: 7, language: "json" },
+    ]));
+
+    expect(parsed).toEqual({ q: "npm i", a: "```json\n{\"a\":1}\n```" });
+  });
+
+  test("问题长度按原文计，不含围栏", () => {
+    const body: string = "问".repeat(CHAT_QA_QUESTION_MAX_CHARS);
+    const parsed: QaFieldInput | undefined = parseQaFieldMessage(groupMessage(`问题:\n${body}`, [
+      { type: "pre", offset: 4, length: body.length },
+    ]));
+
+    expect(parsed?.q).toBe(body);
+    expect(parsed!.q!.length).toBe(CHAT_QA_QUESTION_MAX_CHARS);
+  });
+
   test("代码块内部以标签开头的行不切断答案", () => {
     // 块内正文自带一行「回答:」——认它就会把答案从中间劈开。
     const body: string = "回答: 这一行在代码块里\n第二行";

@@ -94,7 +94,7 @@ export function aiRecordMediaMessageFixture(
     fileUniqueId: "unique",
     width: 640,
     height: 480,
-    commentOnResolve: false,
+    replyTelegramBackpressured: undefined,
     stickerFallbackText: undefined,
     voiceMime: undefined,
     voiceDurationSeconds: 0,

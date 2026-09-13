@@ -11,19 +11,32 @@ export function laneFor(category: TelegramRetryCategory): TelegramRetryLane {
   return telegramOutboundGateState.lanes[category];
 }
 
-/** 把任务接到侵入式 FIFO 尾部；达到全局硬顶时不修改状态。 */
-export function appendRetryJob(job: TelegramOutboundJob): boolean {
+/**
+ * 按接纳序号把任务插入侵入式 FIFO；达到全局硬顶时不修改状态。
+ *
+ * 队列始终按 admissionSeq 升序。新接纳的任务序号最大，O(1) 接到尾部；在途任务
+ * 收到 429 重排时插回第一个比它晚接纳的等待任务之前（队首取出的探测任务回到
+ * 队首）。从队首向后扫描：排在它之前的只可能是与它同时在途、先一步重排的任务。
+ */
+export function enqueueRetryJob(job: TelegramOutboundJob): boolean {
   if (
     telegramOutboundGateState.retryPendingCount >=
     TELEGRAM_429_RETRY_QUEUE_MAX
   ) return false;
   const lane: TelegramRetryLane = laneFor(job.category);
   const tail: TelegramOutboundJob | null = lane.tail;
-  job.previous = tail;
-  job.next = null;
-  if (tail === null) lane.head = job;
-  else tail.next = job;
-  lane.tail = job;
+  let next: TelegramOutboundJob | null = null;
+  if (tail !== null && tail.admissionSeq > job.admissionSeq) {
+    next = lane.head;
+    while (next !== null && next.admissionSeq < job.admissionSeq) next = next.next;
+  }
+  const previous: TelegramOutboundJob | null = next === null ? tail : next.previous;
+  job.previous = previous;
+  job.next = next;
+  if (previous === null) lane.head = job;
+  else previous.next = job;
+  if (next === null) lane.tail = job;
+  else next.previous = job;
   job.state = "retryQueued";
   job.fromRetryQueue = true;
   telegramOutboundGateState.retryPendingCount++;

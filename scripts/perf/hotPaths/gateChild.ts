@@ -2,6 +2,9 @@
 
 import { join } from "node:path";
 import { isPlainRecord } from "../../../packages/libs/record";
+import { JSC_GC_LOG_ENV } from "../../../packages/consts/environment";
+import { summarizeGcPauseProfile } from "./gcProfile";
+import type { GcPauseProfile } from "./gcProfile";
 import {
   createHotPathGateRuntimeRoot,
   hotPathGateChildEnvironment,
@@ -12,8 +15,6 @@ import type { HotPathGateCalibration } from "./gateResult";
 
 export interface SamplingProfileResult {
   readonly totalSamples: number;
-  readonly gcSamples: number;
-  readonly gcPercent: number;
   readonly llintPercent: number;
   readonly baselinePercent: number;
   readonly dfgPercent: number;
@@ -27,6 +28,7 @@ export interface JitProbeResult {
 }
 
 export interface ChildProfileResult {
+  readonly gcProfile: GcPauseProfile | null;
   readonly scenario: string;
   readonly measurementMode: string;
   readonly bunVersion: string;
@@ -91,8 +93,6 @@ function parseSamplingProfile(value: unknown): SamplingProfileResult {
   }
   return {
     totalSamples: requiredNumber(value, "totalSamples"),
-    gcSamples: requiredNumber(value, "gcSamples"),
-    gcPercent: requiredNumber(value, "gcPercent"),
     llintPercent: requiredNumber(value, "llintPercent"),
     baselinePercent: requiredNumber(value, "baselinePercent"),
     dfgPercent: requiredNumber(value, "dfgPercent"),
@@ -118,7 +118,7 @@ function parseJitProbes(value: unknown): Readonly<Record<string, JitProbeResult>
   return probes;
 }
 
-function parseChildProfileResult(text: string): ChildProfileResult {
+function parseChildProfileResult(text: string, stderr: string): ChildProfileResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
@@ -129,6 +129,7 @@ function parseChildProfileResult(text: string): ChildProfileResult {
     throw new Error("Hot-path child result must be a JSON object.");
   }
   return {
+    gcProfile: parsed.measurementMode === "steadyProfile" ? summarizeGcPauseProfile(stderr) : null,
     scenario: requiredString(parsed, "scenario"),
     measurementMode: requiredString(parsed, "measurementMode"),
     bunVersion: requiredString(parsed, "bunVersion"),
@@ -189,7 +190,7 @@ function assertProfileRunWithinLimits(
   calibration: HotPathGateCalibration
 ): void {
   assertRuntimeMatches(result, calibration);
-  if (result.measurementMode !== "steadyProfile" || result.samplingProfile === null) {
+  if (result.measurementMode !== "steadyProfile" || result.samplingProfile === null || result.gcProfile === null) {
     throw new Error(`${result.scenario}: child did not return a sampling profile.`);
   }
   if (result.samplingProfile.totalSamples < calibration.limits.minProfileSamples) {
@@ -198,10 +199,12 @@ function assertProfileRunWithinLimits(
       `expected at least ${calibration.limits.minProfileSamples}.`
     );
   }
-  if (result.samplingProfile.gcPercent > calibration.limits.maxGcPercent) {
+  const gcLimit: number | undefined = calibration.gcPausePercentLimits[result.scenario];
+  if (gcLimit === undefined) throw new Error(`${result.scenario}: GC pause calibration is missing.`);
+  if (result.gcProfile.gcPercent > gcLimit) {
     throw new Error(
-      `${result.scenario}: GC used ${result.samplingProfile.gcPercent.toFixed(3)}% of ` +
-      `steady samples; limit is ${calibration.limits.maxGcPercent}%.`
+      `${result.scenario}: GC paused for ${result.gcProfile.gcPercent.toFixed(3)}% of ` +
+      `steady elapsed time; limit is ${gcLimit}%.`
     );
   }
   for (const probe of productionJitProbes(result)) {
@@ -279,7 +282,7 @@ export async function runHotPathGateChild({
   try {
     const subprocess: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn(args, {
       cwd: projectRoot,
-      env: hotPathGateChildEnvironment(fixture, runtimeRoot),
+      env: { ...hotPathGateChildEnvironment(fixture, runtimeRoot), [JSC_GC_LOG_ENV]: measurementMode === "steadyProfile" ? "1" : "0" },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -294,7 +297,7 @@ export async function runHotPathGateChild({
         `${scenario}: hot-path profile child exited ${exitCode}: ${stderr.trim()}`
       );
     }
-    const result: ChildProfileResult = parseChildProfileResult(stdout.trim());
+    const result: ChildProfileResult = parseChildProfileResult(stdout.trim(), stderr);
     if (result.scenario !== scenario) {
       throw new Error(`${scenario}: child returned scenario ${result.scenario}.`);
     }

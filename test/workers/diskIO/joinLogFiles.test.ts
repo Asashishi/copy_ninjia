@@ -1,27 +1,11 @@
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  mock,
-  spyOn,
-  test,
-} from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { TEST_DATA_ROOT } from "../../preloadEnv";
-
-const testRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "join-log-files-test-"));
-const joinLogDir: string = join(testRoot, "joinlog");
-const UTF8_ENCODER: TextEncoder = new TextEncoder();
-const realPaths = await import("../../../packages/consts/paths");
-mock.module("../../../packages/consts/paths", () => ({
-  ...realPaths,
-  JOIN_LOG_MEMORY_DIR: joinLogDir,
-}));
-
-const {
+import type { JoinLogDiskMessage } from "../../../packages/types/diskIO/messages";
+import type { JoinLogFileCache } from "../../../packages/types/diskIO/storage";
+import {
+  joinLogDir,
+  UTF8_ENCODER,
   flushJoinLogBuffer,
   flushJoinLogDomain,
   handleJoinLogDeleteMessage,
@@ -31,24 +15,17 @@ const {
   maintainJoinLogFiles,
   maintainJoinLogRetention,
   readJoinLog,
-} = await import("../../../packages/workers/diskIO/joinLogFiles");
-const {
   isRecentJoinLogDay,
   joinLogSnapshotChunks,
   measureJoinLogSnapshotBytes,
   serializeJoinLogSnapshotEntry,
   trimJoinLogRecordsToCapacity,
-} = await import("../../../packages/workers/diskIO/joinLogRecords");
-const {
   joinLogBuffer,
   joinLogDeletions,
   joinLogFileCaches,
   joinLogRetryAt,
   markJoinLogDirty,
   noteJoinLogRejected,
-  resetJoinLogCache,
-} = await import("../../../packages/cache/workers/diskIO/joinLog");
-const {
   JOIN_LOG_COMPACT_CHECK_BYTES,
   JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES,
   JOIN_LOG_COMPACT_REDUNDANT_ENTRIES,
@@ -57,66 +34,15 @@ const {
   JOIN_LOG_MAX_RETRY_FILES,
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
   JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
-} = await import("../../../packages/consts/diskIO/joinLog");
-const { getTokyoDateKey } = await import("../../../packages/libs/time");
-import type { JoinLogDiskMessage } from "../../../packages/types/diskIO";
-import type { JoinLogFileCache } from "../../../packages/types/diskIO/storage";
-
-function joinMessage(
-  chatId: number,
-  userId: number,
-  joinedAt: number
-): JoinLogDiskMessage {
-  return {
-    type: "joinLog",
-    chatId,
-    userId,
-    joinedAt,
-    day: getTokyoDateKey(new Date(joinedAt)),
-  };
-}
-
-function currentFile(chatId: number): string {
-  return join(joinLogDir, `${chatId}.${getTokyoDateKey()}.json`);
-}
-
-function datedFile(chatId: number, day: string): string {
-  return join(joinLogDir, `${chatId}.${day}.json`);
-}
-
-/** 取东京当天中午，避免用 Date.now()-偏移量时在午夜附近跨日造成测试偶发失败。 */
-function todayAt(offsetMs: number = 0): number {
-  return Date.parse(`${getTokyoDateKey()}T12:00:00+09:00`) + offsetMs;
-}
-
-function todayMidnight(): number {
-  return Date.parse(`${getTokyoDateKey()}T00:00:00+09:00`);
-}
-
-/**
- * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
- * inspect -> maintenance（见 workers/diskIO/startup.ts）。生产没有这个包装。
- */
-async function recoverJoinLogFiles(today?: string): Promise<void> {
-  const inspection = today === undefined
-    ? await inspectJoinLogFiles(getTokyoDateKey())
-    : await inspectJoinLogFiles(today);
-  await maintainJoinLogFiles(inspection);
-}
-
-beforeEach(() => {
-  rmSync(joinLogDir, { recursive: true, force: true });
-  resetJoinLogCache();
-});
-
-afterEach(() => {
-  resetJoinLogCache();
-  rmSync(joinLogDir, { recursive: true, force: true });
-});
-
-afterAll(() => {
-  rmSync(testRoot, { recursive: true, force: true });
-});
+  getTokyoDateKey,
+  joinMessage,
+  currentFile,
+  datedFile,
+  todayAt,
+  todayMidnight,
+  recoverJoinLogFiles,
+  writeRedundantJoinLogFile,
+} from "./joinLogFixture";
 
 describe("diskIO/joinLogFiles", () => {
   test("模块加载本身不创建、不读取入群目录", () => {
@@ -367,32 +293,6 @@ describe("diskIO/joinLogFiles", () => {
     });
     expect(content.match(new RegExp(`"${now}:42"`, "g"))).toHaveLength(1);
   });
-
-  /**
-   * 造一份**语义合法但物理上全是历史条目**的当日追加文件：只有 userCount 个
-   * 用户，每人反复重新入群。`latestJoinLogRecords` 折叠之后活的就那么几条，
-   * 文件里剩下的全是可回收的字节。
-   */
-  async function writeRedundantJoinLogFile(
-    chatId: number,
-    userCount: number,
-    targetBytes: number
-  ): Promise<number> {
-    const parts: string[] = [];
-    let bytes: number = 2;
-    let joinedAt: number = todayMidnight();
-    for (let index: number = 0; bytes < targetBytes; index += 1) {
-      const userId: number = 1 + (index % userCount);
-      joinedAt += 1;
-      const entry: string = serializeJoinLogSnapshotEntry({ userId, joinedAt });
-      parts.push(entry);
-      bytes += entry.length + 2;
-    }
-    const content: string = `{\n${parts.join(",\n")}\n}`;
-    mkdirSync(joinLogDir, { recursive: true });
-    await Bun.write(currentFile(chatId), content);
-    return UTF8_ENCODER.encode(content).byteLength;
-  }
 
   test("载入超过评估门槛的历史文件时当场压实，只留每人最后一次入群", async () => {
     // 追加型文件只增不减：一个群反复有人重新入群，文件会一直涨，而真正有效的

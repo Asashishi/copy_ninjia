@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
 import type { Animation, Message, MessageEntity, PhotoSize } from "grammy/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../packages/consts/aiChat/media";
-import type { MentionFacts } from "../../packages/types/auto";
+import type { MentionFacts, MessageTriggerContext } from "../../packages/types/auto";
+import type { AiBotInfo } from "../../packages/types/aiChat/protocol";
+import { createMessageTriggerContext } from "../../packages/auto/message/triggerContext";
 import {
   hasCopyableContent,
   isReplyToSelf,
@@ -228,6 +230,45 @@ describe("auto/message/facts", () => {
       reply_to_message: message({ message_id: 2, sender_chat: anonymousSender }),
     }))).toBe(true);
     expect(isReplyToSelf(message({ from: undefined, reply_to_message: message({ message_id: 2, from: undefined }) }))).toBe(false);
+  });
+
+  test("论坛话题里自动填入的话题创建消息不算回复：不产生自回复、回复引用或回复机器人触发", () => {
+    const topicCreated = message({
+      message_id: 3,
+      from: { id: 999, is_bot: true, first_name: "Test Bot", username: "test_bot" },
+      is_topic_message: true,
+      message_thread_id: 3,
+      forum_topic_created: { name: "话题", icon_color: 0x6fb9f0 },
+    });
+    const selfCreated = message({ ...topicCreated, from: alice });
+    const topicMessage = (repliedTo: Message): Message => message({
+      message_id: 9,
+      text: "大家好",
+      is_topic_message: true,
+      message_thread_id: 3,
+      reply_to_message: repliedTo,
+    });
+
+    expect(isReplyToSelf(topicMessage(selfCreated))).toBe(false);
+    expect(resolveReplyReference(topicMessage(selfCreated))).toBeUndefined();
+    const bot: AiBotInfo = { id: 999, username: "test_bot", first_name: "Test Bot" };
+    const context: MessageTriggerContext = createMessageTriggerContext({
+      message: topicMessage(topicCreated),
+      bot,
+      now: 1,
+      isQuiet: false,
+      aiReplyProbability: 0,
+    });
+    expect(context.repliedTo).toBeUndefined();
+    expect(context.replyReference).toBeUndefined();
+    expect(context.repliesToSelf).toBe(false);
+    expect(context.directTriggerReason).toBeUndefined();
+    expect(context.messageThreadId).toBe(3);
+
+    // 话题内显式回复另一条消息仍按回复处理。
+    const explicit: Message = topicMessage(message({ message_id: 7, is_topic_message: true, message_thread_id: 3, text: "上一句" }));
+    expect(isReplyToSelf(explicit)).toBe(true);
+    expect(resolveReplyReference(explicit)?.messageId).toBe(7);
   });
 
   test("回复引用保留原发送者、原文和 Telegram 选中的精确片段", () => {

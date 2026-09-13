@@ -20,10 +20,8 @@ import { songFileExtension } from "./songPayload";
 export interface SongCaptionParams {
   /** 模型自己想对群友说的话；没写时 caption 只有元信息两行。 */
   readonly modelCaption: string | null;
-  /** 已按上限收过的曲名。 */
-  readonly title: string;
-  /** 已按上限收过的演唱者。 */
-  readonly performer: string;
+  /** buildSongTrackLabel 拼出的曲目行，调用方已对这一串做过命令守卫。 */
+  readonly trackLabel: string;
   /** 音频字节数，用于算体积。 */
   readonly byteLength: number;
   /** 供应商声明的音频 mime，用于取容器标签。 */
@@ -38,19 +36,34 @@ function formatSizeMb(byteLength: number): string {
 }
 
 /**
+ * 曲目信息第一行「「曲名」- 演唱者」。
+ *
+ * 曲名与演唱者可由模型或机器人显示名决定，生歌工具在接纳阶段对这一串做
+ * containsRenderableCommand 判定，再把同一串交给 buildSongCaption 拼接。
+ * @param title 已按上限收过的曲名。
+ * @param performer 已按上限收过的演唱者。
+ */
+export function buildSongTrackLabel(title: string, performer: string): string {
+  return `「${title}」- ${performer}`;
+}
+
+/**
  * 拼出完整 caption；恒非空——曲目信息那两行无条件存在，模型没写话时它就是全部。
+ *
+ * 各段之间只用换行连接，而命令判定要求 `/` 与其后的命令名首字符相邻，因此整串
+ * 含可渲染命令当且仅当某一段含有：模型那句话与曲目行由调用方各自判定，第二行
+ * 只由常量、容器标签与数字组成。
  */
 export function buildSongCaption({
   modelCaption,
-  title,
-  performer,
+  trackLabel,
   byteLength,
   mimeType,
   metadata,
 }: SongCaptionParams): string {
   const bitrate: string = metadata === null ? "" : ` ${metadata.bitrateKbps.toFixed(2)}kbps`;
   const info: string =
-    `「${title}」- ${performer}\n` +
+    `${trackLabel}\n` +
     `${SONG_METADATA_HASHTAG} #${songFileExtension(mimeType)} ${formatSizeMb(byteLength)}${bitrate}`;
   return modelCaption === null ? info : `${modelCaption}\n\n${info}`;
 }

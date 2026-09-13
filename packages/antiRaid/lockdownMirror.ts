@@ -5,6 +5,7 @@ import {
   saveChatStateInBackground,
 } from "../infra/storage/stateStore";
 import { telegramApi } from "../infra/telegram/client";
+import { deleteMessageWithOutcome } from "../infra/telegram/actions";
 import { restoreLockdownInvitePermission } from "../infra/telegram/lockdownPermissions";
 import { RESTORE_RETRY_MS } from "../consts/antiRaid/lockdown";
 import { antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
@@ -26,7 +27,8 @@ import type { LockdownRecord } from "../types/chatState";
  * Anti-Raid 主线程侧的 lockdown 镜像与紧急恢复。
  *
  * ChatState.lockdown 是跨进程恢复的权威记录；本模块只维护落盘指纹、构造
- * Worker adopt 消息，并在 Worker 耗尽重建预算后接管邀请权限恢复。
+ * Worker adopt 消息，并在 Worker 耗尽重建预算后接管邀请权限恢复与本轮封锁
+ * 公告的定向删除。
  */
 
 export function lockdownFingerprint(record: LockdownRecord): PersistedLockdownFingerprint {
@@ -115,6 +117,19 @@ function finishEmergencyLockdownRecovery(
   }
 }
 
+/**
+ * 紧急恢复完成时撤掉本轮封锁公告。只经统一删除动作发出一次，不重试、不排定时删除；
+ * API 失败已由统一 Telegram 错误日志记录，这里只兜住边界自身的意外异常。
+ */
+function deleteEmergencyLockdownAnnouncement(chatId: number, messageId: number): void {
+  void deleteMessageWithOutcome(chatId, messageId, telegramApi).catch((error: unknown): void => {
+    logger.error(
+      `Error deleting the anti-raid lockdown announcement in chat ${chatId} after emergency restore:`,
+      error
+    );
+  });
+}
+
 function runEmergencyLockdownRecovery(
   chatId: number,
   recovery: EmergencyLockdownRecovery
@@ -158,6 +173,12 @@ function runEmergencyLockdownRecovery(
         );
         finishEmergencyLockdownRecovery(chatId, recovery);
         return;
+      }
+      // 权限已还原且记录仍属本轮：公告 ID 只存在于这条记录里，清记录前先发起定向
+      // 删除，不等待结果。失败由统一 Telegram 错误日志记录（出站已关闭时同样只
+      // 结算为失败），不改变权限恢复的收尾。
+      if (current.announcementMessageId !== undefined) {
+        deleteEmergencyLockdownAnnouncement(chatId, current.announcementMessageId);
       }
       persistedLockdownFingerprints.delete(chatId);
       if (clearChatStateField(chatId, "lockdown")) {

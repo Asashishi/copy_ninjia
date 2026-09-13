@@ -225,6 +225,25 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity).toBeNull();
   });
 
+  test("黑名单命中或黑名单视图冷缺失时发言不产出临时累计写", () => {
+    const now: number = Date.now();
+    seedMissing(7);
+    expect(queueIdentityPolicyWrite("blocklist", 7, blockValue())).toBeTrue();
+    expect(recordTemporaryWhitelistActivity(7, now)).toBeUndefined();
+
+    // 三份 LRU 各自淘汰：临时累计仍热而黑名单视图已冷时不能按「不在名单」累计。
+    whitelistEntryCache.set(8, null);
+    temporaryWhitelistActivityCache.set(8, null);
+    expect(recordTemporaryWhitelistActivity(8, now)).toBeUndefined();
+
+    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
+    expect(temporaryWhitelistActivityCache.peek(8)).toBeNull();
+    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(0);
+    expect(diskMessages.some(
+      (message: DiskBusinessMessage): boolean => message.type === "temporaryWhitelistWrite"
+    )).toBeFalse();
+  });
+
   test("当天达标后同日发言不再产生写回，跨日恢复推进", () => {
     const dayAt: number = new Date("2026-08-01T12:00:00+09:00").getTime();
     seedMissing(7);
@@ -556,7 +575,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     // 消费者持续提交，主线程仅保留最新批次的未 ACK 最终值。
     let queued: number = 0;
     for (let id: number = 1; id <= churn; id++) {
-      temporaryWhitelistActivityCache.set(id, null);
+      seedMissing(id);
       if (recordTemporaryWhitelistActivity(id, dayAt)?.queued === true) queued++;
       if (id % 128 === 0) {
         const writes: { id: number; revision: number }[] = [];

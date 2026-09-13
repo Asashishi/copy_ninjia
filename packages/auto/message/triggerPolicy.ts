@@ -23,7 +23,8 @@ export function shouldAttemptRandomTrigger(context: MessageTriggerContext): bool
  * 看这份媒体是否成为解析后评价的候选，命中再占用「群 × 发言人」冷却名额。
  *
  * 两级结果都要用：`!== "none"` 决定 handler 的返回值（是否已接管这条消息），
- * `=== "claimed"` 决定 recordChatMedia 的 commentOnResolve。三态取值的理由见
+ * `=== "claimed"` 经 recordContext.ts 的 mediaReplyBackpressurePlaceholder 决定媒体
+ * 是否发起回复轮。三态取值的理由见
  * types/auto.ts 的 RandomMediaTrigger。
  */
 export function claimRandomMediaTrigger(

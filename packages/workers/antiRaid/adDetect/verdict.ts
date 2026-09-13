@@ -360,7 +360,7 @@ export async function detectOne(
   setBoundedMapValue({
     map: recentlyDisposedAdKeys,
     key,
-    value: Date.now(),
+    value: performance.now(),
     maxEntries: AD_DETECT_MAX_PENDING_SENDERS,
   });
   clearReferencedAdWarning(key);

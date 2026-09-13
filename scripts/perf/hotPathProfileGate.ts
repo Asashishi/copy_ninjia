@@ -148,7 +148,7 @@ for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
     bunVersion: reference.bunVersion,
     bunRevision: reference.bunRevision,
     maxGcPercent: maximum(profileRuns.map(
-      (run: ChildProfileResult): number => run.samplingProfile!.gcPercent
+      (run: ChildProfileResult): number => run.gcProfile!.gcPercent
     )),
     maxSampledRssBytes: maximum(retainedRuns.map(
       (run: ChildProfileResult): number => run.peakSampledRssBytes
@@ -213,7 +213,7 @@ const lastRun: Readonly<Record<string, unknown>> = {
   bunVersion: expectedBunVersion,
   bunRevision: expectedBunRevision,
   thresholds: {
-    maxGcPercent: calibration.limits.maxGcPercent,
+    maxGcPausePercentByScenario: calibration.gcPausePercentLimits,
     maxSampledRssBytes: calibration.limits.maxRssBytes,
     maxProcessPeakRssBytes: calibration.limits.maxRssBytes,
     maxSampledHeapUsedGrowthBytes: calibration.limits.maxSampledHeapGrowthBytes,

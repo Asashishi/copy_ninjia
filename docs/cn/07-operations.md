@@ -258,7 +258,9 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 
 覆盖现有 unit 与替换部署配置共用工作树外备份清单，记录原路径、权限、属主和 SHA-256。失败时保留原件与现场；恢复时按清单逐文件核对哈希并恢复权限和属主，完成全部验证后才能手工清理。
 
-启动观察窗口是两倍的有效重启等待上限加两秒：基础值来自 `RestartUSec`，生效的指数退避计入 `RestartMaxDelayUSec`，并加上 `RestartRandomizedDelayUSec`。`RestartMaxDelayUSec=infinity` 关闭退避；基础间隔为零时不启用退避。旧 systemd 不提供退避或随机延迟属性时不计该项，存在但非法的值拒绝确认。unit 加载后、启动前读取 `NRestarts` 基线，观察后必须保持相同计数及 `active/running`。journal 使用启动前游标；没有游标时按本次开始时间查询。journal 不可读、异常退出或状态校验失败时非零退出，外部备份保持不动。
+既有 unit 的数据根在任何配置、unit 或数据写入之前核对：`Environment` 中的 `COPY_NINJIA_DATA_ROOT` 必须可严格解析且与本次安装器的有效根一致。安装器拒绝非空 `EnvironmentFiles`，以及涉及该变量的 `PassEnvironment` / `UnsetEnvironment`。使用这些来源的部署须先按备份与停机流程手工整理为受支持的显式 `Environment` 配置；安装器不推断或迁移有效值。已有部署 JSON 重新填写后保留原 mode，新文件使用 `0600`。
+
+启动观察窗口是两倍的有效重启等待上限加两秒：基础值来自 `RestartUSec`，生效的指数退避计入 `RestartMaxDelayUSec`，并加上 `RestartRandomizedDelayUSec`。`RestartMaxDelayUSec=infinity` 关闭退避；基础间隔为零时不启用退避。旧 systemd 不提供退避或随机延迟属性时不计该项，存在但非法的值拒绝确认。unit 启动后读取 `NRestarts` 基线，观察期间计数增长或回落均拒绝确认，观察后必须保持相同计数及 `active/running`。journal 使用启动前游标；没有游标时按本次开始时间查询。journal 不可读、异常退出或状态校验失败时非零退出，外部备份保持不动。
 
 ## 日常观察点
 

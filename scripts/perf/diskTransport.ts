@@ -7,17 +7,19 @@ import type * as DiskIO from "../../packages/infra/diskIO";
 import type * as Transport from "../../packages/infra/diskIO/transport";
 import type * as Jsc from "bun:jsc";
 import type * as Profile from "./hotPaths/profileSummary";
+import { beginGcProfileWindow, endGcProfileWindow, summarizeGcPauseProfile } from "./hotPaths/gcProfile";
+import { JSC_GC_LOG_ENV } from "../../packages/consts/environment";
 
 if (Bun.argv[2] !== "--child") {
   for (let round: number = 0; round < 3; round++) {
-    const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([Bun.argv[0]!, import.meta.path, "--child"], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([Bun.argv[0]!, import.meta.path, "--child"], { env: { ...process.env, [JSC_GC_LOG_ENV]: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const output: Promise<string> = child.stdout.text();
     const errors: Promise<string> = child.stderr.text();
     const exitCode: number = await child.exited;
     const stdout: string = await output;
     const stderr: string = await errors;
     if (exitCode !== 0) throw new Error(stderr);
-    console.log(JSON.stringify({ round, result: JSON.parse(stdout) as unknown }));
+    console.log(JSON.stringify({ round, result: JSON.parse(stdout) as unknown, gcProfile: summarizeGcPauseProfile(stderr) }));
   }
 } else {
   const { diskIORuntime }: typeof Runtime = await import("../../packages/cache/main/diskIO");
@@ -83,7 +85,11 @@ if (Bun.argv[2] !== "--child") {
   latency.sort(); samples.sort((left: number, right: number): number => left - right);
   const p95: number = latency[Math.floor(total * 0.95)]!;
   const p99: number = latency[Math.floor(total * 0.99)]!;
-  const sampling: Profile.HotPathSamplingProfileSummary = summarizeHotPathSamplingProfile(profile((): void => { normal(total); }, 100));
+  const sampling: Profile.HotPathSamplingProfileSummary = summarizeHotPathSamplingProfile(profile((): void => {
+    const startedAt: number = beginGcProfileWindow();
+    normal(total);
+    endGcProfileWindow(startedAt);
+  }, 100));
   reset(); Bun.gc(true);
   const baselineHeap: number = heapStats().heapSize;
   let accepted: number = 0;
@@ -100,7 +106,7 @@ if (Bun.argv[2] !== "--child") {
     p95ConsumptionNs: p95, p99ConsumptionNs: p99,
     accepted, retainedCount, fatalCount, retainedStalledBytes: stalledHeap - baselineHeap, retainedAfterDrainBytes: drainedHeap - baselineHeap,
     peakSampledRssBytes: peakRss, peakSampledHeapBytes: peakHeap,
-    gcPercent: sampling.gcPercent, profileSamples: sampling.totalSamples,
+    profileSamples: sampling.totalSamples,
     jit: { dfgCompiles: JscProbe(postDiskIO), reoptRetries: reoptimizationProbe(postDiskIO) } }));
   diskIORuntime.worker = null; diskIORuntime.writable = false; diskIORuntime.fatalHandler = undefined; diskIORuntime.fatalSignaled = false;
 }

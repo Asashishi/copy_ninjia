@@ -27,6 +27,8 @@ export interface TelegramOutboundJob {
   signal: AbortSignal;
   previous: TelegramOutboundJob | null;
   next: TelegramOutboundJob | null;
+  /** 构造时分配的接纳序号，主线程内严格递增；429 FIFO 按它保持接纳顺序。 */
+  readonly admissionSeq: number;
   category: TelegramRetryCategory;
   state: "created" | "active" | "retryQueued" | "settled";
   fromRetryQueue: boolean;

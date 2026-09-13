@@ -1,5 +1,5 @@
 import { TRANSLATE_TARGET_TEXTS } from "../../packages/consts/translate";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { CachedUser, CommandTargetMessages } from "../../packages/types";
 
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
@@ -20,7 +20,10 @@ mock.module("../../packages/users/senderIdentity", () => ({
 }));
 
 const { resolveCommandTarget } = await import("../../packages/commands/targetResolution");
+const identityStorage = await import("../../packages/infra/identityStorage");
+const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
 const {
+  IDENTITY_POLICY_UNAVAILABLE_TEXT,
   INVALID_USERNAME_ECHO_MAX_CHARS,
   TELEGRAM_USERNAME_MIN_LENGTH,
   TELEGRAM_USERNAME_MAX_LENGTH,
@@ -52,6 +55,41 @@ describe("resolveCommandTarget", () => {
     knownTargets.clear();
     knownIdTargets.clear();
     sendMessageMock.mockClear();
+    prefetchIdentityPolicies.mockReset();
+    prefetchIdentityPolicies.mockResolvedValue(true);
+  });
+
+  test("目标确定后预热它的黑白名单", async () => {
+    expect(await resolveCommandTarget(params("42", true))).toEqual({ id: 42 });
+    expect(prefetchIdentityPolicies).toHaveBeenCalledWith([42]);
+  });
+
+  test("回归用例：开启 requireIdentityPolicies 时预热失败拒绝执行，提示一个人都没动", async () => {
+    // 冷 LRU 下 isWhitelisted 读成「不在白名单」：放行的话 /mute 会捂住自己人，
+    // /unblock 回「本来就不在小本本上」而 SQLite 里的记录还在。
+    prefetchIdentityPolicies.mockResolvedValue(false);
+    expect(await resolveCommandTarget({ ...params("777", true), requireIdentityPolicies: true })).toBeUndefined();
+    expect(prefetchIdentityPolicies).toHaveBeenCalledWith([777]);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: IDENTITY_POLICY_UNAVAILABLE_TEXT,
+      replyToMessageId: 7,
+    });
+  });
+
+  test("不读名单做决策的调用保持缺省：预热失败不影响目标解析", async () => {
+    prefetchIdentityPolicies.mockResolvedValue(false);
+    replyTarget = { id: 42, first_name: "Reply Target" };
+    expect(await resolveCommandTarget(params(""))).toEqual(replyTarget);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  test("解析失败的分支不预热，也不发名单提示", async () => {
+    prefetchIdentityPolicies.mockResolvedValue(false);
+    expect(await resolveCommandTarget({ ...params("ghost"), requireIdentityPolicies: true })).toBeUndefined();
+    expect(prefetchIdentityPolicies).not.toHaveBeenCalled();
+    expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "unknown:ghost", replyToMessageId: 7 });
   });
 
   test("只给回复目标时用它：对方没有公开 username、或本天才没缓存过 TA 时这是唯一的路", async () => {

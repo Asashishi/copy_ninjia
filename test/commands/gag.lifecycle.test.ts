@@ -66,6 +66,30 @@ describe("/gag 与 /ungag 状态机", () => {
     expect(gagSessionCount()).toBe(0);
   });
 
+  test("论坛话题里没有显式回复时按非回复模式解析，首项仍是目标", async () => {
+    const ctx = commandContext({
+      match: "123456789 10",
+      replyToMessage: {
+        message_id: 3,
+        date: 0,
+        chat: { id: -1001, type: "supergroup", title: "测试群" },
+        from: { id: 555, is_bot: false, first_name: "Topic Creator" },
+        is_topic_message: true,
+        message_thread_id: 3,
+        forum_topic_created: { name: "话题", icon_color: 0x6fb9f0 },
+      },
+    }) as unknown as { msg: Record<string, unknown> };
+    ctx.msg.is_topic_message = true;
+    ctx.msg.message_thread_id = 3;
+
+    await gag.handleGagCommand(ctx as never);
+
+    expect(sendCommandMessage.mock.calls.map((call): unknown => (call[0] as { text: string }).text))
+      .not.toContain(GAG_USAGE_TEXT);
+    expect(resolveCommandTarget).toHaveBeenCalledTimes(1);
+    expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({ rawArgument: "123456789" });
+  });
+
   test("用具名过长撑爆 inline 消息时拒绝，不预约会话", async () => {
     // 目标解析得出来、权限也够，卡住它的只有渲染上限本身：单条 inline 应答的
     // 预算是 TELEGRAM_MESSAGE_MAX_CHARS - GAG_INLINE_QUERY_MAX_CHARS × (1 +

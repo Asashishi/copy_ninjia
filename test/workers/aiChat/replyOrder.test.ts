@@ -37,8 +37,9 @@ mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({
 }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep: async (): Promise<void> => {} }));
 mock.module("../../../packages/aiChat/ai/imageDescription", () => ({ describeMedia }));
+const pushBufferedMessage = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
-  recordChatMessage: (): void => {}, pushBufferedMessage: (): void => {},
+  recordChatMessage: (): void => {}, pushBufferedMessage,
 }));
 mock.module("../../../packages/workers/aiChat/promptContext", () => ({
   buildReplyPromptSections: (_chat: number, _self: unknown, options: UserContentOptions): ReplyPromptSections => {
@@ -75,6 +76,23 @@ function trigger(id: number, options: { chatId?: number; telegramBackpressured?:
   });
 }
 
+interface MediaRecordOptions {
+  directTriggerReason: AiRecordMediaMessage["directTriggerReason"];
+  replyTelegramBackpressured: boolean;
+}
+
+/** 一条要发起回复轮的图片记录；背压快照即主线程投递时刻写入的那个值。 */
+function mediaRecord(id: number, options: MediaRecordOptions): AiRecordMediaMessage {
+  return {
+    type: "recordMedia", messageThreadId: undefined, kind: "photo", chatId: -1001,
+    senderId: 7, firstName: "Alice", lastName: "", username: undefined,
+    caption: "", fileId: `file-${id}`, fileUniqueId: `unique-${id}`, width: 100, height: 100,
+    messageId: id, replyTelegramBackpressured: options.replyTelegramBackpressured, stickerFallbackText: undefined,
+    voiceMime: undefined, voiceDurationSeconds: 0, directTriggerReason: options.directTriggerReason,
+    replyTo: undefined, forwardedFrom: undefined, persistImmediately: false,
+  };
+}
+
 /**
  * 条件在预算内未成立就当场失败，而不是静默继续：本文件后面的 settleTasks 会
  * `await` 回复任务结算，条件没成立时那些任务永远不会结算，静默继续等于挂死。
@@ -96,7 +114,7 @@ beforeEach(() => {
   models.clear(); toolsets.clear(); contexts.clear(); sent.length = 0;
   describeMedia.mockReset().mockResolvedValue("图片描述");
   sendMessage.mockClear(); logError.mockClear();
-  sendNotice.mockClear();
+  sendNotice.mockClear(); pushBufferedMessage.mockClear();
   spyOn(Math, "random").mockReturnValue(1);
 });
 
@@ -284,7 +302,7 @@ test("媒体入站先占位；后到文字已生成也等待媒体识别与回�
     type: "recordMedia", messageThreadId: 17, kind: "photo", chatId: -1001,
     senderId: 7, firstName: "Alice", lastName: "", username: undefined,
     caption: "@bot 看图", fileId: "file", fileUniqueId: "unique", width: 100, height: 100,
-    messageId: 1, commentOnResolve: false, stickerFallbackText: undefined,
+    messageId: 1, replyTelegramBackpressured: false, stickerFallbackText: undefined,
     voiceMime: undefined, voiceDurationSeconds: 0, directTriggerReason: "mention",
     replyTo: undefined, forwardedFrom: undefined, persistImmediately: false,
   };
@@ -384,4 +402,48 @@ test("排队媒体仍先于后到文字，补跑使用解析正文和入站快�
   } finally {
     preparation.resolve(null);
   }
+});
+
+test.each([false, true])("随机媒体评价遵守主线程随媒体投递的高压快照 %s，媒体本身照常进上下文", async (replyTelegramBackpressured) => {
+  recordChatMedia(mediaRecord(1, { directTriggerReason: undefined, replyTelegramBackpressured }));
+
+  expect(pushBufferedMessage).toHaveBeenCalledTimes(1);
+  expect(describeMedia).toHaveBeenCalledTimes(1);
+  expect(pendingReplyTriggers.size).toBe(0);
+  if (replyTelegramBackpressured) {
+    expect(activeReplyCounts.has(-1001)).toBe(false);
+    await settleTasks();
+    expect(models.size).toBe(0);
+    expect(sent).toEqual([]);
+    return;
+  }
+  expect(activeReplyCounts.get(-1001)).toBe(1);
+  await waitUntil(() => models.has(1));
+  models.get(1)!.resolve("评价");
+  await settleTasks();
+  expect(sent).toEqual(["评价"]);
+});
+
+test.each([false, true])("直接媒体触发的同群并发遵守主线程随媒体投递的高压快照 %s", async (replyTelegramBackpressured) => {
+  recordChatMedia(mediaRecord(1, { directTriggerReason: "mention", replyTelegramBackpressured }));
+  recordChatMedia(mediaRecord(2, { directTriggerReason: "reply", replyTelegramBackpressured }));
+
+  expect(pushBufferedMessage).toHaveBeenCalledTimes(2);
+  if (replyTelegramBackpressured) {
+    expect(activeReplyCounts.get(-1001)).toBe(1);
+    expect(pendingReplyTriggers.get(-1001)?.size).toBe(1);
+    expect(pendingReplyTriggers.get(-1001)?.peek()).toMatchObject({ replyToMessageId: 2, telegramBackpressured: true });
+    await waitUntil(() => models.has(1));
+    expect(models.has(2)).toBe(false);
+  } else {
+    expect(activeReplyCounts.get(-1001)).toBe(2);
+    expect(pendingReplyTriggers.size).toBe(0);
+    await waitUntil(() => models.has(1) && models.has(2));
+  }
+  models.get(1)!.resolve("回复1");
+  await waitUntil(() => models.has(2));
+  models.get(2)!.resolve("回复2");
+  await settleTasks();
+  expect(sent).toEqual(["回复1", "回复2"]);
+  expect(pendingReplyTriggers.size).toBe(0);
 });

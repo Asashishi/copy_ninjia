@@ -34,7 +34,7 @@ export const adDetectQueue: LinkedQueue<string> = new LinkedQueue<string>();
 export const queuedAdDetectKeys: Set<string> = new Set<string>();
 
 /**
- * 各自 TTL 内已经被判成广告并处置过的键 -> **处置时刻**（同上，回拨可判）。
+ * 各自 TTL 内已经被判成广告并处置过的键 -> Worker 单调时钟下的处置时刻。
  * 处置到「主线程把人写进黑名单」之间有一段跨线程往返，这张表拦住那段时间里
  * 已经排在本线程的后续消息，避免同一个人被反复判定、反复触发一次完整的拉黑
  * + 各群封禁登记（见 adDetect.ts 的 disposeDetectedAd 与 docs/cn/04-invariants.md）。
@@ -42,7 +42,7 @@ export const queuedAdDetectKeys: Set<string> = new Set<string>();
  * 没有任何入口闸替它把关，写入只来自处置路径，因此由 setBoundedMapValue 将
  * 容量硬顶在 AD_DETECT_MAX_PENDING_SENDERS；满载时淘汰最早处置的键。每个 key
  * 独立 TTL 到期；若封禁已取得确定结果，blocklistEffects 会立即提前回收，无需
- * 等满窗口。
+ * 等满窗口。Worker 重建时清空，由后续真实处置重新填充。
  */
 export const recentlyDisposedAdKeys: Map<string, number> = new Map<string, number>();
 

@@ -30,7 +30,6 @@ function validDocument(): Record<string, unknown> {
         },
         limits: {
           minProfileSamples: 50,
-          maxGcPercent: 5,
           maxRssBytes: 402_653_184,
           maxSampledHeapGrowthBytes: 100_663_296,
           maxRetainedHeapGrowthBytes: 1_048_576,
@@ -43,6 +42,11 @@ function validDocument(): Record<string, unknown> {
             medianNsPerOpReportThreshold: 100,
             measured: { slowestMedianNsPerOp: 80, processes: 13 },
             note: "",
+            gc: {
+              maxPausePercent: 5,
+              samples: Array.from({ length: 3 }, () => ({ elapsedMs: 100, pauseCount: 1, pauseMs: 2, gcPercent: 2 })),
+              note: "",
+            },
           },
         },
         notes: [],
@@ -69,7 +73,6 @@ describe("热路径门禁记录 performance-result.json", () => {
 
     expect(calibration.runtime.bunVersion.length).toBeGreaterThan(0);
     expect(calibration.runtime.bunRevision.length).toBeGreaterThan(0);
-    expect(calibration.limits.maxGcPercent).toBeGreaterThan(0);
     // 这一条就是门禁启动时跑的那道契约：场景表与阈值表任一侧多一项都会抛错。
     expect((): unknown => assertHotPathMedianPolicyCoverage(
       HOT_PATH_PROFILE_SCENARIOS,
@@ -79,6 +82,7 @@ describe("热路径门禁记录 performance-result.json", () => {
     // 成功解析已经把它们钉住了；这里只确认每个默认场景都真的拿到了正阈值。
     for (const scenario of HOT_PATH_PROFILE_SCENARIOS) {
       expect(calibration.medianNsPerOpReportThresholds[scenario]).toBeGreaterThan(0);
+      expect(calibration.gcPausePercentLimits[scenario]).toBeGreaterThan(0);
     }
   });
 
@@ -90,6 +94,8 @@ describe("热路径门禁记录 performance-result.json", () => {
       calibration.medianNsPerOpReportThresholds["ad-capacity-reject"] = 1;
       // @ts-expect-error 硬上限同理：门禁运行中途改判据等于没有判据。
       calibration.limits.maxRssBytes = 1;
+      // @ts-expect-error GC 暂停预算在门禁运行中只读。
+      calibration.gcPausePercentLimits["ad-capacity-reject"] = 1;
     };
     expect(compileOnly).toBeFunction();
   });
@@ -146,6 +152,25 @@ describe("热路径门禁记录 performance-result.json", () => {
 
     await expect(readHotPathGateCalibration(await writeDocument(document)))
       .rejects.toThrow("must be at least its own measured.slowestMedianNsPerOp (80)");
+  });
+
+  test.each([
+    (gc: Record<string, unknown>): void => { gc.maxPausePercent = 1; },
+    (gc: Record<string, unknown>): void => { gc.samples = []; },
+    (gc: Record<string, unknown>): void => {
+      (gc.samples as Record<string, unknown>[])[0]!.gcPercent = 1;
+    },
+    (gc: Record<string, unknown>): void => {
+      (gc.samples as Record<string, unknown>[])[0]!.pauseCount = 0.5;
+    },
+    (gc: Record<string, unknown>): void => { gc.extra = true; },
+  ])("GC 校准拒绝失真、缺失或超出预算的来源读数：%#", async (mutate: (gc: Record<string, unknown>) => void): Promise<void> => {
+    const document: Record<string, unknown> = validDocument();
+    const root = document.hotPathProfileGate as Record<string, unknown>;
+    const calibration = root.calibration as Record<string, unknown>;
+    const scenarios = calibration.scenarios as Record<string, Record<string, unknown>>;
+    mutate(scenarios["only-scenario"]!.gc as Record<string, unknown>);
+    await expect(readHotPathGateCalibration(await writeDocument(document))).rejects.toThrow(".gc");
   });
 
   test("非严格 JSON 直接失败，不退回默认值", async () => {

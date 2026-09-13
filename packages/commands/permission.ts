@@ -6,7 +6,7 @@ import type {
   WhitelistPermissions,
 } from "../types/identityPolicy";
 import type { SetWhitelistPermissionResult } from "../infra/identityPolicy/whitelist";
-import { forumTopicThreadId } from "../libs/forumTopic";
+import { explicitReplyTo, forumTopicThreadId } from "../libs/forumTopic";
 import { commandArgumentTokens } from "./arguments";
 import {
   PERMISSION_COMMAND_TEXTS,
@@ -25,6 +25,8 @@ import {
   setWhitelistPermission,
 } from "../infra/identityPolicy/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
+import { IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT } from "../consts/commands";
+import { prefetchIdentityPolicies } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
@@ -204,7 +206,7 @@ export async function handlePermissionCommand(
   if (isQuery) {
     const rawTargetArgument: string = tokens.slice(1).join(" ");
     let target: CachedUser | undefined = actor;
-    if (rawTargetArgument.length > 0 || ctx.msg.reply_to_message !== undefined) {
+    if (rawTargetArgument.length > 0 || explicitReplyTo(ctx.msg) !== undefined) {
       target = await resolveCommandTarget({
         chatId,
         message: ctx.msg,
@@ -220,6 +222,14 @@ export async function handlePermissionCommand(
       });
     }
     if (target === undefined) return;
+    if (!await prefetchIdentityPolicies([target.id])) {
+      await sendCommandMessage({
+        chatId,
+        text: IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
 
     // 这里只读预热后的主线程 LRU；非白名单身份复用逐项 false 的静态视图，
     // 不为一次查询创建或写入数据库条目。超级管理员则由配置边界返回全开视图。
@@ -293,6 +303,8 @@ export async function handlePermissionCommand(
     rawArgument: targetArgument,
     acceptUserId: true,
     acceptChatId: true,
+    // 「目标不在白名单」判定与逐项权限写入都读目标的名单结论。
+    requireIdentityPolicies: true,
     messages: PERMISSION_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;

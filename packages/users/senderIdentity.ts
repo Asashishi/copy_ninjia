@@ -2,6 +2,7 @@ import type { CachedUser } from "../types/chatState";
 import type { Message, User, Chat } from "grammy/types";
 import { identityById, senderUsernameCache, userCache } from "../cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
+import { explicitReplyTo } from "../libs/forumTopic";
 import { channelIdentity, userIdentity, visibleSenderChat } from "./visibleSender";
 
 /**
@@ -154,10 +155,11 @@ export function cacheSender(message: Message): number | undefined {
 /**
  * 从 /copy 指令所回复的消息中解析出目标，这样即使对方没有公开 @username（或者
  * 机器人还没缓存过 TA，比如因为 privacy mode 屏蔽了 TA 之前的消息），只要能回复到
- * TA 的一条消息，依然可以将其设为目标。
+ * TA 的一条消息，依然可以将其设为目标。只认显式回复：论坛话题里 Bot API 自动填入的
+ * 话题创建消息不算（见 libs/forumTopic.ts 的 explicitReplyTo）。
  */
 export function resolveReplyTarget(message: Message): CachedUser | undefined {
-  const repliedMessage: Message | undefined = message.reply_to_message;
+  const repliedMessage: Message | undefined = explicitReplyTo(message);
   if (!repliedMessage) return undefined;
   return resolveSenderIdentity(repliedMessage);
 }

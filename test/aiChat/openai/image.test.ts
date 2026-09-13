@@ -126,7 +126,11 @@ describe("请求分流", () => {
       moderation: OPENAI_IMAGE_MODERATION,
       n: 1,
     });
-    expect(generate.mock.calls[0]![1]).toEqual({ signal: undefined, timeout: OPENAI_IMAGE_REQUEST_TIMEOUT_MS });
+    // 没有调用方 signal 时仍下传整次调用的 deadline；timeout 是每次尝试各自的期限。
+    expect(generate.mock.calls[0]![1]).toEqual({
+      signal: expect.any(AbortSignal),
+      timeout: OPENAI_IMAGE_REQUEST_TIMEOUT_MS,
+    });
   });
 
   test("有参考图走 images.edit，并把字节转成可上传文件", async () => {
@@ -179,7 +183,7 @@ describe("api.x.ai 的 Grok Imagine 兼容请求", () => {
       n: 1,
     });
     expect(generate.mock.calls[0]![1]).toEqual({
-      signal: undefined,
+      signal: expect.any(AbortSignal),
       timeout: OPENAI_IMAGE_REQUEST_TIMEOUT_MS,
     });
   });
@@ -218,7 +222,7 @@ describe("api.x.ai 的 Grok Imagine 兼容请求", () => {
         resolution: XAI_IMAGE_RESOLUTION,
         response_format: "b64_json",
       },
-      signal: undefined,
+      signal: expect.any(AbortSignal),
       timeout: OPENAI_IMAGE_REQUEST_TIMEOUT_MS,
     });
   });
@@ -315,6 +319,60 @@ describe("失败处理", () => {
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
     expect(loggerError).toHaveBeenCalledWith("Error calling OpenAI image generation API:", expect.any(Error));
   });
+
+  test("四条请求分支共用覆盖整次调用的 deadline：SDK 仍在重试时到期也立即结算并记日志", async () => {
+    const originalTimeout: typeof AbortSignal.timeout = AbortSignal.timeout;
+    const requestedTimeouts: number[] = [];
+    const deadlines: AbortController[] = [];
+    AbortSignal.timeout = (milliseconds: number): AbortSignal => {
+      requestedTimeouts.push(milliseconds);
+      const deadline: AbortController = new AbortController();
+      deadlines.push(deadline);
+      return deadline.signal;
+    };
+    try {
+      const cases: readonly (readonly [OpenAiImageProtocol, boolean, ReturnType<typeof mock>])[] = [
+        ["openai", false, generate],
+        ["openai", true, edit],
+        ["xai", false, generate],
+        ["xai", true, post],
+      ];
+      for (const [protocol, hasReference, endpoint] of cases) {
+        imageProtocol = protocol;
+        loggerError.mockClear();
+        const sdkSignals: AbortSignal[] = [];
+        // SDK 在内部重试与退避中迟迟不结算；整次调用只能由 deadline 结束。
+        endpoint.mockImplementationOnce((...args: unknown[]): Promise<unknown> => {
+          const options: { readonly signal?: AbortSignal } = args[args.length - 1] as { readonly signal?: AbortSignal };
+          if (options.signal !== undefined) sdkSignals.push(options.signal);
+          return new Promise<unknown>((): void => {});
+        });
+        const caller: AbortController = new AbortController();
+        const pending: Promise<unknown> = generateOpenAiImage({
+          prompt: "p",
+          aspectRatio: "1:1",
+          signal: caller.signal,
+          ...(hasReference ? { referenceImage: { bytes: JPEG, mime: "image/jpeg" as const } } : {}),
+        });
+        for (let turn: number = 0; turn < 20 && endpoint.mock.calls.length === 0; turn++) await Bun.sleep(0);
+
+        expect(requestedTimeouts.at(-1)).toBe(OPENAI_IMAGE_REQUEST_TIMEOUT_MS);
+        const sdkSignal: AbortSignal | undefined = sdkSignals[0];
+        expect(sdkSignal).toBeInstanceOf(AbortSignal);
+        expect(sdkSignal).not.toBe(caller.signal);
+        deadlines.at(-1)!.abort(new DOMException("The operation timed out.", "TimeoutError"));
+
+        await expect(pending).resolves.toBeNull();
+        // 交给 SDK 的是同一份合成 signal：deadline 到期后它也停止后续尝试。
+        expect(sdkSignal?.aborted).toBe(true);
+        // deadline 到期不是调用方取消，按普通请求失败留下一行日志。
+        expect(caller.signal.aborted).toBe(false);
+        expect(loggerError).toHaveBeenCalledWith("Error calling OpenAI image generation API:", expect.any(DOMException));
+      }
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+  }, 2_000);
 
   test("调用方主动取消时静默返回 null，不记错误日志", async () => {
     const controller: AbortController = new AbortController();

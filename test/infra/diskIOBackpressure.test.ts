@@ -3,6 +3,7 @@ import { diskIORuntime } from "../../packages/cache/main/diskIO";
 import { defaultStickerConfigCache } from "../../packages/cache/perThread/config";
 import { temporaryWhitelistActivityCache, temporaryWhitelistWriteRevision, unacknowledgedTemporaryWhitelistWrites } from "../../packages/cache/main/temporaryWhitelist";
 import { resetIdentityStorageCache } from "../../packages/cache/main/identityStorage";
+import { seedMissingIdentity } from "../helpers/identityStorage";
 import { recordTemporaryWhitelistActivity } from "../../packages/infra/identityPolicy/temporaryWhitelist";
 import { initDiskIO, postDiskIO, terminateDiskIO, loadPersistedData, readIdentityPolicies, flushDiskIO } from "../../packages/infra/diskIO";
 import { DISK_BUSINESS_MAX_RETAINED_BYTES } from "../../packages/consts/diskIO/business";
@@ -35,7 +36,7 @@ test("非消费 Worker 只有一个在途批次；条数满后保留原事实并
 
 test("传输满额在临时白名单 LRU、revision 和未 ACK 发布之前拒收", (): void => {
   for (let id: number = 1; id <= 3; id++) postDiskIO(write(id));
-  temporaryWhitelistActivityCache.set(9, null);
+  seedMissingIdentity(9);
   expect((): unknown => recordTemporaryWhitelistActivity(9)).toThrow("publication");
   expect(temporaryWhitelistActivityCache.peek(9)).toBeNull();
   expect(temporaryWhitelistWriteRevision.current).toBe(0);
@@ -49,7 +50,7 @@ test("大载荷按字节拒收，未发送且不制造恢复事实", (): void =>
 });
 
 test("读取和 flush 必须在已入队业务之后消费；消费 ACK 不等同于落盘 ACK", async (): Promise<void> => {
-  temporaryWhitelistActivityCache.set(7, null); recordTemporaryWhitelistActivity(7);
+  seedMissingIdentity(7); recordTemporaryWhitelistActivity(7);
   const reading: Promise<unknown> = readIdentityPolicies([7]).catch((): undefined => undefined);
   const flushing: Promise<unknown> = flushDiskIO();
   expect(worker().messages.map((message): string => message.type)).toEqual(["load", "temporaryWhitelistWrite"]);
@@ -87,7 +88,7 @@ test("缺省贴纸配置在初始 load 与运行时恢复都明确发送 null", 
 
 test("未 ACK 主键达到上限后不通过 LRU 淘汰释放持久化事实", (): void => {
   for (let id: number = 1; id <= 8_192; id++) unacknowledgedTemporaryWhitelistWrites.set(id, { activity: null, revision: id });
-  temporaryWhitelistActivityCache.set(9_000, null);
+  seedMissingIdentity(9_000);
   expect((): unknown => recordTemporaryWhitelistActivity(9_000)).toThrow("capacity");
   expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(8_192);
   expect(temporaryWhitelistActivityCache.peek(9_000)).toBeNull();

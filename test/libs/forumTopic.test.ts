@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { forumTopicThreadId } from "../../packages/libs/forumTopic";
+import { explicitReplyTo, forumTopicThreadId } from "../../packages/libs/forumTopic";
 import type { Message } from "grammy/types";
 
 const CHAT: Message["chat"] = { id: -1001, type: "supergroup", title: "论坛群" };
@@ -27,5 +27,63 @@ describe("forumTopicThreadId", () => {
   test("显式 is_topic_message: false 一律不认", () => {
     expect(forumTopicThreadId(message({ message_thread_id: 9, is_topic_message: false })))
       .toBeUndefined();
+  });
+});
+
+describe("explicitReplyTo", () => {
+  const TOPIC_CREATED: Message = message({
+    message_id: 77,
+    from: { id: 555, is_bot: false, first_name: "话题创建者" },
+    is_topic_message: true,
+    message_thread_id: 77,
+    forum_topic_created: { name: "话题", icon_color: 0x6fb9f0 },
+  });
+
+  test("没有 reply_to_message 时没有回复", () => {
+    expect(explicitReplyTo(message({ text: "/block @alice_x" }))).toBeUndefined();
+  });
+
+  test("普通群里的显式回复原样返回", () => {
+    const replied: Message = message({ message_id: 5, text: "请封 123456789" });
+    expect(explicitReplyTo(message({ message_id: 6, reply_to_message: replied as never }))).toBe(replied);
+  });
+
+  test("论坛话题里 Bot API 自动填入的话题创建消息不算回复", () => {
+    expect(explicitReplyTo(message({
+      message_id: 90,
+      is_topic_message: true,
+      message_thread_id: 77,
+      reply_to_message: TOPIC_CREATED as never,
+    }))).toBeUndefined();
+  });
+
+  test("话题创建消息未带 forum_topic_created 时，按 message_id 等于 message_thread_id 识别", () => {
+    const threadRoot: Message = message({ message_id: 77, is_topic_message: true, message_thread_id: 77 });
+    expect(explicitReplyTo(message({
+      message_id: 90,
+      is_topic_message: true,
+      message_thread_id: 77,
+      reply_to_message: threadRoot as never,
+    }))).toBeUndefined();
+  });
+
+  test("论坛话题内显式回复另一条话题消息照常返回", () => {
+    const replied: Message = message({ message_id: 88, is_topic_message: true, message_thread_id: 77, text: "hi" });
+    expect(explicitReplyTo(message({
+      message_id: 90,
+      is_topic_message: true,
+      message_thread_id: 77,
+      reply_to_message: replied as never,
+    }))).toBe(replied);
+  });
+
+  test("讨论组评论线程不是论坛话题：回复频道贴自动转发的顶层评论照常算回复", () => {
+    // 评论的 message_thread_id 就是那条自动转发的 message_id，但 is_topic_message 不为 true。
+    const channelForward: Message = message({ message_id: 12345, is_automatic_forward: true, text: "频道贴" });
+    expect(explicitReplyTo(message({
+      message_id: 12346,
+      message_thread_id: 12345,
+      reply_to_message: channelForward as never,
+    }))).toBe(channelForward);
   });
 });

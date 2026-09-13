@@ -55,6 +55,8 @@ function mediaCommentFor(msg: AiRecordMediaMessage, entry: BufferedMessage, desc
 /**
  * 媒体先同步记录并准入占位，再异步识别；识别完成回填原条目和本轮上下文。
  * 直接触发失败时使用兜底描述，随机评价失败时完成空占位。贴纸目录命中时同步使用真实描述。
+ * 只有 `replyTelegramBackpressured` 有值的媒体进入回复准入，并把这份主线程投递时刻的
+ * 高压快照交给准入：高压时随机评价丢弃、直接触发同群只开一轮（媒体本身照常记录）。
  * 顺位、取消与有界容量约束见 docs/cn/04-invariants.md。
  */
 export function recordChatMedia(msg: AiRecordMediaMessage): void {
@@ -62,6 +64,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   const signal: AbortSignal = replyGenerationSignal(msg.chatId, generation);
   const sanitizedCaption: string = sanitizeInline(msg.caption);
   const imageGenerationReference: ImageGenerationReference | undefined = imageGenerationReferenceFor(msg);
+  const telegramBackpressured: boolean | undefined = msg.replyTelegramBackpressured;
 
   if (msg.kind === "sticker") {
     const catalogEntry: StickerCatalogEntry | undefined = getCatalogEntry(msg.fileUniqueId);
@@ -71,13 +74,14 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption)
       )!;
       pushBufferedMessage(msg.chatId, entry);
-      if (msg.directTriggerReason !== undefined || msg.commentOnResolve) {
+      if (telegramBackpressured !== undefined) {
         generateAndSendReply({
           chatId: msg.chatId,
           triggerSenderId: msg.senderId,
           replyToMessageId: msg.messageId,
           messageThreadId: msg.messageThreadId,
           isRandomTrigger: false,
+          telegramBackpressured,
           imageGenerationRequested: msg.directTriggerReason !== undefined,
           ...(imageGenerationReference ? { imageGenerationReference } : {}),
           mediaComment: mediaCommentFor(msg, entry, catalogEntry.description),
@@ -93,7 +97,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   )!;
   pushBufferedMessage(msg.chatId, entry);
   const preparation: PromiseWithResolvers<MediaCommentContext | null> | undefined =
-    msg.directTriggerReason !== undefined || msg.commentOnResolve
+    telegramBackpressured !== undefined
       ? Promise.withResolvers<MediaCommentContext | null>()
       : undefined;
   if (preparation) {
@@ -103,6 +107,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
       replyToMessageId: msg.messageId,
       messageThreadId: msg.messageThreadId,
       isRandomTrigger: false,
+      telegramBackpressured,
       imageGenerationRequested: msg.directTriggerReason !== undefined,
       ...(imageGenerationReference ? { imageGenerationReference } : {}),
       mediaComment: mediaCommentFor(msg, entry, ""),

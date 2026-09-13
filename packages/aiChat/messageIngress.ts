@@ -40,6 +40,17 @@ function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage): void
 }
 
 /**
+ * AI 回复的 Telegram 软背压判定：message 类在途达到软高水位，或已有真实 429 等待。
+ * 文字 trigger 与媒体 recordMedia 在投递时刻各调用一次，Worker 准入只读随消息
+ * 带过去的这份快照（见 docs/cn/04-invariants.md 的「AI 闲聊运行时」）。
+ */
+function isTelegramReplyBackpressured(): boolean {
+  const telegramStats: ReturnType<typeof telegramOutboundStats> = telegramOutboundStats();
+  return telegramStats.messageActive >= AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER ||
+    telegramStats.messageRetryPending >= AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER;
+}
+
+/**
  * 记录一条群消息到 Worker 侧滚动上下文；主线程只负责保持 FIFO 投递顺序。
  *
  * 入参就是最终载荷，本函数不再 `{type, ...message}` 补一次型别——那次展开
@@ -57,9 +68,18 @@ export function recordChatMessage(message: AiRecordMessage): void {
   postMemoryRecord(message);
 }
 
-/** 记录一条图片、贴纸或 GIF；媒体解析与可选评价都由 AI Worker 完成。 */
+/**
+ * 记录一条图片、贴纸、GIF 或语音；媒体解析与回复准入都由 AI Worker 完成。
+ *
+ * 要发起回复轮的媒体（`replyTelegramBackpressured` 不是 undefined）在投递前覆写为
+ * 此刻的发送面高压快照，与 trigger 消息共用 isTelegramReplyBackpressured；不发起
+ * 回复的媒体不读取发送面。同 postMemoryRecord，只改已存在字段的值。
+ */
 export function recordChatMedia(message: AiRecordMediaMessage): void {
   purgedAiMemoryChats.delete(message.chatId);
+  if (message.replyTelegramBackpressured !== undefined) {
+    message.replyTelegramBackpressured = isTelegramReplyBackpressured();
+  }
   postMemoryRecord(message);
 }
 
@@ -81,16 +101,13 @@ export function generateAndSendReply({
   isRandomTrigger = false,
   messageThreadId,
 }: GenerateAndSendReplyParams): void {
-  const telegramStats: ReturnType<typeof telegramOutboundStats> = telegramOutboundStats();
   postAiChatOrThrow({
     type: "trigger",
     chatId,
     triggerSenderId,
     replyToMessageId,
     isRandomTrigger,
-    telegramBackpressured:
-      telegramStats.messageActive >= AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER ||
-      telegramStats.messageRetryPending >= AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
+    telegramBackpressured: isTelegramReplyBackpressured(),
     imageGenerationRequested,
     // 同 workers/aiChat/rollingMemory.ts：字段一律发出，不用条件展开。这条消息
     // 走在每次 AI 触发的路径上，两种形状轮着产生会让 Worker 侧的读取变多态。

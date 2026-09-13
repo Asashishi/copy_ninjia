@@ -5,8 +5,10 @@ import {
   storageDatabaseHandle,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { IDENTITY_DATABASE_SCHEMA_VERSION } from "../../../consts/identityStorage";
-import { BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE } from
-  "../../../consts/antiRaid/blocklist";
+import {
+  BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE,
+  BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
+} from "../../../consts/antiRaid/blocklist";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import {
   closeStorageDatabase,
@@ -59,12 +61,16 @@ function assertPendingRemovalPage(
   }
 }
 
-/** 一页完成存储形态与领域解码后才推进游标；失败由外层统一丢弃半恢复快照。 */
 interface PendingRemovalInspection {
   readonly values: Map<number, PendingBlockedRemoval>;
   readonly encoded: Map<number, string>;
 }
 
+/**
+ * 一页完成存储形态与领域解码后才推进游标；失败由外层统一丢弃半恢复快照。
+ * 累计行数超过 `BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES` 时在解码该页之前拒绝启动，
+ * 主线程 `hydrateBlocklist` 只接收本处校验过的快照，不再重复判定。
+ */
 function inspectPendingRemovalPages(
   database: StorageDatabase
 ): PendingRemovalInspection {
@@ -74,6 +80,12 @@ function inspectPendingRemovalPages(
   while (true) {
     const page: readonly StoredPendingRemovalStartupRow[] =
       readStorageDatabasePendingRemovalPage(database, afterRemovalId);
+    if (values.size + page.length > BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES) {
+      throw new Error(
+        `${IDENTITY_DATABASE_PATH}:pending_blocked_removals: ` +
+        `expected at most ${BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES} rows.`
+      );
+    }
     assertPendingRemovalPage(page);
     const removals: DecodedPendingRemovalRows = decodeStoredPendingRemovals(
       page,

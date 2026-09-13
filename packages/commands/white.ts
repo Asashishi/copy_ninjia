@@ -98,6 +98,8 @@ export async function handleWhiteCommand(
     rawArgument: targetArgument,
     acceptUserId: true,
     acceptChatId: true,
+    // 黑名单互斥判定与成员关系写入都读目标的名单结论。
+    requireIdentityPolicies: true,
     messages: WHITE_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;

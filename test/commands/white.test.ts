@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
 import { settleTestBatch } from "../libs/helpers";
 
@@ -39,6 +39,9 @@ const {
 } = await import("../../packages/cache/main/senderIdentity");
 const { protectedIdentityMutationQueue } =
   await import("../../packages/cache/main/blocklist");
+const identityStorage = await import("../../packages/infra/identityStorage");
+const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
+const { IDENTITY_POLICY_UNAVAILABLE_TEXT } = await import("../../packages/consts/commands");
 const { runProtectedIdentityMutation } =
   await import("../../packages/infra/identityPolicy/coordination");
 
@@ -101,6 +104,8 @@ beforeEach(() => {
   hasWhitelistPermission.mockClear();
   hasWhitelistPermission.mockImplementation((): boolean => false);
   protectedIdentityMutationQueue.current = Promise.resolve();
+  prefetchIdentityPolicies.mockClear();
+  prefetchIdentityPolicies.mockResolvedValue(true);
   userCache.clear();
   senderUsernameCache.clear();
 });
@@ -243,6 +248,23 @@ describe("/white", () => {
     expect(setWhitelistMembership).toHaveBeenLastCalledWith({
       id: 100,
       enabled: false,
+    });
+  });
+
+  test("目标名单预热失败时拒绝执行：不按「不在黑名单」写白名单，只回一句名单读不出来", async () => {
+    // 冷 LRU 下 isUserBlocked 读成 false：放行会把黑名单身份写进白名单。
+    prefetchIdentityPolicies.mockResolvedValue(false);
+
+    await handleWhiteCommand(context(1, "100 enable"));
+
+    expect(prefetchIdentityPolicies).toHaveBeenCalledWith([100]);
+    expect(isUserBlocked).not.toHaveBeenCalled();
+    expect(setWhitelistMembership).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: IDENTITY_POLICY_UNAVAILABLE_TEXT,
+      replyToMessageId: 10,
     });
   });
 

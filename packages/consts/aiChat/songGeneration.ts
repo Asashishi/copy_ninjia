@@ -44,6 +44,11 @@ export const SONG_PERFORMER_MAX_CHARS: number = 64;
 
 /** 模型没给曲名时用的占位；不留空字符串——播放条上会退化成显示文件名。 */
 export const SONG_DEFAULT_TITLE: string = "无题";
+
+/** 生歌工具在曲目行含可点击命令时返回的错误文案；默认演唱者也须通过同一校验。 */
+export const SONG_TRACK_COMMAND_ERROR_TEXT: string =
+  'title and performer must not contain a slash command such as "/example": Telegram renders it as a tappable command in the bot\'s own message. ' +
+  "Write the command name without the leading slash, and give performer explicitly if the default one contains it";
 /**
  * 取不到机器人自己账号身份时的演唱者占位。
  *

@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { buildSongCaption } from "../../../../packages/aiChat/ai/utils/songCaption";
+import { buildSongCaption, buildSongTrackLabel } from "../../../../packages/aiChat/ai/utils/songCaption";
 import { SONG_METADATA_HASHTAG } from "../../../../packages/consts/aiChat/songGeneration";
 
 const METADATA = { durationSeconds: 194, bitrateKbps: 920.7043 } as const;
@@ -16,8 +16,7 @@ describe("生歌 caption", () => {
   test("模型那句话在前，曲目信息两行跟在后面", () => {
     const caption: string = buildSongCaption({
       modelCaption: "给你写了一首",
-      title: "まほう",
-      performer: "花譜",
+      trackLabel: buildSongTrackLabel("まほう", "花譜"),
       byteLength: 21.5 * 1024 * 1024,
       mimeType: "audio/mp3",
       metadata: METADATA,
@@ -33,8 +32,7 @@ describe("生歌 caption", () => {
   test("模型没写话时 caption 只有曲目信息，不留空行", () => {
     const caption: string = buildSongCaption({
       modelCaption: null,
-      title: "无题",
-      performer: "小忍",
+      trackLabel: buildSongTrackLabel("无题", "小忍"),
       byteLength: 1024 * 1024,
       mimeType: "audio/mp3",
       metadata: METADATA,
@@ -46,8 +44,7 @@ describe("生歌 caption", () => {
   test("解析不出码率时整项省掉，其余照常——不填一个编出来的数", () => {
     const caption: string = buildSongCaption({
       modelCaption: null,
-      title: "无题",
-      performer: "小忍",
+      trackLabel: buildSongTrackLabel("无题", "小忍"),
       byteLength: 3 * 1024 * 1024,
       mimeType: "audio/wav",
       metadata: null,
@@ -60,8 +57,7 @@ describe("生歌 caption", () => {
   test("体积按 MiB 保留两位，与 Telegram 播放条上那个大小同源", () => {
     const caption: string = buildSongCaption({
       modelCaption: null,
-      title: "t",
-      performer: "p",
+      trackLabel: buildSongTrackLabel("t", "p"),
       byteLength: 22_544_384,
       mimeType: "audio/mp3",
       metadata: null,
@@ -73,8 +69,7 @@ describe("生歌 caption", () => {
   test("标出这是 AI 生成：水印听不出来，不标就等于默认冒充", () => {
     const caption: string = buildSongCaption({
       modelCaption: null,
-      title: "t",
-      performer: "p",
+      trackLabel: buildSongTrackLabel("t", "p"),
       byteLength: 1,
       mimeType: "audio/mp3",
       metadata: null,

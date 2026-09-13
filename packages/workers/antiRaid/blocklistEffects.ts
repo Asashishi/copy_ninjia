@@ -18,6 +18,10 @@
  * - 探测失败不算「不在群」。只有确认不在群才跳过，其余一律照封。
  * - 群停管后立刻放弃在途批次，避免在已经不归自己管的群里继续封人。
  *
+ * 整批登记在 Worker 在途任务集合里、由停机 drain 等待，因此同时订阅停机取消信号
+ * （antiRaidDispatchSignal）：取消后不再开始新的 id、分批暂停或重试退避，整批按
+ * complete:false 回执，durable outbox 在下一次启动重放。
+ *
  * 还有一条与「一个 id 卡住整个群」相关：`permissionDenied` 只能由**机器人自己
  * 缺权限**触发。Telegram 用同一句 400 表达「目标是管理员」，混进去就会把整个群
  * 的清扫永久闩死，见 RemovalOutcome 的 targetIsAdmin。
@@ -41,8 +45,9 @@ import type { BlockedMembersRemovedEvent } from
 import type { RemoveBlockedMembersMessage } from
   "../../types/antiRaid/protocol";
 import type { RemoveBlockedMembersParams } from "../../types/blocklist";
-import { trackAntiRaidTask } from "./taskTracker";
+import { antiRaidDispatchSignal, trackAntiRaidTask } from "./taskTracker";
 import { releaseAdDetectDedupKey } from "./adDetect/queueState";
+import { sleep } from "../../libs/sleep";
 
 /**
  * 单个 id 的处置结局。
@@ -61,15 +66,17 @@ export interface RemoveOneParams {
   chatId: number;
   userId: number;
   probeMembership: boolean;
+  /** 本批开始时取得的停机取消信号（antiRaidDispatchSignal）。 */
+  signal: AbortSignal;
 }
 
 /**
- * 处置一个 id，失败按线性退避重试。
+ * 处置一个 id，失败按线性退避重试；停机取消后不再进入下一次退避。
  * @returns removed=已封；absent=确认不在群，不必封；forbidden=机器人在这个群
  *   缺封禁权限，重试没有意义；targetIsAdmin=目标本身是管理员，只这一个封不掉；
- *   failed=尝试用尽仍未落定。
+ *   failed=尝试用尽或停机取消时仍未落定。
  */
-async function removeOne({ chatId, userId, probeMembership }: RemoveOneParams): Promise<RemovalOutcome> {
+async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneParams): Promise<RemovalOutcome> {
   for (let attempt: number = 1; attempt <= BLOCKLIST_REMOVAL_MAX_ATTEMPTS; attempt++) {
     // 频道马甲（sender_chat）没有「成员」这个概念，getChatMember 探不到，
     // 一律直接封掉它在本群的发言权（同 commands/block.ts 的处理）。
@@ -101,7 +108,15 @@ async function removeOne({ chatId, userId, probeMembership }: RemoveOneParams): 
       }
     }
     if (attempt < BLOCKLIST_REMOVAL_MAX_ATTEMPTS) {
-      await Bun.sleep(BLOCKLIST_REMOVAL_RETRY_DELAY_MS * attempt);
+      // 停机 drain 的预算是秒级，退避却按 5s、10s 放大：取消后既不开始、也不继续
+      // 等这次退避，本 id 按未落定结算，由 durable outbox 在下一次启动重放。
+      if (signal.aborted) return "failed";
+      try {
+        await sleep(BLOCKLIST_REMOVAL_RETRY_DELAY_MS * attempt, signal);
+      } catch (error: unknown) {
+        if (signal.aborted) return "failed";
+        throw error;
+      }
     }
   }
   return "failed";
@@ -149,6 +164,7 @@ async function removeBlockedMembers({
     if (now - joinedAt < JOIN_WINDOW_MS) recordJoin(chatId, now);
   }
   const epoch: number = currentBlocklistRemovalEpoch(chatId);
+  const signal: AbortSignal = antiRaidDispatchSignal();
   let removed: number = 0;
   let complete: boolean = true;
   let permissionDenied: boolean = false;
@@ -156,13 +172,21 @@ async function removeBlockedMembers({
   for (let index: number = 0; index < userIds.length; index++) {
     // 群已被停管：整批放弃，且不算完成——重新接管后会有新的边沿再扫一次。
     if (currentBlocklistRemovalEpoch(chatId) !== epoch) return { complete: false, permissionDenied, targetIsAdmin };
+    // Worker 正在停机：不再开始新的处置，整批按未完成回执，durable outbox 在
+    // 下一次启动重放（见 cache/workers/antiRaid/tasks.ts 的 antiRaidDispatchAbort）。
+    if (signal.aborted) return { complete: false, permissionDenied, targetIsAdmin };
     // 补扫可能有几千个 id，且与验证超时踢人共用 kick 类别的 429 FIFO；每批
     // 之间让一步，给同 owner 的其它安全动作与 Worker mailbox 留出调度机会。
     if (index > 0 && index % BLOCKLIST_SWEEP_BATCH_SIZE === 0) {
-      await Bun.sleep(BLOCKLIST_SWEEP_BATCH_PAUSE_MS);
+      try {
+        await sleep(BLOCKLIST_SWEEP_BATCH_PAUSE_MS, signal);
+      } catch (error: unknown) {
+        if (signal.aborted) return { complete: false, permissionDenied, targetIsAdmin };
+        throw error;
+      }
     }
     const userId: number = userIds[index]!;
-    const outcome: RemovalOutcome = await removeOne({ chatId, userId, probeMembership });
+    const outcome: RemovalOutcome = await removeOne({ chatId, userId, probeMembership, signal });
     if (outcome === "removed") removed++;
     else if (outcome === "forbidden") {
       complete = false;

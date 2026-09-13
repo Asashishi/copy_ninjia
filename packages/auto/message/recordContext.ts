@@ -3,7 +3,7 @@ import type {
   AiRecordMessage,
 } from "../../types/aiChat/protocol";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
-import type { MessageTriggerContext } from "../../types/auto";
+import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 
 /**
  * 文字与各媒体 handler 共用的 Worker 记录载荷构造边界，集中保持身份和回复
@@ -55,11 +55,27 @@ export type AiRecordMediaPayload = Pick<
   | "fileUniqueId"
   | "width"
   | "height"
-  | "commentOnResolve"
+  | "replyTelegramBackpressured"
   | "stickerFallbackText"
   | "voiceMime"
   | "voiceDurationSeconds"
 >;
+
+/**
+ * 四个媒体 handler 写入 `replyTelegramBackpressured` 的构造值：直接触发或已占到
+ * 随机评价名额（`claimed`）时为 false，由 aiChat/messageIngress.ts 在投递时刻覆写为
+ * 实时快照；不发起回复为 undefined。
+ *
+ * 判定在 handler 侧算好再放进 media 载荷，buildAiRecordMediaMessage 只做直接取值。
+ */
+export function mediaReplyBackpressurePlaceholder(
+  context: MessageTriggerContext,
+  randomTrigger: RandomMediaTrigger
+): boolean | undefined {
+  return context.directTriggerReason !== undefined || randomTrigger === "claimed"
+    ? false
+    : undefined;
+}
 
 export interface BuildAiRecordMediaMessageParams {
   context: MessageTriggerContext;
@@ -90,7 +106,7 @@ export function buildAiRecordMediaMessage({
     fileUniqueId: media.fileUniqueId,
     width: media.width,
     height: media.height,
-    commentOnResolve: media.commentOnResolve,
+    replyTelegramBackpressured: media.replyTelegramBackpressured,
     stickerFallbackText: media.stickerFallbackText,
     voiceMime: media.voiceMime,
     voiceDurationSeconds: media.voiceDurationSeconds,

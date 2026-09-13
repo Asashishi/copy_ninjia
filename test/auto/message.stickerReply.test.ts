@@ -120,7 +120,7 @@ describe("媒体直接叫机器人", () => {
       width: 512,
       height: 512,
       messageId: 11,
-      commentOnResolve: false,
+      replyTelegramBackpressured: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTriggerReason: "reply",
     }));
@@ -216,7 +216,7 @@ describe("媒体直接叫机器人", () => {
       width: 512,
       height: 512,
       messageId: 23,
-      commentOnResolve: true,
+      replyTelegramBackpressured: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTriggerReason: undefined,
     }));
@@ -257,7 +257,7 @@ describe("媒体直接叫机器人", () => {
       width: 512,
       height: 512,
       messageId: 13,
-      commentOnResolve: false,
+      replyTelegramBackpressured: undefined,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTriggerReason: undefined,
     }));
@@ -292,7 +292,7 @@ describe("媒体直接叫机器人", () => {
       width: 640,
       height: 480,
       messageId: 14,
-      commentOnResolve: false,
+      replyTelegramBackpressured: false,
       directTriggerReason: "mention",
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -417,7 +417,7 @@ describe("媒体直接叫机器人", () => {
       width: 320,
       height: 180,
       messageId: 15,
-      commentOnResolve: false,
+      replyTelegramBackpressured: false,
       directTriggerReason: "reply",
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -642,7 +642,7 @@ describe("媒体直接叫机器人", () => {
       width: 640,
       height: 480,
       messageId: 35,
-      commentOnResolve: false,
+      replyTelegramBackpressured: undefined,
       directTriggerReason: undefined,
     }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();

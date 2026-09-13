@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { waitUntil } from "../../helpers/waitUntil";
 import type { BlockedMembersRemovedEvent } from "../../../packages/types/antiRaid";
 
@@ -41,6 +41,11 @@ const {
   resetWorkerBotPermissions,
 } = await import("../../../packages/workers/antiRaid/botPermissions");
 const { bumpBlocklistRemovalEpoch, blocklistRemovalEpochs } = await import("../../../packages/cache/workers/antiRaid/blocklist");
+const {
+  drainAntiRaidTasks,
+  quiesceAntiRaidDispatch,
+  resetAntiRaidTaskTracker,
+} = await import("../../../packages/workers/antiRaid/taskTracker");
 
 const events: BlockedMembersRemovedEvent[] = [];
 const publish = (event: BlockedMembersRemovedEvent): void => { events.push(event); };
@@ -86,6 +91,8 @@ beforeEach(() => {
   banChatSenderChatWithOutcome.mockImplementation(async (): Promise<string> => "banned");
   deleteMessage.mockImplementation(async (): Promise<boolean> => true);
   events.length = 0;
+  // 换回未 abort 的停机取消信号，并清空上一条用例留下的在途任务。
+  resetAntiRaidTaskTracker();
   blocklistRemovalEpochs.clear();
   resetWorkerBotPermissions();
 });
@@ -420,5 +427,58 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 10, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+  });
+
+  test("停机取消后不再重试、也不开始下一个 id：整批立即按未完成回执", async () => {
+    // drain 到达时 Worker 双工请求被就地 abort，封禁结算成 failed。此后仍按退避
+    // 重试、再逐个处置剩余 id 的话，每个 id 都要白等整轮退避，drain 必然超时。
+    banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => {
+      quiesceAntiRaidDispatch();
+      return "failed";
+    });
+
+    handleRemoveBlockedMembers({
+      msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8, 9], probeMembership: false, removalId: 30 },
+      publish,
+    });
+    await settle();
+
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
+    // 与其它未落定路径同一形态：outbox 保留，下一次启动重放。
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 30, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+    expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
+  });
+
+  test("正在进行的重试退避随停机取消立即结束，drain 不再被整轮退避拖住", async () => {
+    // 生产退避是 5s、10s；这里把本批发出的 timer 统一拉长到远超等待预算，
+    // 只有退避本身可被取消时，回执与 drain 才能在预算内结算。
+    const realSetTimeout: typeof setTimeout = globalThis.setTimeout;
+    const scheduledDelays: number[] = [];
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+      ((handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
+        scheduledDelays.push(delayMs ?? 0);
+        return realSetTimeout(handler, 60_000);
+      }) as typeof globalThis.setTimeout
+    );
+    try {
+      banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "failed");
+
+      handleRemoveBlockedMembers({
+        msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8], probeMembership: false, removalId: 31 },
+        publish,
+      });
+      await until((): boolean => scheduledDelays.length > 0);
+      quiesceAntiRaidDispatch();
+      await settle();
+      let drained: boolean = false;
+      void drainAntiRaidTasks().then((): void => { drained = true; });
+      await until((): boolean => drained);
+
+      expect(drained).toBeTrue();
+      expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 31, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 });

@@ -153,8 +153,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/joinLogWrites.ts": {
     "node:fs": {
-      symbols: ["mkdirSync"],
-      purpose: "join-log owner directory initialization",
+      symbols: ["mkdirSync", "statSync"],
+      purpose: "join-log owner directory initialization and file identity checks around failed compaction",
     },
   },
   "packages/workers/diskIO/joinLogRecovery.ts": {

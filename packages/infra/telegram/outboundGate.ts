@@ -22,7 +22,7 @@ import {
   TelegramRetryQueueFullError,
 } from "./outboundRetryPolicy";
 import {
-  appendRetryJob,
+  enqueueRetryJob,
   laneFor,
   removeRetryJob,
   takeRetryHead,
@@ -279,8 +279,8 @@ function handleActiveResponse(job: TelegramOutboundJob, response: unknown): void
     job.state = "settled";
     detachAbortListener(job);
     job.reject(abortReason());
-  } else if (appendRetryJob(job)) {
-    // 重排进队后由下一次尝试自己拿新响应，这一份丢弃。
+  } else if (enqueueRetryJob(job)) {
+    // 按接纳序号回到原有 FIFO 位置，由下一次尝试自己拿新响应，这一份丢弃。
     releaseResponseBody(response);
   } else {
     // 队列已满：原样把 429 交给调用方，body 的所有权随之转移，这里不能释放。
@@ -384,7 +384,7 @@ function enqueueOrStart(
     lane.recovering ||
     lane.head !== null
   ) {
-    if (appendRetryJob(job)) return;
+    if (enqueueRetryJob(job)) return;
     detachAbortListener(job);
     job.state = "settled";
     job.reject(new TelegramRetryQueueFullError());
@@ -394,8 +394,9 @@ function enqueueOrStart(
 }
 
 /**
- * 出站 job 的唯一构造点：按固定顺序一次初始化全部字段，再挂上一次性 abort
- * 监听。每条出站请求都经过这里，字段集合与顺序不得在调用点各自展开。
+ * 出站 job 的唯一构造点：按固定顺序一次初始化全部字段（含递增的接纳序号），
+ * 再挂上一次性 abort 监听。每条出站请求都经过这里，字段集合与顺序不得在调用点
+ * 各自展开。
  */
 function createOutboundJob({
   signal,
@@ -409,6 +410,7 @@ function createOutboundJob({
     signal,
     previous: null,
     next: null,
+    admissionSeq: telegramOutboundGateState.nextAdmissionSeq++,
     category,
     state: "created",
     fromRetryQueue: false,

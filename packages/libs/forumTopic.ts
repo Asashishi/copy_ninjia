@@ -37,3 +37,28 @@ import type { Message } from "grammy/types";
 export function forumTopicThreadId(message: Message): number | undefined {
   return message.is_topic_message === true ? message.message_thread_id : undefined;
 }
+
+/**
+ * 这条消息显式回复的那条消息；没有显式回复时返回 undefined。
+ *
+ * Bot API 对论坛（topics）群非 General 话题里**没有显式回复**的消息，同样填上
+ * `reply_to_message`，指向该话题的创建服务消息：它带 `forum_topic_created`，
+ * `message_id` 等于本条的 `message_thread_id`。两种形态任一命中都按「没有回复」
+ * 处理；第二种只在 `is_topic_message === true` 时成立。
+ *
+ * 关联频道讨论组的评论线程不是论坛话题（`is_topic_message` 不为 true），顶层评论
+ * 的 `reply_to_message` 是频道贴的自动转发，其 `message_id` 同样等于
+ * `message_thread_id`，这里照常把它当作显式回复返回（见 docs/cn/04-invariants.md
+ * 的讨论组评论约定）。
+ *
+ * 命令目标解析、`/permission query`、`/gag`、`/translate stop` 与 AI 触发事实里
+ * 「用户回复了某条消息」的判定统一走这里。
+ */
+export function explicitReplyTo(message: Message): Message | undefined {
+  const repliedTo: Message | undefined = message.reply_to_message;
+  if (repliedTo === undefined || repliedTo.forum_topic_created !== undefined) return undefined;
+  if (message.is_topic_message === true && repliedTo.message_id === message.message_thread_id) {
+    return undefined;
+  }
+  return repliedTo;
+}

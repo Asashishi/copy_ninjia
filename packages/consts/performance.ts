@@ -1,5 +1,11 @@
 import type { HotPathProfileScenarioName } from "../types/performance";
 
+/** GC 暂停日志测量窗口的起始标记；仅性能脚本向 stderr 输出。 */
+export const HOT_PATH_GC_WINDOW_START: string = "COPY_NINJIA_GC_WINDOW_START";
+
+/** GC 暂停日志测量窗口的结束标记，后接单调时钟测得的毫秒数。 */
+export const HOT_PATH_GC_WINDOW_END: string = "COPY_NINJIA_GC_WINDOW_END";
+
 /**
  * 热路径 GC/RSS 门禁的**采样旋钮**，以及门禁覆盖的固定场景表。
  *

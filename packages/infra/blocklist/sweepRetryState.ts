@@ -88,16 +88,25 @@ export function updatePendingRemovalFailure(
   return true;
 }
 
-/** 告警阈值首次跨越时把诊断状态纳入下一份 durable outbox 快照。 */
+/**
+ * 更新任务诊断。`lastFailure` 变为 `missing-permission`，或告警阈值首次跨越时，
+ * 把诊断状态纳入下一份 durable outbox 快照；其余失败只改内存镜像。
+ */
 export function recordPendingRemovalFailure(
   removalId: number,
   chatId: number,
   failure: BlocklistRemovalFailure
 ): void {
-  if (!updatePendingRemovalFailure(removalId, chatId, failure)) return;
+  const pending: PendingBlockedRemoval | undefined =
+    pendingBlockedRemovals.get(removalId);
+  if (pending === undefined) return;
+  const permissionMarked: boolean =
+    failure === "missing-permission" &&
+    pending.lastFailure !== "missing-permission";
+  updatePendingRemovalFailure(removalId, chatId, failure);
   if (
-    pendingBlockedRemovals.get(removalId)?.attempts !==
-    BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS
+    !permissionMarked &&
+    pending.attempts !== BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS
   ) {
     return;
   }

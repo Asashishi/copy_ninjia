@@ -1,5 +1,5 @@
 /**
- * generate_song 校验资格、群冷却、正文与单轮接纳限额，再返回独立生成发送链。
+ * generate_song 校验资格、群冷却、正文、曲目行与单轮接纳限额，再返回独立生成发送链。
  * 歌曲、封面和 Telegram 发送在同一链内执行；实际模型请求开始后保留群冷却。
  * caption 预留执行侧曲目信息所需长度，真实发送后按同一消息登记歌曲与附言。
  */
@@ -21,6 +21,7 @@ import {
   SONG_GENERATION_PROMPT_MAX_CHARS,
   SONG_PERFORMER_MAX_CHARS,
   SONG_TITLE_MAX_CHARS,
+  SONG_TRACK_COMMAND_ERROR_TEXT,
 } from "../../../../consts/aiChat/songGeneration";
 import { GENERATE_SONG_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
 import { songSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
@@ -31,9 +32,10 @@ import { sendAudioWithResult } from "../../../../infra/telegram";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
 import { songAiProvider } from "../../../provider";
 import { botInfoState } from "../../../../cache/workers/aiChat/identity";
-import { probeAudioMetadata, type AudioTrackMetadata } from "../../utils/audioMetadata";
+import { probeAudioMetadata } from "../../utils/audioMetadata";
+import type { AudioTrackMetadata } from "../../utils/audioMetadata";
 import { generateSongCover } from "../../songCover";
-import { buildSongCaption } from "../../utils/songCaption";
+import { buildSongCaption, buildSongTrackLabel } from "../../utils/songCaption";
 import { songFileExtension } from "../../utils/songPayload";
 import type { ReplyToolContext, ReplyToolExecution, RoundMessageState } from "../../../../types/aiChat/replies";
 import type { ChatActionControl } from "../../../../types/aiChat/chatAction";
@@ -45,6 +47,7 @@ import type {
 } from "../../../../types/aiChat/songGeneration";
 import type { TelegramSendResult } from "../../../../types/telegram";
 import { cleanReply } from "../../utils/replyText";
+import { containsRenderableCommand } from "../../../../libs/renderableCommand";
 import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
 
 /**
@@ -118,12 +121,14 @@ export function buildGenerateSongToolDefinition(): AiToolDefinition {
  * 解析后的生歌入参。
  *
  * caption 已走过 send_message 同一套正文清洗，缺省为 null；title/performer 已按
- * 各自上限收好并填过默认值，因此下游只当普通字符串用，不再判空。
+ * 各自上限收好并填过默认值，因此下游只当普通字符串用，不再判空。trackLabel 是由
+ * 这两项拼好的曲目行，接纳阶段的命令守卫与发送时的 caption 拼接共用这一串。
  */
 interface ParsedSongArguments {
   prompt: string;
   title: string;
   performer: string;
+  trackLabel: string;
   caption: string | null;
 }
 
@@ -151,10 +156,13 @@ function parseArguments(argumentsJson: string): ParsedSongArguments | null {
   // 群友要读的正文，截断等于替模型改话，因此仍然退回参数错误让它自己重写。
   const caption: string | null = typeof parsed.caption === "string" ? cleanReply(parsed.caption) : null;
   if (caption !== null && caption.length > MODEL_CAPTION_MAX_CHARS) return null;
+  const title: string = normalizeTag(parsed.title, SONG_TITLE_MAX_CHARS) ?? SONG_DEFAULT_TITLE;
+  const performer: string = normalizeTag(parsed.performer, SONG_PERFORMER_MAX_CHARS) ?? defaultPerformer();
   return {
     prompt,
-    title: normalizeTag(parsed.title, SONG_TITLE_MAX_CHARS) ?? SONG_DEFAULT_TITLE,
-    performer: normalizeTag(parsed.performer, SONG_PERFORMER_MAX_CHARS) ?? defaultPerformer(),
+    title,
+    performer,
+    trackLabel: buildSongTrackLabel(title, performer),
     caption,
   };
 }
@@ -231,6 +239,8 @@ export function createGenerateSongExecutor(
       const policyResult: string | null = modelAuthoredTextPolicyResult(modelCaption, state, "song");
       if (policyResult !== null) return policyResult;
     }
+    // 曲目行随 caption 一起发出，同样在 claim 冷却前判定；判的就是下方拼进 caption 的那一串。
+    if (containsRenderableCommand(parsed.trackLabel)) return toolError(SONG_TRACK_COMMAND_ERROR_TEXT);
 
     const claim: SongGenerationClaim = claimSongGeneration({
       chatId: ctx.chatId,
@@ -274,8 +284,7 @@ export function createGenerateSongExecutor(
 
           const caption: string = buildSongCaption({
             modelCaption,
-            title: parsed.title,
-            performer: parsed.performer,
+            trackLabel: parsed.trackLabel,
             byteLength: song.bytes.byteLength,
             mimeType: song.mimeType,
             metadata,

@@ -29,6 +29,7 @@ import {
 import {
   clearMediaInputProbe,
   getMediaInputProbe,
+  getMediaInputState,
   getMediaInputSupport,
   isMediaInputClosed,
   isMediaInputProbeCoolingDown,
@@ -53,6 +54,7 @@ import type {
   AiTextResult,
   AiProviderTaskPriority,
   MediaInputCapability,
+  MediaInputModalityState,
   MediaInputSupport,
 } from "../../types/aiChat/provider";
 
@@ -234,6 +236,7 @@ function runTrackedMediaAttempt(
   task: () => Promise<AiTextResult>,
   signal?: AbortSignal
 ): Promise<AiTextResult> {
+  const attemptState: MediaInputModalityState = getMediaInputState(capability);
   return runMediaTask(task, signal).then((result: AiTextResult | undefined): AiTextResult => {
     // undefined 表示任务根本没启动：执行槽位和等待队列都满，或出队时已取消。两者
     // 都不是一次真实观测，不推进模态状态机（recordMediaInputResult 对不带
@@ -246,7 +249,7 @@ function runTrackedMediaAttempt(
     // 成功那一档本该由 recordMediaInputResult 置 supported 并清空退避——于是之后
     // 每份媒体都退回 runMediaInputRequest 第 4 条的单探测串行路径，频繁作废回复
     // 的聊天永远学不会这个端点。
-    recordMediaInputResult(capability, result, Date.now());
+    recordMediaInputResult({ capability, result, attemptState });
     return signal?.aborted === true ? MEDIA_CANCELLED_RESULT : result;
   });
 }
@@ -258,9 +261,13 @@ function runTrackedMediaAttempt(
  * 2. 在退避窗口内：复用共享瞬时失败，同样不下载、不占执行器槽位。端点持续故障
  *    时这条路挡掉了「每条群媒体各付一次下载 + 一整轮 SDK 重试」。
  * 3. 已确认支持：直接进有界执行器。
- * 4. 尚无结论：**只放行一个**首次真实请求，并发等待者共享它的结果——冷启动时
+ * 4. 尚无结论：**只放行一个**首次真实请求，并发等待者观察它的结果——冷启动时
  *    25 条媒体不会把同一能力并发探测 25 次。探测成功后等待者各自进队列；探测
- *    失败则共享本次失败，退避到期后仍可重新探测，瞬时故障不会被永久锁死。
+ *    结果带 mediaFailure（模态结论或端点故障）时等待者共享本次失败，退避到期后
+ *    仍可重新探测，瞬时故障不会被永久锁死。不带 mediaFailure 的失败只属于探测者
+ *    自己那份媒体（或那次取消、未获执行槽），等待者重新进入本闸：在
+ *    `.finally` 清掉旧探测后同步重入的第一个等待者成为下一个探测，其余继续等待它，
+ *    每个等待者至多各自发起一次真实请求。
  */
 function runMediaInputRequest(
   capability: MediaInputCapability,
@@ -277,10 +284,9 @@ function runMediaInputRequest(
   if (activeProbe !== null) {
     return waitForMediaProbe(activeProbe, signal).then(
       (result: AiTextResult): Promise<AiTextResult> | AiTextResult => {
-        if (result === MEDIA_CANCELLED_RESULT && signal?.aborted !== true) {
-          return runMediaInputRequest(capability, task, signal);
-        }
-        return result.ok ? runTrackedMediaAttempt(capability, task, signal) : result;
+        if (result.ok) return runTrackedMediaAttempt(capability, task, signal);
+        // 本等待者自己已取消时，重入第一步即返回 MEDIA_CANCELLED_RESULT。
+        return result.mediaFailure === undefined ? runMediaInputRequest(capability, task, signal) : result;
       }
     );
   }
@@ -386,8 +392,8 @@ function waitForMediaProbe(
   probe: Promise<AiTextResult>,
   signal?: AbortSignal
 ): Promise<AiTextResult> {
-  // 探测本身由首个放行者驱动，等待者失效只结束自己这一份等待；reject 与取消要分
-  // 开归口，runMediaInputRequest 靠 MEDIA_CANCELLED_RESULT 的对象身份判断是否重试。
+  // 探测本身由首个放行者驱动，等待者失效只结束自己这一份等待。取消与 reject 都归到
+  // 不带 mediaFailure 的共享结果，runMediaInputRequest 据此让等待者重新进闸。
   return raceAbort(probe, {
     signal,
     cancelled: MEDIA_CANCELLED_RESULT,

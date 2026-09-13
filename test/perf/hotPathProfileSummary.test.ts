@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { summarizeHotPathSamplingProfile } from "../../scripts/perf/hotPaths/profileSummary";
 
 describe("hot path JSC profile summary", () => {
-  test("只统计稳态采样中的 GC，并读取 JIT tier 百分比", () => {
+  test("读取稳态采样与 JIT tier 百分比，不把名为 gc 的函数推断为 GC 暂停", () => {
     expect(summarizeHotPathSamplingProfile({
       functions: `
 Sampling rate: 1000.000000 microseconds. Total samples: 200
@@ -20,8 +20,6 @@ FTL:                     160  (80.000000%)
 `,
     })).toEqual({
       totalSamples: 200,
-      gcSamples: 10,
-      gcPercent: 5,
       llintPercent: 0,
       baselinePercent: 1,
       dfgPercent: 9,

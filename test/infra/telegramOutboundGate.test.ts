@@ -499,6 +499,74 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramOutboundGateState.retryPendingCount).toBe(0);
   });
 
+  test("探测任务再次 429 时回到队首，同类别并发请求仍按接纳顺序送达", async () => {
+    const delivered: string[] = [];
+    const attempts: Map<string, number> = new Map<string, number>();
+    const previous: PreviousCall = ((_method: string, payload: { text: string }): Promise<unknown> => {
+      const attempt: number = (attempts.get(payload.text) ?? 0) + 1;
+      attempts.set(payload.text, attempt);
+      // A 连续两次 429（第二次是冷却结束后的探测），B 只 429 一次。
+      if (attempt <= (payload.text === "A" ? 2 : 1)) {
+        return Promise.resolve({ ok: false, error_code: 429, parameters: { retry_after: 0.001 } });
+      }
+      delivered.push(payload.text);
+      return Promise.resolve({ ok: true, result: true });
+    }) as PreviousCall;
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const first: Promise<unknown> = transform(previous, "sendMessage", { chat_id: -1001, text: "A" }) as Promise<unknown>;
+    const second: Promise<unknown> = transform(previous, "sendMessage", { chat_id: -1001, text: "B" }) as Promise<unknown>;
+
+    await settleTestBatch([first, second]);
+    expect(delivered).toEqual(["A", "B"]);
+    expect(attempts.get("A")).toBe(3);
+    expect(telegramOutboundGateState.retryPendingCount).toBe(0);
+  });
+
+  test("多个在途恢复任务的 429 乱序返回时，按接纳顺序插回等待任务之前", async () => {
+    const delivered: string[] = [];
+    const started: string[] = [];
+    const deferred: Map<string, (response: unknown) => void> = new Map<string, (response: unknown) => void>();
+    const tooManyRequests: unknown = { ok: false, error_code: 429, parameters: { retry_after: 0.001 } };
+    const attempts: Map<string, number> = new Map<string, number>();
+    const previous: PreviousCall = ((_method: string, payload: { text: string }): Promise<unknown> => {
+      const attempt: number = (attempts.get(payload.text) ?? 0) + 1;
+      attempts.set(payload.text, attempt);
+      const attemptKey: string = `${payload.text}#${attempt}`;
+      started.push(attemptKey);
+      if (attempt === 1) return Promise.resolve(tooManyRequests);
+      // A 的探测成功后恢复并发升到 2，B、C 同时在途；它们的 429 由测试按 C、B 的次序交还。
+      if (attemptKey === "B#2" || attemptKey === "C#2") {
+        return new Promise<unknown>((resolve: (response: unknown) => void): void => {
+          deferred.set(attemptKey, resolve);
+        });
+      }
+      delivered.push(payload.text);
+      return Promise.resolve({ ok: true, result: true });
+    }) as PreviousCall;
+    const transform: Transformer<RawApi> = telegramOutboundGate();
+    const requests: Promise<unknown>[] = ["A", "B", "C", "D"].map(
+      (text: string): Promise<unknown> =>
+        transform(previous, "sendMessage", { chat_id: -1001, text }) as Promise<unknown>
+    );
+
+    for (let tick: number = 0; tick < 500 && deferred.size < 2; tick++) {
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 1);
+      });
+    }
+    expect([...deferred.keys()].sort()).toEqual(["B#2", "C#2"]);
+    expect(telegramOutboundGateState.lanes.message.recoveryActive).toBe(2);
+    deferred.get("C#2")!(tooManyRequests);
+    await Promise.resolve();
+    await Promise.resolve();
+    deferred.get("B#2")!(tooManyRequests);
+
+    await settleTestBatch(requests);
+    expect(delivered).toEqual(["A", "B", "C", "D"]);
+    expect(started.filter((key: string): boolean => key.endsWith("#3"))).toEqual(["B#3", "C#3"]);
+    expect(telegramOutboundGateState.retryPendingCount).toBe(0);
+  });
+
   test("查询 429 只暂停查询，不阻塞发送、踢人、禁言或删除类别", async () => {
     const controller: AbortController = new AbortController();
     const calledMethods: string[] = [];

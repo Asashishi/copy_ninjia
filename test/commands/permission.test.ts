@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { NON_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 
 interface SentMessageEntity {
@@ -113,6 +113,9 @@ const {
   senderUsernameCache,
   userCache,
 } = await import("../../packages/cache/main/senderIdentity");
+const identityStorage = await import("../../packages/infra/identityStorage");
+const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
+const { IDENTITY_POLICY_UNAVAILABLE_TEXT, IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT } = await import("../../packages/consts/commands");
 
 function context(
   userId: number,
@@ -168,6 +171,8 @@ beforeEach(() => {
   }));
   userCache.clear();
   senderUsernameCache.clear();
+  prefetchIdentityPolicies.mockClear();
+  prefetchIdentityPolicies.mockResolvedValue(true);
 });
 
 describe("/permission", () => {
@@ -469,6 +474,54 @@ describe("/permission", () => {
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       text: expect.stringContaining("没能把这条权限写进硬盘"),
     }));
+  });
+
+  test("修改路径的目标名单预热失败时拒绝执行，不误报「目标不在白名单」也不写入", async () => {
+    prefetchIdentityPolicies.mockResolvedValue(false);
+
+    await handlePermissionCommand(context(1, "100 isCanMute true"));
+    await handlePermissionCommand(context(1, "100 all"));
+
+    expect(setWhitelistPermission).not.toHaveBeenCalled();
+    expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    for (const call of sendMessage.mock.calls) {
+      expect(call[0]).toEqual({ chatId: -1001, text: IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: 10 });
+    }
+  });
+
+  test("论坛话题里没有显式回复的 query 查询发起人自己，不把话题创建者当目标", async () => {
+    const forumChat = { id: -1001, type: "supergroup", title: "Forum", is_forum: true };
+    const ctx = context(100, "query", {
+      message_id: 3,
+      chat: forumChat,
+      date: 0,
+      from: { id: 555, is_bot: false, first_name: "Topic Creator" },
+      is_topic_message: true,
+      message_thread_id: 3,
+      forum_topic_created: { name: "话题", icon_color: 0x6fb9f0 },
+    }) as unknown as { msg: { is_topic_message: boolean; message_thread_id: number } };
+    ctx.msg.is_topic_message = true;
+    ctx.msg.message_thread_id = 3;
+
+    await handlePermissionCommand(ctx as never);
+
+    expect(getWhitelistPermissionQueryView).toHaveBeenLastCalledWith(100);
+    expect(prefetchIdentityPolicies).toHaveBeenCalledWith([100]);
+    expect(lastQueriedPermissions()).toEqual(whitelistPermissionsById.get(100)!);
+  });
+
+  test.each(["query", "query 100"])("%s 读取失败只发送临时提示，不展示未知权限", async (command: string) => {
+    prefetchIdentityPolicies.mockResolvedValue(false);
+    await handlePermissionCommand(context(100, command));
+    expect(getWhitelistPermissionQueryView).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
+      replyToMessageId: 10,
+    });
+    expect(setWhitelistPermission).not.toHaveBeenCalled();
   });
 
   test("超级管理员可按用户 ID 修改已有条目的单项权限", async () => {

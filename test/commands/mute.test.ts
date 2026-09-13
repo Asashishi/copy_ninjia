@@ -120,9 +120,15 @@ describe("/mute 手动禁言", () => {
 
   test("末尾 token 是时长，其余整段作为目标参数传给解析层", async () => {
     await handleMuteCommand(context({ match: "@alice 10m" }));
-    const resolveParams = resolveCommandTarget.mock.calls.at(-1)?.[0] as { rawArgument: string; acceptUserId: boolean };
+    const resolveParams = resolveCommandTarget.mock.calls.at(-1)?.[0] as {
+      rawArgument: string;
+      acceptUserId: boolean;
+      requireIdentityPolicies?: boolean;
+    };
     expect(resolveParams.rawArgument).toBe("@alice");
     expect(resolveParams.acceptUserId).toBe(true);
+    // 自己人闸读 isWhitelisted：名单预热失败时由解析层拒绝，不能按「不受保护」捂人。
+    expect(resolveParams.requireIdentityPolicies).toBe(true);
     expect(muteChatMemberWithOutcome).toHaveBeenCalledWith({
       chatId: -1001,
       userId: 7,
@@ -140,6 +146,14 @@ describe("/mute 手动禁言", () => {
       mutedUntil: 1_000_000 + 2 * 60 * 60_000,
       dispatchTimeoutMs: 2 * 60 * 60_000 - MUTE_DISPATCH_MIN_REMAINING_MS,
     });
+  });
+
+  test("目标解析层因名单读不出来拒绝时不打请求、不再追加回执", async () => {
+    target = undefined;
+    await handleMuteCommand(context({ match: "777 10m" }));
+    expect(resolveCommandTarget).toHaveBeenCalledTimes(1);
+    expect(muteChatMemberWithOutcome).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("频道皮套与自己人都按不下去，不打请求", async () => {
@@ -184,6 +198,9 @@ describe("/mute 手动禁言", () => {
 describe("/unmute 解除禁言", () => {
   test("成功解除时按目标打请求并播报", async () => {
     await handleUnmuteCommand(context({ match: "@alice" }));
+    // 不读名单做决策，预热失败不拦解除。
+    expect((resolveCommandTarget.mock.calls.at(-1)?.[0] as { requireIdentityPolicies?: boolean })
+      .requireIdentityPolicies).toBeUndefined();
     expect(unmuteChatMemberWithOutcome).toHaveBeenCalledWith({ chatId: -1001, userId: 7 });
     expect(lastReplyText()).toContain("松开");
   });

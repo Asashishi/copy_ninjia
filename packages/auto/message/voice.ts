@@ -2,7 +2,7 @@ import type { Voice } from "grammy/types";
 import { recordChatMedia } from "../../aiChat";
 import { VOICE_MAX_DOWNLOAD_BYTES, VOICE_MAX_DURATION_SECONDS } from "../../consts/aiChat/voice";
 import { resolveSpeaker } from "./facts";
-import { buildAiRecordMediaMessage } from "./recordContext";
+import { buildAiRecordMediaMessage, mediaReplyBackpressurePlaceholder } from "./recordContext";
 import { replyToUnresolvableMedia } from "./mediaFallback";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
@@ -58,7 +58,7 @@ export function handleVoiceMessage(context: MessageTriggerContext): boolean {
       // 语音没有画幅；两个尺寸字段恒为 0，形状约束见 types/aiChat/protocol.ts。
       width: 0,
       height: 0,
-      commentOnResolve: randomTrigger === "claimed",
+      replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
       // 直接回复/@ 只开放重媒体工具资格，具体调不调由模型判断；语音不作为
       // 生图参考素材（imageGenerationReferenceFor 只认图片和贴纸）。
       stickerFallbackText: undefined,

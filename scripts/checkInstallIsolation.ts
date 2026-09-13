@@ -137,7 +137,7 @@ async function checkSuccessfulReplacement(): Promise<void> {
   assertEqual(result.exitCode, 0, "Telegram 配置原子替换与后续核验必须成功");
   assertContains(await readText(telegramPath), replacementToken, "提交后必须读取到完整新配置");
   const replacementStats: ReturnType<typeof statSync> = statSync(telegramPath);
-  assertEqual(replacementStats.mode & 0o777, 0o600, "新配置权限必须为 0600");
+  assertEqual(replacementStats.mode & 0o777, 0o640, "重新填写既有配置必须沿用原权限");
   assertEqual(replacementStats.uid, originalOwner.uid, "原子替换必须保持既有配置属主");
   assertEqual(replacementStats.gid, originalOwner.gid, "原子替换必须保持既有配置属组");
   const exampleMode: number = statSync(
@@ -176,6 +176,114 @@ async function checkSuccessfulReplacement(): Promise<void> {
   assertEqual(readdirSync(fixture.backupRoot).length, 0, "稳定性核验通过后必须清理外部备份");
 }
 
+async function checkFirstFillMode(): Promise<void> {
+  for (const placeholderMode of [undefined, 0o644]) {
+    const fixture: InstallerFixture = await createFixture();
+    const telegramPath: string = join(fixture.configRoot, "telegram.json");
+    if (placeholderMode !== undefined) {
+      mkdirSync(fixture.configRoot);
+      await writeText(
+        telegramPath,
+        await readText(join(fixture.worktree, "config_example", "telegram.json")),
+        placeholderMode
+      );
+    }
+    const result: InstallerRunResult = runInstaller(fixture, [
+      { prompt: "Telegram bot token", reply: "987654321:first_fill_test_token", secret: true },
+      { prompt: "超级管理员用户 ID", reply: "987654321" },
+      { prompt: "现在配置 AI 能力", reply: "n" },
+      systemdPrompt(),
+    ]);
+    assertEqual(result.exitCode, 0, "首次填写 Telegram 配置必须成功");
+    assertCondition(!result.output.includes("是否重新填写？"), "占位配置不得询问是否重新填写");
+    assertEqual(statSync(telegramPath).mode & 0o777, 0o600, "首次填写的 Telegram 配置权限必须为 0600");
+  }
+}
+
+/** 按夹具路径生成一次安装的环境覆盖项；值为 undefined 表示移除该变量。 */
+type EnvironmentOverrides = Readonly<Record<string, string | undefined>>;
+
+async function checkServiceDataRoot(): Promise<void> {
+  const rejected: readonly ((fixture: InstallerFixture) => EnvironmentOverrides)[] = [
+    (): EnvironmentOverrides => ({
+      COPY_NINJIA_DATA_ROOT: undefined,
+      FAKE_SERVICE_ENVIRONMENT: "",
+      FAKE_SERVICE_ENVIRONMENT_FILES: "/srv/bot.env (ignore_errors=no)",
+    }),
+    (): EnvironmentOverrides => ({ FAKE_SERVICE_ENVIRONMENT_FILES: "/srv/bot.env (ignore_errors=no)" }),
+    (): EnvironmentOverrides => ({ FAKE_SERVICE_PASS_ENVIRONMENT: "COPY_NINJIA_DATA_ROOT" }),
+    (): EnvironmentOverrides => ({ FAKE_SERVICE_UNSET_ENVIRONMENT: "COPY_NINJIA_DATA_ROOT" }),
+    (): EnvironmentOverrides => ({ FAKE_SERVICE_UNSET_ENVIRONMENT: "COPY_NINJIA_DATA_ROOT=/srv/bot" }),
+    (fixture: InstallerFixture): EnvironmentOverrides => ({
+      FAKE_SERVICE_ENVIRONMENT: `COPY_NINJIA_DATA_ROOT=${join(fixture.root, "other-runtime")}`,
+    }),
+    (): EnvironmentOverrides => ({ FAKE_SERVICE_ENVIRONMENT: "LANG=C.UTF-8" }),
+    (): EnvironmentOverrides => ({ FAKE_SERVICE_ENVIRONMENT: "" }),
+    (): EnvironmentOverrides => ({ COPY_NINJIA_DATA_ROOT: undefined }),
+    (): EnvironmentOverrides => ({ FAKE_SERVICE_ENVIRONMENT: "COPY_NINJIA_DATA_ROOT=" }),
+    (fixture: InstallerFixture): EnvironmentOverrides => ({
+      FAKE_SERVICE_ENVIRONMENT: `"COPY_NINJIA_DATA_ROOT=${fixture.runtimeRoot}`,
+    }),
+    (fixture: InstallerFixture): EnvironmentOverrides => ({
+      FAKE_SERVICE_ENVIRONMENT: `"COPY_NINJIA_DATA_ROOT=${fixture.runtimeRoot}\\001"`,
+    }),
+    (fixture: InstallerFixture): EnvironmentOverrides => ({
+      FAKE_SERVICE_ENVIRONMENT:
+        `COPY_NINJIA_DATA_ROOT=${fixture.runtimeRoot} COPY_NINJIA_DATA_ROOT=${fixture.runtimeRoot}`,
+    }),
+  ];
+  for (const environment of rejected) {
+    const fixture: InstallerFixture = await createFixture();
+    mkdirSync(fixture.configRoot);
+    const telegram: string = validTelegram();
+    await writeText(join(fixture.configRoot, "telegram.json"), telegram, 0o600);
+    const result: InstallerRunResult = runInstaller(fixture, [], environment(fixture));
+    assertCondition(result.exitCode !== 0, "既有 unit 与安装环境的数据根不一致时必须失败");
+    assertContains(result.output, "COPY_NINJIA_DATA_ROOT", "拒绝信息必须点名数据根环境项");
+    assertEqual(await readText(join(fixture.configRoot, "telegram.json")), telegram, "拒绝时不得修改配置");
+    assertEqual(readdirSync(fixture.configRoot).length, 1, "拒绝时不得创建配置");
+    assertEqual(readdirSync(fixture.runtimeRoot).length, 0, "拒绝时不得写入运行时数据");
+    assertEqual(readdirSync(fixture.backupRoot).length, 0, "拒绝时不得开始部署备份");
+    assertCondition(!(await readText(fixture.callLog)).includes("bun:install"), "数据根核对必须早于依赖安装");
+    const calls: string = await readText(fixture.outboundLog);
+    assertContains(calls, "-p Environment", "数据根核对必须读取既有 unit 的 Environment");
+    assertCondition(!/systemctl:guarded:(start|restart|enable|daemon-reload)|tee:guarded/.test(calls), "拒绝时不得执行服务写操作");
+  }
+
+  const missingRoot: InstallerFixture = await createFixture();
+  const unsetResult: InstallerRunResult = runInstaller(missingRoot, [], { COPY_NINJIA_DATA_ROOT: undefined });
+  assertContains(
+    unsetResult.output,
+    "Environment.COPY_NINJIA_DATA_ROOT 与安装环境必须同时缺省或显式解析为同一数据根",
+    "安装环境缺少数据根时只描述字段与期望条件"
+  );
+  assertCondition(!unsetResult.output.includes(missingRoot.runtimeRoot), "数据根预检失败不得回显 unit 的配置值");
+
+  const quotedRoot: string = "data root \"q\" $v `x` 日本";
+  const accepted: readonly ((fixture: InstallerFixture) => EnvironmentOverrides)[] = [
+    (): EnvironmentOverrides => ({ COPY_NINJIA_DATA_ROOT: undefined, FAKE_SERVICE_ENVIRONMENT: "LANG=C.UTF-8" }),
+    (fixture: InstallerFixture): EnvironmentOverrides => ({
+      FAKE_SERVICE_ENVIRONMENT: `LANG=C.UTF-8 COPY_NINJIA_DATA_ROOT=${fixture.runtimeRoot}/ "NOTE=a b"`,
+    }),
+    (fixture: InstallerFixture): EnvironmentOverrides => ({
+      COPY_NINJIA_DATA_ROOT: join(fixture.root, quotedRoot),
+      FAKE_SERVICE_ENVIRONMENT:
+        `"NOTE=tab\\there" "COPY_NINJIA_DATA_ROOT=${join(fixture.root, quotedRoot).replace(/["\\`$]/g, "\\$&")}"`,
+    }),
+  ];
+  for (const environment of accepted) {
+    const fixture: InstallerFixture = await createFixture();
+    mkdirSync(fixture.configRoot);
+    await writeText(join(fixture.configRoot, "telegram.json"), validTelegram(), 0o600);
+    const result: InstallerRunResult = runInstaller(fixture, [
+      { prompt: "是否重新填写？", reply: "n" },
+      { prompt: "现在配置 AI 能力", reply: "n" },
+      systemdPrompt(),
+    ], environment(fixture));
+    assertEqual(result.exitCode, 0, `既有 unit 与安装环境指向同一数据根时必须继续：${result.output}`);
+  }
+}
+
 async function checkSymlinkTopologyPreserved(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
   mkdirSync(fixture.configRoot);
@@ -197,7 +305,7 @@ async function checkSymlinkTopologyPreserved(): Promise<void> {
   assertEqual(result.exitCode, 0, "软链接配置的原子替换必须成功");
   assertCondition(lstatSync(telegramPath).isSymbolicLink(), "配置软链接拓扑不得被替换");
   assertContains(await readText(realTelegramPath), replacementToken, "软链接实际目标必须更新");
-  assertEqual(statSync(realTelegramPath).mode & 0o777, 0o600, "软链接实际目标权限必须为 0600");
+  assertEqual(statSync(realTelegramPath).mode & 0o777, 0o640, "软链接实际目标必须沿用原权限");
   assertCondition(
     !(await readText(fixture.outboundLog)).includes(":blocked"),
     "软链接实测不得调用真实外部命令"
@@ -328,7 +436,10 @@ async function checkServiceObservation(): Promise<void> {
     { environment: { FAKE_RESTART_INTERVAL: "", FAKE_RESTART_STEPS: "3", FAKE_RESTART_MAX: "2min" }, success: false },
     { environment: { FAKE_RESTART_RANDOMIZED: "invalid" }, success: false },
     { environment: { FAKE_RESTART_INTERVAL: "unknown" }, success: false },
-    { environment: { FAKE_RESTARTS_BEFORE: "" }, success: false },
+    { environment: { FAKE_RESTARTS_STARTED: "" }, success: false },
+    { environment: { FAKE_RESTARTS_BEFORE: "3", FAKE_RESTARTS_STARTED: "0" }, seconds: 12, success: true },
+    { environment: { FAKE_RESTARTS_STARTED: "2" }, seconds: 12, success: true },
+    { environment: { FAKE_RESTARTS_STARTED: "2", FAKE_RESTARTS_AFTER: "0" }, seconds: 12, success: false },
     { environment: { FAKE_RESTARTS_AFTER: "1" }, seconds: 12, success: false },
     { environment: { FAKE_RESTARTS_AFTER: "" }, seconds: 12, success: false },
     { environment: { FAKE_STARTED_STATE: "failed" }, seconds: 12, success: false },
@@ -350,6 +461,18 @@ async function checkServiceObservation(): Promise<void> {
     assertEqual(result.exitCode === 0, scenario.success, `服务观察结果不符：${result.output}`);
     const calls: string = await readText(fixture.outboundLog);
     assertContains(calls, "systemctl:guarded:show", "必须执行 systemd 分支");
+    const baselineIndex: number = calls.indexOf("-p NRestarts");
+    if (scenario.seconds !== undefined) assertCondition(baselineIndex > -1, "必须读取重启计数基线");
+    if (baselineIndex > -1) {
+      const startIndex: number = calls.indexOf("systemctl:guarded:start ");
+      assertCondition(
+        startIndex > -1 && startIndex < baselineIndex,
+        "重启计数基线必须在 systemctl start 返回之后读取"
+      );
+    }
+    if (scenario.environment.FAKE_RESTARTS_AFTER === "0") {
+      assertContains(result.output, "回落", "重启计数回落必须明确报告无法确认");
+    }
     if (scenario.seconds !== undefined) {
       assertContains(calls, `sleep:guarded:${scenario.seconds}\n`, "观察必须覆盖两个实际重启间隔");
     }
@@ -364,11 +487,13 @@ async function checkServiceObservation(): Promise<void> {
 
 try {
   await checkServiceProtection();
+  await checkServiceDataRoot();
   await checkServiceObservation();
   await checkStagingPermissionFailureCleanup();
   await checkTelegramRollback();
   await checkInterruptedResume();
   await checkSuccessfulReplacement();
+  await checkFirstFillMode();
   await checkSymlinkTopologyPreserved();
   await checkUnverifiedJournalBackupRetention();
   await checkCredentialIsolation();

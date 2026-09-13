@@ -132,7 +132,7 @@ export function enqueueAdCandidate(
     noteAdDetectCapacitySaturation(true);
     return;
   }
-  const recentlyDisposed: boolean = hasActiveAdDisposalMarker(key, now);
+  const recentlyDisposed: boolean = hasActiveAdDisposalMarker(key);
   // 新普通 key 满载时不可以先分配清洗正文、URL 串和引用上下文。
   // blocked/recentlyDisposed 的频道马甲例外必须继续读正文，非空时要删掉尾随广告。
   if (
@@ -359,7 +359,7 @@ export function clearIdentityAdDetect(identityId: number): void {
  * 它兜的是异常态，不是常规调度路径——常规路径上补排由 detectOne 结算时发起。
  */
 export function sweepAdDetect(now: number = Date.now()): void {
-  expireAdDetectDisposalMarkers(now);
+  expireAdDetectDisposalMarkers();
   for (const [key, bundle] of pendingAdMessages) {
     pruneConsumedContext(bundle, now);
     if (

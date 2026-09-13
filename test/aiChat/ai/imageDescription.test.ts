@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import type { TelegramWorkerDownloadFileResult } from "../../../packages/types/telegramWorker";
 
@@ -32,20 +32,61 @@ mock.module("../../../packages/infra/logger", () => ({
 const { describeMedia, describeMediaForStickerCatalog } = await import("../../../packages/aiChat/ai/imageDescription");
 const { transientDescriptionCache } = await import("../../../packages/cache/workers/aiChat/imageDescription");
 const {
+  isMediaInputProbeCoolingDown,
   mediaInputProbeCache,
   mediaInputSupportCache,
+  recordMediaInputResult,
+  getMediaInputState,
 } = await import("../../../packages/cache/workers/aiChat/mediaInputSupport");
-const { MEDIA_MAX_DOWNLOAD_BYTES } = await import("../../../packages/consts/aiChat/media");
+const {
+  MEDIA_MAX_DOWNLOAD_BYTES,
+  MEDIA_PROBE_BACKOFF_BASE_MS,
+  MEDIA_PROBE_BACKOFF_MAX_MS,
+  MEDIA_PROBE_MAX_TRANSIENT_FAILURES,
+} = await import("../../../packages/consts/aiChat/media");
+
+/** 由测试逐个放行的 describeVision 调用：started 在请求真正发出时兑现。 */
+interface ControlledVisionCall {
+  readonly started: Promise<void>;
+  resolve(result: AiTextResult): void;
+}
+
+/** 让下一次 describeVision 挂起，直到测试调用 resolve。 */
+function controlNextVisionCall(): ControlledVisionCall {
+  let markStarted: () => void = (): void => {};
+  let settle: (result: AiTextResult) => void = (): void => {};
+  const started: Promise<void> = new Promise<void>((resolve: () => void): void => {
+    markStarted = resolve;
+  });
+  describeVision.mockImplementationOnce((): Promise<AiTextResult> =>
+    new Promise<AiTextResult>((resolve: (result: AiTextResult) => void): void => {
+      settle = resolve;
+      markStarted();
+    })
+  );
+  return { started, resolve: (result: AiTextResult): void => settle(result) };
+}
+
+/** 有界地等 describeVision 累计到 count 次调用；等不到时交给随后的断言报错，不挂死用例。 */
+async function waitForVisionCalls(count: number): Promise<void> {
+  for (let turn: number = 0; turn < 50 && describeVision.mock.calls.length < count; turn++) await Bun.sleep(0);
+}
+
+/** 下载桩收到的 fileId，按调用顺序。 */
+function downloadedFileIds(): string[] {
+  return downloadTelegramFileFromMain.mock.calls.map((call: unknown[]): string => (call[0] as { fileId: string }).fileId);
+}
 beforeEach(() => {
   transientDescriptionCache.clear();
   mediaInputProbeCache.current = null;
   mediaInputSupportCache.current = null;
+  // mockReset 连同未消费的 mockImplementationOnce 一起清掉，用例之间不串实现。
   for (const mocked of [
     downloadTelegramFileFromMain,
     describeVision,
     prepareVisionImage,
     loggerError,
-  ]) mocked.mockClear();
+  ]) mocked.mockReset();
   downloadTelegramFileFromMain.mockImplementation(async (): Promise<TelegramWorkerDownloadFileResult> => ({
     status: "ok" as const,
     bytes: new Uint8Array([1, 2, 3]),
@@ -328,6 +369,178 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     expect(downloadTelegramFileFromMain).toHaveBeenCalledTimes(1);
     expect(describeVision).toHaveBeenCalledTimes(1);
     expect(mediaInputSupportCache.current?.vision.support).toBe("unsupported");
+  });
+
+  test("冷启动探测因单份媒体自身失败时，等待者重新进闸：一次只放行一个新探测，其余继续等待", async () => {
+    const firstProbe: ControlledVisionCall = controlNextVisionCall();
+    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-a", fileUniqueId: "single-unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
+    await firstProbe.started;
+    const secondProbe: ControlledVisionCall = controlNextVisionCall();
+    const second: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-b", fileUniqueId: "single-unique-b", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const third: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-c", fileUniqueId: "single-unique-c", voiceMime: undefined, voiceDurationSeconds: 0 });
+
+    // HTTP 成功但这一份的正文不可用：不带 mediaFailure，不构成模态结论。
+    firstProbe.resolve({ ok: false, retryable: true });
+    await expect(first).resolves.toBeNull();
+    await waitForVisionCalls(2);
+    // 只有一个等待者成为新探测，另一个继续等它，没有并发探测。
+    expect(describeVision).toHaveBeenCalledTimes(2);
+    expect(downloadedFileIds()).toEqual(["single-a", "single-b"]);
+    expect(mediaInputProbeCache.current?.vision).not.toBeNull();
+    expect(mediaInputSupportCache.current?.vision).toEqual({ support: "unknown", transientFailures: 0, nextProbeAt: 0 });
+
+    secondProbe.resolve({ ok: true, text: "第二份自己的描述" });
+    await expect(second).resolves.toBe("第二份自己的描述");
+    await expect(third).resolves.toBe("一只挥手的猫");
+    expect(downloadedFileIds()).toEqual(["single-a", "single-b", "single-c"]);
+    expect(describeVision).toHaveBeenCalledTimes(3);
+    expect(mediaInputSupportCache.current?.vision.support).toBe("supported");
+    expect(mediaInputProbeCache.current?.vision).toBeNull();
+  });
+
+  test("冷启动探测带瞬时端点故障时，等待者共享失败并一起进入退避，不下载自己的媒体", async () => {
+    const probe: ControlledVisionCall = controlNextVisionCall();
+    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "shared-fail-a", fileUniqueId: "shared-fail-unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
+    await probe.started;
+    const second: Promise<string | null> = describeMedia({ kind: "photo", fileId: "shared-fail-b", fileUniqueId: "shared-fail-unique-b", voiceMime: undefined, voiceDurationSeconds: 0 });
+
+    probe.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toBeNull();
+    expect(downloadedFileIds()).toEqual(["shared-fail-a"]);
+    expect(describeVision).toHaveBeenCalledTimes(1);
+    expect(mediaInputSupportCache.current?.vision.transientFailures).toBe(1);
+  });
+
+  test("等待者自己已取消时，探测的单份失败不会让它再发请求", async () => {
+    const probe: ControlledVisionCall = controlNextVisionCall();
+    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "cancel-a", fileUniqueId: "cancel-unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
+    await probe.started;
+    const controller: AbortController = new AbortController();
+    const second: Promise<string | null> = describeMedia({
+      kind: "photo",
+      fileId: "cancel-b",
+      fileUniqueId: "cancel-unique-b",
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(second).resolves.toBeNull();
+
+    probe.resolve({ ok: false, retryable: true });
+    await expect(first).resolves.toBeNull();
+    await Bun.sleep(0);
+    expect(downloadedFileIds()).toEqual(["cancel-a"]);
+    expect(describeVision).toHaveBeenCalledTimes(1);
+  });
+
+  test("已确认支持时同一次端点故障里的并发失败只计一次，退避从 30 秒起", async () => {
+    mediaInputSupportCache.current = {
+      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+    };
+    const album: ControlledVisionCall[] = [];
+    const pending: Promise<string | null>[] = [];
+    for (let index: number = 0; index < 6; index++) {
+      const call: ControlledVisionCall = controlNextVisionCall();
+      album.push(call);
+      pending.push(describeMedia({ kind: "photo", fileId: `album-${index}`, fileUniqueId: `album-unique-${index}`, voiceMime: undefined, voiceDurationSeconds: 0 }));
+      await call.started;
+    }
+    const before: number = Date.now();
+    for (const call of album) call.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
+    for (const result of pending) await expect(result).resolves.toBeNull();
+    const after: number = Date.now();
+
+    const vision = mediaInputSupportCache.current!.vision;
+    expect(vision.support).toBe("supported");
+    expect(vision.transientFailures).toBe(1);
+    expect(vision.nextProbeAt).toBeGreaterThanOrEqual(before + MEDIA_PROBE_BACKOFF_BASE_MS);
+    expect(vision.nextProbeAt).toBeLessThanOrEqual(after + MEDIA_PROBE_BACKOFF_BASE_MS);
+  });
+
+  test("同批请求错峰失败跨过退避窗口也只计一次，后续真实探测失败才推进下一档", async () => {
+    mediaInputSupportCache.current = {
+      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+    };
+    const time = spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const calls: ControlledVisionCall[] = [];
+      const pending: Promise<string | null>[] = [];
+      for (let index: number = 0; index < 4; index++) {
+        const call: ControlledVisionCall = controlNextVisionCall();
+        calls.push(call);
+        pending.push(describeMedia({ kind: "photo", fileId: `staggered-${index}`, fileUniqueId: `staggered-${index}`, voiceMime: undefined, voiceDurationSeconds: 0 }));
+        await call.started;
+      }
+      for (const [index, now] of [1_000_001, 1_031_001, 1_092_001, 1_213_001].entries()) {
+        time.mockReturnValue(now);
+        calls[index]!.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
+        await expect(pending[index]!).resolves.toBeNull();
+        expect(mediaInputSupportCache.current!.vision.transientFailures).toBe(1);
+        expect(mediaInputSupportCache.current!.vision.nextProbeAt).toBe(1_030_001);
+      }
+      const next: ControlledVisionCall = controlNextVisionCall();
+      const result: Promise<string | null> = describeMedia({ kind: "photo", fileId: "next-probe", fileUniqueId: "next-probe", voiceMime: undefined, voiceDurationSeconds: 0 });
+      await next.started;
+      next.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
+      await expect(result).resolves.toBeNull();
+      expect(mediaInputSupportCache.current!.vision.transientFailures).toBe(2);
+      expect(mediaInputSupportCache.current!.vision.nextProbeAt).toBe(1_273_001);
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  test("单探测路径的连续瞬时失败按窗口逐次翻倍、封顶 10 分钟；窗口内迟到的失败不计数，一次成功清零", () => {
+    let now: number = 1_000_000;
+    const transient: AiTextResult = { ok: false, retryable: false, mediaFailure: "transient" };
+    const expectedBackoffs: number[] = [];
+    for (let failures: number = 1; failures <= MEDIA_PROBE_MAX_TRANSIENT_FAILURES + 2; failures++) {
+      expectedBackoffs.push(Math.min(MEDIA_PROBE_BACKOFF_BASE_MS * 2 ** (failures - 1), MEDIA_PROBE_BACKOFF_MAX_MS));
+    }
+    expect(expectedBackoffs.slice(0, 6)).toEqual([30_000, 60_000, 120_000, 240_000, 480_000, 600_000]);
+
+    for (const [index, backoff] of expectedBackoffs.entries()) {
+      const attemptState = getMediaInputState("vision");
+      recordMediaInputResult({ capability: "vision", result: transient, attemptState, now });
+      const state = mediaInputSupportCache.current!.vision;
+      expect(state.support).toBe("unknown");
+      expect(state.transientFailures).toBe(Math.min(index + 1, MEDIA_PROBE_MAX_TRANSIENT_FAILURES));
+      expect(state.nextProbeAt).toBe(now + backoff);
+
+      // 窗口内再到一次失败：计数与 nextProbeAt 都不动。
+      recordMediaInputResult({ capability: "vision", result: transient, attemptState, now: state.nextProbeAt - 1 });
+      expect(mediaInputSupportCache.current!.vision).toBe(state);
+      expect(isMediaInputProbeCoolingDown("vision", state.nextProbeAt - 1)).toBe(true);
+      expect(isMediaInputProbeCoolingDown("vision", state.nextProbeAt)).toBe(false);
+      now = state.nextProbeAt;
+    }
+
+    recordMediaInputResult({ capability: "vision", result: { ok: true, text: "恢复" }, attemptState: getMediaInputState("vision"), now });
+    expect(mediaInputSupportCache.current!.vision).toEqual({ support: "supported", transientFailures: 0, nextProbeAt: 0 });
+    recordMediaInputResult({ capability: "vision", result: transient, attemptState: getMediaInputState("vision"), now: now + 1 });
+    expect(mediaInputSupportCache.current!.vision).toEqual({
+      support: "supported",
+      transientFailures: 1,
+      nextProbeAt: now + 1 + MEDIA_PROBE_BACKOFF_BASE_MS,
+    });
+  });
+
+  test("墙钟回拨遗留的过远 nextProbeAt 不算退避窗口，下一次瞬时失败照常计数并重新计时", () => {
+    const now: number = 5_000_000;
+    mediaInputSupportCache.current = {
+      vision: { support: "unknown", transientFailures: 1, nextProbeAt: now + 24 * 60 * 60_000 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+    };
+    recordMediaInputResult({ capability: "vision", result: { ok: false, retryable: false, mediaFailure: "transient" }, attemptState: getMediaInputState("vision"), now });
+    expect(mediaInputSupportCache.current.vision).toEqual({
+      support: "unknown",
+      transientFailures: 2,
+      nextProbeAt: now + MEDIA_PROBE_BACKOFF_BASE_MS * 2,
+    });
   });
 
   test("端点 404/405 记成配置错误：停止后续请求，并只记一次可定位的诊断", async () => {

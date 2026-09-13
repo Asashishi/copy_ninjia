@@ -1,7 +1,7 @@
 import { recordChatMedia } from "../../aiChat";
 import { describeStickerForContext, pickStickerVisionSource } from "../../aiChat/ai/stickers/describe";
 import { resolveSpeaker } from "./facts";
-import { buildAiRecordMediaMessage } from "./recordContext";
+import { buildAiRecordMediaMessage, mediaReplyBackpressurePlaceholder } from "./recordContext";
 import { replyToUnresolvableMedia } from "./mediaFallback";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
@@ -31,7 +31,7 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
       fileUniqueId: visionSource.fileUniqueId,
       width: visionSource.width,
       height: visionSource.height,
-      commentOnResolve: randomTrigger === "claimed",
+      replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
       stickerFallbackText: fallbackText,
       voiceMime: undefined,
       voiceDurationSeconds: 0,

@@ -19,6 +19,7 @@ import {
 } from "../consts/translate";
 import { getChatState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
+import { explicitReplyTo } from "../libs/forumTopic";
 import { isTelegramGroupChatId } from "../libs/telegramId";
 import { getTranslateState, setTranslateState, stopTranslation } from "../translate/state";
 import { formatUserLabel } from "../users/userLabel";
@@ -76,7 +77,7 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
 
   const stopMatch: RegExpExecArray | null = TRANSLATE_STOP_ARGUMENT_PATTERN.exec(argument);
   if (stopMatch !== null) {
-    if (stopMatch[1] === undefined && ctx.msg.reply_to_message === undefined && ctx.msg.external_reply === undefined) {
+    if (stopMatch[1] === undefined && explicitReplyTo(ctx.msg) === undefined && ctx.msg.external_reply === undefined) {
       await stopTranslation(chatId);
       await sendCommandMessage({ chatId, text: TRANSLATE_STOP_ALL_TEXT, replyToMessageId: messageId });
       return;

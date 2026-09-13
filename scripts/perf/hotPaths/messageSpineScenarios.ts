@@ -8,7 +8,10 @@
 import type { Message } from "grammy/types";
 import type { Context } from "grammy";
 import { resolveSpeaker } from "../../../packages/auto/message/facts";
-import { buildAiRecordMediaMessage } from "../../../packages/auto/message/recordContext";
+import {
+  buildAiRecordMediaMessage,
+  mediaReplyBackpressurePlaceholder,
+} from "../../../packages/auto/message/recordContext";
 import { createMessageTriggerContext } from "../../../packages/auto/message/triggerContext";
 import { claimRandomMediaTrigger } from "../../../packages/auto/message/triggerPolicy";
 import type { AiBotInfo, AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
@@ -257,7 +260,7 @@ export function aiMediaDirectTriggerScenario(): Scenario {
             fileUniqueId: "AQADu",
             width: 1280,
             height: 720,
-            commentOnResolve: claim === "claimed",
+            replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, claim),
             stickerFallbackText: undefined,
             voiceMime: undefined,
             voiceDurationSeconds: 0,

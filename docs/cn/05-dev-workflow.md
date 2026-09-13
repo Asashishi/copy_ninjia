@@ -62,7 +62,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**4076 tests / 367 files / 155855 次 `expect()`**；全源码**函数覆盖率 97.64% / 行覆盖率 97.78%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**4180 tests / 370 files / 156432 次 `expect()`**；全源码**函数覆盖率 97.56% / 行覆盖率 97.76%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -74,6 +74,8 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 4. **agent 配置快照**：`agent.json` 是唯一不由运行时读盘取得的部署配置（真实进程里由主线程解析后经 Worker 初始化消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到那两条消息，因此 `test/preload.ts` 把上一层那份 `agent.json` 副本一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
 
 `test/scripts/installStartup.test.ts` 复用安装隔离夹具，在独立临时配置和数据根中运行 `install.sh`、`bun run start` 及真实 Worker；Telegram 应答和系统服务命令由测试替身接管。它覆盖不启用 AI、正常 AI 配置、重复安装启动，以及非法可选配置在联网前拒绝，核对正常停机和实例锁释放。
+
+安装隔离检查还覆盖既有 unit 数据根缺失或不匹配、`EnvironmentFiles` 与相关 `PassEnvironment` / `UnsetEnvironment` 拒绝、启动后 `NRestarts` 基线及计数回落拒绝、已有配置重新填写后的 mode 保留。系统命令全部由夹具接管，失败预检必须早于配置、unit 和运行数据的写入。
 
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
 
@@ -95,11 +97,15 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 校准记录保存在 [`performance-result.json`](../../performance-result.json)，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。`gateRuntime.ts` 在约定检查和热路径子进程启动前核对 `packageManager`、当前 Bun version/revision 与校准构建；不一致时先重新实测校准。记录保留采样进程数、逐场景延迟来源和 GC/RSS/留存硬上限。历史 `fullSuite` 全量读数保留各自的运行时间和 Bun 构建。
 
+`steadyProfile` 子进程显式启用 `BUN_JSC_logGC=1`；`hotPaths/gcProfile.ts` 只累加正式循环边界内 JSC 日志的 `p=…ms` 暂停段，除以同窗口单调耗时，得到 GC 暂停时间占比。JSC 启动握手、唯一完整窗口和暂停格式必须匹配，缺失或未知格式即失败；无暂停只在完整有效日志下记为 0。JIT 层级仍由采样 profiler 统计。`retained` 的强制 GC 在计时边界外，不参与该比例。校准逐场景保存至少三轮独立进程的暂停数据与 `maxPausePercent` 上限；当前媒体直达为 29%、刷屏滑窗为 19%，其余门禁场景为 5%，每个上限覆盖校准最大值。
+
+`perf:isolated-hot-path --profile` 与 `perf:review` 的 profile 输出用于 JIT 和采样诊断，不提供 GC 暂停比例。需要 GC 读数时运行 `perf:hot-path-gate`；`perf:disk-transport` 同样由父进程解析 GC 日志，逐轮返回独立的 `gcProfile`。
+
 `hotPathProfileGate` 这一节是双向的，但两半 owner 不同：`calibration` 由人重标后手工修改，门禁只读；`lastRun` 记录最近一次门禁读数，只有显式传 `bun run perf:hot-path-gate -- --write-result` 才覆盖写，因此 `bun run check` 跑完不会产生工作树改动。回写一个字节都不碰 `calibration`——让门禁拿一次运行的读数自动改自己的判据，等于把闸门焊死在当前性能上。
 
 同一份文件的另一节 `fullSuite.lastRun` 属于[全量基准](#全量性能基准)，由 `bun run perf:full -- --write-doc` 写入。两套基准在不同进程、不同时刻运行，因此写入统一走 `scripts/perf/performanceResult.ts` 的「读整份 → 只换自己那一格 → 整份写回」：谁都不按解析结果重建文档，否则后跑的那个会把另一节连同 `calibration` 里那些给人看的说明一起抹掉。
 
-设闸门的项：GC 采样占比、采样 RSS 峰值与进程生命周期 RSS 高水位（共用同一上限，后者能拦住完整落在两次节拍之间的瞬时分配）、采样 heapUsed 增长、full-GC 后的 JSC heap/堆外内存/对象数留存、最少采样数，以及逐生产探针的「预热后已进 DFG」与「采样期无重编译或去优化」。
+设闸门的项：GC 暂停时间占比、采样 RSS 峰值与进程生命周期 RSS 高水位（共用同一上限，后者能拦住完整落在两次节拍之间的瞬时分配）、采样 heapUsed 增长、full-GC 后的 JSC heap/堆外内存/对象数留存、最少采样数，以及逐生产探针的「预热后已进 DFG」与「采样期无重编译或去优化」。
 
 输出里带 `Diagnostic` 后缀的字段只报告、不设闸门。汇总 FTL 比例是其中之一：它对纯叶子场景接近 100%、对异步主链只有个位数（采样里混着 native Promise 与调度帧），单一阈值对两类场景没有共同含义。`reoptRetries` 的绝对值同理——采样前的 JIT 稳定轮已经要求它连续两轮不变，剩下的只是预热期历史。
 
@@ -121,7 +127,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 `bun run perf:review` 复用全量基准的隔离根、配置夹具、进程编排及出站罐头，输出 JSON 并清理本轮数据根。`--hot-paths` 覆盖发送者、消息滑窗、权限读取、AI 活跃窗口、待验证快照及 clone、空块/细碎块/1 KiB/1 MiB/16 MiB 响应读取和注册链；12 项各三轮普通测量与三轮 profile。完整异步读取按场景显式预热并记录实际 JIT 层级，其余场景沿用优化层级稳定性检查。
 
-`--ai` 测量准入判定、正常发送、容量/重开压力，以及 Base64 1 MiB、8 MiB、异常首部和尾部。7 个场景各三轮独立计时与三轮 profile，直接调用生产函数；发送场景断言单群/全局容量、真实收尾和清理，并要求生产 JIT 探针稳定。容量压力每批包含 128 个存活槽位及容量拒收检查，耗时按整批报告。Base64 保留编码/解码大小上限、标准字母表与严格尾部位检查，正则不带 g/y，解码仅一次。固定输入与预热用于局部测量，不包含真实模型、Telegram 网络或完整生产载荷的内存预算；profile 没采到 GC 不等于无 GC。
+`--ai` 测量准入判定、正常发送、容量/重开压力，以及 Base64 1 MiB、8 MiB、异常首部和尾部。7 个场景各三轮独立计时与三轮 profile，直接调用生产函数；发送场景断言单群/全局容量、真实收尾和清理，并要求生产 JIT 探针稳定。容量压力每批包含 128 个存活槽位及容量拒收检查，耗时按整批报告。Base64 保留编码/解码大小上限、标准字母表与严格尾部位检查，正则不带 g/y，解码仅一次。固定输入与预热用于局部测量，不包含真实模型、Telegram 网络或完整生产载荷的内存预算；JIT profile 不提供 GC 暂停计量。
 
 `--chains` 运行启用功能的 `ad-detect-command` 与 `ai-reply-command`，逐轮断言 Telegram 罐头调用及处置排空。`--worker` 经真实 Disk I/O Worker 每轮写入 400 批、每批 128 条消息；每批等待最终 revision ACK，每轮执行两次优雅停机重建并核对 25 群恢复值。该项包含 clone、事务及落盘等待，报告吞吐、延迟、堆留存与 RSS；它不替代故障注入。以上模式各跑三轮，不改全量基准和默认十场景硬门禁的阈值。
 
@@ -129,9 +135,9 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 注册表包含 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` 和 `storage-sqlite-flush`。前四项覆盖成员集合命中、填充、满额拒绝和切群；middleware 场景运行真实注册链并断言活动路径；SQLite 场景对空库提交 128 个删除，主要衡量事务调度，不能作为磁盘吞吐读数。
 
-运行 `bun run perf:isolated-hot-path <场景>`，加 `--profile` 单独采样。该入口复用 `gateFixture.ts` 建立独立配置和数据根，注入三个独立子进程并在结束后清理 run 目录；出站由基准罐头接管。固定 Bun 与输入、完成预热，分别观察 retained 与 profile 输出；采样数不足时不得用零 GC 样本断言没有 GC。
+运行 `bun run perf:isolated-hot-path <场景>`，加 `--profile` 单独采样。该入口复用 `gateFixture.ts` 建立独立配置和数据根，注入三个独立子进程并在结束后清理 run 目录；出站由基准罐头接管。固定 Bun 与输入、完成预热，分别观察 retained 与 profile 输出；JIT 采样数不足时不得推断优化层级稳定。
 
-`luck-tier-table` 用固定 roll 直接调用生产 `drawLuckTier`，校验和覆盖返回档位，并登记该函数的 JIT 探针；`gag-speak-counter` 的会话数读取 `GAG_SESSION_MAX`，调用生产发言计数入口。修改这些边界时，两场景都运行默认模式和 `--profile`，分别核对校验和、清理、留存堆与 GC/JIT；它们不在默认十场景门禁中。
+`luck-tier-table` 用固定 roll 直接调用生产 `drawLuckTier`，校验和覆盖返回档位，并登记该函数的 JIT 探针；`gag-speak-counter` 的会话数读取 `GAG_SESSION_MAX`，调用生产发言计数入口。修改这些边界时，两场景都运行默认模式和 `--profile`，分别核对校验和、清理、留存堆与 JIT；它们不在默认十场景门禁中。
 
 `bun run perf:disk-transport` 跑三轮独立 mock 进程，验证单批 ACK、正常排空和停止 ACK 后的容量拒收，并报告延迟、堆、GC 与 JIT。它复用同一份不可变载荷，只测队列与确认开销，不包含 Worker clone、真实负载载荷体积或磁盘等待。
 

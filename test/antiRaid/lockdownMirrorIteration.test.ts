@@ -14,6 +14,7 @@ import type { ChatState, LockdownRecord } from "../../packages/types/chatState";
 
 const chatStates = new LruCache<number, ChatState>(25);
 const restoreLockdownInvitePermission = mock(async (..._args: unknown[]): Promise<void> => {});
+const deleteMessageWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "deleted");
 const saveChatStateInBackground = mock((_chatId: number, _context: string): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 
@@ -35,6 +36,9 @@ mock.module("../../packages/infra/telegram/client", () => ({
 }));
 mock.module("../../packages/infra/telegram/lockdownPermissions", () => ({
   restoreLockdownInvitePermission,
+}));
+mock.module("../../packages/infra/telegram/actions", () => ({
+  deleteMessageWithOutcome,
 }));
 
 const {
@@ -63,7 +67,10 @@ describe("主线程紧急恢复遍历真实群状态 LRU", () => {
     chatStates.clear();
     emergencyLockdownRecoveries.clear();
     emergencyLockdownRecoveryRuntime.stopped = false;
-    restoreLockdownInvitePermission.mockClear();
+    restoreLockdownInvitePermission.mockReset();
+    restoreLockdownInvitePermission.mockImplementation(async (): Promise<void> => {});
+    deleteMessageWithOutcome.mockReset();
+    deleteMessageWithOutcome.mockImplementation(async (): Promise<string> => "deleted");
     saveChatStateInBackground.mockClear();
     loggerError.mockClear();
     for (const [index, chatId] of chatIds.entries()) {
@@ -129,5 +136,108 @@ describe("主线程紧急恢复遍历真实群状态 LRU", () => {
     expect(visited.slice().sort()).toEqual(chatIds.slice().sort());
     expect(steps).toBeLessThanOrEqual(stepLimit);
     expect(chatStates.size).toBe(chatIds.length);
+  });
+});
+
+describe("主线程紧急恢复收尾时清理本轮封锁公告", () => {
+  const announcedChatId: number = -7101;
+  const silentChatId: number = -7102;
+
+  function announcedLockdown(intentId: number, announcementMessageId: number): LockdownRecord {
+    return { ...lockdown(intentId), announcementMessageId };
+  }
+
+  beforeEach(() => {
+    chatStates.clear();
+    emergencyLockdownRecoveries.clear();
+    emergencyLockdownRecoveryRuntime.stopped = false;
+    restoreLockdownInvitePermission.mockReset();
+    restoreLockdownInvitePermission.mockImplementation(async (): Promise<void> => {});
+    deleteMessageWithOutcome.mockReset();
+    deleteMessageWithOutcome.mockImplementation(async (): Promise<string> => "deleted");
+    saveChatStateInBackground.mockClear();
+    loggerError.mockClear();
+  });
+
+  afterEach(() => {
+    stopEmergencyLockdownRecoveries();
+  });
+
+  test("权限还原后先按公告 ID 定向删除，再清记录；没有公告 ID 的群不发删除", async () => {
+    const recordPresentAtDelete: boolean[] = [];
+    deleteMessageWithOutcome.mockImplementation(async (...args: unknown[]): Promise<string> => {
+      recordPresentAtDelete.push(chatStates.get(args[0] as number)?.lockdown !== undefined);
+      return "deleted";
+    });
+    chatStates.set(announcedChatId, { lockdown: announcedLockdown(201, 321) } as ChatState);
+    chatStates.set(silentChatId, { lockdown: lockdown(202) } as ChatState);
+
+    recoverAbandonedLockdowns();
+    await waitUntil((): boolean =>
+      emergencyLockdownRecoveries.size === 0 &&
+      saveChatStateInBackground.mock.calls.length >= 2);
+
+    // 公告 ID 只存在于这条记录里：清掉之后就再没有任何 owner 能删那条公告。
+    expect(deleteMessageWithOutcome.mock.calls).toEqual([
+      [announcedChatId, 321, { kind: "lockdown-iteration-test-api" }],
+    ]);
+    expect(recordPresentAtDelete).toEqual([true]);
+    expect(chatStates.get(announcedChatId)?.lockdown).toBeUndefined();
+    expect(chatStates.get(silentChatId)?.lockdown).toBeUndefined();
+  });
+
+  test("公告删除失败、悬挂或抛错都不阻塞恢复收尾", async () => {
+    const hungChatId: number = -7103;
+    deleteMessageWithOutcome.mockImplementation(async (...args: unknown[]): Promise<string> => {
+      const chatId: number = args[0] as number;
+      // 停机期间出站已关闭时，统一删除动作把拒绝结算成 failed 并自行记日志。
+      if (chatId === announcedChatId) return "failed";
+      if (chatId === hungChatId) return await new Promise<string>((): void => {});
+      throw new Error("unexpected deletion boundary failure");
+    });
+    chatStates.set(announcedChatId, { lockdown: announcedLockdown(211, 331) } as ChatState);
+    chatStates.set(silentChatId, { lockdown: announcedLockdown(212, 332) } as ChatState);
+    chatStates.set(hungChatId, { lockdown: announcedLockdown(213, 333) } as ChatState);
+
+    recoverAbandonedLockdowns();
+    await waitUntil((): boolean =>
+      emergencyLockdownRecoveries.size === 0 &&
+      saveChatStateInBackground.mock.calls.length >= 3 &&
+      loggerError.mock.calls.length >= 2);
+
+    for (const chatId of [announcedChatId, silentChatId, hungChatId]) {
+      expect(chatStates.get(chatId)?.lockdown).toBeUndefined();
+    }
+    expect(deleteMessageWithOutcome).toHaveBeenCalledTimes(3);
+    expect(saveChatStateInBackground).toHaveBeenCalledTimes(3);
+    expect(loggerError.mock.calls.some((call: unknown[]): boolean =>
+      String(call[0]).includes(`announcement in chat ${silentChatId}`))).toBeTrue();
+  });
+
+  test("恢复期间意图已换代或恢复已停止时，不删新一轮或留给下一进程的公告", async () => {
+    const pending: (() => void)[] = [];
+    restoreLockdownInvitePermission.mockImplementation(async (): Promise<void> => {
+      await new Promise<void>((resolve: () => void): void => { pending.push(resolve); });
+    });
+    chatStates.set(announcedChatId, { lockdown: announcedLockdown(221, 341) } as ChatState);
+
+    recoverAbandonedLockdowns();
+    chatStates.get(announcedChatId)!.lockdown = announcedLockdown(999, 342);
+    for (const resolve of pending.splice(0)) resolve();
+    await waitUntil((): boolean => emergencyLockdownRecoveries.size === 0);
+
+    expect(chatStates.get(announcedChatId)?.lockdown?.announcementMessageId).toBe(342);
+
+    chatStates.set(silentChatId, { lockdown: announcedLockdown(222, 343) } as ChatState);
+    chatStates.delete(announcedChatId);
+    recoverAbandonedLockdowns();
+    await waitUntil((): boolean => pending.length === 1);
+    stopEmergencyLockdownRecoveries();
+    for (const resolve of pending.splice(0)) resolve();
+    await Bun.sleep(0);
+
+    expect(chatStates.get(silentChatId)?.lockdown?.announcementMessageId).toBe(343);
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
+    expect(saveChatStateInBackground).not.toHaveBeenCalled();
   });
 });

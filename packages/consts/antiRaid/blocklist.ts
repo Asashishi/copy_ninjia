@@ -35,10 +35,11 @@ export const BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES: number = 5_000;
  *
  * 这个抛错**不构成背压**，绝不能逃到 update 边界去：满仓通常正是一批永远封不掉
  * 的处置堆出来的，扣住 offset 只会变成「重投 -> 再抛 -> 非零退出」的重启循环，
- * 只能靠手改 removals.json 解开（见 blocklistGuard.ts 的 claimBlockedJoiner）。
+ * 只能靠人工修复 SQLite outbox 解开（见 blocklistGuard.ts 的 claimBlockedJoiner）。
  * 调用方一律就地降级：记一行点名日志，再用 requestBlocklistResweep 把这个群挂
  * 回补扫，等 outbox 腾出位置后补做。已登记的批次留在 outbox，没登记上的由补扫
  * 覆盖，两边都不丢任务。
+ * Disk I/O 启动 inspect 对 `pending_blocked_removals` 行数执行同一上限，超出即拒绝启动。
  * 所属模块：infra/blocklist/。
  */
 export const BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES: number = 4_096;

@@ -74,11 +74,9 @@ export function storeBundle(key: string, bundle: AdMessageBundle): void {
 /**
  * 处置抑制记录是否仍在自己的窗口内。
  *
- * 表里存的是**处置时刻**而不是失效时刻：窗口本来就是常量，少存一个字段就少
- * 一次每键分配，更要紧的是这样才判得出墙钟回拨——`now` 落在处置时刻之前只
- * 可能是时钟往回走了，继续按失效时刻比较会把抑制拉长到「回拨幅度 + 窗口」，
- * 那段时间里这些人的每条消息都被 ignore，判定对他们整体静默停摆。同
- * referencePolicy.ts 的 hasActiveReferencedAdWarning 与 sweepReferencedAdWarnings。
+ * 表里存 Worker 开始处置时的单调时钟，读取也使用本线程 performance.now()。
+ * 主线程观测时间用于消息上下文与引用警告窗口，不参与处置 TTL；排队等待与墙钟调整不会
+ * 缩短或延长该窗口。跨模块约束见 docs/cn/04-invariants.md。
  */
 function adDisposalMarkerActive(disposedAt: number, now: number): boolean {
   const elapsedMs: number = now - disposedAt;
@@ -89,10 +87,10 @@ function adDisposalMarkerActive(disposedAt: number, now: number): boolean {
  * 读取一个 key 的处置抑制状态；失效记录就地删除，避免逻辑过期但 Map 仍增长。
  * 每个 key 独立到期，读到即回收，因此不依赖任何周期扫描保证正确性。
  */
-export function hasActiveAdDisposalMarker(key: string, now: number): boolean {
+export function hasActiveAdDisposalMarker(key: string): boolean {
   const disposedAt: number | undefined = recentlyDisposedAdKeys.get(key);
   if (disposedAt === undefined) return false;
-  if (adDisposalMarkerActive(disposedAt, now)) return true;
+  if (adDisposalMarkerActive(disposedAt, performance.now())) return true;
   recentlyDisposedAdKeys.delete(key);
   return false;
 }
@@ -105,7 +103,7 @@ export function hasActiveAdDisposalMarker(key: string, now: number): boolean {
  * 的死记录从内存里清掉，5 分钟一次的维护 sweep 足够；不进入每秒一次的判定
  * 节拍，避免满载时反复扫描最多 8,192 条记录。
  */
-export function expireAdDetectDisposalMarkers(now: number = Date.now()): void {
+export function expireAdDetectDisposalMarkers(now: number = performance.now()): void {
   for (const [key, disposedAt] of recentlyDisposedAdKeys) {
     if (!adDisposalMarkerActive(disposedAt, now)) recentlyDisposedAdKeys.delete(key);
   }

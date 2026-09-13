@@ -10,6 +10,7 @@ import { clearAiReplyActivity } from "../../packages/auto/message/aiReplyActivit
 import { snapshotHeap } from "./heapSnapshot";
 import { installOutboundGuards } from "./outboundGuard";
 import { median } from "./statistics";
+import { beginGcProfileWindow, endGcProfileWindow } from "./hotPaths/gcProfile";
 import { collectJitTiers, diffJitTiers } from "./hotPaths/jitTiers";
 import { readInterruptibleMemory, readProcessMemoryUsage } from "./hotPaths/liveMemory";
 import { createScenario } from "./hotPaths/scenarioRegistry";
@@ -53,7 +54,7 @@ interface BenchmarkResult {
    * 边界才更新，采样后不 GC 直接读恒为 0（见 HeapSnapshot），不能用来衡量分配。
    *
    * 也要清楚它**不度量分配速率**：采样中被回收的短命对象一律不计。短命分配
-   * 的运行时后果由 steadyProfile 模式的 GC 采样占比、heapUsed 与 RSS 节拍峰值
+   * 的运行时后果由 steadyProfile 模式的 GC 暂停占比、heapUsed 与 RSS 节拍峰值
    * 共同观测；仍不能把这些读数误称为精确 allocation bytes/op。
    */
   retainedHeapDelta: number | null;
@@ -316,6 +317,7 @@ async function runBenchmark(
    * 同步场景一律走本函数，异步场景没有这个选择，其分层读数只作参考。
    */
   function sampleScenarioSync(): void {
+    const gcStartedAt: number = steadyProfile ? beginGcProfileWindow() : 0;
     for (let sample: number = 0; sample < SAMPLE_COUNT; sample += 1) {
       const startedAt: number = beginSample();
       const result: number | Promise<number> = scenario.run(sampleIterations);
@@ -326,14 +328,17 @@ async function runBenchmark(
       }
       endSample(startedAt, result);
     }
+    if (steadyProfile) endGcProfileWindow(gcStartedAt);
   }
 
   /** 异步场景的采样驱动；编排壳的开销本来就是生产每条消息要付的那一份。 */
   async function sampleScenarioAsync(): Promise<void> {
+    const gcStartedAt: number = steadyProfile ? beginGcProfileWindow() : 0;
     for (let sample: number = 0; sample < SAMPLE_COUNT; sample += 1) {
       const startedAt: number = beginSample();
       endSample(startedAt, await runOnce(scenario, sampleIterations));
     }
+    if (steadyProfile) endGcProfileWindow(gcStartedAt);
   }
 
   let samplingProfile: HotPathSamplingProfileSummary | null = null;

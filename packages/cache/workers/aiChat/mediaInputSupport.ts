@@ -13,7 +13,8 @@
  * - `unknown`：还没有结论。瞬时故障（超时、429、5xx、SDK 重试耗尽）保持在这一
  *   档，只按连续失败次数进入**有限指数退避**：退避期内直接返回共享的瞬时失败，
  *   不下载媒体、不占执行器槽位；退避到期后重新放行一次真实探测。永远不会因为
- *   端点抖了几次就把模态永久关掉。
+ *   端点抖了几次就把模态永久关掉。`supported` 下的瞬时故障同样只推进退避；
+ *   同一状态代次接纳的其它请求即使在退避到期后才失败，也不再计数。
  *
  * 单份媒体自己的问题（下载不到、格式不合、正文被安全策略清空）不带
  * mediaFailure，因此完全不改变模态状态——「这一份不行」与「这一类都不行」在
@@ -114,8 +115,8 @@ function replaceModalityState(
     : { vision: state.vision, voice: next };
 }
 
-/** 读取一种模态的完整状态；从未尝试时返回初始状态。 */
-function getMediaInputState(capability: MediaInputCapability): MediaInputModalityState {
+/** 读取模态状态；请求接纳时保留此只读对象，完成时用对象身份核对归因代次。 */
+export function getMediaInputState(capability: MediaInputCapability): MediaInputModalityState {
   return supportState()[capability];
 }
 
@@ -136,30 +137,40 @@ function backoffMsFor(transientFailures: number): number {
 }
 
 /**
- * 判断某模态此刻是否还压在退避里。
+ * 判断 nextProbeAt 在 now 时刻是否仍处于退避窗口内。
  *
  * 墙钟回拨会让 nextProbeAt 落在「比任何一档退避都远的未来」，那一刻起这个模态
  * 就再也等不到放行了。识别出来直接放行（口径同 auto/message/triggerPolicy.ts 的
  * 冷却处理：旧时间轴上的冷却点先失效，再从新时间轴重新计时）。
  */
+function isWithinProbeBackoff(nextProbeAt: number, now: number): boolean {
+  const remaining: number = nextProbeAt - now;
+  return remaining > 0 && remaining <= MEDIA_PROBE_BACKOFF_MAX_MS;
+}
+
+/** 判断某模态此刻是否还压在退避里；判据见 isWithinProbeBackoff。 */
 export function isMediaInputProbeCoolingDown(
   capability: MediaInputCapability,
   now: number
 ): boolean {
-  const remaining: number = getMediaInputState(capability).nextProbeAt - now;
-  return remaining > 0 && remaining <= MEDIA_PROBE_BACKOFF_MAX_MS;
+  return isWithinProbeBackoff(getMediaInputState(capability).nextProbeAt, now);
 }
 
-/**
- * 记录一次真实调用的结果并推进模态状态机。
- *
- * @param now 调用方传入的时刻，与退避判定共用同一口径，便于测试固定时间轴。
- */
-export function recordMediaInputResult(
-  capability: MediaInputCapability,
-  result: AiTextResult,
-  now: number = Date.now()
-): void {
+/** 单次请求归因输入；状态引用只在请求存活期间保留，不增加 owner 缓存容量。 */
+export interface RecordMediaInputResultOptions {
+  readonly capability: MediaInputCapability;
+  readonly result: AiTextResult;
+  readonly attemptState: MediaInputModalityState;
+  readonly now?: number;
+}
+
+/** 记录真实调用的结果；旧代次的瞬时失败不能推进当前退避，now 与准入共用墙钟。 */
+export function recordMediaInputResult({
+  capability,
+  result,
+  attemptState,
+  now = Date.now(),
+}: RecordMediaInputResultOptions): void {
   const current: MediaInputModalityState = getMediaInputState(capability);
   if (result.ok) {
     // 成功即清空失败计数与退避：端点恢复了，下一份媒体不该继续被上一轮故障拖着。
@@ -192,6 +203,9 @@ export function recordMediaInputResult(
       // 已经落定的终局结论不被瞬时故障翻案：那两档说的是「这个端点做不到」，
       // 与网络抖动无关。
       if (isMediaInputClosed(current.support)) return;
+      // 首次失败整体替换状态，同代次其它请求的迟到失败不再影响后续探测。
+      if (attemptState !== current) return;
+      if (isWithinProbeBackoff(current.nextProbeAt, now)) return;
       const transientFailures: number = Math.min(
         current.transientFailures + 1,
         MEDIA_PROBE_MAX_TRANSIENT_FAILURES

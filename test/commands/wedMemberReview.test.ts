@@ -7,7 +7,7 @@ import { resetWedMemberStates, wedMemberStates } from "../../packages/cache/main
 import { telegramApiState } from "../../packages/cache/perThread/telegramApi";
 import { enableWedMemberReview } from "../../packages/commands/wed/memberReview";
 import { observeWedMembers } from "../../packages/commands/wed/members";
-import { flushWedMembers, hydrateWedMembers, removeWedMember } from "../../packages/commands/wed/persistence";
+import { flushWedMembers, hydrateWedMembers, purgeWedMembers, removeWedMember } from "../../packages/commands/wed/persistence";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../../packages/commands/wed/runtime";
 import { WED_OPERATION_TIMEOUT_MS } from "../../packages/consts/wed";
 import * as diskIO from "../../packages/infra/diskIO";
@@ -206,16 +206,43 @@ test("停机在途查询必须结算后才能重建，取消后的离群回包�
   expect(wedMemberReview.current!.ready).toBeFalse();
 });
 
-test("重新接管成员集合时结束旧遍历，旧回包不能删除新集合的 ID", async (): Promise<void> => {
+test("重新接管成员集合时结束旧集合的遍历，旧回包不能删除新集合的 ID，新集合按自己的快照复核", async (): Promise<void> => {
   const gate = heldProbe();
   enableWedMemberReview();
   midnight();
   const replacement: Set<number> = new Set<number>([1, 3]);
   hydrateWedMembers(new Map([[-1001, replacement]]));
   gate.resolve(member(1, "left"));
-  await tick(200);
+  await tick();
   expect([...replacement]).toEqual([1, 3]);
   expect(probe).toHaveBeenCalledTimes(1);
+  await tick(200);
+  await tick(200);
+  expect(probe.mock.calls.map(([chatId, userId]) => [chatId, userId])).toEqual([[-1001, 1], [-1001, 1], [-1001, 3]]);
+  expect([...replacement]).toEqual([1, 3]);
+  expect(wedRuntime.current!.tasks.size).toBe(0);
+  expect(wedMemberReview.current!.chatId).toBeNull();
+});
+
+test("复核中某群被停管只跳过该群，其余群照常复核", async (): Promise<void> => {
+  hydrateWedMembers(new Map([[-1001, new Set([1, 2])], [-1002, new Set([5, 6])]]));
+  const gate = heldProbe();
+  enableWedMemberReview();
+  midnight();
+  await tick();
+  expect(wedMemberReview.current!.chatId).toBe(-1001);
+  // `/init disable` 与离群 teardown 摘除成员集合的同一边界。
+  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  await purgeWedMembers(-1001);
+  flush.mockRestore();
+  gate.resolve(member(1, "left"));
+  await tick();
+  expect(wedMemberReview.current!.chatId).toBeNull();
+  expect(wedMemberReview.current!.userId).toBeNull();
+  expect(wedMemberReview.current!.observed).toBeFalse();
+  for (let index: number = 0; index < 3; index++) await tick(200);
+  expect(probe.mock.calls.map(([chatId, userId]) => [chatId, userId])).toEqual([[-1001, 1], [-1002, 5], [-1002, 6]]);
+  expect(wedMemberStates.has(-1001)).toBeFalse();
   expect(wedRuntime.current!.tasks.size).toBe(0);
 });
 
