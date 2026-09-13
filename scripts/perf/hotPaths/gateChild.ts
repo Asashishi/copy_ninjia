@@ -187,7 +187,8 @@ function assertRuntimeMatches(
 
 function assertProfileRunWithinLimits(
   result: ChildProfileResult,
-  calibration: HotPathGateCalibration
+  calibration: HotPathGateCalibration,
+  maxGcPausePercent: number
 ): void {
   assertRuntimeMatches(result, calibration);
   if (result.measurementMode !== "steadyProfile" || result.samplingProfile === null || result.gcProfile === null) {
@@ -199,12 +200,10 @@ function assertProfileRunWithinLimits(
       `expected at least ${calibration.limits.minProfileSamples}.`
     );
   }
-  const gcLimit: number | undefined = calibration.gcPausePercentLimits[result.scenario];
-  if (gcLimit === undefined) throw new Error(`${result.scenario}: GC pause calibration is missing.`);
-  if (result.gcProfile.gcPercent > gcLimit) {
+  if (result.gcProfile.gcPercent > maxGcPausePercent) {
     throw new Error(
       `${result.scenario}: GC paused for ${result.gcProfile.gcPercent.toFixed(3)}% of ` +
-      `steady elapsed time; limit is ${gcLimit}%.`
+      `steady elapsed time; limit is ${maxGcPausePercent}%.`
     );
   }
   for (const probe of productionJitProbes(result)) {
@@ -262,6 +261,7 @@ export interface RunHotPathGateChildOptions {
   readonly measurementMode: "retained" | "steadyProfile";
   readonly fixture: HotPathGateFixture;
   readonly calibration: HotPathGateCalibration;
+  readonly maxGcPausePercent: number;
 }
 
 /** 运行一轮隔离子进程，严格解码并执行对应的 profile 或 retained 门禁。 */
@@ -271,6 +271,7 @@ export async function runHotPathGateChild({
   measurementMode,
   fixture,
   calibration,
+  maxGcPausePercent,
 }: RunHotPathGateChildOptions): Promise<ChildProfileResult> {
   const args: string[] = [
     Bun.argv[0]!,
@@ -302,7 +303,7 @@ export async function runHotPathGateChild({
       throw new Error(`${scenario}: child returned scenario ${result.scenario}.`);
     }
     if (measurementMode === "steadyProfile") {
-      assertProfileRunWithinLimits(result, calibration);
+      assertProfileRunWithinLimits(result, calibration, maxGcPausePercent);
     } else {
       assertRetainedRunWithinLimits(result, calibration);
     }

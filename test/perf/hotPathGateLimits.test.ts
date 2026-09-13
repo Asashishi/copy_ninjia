@@ -2,7 +2,21 @@ import { describe, expect, test } from "bun:test";
 import {
   assertHotPathMedianPolicyCoverage,
   createHotPathMedianLatencyReport,
+  selectHotPathGcPausePercentLimit,
 } from "../../scripts/perf/hotPaths/gateLimits";
+
+describe("热路径 GC 按可用 CPU 数分档", () => {
+  test.each([
+    [1, 35], [2, 30], [3, 30], [4, 25], [8, 25], [128, 25],
+  ])("%i 个 CPU 使用 %i% 暂停预算", (cpuCount: number, expected: number): void => {
+    expect(selectHotPathGcPausePercentLimit(cpuCount)).toBe(expected);
+  });
+
+  test.each([0, -1, 1.5, NaN, Infinity])("非法 CPU 数拒绝分档：%#", (cpuCount: number): void => {
+    expect((): number => selectHotPathGcPausePercentLimit(cpuCount))
+      .toThrow("positive integer CPU count");
+  });
+});
 
 describe("热路径纳秒软上报", () => {
   test("不超过阈值时没有报告，超过时返回完整超额内容但不抛错", () => {

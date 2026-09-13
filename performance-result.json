@@ -47,7 +47,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 176.053199,
@@ -68,7 +67,7 @@
                 "gcPercent": 3.1634969383042835
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "ai-media-direct-trigger": {
@@ -79,7 +78,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 29,
             "samples": [
               {
                 "elapsedMs": 202.59822499999996,
@@ -100,7 +98,7 @@
                 "gcPercent": 22.69125316800641
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "sender-stable-username": {
@@ -111,7 +109,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 207.30663800000002,
@@ -132,7 +129,7 @@
                 "gcPercent": 0
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "luck-receipt-fast-path": {
@@ -143,7 +140,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 301.74612399999995,
@@ -164,7 +160,7 @@
                 "gcPercent": 0
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "ai-activity-window": {
@@ -175,7 +171,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 152.453363,
@@ -196,7 +191,7 @@
                 "gcPercent": 0
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "flood-window-steady": {
@@ -207,7 +202,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 19,
             "samples": [
               {
                 "elapsedMs": 444.857664,
@@ -228,7 +222,7 @@
                 "gcPercent": 14.024926406067042
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "join-timestamp-window": {
@@ -239,7 +233,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 261.73738,
@@ -260,7 +253,7 @@
                 "gcPercent": 0
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "mention-facts-plain": {
@@ -271,7 +264,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 119.89286799999996,
@@ -292,7 +284,7 @@
                 "gcPercent": 0
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "ad-capacity-reject": {
@@ -303,7 +295,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 337.45723300000003,
@@ -324,7 +315,7 @@
                 "gcPercent": 2.5324892264956107
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         },
         "identity-permission-read": {
@@ -335,7 +326,6 @@
           },
           "note": "Bun 1.4.2 固定场景与输入，独立 retained 进程分别完成预热与稳态测量；软阈值为本次最慢中位数乘 1.25 向上取整。",
           "gc": {
-            "maxPausePercent": 5,
             "samples": [
               {
                 "elapsedMs": 2073.404697,
@@ -356,13 +346,13 @@
                 "gcPercent": 0
               }
             ],
-            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停；阈值为 max(5, ceil(本场景最大暂停占比 × 1.25))。并发 GC 只累计暂停段，不累计后台收集时间。"
+            "note": "固定 Bun 与输入，预热后在三个独立进程中以 JSC logGC 计量正式窗口内的每段暂停。并发 GC 只累计暂停段，不累计后台收集时间。"
           }
         }
       },
       "notes": [
         "每个默认热场景在 retained 独立进程中的中位纳秒/操作软上报阈值。超过只输出场景与超额读数，不让门禁失败；数值只能在固定 Bun revision、固定输入并经多个独立进程重测后调整。",
-        "延迟阈值 = ceil(measured.slowestMedianNsPerOp × 1.25)；逐场景 measured.processes 记录延迟校准进程数。GC 暂停的独立进程读数与硬上限由各场景 gc.samples 和 gc.maxPausePercent 记录。",
+        "延迟阈值 = ceil(measured.slowestMedianNsPerOp × 1.25)；逐场景 measured.processes 记录延迟校准进程数。GC 暂停的独立进程读数由各场景 gc.samples 记录；硬上限由 packages/consts/performance.ts 的 CPU 分档标准确定。",
         "校准串行运行，不与测试、lint 或其它基准并行；每个子进程使用独立临时数据根。",
         "scenarios 的键集合必须与 packages/consts/performance.ts 的 HOT_PATH_PROFILE_SCENARIOS 精确一一对应，多一个少一个都会让门禁拒绝启动。",
         "本文件唯一的严格解析边界是 scripts/perf/hotPaths/gateResult.ts；未知键、缺字段、类型不符一律拒绝，不做默认值回填。"

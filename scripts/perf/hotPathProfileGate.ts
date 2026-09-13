@@ -6,6 +6,7 @@
  */
 
 import { join } from "node:path";
+import { availableParallelism } from "node:os";
 import {
   HOT_PATH_PROFILE_REPEATS,
   HOT_PATH_PROFILE_SCENARIOS,
@@ -13,6 +14,7 @@ import {
 import {
   assertHotPathMedianPolicyCoverage,
   createHotPathMedianLatencyReport,
+  selectHotPathGcPausePercentLimit,
 } from "./hotPaths/gateLimits";
 import type { HotPathMedianLatencyReport } from "./hotPaths/gateLimits";
 import {
@@ -65,6 +67,8 @@ if (runtimeProblems.length > 0) throw new Error(runtimeProblems.join("\n"));
 const calibration: HotPathGateCalibration = await readHotPathGateCalibration(
   PERFORMANCE_RESULT_PATH
 );
+const availableCpuCount: number = availableParallelism();
+const maxGcPausePercent: number = selectHotPathGcPausePercentLimit(availableCpuCount);
 const shouldWriteResult: boolean = Bun.argv.includes("--write-result");
 const gateFixture: HotPathGateFixture = await createHotPathGateFixture();
 let gateFixturePresent: boolean = true;
@@ -105,6 +109,7 @@ for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
       measurementMode: "steadyProfile",
       fixture: gateFixture,
       calibration,
+      maxGcPausePercent,
     });
     const retainedRun: ChildProfileResult = await runHotPathGateChild({
       projectRoot,
@@ -112,6 +117,7 @@ for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
       measurementMode: "retained",
       fixture: gateFixture,
       calibration,
+      maxGcPausePercent,
     });
     expectedBunVersion ??= profileRun.bunVersion;
     expectedBunRevision ??= profileRun.bunRevision;
@@ -212,8 +218,9 @@ const lastRun: Readonly<Record<string, unknown>> = {
   recordedAt: new Date().toISOString(),
   bunVersion: expectedBunVersion,
   bunRevision: expectedBunRevision,
+  availableCpuCount,
   thresholds: {
-    maxGcPausePercentByScenario: calibration.gcPausePercentLimits,
+    maxGcPausePercent,
     maxSampledRssBytes: calibration.limits.maxRssBytes,
     maxProcessPeakRssBytes: calibration.limits.maxRssBytes,
     maxSampledHeapUsedGrowthBytes: calibration.limits.maxSampledHeapGrowthBytes,

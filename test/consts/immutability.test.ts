@@ -1,6 +1,17 @@
 import { TRANSLATE_TARGET_TEXTS, TRANSLATE_TOGGLE_TEXTS, TRANSLATE_LANGUAGE_CODES, TRANSLATE_LANGUAGE_LABELS } from "../../packages/consts/translate";
 import { expect, test } from "bun:test";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../packages/consts/diskIO/common";
+import { HOT_PATH_GC_CPU_BUDGETS } from "../../packages/consts/performance";
+
+function assertGcCpuBudgetsReadonly(): void {
+  // @ts-expect-error CPU 分档表不允许调用方增删规则。
+  HOT_PATH_GC_CPU_BUDGETS.push({ minCpuCount: 1, maxPausePercent: 100 });
+  // @ts-expect-error 每档 GC 暂停预算在编译期只读。
+  HOT_PATH_GC_CPU_BUDGETS[0]!.maxPausePercent = 100;
+  // @ts-expect-error 每档 CPU 下界在编译期只读。
+  HOT_PATH_GC_CPU_BUDGETS[0]!.minCpuCount = 1;
+}
+void assertGcCpuBudgetsReadonly;
 
 function assertTranslateConstantsReadonly(): void {
   // @ts-expect-error 翻译方向代码表由常量模块持有。

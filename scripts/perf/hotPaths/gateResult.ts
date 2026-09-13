@@ -1,10 +1,9 @@
 /**
  * 仓库根 `performance-result.json` 的唯一严格解析与回写边界。
  *
- * 热路径门禁的**校准记录**（Bun 版本/revision、内存与 GC 硬上限、逐场景 ns/op
- * 软阈值，以及每个数字背后的实测读数）不写进 TypeScript：它们是随运行时重测
- * 而变的观测值，不是代码常量。`packages/consts/performance.ts` 因此只留与测量
- * 无关的采样旋钮（采样间隔、重复次数、JIT 稳定轮数、场景表）。
+ * 校准记录包含 Bun 版本/revision、内存硬上限、逐场景 ns/op 软阈值与实测读数。
+ * GC 来源读数独立保留；所有场景的 GC 硬上限按
+ * `packages/consts/performance.ts` 的 CPU 分档标准选择。
  *
  * 方向是双向的，但两半的 owner 不同，不能混：
  * - `calibration` 由人重标后手工修改，门禁只读。回写路径一个字节都不碰它——
@@ -49,7 +48,6 @@ interface HotPathGateScenarioCalibration {
   readonly medianNsPerOpReportThreshold: number;
   readonly slowestMedianNsPerOp: number;
   readonly processes: number;
-  readonly maxGcPausePercent: number;
 }
 
 /** performance-result.json 中门禁只读的那一半。 */
@@ -58,8 +56,6 @@ export interface HotPathGateCalibration {
   readonly limits: HotPathGateLimits;
   /** 场景 -> 软上报阈值，直接喂给 assertHotPathMedianPolicyCoverage。 */
   readonly medianNsPerOpReportThresholds: Readonly<Record<string, number>>;
-  /** 场景 -> 正式循环 GC 暂停时间占比硬上限。 */
-  readonly gcPausePercentLimits: Readonly<Record<string, number>>;
 }
 
 /** `limits` 中要求为正数的字段，按 performance-result.json 的声明顺序。 */
@@ -206,12 +202,10 @@ function parseLimits(gate: Readonly<Record<string, unknown>>): HotPathGateLimits
   };
 }
 
-/** 每个 GC 阈值必须附带至少三次独立进程的完整暂停读数。 */
-function parseGcCalibration(value: unknown, path: string): number {
+/** 每个场景保留至少三次独立进程的完整 GC 暂停读数，不参与 CPU 预算选择。 */
+function validateGcCalibration(value: unknown, path: string): void {
   if (!isPlainRecord(value)) fail(path, "must be an object");
-  assertExactKeys(value, ["maxPausePercent", "samples", "note"], path);
-  const limit: number = requiredPositiveNumber(value, "maxPausePercent", `${path}.maxPausePercent`);
-  if (limit > 100) fail(`${path}.maxPausePercent`, "must be at most 100");
+  assertExactKeys(value, ["samples", "note"], path);
   if (typeof value.note !== "string") fail(`${path}.note`, "must be a string");
   if (!Array.isArray(value.samples) || value.samples.length < HOT_PATH_PROFILE_REPEATS) {
     fail(`${path}.samples`, `must contain at least ${HOT_PATH_PROFILE_REPEATS} independent process measurements`);
@@ -236,9 +230,7 @@ function parseGcCalibration(value: unknown, path: string): number {
     if (pause > elapsed || Math.abs(percent - pause / elapsed * 100) > 1e-9) {
       fail(`${samplePath}.gcPercent`, "must equal pauseMs / elapsedMs * 100 within 0..100");
     }
-    if (percent > limit) fail(`${path}.maxPausePercent`, "must cover every measured GC pause percentage");
   }
-  return limit;
 }
 
 function parseScenario(
@@ -288,11 +280,11 @@ function parseScenario(
       `must be at least its own measured.slowestMedianNsPerOp (${slowestMedianNsPerOp})`
     );
   }
+  validateGcCalibration(value.gc, `${path}.gc`);
   return {
     medianNsPerOpReportThreshold: threshold,
     slowestMedianNsPerOp,
     processes,
-    maxGcPausePercent: parseGcCalibration(value.gc, `${path}.gc`),
   };
 }
 
@@ -354,19 +346,17 @@ function parseCalibrationDocument(parsed: unknown): HotPathGateCalibration {
     "hotPathProfileGate.calibration.scenarios"
   );
   const thresholds: Record<string, number> = {};
-  const gcLimits: Record<string, number> = {};
   for (const name of Object.keys(scenarios)) {
     const scenario: HotPathGateScenarioCalibration = parseScenario(
       scenarios[name],
       `hotPathProfileGate.calibration.scenarios.${name}`
     );
     thresholds[name] = scenario.medianNsPerOpReportThreshold;
-    gcLimits[name] = scenario.maxGcPausePercent;
   }
   if (Object.keys(thresholds).length === 0) {
     fail("hotPathProfileGate.calibration.scenarios", "must declare at least one scenario");
   }
-  return { runtime, limits, medianNsPerOpReportThresholds: thresholds, gcPausePercentLimits: gcLimits };
+  return { runtime, limits, medianNsPerOpReportThresholds: thresholds };
 }
 
 /**

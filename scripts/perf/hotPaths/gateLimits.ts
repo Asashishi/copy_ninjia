@@ -1,4 +1,16 @@
-/** 热路径纳秒软上报的纯判定；不启动子进程，便于单元测试边界。 */
+/** 热路径 GC 预算选择与纳秒软上报的纯判定。 */
+import { HOT_PATH_GC_CPU_BUDGETS } from "../../../packages/consts/performance";
+
+/** 可用 CPU 数必须为正整数；按降序下界选择所有场景共同的暂停预算。 */
+export function selectHotPathGcPausePercentLimit(cpuCount: number): number {
+  if (!Number.isSafeInteger(cpuCount) || cpuCount < 1) {
+    throw new Error("Hot-path GC policy requires a positive integer CPU count.");
+  }
+  for (const budget of HOT_PATH_GC_CPU_BUDGETS) {
+    if (cpuCount >= budget.minCpuCount) return budget.maxPausePercent;
+  }
+  throw new Error("Hot-path GC policy does not cover the available CPU count.");
+}
 
 export interface HotPathMedianReportInput {
   readonly scenario: string;

@@ -62,7 +62,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**4180 tests / 370 files / 156432 次 `expect()`**；全源码**函数覆盖率 97.56% / 行覆盖率 97.76%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**4190 tests / 370 files / 156432 次 `expect()`**；全源码**函数覆盖率 97.56% / 行覆盖率 97.76%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -95,9 +95,9 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 `bun run perf:hot-path-gate` 是 `bun run check` 的最后一段，合入 `master` 前必须执行。它按 `packages/consts/performance.ts` 的 `HOT_PATH_PROFILE_SCENARIOS` 逐场景、逐次重复各起两个独立子进程：`steadyProfile` 只判断正式循环的 GC 与 JIT，`retained` 在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC 后留存。
 
-校准记录保存在 [`performance-result.json`](../../performance-result.json)，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。`gateRuntime.ts` 在约定检查和热路径子进程启动前核对 `packageManager`、当前 Bun version/revision 与校准构建；不一致时先重新实测校准。记录保留采样进程数、逐场景延迟来源和 GC/RSS/留存硬上限。历史 `fullSuite` 全量读数保留各自的运行时间和 Bun 构建。
+校准记录保存在 [`performance-result.json`](../../performance-result.json)，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。`gateRuntime.ts` 在约定检查和热路径子进程启动前核对 `packageManager`、当前 Bun version/revision 与校准构建；不一致时先重新实测校准。记录保留采样进程数、逐场景延迟与 GC 暂停来源读数，以及 RSS/留存硬上限。历史 `fullSuite` 全量读数保留各自的运行时间和 Bun 构建。
 
-`steadyProfile` 子进程显式启用 `BUN_JSC_logGC=1`；`hotPaths/gcProfile.ts` 只累加正式循环边界内 JSC 日志的 `p=…ms` 暂停段，除以同窗口单调耗时，得到 GC 暂停时间占比。JSC 启动握手、唯一完整窗口和暂停格式必须匹配，缺失或未知格式即失败；无暂停只在完整有效日志下记为 0。JIT 层级仍由采样 profiler 统计。`retained` 的强制 GC 在计时边界外，不参与该比例。校准逐场景保存至少三轮独立进程的暂停数据与 `maxPausePercent` 上限；当前媒体直达为 29%、刷屏滑窗为 19%，其余门禁场景为 5%，每个上限覆盖校准最大值。
+`steadyProfile` 子进程显式启用 `BUN_JSC_logGC=1`；`hotPaths/gcProfile.ts` 只累加正式循环边界内 JSC 日志的 `p=…ms` 暂停段，除以同窗口单调耗时，得到 GC 暂停时间占比。JSC 启动握手、唯一完整窗口和暂停格式必须匹配，缺失或未知格式即失败；无暂停只在完整有效日志下记为 0。JIT 层级仍由采样 profiler 统计。`retained` 的强制 GC 在计时边界外，不参与该比例。校准逐场景保存至少三轮独立进程的暂停数据。GC 暂停占比上限统一按进程可用 CPU 数分档：4 核及以上 25%，2～3 核 30%，单核 35%；等于上限时通过，超过时失败。标准由 `packages/consts/performance.ts` 的 `HOT_PATH_GC_CPU_BUDGETS` 定义，门禁启动时通过 `node:os.availableParallelism()` 读取可用并行度并选择本次预算；Linux CPU 亲和性限制参与该读数。输出中的 `availableCpuCount` 与 `thresholds.maxGcPausePercent` 记录本次使用的 CPU 数和统一上限。
 
 `perf:isolated-hot-path --profile` 与 `perf:review` 的 profile 输出用于 JIT 和采样诊断，不提供 GC 暂停比例。需要 GC 读数时运行 `perf:hot-path-gate`；`perf:disk-transport` 同样由父进程解析 GC 日志，逐轮返回独立的 `gcProfile`。
 

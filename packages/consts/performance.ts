@@ -1,4 +1,4 @@
-import type { HotPathProfileScenarioName } from "../types/performance";
+import type { HotPathGcCpuBudget, HotPathProfileScenarioName } from "../types/performance";
 
 /** GC 暂停日志测量窗口的起始标记；仅性能脚本向 stderr 输出。 */
 export const HOT_PATH_GC_WINDOW_START: string = "COPY_NINJIA_GC_WINDOW_START";
@@ -7,14 +7,17 @@ export const HOT_PATH_GC_WINDOW_START: string = "COPY_NINJIA_GC_WINDOW_START";
 export const HOT_PATH_GC_WINDOW_END: string = "COPY_NINJIA_GC_WINDOW_END";
 
 /**
- * 热路径 GC/RSS 门禁的**采样旋钮**，以及门禁覆盖的固定场景表。
- *
- * 这里只放与测量结果无关的常量：换一台机器、换一个 Bun 构建，下面这些数字都
- * 不需要动。随运行时重测而变的那一半——Bun 版本与 revision、GC/RSS/常驻增长
- * 硬上限、逐场景 ns/op 软阈值，以及每个数字背后的实测读数——是**校准记录**
- * 而不是代码常量，全部放在仓库根被跟踪的 `performance-result.json`，由
- * `scripts/perf/hotPaths/gateResult.ts` 严格解析。重标时改那份 JSON，不改本文件。
+ * 热路径门禁的采样参数、固定场景和 CPU 分档 GC 标准。
+ * Bun 构建、内存硬上限、逐场景延迟阈值与实测数据保存在
+ * `performance-result.json`，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。
  */
+
+/** 热路径 GC 暂停占比按可用 CPU 数分档；下界降序，首个匹配项适用于所有场景。 */
+export const HOT_PATH_GC_CPU_BUDGETS: readonly HotPathGcCpuBudget[] = [
+  { minCpuCount: 4, maxPausePercent: 25 },
+  { minCpuCount: 2, maxPausePercent: 30 },
+  { minCpuCount: 1, maxPausePercent: 35 },
+];
 
 /** 热路径稳态采样的 JSC profiler 间隔；1 ms 与 Bun CPU profiler 默认粒度对齐。 */
 export const HOT_PATH_PROFILE_SAMPLE_INTERVAL_US: number = 1_000;

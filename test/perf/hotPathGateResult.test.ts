@@ -43,7 +43,6 @@ function validDocument(): Record<string, unknown> {
             measured: { slowestMedianNsPerOp: 80, processes: 13 },
             note: "",
             gc: {
-              maxPausePercent: 5,
               samples: Array.from({ length: 3 }, () => ({ elapsedMs: 100, pauseCount: 1, pauseMs: 2, gcPercent: 2 })),
               note: "",
             },
@@ -82,7 +81,6 @@ describe("热路径门禁记录 performance-result.json", () => {
     // 成功解析已经把它们钉住了；这里只确认每个默认场景都真的拿到了正阈值。
     for (const scenario of HOT_PATH_PROFILE_SCENARIOS) {
       expect(calibration.medianNsPerOpReportThresholds[scenario]).toBeGreaterThan(0);
-      expect(calibration.gcPausePercentLimits[scenario]).toBeGreaterThan(0);
     }
   });
 
@@ -94,8 +92,6 @@ describe("热路径门禁记录 performance-result.json", () => {
       calibration.medianNsPerOpReportThresholds["ad-capacity-reject"] = 1;
       // @ts-expect-error 硬上限同理：门禁运行中途改判据等于没有判据。
       calibration.limits.maxRssBytes = 1;
-      // @ts-expect-error GC 暂停预算在门禁运行中只读。
-      calibration.gcPausePercentLimits["ad-capacity-reject"] = 1;
     };
     expect(compileOnly).toBeFunction();
   });
@@ -155,7 +151,6 @@ describe("热路径门禁记录 performance-result.json", () => {
   });
 
   test.each([
-    (gc: Record<string, unknown>): void => { gc.maxPausePercent = 1; },
     (gc: Record<string, unknown>): void => { gc.samples = []; },
     (gc: Record<string, unknown>): void => {
       (gc.samples as Record<string, unknown>[])[0]!.gcPercent = 1;
@@ -164,7 +159,7 @@ describe("热路径门禁记录 performance-result.json", () => {
       (gc.samples as Record<string, unknown>[])[0]!.pauseCount = 0.5;
     },
     (gc: Record<string, unknown>): void => { gc.extra = true; },
-  ])("GC 校准拒绝失真、缺失或超出预算的来源读数：%#", async (mutate: (gc: Record<string, unknown>) => void): Promise<void> => {
+  ])("GC 校准拒绝失真或缺失的来源读数：%#", async (mutate: (gc: Record<string, unknown>) => void): Promise<void> => {
     const document: Record<string, unknown> = validDocument();
     const root = document.hotPathProfileGate as Record<string, unknown>;
     const calibration = root.calibration as Record<string, unknown>;

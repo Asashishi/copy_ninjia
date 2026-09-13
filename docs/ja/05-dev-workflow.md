@@ -62,7 +62,7 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**4180 tests / 370 files / 156432 `expect()` calls**。全ソースコードの**関数カバレッジは 97.56%、行カバレッジは 97.76%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**4190 tests / 370 files / 156432 `expect()` calls**。全ソースコードの**関数カバレッジは 97.56%、行カバレッジは 97.76%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -95,9 +95,9 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 
 `bun run perf:hot-path-gate` は `bun run check` の最終段で、`master` へのマージ前に実行する必要があります。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` の各シナリオ・各繰り返しごとに独立した子プロセスを 2 つ起動します。`steadyProfile` は正式ループの GC と JIT だけを判定し、`retained` は profiler 自身のメモリ干渉がない状態で RSS、heapUsed のピーク、full GC 後の残存を判定します。
 
-校準記録を [`performance-result.json`](../../performance-result.json) に保存し、`scripts/perf/hotPaths/gateResult.ts` が厳密に解析します。`gateRuntime.ts` は規約検査と hot-path 子 process の開始前に `packageManager`、現在の Bun version/revision、校準 build を照合し、不一致なら再測定を要求します。記録には process 数、各場面の遅延測定値、GC/RSS/保持量の hard limit を含みます。過去の `fullSuite` 結果は各回の時刻と Bun build を維持します。
+校準記録を [`performance-result.json`](../../performance-result.json) に保存し、`scripts/perf/hotPaths/gateResult.ts` が厳密に解析します。`gateRuntime.ts` は規約検査と hot-path 子 process の開始前に `packageManager`、現在の Bun version/revision、校準 build を照合し、不一致なら再測定を要求します。記録には process 数、各場面の遅延と GC 停止の測定値、RSS/保持量の hard limit を含みます。過去の `fullSuite` 結果は各回の時刻と Bun build を維持します。
 
-`steadyProfile` 子プロセスは `BUN_JSC_logGC=1` を明示的に有効化します。`hotPaths/gcProfile.ts` は正式ループの境界内にある JSC の `p=…ms` 停止区間だけを合計し、同じ窓の単調経過時間で割って GC 停止時間比率を得ます。起動 handshake、唯一の完全な窓、停止ログ形式の一致が必須で、欠落・未知形式は失敗です。完全な有効ログで停止がなかった場合だけ 0 を記録します。JIT 層は sampling profiler で集計します。`retained` の強制 GC は計時境界外で、この比率には含めません。シナリオ別 calibration は最低 3 個の独立プロセスの停止データと `maxPausePercent` を保存します。現在の上限は媒体直接発火 29%、flood window 19%、その他の gate シナリオ 5% で、各上限は calibration 最大値を覆います。
+`steadyProfile` 子プロセスは `BUN_JSC_logGC=1` を明示的に有効化します。`hotPaths/gcProfile.ts` は正式ループの境界内にある JSC の `p=…ms` 停止区間だけを合計し、同じ窓の単調経過時間で割って GC 停止時間比率を得ます。起動 handshake、唯一の完全な窓、停止ログ形式の一致が必須で、欠落・未知形式は失敗です。完全な有効ログで停止がなかった場合だけ 0 を記録します。JIT 層は sampling profiler で集計します。`retained` の強制 GC は計時境界外で、この比率には含めません。シナリオ別 calibration は最低 3 個の独立プロセスの停止データを保存します。GC 停止時間比率の上限は、プロセスが利用可能な CPU 数に応じて全シナリオ共通で適用します。4 コア以上は 25%、2～3 コアは 30%、1 コアは 35% です。上限と同じ値は合格し、上限を超えると失敗します。基準は `packages/consts/performance.ts` の `HOT_PATH_GC_CPU_BUDGETS` で定義します。ゲート起動時に `node:os.availableParallelism()` から利用可能な並列度を取得して上限を選び、Linux の CPU affinity 制限もこの値に反映されます。出力の `availableCpuCount` と `thresholds.maxGcPausePercent` に、今回の CPU 数と共通上限を記録します。
 
 `perf:isolated-hot-path --profile` と `perf:review` の profile 出力は JIT・sampling 診断用で、GC 停止比率は提供しません。GC 計測には `perf:hot-path-gate` を使います。`perf:disk-transport` も親プロセスで GC ログを解析し、各ラウンドに独立した `gcProfile` を返します。
 
