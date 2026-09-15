@@ -1,7 +1,7 @@
 /**
- * `/gag` 三个用例文件（参数渲染、状态机、消息与 inline 入口）共用的替身与工厂。
+ * `/gag` 参数渲染、状态机、消息与 inline 入口及定时刷新的替身与工厂。
  *
- * mock.module 装配、会话工厂与隔离钩子由三份用例共用，各文件只保留领域断言。
+ * mock.module 装配、会话工厂与隔离钩子由各用例文件共用，各文件只保留领域断言。
  * 每个文件都要在顶层调用一次 installGagTestHooks()。
  */
 
@@ -209,6 +209,7 @@ export function createSession({
     speakNoticeThreadId,
     messagesSinceSpeakNotice,
     speakNoticeRefreshTask: null,
+    speakNoticeRefreshTimer: null,
     noticePending: false,
     timer: null,
     cleanupRetryIndex: 0,
@@ -271,8 +272,10 @@ export function resetGagTestState(): void {
     for (const session of sessions) {
       if (session.timer !== null) clearTimeout(session.timer);
       if (session.cleanupTimer !== null) clearTimeout(session.cleanupTimer);
+      if (session.speakNoticeRefreshTimer !== null) clearTimeout(session.speakNoticeRefreshTimer);
       session.timer = null;
       session.cleanupTimer = null;
+      session.speakNoticeRefreshTimer = null;
     }
   }
   gagSessionsByChat.clear();
@@ -282,7 +285,7 @@ export function resetGagTestState(): void {
 }
 
 /**
- * 三个 gag 用例文件共用的隔离钩子。拆文件之后每份都必须重新登记，否则会话表、
+ * gag 用例文件共用的隔离钩子。每份都必须登记，否则会话表、
  * Date.now 替身与 mock 实现会跨用例泄漏。
  */
 export function installGagTestHooks(): void {

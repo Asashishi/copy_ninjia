@@ -3,7 +3,7 @@ import type { GagSession } from "../../types/gag";
 
 /**
  * 给本群所有未到期的活动入口原地计数，并只在命中阈值时返回待换新列表。
- * 常态不分配数组；调用方完成 Telegram 换新后负责把对应计数归零。
+ * 常态及已有换新在途时不分配数组；调用方完成换新后负责把对应计数归零。
  */
 export function collectDueGagSpeakNotices(
   sessions: readonly GagSession[],
@@ -21,7 +21,8 @@ export function collectDueGagSpeakNotices(
     ) session.messagesSinceSpeakNotice++;
     if (
       session.messagesSinceSpeakNotice ===
-      GAG_SPEAK_NOTICE_MESSAGE_INTERVAL
+      GAG_SPEAK_NOTICE_MESSAGE_INTERVAL &&
+      session.speakNoticeRefreshTask === null
     ) {
       due ??= [];
       due.push(session);

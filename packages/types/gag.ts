@@ -51,7 +51,7 @@ export interface GagSession {
    * 被管教的人换个话题说话时，入口必须跟着搬过去，否则他在话题 B 被删消息、
    * 按钮却留在话题 A，等于被封了口还找不到说话的地方。搬家复用换新那套
    * current/pending/retired 槽位：先在新话题发一条，再删旧的（见
-   * commands/gag/inline.ts 的 replaceGagSpeakNotice）。本字段只在发送成功后
+   * commands/gag/refresh.ts 的 replaceGagSpeakNotice）。本字段只在发送成功后
    * 更新，因此它永远指向「群里现在真的挂着按钮的那个话题」，判定是否需要搬家
    * 就拿它和来消息的话题比。删除不需要话题，故 pending/retired 只存 id。
    */
@@ -60,6 +60,8 @@ export interface GagSession {
   messagesSinceSpeakNotice: number;
   /** 唯一的入口换新任务；结束状态必须等它交出在途 message id。 */
   speakNoticeRefreshTask: Promise<void> | null;
+  /** 用户专属入口的定时换新；starting/ending、频道及换新在途时为 null，不阻止退出。 */
+  speakNoticeRefreshTimer: ReturnType<typeof setTimeout> | null;
   /** 全部开始提示的发送流程是否尚未结算；ending 必须等它交出所有 message id。 */
   noticePending: boolean;
   /** 到期 timer；starting/ending 时为 null，且 active timer 不阻止进程退出。 */

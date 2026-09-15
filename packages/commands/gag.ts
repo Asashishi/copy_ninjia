@@ -32,10 +32,10 @@ import {
 } from "./gag/rendering";
 import { createGagTargetProfileUrl } from "./gag/identity";
 import { sendGagSpeakNotice } from "./gag/notices";
+import { findGagSession } from "./gag/owner";
 import {
   commitGagNotices,
   failGagNotice,
-  findGagSession,
   finishGag,
   recordGagPublicNotice,
   recordGagSpeakNotice,
@@ -115,10 +115,11 @@ function createGagReservation(
     pendingSpeakNoticeMessageId: 0,
     retiredSpeakNoticeMessageId: 0,
     // 入口从下命令的那个话题起步；随后被管教的人换话题说话时再搬家
-    // （见 commands/gag/inline.ts 的 moveGagSpeakNotice）。
+    // （见 commands/gag/refresh.ts 的 moveGagSpeakNotice）。
     speakNoticeThreadId: forumTopicThreadId(ctx.msg),
     messagesSinceSpeakNotice: 0,
     speakNoticeRefreshTask: null,
+    speakNoticeRefreshTimer: null,
     noticePending: true,
     timer: null,
     cleanupRetryIndex: 0,

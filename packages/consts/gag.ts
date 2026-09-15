@@ -35,7 +35,10 @@ export const GAG_INLINE_QUERY_MAX_CHARS: number = 256;
 export const GAG_INLINE_SPEAK_BUTTON_TEXT: string = "发言";
 
 /** 每个发言入口在本群经过多少条新消息后滚动换新；各会话独立计数。 */
-export const GAG_SPEAK_NOTICE_MESSAGE_INTERVAL: number = 15;
+export const GAG_SPEAK_NOTICE_MESSAGE_INTERVAL: number = 7;
+
+/** gag 用户专属入口的定时换新间隔；仅在有效会话内补发，不依赖群消息计数。 */
+export const GAG_SPEAK_NOTICE_REFRESH_INTERVAL_MS: number = 30_000;
 
 /**
  * gag 查询的唯一协议前缀；其后 scope 只能是目标 Telegram ID。

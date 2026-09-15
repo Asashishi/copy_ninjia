@@ -36,171 +36,23 @@ import {
   renderGagSpeech,
 } from "./rendering";
 import {
-  deleteGagSpeakNotice,
-  sendGagSpeakNotice,
-} from "./notices";
+  moveGagSpeakNotice,
+  refreshDueGagSpeakNotices,
+} from "./refresh";
 import { collectDueGagSpeakNotices } from "./counter";
 import {
   expireGag,
-  findGagSession,
   finishGag,
-  trackGagBackgroundTask,
 } from "./runtime";
 import {
   createGagInlineMarkerUrl,
   isGagInlineMarkerUrl,
 } from "./identity";
 
-/** deleted/gone 都表示该入口不再可见，可以安全释放其唯一 id 槽位。 */
-function gagNoticeDeletionFinished(
-  outcome: Awaited<ReturnType<typeof deleteGagSpeakNotice>>
-): boolean {
-  return outcome === "deleted" || outcome === "gone";
-}
-
 /** 只把纯文本或带 caption 的媒体视作 gag 应删除的文字消息。 */
 function hasGagDeletableText(message: Message): boolean {
   return typeof message.text === "string" ||
     typeof message.caption === "string";
-}
-
-/** 删除上一次换新遗留的旧入口；失败时保留固定单槽位，禁止继续堆新入口。 */
-async function retryRetiredGagSpeakNotice(
-  session: GagSession
-): Promise<boolean> {
-  const retiredId: number = session.retiredSpeakNoticeMessageId;
-  if (retiredId === 0) return true;
-  const outcome: Awaited<ReturnType<typeof deleteGagSpeakNotice>> =
-    await deleteGagSpeakNotice(session, retiredId);
-  const finished: boolean = gagNoticeDeletionFinished(outcome);
-  if (
-    finished &&
-    session.retiredSpeakNoticeMessageId === retiredId
-  ) session.retiredSpeakNoticeMessageId = 0;
-  return finished;
-}
-
-/**
- * 发出本会话的新入口，再原子切换 current/pending/retired 三个固定槽位，最后
- * 删除旧入口。onSent 必须先写 pending：停机 abort 即使带走返回值，ending 仍
- * 能按精确目标身份回收远端已经建立的入口。
- *
- * `targetThreadId` 就是这条新入口要落进的话题：按消息数滚动换新时传当前话题
- * （原地换一条更靠下的），被管教的人换话题说话时传新话题（搬家）。两者是同一
- * 套「发新的 → 切槽位 → 删旧的」，因此不另写一条发送/删除路径。
- * `speakNoticeThreadId` 只在切槽位那一步更新，发送失败时仍指向旧话题，下一条
- * 消息还会再判一次要不要搬家。
- */
-async function replaceGagSpeakNotice(
-  session: GagSession,
-  targetThreadId: number | undefined
-): Promise<void> {
-  if (
-    findGagSession(session.chatId, session.targetId) !== session ||
-    session.phase !== "active"
-  ) return;
-  const recordPending = (noticeMessageId: number): void => {
-    session.pendingSpeakNoticeMessageId = noticeMessageId;
-  };
-  const noticeMessageId: number | undefined = await sendGagSpeakNotice({
-    session,
-    messageThreadId: targetThreadId,
-    onSent: recordPending,
-  });
-  if (noticeMessageId === undefined) {
-    // API 失败已经由统一 Telegram 边界记录；隔 15 条消息再试，避免每条消息
-    // 都打一次失败请求。
-    session.messagesSinceSpeakNotice = 0;
-    return;
-  }
-  session.pendingSpeakNoticeMessageId = noticeMessageId;
-  if (
-    findGagSession(session.chatId, session.targetId) !== session ||
-    session.phase !== "active"
-  ) return;
-  const previousNoticeMessageId: number = session.speakNoticeMessageId;
-  session.speakNoticeMessageId = noticeMessageId;
-  session.speakNoticeThreadId = targetThreadId;
-  session.pendingSpeakNoticeMessageId = 0;
-  session.retiredSpeakNoticeMessageId =
-    previousNoticeMessageId === noticeMessageId
-      ? 0
-      : previousNoticeMessageId;
-  session.messagesSinceSpeakNotice = 0;
-  if (session.retiredSpeakNoticeMessageId === 0) return;
-  await retryRetiredGagSpeakNotice(session);
-}
-
-/**
- * 同一会话只允许一条换新任务；timer/teardown 可通过字段等待并接管所有 id。
- *
- * 已有任务在途时直接复用它，不排队第二条：那条在途任务可能发往旧话题，于是
- * `speakNoticeThreadId` 仍与来消息的话题对不上，被管教的人下一条消息会再触发
- * 一次搬家。这条自愈路径成立的前提就是「他还在那个话题里说话」——不说话也就
- * 不需要按钮跟过去。
- */
-async function refreshGagSpeakNotice(
-  session: GagSession,
-  targetThreadId: number | undefined
-): Promise<void> {
-  const existing: Promise<void> | null = session.speakNoticeRefreshTask;
-  if (existing !== null) return existing;
-  const task: Promise<void> = replaceGagSpeakNotice(session, targetThreadId);
-  session.speakNoticeRefreshTask = task;
-  try {
-    await task;
-  } finally {
-    if (session.speakNoticeRefreshTask === task) {
-      session.speakNoticeRefreshTask = null;
-    }
-  }
-}
-
-/**
- * 被管教的人在别的话题说话：把发言入口搬到那个话题，并删掉原话题里的旧入口。
- *
- * 与滚动换新共用 replaceGagSpeakNotice，因此 retired 槽位、单条在途任务与
- * ending 的接管语义全部沿用，不新增状态。搬家前先把上一次换新遗留的 retired
- * 清掉，理由同 refreshDueGagSpeakNotices：单槽位放不下第二条。
- */
-async function moveGagSpeakNotice(
-  session: GagSession,
-  targetThreadId: number | undefined
-): Promise<void> {
-  if (
-    findGagSession(session.chatId, session.targetId) !== session ||
-    session.phase !== "active" ||
-    session.expiresAt <= Date.now() ||
-    session.speakNoticeThreadId === targetThreadId
-  ) return;
-  if (
-    session.retiredSpeakNoticeMessageId !== 0 &&
-    !await retryRetiredGagSpeakNotice(session)
-  ) return;
-  await refreshGagSpeakNotice(session, targetThreadId);
-}
-
-/** 只处理已经命中阈值的会话；常态计数路径不进入 async，避免额外 Promise。 */
-async function refreshDueGagSpeakNotices(
-  due: readonly GagSession[]
-): Promise<void> {
-  for (const session of due) {
-    if (
-      findGagSession(session.chatId, session.targetId) !== session ||
-      session.phase !== "active" ||
-      session.expiresAt <= Date.now()
-    ) continue;
-    if (session.retiredSpeakNoticeMessageId !== 0) {
-      const retiredFinished: boolean =
-        await retryRetiredGagSpeakNotice(session);
-      if (!retiredFinished) {
-        session.messagesSinceSpeakNotice = 0;
-        continue;
-      }
-    }
-    // 滚动换新只是把入口挪到更靠下的位置，话题不变。
-    await refreshGagSpeakNotice(session, session.speakNoticeThreadId);
-  }
 }
 
 /** 当前 bot 消息是否带有用户或频道 gag 隐藏主页标记。 */
@@ -323,10 +175,7 @@ async function claimGagMessage(
     if (threadId !== session.speakNoticeThreadId) {
       // 他换话题说话了：把发言入口搬过去。与滚动换新同一条理由绝不 await——
       // 这条 handler 卡住的是整个进程的所有群（见下面那段长注释）。
-      trackGagBackgroundTask(
-        moveGagSpeakNotice(session, threadId),
-        "Unexpected error while moving a gag speak notice to another topic:"
-      );
+      moveGagSpeakNotice(session, threadId);
     }
   }
   const isGagInlineMessage: boolean = session !== undefined &&
@@ -339,7 +188,7 @@ async function claimGagMessage(
     !isGagInlineMessage &&
     hasDeletableText;
   if (!isDeletedGagTargetMessage) {
-    // 会被 gag 删除的目标消息不进入任何入口的 15 条窗口；通过按钮的发言和
+    // 会被 gag 删除的目标消息不进入任何入口的 7 条窗口；通过按钮的发言和
     // 允许保留的无文字媒体仍是群内可见消息。常态只原地更新定长小数组。
     const due: GagSession[] | null = collectDueGagSpeakNotices(
       sessions,
@@ -352,12 +201,7 @@ async function claimGagMessage(
     // 都不再被处理。交给统一的 gag 后台任务集合，停机由 drainGagRuntime 有界排空。
     // 换新任务自己会重新核对会话仍是当前 active 会话，并由 speakNoticeRefreshTask
     // 保证同一会话只有一条在途。
-    if (due !== null) {
-      trackGagBackgroundTask(
-        refreshDueGagSpeakNotices(due),
-        "Unexpected error while refreshing a gag speak notice:"
-      );
-    }
+    if (due !== null) refreshDueGagSpeakNotices(due);
   }
   const isCandidate: boolean = hasMarker || isGagInlineCandidate(
     message,
