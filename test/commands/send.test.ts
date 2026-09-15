@@ -24,6 +24,7 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
 const chatStates = new Map<number, Record<string, unknown>>();
 const saveStateInBackgroundMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/storage/stateStore", () => ({
+  getChatState: (): Record<string, never> => ({}),
   // 故意按「State 已经管满」建模：真实的 getOrCreateChatState 在 chat_states 已达
   // STATE_MANAGED_CHAT_LIMIT 时，为一个未知群新建状态会抛容量错（见
   // infra/chatStateStorage.ts 的 assertChatStateCapacity）。handleSendCommand 绝不

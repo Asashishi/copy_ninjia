@@ -106,7 +106,7 @@ This page answers “where does this code live, and where should new code go?”
     `workers/diskIO/`, `perThread/`.
 - **`packages/consts/`**
   - **Responsibility**: literal constants, tunable parameters, and user-facing text tables, split by domain.
-  - **Representative files**: `commands.ts`, `whitelist.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
+  - **Representative files**: `atmosphere/{teasing,plain}/`, `commands.ts`, `whitelist.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
 - **`packages/types/`**
   - **Responsibility**: cross-module protocols, domain types, and state-machine contracts under
     `types/states/`.

@@ -43,7 +43,8 @@ mock.module("../../packages/infra/telegram/client", () => ({
   telegramApi: { kind: "guard-api" },
 }));
 mock.module("../../packages/infra/botAdmin", () => ({ resolveBotAdminStatus }));
-mock.module("../../packages/infra/storage/stateStore", () => ({ getChatStateCache: () => chatStates }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
+  getChatState: (): Record<string, never> => ({}), getChatStateCache: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 mock.module("../../packages/infra/diskIO", () => ({
   postDiskIO,

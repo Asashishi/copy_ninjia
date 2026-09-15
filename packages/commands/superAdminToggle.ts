@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { User } from "grammy/types";
 import { logger } from "../infra/logger";
@@ -183,7 +184,7 @@ export async function resolveSuperAdminToggleArg(
   if (!actor || !isAuthorized) {
     await sendCommandMessage({
       chatId,
-      text: texts.rejection(actor ? formatUserLabel(actor) : "哪个杂鱼"),
+      text: texts.rejection(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor),
       replyToMessageId: messageId,
     });
     return undefined;

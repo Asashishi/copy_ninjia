@@ -103,7 +103,7 @@
     `workers/diskIO/`、`perThread/`。
 - **`packages/consts/`**
   - **責務**：リテラル定数、調整値、ユーザーに見える文言テーブルをドメイン別に配置。
-  - **代表的なファイル**：`commands.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
+  - **代表的なファイル**：`atmosphere/{teasing,plain}/`、`commands.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
 - **`packages/types/`**
   - **責務**：モジュール間 protocol、ドメイン型、`types/states/` の状態機械 contract。
   - **代表的なファイル**：`chatState.ts`、`commands.ts`、`lifecycle.ts`、`diskIO.ts`。

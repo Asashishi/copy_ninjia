@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type { SetWhitelistMembershipResult } from "../infra/identityPolicy/whitelist";
@@ -6,7 +7,7 @@ import {
   hasWhitelistPermission,
   setWhitelistMembership,
 } from "../infra/identityPolicy/whitelist";
-import { WHITE_COMMAND_TEXTS } from "../consts/whitelist";
+
 import { commandArgumentTokens } from "./arguments";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
@@ -60,8 +61,8 @@ export async function handleWhiteCommand(
   if (!actorCanWhiteOther) {
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.rejection(
-        actor ? formatUserLabel(actor) : "哪个杂鱼"
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.rejection(
+        actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor
       ),
       replyToMessageId: messageId,
     });
@@ -76,7 +77,7 @@ export async function handleWhiteCommand(
   if (action === undefined) {
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.usage,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.usage,
       replyToMessageId: messageId,
     });
     return;
@@ -84,7 +85,7 @@ export async function handleWhiteCommand(
   if (!actorIsSuperAdmin && action === "disable") {
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.delegatedDisableRejection,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.delegatedDisableRejection,
       replyToMessageId: messageId,
     });
     return;
@@ -100,7 +101,7 @@ export async function handleWhiteCommand(
     acceptChatId: true,
     // 黑名单互斥判定与成员关系写入都读目标的名单结论。
     requireIdentityPolicies: true,
-    messages: WHITE_COMMAND_TEXTS.target,
+    messages: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;
 
@@ -115,7 +116,7 @@ export async function handleWhiteCommand(
   if (target.isChannel === true && target.id === chatId) {
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.currentChatTarget,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.currentChatTarget,
       replyToMessageId: messageId,
     });
     return;
@@ -131,7 +132,7 @@ export async function handleWhiteCommand(
   if (enabled && isSuperAdminTarget) {
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.superAdminEnable,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.superAdminEnable,
       replyToMessageId: messageId,
     });
     return;
@@ -178,7 +179,7 @@ export async function handleWhiteCommand(
     );
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.mutationFailed,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.mutationFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -186,8 +187,8 @@ export async function handleWhiteCommand(
   if (outcome.kind === "unauthorized") {
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.rejection(
-        actor ? formatUserLabel(actor) : "哪个杂鱼"
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.rejection(
+        actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor
       ),
       replyToMessageId: messageId,
     });
@@ -196,13 +197,13 @@ export async function handleWhiteCommand(
   if (outcome.kind === "blocked") {
     await sendCommandMessage({
       chatId,
-      text: WHITE_COMMAND_TEXTS.blocked(formatTargetLabel(target)),
+      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.blocked(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
       replyToMessageId: messageId,
     });
     return;
   }
   const result: SetWhitelistMembershipResult = outcome.result;
-  const targetLabel: string = formatTargetLabel(target);
+  const targetLabel: string = formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0));
   // 超级管理员只可能走到 disable 这一支（enable 上面已经拒了）。它删掉的只是
   // 表里的历史残留：isWhitelisted 与 getEffectiveWhitelistPermissions 对
   // SUPER_ADMIN_USER_ID 是无条件的（见 whitelist.ts），删完再
@@ -210,15 +211,15 @@ export async function handleWhiteCommand(
   // 「已经从白名单里踢出去啦」。
   const replyText: string = isSuperAdminTarget
     ? result.changed
-      ? WHITE_COMMAND_TEXTS.superAdminDisableCleared
-      : WHITE_COMMAND_TEXTS.superAdminDisableNoEntry
+      ? chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.superAdminDisableCleared
+      : chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.superAdminDisableNoEntry
     : enabled
       ? result.changed
-        ? WHITE_COMMAND_TEXTS.enabled(targetLabel)
-        : WHITE_COMMAND_TEXTS.alreadyEnabled(targetLabel)
+        ? chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.enabled(targetLabel)
+        : chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.alreadyEnabled(targetLabel)
       : result.changed
-        ? WHITE_COMMAND_TEXTS.disabled(targetLabel)
-        : WHITE_COMMAND_TEXTS.alreadyDisabled(targetLabel);
+        ? chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.disabled(targetLabel)
+        : chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.alreadyDisabled(targetLabel);
   await sendCommandMessage({
     chatId,
     text: replyText,

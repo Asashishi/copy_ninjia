@@ -35,6 +35,8 @@ export const kickChatKinds: (boolean | undefined)[] = [];
 export const deletedMessageIds: number[] = [];
 export const autoDeleted: { messageId: number; delayMs: number }[] = [];
 export const sentTexts: string[] = [];
+/** 验证按钮应答正文，随每个用例清空。 */
+export const callbackTexts: string[] = [];
 /** 与 sentTexts 同序：每次 sendMessage 带上的按钮行，没带就是 undefined。 */
 export const sentKeyboards: (InlineKeyboardMarkup | undefined)[] = [];
 export const warnings: string[] = [];
@@ -124,7 +126,7 @@ mock.module("../../packages/infra/telegram", () => ({
     return testState.kickSucceeds ? "kicked" : "failed";
   },
   probeChatMembership,
-  answerCallbackQuery: async (): Promise<boolean> => true,
+  answerCallbackQuery: async ({ text }: { text: string }): Promise<boolean> => { callbackTexts.push(text); return true; },
 }));
 
 /**
@@ -285,6 +287,7 @@ export function installVerificationEffectsHooks(injected: VerificationEffectsDep
     deletedMessageIds.length = 0;
     autoDeleted.length = 0;
     sentTexts.length = 0;
+    callbackTexts.length = 0;
     sentKeyboards.length = 0;
     warnings.length = 0;
     loggedErrors.length = 0;

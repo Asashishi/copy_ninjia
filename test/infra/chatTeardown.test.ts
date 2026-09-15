@@ -3,6 +3,8 @@ import { botPermissions } from "../helpers/botPermissions";
 
 const calls: string[] = [];
 const states = new Map<number, Record<string, unknown>>();
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere: (): void => {} }));
+mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: async (): Promise<void> => {} }));
 const saveStateInBackground = mock((context: string): void => { calls.push(`save:${context}`); });
 const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
 

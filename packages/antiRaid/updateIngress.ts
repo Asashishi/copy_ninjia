@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { Context } from "grammy";
 import type {
   CallbackQuery,
@@ -14,12 +15,8 @@ import {
   resolveBotAdminStatus,
   markBotAdminObserved,
 } from "../infra/botAdmin";
-import {
-  VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT,
-  VERIFICATION_INVALID_CALLBACK_TEXT,
-  VERIFY_APPROVE_CALLBACK_PREFIX,
-  VERIFY_SELF_CALLBACK_PREFIX,
-} from "../consts/antiRaid/verification";
+import { VERIFY_APPROVE_CALLBACK_PREFIX, VERIFY_SELF_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
+
 import { isAdminStatus } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
 import { hasUserMessageContent } from "../users/messageContent";
@@ -390,7 +387,7 @@ function ingestAdmittedMessage(
 }
 
 /**
- * 处理入群验证按钮的点击（callback_query）：按前缀分辨「我是良民」与「通过」，
+ * 处理入群验证按钮的点击（callback_query）：按前缀分辨本人验证与「通过」，
  * 解析出目标成员后整体投递给 Worker 应答与处理；「通过」的管理员身份由
  * Worker 侧的本群管理员缓存判定。前缀不匹配的 callback_query 与本模块无关，
  * 直接放过。
@@ -423,7 +420,7 @@ export async function handleVerificationCallback(
   ) {
     await answerCallbackQuery({
       callbackQueryId: query.id,
-      text: VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT,
       showAlert: true,
     });
     return;
@@ -435,7 +432,7 @@ export async function handleVerificationCallback(
   if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
     await answerCallbackQuery({
       callbackQueryId: query.id,
-      text: VERIFICATION_INVALID_CALLBACK_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).VERIFICATION_INVALID_CALLBACK_TEXT,
       showAlert: true,
     });
     return;

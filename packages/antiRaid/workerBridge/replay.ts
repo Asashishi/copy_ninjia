@@ -111,6 +111,16 @@ export function replayChatKinds(
   return true;
 }
 
+/** 人设风格在接管验证和私密模式之前全量重放；新 Worker 无条目即使用默认风格。 */
+export function replayChatAtmospheres(
+  postTo: (message: AntiRaidWorkerMessage) => boolean
+): boolean {
+  for (const [chatId, state] of getChatStateCache()) {
+    if (state.aiPersona !== undefined && !postTo({ type: "atmosphere", chatId, plain: true })) return false;
+  }
+  return true;
+}
+
 /**
  * adopt 完成后清理开关已关群的残留入群守卫。
  *

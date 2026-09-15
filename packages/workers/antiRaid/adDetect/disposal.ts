@@ -1,3 +1,6 @@
+import { ATMOSPHERE_TEXTS } from "../../../consts/atmosphere";
+import type { AtmosphereTexts } from "../../../types/atmosphere";
+import { workerAtmosphere } from "../atmosphere";
 /**
  * 判定命中后的处置副作用（入群守卫线程侧）：删掉这一串消息，并把「这个人该按
  * /block 处置」回投主线程。
@@ -63,8 +66,8 @@ interface DisposalMessageIdsParams {
 }
 
 /** 引用类广告第一次命中时的公开警告；刻意不透露内部五分钟升级窗口。 */
-export function formatReferencedAdWarning(label: string): string {
-  return `哼，${label}，不要回复、引用或转发广告相关内容，连这点都记不住吗，杂鱼♡`;
+export function formatReferencedAdWarning(label: string, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
+  return atmosphere.NOTICE_TEXTS.adReferenceWarning(label);
 }
 
 /**
@@ -78,7 +81,7 @@ export function warnReferencedAdSender(
     purpose: "adWarning",
     chatId: bundle.chatId,
     identityId: bundle.senderId,
-    text: formatReferencedAdWarning(bundle.label),
+    text: formatReferencedAdWarning(bundle.label, workerAtmosphere(bundle.chatId)),
     deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
   });
 }

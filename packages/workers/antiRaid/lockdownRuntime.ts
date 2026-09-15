@@ -1,3 +1,4 @@
+import { workerAtmosphere } from "./atmosphere";
 import {
   nextLockdownIntentId,
   beginLockdownAnnouncement,
@@ -213,7 +214,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
             purpose: "notice",
             deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
             chatId,
-            text: `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`,
+            text: workerAtmosphere(chatId).NOTICE_TEXTS.lockdownEnded(LOCKDOWN_MS / 60_000),
           }),
         });
         break;

@@ -70,22 +70,22 @@ describe("/bot_status", () => {
   test("只展示模型路由、总闸状态和本群开启项，不泄漏密钥或端点", () => {
     const text: string = buildBotStatusMessage(statusSnapshot()).text;
 
-    expect(text).toStartWith("本天才的状态，杂鱼可要看仔细啦♡");
-    expect(text).toContain("全局模型能力，本天才会的可多着呢♡：");
+    expect(text).toStartWith("机器人状态");
+    expect(text).toContain("全局模型能力：");
     expect(text).toContain("群聊正文：已配置 · openai / gpt-status");
     expect(text).toContain("图片生成：未配置");
     expect(text).toContain("歌曲生成：未配置");
     expect(text).toContain("广告检测：已配置 · openai / ad-model");
     expect(text).toContain("Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/81920");
-    expect(text).toContain("• 本群专属提示词：已设置，杂鱼还挺会使唤本天才嘛♡");
+    expect(text).toContain("• 本群自定义提示词：已设置");
     expect(text).not.toContain("本群的自定义提示词正文");
     // 三行同属「本群此刻的占用」一组：逐条带项目符号，上下文容量排在最前。
     expect(text).toContain(
-      "• 猫脑子利用率：47.86%\n" +
-      "• 正在被本天才调教的杂鱼：3/5\n" +
-      "• 本群正赖着本天才翻译的杂鱼：2/5 人♡"
+      "• AI 上下文利用率：47.86%\n" +
+      "• 当前 gag 会话：3/5\n" +
+      "• 本群翻译人数：2/5 人"
     );
-    expect(text).toContain("本机进程，本天才当然精神得很♡：");
+    expect(text).toContain("本机进程：");
     expect(text).toContain("Bot 运行时长：2 天 03:04:05");
     expect(text).toContain("CPU：12.35% (6 Core)");
     expect(text).not.toContain("运行期平均");
@@ -132,7 +132,7 @@ describe("/bot_status", () => {
       entity.offset,
       entity.offset + entity.length
     );
-    expect(message.text).toContain(`本天才在这个群的权柄：\n${json}`);
+    expect(message.text).toContain(`机器人在本群的权限：\n${json}`);
     // 快照是「管理员 + 通用管理能力 + 删除消息」，顺序仍随权限清单。
     expect(JSON.parse(json)).toEqual({
       isAdministrator: "管理员身份",
@@ -164,7 +164,7 @@ describe("/bot_status", () => {
     });
 
     expect(message.entities).toHaveLength(1);
-    expect(message.text).toContain("本天才在这个群的权柄：\n{}");
+    expect(message.text).toContain("机器人在本群的权限：\n{}");
   });
 
   test("权限尚未确证时不出 JSON 块，也不留下空实体", () => {
@@ -176,7 +176,7 @@ describe("/bot_status", () => {
 
     expect(message.entities).toHaveLength(0);
     expect(message.text).toContain(
-      "本天才在这个群的权柄：\n• 还没确证呢，等本天才在这个群有了身份再来看吧♡"
+      "机器人在本群的权限：\n• 尚未确认本群权限"
     );
   });
 

@@ -46,7 +46,8 @@ mock.module("../../packages/infra/botAdmin", () => ({
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
-mock.module("../../packages/infra/storage/stateStore", () => ({ getChatStateCache: () => chatStates }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
+  getChatState: (): Record<string, never> => ({}), getChatStateCache: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 const flushDiskIO = mock(async (): Promise<string> => "flushed");
 mock.module("../../packages/infra/diskIO", () => ({

@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, GlobalCopyState } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
@@ -59,7 +60,7 @@ export async function claimCopyCooldownOrReject(
     if (elapsed >= 0 && elapsed < COPY_COOLDOWN_MS) {
       await sendCommandMessage({
         chatId,
-        text: `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`,
+        text: chatAtmosphere(chatId).NOTICE_TEXTS.copyCooldown(formatMinSec(COPY_COOLDOWN_MS - elapsed)),
         replyToMessageId: messageId,
       });
       return { rejected: true };

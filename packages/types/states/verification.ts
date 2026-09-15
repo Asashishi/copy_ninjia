@@ -193,7 +193,7 @@ export interface ConfirmedThreadCommentEvent {
 }
 
 /**
- * 验证按钮点击。`action` 区分两颗按钮：`self` 是「我是良民」，只认本人；
+ * 验证按钮点击。`action` 区分两颗按钮：`self` 是本人验证，只认本人；
  * `approve` 是「通过」，只认代点资格。
  */
 export interface VerificationCallbackEvent {

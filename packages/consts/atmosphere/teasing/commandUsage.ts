@@ -14,11 +14,11 @@ export const BATCH_KICK_USAGE_TEXT: string =
   "笨蛋，/batch_kick 后面只带一个回溯时长：数字加 m/h/d，比如 30m、2h、1d；" +
   "最多回溯滚动 24 小时。这个命令只踢人，不会加入黑名单♡";
 
-/** /copy stop 携带多余参数时的固定用法提示；群内由统一命令消息边界清理。 */
+/** /copy stop 携带多余参数时的固定用法提示。 */
 export const COPY_USAGE_TEXT: string =
   "笨蛋，回复目标消息后用 /copy、/copy reverse（倒序）或 /copy nya（加喵~），也可以在后面加 @username 指定目标；停止用 /copy stop，stop 后面别加参数♡";
 
-/** /qa 参数不合法时的用法提示；表单内容通过后续消息填写。 */
+/** /qa 参数不合法时的用法提示。 */
 export const QA_USAGE_TEXT: string =
   "笨蛋，用 /qa set 开表单登记问答，/qa remove <问题文本> 删除，/qa query [问题文本] 查询；query 不带问题时列出全部♡";
 
@@ -26,11 +26,11 @@ export const QA_USAGE_TEXT: string =
 export const MOOD_USAGE_TEXT: string =
   "笨蛋，用 /mood query 看本群当前心情，/mood switch 重新抽取心情，后面别加其它参数♡";
 
-/** /clear_context 不接受任何参数；带参数一律按用法提示拒绝，不清任何记忆。 */
+/** /clear_context 不接受任何参数。 */
 export const CLEAR_CONTEXT_USAGE_TEXT: string =
   "笨蛋，/clear_context 后面什么都别加呀——本天才一收到就把这个群的上下文记忆全忘光，" +
   "脑子里的和存档里的一起清，连这都写不对还想指挥本天才？♡";
 
-/** /icon 的用法提示；steal 接受目标，reset 不接受额外参数。 */
+/** /icon 的用法提示。 */
 export const ICON_USAGE_TEXT: string =
   "笨蛋，回复目标消息后用 /icon steal，或 /icon steal @username 偷头像；恢复默认头像用 /icon reset，reset 后面别加参数♡";

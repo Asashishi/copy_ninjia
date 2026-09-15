@@ -1,3 +1,6 @@
+import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
+import type { AtmosphereTexts } from "../../types/atmosphere";
+import { chatAtmosphere } from "../../infra/atmosphere";
 /**
  * `/qa query` 看板：把本群已登记的问答铺成可复制的 JSON 代码块，并按长度分页。
  *
@@ -14,17 +17,8 @@
 
 import { InlineKeyboard, type Context } from "grammy";
 import type { CallbackQuery } from "grammy/types";
-import {
-  QA_COMMAND_TEXTS,
-  QA_QUERY_ANSWER_PREVIEW_MAX_CHARS,
-  QA_QUERY_JSON_LANGUAGE,
-  QA_QUERY_PAGE_CALLBACK_PREFIX,
-  QA_QUERY_PAGE_MAX_ENTRIES,
-  QA_QUERY_PAGE_NEXT_TEXT,
-  QA_QUERY_PAGE_NOOP_DATA,
-  QA_QUERY_PAGE_PREV_TEXT,
-  QA_TRUNCATION_MARK,
-} from "../../consts/qa";
+import { QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_JSON_LANGUAGE, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../consts/qa";
+
 import { answerCallbackQuery, editMessageText } from "../../infra/telegram";
 import { getChatQa } from "../../infra/qaStore";
 import { truncateInline } from "../../libs/text";
@@ -41,8 +35,8 @@ function answerPreview(answer: string): string {
 }
 
 /** 把一页条目渲染成「前缀 + json 代码块」；实体偏移按 UTF-16 code unit 计。 */
-function renderQaBoardPage(entries: readonly QaEntry[]): RichTextMessage {
-  const prefix: string = QA_COMMAND_TEXTS.queryPrefix;
+function renderQaBoardPage(entries: readonly QaEntry[], atmosphere: AtmosphereTexts): RichTextMessage {
+  const prefix: string = atmosphere.QA_COMMAND_TEXTS.queryPrefix;
   // 单条与多条都用数组：看板的形状必须稳定，读的人才能照着同一套结构抄。
   const json: string = JSON.stringify(entries, null, 2);
   return {
@@ -63,7 +57,7 @@ function renderQaBoardPage(entries: readonly QaEntry[]): RichTextMessage {
  * 整个消失。单页不会超出 Telegram 上限的依据写在该常量的 JSDoc 里，这里因此
  * 不再对整页做一次 `JSON.stringify` 试装。
  */
-export function buildQaBoardPages(entries: readonly QaEntry[]): readonly RichTextMessage[] {
+export function buildQaBoardPages(entries: readonly QaEntry[], atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): readonly RichTextMessage[] {
   const pages: RichTextMessage[] = [];
   for (let start: number = 0; start < entries.length; start += QA_QUERY_PAGE_MAX_ENTRIES) {
     const bucket: QaEntry[] = [];
@@ -73,7 +67,7 @@ export function buildQaBoardPages(entries: readonly QaEntry[]): readonly RichTex
       if (entry === undefined) continue;
       bucket.push({ q: entry.q, a: answerPreview(entry.a) });
     }
-    if (bucket.length > 0) pages.push(renderQaBoardPage(bucket));
+    if (bucket.length > 0) pages.push(renderQaBoardPage(bucket, atmosphere));
   }
   return pages;
 }
@@ -84,15 +78,15 @@ export function buildQaBoardPages(entries: readonly QaEntry[]): readonly RichTex
  * 首页不给「上一页」、末页不给「下一页」：Telegram 没有禁用态按钮，画一个点了
  * 没反应的按钮只会让人以为看板坏了。中间那颗是页码指示，点它什么都不做。
  */
-export function buildQaBoardKeyboard(page: number, total: number): InlineKeyboard | undefined {
+export function buildQaBoardKeyboard(page: number, total: number, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): InlineKeyboard | undefined {
   if (total <= 1) return undefined;
   const keyboard: InlineKeyboard = new InlineKeyboard();
   if (page > 0) {
-    keyboard.text(QA_QUERY_PAGE_PREV_TEXT, `${QA_QUERY_PAGE_CALLBACK_PREFIX}${page - 1}`);
+    keyboard.text(atmosphere.QA_QUERY_PAGE_PREV_TEXT, `${QA_QUERY_PAGE_CALLBACK_PREFIX}${page - 1}`);
   }
   keyboard.text(`${page + 1}/${total}`, QA_QUERY_PAGE_NOOP_DATA);
   if (page < total - 1) {
-    keyboard.text(QA_QUERY_PAGE_NEXT_TEXT, `${QA_QUERY_PAGE_CALLBACK_PREFIX}${page + 1}`);
+    keyboard.text(atmosphere.QA_QUERY_PAGE_NEXT_TEXT, `${QA_QUERY_PAGE_CALLBACK_PREFIX}${page + 1}`);
   }
   return keyboard;
 }
@@ -123,14 +117,14 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
   const stored: ReadonlyMap<string, string> | undefined = getChatQa(chatId);
   const entries: QaEntry[] = [];
   if (stored !== undefined) for (const [q, a] of stored) entries.push({ q, a });
-  const pages: readonly RichTextMessage[] = buildQaBoardPages(entries);
+  const pages: readonly RichTextMessage[] = buildQaBoardPages(entries, chatAtmosphere(chatId));
   if (pages.length === 0) {
     // 看板还挂着，条目却已经被删光：就地收敛成「空空如也」并收走翻页条，
     // 而不是留一份指向不存在条目的旧快照。
     await editMessageText({
       chatId,
       messageId: boardMessage.message_id,
-      text: QA_COMMAND_TEXTS.queryEmpty,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).QA_COMMAND_TEXTS.queryEmpty,
     });
     return true;
   }
@@ -143,7 +137,7 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
     messageId: boardMessage.message_id,
     text: rendered.text,
     entities: rendered.entities,
-    keyboard: buildQaBoardKeyboard(page, pages.length),
+    keyboard: buildQaBoardKeyboard(page, pages.length, chatAtmosphere(chatId)),
   });
   return true;
 }

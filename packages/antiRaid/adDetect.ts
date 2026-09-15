@@ -1,3 +1,6 @@
+import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
 /**
  * 广告命中后的主线程处置：写入永久黑名单并落盘，再把跨群封禁登记进 durable
  * outbox 交回 Anti-Raid Worker。候选消息构建位于 adCandidate.ts。
@@ -230,6 +233,7 @@ export interface FormatAdNoticeParams {
   enforcedChats: number;
   /** 登记失败、改由补扫接手的群数。 */
   failedChats: number;
+  readonly atmosphere?: AtmosphereTexts;
 }
 
 /**
@@ -251,16 +255,15 @@ export interface FormatAdNoticeParams {
  * 一眼就能证伪的假话。只说这边确证得了的两件事：记进名单、封了几个群。
  * 删除失败由判定线程自己记日志（见 workers/antiRaid/adDetect/disposal.ts）。
  */
-export function formatAdNotice({ label, reason, enforcedChats, failedChats }: FormatAdNoticeParams): string {
-  const head: string = `哼，${label} 被本天才当广告封了，理由：${reason || "整串消息通篇都是推广引流"}。`;
+export function formatAdNotice({ label, reason, enforcedChats, failedChats, atmosphere = ATMOSPHERE_TEXTS.teasing }: FormatAdNoticeParams): string {
+  const head: string = atmosphere.NOTICE_TEXTS.adDetected(label, reason || "整串消息通篇都是推广引流");
   if (enforcedChats === 0) {
-    return `${head}人已经记进小本本了；可本天才现在一个群都封不动，杂鱼管理员快来看看本天才的权限♡`;
+    return atmosphere.NOTICE_TEXTS.adNoManagedChat(head);
   }
   if (failedChats > 0) {
-    return `${head}人已经记进小本本、在 ${enforcedChats} 个群封掉了，还有 ${failedChats} 个群没封动，` +
-      "杂鱼管理员快来看看本天才在那边的权限♡";
+    return atmosphere.NOTICE_TEXTS.adPartialBan(head, enforcedChats, failedChats);
   }
-  return `${head}人已经记进小本本、在所有盯着的群里一起封掉了♡`;
+  return atmosphere.NOTICE_TEXTS.adBanned(head);
 }
 
 /**
@@ -284,7 +287,7 @@ async function announceAdDisposal(
 ): Promise<void> {
   await sendMessage({
     chatId: event.chatId,
-    text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats }),
+    text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats, atmosphere: chatAtmosphere(event.chatId) }),
     onSent: (noticeMessageId: number): void => {
       deleteMessageAfter({
         chatId: event.chatId,

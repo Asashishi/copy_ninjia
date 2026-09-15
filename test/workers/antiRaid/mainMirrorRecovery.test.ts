@@ -39,6 +39,7 @@ const {
 type FlushResult = "flushed" | "timedOut" | "failed";
 
 const antiRaid = await import("../../../packages/antiRaid");
+const { syncAntiRaidAtmosphere } = await import("../../../packages/antiRaid/workerBridge/controller");
 
 const { grantVerificationAttempt } = await import("../../../packages/antiRaid/verificationAttempts");
 
@@ -48,6 +49,25 @@ installAntiRaidMirrorHooks({
 });
 
 describe("Anti-Raid main-thread persistence mirror", () => {
+  test("风格在业务接管前重放，变更增量推送，重建和删除以当前群状态为准", async () => {
+    await resetAntiRaidTestState();
+    chatStates.set(-1001, { aiPersona: "自定义", isAIChatEnabled: false });
+    chatStates.set(-1002, { isInitEnabled: true });
+    antiRaid.initAntiRaid();
+    const firstStyle: number = workerPosts.findIndex((message) => message.type === "atmosphere");
+    expect(workerPosts[firstStyle]).toEqual({ type: "atmosphere", chatId: -1001, plain: true });
+    expect(firstStyle).toBeLessThan(workerPosts.findIndex((message) => message.type === "adoptVerifications"));
+    workerPosts.length = 0;
+    chatStates.delete(-1001);
+    syncAntiRaidAtmosphere(-1001);
+    expect(workerPosts).toEqual([{ type: "atmosphere", chatId: -1001, plain: false }]);
+    chatStates.set(-1002, { aiPersona: "另一群" });
+    const replay: AntiRaidWorkerMessage[] = [];
+    workerHooks.supervisorOptions!.onRespawn((message: AntiRaidWorkerMessage): boolean => { replay.push(message); return true; });
+    expect(replay.filter((message) => message.type === "atmosphere")).toEqual([{ type: "atmosphere", chatId: -1002, plain: true }]);
+    expect(replay.findIndex((message) => message.type === "atmosphere"))
+      .toBeLessThan(replay.findIndex((message) => message.type === "adoptVerifications"));
+  });
   test("完整进程冷启动把磁盘终态提升到新代际，恢复后的第一轮许可不会被判 stale", async () => {
     await resetAntiRaidTestState();
     antiRaid.hydratePendingVerifications(new Map([

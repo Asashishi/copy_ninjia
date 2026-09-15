@@ -131,7 +131,7 @@ function approveDenial(
 }
 
 /**
- * 处理两颗验证按钮：「我是良民」只认待验证真人本人，「通过」只认本群管理员
+ * 处理两颗验证按钮：本人验证只认待验证真人本人，「通过」只认本群管理员
  * 的代点。记录不在 pending 时先应答失效，不泄漏也不改变任何状态。
  */
 export function handleCallback(

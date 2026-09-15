@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { TelegramConfig } from "../../packages/types/config";
-import { CLEAR_CONTEXT_USAGE_TEXT } from "../../packages/consts/commandUsage";
+import { CLEAR_CONTEXT_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock(async (_chatId: number, _purgeMemory: boolean): Promise<void> => undefined);

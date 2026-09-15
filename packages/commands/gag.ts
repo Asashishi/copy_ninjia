@@ -1,11 +1,9 @@
-import { GAG_USAGE_TEXT } from "../consts/commandUsage";
+import { chatAtmosphere } from "../infra/atmosphere";
+
 import type { CommandContext, Context } from "grammy";
 import { gagSessionCount } from "../cache/main/gag";
-import {
-  GAG_SESSION_MAX,
-  GAG_TARGET_TEXTS,
-  UNGAG_TARGET_TEXTS,
-} from "../consts/gag";
+import { GAG_SESSION_MAX } from "../consts/gag";
+
 import type { CachedUser } from "../types/chatState";
 import type {
   GagSession,
@@ -52,12 +50,12 @@ async function passesGagCommandGate(
 ): Promise<boolean> {
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
   const actorLabel: string = actor === undefined
-    ? "哪个杂鱼"
-    : formatUserLabel(actor);
+    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor
+    : formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0));
   if (!hasCommandPermission(ctx, "isCanGag")) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: `哈？就 ${actorLabel} 这种没资格的杂鱼也想 /${command} 人？做梦去吧♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagRejected(actorLabel, command),
       replyToMessageId: ctx.msgId,
     });
     return false;
@@ -68,7 +66,7 @@ async function passesGagCommandGate(
   ) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: "噗，连地方都找不对吗？/gag 和 /ungag 只能在群里用啦，笨蛋♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagGroupOnly,
       replyToMessageId: ctx.msgId,
     });
     return false;
@@ -76,7 +74,7 @@ async function passesGagCommandGate(
   if (getChatState(ctx.chat.id).isInitEnabled !== true) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: "这个群连 /init enable 都没开，还想使唤本天才管 gag？先把准备做好呀，杂鱼♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagNotInitialized,
       replyToMessageId: ctx.msgId,
     });
     return false;
@@ -86,7 +84,7 @@ async function passesGagCommandGate(
   if (permissions?.canDeleteMessages !== true) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: "本天才不在群里当管理员、也没有「删除消息」权限的话，可擦不了杂鱼的发言哦？快去补好啦♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagMissingRights,
       replyToMessageId: ctx.msgId,
     });
     return false;
@@ -104,7 +102,7 @@ function createGagReservation(
     chatId: ctx.chat.id,
     targetId: target.id,
     targetProfileUrl: createGagTargetProfileUrl(target),
-    targetLabel: formatTargetLabel(target),
+    targetLabel: formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)),
     chatLabel: sanitizeDisplayName(ctx.chat.title ?? String(ctx.chat.id)),
     tool: parsed.tool,
     durationMinutes: parsed.durationMinutes,
@@ -139,7 +137,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   if (parsed === undefined) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: GAG_USAGE_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).GAG_USAGE_TEXT,
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -147,7 +145,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   if (!canRenderMaximumInlineQuery(parsed.tool)) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: "噗，这个用具名字长到连 Telegram 的 inline 消息都塞不下，杂鱼的命名品味也太差了吧♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagToolTooLong,
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -155,7 +153,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   if (gagSessionCount() >= GAG_SESSION_MAX) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: `本天才同时管教的 ${GAG_SESSION_MAX} 只杂鱼已经满员啦，连排队都不会吗？等一个结束再来♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagCapacity(GAG_SESSION_MAX),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -167,7 +165,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     rawArgument: parsed.rawTarget,
     acceptUserId: true,
     acceptChatId: true,
-    messages: GAG_TARGET_TEXTS,
+    messages: chatAtmosphere(ctx.chat?.id ?? 0).GAG_TARGET_TEXTS,
   });
   if (target === undefined) return;
   const existingTarget: GagSession | undefined = findGagSession(
@@ -178,8 +176,8 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: existingTarget.phase === "ending"
-        ? `${formatTargetLabel(target)} 这只杂鱼还在收尾，急什么呀？乖乖等着♡`
-        : `${formatTargetLabel(target)} 这只杂鱼在本群已经被管教啦；要换工具就先定向 /ungag，笨蛋♡`,
+        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagEnding(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
+        : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagExists(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -191,8 +189,8 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: targetMembership === false
-        ? `${formatTargetLabel(target)} 根本不在这个群里，想隔空 gag 人的杂鱼在做什么梦呀♡`
-        : `本天才暂时确认不了 ${formatTargetLabel(target)} 还在不在群里，急也没用，等会儿再试啦♡`,
+        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagTargetAbsent(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
+        : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagMembershipUnknown(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -210,10 +208,10 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: reservation === "full"
-        ? `本天才同时管教的 ${GAG_SESSION_MAX} 只杂鱼已经满员啦，连排队都不会吗？等一个结束再来♡`
+        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagCapacity(GAG_SESSION_MAX)
         : existing?.phase === "ending"
-          ? `${session.targetLabel} 这只杂鱼还在收尾，急什么呀？乖乖等着♡`
-          : `${session.targetLabel} 这只杂鱼在本群已经被管教啦；要换工具就先定向 /ungag，笨蛋♡`,
+          ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagEnding(session.targetLabel)
+          : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagExists(session.targetLabel),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -302,7 +300,7 @@ export async function handleUngagCommand(ctx: CommandContext<Context>): Promise<
     rawArgument: ctx.match,
     acceptUserId: true,
     acceptChatId: true,
-    messages: UNGAG_TARGET_TEXTS,
+    messages: chatAtmosphere(ctx.chat?.id ?? 0).UNGAG_TARGET_TEXTS,
   });
   if (target === undefined) return;
   const session: GagSession | undefined = findGagSession(ctx.chat.id, target.id);
@@ -313,10 +311,10 @@ export async function handleUngagCommand(ctx: CommandContext<Context>): Promise<
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: session?.phase === "ending"
-        ? `${formatTargetLabel(target)} 的 gag 已经在收尾啦，急什么呀杂鱼？乖乖等着♡`
+        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.ungagEnding(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
         : session?.phase === "starting"
-          ? `${formatTargetLabel(target)} 还没戴好呢，手忙脚乱的杂鱼先等一下♡`
-          : `${formatTargetLabel(target)} 在本群根本没被本天才 gag，对着空气 /ungag 的笨蛋♡`,
+          ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.ungagStarting(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
+          : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.ungagAbsent(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
       replyToMessageId: ctx.msgId,
     });
     return;

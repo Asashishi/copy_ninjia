@@ -21,11 +21,11 @@
 
 ## スラッシュコマンドの追加
 
-1. **Handler**：`packages/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。permission key による認可は `block.ts` / `mood.ts`（常に `hasCommandPermission(ctx, key)`。スーパー管理者はすべての permission key を持つため、identity を個別に判定しないでください）、付与できない操作は `isSuperAdminActor`（`white.ts`、`batchKick.ts`）、プライベートチャット限定は `send.ts` です。最後のものは本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。ユーザーに見える文言は handler に置きません。所属ドメインの `packages/consts/<domain>.ts` に文言テーブルとして置き、型は `packages/types/` に置きます（`PERMISSION_COMMAND_TEXTS`、`BLOCK_TARGET_TEXTS` を参照）。文言変更の集約先になり、呼び出しごとに object 1 つと closure 3 つを作り直さずに済みます。例外は無界のユーザー入力を埋め込む必要がある文言だけで、`cjkAction.ts` が唯一の該当箇所です。
+1. **Handler**：`packages/commands/` から明示的な戻り値型付きで `handleXxxCommand` を export します。委任可能な権限は `hasCommandPermission(ctx, key)`、スーパー管理者本人限定の操作は `isSuperAdminActor`、private chat は `send.ts` を参照します。固定文言と formatter は `packages/consts/atmosphere/{teasing,plain}/` の対応する領域に置き、両版で同じ型を使います。main は `chatAtmosphere(chatId)` で選択し、名前・プロンプト・質問は引数で挿入します。描画後の本文置換は行いません。
 2. **Export**：`packages/commands/index.ts` に追加します。
 3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) の `commands` サブチェーンに `commands.command("xxx", ...)` を追加します。**`bot` へ直接登録してはいけません** — コマンドはすべて共有の `bot.on(":entities:bot_command")` サブチェーンの後ろに収めます（理由は [02 アーキテクチャ概要](02-architecture.md#1-件のメッセージが通る経路) の「コマンド登録」を参照）。`test/app/registerHandlers.test.ts` は `bot` に直接登録されたコマンドを拒否します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
 4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。
-5. **メニュー**：Telegram のコマンドメニューに表示するなら [`packages/consts/commands.ts`](../../packages/consts/commands.ts) の `BOT_COMMANDS` に追加します。`/send` のような hidden command は追加しません。
+5. **メニュー**：`packages/consts/atmosphere/{teasing,plain}/commands.ts` の両方の `BOT_COMMANDS` に同じコマンド名を追加します。`/send` などの非表示コマンドは追加しません。`packages/app/commandMenu.ts` が既定の全体メニューと群別の普通版を登録します。
 6. **パラメータ定数**：cooldown、threshold などは `packages/consts/commands.ts` または該当ドメインの consts に置き、中国語 JSDoc を付けます。
 7. **テスト**：`test/commands/xxx.test.ts` を追加し、少なくとも権限拒否、引数解析、主要経路を検証します。
 8. **ドキュメント**：3 言語の `docs/{cn,en,ja}/08-commands.md` のコマンド表に項目を追加し、操作と権限の境界を記載します。
@@ -49,13 +49,13 @@
 
 ## 別の言語にする：i18n はやらないので fork してください
 
-ユーザー向けの文言は簡体中国語のみです。本リポジトリは i18n レイヤーを提供も受け入れもしません。文言は差し替え可能な辞書項目ではないからです。
+固定通知は簡体中国語です。`packages/consts/atmosphere/` に既定の雌小鬼版と普通版を置き、専用人設を設定した群では普通版を選びます。クライアントの言語では切り替えません。
 
-- 多くの応答は断片の連結で組み立てられ、同時に Telegram `entities` の UTF-16 オフセットを算出しています（前節参照）。言語が変われば語順も長さも、そもそも文を分けるべきかどうかも変わり、オフセットは全て計算し直しになります。key-value の語彙表では受け止められません。
-- `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
-- ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
+- 文言表は固定文字列と formatter を保持し、Telegram `entities` の UTF-16 offset は描画後の本文から計算します。名前・質問・プロンプト・モデル出力を口調変更のために置換しません。
+- `/咬` などの action command は 1〜2 文字の漢字を使い、コマンド解析と表示文言を別々に管理します。
+- 群専用 AI 人設を優先し、未設定なら `prompt/persona.md` を使用します。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 89 ファイルに約 961 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別言語にする場合は fork し、文言・操作・プロンプトをまとめて調整してください。TypeScript AST で数えると、`packages/` の中国語 string/template literal を含むソース行は 81 ファイルに 1352 行あり、コメントは含みません。人設ファイルとデプロイ設定は別です。変更後は `bun run check` を実行します。
 
 ## 動作パラメータの調整
 

@@ -1,12 +1,9 @@
 /** `/gag` 与 `/ungag` 的容量预约、提示收尾与停机排空状态机。 */
 
 import { describe, expect, test } from "bun:test";
-import {
-  GAG_SESSION_MAX,
-  GAG_TARGET_TEXTS,
-  UNGAG_TARGET_TEXTS,
-} from "../../packages/consts/gag";
-import { GAG_USAGE_TEXT } from "../../packages/consts/commandUsage";
+import { GAG_SESSION_MAX } from "../../packages/consts/gag";
+import { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/gag";
+import { GAG_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";
 import { settleTestBatch } from "../libs/helpers";

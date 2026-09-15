@@ -99,7 +99,7 @@
     `workers/diskIO/`、`perThread/`。
 - **`packages/consts/`**
   - **职责**：字面量常量、调参值与用户可见文案表，按领域分文件/子目录。
-  - **典型文件**：`commands.ts`、`whitelist.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
+  - **典型文件**：`atmosphere/{teasing,plain}/`、`commands.ts`、`whitelist.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
 - **`packages/types/`**
   - **职责**：跨模块协议、领域类型、状态机契约（`types/states/`）。
   - **典型文件**：`chatState.ts`、`commands.ts`、`lifecycle.ts`、`diskIO.ts`。

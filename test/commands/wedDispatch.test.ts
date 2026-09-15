@@ -25,8 +25,8 @@ const { getOrCreateWedMemberState } = await import("../../packages/commands/wed/
 const { handleWedCommand, teardownWedInChat } = await import("../../packages/commands/wed");
 const { dispatchWedCallback, dispatchWedCommand } = await import("../../packages/commands/wed/dispatch");
 const { drainWedRuntime, initWedRuntime, submitWedTask } = await import("../../packages/commands/wed/runtime");
-const { WED_CHAT_CACHE_MAX_ENTRIES, WED_TEXTS, WED_MAX_CONCURRENT, WED_MAX_PENDING } =
-  await import("../../packages/consts/wed");
+const { WED_CHAT_CACHE_MAX_ENTRIES, WED_MAX_CONCURRENT, WED_MAX_PENDING } = await import("../../packages/consts/wed");
+const { WED_TEXTS } = await import("../../packages/consts/atmosphere/teasing/wed");
 const { STATE_MANAGED_CHAT_LIMIT } = await import("../../packages/consts/storage");
 const chat = { id: -1001, type: "supergroup", title: "群" } as const;
 let nextMessageId: number = 100;

@@ -1,18 +1,13 @@
+import type { AtmosphereTexts } from "../../types/atmosphere";
+import { workerAtmosphere } from "./atmosphere";
 import { logger } from "../../infra/logger";
 import {
   deleteMessage,
   sendMessage,
   telegramApi,
 } from "../../infra/telegram";
-import {
-  VERIFICATION_APPROVE_BUTTON_TEXT,
-  VERIFICATION_REMINDER_RETRY_INITIAL_MS,
-  VERIFICATION_REMINDER_RETRY_MAX_MS,
-  VERIFICATION_SELF_BUTTON_TEXT,
-  VERIFICATION_TIMEOUT_MS,
-  VERIFY_APPROVE_CALLBACK_PREFIX,
-  VERIFY_SELF_CALLBACK_PREFIX,
-} from "../../consts/antiRaid/verification";
+import { VERIFICATION_REMINDER_RETRY_INITIAL_MS, VERIFICATION_REMINDER_RETRY_MAX_MS, VERIFICATION_TIMEOUT_MS, VERIFY_APPROVE_CALLBACK_PREFIX, VERIFY_SELF_CALLBACK_PREFIX } from "../../consts/antiRaid/verification";
+
 import { reminderDeliveries, verificationEntries } from "../../cache/workers/antiRaid/verification";
 import { formatMinSec } from "../../libs/time";
 import { verificationKey } from "../../libs/verificationKey";
@@ -45,19 +40,19 @@ export function clearReminderDeliveries(): void {
 }
 
 /**
- * 验证提醒下面的按钮行。真人两颗：「我是良民」给本人、「通过」给本群非匿名
+ * 验证提醒下面的按钮行。真人两颗：本人验证给本人、「通过」给本群非匿名
  * 管理员代点；机器人点不了按钮，只留「通过」。
  */
-function buildVerificationKeyboard(userId: number, isBot: boolean): InlineKeyboardMarkup {
+function buildVerificationKeyboard(userId: number, isBot: boolean, atmosphere: AtmosphereTexts): InlineKeyboardMarkup {
   const approveButton: InlineKeyboardButton = {
-    text: VERIFICATION_APPROVE_BUTTON_TEXT,
+    text: atmosphere.VERIFICATION_APPROVE_BUTTON_TEXT,
     callback_data: `${VERIFY_APPROVE_CALLBACK_PREFIX}${userId}`,
   };
   if (isBot) return { inline_keyboard: [[approveButton]] };
   return {
     inline_keyboard: [[
       {
-        text: VERIFICATION_SELF_BUTTON_TEXT,
+        text: atmosphere.VERIFICATION_SELF_BUTTON_TEXT,
         callback_data: `${VERIFY_SELF_CALLBACK_PREFIX}${userId}`,
       },
       approveButton,
@@ -102,16 +97,24 @@ function attemptReminderDelivery(
   }
 
   delivery.inFlight = true;
+  const atmosphere: AtmosphereTexts = workerAtmosphere(delivery.chatId);
   const verifyKeyboard: InlineKeyboardMarkup = buildVerificationKeyboard(
     delivery.userId,
-    delivery.expectedState.isBot
+    delivery.expectedState.isBot,
+    atmosphere
   );
+  // 每次发送尝试都按当前群风格渲染，重试队列不保存已经选定语气的正文。
+  const text: string = delivery.kind === "reply"
+    ? atmosphere.NOTICE_TEXTS.verificationReplyReminder(delivery.label, formatMinSec(VERIFICATION_TIMEOUT_MS), atmosphere.VERIFICATION_SELF_BUTTON_TEXT)
+    : delivery.isBot
+      ? atmosphere.NOTICE_TEXTS.verificationBotReminder(delivery.label, formatMinSec(VERIFICATION_TIMEOUT_MS), atmosphere.VERIFICATION_APPROVE_BUTTON_TEXT)
+      : atmosphere.NOTICE_TEXTS.verificationMemberReminder({ label: delivery.label, timeout: formatMinSec(VERIFICATION_TIMEOUT_MS), selfButton: atmosphere.VERIFICATION_SELF_BUTTON_TEXT, approveButton: atmosphere.VERIFICATION_APPROVE_BUTTON_TEXT });
   const task: Promise<void> = (async (): Promise<void> => {
     let reminderMessageId: number | undefined;
     try {
       reminderMessageId = await sendMessage({
         chatId: delivery.chatId,
-        text: delivery.text,
+        text,
         replyToMessageId: delivery.replyToMessageId,
         api: telegramApi,
         keyboard: verifyKeyboard,
@@ -155,7 +158,8 @@ interface SendReminderMessageParams {
   chatId: number;
   userId: number;
   reminderKind: ReminderKind;
-  text: string;
+  label: string;
+  isBot: boolean;
   replyToMessageId: number | undefined;
   dispatchVerification: VerificationDispatcher;
 }
@@ -164,7 +168,8 @@ function sendReminderMessage({
   chatId,
   userId,
   reminderKind,
-  text,
+  label,
+  isBot,
   replyToMessageId,
   dispatchVerification,
 }: SendReminderMessageParams): void {
@@ -184,7 +189,8 @@ function sendReminderMessage({
     chatId,
     userId,
     kind: reminderKind,
-    text,
+    label,
+    isBot,
     replyToMessageId,
     expectedState: captured,
     attempts: 0,
@@ -203,7 +209,7 @@ interface SendVerificationReminderParams {
   dispatchVerification: VerificationDispatcher;
 }
 
-/** 发送原始独立提醒；真人自己点「我是良民」，机器人只能由管理员点「通过」作保。 */
+/** 发送原始独立提醒；真人自己点本人验证，机器人只能由管理员点「通过」作保。 */
 export function sendVerificationReminder({
   chatId,
   userId,
@@ -211,22 +217,12 @@ export function sendVerificationReminder({
   isBot,
   dispatchVerification,
 }: SendVerificationReminderParams): void {
-  const reminderText: string = isBot
-    ? `哦？谁把 ${label} 这个机器人拎进来的？铁疙瘩自己可点不了按钮——` +
-      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内得有管理员帮它点「${VERIFICATION_APPROVE_BUTTON_TEXT}」作保，` +
-      `不然本天才就把这个来路不明的铁皮杂鱼扔出去哦♡`
-    : `喂，${label}，新来的杂鱼给本天才听好了，` +
-      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的「${VERIFICATION_SELF_BUTTON_TEXT}」证明你不是机器人` +
-      `（管理员也可以点「${VERIFICATION_APPROVE_BUTTON_TEXT}」直接放你进来），` +
-      // 只承诺踢人：处置路径只清理机器人自己制造的验证痕迹，成员发言一概不动
-      // （见 verificationEffects/terminal.ts 的 expelMember）。承诺删发言而实际
-      // 不删，是群成员一眼就能证伪的假话。
-      `不然本天才就一脚把你踢出去哦♡`;
   sendReminderMessage({
     chatId,
     userId,
     reminderKind: "original",
-    text: reminderText,
+    label,
+    isBot,
     replyToMessageId: undefined,
     dispatchVerification,
   });
@@ -248,14 +244,12 @@ export function sendReplyReminder({
   targetMessageId,
   dispatchVerification,
 }: SendReplyReminderParams): void {
-  const reminderText: string = `喂，${label}，话都说上了，${formatMinSec(VERIFICATION_TIMEOUT_MS)}内把下面的「${VERIFICATION_SELF_BUTTON_TEXT}」点一下啊杂鱼。` +
-    // 同上：不承诺删发言，只承诺请人出去。
-    `再装看不见的话，本天才可要直接把你请出去咯♡`;
   sendReminderMessage({
     chatId,
     userId,
     reminderKind: "reply",
-    text: reminderText,
+    label,
+    isBot: false,
     replyToMessageId: targetMessageId,
     dispatchVerification,
   });

@@ -1,11 +1,9 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
-import {
-  COPY_TARGET_TEXTS,
-  NYA_COPY_TARGET_TEXTS,
-  REVERSE_COPY_TARGET_TEXTS,
-} from "../consts/commands";
+
 import { COPY_SUBCOMMAND_PATTERN } from "../consts/copyModes";
-import { COPY_USAGE_TEXT } from "../consts/commandUsage";
+
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
 import { getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
@@ -18,10 +16,10 @@ import { peekCommandTarget } from "./targetResolution";
 import { resolveCommandActor } from "./commandActor";
 
 /** 按复读模式选取包含对应 /copy 参数的目标提示。 */
-function copyTargetTextsForMode(mode: CopyMode | undefined): Readonly<CommandTargetMessages> {
-  if (mode === "reverse") return REVERSE_COPY_TARGET_TEXTS;
-  if (mode === "nya") return NYA_COPY_TARGET_TEXTS;
-  return COPY_TARGET_TEXTS;
+function copyTargetTextsForMode(mode: CopyMode | undefined, atmosphere: AtmosphereTexts): Readonly<CommandTargetMessages> {
+  if (mode === "reverse") return atmosphere.REVERSE_COPY_TARGET_TEXTS;
+  if (mode === "nya") return atmosphere.NYA_COPY_TARGET_TEXTS;
+  return atmosphere.COPY_TARGET_TEXTS;
 }
 
 /**
@@ -42,7 +40,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
   const subcommand: string | undefined = match?.[1];
   if (subcommand === "stop") {
     if (match?.[2] !== undefined) {
-      await sendCommandMessage({ chatId, text: COPY_USAGE_TEXT, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).COPY_USAGE_TEXT, replyToMessageId: messageId });
       return;
     }
     await stopCopy(ctx);
@@ -62,8 +60,8 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     // 这个用户名」，而真正的原因（正在复读别人）永远没说。
     const targetUser: CachedUser | undefined = peekCommandTarget(ctx.msg, targetArgument);
     const replyText: string = globalCopy.copiedUser.id === targetUser?.id
-      ? `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`
-      : `本天才手上已经有猎物啦，想换人的话先 /copy stop 呀，笨蛋♡`;
+      ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAlreadyRunning(formatUserLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0)))
+      : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyOtherTarget;
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -75,7 +73,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     cooldownClaim = await claimCopyCooldownOrReject(resolveCommandActor(ctx), chatId, messageId);
     if (cooldownClaim.rejected) return;
 
-    targetUser = await resolveCopyCommandTarget(ctx, copyTargetTextsForMode(mode), targetArgument);
+    targetUser = await resolveCopyCommandTarget(ctx, copyTargetTextsForMode(mode, chatAtmosphere(chatId)), targetArgument);
     if (!targetUser) return;
 
     globalCopy.copiedUser = targetUser;
@@ -93,16 +91,16 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
   // 避免 update 已确认后重启复活旧 copy 状态。
   await persistGlobalState("copy started");
 
-  const targetLabel: string = formatUserLabel(targetUser);
-  const startText: string = `正在把 ${targetLabel} 的脸皮扒下来当本天才的头像哦${describeCopyModeEffect(mode)}，杂鱼乖乖等一下~♡`;
+  const targetLabel: string = formatUserLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
+  const startText: string = chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyStarting(targetLabel, describeCopyModeEffect(mode, chatAtmosphere(chatId)));
   await sendCommandMessage({ chatId, text: startText, replyToMessageId: messageId });
 
   // 头像复制放在后台执行：copiedUser 已经写入，复读逻辑立即生效。
   stealAvatarInBackground({
     chatId,
     target: targetUser,
-    successText: `嘿嘿，${targetLabel} 的脸已经被本天才偷走啦，杂鱼♡`,
-    failureText: `啧，修改头像失败了呢（可能是 TA 没设置公开头像，或者本天才换头像太频繁被限流了）。不过没关系，本天才依然要开始疯狂复读 ${targetLabel} 的消息啦，杂鱼♡`,
+    successText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarChanged(targetLabel),
+    failureText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarFailed(targetLabel),
   });
 }
 
@@ -118,7 +116,7 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
   if (!globalCopy.copiedUser) {
     await sendCommandMessage({
       chatId,
-      text: `本天才现在什么杂鱼都没盯着呢，笨蛋要 /copy stop 什么呀♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyNotRunning,
       replyToMessageId: messageId,
     });
     return;
@@ -129,13 +127,13 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
   globalCopy.copyChatId = undefined;
   await persistGlobalState("copy stopped");
 
-  await sendCommandMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyStopped, replyToMessageId: messageId });
 
   // /copy stop 不占全局冷却；仅在停止活动复读后预约恢复默认头像。
   restoreAvatarInBackground({
     chatId,
-    successText: `顺手把脸也换回来了，本天才的原装脸可比杂鱼们的耐看多了♡`,
-    failureText: `复读是停了，但脸没换回来呢（图取不下来或者被限流了），等下可以 /icon reset 再试，杂鱼♡`,
+    successText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarRestored,
+    failureText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarRestoreFailed,
   });
 }
 

@@ -1,12 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser, CopyMode } from "../../packages/types/chatState";
-import {
-  COPY_TARGET_TEXTS,
-  NYA_COPY_TARGET_TEXTS,
-  REVERSE_COPY_TARGET_TEXTS,
-} from "../../packages/consts/commands";
-import { COPY_USAGE_TEXT, ICON_USAGE_TEXT } from "../../packages/consts/commandUsage";
+import { COPY_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
+import { COPY_USAGE_TEXT, ICON_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
@@ -35,6 +31,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
+  getChatState: (): Record<string, never> => ({}),
   getGlobalCopyState: () => globalCopy,
   persistGlobalState: async (context: string): Promise<void> => { saveStateInBackground(context); },
 }));

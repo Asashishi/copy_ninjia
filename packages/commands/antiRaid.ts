@@ -1,10 +1,8 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { deactivateJoinGuardChat } from "../antiRaid";
-import {
-  ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
-  ANTI_RAID_TOGGLE_TEXTS,
-} from "../consts/commands";
+
 import { runChatToggleCommand } from "./superAdminToggle";
 
 /**
@@ -32,7 +30,7 @@ export async function handleAntiRaidCommand(
 ): Promise<void> {
   await runChatToggleCommand({
     ctx,
-    texts: ANTI_RAID_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat?.id ?? 0).ANTI_RAID_TOGGLE_TEXTS,
     permission: "isCanControllAntiRaidPermission",
     persistReason: "antiraid toggled",
     runtimeLabel: "join guard runtime",
@@ -41,6 +39,6 @@ export async function handleAntiRaidCommand(
       state.isAntiRaidEnabled = isEnabled;
     },
     teardown: deactivateJoinGuardChat,
-    teardownFailedText: ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
+    teardownFailedText: chatAtmosphere(ctx.chat?.id ?? 0).ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
   });
 }

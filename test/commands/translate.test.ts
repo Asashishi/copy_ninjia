@@ -4,7 +4,7 @@ import type { TranslateLanguage, TranslateState } from "../../packages/types/tra
 import type { SendCommandMessageParams } from "../../packages/infra/telegram/commandMessages";
 import { translateStates } from "../../packages/cache/main/translateState";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
-import { TRANSLATE_CAPACITY_TEXT, TRANSLATE_CHAT_CAPACITY_TEXT, TRANSLATE_TARGET_TEXTS } from "../../packages/consts/translate";
+import { TRANSLATE_CAPACITY_TEXT, TRANSLATE_CHAT_CAPACITY_TEXT, TRANSLATE_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/translate";
 import { teardownRegisteredChat } from "../../packages/infra/chatTeardownRegistry";
 import { loggerStub } from "../helpers/loggerMock";
 

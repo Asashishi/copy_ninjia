@@ -1,6 +1,8 @@
 /** 踢人前的拉人者身份核查，以及同步副作用的逐条执行。 */
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { applyWorkerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
+import { plainAtmosphereChats } from "../../../packages/cache/workers/antiRaid/atmosphere";
 
 import type {
   ExpelSnapshot,
@@ -25,6 +27,7 @@ const {
   run,
   sentKeyboards,
   sentTexts,
+  callbackTexts,
   setState,
   snapshot,
   testState,
@@ -71,6 +74,17 @@ installVerificationEffectsHooks({
   resetAdminCache,
   resetWorkerBotPermissions,
   resetWorkerChatKind,
+});
+beforeEach(() => { plainAtmosphereChats.clear(); });
+
+test("验证按钮应答按当前风格指向实际按钮，移除自定义人设后恢复默认", async () => {
+  setState(pendingState());
+  applyWorkerAtmosphere(CHAT_ID, true);
+  await run([{ kind: "answerCallback", callbackQueryId: "callback", reply: "useSelfButton" }]);
+  expect(callbackTexts[0]).toBe("请点击「完成验证」完成本人的验证；「通过」仅供管理员代他人验证。");
+  applyWorkerAtmosphere(CHAT_ID, false);
+  await run([{ kind: "answerCallback", callbackQueryId: "callback", reply: "useSelfButton" }]);
+  expect(callbackTexts[1]).toBe("想自己过验证就点「我是良民」，「通过」是给管理员代点的～");
 });
 
 describe("管理员拉人豁免的异步核查", () => {
@@ -202,6 +216,21 @@ describe("超时踢人前的拉人者最终复核", () => {
   });
 });
 describe("同步副作用的逐条执行", () => {
+  test("验证提醒重试采用当前群风格，按钮与正文一致且保留目标昵称", async () => {
+    const state: VerificationState = pendingState();
+    setState(state);
+    testState.nextSentMessageId = undefined;
+    await run([{ kind: "sendReminder", label: "用户😀♡", isBot: false }]);
+    await Bun.sleep(0);
+    expect(sentTexts[0]).toContain("杂鱼");
+    applyWorkerAtmosphere(CHAT_ID, true);
+    testState.nextSentMessageId = 900;
+    await run([{ kind: "sendReminder", label: "用户😀♡", isBot: false }]);
+    await Bun.sleep(0);
+    expect(sentTexts[1]).toBe("用户😀♡，请在 3分钟 内点击下方「完成验证」完成验证，管理员也可点击「通过」代为通过；超时将被踢出。");
+    expect(sentKeyboards[1]?.inline_keyboard[0]?.[0]).toEqual({ text: "完成验证", callback_data: `verify:${USER_ID}` });
+    expect(reminderDeliveries.size).toBe(0);
+  });
   test("真人、机器人和回复式验证提醒都明确给出三分钟", async () => {
     setState(pendingState());
     await run([

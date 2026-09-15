@@ -164,7 +164,8 @@ export interface ReminderDelivery {
   chatId: number;
   userId: number;
   kind: ReminderKind;
-  text: string;
+  label: string;
+  isBot: boolean;
   replyToMessageId: number | undefined;
   expectedState: PendingState;
   attempts: number;

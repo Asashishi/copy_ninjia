@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../../infra/atmosphere";
 /**
  * /wed 状态消息的唯一发送边界。可操作的图片结果只由移除、
  * 重开、LRU 淘汰和群 teardown 清理，不挂固定延迟删除。豁免登记于 conventions/telegramMessages。
@@ -29,7 +30,7 @@ export interface SendWedResultOptions {
 
 /** 按 file_id 复用头像或上传下载字节；远端成功时先同步登记消息 ID，再传播取消。 */
 export function sendWedResult({ session, candidate, replyToMessageId, signal }: SendWedResultOptions): Promise<boolean> {
-  const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity);
+  const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity, chatAtmosphere(session.chatId));
   return runTelegramAction({
     action: "send wed result",
     execute: (requestSignal?: AbortSignal): Promise<Message.PhotoMessage> => bot.api.sendPhoto(
@@ -38,7 +39,7 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
       {
         caption: caption.text,
         caption_entities: [...caption.entities],
-        reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id),
+        reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id, { atmosphere: chatAtmosphere(session.chatId) }),
         reply_parameters: replyParametersFor(replyToMessageId),
         message_thread_id: session.messageThreadId,
       },
@@ -58,7 +59,7 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
 
 /** 在同一条消息中同时换头像、图注和按钮；失败时保留原抽取。 */
 export function replaceWedResult(session: WedSession, candidate: WedCandidate, signal: AbortSignal): Promise<boolean> {
-  const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity);
+  const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity, chatAtmosphere(session.chatId));
   return runTelegramAction({
     action: "replace wed result",
     execute: (requestSignal?: AbortSignal): ReturnType<typeof bot.api.editMessageMedia> => bot.api.editMessageMedia(
@@ -70,7 +71,7 @@ export function replaceWedResult(session: WedSession, candidate: WedCandidate, s
         caption: caption.text,
         caption_entities: [...caption.entities],
       },
-      { reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id) },
+      { reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id, { atmosphere: chatAtmosphere(session.chatId) }) },
       ...signalArgs(requestSignal)
     ),
     map: (): boolean => {
@@ -91,7 +92,7 @@ export function confirmWedResult(session: WedSession, signal: AbortSignal): Prom
     execute: async (requestSignal?: AbortSignal): Promise<void> => {
       try {
         await bot.api.editMessageReplyMarkup(session.chatId, session.messageId!, {
-          reply_markup: buildWedKeyboard(session.actor.id, session.targetId!, true),
+          reply_markup: buildWedKeyboard(session.actor.id, session.targetId!, { confirmed: true, atmosphere: chatAtmosphere(session.chatId) }),
         }, ...signalArgs(requestSignal));
       } catch (error: unknown) {
         if (!isMessageNotModified(error)) throw error;

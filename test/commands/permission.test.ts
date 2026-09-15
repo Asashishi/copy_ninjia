@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { NON_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { chatStateCache } from "../../packages/cache/main/chatState";
+import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
 
 interface SentMessageEntity {
   type: string;
@@ -104,10 +107,8 @@ const {
   parsePermissionBoolean,
   parseWhitelistPermissionKey,
 } = await import("../../packages/commands/permission");
-const {
-  WHITELIST_PERMISSION_HELP,
-  WHITELIST_PERMISSION_KEYS,
-} = await import("../../packages/consts/whitelist");
+const { WHITELIST_PERMISSION_HELP } = await import("../../packages/consts/atmosphere/teasing/whitelist");
+const { WHITELIST_PERMISSION_KEYS } = await import("../../packages/consts/whitelist");
 const {
   seedSenderCache,
 } = await import("../../packages/users/senderIdentity");
@@ -117,7 +118,7 @@ const {
 } = await import("../../packages/cache/main/senderIdentity");
 const identityStorage = await import("../../packages/infra/identityStorage");
 const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
-const { IDENTITY_POLICY_UNAVAILABLE_TEXT, IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT } = await import("../../packages/consts/commands");
+const { IDENTITY_POLICY_UNAVAILABLE_TEXT, IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT } = await import("../../packages/consts/atmosphere/teasing/commands");
 
 function context(
   userId: number,
@@ -153,6 +154,7 @@ function lastQueriedPermissions(): Record<string, boolean> {
 }
 
 beforeEach(() => {
+  chatStateCache.clear();
   whitelistPermissionsById.clear();
   whitelistPermissionsById.set(100, permissions({ isCanMute: true }));
   sendMessage.mockClear();
@@ -178,6 +180,25 @@ beforeEach(() => {
 });
 
 describe("/permission", () => {
+  test("自定义人设群的 help 和 query 使用普通版，JSON 实体仍完整且长期保留", async () => {
+    const ctx = context(2, "help");
+    const chatId: number = (ctx as unknown as { chat: { id: number } }).chat.id;
+    getOrCreateChatState(chatId).aiPersona = "普通助手";
+    await handlePermissionCommand(ctx);
+    let sent = sendMessage.mock.calls.at(-1)?.[0] as SentMessage;
+    let entity = sent.entities?.[0];
+    expect(entity).toBeDefined();
+    expect(sent.text).toStartWith(ATMOSPHERE_TEXTS.plain.PERMISSION_COMMAND_TEXTS.helpPrefix);
+    expect(JSON.parse(sent.text.slice(entity!.offset, entity!.offset + entity!.length)))
+      .toEqual(ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP);
+    expect(sent.preserveInGroup).toBeTrue();
+    await handlePermissionCommand(context(2, "query"));
+    sent = sendMessage.mock.calls.at(-1)?.[0] as SentMessage;
+    entity = sent.entities?.[0];
+    expect(sent.text).toContain("true 表示已授权，false 表示未授权");
+    expect(JSON.parse(sent.text.slice(entity!.offset, entity!.offset + entity!.length))).toEqual(NON_WHITELIST_PERMISSIONS);
+    expect(sent.preserveInGroup).toBeTrue();
+  });
   test("权限键大小写不敏感，布尔值只接受 true/false", () => {
     for (const key of WHITELIST_PERMISSION_KEYS) {
       expect(parseWhitelistPermissionKey(key.toUpperCase())).toBe(key);

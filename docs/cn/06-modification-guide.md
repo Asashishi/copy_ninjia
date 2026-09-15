@@ -21,11 +21,11 @@
 
 ## 新增一个斜杠命令
 
-1. **handler**：在 `packages/commands/` 新建一文件，`function` 声明导出 `handleXxxCommand`，显式返回类型。权限门禁参考现成模式：按权限键授权看 `block.ts` / `mood.ts`（一律 `hasCommandPermission(ctx, key)`，超级管理员恒持有全部权限键，不要再单独判身份）；只认超管身份、无法授权出去的看 `isSuperAdminActor`（`white.ts`、`batchKick.ts`）；仅私聊看 `send.ts`（非本人/非私聊静默 return，不回错误提示）。用户可见文案不写在 handler 里：放进所属领域的 `packages/consts/<domain>.ts` 文案表，类型放 `packages/types/`（见 `PERMISSION_COMMAND_TEXTS`、`BLOCK_TARGET_TEXTS`）——那既是给文案改动一个集中入口，也免掉每次调用现造一个对象加三个闭包。文案里要嵌无界的用户输入时才例外，`cjkAction.ts` 是唯一一处。
+1. **handler**：在 `packages/commands/` 导出带显式返回类型的 `handleXxxCommand`。按权限键授权使用 `hasCommandPermission(ctx, key)`；仅超级管理员本人可执行的操作使用 `isSuperAdminActor`；私聊命令参考 `send.ts`。固定提示和格式化函数放在 `packages/consts/atmosphere/{teasing,plain}/` 的对应领域文件，两版使用同一类型。主线程通过 `chatAtmosphere(chatId)` 读取当前群文案；动态昵称、提示词和问题作为参数插入，不在渲染后替换文本。
 2. **导出**：加入 `packages/commands/index.ts`。
 3. **注册**：在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 的 `commands` 子链上加 `commands.command("xxx", ...)`。**不要直接挂到 `bot` 上**——命令一律收在那条 `bot.on(":entities:bot_command")` 子链后面（理由见 [02 架构总览](02-architecture.md#一条消息的旅程) 的「命令注册」），`test/app/registerHandlers.test.ts` 会拒绝任何直接挂在 `bot` 上的命令。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
 4. **私聊网关**：新命令若要在私聊中使用，还必须同步调整 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 并补网关测试；当前私聊中的斜杠命令只显式放行 `/send`，仅注册 handler 不会到达命令处理器。纯群聊命令无需改这里。
-5. **菜单**：要出现在 Telegram 命令菜单就在 [`packages/consts/commands.ts`](../../packages/consts/commands.ts) 的 `BOT_COMMANDS` 加一项；像 `/send` 这类隐藏命令则不加。
+5. **菜单**：在 `packages/consts/atmosphere/{teasing,plain}/commands.ts` 的两份 `BOT_COMMANDS` 同时添加同名命令；隐藏命令 `/send` 不加入。`packages/app/commandMenu.ts` 注册全局默认版和按群覆盖的普通版。
 6. **参数常量**：冷却、阈值等进 `packages/consts/commands.ts` 或对应领域 consts，带中文 JSDoc。
 7. **测试**：`test/commands/xxx.test.ts`，至少覆盖权限拒绝、参数解析与主路径。
 8. **文档**：三语 `docs/{cn,en,ja}/08-commands.md` 的命令表添加条目，并写明交互和权限边界。
@@ -49,13 +49,13 @@
 
 ## 换成别的语言：不做 i18n，请自行 fork
 
-面向用户的文案只有简体中文一套，仓库不提供也不接受 i18n 层——文案不是能替换的字典项：
+面向用户的固定提示均为简体中文，`packages/consts/atmosphere/` 提供默认雌小鬼版与普通版。群内配置自定义人设时选择普通版；这两版不按客户端语言切换。
 
-- 大量回复由片段拼接而成，还要同时算出 Telegram `entities` 的 UTF-16 偏移（见上一节）。换语言意味着词序、长度、乃至句子该不该拆都变了，偏移必须跟着重算，key-value 词条表接不住这类文案。
-- `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
-- 人设、工具描述与提示词（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
+- 文案表保存固定字符串和格式化函数，Telegram `entities` 的 UTF-16 偏移由最终渲染文本计算。昵称、问题、提示词和模型输出不参与语气替换。
+- `/咬` 等动作命令使用 1~2 个中文字；其命令解析与显示文案分别维护。
+- 群自定义 AI 人设优先，未设置时使用 `prompt/persona.md`。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 961 处、分布在 89 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+其他语言需自行 fork 并同步调整文案、交互和提示词。按 TypeScript AST 统计，`packages/` 中含中文字符串或模板字面量的源码行有 1352 行，分布在 81 个文件，不含注释；另有 `prompt/persona.md` 和部署配置。修改后运行 `bun run check`。
 
 ## 调整行为参数
 

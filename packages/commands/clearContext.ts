@@ -1,6 +1,7 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { invalidateAiChat } from "../aiChat";
-import { CLEAR_CONTEXT_USAGE_TEXT } from "../consts/commandUsage";
+
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import type { CachedUser } from "../types/chatState";
@@ -34,8 +35,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
   if (actor === undefined || !isSuperAdminActor(ctx)) {
     await sendCommandMessage({
       chatId,
-      text: `就 ${actor === undefined ? "哪个杂鱼" : formatUserLabel(actor)} ` +
-        "也想抹掉本天才的记忆？哪来的资格呀，笨蛋♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.clearContextRejected(actor === undefined ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor : formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0))),
       replyToMessageId: messageId,
     });
     return;
@@ -43,7 +43,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
   if (ctx.match.trim().length > 0) {
     await sendCommandMessage({
       chatId,
-      text: CLEAR_CONTEXT_USAGE_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).CLEAR_CONTEXT_USAGE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -55,7 +55,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
     logger.error(`Failed to clear the AI chat context of chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: "呜……这次没擦干净，才不是本天才的错呢！过会儿再来求本天才一次吧，杂鱼♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.clearContextFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -63,7 +63,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
 
   await sendCommandMessage({
     chatId,
-    text: "哼，你们这群杂鱼说过的破事，本天才一句都不记得啦——从现在起重新讨好本天才吧♡",
+    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.clearContextDone,
     replyToMessageId: messageId,
   });
 }

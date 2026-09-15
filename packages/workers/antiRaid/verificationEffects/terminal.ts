@@ -1,3 +1,4 @@
+import { workerAtmosphere } from "../atmosphere";
 import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
 import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
@@ -355,21 +356,21 @@ async function expelMember({
   if (removalOutcome === "absent" && !kicked) return stillCurrent();
   const noticeText: string = !kicked
     ? removalOutcome === "unconfirmed"
-      ? `啧，本天才没能确认 ${snapshot.label} 现在还在不在群里，所以这次没有贸然踢人；会继续重试，杂鱼管理员也检查下网络和本天才的成员查询权限！`
+      ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationMembershipUnknown(snapshot.label)
       : removalOutcome === "kindUnknown"
-        ? `啧，本天才没能确认这个聊天是普通群还是超级群，所以这次没有拿 ${snapshot.label} 乱试踢人接口；会继续重试，杂鱼管理员检查下网络！`
+        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationChatKindUnknown(snapshot.label)
       : reason === "flood"
-        ? `啧，${snapshot.label} 没完成验证还在刷屏，本天才想把 TA 踢出去却没踢动……管理员快检查本天才的封禁权限！`
-        : `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
+        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationFloodKickFailed(snapshot.label)
+        : workerAtmosphere(chatId).NOTICE_TEXTS.verificationTimeoutKickFailed(snapshot.label)
     : !cleanupCleared
       ? permissionDenied
-        ? `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去了，可本天才自己的 ${cleanupMessageIds.length} 条验证消息里还有 ${missedCleanup} 条删不动……杂鱼管理员快看看本天才有没有删消息的权限♡`
-        : `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去了，不过本天才自己的验证消息还有 ${missedCleanup} 条没清掉，多半是网络抽了一下♡`
+        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationCleanupForbidden(snapshot.label, cleanupMessageIds.length, missedCleanup)
+        : workerAtmosphere(chatId).NOTICE_TEXTS.verificationCleanupFailed(snapshot.label, missedCleanup)
       : reason === "flood"
-        ? `啧，${snapshot.label} 验证都没过就开始刷屏，本天才已经把 TA 踢出去啦♡`
+        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationFloodKicked(snapshot.label)
         : snapshot.isBot
-          ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有管理员愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩踢出去啦♡`
-          : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 踢出去啦，杂鱼动作太慢咯♡`;
+          ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationBotTimeout(formatMinSec(VERIFICATION_TIMEOUT_MS), snapshot.label)
+          : workerAtmosphere(chatId).NOTICE_TEXTS.verificationMemberTimeout(snapshot.label, formatMinSec(VERIFICATION_TIMEOUT_MS));
   if (!stillCurrent()) return false;
 
   // 三类诊断分别持久化，成员/群类型探测失败不能占掉权限失败的唯一告警名额。

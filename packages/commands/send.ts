@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { clearChatStateField, getActiveProxySendTarget, getChatStateCache, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { logApiError, sendCommandMessage } from "../infra/telegram";
@@ -29,12 +30,12 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
 
   if (arg.toLowerCase() === "finish") {
     if (activeTargetChatId === undefined) {
-      await sendCommandMessage({ chatId, text: `现在又没在转发，是想 finish 什么呀♡`, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyAlreadyStopped, replyToMessageId: messageId });
       return;
     }
     clearChatStateField(activeTargetChatId, "isProxySendEnabled");
     await persistChatState(activeTargetChatId, "send finished");
-    await sendCommandMessage({ chatId, text: `好啦，不转发了♡`, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyStopped, replyToMessageId: messageId });
     return;
   }
 
@@ -44,12 +45,12 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   // 一个他从没输入过的群。
   const targetChatId: number | undefined = parseChatIdArgument(arg);
   if (targetChatId === undefined) {
-    await sendCommandMessage({ chatId, text: `笨蛋，要 /send <群组id> 或者 /send finish，说清楚呀♡`, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyUsage, replyToMessageId: messageId });
     return;
   }
 
   if (activeTargetChatId !== undefined) {
-    await sendCommandMessage({ chatId, text: `已经在转发到 ${activeTargetChatId} 了，先 /send finish 呀♡`, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyAlreadyStarted(activeTargetChatId), replyToMessageId: messageId });
     return;
   }
 
@@ -58,7 +59,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   // 这里只读现有状态，不为未纳管目标创建 chat_states 记录，也不触发只属于
   // /init enable 的容量闸。判定放在 getChat 之前，没纳管的目标无需探测可达性。
   if (!getChatStateCache().has(targetChatId)) {
-    await sendCommandMessage({ chatId, text: `${targetChatId} 本天才还没接管呢，先去那边 /init enable 再来找我♡`, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyNotInitialized(targetChatId), replyToMessageId: messageId });
     return;
   }
 
@@ -67,17 +68,17 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
     const targetChat: ChatFullInfo =
       await bot.api.getChat(targetChatId, ...signalArgs(signal));
     if (targetChat.type !== "group" && targetChat.type !== "supergroup") {
-      await sendCommandMessage({ chatId, text: `只能转发进群组呀，${targetChatId} 不是群组，检查一下 id♡`, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyNotGroup(targetChatId), replyToMessageId: messageId });
       return;
     }
   } catch (error: unknown) {
     throwIfUpdateAborted();
     logApiError(`resolve /send target chat ${targetChatId}`, error);
-    await sendCommandMessage({ chatId, text: `连不上 ${targetChatId} 这个聊天呀，检查一下 id 对不对、本天才是不是已经在那边了♡`, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyUnavailable(targetChatId), replyToMessageId: messageId });
     return;
   }
 
   getOrCreateChatState(targetChatId).isProxySendEnabled = true;
   await persistChatState(targetChatId, "send started");
-  await sendCommandMessage({ chatId, text: `好，现在这里发的消息本天才都会转发进 ${targetChatId}，说完了记得 /send finish♡`, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyStarted(targetChatId), replyToMessageId: messageId });
 }

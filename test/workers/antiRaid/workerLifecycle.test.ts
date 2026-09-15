@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../packages/types";
 import type { AdDetectAgentConfig } from "../../../packages/types/config";
 import { workerDuplexRequestSignal } from "../../../packages/cache/perThread/workerDuplex";
+import { workerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
+import { plainAtmosphereChats } from "../../../packages/cache/workers/antiRaid/atmosphere";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 
 const calls: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
@@ -135,6 +138,19 @@ beforeEach(() => {
 });
 
 describe("Anti-Raid Worker lifecycle", () => {
+  test("风格镜像只响应变更消息，失权保留，移除和 Worker 停止清理", () => {
+    worker.startAntiRaidWorker();
+    worker.handleAntiRaidWorkerMessage({ type: "atmosphere", chatId: -1001, plain: true });
+    expect(workerAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
+    expect(workerAtmosphere(-1002)).toBe(ATMOSPHERE_TEXTS.teasing);
+    worker.handleAntiRaidWorkerMessage({ type: "deactivateChat", chatId: -1001, cleanupVerificationMessages: false });
+    expect(workerAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
+    worker.handleAntiRaidWorkerMessage({ type: "atmosphere", chatId: -1001, plain: false });
+    expect(plainAtmosphereChats.size).toBe(0);
+    worker.handleAntiRaidWorkerMessage({ type: "atmosphere", chatId: -1001, plain: true });
+    worker.stopAntiRaidWorker();
+    expect(plainAtmosphereChats.size).toBe(0);
+  });
   test("stop/start 作废旧关联频道在途槽，旧 settle 不破坏新代去重", async () => {
     let resolveStale!: () => void;
     let resolveFresh!: () => void;

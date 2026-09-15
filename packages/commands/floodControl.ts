@@ -1,7 +1,8 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { clearFloodControl } from "../antiRaid";
-import { FLOOD_CONTROL_TOGGLE_TEXTS } from "../consts/commands";
+
 import { runChatToggleCommand } from "./superAdminToggle";
 
 /**
@@ -18,7 +19,7 @@ export async function handleFloodControlCommand(
 ): Promise<void> {
   await runChatToggleCommand({
     ctx,
-    texts: FLOOD_CONTROL_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat?.id ?? 0).FLOOD_CONTROL_TOGGLE_TEXTS,
     permission: "isCanControllFloodControlPermission",
     persistReason: "flood_control toggled",
     runtimeLabel: "flood control runtime",

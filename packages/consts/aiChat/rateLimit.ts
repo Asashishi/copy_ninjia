@@ -26,5 +26,3 @@ export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;
 /** 限频提示本身的冷却与固定文案。 */
 export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;
-/** 达到回复限频时发送给群聊的固定提示。 */
-export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡";

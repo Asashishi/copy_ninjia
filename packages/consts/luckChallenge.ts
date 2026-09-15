@@ -1,3 +1,4 @@
+import { LUCK_TIER_COMMENTS } from "./atmosphere/teasing/luck";
 import type { LuckTier } from "../types/luckChallenge";
 
 /** /luck_challenge 内联抽签（packages/commands/luckChallenge/）的调参常量。 */
@@ -11,13 +12,13 @@ import type { LuckTier } from "../types/luckChallenge";
  * 各半，浮动出来偶尔翻面是应有之义。
  */
 export const LUCK_TIERS: readonly LuckTier[] = [
-  { label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼快让本天才蹭蹭欧气～♡", fortunePercentRange: [88, 97] as const },
-  { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: [72, 82] as const },
-  { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: [58, 67] as const },
-  { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: [45, 55] as const },
-  { label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercentRange: [33, 42] as const },
-  { label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercentRange: [18, 28] as const },
-  { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: [3, 12] as const },
+  { label: "大吉", weight: 7, comment: LUCK_TIER_COMMENTS.大吉, fortunePercentRange: [88, 97] as const },
+  { label: "吉", weight: 15, comment: LUCK_TIER_COMMENTS.吉, fortunePercentRange: [72, 82] as const },
+  { label: "小吉", weight: 20, comment: LUCK_TIER_COMMENTS.小吉, fortunePercentRange: [58, 67] as const },
+  { label: "尚可", weight: 26, comment: LUCK_TIER_COMMENTS.尚可, fortunePercentRange: [45, 55] as const },
+  { label: "小凶", weight: 17, comment: LUCK_TIER_COMMENTS.小凶, fortunePercentRange: [33, 42] as const },
+  { label: "凶", weight: 10, comment: LUCK_TIER_COMMENTS.凶, fortunePercentRange: [18, 28] as const },
+  { label: "大凶", weight: 5, comment: LUCK_TIER_COMMENTS.大凶, fortunePercentRange: [3, 12] as const },
 ];
 
 /**

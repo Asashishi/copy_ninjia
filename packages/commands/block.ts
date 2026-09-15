@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import {
@@ -8,7 +9,7 @@ import {
 } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
-import { BLOCK_TARGET_TEXTS } from "../consts/commands";
+
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import { resolveBotAdminStatus } from "../infra/botAdmin";
@@ -61,7 +62,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
   if (!actor || !hasCommandPermission(ctx, "isCanBlock")) {
-    const replyText: string = `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /block 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
+    const replyText: string = chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockRejected(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor);
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -81,7 +82,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     acceptUserId: true,
     // 自己人闸与 blockUser 都读目标的名单结论，冷读失败时不能当成「不受保护」。
     requireIdentityPolicies: true,
-    messages: BLOCK_TARGET_TEXTS,
+    messages: chatAtmosphere(ctx.chat?.id ?? 0).BLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;
 
@@ -91,7 +92,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   if (targetUser.isChannel === true && targetUser.id === chatId) {
     await sendCommandMessage({
       chatId,
-      text: `匿名管理员拿这个群当皮套时，Telegram 不会告诉本天才皮套底下是谁；本天才不能把整个群当成那个人踢掉呀♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockCurrentChat,
       replyToMessageId: messageId,
     });
     return;
@@ -120,7 +121,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   if (admission.protected) {
     await sendCommandMessage({
       chatId,
-      text: `笨蛋，${formatTargetLabel(targetUser)} 可是自己人，本天才才不会把自己人写进小本本♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockProtected(formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0))),
       replyToMessageId: messageId,
     });
     return;
@@ -140,16 +141,16 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 封禁清单与 /unblock 的跨群解封同源，见 infra/blocklist/membership.ts 的 managedAdminChatIds。
   const targetChatIds: number[] = managedAdminChatIds(chatId, isAdminHere);
 
-  const targetLabel: string = formatTargetLabel(targetUser);
+  const targetLabel: string = formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
   // 落盘失败必须说破：那条记录只活在本进程内存里，重启就没了，而管理员默认
   // 理解的是「永久」。
-  const persistWarning: string = persisted ? "" : `（不过小本本没能写进硬盘，重启就忘了，杂鱼管理员快去查磁盘）`;
+  const persistWarning: string = persisted ? "" : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockPersistFailed;
   // 一个管理的群都没有时也已经记进黑名单了：现在踢不动，不代表以后进群时
   // 也放过 TA。文案要说清这一点，否则管理员会以为这条命令完全没生效。
   if (targetChatIds.length === 0) {
     await sendCommandMessage({
       chatId,
-      text: `笨蛋，本天才连一个群的管理员都不是，${targetLabel} 现在踢也踢不动，不过已经记进小本本了${persistWarning}——再进本天才盯着的任何群就秒踢♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockNoManagedChat(targetLabel, persistWarning),
       replyToMessageId: messageId,
     });
     return;
@@ -197,18 +198,18 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
 
   const bannedCount: number = kickedCount + confirmedBannedCount;
   if (bannedCount === 0) {
-    const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查——不过 TA 已经记进小本本了${persistWarning}，再进群就秒踢♡`;
+    const replyText: string = chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockAllFailed(targetLabel, persistWarning);
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
   // 本群不是管理员时明确说清：本群这个人还留着，被拉黑的是其它群。
-  const notAdminHereNote: string = isAdminHere ? "" : `本天才在这个群不是管理员、这里踢不动 TA，不过——`;
+  const notAdminHereNote: string = isAdminHere ? "" : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockNotAdminHere;
   const failedCount: number = targetChatIds.length - bannedCount;
-  const failedNote: string = failedCount > 0 ? `（还有 ${failedCount} 个群没踢动，杂鱼管理员快去检查权限）` : "";
+  const failedNote: string = failedCount > 0 ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockPartialFailure(failedCount) : "";
   // “不在群”只表示本次没有执行移出动作，无法证明目标从未加入过；因此只说
   // “确认封禁”，不再使用“提前拉黑（根本没进去过）”这类历史推断。
-  const kickedNote: string = kickedCount > 0 ? `从 ${kickedCount} 个群一脚踢出去还上了黑名单` : "";
+  const kickedNote: string = kickedCount > 0 ? chatAtmosphere(chatId).NOTICE_TEXTS.blockKicked(kickedCount) : "";
   const confirmedBannedNote: string = confirmedBannedCount > 0 ? `在 ${confirmedBannedCount} 个群确认封禁` : "";
   const actionNote: string = [kickedNote, confirmedBannedNote].filter(Boolean).join("，");
   // 本来就在名单里的人再 /block 一次不该被说成「刚记上」。各群仍重新查询
@@ -216,11 +217,11 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 落盘警告两条路都要带：重复 /block 正是上一次没写进硬盘时的重试动作，
   // 还没写成功就不能不说。
   const blocklistNote: string = newlyBlocked
-    ? `，杂鱼永远别想回来了${persistWarning}`
-    : `（早就在小本本上了${persistWarning}）`;
+    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockRecorded(persistWarning)
+    : chatAtmosphere(chatId).NOTICE_TEXTS.blockAlreadyRecorded(persistWarning);
   await sendCommandMessage({
     chatId,
-    text: `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}${blocklistNote}♡`,
+    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockResult({ notAdminHereNote, targetLabel, actionNote, failedNote, blocklistNote }),
     replyToMessageId: messageId,
   });
 }

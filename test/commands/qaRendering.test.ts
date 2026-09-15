@@ -1,11 +1,7 @@
 import type { Message, MessageEntity } from "grammy/types";
 import { describe, expect, test } from "bun:test";
-import {
-  CHAT_QA_ANSWER_MAX_CHARS,
-  CHAT_QA_QUESTION_MAX_CHARS,
-  QA_COMMAND_TEXTS,
-  QA_TRUNCATION_MARK,
-} from "../../packages/consts/qa";
+import { CHAT_QA_ANSWER_MAX_CHARS, CHAT_QA_QUESTION_MAX_CHARS, QA_TRUNCATION_MARK } from "../../packages/consts/qa";
+import { QA_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/qa";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 import {
   parseQaFieldMessage,

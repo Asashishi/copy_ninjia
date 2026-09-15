@@ -1,3 +1,4 @@
+import { workerAtmosphere } from "./atmosphere";
 import type { ChatPermissions, ChatFullInfo } from "grammy/types";
 import type { LockdownDispatcher, LockdownEntry } from "../../types/antiRaid/internal";
 import { deleteMessage, sendMessage, telegramApi } from "../../infra/telegram";
@@ -41,7 +42,7 @@ export function beginLockdownAnnouncement(chatId: number, joinCount: number | un
     try {
       const sentMessageId: number | undefined = await sendMessage({
         chatId,
-        text: lockdownAnnouncementText(joinCount),
+        text: lockdownAnnouncementText(joinCount, workerAtmosphere(chatId)),
         api: telegramApi,
         onSent: (pendingMessageId: number): void => {
           messageId = pendingMessageId;

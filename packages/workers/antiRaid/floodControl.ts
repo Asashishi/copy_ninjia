@@ -1,3 +1,6 @@
+import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
+import type { AtmosphereTexts } from "../../types/atmosphere";
+import { workerAtmosphere } from "./atmosphere";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 /**
@@ -153,10 +156,9 @@ export function observeMemberMessage(
  * 到点自己就解开了，和广告检测那条「人已经没了」的播报不是一回事。
  * 导出仅为可测试性。
  */
-export function formatFloodMuteNotice(label: string): string {
+export function formatFloodMuteNotice(label: string, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
   const minutes: number = Math.round(FLOOD_MUTE_DURATION_MS / 60_000);
-  return `哼，${label} 一分钟刷了 ${FLOOD_MESSAGE_LIMIT} 条，本天才把你禁言 ${minutes} 分钟，` +
-    "冷静完了再回来说话啦杂鱼♡";
+  return atmosphere.NOTICE_TEXTS.floodMuted(label, FLOOD_MESSAGE_LIMIT, minutes);
 }
 
 interface MuteFlooderParams {
@@ -260,7 +262,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
   await sendTemporaryMessageFromMain({
     purpose: "notice",
     chatId: message.chatId,
-    text: formatFloodMuteNotice(message.label),
+    text: formatFloodMuteNotice(message.label, workerAtmosphere(message.chatId)),
     deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     signal: signalWithTimeout(dispatchAbort, FLOOD_NOTICE_DISPATCH_TIMEOUT_MS),
   });

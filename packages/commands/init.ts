@@ -1,12 +1,11 @@
+import { syncAntiRaidAtmosphere } from "../antiRaid/workerBridge/controller";
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { syncAiChatPersona } from "../aiChat/workerBridge";
+import { syncChatCommandMenu } from "../app/commandMenu";
 import type { ChatState } from "../types/chatState";
 import type { ReadonlyLruCache } from "../libs/lruCache";
-import {
-  INIT_CHAT_LIMIT_TEXT,
-  INIT_DISABLE_TEARDOWN_FAILED_TEXT,
-  INIT_TOGGLE_TEXTS,
-} from "../consts/commands";
+
 import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
 import { logger } from "../infra/logger";
 import {
@@ -31,7 +30,7 @@ import { teardownChatRuntime } from "../infra/chatTeardown";
  */
 export async function handleInitCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
-    texts: INIT_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat?.id ?? 0).INIT_TOGGLE_TEXTS,
   });
   if (!arg) return;
 
@@ -45,7 +44,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   ) {
     await sendCommandMessage({
       chatId,
-      text: INIT_CHAT_LIMIT_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).INIT_CHAT_LIMIT_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -75,6 +74,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // （见 docs/cn/04-invariants.md）。此刻还什么都没写进去，因此重投那一轮读到的
   // wasEnabled 仍是 true，回执不会出现「本来就关着」那种歧义。
   await persistChatState(chatId, "init toggled");
+  if (isEnabled) await syncChatCommandMenu(ctx.api, chatId);
 
   // 拆运行态失败**不上抛**。总开关上面已经 durable 地关掉，异常逸出只会让
   // acknowledged runner 带非零码退出且不确认 offset：Telegram 重投同一条
@@ -103,6 +103,8 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
       // 「有几样没拆干净」如实回执，不再扣住 offset 制造上面那种歧义。
       await persistChatState(chatId, "init teardown settled");
       syncAiChatPersona(chatId);
+      syncAntiRaidAtmosphere(chatId);
+      await syncChatCommandMenu(ctx.api, chatId);
     } catch (error: unknown) {
       teardownFailed = true;
       logger.error(
@@ -129,11 +131,11 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   if (isEnabled && getChatState(chatId).botPermissions === undefined) await resolveBotAdminStatus(chatId);
 
   const replyText: string = teardownFailed
-    ? INIT_DISABLE_TEARDOWN_FAILED_TEXT
+    ? chatAtmosphere(ctx.chat?.id ?? 0).INIT_DISABLE_TEARDOWN_FAILED_TEXT
     : toggleReplyText({
       isEnabled,
       wasEnabled,
-      texts: INIT_TOGGLE_TEXTS,
+      texts: chatAtmosphere(ctx.chat?.id ?? 0).INIT_TOGGLE_TEXTS,
     });
   await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

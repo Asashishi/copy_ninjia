@@ -1,9 +1,9 @@
+const syncAtmosphere = mock((_chatId: number): void => {});
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere: syncAtmosphere }));
+const syncMenu = mock(async (): Promise<void> => {});
+mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: syncMenu }));
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import {
-  ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
-  INIT_CHAT_LIMIT_TEXT,
-  INIT_TOGGLE_TEXTS,
-} from "../../packages/consts/commands";
+import { ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT, INIT_CHAT_LIMIT_TEXT, INIT_TOGGLE_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { botPermissions } from "../helpers/botPermissions";
 

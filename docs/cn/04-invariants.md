@@ -498,6 +498,12 @@
 
 - **群提示词与上下文沿用各自 owner 的缓存**：`aiPersona` 随现有 25 群 `ChatState` 热表恢复，`/prompt` 修改该字段并等待 `persistChatState` 的精确 durable ACK，再增量推送 AI Worker。`/bot_status` 从同一群缓存读取是否已设置，不读 SQL、不展示正文。Worker 的 `cache/workers/aiChat/persona.ts` 只由协议入口更新，初始化/重建由主线程全量重放，群状态删除确认落盘后推送清理，停机清空；被撤管理员保留人设。无条目使用 `prompt/persona.md`。每轮回复固定一次人设，轮内工具调用不切换前缀。`isCanConfigAiPrompt` 默认为 false，超级管理员有效权限恒为 true；配置命令仍受 `/init` 和统一 30 秒提示清理边界约束。
 
+- **群通知风格由当前群人设决定**：两套只读文案存于 `packages/consts/atmosphere/{teasing,plain}/`。机器人所在群设置了 `aiPersona` 才用普通版；无配置使用雌小鬼版，与 `isAIChatEnabled` 无关。主线程直接读现有群缓存，AI Worker 读现有人设镜像；Anti-Raid 的 `cache/workers/antiRaid/atmosphere.ts` 只保存普通版群 ID，容量受 25 群状态上限约束。主线程在配置或删除落盘后增量推送，Worker 初始化和崩溃重建时在业务接管前全量重放；缺项即默认版，停机清空，被撤管理员保留。每条群消息不增加 SQL、镜像同步或 request/reply。
+
+- **菜单与通知共用同一风格选择**：启动注册全局雌小鬼菜单，再恢复各群作用域；`/prompt config` 设置普通版群菜单，`/prompt remove` 或群状态清除删除群作用域，`/init enable` 重新核对本群菜单。菜单 API 失败只记录日志，后续启动或人设操作重新同步。权限 help/query、QA、按钮、命令回执和 Worker 通知使用所选文案，保留既有留存边界。验证提醒每次重试重新选择正文与按钮；AI 限频提示的自录使用实际发送文本。用户内容只插值，实体偏移在渲染后计算。
+
+- **普通 inline 运势固定使用默认雌小鬼版**：[InlineQuery](https://core.telegram.org/bots/api#inlinequery) 没有目标群 ID，签名回执也不提供可用于查询阶段的群身份。不得由查询用户、其他群缓存或 `chat_type` 推断发送目标。
+
 - **AI 持久化只更新已有群**：启动从同一 SQLite 连接读取并严格解码 `ai_context`，恢复 AI Worker 记忆及主线程未确认快照镜像。上下文写入前先提交本群待写状态；状态事务失败时保留上下文待写值，不提前回 durable ACK。上下文只执行按主键 UPDATE，迟到快照不能复活已删群；状态与人设写入不覆盖上下文。记忆删除只置空 `ai_context`，群行删除则清除三列。
 
 ### 群状态与 `chat_states`

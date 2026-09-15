@@ -17,6 +17,7 @@ mock.module("../../packages/infra/telegram", () => ({
 mock.module("../../packages/infra/telegram/avatar/copy", () => ({ copyUserProfilePhoto }));
 mock.module("../../packages/infra/telegram/avatar/restore", () => ({ restoreDefaultProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
+  getChatState: (): Record<string, never> => ({}),
   getGlobalCopyState: () => globalCopyState,
   // copy/avatarQueue.ts 在主线程取默认头像直链后传给 restoreDefaultProfilePhoto；
   // 这里的替身必须一并提供，否则整个模块的具名导入会在加载期就失败。
@@ -40,8 +41,8 @@ const {
   quiesceAvatarUpdates,
 } = await import("../../packages/copy/avatarQueue");
 const { avatarUpdateState } = await import("../../packages/cache/main/copy/avatar");
-const { COPY_COOLDOWN_MS, STEAL_ICON_TARGET_TEXTS } =
-  await import("../../packages/consts/commands");
+const { COPY_COOLDOWN_MS } = await import("../../packages/consts/commands");
+const { STEAL_ICON_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/commands");
 const originalDateNow: () => number = Date.now;
 
 async function waitFor(predicate: () => boolean): Promise<void> {

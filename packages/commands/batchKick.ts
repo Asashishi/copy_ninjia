@@ -1,12 +1,9 @@
-import { BATCH_KICK_USAGE_TEXT } from "../consts/commandUsage";
+import { chatAtmosphere } from "../infra/atmosphere";
+
 import { commandArgumentTokens } from "./arguments";
 import type { CommandContext, Context } from "grammy";
-import {
-  BATCH_KICK_CONCURRENCY,
-  BATCH_KICK_MAX_DURATION_MS,
-  BATCH_KICK_MIN_DURATION_MS,
-  IDENTITY_POLICY_UNAVAILABLE_TEXT,
-} from "../consts/commands";
+import { BATCH_KICK_CONCURRENCY, BATCH_KICK_MAX_DURATION_MS, BATCH_KICK_MIN_DURATION_MS } from "../consts/commands";
+
 import {
   formatDurationCn,
   parseDurationTokenMs,
@@ -245,7 +242,7 @@ export async function handleBatchKickCommand(
   if (!isSuperAdminActor(ctx)) {
     await sendCommandMessage({
       chatId,
-      text: "就你也想批量踢人？/batch_kick 只听超级管理员本人的，杂鱼退散啦♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickRejected,
       replyToMessageId: messageId,
     });
     return;
@@ -253,7 +250,7 @@ export async function handleBatchKickCommand(
   if (ctx.chat.type !== "supergroup") {
     await sendCommandMessage({
       chatId,
-      text: "笨蛋，/batch_kick 只能在超级群里使用♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickSupergroupOnly,
       replyToMessageId: messageId,
     });
     return;
@@ -265,7 +262,7 @@ export async function handleBatchKickCommand(
   if (durationMs === undefined) {
     await sendCommandMessage({
       chatId,
-      text: BATCH_KICK_USAGE_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).BATCH_KICK_USAGE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -294,7 +291,7 @@ export async function handleBatchKickCommand(
     );
     await sendCommandMessage({
       chatId,
-      text: "呜……入群日志暂时读不了，本次一个人都没动，稍后再试吧♡",
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.joinLogUnavailable,
       replyToMessageId: messageId,
     });
     return;
@@ -303,7 +300,7 @@ export async function handleBatchKickCommand(
   if (records.length === 0) {
     await sendCommandMessage({
       chatId,
-      text: `最近 ${formatDurationCn(durationMs)} 没有记录到新成员，本次没有踢人，也没有写入黑名单♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickEmpty(formatDurationCn(durationMs)),
       replyToMessageId: messageId,
     });
     return;
@@ -313,7 +310,7 @@ export async function handleBatchKickCommand(
   if (stats.aborted && stats.scanned === 0) {
     await sendCommandMessage({
       chatId,
-      text: IDENTITY_POLICY_UNAVAILABLE_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).IDENTITY_POLICY_UNAVAILABLE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -340,13 +337,9 @@ export async function handleBatchKickCommand(
   await sendCommandMessage({
     chatId,
     text:
-      `已扫描最近 ${formatDurationCn(durationMs)} 的 ${records.length} 条入群记录中的 ${stats.scanned} 条：` +
-      `踢出 ${stats.kicked}，已不在群 ${stats.absent}，自己人跳过 ${stats.protected}，` +
-      `黑名单交回封禁 ${stats.blocked}，` +
-      `权限不足 ${stats.forbidden}，查询或请求失败 ${stats.failed}。只踢未拉黑♡` +
-      (stats.aborted
-        ? "\n中途黑白名单读不出来了，剩下的记录一条都没动，稍后再跑一次吧♡"
-        : ""),
+      chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickResult({ duration: formatDurationCn(durationMs), recordCount: records.length, scanned: stats.scanned, kicked: stats.kicked, absent: stats.absent, protected: stats.protected, blocked: stats.blocked, forbidden: stats.forbidden, failed: stats.failed, abortedNotice: (stats.aborted
+        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickAborted
+        : "") }),
     replyToMessageId: messageId,
   });
 }

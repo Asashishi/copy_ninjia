@@ -41,7 +41,7 @@ const { protectedIdentityMutationQueue } =
   await import("../../packages/cache/main/blocklist");
 const identityStorage = await import("../../packages/infra/identityStorage");
 const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
-const { IDENTITY_POLICY_UNAVAILABLE_TEXT } = await import("../../packages/consts/commands");
+const { IDENTITY_POLICY_UNAVAILABLE_TEXT } = await import("../../packages/consts/atmosphere/teasing/commands");
 const { runProtectedIdentityMutation } =
   await import("../../packages/infra/identityPolicy/coordination");
 

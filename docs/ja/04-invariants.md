@@ -560,6 +560,12 @@
 
 - **人設と context は各 owner の既存 cache を使います。** `aiPersona` は 25 群のメインスレッド `ChatState` と同時に復元します。`/prompt` はこの値を変更し、`persistChatState` の正確な durable ACK を待って AI Worker に差分を送ります。`/bot_status` は同じ cache から設定の有無を読み、SQL 参照や本文公開を行いません。`cache/workers/aiChat/persona.ts` の更新は protocol 入口だけで行い、初期化・再構築時はメインスレッドが全量 replay、群状態の削除が永続化された後に消去を送り、停止時は全消去します。管理者降格では人設を保持します。entry がなければ `prompt/persona.md` を使用します。各返信は開始時の人設を固定し、round 内の tool call で prefix を変えません。`isCanConfigAiPrompt` の既定値は false、スーパー管理者の実効権限は常に true です。設定命令は `/init` gate と共通の 30 秒通知削除境界に従います。
 
+- **群通知の口調は現在の人設で決まります。** 読み取り専用の文言表は `packages/consts/atmosphere/{teasing,plain}/` に置きます。Bot がいる群で `aiPersona` を設定した場合だけ普通版を使い、未設定なら既定の雌小鬼版です。`isAIChatEnabled` とは独立です。main は既存群 cache、AI は既存人設 mirror を読み、Anti-Raid は `cache/workers/antiRaid/atmosphere.ts` に普通版の群 ID のみ保持します。上限は群状態と同じ 25 群です。設定・削除の永続化後に main が差分を送り、Worker 初期化・再構築時は業務接管前に全量 replay します。未登録は既定版、停止時は全消去、管理者降格時は保持します。各メッセージに SQL、mirror 同期、request/reply を追加しません。
+
+- **メニューと通知は同じ口調選択を使います。** 起動時に既定の全体メニューと群 scope を復元します。`/prompt config` は普通版の群メニューを設定し、`/prompt remove` や群状態削除では scope を削除します。`/init enable` でも再同期します。API 失敗はログに記録し、次の起動や人設操作で再同期します。権限 help/query、QA、ボタン、操作結果、Worker 通知は既存の保持・削除規則に従います。検証通知は再試行ごとに現在の本文とボタンを描画し、AI 制限通知の自録には実際の送信本文を使います。動的内容は挿入だけを行い、entity offset は描画後に計算します。
+
+- **通常の inline 運勢は既定の雌小鬼版を使います。** [InlineQuery](https://core.telegram.org/bots/api#inlinequery) に送信先群 ID はなく、署名 receipt も query 時点の送信先を示しません。照会ユーザー、別群 cache、`chat_type` から送信先を推定してはいけません。
+
 - **context の永続化は既存群だけを更新します。** 起動時に同じ SQLite 接続で `ai_context` を厳密に読み、AI memory とメインスレッドの未確認 snapshot mirror を復元します。context の書き込み前に本群の保留状態を commit し、失敗時は context を保留したまま durable ACK を返しません。主キー UPDATE だけを使うため遅延 snapshot は削除済み群を復活させません。状態・人設の書き込みは context を保持し、記憶消去は `ai_context` だけを NULL、行削除は 3 列すべてを消去します。
 
 ### グループ状態と `chat_states`

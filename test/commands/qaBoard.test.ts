@@ -1,17 +1,7 @@
 import type { InlineKeyboardButton } from "grammy/types";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import {
-  CHAT_QA_ANSWER_MAX_CHARS,
-  CHAT_QA_QUESTION_MAX_CHARS,
-  QA_QUERY_ANSWER_PREVIEW_MAX_CHARS,
-  QA_QUERY_PAGE_CALLBACK_PREFIX,
-  QA_QUERY_PAGE_MAX_ENTRIES,
-  QA_QUERY_PAGE_NEXT_TEXT,
-  QA_QUERY_PAGE_NOOP_DATA,
-  QA_QUERY_PAGE_PREV_TEXT,
-  QA_TRUNCATION_MARK,
-  QA_COMMAND_TEXTS,
-} from "../../packages/consts/qa";
+import { CHAT_QA_ANSWER_MAX_CHARS, CHAT_QA_QUESTION_MAX_CHARS, QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../packages/consts/qa";
+import { QA_QUERY_PAGE_NEXT_TEXT, QA_QUERY_PAGE_PREV_TEXT, QA_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/qa";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 
 interface EditCall {

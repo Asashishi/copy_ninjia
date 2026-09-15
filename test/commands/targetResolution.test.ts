@@ -1,4 +1,4 @@
-import { TRANSLATE_TARGET_TEXTS } from "../../packages/consts/translate";
+import { TRANSLATE_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/translate";
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { CachedUser, CommandTargetMessages } from "../../packages/types";
 
@@ -22,12 +22,8 @@ mock.module("../../packages/users/senderIdentity", () => ({
 const { resolveCommandTarget } = await import("../../packages/commands/targetResolution");
 const identityStorage = await import("../../packages/infra/identityStorage");
 const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
-const {
-  IDENTITY_POLICY_UNAVAILABLE_TEXT,
-  INVALID_USERNAME_ECHO_MAX_CHARS,
-  TELEGRAM_USERNAME_MIN_LENGTH,
-  TELEGRAM_USERNAME_MAX_LENGTH,
-} = await import("../../packages/consts/commands");
+const { IDENTITY_POLICY_UNAVAILABLE_TEXT } = await import("../../packages/consts/atmosphere/teasing/commands");
+const { INVALID_USERNAME_ECHO_MAX_CHARS, TELEGRAM_USERNAME_MIN_LENGTH, TELEGRAM_USERNAME_MAX_LENGTH } = await import("../../packages/consts/commands");
 
 const messages = {
   missingTarget: "missing",
@@ -266,19 +262,9 @@ describe("resolveCommandTarget", () => {
  * 调用，`@ts-expect-error` 不可变性断言不触发调用——`packages/consts/gag.ts` 的六个
  * 模板此前函数覆盖率为 0 就是这么来的。
  */
-const { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } = await import("../../packages/consts/gag");
-const {
-  BLOCK_TARGET_TEXTS,
-  COPY_TARGET_TEXTS,
-  MUTE_TARGET_TEXTS,
-  NYA_COPY_TARGET_TEXTS,
-  REVERSE_COPY_TARGET_TEXTS,
-  STEAL_ICON_TARGET_TEXTS,
-  UNBLOCK_TARGET_TEXTS,
-  UNMUTE_TARGET_TEXTS,
-} = await import("../../packages/consts/commands");
-const { PERMISSION_COMMAND_TEXTS, WHITE_COMMAND_TEXTS } =
-  await import("../../packages/consts/whitelist");
+const { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/gag");
+const { BLOCK_TARGET_TEXTS, COPY_TARGET_TEXTS, MUTE_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS, STEAL_ICON_TARGET_TEXTS, UNBLOCK_TARGET_TEXTS, UNMUTE_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/commands");
+const { PERMISSION_COMMAND_TEXTS, WHITE_COMMAND_TEXTS } = await import("../../packages/consts/atmosphere/teasing/whitelist");
 
 interface DeployedTargetTexts {
   /** 命令名，只用于失败输出定位。 */

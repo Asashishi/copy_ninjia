@@ -84,6 +84,8 @@ import {
 } from "../libs/workerDuplex";
 import type { WorkerDuplexOutbound } from "../types/workerDuplex";
 import { installTelegramApi } from "../infra/telegram/client";
+import { applyWorkerAtmosphere } from "./antiRaid/atmosphere";
+import { plainAtmosphereChats } from "../cache/workers/antiRaid/atmosphere";
 import { workerTelegramApi } from "../infra/telegram/workerClient";
 import { acceptForwardedLogBatch } from "../infra/logger";
 
@@ -218,6 +220,9 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "botPermissionsChanged":
       applyBotPermissionsChange(msg.chatId, msg.permissions);
       break;
+    case "atmosphere":
+      applyWorkerAtmosphere(msg.chatId, msg.plain);
+      break;
     case "chatKind":
       applyChatKindChange(msg.chatId, msg.isSupergroup);
       break;
@@ -309,6 +314,7 @@ export function stopAntiRaidWorker(): void {
   resetFloodWindows();
   resetGenericMessageDeletions();
   resetWorkerBotPermissions();
+  plainAtmosphereChats.clear();
   resetWorkerChatKind();
   resetAntiRaidTaskTracker();
   resetWorkerDuplex("Anti-Raid Worker stopped before the main-thread request completed.");
