@@ -55,10 +55,8 @@ export async function handleWhiteCommand(
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
   const actorIsSuperAdmin: boolean = actor?.id === SUPER_ADMIN_USER_ID;
-  const actorCanWhiteOther: boolean = actorIsSuperAdmin || (
-    actor !== undefined &&
-    hasWhitelistPermission(actor.id, "isCanWhiteOther")
-  );
+  const actorCanWhiteOther: boolean = actor !== undefined &&
+    hasWhitelistPermission(actor.id, "isCanWhiteOther");
   if (!actorCanWhiteOther) {
     const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
@@ -151,9 +149,8 @@ export async function handleWhiteCommand(
         // 等待期间，超级管理员可能已经撤掉发起人的 isCanWhiteOther，不能沿用
         // handler 入口那份陈旧快照继续扩张白名单。
         if (
-          !actorIsSuperAdmin &&
-          (actor === undefined ||
-            !hasWhitelistPermission(actor.id, "isCanWhiteOther"))
+          actor === undefined ||
+          !hasWhitelistPermission(actor.id, "isCanWhiteOther")
         ) {
           return { kind: "unauthorized" };
         }

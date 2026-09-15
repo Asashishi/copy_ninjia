@@ -84,7 +84,9 @@ export const gagTestSwitches: {
   permissionAllowed: boolean;
   initEnabled: boolean;
   canDeleteMessages: boolean;
-} = { permissionAllowed: true, initEnabled: true, canDeleteMessages: true };
+  /** 非 undefined 时模拟本群配置了自定义人设，命令改用普通版文案。 */
+  aiPersona: string | undefined;
+} = { permissionAllowed: true, initEnabled: true, canDeleteMessages: true, aiPersona: undefined };
 
 mock.module("../../packages/infra/botAdmin", () => ({
   botChatPermissionsIn: async (): Promise<BotChatPermissions> => botPermissions({
@@ -99,7 +101,10 @@ mock.module("../../packages/infra/logger", () => ({
   logger: { error(): void {}, info(): void {}, log(): void {}, warn(): void {} },
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (): Readonly<{ isInitEnabled: boolean }> => ({ isInitEnabled: gagTestSwitches.initEnabled }),
+  getChatState: (): Readonly<{ isInitEnabled: boolean; aiPersona: string | undefined }> => ({
+    isInitEnabled: gagTestSwitches.initEnabled,
+    aiPersona: gagTestSwitches.aiPersona,
+  }),
   getGagThumbnailUrl: (): string => GAG_THUMBNAIL_URL,
 }));
 mock.module("../../packages/infra/telegram", () => ({
@@ -295,6 +300,7 @@ export function installGagTestHooks(): void {
     gagTestSwitches.permissionAllowed = true;
     gagTestSwitches.initEnabled = true;
     gagTestSwitches.canDeleteMessages = true;
+    gagTestSwitches.aiPersona = undefined;
     Date.now = (): number => 1_000_000;
     for (const mocked of [
       deleteEphemeralMessageWithOutcome,

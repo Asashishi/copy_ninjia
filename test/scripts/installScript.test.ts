@@ -365,7 +365,7 @@ async function runServiceDataRootCheck(options: {
     ],
     cwd: join(import.meta.dir, "..", ".."),
     env: {
-      PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      PATH: `${bin}:${dirname(Bun.argv[0]!)}:/usr/bin:/bin`,
       FAKE_LOAD_STATE: options.loadState ?? "loaded",
       FAKE_ENVIRONMENT: options.environment,
       FAKE_ENVIRONMENT_FILES: options.environmentFiles ?? "",

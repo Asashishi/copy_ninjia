@@ -154,6 +154,8 @@ One constraint harder than editing `state.json`: **the runtime never migrates au
 
 The repository keeps only the migration entry from the latest released version to the current version. A new edge must replace the preceding entry, its tests, and its convention registration together.
 
+The single-edge rule governs the cold-migration script under `scripts/` that rewrites deployed data, its tests, and its `coldMigrations.ts` registration. It does not apply to the SQL files in `schema/migrations/` or to `meta/_journal.json`, which must be kept complete from `0000`: `createStorageDatabase` replays every entry through the Drizzle migrator when it builds a new database, and at startup `assertStorageDatabaseMigrationLineage` in `packages/database/interact/inspection.ts` requires `__drizzle_migrations` to carry the full lineage.
+
 ## Changing an Inter-Worker Protocol
 
 `packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the shared `/mood query` and `/mood switch` mood handshake is the reference implementation.

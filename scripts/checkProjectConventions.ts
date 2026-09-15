@@ -38,6 +38,7 @@ const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
 const CONSTS_ROOT: string = join(PROJECT_ROOT, "packages", "consts");
 const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
 const SCRIPTS_ROOT: string = join(PROJECT_ROOT, "scripts");
+const TEST_ROOT: string = join(PROJECT_ROOT, "test");
 const COMMANDS_ROOT: string = join(SOURCE_ROOT, "commands");
 const WORKERS_ROOT: string = join(SOURCE_ROOT, "workers");
 
@@ -177,7 +178,7 @@ for (const problem of await collectPerformanceRecordProblems(PROJECT_ROOT)) {
 const sourceDirectories: readonly string[] = collectSourceDirectories([
   SOURCE_ROOT,
   SCRIPTS_ROOT,
-  join(PROJECT_ROOT, "test"),
+  TEST_ROOT,
 ]);
 const tracked: string[] = trackedFiles();
 for (const trackedPath of tracked) {
@@ -304,8 +305,8 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   }
 }
 
-// Node 兼容 import 是唯一同时约束 scripts/ 的规则，其余判定只针对 packages/。
-for (const path of sourceFilesUnder(SCRIPTS_ROOT)) {
+// Node 兼容 import 是唯一同时约束 scripts/ 与 test/ 的规则，其余判定只针对 packages/。
+for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_ROOT)]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
     failures.push(problem);

@@ -721,6 +721,22 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
+  test("早于当前 owner 日期的密钥请求被拒绝，不刷盘、不回退 owner", async () => {
+    luckWorkerCache.current = { day: "2026-07-22", entries: new Map() };
+
+    await route({ type: "ensureLuckSecret", day: "2026-07-21", requestId: 12 });
+
+    expect(flushLuckAppends).not.toHaveBeenCalled();
+    expect(hydrateLuckDay).not.toHaveBeenCalled();
+    expect(recoverLuckReceiptSecret).not.toHaveBeenCalled();
+    expect(luckWorkerCache.current.day).toBe("2026-07-22");
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "luckSecret",
+      requestId: 12,
+      error: "Refusing to move luck persistence backward from 2026-07-22 to 2026-07-21.",
+    });
+  });
+
   test("启动恢复先加载当天结果，再把确认数交给密钥一致性检查", async () => {
     hydratedLuckEntries.set("confirmed", { label: "大吉", fortunePercent: 99 });
 

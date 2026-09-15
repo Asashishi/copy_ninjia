@@ -10,6 +10,10 @@ import {
   SCRIPT_BUFFER_GLOBALS,
   SCRIPT_ONLY_NODE_IMPORTS,
   SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS,
+  TEST_BUFFER_GLOBALS,
+  TEST_NODE_IMPORTS,
+  TEST_ONLY_NODE_IMPORTS,
+  TEST_SYNC_CONTENT_IO_EXEMPTIONS,
 } from "./nodeAllowances";
 import type { NodeImportAllowance, BufferGlobalAllowance } from "./nodeAllowances";
 
@@ -130,8 +134,8 @@ const PROCESS_REPLACEMENTS: Readonly<Record<string, string>> = {
 };
 
 /**
- * 核对一个生产模块的 Node 兼容 import。未登记模块、namespace/default import 与
- * 未登记符号都拒绝；第三方依赖和测试文件不进入本检查。
+ * 核对生产模块、脚本或测试文件的 Node 兼容 import。未登记模块、namespace/default
+ * import 与未登记符号都拒绝；第三方依赖不进入本检查。
  */
 export function collectNodeCompatibilityProblems(
   projectRoot: string,
@@ -141,6 +145,7 @@ export function collectNodeCompatibilityProblems(
   const problems: string[] = [];
   const relativePath: string = relative(projectRoot, path);
   const isScript: boolean = relativePath.startsWith("scripts/");
+  const isTest: boolean = relativePath.startsWith("test/");
   for (const statement of source.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
@@ -152,10 +157,14 @@ export function collectNodeCompatibilityProblems(
       ? SCRIPT_NODE_IMPORTS[moduleName]
       : isScript
         ? SCRIPT_NODE_IMPORTS[moduleName]
-        : PRODUCTION_NODE_IMPORTS[relativePath]?.[moduleName];
-    const scriptAllowed: NodeImportAllowance | undefined = isScript
+        : isTest
+          ? TEST_NODE_IMPORTS[relativePath]?.[moduleName] ?? SCRIPT_NODE_IMPORTS[moduleName]
+          : PRODUCTION_NODE_IMPORTS[relativePath]?.[moduleName];
+    const extraAllowed: NodeImportAllowance | undefined = isScript
       ? SCRIPT_ONLY_NODE_IMPORTS[moduleName]
-      : undefined;
+      : isTest
+        ? TEST_ONLY_NODE_IMPORTS[moduleName]
+        : undefined;
     const line: number = source.getLineAndCharacterOfPosition(statement.getStart()).line + 1;
     const location: string = `${relativePath}:${line}`;
     const clause: ts.ImportClause | undefined = statement.importClause;
@@ -163,7 +172,7 @@ export function collectNodeCompatibilityProblems(
     if (clause?.name === undefined && clause?.namedBindings !== undefined &&
       ts.isNamedImports(clause.namedBindings) && clause.namedBindings.elements.length > 0 &&
       clause.namedBindings.elements.every((element: ts.ImportSpecifier): boolean => element.isTypeOnly)) continue;
-    if (allowed === undefined && scriptAllowed === undefined) {
+    if (allowed === undefined && extraAllowed === undefined) {
       problems.push(`${location} uses unreviewed Node compatibility module ${moduleName}`);
       continue;
     }
@@ -184,12 +193,14 @@ export function collectNodeCompatibilityProblems(
       const imported: string = element.propertyName?.text ?? element.name.text;
       const contentIoAllowance: NodeImportAllowance | undefined = isScript
         ? SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS[relativePath]?.[moduleName]
-        : undefined;
+        : isTest
+          ? TEST_SYNC_CONTENT_IO_EXEMPTIONS[relativePath]?.[moduleName]
+          : undefined;
       const isSynchronousContentIo: boolean = moduleName === "node:fs" &&
         (imported === "readFileSync" || imported === "writeFileSync");
-      const permitted: boolean = isSynchronousContentIo && isScript
+      const permitted: boolean = isSynchronousContentIo && (isScript || isTest)
         ? allowsImport(contentIoAllowance, imported)
-        : allowsImport(allowed, imported) || allowsImport(scriptAllowed, imported);
+        : allowsImport(allowed, imported) || allowsImport(extraAllowed, imported);
       if (!permitted) {
         problems.push(`${location} uses unreviewed ${moduleName} export ${imported}`);
       }
@@ -234,7 +245,9 @@ export function collectNodeCompatibilityProblems(
   let usesBufferGlobal: boolean = false;
   const bufferAllowance: BufferGlobalAllowance | undefined = isScript
     ? SCRIPT_BUFFER_GLOBALS[relativePath]
-    : PRODUCTION_BUFFER_GLOBALS[relativePath];
+    : isTest
+      ? TEST_BUFFER_GLOBALS[relativePath]
+      : PRODUCTION_BUFFER_GLOBALS[relativePath];
   const visitBufferGlobal = (node: ts.Node): void => {
     if (isBufferGlobalUse(node)) {
       usesBufferGlobal = true;
@@ -284,7 +297,7 @@ export function collectNodeCompatibilityProblems(
  *
  * `collectNodeCompatibilityProblems` 只在遍历到某个文件时才查它的登记，文件一旦删除，
  * 它留下的登记就再也不会被访问到，会作为一条永不过期的豁免留在表里。本函数在逐文件
- * 遍历之外整表核对一次路径存在性，四张登记表各查一遍。
+ * 遍历之外整表核对一次路径存在性，七张逐文件登记表各查一遍。
  */
 export function collectStaleNodeAllowanceProblems(
   projectRoot: string
@@ -295,6 +308,9 @@ export function collectStaleNodeAllowanceProblems(
     ["SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS", SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS],
     ["PRODUCTION_BUFFER_GLOBALS", PRODUCTION_BUFFER_GLOBALS],
     ["SCRIPT_BUFFER_GLOBALS", SCRIPT_BUFFER_GLOBALS],
+    ["TEST_NODE_IMPORTS", TEST_NODE_IMPORTS],
+    ["TEST_SYNC_CONTENT_IO_EXEMPTIONS", TEST_SYNC_CONTENT_IO_EXEMPTIONS],
+    ["TEST_BUFFER_GLOBALS", TEST_BUFFER_GLOBALS],
   ];
   for (const [table, entries] of tables) {
     for (const relativePath of Object.keys(entries)) {

@@ -5,6 +5,10 @@ import type { SendCommandMessageParams } from "../../packages/infra/telegram/com
 import { translateStates } from "../../packages/cache/main/translateState";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { TRANSLATE_CAPACITY_TEXT, TRANSLATE_CHAT_CAPACITY_TEXT, TRANSLATE_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/translate";
+import {
+  TRANSLATE_TARGET_TEXTS as PLAIN_TRANSLATE_TARGET_TEXTS,
+  TRANSLATE_TOGGLE_TEXTS as PLAIN_TRANSLATE_TOGGLE_TEXTS,
+} from "../../packages/consts/atmosphere/plain/translate";
 import { teardownRegisteredChat } from "../../packages/infra/chatTeardownRegistry";
 import { loggerStub } from "../helpers/loggerMock";
 
@@ -16,7 +20,7 @@ const seedSenderCache = mock((..._args: unknown[]): void => {});
 let target: CachedUser | undefined = { id: 7, first_name: "Target" };
 let configured: boolean = true;
 let allowed: boolean = true;
-const state: { isTranslationEnabled?: boolean } = {};
+const state: { isTranslationEnabled?: boolean; aiPersona?: string } = {};
 const globalCopy: GlobalCopyState = { copiedUser: { id: 8 }, copyChatId: -2002, copyMode: "nya", lastCopyTime: Date.now() };
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => target);
 mock.module("../../packages/infra/telegram", () => ({ sendCommandMessage }));
@@ -55,6 +59,7 @@ function context(argument: string, chatId: number = -1001): never {
 beforeEach(() => {
   translateStates.clear();
   state.isTranslationEnabled = true;
+  state.aiPersona = undefined;
   target = { id: 7, first_name: "Target" };
   configured = true;
   allowed = true;
@@ -243,6 +248,23 @@ describe("/translate 独立命令", () => {
     await handleTranslateCommand(context("disable"));
     expect(translateStates.has(-1001)).toBe(false);
     expect(state.isTranslationEnabled).toBe(false);
+  });
+
+  test("自定义人设群使用普通版目标与开关拒绝文案", async () => {
+    state.aiPersona = "温和助手";
+
+    await handleTranslateCommand(context("ja"));
+    expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
+      messages: PLAIN_TRANSLATE_TARGET_TEXTS,
+    });
+
+    allowed = false;
+    sendCommandMessage.mockClear();
+    await handleTranslateCommand(context("disable"));
+    expect(sendCommandMessage).toHaveBeenCalledTimes(1);
+    expect(sendCommandMessage.mock.calls[0]?.[0]).toMatchObject({
+      text: PLAIN_TRANSLATE_TOGGLE_TEXTS.rejection("Caller"),
+    });
   });
 
   test("配置不可用和功能缺省关闭都拒绝开始", async () => {

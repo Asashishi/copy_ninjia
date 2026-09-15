@@ -154,6 +154,8 @@
 
 当前仓库只保留最近发布版到当前版的迁移入口；实现新边时必须同时替换上一条入口、测试与约定登记。
 
+「只留一条边」约束的是 `scripts/` 下面向已部署数据的冷迁移脚本、它的测试与 `coldMigrations.ts` 登记，不适用于 `schema/migrations/` 的 SQL 文件与 `meta/_journal.json`。后者必须从 `0000` 起完整保留：`createStorageDatabase` 建新库时由 Drizzle migrator 逐条重放，启动时 `packages/database/interact/inspection.ts` 的 `assertStorageDatabaseMigrationLineage` 也要求 `__drizzle_migrations` 带着完整谱系。
+
 ## 改动 Worker 间协议
 
 `packages/types/` 持有跨线程消息协议。改协议时同步三处：类型定义、主线程侧代理（`packages/infra/` 或 `packages/cache/main/` 对应模块）、Worker 侧处理（`packages/workers/<domain>/`）。请求/回执式交互遵循 [04](04-invariants.md#worker-与状态所有权) 的 waiter 先登记再投递、超时/崩溃统一结算模式（现成范例：`/mood query` 与 `/mood switch` 共用的心情握手）。

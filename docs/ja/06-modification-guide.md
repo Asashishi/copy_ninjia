@@ -154,6 +154,8 @@
 
 現行 repository が保持する migration entry は、直近の released version から現行 version への 1 本だけです。新しい edge を実装するときは、前の entry・test・convention 登録を同時に置き換えます。
 
+「edge は 1 本だけ」の規約が対象とするのは、deploy 済みデータを書き換える `scripts/` 配下の cold migration script、その test、`coldMigrations.ts` の登録です。`schema/migrations/` の SQL ファイルと `meta/_journal.json` には適用せず、`0000` から欠かさず保持します。`createStorageDatabase` は新しい database を作るとき Drizzle migrator で全 entry を順に replay し、起動時には `packages/database/interact/inspection.ts` の `assertStorageDatabaseMigrationLineage` が `__drizzle_migrations` に完全な系譜があることを要求します。
+
 ## Worker 間 protocol の変更
 
 スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/mood query` と `/mood switch` が共有する mood handshake が実装例です。
