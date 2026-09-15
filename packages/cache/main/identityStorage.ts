@@ -8,7 +8,7 @@ import type {
   WhitelistEntryData,
 } from "../../types/identityPolicy";
 import type { UnacknowledgedIdentityWrite } from "../../types/identityStorage";
-import { resetTemporaryWhitelistCache } from "./temporaryWhitelist";
+import { resetTemporaryAdBypassCache } from "./temporaryAdBypass";
 
 /** 白名单热查询缓存；null 是已确认不存在的负缓存，容量严格为 8192。 */
 export const whitelistEntryCache: LruCache<
@@ -81,5 +81,5 @@ export function resetIdentityStorageCache(): void {
   identityWriteRevision.current = 0;
   unacknowledgedRemovalSnapshotRevision.current = null;
   removalSnapshotRevision.current = 0;
-  resetTemporaryWhitelistCache();
+  resetTemporaryAdBypassCache();
 }

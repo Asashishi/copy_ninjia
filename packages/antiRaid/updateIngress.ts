@@ -40,7 +40,7 @@ import {
 } from "./memberFacts";
 import { postAntiRaidDurably } from "./durableDelivery";
 import { postAntiRaid } from "./workerBridge";
-import { recordEligibleTemporaryWhitelistActivity } from "./temporaryWhitelist";
+import { recordEligibleTemporaryAdBypassActivity } from "./temporaryAdBypass";
 import type {
   AdCandidateMessage,
   AdDetectionMessageContext,
@@ -302,7 +302,7 @@ function ingestAdmittedMessage(
     return false;
   }
 
-  // 临时白名单累计先于候选构建：本条消息恰好让成员获权时，
+  // 临时广告免检累计先于候选构建：本条消息恰好让成员获权时，
   // buildAdCandidate 必须立即读到临时广告绕过权限，不得再把这条送检。
   // 投递仍是尽力而为：Worker 重建时待检队列本来就会随 isolate 清空。
   let adCandidate: AdCandidateMessage | undefined;
@@ -316,7 +316,7 @@ function ingestAdmittedMessage(
       now: updateNow(),
     };
     if (hasUserMessageContent(message)) {
-      recordEligibleTemporaryWhitelistActivity(adContext);
+      recordEligibleTemporaryAdBypassActivity(adContext);
     }
     adCandidate = buildAdCandidate(adContext);
   }

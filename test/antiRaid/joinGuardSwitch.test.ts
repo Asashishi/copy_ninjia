@@ -17,8 +17,8 @@ import type { DiskBusinessMessage } from "../../packages/types/diskIO";
 const workerPosts: AntiRaidWorkerMessage[] = [];
 const diskPosts: DiskBusinessMessage[] = [];
 const answeredCallbacks: { callbackQueryId: string; text?: string }[] = [];
-const temporaryWhitelistActivityMessages: Message[] = [];
-const temporaryWhitelistActivityTimes: number[] = [];
+const temporaryAdBypassActivityMessages: Message[] = [];
+const temporaryAdBypassActivityTimes: number[] = [];
 /** 逐用例可改的群状态；缺省是「已开防刷屏、未开入群守卫」。 */
 const chatState: Record<string, boolean> = {};
 
@@ -84,12 +84,12 @@ mock.module("../../packages/infra/diskIO", () => ({
     return true;
   },
 }));
-mock.module("../../packages/antiRaid/temporaryWhitelist", () => ({
-  recordEligibleTemporaryWhitelistActivity(
+mock.module("../../packages/antiRaid/temporaryAdBypass", () => ({
+  recordEligibleTemporaryAdBypassActivity(
     options: AdDetectionMessageContext
   ): boolean {
-    temporaryWhitelistActivityMessages.push(options.message);
-    temporaryWhitelistActivityTimes.push(options.now);
+    temporaryAdBypassActivityMessages.push(options.message);
+    temporaryAdBypassActivityTimes.push(options.now);
     return true;
   },
 }));
@@ -159,8 +159,8 @@ beforeEach(() => {
   workerPosts.length = 0;
   diskPosts.length = 0;
   answeredCallbacks.length = 0;
-  temporaryWhitelistActivityMessages.length = 0;
-  temporaryWhitelistActivityTimes.length = 0;
+  temporaryAdBypassActivityMessages.length = 0;
+  temporaryAdBypassActivityTimes.length = 0;
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
   activeVerificationSnapshots.clear();
@@ -261,7 +261,7 @@ describe("入群守卫开关（主线程投递侧）", () => {
     expect(typesOf()).toContain("floodCandidate");
   });
 
-  test("只有用户内容消息进入临时白名单累计，平台服务事件全部跳过", () => {
+  test("只有用户内容消息进入临时广告免检累计，平台服务事件全部跳过", () => {
     chatState.isAdDetectEnabled = true;
     const contentMessages: readonly Partial<Message>[] = [
       { text: "text" },
@@ -298,8 +298,8 @@ describe("入群守卫开关（主线程投递侧）", () => {
       } as Message, 999);
     }
 
-    expect(temporaryWhitelistActivityMessages).toHaveLength(contentMessages.length);
-    expect(temporaryWhitelistActivityMessages.map(
+    expect(temporaryAdBypassActivityMessages).toHaveLength(contentMessages.length);
+    expect(temporaryAdBypassActivityMessages.map(
       (message: Message): number => message.message_id
     )).toEqual([100, 101, 102, 103, 104]);
   });
@@ -325,7 +325,7 @@ describe("入群守卫开关（主线程投递侧）", () => {
         }
       );
       expect(nowSpy).toHaveBeenCalledTimes(1);
-      expect(temporaryWhitelistActivityTimes).toEqual([now]);
+      expect(temporaryAdBypassActivityTimes).toEqual([now]);
       const flood: AntiRaidWorkerMessage | undefined = workerPosts.find(
         (message: AntiRaidWorkerMessage): boolean => message.type === "floodCandidate"
       );

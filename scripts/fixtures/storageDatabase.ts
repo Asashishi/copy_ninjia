@@ -6,15 +6,15 @@ import { chatQa } from "../../packages/database/schema/chatQa";
 import { chatStates } from "../../packages/database/schema/chatState";
 import {
   blocklistEntries,
-  whitelistEntries,
+  permissionList,
 } from "../../packages/database/schema/identityPolicy";
 import { storageMetadata } from "../../packages/database/schema/metadata";
 import { pendingBlockedRemovals } from
   "../../packages/database/schema/pendingRemoval";
-import { temporaryWhitelistEntries } from
-  "../../packages/database/schema/temporaryWhitelist";
-import type { StoredTemporaryWhitelistActivity } from
-  "../../packages/types/temporaryWhitelist";
+import { temporaryAdBypassEntries } from
+  "../../packages/database/schema/temporaryAdBypass";
+import type { StoredTemporaryAdBypassActivity } from
+  "../../packages/types/temporaryAdBypass";
 import type {
   StorageDatabase,
   StoredChatQaRow,
@@ -48,7 +48,7 @@ export interface SeedStorageDatabaseOptions {
   readonly removals: readonly StoredPendingRemovalRow[];
   readonly chatStates?: readonly StoredChatStateRow[];
   readonly chatQa?: readonly StoredChatQaRow[];
-  readonly temporaryWhitelist?: readonly StoredTemporaryWhitelistActivity[];
+  readonly temporaryAdBypass?: readonly StoredTemporaryAdBypassActivity[];
 }
 
 /** 测试与性能夹具在一个 Drizzle 事务内写入全部初始行。 */
@@ -61,7 +61,7 @@ export function seedStorageDatabase(
     removals,
     chatStates: storedChatStates = [],
     chatQa: storedChatQa = [],
-    temporaryWhitelist = [],
+    temporaryAdBypass = [],
   }: SeedStorageDatabaseOptions
 ): void {
   database.transaction((transaction: StorageDatabaseTransaction): void => {
@@ -69,7 +69,7 @@ export function seedStorageDatabase(
       transaction.insert(storageMetadata).values([...metadata]).run();
     }
     if (whitelist.length > 0) {
-      transaction.insert(whitelistEntries).values([...whitelist]).run();
+      transaction.insert(permissionList).values([...whitelist]).run();
     }
     if (blocklist.length > 0) {
       transaction.insert(blocklistEntries).values([...blocklist]).run();
@@ -78,13 +78,13 @@ export function seedStorageDatabase(
       transaction.insert(pendingBlockedRemovals).values([...removals]).run();
     }
     if (storedChatStates.length > 0) {
-      transaction.insert(chatStates).values([...storedChatStates]).run();
+      transaction.insert(chatStates).values(storedChatStates.map((row: StoredChatStateRow): typeof chatStates.$inferInsert => ({ chatId: row.chatId, status: row.data, aiPersona: row.aiPersona }))).run();
     }
     if (storedChatQa.length > 0) {
       transaction.insert(chatQa).values([...storedChatQa]).run();
     }
-    if (temporaryWhitelist.length > 0) {
-      transaction.insert(temporaryWhitelistEntries).values([...temporaryWhitelist]).run();
+    if (temporaryAdBypass.length > 0) {
+      transaction.insert(temporaryAdBypassEntries).values([...temporaryAdBypass]).run();
     }
   });
 }
@@ -94,9 +94,9 @@ export function clearStorageBusinessTables(database: StorageDatabase): void {
   database.transaction((transaction: StorageDatabaseTransaction): void => {
     transaction.delete(chatQa).run();
     transaction.delete(pendingBlockedRemovals).run();
-    transaction.delete(whitelistEntries).run();
+    transaction.delete(permissionList).run();
     transaction.delete(blocklistEntries).run();
     transaction.delete(chatStates).run();
-    transaction.delete(temporaryWhitelistEntries).run();
+    transaction.delete(temporaryAdBypassEntries).run();
   });
 }

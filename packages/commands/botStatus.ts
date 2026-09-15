@@ -17,6 +17,8 @@ import {
   BOT_STATUS_PERMISSION_JSON_INDENT,
   BOT_STATUS_PERMISSION_JSON_LANGUAGE,
   BOT_STATUS_PERMISSION_LABELS,
+  BOT_STATUS_PERSONA_CONFIGURED,
+  BOT_STATUS_PERSONA_DEFAULT,
   BOT_STATUS_SECONDS_PER_DAY,
   BOT_STATUS_SECONDS_PER_HOUR,
   BOT_STATUS_SECONDS_PER_MINUTE,
@@ -209,6 +211,9 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     `• 处理中 ${snapshot.telegramActive}`,
     `• 429 退避排队 ${snapshot.telegramPending}/${snapshot.telegramCapacity}`,
     "",
+    snapshot.chatState.aiPersona === undefined
+      ? BOT_STATUS_PERSONA_DEFAULT
+      : BOT_STATUS_PERSONA_CONFIGURED,
     contextCapacityLine(snapshot.aiContextUsage),
     `• 正在被本天才调教的杂鱼：${snapshot.activeGagSessions}/${GAG_SESSION_MAX}`,
     `• 本群正赖着本天才翻译的杂鱼：${snapshot.activeTranslateSessions}/${TRANSLATE_CHAT_USER_LIMIT} 人♡`,

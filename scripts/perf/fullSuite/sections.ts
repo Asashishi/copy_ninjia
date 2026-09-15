@@ -138,7 +138,7 @@ export async function runColdStartSection(
     context.recordIo(round.io);
     context.recordOperations(1);
     if (
-      round.recovered.whitelistEntries !== reference.recovered.whitelistEntries ||
+      round.recovered.permissionList !== reference.recovered.permissionList ||
       round.recovered.blocklistEntries !== reference.recovered.blocklistEntries ||
       round.recovered.chatStates !== reference.recovered.chatStates ||
       round.recovered.chatQaEntries !== reference.recovered.chatQaEntries ||

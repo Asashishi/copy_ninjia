@@ -55,7 +55,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 88 ファイルに約 947 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 89 ファイルに約 961 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -81,7 +81,7 @@
 手順：定数を変更 → 不変条件の変更も含めて中国語 JSDoc を更新 → ルート README がその値を引用していないか確認し 3 言語を同期 → `bun run check`。
 
 > [!WARNING]
-> **容量定数はディスクデータと結び付いている場合があります。** `AI_MEMORY_HYDRATE_BUFFER_MAX` や `MAX_SUMMARY_ROUNDS` を小さくする前に、[04 実行時の正式な不変条件](04-invariants.md#永続化) の規則に従い、旧プロセスを停止して既存の `memory/ai/` snapshot をアトミックに書き換えてください。容量を変更する前にこの section を確認します。
+> **容量定数はディスクデータと結び付いている場合があります。** `AI_MEMORY_HYDRATE_BUFFER_MAX` や `MAX_SUMMARY_ROUNDS` を小さくする前に、[04 実行時の正式な不変条件](04-invariants.md#永続化) の規則に従い、旧プロセスを停止して既存の `chat_states.ai_context` snapshot を SQLite トランザクションで書き換えてください。容量を変更する前にこの section を確認します。
 
 ## provider の任意能力を追加する
 

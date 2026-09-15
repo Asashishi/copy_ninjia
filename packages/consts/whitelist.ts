@@ -59,6 +59,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassAdDetection: DEFAULT_IS_CAN_BYPASS_AD_DETECTION,
   isCanBypassFloodControl: DEFAULT_IS_CAN_BYPASS_FLOOD_CONTROL,
   isCanControllAIPermission: DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION,
+  isCanConfigAiPrompt: false,
   isCanControllAdDetectPermission: DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION,
   isCanControllFloodControlPermission: DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION,
   isCanControllTranslatePermission: DEFAULT_IS_CAN_CONTROLL_TRANSLATE_PERMISSION,
@@ -85,6 +86,7 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassAdDetection: false,
   isCanBypassFloodControl: false,
   isCanControllAIPermission: false,
+  isCanConfigAiPrompt: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
   isCanControllTranslatePermission: false,
@@ -93,14 +95,14 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
 };
 
 /**
- * 临时白名单的固定权限：仅绕过广告检测，其余权限逐项为 false。
+ * 临时广告免检的固定权限：仅绕过广告检测，其余权限逐项为 false。
  *
  * 连续七个合格日只授予本视图，不创建永久白名单条目，也不提供防刷屏、命令、
  * 状态查看或入群验证权限。字段顺序必须与 DEFAULT_WHITELIST_PERMISSIONS 一致，
  * 让消息热路径的逐项权限读取保持稳定对象 shape。所属模块：
  * packages/infra/identityPolicy/whitelist.ts。
  */
-export const TEMPORARY_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
+export const TEMPORARY_AD_BYPASS_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: false,
   isCanUnMute: false,
   isCanGag: false,
@@ -112,6 +114,7 @@ export const TEMPORARY_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassAdDetection: true,
   isCanBypassFloodControl: false,
   isCanControllAIPermission: false,
+  isCanConfigAiPrompt: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
   isCanControllTranslatePermission: false,
@@ -152,6 +155,7 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
   isCanBypassAdDetection: true,
   isCanBypassFloodControl: true,
   isCanControllAIPermission: true,
+  isCanConfigAiPrompt: true,
   isCanControllAdDetectPermission: true,
   isCanControllFloodControlPermission: true,
   isCanControllTranslatePermission: true,
@@ -172,6 +176,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanBypassAdDetection",
   "isCanBypassFloodControl",
   "isCanControllAIPermission",
+  "isCanConfigAiPrompt",
   "isCanControllAdDetectPermission",
   "isCanControllFloodControlPermission",
   "isCanControllTranslatePermission",
@@ -221,6 +226,7 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanBypassAdDetection: "让这个身份绕过广告检测与自动处置，本天才会当作没看见，别放广告杂鱼进来哦♡",
   isCanBypassFloodControl: "让这个身份绕过防刷屏计数与自动禁言，本天才不会按住 TA，别给刷屏杂鱼哦♡",
   isCanControllAIPermission: "让这号杂鱼能用 /ai_chat enable|disable 开关 AI 闲聊，别乱按呀♡",
+  isCanConfigAiPrompt: "允许使用 /prompt config 和 /prompt remove 配置本群 AI 人设♡",
   isCanControllAdDetectPermission: "让这号杂鱼能用 /ad_detect enable|disable 开关广告检测，抓漏了就怪你哦♡",
   isCanControllFloodControlPermission: "让这号杂鱼能用 /flood_control enable|disable 开关防刷屏禁言，别乱按呀♡",
   isCanControllTranslatePermission: "让这号杂鱼能用 /translate enable|disable 开关翻译功能，这点小事总看得懂吧♡",

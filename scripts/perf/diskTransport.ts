@@ -1,7 +1,7 @@
 /** 主线程业务通道 mock：计量队列和确认开销、延迟、堆及停滞上限，不含 Worker clone 与磁盘等待。 */
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../../packages/consts/diskIO/business";
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES } from "../../packages/consts/diskIO/common";
-import type { DiskIOMessage, DiskOperationBatchRequest, TemporaryWhitelistWriteDiskMessage } from "../../packages/types/diskIO/messages";
+import type { DiskIOMessage, DiskOperationBatchRequest, TemporaryAdBypassWriteDiskMessage } from "../../packages/types/diskIO/messages";
 import type * as Runtime from "../../packages/cache/main/diskIO";
 import type * as DiskIO from "../../packages/infra/diskIO";
 import type * as Transport from "../../packages/infra/diskIO/transport";
@@ -39,7 +39,7 @@ if (Bun.argv[2] !== "--child") {
       pendingBatch = message;
     },
   } as unknown as Worker;
-  const message: TemporaryWhitelistWriteDiskMessage = { type: "temporaryWhitelistWrite", id: 1, activity: null, revision: 1 };
+  const message: TemporaryAdBypassWriteDiskMessage = { type: "temporaryAdBypassWrite", id: 1, activity: null, revision: 1 };
   function reset(): void {
     resetDiskIOOperations(); pendingBatch = null; nextConsumed = 0;
     diskIORuntime.worker = fake; diskIORuntime.writable = true;

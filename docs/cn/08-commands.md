@@ -89,11 +89,12 @@
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>从 SQLite 权威黑名单事务删除目标，并在机器人管理的全部群解除封禁；目标方式同 <code>/block</code>，也接受频道负数 id，拒绝本群自己的身份</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊</td></tr>
-<tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，连同 <code>memory/ai/&lt;chatId&gt;.json</code> 一并删除，并使本群在途回复代数失效；不接受参数，部署配置写坏或 AI Worker 没起来时同样执行</td></tr>
+<tr><td><code>/prompt config &lt;提示词&gt;</code><br><code>/prompt remove</code></td><td align="center"><code>isCanConfigAiPrompt</code></td><td>配置或移除本群专属 AI 提示词；移除后使用默认人设</td></tr>
+<tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，并将 <code>chat_states.ai_context</code> 置 NULL，保留本群自定义人设；使本群在途回复代数失效。不接受参数，部署配置写坏或 AI Worker 没起来时同样执行</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，非受保护身份命中后按 <code>/block</code> 同权处置</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>开关本群防刷屏禁言（默认关闭）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>开关本群入群验证与防冲群私密模式（默认关闭）</td></tr>
-<tr><td><code>/bot_status</code></td><td align="center"><code>isCanViewBotStatus</code></td><td>查看本机进程指标、全局模型能力、Telegram 429 出站队列、本群 AI 上下文容量、正在生效的 gag 数量、本群翻译人数（最多 5 人）、本天才在本群已拥有的权限（JSON 块）和本群已开启功能</td></tr>
+<tr><td><code>/bot_status</code></td><td align="center"><code>isCanViewBotStatus</code></td><td>查看本机进程指标、全局模型能力、Telegram 429 出站队列、本群专属提示词是否已设置、AI 上下文容量、正在生效的 gag 数量、本群翻译人数（最多 5 人）、本天才在本群已拥有的权限（JSON 块）和本群已开启功能</td></tr>
 <tr><td><code>/mood query</code></td><td align="center">群成员</td><td>查询本群 AI 当前有效心情，不触发重抽</td></tr>
 <tr><td><code>/mood switch</code></td><td align="center"><code>isCanSwitchMood</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名</td></tr>
 <tr><td><code>/translate enable|disable</code></td><td align="center"><code>isCanControllTranslatePermission</code></td><td>开关本群翻译能力（默认关闭）</td></tr>
@@ -118,6 +119,7 @@
 
 ### 行为细节
 
+- **`/prompt` 与人设状态**：已初始化群中，`/prompt config <提示词>` 保存完整多行正文（去掉首尾空白，保留内部空格和换行），`/prompt remove` 清除本群覆盖并使用项目 `prompt/persona.md`。`isCanConfigAiPrompt` 默认 false；超级管理员可直接使用，或通过 `/permission` 授权。SQLite 确认落盘后推送 Worker，后续回复轮次使用新值，已开始的轮次保持原人设。`/bot_status` 直接读群缓存，以现有雌小鬼语气显示“已设置 / 未设置”，不公开提示词正文。配置与移除回执均在 30 秒后删除。
 - **`/bot_status` 内存**：在收到命令时调用 `Bun.unsafe.memoryFootprint()`，展示整个 Bot 进程（含 Worker）的当前内存占用；Linux 使用 PSS，共享驻留页按进程分摊。百分比以容器内存约束为分母，无约束时使用本机物理内存总量；无法采样时显示「不可用」。
 - **`/bot_status` 本群上下文容量**：滑动热记忆按 `VERBATIM_CONTEXT_MAX`（256 条）、冷记忆摘要按 `MAX_SUMMARY_ROUNDS`（7 轮）各算占用率，再按 7:3 加权求和，**只展示这一个百分比**——两段的原始条数属于记忆分层的内部机制，对群友一律不可见（见 [04 权威约束](04-invariants.md)）。两个计数由 AI Worker 随记忆快照上报（周期 `AI_SNAPSHOT_INTERVAL_MS`，30 秒）带过来，并在 hydrate 完成后全量播种，主线程只持有只读镜像。待晋升摘要不计入冷区（原文此刻仍在逐字热区里），镜像没有条目一律按 0 展示，因此读数最多滞后一个上报周期。
 - **命令入口**：群命令统一经过 `/init` 网关；未初始化群只接受超级管理员的 `/init`，所以 `/permission`、`/white` 也必须在已初始化群中使用。私聊斜杠命令只放行 `/send`。

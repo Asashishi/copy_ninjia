@@ -116,7 +116,7 @@ export function emitSuccessfulDiskIOLoad(worker: FakeDiskIOWorker): void {
     verifications: new Map(),
     pendingBlockedRemovals: new Map(),
     blocklistEntryCount: 0,
-    whitelistEntryCount: 0,
+    permissionEntryCount: 0,
   } } as MessageEvent<DiskIOReply>);
 }
 

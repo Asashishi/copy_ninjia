@@ -50,6 +50,7 @@ interface ChatStateDiskIOApi {
 interface EncodedChatStateWrite {
   readonly data: string | null;
   readonly deleted: boolean;
+  readonly aiPersona: string | null;
 }
 
 interface QueuedChatStateWrite {
@@ -87,15 +88,16 @@ export function assertChatStateCapacity(chatId: number): void {
 
 function encodeCurrentChatState(chatId: number): EncodedChatStateWrite {
   const state: ChatState | undefined = chatStateCache.peek(chatId);
-  if (state === undefined) return { data: null, deleted: true };
+  if (state === undefined) return { data: null, deleted: true, aiPersona: null };
   normalizeChatState(state);
   if (isEmptyChatState(state)) {
     chatStateCache.delete(chatId);
-    return { data: null, deleted: true };
+    return { data: null, deleted: true, aiPersona: null };
   }
   return {
     data: encodeChatStateData(state, `chat state ${chatId}`),
     deleted: false,
+    aiPersona: state.aiPersona ?? null,
   };
 }
 
@@ -120,13 +122,14 @@ export function queueChatStateWrite(chatId: number): number {
     type: "chatStateWrite",
     chatId,
     data: encoded.data,
+    aiPersona: encoded.aiPersona,
     revision,
   };
-  let bytes: number = storageWriteCost(encoded.data);
+  let bytes: number = storageWriteCost(encoded.data) + storageWriteCost(encoded.aiPersona);
   for (const pendingChatId of unacknowledgedChatStateWrites.keys()) {
     if (pendingChatId === chatId) continue;
     const state: ChatState | undefined = chatStateCache.peek(pendingChatId);
-    bytes += storageWriteCost(state === undefined ? null : encodeChatStateData(state, "chat state admission"));
+    bytes += storageWriteCost(state === undefined ? null : encodeChatStateData(state, "chat state admission")) + storageWriteCost(state?.aiPersona ?? null);
   }
   assertStorageAdmission(unacknowledgedChatStateWrites.size + (unacknowledgedChatStateWrites.has(chatId) ? 0 : 1), bytes);
   if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat state publication.");
@@ -210,6 +213,7 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
       type: "chatStateWrite",
       chatId: write.chatId,
       data: encoded.data,
+      aiPersona: encoded.aiPersona,
       revision: write.revision,
     };
     if (!postChatStateWrite(message, transport)) return false;

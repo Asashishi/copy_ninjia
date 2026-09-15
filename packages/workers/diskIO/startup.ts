@@ -8,9 +8,7 @@ import type { WedMemberInspection } from "./wedMemberFiles";
 import { inspectLogFiles, adoptLogFiles, maintainLogFiles } from "./logFiles";
 import {
   adoptAiMemorySnapshots,
-  inspectAiMemorySnapshots,
-  maintainAiMemorySnapshots,
-} from "./aiMemoryFiles";
+} from "./aiMemoryStorage";
 import {
   adoptStickerCatalogSnapshots,
   inspectStickerCatalogSnapshots,
@@ -27,7 +25,7 @@ import {
 import {
   adoptStorageDatabase,
   inspectStorageDatabase,
-  maintainTemporaryWhitelistActivities,
+  maintainTemporaryAdBypassActivities,
 } from "./storageDatabase";
 import { maintainAdSampleFiles } from "./adSampleFile";
 import {
@@ -47,7 +45,6 @@ import type {
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LogFilesInspection } from "./logFiles";
 import type {
-  AiMemoryRecoveryInspection,
   LuckDayRecoveryInspection,
   StickerCatalogRecoveryInspection,
 } from "./snapshotFiles";
@@ -62,7 +59,6 @@ export type DiskIOStartupReplySink = (
 
 interface StartupMaintenanceInspections {
   readonly logs: LogFilesInspection;
-  readonly aiMemories: AiMemoryRecoveryInspection;
   readonly stickerCatalogs: StickerCatalogRecoveryInspection;
   readonly joinLogs: JoinLogRecoveryInspection;
   readonly luck: LuckDayRecoveryInspection;
@@ -76,14 +72,13 @@ async function runMaintenance(
 ): Promise<void> {
   const tasks: readonly (readonly [string, () => void | Promise<void>])[] = [
     ["logs", (): Promise<void> => maintainLogFiles(inspections.logs)],
-    ["AI memories", (): Promise<void> => maintainAiMemorySnapshots(inspections.aiMemories)],
     ["wed members", (): Promise<void> => maintainWedMemberFiles(inspections.wedMembers)],
     ["sticker catalogs", (): Promise<void> => maintainStickerCatalogSnapshots(inspections.stickerCatalogs)],
     ["join logs", (): Promise<void> => maintainJoinLogFiles(inspections.joinLogs)],
     ["luck", (): Promise<void> => maintainLuckDayState(inspections.luck.day, inspections.luck)],
     ["verifications", (): Promise<void> => maintainVerificationDay(inspections.verifications)],
     ["ad samples", (): Promise<void> => maintainAdSampleFiles()],
-    ["temporary whitelist", (): void => maintainTemporaryWhitelistActivities(reply)],
+    ["temporary ad bypass", (): void => maintainTemporaryAdBypassActivities(reply)],
   ];
   for (const [domain, maintain] of tasks) {
     try {
@@ -106,7 +101,7 @@ export async function handleDiskIOStartupLoad(
   let loadError: string | undefined;
   let verifications: Map<string, VerificationSnapshot> = new Map();
   let blocklistEntryCount: number = 0;
-  let whitelistEntryCount: number = 0;
+  let permissionEntryCount: number = 0;
   let pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
   let chatStates: Map<number, ChatState> = new Map();
   let chatQa: Map<number, ReadonlyMap<string, string>> = new Map();
@@ -115,7 +110,6 @@ export async function handleDiskIOStartupLoad(
   try {
     const today: string = getTokyoDateKey();
     const logs: LogFilesInspection = await inspectLogFiles();
-    const aiMemories: AiMemoryRecoveryInspection = await inspectAiMemorySnapshots();
     const stickerCatalogs: StickerCatalogRecoveryInspection =
       await inspectStickerCatalogSnapshots(stickerPacks);
     const joinLogs: JoinLogRecoveryInspection = await inspectJoinLogFiles(today);
@@ -134,19 +128,18 @@ export async function handleDiskIOStartupLoad(
       adoptStorageDatabase(storage);
     adoptLogFiles(logs);
     resetWedFileWrites();
-    adoptAiMemorySnapshots(aiMemories);
+    adoptAiMemorySnapshots(storage.aiMemories);
     adoptStickerCatalogSnapshots(stickerCatalogs);
     adoptLuckDay(luck);
     verifications = adoptVerificationDay(verificationState);
     luckReceiptSecret = adoptLuckReceiptSecret(luckSecret);
     blocklistEntryCount = identityStorage.blocklistEntryCount;
-    whitelistEntryCount = identityStorage.whitelistEntryCount;
+    permissionEntryCount = identityStorage.permissionEntryCount;
     pendingBlockedRemovals = identityStorage.pendingBlockedRemovals;
     chatStates = identityStorage.chatStates;
     chatQa = identityStorage.chatQa;
     maintenanceInspections = {
       logs,
-      aiMemories,
       stickerCatalogs,
       joinLogs,
       luck,
@@ -167,7 +160,7 @@ export async function handleDiskIOStartupLoad(
     verifications,
     pendingBlockedRemovals,
     blocklistEntryCount,
-    whitelistEntryCount,
+    permissionEntryCount,
     chatStates,
     chatQa,
     wedMembers: maintenanceInspections?.wedMembers.snapshots ?? new Map(),

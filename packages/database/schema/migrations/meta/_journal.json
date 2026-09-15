@@ -50,6 +50,13 @@
       "when": 20260908000000,
       "tag": "0006_translate_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 20260915000000,
+      "tag": "0007_ai_context_persona",
+      "breakpoints": true
     }
   ]
 }

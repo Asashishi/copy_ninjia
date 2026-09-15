@@ -9,7 +9,7 @@ import type {
   LuckReceiptSecret,
 } from "./storage";
 import type { BlocklistIdPage } from "../identityStorage";
-import type { StoredTemporaryWhitelistActivity } from "../temporaryWhitelist";
+import type { StoredTemporaryAdBypassActivity } from "../temporaryAdBypass";
 /** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
  * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify，
  * 见 workers/diskIO/snapshotFiles.ts），供 hydrate 链路直接透传。 */
@@ -27,7 +27,7 @@ export interface LoadedReply {
   /** 黑名单总条目数；主线程只保留计数与有界 LRU，不恢复整表。 */
   blocklistEntryCount: number;
   /** 白名单总条目数；主线程只保留计数与有界 LRU，不恢复整表。 */
-  whitelistEntryCount: number;
+  permissionEntryCount: number;
   /** 当前格式的全部群状态；主线程据此建立同容量 LRU，不重复启动正确性校验。 */
   chatStates: Map<number, ChatState>;
   /** 全部群问答；整表恒定不超过 375 行，主线程据此建立直答热表。 */
@@ -49,7 +49,7 @@ export interface LoadedData {
   verifications: Map<string, VerificationSnapshot>;
   pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
   blocklistEntryCount: number;
-  whitelistEntryCount: number;
+  permissionEntryCount: number;
   chatStates: Map<number, ChatState>;
   /** 群 -> 问题 -> 答案；整表恒定不超过 375 行，启动一次性读全。 */
   chatQa: Map<number, ReadonlyMap<string, string>>;
@@ -71,13 +71,13 @@ export interface JoinLogReadReply {
   error?: string;
 }
 
-/** Disk I/O Worker -> 主线程：一次身份策略与临时白名单累计批量读取。 */
+/** Disk I/O Worker -> 主线程：一次身份策略与临时广告免检累计批量读取。 */
 export interface IdentityPoliciesReadReply {
   type: "identityPoliciesRead";
   requestId: number;
   whitelist?: readonly (readonly [number, string])[];
   blocklist?: readonly (readonly [number, string])[];
-  temporaryWhitelist?: readonly StoredTemporaryWhitelistActivity[];
+  temporaryAdBypass?: readonly StoredTemporaryAdBypassActivity[];
   error?: string;
 }
 
@@ -96,8 +96,8 @@ export interface IdentityPolicyPersistedRevision {
   readonly revision: number;
 }
 
-/** 一项临时白名单累计最终值已由显式 SQLite 事务提交。 */
-export interface TemporaryWhitelistPersistedRevision {
+/** 一项临时广告免检累计最终值已由显式 SQLite 事务提交。 */
+export interface TemporaryAdBypassPersistedRevision {
   readonly id: number;
   readonly revision: number;
 }
@@ -119,8 +119,8 @@ export interface ChatQaPersistedRevision {
 export interface IdentityStoragePersistedReply {
   type: "identityStoragePersisted";
   writes: readonly IdentityPolicyPersistedRevision[];
-  /** 本事务提交的临时白名单累计 revision。 */
-  temporaryWhitelistWrites: readonly TemporaryWhitelistPersistedRevision[];
+  /** 本事务提交的临时广告免检累计 revision。 */
+  temporaryAdBypassWrites: readonly TemporaryAdBypassPersistedRevision[];
   /** 本事务提交的群状态 revision；与身份策略共享同一 SQLite 事务。 */
   chatStateWrites: readonly ChatStatePersistedRevision[];
   /** 本事务提交的群问答 revision；与群状态共享同一 SQLite 事务。 */
@@ -155,7 +155,7 @@ export type DiskIODomain =
   | "verification"
   | "whitelist"
   | "blocklist"
-  | "temporaryWhitelist"
+  | "temporaryAdBypass"
   | "blocklistRemovalOutbox"
   | "chatState"
   | "chatQa"

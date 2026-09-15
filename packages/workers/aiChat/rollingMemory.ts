@@ -237,13 +237,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
   for (const { chatId, snapshot } of parsedMemories) {
     if (hasChatMemory(chatId)) continue;
     if (memoryChatCount >= AI_MEMORY_MAX_CHATS) {
-      // 超出容量只是「这一轮装不下」，不是「这份记忆该没了」。这里发
-      // memoryDeleted 会被主线程路由到 requestAiMemoryDelete，最终 unlink 掉
-      // memory/ai/<chatId>.json：105 个群开着 AI 闲聊时，一次 systemctl restart
-      // 就让 savedAt 最旧的 5 个群的逐字缓冲、中期摘要和待处理摘要从磁盘永久
-      // 消失，且触发条件只是「重启」。运行期的淘汰路径 ensureMemoryCapacity
-      // ——它至少会跳过有回复在途的群。这里只跳过不加载，文件留在盘上；真要
-      // 回收得走独立的过期策略，不能挂在容量判定上。
+      // 容量不足只跳过本轮水合，SQLite 快照保留；删除只由群状态或显式清理驱动。
       skippedOverCapacity++;
       continue;
     }

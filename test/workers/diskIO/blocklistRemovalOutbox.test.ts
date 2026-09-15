@@ -141,7 +141,7 @@ function chatStateWrite(
   revision: number,
   proxyEnabled: boolean = false
 ): ChatStateWriteDiskMessage {
-  return {
+  return { aiPersona: null,
     type: "chatStateWrite",
     chatId,
     data: encodeChatStateData({
@@ -168,7 +168,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     );
     expect(hydrateStorageDatabase()).toEqual({
       blocklistEntryCount: 0,
-      whitelistEntryCount: 0,
+      permissionEntryCount: 0,
       pendingBlockedRemovals: new Map(),
       chatStates: new Map(),
       chatQa: new Map(),
@@ -189,12 +189,12 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(acknowledgements).toEqual([{
       type: "identityStoragePersisted",
       writes: [{ table: "whitelist", id: 7, revision: 1 }],
-      temporaryWhitelistWrites: [],
+      temporaryAdBypassWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
     }]);
     resetStorageDatabaseCache();
-    expect(hydrateStorageDatabase().whitelistEntryCount).toBe(1);
+    expect(hydrateStorageDatabase().permissionEntryCount).toBe(1);
   });
 
   test("黑白两表分别计到 128；任一满批时同一事务提交当时全部变化", () => {
@@ -219,7 +219,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     );
     resetStorageDatabaseCache();
     const restored = hydrateStorageDatabase();
-    expect(restored.whitelistEntryCount).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES);
+    expect(restored.permissionEntryCount).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES);
     expect(restored.blocklistEntryCount).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES - 1);
   });
 
@@ -234,7 +234,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(acknowledgements.at(-1)).toEqual({
       type: "identityStoragePersisted",
       writes: [{ table: "blocklist", id: 7, revision: 1 }],
-      temporaryWhitelistWrites: [],
+      temporaryAdBypassWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
       removalSnapshotRevision: 4,
@@ -487,7 +487,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     resetStorageDatabaseCache();
     const restored = hydrateStorageDatabase();
     expect(restored.blocklistEntryCount).toBe(0);
-    expect(restored.whitelistEntryCount).toBe(1);
+    expect(restored.permissionEntryCount).toBe(1);
   });
 
   test("已提交行的跨表互斥两个方向都拒绝，不靠未提交视图兜底", () => {
@@ -498,18 +498,18 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     handleIdentityPolicyWrite(blocklistWrite(11, 1), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
     expect((): void => handleIdentityPolicyWrite(whitelistWrite(11, 2), reply))
-      .toThrow("Identity 11 cannot exist in both whitelist_entries and blocklist_entries.");
+      .toThrow("Identity 11 cannot exist in both permission_list and blocklist_entries.");
 
     // 反方向同样要拒绝：只查一张表的实现能过上面那半，过不了这半。
     handleIdentityPolicyWrite(whitelistWrite(12, 1), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
     expect((): void => handleIdentityPolicyWrite(blocklistWrite(12, 2), reply))
-      .toThrow("Identity 12 cannot exist in both whitelist_entries and blocklist_entries.");
+      .toThrow("Identity 12 cannot exist in both permission_list and blocklist_entries.");
 
     resetStorageDatabaseCache();
     const restored = hydrateStorageDatabase();
     expect(restored.blocklistEntryCount).toBe(1);
-    expect(restored.whitelistEntryCount).toBe(1);
+    expect(restored.permissionEntryCount).toBe(1);
   });
 
   test("群状态第 25 条自动事务提交并精确 ACK，第 26 条在 Worker owner 再次拒绝", () => {
@@ -530,7 +530,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(() => handleChatStateWrite(chatStateWrite(-9_999, 1), reply))
       .toThrow("must contain at most 25 chats");
 
-    handleChatStateWrite({
+    handleChatStateWrite({ aiPersona: null,
       type: "chatStateWrite",
       chatId: -1_000,
       data: null,
@@ -552,7 +552,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
 
     expect(() => handleChatStateWrite(chatStateWrite(-1_002, 1, true), reply))
       .toThrow("at most one active proxy send target");
-    handleChatStateWrite({
+    handleChatStateWrite({ aiPersona: null,
       type: "chatStateWrite",
       chatId: -1_001,
       data: null,
@@ -596,7 +596,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       removals: [],
       chatStates: Array.from(
         { length: STATE_MANAGED_CHAT_LIMIT + 1 },
-        (_value: unknown, index: number) => ({
+        (_value: unknown, index: number) => ({ aiPersona: null,
           chatId: -2_000 - index,
           data: encodeChatStateData({ isInitEnabled: true }),
         })
@@ -614,8 +614,8 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       blocklist: [],
       removals: [],
       chatStates: [
-        { chatId: -3_001, data: encodeChatStateData({ isProxySendEnabled: true }) },
-        { chatId: -3_002, data: encodeChatStateData({ isProxySendEnabled: true }) },
+        { aiPersona: null, chatId: -3_001, data: encodeChatStateData({ isProxySendEnabled: true }) },
+        { aiPersona: null, chatId: -3_002, data: encodeChatStateData({ isProxySendEnabled: true }) },
       ],
     });
     closeStorageDatabase(second);
@@ -631,7 +631,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     putIdentityPolicyRow({ database, table: "whitelist", id: 7, data: "{}" });
     database.$client.exec(
       "PRAGMA ignore_check_constraints=ON; " +
-      "UPDATE whitelist_entries SET data = x'00' WHERE id = 7; " +
+      "UPDATE permission_list SET policy = x'00' WHERE id = 7; " +
       "PRAGMA ignore_check_constraints=OFF;"
     );
     const black: IdentityPolicyWriteDiskMessage = blocklistWrite(7, 2);
@@ -644,6 +644,6 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     closeStorageDatabase(database);
 
     expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
-      .toThrow("whitelist_entries/blocklist_entries[$.id]: expected disjoint primary keys");
+      .toThrow("permission_list/blocklist_entries[$.id]: expected disjoint primary keys");
   });
 });

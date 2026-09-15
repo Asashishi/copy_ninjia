@@ -25,7 +25,7 @@ interface MigrationSnapshot {
 
 /** 还原 v8 所需的原始 DDL、migration 记录与 schema 版本行。 */
 interface SchemaSnapshot {
-  readonly temporaryWhitelistDdl: string;
+  readonly temporaryAdBypassDdl: string;
   readonly migrations: readonly MigrationSnapshot[];
   readonly versionText: string;
 }
@@ -49,7 +49,7 @@ function readSchemaSnapshot(database: StorageDatabase): SchemaSnapshot {
   const ddl: { sql: string } | null = database.$client
     .query<{ sql: string }, []>(
       "SELECT sql FROM sqlite_master " +
-      "WHERE type = 'table' AND name = 'temporary_whitelist_entries';"
+      "WHERE type = 'table' AND name = 'temporary_ad_bypass_entries';"
     ).get();
   const migrations: MigrationSnapshot[] = database.$client
     .query<{ hash: string; createdAt: number }, []>(
@@ -64,7 +64,7 @@ function readSchemaSnapshot(database: StorageDatabase): SchemaSnapshot {
     throw new Error("test fixture expects a fully migrated v8 database");
   }
   return {
-    temporaryWhitelistDdl: ddl.sql,
+    temporaryAdBypassDdl: ddl.sql,
     migrations,
     versionText: version.text,
   };
@@ -72,12 +72,12 @@ function readSchemaSnapshot(database: StorageDatabase): SchemaSnapshot {
 
 let snapshot: SchemaSnapshot | null = null;
 
-/** 把本文件的测试库改成上一版 release 的 v5 形态：无临时白名单表。 */
+/** 把本文件的测试库改成上一版 release 的 v5 形态：无临时广告免检表。 */
 function degradeToSchemaV5(): void {
   withDatabase((database: StorageDatabase): void => {
     // 先登记还原信息再破坏：赋值排在 DDL 之前，任何一步失败 afterEach 都能收拾。
     snapshot = readSchemaSnapshot(database);
-    database.$client.run("DROP TABLE temporary_whitelist_entries;");
+    database.$client.run("DROP TABLE temporary_ad_bypass_entries;");
     database.$client.run(
       "DELETE FROM __drizzle_migrations WHERE created_at >= ?;",
       [snapshot.migrations[0]!.createdAt]
@@ -92,7 +92,7 @@ function degradeToSchemaV5(): void {
 function restoreSchemaV8(restored: SchemaSnapshot): void {
   withDatabase((database: StorageDatabase): void => {
     // DDL 取自 sqlite_master，逐字写回本库自己的建表语句。
-    database.$client.run(restored.temporaryWhitelistDdl);
+    database.$client.run(restored.temporaryAdBypassDdl);
     for (const migration of restored.migrations) {
       database.$client.run(
         "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?);",
@@ -112,11 +112,11 @@ afterEach((): void => {
   if (pending !== null) restoreSchemaV8(pending);
   withDatabase((database: StorageDatabase): void => {
     database.$client.run("DELETE FROM pending_blocked_removals;");
-    database.$client.run("DELETE FROM whitelist_entries;");
+    database.$client.run("DELETE FROM permission_list;");
     database.$client.run("DELETE FROM blocklist_entries;");
     database.$client.run("DELETE FROM chat_states;");
     database.$client.run("DELETE FROM chat_qa;");
-    database.$client.run("DELETE FROM temporary_whitelist_entries;");
+    database.$client.run("DELETE FROM temporary_ad_bypass_entries;");
   });
 });
 
@@ -130,7 +130,7 @@ function identityMeta(): {
 
 interface InsertJsonbRowOptions {
   readonly database: StorageDatabase;
-  readonly table: "blocklist_entries" | "chat_states" | "pending_blocked_removals" | "whitelist_entries";
+  readonly table: "blocklist_entries" | "chat_states" | "pending_blocked_removals" | "permission_list";
   readonly idColumn: "chat_id" | "id" | "removal_id";
   readonly id: number;
   readonly data: string;
@@ -144,26 +144,26 @@ function insertJsonbRow({
   data,
 }: InsertJsonbRowOptions): void {
   database.$client.run(
-    `INSERT INTO ${table} (${idColumn}, data) VALUES (?1, jsonb(?2));`,
+    `INSERT INTO ${table} (${idColumn}, ${table === "chat_states" ? "status" : table === "permission_list" ? "policy" : "data"}) VALUES (?1, jsonb(?2));`,
     [id, data]
   );
 }
 
 describe("共享存储库的启动 schema 闸", () => {
-  test("未迁移的 v5 库报 schema 版本，而不是临时白名单缺表", () => {
+  test("未迁移的 v5 库报 schema 版本，而不是临时广告免检缺表", () => {
     degradeToSchemaV5();
 
     // 版本判定必须先于任何按版本才存在的表：先读 startup rows 的话，这里拿到的
-    // 是临时白名单缺表，运维照着那句排查不会想到该跑冷迁移。
+    // 是临时广告免检缺表，运维照着那句排查不会想到该跑冷迁移。
     expect(() => hydrateStorageDatabase()).toThrow(
-      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":8}.`
+      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":9}.`
     );
   });
 
-  test("当前 v8 库照常 hydrate", () => {
+  test("当前 v9 库照常 hydrate", () => {
     expect(hydrateStorageDatabase()).toEqual({
       blocklistEntryCount: 0,
-      whitelistEntryCount: 0,
+      permissionEntryCount: 0,
       pendingBlockedRemovals: new Map(),
       chatStates: new Map(),
       chatQa: new Map(),
@@ -177,7 +177,7 @@ describe("共享存储库的启动 schema 闸", () => {
     expect(storageDatabaseHandle.current).toBeNull();
     expect(inspection.hydration).toEqual({
       blocklistEntryCount: 0,
-      whitelistEntryCount: 0,
+      permissionEntryCount: 0,
       pendingBlockedRemovals: new Map(),
       chatStates: new Map(),
       chatQa: new Map(),
@@ -192,7 +192,7 @@ describe("共享存储库的启动 schema 闸", () => {
     withDatabase((database: StorageDatabase): void => {
       insertJsonbRow({
         database,
-        table: "whitelist_entries",
+        table: "permission_list",
         idColumn: "id",
         id: 11,
         data: JSON.stringify({ permissions: {}, meta: identityMeta() }),
@@ -200,7 +200,7 @@ describe("共享存储库的启动 schema 闸", () => {
     });
 
     expect(() => inspectStorageDatabase()).toThrow(
-      /whitelist_entries\[11\]\.data.*permissions/
+      /permission_list\[11\]\.policy.*permissions/
     );
     expect(storageDatabaseHandle.current).toBeNull();
   });
@@ -209,7 +209,7 @@ describe("共享存储库的启动 schema 闸", () => {
     withDatabase((database: StorageDatabase): void => {
       insertJsonbRow({
         database,
-        table: "whitelist_entries",
+        table: "permission_list",
         idColumn: "id",
         id: 21,
         data: encodeWhitelistEntryData({
@@ -232,7 +232,7 @@ describe("共享存储库的启动 schema 闸", () => {
     expect(() => inspectStorageDatabase()).toThrow(/expected disjoint primary keys/);
   });
 
-  test("临时白名单与黑名单主键交叉时拒绝启动", () => {
+  test("临时广告免检与黑名单主键交叉时拒绝启动", () => {
     withDatabase((database: StorageDatabase): void => {
       insertJsonbRow({
         database,
@@ -245,15 +245,15 @@ describe("共享存储库的启动 schema 闸", () => {
         }),
       });
       database.$client.run(
-        "INSERT INTO temporary_whitelist_entries " +
-        "(id, temp_white, temp_white_at, temp_white_count, send_count, " +
+        "INSERT INTO temporary_ad_bypass_entries " +
+        "(id, ad_bypass, ad_bypass_granted_at, qualified_days, send_count, " +
         "counted_at, qualified_at) VALUES (?1, 0, NULL, 0, 1, ?2, NULL);",
         [22, Date.now()]
       );
     });
 
     expect(() => inspectStorageDatabase()).toThrow(
-      /temporary_whitelist_entries\/blocklist_entries.*expected disjoint primary keys/
+      /temporary_ad_bypass_entries\/blocklist_entries.*expected disjoint primary keys/
     );
   });
 
@@ -261,8 +261,8 @@ describe("共享存储库的启动 schema 闸", () => {
     const future: number = Date.now() + 60_000;
     withDatabase((database: StorageDatabase): void => {
       database.$client.run(
-        "INSERT INTO temporary_whitelist_entries " +
-        "(id, temp_white, temp_white_at, temp_white_count, send_count, " +
+        "INSERT INTO temporary_ad_bypass_entries " +
+        "(id, ad_bypass, ad_bypass_granted_at, qualified_days, send_count, " +
         "counted_at, qualified_at) VALUES (?1, 0, NULL, 0, 1, ?2, NULL);",
         [24, future]
       );
@@ -271,18 +271,18 @@ describe("共享存储库的启动 schema 闸", () => {
     expect(() => inspectStorageDatabase()).not.toThrow();
   });
 
-  test("临时白名单跨东京日的合格时间损坏时拒绝启动", () => {
+  test("临时广告免检跨东京日的合格时间损坏时拒绝启动", () => {
     withDatabase((database: StorageDatabase): void => {
       database.$client.run(
-        "INSERT INTO temporary_whitelist_entries " +
-        "(id, temp_white, temp_white_at, temp_white_count, send_count, " +
+        "INSERT INTO temporary_ad_bypass_entries " +
+        "(id, ad_bypass, ad_bypass_granted_at, qualified_days, send_count, " +
         "counted_at, qualified_at) VALUES (?1, 1, ?3, 1, 8, ?2, ?3);",
         [23, 90_000_000, 1_000]
       );
     });
 
     expect(() => inspectStorageDatabase()).toThrow(
-      /temporary_whitelist_entries\[23\].*qualified_at/
+      /temporary_ad_bypass_entries\[23\].*qualified_at/
     );
   });
 
@@ -297,7 +297,7 @@ describe("共享存储库的启动 schema 闸", () => {
       });
     });
 
-    expect(() => inspectStorageDatabase()).toThrow(/chat_states\[-1001\]\.data/);
+    expect(() => inspectStorageDatabase()).toThrow(/chat_states\[-1001\]\.status/);
   });
 
   test("待踢 outbox 引用不存在的黑名单身份时拒绝启动", () => {
@@ -343,7 +343,7 @@ describe("共享存储库的启动 schema 闸", () => {
       );
     });
     try {
-      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v8 migration lineage/);
+      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v9 migration lineage/);
     } finally {
       withDatabase((database: StorageDatabase): void => {
         database.$client.run(

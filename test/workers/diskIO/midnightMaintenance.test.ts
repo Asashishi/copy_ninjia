@@ -13,7 +13,7 @@ const maintainVerificationDayForToday = mock((
   _reply: (reply: VerificationPersistedReply) => void,
   _day: string
 ): void => {});
-const maintainTemporaryWhitelistActivities = mock((
+const maintainTemporaryAdBypassActivities = mock((
   _reply: (reply: IdentityStoragePersistedReply) => void
 ): void => {});
 
@@ -33,7 +33,7 @@ mock.module("../../../packages/workers/diskIO/verificationWrites", () => ({
   maintainVerificationDayForToday,
 }));
 mock.module("../../../packages/workers/diskIO/storageDatabase", () => ({
-  maintainTemporaryWhitelistActivities,
+  maintainTemporaryAdBypassActivities,
 }));
 
 const { runDiskIOMidnightMaintenance } = await import(
@@ -51,7 +51,7 @@ beforeEach((): void => {
     maintainJoinLogRetention,
     maintainAdSampleFiles,
     maintainVerificationDayForToday,
-    maintainTemporaryWhitelistActivities,
+    maintainTemporaryAdBypassActivities,
   ]) fn.mockClear();
   maintainLuckForDay.mockImplementation((_day: string): void => {});
   maintainAdSampleFiles.mockImplementation(async (_day: string): Promise<void> => {});
@@ -73,7 +73,7 @@ describe("Disk I/O Worker 午夜维护编排", (): void => {
       deletion.reject(new Error("injected async deletion failure"));
       await maintenance;
       expect(maintainVerificationDayForToday).toHaveBeenCalledTimes(1);
-      expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
+      expect(maintainTemporaryAdBypassActivities).toHaveBeenCalledWith(reply);
       expect(errorLog).toHaveBeenCalledTimes(1);
     } finally {
       deletion.resolve();
@@ -92,7 +92,7 @@ describe("Disk I/O Worker 午夜维护编排", (): void => {
     expect(maintainJoinLogRetention).toHaveBeenCalledWith(DAY);
     expect(maintainAdSampleFiles).toHaveBeenCalledWith(DAY);
     expect(maintainVerificationDayForToday).toHaveBeenCalledWith(reply, DAY);
-    expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
+    expect(maintainTemporaryAdBypassActivities).toHaveBeenCalledWith(reply);
   });
 
   test("主线程通知先于磁盘维护，通知失败仍维护磁盘领域", async (): Promise<void> => {
@@ -104,7 +104,7 @@ describe("Disk I/O Worker 午夜维护编排", (): void => {
     try {
       await runDiskIOMidnightMaintenance(reply, DAY);
       expect(maintainLuckForDay).toHaveBeenCalledWith(DAY);
-      expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
+      expect(maintainTemporaryAdBypassActivities).toHaveBeenCalledWith(reply);
       expect(errorLog).toHaveBeenCalledTimes(1);
     } finally {
       errorLog.mockRestore();
@@ -121,7 +121,7 @@ describe("Disk I/O Worker 午夜维护编排", (): void => {
 
     expect(maintainLogRetention).toHaveBeenCalledTimes(1);
     expect(maintainVerificationDayForToday).toHaveBeenCalledTimes(1);
-    expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledWith(reply);
+    expect(maintainTemporaryAdBypassActivities).toHaveBeenCalledWith(reply);
     expect(errorLog).toHaveBeenCalledTimes(1);
     errorLog.mockRestore();
   });

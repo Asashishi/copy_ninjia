@@ -7,6 +7,7 @@ import {
 } from "../aiChat/ai/stickers/catalog";
 import { adoptStickerConfig, getStickerConfig } from "../config/stickers";
 import { adoptMoodConfig } from "../config/mood";
+import { chatPersonas } from "../cache/workers/aiChat/persona";
 import { adoptPersona } from "../config/persona";
 import { adoptReactionConfig } from "../config/reactions";
 import { adoptAgentDeploymentConfig } from "../config/agent";
@@ -177,6 +178,10 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(getStickerConfig().packs);
       break;
+    case "persona":
+      if (msg.persona === null) chatPersonas.delete(msg.chatId);
+      else chatPersonas.set(msg.chatId, msg.persona);
+      break;
     case "record":
       if (aiChatWorkerQuiescing.current) break;
       recordChatMessage(msg);
@@ -291,6 +296,7 @@ export function stopAiChatWorker(): void {
     aiChatMaintenanceTimer.current = null;
   }
   stopWeatherRefreshLoop();
+  chatPersonas.clear();
   resetWorkerDuplex("AI Worker stopped before the main-thread request completed.");
   self.onmessage = null;
   process.off("exit", stopAiChatWorker);

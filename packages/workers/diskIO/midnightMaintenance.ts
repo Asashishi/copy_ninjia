@@ -4,7 +4,7 @@ import { maintainAdSampleFiles } from "./adSampleFile";
 import { maintainJoinLogRetention } from "./joinLogFiles";
 import { maintainLogRetention } from "./logFiles";
 import { maintainLuckForDay } from "./luckFiles";
-import { maintainTemporaryWhitelistActivities } from "./storageDatabase";
+import { maintainTemporaryAdBypassActivities } from "./storageDatabase";
 import {
   maintainVerificationDayForToday,
 } from "./verificationWrites";
@@ -46,6 +46,6 @@ export function runDiskIOMidnightMaintenance(
     ["join logs", async (): Promise<void> => maintainJoinLogRetention(day)],
     ["ad samples", (): Promise<void> => maintainAdSampleFiles(day)],
     ["verifications", (): Promise<void> => maintainVerificationDayForToday(reply, day)],
-    ["temporary whitelist", (): void => maintainTemporaryWhitelistActivities(reply)],
+    ["temporary ad bypass", (): void => maintainTemporaryAdBypassActivities(reply)],
   ]);
 }

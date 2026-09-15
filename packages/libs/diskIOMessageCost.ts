@@ -16,8 +16,10 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
       payloadBytes = (message.day.length + message.key.length + message.label.length) * 2;
       break;
     case "identityPolicyWrite":
-    case "chatStateWrite":
       payloadBytes = (message.data?.length ?? 0) * 2;
+      break;
+    case "chatStateWrite":
+      payloadBytes = ((message.data?.length ?? 0) + (message.aiPersona?.length ?? 0)) * 2;
       break;
     case "chatQaWrite":
       payloadBytes = (message.q.length + (message.data?.length ?? 0)) * 2;
@@ -45,7 +47,7 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
     case "deleteAiMemory":
     case "forgetAiMemory":
     case "verificationDelete":
-    case "temporaryWhitelistWrite":
+    case "temporaryAdBypassWrite":
     case "flush":
     case "readJoinLog":
     case "readBlocklistIdPage":

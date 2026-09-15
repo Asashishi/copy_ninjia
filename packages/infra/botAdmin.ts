@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import { syncAiChatPersona } from "../aiChat/workerBridge";
 import { logger } from "./logger";
 import { bot } from "./telegram/mainClient";
 import { signalArgs } from "../libs/telegramSignalArgs";
@@ -171,6 +172,7 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
           update.chat.id,
           `chat ${update.chat.id} state pruned after bot left/kicked`
         );
+        syncAiChatPersona(update.chat.id);
       },
       `Failed to complete departure transition for chat ${update.chat.id}.`
     );

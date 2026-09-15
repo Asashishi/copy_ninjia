@@ -29,6 +29,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "x", description: "把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 或加 @username 指定目标，笨蛋♡" },
   { command: "block", description: "把目标写进永久黑名单并在所有托管群封禁，之后再进群也秒踢；支持回复、@username 或用户 id，仅持有 isCanBlock 的身份配用，杂鱼别乱碰♡" },
   { command: "unblock", description: "把目标移出永久黑名单并解除所有托管群封禁；支持回复、@username、用户 id 或频道负数 id，仅持有 isCanUnBlock 的身份配用，笨蛋♡" },
+  { command: "prompt", description: "用 config/remove 配置本天才在本群的 AI 个性化提示词♡" },
   { command: "ai_chat", description: "用 enable/disable 开关本群 AI 闲聊，只有获授权者配使唤本天才，杂鱼别乱按♡" },
   { command: "clear_context", description: "把本天才在这个群攒下的 AI 上下文记忆全忘光，内存里的和存档里的一起清，之后从零重新记；不带参数，只有超级管理员配下这种命令，杂鱼别乱按♡" },
   { command: "ad_detect", description: "用 enable/disable 开关本群广告检测；命中就拉黑并全群封禁删消息，只有获授权者配碰，杂鱼♡" },

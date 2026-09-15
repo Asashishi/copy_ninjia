@@ -147,7 +147,7 @@ export async function runMainWriteThroughChild(
   try {
     const loaded: LoadedData = await loadPersistedData(120_000);
     hydrateIdentityStorageCounts(
-      loaded.whitelistEntryCount,
+      loaded.permissionEntryCount,
       loaded.blocklistEntryCount
     );
     seedMainWriteThroughCache();

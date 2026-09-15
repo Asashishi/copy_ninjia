@@ -4,8 +4,8 @@ import {
   resetIdentityStorageCache,
   whitelistEntryCache,
 } from "../../packages/cache/main/identityStorage";
-import { temporaryWhitelistActivityCache } from
-  "../../packages/cache/main/temporaryWhitelist";
+import { temporaryAdBypassActivityCache } from
+  "../../packages/cache/main/temporaryAdBypass";
 import type { BlocklistEntryData } from "../../packages/types/identityPolicy";
 
 interface BlockedTestRecord {
@@ -63,7 +63,7 @@ export const blockedIdentityTestView: {
       meta: TEST_IDENTITY_META,
     });
     whitelistEntryCache.set(id, null);
-    temporaryWhitelistActivityCache.set(id, null);
+    temporaryAdBypassActivityCache.set(id, null);
   },
 };
 
@@ -76,7 +76,7 @@ export function readBlockedIdentityTestIds(): readonly number[] {
 export function seedMissingIdentity(id: number): void {
   if (!blocklistEntryCache.has(id)) blocklistEntryCache.set(id, null);
   if (!whitelistEntryCache.has(id)) whitelistEntryCache.set(id, null);
-  if (!temporaryWhitelistActivityCache.has(id)) {
-    temporaryWhitelistActivityCache.set(id, null);
+  if (!temporaryAdBypassActivityCache.has(id)) {
+    temporaryAdBypassActivityCache.set(id, null);
   }
 }

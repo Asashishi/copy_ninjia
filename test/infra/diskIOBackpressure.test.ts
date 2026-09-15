@@ -1,19 +1,19 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { diskIORuntime } from "../../packages/cache/main/diskIO";
 import { defaultStickerConfigCache } from "../../packages/cache/perThread/config";
-import { temporaryWhitelistActivityCache, temporaryWhitelistWriteRevision, unacknowledgedTemporaryWhitelistWrites } from "../../packages/cache/main/temporaryWhitelist";
+import { temporaryAdBypassActivityCache, temporaryAdBypassWriteRevision, unacknowledgedTemporaryAdBypassWrites } from "../../packages/cache/main/temporaryAdBypass";
 import { resetIdentityStorageCache } from "../../packages/cache/main/identityStorage";
 import { seedMissingIdentity } from "../helpers/identityStorage";
-import { recordTemporaryWhitelistActivity } from "../../packages/infra/identityPolicy/temporaryWhitelist";
+import { recordTemporaryAdBypassActivity } from "../../packages/infra/identityPolicy/temporaryAdBypass";
 import { initDiskIO, postDiskIO, terminateDiskIO, loadPersistedData, readIdentityPolicies, flushDiskIO } from "../../packages/infra/diskIO";
 import { DISK_BUSINESS_MAX_RETAINED_BYTES } from "../../packages/consts/diskIO/business";
-import type { DiskIOReply, TemporaryWhitelistWriteDiskMessage } from "../../packages/types/diskIO";
+import type { DiskIOReply, TemporaryAdBypassWriteDiskMessage } from "../../packages/types/diskIO";
 import { emitSuccessfulDiskIOLoad, FakeDiskIOWorker, installFakeDiskIOWorker, crashDiskIOWorker } from "../helpers/diskIOWorkerHarness";
 
 let restoreWorker: () => void;
 const fatals: Error[] = [];
 function worker(): FakeDiskIOWorker { return FakeDiskIOWorker.instances.at(-1)!; }
-function write(id: number): TemporaryWhitelistWriteDiskMessage { return { type: "temporaryWhitelistWrite", id, activity: null, revision: id }; }
+function write(id: number): TemporaryAdBypassWriteDiskMessage { return { type: "temporaryAdBypassWrite", id, activity: null, revision: id }; }
 function acknowledge(target: FakeDiskIOWorker): void {
   target.onmessage!({ data: { type: "operationBatchAccepted", batchId: target.operationBatches.at(-1)!.batchId } } as MessageEvent<DiskIOReply>);
 }
@@ -34,13 +34,13 @@ test("非消费 Worker 只有一个在途批次；条数满后保留原事实并
   expect(fatals).toHaveLength(1); expect(diskIORuntime.operationQueue.size).toBe(3);
 });
 
-test("传输满额在临时白名单 LRU、revision 和未 ACK 发布之前拒收", (): void => {
+test("传输满额在临时广告免检 LRU、revision 和未 ACK 发布之前拒收", (): void => {
   for (let id: number = 1; id <= 3; id++) postDiskIO(write(id));
   seedMissingIdentity(9);
-  expect((): unknown => recordTemporaryWhitelistActivity(9)).toThrow("publication");
-  expect(temporaryWhitelistActivityCache.peek(9)).toBeNull();
-  expect(temporaryWhitelistWriteRevision.current).toBe(0);
-  expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(0);
+  expect((): unknown => recordTemporaryAdBypassActivity(9)).toThrow("publication");
+  expect(temporaryAdBypassActivityCache.peek(9)).toBeNull();
+  expect(temporaryAdBypassWriteRevision.current).toBe(0);
+  expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(0);
 });
 
 test("大载荷按字节拒收，未发送且不制造恢复事实", (): void => {
@@ -50,13 +50,13 @@ test("大载荷按字节拒收，未发送且不制造恢复事实", (): void =>
 });
 
 test("读取和 flush 必须在已入队业务之后消费；消费 ACK 不等同于落盘 ACK", async (): Promise<void> => {
-  seedMissingIdentity(7); recordTemporaryWhitelistActivity(7);
+  seedMissingIdentity(7); recordTemporaryAdBypassActivity(7);
   const reading: Promise<unknown> = readIdentityPolicies([7]).catch((): undefined => undefined);
   const flushing: Promise<unknown> = flushDiskIO();
-  expect(worker().messages.map((message): string => message.type)).toEqual(["load", "temporaryWhitelistWrite"]);
+  expect(worker().messages.map((message): string => message.type)).toEqual(["load", "temporaryAdBypassWrite"]);
   acknowledge(worker());
   expect(worker().operationBatches.at(-1)!.messages.map((message): string => message.type)).toEqual(["readIdentityPolicies", "flush"]);
-  expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(1);
+  expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(1);
   expect(diskIORuntime.operationTimer?.hasRef()).toBeFalse();
   await terminateDiskIO(); await reading; await flushing;
 });
@@ -71,7 +71,7 @@ test("崩溃按原序重放未消费业务；旧代 ACK 不释放新队列", asy
   const retained: number = diskIORuntime.operationQueue.size;
   acknowledge(previous); expect(diskIORuntime.operationQueue.size).toBe(retained);
   acknowledge(replacement);
-  expect(replacement.operationBatches.at(-1)!.messages.filter((message): boolean => message.type === "temporaryWhitelistWrite").map((message): number => (message as TemporaryWhitelistWriteDiskMessage).id)).toEqual([1, 2]);
+  expect(replacement.operationBatches.at(-1)!.messages.filter((message): boolean => message.type === "temporaryAdBypassWrite").map((message): number => (message as TemporaryAdBypassWriteDiskMessage).id)).toEqual([1, 2]);
 });
 
 test("缺省贴纸配置在初始 load 与运行时恢复都明确发送 null", async (): Promise<void> => {
@@ -87,12 +87,12 @@ test("缺省贴纸配置在初始 load 与运行时恢复都明确发送 null", 
 });
 
 test("未 ACK 主键达到上限后不通过 LRU 淘汰释放持久化事实", (): void => {
-  for (let id: number = 1; id <= 8_192; id++) unacknowledgedTemporaryWhitelistWrites.set(id, { activity: null, revision: id });
+  for (let id: number = 1; id <= 8_192; id++) unacknowledgedTemporaryAdBypassWrites.set(id, { activity: null, revision: id });
   seedMissingIdentity(9_000);
-  expect((): unknown => recordTemporaryWhitelistActivity(9_000)).toThrow("capacity");
-  expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(8_192);
-  expect(temporaryWhitelistActivityCache.peek(9_000)).toBeNull();
-  expect(temporaryWhitelistWriteRevision.current).toBe(0);
+  expect((): unknown => recordTemporaryAdBypassActivity(9_000)).toThrow("capacity");
+  expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(8_192);
+  expect(temporaryAdBypassActivityCache.peek(9_000)).toBeNull();
+  expect(temporaryAdBypassWriteRevision.current).toBe(0);
   expect(worker().operationBatches).toHaveLength(0);
 });
 

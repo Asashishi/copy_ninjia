@@ -1,23 +1,23 @@
 import {
-  TEMPORARY_WHITELIST_DAILY_MESSAGE_THRESHOLD,
-  TEMPORARY_WHITELIST_REQUIRED_DAYS,
-} from "../consts/temporaryWhitelist";
+  TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD,
+  TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
+} from "../consts/temporaryAdBypass";
 import { getTokyoDayIndex } from "../libs/time";
-import type { TemporaryWhitelistActivity } from "../types/temporaryWhitelist";
+import type { TemporaryAdBypassActivity } from "../types/temporaryAdBypass";
 
 /**
  * 记录是否尚未越过保留边界；未来时间轴留给下一条发言显式收敛。
  *
  * `now` 必填：本模块与同目录其余判定一样不读时钟，墙钟由调用方一次取好传进来
- * （见 infra/identityPolicy/temporaryWhitelist.ts），同一条消息的多次判定因此用
+ * （见 infra/identityPolicy/temporaryAdBypass.ts），同一条消息的多次判定因此用
  * 同一个时刻。
  */
-export function isTemporaryWhitelistActivityRetained(
-  activity: Readonly<TemporaryWhitelistActivity>,
+export function isTemporaryAdBypassActivityRetained(
+  activity: Readonly<TemporaryAdBypassActivity>,
   now: number
 ): boolean {
   if (!Number.isSafeInteger(now) || now < 0) {
-    throw new RangeError("Temporary whitelist activity time must be a non-negative safe integer.");
+    throw new RangeError("Temporary ad bypass activity time must be a non-negative safe integer.");
   }
   const currentDay: number = getTokyoDayIndex(now);
   const countedDay: number = getTokyoDayIndex(activity.countedAt);
@@ -28,19 +28,19 @@ export function isTemporaryWhitelistActivityRetained(
 }
 
 /** 当前记录是否仍提供临时广告检测豁免；`now` 由调用方给出，理由同上。 */
-export function isTemporaryWhitelistActive(
-  activity: Readonly<TemporaryWhitelistActivity>,
+export function isTemporaryAdBypassActive(
+  activity: Readonly<TemporaryAdBypassActivity>,
   now: number
 ): boolean {
-  return activity.tempWhite &&
-    isTemporaryWhitelistActivityRetained(activity, now);
+  return activity.adBypass &&
+    isTemporaryAdBypassActivityRetained(activity, now);
 }
 
-function firstActivity(now: number): Readonly<TemporaryWhitelistActivity> {
+function firstActivity(now: number): Readonly<TemporaryAdBypassActivity> {
   return {
-    tempWhite: false,
-    tempWhiteAt: null,
-    tempWhiteCount: 0,
+    adBypass: false,
+    adBypassGrantedAt: null,
+    qualifiedDays: 0,
     sendCount: 1,
     countedAt: now,
     qualifiedAt: null,
@@ -49,17 +49,17 @@ function firstActivity(now: number): Readonly<TemporaryWhitelistActivity> {
 
 /** 墙钟回拨时从当前消息重建计数时间轴，同时保留已经授予的临时资格。 */
 function restartActivityAfterClockRollback(
-  current: Readonly<TemporaryWhitelistActivity>,
+  current: Readonly<TemporaryAdBypassActivity>,
   now: number
-): Readonly<TemporaryWhitelistActivity> {
-  if (!current.tempWhite) return firstActivity(now);
-  if (current.tempWhiteAt === null) {
-    throw new Error("Temporary whitelist membership requires a grant timestamp.");
+): Readonly<TemporaryAdBypassActivity> {
+  if (!current.adBypass) return firstActivity(now);
+  if (current.adBypassGrantedAt === null) {
+    throw new Error("Temporary ad bypass membership requires a grant timestamp.");
   }
   return {
-    tempWhite: true,
-    tempWhiteAt: Math.min(current.tempWhiteAt, now),
-    tempWhiteCount: 0,
+    adBypass: true,
+    adBypassGrantedAt: Math.min(current.adBypassGrantedAt, now),
+    qualifiedDays: 0,
     sendCount: 1,
     countedAt: now,
     qualifiedAt: null,
@@ -78,12 +78,12 @@ function restartActivityAfterClockRollback(
  *
  * @see ../../docs/cn/04-invariants.md
  */
-export function advanceTemporaryWhitelistActivity(
-  current: Readonly<TemporaryWhitelistActivity> | null,
+export function advanceTemporaryAdBypassActivity(
+  current: Readonly<TemporaryAdBypassActivity> | null,
   now: number
-): Readonly<TemporaryWhitelistActivity> {
+): Readonly<TemporaryAdBypassActivity> {
   if (!Number.isSafeInteger(now) || now < 0) {
-    throw new RangeError("Temporary whitelist activity time must be a non-negative safe integer.");
+    throw new RangeError("Temporary ad bypass activity time must be a non-negative safe integer.");
   }
   if (current === null) {
     return firstActivity(now);
@@ -98,9 +98,9 @@ export function advanceTemporaryWhitelistActivity(
       getTokyoDayIndex(current.qualifiedAt) === countedDay;
     if (!previousDayQualified) return firstActivity(now);
     return {
-      tempWhite: current.tempWhite,
-      tempWhiteAt: current.tempWhiteAt,
-      tempWhiteCount: current.tempWhiteCount,
+      adBypass: current.adBypass,
+      adBypassGrantedAt: current.adBypassGrantedAt,
+      qualifiedDays: current.qualifiedDays,
       sendCount: 1,
       countedAt: now,
       qualifiedAt: null,
@@ -110,21 +110,21 @@ export function advanceTemporaryWhitelistActivity(
   if (current.qualifiedAt !== null) return current;
 
   if (!Number.isSafeInteger(current.sendCount + 1)) {
-    throw new RangeError("Temporary whitelist daily message count is exhausted.");
+    throw new RangeError("Temporary ad bypass daily message count is exhausted.");
   }
   const sendCount: number = current.sendCount + 1;
-  if (sendCount <= TEMPORARY_WHITELIST_DAILY_MESSAGE_THRESHOLD) {
+  if (sendCount <= TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD) {
     return { ...current, sendCount, countedAt: now };
   }
 
-  const tempWhiteCount: number = Math.min(
-    current.tempWhiteCount + 1,
-    TEMPORARY_WHITELIST_REQUIRED_DAYS
+  const qualifiedDays: number = Math.min(
+    current.qualifiedDays + 1,
+    TEMPORARY_AD_BYPASS_REQUIRED_DAYS
   );
   return {
-    tempWhite: true,
-    tempWhiteAt: current.tempWhiteAt ?? now,
-    tempWhiteCount,
+    adBypass: true,
+    adBypassGrantedAt: current.adBypassGrantedAt ?? now,
+    qualifiedDays,
     sendCount,
     countedAt: now,
     qualifiedAt: now,

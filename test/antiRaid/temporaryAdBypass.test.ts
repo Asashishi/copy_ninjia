@@ -18,15 +18,15 @@ let promoteOnRecord: boolean = false;
 mock.module("../../packages/config/readiness", () => ({
   adDetectConfigReadiness: (): { readonly ok: boolean } => ({ ok: readinessOk }),
 }));
-mock.module("../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
-  recordTemporaryWhitelistActivity: (id: number, now: number): object => {
+mock.module("../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
+  recordTemporaryAdBypassActivity: (id: number, now: number): object => {
     recorded.push({ id, now });
     if (grantOnRecord) temporaryIds.add(id);
     return {
       activity: {
-        tempWhite: grantOnRecord,
-        tempWhiteAt: grantOnRecord ? now : null,
-        tempWhiteCount: promoteOnRecord ? 7 : grantOnRecord ? 1 : 0,
+        adBypass: grantOnRecord,
+        adBypassGrantedAt: grantOnRecord ? now : null,
+        qualifiedDays: promoteOnRecord ? 7 : grantOnRecord ? 1 : 0,
         sendCount: 8,
         countedAt: now,
         qualifiedAt: grantOnRecord ? now : null,
@@ -34,8 +34,8 @@ mock.module("../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
       queued: true,
     };
   },
-  hasActiveTemporaryWhitelistAt: (id: number): boolean => temporaryIds.has(id),
-  clearTemporaryWhitelistActivity: (id: number): boolean => {
+  hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryIds.has(id),
+  clearTemporaryAdBypassActivity: (id: number): boolean => {
     temporaryIds.delete(id);
     return true;
   },
@@ -58,8 +58,8 @@ mock.module("../../packages/antiRaid/workerBridge", () => ({
   },
 }));
 
-const { recordEligibleTemporaryWhitelistActivity } = await import(
-  "../../packages/antiRaid/temporaryWhitelist"
+const { recordEligibleTemporaryAdBypassActivity } = await import(
+  "../../packages/antiRaid/temporaryAdBypass"
 );
 
 const ENABLED_CHAT_STATE: Readonly<ChatState> = {
@@ -88,15 +88,15 @@ beforeEach((): void => {
   promoteOnRecord = false;
 });
 
-describe("临时白名单发言入口", () => {
+describe("临时广告免检发言入口", () => {
   test("用户与频道马甲跨群都按实际展示身份计数", () => {
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
       now: 1_000,
     })).toBeTrue();
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message({
         sender_chat: { id: -2_001, type: "channel", title: "频道" },
       }),
@@ -115,7 +115,7 @@ describe("临时白名单发言入口", () => {
     grantOnRecord = true;
     promoteOnRecord = true;
 
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
@@ -130,16 +130,16 @@ describe("临时白名单发言入口", () => {
     expect(temporaryIds.has(7)).toBeFalse();
   });
 
-  test("刚进入临时白名单时只推一次 Worker 旧状态清理", () => {
+  test("刚进入临时广告免检时只推一次 Worker 旧状态清理", () => {
     grantOnRecord = true;
 
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
       now: 1_000,
     })).toBeTrue();
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
@@ -147,14 +147,14 @@ describe("临时白名单发言入口", () => {
     })).toBeTrue();
 
     expect(workerPosts).toEqual([{
-      type: "temporaryWhitelistGranted",
+      type: "temporaryAdBypassGranted",
       identityId: 7,
     }]);
   });
 
   test("功能未就绪、自动转发、机器人自身与永久白名单均不累计", () => {
     readinessOk = false;
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
@@ -163,19 +163,19 @@ describe("临时白名单发言入口", () => {
 
     readinessOk = true;
     permanentIds.add(7);
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message(),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
       now: 1_000,
     })).toBeFalse();
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message({ from: { id: 999, is_bot: true, first_name: "Bot" } }),
       botId: 999,
       chatState: ENABLED_CHAT_STATE,
       now: 1_000,
     })).toBeFalse();
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message({
         is_automatic_forward: true,
         sender_chat: { id: -2_001, type: "channel", title: "频道" },
@@ -188,7 +188,7 @@ describe("临时白名单发言入口", () => {
   });
 
   test("匿名管理员的本群身份与未开启广告检测的群不累计", () => {
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message({
         sender_chat: { id: -1_001, type: "supergroup", title: "群" },
       }),
@@ -196,7 +196,7 @@ describe("临时白名单发言入口", () => {
       chatState: ENABLED_CHAT_STATE,
       now: 1_000,
     })).toBeFalse();
-    expect(recordEligibleTemporaryWhitelistActivity({
+    expect(recordEligibleTemporaryAdBypassActivity({
       message: message(),
       botId: 999,
       chatState: {} as Readonly<ChatState>,

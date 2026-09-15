@@ -90,7 +90,7 @@ async function runColdStartChild(): Promise<ColdStartRound> {
     lifecycleDependencies.hydrateChatStateCache(loaded.chatStates);
     lifecycleDependencies.hydrateChatQaCache(loaded.chatQa);
     lifecycleDependencies.hydrateIdentityStorageCounts(
-      loaded.whitelistEntryCount,
+      loaded.permissionEntryCount,
       loaded.blocklistEntryCount
     );
     const hydrateMs: number = elapsedMsSince(hydrateStartedAtNs);
@@ -114,7 +114,7 @@ async function runColdStartChild(): Promise<ColdStartRound> {
       aiMemoryChats: loaded.aiMemories.size,
       chatStates: loaded.chatStates.size,
       chatQaEntries,
-      whitelistEntries: loaded.whitelistEntryCount,
+      permissionList: loaded.permissionEntryCount,
       blocklistEntries: loaded.blocklistEntryCount,
       pendingRemovals: loaded.pendingBlockedRemovals.size,
     };

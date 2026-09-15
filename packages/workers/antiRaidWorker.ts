@@ -211,8 +211,8 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "clearFloodControl":
       clearChatFloodWindows(msg.chatId);
       break;
-    case "temporaryWhitelistGranted":
-      // 只清广告状态；临时白名单不提供防刷屏或其它权限。
+    case "temporaryAdBypassGranted":
+      // 只清广告状态；临时广告免检不提供防刷屏或其它权限。
       clearIdentityAdDetect(msg.identityId);
       break;
     case "botPermissionsChanged":

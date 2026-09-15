@@ -27,8 +27,8 @@ import {
   requeueUnacknowledgedIdentityWrite,
 } from "../identityStorage";
 import { IDENTITY_DATABASE_PATH } from "../../consts/paths";
-import { clearTemporaryWhitelistActivity } from
-  "../identityPolicy/temporaryWhitelist";
+import { clearTemporaryAdBypassActivity } from
+  "../identityPolicy/temporaryAdBypass";
 import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
 
 /**
@@ -165,9 +165,9 @@ export function blockUser(
 ): boolean {
   if (isUserBlocked(userId)) return false;
   const blockedAt: string = formatTokyoTime(Date.now());
-  if (!clearTemporaryWhitelistActivity(userId)) {
+  if (!clearTemporaryAdBypassActivity(userId)) {
     throw new Error(
-      `Temporary whitelist reset for identity ${userId} was rejected by the persistence Worker.`
+      `Temporary ad bypass reset for identity ${userId} was rejected by the persistence Worker.`
     );
   }
   queueIdentityPolicyWrite("blocklist", userId, { blockedAt, meta });

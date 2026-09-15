@@ -1,3 +1,4 @@
+import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type { AgentDeploymentConfig } from "../../../packages/types/config";
@@ -379,4 +380,16 @@ describe("AI Chat Worker lifecycle", () => {
       globalThis.setInterval = originalSetInterval;
     }
   });
+});
+
+test("人设协议按群更新只读使用侧镜像，null 删除群级覆盖", async () => {
+  const { handleAiChatWorkerMessage } = await import("../../../packages/workers/aiChatWorker");
+  chatPersonas.clear();
+  handleAiChatWorkerMessage({ type: "persona", chatId: -1001, persona: "人设一" });
+  handleAiChatWorkerMessage({ type: "persona", chatId: -1002, persona: "人设二" });
+  expect(chatPersonas.get(-1001)).toBe("人设一");
+  handleAiChatWorkerMessage({ type: "persona", chatId: -1001, persona: null });
+  expect(chatPersonas.has(-1001)).toBeFalse();
+  expect(chatPersonas.get(-1002)).toBe("人设二");
+  chatPersonas.clear();
 });

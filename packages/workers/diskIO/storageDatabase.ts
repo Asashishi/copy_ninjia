@@ -24,6 +24,6 @@ export {
 } from "./storageDatabase/identityPolicy";
 export { handlePendingRemovalSnapshot } from "./storageDatabase/pendingRemoval";
 export {
-  handleTemporaryWhitelistWrite,
-  maintainTemporaryWhitelistActivities,
-} from "./storageDatabase/temporaryWhitelist";
+  handleTemporaryAdBypassWrite,
+  maintainTemporaryAdBypassActivities,
+} from "./storageDatabase/temporaryAdBypass";

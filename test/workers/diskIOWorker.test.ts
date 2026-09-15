@@ -16,9 +16,7 @@ const inspectLogFiles = mock((): { readonly kind: "logs" } => ({ kind: "logs" })
 const adoptLogFiles = mock((_inspection: unknown): void => {});
 const maintainLogFiles = mock(async (_inspection: unknown): Promise<void> => {});
 const maintainLogRetention = mock((): void => {});
-const inspectAiMemorySnapshots = mock((): { readonly kind: "ai" } => ({ kind: "ai" }));
 const adoptAiMemorySnapshots = mock((_inspection: unknown): Map<number, string> => new Map());
-const maintainAiMemorySnapshots = mock((_inspection: unknown): void => {});
 interface StickerInspection {
   readonly kind: "stickers";
 }
@@ -88,7 +86,7 @@ const maintainVerificationDayForToday = mock((
   _day?: string
 ): void => {});
 const maintainAdSampleFiles = mock((_today?: string): void => {});
-const maintainTemporaryWhitelistActivities = mock((_reply: unknown, _now?: number): void => {});
+const maintainTemporaryAdBypassActivities = mock((_reply: unknown, _now?: number): void => {});
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
 const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
   "blocklistRemovalOutbox",
@@ -98,12 +96,12 @@ const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
 const handleChatStateWrite = mock((_message: unknown): void => {});
 const handleChatQaWrite = mock((_message: unknown): void => {});
-const handleTemporaryWhitelistWrite = mock((_message: unknown): void => {});
+const handleTemporaryAdBypassWrite = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 const consoleError = mock((..._args: unknown[]): void => {});
 interface HydratedStorageDatabase {
   readonly blocklistEntryCount: number;
-  readonly whitelistEntryCount: number;
+  readonly permissionEntryCount: number;
   readonly pendingBlockedRemovals: Map<number, never>;
   readonly chatStates: Map<number, never>;
   readonly chatQa: Map<number, never>;
@@ -111,7 +109,7 @@ interface HydratedStorageDatabase {
 const inspectStorageDatabase = mock((): { readonly kind: "storage" } => ({ kind: "storage" }));
 const adoptStorageDatabase = mock((_inspection: unknown): HydratedStorageDatabase => ({
   blocklistEntryCount: 0,
-  whitelistEntryCount: 0,
+  permissionEntryCount: 0,
   pendingBlockedRemovals: new Map<number, never>(),
   chatStates: new Map<number, never>(),
   chatQa: new Map<number, never>(),
@@ -166,14 +164,13 @@ mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
   maintainJoinLogRetention,
   readJoinLog,
 }));
-mock.module("../../packages/workers/diskIO/aiMemoryFiles", () => ({
+mock.module("../../packages/workers/diskIO/aiMemoryStorage", () => ({
   adoptAiMemorySnapshots,
   configureAiMemoryDeletePersistedReply: (): void => {},
   configureAiMemoryPersistedReply: (): void => {},
   deleteAiMemorySnapshot,
   flushAiMemorySnapshots,
-  inspectAiMemorySnapshots,
-  maintainAiMemorySnapshots,
+
   markAiMemorySnapshotDirty,
 }));
 mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
@@ -190,11 +187,11 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   handleIdentityPolicyWrite,
   handleChatStateWrite,
   handleChatQaWrite,
-  handleTemporaryWhitelistWrite,
+  handleTemporaryAdBypassWrite,
   handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
   inspectStorageDatabase,
   pendingStorageDatabaseDomains,
-  maintainTemporaryWhitelistActivities,
+  maintainTemporaryAdBypassActivities,
   readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({
     type: "blocklistIdPageRead",
     requestId: message.requestId,
@@ -205,7 +202,7 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
     requestId: message.requestId,
     whitelist: [],
     blocklist: [],
-    temporaryWhitelist: [],
+    temporaryAdBypass: [],
   }),
 }));
 const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: unknown) => void };
@@ -250,9 +247,9 @@ beforeEach(() => {
     adoptLogFiles,
     maintainLogFiles,
     maintainLogRetention,
-    inspectAiMemorySnapshots,
+
     adoptAiMemorySnapshots,
-    maintainAiMemorySnapshots,
+
     inspectStickerCatalogSnapshots,
     adoptStickerCatalogSnapshots,
     maintainStickerCatalogSnapshots,
@@ -267,7 +264,7 @@ beforeEach(() => {
     flushVerificationChanges,
     maintainVerificationDayForToday,
     maintainAdSampleFiles,
-    maintainTemporaryWhitelistActivities,
+    maintainTemporaryAdBypassActivities,
     flushBlocklistRemovalOutbox,
     pendingStorageDatabaseDomains,
     flushJoinLogDomain,
@@ -275,7 +272,7 @@ beforeEach(() => {
     handleIdentityPolicyWrite,
     handleChatStateWrite,
     handleChatQaWrite,
-    handleTemporaryWhitelistWrite,
+    handleTemporaryAdBypassWrite,
     postMessage,
     hydrateLuckDay,
     inspectLuckDayState,
@@ -301,7 +298,7 @@ beforeEach(() => {
   recoverLuckReceiptSecret.mockImplementation((input) => ({ version: 1, day: input.day, key: "secret" }));
   adoptStorageDatabase.mockImplementation((): HydratedStorageDatabase => ({
     blocklistEntryCount: 0,
-    whitelistEntryCount: 0,
+    permissionEntryCount: 0,
     pendingBlockedRemovals: new Map<number, never>(),
     chatStates: new Map<number, never>(),
     chatQa: new Map<number, never>(),
@@ -430,13 +427,13 @@ describe("Disk I/O Worker protocol router", () => {
 
   test("身份 SQLite 的三个 owner 抛错同样不逸出 onmessage，按领域记拒收", async () => {
     handleIdentityPolicyWrite.mockImplementationOnce((): void => {
-      throw new Error("Identity 7 cannot exist in both whitelist_entries and blocklist_entries.");
+      throw new Error("Identity 7 cannot exist in both permission_list and blocklist_entries.");
     });
     handleBlocklistRemovalsMessage.mockImplementationOnce((): void => {
       throw new Error("Pending removal row 1 contains an identity absent from the effective blocklist.");
     });
-    handleTemporaryWhitelistWrite.mockImplementationOnce((): void => {
-      throw new Error("Temporary whitelist activity is invalid.");
+    handleTemporaryAdBypassWrite.mockImplementationOnce((): void => {
+      throw new Error("Temporary ad bypass activity is invalid.");
     });
 
     const originalConsoleError = console.error;
@@ -457,7 +454,7 @@ describe("Disk I/O Worker protocol router", () => {
         removals: [],
       })).resolves.toBeUndefined();
       await expect(route({
-        type: "temporaryWhitelistWrite",
+        type: "temporaryAdBypassWrite",
         id: 8,
         activity: null,
         revision: 1,
@@ -471,7 +468,7 @@ describe("Disk I/O Worker protocol router", () => {
     // /block 的 confirmBlocklistPersisted 正是这么问的。
     expect([...rejectedStorageDomains].sort()).toEqual([
       "blocklistRemovalOutbox",
-      "temporaryWhitelist",
+      "temporaryAdBypass",
       "whitelist",
     ]);
     // 在线消息不升级为停机：主线程仍持有未 ACK 的 revision，Worker 重建时重放。
@@ -517,7 +514,7 @@ describe("Disk I/O Worker protocol router", () => {
         throw new Error("chat QA write rejected");
       });
     }
-    const stateMessage: DiskIOMessage = {
+    const stateMessage: DiskIOMessage = { aiPersona: null,
       type: "chatStateWrite",
       chatId: -1,
       data: "{}",
@@ -755,7 +752,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(adoptStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
     expect(maintainStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
     expect(maintainAdSampleFiles).toHaveBeenCalledTimes(1);
-    expect(maintainTemporaryWhitelistActivities).toHaveBeenCalledTimes(1);
+    expect(maintainTemporaryAdBypassActivities).toHaveBeenCalledTimes(1);
     expect(diskIOMaintenanceCron.current).not.toBeNull();
     expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(
       maintainStickerCatalogSnapshots.mock.invocationCallOrder[0]!
@@ -812,13 +809,13 @@ describe("Disk I/O Worker protocol router", () => {
     try {
       await entered.promise;
       expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "loaded" }));
-      expect(maintainAiMemorySnapshots).not.toHaveBeenCalled();
+
       expect(handleJoinLogMessage).not.toHaveBeenCalled();
       expect(diskIOMaintenanceCron.current).toBeNull();
       maintenance.resolve();
       await load;
       await write;
-      expect(maintainAiMemorySnapshots).toHaveBeenCalledTimes(1);
+
       expect(handleJoinLogMessage).toHaveBeenCalledTimes(1);
       expect(diskIOMaintenanceCron.current).not.toBeNull();
     } finally {
@@ -848,7 +845,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(adoptVerificationDay).not.toHaveBeenCalled();
     expect(adoptStorageDatabase).not.toHaveBeenCalled();
     expect(maintainLogFiles).not.toHaveBeenCalled();
-    expect(maintainAiMemorySnapshots).not.toHaveBeenCalled();
+
     expect(maintainStickerCatalogSnapshots).not.toHaveBeenCalled();
     expect(maintainAdSampleFiles).not.toHaveBeenCalled();
     expect(diskIOMaintenanceCron.current).toBeNull();
@@ -873,13 +870,13 @@ describe("Disk I/O Worker protocol router", () => {
     expect(adoptStorageDatabase).not.toHaveBeenCalled();
     expect(adoptLogFiles).not.toHaveBeenCalled();
     expect(maintainLogFiles).not.toHaveBeenCalled();
-    expect(maintainAiMemorySnapshots).not.toHaveBeenCalled();
+
     expect(maintainStickerCatalogSnapshots).not.toHaveBeenCalled();
     expect(maintainJoinLogFiles).not.toHaveBeenCalled();
     expect(maintainLuckDayState).not.toHaveBeenCalled();
     expect(maintainVerificationDay).not.toHaveBeenCalled();
     expect(maintainAdSampleFiles).not.toHaveBeenCalled();
-    expect(maintainTemporaryWhitelistActivities).not.toHaveBeenCalled();
+    expect(maintainTemporaryAdBypassActivities).not.toHaveBeenCalled();
     expect(diskIOMaintenanceCron.current).toBeNull();
     expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       type: "loaded",

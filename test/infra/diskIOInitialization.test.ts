@@ -146,7 +146,7 @@ describe("explicit Worker initialization", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       expect(await loadedPromise).toMatchObject({
         aiMemories: new Map([[1, "memory"]]),
@@ -265,7 +265,7 @@ describe("explicit Worker initialization", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       expect(respawns).toBe(1);
       expect(second.messages).toEqual([expect.objectContaining({ type: "load" }), luckDraw]);
@@ -287,7 +287,7 @@ describe("explicit Worker initialization", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
         error: "verification file is corrupt",
       } } as MessageEvent<DiskIOReply>);
       await Promise.resolve();

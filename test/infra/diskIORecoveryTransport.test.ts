@@ -325,7 +325,7 @@ describe("Disk I/O 新代际握手与终止失败", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
         error: "verification file is corrupt",
       } } as MessageEvent<DiskIOReply>);
       await Bun.sleep(0);
@@ -354,7 +354,7 @@ describe("Disk I/O 新代际握手与终止失败", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
         error: "state file is corrupt",
       } } as MessageEvent<DiskIOReply>);
       await Bun.sleep(0);
@@ -380,7 +380,7 @@ describe("Disk I/O 新代际握手与终止失败", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
         error: "luck secret file is corrupt",
       } } as MessageEvent<DiskIOReply>);
       await Bun.sleep(0);
@@ -506,16 +506,16 @@ describe("Disk I/O 诊断受控重建", () => {
 test("镜像已消费的 revision 覆盖旧 FIFO，镜像之后的新写仍按序重放", async (): Promise<void> => {
   const fixture: RecoveryFixture = await startDiskIO();
   const restoreListeners: () => void = withOnlyRespawnListener((transport: DiskIORecoveryTransport): boolean => {
-    if (!transport.post({ type: "temporaryWhitelistWrite", id: 7, activity: null, revision: 2 })) return false;
-    return diskIO.postDiskIO({ type: "temporaryWhitelistWrite", id: 7, activity: null, revision: 3 });
+    if (!transport.post({ type: "temporaryAdBypassWrite", id: 7, activity: null, revision: 2 })) return false;
+    return diskIO.postDiskIO({ type: "temporaryAdBypassWrite", id: 7, activity: null, revision: 3 });
   });
   try {
     fixture.first.autoAcknowledgeOperations = false;
-    expect(diskIO.postDiskIO({ type: "temporaryWhitelistWrite", id: 7, activity: null, revision: 1 })).toBeTrue();
+    expect(diskIO.postDiskIO({ type: "temporaryAdBypassWrite", id: 7, activity: null, revision: 1 })).toBeTrue();
     const second: FakeWorker = crashDiskIOWorker(fixture.first);
     emitSuccessfulLoad(second); await Bun.sleep(0);
     const revisions: number[] = [];
-    for (const message of second.messages) if (message.type === "temporaryWhitelistWrite") revisions.push(message.revision);
+    for (const message of second.messages) if (message.type === "temporaryAdBypassWrite") revisions.push(message.revision);
     expect(revisions).toEqual([2, 3]);
     expect(diskIORuntime.writable).toBeTrue();
   } finally { restoreListeners(); await fixture.dispose(); }

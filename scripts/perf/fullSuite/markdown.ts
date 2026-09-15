@@ -291,7 +291,7 @@ function renderColdStartCaption(
   copy: BenchmarkCopy
 ): string {
   return `> ${copy.coldStartCaption
-    .replace("{whitelist}", formatCount(report.coldStart.recovered.whitelistEntries))
+    .replace("{whitelist}", formatCount(report.coldStart.recovered.permissionList))
     .replace("{blocklist}", formatCount(report.coldStart.recovered.blocklistEntries))
     .replace("{chats}", formatCount(report.coldStart.recovered.chatStates))
     .replace("{qa}", formatCount(report.coldStart.recovered.chatQaEntries))

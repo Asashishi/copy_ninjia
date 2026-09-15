@@ -41,9 +41,9 @@ const {
   unacknowledgedBlocklistWrites,
 } = await import("../../packages/cache/main/identityStorage");
 const {
-  temporaryWhitelistActivityCache,
-  unacknowledgedTemporaryWhitelistWrites,
-} = await import("../../packages/cache/main/temporaryWhitelist");
+  temporaryAdBypassActivityCache,
+  unacknowledgedTemporaryAdBypassWrites,
+} = await import("../../packages/cache/main/temporaryAdBypass");
 const {
   assertSuperAdminNotBlocked,
   blockUser,
@@ -86,10 +86,10 @@ describe("SQLite 黑名单主线程最终值", () => {
   test("拉黑已有临时累计时先排 tombstone，再排永久黑名单", () => {
     const now: number = Date.now();
     seedMissingIdentity(8);
-    temporaryWhitelistActivityCache.set(8, {
-      tempWhite: true,
-      tempWhiteAt: now,
-      tempWhiteCount: 7,
+    temporaryAdBypassActivityCache.set(8, {
+      adBypass: true,
+      adBypassGrantedAt: now,
+      qualifiedDays: 7,
       sendCount: 8,
       countedAt: now,
       qualifiedAt: now,
@@ -99,7 +99,7 @@ describe("SQLite 黑名单主线程最终值", () => {
 
     expect(diskMessages).toEqual([
       expect.objectContaining({
-        type: "temporaryWhitelistWrite",
+        type: "temporaryAdBypassWrite",
         id: 8,
         activity: null,
       }),
@@ -109,7 +109,7 @@ describe("SQLite 黑名单主线程最终值", () => {
         id: 8,
       }),
     ]);
-    expect(unacknowledgedTemporaryWhitelistWrites.get(8)?.activity).toBeNull();
+    expect(unacknowledgedTemporaryAdBypassWrites.get(8)?.activity).toBeNull();
   });
 
   test("解除拉黑发布负缓存，并裁掉冻结名单中已解除的成员", () => {
@@ -147,7 +147,7 @@ describe("SQLite 黑名单主线程最终值", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 9, revision }],
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });

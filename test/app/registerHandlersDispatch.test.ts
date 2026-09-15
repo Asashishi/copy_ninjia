@@ -53,6 +53,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   batch_kick: "handleBatchKickCommand",
   unblock: "handleUnblockCommand",
   ai_chat: "handleAiChatCommand",
+  prompt: "handlePromptCommand",
   clear_context: "handleClearContextCommand",
   ad_detect: "handleAdDetectCommand",
   flood_control: "handleFloodControlCommand",

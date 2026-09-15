@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
   NON_WHITELIST_PERMISSIONS,
-  TEMPORARY_WHITELIST_PERMISSIONS,
+  TEMPORARY_AD_BYPASS_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
 } from "../../packages/consts/whitelist";
 import { DAY_MS } from "../../packages/consts/diskIO/common";
@@ -27,7 +27,7 @@ const flushDiskIODomainOutcome = mock(
       listener({
         type: "identityStoragePersisted",
         writes,
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -58,8 +58,8 @@ const {
   unacknowledgedWhitelistWrites,
   whitelistEntryCache,
 } = await import("../../packages/cache/main/identityStorage");
-const { temporaryWhitelistActivityCache } = await import(
-  "../../packages/cache/main/temporaryWhitelist"
+const { temporaryAdBypassActivityCache } = await import(
+  "../../packages/cache/main/temporaryAdBypass"
 );
 const {
   enableAllWhitelistPermissions,
@@ -79,7 +79,7 @@ const { canBypassAdDetection } = await import(
 function seedMissing(id: number): void {
   whitelistEntryCache.set(id, null);
   blocklistEntryCache.set(id, null);
-  temporaryWhitelistActivityCache.set(id, null);
+  temporaryAdBypassActivityCache.set(id, null);
 }
 
 beforeEach(() => {
@@ -110,13 +110,13 @@ describe("SQLite 白名单运行时视图", () => {
     expect(diskMessages).toEqual([]);
   });
 
-  test("上一东京日达标的临时白名单只取得广告检测豁免", () => {
+  test("上一东京日达标的临时广告免检只取得广告检测豁免", () => {
     const now: number = Date.now();
     seedMissing(7);
-    temporaryWhitelistActivityCache.set(7, {
-      tempWhite: true,
-      tempWhiteAt: now - DAY_MS,
-      tempWhiteCount: 7,
+    temporaryAdBypassActivityCache.set(7, {
+      adBypass: true,
+      adBypassGrantedAt: now - DAY_MS,
+      qualifiedDays: 7,
       sendCount: 8,
       countedAt: now - DAY_MS,
       qualifiedAt: now - DAY_MS,
@@ -125,8 +125,8 @@ describe("SQLite 白名单运行时视图", () => {
     expect(isWhitelisted(7)).toBeFalse();
     expect(canBypassAdDetection(SUPER_ADMIN_USER_ID, now)).toBeTrue();
     expect(canBypassAdDetection(7, now)).toBeTrue();
-    expect(getEffectiveWhitelistPermissions(7)).toBe(TEMPORARY_WHITELIST_PERMISSIONS);
-    expect(getWhitelistPermissionQueryView(7)).toBe(TEMPORARY_WHITELIST_PERMISSIONS);
+    expect(getEffectiveWhitelistPermissions(7)).toBe(TEMPORARY_AD_BYPASS_PERMISSIONS);
+    expect(getWhitelistPermissionQueryView(7)).toBe(TEMPORARY_AD_BYPASS_PERMISSIONS);
     expect(hasWhitelistPermission(7, "isCanViewBotStatus")).toBeFalse();
     expect(hasWhitelistPermission(7, "isCanBypassAdDetection")).toBeTrue();
     expect(hasWhitelistPermission(7, "isCanBypassFloodControl")).toBeFalse();
@@ -136,10 +136,10 @@ describe("SQLite 白名单运行时视图", () => {
         .toBe(key === "isCanBypassAdDetection");
     }
 
-    temporaryWhitelistActivityCache.set(7, {
-      tempWhite: true,
-      tempWhiteAt: now - 2 * DAY_MS,
-      tempWhiteCount: 1,
+    temporaryAdBypassActivityCache.set(7, {
+      adBypass: true,
+      adBypassGrantedAt: now - 2 * DAY_MS,
+      qualifiedDays: 1,
       sendCount: 8,
       countedAt: now - 2 * DAY_MS,
       qualifiedAt: now - 2 * DAY_MS,
@@ -147,7 +147,7 @@ describe("SQLite 白名单运行时视图", () => {
     expect(canBypassAdDetection(7, now)).toBeFalse();
     expect(getEffectiveWhitelistPermissions(7)).toBeUndefined();
 
-    temporaryWhitelistActivityCache.set(7, null);
+    temporaryAdBypassActivityCache.set(7, null);
     expect(isWhitelisted(7)).toBeFalse();
     expect(canBypassAdDetection(7, now)).toBeFalse();
     expect(getEffectiveWhitelistPermissions(7)).toBeUndefined();
@@ -171,10 +171,10 @@ describe("SQLite 白名单运行时视图", () => {
 
     const now: number = Date.now();
     seedMissing(11);
-    temporaryWhitelistActivityCache.set(11, {
-      tempWhite: true,
-      tempWhiteAt: now,
-      tempWhiteCount: 1,
+    temporaryAdBypassActivityCache.set(11, {
+      adBypass: true,
+      adBypassGrantedAt: now,
+      qualifiedDays: 1,
       sendCount: 8,
       countedAt: now,
       qualifiedAt: now,
@@ -183,10 +183,10 @@ describe("SQLite 白名单运行时视图", () => {
     expect(canBypassAdDetection(11, now + 2 * DAY_MS)).toBeFalse();
 
     seedMissing(12);
-    temporaryWhitelistActivityCache.set(12, {
-      tempWhite: false,
-      tempWhiteAt: null,
-      tempWhiteCount: 0,
+    temporaryAdBypassActivityCache.set(12, {
+      adBypass: false,
+      adBypassGrantedAt: null,
+      qualifiedDays: 0,
       sendCount: 1,
       countedAt: now,
       qualifiedAt: null,
@@ -230,7 +230,7 @@ describe("SQLite 白名单运行时视图", () => {
       username: "alice",
     })).toEqual({ changed: true, queued: true });
     expect(whitelistEntryCache.peek(8)).toEqual({
-      permissions: TEMPORARY_WHITELIST_PERMISSIONS,
+      permissions: TEMPORARY_AD_BYPASS_PERMISSIONS,
       meta: { firstName: "Alice", lastName: "", username: "alice" },
     });
     for (const key of WHITELIST_PERMISSION_KEYS) {

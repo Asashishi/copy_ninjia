@@ -96,7 +96,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
@@ -226,12 +226,12 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         requestId: policiesRequest.requestId,
         whitelist: [[42, "{\"isCanUseBot\":true}"]],
         blocklist: [[43, "{\"reason\":\"spam\"}"]],
-        temporaryWhitelist: [],
+        temporaryAdBypass: [],
       } } as unknown as MessageEvent<DiskIOReply>);
       await expect(policiesPromise).resolves.toEqual({
         whitelist: [[42, "{\"isCanUseBot\":true}"]],
         blocklist: [[43, "{\"reason\":\"spam\"}"]],
-        temporaryWhitelist: [],
+        temporaryAdBypass: [],
       });
       expect(identityPolicyReadRequests.pending.size).toBe(0);
 
@@ -307,7 +307,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
@@ -358,7 +358,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 

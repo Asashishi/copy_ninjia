@@ -30,7 +30,7 @@ const flushDiskIODomainOutcome = mock(
         listener({
           type: "identityStoragePersisted",
           writes: [],
-          temporaryWhitelistWrites: [],
+          temporaryAdBypassWrites: [],
           chatStateWrites,
           chatQaWrites: [],
         });
@@ -131,7 +131,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [],
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [{ chatId: -1001, revision: firstRevision }],
         chatQaWrites: [],
       });
@@ -169,13 +169,13 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     };
     expect(await respawnListeners[0]!(transport)).toBeTrue();
     expect(replayed).toEqual([
-      {
+      { aiPersona: null,
         type: "chatStateWrite",
         chatId: -1001,
         data: JSON.stringify({ title: "after" }),
         revision: latestRevision,
       },
-      {
+      { aiPersona: null,
         type: "chatStateWrite",
         chatId: -1002,
         data: null,

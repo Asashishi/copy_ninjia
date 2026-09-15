@@ -1,12 +1,12 @@
 import type { PendingBlockedRemoval } from "./blocklist";
 import type { ChatState } from "./chatState";
-import type { StoredTemporaryWhitelistActivity } from "./temporaryWhitelist";
+import type { StoredTemporaryAdBypassActivity } from "./temporaryAdBypass";
 
 /** Disk I/O 回执路由层尚未解码的永久策略文本与临时累计关系列。 */
 export interface IdentityPolicyRawReadResult {
   readonly whitelist: readonly (readonly [number, string])[];
   readonly blocklist: readonly (readonly [number, string])[];
-  readonly temporaryWhitelist: readonly StoredTemporaryWhitelistActivity[];
+  readonly temporaryAdBypass: readonly StoredTemporaryAdBypassActivity[];
 }
 
 /** SQLite 按主键稳定顺序返回的一页黑名单 ID；载荷受固定页大小硬顶。 */
@@ -37,6 +37,7 @@ export interface PendingRemovalWrite {
 
 /** Disk I/O Worker 同一群主键在事务提交前保留的最新最终值。 */
 export interface PendingChatStateWrite {
+  readonly aiPersona: string | null;
   readonly data: string | null;
   readonly revision: number;
 }
@@ -56,7 +57,7 @@ export interface UnacknowledgedChatStateWrite {
 /** 共享存储数据库启动恢复交给主线程的有界结果。 */
 export interface StorageDatabaseHydration {
   readonly blocklistEntryCount: number;
-  readonly whitelistEntryCount: number;
+  readonly permissionEntryCount: number;
   readonly pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
   readonly chatStates: Map<number, ChatState>;
   /**

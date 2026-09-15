@@ -9,7 +9,7 @@ import { aiReplyActivityByChat } from "../../../packages/cache/main/auto";
 import { wedMemberStates, resetWedMemberStates } from "../../../packages/cache/main/wedMembers";
 import { aiChatConfigReadinessCache } from "../../../packages/cache/main/configReadiness";
 import { whitelistEntryCache, blocklistEntryCache } from "../../../packages/cache/main/identityStorage";
-import { temporaryWhitelistActivityCache } from "../../../packages/cache/main/temporaryWhitelist";
+import { temporaryAdBypassActivityCache } from "../../../packages/cache/main/temporaryAdBypass";
 import { getOrCreateChatState } from "../../../packages/infra/storage/stateStore";
 import { bot } from "../../../packages/infra/telegram/mainClient";
 import { cannedTelegramCalls, installCannedTelegramOutbound } from "../outboundGuard";
@@ -57,7 +57,7 @@ export function registeredMiddlewareScenario(): Scenario {
         readBotChatPermissions(BENCHMARK_BOT_ADMIN_MEMBER);
       whitelistEntryCache.set(BENCHMARK_SENDER_ID, null);
       blocklistEntryCache.set(BENCHMARK_SENDER_ID, null);
-      temporaryWhitelistActivityCache.set(BENCHMARK_SENDER_ID, null);
+      temporaryAdBypassActivityCache.set(BENCHMARK_SENDER_ID, null);
       aiChatConfigReadinessCache.current = { ok: true };
     },
     run: async (iterations: number): Promise<number> => {

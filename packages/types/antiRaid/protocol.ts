@@ -203,8 +203,8 @@ export interface ClearFloodControlMessage {
  * 主线程 -> Worker：某身份刚获得临时广告检测豁免。
  * 只在 false -> true 边沿推送；Worker 据此清除授权前累积的广告状态。
  */
-export interface TemporaryWhitelistGrantedMessage {
-  type: "temporaryWhitelistGranted";
+export interface TemporaryAdBypassGrantedMessage {
+  type: "temporaryAdBypassGranted";
   identityId: number;
 }
 
@@ -262,7 +262,7 @@ export type AntiRaidWorkerMessage =
   | ClearAdDetectMessage
   | FloodCandidateMessage
   | ClearFloodControlMessage
-  | TemporaryWhitelistGrantedMessage
+  | TemporaryAdBypassGrantedMessage
   | BotPermissionsChangedMessage
   | ChatKindChangedMessage
   | AntiRaidBarrierMessage

@@ -13,21 +13,19 @@ import {
   markAiMemoryDirty,
 } from "../../cache/workers/diskIO/snapshots";
 import {
-  deleteAiMemoryFile,
-  inspectAiMemories,
-  maintainAiMemoryFiles,
-  writeAiMemoryFile,
-} from "./snapshotFiles";
+  deleteAiContext,
+  writeAiContext,
+} from "./storageDatabase/aiContext";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
 } from "../../types/diskIO/replies";
-import type { AiMemorySnapshotFileDependencies } from "../../types/diskIO/snapshotOwners";
-import type { AiMemoryRecoveryInspection } from "./snapshotFiles";
+import type { AiMemorySnapshotStorageDependencies } from "../../types/diskIO/snapshotOwners";
 
-const AI_MEMORY_FILE_DEPENDENCIES: AiMemorySnapshotFileDependencies = {
-  write: writeAiMemoryFile,
-  delete: deleteAiMemoryFile,
+/** Disk I/O owner 的只读 SQLite 写入与删除句柄；整个 Worker 生命周期保持不变。 */
+const AI_MEMORY_STORAGE_DEPENDENCIES: Readonly<AiMemorySnapshotStorageDependencies> = {
+  write: writeAiContext,
+  delete: deleteAiContext,
 };
 
 /** Worker 启动时注入唯一回执出口；测试可替换为确定性收集器。 */
@@ -53,24 +51,12 @@ function scheduleAiMemoryFlush(): void {
   aiMemoryFlushState.timer.unref();
 }
 
-/** 跨域启动第一阶段：只读扫描并严格解码，不改缓存或磁盘。 */
-export async function inspectAiMemorySnapshots(): Promise<AiMemoryRecoveryInspection> {
-  return inspectAiMemories();
-}
-
 /** 跨域启动第二阶段：全部领域 inspect 成功后整体发布到 owner 缓存。 */
 export function adoptAiMemorySnapshots(
-  inspection: AiMemoryRecoveryInspection
+  snapshots: ReadonlyMap<number, string>
 ): Map<number, string> {
-  hydrateAiMemoryCache(inspection.snapshots);
+  hydrateAiMemoryCache(snapshots);
   return aiMemoryCache;
-}
-
-/** 跨域启动成功后的临时文件清理。 */
-export async function maintainAiMemorySnapshots(
-  inspection: AiMemoryRecoveryInspection
-): Promise<void> {
-  await maintainAiMemoryFiles(inspection);
 }
 
 export interface MarkAiMemorySnapshotDirtyParams {
@@ -78,13 +64,13 @@ export interface MarkAiMemorySnapshotDirtyParams {
   revision: number;
   snapshot: string;
   persistImmediately?: boolean;
-  files?: AiMemorySnapshotFileDependencies;
+  storage?: AiMemorySnapshotStorageDependencies;
 }
 
 /** 写入单群最新快照；即时 revision durable 后在删除 dirty 标记的同一边界回执。 */
 function flushAiMemorySnapshot(
   chatId: number,
-  files: AiMemorySnapshotFileDependencies
+  storage: AiMemorySnapshotStorageDependencies
 ): boolean {
   const snapshot: string | undefined = aiMemoryCache.get(chatId);
   if (snapshot === undefined) {
@@ -93,7 +79,7 @@ function flushAiMemorySnapshot(
     return true;
   }
   try {
-    files.write(chatId, snapshot);
+    storage.write(chatId, snapshot);
     dirtyChats.delete(chatId);
     const immediateRevision: number | undefined = aiMemoryImmediateRevisions.get(chatId);
     if (immediateRevision !== undefined) {
@@ -120,7 +106,7 @@ export function markAiMemorySnapshotDirty({
   revision,
   snapshot,
   persistImmediately = false,
-  files = AI_MEMORY_FILE_DEPENDENCIES,
+  storage = AI_MEMORY_STORAGE_DEPENDENCIES,
 }: MarkAiMemorySnapshotDirtyParams): void {
   if (!markAiMemoryDirty(chatId, revision, snapshot)) return;
   if (!persistImmediately) {
@@ -128,21 +114,21 @@ export function markAiMemorySnapshotDirty({
     return;
   }
   aiMemoryImmediateRevisions.set(chatId, revision);
-  if (!flushAiMemorySnapshot(chatId, files)) scheduleAiMemoryFlush();
+  if (!flushAiMemorySnapshot(chatId, storage)) scheduleAiMemoryFlush();
 }
 
 /** 删除立即尝试落盘；失败保留待删标记并独立重试。 */
 export function deleteAiMemorySnapshot(
   chatId: number,
   revision: number,
-  files: AiMemorySnapshotFileDependencies = AI_MEMORY_FILE_DEPENDENCIES
+  storage: AiMemorySnapshotStorageDependencies = AI_MEMORY_STORAGE_DEPENDENCIES
 ): void {
   if (!markAiMemoryDeleted(chatId, revision)) {
     aiMemoryDeletePersistedNotifier.current({ type: "aiMemoryDeletedPersisted", chatId, revision });
     return;
   }
   try {
-    files.delete(chatId);
+    storage.delete(chatId);
     deletedAiMemoryChats.delete(chatId);
     aiMemoryDeletePersistedNotifier.current({ type: "aiMemoryDeletedPersisted", chatId, revision });
   } catch (error: unknown) {
@@ -153,7 +139,7 @@ export function deleteAiMemorySnapshot(
 
 /** flush 边界：逐份写入，单份失败保留 dirty 并自动重排。 */
 export function flushAiMemorySnapshots(
-  files: AiMemorySnapshotFileDependencies = AI_MEMORY_FILE_DEPENDENCIES
+  storage: AiMemorySnapshotStorageDependencies = AI_MEMORY_STORAGE_DEPENDENCIES
 ): boolean {
   if (aiMemoryFlushState.timer !== null) {
     clearTimeout(aiMemoryFlushState.timer);
@@ -161,7 +147,7 @@ export function flushAiMemorySnapshots(
   }
   for (const chatId of deletedAiMemoryChats) {
     try {
-      files.delete(chatId);
+      storage.delete(chatId);
       deletedAiMemoryChats.delete(chatId);
       aiMemoryDeletePersistedNotifier.current({
         type: "aiMemoryDeletedPersisted",
@@ -172,7 +158,7 @@ export function flushAiMemorySnapshots(
       console.error(`[diskIOWorker] failed to delete AI memory snapshot for chat ${chatId}:`, error);
     }
   }
-  for (const chatId of dirtyChats) flushAiMemorySnapshot(chatId, files);
+  for (const chatId of dirtyChats) flushAiMemorySnapshot(chatId, storage);
   if (deletedAiMemoryChats.size > 0 || dirtyChats.size > 0) scheduleAiMemoryFlush();
   return deletedAiMemoryChats.size === 0 && dirtyChats.size === 0;
 }

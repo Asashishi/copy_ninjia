@@ -23,7 +23,7 @@ export function storageRowSource(
   table: string,
   id: number | string
 ): string {
-  return `${source}:${table}[${String(id)}].data`;
+  return `${source}:${table}[${String(id)}].${table === "chat_states" ? "status" : table === "permission_list" ? "policy" : "data"}`;
 }
 
 /** schema-version 解码只接收预先投影出的 metadata 行。 */
@@ -144,7 +144,7 @@ export function decodeStoredChatStates(
     if (chatStates.has(row.chatId)) {
       throw new Error(`${path}: duplicate chat primary key.`);
     }
-    const state: ChatState = decodeChatStateData(row.data, path);
+    const state: ChatState = decodeChatStateData(row.data, path, row.aiPersona);
     if (state.isProxySendEnabled === true) {
       if (proxyTargetChatId !== undefined) {
         throw new Error(

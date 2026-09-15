@@ -5,7 +5,7 @@ import { IDENTITY_WRITE_BATCH_MAX_ENTRIES } from "../../../packages/consts/ident
 import { storageDatabaseHandle, resetStorageDatabaseCache } from "../../../packages/cache/workers/diskIO/storageDatabase";
 import { openStorageDatabase } from "../../../packages/database/interact/connection";
 import { createStorageDatabase } from "../../../packages/database/interact/migration";
-import { handleTemporaryWhitelistWrite } from "../../../packages/workers/diskIO/storageDatabase/temporaryWhitelist";
+import { handleTemporaryAdBypassWrite } from "../../../packages/workers/diskIO/storageDatabase/temporaryAdBypass";
 import { flushStorageDatabase } from "../../../packages/workers/diskIO/storageDatabase/flush";
 import type { IdentityStoragePersistedReply } from "../../../packages/types/diskIO/replies";
 import { assertInsidePerformanceMockRoot } from "../fullSuite/mockRoot";
@@ -18,7 +18,7 @@ export function storageFlushScenario(): Scenario {
   if (!existsSync(IDENTITY_DATABASE_PATH)) createStorageDatabase(IDENTITY_DATABASE_PATH);
   let confirmed: number = 0;
   let revision: number = 0;
-  function reply(value: IdentityStoragePersistedReply): void { confirmed += value.temporaryWhitelistWrites.length; }
+  function reply(value: IdentityStoragePersistedReply): void { confirmed += value.temporaryAdBypassWrites.length; }
   return {
     iterations: 1_000,
     prepare: (): void => { storageDatabaseHandle.current = openStorageDatabase({ path: IDENTITY_DATABASE_PATH }); },
@@ -26,13 +26,13 @@ export function storageFlushScenario(): Scenario {
       const before: number = confirmed;
       for (let index: number = 0; index < iterations; index++) {
         for (let id: number = 1; id <= IDENTITY_WRITE_BATCH_MAX_ENTRIES; id++) {
-          handleTemporaryWhitelistWrite({ type: "temporaryWhitelistWrite", id, activity: null, revision: ++revision }, reply);
+          handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id, activity: null, revision: ++revision }, reply);
         }
       }
       if (confirmed - before !== iterations * IDENTITY_WRITE_BATCH_MAX_ENTRIES) throw new Error("SQLite benchmark omitted durable acknowledgements.");
       return confirmed - before;
     },
     reset: (): void => { resetStorageDatabaseCache(); confirmed = 0; revision = 0; },
-    probes: { handleTemporaryWhitelistWrite, flushStorageDatabase },
+    probes: { handleTemporaryAdBypassWrite, flushStorageDatabase },
   };
 }

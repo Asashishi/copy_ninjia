@@ -6,7 +6,7 @@ import {
 import { DAY_MS } from "../../../packages/consts/diskIO/common";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
 import {
-  pendingTemporaryWhitelistWrites,
+  pendingTemporaryAdBypassWrites,
   resetStorageDatabaseCache,
   storagePersistenceReplyHolder,
   storageDatabaseHandle,
@@ -16,8 +16,8 @@ import {
   closeStorageDatabase,
   openStorageDatabase,
 } from "../../../packages/database/interact/connection";
-import { readStoredTemporaryWhitelistActivities } from
-  "../../../packages/database/interact/temporaryWhitelist";
+import { readStoredTemporaryAdBypassActivities } from
+  "../../../packages/database/interact/temporaryAdBypass";
 import { clearStorageBusinessTables } from
   "../../../scripts/fixtures/storageDatabase";
 import {
@@ -27,17 +27,17 @@ import {
 import { hydrateStorageDatabase } from
   "../../../packages/workers/diskIO/storageDatabase/hydration";
 import {
-  handleTemporaryWhitelistWrite,
-  maintainTemporaryWhitelistActivities,
-} from "../../../packages/workers/diskIO/storageDatabase/temporaryWhitelist";
+  handleTemporaryAdBypassWrite,
+  maintainTemporaryAdBypassActivities,
+} from "../../../packages/workers/diskIO/storageDatabase/temporaryAdBypass";
 import type {
   IdentityStoragePersistedReply,
-  TemporaryWhitelistWriteDiskMessage,
+  TemporaryAdBypassWriteDiskMessage,
 } from "../../../packages/types/diskIO";
 import type { StorageDatabase } from
   "../../../packages/types/storageDatabase";
-import type { StoredTemporaryWhitelistActivity } from
-  "../../../packages/types/temporaryWhitelist";
+import type { StoredTemporaryAdBypassActivity } from
+  "../../../packages/types/temporaryAdBypass";
 
 const NOW: number = new Date("2026-08-30T00:00:00+09:00").getTime();
 const acknowledgements: IdentityStoragePersistedReply[] = [];
@@ -50,8 +50,8 @@ interface ActivityWriteOptions {
   readonly countedAt?: number;
   readonly qualified?: boolean;
   readonly sendCount?: number;
-  readonly tempWhite?: boolean;
-  readonly tempWhiteCount?: number;
+  readonly adBypass?: boolean;
+  readonly qualifiedDays?: number;
 }
 
 function activityWrite(
@@ -60,20 +60,20 @@ function activityWrite(
   {
     countedAt = NOW,
     sendCount = 1,
-    tempWhite = false,
-    qualified = tempWhite,
-    tempWhiteCount = tempWhite ? 1 : 0,
+    adBypass = false,
+    qualified = adBypass,
+    qualifiedDays = adBypass ? 1 : 0,
   }: ActivityWriteOptions = {}
-): TemporaryWhitelistWriteDiskMessage {
+): TemporaryAdBypassWriteDiskMessage {
   const storedSendCount: number = qualified ? Math.max(sendCount, 8) : sendCount;
   return {
-    type: "temporaryWhitelistWrite",
+    type: "temporaryAdBypassWrite",
     id,
     revision,
     activity: {
-      tempWhite,
-      tempWhiteAt: tempWhite ? countedAt : null,
-      tempWhiteCount,
+      adBypass,
+      adBypassGrantedAt: adBypass ? countedAt : null,
+      qualifiedDays,
       sendCount: storedSendCount,
       countedAt,
       qualifiedAt: qualified ? countedAt : null,
@@ -102,30 +102,30 @@ afterEach((): void => {
   jest.useRealTimers();
 });
 
-describe("临时白名单 SQLite 合并写与过期清理", () => {
+describe("临时广告免检 SQLite 合并写与过期清理", () => {
   test("同一主键在 30 秒窗口内只落最新最终值与 revision", (): void => {
     configureStoragePersistenceReply(reply);
 
-    handleTemporaryWhitelistWrite(activityWrite(7, 1), reply);
+    handleTemporaryAdBypassWrite(activityWrite(7, 1), reply);
     const firstTimer: ReturnType<typeof setTimeout> | null = storageWriteFlushTimer.current;
-    handleTemporaryWhitelistWrite(activityWrite(7, 2, { sendCount: 2 }), reply);
+    handleTemporaryAdBypassWrite(activityWrite(7, 2, { sendCount: 2 }), reply);
 
-    expect(pendingTemporaryWhitelistWrites).toHaveLength(1);
-    expect(pendingTemporaryWhitelistWrites.get(7)?.revision).toBe(2);
+    expect(pendingTemporaryAdBypassWrites).toHaveLength(1);
+    expect(pendingTemporaryAdBypassWrites.get(7)?.revision).toBe(2);
     expect(storageWriteFlushTimer.current).toBe(firstTimer);
     expect(firstTimer?.hasRef()).toBeFalse();
 
     jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS);
 
-    expect(pendingTemporaryWhitelistWrites).toHaveLength(0);
+    expect(pendingTemporaryAdBypassWrites).toHaveLength(0);
     expect(acknowledgements).toEqual([{
       type: "identityStoragePersisted",
       writes: [],
-      temporaryWhitelistWrites: [{ id: 7, revision: 2 }],
+      temporaryAdBypassWrites: [{ id: 7, revision: 2 }],
       chatStateWrites: [],
       chatQaWrites: [],
     }]);
-    expect(readStoredTemporaryWhitelistActivities(
+    expect(readStoredTemporaryAdBypassActivities(
       requireStorageDatabaseFixture(),
       [7]
     )[0]?.sendCount).toBe(2);
@@ -133,81 +133,81 @@ describe("临时白名单 SQLite 合并写与过期清理", () => {
 
   test("第 128 个不同主键到达时立即以一个事务提交整批", (): void => {
     for (let id: number = 1; id <= IDENTITY_WRITE_BATCH_MAX_ENTRIES; id++) {
-      handleTemporaryWhitelistWrite(activityWrite(id, 1), reply);
+      handleTemporaryAdBypassWrite(activityWrite(id, 1), reply);
       if (id < IDENTITY_WRITE_BATCH_MAX_ENTRIES) {
         expect(acknowledgements).toHaveLength(0);
       }
     }
 
-    expect(pendingTemporaryWhitelistWrites).toHaveLength(0);
+    expect(pendingTemporaryAdBypassWrites).toHaveLength(0);
     expect(storageWriteFlushTimer.current).toBeNull();
     expect(acknowledgements).toHaveLength(1);
-    expect(acknowledgements[0]?.temporaryWhitelistWrites)
+    expect(acknowledgements[0]?.temporaryAdBypassWrites)
       .toHaveLength(IDENTITY_WRITE_BATCH_MAX_ENTRIES);
     const database: StorageDatabase = requireStorageDatabaseFixture();
     const count: { readonly value: number } | null = database.$client
       .query<{ readonly value: number }, []>(
-        "SELECT COUNT(*) AS value FROM temporary_whitelist_entries;"
+        "SELECT COUNT(*) AS value FROM temporary_ad_bypass_entries;"
       ).get();
     expect(count?.value).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES);
   });
 
   test("零点先提交在途写，再删除未在刚结束东京日达标的旧累计", (): void => {
     jest.setSystemTime(NOW - 1);
-    handleTemporaryWhitelistWrite(activityWrite(7, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(7, 1, {
       countedAt: NOW - 1,
     }), reply);
-    handleTemporaryWhitelistWrite(activityWrite(8, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(8, 1, {
       countedAt: NOW,
     }), reply);
-    handleTemporaryWhitelistWrite(activityWrite(9, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(9, 1, {
       countedAt: NOW - 1,
-      tempWhite: true,
+      adBypass: true,
     }), reply);
-    handleTemporaryWhitelistWrite(activityWrite(10, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(10, 1, {
       countedAt: NOW - DAY_MS - 1,
-      tempWhite: true,
+      adBypass: true,
     }), reply);
-    handleTemporaryWhitelistWrite(activityWrite(11, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(11, 1, {
       countedAt: NOW - 1,
       qualified: false,
       sendCount: 7,
-      tempWhite: true,
+      adBypass: true,
     }), reply);
-    handleTemporaryWhitelistWrite(activityWrite(12, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(12, 1, {
       countedAt: NOW + DAY_MS,
     }), reply);
 
     jest.setSystemTime(NOW);
-    maintainTemporaryWhitelistActivities(reply, NOW);
+    maintainTemporaryAdBypassActivities(reply, NOW);
 
-    const rows: readonly StoredTemporaryWhitelistActivity[] =
-      readStoredTemporaryWhitelistActivities(
+    const rows: readonly StoredTemporaryAdBypassActivity[] =
+      readStoredTemporaryAdBypassActivities(
         requireStorageDatabaseFixture(),
         [7, 8, 9, 10, 11, 12]
       );
-    expect(rows.map((row: StoredTemporaryWhitelistActivity): number => row.id))
+    expect(rows.map((row: StoredTemporaryAdBypassActivity): number => row.id))
       .toEqual([8, 9, 12]);
-    expect(acknowledgements.at(-1)?.temporaryWhitelistWrites).toHaveLength(6);
+    expect(acknowledgements.at(-1)?.temporaryAdBypassWrites).toHaveLength(6);
   });
 
   test("零点清理后迟到的前一日未达标写按原 revision 落成墓碑", (): void => {
-    maintainTemporaryWhitelistActivities(reply, NOW);
+    maintainTemporaryAdBypassActivities(reply, NOW);
 
-    handleTemporaryWhitelistWrite(activityWrite(7, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(7, 1, {
       countedAt: NOW - 1,
     }), reply);
-    handleTemporaryWhitelistWrite(activityWrite(8, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(8, 1, {
       countedAt: NOW - 1,
-      tempWhite: true,
+      adBypass: true,
     }), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
 
-    expect(readStoredTemporaryWhitelistActivities(
+    expect(readStoredTemporaryAdBypassActivities(
       requireStorageDatabaseFixture(),
       [7, 8]
-    ).map((row: StoredTemporaryWhitelistActivity): number => row.id)).toEqual([8]);
-    expect(acknowledgements.at(-1)?.temporaryWhitelistWrites).toEqual([
+    ).map((row: StoredTemporaryAdBypassActivity): number => row.id)).toEqual([8]);
+    expect(acknowledgements.at(-1)?.temporaryAdBypassWrites).toEqual([
       { id: 7, revision: 1 },
       { id: 8, revision: 1 },
     ]);
@@ -215,22 +215,22 @@ describe("临时白名单 SQLite 合并写与过期清理", () => {
 
   test("在途事务提交失败时保留累计并拒绝执行日切删除", (): void => {
     jest.setSystemTime(NOW - 1);
-    handleTemporaryWhitelistWrite(activityWrite(7, 1, {
+    handleTemporaryAdBypassWrite(activityWrite(7, 1, {
       countedAt: NOW - 1,
     }), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
     jest.setSystemTime(NOW);
-    handleTemporaryWhitelistWrite(activityWrite(8, 2), reply);
+    handleTemporaryAdBypassWrite(activityWrite(8, 2), reply);
 
     closeStorageDatabase(requireStorageDatabaseFixture());
-    expect((): void => maintainTemporaryWhitelistActivities(reply, NOW))
+    expect((): void => maintainTemporaryAdBypassActivities(reply, NOW))
       .toThrow("requires all pending writes to be committed");
-    expect(pendingTemporaryWhitelistWrites.has(8)).toBeTrue();
+    expect(pendingTemporaryAdBypassWrites.has(8)).toBeTrue();
 
     storageDatabaseHandle.current = openStorageDatabase({
       path: IDENTITY_DATABASE_PATH,
     });
-    expect(readStoredTemporaryWhitelistActivities(
+    expect(readStoredTemporaryAdBypassActivities(
       requireStorageDatabaseFixture(),
       [7]
     )).toHaveLength(1);

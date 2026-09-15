@@ -91,11 +91,12 @@ entity 付き文字は書式を保持してコピーし、API 失敗時も元の
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>ブロックリスト登録：永続的に記録し、全管理グループで BAN。対象はメッセージへの返信・<code>@username</code>・ユーザー id のいずれでも指定できます</td></tr>
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>SQLite の正式 blocklist から対象を transaction で削除し、Bot が管理する全群の BAN を解除。<code>/block</code> の指定に加えて負の channel id も受理し、本群自身の identity は拒否</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>このグループの AI チャットを切り替え</td></tr>
-<tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの AI コンテキスト記憶を消去：Worker 側のローリング逐語バッファ、中期要約、未昇格の要約、mood と <code>memory/ai/&lt;chatId&gt;.json</code> をまとめて削除し、処理中の返信 generation を無効化します。引数は取らず、デプロイ設定が壊れていても AI Worker が起動していなくても実行します</td></tr>
+<tr><td><code>/prompt config &lt;プロンプト&gt;</code><br><code>/prompt remove</code></td><td align="center"><code>isCanConfigAiPrompt</code></td><td>本群専用 AI プロンプトを設定・削除します。削除後は既定の人設を使います</td></tr>
+<tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>本群の AI 逐語 buffer、要約、未統合要約、mood を消去し、<code>chat_states.ai_context</code> を NULL にして処理中の返信 generation を無効化します。専用人設は保持します。引数は取らず、設定が壊れていても AI Worker が起動していなくても実行します</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>このグループの広告検出を切り替え。protected identity 以外の命中時は <code>/block</code> と同じ処分</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>このグループの連投ミュートを切り替え（既定で無効）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>このグループの参加認証と Anti-Raid の非公開モードを切り替え（既定で無効）</td></tr>
-<tr><td><code>/bot_status</code></td><td align="center"><code>isCanViewBotStatus</code></td><td>ローカルプロセス指標、グローバル model capability、Telegram 429 outbound queue、このグループの AI コンテキスト容量、有効な gag 数、本群の翻訳人数（最大 5 人）、このグループで Bot が現在持つ権限（JSON ブロック）、このグループで有効な機能を表示</td></tr>
+<tr><td><code>/bot_status</code></td><td align="center"><code>isCanViewBotStatus</code></td><td>ローカルプロセス指標、グローバル model capability、Telegram 429 outbound queue、本群専用プロンプトの設定有無、このグループの AI コンテキスト容量、有効な gag 数、本群の翻訳人数（最大 5 人）、このグループで Bot が現在持つ権限（JSON ブロック）、このグループで有効な機能を表示</td></tr>
 <tr><td><code>/mood query</code></td><td align="center">メンバー</td><td>このグループで現在有効な AI の気分を、再抽選せずに表示</td></tr>
 <tr><td><code>/mood switch</code></td><td align="center"><code>isCanSwitchMood</code></td><td>AI 有効グループの気分を即時再抽選</td></tr>
 <tr><td><code>/translate enable|disable</code></td><td align="center"><code>isCanControllTranslatePermission</code></td><td>翻訳機能を切り替え（既定 OFF）</td></tr>
@@ -120,6 +121,7 @@ forum topic の自動補完された作成メッセージは明示返信なし�
 
 ### 挙動の詳細
 
+- **`/prompt` と人設状態**：初期化済み群で `/prompt config <プロンプト>` は複数行本文を保存します。前後の空白を除き、内部の空白・改行を保持します。`/prompt remove` は本群の上書きを消し、プロジェクトの `prompt/persona.md` を使います。`isCanConfigAiPrompt` は既定 false。スーパー管理者は直接使用でき、`/permission` で委任できます。SQLite 確認後に Worker へ送り、以降の返信 round から反映し、開始済み round は元の人設を保持します。`/bot_status` は群 cache から設定済み／未設定を既存の小生意気な口調で示し、本文は公開しません。設定・削除の応答は 30 秒後に削除します。
 - **`/bot_status` のメモリ**：コマンド受信時に `Bun.unsafe.memoryFootprint()` を呼び、Worker を含む Bot プロセス全体の現在のメモリ使用量を表示します。Linux では共有常駐ページをプロセス間で按分する PSS を使います。使用率の分母はコンテナのメモリ制限、制限が無ければホストの物理メモリ総量です。測定できない場合は「不可用」と表示します。
 - **`/bot_status` のコンテキスト容量**：スライディング hot memory は `VERBATIM_CONTEXT_MAX`（256 件）、cold 要約は `MAX_SUMMARY_ROUNDS`（7 ラウンド）を分母に使用率を求め、7:3 で加重合計し、**この 1 つのパーセンテージだけを表示します**——生の件数は記憶階層の内部メカニズムであり、グループメンバーには一切見せません（[04 権威ある制約](04-invariants.md) を参照）。2 つの件数は AI Worker が記憶スナップショットの上報（`AI_SNAPSHOT_INTERVAL_MS`、30 秒）に載せて送り、hydrate 完了後に全量を播種します。メインスレッドは読み取り専用の mirror を持つだけです。未昇格の要約は逐語 hot window に原文が残っているため cold に数えず、mirror にエントリが無い場合は常に 0 と表示するので、読み取りは最大 1 上報周期ぶん遅れます。
 - **コマンドの入口ゲート**：グループコマンドは一律 `/init` ゲートを通ります。未初期化グループで受け付けるのはスーパー管理者の `/init` だけなので、`/permission` と `/white` も初期化済みグループで使う必要があります。private chat で許可される slash command は `/send` だけです。

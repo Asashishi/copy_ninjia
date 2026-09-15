@@ -35,7 +35,7 @@ export interface BufferedMessage extends AiSpeakerSnapshot {
   at: string;
 }
 
-/** memory/ai/<chatId>.json 的版本化落盘结构。 */
+/** chat_states.ai_context 的版本化落盘结构。 */
 export interface AiMemorySnapshot {
   version: 1;
   buffer: BufferedMessage[];

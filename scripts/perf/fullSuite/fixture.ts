@@ -70,7 +70,7 @@ import type {
 
 /** fixture 实际写出的行数与文件数；冷启动报告用它证明这一轮真的读到了数据。 */
 export interface SeededFixtureCounts {
-  readonly whitelistEntries: number;
+  readonly permissionList: number;
   readonly blocklistEntries: number;
   readonly chatStates: number;
   readonly chatQaEntries: number;
@@ -165,7 +165,7 @@ function chatStateRows(): readonly StoredChatStateRow[] {
     COLD_START_CHAT_STATE_ROWS
   );
   for (let index: number = 0; index < COLD_START_CHAT_STATE_ROWS; index += 1) {
-    rows[index] = {
+    rows[index] = { aiPersona: null,
       chatId: benchmarkChatId(index),
       data: encodeChatStateData(buildChatState(index)),
     };
@@ -286,7 +286,7 @@ export function joinLogEvent(index: number): JoinLogDiskMessage {
 /** fixture 的规模摘要；随冷启动读数一并回传，方便读者判断这批数是什么量级。 */
 export function fixtureCounts(): SeededFixtureCounts {
   return {
-    whitelistEntries: COLD_START_IDENTITY_ROWS,
+    permissionList: COLD_START_IDENTITY_ROWS,
     blocklistEntries: COLD_START_IDENTITY_ROWS,
     chatStates: COLD_START_CHAT_STATE_ROWS,
     chatQaEntries: COLD_START_CHAT_QA_ROWS,

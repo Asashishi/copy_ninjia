@@ -168,7 +168,7 @@ export function requestJoinLogFromWorker({
   });
 }
 
-/** 向当前 Disk I/O 代际批量读取永久策略与临时白名单累计表。 */
+/** 向当前 Disk I/O 代际批量读取永久策略与临时广告免检累计表。 */
 export interface RequestIdentityPoliciesParams {
   worker: Worker;
   ids: readonly number[];

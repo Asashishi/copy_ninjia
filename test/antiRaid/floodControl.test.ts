@@ -5,8 +5,8 @@ import type { FloodCandidateMessage } from "../../packages/types/antiRaid/protoc
 import type { ChatState } from "../../packages/types/chatState";
 import { chatStateCache } from "../../packages/cache/main/chatState";
 import { whitelistEntryCache } from "../../packages/cache/main/identityStorage";
-import { temporaryWhitelistActivityCache } from
-  "../../packages/cache/main/temporaryWhitelist";
+import { temporaryAdBypassActivityCache } from
+  "../../packages/cache/main/temporaryAdBypass";
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 
@@ -37,13 +37,13 @@ beforeEach(() => {
   chatStateCache.clear();
   chatStateCache.set(-1001, { isFloodControlEnabled: true });
   whitelistEntryCache.clear();
-  temporaryWhitelistActivityCache.clear();
+  temporaryAdBypassActivityCache.clear();
 });
 
 afterEach(() => {
   chatStateCache.clear();
   whitelistEntryCache.clear();
-  temporaryWhitelistActivityCache.clear();
+  temporaryAdBypassActivityCache.clear();
 });
 
 describe("刷屏计数的主线程投递门禁", () => {
@@ -122,10 +122,10 @@ describe("刷屏计数的主线程投递门禁", () => {
     expect(candidate(groupMessage())?.userId).toBe(7);
 
     whitelistEntryCache.set(7, null);
-    temporaryWhitelistActivityCache.set(7, {
-      tempWhite: true,
-      tempWhiteAt: 1,
-      tempWhiteCount: 7,
+    temporaryAdBypassActivityCache.set(7, {
+      adBypass: true,
+      adBypassGrantedAt: 1,
+      qualifiedDays: 7,
       sendCount: 8,
       countedAt: 1,
       qualifiedAt: 1,

@@ -49,7 +49,7 @@ describe("/clear_context", () => {
   test("超级管理员清空本群上下文：内存与磁盘记忆一并删除", async () => {
     await handleClearContextCommand(context("", 100));
 
-    // purgeMemory=true 才同时走 Worker 侧 purge 与 durable 删除 memory/ai/<chatId>.json。
+    // purgeMemory=true 才同时走 Worker 侧 purge 与 durable 删除 chat_states.ai_context。
     expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,

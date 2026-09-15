@@ -34,7 +34,7 @@ function metadataRows(data: string): { readonly metadata: readonly StoredStorage
 }
 
 function chatStateRow(chatId: number, state: Readonly<ChatState>): StoredChatStateRow {
-  return { chatId, data: encodeChatStateData(state) };
+  return { aiPersona: null, chatId, data: encodeChatStateData(state) };
 }
 
 describe("schema 版本行", () => {

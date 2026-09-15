@@ -3,7 +3,6 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   AD_SAMPLES_CONFIG_PATH,
-  AI_MEMORY_DIR,
   CONFIG_ROOT,
   DATABASE_DIR,
   IDENTITY_DATABASE_PATH,
@@ -29,7 +28,6 @@ test("测试环境的真实运行时文件与生产数据根完全隔离", async
     MEMORY_DIR,
     DATABASE_DIR,
     IDENTITY_DATABASE_PATH,
-    AI_MEMORY_DIR,
     JOIN_LOG_MEMORY_DIR,
   ]) {
     expect(path.startsWith(`${RUNTIME_DATA_ROOT}/`)).toBeTrue();
@@ -37,9 +35,9 @@ test("测试环境的真实运行时文件与生产数据根完全隔离", async
   }
 
   const markerName: string = `.test-isolation-${crypto.randomUUID()}`;
-  const isolatedMarker: string = join(AI_MEMORY_DIR, markerName);
-  const productionMarker: string = join(PROJECT_ROOT, "memory", "ai", markerName);
-  mkdirSync(AI_MEMORY_DIR, { recursive: true });
+  const isolatedMarker: string = join(MEMORY_DIR, markerName);
+  const productionMarker: string = join(PROJECT_ROOT, "memory", markerName);
+  mkdirSync(MEMORY_DIR, { recursive: true });
   await Bun.write(isolatedMarker, "real test cache");
 
   expect(await Bun.file(isolatedMarker).text()).toBe("real test cache");

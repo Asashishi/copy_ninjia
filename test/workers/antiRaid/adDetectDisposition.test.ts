@@ -8,7 +8,7 @@ const activeVerificationSnapshots = new Map<string, unknown>();
 const dispatched: RemoveBlockedMembersParams[][] = [];
 const errorLogs: string[] = [];
 const blockedIds = new Set<number>();
-const temporaryWhitelistIds = new Set<number>();
+const temporaryAdBypassIds = new Set<number>();
 const blockUser = mock((userId: number): boolean => blockedIds.has(userId) ? false : (blockedIds.add(userId), true));
 const confirmBlocklistPersisted = mock(async (): Promise<boolean> => true);
 const isUserBlocked = mock((userId: number): boolean => blockedIds.has(userId));
@@ -41,7 +41,7 @@ const sendMessage = mock(async (params: SendMessageMockParams): Promise<number |
   return NOTICE_MESSAGE_ID;
 });
 const deleteMessageAfter = mock((..._args: unknown[]): void => {});
-const clearTemporaryWhitelistActivity = mock((_id: number): boolean => true);
+const clearTemporaryAdBypassActivity = mock((_id: number): boolean => true);
 mock.module("../../../packages/infra/logger", () => ({
   logger: {
     log(): void {},
@@ -62,7 +62,7 @@ mock.module("../../../packages/infra/identityPolicy/whitelist", () => ({
     ((id === 100 || id === -200) && key === "isCanBypassFloodControl"),
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 ||
-    ((id === 100 || id === -200 || temporaryWhitelistIds.has(id)) &&
+    ((id === 100 || id === -200 || temporaryAdBypassIds.has(id)) &&
       key === "isCanBypassAdDetection"),
   isWhitelisted: (id: number): boolean =>
     id === 1 || id === 100 || id === 101 || id === -200,
@@ -76,13 +76,13 @@ mock.module("../../../packages/infra/blocklist/membership", () => ({
   confirmBlocklistPersisted,
   isUserBlocked,
 }));
-mock.module("../../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
-  clearTemporaryWhitelistActivity,
-  hasActiveTemporaryWhitelist: (id: number): boolean =>
-    temporaryWhitelistIds.has(id),
-  hasActiveTemporaryWhitelistAt: (id: number): boolean => temporaryWhitelistIds.has(id),
-  hydrateTemporaryWhitelistActivities: (): void => {},
-  isTemporaryWhitelistActivityCached: (): boolean => true,
+mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
+  clearTemporaryAdBypassActivity,
+  hasActiveTemporaryAdBypass: (id: number): boolean =>
+    temporaryAdBypassIds.has(id),
+  hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryAdBypassIds.has(id),
+  hydrateTemporaryAdBypassActivities: (): void => {},
+  isTemporaryAdBypassActivityCached: (): boolean => true,
 }));
 mock.module("../../../packages/infra/blocklist/outbox", () => ({
   dispatchBlockedRemovals,
@@ -143,7 +143,7 @@ beforeEach(() => {
     removalId: ++removalCounter,
   }));
   blockedIds.clear();
-  temporaryWhitelistIds.clear();
+  temporaryAdBypassIds.clear();
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
   for (const id of [7, -300, -1005]) {
@@ -151,7 +151,7 @@ beforeEach(() => {
     whitelistEntryCache.set(id, null);
   }
   blockUser.mockClear();
-  clearTemporaryWhitelistActivity.mockClear();
+  clearTemporaryAdBypassActivity.mockClear();
   confirmBlocklistPersisted.mockClear();
   confirmBlocklistPersisted.mockImplementation(async (): Promise<boolean> => true);
   isUserBlocked.mockClear();
@@ -176,18 +176,18 @@ describe("广告判定命中后的处置", () => {
     handleAdVerdictTrue({ type: "adVerdictTrue", chatId: -1001, senderId: 7 });
     await drainAdDisposals(5_000);
 
-    expect(clearTemporaryWhitelistActivity).toHaveBeenCalledWith(7);
+    expect(clearTemporaryAdBypassActivity).toHaveBeenCalledWith(7);
     expect(blockUser).not.toHaveBeenCalled();
   });
 
   test("入队后才获得临时广告豁免时，旧判定不撤权也不处置", async () => {
-    temporaryWhitelistIds.add(7);
+    temporaryAdBypassIds.add(7);
 
     handleAdVerdictTrue({ type: "adVerdictTrue", chatId: -1001, senderId: 7 });
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
 
-    expect(clearTemporaryWhitelistActivity).not.toHaveBeenCalled();
+    expect(clearTemporaryAdBypassActivity).not.toHaveBeenCalled();
     expect(blockUser).not.toHaveBeenCalled();
     expect(dispatched).toHaveLength(0);
     expect(diskMessages).toHaveLength(0);

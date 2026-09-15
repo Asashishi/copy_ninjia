@@ -1,4 +1,4 @@
-import { lstat, mkdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Stats } from "node:fs";
 import { openStorageDatabase } from "../packages/database/interact/connection";
@@ -6,23 +6,24 @@ import { atomicWriteText, syncDirectory } from "../packages/libs/atomicFile";
 import { InputValidationError, invalidInput, readUtf8TextInput } from "../packages/libs/inputValidation";
 import { isErrno } from "../packages/libs/errno";
 import type { StorageDatabase } from "../packages/types/storageDatabase";
-import { migrateTranslationDatabase } from "./migrations/translate/database";
-import { migrateTranslationState, TranslationStateMigrationError } from "./migrations/translate/state";
-import { TRANSLATE_MIGRATION_SOURCE_RELEASE, TRANSLATE_MIGRATION_TARGET_SCHEMA } from "./migrations/translate/consts";
+import { migrateAiContextDatabase } from "./migrations/aiContext/database";
+import type { AiContextMigrationCounts } from "./migrations/aiContext/database";
+import { decodeAiMemorySnapshot } from "../packages/libs/persistedSnapshotCodec";
+import { parseJsonInput } from "../packages/libs/inputValidation";
+import { isTelegramGroupChatId } from "../packages/libs/telegramId";
 
 /** 停机备份中参与本次直接迁移的文件；SQLite 旁路文件必须来自同一一致性点。 */
-const SOURCE_FILES: readonly string[] = ["state.json", "state.json.bak", "database/storage.sqlite", "database/storage.sqlite-wal", "database/storage.sqlite-shm"];
-/** 只有这三份产物替换部署文件；ready.json 仅为校验清单。 */
-const OUTPUT_FILES: readonly string[] = ["state.json", "state.json.bak", "database/storage.sqlite"];
+const SOURCE_FILES: readonly string[] = ["database/storage.sqlite", "database/storage.sqlite-wal", "database/storage.sqlite-shm"];
+/** 只有 SQLite 产物替换部署文件；ready.json 仅为校验清单。 */
+const OUTPUT_FILES: readonly string[] = ["database/storage.sqlite"];
 /** 暂存目录仅当前账号可进入，部署权限由运维按清单手工恢复。 */
 const STAGING_DIRECTORY_MODE: number = 0o700;
 /** 校验清单与文本暂存文件只允许当前账号读写。 */
 const STAGING_FILE_MODE: number = 0o600;
 
-export interface TranslationMigrationOptions {
+export interface AiContextMigrationOptions {
   readonly sourceRoot: string;
   readonly outputRoot: string;
-  readonly from: string;
 }
 
 export interface MigrationFileRecord {
@@ -33,8 +34,10 @@ export interface MigrationFileRecord {
   readonly gid: number;
 }
 
-export interface TranslationMigrationResult {
-  readonly sourceRelease: string;
+export interface AiContextMigrationResult {
+  readonly sourceSchema: number;
+  readonly importedContexts: number;
+  readonly discardedContexts: number;
   readonly targetSchema: number;
   readonly sourceRoot: string;
   readonly outputRoot: string;
@@ -66,6 +69,13 @@ async function sourceFileRecords(root: string): Promise<readonly MigrationFileRe
       if (!(path.endsWith("-wal") || path.endsWith("-shm")) || !isErrno(error, "ENOENT")) throw error;
     }
   }
+  for (const relativePath of ["memory", "memory/ai"]) {
+    const directoryPath: string = join(root, relativePath);
+    let directory: Stats;
+    try { directory = await lstat(directoryPath); } catch (error: unknown) { if (isErrno(error, "ENOENT")) return records; throw error; }
+    if (!directory.isDirectory() || directory.isSymbolicLink()) return invalidInput(directoryPath, "$type", "a directory without symbolic links");
+  }
+  for (const name of (await readdir(join(root, "memory/ai"))).sort()) records.push(await fileRecord(root, join("memory/ai", name)));
   return records;
 }
 
@@ -75,23 +85,31 @@ function isInside(parent: string, child: string): boolean {
 }
 
 /**
- * 从 10.5.4 停机备份生成独立产物；不改源文件，不覆盖既有目录，不执行服务操作。
+ * 从 schema v8 停机备份生成独立产物；不改源文件，不覆盖既有目录，不执行服务操作。
  * ready.json 只在全部校验及源哈希复核后产生。中断后保留目录，换新 outputRoot 重跑。
- * 部署方按 docs/cn/04-invariants.md 的持久化边界手工替换主备及 SQLite 一致性点。
+ * 部署方按 docs/cn/04-invariants.md 的持久化边界手工替换 SQLite 并移除已迁移的 memory/ai 目录。
  */
-export async function prepareTranslationMigration({ sourceRoot, outputRoot, from }: TranslationMigrationOptions): Promise<TranslationMigrationResult> {
-  if (from !== TRANSLATE_MIGRATION_SOURCE_RELEASE) return invalidInput("--from", "$", "release 10.5.4");
+export async function prepareAiContextMigration({ sourceRoot, outputRoot }: AiContextMigrationOptions): Promise<AiContextMigrationResult> {
   const source: string = await realpath(sourceRoot);
   const output: string = join(await realpath(dirname(resolve(outputRoot))), basename(resolve(outputRoot)));
   if (isInside(source, output) || isInside(output, source)) return invalidInput(output, "$path", "a new directory outside the source backup");
   const databaseDirectory: Stats = await lstat(join(source, "database"));
   if (!databaseDirectory.isDirectory() || databaseDirectory.isSymbolicLink()) return invalidInput(source, "database", "a directory without symbolic links");
   const sourceFiles: readonly MigrationFileRecord[] = await sourceFileRecords(source);
-  const primary: string = migrateTranslationState(await readUtf8TextInput(join(source, "state.json")), join(source, "state.json"));
-  const backup: string = migrateTranslationState(await readUtf8TextInput(join(source, "state.json.bak")), join(source, "state.json.bak"));
+  const snapshots: Map<number, string> = new Map();
+  for (const record of sourceFiles) {
+    if (!record.path.startsWith("memory/ai/")) continue;
+    const name: string = basename(record.path);
+    if (name.endsWith(".tmp")) continue;
+    const id: number = Number(name.slice(0, -5));
+    const path: string = join(source, record.path);
+    if (!name.endsWith(".json") || !isTelegramGroupChatId(id) || name !== id + ".json") return invalidInput(path, "$filename", "the canonical <negative-safe-chatId>.json form");
+    const snapshot: unknown = parseJsonInput(await readUtf8TextInput(path), path);
+    snapshots.set(id, JSON.stringify(decodeAiMemorySnapshot(snapshot, path)));
+  }
   await mkdir(output, { mode: STAGING_DIRECTORY_MODE });
   await mkdir(join(output, "database"), { mode: STAGING_DIRECTORY_MODE });
-  await atomicWriteText(join(output, "incomplete.json"), JSON.stringify({ from, sourceFiles }, null, 2), STAGING_FILE_MODE);
+  await atomicWriteText(join(output, "incomplete.json"), JSON.stringify({ sourceSchema: 8, sourceFiles }, null, 2), STAGING_FILE_MODE);
   for (const record of sourceFiles) {
     if (record.path.startsWith("database/")) {
       const target: string = join(output, record.path);
@@ -101,21 +119,20 @@ export async function prepareTranslationMigration({ sourceRoot, outputRoot, from
   }
   const databasePath: string = join(output, "database/storage.sqlite");
   const database: StorageDatabase = openStorageDatabase({ path: databasePath });
+  let counts: AiContextMigrationCounts;
   try {
-    migrateTranslationDatabase(database, databasePath);
+    counts = migrateAiContextDatabase(database, databasePath, snapshots);
   } finally {
     database.$client.close(true);
   }
   await syncDirectory(databasePath);
-  await atomicWriteText(join(output, "state.json"), primary, STAGING_FILE_MODE);
-  await atomicWriteText(join(output, "state.json.bak"), backup, STAGING_FILE_MODE);
   if (JSON.stringify(await sourceFileRecords(source)) !== JSON.stringify(sourceFiles)) {
     return invalidInput(source, "$snapshot", "an unchanged cold backup including metadata and SQLite sidecars");
   }
   const outputFiles: MigrationFileRecord[] = [];
   for (const path of OUTPUT_FILES) outputFiles.push(await fileRecord(output, path));
-  const result: TranslationMigrationResult = {
-    sourceRelease: from, targetSchema: TRANSLATE_MIGRATION_TARGET_SCHEMA,
+  const result: AiContextMigrationResult = {
+    sourceSchema: 8, targetSchema: 9, ...counts,
     sourceRoot: source, outputRoot: output, sourceFiles, outputFiles,
   };
   await Bun.file(join(output, "incomplete.json")).delete();
@@ -124,40 +141,39 @@ export async function prepareTranslationMigration({ sourceRoot, outputRoot, from
 }
 
 /** CLI 不接受默认部署根；源备份与产物目录都必须明确提供。 */
-function parseArguments(args: readonly string[]): TranslationMigrationOptions {
+function parseArguments(args: readonly string[]): AiContextMigrationOptions {
   const values: Map<string, string> = new Map();
   for (let index: number = 0; index < args.length; index += 2) {
     const key: string | undefined = args[index];
     const value: string | undefined = args[index + 1];
-    if (key === undefined || !["--source-root", "--output-root", "--from"].includes(key) ||
+    if (key === undefined || !["--source-root", "--output-root"].includes(key) ||
       values.has(key) || value === undefined || value.trim().length === 0 || value.startsWith("--")) {
-      return invalidInput("arguments", "$", "--from 10.5.4 --source-root <cold-backup> --output-root <new-directory>");
+      return invalidInput("arguments", "$", "--source-root <cold-backup> --output-root <new-directory>");
     }
     values.set(key, value);
   }
   const sourceRoot: string | undefined = values.get("--source-root");
   const outputRoot: string | undefined = values.get("--output-root");
-  const from: string | undefined = values.get("--from");
-  if (sourceRoot === undefined || outputRoot === undefined || from === undefined) return invalidInput("arguments", "$", "all three required options");
-  return { sourceRoot, outputRoot, from };
+  if (sourceRoot === undefined || outputRoot === undefined) return invalidInput("arguments", "$", "both required options");
+  return { sourceRoot, outputRoot };
 }
 
 if (import.meta.main) {
   if (Bun.argv.slice(2).length === 1 && Bun.argv[2] === "--help") {
-    console.log("bun run migrate:translate --from 10.5.4 --source-root <cold-backup> --output-root <new-directory>\n" +
-      "Stop the service and verify inactive before taking an external backup, including state.json, state.json.bak and SQLite WAL/SHM.\n" +
+    console.log("bun run migrate:ai-context --source-root <cold-backup> --output-root <new-directory>\n" +
+      "Stop the service and verify inactive before taking an external backup, including memory/ai and SQLite WAL/SHM.\n" +
       "The source remains unchanged. Only ready.json marks validated output; after interruption rerun into a new output directory.\n" +
-      "Verify output hashes, then manually replace both state files and SQLite while stopped. Remove stale deployment WAL/SHM only after preserving the backup.\n" +
+      "Verify output hashes, then manually replace SQLite and remove the migrated memory/ai directory while stopped. Remove stale deployment WAL/SHM only after preserving the backup.\n" +
       "Restore original ownership/modes from sourceFiles; ensure the service can write SQLite and its directory.\n" +
       "Validate configuration and state before startup; retain the backup until service stability is confirmed.");
   } else {
     try {
-      const result: TranslationMigrationResult = await prepareTranslationMigration(parseArguments(Bun.argv.slice(2)));
-      console.log(`Translation migration prepared: ${result.outputRoot}/ready.json. Manual replacement while stopped is required.`);
+      const result: AiContextMigrationResult = await prepareAiContextMigration(parseArguments(Bun.argv.slice(2)));
+      console.log(`AI context migration prepared: ${result.outputRoot}/ready.json. Manual replacement while stopped is required.`);
     } catch (error: unknown) {
-      console.error(error instanceof InputValidationError || error instanceof TranslationStateMigrationError
+      console.error(error instanceof InputValidationError
         ? error.message
-        : "Translation migration failed; source backup and incomplete output are retained. No deployment files were replaced.");
+        : "AI context migration failed; source backup and incomplete output are retained. No deployment files were replaced.");
       process.exitCode = 1;
     }
   }

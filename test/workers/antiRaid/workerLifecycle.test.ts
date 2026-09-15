@@ -230,7 +230,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "clearAdDetect", chatId: -1001 },
       { type: "floodCandidate", chatId: -1001, userId: 1, observedAt: 1, label: "@noisy" },
       { type: "clearFloodControl", chatId: -1001 },
-      { type: "temporaryWhitelistGranted", identityId: 1 },
+      { type: "temporaryAdBypassGranted", identityId: 1 },
       { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: true, canDeleteMessages: true } },
       { type: "chatKind", chatId: -1001, isSupergroup: true },
       { type: "barrier", barrierId: 99 },

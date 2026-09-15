@@ -34,8 +34,8 @@ import {
   runBlocklistIdentityMutation,
   runProtectedIdentityMutation,
 } from "../infra/identityPolicy/coordination";
-import { clearTemporaryWhitelistActivity } from
-  "../infra/identityPolicy/temporaryWhitelist";
+import { clearTemporaryAdBypassActivity } from
+  "../infra/identityPolicy/temporaryAdBypass";
 import type {
   AdDetectedEvent,
   AdVerdictTrueEvent,
@@ -121,16 +121,16 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       // 区内、紧挨着 blockUser：再往后就过了不可逆点，那时候撤只会留下一条既成
       // 事实的名单条目却没有任何执行。
       if (getChatState(event.chatId).isAdDetectEnabled !== true) return null;
-      // 候选入队与模型回投之间，发送者可能刚达到临时白名单条件。
-      // 临时白名单只提供广告绕过，因此必须在清除累计之前复查当前权限；
+      // 候选入队与模型回投之间，发送者可能刚达到临时广告免检条件。
+      // 临时广告免检只提供广告绕过，因此必须在清除累计之前复查当前权限；
       // 旧判定不得先撤权再把成员写进黑名单。
       if (canBypassAdDetection(event.senderId)) return null;
       // 即使白名单成员显式关掉广告绕过，模型也只能处理本批消息，
       // 不得把成员写入永久黑名单。本检查同样要在临时累计删除之前完成。
       if (isProtectedSender(event.senderId)) return null;
-      if (!clearTemporaryWhitelistActivity(event.senderId)) {
+      if (!clearTemporaryAdBypassActivity(event.senderId)) {
         throw new Error(
-          `Temporary whitelist reset for identity ${event.senderId} was rejected by the persistence Worker.`
+          `Temporary ad bypass reset for identity ${event.senderId} was rejected by the persistence Worker.`
         );
       }
       recordAdSample(event);
@@ -317,9 +317,9 @@ async function clearAdVerdictActivity(event: AdVerdictTrueEvent): Promise<void> 
   await runProtectedIdentityMutation((): void => {
     // 判定回投时以当前权限为准：已获临时广告豁免的成员不能被旧候选撤权。
     if (canBypassAdDetection(event.senderId)) return;
-    if (clearTemporaryWhitelistActivity(event.senderId)) return;
+    if (clearTemporaryAdBypassActivity(event.senderId)) return;
     throw new Error(
-      `Temporary whitelist reset for identity ${event.senderId} was rejected by the persistence Worker.`
+      `Temporary ad bypass reset for identity ${event.senderId} was rejected by the persistence Worker.`
     );
   });
 }
@@ -329,7 +329,7 @@ export function handleAdVerdictTrue(event: AdVerdictTrueEvent): void {
   trackBackgroundTask(
     inFlightAdDisposals,
     clearAdVerdictActivity(event),
-    `Failed to clear temporary whitelist activity for sender ${event.senderId}:`
+    `Failed to clear temporary ad bypass activity for sender ${event.senderId}:`
   );
 }
 

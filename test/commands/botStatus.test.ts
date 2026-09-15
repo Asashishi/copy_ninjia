@@ -44,6 +44,7 @@ function statusSnapshot(): BotStatusSnapshot {
     chatState: {
       isInitEnabled: true,
       isAIChatEnabled: true,
+      aiPersona: "secret-persona\n本群的自定义提示词正文",
       isAdDetectEnabled: true,
       isAntiRaidEnabled: true,
       botPermissions: botPermissions({ canDeleteMessages: true }),
@@ -76,6 +77,8 @@ describe("/bot_status", () => {
     expect(text).toContain("歌曲生成：未配置");
     expect(text).toContain("广告检测：已配置 · openai / ad-model");
     expect(text).toContain("Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/81920");
+    expect(text).toContain("• 本群专属提示词：已设置，杂鱼还挺会使唤本天才嘛♡");
+    expect(text).not.toContain("本群的自定义提示词正文");
     // 三行同属「本群此刻的占用」一组：逐条带项目符号，上下文容量排在最前。
     expect(text).toContain(
       "• 猫脑子利用率：47.86%\n" +
@@ -112,6 +115,7 @@ describe("/bot_status", () => {
 
     expect(text).toContain("AI 对话能力：不可用（部署配置未就绪）");
     expect(text).toContain("广告检测：不可用（部署配置未就绪）");
+    expect(text).toContain("• 本群专属提示词：未设置，本天才就用默认人设啦，笨蛋♡");
     // 镜像没有条目就是「此刻没有可展示的上下文」，按 0 展示而不是沿用旧值。
     expect(text).toContain("• 猫脑子利用率：0.00%");
     expect(text).toEndWith("本群已开启，连这个都记不住吗，笨蛋♡：\n• 无");

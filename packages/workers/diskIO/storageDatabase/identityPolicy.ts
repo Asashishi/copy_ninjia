@@ -8,7 +8,7 @@ import {
   pendingBlocklistWrites,
   pendingWhitelistWrites,
   storedIdentityIdLookups,
-  pendingTemporaryWhitelistWrites,
+  pendingTemporaryAdBypassWrites,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import {
@@ -21,8 +21,8 @@ import {
   readStoredBlocklistIdPage,
   readStoredIdentityPolicies,
 } from "../../../database/interact/identityPolicy";
-import { readStoredTemporaryWhitelistActivities } from
-  "../../../database/interact/temporaryWhitelist";
+import { readStoredTemporaryAdBypassActivities } from
+  "../../../database/interact/temporaryAdBypass";
 import type {
   BlocklistIdPageReadReply,
   IdentityPersistenceReply,
@@ -36,9 +36,9 @@ import type {
 import type { IdentityPolicyTable } from "../../../types/identityPolicy";
 import type { PendingIdentityPolicyWrite } from "../../../types/identityStorage";
 import type {
-  PendingTemporaryWhitelistWrite,
-  StoredTemporaryWhitelistActivity,
-} from "../../../types/temporaryWhitelist";
+  PendingTemporaryAdBypassWrite,
+  StoredTemporaryAdBypassActivity,
+} from "../../../types/temporaryAdBypass";
 import type {
   StorageDatabase,
   StoredIdentityIdLookup,
@@ -163,38 +163,38 @@ function assertOppositePolicyAbsent(message: IdentityPolicyWriteDiskMessage): vo
   if (pending !== undefined) {
     if (pending.data !== null) {
       throw new Error(
-        `Identity ${message.id} cannot exist in both whitelist_entries and blocklist_entries.`
+        `Identity ${message.id} cannot exist in both permission_list and blocklist_entries.`
       );
     }
   } else if (hasStoredIdentityPolicy(opposite, message.id)) {
     throw new Error(
-      `Identity ${message.id} cannot exist in both whitelist_entries and blocklist_entries.`
+      `Identity ${message.id} cannot exist in both permission_list and blocklist_entries.`
     );
   }
   if (message.table === "blocklist") {
-    const pendingTemporary: PendingTemporaryWhitelistWrite | undefined =
-      pendingTemporaryWhitelistWrites.get(message.id);
+    const pendingTemporary: PendingTemporaryAdBypassWrite | undefined =
+      pendingTemporaryAdBypassWrites.get(message.id);
     const temporaryPresent: boolean = pendingTemporary === undefined
-      ? identityIdLookups().temporaryWhitelist.get({ id: message.id }) !== undefined
+      ? identityIdLookups().temporaryAdBypass.get({ id: message.id }) !== undefined
       : pendingTemporary.activity !== null;
     if (temporaryPresent) {
       throw new Error(
-        `Identity ${message.id} cannot exist in blocklist_entries and temporary_whitelist_entries.`
+        `Identity ${message.id} cannot exist in blocklist_entries and temporary_ad_bypass_entries.`
       );
     }
   }
 }
 
-function temporaryWhitelistRowsWithPending(
+function temporaryAdBypassRowsWithPending(
   ids: readonly number[]
-): readonly StoredTemporaryWhitelistActivity[] {
-  const rows: readonly StoredTemporaryWhitelistActivity[] =
-    readStoredTemporaryWhitelistActivities(requireStorageDatabase(), ids);
-  const values: Map<number, StoredTemporaryWhitelistActivity> = new Map();
+): readonly StoredTemporaryAdBypassActivity[] {
+  const rows: readonly StoredTemporaryAdBypassActivity[] =
+    readStoredTemporaryAdBypassActivities(requireStorageDatabase(), ids);
+  const values: Map<number, StoredTemporaryAdBypassActivity> = new Map();
   for (const row of rows) values.set(row.id, row);
   for (const id of ids) {
-    const pending: PendingTemporaryWhitelistWrite | undefined =
-      pendingTemporaryWhitelistWrites.get(id);
+    const pending: PendingTemporaryAdBypassWrite | undefined =
+      pendingTemporaryAdBypassWrites.get(id);
     if (pending === undefined) continue;
     if (pending.activity === null) values.delete(id);
     else values.set(id, { id, ...pending.activity });
@@ -252,7 +252,7 @@ export function readIdentityPolicies(
       requestId: message.requestId,
       whitelist: policyRowsWithPending("whitelist", ids),
       blocklist: policyRowsWithPending("blocklist", ids),
-      temporaryWhitelist: temporaryWhitelistRowsWithPending(ids),
+      temporaryAdBypass: temporaryAdBypassRowsWithPending(ids),
     };
   } catch (error: unknown) {
     return {

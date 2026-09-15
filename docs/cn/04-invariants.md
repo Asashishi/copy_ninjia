@@ -44,17 +44,17 @@
 
   Disk I/O 恢复通过 `stickerPacksForRecovery()` 取得可空贴纸白名单：缺省时传 `null`，严格读取全部现存 catalog，但不按白名单删除文件；显式空数组仍执行空白名单对账。存在但非法或不可读的配置必须拒绝启动。
 
-- 白名单、黑名单、临时白名单累计和待完成处置统一以 `database/storage.sqlite` 为权威源；运行时不再读取或写入名单 JSON。Disk I/O Worker 启动时执行 SQLite 完整性、JSONB storage class、migration 谱系、schema 版本、每行严格 codec、黑名单与两类白名单互斥以及 outbox 引用一致性校验，任一失败都拒绝以部分状态启动。生产启动不会自动迁移或创建缺失数据库，结构变更只由停机迁移脚本完成。
+- 白名单、黑名单、临时广告免检累计和待完成处置统一以 `database/storage.sqlite` 为权威源；运行时不再读取或写入名单 JSON。Disk I/O Worker 启动时执行 SQLite 完整性、JSONB storage class、migration 谱系、schema 版本、每行严格 codec、黑名单与两类白名单互斥以及 outbox 引用一致性校验，任一失败都拒绝以部分状态启动。生产启动不会自动迁移或创建缺失数据库，结构变更只由停机迁移脚本完成。
 
-  **同步鉴权只读主线程的三份有界 LRU**：永久白名单、黑名单和临时白名单活动各最多 8,192 项，`null` 是明确的负缓存；Disk I/O 启动只返回永久名单计数，不复制三张整表。每条 update 的前置边界把最终会用到的身份批量预热，单次跨线程冷读最多 4,096 个主键；命令和入群判定随后同步读缓存，不在每个判定点 request/reply。冷读失败时普通路径按缺失 fail-closed，破坏性批量路径必须取消执行，不能把未知误判成不受保护。
+  **同步鉴权只读主线程的三份有界 LRU**：永久白名单、黑名单和临时广告免检活动各最多 8,192 项，`null` 是明确的负缓存；Disk I/O 启动只返回永久名单计数，不复制三张整表。每条 update 的前置边界把最终会用到的身份批量预热，单次跨线程冷读最多 4,096 个主键；命令和入群判定随后同步读缓存，不在每个判定点 request/reply。冷读失败时普通路径按缺失 fail-closed，破坏性批量路径必须取消执行，不能把未知误判成不受保护。
 
-  单目标身份命令同样必须确认目标策略预热成功；冷读失败时拒绝执行，不得按默认权限继续修改身份或成员。`/permission query` 的自身与显式目标也先预热，失败只发送 30 秒清理的查询失败提示，不渲染默认权限看板。临时白名单累计仅接受黑名单 LRU 已明确为 `null` 的身份，黑名单命中与冷缺失均不计数。
+  单目标身份命令同样必须确认目标策略预热成功；冷读失败时拒绝执行，不得按默认权限继续修改身份或成员。`/permission query` 的自身与显式目标也先预热，失败只发送 30 秒清理的查询失败提示，不渲染默认权限看板。临时广告免检累计仅接受黑名单 LRU 已明确为 `null` 的身份，黑名单命中与冷缺失均不计数。
 
-  **临时白名单按展示身份跨群累计广告检测中的正常发言**：只有广告配置可用且本群显式开启广告检测时，真实用户或频道马甲才计数；服务消息、自动转发、机器人自身、本群匿名管理员皮套和永久白名单成员都不计。东京自然日内第 8 条发言把当天记为一次合格日，同一天只记一次；首个合格日立即授予只包含广告免检的 `TEMPORARY_WHITELIST_PERMISSIONS`。连续 7 个合格日后才写入永久白名单，永久条目仍只持有这份广告免检权限。累计严格按东京自然日重算，不使用滚动 24 小时：刚结束日已经合格的行保留到新一天，以延续临时广告免检和连续日数；新一天第一条符合累计条件的发言把 `send_count` 重算为 1 并清空本日 `qualified_at`，第 8 条再标记本日合格。当天合格后同一日的后续发言不再改写该行：`send_count` 与 `counted_at` 冻结在达标那条发言上，因而 `counted_at` 与 `qualified_at` 相等；日界推进、保留判定、严格解码与零点清理读到的事实完全不变。若新一天没有再次合格，下一个东京零点删除整行及其中的发言累计；更早的行同样删除，当日行保留。午夜维护先提交共享 SQLite 的在途最终值，事务失败且临时白名单写仍在途时拒绝清理；清理后才到达的旧日写按相同日界归一化，失效值以原 revision 的墓碑 ACK，不能把旧行重新插回。主线程 LRU 的权限读取与 Worker 重建也使用同一日界，因此过期缓存不授予广告免检，过期未 ACK 最终值重放为墓碑。适用的广告 true verdict、身份拉黑或永久晋升会显式清除整条临时累计；已经授予豁免后到达的旧 verdict 不得撤权。墙钟回拨到 `counted_at` 之前时从当前消息重建计数时间轴并保留已经授予的临时资格，不沿用未来计数；当天已合格的行 `counted_at` 就是 `qualified_at`，因此回拨落在达标之后仍按同一东京日继续，两种情形都保留成员关系。
+  **临时广告免检按展示身份跨群累计广告检测中的正常发言**：只有广告配置可用且本群显式开启广告检测时，真实用户或频道马甲才计数；服务消息、自动转发、机器人自身、本群匿名管理员皮套和永久白名单成员都不计。东京自然日内第 8 条发言把当天记为一次合格日，同一天只记一次；首个合格日立即授予只包含广告免检的 `TEMPORARY_AD_BYPASS_PERMISSIONS`。连续 7 个合格日后才写入永久白名单，永久条目仍只持有这份广告免检权限。累计严格按东京自然日重算，不使用滚动 24 小时：刚结束日已经合格的行保留到新一天，以延续临时广告免检和连续日数；新一天第一条符合累计条件的发言把 `send_count` 重算为 1 并清空本日 `qualified_at`，第 8 条再标记本日合格。当天合格后同一日的后续发言不再改写该行：`send_count` 与 `counted_at` 冻结在达标那条发言上，因而 `counted_at` 与 `qualified_at` 相等；日界推进、保留判定、严格解码与零点清理读到的事实完全不变。若新一天没有再次合格，下一个东京零点删除整行及其中的发言累计；更早的行同样删除，当日行保留。午夜维护先提交共享 SQLite 的在途最终值，事务失败且临时广告免检写仍在途时拒绝清理；清理后才到达的旧日写按相同日界归一化，失效值以原 revision 的墓碑 ACK，不能把旧行重新插回。主线程 LRU 的权限读取与 Worker 重建也使用同一日界，因此过期缓存不授予广告免检，过期未 ACK 最终值重放为墓碑。适用的广告 true verdict、身份拉黑或永久晋升会显式清除整条临时累计；已经授予豁免后到达的旧 verdict 不得撤权。墙钟回拨到 `counted_at` 之前时从当前消息重建计数时间轴并保留已经授予的临时资格，不沿用未来计数；当天已合格的行 `counted_at` 就是 `qualified_at`，因此回拨落在达标之后仍按同一东京日继续，两种情形都保留成员关系。
 
-  **写入采用容量准入、write-through 与精确 revision ACK**：身份写入先检查未确认主键和字节预算及传输容量，再发布 LRU 最终值、登记 revision 并投给 Disk I/O。每张主线程身份表按替换差额维护字节总数，只有精确 ACK 才释放对应最终值的预算；旧 ACK 不影响新 revision。主线程各领域最多保留 8,192 个未确认主键和 32 MiB 估算载荷，Worker 六张 SQLite 表共用同一上限。Worker 对永久白名单、黑名单、临时白名单和 outbox 按 128 个变化，群状态和问答按托管群上限，或首个变化等待 30 秒触发同步事务。成功事务清空缓冲后发送精确 ACK；失败保留全部待写值，按 30 秒、60 秒退避，连续三次失败通知宿主停止新业务。停机显式 flush 可再次尝试。迟到读不得覆盖未确认最终值，恢复按 revision 重放；`/white`、`/permission` 和 `/block` 的关键成功回执等待本领域 durable 确认，拒收、超时和 ACK 缺失由命令就地报告。
+  **写入采用容量准入、write-through 与精确 revision ACK**：身份写入先检查未确认主键和字节预算及传输容量，再发布 LRU 最终值、登记 revision 并投给 Disk I/O。每张主线程身份表按替换差额维护字节总数，只有精确 ACK 才释放对应最终值的预算；旧 ACK 不影响新 revision。主线程各领域最多保留 8,192 个未确认主键和 32 MiB 估算载荷，Worker 六张 SQLite 表共用同一上限。Worker 对永久白名单、黑名单、临时广告免检和 outbox 按 128 个变化，群状态和问答按托管群上限，或首个变化等待 30 秒触发同步事务。成功事务清空缓冲后发送精确 ACK；失败保留全部待写值，按 30 秒、60 秒退避，连续三次失败通知宿主停止新业务。停机显式 flush 可再次尝试。迟到读不得覆盖未确认最终值，恢复按 revision 重放；`/white`、`/permission` 和 `/block` 的关键成功回执等待本领域 durable 确认，拒收、超时和 ACK 缺失由命令就地报告。
 
-  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`；其余身份先读永久白名单，未命中时才以仍处于东京日保留边界内的临时白名单返回 `TEMPORARY_WHITELIST_PERMISSIONS`。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
+  **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`；其余身份先读永久白名单，未命中时才以仍处于东京日保留边界内的临时广告免检返回 `TEMPORARY_AD_BYPASS_PERMISSIONS`。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
 
   `/permission query` 与 `/permission help` 是只读入口：`query` 可以查询自身、回复目标或显式目标，返回补齐默认值后的完整视图，不创建数据库行；两者渲染出的 JSON 都长期保留——那是要照着逐项核对的权限看板，30 秒清理会在读完之前收走它。目标解析失败、修改拒绝与用法提示仍走统一 30 秒清理。
 - **进程级 Telegram 身份严格来自 `config/telegram.json`**：`bot_token` 与 `super_admin_user_id` 联网前必检，缺失、未知字段或非法值均拒绝启动。AI key 全部属于 `config/agent.json` 中的能力配置；每项能力独立声明 provider、api_key、base_url 与 model，不存在凭据默认、跨能力回退或运行时覆盖。`base_url` 只接受 `https`，明文 `http` 仅限 `localhost`/`127.0.0.1`/`::1`，且不得带 userinfo 或 `#` 片段——它旁边就是同一项能力的 api_key。
@@ -196,7 +196,7 @@
 
   无上限地等，一次「`/ai_chat disable` 撞上镜像块轮转」就会让主线程先超时 reject，而那个异常会逃进 grammY 中间件：这条 update 判失败、最终 offset 被扣住，重启后 Telegram 重投同一条指令。到点降级放行并记一行错误日志，不影响正确性——这些任务全部按 generation 自检，失效之后跑完也不会再写任何东西。迟到任务只做无副作用 epoch 对账，条目回收或群重新启用都不能让旧 token 复活；epoch Map 因此只随当前活跃工作增长，不保留历史群。
 
-  主线程必须同时等该回执与记忆删除 durable 才能宣称 `/ai_chat disable` 或 `/clear_context` 完成——两条命令共用同一条 `invalidateAiChat(chatId, true)`，都要求本群记忆连同 `memory/ai/<chatId>.json` 一起消失，区别只是前者还落一次开关。Worker 崩溃、放弃重建、投递失败、超时或停机都必须 reject waiter。
+  主线程必须同时等该回执与记忆删除 durable 才能宣称 `/ai_chat disable` 或 `/clear_context` 完成——两条命令共用同一条 `invalidateAiChat(chatId, true)`，都要求本群记忆清空并将 `chat_states.ai_context` 置为 NULL，保留 `ai_persona`，区别只是前者还落一次开关。Worker 崩溃、放弃重建、投递失败、超时或停机都必须 reject waiter。
 - 模型请求的传输、网络、429 与 5xx 重试只由所选供应商官方 SDK 自己负责（Gemini 是 `@google/genai` 的 `retryOptions`，OpenAI 是 SDK 的 `maxRetries`；两边都按「首次加最多 5 次重试」对齐）。两个 SDK 的 timeout 都是**每次尝试**各自的期限，因此 aiChat 的两个底层封装（`aiChat/gemini/client.ts`、`aiChat/openai/client.ts`）各自用 `libs/abortSignal.ts` 的 `signalWithTimeout` 合成一份覆盖整次调用（含全部重试与退避）的 deadline 再下传：signal 一触发 SDK 即短路整轮重试，最坏挂起因而等于 `GEMINI_REQUEST_TIMEOUT_MS` / `OPENAI_REQUEST_TIMEOUT_MS` 本身，而不是它乘上尝试次数。调用方的 invalidate signal 与这份 deadline 合成而非被替换。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
 
   `aiChat/openai/image.ts` 同样以 `OPENAI_IMAGE_REQUEST_TIMEOUT_MS` 同时限制单次尝试和整次生图调用。合成 signal 交给 SDK 与外层等待，覆盖素材准备、SDK 重试和退避；调用方取消静默结算，整次超时按请求失败记录。
@@ -287,7 +287,7 @@
 
   冷缓存的 `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认 `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
 - **Worker 侧的管理员豁免缓存必须按身份释放在途槽位、按世代决定写不写回**：`getOrCreateAdminFetch` 的 `.finally()` 只能在 `adminFetches.get(chatId)` 仍是自己那个 promise 时才删（同主线程侧的 `botPermissionFetches`）——`resetAdminCache()` 会在拉取在途时清空整张表，随后同群的新 fetch 会重新登记，陈旧 fetch 无条件 delete 删掉的是**新** fetch 的槽位，去重随之失效，下一个调用者会在 query 类 Telegram 通道上额外发起一次全量拉取。`resetAdminCache()` 同时自增整表世代号，在途拉取据此在 `.then` 里判断自己那份快照是否已被作废：世代对不上就只把结果交给等待者、绝不 `cacheAdminIds`，`.catch` 的 `discardPendingAdminChanges` 同样跳过。否则 reset 前的旧快照会被灌进刚清空的表，而那次 reset 一并丢掉了窗口内到达的降权——被降权者会在整个 `ADMIN_CACHE_TTL_MS` 内继续留在邀请人豁免集合里，他拉进来的人全部免入群验证。
-- 入群验证只有两颗按钮，资格各自独立：「我是良民」只接受待验证真人本人点击，Worker 必须以可信的 `callback_query.from.id === callback_data` 目标 ID 计算本人关系，不能接受调用方直接声称；「通过」只接受本群**非匿名管理员**替他人代点（真人与机器人目标一致），资格由 Worker 侧的管理员缓存（`isChatAdmin`，冷缓存时现拉一次 `getChatAdministrators`）判定，查不出来只应答「稍后再试」、不改记录。白名单边界（SQLite `whitelist_entries` 的条目，或恒在边界内的 `SUPER_ADMIN_USER_ID`）在这两条判定里**没有任何地位**：白名单成员不能替任何人通过，超级管理员也只有本身是该群管理员时才能点「通过」；目标本人点「通过」一律驳回。拉人者豁免同样只认非匿名管理员（同步缓存命中，冷缓存时由 `startAdminCheck` 异步补查），白名单拉人不免验证。无状态、已终结或目标不匹配的点击只能应答失败，不得改变验证记录。
+- 入群验证只有两颗按钮，资格各自独立：「我是良民」只接受待验证真人本人点击，Worker 必须以可信的 `callback_query.from.id === callback_data` 目标 ID 计算本人关系，不能接受调用方直接声称；「通过」只接受本群**非匿名管理员**替他人代点（真人与机器人目标一致），资格由 Worker 侧的管理员缓存（`isChatAdmin`，冷缓存时现拉一次 `getChatAdministrators`）判定，查不出来只应答「稍后再试」、不改记录。白名单边界（SQLite `permission_list` 的条目，或恒在边界内的 `SUPER_ADMIN_USER_ID`）在这两条判定里**没有任何地位**：白名单成员不能替任何人通过，超级管理员也只有本身是该群管理员时才能点「通过」；目标本人点「通过」一律驳回。拉人者豁免同样只认非匿名管理员（同步缓存命中，冷缓存时由 `startAdminCheck` 异步补查），白名单拉人不免验证。无状态、已终结或目标不匹配的点击只能应答失败，不得改变验证记录。
 - 终态处置（超时/刷屏踢人）执行 `kickChatMember` 前必须用 `probeChatMembership` 现查：确认仍在群才踢，确认已离群就直接结算且不发错误战报，查询失败则不做破坏性成员操作、保留终态进入既有退避。**首发同样要付这次查询，没有豁免**：超级群的「只踢不封」映射到不带 `only_if_banned` 的 `unbanChatMember`，它会**解除已有封禁**。join update 只证明到达时在场，不能证明 kick 请求排队期间没有被人工管理员封禁；请求命中 429 时会在 kick 类独立车道等待。因此主线程每次调用这种 `unbanChatMember` 前都必须经 query 类重新 `getChatMember`：仍在群才继续，`left` / `kicked` 就取消并把业务结果归一成 `absent`。显式解封的 `only_if_banned: true` 不套用这条前置条件。否则延迟调用会解除管理员封禁，而 outcome 还报 `kicked`，当事人凭邀请链接即可回来。终态处置失败后按指数退避重试到上限，记录不因重试耗尽被删除——删了就等于把没处置的成员当成已完成。
 
   「只踢不封」还要求群类型精确：普通群使用 `banChatMember`（普通群里只移除），超级群使用 `unbanChatMember`。主线程按 update 观测 `group` / `supergroup` 并在首次启动和 Worker 重建时于终态 adopt 前整表重放；完整进程冷启动没有镜像时，Worker 以群为键复用 `getChat`，并以 `VERIFICATION_CHAT_KIND_FETCH_MAX` 限制在途查询。群类型查询失败、返回非群聊或达到背压上限时不得猜测任一 API，必须保留终态并按既有退避重试；镜像在查询期间到达时，其值优先于迟到查询结果。
@@ -469,12 +469,12 @@
 - **`normalizeChatState` 只回收「真的到点」的字段，「读数看起来不合理」一律收敛而不是删除**：`quietUntil` 的上限判定（`isQuietUntilActive`）是为墙钟回拨设的，而 `/quiet <上限分钟数>` 写下的 `quietUntil - now` 恰好等于 `QUIET_MAX_DURATION_MS`，不留容差的话时钟往回跳 1 毫秒就让顶格静默失效。因此判定带 `QUIET_CLOCK_SKEW_TOLERANCE_MS` 的容差吸收常见 NTP step；超出容差的大幅回拨由这个 normalizer 把值收敛到 `now + QUIET_MAX_DURATION_MS`——静默继续有效且保证不晚于上限结束，正是那条上限本来的意思。删字段不行：这个 normalizer 每次 `saveState()` 都对每个群跑一遍，一删就是把静默从内存和 SQLite `chat_states` 一并抹掉，时钟回正也找不回来（同 `libs/slidingWindowRateLimit.ts` 对回拨「只丢越界项、绝不整窗清空」的取舍）。
 - **`ChatState` 是规范形状：所有字段一次建齐，此后只赋值、绝不 `delete`**（`libs/chatState.ts` 的 `createChatState`）。「没设过」由 `undefined` 表示，不由「键不存在」表示；`getChatState` 对没有条目的群交出的 `DEFAULT_CHAT_STATE` 必须同形状，否则「有条目/没条目」之间来回换隐藏类。这是热调用点的形状契约（AGENTS.md：不得事后增删字段）——每条群消息要读 4~6 次 `getChatState(chatId).isXEnabled`（`antiRaid/updateIngress.ts`、`antiRaid/floodControl.ts`、`antiRaid/adCandidate.ts`、`auto/message/index.ts`、`aiChat/availability.ts`）。
 
-  **磁盘格式不变**：`JSON.stringify` 天然跳过取值为 `undefined` 的键，SQLite `chat_states` 的 JSONB 行里仍然只出现偏离缺省值的字段（已确证的 `botPermissions` 例外——「不是管理员」保存成一份 `isAdministrator: false` 的完整快照，与「没查过」的 `undefined` 是两回事，必须落盘，见 `libs/chatState.ts` 的 `isEmptyChatState`）。因此判空要逐字段看取值，不能数 `Object.keys().length`（规范形状下恒为 11）；`clearChatStateField` 判「有没有设过」同理看取值而不是 `field in chatState`。解码结果是稀疏的（行里只带真正出现过的键），必须经 `adoptChatState` 搬进规范形状再进 `chatStates`，否则磁盘上的形状差异会一路带进热路径。写回前统一过 `encodeChatStateData`，同一份严格解码器既守住字段集合，也把各群的键排成固定顺序。
-- AI 记忆与贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的 JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone。启动跨东京午夜时，先严格解码最新旧日文件，再以当天 active/tombstone 为更晚权威值合并并原子压缩到当天；只有发布成功才删除旧日，旧日损坏则保持新旧文件不动并拒绝恢复。稳态只保留东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；
-- Disk I/O 启动恢复严格分成三阶段：所有持久化域先只读 inspect/解码，全部成功后统一 adopt 内存 owner 与可写 SQLite 连接，成功回执后才执行临时/孤儿/过期文件清理、compact，并注册唯一的东京零点维护 cron。该 cron 逐领域隔离失败，先通知主线程接纳 `/wed` 每日成员复核，再触发运势、日志、入群日志、广告样本、待验证与临时白名单维护；既有启动/事件路径仍作为兜底。任一 inspect 失败都不得改变任一领域的文件或权限，也不得留下维护 cron；AI 记忆与贴纸协议在 AI Worker 再水合时复用同一严格 decoder，坏载荷必须让该 Worker 初始化/重建明确失败，不能静默跳过单项。
+  **状态与人设分别编码**：`encodeChatStateData` 只把偏离缺省值的状态字段写入 `chat_states.status`；`aiPersona` 独立写入 `ai_persona`。已确证的 `botPermissions` 即使全部为 false 也必须保留，与未查询的 `undefined` 不同。规范 `ChatState` 一次初始化全部 12 个字段，判空逐字段读取取值，并计入人设；仅有上下文不能让群状态存活。解码结果经 `adoptChatState` 进入同一规范形状，未设置的字段取 `undefined`，不得通过增删键改变热路径对象形状。
+- AI 记忆按群事务更新 `chat_states.ai_context`，贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的 JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone。启动跨东京午夜时，先严格解码最新旧日文件，再以当天 active/tombstone 为更晚权威值合并并原子压缩到当天；只有发布成功才删除旧日，旧日损坏则保持新旧文件不动并拒绝恢复。稳态只保留东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；
+- Disk I/O 启动恢复严格分成三阶段：所有持久化域先只读 inspect/解码，全部成功后统一 adopt 内存 owner 与可写 SQLite 连接，成功回执后才执行临时/孤儿/过期文件清理、compact，并注册唯一的东京零点维护 cron。该 cron 逐领域隔离失败，先通知主线程接纳 `/wed` 每日成员复核，再触发运势、日志、入群日志、广告样本、待验证与临时广告免检维护；既有启动/事件路径仍作为兜底。任一 inspect 失败都不得改变任一领域的文件或权限，也不得留下维护 cron；AI 记忆与贴纸协议在 AI Worker 再水合时复用同一严格 decoder，坏载荷必须让该 Worker 初始化/重建明确失败，不能静默跳过单项。
 
   `null` tombstone 与其它基础类型都必须被视为完整的最后值。
-- AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，Disk I/O Worker 只有在 unlink 达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker 重建会重放 tombstone 与最新镜像，顺序不决定最终结果。一次已确认删除或 LRU 淘汰后的首份新快照必须立即写入，主线程在收到对应 durable upsert 回执前保留 revision 标记并在 Disk I/O Worker 重建后重放最新镜像。
+- AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，Disk I/O Worker 只有在 SQLite 清空事务达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker 重建会重放 tombstone 与最新镜像，顺序不决定最终结果。一次已确认删除或 LRU 淘汰后的首份新快照必须立即写入，主线程在收到对应 durable upsert 回执前保留 revision 标记并在 Disk I/O Worker 重建后重放最新镜像。
 
   `/bot_status` 展示的本群上下文容量只读这份镜像的派生计数：滑动热记忆条数与冷摘要轮数由 AI Worker 随记忆快照上报，hydrate 完成后再全量播种一次，两个计数与快照镜像同生共死。主线程不得在命令路径上解析快照 JSON 现算，也不得把「无条目」解释成沿用旧值——那一律表示此刻没有可展示的上下文，按 0 展示。
 
@@ -496,9 +496,13 @@
 
   **`/batch_kick` 战报里的「黑名单交回封禁」必须真的交回去**：命中黑名单就早退的那几条记录，本命令一步都没做（不探测、不移除），只在回执里报个数。不在整批结束后请一次补扫（`requestBlocklistResweep` + `sweepBlockedMembers`）的话那句话是空的——管理员据此认为黑名单流程接手了，实际没有任何批次、清扫或重试存在，而典型成因正是更早的封禁批次在限流下被判 `complete` 而实际没生效、人还坐在群里。派发按「早退条数」而不是 `blocked` 总数触发：并发拉黑后补封成功那条路已经把人按住了，不必再惊动清扫；整批只派发一次，`prepareBlocklistSweep` 自带 claim 与 `nextRetryAt` 闸门，逐条调用只是在命令的固定小并发池里空转。
 
+- **群提示词与上下文沿用各自 owner 的缓存**：`aiPersona` 随现有 25 群 `ChatState` 热表恢复，`/prompt` 修改该字段并等待 `persistChatState` 的精确 durable ACK，再增量推送 AI Worker。`/bot_status` 从同一群缓存读取是否已设置，不读 SQL、不展示正文。Worker 的 `cache/workers/aiChat/persona.ts` 只由协议入口更新，初始化/重建由主线程全量重放，群状态删除确认落盘后推送清理，停机清空；被撤管理员保留人设。无条目使用 `prompt/persona.md`。每轮回复固定一次人设，轮内工具调用不切换前缀。`isCanConfigAiPrompt` 默认为 false，超级管理员有效权限恒为 true；配置命令仍受 `/init` 和统一 30 秒提示清理边界约束。
+
+- **AI 持久化只更新已有群**：启动从同一 SQLite 连接读取并严格解码 `ai_context`，恢复 AI Worker 记忆及主线程未确认快照镜像。上下文写入前先提交本群待写状态；状态事务失败时保留上下文待写值，不提前回 durable ACK。上下文只执行按主键 UPDATE，迟到快照不能复活已删群；状态与人设写入不覆盖上下文。记忆删除只置空 `ai_context`，群行删除则清除三列。
+
 ### 群状态与 `chat_states`
 
-- **每群状态的权威副本是 SQLite `chat_states` 表；主线程只持有一份容量恰好等于 `STATE_MANAGED_CHAT_LIMIT`（25）的热读副本**（`packages/cache/main/chatState.ts`）。行的内容是 `ChatState` 的规范形状：七个功能开关、`quietUntil`、`lockdown` write-ahead 记录、`botPermissions` 完整权限快照、`title` 与 `isProxySendEnabled`。
+- **每群状态的权威副本是 SQLite `chat_states` 表；主线程只持有一份容量恰好等于 `STATE_MANAGED_CHAT_LIMIT`（25）的热读副本**（`packages/cache/main/chatState.ts`）。状态字段保存在 `status`，覆盖七个功能开关（含 `isProxySendEnabled`）、`quietUntil`、`lockdown` write-ahead 记录、`botPermissions` 完整快照与 `title`；`aiPersona` 从独立的 `ai_persona` 列合并到同一 `ChatState`。
 
 - **容量闸只拒绝、绝不淘汰**：新建第 26 条时 `assertChatStateCapacity` 抛错，启动读到第 26 行时 `hydrateChatStateCache` 拒绝启动，Disk I/O Worker 在写入侧独立复核一次（三道都不依赖对方）。缓存的淘汰分支因此永远走不到，这是有意的——淘汰掉一个在管群的状态会让它静默读成 `DEFAULT_CHAT_STATE`：每个功能都是关的、权限未知，而且没有任何错误。
 
@@ -511,8 +515,6 @@
 - **至多一个代理发送目标**（`isProxySendEnabled`）：写入侧与启动整表恢复各自独立校验。写入侧按**归纳**判定——写这一条之前不变量已经成立，因此只有把 `isProxySendEnabled` 打开的那一条写才可能破坏它，其余写不必扫描其它行。
 
 - 落盘沿用与身份表相同的 write-through + 精确 revision ACK：`persistChatState` 是 durable barrier，供权威决策使用；`saveChatStateInBackground` 是低优先级写，供群名刷新、权限快照失效这类可重建值使用。
-
-<p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 
 <p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 
@@ -554,14 +556,14 @@
 
   **`/unblock` 默认完整解除**：已在表中时先发布负缓存和删除 tombstone，并从 `pendingBlockedRemovals` 在途批次摘掉该 id；无论目标是否在表中，都在所有 `ChatState.botPermissions?.isAdministrator === true` 的群解除 Telegram 封禁。命令只要求 `isCanUnBlock`，旧 `all` 参数不再解析。跨群解封必须走 `unbanChatMemberIfBanned`（`only_if_banned: true`），避免把当前仍是成员的人误踢；频道身份走 `unbanChatSenderChat`。已经投进 Worker 的旧批次无法撤回，这段窗口仍是已知取舍。
 
-  **自己人不可拉黑**：`isWhitelisted` 覆盖永久白名单与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；临时白名单只授予广告免检，不进入这道永久保护边界。`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。拉黑路径先排临时累计墓碑，再排黑名单最终值；Disk I/O 事务和启动 hydrate 复核黑名单不得与两类白名单相交，任何冲突均 fail closed。
+  **自己人不可拉黑**：`isWhitelisted` 覆盖永久白名单与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；临时广告免检只授予广告免检，不进入这道永久保护边界。`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。拉黑路径先排临时累计墓碑，再排黑名单最终值；Disk I/O 事务和启动 hydrate 复核黑名单不得与两类白名单相交，任何冲突均 fail closed。
 
-  启动恢复逐行验证 canonical 非零安全整数主键、严格 JSONB data 和表间引用；一条非法就拒绝整个身份库，不截断、不丢行、不猜。`memory/ai/<chatId>.json` 等仍以 id 命名的文件继续要求规范十进制文件名，避免补零变体映射到同一个运行时 key。
+  启动恢复逐行验证 canonical 非零安全整数主键、严格 JSONB data 和表间引用；一条非法就拒绝整个身份库，不截断、不丢行、不猜。`memory/wed/<chatId>.json` 等仍以 id 命名的文件继续要求规范十进制文件名，避免补零变体映射到同一个运行时 key。
 
   落盘失败时 `/block` 的回复必须说破「没写进硬盘」：Worker 侧写盘错误只有 `console.error`，按设计不进 `logs/`。
   **唯一例外是每日运势的追加停摆**：连续失败到阈值时 Worker 额外向主线程发一条 `luckAppendStalled` 诊断，由运势 owner 记一行 `logger.error` 进 `logs/`（边沿触发，一次故障期只报一条）。它报的不是某一次 write(2) 的错，而是「一个领域已持续丢数据」——而运势的丢失在别处完全无迹可寻：主线程 `dailyLuckCache` 照常命中，用户看不出异常。递归风险为零：据此记的日志走 log 领域，log 领域自己写失败仍只 `console.error`。
 
-  **落盘确认按领域收敛**：统一 flush（`flushAll`）是八个领域的合取，任何一个失败都会让整体回执变成 `flushFailed`；`/block` 只能等 `flushDiskIODomain("blocklist")`，否则某群 `memory/ai/<chat>.json` 属主不对也会让它报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。回执因此必须带 `failedDomains`，主线程据此点名真正坏掉的领域——不点名就没有任何一条进得了 `logs/`。
+  **落盘确认按领域收敛**：统一 flush（`flushAll`）是八个领域的合取，任何一个失败都会让整体回执变成 `flushFailed`；`/block` 只能等 `flushDiskIODomain("blocklist")`，否则某群 `memory/wed/<chat>.json` 属主不对也会让它报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。回执因此必须带 `failedDomains`，主线程据此点名真正坏掉的领域——不点名就没有任何一条进得了 `logs/`。
 
   **重复 `/block` 是落盘失败后的重试动作**：目标已在黑名单 LRU 里但仍有未 ACK 的 `blocklist` revision 时，`ensureBlocklistEntryQueued` 必须重投最终值并重新等确认，不能因为「LRU 里已经有了」就把 `persisted` 当成 true——那会连着两次都告诉管理员成功了，而 SQLite 根本没有这条记录。黑名单成员入群一律 ban（不是「踢而不封」）——那条只踢不封的规则是为反刷群自动踢出防误杀而设，黑名单里的每个 id 都是管理员亲手写进去的。
 
@@ -796,7 +798,7 @@
 - 运势切换东京日 owner 前必须先 flush 旧日追加缓冲，失败则保持旧 owner 并拒绝轮换；**但触发这次轮换的那条新日抽签必须转入滞留区等待补录，不得随轮换失败一起丢弃**——主线程 `dailyLuckCache` 已经把它记成「今天抽过了」并发了回执，丢掉就等于磁盘恢复后当天文件永远缺这一条、用户当天也再抽不了第二次，而 `onDiskIORespawn` 的全量重放只覆盖 Worker 重建、覆盖不到「Worker 活着但写不进盘」。滞留区有明确上界，溢出时丢最旧的一条并记一行（不得静默）；刷盘重试成功后立刻补录，不等下一条抽签消息来推动。目标日已有确认结果时，缺失密钥或密钥日期不一致属于不一致备份，必须拒绝启动/轮换，不能静默生成新密钥。
 
   **但启动时「主线程算出的今天」与凭据日期对不上不属于这一类，不得拒绝启动**：Disk I/O Worker 在启动边界算一次东京日、主线程在 `restoreLuckState` 里再算一次，进程恰好卡在 00:00 前后启动时两者天然可能差一天。这里抛错的话异常会逸出 `ApplicationLifecycle.init()`（调用点没有 try/catch），`run()` 记一行日志并以退出码 1 结束——一次日切让 bot 起不来，靠进程管理器重启才恢复。正确处置是丢弃这份过期凭据与它那天的已确认记录：不 adopt、缓存留空，首次用到运势时由 `ensureLuckCacheFreshForToday` 向 Worker 重新取当天密钥（每个入口本来就会先 await 它）；同时标记「本进程内已跨日」，让没有当日证明的迟到确认一律 fail closed。
-- AI 记忆恢复只接受满足当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 255 条逐字消息与 7 轮冷摘要）的 version=1 快照；超限或字段非法都拒绝启动，不在恢复时截断。提高容量上限与已有快照兼容；降低上限时，必须先停止旧进程，再以同一严格 codec 原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
+- AI 记忆恢复只接受满足当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 255 条逐字消息与 7 轮冷摘要）的 version=1 快照；超限或字段非法都拒绝启动，不在恢复时截断。提高容量上限与已有快照兼容；降低上限时，必须先停止旧进程，再以同一严格 codec 在 SQLite 事务中重写现有 `chat_states.ai_context` 快照，避免旧进程的停机 flush 覆盖迁移结果。
 
   当前消息及引用中的姓名、用户名、转发来源、正文和引用文本必须是单行字符串，空白只允许普通空格；正文非空，引用 text/quote 最长 500 个 UTF-16 码元。截断产生的末尾空格或单个代理码元保留。`at` 必须是有效东京本地时间 `YYYY/MM/DD HH:mm:ss`。摘要和 pendingSummary 可以换行。Disk I/O 恢复与 AI Worker hydrate 共用严格 decoder，非法内容按具体字段路径拒绝，不清洗、不丢条、不回写。
 
@@ -847,7 +849,7 @@
 
 ### 文件权限与 schema
 
-- 当前部署基线允许开发工作区本身保持协作所需的权限；但显式配置的独立数据根是敏感数据边界，数据根、`memory/` 与 `logs/` 启动时强制不宽于 `0755`，即禁止 group 与 other 的写位。唯一例外是 SQLite `database/`：迁移脚本以 `02770` 建立 setgid 协作目录，主库及 WAL/SHM 首次创建使用 `0660`；启动只接受运行 UID 所有，或属于运行进程有效组且组位完整可写的目录，并继续禁止 any other 权限。部署工具负责 owner/group 与已有目录的手工迁移，运行时不得擅自 chmod。
+- 当前部署基线允许开发工作区本身保持协作所需的权限；但显式配置的独立数据根是敏感数据边界，数据根、`memory/` 与 `logs/` 启动时强制不宽于 `0755`，即禁止 group 与 other 的写位。唯一例外是 SQLite `database/`：部署方可用 `02770` 建立 setgid 协作目录，主库及 WAL/SHM 首次创建使用 `0660`；启动只接受运行 UID 所有，或属于运行进程有效组且组位完整可写的目录，并继续禁止 any other 权限。部署工具负责 owner/group 与已有目录的手工迁移，运行时不得擅自 chmod。
 - `memory/` 新产物默认 `0644`；已有的 `0600`、`0640` 等更严格 mode 在接管、追加、compact 与原子替换后保持不变。启动只校验运行账号确实可读写，不替部署者修权限；敏感性由文件/目录权限、部署隔离和备份策略共同控制。
 - **原子替换不得顺手重置目标文件的权限位**：`tmp + fsync + rename` 里的临时文件是新建的，`0666 & ~umask` 与目标原有权限无关。异步与同步原子写都先读取已有目标 mode 并沿用；调用方传入的 `mode` 只作为目标不存在时的首次创建默认值。这样部署方收紧过的 `state.json`、`bot.lock` 与 `memory/` 文件不会在普通写入、compact 或密钥轮换后被静默放宽。
 - 持久化 schema 不做猜测式自动迁移；不兼容输入会阻止启动，避免空状态覆盖原数据。

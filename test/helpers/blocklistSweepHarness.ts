@@ -65,6 +65,9 @@ mock.module("../../packages/infra/logger", () => ({
 mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
 }));
+mock.module("../../packages/aiChat/workerBridge", () => ({
+  syncAiChatPersona: (_chatId: number): void => {},
+}));
 mock.module("../../packages/infra/diskIO", () => ({
   postDiskIO,
   onDiskIORespawn: (): void => {},

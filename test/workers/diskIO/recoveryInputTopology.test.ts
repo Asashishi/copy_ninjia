@@ -19,7 +19,7 @@ mock.module("../../../packages/consts/paths", () => paths);
 const { inspectVerificationDay } = await import("../../../packages/workers/diskIO/verificationRecovery");
 const { inspectLogFiles } = await import("../../../packages/workers/diskIO/logFiles");
 const { inspectLuckReceiptSecret } = await import("../../../packages/workers/diskIO/luckSecretFile");
-const { inspectAiMemories, inspectStickerCatalogs, inspectLuckDay } = await import("../../../packages/workers/diskIO/snapshotFiles");
+const { inspectStickerCatalogs, inspectLuckDay } = await import("../../../packages/workers/diskIO/snapshotFiles");
 const { inspectJoinLogFiles } = await import("../../../packages/workers/diskIO/joinLogRecovery");
 const { inspectWedMemberFiles } = await import("../../../packages/workers/diskIO/wedMemberFiles");
 const { openAppendOnlyFile, openValidatedAppendOnlyFile } = await import("../../../packages/workers/diskIO/appendOnlyDayFile");
@@ -31,7 +31,6 @@ const domains: readonly Readonly<{ name: string; path: string; inspect: () => un
   { name: "logs", path: join(paths.LOGS_DIR, `${today}.json`), inspect: inspectLogFiles },
   { name: "luck", path: join(paths.LUCK_MEMORY_DIR, `${today}.json`), inspect: () => inspectLuckDay(today) },
   { name: "secret", path: paths.LUCK_RECEIPT_SECRET_PATH, inspect: () => inspectLuckReceiptSecret({ day: today, confirmedResultCount: 0 }) },
-  { name: "AI", path: join(paths.AI_MEMORY_DIR, "-1001.json"), inspect: inspectAiMemories },
   { name: "stickers", path: join(paths.STICKER_MEMORY_DIR, "pack_a.json"), inspect: () => inspectStickerCatalogs(null) },
   { name: "join log", path: join(paths.JOIN_LOG_MEMORY_DIR, `-1001.${today}.json`), inspect: () => inspectJoinLogFiles(today) },
   { name: "wed", path: join(paths.WED_MEMORY_DIR, "-1001.json"), inspect: inspectWedMemberFiles },
@@ -62,7 +61,7 @@ for (const domain of domains) {
 }
 
 test("跨域恢复遇到路径异常时不发布 owner、不生成密钥也不清理已检查领域", async () => {
-  const snapshots = await import("../../../packages/workers/diskIO/aiMemoryFiles");
+  const snapshots = await import("../../../packages/workers/diskIO/aiMemoryStorage");
   const logs = await import("../../../packages/workers/diskIO/logFiles");
   const secrets = await import("../../../packages/workers/diskIO/luckSecretFile");
   const { handleDiskIOStartupLoad } = await import("../../../packages/workers/diskIO/startup");

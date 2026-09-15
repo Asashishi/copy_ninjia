@@ -1,32 +1,11 @@
-/**
- * memory/ai/、memory/stickers/ 与 memory/luck/ 的启动恢复读取、结构校验与落盘。被
- * diskIOWorker.ts 调用；本文件不持有任何状态，纯函数式的读写辅助——文件
- * 当前的 DayFileState/待写缓冲由调用方在 cache/workers/diskIO/ 下的领域 owner 持有，
- * 按参数传进来。
- *
- * AI 记忆快照是整份覆盖写：先写 <file>.tmp、fsync、再 rename，rename 在
- * 同一文件系统内是原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），
- * 目标文件要么是写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂
- * JSON（同 infra/storage/statePersistence.ts 的原子性理由，fsync 的必要性
- * 见 atomicWriteText 注释）——快照本身有固定上限
- * （AI_MEMORY_HYDRATE_BUFFER_MAX/MAX_SUMMARY_ROUNDS），整份重写的开销
- * 不随时间增长，没有必要为它换成追加写。
- *
- * 每日运势是按位置追加写（见 appendLuckEntries）：entries 只增不改，
- * 一天下来可能攒到不少条，整份重写的开销会随条数线性增长，值得换成只写
- * 增量的追加机制，见 appendOnlyDayFile.ts 的模块头注释；换来的代价是单次
- * 追加不再是"要么全新要么全旧"的原子操作；若断电留下撕裂尾部，下次恢复
- * 保留原始字节并拒绝启动，不能猜测哪条已确认结果可以丢弃。
- */
+/** 贴纸与每日运势的严格文件恢复、校验与落盘；AI 上下文由 SQLite 持久化。 */
 
 import { mkdirSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { AiMemorySnapshot } from "../../types/aiChat/memory";
 import type { DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types/diskIO/storage";
 import type { StickerCatalogSnapshot } from "../../types/stickers/catalog";
 import type { LuckTier } from "../../types/luckChallenge";
 import {
-  AI_MEMORY_DIR,
   LUCK_MEMORY_DIR,
   LUCK_RECEIPT_SECRET_PATH,
   STICKER_MEMORY_DIR,
@@ -34,7 +13,6 @@ import {
 } from "../../consts/paths";
 import { DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
-import { AI_MEMORY_FILE_PATTERN } from "../../consts/diskIO/snapshots";
 import { STICKER_PACK_NAME_PATTERN } from "../../consts/aiChat/stickers";
 import { DAILY_LUCK_CACHE_MAX, luckTierByLabel } from "../../consts/luckChallenge";
 import { LUCK_CACHE_KEY_PATTERN } from "../../consts/luckReceipt";
@@ -44,14 +22,12 @@ import {
   openValidatedAppendOnlyFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
+import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput, readUtf8TextInput } from "../../libs/inputValidation";
 import {
-  decodeAiMemorySnapshot,
   decodeStickerCatalogSnapshot,
 } from "../../libs/persistedSnapshotCodec";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
-import { isTelegramGroupChatId } from "../../libs/telegramId";
 import { isCanonicalDateKey } from "../../libs/time";
 import { assertFileReadableWritable, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
 
@@ -68,83 +44,6 @@ function assertPersistedFileWritable(path: string): void {
   assertFileReadableWritable(path);
 }
 
-export interface AiMemoryRecoveryInspection {
-  readonly snapshots: Map<number, string>;
-  readonly temporaryPaths: readonly string[];
-}
-
-/**
- * 启动 inspect：只读登记 memory/ai/ 下的 *.tmp 残留，并严格校验每个群的
- * 文件名、schema 和容量。任一非法文件都保留原字节并拒绝恢复；成功快照
- * 重新 stringify 成与消息协议同形的 JSON 文本，直接可灌缓存/回 LoadedReply。
- */
-export async function inspectAiMemories(): Promise<AiMemoryRecoveryInspection> {
-  const result: Map<number, string> = new Map();
-  const temporaryPaths: string[] = [];
-  const names: readonly string[] = inspectOptionalDirectory(AI_MEMORY_DIR)
-    ? readdirSync(AI_MEMORY_DIR)
-    : [];
-  for (const name of names) {
-    const path: string = join(AI_MEMORY_DIR, name);
-    if (name.endsWith(TMP_FILE_SUFFIX)) {
-      temporaryPaths.push(path);
-      continue;
-    }
-    const match: RegExpExecArray | null = AI_MEMORY_FILE_PATTERN.exec(name);
-    if (!match) {
-      if (name.endsWith(".json")) {
-        return invalidInput(path, "$filename", "the canonical <chatId>.json form");
-      }
-      continue;
-    }
-    const chatIdText: string = match[1]!;
-    const chatId: number = Number(chatIdText);
-    // 必须原样还原：正则只保证「一串数字」，`-01001234567890.json`、
-    // `-1001234567890.json` 这种补零变体都能匹配，
-    // Number 后是同一个 key，于是 result.set 互相覆盖，胜者取决于 readdirSync 的
-    // 枚举顺序——该群的 AI 记忆静默回退到旧副本，而回写只用 `${chatId}.json`，
-    // 补零那份永不被改写或删除，每次重启继续顶替。位数超出安全整数的文件名
-    // （1e20 那种）同样在这里挡掉，否则水合出的 key 与任何真实 chatId 都对不上。
-    if (!isTelegramGroupChatId(chatId) || String(chatId) !== chatIdText) {
-      return invalidInput(
-        path,
-        "$filename",
-        "the canonical <chatId>.json form with a negative safe integer Telegram group or channel ID"
-      );
-    }
-    assertPersistedFileWritable(path);
-    const parsed: unknown = await readJsonInput(path);
-    const snapshot: AiMemorySnapshot = decodeAiMemorySnapshot(parsed, path);
-    result.set(chatId, JSON.stringify(snapshot, null, 2));
-  }
-  return { snapshots: result, temporaryPaths };
-}
-
-/** 全域校验成功后清理本轮 inspect 识别出的 AI 临时文件。 */
-export async function maintainAiMemoryFiles(
-  inspection: AiMemoryRecoveryInspection
-): Promise<void> {
-  mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) await tryUnlink(path);
-}
-
-/**
- * 覆盖式写入某群的 AI 记忆快照（tmp + fsync + rename 原子落盘）。
- * snapshotJson 是源头序列化好的 JSON 文本，原样写入。目录正常总已由
- * 启动 maintenance 建好；这里仍重建一次（recursive 下已存在
- * 时是廉价的空操作）防御外部干预（比如运行期间该目录被手动删除）——否则
- * 一旦目录消失，写入会持续 ENOENT 失败且没有谁会重新把它建回来。
- */
-export function writeAiMemoryFile(chatId: number, snapshotJson: string): void {
-  mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  atomicWriteTextSync(join(AI_MEMORY_DIR, `${chatId}.json`), snapshotJson, PERSISTED_FILE_MODE);
-}
-
-export function deleteAiMemoryFile(chatId: number): void {
-  mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  durableUnlinkSync(join(AI_MEMORY_DIR, `${chatId}.json`));
-}
-
 /** 贴纸目录快照的 inspect 结果：待载入的快照、孤儿快照与 *.tmp 残留三类路径。 */
 export interface StickerCatalogRecoveryInspection {
   readonly snapshots: Map<string, string>;
@@ -155,7 +54,7 @@ export interface StickerCatalogRecoveryInspection {
 /**
  * 启动恢复的只读阶段：严格校验 memory/stickers/ 下每个贴纸包的目录快照，把它们
  * 归类成待载入快照、孤儿快照与临时文件残留。本函数不写盘、不删除。机制与
- * inspectAiMemories 基本一致，只是文件名使用 pack short name；多一步 activePacks
+ * 其它快照领域基本一致，只是文件名使用 pack short name；多一步 activePacks
  * 对账——config/stickers.json 的白名单已经不包含的包记为孤儿，不载入内存，
  * 也就不会让 aiChat/ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个已下架包的
  * 旧描述去匹配群友发的贴纸。删除由全域校验成功后的 maintainStickerCatalogFiles
@@ -207,7 +106,7 @@ export async function maintainStickerCatalogFiles(
 }
 
 /** 覆盖式写入某个白名单贴纸包的目录快照（tmp + fsync + rename 原子落盘），
- *  机制与 writeAiMemoryFile 完全一致，snapshotJson 同为源头序列化好的
+ *  使用 tmp + fsync + rename，snapshotJson 为源头序列化好的
  *  JSON 文本。 */
 export function writeStickerCatalogFile(pack: string, snapshotJson: string): void {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });

@@ -1,57 +1,57 @@
 import { storagePendingBudget } from "../../../cache/workers/diskIO/storageDatabase";
 import { storageWriteCost } from "../../../libs/storageWriteBudget";
-import { pendingTemporaryWhitelistWrites } from
+import { pendingTemporaryAdBypassWrites } from
   "../../../cache/workers/diskIO/storageDatabase";
 import { DAY_MS } from "../../../consts/diskIO/common";
 import { assertTelegramIdentityId } from "../../../database/codec/identity";
-import { assertTemporaryWhitelistActivity } from
-  "../../../database/codec/temporaryWhitelist";
+import { assertTemporaryAdBypassActivity } from
+  "../../../database/codec/temporaryAdBypass";
 import {
-  deleteStaleTemporaryWhitelistActivities,
-} from "../../../database/interact/temporaryWhitelist";
+  deleteStaleTemporaryAdBypassActivities,
+} from "../../../database/interact/temporaryAdBypass";
 import { getTokyoDayStartTimestamp } from "../../../libs/time";
-import { isTemporaryWhitelistActivityRetained } from
-  "../../../states/temporaryWhitelist";
+import { isTemporaryAdBypassActivityRetained } from
+  "../../../states/temporaryAdBypass";
 import type {
-  TemporaryWhitelistWriteDiskMessage,
+  TemporaryAdBypassWriteDiskMessage,
 } from "../../../types/diskIO/messages";
 import type { IdentityPersistenceReply } from "../../../types/diskIO/replies";
 import type {
-  PendingTemporaryWhitelistWrite,
-} from "../../../types/temporaryWhitelist";
+  PendingTemporaryAdBypassWrite,
+} from "../../../types/temporaryAdBypass";
 import { hasEffectiveBlocklistIdentity } from "./identityPolicy";
 import { requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull, flushStorageDatabase } from "./flush";
 
-/** 收下一条临时白名单累计最终值；同一主键的迟到 revision 不覆盖新值。 */
-export function handleTemporaryWhitelistWrite(
-  message: TemporaryWhitelistWriteDiskMessage,
+/** 收下一条临时广告免检累计最终值；同一主键的迟到 revision 不覆盖新值。 */
+export function handleTemporaryAdBypassWrite(
+  message: TemporaryAdBypassWriteDiskMessage,
   reply: IdentityPersistenceReply
 ): void {
-  const source: string = storageSource("temporary_whitelist_entries", message.id);
+  const source: string = storageSource("temporary_ad_bypass_entries", message.id);
   assertTelegramIdentityId(message.id, source);
   if (!Number.isSafeInteger(message.revision) || message.revision < 1) {
     throw new Error(`${source}: revision must be a positive safe integer.`);
   }
-  let activity: TemporaryWhitelistWriteDiskMessage["activity"] = message.activity;
+  let activity: TemporaryAdBypassWriteDiskMessage["activity"] = message.activity;
   if (activity !== null) {
-    assertTemporaryWhitelistActivity(activity, source);
-    if (!isTemporaryWhitelistActivityRetained(activity, Date.now())) {
+    assertTemporaryAdBypassActivity(activity, source);
+    if (!isTemporaryAdBypassActivityRetained(activity, Date.now())) {
       activity = null;
     }
   }
   if (activity !== null) {
     if (hasEffectiveBlocklistIdentity(message.id)) {
       throw new Error(
-        `Identity ${message.id} cannot exist in temporary_whitelist_entries and blocklist_entries.`
+        `Identity ${message.id} cannot exist in temporary_ad_bypass_entries and blocklist_entries.`
       );
     }
   }
-  const current: PendingTemporaryWhitelistWrite | undefined =
-    pendingTemporaryWhitelistWrites.get(message.id);
+  const current: PendingTemporaryAdBypassWrite | undefined =
+    pendingTemporaryAdBypassWrites.get(message.id);
   if (current !== undefined && current.revision >= message.revision) return;
   storagePendingBudget.reserve(current === undefined ? 1 : 0, current === undefined ? storageWriteCost(null) : 0);
-  pendingTemporaryWhitelistWrites.set(message.id, {
+  pendingTemporaryAdBypassWrites.set(message.id, {
     activity,
     revision: message.revision,
   });
@@ -59,22 +59,22 @@ export function handleTemporaryWhitelistWrite(
 }
 
 /** 提交在途最终值后，清理未在刚结束东京日达标的旧累计。 */
-export function maintainTemporaryWhitelistActivities(
+export function maintainTemporaryAdBypassActivities(
   reply: IdentityPersistenceReply,
   now: number = Date.now()
 ): void {
   if (!Number.isSafeInteger(now) || now < 0) {
-    throw new RangeError("Temporary whitelist cleanup time must be a current safe integer.");
+    throw new RangeError("Temporary ad bypass cleanup time must be a current safe integer.");
   }
   const currentDayStart: number = getTokyoDayStartTimestamp(now);
   if (currentDayStart < DAY_MS) {
-    throw new RangeError("Temporary whitelist cleanup time must include a previous Tokyo day.");
+    throw new RangeError("Temporary ad bypass cleanup time must include a previous Tokyo day.");
   }
   flushStorageDatabase(reply);
-  if (pendingTemporaryWhitelistWrites.size > 0) {
-    throw new Error("Temporary whitelist cleanup requires all pending writes to be committed.");
+  if (pendingTemporaryAdBypassWrites.size > 0) {
+    throw new Error("Temporary ad bypass cleanup requires all pending writes to be committed.");
   }
-  deleteStaleTemporaryWhitelistActivities(
+  deleteStaleTemporaryAdBypassActivities(
     requireStorageDatabase(),
     currentDayStart,
     currentDayStart - DAY_MS

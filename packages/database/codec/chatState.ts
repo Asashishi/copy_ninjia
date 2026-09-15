@@ -194,8 +194,9 @@ export function assertPersistableLockdown(
   decodeLockdown(record, source, "$.lockdown");
 }
 
-/** 严格解码一条 `chat_states.data`；未知字段和空状态都拒绝。 */
-export function decodeChatStateData(text: string, source: string): ChatState {
+/** 合并并严格解码 status 与 ai_persona；未知字段及状态、人设同时为空的行均拒绝。 */
+export function decodeChatStateData(text: string, source: string, aiPersona: string | null = null): ChatState {
+  const persona: string | undefined = decodeAiPersona(aiPersona, source);
   const value: unknown = parseJsonInput(text, source);
   if (!isPlainRecord(value) || !hasOnlyKeys(value, CHAT_STATE_KEYS)) {
     return invalidInput(source, "$", "an object containing only supported chat-state fields");
@@ -206,6 +207,7 @@ export function decodeChatStateData(text: string, source: string): ChatState {
   }
   const rootContext: DecodeFieldContext = { source, path: "$" };
   const state: ChatState = {
+    aiPersona: persona,
     quietUntil: optionalTimestamp(value, "quietUntil", rootContext),
     lockdown: value.lockdown === undefined
       ? undefined
@@ -233,7 +235,16 @@ export function encodeChatStateData(
   state: Readonly<ChatState>,
   source: string = "chat state"
 ): string {
-  const text: string = JSON.stringify(state);
-  decodeChatStateData(text, source);
+  const text: string = JSON.stringify({ ...state, aiPersona: undefined });
+  decodeChatStateData(text, source, state.aiPersona ?? null);
   return text;
+}
+
+/** SQL NULL 表示缺省；显式空白或非法类型拒绝使用。 */
+export function decodeAiPersona(value: unknown, source: string): string | undefined {
+  if (value === null) return undefined;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return invalidInput(source, "$.ai_persona", "SQL NULL or a non-blank string");
+  }
+  return value;
 }

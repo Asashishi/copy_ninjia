@@ -14,7 +14,7 @@ export const DEFAULT_MAX_PENDING_BUSINESS_MESSAGES: number = 45_000;
 export const DISK_IO_RESPAWN_PRIORITIES: Readonly<{
   CHAT_STATE: number;
   CHAT_QA: number;
-  TEMPORARY_WHITELIST: number;
+  TEMPORARY_AD_BYPASS: number;
   BLOCKLIST: number;
   AI_MEMORY: number;
   ANTI_RAID_VERIFICATION: number;
@@ -26,7 +26,7 @@ export const DISK_IO_RESPAWN_PRIORITIES: Readonly<{
   // 失败诊断的因果顺序才和运行时一致。
   CHAT_QA: 60,
   // 先重放广告 true 产生的累计删除，再重放同身份的永久拉黑最终值。
-  TEMPORARY_WHITELIST: 90,
+  TEMPORARY_AD_BYPASS: 90,
   BLOCKLIST: 100,
   AI_MEMORY: 200,
   ANTI_RAID_VERIFICATION: 300,

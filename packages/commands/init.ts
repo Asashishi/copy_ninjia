@@ -1,4 +1,5 @@
 import type { CommandContext, Context } from "grammy";
+import { syncAiChatPersona } from "../aiChat/workerBridge";
 import type { ChatState } from "../types/chatState";
 import type { ReadonlyLruCache } from "../libs/lruCache";
 import {
@@ -101,6 +102,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
       // 这一次跟着拆除一起降级——总开关那一次已经 durable，这里只补收尾，失败按
       // 「有几样没拆干净」如实回执，不再扣住 offset 制造上面那种歧义。
       await persistChatState(chatId, "init teardown settled");
+      syncAiChatPersona(chatId);
     } catch (error: unknown) {
       teardownFailed = true;
       logger.error(

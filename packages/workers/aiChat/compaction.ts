@@ -170,7 +170,7 @@ function promotePendingSummary(chatId: number): void {
  * 截断用子句边界而不是硬切：各实现包的摘要 token 上限（GEMINI_/OPENAI_CHAT_SUMMARY_MAX_TOKENS）
  * 远大于 SUMMARY_MAX_CHARS，
  * 上游不会把长度约束到这个量级附近，硬切留下的半句会被 buildMemorySnapshot
- * 落进 memory/ai/<chat>.json，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
+ * 落进 chat_states.ai_context，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
  * （truncateAtClauseBoundary 的 JSDoc 记的正是这类残留）。
  */
 async function summarizeBatch(batch: BufferedMessage[], signal: AbortSignal): Promise<AiTextResult> {

@@ -56,7 +56,7 @@ export const COLD_START_CHAT_QA_ROWS: number =
 /** 冷启动 fixture 的待踢成员 outbox 行数。 */
 export const COLD_START_REMOVAL_ROWS: number = 512;
 
-/** 冷启动 fixture 的 AI 记忆快照群数；每群一个 memory/ai/<chatId>.json。 */
+/** 冷启动 fixture 的 AI 记忆快照群数；每群一行 chat_states.ai_context。 */
 export const COLD_START_AI_MEMORY_CHATS: number = STATE_MANAGED_CHAT_LIMIT;
 
 /**
@@ -78,8 +78,8 @@ export const CHAIN_JOIN_LOG_EVENTS: number = 1_000;
 /** 身份策略写透链路的计时批次数；每批 `IDENTITY_WRITE_BATCH_MAX_ENTRIES` 条。 */
 export const CHAIN_IDENTITY_BATCHES: number = 200;
 
-/** 临时白名单资格判定到 SQLite 精确 ACK 的计时次数。 */
-export const CHAIN_TEMPORARY_WHITELIST_WRITES: number = 400;
+/** 临时广告免检资格判定到 SQLite 精确 ACK 的计时次数。 */
+export const CHAIN_TEMPORARY_AD_BYPASS_WRITES: number = 400;
 
 /** 群状态 durable 屏障链路的计时次数；写入在固定群集合上轮转。 */
 export const CHAIN_CHAT_STATE_WRITES: number = 400;

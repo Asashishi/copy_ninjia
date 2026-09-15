@@ -2,7 +2,7 @@ import type { AdSampleMessage } from "../antiRaid/adDetect";
 import type { VerificationSnapshot } from "../antiRaid/verification";
 import type { PendingBlockedRemoval } from "../blocklist";
 import type { IdentityPolicyTable } from "../identityPolicy";
-import type { TemporaryWhitelistActivity } from "../temporaryWhitelist";
+import type { TemporaryAdBypassActivity } from "../temporaryAdBypass";
 import type { LuckReceiptSecret } from "./storage";
 
 /**
@@ -154,17 +154,18 @@ export interface IdentityPolicyWriteDiskMessage {
   revision: number;
 }
 
-/** 主线程 -> Disk I/O Worker：一项临时白名单累计最终值；null 表示删除。 */
-export interface TemporaryWhitelistWriteDiskMessage {
-  type: "temporaryWhitelistWrite";
+/** 主线程 -> Disk I/O Worker：一项临时广告免检累计最终值；null 表示删除。 */
+export interface TemporaryAdBypassWriteDiskMessage {
+  type: "temporaryAdBypassWrite";
   id: number;
-  activity: Readonly<TemporaryWhitelistActivity> | null;
+  activity: Readonly<TemporaryAdBypassActivity> | null;
   /** 主线程同一身份累计行的单调修订号。 */
   revision: number;
 }
 
 /** 主线程 -> Disk I/O Worker：一群最终状态；null 表示删除该主键。 */
 export interface ChatStateWriteDiskMessage {
+  readonly aiPersona: string | null;
   type: "chatStateWrite";
   chatId: number;
   data: string | null;
@@ -260,7 +261,7 @@ export type DiskBusinessMessage =
   | VerificationDeleteDiskMessage
   | BlocklistRemovalsDiskMessage
   | IdentityPolicyWriteDiskMessage
-  | TemporaryWhitelistWriteDiskMessage
+  | TemporaryAdBypassWriteDiskMessage
   | ChatStateWriteDiskMessage
   | ChatQaWriteDiskMessage
   | JoinLogDiskMessage

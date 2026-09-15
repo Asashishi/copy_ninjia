@@ -40,12 +40,12 @@ import {
 import { measuredResult } from "./measurement";
 import { assertMockRoot, isBenchmarkMockRoot } from "./roots";
 import type { ChildResult } from "./types";
-import type { PendingTemporaryWhitelistWrite } from
-  "../../../packages/types/temporaryWhitelist";
+import type { PendingTemporaryAdBypassWrite } from
+  "../../../packages/types/temporaryAdBypass";
 
-const EMPTY_TEMPORARY_WHITELIST_CHANGES: ReadonlyMap<
+const EMPTY_TEMPORARY_AD_BYPASS_CHANGES: ReadonlyMap<
   number,
-  PendingTemporaryWhitelistWrite
+  PendingTemporaryAdBypassWrite
 > = new Map();
 
 interface DatabaseFixture {
@@ -180,9 +180,9 @@ function runWriteBatches(
     commitStorageDatabaseChanges(database, {
       whitelist,
       blocklist: EMPTY_STORAGE_CHANGES,
-      temporaryWhitelist: EMPTY_TEMPORARY_WHITELIST_CHANGES,
+      temporaryAdBypass: EMPTY_TEMPORARY_AD_BYPASS_CHANGES,
       removals: EMPTY_STORAGE_CHANGES,
-      chatStates: EMPTY_STORAGE_CHANGES,
+      chatStates: new Map(),
       chatQa: EMPTY_CHAT_QA_CHANGES,
     });
     checksum += whitelist.size;
@@ -202,9 +202,9 @@ function runColdWriteBatches(
       commitStorageDatabaseChanges(database, {
         whitelist,
         blocklist: EMPTY_STORAGE_CHANGES,
-        temporaryWhitelist: EMPTY_TEMPORARY_WHITELIST_CHANGES,
+        temporaryAdBypass: EMPTY_TEMPORARY_AD_BYPASS_CHANGES,
         removals: EMPTY_STORAGE_CHANGES,
-        chatStates: EMPTY_STORAGE_CHANGES,
+        chatStates: new Map(),
         chatQa: EMPTY_CHAT_QA_CHANGES,
       });
       checksum += whitelist.size;

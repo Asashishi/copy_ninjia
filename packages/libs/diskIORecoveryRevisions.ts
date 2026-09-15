@@ -18,7 +18,7 @@ export class DiskIORecoveryRevisions {
   record(message: DiskBusinessMessage, buffered: LinkedQueue<DiskBusinessMessage>): void {
     switch (message.type) {
       case "identityPolicyWrite": this.policies[message.table].set(message.id, message.revision); break;
-      case "temporaryWhitelistWrite": this.temporary.set(message.id, message.revision); break;
+      case "temporaryAdBypassWrite": this.temporary.set(message.id, message.revision); break;
       case "chatStateWrite": this.states.set(message.chatId, message.revision); break;
       case "wedMembers":
       case "deleteWedMembers":
@@ -57,7 +57,7 @@ export class DiskIORecoveryRevisions {
   covers(message: DiskBusinessMessage): boolean {
     switch (message.type) {
       case "identityPolicyWrite": return (this.policies[message.table].get(message.id) ?? 0) >= message.revision;
-      case "temporaryWhitelistWrite": return (this.temporary.get(message.id) ?? 0) >= message.revision;
+      case "temporaryAdBypassWrite": return (this.temporary.get(message.id) ?? 0) >= message.revision;
       case "chatStateWrite": return (this.states.get(message.chatId) ?? 0) >= message.revision;
       case "wedMembers":
       case "deleteWedMembers": return this.coveredWedOperations.has(message);

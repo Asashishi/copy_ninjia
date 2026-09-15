@@ -165,12 +165,12 @@ export function createDiskIOWorker(): Worker {
       const rows: IdentityPolicyRawReadResult | undefined =
         reply.whitelist === undefined ||
           reply.blocklist === undefined ||
-          reply.temporaryWhitelist === undefined
+          reply.temporaryAdBypass === undefined
           ? undefined
           : {
             whitelist: reply.whitelist,
             blocklist: reply.blocklist,
-            temporaryWhitelist: reply.temporaryWhitelist,
+            temporaryAdBypass: reply.temporaryAdBypass,
           };
       settleDiskIOReply({
         channel: identityPolicyReadRequests,

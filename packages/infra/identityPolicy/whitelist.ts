@@ -2,7 +2,7 @@ import {
   DEFAULT_WHITELIST_PERMISSIONS,
   NON_WHITELIST_PERMISSIONS,
   SUPER_ADMIN_WHITELIST_PERMISSIONS,
-  TEMPORARY_WHITELIST_PERMISSIONS,
+  TEMPORARY_AD_BYPASS_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
 } from "../../consts/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
@@ -12,9 +12,9 @@ import {
   queueIdentityPolicyWrite,
 } from "../identityStorage";
 import {
-  hasActiveTemporaryWhitelist,
-  hasActiveTemporaryWhitelistAt,
-} from "./temporaryWhitelist";
+  hasActiveTemporaryAdBypass,
+  hasActiveTemporaryAdBypassAt,
+} from "./temporaryAdBypass";
 import type {
   TelegramIdentityMetadata,
   WhitelistEntryData,
@@ -70,10 +70,10 @@ export function getEffectiveWhitelistPermissions(
   const permanent: Readonly<WhitelistEntryData> | undefined = cachedWhitelistEntry(id);
   if (permanent !== undefined) return permanent.permissions;
   const temporaryActive: boolean = now === undefined
-    ? hasActiveTemporaryWhitelist(id)
-    : hasActiveTemporaryWhitelistAt(id, now);
+    ? hasActiveTemporaryAdBypass(id)
+    : hasActiveTemporaryAdBypassAt(id, now);
   return temporaryActive
-    ? TEMPORARY_WHITELIST_PERMISSIONS
+    ? TEMPORARY_AD_BYPASS_PERMISSIONS
     : undefined;
 }
 
@@ -105,7 +105,7 @@ export function hasWhitelistPermission(
 }
 
 /**
- * 永久白名单身份是否持有单项权限；超级管理员按身份直授，临时白名单不进入本边界。
+ * 永久白名单身份是否持有单项权限；超级管理员按身份直授，临时广告免检不进入本边界。
  * 一次缓存读取同时完成成员关系与权限判断，供明确排除临时授权的消息热路径使用。
  */
 export function hasPermanentWhitelistPermission(
@@ -254,7 +254,7 @@ export function promoteAdBypassWhitelistMembership(
   return {
     changed: true,
     queued: queueIdentityPolicyWrite("whitelist", id, {
-      permissions: TEMPORARY_WHITELIST_PERMISSIONS,
+      permissions: TEMPORARY_AD_BYPASS_PERMISSIONS,
       meta: storedMeta,
     }),
   };

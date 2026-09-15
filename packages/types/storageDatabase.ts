@@ -33,6 +33,7 @@ export interface StoredPendingRemovalStartupRow {
 
 /** 群状态 JSONB 经 SQLite `json()` 规范化后的文本行。 */
 export interface StoredChatStateRow {
+  readonly aiPersona: string | null;
   readonly chatId: number;
   readonly data: string;
 }
@@ -59,7 +60,7 @@ export interface StoredStorageMetadataRow {
  * readStorageDatabaseSchemaMetadata 单独取，不从这里回传。
  */
 export interface StorageDatabaseStartupRows {
-  readonly whitelistEntryCount: number;
+  readonly permissionEntryCount: number;
   readonly blocklistEntryCount: number;
   readonly chatStates: readonly StoredChatStateRow[];
   readonly chatQa: readonly StoredChatQaRow[];
@@ -68,6 +69,11 @@ export interface StorageDatabaseStartupRows {
 /** 事务缓冲中一项主键的最终 JSON 文本；null 表示删除。 */
 export interface StorageDatabaseChange {
   readonly data: string | null;
+}
+
+/** 群状态与人设由主线程以同一 revision 提交，上下文由 AI owner 单独提交。 */
+export interface StorageChatStateChange extends StorageDatabaseChange {
+  readonly aiPersona: string | null;
 }
 
 /** Drizzle 迁移日志中用于严格识别部署谱系的一项。 */
@@ -103,5 +109,5 @@ export interface StoredIdentityIdLookup {
 export interface StoredIdentityIdLookups {
   readonly whitelist: StoredIdentityIdLookup;
   readonly blocklist: StoredIdentityIdLookup;
-  readonly temporaryWhitelist: StoredIdentityIdLookup;
+  readonly temporaryAdBypass: StoredIdentityIdLookup;
 }

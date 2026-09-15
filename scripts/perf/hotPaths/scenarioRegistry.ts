@@ -37,8 +37,8 @@ import {
   senderMixedIdentityScenario,
   senderScenario,
 } from "./scenarios";
-import { createTemporaryWhitelistActivityScenario } from
-  "./temporaryWhitelistScenario";
+import { createTemporaryAdBypassActivityScenario } from
+  "./temporaryAdBypassScenario";
 import {
   bufferedMessageBuildScenario,
   mentionFactsScenario,
@@ -81,7 +81,7 @@ export function createScenario(name: ScenarioName): Scenario {
     case "ad-wire-clone": return adWireCloneScenario();
     case "ad-capacity-reject": return createAdCapacityRejectScenario();
     case "identity-permission-read": return createIdentityPermissionReadScenario();
-    case "temporary-whitelist-activity": return createTemporaryWhitelistActivityScenario();
+    case "temporary-whitelist-activity": return createTemporaryAdBypassActivityScenario();
     case "join-timestamp-window": return joinTimestampWindowScenario();
     case "quota-timestamp-window": return quotaTimestampWindowScenario();
     case "bounded-rolling-buffer": return boundedRollingBufferScenario();

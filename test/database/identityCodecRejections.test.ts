@@ -12,7 +12,7 @@ import type { WhitelistPermissionKey } from "../../packages/types/identityPolicy
 /**
  * 名单与 outbox 三个解码器的**拒绝分支**逐条核对。
  *
- * 与 temporaryWhitelistCodec.test.ts 同一条理由：这些解码器是 AGENTS.md
+ * 与 temporaryAdBypassCodec.test.ts 同一条理由：这些解码器是 AGENTS.md
  * 「不为用户行为兜底」在持久化侧的落点，被改坏的行必须致命退出而不是被默认值
  * 回填或丢弃。正例通过证明不了任何一条判定写对了方向——只有让每条 invalidInput
  * 都被一个具体的坏输入命中，才谈得上这道闸真的在。
@@ -21,7 +21,7 @@ import type { WhitelistPermissionKey } from "../../packages/types/identityPolicy
  * 是运维唯一能据以定位的东西，写错路径等于把人指到别的列上。
  */
 
-const SOURCE: string = "whitelist_entries[7].data";
+const SOURCE: string = "permission_list[7].policy";
 
 function allPermissions(value: boolean): Record<string, boolean> {
   const permissions: Record<string, boolean> = {};
