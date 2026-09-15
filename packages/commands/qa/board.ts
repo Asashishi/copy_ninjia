@@ -117,14 +117,15 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
   const stored: ReadonlyMap<string, string> | undefined = getChatQa(chatId);
   const entries: QaEntry[] = [];
   if (stored !== undefined) for (const [q, a] of stored) entries.push({ q, a });
-  const pages: readonly RichTextMessage[] = buildQaBoardPages(entries, chatAtmosphere(chatId));
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const pages: readonly RichTextMessage[] = buildQaBoardPages(entries, atmosphere);
   if (pages.length === 0) {
     // 看板还挂着，条目却已经被删光：就地收敛成「空空如也」并收走翻页条，
     // 而不是留一份指向不存在条目的旧快照。
     await editMessageText({
       chatId,
       messageId: boardMessage.message_id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).QA_COMMAND_TEXTS.queryEmpty,
+      text: atmosphere.QA_COMMAND_TEXTS.queryEmpty,
     });
     return true;
   }
@@ -137,7 +138,7 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
     messageId: boardMessage.message_id,
     text: rendered.text,
     entities: rendered.entities,
-    keyboard: buildQaBoardKeyboard(page, pages.length, chatAtmosphere(chatId)),
+    keyboard: buildQaBoardKeyboard(page, pages.length, atmosphere),
   });
   return true;
 }

@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { queryAiMood, switchAiMood } from "../aiChat";
@@ -110,9 +111,10 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
 
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
   if (!actor || !hasCommandPermission(ctx, "isCanSwitchMood")) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodSwitchRejected(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor),
+      text: atmosphere.NOTICE_TEXTS.moodSwitchRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor),
       replyToMessageId: messageId,
     });
     return;

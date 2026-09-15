@@ -241,9 +241,10 @@ export async function handleBotStatusCommand(
 ): Promise<void> {
   if (!hasCommandPermission(ctx, "isCanViewBotStatus")) {
     const actor: CachedUser | undefined = resolveCommandActor(ctx);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.statusRejected(actor === undefined ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor : formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0))),
+      text: atmosphere.NOTICE_TEXTS.statusRejected(actor === undefined ? atmosphere.NOTICE_TEXTS.unknownActor : formatUserLabel(actor, atmosphere)),
       replyToMessageId: ctx.msgId,
     });
     return;

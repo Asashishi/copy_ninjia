@@ -1,4 +1,5 @@
-import { chatAtmosphere } from "../infra/atmosphere";
+import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import type { AtmosphereTexts } from "../types/atmosphere";
 /** 广告检测主线程入口：把一条 Telegram 群消息收敛为 Worker 所需的最小候选载荷。 */
 
 import type {
@@ -196,14 +197,15 @@ export function buildAdCandidate(
   // `senderChat === undefined` 时 senderId 只能来自 `message.from.id`，上面那道
   // `senderId === undefined` 早退已经证明它在；频道那一支仍要投影，它得合成
   // `isChannel: true` 与 title。
+  const atmosphere: AtmosphereTexts = chatState.aiPersona === undefined ? ATMOSPHERE_TEXTS.teasing : ATMOSPHERE_TEXTS.plain;
   const label: string = senderChat === undefined
-    ? formatUserLabel(message.from!, chatAtmosphere(chatId))
+    ? formatUserLabel(message.from!, atmosphere)
     : formatUserLabel({
       id: senderId,
       username: "username" in senderChat ? senderChat.username : undefined,
       title: "title" in senderChat ? senderChat.title : undefined,
       isChannel: true,
-    }, chatAtmosphere(chatId));
+    }, atmosphere);
   const meta: Readonly<TelegramIdentityMetadata> =
     messageIdentityMetadata(message, senderChat);
   // 两个可选字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`

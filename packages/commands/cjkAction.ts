@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { Context, NextFunction } from "grammy";
 import type { Message, MessageEntity } from "grammy/types";
@@ -185,10 +186,11 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
   });
   if (!target) return;
 
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   const { text, entities }: ActionMessage = buildActionMessage([
-    { text: formatFullName(actor, chatAtmosphere(ctx.chat?.id ?? 0)), url: formatProfileUrl(actor) },
+    { text: formatFullName(actor, atmosphere), url: formatProfileUrl(actor) },
     { text: ` ${actionWord}了 `, url: undefined },
-    { text: formatFullName(target, chatAtmosphere(ctx.chat?.id ?? 0)), url: formatProfileUrl(target) },
+    { text: formatFullName(target, atmosphere), url: formatProfileUrl(target) },
     { text: "！", url: undefined },
   ]);
   await sendCommandMessage({

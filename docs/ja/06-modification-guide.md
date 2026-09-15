@@ -21,7 +21,7 @@
 
 ## スラッシュコマンドの追加
 
-1. **Handler**：`packages/commands/` から明示的な戻り値型付きで `handleXxxCommand` を export します。委任可能な権限は `hasCommandPermission(ctx, key)`、スーパー管理者本人限定の操作は `isSuperAdminActor`、private chat は `send.ts` を参照します。固定文言と formatter は `packages/consts/atmosphere/{teasing,plain}/` の対応する領域に置き、両版で同じ型を使います。main は `chatAtmosphere(chatId)` で選択し、名前・プロンプト・質問は引数で挿入します。描画後の本文置換は行いません。
+1. **Handler**：`packages/commands/` から明示的な戻り値型付きで `handleXxxCommand` を export します。委任可能な権限は `hasCommandPermission(ctx, key)`、スーパー管理者本人限定の操作は `isSuperAdminActor`、private chat は `send.ts` を参照します。固定文言と formatter は `packages/consts/atmosphere/{teasing,plain}/` の対応する領域に置き、両版で同じ型を使います。main は `chatAtmosphere(chatId)` で選択し、名前・プロンプト・質問は引数で挿入します。描画後の本文置換は行いません。 一度の描画ではローカルの `AtmosphereTexts` を呼称・本文・ボタンの formatter に渡し、人設変更後・次の操作・バックグラウンド実行時は再選択します。`chatState` を持つメッセージ hot path は、その `aiPersona` から選び、cache 読み取りを追加しません。
 2. **Export**：`packages/commands/index.ts` に追加します。
 3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) の `commands` サブチェーンに `commands.command("xxx", ...)` を追加します。**`bot` へ直接登録してはいけません** — コマンドはすべて共有の `bot.on(":entities:bot_command")` サブチェーンの後ろに収めます（理由は [02 アーキテクチャ概要](02-architecture.md#1-件のメッセージが通る経路) の「コマンド登録」を参照）。`test/app/registerHandlers.test.ts` は `bot` に直接登録されたコマンドを拒否します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
 4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。

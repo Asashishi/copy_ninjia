@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import type { AvatarNoticeSource } from "../../packages/types/copy/avatar";
+import type { Atmosphere } from "../../packages/types/atmosphere";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const copyUserProfilePhoto = mock(async (..._args: unknown[]): Promise<boolean> => true);
@@ -8,6 +11,7 @@ const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => ({ id: 7, first_name: "Alice" }));
 const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
+const personas = new Map<number, { aiPersona?: string }>();
 const DEFAULT_AVATAR_URL: string = "https://cdn.example/default-face.jpg";
 
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 100 }));
@@ -17,7 +21,7 @@ mock.module("../../packages/infra/telegram", () => ({
 mock.module("../../packages/infra/telegram/avatar/copy", () => ({ copyUserProfilePhoto }));
 mock.module("../../packages/infra/telegram/avatar/restore", () => ({ restoreDefaultProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (): Record<string, never> => ({}),
+  getChatState: (chatId: number): { aiPersona?: string } => personas.get(chatId) ?? {},
   getGlobalCopyState: () => globalCopyState,
   // copy/avatarQueue.ts 在主线程取默认头像直链后传给 restoreDefaultProfilePhoto；
   // 这里的替身必须一并提供，否则整个模块的具名导入会在加载期就失败。
@@ -45,6 +49,13 @@ const { COPY_COOLDOWN_MS } = await import("../../packages/consts/commands");
 const { STEAL_ICON_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/commands");
 const originalDateNow: () => number = Date.now;
 
+interface AvatarNoticeCase {
+  source: AvatarNoticeSource;
+  kind: "user" | "default";
+  updated: boolean;
+  nextAtmosphere: Atmosphere;
+}
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt: number = 0; attempt < 20; attempt++) {
     if (predicate()) return;
@@ -54,6 +65,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 beforeEach(() => {
+  personas.clear();
   delete globalCopyState.lastCopyTime;
   Date.now = (): number => 1_000_000;
   for (const mocked of [
@@ -79,6 +91,56 @@ afterEach(() => {
 });
 
 describe("copy 命令共享冷却与头像串行器", () => {
+  test.each([
+    { source: "copy", kind: "user", updated: true, nextAtmosphere: "plain" },
+    { source: "copy", kind: "user", updated: false, nextAtmosphere: "teasing" },
+    { source: "copy", kind: "default", updated: true, nextAtmosphere: "teasing" },
+    { source: "copy", kind: "default", updated: false, nextAtmosphere: "plain" },
+    { source: "icon", kind: "user", updated: true, nextAtmosphere: "teasing" },
+    { source: "icon", kind: "user", updated: false, nextAtmosphere: "plain" },
+    { source: "icon", kind: "default", updated: true, nextAtmosphere: "plain" },
+    { source: "icon", kind: "default", updated: false, nextAtmosphere: "teasing" },
+  ] satisfies AvatarNoticeCase[])(
+    "$source $kind 结果 $updated 在发送时使用新切换的 $nextAtmosphere 氛围",
+    async ({ source, kind, updated, nextAtmosphere }) => {
+      let finish!: (value: boolean) => void;
+      const pending = new Promise<boolean>((resolve) => { finish = resolve; });
+      const operation = kind === "user" ? copyUserProfilePhoto : restoreDefaultProfilePhoto;
+      operation.mockImplementationOnce(() => pending);
+      personas.set(-1001, { aiPersona: nextAtmosphere === "plain" ? undefined : "旧人设" });
+      if (kind === "user") {
+        shared.stealAvatarInBackground({ chatId: -1001, target: { id: 7 }, source });
+      } else {
+        shared.restoreAvatarInBackground({ chatId: -1001, source });
+      }
+      expect(operation).toHaveBeenCalledTimes(1);
+      expect(sendMessage).not.toHaveBeenCalled();
+      personas.set(-1001, { aiPersona: nextAtmosphere === "plain" ? "新的人设" : undefined });
+      finish(updated);
+      await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
+
+      const texts = ATMOSPHERE_TEXTS[nextAtmosphere].NOTICE_TEXTS;
+      const expected: string = kind === "default"
+        ? source === "copy"
+          ? updated ? texts.copyAvatarRestored : texts.copyAvatarRestoreFailed
+          : updated ? texts.iconRestored : texts.iconRestoreFailed
+        : source === "copy"
+          ? updated ? texts.copyAvatarChanged(texts.unknownUser) : texts.copyAvatarFailed(texts.unknownUser)
+          : updated ? texts.iconChanged(texts.unknownUser) : texts.iconFailed(texts.unknownUser);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: expected, signal: expect.any(AbortSignal) });
+    }
+  );
+
+  test("头像回执保留昵称原文，只按群配置选择模板", async () => {
+    personas.set(-1001, { aiPersona: "普通风格" });
+    shared.stealAvatarInBackground({ chatId: -1001, target: { id: 7, first_name: "本天才♡" }, source: "icon" });
+    await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.iconChanged("本天才♡"),
+    }));
+  });
+
   test("头像 drain 拒绝非有限与负预算", () => {
     expect(() => drainAvatarUpdates(-1)).toThrow("non-negative finite");
     expect(() => drainAvatarUpdates(Number.NaN)).toThrow("non-negative finite");
@@ -97,8 +159,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
     shared.stealAvatarInBackground({
       chatId: -1001,
       target: { id: 7, first_name: "Alice" },
-      successText: "late-ok",
-      failureText: "late-fail",
+      source: "icon",
     });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
 
@@ -180,20 +241,17 @@ describe("copy 命令共享冷却与头像串行器", () => {
     shared.stealAvatarInBackground({
       chatId: -1001,
       target: firstTarget,
-      successText: "first-ok",
-      failureText: "first-fail",
+      source: "icon",
     });
     shared.stealAvatarInBackground({
       chatId: -1002,
       target: secondTarget,
-      successText: "second-ok",
-      failureText: "second-fail",
+      source: "icon",
     });
     shared.stealAvatarInBackground({
       chatId: -1003,
       target: latestTarget,
-      successText: "latest-ok",
-      failureText: "latest-fail",
+      source: "icon",
     });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
     expect(copyUserProfilePhoto).toHaveBeenCalledWith(7, false, {
@@ -211,7 +269,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
       { username: "latest_channel", signal: expect.any(AbortSignal) }
     );
     expect(sendMessage.mock.calls).toEqual([
-      [{ chatId: -1003, text: "latest-fail", signal: expect.any(AbortSignal) }],
+      [{ chatId: -1003, text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.iconFailed("@latest_channel"), signal: expect.any(AbortSignal) }],
     ]);
     await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
   });
@@ -221,8 +279,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
     shared.stealAvatarInBackground({
       chatId: -1001,
       target: { id: 7, first_name: "Alice" },
-      successText: "ok",
-      failureText: "fail",
+      source: "icon",
     });
     await waitFor(() => loggerError.mock.calls.length === 1);
     expect(loggerError).toHaveBeenCalledWith("Error in background avatar update task:", expect.any(Error));
@@ -236,8 +293,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
     shared.stealAvatarInBackground({
       chatId: -1001,
       target: { id: 7, first_name: "Alice" },
-      successText: "late-ok",
-      failureText: "late-fail",
+      source: "icon",
     });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
 
@@ -252,8 +308,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
   test("复原任务与偷脸任务共用同一个执行槽，走 restoreDefaultProfilePhoto", async () => {
     shared.restoreAvatarInBackground({
       chatId: -1001,
-      successText: "restored",
-      failureText: "restore-failed",
+      source: "icon",
     });
     await waitFor(() => restoreDefaultProfilePhoto.mock.calls.length === 1);
     await waitFor(() => !avatarUpdateState.running);
@@ -262,19 +317,18 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(copyUserProfilePhoto).not.toHaveBeenCalled();
     // 直链在主线程取好后传进去，avatar/restore.ts 自己不碰 state（见 avatarQueue.ts）。
     expect(restoreDefaultProfilePhoto.mock.calls[0]?.[0]).toBe(DEFAULT_AVATAR_URL);
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "restored" }));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.iconRestored }));
   });
 
   test("复原失败时发失败战报", async () => {
     restoreDefaultProfilePhoto.mockImplementationOnce(async (): Promise<boolean> => false);
     shared.restoreAvatarInBackground({
       chatId: -1001,
-      successText: "restored",
-      failureText: "restore-failed",
+      source: "icon",
     });
     await waitFor(() => restoreDefaultProfilePhoto.mock.calls.length === 1);
     await waitFor(() => !avatarUpdateState.running);
 
-    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "restore-failed" }));
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.iconRestoreFailed }));
   });
 });

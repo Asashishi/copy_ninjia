@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
@@ -59,10 +60,11 @@ export async function handleWhiteCommand(
     hasWhitelistPermission(actor.id, "isCanWhiteOther")
   );
   if (!actorCanWhiteOther) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.rejection(
-        actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor
+      text: atmosphere.WHITE_COMMAND_TEXTS.rejection(
+        actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor
       ),
       replyToMessageId: messageId,
     });
@@ -185,19 +187,21 @@ export async function handleWhiteCommand(
     return;
   }
   if (outcome.kind === "unauthorized") {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.rejection(
-        actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor
+      text: atmosphere.WHITE_COMMAND_TEXTS.rejection(
+        actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor
       ),
       replyToMessageId: messageId,
     });
     return;
   }
   if (outcome.kind === "blocked") {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).WHITE_COMMAND_TEXTS.blocked(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
+      text: atmosphere.WHITE_COMMAND_TEXTS.blocked(formatTargetLabel(target, atmosphere)),
       replyToMessageId: messageId,
     });
     return;

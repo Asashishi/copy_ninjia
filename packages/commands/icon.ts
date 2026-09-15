@@ -3,6 +3,7 @@ import type { CommandContext, Context } from "grammy";
 
 import { ICON_SUBCOMMAND_PATTERN } from "../consts/icon";
 import type { CachedUser } from "../types/chatState";
+import type { AtmosphereTexts } from "../types/atmosphere";
 import type { CopyCooldownClaim } from "../types/copy/cooldown";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
@@ -16,7 +17,7 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
   const match: RegExpExecArray | null = ICON_SUBCOMMAND_PATTERN.exec(ctx.match.trim());
   const subcommand: string | undefined = match?.[1];
   if (match === null || (subcommand === "reset" && match[2] !== undefined)) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).ICON_USAGE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).ICON_USAGE_TEXT, replyToMessageId: messageId });
     return;
   }
 
@@ -30,32 +31,31 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
   if (subcommand === "reset") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.iconRestoring,
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.iconRestoring,
       replyToMessageId: messageId,
     });
     restoreAvatarInBackground({
       chatId,
-      successText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.iconRestored,
-      failureText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.iconRestoreFailed,
+      source: "icon",
     });
     return;
   }
 
-  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, chatAtmosphere(ctx.chat?.id ?? 0).STEAL_ICON_TARGET_TEXTS, match[2] ?? "");
+  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, chatAtmosphere(chatId).STEAL_ICON_TARGET_TEXTS, match[2] ?? "");
   if (!targetUser) {
     await releaseCopyCooldownClaim(cooldownClaim);
     return;
   }
-  const targetLabel: string = formatUserLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const targetLabel: string = formatUserLabel(targetUser, atmosphere);
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.iconStarting(targetLabel),
+    text: atmosphere.NOTICE_TEXTS.iconStarting(targetLabel),
     replyToMessageId: messageId,
   });
   stealAvatarInBackground({
     chatId,
     target: targetUser,
-    successText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.iconChanged(targetLabel),
-    failureText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.iconFailed(targetLabel),
+    source: "icon",
   });
 }

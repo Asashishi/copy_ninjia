@@ -3,6 +3,7 @@ import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser, CopyMode } from "../../packages/types/chatState";
 import { COPY_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
 import { COPY_USAGE_TEXT, ICON_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
@@ -11,6 +12,7 @@ const stealAvatarInBackground = mock((..._args: unknown[]): void => {});
 const restoreAvatarInBackground = mock((..._args: unknown[]): void => {});
 let cooldownRejected: boolean = false;
 let target: CachedUser | undefined;
+const persona: { aiPersona?: string } = {};
 const claim = { rejected: false as const, previousLastCopyTime: undefined, claimedAt: 123 };
 const globalCopy: {
   copiedUser: CachedUser | null;
@@ -31,7 +33,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (): Record<string, never> => ({}),
+  getChatState: (): { aiPersona?: string } => persona,
   getGlobalCopyState: () => globalCopy,
   persistGlobalState: async (context: string): Promise<void> => { saveStateInBackground(context); },
 }));
@@ -69,6 +71,7 @@ function context(chatId: number = -1001, replyToUserId?: number, argument: strin
 }
 
 beforeEach(() => {
+  persona.aiPersona = undefined;
   cooldownRejected = false;
   target = { id: 7, first_name: "Alice", username: "alice" };
   jaReadiness = { ok: true };
@@ -88,6 +91,20 @@ beforeEach(() => {
 });
 
 describe("copy 类命令生命周期", () => {
+  test("/icon 目标解析完成后使用当前氛围渲染开始提示", async () => {
+    resolveCopyCommandTarget.mockImplementationOnce(async () => {
+      persona.aiPersona = "新的人设";
+      return { id: 7 };
+    });
+    await handleIconCommand(context(-1001, undefined, "steal"));
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.iconStarting(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser),
+      replyToMessageId: 9,
+    });
+    expect(stealAvatarInBackground).toHaveBeenCalledWith({ chatId: -1001, target: { id: 7 }, source: "icon" });
+  });
+
   test.each([
     ["", undefined, ""],
     ["@alice", undefined, "@alice"],
@@ -195,6 +212,7 @@ describe("copy 类命令生命周期", () => {
     });
     expect(saveStateInBackground).toHaveBeenCalledWith("copy started");
     expect(stealAvatarInBackground).toHaveBeenCalledTimes(1);
+    expect(stealAvatarInBackground).toHaveBeenCalledWith({ chatId: -1001, target: globalCopy.copiedUser, source: "copy" });
     expect(sendMessage).toHaveBeenCalledWith({
       chatId: -1001,
       text: expect.stringContaining("倒过来念"),
@@ -214,6 +232,7 @@ describe("copy 类命令生命周期", () => {
     await handleCopyCommand(context(-1001, undefined, "stop"));
     expect(globalCopy).toEqual({ copiedUser: null });
     expect(saveStateInBackground).toHaveBeenCalledWith("copy stopped");
+    expect(restoreAvatarInBackground).toHaveBeenCalledWith({ chatId: -1001, source: "copy" });
   });
 
   test("/copy stop 停掉复读后顺带把头像复原", async () => {
@@ -271,6 +290,7 @@ describe("copy 类命令生命周期", () => {
     expect(claimCopyCooldownOrReject).toHaveBeenCalledTimes(1);
     expect(restoreAvatarInBackground).toHaveBeenCalledTimes(1);
     // 与 /icon steal 对称：这条命令只管脸，正在复读谁保持原样。
+    expect(restoreAvatarInBackground).toHaveBeenCalledWith({ chatId: -1001, source: "icon" });
     expect(globalCopy.copiedUser).toEqual({ id: 7, first_name: "Alice" });
     expect(saveStateInBackground).not.toHaveBeenCalled();
   });

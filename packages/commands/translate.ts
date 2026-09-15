@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState } from "../types/chatState";
@@ -78,11 +79,12 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
     if (target === undefined) return;
     const current: TranslateState | undefined = getTranslateState(chatId, target.id);
     await stopTranslation(chatId, target.id);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
       text: current === undefined
-        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.translateNotRunning(formatUserLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
-        : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.translateStopped(formatUserLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
+        ? atmosphere.NOTICE_TEXTS.translateNotRunning(formatUserLabel(target, atmosphere))
+        : atmosphere.NOTICE_TEXTS.translateStopped(formatUserLabel(target, atmosphere)),
       replyToMessageId: messageId,
     });
     return;
@@ -114,9 +116,10 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (target === undefined) return;
   const current: TranslateState | undefined = getTranslateState(chatId, target.id);
   if (current !== undefined) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.translateAlreadyRunning(formatUserLabel(current.translatedUser, chatAtmosphere(ctx.chat?.id ?? 0)), TRANSLATE_LANGUAGE_LABELS[current.language]),
+      text: atmosphere.NOTICE_TEXTS.translateAlreadyRunning(formatUserLabel(current.translatedUser, atmosphere), TRANSLATE_LANGUAGE_LABELS[current.language]),
       replyToMessageId: messageId,
     });
     return;
@@ -131,9 +134,10 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
     return;
   }
   await persistGlobalState("translation started");
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.translateStarted(formatUserLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)), TRANSLATE_LANGUAGE_LABELS[language]),
+    text: atmosphere.NOTICE_TEXTS.translateStarted(formatUserLabel(target, atmosphere), TRANSLATE_LANGUAGE_LABELS[language]),
     replyToMessageId: messageId,
   });
 }

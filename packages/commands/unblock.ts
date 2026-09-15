@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
@@ -58,7 +59,8 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
   if (!actor || !hasCommandPermission(ctx, "isCanUnBlock")) {
-    const replyText: string = chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockRejected(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const replyText: string = atmosphere.NOTICE_TEXTS.unblockRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor);
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -98,7 +100,6 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     return;
   }
 
-  const targetLabel: string = formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
   const {
     removedFromList,
     persisted,
@@ -110,27 +111,29 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   );
   // tombstone 没落盘就不能说「划掉了」：数据库里那条还在，重启后这个人会重新回到
   // 名单上，而管理员以为已经放过 TA 了。没动过名单就不必等这一次回执。
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
   const persistWarning: string = persisted
     ? ""
-    : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockPersistFailed;
+    : atmosphere.NOTICE_TEXTS.unblockPersistFailed;
 
   const listNote: string = removedFromList
-    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockRecorded(targetLabel, persistWarning)
-    : chatAtmosphere(chatId).NOTICE_TEXTS.unblockNotRecorded(targetLabel);
+    ? atmosphere.NOTICE_TEXTS.unblockRecorded(targetLabel, persistWarning)
+    : atmosphere.NOTICE_TEXTS.unblockNotRecorded(targetLabel);
 
   if (unbannedCount === 0 && failedCount === 0) {
     await sendCommandMessage({
       chatId,
       replyToMessageId: messageId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockNoManagedChat(listNote),
+      text: atmosphere.NOTICE_TEXTS.unblockNoManagedChat(listNote),
     });
     return;
   }
-  const failedNote: string = failedCount > 0 ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockPartialFailure(failedCount) : "";
+  const failedNote: string = failedCount > 0 ? atmosphere.NOTICE_TEXTS.unblockPartialFailure(failedCount) : "";
   await sendCommandMessage({
     chatId,
     replyToMessageId: messageId,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockResult(listNote, unbannedCount, failedNote),
+    text: atmosphere.NOTICE_TEXTS.unblockResult(listNote, unbannedCount, failedNote),
   });
 }
 

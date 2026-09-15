@@ -40,7 +40,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
   const subcommand: string | undefined = match?.[1];
   if (subcommand === "stop") {
     if (match?.[2] !== undefined) {
-      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).COPY_USAGE_TEXT, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).COPY_USAGE_TEXT, replyToMessageId: messageId });
       return;
     }
     await stopCopy(ctx);
@@ -59,9 +59,10 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     // 自己发一条「@x 都还没说过话呢」并返回 undefined，用户收到的是「不认识
     // 这个用户名」，而真正的原因（正在复读别人）永远没说。
     const targetUser: CachedUser | undefined = peekCommandTarget(ctx.msg, targetArgument);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
     const replyText: string = globalCopy.copiedUser.id === targetUser?.id
-      ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAlreadyRunning(formatUserLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0)))
-      : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyOtherTarget;
+      ? atmosphere.NOTICE_TEXTS.copyAlreadyRunning(formatUserLabel(targetUser, atmosphere))
+      : atmosphere.NOTICE_TEXTS.copyOtherTarget;
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -91,16 +92,16 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
   // 避免 update 已确认后重启复活旧 copy 状态。
   await persistGlobalState("copy started");
 
-  const targetLabel: string = formatUserLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
-  const startText: string = chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyStarting(targetLabel, describeCopyModeEffect(mode, chatAtmosphere(chatId)));
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const targetLabel: string = formatUserLabel(targetUser, atmosphere);
+  const startText: string = atmosphere.NOTICE_TEXTS.copyStarting(targetLabel, describeCopyModeEffect(mode, atmosphere));
   await sendCommandMessage({ chatId, text: startText, replyToMessageId: messageId });
 
   // 头像复制放在后台执行：copiedUser 已经写入，复读逻辑立即生效。
   stealAvatarInBackground({
     chatId,
     target: targetUser,
-    successText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarChanged(targetLabel),
-    failureText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarFailed(targetLabel),
+    source: "copy",
   });
 }
 
@@ -116,7 +117,7 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
   if (!globalCopy.copiedUser) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyNotRunning,
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.copyNotRunning,
       replyToMessageId: messageId,
     });
     return;
@@ -127,13 +128,12 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
   globalCopy.copyChatId = undefined;
   await persistGlobalState("copy stopped");
 
-  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyStopped, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.copyStopped, replyToMessageId: messageId });
 
   // /copy stop 不占全局冷却；仅在停止活动复读后预约恢复默认头像。
   restoreAvatarInBackground({
     chatId,
-    successText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarRestored,
-    failureText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.copyAvatarRestoreFailed,
+    source: "copy",
   });
 }
 

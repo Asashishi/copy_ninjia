@@ -6,7 +6,25 @@ import { copyUserProfilePhoto } from "../infra/telegram/avatar/copy";
 import { restoreDefaultProfilePhoto } from "../infra/telegram/avatar/restore";
 import { getBotDefaultAvatarUrl } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
+import { chatAtmosphere } from "../infra/atmosphere";
+import { formatUserLabel } from "../users/userLabel";
+import type { AtmosphereTexts } from "../types/atmosphere";
 import type { AvatarUpdateRequest, AvatarUpdateTask } from "../types/copy/avatar";
+
+function renderAvatarNotice(task: AvatarUpdateTask, updated: boolean): string {
+  const atmosphere: AtmosphereTexts = chatAtmosphere(task.chatId);
+  if (task.target.kind === "default") {
+    if (task.source === "copy") {
+      return updated ? atmosphere.NOTICE_TEXTS.copyAvatarRestored : atmosphere.NOTICE_TEXTS.copyAvatarRestoreFailed;
+    }
+    return updated ? atmosphere.NOTICE_TEXTS.iconRestored : atmosphere.NOTICE_TEXTS.iconRestoreFailed;
+  }
+  const label: string = formatUserLabel(task.target.user, atmosphere);
+  if (task.source === "copy") {
+    return updated ? atmosphere.NOTICE_TEXTS.copyAvatarChanged(label) : atmosphere.NOTICE_TEXTS.copyAvatarFailed(label);
+  }
+  return updated ? atmosphere.NOTICE_TEXTS.iconChanged(label) : atmosphere.NOTICE_TEXTS.iconFailed(label);
+}
 
 function notifyAvatarDrainIfIdle(): void {
   if (avatarUpdateState.running || avatarUpdateState.pending !== null) return;
@@ -41,7 +59,7 @@ async function consumeAvatarUpdates(): Promise<void> {
         if (!signal.aborted && task.generation === avatarUpdateState.latestGeneration) {
           await sendCommandMessage({
             chatId: task.chatId,
-            text: updated ? task.successText : task.failureText,
+            text: renderAvatarNotice(task, updated),
             signal,
           });
         }

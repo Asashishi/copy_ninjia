@@ -1,3 +1,5 @@
+import type { AtmosphereTexts } from "../../types/atmosphere";
+import { chatAtmosphere } from "../../infra/atmosphere";
 import {
   deleteEphemeralMessageWithOutcome,
   deleteMessageWithOutcome,
@@ -35,9 +37,10 @@ export async function sendGagSpeakNotice({
   replyToMessageId,
   onSent,
 }: SendGagSpeakNoticeOptions): Promise<number | undefined> {
-  const text: string = renderGagSpeakNotice(session);
+  const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
+  const text: string = renderGagSpeakNotice(session, atmosphere);
   const keyboard: ReturnType<typeof buildGagSpeakKeyboard> =
-    buildGagSpeakKeyboard(session);
+    buildGagSpeakKeyboard(session, atmosphere);
   if (session.targetId > 0) {
     return sendEphemeralMessage({
       chatId: session.chatId,

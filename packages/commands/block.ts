@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
@@ -62,7 +63,8 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
   if (!actor || !hasCommandPermission(ctx, "isCanBlock")) {
-    const replyText: string = chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockRejected(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const replyText: string = atmosphere.NOTICE_TEXTS.blockRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor);
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -119,9 +121,10 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     }
   );
   if (admission.protected) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockProtected(formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0))),
+      text: atmosphere.NOTICE_TEXTS.blockProtected(formatTargetLabel(targetUser, atmosphere)),
       replyToMessageId: messageId,
     });
     return;
@@ -141,16 +144,14 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 封禁清单与 /unblock 的跨群解封同源，见 infra/blocklist/membership.ts 的 managedAdminChatIds。
   const targetChatIds: number[] = managedAdminChatIds(chatId, isAdminHere);
 
-  const targetLabel: string = formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
-  // 落盘失败必须说破：那条记录只活在本进程内存里，重启就没了，而管理员默认
-  // 理解的是「永久」。
-  const persistWarning: string = persisted ? "" : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockPersistFailed;
-  // 一个管理的群都没有时也已经记进黑名单了：现在踢不动，不代表以后进群时
-  // 也放过 TA。文案要说清这一点，否则管理员会以为这条命令完全没生效。
+  // 无跨群操作时直接渲染本次落盘结果。
   if (targetChatIds.length === 0) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
+    const persistWarning: string = persisted ? "" : atmosphere.NOTICE_TEXTS.blockPersistFailed;
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockNoManagedChat(targetLabel, persistWarning),
+      text: atmosphere.NOTICE_TEXTS.blockNoManagedChat(targetLabel, persistWarning),
       replyToMessageId: messageId,
     });
     return;
@@ -196,20 +197,23 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 权限恢复后由下一次管理员身份观测把这些群重扫一遍，不用管理员再跑一次 /block。
   for (const resweepChatId of resweepChatIds) requestBlocklistResweep(resweepChatId);
 
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
+  const persistWarning: string = persisted ? "" : atmosphere.NOTICE_TEXTS.blockPersistFailed;
   const bannedCount: number = kickedCount + confirmedBannedCount;
   if (bannedCount === 0) {
-    const replyText: string = chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockAllFailed(targetLabel, persistWarning);
+    const replyText: string = atmosphere.NOTICE_TEXTS.blockAllFailed(targetLabel, persistWarning);
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
   // 本群不是管理员时明确说清：本群这个人还留着，被拉黑的是其它群。
-  const notAdminHereNote: string = isAdminHere ? "" : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockNotAdminHere;
+  const notAdminHereNote: string = isAdminHere ? "" : atmosphere.NOTICE_TEXTS.blockNotAdminHere;
   const failedCount: number = targetChatIds.length - bannedCount;
-  const failedNote: string = failedCount > 0 ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockPartialFailure(failedCount) : "";
+  const failedNote: string = failedCount > 0 ? atmosphere.NOTICE_TEXTS.blockPartialFailure(failedCount) : "";
   // “不在群”只表示本次没有执行移出动作，无法证明目标从未加入过；因此只说
   // “确认封禁”，不再使用“提前拉黑（根本没进去过）”这类历史推断。
-  const kickedNote: string = kickedCount > 0 ? chatAtmosphere(chatId).NOTICE_TEXTS.blockKicked(kickedCount) : "";
+  const kickedNote: string = kickedCount > 0 ? atmosphere.NOTICE_TEXTS.blockKicked(kickedCount) : "";
   const confirmedBannedNote: string = confirmedBannedCount > 0 ? `在 ${confirmedBannedCount} 个群确认封禁` : "";
   const actionNote: string = [kickedNote, confirmedBannedNote].filter(Boolean).join("，");
   // 本来就在名单里的人再 /block 一次不该被说成「刚记上」。各群仍重新查询
@@ -217,11 +221,11 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 落盘警告两条路都要带：重复 /block 正是上一次没写进硬盘时的重试动作，
   // 还没写成功就不能不说。
   const blocklistNote: string = newlyBlocked
-    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockRecorded(persistWarning)
-    : chatAtmosphere(chatId).NOTICE_TEXTS.blockAlreadyRecorded(persistWarning);
+    ? atmosphere.NOTICE_TEXTS.blockRecorded(persistWarning)
+    : atmosphere.NOTICE_TEXTS.blockAlreadyRecorded(persistWarning);
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockResult({ notAdminHereNote, targetLabel, actionNote, failedNote, blocklistNote }),
+    text: atmosphere.NOTICE_TEXTS.blockResult({ notAdminHereNote, targetLabel, actionNote, failedNote, blocklistNote }),
     replyToMessageId: messageId,
   });
 }

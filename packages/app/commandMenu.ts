@@ -1,7 +1,6 @@
 import type { Bot } from "grammy";
 import type { Api } from "grammy";
 import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
-import { chatAtmosphere } from "../infra/atmosphere";
 import { getChatState, getChatStateCache } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
 
@@ -27,7 +26,7 @@ export async function syncChatCommandMenu(
     if (getChatState(chatId).aiPersona === undefined) {
       await api.deleteMyCommands({ scope: { type: "chat", chat_id: chatId } });
     } else {
-      await api.setMyCommands(chatAtmosphere(chatId).BOT_COMMANDS, { scope: { type: "chat", chat_id: chatId } });
+      await api.setMyCommands(ATMOSPHERE_TEXTS.plain.BOT_COMMANDS, { scope: { type: "chat", chat_id: chatId } });
     }
   } catch (error: unknown) {
     logger.error(`Failed to synchronize the commands menu for chat ${chatId}:`, error);

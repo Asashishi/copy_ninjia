@@ -231,10 +231,11 @@ export async function handlePermissionCommand(
     // 不为一次查询创建或写入数据库条目。超级管理员则由配置边界返回全开视图。
     const permissions: Readonly<WhitelistPermissions> =
       getWhitelistPermissionQueryView(target.id);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
     const queryMessage: PermissionHelpMessage = formatPermissionQueryMessage(
       permissions,
-      formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)),
-      chatAtmosphere(chatId)
+      formatTargetLabel(target, atmosphere),
+      atmosphere
     );
     await sendCommandMessage({
       chatId,
@@ -251,10 +252,11 @@ export async function handlePermissionCommand(
   }
 
   if (!actorIsSuperAdmin) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.mutationRejection(
-        actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor
+      text: atmosphere.PERMISSION_COMMAND_TEXTS.mutationRejection(
+        actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor
       ),
       replyToMessageId: messageId,
     });
@@ -331,9 +333,10 @@ export async function handlePermissionCommand(
     return;
   }
   if (!isWhitelisted(target.id)) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.targetNotWhitelisted(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
+      text: atmosphere.PERMISSION_COMMAND_TEXTS.targetNotWhitelisted(formatTargetLabel(target, atmosphere)),
       replyToMessageId: messageId,
     });
     return;
@@ -348,9 +351,10 @@ export async function handlePermissionCommand(
       await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
       return;
     }
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     const replyText: string = result.changed
-      ? chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.allEnabled(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
-      : chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.allAlreadyEnabled(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)));
+      ? atmosphere.PERMISSION_COMMAND_TEXTS.allEnabled(formatTargetLabel(target, atmosphere))
+      : atmosphere.PERMISSION_COMMAND_TEXTS.allAlreadyEnabled(formatTargetLabel(target, atmosphere));
     await sendCommandMessage({
       chatId,
       text: replyText,
@@ -370,10 +374,11 @@ export async function handlePermissionCommand(
     await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
     return;
   }
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.permissionSet({
-      targetLabel: formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)),
+    text: atmosphere.PERMISSION_COMMAND_TEXTS.permissionSet({
+      targetLabel: formatTargetLabel(target, atmosphere),
       key,
       value,
       changed: result.changed,

@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../../types/atmosphere";
 import { chatAtmosphere } from "../../infra/atmosphere";
 import { InlineKeyboard } from "grammy";
 import { GAG_DEFAULT_DURATION_MINUTES, GAG_DEFAULT_TOOL, GAG_DURATION_MINUTES, GAG_DURATION_TOKEN_PATTERN, GAG_FILLER_DOT, GAG_FILLER_GAP_SPACE_PROBABILITY, GAG_FILLER_MAX_CHARS, GAG_FILLER_MAX_DOTS, GAG_FILLER_MIN_DOTS, GAG_FILL_OPERATION_PROBABILITY, GAG_INLINE_QUERY_MAX_CHARS, GAG_INLINE_QUERY_PREFIX, GAG_MAX_CONSECUTIVE_SAME_OPERATIONS, GAG_MIN_OPERATION_TIERS, GAG_REPLACEMENT_CHARACTERS } from "../../consts/gag";
@@ -28,9 +29,9 @@ export function gagSpeechPrefix(tool: string): string {
  * 放进 InlineQuery，任何追加值也无法证明实际输入群；群绑定必须留给隐藏 marker
  * 和落群后的 from.id/sender_chat.id、message.chat.id 校验。无前缀查询进入运势。
  */
-export function buildGagSpeakKeyboard(session: GagSession): InlineKeyboard {
+export function buildGagSpeakKeyboard(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId)): InlineKeyboard {
   return new InlineKeyboard().switchInlineCurrent(
-    chatAtmosphere(session.chatId).GAG_INLINE_SPEAK_BUTTON_TEXT,
+    atmosphere.GAG_INLINE_SPEAK_BUTTON_TEXT,
     `${GAG_INLINE_QUERY_PREFIX}${session.targetId} `
   );
 }
@@ -156,17 +157,17 @@ export function renderGagSpeech({
 }
 
 /** 群内公开状态文案；普通用户无按钮，频道入口直接附在这条消息上。 */
-export function renderGagPublicNotice(session: GagSession): string {
-  return chatAtmosphere(session.chatId).NOTICE_TEXTS.gagPublicNotice({ targetLabel: session.targetLabel, tool: session.tool, durationMinutes: session.durationMinutes, channelEntry: (session.targetId < 0
-      ? chatAtmosphere(session.chatId).NOTICE_TEXTS.gagChannelEntry
+export function renderGagPublicNotice(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId)): string {
+  return atmosphere.NOTICE_TEXTS.gagPublicNotice({ targetLabel: session.targetLabel, tool: session.tool, durationMinutes: session.durationMinutes, channelEntry: (session.targetId < 0
+      ? atmosphere.NOTICE_TEXTS.gagChannelEntry
       : "") });
 }
 
 /** 发言入口随目标身份选择公开频道文案或仅用户可见的短提示。 */
-export function renderGagSpeakNotice(session: GagSession): string {
+export function renderGagSpeakNotice(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId)): string {
   return session.targetId < 0
-    ? renderGagPublicNotice(session)
-    : chatAtmosphere(session.chatId).NOTICE_TEXTS.gagSpeakNotice(session.targetLabel);
+    ? renderGagPublicNotice(session, atmosphere)
+    : atmosphere.NOTICE_TEXTS.gagSpeakNotice(session.targetLabel);
 }
 
 /** 只接受三个离散分钟值，不把其它时长猜成最近一档。 */

@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { invalidateAiChat } from "../aiChat";
@@ -33,9 +34,10 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
   if (actor === undefined || !isSuperAdminActor(ctx)) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.clearContextRejected(actor === undefined ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor : formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0))),
+      text: atmosphere.NOTICE_TEXTS.clearContextRejected(actor === undefined ? atmosphere.NOTICE_TEXTS.unknownActor : formatUserLabel(actor, atmosphere)),
       replyToMessageId: messageId,
     });
     return;

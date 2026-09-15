@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 /**
  * 群问答的三个子命令：`/qa set`、`/qa query`、`/qa remove`。
@@ -78,9 +79,10 @@ async function requiresInitialized(
 async function requiresQaPermission(ctx: CommandContext<Context>): Promise<boolean> {
   if (hasCommandPermission(ctx, "isCanControllQaPermission")) return true;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   await sendCommandMessage({
     chatId: ctx.chat.id,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).QA_COMMAND_TEXTS.rejected(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor),
+    text: atmosphere.QA_COMMAND_TEXTS.rejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor),
     replyToMessageId: ctx.msgId,
   });
   return false;
@@ -272,14 +274,15 @@ async function queryQa(ctx: CommandContext<Context>, wanted: string): Promise<vo
   } else {
     for (const [q, a] of entries) selected.push({ q, a });
   }
-  const pages: readonly RichTextMessage[] = buildQaBoardPages(selected, chatAtmosphere(chatId));
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const pages: readonly RichTextMessage[] = buildQaBoardPages(selected, atmosphere);
   const first: RichTextMessage | undefined = pages[0];
   if (first === undefined) return;
   await sendCommandMessage({
     chatId,
     text: first.text,
     entities: first.entities,
-    keyboard: buildQaBoardKeyboard(0, pages.length, chatAtmosphere(chatId)),
+    keyboard: buildQaBoardKeyboard(0, pages.length, atmosphere),
     replyToMessageId: messageId,
     // 与 /permission query 同一口径的长期保留例外：这是一张要照着逐条核对的
     // 看板，30 秒清理会在读完之前收走它。查不到那条的提示仍走默认清理。

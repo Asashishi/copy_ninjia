@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 
 import type { CommandContext, Context } from "grammy";
@@ -48,9 +49,10 @@ async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mut
     command === "mute" ? "isCanMute" : "isCanUnMute";
 
   if (!actor || !hasCommandPermission(ctx, permission)) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteRejected(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor, command),
+      text: atmosphere.NOTICE_TEXTS.muteRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor, command),
       replyToMessageId: messageId,
     });
     return false;
@@ -78,9 +80,10 @@ async function rejectUnrestrictableTarget(
   targetUser: CachedUser
 ): Promise<boolean> {
   if (targetUser.isChannel !== true) return false;
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   await sendCommandMessage({
     chatId: ctx.chat.id,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteChannelTarget(formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0))),
+    text: atmosphere.NOTICE_TEXTS.muteChannelTarget(formatTargetLabel(targetUser, atmosphere)),
     replyToMessageId: ctx.msgId,
   });
   return true;
@@ -146,9 +149,10 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   // isProtectedSender；超级管理员已含在 isWhitelisted 内），回错消息也只损失
   // 一句嘲讽。
   if (isWhitelisted(targetUser.id)) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteProtected(formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0))),
+      text: atmosphere.NOTICE_TEXTS.muteProtected(formatTargetLabel(targetUser, atmosphere)),
       replyToMessageId: messageId,
     });
     return;

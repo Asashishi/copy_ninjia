@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 
 import type { CommandContext, Context } from "grammy";
@@ -173,11 +174,12 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     target.id
   );
   if (existingTarget !== undefined) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: existingTarget.phase === "ending"
-        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagEnding(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
-        : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagExists(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
+        ? atmosphere.NOTICE_TEXTS.gagEnding(formatTargetLabel(target, atmosphere))
+        : atmosphere.NOTICE_TEXTS.gagExists(formatTargetLabel(target, atmosphere)),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -186,11 +188,12 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     ? true
     : await probeChatMembership(ctx.chat.id, target.id);
   if (targetMembership !== true) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: targetMembership === false
-        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagTargetAbsent(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
-        : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagMembershipUnknown(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
+        ? atmosphere.NOTICE_TEXTS.gagTargetAbsent(formatTargetLabel(target, atmosphere))
+        : atmosphere.NOTICE_TEXTS.gagMembershipUnknown(formatTargetLabel(target, atmosphere)),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -308,13 +311,14 @@ export async function handleUngagCommand(ctx: CommandContext<Context>): Promise<
     if (session?.phase === "ending") {
       requestGagCleanupRetry(session);
     }
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: session?.phase === "ending"
-        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.ungagEnding(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
+        ? atmosphere.NOTICE_TEXTS.ungagEnding(formatTargetLabel(target, atmosphere))
         : session?.phase === "starting"
-          ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.ungagStarting(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)))
-          : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.ungagAbsent(formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0))),
+          ? atmosphere.NOTICE_TEXTS.ungagStarting(formatTargetLabel(target, atmosphere))
+          : atmosphere.NOTICE_TEXTS.ungagAbsent(formatTargetLabel(target, atmosphere)),
       replyToMessageId: ctx.msgId,
     });
     return;

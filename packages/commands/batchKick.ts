@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 
 import { commandArgumentTokens } from "./arguments";
@@ -334,11 +335,12 @@ export async function handleBatchKickCommand(
       );
     }
   }
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   await sendCommandMessage({
     chatId,
     text:
-      chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickResult({ duration: formatDurationCn(durationMs), recordCount: records.length, scanned: stats.scanned, kicked: stats.kicked, absent: stats.absent, protected: stats.protected, blocked: stats.blocked, forbidden: stats.forbidden, failed: stats.failed, abortedNotice: (stats.aborted
-        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickAborted
+      atmosphere.NOTICE_TEXTS.batchKickResult({ duration: formatDurationCn(durationMs), recordCount: records.length, scanned: stats.scanned, kicked: stats.kicked, absent: stats.absent, protected: stats.protected, blocked: stats.blocked, forbidden: stats.forbidden, failed: stats.failed, abortedNotice: (stats.aborted
+        ? atmosphere.NOTICE_TEXTS.batchKickAborted
         : "") }),
     replyToMessageId: messageId,
   });

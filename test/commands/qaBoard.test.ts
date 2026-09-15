@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { CHAT_QA_ANSWER_MAX_CHARS, CHAT_QA_QUESTION_MAX_CHARS, QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../packages/consts/qa";
 import { QA_QUERY_PAGE_NEXT_TEXT, QA_QUERY_PAGE_PREV_TEXT, QA_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/qa";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { chatStateCache } from "../../packages/cache/main/chatState";
+import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
 
 interface EditCall {
   chatId: number;
@@ -58,6 +61,7 @@ function buttonTexts(keyboard: { inline_keyboard: InlineKeyboardButton[][] } | u
 }
 
 beforeEach((): void => {
+  chatStateCache.clear();
   answerCallbackQuery.mockClear();
   editMessageText.mockClear();
   resetChatQaCache();
@@ -189,6 +193,27 @@ describe("翻页条", () => {
 });
 
 describe("翻页回调", () => {
+  test("配置变更后的翻页正文和按钮使用同一版，空看板也按消息所属群选择", async () => {
+    const state = getOrCreateChatState(CHAT_ID);
+    state.aiPersona = "普通风格";
+    chatQaEntries.set(CHAT_ID, new Map(Array.from({ length: 5 }, (_, index) => [`问题${index}`, "答案"])));
+    await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}1`));
+    let call: EditCall = editMessageText.mock.calls.at(-1)![0];
+    expect(call.text).toStartWith(ATMOSPHERE_TEXTS.plain.QA_COMMAND_TEXTS.queryPrefix);
+    expect(buttonTexts(call.keyboard)).toContain(ATMOSPHERE_TEXTS.plain.QA_QUERY_PAGE_PREV_TEXT);
+
+    chatQaEntries.clear();
+    await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}0`));
+    expect(editMessageText.mock.calls.at(-1)![0].text).toBe(ATMOSPHERE_TEXTS.plain.QA_COMMAND_TEXTS.queryEmpty);
+
+    state.aiPersona = undefined;
+    chatQaEntries.set(CHAT_ID, new Map(Array.from({ length: 5 }, (_, index) => [`问题${index}`, "答案"])));
+    await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}1`));
+    call = editMessageText.mock.calls.at(-1)![0];
+    expect(call.text).toStartWith(QA_COMMAND_TEXTS.queryPrefix);
+    expect(buttonTexts(call.keyboard)).toContain(QA_QUERY_PAGE_PREV_TEXT);
+  });
+
   test("不是本领域前缀的一律不认领", async () => {
     expect(await handleQaBoardCallback(callbackContext("verify:42"))).toBeFalse();
     expect(answerCallbackQuery).not.toHaveBeenCalled();

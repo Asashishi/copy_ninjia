@@ -1,3 +1,4 @@
+import type { AtmosphereTexts } from "../../types/atmosphere";
 import { chatAtmosphere } from "../../infra/atmosphere";
 import {
   gagBackgroundTasks,
@@ -265,12 +266,13 @@ export async function finishGag(
     const cleaned: boolean = await deleteGagNotices(session);
     try {
       if (reason !== "teardown") {
+        const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
         const reasonText: string = reason === "timeout"
-          ? chatAtmosphere(session.chatId).NOTICE_TEXTS.gagExpired
-          : chatAtmosphere(session.chatId).NOTICE_TEXTS.gagRemoved;
+          ? atmosphere.NOTICE_TEXTS.gagExpired
+          : atmosphere.NOTICE_TEXTS.gagRemoved;
         await sendCommandMessage({
           chatId: session.chatId,
-          text: chatAtmosphere(session.chatId).NOTICE_TEXTS.gagEndedNotice(reasonText, session.targetLabel, session.tool),
+          text: atmosphere.NOTICE_TEXTS.gagEndedNotice(reasonText, session.targetLabel, session.tool),
           replyToMessageId,
           // 到期那一路没有可回复的消息，缺了话题就会把解除回执播到 General，
           // 而被管教的人正盯着入口所在的那个话题（见 types/gag.ts 的同名字段）。

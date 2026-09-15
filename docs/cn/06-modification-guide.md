@@ -21,7 +21,7 @@
 
 ## 新增一个斜杠命令
 
-1. **handler**：在 `packages/commands/` 导出带显式返回类型的 `handleXxxCommand`。按权限键授权使用 `hasCommandPermission(ctx, key)`；仅超级管理员本人可执行的操作使用 `isSuperAdminActor`；私聊命令参考 `send.ts`。固定提示和格式化函数放在 `packages/consts/atmosphere/{teasing,plain}/` 的对应领域文件，两版使用同一类型。主线程通过 `chatAtmosphere(chatId)` 读取当前群文案；动态昵称、提示词和问题作为参数插入，不在渲染后替换文本。
+1. **handler**：在 `packages/commands/` 导出带显式返回类型的 `handleXxxCommand`。按权限键授权使用 `hasCommandPermission(ctx, key)`；仅超级管理员本人可执行的操作使用 `isSuperAdminActor`；私聊命令参考 `send.ts`。固定提示和格式化函数放在 `packages/consts/atmosphere/{teasing,plain}/` 的对应领域文件，两版使用同一类型。主线程通过 `chatAtmosphere(chatId)` 读取当前群文案；动态昵称、提示词和问题作为参数插入，不在渲染后替换文本。 同次渲染用局部 `AtmosphereTexts` 传给称呼、正文和按钮函数；跨配置变更、后续交互或后台执行时重新读取。已有 `chatState` 的消息热路径直接依据其 `aiPersona` 选表，不增加缓存查询。
 2. **导出**：加入 `packages/commands/index.ts`。
 3. **注册**：在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 的 `commands` 子链上加 `commands.command("xxx", ...)`。**不要直接挂到 `bot` 上**——命令一律收在那条 `bot.on(":entities:bot_command")` 子链后面（理由见 [02 架构总览](02-architecture.md#一条消息的旅程) 的「命令注册」），`test/app/registerHandlers.test.ts` 会拒绝任何直接挂在 `bot` 上的命令。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
 4. **私聊网关**：新命令若要在私聊中使用，还必须同步调整 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 并补网关测试；当前私聊中的斜杠命令只显式放行 `/send`，仅注册 handler 不会到达命令处理器。纯群聊命令无需改这里。
