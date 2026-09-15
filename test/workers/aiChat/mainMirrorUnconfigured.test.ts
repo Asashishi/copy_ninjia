@@ -1,3 +1,4 @@
+import { diskIOStub } from "../../helpers/diskIOMock";
 /**
  * AI agent 核心配置不可用时主线程侧代理的行为。与 mainMirrorRecovery.test.ts
  * 是同一批入口的另一种进程状态，因此必须另开一个文件：readiness mock 整文件生效。
@@ -11,17 +12,13 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type {
   AiMemoryDeletedPersistedReply,
-  AiMemoryDeleteDiskMessage,
-  AiMemoryDiskMessage,
   AiMemoryPersistedReply,
   DiskIORespawnListener,
-  StickerCatalogDiskMessage,
+  DiskBusinessMessage,
 } from "../../../packages/types/diskIO";
 
-type AiDiskMessage = AiMemoryDiskMessage | AiMemoryDeleteDiskMessage | StickerCatalogDiskMessage;
-
 const workerPosts: AiChatWorkerMessage[] = [];
-const diskPosts: AiDiskMessage[] = [];
+const diskPosts: DiskBusinessMessage[] = [];
 const initWorker = mock((): void => {});
 const loggerLog = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
@@ -49,14 +46,14 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
     terminate: async (): Promise<void> => {},
   }),
 }));
-mock.module("../../../packages/infra/diskIO", () => ({
-  postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
+mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
+  postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (_callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {},
   onAiMemoryPersisted: (_callback: (reply: AiMemoryPersistedReply) => void): void => {},
   onDiskIORespawn: (_owner: string, _priority: number, _listener: DiskIORespawnListener): void => {},
   onDiskIOGiveUp: (_callback: () => void): void => {},
   relayLogMessage: (): boolean => true,
-}));
+})));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
   getChatStateCache: (): Map<number, unknown> =>

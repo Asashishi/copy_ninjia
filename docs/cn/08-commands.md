@@ -90,7 +90,7 @@
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>从 SQLite 权威黑名单事务删除目标，并在机器人管理的全部群解除封禁；目标方式同 <code>/block</code>，也接受频道负数 id，拒绝本群自己的身份</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊</td></tr>
 <tr><td><code>/prompt config &lt;提示词&gt;</code><br><code>/prompt remove</code></td><td align="center"><code>isCanConfigAiPrompt</code></td><td>配置或移除本群专属 AI 提示词；移除后使用默认人设</td></tr>
-<tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，并将 <code>chat_states.ai_context</code> 置 NULL，保留本群自定义人设；使本群在途回复代数失效。不接受参数，部署配置写坏或 AI Worker 没起来时同样执行</td></tr>
+<tr><td><code>/clear_context</code></td><td align="center"><code>isCanClearContext</code></td><td>清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，并将 <code>chat_states.ai_context</code> 置 NULL，保留本群自定义人设；使本群在途回复代数失效。不接受参数，部署配置写坏或 AI Worker 没起来时同样执行</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，非受保护身份命中后按 <code>/block</code> 同权处置</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>开关本群防刷屏禁言（默认关闭）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>开关本群入群验证与防冲群私密模式（默认关闭）</td></tr>

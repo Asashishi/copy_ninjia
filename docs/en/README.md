@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4223_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.89%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4281_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.93%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4223 tests passed, 375 test files, 157,360 expect() calls, 96.97% function coverage, 97.89% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4281 tests passed, 378 test files, 157,651 expect() calls, 97.16% function coverage, 97.93% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -162,7 +162,7 @@ Behavior details, configuration and boundaries for each feature live in the **[�
 
 ## 🎮 Commands and Permissions
 
-Command access follows the entry point: **group members** can use copy, action commands and quiet mode. **Identity permission keys** control `/bot_status`, `/prompt`, `/mute`, `/gag`, `/block` and feature switches. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, `/batch_kick` and `/clear_context`; `/white enable` can be delegated with `isCanWhiteOther`. `/send` requires the super administrator in private chat.
+Command access follows the entry point: **group members** can use copy, action commands and quiet mode. **Identity permission keys** control `/bot_status`, `/prompt`, `/clear_context`, `/mute`, `/gag`, `/block` and feature switches. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, `/batch_kick`; `/white enable` can be delegated with `isCanWhiteOther`. `/send` requires the super administrator in private chat.
 
 Set this group's AI prompt with `/prompt config <prompt>` or restore `prompt/persona.md` with `/prompt remove`. Both require `isCanConfigAiPrompt`, which defaults to false. `/bot_status` shows whether the current group has a custom prompt.
 

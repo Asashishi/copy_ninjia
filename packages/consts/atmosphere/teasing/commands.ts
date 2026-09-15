@@ -16,7 +16,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "unblock", description: "把目标移出永久黑名单并解除所有托管群封禁；支持回复、@username、用户 id 或频道负数 id，仅持有 isCanUnBlock 的身份配用，笨蛋♡" },
   { command: "prompt", description: "用 config/remove 配置或移除本天才在本群的 AI 提示词；需要 isCanConfigAiPrompt，杂鱼别乱改♡" },
   { command: "ai_chat", description: "用 enable/disable 开关本群 AI 闲聊，只有获授权者配使唤本天才，杂鱼别乱按♡" },
-  { command: "clear_context", description: "把本天才在这个群攒下的 AI 上下文记忆全忘光，内存里的和存档里的一起清，之后从零重新记；不带参数，只有超级管理员配下这种命令，杂鱼别乱按♡" },
+  { command: "clear_context", description: "把本天才在这个群攒下的 AI 上下文记忆全忘光，内存里的和存档里的一起清，之后从零重新记；不带参数，需要 isCanClearContext，杂鱼别乱按♡" },
   { command: "ad_detect", description: "用 enable/disable 开关本群广告检测；命中就拉黑并全群封禁删消息，只有获授权者配碰，杂鱼♡" },
   { command: "flood_control", description: "用 enable/disable 开关本群防刷屏禁言，只有获授权者配碰，刷屏杂鱼可别手抖哦♡" },
   { command: "antiraid", description: "用 enable/disable 开关本群入群验证与防冲群私密模式，只有获授权者配碰，关掉就没人替你拦僵尸了哦杂鱼♡" },

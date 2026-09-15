@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4223_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.89%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4281_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.93%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4223 件のテストが全て成功 / テストファイル 375 件 / expect() 呼び出し 157,360 回 / 関数カバレッジ 96.97% / 行カバレッジ 97.89%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4281 件のテストが全て成功 / テストファイル 378 件 / expect() 呼び出し 157,651 回 / 関数カバレッジ 97.16% / 行カバレッジ 97.93%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -168,7 +168,7 @@
 
 ## 🎮 コマンドと権限
 
-コマンドは入口で認可します。**群メンバー**は Copy、アクション、静音モードを使用できます。**identity 権限キー**は `/bot_status`、`/prompt`、`/mute`、`/gag`、`/block` と機能スイッチを制御します。**`SUPER_ADMIN_USER_ID` 専用**は `/init`、権限変更、allowlist からの削除、`/batch_kick`、`/clear_context`。`/white enable` は `isCanWhiteOther` で委任でき、`/send` はスーパー管理者の個人チャットだけで使用できます。
+コマンドは入口で認可します。**群メンバー**は Copy、アクション、静音モードを使用できます。**identity 権限キー**は `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` と機能スイッチを制御します。**`SUPER_ADMIN_USER_ID` 専用**は `/init`、権限変更、allowlist からの削除、`/batch_kick`。`/white enable` は `isCanWhiteOther` で委任でき、`/send` はスーパー管理者の個人チャットだけで使用できます。
 
 本群 AI プロンプトは `/prompt config <プロンプト>` で設定し、`/prompt remove` で `prompt/persona.md` に戻します。両方とも既定 false の `isCanConfigAiPrompt` が必要です。`/bot_status` で本群の設定有無を確認できます。
 

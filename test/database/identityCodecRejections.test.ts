@@ -61,6 +61,12 @@ describe("身份主键的严格校验", () => {
 });
 
 describe("白名单行的严格解码", () => {
+  test.each([undefined, null, 1, "true"])("清理上下文权限缺失或非法 %s 时拒绝当前格式", (invalid) => {
+    const permissions: Record<string, unknown> = allPermissions(true);
+    permissions.isCanClearContext = invalid;
+    expectRejected((): unknown => decodeWhitelistEntryData(JSON.stringify({ permissions, meta: VALID_META }), SOURCE), "$.permissions");
+  });
+
   test.each([false, true])("运行时拒绝旧翻译权限名称，旧新字段并存为 %s 也拒绝", (keepNew: boolean) => {
     const permissions: Record<string, boolean> = allPermissions(true);
     permissions.isCanControllJATranslatePermission = false;

@@ -1,3 +1,4 @@
+import * as diskIO from "../diskIO";
 import {
   blocklistEntryCache,
   identityEntryCounts,
@@ -19,7 +20,6 @@ import {
 } from "../identityPolicy/temporaryAdBypass";
 import {
   currentIdentityPolicyText,
-  identityDiskIOApi,
   rawIdentityPolicyRows,
 } from "./shared";
 import type { CachedUser } from "../../types/chatState";
@@ -30,7 +30,6 @@ import type {
 } from "../../types/identityPolicy";
 import type { IdentityPolicyRawReadResult } from
   "../../types/identityStorage";
-import type { IdentityDiskIOApi } from "./shared";
 
 /** CachedUser 的 Telegram 字段稳定映射到 SQLite meta。 */
 export function identityMetadataFromCachedUser(
@@ -85,10 +84,7 @@ export function cachedBlocklistEntry(
 }
 
 async function prefetchChunk(ids: readonly number[]): Promise<void> {
-  const read: IdentityDiskIOApi["readIdentityPolicies"] =
-    identityDiskIOApi.readIdentityPolicies;
-  if (read === undefined) return;
-  const reply: IdentityPolicyRawReadResult = await read(ids);
+  const reply: IdentityPolicyRawReadResult = await diskIO.readIdentityPolicies(ids);
   const requested: Set<number> = new Set(ids);
   const whitelistRows: Map<number, string> = rawIdentityPolicyRows(
     reply.whitelist,
@@ -159,7 +155,7 @@ export async function prefetchIdentityPolicies(
   }
   if (
     missing.length === 0 ||
-    identityDiskIOApi.isDiskIOInitialized?.() !== true
+    diskIO.isDiskIOInitialized() !== true
   ) return true;
   for (
     let index: number = 0;

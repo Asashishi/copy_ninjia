@@ -1,3 +1,5 @@
+import type { DiskIODomain } from "../../packages/types/diskIO/replies";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
@@ -17,7 +19,7 @@ const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [
 /** Worker 放弃自愈、恢复缓冲顶到硬顶或同步拒收时，postDiskIO 返回 false。 */
 let acceptDiskMessages: boolean = true;
 const flushDiskIODomainOutcome = mock(
-  async (domain: "whitelist" | "blocklist") => {
+  async (domain: DiskIODomain) => {
     const writes: { table: "whitelist" | "blocklist"; id: number; revision: number }[] = [];
     for (const message of diskMessages) {
       if (message.type !== "identityPolicyWrite" || message.table !== domain) continue;
@@ -36,7 +38,7 @@ const flushDiskIODomainOutcome = mock(
   }
 );
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   isDiskIOInitialized: (): boolean => false,
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (
@@ -50,7 +52,7 @@ mock.module("../../packages/infra/diskIO", () => ({
     return acceptDiskMessages;
   },
   flushDiskIODomainOutcome,
-}));
+})));
 
 const {
   blocklistEntryCache,
@@ -93,8 +95,23 @@ describe("SQLite 白名单运行时视图", () => {
   test("超级管理员由身份直接持有全部权限，不需要数据库条目", () => {
     expect(isWhitelisted(SUPER_ADMIN_USER_ID)).toBeTrue();
     expect(getEffectiveWhitelistPermissions(SUPER_ADMIN_USER_ID)).toEqual(
-      expect.objectContaining({ isCanBlock: true, isCanUnBlock: true })
+      expect.objectContaining({ isCanBlock: true, isCanUnBlock: true, isCanClearContext: true })
     );
+  });
+
+  test("清理上下文权限默认关闭，单独授予和撤销不依赖其他权限", () => {
+    seedMissing(7);
+    whitelistEntryCache.set(7, {
+      permissions: DEFAULT_WHITELIST_PERMISSIONS,
+      meta: { firstName: "Member", lastName: "", username: "" },
+    });
+    expect(hasWhitelistPermission(7, "isCanClearContext")).toBeFalse();
+    setWhitelistPermission({ id: 7, key: "isCanClearContext", value: true });
+    expect(hasWhitelistPermission(7, "isCanClearContext")).toBeTrue();
+    enableAllWhitelistPermissions(7);
+    setWhitelistPermission({ id: 7, key: "isCanClearContext", value: false });
+    expect(hasWhitelistPermission(7, "isCanClearContext")).toBeFalse();
+    expect(hasWhitelistPermission(SUPER_ADMIN_USER_ID, "isCanClearContext")).toBeTrue();
   });
 
   test("冷缺失与负缓存都按白名单外处理", () => {

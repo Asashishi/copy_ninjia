@@ -10,8 +10,9 @@ import {
   writeText,
 } from "../../scripts/installIsolation/fixture";
 import type { InstallerFixture, InstallerRunResult } from "../../scripts/installIsolation/fixture";
+import { expandedInstallSource } from "../../scripts/installSources";
 
-const INSTALL_SCRIPT: string = await Bun.file(join(import.meta.dir, "../../install.sh")).text();
+const INSTALL_SCRIPT: string = await expandedInstallSource(join(import.meta.dir, "../.."));
 const MANIFEST: { readonly packageManager: string } = await Bun.file(
   join(import.meta.dir, "../../package.json")
 ).json();
@@ -57,6 +58,19 @@ async function expectReadOnlyServiceQueries(fixture: InstallerFixture): Promise<
 }
 
 describe("安装器精确运行时边界", () => {
+  test.each(["missing", "syntax"])("安装模块 %s 时在写入前拒绝", async (kind: string): Promise<void> => {
+    const fixture: InstallerFixture = await createFixture();
+    const modulePath: string = join(fixture.worktree, "scripts/install/configure.sh");
+    if (kind === "missing") await Bun.file(modulePath).delete();
+    else await writeText(modulePath, "if then\n");
+    const result: InstallerRunResult = runInstaller(fixture, []);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.output).toContain("scripts/install/configure.sh");
+    expect(await installationCalls(fixture)).toBe("");
+    expect(await Bun.file(join(fixture.configRoot, "telegram.json")).exists()).toBeFalse();
+    await expectReadOnlyServiceQueries(fixture);
+  });
+
   test.each(["1.4.0", "1.4.1", "1.5.0", "2.0.0", "1.4.2-canary.1", "invalid", ""])(
     "拒绝不匹配的 Bun %s，并在依赖安装和配置写入前退出",
     async (version: string): Promise<void> => {
@@ -142,7 +156,7 @@ describe("下载入口转交目标工作树", () => {
     async (absolute: boolean): Promise<void> => {
       const fixture: InstallerFixture = await createFixture();
       const locateWorktree: string = scriptRange('SCRIPT_DIRECTORY=""', "\n# 下载入口只负责定位工作树");
-      const repositoryProbe: string = scriptRange("is_repository_root() {", "\n# 这棵工作树自己");
+      const repositoryProbe: string = scriptRange("is_repository_root() {", "\n}") + "\n}";
       const result: InstallerRunResult = runFragment(fixture, [
         "info() { :; }",
         'die() { printf "%s\\n" "$1" >&2; exit 1; }',

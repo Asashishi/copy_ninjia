@@ -57,6 +57,13 @@
       "when": 20260915000000,
       "tag": "0007_ai_context_persona",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 20260915010000,
+      "tag": "0008_clear_context_permission",
+      "breakpoints": true
     }
   ]
 }

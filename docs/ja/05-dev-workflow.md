@@ -38,6 +38,8 @@
 
 ## 品質ゲートの基準
 
+- **インストーラー起動の隔離**：フィクスチャは独立した一時設定・データルートを使用し、システム管理、依存インストール、ネットワーク送信を mock 化して、実際の `index.ts`、Worker、終了時の永続化を実行します。各 Worker は Bun `preload` でネットワーク代替を読み込み、天気には固定応答を返し、他の要求は拒否します。読み込み完了、ポーリング開始、SIGTERM 時の排空、ロックファイル削除を検証します。
+- **ファイル長と走査範囲**：手書き TS・JS・shell ファイルは 1,000 行を超えると拒否し、500 行を超えたら分割を検討します。追跡済みファイルと未 stage の新規ファイルが対象で、Git が無視する配備データは走査しません。インストーラーの構文検査は `install.sh` と宣言された全 shell モジュールを対象とします。
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
@@ -62,7 +64,7 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**4223 tests / 375 files / 157360 `expect()` calls**。全ソースコードの**関数カバレッジは 96.97%、行カバレッジは 97.89%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**4281 tests / 378 files / 157651 `expect()` calls**。全ソースコードの**関数カバレッジは 97.16%、行カバレッジは 97.93%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 

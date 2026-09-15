@@ -110,7 +110,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     `/init disable` と Bot のグループ退出では、保持 window の内外を問わずその chat の
     ファイルをすべて削除し、自然な期限切れを待ちません（管理者権限の剥奪では削除しません）。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
-  - **内容**：schema v9 共有ストレージです。`permission_list.policy` は厳密な JSONB の恒久権限、`blocklist_entries` はブラックリストを保持します。`temporary_ad_bypass_entries` は `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at`、`qualified_at` で広告免除の活動を集計します。`pending_blocked_removals` は未完了の群別 ban、`storage_metadata` と Drizzle journal は schema と厳密な系譜を保持します。
+  - **内容**：schema v10 共有ストレージです。`permission_list.policy` は厳密な JSONB の恒久権限、`blocklist_entries` はブラックリストを保持します。`temporary_ad_bypass_entries` は `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at`、`qualified_at` で広告免除の活動を集計します。`pending_blocked_removals` は未完了の群別 ban、`storage_metadata` と Drizzle journal は schema と厳密な系譜を保持します。
   - **群状態と人設**：`chat_states` は最大 25 行。`chat_id` が主キー、`status` は必須 JSONB、`ai_persona` は NULL 許容・空白のみ不可の TEXT で、本群専用プロンプトを保存します。未設定ならプロジェクトの `prompt/persona.md` を使用します。起動時に状態と人設を既存メインスレッド群 cache に読み込み、`/bot_status` は設定の有無をそこから確認します。`/init disable` と Bot 退群では行と人設を削除し、未復元 lockdown は復元 protocol に従って保持します。
   - **AI context**：NULL 許容 JSONB `ai_context` は version=1 の逐語メッセージ、要約、未統合要約、保存時刻を保持し、既存 AI Worker memory cache とメインスレッド復元 mirror を使用します。書き込みは既存群行だけを更新し、context だけの行は保持しません。記憶の消去はこの列を NULL にして人設を保持します。本文・名前・引用は単一行、引用 text/quote は最大 500 UTF-16 code unit、`at` は有効な東京時刻 `YYYY/MM/DD HH:mm:ss` です。要約は改行可能。不正 field は復元を拒否して入れ子 path を示し、元データを変更しません。
   - **バックアップと復元**：群会話と専用プロンプトを含む機密データです。Bot 停止中に本体と存在する WAL/SHM を同一集合として作業ツリー外へコピーし、所有者・mode・SHA-256 を記録して検証します。Disk I/O Worker が DB を独占し、起動時に integrity、JSONB、schema、系譜、厳密な行 codec、policy 排他、outbox 参照を検証します。群状態と AI snapshot は同じ接続から復元します。identity の参照は 8,192 件 LRU と update に必要な ID の cold read を使います。検証失敗時は自動建庫・移行・行破棄・縮退をせず起動を拒否します。
@@ -152,27 +152,50 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 起動は database 欠落を「空 policy」と推測しないため、新規 deployment は現行 schema の空 database を明示的に一度作成する必要があります。手順は [01 セットアップ](01-getting-started.md#identity-storage-の初期化) にあり、`install.sh` にも含まれています。作成 entry point は既存 target の上書きを拒否します。
 
-### schema v8 からの cold migration
+### schema v9 からの cold migration
 
-唯一の cold migration 入口は [`scripts/migrateAiContext.ts`](../../scripts/migrateAiContext.ts) です。直前の migration が出力した厳密な schema v8 系譜だけを受け入れ、schema v9 を出力します。古い版は対応する版の手順で先に v8 まで段階的に更新してください。未知の系譜と変換済み v9 は拒否します。本番起動は現行形式だけを検証し、migration を行いません。
+唯一の入口は [`scripts/migrateClearContextPermission.ts`](../../scripts/migrateClearContextPermission.ts) です。直前の migration が出力した厳密な schema v9 系譜だけを受け入れ、schema v10 を出力します。古い版は対応する版の手順で先に v9 まで段階的に更新してください。未知の系譜と変換済み v10 は拒否します。本番起動は現行形式だけを検証し、migration を行いません。
 
-1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、実際の設定・資格情報・実行データをコピーします。SQLite 本体、存在する WAL/SHM、`memory/ai/` は同一停止時点のものを使い、ファイル一覧・mode・所有者・SHA-256 を記録して全コピーを検証します。
-
+1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、実際の設定・資格情報・実行データをコピーします。SQLite 本体と既存 WAL/SHM は同一停止時点のものを使い、ファイル一覧・mode・所有者・SHA-256 を記録して全コピーを検証します。
 2. ソース外の新しい出力先を指定します。親ディレクトリは事前に存在する必要があります。スクリプトはソース、サービス、実際のデプロイファイルを変更しません。
 
 ```bash
-bun run migrate:ai-context \
+bun run migrate:clear-context-permission \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. `chat_states.data` を `status` に改名し、NULL 許容の JSONB `ai_context` と TEXT `ai_persona` を追加します。旧 AI snapshot は厳密に検証し、群主キーが存在するものだけ取り込みます。対応する群状態がない snapshot は `discardedContexts` に計上し、空状態行は作りません。`whitelist_entries.data` は `permission_list.policy`、`temporary_whitelist_entries` は `temporary_ad_bypass_entries`、`temp_white/temp_white_at/temp_white_count` はそれぞれ `ad_bypass/ad_bypass_granted_at/qualified_days` になります。集計と権限付与の意味は維持します。既存権限がすべて true の行だけに `isCanConfigAiPrompt: true` を付け、他は false、人設は初期状態では空です。主備状態ファイルは変換しません。
+3. 各 `permission_list.policy` に boolean 権限 `isCanClearContext` を追加します。既存権限がすべて true のメンバーだけ true、他は false です。元の権限・identity metadata・群状態・context・専用人設・他領域のデータは保持します。スーパー管理者は database 行に依存せず、runtime で常に true を持ちます。新規メンバーは false が既定で、以後は `/permission` で個別に付与・撤回できます。
+4. 変換、厳密検証、SQLite checkpoint、接続終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata、および `enabledPermissions`・`disabledPermissions` を確認します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行します。既存出力は上書きできません。
+5. 停止状態で検証済み SQLite 本体を手動置換します。旧 WAL/SHM はバックアップ済みで DB を開くプロセスがない場合だけ削除し、新本体と混在させません。一覧から元の所有者と mode を復元し、サービスアカウントが SQLite と親ディレクトリに書けることを確認します。`config/` は読み取り専用でも構いません。
+6. DB を開く前に設置後ハッシュを確認し、設定・主備状態・現行 DB を厳密検証します。すべて整ってから起動し、最低 2 回の supervisor 再起動間隔にわたり `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認します。全検証完了まで外部バックアップを保持します。rollback は旧データに対応するプログラムと同一時点のバックアップ全体を復元します。
 
-4. 変換、厳密検証、SQLite checkpoint、接続終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata と取込／破棄件数を確認します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行します。既存出力は上書きできません。
+読み取り専用 SQLite 接続でも SHM インデックスを再構築する場合があります。DB を開く前にハッシュを記録し、サイドカー索引の変化は元のバックアップ清単を上書きせず別途記録してください。
 
-5. 停止状態で検証済み SQLite 本体を手動置換し、移行済みのデプロイ側 `memory/ai/` を削除します。旧 WAL/SHM はバックアップ済みで DB を開くプロセスがない場合だけ削除し、新本体と混在させません。一覧から元の所有者と mode を復元し、サービスアカウントが SQLite と親ディレクトリに書けることを確認します。`config/` は読み取り専用でも構いません。
+### 11.0.9 からの段階的なアップグレード
 
-6. DB を開く前に設置後ハッシュを確認し、設定・主備状態・現行 DB を厳密検証します。SQLite を開くと SHM が再構築・更新される場合があり、実行中の SHM ハッシュ変化だけで業務データ破損とは判定しません。すべて整ってから起動し、最低 2 回の supervisor 再起動間隔にわたり `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認します。全検証完了まで外部バックアップを保持します。失敗したら以降を停止し、rollback は旧データに対応するプログラムと同一時点のバックアップ全体を復元します。
+11.0.9 は schema v8 を使用します。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、現行入口で v10 を生成します。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットが必要で、二つの出力ディレクトリは未作成である必要があります。
+
+中間ソースはこの手順の必須入力です。11.0.9 タグまたは現行ソースアーカイブだけを持つ環境では、先に固定コミットの完全なソースを取得してください。リリース前にそのソースを独立して保持・提供し、squash 後に reset される dev 履歴だけに依存しないでください。
+
+独立した中間ソースアーカイブ `copy-ninjia-schema-v9-source-500e848f.tar.gz` も使用できます。SHA-256 は `df6502625512d8fde136dc66d8470e1d4c977856e8a0bd3909b9b6c763c820f8` です。検証後、以下の `git archive` を `tar -xzf /absolute/copy-ninjia-schema-v9-source-500e848f.tar.gz -C "$MIGRATION_CODE"` に置き換えてください。
+
+```bash
+MIGRATION_CODE="$(mktemp -d)"
+git archive 500e848faeda75dcae3c3329507f24d05137e3b9 | tar -x -C "$MIGRATION_CODE"
+(
+  cd "$MIGRATION_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:ai-context \
+    --source-root /absolute/11.0.9-cold-backup \
+    --output-root /absolute/new-schema-v9-staging
+)
+bun run migrate:clear-context-permission \
+  --source-root /absolute/new-schema-v9-staging \
+  --output-root /absolute/new-schema-v10-staging
+```
+
+第一段階では元の 16 権限がすべて true の場合だけ `isCanConfigAiPrompt` を付与し、第二段階では 17 権限がすべて true の場合だけ `isCanClearContext` を付与します。第一段階は `chat_states` に存在するグループの記憶だけを取り込みます。対応行のない記憶は `discardedContexts` に計上し、グループ状態を作成しません。各段階の `ready.json`、入力・出力ハッシュ、取り込み・破棄件数を確認し、最終 v10 主 DB だけを設置します。元のバックアップ全体を保持し、移行済みの `memory/ai/` を配備ルートから手動で削除してください。他の設定と状態は元のパスに保持します。続いて上節の所有者・権限復元、厳密検証、起動観察を実施します。現行ランタイムと移行入口は v8 を直接受け付けません。
 
 ## 起動失敗の調査
 

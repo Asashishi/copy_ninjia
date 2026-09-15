@@ -7,7 +7,8 @@ import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import type { CachedUser } from "../types/chatState";
 import { formatUserLabel } from "../users/userLabel";
-import { isSuperAdminActor, resolveCommandActor } from "./commandActor";
+import { resolveCommandActor } from "./commandActor";
+import { hasWhitelistPermission } from "../infra/identityPolicy/whitelist";
 
 /**
  * 处理 /clear_context：清空本群 AI 上下文记忆，从零重新累计。
@@ -17,10 +18,8 @@ import { isSuperAdminActor, resolveCommandActor } from "./commandActor";
  * invalidateAiChat(chatId, true) 一并完成，本命令不另写一条清理路径。同一次调用
  * 还会递增本群回复代数：在途那一轮的上下文此刻已经不存在，它的回复不该再发出去。
  *
- * **只认 SUPER_ADMIN_USER_ID 这个身份本身**（走 commandActor.ts 的 isSuperAdminActor，
- * 同 `/init`、`/batch_kick`），不挂任何白名单权限键，因此也无法经 `/permission`
- * 授权出去：这条命令一发就不可逆地抹掉本群全部 AI 上下文，磁盘上那份也一起没，
- * 误发没有任何补救途径。
+ * 发起身份必须持有 isCanClearContext；超级管理员由统一权限边界直授。
+ * 只操作命令所在群，保留自定义人设，不接受指定其它群的参数。
  *
  * **前提不齐也照样执行**，口径同 `/ai_chat disable` 的关闭方向：部署配置写坏或
  * AI Worker 没起来时，磁盘上的记忆仍要能清干净，durable 删除本来就不经 Worker。
@@ -33,7 +32,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  if (actor === undefined || !isSuperAdminActor(ctx)) {
+  if (actor === undefined || !hasWhitelistPermission(actor.id, "isCanClearContext")) {
     const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,

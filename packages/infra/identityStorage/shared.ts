@@ -2,23 +2,9 @@ import {
   unacknowledgedIdentityWrites,
 } from "../../cache/main/identityStorage";
 import { assertTelegramIdentityId } from "../../database/codec/identity";
-import * as diskIO from "../diskIO";
 import type { IdentityPolicyTable } from "../../types/identityPolicy";
 import type { UnacknowledgedIdentityWrite } from
   "../../types/identityStorage";
-
-export interface IdentityDiskIOApi {
-  readonly isDiskIOInitialized?: typeof diskIO.isDiskIOInitialized;
-  readonly flushDiskIODomainOutcome?: typeof diskIO.flushDiskIODomainOutcome;
-  readonly onDiskIORespawn?: typeof diskIO.onDiskIORespawn;
-  readonly onIdentityStoragePersisted?: typeof diskIO.onIdentityStoragePersisted;
-  readonly postDiskIO?: typeof diskIO.postDiskIO;
-  readonly readBlocklistIdPage?: typeof diskIO.readBlocklistIdPage;
-  readonly readIdentityPolicies?: typeof diskIO.readIdentityPolicies;
-}
-
-/** 叶子单测可按旧协议替换 Disk I/O，生产装配始终提供完整接口。 */
-export const identityDiskIOApi: IdentityDiskIOApi = diskIO;
 
 /** 校验并收敛 Disk I/O 返回的一张身份策略原始行表。 */
 export function rawIdentityPolicyRows(

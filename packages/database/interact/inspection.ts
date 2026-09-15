@@ -2,6 +2,8 @@ import { asc, count, gt } from "drizzle-orm";
 import { BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE } from
   "../../consts/antiRaid/blocklist";
 import {
+  CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT,
+  CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH,
   AI_CONTEXT_MIGRATION_CREATED_AT,
   AI_CONTEXT_MIGRATION_HASH,
   IDENTITY_DATABASE_CHAT_QA_MIGRATION_CREATED_AT,
@@ -142,7 +144,7 @@ function assertJsonbStorageRows(
   }
 }
 
-/** 启动与性能夹具都拒绝当前六张表的非严格 JSONB 存储。 */
+/** 启动与性能夹具都拒绝当前七个 JSONB 列的非严格存储。 */
 export function assertStorageDatabaseJsonbStorage(
   database: StorageDatabase,
   source: string
@@ -217,17 +219,18 @@ function hasSchemaV5MigrationLineage(
     hasCurrentBaseLineage(rows.slice(0, -2));
 }
 
-/** 当前 v9 必须包含完整谱系及 AI 上下文、人设迁移，不接受缺项或额外项。 */
+/** 当前 v10 必须包含完整谱系及清理上下文权限迁移，不接受缺项或额外项。 */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,
   source: string
 ): void {
   const journal: readonly StorageDatabaseMigrationJournalEntry[] =
     readStorageDatabaseMigrationJournal(database, source);
-  if (!isMigrationEntry(journal.at(-1), AI_CONTEXT_MIGRATION_CREATED_AT, AI_CONTEXT_MIGRATION_HASH)) {
-    throw new Error(`${source}: expected the exact supported schema v9 migration lineage.`);
+  if (!isMigrationEntry(journal.at(-1), CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT, CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH) ||
+    !isMigrationEntry(journal.at(-2), AI_CONTEXT_MIGRATION_CREATED_AT, AI_CONTEXT_MIGRATION_HASH)) {
+    throw new Error(`${source}: expected the exact supported schema v10 migration lineage.`);
   }
-  const rows: readonly StorageDatabaseMigrationJournalEntry[] = journal.slice(0, -1);
+  const rows: readonly StorageDatabaseMigrationJournalEntry[] = journal.slice(0, -2);
   if (
     rows.length < 7 ||
     !isMigrationEntry(
@@ -241,7 +244,7 @@ export function assertStorageDatabaseMigrationLineage(
       IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH
     )
   ) {
-    throw new Error(`${source}: expected the exact supported schema v9 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v10 migration lineage.`);
   }
   const v6Rows: readonly StorageDatabaseMigrationJournalEntry[] =
     rows.slice(0, -2);
@@ -254,7 +257,7 @@ export function assertStorageDatabaseMigrationLineage(
     ) ||
     !hasSchemaV5MigrationLineage(v6Rows.slice(0, -1))
   ) {
-    throw new Error(`${source}: expected the exact supported schema v9 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v10 migration lineage.`);
   }
 }
 

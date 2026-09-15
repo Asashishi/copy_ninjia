@@ -28,15 +28,6 @@ import type {
   IdentityStoragePersistedReply,
 } from "../types/diskIO/replies";
 
-interface ChatQaDiskIOApi {
-  readonly onDiskIORespawn?: typeof diskIO.onDiskIORespawn;
-  readonly onIdentityStoragePersisted?: typeof diskIO.onIdentityStoragePersisted;
-  readonly postDiskIO?: typeof diskIO.postDiskIO;
-}
-
-// 叶子单测可只替换实际观察的出口；生产装配始终提供完整接口。
-const chatQaDiskIOApi: ChatQaDiskIOApi = diskIO;
-
 /** 问答条数达到上限；命令回执只把这一类失败解释为业务容量已满。 */
 export class ChatQaCapacityError extends Error {}
 
@@ -73,7 +64,7 @@ function postChatQaWrite(
   transport?: DiskIORecoveryTransport
 ): boolean {
   return transport === undefined
-    ? chatQaDiskIOApi.postDiskIO?.(message) === true
+    ? diskIO.postDiskIO(message) === true
     : transport.post(message);
 }
 
@@ -212,13 +203,9 @@ function replayChatQaWrites(transport: DiskIORecoveryTransport): boolean {
   return true;
 }
 
-if (chatQaDiskIOApi.onIdentityStoragePersisted !== undefined) {
-  chatQaDiskIOApi.onIdentityStoragePersisted(settleChatQaWrites);
-}
-if (chatQaDiskIOApi.onDiskIORespawn !== undefined) {
-  chatQaDiskIOApi.onDiskIORespawn(
-    "chat qa",
-    DISK_IO_RESPAWN_PRIORITIES.CHAT_QA,
-    replayChatQaWrites
-  );
-}
+diskIO.onIdentityStoragePersisted(settleChatQaWrites);
+diskIO.onDiskIORespawn(
+  "chat qa",
+  DISK_IO_RESPAWN_PRIORITIES.CHAT_QA,
+  replayChatQaWrites
+);

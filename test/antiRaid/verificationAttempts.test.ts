@@ -1,3 +1,4 @@
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
   DiskBusinessMessage,
@@ -6,12 +7,12 @@ import type {
 
 const diskPosts: DiskBusinessMessage[] = [];
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO(message: DiskBusinessMessage): boolean {
     diskPosts.push(message);
     return true;
   },
-}));
+})));
 
 const {
   acceptVerificationDeferred,

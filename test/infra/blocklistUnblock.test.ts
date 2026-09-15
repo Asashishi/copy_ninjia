@@ -1,3 +1,5 @@
+import type { FlushResult } from "../../packages/types/lifecycle";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
   DiskBusinessMessage,
@@ -14,8 +16,8 @@ import {
 const diskMessages: DiskBusinessMessage[] = [];
 const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
 
-mock.module("../../packages/infra/diskIO", () => ({
-  flushDiskIODomain: async (): Promise<string> => "flushed",
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
+  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
   flushDiskIODomainOutcome: async (): Promise<{ result: "flushed" }> => ({ result: "flushed" }),
   isDiskIOInitialized: (): boolean => false,
   onDiskIORespawn: (): void => {},
@@ -27,7 +29,7 @@ mock.module("../../packages/infra/diskIO", () => ({
     diskMessages.push(message);
     return true;
   },
-}));
+})));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: (): ReadonlyMap<number, { isInitEnabled: boolean; botPermissions: BotChatPermissions }> =>
     new Map([[-1001, { isInitEnabled: true, botPermissions: botPermissions() }]]),

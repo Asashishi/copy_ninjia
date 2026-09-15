@@ -12,6 +12,8 @@ function assertAtmosphereReadonly(): void {
   ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.copyAlreadyRunning = (): string => "changed";
   // @ts-expect-error 权限说明表不可修改。
   ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP.isCanConfigAiPrompt = "changed";
+  // @ts-expect-error 清理上下文权限说明不可修改。
+  ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP.isCanClearContext = "changed";
   // @ts-expect-error 嵌套目标提示不可修改。
   ATMOSPHERE_TEXTS.plain.PERMISSION_COMMAND_TEXTS.target.selfTarget = "changed";
   // @ts-expect-error 运势固定评语不可修改。

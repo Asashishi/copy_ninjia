@@ -1,3 +1,4 @@
+import * as diskIO from "../diskIO";
 import { assertStorageAdmission } from "../diskIO/storageAdmission";
 import { canQueueDiskIOBusiness } from "../diskIO/transport";
 import { storageWriteCost } from "../../libs/storageWriteBudget";
@@ -19,7 +20,6 @@ import {
   encodeWhitelistEntryData,
 } from "../../database/codec/identity";
 import { logger } from "../logger";
-import { identityDiskIOApi } from "./shared";
 import type {
   DiskIORecoveryTransport,
   IdentityPolicyWriteDiskMessage,
@@ -35,7 +35,6 @@ import type {
 } from "../../types/identityPolicy";
 import type { UnacknowledgedIdentityWrite } from
   "../../types/identityStorage";
-import type { IdentityDiskIOApi } from "./shared";
 
 interface QueuedIdentityWrite {
   readonly table: IdentityPolicyTable;
@@ -114,7 +113,7 @@ export function queueIdentityPolicyWrite(
   identityWriteRevision.current++;
   pendingWrites.set(id, { data, revision });
   unacknowledgedIdentityBytes.current[table] = bytes;
-  if (identityDiskIOApi.postDiskIO?.(message) === true) return true;
+  if (diskIO.postDiskIO(message) === true) return true;
   logger.error(
     `Failed to queue ${table} identity ${id}; retaining revision ${revision} for replay.`
   );
@@ -135,12 +134,7 @@ export async function confirmIdentityPolicyPersisted(
     unacknowledgedIdentityWrites(table).get(id);
   if (pending === undefined) return;
   if (retryUnacknowledged) requeueUnacknowledgedIdentityWrite(table, id);
-  const flush: IdentityDiskIOApi["flushDiskIODomainOutcome"] =
-    identityDiskIOApi.flushDiskIODomainOutcome;
-  if (flush === undefined) {
-    throw new Error(`Persistence flush is unavailable for ${table} identity ${id}.`);
-  }
-  const outcome: DomainFlushOutcome = await flush(table);
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome(table);
   if (outcome.result !== "flushed") {
     const domainNote: string = outcome.failedDomains === undefined
       ? "no per-domain reply"
@@ -166,7 +160,7 @@ export function requeueUnacknowledgedIdentityWrite(
   const change: UnacknowledgedIdentityWrite | undefined =
     unacknowledgedIdentityWrites(table).get(id);
   if (change === undefined) return false;
-  const posted: boolean = identityDiskIOApi.postDiskIO?.({
+  const posted: boolean = diskIO.postDiskIO({
     type: "identityPolicyWrite",
     table,
     id,
@@ -225,13 +219,9 @@ function replayIdentityPolicyWrites(
   return true;
 }
 
-if (identityDiskIOApi.onIdentityStoragePersisted !== undefined) {
-  identityDiskIOApi.onIdentityStoragePersisted(settleIdentityStorageWrite);
-}
-if (identityDiskIOApi.onDiskIORespawn !== undefined) {
-  identityDiskIOApi.onDiskIORespawn(
-    "identity policies",
-    DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST,
-    replayIdentityPolicyWrites
-  );
-}
+diskIO.onIdentityStoragePersisted(settleIdentityStorageWrite);
+diskIO.onDiskIORespawn(
+  "identity policies",
+  DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST,
+  replayIdentityPolicyWrites
+);

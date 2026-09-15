@@ -1,3 +1,4 @@
+import { diskIOStub } from "../../helpers/diskIOMock";
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegistry";
 import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
@@ -12,24 +13,14 @@ import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
 import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
 import type {
   AiMemoryDeletedPersistedReply,
-  AiMemoryDeleteDiskMessage,
-  AiMemoryDiskMessage,
-  AiMemoryForgetDiskMessage,
   AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskIORecoveryTransport,
   DiskIORespawnListener,
-  StickerCatalogDiskMessage,
 } from "../../../packages/types/diskIO";
 
-type AiDiskMessage =
-  | AiMemoryDiskMessage
-  | AiMemoryDeleteDiskMessage
-  | AiMemoryForgetDiskMessage
-  | StickerCatalogDiskMessage;
-
 const workerPosts: AiChatWorkerMessage[] = [];
-const diskPosts: AiDiskMessage[] = [];
+const diskPosts: DiskBusinessMessage[] = [];
 const initWorker = mock((): void => {});
 const teardownFatal = mock((_error: Error): void => {});
 mock.module("../../../packages/infra/diskIO/fatal", () => ({ signalDiskIOFatal: teardownFatal }));
@@ -58,8 +49,8 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../../packages/infra/diskIO", () => ({
-  postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
+mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
+  postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
     diskDeletePersisted = callback;
   },
@@ -74,7 +65,7 @@ mock.module("../../../packages/infra/diskIO", () => ({
   },
   onDiskIOGiveUp: (callback: () => void): void => { diskGaveUp = callback; },
   relayLogMessage: (): boolean => true,
-}));
+})));
 // 主线程群状态缓存同时提供 AI 开关和可选人设。
 const knownChats = new Set<number>();
 const personas = new Map<number, string>();
@@ -314,7 +305,7 @@ describe("AI main-thread persistence mirror", () => {
     diskPosts.length = 0;
     const recoveryTransport: DiskIORecoveryTransport = {
       post: (message: DiskBusinessMessage): boolean => {
-        diskPosts.push(message as AiDiskMessage);
+        diskPosts.push(message);
         return true;
       },
       ensureLuckReceiptSecret: async (): Promise<never> => {
@@ -443,7 +434,7 @@ describe("AI main-thread persistence mirror", () => {
     diskPosts.length = 0;
     const recoveryTransport: DiskIORecoveryTransport = {
       post: (message: DiskBusinessMessage): boolean => {
-        diskPosts.push(message as AiDiskMessage);
+        diskPosts.push(message);
         return true;
       },
       ensureLuckReceiptSecret: async (): Promise<never> => {
@@ -563,7 +554,7 @@ describe("AI main-thread persistence mirror", () => {
     expect(aiMemoryRevisionCounters.has(-1001)).toBeFalse();
     // 落盘侧的水位线必须同一时刻一起丢：只归零主线程计数器的话，重新启用后的
     // revision 1 会被 Worker 判成迟到消息静默丢弃，直到爬过删除时的旧水位。
-    expect(diskPosts.filter((message: AiDiskMessage): boolean => message.type === "forgetAiMemory"))
+    expect(diskPosts.filter((message: DiskBusinessMessage): boolean => message.type === "forgetAiMemory"))
       .toEqual([{ type: "forgetAiMemory", chatId: -1001 }]);
   });
 
@@ -601,7 +592,7 @@ describe("AI main-thread persistence mirror", () => {
 
     const deleted = aiChat.invalidateAiChat(-1001, true);
     forgetAiMemoryRevisionCounter(-1001);
-    expect(diskPosts.some((message: AiDiskMessage): boolean => message.type === "forgetAiMemory")).toBeFalse();
+    expect(diskPosts.some((message: DiskBusinessMessage): boolean => message.type === "forgetAiMemory")).toBeFalse();
 
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
     const invalidateRequest: AiChatWorkerMessage | undefined =

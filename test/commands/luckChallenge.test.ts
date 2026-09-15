@@ -1,3 +1,4 @@
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 /**
@@ -11,7 +12,7 @@ let postDiskIOAccepted: boolean = true;
 const postDiskIOMock = mock((..._args: unknown[]): boolean => postDiskIOAccepted);
 const onDiskIORespawnMock = mock((..._args: unknown[]): void => {});
 const onLuckAppendStalledMock = mock((..._args: unknown[]): void => {});
-const relayLogMessageMock = mock((..._args: unknown[]): void => {});
+const relayLogMessageMock = mock((..._args: unknown[]): boolean => true);
 const logApiErrorMock = mock((..._args: unknown[]): void => {});
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 let ensureLuckReceiptSecretError: unknown = null;
@@ -38,13 +39,13 @@ mock.module("../../packages/infra/logger", () => ({
   },
 }));
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
   onLuckAppendStalled: onLuckAppendStalledMock,
   relayLogMessage: relayLogMessageMock,
   ensureLuckReceiptSecret: ensureLuckReceiptSecretMock,
-}));
+})));
 
 // 跨东京零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）
 // 时 getTokyoDateKey 走真实实现，其余测试完全不受影响。

@@ -111,7 +111,8 @@
   - **責務**：`packages/` と対応する Bun 単体テスト。
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
-  - **Cold migration**：`migrateAiContext.ts` は schema v8 の停止時バックアップを検証し、独立した出力と検証一覧を生成します。`migrations/aiContext/database.ts` は系譜検証、schema v9 トランザクション、AI snapshot 取込を担当し、アプリ起動 graph には入りません。
+  - **インストーラー**：`install.sh` は対象ワークツリーを特定し、そのバージョンの入口へ処理を渡します。`scripts/install/` の repository、service、config、runtime、configure、start の各 shell モジュールの可読性と構文を一括確認してから順に読み込みます。`installSources.ts` は構文検査と隔離フィクスチャへ同じモジュール一覧を提供します。
+  - **Cold migration**：`migrateClearContextPermission.ts` は schema v9 の停止時バックアップを検証し、独立した出力と検証一覧を生成します。`migrations/clearContextPermission/database.ts` は系譜検証と schema v10 権限トランザクションを担当し、アプリ起動 graph には入りません。
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
   - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、リリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`、および 2 つの benchmark ルートが共用する `fixtures/copyTree.ts`（ディレクトリツリーの複製）と `fixtures/pathBoundary.ts`（書き込み境界の実パス構成要素の検査）。
 

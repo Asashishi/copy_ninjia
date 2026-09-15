@@ -38,6 +38,8 @@
 
 ## 质量门禁的口径
 
+- **安装启动隔离**：安装夹具使用独立临时配置与数据根，mock 系统管理、依赖安装和网络出站，执行真实 `index.ts`、Worker 与退出落盘。每个 Worker 通过 Bun `preload` 安装网络替身，天气返回固定应答，其他请求被拒绝；测试核对替身已加载、轮询成功、SIGTERM 排空和锁文件清除。
+- **文件长度与扫描范围**：手写 TS、JS、shell 文件超过 1,000 行即拒绝；超过 500 行应评估拆分。检查覆盖受跟踪文件与尚未加入索引的新文件，Git 忽略的部署数据不进入扫描。安装语法检查同时覆盖 `install.sh` 和它声明的全部 shell 模块。
 - **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 90%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
@@ -62,7 +64,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**4223 tests / 375 files / 157360 次 `expect()`**；全源码**函数覆盖率 96.97% / 行覆盖率 97.89%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**4281 tests / 378 files / 157651 次 `expect()`**；全源码**函数覆盖率 97.16% / 行覆盖率 97.93%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 

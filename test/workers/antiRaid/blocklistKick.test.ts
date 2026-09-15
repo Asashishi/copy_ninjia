@@ -1,19 +1,25 @@
+import type { IdentityPolicyRawReadResult } from "../../../packages/types/identityStorage";
+import type { FlushResult } from "../../../packages/types/lifecycle";
+import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AntiRaidWorkerMessage } from "../../../packages/types";
-import type { DiskBusinessMessage } from "../../../packages/types/diskIO";
+import type { DiskBusinessMessage, AdSampleDiskMessage } from "../../../packages/types/diskIO";
 import {
   blockedIdentityTestView as blockedUserIds,
   readBlockedIdentityTestIds,
 } from "../../helpers/identityStorage";
+
+/** 测试观察业务写入与诊断消息。 */
+type TestDiskMessage = DiskBusinessMessage | AdSampleDiskMessage;
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
 /** 被要求补齐权限位的群，验证刷屏投递顺手触发了那次按需现查。 */
 const ensuredPermissionChats: number[] = [];
 /** 在主线程入口被黑名单频道守卫删除的已知消息。 */
 const deletedMessages: { chatId: number; messageId: number }[] = [];
-const diskPosts: DiskBusinessMessage[] = [];
+const diskPosts: TestDiskMessage[] = [];
 const deliveryOrder: string[] = [];
-const flushDiskIODomain = mock(async (): Promise<string> => {
+const flushDiskIODomain = mock(async (): Promise<FlushResult> => {
   deliveryOrder.push("disk-flush");
   return "flushed";
 });
@@ -29,7 +35,7 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => new Map(),
   getOrCreateChatState: () => ({}),
   persistChatState: async (): Promise<void> => {},
-  flushStateToDisk: async (): Promise<string> => "flushed",
+  flushStateToDisk: async (): Promise<FlushResult> => "flushed",
   saveChatStateInBackground: (): void => {},
 }));
 mock.module("../../../packages/infra/telegram/actions", () => ({
@@ -71,12 +77,12 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
     terminate: async (): Promise<void> => {},
   }),
 }));
-mock.module("../../../packages/infra/diskIO", () => ({
-  flushDiskIO: async (): Promise<string> => "flushed",
+mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
+  flushDiskIO: async (): Promise<FlushResult> => "flushed",
   flushDiskIODomain,
   // 落盘 Worker 正常可写：这些用例考察的是 flush 结果本身，不是恢复握手期。
   isDiskIOBuffering: (): boolean => false,
-  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIODomain() }),
+  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIODomain() }),
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (): void => {},
   readBlocklistIdPage: async (afterId: number | null): Promise<{
@@ -93,27 +99,25 @@ mock.module("../../../packages/infra/diskIO", () => ({
       done: true,
     };
   },
-  readIdentityPolicies: async (ids: readonly number[]): Promise<{
-    whitelist: readonly (readonly [number, string])[];
-    blocklist: readonly (readonly [number, string])[];
-  }> => ({
+  readIdentityPolicies: async (ids: readonly number[]): Promise<IdentityPolicyRawReadResult> => ({
+    temporaryAdBypass: [],
     whitelist: [],
     blocklist: ids
       .filter((id: number): boolean => readBlockedIdentityTestIds().includes(id))
       .map((id: number): readonly [number, string] => [id, "{}"]),
   }),
   onVerificationPersisted: (): void => {},
-  postDiskIO: (message: DiskBusinessMessage): boolean => {
+  postDiskIO: (message: TestDiskMessage): boolean => {
     diskPosts.push(message);
     deliveryOrder.push(`disk-${message.type}`);
     return true;
   },
-  postDiskIODiagnostic: (message: DiskBusinessMessage): boolean => {
+  postDiskIODiagnostic: (message: TestDiskMessage): boolean => {
     diskPosts.push(message);
     deliveryOrder.push(`disk-${message.type}`);
     return true;
   },
-}));
+})));
 const { handleChatMemberUpdate, handleAntiRaidMessageIngress } = await import("../../../packages/antiRaid");
 const { pendingBlockedRemovals } = await import("../../../packages/cache/main/blocklist");
 const { recentBlockedJoinCounts } = await import("../../../packages/cache/main/antiRaid/blocklistGuard");
@@ -151,7 +155,7 @@ beforeEach(() => {
   diskPosts.length = 0;
   deliveryOrder.length = 0;
   flushDiskIODomain.mockClear();
-  flushDiskIODomain.mockImplementation(async (): Promise<string> => {
+  flushDiskIODomain.mockImplementation(async (): Promise<FlushResult> => {
     deliveryOrder.push("disk-flush");
     return "flushed";
   });
@@ -253,10 +257,10 @@ describe("黑名单成员入群秒踢", () => {
 
   test("outbox flush 等待期间解除拉黑时，先持久化取消且不投递旧处置", async () => {
     blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    let releaseOutboxFlush: ((result: string) => void) | undefined;
+    let releaseOutboxFlush: ((result: FlushResult) => void) | undefined;
     flushDiskIODomain.mockResolvedValueOnce("flushed");
     flushDiskIODomain.mockImplementationOnce(
-      (): Promise<string> => new Promise<string>((resolve: (result: string) => void): void => {
+      (): Promise<FlushResult> => new Promise<FlushResult>((resolve: (result: FlushResult) => void): void => {
         releaseOutboxFlush = resolve;
       })
     );

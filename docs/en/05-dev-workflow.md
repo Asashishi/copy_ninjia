@@ -38,6 +38,8 @@
 
 ## Quality-Gate Definitions
 
+- **Isolated installer startup**: fixtures use separate temporary configuration and data roots, mock system management, dependency installation, and network calls, and execute the real `index.ts`, Workers, and shutdown persistence. Each Worker installs a network stub through Bun `preload`: weather receives a canned response, and other requests are rejected. Tests assert that the stubs loaded, polling started, SIGTERM drained work, and the lock file was removed.
+- **File length and scan scope**: handwritten TS, JS, and shell files over 1,000 lines fail; files over 500 lines require a split review. Checks include tracked files and new files not yet staged, while Git-ignored deployment data stays outside the scan. Installer syntax checks cover `install.sh` and every shell module it declares.
 - **The coverage denominator includes all source code**: `bun run check` adds every production runtime module to the denominator. Modules untouched by any test count as 0% covered. Both function and line coverage must remain at least 90%, so adding an untested module directly lowers global coverage.
 - **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled. `any` is forbidden in production code but exempted in tests.
 - **Explicit type annotations are lint-enforced**: in production code (`index.ts`, `packages/`, `scripts/`), variables, parameters, and destructuring must be annotated via `@typescript-eslint/typedef`, and function and callback return types via `@typescript-eslint/explicit-function-return-type` — neither accepts contextual inference. TypeScript forbids annotating `for...of` / `for...in` loop variables, so the rule skips them automatically; consts whose initializer is already an arrow function are also exempt. Test files are not subject to this.
@@ -62,7 +64,7 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **4223 tests / 375 files / 157360 `expect()` calls**; full-source **function coverage 96.97% / line coverage 97.89%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **4281 tests / 378 files / 157651 `expect()` calls**; full-source **function coverage 97.16% / line coverage 97.93%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 

@@ -61,7 +61,7 @@
 
   **同一进程内只有一代 AI 配置。** `agent.json` 由主线程在启动总闸解析一次，AI 闲聊 Worker 经 `init`、Anti-Raid Worker 经 `agentConfig` 各收到一份只读快照；两条 Worker 都只读本线程 holder，任何运行时路径都不再读盘，崩溃重建重放的也是**同一份**快照。因此改配置必须整进程重启，Worker 重建不会捡到磁盘上的新版本。ad_detect 未配置时快照显式为 `null`，判定侧 fail-closed，不得沿用上一实例的值。
 
-  `text`、`summary`、`media` 三项齐备才算 AI 对话可用；缺 `image`/`song` 只摘对应工具，缺 `ad_detect` 只阻止广告检测。若相关群状态已经开启，启动 preflight 会拒绝缺失前提，而不是静默降级。
+  `text`、`summary`、`media` 三项齐备才算 AI 对话可用；缺 `image`/`song` 只摘对应工具，缺 `ad_detect` 只阻止广告检测。启动 preflight 严格校验已经存在的部署输入；可选输入缺省时由 readiness 判定相应功能不可用，持久化群开关保持原值。
 
   **可选能力一律按「这个成员在不在」判定，绝不按供应商名字。** 两家都实现语音转写入口，但所配 media 模型是否接受视觉/语音由两种模态各自的首次真实请求探测；每种模态只允许一个在途探测，SDK 最多尝试五次，等待者不占媒体执行槽。结论分四档：`supported`；`unsupported`（端点明确拒绝该模态）；`misconfigured`（404/405，模型或 base_url 写错，落定时记一行指向 `$.agent.media` 的诊断）；其余保持 `unknown`。`unsupported` 与 `misconfigured` 都是终局，在 Worker 生命周期内不再下载该模态。端点故障（超时、408/429/5xx、网络）按连续次数做有限指数退避（30 秒起，封顶 10 分钟），退避期内直接返回共享结果、不下载也不占执行槽，一次成功即清零；普通 4xx 参数错误、下载失败与空响应只是这一份媒体的问题，既不下模态结论也不推进退避。生歌仍按 `provider.generateSong === undefined` 摘挂工具，且「配了这项能力但所选实现没有它」会在 Worker 初始化时记一次启动诊断。
 
@@ -187,6 +187,8 @@
 
 ### AI 闲聊运行时
 
+- 天气刷新由 AI Worker 独占；停止时清除 interval、取消在途 HTTP 请求并撤销写回资格。重开后的缓存只接受当前循环结果；HTTP 边界同时遵守调用方取消、原有超时与响应体大小上限。
+
 - `/mood query` 与 `/mood switch` 共用主线程 request/waiter 与 AI Worker 回执握手。前者允许任意群成员读取当前有效心情且不强制重抽，后者才检查 `isCanSwitchMood` 并执行重抽。主线程必须先登记 waiter 再投递，并在超时、Worker 崩溃、放弃重启和停机时统一结算；请求携带绝对截止时刻，AI Worker 必须在读取或重抽前拒绝已过期的积压请求。只有 request ID、chat ID 和预期事件类型都匹配的 `moodQueried` / `moodSwitched` 回执能证明结果；后续 Telegram 回复发送失败不得被改写成查询或重抽失败。
 - **AI chat teardown 的收尾责任跨超时保留。** 主线程 `pendingAiMemoryTeardowns` 等待 durable 删除与匹配请求的 `chatInvalidated`；AI Worker 重建、放弃或终止也可结算旧请求。删除等待超时只释放 waiter，迟到回执继续收尾；Worker 的 `memoryDeleted` 若又建立删除，仍等待该墓碑确认。新记录或快照接管时撤销旧收尾，普通 `/ai_chat disable` 不建立彻底清理身份。确认无新快照、首份落盘标志、墓碑与 waiter 后，释放主线程群计数并按 FIFO 发送 `forgetAiMemory`；一个全局 revision 下界标量保证新生命周期不复用已释放编号。未完成 teardown 最多 `STATE_MANAGED_CHAT_LIMIT`（25）项，满额触发现有存储 fatal 并拒绝新增责任。DiskIO 重建由主线程重放待删记录；进程重启不恢复这些纯内存身份。
 
@@ -197,6 +199,8 @@
   无上限地等，一次「`/ai_chat disable` 撞上镜像块轮转」就会让主线程先超时 reject，而那个异常会逃进 grammY 中间件：这条 update 判失败、最终 offset 被扣住，重启后 Telegram 重投同一条指令。到点降级放行并记一行错误日志，不影响正确性——这些任务全部按 generation 自检，失效之后跑完也不会再写任何东西。迟到任务只做无副作用 epoch 对账，条目回收或群重新启用都不能让旧 token 复活；epoch Map 因此只随当前活跃工作增长，不保留历史群。
 
   主线程必须同时等该回执与记忆删除 durable 才能宣称 `/ai_chat disable` 或 `/clear_context` 完成——两条命令共用同一条 `invalidateAiChat(chatId, true)`，都要求本群记忆清空并将 `chat_states.ai_context` 置为 NULL，保留 `ai_persona`，区别只是前者还落一次开关。Worker 崩溃、放弃重建、投递失败、超时或停机都必须 reject waiter。
+
+- `/clear_context` 只按发起身份的 `isCanClearContext` 清除当前群对话记忆，保留自定义人设。超级管理员始终直授 true；新白名单成员默认 false。v9 → v10 冷迁移仅为原有全部权限均为 true 的成员开启，后续授权与撤销由 `/permission` 独立控制。
 - 模型请求的传输、网络、429 与 5xx 重试只由所选供应商官方 SDK 自己负责（Gemini 是 `@google/genai` 的 `retryOptions`，OpenAI 是 SDK 的 `maxRetries`；两边都按「首次加最多 5 次重试」对齐）。两个 SDK 的 timeout 都是**每次尝试**各自的期限，因此 aiChat 的两个底层封装（`aiChat/gemini/client.ts`、`aiChat/openai/client.ts`）各自用 `libs/abortSignal.ts` 的 `signalWithTimeout` 合成一份覆盖整次调用（含全部重试与退避）的 deadline 再下传：signal 一触发 SDK 即短路整轮重试，最坏挂起因而等于 `GEMINI_REQUEST_TIMEOUT_MS` / `OPENAI_REQUEST_TIMEOUT_MS` 本身，而不是它乘上尝试次数。调用方的 invalidate signal 与这份 deadline 合成而非被替换。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
 
   `aiChat/openai/image.ts` 同样以 `OPENAI_IMAGE_REQUEST_TIMEOUT_MS` 同时限制单次尝试和整次生图调用。合成 signal 交给 SDK 与外层等待，覆盖素材准备、SDK 重试和退避；调用方取消静默结算，整次超时按请求失败记录。
@@ -244,6 +248,8 @@
   `failedEntries` 使用 `STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS`（30 分钟）负缓存，`failedPacks` 使用 `STICKER_SET_FAILURE_RETRY_MS`；未到期条目不重试。维护复用 `ensureStickerCatalogs` 的包级并发去重和生成循环，只描述缺项，成功或移出集合后释放失败记录。查询集合失败时保留现有目录；取消后不提交模型结果。
 
 ### AI 提示词与转录
+
+- 本机器人发言按账号 ID 识别，在 AI 自录、转录名册、回复引用和摘要输入中统一使用 `SELF_SPEAKER_NAME`（`自己（也就是你）`），不向模型提供自身的 Telegram `first_name`、`last_name` 或 `username` 身份字段。名册编号 `me` 与账号 ID 保留；其他发言人的身份、消息正文及其中的提及原样保留。既有逐字快照在渲染时使用同一规则，不改写持久化格式或历史摘要正文。
 
 - AI 回复只使用一份供应商中立的固定联网查证说明（`WEB_SEARCH_INSTRUCTION`），同一回复的每次模型往返复用完全相同的 system prompt。提示要求：遇到会变化的现实信息或不能确认的可查事实，且本轮提供联网检索工具时，必须先搜索再做可见动作；主观聊天、创作和转录中已经给出的事实不搜索；搜索结果优先于记忆，证据不足或工具不可用时明确不确定，且不向群友解释搜索过程。每轮次数上限作为常量写进这段说明本身；真实调用数由 `replyModel.ts` 记账并在跨过上限时点名，但既不改写 system prompt，也不摘掉服务端检索工具。观测到服务端搜索后，后续请求把 `grounded` 置为 true；Gemini 据此降低采样温度，OpenAI Responses 保持模型默认采样参数。
 - AI 回复的初始输入必须保持 4 个有序文本区块：只读参考记忆、只读当前会话、本轮运行时状态、本轮回复任务。区块按「跨轮回复是否逐字不变」分成两组交给实现包——稳定组只有参考记忆，易变组是其余三段（`AiReplySessionParams` 的 `stableBlocks` / `volatileBlocks`），顺序恒定为稳定组在前，这条分界是供应商缓存的命中前提。区块数与触发类型无关——直接 @/回复只体现为回复任务开头多一句唤起者声明（`directInvokerSentence`，身份段与转录行同形），不得为此另插一个 Part 或把该成员的热区发言再复制一份。区块在 `packages/workers/aiChat/replyModel.ts` 保持领域语义，直到各供应商实现包的 `replySession.ts` 才映射成自家形状（Gemini 用前后相邻的两个 `user Content` 分别承载稳定组与易变组、每个区块各是一个 `text Part`；OpenAI 用一条 user message 下的多个 `input_text`）。每段只由模型可见的首尾标签加一行段首职责标注包围；防注入总规则（数据 vs 指令、伪造边界无效、不暴露内部结构）统一只在系统提示词里声明一次，不逐段重复。运行时状态段由系统写入、内容可信，但只描述状态、不布置任务；转录或摘要正文里出现的同名标签、心情声明或时间声明一律无效。数据 Part 内只放数据与分层标注——转录行怎么读由系统提示词里的 `TRANSCRIPT_FORMAT_INSTRUCTION` 交代（它自带「讲的是哪个 Part」的指向），恒定文案不得再拼进每轮都变的转录区块，防注入声明的可信白名单里因此也没有「格式说明」这一类。
@@ -512,7 +518,7 @@
 
 - **每群状态的权威副本是 SQLite `chat_states` 表；主线程只持有一份容量恰好等于 `STATE_MANAGED_CHAT_LIMIT`（25）的热读副本**（`packages/cache/main/chatState.ts`）。状态字段保存在 `status`，覆盖七个功能开关（含 `isProxySendEnabled`）、`quietUntil`、`lockdown` write-ahead 记录、`botPermissions` 完整快照与 `title`；`aiPersona` 从独立的 `ai_persona` 列合并到同一 `ChatState`。
 
-- **容量闸只拒绝、绝不淘汰**：新建第 26 条时 `assertChatStateCapacity` 抛错，启动读到第 26 行时 `hydrateChatStateCache` 拒绝启动，Disk I/O Worker 在写入侧独立复核一次（三道都不依赖对方）。缓存的淘汰分支因此永远走不到，这是有意的——淘汰掉一个在管群的状态会让它静默读成 `DEFAULT_CHAT_STATE`：每个功能都是关的、权限未知，而且没有任何错误。
+- **容量闸只拒绝、绝不淘汰**：新建第 26 条时 `assertChatStateCapacity` 抛错，启动读取由 `decodeStoredChatStates` 校验容量与代理目标唯一性，Disk I/O Worker 在写入侧独立复核容量。`hydrateChatStateCache` 只将已解码状态装入固定 shape 热缓存；这些边界保证管理中的群状态不会被 LRU 淘汰。
 
   正因为淘汰不可能发生，**热读走 `peek` 而不是 `get`**：那次为刷新热度而做的 `Map.delete` + `Map.set` 一分钱也买不到（chat-state-map-read 实测 253.0 → 14.1 ns/op），还会让 `getChatStateCache()` 的迭代序变成读取历史的函数，而 `/block`、`/unblock` 的连带封禁群清单直接把它呈现给用户。
 

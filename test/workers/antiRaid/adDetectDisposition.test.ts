@@ -1,3 +1,4 @@
+import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
@@ -90,7 +91,7 @@ mock.module("../../../packages/infra/blocklist/outbox", () => ({
 }));
 mock.module("../../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
 mock.module("../../../packages/cache/main/antiRaid/verificationMirror", () => ({ activeVerificationSnapshots }));
-mock.module("../../../packages/infra/diskIO", () => ({ postDiskIODiagnostic: postDiskIO }));
+mock.module("../../../packages/infra/diskIO", () => (diskIOStub({ postDiskIODiagnostic: postDiskIO })));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => chatStates,
   getChatState: (chatId: number) => chatStates.get(chatId) ?? {},

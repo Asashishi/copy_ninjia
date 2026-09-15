@@ -1,3 +1,5 @@
+import type { DiskIODomain } from "../../packages/types/diskIO/replies";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
@@ -58,7 +60,7 @@ const readBlocklistIdPage = mock(
 );
 let acceptDiskMessages: boolean = true;
 const flushDiskIODomainOutcome = mock(
-  async (domain: "whitelist" | "blocklist"): Promise<DomainFlushOutcome> => {
+  async (domain: DiskIODomain): Promise<DomainFlushOutcome> => {
     const writes: { table: "whitelist" | "blocklist"; id: number; revision: number }[] = [];
     for (const message of diskMessages) {
       if (message.type !== "identityPolicyWrite" || message.table !== domain) continue;
@@ -77,7 +79,7 @@ const flushDiskIODomainOutcome = mock(
   }
 );
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   isDiskIOInitialized: (): boolean => true,
   onDiskIORespawn: (
     _owner: string,
@@ -99,7 +101,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   readBlocklistIdPage,
   readIdentityPolicies,
   relayLogMessage: (): boolean => true,
-}));
+})));
 
 const {
   blocklistEntryCache,

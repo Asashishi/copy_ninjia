@@ -77,6 +77,24 @@ afterEach(() => {
 });
 
 describe("AI 中期记忆压缩", () => {
+  test("摘要输入仅将自身发言和自身引用身份改为代称", async (): Promise<void> => {
+    responses.push(response("摘要"));
+    const own: BufferedMessage = bufferedMessageFixture({
+      id: 99, messageId: 1, firstName: "Ninja", lastName: "BotLast", username: "ninja_bot", text: "自己的消息",
+    });
+    scheduleRotation(-1009, [own, bufferedMessageFixture({
+      id: 7, messageId: 2, firstName: "Alice", lastName: "Chen", username: "alice_dev", text: "群友消息",
+      replyTo: { ...own, quote: "自己的" },
+    })], false);
+    await waitForRotation(-1009);
+    const request: { userContent: string } = generateText.mock.calls[0]![0] as { userContent: string };
+    expect(request.userContent).toContain("[id:99] 自己（也就是你）");
+    expect(request.userContent).toContain("[id:7] [username:@alice_dev] Alice Chen");
+    expect(request.userContent).toContain("摘要里统一以「自己（也就是你）」称呼它");
+    for (const field of ["Ninja", "BotLast", "ninja_bot"]) expect(request.userContent).not.toContain(field);
+    expect(own.firstName).toBe("Ninja");
+  });
+
   test("当前时间拼在 userContent 末尾，systemPrompt 逐字恒定", async () => {
     responses.push(response("摘要"));
 

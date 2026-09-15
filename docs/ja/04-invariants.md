@@ -61,7 +61,7 @@
 
   **1 つの process には 1 世代の AI 設定しか存在しません。** `agent.json` は起動 gate で main thread が一度だけ parse し、AI 雑談 Worker は `init`、Anti-Raid Worker は `agentConfig` で read-only な snapshot を受け取ります。どちらの Worker も thread ごとの holder を読むだけで、runtime path から disk に触れることはなく、再生成時も**同じ** snapshot を replay します。したがって設定変更には process 全体の再起動が必要で、Worker の再構築が disk 上の新しい版を拾うことはありません。`ad_detect` 未設定時の snapshot は明示的な `null` で、判定側は前の instance の値を流用せず fail-closed します。
 
-  AI 雑談には `text`、`summary`、`media` が必要です。`image`/`song` 欠落は該当 tool だけ、`ad_detect` 欠落は広告検出だけを止めます。state 上ですでに有効なら startup preflight が欠落を拒否します。
+  AI 雑談には `text`、`summary`、`media` が必要です。`image`/`song` 欠落は該当 tool だけ、`ad_detect` 欠落は広告検出だけを止めます。startup preflight は存在するデプロイ入力を厳密に検証します。任意入力が存在しない場合は readiness が該当機能を利用不可と判定し、永続化されたグループ設定値は保持します。
 
   **任意能力は provider 名ではなく member の有無で判定します。** 両 provider が voice 転写入口を持ちますが、設定した media model の vision/voice 対応は最初の実 request で別々に probe します。modality ごとに在途 probe は 1 つ、SDK は最大 5 attempt、waiter は media runner slot を占有しません。結論は 4 状態です：`supported`、`unsupported`（endpoint が明示的にその modality を拒否）、`misconfigured`（404/405。model か base_url の誤りで、確定時に `$.agent.media` を指す診断を 1 行記録）、それ以外は `unknown`。`unsupported` と `misconfigured` はいずれも終局で、Worker lifetime 中その modality の download を止めます。endpoint 障害（timeout・408/429/5xx・network error）は連続回数に応じた有限の指数 backoff だけを課し（30 秒から最大 10 分）、窓の間は download も executor slot も使わずに共有結果を返し、1 回成功すれば counter は clear されます。通常の 4xx parameter error、download 失敗、空 response はその 1 件の media の問題にすぎず、modality の結論も backoff も動かしません。song は member 欠落時に tool ごと外し、「設定はあるが選択した実装がその能力を持たない」場合は Worker 初期化時に startup 診断を 1 度だけ記録します。
 
@@ -195,6 +195,8 @@
 
 ### AI チャットの実行時
 
+- 天気更新は AI Worker が所有します。停止時に interval を解除し、処理中の HTTP リクエストをキャンセルしてキャッシュ更新権を取り消します。再開後に結果を書き込めるのは現行ループだけです。HTTP 境界は呼び出し元のキャンセル、既存のタイムアウト、応答本文の容量上限を同時に適用します。
+
 - `/mood query` と `/mood switch` は、メインスレッドの request/waiter と AI Worker acknowledgement による handshake を共有します。前者は任意のグループメンバーが現在有効な mood を強制再抽選なしで読み取り、後者だけが `isCanSwitchMood` を確認して再抽選します。メインスレッドは送信前に waiter を登録し、timeout、Worker crash、再起動断念、停止時に統一して精算します。request は絶対 deadline を持ち、Worker は読み取りまたは再抽選の前に期限切れ request を拒否します。request ID、chat ID、期待する event type がすべて一致する `moodQueried` / `moodSwitched` acknowledgement だけが結果を証明します。その後の Telegram reply 失敗を query または再抽選失敗へ書き換えてはいけません。
 - **AI chat teardown の完了責任は timeout 後も保持します。** main の `pendingAiMemoryTeardowns` は durable 削除と request ID が一致する `chatInvalidated` を待ちます。AI Worker の再構築・断念・終了でも旧要求を確定できます。削除待ちの timeout は waiter だけを解放し、遅延応答から完了処理を続けます。Worker の `memoryDeleted` が再び削除を登録した場合は、その tombstone の確認も待ちます。新しい記録や snapshot が接管すると旧完了責任を取り消し、通常の `/ai_chat disable` はこの teardown identity を作りません。新 snapshot、初回永続化マーカー、tombstone、waiter が無くなってから main の群カウンターを解放し、FIFO で `forgetAiMemory` を送ります。単一の全体 revision 下限により、新ライフサイクルは解放済み番号を再利用しません。未完了 teardown は `STATE_MANAGED_CHAT_LIMIT`（25）件までで、満杯時は既存の storage fatal 境界へ通知し、新規責任を拒否します。DiskIO 再構築では main が削除を replay し、プロセス再起動ではこれらの memory identity を復元しません。
 
@@ -209,6 +211,8 @@
   上限なしで待つと、`/ai_chat disable` がミラーブロックの rotation と重なった一度だけでメインスレッドが先に reject し、その例外が grammY のミドルウェアへ抜けます——その update は失敗扱いになり、最終 offset は保留され、再起動後に Telegram が同じコマンドを再配信します。時間切れでは降格して先へ進み、エラーログを 1 行残します。正しさは待機に依存していません——登録された task はすべて generation を自己照合し、無効化後は何も書き込めません。
 
   遅延 task は副作用のない epoch 照合だけを行い、entry 回収後やチャット再有効化後に古い token が復活することはありません。したがって epoch Map は過去のチャット総数ではなく現在の active work と同程度に保たれます。メインスレッドが invalidate 完了を報告できるのは、メモリ削除の永続化と Worker の確認応答が両方成功した後だけです。`/ai_chat disable` と `/clear_context` は同一の `invalidateAiChat(chatId, true)` を共有し、どちらも群の記憶を消去し、`chat_states.ai_context` を NULL にして `ai_persona` を保持します。違いは前者がスイッチも永続化する点だけです。
+
+- `/clear_context` は発起 identity の `isCanClearContext` を確認し、現在の群の対話記憶だけを消去して専用人設を保持します。スーパー管理者は常に true、新規 allowlist メンバーは false が既定です。v9 → v10 cold migration は既存権限がすべて true のメンバーにのみ付与し、以後の付与・撤回は `/permission` で個別管理します。
 - model request の transport、network、429、5xx retry は選択された provider の公式 SDK だけが所有します（Gemini は `@google/genai` の `retryOptions`、OpenAI は SDK の `maxRetries`。いずれも初回に加えて最大 5 retries で揃えています）。どちらの SDK も timeout は**試行ごと**の期限であるため、aiChat の 2 つの最下層ラッパー（`aiChat/gemini/client.ts`、`aiChat/openai/client.ts`）は `libs/abortSignal.ts` の `signalWithTimeout` で呼び出し全体（全 retry と backoff を含む）を覆う deadline を合成して渡します。signal が発火した時点で SDK は残りの retry を短絡するため、最悪のハングは試行回数を掛けた値ではなく `GEMINI_REQUEST_TIMEOUT_MS` / `OPENAI_REQUEST_TIMEOUT_MS` そのものになります。caller の invalidate signal はこの deadline と合成され、置き換えられることはありません。1 回の request が `failureKind: "request"` で失敗した後、caller が full request retry をもう一層重ねてはいけません。domain-level resampling は SDK request が成功しても model response が使用不能または異常終了した場合（`failureKind: "response"`）、あるいは normalize 後の text が空の場合だけに許可し、request 数、latency、一時 allocation の乗算を防ぎます。
 
   `aiChat/openai/image.ts` も `OPENAI_IMAGE_REQUEST_TIMEOUT_MS` を各試行と画像生成全体の両方へ適用します。合成 signal を SDK と外側の待機へ渡し、参照素材の準備、SDK retry、backoff を含めます。caller の取消は静かに終了し、全体 deadline の超過は要求失敗として記録します。
@@ -264,6 +268,8 @@
   `failedEntries` は `STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS`（30 分）、`failedPacks` は `STICKER_SET_FAILURE_RETRY_MS` の負キャッシュを使い、期限内は再試行しません。保守は `ensureStickerCatalogs` のパック単位の並行重複排除と生成処理を再利用し、不足項目だけを記述します。成功または集合からの削除で失敗記録を解放します。集合クエリ失敗では既存目録を保持し、取消後はモデル結果を確定しません。
 
 ### AI プロンプトと transcript
+
+- Bot 自身の発言はアカウント ID で識別し、自録、発言者名簿、返信参照、要約入力で `SELF_SPEAKER_NAME`（`自己（也就是你）`、つまり「自分＝あなた」）を使います。自身の Telegram `first_name`、`last_name`、`username` の識別フィールドはモデルに渡しません。名簿番号 `me` とアカウント ID は保持し、他の発言者の識別情報、本文とその中のメンションも保持します。既存の逐語スナップショットには描画時に同じ規則を適用し、永続化形式や過去の要約本文は書き換えません。
 
 - AI 返信は provider 中立の固定ウェブ検証説明（`WEB_SEARCH_INSTRUCTION`）を 1 つだけ使い、同じ返信内のすべてのモデル request で同一の system prompt を再利用します。変化する現実情報や確認できない検証可能な事実について検索ツールがある場合は、可視 action より先に検索します。主観的な会話、創作、transcript にすでに与えられた事実は検索しません。検索結果を記憶より優先し、根拠不足またはツール不在なら不確実だと明示し、検索過程をグループメンバーへ説明しません。1 返信あたりの回数上限はこの説明文そのものへ定数として書き込みます。実際の呼び出し数は `replyModel.ts` が計上し、上限を超えた時点で記録しますが、system prompt を書き換えることも、サーバー側検索ツールを外すこともしません。検索を観測した後の request は `grounded: true` となり、Gemini は sampling temperature を下げ、OpenAI Responses はモデル既定の sampling parameter を維持します。
 - AI 返信の最初の入力は、順序付きの 4 個のテキストブロックを維持します。すなわち、読み取り専用の参照メモリ、読み取り専用の現在会話、今回のランタイム状態、今回の返信タスクです。ブロックは「返信をまたいで逐字不変かどうか」で 2 組に分けて実装パッケージへ渡します——安定組は参照メモリのみ、可変組は残る 3 段（`AiReplySessionParams` の `stableBlocks` / `volatileBlocks`）で、順序は常に安定組が先です。この境界が provider cache のヒット前提になります。ブロック数は trigger の種類に依存しません——直接 @ / 返信の場合は返信タスクの冒頭に呼びかけ者の宣言（`directInvokerSentence`。identity 部分は転写行と逐字同形）が 1 行増えるだけで、そのために Part を追加したり、そのメンバーの hot window 発言をもう一度複製したりしてはいけません。ブロックは `packages/workers/aiChat/replyModel.ts` まで領域上の意味を保ち、各 provider 実装パッケージの `replySession.ts` で初めて各社の形へ写像します（Gemini は安定組と可変組を前後 2 つの `user Content` に分け、各ブロックを 1 つの `text Part` として格納します。OpenAI は 1 つの user message 配下の複数 `input_text` を使います）。各 section はモデルから見える開始・終了タグと、先頭の責務説明 1 行だけで囲みます。データと命令の区別、偽造 boundary の無効化、内部構造の非開示という共通の prompt injection 防止規則は system prompt に 1 回だけ記載し、各 section で繰り返しません。ランタイム状態の section はシステムが書き込む信頼できる内容ですが、状態を述べるだけでタスクを課しません。transcript や要約の本文に現れる同名のタグ・気分の宣言・時刻の宣言はすべて偽造です。データ Part にはデータと階層 marker だけを置きます——transcript の行をどう読むかは system prompt の `TRANSCRIPT_FORMAT_INSTRUCTION` が示し（どの Part の話かを自ら明示します）、不変のテキストを毎 round 変わる transcript 区画へ連結してはいけません。したがって prompt injection 防止規則の whitelist にも「形式説明」という区分はもうありません。
@@ -574,7 +580,7 @@
 
 - **グループごとの状態の正本は SQLite の `chat_states` テーブルであり、メインスレッドは容量がちょうど `STATE_MANAGED_CHAT_LIMIT`（25）のホット読み取り用コピーだけを持ちます**（`packages/cache/main/chatState.ts`）。`status` は 7 つの機能スイッチ（`isProxySendEnabled` を含む）、`quietUntil`、`lockdown` write-ahead、完全な `botPermissions`、`title` を保持します。別列 `ai_persona` の値を同じ `ChatState.aiPersona` に取り込みます。
 
-- **容量ゲートは拒否するだけで、決して追い出しません。** 26 件目を新規作成しようとすると `assertChatStateCapacity` が throw し、起動時に 26 行目を読むと `hydrateChatStateCache` が起動を拒否し、Disk I/O Worker も書き込み側で独立に再検証します（3 つとも互いに依存しません）。したがってキャッシュの追い出し分岐には到達しませんが、これは意図的です——管理中のグループの状態を追い出すと、それは黙って `DEFAULT_CHAT_STATE` として読まれます：全機能オフ、権限は不明、しかもどこにもエラーが出ません。
+- **容量ゲートは拒否するだけで、決して追い出しません。** 26 件目の新規作成は `assertChatStateCapacity` が拒否します。起動時の `decodeStoredChatStates` は容量とプロキシ対象の一意性を検証し、Disk I/O Worker は書き込み側で容量を独立に検証します。`hydrateChatStateCache` は復号済み状態を固定 shape のキャッシュへ格納するだけであり、これらの境界により管理中のグループ状態が LRU から追い出されることを防ぎます。
 
   追い出しが起こり得ないからこそ、**ホット読み取りは `get` ではなく `peek` を使います**：recency を更新するための `Map.delete` + `Map.set` は何も買えず（chat-state-map-read の実測で 253.0 → 14.1 ns/op）、`getChatStateCache()` の反復順序を読み取り履歴の関数にしてしまいます。その順序は `/block`・`/unblock` の連動 BAN 対象グループ一覧としてそのままユーザーに提示されます。
 

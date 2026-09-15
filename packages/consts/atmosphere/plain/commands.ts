@@ -14,7 +14,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "unblock", description: "移出永久黑名单并解除所有受管群的封禁；回复目标、@username 或用户/频道 id；需要 isCanUnBlock" },
   { command: "prompt", description: "config/remove 配置或移除本群 AI 自定义提示词；需要 isCanConfigAiPrompt" },
   { command: "ai_chat", description: "enable/disable 开关本群 AI 闲聊；需要 AI 管理权限" },
-  { command: "clear_context", description: "清空本群内存和数据库中的 AI 上下文；不带参数，仅超级管理员可用" },
+  { command: "clear_context", description: "清空本群内存和数据库中的 AI 上下文；不带参数，需要 isCanClearContext" },
   { command: "ad_detect", description: "enable/disable 开关本群广告检测；命中后拉黑、跨群封禁并删除消息；需要广告检测管理权限" },
   { command: "flood_control", description: "enable/disable 开关本群防刷屏禁言；需要防刷屏管理权限" },
   { command: "antiraid", description: "enable/disable 开关本群入群验证和防冲群私密模式；需要防冲群管理权限" },

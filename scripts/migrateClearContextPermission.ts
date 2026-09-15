@@ -1,16 +1,13 @@
-import { lstat, mkdir, realpath, readdir } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Stats } from "node:fs";
 import { openStorageDatabase } from "../packages/database/interact/connection";
 import { atomicWriteText, syncDirectory } from "../packages/libs/atomicFile";
-import { InputValidationError, invalidInput, readUtf8TextInput } from "../packages/libs/inputValidation";
+import { InputValidationError, invalidInput } from "../packages/libs/inputValidation";
 import { isErrno } from "../packages/libs/errno";
 import type { StorageDatabase } from "../packages/types/storageDatabase";
-import { migrateAiContextDatabase } from "./migrations/aiContext/database";
-import type { AiContextMigrationCounts } from "./migrations/aiContext/database";
-import { decodeAiMemorySnapshot } from "../packages/libs/persistedSnapshotCodec";
-import { parseJsonInput } from "../packages/libs/inputValidation";
-import { isTelegramGroupChatId } from "../packages/libs/telegramId";
+import { migrateClearContextPermissionDatabase } from "./migrations/clearContextPermission/database";
+import type { ClearContextPermissionMigrationCounts } from "./migrations/clearContextPermission/database";
 
 /** 停机备份中参与本次直接迁移的文件；SQLite 旁路文件必须来自同一一致性点。 */
 const SOURCE_FILES: readonly string[] = ["database/storage.sqlite", "database/storage.sqlite-wal", "database/storage.sqlite-shm"];
@@ -21,7 +18,7 @@ const STAGING_DIRECTORY_MODE: number = 0o700;
 /** 校验清单与文本暂存文件只允许当前账号读写。 */
 const STAGING_FILE_MODE: number = 0o600;
 
-export interface AiContextMigrationOptions {
+export interface ClearContextPermissionMigrationOptions {
   readonly sourceRoot: string;
   readonly outputRoot: string;
 }
@@ -34,10 +31,10 @@ export interface MigrationFileRecord {
   readonly gid: number;
 }
 
-export interface AiContextMigrationResult {
+export interface ClearContextPermissionMigrationResult {
   readonly sourceSchema: number;
-  readonly importedContexts: number;
-  readonly discardedContexts: number;
+  readonly enabledPermissions: number;
+  readonly disabledPermissions: number;
   readonly targetSchema: number;
   readonly sourceRoot: string;
   readonly outputRoot: string;
@@ -45,14 +42,21 @@ export interface AiContextMigrationResult {
   readonly outputFiles: readonly MigrationFileRecord[];
 }
 
+/** 清单哈希按 Bun 文件流增量计算，不持有整份数据库或旁路文件。 */
+async function fileSha256(path: string): Promise<string> {
+  const hasher: Bun.CryptoHasher = new Bun.CryptoHasher("sha256");
+  for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
+  return hasher.digest("hex");
+}
+
 /** 文件清单只记录相对路径、哈希与元数据，不输出部署内容。 */
-async function fileRecord(root: string, path: string): Promise<MigrationFileRecord> {
+export async function readMigrationFileRecord(root: string, path: string): Promise<MigrationFileRecord> {
   const fullPath: string = join(root, path);
   const stats: Stats = await lstat(fullPath);
   if (!stats.isFile()) return invalidInput(fullPath, "$type", "a regular file without symbolic links");
   return {
     path,
-    sha256: new Bun.CryptoHasher("sha256").update(await Bun.file(fullPath).bytes()).digest("hex"),
+    sha256: await fileSha256(fullPath),
     mode: stats.mode & 0o7777,
     uid: stats.uid,
     gid: stats.gid,
@@ -64,18 +68,11 @@ async function sourceFileRecords(root: string): Promise<readonly MigrationFileRe
   const records: MigrationFileRecord[] = [];
   for (const path of SOURCE_FILES) {
     try {
-      records.push(await fileRecord(root, path));
+      records.push(await readMigrationFileRecord(root, path));
     } catch (error: unknown) {
       if (!(path.endsWith("-wal") || path.endsWith("-shm")) || !isErrno(error, "ENOENT")) throw error;
     }
   }
-  for (const relativePath of ["memory", "memory/ai"]) {
-    const directoryPath: string = join(root, relativePath);
-    let directory: Stats;
-    try { directory = await lstat(directoryPath); } catch (error: unknown) { if (isErrno(error, "ENOENT")) return records; throw error; }
-    if (!directory.isDirectory() || directory.isSymbolicLink()) return invalidInput(directoryPath, "$type", "a directory without symbolic links");
-  }
-  for (const name of (await readdir(join(root, "memory/ai"))).sort()) records.push(await fileRecord(root, join("memory/ai", name)));
   return records;
 }
 
@@ -85,43 +82,30 @@ function isInside(parent: string, child: string): boolean {
 }
 
 /**
- * 从 schema v8 停机备份生成独立产物；不改源文件，不覆盖既有目录，不执行服务操作。
+ * 从 schema v9 停机备份生成独立产物；不改源文件，不覆盖既有目录，不执行服务操作。
  * ready.json 只在全部校验及源哈希复核后产生。中断后保留目录，换新 outputRoot 重跑。
- * 部署方按 docs/cn/04-invariants.md 的持久化边界手工替换 SQLite 并移除已迁移的 memory/ai 目录。
+ * 部署方按 docs/cn/04-invariants.md 的持久化边界手工替换 SQLite。
  */
-export async function prepareAiContextMigration({ sourceRoot, outputRoot }: AiContextMigrationOptions): Promise<AiContextMigrationResult> {
+export async function prepareClearContextPermissionMigration({ sourceRoot, outputRoot }: ClearContextPermissionMigrationOptions): Promise<ClearContextPermissionMigrationResult> {
   const source: string = await realpath(sourceRoot);
   const output: string = join(await realpath(dirname(resolve(outputRoot))), basename(resolve(outputRoot)));
   if (isInside(source, output) || isInside(output, source)) return invalidInput(output, "$path", "a new directory outside the source backup");
   const databaseDirectory: Stats = await lstat(join(source, "database"));
   if (!databaseDirectory.isDirectory() || databaseDirectory.isSymbolicLink()) return invalidInput(source, "database", "a directory without symbolic links");
   const sourceFiles: readonly MigrationFileRecord[] = await sourceFileRecords(source);
-  const snapshots: Map<number, string> = new Map();
-  for (const record of sourceFiles) {
-    if (!record.path.startsWith("memory/ai/")) continue;
-    const name: string = basename(record.path);
-    if (name.endsWith(".tmp")) continue;
-    const id: number = Number(name.slice(0, -5));
-    const path: string = join(source, record.path);
-    if (!name.endsWith(".json") || !isTelegramGroupChatId(id) || name !== id + ".json") return invalidInput(path, "$filename", "the canonical <negative-safe-chatId>.json form");
-    const snapshot: unknown = parseJsonInput(await readUtf8TextInput(path), path);
-    snapshots.set(id, JSON.stringify(decodeAiMemorySnapshot(snapshot, path)));
-  }
   await mkdir(output, { mode: STAGING_DIRECTORY_MODE });
   await mkdir(join(output, "database"), { mode: STAGING_DIRECTORY_MODE });
-  await atomicWriteText(join(output, "incomplete.json"), JSON.stringify({ sourceSchema: 8, sourceFiles }, null, 2), STAGING_FILE_MODE);
+  await atomicWriteText(join(output, "incomplete.json"), JSON.stringify({ sourceSchema: 9, sourceFiles }, null, 2), STAGING_FILE_MODE);
   for (const record of sourceFiles) {
-    if (record.path.startsWith("database/")) {
-      const target: string = join(output, record.path);
-      await Bun.write(target, Bun.file(join(source, record.path)));
-      if ((await fileRecord(output, record.path)).sha256 !== record.sha256) return invalidInput(target, "$sha256", "an exact copy of the source file");
-    }
+    const target: string = join(output, record.path);
+    await Bun.write(target, Bun.file(join(source, record.path)));
+    if ((await readMigrationFileRecord(output, record.path)).sha256 !== record.sha256) return invalidInput(target, "$sha256", "an exact copy of the source file");
   }
   const databasePath: string = join(output, "database/storage.sqlite");
   const database: StorageDatabase = openStorageDatabase({ path: databasePath });
-  let counts: AiContextMigrationCounts;
+  let counts: ClearContextPermissionMigrationCounts;
   try {
-    counts = migrateAiContextDatabase(database, databasePath, snapshots);
+    counts = migrateClearContextPermissionDatabase(database, databasePath);
   } finally {
     database.$client.close(true);
   }
@@ -130,18 +114,18 @@ export async function prepareAiContextMigration({ sourceRoot, outputRoot }: AiCo
     return invalidInput(source, "$snapshot", "an unchanged cold backup including metadata and SQLite sidecars");
   }
   const outputFiles: MigrationFileRecord[] = [];
-  for (const path of OUTPUT_FILES) outputFiles.push(await fileRecord(output, path));
-  const result: AiContextMigrationResult = {
-    sourceSchema: 8, targetSchema: 9, ...counts,
+  for (const path of OUTPUT_FILES) outputFiles.push(await readMigrationFileRecord(output, path));
+  const result: ClearContextPermissionMigrationResult = {
+    sourceSchema: 9, targetSchema: 10, ...counts,
     sourceRoot: source, outputRoot: output, sourceFiles, outputFiles,
   };
-  await Bun.file(join(output, "incomplete.json")).delete();
   await atomicWriteText(join(output, "ready.json"), `${JSON.stringify(result, null, 2)}\n`, STAGING_FILE_MODE);
+  await Bun.file(join(output, "incomplete.json")).delete();
   return result;
 }
 
 /** CLI 不接受默认部署根；源备份与产物目录都必须明确提供。 */
-function parseArguments(args: readonly string[]): AiContextMigrationOptions {
+function parseArguments(args: readonly string[]): ClearContextPermissionMigrationOptions {
   const values: Map<string, string> = new Map();
   for (let index: number = 0; index < args.length; index += 2) {
     const key: string | undefined = args[index];
@@ -160,20 +144,20 @@ function parseArguments(args: readonly string[]): AiContextMigrationOptions {
 
 if (import.meta.main) {
   if (Bun.argv.slice(2).length === 1 && Bun.argv[2] === "--help") {
-    console.log("bun run migrate:ai-context --source-root <cold-backup> --output-root <new-directory>\n" +
-      "Stop the service and verify inactive before taking an external backup, including memory/ai and SQLite WAL/SHM.\n" +
+    console.log("bun run migrate:clear-context-permission --source-root <cold-backup> --output-root <new-directory>\n" +
+      "Stop the service and verify inactive before taking an external backup, including SQLite WAL/SHM.\n" +
       "The source remains unchanged. Only ready.json marks validated output; after interruption rerun into a new output directory.\n" +
-      "Verify output hashes, then manually replace SQLite and remove the migrated memory/ai directory while stopped. Remove stale deployment WAL/SHM only after preserving the backup.\n" +
+      "Verify output hashes, then manually replace SQLite while stopped. Remove stale deployment WAL/SHM only after preserving the backup.\n" +
       "Restore original ownership/modes from sourceFiles; ensure the service can write SQLite and its directory.\n" +
       "Validate configuration and state before startup; retain the backup until service stability is confirmed.");
   } else {
     try {
-      const result: AiContextMigrationResult = await prepareAiContextMigration(parseArguments(Bun.argv.slice(2)));
-      console.log(`AI context migration prepared: ${result.outputRoot}/ready.json. Manual replacement while stopped is required.`);
+      const result: ClearContextPermissionMigrationResult = await prepareClearContextPermissionMigration(parseArguments(Bun.argv.slice(2)));
+      console.log(`Clear-context permission migration prepared: ${result.outputRoot}/ready.json. Manual replacement while stopped is required.`);
     } catch (error: unknown) {
       console.error(error instanceof InputValidationError
         ? error.message
-        : "AI context migration failed; source backup and incomplete output are retained. No deployment files were replaced.");
+        : "Clear-context permission migration failed; source backup and incomplete output are retained. No deployment files were replaced.");
       process.exitCode = 1;
     }
   }

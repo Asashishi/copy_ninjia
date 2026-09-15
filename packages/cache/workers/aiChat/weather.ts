@@ -1,3 +1,4 @@
+/** Owner: workers/aiChat；天气缓存和刷新生命周期随 isolate 创建与销毁。 */
 import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
 
 /**
@@ -17,3 +18,9 @@ export const weatherCache: { current: TokyoWeatherResult | null } = {
  * 重新启动，容量固定为一个 timer。
  */
 export const weatherRefreshTimer: { current: ReturnType<typeof setInterval> | null } = { current: null };
+
+/**
+ * 唯一天气刷新循环的取消句柄，启动时填充，停止时先清空再取消在途请求。
+ * 容量固定为一个 holder；Worker 崩溃时随 isolate 销毁，重建后由启动入口重新创建。
+ */
+export const weatherRefreshController: { current: AbortController | null } = { current: null };

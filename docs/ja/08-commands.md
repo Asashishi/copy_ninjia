@@ -92,7 +92,7 @@ entity 付き文字は書式を保持してコピーし、API 失敗時も元の
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>SQLite の正式 blocklist から対象を transaction で削除し、Bot が管理する全群の BAN を解除。<code>/block</code> の指定に加えて負の channel id も受理し、本群自身の identity は拒否</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>このグループの AI チャットを切り替え</td></tr>
 <tr><td><code>/prompt config &lt;プロンプト&gt;</code><br><code>/prompt remove</code></td><td align="center"><code>isCanConfigAiPrompt</code></td><td>本群専用 AI プロンプトを設定・削除します。削除後は既定の人設を使います</td></tr>
-<tr><td><code>/clear_context</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>本群の AI 逐語 buffer、要約、未統合要約、mood を消去し、<code>chat_states.ai_context</code> を NULL にして処理中の返信 generation を無効化します。専用人設は保持します。引数は取らず、設定が壊れていても AI Worker が起動していなくても実行します</td></tr>
+<tr><td><code>/clear_context</code></td><td align="center"><code>isCanClearContext</code></td><td>本群の AI 逐語 buffer、要約、未統合要約、mood を消去し、<code>chat_states.ai_context</code> を NULL にして処理中の返信 generation を無効化します。専用人設は保持します。引数は取らず、設定が壊れていても AI Worker が起動していなくても実行します</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>このグループの広告検出を切り替え。protected identity 以外の命中時は <code>/block</code> と同じ処分</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>このグループの連投ミュートを切り替え（既定で無効）</td></tr>
 <tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>このグループの参加認証と Anti-Raid の非公開モードを切り替え（既定で無効）</td></tr>

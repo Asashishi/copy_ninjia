@@ -1,3 +1,6 @@
+import type { IdentityPolicyRawReadResult } from "../../packages/types/identityStorage";
+import type { FlushResult } from "../../packages/types/lifecycle";
+import { diskIOStub } from "./diskIOMock";
 /**
  * 黑名单清扫与启动恢复各用例文件共用的替身、状态与隔离钩子。
  *
@@ -68,26 +71,24 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
 mock.module("../../packages/aiChat/workerBridge", () => ({
   syncAiChatPersona: (_chatId: number): void => {},
 }));
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (): void => {},
   readBlocklistIdPage,
-  readIdentityPolicies: async (ids: readonly number[]): Promise<{
-    whitelist: readonly (readonly [number, string])[];
-    blocklist: readonly (readonly [number, string])[];
-  }> => ({
+  readIdentityPolicies: async (ids: readonly number[]): Promise<IdentityPolicyRawReadResult> => ({
+    temporaryAdBypass: [],
     whitelist: [],
     blocklist: ids
       .filter((id: number): boolean => blockedUserIds.has(id))
       .map((id: number): readonly [number, string] => [id, "{}"]),
   }),
   relayLogMessage: (): boolean => true,
-  flushDiskIO: async (): Promise<string> => "flushed",
+  flushDiskIO: async (): Promise<FlushResult> => "flushed",
   // /block 只等黑名单这一个领域的落盘回执（见 confirmBlocklistPersisted）。
-  flushDiskIODomain: async (): Promise<string> => "flushed",
-  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: "flushed" }),
-}));
+  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
+  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
+})));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: (): ReadonlyMap<number, Record<string, unknown>> => states,
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},

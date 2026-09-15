@@ -72,9 +72,9 @@ describe("AI 限频提示", () => {
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: CHAT_ID,
       senderId: 99,
-      firstName: "Ninja",
+      firstName: "自己（也就是你）",
       lastName: "",
-      username: "ninja_bot",
+      username: undefined,
       messageId: 501,
       text: RATE_LIMIT_NOTICE_TEXT,
     }));

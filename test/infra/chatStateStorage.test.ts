@@ -1,3 +1,5 @@
+import type { DiskIODomain } from "../../packages/types/diskIO/replies";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import type { ChatState } from "../../packages/types/chatState";
@@ -14,7 +16,7 @@ const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [
 const respawnListeners: DiskIORespawnListener[] = [];
 let acknowledgeFlush: boolean = true;
 const flushDiskIODomainOutcome = mock(
-  async (_domain: "chatState"): Promise<DomainFlushOutcome> => {
+  async (_domain: DiskIODomain): Promise<DomainFlushOutcome> => {
     if (acknowledgeFlush) {
       const latest = new Map<number, number>();
       for (const message of diskMessages) {
@@ -40,7 +42,7 @@ const flushDiskIODomainOutcome = mock(
   }
 );
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIODomainOutcome,
   onDiskIORespawn: (
     _owner: string,
@@ -59,7 +61,7 @@ mock.module("../../packages/infra/diskIO", () => ({
     return true;
   },
   relayLogMessage: (): boolean => true,
-}));
+})));
 
 const {
   chatStateCache,

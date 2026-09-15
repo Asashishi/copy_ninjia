@@ -39,8 +39,8 @@ const DEFAULT_IS_CAN_CONTROLL_QA_PERMISSION: boolean = false;
 /**
  * 白名单权限的完整默认值。跨调用方共享同一个对象，由 `Readonly<>` 在编译期
  * 锁住全部字段（不可变性只在编译期表达，见 AGENTS.md 的「常量」一节；断言在
- * `test/consts/immutability.test.ts`）。配置文件允许只写需要覆盖的键，解析时
- * 统一从这里补齐。
+ * `test/consts/immutability.test.ts`）。新增白名单成员使用这份完整默认值；
+ * 已持久化权限必须逐项完整，不在读取时补齐。
  */
 export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: DEFAULT_IS_CAN_MUTE,
@@ -55,6 +55,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassFloodControl: DEFAULT_IS_CAN_BYPASS_FLOOD_CONTROL,
   isCanControllAIPermission: DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION,
   isCanConfigAiPrompt: false,
+  isCanClearContext: false,
   isCanControllAdDetectPermission: DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION,
   isCanControllFloodControlPermission: DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION,
   isCanControllTranslatePermission: DEFAULT_IS_CAN_CONTROLL_TRANSLATE_PERMISSION,
@@ -82,6 +83,7 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassFloodControl: false,
   isCanControllAIPermission: false,
   isCanConfigAiPrompt: false,
+  isCanClearContext: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
   isCanControllTranslatePermission: false,
@@ -110,6 +112,7 @@ export const TEMPORARY_AD_BYPASS_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassFloodControl: false,
   isCanControllAIPermission: false,
   isCanConfigAiPrompt: false,
+  isCanClearContext: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
   isCanControllTranslatePermission: false,
@@ -151,6 +154,7 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
   isCanBypassFloodControl: true,
   isCanControllAIPermission: true,
   isCanConfigAiPrompt: true,
+  isCanClearContext: true,
   isCanControllAdDetectPermission: true,
   isCanControllFloodControlPermission: true,
   isCanControllTranslatePermission: true,
@@ -172,6 +176,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanBypassFloodControl",
   "isCanControllAIPermission",
   "isCanConfigAiPrompt",
+  "isCanClearContext",
   "isCanControllAdDetectPermission",
   "isCanControllFloodControlPermission",
   "isCanControllTranslatePermission",
@@ -181,7 +186,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
 
 /**
  * 权限键的小写输入到规范拼写的只读索引；命令解析复用，避免每次从头遍历并对
- * 16 个候选重复 lower-case。所属模块：packages/commands/permission.ts。
+ * 全部候选重复 lower-case。所属模块：packages/commands/permission.ts。
  */
 export const WHITELIST_PERMISSION_KEY_BY_LOWERCASE: ReadonlyMap<
   string,

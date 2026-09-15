@@ -156,11 +156,11 @@ describe("共享存储库的启动 schema 闸", () => {
     // 版本判定必须先于任何按版本才存在的表：先读 startup rows 的话，这里拿到的
     // 是临时广告免检缺表，运维照着那句排查不会想到该跑冷迁移。
     expect(() => hydrateStorageDatabase()).toThrow(
-      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":9}.`
+      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":10}.`
     );
   });
 
-  test("当前 v9 库照常 hydrate", () => {
+  test("当前 v10 库照常 hydrate", () => {
     expect(hydrateStorageDatabase()).toEqual({
       blocklistEntryCount: 0,
       permissionEntryCount: 0,
@@ -343,7 +343,7 @@ describe("共享存储库的启动 schema 闸", () => {
       );
     });
     try {
-      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v9 migration lineage/);
+      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v10 migration lineage/);
     } finally {
       withDatabase((database: StorageDatabase): void => {
         database.$client.run(

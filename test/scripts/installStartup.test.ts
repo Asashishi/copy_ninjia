@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { openStorageDatabase } from "../../packages/database/interact/connection";
+import { seedStorageDatabase } from "../../scripts/fixtures/storageDatabase";
 import {
   cleanupFixtures,
   createFixture,
@@ -42,6 +44,10 @@ async function assertInstalledStartup(fixture: InstallerFixture, output: string,
   expect(output).toContain("Received SIGTERM; beginning graceful shutdown.");
   expect(output).not.toContain("Unhandled error");
   expect(output).not.toContain("Shutdown drain/flush results:");
+  expect(output).not.toContain("INSTALL_NETWORK_BLOCKED");
+  expect(output.match(/^INSTALL_WORKER_NETWORK_GUARD\r?$/gm)?.length).toBe(ai ? 3 : 2);
+  if (ai) expect(output).toContain("INSTALL_WEATHER_MOCK");
+  else expect(output).not.toContain("INSTALL_WEATHER_MOCK");
   expect(output).toContain(`INSTALL_WORKERS ${JSON.stringify(
     (ai ? ["aiChatWorker.ts", "antiRaidWorker.ts", "diskIOWorker.ts"] : ["antiRaidWorker.ts", "diskIOWorker.ts"])
   )}`);
@@ -60,12 +66,21 @@ describe("install.sh 到真实应用启动", () => {
     await assertInstalledStartup(fixture, first.output, ai);
 
     const telegram: string = await readText(join(fixture.configRoot, "telegram.json"));
+    const database = openStorageDatabase({ path: join(fixture.runtimeRoot, "database/storage.sqlite") });
+    try {
+      seedStorageDatabase(database, {
+        metadata: [], whitelist: [], blocklist: [], removals: [],
+        chatStates: [{ chatId: -1001, data: JSON.stringify({ isInitEnabled: true, isAIChatEnabled: ai }), aiPersona: "fixture persona" }],
+      });
+    } finally { database.$client.close(true); }
     const prompts: PromptReply[] = [{ prompt: "是否重新填写？", reply: "n" }];
     if (!ai) prompts.push({ prompt: "现在配置 AI 能力", reply: "n" });
     prompts.push(systemdPrompt());
     const second = runInstaller(fixture, prompts);
     expect(second.exitCode, second.output).toBe(0);
     await assertInstalledStartup(fixture, second.output, ai);
+    expect(second.output).toContain("Restored state for 1 chat(s).");
+    expect(second.output).toContain("INSTALL_API getChat");
     expect(await readText(join(fixture.configRoot, "telegram.json"))).toBe(telegram);
   }, 60_000);
 

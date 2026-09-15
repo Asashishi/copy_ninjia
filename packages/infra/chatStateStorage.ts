@@ -40,13 +40,6 @@ import type {
 } from "../types/diskIO/replies";
 import type { UnacknowledgedChatStateWrite } from "../types/identityStorage";
 
-interface ChatStateDiskIOApi {
-  readonly flushDiskIODomainOutcome?: typeof diskIO.flushDiskIODomainOutcome;
-  readonly onDiskIORespawn?: typeof diskIO.onDiskIORespawn;
-  readonly onIdentityStoragePersisted?: typeof diskIO.onIdentityStoragePersisted;
-  readonly postDiskIO?: typeof diskIO.postDiskIO;
-}
-
 interface EncodedChatStateWrite {
   readonly data: string | null;
   readonly deleted: boolean;
@@ -57,9 +50,6 @@ interface QueuedChatStateWrite {
   readonly chatId: number;
   readonly revision: number;
 }
-
-// 叶子单测可只替换实际观察的出口；生产装配始终提供完整接口。
-const chatStateDiskIOApi: ChatStateDiskIOApi = diskIO;
 
 function capacityError(): Error {
   return new Error(
@@ -106,7 +96,7 @@ function postChatStateWrite(
   transport?: DiskIORecoveryTransport
 ): boolean {
   return transport === undefined
-    ? chatStateDiskIOApi.postDiskIO?.(message) === true
+    ? diskIO.postDiskIO(message) === true
     : transport.post(message);
 }
 
@@ -147,12 +137,7 @@ export function queueChatStateWrite(chatId: number): number {
 export async function persistChatState(chatId: number, context: string): Promise<void> {
   throwIfUpdateAborted();
   const revision: number = queueChatStateWrite(chatId);
-  const flush: typeof diskIO.flushDiskIODomainOutcome | undefined =
-    chatStateDiskIOApi.flushDiskIODomainOutcome;
-  if (flush === undefined) {
-    throw new Error(`Failed to persist chat state update (${context}): persistence flush is unavailable.`);
-  }
-  const outcome: DomainFlushOutcome = await flush("chatState");
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("chatState");
   throwIfUpdateAborted();
   if (outcome.result !== "flushed") {
     const domainNote: string = outcome.failedDomains === undefined
@@ -221,13 +206,9 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
   return true;
 }
 
-if (chatStateDiskIOApi.onIdentityStoragePersisted !== undefined) {
-  chatStateDiskIOApi.onIdentityStoragePersisted(settleChatStateWrites);
-}
-if (chatStateDiskIOApi.onDiskIORespawn !== undefined) {
-  chatStateDiskIOApi.onDiskIORespawn(
-    "chat state",
-    DISK_IO_RESPAWN_PRIORITIES.CHAT_STATE,
-    replayChatStateWrites
-  );
-}
+diskIO.onIdentityStoragePersisted(settleChatStateWrites);
+diskIO.onDiskIORespawn(
+  "chat state",
+  DISK_IO_RESPAWN_PRIORITIES.CHAT_STATE,
+  replayChatStateWrites
+);

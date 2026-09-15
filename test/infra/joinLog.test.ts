@@ -1,3 +1,5 @@
+import type { FlushResult } from "../../packages/types/lifecycle";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { DiskBusinessMessage, JoinLogRecord } from "../../packages/types/diskIO";
 
@@ -11,16 +13,16 @@ import type { DiskBusinessMessage, JoinLogRecord } from "../../packages/types/di
  */
 
 const postDiskIO = mock((_message: DiskBusinessMessage): boolean => true);
-const flushDiskIODomain = mock(async (): Promise<string> => "flushed");
-const readJoinLog = mock(async (..._args: unknown[]): Promise<readonly unknown[]> => []);
+const flushDiskIODomain = mock(async (): Promise<FlushResult> => "flushed");
+const readJoinLog = mock(async (..._args: unknown[]): Promise<readonly JoinLogRecord[]> => []);
 let buffering: boolean = false;
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   flushDiskIODomain,
   isDiskIOBuffering: (): boolean => buffering,
   readJoinLog,
-}));
+})));
 
 const { purgeChatJoinLog, readRecentJoinLog, recordJoinLog } = await import("../../packages/infra/joinLog");
 const { teardownRegisteredChat } = await import("../../packages/infra/chatTeardownRegistry");
@@ -31,9 +33,9 @@ beforeEach(() => {
   postDiskIO.mockClear();
   flushDiskIODomain.mockClear();
   postDiskIO.mockImplementation((): boolean => true);
-  flushDiskIODomain.mockImplementation(async (): Promise<string> => "flushed");
+  flushDiskIODomain.mockImplementation(async (): Promise<FlushResult> => "flushed");
   readJoinLog.mockClear();
-  readJoinLog.mockImplementation(async (): Promise<readonly unknown[]> => []);
+  readJoinLog.mockImplementation(async (): Promise<readonly JoinLogRecord[]> => []);
   buffering = false;
 });
 
@@ -45,7 +47,7 @@ describe("recordJoinLog 的 durable 屏障", () => {
   });
 
   test("可写时真的没写进去就报失败，让这条 update 重投", async () => {
-    flushDiskIODomain.mockImplementation(async (): Promise<string> => "failed");
+    flushDiskIODomain.mockImplementation(async (): Promise<FlushResult> => "failed");
 
     await expect(recordJoinLog(PARAMS)).resolves.toBeFalse();
   });
@@ -63,7 +65,7 @@ describe("recordJoinLog 的 durable 屏障", () => {
     // 握手结束后由 activateDiskIOWorker 原序重放；重放失败或缓冲触顶都走
     // stopWorkerAfterLoadFailure 的统一 fatal，事实不会被静默丢掉。
     buffering = true;
-    flushDiskIODomain.mockImplementation(async (): Promise<string> => "failed");
+    flushDiskIODomain.mockImplementation(async (): Promise<FlushResult> => "failed");
 
     await expect(recordJoinLog(PARAMS)).resolves.toBeTrue();
     expect(postDiskIO).toHaveBeenCalledTimes(1);
@@ -136,7 +138,7 @@ describe("purgeChatJoinLog 的整群删除", () => {
   });
 
   test("没落盘就上抛，不把日志还在报成删干净了", async () => {
-    flushDiskIODomain.mockImplementation(async (): Promise<string> => "failed");
+    flushDiskIODomain.mockImplementation(async (): Promise<FlushResult> => "failed");
 
     await expect(purgeChatJoinLog(-1001)).rejects.toThrow("Failed to delete the join logs");
   });

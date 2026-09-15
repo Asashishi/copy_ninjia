@@ -281,7 +281,7 @@ export function startAiChatWorker(): void {
   aiChatMaintenanceTimer.current.unref();
   // 东京天气的后台定时刷新（见 aiChat/ai/weather.ts）：get_tokyo_weather 工具与
   // 心情系统（aiChat/ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
-  // 读不发请求。全进程只应调用一次——重复调用会叠加出多个定时器。
+  // 读不发请求。重复启动不会叠加定时器，停止时同时取消在途请求。
   startWeatherRefreshLoop();
   process.once("exit", stopAiChatWorker);
 }

@@ -30,7 +30,7 @@ export function createStorageDatabase(path: string): void {
 
 /**
  * 给刚建出来的空库应用当前 schema；只有 createStorageDatabase 调用，生产启动不得调用。
- * 既有库的冷迁移由 scripts/migrateAiContext.ts 在独立暂存副本中直接调用 Drizzle API。
+ * 既有库的冷迁移由 scripts/migrateClearContextPermission.ts 在独立暂存副本中直接调用 Drizzle API。
  */
 function migrateStorageDatabaseSchema(database: StorageDatabase): void {
   migrate(database, { migrationsFolder: IDENTITY_DATABASE_MIGRATIONS_DIR });
