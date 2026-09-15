@@ -108,9 +108,9 @@ export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
 
 /** `/init enable` 在 State 已达群数上限时的拒绝提示。 */
 export const INIT_CHAT_LIMIT_TEXT: string =
-  `State 最多只能管理 ${STATE_MANAGED_CHAT_LIMIT} 个群，现在已经满了。` +
-  `去不再需要的那个群 /init disable，或者把本天才移出那个群，那一格就腾出来了，再回来启用本群。` +
-  `只有仍在私密模式里的群腾不出来——那条记录要留到邀请权限恢复为止。`;
+  `哈？本天才的 State 最多只管 ${STATE_MANAGED_CHAT_LIMIT} 个群，早就塞满啦，贪心的杂鱼♡ ` +
+  `去不再需要的那个群 /init disable，或者把本天才移出那个群，腾出一格再回来启用本群。` +
+  `还在私密模式里的群可腾不出来——那条记录要留到邀请权限恢复为止，笨蛋♡`;
 
 /** `/block` 的目标解析提示。 */
 export const BLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {

@@ -16,15 +16,15 @@ export const TRANSLATE_STOP_ALL_TEXT: string = "本群所有杂鱼的翻译都�
 
 /** 本群翻译开关关闭时拒绝设置方向。 */
 export const TRANSLATE_DISABLED_TEXT: string =
-  "本群翻译功能还没开启，找有翻译管理权限的人 /translate enable 一下吧♡";
+  "笨蛋，本群翻译功能还没开呢，找有翻译管理权限的人 /translate enable 一下再来使唤本天才♡";
 
 /** /translate 开关文案。 */
 export const TRANSLATE_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
   rejection: (label: string): string => `就 ${label} 也想管本天才要不要翻译？没这项权限呀，笨蛋♡`,
   usage: TRANSLATE_USAGE_TEXT,
-  enabled: "本天才已开启本群翻译，用 /translate ja|cn|en|uk|ru 选方向和目标吧♡",
+  enabled: "哼，本天才赏脸开启本群翻译啦，用 /translate ja|cn|en|uk|ru 选方向和目标吧，杂鱼♡",
   disabled: "本群翻译功能已关闭，杂鱼需要时再来开启♡",
-  alreadyEnabled: "本群翻译功能本来就开着啦，用 /translate ja|cn|en|uk|ru 开始吧♡",
+  alreadyEnabled: "笨蛋，本群翻译功能本来就开着啦，直接用 /translate ja|cn|en|uk|ru 开始吧♡",
   alreadyDisabled: "本群翻译功能本来就关着啦，笨蛋♡",
 };
 
@@ -32,7 +32,7 @@ export const TRANSLATE_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
 export const TRANSLATE_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
   missingTarget: TRANSLATE_USAGE_TEXT,
   invalidUsername: (argument: string): string => `笨蛋，${argument} 不是合法用户名。${TRANSLATE_USAGE_TEXT}`,
-  unknownUsername: (username: string): string => `本天才还不认识 @${username}，先让 TA 发言，或回复 TA 的消息指定翻译目标♡`,
+  unknownUsername: (username: string): string => `本天才还不认识 @${username} 这号杂鱼，先让 TA 冒个泡，或回复 TA 的消息指定翻译目标，笨蛋♡`,
   conflictingTarget: (argument: string): string => `回复目标和 ${argument} 不一致，只留一个翻译目标，笨蛋♡`,
   selfTarget: "本天才不能把自己设成翻译目标呀，笨蛋♡",
 };

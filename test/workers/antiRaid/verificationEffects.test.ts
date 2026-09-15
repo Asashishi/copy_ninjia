@@ -84,7 +84,7 @@ test("验证按钮应答按当前风格指向实际按钮，移除自定义人�
   expect(callbackTexts[0]).toBe("请点击「完成验证」完成本人的验证；「通过」仅供管理员代他人验证。");
   applyWorkerAtmosphere(CHAT_ID, false);
   await run([{ kind: "answerCallback", callbackQueryId: "callback", reply: "useSelfButton" }]);
-  expect(callbackTexts[1]).toBe("想自己过验证就点「我是良民」，「通过」是给管理员代点的～");
+  expect(callbackTexts[1]).toBe("笨蛋，想自己过验证就点「我是良民」，「通过」是给管理员代点的，别乱按♡");
 });
 
 describe("管理员拉人豁免的异步核查", () => {

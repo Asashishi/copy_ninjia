@@ -20,7 +20,7 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanBypassAdDetection: "让这个身份绕过广告检测与自动处置，本天才会当作没看见，别放广告杂鱼进来哦♡",
   isCanBypassFloodControl: "让这个身份绕过防刷屏计数与自动禁言，本天才不会按住 TA，别给刷屏杂鱼哦♡",
   isCanControllAIPermission: "让这号杂鱼能用 /ai_chat enable|disable 开关 AI 闲聊，别乱按呀♡",
-  isCanConfigAiPrompt: "允许使用 /prompt config 和 /prompt remove 配置本群 AI 人设♡",
+  isCanConfigAiPrompt: "让这号杂鱼能用 /prompt config 和 /prompt remove 配置本群 AI 人设，可别把本天才改得面目全非哦♡",
   isCanControllAdDetectPermission: "让这号杂鱼能用 /ad_detect enable|disable 开关广告检测，抓漏了就怪你哦♡",
   isCanControllFloodControlPermission: "让这号杂鱼能用 /flood_control enable|disable 开关防刷屏禁言，别乱按呀♡",
   isCanControllTranslatePermission: "让这号杂鱼能用 /translate enable|disable 开关翻译功能，这点小事总看得懂吧♡",

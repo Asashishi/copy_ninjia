@@ -21,7 +21,7 @@ export const WED_TEXTS: Readonly<{
   failed: string;
   confirmed: string;
 }> = {
-  groupOnly: "频道怎么娶老婆呀，用个人身份在群里发送 /wed 啦。",
+  groupOnly: "噗，频道皮套还想娶老婆？用个人身份在群里发送 /wed 啦，杂鱼♡",
   usage: "连抽老婆都不会呀，杂鱼♡ 直接发送 /wed 就好，后面不用加东西啦。",
   busy: "本天才正在帮你抽呢，急着娶老婆也要乖乖等一下，杂鱼♡",
   full: "本群的抽取会话已经塞满啦，先移除不需要的结果再来，贪心的杂鱼♡",
