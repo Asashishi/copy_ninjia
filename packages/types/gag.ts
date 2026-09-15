@@ -58,6 +58,8 @@ export interface GagSession {
   speakNoticeThreadId: number | undefined;
   /** 当前入口发出后本群收到的消息数；达到固定阈值才换新。 */
   messagesSinceSpeakNotice: number;
+  /** 本群目标最近一次消息的时间；激活时初始化，入口刷新不更新此值。 */
+  lastTargetMessageAt: number;
   /** 唯一的入口换新任务；结束状态必须等它交出在途 message id。 */
   speakNoticeRefreshTask: Promise<void> | null;
   /** 用户专属入口的定时换新；starting/ending、频道及换新在途时为 null，不阻止退出。 */

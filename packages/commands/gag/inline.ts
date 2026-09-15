@@ -36,7 +36,7 @@ import {
   renderGagSpeech,
 } from "./rendering";
 import {
-  moveGagSpeakNotice,
+  refreshGagSpeakNoticeOnSpeech,
   refreshDueGagSpeakNotices,
 } from "./refresh";
 import { collectDueGagSpeakNotices } from "./counter";
@@ -168,19 +168,16 @@ async function claimGagMessage(
     sessions,
     senderId
   );
+  const now: number = Date.now();
   // 只有「说话的人正被管教」才付话题解析这两次属性读取；本 handler 排在所有
   // 命令之前，普通群消息不该为一个只对被管教者生效的判定买单。
   if (session !== undefined) {
     const threadId: number | undefined = forumTopicThreadId(message);
-    if (threadId !== session.speakNoticeThreadId) {
-      // 他换话题说话了：把发言入口搬过去。与滚动换新同一条理由绝不 await——
-      // 这条 handler 卡住的是整个进程的所有群（见下面那段长注释）。
-      moveGagSpeakNotice(session, threadId);
-    }
+    // 发言补发与跨话题移动均同步认领后台任务，不等待维护性的 Telegram 往返。
+    refreshGagSpeakNoticeOnSpeech(session, threadId, now);
   }
   const isGagInlineMessage: boolean = session !== undefined &&
     isCurrentGagInlineMessage(message, botId, session);
-  const now: number = Date.now();
   const hasDeletableText: boolean = hasGagDeletableText(message);
   const isDeletedGagTargetMessage: boolean =
     session !== undefined &&

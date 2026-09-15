@@ -1,5 +1,8 @@
 import { gagRuntimeAccepting } from "../../cache/main/gag";
-import { GAG_SPEAK_NOTICE_REFRESH_INTERVAL_MS } from "../../consts/gag";
+import {
+  GAG_SPEAK_NOTICE_IDLE_INTERVAL_MS,
+  GAG_SPEAK_NOTICE_REFRESH_INTERVAL_MS,
+} from "../../consts/gag";
 import type { GagSession } from "../../types/gag";
 import { deleteGagSpeakNotice, sendGagSpeakNotice } from "./notices";
 import { findGagSession, trackGagBackgroundTask } from "./owner";
@@ -143,21 +146,26 @@ function refreshGagSpeakNotice(
 }
 
 /**
- * 被管教的人在别的话题说话：把发言入口搬到那个话题，并删掉原话题里的旧入口。
+ * 用户沉默达到阈值后再次发言即补发；跨话题发言同时移动用户或频道入口。
+ * 仅目标消息更新沉默起点，定时或消息阈值刷新不影响它。
  *
  * 与滚动换新共用 replaceGagSpeakNotice，因此 retired 槽位、单条在途任务与
  * ending 的接管语义全部沿用。旧入口重试也由同一个在途任务持有。
  */
-export function moveGagSpeakNotice(
+export function refreshGagSpeakNoticeOnSpeech(
   session: GagSession,
-  targetThreadId: number | undefined
+  targetThreadId: number | undefined,
+  now: number
 ): void {
   if (
-    findGagSession(session.chatId, session.targetId) !== session ||
+    !gagRuntimeAccepting.current ||
     session.phase !== "active" ||
-    session.expiresAt <= Date.now() ||
-    session.speakNoticeThreadId === targetThreadId
+    session.expiresAt <= now
   ) return;
+  const wasIdle: boolean = session.targetId > 0 &&
+    now - session.lastTargetMessageAt >= GAG_SPEAK_NOTICE_IDLE_INTERVAL_MS;
+  session.lastTargetMessageAt = now;
+  if (!wasIdle && session.speakNoticeThreadId === targetThreadId) return;
   refreshGagSpeakNotice(session, targetThreadId);
 }
 

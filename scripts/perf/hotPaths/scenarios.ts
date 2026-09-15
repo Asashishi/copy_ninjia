@@ -388,6 +388,7 @@ export function gagSpeakCounterScenario(): Scenario {
       retiredSpeakNoticeMessageId: 0,
       speakNoticeThreadId: undefined,
       messagesSinceSpeakNotice: 0,
+      lastTargetMessageAt: 0,
       speakNoticeRefreshTask: null,
       speakNoticeRefreshTimer: null,
       noticePending: false,

@@ -208,6 +208,7 @@ export function createSession({
     retiredSpeakNoticeMessageId,
     speakNoticeThreadId,
     messagesSinceSpeakNotice,
+    lastTargetMessageAt: Date.now(),
     speakNoticeRefreshTask: null,
     speakNoticeRefreshTimer: null,
     noticePending: false,

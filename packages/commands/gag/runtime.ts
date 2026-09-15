@@ -299,7 +299,9 @@ export function expireGag(session: GagSession): void {
 
 /** 激活预约并安装不会阻止进程退出的到期 timer。 */
 function activateGag(session: GagSession): void {
-  session.expiresAt = Date.now() + session.durationMinutes * 60_000;
+  const now: number = Date.now();
+  session.expiresAt = now + session.durationMinutes * 60_000;
+  session.lastTargetMessageAt = now;
   session.phase = "active";
   session.timer = setTimeout(
     expireGag,

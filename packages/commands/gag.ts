@@ -115,9 +115,10 @@ function createGagReservation(
     pendingSpeakNoticeMessageId: 0,
     retiredSpeakNoticeMessageId: 0,
     // 入口从下命令的那个话题起步；随后被管教的人换话题说话时再搬家
-    // （见 commands/gag/refresh.ts 的 moveGagSpeakNotice）。
+    // （见 commands/gag/refresh.ts 的 refreshGagSpeakNoticeOnSpeech）。
     speakNoticeThreadId: forumTopicThreadId(ctx.msg),
     messagesSinceSpeakNotice: 0,
+    lastTargetMessageAt: 0,
     speakNoticeRefreshTask: null,
     speakNoticeRefreshTimer: null,
     noticePending: true,

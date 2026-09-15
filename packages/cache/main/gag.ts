@@ -7,7 +7,8 @@ import type { GagSession } from "../../types/gag";
  * 但同群同 targetId 至多一条。`/gag` 在发开始提示前以 starting 预约，
  * 公开状态与目标入口全部成功后切 active 并安装 unref timer；每条入口各自按
  * 群消息数滚动换新，用户专属入口另有每会话一个 unref timer 定时补发；换新在途、
- * 结束与停机时撤销，结算后仅为未到期会话重设。current/pending/retired 三个
+ * 结束与停机时撤销，结算后仅为未到期会话重设。目标消息另更新沉默起点，
+ * 用户久未发言后再次发言沿同一任务补发并重设 timer。current/pending/retired 三个
  * 固定 id 槽位关闭换新与结束的竞态且不会随失败次数增长。
  * 超时、`/ungag` 或群 teardown 同步认领为 ending，
  * 只有全部提示确实 deleted/gone 后才按对象身份删除；瞬时失败

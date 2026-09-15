@@ -40,6 +40,9 @@ export const GAG_SPEAK_NOTICE_MESSAGE_INTERVAL: number = 7;
 /** gag 用户专属入口的定时换新间隔；仅在有效会话内补发，不依赖群消息计数。 */
 export const GAG_SPEAK_NOTICE_REFRESH_INTERVAL_MS: number = 30_000;
 
+/** gag 用户连续未发言达到此时长后，再次发言立即补发专属入口；按目标消息独立计时。 */
+export const GAG_SPEAK_NOTICE_IDLE_INTERVAL_MS: number = 45_000;
+
 /**
  * gag 查询的唯一协议前缀；其后 scope 只能是目标 Telegram ID。
  * 禁止追加摘要、随机 token、群 ID 或其它元数据；群绑定只走隐藏 marker 与落群校验。
