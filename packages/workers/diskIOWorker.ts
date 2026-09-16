@@ -9,7 +9,7 @@
  *
  * 本文件只做消息路由与统一 flush 调度；启动恢复编排在 diskIO/startup.ts，
  * 具体领域逻辑分别在
- * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryFiles.ts（AI 记忆）、
+ * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryStorage.ts（AI 记忆）、
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
  * diskIO/verificationRecovery.ts 与 verificationWrites.ts（待验证按日增量）、
@@ -34,7 +34,7 @@ import {
   handleChatQaWrite,
   handleChatStateWrite,
   handleIdentityPolicyWrite,
-  handleTemporaryWhitelistWrite,
+  handleTemporaryAdBypassWrite,
   handlePendingRemovalSnapshot,
   pendingStorageDatabaseDomains,
   readBlocklistIdPage,
@@ -66,7 +66,7 @@ import {
   deleteAiMemorySnapshot,
   flushAiMemorySnapshots,
   markAiMemorySnapshotDirty,
-} from "./diskIO/aiMemoryFiles";
+} from "./diskIO/aiMemoryStorage";
 import {
   flushStickerCatalogs,
   markStickerCatalogSnapshotDirty,
@@ -286,10 +286,10 @@ export async function handleDiskIOWorkerMessage(
         )
       );
       break;
-    case "temporaryWhitelistWrite":
+    case "temporaryAdBypassWrite":
       handleIdentityMessage(
-        "temporaryWhitelist",
-        (): void => handleTemporaryWhitelistWrite(
+        "temporaryAdBypass",
+        (): void => handleTemporaryAdBypassWrite(
           msg,
           (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
         )
@@ -411,7 +411,7 @@ export function queueDiskIOWorkerMessage(message: DiskIOMessage): Promise<void> 
  * joinLog 与 types/diskIO.ts 的 RecoveryReplayRequest）。
  */
 function handleIdentityMessage(
-  domain: "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa",
+  domain: "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa",
   apply: () => void
 ): void {
   try {

@@ -1,3 +1,5 @@
+import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
+import type { AtmosphereTexts } from "../../types/atmosphere";
 import type { InlineQueryResultArticle } from "grammy/types";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import {
@@ -83,9 +85,9 @@ export function buildProbabilityResult(
   });
 }
 
-export function buildRateLimitedResult(): InlineQueryResultArticle {
+export function buildRateLimitedResult(atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): InlineQueryResultArticle {
   const windowSeconds: number = RATE_LIMIT_WINDOW_MS / 1000;
-  return InlineQueryResultBuilder.article("luck-rate-limited", "太快啦，本天才应付不过来～", {
-    description: `本天才每 ${windowSeconds} 秒最多接 ${RATE_LIMIT_MAX_CALLS_PER_WINDOW} 次，杂鱼先歇会儿再来吧`,
-  }).text(`笨蛋，问太快啦，本天才每 ${windowSeconds} 秒最多接 ${RATE_LIMIT_MAX_CALLS_PER_WINDOW} 次，杂鱼先歇会儿再来吧♡`);
+  return InlineQueryResultBuilder.article("luck-rate-limited", atmosphere.NOTICE_TEXTS.inlineRateLimitTitle, {
+    description: atmosphere.NOTICE_TEXTS.inlineRateLimitDescription(windowSeconds, RATE_LIMIT_MAX_CALLS_PER_WINDOW),
+  }).text(atmosphere.NOTICE_TEXTS.inlineRateLimitBody(windowSeconds, RATE_LIMIT_MAX_CALLS_PER_WINDOW));
 }

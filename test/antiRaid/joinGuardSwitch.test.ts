@@ -1,9 +1,11 @@
+import type { FlushResult } from "../../packages/types/lifecycle";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { Message } from "grammy/types";
 import type { AntiRaidWorkerMessage } from "../../packages/types";
 import type { AdDetectionMessageContext } from
   "../../packages/types/antiRaid/adDetect";
-import type { DiskBusinessMessage } from "../../packages/types/diskIO";
+import type { DiskBusinessMessage, AdSampleDiskMessage } from "../../packages/types/diskIO";
 
 /**
  * `/antiraid` 这道开关在主线程投递侧的边界（见 antiRaid/updateIngress.ts）。
@@ -14,11 +16,14 @@ import type { DiskBusinessMessage } from "../../packages/types/diskIO";
  * 容易犯、也最难在群里发现的错。
  */
 
+/** 测试观察业务写入与诊断消息。 */
+type TestDiskMessage = DiskBusinessMessage | AdSampleDiskMessage;
+
 const workerPosts: AntiRaidWorkerMessage[] = [];
-const diskPosts: DiskBusinessMessage[] = [];
+const diskPosts: TestDiskMessage[] = [];
 const answeredCallbacks: { callbackQueryId: string; text?: string }[] = [];
-const temporaryWhitelistActivityMessages: Message[] = [];
-const temporaryWhitelistActivityTimes: number[] = [];
+const temporaryAdBypassActivityMessages: Message[] = [];
+const temporaryAdBypassActivityTimes: number[] = [];
 /** 逐用例可改的群状态；缺省是「已开防刷屏、未开入群守卫」。 */
 const chatState: Record<string, boolean> = {};
 
@@ -31,7 +36,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => new Map(),
   getOrCreateChatState: () => ({}),
   persistChatState: async (): Promise<void> => {},
-  flushStateToDisk: async (): Promise<string> => "flushed",
+  flushStateToDisk: async (): Promise<FlushResult> => "flushed",
   saveChatStateInBackground: (): void => {},
 }));
 mock.module("../../packages/infra/telegram/actions", () => ({
@@ -67,29 +72,29 @@ mock.module("../../packages/infra/supervisedWorker", () => ({
     terminate: async (): Promise<void> => {},
   }),
 }));
-mock.module("../../packages/infra/diskIO", () => ({
-  flushDiskIO: async (): Promise<string> => "flushed",
-  flushDiskIODomain: async (): Promise<string> => "flushed",
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
+  flushDiskIO: async (): Promise<FlushResult> => "flushed",
+  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
   isDiskIOBuffering: (): boolean => false,
-  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: "flushed" }),
+  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (): void => {},
   onVerificationPersisted: (): void => {},
-  postDiskIO: (message: DiskBusinessMessage): boolean => {
+  postDiskIO: (message: TestDiskMessage): boolean => {
     diskPosts.push(message);
     return true;
   },
-  postDiskIODiagnostic: (message: DiskBusinessMessage): boolean => {
+  postDiskIODiagnostic: (message: TestDiskMessage): boolean => {
     diskPosts.push(message);
     return true;
   },
-}));
-mock.module("../../packages/antiRaid/temporaryWhitelist", () => ({
-  recordEligibleTemporaryWhitelistActivity(
+})));
+mock.module("../../packages/antiRaid/temporaryAdBypass", () => ({
+  recordEligibleTemporaryAdBypassActivity(
     options: AdDetectionMessageContext
   ): boolean {
-    temporaryWhitelistActivityMessages.push(options.message);
-    temporaryWhitelistActivityTimes.push(options.now);
+    temporaryAdBypassActivityMessages.push(options.message);
+    temporaryAdBypassActivityTimes.push(options.now);
     return true;
   },
 }));
@@ -159,8 +164,8 @@ beforeEach(() => {
   workerPosts.length = 0;
   diskPosts.length = 0;
   answeredCallbacks.length = 0;
-  temporaryWhitelistActivityMessages.length = 0;
-  temporaryWhitelistActivityTimes.length = 0;
+  temporaryAdBypassActivityMessages.length = 0;
+  temporaryAdBypassActivityTimes.length = 0;
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
   activeVerificationSnapshots.clear();
@@ -261,7 +266,7 @@ describe("入群守卫开关（主线程投递侧）", () => {
     expect(typesOf()).toContain("floodCandidate");
   });
 
-  test("只有用户内容消息进入临时白名单累计，平台服务事件全部跳过", () => {
+  test("只有用户内容消息进入临时广告免检累计，平台服务事件全部跳过", () => {
     chatState.isAdDetectEnabled = true;
     const contentMessages: readonly Partial<Message>[] = [
       { text: "text" },
@@ -298,8 +303,8 @@ describe("入群守卫开关（主线程投递侧）", () => {
       } as Message, 999);
     }
 
-    expect(temporaryWhitelistActivityMessages).toHaveLength(contentMessages.length);
-    expect(temporaryWhitelistActivityMessages.map(
+    expect(temporaryAdBypassActivityMessages).toHaveLength(contentMessages.length);
+    expect(temporaryAdBypassActivityMessages.map(
       (message: Message): number => message.message_id
     )).toEqual([100, 101, 102, 103, 104]);
   });
@@ -325,7 +330,7 @@ describe("入群守卫开关（主线程投递侧）", () => {
         }
       );
       expect(nowSpy).toHaveBeenCalledTimes(1);
-      expect(temporaryWhitelistActivityTimes).toEqual([now]);
+      expect(temporaryAdBypassActivityTimes).toEqual([now]);
       const flood: AntiRaidWorkerMessage | undefined = workerPosts.find(
         (message: AntiRaidWorkerMessage): boolean => message.type === "floodCandidate"
       );

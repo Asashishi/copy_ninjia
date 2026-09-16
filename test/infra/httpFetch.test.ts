@@ -133,4 +133,59 @@ describe("fetchJsonWithTimeout", () => {
     expect(await fetchJsonWithTimeout({ input: allowedUrl("/slow"), init: {}, timeoutMs: 5, errorLabel: "Slow API" })).toBeNull();
     expect(loggerError).toHaveBeenCalledTimes(1);
   });
+
+  test("预先取消时不发请求，仍经统一错误边界返回 null", async (): Promise<void> => {
+    const fetchAttempt = mock(async (): Promise<Response> => new Response("{}"));
+    installFetch(fetchAttempt);
+    const reason: Error = new Error("owner stopped");
+    expect(await fetchJsonWithTimeout({
+      input: allowedUrl("/cancelled"), init: { signal: AbortSignal.abort(reason) },
+      timeoutMs: 1_000, errorLabel: "Cancelled API",
+    })).toBeNull();
+    expect(fetchAttempt).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith("Error calling Cancelled API:", reason);
+  });
+
+  test("调用方取消在途 fetch，并透传取消原因", async (): Promise<void> => {
+    const owner: AbortController = new AbortController();
+    const reason: Error = new Error("owner stopped");
+    installFetch((_input, init): Promise<Response> => new Promise((_resolve, reject): void => {
+      const signal: AbortSignal = init!.signal!;
+      signal.addEventListener("abort", (): void => reject(signal.reason), { once: true });
+    }));
+    const result: Promise<unknown> = fetchJsonWithTimeout({
+      input: allowedUrl("/cancelled"), init: { signal: owner.signal },
+      timeoutMs: 1_000, errorLabel: "Cancelled API",
+    });
+    owner.abort(reason);
+    expect(await result).toBeNull();
+    expect(loggerError).toHaveBeenCalledWith("Error calling Cancelled API:", reason);
+  });
+
+  test.each(["owner", "timeout"])("响应正文未读完时 %s 取消仍生效", async (source: string): Promise<void> => {
+    const owner: AbortController = new AbortController();
+    const reading: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    let receivedSignal: AbortSignal | undefined;
+    installFetch(async (_input, init): Promise<Response> => {
+      const signal: AbortSignal = init!.signal!;
+      receivedSignal = signal;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller: ReadableStreamDefaultController<Uint8Array>): void {
+          controller.enqueue(new TextEncoder().encode("{\"ok\":"));
+          signal.addEventListener("abort", (): void => controller.error(signal.reason), { once: true });
+        },
+        pull(): void { reading.resolve(); },
+      }));
+    });
+    const result: Promise<unknown> = fetchJsonWithTimeout({
+      input: allowedUrl("/slow-body"), init: { signal: owner.signal },
+      timeoutMs: source === "timeout" ? 5 : 1_000, errorLabel: "Body API",
+    });
+    await reading.promise;
+    if (source === "owner") owner.abort();
+    expect(await result).toBeNull();
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(owner.signal.aborted).toBe(source === "owner");
+    expect(loggerError).toHaveBeenCalledTimes(1);
+  });
 });

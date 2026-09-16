@@ -38,11 +38,11 @@ import type {
   VerificationTransition,
 } from "../../types/states/verification";
 import {
-  type ParsedVerificationKey,
   parseVerificationKey,
   verificationKey,
   verificationKeyPrefix,
 } from "../../libs/verificationKey";
+import type { ParsedVerificationKey } from "../../libs/verificationKey";
 import { runVerificationEffects } from "./verificationEffects";
 import {
   handleJoinEvent,

@@ -9,9 +9,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { copyFixtureTree } from "../fixtures/copyTree";
+import { readInstallScripts } from "../installSources";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
-const INSTALL_SCRIPT_PATH: string = join(PROJECT_ROOT, "install.sh");
 const CONFIG_EXAMPLE_ROOT: string = join(PROJECT_ROOT, "config_example");
 const REAL_BUN_PATH: string = Bun.argv[0]!;
 /** 替身 bun 解析数据根时直接加载的生产路径模块。 */
@@ -310,10 +310,12 @@ export async function createFixture(realRuntime: boolean = false): Promise<Insta
   const systemdRoot: string = join(root, "systemd");
   mkdirSync(systemdRoot);
   await writeText(join(systemdRoot, "copy-ninjia.service"), "[Service]\n");
-  const installer: string = (await readText(INSTALL_SCRIPT_PATH))
-    .replaceAll("/run/systemd/system", systemdRoot)
-    .replace("/etc/systemd/system/${SERVICE_NAME}.service", `${systemdRoot}/\u0024{SERVICE_NAME}.service`);
-  await writeText(join(fixture.worktree, "install.sh"), installer);
+  for (const script of await readInstallScripts(PROJECT_ROOT)) {
+    const installer: string = script.source
+      .replaceAll("/run/systemd/system", systemdRoot)
+      .replace("/etc/systemd/system/${SERVICE_NAME}.service", `${systemdRoot}/\u0024{SERVICE_NAME}.service`);
+    await writeText(join(fixture.worktree, script.path), installer);
+  }
   await copyFixtureTree(CONFIG_EXAMPLE_ROOT, join(fixture.worktree, "config_example"));
   await Bun.write(join(fixture.worktree, "package.json"), Bun.file(join(PROJECT_ROOT, "package.json")));
   await writeText(join(fixture.worktree, "index.ts"), "");
@@ -322,8 +324,9 @@ export async function createFixture(realRuntime: boolean = false): Promise<Insta
       await copyFixtureTree(join(PROJECT_ROOT, relativePath), join(fixture.worktree, relativePath));
     }
     symlinkSync(join(PROJECT_ROOT, "node_modules"), join(fixture.worktree, "node_modules"));
-    const preload: string = "test/helpers/installedApplication.ts";
-    await copyFixtureTree(join(PROJECT_ROOT, preload), join(fixture.worktree, preload));
+    for (const preload of ["test/helpers/installedApplication.ts", "test/helpers/installedWorkerNetwork.ts"]) {
+      await copyFixtureTree(join(PROJECT_ROOT, preload), join(fixture.worktree, preload));
+    }
   }
   await writeText(fixture.callLog, "");
   await writeText(fixture.outboundLog, "");

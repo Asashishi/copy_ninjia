@@ -110,7 +110,7 @@ const REPORT: FullSuiteReport = {
       aiMemoryChats: 25,
       chatStates: 25,
       chatQaEntries: 125,
-      whitelistEntries: 8_192,
+      permissionList: 8_192,
       blocklistEntries: 8_192,
       pendingRemovals: 512,
     },

@@ -365,7 +365,7 @@ export function luckTierTableScenario(): Scenario {
 }
 
 /**
- * gag 活动群的每消息入口计数：会话数量读取生产容量上限，每 15 次才允许分配
+ * gag 活动群的每消息入口计数：会话数量读取生产容量上限，每 7 次才允许分配
  * due 数组；调用方在真实换新成功后同样把对应计数归零。
  */
 export function gagSpeakCounterScenario(): Scenario {
@@ -388,7 +388,9 @@ export function gagSpeakCounterScenario(): Scenario {
       retiredSpeakNoticeMessageId: 0,
       speakNoticeThreadId: undefined,
       messagesSinceSpeakNotice: 0,
+      lastTargetMessageAt: 0,
       speakNoticeRefreshTask: null,
+      speakNoticeRefreshTimer: null,
       noticePending: false,
       timer: null,
       cleanupRetryIndex: 0,

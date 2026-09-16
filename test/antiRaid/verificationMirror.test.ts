@@ -1,15 +1,16 @@
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { VerificationSnapshot } from "../../packages/types/antiRaid";
 import type { DiskBusinessMessage } from "../../packages/types/diskIO";
 
 const diskPosts: DiskBusinessMessage[] = [];
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskPosts.push(message);
     return true;
   },
-}));
+})));
 
 const { acceptVerificationDelete, acceptVerificationUpsert } =
   await import("../../packages/antiRaid/verificationMirror");

@@ -1,13 +1,23 @@
-import { integer, sqliteTable } from "drizzle-orm/sqlite-core";
-import { jsonbText, jsonDataCheck } from "./jsonb";
-import type { JsonDataTable } from "./jsonb";
-import type { CheckBuilder } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { jsonbText } from "./jsonb";
+import type { CheckBuilder, SQLiteColumn } from "drizzle-orm/sqlite-core";
 
-/** 群/频道状态：Telegram chat ID 为主键，data 保存严格 SQLite JSONB。 */
-// Drizzle 需要保留列 builder 的字面量泛型；显式宽化会让查询结果丢失列类型。
+interface ChatStateColumns {
+  readonly status: SQLiteColumn;
+  readonly aiContext: SQLiteColumn;
+  readonly aiPersona: SQLiteColumn;
+}
+
+/** 群状态与 AI 上下文使用独立 JSONB 列；上下文只能属于已有群状态。 */
 // eslint-disable-next-line @typescript-eslint/typedef
 export const chatStates = sqliteTable("chat_states", {
   chatId: integer("chat_id", { mode: "number" }).primaryKey(),
-  data: jsonbText("data").notNull(),
-}, (table: JsonDataTable): CheckBuilder[] =>
-  jsonDataCheck("chat_states_data_jsonb", table));
+  status: jsonbText("status").notNull(),
+  aiContext: jsonbText("ai_context"),
+  aiPersona: text("ai_persona"),
+}, (table: ChatStateColumns): CheckBuilder[] => [
+  check("chat_states_status_jsonb", sql`typeof(${table.status}) = 'blob' AND json_valid(${table.status}, 8)`),
+  check("chat_states_ai_context_jsonb", sql`${table.aiContext} IS NULL OR (typeof(${table.aiContext}) = 'blob' AND json_valid(${table.aiContext}, 8))`),
+  check("chat_states_ai_persona_text", sql`${table.aiPersona} IS NULL OR (${table.status} IS NOT NULL AND typeof(${table.aiPersona}) = 'text' AND length(trim(${table.aiPersona})) > 0)`),
+]);

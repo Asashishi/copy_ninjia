@@ -7,6 +7,7 @@ import {
 } from "../aiChat/ai/stickers/catalog";
 import { adoptStickerConfig, getStickerConfig } from "../config/stickers";
 import { adoptMoodConfig } from "../config/mood";
+import { chatPersonas } from "../cache/workers/aiChat/persona";
 import { adoptPersona } from "../config/persona";
 import { adoptReactionConfig } from "../config/reactions";
 import { adoptAgentDeploymentConfig } from "../config/agent";
@@ -177,6 +178,10 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(getStickerConfig().packs);
       break;
+    case "persona":
+      if (msg.persona === null) chatPersonas.delete(msg.chatId);
+      else chatPersonas.set(msg.chatId, msg.persona);
+      break;
     case "record":
       if (aiChatWorkerQuiescing.current) break;
       recordChatMessage(msg);
@@ -276,7 +281,7 @@ export function startAiChatWorker(): void {
   aiChatMaintenanceTimer.current.unref();
   // 东京天气的后台定时刷新（见 aiChat/ai/weather.ts）：get_tokyo_weather 工具与
   // 心情系统（aiChat/ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
-  // 读不发请求。全进程只应调用一次——重复调用会叠加出多个定时器。
+  // 读不发请求。重复启动不会叠加定时器，停止时同时取消在途请求。
   startWeatherRefreshLoop();
   process.once("exit", stopAiChatWorker);
 }
@@ -291,6 +296,7 @@ export function stopAiChatWorker(): void {
     aiChatMaintenanceTimer.current = null;
   }
   stopWeatherRefreshLoop();
+  chatPersonas.clear();
   resetWorkerDuplex("AI Worker stopped before the main-thread request completed.");
   self.onmessage = null;
   process.off("exit", stopAiChatWorker);

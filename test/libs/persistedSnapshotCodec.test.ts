@@ -5,7 +5,7 @@ import { buildBufferedMessage } from "../../packages/workers/aiChat/bufferedMess
 import type { AiRecordContext } from "../../packages/types/aiChat/protocol";
 import type { AiMemorySnapshot, BufferedMessage } from "../../packages/types/aiChat/memory";
 
-const source: string = "/fixture/memory/ai/-1001.json";
+const source: string = "/fixture/database/storage.sqlite:chat_states[-1001].ai_context";
 const context: AiRecordContext = {
   chatId: -1001, senderId: 1, firstName: "甲\n乙", lastName: " 丙\t丁 ", username: "@@ @alice",
   messageId: 2, replyTo: undefined, forwardedFrom: "频道\n来源", persistImmediately: false,

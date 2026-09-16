@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { STORAGE_PENDING_MAX_ENTRIES, STORAGE_PENDING_MAX_BYTES, STORAGE_WRITE_MAX_FAILURES } from "../../../packages/consts/diskIO/business";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
-import { pendingTemporaryWhitelistWrites, resetStorageDatabaseCache, storageDatabaseHandle, storageWriteFatalReply, storageWriteRetry } from "../../../packages/cache/workers/diskIO/storageDatabase";
+import { pendingTemporaryAdBypassWrites, resetStorageDatabaseCache, storageDatabaseHandle, storageWriteFatalReply, storageWriteRetry } from "../../../packages/cache/workers/diskIO/storageDatabase";
 import { openStorageDatabase } from "../../../packages/database/interact/connection";
 import { clearStorageBusinessTables } from "../../../scripts/fixtures/storageDatabase";
-import { handleTemporaryWhitelistWrite } from "../../../packages/workers/diskIO/storageDatabase/temporaryWhitelist";
+import { handleTemporaryAdBypassWrite } from "../../../packages/workers/diskIO/storageDatabase/temporaryAdBypass";
 import { flushStorageDatabase } from "../../../packages/workers/diskIO/storageDatabase/flush";
 import { StorageWriteBudget, storageWriteCost } from "../../../packages/libs/storageWriteBudget";
 import type { IdentityStoragePersistedReply } from "../../../packages/types/diskIO/replies";
@@ -22,30 +22,30 @@ afterEach((): void => { resetStorageDatabaseCache(); storageWriteFatalReply.curr
 test("SQLite 只读时容量内输入只触发一次自动提交；容量拒绝不删除原批", (): void => {
   storageDatabaseHandle.current!.$client.run("PRAGMA query_only = ON");
   for (let id: number = 1; id <= STORAGE_PENDING_MAX_ENTRIES; id++) {
-    handleTemporaryWhitelistWrite({ type: "temporaryWhitelistWrite", id, activity: null, revision: id }, reply);
+    handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id, activity: null, revision: id }, reply);
   }
   expect(storageWriteRetry.failures).toBe(1); expect(acks).toHaveLength(0);
-  expect(pendingTemporaryWhitelistWrites.size).toBe(STORAGE_PENDING_MAX_ENTRIES);
-  expect((): void => handleTemporaryWhitelistWrite({ type: "temporaryWhitelistWrite", id: STORAGE_PENDING_MAX_ENTRIES + 1, activity: null, revision: 1 }, reply)).toThrow("capacity");
+  expect(pendingTemporaryAdBypassWrites.size).toBe(STORAGE_PENDING_MAX_ENTRIES);
+  expect((): void => handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id: STORAGE_PENDING_MAX_ENTRIES + 1, activity: null, revision: 1 }, reply)).toThrow("capacity");
   let fatalCount: number = 0; storageWriteFatalReply.current = (): void => { fatalCount++; };
   for (let index: number = 1; index < STORAGE_WRITE_MAX_FAILURES; index++) expect(flushStorageDatabase(reply)).toBeFalse();
   expect(fatalCount).toBe(1); expect(acks).toHaveLength(0);
   storageDatabaseHandle.current!.$client.run("PRAGMA query_only = OFF");
   expect(flushStorageDatabase(reply)).toBeTrue();
-  expect(acks[0]!.temporaryWhitelistWrites).toHaveLength(STORAGE_PENDING_MAX_ENTRIES);
-  expect(pendingTemporaryWhitelistWrites.size).toBe(0);
+  expect(acks[0]!.temporaryAdBypassWrites).toHaveLength(STORAGE_PENDING_MAX_ENTRIES);
+  expect(pendingTemporaryAdBypassWrites.size).toBe(0);
 });
 
 test("同步事务 ACK 回调创建的新写入属于下一批", (): void => {
-  handleTemporaryWhitelistWrite({ type: "temporaryWhitelistWrite", id: 1, activity: null, revision: 1 }, reply);
+  handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id: 1, activity: null, revision: 1 }, reply);
   expect(flushStorageDatabase((value: IdentityStoragePersistedReply): void => {
     reply(value);
-    handleTemporaryWhitelistWrite({ type: "temporaryWhitelistWrite", id: 1, activity: null, revision: 2 }, reply);
+    handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id: 1, activity: null, revision: 2 }, reply);
   })).toBeTrue();
-  expect(acks[0]!.temporaryWhitelistWrites).toEqual([{ id: 1, revision: 1 }]);
-  expect(pendingTemporaryWhitelistWrites.get(1)?.revision).toBe(2);
+  expect(acks[0]!.temporaryAdBypassWrites).toEqual([{ id: 1, revision: 1 }]);
+  expect(pendingTemporaryAdBypassWrites.get(1)?.revision).toBe(2);
   expect(flushStorageDatabase(reply)).toBeTrue();
-  expect(acks[1]!.temporaryWhitelistWrites).toEqual([{ id: 1, revision: 2 }]);
+  expect(acks[1]!.temporaryAdBypassWrites).toEqual([{ id: 1, revision: 2 }]);
 });
 
 test("字节与条目预算独立生效；拒绝、替换和 reset 不泄漏额度", (): void => {
@@ -67,7 +67,7 @@ test("自动重试按截止退避，连续失败达到上限后停止自动提�
     configureStoragePersistenceReply(reply);
     let fatalCount: number = 0; storageWriteFatalReply.current = (): void => { fatalCount++; };
     storageDatabaseHandle.current!.$client.run("PRAGMA query_only = ON");
-    for (let id: number = 1; id <= 128; id++) handleTemporaryWhitelistWrite({ type: "temporaryWhitelistWrite", id, activity: null, revision: 1 }, reply);
+    for (let id: number = 1; id <= 128; id++) handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id, activity: null, revision: 1 }, reply);
     expect(storageWriteRetry.failures).toBe(1);
     jest.advanceTimersByTime(30_000);
     expect(storageWriteRetry.failures).toBe(2);
@@ -76,6 +76,6 @@ test("自动重试按截止退避，连续失败达到上限后停止自动提�
     jest.advanceTimersByTime(1);
     expect(storageWriteRetry.failures).toBe(STORAGE_WRITE_MAX_FAILURES);
     expect(fatalCount).toBe(1); expect(storageWriteFlushTimer.current).toBeNull();
-    expect(pendingTemporaryWhitelistWrites.size).toBe(128); expect(acks).toHaveLength(0);
+    expect(pendingTemporaryAdBypassWrites.size).toBe(128); expect(acks).toHaveLength(0);
   } finally { jest.useRealTimers(); }
 });

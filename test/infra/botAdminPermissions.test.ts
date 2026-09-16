@@ -5,6 +5,12 @@ import { settleBackgroundWork, settleTestBatch } from "../libs/helpers";
 import { botPermissions } from "../helpers/botPermissions";
 
 const states = new Map<number, Record<string, unknown>>();
+const syncAiChatPersona = mock((_chatId: number): void => {});
+const syncAntiRaidAtmosphere = mock((_chatId: number): void => {});
+const syncChatCommandMenu = mock(async (): Promise<void> => {});
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere }));
+mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu }));
+mock.module("../../packages/aiChat/workerBridge", () => ({ syncAiChatPersona }));
 /** 每一次后台落盘请求，供断言「清掉内存快照也把磁盘一起清了」。 */
 const backgroundSaves: { chatId: number; context: string }[] = [];
 const TEST_BOT_USER = { id: 99, is_bot: true, first_name: "Bot" } as const;
@@ -138,6 +144,9 @@ const CHAT_ID: number = -1001;
 const broadcasts: { chatId: number; permissions: BotChatPermissions | undefined }[] = [];
 
 beforeEach(() => {
+  syncAiChatPersona.mockReset();
+  syncAntiRaidAtmosphere.mockReset();
+  syncChatCommandMenu.mockReset();
   states.clear();
   states.set(CHAT_ID, { isInitEnabled: true });
   botPermissionFetches.clear();
@@ -218,17 +227,28 @@ describe("机器人自身权限 State 快照", () => {
   });
 
   test("撤管理员保留全 false 快照，被移出群聊才删掉群状态", async () => {
+    states.set(CHAT_ID, { isInitEnabled: true, aiPersona: "本群人设" });
     await handleMyChatMemberUpdate(myChatMemberContext({ status: "administrator", can_restrict_members: true }));
     await handleMyChatMemberUpdate(myChatMemberContext({ status: "member" }, "administrator"));
     expect(statePermissions()).toEqual(botPermissions({
       isAdministrator: false,
       canManageChat: false,
     }));
+    expect(states.get(CHAT_ID)?.aiPersona).toBe("本群人设");
+    expect(syncAiChatPersona).not.toHaveBeenCalled();
+    expect(syncAntiRaidAtmosphere).not.toHaveBeenCalled();
+    expect(syncChatCommandMenu).not.toHaveBeenCalled();
 
-    states.set(CHAT_ID, { isInitEnabled: true });
+    syncAiChatPersona.mockImplementation((chatId: number): void => {
+      expect(states.get(chatId)?.aiPersona).toBeUndefined();
+    });
     await handleMyChatMemberUpdate(myChatMemberContext({ status: "administrator", can_restrict_members: true }));
     await handleMyChatMemberUpdate(myChatMemberContext({ status: "kicked" }, "administrator"));
     expect(statePermissions()).toBeUndefined();
+    expect(syncAiChatPersona).toHaveBeenCalledTimes(1);
+    expect(syncAiChatPersona).toHaveBeenCalledWith(CHAT_ID);
+    expect(syncAntiRaidAtmosphere).toHaveBeenCalledWith(CHAT_ID);
+    expect(syncChatCommandMenu).toHaveBeenCalledTimes(1);
   });
 
   test("收到别人的 chat_member 更新时，缺快照就现查完整权限", async () => {

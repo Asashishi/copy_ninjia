@@ -32,8 +32,6 @@ import {
 } from "../consts/lifecycle";
 import { MOOD_REQUEST_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
-import type { ChatState } from "../types/chatState";
-import type { ReadonlyLruCache } from "../libs/lruCache";
 import { getChatStateCache, getChatState } from "../infra/storage/stateStore";
 import type {
   AiBotInfo,
@@ -198,6 +196,9 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     // 的 agent.json。重启发生在 initAiChat 调用之前的话 lastInitState.current
     // 仍是 null，没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
     if (lastInitState.current && !postToNext(lastInitState.current)) return;
+    for (const [chatId, state] of getChatStateCache()) {
+      if (state.aiPersona !== undefined && !postToNext({ type: "persona", chatId, persona: state.aiPersona })) return;
+    }
     // 记忆镜像同样要重放：新 Worker 内存全空，凭上一实例上报过的最新快照
     // 补齐（见模块头注）。
     if (latestAiMemories.size > 0) {
@@ -277,6 +278,9 @@ export function initAiChat(botInfo: AiBotInfo): void {
     persona: getPersona(),
   };
   postAiChatOrThrow(message);
+  for (const [chatId, state] of getChatStateCache()) {
+    if (state.aiPersona !== undefined) postAiChatOrThrow({ type: "persona", chatId, persona: state.aiPersona });
+  }
   lastInitState.current = message;
   aiChatWorkerState.available = true;
 }
@@ -286,30 +290,14 @@ export function initAiChat(botInfo: AiBotInfo): void {
  * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts），FIFO 保证
  * hydrate 消息先于一切 record/trigger 到达。
  *
- * 顺带回收磁盘残留：本群已经关掉 AI 闲聊，它那份记忆就该跟着走。这一步是
- * **不可逆的删除**，因此判据收得很紧——只有在下面两个前提都成立时才动手，
- * 任何一个不成立都宁可留着文件（留下的是可回收的垃圾，删错的是找不回来的数据）：
- *
- * 1. 进程侧前提齐备（isAiChatConfigured）。缺 key 时每个群看起来都是关的，
- *    不拦的话一次临时抽掉密钥的重启就把所有群的记忆一起抹掉。
- * 2. SQLite `chat_states` 确实认识这个群。「群在状态表里、但开关不是 true」才是管理员
- *    关掉了它；「群根本不在状态表里」说明状态自己丢了（LKG 回滚等），这时
- *    没有任何权威依据支持删除——那恰恰是最该保住记忆的时刻。
- *
- * 两类结果都记一行日志：删除本身没有别的痕迹，出了事连"删过什么"都查不到。
+ * 进程侧 AI 配置可用时，未开启 AI 或已不受管的群统一清除上下文；仅恢复仍启用的群。
  */
 export function hydrateAiMemory(memories: Map<number, string>): void {
   if (!isAiChatConfigured()) return;
-  const knownChats: ReadonlyLruCache<number, ChatState> = getChatStateCache();
   const enabledMemories: Map<number, string> = new Map();
   const dropped: number[] = [];
-  const keptWithoutChatState: number[] = [];
   for (const [chatId, snapshot] of memories) {
     if (getChatState(chatId).isAIChatEnabled !== true) {
-      if (!knownChats.has(chatId)) {
-        keptWithoutChatState.push(chatId);
-        continue;
-      }
       dropped.push(chatId);
       requestAiMemoryDelete(chatId, false);
       continue;
@@ -321,12 +309,6 @@ export function hydrateAiMemory(memories: Map<number, string>): void {
   }
   if (dropped.length > 0) {
     logger.log(`Dropping the persisted AI memory of ${dropped.length} chat(s) with AI chat disabled: ${dropped.join(", ")}.`);
-  }
-  if (keptWithoutChatState.length > 0) {
-    logger.error(
-      `Keeping the persisted AI memory of ${keptWithoutChatState.length} chat(s) absent from chat_states ` +
-      `(${keptWithoutChatState.join(", ")}); restore or re-enter those chats, or delete the files by hand.`
-    );
   }
   if (enabledMemories.size > 0) {
     postAiChatOrThrow({ type: "hydrate", memories: enabledMemories });
@@ -490,3 +472,9 @@ registerChatTeardown("aiChat", async (chatId: number): Promise<void> => {
     finishAiMemoryTeardown(chatId);
   }
 });
+
+/** 人设配置或群状态删除 durable 后发布最终值；AI 未配置时由下次初始化恢复。 */
+export function syncAiChatPersona(chatId: number): void {
+  if (!aiChatWorkerState.available) return;
+  postAiChatOrThrow({ type: "persona", chatId, persona: getChatState(chatId).aiPersona ?? null });
+}

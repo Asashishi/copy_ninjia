@@ -6,7 +6,7 @@
  * 不返回是否刷净：调用方在重排定时器时读取残留集合的 size，
  * 由它自己判，这里不再多给一个会被丢掉的布尔。
  *
- * aiMemoryFiles.ts 形状相似但不复用本实现：它要在摘掉 dirty 标记的同一边界
+ * aiMemoryStorage.ts 形状相似但不复用本实现：它要在摘掉 dirty 标记的同一边界
  * 结算 aiMemoryImmediateRevisions 并发出 aiMemoryPersisted 回执，那条回执的
  * 生命周期不属于通用循环。
  */

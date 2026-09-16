@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { beforeEach, expect, mock, test } from "bun:test";
 import { Api } from "grammy";
 import type { PhotoSize, User } from "grammy/types";
 import type * as AvatarReader from "../../packages/infra/telegram/avatar/read";
@@ -6,6 +6,9 @@ import type * as WedMessages from "../../packages/commands/wed/messages";
 import { WED_MAX_CONCURRENT } from "../../packages/consts/wed";
 import type { CurrentAvatarResult } from "../../packages/types/telegram";
 import type { WedCandidate, WedSession } from "../../packages/types/wed";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { chatStateCache } from "../../packages/cache/main/chatState";
+import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
 
 interface RecordedRequest {
   readonly method: string;
@@ -57,6 +60,40 @@ const { readCurrentAvatar }: typeof AvatarReader =
   await import("../../packages/infra/telegram/avatar/read");
 const { sendWedResult, replaceWedResult }: typeof WedMessages =
   await import("../../packages/commands/wed/messages");
+
+beforeEach(() => { requests.length = 0; chatStateCache.clear(); });
+
+test("抽取与更换均按当前人设同时渲染无名身份称呼和按钮", async () => {
+  const actor: User = { id: 1, first_name: "", is_bot: false };
+  const target: User = { id: 2, first_name: "", is_bot: false };
+  const session: WedSession = {
+    chatId: -100, actor, messageThreadId: undefined,
+    controller: new AbortController(), messageId: undefined, targetId: undefined,
+    confirmed: false, busy: true,
+  };
+  const candidate: WedCandidate = { identity: target, photo: current.file_id };
+  const state = getOrCreateChatState(session.chatId);
+  state.aiPersona = "普通风格";
+  expect(await sendWedResult({ session, candidate, replyToMessageId: 50, signal: session.controller.signal })).toBeTrue();
+  expect(requests[0]?.body).toMatchObject({
+    caption: `${ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser}，你的群友老婆是 ${ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser}!`,
+    reply_markup: { inline_keyboard: [[
+      { text: ATMOSPHERE_TEXTS.plain.WED_BUTTON_TEXTS.remove },
+      { text: ATMOSPHERE_TEXTS.plain.WED_BUTTON_TEXTS.marry },
+      { text: ATMOSPHERE_TEXTS.plain.WED_BUTTON_TEXTS.change },
+    ]] },
+  });
+  state.aiPersona = undefined;
+  expect(await replaceWedResult(session, candidate, session.controller.signal)).toBeTrue();
+  expect(requests[1]?.body).toMatchObject({
+    media: { caption: `${ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser}，你的群友老婆是 ${ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser}!` },
+    reply_markup: { inline_keyboard: [[
+      { text: ATMOSPHERE_TEXTS.teasing.WED_BUTTON_TEXTS.remove },
+      { text: ATMOSPHERE_TEXTS.teasing.WED_BUTTON_TEXTS.marry },
+      { text: ATMOSPHERE_TEXTS.teasing.WED_BUTTON_TEXTS.change },
+    ]] },
+  });
+});
 
 test("真实头像读取与 grammY 出站在并发上限内只传 JSON，不下载或上传图片", async (): Promise<void> => {
   const tasks: Promise<void>[] = [];

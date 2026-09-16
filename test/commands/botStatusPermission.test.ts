@@ -97,7 +97,7 @@ beforeEach(() => {
 });
 
 describe("/bot_status 白名单权限", () => {
-  test("无权限身份只收到临时拒绝，不能触及任何全局状态来源", async () => {
+  test("无权限身份按本群人设发送临时拒绝，不读取全局运行指标", async () => {
     const ctx: never = context();
     await handleBotStatusCommand(ctx);
 
@@ -110,7 +110,7 @@ describe("/bot_status 白名单权限", () => {
     expect(aiChatConfigReadiness).not.toHaveBeenCalled();
     expect(adDetectConfigReadiness).not.toHaveBeenCalled();
     expect(telegramOutboundStats).not.toHaveBeenCalled();
-    expect(getChatState).not.toHaveBeenCalled();
+    expect(getChatState).toHaveBeenCalledWith(-1001);
     expect(readBotProcessStatus).not.toHaveBeenCalled();
     expect(activeGagSessionCount).not.toHaveBeenCalled();
   });

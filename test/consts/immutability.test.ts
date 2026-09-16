@@ -1,4 +1,29 @@
-import { TRANSLATE_TARGET_TEXTS, TRANSLATE_TOGGLE_TEXTS, TRANSLATE_LANGUAGE_CODES, TRANSLATE_LANGUAGE_LABELS } from "../../packages/consts/translate";
+import { PROMPT_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/prompt";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+
+function assertAtmosphereReadonly(): void {
+  // @ts-expect-error 调用方不能替换风格表。
+  ATMOSPHERE_TEXTS.plain = ATMOSPHERE_TEXTS.teasing;
+  // @ts-expect-error 普通版菜单元素不可修改。
+  ATMOSPHERE_TEXTS.plain.BOT_COMMANDS[0]!.description = "changed";
+  // @ts-expect-error 默认版菜单容器不可扩容。
+  ATMOSPHERE_TEXTS.teasing.BOT_COMMANDS.push({ command: "extra", description: "changed" });
+  // @ts-expect-error 文案格式化函数不可替换。
+  ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.copyAlreadyRunning = (): string => "changed";
+  // @ts-expect-error 权限说明表不可修改。
+  ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP.isCanConfigAiPrompt = "changed";
+  // @ts-expect-error 清理上下文权限说明不可修改。
+  ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP.isCanClearContext = "changed";
+  // @ts-expect-error 嵌套目标提示不可修改。
+  ATMOSPHERE_TEXTS.plain.PERMISSION_COMMAND_TEXTS.target.selfTarget = "changed";
+  // @ts-expect-error 运势固定评语不可修改。
+  ATMOSPHERE_TEXTS.plain.LUCK_TIER_COMMENTS.大吉 = "changed";
+  // @ts-expect-error 默认运势固定评语不可修改。
+  ATMOSPHERE_TEXTS.teasing.LUCK_TIER_COMMENTS.大吉 = "changed";
+}
+void assertAtmosphereReadonly;
+import { TRANSLATE_LANGUAGE_CODES, TRANSLATE_LANGUAGE_LABELS } from "../../packages/consts/translate";
+import { TRANSLATE_TARGET_TEXTS, TRANSLATE_TOGGLE_TEXTS } from "../../packages/consts/atmosphere/teasing/translate";
 import { expect, test } from "bun:test";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../packages/consts/diskIO/common";
 import { HOT_PATH_GC_CPU_BUDGETS } from "../../packages/consts/performance";
@@ -32,21 +57,7 @@ function assertWedRecoveryPriorityReadonly(): void {
   DISK_IO_RESPAWN_PRIORITIES.WED_MEMBERS = 0;
 }
 void assertWedRecoveryPriorityReadonly;
-import {
-  AD_DETECT_TOGGLE_TEXTS,
-  AI_CHAT_TOGGLE_TEXTS,
-  BLOCK_TARGET_TEXTS,
-  BOT_COMMANDS,
-  COPY_TARGET_TEXTS,
-  FLOOD_CONTROL_TOGGLE_TEXTS,
-  INIT_TOGGLE_TEXTS,
-  MUTE_TARGET_TEXTS,
-  NYA_COPY_TARGET_TEXTS,
-  REVERSE_COPY_TARGET_TEXTS,
-  STEAL_ICON_TARGET_TEXTS,
-  UNBLOCK_TARGET_TEXTS,
-  UNMUTE_TARGET_TEXTS,
-} from "../../packages/consts/commands";
+import { AD_DETECT_TOGGLE_TEXTS, AI_CHAT_TOGGLE_TEXTS, BLOCK_TARGET_TEXTS, BOT_COMMANDS, COPY_TARGET_TEXTS, FLOOD_CONTROL_TOGGLE_TEXTS, INIT_TOGGLE_TEXTS, MUTE_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS, STEAL_ICON_TARGET_TEXTS, UNBLOCK_TARGET_TEXTS, UNMUTE_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
 import { CHAT_TEARDOWN_ORDER } from "../../packages/consts/chatTeardown";
 import {
   AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
@@ -54,12 +65,8 @@ import {
   AGENT_CAPABILITY_NAMES,
 } from "../../packages/consts/agent";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
-import {
-  GAG_MIN_OPERATION_TIERS,
-  GAG_REPLACEMENT_CHARACTERS,
-  GAG_TARGET_TEXTS,
-  UNGAG_TARGET_TEXTS,
-} from "../../packages/consts/gag";
+import { GAG_MIN_OPERATION_TIERS, GAG_REPLACEMENT_CHARACTERS } from "../../packages/consts/gag";
+import { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/gag";
 import { GEMINI_SAFETY_SETTINGS } from "../../packages/consts/aiChat/gemini";
 import {
   OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO,
@@ -69,15 +76,8 @@ import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
 import { EMPTY_MESSAGE_ENTITIES, MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import { QA_ANSWER_LABELS, QA_QUESTION_LABELS } from "../../packages/consts/qa";
 import { DEFAULT_CHAT_STATE, createChatState } from "../../packages/libs/chatState";
-import {
-  DEFAULT_WHITELIST_PERMISSIONS,
-  NON_WHITELIST_PERMISSIONS,
-  PERMISSION_COMMAND_TEXTS,
-  SUPER_ADMIN_WHITELIST_PERMISSIONS,
-  TEMPORARY_WHITELIST_PERMISSIONS,
-  WHITELIST_PERMISSION_KEY_BY_LOWERCASE,
-  WHITE_COMMAND_TEXTS,
-} from "../../packages/consts/whitelist";
+import { DEFAULT_WHITELIST_PERMISSIONS, NON_WHITELIST_PERMISSIONS, SUPER_ADMIN_WHITELIST_PERMISSIONS, TEMPORARY_AD_BYPASS_PERMISSIONS, WHITELIST_PERMISSION_KEY_BY_LOWERCASE } from "../../packages/consts/whitelist";
+import { PERMISSION_COMMAND_TEXTS, WHITE_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/whitelist";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
 import { BOT_STATUS_PERMISSION_LABELS } from "../../packages/consts/botStatus";
 import { getChatState } from "../../packages/infra/storage/stateStore";
@@ -229,8 +229,8 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   expect(() => { SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock = false; }).toBeDefined();
   // @ts-expect-error 非白名单 query 复用这份逐项 false 视图，不允许调用方改写。
   expect(() => { NON_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
-  // @ts-expect-error 临时白名单共享这份仅广告豁免视图，不允许调用方扩权。
-  expect(() => { TEMPORARY_WHITELIST_PERMISSIONS.isCanMute = true; }).toBeDefined();
+  // @ts-expect-error 临时广告免检共享这份仅广告豁免视图，不允许调用方扩权。
+  expect(() => { TEMPORARY_AD_BYPASS_PERMISSIONS.isCanMute = true; }).toBeDefined();
   const compileOnly: () => void = (): void => {
     // @ts-expect-error 权限键规范化索引是跨命令调用共享的只读查表，不允许增删。
     WHITELIST_PERMISSION_KEY_BY_LOWERCASE.set("x", "isCanMute");
@@ -408,17 +408,23 @@ test("常量表内容本身仍可正常读取", () => {
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(false);
   expect(Object.keys(NON_WHITELIST_PERMISSIONS))
     .toEqual(Object.keys(DEFAULT_WHITELIST_PERMISSIONS));
-  expect(Object.keys(TEMPORARY_WHITELIST_PERMISSIONS))
+  expect(Object.keys(TEMPORARY_AD_BYPASS_PERMISSIONS))
     .toEqual(Object.keys(DEFAULT_WHITELIST_PERMISSIONS));
-  expect(TEMPORARY_WHITELIST_PERMISSIONS).toEqual({
+  expect(TEMPORARY_AD_BYPASS_PERMISSIONS).toEqual({
     ...NON_WHITELIST_PERMISSIONS,
     isCanBypassAdDetection: true,
   });
   expect(NON_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(false);
   expect(NON_WHITELIST_PERMISSIONS.isCanViewBotStatus).toBe(false);
-  expect(TEMPORARY_WHITELIST_PERMISSIONS.isCanBypassAdDetection).toBe(true);
-  expect(TEMPORARY_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(false);
-  expect(TEMPORARY_WHITELIST_PERMISSIONS.isCanViewBotStatus).toBe(false);
+  expect(TEMPORARY_AD_BYPASS_PERMISSIONS.isCanBypassAdDetection).toBe(true);
+  expect(TEMPORARY_AD_BYPASS_PERMISSIONS.isCanBypassFloodControl).toBe(false);
+  expect(TEMPORARY_AD_BYPASS_PERMISSIONS.isCanViewBotStatus).toBe(false);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock).toBe(true);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(true);
 });
+
+function assertPromptTextsReadonly(): void {
+  // @ts-expect-error 提示词命令文案由常量模块持有，调用方不可修改。
+  PROMPT_COMMAND_TEXTS.usage = "changed";
+}
+void assertPromptTextsReadonly;

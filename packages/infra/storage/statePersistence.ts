@@ -11,7 +11,8 @@ import {
   parseJsonInput,
   readUtf8TextInput,
 } from "../../libs/inputValidation";
-import { createLatestValueRunner, type LatestValueRunner } from "../../libs/latestValueRunner";
+import { createLatestValueRunner } from "../../libs/latestValueRunner";
+import type { LatestValueRunner } from "../../libs/latestValueRunner";
 import { decodeStateFile } from "../../libs/stateFileCodec";
 import type { FlushResult } from "../../types/lifecycle";
 import type { DecodedStateFile, StateFileSchema } from "../../types/chatState";

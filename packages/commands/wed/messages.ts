@@ -1,3 +1,5 @@
+import type { AtmosphereTexts } from "../../types/atmosphere";
+import { chatAtmosphere } from "../../infra/atmosphere";
 /**
  * /wed 状态消息的唯一发送边界。可操作的图片结果只由移除、
  * 重开、LRU 淘汰和群 teardown 清理，不挂固定延迟删除。豁免登记于 conventions/telegramMessages。
@@ -29,21 +31,24 @@ export interface SendWedResultOptions {
 
 /** 按 file_id 复用头像或上传下载字节；远端成功时先同步登记消息 ID，再传播取消。 */
 export function sendWedResult({ session, candidate, replyToMessageId, signal }: SendWedResultOptions): Promise<boolean> {
-  const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity);
   return runTelegramAction({
     action: "send wed result",
-    execute: (requestSignal?: AbortSignal): Promise<Message.PhotoMessage> => bot.api.sendPhoto(
-      session.chatId,
-      typeof candidate.photo === "string" ? candidate.photo : new InputFile(candidate.photo, BOT_PROFILE_PHOTO_FILE_NAME),
-      {
-        caption: caption.text,
-        caption_entities: [...caption.entities],
-        reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id),
-        reply_parameters: replyParametersFor(replyToMessageId),
-        message_thread_id: session.messageThreadId,
-      },
-      ...signalArgs(requestSignal)
-    ),
+    execute: (requestSignal?: AbortSignal): Promise<Message.PhotoMessage> => {
+      const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
+      const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity, atmosphere);
+      return bot.api.sendPhoto(
+        session.chatId,
+        typeof candidate.photo === "string" ? candidate.photo : new InputFile(candidate.photo, BOT_PROFILE_PHOTO_FILE_NAME),
+        {
+          caption: caption.text,
+          caption_entities: [...caption.entities],
+          reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id, { atmosphere }),
+          reply_parameters: replyParametersFor(replyToMessageId),
+          message_thread_id: session.messageThreadId,
+        },
+        ...signalArgs(requestSignal)
+      );
+    },
     map: (sent: Message.PhotoMessage): boolean => {
       session.messageId = sent.message_id;
       session.targetId = candidate.identity.id;
@@ -58,21 +63,24 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
 
 /** 在同一条消息中同时换头像、图注和按钮；失败时保留原抽取。 */
 export function replaceWedResult(session: WedSession, candidate: WedCandidate, signal: AbortSignal): Promise<boolean> {
-  const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity);
   return runTelegramAction({
     action: "replace wed result",
-    execute: (requestSignal?: AbortSignal): ReturnType<typeof bot.api.editMessageMedia> => bot.api.editMessageMedia(
-      session.chatId,
-      session.messageId!,
-      {
-        type: "photo",
-        media: typeof candidate.photo === "string" ? candidate.photo : new InputFile(candidate.photo, BOT_PROFILE_PHOTO_FILE_NAME),
-        caption: caption.text,
-        caption_entities: [...caption.entities],
-      },
-      { reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id) },
-      ...signalArgs(requestSignal)
-    ),
+    execute: (requestSignal?: AbortSignal): ReturnType<typeof bot.api.editMessageMedia> => {
+      const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
+      const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity, atmosphere);
+      return bot.api.editMessageMedia(
+        session.chatId,
+        session.messageId!,
+        {
+          type: "photo",
+          media: typeof candidate.photo === "string" ? candidate.photo : new InputFile(candidate.photo, BOT_PROFILE_PHOTO_FILE_NAME),
+          caption: caption.text,
+          caption_entities: [...caption.entities],
+        },
+        { reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id, { atmosphere }) },
+        ...signalArgs(requestSignal)
+      );
+    },
     map: (): boolean => {
       session.targetId = candidate.identity.id;
       session.confirmed = false;
@@ -91,7 +99,7 @@ export function confirmWedResult(session: WedSession, signal: AbortSignal): Prom
     execute: async (requestSignal?: AbortSignal): Promise<void> => {
       try {
         await bot.api.editMessageReplyMarkup(session.chatId, session.messageId!, {
-          reply_markup: buildWedKeyboard(session.actor.id, session.targetId!, true),
+          reply_markup: buildWedKeyboard(session.actor.id, session.targetId!, { confirmed: true, atmosphere: chatAtmosphere(session.chatId) }),
         }, ...signalArgs(requestSignal));
       } catch (error: unknown) {
         if (!isMessageNotModified(error)) throw error;

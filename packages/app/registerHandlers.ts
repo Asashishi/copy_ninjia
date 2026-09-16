@@ -1,9 +1,11 @@
-import { GrammyError, type Bot } from "grammy";
+import { GrammyError } from "grammy";
+import type { Bot } from "grammy";
 import { handleIncomingMessageMiddleware, handleReaction } from "../auto";
 import {
   confirmLuckDraw,
   handleAdDetectCommand,
   handleAiChatCommand,
+  handlePromptCommand,
   handleBatchKickCommand,
   handleBlockCommand,
   handleBotStatusCommand,
@@ -162,7 +164,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     } else {
       // 纯粹的频道帖没有 from、也没有 sender_chat：频道自己就是 ctx.chat，
       // 而 users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts
-      // 都按这个 id 解析行为主体。漏掉它的话，已在 whitelist_entries 里的频道
+      // 都按这个 id 解析行为主体。漏掉它的话，已在 permission_list 里的频道
       // 在自己频道发 /mood query、/bot_status 会撞上冷 LRU 的 fail-closed 判定，
       // 被当成未授权拒绝，直到别的 update 偶然把这个 id 预热进来。
       // `ctx.chat` 只在这条分支需要，因此留在分支内读一次，不提到函数头。
@@ -255,6 +257,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
   commands.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
   commands.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
+  commands.command("prompt", (ctx: CommandContext<Context>): Promise<void> => handlePromptCommand(ctx));
   commands.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
   commands.command("clear_context", (ctx: CommandContext<Context>): Promise<void> => handleClearContextCommand(ctx));
   commands.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));

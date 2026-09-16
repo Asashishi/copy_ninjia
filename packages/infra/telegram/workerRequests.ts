@@ -47,6 +47,7 @@ async function sendTemporaryMessage(
     text: request.text,
     deleteAfterMs: request.deleteAfterMs,
     messageThreadId: request.messageThreadId,
+    replyToMessageId: request.replyToMessageId,
     signal,
   });
 }

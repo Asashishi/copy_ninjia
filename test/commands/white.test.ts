@@ -11,8 +11,9 @@ const confirmWhitelistEntryPersisted = mock(
   async (_id: number, _retryUnacknowledged: boolean): Promise<void> => {}
 );
 const isUserBlocked = mock((_id: number): boolean => false);
+// 与 getEffectiveWhitelistPermissions 一致：超级管理员（id 1）恒持有全部权限。
 const hasWhitelistPermission = mock(
-  (_id: number, _key: string): boolean => false
+  (id: number, _key: string): boolean => id === 1
 );
 
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
@@ -41,7 +42,7 @@ const { protectedIdentityMutationQueue } =
   await import("../../packages/cache/main/blocklist");
 const identityStorage = await import("../../packages/infra/identityStorage");
 const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
-const { IDENTITY_POLICY_UNAVAILABLE_TEXT } = await import("../../packages/consts/commands");
+const { IDENTITY_POLICY_UNAVAILABLE_TEXT } = await import("../../packages/consts/atmosphere/teasing/commands");
 const { runProtectedIdentityMutation } =
   await import("../../packages/infra/identityPolicy/coordination");
 
@@ -102,7 +103,7 @@ beforeEach(() => {
   isUserBlocked.mockClear();
   isUserBlocked.mockImplementation((): boolean => false);
   hasWhitelistPermission.mockClear();
-  hasWhitelistPermission.mockImplementation((): boolean => false);
+  hasWhitelistPermission.mockImplementation((id: number): boolean => id === 1);
   protectedIdentityMutationQueue.current = Promise.resolve();
   prefetchIdentityPolicies.mockClear();
   prefetchIdentityPolicies.mockResolvedValue(true);

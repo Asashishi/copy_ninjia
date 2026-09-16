@@ -1,3 +1,5 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { Context, NextFunction } from "grammy";
 import type { Message, MessageEntity } from "grammy/types";
 import type { CachedUser } from "../types/chatState";
@@ -97,7 +99,7 @@ function buildActionMessage(segments: readonly ActionSegment[]): ActionMessage {
 /**
  * 菜单占位项 `/x` 的处理器。`/x` 自己不是动作命令——它只为把「把 x 换成任意
  * 1~2 个中文字」这个用法曝光进命令菜单（非 ASCII 命令名进不了菜单，见
- * consts/commands.ts 的 BOT_COMMANDS）。但点菜单会真的把 `/x` 发出去，所以它
+ * consts/atmosphere/teasing/commands.ts 的 BOT_COMMANDS）。但点菜单会真的把 `/x` 发出去，所以它
  * 必须回一句用法：沉默会让用户完全不知道发生了什么；而放行到消息兜底则会让
  * 这条命令被当成普通消息进入 AI/复读流水线，正是注册它要避免的事。
  */
@@ -106,7 +108,7 @@ export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
   if (chatId === undefined) return;
   await sendCommandMessage({
     chatId,
-    text: `笨蛋，/x 只是菜单里的用法说明啦——把 x 换成任意 1~2 个中文字直接发，比如 /咬、/贴贴，再回复 TA 的消息或者加 @username 指定对象♡`,
+    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.actionUsage,
     replyToMessageId: ctx.msg?.message_id,
   });
 }
@@ -123,7 +125,7 @@ export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
  * 提示仍走默认 30 秒清理。
  * 动作词进不了 Telegram 命令菜单——命令名只收 ASCII，这类命令也因此拿不到
  * bot_command 实体，只能由 bot.hears 按原文匹配；菜单里的 `/x` 只是一条不做
- * 任何处理的占位说明项，见 consts/commands.ts 的 BOT_COMMANDS。
+ * 任何处理的占位说明项，见 consts/atmosphere/teasing/commands.ts 的 BOT_COMMANDS。
  * @param next 命令并非发给本机器人（`/咬@OtherBot`）或消息形态异常时放行，
  * 让消息回到普通消息流水线，不被这里静默吞掉。
  */
@@ -172,22 +174,23 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
     botUserId: ctx.me.id,
     rawArgument: command.rawArgument,
     messages: {
-      missingTarget: `笨蛋，要 ${actionWord} 谁呀？回复 TA 的一条消息，或者写成 /${actionWord} @username 再来♡`,
+      missingTarget: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.actionMissingTarget(actionWord, actionWord),
       invalidUsername: (rawArgument: string): string =>
-        `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，本天才可不会对着空气 ${actionWord}♡`,
+        chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.actionInvalidTarget(rawArgument, actionWord),
       unknownUsername: (rawUsername: string): string =>
-        `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再 ${actionWord} 吧♡`,
+        chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.actionUnknownTarget(rawUsername, actionWord),
       conflictingTarget: (rawArgument: string): string =>
-        `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该 ${actionWord} 哪个呀？只留一个再来♡`,
-      selfTarget: `哼，本天才可不给杂鱼 ${actionWord}，想得美♡`,
+        chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.actionConflictingTarget(rawArgument, actionWord),
+      selfTarget: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.actionSelfTarget(actionWord),
     },
   });
   if (!target) return;
 
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   const { text, entities }: ActionMessage = buildActionMessage([
-    { text: formatFullName(actor), url: formatProfileUrl(actor) },
+    { text: formatFullName(actor, atmosphere), url: formatProfileUrl(actor) },
     { text: ` ${actionWord}了 `, url: undefined },
-    { text: formatFullName(target), url: formatProfileUrl(target) },
+    { text: formatFullName(target, atmosphere), url: formatProfileUrl(target) },
     { text: "！", url: undefined },
   ]);
   await sendCommandMessage({

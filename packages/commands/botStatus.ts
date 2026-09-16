@@ -1,3 +1,6 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
+import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
 import type { MessageEntity } from "grammy/types";
 import type { CommandContext, Context } from "grammy";
 import { activeGagSessionCount } from "../cache/main/gag";
@@ -6,21 +9,8 @@ import { TRANSLATE_CHAT_USER_LIMIT } from "../consts/translate";
 import { getAdDetectAgentConfig, getAgentDeploymentConfig } from "../config/agent";
 import { adDetectConfigReadiness, aiChatConfigReadiness } from "../config/readiness";
 import { BOT_CHAT_PERMISSION_KEYS } from "../consts/botAdmin";
-import {
-  BOT_STATUS_BYTES_PER_GIB,
-  BOT_STATUS_BYTES_PER_KIB,
-  BOT_STATUS_BYTES_PER_MIB,
-  BOT_STATUS_COLD_MEMORY_WEIGHT,
-  BOT_STATUS_DECIMAL_PLACES,
-  BOT_STATUS_HOT_MEMORY_WEIGHT,
-  BOT_STATUS_PERCENT_SCALE,
-  BOT_STATUS_PERMISSION_JSON_INDENT,
-  BOT_STATUS_PERMISSION_JSON_LANGUAGE,
-  BOT_STATUS_PERMISSION_LABELS,
-  BOT_STATUS_SECONDS_PER_DAY,
-  BOT_STATUS_SECONDS_PER_HOUR,
-  BOT_STATUS_SECONDS_PER_MINUTE,
-} from "../consts/botStatus";
+import { BOT_STATUS_BYTES_PER_GIB, BOT_STATUS_BYTES_PER_KIB, BOT_STATUS_BYTES_PER_MIB, BOT_STATUS_COLD_MEMORY_WEIGHT, BOT_STATUS_DECIMAL_PLACES, BOT_STATUS_HOT_MEMORY_WEIGHT, BOT_STATUS_PERCENT_SCALE, BOT_STATUS_PERMISSION_JSON_INDENT, BOT_STATUS_PERMISSION_JSON_LANGUAGE, BOT_STATUS_PERMISSION_LABELS, BOT_STATUS_SECONDS_PER_DAY, BOT_STATUS_SECONDS_PER_HOUR, BOT_STATUS_SECONDS_PER_MINUTE } from "../consts/botStatus";
+
 import { BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS } from "../consts/commands";
 import { MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../consts/aiChat/memory";
 import { aiMemoryUsages } from "../cache/main/aiChat";
@@ -139,12 +129,12 @@ function formatPercent(value: number): string {
  * 没有镜像条目就是没有可展示的上下文，按 0 展示而不是沿用旧值（见
  * cache/main/aiChat.ts 的 aiMemoryUsages）。
  */
-function contextCapacityLine(usage: Readonly<AiMemoryUsage> | undefined): string {
+function contextCapacityLine(usage: Readonly<AiMemoryUsage> | undefined, atmosphere: AtmosphereTexts): string {
   const percent: number = (
     BOT_STATUS_HOT_MEMORY_WEIGHT * ((usage?.bufferedCount ?? 0) / VERBATIM_CONTEXT_MAX) +
     BOT_STATUS_COLD_MEMORY_WEIGHT * ((usage?.summaryCount ?? 0) / MAX_SUMMARY_ROUNDS)
   ) * BOT_STATUS_PERCENT_SCALE;
-  return `• 猫脑子利用率：${formatPercent(percent)}`;
+  return atmosphere.NOTICE_TEXTS.statusContextUsage(formatPercent(percent));
 }
 
 /**
@@ -172,10 +162,11 @@ function permissionsJson(permissions: Readonly<BotChatPermissions>): string {
  * 反引号。偏移按 UTF-16 码元计算，与 Telegram 对 entities 的口径一致。
  */
 export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMessage {
+  const atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS[snapshot.chatState.aiPersona === undefined ? "teasing" : "plain"];
   const lines: string[] = [
-    "本天才的状态，杂鱼可要看仔细啦♡",
+    atmosphere.NOTICE_TEXTS.statusTitle,
     "",
-    "本机进程，本天才当然精神得很♡：",
+    atmosphere.NOTICE_TEXTS.statusProcess,
     `• CPU：${formatPercent(snapshot.processStatus.averageCpuPercent)}` +
       ` (${snapshot.processStatus.availableCpuCount} Core)`,
     `• Bot 运行时长：${formatBotUptime(snapshot.processStatus.uptimeSeconds)}`,
@@ -187,7 +178,7 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
         `（${formatPercent(snapshot.processStatus.memoryPercent)}）`
       : `• 当前内存占用：${formatBotMemory(snapshot.processStatus.memoryFootprintBytes)}（本机上限不可用）`,
     "",
-    "全局模型能力，本天才会的可多着呢♡：",
+    atmosphere.NOTICE_TEXTS.statusModels,
   ];
   if (!snapshot.aiReady || snapshot.aiConfig === null) {
     lines.push("• AI 对话能力：不可用（部署配置未就绪）");
@@ -209,11 +200,14 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     `• 处理中 ${snapshot.telegramActive}`,
     `• 429 退避排队 ${snapshot.telegramPending}/${snapshot.telegramCapacity}`,
     "",
-    contextCapacityLine(snapshot.aiContextUsage),
-    `• 正在被本天才调教的杂鱼：${snapshot.activeGagSessions}/${GAG_SESSION_MAX}`,
-    `• 本群正赖着本天才翻译的杂鱼：${snapshot.activeTranslateSessions}/${TRANSLATE_CHAT_USER_LIMIT} 人♡`,
+    snapshot.chatState.aiPersona === undefined
+      ? atmosphere.BOT_STATUS_PERSONA_DEFAULT
+      : atmosphere.BOT_STATUS_PERSONA_CONFIGURED,
+    contextCapacityLine(snapshot.aiContextUsage, atmosphere),
+    atmosphere.NOTICE_TEXTS.statusGag(snapshot.activeGagSessions, GAG_SESSION_MAX),
+    atmosphere.NOTICE_TEXTS.statusTranslate(snapshot.activeTranslateSessions, TRANSLATE_CHAT_USER_LIMIT),
     "",
-    "本天才在这个群的权柄："
+    atmosphere.NOTICE_TEXTS.statusPermissions
   );
   const permissions: BotChatPermissions | undefined =
     snapshot.chatState.botPermissions;
@@ -221,7 +215,7 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
   if (permissions === undefined) {
     // undefined 只表示尚未确证（见 types/chatState.ts）：确认不是管理员时快照仍在，
     // 只是全 false，那种情况照常出 JSON。
-    lines.push("• 还没确证呢，等本天才在这个群有了身份再来看吧♡");
+    lines.push(atmosphere.NOTICE_TEXTS.statusPermissionsUnknown);
   } else {
     const json: string = permissionsJson(permissions);
     entities.push({
@@ -232,7 +226,7 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     });
     lines.push(json);
   }
-  lines.push("", "本群已开启，连这个都记不住吗，笨蛋♡：");
+  lines.push("", atmosphere.NOTICE_TEXTS.statusFeatures);
   const features: string[] = enabledGroupFeatures(snapshot.chatState);
   if (features.length === 0) lines.push("• 无");
   else {
@@ -247,10 +241,10 @@ export async function handleBotStatusCommand(
 ): Promise<void> {
   if (!hasCommandPermission(ctx, "isCanViewBotStatus")) {
     const actor: CachedUser | undefined = resolveCommandActor(ctx);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: `就 ${actor === undefined ? "哪个杂鱼" : formatUserLabel(actor)} ` +
-        "也想看本天才的全局状态？哪来的资格呀，笨蛋♡",
+      text: atmosphere.NOTICE_TEXTS.statusRejected(actor === undefined ? atmosphere.NOTICE_TEXTS.unknownActor : formatUserLabel(actor, atmosphere)),
       replyToMessageId: ctx.msgId,
     });
     return;

@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
+import * as nodeFs from "node:fs";
 import { readdirSync } from "node:fs";
+import * as nodeFsPromises from "node:fs/promises";
 import { join } from "node:path";
 
 const projectRoot: string = join(import.meta.dir, "..");
@@ -66,8 +68,8 @@ describe("production module coverage manifest", () => {
     // 关闭开关后包装只透传真实实现，不影响需要读写临时目录的用例。
     let fsWriteStarts: number = 0;
     let fsGuardActive: boolean = false;
-    const realFs: Record<string, unknown> = { ...(await import("node:fs")) };
-    const realFsPromises: Record<string, unknown> = { ...(await import("node:fs/promises")) };
+    const realFs: Record<string, unknown> = { ...nodeFs };
+    const realFsPromises: Record<string, unknown> = { ...nodeFsPromises };
     function guardFsWrite(real: Record<string, unknown>, name: string, label: string): (...args: unknown[]) => unknown {
       return (...args: unknown[]): unknown => {
         if (fsGuardActive) {

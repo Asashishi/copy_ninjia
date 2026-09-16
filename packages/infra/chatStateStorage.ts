@@ -40,25 +40,16 @@ import type {
 } from "../types/diskIO/replies";
 import type { UnacknowledgedChatStateWrite } from "../types/identityStorage";
 
-interface ChatStateDiskIOApi {
-  readonly flushDiskIODomainOutcome?: typeof diskIO.flushDiskIODomainOutcome;
-  readonly onDiskIORespawn?: typeof diskIO.onDiskIORespawn;
-  readonly onIdentityStoragePersisted?: typeof diskIO.onIdentityStoragePersisted;
-  readonly postDiskIO?: typeof diskIO.postDiskIO;
-}
-
 interface EncodedChatStateWrite {
   readonly data: string | null;
   readonly deleted: boolean;
+  readonly aiPersona: string | null;
 }
 
 interface QueuedChatStateWrite {
   readonly chatId: number;
   readonly revision: number;
 }
-
-// 叶子单测可只替换实际观察的出口；生产装配始终提供完整接口。
-const chatStateDiskIOApi: ChatStateDiskIOApi = diskIO;
 
 function capacityError(): Error {
   return new Error(
@@ -87,15 +78,16 @@ export function assertChatStateCapacity(chatId: number): void {
 
 function encodeCurrentChatState(chatId: number): EncodedChatStateWrite {
   const state: ChatState | undefined = chatStateCache.peek(chatId);
-  if (state === undefined) return { data: null, deleted: true };
+  if (state === undefined) return { data: null, deleted: true, aiPersona: null };
   normalizeChatState(state);
   if (isEmptyChatState(state)) {
     chatStateCache.delete(chatId);
-    return { data: null, deleted: true };
+    return { data: null, deleted: true, aiPersona: null };
   }
   return {
     data: encodeChatStateData(state, `chat state ${chatId}`),
     deleted: false,
+    aiPersona: state.aiPersona ?? null,
   };
 }
 
@@ -104,7 +96,7 @@ function postChatStateWrite(
   transport?: DiskIORecoveryTransport
 ): boolean {
   return transport === undefined
-    ? chatStateDiskIOApi.postDiskIO?.(message) === true
+    ? diskIO.postDiskIO(message) === true
     : transport.post(message);
 }
 
@@ -120,13 +112,14 @@ export function queueChatStateWrite(chatId: number): number {
     type: "chatStateWrite",
     chatId,
     data: encoded.data,
+    aiPersona: encoded.aiPersona,
     revision,
   };
-  let bytes: number = storageWriteCost(encoded.data);
+  let bytes: number = storageWriteCost(encoded.data) + storageWriteCost(encoded.aiPersona);
   for (const pendingChatId of unacknowledgedChatStateWrites.keys()) {
     if (pendingChatId === chatId) continue;
     const state: ChatState | undefined = chatStateCache.peek(pendingChatId);
-    bytes += storageWriteCost(state === undefined ? null : encodeChatStateData(state, "chat state admission"));
+    bytes += storageWriteCost(state === undefined ? null : encodeChatStateData(state, "chat state admission")) + storageWriteCost(state?.aiPersona ?? null);
   }
   assertStorageAdmission(unacknowledgedChatStateWrites.size + (unacknowledgedChatStateWrites.has(chatId) ? 0 : 1), bytes);
   if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat state publication.");
@@ -144,12 +137,7 @@ export function queueChatStateWrite(chatId: number): number {
 export async function persistChatState(chatId: number, context: string): Promise<void> {
   throwIfUpdateAborted();
   const revision: number = queueChatStateWrite(chatId);
-  const flush: typeof diskIO.flushDiskIODomainOutcome | undefined =
-    chatStateDiskIOApi.flushDiskIODomainOutcome;
-  if (flush === undefined) {
-    throw new Error(`Failed to persist chat state update (${context}): persistence flush is unavailable.`);
-  }
-  const outcome: DomainFlushOutcome = await flush("chatState");
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("chatState");
   throwIfUpdateAborted();
   if (outcome.result !== "flushed") {
     const domainNote: string = outcome.failedDomains === undefined
@@ -210,6 +198,7 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
       type: "chatStateWrite",
       chatId: write.chatId,
       data: encoded.data,
+      aiPersona: encoded.aiPersona,
       revision: write.revision,
     };
     if (!postChatStateWrite(message, transport)) return false;
@@ -217,13 +206,9 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
   return true;
 }
 
-if (chatStateDiskIOApi.onIdentityStoragePersisted !== undefined) {
-  chatStateDiskIOApi.onIdentityStoragePersisted(settleChatStateWrites);
-}
-if (chatStateDiskIOApi.onDiskIORespawn !== undefined) {
-  chatStateDiskIOApi.onDiskIORespawn(
-    "chat state",
-    DISK_IO_RESPAWN_PRIORITIES.CHAT_STATE,
-    replayChatStateWrites
-  );
-}
+diskIO.onIdentityStoragePersisted(settleChatStateWrites);
+diskIO.onDiskIORespawn(
+  "chat state",
+  DISK_IO_RESPAWN_PRIORITIES.CHAT_STATE,
+  replayChatStateWrites
+);

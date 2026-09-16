@@ -181,6 +181,13 @@ export interface AiTriggerMessage {
   messageThreadId: number | undefined;
 }
 
+/** 主线程群状态变更的人设最终值；null 表示恢复默认提示词。 */
+export interface AiPersonaMessage {
+  type: "persona";
+  chatId: number;
+  persona: string | null;
+}
+
 export interface AiHydrateMessage {
   type: "hydrate";
   memories: Map<number, string>;
@@ -222,6 +229,7 @@ export interface AiQueryMoodMessage {
 }
 
 export type AiChatWorkerMessage =
+  | AiPersonaMessage
   | AiInitMessage
   | AiRecordMessage
   | AiRecordMediaMessage

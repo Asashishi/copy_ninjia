@@ -1,22 +1,19 @@
 import type { CachedUser } from "../chatState";
 
-/**
- * 头像更新的两种目标：偷某个用户/频道的脸，或复原成机器人自己的默认头像。
- *
- * 做成判别联合而不是「user 为空即复原」：两者的失败含义完全不同——偷不到多半
- * 是对方没有公开头像，复原失败则是那个固定链接取不下来，战报与日志都得分开写。
- */
+/** 头像更新目标：用户或频道的公开头像，或机器人的默认头像。 */
 export type AvatarUpdateTarget =
   | { readonly kind: "user"; readonly user: CachedUser }
   | { readonly kind: "default" };
 
-/** 全局头像更新槽中的一份最新目标。 */
+/** 头像回执所属的命令；发送时据此选择当前群氛围中的文案。 */
+export type AvatarNoticeSource = "copy" | "icon";
+
+/** 全局头像更新槽中的最新目标与回执来源；渲染时机见 docs/cn/04-invariants.md。 */
 export interface AvatarUpdateTask {
   generation: number;
   chatId: number;
   target: AvatarUpdateTarget;
-  successText: string;
-  failureText: string;
+  source: AvatarNoticeSource;
 }
 
 export type AvatarUpdateRequest = Omit<AvatarUpdateTask, "generation">;

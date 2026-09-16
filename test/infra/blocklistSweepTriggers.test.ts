@@ -1,6 +1,8 @@
 /** 「是管理员 && 已初始化」成立那一刻的补扫触发边界。 */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere: (): void => {} }));
+mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: async (): Promise<void> => {} }));
 import { botPermissions } from "../helpers/botPermissions";
 import { settleBackgroundWork } from "../libs/helpers";
 const {

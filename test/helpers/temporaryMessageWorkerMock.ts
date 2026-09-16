@@ -11,6 +11,7 @@ export function installTemporaryMessageWorkerMock(): void {
       const messageId: number | undefined = await telegram.sendMessage({
         chatId: params.chatId, text: params.text, signal: params.signal,
         api: telegram.telegramApi, messageThreadId: params.messageThreadId,
+        replyToMessageId: params.replyToMessageId,
       });
       if (messageId === undefined) return undefined;
       telegram.deleteMessageAfter?.({ chatId: params.chatId, messageId, delayMs: params.deleteAfterMs, api: telegram.telegramApi, batchOnFlush: true });

@@ -16,6 +16,7 @@ import type { SourceFileRuleParams } from "./conventions/sourceRules";
 import { collectColdMigrationProblems } from "./conventions/coldMigrations";
 import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectFaultInjectionSuiteProblems } from "./conventions/faultInjectionSuite";
+import { collectFileLengthProblems } from "./conventions/fileLength";
 import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
 import { collectRuntimeCalibrationProblems } from "./perf/hotPaths/gateRuntime";
 import { collectCacheOwnershipProblems } from "./conventions/cacheOwnership";
@@ -38,17 +39,21 @@ const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
 const CONSTS_ROOT: string = join(PROJECT_ROOT, "packages", "consts");
 const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
 const SCRIPTS_ROOT: string = join(PROJECT_ROOT, "scripts");
+const TEST_ROOT: string = join(PROJECT_ROOT, "test");
 const COMMANDS_ROOT: string = join(SOURCE_ROOT, "commands");
 const WORKERS_ROOT: string = join(SOURCE_ROOT, "workers");
 
-/** 读取 Git 跟踪清单；约定检查只约束会进入提交的文件。 */
-function trackedFiles(): string[] {
+/** 检查受跟踪与尚未加入索引的源码；Git 忽略的部署数据不进入清单。 */
+function projectFiles(): string[] {
   const result: ReturnType<typeof Bun.spawnSync> = Bun.spawnSync({
     cmd: [
       "git",
       "-c",
       `safe.directory=${PROJECT_ROOT}`,
       "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
       "-z",
     ],
     cwd: PROJECT_ROOT,
@@ -60,7 +65,7 @@ function trackedFiles(): string[] {
       ? ""
       : new TextDecoder().decode(result.stderr);
     throw new Error(
-      `Failed to enumerate tracked files: ${stderr.trim()}`
+      `Failed to enumerate project files: ${stderr.trim()}`
     );
   }
   const stdout: string = result.stdout === undefined
@@ -177,13 +182,16 @@ for (const problem of await collectPerformanceRecordProblems(PROJECT_ROOT)) {
 const sourceDirectories: readonly string[] = collectSourceDirectories([
   SOURCE_ROOT,
   SCRIPTS_ROOT,
-  join(PROJECT_ROOT, "test"),
+  TEST_ROOT,
 ]);
-const tracked: string[] = trackedFiles();
+const tracked: string[] = projectFiles();
 for (const trackedPath of tracked) {
   const path: string = join(PROJECT_ROOT, trackedPath);
   // 允许尚未 stage 的正常删除；其它门禁会从最终工作树/索引确认变更范围。
   if (!existsSync(path)) continue;
+  if (/\.(?:[cm]?[jt]sx?|sh)$/.test(path)) {
+    failures.push(...collectFileLengthProblems(trackedPath, await Bun.file(path).text()));
+  }
   if (extname(path) === ".md") {
     await checkMarkdownLocalLinks(path, failures);
     for (const problem of await collectMarkdownModuleListProblems(
@@ -304,8 +312,8 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   }
 }
 
-// Node 兼容 import 是唯一同时约束 scripts/ 的规则，其余判定只针对 packages/。
-for (const path of sourceFilesUnder(SCRIPTS_ROOT)) {
+// Node 兼容 import 是唯一同时约束 scripts/ 与 test/ 的规则，其余判定只针对 packages/。
+for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_ROOT)]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
     failures.push(problem);

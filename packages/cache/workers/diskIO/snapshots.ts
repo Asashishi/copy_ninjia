@@ -3,16 +3,13 @@ import type {
   AiMemoryPersistedReply,
 } from "../../../types/diskIO/replies";
 
-/**
- * AI 记忆快照落盘（packages/workers/diskIO/aiMemoryFiles.ts）的内存状态；同目录
- * 下的 snapshotFiles.ts 只是无状态的读写辅助函数集合，不持有任何状态。
- */
+/** owner: workers/diskIO。AI 上下文缓存由 aiMemoryStorage.ts 写入 SQLite。 */
 
 /** AI 记忆快照、dirty/delete 集合及其 flush timer 的唯一 owner。 */
 export const aiMemoryCache: Map<number, string> = new Map();
 /** 需要覆盖写入的群；成功 flush、删除接管或 reset 时清除。 */
 export const dirtyChats: Set<number> = new Set();
-/** 需要 durable unlink 的群；删除回执或 reset 时清除。 */
+/** 需要 durable 清除 ai_context 的群；删除回执或 reset 时清除。 */
 export const deletedAiMemoryChats: Set<number> = new Set();
 /**
  * diskIOWorker 运行时按 chat 观察到的最新 revision（迟到消息的水位线）。
@@ -48,7 +45,7 @@ export const aiMemoryDeletePersistedNotifier: {
   current: (reply: AiMemoryDeletedPersistedReply) => void;
 } = {
   current: (): void => {
-    // Worker 入口会在处理消息前配置；文件 owner 单测不需要回执出口。
+    // Worker 入口会在处理消息前配置；快照 owner 单测不需要回执出口。
   },
 };
 
@@ -57,7 +54,7 @@ export const aiMemoryPersistedNotifier: {
   current: (reply: AiMemoryPersistedReply) => void;
 } = {
   current: (): void => {
-    // Worker 入口会在处理消息前配置；文件 owner 单测不需要回执出口。
+    // Worker 入口会在处理消息前配置；快照 owner 单测不需要回执出口。
   },
 };
 
@@ -84,7 +81,7 @@ export function markAiMemoryDirty(chatId: number, revision: number, snapshot: st
   return true;
 }
 
-/** 以 revision 判定并接管一份删除；接受时移除镜像并登记待 unlink。 */
+/** 以 revision 判定并接管一份删除；接受时移除镜像并登记待清除上下文。 */
 export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
   const currentRevision: number = aiMemoryRevisions.get(chatId) ?? -1;
   const currentOperation: "delete" | "upsert" | undefined = aiMemoryOperations.get(chatId);
@@ -105,8 +102,8 @@ export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
  * waiter（见 aiChat/memoryMirror.ts 的 forgetAiMemoryRevisionCounter）。没有
  * 这个前提就不能删水位线——它正是用来挡迟到 upsert 的。
  *
- * 只动这两张水位线表：快照本体与待 unlink 集合各有自己的生命周期，
- * 「忘掉 revision 序列」不表达「删除文件」。
+ * 只动这两张水位线表：快照本体与待清除上下文集合各有自己的生命周期，
+ * 「忘掉 revision 序列」不表达「删除上下文」。
  */
 export function forgetAiMemoryChat(chatId: number): void {
   aiMemoryRevisions.delete(chatId);

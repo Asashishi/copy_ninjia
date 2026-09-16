@@ -1,3 +1,5 @@
+import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
+import type { AtmosphereTexts } from "../../types/atmosphere";
 /**
  * 群问答的文本解析与渲染：表单投递消息的字段解析，以及表单提示正文。
  *
@@ -7,12 +9,8 @@
 
 import type { Message, MessageEntity } from "grammy/types";
 import { captureFencedText } from "../../libs/codeFence";
-import {
-  QA_ANSWER_LABELS,
-  QA_COMMAND_TEXTS,
-  QA_QUESTION_LABELS,
-  QA_TRUNCATION_MARK,
-} from "../../consts/qa";
+import { QA_ANSWER_LABELS, QA_QUESTION_LABELS, QA_TRUNCATION_MARK } from "../../consts/qa";
+
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
 import { truncateInline } from "../../libs/text";
 import type { QaFieldInput } from "../../types/qa";
@@ -138,10 +136,11 @@ export function parseQaFieldMessage(message: Message): QaFieldInput | undefined 
  */
 export function renderQaFormPrompt(
   q: string | undefined,
-  a: string | undefined
+  a: string | undefined,
+  atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing
 ): string {
-  const unset: string = QA_COMMAND_TEXTS.formUnset;
-  const head: string = `${QA_COMMAND_TEXTS.formPrompt}\n` +
+  const unset: string = atmosphere.QA_COMMAND_TEXTS.formUnset;
+  const head: string = `${atmosphere.QA_COMMAND_TEXTS.formPrompt}\n` +
     `——\n已收到的问题：${q ?? unset}\n已收到的回答：`;
   const answer: string = a ?? unset;
   const budget: number = TELEGRAM_MESSAGE_MAX_CHARS - head.length;

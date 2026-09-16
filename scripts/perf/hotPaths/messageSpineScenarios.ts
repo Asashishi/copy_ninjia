@@ -199,8 +199,8 @@ export function incomingMessageSpineScenario(): Scenario {
  * - 有 directTriggerReason 时 shouldAttemptRandomTrigger 在第一个条件就短路，
  *   因此不调 Math.random()、不写 userReplyTriggerTimes、不排 timer——读数可复现，
  *   也不会让门禁的 retained/RSS 判据混进一张会增长的冷却表。
- * - 三个被测函数（triggerContext.ts / triggerPolicy.ts / recordContext.ts）连同它们
- *   依赖的 facts.ts 全是纯函数，只 import 常量与类型，不碰配置、缓存、Worker 与网络。
+ * - 本场景在 triggerPolicy.ts 的直接唤起分支短路，不访问随机触发的冷却缓存；
+ *   triggerContext.ts / recordContext.ts 及 facts.ts 只计算输入事实与载荷。
  *   这里**不**调 recordChatMedia：那一步会 postAiChatOrThrow 到 AI Worker，
  *   而基准进程从不启动它。
  */

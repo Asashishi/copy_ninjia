@@ -29,6 +29,7 @@ import {
   replyPointerTemplate,
   replyQuoteTemplate,
   SELF_ROSTER_CODE,
+  SELF_SPEAKER_NAME,
   SPEAKER_ROSTER_BLOCK_NAME,
   TRANSCRIPT_LINE_FORMAT_HINT,
   transcriptDateHeader,
@@ -279,7 +280,9 @@ describe("AI 群聊转录身份格式", () => {
 
     expect(transcript).toStartWith("【发言人名册】");
     expect(transcript).toContain("u1=[id:42] [username:@anon_tokyo] 千早 愛音");
-    expect(transcript).toContain(`${SELF_ROSTER_CODE}=[id:99] [username:@ninja_bot] 天才酱`);
+    expect(transcript).toContain(`${SELF_ROSTER_CODE}=[id:99] ${SELF_SPEAKER_NAME}`);
+    expect(transcript).not.toContain("ninja_bot");
+    expect(transcript).not.toContain("天才酱");
     // 机器人不占 uN 序号：它要能一眼认出哪些行是自己说的，不该被排进普通编号。
     expect(transcript).not.toContain("u2=");
     expect(transcript).toContain("] u1：群友说话");

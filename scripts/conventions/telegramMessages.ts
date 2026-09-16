@@ -32,7 +32,6 @@ export async function collectTelegramMessageProblems(
   const directBoundaries: Readonly<Record<string, string>> = {
     "workers/antiRaid/lockdownApi.ts": "beginLockdownAnnouncement",
     "workers/antiRaid/verificationReminders.ts": "attemptReminderDelivery",
-    "workers/antiRaid/verificationEffects.ts": "runVerificationEffects",
     "antiRaid/adDetect.ts": "announceAdDisposal",
     "auto/message/qaDirectAnswer.ts": "sendQaDirectAnswer",
     "auto/message/proxySend.ts": "handlePrivateProxySend",

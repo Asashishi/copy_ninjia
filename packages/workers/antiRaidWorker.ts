@@ -84,6 +84,8 @@ import {
 } from "../libs/workerDuplex";
 import type { WorkerDuplexOutbound } from "../types/workerDuplex";
 import { installTelegramApi } from "../infra/telegram/client";
+import { applyWorkerAtmosphere } from "./antiRaid/atmosphere";
+import { plainAtmosphereChats } from "../cache/workers/antiRaid/atmosphere";
 import { workerTelegramApi } from "../infra/telegram/workerClient";
 import { acceptForwardedLogBatch } from "../infra/logger";
 
@@ -211,12 +213,15 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "clearFloodControl":
       clearChatFloodWindows(msg.chatId);
       break;
-    case "temporaryWhitelistGranted":
-      // 只清广告状态；临时白名单不提供防刷屏或其它权限。
+    case "temporaryAdBypassGranted":
+      // 只清广告状态；临时广告免检不提供防刷屏或其它权限。
       clearIdentityAdDetect(msg.identityId);
       break;
     case "botPermissionsChanged":
       applyBotPermissionsChange(msg.chatId, msg.permissions);
+      break;
+    case "atmosphere":
+      applyWorkerAtmosphere(msg.chatId, msg.plain);
       break;
     case "chatKind":
       applyChatKindChange(msg.chatId, msg.isSupergroup);
@@ -309,6 +314,7 @@ export function stopAntiRaidWorker(): void {
   resetFloodWindows();
   resetGenericMessageDeletions();
   resetWorkerBotPermissions();
+  plainAtmosphereChats.clear();
   resetWorkerChatKind();
   resetAntiRaidTaskTracker();
   resetWorkerDuplex("Anti-Raid Worker stopped before the main-thread request completed.");

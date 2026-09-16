@@ -1,3 +1,5 @@
+import type { FlushResult } from "../../packages/types/lifecycle";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { BotChatPermissions } from "../../packages/types/telegram";
@@ -46,10 +48,11 @@ mock.module("../../packages/infra/botAdmin", () => ({
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
-mock.module("../../packages/infra/storage/stateStore", () => ({ getChatStateCache: () => chatStates }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
+  getChatState: (): Record<string, never> => ({}), getChatStateCache: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
-const flushDiskIO = mock(async (): Promise<string> => "flushed");
-mock.module("../../packages/infra/diskIO", () => ({
+const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (): void => {},
@@ -59,9 +62,9 @@ mock.module("../../packages/infra/diskIO", () => ({
   // 无关领域失败不该让它报「小本本没能写进硬盘」（见 confirmBlocklistPersisted）。
   flushDiskIODomain: flushDiskIO,
   // confirmBlocklistPersisted 改用带回执的出口：失败领域名必须来自本次 flush。
-  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIO() }),
+  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIO() }),
   flushDiskIO,
-}));
+})));
 
 const { handleBlockCommand } = await import("../../packages/commands/block");
 const { blocklistSweepState } = await import("../../packages/cache/main/blocklist");
@@ -91,7 +94,7 @@ beforeEach(() => {
     postDiskIO,
     flushDiskIO,
   ]) mocked.mockClear();
-  flushDiskIO.mockImplementation(async (): Promise<string> => "flushed");
+  flushDiskIO.mockImplementation(async (): Promise<FlushResult> => "flushed");
   blockedUserIds.clear();
   blocklistSweepState.clear();
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);

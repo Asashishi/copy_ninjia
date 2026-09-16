@@ -18,8 +18,8 @@ import { copyFixtureTree } from "../../fixtures/copyTree";
 import {
   assertUnlinkedFixtureParent,
   assertUnlinkedFixturePath,
-  type FixturePathBoundary,
 } from "../../fixtures/pathBoundary";
+import type { FixturePathBoundary } from "../../fixtures/pathBoundary";
 import {
   BENCHMARK_AGENT_API_KEY,
   BENCHMARK_BOT_TOKEN,

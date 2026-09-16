@@ -1,25 +1,25 @@
 import { chatQa } from "./chatQa";
 import { chatStates } from "./chatState";
-import { blocklistEntries, whitelistEntries } from "./identityPolicy";
+import { blocklistEntries, permissionList } from "./identityPolicy";
 import { storageMetadata } from "./metadata";
 import { pendingBlockedRemovals } from "./pendingRemoval";
-import { temporaryWhitelistEntries } from "./temporaryWhitelist";
+import { temporaryAdBypassEntries } from "./temporaryAdBypass";
 
 /** Drizzle 连接使用的完整共享存储 schema；各领域表声明仍保持独立。 */
 export const storageDatabaseSchema: Readonly<{
-  whitelistEntries: typeof whitelistEntries;
+  permissionList: typeof permissionList;
   blocklistEntries: typeof blocklistEntries;
   pendingBlockedRemovals: typeof pendingBlockedRemovals;
   chatStates: typeof chatStates;
   chatQa: typeof chatQa;
-  temporaryWhitelistEntries: typeof temporaryWhitelistEntries;
+  temporaryAdBypassEntries: typeof temporaryAdBypassEntries;
   storageMetadata: typeof storageMetadata;
 }> = {
-  whitelistEntries,
+  permissionList,
   blocklistEntries,
   pendingBlockedRemovals,
   chatStates,
   chatQa,
-  temporaryWhitelistEntries,
+  temporaryAdBypassEntries,
   storageMetadata,
 };

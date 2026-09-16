@@ -1,4 +1,7 @@
+import { syncAntiRaidAtmosphere } from "../antiRaid/workerBridge/controller";
 import type { Context } from "grammy";
+import { syncAiChatPersona } from "../aiChat/workerBridge";
+import { syncChatCommandMenu } from "../app/commandMenu";
 import { logger } from "./logger";
 import { bot } from "./telegram/mainClient";
 import { signalArgs } from "../libs/telegramSignalArgs";
@@ -171,6 +174,9 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
           update.chat.id,
           `chat ${update.chat.id} state pruned after bot left/kicked`
         );
+        syncAiChatPersona(update.chat.id);
+        syncAntiRaidAtmosphere(update.chat.id);
+        await syncChatCommandMenu(bot.api, update.chat.id);
       },
       `Failed to complete departure transition for chat ${update.chat.id}.`
     );

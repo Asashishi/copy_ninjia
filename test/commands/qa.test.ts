@@ -3,14 +3,9 @@ import type { Mock } from "bun:test";
 import type { DeleteMessageOutcome } from "../../packages/infra/telegram/actions/messageLifecycle";
 import type { QaFormSession } from "../../packages/types/qa";
 import { runWithUpdateAbortSignal, throwIfUpdateAborted } from "../../packages/infra/updateContext";
-import {
-  CHAT_QA_MAX_PER_CHAT,
-  CHAT_QA_QUESTION_MAX_CHARS,
-  QA_COMMAND_TEXTS,
-  QA_FORM_SESSION_MAX,
-  QA_FORM_SESSION_TTL_MS,
-} from "../../packages/consts/qa";
-import { QA_USAGE_TEXT } from "../../packages/consts/commandUsage";
+import { CHAT_QA_MAX_PER_CHAT, CHAT_QA_QUESTION_MAX_CHARS, QA_FORM_SESSION_MAX, QA_FORM_SESSION_TTL_MS } from "../../packages/consts/qa";
+import { QA_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/qa";
+import { QA_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 
 interface SentMessage {
   chatId: number;

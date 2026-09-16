@@ -112,7 +112,7 @@ export function purgeChatJoinLogFiles(chatId: number): void {
     try {
       // 用带目录 fsync 的删除，而不是保留窗口清理那条 `Bun.file().delete()`：这一次
       // 的结果要经 `joinLogPurge` 领域 flush 当成 durable 回执交给 teardown，掉电后
-      // 文件不能再出现（同 snapshotFiles.ts 的 deleteAiMemoryFile）。窗口清理没有这个
+      // 文件不能再出现（见 libs/atomicFile.ts 的 durableUnlinkSync）。窗口清理没有这个
       // 承诺——那边漏删一次，下一次跨日清理照样会删掉。
       durableUnlinkSync(join(JOIN_LOG_MEMORY_DIR, name));
     } catch (error: unknown) {

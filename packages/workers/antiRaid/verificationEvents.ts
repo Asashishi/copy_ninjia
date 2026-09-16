@@ -1,3 +1,4 @@
+import { workerAtmosphere } from "./atmosphere";
 import { logger } from "../../infra/logger";
 import { answerCallbackQuery, telegramApi } from "../../infra/telegram";
 import { lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
@@ -41,12 +42,12 @@ import {
  * 这里预计算管理员、lockdown 与评论区线索，状态转移仍由 dispatcher 统一执行。
  */
 
-function memberLabel(member: AntiRaidMember): string {
+function memberLabel(member: AntiRaidMember, chatId: number): string {
   return formatUserLabel({
     id: member.id,
     username: member.username,
     first_name: member.first_name,
-  });
+  }, workerAtmosphere(chatId));
 }
 
 export interface HandleJoinEventParams {
@@ -72,7 +73,7 @@ export function handleJoinEvent({
   const event: JoinEvent = {
     type: "join",
     memberId: member.id,
-    label: memberLabel(member),
+    label: memberLabel(member, chatId),
     isBot: member.isBot === true,
     announcementMessageId: message.announcementMessageId,
     actorId,
@@ -290,7 +291,7 @@ export interface HandleVerificationCallbackEventParams {
 }
 
 /**
- * 把按钮点击翻译成状态机事件。「我是良民」与本人点击同步结算；只有「别人替
+ * 把按钮点击翻译成状态机事件。本人验证与本人点击同步结算；只有「别人替
  * 目标点通过」且目标仍在 pending 时，才付一次管理员身份闸（见 adminCache.ts
  * 的 isChatAdmin）再回投，查不出来按 undefined 回投。
  */
@@ -323,11 +324,11 @@ export function handleVerificationCallbackEvent({
       action: message.action,
       isSelf,
       fromCanApprove: false,
-      fromLabel: memberLabel(message.from),
+      fromLabel: memberLabel(message.from, message.chatId ?? 0),
     });
     return;
   }
-  const fromLabel: string = memberLabel(message.from);
+  const fromLabel: string = memberLabel(message.from, message.chatId ?? 0);
   void trackAntiRaidTask({
     task: isChatAdmin(chatId, message.from.id, "verification approver")
       .then((isAdmin: boolean | undefined): void => {

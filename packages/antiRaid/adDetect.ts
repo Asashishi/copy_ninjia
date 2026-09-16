@@ -1,3 +1,6 @@
+import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
 /**
  * 广告命中后的主线程处置：写入永久黑名单并落盘，再把跨群封禁登记进 durable
  * outbox 交回 Anti-Raid Worker。候选消息构建位于 adCandidate.ts。
@@ -34,8 +37,8 @@ import {
   runBlocklistIdentityMutation,
   runProtectedIdentityMutation,
 } from "../infra/identityPolicy/coordination";
-import { clearTemporaryWhitelistActivity } from
-  "../infra/identityPolicy/temporaryWhitelist";
+import { clearTemporaryAdBypassActivity } from
+  "../infra/identityPolicy/temporaryAdBypass";
 import type {
   AdDetectedEvent,
   AdVerdictTrueEvent,
@@ -121,16 +124,16 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       // 区内、紧挨着 blockUser：再往后就过了不可逆点，那时候撤只会留下一条既成
       // 事实的名单条目却没有任何执行。
       if (getChatState(event.chatId).isAdDetectEnabled !== true) return null;
-      // 候选入队与模型回投之间，发送者可能刚达到临时白名单条件。
-      // 临时白名单只提供广告绕过，因此必须在清除累计之前复查当前权限；
+      // 候选入队与模型回投之间，发送者可能刚达到临时广告免检条件。
+      // 临时广告免检只提供广告绕过，因此必须在清除累计之前复查当前权限；
       // 旧判定不得先撤权再把成员写进黑名单。
       if (canBypassAdDetection(event.senderId)) return null;
       // 即使白名单成员显式关掉广告绕过，模型也只能处理本批消息，
       // 不得把成员写入永久黑名单。本检查同样要在临时累计删除之前完成。
       if (isProtectedSender(event.senderId)) return null;
-      if (!clearTemporaryWhitelistActivity(event.senderId)) {
+      if (!clearTemporaryAdBypassActivity(event.senderId)) {
         throw new Error(
-          `Temporary whitelist reset for identity ${event.senderId} was rejected by the persistence Worker.`
+          `Temporary ad bypass reset for identity ${event.senderId} was rejected by the persistence Worker.`
         );
       }
       recordAdSample(event);
@@ -230,6 +233,7 @@ export interface FormatAdNoticeParams {
   enforcedChats: number;
   /** 登记失败、改由补扫接手的群数。 */
   failedChats: number;
+  readonly atmosphere?: AtmosphereTexts;
 }
 
 /**
@@ -251,16 +255,15 @@ export interface FormatAdNoticeParams {
  * 一眼就能证伪的假话。只说这边确证得了的两件事：记进名单、封了几个群。
  * 删除失败由判定线程自己记日志（见 workers/antiRaid/adDetect/disposal.ts）。
  */
-export function formatAdNotice({ label, reason, enforcedChats, failedChats }: FormatAdNoticeParams): string {
-  const head: string = `哼，${label} 被本天才当广告封了，理由：${reason || "整串消息通篇都是推广引流"}。`;
+export function formatAdNotice({ label, reason, enforcedChats, failedChats, atmosphere = ATMOSPHERE_TEXTS.teasing }: FormatAdNoticeParams): string {
+  const head: string = atmosphere.NOTICE_TEXTS.adDetected(label, reason || "整串消息通篇都是推广引流");
   if (enforcedChats === 0) {
-    return `${head}人已经记进小本本了；可本天才现在一个群都封不动，杂鱼管理员快来看看本天才的权限♡`;
+    return atmosphere.NOTICE_TEXTS.adNoManagedChat(head);
   }
   if (failedChats > 0) {
-    return `${head}人已经记进小本本、在 ${enforcedChats} 个群封掉了，还有 ${failedChats} 个群没封动，` +
-      "杂鱼管理员快来看看本天才在那边的权限♡";
+    return atmosphere.NOTICE_TEXTS.adPartialBan(head, enforcedChats, failedChats);
   }
-  return `${head}人已经记进小本本、在所有盯着的群里一起封掉了♡`;
+  return atmosphere.NOTICE_TEXTS.adBanned(head);
 }
 
 /**
@@ -284,7 +287,7 @@ async function announceAdDisposal(
 ): Promise<void> {
   await sendMessage({
     chatId: event.chatId,
-    text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats }),
+    text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats, atmosphere: chatAtmosphere(event.chatId) }),
     onSent: (noticeMessageId: number): void => {
       deleteMessageAfter({
         chatId: event.chatId,
@@ -317,9 +320,9 @@ async function clearAdVerdictActivity(event: AdVerdictTrueEvent): Promise<void> 
   await runProtectedIdentityMutation((): void => {
     // 判定回投时以当前权限为准：已获临时广告豁免的成员不能被旧候选撤权。
     if (canBypassAdDetection(event.senderId)) return;
-    if (clearTemporaryWhitelistActivity(event.senderId)) return;
+    if (clearTemporaryAdBypassActivity(event.senderId)) return;
     throw new Error(
-      `Temporary whitelist reset for identity ${event.senderId} was rejected by the persistence Worker.`
+      `Temporary ad bypass reset for identity ${event.senderId} was rejected by the persistence Worker.`
     );
   });
 }
@@ -329,7 +332,7 @@ export function handleAdVerdictTrue(event: AdVerdictTrueEvent): void {
   trackBackgroundTask(
     inFlightAdDisposals,
     clearAdVerdictActivity(event),
-    `Failed to clear temporary whitelist activity for sender ${event.senderId}:`
+    `Failed to clear temporary ad bypass activity for sender ${event.senderId}:`
   );
 }
 

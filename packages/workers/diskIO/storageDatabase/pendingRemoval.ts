@@ -139,7 +139,7 @@ export function handlePendingRemovalSnapshot(
     reply({
       type: "identityStoragePersisted",
       writes: [],
-      temporaryWhitelistWrites: [],
+      temporaryAdBypassWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
       removalSnapshotRevision: message.revision,

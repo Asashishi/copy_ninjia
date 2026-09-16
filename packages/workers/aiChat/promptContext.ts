@@ -17,6 +17,7 @@ import {
 import {
   forwardPathTemplate,
   SELF_ROSTER_CODE,
+  SELF_SPEAKER_NAME,
 } from "../../consts/aiChat/prompts/transcript";
 import { SILENT_REPLY_END_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/workers/aiChat/memory";
@@ -188,14 +189,12 @@ export function buildReplyPromptSections(
     ? "群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。"
     : "请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。";
 
-  // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
-  // 回复你的消息、以及标着你自己 id 的行（见发送后的 recordChatMessage 自录）
-  // 都要能认出来是你自己，不能当成第三个人。username/id 来自主线程在
-  // bot.init() 之后注入的 init 消息（见 cache/workers/aiChat/identity.ts 的 botInfoState），不写死在代码里。
+  // 自身用户名使用启动身份快照；生命周期约束见 docs/cn/04-invariants.md。
   const selfIdentity: string =
-    `本群中你的 Telegram 账号身份是 @${selfInfo.username}（[id:${selfInfo.id}]）。` +
+    `本群中 [id:${selfInfo.id}] 的发言人「${SELF_SPEAKER_NAME}」就是你。` +
+    `你的 Telegram 用户名是 @${selfInfo.username}。` +
     `转录里编号写作「${SELF_ROSTER_CODE}」的行就是你自己之前说过的话（行内不会再出现这个 id）；` +
-    `消息里 @ 这个用户名、或回复这个账号的消息，指向的对象都是你。`;
+    "回复这个发言人的消息，指向的对象也是你。";
 
   // 冷记忆段：更早的历史按每轮 COMPACT_BATCH_SIZE 条压缩成摘要（从旧到
   // 新），只作为长期背景纳入理解，不参与判断当前状态（两层仲裁见
@@ -233,7 +232,7 @@ export function buildReplyPromptSections(
   const invokerLine: string = directInvokerId === undefined
     ? ""
     : directInvokerSentence(
-      invokerSnapshot ? formatSpeakerIdentity(invokerSnapshot) : `[id:${directInvokerId}]`,
+      invokerSnapshot ? formatSpeakerIdentity(invokerSnapshot, selfInfo.id) : `[id:${directInvokerId}]`,
       // 转录行内只有编号：不把它一起给出，模型就得拿 id 回名册做一次连接查询。
       rendered.codeOf.get(directInvokerId) ?? ""
     ) + "\n";

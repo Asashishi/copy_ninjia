@@ -25,7 +25,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/commands/`**
   - **Responsibility**: explicit commands organized by command family, with subcommands dispatched within that domain; shared permission and
     configuration gates for toggle commands live in separate files.
-  - **Representative files**: `copy.ts`, `icon.ts`, `mood.ts`, `qa.ts`, `block.ts`, `mute.ts`, `batchKick.ts`,
+  - **Representative files**: `copy.ts`, `icon.ts`, `mood.ts`, `prompt.ts`, `qa.ts`, `block.ts`, `mute.ts`, `batchKick.ts`,
     `targetResolution.ts`, and `configGate.ts`. The larger gag domain keeps command admission in
     `gag.ts`, with lifecycle, inline handling, and pure rendering split into `gag/runtime.ts`,
     `gag/inline.ts`, and `gag/rendering.ts`.
@@ -57,15 +57,15 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts`, `identityMetadata.ts`, `messageContent.ts`, `messageOrigin.ts`.
 - **`packages/states/`**
   - **Responsibility**: **I/O-free** state transitions and admission rules for verification,
-    lockdown, AI replies, ad detection, and temporary-allowlist accrual.
+    lockdown, AI replies, ad detection, and temporary-ad-bypass accrual.
   - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts` plus `lockdown/` (the `apply`/`persistence`/`restore`/`announcement`/`adopt` lifecycle segments), `replyAdmission.ts`,
-    `adDetectAdmission.ts`, `temporaryWhitelist.ts`.
+    `adDetectAdmission.ts`, `temporaryAdBypass.ts`.
 - **`packages/config/`**
   - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
   - **Representative files**: `telegram.ts`, `telegramInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
 - **`packages/database/`**
   - **Responsibility**: the shared SQLite (identity policy plus chat state) schema, codecs, row validation, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
-  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `temporaryWhitelist.ts`, `migration.ts`, `initialization.ts`, `inspection.ts`), and `validation/storageRows.ts`.
+  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `temporaryAdBypass.ts`, `aiContext.ts`, `migration.ts`, `initialization.ts`, `inspection.ts`), and `validation/storageRows.ts`.
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
@@ -106,7 +106,7 @@ This page answers “where does this code live, and where should new code go?”
     `workers/diskIO/`, `perThread/`.
 - **`packages/consts/`**
   - **Responsibility**: literal constants, tunable parameters, and user-facing text tables, split by domain.
-  - **Representative files**: `commands.ts`, `whitelist.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
+  - **Representative files**: `atmosphere/{teasing,plain}/`, `commands.ts`, `whitelist.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
 - **`packages/types/`**
   - **Responsibility**: cross-module protocols, domain types, and state-machine contracts under
     `types/states/`.
@@ -115,7 +115,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: Bun unit tests mirroring `packages/`.
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
-  - **Cold migration**: `migrateTranslate.ts` validates backup input and produces isolated output; `migrations/translate/` separates source-version constraints, state conversion and the SQLite transaction. These modules are outside the application startup graph.
+  - **Installer**: `install.sh` locates the target worktree and hands off to its versioned entry. It checks readability and syntax of the repository, service, config, runtime, configure, and start shell modules in `scripts/install/` before sourcing them in order. `installSources.ts` supplies the same module list to syntax checks and isolated fixtures.
+  - **Cold migration**: `migrateClearContextPermission.ts` validates a schema v9 cold backup and produces isolated output and manifests; `migrations/clearContextPermission/database.ts` validates lineage and executes the schema v10 permission transaction. These modules stay outside the application startup graph.
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
   - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`, plus `fixtures/copyTree.ts` (directory-tree copying) and `fixtures/pathBoundary.ts` (real path-component checks for the write boundary), both shared by the two benchmark roots.
 

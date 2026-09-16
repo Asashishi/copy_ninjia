@@ -212,7 +212,9 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
 
   expect(sections.referenceMemory).toStartWith(`[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]\n${REPLY_CONTEXT_SECTION_TEXT.referenceMemory.header}`);
   expect(sections.referenceMemory).toContain("更早时 Alice 和 Bob 约好周末去看展。");
-  expect(sections.referenceMemory).toContain("本群中你的 Telegram 账号身份是 @ninja_bot（[id:99]）");
+  expect(sections.referenceMemory).toContain("本群中 [id:99] 的发言人「自己（也就是你）」就是你");
+  expect(sections.referenceMemory).toContain("你的 Telegram 用户名是 @ninja_bot。");
+  expect(sections.referenceMemory).not.toContain("Ninja");
   expect(sections.referenceMemory).toEndWith(`[END ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]`);
 
   expect(sections.currentConversation).toStartWith(`[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]\n${REPLY_CONTEXT_SECTION_TEXT.currentConversation.header}`);

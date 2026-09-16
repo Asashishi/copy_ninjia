@@ -1,8 +1,8 @@
 import { asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../consts/identityStorage";
-import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
+import { blocklistEntries, permissionList } from "../schema/identityPolicy";
 import { jsonbTextProjection } from "../schema/jsonb";
-import { temporaryWhitelistEntries } from "../schema/temporaryWhitelist";
+import { temporaryAdBypassEntries } from "../schema/temporaryAdBypass";
 import type { IdentityPolicyTable } from "../../types/identityPolicy";
 import type {
   StorageDatabase,
@@ -25,13 +25,13 @@ export function prepareStoredIdentityIdLookups(
   database: StorageDatabase
 ): StoredIdentityIdLookups {
   return {
-    whitelist: database.select({ id: whitelistEntries.id }).from(whitelistEntries)
-      .where(eq(whitelistEntries.id, sql.placeholder("id"))).prepare(),
+    whitelist: database.select({ id: permissionList.id }).from(permissionList)
+      .where(eq(permissionList.id, sql.placeholder("id"))).prepare(),
     blocklist: database.select({ id: blocklistEntries.id }).from(blocklistEntries)
       .where(eq(blocklistEntries.id, sql.placeholder("id"))).prepare(),
-    temporaryWhitelist: database.select({ id: temporaryWhitelistEntries.id })
-      .from(temporaryWhitelistEntries)
-      .where(eq(temporaryWhitelistEntries.id, sql.placeholder("id"))).prepare(),
+    temporaryAdBypass: database.select({ id: temporaryAdBypassEntries.id })
+      .from(temporaryAdBypassEntries)
+      .where(eq(temporaryAdBypassEntries.id, sql.placeholder("id"))).prepare(),
   };
 }
 
@@ -68,9 +68,9 @@ export function readStoredIdentityPolicies(
   }
   return table === "whitelist"
     ? database
-      .select({ id: whitelistEntries.id, data: jsonbTextProjection(whitelistEntries.data) })
-      .from(whitelistEntries)
-      .where(inArray(whitelistEntries.id, ids))
+      .select({ id: permissionList.id, data: jsonbTextProjection(permissionList.data) })
+      .from(permissionList)
+      .where(inArray(permissionList.id, ids))
       .all()
     : database
       .select({ id: blocklistEntries.id, data: jsonbTextProjection(blocklistEntries.data) })

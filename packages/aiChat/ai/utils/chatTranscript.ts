@@ -13,6 +13,7 @@ import {
   replyTagTemplate,
   rosterEntryTemplate,
   SELF_ROSTER_CODE,
+  SELF_SPEAKER_NAME,
   SPEAKER_ROSTER_BLOCK_NAME,
   transcriptDateHeader,
 } from "../../../consts/aiChat/prompts/transcript";
@@ -39,15 +40,11 @@ export function displayBufferedMessageName(message: BufferedMessage): string {
 }
 
 /**
- * 一个人的完整身份段：`[id:…] [username:@…] 显示名`，公开 username 缺席时省略
- * 中段。转录行与回复标注里的同一段身份是逐字同形的，因此提示词里点名
- * 某个人（目前是回复任务开头的唤起者声明，见 workers/aiChat/promptContext.ts）
- * 用这个函数生成，模型不必在两种身份写法之间二次对齐。
- *
- * 高频转录行与回复标注继续内联拼接，避免先物化完整身份中间串；本函数每轮回复
- * 最多调用一次，形状一致由测试守住。
+ * 名册、引用与唤起者共用身份段。仅 selfId 对应的发言人使用代称并省略 username，
+ * 其他身份保留 `[id:…] [username:@…] 显示名`，没有公开用户名时省略中段。
  */
-export function formatSpeakerIdentity(speaker: AiSpeakerSnapshot): string {
+export function formatSpeakerIdentity(speaker: AiSpeakerSnapshot, selfId?: number): string {
+  if (speaker.id === selfId) return `[id:${speaker.id}] ${SELF_SPEAKER_NAME}`;
   const usernameTag: string = speaker.username ? ` [username:@${stripLeadingAtSigns(speaker.username)}]` : "";
   return `[id:${speaker.id}]${usernameTag} ${displaySpeakerName(speaker)}`;
 }
@@ -59,11 +56,10 @@ function formatForwardTag(forwardedFrom: string | undefined): string {
 }
 
 /** 回复关系以内嵌元数据呈现，模型无需靠相邻消息猜测被回复对象。 */
-function formatReplyReference(reference: BufferedReplyReference): string {
-  const usernameTag: string = reference.username ? ` [username:@${stripLeadingAtSigns(reference.username)}]` : "";
+function formatReplyReference(reference: BufferedReplyReference, selfId: number | undefined): string {
   const quote: string = reference.quote ? replyQuoteInlineTemplate(reference.quote) : "";
   return replyTagTemplate({
-    target: `[message_id:${reference.messageId}] [id:${reference.id}]${usernameTag} ${displaySpeakerName(reference)}`,
+    target: `[message_id:${reference.messageId}] ${formatSpeakerIdentity(reference, selfId)}`,
     text: reference.text,
     forwardTag: formatForwardTag(reference.forwardedFrom),
     quote,
@@ -80,17 +76,20 @@ function formatReplyReference(reference: BufferedReplyReference): string {
  * SUMMARY_SYSTEM_PROMPT。回复转录使用名册 + 编号的紧凑渲染，见
  * buildTieredVerbatimTranscript。
  */
-export function formatBufferedMessageLine(message: BufferedMessage): string {
+export function formatBufferedMessageLine(message: BufferedMessage, selfId?: number): string {
   // message_id 段直接写进最终模板，不先物化 messageIdTag 中间串。usernameTag /
   // replyTag 仍留变量——它们是条件分支，
   // 内联成三元反而让这行长到读不动，且省不掉那次物化。
-  const usernameTag: string = message.username ? ` [username:@${stripLeadingAtSigns(message.username)}]` : "";
-  const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo) : "";
-  return `[${message.at}] [message_id:${message.messageId}] [id:${message.id}]${usernameTag} ${displayBufferedMessageName(message)}${formatForwardTag(message.forwardedFrom)}${replyTag}：${message.text}`;
+  const isSelf: boolean = message.id === selfId;
+  const usernameTag: string = !isSelf && message.username ? ` [username:@${stripLeadingAtSigns(message.username)}]` : "";
+  const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo, selfId) : "";
+  return `[${message.at}] [message_id:${message.messageId}] [id:${message.id}]${usernameTag} ${isSelf ? SELF_SPEAKER_NAME : displayBufferedMessageName(message)}${formatForwardTag(message.forwardedFrom)}${replyTag}：${message.text}`;
 }
 
 /** buildTieredVerbatimTranscript 的一次渲染状态：编号表 + 哪些行要带消息号。 */
 interface TranscriptContext {
+  /** 本机器人 ID；名册与窗口外引用都据此选择统一代称。 */
+  readonly selfId: number;
   /** 发送者 id → 行内编号；机器人自己固定是 SELF_ROSTER_CODE。
    *  单独一张只存编号的表，是因为它每渲染一行就要查一次（一次回复上百次），
    *  而下面那张快照表只在拼名册时遍历一遍。 */
@@ -183,7 +182,7 @@ function buildTranscriptContext(
       origins.set(replyTo.forwardedFrom, `f${origins.size + 1}`);
     }
   }
-  return { speakers, speakerSnapshots, origins, numbered, present, duplicates: messages.length - present.size };
+  return { selfId, speakers, speakerSnapshots, origins, numbered, present, duplicates: messages.length - present.size };
 }
 
 /** 名册区块：编号到人、编号到转发来源各一段；没有转发时后一段整个不出现。
@@ -191,7 +190,7 @@ function buildTranscriptContext(
 function buildRosterBlock(context: TranscriptContext): string {
   const speakerLines: string[] = [];
   for (const [id, snapshot] of context.speakerSnapshots) {
-    speakerLines.push(rosterEntryTemplate(context.speakers.get(id)!, formatSpeakerIdentity(snapshot)));
+    speakerLines.push(rosterEntryTemplate(context.speakers.get(id)!, formatSpeakerIdentity(snapshot, context.selfId)));
   }
   const originLines: string[] = [];
   for (const [origin, code] of context.origins) originLines.push(rosterEntryTemplate(code, origin));
@@ -252,7 +251,7 @@ function renderRange(
       : forwardTagTemplate(context.origins.get(message.forwardedFrom) ?? message.forwardedFrom);
     if (!first) rendered += "\n";
     rendered +=
-      `[${clock}]${numberTag} ${context.speakers.get(message.id) ?? formatSpeakerIdentity(message)}${forwardTag}${formatCompactReplyTag(message.replyTo, context)}：${message.text}`;
+      `[${clock}]${numberTag} ${context.speakers.get(message.id) ?? formatSpeakerIdentity(message, context.selfId)}${forwardTag}${formatCompactReplyTag(message.replyTo, context)}：${message.text}`;
     first = false;
   }
   return rendered;
@@ -275,7 +274,7 @@ function formatCompactReplyTag(
   if (context.present.has(reference.messageId)) {
     return `${replyPointerTemplate(reference.messageId)}${reference.quote ? replyQuoteTemplate(reference.quote) : ""}`;
   }
-  const identity: string = context.speakers.get(reference.id) ?? formatSpeakerIdentity(reference);
+  const identity: string = context.speakers.get(reference.id) ?? formatSpeakerIdentity(reference, context.selfId);
   const forwardTag: string = reference.forwardedFrom === undefined
     ? ""
     : forwardTagTemplate(context.origins.get(reference.forwardedFrom) ?? reference.forwardedFrom);

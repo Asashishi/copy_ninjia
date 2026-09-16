@@ -1,14 +1,16 @@
+const syncAtmosphere = mock((_chatId: number): void => {});
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere: syncAtmosphere }));
+const syncMenu = mock(async (): Promise<void> => {});
+mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: syncMenu }));
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import {
-  ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
-  INIT_CHAT_LIMIT_TEXT,
-  INIT_TOGGLE_TEXTS,
-} from "../../packages/consts/commands";
+import { ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT, INIT_CHAT_LIMIT_TEXT, INIT_TOGGLE_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { botPermissions } from "../helpers/botPermissions";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
+const syncAiChatPersona = mock((_chatId: number): void => {});
+mock.module("../../packages/aiChat/workerBridge", () => ({ syncAiChatPersona }));
 const teardownChatRuntime = mock(async (..._args: unknown[]): Promise<void> => {});
 const invalidateBotAdminStatus = mock((chatId: number): void => {
   delete states.get(chatId)?.botPermissions;
@@ -112,6 +114,7 @@ beforeEach(() => {
   delegatedPermissions.clear();
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
+  syncAiChatPersona.mockReset();
   teardownChatRuntime.mockClear();
   invalidateBotAdminStatus.mockClear();
   resolveBotAdminStatus.mockClear();
@@ -404,6 +407,7 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
     expect(saveStateInBackground).not.toHaveBeenCalledWith("init teardown settled");
+    expect(syncAiChatPersona).not.toHaveBeenCalled();
     expect(lastReplyText()).toContain("没能拆干净");
   });
 
@@ -422,13 +426,17 @@ describe("超级管理员开关命令", () => {
     // 删除、translate owner 的会话删除）。反过来做的话，落盘一旦失败就是「磁盘上
     // 开关还开着、本群的 AI 记忆已经没了」。口径同 runChatToggleCommand。
     const order: string[] = [];
-    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions(), aiPersona: "本群人设" });
     persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
       order.push(`persist:${context}`);
       saveStateInBackground(context);
     });
     teardownChatRuntime.mockImplementationOnce(async (): Promise<void> => {
       order.push("teardown");
+    });
+    syncAiChatPersona.mockImplementation((chatId: number): void => {
+      expect(states.get(chatId)?.aiPersona).toBeUndefined();
+      order.push("persona removed");
     });
 
     await handleInitCommand(context("disable"));
@@ -438,6 +446,7 @@ describe("超级管理员开关命令", () => {
       "persist:init toggled",
       "teardown",
       "persist:init teardown settled",
+      "persona removed",
     ]);
   });
 

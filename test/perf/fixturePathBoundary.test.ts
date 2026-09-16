@@ -5,8 +5,8 @@ import { join } from "node:path";
 import {
   assertUnlinkedFixtureParent,
   assertUnlinkedFixturePath,
-  type FixturePathBoundary,
 } from "../../scripts/fixtures/pathBoundary";
+import type { FixturePathBoundary } from "../../scripts/fixtures/pathBoundary";
 
 /**
  * 叶子校验器本身的边界。

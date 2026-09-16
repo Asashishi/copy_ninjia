@@ -1,22 +1,12 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState } from "../types/chatState";
 import type { TranslateState } from "../types/translate";
 import { translateStates } from "../cache/main/translateState";
 import { translateConfigReadiness } from "../config/readiness";
-import {
-  TRANSLATE_ARGUMENT_PATTERN,
-  TRANSLATE_CAPACITY_TEXT,
-  TRANSLATE_CHAT_CAPACITY_TEXT,
-  TRANSLATE_DISABLED_TEXT,
-  TRANSLATE_STOP_ALL_TEXT,
-  TRANSLATE_STOP_ARGUMENT_PATTERN,
-  TRANSLATE_LANGUAGE_LABELS,
-  TRANSLATE_LIST_JSON_INDENT,
-  TRANSLATE_LIST_JSON_LANGUAGE,
-  TRANSLATE_TARGET_TEXTS,
-  TRANSLATE_TOGGLE_TEXTS,
-  TRANSLATE_USAGE_TEXT,
-} from "../consts/translate";
+import { TRANSLATE_ARGUMENT_PATTERN, TRANSLATE_STOP_ARGUMENT_PATTERN, TRANSLATE_LANGUAGE_LABELS, TRANSLATE_LIST_JSON_INDENT, TRANSLATE_LIST_JSON_LANGUAGE } from "../consts/translate";
+
 import { getChatState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { explicitReplyTo } from "../libs/forumTopic";
@@ -34,7 +24,7 @@ function refuseUnavailableTranslation(chatId: number, messageId: number | undefi
     chatId,
     messageId,
     feature: "Translation",
-    text: (file: string): string => `本天才的 ${file} 不见了或写坏了，翻不了呀。补好再重启，笨蛋♡`,
+    text: (file: string): string => chatAtmosphere(chatId).NOTICE_TEXTS.translateConfigInvalid(file),
   });
 }
 
@@ -63,7 +53,7 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (argument === "enable" || argument === "disable") {
     await runChatToggleCommand({
       ctx,
-      texts: TRANSLATE_TOGGLE_TEXTS,
+      texts: chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_TOGGLE_TEXTS,
       permission: "isCanControllTranslatePermission",
       persistReason: "translation toggled",
       runtimeLabel: "translation runtime",
@@ -79,21 +69,22 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (stopMatch !== null) {
     if (stopMatch[1] === undefined && explicitReplyTo(ctx.msg) === undefined && ctx.msg.external_reply === undefined) {
       await stopTranslation(chatId);
-      await sendCommandMessage({ chatId, text: TRANSLATE_STOP_ALL_TEXT, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_STOP_ALL_TEXT, replyToMessageId: messageId });
       return;
     }
     const target: CachedUser | undefined = await resolveCommandTarget({
       chatId, message: ctx.msg, botUserId: ctx.me.id, rawArgument: stopMatch[1] ?? "",
-      messages: TRANSLATE_TARGET_TEXTS, acceptUserId: true, acceptChatId: true,
+      messages: chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_TARGET_TEXTS, acceptUserId: true, acceptChatId: true,
     });
     if (target === undefined) return;
     const current: TranslateState | undefined = getTranslateState(chatId, target.id);
     await stopTranslation(chatId, target.id);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
       text: current === undefined
-        ? `${formatUserLabel(target)} 本来就没在用翻译呀，笨蛋♡`
-        : `本天才已经停止给 ${formatUserLabel(target)} 翻译啦，其他杂鱼照常哦♡`,
+        ? atmosphere.NOTICE_TEXTS.translateNotRunning(formatUserLabel(target, atmosphere))
+        : atmosphere.NOTICE_TEXTS.translateStopped(formatUserLabel(target, atmosphere)),
       replyToMessageId: messageId,
     });
     return;
@@ -102,14 +93,14 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   const match: RegExpExecArray | null = TRANSLATE_ARGUMENT_PATTERN.exec(argument);
   const language: string | undefined = match?.[1];
   if (language !== "ja" && language !== "cn" && language !== "en" && language !== "uk" && language !== "ru") {
-    await sendCommandMessage({ chatId, text: TRANSLATE_USAGE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_USAGE_TEXT, replyToMessageId: messageId });
     return;
   }
   if (await refuseUnavailableTranslation(chatId, messageId)) return;
   if (getChatState(chatId).isTranslationEnabled !== true) {
     await sendCommandMessage({
       chatId,
-      text: TRANSLATE_DISABLED_TEXT,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_DISABLED_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -120,14 +111,15 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: match?.[2] ?? "",
-    messages: TRANSLATE_TARGET_TEXTS,
+    messages: chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_TARGET_TEXTS,
   });
   if (target === undefined) return;
   const current: TranslateState | undefined = getTranslateState(chatId, target.id);
   if (current !== undefined) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: `本天才正在把 ${formatUserLabel(current.translatedUser)} 的文字翻成${TRANSLATE_LANGUAGE_LABELS[current.language]}，要换方向先回复 TA 用 /translate stop，笨蛋♡`,
+      text: atmosphere.NOTICE_TEXTS.translateAlreadyRunning(formatUserLabel(current.translatedUser, atmosphere), TRANSLATE_LANGUAGE_LABELS[current.language]),
       replyToMessageId: messageId,
     });
     return;
@@ -136,15 +128,16 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (!setTranslateState(chatId, { translatedUser: target, language })) {
     await sendCommandMessage({
       chatId,
-      text: translateStates.has(chatId) ? TRANSLATE_CHAT_CAPACITY_TEXT : TRANSLATE_CAPACITY_TEXT,
+      text: translateStates.has(chatId) ? chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_CHAT_CAPACITY_TEXT : chatAtmosphere(ctx.chat?.id ?? 0).TRANSLATE_CAPACITY_TEXT,
       replyToMessageId: messageId,
     });
     return;
   }
   await persistGlobalState("translation started");
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
   await sendCommandMessage({
     chatId,
-    text: `本天才开始把 ${formatUserLabel(target)} 的文字翻成${TRANSLATE_LANGUAGE_LABELS[language]}啦，停止用 /translate stop♡`,
+    text: atmosphere.NOTICE_TEXTS.translateStarted(formatUserLabel(target, atmosphere), TRANSLATE_LANGUAGE_LABELS[language]),
     replyToMessageId: messageId,
   });
 }

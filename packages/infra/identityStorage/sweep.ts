@@ -1,3 +1,4 @@
+import * as diskIO from "../diskIO";
 import {
   identityEntryCounts,
   unacknowledgedBlocklistWrites,
@@ -8,13 +9,11 @@ import { assertTelegramIdentityId } from
   "../../database/codec/identity";
 import {
   currentIdentityPolicyText,
-  identityDiskIOApi,
   rawIdentityPolicyRows,
 } from "./shared";
 import type { DomainFlushOutcome } from "../../types/diskIO/replies";
 import type { BlocklistIdPage, IdentityPolicyRawReadResult } from
   "../../types/identityStorage";
-import type { IdentityDiskIOApi } from "./shared";
 
 /** 是否至少存在一个黑名单身份；只读启动计数，不持有整表 ID。 */
 export function hasAnyBlockedIdentity(): boolean {
@@ -57,14 +56,7 @@ function validateBlocklistIdPage(
 export async function readBlocklistSweepPage(
   afterId: number | null
 ): Promise<BlocklistIdPage> {
-  const flush: IdentityDiskIOApi["flushDiskIODomainOutcome"] =
-    identityDiskIOApi.flushDiskIODomainOutcome;
-  const read: IdentityDiskIOApi["readBlocklistIdPage"] =
-    identityDiskIOApi.readBlocklistIdPage;
-  if (flush === undefined || read === undefined) {
-    return { ids: [], nextCursor: afterId, done: true };
-  }
-  const outcome: DomainFlushOutcome = await flush("blocklist");
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("blocklist");
   if (outcome.result !== "flushed") {
     throw new Error(`Blocklist sweep flush ${outcome.result}.`);
   }
@@ -73,7 +65,7 @@ export async function readBlocklistSweepPage(
       `Blocklist sweep flush left ${unacknowledgedBlocklistWrites.size} unacknowledged write(s).`
     );
   }
-  return validateBlocklistIdPage(await read(afterId), afterId);
+  return validateBlocklistIdPage(await diskIO.readBlocklistIdPage(afterId), afterId);
 }
 
 /**
@@ -88,10 +80,7 @@ export async function retainCurrentlyBlockedIdentityIds(
     );
   }
   if (ids.length === 0) return [];
-  const read: IdentityDiskIOApi["readIdentityPolicies"] =
-    identityDiskIOApi.readIdentityPolicies;
-  if (read === undefined) return ids;
-  const reply: IdentityPolicyRawReadResult = await read(ids);
+  const reply: IdentityPolicyRawReadResult = await diskIO.readIdentityPolicies(ids);
   const requested: Set<number> = new Set(ids);
   const rows: Map<number, string> = rawIdentityPolicyRows(
     reply.blocklist,

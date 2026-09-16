@@ -163,7 +163,7 @@ that file is covered by `.gitignore`.
     wrong path, which also logs one diagnostic pointing at `$.agent.media`) both stop further
     downloads, while transient failures only back off and never close the capability for good.
 
-Permanent-allowlist, blocklist, temporary-allowlist activity, and pending-removal state are no longer deployment JSON. They live together
+Permanent-allowlist, blocklist, temporary-ad-bypass activity, and pending-removal state are no longer deployment JSON. They live together
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
 SQLite integrity, migration lineage, schema version, JSONB/relational row shapes, and policy disjointness.
 Other inputs are validated per feature: AI chat reads stickers, reactions, moods, persona, and the

@@ -1,15 +1,16 @@
 import { and, eq } from "drizzle-orm";
 import { chatQa } from "../schema/chatQa";
 import { chatStates } from "../schema/chatState";
-import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
+import { blocklistEntries, permissionList } from "../schema/identityPolicy";
 import { pendingBlockedRemovals } from "../schema/pendingRemoval";
-import { temporaryWhitelistEntries } from "../schema/temporaryWhitelist";
+import { temporaryAdBypassEntries } from "../schema/temporaryAdBypass";
 import type {
   StorageDatabase,
   StorageDatabaseChange,
+  StorageChatStateChange,
 } from "../../types/storageDatabase";
-import type { PendingTemporaryWhitelistWrite } from
-  "../../types/temporaryWhitelist";
+import type { PendingTemporaryAdBypassWrite } from
+  "../../types/temporaryAdBypass";
 
 type StorageDatabaseTransaction = Parameters<
   Parameters<StorageDatabase["transaction"]>[0]
@@ -18,9 +19,9 @@ type StorageDatabaseTransaction = Parameters<
 export interface CommitStorageDatabaseChangesOptions {
   readonly whitelist: ReadonlyMap<number, StorageDatabaseChange>;
   readonly blocklist: ReadonlyMap<number, StorageDatabaseChange>;
-  readonly temporaryWhitelist: ReadonlyMap<number, PendingTemporaryWhitelistWrite>;
+  readonly temporaryAdBypass: ReadonlyMap<number, PendingTemporaryAdBypassWrite>;
   readonly removals: ReadonlyMap<number, StorageDatabaseChange>;
-  readonly chatStates: ReadonlyMap<number, StorageDatabaseChange>;
+  readonly chatStates: ReadonlyMap<number, StorageChatStateChange>;
   /**
    * 群问答按 (chatId, q) 复合主键变更，因此外层是群、内层是问题文本。
    * 嵌套而不是拼一个 `${chatId}\u0000${q}` 复合键：拼键要为每条变更造一个字符串，
@@ -35,7 +36,7 @@ export function commitStorageDatabaseChanges(
   {
     whitelist,
     blocklist,
-    temporaryWhitelist,
+    temporaryAdBypass,
     removals,
     chatStates: chatStateChanges,
     chatQa: chatQaChanges,
@@ -44,10 +45,10 @@ export function commitStorageDatabaseChanges(
   database.transaction((transaction: StorageDatabaseTransaction): void => {
     for (const [id, change] of whitelist) {
       if (change.data === null) {
-        transaction.delete(whitelistEntries).where(eq(whitelistEntries.id, id)).run();
+        transaction.delete(permissionList).where(eq(permissionList.id, id)).run();
       } else {
-        transaction.insert(whitelistEntries).values({ id, data: change.data })
-          .onConflictDoUpdate({ target: whitelistEntries.id, set: { data: change.data } })
+        transaction.insert(permissionList).values({ id, data: change.data })
+          .onConflictDoUpdate({ target: permissionList.id, set: { data: change.data } })
           .run();
       }
     }
@@ -60,15 +61,15 @@ export function commitStorageDatabaseChanges(
           .run();
       }
     }
-    for (const [id, change] of temporaryWhitelist) {
+    for (const [id, change] of temporaryAdBypass) {
       if (change.activity === null) {
-        transaction.delete(temporaryWhitelistEntries)
-          .where(eq(temporaryWhitelistEntries.id, id)).run();
+        transaction.delete(temporaryAdBypassEntries)
+          .where(eq(temporaryAdBypassEntries.id, id)).run();
       } else {
-        transaction.insert(temporaryWhitelistEntries)
+        transaction.insert(temporaryAdBypassEntries)
           .values({ id, ...change.activity })
           .onConflictDoUpdate({
-            target: temporaryWhitelistEntries.id,
+            target: temporaryAdBypassEntries.id,
             set: change.activity,
           }).run();
       }
@@ -90,8 +91,8 @@ export function commitStorageDatabaseChanges(
       if (change.data === null) {
         transaction.delete(chatStates).where(eq(chatStates.chatId, chatId)).run();
       } else {
-        transaction.insert(chatStates).values({ chatId, data: change.data })
-          .onConflictDoUpdate({ target: chatStates.chatId, set: { data: change.data } })
+        transaction.insert(chatStates).values({ chatId, status: change.data, aiPersona: change.aiPersona })
+          .onConflictDoUpdate({ target: chatStates.chatId, set: { status: change.data, aiPersona: change.aiPersona } })
           .run();
       }
     }

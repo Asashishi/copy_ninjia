@@ -1,10 +1,11 @@
+import * as diskIO from "../diskIO";
 import {
   blocklistEntryCache,
   identityEntryCounts,
   whitelistEntryCache,
 } from "../../cache/main/identityStorage";
-import { resetTemporaryWhitelistCache } from
-  "../../cache/main/temporaryWhitelist";
+import { resetTemporaryAdBypassCache } from
+  "../../cache/main/temporaryAdBypass";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from
   "../../consts/identityStorage";
 import {
@@ -14,12 +15,11 @@ import {
 } from "../../database/codec/identity";
 import { logger } from "../logger";
 import {
-  hydrateTemporaryWhitelistActivities,
-  isTemporaryWhitelistActivityCached,
-} from "../identityPolicy/temporaryWhitelist";
+  hydrateTemporaryAdBypassActivities,
+  isTemporaryAdBypassActivityCached,
+} from "../identityPolicy/temporaryAdBypass";
 import {
   currentIdentityPolicyText,
-  identityDiskIOApi,
   rawIdentityPolicyRows,
 } from "./shared";
 import type { CachedUser } from "../../types/chatState";
@@ -30,7 +30,6 @@ import type {
 } from "../../types/identityPolicy";
 import type { IdentityPolicyRawReadResult } from
   "../../types/identityStorage";
-import type { IdentityDiskIOApi } from "./shared";
 
 /** CachedUser 的 Telegram 字段稳定映射到 SQLite meta。 */
 export function identityMetadataFromCachedUser(
@@ -58,7 +57,7 @@ export function hydrateIdentityStorageCounts(
   }
   whitelistEntryCache.clear();
   blocklistEntryCache.clear();
-  resetTemporaryWhitelistCache();
+  resetTemporaryAdBypassCache();
   identityEntryCounts.whitelist = whitelistCount;
   identityEntryCounts.blocklist = blocklistCount;
 }
@@ -67,7 +66,7 @@ export function hydrateIdentityStorageCounts(
 export function isIdentityPolicyCached(id: number): boolean {
   return whitelistEntryCache.has(id) &&
     blocklistEntryCache.has(id) &&
-    isTemporaryWhitelistActivityCached(id);
+    isTemporaryAdBypassActivityCached(id);
 }
 
 /** 同步读取已预热的白名单；冷缺失按 fail-closed 解释为不存在。 */
@@ -85,10 +84,7 @@ export function cachedBlocklistEntry(
 }
 
 async function prefetchChunk(ids: readonly number[]): Promise<void> {
-  const read: IdentityDiskIOApi["readIdentityPolicies"] =
-    identityDiskIOApi.readIdentityPolicies;
-  if (read === undefined) return;
-  const reply: IdentityPolicyRawReadResult = await read(ids);
+  const reply: IdentityPolicyRawReadResult = await diskIO.readIdentityPolicies(ids);
   const requested: Set<number> = new Set(ids);
   const whitelistRows: Map<number, string> = rawIdentityPolicyRows(
     reply.whitelist,
@@ -100,7 +96,7 @@ async function prefetchChunk(ids: readonly number[]): Promise<void> {
     requested,
     "blocklist"
   );
-  hydrateTemporaryWhitelistActivities(reply.temporaryWhitelist, requested, ids);
+  hydrateTemporaryAdBypassActivities(reply.temporaryAdBypass, requested, ids);
   for (const id of ids) {
     const whitelistText: string | null = currentIdentityPolicyText(
       "whitelist",
@@ -121,7 +117,7 @@ async function prefetchChunk(ids: readonly number[]): Promise<void> {
         ? null
         : decodeWhitelistEntryData(
           whitelistText,
-          `whitelist_entries[${id}].data`
+          `permission_list[${id}].policy`
         )
     );
     blocklistEntryCache.set(
@@ -154,12 +150,12 @@ export async function prefetchIdentityPolicies(
     if (
       !whitelistEntryCache.has(id) ||
       !blocklistEntryCache.has(id) ||
-      !isTemporaryWhitelistActivityCached(id)
+      !isTemporaryAdBypassActivityCached(id)
     ) missing.push(id);
   }
   if (
     missing.length === 0 ||
-    identityDiskIOApi.isDiskIOInitialized?.() !== true
+    diskIO.isDiskIOInitialized() !== true
   ) return true;
   for (
     let index: number = 0;

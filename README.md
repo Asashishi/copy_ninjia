@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4190_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.76%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4290_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.93%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：4190 项测试全部通过 / 370 个测试文件 / 156,432 次 expect() 调用 / 函数覆盖率 97.56% / 行覆盖率 97.76%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：4290 项测试全部通过 / 380 个测试文件 / 157,750 次 expect() 调用 / 函数覆盖率 97.17% / 行覆盖率 97.93%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -162,7 +162,9 @@
 
 ## 🎮 命令与权限
 
-命令分四档：**群成员**（复读、动作命令、安静模式、`/bot_status` 等）、**白名单权限键**（`/mute`、`/gag`、`/block`、各功能开关）、**`SUPER_ADMIN_USER_ID` 专属**（`/init`、`/white`、`/permission`、`/batch_kick`、`/clear_context`），以及只在私聊生效的 `/send`。
+命令按入口授权：**群成员**可用复读、动作命令和安静模式；**身份权限键**控制 `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` 和功能开关。**`SUPER_ADMIN_USER_ID` 专属**包括 `/init`、权限修改、删除白名单成员、`/batch_kick`；`/white enable` 可按 `isCanWhiteOther` 委托。`/send` 仅超级管理员私聊可用。
+
+群专属 AI 提示词由 `/prompt config <提示词>` 设置，`/prompt remove` 恢复 `prompt/persona.md`；两者受默认关闭的 `isCanConfigAiPrompt` 控制。`/bot_status` 可查看当前群是否已设置。
 
 复读目标全局唯一，`/copy` 系列在发起命令的群里逐条复读并同步头像；`/luck_challenge` 走 Inline Mode，中文动作命令（`/咬`、`/揪住`）不需要预先登记。
 

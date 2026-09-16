@@ -1,3 +1,5 @@
+import type { DiskIORespawnListener } from "../../packages/types/diskIO/messages";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type {
@@ -29,7 +31,7 @@ const loggerError = mock((..._args: unknown[]): void => {});
 const captured: {
   permissions?: (chatId: number, permissions: BotChatPermissions | undefined) => void;
   teardown?: (chatId: number, reason: ChatTeardownReason) => void;
-  respawn?: (transport: DiskIORecoveryTransport) => boolean;
+  respawn?: DiskIORespawnListener;
   persisted?: (reply: VerificationPersistedReply) => void;
 } = {};
 
@@ -44,16 +46,16 @@ mock.module("../../packages/infra/chatTeardownRegistry", () => ({
     observer: (chatId: number, reason: ChatTeardownReason) => void
   ): void => { captured.teardown = observer; },
 }));
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   onDiskIORespawn: (
     _label: string,
     _priority: number,
-    replay: (transport: DiskIORecoveryTransport) => boolean
+    replay: DiskIORespawnListener
   ): void => { captured.respawn = replay; },
   onVerificationPersisted: (
     observer: (reply: VerificationPersistedReply) => void
   ): void => { captured.persisted = observer; },
-}));
+})));
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/antiRaid/verificationAttempts", () => ({
   settlePersistedVerificationDeferral: settleDeferral,

@@ -18,8 +18,8 @@ import {
   blocklistEntryCache,
   whitelistEntryCache,
 } from "../../../packages/cache/main/identityStorage";
-import { temporaryWhitelistActivityCache } from
-  "../../../packages/cache/main/temporaryWhitelist";
+import { temporaryAdBypassActivityCache } from
+  "../../../packages/cache/main/temporaryAdBypass";
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../../packages/consts/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
@@ -92,12 +92,12 @@ export function createIdentityPermissionReadScenario(): Scenario {
       for (let index: number = 0; index < ids.length; index += 1) {
         const id: number = ids[index]!;
         // 生产上绝大多数条目是负缓存（见过、但不在任何名单里）；三张表在同一次
-        // update 前置读取中一起填充，临时白名单的常态热读也必须进入场景。
+        // update 前置读取中一起填充，临时广告免检的常态热读也必须进入场景。
         const whitelisted: boolean = index % 50 === 0;
         const blocked: boolean = !whitelisted && index % 97 === 0;
         whitelistEntryCache.set(id, whitelisted ? WHITELIST_ENTRY : null);
         blocklistEntryCache.set(id, blocked ? BLOCKLIST_ENTRY : null);
-        temporaryWhitelistActivityCache.set(id, null);
+        temporaryAdBypassActivityCache.set(id, null);
       }
     },
     run: (iterations: number): number => {
@@ -114,7 +114,7 @@ export function createIdentityPermissionReadScenario(): Scenario {
     reset: (): void => {
       whitelistEntryCache.clear();
       blocklistEntryCache.clear();
-      temporaryWhitelistActivityCache.clear();
+      temporaryAdBypassActivityCache.clear();
     },
     probes: {
       canBypassFloodControl,

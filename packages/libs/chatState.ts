@@ -12,11 +12,12 @@ import { QUIET_CLOCK_SKEW_TOLERANCE_MS, QUIET_MAX_DURATION_MS } from "../consts/
  * auto/message/index.ts、aiChat/availability.ts）。所有写入方都必须从本构造器取得
  * 同一隐藏类，并以 undefined 表示缺省值。
  *
- * **磁盘格式不变**：`JSON.stringify` 天然跳过取值为 `undefined` 的键，因此
- * SQLite JSONB 行里仍然只出现偏离缺省值的字段。
+ * 持久化时状态编码器只把已设置的状态字段写入 JSONB status，aiPersona 独立写入
+ * ai_persona；缺省字段不进入状态载荷。
  */
 export function createChatState(): ChatState {
   return {
+    aiPersona: undefined,
     quietUntil: undefined,
     lockdown: undefined,
     isAIChatEnabled: undefined,
@@ -49,6 +50,7 @@ export const DEFAULT_CHAT_STATE: Readonly<ChatState> = createChatState();
  */
 export function adoptChatState(decoded: Readonly<ChatState>): ChatState {
   const chatState: ChatState = createChatState();
+  chatState.aiPersona = decoded.aiPersona;
   chatState.quietUntil = decoded.quietUntil;
   chatState.lockdown = decoded.lockdown;
   chatState.isAIChatEnabled = decoded.isAIChatEnabled;
@@ -120,13 +122,14 @@ export function normalizeChatState(chatState: ChatState, now: number = Date.now(
 
 /**
  * 是否所有字段都还是缺省值。逐字段判定而不是数 `Object.keys().length`：规范形状
- * 下键一直都在，数出来恒为 11。
+ * 下键一直都在，不能用键数判断状态是否为空。
  *
  * `botPermissions` 只要存在就不算缺省：其中全 false 是「已确认不是
  * 管理员」，与「没查过」是两回事（见 types/chatState.ts）。
  */
 export function isEmptyChatState(chatState: ChatState): boolean {
-  return chatState.quietUntil === undefined &&
+  return chatState.aiPersona === undefined &&
+    chatState.quietUntil === undefined &&
     chatState.lockdown === undefined &&
     chatState.isAIChatEnabled === undefined &&
     chatState.isTranslationEnabled === undefined &&

@@ -1,3 +1,5 @@
+import type { DiskBusinessMessage } from "../../packages/types/diskIO/messages";
+import { diskIOStub } from "./diskIOMock";
 /**
  * Anti-Raid 主线程镜像与恢复用例共用的替身、缓存句柄与隔离钩子。
  *
@@ -31,6 +33,9 @@ export const workerHooks: {
   persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
 } = { supervisorOptions: undefined, diskRespawn: undefined, persistedAck: undefined };
 export const chatStates = new Map<number, {
+  aiPersona?: string;
+  isAIChatEnabled?: boolean;
+  isInitEnabled?: boolean;
   isAntiRaidEnabled?: boolean;
   lockdown?: {
     phase?: "applying" | "active" | "reconciling" | "restoring";
@@ -121,18 +126,22 @@ mock.module("../../packages/infra/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO,
   flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
   flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
-  postDiskIO: (message: VerificationUpsertDiskMessage | VerificationDeleteDiskMessage): void => { diskPosts.push(message); },
+  postDiskIO: (message: DiskBusinessMessage): boolean => {
+    if (message.type !== "verificationUpsert" && message.type !== "verificationDelete") throw new Error("Unexpected Disk I/O write.");
+    diskPosts.push(message);
+    return true;
+  },
   postDiskIODiagnostic: (): boolean => true,
   onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
     workerHooks.diskRespawn = listener;
   },
   onIdentityStoragePersisted: (): void => {},
   onVerificationPersisted: (callback: (reply: VerificationPersistedReply) => void): void => { workerHooks.persistedAck = callback; },
-}));
+})));
 
 import {
   activeVerificationSnapshots,

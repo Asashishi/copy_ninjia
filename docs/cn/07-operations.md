@@ -52,7 +52,7 @@ WantedBy=multi-user.target
 
 程序会补建数据根、`logs/`、`memory/` 与初始 `database/`（前三者按 `0755`，`database/` 按 `0770`，实际权限再受 umask 收窄），四者都拒绝符号链接。数据根、`logs/` 与 `memory/` 必须属于运行 UID 且 mode 不宽于 `0755`——这道闸拦的是**写**：group 或 other 拿到 `w` 位一律拒绝启动。读侧放开到 `0755`，因为本项目按单租户处理、绝大多数部署是 root 直接跑，而默认 umask 建出来的目录就是 `0755`。
 
-> **代价**：`memory/` 新文件默认是 `0644`，所以只采用默认值时，群聊逐字记录的访问控制主要依赖目录位。留在 `0755` 意味着同机器上任何本地账号都能读它们。多租户或存在非特权登录用户的机器，请自行把数据根与 `memory/` 收回 `0750`，并可把既有文件收紧为 `0600`/`0640`；运行时会保留这些 mode，不自动 chmod。身份迁移会把 `database/` 设为 `02770`，主库及 WAL/SHM 首次创建为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
+> **代价**：`memory/` 新文件默认是 `0644`，所以只采用默认值时，群聊逐字记录的访问控制主要依赖目录位。留在 `0755` 意味着同机器上任何本地账号都能读它们。多租户或存在非特权登录用户的机器，请自行把数据根与 `memory/` 收回 `0750`，并可把既有文件收紧为 `0600`/`0640`；运行时会保留这些 mode，不自动 chmod。部署方可将 `database/` 设为 `02770`，主库及 WAL/SHM 首次创建为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
 
 进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、身份写透、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 
@@ -73,11 +73,6 @@ WantedBy=multi-user.target
     链接即是）照样能用，不必自己解析出终点。
   - **升级前先看一眼这四项**：三张缩略图现在只认 `https`，从更早版本升上来时若有一项
     配成 `http://`，会在解码期拒绝启动并点名字段路径。
-- **`memory/ai/<chatId>.json`**
-  - **内容**：每群 AI 记忆的 version=1 原子快照，包括最近逐字消息、历史摘要、
-    待合并摘要与保存时间。
-  - **备份**：含群聊逐字内容，属于敏感数据；清空该群记忆时删除，启动按 chatId 恢复。
-  - **校验**：正文、名称和引用字段遵守单行约束，引用 text/quote 不超过 500 个 UTF-16 码元，`at` 是有效的东京本地时间 `YYYY/MM/DD HH:mm:ss`；摘要允许换行。任一字段非法都拒绝恢复，指出嵌套字段路径并保持原文件不变。
 - **`memory/wed/<chatId>.json`**
   - **内容**：每群已发言成员 ID 的纯数字数组，例如 `[5974478892]`；主线程每群长期复用一个 `Set<number>`。最多 25 群，每群最多 150,000 个 ID，满额保留已有成员，退群后可继续新增。
   - **校验**：文件名必须是规范负安全整数群 ID，数组元素必须是唯一的正安全整数；非法 JSON、重复、类型或容量错误拒绝启动，不截断或修复原文件。目录和文件缺失允许启动，由程序按需创建。
@@ -107,23 +102,10 @@ WantedBy=multi-user.target
     最新 250,000 人。`/init disable` 与机器人被移出群会把该群保留窗口内外的全部
     日志一并删掉，不等自然过期（被撤管理员不删）。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
-  - **内容**：schema v8 共享存储数据库。`whitelist_entries` 与 `blocklist_entries` 是永久白名单、
-    黑名单权威表；`temporary_whitelist_entries` 以关系列保存跨群发言累计、连续合格日、
-    临时授权时刻，以及日切所需的 `send_count`、`counted_at`、`qualified_at`；
-    `pending_blocked_removals` 是未完成群级封禁任务 outbox，
-    `chat_states` 是每群状态权威表（最多 25 行，超出即拒绝启动），
-    `storage_metadata` 记录唯一 schema version；Drizzle migration journal 必须匹配受支持谱系。
-    `chat_states` 的 25 行名额只在整条记录回到缺省时释放，两条路各自能腾出一格：在那个群
-    `/init disable`，或者把 Bot 移出该群——两者都会整行删掉群名、权限快照与全部功能开关，
-    唯一保留的是还挂着待恢复 lockdown 的行（删了那个群的邀请权限会永久卡住）。因此重新
-    `/init enable` 之后功能开关要逐条重开，那是「不再管这个群就一样不留」的另一面。
-  - **备份**：必须备份，丢失黑名单等于解除全部永久封禁，丢失 outbox 则会漏掉未完成处置。
-    停止 Bot 后，把主库及当时存在的 WAL/SHM 作为同一一致性集合复制到工作树外，并记录
-    owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。翻译冷迁移只在独立暂存副本上写库，保留源备份并核对哈希与元数据。
-  - **恢复**：Disk I/O Worker 是唯一数据库 owner；启动先做 integrity、JSONB、schema、
-    migration lineage、行 codec、黑名单与两类白名单互斥校验，再只把永久名单计数和
-    pending outbox 交回主线程；临时累计按 update 所需身份冷读进 8,192 项 LRU。
-    任一校验失败都拒绝启动，不会建空库、丢行或静默降级。
+  - **内容**：schema v10 共享存储数据库。`permission_list.policy` 是永久身份权限的严格 JSONB，`blocklist_entries` 保存黑名单，`temporary_ad_bypass_entries` 保存临时广告免检累计；后者使用 `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at` 与 `qualified_at`。`pending_blocked_removals` 保存未完成的群级封禁任务；`storage_metadata` 与 Drizzle journal 共同约束 schema 和精确谱系。
+  - **群状态与人设**：`chat_states` 最多 25 行。`chat_id` 是群主键；`status` 是必填 JSONB 状态；`ai_persona` 是可空、非空白 TEXT，仅保存本群自定义提示词，缺省使用项目 `prompt/persona.md`。状态与人设在启动时读入现有主线程群缓存，`/bot_status` 直接查看是否已设置。`/init disable` 或 Bot 离群清除整行及人设；待恢复的 lockdown 状态按恢复协议保留。
+  - **AI 上下文**：`ai_context` 是可空 JSONB version=1 快照，包含逐字消息、摘要、待合并摘要与保存时间，沿用 AI Worker 记忆缓存及主线程恢复镜像。只更新已有群行，不保留仅有上下文的行；清空记忆将该列置 NULL，不改人设。正文、名称与引用字段为单行，引用 text/quote 最多 500 个 UTF-16 码元，`at` 为有效东京本地时间 `YYYY/MM/DD HH:mm:ss`；摘要允许换行。非法字段拒绝恢复并指出嵌套路径，不修复原数据。
+  - **备份与恢复**：数据库包含敏感群聊记忆与自定义提示词，必须备份。停 Bot 后，将主库及存在的 WAL/SHM 作为同一集合复制到工作树外，记录并核对 owner/mode 与 SHA-256。Disk I/O Worker 独占数据库，启动校验 integrity、JSONB、schema、谱系、严格行 codec、名单互斥与 outbox 引用；群状态和 AI 快照从同一连接恢复。身份热读使用 8,192 项 LRU，只按 update 所需身份冷读。任一校验失败都拒绝启动，不自动建库、迁移、丢行或降级。
 - **`memory/ad-detected/sample.json`**
   - **内容**：广告判定命中的原始样本，包括时间、消息 id 与正文、判定理由、
     引用/回复上下文。
@@ -142,13 +124,13 @@ WantedBy=multi-user.target
   - **内容**：单实例锁。
   - **备份**：随停机快照保留，不手工编辑或向运行中的进程回放锁。
 
-`memory/` 顶层不直接放文件，上述七个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 先通知主线程接纳 `/wed` 每日成员复核，再维护运势、日志、入群日志、广告样本归档、待验证日文件和临时白名单累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。临时白名单维护会先提交共享 SQLite 的在途最终值；临时写仍未提交时拒绝删除。它保留当日行和刚结束日已经合格的行，删除刚结束日未合格及更早的整行，清理后迟到的失效旧日写会按原 revision 收敛为墓碑。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
+`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。启动先只读扫描需要恢复的状态域（包括 `joinlog/` 的保留窗口）并严格解码，全部领域成功后才接管 owner；成功回执之后才按需建目录、清理临时/孤儿/过期文件、compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 先通知主线程接纳 `/wed` 每日成员复核，再维护运势、日志、入群日志、广告样本归档、待验证日文件和临时广告免检累计，单领域失败不阻断其余任务；原有启动与业务事件路径继续兜底。临时广告免检维护会先提交共享 SQLite 的在途最终值；临时写仍未提交时拒绝删除。它保留当日行和刚结束日已经合格的行，删除刚结束日未合格及更早的整行，清理后迟到的失效旧日写会按原 revision 收敛为墓碑。`ad-detected/` 仍只在第一次命中后建立；若目录已经存在，启动成功后的 maintenance 只扫描目录项，不读取样本内容。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有成功回执后的 maintenance 才原子发布当天快照并清理旧日。运行期由统一 cron 触发相同轮换，失败时保留 active 镜像并以一秒 unref timer 重试。
 
 `joinlog/` 的一次查询最多读取覆盖 `[since, now]` 的两个群日文件，并按用户取窗口内最后一次入群；第三个保留日只服务于 23:59 发起、跨午夜才进入 Worker 的在途查询。文件在 10,000 条冗余历史或新增 4 MiB 后评估压缩，预计至少回收 512 KiB 才原子重写。可解析但 schema 错误的文件会原样拒绝本次读写；仅末尾截断残片可由追加层修复。
 
 ### `memory/` 辅助文件与纯内存状态
 
-- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。启动 inspect 只登记这些文件，不删除；所有领域校验与 adopt 成功并发出成功回执后，日志、`ai/`、`stickers/`、`luck/`、`joinlog/` 与 `wed/` 的 maintenance 才清理对应 `*.tmp`。已有的 `ad-detected/` 目录在启动成功后的 maintenance 清理 `.sample.json.*.tmp`，首次写样本仍执行同一兜底；`anti-raid/` 不把临时文件当恢复输入。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
+- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。启动 inspect 只登记这些文件，不删除；所有领域校验与 adopt 成功并发出成功回执后，日志、`stickers/`、`luck/`、`joinlog/` 与 `wed/` 的 maintenance 才清理对应 `*.tmp`。已有的 `ad-detected/` 目录在启动成功后的 maintenance 清理 `.sample.json.*.tmp`，首次写样本仍执行同一兜底；`anti-raid/` 不把临时文件当恢复输入。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
 - Challenge timer、广告检测待判队列/去重 Set、Telegram 成员/管理员短缓存都只存在于进程内，没有对应文件。
 
 备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成；SQLite 主库与存在的 sidecar 必须来自同一时点。`memory/` 与 `database/` 都视为敏感数据：新建 memory 文件默认 `0644`，数据库及 sidecar 首次创建默认 `0660`；已有文件的 mode 会在接管和原子替换后保留（见 [04](04-invariants.md#持久化)）。
@@ -161,27 +143,50 @@ WantedBy=multi-user.target
 
 启动不会凭缺失数据库猜测「空名单」，所以全新部署必须显式建一次当前 schema 的空库。步骤见 [01 环境搭建](01-getting-started.md#初始化身份数据库)，`install.sh` 也已包含。目标库已存在时建库入口直接拒绝覆盖。
 
-### 从 10.5.4 冷迁移
+### 从 schema v9 冷迁移
 
-当前唯一冷迁移入口是 [`scripts/migrateTranslate.ts`](../../scripts/migrateTranslate.ts)，仅接受 `10.5.4` 的 schema v7 精确谱系和 global-only 状态，输出 schema v8 与每群会话数组。更旧部署须先按对应版本文档分阶段升级到 `10.5.4`；未知谱系及未发布 dev 的状态形态均拒绝。运行时只接受当前格式。
+当前唯一冷迁移入口是 [`scripts/migrateClearContextPermission.ts`](../../scripts/migrateClearContextPermission.ts)，只接受上一次迁移产出的 schema v9 精确谱系，输出 schema v10。更旧部署须先按对应版本文档分阶段升级到 schema v9；未知谱系与已迁移的 v10 均拒绝。生产启动只校验当前格式，不执行迁移。
 
-1. 停止服务并确认 inactive、相关进程已退出。在工作树外用 `mktemp -d` 建立备份，复制真实配置、凭据和运行数据；`state.json`、`state.json.bak`、SQLite 主库及存在的 WAL/SHM 必须来自同一停机时点。记录文件清单、权限、属主和 SHA-256，核对复制结果。
-
-2. 用下方命令从备份生成全新暂存目录。输出目录必须在源备份外，父目录须存在。脚本不修改源文件、不控制服务、不替换部署文件。
+1. 停止服务并确认 inactive、没有残留进程。用 `mktemp -d` 在工作树外备份真实配置、凭据和运行时数据；SQLite 主库与已有 WAL/SHM 必须来自同一停机时点。记录文件清单、权限、属主与 SHA-256，并逐文件核对副本。
+2. 指定源备份之外的新输出目录，父目录须存在。脚本不改源文件、不操作服务、不替换部署文件。
 
 ```bash
-bun run migrate:translate --from 10.5.4 \
+bun run migrate:clear-context-permission \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. 脚本把 SQLite 权限 `isCanControllJATranslatePermission` 改为 `isCanControllTranslatePermission`，群开关 `isJATranslationEnabled` 改为 `isTranslationEnabled`，保留原布尔值及可选开关的缺省。权限缺失、非法值、旧新字段冲突均拒绝。`copyMode: "ja"` 的目标转为该群的日语会话，清除对应 copy 目标/模式/群 ID，保留冷却时间和素材；其他 copy 模式原样保留。主备分别转换。
+3. 迁移为每条 `permission_list.policy` 增加布尔权限 `isCanClearContext`。原有全部权限均为 true 的成员设为 true，其余设为 false；原权限、身份元数据、群状态、上下文、人设及其他领域数据保持不变。超级管理员不依赖此表，运行时始终直授 true。新成员默认 false，后续可以通过 `/permission` 单独授予或撤销。
+4. `ready.json` 是转换、严格校验、SQLite checkpoint、连接关闭及源复核完成的唯一标记。核对 `sourceFiles`、`outputFiles` 的哈希和元数据，以及 `enabledPermissions`、`disabledPermissions` 计数。失败或中断时保留备份与不完整产物，从原备份向新目录重跑；不覆盖既有输出。
+5. 在停机状态下手工替换验证后的 SQLite 主库。旧 WAL/SHM 只在已有一致备份且确认无数据库句柄时移除，不得与新主库混用。按清单恢复原属主与权限，确保服务账号能写 SQLite 和父目录；`config/` 可只读。
+6. 打开数据库前核对安装后哈希，再严格校验配置、主备状态和当前数据库。全部就位后启动，观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长且 journal 无新增非零退出。全部核验完成前保留外部备份；回滚必须恢复对应代码与同一时点的数据集。
 
-4. 仅 `ready.json` 表示转换、严格校验、SQLite 检查点、连接关闭和源文件复核全部成功。按其中 `sourceFiles`、`outputFiles` 核对哈希和元数据。失败或中断时保留源备份与暂存现场，从原备份向新的输出目录重跑，禁止覆盖已有输出。
+只读 SQLite 连接也可能重建 SHM 索引；先记录文件哈希，再做数据库校验，旁路索引变化须单独记录，不能覆盖原始备份清单。
 
-5. 保持停机，手工替换两份状态和 SQLite 主库。旧部署 WAL/SHM 仅在已备份且确认没有数据库占用后清理，不与新主库混用。按清单恢复原属主和 mode，确保服务账号可读写主备、SQLite 及其父目录；`config/` 可保持只读。
+### 从 11.0.9 分阶段升级
 
-6. 严格校验配置和主备、核对部署文件哈希后才启动。确认 `active/running`，观察至少两个 supervisor 重启间隔，确保 `NRestarts` 不增长、journal 无新增非零退出。完成所有验证前保留外部备份；失败时停止后续操作，回滚须恢复与旧数据匹配的程序和同一备份集。
+11.0.9 使用 schema v8。先在独立目录中使用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再由当前入口产出 v10；全过程保持服务停止，不需要启动中间版本。运行以下命令前，先按上节完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交，两个暂存输出目录须不存在。
+
+中间源码是本流程的必需输入。仅有 11.0.9 标签或当前版本的源码压缩包时，须先取得上述固定提交的完整源码；发布前应独立保留并提供该源码，不能依赖 squash 后会被重置的 dev 历史。
+
+也可使用独立中间源码归档 `copy-ninjia-schema-v9-source-500e848f.tar.gz`，其 SHA-256 为 `df6502625512d8fde136dc66d8470e1d4c977856e8a0bd3909b9b6c763c820f8`。核验后以 `tar -xzf /absolute/copy-ninjia-schema-v9-source-500e848f.tar.gz -C "$MIGRATION_CODE"` 代替下方的 `git archive` 步骤。
+
+```bash
+MIGRATION_CODE="$(mktemp -d)"
+git archive 500e848faeda75dcae3c3329507f24d05137e3b9 | tar -x -C "$MIGRATION_CODE"
+(
+  cd "$MIGRATION_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:ai-context \
+    --source-root /absolute/11.0.9-cold-backup \
+    --output-root /absolute/new-schema-v9-staging
+)
+bun run migrate:clear-context-permission \
+  --source-root /absolute/new-schema-v9-staging \
+  --output-root /absolute/new-schema-v10-staging
+```
+
+第一阶段按原有全部 16 项权限授予 `isCanConfigAiPrompt`，第二阶段按完整 17 项权限授予 `isCanClearContext`。第一阶段仅导入 `chat_states` 已有群的记忆；无对应群行的记忆计入 `discardedContexts`，不创建群状态。逐阶段检查 `ready.json`、源/产物哈希和导入/丢弃计数，最终只安装 v10 主库；保留整份原始备份，手工移除部署根中已迁移的 `memory/ai/`，其余配置和状态按原路径保留。继续执行上节的权限恢复、严格校验和启动观察。当前运行时与迁移入口均不直接接受 v8。
 
 ## 启动失败排查
 
@@ -202,7 +207,7 @@ bun run migrate:translate --from 10.5.4 \
     贴纸最多 5 包。
 - **身份数据库缺失或校验失败**
   - **原因**：尚未建立身份数据库，`storage.sqlite` 不可写，integrity/JSONB/schema/
-    migration lineage 不合法，行 codec 失败，或黑名单与永久/临时白名单相交。
+    migration lineage 不合法，行 codec 失败，或黑名单与永久/临时广告免检相交。
   - **处理**：若为已确认的 10.5.4 schema v7，保持停机并执行上述冷迁移；更旧版本先分阶段升级到 10.5.4。其余情况按
     [身份存储迁移](#身份存储迁移)建库或回滚。从同一一致性
     备份恢复主库与 sidecar，修正目录协作组权限后再启动。不要创建空库或删除失败行。

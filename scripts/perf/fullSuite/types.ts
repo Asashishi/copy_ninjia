@@ -52,7 +52,7 @@ export interface ColdStartRecovered {
   readonly aiMemoryChats: number;
   readonly chatStates: number;
   readonly chatQaEntries: number;
-  readonly whitelistEntries: number;
+  readonly permissionList: number;
   readonly blocklistEntries: number;
   readonly pendingRemovals: number;
 }

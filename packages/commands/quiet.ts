@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { clearChatStateField, getChatState, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
@@ -20,7 +21,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   const quietUntil: number = getChatState(chatId).quietUntil ?? 0;
   if (isQuietUntilActive(quietUntil)) {
     const remainingMinutes: number = Math.ceil((quietUntil - Date.now()) / 60_000);
-    await sendCommandMessage({ chatId, text: `本天才已经在闭嘴了呀（还剩约 ${remainingMinutes} 分钟），一个静默没结束不许再叠，想重来就先 /unquiet，笨蛋♡`, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietAlreadyEnabled(remainingMinutes), replyToMessageId: messageId });
     return;
   }
 
@@ -29,7 +30,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   if (arg) {
     const parsed: number = Number(arg);
     if (!Number.isFinite(parsed)) {
-      await sendCommandMessage({ chatId, text: `笨蛋，/quiet 后面要接分钟数（${QUIET_MIN_MINUTES}~${QUIET_MAX_MINUTES}），不填就是 ${QUIET_DEFAULT_MINUTES} 分钟♡`, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietUsage(QUIET_MIN_MINUTES, QUIET_MAX_MINUTES, QUIET_DEFAULT_MINUTES), replyToMessageId: messageId });
       return;
     }
     minutes = Math.min(QUIET_MAX_MINUTES, Math.max(QUIET_MIN_MINUTES, Math.round(parsed)));
@@ -39,7 +40,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   state.quietUntil = Date.now() + minutes * 60_000;
   await persistChatState(chatId, "quiet set");
 
-  await sendCommandMessage({ chatId, text: `哼，本天才就赏你们 ${minutes} 分钟清净，不主动插话也不复读。想本天才了就回复或 @ 我，杂鱼♡`, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietEnabled(minutes), replyToMessageId: messageId });
 }
 
 /**
@@ -52,7 +53,7 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
 
   const state: Readonly<ChatState> = getChatState(chatId);
   if (!isQuietUntilActive(state.quietUntil)) {
-    await sendCommandMessage({ chatId, text: `本天才本来就没在闭嘴呀，笨蛋要 /unquiet 什么呢♡`, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietAlreadyDisabled, replyToMessageId: messageId });
     return;
   }
 
@@ -61,5 +62,5 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
   clearChatStateField(chatId, "quietUntil");
   await persistChatState(chatId, "quiet cleared");
 
-  await sendCommandMessage({ chatId, text: `哼，这么快就受不了没有本天才的日子啦？静默解除，杂鱼们做好被吵的准备吧♡`, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietDisabled, replyToMessageId: messageId });
 }

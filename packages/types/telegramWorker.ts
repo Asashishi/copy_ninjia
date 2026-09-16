@@ -65,6 +65,7 @@ interface TelegramWorkerTemporaryMessageBase {
   readonly category: "message";
   readonly chatId: number;
   readonly messageThreadId?: number;
+  readonly replyToMessageId?: number;
   readonly text: string;
   readonly deleteAfterMs: number;
 }

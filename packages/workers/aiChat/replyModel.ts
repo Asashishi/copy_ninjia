@@ -1,3 +1,4 @@
+import { chatPersonas } from "../../cache/workers/aiChat/persona";
 import { getPersona } from "../../config/persona";
 import {
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
@@ -61,14 +62,6 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
 }
 
 /**
- * 返回仓库根目录 prompt/persona.md 的人设文本。主线程启动总闸预先校验文件，
- * AI Worker 在自己的 isolate 中首次回复时读取并缓存。
- */
-function systemPrompt(): string {
-  return getPersona();
-}
-
-/**
  * 跑完一轮回复对话。
  * @param chatId 群聊 ID，用于取该群当前的心情（见 runtimeState.ts 的
  *   buildRuntimeStateBlock）。
@@ -88,12 +81,9 @@ export async function generateReply(
   toolset: ReplyToolset
 ): Promise<string | null> {
   if (!toolset.isActive()) return null;
-  // 系统提示词整段逐字恒定——心情与当前时间已经挪进 user 内容的运行时状态区块
-  // （见 runtimeState.ts）。这一条是供应商缓存的前提，别再往这里拼任何随时间、
-  // 群或轮次变化的东西。persona.md 与 CHAT_INTERACTION_INSTRUCTION 自带 Markdown
-  // 标题，其余段落在此补同级的 ## 标题。
+  // 每轮开始固定本群当前人设；后续工具往返复用同一系统提示词。
   const staticSystemPrompt: string =
-    `${systemPrompt()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
+    `${chatPersonas.get(chatId) ?? getPersona()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
     `${CHAT_INTERACTION_INSTRUCTION}\n\n` +
     `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n` +
     // 上下文结构后依次声明转录格式、两层仲裁与直接唤起的读取顺序。

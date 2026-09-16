@@ -1,3 +1,5 @@
+import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
+import type { AtmosphereTexts } from "../../types/atmosphere";
 import {
   ANTI_RAID_PER_MINUTE_LIMIT,
   JOIN_WINDOW_CAPACITY,
@@ -14,11 +16,11 @@ import type { LockdownAbandonReason } from "../../types/states/lockdown";
 import { logger } from "../../infra/logger";
 
 /** 生成超过入群阈值时的封锁公告。 */
-export function lockdownAnnouncementText(joinCount?: number): string {
+export function lockdownAnnouncementText(joinCount?: number, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
   const influx: string = joinCount === undefined
     ? "检测到短时间内大量成员入群"
-    : `${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${joinCount} 个杂鱼`;
-  return `哼，${influx}，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`;
+    : atmosphere.NOTICE_TEXTS.lockdownInflux(JOIN_WINDOW_MS / 1000, joinCount);
+  return atmosphere.NOTICE_TEXTS.lockdownStarted(influx, LOCKDOWN_MS / 60_000);
 }
 
 /** 丢弃某群的入群滑窗与静默清理计时器；重新计数从零开始。 */

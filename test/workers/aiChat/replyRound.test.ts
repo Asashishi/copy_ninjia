@@ -279,9 +279,9 @@ describe("AI 单轮回复生命周期", () => {
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -1001,
       senderId: 99,
-      firstName: "Ninja",
+      firstName: "自己（也就是你）",
       lastName: "",
-      username: "ninja_bot",
+      username: undefined,
       messageId: 104,
       replyTo: aiReplyReferenceFixture({
         messageId: 555,
@@ -318,9 +318,9 @@ describe("AI 单轮回复生命周期", () => {
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -1001,
       senderId: 99,
-      firstName: "Ninja",
+      firstName: "自己（也就是你）",
       lastName: "",
-      username: "ninja_bot",
+      username: undefined,
       messageId: 105,
       text: "退化成普通消息",
     }));

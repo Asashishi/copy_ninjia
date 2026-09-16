@@ -1,31 +1,34 @@
+import type { DiskIORespawnListener } from "../../packages/types/diskIO/messages";
+import type { IdentityStoragePersistedReply } from "../../packages/types/diskIO/replies";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { CHAT_QA_MAX_PER_CHAT } from "../../packages/consts/qa";
 
 const posted: unknown[] = [];
-let persistedListener: ((reply: unknown) => void) | undefined;
-let respawnListener: ((transport: unknown) => boolean) | undefined;
+let persistedListener: ((reply: IdentityStoragePersistedReply) => void) | undefined;
+let respawnListener: (DiskIORespawnListener) | undefined;
 let postSucceeds: boolean = true;
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: (message: unknown): boolean => {
     if (!postSucceeds) return false;
     posted.push(message);
     return true;
   },
-  onIdentityStoragePersisted: (callback: (reply: unknown) => void): void => {
+  onIdentityStoragePersisted: (callback: (reply: IdentityStoragePersistedReply) => void): void => {
     persistedListener = callback;
   },
   // 按 owner 名捕获：同一 isolate 里还有别的领域也会登记重放回调。
   onDiskIORespawn: (
     owner: string,
     _priority: number,
-    listener: (transport: unknown) => boolean
+    listener: DiskIORespawnListener
   ): void => {
     if (owner === "chat qa") respawnListener = listener;
   },
   // logger 静态 import 了 infra/diskIO，模块被整体替换后这个出口也得给全。
   relayLogMessage: (): boolean => true,
-}));
+})));
 
 const {
   chatQaCount,
@@ -117,6 +120,8 @@ describe("群问答主线程持久化边界", () => {
     setChatQa(CHAT_ID, "怎么入群？", "改了");
 
     persistedListener?.({
+      type: "identityStoragePersisted",
+      temporaryAdBypassWrites: [],
       writes: [],
       chatStateWrites: [],
       chatQaWrites: [{ chatId: CHAT_ID, q: "怎么入群？", revision: first }],
@@ -131,7 +136,7 @@ describe("群问答主线程持久化边界", () => {
     posted.length = 0;
     const replayed: unknown[] = [];
 
-    expect(respawnListener?.({ post: (m: unknown): boolean => {
+    expect(respawnListener?.({ ensureLuckReceiptSecret: async (): Promise<never> => { throw new Error("Unexpected secret request."); }, post: (m: unknown): boolean => {
       replayed.push(m);
       return true;
     } })).toBeTrue();

@@ -25,8 +25,8 @@ import { PERFORMANCE_MOCK_ROOT, PROJECT_ROOT } from "../fullSuite/mockRoot";
 import {
   assertUnlinkedFixtureParent,
   assertUnlinkedFixturePath,
-  type FixturePathBoundary,
 } from "../../fixtures/pathBoundary";
+import type { FixturePathBoundary } from "../../fixtures/pathBoundary";
 import {
   MAIN_BENCHMARK_ROOT_PREFIX,
   MOCK_ROOT_PREFIX,

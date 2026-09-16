@@ -45,6 +45,9 @@ export const FORWARD_ROSTER_BLOCK_NAME: string = "【转发来源名册】";
  *  自己说的」是回复链路的前提，给它一个不需要查表就认得的记号。 */
 export const SELF_ROSTER_CODE: string = "me";
 
+/** AI 上下文中本机器人发言的唯一代称；仅按自身账号 ID 使用，转录身份不展示 Telegram 姓名或用户名。 */
+export const SELF_SPEAKER_NAME: string = "自己（也就是你）";
+
 /** 转录行上的消息号。只出现在「本段里被别人回复过」和本轮触发消息这两类行上
  *  ——其余行没有任何东西会引用它们的编号，写出来纯属付费。 */
 export function messageNumberTag(messageId: number | string): string {

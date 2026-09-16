@@ -1,3 +1,4 @@
+import { chatAtmosphere } from "../../infra/atmosphere";
 import type { Message } from "grammy/types";
 import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
 import {
@@ -27,6 +28,6 @@ export async function handlePrivateProxySend(message: Message): Promise<void> {
   await persistChatState(targetChatId, "proxy send failed");
   await sendMessage({
     chatId: message.chat.id,
-    text: `转发到 ${targetChatId} 失败了，本天才先把这轮中转停掉了，检查一下再 /send 重新开吧♡`,
+    text: chatAtmosphere(targetChatId).NOTICE_TEXTS.proxyFailed(targetChatId),
   });
 }

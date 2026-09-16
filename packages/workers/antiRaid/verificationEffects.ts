@@ -1,20 +1,21 @@
+import { workerAtmosphere } from "./atmosphere";
+import type { AtmosphereTexts } from "../../types/atmosphere";
 import {
   verificationEntries,
   verificationGeneration,
   verificationRevisions,
 } from "../../cache/workers/antiRaid/verification";
-import {
-  VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS,
-  WELCOME_AUTO_DELETE_MS,
-} from "../../consts/antiRaid/verification";
+import { VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS } from "../../consts/antiRaid/verification";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { logger } from "../../infra/logger";
 import {
   answerCallbackQuery,
   deleteMessage,
-  deleteMessageAfter,
-  sendMessage,
   telegramApi,
 } from "../../infra/telegram";
+import { runBooleanTelegramAction } from "../../infra/telegram/actions/core";
+import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
+import type { TelegramWorkerTemporaryMessageResult } from "../../types/telegramWorker";
 import { verificationKey } from "../../libs/verificationKey";
 import type { VerificationDispatcher } from "../../types/antiRaid/internal";
 import type {
@@ -169,41 +170,39 @@ export async function runVerificationEffects({
       case "sendWelcome": {
         const welcomeText: string =
           effect.variant === "channelComment"
-            ? `哼，${effect.targetLabel} 老实巴交的在帖子底下冒个了泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`
+            ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationCommentExempt(effect.targetLabel)
             : effect.variant === "vouchedBot"
-              ? `哼，既然 ${effect.fromLabel} 大人愿意为机器人 ${effect.targetLabel} 作保，本天才就勉为其难放这个铁疙瘩进来啦~♡`
+              ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationBotApproved(effect.fromLabel, effect.targetLabel)
               : effect.variant === "approved"
-                ? `哼，既然 ${effect.fromLabel} 大人肯为 ${effect.targetLabel} 作保，本天才就勉为其难放这条杂鱼进来啦~♡`
-                : `哼，算你机灵，${effect.fromLabel} 通过验证啦，欢迎杂鱼入群~♡`;
-        const welcomeMessageId: number | undefined = await sendMessage({
-          chatId,
-          text: welcomeText,
-          replyToMessageId: effect.anchorMessageId,
-          api: telegramApi,
-        });
-        if (welcomeMessageId !== undefined) {
-          deleteMessageAfter({
+                ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationMemberApproved(effect.fromLabel, effect.targetLabel)
+                : workerAtmosphere(chatId).NOTICE_TEXTS.verificationSelfPassed(effect.fromLabel);
+        await runBooleanTelegramAction(
+          "send message",
+          (signal?: AbortSignal): Promise<TelegramWorkerTemporaryMessageResult | undefined> => sendTemporaryMessageFromMain({
+            purpose: "notice",
             chatId,
-            messageId: welcomeMessageId,
-            delayMs: WELCOME_AUTO_DELETE_MS,
-            api: telegramApi,
-          });
-        }
+            text: welcomeText,
+            replyToMessageId: effect.anchorMessageId,
+            deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
+            signal,
+          })
+        );
         break;
       }
       case "answerCallback": {
+        const atmosphere: AtmosphereTexts = workerAtmosphere(chatId);
         const replyText: string =
           effect.reply === "ok"
-            ? "验证通过啦～"
+            ? atmosphere.NOTICE_TEXTS.verificationCallbackPassed
             : effect.reply === "invalid"
-              ? "验证已经失效啦，再试试重新进群吧"
+              ? atmosphere.NOTICE_TEXTS.verificationCallbackExpired
               : effect.reply === "useSelfButton"
-                ? "想自己过验证就点「我是良民」，「通过」是给管理员代点的～"
+                ? atmosphere.NOTICE_TEXTS.verificationUseSelfButton(atmosphere.VERIFICATION_SELF_BUTTON_TEXT, atmosphere.VERIFICATION_APPROVE_BUTTON_TEXT)
                 : effect.reply === "notApprover"
-                  ? "替人点「通过」是本群管理员的特权，杂鱼别乱点～"
+                  ? atmosphere.NOTICE_TEXTS.verificationAdminOnly
                   : effect.reply === "approverUnknown"
-                    ? "本天才暂时没查到你是不是管理员，稍后再点一次～"
-                    : "这不是你的验证按钮哦，杂鱼别乱点～";
+                    ? atmosphere.NOTICE_TEXTS.verificationAdminUnknown
+                    : atmosphere.NOTICE_TEXTS.verificationOtherUser;
         await answerCallbackQuery({
           callbackQueryId: effect.callbackQueryId,
           text: replyText,

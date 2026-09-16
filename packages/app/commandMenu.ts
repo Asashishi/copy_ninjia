@@ -1,5 +1,7 @@
 import type { Bot } from "grammy";
-import { BOT_COMMANDS } from "../consts/commands";
+import type { Api } from "grammy";
+import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import { getChatState, getChatStateCache } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
 
 /**
@@ -8,8 +10,25 @@ import { logger } from "../infra/logger";
  */
 export async function registerCommandMenu(bot: Bot): Promise<void> {
   try {
-    await bot.api.setMyCommands(BOT_COMMANDS);
+    await bot.api.setMyCommands(ATMOSPHERE_TEXTS.teasing.BOT_COMMANDS);
   } catch (error: unknown) {
     logger.error("Failed to register bot commands menu:", error);
+  }
+  for (const [chatId] of getChatStateCache()) await syncChatCommandMenu(bot.api, chatId);
+}
+
+/** 人设变更后更新 Telegram 群菜单；删除自定义人设时恢复默认作用域的菜单。 */
+export async function syncChatCommandMenu(
+  api: Pick<Api, "setMyCommands" | "deleteMyCommands">,
+  chatId: number
+): Promise<void> {
+  try {
+    if (getChatState(chatId).aiPersona === undefined) {
+      await api.deleteMyCommands({ scope: { type: "chat", chat_id: chatId } });
+    } else {
+      await api.setMyCommands(ATMOSPHERE_TEXTS.plain.BOT_COMMANDS, { scope: { type: "chat", chat_id: chatId } });
+    }
+  } catch (error: unknown) {
+    logger.error(`Failed to synchronize the commands menu for chat ${chatId}:`, error);
   }
 }

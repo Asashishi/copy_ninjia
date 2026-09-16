@@ -1,8 +1,6 @@
 import { join } from "node:path";
-import {
-  declaredCoverageMetrics,
-  type CoverageMetrics,
-} from "./conventions/coverageMetrics";
+import { declaredCoverageMetrics } from "./conventions/coverageMetrics";
+import type { CoverageMetrics } from "./conventions/coverageMetrics";
 import { parseCoverageSummary } from "./coverageSummary";
 
 /**

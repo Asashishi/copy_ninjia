@@ -10,7 +10,7 @@ export interface BufferGlobalAllowance {
   readonly purpose: string;
 }
 
-/** 脚本可复用的 Node 兼容接口；生产模块必须再按精确文件登记。 */
+/** 脚本与测试可复用的 Node 兼容接口；生产模块必须再按精确文件登记。 */
 export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
   "node:async_hooks": {
     symbols: ["AsyncLocalStorage"],
@@ -261,6 +261,86 @@ export const SCRIPT_ONLY_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowan
   },
 };
 
+/** 测试夹具、隔离临时根与密钥样本额外使用的 Node 兼容接口；测试同时复用 SCRIPT_NODE_IMPORTS。 */
+export const TEST_ONLY_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
+  "node:crypto": {
+    symbols: ["generateKeyPairSync"],
+    purpose: "throwaway private-key fixtures for credential parsing",
+  },
+  "node:fs": {
+    symbols: ["cpSync", "mkdtempSync", "rmSync", "rmdirSync", "symlinkSync"],
+    purpose: "isolated temporary-root lifecycle, config fixture copies, and filesystem topology fixtures",
+  },
+  "node:fs/promises": {
+    symbols: ["mkdtemp", "rm"],
+    purpose: "asynchronous isolated temporary-root lifecycle",
+  },
+  "node:os": {
+    symbols: ["tmpdir"],
+    purpose: "temporary-root placement",
+  },
+};
+
+/** 测试文件中需要整模块替身或透传包装的精确 Node 兼容 import 位置。 */
+export const TEST_NODE_IMPORTS: Readonly<
+  Record<string, Readonly<Record<string, NodeImportAllowance>>>
+> = {
+  "test/infra/storageLockDurability.test.ts": {
+    "node:fs/promises": {
+      symbols: "*",
+      purpose: "real-module snapshot behind mock.module fault injection",
+    },
+  },
+  "test/libs/atomicFile.test.ts": {
+    "node:fs": {
+      symbols: "*",
+      purpose: "real-module snapshot behind mock.module fault injection",
+    },
+    "node:fs/promises": {
+      symbols: "*",
+      purpose: "real-module snapshot behind mock.module fault injection",
+    },
+  },
+  "test/libs/fileAccess.test.ts": {
+    "node:fs": {
+      symbols: "*",
+      purpose: "spyOn targets for metadata and access-mode failures",
+    },
+  },
+  "test/productionModules.test.ts": {
+    "node:fs": {
+      symbols: "*",
+      purpose: "pass-through write guard installed with mock.module during production imports",
+    },
+    "node:fs/promises": {
+      symbols: "*",
+      purpose: "pass-through write guard installed with mock.module during production imports",
+    },
+  },
+  "test/workers/diskIO/joinLogCompaction.test.ts": {
+    "node:fs": {
+      symbols: "*",
+      purpose: "spyOn target for directory fsync failures",
+    },
+  },
+};
+
+/** 测试文件中有字节接口语义依据的 Node Buffer 全局调用位置。 */
+export const TEST_BUFFER_GLOBALS: Readonly<Record<string, BufferGlobalAllowance>> = {
+  "test/config/googleAuth.test.ts": {
+    methods: ["from"],
+    purpose: "DER byte patching of generated private-key fixtures",
+  },
+  "test/infra/loggerSerializationBudget.test.ts": {
+    methods: ["byteLength"],
+    purpose: "production-equivalent UTF-8 byte budget assertions",
+  },
+  "test/libs/boundedResponse.test.ts": {
+    methods: ["from"],
+    purpose: "Buffer-typed stream chunk inputs",
+  },
+};
+
 /** 同步内容 I/O 仅保留 Bun 原生 API 无法覆盖的精确语义与调用位置。 */
 export const SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
@@ -269,6 +349,24 @@ export const SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS: Readonly<
     "node:fs": {
       symbols: ["readFileSync"],
       purpose: "synchronous /proc I/O counter snapshots bracketing measured work",
+    },
+  },
+};
+
+/** 测试预加载在任何测试模块求值前同步准备隔离配置根，仅限这些位置使用同步内容 I/O。 */
+export const TEST_SYNC_CONTENT_IO_EXEMPTIONS: Readonly<
+  Record<string, Readonly<Record<string, NodeImportAllowance>>>
+> = {
+  "test/preload.ts": {
+    "node:fs": {
+      symbols: ["readFileSync"],
+      purpose: "synchronous deployment-config adoption before test modules evaluate",
+    },
+  },
+  "test/preloadEnv.ts": {
+    "node:fs": {
+      symbols: ["readFileSync", "writeFileSync"],
+      purpose: "synchronous isolated config-root rewrite before environment-derived constants load",
     },
   },
 };

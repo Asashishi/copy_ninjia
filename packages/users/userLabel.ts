@@ -1,3 +1,5 @@
+import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import type { AtmosphereTexts } from "../types/atmosphere";
 import type { CachedUser } from "../types/chatState";
 import { joinPersonName, sanitizeDisplayName } from "../libs/text";
 
@@ -7,12 +9,12 @@ import { joinPersonName, sanitizeDisplayName } from "../libs/text";
  * first_name/title。
  * @param user 要生成标签的用户/频道。
  */
-export function formatUserLabel(user: CachedUser): string {
+export function formatUserLabel(user: CachedUser, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
   if (user.username) return `@${user.username}`;
   // title / first_name 是用户可控内容，同样要清洗后才拼进机器人的句子；
   // username 由 Telegram 限定字符集，直接用。
   if (user.isChannel) return sanitizeDisplayName(user.title ?? "") || "这个频道";
-  return sanitizeDisplayName(user.first_name ?? "") || "这个杂鱼";
+  return sanitizeDisplayName(user.first_name ?? "") || atmosphere.NOTICE_TEXTS.unknownUser;
 }
 
 /**
@@ -27,9 +29,9 @@ export function formatUserLabel(user: CachedUser): string {
  * `/unblock` 还据此决定走哪个解封接口。
  * @param user 目标用户/频道；只带 id 的最小身份也接受。
  */
-export function formatTargetLabel(user: CachedUser): string {
+export function formatTargetLabel(user: CachedUser, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
   if (user.username !== undefined || user.first_name !== undefined || user.title !== undefined) {
-    return formatUserLabel(user);
+    return formatUserLabel(user, atmosphere);
   }
   return user.isChannel === true ? `频道 ${user.id}` : `用户 ${user.id}`;
 }
@@ -41,13 +43,13 @@ export function formatTargetLabel(user: CachedUser): string {
  * 单个空格，避免一句话被撑成多行。
  * @param user 要生成展示名的用户/频道。
  */
-export function formatFullName(user: CachedUser): string {
+export function formatFullName(user: CachedUser, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
   const rawName: string = user.isChannel
     ? user.title ?? ""
     : joinPersonName(user.first_name, user.last_name);
   const displayName: string = sanitizeDisplayName(rawName);
   if (displayName.length > 0) return displayName;
-  return user.username ? `@${user.username}` : "这个杂鱼";
+  return user.username ? `@${user.username}` : atmosphere.NOTICE_TEXTS.unknownUser;
 }
 
 /**

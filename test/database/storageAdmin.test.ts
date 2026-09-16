@@ -48,11 +48,11 @@ describe("共享数据库夹具辅助函数", () => {
           q: "怎么入群？",
           data: encodeChatQaData("请阅读置顶消息。", "test:chat_qa.data"),
         }],
-        temporaryWhitelist: [{
+        temporaryAdBypass: [{
           id: 7,
-          tempWhite: false,
-          tempWhiteAt: null,
-          tempWhiteCount: 0,
+          adBypass: false,
+          adBypassGrantedAt: null,
+          qualifiedDays: 0,
           sendCount: 1,
           countedAt: Date.now(),
           qualifiedAt: null,
@@ -63,12 +63,12 @@ describe("共享数据库夹具辅助函数", () => {
       clearStorageBusinessTables(database);
 
       const businessTables: readonly string[] = [
-        "whitelist_entries",
+        "permission_list",
         "blocklist_entries",
         "pending_blocked_removals",
         "chat_states",
         "chat_qa",
-        "temporary_whitelist_entries",
+        "temporary_ad_bypass_entries",
       ];
       for (const table of businessTables) {
         const row: { readonly count: number } | null = database.$client

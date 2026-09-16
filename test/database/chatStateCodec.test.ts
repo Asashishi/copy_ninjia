@@ -10,13 +10,13 @@ import { botPermissions } from "../helpers/botPermissions";
 
 describe("chat_states codec", () => {
   test("当前翻译开关严格往返，运行时拒绝旧开关名称", () => {
-    const text: string = encodeChatStateData({ isTranslationEnabled: true }, "chat_states[-1001].data");
-    expect(decodeChatStateData(text, "chat_states[-1001].data").isTranslationEnabled).toBe(true);
+    const text: string = encodeChatStateData({ isTranslationEnabled: true }, "chat_states[-1001].status");
+    expect(decodeChatStateData(text, "chat_states[-1001].status").isTranslationEnabled).toBe(true);
     for (const value of [
       { isJATranslationEnabled: true },
       { isJATranslationEnabled: true, isTranslationEnabled: true },
       { isTranslationEnabled: "true" },
-    ]) expect(() => decodeChatStateData(JSON.stringify(value), "chat_states[-1001].data")).toThrow();
+    ]) expect(() => decodeChatStateData(JSON.stringify(value), "chat_states[-1001].status")).toThrow();
   });
 
   test("完整权限、功能开关和 lockdown 严格往返", () => {
@@ -36,8 +36,8 @@ describe("chat_states codec", () => {
         originalPermissions: { can_invite_users: true },
         expiresAt: 3_000,
       },
-    }, "chat_states[-1001].data");
-    expect(decodeChatStateData(text, "chat_states[-1001].data")).toEqual({
+    }, "chat_states[-1001].status");
+    expect(decodeChatStateData(text, "chat_states[-1001].status")).toEqual({
       quietUntil: undefined,
       lockdown: {
         phase: "reconciling",
@@ -68,8 +68,8 @@ describe("chat_states codec", () => {
         originalPermissions: { can_invite_users: true },
         expiresAt: 9_000,
       },
-    }, "chat_states[-1001].data");
-    expect(decodeChatStateData(text, "chat_states[-1001].data").lockdown).toEqual({
+    }, "chat_states[-1001].status");
+    expect(decodeChatStateData(text, "chat_states[-1001].status").lockdown).toEqual({
       phase: "active",
       intentId: 5,
       announced: true,
@@ -86,7 +86,7 @@ describe("chat_states codec", () => {
     delete incomplete.canManageTopics;
     expect(() => decodeChatStateData(
       JSON.stringify({ botPermissions: incomplete }),
-      "database/storage.sqlite:chat_states[-1001].data"
+      "database/storage.sqlite:chat_states[-1001].status"
     )).toThrow("$.botPermissions.canManageTopics");
 
     const nonAdmin: BotChatPermissions = botPermissions({
@@ -97,16 +97,16 @@ describe("chat_states codec", () => {
       JSON.stringify({
         botPermissions: { ...nonAdmin, canDeleteMessages: true },
       }),
-      "database/storage.sqlite:chat_states[-1001].data"
+      "database/storage.sqlite:chat_states[-1001].status"
     )).toThrow("$.botPermissions.canDeleteMessages");
   });
 
   test("旧 botIsAdmin、未知字段、空状态和非法 lockdown 一律拒绝", () => {
     expect(() => decodeChatStateData(
       JSON.stringify({ botIsAdmin: true }),
-      "chat_states[-1001].data"
+      "chat_states[-1001].status"
     )).toThrow("supported chat-state fields");
-    expect(() => decodeChatStateData("{}", "chat_states[-1001].data"))
+    expect(() => decodeChatStateData("{}", "chat_states[-1001].status"))
       .toThrow("a non-empty chat-state object");
     // 公告在占位落地那一刻就发出，因此 applying 阶段也可以是「已公告」。
     expect(() => decodeChatStateData(
@@ -120,7 +120,7 @@ describe("chat_states codec", () => {
           expiresAt: 2_000,
         },
       }),
-      "chat_states[-1001].data"
+      "chat_states[-1001].status"
     )).not.toThrow();
     // message ID 只可能来自一次成功的发送。
     expect(() => decodeChatStateData(
@@ -134,7 +134,7 @@ describe("chat_states codec", () => {
           expiresAt: 2_000,
         },
       }),
-      "chat_states[-1001].data"
+      "chat_states[-1001].status"
     )).toThrow("$.lockdown.announcementMessageId");
     expect(() => decodeChatStateData(
       JSON.stringify({
@@ -147,7 +147,7 @@ describe("chat_states codec", () => {
           expiresAt: 2_000,
         },
       }),
-      "chat_states[-1001].data"
+      "chat_states[-1001].status"
     )).toThrow("$.lockdown.announcementMessageId");
   });
 
@@ -169,7 +169,7 @@ describe("chat_states codec", () => {
  * 失败，只会让一整类坏行悄悄通过。
  */
 describe("chat_states codec 的拒绝分支", () => {
-  const SOURCE: string = "chat_states[-1001].data";
+  const SOURCE: string = "chat_states[-1001].status";
 
   function chatStateJson(override: Readonly<Record<string, unknown>>): string {
     return JSON.stringify(override);
@@ -279,4 +279,14 @@ describe("chat_states codec 的拒绝分支", () => {
       "$.lockdown.expiresAt"
     );
   });
+});
+
+test("人设独立于 status，空白和非法类型不回退默认", () => {
+  const status = encodeChatStateData({ isInitEnabled: true, aiPersona: "群人设" });
+  expect(JSON.parse(status)).toEqual({ isInitEnabled: true });
+  expect(decodeChatStateData(status, "chat_states[-1001]", "群人设").aiPersona).toBe("群人设");
+  expect(decodeChatStateData(status, "chat_states[-1001]", null).aiPersona).toBeUndefined();
+  for (const invalid of ["", " ", "\n", 1, true, {}]) {
+    expect(() => decodeChatStateData(status, "chat_states[-1001]", invalid as string)).toThrow("ai_persona");
+  }
 });

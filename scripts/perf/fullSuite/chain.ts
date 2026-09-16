@@ -23,13 +23,14 @@ import {
   CHAIN_IDENTITY_BATCHES,
   CHAIN_JOIN_LOG_EVENTS,
   CHAIN_LOG_ENTRIES,
-  CHAIN_TEMPORARY_WHITELIST_WRITES,
+  CHAIN_TEMPORARY_AD_BYPASS_WRITES,
   CHAIN_WARMUP_OPERATIONS,
 } from "./constants";
 import {
   benchmarkChatId,
   benchmarkUserId,
   buildAiMemorySnapshot,
+  readBenchmarkAiMemories,
 } from "./fixture";
 import { assertBenchmarkRuntimeRoot } from "./mockRoot";
 import { percentile } from "../statistics";
@@ -44,9 +45,9 @@ import {
   whitelistEntryCache,
 } from "../../../packages/cache/main/identityStorage";
 import {
-  temporaryWhitelistActivityCache,
-  unacknowledgedTemporaryWhitelistWrites,
-} from "../../../packages/cache/main/temporaryWhitelist";
+  temporaryAdBypassActivityCache,
+  unacknowledgedTemporaryAdBypassWrites,
+} from "../../../packages/cache/main/temporaryAdBypass";
 import { IDENTITY_WRITE_BATCH_MAX_ENTRIES } from
   "../../../packages/consts/identityStorage";
 import { STATE_MANAGED_CHAT_LIMIT } from
@@ -72,8 +73,8 @@ import { setChatQa } from "../../../packages/infra/qaStore";
 import { recordJoinLog } from "../../../packages/infra/joinLog";
 import { getOrCreateChatState } from
   "../../../packages/infra/storage/stateStore";
-import { recordEligibleTemporaryWhitelistActivity } from
-  "../../../packages/antiRaid/temporaryWhitelist";
+import { recordEligibleTemporaryAdBypassActivity } from
+  "../../../packages/antiRaid/temporaryAdBypass";
 import { drainAdDisposals, handleAdDetected } from
   "../../../packages/antiRaid/adDetect";
 import { ensureBotChatPermissions } from
@@ -111,7 +112,7 @@ import type { ChainName, ChainRound } from "./types";
 const STORAGE_CHAIN_DEPENDENCIES: StorageChainDependencies = {
   chainJoinLogEvents: CHAIN_JOIN_LOG_EVENTS,
   chainIdentityBatches: CHAIN_IDENTITY_BATCHES,
-  chainTemporaryWhitelistWrites: CHAIN_TEMPORARY_WHITELIST_WRITES,
+  chainTemporaryAdBypassWrites: CHAIN_TEMPORARY_AD_BYPASS_WRITES,
   chainChatStateWrites: CHAIN_CHAT_STATE_WRITES,
   chainChatQaWrites: CHAIN_CHAT_QA_WRITES,
   chainAiMemorySnapshots: CHAIN_AI_MEMORY_SNAPSHOTS,
@@ -124,6 +125,7 @@ const STORAGE_CHAIN_DEPENDENCIES: StorageChainDependencies = {
   benchmarkChatId,
   benchmarkUserId,
   buildAiMemorySnapshot,
+  readBenchmarkAiMemories,
   recordJoinLog,
   hydrateIdentityStorageCounts,
   queueIdentityPolicyWrite,
@@ -135,12 +137,12 @@ const STORAGE_CHAIN_DEPENDENCIES: StorageChainDependencies = {
   flushDiskIO,
   flushDiskIODomain,
   readIdentityPolicies,
-  recordEligibleTemporaryWhitelistActivity,
+  recordEligibleTemporaryAdBypassActivity,
   ensureAdDetectAgentConfig,
   whitelistEntryCache,
   blocklistEntryCache,
-  temporaryWhitelistActivityCache,
-  unacknowledgedTemporaryWhitelistWrites,
+  temporaryAdBypassActivityCache,
+  unacknowledgedTemporaryAdBypassWrites,
 };
 
 const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {

@@ -98,7 +98,7 @@ describe("gag 消息与 inline 入口", () => {
       }
     );
 
-    // 目标自己的消息会被 gag 删掉，因此不进 15 条窗口；换新由别人的消息推动。
+    // 目标自己的消息会被 gag 删掉，因此不进 7 条窗口；换新由别人的消息推动。
     await gag.handleGagMessageIngress(
       normalMessage({
         message_id: 90,
@@ -134,7 +134,7 @@ describe("gag 消息与 inline 入口", () => {
     expect(session.speakNoticeThreadId).toBeUndefined();
   });
 
-  test("多个用户和频道会话按各自入口起点每 15 条换新，且先发新入口再删本会话旧入口", async () => {
+  test("多个用户和频道会话按各自入口起点每 7 条换新，且先发新入口再删本会话旧入口", async () => {
     const userSession: GagSession = createSession({
       targetId: 7,
       messagesSinceSpeakNotice: 0,
@@ -173,7 +173,7 @@ describe("gag 消息与 inline 入口", () => {
       return "deleted";
     });
 
-    for (let index: number = 0; index < 10; index++) {
+    for (let index: number = 0; index < GAG_SPEAK_NOTICE_MESSAGE_INTERVAL - 5; index++) {
       expect(await gag.handleGagMessageIngress(normalMessage({
         message_id: 100 + index,
         from: { id: 100, is_bot: false, first_name: "Admin" },
@@ -183,10 +183,10 @@ describe("gag 消息与 inline 入口", () => {
     expect(channelSession.speakNoticeMessageId).toBe(76);
     expect(channelSession.messagesSinceSpeakNotice).toBe(0);
     expect(userSession.speakNoticeMessageId).toBe(55);
-    expect(userSession.messagesSinceSpeakNotice).toBe(10);
+    expect(userSession.messagesSinceSpeakNotice).toBe(GAG_SPEAK_NOTICE_MESSAGE_INTERVAL - 5);
     expect(events).toEqual(["send-channel-76", "delete-channel-66"]);
 
-    for (let index: number = 10; index < GAG_SPEAK_NOTICE_MESSAGE_INTERVAL; index++) {
+    for (let index: number = GAG_SPEAK_NOTICE_MESSAGE_INTERVAL - 5; index < GAG_SPEAK_NOTICE_MESSAGE_INTERVAL; index++) {
       expect(await gag.handleGagMessageIngress(normalMessage({
         message_id: 100 + index,
         from: { id: 100, is_bot: false, first_name: "Admin" },
@@ -207,7 +207,7 @@ describe("gag 消息与 inline 入口", () => {
     expect(channelSession.retiredSpeakNoticeMessageId).toBe(0);
   });
 
-  test("旧入口删除连续失败时只保留一个 retired 槽，并按每 15 条而非每条消息重试", async () => {
+  test("旧入口删除连续失败时只保留一个 retired 槽，并按每 7 条而非每条消息重试", async () => {
     const session: GagSession = createSession({
       messagesSinceSpeakNotice: GAG_SPEAK_NOTICE_MESSAGE_INTERVAL - 1,
     });
@@ -346,7 +346,7 @@ describe("gag 消息与 inline 入口", () => {
     });
   });
 
-  test("目标直发且会删除的文字不计入 15 条，按钮发言与保留媒体才计数", async () => {
+  test("目标直发且会删除的文字不计入 7 条，按钮发言与保留媒体才计数", async () => {
     const session: GagSession = createSession({
       messagesSinceSpeakNotice: GAG_SPEAK_NOTICE_MESSAGE_INTERVAL - 1,
     });

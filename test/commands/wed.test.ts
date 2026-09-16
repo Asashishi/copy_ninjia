@@ -32,8 +32,8 @@ const { resetPendingMessageDeletions } = await import("../../packages/infra/tele
 const { wedChats } = await import("../../packages/cache/main/wed");
 const { getOrCreateWedChat } = await import("../../packages/commands/wed/chats");
 const { handleWedCommand, handleWedCallback, teardownWedInChat } = await import("../../packages/commands/wed");
-const { WED_BUTTON_TEXTS, WED_DRAW_TRANSIENT_LIMIT, WED_MEMBER_LIMIT, WED_OPERATION_TIMEOUT_MS,
-  WED_SESSION_LIMIT, WED_TEXTS } = await import("../../packages/consts/wed");
+const { WED_BUTTON_TEXTS, WED_TEXTS } = await import("../../packages/consts/atmosphere/teasing/wed");
+const { WED_DRAW_TRANSIENT_LIMIT, WED_MEMBER_LIMIT, WED_OPERATION_TIMEOUT_MS, WED_SESSION_LIMIT } = await import("../../packages/consts/wed");
 const { renderWedCaption } = await import("../../packages/commands/wed/rendering");
 
 const chat = { id: -1001, type: "supergroup", title: "群" } as const;

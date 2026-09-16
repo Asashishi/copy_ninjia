@@ -238,7 +238,7 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         verifications: reply.verifications,
         pendingBlockedRemovals: reply.pendingBlockedRemovals,
         blocklistEntryCount: reply.blocklistEntryCount,
-        whitelistEntryCount: reply.whitelistEntryCount,
+        permissionEntryCount: reply.permissionEntryCount,
         chatStates: reply.chatStates,
         chatQa: reply.chatQa,
       });
@@ -304,7 +304,7 @@ export function readJoinLog({
   });
 }
 
-/** 黑白名单与临时白名单累计 LRU 冷缺失的唯一跨线程批量读取边界。 */
+/** 黑白名单与临时广告免检累计 LRU 冷缺失的唯一跨线程批量读取边界。 */
 export function readIdentityPolicies(
   ids: readonly number[],
   timeoutMs: number = LOAD_TIMEOUT_MS
@@ -379,9 +379,7 @@ async function requestDiskIOFlush(
  * 只关心某一个领域有没有落盘的 flush。仍然触发统一 flush（Worker 那边本来
  * 就是各领域一起刷），但把「无关领域失败」判成成功。
  *
- * 存在的理由：`flushAll` 是各领域的合取，任何一个失败（典型是某群
- * `memory/ai/<chat>.json` 部署后属主不对）都会让 /block 报「小本本没能写进
- * 硬盘」，把运维引向一个其实没坏的文件。
+ * 各文件领域与 SQLite 的失败独立归属；调用方只按回执中的目标领域判断结果。
  * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
  */
 export async function flushDiskIODomain(

@@ -1,3 +1,5 @@
+import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
+import { getPersona } from "../../../packages/config/persona";
 /**
  * 回复循环的供应商中立行为：提示词分段、上下文区块顺序、整轮函数调用预算、
  * 联网检索软额度记账、工具轮往返与收尾。
@@ -151,6 +153,7 @@ function promptSections(label: string): ReplyPromptSections {
 }
 
 beforeEach(() => {
+  chatPersonas.clear();
   turns.length = 0;
   requests.length = 0;
   appendedOutputs.length = 0;
@@ -552,4 +555,36 @@ test("撞上工具轮上限时不再执行剩余调用，点名后收尾", async
   expect(loggerErrorMock).toHaveBeenCalledWith(
     expect.stringContaining(`hit the tool-round limit (${MAX_TOOL_ROUNDS})`)
   );
+});
+
+test("群级人设隔离，删除后使用默认 persona.md", async () => {
+  chatPersonas.set(-1001, "本群专用人设");
+  turns.push(okTurn({ text: "response" }));
+  await generateReply(-1001, promptSections("context"), toolset());
+  expect(requests.at(-1)?.systemPrompt).toStartWith("本群专用人设");
+  turns.push(okTurn({ text: "response" }));
+  await generateReply(-1002, promptSections("context"), toolset());
+  expect(requests.at(-1)?.systemPrompt).toStartWith(getPersona());
+  chatPersonas.delete(-1001);
+  turns.push(okTurn({ text: "response" }));
+  await generateReply(-1001, promptSections("context"), toolset());
+  expect(requests.at(-1)?.systemPrompt).toStartWith(getPersona());
+});
+
+test("工具往返期间修改人设只影响下一轮回复，当前轮系统前缀恒定", async () => {
+  chatPersonas.set(-1001, "本轮人设");
+  turns.push(okTurn({ calls: [call(SEND_MESSAGE_TOOL)] }), okTurn({ text: "本轮完成" }));
+  await expect(generateReply(-1001, promptSections("当前轮"), toolset({
+    has: (): boolean => true,
+    execute: async (): Promise<string> => {
+      chatPersonas.set(-1001, "下一轮人设");
+      return "{}";
+    },
+  }))).resolves.toBe("本轮完成");
+  expect(requests).toHaveLength(2);
+  expect(requests[0]!.systemPrompt).toStartWith("本轮人设");
+  expect(requests[1]!.systemPrompt).toBe(requests[0]!.systemPrompt);
+  turns.push(okTurn({ text: "下一轮完成" }));
+  await generateReply(-1001, promptSections("下一轮"), toolset());
+  expect(requests[2]!.systemPrompt).toStartWith("下一轮人设");
 });

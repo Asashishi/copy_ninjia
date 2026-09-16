@@ -80,7 +80,7 @@ describe("logger persistence routing boundary", () => {
         verifications: new Map(),
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
-        whitelistEntryCount: 0,
+        permissionEntryCount: 0,
         chatStates: new Map(),
         chatQa: new Map(),
       } satisfies DiskIOReply } as unknown as MessageEvent<DiskIOReply>);

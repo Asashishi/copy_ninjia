@@ -123,7 +123,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
         { table: "whitelist", id: 7, revision: 1 },
         { table: "whitelist", id: 8, revision: 1 },
       ],
-      temporaryWhitelistWrites: [],
+      temporaryAdBypassWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
     }]);
@@ -149,13 +149,13 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
     expect(acknowledgements).toEqual([{
       type: "identityStoragePersisted",
       writes: [{ table: "whitelist", id: 9, revision: 4 }],
-      temporaryWhitelistWrites: [],
+      temporaryAdBypassWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
     }]);
 
     resetStorageDatabaseCache();
-    expect(hydrateStorageDatabase().whitelistEntryCount).toBe(1);
+    expect(hydrateStorageDatabase().permissionEntryCount).toBe(1);
   });
 
   test("节拍到点时提交仍然失败：点名记一行并重排下一拍，不丢最终值", (): void => {
@@ -210,7 +210,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
     expect(acknowledgements).toEqual([{
       type: "identityStoragePersisted",
       writes: [],
-      temporaryWhitelistWrites: [],
+      temporaryAdBypassWrites: [],
       chatStateWrites: [],
       chatQaWrites: [],
       removalSnapshotRevision: 5,

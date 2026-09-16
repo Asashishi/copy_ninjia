@@ -46,7 +46,7 @@ type SeedMode = "cold-start" | "chain";
 
 /** 链路模式回传的空计数；空库本身就是它要的初始条件。 */
 const EMPTY_COUNTS: SeededFixtureCounts = {
-  whitelistEntries: 0,
+  permissionList: 0,
   blocklistEntries: 0,
   chatStates: 0,
   chatQaEntries: 0,

@@ -12,6 +12,7 @@ import {
   SUMMARY_RETRY_DELAYS_MS,
 } from "../../consts/aiChat/memory";
 import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
+import { SELF_SPEAKER_NAME } from "../../consts/aiChat/prompts/transcript";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/workers/aiChat/memory";
 import { compactionPendingCounts, compactionRunner } from "../../cache/workers/aiChat/compaction";
@@ -170,17 +171,18 @@ function promotePendingSummary(chatId: number): void {
  * 截断用子句边界而不是硬切：各实现包的摘要 token 上限（GEMINI_/OPENAI_CHAT_SUMMARY_MAX_TOKENS）
  * 远大于 SUMMARY_MAX_CHARS，
  * 上游不会把长度约束到这个量级附近，硬切留下的半句会被 buildMemorySnapshot
- * 落进 memory/ai/<chat>.json，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
+ * 落进 chat_states.ai_context，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
  * （truncateAtClauseBoundary 的 JSDoc 记的正是这类残留）。
  */
 async function summarizeBatch(batch: BufferedMessage[], signal: AbortSignal): Promise<AiTextResult> {
-  const selfNote: string = botInfoState.current
-    ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
+  const selfId: number | undefined = botInfoState.current?.id;
+  const selfNote: string = selfId !== undefined
+    ? `注意：[id:${selfId}] 是群里聊天机器人本人的发言，摘要里统一以「${SELF_SPEAKER_NAME}」称呼它。\n\n`
     : "";
   return summaryAiProvider().generateText({
     purpose: "chatSummary",
     systemPrompt: SUMMARY_SYSTEM_PROMPT,
-    userContent: selfNote + batch.map(formatBufferedMessageLine).join("\n") + "\n\n" + currentTimeSentence(),
+    userContent: selfNote + batch.map((message: BufferedMessage): string => formatBufferedMessageLine(message, selfId)).join("\n") + "\n\n" + currentTimeSentence(),
     signal,
     errorLabel: CHAT_SUMMARY_ERROR_LABEL,
     normalize: (text: string): string => {

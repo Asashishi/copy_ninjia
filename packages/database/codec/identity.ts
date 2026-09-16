@@ -70,7 +70,7 @@ function parseStoredPermissions(
   return permissions;
 }
 
-/** 严格解码 whitelist_entries.data；存在但非法的字段不会被默认值掩盖。 */
+/** 严格解码 permission_list.policy；存在但非法的字段不会被默认值掩盖。 */
 export function decodeWhitelistEntryData(
   text: string,
   source: string

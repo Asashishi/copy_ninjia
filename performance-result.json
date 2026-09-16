@@ -624,9 +624,9 @@
   },
   "fullSuite": {
     "lastRun": {
-      "generatedAt": "2026-09-13T08:13:44Z",
+      "generatedAt": "2026-09-16T07:05:02Z",
       "rounds": 3,
-      "wallClockMs": 471647.769153,
+      "wallClockMs": 490158.60469,
       "mockDataRoot": "performance",
       "environment": {
         "bunVersion": "1.4.2",
@@ -648,10 +648,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 88.95972666666667,
-                  "min": 87.64619,
-                  "max": 89.714752,
-                  "coefficientOfVariationPercent": 1.0479675283901662
+                  "mean": 102.46418033333333,
+                  "min": 98.303607,
+                  "max": 108.050485,
+                  "coefficientOfVariationPercent": 4.0061514861554
                 }
               ]
             },
@@ -662,10 +662,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 11.679898000000001,
-                  "min": 10.818846,
-                  "max": 12.29856,
-                  "coefficientOfVariationPercent": 5.376200581835778
+                  "mean": 12.848674,
+                  "min": 11.658408,
+                  "max": 14.212669,
+                  "coefficientOfVariationPercent": 8.171922600820976
                 }
               ]
             },
@@ -676,10 +676,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.5065536666666667,
-                  "min": 0.468913,
-                  "max": 0.548429,
-                  "coefficientOfVariationPercent": 6.435661721107279
+                  "mean": 0.6512143333333333,
+                  "min": 0.547062,
+                  "max": 0.736783,
+                  "coefficientOfVariationPercent": 12.06362862901105
                 }
               ]
             },
@@ -690,10 +690,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.3068423333333332,
-                  "min": 1.25699,
-                  "max": 1.36182,
-                  "coefficientOfVariationPercent": 3.286536231216325
+                  "mean": 1.6063323333333333,
+                  "min": 1.405686,
+                  "max": 1.983954,
+                  "coefficientOfVariationPercent": 16.633771626300124
                 }
               ]
             },
@@ -704,10 +704,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 4.026827333333333,
-                  "min": 3.870267,
-                  "max": 4.125493,
-                  "coefficientOfVariationPercent": 2.780083477206747
+                  "mean": 5.348056666666667,
+                  "min": 4.618009,
+                  "max": 6.123284,
+                  "coefficientOfVariationPercent": 11.50615673319062
                 }
               ]
             },
@@ -718,10 +718,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.6300326666666667,
-                  "min": 0.620347,
-                  "max": 0.641959,
-                  "coefficientOfVariationPercent": 1.4228136606335848
+                  "mean": 0.8187986666666666,
+                  "min": 0.691502,
+                  "max": 1.053372,
+                  "coefficientOfVariationPercent": 20.282108902761237
                 }
               ]
             },
@@ -732,10 +732,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 176.66489433333334,
-                  "min": 172.849773,
-                  "max": 180.08366,
-                  "coefficientOfVariationPercent": 1.6791627176600863
+                  "mean": 210.58285333333333,
+                  "min": 189.906277,
+                  "max": 230.708014,
+                  "coefficientOfVariationPercent": 7.912231199908009
                 }
               ]
             },
@@ -746,10 +746,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.43848200000000004,
-                  "min": 0.366261,
-                  "max": 0.489234,
-                  "coefficientOfVariationPercent": 11.961395508377654
+                  "mean": 0.95892,
+                  "min": 0.389623,
+                  "max": 2.043959,
+                  "coefficientOfVariationPercent": 80.04316244722934
                 }
               ]
             },
@@ -760,10 +760,10 @@
                   "metric": "duration",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 296.246525,
-                  "min": 293.443674,
-                  "max": 297.829706,
-                  "coefficientOfVariationPercent": 0.6708815461170688
+                  "mean": 348.12910733333337,
+                  "min": 332.509288,
+                  "max": 367.395669,
+                  "coefficientOfVariationPercent": 4.157612753061412
                 }
               ]
             }
@@ -779,37 +779,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 145.99250000000004,
-                  "min": 142.14492,
-                  "max": 149.62638,
-                  "coefficientOfVariationPercent": 2.0946479868425896
+                  "mean": 136.14725333333334,
+                  "min": 123.70521,
+                  "max": 142.438975,
+                  "coefficientOfVariationPercent": 6.462152102460018
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 6852680.824316185,
-                  "min": 6683313.463842405,
-                  "max": 7035073.782446815,
-                  "coefficientOfVariationPercent": 2.0999170650122054
+                  "mean": 7377270.309433254,
+                  "min": 7020550.379557281,
+                  "max": 8083733.90255754,
+                  "coefficientOfVariationPercent": 6.771519750637294
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 90802858.66666667,
-                  "min": 90759168,
-                  "max": 90877952,
-                  "coefficientOfVariationPercent": 0.05873763264855685
+                  "mean": 90536618.66666667,
+                  "min": 87793664,
+                  "max": 92020736,
+                  "coefficientOfVariationPercent": 2.144702520559175
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 6200.666666666667,
-                  "min": 3413,
-                  "max": 9613,
-                  "coefficientOfVariationPercent": 41.4373371368553
+                  "mean": 12541,
+                  "min": 7211,
+                  "max": 21409,
+                  "coefficientOfVariationPercent": 50.34012225278862
                 }
               ]
             },
@@ -820,37 +820,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 100.03432888888888,
-                  "min": 88.6703,
-                  "max": 107.26072,
-                  "coefficientOfVariationPercent": 8.131127931539941
+                  "mean": 93.08063666666668,
+                  "min": 90.1229,
+                  "max": 97.16777666666667,
+                  "coefficientOfVariationPercent": 3.2067646614825036
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 10066774.127932226,
-                  "min": 9323077.450906537,
-                  "max": 11277733.35603917,
-                  "coefficientOfVariationPercent": 8.579533805457846
+                  "mean": 10754255.507943852,
+                  "min": 10291477.630804423,
+                  "max": 11095958.962705372,
+                  "coefficientOfVariationPercent": 3.1559898902485823
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 91428181.33333333,
-                  "min": 89677824,
-                  "max": 94806016,
-                  "coefficientOfVariationPercent": 2.61299800582354
+                  "mean": 94935722.66666667,
+                  "min": 94064640,
+                  "max": 96079872,
+                  "coefficientOfVariationPercent": 0.8901492726249739
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23305,
-                  "min": 21623,
-                  "max": 24154,
-                  "coefficientOfVariationPercent": 5.103503723383435
+                  "mean": 21769,
+                  "min": 21252,
+                  "max": 22162,
+                  "coefficientOfVariationPercent": 1.7534696427347674
                 }
               ]
             },
@@ -861,37 +861,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 15.957791,
-                  "min": 15.396508,
-                  "max": 16.968554,
-                  "coefficientOfVariationPercent": 4.487922737318798
+                  "mean": 15.914104333333334,
+                  "min": 15.727025,
+                  "max": 16.255763,
+                  "coefficientOfVariationPercent": 1.5203697402849992
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 62787962.56527829,
-                  "min": 58932540.74566401,
-                  "max": 64949792.51139284,
-                  "coefficientOfVariationPercent": 4.352567662708111
+                  "mean": 62851716.86558933,
+                  "min": 61516644.89695131,
+                  "max": 63584816.58164847,
+                  "coefficientOfVariationPercent": 1.5044219598318807
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 78166698.66666667,
-                  "min": 77918208,
-                  "max": 78573568,
-                  "coefficientOfVariationPercent": 0.371056433970445
+                  "mean": 78848000,
+                  "min": 78303232,
+                  "max": 79290368,
+                  "coefficientOfVariationPercent": 0.5192900083565982
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 24407,
-                  "min": 23653,
-                  "max": 25815,
-                  "coefficientOfVariationPercent": 4.082611575509349
+                  "mean": 23490.333333333332,
+                  "min": 23260,
+                  "max": 23775,
+                  "coefficientOfVariationPercent": 0.9098607369865896
                 }
               ]
             },
@@ -902,37 +902,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 28.325937333333332,
-                  "min": 28.154867,
-                  "max": 28.465377,
-                  "coefficientOfVariationPercent": 0.454435763712849
+                  "mean": 29.86896933333333,
+                  "min": 28.434057,
+                  "max": 31.827363,
+                  "coefficientOfVariationPercent": 4.800674905882742
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 35304063.31335505,
-                  "min": 35130397.18391926,
-                  "max": 35517837.82178762,
-                  "coefficientOfVariationPercent": 0.45517275979203947
+                  "mean": 33555129.123337485,
+                  "min": 31419505.28543631,
+                  "max": 35169093.17583488,
+                  "coefficientOfVariationPercent": 4.692513919335044
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 77759829.33333333,
-                  "min": 77541376,
-                  "max": 77893632,
-                  "coefficientOfVariationPercent": 0.2003190096669417
+                  "mean": 79076010.66666667,
+                  "min": 78585856,
+                  "max": 80035840,
+                  "coefficientOfVariationPercent": 0.8583555515832785
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 24362.666666666668,
-                  "min": 23597,
-                  "max": 25641,
-                  "coefficientOfVariationPercent": 3.7344027753287996
+                  "mean": 22946,
+                  "min": 21353,
+                  "max": 24793,
+                  "coefficientOfVariationPercent": 6.170192494841734
                 }
               ]
             },
@@ -943,37 +943,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 34.00413833333334,
-                  "min": 32.950944,
-                  "max": 35.004424,
-                  "coefficientOfVariationPercent": 2.4678292654800695
+                  "mean": 34.707976333333335,
+                  "min": 34.382739,
+                  "max": 35.036983,
+                  "coefficientOfVariationPercent": 0.7695847496865985
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 29426153.516373236,
-                  "min": 28567817.599284023,
-                  "max": 30348144.198842984,
-                  "coefficientOfVariationPercent": 2.474695457097648
+                  "mean": 28813527.24451721,
+                  "min": 28541270.23436921,
+                  "max": 29084361.196471285,
+                  "coefficientOfVariationPercent": 0.7694935728791554
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 79313578.66666667,
-                  "min": 78917632,
-                  "max": 79699968,
-                  "coefficientOfVariationPercent": 0.4027794865004292
+                  "mean": 80620202.66666667,
+                  "min": 80142336,
+                  "max": 81162240,
+                  "coefficientOfVariationPercent": 0.519521427598175
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23745.666666666668,
-                  "min": 23240,
-                  "max": 24099,
-                  "coefficientOfVariationPercent": 1.5449362240238287
+                  "mean": 23056,
+                  "min": 22082,
+                  "max": 23547,
+                  "coefficientOfVariationPercent": 2.987203975726895
                 }
               ]
             },
@@ -984,37 +984,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 0.8863764999999999,
-                  "min": 0.8384175,
-                  "max": 0.9762485,
-                  "coefficientOfVariationPercent": 7.1749439194994515
+                  "mean": 0.8669325,
+                  "min": 0.8476255,
+                  "max": 0.9037725,
+                  "coefficientOfVariationPercent": 3.0059871290839393
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 1133745452.9401982,
-                  "min": 1024329358.7646998,
-                  "max": 1192723195.7825308,
-                  "coefficientOfVariationPercent": 6.831107012378652
+                  "mean": 1154513920.7678378,
+                  "min": 1106473144.5136912,
+                  "max": 1179766300.0936143,
+                  "coefficientOfVariationPercent": 2.943649995230487
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 76363093.33333333,
-                  "min": 76304384,
-                  "max": 76427264,
-                  "coefficientOfVariationPercent": 0.06588780894935914
+                  "mean": 77795328,
+                  "min": 77443072,
+                  "max": 78061568,
+                  "coefficientOfVariationPercent": 0.33385314091748175
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23369.333333333332,
-                  "min": 22226,
-                  "max": 24165,
-                  "coefficientOfVariationPercent": 3.5469071132583267
+                  "mean": 23049,
+                  "min": 21271,
+                  "max": 24999,
+                  "coefficientOfVariationPercent": 6.624154842528369
                 }
               ]
             },
@@ -1025,37 +1025,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 49.57135333333334,
-                  "min": 47.7143775,
-                  "max": 53.0042675,
-                  "coefficientOfVariationPercent": 4.90232088979574
+                  "mean": 56.55069749999999,
+                  "min": 49.4414125,
+                  "max": 67.48545,
+                  "coefficientOfVariationPercent": 13.876747665188054
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 20219924.161278095,
-                  "min": 18866405.426695123,
-                  "max": 20958043.516338445,
-                  "coefficientOfVariationPercent": 4.739843061478415
+                  "mean": 18003406.76686643,
+                  "min": 14818008.91895957,
+                  "max": 20225959.361496802,
+                  "coefficientOfVariationPercent": 12.833016901779512
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 79252138.66666667,
-                  "min": 79155200,
-                  "max": 79437824,
-                  "coefficientOfVariationPercent": 0.16572668757628417
+                  "mean": 80408576,
+                  "min": 79753216,
+                  "max": 81051648,
+                  "coefficientOfVariationPercent": 0.6593250108377833
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 22229,
-                  "min": 21260,
-                  "max": 22932,
-                  "coefficientOfVariationPercent": 3.185170468997435
+                  "mean": 22894.666666666668,
+                  "min": 21491,
+                  "max": 24873,
+                  "coefficientOfVariationPercent": 6.28640008585958
                 }
               ]
             },
@@ -1066,37 +1066,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 3.9067014666666666,
-                  "min": 3.7728977,
-                  "max": 4.1557728,
-                  "coefficientOfVariationPercent": 4.5123112032057
+                  "mean": 4.028956783333333,
+                  "min": 3.8013677,
+                  "max": 4.17611245,
+                  "coefficientOfVariationPercent": 4.051142617155162
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 256476618.21611753,
-                  "min": 240629131.6021896,
-                  "max": 265048267.8075263,
-                  "coefficientOfVariationPercent": 4.374022617384453
+                  "mean": 248621824.5867109,
+                  "min": 239457153.50648665,
+                  "max": 263063212.74840105,
+                  "coefficientOfVariationPercent": 4.156604197217998
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 76780885.33333333,
-                  "min": 76488704,
-                  "max": 77025280,
-                  "coefficientOfVariationPercent": 0.2886747833451953
+                  "mean": 78336000,
+                  "min": 77676544,
+                  "max": 78741504,
+                  "coefficientOfVariationPercent": 0.600480629212544
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23762.333333333332,
-                  "min": 22199,
-                  "max": 25656,
-                  "coefficientOfVariationPercent": 6.020087557192143
+                  "mean": 22788.333333333332,
+                  "min": 22577,
+                  "max": 22990,
+                  "coefficientOfVariationPercent": 0.7404887343497468
                 }
               ]
             },
@@ -1107,37 +1107,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 11.435576633333334,
-                  "min": 11.3504726,
-                  "max": 11.5393857,
-                  "coefficientOfVariationPercent": 0.6842626650292889
+                  "mean": 12.446793300000001,
+                  "min": 11.8020015,
+                  "max": 13.3328778,
+                  "coefficientOfVariationPercent": 5.204945790196294
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 87450484.25439782,
-                  "min": 86659725.74259304,
-                  "max": 88102058.4112066,
-                  "coefficientOfVariationPercent": 0.6826698606083295
+                  "mean": 80554742.15241973,
+                  "min": 75002562.46254653,
+                  "max": 84731390.68826589,
+                  "coefficientOfVariationPercent": 5.076224060066187
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 77649237.33333333,
-                  "min": 77312000,
-                  "max": 78024704,
-                  "coefficientOfVariationPercent": 0.37632466452851165
+                  "mean": 78984533.33333333,
+                  "min": 78303232,
+                  "max": 79732736,
+                  "coefficientOfVariationPercent": 0.741292938180234
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 22582,
-                  "min": 22223,
-                  "max": 22881,
-                  "coefficientOfVariationPercent": 1.2043092040595793
+                  "mean": 21334,
+                  "min": 19767,
+                  "max": 22226,
+                  "coefficientOfVariationPercent": 5.210331676670393
                 }
               ]
             },
@@ -1148,37 +1148,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 42.666132,
-                  "min": 42.142154,
-                  "max": 43.382712,
-                  "coefficientOfVariationPercent": 1.2291891051663728
+                  "mean": 57.97981066666667,
+                  "min": 42.1394,
+                  "max": 87.5155,
+                  "coefficientOfVariationPercent": 36.05261700706183
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 23441313.90680847,
-                  "min": 23050656.67632766,
-                  "max": 23729209.475149278,
-                  "coefficientOfVariationPercent": 1.2217298545738706
+                  "mean": 19246185.19706778,
+                  "min": 11426547.2973359,
+                  "max": 23730760.286098044,
+                  "coefficientOfVariationPercent": 28.83271630282719
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 79179776,
-                  "min": 78782464,
-                  "max": 79892480,
-                  "coefficientOfVariationPercent": 0.6378728696882059
+                  "mean": 80207872,
+                  "min": 79953920,
+                  "max": 80486400,
+                  "coefficientOfVariationPercent": 0.27189044916217486
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23280.333333333332,
-                  "min": 23151,
-                  "max": 23384,
-                  "coefficientOfVariationPercent": 0.41596388763667874
+                  "mean": 21927.666666666668,
+                  "min": 20551,
+                  "max": 22801,
+                  "coefficientOfVariationPercent": 4.492498553042921
                 }
               ]
             },
@@ -1189,37 +1189,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 8073.744883333333,
-                  "min": 7635.99555,
-                  "max": 8451.4342,
-                  "coefficientOfVariationPercent": 4.156676003503733
+                  "mean": 13912.875816666667,
+                  "min": 11977.17735,
+                  "max": 15434.2407,
+                  "coefficientOfVariationPercent": 10.360395200755406
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 124075.16579868425,
-                  "min": 118323.1125434308,
-                  "max": 130958.69339525742,
-                  "coefficientOfVariationPercent": 4.207232742829064
+                  "mean": 72693.46532182336,
+                  "min": 64791.00717925178,
+                  "max": 83492.12596405279,
+                  "coefficientOfVariationPercent": 10.873873994046434
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 102569301.33333333,
-                  "min": 101842944,
-                  "max": 103829504,
-                  "coefficientOfVariationPercent": 0.8721488489787321
+                  "mean": 103565994.66666667,
+                  "min": 102805504,
+                  "max": 105066496,
+                  "coefficientOfVariationPercent": 1.024513512796776
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 22807.666666666668,
-                  "min": 20322,
-                  "max": 24086,
-                  "coefficientOfVariationPercent": 7.707367748436209
+                  "mean": 23409.333333333332,
+                  "min": 23180,
+                  "max": 23701,
+                  "coefficientOfVariationPercent": 0.9279043662835406
                 }
               ]
             },
@@ -1230,37 +1230,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 94.630016,
-                  "min": 91.829337,
-                  "max": 98.331229,
-                  "coefficientOfVariationPercent": 2.8845998484116824
+                  "mean": 95.83862111111112,
+                  "min": 94.12883066666667,
+                  "max": 98.478381,
+                  "coefficientOfVariationPercent": 1.975765937523798
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 10576158.97197775,
-                  "min": 10169709.157199694,
-                  "max": 10889766.088586701,
-                  "coefficientOfVariationPercent": 2.847947908837065
+                  "mean": 10438232.618378902,
+                  "min": 10154512.999152575,
+                  "max": 10623737.625523532,
+                  "coefficientOfVariationPercent": 1.9520595152469151
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 85008384,
-                  "min": 84631552,
-                  "max": 85401600,
-                  "coefficientOfVariationPercent": 0.3700625312110673
+                  "mean": 86289066.66666667,
+                  "min": 86069248,
+                  "max": 86724608,
+                  "coefficientOfVariationPercent": 0.35691517108784804
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 25816.666666666668,
-                  "min": 25007,
-                  "max": 26337,
-                  "coefficientOfVariationPercent": 2.2475239864383445
+                  "mean": 23365,
+                  "min": 20326,
+                  "max": 25731,
+                  "coefficientOfVariationPercent": 9.661093435131022
                 }
               ]
             },
@@ -1271,37 +1271,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 35.45818033333333,
-                  "min": 26.717183,
-                  "max": 50.80317,
-                  "coefficientOfVariationPercent": 30.69972309318652
+                  "mean": 30.468098666666666,
+                  "min": 27.58385,
+                  "max": 35.698305,
+                  "coefficientOfVariationPercent": 12.15972709795825
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 30589973.627147306,
-                  "min": 19683811.069269888,
-                  "max": 37429095.724650316,
-                  "coefficientOfVariationPercent": 25.480298563960012
+                  "mean": 33274934.04214421,
+                  "min": 28012534.488682307,
+                  "max": 36253097.37400689,
+                  "coefficientOfVariationPercent": 11.215189091287566
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 86514346.66666667,
-                  "min": 85168128,
-                  "max": 88334336,
-                  "coefficientOfVariationPercent": 1.5434501024824776
+                  "mean": 87747242.66666667,
+                  "min": 87580672,
+                  "max": 87887872,
+                  "coefficientOfVariationPercent": 0.1444469778462087
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23815.666666666668,
-                  "min": 21293,
-                  "max": 25139,
-                  "coefficientOfVariationPercent": 7.493020900533825
+                  "mean": 24136.666666666668,
+                  "min": 23283,
+                  "max": 24956,
+                  "coefficientOfVariationPercent": 2.8315041766344686
                 }
               ]
             },
@@ -1312,37 +1312,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 49.082514333333336,
-                  "min": 46.936278,
-                  "max": 50.845392,
-                  "coefficientOfVariationPercent": 3.2980129058725356
+                  "mean": 57.36973066666667,
+                  "min": 50.335273,
+                  "max": 70.934406,
+                  "coefficientOfVariationPercent": 16.722899974208666
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 20396301.619942192,
-                  "min": 19667465.637790736,
-                  "max": 21305481.44443835,
-                  "coefficientOfVariationPercent": 3.337701382403805
+                  "mean": 17878018.40054232,
+                  "min": 14097531.175491905,
+                  "max": 19866784.074062735,
+                  "coefficientOfVariationPercent": 14.95925429044516
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 79547050.66666667,
-                  "min": 79167488,
-                  "max": 79998976,
-                  "coefficientOfVariationPercent": 0.43155384183279893
+                  "mean": 80628394.66666667,
+                  "min": 80547840,
+                  "max": 80732160,
+                  "coefficientOfVariationPercent": 0.09552141955613812
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 24147.333333333332,
-                  "min": 23405,
-                  "max": 25050,
-                  "coefficientOfVariationPercent": 2.8204807520035025
+                  "mean": 24056.666666666668,
+                  "min": 22776,
+                  "max": 25260,
+                  "coefficientOfVariationPercent": 4.221540901345871
                 }
               ]
             },
@@ -1353,37 +1353,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 266.70878666666664,
-                  "min": 249.87572,
-                  "max": 276.55508,
-                  "coefficientOfVariationPercent": 4.484249004795668
+                  "mean": 290.8775866666667,
+                  "min": 244.54156,
+                  "max": 355.96536,
+                  "coefficientOfVariationPercent": 16.289219951071594
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 3757200.1095898286,
-                  "min": 3615916.2218246004,
-                  "max": 4001989.4690048317,
-                  "coefficientOfVariationPercent": 4.6251987220171396
+                  "mean": 3524439.0121918456,
+                  "min": 2809262.114718129,
+                  "max": 4089284.4553702855,
+                  "coefficientOfVariationPercent": 15.130610419281131
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 125102762.66666667,
-                  "min": 124796928,
-                  "max": 125644800,
-                  "coefficientOfVariationPercent": 0.3072122615939557
+                  "mean": 126769834.66666667,
+                  "min": 126447616,
+                  "max": 127254528,
+                  "coefficientOfVariationPercent": 0.2752069560326133
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 5909224.333333333,
-                  "min": 5907397,
-                  "max": 5910308,
-                  "coefficientOfVariationPercent": 0.021991953287970403
+                  "mean": 5908398,
+                  "min": 5907172,
+                  "max": 5909869,
+                  "coefficientOfVariationPercent": 0.018864528167452446
                 }
               ]
             },
@@ -1394,37 +1394,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 292.81940333333336,
-                  "min": 266.46095,
-                  "max": 307.235425,
-                  "coefficientOfVariationPercent": 6.374433484649594
+                  "mean": 328.19149999999996,
+                  "min": 324.63923,
+                  "max": 332.14772,
+                  "coefficientOfVariationPercent": 0.9380522072374795
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 3429659.6249796445,
-                  "min": 3254832.999807883,
-                  "max": 3752895.1240322455,
-                  "coefficientOfVariationPercent": 6.671691921324637
+                  "mean": 3047269.186374536,
+                  "min": 3010708.6088081533,
+                  "max": 3080342.446598336,
+                  "coefficientOfVariationPercent": 0.9364005093892728
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 143021397.33333334,
-                  "min": 142032896,
-                  "max": 144433152,
-                  "coefficientOfVariationPercent": 0.7163865229483799
+                  "mean": 143144277.33333334,
+                  "min": 136761344,
+                  "max": 148746240,
+                  "coefficientOfVariationPercent": 3.4398011607190657
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 22470.666666666668,
-                  "min": 21367,
-                  "max": 23808,
-                  "coefficientOfVariationPercent": 4.49536602242987
+                  "mean": 23261.666666666668,
+                  "min": 23101,
+                  "max": 23539,
+                  "coefficientOfVariationPercent": 0.8465655387000857
                 }
               ]
             },
@@ -1435,37 +1435,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 4.270631333333333,
-                  "min": 4.14118,
-                  "max": 4.34519,
-                  "coefficientOfVariationPercent": 2.1516101116523396
+                  "mean": 4.536988333333333,
+                  "min": 4.459031,
+                  "max": 4.668292,
+                  "coefficientOfVariationPercent": 2.058364908447577
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 234267487.92802003,
-                  "min": 230139533.59922123,
-                  "max": 241477066.92295432,
-                  "coefficientOfVariationPercent": 2.183746086051489
+                  "mean": 220502683.57546616,
+                  "min": 214211107.61708993,
+                  "max": 224263971.2529471,
+                  "coefficientOfVariationPercent": 2.030411169034491
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 77709312,
-                  "min": 77291520,
-                  "max": 78491648,
-                  "coefficientOfVariationPercent": 0.712426900888653
+                  "mean": 79480149.33333333,
+                  "min": 79200256,
+                  "max": 79843328,
+                  "coefficientOfVariationPercent": 0.33852136389009474
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23267,
-                  "min": 23063,
-                  "max": 23383,
-                  "coefficientOfVariationPercent": 0.6219194249998145
+                  "mean": 21978,
+                  "min": 21459,
+                  "max": 22944,
+                  "coefficientOfVariationPercent": 3.110825832390017
                 }
               ]
             },
@@ -1476,37 +1476,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 4416.107385,
-                  "min": 4376.403715,
-                  "max": 4438.259825,
-                  "coefficientOfVariationPercent": 0.6371562841213742
+                  "mean": 4563.806926666667,
+                  "min": 4457.619625,
+                  "max": 4638.372545,
+                  "coefficientOfVariationPercent": 1.6894963340946476
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 226453.00291900174,
-                  "min": 225313.53265240617,
-                  "max": 228498.11514703915,
-                  "coefficientOfVariationPercent": 0.6399826931604683
+                  "mean": 219178.46526045864,
+                  "min": 215592.85941315003,
+                  "max": 224334.97788631974,
+                  "coefficientOfVariationPercent": 1.7053783058813856
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 88529578.66666667,
-                  "min": 88244224,
-                  "max": 88784896,
-                  "coefficientOfVariationPercent": 0.25047894644216995
+                  "mean": 89475754.66666667,
+                  "min": 88870912,
+                  "max": 89964544,
+                  "coefficientOfVariationPercent": 0.5073466995893584
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 25997,
-                  "min": 25688,
-                  "max": 26169,
-                  "coefficientOfVariationPercent": 0.8422614382782873
+                  "mean": 25444.666666666668,
+                  "min": 25346,
+                  "max": 25559,
+                  "coefficientOfVariationPercent": 0.3445110784460013
                 }
               ]
             },
@@ -1517,37 +1517,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 94.48083933333334,
-                  "min": 92.444292,
-                  "max": 96.269506,
-                  "coefficientOfVariationPercent": 1.663239769461275
+                  "mean": 100.07020066666666,
+                  "min": 99.112446,
+                  "max": 100.962216,
+                  "coefficientOfVariationPercent": 0.7560640252834373
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 10587097.129032185,
-                  "min": 10387505.26049235,
-                  "max": 10817325.530493543,
-                  "coefficientOfVariationPercent": 1.6700098914416832
+                  "mean": 9993556.698933823,
+                  "min": 9904695.435765792,
+                  "max": 10089550.206439259,
+                  "coefficientOfVariationPercent": 0.7568373624327337
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 123073877.33333333,
-                  "min": 122339328,
-                  "max": 123826176,
-                  "coefficientOfVariationPercent": 0.4933076825059828
+                  "mean": 125794986.66666667,
+                  "min": 125276160,
+                  "max": 126148608,
+                  "coefficientOfVariationPercent": 0.29797933148668515
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 45779.333333333336,
-                  "min": 44878,
-                  "max": 46337,
-                  "coefficientOfVariationPercent": 1.4052169744989058
+                  "mean": 26286,
+                  "min": 26269,
+                  "max": 26302,
+                  "coefficientOfVariationPercent": 0.051322900263379906
                 }
               ]
             },
@@ -1558,37 +1558,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 250.5025866666667,
-                  "min": 245.490126,
-                  "max": 254.100266,
-                  "coefficientOfVariationPercent": 1.4589318728906615
+                  "mean": 260.3077366666667,
+                  "min": 257.016878,
+                  "max": 263.789082,
+                  "coefficientOfVariationPercent": 1.0633644089895966
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 3992831.1855126224,
-                  "min": 3935454.36115364,
-                  "max": 4073483.5909449165,
-                  "coefficientOfVariationPercent": 1.4702480651437093
+                  "mean": 3842040.8959595636,
+                  "min": 3790907.464471937,
+                  "max": 3890795.0628829906,
+                  "coefficientOfVariationPercent": 1.0622903930241965
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 95432704,
-                  "min": 91967488,
-                  "max": 101629952,
-                  "coefficientOfVariationPercent": 4.602538325908151
+                  "mean": 100581376,
+                  "min": 96776192,
+                  "max": 104099840,
+                  "coefficientOfVariationPercent": 2.979411225300562
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 28034.333333333332,
-                  "min": 26876,
-                  "max": 30250,
-                  "coefficientOfVariationPercent": 5.590485789880237
+                  "mean": 27732.666666666668,
+                  "min": 26794,
+                  "max": 29503,
+                  "coefficientOfVariationPercent": 4.516610855813646
                 }
               ]
             },
@@ -1599,37 +1599,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 37052.792649999996,
-                  "min": 36946.2272,
-                  "max": 37221.51545,
-                  "coefficientOfVariationPercent": 0.3256830129490644
+                  "mean": 38961.49698333334,
+                  "min": 38061.7131,
+                  "max": 40081.9746,
+                  "coefficientOfVariationPercent": 2.154439651670465
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 26988.804719451833,
-                  "min": 26866.181774444653,
-                  "max": 27066.363084564153,
-                  "coefficientOfVariationPercent": 0.32501033554888076
+                  "mean": 25678.18989187274,
+                  "min": 24948.870657684613,
+                  "max": 26273.121164375545,
+                  "coefficientOfVariationPercent": 2.1376546075710063
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 101613568,
-                  "min": 100995072,
-                  "max": 102227968,
-                  "coefficientOfVariationPercent": 0.4953433161589041
+                  "mean": 102043648,
+                  "min": 101466112,
+                  "max": 102776832,
+                  "coefficientOfVariationPercent": 0.5353596933969279
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23884.666666666668,
-                  "min": 23717,
-                  "max": 24055,
-                  "coefficientOfVariationPercent": 0.5777799082422347
+                  "mean": 24365.333333333332,
+                  "min": 23739,
+                  "max": 24791,
+                  "coefficientOfVariationPercent": 1.856366452809974
                 }
               ]
             },
@@ -1640,37 +1640,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 19.082524666666668,
-                  "min": 18.251604,
-                  "max": 19.536136,
-                  "coefficientOfVariationPercent": 3.0833174017684137
+                  "mean": 18.886390000000002,
+                  "min": 18.225096,
+                  "max": 19.483352,
+                  "coefficientOfVariationPercent": 2.730490680456644
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 52454933.240116954,
-                  "min": 51187194.84753792,
-                  "max": 54789705.058251314,
-                  "coefficientOfVariationPercent": 3.151209908341219
+                  "mean": 52987901.31588119,
+                  "min": 51325870.41490602,
+                  "max": 54869395.47533796,
+                  "coefficientOfVariationPercent": 2.7457922681200273
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 89402026.66666667,
-                  "min": 88899584,
-                  "max": 89792512,
-                  "coefficientOfVariationPercent": 0.41725391232130077
+                  "mean": 90725034.66666667,
+                  "min": 90390528,
+                  "max": 90935296,
+                  "coefficientOfVariationPercent": 0.26357047366364467
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 25848.333333333332,
-                  "min": 25380,
-                  "max": 26606,
-                  "coefficientOfVariationPercent": 2.091864395923753
+                  "mean": 25392.666666666668,
+                  "min": 24835,
+                  "max": 26342,
+                  "coefficientOfVariationPercent": 2.65703560027691
                 }
               ]
             },
@@ -1681,37 +1681,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 51.51510199999999,
-                  "min": 50.468993,
-                  "max": 52.771196,
-                  "coefficientOfVariationPercent": 1.8470832526880965
+                  "mean": 54.310671000000006,
+                  "min": 53.921973,
+                  "max": 54.840169,
+                  "coefficientOfVariationPercent": 0.7141290855750833
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 19418370.29327323,
-                  "min": 18949731.59221178,
-                  "max": 19814146.083715204,
-                  "coefficientOfVariationPercent": 1.8365956078122716
+                  "mean": 18413523.578445766,
+                  "min": 18234808.867930368,
+                  "max": 18545315.46907603,
+                  "coefficientOfVariationPercent": 0.711618790640275
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 91949738.66666667,
-                  "min": 91357184,
-                  "max": 92459008,
-                  "coefficientOfVariationPercent": 0.49337446047192046
+                  "mean": 92565504,
+                  "min": 91615232,
+                  "max": 93143040,
+                  "coefficientOfVariationPercent": 0.7315095488172235
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 24281.666666666668,
-                  "min": 22595,
-                  "max": 25681,
-                  "coefficientOfVariationPercent": 5.25553711136582
+                  "mean": 22698.333333333332,
+                  "min": 21586,
+                  "max": 24569,
+                  "coefficientOfVariationPercent": 5.8622476595570765
                 }
               ]
             },
@@ -1722,37 +1722,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 4.2825196666666665,
-                  "min": 4.179811,
-                  "max": 4.358821,
-                  "coefficientOfVariationPercent": 1.7613078854164042
+                  "mean": 4.313467333333333,
+                  "min": 4.21732,
+                  "max": 4.410151,
+                  "coefficientOfVariationPercent": 1.825070958214408
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 233580480.60262287,
-                  "min": 229419836.2355325,
-                  "max": 239245267.3099334,
-                  "coefficientOfVariationPercent": 1.7766158644642747
+                  "mean": 231909300.66890013,
+                  "min": 226749605.62574843,
+                  "max": 237117411.0572591,
+                  "coefficientOfVariationPercent": 1.8251865187852436
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 82560341.33333333,
-                  "min": 78778368,
-                  "max": 84701184,
-                  "coefficientOfVariationPercent": 3.2485682679432277
+                  "mean": 85450752,
+                  "min": 85221376,
+                  "max": 85712896,
+                  "coefficientOfVariationPercent": 0.23638822751295088
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23271.333333333332,
-                  "min": 22068,
-                  "max": 24078,
-                  "coefficientOfVariationPercent": 3.7264394607927067
+                  "mean": 22986,
+                  "min": 22388,
+                  "max": 23286,
+                  "coefficientOfVariationPercent": 1.839600815499412
                 }
               ]
             },
@@ -1763,37 +1763,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 33.662796,
-                  "min": 33.4803745,
-                  "max": 34.018491,
-                  "coefficientOfVariationPercent": 0.7472405808241639
+                  "mean": 39.137497,
+                  "min": 37.107448,
+                  "max": 41.70446,
+                  "coefficientOfVariationPercent": 4.892338550198026
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 29708035.742100507,
-                  "min": 29395777.72570806,
-                  "max": 29868244.155990545,
-                  "coefficientOfVariationPercent": 0.7433170085703754
+                  "mean": 25611121.014759094,
+                  "min": 23978250.767423917,
+                  "max": 26948767.80532038,
+                  "coefficientOfVariationPercent": 4.804728145818913
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 86174378.66666667,
-                  "min": 85856256,
-                  "max": 86573056,
-                  "coefficientOfVariationPercent": 0.34595494855442993
+                  "mean": 87609344,
+                  "min": 87117824,
+                  "max": 87932928,
+                  "coefficientOfVariationPercent": 0.4032881341606575
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 21017.666666666668,
-                  "min": 19734,
-                  "max": 21721,
-                  "coefficientOfVariationPercent": 4.325300826285644
+                  "mean": 21230.333333333332,
+                  "min": 21045,
+                  "max": 21368,
+                  "coefficientOfVariationPercent": 0.6410814021766522
                 }
               ]
             },
@@ -1804,37 +1804,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 20.9613695,
-                  "min": 20.6042535,
-                  "max": 21.224074,
-                  "coefficientOfVariationPercent": 1.2484821240140442
+                  "mean": 22.81694466666666,
+                  "min": 21.3173455,
+                  "max": 25.049383,
+                  "coefficientOfVariationPercent": 7.053133482030657
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 47714290.29464042,
-                  "min": 47116307.641972974,
-                  "max": 48533668.06033521,
-                  "coefficientOfVariationPercent": 1.2563077784735754
+                  "mean": 44037578.12895406,
+                  "min": 39921142.9678727,
+                  "max": 46910155.86344933,
+                  "coefficientOfVariationPercent": 6.779981347587876
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 77927765.33333333,
-                  "min": 77701120,
-                  "max": 78098432,
-                  "coefficientOfVariationPercent": 0.21425213527366177
+                  "mean": 78577664,
+                  "min": 78360576,
+                  "max": 78995456,
+                  "coefficientOfVariationPercent": 0.3760601322158252
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 21940.666666666668,
-                  "min": 21287,
-                  "max": 23248,
-                  "coefficientOfVariationPercent": 4.213291598270547
+                  "mean": 23107.333333333332,
+                  "min": 21617,
+                  "max": 25230,
+                  "coefficientOfVariationPercent": 6.670099920671494
                 }
               ]
             },
@@ -1845,37 +1845,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 16.389808666666667,
-                  "min": 15.821857,
-                  "max": 16.74335,
-                  "coefficientOfVariationPercent": 2.474704262400149
+                  "mean": 16.325548333333334,
+                  "min": 15.482839,
+                  "max": 17.73565,
+                  "coefficientOfVariationPercent": 6.14624068035282
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 61051522.51802519,
-                  "min": 59725204.33485533,
-                  "max": 63203706.11363761,
-                  "coefficientOfVariationPercent": 2.515050937076138
+                  "mean": 61476817.067596294,
+                  "min": 56383611.539469935,
+                  "max": 64587637.96484611,
+                  "coefficientOfVariationPercent": 5.905941657183187
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 79799637.33333333,
-                  "min": 79106048,
-                  "max": 80474112,
-                  "coefficientOfVariationPercent": 0.7000950518217072
+                  "mean": 81308330.66666667,
+                  "min": 81022976,
+                  "max": 81616896,
+                  "coefficientOfVariationPercent": 0.29888900781470434
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 24698.333333333332,
-                  "min": 24550,
-                  "max": 24784,
-                  "coefficientOfVariationPercent": 0.42637273253251584
+                  "mean": 23927.333333333332,
+                  "min": 23432,
+                  "max": 24183,
+                  "coefficientOfVariationPercent": 1.464076489545312
                 }
               ]
             },
@@ -1886,37 +1886,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 77.76270866666665,
-                  "min": 72.961531,
-                  "max": 82.510252,
-                  "coefficientOfVariationPercent": 5.013242940969077
+                  "mean": 78.476352,
+                  "min": 73.343744,
+                  "max": 84.291127,
+                  "coefficientOfVariationPercent": 5.728102370796827
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 12892109.913618347,
-                  "min": 12119706.045740837,
-                  "max": 13705852.745880567,
-                  "coefficientOfVariationPercent": 5.027890047963147
+                  "mean": 12784168.056909325,
+                  "min": 11863644.912471035,
+                  "max": 13634428.04337886,
+                  "coefficientOfVariationPercent": 5.6681393327795835
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 78789290.66666667,
-                  "min": 78389248,
-                  "max": 79044608,
-                  "coefficientOfVariationPercent": 0.3635688409783021
+                  "mean": 79690410.66666667,
+                  "min": 79237120,
+                  "max": 80228352,
+                  "coefficientOfVariationPercent": 0.5133261668861818
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 23094.333333333332,
-                  "min": 22232,
-                  "max": 23925,
-                  "coefficientOfVariationPercent": 2.9943578100482378
+                  "mean": 22700.333333333332,
+                  "min": 22468,
+                  "max": 22913,
+                  "coefficientOfVariationPercent": 0.8026400360208632
                 }
               ]
             }
@@ -1932,55 +1932,55 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 940.5067794812174,
-                  "min": 930.3090918559597,
-                  "max": 949.2411708651015,
-                  "coefficientOfVariationPercent": 0.8291212127800284
+                  "mean": 760.1324303676732,
+                  "min": 664.1090997313336,
+                  "max": 912.7958678563532,
+                  "coefficientOfVariationPercent": 14.358042117486542
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.0625966796666662,
-                  "min": 1.0527463999999989,
-                  "max": 1.0741706319999995,
-                  "coefficientOfVariationPercent": 0.8310697646954389
+                  "mean": 1.340058659666666,
+                  "min": 1.094626729,
+                  "max": 1.504922720999999,
+                  "coefficientOfVariationPercent": 13.202836905158975
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.9595006666666667,
-                  "min": 0.948573,
-                  "max": 0.967131,
-                  "coefficientOfVariationPercent": 0.8261507887330899
+                  "mean": 1.028392,
+                  "min": 1.015497,
+                  "max": 1.036728,
+                  "coefficientOfVariationPercent": 0.8992292362136716
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.536486,
-                  "min": 1.48835,
-                  "max": 1.576294,
-                  "coefficientOfVariationPercent": 2.367917442849344
+                  "mean": 2.417310333333333,
+                  "min": 1.459539,
+                  "max": 3.609954,
+                  "coefficientOfVariationPercent": 36.9615126395358
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 8.485334666666667,
-                  "min": 5.535195,
-                  "max": 10.816817,
-                  "coefficientOfVariationPercent": 25.928756031668165
+                  "mean": 20.794415,
+                  "min": 6.551202,
+                  "max": 28.348457,
+                  "coefficientOfVariationPercent": 48.46329993543227
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 940.5067794812174,
-                  "min": 930.3090918559597,
-                  "max": 949.2411708651015,
-                  "coefficientOfVariationPercent": 0.8291212127800284
+                  "mean": 760.1324303676732,
+                  "min": 664.1090997313336,
+                  "max": 912.7958678563532,
+                  "coefficientOfVariationPercent": 14.358042117486542
                 },
                 {
                   "metric": "writtenBytes",
@@ -2000,63 +2000,63 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 148.58472128257026,
-                  "min": 146.43318387513276,
-                  "max": 150.94053883657688,
-                  "coefficientOfVariationPercent": 1.2422412971328471
+                  "mean": 133.7486280932806,
+                  "min": 131.99449051300752,
+                  "max": 135.49001295730287,
+                  "coefficientOfVariationPercent": 1.0669788343273787
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 6.729718438333335,
-                  "min": 6.623645784999999,
-                  "max": 6.827638915000002,
-                  "coefficientOfVariationPercent": 1.240454722833556
+                  "mean": 7.47556068,
+                  "min": 7.378804604999996,
+                  "max": 7.57398447,
+                  "coefficientOfVariationPercent": 1.0660146487358257
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 7.517218666666667,
-                  "min": 7.434503,
-                  "max": 7.660915,
-                  "coefficientOfVariationPercent": 1.356823087996299
+                  "mean": 8.461780333333333,
+                  "min": 8.297691,
+                  "max": 8.548191,
+                  "coefficientOfVariationPercent": 1.371855862791667
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 10.821703333333334,
-                  "min": 10.69936,
-                  "max": 10.886941,
-                  "coefficientOfVariationPercent": 0.7999986306581104
+                  "mean": 12.195350333333332,
+                  "min": 11.621296,
+                  "max": 12.558386,
+                  "coefficientOfVariationPercent": 3.3671400847433333
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 17.456521666666667,
-                  "min": 14.431666,
-                  "max": 21.722593,
-                  "coefficientOfVariationPercent": 17.776793315720994
+                  "mean": 22.144230333333336,
+                  "min": 18.472667,
+                  "max": 28.627123,
+                  "coefficientOfVariationPercent": 20.76175132505828
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 19018.844324168993,
-                  "min": 18743.447536016993,
-                  "max": 19320.38897108184,
-                  "coefficientOfVariationPercent": 1.2422412971328471
+                  "mean": 17119.824395939915,
+                  "min": 16895.294785664963,
+                  "max": 17342.721658534767,
+                  "coefficientOfVariationPercent": 1.0669788343273787
                 },
                 {
                   "metric": "writtenBytes",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 21524480,
-                  "min": 21524480,
-                  "max": 21524480,
+                  "mean": 22458368,
+                  "min": 22458368,
+                  "max": 22458368,
                   "coefficientOfVariationPercent": 0
                 }
               ]
@@ -2068,55 +2068,55 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 619.777471228875,
-                  "min": 564.8898104752319,
-                  "max": 647.781096784993,
-                  "coefficientOfVariationPercent": 6.262591046816206
+                  "mean": 671.5097771459386,
+                  "min": 654.1837568220776,
+                  "max": 685.4529135095548,
+                  "coefficientOfVariationPercent": 1.934113707657995
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.6192543733333344,
-                  "min": 1.5428289525000007,
-                  "max": 1.7693552700000021,
-                  "coefficientOfVariationPercent": 6.555072563449074
+                  "mean": 1.4887988183333338,
+                  "min": 1.4580603725,
+                  "max": 1.5275395675000012,
+                  "coefficientOfVariationPercent": 1.9427514980061593
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.4377943333333334,
-                  "min": 1.378701,
-                  "max": 1.508404,
-                  "coefficientOfVariationPercent": 3.7260921209417814
+                  "mean": 1.3881370000000002,
+                  "min": 1.375198,
+                  "max": 1.402311,
+                  "coefficientOfVariationPercent": 0.7998656538435012
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 2.221346666666667,
-                  "min": 2.028492,
-                  "max": 2.521649,
-                  "coefficientOfVariationPercent": 9.687339160420995
+                  "mean": 1.890697,
+                  "min": 1.754243,
+                  "max": 2.038461,
+                  "coefficientOfVariationPercent": 6.151529962380763
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 14.401438666666664,
-                  "min": 8.392532,
-                  "max": 24.409276,
-                  "coefficientOfVariationPercent": 49.467456477698605
+                  "mean": 10.207496666666666,
+                  "min": 5.106284,
+                  "max": 19.927314,
+                  "coefficientOfVariationPercent": 67.3600236456399
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 619.777471228875,
-                  "min": 564.8898104752319,
-                  "max": 647.781096784993,
-                  "coefficientOfVariationPercent": 6.262591046816206
+                  "mean": 671.5097771459386,
+                  "min": 654.1837568220776,
+                  "max": 685.4529135095548,
+                  "coefficientOfVariationPercent": 1.934113707657995
                 },
                 {
                   "metric": "writtenBytes",
@@ -2136,55 +2136,55 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 667.4156983197844,
-                  "min": 612.8790348284125,
-                  "max": 702.5498955370657,
-                  "coefficientOfVariationPercent": 5.857577992692978
+                  "mean": 546.209203432585,
+                  "min": 485.801281897445,
+                  "max": 633.49437562788,
+                  "coefficientOfVariationPercent": 11.574271379695539
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.502764014166667,
-                  "min": 1.422410285000001,
-                  "max": 1.6306701799999994,
-                  "coefficientOfVariationPercent": 6.084074786477501
+                  "mean": 1.8532005583333324,
+                  "min": 1.5776730899999978,
+                  "max": 2.0573617249999994,
+                  "coefficientOfVariationPercent": 10.912445662348677
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.422651,
-                  "min": 1.367289,
-                  "max": 1.527767,
-                  "coefficientOfVariationPercent": 5.227106854768408
+                  "mean": 1.524132,
+                  "min": 1.473823,
+                  "max": 1.550058,
+                  "coefficientOfVariationPercent": 2.3344048852135795
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.9483966666666666,
-                  "min": 1.784534,
-                  "max": 2.270935,
-                  "coefficientOfVariationPercent": 11.70597738608942
+                  "mean": 3.513894333333333,
+                  "min": 2.137229,
+                  "max": 4.551267,
+                  "coefficientOfVariationPercent": 28.86566950470564
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 5.221728333333333,
-                  "min": 3.118369,
-                  "max": 7.260941,
-                  "coefficientOfVariationPercent": 32.399351059232146
+                  "mean": 13.201734666666667,
+                  "min": 6.596332,
+                  "max": 21.405206,
+                  "coefficientOfVariationPercent": 46.58778616029059
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 667.4156983197844,
-                  "min": 612.8790348284125,
-                  "max": 702.5498955370657,
-                  "coefficientOfVariationPercent": 5.857577992692978
+                  "mean": 546.209203432585,
+                  "min": 485.801281897445,
+                  "max": 633.49437562788,
+                  "coefficientOfVariationPercent": 11.574271379695539
                 },
                 {
                   "metric": "writtenBytes",
@@ -2204,55 +2204,55 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 653.8296169439768,
-                  "min": 614.9599874054965,
-                  "max": 685.2076877863229,
-                  "coefficientOfVariationPercent": 4.460435262081658
+                  "mean": 547.4596660992271,
+                  "min": 470.39333694611884,
+                  "max": 637.0516606994754,
+                  "coefficientOfVariationPercent": 12.53280308072042
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.531596918333334,
-                  "min": 1.4585844750000008,
-                  "max": 1.6249927950000003,
-                  "coefficientOfVariationPercent": 4.534354942355621
+                  "mean": 1.8536957400000003,
+                  "min": 1.5686974600000005,
+                  "max": 2.1243831125000003,
+                  "coefficientOfVariationPercent": 12.250300576285039
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.4390239999999999,
-                  "min": 1.396931,
-                  "max": 1.482715,
-                  "coefficientOfVariationPercent": 2.434941711140562
+                  "mean": 1.510718,
+                  "min": 1.479633,
+                  "max": 1.530757,
+                  "coefficientOfVariationPercent": 1.4751210438220959
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.963093,
-                  "min": 1.852996,
-                  "max": 2.111769,
-                  "coefficientOfVariationPercent": 5.558008600306069
+                  "mean": 3.4647086666666667,
+                  "min": 1.999083,
+                  "max": 5.141406,
+                  "coefficientOfVariationPercent": 37.2758876104476
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 11.572025000000002,
-                  "min": 4.212041,
-                  "max": 26.235331,
-                  "coefficientOfVariationPercent": 89.60012539809848
+                  "mean": 18.637735,
+                  "min": 5.256433,
+                  "max": 29.58957,
+                  "coefficientOfVariationPercent": 54.09136912813699
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 653.8296169439768,
-                  "min": 614.9599874054965,
-                  "max": 685.2076877863229,
-                  "coefficientOfVariationPercent": 4.460435262081658
+                  "mean": 547.4596660992271,
+                  "min": 470.39333694611884,
+                  "max": 637.0516606994754,
+                  "coefficientOfVariationPercent": 12.53280308072042
                 },
                 {
                   "metric": "writtenBytes",
@@ -2272,63 +2272,63 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 335.05004036859344,
-                  "min": 319.0775496967964,
-                  "max": 361.1229470494499,
-                  "coefficientOfVariationPercent": 5.548882554742579
+                  "mean": 345.69749701164665,
+                  "min": 338.3924104104909,
+                  "max": 354.19509126548456,
+                  "coefficientOfVariationPercent": 1.8820764360528792
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 2.992205966666667,
-                  "min": 2.7678011533333335,
-                  "max": 3.13283604,
-                  "coefficientOfVariationPercent": 5.359484457741984
+                  "mean": 2.892135751111111,
+                  "min": 2.8219848066666655,
+                  "max": 2.953790660000001,
+                  "coefficientOfVariationPercent": 1.8721056740232163
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 2.748431,
-                  "min": 2.590522,
-                  "max": 2.979702,
-                  "coefficientOfVariationPercent": 6.081148945097713
+                  "mean": 2.6295303333333333,
+                  "min": 2.552204,
+                  "max": 2.692451,
+                  "coefficientOfVariationPercent": 2.2115989592056438
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 4.831198333333333,
-                  "min": 3.882661,
-                  "max": 6.482798,
-                  "coefficientOfVariationPercent": 24.26207971373748
+                  "mean": 4.4652606666666665,
+                  "min": 3.800082,
+                  "max": 5.457985,
+                  "coefficientOfVariationPercent": 16.020725124978828
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 8.750669666666667,
-                  "min": 5.65776,
-                  "max": 13.880057,
-                  "coefficientOfVariationPercent": 41.740537221591566
+                  "mean": 11.507650666666668,
+                  "min": 10.906543,
+                  "max": 12.161627,
+                  "coefficientOfVariationPercent": 4.464402572142364
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 335.05004036859344,
-                  "min": 319.0775496967964,
-                  "max": 361.1229470494499,
-                  "coefficientOfVariationPercent": 5.548882554742579
+                  "mean": 345.69749701164665,
+                  "min": 338.3924104104909,
+                  "max": 354.19509126548456,
+                  "coefficientOfVariationPercent": 1.8820764360528792
                 },
                 {
                   "metric": "writtenBytes",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 12288000,
-                  "min": 12288000,
-                  "max": 12288000,
+                  "mean": 5820416,
+                  "min": 5820416,
+                  "max": 5820416,
                   "coefficientOfVariationPercent": 0
                 }
               ]
@@ -2340,55 +2340,55 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 829.6832066968069,
-                  "min": 753.4147534844819,
-                  "max": 898.31357571226,
-                  "coefficientOfVariationPercent": 7.1594486431148505
+                  "mean": 807.5927507345499,
+                  "min": 791.1244388434698,
+                  "max": 831.6766895060139,
+                  "coefficientOfVariationPercent": 2.1556886277293597
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.2109347620000008,
-                  "min": 1.1125845699999999,
-                  "max": 1.326626714000001,
-                  "coefficientOfVariationPercent": 7.286812792125933
+                  "mean": 1.2380407406666674,
+                  "min": 1.201662636,
+                  "max": 1.2632342660000013,
+                  "coefficientOfVariationPercent": 2.1284689404135726
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.101546,
-                  "min": 1.045301,
-                  "max": 1.142139,
-                  "coefficientOfVariationPercent": 3.726937882452463
+                  "mean": 1.0988083333333332,
+                  "min": 1.090363,
+                  "max": 1.111591,
+                  "coefficientOfVariationPercent": 0.836631869728296
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.6317663333333332,
-                  "min": 1.458961,
-                  "max": 1.849237,
-                  "coefficientOfVariationPercent": 9.954221936034035
+                  "mean": 1.6153043333333335,
+                  "min": 1.575592,
+                  "max": 1.648786,
+                  "coefficientOfVariationPercent": 1.8698875122377403
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 7.893229333333333,
-                  "min": 4.917542,
-                  "max": 11.516118,
-                  "coefficientOfVariationPercent": 34.61768839597731
+                  "mean": 13.366019999999999,
+                  "min": 10.948802,
+                  "max": 17.155547,
+                  "coefficientOfVariationPercent": 20.30030585231781
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 829.6832066968069,
-                  "min": 753.4147534844819,
-                  "max": 898.31357571226,
-                  "coefficientOfVariationPercent": 7.1594486431148505
+                  "mean": 807.5927507345499,
+                  "min": 791.1244388434698,
+                  "max": 831.6766895060139,
+                  "coefficientOfVariationPercent": 2.1556886277293597
                 },
                 {
                   "metric": "writtenBytes",
@@ -2408,55 +2408,55 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 320.2570705438357,
-                  "min": 311.4736508439388,
-                  "max": 336.65115238259233,
-                  "coefficientOfVariationPercent": 3.622792519568747
+                  "mean": 307.6749126770096,
+                  "min": 303.7525142127168,
+                  "max": 309.79038867718936,
+                  "coefficientOfVariationPercent": 0.9023854309176995
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 3.125233497777778,
-                  "min": 2.9692728333333336,
-                  "max": 3.209271873333332,
-                  "coefficientOfVariationPercent": 3.532270991664158
+                  "mean": 3.249116311111111,
+                  "min": 3.226657126666666,
+                  "max": 3.2906973800000006,
+                  "coefficientOfVariationPercent": 0.9059018727718409
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 2.939554,
-                  "min": 2.777263,
-                  "max": 3.061144,
-                  "coefficientOfVariationPercent": 4.0623149420632885
+                  "mean": 2.9803979999999997,
+                  "min": 2.923674,
+                  "max": 3.022114,
+                  "coefficientOfVariationPercent": 1.3946297825006009
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 4.369003,
-                  "min": 4.093948,
-                  "max": 4.627976,
-                  "coefficientOfVariationPercent": 4.996846870811581
+                  "mean": 4.817404666666667,
+                  "min": 4.559793,
+                  "max": 5.107348,
+                  "coefficientOfVariationPercent": 4.664429222996181
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 8.949463333333334,
-                  "min": 5.650466,
-                  "max": 12.483272,
-                  "coefficientOfVariationPercent": 31.22442484259868
+                  "mean": 9.734088,
+                  "min": 8.308736,
+                  "max": 11.598649,
+                  "coefficientOfVariationPercent": 14.161987876018744
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 320.2570705438357,
-                  "min": 311.4736508439388,
-                  "max": 336.65115238259233,
-                  "coefficientOfVariationPercent": 3.622792519568747
+                  "mean": 307.6749126770096,
+                  "min": 303.7525142127168,
+                  "max": 309.79038867718936,
+                  "coefficientOfVariationPercent": 0.9023854309176995
                 },
                 {
                   "metric": "writtenBytes",
@@ -2476,55 +2476,55 @@
                   "metric": "completedThroughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 1193.9940751226566,
-                  "min": 1174.5273327632374,
-                  "max": 1213.3161078845496,
-                  "coefficientOfVariationPercent": 1.326286458200689
+                  "mean": 1112.786401703326,
+                  "min": 1090.7433276708302,
+                  "max": 1144.2379438227229,
+                  "coefficientOfVariationPercent": 2.0515995720997307
                 },
                 {
                   "metric": "meanLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.8302312500000001,
-                  "min": 0.8168297750000001,
-                  "max": 0.843661775,
-                  "coefficientOfVariationPercent": 1.3194079829741865
+                  "mean": 0.8907417333333333,
+                  "min": 0.865917475,
+                  "max": 0.9085285499999998,
+                  "coefficientOfVariationPercent": 2.0313011923656936
                 },
                 {
                   "metric": "p50Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.7927333333333334,
-                  "min": 0.771792,
-                  "max": 0.828604,
-                  "coefficientOfVariationPercent": 3.2145569658050164
+                  "mean": 0.8365600000000001,
+                  "min": 0.82398,
+                  "max": 0.854469,
+                  "coefficientOfVariationPercent": 1.5545758334610373
                 },
                 {
                   "metric": "p95Latency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.087363,
-                  "min": 1.041433,
-                  "max": 1.122854,
-                  "coefficientOfVariationPercent": 3.1314025028010035
+                  "mean": 1.308057,
+                  "min": 1.27322,
+                  "max": 1.341084,
+                  "coefficientOfVariationPercent": 2.1203134264386665
                 },
                 {
                   "metric": "maxLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 1.4726253333333332,
-                  "min": 1.317991,
-                  "max": 1.647931,
-                  "coefficientOfVariationPercent": 9.200452955389544
+                  "mean": 1.6384103333333335,
+                  "min": 1.375481,
+                  "max": 2.01486,
+                  "coefficientOfVariationPercent": 16.667933831142072
                 },
                 {
                   "metric": "recordThroughput",
                   "unit": "records/s",
                   "samples": 3,
-                  "mean": 1193.9940751226566,
-                  "min": 1174.5273327632374,
-                  "max": 1213.3161078845496,
-                  "coefficientOfVariationPercent": 1.326286458200689
+                  "mean": 1112.786401703326,
+                  "min": 1090.7433276708302,
+                  "max": 1144.2379438227229,
+                  "coefficientOfVariationPercent": 2.0515995720997307
                 },
                 {
                   "metric": "writtenBytes",
@@ -2549,19 +2549,19 @@
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 30245251.547481406,
-                  "min": 29901873.22789118,
-                  "max": 30529214.429924753,
-                  "coefficientOfVariationPercent": 0.8580985298242002
+                  "mean": 28495287.20110832,
+                  "min": 28174186.726303156,
+                  "max": 28731625.13358814,
+                  "coefficientOfVariationPercent": 0.8258687748373262
                 },
                 {
                   "metric": "batchLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.000264523864,
-                  "min": 0.000262044083,
-                  "max": 0.000267541767,
-                  "coefficientOfVariationPercent": 0.8605827026199877
+                  "mean": 0.000280767408,
+                  "min": 0.000278438827,
+                  "max": 0.000283947859,
+                  "coefficientOfVariationPercent": 0.8292705120129439
                 },
                 {
                   "metric": "writtenBytes",
@@ -2576,10 +2576,10 @@
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 6431,
-                  "min": 5775,
-                  "max": 6800,
-                  "coefficientOfVariationPercent": 7.231666206542432
+                  "mean": 3913.3333333333335,
+                  "min": 1923,
+                  "max": 7237,
+                  "coefficientOfVariationPercent": 60.445737773994956
                 }
               ]
             },
@@ -2590,37 +2590,37 @@
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 20987.60391088809,
-                  "min": 20684.396444451984,
-                  "max": 21141.94570467035,
-                  "coefficientOfVariationPercent": 1.021611194682506
+                  "mean": 17742.628173194324,
+                  "min": 16667.692205162588,
+                  "max": 18646.327315652852,
+                  "coefficientOfVariationPercent": 4.603596108619847
                 },
                 {
                   "metric": "batchLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 6.099479404296875,
-                  "min": 6.054315046875001,
-                  "max": 6.18823954296875,
-                  "coefficientOfVariationPercent": 1.0290413089722767
+                  "mean": 7.229817813151041,
+                  "min": 6.86462260546875,
+                  "max": 7.6795274609375,
+                  "coefficientOfVariationPercent": 4.675199155737417
                 },
                 {
                   "metric": "writtenBytes",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 64909312,
-                  "min": 64909312,
-                  "max": 64909312,
+                  "mean": 59019264,
+                  "min": 59019264,
+                  "max": 59019264,
                   "coefficientOfVariationPercent": 0
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 31821,
-                  "min": 31517,
-                  "max": 32120,
-                  "coefficientOfVariationPercent": 0.7737000924418626
+                  "mean": 33042.666666666664,
+                  "min": 32234,
+                  "max": 33857,
+                  "coefficientOfVariationPercent": 2.005283344126455
                 }
               ]
             },
@@ -2631,37 +2631,37 @@
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 77955.23007903025,
-                  "min": 75716.11556295707,
-                  "max": 80441.32776629365,
-                  "coefficientOfVariationPercent": 2.484694309684961
+                  "mean": 68678.64755578937,
+                  "min": 66979.47413981496,
+                  "max": 70016.54565191292,
+                  "coefficientOfVariationPercent": 1.8432552577037609
                 },
                 {
                   "metric": "batchLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.10268612229333333,
-                  "min": 0.09945136688,
-                  "max": 0.10565782384,
-                  "coefficientOfVariationPercent": 2.4741354587145037
+                  "mean": 0.11652442269333334,
+                  "min": 0.11425870736,
+                  "max": 0.11943957611999999,
+                  "coefficientOfVariationPercent": 1.8574298729585037
                 },
                 {
                   "metric": "writtenBytes",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 5091328,
-                  "min": 5091328,
-                  "max": 5091328,
+                  "mean": 5550080,
+                  "min": 5550080,
+                  "max": 5550080,
                   "coefficientOfVariationPercent": 0
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 79910,
-                  "min": 62073,
-                  "max": 114784,
-                  "coefficientOfVariationPercent": 30.861975435315674
+                  "mean": 78431,
+                  "min": 72842,
+                  "max": 82596,
+                  "coefficientOfVariationPercent": 5.236945271462275
                 }
               ]
             },
@@ -2672,37 +2672,37 @@
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 18050.82318112491,
-                  "min": 17593.478931291073,
-                  "max": 18644.445954955307,
-                  "coefficientOfVariationPercent": 2.4361421500073885
+                  "mean": 15965.502252773707,
+                  "min": 15856.519964053346,
+                  "max": 16163.089712954681,
+                  "coefficientOfVariationPercent": 0.8766581465186942
                 },
                 {
                   "metric": "batchLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 0.44345355233333333,
-                  "min": 0.42908220599999997,
-                  "max": 0.454713933,
-                  "coefficientOfVariationPercent": 2.411262801848256
+                  "mean": 0.5011186630000001,
+                  "min": 0.494954872,
+                  "max": 0.504524323,
+                  "coefficientOfVariationPercent": 0.8713441020501832
                 },
                 {
                   "metric": "writtenBytes",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 2830336,
-                  "min": 2830336,
-                  "max": 2830336,
+                  "mean": 3059712,
+                  "min": 3059712,
+                  "max": 3059712,
                   "coefficientOfVariationPercent": 0
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 286166,
-                  "min": 255338,
-                  "max": 301700,
-                  "coefficientOfVariationPercent": 7.617574430941031
+                  "mean": 304310.6666666667,
+                  "min": 303352,
+                  "max": 304813,
+                  "coefficientOfVariationPercent": 0.22284456317382434
                 }
               ]
             },
@@ -2713,37 +2713,37 @@
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 18246.362277471402,
-                  "min": 18058.7214278524,
-                  "max": 18521.62274241478,
-                  "coefficientOfVariationPercent": 1.0899470128376563
+                  "mean": 16117.267073172445,
+                  "min": 15961.159601411324,
+                  "max": 16230.2409258237,
+                  "coefficientOfVariationPercent": 0.7073625979018022
                 },
                 {
                   "metric": "batchLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 7.015925233723959,
-                  "min": 6.910841548828126,
-                  "max": 7.08798795703125,
-                  "coefficientOfVariationPercent": 1.0831873657190325
+                  "mean": 7.942191923177084,
+                  "min": 7.886512626953126,
+                  "max": 8.01946745703125,
+                  "coefficientOfVariationPercent": 0.7099531572511324
                 },
                 {
                   "metric": "writtenBytes",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 71020544,
-                  "min": 71020544,
-                  "max": 71020544,
+                  "mean": 76697600,
+                  "min": 76697600,
+                  "max": 76697600,
                   "coefficientOfVariationPercent": 0
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 192121.66666666666,
-                  "min": 189717,
-                  "max": 196898,
-                  "coefficientOfVariationPercent": 1.757950895210214
+                  "mean": 191339.66666666666,
+                  "min": 189835,
+                  "max": 194155,
+                  "coefficientOfVariationPercent": 1.0412457401679742
                 }
               ]
             },
@@ -2754,37 +2754,37 @@
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 15155.33388919502,
-                  "min": 14451.844977712193,
-                  "max": 15680.750126046567,
-                  "coefficientOfVariationPercent": 3.4130452079675915
+                  "mean": 13657.670324460234,
+                  "min": 13482.639743520429,
+                  "max": 13814.456636628036,
+                  "coefficientOfVariationPercent": 0.9963381369459434
                 },
                 {
                   "metric": "batchLatency",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 8.455887213541667,
-                  "min": 8.162874796875,
-                  "max": 8.857000625,
-                  "coefficientOfVariationPercent": 3.471003685695158
+                  "mean": 9.372955302083334,
+                  "min": 9.26565578125,
+                  "max": 9.49368984375,
+                  "coefficientOfVariationPercent": 0.9983828966246332
                 },
                 {
                   "metric": "writtenBytes",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 9441280,
-                  "min": 9441280,
-                  "max": 9441280,
+                  "mean": 10203136,
+                  "min": 10203136,
+                  "max": 10203136,
                   "coefficientOfVariationPercent": 0
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 229879.66666666666,
-                  "min": 228802,
-                  "max": 230468,
-                  "coefficientOfVariationPercent": 0.3319547487021421
+                  "mean": 229789.33333333334,
+                  "min": 228097,
+                  "max": 231979,
+                  "coefficientOfVariationPercent": 0.7064593245309141
                 }
               ]
             }
@@ -2800,37 +2800,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 16.677966666666666,
-                  "min": 14.467928,
-                  "max": 18.067426,
-                  "coefficientOfVariationPercent": 9.472956169444148
+                  "mean": 16.785921,
+                  "min": 15.38935,
+                  "max": 18.367599,
+                  "coefficientOfVariationPercent": 7.285212897284806
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 60538076.71395434,
-                  "min": 55348227.24609471,
-                  "max": 69118397.60330574,
-                  "coefficientOfVariationPercent": 10.095319233548699
+                  "mean": 59887236.57178403,
+                  "min": 54443697.295438565,
+                  "max": 64980002.404260084,
+                  "coefficientOfVariationPercent": 7.194477638015983
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 89767936,
-                  "min": 89587712,
-                  "max": 89939968,
-                  "coefficientOfVariationPercent": 0.16032954861719825
+                  "mean": 89855317.33333333,
+                  "min": 88756224,
+                  "max": 90968064,
+                  "coefficientOfVariationPercent": 1.0049839394622357
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 25125.666666666668,
-                  "min": 24914,
-                  "max": 25259,
-                  "coefficientOfVariationPercent": 0.6023554179522396
+                  "mean": 24511,
+                  "min": 24465,
+                  "max": 24545,
+                  "coefficientOfVariationPercent": 0.1376693537306381
                 }
               ]
             },
@@ -2841,37 +2841,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 36.211475,
-                  "min": 34.715976,
-                  "max": 37.556051,
-                  "coefficientOfVariationPercent": 3.2154357369996367
+                  "mean": 36.125983,
+                  "min": 34.786288,
+                  "max": 36.806792,
+                  "coefficientOfVariationPercent": 2.622349951218649
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 27644328.669398043,
-                  "min": 26626867.665080126,
-                  "max": 28805181.79871999,
-                  "coefficientOfVariationPercent": 3.2377512429876516
+                  "mean": 27700316.15077086,
+                  "min": 27168898.60980006,
+                  "max": 28746959.146661468,
+                  "coefficientOfVariationPercent": 2.6718752122514133
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 79253504,
-                  "min": 78950400,
-                  "max": 79482880,
-                  "coefficientOfVariationPercent": 0.282067096496232
+                  "mean": 80594261.33333333,
+                  "min": 80072704,
+                  "max": 81125376,
+                  "coefficientOfVariationPercent": 0.5332943945403557
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 26024,
-                  "min": 25642,
-                  "max": 26359,
-                  "coefficientOfVariationPercent": 1.1320113616155687
+                  "mean": 24536.333333333332,
+                  "min": 23279,
+                  "max": 25729,
+                  "coefficientOfVariationPercent": 4.080695265995958
                 }
               ]
             },
@@ -2882,37 +2882,37 @@
                   "metric": "medianLatency",
                   "unit": "ns/op",
                   "samples": 3,
-                  "mean": 18.769618666666666,
-                  "min": 17.543688,
-                  "max": 19.443356,
-                  "coefficientOfVariationPercent": 4.626001699335924
+                  "mean": 19.605862666666667,
+                  "min": 18.287552,
+                  "max": 21.695346,
+                  "coefficientOfVariationPercent": 7.62158230423881
                 },
                 {
                   "metric": "throughput",
                   "unit": "ops/s",
                   "samples": 3,
-                  "mean": 53395662.81255909,
-                  "min": 51431450.41421861,
-                  "max": 57000557.69345647,
-                  "coefficientOfVariationPercent": 4.780285717934786
+                  "mean": 51289453.27318981,
+                  "min": 46092834.84116824,
+                  "max": 54682004.45855191,
+                  "coefficientOfVariationPercent": 7.275081276744218
                 },
                 {
                   "metric": "peakRss",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 86213973.33333333,
-                  "min": 86163456,
-                  "max": 86249472,
-                  "coefficientOfVariationPercent": 0.04255294589451074
+                  "mean": 87556096,
+                  "min": 87359488,
+                  "max": 87736320,
+                  "coefficientOfVariationPercent": 0.1762031797882427
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 27056.333333333332,
-                  "min": 26567,
-                  "max": 27427,
-                  "coefficientOfVariationPercent": 1.3341843994832836
+                  "mean": 26721,
+                  "min": 26678,
+                  "max": 26786,
+                  "coefficientOfVariationPercent": 0.17497353733110227
                 }
               ]
             }
@@ -2928,28 +2928,28 @@
                   "metric": "elapsed",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 117.29701033333333,
-                  "min": 116.95564999999999,
-                  "max": 117.715761,
-                  "coefficientOfVariationPercent": 0.2686362059707196
+                  "mean": 131.81801566666667,
+                  "min": 126.990674,
+                  "max": 141.330992,
+                  "coefficientOfVariationPercent": 5.103201415265962
                 },
                 {
                   "metric": "allocatedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 1747892.3333333333,
-                  "min": 1687105,
-                  "max": 1811315,
-                  "coefficientOfVariationPercent": 2.903082035267355
+                  "mean": 1760689.6666666667,
+                  "min": 1748255,
+                  "max": 1769600,
+                  "coefficientOfVariationPercent": 0.5147644483564957
                 },
                 {
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": 5158.333333333333,
+                  "mean": 5009,
                   "min": 5009,
-                  "max": 5233,
-                  "coefficientOfVariationPercent": 2.0470684198486158
+                  "max": 5009,
+                  "coefficientOfVariationPercent": 0
                 }
               ]
             },
@@ -2960,10 +2960,10 @@
                   "metric": "elapsed",
                   "unit": "ms",
                   "samples": 3,
-                  "mean": 16.346057333333334,
-                  "min": 14.507097000000002,
-                  "max": 19.553792,
-                  "coefficientOfVariationPercent": 13.925796399650997
+                  "mean": 21.954899333333334,
+                  "min": 20.14075799999999,
+                  "max": 24.069814000000008,
+                  "coefficientOfVariationPercent": 7.369965663346221
                 },
                 {
                   "metric": "allocatedHeap",
@@ -2978,10 +2978,10 @@
                   "metric": "retainedHeap",
                   "unit": "bytes",
                   "samples": 3,
-                  "mean": -5058,
-                  "min": -5058,
+                  "mean": -5095.333333333333,
+                  "min": -5170,
                   "max": -5058,
-                  "coefficientOfVariationPercent": 0
+                  "coefficientOfVariationPercent": 1.0361894477678049
                 }
               ]
             }
@@ -2993,7 +2993,7 @@
           "aiMemoryChats": 25,
           "chatStates": 25,
           "chatQaEntries": 375,
-          "whitelistEntries": 8192,
+          "permissionList": 8192,
           "blocklistEntries": 8192,
           "pendingRemovals": 512
         },
@@ -3001,22 +3001,22 @@
           "metric": "peakRss",
           "unit": "bytes",
           "samples": 3,
-          "mean": 120621738.66666667,
-          "min": 118816768,
-          "max": 121774080,
-          "coefficientOfVariationPercent": 1.0715386121990031
+          "mean": 115574101.33333333,
+          "min": 113602560,
+          "max": 116797440,
+          "coefficientOfVariationPercent": 1.217850933988944
         }
       },
       "totals": {
         "measuredOperations": 392931405,
-        "rcharBytes": 127637672.66666667,
-        "wcharBytes": 186982876.33333334,
+        "rcharBytes": 172111864.66666666,
+        "wcharBytes": 182388369,
         "readBytes": 0,
-        "writeBytes": 207405056,
-        "readSyscalls": 40293.333333333336,
-        "writeSyscalls": 85065.66666666667,
-        "mockRootBytes": 14280860,
-        "mockRootFiles": 160
+        "writeBytes": 203104256,
+        "readSyscalls": 51592,
+        "writeSyscalls": 86157,
+        "mockRootBytes": 14888963.333333334,
+        "mockRootFiles": 113.33333333333333
       }
     }
   }

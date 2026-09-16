@@ -102,7 +102,7 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
   },
   chatStateWrite: {
     // data 为 null 的墓碑写：载荷按 0 计，只留 base。
-    message: { type: "chatStateWrite", chatId: -1001, data: null, revision: 4 },
+    message: { aiPersona: null, type: "chatStateWrite", chatId: -1001, data: null, revision: 4 },
     payloadBytes: 0,
     business: true,
   },
@@ -194,8 +194,8 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     payloadBytes: 0,
     business: true,
   },
-  temporaryWhitelistWrite: {
-    message: { type: "temporaryWhitelistWrite", id: 42, activity: null, revision: 1 },
+  temporaryAdBypassWrite: {
+    message: { type: "temporaryAdBypassWrite", id: 42, activity: null, revision: 1 },
     payloadBytes: 0,
     business: true,
   },
@@ -256,7 +256,7 @@ describe("Disk I/O 消息计价", () => {
     expect(business).toEqual([
       "aiMemory", "blocklistRemovals", "chatQaWrite", "chatStateWrite", "deleteAiMemory",
       "deleteJoinLog", "deleteWedMembers", "forgetAiMemory", "identityPolicyWrite", "joinLog",
-      "luckDraw", "stickerCatalog", "temporaryWhitelistWrite", "verificationDelete",
+      "luckDraw", "stickerCatalog", "temporaryAdBypassWrite", "verificationDelete",
       "verificationUpsert", "wedMembers",
     ]);
   });

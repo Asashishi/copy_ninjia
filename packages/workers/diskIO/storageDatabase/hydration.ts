@@ -1,3 +1,4 @@
+import { readStoredAiContexts } from "../../../database/interact/aiContext";
 import {
   removalSnapshot,
   removalSnapshotData,
@@ -108,6 +109,7 @@ function inspectPendingRemovalPages(
 
 export interface StorageDatabaseInspection {
   readonly hydration: StorageDatabaseHydration;
+  readonly aiMemories: ReadonlyMap<number, string>;
   readonly pendingRemovalData: ReadonlyMap<number, string>;
 }
 
@@ -156,12 +158,13 @@ export function inspectStorageDatabase(): StorageDatabaseInspection {
     return {
       hydration: {
         blocklistEntryCount: rows.blocklistEntryCount,
-        whitelistEntryCount: rows.whitelistEntryCount,
+        permissionEntryCount: rows.permissionEntryCount,
         pendingBlockedRemovals: removals.values,
         chatStates,
         chatQa: chatQaEntries,
       },
       pendingRemovalData: removals.encoded,
+      aiMemories: readStoredAiContexts(database, IDENTITY_DATABASE_PATH),
     };
   } finally {
     closeStorageDatabase(database);

@@ -1,3 +1,4 @@
+import { diskIOStub } from "../../helpers/diskIOMock";
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegistry";
 import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
@@ -12,24 +13,14 @@ import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
 import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
 import type {
   AiMemoryDeletedPersistedReply,
-  AiMemoryDeleteDiskMessage,
-  AiMemoryDiskMessage,
-  AiMemoryForgetDiskMessage,
   AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskIORecoveryTransport,
   DiskIORespawnListener,
-  StickerCatalogDiskMessage,
 } from "../../../packages/types/diskIO";
 
-type AiDiskMessage =
-  | AiMemoryDiskMessage
-  | AiMemoryDeleteDiskMessage
-  | AiMemoryForgetDiskMessage
-  | StickerCatalogDiskMessage;
-
 const workerPosts: AiChatWorkerMessage[] = [];
-const diskPosts: AiDiskMessage[] = [];
+const diskPosts: DiskBusinessMessage[] = [];
 const initWorker = mock((): void => {});
 const teardownFatal = mock((_error: Error): void => {});
 mock.module("../../../packages/infra/diskIO/fatal", () => ({ signalDiskIOFatal: teardownFatal }));
@@ -58,8 +49,8 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../../packages/infra/diskIO", () => ({
-  postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
+mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
+  postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
     diskDeletePersisted = callback;
   },
@@ -74,15 +65,14 @@ mock.module("../../../packages/infra/diskIO", () => ({
   },
   onDiskIOGiveUp: (callback: () => void): void => { diskGaveUp = callback; },
   relayLogMessage: (): boolean => true,
-}));
-// hydrate 的删除判据要求 state.json 确实认识这个群（见 aiChat/index.ts）：
-// 只在状态表里、开关不是 true 的群才回收磁盘残留。开着的群必然在表里，
-// 因此这里取两个集合的并集。
+})));
+// 主线程群状态缓存同时提供 AI 开关和可选人设。
 const knownChats = new Set<number>();
+const personas = new Map<number, string>();
 mock.module("../../../packages/infra/storage/stateStore", () => ({
-  getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
+  getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId), aiPersona: personas.get(chatId) }),
   getChatStateCache: (): Map<number, unknown> =>
-    new Map([...aiEnabledChats, ...knownChats].map((chatId: number): [number, unknown] => [chatId, {}])),
+    new Map([...aiEnabledChats, ...knownChats, ...personas.keys()].map((chatId: number): [number, unknown] => [chatId, { aiPersona: personas.get(chatId) }])),
 }));
 
 const aiChat = await import("../../../packages/aiChat");
@@ -135,6 +125,7 @@ beforeEach(() => {
   aiChatWorkerState.available = false;
   aiEnabledChats.clear();
   knownChats.clear();
+  personas.clear();
   workerPostAccepted = true;
 });
 afterEach((): void => { jest.useRealTimers(); });
@@ -314,7 +305,7 @@ describe("AI main-thread persistence mirror", () => {
     diskPosts.length = 0;
     const recoveryTransport: DiskIORecoveryTransport = {
       post: (message: DiskBusinessMessage): boolean => {
-        diskPosts.push(message as AiDiskMessage);
+        diskPosts.push(message);
         return true;
       },
       ensureLuckReceiptSecret: async (): Promise<never> => {
@@ -385,24 +376,12 @@ describe("AI main-thread persistence mirror", () => {
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
   });
 
-  test("state.json 不认识的群：留着文件并点名，不当成「已关闭」删掉", () => {
-    // 「群在状态表里、开关不是 true」是管理员关掉了它；「群根本不在状态表里」
-    // 说明状态自己丢了（LKG 回滚等），这时没有任何权威依据支持删除——而那
-    // 恰恰是最该保住记忆的时刻。留下的是可回收的垃圾，删错的是找不回来的数据。
+  test("状态表已不再包含的群同样清理上下文", () => {
     aiEnabledChats.add(-1002);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-
-    aiChat.hydrateAiMemory(new Map([
-      [-1001, "orphaned-memory"],
-      [-1002, "enabled-memory"],
-    ]));
-
-    expect(pendingAiMemoryDeletes.size).toBe(0);
-    expect(diskPosts.every((message: AiDiskMessage): boolean => message.type !== "deleteAiMemory")).toBeTrue();
-    expect(workerPosts.at(-1)).toEqual({
-      type: "hydrate",
-      memories: new Map([[-1002, "enabled-memory"]]),
-    });
+    aiChat.hydrateAiMemory(new Map([[-1001, "orphan-memory"], [-1002, "enabled-memory"]]));
+    expect(latestAiMemories.has(-1001)).toBeFalse();
+    expect(diskPosts).toContainEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
   });
 
   test("purge 后首份新记忆跨两级 Worker 立即持久化，确认后恢复普通批处理", async () => {
@@ -455,7 +434,7 @@ describe("AI main-thread persistence mirror", () => {
     diskPosts.length = 0;
     const recoveryTransport: DiskIORecoveryTransport = {
       post: (message: DiskBusinessMessage): boolean => {
-        diskPosts.push(message as AiDiskMessage);
+        diskPosts.push(message);
         return true;
       },
       ensureLuckReceiptSecret: async (): Promise<never> => {
@@ -575,7 +554,7 @@ describe("AI main-thread persistence mirror", () => {
     expect(aiMemoryRevisionCounters.has(-1001)).toBeFalse();
     // 落盘侧的水位线必须同一时刻一起丢：只归零主线程计数器的话，重新启用后的
     // revision 1 会被 Worker 判成迟到消息静默丢弃，直到爬过删除时的旧水位。
-    expect(diskPosts.filter((message: AiDiskMessage): boolean => message.type === "forgetAiMemory"))
+    expect(diskPosts.filter((message: DiskBusinessMessage): boolean => message.type === "forgetAiMemory"))
       .toEqual([{ type: "forgetAiMemory", chatId: -1001 }]);
   });
 
@@ -613,7 +592,7 @@ describe("AI main-thread persistence mirror", () => {
 
     const deleted = aiChat.invalidateAiChat(-1001, true);
     forgetAiMemoryRevisionCounter(-1001);
-    expect(diskPosts.some((message: AiDiskMessage): boolean => message.type === "forgetAiMemory")).toBeFalse();
+    expect(diskPosts.some((message: DiskBusinessMessage): boolean => message.type === "forgetAiMemory")).toBeFalse();
 
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
     const invalidateRequest: AiChatWorkerMessage | undefined =
@@ -689,4 +668,39 @@ describe("AI main-thread persistence mirror", () => {
     await expect(aiChat.flushAiMemory(1_000)).resolves.toBe("flushed");
     expect(workerPosts).toEqual([]);
   });
+});
+
+test("群人设由 states 缓存重放，变更及移除只发送该群最终值", async () => {
+  const { syncAiChatPersona } = await import("../../../packages/aiChat/workerBridge");
+  personas.set(-1001, "原人设");
+  aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+  expect(workerPosts).toContainEqual({ type: "persona", chatId: -1001, persona: "原人设" });
+  personas.set(-1001, "新人设");
+  syncAiChatPersona(-1001);
+  expect(workerPosts.at(-1)).toEqual({ type: "persona", chatId: -1001, persona: "新人设" });
+  const replay: AiChatWorkerMessage[] = [];
+  supervisorOptions!.onRespawn((message): boolean => { replay.push(message); return true; });
+  expect(replay).toContainEqual({ type: "persona", chatId: -1001, persona: "新人设" });
+  personas.delete(-1001);
+  syncAiChatPersona(-1001);
+  expect(workerPosts.at(-1)).toEqual({ type: "persona", chatId: -1001, persona: null });
+});
+
+test("撤管理员的 AI teardown 清空记忆但保留群人设，重建仍重放当前人设", async () => {
+  personas.set(-1001, "本群人设");
+  aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+  workerPosts.length = 0;
+  const teardown: Promise<void> = teardownRegisteredChat("aiChat", -1001, "lostAuthority");
+  const invalidation: AiChatWorkerMessage | undefined = workerPosts.find(
+    (message: AiChatWorkerMessage): boolean => message.type === "invalidateChat"
+  );
+  if (invalidation?.type !== "invalidateChat") throw new Error("Expected chat invalidation");
+  supervisorOptions!.onEvent({ type: "chatInvalidated", chatId: -1001, requestId: invalidation.requestId });
+  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: pendingAiMemoryDeletes.get(-1001)! });
+  await teardown;
+  expect(workerPosts.some((message: AiChatWorkerMessage): boolean => message.type === "persona")).toBeFalse();
+  expect(personas.get(-1001)).toBe("本群人设");
+  const replay: AiChatWorkerMessage[] = [];
+  supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => { replay.push(message); return true; });
+  expect(replay).toContainEqual({ type: "persona", chatId: -1001, persona: "本群人设" });
 });

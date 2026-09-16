@@ -1,15 +1,19 @@
+import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "grammy/types";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { ChatState } from "../../../packages/types/chatState";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
+import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import type { TelegramConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
 const chatStates = new Map<number, Record<string, unknown>>();
+const getChatState = mock((chatId: number) => chatStates.get(chatId) ?? {});
 const activeVerificationSnapshots = new Map<string, unknown>();
 const dispatched: RemoveBlockedMembersParams[][] = [];
 const errorLogs: string[] = [];
 const blockedIds = new Set<number>();
-const temporaryWhitelistIds = new Set<number>();
+const temporaryAdBypassIds = new Set<number>();
 const blockUser = mock((userId: number): boolean => blockedIds.has(userId) ? false : (blockedIds.add(userId), true));
 const confirmBlocklistPersisted = mock(async (): Promise<boolean> => true);
 const isUserBlocked = mock((userId: number): boolean => blockedIds.has(userId));
@@ -42,7 +46,7 @@ const sendMessage = mock(async (params: SendMessageMockParams): Promise<number |
   return NOTICE_MESSAGE_ID;
 });
 const deleteMessageAfter = mock((..._args: unknown[]): void => {});
-const clearTemporaryWhitelistActivity = mock((_id: number): boolean => true);
+const clearTemporaryAdBypassActivity = mock((_id: number): boolean => true);
 mock.module("../../../packages/infra/logger", () => ({
   logger: {
     log(): void {},
@@ -63,7 +67,7 @@ mock.module("../../../packages/infra/identityPolicy/whitelist", () => ({
     ((id === 100 || id === -200) && key === "isCanBypassFloodControl"),
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 ||
-    ((id === 100 || id === -200 || temporaryWhitelistIds.has(id)) &&
+    ((id === 100 || id === -200 || temporaryAdBypassIds.has(id)) &&
       key === "isCanBypassAdDetection"),
   isWhitelisted: (id: number): boolean =>
     id === 1 || id === 100 || id === 101 || id === -200,
@@ -77,13 +81,13 @@ mock.module("../../../packages/infra/blocklist/membership", () => ({
   confirmBlocklistPersisted,
   isUserBlocked,
 }));
-mock.module("../../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
-  clearTemporaryWhitelistActivity,
-  hasActiveTemporaryWhitelist: (id: number): boolean =>
-    temporaryWhitelistIds.has(id),
-  hasActiveTemporaryWhitelistAt: (id: number): boolean => temporaryWhitelistIds.has(id),
-  hydrateTemporaryWhitelistActivities: (): void => {},
-  isTemporaryWhitelistActivityCached: (): boolean => true,
+mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
+  clearTemporaryAdBypassActivity,
+  hasActiveTemporaryAdBypass: (id: number): boolean =>
+    temporaryAdBypassIds.has(id),
+  hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryAdBypassIds.has(id),
+  hydrateTemporaryAdBypassActivities: (): void => {},
+  isTemporaryAdBypassActivityCached: (): boolean => true,
 }));
 mock.module("../../../packages/infra/blocklist/outbox", () => ({
   dispatchBlockedRemovals,
@@ -91,10 +95,10 @@ mock.module("../../../packages/infra/blocklist/outbox", () => ({
 }));
 mock.module("../../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
 mock.module("../../../packages/cache/main/antiRaid/verificationMirror", () => ({ activeVerificationSnapshots }));
-mock.module("../../../packages/infra/diskIO", () => ({ postDiskIODiagnostic: postDiskIO }));
+mock.module("../../../packages/infra/diskIO", () => (diskIOStub({ postDiskIODiagnostic: postDiskIO })));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => chatStates,
-  getChatState: (chatId: number) => chatStates.get(chatId) ?? {},
+  getChatState,
 }));
 const { buildAdCandidate: buildAdCandidateFromContext } = await import(
   "../../../packages/antiRaid/adCandidate"
@@ -125,7 +129,7 @@ function message(overrides: Partial<Message> = {}): Message {
  * 同一条消息的两次构建就会各拿一个时刻，跨毫秒边界时逐字段比对在 observedAt
  * 上失败。固定成常量既守住「一次 update 一个时刻」的口径，也让 observedAt 可比对。
  *
- * 本文件把临时白名单整层 mock 成纯集合判断，now 的唯一可观测去向就是 observedAt。
+ * 本文件把临时广告免检整层 mock 成纯集合判断，now 的唯一可观测去向就是 observedAt。
  */
 const OBSERVED_AT_MS: number = Date.parse("2026-03-01T00:00:00Z");
 
@@ -139,6 +143,7 @@ function buildAdCandidate(
   });
 }
 beforeEach(() => {
+  getChatState.mockClear();
   chatStates.clear();
   chatStates.set(-1001, {
     isAdDetectEnabled: true,
@@ -157,7 +162,7 @@ beforeEach(() => {
     removalId: ++removalCounter,
   }));
   blockedIds.clear();
-  temporaryWhitelistIds.clear();
+  temporaryAdBypassIds.clear();
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
   for (const id of [7, -300, -1005]) {
@@ -165,7 +170,7 @@ beforeEach(() => {
     whitelistEntryCache.set(id, null);
   }
   blockUser.mockClear();
-  clearTemporaryWhitelistActivity.mockClear();
+  clearTemporaryAdBypassActivity.mockClear();
   confirmBlocklistPersisted.mockClear();
   confirmBlocklistPersisted.mockImplementation(async (): Promise<boolean> => true);
   isUserBlocked.mockClear();
@@ -214,8 +219,8 @@ describe("广告检测投递门禁", () => {
     expect(buildAdCandidate(message({ text: undefined, caption: "扫码进群" }), 999)?.text).toBe("扫码进群");
   });
 
-  test("已进入临时白名单的成员回复、转发或引用广告都不生成候选", () => {
-    temporaryWhitelistIds.add(7);
+  test("已进入临时广告免检的成员回复、转发或引用广告都不生成候选", () => {
+    temporaryAdBypassIds.add(7);
 
     expect(buildAdCandidate(message(), 999)).toBeUndefined();
     expect(buildAdCandidate(message({
@@ -252,6 +257,38 @@ describe("广告检测投递门禁", () => {
       { isAdDetectEnabled: true }
     )).toEqual(expected);
     expect(buildAdCandidate(message(), 999)).toBeUndefined();
+  });
+
+  test("候选标签使用消息上下文中的人设，与门禁共用同一份群状态", () => {
+    const candidateMessage: Message = message({ from: { id: 7, is_bot: false, first_name: "" } });
+    expect(buildAdCandidate(candidateMessage, 999, { isAdDetectEnabled: true, aiPersona: "普通风格" })?.label)
+      .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
+    chatStates.set(-1001, { isAdDetectEnabled: true, aiPersona: "普通风格" });
+    expect(buildAdCandidate(candidateMessage, 999, { isAdDetectEnabled: true })?.label)
+      .toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser);
+  });
+
+  test("受管群上限下连续构建广告候选复用现有状态，不产生群缓存回读或出站", () => {
+    const fixtures: { message: Message; state: ChatState; label: string }[] = [];
+    for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index++) {
+      const plain: boolean = index % 2 === 0;
+      fixtures.push({
+        message: message({ chat: { id: -1001 - index, type: "supergroup", title: "群" }, from: { id: 7, is_bot: false, first_name: "" } }),
+        state: { isAdDetectEnabled: true, aiPersona: plain ? "自定义" : undefined },
+        label: (plain ? ATMOSPHERE_TEXTS.plain : ATMOSPHERE_TEXTS.teasing).NOTICE_TEXTS.unknownUser,
+      });
+    }
+    let matched: number = 0;
+    for (let round: number = 0; round < 1_000; round++) {
+      for (const fixture of fixtures) {
+        const result = buildAdCandidate(fixture.message, 999, fixture.state);
+        if (result?.chatId === fixture.message.chat.id && result.label === fixture.label) matched++;
+      }
+    }
+    expect(matched).toBe(STATE_MANAGED_CHAT_LIMIT * 1_000);
+    expect(getChatState).not.toHaveBeenCalled();
+    expect(postDiskIO).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("没开开关、私聊、无正文与机器人自己的消息都不判定", () => {

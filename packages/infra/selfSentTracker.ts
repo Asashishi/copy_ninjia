@@ -22,7 +22,7 @@ import type { SelfSentWaiter } from "../types/telegram";
  * @see ../../docs/cn/04-invariants.md
  *
  * **isBotOwnMessage 是每条群消息都要走的判定，且一条消息会走多次**：
- * antiRaid/temporaryWhitelist.ts、antiRaid/adCandidate.ts、commands/qa/ingress.ts、
+ * antiRaid/temporaryAdBypass.ts、antiRaid/adCandidate.ts、commands/qa/ingress.ts、
  * commands/cjkAction.ts、auto/message/index.ts 各查一次，自动转发那条还会查第二次。
  * 这里按 (chatId, messageId) 两级整数键直查。
  */

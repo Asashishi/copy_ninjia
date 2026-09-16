@@ -4,7 +4,7 @@
  * 只覆盖写与删：启动恢复走的是跨域 inspect/adopt/maintenance 三阶段编排
  * （见 workers/diskIO/startup.ts），读盘那一步不经过本边界。
  */
-export interface AiMemorySnapshotFileDependencies {
+export interface AiMemorySnapshotStorageDependencies {
   write(chatId: number, snapshot: string): void;
   delete(chatId: number): void;
 }

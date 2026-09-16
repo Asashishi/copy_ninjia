@@ -156,6 +156,10 @@ export default defineConfig(
       "no-restricted-syntax": [
         "error",
         {
+          selector: "ImportSpecifier[importKind='type']",
+          message: "Use a separate import type declaration.",
+        },
+        {
           selector: "CallExpression[callee.object.name='Promise'][callee.property.name='all']",
           message: "Use Promise.allSettled with bounded concurrency and traceable per-item outcomes.",
         },

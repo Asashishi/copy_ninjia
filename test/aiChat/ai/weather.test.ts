@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 const responses: unknown[] = [];
 const fetchJsonWithTimeout = mock(async (..._args: unknown[]): Promise<unknown> => responses.shift() ?? null);
@@ -28,9 +28,9 @@ async function flushRefresh(): Promise<void> {
   await Promise.resolve();
 }
 
-function validWeather(currentCode: number = 0, todayCode: number = 3): object {
+function validWeather(currentCode: number = 0, todayCode: number = 3, temperature: number = 31.5): object {
   return {
-    current: { temperature_2m: 31.5, weather_code: currentCode },
+    current: { temperature_2m: temperature, weather_code: currentCode },
     daily: {
       temperature_2m_max: [35],
       temperature_2m_min: [26],
@@ -47,6 +47,8 @@ beforeEach(() => {
   weatherCache.current = null;
 });
 
+afterEach((): void => stopWeatherRefreshLoop());
+
 describe("Open-Meteo 适配层", () => {
   test("启动时立即刷新并注册唯一周期回调，合法响应写入共享缓存", async () => {
     responses.push(validWeather());
@@ -59,7 +61,9 @@ describe("Open-Meteo 适配层", () => {
     }) as typeof setInterval;
     try {
       startWeatherRefreshLoop();
+      startWeatherRefreshLoop();
       await flushRefresh();
+      expect(fetchJsonWithTimeout).toHaveBeenCalledTimes(1);
 
       expect(intervalCallback).not.toBeNull();
       expect(currentTokyoWeather()).toEqual({
@@ -78,6 +82,9 @@ describe("Open-Meteo 适配层", () => {
       await flushRefresh();
       expect(currentTokyoWeather()?.currentCondition).toContain("代码 999");
       expect(currentTokyoWeather()?.todayCondition).toContain("代码 998");
+      stopWeatherRefreshLoop();
+      intervalCallback!();
+      expect(fetchJsonWithTimeout).toHaveBeenCalledTimes(2);
     } finally {
       globalThis.setInterval = originalSetInterval;
     }
@@ -111,4 +118,36 @@ describe("Open-Meteo 适配层", () => {
       globalThis.setInterval = originalSetInterval;
     }
   });
+
+  test("停止取消请求，迟到成功不得填充缓存", async (): Promise<void> => {
+    const pending: PromiseWithResolvers<unknown> = Promise.withResolvers<unknown>();
+    responses.push(pending.promise);
+    startWeatherRefreshLoop();
+    const signal: AbortSignal = (fetchJsonWithTimeout.mock.calls[0]![0] as { init: { signal: AbortSignal } }).init.signal;
+    expect(signal.aborted).toBe(false);
+    stopWeatherRefreshLoop();
+    expect(signal.aborted).toBe(true);
+    pending.resolve(validWeather());
+    await flushRefresh();
+    expect(currentTokyoWeather()).toBeNull();
+  });
+
+  test.each([validWeather(0, 3, 10), null, { current: "invalid" }])(
+    "重开后旧循环的迟到结果不影响新缓存：%j",
+    async (late: unknown): Promise<void> => {
+      const old: PromiseWithResolvers<unknown> = Promise.withResolvers<unknown>();
+      const current: PromiseWithResolvers<unknown> = Promise.withResolvers<unknown>();
+      responses.push(old.promise, current.promise);
+      startWeatherRefreshLoop();
+      stopWeatherRefreshLoop();
+      startWeatherRefreshLoop();
+      current.resolve(validWeather(0, 3, 20));
+      await flushRefresh();
+      expect(currentTokyoWeather()?.currentTemperatureC).toBe(20);
+      old.resolve(late);
+      await flushRefresh();
+      expect(currentTokyoWeather()?.currentTemperatureC).toBe(20);
+      expect(loggerError).not.toHaveBeenCalled();
+    }
+  );
 });

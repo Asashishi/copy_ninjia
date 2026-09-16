@@ -1,23 +1,21 @@
+import { LUCK_TIER_COMMENTS } from "./atmosphere/teasing/luck";
 import type { LuckTier } from "../types/luckChallenge";
 
 /** /luck_challenge 内联抽签（packages/commands/luckChallenge/）的调参常量。 */
 
 /**
- * 吉凶概率表：越靠两端（大吉/大凶）越稀有，中间几档更常见，仿传统抽签。
- * fortunePercentRange 是行大运概率的浮动区间（闭区间，%），每次抽到新结果时
- * 都在区间内重新滚动一次，不再是查表就唯一确定的固定值（见
- * commands/luckChallenge/ 的 rollFortunePercent）。区间两两不重叠、按档递减，
- * 唯独「尚可」横跨 50（45~55）——半吉半凶的档位，行大运/倒大霉谁占上风本就该
- * 各半，浮动出来偶尔翻面是应有之义。
+ * commands/luckChallenge/ 的吉凶权重与行大运概率区间（闭区间，%）。
+ * 当日密钥与 cache key 确定档位及区间内的概率，后者保留两位小数。
+ * 区间两两不重叠、按档递减，「尚可」的 45~55 区间跨越 50。
  */
 export const LUCK_TIERS: readonly LuckTier[] = [
-  { label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼快让本天才蹭蹭欧气～♡", fortunePercentRange: [88, 97] as const },
-  { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: [72, 82] as const },
-  { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: [58, 67] as const },
-  { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: [45, 55] as const },
-  { label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercentRange: [33, 42] as const },
-  { label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercentRange: [18, 28] as const },
-  { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: [3, 12] as const },
+  { label: "大吉", weight: 7, comment: LUCK_TIER_COMMENTS.大吉, fortunePercentRange: [88, 97] as const },
+  { label: "吉", weight: 15, comment: LUCK_TIER_COMMENTS.吉, fortunePercentRange: [72, 82] as const },
+  { label: "小吉", weight: 20, comment: LUCK_TIER_COMMENTS.小吉, fortunePercentRange: [58, 67] as const },
+  { label: "尚可", weight: 26, comment: LUCK_TIER_COMMENTS.尚可, fortunePercentRange: [45, 55] as const },
+  { label: "小凶", weight: 17, comment: LUCK_TIER_COMMENTS.小凶, fortunePercentRange: [33, 42] as const },
+  { label: "凶", weight: 10, comment: LUCK_TIER_COMMENTS.凶, fortunePercentRange: [18, 28] as const },
+  { label: "大凶", weight: 5, comment: LUCK_TIER_COMMENTS.大凶, fortunePercentRange: [3, 12] as const },
 ];
 
 /**
@@ -43,10 +41,7 @@ if (LUCK_TIERS.some(
   throw new Error("luckTierByLabel must cover every current LUCK_TIERS label exactly once");
 }
 
-// weight 必须凑满 100（drawLuckTier 按 1~100 掷骰累加匹配）：凑不满 100，
-// 最后一档会因兜底 return 吃到多余权重；超过 100，末尾档位会被挤到摇不出——
-// 加载期直接炸掉，不留一个只有注释约束、没人真正校验的隐性契约。
-/** 启动期校验使用的吉凶档总权重，固定必须为 100。 */
+/** commands/luckChallenge/ 的启动期权重校验；总和必须覆盖 drawLuckTier 的 [0, 100) 输入区间。 */
 const LUCK_TIER_WEIGHT_SUM: number = LUCK_TIERS.reduce((sum: number, tier: LuckTier): number => sum + tier.weight, 0);
 if (LUCK_TIER_WEIGHT_SUM !== 100) {
   throw new Error(`LUCK_TIERS weights must sum to 100, got ${LUCK_TIER_WEIGHT_SUM}`);

@@ -1,34 +1,10 @@
-/** 入群验证文案、时限与短期去重窗口。 */
-
 /**
- * 「我是良民」按钮文案：待验证的真人必须在 VERIFICATION_TIMEOUT_MS 内自己点它，
- * 只认本人点击。机器人成员的提醒不带这颗按钮。
- * 所属模块：workers/antiRaid/verificationReminders.ts。
- */
-export const VERIFICATION_SELF_BUTTON_TEXT: string = "我是良民";
-/**
- * 「通过」按钮文案：本群非匿名管理员替待验证成员（真人或机器人）代为通过；
- * 本人、白名单与其他成员点击一律驳回。
- * 所属模块：workers/antiRaid/verificationReminders.ts。
- */
-export const VERIFICATION_APPROVE_BUTTON_TEXT: string = "通过";
-/**
- * 「我是良民」按钮 callback_data 的前缀，后面拼上待验证成员的 userId。
+ * 本人验证按钮 callback_data 的前缀，后面拼上待验证成员的 userId。
  * 与 VERIFY_APPROVE_CALLBACK_PREFIX、consts/qa.ts 的看板前缀互不为前缀。
  */
 export const VERIFY_SELF_CALLBACK_PREFIX: string = "verify:";
 /** 「通过」按钮 callback_data 的前缀，后面拼上待验证成员的 userId。 */
 export const VERIFY_APPROVE_CALLBACK_PREFIX: string = "approve:";
-/**
- * 守卫已关的群里还留着旧按钮时的 callback 应答文案。当场应答掉、不投给 Worker，
- * 否则点的人只看到按钮一直转。所属模块：antiRaid/updateIngress.ts。
- */
-export const VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT: string = "本天才已经不守这个群的门啦♡";
-/**
- * callback_data 后半段不是合法正整数时的应答文案。这是外部输入，前缀匹配不代表
- * 目标 id 合法。所属模块：antiRaid/updateIngress.ts。
- */
-export const VERIFICATION_INVALID_CALLBACK_TEXT: string = "验证请求无效";
 /** 新成员完成验证的完整时间窗口。 */
 export const VERIFICATION_TIMEOUT_MS: number = 3 * 60_000;
 /** 验证提醒投递失败后的指数退避边界；失败期间成员不会因看不到按钮被踢。 */
@@ -97,7 +73,5 @@ export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
  * 同一次入群的两条腿，见 states/verification.ts 的 handleJoin。
  */
 export const KICKED_REJOIN_GRACE_MS: number = 5 * 1000;
-/** 验证通过后的欢迎消息在被自动清理前保持可见的时长。 */
-export const WELCOME_AUTO_DELETE_MS: number = 30 * 1000;
 /** 终结 revision 为抵御重复 adopt 保留的时间；之后周期清理，避免按历史成员增长。 */
 export const VERIFICATION_REVISION_RETENTION_MS: number = 10 * 60 * 1000;

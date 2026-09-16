@@ -14,8 +14,8 @@ import type {
   PendingIdentityPolicyWrite,
   PendingRemovalWrite,
 } from "../../../types/identityStorage";
-import type { PendingTemporaryWhitelistWrite } from
-  "../../../types/temporaryWhitelist";
+import type { PendingTemporaryAdBypassWrite } from
+  "../../../types/temporaryAdBypass";
 
 /** Owner: Disk I/O Worker。六表共同的条目与字节预算；写前预约、事务成功清空，重建由主线程重放。 */
 export const storagePendingBudget: StorageWriteBudget = new StorageWriteBudget();
@@ -31,7 +31,7 @@ export const storageWriteFatalReply: { current: (() => void) | null } = { curren
 /**
  * Owner: Disk I/O Worker。
  *
- * 每条连接三条预编译的主键存在性语句（永久白/黑名单与临时白名单各一），首次由
+ * 每条连接三条预编译的主键存在性语句（永久白/黑名单与临时广告免检各一），首次由
  * workers/diskIO/storageDatabase/identityPolicy.ts 建好放进来。写入路径按条目调用
  * assertOppositePolicyAbsent，因此同一连接必须复用预编译语句。
  *
@@ -66,13 +66,13 @@ export const pendingWhitelistWrites: Map<number, PendingIdentityPolicyWrite> = n
 export const pendingBlocklistWrites: Map<number, PendingIdentityPolicyWrite> = new Map();
 
 /**
- * 临时白名单累计未提交最终值；消息到达时按身份合并，容量达到 128 即触发事务。
+ * 临时广告免检累计未提交最终值；消息到达时按身份合并，容量达到 128 即触发事务。
  * 成功提交后由 flush 清理，失败时保留给 30 秒 timer 重试；Worker 重建后为空，
  * 主线程以未 ACK revision 重放最终值。
  */
-export const pendingTemporaryWhitelistWrites: Map<
+export const pendingTemporaryAdBypassWrites: Map<
   number,
-  PendingTemporaryWhitelistWrite
+  PendingTemporaryAdBypassWrite
 > = new Map();
 
 /** 待踢成员未提交行变化；容量达到 128 即触发一次显式事务。 */
@@ -120,12 +120,12 @@ export const storageWriteFlushTimer: {
  * 容量最多为六个 SQLite 持久化领域，Worker 重建时由 reset 清空。
  */
 export const rejectedStorageDomains: Set<
-  "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
 > = new Set();
 
 /** 记下某个存储领域本轮拒收的一条消息；下一次 flush 会按该领域回报失败。 */
 export function noteStorageWriteRejected(
-  domain: "whitelist" | "blocklist" | "temporaryWhitelist" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  domain: "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
 ): void {
   rejectedStorageDomains.add(domain);
 }
@@ -142,7 +142,7 @@ export function resetStorageDatabaseCache(): void {
   storageDatabaseHandle.current = null;
   pendingWhitelistWrites.clear();
   pendingBlocklistWrites.clear();
-  pendingTemporaryWhitelistWrites.clear();
+  pendingTemporaryAdBypassWrites.clear();
   pendingRemovalWrites.clear();
   pendingChatStateWrites.clear();
   pendingChatQaWrites.clear();

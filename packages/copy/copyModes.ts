@@ -1,3 +1,5 @@
+import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import type { AtmosphereTexts } from "../types/atmosphere";
 import type { CopyMode } from "../types/chatState";
 import { NYA_SUFFIX } from "../consts/copyModes";
 import { splitGraphemes } from "../libs/text";
@@ -44,12 +46,12 @@ export function applyCopyModeTransform(text: string, mode: CopyMode | undefined)
  * "，之后 TA 说的纯文字都会被本天才倒过来念"。没有模式时返回 ""。
  * @param mode 即将启动的 copy mode。
  */
-export function describeCopyModeEffect(mode: CopyMode | undefined): string {
+export function describeCopyModeEffect(mode: CopyMode | undefined, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
   switch (mode) {
     case "reverse":
-      return "，之后 TA 说的纯文字都会被本天才倒过来念";
+      return atmosphere.NOTICE_TEXTS.copyReverseEffect;
     case "nya":
-      return "，之后 TA 说的纯文字后面本天才都会给它加上喵~";
+      return atmosphere.NOTICE_TEXTS.copyNyaEffect;
     default:
       return "";
   }

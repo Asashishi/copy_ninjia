@@ -64,6 +64,7 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   { path: "packages/workers/antiRaid/lockdownRuntime.ts", purpose: "lockdown durable acknowledgements, restore and teardown" },
   { path: "packages/workers/antiRaid/lockdownApi.ts", purpose: "lockdown API ownership and permission compensation" },
   { path: "packages/states/lockdown.ts", purpose: "lockdown recovery and durable state transitions" },
+  { path: "packages/aiChat/ai/weather.ts", purpose: "weather refresh cancellation and late-result ownership" },
 ];
 
 /** 静态字符串字面量说明符；模板与动态表达式不参与判定。 */

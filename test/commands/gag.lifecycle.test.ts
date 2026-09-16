@@ -1,12 +1,13 @@
 /** `/gag` 与 `/ungag` 的容量预约、提示收尾与停机排空状态机。 */
 
 import { describe, expect, test } from "bun:test";
+import { GAG_SESSION_MAX } from "../../packages/consts/gag";
+import { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/gag";
 import {
-  GAG_SESSION_MAX,
-  GAG_TARGET_TEXTS,
-  UNGAG_TARGET_TEXTS,
-} from "../../packages/consts/gag";
-import { GAG_USAGE_TEXT } from "../../packages/consts/commandUsage";
+  GAG_TARGET_TEXTS as PLAIN_GAG_TARGET_TEXTS,
+  UNGAG_TARGET_TEXTS as PLAIN_UNGAG_TARGET_TEXTS,
+} from "../../packages/consts/atmosphere/plain/gag";
+import { GAG_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";
 import { settleTestBatch } from "../libs/helpers";
@@ -161,6 +162,21 @@ describe("/gag 与 /ungag 状态机", () => {
       messages: GAG_TARGET_TEXTS,
     });
     expect(lastEphemeralText()).toContain("只有你看得到这个发言入口");
+  });
+
+  test("自定义人设群的 /gag 与 /ungag 把普通版目标文案交给解析器", async () => {
+    gagTestSwitches.aiPersona = "温和助手";
+
+    await gag.handleGagCommand(commandContext({ match: "@alice 5" }));
+    expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
+      messages: PLAIN_GAG_TARGET_TEXTS,
+    });
+
+    resolveCommandTarget.mockClear();
+    await gag.handleUngagCommand(commandContext({ match: "@alice" }));
+    expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
+      messages: PLAIN_UNGAG_TARGET_TEXTS,
+    });
   });
 
   test("回复目标只写用具时使用默认 5 分钟，并把空目标交给回复解析", async () => {

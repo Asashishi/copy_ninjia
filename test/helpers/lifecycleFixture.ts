@@ -37,7 +37,7 @@ const loadPersistedData = mock(async () => ({
   pendingBlockedRemovals: new Map(),
   blocklistEntryCount: 0,
   chatStates: new Map<number, never>(),
-  whitelistEntryCount: 0,
+  permissionEntryCount: 0,
 }));
 type FlushResult = "flushed" | "timedOut" | "failed";
 const flushDiskIO = mock(async (): Promise<FlushResult> => { calls.push("flushDiskIO"); return "flushed"; });

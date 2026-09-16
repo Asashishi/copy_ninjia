@@ -1,8 +1,9 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { invalidateAiChat } from "../aiChat";
 import { aiChatConfigReadiness } from "../config/readiness";
-import { AI_CHAT_TOGGLE_TEXTS } from "../consts/commands";
+
 import { refuseIfConfigBroken } from "./configGate";
 import { runChatToggleCommand } from "./superAdminToggle";
 
@@ -22,7 +23,7 @@ import { runChatToggleCommand } from "./superAdminToggle";
 export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise<void> {
   await runChatToggleCommand({
     ctx,
-    texts: AI_CHAT_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat?.id ?? 0).AI_CHAT_TOGGLE_TEXTS,
     permission: "isCanControllAIPermission",
     persistReason: "ai_chat toggled",
     runtimeLabel: "AI chat runtime",
@@ -36,7 +37,7 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
         chatId,
         messageId,
         feature: "AI chat",
-        text: (file: string): string => `本天才的 ${file} 写坏了，读都读不动还闲什么聊？修好再重启，笨蛋♡`,
+        text: (file: string): string => chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.aiConfigInvalid(file),
       }),
     teardown: (chatId: number): Promise<void> => invalidateAiChat(chatId, true),
   });

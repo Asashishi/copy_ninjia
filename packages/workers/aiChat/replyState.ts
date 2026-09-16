@@ -1,10 +1,9 @@
+import { aiChatAtmosphere } from "./atmosphere";
 import type { TelegramWorkerTemporaryMessageResult } from "../../types/telegramWorker";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
-import {
-  RATE_LIMIT_NOTICE_COOLDOWN_MS,
-  RATE_LIMIT_NOTICE_TEXT,
-} from "../../consts/aiChat/rateLimit";
+import { RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../consts/aiChat/rateLimit";
+
 import {
   rateLimitNoticeTimes,
 } from "../../cache/workers/aiChat/replies";
@@ -54,11 +53,12 @@ export function notifyRateLimited({
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
   const signal: AbortSignal = replyGenerationSignal(chatId, generation);
+  const text: string = aiChatAtmosphere(chatId).RATE_LIMIT_NOTICE_TEXT;
   const task: Promise<void> = sendTemporaryMessageFromMain({
     purpose: "notice",
     deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     chatId,
-    text: RATE_LIMIT_NOTICE_TEXT,
+    text,
     signal,
     messageThreadId,
   }).then((result: TelegramWorkerTemporaryMessageResult | undefined): void => {
@@ -69,7 +69,7 @@ export function notifyRateLimited({
         chatId,
         self: botInfoState.current,
         messageId: sentMessageId,
-        text: RATE_LIMIT_NOTICE_TEXT,
+        text,
       }));
     }
   });

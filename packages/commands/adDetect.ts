@@ -1,8 +1,9 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { clearAdDetection } from "../antiRaid";
 import { adDetectConfigReadiness } from "../config/readiness";
-import { AD_DETECT_TOGGLE_TEXTS } from "../consts/commands";
+
 import { refuseIfConfigBroken } from "./configGate";
 import { runChatToggleCommand } from "./superAdminToggle";
 
@@ -27,7 +28,7 @@ import { runChatToggleCommand } from "./superAdminToggle";
 export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promise<void> {
   await runChatToggleCommand({
     ctx,
-    texts: AD_DETECT_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat?.id ?? 0).AD_DETECT_TOGGLE_TEXTS,
     permission: "isCanControllAdDetectPermission",
     persistReason: "ad_detect toggled",
     runtimeLabel: "queued ad detection",
@@ -41,7 +42,7 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
         chatId,
         messageId,
         feature: "Ad detection",
-        text: (file: string): string => `本天才的 ${file} 写坏了，判定口径都读不出来还抓什么广告？修好再重启，笨蛋♡`,
+        text: (file: string): string => chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.adConfigInvalid(file),
       }),
     teardown: clearAdDetection,
   });

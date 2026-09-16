@@ -52,7 +52,7 @@ WantedBy=multi-user.target
 
 program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 者は `0755`、`database/` は `0770`。実際の mode は umask でさらに絞られます）、4 path の symlink を拒否します。root・`logs/`・`memory/` は runtime UID 所有かつ `0755` 以下でなければなりません。この gate が止めるのは**書き込み**で、group または other に `w` bit があれば起動を拒否します。読み側を `0755` まで緩めているのは、本 project を単一テナントとして扱い、大半の deployment が root で直接動かし、既定 umask で作られる directory がまさに `0755` だからです。
 
-> **代償**：`memory/` の新規 file は `0644` が既定値なので、既定のまま使う deployment では group chat の逐語記録を主に directory bit で保護します。`0755` のままにすると、同じマシンのどの local account からも読めます。マルチテナント host では data root と `memory/` を `0750`、既存 file を必要に応じて `0600`/`0640` に収めてください。runtime の adopt と replace はその mode を維持し、自動 chmod しません。identity migration は `database/` を `02770` にし、主 DB と WAL/SHM は初回作成時に `0660` を使います。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
+> **代償**：`memory/` の新規 file は `0644` が既定値なので、既定のまま使う deployment では group chat の逐語記録を主に directory bit で保護します。`0755` のままにすると、同じマシンのどの local account からも読めます。マルチテナント host では data root と `memory/` を `0750`、既存 file を必要に応じて `0600`/`0640` に収めてください。runtime の adopt と replace はその mode を維持し、自動 chmod しません。deployment tooling は `database/` を `02770` に設定でき、主 DB と WAL/SHM は初回作成時に `0660` を使います。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
 
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、identity write-through、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
@@ -77,12 +77,6 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **アップグレード前にこの 4 項目を確認**：サムネイル 3 枚は現在 `https` のみを受け付ける
     ため、古いバージョンで `http://` のままの項目があると decode 時に起動を拒否し、
     フィールドパスを示します。
-- **`memory/ai/<chatId>.json`**
-  - **内容**：チャットごとの version=1 AI メモリ原子 snapshot。直近の逐語メッセージ、
-    過去の要約、要約待ち内容、保存時刻を保持。
-  - **バックアップ**：機密のグループチャット本文を含む。チャットのメモリ purge 時に
-    削除し、起動時は chat ID ごとに復元。
-  - **検証**：本文・名前・参照は単一行、参照 text/quote は最大 500 UTF-16 code unit、`at` は実在する東京ローカル時刻 `YYYY/MM/DD HH:mm:ss` です。要約は改行可能です。不正フィールドがあれば復元を拒否し、ネストしたパスを示して原本を保持します。
 - **`memory/wed/<chatId>.json`**
   - **内容**：各群の発言済みメンバー ID の数値配列（例：`[5974478892]`）。主スレッドは各群で同じ長期 `Set<number>` を再利用します。最大 25 群、各群 150,000 ID です。満杯では既存 ID を保持し、退室で空きができると追加を再開します。
   - **検証**：ファイル名は正規形の負の安全整数グループ ID、要素は重複のない正の安全整数です。不正 JSON、重複、型や容量の違反は原本を切り詰めたり修復したりせず起動を拒否します。ディレクトリやファイルの欠落は許可し、必要時に作成します。
@@ -116,29 +110,10 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     `/init disable` と Bot のグループ退出では、保持 window の内外を問わずその chat の
     ファイルをすべて削除し、自然な期限切れを待ちません（管理者権限の剥奪では削除しません）。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
-  - **内容**：schema v8 共有ストレージ database。`whitelist_entries` と `blocklist_entries` は
-    恒久 allowlist / blocklist の正式表です。`temporary_whitelist_entries` は group 横断発言の
-    累計、連続 qualified day、一時 grant 時刻、日次 rollover に必要な `send_count`、
-    `counted_at`、`qualified_at` を relational column で保持し、
-    `pending_blocked_removals` は未完了の chat 別 BAN
-    outbox、`chat_states` はグループ単位状態の正式表（最大 25 行。26 行目があれば起動を
-    拒否）、`storage_metadata` は唯一の schema version を保持します。Drizzle migration
-    journal は対応する lineage と厳密に一致しなければなりません。`chat_states` の 25 行枠は
-    record 全体が既定値へ戻ったときだけ解放され、空ける方法は 2 つあります：そのグループで
-    `/init disable` を実行するか、Bot をそのグループから外します。どちらもグループ名・権限
-    スナップショット・全機能スイッチを含む row 全体を削除します。残るのは復旧待ちの
-    lockdown を抱えた row だけで、消すとそのグループの招待権限が永久に固まるからです。
-    したがって `/init enable` し直した後は各機能を 1 つずつ入れ直すことになります。それが
-    「管理をやめたグループには何も残さない」ことの裏返しです。
-  - **バックアップ**：必須です。blocklist を失えば恒久 BAN がすべて解除され、outbox を
-    失えば未完了処置が抜けます。Bot 停止後、主 DB とその時点で存在する WAL/SHM を同じ
-    consistency set として worktree 外へ copy し、owner/mode と SHA-256 を記録します。
-    text editor や場当たり的な SQL で業務 row を手編集してはいけません。翻訳の cold migration は独立したコピーだけを書き換え、ソースを保持してハッシュと metadata を確認します。
-  - **復元**：Disk I/O Worker が唯一の database owner です。起動時は integrity、JSONB、
-    schema、migration lineage、row codec、blocklist と 2 種類の allowlist の非交差を検証してから、
-    恒久 policy count と pending outbox だけを main thread へ返します。一時 activity は update が
-    必要とする identity だけ 8,192-entry LRU へ cold read します。失敗時は起動を拒否し、空 DB の
-    作成、row の破棄、silent degradation は行いません。
+  - **内容**：schema v10 共有ストレージです。`permission_list.policy` は厳密な JSONB の恒久権限、`blocklist_entries` はブラックリストを保持します。`temporary_ad_bypass_entries` は `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at`、`qualified_at` で広告免除の活動を集計します。`pending_blocked_removals` は未完了の群別 ban、`storage_metadata` と Drizzle journal は schema と厳密な系譜を保持します。
+  - **群状態と人設**：`chat_states` は最大 25 行。`chat_id` が主キー、`status` は必須 JSONB、`ai_persona` は NULL 許容・空白のみ不可の TEXT で、本群専用プロンプトを保存します。未設定ならプロジェクトの `prompt/persona.md` を使用します。起動時に状態と人設を既存メインスレッド群 cache に読み込み、`/bot_status` は設定の有無をそこから確認します。`/init disable` と Bot 退群では行と人設を削除し、未復元 lockdown は復元 protocol に従って保持します。
+  - **AI context**：NULL 許容 JSONB `ai_context` は version=1 の逐語メッセージ、要約、未統合要約、保存時刻を保持し、既存 AI Worker memory cache とメインスレッド復元 mirror を使用します。書き込みは既存群行だけを更新し、context だけの行は保持しません。記憶の消去はこの列を NULL にして人設を保持します。本文・名前・引用は単一行、引用 text/quote は最大 500 UTF-16 code unit、`at` は有効な東京時刻 `YYYY/MM/DD HH:mm:ss` です。要約は改行可能。不正 field は復元を拒否して入れ子 path を示し、元データを変更しません。
+  - **バックアップと復元**：群会話と専用プロンプトを含む機密データです。Bot 停止中に本体と存在する WAL/SHM を同一集合として作業ツリー外へコピーし、所有者・mode・SHA-256 を記録して検証します。Disk I/O Worker が DB を独占し、起動時に integrity、JSONB、schema、系譜、厳密な行 codec、policy 排他、outbox 参照を検証します。群状態と AI snapshot は同じ接続から復元します。identity の参照は 8,192 件 LRU と update に必要な ID の cold read を使います。検証失敗時は自動建庫・移行・行破棄・縮退をせず起動を拒否します。
 - **`memory/ad-detected/sample.json`**
   - **内容**：広告判定ヒットの生サンプル。時刻、メッセージ ID と本文、判定理由、
     引用/返信コンテキストを含む。
@@ -158,13 +133,13 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **内容**：単一インスタンスロック。
   - **バックアップ**：停止時の snapshot とともに保全し、手動編集や実行中 process への lock 復元は行いません。
 
-`memory/` 直下にはファイルを置かず、7 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は復元が必要な state domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact は成功応答後に行い、その後で `Asia/Tokyo` を明示した Bun native の東京 0 時 maintenance cron を 1 つ登録します。この cron は最初に主スレッドへ `/wed` の日次メンバー再確認を通知し、その後で運勢 file、log、入室 log、広告 sample archive、認証待ちの日別 file、一時 allowlist activity をまとめて maintenance し、1 domain の失敗で残りを止めません。既存の起動時・業務 event 経路は fallback として残します。一時 allowlist maintenance は shared SQLite の pending final value を先に commit し、一時 write が未 commit のままなら削除を拒否します。当日 row と終了したばかりの日に qualified だった row を保持し、その日の unqualified row とさらに古い row は全体を削除します。cleanup 後に到着した失効済み旧日 write は元の revision の tombstone に正規化します。`ad-detected/` は引き続き最初の hit 後にだけ現れ、すでに directory がある場合も起動成功後の maintenance は sample 内容を読まず directory entry だけを走査します。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。実行中は統一 cron が同じ rollover を起動し、失敗時は active mirror を保持したまま unref 済み 1 秒 timer で再試行します。
+`memory/` 直下にはファイルを置かず、6 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動時は復元が必要な state domain（`joinlog/` の保持 window を含む）を read-only scan して厳格 decode し、すべて成功した後だけ owner を adopt します。directory 作成、temporary/orphan/期限切れ file の清掃、compact は成功応答後に行い、その後で `Asia/Tokyo` を明示した Bun native の東京 0 時 maintenance cron を 1 つ登録します。この cron は最初に主スレッドへ `/wed` の日次メンバー再確認を通知し、その後で運勢 file、log、入室 log、広告 sample archive、認証待ちの日別 file、一時 allowlist activity をまとめて maintenance し、1 domain の失敗で残りを止めません。既存の起動時・業務 event 経路は fallback として残します。一時 allowlist maintenance は shared SQLite の pending final value を先に commit し、一時 write が未 commit のままなら削除を拒否します。当日 row と終了したばかりの日に qualified だった row を保持し、その日の unqualified row とさらに古い row は全体を削除します。cleanup 後に到着した失効済み旧日 write は元の revision の tombstone に正規化します。`ad-detected/` は引き続き最初の hit 後にだけ現れ、すでに directory がある場合も起動成功後の maintenance は sample 内容を読まず directory entry だけを走査します。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、起動成功後の maintenance だけが当日の原子 snapshot を公開して旧日を清掃します。実行中は統一 cron が同じ rollover を起動し、失敗時は active mirror を保持したまま unref 済み 1 秒 timer で再試行します。
 
 `joinlog/` の query は `[since, now]` を覆う最大 2 個の chat/day file を読み、window 内で user ごとの最後の入室だけを返します。3 日目の保持は 23:59 に採取され、深夜を越えて Worker が処理する in-flight query 専用です。冗長履歴 10,000 件または新規追記 4 MiB で compact を評価し、512 KiB 以上回収できる場合だけ atomic rewrite します。parse 可能でも schema が不正な file は byte を変えずその read/write を拒否し、末尾の truncate 断片だけ append layer が修復できます。
 
 ### `memory/` の補助ファイルとプロセス内限定状態
 
-- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。起動 inspect はこれらを記録するだけで削除しません。全 domain の検証と adopt が成功して成功応答を返した後、logs、`ai/`、`stickers/`、`luck/`、`joinlog/`、`wed/` の maintenance が対応する `*.tmp` を清掃します。既存の `ad-detected/` directory は起動成功後の maintenance で `.sample.json.*.tmp` を清掃し、最初の sample 書き込みにも同じ fallback を残します。`anti-raid/` は temporary file を復元 input から除外します。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
+- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。起動 inspect はこれらを記録するだけで削除しません。全 domain の検証と adopt が成功して成功応答を返した後、logs、`stickers/`、`luck/`、`joinlog/`、`wed/` の maintenance が対応する `*.tmp` を清掃します。既存の `ad-detected/` directory は起動成功後の maintenance で `.sample.json.*.tmp` を清掃し、最初の sample 書き込みにも同じ fallback を残します。`anti-raid/` は temporary file を復元 input から除外します。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
 - Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。
 
 Bot 停止中または storage snapshot の整合境界でデータルート全体をバックアップし、SQLite 主 DB と存在する sidecar は同一時点から取得します。`memory/` と `database/` は機密データとして扱ってください。新規 memory file は `0644`、DB と sidecar は初回作成時に `0660` が既定値で、既存 file の mode は adopt と atomic replace 後も維持されます。詳細は [04](04-invariants.md#永続化) を参照してください。
@@ -177,27 +152,50 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 起動は database 欠落を「空 policy」と推測しないため、新規 deployment は現行 schema の空 database を明示的に一度作成する必要があります。手順は [01 セットアップ](01-getting-started.md#identity-storage-の初期化) にあり、`install.sh` にも含まれています。作成 entry point は既存 target の上書きを拒否します。
 
-### 10.5.4 からの cold migration
+### schema v9 からの cold migration
 
-唯一の cold migration 入口は [`scripts/migrateTranslate.ts`](../../scripts/migrateTranslate.ts) です。`10.5.4` の厳密な schema v7 系譜と global-only 状態だけを受け入れ、schema v8 と群別セッション配列を出力します。古い版は各版の手順で先に `10.5.4` まで段階的に更新してください。未知の系譜と未公開 dev の状態形式は拒否し、runtime は現行形式だけを扱います。
+唯一の入口は [`scripts/migrateClearContextPermission.ts`](../../scripts/migrateClearContextPermission.ts) です。直前の migration が出力した厳密な schema v9 系譜だけを受け入れ、schema v10 を出力します。古い版は対応する版の手順で先に v9 まで段階的に更新してください。未知の系譜と変換済み v10 は拒否します。本番起動は現行形式だけを検証し、migration を行いません。
 
-1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、実際の設定・資格情報・実行データをコピーします。主備状態、SQLite 本体、存在する WAL/SHM は同一停止時点のものを使い、ファイル一覧・mode・所有者・SHA-256 を記録して検証します。
-
-2. 下記コマンドでバックアップから新しい出力ディレクトリを生成します。出力はソースの外に置き、親ディレクトリは事前に存在する必要があります。スクリプトはソース、サービス、実際のデプロイファイルを変更しません。
+1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、実際の設定・資格情報・実行データをコピーします。SQLite 本体と既存 WAL/SHM は同一停止時点のものを使い、ファイル一覧・mode・所有者・SHA-256 を記録して全コピーを検証します。
+2. ソース外の新しい出力先を指定します。親ディレクトリは事前に存在する必要があります。スクリプトはソース、サービス、実際のデプロイファイルを変更しません。
 
 ```bash
-bun run migrate:translate --from 10.5.4 \
+bun run migrate:clear-context-permission \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. SQLite 権限 `isCanControllJATranslatePermission` を `isCanControllTranslatePermission`、群スイッチ `isJATranslationEnabled` を `isTranslationEnabled` に改名し、真偽値と任意スイッチの欠落を保持します。必須権限の欠落、不正値、旧新キーの衝突は拒否します。`copyMode: "ja"` の対象をその群の日本語セッションへ移し、対応する copy 対象・モード・群 ID を消去してクールダウン時刻と素材を保持します。他の copy モードは保持し、主備を別々に変換します。
+3. 各 `permission_list.policy` に boolean 権限 `isCanClearContext` を追加します。既存権限がすべて true のメンバーだけ true、他は false です。元の権限・identity metadata・群状態・context・専用人設・他領域のデータは保持します。スーパー管理者は database 行に依存せず、runtime で常に true を持ちます。新規メンバーは false が既定で、以後は `/permission` で個別に付与・撤回できます。
+4. 変換、厳密検証、SQLite checkpoint、接続終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata、および `enabledPermissions`・`disabledPermissions` を確認します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行します。既存出力は上書きできません。
+5. 停止状態で検証済み SQLite 本体を手動置換します。旧 WAL/SHM はバックアップ済みで DB を開くプロセスがない場合だけ削除し、新本体と混在させません。一覧から元の所有者と mode を復元し、サービスアカウントが SQLite と親ディレクトリに書けることを確認します。`config/` は読み取り専用でも構いません。
+6. DB を開く前に設置後ハッシュを確認し、設定・主備状態・現行 DB を厳密検証します。すべて整ってから起動し、最低 2 回の supervisor 再起動間隔にわたり `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認します。全検証完了まで外部バックアップを保持します。rollback は旧データに対応するプログラムと同一時点のバックアップ全体を復元します。
 
-4. 変換、厳密検証、SQLite checkpoint、接続の完全終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata を検証します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行してください。既存出力は上書きできません。
+読み取り専用 SQLite 接続でも SHM インデックスを再構築する場合があります。DB を開く前にハッシュを記録し、サイドカー索引の変化は元のバックアップ清単を上書きせず別途記録してください。
 
-5. 停止状態を保って主備状態と SQLite 本体を手動で置換します。旧 WAL/SHM はバックアップ済みで DB を開くプロセスがない場合だけ消去し、新本体と混在させません。一覧から元の所有者と mode を復元し、サービスアカウントが主備状態、SQLite と親ディレクトリへ書けることを確認します。`config/` は読み取り専用でも構いません。
+### 11.0.9 からの段階的なアップグレード
 
-6. 設定と主備を厳密検証し、設置後ハッシュを確認してから起動します。最低 2 回の supervisor 再起動間隔にわたって `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認します。全検証完了まで外部バックアップを保持します。失敗したら以降を停止し、rollback は旧データに対応するプログラムと同一時点のバックアップ全体を復元します。
+11.0.9 は schema v8 を使用します。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、現行入口で v10 を生成します。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットが必要で、二つの出力ディレクトリは未作成である必要があります。
+
+中間ソースはこの手順の必須入力です。11.0.9 タグまたは現行ソースアーカイブだけを持つ環境では、先に固定コミットの完全なソースを取得してください。リリース前にそのソースを独立して保持・提供し、squash 後に reset される dev 履歴だけに依存しないでください。
+
+独立した中間ソースアーカイブ `copy-ninjia-schema-v9-source-500e848f.tar.gz` も使用できます。SHA-256 は `df6502625512d8fde136dc66d8470e1d4c977856e8a0bd3909b9b6c763c820f8` です。検証後、以下の `git archive` を `tar -xzf /absolute/copy-ninjia-schema-v9-source-500e848f.tar.gz -C "$MIGRATION_CODE"` に置き換えてください。
+
+```bash
+MIGRATION_CODE="$(mktemp -d)"
+git archive 500e848faeda75dcae3c3329507f24d05137e3b9 | tar -x -C "$MIGRATION_CODE"
+(
+  cd "$MIGRATION_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:ai-context \
+    --source-root /absolute/11.0.9-cold-backup \
+    --output-root /absolute/new-schema-v9-staging
+)
+bun run migrate:clear-context-permission \
+  --source-root /absolute/new-schema-v9-staging \
+  --output-root /absolute/new-schema-v10-staging
+```
+
+第一段階では元の 16 権限がすべて true の場合だけ `isCanConfigAiPrompt` を付与し、第二段階では 17 権限がすべて true の場合だけ `isCanClearContext` を付与します。第一段階は `chat_states` に存在するグループの記憶だけを取り込みます。対応行のない記憶は `discardedContexts` に計上し、グループ状態を作成しません。各段階の `ready.json`、入力・出力ハッシュ、取り込み・破棄件数を確認し、最終 v10 主 DB だけを設置します。元のバックアップ全体を保持し、移行済みの `memory/ai/` を配備ルートから手動で削除してください。他の設定と状態は元のパスに保持します。続いて上節の所有者・権限復元、厳密検証、起動観察を実施します。現行ランタイムと移行入口は v8 を直接受け付けません。
 
 ## 起動失敗の調査
 

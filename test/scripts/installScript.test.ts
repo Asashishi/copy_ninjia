@@ -7,9 +7,10 @@ import {
   AGENT_CAPABILITY_NAMES,
 } from "../../packages/consts/agent";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
+import { expandedInstallSource } from "../../scripts/installSources";
 
 const INSTALL_SCRIPT_PATH: string = join(import.meta.dir, "..", "..", "install.sh");
-const INSTALL_SCRIPT: string = await Bun.file(INSTALL_SCRIPT_PATH).text();
+const INSTALL_SCRIPT: string = await expandedInstallSource(dirname(INSTALL_SCRIPT_PATH));
 
 /** 从 install.sh 原文取一个 `readonly NAME=(a b c)` 数组的元素。 */
 function extractShellArray(name: string): readonly string[] {
@@ -365,7 +366,7 @@ async function runServiceDataRootCheck(options: {
     ],
     cwd: join(import.meta.dir, "..", ".."),
     env: {
-      PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      PATH: `${bin}:${dirname(Bun.argv[0]!)}:/usr/bin:/bin`,
       FAKE_LOAD_STATE: options.loadState ?? "loaded",
       FAKE_ENVIRONMENT: options.environment,
       FAKE_ENVIRONMENT_FILES: options.environmentFiles ?? "",

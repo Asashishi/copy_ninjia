@@ -1,6 +1,8 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, GlobalCopyState } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
+import type { AvatarNoticeSource } from "../types/copy/avatar";
 import type {
   CopyCooldownClaim,
   GrantedCopyCooldownClaim,
@@ -59,7 +61,7 @@ export async function claimCopyCooldownOrReject(
     if (elapsed >= 0 && elapsed < COPY_COOLDOWN_MS) {
       await sendCommandMessage({
         chatId,
-        text: `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`,
+        text: chatAtmosphere(chatId).NOTICE_TEXTS.copyCooldown(formatMinSec(COPY_COOLDOWN_MS - elapsed)),
         replyToMessageId: messageId,
       });
       return { rejected: true };
@@ -100,7 +102,7 @@ export async function releaseCopyCooldownClaim(
  * copy 类命令的目标解析，见 targetResolution.ts 的 resolveCommandTarget（回复
  * 优先于 @username）。解析失败（没给目标、@username 没缓存、目标是机器人
  * 自己）时反馈已发送。
- * @param messages 触发命令自己的目标解析文案表（见 consts/commands.ts）。
+ * @param messages 当前群氛围下该命令的目标解析文案表（见 consts/atmosphere/）。
  * @param rawArgument 去掉子命令后的目标参数。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */
@@ -122,10 +124,7 @@ export async function resolveCopyCommandTarget(
 export interface StealAvatarInBackgroundParams {
   chatId: number;
   target: CachedUser;
-  /** 头像更换成功时发送的文本。 */
-  successText: string;
-  /** 头像更换失败时发送的文本。 */
-  failureText: string;
+  source: AvatarNoticeSource;
 }
 
 /**
@@ -136,19 +135,15 @@ export interface StealAvatarInBackgroundParams {
 export function stealAvatarInBackground({
   chatId,
   target,
-  successText,
-  failureText,
+  source,
 }: StealAvatarInBackgroundParams): void {
-  queueAvatarUpdate({ chatId, target: { kind: "user", user: target }, successText, failureText });
+  queueAvatarUpdate({ chatId, target: { kind: "user", user: target }, source });
 }
 
 /** restoreAvatarInBackground 的入参。 */
 export interface RestoreAvatarInBackgroundParams {
   chatId: number;
-  /** 头像复原成功时发送的文本。 */
-  successText: string;
-  /** 头像复原失败时发送的文本。 */
-  failureText: string;
+  source: AvatarNoticeSource;
 }
 
 /**
@@ -160,8 +155,7 @@ export interface RestoreAvatarInBackgroundParams {
  */
 export function restoreAvatarInBackground({
   chatId,
-  successText,
-  failureText,
+  source,
 }: RestoreAvatarInBackgroundParams): void {
-  queueAvatarUpdate({ chatId, target: { kind: "default" }, successText, failureText });
+  queueAvatarUpdate({ chatId, target: { kind: "default" }, source });
 }

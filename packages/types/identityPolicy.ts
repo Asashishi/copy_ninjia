@@ -18,6 +18,8 @@ export interface WhitelistPermissions {
   isCanBypassAdDetection: boolean;
   isCanBypassFloodControl: boolean;
   isCanControllAIPermission: boolean;
+  isCanConfigAiPrompt: boolean;
+  isCanClearContext: boolean;
   isCanControllAdDetectPermission: boolean;
   isCanControllFloodControlPermission: boolean;
   isCanControllTranslatePermission: boolean;

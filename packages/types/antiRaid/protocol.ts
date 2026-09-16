@@ -76,7 +76,7 @@ export interface VerifyCallbackMessage {
   chatId?: number;
   /** callback_data 里携带的待验证成员 userId。 */
   targetUserId: number;
-  /** 由 callback_data 前缀解析出的按钮：`self` = 「我是良民」，`approve` = 「通过」。 */
+  /** 由 callback_data 前缀解析出的按钮：`self` = 本人验证，`approve` = 「通过」。 */
   action: "self" | "approve";
   /** 实际点击按钮的用户；「通过」的管理员身份由 Worker 按本群管理员缓存判定。 */
   from: AntiRaidMember;
@@ -203,8 +203,8 @@ export interface ClearFloodControlMessage {
  * 主线程 -> Worker：某身份刚获得临时广告检测豁免。
  * 只在 false -> true 边沿推送；Worker 据此清除授权前累积的广告状态。
  */
-export interface TemporaryWhitelistGrantedMessage {
-  type: "temporaryWhitelistGranted";
+export interface TemporaryAdBypassGrantedMessage {
+  type: "temporaryAdBypassGranted";
   identityId: number;
 }
 
@@ -244,6 +244,7 @@ export interface AntiRaidDrainMessage {
 
 /** 主线程投递给 Anti-Raid Worker 的完整协议。 */
 export type AntiRaidWorkerMessage =
+  | { readonly type: "atmosphere"; readonly chatId: number; readonly plain: boolean }
   | AntiRaidAgentConfigMessage
   | NewMemberMessage
   | MemberLeftMessage
@@ -262,7 +263,7 @@ export type AntiRaidWorkerMessage =
   | ClearAdDetectMessage
   | FloodCandidateMessage
   | ClearFloodControlMessage
-  | TemporaryWhitelistGrantedMessage
+  | TemporaryAdBypassGrantedMessage
   | BotPermissionsChangedMessage
   | ChatKindChangedMessage
   | AntiRaidBarrierMessage

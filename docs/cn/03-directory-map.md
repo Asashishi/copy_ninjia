@@ -24,7 +24,7 @@
     推导并与其同住，避免共享类型层反向依赖 `app/`。
 - **`packages/commands/`**
   - **职责**：显式命令按命令族组织，同一入口的子命令在该领域内分派；开关命令共用的权限与配置门禁另成文件。
-  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
+  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`prompt.ts`、`qa.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`、`arguments.ts`；较大的 gag 领域以 `gag.ts` 保留命令入口，
     `gag/runtime.ts`、`gag/inline.ts`、`gag/rendering.ts` 分别承接生命周期、inline 与纯渲染。
 - **`packages/auto/`**
@@ -52,10 +52,10 @@
   - **典型文件**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`、`identityMetadata.ts`、`messageContent.ts`、`messageOrigin.ts`。
 - **`packages/states/`**
   - **职责**：**无 I/O** 的纯状态转移与准入规则，包括验证、锁定、AI 回复准入、
-    广告检测准入和临时白名单累计。
+    广告检测准入和临时广告免检累计。
   - **典型文件**：`verification.ts` 与 `verification/`（`join`/`pending`/`terminal`/`disable`
     四段生命周期）、`lockdown.ts` 与 `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt`
-    五段生命周期）、`replyAdmission.ts`、`adDetectAdmission.ts`、`temporaryWhitelist.ts`。
+    五段生命周期）、`replyAdmission.ts`、`adDetectAdmission.ts`、`temporaryAdBypass.ts`。
 - **`packages/config/`**
   - **职责**：部署 `config/*.json` 的严格 schema、进程快照与按功能聚合的可用性判定；身份策略不在这里。
   - **典型文件**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
@@ -63,7 +63,7 @@
   - **职责**：共享 SQLite（身份策略 + 群状态）的 schema、codec、行校验与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
   - **典型目录**：`schema/`（含 `migrations/`）、`codec/identity.ts`、`codec/chatState.ts`、
     `codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、
-    `chatState.ts`、`chatQa.ts`、`temporaryWhitelist.ts`、`migration.ts`、`initialization.ts`、
+    `chatState.ts`、`chatQa.ts`、`temporaryAdBypass.ts`、`aiContext.ts`、`migration.ts`、`initialization.ts`、
     `inspection.ts`）、
     `validation/storageRows.ts`。
 - **`packages/libs/`**
@@ -99,7 +99,7 @@
     `workers/diskIO/`、`perThread/`。
 - **`packages/consts/`**
   - **职责**：字面量常量、调参值与用户可见文案表，按领域分文件/子目录。
-  - **典型文件**：`commands.ts`、`whitelist.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
+  - **典型文件**：`atmosphere/{teasing,plain}/`、`commands.ts`、`whitelist.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
 - **`packages/types/`**
   - **职责**：跨模块协议、领域类型、状态机契约（`types/states/`）。
   - **典型文件**：`chatState.ts`、`commands.ts`、`lifecycle.ts`、`diskIO.ts`。
@@ -107,7 +107,8 @@
   - **职责**：与 `packages/` 镜像的 Bun 单元测试。
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
-  - **冷迁移**：`migrateTranslate.ts` 负责备份输入校验与独立产物，`migrations/translate/` 分开保存源版本约束、状态转换和 SQLite 事务；不进入应用启动依赖图。
+  - **安装器**：`install.sh` 定位目标工作树并转交该版本入口；`scripts/install/` 的 repository、service、config、runtime、configure、start 六个 shell 模块由入口统一检查可读性和语法后按序加载。`installSources.ts` 为语法检查与隔离夹具提供相同模块清单。
+  - **冷迁移**：`migrateClearContextPermission.ts` 校验 schema v9 停机备份并生成独立产物与校验清单；`migrations/clearContextPermission/database.ts` 校验源谱系并执行 schema v10 的权限迁移事务，不进入应用启动依赖图。
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
   - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`，以及两套基准根共用的 `fixtures/copyTree.ts`（目录树复制）与 `fixtures/pathBoundary.ts`（写入边界的真实路径分量核对）。
 

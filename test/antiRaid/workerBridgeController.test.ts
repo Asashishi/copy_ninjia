@@ -88,12 +88,12 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
     key === "isCanBypassAdDetection" && adBypassIds.has(id),
   isWhitelisted: (id: number): boolean => permanentWhitelistIds.has(id),
 }));
-const temporaryWhitelistPolicy = await import(
-  "../../packages/infra/identityPolicy/temporaryWhitelist"
+const temporaryAdBypassPolicy = await import(
+  "../../packages/infra/identityPolicy/temporaryAdBypass"
 );
-mock.module("../../packages/infra/identityPolicy/temporaryWhitelist", () => ({
-  ...temporaryWhitelistPolicy,
-  hasActiveTemporaryWhitelist: (id: number): boolean => adBypassIds.has(id),
+mock.module("../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
+  ...temporaryAdBypassPolicy,
+  hasActiveTemporaryAdBypass: (id: number): boolean => adBypassIds.has(id),
 }));
 mock.module("../../packages/antiRaid/workerBridge/observers", () => ({
   registerAntiRaidBridgeObservers: (): void => {},

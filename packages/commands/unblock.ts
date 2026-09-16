@@ -1,6 +1,8 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
-import { UNBLOCK_TARGET_TEXTS } from "../consts/commands";
+
 import { sendCommandMessage, unbanChatMemberIfBanned, unbanChatSenderChat } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { resolveCommandTarget } from "./targetResolution";
@@ -57,7 +59,8 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
   if (!actor || !hasCommandPermission(ctx, "isCanUnBlock")) {
-    const replyText: string = `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /unblock 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const replyText: string = atmosphere.NOTICE_TEXTS.unblockRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor);
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -75,7 +78,7 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     acceptChatId: true,
     // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不能当成「不在名单」。
     requireIdentityPolicies: true,
-    messages: UNBLOCK_TARGET_TEXTS,
+    messages: chatAtmosphere(ctx.chat?.id ?? 0).UNBLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;
 
@@ -91,13 +94,12 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   if (targetUser.isChannel === true && targetUser.id === chatId) {
     await sendCommandMessage({
       chatId,
-      text: `笨蛋，这是本群自己的身份呀——匿名管理员拿它当皮套时，Telegram 也不会告诉本天才皮套底下是谁；本天才没法把整个群当成那个人从小本本上划掉♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockCurrentChat,
       replyToMessageId: messageId,
     });
     return;
   }
 
-  const targetLabel: string = formatTargetLabel(targetUser);
   const {
     removedFromList,
     persisted,
@@ -109,27 +111,29 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   );
   // tombstone 没落盘就不能说「划掉了」：数据库里那条还在，重启后这个人会重新回到
   // 名单上，而管理员以为已经放过 TA 了。没动过名单就不必等这一次回执。
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
   const persistWarning: string = persisted
     ? ""
-    : `（不过小本本没能写进硬盘，重启后 TA 还会回到名单上，杂鱼管理员快去查磁盘）`;
+    : atmosphere.NOTICE_TEXTS.unblockPersistFailed;
 
   const listNote: string = removedFromList
-    ? `本天才勉为其难把 ${targetLabel} 从小本本上划掉啦${persistWarning}`
-    : `${targetLabel} 本来就不在小本本上`;
+    ? atmosphere.NOTICE_TEXTS.unblockRecorded(targetLabel, persistWarning)
+    : atmosphere.NOTICE_TEXTS.unblockNotRecorded(targetLabel);
 
   if (unbannedCount === 0 && failedCount === 0) {
     await sendCommandMessage({
       chatId,
       replyToMessageId: messageId,
-      text: `哼，${listNote}——不过本天才一个群的管理员都不是，各群的封禁想解也解不了呀♡`,
+      text: atmosphere.NOTICE_TEXTS.unblockNoManagedChat(listNote),
     });
     return;
   }
-  const failedNote: string = failedCount > 0 ? `（还有 ${failedCount} 个群没解开，杂鱼管理员快去检查权限）` : "";
+  const failedNote: string = failedCount > 0 ? atmosphere.NOTICE_TEXTS.unblockPartialFailure(failedCount) : "";
   await sendCommandMessage({
     chatId,
     replyToMessageId: messageId,
-    text: `哼，${listNote}，还在 ${unbannedCount} 个群把封禁一并解开了${failedNote}——这次真的放 TA 回来了，别再让本天才失望哦♡`,
+    text: atmosphere.NOTICE_TEXTS.unblockResult(listNote, unbannedCount, failedNote),
   });
 }
 

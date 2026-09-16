@@ -1,6 +1,8 @@
+import { chatAtmosphere } from "../../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { wedChats, wedRuntime } from "../../cache/main/wed";
-import { WED_CALLBACK_PREFIX, WED_TEXTS } from "../../consts/wed";
+import { WED_CALLBACK_PREFIX } from "../../consts/wed";
+
 import { answerCallbackQuery, sendCommandMessage } from "../../infra/telegram";
 import type { WedChat } from "../../types/wed";
 import { handleWedCallback, handleWedCommand } from "../wed";
@@ -14,7 +16,7 @@ export function dispatchWedCommand(ctx: CommandContext<Context>): void | Promise
   const chat: WedChat | undefined = getOrCreateWedChat(ctx.chat.id);
   if (chat !== undefined && submitWedTask(chat, (): Promise<void> => handleWedCommand(ctx))) return;
   return sendCommandMessage({ chatId: ctx.chat.id,
-    text: chat === undefined ? WED_TEXTS.full : WED_TEXTS.queueFull, replyToMessageId: ctx.msgId }).then((): void => undefined);
+    text: chat === undefined ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.full : chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.queueFull, replyToMessageId: ctx.msgId }).then((): void => undefined);
 }
 
 /** /wed 按钮与命令共享执行槽；出队后重新核对消息、目标及发起人身份。 */
@@ -25,5 +27,5 @@ export function dispatchWedCallback(ctx: Context): boolean | Promise<boolean> {
   const chat: WedChat | undefined = query.message === undefined ? undefined : wedChats.get(query.message.chat.id);
   if (chat === undefined) return handleWedCallback(ctx);
   if (submitWedTask(chat, (): Promise<boolean> => handleWedCallback(ctx))) return true;
-  return answerCallbackQuery({ callbackQueryId: query.id, text: WED_TEXTS.queueFull }).then((): boolean => true);
+  return answerCallbackQuery({ callbackQueryId: query.id, text: chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.queueFull }).then((): boolean => true);
 }

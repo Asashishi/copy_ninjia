@@ -21,11 +21,11 @@
 
 ## 新增一个斜杠命令
 
-1. **handler**：在 `packages/commands/` 新建一文件，`function` 声明导出 `handleXxxCommand`，显式返回类型。权限门禁参考现成模式：按权限键授权看 `block.ts` / `mood.ts`（一律 `hasCommandPermission(ctx, key)`，超级管理员恒持有全部权限键，不要再单独判身份）；只认超管身份、无法授权出去的看 `isSuperAdminActor`（`white.ts`、`batchKick.ts`）；仅私聊看 `send.ts`（非本人/非私聊静默 return，不回错误提示）。用户可见文案不写在 handler 里：放进所属领域的 `packages/consts/<domain>.ts` 文案表，类型放 `packages/types/`（见 `PERMISSION_COMMAND_TEXTS`、`BLOCK_TARGET_TEXTS`）——那既是给文案改动一个集中入口，也免掉每次调用现造一个对象加三个闭包。文案里要嵌无界的用户输入时才例外，`cjkAction.ts` 是唯一一处。
+1. **handler**：在 `packages/commands/` 导出带显式返回类型的 `handleXxxCommand`。按权限键授权使用 `hasCommandPermission(ctx, key)`；仅超级管理员本人可执行的操作使用 `isSuperAdminActor`；私聊命令参考 `send.ts`。固定提示和格式化函数放在 `packages/consts/atmosphere/{teasing,plain}/` 的对应领域文件，两版使用同一类型。主线程通过 `chatAtmosphere(chatId)` 读取当前群文案；动态昵称、提示词和问题作为参数插入，不在渲染后替换文本。 同次渲染用局部 `AtmosphereTexts` 传给称呼、正文和按钮函数；跨配置变更、后续交互或后台执行时重新读取。已有 `chatState` 的消息热路径直接依据其 `aiPersona` 选表，不增加缓存查询。
 2. **导出**：加入 `packages/commands/index.ts`。
 3. **注册**：在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 的 `commands` 子链上加 `commands.command("xxx", ...)`。**不要直接挂到 `bot` 上**——命令一律收在那条 `bot.on(":entities:bot_command")` 子链后面（理由见 [02 架构总览](02-architecture.md#一条消息的旅程) 的「命令注册」），`test/app/registerHandlers.test.ts` 会拒绝任何直接挂在 `bot` 上的命令。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
 4. **私聊网关**：新命令若要在私聊中使用，还必须同步调整 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 并补网关测试；当前私聊中的斜杠命令只显式放行 `/send`，仅注册 handler 不会到达命令处理器。纯群聊命令无需改这里。
-5. **菜单**：要出现在 Telegram 命令菜单就在 [`packages/consts/commands.ts`](../../packages/consts/commands.ts) 的 `BOT_COMMANDS` 加一项；像 `/send` 这类隐藏命令则不加。
+5. **菜单**：在 `packages/consts/atmosphere/{teasing,plain}/commands.ts` 的两份 `BOT_COMMANDS` 同时添加同名命令；隐藏命令 `/send` 不加入。`packages/app/commandMenu.ts` 注册全局默认版和按群覆盖的普通版。
 6. **参数常量**：冷却、阈值等进 `packages/consts/commands.ts` 或对应领域 consts，带中文 JSDoc。
 7. **测试**：`test/commands/xxx.test.ts`，至少覆盖权限拒绝、参数解析与主路径。
 8. **文档**：三语 `docs/{cn,en,ja}/08-commands.md` 的命令表添加条目，并写明交互和权限边界。
@@ -49,13 +49,13 @@
 
 ## 换成别的语言：不做 i18n，请自行 fork
 
-面向用户的文案只有简体中文一套，仓库不提供也不接受 i18n 层——文案不是能替换的字典项：
+面向用户的固定提示均为简体中文，`packages/consts/atmosphere/` 提供默认雌小鬼版与普通版。群内配置自定义人设时选择普通版；这两版不按客户端语言切换。
 
-- 大量回复由片段拼接而成，还要同时算出 Telegram `entities` 的 UTF-16 偏移（见上一节）。换语言意味着词序、长度、乃至句子该不该拆都变了，偏移必须跟着重算，key-value 词条表接不住这类文案。
-- `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
-- 人设、工具描述与提示词（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
+- 文案表保存固定字符串和格式化函数，Telegram `entities` 的 UTF-16 偏移由最终渲染文本计算。昵称、问题、提示词和模型输出不参与语气替换。
+- `/咬` 等动作命令使用 1~2 个中文字；其命令解析与显示文案分别维护。
+- 群自定义 AI 人设优先，未设置时使用 `prompt/persona.md`。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 947 处、分布在 88 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+其他语言需自行 fork 并同步调整文案、交互和提示词。按 TypeScript AST 统计，`packages/` 中含中文字符串或模板字面量的源码行有 1355 行，分布在 81 个文件，不含注释；另有 `prompt/persona.md` 和部署配置。修改后运行 `bun run check`。
 
 ## 调整行为参数
 
@@ -81,7 +81,7 @@
 步骤：改常量 → 更新它的中文 JSDoc（不变量变了就改说明）→ 检查根 README 是否引用了该数值并同步 → `bun run check`。
 
 > [!WARNING]
-> **容量类常量可能与磁盘数据耦合。** 例如调小 `AI_MEMORY_HYDRATE_BUFFER_MAX` 或 `MAX_SUMMARY_ROUNDS` 前，必须按 [04 运行时权威约束](04-invariants.md#持久化) 的要求在旧进程停止后原子重写现有 `memory/ai/` 快照。改这类值前先在 04 里确认没有踩到迁移要求。
+> **容量类常量可能与磁盘数据耦合。** 例如调小 `AI_MEMORY_HYDRATE_BUFFER_MAX` 或 `MAX_SUMMARY_ROUNDS` 前，必须按 [04 运行时权威约束](04-invariants.md#持久化) 的要求在旧进程停止后在 SQLite 事务中重写现有 `chat_states.ai_context` 快照。改这类值前先在 04 里确认没有踩到迁移要求。
 
 ## 新增一项可选供应商能力
 
@@ -112,7 +112,7 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`telegram.json` 在联网前严格加载；`stickers.json`、`reactions.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。永久白名单、黑名单、临时白名单累计与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、对应的 `packages/database/codec/`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
+- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`telegram.json` 在联网前严格加载；`stickers.json`、`reactions.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。永久白名单、黑名单、临时广告免检累计与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、对应的 `packages/database/codec/`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
 
 ## 新增部署 JSON 配置
 
@@ -153,6 +153,8 @@
 7. 落盘沿用既有 write-through：主线程发布内存最终值 → 投给 Disk I/O Worker → 显式事务 → 精确 revision ACK → Worker 重建后从内存重放。
 
 当前仓库只保留最近发布版到当前版的迁移入口；实现新边时必须同时替换上一条入口、测试与约定登记。
+
+「只留一条边」约束的是 `scripts/` 下面向已部署数据的冷迁移脚本、它的测试与 `coldMigrations.ts` 登记，不适用于 `schema/migrations/` 的 SQL 文件与 `meta/_journal.json`。后者必须从 `0000` 起完整保留：`createStorageDatabase` 建新库时由 Drizzle migrator 逐条重放，启动时 `packages/database/interact/inspection.ts` 的 `assertStorageDatabaseMigrationLineage` 也要求 `__drizzle_migrations` 带着完整谱系。
 
 ## 改动 Worker 间协议
 

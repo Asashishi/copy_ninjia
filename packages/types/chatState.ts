@@ -47,6 +47,8 @@ export type CopyMode = "reverse" | "nya";
  * 复读目标，见 GlobalCopyState。
  */
 export interface ChatState {
+  /** 本群自定义 AI 人设；缺省使用 prompt/persona.md，独立存入 ai_persona 列。 */
+  aiPersona?: string;
   /**
    * /quiet 静默期的截止时间戳（ms）。在此之前机器人不主动刷存在感（AI 随机
    * 插话、随机复读等）；被动触发（回复/@机器人）和指令不受影响。

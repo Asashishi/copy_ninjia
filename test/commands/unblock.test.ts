@@ -1,3 +1,5 @@
+import type { FlushResult } from "../../packages/types/lifecycle";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { BotChatPermissions } from "../../packages/types/telegram";
@@ -22,7 +24,7 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => {
 });
 const loggerError = mock((..._args: unknown[]): void => {});
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
-const flushDiskIO = mock(async (): Promise<string> => "flushed");
+const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
 
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/logger", () => ({
@@ -43,17 +45,18 @@ mock.module("../../packages/infra/telegram/client", () => ({
   telegramApi: { kind: "guard-api" },
 }));
 mock.module("../../packages/infra/botAdmin", () => ({ resolveBotAdminStatus }));
-mock.module("../../packages/infra/storage/stateStore", () => ({ getChatStateCache: () => chatStates }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
+  getChatState: (): Record<string, never> => ({}), getChatStateCache: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   onDiskIORespawn: (): void => {},
   onIdentityStoragePersisted: (): void => {},
   relayLogMessage: (): boolean => true,
   flushDiskIODomain: flushDiskIO,
-  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIO() }),
+  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIO() }),
   flushDiskIO,
-}));
+})));
 
 const { handleUnblockCommand } = await import("../../packages/commands/unblock");
 const { blocklistIdentityMutationQueues } = await import("../../packages/cache/main/blocklist");
@@ -86,7 +89,7 @@ beforeEach(() => {
   ]) mocked.mockClear();
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);
   postDiskIO.mockImplementation((): boolean => true);
-  flushDiskIO.mockImplementation(async (): Promise<string> => "flushed");
+  flushDiskIO.mockImplementation(async (): Promise<FlushResult> => "flushed");
   unbanChatMemberIfBanned.mockImplementation(async (): Promise<boolean> => true);
   unbanChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
   resolveBotAdminStatus.mockImplementation(async (): Promise<boolean> => false);

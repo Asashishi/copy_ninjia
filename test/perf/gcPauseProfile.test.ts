@@ -51,7 +51,7 @@ describe("JSC GC 暂停计量", () => {
       endGcProfileWindow(start);
       console.log(checksum);
     `;
-    const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([process.execPath, "-e", source], {
+    const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([Bun.argv[0]!, "-e", source], {
       env: { ...process.env, [JSC_GC_LOG_ENV]: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
     const output: Promise<string> = child.stdout.text();

@@ -119,6 +119,49 @@ describe("Node 兼容约定", () => {
     ]);
   });
 
+  test("测试文件复用脚本通用能力与测试夹具接口，整模块替身、同步内容 I/O 和 Buffer 按文件豁免", () => {
+    const testPath: string = "/project/test/example.test.ts";
+    const fixtureImports: string =
+      'import { cpSync, mkdtempSync, rmSync, statSync } from "node:fs";\n' +
+      'import { mkdtemp, lstat } from "node:fs/promises";\n' +
+      'import { tmpdir } from "node:os";\nimport { generateKeyPairSync } from "node:crypto";';
+    expect(collectNodeCompatibilityProblems(projectRoot, testPath, source(testPath, fixtureImports))).toEqual([]);
+    expect(collectNodeCompatibilityProblems(projectRoot, packagePath, source(packagePath, fixtureImports))).toHaveLength(4);
+    expect(collectNodeCompatibilityProblems(
+      projectRoot,
+      testPath,
+      source(testPath, 'import { arch } from "node:os";\nimport { exec } from "node:child_process";')
+    )).toEqual([
+      expect.stringContaining("unreviewed node:os export arch"),
+      expect.stringContaining("unreviewed Node compatibility module node:child_process"),
+    ]);
+
+    const namespaceSource: string = 'import * as fs from "node:fs";';
+    expect(collectNodeCompatibilityProblems(projectRoot, testPath, source(testPath, namespaceSource)))
+      .toEqual([expect.stringContaining("must not namespace-import node:fs")]);
+    const fileAccessPath: string = "/project/test/libs/fileAccess.test.ts";
+    expect(collectNodeCompatibilityProblems(projectRoot, fileAccessPath, source(fileAccessPath, namespaceSource)))
+      .toEqual([]);
+
+    const preloadEnvPath: string = "/project/test/preloadEnv.ts";
+    const contentIoSource: string = 'import { readFileSync, writeFileSync } from "node:fs";';
+    expect(collectNodeCompatibilityProblems(projectRoot, preloadEnvPath, source(preloadEnvPath, contentIoSource)))
+      .toEqual([]);
+    expect(collectNodeCompatibilityProblems(projectRoot, testPath, source(testPath, contentIoSource))).toEqual([
+      expect.stringContaining("unreviewed node:fs export readFileSync"),
+      expect.stringContaining("unreviewed node:fs export writeFileSync"),
+    ]);
+
+    const bufferSource: string = "const bytes: Uint8Array = Buffer.from([1]);";
+    const boundedResponsePath: string = "/project/test/libs/boundedResponse.test.ts";
+    expect(collectNodeCompatibilityProblems(projectRoot, boundedResponsePath, source(boundedResponsePath, bufferSource)))
+      .toEqual([]);
+    expect(collectNodeCompatibilityProblems(projectRoot, testPath, source(testPath, bufferSource)))
+      .toEqual([expect.stringContaining("unreviewed Node compatibility global Buffer.from")]);
+    expect(collectNodeCompatibilityProblems(projectRoot, testPath, source(testPath, "const bun = process.execPath;")))
+      .toEqual([expect.stringContaining("uses process.execPath; use Bun.argv")]);
+  });
+
   test("运行时动态 import 与 require 不能绕过静态命名导入核对", () => {
     const problems: readonly string[] = collectNodeCompatibilityProblems(
       projectRoot,

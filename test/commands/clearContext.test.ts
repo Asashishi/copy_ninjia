@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { TelegramConfig } from "../../packages/types/config";
-import { CLEAR_CONTEXT_USAGE_TEXT } from "../../packages/consts/commandUsage";
+import { CLEAR_CONTEXT_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock(async (_chatId: number, _purgeMemory: boolean): Promise<void> => undefined);
@@ -12,11 +12,11 @@ mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
   getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 100 }),
 }));
-// 白名单权限照常可授予，但这条命令根本不查权限键（只认 SUPER_ADMIN_USER_ID 身份），
-// 授权了也一样进不来——下面那条用例钉的就是这件事。
+// 超级管理员直授全部权限，普通成员按被授予的独立权限位判定。
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
-    id === 100 || (key === "isCanControllAIPermission" && delegatedPermissions.has(id)),
+    id === 100 || (key === "isCanClearContext" && delegatedPermissions.has(id)) ||
+    (key === "isCanControllAIPermission" && id === 201),
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
@@ -49,7 +49,7 @@ describe("/clear_context", () => {
   test("超级管理员清空本群上下文：内存与磁盘记忆一并删除", async () => {
     await handleClearContextCommand(context("", 100));
 
-    // purgeMemory=true 才同时走 Worker 侧 purge 与 durable 删除 memory/ai/<chatId>.json。
+    // purgeMemory=true 才同时走 Worker 侧 purge 与 durable 删除 chat_states.ai_context。
     expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
@@ -58,9 +58,20 @@ describe("/clear_context", () => {
     });
   });
 
-  test("白名单身份即使拿到 isCanControllAIPermission 也清不了：这条命令只认超级管理员", async () => {
+  test("持有 isCanClearContext 的白名单成员可以清理当前群", async () => {
     delegatedPermissions.add(200);
     await handleClearContextCommand(context("", 200));
+    expect(invalidateAiChat).toHaveBeenCalledTimes(1);
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+
+    delegatedPermissions.delete(200);
+    invalidateAiChat.mockClear();
+    await handleClearContextCommand(context("", 200));
+    expect(invalidateAiChat).not.toHaveBeenCalled();
+  });
+
+  test.each([201, 202])("只有 AI 开关权限或未授权的成员 %i 不清任何记忆", async (id) => {
+    await handleClearContextCommand(context("", id));
 
     expect(invalidateAiChat).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -70,15 +81,19 @@ describe("/clear_context", () => {
     });
   });
 
-  test("普通群成员只被嘲讽，不清任何记忆", async () => {
-    await handleClearContextCommand(context("", 201));
-
+  test("sender_chat 按可见频道身份授权，不借用 from 的超管权限", async () => {
+    const ctx = {
+      chat: { id: -1001, type: "supergroup" },
+      msg: { sender_chat: { id: -2001, type: "channel", title: "频道" } },
+      from: { id: 100, first_name: "Admin" },
+      msgId: 7,
+      match: "",
+    };
+    await handleClearContextCommand(ctx as never);
     expect(invalidateAiChat).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("哪来的资格"),
-      replyToMessageId: 7,
-    });
+    delegatedPermissions.add(-2001);
+    await handleClearContextCommand(ctx as never);
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
   });
 
   test("解析不出发起身份时同样拒绝", async () => {
@@ -93,7 +108,8 @@ describe("/clear_context", () => {
   });
 
   test.each(["enable", "all", "-1001"])("带参数 %s 只回用法提示，不清记忆", async (argument) => {
-    await handleClearContextCommand(context(argument));
+    delegatedPermissions.add(200);
+    await handleClearContextCommand(context(argument, 200));
 
     expect(invalidateAiChat).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({

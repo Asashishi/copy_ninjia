@@ -2,6 +2,8 @@ import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessag
 installTemporaryMessageWorkerMock();
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
+import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 
 /**
  * 限频/溢出提示的投递路径（replyState.ts 的 notifyRateLimited）：按群冷却避免
@@ -24,13 +26,14 @@ const {
   rateLimitNoticeTimes,
   resetAiChatReplyCache,
 } = await import("../../../packages/cache/workers/aiChat/replies");
-const { RATE_LIMIT_NOTICE_COOLDOWN_MS, RATE_LIMIT_NOTICE_TEXT } =
-  await import("../../../packages/consts/aiChat/rateLimit");
+const { RATE_LIMIT_NOTICE_COOLDOWN_MS } = await import("../../../packages/consts/aiChat/rateLimit");
+const { RATE_LIMIT_NOTICE_TEXT } = await import("../../../packages/consts/atmosphere/teasing/aiChat_rateLimit");
 
 const CHAT_ID: number = -1001;
 const NOW: number = 1_700_000_000_000;
 
 beforeEach(() => {
+  chatPersonas.clear();
   resetAiChatReplyCache();
   botInfoState.current = { id: 99, first_name: "Ninja", username: "ninja_bot" };
   nextSentMessageId = 501;
@@ -44,6 +47,19 @@ afterAll(() => {
 });
 
 describe("AI 限频提示", () => {
+  test("普通提示的发送和自录使用同一份正文，不受发送期间的人设变化影响", async () => {
+    chatPersonas.set(CHAT_ID, "自定义");
+    sendMessage.mockImplementationOnce(async (): Promise<number> => {
+      chatPersonas.delete(CHAT_ID);
+      return 501;
+    });
+    notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
+    await Bun.sleep(0);
+    const text: string = ATMOSPHERE_TEXTS.plain.RATE_LIMIT_NOTICE_TEXT;
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text }));
+    expect(recordChatMessage).toHaveBeenCalledWith(expect.objectContaining({ text }));
+    expect(chatPersonas.size).toBe(0);
+  });
   test("首次触发发送提示并写入滚动记忆", async () => {
     notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
@@ -56,9 +72,9 @@ describe("AI 限频提示", () => {
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: CHAT_ID,
       senderId: 99,
-      firstName: "Ninja",
+      firstName: "自己（也就是你）",
       lastName: "",
-      username: "ninja_bot",
+      username: undefined,
       messageId: 501,
       text: RATE_LIMIT_NOTICE_TEXT,
     }));

@@ -1,3 +1,5 @@
+import type { AtmosphereTexts } from "../types/atmosphere";
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { queryAiMood, switchAiMood } from "../aiChat";
 import { aiChatConfigReadiness } from "../config/readiness";
@@ -8,7 +10,6 @@ import { formatUserLabel } from "../users/userLabel";
 import { refuseIfConfigBroken } from "./configGate";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import type { CachedUser } from "../types/chatState";
-import { MOOD_USAGE_TEXT } from "../consts/commandUsage";
 
 /** /mood 只分派 query 与 switch；非法参数不触发 Worker 请求。 */
 export async function handleMoodCommand(ctx: CommandContext<Context>): Promise<void> {
@@ -18,7 +19,7 @@ export async function handleMoodCommand(ctx: CommandContext<Context>): Promise<v
   } else if (argument === "switch") {
     await switchMood(ctx);
   } else {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: MOOD_USAGE_TEXT, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat?.id ?? 0).MOOD_USAGE_TEXT, replyToMessageId: ctx.msgId });
   }
 }
 
@@ -72,8 +73,8 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
     chatId,
     messageId,
     feature: "AI mood query",
-    brokenConfigText: (file: string): string => `本天才的 ${file} 写坏了，连心情表都读不出来还查什么？修好再重启，笨蛋♡`,
-    disabledText: `本群连 AI 闲聊都没开，本天才在这儿根本没有心情可查呀，笨蛋♡`,
+    brokenConfigText: (file: string): string => chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodQueryConfigInvalid(file),
+    disabledText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodQueryDisabled,
   });
   if (!available) return;
 
@@ -84,7 +85,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
     logger.error(`Failed to confirm AI mood query for chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: `呜……本天才的 AI 脑袋没及时回话，这次没查到当前心情，过会儿再试吧♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodQueryFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -92,7 +93,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
 
   await sendCommandMessage({
     chatId,
-    text: `本天才现在的心情是「${moodName}」♡`,
+    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodCurrent(moodName),
     replyToMessageId: messageId,
   });
 }
@@ -110,9 +111,10 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
 
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
   if (!actor || !hasCommandPermission(ctx, "isCanSwitchMood")) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({
       chatId,
-      text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想给本天才换心情？本天才的心情才轮不到杂鱼做主呀♡`,
+      text: atmosphere.NOTICE_TEXTS.moodSwitchRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor),
       replyToMessageId: messageId,
     });
     return;
@@ -122,8 +124,8 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
     chatId,
     messageId,
     feature: "AI mood switch",
-    brokenConfigText: (file: string): string => `本天才的 ${file} 写坏了，连心情表都读不出来还换什么？修好再重启，笨蛋♡`,
-    disabledText: `本群连 AI 闲聊都没开，本天才在这儿根本没有心情可换呀，笨蛋♡`,
+    brokenConfigText: (file: string): string => chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodSwitchConfigInvalid(file),
+    disabledText: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodSwitchDisabled,
   });
   if (!available) return;
 
@@ -134,7 +136,7 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
     logger.error(`Failed to confirm AI mood switch for chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: `呜……本天才的 AI 脑袋没及时回话，这次没确认到新心情，过会儿再试吧♡`,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodSwitchFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -144,7 +146,7 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
   // 伪装成重抽失败；让 grammY 的统一错误边界按 update 失败处理。
   await sendCommandMessage({
     chatId,
-    text: `哼，那就依你重抽一次——本天才现在的心情是「${moodName}」♡`,
+    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.moodSwitched(moodName),
     replyToMessageId: messageId,
   });
 }

@@ -1,16 +1,12 @@
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { Message } from "grammy/types";
 import type { CachedUser } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
 import { sendCommandMessage } from "../infra/telegram";
 import { resolveIdTarget, resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
 import { sanitizeDisplayName, truncateInline } from "../libs/text";
-import {
-  CHAT_ID_ARG_PATTERN,
-  IDENTITY_POLICY_UNAVAILABLE_TEXT,
-  INVALID_USERNAME_ECHO_MAX_CHARS,
-  USERNAME_ARG_PATTERN,
-  USER_ID_ARG_PATTERN,
-} from "../consts/commands";
+import { CHAT_ID_ARG_PATTERN, INVALID_USERNAME_ECHO_MAX_CHARS, USERNAME_ARG_PATTERN, USER_ID_ARG_PATTERN } from "../consts/commands";
+
 import { prefetchIdentityPolicies } from "../infra/identityStorage";
 
 /** 参数那一路的解析结果；三态各自对应一句不同的提示。 */
@@ -235,7 +231,7 @@ export async function resolveCommandTarget({
   // 按自己的语义拒绝，避免误把整个群组身份当作那名管理员。
   const prefetched: boolean = await prefetchIdentityPolicies([targetUser.id]);
   if (!prefetched && requireIdentityPolicies) {
-    await sendCommandMessage({ chatId, text: IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: messageId });
     return undefined;
   }
   return targetUser;

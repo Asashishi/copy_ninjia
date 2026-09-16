@@ -1,3 +1,5 @@
+import type { AtmosphereTexts } from "../../types/atmosphere";
+import { chatAtmosphere } from "../../infra/atmosphere";
 import {
   gagBackgroundTasks,
   gagRuntimeAccepting,
@@ -8,7 +10,7 @@ import {
   GAG_SESSION_MAX,
 } from "../../consts/gag";
 import { registerChatTeardown } from "../../infra/chatTeardownRegistry";
-import { trackBackgroundTask } from "../../infra/backgroundTasks";
+import { settleInflight } from "../../libs/inflight";
 import { logger } from "../../infra/logger";
 import {
   deleteMessageWithOutcome,
@@ -18,6 +20,11 @@ import type { DeleteMessageOutcome } from "../../infra/telegram";
 import type { FlushResult } from "../../types/lifecycle";
 import type { GagSession } from "../../types/gag";
 import { deleteGagSpeakNotice } from "./notices";
+import { findGagSession, trackGagBackgroundTask } from "./owner";
+import {
+  clearGagSpeakNoticeRefreshTimer,
+  scheduleGagSpeakNoticeRefresh,
+} from "./refresh";
 
 export type GagEndReason = "timeout" | "ungag" | "teardown";
 export type GagReservationOutcome =
@@ -25,17 +32,6 @@ export type GagReservationOutcome =
   | "duplicate"
   | "full"
   | "quiescing";
-
-/** 在当前群的小列表中按目标 id 定位会话。 */
-export function findGagSession(
-  chatId: number,
-  targetId: number
-): GagSession | undefined {
-  const sessions: GagSession[] | undefined = gagSessionsByChat.get(chatId);
-  return sessions?.find((session: GagSession): boolean =>
-    session.targetId === targetId
-  );
-}
 
 /** 删除精确的会话对象；同目标的新会话不会被旧收尾误删。 */
 function removeGagSession(session: GagSession): boolean {
@@ -46,6 +42,7 @@ function removeGagSession(session: GagSession): boolean {
   if (index === -1) return false;
   if (session.timer !== null) clearTimeout(session.timer);
   if (session.cleanupTimer !== null) clearTimeout(session.cleanupTimer);
+  clearGagSpeakNoticeRefreshTimer(session);
   session.timer = null;
   session.cleanupTimer = null;
   sessions.splice(index, 1);
@@ -84,6 +81,7 @@ function claimGagEnd(session: GagSession): boolean {
     session.phase === "ending"
   ) return false;
   session.phase = "ending";
+  clearGagSpeakNoticeRefreshTimer(session);
   if (session.timer !== null) clearTimeout(session.timer);
   session.timer = null;
   clearCleanupTimer(session);
@@ -98,13 +96,12 @@ async function deleteGagNotices(session: GagSession): Promise<boolean> {
   if (session.noticePending) return false;
   const refreshTask: Promise<void> | null = session.speakNoticeRefreshTask;
   if (refreshTask !== null) {
-    // refresh 属于当前 update；停机 abort 时它会拒绝，但 onSent 已经把远端可能
-    // 成功建立的 id 同步登记到 pending 字段。结束方只需等它停止改状态，再按
-    // current/pending/retired 三个固定槽位逐一清理，不能让 abort 跳过清理。
+    // 消息或 timer 触发的换新均由此任务持有。等待它停止改状态后，再按
+    // current/pending/retired 槽位清理；update 取消也不能丢掉 onSent 登记的 id。
     try {
       await refreshTask;
     } catch {
-      // 原 update 保留拒绝语义；这里的职责只是回收它已经登记的 Telegram 消息。
+      // 后台任务边界负责记录拒绝；这里回收已经登记的 Telegram 消息。
     }
   }
   let publicFinished: boolean = true;
@@ -192,21 +189,6 @@ async function runExclusiveEndingTask(
   }
 }
 
-/**
- * 把一条 gag 后台任务纳入停机可观测集合并自摘除。
- *
- * 唯一的 fire-and-forget 边界：调用方绝不 await 它。update 循环一次只取一条
- * update 并完整等待（见 app/updateRunner.ts），在 handler 里 await 一次维护性
- * Telegram 往返，阻塞的是整个进程的所有群。停机由 drainGagRuntime 排空本集合。
- * @param failureMessage 失败时那行日志的完整英文前缀（含冒号）。
- */
-export function trackGagBackgroundTask(
-  task: Promise<unknown>,
-  failureMessage: string
-): void {
-  trackBackgroundTask(gagBackgroundTasks, task, failureMessage);
-}
-
 function observeGagTask(task: Promise<boolean>): void {
   trackGagBackgroundTask(task, "Unexpected error while finishing a gag session:");
 }
@@ -285,13 +267,13 @@ export async function finishGag(
     const cleaned: boolean = await deleteGagNotices(session);
     try {
       if (reason !== "teardown") {
+        const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
         const reasonText: string = reason === "timeout"
-          ? "哼哼，处罚时间到啦"
-          : "哼，提前解除啦";
+          ? atmosphere.NOTICE_TEXTS.gagExpired
+          : atmosphere.NOTICE_TEXTS.gagRemoved;
         await sendCommandMessage({
           chatId: session.chatId,
-          text: `${reasonText}，${session.targetLabel} 的 ${session.tool} 已经取下，` +
-            "终于又能正常说话咯，可别高兴得太早呀，杂鱼♡",
+          text: atmosphere.NOTICE_TEXTS.gagEndedNotice(reasonText, session.targetLabel, session.tool),
           replyToMessageId,
           // 到期那一路没有可回复的消息，缺了话题就会把解除回执播到 General，
           // 而被管教的人正盯着入口所在的那个话题（见 types/gag.ts 的同名字段）。
@@ -320,7 +302,9 @@ export function expireGag(session: GagSession): void {
 
 /** 激活预约并安装不会阻止进程退出的到期 timer。 */
 function activateGag(session: GagSession): void {
-  session.expiresAt = Date.now() + session.durationMinutes * 60_000;
+  const now: number = Date.now();
+  session.expiresAt = now + session.durationMinutes * 60_000;
+  session.lastTargetMessageAt = now;
   session.phase = "active";
   session.timer = setTimeout(
     expireGag,
@@ -328,6 +312,7 @@ function activateGag(session: GagSession): void {
     session
   );
   session.timer.unref();
+  scheduleGagSpeakNoticeRefresh(session);
 }
 
 /** 开始提示发送失败；已发出的公开/临时提示仍必须沿同一收尾边界删除。 */
@@ -414,11 +399,14 @@ export function initGagRuntime(): void {
 /** 停机先关闭预约入口；已有会话继续占位到提示清理完成。 */
 export function quiesceGagRuntime(): void {
   gagRuntimeAccepting.current = false;
+  for (const sessions of gagSessionsByChat.values()) {
+    for (const session of sessions) clearGagSpeakNoticeRefreshTimer(session);
+  }
 }
 
 async function settleGagRuntime(): Promise<FlushResult> {
   if (gagBackgroundTasks.size > 0) {
-    await Promise.allSettled([...gagBackgroundTasks]);
+    await settleInflight(gagBackgroundTasks);
   }
   const snapshot: GagSession[] = [];
   for (const sessions of gagSessionsByChat.values()) snapshot.push(...sessions);
@@ -463,6 +451,7 @@ export function resetGagSessions(): void {
     for (const session of sessions) {
       if (session.timer !== null) clearTimeout(session.timer);
       if (session.cleanupTimer !== null) clearTimeout(session.cleanupTimer);
+      clearGagSpeakNoticeRefreshTimer(session);
       session.timer = null;
       session.cleanupTimer = null;
     }

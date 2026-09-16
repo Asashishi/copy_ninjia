@@ -151,7 +151,7 @@ export class ApplicationLifecycle {
     const loaded: LoadedData = await this.dependencies.loadPersistedData();
     if (
       loaded.blocklistEntryCount === undefined ||
-      loaded.whitelistEntryCount === undefined
+      loaded.permissionEntryCount === undefined
     ) {
       throw new Error("Identity database recovery did not return both policy table counts.");
     }
@@ -160,7 +160,7 @@ export class ApplicationLifecycle {
     this.dependencies.hydrateWedMembers(loaded.wedMembers);
     this.dependencies.initTelegramClients();
     this.dependencies.hydrateIdentityStorageCounts(
-      loaded.whitelistEntryCount,
+      loaded.permissionEntryCount,
       loaded.blocklistEntryCount
     );
     // 超管与黑名单必须互斥。这条断言只能排在 hydrate 之后（它会清空三份 LRU）、

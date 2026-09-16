@@ -21,15 +21,6 @@ import type { TelegramApi } from "../../../types/telegramWorker";
 import { toTelegramSendResult } from "./sendResult";
 
 type SendMessageApi = Pick<TelegramApi, "sendMessage">;
-type EphemeralSendMessageOptions = NonNullable<
-  Parameters<TelegramApi["sendMessage"]>[2]
-> & {
-  readonly ephemeral_message_parameters: Readonly<{
-    receiver_user_id: number;
-    callback_query_id?: string;
-  }>;
-};
-type EphemeralSendMessageApi = Pick<TelegramApi, "sendMessage">;
 type EditMessageTextApi = Pick<TelegramApi, "editMessageText">;
 type SendChatActionApi = Pick<TelegramApi, "sendChatAction">;
 type AnswerCallbackQueryApi = Pick<TelegramApi, "answerCallbackQuery">;
@@ -57,7 +48,7 @@ export interface SendMessageParams {
    * - **长期留存的必须带**——会话性输出（复读、AI 回复、洗澡回复、问答直答）、
    *   `AGENTS.md`「Telegram 提示留存」列举的长期保留例外（两块权限看板、问答
    *   看板、成功的中文动作结果），以及不由固定延迟清理持有的按钮消息
-   *   （`/qa set` 表单、gag 发言提示）。它们不会自己消失，落错话题就是永久错位。
+   *   （`/qa set` 表单、gag 发言提示）。这些输出必须落在对应的会话话题中。
    *   `preserveInGroup` 那一档由 `bun run check:conventions` 强制。
    * - **到期自删的不带**——命令回执与用法提示（30 秒清理，见 commandMessages.ts）、
    *   广告封禁播报与刷屏禁言公告，以及入群验证提醒（理由见 libs/forumTopic.ts
@@ -134,7 +125,7 @@ export interface SendEphemeralMessageParams {
   callbackQueryId?: string;
   text: string;
   keyboard: InlineKeyboardMarkup;
-  api?: EphemeralSendMessageApi;
+  api?: SendMessageApi;
   signal?: AbortSignal;
   /**
    * 论坛（topics）群里这条目标专属提示要亮在哪个话题；语义见 SendMessageParams
@@ -155,8 +146,8 @@ export interface SendEphemeralMessageParams {
 }
 
 /**
- * 通过 Bot API 10.3 ephemeral_message_parameters 发送目标专属消息；只补充
- * 已安装 SDK 尚未声明的请求字段。响应身份校验后交给业务状态机定向删除。
+ * 使用 SDK 的 ephemeral_message_parameters 发送目标专属消息。
+ * 响应身份校验后交给业务状态机定向删除。
  */
 export async function sendEphemeralMessage({
   chatId,
@@ -169,7 +160,7 @@ export async function sendEphemeralMessage({
   messageThreadId,
   onSent,
 }: SendEphemeralMessageParams): Promise<number | undefined> {
-  const other: EphemeralSendMessageOptions = {
+  const other: Parameters<SendMessageApi["sendMessage"]>[2] = {
     message_thread_id: messageThreadId,
     ephemeral_message_parameters: {
       receiver_user_id: receiverUserId,

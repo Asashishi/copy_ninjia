@@ -21,11 +21,11 @@ Each recipe names the files to touch and the order to follow. The universal prer
 
 ## Adding a Slash Command
 
-1. **Handler**: create one file under `packages/commands/` and export `handleXxxCommand` with a `function` declaration and explicit return type. Follow existing authorization patterns: `block.ts` / `mood.ts` for permission-key authorization (always `hasCommandPermission(ctx, key)` — the super administrator holds every permission key, so never test the identity separately); `isSuperAdminActor` for capabilities that cannot be granted away (`white.ts`, `batchKick.ts`); and `send.ts` for private-chat-only commands, which silently return for the wrong user or chat instead of sending an error. User-facing copy does not live in the handler: put it in a text table under the owning domain's `packages/consts/<domain>.ts`, with its type in `packages/types/` (see `PERMISSION_COMMAND_TEXTS`, `BLOCK_TARGET_TEXTS`) — that gives copy edits one place to land and avoids rebuilding an object plus three closures on every invocation. The exception is copy that must embed unbounded user input; `cjkAction.ts` is the only such case.
+1. **Handler**: export `handleXxxCommand` from `packages/commands/` with an explicit return type. Use `hasCommandPermission(ctx, key)` for delegated permissions, `isSuperAdminActor` for owner-only operations, and `send.ts` for private-chat handling. Put fixed copy and formatters in matching domain files under `packages/consts/atmosphere/{teasing,plain}/`, sharing one type. Main-thread callers select `chatAtmosphere(chatId)`; interpolate names, prompts, and questions without replacing text after rendering. Pass one local `AtmosphereTexts` reference to label, body, and button formatters in a rendering phase; select again after persona changes, for subsequent interactions, or during background execution. Message hot paths that already have `chatState` select from its `aiPersona` without another cache lookup.
 2. **Export**: add it to `packages/commands/index.ts`.
 3. **Registration**: add `commands.command("xxx", ...)` on the `commands` sub-chain in [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts). **Never register directly on `bot`**—every command lives behind the shared `bot.on(":entities:bot_command")` sub-chain (see “Command registration” in [02 Architecture Overview](02-architecture.md#the-journey-of-a-message)), and `test/app/registerHandlers.test.ts` rejects any command registered straight on `bot`. Registration occurs after the init gateway, per-chat serialization, private-chat gateway, and join-verification middleware, so new commands inherit those semantics. Do not duplicate gateway checks in the handler.
 4. **Private-chat gateway**: if the new command must work in private chats, also update [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) and add gateway tests. At present, only `/send` is explicitly allowed as a slash command in private chats; registering a handler alone will not reach it. Group-only commands need no change here.
-5. **Menu**: add an entry to `BOT_COMMANDS` in [`packages/consts/commands.ts`](../../packages/consts/commands.ts) if the command should appear in Telegram's command menu. Hidden commands such as `/send` stay out.
+5. **Menu**: add the same command name to both `BOT_COMMANDS` arrays in `packages/consts/atmosphere/{teasing,plain}/commands.ts`. Hidden commands such as `/send` stay out. `packages/app/commandMenu.ts` registers the default global menu and ordinary per-chat overrides.
 6. **Parameter constants**: cooldowns, thresholds, and similar values belong in `packages/consts/commands.ts` or the relevant domain constants, with Chinese JSDoc.
 7. **Tests**: add `test/commands/xxx.test.ts`, covering at least authorization rejection, argument parsing, and the main path.
 8. **Documentation**: add an entry to the command tables in `docs/{cn,en,ja}/08-commands.md`, and describe the interactions and permission boundaries.
@@ -49,13 +49,13 @@ CJK action commands such as `/咬` and `/贴贴` (whose action word is one or tw
 
 ## Switching Languages: No i18n Here — Fork It
 
-User-facing copy exists in Simplified Chinese only. This repository neither ships nor accepts an i18n layer, because the copy is not a set of swappable dictionary entries:
+Fixed user-facing copy is Simplified Chinese. `packages/consts/atmosphere/` provides default teasing and ordinary styles; a group with a custom persona selects the ordinary version. Client language does not select these styles.
 
-- Many replies are assembled from fragments while simultaneously computing UTF-16 offsets for Telegram `entities` (see the previous section). Changing language changes word order, length, and even whether a sentence should be split at all; every offset has to be recomputed, and a key-value catalogue cannot carry that.
-- Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
-- The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
+- Text tables contain fixed strings and formatters. Telegram `entities` use UTF-16 offsets computed from the rendered text. Names, questions, prompts, and model output are not rewritten for tone.
+- Action commands such as `/咬` use one or two Chinese characters; command parsing and display copy are maintained separately.
+- A group's custom AI persona takes priority; an unset persona uses `prompt/persona.md`.
 
-If you need another language, fork it and change it yourself. Production code has roughly 947 source lines containing Chinese string or template literals across 88 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+Fork the project for another language and update copy, interactions, and prompts together. TypeScript AST counting finds 1355 source lines with Chinese string or template literals across 81 files in `packages/`, excluding comments; persona and deployment configuration are separate. Run `bun run check` after changes.
 
 ## Adjusting Behavioral Parameters
 
@@ -81,7 +81,7 @@ All parameters are centralized under `packages/consts/`, so changing a value doe
 Procedure: change the constant → update its Chinese JSDoc, including changed invariants → check whether the root READMEs quote the value and synchronize them → run `bun run check`.
 
 > [!WARNING]
-> **Capacity constants may be coupled to disk data.** Before reducing values such as `AI_MEMORY_HYDRATE_BUFFER_MAX` or `MAX_SUMMARY_ROUNDS`, atomically rewrite existing `memory/ai/` snapshots after stopping the old process, as required by [04 Authoritative Runtime Invariants](04-invariants.md#persistence). Check that section before changing any capacity value.
+> **Capacity constants may be coupled to disk data.** Before reducing values such as `AI_MEMORY_HYDRATE_BUFFER_MAX` or `MAX_SUMMARY_ROUNDS`, rewrite existing `chat_states.ai_context` snapshots in a SQLite transaction after stopping the old process, as required by [04 Authoritative Runtime Invariants](04-invariants.md#persistence). Check that section before changing any capacity value.
 
 ## Adding an Optional Provider Capability
 
@@ -112,7 +112,7 @@ The contract is split into five minimal per-capability interfaces (`AiTextProvid
 ## Changing the Persona or JSON Configuration
 
 - Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
-- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `telegram.json` loads strictly before network access; `stickers.json`, `reactions.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. The permanent allowlist, blocklist, temporary-allowlist activity, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, the matching `packages/database/codec/` module, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
+- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `telegram.json` loads strictly before network access; `stickers.json`, `reactions.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. The permanent allowlist, blocklist, temporary-ad-bypass activity, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, the matching `packages/database/codec/` module, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
 
 ## Adding Deployment JSON Configuration
 
@@ -153,6 +153,8 @@ One constraint harder than editing `state.json`: **the runtime never migrates au
 7. Persistence reuses the existing write-through: the main thread publishes the in-memory final value, posts it to the Disk I/O Worker, an explicit transaction commits, an exact revision is acknowledged, and a rebuilt worker replays from memory.
 
 The repository keeps only the migration entry from the latest released version to the current version. A new edge must replace the preceding entry, its tests, and its convention registration together.
+
+The single-edge rule governs the cold-migration script under `scripts/` that rewrites deployed data, its tests, and its `coldMigrations.ts` registration. It does not apply to the SQL files in `schema/migrations/` or to `meta/_journal.json`, which must be kept complete from `0000`: `createStorageDatabase` replays every entry through the Drizzle migrator when it builds a new database, and at startup `assertStorageDatabaseMigrationLineage` in `packages/database/interact/inspection.ts` requires `__drizzle_migrations` to carry the full lineage.
 
 ## Changing an Inter-Worker Protocol
 

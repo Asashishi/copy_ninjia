@@ -1,3 +1,5 @@
+import type { DiskIODomain } from "../../packages/types/diskIO/replies";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
@@ -17,9 +19,9 @@ import type {
   IdentityPolicyRawReadResult,
 } from "../../packages/types/identityStorage";
 import type {
-  RecordedTemporaryWhitelistActivity,
-  TemporaryWhitelistActivity,
-} from "../../packages/types/temporaryWhitelist";
+  RecordedTemporaryAdBypassActivity,
+  TemporaryAdBypassActivity,
+} from "../../packages/types/temporaryAdBypass";
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -41,7 +43,7 @@ let readImplementation: (ids: readonly number[]) => Promise<IdentityPolicyRawRea
   async (): Promise<IdentityPolicyRawReadResult> => ({
     whitelist: [],
     blocklist: [],
-    temporaryWhitelist: [],
+    temporaryAdBypass: [],
   });
 let pageReadImplementation: (afterId: number | null) => Promise<BlocklistIdPage> =
   async (afterId: number | null): Promise<BlocklistIdPage> => ({
@@ -58,7 +60,7 @@ const readBlocklistIdPage = mock(
 );
 let acceptDiskMessages: boolean = true;
 const flushDiskIODomainOutcome = mock(
-  async (domain: "whitelist" | "blocklist"): Promise<DomainFlushOutcome> => {
+  async (domain: DiskIODomain): Promise<DomainFlushOutcome> => {
     const writes: { table: "whitelist" | "blocklist"; id: number; revision: number }[] = [];
     for (const message of diskMessages) {
       if (message.type !== "identityPolicyWrite" || message.table !== domain) continue;
@@ -68,7 +70,7 @@ const flushDiskIODomainOutcome = mock(
       listener({
         type: "identityStoragePersisted",
         writes,
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -77,7 +79,7 @@ const flushDiskIODomainOutcome = mock(
   }
 );
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   isDiskIOInitialized: (): boolean => true,
   onDiskIORespawn: (
     _owner: string,
@@ -99,7 +101,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   readBlocklistIdPage,
   readIdentityPolicies,
   relayLogMessage: (): boolean => true,
-}));
+})));
 
 const {
   blocklistEntryCache,
@@ -112,16 +114,16 @@ const {
   whitelistEntryCache,
 } = await import("../../packages/cache/main/identityStorage");
 const {
-  temporaryWhitelistActivityCache,
-  unacknowledgedTemporaryWhitelistWrites,
+  temporaryAdBypassActivityCache,
+  unacknowledgedTemporaryAdBypassWrites,
 } = await import(
-  "../../packages/cache/main/temporaryWhitelist"
+  "../../packages/cache/main/temporaryAdBypass"
 );
 const {
-  clearTemporaryWhitelistActivity,
-  hasActiveTemporaryWhitelist,
-  recordTemporaryWhitelistActivity,
-} = await import("../../packages/infra/identityPolicy/temporaryWhitelist");
+  clearTemporaryAdBypassActivity,
+  hasActiveTemporaryAdBypass,
+  recordTemporaryAdBypassActivity,
+} = await import("../../packages/infra/identityPolicy/temporaryAdBypass");
 const {
   cachedBlocklistEntry,
   cachedWhitelistEntry,
@@ -136,7 +138,7 @@ const {
 function seedMissing(id: number): void {
   blocklistEntryCache.set(id, null);
   whitelistEntryCache.set(id, null);
-  temporaryWhitelistActivityCache.set(id, null);
+  temporaryAdBypassActivityCache.set(id, null);
 }
 
 function blockValue(blockedAt: string = "2026/08/11 00:00:00") {
@@ -156,7 +158,7 @@ beforeEach(() => {
   readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
     whitelist: [],
     blocklist: [],
-    temporaryWhitelist: [],
+    temporaryAdBypass: [],
   });
   pageReadImplementation = async (
     afterId: number | null
@@ -168,16 +170,16 @@ beforeEach(() => {
 });
 
 describe("主线程身份 LRU 与数据库最终一致性", () => {
-  test("冷读填充上一东京日已达标的临时白名单正缓存", async () => {
+  test("冷读填充上一东京日已达标的临时广告免检正缓存", async () => {
     const now: number = Date.now();
     readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
       whitelist: [],
       blocklist: [],
-      temporaryWhitelist: [{
+      temporaryAdBypass: [{
         id: 7,
-        tempWhite: true,
-        tempWhiteAt: now - DAY_MS,
-        tempWhiteCount: 7,
+        adBypass: true,
+        adBypassGrantedAt: now - DAY_MS,
+        qualifiedDays: 7,
         sendCount: 8,
         countedAt: now - DAY_MS,
         qualifiedAt: now - DAY_MS,
@@ -185,62 +187,62 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     });
 
     await expect(prefetchIdentityPolicies([7])).resolves.toBeTrue();
-    expect(hasActiveTemporaryWhitelist(7)).toBeTrue();
+    expect(hasActiveTemporaryAdBypass(7)).toBeTrue();
     await expect(prefetchIdentityPolicies([7])).resolves.toBeTrue();
     expect(readIdentityPolicies).toHaveBeenCalledTimes(1);
   });
 
-  test("临时白名单发言写入按主键保留最新 revision 并由精确 ACK 收敛", () => {
+  test("临时广告免检发言写入按主键保留最新 revision 并由精确 ACK 收敛", () => {
     const now: number = Date.now();
     seedMissing(7);
-    expect(recordTemporaryWhitelistActivity(7, now)?.queued).toBeTrue();
-    const firstRevision: number = unacknowledgedTemporaryWhitelistWrites.get(7)!.revision;
-    expect(recordTemporaryWhitelistActivity(7, now)?.queued).toBeTrue();
-    const secondRevision: number = unacknowledgedTemporaryWhitelistWrites.get(7)!.revision;
-    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity?.sendCount).toBe(2);
+    expect(recordTemporaryAdBypassActivity(7, now)?.queued).toBeTrue();
+    const firstRevision: number = unacknowledgedTemporaryAdBypassWrites.get(7)!.revision;
+    expect(recordTemporaryAdBypassActivity(7, now)?.queued).toBeTrue();
+    const secondRevision: number = unacknowledgedTemporaryAdBypassWrites.get(7)!.revision;
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)?.activity?.sendCount).toBe(2);
 
     for (const listener of persistedListeners) {
       listener({
         type: "identityStoragePersisted",
         writes: [],
-        temporaryWhitelistWrites: [{ id: 7, revision: firstRevision }],
+        temporaryAdBypassWrites: [{ id: 7, revision: firstRevision }],
         chatStateWrites: [],
         chatQaWrites: [],
       });
     }
-    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.revision).toBe(secondRevision);
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)?.revision).toBe(secondRevision);
     for (const listener of persistedListeners) {
       listener({
         type: "identityStoragePersisted",
         writes: [],
-        temporaryWhitelistWrites: [{ id: 7, revision: secondRevision }],
+        temporaryAdBypassWrites: [{ id: 7, revision: secondRevision }],
         chatStateWrites: [],
         chatQaWrites: [],
       });
     }
-    expect(unacknowledgedTemporaryWhitelistWrites.has(7)).toBeFalse();
+    expect(unacknowledgedTemporaryAdBypassWrites.has(7)).toBeFalse();
 
-    expect(clearTemporaryWhitelistActivity(7)).toBeTrue();
-    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
-    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity).toBeNull();
+    expect(clearTemporaryAdBypassActivity(7)).toBeTrue();
+    expect(temporaryAdBypassActivityCache.peek(7)).toBeNull();
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)?.activity).toBeNull();
   });
 
   test("黑名单命中或黑名单视图冷缺失时发言不产出临时累计写", () => {
     const now: number = Date.now();
     seedMissing(7);
     expect(queueIdentityPolicyWrite("blocklist", 7, blockValue())).toBeTrue();
-    expect(recordTemporaryWhitelistActivity(7, now)).toBeUndefined();
+    expect(recordTemporaryAdBypassActivity(7, now)).toBeUndefined();
 
     // 三份 LRU 各自淘汰：临时累计仍热而黑名单视图已冷时不能按「不在名单」累计。
     whitelistEntryCache.set(8, null);
-    temporaryWhitelistActivityCache.set(8, null);
-    expect(recordTemporaryWhitelistActivity(8, now)).toBeUndefined();
+    temporaryAdBypassActivityCache.set(8, null);
+    expect(recordTemporaryAdBypassActivity(8, now)).toBeUndefined();
 
-    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
-    expect(temporaryWhitelistActivityCache.peek(8)).toBeNull();
-    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(0);
+    expect(temporaryAdBypassActivityCache.peek(7)).toBeNull();
+    expect(temporaryAdBypassActivityCache.peek(8)).toBeNull();
+    expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(0);
     expect(diskMessages.some(
-      (message: DiskBusinessMessage): boolean => message.type === "temporaryWhitelistWrite"
+      (message: DiskBusinessMessage): boolean => message.type === "temporaryAdBypassWrite"
     )).toBeFalse();
   });
 
@@ -248,42 +250,42 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     const dayAt: number = new Date("2026-08-01T12:00:00+09:00").getTime();
     seedMissing(7);
     for (let index: number = 0; index < 8; index++) {
-      expect(recordTemporaryWhitelistActivity(7, dayAt + index)?.queued).toBeTrue();
+      expect(recordTemporaryAdBypassActivity(7, dayAt + index)?.queued).toBeTrue();
     }
-    const qualified: Readonly<TemporaryWhitelistActivity> | null | undefined =
-      temporaryWhitelistActivityCache.peek(7);
+    const qualified: Readonly<TemporaryAdBypassActivity> | null | undefined =
+      temporaryAdBypassActivityCache.peek(7);
     if (qualified === null || qualified === undefined) {
       throw new Error("qualified activity must exist");
     }
     expect(qualified.qualifiedAt).toBe(dayAt + 7);
-    const revision: number = unacknowledgedTemporaryWhitelistWrites.get(7)!.revision;
+    const revision: number = unacknowledgedTemporaryAdBypassWrites.get(7)!.revision;
     const queuedWrites: number = diskMessages.length;
 
     for (let index: number = 8; index < 64; index++) {
-      const recorded: RecordedTemporaryWhitelistActivity | undefined =
-        recordTemporaryWhitelistActivity(7, dayAt + index);
+      const recorded: RecordedTemporaryAdBypassActivity | undefined =
+        recordTemporaryAdBypassActivity(7, dayAt + index);
       expect(recorded?.queued).toBeTrue();
       expect(recorded?.activity).toBe(qualified);
     }
     expect(diskMessages.length).toBe(queuedWrites);
-    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.revision).toBe(revision);
-    expect(temporaryWhitelistActivityCache.peek(7)).toBe(qualified);
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)?.revision).toBe(revision);
+    expect(temporaryAdBypassActivityCache.peek(7)).toBe(qualified);
 
     // 跨东京日的第一条发言仍然重置当日累计并落盘。
     const nextDayAt: number = dayAt + DAY_MS;
-    expect(recordTemporaryWhitelistActivity(7, nextDayAt)?.activity).toMatchObject({
-      tempWhite: true,
-      tempWhiteCount: 1,
+    expect(recordTemporaryAdBypassActivity(7, nextDayAt)?.activity).toMatchObject({
+      adBypass: true,
+      qualifiedDays: 1,
       sendCount: 1,
       countedAt: nextDayAt,
       qualifiedAt: null,
     });
     expect(diskMessages.length).toBe(queuedWrites + 1);
     for (let index: number = 1; index < 8; index++) {
-      expect(recordTemporaryWhitelistActivity(7, nextDayAt + index)?.queued).toBeTrue();
+      expect(recordTemporaryAdBypassActivity(7, nextDayAt + index)?.queued).toBeTrue();
     }
-    expect(temporaryWhitelistActivityCache.peek(7)).toMatchObject({
-      tempWhiteCount: 2,
+    expect(temporaryAdBypassActivityCache.peek(7)).toMatchObject({
+      qualifiedDays: 2,
       sendCount: 8,
       qualifiedAt: nextDayAt + 7,
     });
@@ -291,17 +293,17 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
   });
 
   test("广告 true 清理在冷读失败窗口仍发布可重放墓碑", () => {
-    expect(temporaryWhitelistActivityCache.has(7)).toBeFalse();
+    expect(temporaryAdBypassActivityCache.has(7)).toBeFalse();
 
-    expect(clearTemporaryWhitelistActivity(7)).toBeTrue();
+    expect(clearTemporaryAdBypassActivity(7)).toBeTrue();
 
-    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
-    expect(unacknowledgedTemporaryWhitelistWrites.get(7)).toEqual({
+    expect(temporaryAdBypassActivityCache.peek(7)).toBeNull();
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)).toEqual({
       activity: null,
       revision: 1,
     });
     expect(diskMessages.at(-1)).toEqual({
-      type: "temporaryWhitelistWrite",
+      type: "temporaryAdBypassWrite",
       id: 7,
       activity: null,
       revision: 1,
@@ -316,7 +318,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
 
     seedMissing(7);
     queueIdentityPolicyWrite("blocklist", 7, blockValue());
-    pendingRead.resolve({ whitelist: [], blocklist: [], temporaryWhitelist: [] });
+    pendingRead.resolve({ whitelist: [], blocklist: [], temporaryAdBypass: [] });
     await loading;
 
     expect(cachedBlocklistEntry(7)?.meta.username).toBe("alice");
@@ -337,7 +339,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: writeRevision }],
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -367,7 +369,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: firstRevision }],
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -378,7 +380,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision: secondRevision }],
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [],
         chatQaWrites: [],
       });
@@ -401,7 +403,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [{ table: "blocklist", id: 7, revision }],
-        temporaryWhitelistWrites: [], chatStateWrites: [], chatQaWrites: [],
+        temporaryAdBypassWrites: [], chatStateWrites: [], chatQaWrites: [],
       });
     }
     expect(unacknowledgedIdentityBytes.current.blocklist).toBe(otherBytes);
@@ -483,13 +485,13 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     })]);
   });
 
-  test("Worker 重建把已经失效的临时白名单重放归一化为墓碑", async () => {
+  test("Worker 重建把已经失效的临时广告免检重放归一化为墓碑", async () => {
     const staleAt: number = Date.now() - 2 * DAY_MS;
     seedMissing(7);
     for (let index: number = 0; index < 8; index++) {
-      expect(recordTemporaryWhitelistActivity(7, staleAt + index)?.queued).toBeTrue();
+      expect(recordTemporaryAdBypassActivity(7, staleAt + index)?.queued).toBeTrue();
     }
-    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity?.tempWhite)
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)?.activity?.adBypass)
       .toBeTrue();
 
     const replayed: DiskBusinessMessage[] = [];
@@ -505,12 +507,12 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
 
     for (const listener of respawnListeners) expect(await listener(transport)).toBeTrue();
     expect(replayed).toEqual([expect.objectContaining({
-      type: "temporaryWhitelistWrite",
+      type: "temporaryAdBypassWrite",
       id: 7,
       activity: null,
     })]);
-    expect(unacknowledgedTemporaryWhitelistWrites.get(7)?.activity).toBeNull();
-    expect(temporaryWhitelistActivityCache.peek(7)).toBeNull();
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)?.activity).toBeNull();
+    expect(temporaryAdBypassActivityCache.peek(7)).toBeNull();
   });
 
   test("黑转白在 Worker 重建后仍按全局 revision 先删后增", async () => {
@@ -558,17 +560,17 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     for (let id: number = 1; id <= IDENTITY_READ_CACHE_MAX_ENTRIES + 1; id++) {
       blocklistEntryCache.set(id, null);
       whitelistEntryCache.set(id, null);
-      temporaryWhitelistActivityCache.set(id, null);
+      temporaryAdBypassActivityCache.set(id, null);
     }
     expect(blocklistEntryCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
     expect(whitelistEntryCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
-    expect(temporaryWhitelistActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
+    expect(temporaryAdBypassActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
     expect(blocklistEntryCache.has(1)).toBeFalse();
     expect(whitelistEntryCache.has(1)).toBeFalse();
-    expect(temporaryWhitelistActivityCache.has(1)).toBeFalse();
+    expect(temporaryAdBypassActivityCache.has(1)).toBeFalse();
   });
 
-  test("长时间取键流转下临时白名单只保留有界现场，Worker 重建按 revision 重放", async () => {
+  test("长时间取键流转下临时广告免检只保留有界现场，Worker 重建按 revision 重放", async () => {
     const dayAt: number = new Date("2026-08-01T12:00:00+09:00").getTime();
     const churn: number = IDENTITY_READ_CACHE_MAX_ENTRIES * 2;
 
@@ -576,48 +578,48 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     let queued: number = 0;
     for (let id: number = 1; id <= churn; id++) {
       seedMissing(id);
-      if (recordTemporaryWhitelistActivity(id, dayAt)?.queued === true) queued++;
+      if (recordTemporaryAdBypassActivity(id, dayAt)?.queued === true) queued++;
       if (id % 128 === 0) {
         const writes: { id: number; revision: number }[] = [];
-        for (const [key, write] of unacknowledgedTemporaryWhitelistWrites) writes.push({ id: key, revision: write.revision });
-        for (const listener of persistedListeners) listener({ type: "identityStoragePersisted", writes: [], temporaryWhitelistWrites: writes, chatStateWrites: [], chatQaWrites: [] });
+        for (const [key, write] of unacknowledgedTemporaryAdBypassWrites) writes.push({ id: key, revision: write.revision });
+        for (const listener of persistedListeners) listener({ type: "identityStoragePersisted", writes: [], temporaryAdBypassWrites: writes, chatStateWrites: [], chatQaWrites: [] });
       }
     }
     expect(queued).toBe(churn);
-    expect(temporaryWhitelistActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
-    expect(temporaryWhitelistActivityCache.has(1)).toBeFalse();
-    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(0);
+    expect(temporaryAdBypassActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
+    expect(temporaryAdBypassActivityCache.has(1)).toBeFalse();
+    expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(0);
 
     const settled: { id: number; revision: number }[] = [];
-    for (const [id, write] of unacknowledgedTemporaryWhitelistWrites) {
+    for (const [id, write] of unacknowledgedTemporaryAdBypassWrites) {
       settled.push({ id, revision: write.revision });
     }
     for (const listener of persistedListeners) {
       listener({
         type: "identityStoragePersisted",
         writes: [],
-        temporaryWhitelistWrites: settled,
+        temporaryAdBypassWrites: settled,
         chatStateWrites: [],
         chatQaWrites: [],
       });
     }
-    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(0);
-    expect(temporaryWhitelistActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
+    expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(0);
+    expect(temporaryAdBypassActivityCache.size).toBe(IDENTITY_READ_CACHE_MAX_ENTRIES);
 
     // 达标稳态不再产生任何未 ACK 现场：连续发言只走热度刷新。
     const steady: number = churn;
     for (let index: number = 1; index < 8; index++) {
-      recordTemporaryWhitelistActivity(steady, dayAt + index);
+      recordTemporaryAdBypassActivity(steady, dayAt + index);
     }
     const qualifiedRevision: number =
-      unacknowledgedTemporaryWhitelistWrites.get(steady)!.revision;
+      unacknowledgedTemporaryAdBypassWrites.get(steady)!.revision;
     let frozen: number = 0;
     for (let index: number = 8; index < 512; index++) {
-      if (recordTemporaryWhitelistActivity(steady, dayAt + index)?.queued === true) frozen++;
+      if (recordTemporaryAdBypassActivity(steady, dayAt + index)?.queued === true) frozen++;
     }
     expect(frozen).toBe(504);
-    expect(unacknowledgedTemporaryWhitelistWrites.size).toBe(1);
-    expect(unacknowledgedTemporaryWhitelistWrites.get(steady)?.revision)
+    expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(1);
+    expect(unacknowledgedTemporaryAdBypassWrites.get(steady)?.revision)
       .toBe(qualifiedRevision);
 
     const replayed: DiskBusinessMessage[] = [];
@@ -632,7 +634,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     };
     for (const listener of respawnListeners) expect(await listener(transport)).toBeTrue();
     expect(replayed).toEqual([expect.objectContaining({
-      type: "temporaryWhitelistWrite",
+      type: "temporaryAdBypassWrite",
       id: steady,
       revision: qualifiedRevision,
     })]);
@@ -693,7 +695,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
       whitelist: [],
       blocklist: [[7, "{}"], [8, "{}"]],
-      temporaryWhitelist: [],
+      temporaryAdBypass: [],
     });
 
     await expect(retainCurrentlyBlockedIdentityIds([7, 8, 9]))

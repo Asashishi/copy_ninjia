@@ -169,6 +169,9 @@ describe("project convention collectors", () => {
     );
     await Bun.write(join(sourceRoot, "workers", "antiRaid", "badNotice.ts"),
       'import { sendMessage as send } from "../../../infra/telegram"; function notice() { return send({chatId: 1, text: "notice"}); }');
+    const welcomePath: string = join(sourceRoot, "workers", "antiRaid", "verificationEffects.ts");
+    await Bun.write(welcomePath,
+      'import { sendMessage as send } from "../../../infra/telegram"; function runVerificationEffects() { return send({chatId: 1, text: "welcome"}); }');
 
     const problems: readonly string[] = await collectTelegramMessageProblems(
       root,
@@ -182,26 +185,34 @@ describe("project convention collectors", () => {
       expect.stringContaining("state-owned button messages"),
     ]));
     expect(problems).toContainEqual(expect.stringContaining("ordinary Worker/group notices"));
-    expect(problems).toHaveLength(6);
+    expect(problems).toContainEqual(expect.stringContaining("verificationEffects.ts: ordinary Worker/group notices"));
+    expect(problems).toHaveLength(7);
+
+    await Bun.write(welcomePath,
+      'import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient"; function runVerificationEffects() { return sendTemporaryMessageFromMain({purpose: "notice", chatId: 1, text: "welcome", deleteAfterMs: 30000}); }');
+    await Bun.write(join(sourceRoot, "workers", "antiRaid", "verificationReminders.ts"),
+      'import { sendMessage } from "../../../infra/telegram"; function attemptReminderDelivery() { return sendMessage({chatId: 1, text: "verify", keyboard: {inline_keyboard: []}}); }');
+    const fixedProblems: readonly string[] = await collectTelegramMessageProblems(root, sourceRoot, commandsRoot);
+    expect(fixedProblems.some((problem: string): boolean => /verification(?:Effects|Reminders)\.ts/.test(problem))).toBeFalse();
   });
 
-  test("package.json 只允许当前翻译冷迁移边并要求入口存在", async () => {
+  test("package.json 只允许当前清理上下文权限冷迁移边并要求入口存在", async () => {
     const root: string = temporaryRoot("copy-ninjia-conventions-");
     mkdirSync(join(root, "scripts"), { recursive: true });
 
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:translate": "bun scripts/migrateTranslate.ts" },
+      scripts: { "migrate:clear-context-permission": "bun scripts/migrateClearContextPermission.ts" },
     }));
     expect(await collectColdMigrationProblems(root)).toContainEqual(expect.stringContaining("active cold migration entry does not exist"));
-    await Bun.write(join(root, "scripts/migrateTranslate.ts"), "export {};\n");
+    await Bun.write(join(root, "scripts/migrateClearContextPermission.ts"), "export {};\n");
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:translate": "bun scripts/migrateTranslate.ts", "migrate:legacy": "bun scripts/legacy.ts" },
+      scripts: { "migrate:clear-context-permission": "bun scripts/migrateClearContextPermission.ts", "migrate:legacy": "bun scripts/legacy.ts" },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:translate"
+        "package.json must expose exactly the declared active cold migration commands migrate:clear-context-permission"
       ),
     ]);
   });

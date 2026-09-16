@@ -8,6 +8,7 @@ export interface SendTemporaryMessageOnMainParams {
   readonly chatId: number;
   readonly text: string;
   readonly messageThreadId?: number;
+  readonly replyToMessageId?: number;
   readonly deleteAfterMs: number;
   readonly signal: AbortSignal;
 }
@@ -22,6 +23,7 @@ export async function sendTemporaryMessageOnMain({
   deleteAfterMs,
   signal,
   messageThreadId,
+  replyToMessageId,
 }: SendTemporaryMessageOnMainParams): Promise<TelegramWorkerTemporaryMessageSentResult | undefined> {
   let result: TelegramWorkerTemporaryMessageSentResult | undefined;
   const messageId: number | undefined = await sendMessage({
@@ -29,6 +31,7 @@ export async function sendTemporaryMessageOnMain({
     text,
     signal,
     messageThreadId,
+    replyToMessageId,
     onSent: (sentMessageId: number): void => {
       const sentAt: number = Date.now();
       deleteMessageAfter({

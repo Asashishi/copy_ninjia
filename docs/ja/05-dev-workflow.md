@@ -38,10 +38,13 @@
 
 ## 品質ゲートの基準
 
+- **インストーラー起動の隔離**：フィクスチャは独立した一時設定・データルートを使用し、システム管理、依存インストール、ネットワーク送信を mock 化して、実際の `index.ts`、Worker、終了時の永続化を実行します。各 Worker は Bun `preload` でネットワーク代替を読み込み、天気には固定応答を返し、他の要求は拒否します。読み込み完了、ポーリング開始、SIGTERM 時の排空、ロックファイル削除を検証します。
+- **ファイル長と走査範囲**：手書き TS・JS・shell ファイルは 1,000 行を超えると拒否し、500 行を超えたら分割を検討します。追跡済みファイルと未 stage の新規ファイルが対象で、Git が無視する配備データは走査しません。インストーラーの構文検査は `install.sh` と宣言された全 shell モジュールを対象とします。
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
+- **型 import は独立して宣言**：ソース・script・test は独立した `import type` を使用します。ESLint の `no-restricted-syntax` が `import { value, type Shape }` などの inline type specifier を拒否します。`test/scripts/typeImportConventions.test.ts` は 3 種類のファイルで許可・拒否の境界を検証し、既存の `Promise.all` 禁止も確認します。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コードと script の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、fault injection suite の一覧、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コード・script・test の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、fault injection suite の一覧、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
   module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
 
   Node API 検査は `process.getBuiltinModule`、`globalThis.Buffer` とリテラル添字形式を対象にします。`Buffer.byteLength` などの例外は module・symbol・用途ごとに登録します。`@grammyjs/runner` は SDK 対照テスト用の開発依存で、production の取得処理はプロジェクトの offset 確認境界を使います。
@@ -62,7 +65,7 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**4190 tests / 370 files / 156432 `expect()` calls**。全ソースコードの**関数カバレッジは 97.56%、行カバレッジは 97.76%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**4290 tests / 380 files / 157750 `expect()` calls**。全ソースコードの**関数カバレッジは 97.17%、行カバレッジは 97.93%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -88,6 +91,8 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 ## Fault injection suite
 
 `bun run test:fault-injection` は application / Worker lifecycle、封鎖復元、返信容量と取消、資格情報 snapshot、Disk I/O の inspect・原子的書込・復旧障害を検証します。完全な一覧は [`package.json`](../../package.json) の script が正本です。`check:conventions` は登録 harness と production 復旧/lifecycle 境界への実 path 参照から登録漏れを検出します。静的な値 import、dynamic import、値の再 export を含み、型だけの参照は除外します。空宣言の副作用は保持し、別 path の同名 module は一致させません。[04 実行時の不変条件](04-invariants.md) の永続化・停止・Worker lifecycle を変更する場合、この suite を通します。
+
+`test/workers/antiRaid/verificationWelcome.test.ts` は実際の双方向プロトコル、main thread の一時通知境界、削除 owner を通し、Telegram 出力を SDK transformer で代替します。4 種類の歓迎文、返信先、応答消失、取消、Worker teardown・再生成、送信・通信失敗を検証し、削除の一度だけの登録、終了を妨げない timer、後続副作用の順序を確認します。このファイルは全量テストと障害注入の両方に含まれます。
 
 `/wed` の操作回帰は 1,024 件の LRU 容量、コマンドとボタン参照による利用順更新、eviction 時の待機・実行中操作の取消、遅着結果の清掃、個別削除失敗後の継続、update 取消からの独立性、停止時 drain を検証します。メンバー正本では 25 群の満杯時拒否を別途検証します。永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
 

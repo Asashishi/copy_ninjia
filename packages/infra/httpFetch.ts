@@ -8,7 +8,7 @@ import { readBoundedResponseBytes } from "../libs/boundedResponse";
 import { parseAllowedHttpsUrl } from "../libs/httpUrlPolicy";
 import type { BoundedResponseResult } from "../libs/boundedResponse";
 
-/** 复用同一个非 fatal 解码器，理由同 libs/boundedResponse.ts 的 UTF8_DECODER。 */
+/** 所有 JSON 响应共用一个非 fatal UTF-8 解码器。 */
 const UTF8_DECODER: TextDecoder = new TextDecoder();
 
 function boundedErrorPreview(text: string): string {
@@ -31,7 +31,7 @@ export interface FetchJsonWithTimeoutParams {
 /**
  * 带超时和响应体硬上限的 JSON API 请求。成功/失败正文都经过同一个流式
  * bounded reader，不能因缺失或伪造 Content-Length 而无界占用内存。请求
- * 失败、超时、超限、非法 JSON 或非 2xx 时返回 null，具体 JSON 形状校验
+ * 失败、调用方取消、超时、超限、非法 JSON 或非 2xx 时返回 null，具体 JSON 形状校验
  * 交给调用方。请求地址必须命中 JSON_API_ALLOWED_ORIGINS，且禁止自动跟随
  * 重定向，避免可信服务把通用请求能力转交给未经允许的目标。Telegram 头像
  * 爬取使用独立的 HTML/图片下载链路，不受此 JSON API 列表约束。
@@ -52,13 +52,18 @@ export async function fetchJsonWithTimeout({
   }
   const controller: AbortController = new AbortController();
   const timer: ReturnType<typeof setTimeout> = setTimeout((): void => controller.abort(), timeoutMs);
+  const signal: AbortSignal = init.signal === undefined || init.signal === null
+    ? controller.signal
+    : AbortSignal.any([init.signal, controller.signal]);
   try {
+    signal.throwIfAborted();
     const response: Response = await fetch(requestUrl, {
       ...init,
       redirect: "error",
-      signal: controller.signal,
+      signal,
     });
     const body: BoundedResponseResult = await readBoundedResponseBytes(response, JSON_API_MAX_RESPONSE_BYTES);
+    signal.throwIfAborted();
     if (!body.ok) {
       logger.error(`${errorLabel} response exceeded ${JSON_API_MAX_RESPONSE_BYTES} bytes (observed ${body.observedBytes}).`);
       return null;

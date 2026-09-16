@@ -1,3 +1,5 @@
+import type { DiskIODomain } from "../../packages/types/diskIO/replies";
+import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import type { ChatState } from "../../packages/types/chatState";
@@ -14,7 +16,7 @@ const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [
 const respawnListeners: DiskIORespawnListener[] = [];
 let acknowledgeFlush: boolean = true;
 const flushDiskIODomainOutcome = mock(
-  async (_domain: "chatState"): Promise<DomainFlushOutcome> => {
+  async (_domain: DiskIODomain): Promise<DomainFlushOutcome> => {
     if (acknowledgeFlush) {
       const latest = new Map<number, number>();
       for (const message of diskMessages) {
@@ -30,7 +32,7 @@ const flushDiskIODomainOutcome = mock(
         listener({
           type: "identityStoragePersisted",
           writes: [],
-          temporaryWhitelistWrites: [],
+          temporaryAdBypassWrites: [],
           chatStateWrites,
           chatQaWrites: [],
         });
@@ -40,7 +42,7 @@ const flushDiskIODomainOutcome = mock(
   }
 );
 
-mock.module("../../packages/infra/diskIO", () => ({
+mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIODomainOutcome,
   onDiskIORespawn: (
     _owner: string,
@@ -59,7 +61,7 @@ mock.module("../../packages/infra/diskIO", () => ({
     return true;
   },
   relayLogMessage: (): boolean => true,
-}));
+})));
 
 const {
   chatStateCache,
@@ -131,7 +133,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       listener({
         type: "identityStoragePersisted",
         writes: [],
-        temporaryWhitelistWrites: [],
+        temporaryAdBypassWrites: [],
         chatStateWrites: [{ chatId: -1001, revision: firstRevision }],
         chatQaWrites: [],
       });
@@ -169,13 +171,13 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     };
     expect(await respawnListeners[0]!(transport)).toBeTrue();
     expect(replayed).toEqual([
-      {
+      { aiPersona: null,
         type: "chatStateWrite",
         chatId: -1001,
         data: JSON.stringify({ title: "after" }),
         revision: latestRevision,
       },
-      {
+      { aiPersona: null,
         type: "chatStateWrite",
         chatId: -1002,
         data: null,

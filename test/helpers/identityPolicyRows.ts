@@ -1,6 +1,6 @@
 import {
   blocklistEntries,
-  whitelistEntries,
+  permissionList,
 } from "../../packages/database/schema/identityPolicy";
 import type { IdentityPolicyTable } from "../../packages/types/identityPolicy";
 import type { StorageDatabase } from "../../packages/types/storageDatabase";
@@ -23,8 +23,8 @@ export function putIdentityPolicyRow({
   data,
 }: PutIdentityPolicyRowOptions): void {
   if (table === "whitelist") {
-    database.insert(whitelistEntries).values({ id, data })
-      .onConflictDoUpdate({ target: whitelistEntries.id, set: { data } }).run();
+    database.insert(permissionList).values({ id, data })
+      .onConflictDoUpdate({ target: permissionList.id, set: { data } }).run();
     return;
   }
   database.insert(blocklistEntries).values({ id, data })

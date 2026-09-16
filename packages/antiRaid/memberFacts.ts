@@ -17,7 +17,7 @@ import type { AntiRaidMember } from "../types/antiRaid/protocol";
  *
  * `SUPER_ADMIN_USER_ID` 与 SQLite 永久白名单是部署方明确登记的身份，两者都由
  * isWhitelisted 一并覆盖（超级管理员恒在白名单边界内，见 whitelist.ts）。
- * 临时白名单只持有广告检测豁免，不进入本边界；广告检测在调用本函数前先按
+ * 临时广告免检只持有广告检测豁免，不进入本边界；广告检测在调用本函数前先按
  * isCanBypassAdDetection 复查。防刷屏另受 isCanBypassFloodControl 控制。
  */
 export function isProtectedSender(senderId: number): boolean {

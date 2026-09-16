@@ -7,7 +7,11 @@ import {
   WEATHER_REFRESH_INTERVAL_MS,
   WEATHER_REQUEST_TIMEOUT_MS,
 } from "../../consts/weather";
-import { weatherCache, weatherRefreshTimer } from "../../cache/workers/aiChat/weather";
+import {
+  weatherCache,
+  weatherRefreshController,
+  weatherRefreshTimer,
+} from "../../cache/workers/aiChat/weather";
 import { fetchJsonWithTimeout } from "../../infra/httpFetch";
 import { isPlainRecord } from "../../libs/record";
 import type { TokyoWeatherResult } from "../../types/aiChat/weather";
@@ -26,10 +30,10 @@ function describeWeatherCode(code: number): string {
 }
 
 /**
- * 实际请求 Open-Meteo 并刷新缓存。请求失败、超时或返回数据格式不对时
- * 缓存维持原值不动（旧数据总比没有数据强，下次定时刷新照常重试）。
+ * 请求 Open-Meteo，仅当前刷新循环可写缓存。失败、超时或非法响应保留上次结果。
  */
-async function refreshTokyoWeather(): Promise<void> {
+async function refreshTokyoWeather(controller: AbortController): Promise<void> {
+  if (weatherRefreshController.current !== controller) return;
   const url: URL = new URL(WEATHER_API_URL);
   url.searchParams.set("latitude", String(TOKYO_LATITUDE));
   url.searchParams.set("longitude", String(TOKYO_LONGITUDE));
@@ -39,11 +43,11 @@ async function refreshTokyoWeather(): Promise<void> {
 
   const data: unknown = await fetchJsonWithTimeout({
     input: url,
-    init: {},
+    init: { signal: controller.signal },
     timeoutMs: WEATHER_REQUEST_TIMEOUT_MS,
     errorLabel: "Open-Meteo API",
   });
-  if (data === null) return;
+  if (data === null || weatherRefreshController.current !== controller) return;
 
   const record: Record<string, unknown> = isPlainRecord(data) ? data : {};
   const current: Record<string, unknown> = isPlainRecord(record.current)
@@ -80,8 +84,7 @@ async function refreshTokyoWeather(): Promise<void> {
 }
 
 /**
- * 读取当前缓存的东京天气；缓存还没暖起来（Worker 刚启动、还没轮到第一次
- * 定时刷新）时返回 null。get_tokyo_weather 工具与心情系统都只应该走这个
+ * 读取当前缓存的东京天气；首次成功刷新之前返回 null。get_tokyo_weather 工具与心情系统都只应该走这个
  * 函数，不直接碰 weatherCache——本模块是缓存的唯一写入者，调用方不需要、
  * 也不应该知道背后是个可变的缓存对象。
  */
@@ -91,21 +94,23 @@ export function currentTokyoWeather(): TokyoWeatherResult | null {
 
 /**
  * 启动每小时一次的天气后台刷新：立即刷新一次（让缓存尽快就绪，不必等
- * 满一个整点周期），此后按 WEATHER_REFRESH_INTERVAL_MS 定期刷新。全进程
- * 只应在 Worker 启动时调用一次（见 workers/aiChatWorker.ts）——重复调用
- * 会叠加出多个定时器、多倍频率打接口。刷新失败只记日志、不影响循环本身，
- * 下一次照常按周期再试。
+ * 满一个整点周期），此后按 WEATHER_REFRESH_INTERVAL_MS 定期刷新。
+ * Worker 启动时调用；循环存在时重复调用无副作用。刷新失败保留缓存并按周期重试。
  */
 export function startWeatherRefreshLoop(): void {
   if (weatherRefreshTimer.current !== null) return;
-  void refreshTokyoWeather();
-  weatherRefreshTimer.current = setInterval((): undefined => void refreshTokyoWeather(), WEATHER_REFRESH_INTERVAL_MS);
+  const controller: AbortController = new AbortController();
+  weatherRefreshController.current = controller;
+  void refreshTokyoWeather(controller);
+  weatherRefreshTimer.current = setInterval((): undefined => void refreshTokyoWeather(controller), WEATHER_REFRESH_INTERVAL_MS);
   weatherRefreshTimer.current.unref();
 }
 
-/** 停止唯一刷新 interval；Worker 重建后由启动入口重新创建。 */
+/** 停止刷新并取消在途请求，迟到结果不得写回；Worker 重建后由启动入口重新创建。 */
 export function stopWeatherRefreshLoop(): void {
-  if (weatherRefreshTimer.current === null) return;
-  clearInterval(weatherRefreshTimer.current);
+  if (weatherRefreshTimer.current !== null) clearInterval(weatherRefreshTimer.current);
   weatherRefreshTimer.current = null;
+  const controller: AbortController | null = weatherRefreshController.current;
+  weatherRefreshController.current = null;
+  controller?.abort();
 }

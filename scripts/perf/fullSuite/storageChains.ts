@@ -4,7 +4,7 @@ import type { WhitelistEntryData } from
   "../../../packages/types/identityPolicy";
 import type { IdentityPolicyRawReadResult } from
   "../../../packages/types/identityStorage";
-import type { buildAiMemorySnapshot } from "./fixture";
+import type { buildAiMemorySnapshot, readBenchmarkAiMemories } from "./fixture";
 import type { recordJoinLog } from "../../../packages/infra/joinLog";
 import type {
   hydrateIdentityStorageCounts,
@@ -22,8 +22,8 @@ import type {
   readIdentityPolicies,
   relayLogMessage,
 } from "../../../packages/infra/diskIO";
-import type { recordEligibleTemporaryWhitelistActivity } from
-  "../../../packages/antiRaid/temporaryWhitelist";
+import type { recordEligibleTemporaryAdBypassActivity } from
+  "../../../packages/antiRaid/temporaryAdBypass";
 import type { ensureAdDetectAgentConfig } from
   "../../../packages/config/agent";
 import type {
@@ -31,16 +31,16 @@ import type {
   whitelistEntryCache,
 } from "../../../packages/cache/main/identityStorage";
 import type {
-  temporaryWhitelistActivityCache,
-  unacknowledgedTemporaryWhitelistWrites,
-} from "../../../packages/cache/main/temporaryWhitelist";
+  temporaryAdBypassActivityCache,
+  unacknowledgedTemporaryAdBypassWrites,
+} from "../../../packages/cache/main/temporaryAdBypass";
 import type { ChainDefinition } from "./chainDefinition";
 import type { ChainName } from "./types";
 
 export interface StorageChainDependencies {
   readonly chainJoinLogEvents: number;
   readonly chainIdentityBatches: number;
-  readonly chainTemporaryWhitelistWrites: number;
+  readonly chainTemporaryAdBypassWrites: number;
   readonly chainChatStateWrites: number;
   readonly chainChatQaWrites: number;
   readonly chainAiMemorySnapshots: number;
@@ -53,6 +53,7 @@ export interface StorageChainDependencies {
   readonly benchmarkChatId: (index: number) => number;
   readonly benchmarkUserId: (index: number) => number;
   readonly buildAiMemorySnapshot: typeof buildAiMemorySnapshot;
+  readonly readBenchmarkAiMemories: typeof readBenchmarkAiMemories;
   readonly recordJoinLog: typeof recordJoinLog;
   readonly hydrateIdentityStorageCounts: typeof hydrateIdentityStorageCounts;
   readonly queueIdentityPolicyWrite: typeof queueIdentityPolicyWrite;
@@ -64,15 +65,15 @@ export interface StorageChainDependencies {
   readonly flushDiskIO: typeof flushDiskIO;
   readonly flushDiskIODomain: typeof flushDiskIODomain;
   readonly readIdentityPolicies: typeof readIdentityPolicies;
-  readonly recordEligibleTemporaryWhitelistActivity:
-    typeof recordEligibleTemporaryWhitelistActivity;
+  readonly recordEligibleTemporaryAdBypassActivity:
+    typeof recordEligibleTemporaryAdBypassActivity;
   readonly ensureAdDetectAgentConfig: typeof ensureAdDetectAgentConfig;
   readonly whitelistEntryCache: Pick<typeof whitelistEntryCache, "set">;
   readonly blocklistEntryCache: Pick<typeof blocklistEntryCache, "set">;
-  readonly temporaryWhitelistActivityCache:
-  Pick<typeof temporaryWhitelistActivityCache, "set">;
-  readonly unacknowledgedTemporaryWhitelistWrites:
-  Pick<typeof unacknowledgedTemporaryWhitelistWrites, "has">;
+  readonly temporaryAdBypassActivityCache:
+  Pick<typeof temporaryAdBypassActivityCache, "set">;
+  readonly unacknowledgedTemporaryAdBypassWrites:
+  Pick<typeof unacknowledgedTemporaryAdBypassWrites, "has">;
 }
 
 function chatIdForSequence(
@@ -154,16 +155,16 @@ function identityPolicyChain(
   };
 }
 
-function temporaryWhitelistWriteChain(
+function temporaryAdBypassWriteChain(
   dependencies: StorageChainDependencies
 ): ChainDefinition {
   const chatId: number = dependencies.benchmarkChatId(0);
   const totalOperations: number = dependencies.chainWarmupOperations +
-    dependencies.chainTemporaryWhitelistWrites;
+    dependencies.chainTemporaryAdBypassWrites;
   const chatState: Readonly<ChatState> = { isAdDetectEnabled: true };
   return {
     chain: "temporary-whitelist-write",
-    operations: dependencies.chainTemporaryWhitelistWrites,
+    operations: dependencies.chainTemporaryAdBypassWrites,
     recordsPerOperation: 1,
     prepare: async (): Promise<void> => {
       await dependencies.ensureAdDetectAgentConfig();
@@ -172,7 +173,7 @@ function temporaryWhitelistWriteChain(
         const id: number = dependencies.benchmarkUserId(sequence);
         dependencies.whitelistEntryCache.set(id, null);
         dependencies.blocklistEntryCache.set(id, null);
-        dependencies.temporaryWhitelistActivityCache.set(id, null);
+        dependencies.temporaryAdBypassActivityCache.set(id, null);
       }
     },
     run: async (sequence: number): Promise<void> => {
@@ -184,7 +185,7 @@ function temporaryWhitelistWriteChain(
         from: { id, is_bot: false, first_name: `Member${sequence}` },
         text: "性能基准普通群发言",
       };
-      if (!dependencies.recordEligibleTemporaryWhitelistActivity({
+      if (!dependencies.recordEligibleTemporaryAdBypassActivity({
         message,
         botId: 1,
         chatState,
@@ -195,13 +196,13 @@ function temporaryWhitelistWriteChain(
         );
       }
       if (
-        await dependencies.flushDiskIODomain("temporaryWhitelist") !== "flushed"
+        await dependencies.flushDiskIODomain("temporaryAdBypass") !== "flushed"
       ) {
         throw new Error(
           `Temporary-whitelist activity ${sequence} was not committed.`
         );
       }
-      if (dependencies.unacknowledgedTemporaryWhitelistWrites.has(id)) {
+      if (dependencies.unacknowledgedTemporaryAdBypassWrites.has(id)) {
         throw new Error(
           `Temporary-whitelist activity ${sequence} did not receive its exact ACK.`
         );
@@ -214,14 +215,14 @@ function temporaryWhitelistWriteChain(
       }
       const reply: IdentityPolicyRawReadResult =
         await dependencies.readIdentityPolicies(ids);
-      if (reply.temporaryWhitelist.length !== totalOperations) {
+      if (reply.temporaryAdBypass.length !== totalOperations) {
         throw new Error(
-          `Temporary-whitelist chain persisted ${reply.temporaryWhitelist.length} of ${totalOperations} records.`
+          `Temporary-whitelist chain persisted ${reply.temporaryAdBypass.length} of ${totalOperations} records.`
         );
       }
-      for (const activity of reply.temporaryWhitelist) {
+      for (const activity of reply.temporaryAdBypass) {
         if (
-          activity.tempWhite ||
+          activity.adBypass ||
           activity.sendCount !== 1 ||
           activity.qualifiedAt !== null
         ) {
@@ -291,13 +292,22 @@ function aiMemoryChain(
     chain: "ai-memory-snapshot",
     operations: dependencies.chainAiMemorySnapshots,
     recordsPerOperation: 1,
+    prepare: async (): Promise<void> => {
+      for (let index: number = 0; index < dependencies.stateManagedChatLimit; index++) {
+        const chatId: number = dependencies.benchmarkChatId(index);
+        const state: ChatState = dependencies.getOrCreateChatState(chatId);
+        state.isInitEnabled = true;
+        state.isAIChatEnabled = true;
+        await dependencies.persistChatState(chatId, "AI memory benchmark fixture");
+      }
+    },
     run: async (sequence: number): Promise<void> => {
       const chatIndex: number = sequence % dependencies.stateManagedChatLimit;
       if (!dependencies.postDiskIO({
         type: "aiMemory",
         chatId: dependencies.benchmarkChatId(chatIndex),
         revision: sequence + 1,
-        snapshot: dependencies.buildAiMemorySnapshot(chatIndex),
+        snapshot: dependencies.buildAiMemorySnapshot(sequence),
       })) {
         throw new Error(
           `AI memory snapshot ${sequence} was rejected before reaching the Worker.`
@@ -305,6 +315,20 @@ function aiMemoryChain(
       }
       if (await dependencies.flushDiskIODomain("aiMemory") !== "flushed") {
         throw new Error(`AI memory snapshot ${sequence} was not written.`);
+      }
+    },
+    verify: (): void => {
+      const snapshots: ReadonlyMap<number, string> = dependencies.readBenchmarkAiMemories();
+      const total: number = dependencies.chainWarmupOperations + dependencies.chainAiMemorySnapshots;
+      const count: number = Math.min(total, dependencies.stateManagedChatLimit);
+      if (snapshots.size !== count) {
+        throw new Error(`AI memory chain persisted ${snapshots.size} of ${count} snapshots.`);
+      }
+      for (let index: number = 0; index < count; index++) {
+        const sequence: number = total - 1 - (total - 1 - index) % dependencies.stateManagedChatLimit;
+        if (snapshots.get(dependencies.benchmarkChatId(index)) !== dependencies.buildAiMemorySnapshot(sequence)) {
+          throw new Error(`AI memory chain did not persist the final snapshot for chat index ${index}.`);
+        }
       }
     },
   };
@@ -349,7 +373,7 @@ export function createStorageChain(
     case "join-log-append": return joinLogChain(dependencies);
     case "identity-policy-write": return identityPolicyChain(dependencies);
     case "temporary-whitelist-write":
-      return temporaryWhitelistWriteChain(dependencies);
+      return temporaryAdBypassWriteChain(dependencies);
     case "chat-state-write": return chatStateChain(dependencies);
     case "chat-qa-write": return chatQaChain(dependencies);
     case "ai-memory-snapshot": return aiMemoryChain(dependencies);

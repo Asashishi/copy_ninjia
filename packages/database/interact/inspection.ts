@@ -2,6 +2,10 @@ import { asc, count, gt } from "drizzle-orm";
 import { BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE } from
   "../../consts/antiRaid/blocklist";
 import {
+  CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT,
+  CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH,
+  AI_CONTEXT_MIGRATION_CREATED_AT,
+  AI_CONTEXT_MIGRATION_HASH,
   IDENTITY_DATABASE_CHAT_QA_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_CHAT_QA_MIGRATION_HASH,
   IDENTITY_DATABASE_CHAT_STATE_MIGRATION_CREATED_AT,
@@ -11,8 +15,8 @@ import {
   IDENTITY_DATABASE_JSONB_MIGRATION_HASH,
   IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_TEXT_MIGRATION_HASH,
-  IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_CREATED_AT,
-  IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_HASH,
+  IDENTITY_DATABASE_TEMPORARY_ACTIVITY_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_TEMPORARY_ACTIVITY_MIGRATION_HASH,
   IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_CREATED_AT,
   IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH,
   IDENTITY_DATABASE_TRANSLATE_MIGRATION_CREATED_AT,
@@ -25,10 +29,10 @@ import {
   decodeBlocklistEntryData,
   decodeWhitelistEntryData,
 } from "../codec/identity";
-import { assertTemporaryWhitelistActivity } from "../codec/temporaryWhitelist";
-import { chatStates } from "../schema/chatState";
+import { assertTemporaryAdBypassActivity } from "../codec/temporaryAdBypass";
+import { readStoredChatStates } from "./chatState";
 import { readStoredChatQa } from "./chatQa";
-import { blocklistEntries, whitelistEntries } from "../schema/identityPolicy";
+import { blocklistEntries, permissionList } from "../schema/identityPolicy";
 import {
   guardedStrictJsonbTextProjection,
   jsonbStorageClass,
@@ -36,8 +40,8 @@ import {
 } from "../schema/jsonb";
 import { storageMetadata } from "../schema/metadata";
 import { pendingBlockedRemovals } from "../schema/pendingRemoval";
-import type { StoredTemporaryWhitelistActivity } from
-  "../../types/temporaryWhitelist";
+import type { StoredTemporaryAdBypassActivity } from
+  "../../types/temporaryAdBypass";
 import { readStorageDatabaseMigrationJournal } from "./migration";
 import { storageRowSource } from "../validation/storageRows";
 import type {
@@ -53,6 +57,8 @@ import type {
 
 interface ReadJsonbStorageRowOptions {
   readonly tableName: string;
+  readonly columnName?: string;
+  readonly nullable?: boolean;
 }
 
 interface StorageColumnDeclarationRow {
@@ -72,24 +78,24 @@ interface StorageDatabaseIntegrityRow {
 
 function readJsonbStorageRow(
   database: StorageDatabase,
-  { tableName }: ReadJsonbStorageRowOptions
+  { tableName, columnName = "data", nullable = false }: ReadJsonbStorageRowOptions
 ): StorageDatabaseJsonStorageRow {
   const declaration: StorageColumnDeclarationRow | null = database.$client
     .query<StorageColumnDeclarationRow, [string, string]>(
       "SELECT type FROM pragma_table_xinfo(?1) WHERE name = ?2;"
     )
-    .get(tableName, "data");
+    .get(tableName, columnName);
   const aggregate: StorageJsonbAggregateRow | null = database.$client
     .query<StorageJsonbAggregateRow, []>(
       `SELECT COUNT(*) AS rowCount, ` +
-      `COALESCE(SUM(typeof(data) = 'text'), 0) AS textRows, ` +
-      `COALESCE(SUM(typeof(data) = 'blob'), 0) AS blobRows, ` +
-      `COALESCE(SUM(json_valid(data, 8) <> 1), 0) AS invalidJsonbRows ` +
-      `FROM ${tableName};`
+      `COALESCE(SUM(typeof(${columnName}) = 'text'), 0) AS textRows, ` +
+      `COALESCE(SUM(typeof(${columnName}) = 'blob'), 0) AS blobRows, ` +
+      `COALESCE(SUM(json_valid(${columnName}, 8) <> 1), 0) AS invalidJsonbRows ` +
+      `FROM ${tableName}${nullable ? ` WHERE ${columnName} IS NOT NULL` : ""};`
     )
     .get();
   return {
-    tableName,
+    tableName: `${tableName}.${columnName}`,
     declaredType: declaration?.type.toUpperCase() ?? null,
     rowCount: aggregate?.rowCount ?? 0,
     textRows: aggregate?.textRows ?? 0,
@@ -103,11 +109,12 @@ function readStorageDatabaseJsonStorage(
   database: StorageDatabase
 ): readonly StorageDatabaseJsonStorageRow[] {
   return [
-    readJsonbStorageRow(database, { tableName: "whitelist_entries" }),
+    readJsonbStorageRow(database, { tableName: "permission_list", columnName: "policy" }),
     readJsonbStorageRow(database, { tableName: "blocklist_entries" }),
     readJsonbStorageRow(database, { tableName: "pending_blocked_removals" }),
     readJsonbStorageRow(database, { tableName: "storage_metadata" }),
-    readJsonbStorageRow(database, { tableName: "chat_states" }),
+    readJsonbStorageRow(database, { tableName: "chat_states", columnName: "status" }),
+    readJsonbStorageRow(database, { tableName: "chat_states", columnName: "ai_context", nullable: true }),
     readJsonbStorageRow(database, { tableName: "chat_qa" }),
   ];
 }
@@ -131,18 +138,18 @@ function assertJsonbStorageRows(
       row.invalidJsonbRows !== 0
     ) {
       throw new Error(
-        `${source}:${row.tableName}.data: expected a BLOB column containing only strict SQLite JSONB.`
+        `${source}:${row.tableName}: expected a BLOB column containing only strict SQLite JSONB.`
       );
     }
   }
 }
 
-/** 启动与性能夹具都拒绝当前六张表的非严格 JSONB 存储。 */
+/** 启动与性能夹具都拒绝当前七个 JSONB 列的非严格存储。 */
 export function assertStorageDatabaseJsonbStorage(
   database: StorageDatabase,
   source: string
 ): void {
-  assertJsonbStorageRows(readStorageDatabaseJsonStorage(database), source, 6);
+  assertJsonbStorageRows(readStorageDatabaseJsonStorage(database), source, 7);
 }
 
 /** 启动时执行 SQLite 自身的完整性检查。 */
@@ -212,13 +219,18 @@ function hasSchemaV5MigrationLineage(
     hasCurrentBaseLineage(rows.slice(0, -2));
 }
 
-/** 当前 v8 必须包含完整的已发布谱系和翻译字段名称迁移，不接受缺项或额外项。 */
+/** 当前 v10 必须包含完整谱系及清理上下文权限迁移，不接受缺项或额外项。 */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,
   source: string
 ): void {
-  const rows: readonly StorageDatabaseMigrationJournalEntry[] =
+  const journal: readonly StorageDatabaseMigrationJournalEntry[] =
     readStorageDatabaseMigrationJournal(database, source);
+  if (!isMigrationEntry(journal.at(-1), CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT, CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH) ||
+    !isMigrationEntry(journal.at(-2), AI_CONTEXT_MIGRATION_CREATED_AT, AI_CONTEXT_MIGRATION_HASH)) {
+    throw new Error(`${source}: expected the exact supported schema v10 migration lineage.`);
+  }
+  const rows: readonly StorageDatabaseMigrationJournalEntry[] = journal.slice(0, -2);
   if (
     rows.length < 7 ||
     !isMigrationEntry(
@@ -232,7 +244,7 @@ export function assertStorageDatabaseMigrationLineage(
       IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH
     )
   ) {
-    throw new Error(`${source}: expected the exact supported schema v8 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v10 migration lineage.`);
   }
   const v6Rows: readonly StorageDatabaseMigrationJournalEntry[] =
     rows.slice(0, -2);
@@ -240,12 +252,12 @@ export function assertStorageDatabaseMigrationLineage(
     v6Rows.length < 5 ||
     !isMigrationEntry(
       v6Rows.at(-1),
-      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_CREATED_AT,
-      IDENTITY_DATABASE_TEMPORARY_WHITELIST_MIGRATION_HASH
+      IDENTITY_DATABASE_TEMPORARY_ACTIVITY_MIGRATION_CREATED_AT,
+      IDENTITY_DATABASE_TEMPORARY_ACTIVITY_MIGRATION_HASH
     ) ||
     !hasSchemaV5MigrationLineage(v6Rows.slice(0, -1))
   ) {
-    throw new Error(`${source}: expected the exact supported schema v8 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v10 migration lineage.`);
   }
 }
 
@@ -256,34 +268,34 @@ export function assertStoredIdentityPolicies(
 ): void {
   const overlap: { readonly id: number } | null = database.$client
     .query<{ readonly id: number }, []>(
-      "SELECT whitelist_entries.id AS id FROM whitelist_entries " +
+      "SELECT permission_list.id AS id FROM permission_list " +
       "INNER JOIN blocklist_entries USING (id) LIMIT 1;"
     )
     .get();
   if (overlap !== null) {
     throw new Error(
-      `${source}:whitelist_entries/blocklist_entries[$.id]: expected disjoint primary keys.`
+      `${source}:permission_list/blocklist_entries[$.id]: expected disjoint primary keys.`
     );
   }
   const temporaryOverlap: { readonly id: number } | null = database.$client
     .query<{ readonly id: number }, []>(
-      "SELECT temporary_whitelist_entries.id AS id FROM temporary_whitelist_entries " +
+      "SELECT temporary_ad_bypass_entries.id AS id FROM temporary_ad_bypass_entries " +
       "INNER JOIN blocklist_entries USING (id) LIMIT 1;"
     )
     .get();
   if (temporaryOverlap !== null) {
     throw new Error(
-      `${source}:temporary_whitelist_entries/blocklist_entries[$.id]: ` +
+      `${source}:temporary_ad_bypass_entries/blocklist_entries[$.id]: ` +
       "expected disjoint primary keys."
     );
   }
   const whitelistRows: IterableIterator<StoredIdentityPolicyRow> = database.$client
     .query<StoredIdentityPolicyRow, []>(
-      "SELECT id, json(data) AS data FROM whitelist_entries ORDER BY id ASC;"
+      "SELECT id, json(policy) AS data FROM permission_list ORDER BY id ASC;"
     )
     .iterate();
   for (const row of whitelistRows) {
-    const path: string = storageRowSource(source, "whitelist_entries", row.id);
+    const path: string = storageRowSource(source, "permission_list", row.id);
     assertTelegramIdentityId(row.id, path);
     decodeWhitelistEntryData(row.data, path);
   }
@@ -299,42 +311,42 @@ export function assertStoredIdentityPolicies(
   }
   const temporaryRows: IterableIterator<{
     readonly id: number;
-    readonly tempWhite: number;
-    readonly tempWhiteAt: number | null;
-    readonly tempWhiteCount: number;
+    readonly adBypass: number;
+    readonly adBypassGrantedAt: number | null;
+    readonly qualifiedDays: number;
     readonly sendCount: number;
     readonly countedAt: number;
     readonly qualifiedAt: number | null;
   }> = database.$client.query<{
     readonly id: number;
-    readonly tempWhite: number;
-    readonly tempWhiteAt: number | null;
-    readonly tempWhiteCount: number;
+    readonly adBypass: number;
+    readonly adBypassGrantedAt: number | null;
+    readonly qualifiedDays: number;
     readonly sendCount: number;
     readonly countedAt: number;
     readonly qualifiedAt: number | null;
   }, []>(
-    "SELECT id, temp_white AS tempWhite, temp_white_at AS tempWhiteAt, " +
-    "temp_white_count AS tempWhiteCount, send_count AS sendCount, " +
+    "SELECT id, ad_bypass AS adBypass, ad_bypass_granted_at AS adBypassGrantedAt, " +
+    "qualified_days AS qualifiedDays, send_count AS sendCount, " +
     "counted_at AS countedAt, qualified_at AS qualifiedAt " +
-    "FROM temporary_whitelist_entries ORDER BY id ASC;"
+    "FROM temporary_ad_bypass_entries ORDER BY id ASC;"
   ).iterate();
   for (const row of temporaryRows) {
-    const path: string = `${source}:temporary_whitelist_entries[${row.id}]`;
+    const path: string = `${source}:temporary_ad_bypass_entries[${row.id}]`;
     assertTelegramIdentityId(row.id, path);
-    if (row.tempWhite !== 0 && row.tempWhite !== 1) {
-      throw new Error(`${path}.temp_white: expected SQLite integer 0 or 1.`);
+    if (row.adBypass !== 0 && row.adBypass !== 1) {
+      throw new Error(`${path}.ad_bypass: expected SQLite integer 0 or 1.`);
     }
-    const activity: StoredTemporaryWhitelistActivity = {
+    const activity: StoredTemporaryAdBypassActivity = {
       id: row.id,
-      tempWhite: row.tempWhite === 1,
-      tempWhiteAt: row.tempWhiteAt,
-      tempWhiteCount: row.tempWhiteCount,
+      adBypass: row.adBypass === 1,
+      adBypassGrantedAt: row.adBypassGrantedAt,
+      qualifiedDays: row.qualifiedDays,
       sendCount: row.sendCount,
       countedAt: row.countedAt,
       qualifiedAt: row.qualifiedAt,
     };
-    assertTemporaryWhitelistActivity(activity, path);
+    assertTemporaryAdBypassActivity(activity, path);
   }
 }
 
@@ -373,16 +385,13 @@ export function readStorageDatabaseSchemaMetadata(
 export function readStorageDatabaseStartupRows(
   database: StorageDatabase
 ): StorageDatabaseStartupRows {
-  const whitelistEntryCount: number = database
-    .select({ value: count() }).from(whitelistEntries).get()?.value ?? 0;
+  const permissionEntryCount: number = database
+    .select({ value: count() }).from(permissionList).get()?.value ?? 0;
   const blocklistEntryCount: number = database
     .select({ value: count() }).from(blocklistEntries).get()?.value ?? 0;
-  const storedChatStates: StoredChatStateRow[] = database
-    .select({ chatId: chatStates.chatId, data: jsonbTextProjection(chatStates.data) })
-    .from(chatStates)
-    .all();
+  const storedChatStates: readonly StoredChatStateRow[] = readStoredChatStates(database);
   return {
-    whitelistEntryCount,
+    permissionEntryCount,
     blocklistEntryCount,
     chatStates: storedChatStates,
     // 全表读而不分页：每群上限 15 条、受管群上限 STATE_MANAGED_CHAT_LIMIT，
