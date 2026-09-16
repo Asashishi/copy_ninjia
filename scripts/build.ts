@@ -8,6 +8,7 @@ import { fileSha256, RELEASE_VERSION_PATTERN } from "./release/assets";
 import type { ReleaseCommand } from "./release/command";
 
 interface PackageManifest {
+  readonly version?: string;
   readonly packageManager?: string;
   readonly dependencies?: Readonly<Record<string, string>>;
 }
@@ -18,10 +19,14 @@ if (arguments_.length !== 0 &&
   (arguments_.length !== 2 || arguments_[0] !== "--version" || !RELEASE_VERSION_PATTERN.test(arguments_[1]!))) {
   throw new Error("Usage: bun run build [-- --version MAJOR.MINOR.PATCH]");
 }
-const version: string = arguments_[1] ?? "development";
 const sourceCommand: ReleaseCommand | null = Bun.which("git") === null ? null : createReleaseCommand(projectRoot);
 const sourceTree: string | null = sourceCommand === null ? null : readBuildSourceTree(sourceCommand);
 const manifest: PackageManifest = await Bun.file(join(projectRoot, "package.json")).json() as PackageManifest;
+if (typeof manifest.version !== "string" || !RELEASE_VERSION_PATTERN.test(manifest.version)) {
+  throw new Error("package.json version must be the release MAJOR.MINOR.PATCH without a v prefix.");
+}
+const version: string = manifest.version;
+if (arguments_[1] !== undefined && arguments_[1] !== version) throw new Error("--version must match package.json version.");
 if (manifest.packageManager !== `bun@${Bun.version}`) throw new Error("Build requires the packageManager Bun version.");
 const libc: string | null = familySync();
 if (process.platform !== "linux" || !["x64", "arm64"].includes(process.arch) || (libc !== GLIBC && libc !== MUSL)) {
@@ -65,7 +70,7 @@ try {
     compile: { outfile: executable, autoloadBunfig: false },
     external: ["sharp"],
     minify: true,
-    sourcemap: "linked",
+    sourcemap: "none",
   });
   if (!application.success) throw new AggregateError(application.logs, "Application compilation failed.");
   const installer: Bun.BuildOutput = await Bun.build({
@@ -73,6 +78,7 @@ try {
     outdir: join(packageRoot, "scripts/install"),
     target: "bun",
     naming: "runtime.js",
+    sourcemap: "none",
     // 安装器通过发行包内的 Bun CLI 执行，路径同样以部署工作目录为根。
     define: { "Bun.isStandaloneExecutable": "true" },
     external: ["sharp"],
@@ -85,6 +91,9 @@ try {
     await Bun.write(join(packageRoot, "scripts/install", file), Bun.file(join(projectRoot, "scripts/install", file)));
   }
   for (const name of ["sharp", `@img/sharp-${sharpPlatform}`, `@img/sharp-libvips-${sharpPlatform}`]) await copyPackage(name);
+  for await (const file of new Bun.Glob("**/*.map").scan({ cwd: packageRoot, dot: true })) {
+    await Bun.file(join(packageRoot, file)).delete();
+  }
   await Bun.write(join(packageRoot, "binary.json"), JSON.stringify({ version, platform, bun: Bun.version, bunRevision: Bun.revision, sourceTree }, null, 2) + "\n");
   chmodSync(executable, 0o755);
   run([executable, "--help"], packageRoot);

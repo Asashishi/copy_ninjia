@@ -33,8 +33,8 @@
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
 | `bun run perf:review` | 专项复核：12 个既有热点、7 个 AI 回复/载荷场景、两条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择 |
-| `bun run build` | 构建当前 Linux 平台二进制，完成隔离验证后生成 `dist/` 发行包和 SHA-256 文件；默认版本为 `development` |
-| `bun run release:check` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入 + 开发版二进制构建验证，发布前必跑 |
+| `bun run build` | 按 `package.json` 的 Release 版本构建当前 Linux 平台二进制，完成隔离验证后生成 `dist/` 发行包和 SHA-256 文件；不包含 `.map` 文件 |
+| `bun run release:check` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入 + 二进制构建验证，发布前必跑 |
 | `bun run release:build -- --version <tag>` | 在干净、已提交的 `dev` 上原生构建正式版本 |
 | `bun run release:verify -- --version <tag> --platforms <列表>` | 核对全部声明平台的发行包、SHA-256、版本、Git tree 与 Bun 构建 |
 | `bun run release:publish -- --version <tag> --platforms <列表> --notes-file <文件>` | 验证已推送引用，创建或续传草稿，下载核验资产，公开为 Latest 并再次确认 |
@@ -201,16 +201,16 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 每次 squash 合并进 `master` 都要创建一个带二进制资产的 GitHub Release：
 
 1. 同步远端 tags，并通过 `gh release list` 读取当前 Latest Release tag。tag 严格使用不带 `v` 的 `MAJOR.MINOR.PATCH`；按本次完整改动的最高语义影响选择版本：破坏兼容升 `MAJOR`（`1.0.9` → `2.0.0`），向后兼容的新增功能升 `MINOR`（`1.0.9` → `1.1.0`），只有修复、性能、重构或文档时才升 `PATCH`（`1.0.9` → `1.0.10`）。
-2. 在代码与本次基准结果提交后，从干净的 `dev` 执行 `release:build`。本次声明的每个平台分别使用同一 Git tree、同一 Bun version/revision，在对应架构和 libc 的环境原生构建。构建会验证可执行文件、三个 Worker、图片原生依赖和二进制安装器；`release:check` 生成的 `development` 包不用于发布。
+2. 将 `package.json` 的 `version` 更新为本次 Release 的无前缀 `MAJOR.MINOR.PATCH`，与代码及本次基准结果一起提交后，从干净的 `dev` 执行 `release:build`；显式 `--version` 必须与该字段相同。本次声明的每个平台分别使用同一 Git tree、同一 Bun version/revision，在对应架构和 libc 的环境原生构建。构建会验证可执行文件版本、无 `.map` 文件、三个 Worker、图片原生依赖和二进制安装器；正式发行包必须在最终提交后生成。
 3. 汇总各平台的 `.tar.gz` 与 `.tar.gz.sha256`，执行 `release:verify`。支持的平台名为 `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl`；`--platforms` 是本次必须提供的完整清单，缺项即失败。默认读取 `dist/`，也可用 `--directory` 指定汇总目录。包内 `binary.json` 的版本、平台、Git tree、Bun version/revision 和实际 SHA-256 必须一致；未提交工作树的产物拒绝发布。
 4. 按仓库与部署保护流程 squash 合入 `master`，确认 Git tree 与构建时一致，推送 `master` 后为该提交创建、单独推送 annotated version tag。已有 tag 不得覆盖、移动或复用。
 5. 准备英文 Release notes，仅描述上一个 Latest tag 到当前 `master` 的增量，包含 Highlights、Compatibility / Migration Notes、Validation。兼容性说明列出本次提供的二进制平台；门禁数值来自本次真实输出。执行 `release:publish`：脚本先验证本地和远端 `master`、annotated tag，再创建草稿、上传资产并下载核对内容，全部通过后才公开为 Latest，最后再次确认下载内容和远端引用。需要迁移附件时，可先创建说明一致的草稿并上传附件，再由脚本补齐二进制资产。
 6. 创建、上传或确认失败时保留现场，重试同一版本。草稿只补传缺失资产，已有同名资产须下载核对且绝不覆盖；已公开 Release 缺包时拒绝修改。只有 Release、Latest、资产和 Git 引用全部确认后，才执行 `git diff dev master --quiet`，并按 [`AGENTS.md`](../../AGENTS.md) 对齐、推送 `dev`，最终确认本地和远端的两条分支指向同一提交。发布脚本不会替代这些 Git 操作。
 
-以下以 `12.1.0`、Linux x64 glibc 为命令示例；实际版本按 Latest 与改动集计算，平台清单按已完成原生验证的发行包填写：
+以下以 `12.0.1`、Linux x64 glibc 为命令示例；实际版本按 Latest 与改动集计算，平台清单按已完成原生验证的发行包填写：
 
 ```bash
-RELEASE_VERSION=12.1.0
+RELEASE_VERSION=12.0.1
 RELEASE_PLATFORMS=linux-x64
 bun run release:build -- --version "$RELEASE_VERSION"
 bun run release:verify -- --version "$RELEASE_VERSION" --platforms "$RELEASE_PLATFORMS"

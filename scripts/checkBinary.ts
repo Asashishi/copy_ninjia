@@ -30,8 +30,13 @@ function run(arguments_: string[], extra: Readonly<Record<string, string>> = {})
 }
 
 try {
+  for await (const file of new Bun.Glob("**/*.map").scan({ cwd: source, dot: true })) {
+    throw new Error(`Binary package must not contain source maps: ${file}`);
+  }
   await copyFixtureTree(source, root);
   chmodSync(executable, 0o700);
+  const manifest: { readonly version: string } = await Bun.file(join(root, "package.json")).json() as { readonly version: string };
+  if (run(["--version"]).trim() !== manifest.version) throw new Error("Binary version must match package.json version.");
   await copyFixtureTree(join(root, "config_example"), join(root, "config"));
   await Bun.write(join(root, "config/telegram.json"), JSON.stringify({ bot_token: "123456789:binary_test_token", super_admin_user_id: 123456789 }));
   await Bun.write(join(root, "config/agent.json"), JSON.stringify({ agent: {
