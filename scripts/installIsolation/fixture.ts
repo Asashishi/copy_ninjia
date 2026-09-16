@@ -320,7 +320,7 @@ export async function createFixture(realRuntime: boolean = false): Promise<Insta
   await Bun.write(join(fixture.worktree, "package.json"), Bun.file(join(PROJECT_ROOT, "package.json")));
   await writeText(join(fixture.worktree, "index.ts"), "");
   if (realRuntime) {
-    for (const relativePath of ["packages", "prompt", "index.ts", "tsconfig.json", "bun.lock"]) {
+    for (const relativePath of ["packages", "prompt", "index.ts", "tsconfig.json", "bun.lock", "scripts/install/runtime.ts"]) {
       await copyFixtureTree(join(PROJECT_ROOT, relativePath), join(fixture.worktree, relativePath));
     }
     symlinkSync(join(PROJECT_ROOT, "node_modules"), join(fixture.worktree, "node_modules"));

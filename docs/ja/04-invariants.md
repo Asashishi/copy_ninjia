@@ -86,6 +86,7 @@
 
 ### データルートとバックグラウンドタスク
 
+- ソース実行のプロジェクトルートはモジュールの位置、バイナリ実行ではデプロイ作業ディレクトリから決まります。設定、素材、既定のデータルートはそこから導出します。3 つの Worker 入口は `packages/consts/paths.ts` に集約し、バイナリは埋め込まれた Worker を使用します。スレッド所有権、メッセージプロトコル、停止順序には同じ制約を適用します。
 - `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` はすべて 1 つの実行時データルートから導出します。production の既定値はプロジェクトルートです。テスト preload は production モジュールを import する前に isolate ごとの一時ルートを注入し、実ファイル I/O が production cache や identity database へアクセスできないようにします。
 - 低優先度のグループタイトル保守は、コマンドメニュー、`bot.init()`、Worker hydrate、acknowledgement-safe runner の準備完了後にだけ開始します。title owner の `getChat` は現在最大 25 並列で、履歴補完が query category と network connection を同時に占有する量を制限し、ライフサイクルの quiesce/abort signal を受け取ります。
 

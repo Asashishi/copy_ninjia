@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4290_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.93%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4329_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.94%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：4290 项测试全部通过 / 380 个测试文件 / 157,750 次 expect() 调用 / 函数覆盖率 97.17% / 行覆盖率 97.93%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：4329 项测试全部通过 / 382 个测试文件 / 157,982 次 expect() 调用 / 函数覆盖率 97.21% / 行覆盖率 97.94%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -176,7 +176,7 @@
 
 ## 🚀 快速开始
 
-需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、Bun 1.4.2、一个 Bot Token 与一个超级管理员用户 ID；启用 AI 能力还需要对应 provider 的 API Key，`/translate` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
+需要 Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）、一个 Bot Token 与一个超级管理员用户 ID。源码安装需要 Bun 1.4.2，二进制发行包自带运行时；启用 AI 能力还需要对应 provider 的 API Key，`/translate` 另需 Google Cloud 服务账号 JSON。硬件参考见 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
 
 一键安装（缺什么装什么，问完配置直接启动）：
 
@@ -184,7 +184,7 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-安装器取得 **GitHub Latest Release** 后，转交目标工作树自己的脚本；已有工作树保持 checkout 不变。它按目标代码校验 Bun 精确版本并安装锁定依赖，然后交互配置 Telegram 与 AI、初始化缺少的身份数据库。既有配置仅在明确重填时经备份、校验和原子替换更新。最后注册或复用 systemd unit 并观察运行状态；无 systemd 时以前台运行。目录参数与备份留存规则见 [环境搭建](docs/cn/01-getting-started.md)。
+新安装会询问源码或二进制方式，也可把末尾改为 `bash -s -- --binary` 或 `bash -s -- --source`。二进制方式直接下载 **GitHub Latest Release** 的当前平台包与 SHA-256 文件，不检出源码、不在安装机打包；源码方式取得该 tag 并安装锁定依赖。已有部署保持当前版本。两种方式都转交目标目录的安装器，交互配置 Telegram 与 AI、初始化缺少的身份数据库，再注册或复用 systemd unit 并观察运行状态；无 systemd 时以前台运行。既有配置仅在明确重填时经备份、校验和原子替换更新。平台、目录参数与备份留存规则见 [环境搭建](docs/cn/01-getting-started.md)。
 
 手工安装：
 

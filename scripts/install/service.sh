@@ -17,10 +17,21 @@ systemd_environment_assignment() {
   printf 'Environment="%s=%s"' "$variable_name" "$escaped_value"
 }
 
+# 可执行路径作为单个 systemd 参数；冒号前缀禁止路径中的环境变量展开。
+systemd_exec_path() {
+  local value="$1" escaped_value=""
+  [[ "$value" = /* ]] && [[ ! "$value" =~ [[:cntrl:]] ]] ||
+    die "无法生成 systemd ExecStart：需要不含控制字符的绝对路径。"
+  escaped_value="${value//\\/\\\\}"
+  escaped_value="${escaped_value//\"/\\\"}"
+  escaped_value="${escaped_value//%/%%}"
+  printf '":%s"' "$escaped_value"
+}
+
 # 按 packages/consts/paths.ts 解析当前进程环境下的运行时数据根。
 resolve_runtime_data_root() {
   bun -e '
-    import { RUNTIME_DATA_ROOT } from "./packages/consts/paths";
+    import { RUNTIME_DATA_ROOT } from "./scripts/install/runtime";
     await Bun.write(Bun.stdout, RUNTIME_DATA_ROOT);
   '
 }

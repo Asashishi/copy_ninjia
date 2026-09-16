@@ -10,7 +10,7 @@ step "7/8 初始化身份数据库"
 # 拼死的话，配了独立数据根的部署会在错误的目录上做存在性判断、建目录和 chmod，
 # 而库其实建到了别处。
 IDENTITY_DATABASE_FILE="$(bun -e '
-  import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
+  import { IDENTITY_DATABASE_PATH } from "./scripts/install/runtime";
   await Bun.write(Bun.stdout, IDENTITY_DATABASE_PATH);
 ')" || die "无法解析身份数据库路径。"
 IDENTITY_DATABASE_DIR="$(dirname -- "$IDENTITY_DATABASE_FILE")"
@@ -24,15 +24,14 @@ else
   #
   # createStorageDatabase 只建表；当前 schema-version 由初始化边界另写一笔。
   bun -e '
-    import { createStorageDatabase } from "./packages/database/interact/migration";
     import {
       closeStorageDatabase,
+      createStorageDatabase,
       enableStorageDatabaseWal,
+      IDENTITY_DATABASE_PATH,
+      initializeStorageDatabase,
       openStorageDatabase,
-    } from "./packages/database/interact/connection";
-    import { initializeStorageDatabase } from
-      "./packages/database/interact/initialization";
-    import { IDENTITY_DATABASE_PATH } from "./packages/consts/paths";
+    } from "./scripts/install/runtime";
     createStorageDatabase(IDENTITY_DATABASE_PATH);
     const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
     try {
@@ -53,7 +52,7 @@ fi
 # 有问题现在就点名文件与字段，好过启动后进重启循环。
 info "校验已存在的部署输入……"
 bun -e '
-  import { validateExistingDeploymentInputs } from "./packages/config/readiness";
+  import { validateExistingDeploymentInputs } from "./scripts/install/runtime";
   await validateExistingDeploymentInputs();
 ' || die "部署输入校验未通过。按上面报出的文件与字段路径修好后重跑本脚本。"
 info "配置校验通过。"
@@ -74,12 +73,18 @@ if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
   if [ -n "$CONFIG_BACKUP_DIRECTORY" ]; then
     warn "前台进程无法自动完成稳定性观察；配置备份保留在 ${CONFIG_BACKUP_DIRECTORY}。"
   fi
-  info "机器人将在前台运行；Ctrl-C 停止，下次直接用 bun run start。"
+  info "机器人将在前台运行；Ctrl-C 停止。请在部署目录内启动。"
   printf '\n==> 启动\n\n'
+  if [ "$INSTALL_MODE" = binary ]; then exec "$BINARY_EXECUTABLE"; fi
   exec bun run start
 fi
 
-BUN_BINARY="$(command -v bun)" || die "找不到 bun 可执行文件。"
+if [ "$INSTALL_MODE" = binary ]; then
+  SERVICE_EXEC_START="$(systemd_exec_path "$BINARY_EXECUTABLE")"
+else
+  BUN_BINARY="$(command -v bun)" || die "找不到 bun 可执行文件。"
+  SERVICE_EXEC_START="$(systemd_exec_path "$BUN_BINARY") start"
+fi
 SERVICE_USER="$(id -un)"
 SERVICE_WORKDIR="$(pwd)"
 
@@ -94,6 +99,10 @@ fi
 
 # 保留现有 unit 时报告它实际的 WorkingDirectory 与 ExecStart。
 if [ "$WRITE_UNIT" -eq 0 ]; then
+  EXISTING_EXEC_START="$(systemctl show "${SERVICE_NAME}.service" -p ExecStart --value)"
+  if [ "$INSTALL_MODE" = binary ] && [[ "$EXISTING_EXEC_START" != *"argv[]=${BINARY_EXECUTABLE} ;"* ]]; then
+    die "保留的 unit 未使用当前二进制；请重跑并同意写入对应入口。"
+  fi
   info "沿用现有 unit：$(systemctl show "${SERVICE_NAME}.service" -p WorkingDirectory --value)"
   info "                 $(systemctl show "${SERVICE_NAME}.service" -p ExecStart --value | head -c 160)"
 fi
@@ -114,9 +123,9 @@ if [ "$WRITE_UNIT" -eq 1 ]; then
     "[Service]" \
     "Type=simple" \
     "User=${SERVICE_USER}" \
-    "WorkingDirectory=${SERVICE_WORKDIR}" \
+    "WorkingDirectory=${SERVICE_WORKDIR//%/%%}" \
     "${SYSTEMD_DATA_ROOT_ENVIRONMENT}" \
-    "ExecStart=${BUN_BINARY} start" \
+    "ExecStart=${SERVICE_EXEC_START}" \
     "Restart=on-failure" \
     "RestartSec=5" \
     "" \

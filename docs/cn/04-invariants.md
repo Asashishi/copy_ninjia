@@ -84,6 +84,7 @@
 
 ### 数据根与后台任务
 
+- 源码的项目根由模块位置确定，二进制的项目根由部署工作目录确定；配置、素材与默认数据根统一从它派生。三个 Worker 的入口集中在 `packages/consts/paths.ts`，二进制使用嵌入的 Worker 入口；线程归属、消息协议与停机顺序遵循同一套约束。
 - `state.json`、`bot.lock`、`logs/`、`memory/` 与 `database/` 全部从统一运行时数据根派生；生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，让真实文件 I/O 也不可能读写生产缓存或身份数据库。
 - 命令菜单、`bot.init()`、Worker hydrate 与 acknowledgement-safe runner 就绪后，才启动低优先级群标题维护；标题 owner 当前最多并发 25 个 `getChat`，限制历史回填同时占用 query 类别与网络连接的规模，并接受生命周期的 quiesce/abort 信号。
 

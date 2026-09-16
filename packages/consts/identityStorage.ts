@@ -129,8 +129,8 @@ export const IDENTITY_DATABASE_FILE_MODE: number = 0o660;
 
 /** Drizzle 内建 migrator 读取的身份数据库 schema migration 目录。 */
 export const IDENTITY_DATABASE_MIGRATIONS_DIR: string = join(
-  import.meta.dir,
-  "../database/schema/migrations"
+  Bun.isStandaloneExecutable ? process.cwd() : join(import.meta.dir, "..", ".."),
+  "packages/database/schema/migrations"
 );
 
 /** AI 上下文与人设迁移的固定时间戳，所属模块：数据库谱系校验。 */

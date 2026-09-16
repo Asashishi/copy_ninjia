@@ -15,7 +15,7 @@ This page takes a clean environment all the way to “the bot works normally in 
 ## Prerequisites
 
 - **Linux with a readable `/proc`**: the instance lock depends on `/proc/<pid>/stat` and the boot ID. It fails closed on other platforms.
-- **Bun 1.4.2**: install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Every project script, test, and runtime path uses Bun; Node.js is not required.
+- **Bun 1.4.2**: required for source installation and development; install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Binary packages include this runtime and need no system Bun. Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
 - **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `g-auth.json` in the project root. When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
@@ -35,17 +35,19 @@ of this page:
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-After locating the work tree, the downloaded entry point hands control to that tree's own `install.sh`. `COPY_NINJIA_DIR` accepts relative and absolute paths. The current code requires Bun **1.4.2**. A mismatched existing Bun stops installation before dependencies or configuration are written and reports the manual installation command; the installer does not automatically replace it.
+New installations prompt for a mode, defaulting to source. Select it explicitly with a flag or `COPY_NINJIA_INSTALL_MODE=source|binary`; use either the flag or the environment variable, not both.
 
-No prior clone is needed: the script clones **the Latest Release on GitHub** into `copy_ninjia/`
-under the current directory (set `COPY_NINJIA_DIR` to change that), landing on that tag as a detached
-HEAD. It installs a published release rather than `master` HEAD — the tag is read from
-`releases/latest` at run time, and a lookup failure stops the install rather than falling back to
-`master`, which would put unannounced code on a production host.
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --binary
+# Use --source for source installation; a downloaded script also accepts bash install.sh --binary.
+```
 
-If you already have a work tree, running `bash install.sh` from the repository root is equivalent: it
-skips the clone and **leaves that tree's checkout untouched** (it may carry local changes or sit on a
-version deliberately), reporting only which version is present.
+Both modes read **GitHub's Latest Release** from `releases/latest`, install into `COPY_NINJIA_DIR` (default `copy_ninjia/`, relative or absolute), then run that directory's own `install.sh`. Lookup failures stop installation without falling back to `master`. Existing deployments keep their version and installation type; the installer does not upgrade or convert them.
+
+- **Source mode** clones the tag with detached HEAD, verifies Bun **1.4.2** against `packageManager`, and installs locked dependencies. A mismatched system Bun stops installation before configuration writes and reports the manual installation command.
+- **Binary mode** detects Linux x64/arm64 and glibc/musl, downloads `copy-ninjia-<platform>.tar.gz` and its `.sha256`, and verifies content, version, and platform before placing it in a destination that does not yet exist. The Release must provide that platform's assets; missing assets or failed validation stop installation. Packages include Bun, Workers, native image dependencies, configuration examples, and the installer; no git, system Bun, or local compilation is required. Keep the complete directory and run `./copy-ninjia` from it; `--version` reports the package version. Configuration, assets, and the default data root use the deployment working directory. `COPY_NINJIA_DATA_ROOT` still selects a separate data root.
+
+Running `bash install.sh` in an existing source tree preserves its checkout; running it in a binary deployment reuses that package.
 
 If the source came from an extracted release archive (or a copied directory) — source present, no
 `.git` — the script creates the git repository in place so you can update with git afterwards: it runs
@@ -63,7 +65,7 @@ in place, but `HEAD` points at no version and you pick one with `git checkout <t
 Failing to install `git` or to fetch the tags only skips this step with a notice; it never aborts the
 install.
 
-Before dependency installation or configuration/database writes, the installer checks any existing service: it must be `inactive/dead`, its `WorkingDirectory` must resolve to the target tree, and `ExecStart` must contain exactly one Bun project entry point. A running service, unknown state, or mismatched ownership refuses modification. Follow [07 Operations](07-operations.md) to stop and verify the service first; the installer does not stop it automatically.
+Before dependency installation or configuration/database writes, the installer checks any existing service: it must be `inactive/dead`, its `WorkingDirectory` must resolve to the target directory, and `ExecStart` must contain exactly one Bun project entry point or that directory's `copy-ninjia` executable. A running service, unknown state, or mismatched ownership refuses modification. Follow [07 Operations](07-operations.md) to stop and verify the service first; the installer does not stop it automatically.
 
 After configuration validation, it registers or reuses `copy-ninjia.service`, backing up an existing unit before replacement. It observes twice the effective restart-delay upper bound, including active backoff and randomized delay, plus two seconds. Success requires `active/running`, an unchanged restart count, and no new nonzero exits in the journal. Failed queries or an unreadable journal exit nonzero and retain backups. A host without systemd and without an existing unit runs in the foreground, retaining backups for manual verification.
 
@@ -72,14 +74,14 @@ usable controlling terminal the script exits rather than consuming half of its o
 
 The installation follows these steps:
 
-1. **Environment and code**: check Linux, readable `/proc`, and the controlling terminal; obtain missing tools and the Latest Release or reuse the existing tree. Install the target code's exact Bun version when absent, verify `packageManager`, and run `bun install --frozen-lockfile` with the seven-day dependency cooldown.
+1. **Environment and package**: check Linux, readable `/proc`, and the controlling terminal; obtain missing tools and the Latest Release or reuse the existing deployment. Source mode installs or verifies the exact Bun version and runs `bun install --frozen-lockfile` with the seven-day dependency cooldown. Binary mode verifies the embedded Bun against `packageManager` and uses packaged dependencies.
 2. **Deployment configuration**: copy only missing examples, excluding `agent.json`. Telegram identity can be re-entered interactively; an existing file is backed up outside the tree before candidate validation and atomic replacement. No AI configuration creates no `agent.json`; an existing AI configuration is retained. Generated identity and AI configuration files use mode `600`.
 3. **Identity database and validation**: resolve the database location through production code, create the current empty schema only when `database/storage.sqlite` is absent, then validate deployment inputs.
 4. **Service and observation**: register or reuse the unit for a deployment already confirmed stopped, then start and verify state, the calculated observation window, restart count, and journal. Remove configuration and unit backups only after every check succeeds. Verification failures exit nonzero; foreground execution retains backups.
 
 Reruns retain existing databases and replace configuration only after an explicit request to re-enter it. The operator supplies `g-auth.json` out of band. Its absence disables translation; malformed existing credentials refuse startup.
 
-### Manual install
+### Manual source install
 
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git

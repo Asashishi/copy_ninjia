@@ -6,10 +6,24 @@ import {
 
 /**
  * 项目内所有文件/目录路径的集中定义。各模块统一从这里取，不再各自散落
- * join(import.meta.dir, ...)。本文件位于 packages/consts/ 下，PROJECT_ROOT 要
- * 往上跳两级。
+ * join(import.meta.dir, ...)。源码以仓库为根；二进制以部署工作目录为根。
  */
-export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
+export const PROJECT_ROOT: string = Bun.isStandaloneExecutable
+  ? process.cwd()
+  : join(import.meta.dir, "..", "..");
+
+/** Disk I/O Worker 入口；编译时作为独立入口嵌入可执行文件。 */
+export const DISK_IO_WORKER_URL: string = Bun.isStandaloneExecutable
+  ? new URL("./packages/workers/diskIOWorker.ts", import.meta.url).href
+  : new URL("../workers/diskIOWorker.ts", import.meta.url).href;
+/** AI Worker 入口；编译时作为独立入口嵌入可执行文件。 */
+export const AI_CHAT_WORKER_URL: string = Bun.isStandaloneExecutable
+  ? new URL("./packages/workers/aiChatWorker.ts", import.meta.url).href
+  : new URL("../workers/aiChatWorker.ts", import.meta.url).href;
+/** Anti-Raid Worker 入口；编译时作为独立入口嵌入可执行文件。 */
+export const ANTI_RAID_WORKER_URL: string = Bun.isStandaloneExecutable
+  ? new URL("./packages/workers/antiRaidWorker.ts", import.meta.url).href
+  : new URL("../workers/antiRaidWorker.ts", import.meta.url).href;
 
 /** 可选进程环境路径真正缺省时返回 undefined，存在但空白时拒绝启动。 */
 function optionalRootPath(name: string): string | undefined {

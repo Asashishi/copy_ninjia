@@ -56,6 +56,12 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、identity write-through、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
+### バイナリデプロイ
+
+バイナリの配布ディレクトリには `copy-ninjia`、`binary.json`、インストーラー、設定例、`prompt/`、database schema ファイル、`node_modules/` 内の画像処理用ネイティブ依存が含まれます。全体を保持し、その中で `bash install.sh` を実行して設定と新規 database の初期化を行います。前面実行は `./copy-ninjia` を使います。systemd の `WorkingDirectory` はこのディレクトリ、`ExecStart` は実行ファイルの絶対パスとし、`start` 引数は付けません。システム Bun は不要です。
+
+インストーラーが Latest の対応パッケージと SHA-256 を取得するのは新規ディレクトリだけで、既存バイナリデプロイの上書きや更新は行いません。更新は以下の停止、外部バックアップ、検証、手動移行手順に従います。独立した一時ディレクトリで新パッケージを検証し、デプロイ設定・資格情報・データを保持して、プログラムと同梱依存関係を更新します。cold migration が必要な場合は本ページの移行節に従ってツールを先に準備してください。起動入口は現在の形式だけを受け付けます。構築、プラットフォームの選択、アップロード照合は [05 リリース](05-dev-workflow.md#リリース) を参照してください。
+
 ## データルート
 
 `COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。未設定時はプロジェクトルートを使用し、明示的な空白値は起動時に拒否します。
@@ -253,7 +259,7 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 
 ## アップグレードとリリース
 
-1. `bun run release:check`（frozen lockfile + 全検査 + fault injection）をすべて通します。
+1. ソース作業ツリーで `bun run release:check`（frozen lockfile + 全検査 + カバレッジ数値の照合 + fault injection + バイナリ構築検証）をすべて通します。
    ネットワーク環境では `bun run audit:release` も実行します。
 2. worktree を書き換える Git 操作の前に `git status --short`、現行から対象までの
    `git diff --name-status`、`git ls-files config .env g-auth.json` を確認します。
@@ -276,7 +282,7 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 
 ### インストーラーのサービスとバックアップ境界
 
-`install.sh` は最初のインプレース書き込み前に、既存サービスの `inactive/dead`、対象の実体作業ディレクトリ、単一の Bun 入口を確認します。状態問い合わせ失敗・パス不一致・複数の `ExecStart` は処理を拒否します。稼働中のデプロイは先に上記の運用手順で停止してください。
+`install.sh` は最初のインプレース書き込み前に、既存サービスの `inactive/dead`、対象の実体作業ディレクトリ、単一の Bun 入口または現在のデプロイのバイナリ入口を確認します。状態問い合わせ失敗・パス不一致・複数の `ExecStart` は処理を拒否します。稼働中のデプロイは先に上記の運用手順で停止してください。
 
 既存 unit と置換するデプロイ設定は共通の外部バックアップ一覧に原パス・mode・所有者・SHA-256 を記録します。失敗時は原本と現場を保持します。一覧に従って個別に復元し、ハッシュ・mode・所有者を照合したうえで、全検証成功後にだけバックアップを削除します。
 

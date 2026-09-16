@@ -1,4 +1,5 @@
 import { superviseDuplexWorker } from "../infra/supervisedDuplexWorker";
+import { AI_CHAT_WORKER_URL } from "../consts/paths";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
 import { logger } from "../infra/logger";
 import { postDiskIO } from "../infra/diskIO";
@@ -96,7 +97,7 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
  */
 
 const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: SupervisedWorkerHandle<WorkerDuplexInbound<AiChatWorkerMessage>> = superviseDuplexWorker<AiChatWorkerMessage, AiChatWorkerEvent, TelegramWorkerRequest>({
-  url: new URL("../workers/aiChatWorker.ts", import.meta.url).href,
+  url: AI_CHAT_WORKER_URL,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
   handleRequest: handleAiWorkerTelegramRequest,

@@ -6,6 +6,7 @@ import {
   persistedVerificationRevisions,
 } from "../../cache/main/antiRaid/verificationMirror";
 import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
+import { ANTI_RAID_WORKER_URL } from "../../consts/paths";
 import {
   postDiskIO,
 } from "../../infra/diskIO";
@@ -99,7 +100,7 @@ const {
     AntiRaidWorkerEvent,
     AntiRaidWorkerRequest
   >({
-    url: new URL("../../workers/antiRaidWorker.ts", import.meta.url).href,
+    url: ANTI_RAID_WORKER_URL,
     label: "Anti-raid guard Worker",
     giveUpConsequence:
       "join verification and anti-raid features will silently stay disabled until the process restarts.",

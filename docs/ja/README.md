@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4290_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.93%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4329_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.94%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4290 件のテストが全て成功 / テストファイル 380 件 / expect() 呼び出し 157,750 回 / 関数カバレッジ 97.17% / 行カバレッジ 97.93%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4329 件のテストが全て成功 / テストファイル 382 件 / expect() 呼び出し 157,982 回 / 関数カバレッジ 97.21% / 行カバレッジ 97.94%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -184,7 +184,7 @@ Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンド�
 
 ## 🚀 クイックスタート
 
-必要なものは Linux（`/proc` が読めること。他の OS ではインスタンスロックが fail closed になります）、Bun 1.4.2、Bot Token、スーパー管理者のユーザー ID です。有効化する AI 機能ごとにその provider の API Key が要り、`/translate` には Google Cloud サービスアカウント JSON も必要です。ハードウェアの目安は [07 運用とトラブルシュート](07-operations.md#ハードウェアの目安) を参照してください。
+必要なものは Linux（`/proc` が読めること。他の OS ではインスタンスロックが fail closed になります）、Bot Token、スーパー管理者のユーザー ID です。ソースからのインストールには Bun 1.4.2 が必要で、バイナリ配布物にはランタイムが含まれます。有効化する AI 機能ごとにその provider の API Key が要り、`/translate` には Google Cloud サービスアカウント JSON も必要です。ハードウェアの目安は [07 運用とトラブルシュート](07-operations.md#ハードウェアの目安) を参照してください。
 
 ワンショット install（足りないものを導入し、設定を尋ねてそのまま起動）：
 
@@ -192,7 +192,7 @@ Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンド�
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-installer は **GitHub Latest Release** を取得して対象 tree 自身の script に処理を渡し、既存 tree の checkout は保持します。指定された Bun 版と lock 済み依存関係を確認し、Telegram・AI の設定入力と、不足する身分 database の初期化を行います。既存設定は明示的な再入力時だけ、バックアップと検証を経て原子的に置換します。最後に systemd unit を登録または再利用して稼働を観察し、systemd が無い場合は前面実行します。ディレクトリ指定とバックアップ保持は [環境構築](01-getting-started.md) を参照してください。
+新規インストールではソースかバイナリを選択します。末尾を `bash -s -- --binary` または `bash -s -- --source` に変えて明示指定もできます。バイナリ方式は **GitHub Latest Release** の対象プラットフォーム用パッケージと SHA-256 ファイルを直接取得し、インストール先でソースの checkout やビルドを行いません。ソース方式はその tag と固定済み依存関係を取得します。既存デプロイの版は保持します。両方式とも対象ディレクトリのインストーラーで Telegram・AI 設定と不足する身分 database の初期化を行い、systemd unit を登録または再利用して稼働を観察します。systemd が無い場合は前面実行します。既存設定の置換は明示的な再入力時だけ、バックアップ・検証を経て原子的に行います。プラットフォーム、ディレクトリ指定、バックアップ保持は [環境構築](01-getting-started.md) を参照してください。
 
 手動 install：
 

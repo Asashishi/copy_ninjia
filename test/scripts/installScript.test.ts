@@ -40,7 +40,7 @@ describe("install.sh 静态 systemd 数据根边界", () => {
     expect(new TextDecoder().decode(result.stderr)).toBe("");
     expect(result.exitCode).toBe(0);
     expect(INSTALL_SCRIPT).toContain(
-      '"./packages/database/interact/initialization";'
+      '"./scripts/install/runtime";'
     );
     expect(INSTALL_SCRIPT).not.toContain("database/interact/admin");
   });
@@ -50,7 +50,7 @@ describe("install.sh 静态 systemd 数据根边界", () => {
       'if [ "${COPY_NINJIA_DATA_ROOT+x}" = "x" ]; then'
     );
     expect(INSTALL_SCRIPT).toContain(
-      'import { RUNTIME_DATA_ROOT } from "./packages/consts/paths";'
+      'import { RUNTIME_DATA_ROOT } from "./scripts/install/runtime";'
     );
     expect(INSTALL_SCRIPT).toContain(
       "await Bun.write(Bun.stdout, RUNTIME_DATA_ROOT);"
@@ -66,7 +66,7 @@ describe("install.sh 静态 systemd 数据根边界", () => {
       '"${SYSTEMD_DATA_ROOT_ENVIRONMENT}" \\\n'
     );
     const execStartIndex: number = INSTALL_SCRIPT.indexOf(
-      '"ExecStart=${BUN_BINARY} start"'
+      '"ExecStart=${SERVICE_EXEC_START}"'
     );
     expect(environmentIndex).toBeGreaterThan(-1);
     expect(execStartIndex).toBeGreaterThan(environmentIndex);
@@ -110,6 +110,29 @@ function extractShellFunctions(names: readonly string[]): string {
 }
 
 const shellRoots: string[] = [];
+
+describe("systemd 可执行路径", (): void => {
+  test.each([
+    ["/srv/copy bot/copy-ninjia", '":/srv/copy bot/copy-ninjia"'],
+    ["/srv/$BOT/%n/copy-ninjia", '":/srv/$BOT/%%n/copy-ninjia"'],
+    ['/srv/a"b\\c/copy-ninjia', '":/srv/a\\"b\\\\c/copy-ninjia"'],
+  ])("可执行路径保持为单个参数并禁止环境展开：%s", (path: string, expected: string): void => {
+    const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+      cmd: ["bash", "-c", `set -Eeuo pipefail\n${extractShellFunctions(["systemd_exec_path"])}\nsystemd_exec_path "$1"`, "--", path],
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    expect(new TextDecoder().decode(result.stdout)).toBe(expected);
+  });
+  test.each(["relative/copy-ninjia", "/srv/bad\npath/copy-ninjia"])("拒绝无效 unit 入口：%s", (path: string): void => {
+    const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+      cmd: ["bash", "-c", `set -Eeuo pipefail\ndie() { exit 1; }\n${extractShellFunctions(["systemd_exec_path"])}\nsystemd_exec_path "$1"`, "--", path],
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(result.stdout)).toBe("");
+  });
+});
 
 /** 造一个假的 journalctl，让判定逻辑可以在没有 systemd 的机器上跑完整分支。 */
 async function fakeJournalDirectory(): Promise<string> {

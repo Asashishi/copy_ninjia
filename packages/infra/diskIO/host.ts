@@ -10,6 +10,7 @@ import {
   pendingFlushFailedDomains,
   pendingLoad,
 } from "../../cache/main/diskIO";
+import { DISK_IO_WORKER_URL } from "../../consts/paths";
 import { DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES } from
   "../../consts/diskIO/diagnostics";
 import type {
@@ -45,7 +46,7 @@ export { clearRuntimeRecoveryTimer, stopWorkerAfterLoadFailure } from "./recover
 
 /** 创建一个落盘 Worker 实例并挂上回执路由与崩溃自愈；不改变 diskIORuntime.worker。 */
 export function createDiskIOWorker(): Worker {
-  const w: Worker = new Worker(new URL("../../workers/diskIOWorker.ts", import.meta.url).href);
+  const w: Worker = new Worker(DISK_IO_WORKER_URL);
   w.unref();
   w.onmessage = (event: MessageEvent<DiskIOReply>): void => {
     if (diskIORuntime.worker !== w) return;

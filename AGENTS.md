@@ -204,11 +204,17 @@
 - 每次发布必须按以下顺序完整执行：
   1. 在 `dev` 完成开发和门禁。
   2. 在 `dev` 上运行 `bun run perf:full -- --write-doc`，把三份 `09-performance.md` 的基准区块与 `performance-result.json` 的 `fullSuite.lastRun` 更新到本次发布的读数，并与代码改动一起提交。
-  3. 以 `git merge --squash` 合入 `master` 并创建单次提交。
-  4. 推送 `master`。
-  5. 创建并单独推送 annotated version tag。
-  6. 创建并确认 GitHub Release。
-  7. 将 `dev` reset 对齐到 `master`，并以 `--force-with-lease` 推送。
+  3. 在干净、已提交的 `dev` 上，为本次声明的每个平台原生执行 `bun run release:build -- --version <tag>`，收集发行包和 SHA-256 文件，并执行 `bun run release:verify -- --version <tag> --platforms <平台列表>`。
+  4. 以 `git merge --squash` 合入 `master` 并创建单次提交，确认 Git tree 与构建时一致。
+  5. 推送 `master`。
+  6. 创建并单独推送 annotated version tag。
+  7. 执行 `bun run release:publish -- --version <tag> --platforms <平台列表> --notes-file <说明文件>`，先补齐草稿资产并下载校验，再公开为 Latest，最后确认 Release、远端引用和下载内容。
+  8. 将 `dev` reset 对齐到 `master`，并以 `--force-with-lease` 推送。
+- `bun run release:check` 包含开发版二进制构建及隔离启动、Worker、图片原生依赖和安装器验证；正式发行包必须在代码与基准提交后重新通过 `release:build` 生成。
+- 二进制平台为 `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl`；`--platforms` 必须明确列出本次发布的平台，不得缺包后静默缩减。每个平台都必须在对应环境原生构建和验证，使用同一 Git tree、Bun version/revision。
+- 每个平台上传 `copy-ninjia-<平台>.tar.gz` 与对应 `.tar.gz.sha256`。发布脚本核对 SHA-256 及包内版本、平台、Git tree、Bun 构建；`development` 或未提交工作树的产物不得发布。多机汇总目录通过 `--directory` 指定。
+- 二进制安装从 Release 下载发行包，不在目标机器检出源码或执行构建；Release 的 Compatibility / Migration Notes 必须列明本次提供的平台。
+- `release:publish` 只操作已推送 annotated tag 的 Release，不推送分支、不创建或移动 tag、不自动同步 `dev`；执行前必须完成仓库与部署保护检查。
 - 基准使用默认三轮，与上一次发布同机器、同 Bun 构建；`--rounds` 只用于本地排查，非默认轮数的读数不得写进文档。
 - 跑基准前停掉机器上的其它重负载，包括本仓库的服务进程和其它门禁。
 - 全量基准与 `bun run check` 不得连着跑；等机器空下来再跑后一个，热路径软上报按空载读数判定。
@@ -220,12 +226,12 @@
 - 版本号仅使用无 `v` 前缀的 `MAJOR.MINOR.PATCH`。
 - 破坏兼容时升 MAJOR，兼容新增时升 MINOR，仅修复、性能、重构或文档变更时升 PATCH；混合改动取最高级。
 - 不得依据本地旧 tag 推断版本。
-- 目标 tag 已存在时必须重新读取 Release 状态并重算版本，不得覆盖、移动或复用已有 tag。
-- 门禁通过后，必须依次推送 `master`、为该提交创建并单独推送 annotated version tag、执行 `gh release create <tag> --verify-tag --target master ...`。
+- 新发布选版时，目标 tag 已存在必须重新读取 Release 状态并重算版本，不得覆盖、移动或复用已有 tag；同一次发布失败后的续跑按下述重试规则使用原 tag。
+- 门禁通过后，必须依次推送 `master`、为该提交创建并单独推送 annotated version tag，再执行 `release:publish`；脚本使用 `gh release create --verify-tag --target master --draft`，仅在所有声明资产下载校验成功后公开为 Latest。
 - Release 标题和说明使用英文，只描述上一个 Latest tag 到本次 `master` 的增量，并包含 Highlights、Compatibility / Migration Notes、Validation。
 - Release 中的测试数量和覆盖率必须来自本次门禁。
-- tag 已推送但 Release 创建失败时，必须保留并重试同一 tag，不得递增版本。
-- `master`、tag、Release 任一未确认成功时，不得宣称发布完成，不得改写 `dev`。
+- tag 已推送但 Release 创建、上传或确认失败时，必须保留并重试同一 tag，不得递增版本。已有草稿只能补传缺失资产；同名资产须下载核验，不得覆盖。已公开 Release 缺少资产或已有资产不符时停止发布，保留现场。
+- `master`、tag、Release、Latest 状态或二进制资产任一未确认成功时，不得宣称发布完成，不得改写 `dev`。
 - Release 确认成功后，必须先执行 `git diff dev master --quiet` 确认树一致，再在 `dev` 执行 `git reset --hard master` 和 `git push --force-with-lease origin dev`。
 - 发布结束前必须确认本地和远端的 `dev`、`master` 全部指向同一提交。
 - 仅在用户明确要求同步文档或指标时，依据合并前真实 `bun run check` 输出更新徽章、`pictures/coverage_{light,dark}.svg`、README `<img alt>` 和三份开发文档；完整清单以 `docs/cn/05-dev-workflow.md` 的“同步 README 指标”为准。

@@ -15,7 +15,7 @@
 ## 前置条件
 
 - **Linux（带可读的 `/proc`）**：实例锁依赖 `/proc/<pid>/stat` 与 boot ID；其它平台会 fail-closed 拒绝启动。
-- **Bun 1.4.2**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
+- **Bun 1.4.2**：源码安装与开发需要，可用 `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` 安装；二进制发行包自带该运行时，无需系统 Bun。项目不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
 - **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为项目根的 `g-auth.json`。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
@@ -34,17 +34,25 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-下载入口找到工作树后，使用该树自己的 `install.sh` 完成后续步骤。`COPY_NINJIA_DIR` 支持相对路径和绝对路径。当前代码要求 Bun **1.4.2**；已有 Bun 版本不匹配时，安装器在安装依赖和写配置前退出并提示手工安装，不自动覆盖已有 Bun。
+新安装会询问安装方式，默认选择源码。可通过以下参数或 `COPY_NINJIA_INSTALL_MODE=source|binary` 明确指定；参数与环境变量只选一种方式设置。
 
-不用先 clone：脚本自己会把 **GitHub 上的 Latest Release** clone 到当前目录下的 `copy_ninjia/`（想换目录设 `COPY_NINJIA_DIR`），落在该 tag 上（detached HEAD）。装的是已发布版本而不是 `master` HEAD——tag 由 `releases/latest` 接口现问，问不到就当场失败，不会退回 `master`：那等于把一台生产机装成还没公告过的代码。
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --binary
+# 源码安装使用 --source；下载脚本后也可执行 bash install.sh --binary。
+```
 
-已经有工作树时，在仓库根跑 `bash install.sh` 等价，会跳过 clone，并且**不改动那棵树的 checkout**（它可能有本地改动或有意停在某个版本），只报一句当前版本。
+两种方式都从 `releases/latest` 读取 **GitHub Latest Release**，安装到 `COPY_NINJIA_DIR` 指定的目录（默认 `copy_ninjia/`，支持相对或绝对路径），再交给目标目录自己的 `install.sh`。获取失败时停止，不回退到 `master`。已有部署目录会复用当前版本，不执行升级或安装类型转换。
+
+- **源码方式**：clone 对应 tag（detached HEAD），校验 Bun **1.4.2** 与 `packageManager` 后执行锁定依赖安装。已有系统 Bun 版本不匹配时，在写配置前退出并提示手工安装。
+- **二进制方式**：识别 Linux x64/arm64 与 glibc/musl，下载 `copy-ninjia-<平台>.tar.gz` 和同名 `.sha256`，核对内容、包内版本与平台后放置到尚不存在的目标目录。Release 必须提供对应平台资产，缺失或校验失败即停止。包内含 Bun、Worker、原生图片依赖、配置示例与安装器，不需要 git、系统 Bun 或本机编译。保留完整发行目录，并在该目录运行 `./copy-ninjia`；`--version` 查询包版本。配置、素材和默认数据根均以部署工作目录为根，独立数据根仍由 `COPY_NINJIA_DATA_ROOT` 指定。
+
+已有源码工作树执行 `bash install.sh` 时保持 checkout；已有二进制目录执行该命令时复用当前发行包。
 
 源码若是解压发布包（或整目录拷贝）得到的——有源码、没有 `.git`——脚本会就地补出 git 仓库，好让此后能用 git 更新：`git init`、把 `origin` 指向本仓库、拉全部 tag，再**逐个 tag 比对内容**认出与现有文件一致的那个，把 `HEAD` 指过去（detached，与 clone 出来的形态相同），于是 `git status` 是干净的，更新就是一次 `git fetch --tags` 加 `git checkout <新 tag>`。
 
 补仓库这一步**不写工作树里的任何文件**，也不会把 `config/`、`state.json`、`g-auth.json` 这类部署数据收进对象库——它只用 `read-tree`/`diff-index` 比对 tag 自带的对象，未跟踪文件完全不参与，因此不依赖 `.gitignore` 是否完整。对不上任何已发布 tag 时（改过，或根本不是发布包）**不猜版本**：仓库、`origin` 和 tag 都给到位，但 `HEAD` 不指向任何版本，由你核对后自行 `git checkout <tag>`。装不上 `git`、拉不到 tag 也只是跳过这一步并提示，不会中断安装。
 
-安装器在依赖安装、配置或数据库写入前核对既有服务：必须为 `inactive/dead`，`WorkingDirectory` 必须指向目标工作树，`ExecStart` 必须是唯一一条 Bun 项目入口。运行中、状态未知或归属不符时拒绝修改；请先按 [07 运维](07-operations.md) 的流程停机并确认。安装器不会自动停掉既有服务。
+安装器在依赖安装、配置或数据库写入前核对既有服务：必须为 `inactive/dead`，`WorkingDirectory` 必须指向目标目录，`ExecStart` 必须是唯一一条 Bun 项目入口或该目录的 `copy-ninjia` 二进制入口。运行中、状态未知或归属不符时拒绝修改；请先按 [07 运维](07-operations.md) 的流程停机并确认。安装器不会自动停掉既有服务。
 
 配置校验完成后注册或复用 `copy-ninjia.service`，覆盖既有 unit 前先备份。启动后按实际重启等待上限（包括生效的退避与随机延迟）观察两倍时长，再加两秒；要求 `active/running`、重启计数不变且 journal 无新增非零退出。查询失败或 journal 不可读时非零退出并保留备份。没有 systemd 且没有既有 unit 时进入前台运行，备份留待人工核验。
 
@@ -52,14 +60,14 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 
 安装流程包括以下步骤：
 
-1. **环境与代码**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有工作树。缺少 Bun 时安装目标代码指定的精确版本，核对 `packageManager` 后执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期。
+1. **环境与发行包**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有部署。源码方式安装或核验指定 Bun，再执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期；二进制方式核验内置 Bun 与 `packageManager`，直接使用包内依赖。
 2. **部署配置**：只补缺少的示例文件，跳过 `agent.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
 3. **身份数据库与校验**：按生产路径解析结果检查 `database/storage.sqlite`，只在不存在时创建当前 schema 的空库，再校验部署输入。
 4. **服务与观察**：在已确认停止的部署上注册或复用 unit，启动并完成状态、动态观察时长、重启计数与 journal 核验。仅全部通过才清理配置和 unit 备份；验证失败非零退出，前台运行保留备份。
 
 脚本重跑时保留既有数据库，配置仅在明确重填时替换。`g-auth.json` 由部署方带外提供；缺少它时翻译不可用，已有但非法时拒绝启动。
 
-### 手工安装
+### 手工源码安装
 
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git

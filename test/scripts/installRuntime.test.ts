@@ -35,7 +35,7 @@ function runFragment(
   const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
     cmd: ["/bin/bash", "-c", `set -Eeuo pipefail\n${source}`],
     cwd: fixture.worktree,
-    env: { PATH: "/usr/bin:/bin", ...environment },
+    env: { PATH: "/usr/bin:/bin", INSTALL_MODE: "source", ...environment },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -156,7 +156,7 @@ describe("下载入口转交目标工作树", () => {
     async (absolute: boolean): Promise<void> => {
       const fixture: InstallerFixture = await createFixture();
       const locateWorktree: string = scriptRange('SCRIPT_DIRECTORY=""', "\n# 下载入口只负责定位工作树");
-      const repositoryProbe: string = scriptRange("is_repository_root() {", "\n}") + "\n}";
+      const repositoryProbe: string = scriptRange("is_repository_root() {", "\n# 只从同一 Release");
       const result: InstallerRunResult = runFragment(fixture, [
         "info() { :; }",
         'die() { printf "%s\\n" "$1" >&2; exit 1; }',

@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4290_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.93%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4329_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-97.94%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4290 tests passed, 380 test files, 157,750 expect() calls, 97.17% function coverage, 97.93% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4329 tests passed, 382 test files, 157,982 expect() calls, 97.21% function coverage, 97.94% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -176,7 +176,7 @@ The full command table, permission semantics and per-command behaviour live in *
 
 ## 🚀 Quick Start
 
-You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), Bun 1.4.2, a Bot token and a super-admin user ID. Enabled AI capabilities each need their provider's API key, and `/translate` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
+You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), a Bot token and a super-admin user ID. Source installations require Bun 1.4.2; binary packages include the runtime. Enabled AI capabilities each need their provider's API key, and `/translate` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
 
 One-shot install (installs whatever is missing, asks for config, then starts):
 
@@ -184,7 +184,7 @@ One-shot install (installs whatever is missing, asks for config, then starts):
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-The installer obtains **GitHub's Latest Release** and hands control to the target tree's own script; an existing tree keeps its checkout. It verifies the exact Bun version and installs locked dependencies, then asks for Telegram and AI configuration and initializes a missing identity database. Existing configuration is replaced only after an explicit request to re-enter it, with backup, validation, and atomic replacement. Finally, it registers or reuses a systemd unit and observes the running service, or runs in the foreground without systemd. See [Getting Started](01-getting-started.md) for directory options and backup retention.
+New installations prompt for source or binary mode; replace the final `bash` with `bash -s -- --binary` or `bash -s -- --source` to select it explicitly. Binary mode downloads the platform package and SHA-256 file from **GitHub's Latest Release**, without checking out or building source on the installation host. Source mode obtains that tag and installs locked dependencies. Existing deployments keep their current version. Both modes run the target directory's installer, ask for Telegram and AI configuration, initialize a missing identity database, and register or reuse a systemd unit with startup observation; without systemd they run in the foreground. Configuration replacement requires an explicit request and uses backup, validation, and atomic replacement. See [Getting Started](01-getting-started.md) for platforms, directory options, and backup retention.
 
 Manual install:
 

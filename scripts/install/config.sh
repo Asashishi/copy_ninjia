@@ -184,7 +184,7 @@ commit_staged_config() {
 validate_staged_telegram_config() {
   local staging_path="$1"
   bun -e '
-    import { loadTelegramConfig } from "./packages/config/telegramInput";
+    import { loadTelegramConfig } from "./scripts/install/runtime";
     await loadTelegramConfig(Bun.argv[1]);
   ' "$staging_path"
 }
@@ -193,7 +193,7 @@ validate_staged_telegram_config() {
 validate_staged_agent_config() {
   local staging_path="$1"
   bun -e '
-    import { validateAgentDeploymentConfig } from "./packages/config/agent";
+    import { validateAgentDeploymentConfig } from "./scripts/install/runtime";
     await validateAgentDeploymentConfig(Bun.argv[1]);
   ' "$staging_path"
 }

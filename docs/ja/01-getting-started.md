@@ -15,7 +15,7 @@
 ## 前提条件
 
 - **`/proc` を読み取れる Linux**：インスタンスロックは `/proc/<pid>/stat` と boot ID に依存します。ほかのプラットフォームでは fail-closed で起動を拒否します。
-- **Bun 1.4.2**：`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
+- **Bun 1.4.2**：ソース方式と開発時に必要で、`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` で導入できます。バイナリ配布物はこのランタイムを同梱し、システム Bun は不要です。Node.js は使用しません。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
 - **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
@@ -35,17 +35,19 @@
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-download 入口は work tree を見つけた後、その tree 自身の `install.sh` に後続処理を渡します。`COPY_NINJIA_DIR` は相対・絶対パスの両方を受け付けます。現在のコードは Bun **1.4.2** を要求します。既存 Bun が一致しない場合、依存関係の導入や設定の書き込み前に終了し、手動導入コマンドを表示します。既存 Bun の自動置換は行いません。
+新規インストールでは方式を選び、既定はソース方式です。引数または `COPY_NINJIA_INSTALL_MODE=source|binary` で明示指定できます。引数と環境変数はどちらか一方だけを使います。
 
-事前の clone は不要です。script 自身が **GitHub の Latest Release** をカレントディレクトリ直下の
-`copy_ninjia/` へ clone し、その tag（detached HEAD）に着地します（変更したい場合は `COPY_NINJIA_DIR`
-を設定）。入れるのは `master` HEAD ではなく公開済み release です。tag は実行時に `releases/latest` へ
-問い合わせ、取得できなければその場で失敗します。`master` へフォールバックすることはありません——それは
-公開していないコードを本番機へ入れることに等しいためです。
+```bash
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --binary
+# ソース方式は --source。取得済みスクリプトは bash install.sh --binary でも実行できます。
+```
 
-既に work tree がある場合は repository root で `bash install.sh` を実行すれば等価で、clone を飛ばし、
-**その tree の checkout は変更しません**（ローカル変更があったり意図的に特定版で止めている可能性がある
-ため）。現在の版数を 1 行報告するだけです。
+両方式とも `releases/latest` から **GitHub Latest Release** を取得し、`COPY_NINJIA_DIR`（既定は `copy_ninjia/`、相対・絶対パス対応）へ配置して、そのディレクトリの `install.sh` に処理を渡します。取得失敗時は停止し、`master` にフォールバックしません。既存デプロイの版と方式を保持し、アップグレードや方式の変換は行いません。
+
+- **ソース方式**：対象 tag を detached HEAD で clone し、Bun **1.4.2** と `packageManager` を照合して固定済み依存関係をインストールします。既存のシステム Bun が一致しなければ設定の書き込み前に停止し、手動導入コマンドを表示します。
+- **バイナリ方式**：Linux x64/arm64 と glibc/musl を識別し、`copy-ninjia-<プラットフォーム>.tar.gz` と `.sha256` を取得します。内容、版、プラットフォームを検証してから、まだ存在しない対象ディレクトリへ配置します。対応資産が Release に無い場合や照合失敗時は停止します。Bun、Worker、画像処理のネイティブ依存、設定例、インストーラーが同梱され、git、システム Bun、対象マシンでのコンパイルは不要です。配布ディレクトリ全体を保持し、その中で `./copy-ninjia` を実行します。`--version` はパッケージの版を表示します。設定、素材、既定のデータルートはデプロイ作業ディレクトリを基準とし、独立データルートは引き続き `COPY_NINJIA_DATA_ROOT` で指定します。
+
+既存ソースツリー内の `bash install.sh` は checkout を保持し、既存バイナリディレクトリ内では現在のパッケージを再利用します。
 
 ソースが release アーカイブの展開（またはディレクトリのコピー）で得られたもの——ソースはあるが `.git`
 が無い——の場合は、以後 git で更新できるよう、その場に git repository を作ります：`git init` し、
@@ -61,7 +63,7 @@ tag 自身が持つ object とだけ突き合わせ、未追跡ファイルは�
 `git checkout <tag>` してください。`git` を導入できない、tag を取得できない場合もこの手順を飛ばして
 通知するだけで、インストール自体は中断しません。
 
-依存関係のインストールや設定・database の書き込み前に既存サービスを照合します。状態は `inactive/dead`、`WorkingDirectory` は対象 tree の実体パス、`ExecStart` は単一の Bun プロジェクト入口でなければなりません。稼働中、状態不明、対象不一致の場合は変更を拒否します。[07 運用](07-operations.md) の手順で先に停止と状態確認を行ってください。インストーラーは既存サービスを自動停止しません。
+依存関係のインストールや設定・database の書き込み前に既存サービスを照合します。状態は `inactive/dead`、`WorkingDirectory` は対象ディレクトリの実体パス、`ExecStart` は単一の Bun プロジェクト入口またはそのディレクトリの `copy-ninjia` 実行ファイルでなければなりません。稼働中、状態不明、対象不一致の場合は変更を拒否します。[07 運用](07-operations.md) の手順で先に停止と状態確認を行ってください。インストーラーは既存サービスを自動停止しません。
 
 設定検証後に `copy-ninjia.service` を登録または再利用し、既存 unit の上書き前にバックアップします。有効な backoff とランダム追加遅延を含む再起動待機上限の 2 倍に 2 秒を加えた期間を観察し、`active/running`、再起動回数の不変、journal の新規非ゼロ終了なしを確認します。問い合わせ失敗や journal 読み取り不能時は非ゼロ終了し、バックアップを保持します。systemd も既存 unit もない環境では前面実行し、バックアップは手動確認まで保持します。
 
@@ -70,14 +72,14 @@ pipe 実行では fd 0 が script 本文そのものなので、すべての問�
 
 インストールは次の順に進みます。
 
-1. **環境とコード**：Linux、読み取り可能な `/proc`、制御端末を確認し、不足するツールと Latest Release を取得するか、既存 tree を再利用します。Bun が無ければ対象コードの指定版を導入し、`packageManager` を照合してから `bun install --frozen-lockfile` を実行します。依存関係の 7 日間の公開待機期間を維持します。
+1. **環境と配布物**：Linux、読み取り可能な `/proc`、制御端末を確認し、不足するツールと Latest Release を取得するか、既存デプロイを再利用します。ソース方式は指定 Bun を導入または検証し、7 日間の依存関係公開待機期間を維持して `bun install --frozen-lockfile` を実行します。バイナリ方式は内蔵 Bun と `packageManager` を照合し、同梱依存関係を使用します。
 2. **デプロイ設定**：欠けているサンプルだけを補い、`agent.json` サンプルは除外します。Telegram 身分は対話で再入力でき、既存ファイルを tree 外へバックアップしてから候補を検証し、原子的に置換します。AI 未設定時は `agent.json` を作成せず、既存 AI 設定は保持します。生成する身分・AI 設定の mode は `600` です。
 3. **身分 database と検証**：production コードで保存先を解決し、`database/storage.sqlite` が無い場合だけ現在の空 schema を作成して、デプロイ入力を検証します。
 4. **サービスと観察**：停止を確認済みのデプロイで unit を登録または再利用して起動し、状態・計算済み観察期間・再起動回数・journal を検証します。全検証成功時だけ設定と unit のバックアップを削除します。検証失敗は非ゼロ終了し、前面実行時もバックアップを保持します。
 
 再実行時も既存 database は保持し、設定は明示的な再入力時だけ置換します。`g-auth.json` はデプロイ側が帯域外で提供します。欠落時は翻訳が利用不可となり、存在して不正な場合は起動を拒否します。
 
-### 手動 install
+### ソースからの手動 install
 
 ```bash
 git clone https://github.com/Asashishi/copy_ninjia.git

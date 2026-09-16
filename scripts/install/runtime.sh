@@ -11,6 +11,12 @@ readonly REQUIRED_BUN_VERSION="${REQUIRED_BUN_MAJOR}.${REQUIRED_BUN_MINOR}.${REQ
 step "3/8 基础工具与 Bun"
 # --------------------------------------------------------------------------
 
+if [ "$INSTALL_MODE" = binary ]; then
+  BINARY_EXECUTABLE="$PWD/copy-ninjia"
+  # Bun 官方的 BUN_BE_BUN 模式只用于本包安装校验，不依赖系统 Bun。
+  bun() { BUN_BE_BUN=1 "$BINARY_EXECUTABLE" "$@"; }
+fi
+
 if ! command -v bun >/dev/null 2>&1 && [ -x "${BUN_INSTALL:-$HOME/.bun}/bin/bun" ]; then
   # 装过但当前 shell 没加载 PATH 的常见情形，直接用现成的，不重复安装。
   export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
@@ -65,8 +71,12 @@ fi
 verify_service_data_root "$RESOLVED_RUNTIME_DATA_ROOT"
 
 # 用锁文件安装：bun.lock 已进版本库，装出来的树必须和门禁跑过的那棵一致。
-bun install --frozen-lockfile || die "bun install 失败。"
-info "依赖安装完成。"
+if [ "$INSTALL_MODE" = source ]; then
+  bun install --frozen-lockfile || die "bun install 失败。"
+  info "依赖安装完成。"
+else
+  info "使用发行包自带的运行时与原生库，无需安装依赖。"
+fi
 
 # --------------------------------------------------------------------------
 step "5/8 准备配置目录"

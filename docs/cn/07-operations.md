@@ -56,6 +56,12 @@ WantedBy=multi-user.target
 
 进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、身份写透、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 
+### 二进制部署
+
+二进制发行目录包含 `copy-ninjia`、`binary.json`、安装器、配置示例、`prompt/`、数据库 schema 文件与 `node_modules/` 中的原生图片依赖；部署时保留完整目录。在该目录执行 `bash install.sh` 完成配置和新库初始化，前台运行使用 `./copy-ninjia`。systemd 的 `WorkingDirectory` 指向该目录，`ExecStart` 使用该目录内可执行文件的绝对路径，不带 `start` 参数；无需系统 Bun。
+
+安装器只为新目录下载 Latest 的对应平台包与 SHA-256，不覆盖或升级既有二进制部署。更新时按下述停机、外部备份、校验和手工迁移流程操作；先在独立暂存目录核验新包，再保留部署配置、凭据与数据并更新程序文件和随包依赖。需要冷迁移时先按本页迁移章节准备迁移工具；启动入口只接受当前格式。发行包构建、平台清单与上传校验见 [05 发布流程](05-dev-workflow.md#发布)。
+
 ## 数据根
 
 `COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（未设置时使用项目根目录；显式空白值拒绝启动）：
@@ -239,7 +245,7 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 
 ## 升级发布
 
-1. `bun run release:check` 全绿（frozen lockfile + 全量检查 + 故障注入）；联网环境加
+1. 在源码工作树上通过 `bun run release:check`（frozen lockfile + 全量检查 + 覆盖率指标核对 + 故障注入 + 二进制构建验证）；联网环境加
    `bun run audit:release`。
 2. 在任何会改写工作树的 Git 操作前，检查 `git status --short`、当前版本到目标版本的
    `git diff --name-status`，以及 `git ls-files config .env g-auth.json`。`config/`、
@@ -259,7 +265,7 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 
 ### 安装器的服务与备份边界
 
-`install.sh` 在首次原地写入前要求既有服务为 `inactive/dead`，并核对真实工作目录和唯一 Bun 入口。状态查询失败、路径不符或多条 `ExecStart` 均拒绝继续；运行中的部署须先按上述运维流程停止。
+`install.sh` 在首次原地写入前要求既有服务为 `inactive/dead`，并核对真实工作目录和唯一 Bun 或当前部署的二进制入口。状态查询失败、路径不符或多条 `ExecStart` 均拒绝继续；运行中的部署须先按上述运维流程停止。
 
 覆盖现有 unit 与替换部署配置共用工作树外备份清单，记录原路径、权限、属主和 SHA-256。失败时保留原件与现场；恢复时按清单逐文件核对哈希并恢复权限和属主，完成全部验证后才能手工清理。
 

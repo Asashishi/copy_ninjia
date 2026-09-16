@@ -56,6 +56,12 @@ The program creates the root, `logs/`, `memory/`, and the initial `database/` (t
 
 Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification, lockdown timers, identity write-through, AI memory, and unacknowledged Telegram updates resume according to the recovery semantics in [04 Authoritative Runtime Invariants](04-invariants.md#persistence).
 
+### Binary deployment
+
+The binary directory includes `copy-ninjia`, `binary.json`, the installer, configuration examples, `prompt/`, database schema files, and native image dependencies under `node_modules/`. Keep the entire directory. Run `bash install.sh` inside it to configure and initialize a fresh database; use `./copy-ninjia` for foreground execution. Set systemd's `WorkingDirectory` to this directory and `ExecStart` to the executable's absolute path, without a `start` argument. No system Bun is required.
+
+The installer downloads the matching Latest package and SHA-256 only for a new directory; it does not overwrite or upgrade existing binary deployments. Updates follow the shutdown, external backup, validation, and manual migration procedure below. Verify the new package in a separate staging directory, preserve deployment configuration, credentials, and data, then update program files and packaged dependencies. If cold migration is needed, prepare the tools described in this page's migration sections first; startup accepts only the current format. See [05 Release](05-dev-workflow.md#release) for builds, platform selection, and upload verification.
+
 ## Data Root
 
 `COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When unset, it defaults to the project root; an explicitly blank value is rejected at startup:
@@ -255,7 +261,7 @@ The token fingerprint identifies the lock owner; it is not a data-isolation boun
 
 ## Upgrades and Releases
 
-1. Pass `bun run release:check` (frozen lockfile + full checks + fault injection). On a networked
+1. In a source worktree, pass `bun run release:check` (frozen lockfile + full checks + coverage-metric verification + fault injection + binary build validation). On a networked
    host, also run `bun run audit:release`.
 2. Before any Git operation that can rewrite the worktree, inspect `git status --short`, the
    current-to-target `git diff --name-status`, and
@@ -278,7 +284,7 @@ The token fingerprint identifies the lock owner; it is not a data-isolation boun
 
 ### Installer service and backup boundaries
 
-Before its first in-place write, `install.sh` requires an existing service to be `inactive/dead`, with the target physical working directory and exactly one Bun entry point. Failed state queries, mismatched paths, or multiple `ExecStart` commands refuse continuation. Stop a running deployment through the operations procedure above first.
+Before its first in-place write, `install.sh` requires an existing service to be `inactive/dead`, with the target physical working directory and exactly one Bun entry point or the current deployment's binary entry point. Failed state queries, mismatched paths, or multiple `ExecStart` commands refuse continuation. Stop a running deployment through the operations procedure above first.
 
 Existing units and replaced deployment configuration use the same external backup manifest, recording original paths, modes, ownership, and SHA-256. A failed installation retains originals and the current files. Restore each file according to the manifest, verify its hash, restore mode and ownership, and remove the backup only after all checks pass.
 
