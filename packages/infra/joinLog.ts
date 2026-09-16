@@ -1,13 +1,13 @@
 /**
- * 滚动 24 小时入群日志的主线程入口。写入只投递最小事件给 Disk I/O Worker，
- * 主线程不保留成员列表；读取仅由 `/batch_kick` 发起，整群删除由群 teardown 的
- * `joinLog` owner 发起（本模块在加载时反向注册那个 owner）。
+ * 滚动 24 小时入群日志的主线程写入与删除入口。写入只投递最小事件给 Disk I/O
+ * Worker，主线程不保留成员列表；读取由 `/batch_kick` 直接调用 infra/diskIO.ts 的
+ * readJoinLog；整群删除由群 teardown 的 `joinLog` owner 发起（本模块在加载时反向
+ * 注册那个 owner）。
  */
 
 import { getTokyoDateKey } from "../libs/time";
 import { purgesChatData } from "../libs/chatTeardown";
 import type { ChatTeardownReason } from "../types/chatTeardown";
-import type { JoinLogRecord } from "../types/diskIO/storage";
 import { registerChatTeardown } from "./chatTeardownRegistry";
 import * as diskIO from "./diskIO";
 
@@ -58,25 +58,6 @@ export async function recordJoinLog({
   }
   if (bufferedDuringRecovery) return true;
   return await diskIO.flushDiskIODomain("joinLog") === "flushed";
-}
-
-export interface ReadRecentJoinLogParams {
-  chatId: number;
-  since: number;
-  now: number;
-}
-
-/** 按需读取本群滚动区间内的入群记录，至多覆盖两个东京自然日。 */
-export function readRecentJoinLog({
-  chatId,
-  since,
-  now,
-}: ReadRecentJoinLogParams): Promise<readonly JoinLogRecord[]> {
-  return diskIO.readJoinLog({
-    chatId,
-    since,
-    now,
-  });
 }
 
 /**

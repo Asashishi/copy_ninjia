@@ -3,7 +3,12 @@ import { createStickerSendLock } from "../../aiChat/ai/stickers/sendLock";
 import { createReplyToolset } from "../../aiChat/ai/tools/replyToolset/orchestrator";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
 import { botInfoState, superAdminUserIdState } from "../../cache/workers/aiChat/identity";
-import { activeReplyCounts, longTriggerTimes } from "../../cache/workers/aiChat/replies";
+import {
+  activeReplyCounts,
+  cachedReplyGeneration,
+  isCachedReplyGenerationCurrent,
+  longTriggerTimes,
+} from "../../cache/workers/aiChat/replies";
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
 import {
   RATE_LIMIT_LONG_MAX_TRIGGERS,
@@ -32,8 +37,6 @@ import { buildReplyPromptSections } from "./promptContext";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 import {
-  currentReplyGeneration,
-  isReplyGenerationCurrent,
   notifyRateLimited,
   replyGenerationSignal,
   trackReplyGenerationTask,
@@ -86,8 +89,8 @@ export function startReplyRound(
     mediaPreparation,
     queuedTrigger,
   }: ReplyRoundRequest = request;
-  const generation: number = request.generation ?? currentReplyGeneration(chatId);
-  if (!isReplyGenerationCurrent(chatId, generation)) return false;
+  const generation: number = request.generation ?? cachedReplyGeneration(chatId);
+  if (!isCachedReplyGenerationCurrent(chatId, generation)) return false;
 
   // 自动插话与随机媒体评价不得动用重媒体工具（生图、生歌）。用户直接回复/@
   // 的文字轮，以及带 directTriggerReason 的媒体轮才向工具上下文开放统一资格。
@@ -136,7 +139,7 @@ export function startReplyRound(
       onModelFinished?.(chatId);
     };
     const isActive = (): boolean =>
-      !signal.aborted && isReplyGenerationCurrent(chatId, generation);
+      !signal.aborted && isCachedReplyGenerationCurrent(chatId, generation);
     const stickerLock: StickerSendLockControl = createStickerSendLock(chatId);
     // 提示词和工具 schema 必须共用同一次抽签，否则配置概率不等于实际错字概率。
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;

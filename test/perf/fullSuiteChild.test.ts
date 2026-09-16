@@ -23,6 +23,32 @@ describe("基准子进程编排", () => {
     expect(result.ok).toBe(42);
   });
 
+  test("成功时把完整 stderr 交给回调，回调抛错按本次调用失败", async () => {
+    const received: string[] = [];
+    const result: Payload = await spawnJsonChild<Payload>({
+      args: ["-e", "console.error('gc-log'); console.log(JSON.stringify({ ok: 1 }))"],
+      label: "fixture",
+      onStderr: (stderr: string): void => { received.push(stderr); },
+    });
+    expect(result.ok).toBe(1);
+    expect(received).toEqual(["gc-log\n"]);
+    await expect(spawnJsonChild<Payload>({
+      args: ["-e", "console.log(JSON.stringify({ ok: 1 }))"],
+      label: "fixture",
+      onStderr: (): void => { throw new Error("incomplete log"); },
+    })).rejects.toThrow("incomplete log");
+  });
+
+  test("失败的子进程不调用 stderr 回调", async () => {
+    const received: string[] = [];
+    await expect(spawnJsonChild<Payload>({
+      args: ["-e", "console.error('boom'); process.exit(3)"],
+      label: "fixture",
+      onStderr: (stderr: string): void => { received.push(stderr); },
+    })).rejects.toThrow("exited 3");
+    expect(received).toEqual([]);
+  });
+
   test("非零退出时带上 stderr 抛错，不返回半截读数", async () => {
     await expect(spawnJsonChild<Payload>({
       args: ["-e", "console.error('boom'); process.exit(3)"],

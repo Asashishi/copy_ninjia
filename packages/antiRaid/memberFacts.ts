@@ -1,7 +1,6 @@
 import {
   hasPermanentWhitelistPermission,
   hasWhitelistPermission,
-  isWhitelisted,
 } from "../infra/identityPolicy/whitelist";
 import { isAdminStatus } from "../libs/chatMember";
 import type { ChatMember } from "grammy/types";
@@ -11,18 +10,6 @@ import type { AntiRaidMember } from "../types/antiRaid/protocol";
  * 从 grammY 的 ChatMember/User 对象里提取入群守卫需要的几个事实。纯函数、
  * 无 I/O，供 antiRaid/updateIngress.ts 的 chat_member 与服务消息两条路径共用。
  */
-
-/**
- * 自己人：不得进入自动处置产生的永久黑名单。
- *
- * `SUPER_ADMIN_USER_ID` 与 SQLite 永久白名单是部署方明确登记的身份，两者都由
- * isWhitelisted 一并覆盖（超级管理员恒在白名单边界内，见 whitelist.ts）。
- * 临时广告免检只持有广告检测豁免，不进入本边界；广告检测在调用本函数前先按
- * isCanBypassAdDetection 复查。防刷屏另受 isCanBypassFloodControl 控制。
- */
-export function isProtectedSender(senderId: number): boolean {
-  return isWhitelisted(senderId);
-}
 
 /** 广告检测专用豁免：只按当前有效权限的广告检测单项决定。 */
 export function canBypassAdDetection(

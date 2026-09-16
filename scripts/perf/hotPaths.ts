@@ -83,12 +83,10 @@ const SAMPLE_COUNT: number = 7;
 /** 正式采样前的预热占比，确保热点有机会进入 JSC 高层级编译。 */
 const WARMUP_DIVISOR: number = 5;
 
-/** 读取器提到模块级：本函数按样本调用，闭包现造会把分配算进被测的堆增长。 */
-function readJscMemoryUsage(): ReturnType<typeof jscMemoryUsage> {
-  return jscMemoryUsage();
-}
-
-/** 同上；单位是 KiB，换算留给调用方。 */
+/**
+ * 峰值 RSS 读取器放在模块级：按样本调用时不现造闭包，避免分配计入被测的堆增长。
+ * 单位是 KiB，换算留给调用方。
+ */
 function readProcessPeakRssKb(): number {
   return process.resourceUsage().maxRSS;
 }
@@ -98,7 +96,7 @@ function snapshotLiveMemory(): LiveMemorySnapshot {
   // 而它们抛出来的效果与第一次完全一样——整轮 profile 白跑。
   const processMemory: NodeJS.MemoryUsage = readProcessMemoryUsage();
   const jscMemory: ReturnType<typeof jscMemoryUsage> =
-    readInterruptibleMemory(readJscMemoryUsage);
+    readInterruptibleMemory(jscMemoryUsage);
   const resourcePeakRssBytes: number =
     readInterruptibleMemory(readProcessPeakRssKb) * 1024;
   return {

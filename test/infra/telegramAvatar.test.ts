@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { AVATAR_FETCH_MAX_ATTEMPTS } from "../../packages/consts/telegram";
+import { runAvatarFetchAttempts } from "../../packages/infra/telegram/avatar/shared";
+import type {
+  AvatarFetchAttemptsOutcome,
+  AvatarOperationAttemptResult,
+} from "../../packages/infra/telegram/avatar/shared";
 import {
   extractAvatarUrlFromProfileHtml,
   extractPublicUsername,
@@ -131,5 +137,67 @@ describe("Telegram 公开头像解析", () => {
     ]);
     expect(fetchCalls.every((call): boolean => call.init?.redirect === "error")).toBeTrue();
     expect(fetchCalls.every((call): boolean => call.init?.signal instanceof AbortSignal)).toBeTrue();
+  });
+});
+
+describe("头像操作的有界重试", () => {
+  interface ScriptedAttempts {
+    readonly attempt: (attemptNumber: number) => Promise<AvatarOperationAttemptResult>;
+    readonly seen: number[];
+  }
+
+  function scriptedAttempts(results: readonly AvatarOperationAttemptResult[]): ScriptedAttempts {
+    const seen: number[] = [];
+    return {
+      seen,
+      attempt: async (attemptNumber: number): Promise<AvatarOperationAttemptResult> => {
+        seen.push(attemptNumber);
+        return results[attemptNumber - 1] ?? "transient-failure";
+      },
+    };
+  }
+
+  test("瞬时失败后重试，成功即停并按从 1 开始的序号调用", async () => {
+    const { attempt, seen }: ScriptedAttempts = scriptedAttempts(["transient-failure", "ok"]);
+
+    await expect(runAvatarFetchAttempts(attempt)).resolves.toBe("ok");
+    expect(seen).toEqual([1, 2]);
+  });
+
+  test("确定性失败不再重试", async () => {
+    const { attempt, seen }: ScriptedAttempts = scriptedAttempts(["permanent-failure", "ok"]);
+
+    await expect(runAvatarFetchAttempts(attempt)).resolves.toBe("failed");
+    expect(seen).toEqual([1]);
+  });
+
+  test("瞬时失败持续到上限后返回 failed", async () => {
+    const { attempt, seen }: ScriptedAttempts = scriptedAttempts([]);
+
+    await expect(runAvatarFetchAttempts(attempt)).resolves.toBe("failed");
+    expect(seen).toHaveLength(AVATAR_FETCH_MAX_ATTEMPTS);
+  });
+
+  test("尝试开始前已取消时返回 aborted，不再调用下一次尝试", async () => {
+    const preAborted: AbortController = new AbortController();
+    preAborted.abort();
+    const idle: ScriptedAttempts = scriptedAttempts(["ok"]);
+
+    await expect(runAvatarFetchAttempts(idle.attempt, preAborted.signal)).resolves.toBe("aborted");
+    expect(idle.seen).toEqual([]);
+
+    const midway: AbortController = new AbortController();
+    const seen: number[] = [];
+    const outcome: Promise<AvatarFetchAttemptsOutcome> = runAvatarFetchAttempts(
+      async (attemptNumber: number): Promise<AvatarOperationAttemptResult> => {
+        seen.push(attemptNumber);
+        midway.abort();
+        return "transient-failure";
+      },
+      midway.signal
+    );
+
+    await expect(outcome).resolves.toBe("aborted");
+    expect(seen).toEqual([1]);
   });
 });

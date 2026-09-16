@@ -44,7 +44,7 @@ import {
 import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../../consts/aiChat/prompts/media";
 import type { MediaKind } from "../../types/media";
 import { downloadTelegramVisionImage } from "./telegramImage";
-import { runMediaTask } from "./mediaTaskRunner";
+import { mediaTaskRunner } from "../../cache/workers/aiChat/mediaTasks";
 import { transcribeVoiceUncached } from "./voiceTranscription";
 import type { VisionImage } from "../../types/media";
 import type {
@@ -237,7 +237,7 @@ function runTrackedMediaAttempt(
   signal?: AbortSignal
 ): Promise<AiTextResult> {
   const attemptState: MediaInputModalityState = getMediaInputState(capability);
-  return runMediaTask(task, signal).then((result: AiTextResult | undefined): AiTextResult => {
+  return mediaTaskRunner.run("interactive", task, signal).then((result: AiTextResult | undefined): AiTextResult => {
     // undefined 表示任务根本没启动：执行槽位和等待队列都满，或出队时已取消。两者
     // 都不是一次真实观测，不推进模态状态机（recordMediaInputResult 对不带
     // mediaFailure 的失败本就是 no-op，这里显式跳过是为了不把没发生的调用记成观测）。

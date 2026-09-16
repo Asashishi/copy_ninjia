@@ -26,12 +26,19 @@ const {
   dirtyMemoryChats,
   resetAiChatMemoryCache,
 } = await import("../../../packages/cache/workers/aiChat/memory");
-const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
-const { currentReplyGeneration, trackReplyGenerationTask } = await import("../../../packages/workers/aiChat/replyGeneration");
+const {
+  activeReplyCounts,
+  cachedReplyGeneration,
+  resetAiChatReplyCache,
+} = await import("../../../packages/cache/workers/aiChat/replies");
+const { trackReplyGenerationTask } = await import("../../../packages/workers/aiChat/replyGeneration");
 const {
   AI_MEMORY_MAX_CHATS,
+  REPLY_REFERENCE_MAX_CHARS,
   VERBATIM_CONTEXT_MAX,
 } = await import("../../../packages/consts/aiChat/memory");
+const { truncateInline } = await import("../../../packages/libs/text");
+const { formatTokyoTime } = await import("../../../packages/libs/time");
 
 function entry(text: string): BufferedMessage {
   return bufferedMessageFixture({ messageId: 1, id: 1, firstName: "Alice", lastName: "", text, at: "00:00" });
@@ -85,6 +92,87 @@ describe("AI rolling-memory capacity", () => {
       forwardedFrom: "[id:789] Carol",
       at: expect.any(String),
     });
+  });
+
+  test.each([1_024, 4_096])("长正文 %i 码元：各空白排版下的完整缓存条目与参考清洗逐字一致", (length) => {
+    const reference = (raw: string): string => raw.replace(/[\s\u0085]+/g, " ").trim();
+    const fixedNow: number = 1_789_596_000_000;
+    const unit: string = "今天讨论消息处理 and runtime costs🙂 群聊👨‍👩‍👧‍👦混排 ";
+    const base: string = `${unit.repeat(Math.ceil(length / unit.length)).slice(0, length - 1)}x`;
+    const layouts: Readonly<Record<string, (text: string) => string>> = {
+      canonical: (text: string): string => text,
+      head: (text: string): string => `\n${text.slice(1)}`,
+      middle: (text: string): string => `${text.slice(0, length / 2)}\n${text.slice(length / 2 + 1)}`,
+      tail: (text: string): string => `${text.slice(0, -2)}\n${text.slice(-1)}`,
+      dense: (text: string): string => [...text].map((character: string, index: number): string =>
+        index % 40 === 0 ? "\n" : index % 17 === 0 ? "\t" : index % 23 === 0 ? "  " : character
+      ).join(""),
+    };
+    for (const [layout, shape] of Object.entries(layouts)) {
+      const text: string = shape(base);
+      const replyText: string = shape(`${base.slice(1)}y`);
+      const quote: string = shape(base).slice(0, 128);
+      const built: BufferedMessage | null = buildBufferedMessage({
+        chatId: -1001,
+        senderId: 7,
+        firstName: layout === "canonical" ? "群聊成员" : " 群聊\n成员 ",
+        lastName: "Chen",
+        username: "@alice_007",
+        messageId: 40_000,
+        replyTo: aiReplyReferenceFixture({
+          messageId: 30_000,
+          id: 20_000,
+          firstName: "引用用户",
+          username: "reply_user",
+          text: replyText,
+          quote,
+        }),
+        forwardedFrom: layout === "canonical" ? undefined : "转发\n来源",
+        persistImmediately: false,
+      }, text, fixedNow);
+      const expected: BufferedMessage = bufferedMessageFixture({
+        messageId: 40_000,
+        id: 7,
+        firstName: "群聊 成员",
+        lastName: "Chen",
+        username: "alice_007",
+        text: reference(text),
+        replyTo: bufferedReplyReferenceFixture({
+          messageId: 30_000,
+          id: 20_000,
+          firstName: "引用用户",
+          username: "reply_user",
+          text: truncateInline(reference(replyText), REPLY_REFERENCE_MAX_CHARS),
+          quote: truncateInline(reference(quote), REPLY_REFERENCE_MAX_CHARS),
+        }),
+        forwardedFrom: layout === "canonical" ? undefined : "转发 来源",
+        at: formatTokyoTime(fixedNow),
+      });
+      if (layout === "canonical") expected.firstName = "群聊成员";
+      expect(built).toEqual(expected);
+      expect(Object.keys(built!)).toEqual(Object.keys(expected));
+      expect(Object.keys(built!.replyTo!)).toEqual(Object.keys(expected.replyTo!));
+    }
+  });
+
+  test("清洗后为空的正文丢弃，空白回复原文与 quote 归一为占位与 undefined", () => {
+    const source = {
+      chatId: -1001,
+      senderId: 1,
+      firstName: "Alice",
+      lastName: "",
+      username: undefined,
+      messageId: 10,
+      replyTo: aiReplyReferenceFixture({ text: " \n\u0085\t", quote: "\u3000 " }),
+      forwardedFrom: undefined,
+      persistImmediately: false,
+    };
+    for (const empty of ["", " ", "\n\u0085\u00a0", "\ufeff\u2028"]) {
+      expect(buildBufferedMessage(source, empty, 0)).toBeNull();
+    }
+    const built: BufferedMessage | null = buildBufferedMessage(source, "正文", 0);
+    expect(built?.replyTo?.text).toBe("[非文本消息]");
+    expect(built?.replyTo?.quote).toBeUndefined();
   });
 
   test("回复引用按单行清洗并去掉 username 的多余 @", () => {
@@ -155,7 +243,7 @@ describe("AI rolling-memory capacity", () => {
       chatLastActivityTimes.set(chatId, index);
     }
     const pending = Promise.withResolvers<void>();
-    trackReplyGenerationTask(-10_000, currentReplyGeneration(-10_000), pending.promise);
+    trackReplyGenerationTask(-10_000, cachedReplyGeneration(-10_000), pending.promise);
     try {
       expect(activeReplyCounts.has(-10_000)).toBe(false);
       pushBufferedMessage(-20_000, entry("new chat"));

@@ -328,7 +328,7 @@ async function removeQa(ctx: CommandContext<Context>, wanted: string): Promise<v
 }
 
 /**
- * 群 teardown / `/init disable`：收走该群全部未完成表单，并删掉已登记的问答。
+ * 群 teardown / `/init disable`：收走该群全部未完成表单，并在要删数据时删掉已登记的问答。
  *
  * 表单一律收走；问答只在本次 teardown 要删数据时删（见 libs/chatTeardown.ts 的
  * purgesChatData）。被撤管理员那一路只是暂时干不了活，问答必须原样留着——权限

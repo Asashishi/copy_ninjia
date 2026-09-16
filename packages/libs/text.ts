@@ -1,4 +1,9 @@
-import { INLINE_WHITESPACE_PATTERN, BIDI_CONTROL_PATTERN, LEADING_AT_SIGNS_PATTERN } from "../consts/text";
+import {
+  BIDI_CONTROL_PATTERN,
+  INLINE_SANITIZE_REQUIRED_PATTERN,
+  INLINE_WHITESPACE_PATTERN,
+  LEADING_AT_SIGNS_PATTERN,
+} from "../consts/text";
 /**
  * 拼进机器人自己文案的那些文本的共用处理：清洗（压成单行、剥双向控制符、
  * 中和可点击命令）、按字形簇切分，以及把 Telegram 的姓名字段拼成展示名。
@@ -12,68 +17,17 @@ import { graphemeSegmenterHolder } from "../cache/perThread/text";
 import { neutralizeRenderableCommands } from "./renderableCommand";
 
 /**
- * 单个码元是否属于 `INLINE_WHITESPACE_PATTERN` 的字符类。
- *
- * 取值集合就是 ECMAScript 的 `\s`（WhiteSpace、LineTerminator 与 Zs 的并集）
- * 外加 NEL，与上面那个正则的字符类**必须逐字相同**：这里说「不用改」而 `replace`
- * 其实会改的话，未折叠的换行就原样活到转录里，下面 sanitizeInline 的防注入契约
- * 当场失效。这份等价性由 test/libs/text.test.ts 对全 BMP 逐码元与正则对拍锁住。
- *
- * 先判普通空格，再判 ASCII 控制段，最后才进 0x85 之上那批稀疏取值：正常文本里
- * 出现的空白几乎全是普通空格，而绝大多数码元在第二个比较处就走开。
- */
-function isInlineWhitespaceCode(code: number): boolean {
-  if (code === 0x20) return true;
-  if (code >= 0x09 && code <= 0x0d) return true;
-  if (code < 0x85) return false;
-  return code === 0x85 || code === 0xa0 || code === 0x1680 ||
-    (code >= 0x2000 && code <= 0x200a) || code === 0x2028 || code === 0x2029 ||
-    code === 0x202f || code === 0x205f || code === 0x3000 || code === 0xfeff;
-}
-
-/**
- * 「这串还需要规范化吗」的前置判定，命中任一条即说明 sanitizeInline 会改动它：
- * 首空白、尾空白、连续空白、非普通空格的空白（换行/制表等）、NEL。
- *
- * 前置判定用于省掉规范文本的整串重建：`INLINE_WHITESPACE_PATTERN`
- * 连单个空格也匹配，因此任何含空格的正常文本都会被 `replace` 整串重建一遍，
- * 哪怕把空格换成空格是个空操作。规范输入原样返回，不分配新字符串。
- * 这个函数在每条消息上要跑 4~5 次（见 workers/aiChat/bufferedMessage.ts）。
- *
- * 四条判据合在同一趟码元扫描里收口：
- * - 空白且不是普通空格（换行、制表、NEL 等）一命中就返回，这一支同时兜住 NEL；
- * - 普通空格落在首位或末位，即首空白与尾空白；
- * - 普通空格紧跟另一个空白，即连续空白（此时两者必然都是普通空格，只要有一个
- *   不是，上一支已经先命中了）。
- */
-function needsInlineSanitize(raw: string): boolean {
-  const length: number = raw.length;
-  let previousWasWhitespace: boolean = false;
-  for (let index: number = 0; index < length; index += 1) {
-    const code: number = raw.charCodeAt(index);
-    if (!isInlineWhitespaceCode(code)) {
-      previousWasWhitespace = false;
-      continue;
-    }
-    if (code !== 0x20) return true;
-    if (index === 0 || index === length - 1) return true;
-    if (previousWasWhitespace) return true;
-    previousWasWhitespace = true;
-  }
-  return false;
-}
-
-/**
  * 把要写进转录的文本压成单行：所有空白串（含换行）折叠为一个空格。
  * 这是防转录注入的关键——转录按「一行 = 一条消息」拼装，若用户消息或
  * 自己改的昵称里带换行，就能伪造出「[id:x] 某人：……」的假发言行，
  * 给别人栽赃。折叠换行后一条消息永远只占一行，该向量彻底失效。
  * 同一条契约也护着广告判定的提示词（formatAdBundleText 按序号逐行拼装）。
  *
- * 已经是规范形态的串原样返回（同一个字符串对象，不重建），见上方前置判定。
+ * 未命中 INLINE_SANITIZE_REQUIRED_PATTERN 的规范输入原样返回；命中时折叠空白并去掉首尾空白。
+ * 本函数在每条进滚动记忆的消息上调用 4~5 次（见 workers/aiChat/bufferedMessage.ts）。
  */
 export function sanitizeInline(raw: string): string {
-  if (!needsInlineSanitize(raw)) return raw;
+  if (!INLINE_SANITIZE_REQUIRED_PATTERN.test(raw)) return raw;
   return raw.replace(INLINE_WHITESPACE_PATTERN, " ").trim();
 }
 

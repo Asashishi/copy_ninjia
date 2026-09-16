@@ -39,6 +39,10 @@ export interface RoundsOptions {
   readonly label: string;
   readonly seedMode: "cold-start" | "chain" | "none";
   readonly args: readonly string[];
+  /** 追加到测量子进程的环境变量；两个根目录变量始终以本轮隔离根为准。 */
+  readonly env?: Readonly<Record<string, string>>;
+  /** 每轮测量子进程成功后收到其 stderr，按轮次顺序调用；播种子进程不经过它。 */
+  readonly onStderr?: (stderr: string) => void;
 }
 
 const DEFAULT_SECTION_DEPENDENCIES: SectionDependencies = {
@@ -116,7 +120,7 @@ async function seedRuntimeRoot({
 /** 每轮使用新数据根，记录删除前足迹，并在成功或失败后统一清理。 */
 export async function runRounds<TRound>(
   context: SectionContext,
-  { label, seedMode, args }: RoundsOptions
+  { label, seedMode, args, env = {}, onStderr }: RoundsOptions
 ): Promise<readonly TRound[]> {
   const rounds: TRound[] = [];
   const dependencies: SectionDependencies =
@@ -136,8 +140,9 @@ export async function runRounds<TRound>(
       context.onProgress(`${label} ${round + 1}/${context.rounds}`);
       rounds.push(await dependencies.spawnJsonChild<TRound>({
         args,
-        env: childEnv(runtimeRoot, context.configRoot),
+        env: { ...env, ...childEnv(runtimeRoot, context.configRoot) },
         label,
+        onStderr,
       }));
     } finally {
       context.recordFootprint(dependencies.measureDirectoryFootprint(runtimeRoot));

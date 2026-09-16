@@ -1,26 +1,11 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { updateScopeStorage } from "../cache/perThread/updateContext";
+import type { UpdateScope } from "../types/lifecycle";
 
 /**
- * 一条 update 的取消边界，以及它统一的「现在」。
- *
- * `now` 惰性填充：第一次有人问「现在几点」时取一次墙钟，此后同一条 update 的
- * 全部调用点复用它（见 updateNow）。不在进入作用域时就取，是因为
- * callback_query、inline_query、chat_member 这些 update 一次都不问，预先取一次
- * 就是白付一次时钟读取。
+ * 一条 update 的取消边界与统一时刻。app/updateRunner.ts 为每条 update 填入独立
+ * signal；wed/runtime.ts 在交互出队时恢复接纳时的信号并合入自己的停机边界。存储
+ * 实例见 cache/perThread/updateContext.ts，Worker isolate 不共享主线程的作用域。
  */
-interface UpdateScope {
-  readonly signal: AbortSignal;
-  /** `null` 表示本条 update 还没有任何调用点问过时刻，不表示时刻为零。 */
-  now: number | null;
-}
-
-/**
- * 主线程异步取消上下文。app/updateRunner.ts 为每条 update 填入独立 signal；
- * wed/runtime.ts 在交互出队时恢复接纳时的信号并合入自己的停机边界。
- * run 返回后退出调用方上下文，异步子任务继续持有各自的 signal；Worker isolate 不共享本存储。
- */
-const updateScopeStorage: AsyncLocalStorage<UpdateScope> =
-  new AsyncLocalStorage<UpdateScope>();
 
 /** 在指定取消上下文中执行 middleware 或已经接纳的异步交互。 */
 export function runWithUpdateAbortSignal<T>(

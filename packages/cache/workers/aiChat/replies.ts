@@ -10,8 +10,10 @@ import type { QueuedReplyTrigger, ReplyDeliveryWindow } from "../../../types/aiC
  * owner：AI Worker。回复调度的内存状态由本线程的回复流水线共同驱动：
  * packages/workers/aiChat/replyQueue.ts（排队/溢出提示消费）、replyRound.ts
  * （并发位与长窗口触发时刻）、replyPipeline.ts（在途计数读取/溢出提示登记）、
- * replyDelivery.ts（发送顺位桶）、replyState.ts（代际读取、限频提示冷却）；失效与整体重置经
- * cache/workers/aiChat/index.ts 的门面函数，由 replyState.ts 与 rollingMemory.ts 调用。
+ * replyDelivery.ts（发送顺位桶）、replyState.ts（限频提示冷却）；回复轮、限频提示、
+ * 媒体描述与记忆压缩的发起方直接调用 cachedReplyGeneration 读取代际、调用
+ * isCachedReplyGenerationCurrent 核对代际；失效与整体重置经
+ * cache/workers/aiChat/index.ts 的门面函数，由 replyGeneration.ts 与 rollingMemory.ts 调用。
  */
 
 /**

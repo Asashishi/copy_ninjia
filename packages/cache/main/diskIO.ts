@@ -36,7 +36,7 @@ import type { BlocklistIdPage } from "../../types/identityStorage";
  * 磁盘 IO 宿主（packages/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。
  *
  * 本目录里唯一一个会被别的线程一并加载的模块，也是线程归属检查里唯一一条豁免
- * （见 scripts/checkProjectConventions.ts）：infra/logger.ts 静态 import
+ * （见 scripts/conventions/cacheOwnership.ts 的 CACHE_OWNER_EXEMPTIONS）：infra/logger.ts 静态 import
  * infra/diskIO.ts 取 relayLogMessage，而每条线程都要能记日志。Worker isolate
  * 里这份状态**恒为初始值**——只有主线程会 initDiskIO 填 worker 句柄，Worker 侧的
  * error 日志走 postMessage 信封回主线程再转投（见 infra/logger.ts 模块头注），

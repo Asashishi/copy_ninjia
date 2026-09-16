@@ -40,10 +40,6 @@ async function tryUnlink(path: string): Promise<void> {
   }
 }
 
-function assertPersistedFileWritable(path: string): void {
-  assertFileReadableWritable(path);
-}
-
 /** 贴纸目录快照的 inspect 结果：待载入的快照、孤儿快照与 *.tmp 残留三类路径。 */
 export interface StickerCatalogRecoveryInspection {
   readonly snapshots: Map<string, string>;
@@ -52,13 +48,13 @@ export interface StickerCatalogRecoveryInspection {
 }
 
 /**
- * 启动恢复的只读阶段：严格校验 memory/stickers/ 下每个贴纸包的目录快照，把它们
- * 归类成待载入快照、孤儿快照与临时文件残留。本函数不写盘、不删除。机制与
- * 其它快照领域基本一致，只是文件名使用 pack short name；多一步 activePacks
- * 对账——config/stickers.json 的白名单已经不包含的包记为孤儿，不载入内存，
- * 也就不会让 aiChat/ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个已下架包的
- * 旧描述去匹配群友发的贴纸。删除由全域校验成功后的 maintainStickerCatalogFiles
- * 执行。
+ * 跨域启动第一阶段（只读）：严格校验 memory/stickers/ 下每个贴纸包的目录快照
+ * （孤儿快照同样先严格解码），把它们归类成待载入快照、孤儿快照与临时文件残留。
+ * 本函数不写盘、不删除。机制与其它快照领域基本一致，只是文件名使用 pack short
+ * name；多一步 activePacks 对账——config/stickers.json 的白名单已经不包含的包
+ * 记为孤儿，不载入内存，也就不会让 aiChat/ai/stickers/catalog.ts 的
+ * getCatalogEntry 继续拿一个已下架包的旧描述去匹配群友发的贴纸。删除由全域
+ * 校验成功后的 maintainStickerCatalogFiles 执行。
  * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
  *   config/stickers.ts），用于判定哪些持久化文件已经是孤儿；null 表示白名单缺省，
  *   全部现存快照照常载入，不判孤儿。
@@ -84,7 +80,7 @@ export async function inspectStickerCatalogs(
     if (!STICKER_PACK_NAME_PATTERN.test(pack)) {
       return invalidInput(path, "$filename", "the canonical <stickerPackShortName>.json form");
     }
-    assertPersistedFileWritable(path);
+    assertFileReadableWritable(path);
     const parsed: unknown = await readJsonInput(path);
     const snapshot: StickerCatalogSnapshot = decodeStickerCatalogSnapshot(parsed, path);
     if (activePackSet !== null && !activePackSet.has(pack)) {
@@ -114,7 +110,8 @@ export function writeStickerCatalogFile(pack: string, snapshotJson: string): voi
 }
 
 /**
- * 删除 memory/luck/ 下早于 todayKey 的 YYYY-MM-DD.json；非规范或未来文件拒绝清理。
+ * 返回 memory/luck/ 下早于 todayKey 的 YYYY-MM-DD.json 路径，删除由
+ * cleanupStaleLuckFiles 执行；非规范或未来的日期文件直接拒绝。
  */
 function inspectStaleLuckFiles(
   todayKey: string,
@@ -169,10 +166,11 @@ export interface LuckDayRecoveryInspection {
 }
 
 /**
- * 启动恢复：建目录、清 *.tmp 残留（防御性——追加写不产生 .tmp，清一次
- * 挡住外部干预留下的残留）、删除所有非今天的日期文件，只关心今天那份
- * （不存在则返回 null）。先严格校验 JSON、领域 schema 与容量，再接管追加
- * 游标；任何不规范内容都阻止启动并保留原文件，等待人工处理。
+ * 跨域启动第一阶段（只读）：恢复当天结果与追加游标。收集 memory/luck/ 下的
+ * *.tmp 残留路径，校验按日文件名（非规范的 *.json 或晚于 todayKey 的日期文件
+ * 拒绝启动），只载入今天那份（不存在时 cache 与 fileState 为 null）。先严格
+ * 校验 JSON、领域 schema 与容量，再接管追加游标；任何不规范内容都阻止启动并
+ * 保留原文件，等待人工处理。本函数不建目录、不删除，清理由 maintainLuckDay 执行。
  */
 export async function inspectLuckDay(
   todayKey: string

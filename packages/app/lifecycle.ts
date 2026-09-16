@@ -497,7 +497,3 @@ export class ApplicationLifecycle {
     });
   }
 }
-
-export function createApplicationLifecycle(): ApplicationLifecycle {
-  return new ApplicationLifecycle();
-}

@@ -67,9 +67,10 @@ export function admitAdRequeue(input: AdRequeueInput): AdRequeueDecision {
  * 消息不占新名额，由调用方按 `existing !== undefined` 直接跳过本闸。
  *
  * 只读标量、不构造决策对象：判定跑在每条开着广告检测的群消息上，要能在清洗
- * 正文、URL 和引用上下文之前零载荷分配早退。全线程只有 enqueueAdCandidate
- * 一处问它（见 workers/antiRaid/adDetect/queue.ts），问完即已决定去留，
- * storeBundle 不再重复判一次。
+ * 正文、URL 和引用上下文之前零载荷分配早退。全线程只经
+ * workers/antiRaid/adDetect/queueState.ts 的 rejectNewAdBundleAtCapacity 问它，
+ * 调用方只有 enqueueAdCandidate 的两道入队闸；问完即已决定去留，storeBundle
+ * 不再重复判一次。
  */
 export function isNewAdBundleAtCapacity(pendingSize: number): boolean {
   return pendingSize >= AD_DETECT_MAX_PENDING_SENDERS;

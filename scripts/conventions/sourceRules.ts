@@ -186,7 +186,7 @@ export function collectObjectFreezeProblems({
   return problems;
 }
 
-/** 模块级 Map/Set/holder 必须声明在带 owner 的 `packages/cache/<owner>/` 下。 */
+/** 模块级 Map/Set/AsyncLocalStorage/holder 必须声明在带 owner 的 `packages/cache/<owner>/` 下。 */
 export function collectModuleCacheProblems({
   projectRoot,
   path,

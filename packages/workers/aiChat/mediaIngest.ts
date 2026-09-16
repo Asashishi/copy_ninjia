@@ -1,17 +1,16 @@
 import { sanitizeInline } from "../../libs/text";
-import { displayBufferedMessageName } from "../../aiChat/ai/utils/chatTranscript";
+import { displaySpeakerName } from "../../aiChat/ai/utils/chatTranscript";
 import { getCatalogEntry } from "../../aiChat/ai/stickers/catalog";
 import { describeMedia } from "../../aiChat/ai/imageDescription";
 import { dirtyMemoryChats } from "../../cache/workers/aiChat/memory";
+import { cachedReplyGeneration, isCachedReplyGenerationCurrent } from "../../cache/workers/aiChat/replies";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import type { AiRecordMediaMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
 import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
 import { buildBufferedMessage } from "./bufferedMessage";
 import { pushBufferedMessage } from "./rollingMemory";
 import {
-  currentReplyGeneration,
   generateAndSendReply,
-  isReplyGenerationCurrent,
   replyGenerationSignal,
   trackReplyGenerationTask,
 } from "./replyPipeline";
@@ -42,7 +41,7 @@ function mediaCommentFor(msg: AiRecordMediaMessage, entry: BufferedMessage, desc
   return {
     kind: msg.kind,
     senderId: entry.id,
-    senderName: displayBufferedMessageName(entry),
+    senderName: displaySpeakerName(entry),
     description,
     triggerText: entry.text,
     triggerReference: replyReferenceForBufferedEntry(msg.messageId, entry),
@@ -60,7 +59,7 @@ function mediaCommentFor(msg: AiRecordMediaMessage, entry: BufferedMessage, desc
  * 顺位、取消与有界容量约束见 docs/cn/04-invariants.md。
  */
 export function recordChatMedia(msg: AiRecordMediaMessage): void {
-  const generation: number = currentReplyGeneration(msg.chatId);
+  const generation: number = cachedReplyGeneration(msg.chatId);
   const signal: AbortSignal = replyGenerationSignal(msg.chatId, generation);
   const sanitizedCaption: string = sanitizeInline(msg.caption);
   const imageGenerationReference: ImageGenerationReference | undefined = imageGenerationReferenceFor(msg);
@@ -123,7 +122,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     voiceDurationSeconds: msg.voiceDurationSeconds,
     signal,
   }).then((description: string | null): void => {
-    if (!isReplyGenerationCurrent(msg.chatId, generation)) return;
+    if (!isCachedReplyGenerationCurrent(msg.chatId, generation)) return;
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     dirtyMemoryChats.add(msg.chatId);
     if (preparation && (msg.directTriggerReason !== undefined || description)) {

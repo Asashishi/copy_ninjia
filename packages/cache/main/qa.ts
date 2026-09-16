@@ -7,7 +7,8 @@ import type { QaFormSession } from "../../types/qa";
  * `/qa set`、`/qa remove` 写它，写完再投给 Disk I/O Worker 落盘。
  *
  * **填充**：启动时由 Disk I/O Worker 的 hydrate 结果整表灌入。
- * **清理**：`/qa remove` 删单条；群 teardown 删整群；进程重启后从 SQLite 重建。
+ * **清理**：`/qa remove` 删单条；`/init disable` 与离群的 teardown 删整群，失权停管的
+ * teardown 原样保留（见 libs/chatTeardown.ts 的 purgesChatData）；进程重启后从 SQLite 重建。
  * **容量**：受管群不超过 STATE_MANAGED_CHAT_LIMIT，每群不超过 CHAT_QA_MAX_PER_CHAT，
  * 因此整表恒定不超过 375 条，不需要淘汰策略。一群的最后一条被删除后外层随之
  * 移除，空 Map 不留存。
@@ -52,10 +53,8 @@ export const nextChatQaRevision: { current: number } = { current: 1 };
 /**
  * 整表复位；不触碰 SQLite，只清进程内状态。
  *
- * **仅供测试隔离**，生产没有调用方：`/init disable` 的语义是「本天才不再管这个
- * 群」，已登记的问答是部署方写下的配置，重新 enable 之后应当照旧生效（见
- * commands/qa.ts 的 teardownQaInChat——它只收表单，不删问答）。真要删得走
- * /qa remove。
+ * **仅供测试隔离**，生产没有调用方。生产侧删除问答只经 `/qa remove` 与
+ * commands/qa.ts 的 teardownQaInChat，两者都同时投递落盘删除。
  */
 export function resetChatQaCache(): void {
   chatQaEntries.clear();

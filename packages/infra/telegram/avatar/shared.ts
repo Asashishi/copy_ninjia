@@ -1,10 +1,39 @@
 import { InputFile } from "grammy";
-import { BOT_PROFILE_PHOTO_FILE_NAME } from "../../../consts/telegram";
+import {
+  AVATAR_FETCH_MAX_ATTEMPTS,
+  BOT_PROFILE_PHOTO_FILE_NAME,
+} from "../../../consts/telegram";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
 import { bot } from "../mainClient";
 
 /** 单次头像操作的结果：区分可重试故障与确定性失败。 */
 export type AvatarOperationAttemptResult = "ok" | "transient-failure" | "permanent-failure";
+
+/** 有界头像重试的最终结果；`aborted` 表示某次尝试开始前取消信号已经触发。 */
+export type AvatarFetchAttemptsOutcome = "ok" | "failed" | "aborted";
+
+/**
+ * 按 AVATAR_FETCH_MAX_ATTEMPTS 有界重试一次头像操作，复制目标头像与复原默认
+ * 头像两条路径共用。
+ *
+ * 每次尝试开始前检查取消信号，已取消时返回 `aborted` 且不再调用 `attempt`；
+ * `ok` 立即返回，`permanent-failure` 不再重试并返回 `failed`，
+ * `transient-failure` 进入下一次，次数用尽后返回 `failed`。逐次失败日志由
+ * `attempt` 自己记录。
+ * @param attempt 接收从 1 开始的尝试序号。
+ */
+export async function runAvatarFetchAttempts(
+  attempt: (attemptNumber: number) => Promise<AvatarOperationAttemptResult>,
+  signal?: AbortSignal
+): Promise<AvatarFetchAttemptsOutcome> {
+  for (let attemptNumber: number = 1; attemptNumber <= AVATAR_FETCH_MAX_ATTEMPTS; attemptNumber++) {
+    if (signal?.aborted) return "aborted";
+    const result: AvatarOperationAttemptResult = await attempt(attemptNumber);
+    if (result === "ok") return "ok";
+    if (result === "permanent-failure") return "failed";
+  }
+  return "failed";
+}
 
 /**
  * 把一段图片字节换成机器人头像。三条头像路径（复制目标头像、t.me 页面兜底、

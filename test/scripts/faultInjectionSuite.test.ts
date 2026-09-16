@@ -1,8 +1,9 @@
 /**
  * `test:fault-injection` 清单门禁：清单是这套套件的唯一权威，漏登记不会让别的门禁
- * 变红，只会让合入前跑的那一套无声变窄。这里钉住四条判据：真实仓库现状必须干净、
- * 声明路径必须存在且不重复、使用受约束 harness 的用例必须登记（含
- * `await import()` 形态）、harness 自身改名后判定必须失败而不是静默放过。
+ * 变红，只会让合入前跑的那一套无声变窄。这里钉住五条判据：真实仓库现状必须干净、
+ * 声明路径必须存在且不重复、使用受约束边界的用例必须登记（含 `await import()`
+ * 形态）、限定导出的边界只在取用这些导出或无法确定取用范围时要求登记、边界自身
+ * 改名后判定必须失败而不是静默放过。
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -75,6 +76,91 @@ describe("fault-injection 清单门禁", (): void => {
   ])("纯类型与同名其它模块不扩大专项：%s", async (source) => {
     const root: string = await fixture({ tests: { "test/infra/types.test.ts": source } });
     expect(await collectFaultInjectionSuiteProblems(root)).toEqual([]);
+  });
+
+  const wholeModuleBoundaries: string[] = FAULT_INJECTION_BOUNDARIES
+    .filter((entry): boolean => entry.path.startsWith("packages/") && entry.exports === undefined)
+    .map((entry): string => entry.path);
+
+  test.each(wholeModuleBoundaries)("每个整模块生产边界：漏登记失败、补登记通过、纯类型引用不收：%s", async (boundary) => {
+    const path: string = "test/unit/boundary.test.ts";
+    const specifier: string = `../../${boundary.slice(0, -".ts".length)}`;
+    const valueImport: string = `const { marker } = await import("${specifier}");\nexport const used: number = marker;\n`;
+
+    const missing: string = await fixture({ tests: { [path]: valueImport } });
+    expect(await collectFaultInjectionSuiteProblems(missing)).toEqual([
+      expect.stringContaining(`${path} uses ${boundary}`),
+    ]);
+    const listed: string = await fixture({ listed: [path], tests: { [path]: valueImport } });
+    expect(await collectFaultInjectionSuiteProblems(listed)).toEqual([]);
+    const typeOnly: string = await fixture({
+      tests: { [path]: `import type { marker } from "${specifier}";\nexport type Used = typeof marker;\n` },
+    });
+    expect(await collectFaultInjectionSuiteProblems(typeOnly)).toEqual([]);
+  });
+
+  test.each([
+    'import { drainPendingMessageDeletions } from "../../packages/infra/telegram/actions";',
+    'import { sendMessage, flushPendingMessageDeletions as flush } from "../../packages/infra/telegram/actions";',
+    'import * as actions from "../../packages/infra/telegram/actions";\nawait actions.drainPendingMessageDeletions(0);',
+    'const actions = await import("../../packages/infra/telegram/actions");\nactions.flushPendingMessageDeletions();',
+    'const actions = await import("../../packages/infra/telegram/actions");\nawait actions["drainPendingMessageDeletions"](0);',
+    'const actions = await import("../../packages/infra/telegram/actions");\nregister(actions);',
+    'const actions = await import("../../packages/infra/telegram/actions");\nmock.module("x", () => actions);',
+    'const { flushPendingMessageDeletions: flush } = await import("../../packages/infra/telegram/actions");',
+    'const { sendMessage, ...rest } = await import("../../packages/infra/telegram/actions");',
+    'export * from "../../packages/infra/telegram/actions";',
+    'void import("../../packages/infra/telegram/actions").then((loaded) => loaded);',
+  ])("限定导出的边界：取用停机导出或无法确定取用范围时必须登记：%s", async (source) => {
+    const path: string = "test/infra/deletion.test.ts";
+    const root: string = await fixture({ tests: { [path]: source } });
+    expect(await collectFaultInjectionSuiteProblems(root)).toEqual([
+      expect.stringContaining(`${path} uses packages/infra/telegram/actions.ts`),
+    ]);
+  });
+
+  test.each([
+    'import { sendMessage, deleteMessageAfter } from "../../packages/infra/telegram/actions";',
+    'import { resetPendingMessageDeletions } from "../../packages/infra/telegram/actions/messageLifecycle";',
+    'const { deleteMessageWithOutcome } = await import("../../packages/infra/telegram/actions/messageLifecycle");',
+    'import "../../packages/infra/telegram/actions";',
+    'import type { drainPendingMessageDeletions } from "../../packages/infra/telegram/actions";',
+    'import { type drainPendingMessageDeletions, sendMessage } from "../../packages/infra/telegram/actions";',
+    'export { sendMessage } from "../../packages/infra/telegram/actions";',
+    'import * as actions from "../../packages/infra/telegram/actions";',
+    'const telegram = await import("../../packages/infra/telegram/actions");\nmock.module("x", () => ({ ...telegram, sendMessage }));',
+    'import * as actions from "../../packages/infra/telegram/actions";\nactions.sendMessage();\ntype Api = typeof actions;',
+    'const actions = await import("../../packages/infra/telegram/actions");\nconst other = { actions: 1 };\nvoid other.actions;',
+  ])("限定导出的边界：只取用其它导出时不扩大专项：%s", async (source) => {
+    const root: string = await fixture({ tests: { "test/infra/other.test.ts": source } });
+    expect(await collectFaultInjectionSuiteProblems(root)).toEqual([]);
+  });
+
+  test("目录入口按 index.ts 解析：取用停机导出必须登记，只取其它导出不扩大专项", async (): Promise<void> => {
+    const path: string = "test/infra/entry.test.ts";
+    const missing: string = await fixture({
+      tests: { [path]: 'import { drainPendingMessageDeletions } from "../../packages/infra/telegram";\n' },
+    });
+    expect(await collectFaultInjectionSuiteProblems(missing)).toEqual([
+      expect.stringContaining(`${path} uses packages/infra/telegram/index.ts`),
+    ]);
+    const unrelated: string = await fixture({
+      tests: { [path]: 'import { sendMessage } from "../../packages/infra/telegram";\n' },
+    });
+    expect(await collectFaultInjectionSuiteProblems(unrelated)).toEqual([]);
+  });
+
+  test("限定导出的叶子边界：漏登记失败，补登记后不再报告", async (): Promise<void> => {
+    const path: string = "test/infra/welcome.test.ts";
+    const tests: Readonly<Record<string, string>> = {
+      [path]: 'const { drainPendingMessageDeletions } = await import("../../packages/infra/telegram/actions/messageLifecycle");\n',
+    };
+    const missing: string = await fixture({ tests });
+    expect(await collectFaultInjectionSuiteProblems(missing)).toEqual([
+      expect.stringContaining(`${path} uses packages/infra/telegram/actions/messageLifecycle.ts`),
+    ]);
+    const listed: string = await fixture({ listed: [path], tests });
+    expect(await collectFaultInjectionSuiteProblems(listed)).toEqual([]);
   });
 
   test("真实仓库的清单已覆盖全部受约束 harness 的使用者", async (): Promise<void> => {

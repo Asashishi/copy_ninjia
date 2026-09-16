@@ -136,7 +136,7 @@
 - Anti-Raid Worker 独占验证/锁定状态机和对应计时器；主线程只持可恢复镜像。
 - Disk I/O Worker 独占日志、AI 记忆、贴纸目录、运势和待验证数据的持久化，在单一 Worker 线程内串行读写这些共享目录；`state.json` 是明确的例外，由主线程通过 `stateStore.ts` 门面调用 `statePersistence.ts` 中的 `StateStore` 异步维护。业务 Worker 不直接写共享目录。
 - 长期 Map、Set、队列和 timer 必须由对应 `packages/cache/` 模块与业务生命周期模块共同给出容量、清理和 Worker 重建语义。
-- **缓存的线程归属由目录名声明，并由门禁按真实模块图核对**。`packages/cache/` 的第一层就是这份状态的 owner 线程：`main/` 只属主线程，`workers/aiChat|antiRaid|diskIO/` 各属一条 Worker 线程，`perThread/` 是「每条线程各持一份、彼此无关」的状态（Telegram 能力 holder、Worker 双工 waiter、部署配置单例、自发消息登记）。
+- **缓存的线程归属由目录名声明，并由门禁按真实模块图核对**。`packages/cache/` 的第一层就是这份状态的 owner 线程：`main/` 只属主线程，`workers/aiChat|antiRaid|diskIO/` 各属一条 Worker 线程，`perThread/` 是「每条线程各持一份、彼此无关」的状态（Telegram 能力 holder、Worker 双工 waiter、部署配置单例、自发消息登记、update 取消上下文存储）。
 
   跨线程只传消息、不共享内存，因此**一份只属于某条线程的状态被另一条线程 import 就是错的**：Worker isolate 拿到的是同一份代码的另一个实例，写进去的东西对面永远读不到，静态上完全看不出来，运行起来只表现为「缓存莫名其妙不命中」。`bun run check:conventions` 从四个线程入口（`index.ts` 与三个 `*Worker.ts`）算运行时 import 闭包（`import type` 与 `new Worker(new URL(...))` 都不算边）逐个核对，违例时打印完整引入链。
 
@@ -672,7 +672,7 @@
 
   **开关本身也要在同一个临界区内复查一次**：判定跑在 Worker 侧，事件回投主线程后还要排过 identity 串行队列才轮到写名单，这中间完全可能夹进一条 `/ad_detect disable`——而它能清的只有 Worker 里还没判的那串，够不到一条已经发布出来的判定。不复查就会在开关关掉之后仍然把人写进永久黑名单、在所有托管群封禁并公开点名。复查必须紧挨着 `blockUser`：再往后就过了不可逆点，那时候撤只会留下一条既成事实的名单条目却没有任何执行。这是预期内的竞态结局，按普通日志记录，不占 protected sender 那条告警。
 
-  **白名单成员关系仍无条件保护永久黑名单**：判定结果回到主线程时，处置会在与 `/white`、`/block` 共用的 `runProtectedIdentityMutation` 临界区内重新调用 `isProtectedSender`。候选排队后刚加入白名单，或本来就在白名单但关闭了广告检测豁免，两种情况都拒绝 `blockUser`、跨群封禁与封禁播报；只有 Worker 已完成的本批消息删除保留。拿本群当皮套的匿名管理员（`sender_chat.id === chat.id`）同样跳过，理由同 `/block`：Telegram 不暴露皮套底下是谁，处置只会尝试封掉整个群身份。
+  **白名单成员关系仍无条件保护永久黑名单**：判定结果回到主线程时，处置会在与 `/white`、`/block` 共用的 `runProtectedIdentityMutation` 临界区内重新调用 `isWhitelisted`。候选排队后刚加入白名单，或本来就在白名单但关闭了广告检测豁免，两种情况都拒绝 `blockUser`、跨群封禁与封禁播报；只有 Worker 已完成的本批消息删除保留。拿本群当皮套的匿名管理员（`sender_chat.id === chat.id`）同样跳过，理由同 `/block`：Telegram 不暴露皮套底下是谁，处置只会尝试封掉整个群身份。
 
   **关联频道推进讨论组的自动转发（`is_automatic_forward`）与机器人自己帖子的回弹（`isBotOwnMessage`）也一律跳过**：那条消息的发送者是频道本身，处置会走 `userId < 0` 分支在每个托管群 `banChatSenderChat`——因为频道自己的一条推广贴，整个评论区被连根拔掉；机器人发在自己频道里的帖子回弹进来时更是能把自己的频道拉黑。频道贴该不该发由频道管理员决定，不归讨论组的广告检测管。
 

@@ -59,7 +59,6 @@ import {
 } from "../../../cache/workers/antiRaid/adDetect";
 import {
   AD_DETECT_BATCH_SIZE,
-  AD_DETECT_MAX_PENDING_SENDERS,
   AD_DETECT_MESSAGE_MAX_CHARS,
   AD_DETECT_QUEUE_TICK_MS,
 } from "../../../consts/antiRaid/adDetect";
@@ -84,7 +83,6 @@ import {
 import {
   expireAdDetectDisposalMarkers,
   hasActiveAdDisposalMarker,
-  noteAdDetectCapacitySaturation,
   noteAdDetectSaturation,
   refreshAdDetectCapacitySaturation,
   rejectNewAdBundleAtCapacity,
@@ -127,11 +125,8 @@ export function enqueueAdCandidate(
     existing === undefined &&
     !message.blocked &&
     !message.isChannel &&
-    pendingAdMessages.size >= AD_DETECT_MAX_PENDING_SENDERS
-  ) {
-    noteAdDetectCapacitySaturation(true);
-    return;
-  }
+    rejectNewAdBundleAtCapacity()
+  ) return;
   const recentlyDisposed: boolean = hasActiveAdDisposalMarker(key);
   // 新普通 key 满载时不可以先分配清洗正文、URL 串和引用上下文。
   // blocked/recentlyDisposed 的频道马甲例外必须继续读正文，非空时要删掉尾随广告。

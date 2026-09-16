@@ -146,7 +146,7 @@ export function noteAdDetectSaturation(saturated: boolean): void {
 }
 
 /** 记录待检 key 容量撞满/恢复的边沿，避免每条被拒消息都刷一行日志。 */
-export function noteAdDetectCapacitySaturation(saturated: boolean): void {
+function noteAdDetectCapacitySaturation(saturated: boolean): void {
   if (saturated === adDetectCapacitySaturated.current) return;
   adDetectCapacitySaturated.current = saturated;
   logger.error(saturated
@@ -159,6 +159,6 @@ export function noteAdDetectCapacitySaturation(saturated: boolean): void {
 /** 按待检表的现场刷新容量状态；它是唯一一张会撞上接纳硬顶的表。 */
 export function refreshAdDetectCapacitySaturation(): void {
   noteAdDetectCapacitySaturation(
-    pendingAdMessages.size >= AD_DETECT_MAX_PENDING_SENDERS
+    isNewAdBundleAtCapacity(pendingAdMessages.size)
   );
 }

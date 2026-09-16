@@ -1,6 +1,6 @@
 import { startChatActionHeartbeat } from "../../chatActionHeartbeat";
 import { logger } from "../../../../infra/logger";
-import { settleInflight, trackInflight } from "../../../../libs/inflight";
+import { trackInflight } from "../../../../libs/inflight";
 import { raceAbort } from "../../../../libs/abortSignal";
 import type { ChatActionHeartbeatControl } from "../../../../types/aiChat/chatAction";
 import type { PreparedReplyAction, ReplyActionChains, ReplyToolContext } from "../../../../types/aiChat/replies";
@@ -52,7 +52,9 @@ export function createReplyActionChains(
       tail = task;
       void trackInflight(inflight, task);
     },
-    settle: (): Promise<void> => settleInflight(inflight),
+    settle: async (): Promise<void> => {
+      await Promise.allSettled(inflight);
+    },
     completed: (): number => completed,
   };
 }

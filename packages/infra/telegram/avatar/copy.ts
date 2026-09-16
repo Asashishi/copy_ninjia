@@ -10,8 +10,11 @@ import { bot } from "../mainClient";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
 import { downloadAvatarFile } from "./download";
 import type { AvatarDownloadResult } from "../../../types/telegram";
-import { setBotProfilePhoto } from "./shared";
-import type { AvatarOperationAttemptResult } from "./shared";
+import { runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
+import type {
+  AvatarFetchAttemptsOutcome,
+  AvatarOperationAttemptResult,
+} from "./shared";
 import {
   extractPublicUsername,
   fetchAvatarFromWebProfile,
@@ -120,13 +123,18 @@ export async function copyUserProfilePhoto(
   options: CopyUserProfilePhotoOptions = {}
 ): Promise<boolean> {
   const { username, signal }: CopyUserProfilePhotoOptions = options;
-  for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
-    if (signal?.aborted) return false;
-    const result: AvatarOperationAttemptResult = await attemptCopyUserProfilePhoto(targetId, isChannel, signal);
-    if (result === "ok") return true;
-    logger.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
-    if (result === "permanent-failure") break;
-  }
+  const outcome: AvatarFetchAttemptsOutcome = await runAvatarFetchAttempts(
+    async (attempt: number): Promise<AvatarOperationAttemptResult> => {
+      const result: AvatarOperationAttemptResult = await attemptCopyUserProfilePhoto(targetId, isChannel, signal);
+      if (result !== "ok") {
+        logger.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
+      }
+      return result;
+    },
+    signal
+  );
+  if (outcome === "ok") return true;
+  if (outcome === "aborted") return false;
 
   // 抓取目标只认 getChat 现查的结果，绝不用调用方给的那个。provided 值来自
   // reply_to_message（可能是三个月前的消息）或身份缓存，而 Telegram 用户名释放

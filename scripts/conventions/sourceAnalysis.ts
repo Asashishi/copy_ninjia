@@ -19,6 +19,154 @@ export function isRuntimeModuleEdge(node: ts.ImportDeclaration | ts.ExportDeclar
     bindings.elements.some((element: ts.ImportSpecifier): boolean => !element.isTypeOnly);
 }
 
+/**
+ * 一处运行期模块引用。`names` 是取用的导出名（默认导出记为 `default`）；命名空间
+ * 绑定取其属性访问。命名空间被整体传出、`export *`、结果未绑定的动态导入等无法
+ * 静态确定取用范围的形态记为 null。
+ */
+export interface RuntimeModuleReference {
+  readonly specifier: string;
+  readonly names: readonly string[] | null;
+  /** 引用节点在源文件中的起始位置，供报告行号。 */
+  readonly start: number;
+}
+
+/** 静态字符串字面量说明符；模板插值与动态表达式不参与判定。 */
+function literalSpecifier(node: ts.Expression | undefined): string | undefined {
+  if (node === undefined) return undefined;
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return undefined;
+}
+
+/** 标识符是否只出现在类型位置（如 `typeof ns`），这类引用在运行期被擦除。 */
+function isInTypePosition(node: ts.Node): boolean {
+  for (let parent: ts.Node | undefined = node.parent; parent !== undefined; parent = parent.parent) {
+    if (ts.isTypeNode(parent)) return true;
+    if (ts.isStatement(parent) || ts.isSourceFile(parent)) return false;
+  }
+  return false;
+}
+
+/** 标识符是否只是属性访问、对象字面量或类成员里的成员名。 */
+function isMemberName(node: ts.Identifier): boolean {
+  const parent: ts.Node = node.parent;
+  return (ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent) ||
+    ts.isPropertyDeclaration(parent) || ts.isMethodDeclaration(parent) ||
+    ts.isPropertySignature(parent)) && parent.name === node;
+}
+
+/**
+ * 命名空间绑定在本文件里取用的属性名：`ns.x` 与 `ns["x"]` 记名，展开进对象字面量
+ * （`{ ...ns }`）只是转交替身、不记名；被整体传出或以其它方式使用时返回 null。
+ * 按标识符文本匹配，不区分同名遮蔽。
+ */
+function namespaceMemberNames(source: ts.SourceFile, binding: ts.Identifier): readonly string[] | null {
+  const names: string[] = [];
+  let opaque: boolean = false;
+  const visit = (node: ts.Node): void => {
+    if (opaque) return;
+    if (ts.isIdentifier(node) && node !== binding && node.text === binding.text && !isInTypePosition(node)) {
+      const parent: ts.Node = node.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.expression === node) {
+        names.push(parent.name.text);
+      } else if (
+        ts.isElementAccessExpression(parent) && parent.expression === node &&
+        (ts.isStringLiteral(parent.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(parent.argumentExpression))
+      ) {
+        names.push(parent.argumentExpression.text);
+      } else if (isMemberName(node)) {
+        // `other.ns`、`{ ns: 1 }` 里的同名属性名不是对绑定的引用。
+      } else if (!ts.isSpreadAssignment(parent)) {
+        opaque = true;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return opaque ? null : names;
+}
+
+/** `import()` / `require()` 的结果被解构时取出属性名，绑定为命名空间时取其属性访问；其余用法按整模块计。 */
+function loadedBindingNames(source: ts.SourceFile, call: ts.CallExpression): readonly string[] | null {
+  let node: ts.Node = call;
+  while (
+    ts.isAwaitExpression(node.parent) ||
+    ts.isParenthesizedExpression(node.parent) ||
+    ts.isAsExpression(node.parent) ||
+    ts.isSatisfiesExpression(node.parent) ||
+    ts.isNonNullExpression(node.parent)
+  ) {
+    node = node.parent;
+  }
+  const declaration: ts.Node = node.parent;
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer !== node) return null;
+  if (ts.isIdentifier(declaration.name)) return namespaceMemberNames(source, declaration.name);
+  if (!ts.isObjectBindingPattern(declaration.name)) return null;
+  const names: string[] = [];
+  for (const element of declaration.name.elements) {
+    if (element.dotDotDotToken !== undefined) return null;
+    const property: ts.PropertyName | ts.BindingName = element.propertyName ?? element.name;
+    if (!ts.isIdentifier(property) && !ts.isStringLiteral(property)) return null;
+    names.push(property.text);
+  }
+  return names;
+}
+
+/**
+ * 取出一个模块的全部运行期模块引用：静态 `import`/`export … from`、`import()` 与
+ * `require()`。纯类型引用被擦除，不进入结果；只认 AST 节点，字符串夹具里的路径
+ * 不会被误判成引用。`source` 必须带父节点指针解析（`setParentNodes: true`）。
+ */
+export function runtimeModuleReferences(source: ts.SourceFile): readonly RuntimeModuleReference[] {
+  const references: RuntimeModuleReference[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node)) {
+      const specifier: string | undefined = literalSpecifier(node.moduleSpecifier);
+      if (specifier === undefined || !isRuntimeModuleEdge(node)) return;
+      const clause: ts.ImportClause | undefined = node.importClause;
+      const bindings: ts.NamedImportBindings | undefined = clause?.namedBindings;
+      if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+        references.push({ specifier, names: namespaceMemberNames(source, bindings.name), start: node.getStart(source) });
+        return;
+      }
+      const names: string[] = clause?.name === undefined ? [] : ["default"];
+      for (const element of bindings?.elements ?? []) {
+        if (!element.isTypeOnly) names.push((element.propertyName ?? element.name).text);
+      }
+      references.push({ specifier, names, start: node.getStart(source) });
+      return;
+    }
+    if (ts.isExportDeclaration(node)) {
+      const specifier: string | undefined = literalSpecifier(node.moduleSpecifier);
+      if (specifier === undefined || !isRuntimeModuleEdge(node)) return;
+      const clause: ts.NamedExportBindings | undefined = node.exportClause;
+      if (clause === undefined || !ts.isNamedExports(clause)) {
+        references.push({ specifier, names: null, start: node.getStart(source) });
+        return;
+      }
+      const names: string[] = [];
+      for (const element of clause.elements) {
+        if (!element.isTypeOnly) names.push((element.propertyName ?? element.name).text);
+      }
+      references.push({ specifier, names, start: node.getStart(source) });
+      return;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+    ) {
+      const specifier: string | undefined = literalSpecifier(node.arguments[0]);
+      if (specifier !== undefined) {
+        references.push({ specifier, names: loadedBindingNames(source, node), start: node.getStart(source) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return references;
+}
+
 /** 递归读取目录下的 TypeScript 源文件。 */
 export function sourceFilesUnder(root: string): string[] {
   const files: string[] = [];
@@ -81,16 +229,21 @@ export function isObjectFreezeCall(expression: ts.Expression): boolean {
     expression.expression.name.text === "freeze";
 }
 
+/** 实例本身跨调用保存运行时状态的构造器；RegExp、Intl 格式化器等无状态句柄不在此列。 */
+const MODULE_CACHE_CONSTRUCTORS: readonly string[] = [
+  "Map", "Set", "WeakMap", "WeakSet", "AsyncLocalStorage",
+];
+
 /**
- * 模块顶层 Map/Set 与 holder 都是跨调用长期存活的状态，必须进入带 owner 的
- * packages/cache/。consts 下的 ReadonlySet 是静态查找表，不属于运行时缓存。
+ * 模块顶层 Map/Set、AsyncLocalStorage 与 holder 都是跨调用长期存活的状态，必须进入
+ * 带 owner 的 packages/cache/。consts 下的 ReadonlySet 是静态查找表，不属于运行时缓存。
  */
 export function moduleCacheInitializerKind(expression: ts.Expression): string | null {
   const initializer: ts.Expression = unwrapTypeWrappers(expression);
   if (
     ts.isNewExpression(initializer) &&
     ts.isIdentifier(initializer.expression) &&
-    ["Map", "Set", "WeakMap", "WeakSet"].includes(initializer.expression.text)
+    MODULE_CACHE_CONSTRUCTORS.includes(initializer.expression.text)
   ) {
     return initializer.expression.text;
   }

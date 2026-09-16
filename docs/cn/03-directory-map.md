@@ -124,7 +124,7 @@
 
 1. **是字面量参数、或用户可见文案？** → `packages/consts/<domain>.ts`（或领域大了拆 `packages/consts/<domain>/`）。带中文 JSDoc 说明用途与不变量。命令回执与提示按命令收成文案表，不留在 handler 里现造。部署 JSON 的解析与校验进入 `packages/config/<domain>.ts`；仅运行路径覆写由 `packages/consts/paths.ts` 读取进程环境。
 2. **是跨模块共享的类型/协议？** → `packages/types/<domain>.ts`。状态机的 `State/Event/Effect/Transition/Decision` 契约放 `packages/types/states/`。
-3. **是长期存活的可变状态**（Map/Set/队列/timer/单例）？ → `packages/cache/`，**先按 owner 线程选一层目录**（见下），再在里面按领域分文件；holder 对象而非 `export let`，JSDoc 写清何时填充、何时清理、Worker 重启后如何重建。容量与清理策略必须满足 [04 运行时权威约束](04-invariants.md)。
+3. **是长期存活的可变状态**（Map/Set/AsyncLocalStorage/队列/timer/单例）？ → `packages/cache/`，**先按 owner 线程选一层目录**（见下），再在里面按领域分文件；holder 对象而非 `export let`，JSDoc 写清何时填充、何时清理、Worker 重启后如何重建。容量与清理策略必须满足 [04 运行时权威约束](04-invariants.md)。
 4. **是纯状态转移逻辑**（无 I/O、可单测）？ → `packages/states/`；副作用由 worker 侧解释器执行。
 5. **是副作用/编排**？ → 按 owner 归位：命令进 `packages/commands/`，自动行为进 `packages/auto/`，Worker 线程内逻辑进 `packages/workers/<domain>/`，模型能力进所属功能的 `ai/` 子目录，进程级基础设施进 `packages/infra/`。
 
@@ -150,7 +150,7 @@
 - **`perThread/`**
   - **owner**：每条线程各一份。
   - **内容**：Telegram 能力实现 holder（主线程真实适配器、业务 Worker 双工代理）、
-    Worker 双工 waiter、部署配置单例、自发消息登记；同一份代码在每条线程独立实例化。
+    Worker 双工 waiter、部署配置单例、自发消息登记、update 取消上下文存储；同一份代码在每条线程独立实例化。
 
 注意 `main/antiRaid/` 与 `workers/antiRaid/` 是**两拨完全不共享的状态**：权威状态机在 Worker 内，主线程那份只是供崩溃重放的纯数据镜像。放错目录不是风格问题——写进去的东西对面永远读不到。`bun run check:conventions` 按真实模块图核对这条归属（详见 [04 运行时权威约束](04-invariants.md#线程与状态归属)），违例时打印完整引入链。
 
@@ -163,7 +163,7 @@
 - 兼容入口只服务旧 import 的渐进迁移；**新代码一律直接从领域子文件导入**。
 - 兼容入口不得重新持有状态、解析配置或引入 import 副作用。
 - `packages/types/index.ts` 同理，仅为测试/渐进迁移保留。
-- 包内 `index.ts` 只有在调用方确实需要单一 package surface 时才作为稳定公开入口；当前 `packages/aiChat/index.ts` 与 `packages/antiRaid/index.ts` 都只做显式薄导出、不持有状态。生产代码内部仍直接 import 对应 owner 叶子模块，且不使用无边界的 `export *`。
+- 包内 `index.ts` 只有在调用方确实需要单一 package surface 时才作为稳定公开入口；当前 `packages/aiChat/index.ts`、`packages/antiRaid/index.ts` 与 `packages/infra/telegram/index.ts` 都只做显式薄导出、不持有状态；`infra/telegram/index.ts` 只重导出现有业务模块经它使用的客户端、常规动作与命令回执符号，新代码直接从 `client`、`actions/*`、`commandMessages` 等叶子模块导入。aiChat 与 antiRaid 的生产代码内部仍直接 import 对应 owner 叶子模块；这三个入口都不使用无边界的 `export *`。
 
 ## 测试的镜像结构
 

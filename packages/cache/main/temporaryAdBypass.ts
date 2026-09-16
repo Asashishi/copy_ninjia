@@ -34,7 +34,7 @@ export const unacknowledgedTemporaryAdBypassWrites: Map<
  */
 export const temporaryAdBypassWriteRevision: { current: number } = { current: 0 };
 
-/** 应用全新生命周期和测试隔离时清空读取、未 ACK 最终值与 revision。 */
+/** 清空读取、未 ACK 最终值与 revision；只由 resetIdentityStorageCache 在测试隔离与基准重置时调用。 */
 export function resetTemporaryAdBypassCache(): void {
   temporaryAdBypassActivityCache.clear();
   unacknowledgedTemporaryAdBypassWrites.clear();

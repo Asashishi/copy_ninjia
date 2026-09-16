@@ -38,6 +38,7 @@ const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
 const sentMessages: { chatId: number; text: string }[] = [];
 const deletedMessages: { chatId: number; messageId: number }[] = [];
+const loggedErrors: unknown[][] = [];
 let currentPermissions: Record<string, boolean | undefined> = {};
 let sendMessageResult: number | undefined = 700;
 let deleteMessageResult: boolean = true;
@@ -60,7 +61,12 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage(event: AntiRaidWorkerEvent): void { lockdownEvents.push(event); } },
 });
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: {
+    log(): void {},
+    info(): void {},
+    warn(): void {},
+    error(...args: unknown[]): void { loggedErrors.push(args); },
+  },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   telegramApi: {
@@ -83,6 +89,15 @@ async function settleLockdownCalls(): Promise<void> {
   for (let index = 0; index < 8; index++) await Bun.sleep(0);
 }
 
+/** 某群发往主线程的 lockdown 记录与 unlock，按投递顺序投影成阶段名。 */
+function lockdownTrail(chatId: number): string[] {
+  return lockdownEvents.flatMap((event): string[] => {
+    if (event.type === "lockdown" && event.chatId === chatId) return [event.phase];
+    if (event.type === "unlock" && event.chatId === chatId) return ["unlock"];
+    return [];
+  });
+}
+
 const adminCache = await import("../../../packages/workers/antiRaid/adminCache");
 const lockdownRuntime = await import("../../../packages/workers/antiRaid/lockdownRuntime");
 const joinWindowRuntime = await import(
@@ -96,10 +111,11 @@ beforeEach(() => {
   permissionWrites.length = 0;
   sentMessages.length = 0;
   deletedMessages.length = 0;
+  loggedErrors.length = 0;
   currentPermissions = {};
   sendMessageResult = 700;
   deleteMessageResult = true;
-  getChat.mockClear();
+  getChat.mockReset();
   getChat.mockImplementation(async () => ({ permissions: { ...currentPermissions } }));
   getChatAdministrators.mockClear();
   getChatAdministrators.mockResolvedValue([]);
@@ -619,6 +635,63 @@ describe("Lockdown write-ahead runtime", () => {
     expect(sentMessages[0]?.text).not.toContain("0 个");
   });
 
+  test("预备查询响应缺 permissions → 撤销占位、撤掉公告并进入作废冷却，不写权限也不通知主线程", async () => {
+    const chatId = -1013;
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    getChat.mockResolvedValueOnce({});
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    expect(lockdownEntries.get(chatId)?.state).toMatchObject({ kind: "applying", stage: "preparing" });
+    await settleLockdownCalls();
+
+    expect(getChat).toHaveBeenCalledTimes(1);
+    expect(setChatPermissions).not.toHaveBeenCalled();
+    expect(lockdownEntries.has(chatId)).toBeFalse();
+    // 公告排在预备查询之前已发出，撤销占位时按记下的 ID 删除。
+    expect(sentMessages).toHaveLength(1);
+    expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);
+    // preparing 从未形成 intent：主线程既没有 applying 记录，也不需要 unlock。
+    expect(lockdownTrail(chatId)).toEqual([]);
+    expect(lockdownRetriggerCooldowns.has(chatId)).toBeTrue();
+    expect(joinWindows.has(chatId)).toBeFalse();
+    expect(loggedErrors).toEqual([
+      [`Chat ${chatId} getChat response missing permissions field, skipping anti-raid lockdown`],
+      [expect.stringContaining(`chat ${chatId} was abandoned (preparationFailed)`)],
+    ]);
+
+    // 冷却期内继续刷群不再发公告，也不再读权限。
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+    expect(lockdownEntries.has(chatId)).toBeFalse();
+    expect(getChat).toHaveBeenCalledTimes(1);
+    expect(sentMessages).toHaveLength(1);
+  });
+
+  test("当前轮预备查询抛出 → 撤销占位、撤掉公告并进入作废冷却，不写权限也不通知主线程", async () => {
+    const chatId = -1014;
+    const failure = new Error("getChat failed while preparing lockdown");
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    getChat.mockRejectedValueOnce(failure);
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    expect(lockdownEntries.get(chatId)?.state).toMatchObject({ kind: "applying", stage: "preparing" });
+    await settleLockdownCalls();
+
+    expect(getChat).toHaveBeenCalledTimes(1);
+    expect(setChatPermissions).not.toHaveBeenCalled();
+    // 抛出时占位仍属本轮，失败回投状态机撤销它，不留下无恢复计时的秒踢占位。
+    expect(lockdownEntries.has(chatId)).toBeFalse();
+    expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);
+    expect(lockdownTrail(chatId)).toEqual([]);
+    expect(lockdownRetriggerCooldowns.has(chatId)).toBeTrue();
+    expect(joinWindows.has(chatId)).toBeFalse();
+    expect(loggedErrors).toEqual([
+      ["Error preparing anti-raid lockdown:", failure],
+      [expect.stringContaining(`chat ${chatId} was abandoned (preparationFailed)`)],
+    ]);
+    expect(loggedErrors[0]?.[1]).toBe(failure);
+  });
+
   test("提交前刷新权限缺失时不写 Telegram，并清除已落盘 applying intent", async () => {
     const chatId = -1005;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
@@ -641,6 +714,53 @@ describe("Lockdown write-ahead runtime", () => {
     expect(permissionWrites).toEqual([]);
     expect(lockdownEntries.has(chatId)).toBeFalse();
     expect(lockdownEvents.some((event) => event.type === "unlock" && event.chatId === chatId)).toBeTrue();
+  });
+
+  test("提交前刷新权限抛出时不写 Telegram，清除已落盘 applying intent 且不转入恢复", async () => {
+    const chatId = -1015;
+    const failure = new Error("getChat failed before committing lockdown");
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await settleLockdownCalls();
+
+    const applying = lockdownEvents.find((event) =>
+      event.type === "lockdown" && event.chatId === chatId
+    );
+    if (applying?.type !== "lockdown") throw new Error("missing applying intent");
+    getChat.mockRejectedValueOnce(failure);
+
+    lockdownRuntime.handleLockdownPersisted({
+      type: "lockdownPersisted",
+      chatId,
+      phase: "applying",
+      intentId: applying.intentId,
+    });
+    // 回执同步派发提交；刷新查询排在串行链上，抛出前本轮 intent 仍在。
+    expect(lockdownEntries.get(chatId)?.state).toMatchObject({
+      kind: "applying",
+      stage: "prepared",
+      intentId: applying.intentId,
+      commitStarted: true,
+    });
+    await settleLockdownCalls();
+
+    expect(getChat).toHaveBeenCalledTimes(2);
+    expect(setChatPermissions).not.toHaveBeenCalled();
+    expect(currentPermissions.can_invite_users).toBeTrue();
+    expect(lockdownEntries.has(chatId)).toBeFalse();
+    // 写操作从未开始：主线程只收到清除 applying 记录的 unlock，没有 restoring 恢复意图。
+    expect(lockdownTrail(chatId)).toEqual(["applying", "unlock"]);
+    expect(joinWindows.has(chatId)).toBeFalse();
+    expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);
+    // 没有经过恢复成功，因此只有封锁公告，没有解除通知。
+    expect(sentMessages).toHaveLength(1);
+    expect(lockdownRetriggerCooldowns.has(chatId)).toBeTrue();
+    expect(loggedErrors).toEqual([
+      ["Error refreshing chat permissions before anti-raid lockdown; abandoning unapplied intent:", failure],
+      [expect.stringContaining(`chat ${chatId} was abandoned (commitPreparationFailed)`)],
+    ]);
+    expect(loggedErrors[0]?.[1]).toBe(failure);
   });
 
   test("重建会继续 applying/restoring，恢复仅合并 invite 字段", async () => {

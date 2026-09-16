@@ -7,11 +7,7 @@ import {
   stickerFlushState,
 } from "../../cache/workers/diskIO/stickers";
 import { flushDirtyEntries } from "./dirtyFlush";
-import {
-  inspectStickerCatalogs,
-  maintainStickerCatalogFiles,
-  writeStickerCatalogFile,
-} from "./snapshotFiles";
+import { writeStickerCatalogFile } from "./snapshotFiles";
 import type { StickerCatalogFileDependencies } from "../../types/diskIO/snapshotOwners";
 import type { StickerCatalogRecoveryInspection } from "./snapshotFiles";
 
@@ -28,26 +24,12 @@ function scheduleStickerCatalogFlush(): void {
   stickerFlushState.timer.unref();
 }
 
-/** 跨域启动第一阶段：只读扫描全部目录快照，孤儿也先严格解码。 */
-export async function inspectStickerCatalogSnapshots(
-  activePacks: readonly string[] | null
-): Promise<StickerCatalogRecoveryInspection> {
-  return inspectStickerCatalogs(activePacks);
-}
-
 /** 跨域启动第二阶段：全部领域 inspect 成功后整体发布到 owner 缓存。 */
 export function adoptStickerCatalogSnapshots(
   inspection: StickerCatalogRecoveryInspection
 ): Map<string, string> {
   hydrateStickerCatalogCache(inspection.snapshots);
   return stickerCatalogCache;
-}
-
-/** 跨域启动成功后的临时文件与已验证孤儿清理。 */
-export async function maintainStickerCatalogSnapshots(
-  inspection: StickerCatalogRecoveryInspection
-): Promise<void> {
-  await maintainStickerCatalogFiles(inspection);
 }
 
 /** 覆盖式目录的 markDirty 边界。 */

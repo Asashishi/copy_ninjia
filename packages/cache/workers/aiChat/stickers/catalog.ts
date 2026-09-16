@@ -21,7 +21,7 @@ export const dirtyPacks: Set<string> = new Set();
  *  到期之前的对账跳过这枚贴纸。
  *
  *  **必须带 TTL、不能是永久闩**：首次部署撞上一次视觉端点故障（配额耗尽、密钥
- *  刚轮换、runMediaTask 饱和）会让整包每一枚都描述不出来、全部进这张表，此后
+ *  刚轮换、媒体执行器 mediaTaskRunner 饱和）会让整包每一枚都描述不出来、全部进这张表，此后
  *  retryIncompleteStickerCatalogs 虽然每 5 分钟正确地重新选中这个包，
  *  generatePackCatalog 却会把每一枚都原地跳过——目录永远填不起来，两个贴纸工具
  *  对所有回复返回 null 直到进程重启，而 systemd 托管的进程可以连跑几周。理由同

@@ -50,11 +50,6 @@ export function hotPathGateChildEnvironment(
   };
 }
 
-/** 清理单个子进程数据根；路径越出 performance/ 时由共用边界拒绝。 */
-export function removeHotPathGateRuntimeRoot(runtimeRoot: string): void {
-  removeMockPath(runtimeRoot);
-}
-
 /** 清理整次门禁根及其中的严格配置副本。 */
 export function removeHotPathGateFixture(fixture: HotPathGateFixture): void {
   removeMockPath(fixture.runRoot);

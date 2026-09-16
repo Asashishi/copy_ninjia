@@ -19,7 +19,7 @@ mock.module("../../packages/infra/telegram/avatar/read", () => ({ readCurrentAva
 
 const { bot } = await import("../../packages/infra/telegram/mainClient");
 const { telegramApiState } = await import("../../packages/cache/perThread/telegramApi");
-const { resetPendingMessageDeletions } = await import("../../packages/infra/telegram");
+const { resetPendingMessageDeletions } = await import("../../packages/infra/telegram/actions/messageLifecycle");
 const { getOrCreateWedChat } = await import("../../packages/commands/wed/chats");
 const { getOrCreateWedMemberState } = await import("../../packages/commands/wed/persistence");
 const { handleWedCommand, teardownWedInChat } = await import("../../packages/commands/wed");

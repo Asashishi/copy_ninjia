@@ -1,4 +1,4 @@
-import { displayBufferedMessageName } from "../../aiChat/ai/utils/chatTranscript";
+import { displaySpeakerName } from "../../aiChat/ai/utils/chatTranscript";
 import {
   QUEUED_TRIGGER_SNIPPET_MAX_CHARS,
   REPLY_ROUND_MAX_CONCURRENT,
@@ -116,7 +116,7 @@ export function pushReplyTrigger({
     imageGenerationReference,
     chatQa,
     messageThreadId,
-    senderName: triggerEntry ? displayBufferedMessageName(triggerEntry) : "",
+    senderName: triggerEntry ? displaySpeakerName(triggerEntry) : "",
     text: triggerEntry ? truncateInline(triggerEntry.text, QUEUED_TRIGGER_SNIPPET_MAX_CHARS) : "",
     mediaPreparation,
   });

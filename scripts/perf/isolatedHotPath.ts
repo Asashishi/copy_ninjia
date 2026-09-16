@@ -7,9 +7,9 @@ import {
   createHotPathGateRuntimeRoot,
   hotPathGateChildEnvironment,
   removeHotPathGateFixture,
-  removeHotPathGateRuntimeRoot,
 } from "./hotPaths/gateFixture";
 import type { HotPathGateFixture } from "./hotPaths/gateFixture";
+import { removeMockPath } from "./fullSuite/mockRoot";
 
 const fixture: HotPathGateFixture = await createHotPathGateFixture();
 try {
@@ -28,7 +28,7 @@ try {
       const code: number = await child.exited;
       if (code !== 0) throw new Error(`Hot-path measurement round ${round + 1} exited with ${code}.`);
     } finally {
-      removeHotPathGateRuntimeRoot(runtimeRoot);
+      removeMockPath(runtimeRoot);
     }
   }
 } finally {

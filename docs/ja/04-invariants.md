@@ -142,7 +142,7 @@
 - Anti-Raid Worker は認証・ロックダウン状態機械とタイマーを排他的に所有し、メインスレッドは復元可能なミラーだけを持ちます。
 - Disk I/O Worker はログ、AI メモリ、スタンプカタログ、運勢、認証待ちデータの永続化を排他的に所有し、1 つの Worker スレッド内で共有ディレクトリへの読み書きを直列化します。`state.json` は明示的な例外で、メインスレッドが `stateStore.ts` facade 経由で `statePersistence.ts` の `StateStore` を呼び出して非同期に管理します。業務 Worker は共有ディレクトリへ直接書き込みません。
 - 長寿命の Map、Set、キュー、timer には、対応する `packages/cache/` モジュールと業務ライフサイクルモジュールが共同で容量、削除、Worker 再構築の意味を定義しなければなりません。
-- **キャッシュの所有スレッドはディレクトリ名で宣言し、実際のモジュールグラフで照合します。** `packages/cache/` の第 1 階層が所有者です。`main/` はメインスレッド専有、`workers/aiChat|antiRaid|diskIO/` は各 Worker スレッド専有、`perThread/` は「各スレッドが個別に 1 つずつ持ち、互いに無関係」な状態（Telegram capability holder、Worker duplex waiter、デプロイ設定 singleton、自己送信メッセージ登録）です。
+- **キャッシュの所有スレッドはディレクトリ名で宣言し、実際のモジュールグラフで照合します。** `packages/cache/` の第 1 階層が所有者です。`main/` はメインスレッド専有、`workers/aiChat|antiRaid|diskIO/` は各 Worker スレッド専有、`perThread/` は「各スレッドが個別に 1 つずつ持ち、互いに無関係」な状態（Telegram capability holder、Worker duplex waiter、デプロイ設定 singleton、自己送信メッセージ登録、update 取消コンテキストの storage）です。
 
   スレッド間はメッセージのみでやり取りしメモリは共有しないため、**あるスレッド専有の状態を別スレッドが import するのは常に誤り**です。相手の isolate が受け取るのは同じコードの別インスタンスで、書き込んでも所有者側からは永遠に読めません。静的には何も見えず、実行時は「なぜかキャッシュが当たらない」としてしか現れません。
 
@@ -763,7 +763,7 @@
 
   **toggle 自体も同じ critical section 内で読み直します。** 判定は Worker 側で行われ、メインスレッドへ戻ってからも blocklist 書き込みの前に identity の直列化キューを通ります。その隙間に `/ad_detect disable` が入り込むことは十分あり得ますが、それが消せるのは Worker 内でまだ判定していない列だけで、すでに公開された判定には届きません。読み直さなければ、switch を切った後でも人が恒久 blocklist に書かれ、全管理チャットで BAN され、公開告知で名指しされます。確認は `blockUser` の直前に置きます。そこを越えると不可逆で、後から撤回しても実行の伴わない既成事実の entry だけが残るからです。これは想定内の競合結果なので通常 log に記録し、protected sender の警告枠は消費しません。
 
-  **allowlist membership は恒久 blocklist を無条件で保護します。** 判定結果がメインスレッドへ戻ると、処分側は `/white` と `/block` と同じ `runProtectedIdentityMutation` critical section 内で `isProtectedSender` を再確認します。判定中に allowlist へ追加された場合も、もともと allowlist で bypass を無効にしていた場合も、`blockUser`・チャット横断 BAN・BAN 告知を拒否し、Worker がすでに行った当該 bundle の削除だけを残します。現在のグループを皮として使う匿名管理者（`sender_chat.id === chat.id`）は `/block` と同じ理由でスキップします。
+  **allowlist membership は恒久 blocklist を無条件で保護します。** 判定結果がメインスレッドへ戻ると、処分側は `/white` と `/block` と同じ `runProtectedIdentityMutation` critical section 内で `isWhitelisted` を再確認します。判定中に allowlist へ追加された場合も、もともと allowlist で bypass を無効にしていた場合も、`blockUser`・チャット横断 BAN・BAN 告知を拒否し、Worker がすでに行った当該 bundle の削除だけを残します。現在のグループを皮として使う匿名管理者（`sender_chat.id === chat.id`）は `/block` と同じ理由でスキップします。
 
   皮の下が誰かを Telegram は明かさず、処分はグループ ID 全体を BAN しようとするだけだからです。
 

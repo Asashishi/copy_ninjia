@@ -6,6 +6,7 @@ import {
   advanceTemporaryAdBypassActivity,
   isTemporaryAdBypassActive,
   isTemporaryAdBypassActivityRetained,
+  shouldPromoteToPermanentBypass,
 } from "../../packages/states/temporaryAdBypass";
 import type { TemporaryAdBypassActivity } from
   "../../packages/types/temporaryAdBypass";
@@ -107,6 +108,7 @@ describe("临时广告免检连续日状态机", () => {
     let activity: Readonly<TemporaryAdBypassActivity> | null = null;
     for (let day: number = 0; day < 7; day++) {
       activity = recordMessages(activity, FIRST_DAY_AT + day * DAY_MS, 8);
+      expect(shouldPromoteToPermanentBypass(activity)).toBe(day === 6);
     }
     if (activity === null) throw new Error("seven-day activity must exist");
 

@@ -124,15 +124,37 @@ describe("libs/text sanitizeInline", () => {
     expect(sanitizeInline("A\u2028B\u2029C\rD\nE")).toBe("A B C D E");
   });
 
-  test("已是规范形态的串原样返回同一个字符串对象，不重建", () => {
-    // 快路径的存在理由：折叠模式连单个空格也匹配，不加前置判定的话，每条含
-    // 空格的正常消息都会被 replace 整串重建一遍。
+  test("已是规范形态的串输出值不变，重复处理结果稳定", () => {
     const canonical: string = "这是一条普通的群聊消息 with spaces";
-    expect(sanitizeInline(canonical)).toBe(canonical);
-    // 前置判定不能带 g 标志：带的话 test() 会推进 lastIndex，同一个串连续判定
-    // 交替真假，表现成「隔一次才清洗」。
     for (let index: number = 0; index < 5; index += 1) {
-      expect(sanitizeInline(canonical)).toBe(canonical);
+      expect(sanitizeInline(canonical)).toBe("这是一条普通的群聊消息 with spaces");
+    }
+  });
+
+  test("回归用例：同一脏串连续处理、干净与脏串交错处理，每次都清洗", () => {
+    // 前置判定若带 g/y 标志，test() 会推进 lastIndex，同一输入的判定交替真假，
+    // 表现成「隔一次才清洗」；交错输入则会让上一条留下的位置吞掉下一条的命中。
+    for (let index: number = 0; index < 6; index += 1) {
+      expect(sanitizeInline("a\nb")).toBe("a b");
+    }
+    for (const dirty of ["a\nb", " a", "a ", "a  b", "a\u0085b", "a\u00a0b"]) {
+      for (let index: number = 0; index < 4; index += 1) {
+        expect(sanitizeInline("clean text")).toBe("clean text");
+        expect(sanitizeInline(dirty)).toBe(dirty.replace(/[\s\u0085]+/g, " ").trim());
+        expect(sanitizeInline(`${"x".repeat(index * 8)}${dirty}`))
+          .toBe(`${"x".repeat(index * 8)}${dirty}`.replace(/[\s\u0085]+/g, " ").trim());
+      }
+    }
+  });
+
+  test("空串、NEL、NBSP、emoji 与组合序列的输出与参考清洗一致", () => {
+    const reference = (raw: string): string => raw.replace(/[\s\u0085]+/g, " ").trim();
+    for (const raw of [
+      "", " ", "\u0085", "\u00a0", "\u00a0\u00a0",
+      "🙂", "🙂 🚀", "🙂\n🚀", " 👨‍👩‍👧‍👦 ", "🏳️‍🌈\u2028🏳️‍🌈",
+      "中文\u3000全角空格", "\ufeff开头的 BOM", "混排 text\t🙂\r\n结尾 ",
+    ]) {
+      expect(sanitizeInline(raw)).toBe(reference(raw));
     }
   });
 
@@ -205,10 +227,10 @@ describe("libs/text stripLeadingAtSigns", () => {
 
 describe("libs/text sanitizeInline 字符类", () => {
   /**
-   * 前置判定改成逐码元扫描后，它认的空白集合必须与折叠正则的字符类完全相同。
-   * 集合少一个字符，那种空白就再也不会被折叠——转录「一行 = 一条消息」的拼装
-   * 当场出缺口；多一个字符则会把正常文本判成要清洗，虽不影响正确性也白付一次
-   * 整串重建。这里对全 BMP 逐码元与参考实现对拍。
+   * 前置判定认的空白集合必须与折叠正则的字符类完全相同。集合少一个字符，那种
+   * 空白就再也不会被折叠——转录「一行 = 一条消息」的拼装当场出缺口；多一个字符
+   * 则会把正常文本判成要清洗，虽不影响正确性也白付一次整串重建。这里对全 BMP
+   * 逐码元与参考实现对拍。
    */
   test("全 BMP 逐码元与折叠正则的字符类逐字一致", () => {
     const collapse: RegExp = new RegExp("[\\s\\u0085]+", "g");

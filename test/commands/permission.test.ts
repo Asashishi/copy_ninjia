@@ -112,7 +112,7 @@ const {
 const { WHITELIST_PERMISSION_HELP } = await import("../../packages/consts/atmosphere/teasing/whitelist");
 const { WHITELIST_PERMISSION_KEYS } = await import("../../packages/consts/whitelist");
 const {
-  seedSenderCache,
+  updateCachedIdentity,
 } = await import("../../packages/users/senderIdentity");
 const {
   senderUsernameCache,
@@ -340,7 +340,7 @@ describe("/permission", () => {
   test("所有人都可通过回复、@username 或用户 ID 查询指定用户", async () => {
     const expectedWhitelistPermissions: Record<string, boolean> =
       whitelistPermissionsById.get(100)!;
-    seedSenderCache({
+    updateCachedIdentity({
       id: 100,
       username: "Alice",
       first_name: "Alice",
@@ -419,7 +419,7 @@ describe("/permission", () => {
   });
 
   test("all 支持 @username、用户/频道 ID 与回复目标", async () => {
-    seedSenderCache({
+    updateCachedIdentity({
       id: 100,
       username: "Alice",
       first_name: "Alice",

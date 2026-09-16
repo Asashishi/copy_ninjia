@@ -141,8 +141,17 @@ export function recordJoinWindow(chatId: number, now: number): number | undefine
 }
 
 /**
- * 按加入时刻撤销一次计数。找不到表示已过期、已清空，或在极端过载时被硬顶
- * 覆盖；最后一种保持饱和 fail-safe，直到被覆盖时间段退出窗口。
+ * 撤销一次此前 recordJoin 计入的入群计数。由验证状态机的 `retractJoinCount`
+ * 效果调用：管理员拉人的异步豁免事后才确认时（见 states/verification.ts 的
+ * adminCheckResolved、handleJoin 的豁免分支、handleTrackedMessage 的频道评论
+ * 确证分支、handleTimeoutInviterVerdict 的「拉人者确是管理员」分支），这四处
+ * 转移只在原记录是 pending 时触发，而 pending 记录创建时已经 recordJoin 过一次。
+ *
+ * joinedAt 必须是创建那条 PENDING 记录时 recordJoin 压进窗口的同一个时间戳
+ * （见 verificationEvents.ts 把 event.now 同时传给 recordJoin 与状态机），按值
+ * 精确移除，不无差别 shift 队首。找不到表示该项已经过期、窗口已清空，或在极端
+ * 过载时被硬顶覆盖；前两者无需撤销，最后一种保持 overflowThrough 的 fail-safe
+ * 饱和判定，直到被覆盖时间戳全部过期。
  */
 export function retractJoinWindow(chatId: number, joinedAt: number): void {
   joinWindows.get(chatId)?.timestamps.removeValue(joinedAt);

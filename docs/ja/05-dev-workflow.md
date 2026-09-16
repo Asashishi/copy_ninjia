@@ -32,7 +32,7 @@
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
-| `bun run perf:review` | 既存の 12 hot path、AI 返信・payload の 7 シナリオ、2 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択 |
+| `bun run perf:review` | 既存の 12 hot path、AI 返信・payload の 7 シナリオ、2 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択。テキスト清掃の専用検証は `--text` を明示した場合のみ実行 |
 | `bun run build -- --version <tag>` | バージョンの明示指定が必須で既定値なし。現在の Linux 向けバイナリを隔離検証後、`.map` を含まないアーカイブと SHA-256 ファイルを `dist/` へ出力 |
 | `bun run release:check -- --version <tag>` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection + バイナリ構築・検証。リリース前に必須。バージョン未指定・不正は依存関係のインストール前に拒否 |
 | `bun run release:build -- --version <tag>` | クリーンでコミット済みの `dev` から正式版をネイティブ構築 |
@@ -48,8 +48,8 @@
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **型 import は独立して宣言**：ソース・script・test は独立した `import type` を使用します。ESLint の `no-restricted-syntax` が `import { value, type Shape }` などの inline type specifier を拒否します。`test/scripts/typeImportConventions.test.ts` は 3 種類のファイルで許可・拒否の境界を検証し、既存の `Promise.all` 禁止も確認します。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コード・script・test の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、fault injection suite の一覧、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
-  module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コード・script・test の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、fault injection suite の一覧、実行時の bare import がルート `package.json` に直接宣言されていること（hoist された推移的依存でしか解決できない package は失敗。runtime builtin と型だけの参照は対象外で、package subpath は所属 package に帰属）、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+  module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。module-level の Map、Set、WeakMap、WeakSet、AsyncLocalStorage と holder は owner 付きの `packages/cache/` にだけ宣言できます。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
 
   Node API 検査は `process.getBuiltinModule`、`globalThis.Buffer` とリテラル添字形式を対象にします。`Buffer.byteLength` などの例外は module・symbol・用途ごとに登録します。`@grammyjs/runner` は SDK 対照テスト用の開発依存で、production の取得処理はプロジェクトの offset 確認境界を使います。
 
@@ -69,7 +69,7 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**4329 tests / 382 files / 157982 `expect()` calls**。全ソースコードの**関数カバレッジは 97.21%、行カバレッジは 97.94%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**4480 tests / 384 files / 158742 `expect()` calls**。全ソースコードの**関数カバレッジは 97.22%、行カバレッジは 98.01%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -94,7 +94,7 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 
 ## Fault injection suite
 
-`bun run test:fault-injection` は application / Worker lifecycle、封鎖復元、返信容量と取消、資格情報 snapshot、Disk I/O の inspect・原子的書込・復旧障害を検証します。完全な一覧は [`package.json`](../../package.json) の script が正本です。`check:conventions` は登録 harness と production 復旧/lifecycle 境界への実 path 参照から登録漏れを検出します。静的な値 import、dynamic import、値の再 export を含み、型だけの参照は除外します。空宣言の副作用は保持し、別 path の同名 module は一致させません。[04 実行時の不変条件](04-invariants.md) の永続化・停止・Worker lifecycle を変更する場合、この suite を通します。
+`bun run test:fault-injection` は application / Worker lifecycle、封鎖復元、返信容量と取消、資格情報 snapshot、Telegram 送信と遅延削除の停止時 drain、グループ teardown と参加ログの永続化バリア、Anti-Raid タスクの drain と認証復旧、duplex Worker 再構築時の取消、Disk I/O の inspect・原子的書込・復旧障害を検証します。完全な一覧は [`package.json`](../../package.json) の script が正本です。`check:conventions` は登録 harness と production 復旧/lifecycle 境界への実 path 参照から登録漏れを検出します。静的な値 import、dynamic import、値の再 export、directory の `index.ts` 入口を含み、型だけの参照は除外します。空宣言の副作用は保持し、別 path の同名 module は一致させません。互換入口のように主題が混在する module は境界を特定の export に限定できます（`infra/telegram/index.ts`、`actions.ts`、`actions/messageLifecycle.ts` は遅延削除の flush/drain だけを数えます）。namespace は property access で判定し、object literal に展開するだけの替身は数えません。namespace をそのまま受け渡す場合、`export *`、結果を束縛しない dynamic import は取得範囲を確定できないため常に数えます。[04 実行時の不変条件](04-invariants.md) の永続化・停止・Worker lifecycle を変更する場合、この suite を通します。
 
 `test/workers/antiRaid/verificationWelcome.test.ts` は実際の双方向プロトコル、main thread の一時通知境界、削除 owner を通し、Telegram 出力を SDK transformer で代替します。4 種類の歓迎文、返信先、応答消失、取消、Worker teardown・再生成、送信・通信失敗を検証し、削除の一度だけの登録、終了を妨げない timer、後続副作用の順序を確認します。このファイルは全量テストと障害注入の両方に含まれます。
 
@@ -108,7 +108,7 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 
 `steadyProfile` 子プロセスは `BUN_JSC_logGC=1` を明示的に有効化します。`hotPaths/gcProfile.ts` は正式ループの境界内にある JSC の `p=…ms` 停止区間だけを合計し、同じ窓の単調経過時間で割って GC 停止時間比率を得ます。起動 handshake、唯一の完全な窓、停止ログ形式の一致が必須で、欠落・未知形式は失敗です。完全な有効ログで停止がなかった場合だけ 0 を記録します。JIT 層は sampling profiler で集計します。`retained` の強制 GC は計時境界外で、この比率には含めません。シナリオ別 calibration は最低 3 個の独立プロセスの停止データを保存します。GC 停止時間比率の上限は、プロセスが利用可能な CPU 数に応じて全シナリオ共通で適用します。4 コア以上は 25%、2～3 コアは 30%、1 コアは 35% です。上限と同じ値は合格し、上限を超えると失敗します。基準は `packages/consts/performance.ts` の `HOT_PATH_GC_CPU_BUDGETS` で定義します。ゲート起動時に `node:os.availableParallelism()` から利用可能な並列度を取得して上限を選び、Linux の CPU affinity 制限もこの値に反映されます。出力の `availableCpuCount` と `thresholds.maxGcPausePercent` に、今回の CPU 数と共通上限を記録します。
 
-`perf:isolated-hot-path --profile` と `perf:review` の profile 出力は JIT・sampling 診断用で、GC 停止比率は提供しません。GC 計測には `perf:hot-path-gate` を使います。`perf:disk-transport` も親プロセスで GC ログを解析し、各ラウンドに独立した `gcProfile` を返します。
+`perf:isolated-hot-path --profile` と `perf:review` の profile 出力は JIT・sampling 診断用で、GC 停止比率は提供しません。GC 計測には `perf:hot-path-gate` を使います。`perf:disk-transport` と `perf:review --text` も親プロセスで GC ログを解析し、各ラウンドに独立した `gcProfile` を返します。
 
 `hotPathProfileGate` の節は双方向ですが、2 つの半分は owner が異なります。`calibration` は再校正後に人が手で編集し、gate からは read-only です。`lastRun` は直近の gate 読数を記録し、`bun run perf:hot-path-gate -- --write-result` を明示的に渡したときだけ上書きされるため、通常の `bun run check` は working tree を汚しません。write-back は `calibration` を 1 byte も触りません。gate が 1 回の実行結果から自身の判定基準を書き換えられるようにすることは、現在の性能で gate を溶接してしまうのと同じだからです。
 
@@ -139,6 +139,8 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 `--ai` は受付判定、通常送信、容量・再開負荷、Base64 の 1 MiB / 8 MiB / 異常先頭 / 異常末尾を測定します。7 シナリオで各 3 回の独立 process による計時と 3 回の profile を実行し、production 関数を直接使います。送信シナリオは chat 別/全体容量、実完了、後処理を断言し、production JIT probe の安定を要求します。負荷の 1 iteration は 128 存続 slot と容量拒否検証を含み、遅延は batch 全体の値です。Base64 は符号化後と復号後のサイズ上限、標準 alphabet、末尾 bit の厳密検査、g/y なしの正規表現、1 回だけの decode を維持します。固定入力と warmupによる局所測定であり、実 model / Telegram network や全 production payload の memory 予算は含みません。JIT sampling summary は GC 停止時間を提供しません。
 
 `--chains` は機能を有効にした `ad-detect-command` と `ai-reply-command` を実行し、Telegram canned call 数と処理完了を検証します。`--worker` は各 round で実 Disk I/O Worker に 128 message × 400 batch を渡し、batch ごとに最終 revision の ACK を待ちます。各 round で 2 回の graceful shutdown と Worker 再構築を行い、25 chat の復旧値を照合します。clone、transaction、disk wait を含め、throughput、latency、retained heap、RSS を記録しますが、fault injection の代用にはなりません。各 mode は 3 round で、全量基準と既定 10 scenario の hard gate 閾値は変更しません。
+
+`--text` は明示した場合のみ実行し、既定の全体検証には含めません。36 シナリオで各 3 回の独立 process を実行し、production の `sanitizeInline` と `buildBufferedMessage` を直接呼びます。メッセージ構築は既定の時計と時刻整形を使い、結果は圧縮 batch サイズの window に保持します。fixture は中国語・英語・emoji を 6:3:1 で巡回し、本文 8〜4,096 code unit、長文の割合 1%〜75%、先頭・中央・末尾の改行、密な空白、混在レイアウト、返信引用を含みます。各子プロセスは warmup でも正式 sample と同じメモリ読み取りを行い、JIT probe が 3 sample 連続で変化しなくなってから 9 sample を採取します。中央値の所要時間、ピーク heap と RSS の増分、保持 heap、JIT tier、親プロセスが解析した GC 停止を報告し、シナリオごとに 3 ラウンド中央値の平均・範囲・CV と JIT 安定性を集計します。
 
 `sender-mixed-identity` は user と channel の identity を交互に入力して steady behavior と JIT 再最適化を観測します。単一 user scenario とは sender 数が異なるため、時間差を shape 混在だけのコストとは解釈しません。benchmark の user ID は int32 を超える値を扱い、production では小さい ID も有効です。
 

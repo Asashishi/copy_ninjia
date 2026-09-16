@@ -2,6 +2,7 @@ import type { DiskIODomain } from "../../packages/types/diskIO/replies";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
+  BLOCKLIST_SWEEP_PAGE_SIZE,
   IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
   IDENTITY_READ_CACHE_MAX_ENTRIES,
 } from "../../packages/consts/identityStorage";
@@ -128,6 +129,8 @@ const {
   cachedBlocklistEntry,
   cachedWhitelistEntry,
   confirmIdentityPolicyPersisted,
+  hasAnyBlockedIdentity,
+  hydrateIdentityStorageCounts,
   isIdentityPolicyCached,
   prefetchIdentityPolicies,
   queueIdentityPolicyWrite,
@@ -709,5 +712,258 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     await expect(prefetchIdentityPolicies([4_242])).resolves.toBeFalse();
     expect(cachedWhitelistEntry(4_242)).toBeUndefined();
     expect(cachedBlocklistEntry(4_242)).toBeUndefined();
+  });
+
+  test("多块预热时后一块冷读失败返回 false，前一块已写入的结论保留，重试只读剩余冷键", async () => {
+    const now: number = Date.now();
+    const lastWarmId: number = IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES;
+    const coldId: number = IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 1;
+    const ids: number[] = [];
+    for (let id: number = 1; id <= coldId; id++) ids.push(id);
+    readImplementation = async (
+      requested: readonly number[]
+    ): Promise<IdentityPolicyRawReadResult> => {
+      if (requested.includes(coldId)) {
+        throw new Error("Persistence Worker is unavailable; cannot read identity policies.");
+      }
+      return {
+        whitelist: [[1, JSON.stringify({
+          permissions: DEFAULT_WHITELIST_PERMISSIONS,
+          meta: { firstName: "Alice", lastName: "", username: "alice" },
+        })]],
+        blocklist: [[2, JSON.stringify(blockValue())]],
+        temporaryAdBypass: [{
+          id: 3,
+          adBypass: true,
+          adBypassGrantedAt: now - DAY_MS,
+          qualifiedDays: 7,
+          sendCount: 8,
+          countedAt: now - DAY_MS,
+          qualifiedAt: now - DAY_MS,
+        }],
+      };
+    };
+
+    await expect(prefetchIdentityPolicies(ids)).resolves.toBeFalse();
+    expect(readIdentityPolicies).toHaveBeenCalledTimes(2);
+    expect(readIdentityPolicies.mock.calls[0]![0]).toHaveLength(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
+    expect(readIdentityPolicies.mock.calls[1]![0]).toEqual([coldId]);
+    // 第一块读回后已逐键写入三份 LRU；第二块失败只让自己的主键保持冷缺失。
+    expect(cachedWhitelistEntry(1)?.meta.username).toBe("alice");
+    expect(cachedBlocklistEntry(1)).toBeUndefined();
+    expect(cachedBlocklistEntry(2)?.meta.username).toBe("alice");
+    expect(temporaryAdBypassActivityCache.peek(3)).toMatchObject({
+      adBypass: true,
+      qualifiedDays: 7,
+    });
+    expect(isIdentityPolicyCached(lastWarmId)).toBeTrue();
+    expect(whitelistEntryCache.peek(lastWarmId)).toBeNull();
+    expect(blocklistEntryCache.peek(lastWarmId)).toBeNull();
+    expect(temporaryAdBypassActivityCache.peek(lastWarmId)).toBeNull();
+    expect(whitelistEntryCache.has(coldId)).toBeFalse();
+    expect(blocklistEntryCache.has(coldId)).toBeFalse();
+    expect(temporaryAdBypassActivityCache.has(coldId)).toBeFalse();
+
+    readImplementation = async (): Promise<IdentityPolicyRawReadResult> => ({
+      whitelist: [],
+      blocklist: [],
+      temporaryAdBypass: [],
+    });
+    await expect(prefetchIdentityPolicies(ids)).resolves.toBeTrue();
+    expect(readIdentityPolicies).toHaveBeenCalledTimes(3);
+    expect(readIdentityPolicies.mock.calls[2]![0]).toEqual([coldId]);
+    expect(isIdentityPolicyCached(coldId)).toBeTrue();
+    expect(cachedWhitelistEntry(1)?.meta.username).toBe("alice");
+  });
+});
+
+describe("启动计数灌入", () => {
+  test("合法计数清空三份主线程 LRU 后写入两表计数，黑名单计数决定是否存在拉黑身份", () => {
+    seedMissing(7);
+    blocklistEntryCache.set(8, blockValue());
+    whitelistEntryCache.set(8, null);
+    temporaryAdBypassActivityCache.set(8, null);
+
+    hydrateIdentityStorageCounts(2, 1);
+
+    expect(whitelistEntryCache.size).toBe(0);
+    expect(blocklistEntryCache.size).toBe(0);
+    expect(temporaryAdBypassActivityCache.size).toBe(0);
+    expect(isIdentityPolicyCached(7)).toBeFalse();
+    expect(cachedBlocklistEntry(8)).toBeUndefined();
+    expect(identityEntryCounts).toEqual({ whitelist: 2, blocklist: 1 });
+    expect(hasAnyBlockedIdentity()).toBeTrue();
+
+    // write-through 以灌入的计数为基线增减。
+    seedMissing(9);
+    expect(queueIdentityPolicyWrite("whitelist", 9, {
+      permissions: DEFAULT_WHITELIST_PERMISSIONS,
+      meta: { firstName: "Alice", lastName: "", username: "alice" },
+    })).toBeTrue();
+    expect(identityEntryCounts.whitelist).toBe(3);
+
+    hydrateIdentityStorageCounts(0, 0);
+    expect(whitelistEntryCache.has(9)).toBeFalse();
+    expect(identityEntryCounts).toEqual({ whitelist: 0, blocklist: 0 });
+    expect(hasAnyBlockedIdentity()).toBeFalse();
+
+    hydrateIdentityStorageCounts(Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+    expect(identityEntryCounts).toEqual({
+      whitelist: Number.MAX_SAFE_INTEGER,
+      blocklist: Number.MAX_SAFE_INTEGER,
+    });
+  });
+
+  test("灌入计数只清读取 LRU，三类未 ACK 最终值与 revision 保留并在再次预读时覆盖读回值", async () => {
+    const now: number = Date.now();
+    seedMissing(7);
+    expect(queueIdentityPolicyWrite("whitelist", 7, {
+      permissions: DEFAULT_WHITELIST_PERMISSIONS,
+      meta: { firstName: "Alice", lastName: "", username: "alice" },
+    })).toBeTrue();
+    seedMissing(8);
+    expect(queueIdentityPolicyWrite("blocklist", 8, blockValue())).toBeTrue();
+    seedMissing(9);
+    expect(recordTemporaryAdBypassActivity(9, now)?.queued).toBeTrue();
+    const whitelistRevision: number = unacknowledgedWhitelistWrites.get(7)!.revision;
+    const blocklistRevision: number = unacknowledgedBlocklistWrites.get(8)!.revision;
+    const temporaryRevision: number = unacknowledgedTemporaryAdBypassWrites.get(9)!.revision;
+    const pendingBytes: Record<string, number> = { ...unacknowledgedIdentityBytes.current };
+
+    hydrateIdentityStorageCounts(1, 1);
+
+    expect(whitelistEntryCache.size).toBe(0);
+    expect(blocklistEntryCache.size).toBe(0);
+    expect(temporaryAdBypassActivityCache.size).toBe(0);
+    expect(unacknowledgedWhitelistWrites.get(7)?.revision).toBe(whitelistRevision);
+    expect(unacknowledgedBlocklistWrites.get(8)?.revision).toBe(blocklistRevision);
+    expect(unacknowledgedTemporaryAdBypassWrites.get(9)?.revision).toBe(temporaryRevision);
+    expect(unacknowledgedIdentityBytes.current).toEqual(pendingBytes);
+
+    // 数据库读回的仍是落盘前的空结果；未 ACK 最终值必须盖过它。
+    await expect(prefetchIdentityPolicies([7, 8, 9])).resolves.toBeTrue();
+    expect(cachedWhitelistEntry(7)?.meta.username).toBe("alice");
+    expect(cachedBlocklistEntry(8)?.meta.username).toBe("alice");
+    expect(temporaryAdBypassActivityCache.peek(9)?.sendCount).toBe(1);
+
+    // revision 发号器没有回退：下一次写入的 revision 严格大于灌入前的那次。
+    expect(recordTemporaryAdBypassActivity(9, now)?.queued).toBeTrue();
+    expect(unacknowledgedTemporaryAdBypassWrites.get(9)!.revision).toBeGreaterThan(temporaryRevision);
+  });
+
+  const invalidCounts: readonly (readonly [string, number])[] = [
+    ["负数", -1],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["小数", 1.5],
+    ["超过安全整数范围", Number.MAX_SAFE_INTEGER + 1],
+  ];
+  for (const [label, invalid] of invalidCounts) {
+    test(`计数为${label}时在清空缓存前拒绝，既有 LRU 与计数原样保留`, () => {
+      seedMissing(7);
+      blocklistEntryCache.set(8, blockValue());
+      whitelistEntryCache.set(8, null);
+      temporaryAdBypassActivityCache.set(8, null);
+      identityEntryCounts.whitelist = 4;
+      identityEntryCounts.blocklist = 5;
+
+      expect(() => hydrateIdentityStorageCounts(invalid, 1))
+        .toThrow("Whitelist entry count must be a non-negative safe integer.");
+      // 白名单计数合法时也不能先写入它再因黑名单计数失败留下半份状态。
+      expect(() => hydrateIdentityStorageCounts(1, invalid))
+        .toThrow("Blocklist entry count must be a non-negative safe integer.");
+
+      expect(identityEntryCounts).toEqual({ whitelist: 4, blocklist: 5 });
+      expect(whitelistEntryCache.size).toBe(2);
+      expect(blocklistEntryCache.size).toBe(2);
+      expect(temporaryAdBypassActivityCache.size).toBe(2);
+      expect(isIdentityPolicyCached(7)).toBeTrue();
+      expect(cachedBlocklistEntry(8)?.meta.username).toBe("alice");
+    });
+  }
+});
+
+describe("补扫游标页 fail-closed 校验", () => {
+  /** 伪造一份 Disk I/O 游标页回包，断言主线程拒收且不留下任何据此产生的状态。 */
+  async function expectRejectedPage(
+    afterId: number | null,
+    page: BlocklistIdPage,
+    message: string
+  ): Promise<void> {
+    readBlocklistIdPage.mockClear();
+    pageReadImplementation = async (): Promise<BlocklistIdPage> => page;
+
+    await expect(readBlocklistSweepPage(afterId)).rejects.toThrow(message);
+
+    expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("blocklist");
+    expect(readBlocklistIdPage).toHaveBeenCalledTimes(1);
+    expect(readBlocklistIdPage).toHaveBeenCalledWith(afterId);
+    expect(diskMessages).toEqual([]);
+    expect(identityEntryCounts).toEqual({ whitelist: 0, blocklist: 0 });
+    expect(blocklistEntryCache.size).toBe(0);
+    expect(whitelistEntryCache.size).toBe(0);
+  }
+
+  test("超过固定页大小的回包被拒收，即使升序与游标都自洽", async () => {
+    const ids: number[] = [];
+    for (let id: number = 1; id <= BLOCKLIST_SWEEP_PAGE_SIZE + 1; id++) ids.push(id);
+    await expectRejectedPage(
+      null,
+      { ids, nextCursor: BLOCKLIST_SWEEP_PAGE_SIZE + 1, done: true },
+      `Blocklist ID page exceeds ${BLOCKLIST_SWEEP_PAGE_SIZE} entries.`
+    );
+  });
+
+  test("页内出现 0 或非安全整数主键时按非法身份拒收", async () => {
+    await expectRejectedPage(
+      null,
+      { ids: [0], nextCursor: 0, done: true },
+      "blocklist ID page: $.id must be a non-zero safe integer Telegram identity ID."
+    );
+    const unsafeId: number = Number.MAX_SAFE_INTEGER + 1;
+    await expectRejectedPage(
+      null,
+      { ids: [unsafeId], nextCursor: unsafeId, done: true },
+      "blocklist ID page: $.id must be a non-zero safe integer Telegram identity ID."
+    );
+  });
+
+  test("主键不严格晚于游标或页内不严格升序时拒收", async () => {
+    await expectRejectedPage(
+      7,
+      { ids: [7], nextCursor: 7, done: true },
+      "Blocklist ID page must be strictly ordered after its cursor."
+    );
+    await expectRejectedPage(
+      null,
+      { ids: [9, 9], nextCursor: 9, done: true },
+      "Blocklist ID page must be strictly ordered after its cursor."
+    );
+  });
+
+  test("续读游标不是本页末尾主键、或空页挪动了请求游标时拒收", async () => {
+    await expectRejectedPage(
+      7,
+      { ids: [8, 9], nextCursor: 8, done: true },
+      "Blocklist ID page returned an inconsistent next cursor."
+    );
+    await expectRejectedPage(
+      7,
+      { ids: [], nextCursor: null, done: true },
+      "Blocklist ID page returned an inconsistent next cursor."
+    );
+  });
+
+  test("非最后一页未填满固定页大小时拒收，空的非最后一页同样拒收", async () => {
+    await expectRejectedPage(
+      null,
+      { ids: [8, 9], nextCursor: 9, done: false },
+      "A non-final blocklist ID page must fill the fixed page size."
+    );
+    await expectRejectedPage(
+      7,
+      { ids: [], nextCursor: 7, done: false },
+      "A non-final blocklist ID page must fill the fixed page size."
+    );
   });
 });

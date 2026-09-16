@@ -8,7 +8,7 @@ import {
   resolveIdTarget,
   resolveReplyTarget,
   resolveUsernameTarget,
-  seedSenderCache,
+  updateCachedIdentity,
 } from "../../packages/users/senderIdentity";
 
 const chat = { id: -1001, type: "supergroup", title: "Test Group" } as const;
@@ -220,8 +220,8 @@ describe("sender identity cache", () => {
   });
 
   test("大小写归一化不创建重复 key，启动预热复用改名规则", () => {
-    seedSenderCache({ id: 7, username: "MixedCase", first_name: "Before" });
-    seedSenderCache({ id: 7, username: "MIXEDCASE", first_name: "After" });
+    updateCachedIdentity({ id: 7, username: "MixedCase", first_name: "Before" });
+    updateCachedIdentity({ id: 7, username: "MIXEDCASE", first_name: "After" });
 
     expect(userCache.size).toBe(1);
     expect(resolveUsernameTarget("mixedcase")).toMatchObject({
@@ -230,23 +230,23 @@ describe("sender identity cache", () => {
       first_name: "After",
     });
 
-    seedSenderCache({ id: 7, username: "Renamed", first_name: "After" });
+    updateCachedIdentity({ id: 7, username: "Renamed", first_name: "After" });
     expect(resolveUsernameTarget("mixedcase")).toBeUndefined();
     expect(resolveUsernameTarget("RENAMED")?.id).toBe(7);
     expect(senderUsernameCache.get(7)).toBe("renamed");
 
-    seedSenderCache({ id: 7, first_name: "After" });
+    updateCachedIdentity({ id: 7, first_name: "After" });
     expect(resolveUsernameTarget("renamed")).toBeUndefined();
     expect(senderUsernameCache.has(7)).toBe(false);
   });
 
   test("达到容量上限后淘汰正向条目及两份按 id 的索引", () => {
     for (let index = 0; index < USER_CACHE_MAX; index++) {
-      seedSenderCache({ id: 10_000 + index, username: `user_${index}` });
+      updateCachedIdentity({ id: 10_000 + index, username: `user_${index}` });
     }
     expectIdentityIndexInLockstep();
 
-    seedSenderCache({ id: 99_999, username: "overflow_user" });
+    updateCachedIdentity({ id: 99_999, username: "overflow_user" });
 
     expect(userCache.size).toBe(USER_CACHE_MAX);
     expect(senderUsernameCache.size).toBe(USER_CACHE_MAX);

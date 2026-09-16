@@ -13,15 +13,14 @@ mock.module("../../../packages/aiChat/ai/imageDescription", () => ({ describeMed
 mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({ getCatalogEntry }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ pushBufferedMessage }));
 mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
-  currentReplyGeneration: () => 0,
   generateAndSendReply,
-  isReplyGenerationCurrent: () => true,
   replyGenerationSignal: (): AbortSignal => new AbortController().signal,
   trackReplyGenerationTask,
 }));
 
 const { recordChatMedia } = await import("../../../packages/workers/aiChat/mediaIngest");
 const { dirtyMemoryChats } = await import("../../../packages/cache/workers/aiChat/memory");
+const { cachedReplyGeneration } = await import("../../../packages/cache/workers/aiChat/replies");
 
 function photoMessage(): AiRecordMediaMessage {
   return {
@@ -72,10 +71,11 @@ beforeEach(() => {
 
 describe("AI 媒体触发的生图参考图", () => {
   test("当前图片明确触发生图时，把自身 file_id 只沿本轮触发链传递", async () => {
+    const generation: number = cachedReplyGeneration(-1001);
     recordChatMedia({ ...photoMessage(), forwardedFrom: "频道 [id:-100666] 东京日报" });
     await Promise.resolve();
 
-    expect(trackReplyGenerationTask).toHaveBeenCalledWith(-1001, 0, expect.any(Promise));
+    expect(trackReplyGenerationTask).toHaveBeenCalledWith(-1001, generation, expect.any(Promise));
     expect(generateAndSendReply).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
       replyToMessageId: 10,

@@ -48,7 +48,7 @@ import { drainTelegramOutbound } from "../infra/telegram/outboundLifecycle";
 import { bot, initTelegramClients } from "../infra/telegram/mainClient";
 import { sleep } from "../libs/sleep";
 import { monotonicNow } from "../libs/monotonicDeadline";
-import { seedSenderCache } from "../users/senderIdentity";
+import { updateCachedIdentity } from "../users/senderIdentity";
 import { hydrateIdentityStorageCounts } from "../infra/identityStorage";
 import { validateExistingDeploymentInputs } from "./featurePreflight";
 import { registerCommandMenu } from "./commandMenu";
@@ -121,7 +121,7 @@ export const lifecycleDependencies = {
   quiesceWedRuntime,
   quiesceBlocklistSweepScheduler,
   quiesceTranslate,
-  seedSenderCache,
+  seedSenderCache: updateCachedIdentity,
   seedTranslateTargets,
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,

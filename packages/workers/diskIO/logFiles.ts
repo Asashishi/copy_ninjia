@@ -168,7 +168,7 @@ function dayKey(timestamp: number): string {
 
 /**
  * 清掉 LOGS_DIR 下残留的 *.tmp：openDayFile 的维护性重写（appendOnlyDayFile.ts
- * 的 atomicRewrite）走 tmp + rename，正常情况 rename 后 tmp 不会留下；只有
+ * 经 atomicWriteTextSync）走 tmp + rename，正常情况 rename 后 tmp 不会留下；只有
  * 进程恰好在 writeFileSync 与 renameSync 之间被杀、或 rename 本身失败（磁盘
  * 满等）才会留下孤儿文件。DAY_FILE_PATTERN 只匹配 <day>.json，不匹配
  * <day>.json.tmp，保留期清理天然覆盖不到，得单独扫一遍删掉——对齐

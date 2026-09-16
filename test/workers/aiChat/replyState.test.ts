@@ -2,6 +2,8 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import {
   activeReplyCounts,
+  cachedReplyGeneration,
+  isCachedReplyGenerationCurrent,
   longTriggerTimes,
   pendingOverflowNotices,
   pendingReplyTriggers,
@@ -32,9 +34,7 @@ import { VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../packages/types";
 import {
-  currentReplyGeneration,
   invalidateChatReplies,
-  isReplyGenerationCurrent,
   quiesceAiChatReplies,
   replyGenerationSignal,
   trackReplyGenerationTask,
@@ -68,13 +68,13 @@ describe("AI 回复代际状态", () => {
       inflight: new Set(),
       consecutiveFailures: 0,
     } satisfies ChatActionHeartbeatEntry);
-    const captured: number = currentReplyGeneration(-1001);
+    const captured: number = cachedReplyGeneration(-1001);
 
     await invalidateChatReplies(-1001);
 
     expect(replyGenerations.has(-1001)).toBe(false);
-    expect(isReplyGenerationCurrent(-1001, captured)).toBe(false);
-    expect(currentReplyGeneration(-1001)).not.toBe(captured);
+    expect(isCachedReplyGenerationCurrent(-1001, captured)).toBe(false);
+    expect(cachedReplyGeneration(-1001)).not.toBe(captured);
     expect(pendingReplyTriggers.has(-1001)).toBe(false);
     expect(pendingOverflowNotices.has(-1001)).toBe(false);
     expect(longTriggerTimes.has(-1001)).toBe(false);
@@ -85,7 +85,7 @@ describe("AI 回复代际状态", () => {
 
   test("失效先中止旧代信号，并等待该代全部 generation-sensitive 任务 settle", async () => {
     const chatId: number = -1006;
-    const generation: number = currentReplyGeneration(chatId);
+    const generation: number = cachedReplyGeneration(chatId);
     const signal: AbortSignal = replyGenerationSignal(chatId, generation);
     let settleTask: (() => void) | undefined;
     const task: Promise<void> = new Promise<void>((resolve: () => void): void => {
@@ -114,7 +114,7 @@ describe("AI 回复代际状态", () => {
 
   test("失效等待到期仍保留旧代发送容量，真实收尾后才释放", async () => {
     const chatId: number = -1007;
-    const generation: number = currentReplyGeneration(chatId);
+    const generation: number = cachedReplyGeneration(chatId);
     const turns = Array.from({ length: REPLY_DELIVERY_MAX_PER_CHAT }, () => reserveReplyDelivery(chatId)!);
     let settleTask: (() => void) | undefined;
     const task: Promise<void> = new Promise<void>((resolve: () => void): void => {
@@ -151,7 +151,7 @@ describe("AI 回复代际状态", () => {
       );
       expect(timerCleared).toBeTrue();
       expect(replyGenerationTasks.size).toBe(0);
-      expect(currentReplyGeneration(chatId)).not.toBe(generation);
+      expect(cachedReplyGeneration(chatId)).not.toBe(generation);
       expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
       expect(reserveReplyDelivery(chatId)).toBeUndefined();
     } finally {
@@ -165,8 +165,8 @@ describe("AI 回复代际状态", () => {
   });
 
   test("Worker 排空会中止全部代次并等待所有 generation-sensitive 任务", async () => {
-    const firstGeneration: number = currentReplyGeneration(-1008);
-    const secondGeneration: number = currentReplyGeneration(-1009);
+    const firstGeneration: number = cachedReplyGeneration(-1008);
+    const secondGeneration: number = cachedReplyGeneration(-1009);
     const firstSignal: AbortSignal = replyGenerationSignal(-1008, firstGeneration);
     const secondSignal: AbortSignal = replyGenerationSignal(-1009, secondGeneration);
     let settleFirst: (() => void) | undefined;

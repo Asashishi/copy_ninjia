@@ -16,7 +16,7 @@ const sendCommandMessage = mock(async (..._args: unknown[]): Promise<number> => 
 const persistGlobalState = mock(async (..._args: unknown[]): Promise<void> => {});
 const persistChatState = mock(async (..._args: unknown[]): Promise<void> => {});
 const copySideEffect = mock((): void => {});
-const seedSenderCache = mock((..._args: unknown[]): void => {});
+const updateCachedIdentity = mock((..._args: unknown[]): void => {});
 let target: CachedUser | undefined = { id: 7, first_name: "Target" };
 let configured: boolean = true;
 let allowed: boolean = true;
@@ -36,7 +36,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   persistChatState,
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
-mock.module("../../packages/users/senderIdentity", () => ({ seedSenderCache }));
+mock.module("../../packages/users/senderIdentity", () => ({ updateCachedIdentity }));
 mock.module("../../packages/commands/copyShared", () => ({
   claimCopyCooldownOrReject: copySideEffect,
   stealAvatarInBackground: copySideEffect,
@@ -69,7 +69,7 @@ beforeEach(() => {
   persistChatState.mockReset();
   persistChatState.mockResolvedValue(undefined);
   copySideEffect.mockClear();
-  seedSenderCache.mockClear();
+  updateCachedIdentity.mockClear();
   resolveCommandTarget.mockClear();
 });
 
@@ -336,6 +336,6 @@ describe("/translate 独立命令", () => {
     expect(persistGlobalState).not.toHaveBeenCalled();
     expect(setTranslateState(-1, { translatedUser: { id: 50 }, language: "en" })).toBe(true);
     seedTranslateTargets();
-    expect(seedSenderCache).toHaveBeenCalledTimes(STATE_MANAGED_CHAT_LIMIT + 1);
+    expect(updateCachedIdentity).toHaveBeenCalledTimes(STATE_MANAGED_CHAT_LIMIT + 1);
   });
 });

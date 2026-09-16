@@ -99,3 +99,15 @@ export interface OwnerSettler {
   /** 返回 void 的终止型 owner；成功记为 `"flushed"`，抛错记为 `"failed"`。 */
   readonly terminate: (owner: string, run: () => Promise<void>) => Promise<FlushResult>;
 }
+
+/**
+ * 一条 update 的取消边界，以及它统一的「现在」（infra/updateContext.ts）。
+ *
+ * `now` 惰性填充：第一次有调用点询问时刻时取一次墙钟，此后同一条 update 的
+ * 全部调用点复用它（见 updateNow）。
+ */
+export interface UpdateScope {
+  readonly signal: AbortSignal;
+  /** `null` 表示本条 update 还没有任何调用点问过时刻，不表示时刻为零。 */
+  now: number | null;
+}

@@ -41,10 +41,6 @@ function drainAntiRaidWorkerTasks(timeoutMs: number): Promise<FlushResult> {
   );
 }
 
-function remainingDrainTime(deadline: number): number {
-  return remainingMonotonicTime(deadline);
-}
-
 /**
  * 停机排空：先 quiesce Worker 广告判定并取得 FIFO drain 回执，再等待主线程
  * 广告处置；随后让已有镜像落盘并把持久化回执交回 Worker，等待由回执放行的
@@ -59,14 +55,14 @@ export async function drainAntiRaid(
   // adDetected 已先在主线程登记，回执之后在途判定因 stopping 门禁不再发布。
   // 因此只有拿到这道回执后，inFlightAdDisposals 的第一次快照才是稳定边界。
   const quiesceResult: FlushResult =
-    await drainAntiRaidWorkerTasks(remainingDrainTime(deadline));
+    await drainAntiRaidWorkerTasks(remainingMonotonicTime(deadline));
   if (quiesceResult !== "flushed") {
     // 回执拿不到（Worker 已放弃或正在重生）时，主线程侧仍可能有处置卡在
     // confirmBlocklistPersisted 上——那正是「拉黑已入队、还没落盘」的窗口，
     // 直接 return 会连同待写的黑名单一起丢掉。因此用剩余预算再排空一次；
     // 没有回执就没有稳定边界，这一轮只覆盖此刻在途的那批，属尽力而为，
     // 结果不改写返回值：失败原因仍是 quiesce 本身。
-    await drainAdDisposals(remainingDrainTime(deadline));
+    await drainAdDisposals(remainingMonotonicTime(deadline));
     return quiesceResult;
   }
   for (let round: number = 0; round < ANTI_RAID_DRAIN_MAX_ROUNDS; round++) {
@@ -75,18 +71,18 @@ export async function drainAntiRaid(
     // 与本轮其余每一步一样吃同一份剩余预算——裸等的话，预算为 0 的异常退出
     // 路径会被它一路拖到强制退出线（见 adDetect.ts 的 drainAdDisposals）。
     const disposalResult: FlushResult =
-      await drainAdDisposals(remainingDrainTime(deadline));
+      await drainAdDisposals(remainingMonotonicTime(deadline));
     if (disposalResult !== "flushed") return disposalResult;
     const initialBarrier: FlushResult =
-      await barrierAntiRaidMailbox(remainingDrainTime(deadline));
+      await barrierAntiRaidMailbox(remainingMonotonicTime(deadline));
     if (initialBarrier !== "flushed") return initialBarrier;
 
     const persistenceResults: [
       PromiseSettledResult<FlushResult>,
       PromiseSettledResult<FlushResult>
     ] = await Promise.allSettled([
-      flushDiskIO(remainingDrainTime(deadline)),
-      flushStateToDisk(remainingDrainTime(deadline)),
+      flushDiskIO(remainingMonotonicTime(deadline)),
+      flushStateToDisk(remainingMonotonicTime(deadline)),
     ]);
     if (persistenceResults.some(
       (result: PromiseSettledResult<FlushResult>): boolean =>
@@ -104,12 +100,12 @@ export async function drainAntiRaid(
     // flush 回执本身会投回 Worker 并启动下一阶段副作用；第二道 FIFO barrier
     // 确保这些消息已路由，随后才能对真实在途任务做 drain。
     const receiptBarrier: FlushResult =
-      await barrierAntiRaidMailbox(remainingDrainTime(deadline));
+      await barrierAntiRaidMailbox(remainingMonotonicTime(deadline));
     if (receiptBarrier !== "flushed") return receiptBarrier;
     const persistenceVersionBeforeTasks: number =
       antiRaidRuntimeState.persistenceVersion;
     const taskResult: FlushResult =
-      await drainAntiRaidWorkerTasks(remainingDrainTime(deadline));
+      await drainAntiRaidWorkerTasks(remainingMonotonicTime(deadline));
     if (taskResult !== "flushed") return taskResult;
     if (
       antiRaidRuntimeState.persistenceVersion ===

@@ -8,9 +8,9 @@ import type { GcPauseProfile } from "./gcProfile";
 import {
   createHotPathGateRuntimeRoot,
   hotPathGateChildEnvironment,
-  removeHotPathGateRuntimeRoot,
 } from "./gateFixture";
 import type { HotPathGateFixture } from "./gateFixture";
+import { removeMockPath } from "../fullSuite/mockRoot";
 import type { HotPathGateCalibration } from "./gateResult";
 
 export interface SamplingProfileResult {
@@ -309,6 +309,6 @@ export async function runHotPathGateChild({
     }
     return result;
   } finally {
-    removeHotPathGateRuntimeRoot(runtimeRoot);
+    removeMockPath(runtimeRoot);
   }
 }

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../packages/consts/identityStorage";
 import type { JoinLogRecord } from "../../packages/types/diskIO/storage";
+import { diskIOStub } from "../helpers/diskIOMock";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const probeChatMembership = mock(
@@ -15,7 +16,7 @@ const banChatMemberWithOutcome = mock(
 const isUserBlocked = mock((_userId: number): boolean => false);
 const requestBlocklistResweep = mock((_chatId: number): void => {});
 const sweepBlockedMembers = mock(async (_chatId: number): Promise<void> => {});
-const readRecentJoinLog = mock(
+const readJoinLog = mock(
   async (..._args: unknown[]): Promise<readonly JoinLogRecord[]> => []
 );
 const loggerError = mock((..._args: unknown[]): void => {});
@@ -36,7 +37,7 @@ mock.module("../../packages/infra/blocklist/sweep", () => ({
   requestBlocklistResweep,
   sweepBlockedMembers,
 }));
-mock.module("../../packages/infra/joinLog", () => ({ readRecentJoinLog }));
+mock.module("../../packages/infra/diskIO", () => diskIOStub({ readJoinLog }));
 mock.module("../../packages/infra/logger", () => ({
   logger: {
     log(): void {},
@@ -93,14 +94,14 @@ beforeEach(() => {
     isUserBlocked,
     requestBlocklistResweep,
     sweepBlockedMembers,
-    readRecentJoinLog,
+    readJoinLog,
     loggerError,
     prefetchIdentityPolicies,
   ]) {
     mocked.mockClear();
   }
   prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => true);
-  readRecentJoinLog.mockImplementation(async (): Promise<readonly JoinLogRecord[]> => []);
+  readJoinLog.mockImplementation(async (): Promise<readonly JoinLogRecord[]> => []);
   probeChatMembership.mockImplementation(
     async (): Promise<boolean | undefined> => true
   );
@@ -136,7 +137,7 @@ describe("/batch_kick", () => {
     await handleBatchKickCommand(context({ chatType: "group" }));
     await handleBatchKickCommand(context({ match: "2d" }));
 
-    expect(readRecentJoinLog).not.toHaveBeenCalled();
+    expect(readJoinLog).not.toHaveBeenCalled();
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(3);
@@ -149,7 +150,7 @@ describe("/batch_kick", () => {
 
   test("读取失败时不执行任何踢人动作", async () => {
     const failure: Error = new Error("disk offline");
-    readRecentJoinLog.mockRejectedValueOnce(failure);
+    readJoinLog.mockRejectedValueOnce(failure);
 
     await handleBatchKickCommand(context());
 
@@ -169,7 +170,7 @@ describe("/batch_kick", () => {
     await handleBatchKickCommand(context({ match: "2h" }));
 
     const now: number = COMMAND_DATE_SECONDS * 1_000;
-    expect(readRecentJoinLog).toHaveBeenCalledWith({
+    expect(readJoinLog).toHaveBeenCalledWith({
       chatId: -1001,
       since: now - 2 * 60 * 60 * 1_000,
       now,
@@ -179,14 +180,14 @@ describe("/batch_kick", () => {
   test("空窗口明确报告未踢人、未写黑名单", async () => {
     await handleBatchKickCommand(context({ match: "2h" }));
 
-    expect(readRecentJoinLog).toHaveBeenCalledTimes(1);
+    expect(readJoinLog).toHaveBeenCalledTimes(1);
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(lastReplyText()).toContain("没有写入黑名单");
   });
 
   test("保护自己人，先查仍在群，再只踢确认在群的普通成员", async () => {
-    readRecentJoinLog.mockResolvedValueOnce([
+    readJoinLog.mockResolvedValueOnce([
       { userId: 1, joinedAt: 1 },
       { userId: 100, joinedAt: 2 },
       { userId: 2, joinedAt: 3 },
@@ -225,7 +226,7 @@ describe("/batch_kick", () => {
   });
 
   test("单条意外 rejection 带记录身份落日志，并继续结算同批其它成员", async () => {
-    readRecentJoinLog.mockResolvedValueOnce([
+    readJoinLog.mockResolvedValueOnce([
       { userId: 7, joinedAt: 1 },
       { userId: 8, joinedAt: 2 },
     ]);
@@ -253,7 +254,7 @@ describe("/batch_kick", () => {
   });
 
   test("429 等待期间目标已离群时按 absent 结算，不误报请求失败", async () => {
-    readRecentJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
+    readJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
     kickChatMemberWithOutcome.mockResolvedValueOnce("absent");
 
     await handleBatchKickCommand(context());
@@ -263,7 +264,7 @@ describe("/batch_kick", () => {
   });
 
   test("已有黑名单成员不执行只踢，并单独计入交回封禁", async () => {
-    readRecentJoinLog.mockResolvedValueOnce([
+    readJoinLog.mockResolvedValueOnce([
       { userId: 42, joinedAt: 1 },
     ]);
     isUserBlocked.mockImplementation((userId: number): boolean => userId === 42);
@@ -282,7 +283,7 @@ describe("/batch_kick", () => {
 
   test("只踢请求期间并发拉黑时补回永久封禁", async () => {
     let blocked: boolean = false;
-    readRecentJoinLog.mockResolvedValueOnce([
+    readJoinLog.mockResolvedValueOnce([
       { userId: 42, joinedAt: 1 },
     ]);
     isUserBlocked.mockImplementation((): boolean => blocked);
@@ -303,7 +304,7 @@ describe("/batch_kick", () => {
 
   test("只踢返回不确定失败但名单已并发拉黑时仍补回永久封禁", async () => {
     let blocked: boolean = false;
-    readRecentJoinLog.mockResolvedValueOnce([
+    readJoinLog.mockResolvedValueOnce([
       { userId: 42, joinedAt: 1 },
     ]);
     isUserBlocked.mockImplementation((): boolean => blocked);
@@ -323,7 +324,7 @@ describe("/batch_kick", () => {
 
   test("并发拉黑的补封失败时请求补扫且不报告踢出成功", async () => {
     let blocked: boolean = false;
-    readRecentJoinLog.mockResolvedValueOnce([
+    readJoinLog.mockResolvedValueOnce([
       { userId: 42, joinedAt: 1 },
     ]);
     isUserBlocked.mockImplementation((): boolean => blocked);
@@ -350,7 +351,7 @@ describe("身份预取与批次消费必须交错", () => {
     for (let index: number = 0; index < IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 3; index++) {
       records.push({ userId: 1_000 + index, joinedAt: 1 });
     }
-    readRecentJoinLog.mockResolvedValueOnce(records);
+    readJoinLog.mockResolvedValueOnce(records);
     const prefetchedAtCall: number[] = [];
     prefetchIdentityPolicies.mockImplementation(
       async (ids: readonly number[]): Promise<boolean> => {
@@ -372,7 +373,7 @@ describe("身份预取与批次消费必须交错", () => {
   });
 
   test("冷读失败时一个人都不动，并如实回执", async () => {
-    readRecentJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
+    readJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
     prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => false);
 
     await handleBatchKickCommand(context());
@@ -388,7 +389,7 @@ describe("身份预取与批次消费必须交错", () => {
     for (let index: number = 0; index < IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 3; index++) {
       records.push({ userId: 1_000 + index, joinedAt: 1 });
     }
-    readRecentJoinLog.mockResolvedValueOnce(records);
+    readJoinLog.mockResolvedValueOnce(records);
     let call: number = 0;
     prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => {
       call++;

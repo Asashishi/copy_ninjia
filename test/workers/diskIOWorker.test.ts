@@ -20,11 +20,11 @@ const adoptAiMemorySnapshots = mock((_inspection: unknown): Map<number, string> 
 interface StickerInspection {
   readonly kind: "stickers";
 }
-const inspectStickerCatalogSnapshots = mock(async (
+const inspectStickerCatalogs = mock(async (
   _packs: readonly string[]
 ): Promise<StickerInspection> => ({ kind: "stickers" }));
 const adoptStickerCatalogSnapshots = mock((_inspection: unknown): Map<string, string> => new Map());
-const maintainStickerCatalogSnapshots = mock((_inspection: unknown): void => {});
+const maintainStickerCatalogFiles = mock((_inspection: unknown): void => {});
 const inspectJoinLogFiles = mock((day: string): { readonly today: string } => ({ today: day }));
 const maintainJoinLogFiles = mock((_inspection: unknown): void => {});
 const maintainJoinLogRetention = mock((_day?: string): void => {});
@@ -53,14 +53,14 @@ let hydratedLuckEntries: HydratedLuckEntries = new Map();
 const hydrateLuckDay = mock((day: string): void => {
   luckWorkerCache.current = { day, entries: new Map(hydratedLuckEntries) };
 });
-const inspectLuckDayState = mock((day: string): {
+const inspectLuckDay = mock((day: string): {
   readonly day: string;
   readonly cache: { readonly day: string; readonly entries: HydratedLuckEntries };
 } => ({ day, cache: { day, entries: new Map(hydratedLuckEntries) } }));
 const adoptLuckDay = mock((inspection: {
   readonly cache: { day: string; entries: HydratedLuckEntries };
 }): void => { luckWorkerCache.current = inspection.cache; });
-const maintainLuckDayState = mock((_day: string, _inspection: unknown): void => {});
+const maintainLuckDay = mock((_day: string, _inspection: unknown): void => {});
 const maintainLuckForDay = mock((_day: string): void => {});
 const inspectLuckReceiptSecret = mock((input: LuckSecretRecoveryInput): {
   readonly day: string;
@@ -129,8 +129,6 @@ mock.module("../../packages/workers/diskIO/luckFiles", () => ({
   flushLuckAppends,
   handleLuckDrawMessage,
   hydrateLuckDay,
-  inspectLuckDayState,
-  maintainLuckDayState,
   maintainLuckForDay,
 }));
 mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({
@@ -176,9 +174,13 @@ mock.module("../../packages/workers/diskIO/aiMemoryStorage", () => ({
 mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
   adoptStickerCatalogSnapshots,
   flushStickerCatalogs,
-  inspectStickerCatalogSnapshots,
-  maintainStickerCatalogSnapshots,
   markStickerCatalogSnapshotDirty,
+}));
+mock.module("../../packages/workers/diskIO/snapshotFiles", () => ({
+  inspectLuckDay,
+  inspectStickerCatalogs,
+  maintainLuckDay,
+  maintainStickerCatalogFiles,
 }));
 mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   adoptStorageDatabase,
@@ -250,9 +252,9 @@ beforeEach(() => {
 
     adoptAiMemorySnapshots,
 
-    inspectStickerCatalogSnapshots,
+    inspectStickerCatalogs,
     adoptStickerCatalogSnapshots,
-    maintainStickerCatalogSnapshots,
+    maintainStickerCatalogFiles,
     inspectJoinLogFiles,
     maintainJoinLogFiles,
     maintainJoinLogRetention,
@@ -275,9 +277,9 @@ beforeEach(() => {
     handleTemporaryAdBypassWrite,
     postMessage,
     hydrateLuckDay,
-    inspectLuckDayState,
+    inspectLuckDay,
     adoptLuckDay,
-    maintainLuckDayState,
+    maintainLuckDay,
     maintainLuckForDay,
     inspectLuckReceiptSecret,
     adoptLuckReceiptSecret,
@@ -742,7 +744,7 @@ describe("Disk I/O Worker protocol router", () => {
 
     await route({ type: "load", stickerPacks: ["pack_a"] });
 
-    expect(inspectLuckDayState).toHaveBeenCalledTimes(1);
+    expect(inspectLuckDay).toHaveBeenCalledTimes(1);
     expect(inspectLuckReceiptSecret).toHaveBeenLastCalledWith({
       day: expect.any(String),
       confirmedResultCount: 1,
@@ -757,27 +759,27 @@ describe("Disk I/O Worker protocol router", () => {
   test("主线程已校验的贴纸白名单快照原样用于恢复 inspect", async () => {
     await route({ type: "load", stickerPacks: ["pack_b"] });
 
-    expect(inspectStickerCatalogSnapshots).toHaveBeenCalledWith(["pack_b"]);
+    expect(inspectStickerCatalogs).toHaveBeenCalledWith(["pack_b"]);
   });
 
   test("白名单可读时先只读 inspect，成功回执后才执行孤儿维护", async () => {
     await route({ type: "load", stickerPacks: ["pack_a"] });
 
-    expect(inspectStickerCatalogSnapshots).toHaveBeenCalledWith(["pack_a"]);
+    expect(inspectStickerCatalogs).toHaveBeenCalledWith(["pack_a"]);
     expect(inspectJoinLogFiles).toHaveBeenCalledTimes(1);
     expect(adoptStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
-    expect(maintainStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
+    expect(maintainStickerCatalogFiles).toHaveBeenCalledTimes(1);
     expect(maintainAdSampleFiles).toHaveBeenCalledTimes(1);
     expect(maintainTemporaryAdBypassActivities).toHaveBeenCalledTimes(1);
     expect(diskIOMaintenanceCron.current).not.toBeNull();
     expect(postMessage.mock.invocationCallOrder[0]).toBeLessThan(
-      maintainStickerCatalogSnapshots.mock.invocationCallOrder[0]!
+      maintainStickerCatalogFiles.mock.invocationCallOrder[0]!
     );
   });
 
   test("load 未完成时后续业务写只排队，不得穿过恢复事务", async () => {
     let releaseInspection: ((inspection: StickerInspection) => void) | null = null;
-    inspectStickerCatalogSnapshots.mockImplementationOnce(
+    inspectStickerCatalogs.mockImplementationOnce(
       (_packs: readonly string[]): Promise<StickerInspection> => new Promise<StickerInspection>(
         (resolve: (inspection: StickerInspection) => void): void => {
           releaseInspection = resolve;
@@ -798,7 +800,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
     await Bun.sleep(0);
 
-    expect(inspectStickerCatalogSnapshots).toHaveBeenCalledTimes(1);
+    expect(inspectStickerCatalogs).toHaveBeenCalledTimes(1);
     expect(handleJoinLogMessage).not.toHaveBeenCalled();
     expect(releaseInspection).not.toBeNull();
     releaseInspection!({ kind: "stickers" });
@@ -841,7 +843,7 @@ describe("Disk I/O Worker protocol router", () => {
   });
 
   test("任一异步内容 inspect 失败时不 adopt、不维护其它领域", async () => {
-    inspectStickerCatalogSnapshots.mockImplementationOnce(
+    inspectStickerCatalogs.mockImplementationOnce(
       async (): Promise<StickerInspection> => {
         throw new Error("memory/sticker_catalog: $ must be readable valid JSON snapshots.");
       }
@@ -862,7 +864,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(adoptStorageDatabase).not.toHaveBeenCalled();
     expect(maintainLogFiles).not.toHaveBeenCalled();
 
-    expect(maintainStickerCatalogSnapshots).not.toHaveBeenCalled();
+    expect(maintainStickerCatalogFiles).not.toHaveBeenCalled();
     expect(maintainAdSampleFiles).not.toHaveBeenCalled();
     expect(diskIOMaintenanceCron.current).toBeNull();
     expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -887,9 +889,9 @@ describe("Disk I/O Worker protocol router", () => {
     expect(adoptLogFiles).not.toHaveBeenCalled();
     expect(maintainLogFiles).not.toHaveBeenCalled();
 
-    expect(maintainStickerCatalogSnapshots).not.toHaveBeenCalled();
+    expect(maintainStickerCatalogFiles).not.toHaveBeenCalled();
     expect(maintainJoinLogFiles).not.toHaveBeenCalled();
-    expect(maintainLuckDayState).not.toHaveBeenCalled();
+    expect(maintainLuckDay).not.toHaveBeenCalled();
     expect(maintainVerificationDay).not.toHaveBeenCalled();
     expect(maintainAdSampleFiles).not.toHaveBeenCalled();
     expect(maintainTemporaryAdBypassActivities).not.toHaveBeenCalled();

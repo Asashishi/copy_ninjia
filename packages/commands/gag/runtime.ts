@@ -10,7 +10,6 @@ import {
   GAG_SESSION_MAX,
 } from "../../consts/gag";
 import { registerChatTeardown } from "../../infra/chatTeardownRegistry";
-import { settleInflight } from "../../libs/inflight";
 import { logger } from "../../infra/logger";
 import {
   deleteMessageWithOutcome,
@@ -406,7 +405,7 @@ export function quiesceGagRuntime(): void {
 
 async function settleGagRuntime(): Promise<FlushResult> {
   if (gagBackgroundTasks.size > 0) {
-    await settleInflight(gagBackgroundTasks);
+    await Promise.allSettled(gagBackgroundTasks);
   }
   const snapshot: GagSession[] = [];
   for (const sessions of gagSessionsByChat.values()) snapshot.push(...sessions);

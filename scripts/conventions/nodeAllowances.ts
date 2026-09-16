@@ -60,6 +60,12 @@ export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> 
 export const PRODUCTION_NODE_IMPORTS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {
+  "packages/cache/perThread/updateContext.ts": {
+    "node:async_hooks": {
+      symbols: ["AsyncLocalStorage"],
+      purpose: "per-thread update cancellation and clock scope storage",
+    },
+  },
   "packages/config/googleAuth.ts": {
     "node:crypto": {
       symbols: ["createPrivateKey"],
@@ -112,12 +118,6 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
     "node:fs/promises": {
       symbols: ["lstat"],
       purpose: "distinguishing a truly missing state copy from a dangling symbolic link",
-    },
-  },
-  "packages/infra/updateContext.ts": {
-    "node:async_hooks": {
-      symbols: ["AsyncLocalStorage"],
-      purpose: "per-update asynchronous log context",
     },
   },
   "packages/libs/atomicFile.ts": {

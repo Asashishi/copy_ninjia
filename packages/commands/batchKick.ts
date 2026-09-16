@@ -15,7 +15,7 @@ import {
   requestBlocklistResweep,
   sweepBlockedMembers,
 } from "../infra/blocklist/sweep";
-import { readRecentJoinLog } from "../infra/joinLog";
+import { readJoinLog } from "../infra/diskIO";
 import { logger } from "../infra/logger";
 import { prefetchIdentityPolicies } from "../infra/identityStorage";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../consts/identityStorage";
@@ -280,7 +280,7 @@ export async function handleBatchKickCommand(
   const now: number = ctx.msg.date * 1000;
   let records: readonly JoinLogRecord[];
   try {
-    records = await readRecentJoinLog({
+    records = await readJoinLog({
       chatId,
       since: now - durationMs,
       now,

@@ -17,7 +17,7 @@ import {
   needsBotOwnMessageWait,
   waitForBotOwnMessage,
 } from "../infra/selfSentTracker";
-import { resolveSenderIdentity, seedSenderCache } from "../users/senderIdentity";
+import { resolveSenderIdentity, updateCachedIdentity } from "../users/senderIdentity";
 import { formatFullName, formatProfileUrl } from "../users/userLabel";
 import { resolveCommandTarget } from "./targetResolution";
 
@@ -161,7 +161,7 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
   // 被本 handler 认领的消息不会再流经 handleIncomingMessageMiddleware，而 cacheSender 只在
   // 那里调用。不在这里补一次，发言以动作命令为主的人就永远进不了 username 缓存，
   // 明明刚在群里说过话，/copy @TA 却会答「都还没说过话呢」。
-  seedSenderCache(actor);
+  updateCachedIdentity(actor);
 
   // 配额在这里消耗：往下每条路径（含目标解析失败的嘲讽）都会发出一条消息。
   // 超额静默丢弃，也不再 next()——限流的意义就是不为这条更新做任何输出。

@@ -101,9 +101,9 @@ async function rejectUnrestrictableTarget(
  * 参数形态：时长必填且必须是最后一个 token（`数字+m/h/d`，见
  * parseMuteDurationMs），目标用回复消息、@username 或用户 id 指定（时长带
  * 单位字母、id 是纯数字，两者形态互斥，不会互相抢参数）。仅持有 isCanMute 的
- * 身份可用（超级管理员恒持有，见 whitelist.ts）；目标是自己人（白名单
- * 边界内的身份，含超级管理员）时拒绝——他们本来就不参与任何自动处置（见
- * antiRaid/memberFacts.ts 的 isProtectedSender），手动命令也不该例外。
+ * 身份可用（超级管理员恒持有，见 whitelist.ts）；目标是自己人（isWhitelisted
+ * 边界内的身份，含超级管理员）时拒绝——自动处置按同一边界排除他们（见
+ * antiRaid/adDetect.ts），手动命令也不例外。
  *
  * 成功战报与失败提示一样走 sendCommandMessage 的默认路径，30 秒后自动删除：
  * 群里的非功能性提示统一由那道边界回收，操作回执也在其内（见
@@ -145,9 +145,8 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   if (!targetUser) return;
   if (await rejectUnrestrictableTarget(ctx, targetUser)) return;
 
-  // 自己人不可禁言：部署方亲手配的身份不该被机器人按住（口径同
-  // isProtectedSender；超级管理员已含在 isWhitelisted 内），回错消息也只损失
-  // 一句嘲讽。
+  // 自己人不可禁言：部署方亲手配的身份不该被机器人按住（口径同自动处置的
+  // isWhitelisted 边界，超级管理员已含在内），回错消息也只损失一句嘲讽。
   if (isWhitelisted(targetUser.id)) {
     const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
     await sendCommandMessage({

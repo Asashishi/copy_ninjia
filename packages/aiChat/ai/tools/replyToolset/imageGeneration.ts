@@ -40,7 +40,7 @@ import type { TelegramSendResult } from "../../../../types/telegram";
 import { generateChatImage } from "../../imageGeneration";
 import { normalizeImageAspectRatio } from "../../utils/aspectRatio";
 import { downloadTelegramVisionImage } from "../../telegramImage";
-import { runMediaTask } from "../../mediaTaskRunner";
+import { mediaTaskRunner } from "../../../../cache/workers/aiChat/mediaTasks";
 import type { VisionImage } from "../../../../types/media";
 import { cleanReply } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
@@ -219,7 +219,7 @@ export function createGenerateImageExecutor(
             let referenceImage: VisionImage | undefined;
             if (ctx.imageGenerationReference) {
               const referenceFileId: string = ctx.imageGenerationReference.fileId;
-              referenceImage = await runMediaTask((): Promise<VisionImage | null> => downloadTelegramVisionImage({
+              referenceImage = await mediaTaskRunner.run("interactive", (): Promise<VisionImage | null> => downloadTelegramVisionImage({
                 fileId: referenceFileId,
                 logLabel: "image generation reference",
                 signal: ctx.signal,

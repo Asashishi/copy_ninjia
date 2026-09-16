@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   runHotPathSection,
 } from "../../scripts/perf/fullSuite/sections";
+import { runRounds } from "../../scripts/perf/fullSuite/sectionRunner";
+import { JSC_GC_LOG_ENV, RUNTIME_DATA_ROOT_ENV } from "../../packages/consts/environment";
 import type {
   SectionContext,
   SectionDependencies,
@@ -28,6 +30,47 @@ function hotPathRound(
 }
 
 describe("全量基准分区编排", () => {
+  test("按轮透传追加环境与 stderr 回调，隔离根变量不可被覆盖", async (): Promise<void> => {
+    const calls: SpawnChildOptions[] = [];
+    let nextRoot: number = 0;
+    const dependencies: SectionDependencies = {
+      spawnJsonChild: async <TResult>(options: SpawnChildOptions): Promise<TResult> => {
+        calls.push(options);
+        options.onStderr?.(`stderr-${calls.length}`);
+        return { round: calls.length } as TResult;
+      },
+      createRuntimeRoot: (_runRoot: string): string => `/fixture/runtime-${nextRoot++}`,
+      measureDirectoryFootprint: () => ({ bytes: 0, files: 0 }),
+      removeMockPath: (_runtimeRoot: string): void => {},
+    };
+    const context: SectionContext = {
+      runRoot: "/fixture",
+      configRoot: "/fixture/config",
+      rounds: 2,
+      onProgress: (_message: string): void => {},
+      recordIo: (_io): void => {},
+      recordOperations: (_count: number): void => {},
+      recordFootprint: (_footprint): void => {},
+      dependencies,
+    };
+    const received: string[] = [];
+
+    const rounds: readonly { readonly round: number }[] = await runRounds<{ readonly round: number }>(context, {
+      label: "text:fixture",
+      seedMode: "none",
+      args: ["child.ts", "scenario"],
+      env: { [JSC_GC_LOG_ENV]: "1", [RUNTIME_DATA_ROOT_ENV]: "/elsewhere" },
+      onStderr: (stderr: string): void => { received.push(stderr); },
+    });
+
+    expect(rounds).toEqual([{ round: 1 }, { round: 2 }]);
+    expect(received).toEqual(["stderr-1", "stderr-2"]);
+    expect(calls.map((call: SpawnChildOptions) => call.env)).toEqual([
+      expect.objectContaining({ [JSC_GC_LOG_ENV]: "1", [RUNTIME_DATA_ROOT_ENV]: "/fixture/runtime-0" }),
+      expect.objectContaining({ [JSC_GC_LOG_ENV]: "1", [RUNTIME_DATA_ROOT_ENV]: "/fixture/runtime-1" }),
+    ]);
+  });
+
   test("注入的 child runner 按轮聚合，并按真实样本数登记操作与足迹", async (): Promise<void> => {
     const pending: HotPathRound[] = [
       hotPathRound(10, 5, [9, 11]),

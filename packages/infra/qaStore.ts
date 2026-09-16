@@ -150,8 +150,8 @@ export function removeChatQa(chatId: number, q: string): boolean {
  * CHAT_QA_MAX_PER_CHAT 条的冷路径再造一套批量协议。
  *
  * 与 `/qa remove` 同样只排进事务缓冲、不在这里等 durable 回执：调用方
- * （commands/qa.ts 的 teardownQaInChat）后面紧跟着 `/init disable` 自己那次
- * persistChatState，两者共用同一个 SQLite 事务与 flush。
+ * （commands/qa.ts 的 teardownQaInChat）所在的 `/init disable` 与离群路径在 teardown
+ * 之后各自紧跟一次 persistChatState，两者共用同一个 SQLite 事务与 flush。
  *
  * @returns 实际删掉的条数；没有登记过问答的群为 0，且不产生任何投递。
  */

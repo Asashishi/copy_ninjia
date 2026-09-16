@@ -7,15 +7,15 @@ const runs: ApplicationRunMode[] = [];
 let runResult: () => Promise<void> = async (): Promise<void> => {};
 
 mock.module("../../packages/app/lifecycle", () => ({
-  createApplicationLifecycle: (): { run: (mode: ApplicationRunMode) => Promise<void> } => ({
-    run: (mode: ApplicationRunMode): Promise<void> => {
+  ApplicationLifecycle: class {
+    run(mode: ApplicationRunMode): Promise<void> {
       runs.push(mode);
       return runResult();
-    },
-  }),
+    }
+  },
 }));
 
-const { runApplication, runTest } = await import("../../index");
+const { application } = await import("../../index");
 
 /**
  * import 刚完成、任何用例开跑之前的运行记录快照。
@@ -36,18 +36,18 @@ describe("嵌入式与生产入口", () => {
   test("两个入口只选运行模式，import 本身不启动任何东西", async () => {
     expect(RUNS_AFTER_IMPORT).toEqual([]);
 
-    await runTest();
+    await application.run("test");
     expect(runs).toEqual(["test"]);
 
-    await runApplication();
+    await application.run("main");
     expect(runs).toEqual(["test", "main"]);
   });
 
-  test("runTest 把运行异常原样交还调用方", async () => {
+  test("application.run(\"test\") 把运行异常原样交还调用方", async () => {
     const failure: Error = new Error("startup failed");
     runResult = (): Promise<void> => Promise.reject(failure);
     try {
-      await expect(runTest()).rejects.toBe(failure);
+      await expect(application.run("test")).rejects.toBe(failure);
     } finally {
       runResult = async (): Promise<void> => {};
     }

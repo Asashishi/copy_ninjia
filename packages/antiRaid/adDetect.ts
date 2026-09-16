@@ -12,10 +12,8 @@ import {
   createMonotonicDeadline,
   remainingMonotonicTime,
 } from "../libs/monotonicDeadline";
-import {
-  canBypassAdDetection,
-  isProtectedSender,
-} from "./memberFacts";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
+import { canBypassAdDetection } from "./memberFacts";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -130,7 +128,7 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       if (canBypassAdDetection(event.senderId)) return null;
       // 即使白名单成员显式关掉广告绕过，模型也只能处理本批消息，
       // 不得把成员写入永久黑名单。本检查同样要在临时累计删除之前完成。
-      if (isProtectedSender(event.senderId)) return null;
+      if (isWhitelisted(event.senderId)) return null;
       if (!clearTemporaryAdBypassActivity(event.senderId)) {
         throw new Error(
           `Temporary ad bypass reset for identity ${event.senderId} was rejected by the persistence Worker.`

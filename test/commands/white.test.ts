@@ -32,7 +32,7 @@ const {
   parseWhiteAction,
 } = await import("../../packages/commands/white");
 const {
-  seedSenderCache,
+  updateCachedIdentity,
 } = await import("../../packages/users/senderIdentity");
 const {
   senderUsernameCache,
@@ -156,7 +156,7 @@ describe("/white", () => {
       username: "Alice",
       first_name: "Alice",
     };
-    seedSenderCache(alice);
+    updateCachedIdentity(alice);
 
     await handleWhiteCommand(context(1, "@alice enable"));
     expect(setWhitelistMembership).toHaveBeenLastCalledWith({

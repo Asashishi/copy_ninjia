@@ -1,7 +1,5 @@
 import type { Chat } from "grammy/types";
 import { adDetectConfigReadiness } from "../config/readiness";
-import { TEMPORARY_AD_BYPASS_REQUIRED_DAYS } from
-  "../consts/temporaryAdBypass";
 import {
   clearTemporaryAdBypassActivity,
   hasActiveTemporaryAdBypassAt,
@@ -15,6 +13,7 @@ import { logger } from "../infra/logger";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { visibleSenderChat } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
+import { shouldPromoteToPermanentBypass } from "../states/temporaryAdBypass";
 import { postAntiRaid } from "./workerBridge";
 import type { AdDetectionMessageContext } from
   "../types/antiRaid/adDetect";
@@ -59,10 +58,7 @@ export function recordEligibleTemporaryAdBypassActivity(
     // 状态边沿才推一次；Worker 重建时这两类非持久状态本来就是空的。
     postAntiRaid({ type: "temporaryAdBypassGranted", identityId: senderId });
   }
-  if (
-    recorded.activity.qualifiedDays ===
-    TEMPORARY_AD_BYPASS_REQUIRED_DAYS
-  ) {
+  if (shouldPromoteToPermanentBypass(recorded.activity)) {
     const promotion: PromoteAdBypassWhitelistResult =
       promoteAdBypassWhitelistMembership(
         senderId,

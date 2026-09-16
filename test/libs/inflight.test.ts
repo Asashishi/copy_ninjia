@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { settleInflight, settleWithinBudget, trackInflight } from "../../packages/libs/inflight";
+import { settleWithinBudget, trackInflight } from "../../packages/libs/inflight";
 import { deferred } from "./helpers";
 
 describe("inflight tracker", () => {
-  test("settle 会等待被较新请求掩盖不了的所有旧请求", async () => {
+  test("按本体登记的旧请求不会被较新请求掩盖，等待登记集合时仍会等它", async () => {
     const inflight = new Set<Promise<unknown>>();
     const older = deferred();
     const newer = deferred();
@@ -11,7 +11,7 @@ describe("inflight tracker", () => {
     trackInflight(inflight, newer.promise);
 
     let settled = false;
-    const waiting = settleInflight(inflight).then(() => {
+    const waiting = Promise.allSettled(inflight).then(() => {
       settled = true;
     });
 
@@ -27,7 +27,7 @@ describe("inflight tracker", () => {
     expect(inflight.size).toBe(0);
   });
 
-  test("某个请求 reject 不会让 settle 提前返回，仍等其余在途请求落定", async () => {
+  test("某个登记请求 reject 后，allSettled 仍等其余在途请求落定", async () => {
     const inflight = new Set<Promise<unknown>>();
     const pending = deferred();
     const failing = Promise.reject(new Error("boom"));
@@ -35,11 +35,11 @@ describe("inflight tracker", () => {
     trackInflight(inflight, pending.promise);
 
     let settled = false;
-    const waiting = settleInflight(inflight).then(() => {
+    const waiting = Promise.allSettled(inflight).then(() => {
       settled = true;
     });
 
-    // reject 已经发生，若 settle 用的是 Promise.all 会在这里提前失败返回。
+    // reject 已经发生，若等待用的是 Promise.all 会在这里提前失败返回。
     await Promise.resolve();
     await Promise.resolve();
     expect(settled).toBe(false);

@@ -9,13 +9,15 @@ import { inspectLogFiles, adoptLogFiles, maintainLogFiles } from "./logFiles";
 import {
   adoptAiMemorySnapshots,
 } from "./aiMemoryStorage";
+import { adoptStickerCatalogSnapshots } from "./stickerCatalogFiles";
 import {
-  adoptStickerCatalogSnapshots,
-  inspectStickerCatalogSnapshots,
-  maintainStickerCatalogSnapshots,
-} from "./stickerCatalogFiles";
+  inspectLuckDay,
+  inspectStickerCatalogs,
+  maintainLuckDay,
+  maintainStickerCatalogFiles,
+} from "./snapshotFiles";
 import { inspectJoinLogFiles, maintainJoinLogFiles } from "./joinLogFiles";
-import { adoptLuckDay, inspectLuckDayState, maintainLuckDayState } from "./luckFiles";
+import { adoptLuckDay } from "./luckFiles";
 import { adoptLuckReceiptSecret, inspectLuckReceiptSecret } from "./luckSecretFile";
 import {
   adoptVerificationDay,
@@ -73,9 +75,9 @@ async function runMaintenance(
   const tasks: readonly (readonly [string, () => void | Promise<void>])[] = [
     ["logs", (): Promise<void> => maintainLogFiles(inspections.logs)],
     ["wed members", (): Promise<void> => maintainWedMemberFiles(inspections.wedMembers)],
-    ["sticker catalogs", (): Promise<void> => maintainStickerCatalogSnapshots(inspections.stickerCatalogs)],
+    ["sticker catalogs", (): Promise<void> => maintainStickerCatalogFiles(inspections.stickerCatalogs)],
     ["join logs", (): Promise<void> => maintainJoinLogFiles(inspections.joinLogs)],
-    ["luck", (): Promise<void> => maintainLuckDayState(inspections.luck.day, inspections.luck)],
+    ["luck", (): Promise<void> => maintainLuckDay(inspections.luck.day, inspections.luck)],
     ["verifications", (): Promise<void> => maintainVerificationDay(inspections.verifications)],
     ["ad samples", (): Promise<void> => maintainAdSampleFiles()],
     ["temporary ad bypass", (): void => maintainTemporaryAdBypassActivities(reply)],
@@ -111,9 +113,9 @@ export async function handleDiskIOStartupLoad(
     const today: string = getTokyoDateKey();
     const logs: LogFilesInspection = await inspectLogFiles();
     const stickerCatalogs: StickerCatalogRecoveryInspection =
-      await inspectStickerCatalogSnapshots(stickerPacks);
+      await inspectStickerCatalogs(stickerPacks);
     const joinLogs: JoinLogRecoveryInspection = await inspectJoinLogFiles(today);
-    const luck: LuckDayRecoveryInspection = await inspectLuckDayState(today);
+    const luck: LuckDayRecoveryInspection = await inspectLuckDay(today);
     const luckSecret: LuckSecretRecoveryInspection = await inspectLuckReceiptSecret({
       day: today,
       confirmedResultCount: luck.cache?.entries.size ?? 0,

@@ -53,7 +53,7 @@ function deleteAlias(username: string): void {
  * identityById 的每一次写入和删除都紧贴同一条 senderUsernameCache 语句：两张表
  * 的键集恒等是 cacheSender 直查的前提，漏掉一侧会让稳态判定读到已经作废的身份。
  */
-function updateCachedIdentity(identity: CachedUser): void {
+export function updateCachedIdentity(identity: CachedUser): void {
   const username: string | undefined = identity.username
     ? identity.username.toLowerCase()
     : undefined;
@@ -199,7 +199,7 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
  * 管理员收到一份「还有 N 个群没解开」的假战报。缓存命中那条路不必重复标：
  * 负 id 的缓存条目只有两个来源，都已经带上 isChannel——消息观察一律经
  * resolveSenderIdentity 构造（cacheSender 与 resolveReplyTarget 都走它），启动预热的
- * seedSenderCache 写入的是持久化状态里原样保留该标记的身份。
+ * updateCachedIdentity 写入的是持久化状态里原样保留该标记的身份。
  *
  * 双向一致才采信缓存里的那份，理由同 resolveUsernameTarget：单边残留的别名
  * 会把标签写成另一个人的名字。
@@ -210,13 +210,4 @@ export function resolveIdTarget(targetId: number): CachedUser {
   if (normalizedUsername === undefined) return minimalIdentity;
   const identity: CachedUser | undefined = userCache.get(normalizedUsername);
   return identity?.id === targetId ? identity : minimalIdentity;
-}
-
-/**
- * 启动时把某个已知身份（当前正在被复读的目标，见 infra/storage/stateStore.ts 的
- * GlobalCopyState）预热进缓存，让进程重启后立刻能用 /copy @username 重新
- * 指到 TA，不必等 TA 再发一条消息刷新缓存。见 app/lifecycle.ts。
- */
-export function seedSenderCache(user: CachedUser): void {
-  updateCachedIdentity(user);
 }

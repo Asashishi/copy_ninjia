@@ -17,10 +17,18 @@ import { collectColdMigrationProblems } from "./conventions/coldMigrations";
 import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectFaultInjectionSuiteProblems } from "./conventions/faultInjectionSuite";
 import { collectFileLengthProblems } from "./conventions/fileLength";
+import {
+  collectUndeclaredDependencyProblems,
+  readDeclaredPackages,
+} from "./conventions/manifestDependencies";
 import { collectPerformanceRecordProblems } from "./conventions/performanceRecord";
 import { collectRuntimeCalibrationProblems } from "./perf/hotPaths/gateRuntime";
-import { collectCacheOwnershipProblems } from "./conventions/cacheOwnership";
-import type { CacheOwnerPrefix } from "./conventions/cacheOwnership";
+import {
+  CACHE_OWNER_BY_PREFIX,
+  CACHE_OWNER_EXEMPTIONS,
+  collectCacheOwnershipProblems,
+  THREAD_ENTRY_PATHS,
+} from "./conventions/cacheOwnership";
 import { collectWorkerTimerProblems } from "./conventions/workerTimers";
 import { collectCommentReferenceProblems } from "./conventions/commentReferences";
 import {
@@ -118,35 +126,12 @@ async function checkMarkdownLocalLinks(
   }
 }
 
-/** 四条线程各自的入口，以及从入口出发能加载到的模块闭包（含最短引入路径）。 */
-const THREAD_ENTRIES: Readonly<Record<string, string>> = {
-  main: join(PROJECT_ROOT, "index.ts"),
-  aiChat: join(PROJECT_ROOT, "packages", "workers", "aiChatWorker.ts"),
-  antiRaid: join(PROJECT_ROOT, "packages", "workers", "antiRaidWorker.ts"),
-  diskIO: join(PROJECT_ROOT, "packages", "workers", "diskIOWorker.ts"),
-};
-
-/**
- * `packages/cache/` 的目录名就是这份状态的 owner 线程，见
- * docs/cn/04-invariants.md「缓存的线程归属」。这里用真实模块图核对声明与事实是否
- * 一致：一份只属于某条线程的状态被别的线程 import，那条线程拿到的是一份永远
- * 对不上的空副本——静态看不出来，运行起来只是「缓存莫名其妙不命中」。
- */
-const CACHE_OWNER_BY_PREFIX: readonly CacheOwnerPrefix[] = [
-  [join("packages", "cache", "main") + "/", "main"],
-  [join("packages", "cache", "workers", "aiChat") + "/", "aiChat"],
-  [join("packages", "cache", "workers", "antiRaid") + "/", "antiRaid"],
-  [join("packages", "cache", "workers", "diskIO") + "/", "diskIO"],
-];
-
-/**
- * 唯一的归属豁免：infra/logger.ts 静态 import infra/diskIO.ts 取 relayLogMessage，
- * 而四条线程都要能记 error 日志。Worker isolate 里那份状态恒为初始值、一次也不
- * 会被读写，理由见 packages/cache/main/diskIO.ts 的模块头注。
- */
-const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
-  [join("packages", "cache", "main", "diskIO.ts")]: ["aiChat", "antiRaid"],
-};
+/** 四条线程各自入口的绝对路径；从入口出发构建同线程模块闭包（含最短引入路径）。 */
+const THREAD_ENTRIES: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(THREAD_ENTRY_PATHS).map(
+    ([thread, path]: [string, string]): [string, string] => [thread, join(PROJECT_ROOT, path)]
+  )
+);
 
 /**
  * Telegram 凭据、真实客户端、网络分派与出站队列只属主线程。Worker 只能加载
@@ -269,6 +254,8 @@ async function parseSourceFile(path: string): Promise<ts.SourceFile> {
  */
 const cacheSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CACHE_ROOT));
 const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_ROOT));
+/** 根 manifest 直接声明的包；逐文件核对运行期裸导入时共用。 */
+const declaredPackages: ReadonlySet<string> = await readDeclaredPackages(PROJECT_ROOT);
 /** 注释交叉引用按 basename 兜底解析时的候选集合；生产源码与入口一份就够。 */
 const referenceResolutionFiles: readonly string[] = [
   ...sourceFilesUnder(SOURCE_ROOT),
@@ -286,6 +273,7 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
     failures.push(problem);
   }
+  failures.push(...collectUndeclaredDependencyProblems({ projectRoot: PROJECT_ROOT, path, source, declaredPackages }));
   if (cacheSourceFiles.has(path)) {
     for (const problem of collectCacheJsDocProblems(params)) failures.push(problem);
   }
@@ -312,12 +300,13 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   }
 }
 
-// Node 兼容 import 是唯一同时约束 scripts/ 与 test/ 的规则，其余判定只针对 packages/。
+// Node 兼容 import 与依赖声明同时约束 scripts/ 与 test/，其余判定只针对 packages/。
 for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_ROOT)]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
     failures.push(problem);
   }
+  failures.push(...collectUndeclaredDependencyProblems({ projectRoot: PROJECT_ROOT, path, source, declaredPackages }));
 }
 
 for (const problem of await collectTelegramMessageProblems(

@@ -3,7 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
-import { collectCacheOwnershipProblems } from "../../scripts/conventions/cacheOwnership";
+import {
+  CACHE_OWNER_BY_PREFIX,
+  CACHE_OWNER_EXEMPTIONS,
+  collectCacheOwnershipProblems,
+  THREAD_ENTRY_PATHS,
+} from "../../scripts/conventions/cacheOwnership";
+import { createModuleGraphReader } from "../../scripts/conventions/moduleGraph";
+import type { ModuleGraphReader } from "../../scripts/conventions/moduleGraph";
 import { collectColdMigrationProblems } from "../../scripts/conventions/coldMigrations";
 import { collectCommentReferenceProblems } from "../../scripts/conventions/commentReferences";
 import { collectWorkerTimerProblems } from "../../scripts/conventions/workerTimers";
@@ -67,12 +74,70 @@ describe("project convention collectors", () => {
     })).toEqual([]);
   });
 
+  test("update 上下文实例按真实模块图被三条线程加载，只能归 perThread", async () => {
+    const projectRoot: string = process.cwd();
+    const storagePath: string = join(projectRoot, "packages", "cache", "perThread", "updateContext.ts");
+    const reader: ModuleGraphReader = createModuleGraphReader();
+    const threadEntries: Record<string, string> = {};
+    const threadClosures: Map<string, Map<string, string[]>> = new Map<string, Map<string, string[]>>();
+    for (const [thread, path] of Object.entries(THREAD_ENTRY_PATHS)) {
+      const entry: string = join(projectRoot, path);
+      threadEntries[thread] = entry;
+      threadClosures.set(thread, await reader.threadModuleClosure(entry));
+    }
+    const loaders: string[] = [];
+    for (const [thread, closure] of threadClosures) {
+      if (closure.has(storagePath)) loaders.push(thread);
+    }
+    expect(loaders).toEqual(["main", "aiChat", "antiRaid"]);
+
+    const params = { projectRoot, cacheFiles: [storagePath], threadEntries, threadClosures, exemptions: CACHE_OWNER_EXEMPTIONS };
+    expect(collectCacheOwnershipProblems({ ...params, ownerByPrefix: CACHE_OWNER_BY_PREFIX })).toEqual([]);
+    // 反例：同一实例若声明为主线程独占，两条业务 Worker 的真实引入链都会被报出。
+    expect(collectCacheOwnershipProblems({
+      ...params,
+      ownerByPrefix: [[join("packages", "cache", "perThread") + "/", "main"]],
+    })).toEqual([
+      expect.stringContaining("owned by the main thread but is loaded by the aiChat thread"),
+      expect.stringContaining("owned by the main thread but is loaded by the antiRaid thread"),
+    ]);
+
+    const contextPath: string = join(projectRoot, "packages", "infra", "updateContext.ts");
+    expect(collectModuleCacheProblems({
+      projectRoot,
+      path: contextPath,
+      source: source(contextPath, await Bun.file(contextPath).text()),
+    })).toEqual([]);
+  });
+
+  test("每个群 teardown owner 都由主线程真实模块图内的模块注册", async () => {
+    const projectRoot: string = process.cwd();
+    const mainClosure: Map<string, string[]> = await createModuleGraphReader()
+      .threadModuleClosure(join(projectRoot, THREAD_ENTRY_PATHS.main!));
+    const registrars: Map<string, string> = new Map<string, string>();
+    for (const path of sourceFilesUnder(join(projectRoot, "packages"))) {
+      for (const match of (await Bun.file(path).text()).matchAll(/\bregisterChatTeardown\(\s*"([A-Za-z]+)"/g)) {
+        registrars.set(match[1]!, path);
+      }
+    }
+    const { CHAT_TEARDOWN_ORDER } = await import("../../packages/consts/chatTeardown");
+    const missing: string[] = [];
+    for (const owner of CHAT_TEARDOWN_ORDER) {
+      const registrar: string | undefined = registrars.get(owner);
+      if (registrar === undefined || !mainClosure.has(registrar)) missing.push(owner);
+    }
+    expect(registrars.get("joinLog")).toBe(join(projectRoot, "packages", "infra", "joinLog.ts"));
+    expect(missing).toEqual([]);
+  });
+
   test("常量容器与模块级缓存识别保持 fail-closed", () => {
     const parsed: ts.SourceFile = source(
       "fixture.ts",
       "const VALUES: string[] = [], CACHE: Map<string, string> = new Map(), " +
       "SAFE: readonly string[] = [], HOLDER = { current: null }, SCALAR: number = 1, " +
-      "FROZEN: Readonly<Record<string, string>> = Object.freeze({});"
+      "FROZEN: Readonly<Record<string, string>> = Object.freeze({}), " +
+      "SCOPE: AsyncLocalStorage<number> = new AsyncLocalStorage<number>(), " +
+      "FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat(), PATTERN: RegExp = new RegExp(\"a\");"
     );
     const first: ts.VariableStatement = parsed.statements[0] as ts.VariableStatement;
     const values: ts.VariableDeclaration = first.declarationList.declarations[0]!;
@@ -81,6 +146,9 @@ describe("project convention collectors", () => {
     const holder: ts.VariableDeclaration = first.declarationList.declarations[3]!;
     const scalar: ts.VariableDeclaration = first.declarationList.declarations[4]!;
     const frozen: ts.VariableDeclaration = first.declarationList.declarations[5]!;
+    const scope: ts.VariableDeclaration = first.declarationList.declarations[6]!;
+    const formatter: ts.VariableDeclaration = first.declarationList.declarations[7]!;
+    const pattern: ts.VariableDeclaration = first.declarationList.declarations[8]!;
 
     expect(collectSharedConstantProblems(values.initializer!, values.type, "constant VALUES"))
       .toEqual([expect.stringContaining("must be declared with a readonly type")]);
@@ -93,6 +161,9 @@ describe("project convention collectors", () => {
     expect(moduleCacheInitializerKind(cache.initializer!)).toBe("Map");
     expect(moduleCacheInitializerKind(holder.initializer!)).toBe("holder");
     expect(moduleCacheInitializerKind(scalar.initializer!)).toBeNull();
+    expect(moduleCacheInitializerKind(scope.initializer!)).toBe("AsyncLocalStorage");
+    expect(moduleCacheInitializerKind(formatter.initializer!)).toBeNull();
+    expect(moduleCacheInitializerKind(pattern.initializer!)).toBeNull();
   });
 
   test("源码文件收集只递归返回 TypeScript 文件", async () => {
@@ -298,7 +369,7 @@ describe("逐文件源码规则", () => {
       .toEqual([expect.stringContaining("packages/example.ts:1 Object.freeze is not allowed")]);
   });
 
-  test("模块级 Map/Set/holder 必须落在 packages/cache/<owner>/", () => {
+  test("模块级 Map/Set/AsyncLocalStorage/holder 必须落在 packages/cache/<owner>/", () => {
     const path: string = "/project/packages/example.ts";
     expect(collectModuleCacheProblems(rule(path, "function f(): Map<string, number> { return new Map(); }\n")))
       .toEqual([]);
@@ -306,6 +377,14 @@ describe("逐文件源码规则", () => {
       .toEqual([
         "packages/example.ts:1 module-level Map table must be declared under packages/cache/<owner>/",
       ]);
+    expect(collectModuleCacheProblems(rule(
+      path,
+      'import { AsyncLocalStorage } from "node:async_hooks";\n' +
+      "const scopeStorage: AsyncLocalStorage<number> =\n  new AsyncLocalStorage<number>();\n" +
+      "function scoped(): AsyncLocalStorage<number> { return new AsyncLocalStorage<number>(); }\n"
+    ))).toEqual([
+      "packages/example.ts:2 module-level AsyncLocalStorage scopeStorage must be declared under packages/cache/<owner>/",
+    ]);
   });
 
   test("声明规范：类型入口、console.error 边界、返回类型、内联对象参数与 catch 标注", () => {

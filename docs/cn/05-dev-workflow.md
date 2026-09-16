@@ -32,7 +32,7 @@
 | `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
-| `bun run perf:review` | 专项复核：12 个既有热点、7 个 AI 回复/载荷场景、两条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择 |
+| `bun run perf:review` | 专项复核：12 个既有热点、7 个 AI 回复/载荷场景、两条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择；文本清洗专项仅在显式 `--text` 时运行 |
 | `bun run build -- --version <tag>` | 显式版本必填，无默认值；构建当前 Linux 平台二进制，隔离验证后生成 `dist/` 发行包和 SHA-256 文件，不包含 `.map` 文件 |
 | `bun run release:check -- --version <tag>` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入 + 二进制构建验证，发布前必跑；缺失或非法版本在安装依赖前拒绝 |
 | `bun run release:build -- --version <tag>` | 在干净、已提交的 `dev` 上原生构建正式版本 |
@@ -48,8 +48,8 @@
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **类型导入独立声明**：源码、脚本和测试都使用独立 `import type`；ESLint 的 `no-restricted-syntax` 拒绝 `import { value, type Shape }` 等 inline type specifier。`test/scripts/typeImportConventions.test.ts` 验证三类文件的拒绝/接受边界，并确认 `Promise.all` 禁令仍然生效。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
-- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、Markdown 里「`<目录>/`（`a.ts`、`b.ts`）」这类目录清单点名的文件是否仍然存在（目录名解析不唯一时跳过）、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码、脚本与测试的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、故障注入套件清单、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
-  模块级纯字面量及其组合必须放在领域 `consts`，函数装配和缓存 owner 单独核对。Node 内建模块带或不带 `node:` 前缀使用同一白名单；动态加载、重导出、`require`、`process.hrtime` / `nextTick` 和解构入口同样检查，类型专用声明不进入运行时检查。
+- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、Markdown 里「`<目录>/`（`a.ts`、`b.ts`）」这类目录清单点名的文件是否仍然存在（目录名解析不唯一时跳过）、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码、脚本与测试的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、故障注入套件清单、运行期裸导入必须由根 `package.json` 直接声明（只经传递依赖提升的包即失败；运行时内建模块与纯类型引用不参与，包子路径归到所属包）、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
+  模块级纯字面量及其组合必须放在领域 `consts`，函数装配和缓存 owner 单独核对；模块级 Map、Set、WeakMap、WeakSet、AsyncLocalStorage 与 holder 只能声明在带 owner 的 `packages/cache/`。Node 内建模块带或不带 `node:` 前缀使用同一白名单；动态加载、重导出、`require`、`process.hrtime` / `nextTick` 和解构入口同样检查，类型专用声明不进入运行时检查。
 
   Node API 检查覆盖 `process.getBuiltinModule`、`globalThis.Buffer` 及字面量下标形式；`Buffer.byteLength` 等例外仍按模块、符号和用途登记。`@grammyjs/runner` 仅作为开发依赖用于 SDK 对照测试，生产取数使用项目的 offset 确认边界。
 
@@ -69,7 +69,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**4329 tests / 382 files / 157982 次 `expect()`**；全源码**函数覆盖率 97.21% / 行覆盖率 97.94%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**4480 tests / 384 files / 158742 次 `expect()`**；全源码**函数覆盖率 97.22% / 行覆盖率 98.01%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -94,7 +94,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ## 故障注入套件
 
-`bun run test:fault-injection` 覆盖应用/Worker 生命周期、锁定恢复、回复容量与取消、凭据快照，以及 Disk I/O 的检查、原子写入和恢复故障；完整清单见 [`package.json`](../../package.json)。`check:conventions` 对登记的 harness 和生产恢复/生命周期边界按真实引用路径检查漏列，包含静态值导入、动态 import 和值重导出；纯类型引用排除，空声明的副作用保留。同名其它模块不匹配。涉及 [04 运行时权威约束](04-invariants.md) 的持久化、停机或 Worker 生命周期改动必须通过本套件。
+`bun run test:fault-injection` 覆盖应用/Worker 生命周期、锁定恢复、回复容量与取消、凭据快照、Telegram 出站与延迟删除的停机排空、群 teardown 与入群日志落盘屏障、Anti-Raid 任务排空与验证恢复、双工 Worker 重建取消，以及 Disk I/O 的检查、原子写入和恢复故障；完整清单见 [`package.json`](../../package.json)。`check:conventions` 对登记的 harness 和生产恢复/生命周期边界按真实引用路径检查漏列，包含静态值导入、动态 import、值重导出与目录入口 `index.ts`；纯类型引用排除，空声明的副作用保留。同名其它模块不匹配。兼容入口这类混合主题模块的边界可限定到具体导出（`infra/telegram/index.ts`、`actions.ts` 与 `actions/messageLifecycle.ts` 只按延迟删除的 flush/drain 计入）：命名空间按属性访问判定，只展开进对象字面量的替身不计入；命名空间被整体传出、`export *` 与结果未绑定的动态导入无法确定取用范围，一律计入。涉及 [04 运行时权威约束](04-invariants.md) 的持久化、停机或 Worker 生命周期改动必须通过本套件。
 
 `test/workers/antiRaid/verificationWelcome.test.ts` 贯通真实双工协议、主线程临时消息及删除边界，Telegram 出站由 SDK transformer 接管。用例覆盖四种欢迎文案、回复锚点、回执丢失、取消、Worker teardown/重建、发送与传输失败，核对删除任务只认领一次、timer 不阻止退出及后续副作用顺序；它同时属于全量测试与故障注入套件。
 
@@ -108,7 +108,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 `steadyProfile` 子进程显式启用 `BUN_JSC_logGC=1`；`hotPaths/gcProfile.ts` 只累加正式循环边界内 JSC 日志的 `p=…ms` 暂停段，除以同窗口单调耗时，得到 GC 暂停时间占比。JSC 启动握手、唯一完整窗口和暂停格式必须匹配，缺失或未知格式即失败；无暂停只在完整有效日志下记为 0。JIT 层级仍由采样 profiler 统计。`retained` 的强制 GC 在计时边界外，不参与该比例。校准逐场景保存至少三轮独立进程的暂停数据。GC 暂停占比上限统一按进程可用 CPU 数分档：4 核及以上 25%，2～3 核 30%，单核 35%；等于上限时通过，超过时失败。标准由 `packages/consts/performance.ts` 的 `HOT_PATH_GC_CPU_BUDGETS` 定义，门禁启动时通过 `node:os.availableParallelism()` 读取可用并行度并选择本次预算；Linux CPU 亲和性限制参与该读数。输出中的 `availableCpuCount` 与 `thresholds.maxGcPausePercent` 记录本次使用的 CPU 数和统一上限。
 
-`perf:isolated-hot-path --profile` 与 `perf:review` 的 profile 输出用于 JIT 和采样诊断，不提供 GC 暂停比例。需要 GC 读数时运行 `perf:hot-path-gate`；`perf:disk-transport` 同样由父进程解析 GC 日志，逐轮返回独立的 `gcProfile`。
+`perf:isolated-hot-path --profile` 与 `perf:review` 的 profile 输出用于 JIT 和采样诊断，不提供 GC 暂停比例。需要 GC 读数时运行 `perf:hot-path-gate`；`perf:disk-transport` 与 `perf:review --text` 同样由父进程解析 GC 日志，逐轮返回独立的 `gcProfile`。
 
 `hotPathProfileGate` 这一节是双向的，但两半 owner 不同：`calibration` 由人重标后手工修改，门禁只读；`lastRun` 记录最近一次门禁读数，只有显式传 `bun run perf:hot-path-gate -- --write-result` 才覆盖写，因此 `bun run check` 跑完不会产生工作树改动。回写一个字节都不碰 `calibration`——让门禁拿一次运行的读数自动改自己的判据，等于把闸门焊死在当前性能上。
 
@@ -139,6 +139,8 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 `--ai` 测量准入判定、正常发送、容量/重开压力，以及 Base64 1 MiB、8 MiB、异常首部和尾部。7 个场景各三轮独立计时与三轮 profile，直接调用生产函数；发送场景断言单群/全局容量、真实收尾和清理，并要求生产 JIT 探针稳定。容量压力每批包含 128 个存活槽位及容量拒收检查，耗时按整批报告。Base64 保留编码/解码大小上限、标准字母表与严格尾部位检查，正则不带 g/y，解码仅一次。固定输入与预热用于局部测量，不包含真实模型、Telegram 网络或完整生产载荷的内存预算；JIT profile 不提供 GC 暂停计量。
 
 `--chains` 运行启用功能的 `ad-detect-command` 与 `ai-reply-command`，逐轮断言 Telegram 罐头调用及处置排空。`--worker` 经真实 Disk I/O Worker 每轮写入 400 批、每批 128 条消息；每批等待最终 revision ACK，每轮执行两次优雅停机重建并核对 25 群恢复值。该项包含 clone、事务及落盘等待，报告吞吐、延迟、堆留存与 RSS；它不替代故障注入。以上模式各跑三轮，不改全量基准和默认十场景硬门禁的阈值。
+
+`--text` 只在显式指定时运行，不进入缺省的全部复核。36 个场景各三轮独立进程，直接调用生产 `sanitizeInline` 与 `buildBufferedMessage`；消息构造使用默认时钟与时间格式化，结果按压缩批次大小留存。夹具固定中文、英文、emoji 按 6:3:1 轮换，正文 8–4096 码元，长正文占比 1%–75%，并覆盖首部、中部、尾部换行、密集空白、混合排版与回复引用。每个子进程在预热样本中执行与正式样本相同的内存读取，JIT 探针连续三个样本不变后再采 9 个样本，报告中位耗时、峰值堆与 RSS 增量、留存堆、JIT 分层及父进程解析的 GC 暂停；每个场景汇总三轮中位耗时的均值、范围、CV 与 JIT 稳定性。
 
 `sender-mixed-identity` 交替输入普通用户与频道身份，观察稳态读数和 JIT 重新优化；发送者数量与单用户场景不同，两者的耗时差不能单独解释为 shape 混合成本。基准用户 ID 覆盖超出 int32 的数值，生产中也允许较小 ID。
 

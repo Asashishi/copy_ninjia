@@ -2,6 +2,7 @@ import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { aiChatWorkerQuiescing } from "../../cache/workers/aiChat/worker";
 import {
   activeReplyCounts,
+  cachedReplyGeneration,
   longTriggerTimes,
   pendingOverflowNotices,
   pendingReplyTriggers,
@@ -22,13 +23,10 @@ import {
 } from "./replyQueue";
 import { startReplyRound } from "./replyRound";
 import { hasReplyDeliveryCapacity } from "./replyDelivery";
-import { currentReplyGeneration } from "./replyState";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 
 export {
-  currentReplyGeneration,
   invalidateChatReplies,
-  isReplyGenerationCurrent,
   quiesceAiChatReplies,
   replyGenerationSignal,
   trackReplyGenerationTask,
@@ -168,7 +166,7 @@ export function generateAndSendReply({
   mediaPreparation,
 }: GenerateAndSendReplyParams): void {
   if (aiChatWorkerQuiescing.current) return;
-  const generation: number = currentReplyGeneration(chatId);
+  const generation: number = cachedReplyGeneration(chatId);
   if (!botInfoState.current) {
     logger.error("aiChatWorker received trigger before init message; dropping.");
     return;

@@ -132,7 +132,7 @@ Ask these questions in order:
 
 1. **Is it a literal parameter, or user-facing copy?** → `packages/consts/<domain>.ts`, or split a larger domain into `packages/consts/<domain>/`. Add Chinese JSDoc explaining its purpose and invariants. Command replies and prompts belong in a per-command text table, not rebuilt inside the handler. Deployment JSON parsing and validation belong in `packages/config/<domain>.ts`; only runtime path overrides read the process environment through `packages/consts/paths.ts`.
 2. **Is it a shared type or protocol?** → `packages/types/<domain>.ts`. State-machine `State/Event/Effect/Transition/Decision` contracts belong in `packages/types/states/`.
-3. **Is it long-lived mutable state** such as a Map, Set, queue, timer, or singleton? → `packages/cache/`. **Pick the owning-thread directory first** (see below), then split by domain inside it. Use a holder object instead of `export let`, and document when it is populated, when it is cleared, and how it is rebuilt after a Worker restart. Capacity and cleanup must satisfy [04 Authoritative Runtime Invariants](04-invariants.md).
+3. **Is it long-lived mutable state** such as a Map, Set, AsyncLocalStorage, queue, timer, or singleton? → `packages/cache/`. **Pick the owning-thread directory first** (see below), then split by domain inside it. Use a holder object instead of `export let`, and document when it is populated, when it is cleared, and how it is rebuilt after a Worker restart. Capacity and cleanup must satisfy [04 Authoritative Runtime Invariants](04-invariants.md).
 4. **Is it pure state-transition logic** with no I/O and straightforward unit testing? → `packages/states/`; Worker-side interpreters execute the side effects.
 5. **Is it side-effecting code or orchestration?** → place it with its owner: commands in `packages/commands/`, automatic behavior in `packages/auto/`, Worker-internal logic in `packages/workers/<domain>/`, model capabilities in the owning feature's `ai/` subdirectory, and process-level infrastructure in `packages/infra/`.
 
@@ -160,7 +160,8 @@ The first directory level under `packages/cache/` declares which thread owns tha
 - **`perThread/`**
   - **Owner**: one copy per thread.
   - **Contents**: the Telegram-capability holder (real main-thread adapter or Worker duplex proxy),
-    Worker duplex waiters, deployment-config singletons, and self-sent message tracking; the same
+    Worker duplex waiters, deployment-config singletons, self-sent message tracking, and the update
+    cancellation-context storage; the same
     module is instantiated independently in each thread and is never meant to be shared.
 
 Note that `main/antiRaid/` and `workers/antiRaid/` are **two sets of state that share nothing**: the authoritative state machines live inside the Worker, while the main-thread copy is pure data kept for crash replay. Choosing the wrong directory is not a style issue — whatever you write there can never be read on the other side. `bun run check:conventions` verifies this ownership against the real module graph (see [04 Authoritative Runtime Invariants](04-invariants.md#thread-and-state-ownership)) and prints the full import chain on a violation.
@@ -174,7 +175,7 @@ When a large file is split into submodules, the original file may become a thin 
 - Compatibility entry points exist only for gradual migration of old imports. **All new code imports directly from the domain submodule.**
 - A compatibility entry point must not own state, parse configuration, or introduce import-time side effects.
 - The same applies to `packages/types/index.ts`; it remains only for tests and gradual migration.
-- An in-package `index.ts` is a stable public entry point only when callers genuinely need one package surface. The current `packages/aiChat/index.ts` and `packages/antiRaid/index.ts` contain only thin explicit exports and own no state. Production internals still import the appropriate owner leaf module directly and avoid unbounded `export *` surfaces.
+- An in-package `index.ts` is a stable public entry point only when callers genuinely need one package surface. The current `packages/aiChat/index.ts`, `packages/antiRaid/index.ts` and `packages/infra/telegram/index.ts` contain only thin explicit exports and own no state; `infra/telegram/index.ts` re-exports only the client, common action and command-receipt symbols that existing business modules consume through it, and new code imports the `client`, `actions/*`, `commandMessages` and other leaf modules directly. aiChat and antiRaid production internals still import the appropriate owner leaf module directly, and none of these three entries uses an unbounded `export *` surface.
 
 ## Mirrored Test Structure
 

@@ -36,6 +36,17 @@ export function isTemporaryAdBypassActive(
     isTemporaryAdBypassActivityRetained(activity, now);
 }
 
+/**
+ * 记录是否已到自动永久免检门槛：连续合格日数等于
+ * TEMPORARY_AD_BYPASS_REQUIRED_DAYS（`advanceTemporaryAdBypassActivity` 把连续
+ * 日数封顶在该门槛）。调用方据此晋升永久白名单并清除临时累计。
+ */
+export function shouldPromoteToPermanentBypass(
+  activity: Readonly<TemporaryAdBypassActivity>
+): boolean {
+  return activity.qualifiedDays === TEMPORARY_AD_BYPASS_REQUIRED_DAYS;
+}
+
 function firstActivity(now: number): Readonly<TemporaryAdBypassActivity> {
   return {
     adBypass: false,

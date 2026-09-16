@@ -1,4 +1,7 @@
-/** 专项复核入口：生产热点、启用功能的命令链路与真实 Worker 压力，三轮独立进程。 */
+/**
+ * 专项复核入口：生产热点、启用功能的命令链路与真实 Worker 压力，三轮独立进程。
+ * 文本清洗专项仅在显式 `--text` 时运行，不进入缺省的全部复核。
+ */
 import { join } from "node:path";
 import { FULL_SUITE_ROUNDS } from "./fullSuite/constants";
 import { createBenchmarkConfigRoot, createRunRoot, removeMockPath } from "./fullSuite/mockRoot";
@@ -7,6 +10,8 @@ import type { SectionContext } from "./fullSuite/sectionRunner";
 import type { RoundsOptions } from "./fullSuite/sectionRunner";
 import type { ScenarioName } from "./hotPaths/types";
 import type { ChainName } from "./fullSuite/types";
+import { runTextReview } from "./review/text";
+import type { TextReviewResult } from "./review/text";
 
 const HOT_PATHS: readonly ScenarioName[] = [
   "sender-stable-username", "flood-window-steady", "identity-permission-read",
@@ -29,7 +34,10 @@ interface ReviewResult {
 }
 
 const mode: string | undefined = Bun.argv[2];
-if (Bun.argv.length > 3 || (mode !== undefined && mode !== "--hot-paths" && mode !== "--chains" && mode !== "--worker" && mode !== "--ai")) throw new Error("Usage: bun run perf:review [--hot-paths|--chains|--worker|--ai]");
+const MODES: readonly string[] = ["--hot-paths", "--chains", "--worker", "--ai", "--text"];
+if (Bun.argv.length > 3 || (mode !== undefined && !MODES.includes(mode))) {
+  throw new Error("Usage: bun run perf:review [--hot-paths|--chains|--worker|--ai|--text]");
+}
 const runRoot: string = createRunRoot();
 try {
   const context: SectionContext = {
@@ -37,7 +45,7 @@ try {
     onProgress: (message: string): void => { console.error(message); },
     recordIo: (): void => undefined, recordOperations: (): void => undefined, recordFootprint: (): void => undefined,
   };
-  const results: ReviewResult[] = [];
+  const results: (ReviewResult | TextReviewResult)[] = [];
   const tasks: RoundsOptions[] = [];
   if (mode === undefined || mode === "--hot-paths") {
     for (const name of HOT_PATHS) {
@@ -55,6 +63,7 @@ try {
     }
   }
   if (mode === undefined || mode === "--worker") tasks.push({ label: "disk-worker-pressure", seedMode: "chain", args: [join(import.meta.dir, "review", "diskPressure.ts")] });
+  if (mode === "--text") results.push(...await runTextReview(context));
   for (const task of tasks) {
     const rounds: readonly ReviewRound[] = await runRounds<ReviewRound>(context, task);
     for (const round of rounds) assertSameRuntime(round.bunVersion, round.bunRevision, task.label);

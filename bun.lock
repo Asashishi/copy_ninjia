@@ -19,6 +19,7 @@
         "@grammyjs/runner": "^2.0.3",
         "@stylistic/eslint-plugin": "^5.10.0",
         "@types/bun": "1.4.1",
+        "detect-libc": "^2.1.2",
         "eslint": "^10.10.0",
         "typescript": "~6.0.3",
         "typescript-eslint": "^8.69.0",

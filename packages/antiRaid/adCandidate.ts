@@ -31,10 +31,8 @@ import { formatUserLabel } from "../users/userLabel";
 import { messageOriginIdentityId } from "../users/messageOrigin";
 import { visibleSenderChat } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
-import {
-  canBypassAdDetection,
-  isProtectedSender,
-} from "./memberFacts";
+import { isWhitelisted } from "../infra/identityPolicy/whitelist";
+import { canBypassAdDetection } from "./memberFacts";
 
 /**
  * 摘出正文不可见的 text_link URL；与正文分开限额，避免超长填充文本把落地页
@@ -84,7 +82,7 @@ function sourceWhitelistStatus(
   now: number
 ): boolean | undefined {
   if (
-    isProtectedSender(sourceId) ||
+    isWhitelisted(sourceId) ||
     canBypassAdDetection(sourceId, now)
   ) return true;
   return isIdentityPolicyCached(sourceId) ? false : undefined;

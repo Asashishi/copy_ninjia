@@ -22,21 +22,17 @@ import { stripLeadingAtSigns } from "../../../libs/text";
 /**
  * 发言人的显示名：first/last 拼接，都没有则给个占位。
  *
- * 这是转录热函数：每条转录行与回复标注都会调用。直接分支拼接，
- * 不创建临时数组或过滤结果；全空白字段与两者皆空时回退到占位符。
+ * 这是转录热函数：每条转录行与回复标注都会调用，排队触发快照与媒体评价上下文
+ * 也直接传入 BufferedMessage 取发送者显示名。直接分支拼接，不创建临时数组或
+ * 过滤结果；全空白字段与两者皆空时回退到占位符。
  */
-function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
+export function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
   const first: string = speaker.firstName;
   const last: string = speaker.lastName;
   if (first && last) return `${first} ${last}`.trim() || FALLBACK_SPEAKER_NAME;
-  // `|| ""` 不是多余的：外部输入若越过类型边界带来 undefined，必须安全退化
-  // 成占位符；`(first || last).trim()` 会抛 TypeError。
-  // 转录是回复链路的必经之地，不值得为省一次 `|| ""` 换一条可能抛异常的路径。
+  // `|| ""` 让越过类型边界的 undefined 输入同样退化成占位符，
+  // 不会在 `.trim()` 上抛 TypeError。
   return (first || last || "").trim() || FALLBACK_SPEAKER_NAME;
-}
-
-export function displayBufferedMessageName(message: BufferedMessage): string {
-  return displaySpeakerName(message);
 }
 
 /**
@@ -83,7 +79,7 @@ export function formatBufferedMessageLine(message: BufferedMessage, selfId?: num
   const isSelf: boolean = message.id === selfId;
   const usernameTag: string = !isSelf && message.username ? ` [username:@${stripLeadingAtSigns(message.username)}]` : "";
   const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo, selfId) : "";
-  return `[${message.at}] [message_id:${message.messageId}] [id:${message.id}]${usernameTag} ${isSelf ? SELF_SPEAKER_NAME : displayBufferedMessageName(message)}${formatForwardTag(message.forwardedFrom)}${replyTag}：${message.text}`;
+  return `[${message.at}] [message_id:${message.messageId}] [id:${message.id}]${usernameTag} ${isSelf ? SELF_SPEAKER_NAME : displaySpeakerName(message)}${formatForwardTag(message.forwardedFrom)}${replyTag}：${message.text}`;
 }
 
 /** buildTieredVerbatimTranscript 的一次渲染状态：编号表 + 哪些行要带消息号。 */

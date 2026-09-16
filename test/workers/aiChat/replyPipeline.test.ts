@@ -32,6 +32,7 @@ mock.module("../../../packages/workers/aiChat/replyDelivery", () => ({ hasReplyD
 mock.module("../../../packages/cache/workers/aiChat/identity", () => ({ botInfoState }));
 mock.module("../../../packages/cache/workers/aiChat/replies", () => ({
   activeReplyCounts: new Map<number, number>(),
+  cachedReplyGeneration: (): number => 17,
   longTriggerTimes,
   pendingOverflowNotices,
   pendingReplyTriggers,
@@ -48,13 +49,11 @@ mock.module("../../../packages/workers/aiChat/replyQueue", () => ({
 }));
 mock.module("../../../packages/workers/aiChat/replyRound", () => ({ startReplyRound }));
 mock.module("../../../packages/workers/aiChat/bufferedMessageIndex", () => ({ replyReferenceForBufferedMessage }));
-// replyPipeline.ts 还把 replyState 的另外三个名字原样再导出一次，被测函数虽然
-// 不碰它们，模块链接仍要求它们存在：整份模块被替换掉时缺一个就在 import 阶段
-// 报 `export ... not found`（Bun 1.4 起链接期严格判定，1.3 只是碰巧没触发）。
+// replyPipeline.ts 把 replyState 的这四个名字原样再导出，被测函数虽然不碰它们，
+// 模块链接仍要求它们存在：整份模块被替换掉时缺一个就在 import 阶段报
+// `export ... not found`。
 mock.module("../../../packages/workers/aiChat/replyState", () => ({
-  currentReplyGeneration: (): number => 17,
   invalidateChatReplies: (): void => {},
-  isReplyGenerationCurrent: (): boolean => true,
   quiesceAiChatReplies: async (): Promise<void> => {},
   replyGenerationSignal: (): AbortSignal => new AbortController().signal,
   trackReplyGenerationTask: (): void => {},

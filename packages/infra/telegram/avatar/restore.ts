@@ -12,8 +12,11 @@ import type { SniffedImageFormat } from "../../image";
 import { redactUrlForLog } from "../../../libs/redaction";
 import { logger } from "../../logger";
 import { logApiError } from "../client";
-import { setBotProfilePhoto } from "./shared";
-import type { AvatarOperationAttemptResult } from "./shared";
+import { runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
+import type {
+  AvatarFetchAttemptsOutcome,
+  AvatarOperationAttemptResult,
+} from "./shared";
 
 /**
  * 把机器人头像复原成 `url` 指向的那张默认脸。
@@ -40,7 +43,7 @@ import type { AvatarOperationAttemptResult } from "./shared";
  * 有界读取（AVATAR_MAX_DOWNLOAD_BYTES）与上传前的字节签名校验照旧，但那两道防的
  * 是「拿回来的根本不是图片」，与跳不跳转无关。
  *
- * 与 copyUserProfilePhoto 一样按 AVATAR_FETCH_MAX_ATTEMPTS 重试，也与它一样
+ * 与 copyUserProfilePhoto 共用 runAvatarFetchAttempts 的有界重试，也与它一样
  * **区分永久与瞬时失败**：对端偶发 5xx 与限流值得重试，而「拿回来的根本不是
  * 图片」「Telegram 判定这张图不合规」重试多少次都是同一个结果，只会白烧头像
  * 接口的调用额度——那正是本函数的重试本想规避的 flood 限制。
@@ -48,13 +51,12 @@ import type { AvatarOperationAttemptResult } from "./shared";
  *   setMyProfilePhoto 失败为 false（均已记日志）。
  */
 export async function restoreDefaultProfilePhoto(url: string, signal?: AbortSignal): Promise<boolean> {
-  for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
-    if (signal?.aborted) return false;
-    const result: AvatarOperationAttemptResult = await attemptRestoreDefaultProfilePhoto(url, attempt, signal);
-    if (result === "ok") return true;
-    if (result === "permanent-failure") break;
-  }
-  return false;
+  const outcome: AvatarFetchAttemptsOutcome = await runAvatarFetchAttempts(
+    (attempt: number): Promise<AvatarOperationAttemptResult> =>
+      attemptRestoreDefaultProfilePhoto(url, attempt, signal),
+    signal
+  );
+  return outcome === "ok";
 }
 
 /** 单次「下载默认头像并换上」的尝试；失败按可否重试分类，日志已在各分支记过。 */

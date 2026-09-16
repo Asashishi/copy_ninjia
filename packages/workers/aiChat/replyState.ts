@@ -5,22 +5,20 @@ import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../consts/aiChat/rateLimit";
 
 import {
+  cachedReplyGeneration,
+  isCachedReplyGenerationCurrent,
   rateLimitNoticeTimes,
 } from "../../cache/workers/aiChat/replies";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
 import { recordChatMessage } from "./rollingMemory";
 import {
-  currentReplyGeneration,
-  isReplyGenerationCurrent,
   replyGenerationSignal,
   trackReplyGenerationTask,
 } from "./replyGeneration";
 
 export {
-  currentReplyGeneration,
   invalidateChatReplies,
-  isReplyGenerationCurrent,
   quiesceAiChatReplies,
   replyGenerationSignal,
   trackReplyGenerationTask,
@@ -46,7 +44,7 @@ export interface NotifyRateLimitedParams {
 export function notifyRateLimited({
   chatId,
   now,
-  generation = currentReplyGeneration(chatId),
+  generation = cachedReplyGeneration(chatId),
   messageThreadId,
 }: NotifyRateLimitedParams): void {
   const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
@@ -64,7 +62,7 @@ export function notifyRateLimited({
   }).then((result: TelegramWorkerTemporaryMessageResult | undefined): void => {
     if (result === undefined || !("messageId" in result)) return;
     const sentMessageId: number = result.messageId;
-    if (botInfoState.current && isReplyGenerationCurrent(chatId, generation)) {
+    if (botInfoState.current && isCachedReplyGenerationCurrent(chatId, generation)) {
       recordChatMessage(buildSelfRecordMessage({
         chatId,
         self: botInfoState.current,

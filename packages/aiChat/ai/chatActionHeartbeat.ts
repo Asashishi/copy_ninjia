@@ -1,7 +1,7 @@
 import { typingHeartbeats } from "../../cache/workers/aiChat/heartbeat";
 import { CHAT_ACTION_MAX_CONSECUTIVE_FAILURES, TYPING_ACTION_INTERVAL_MS } from "../../consts/aiChat/tools";
 import { sendChatAction } from "../../infra/telegram";
-import { settleInflight, trackInflight } from "../../libs/inflight";
+import { trackInflight } from "../../libs/inflight";
 import type { ChatActionHeartbeatControl, ChatActionHeartbeatEntry, ChatActionPhase } from "../../types/aiChat/chatAction";
 import type { TelegramChatAction } from "../../types/telegram";
 
@@ -217,7 +217,7 @@ export function startChatActionHeartbeat({
     },
     settle: async (): Promise<void> => {
       // 即使本代已经因连续失败从 Map 移除，也必须等齐它留下的全部请求。
-      await settleInflight(acquired.inflight);
+      await Promise.allSettled(acquired.inflight);
     },
     stop: async (): Promise<void> => {
       if (!released) {
@@ -238,7 +238,7 @@ export function startChatActionHeartbeat({
           }
         }
       }
-      await settleInflight(acquired.inflight);
+      await Promise.allSettled(acquired.inflight);
     },
   };
 }

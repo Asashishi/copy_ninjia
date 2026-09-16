@@ -7,7 +7,6 @@ import {
   blocklistRemovalEpochs,
   blocklistRemovalTaskCounts,
 } from "../../cache/workers/antiRaid/blocklist";
-import { settleInflight } from "../../libs/inflight";
 
 /**
  * Anti-Raid Worker 的异步副作用登记与停机排空。
@@ -84,7 +83,7 @@ export function quiesceAntiRaidDispatch(): void {
  */
 export async function drainAntiRaidTasks(): Promise<void> {
   while (antiRaidInFlightTasks.size > 0) {
-    await settleInflight(antiRaidInFlightTasks);
+    await Promise.allSettled(antiRaidInFlightTasks);
   }
 }
 

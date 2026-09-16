@@ -18,6 +18,8 @@ export interface SpawnChildOptions {
   readonly label: string;
   /** 本次调用的时间预算；缺省用 `CHILD_TIMEOUT_MS`。 */
   readonly timeoutMs?: number;
+  /** 子进程成功返回 JSON 后收到完整 stderr；回调抛错按本次调用失败处理。 */
+  readonly onStderr?: (stderr: string) => void;
 }
 
 /**
@@ -31,6 +33,7 @@ export async function spawnJsonChild<TResult>({
   env,
   label,
   timeoutMs = CHILD_TIMEOUT_MS,
+  onStderr,
 }: SpawnChildOptions): Promise<TResult> {
   const subprocess: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn(
     [Bun.argv[0]!, ...args],
@@ -72,9 +75,12 @@ export async function spawnJsonChild<TResult>({
   if (text.length === 0) {
     throw new Error(`${label}: benchmark child produced no result. ${stderr.trim()}`);
   }
+  let result: TResult;
   try {
-    return JSON.parse(text) as TResult;
+    result = JSON.parse(text) as TResult;
   } catch {
     throw new Error(`${label}: benchmark child did not return JSON.`);
   }
+  onStderr?.(stderr);
+  return result;
 }

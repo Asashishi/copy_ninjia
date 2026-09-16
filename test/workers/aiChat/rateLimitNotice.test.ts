@@ -19,9 +19,10 @@ const recordChatMessage = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 
-const { currentReplyGeneration, notifyRateLimited } = await import("../../../packages/workers/aiChat/replyState");
+const { notifyRateLimited } = await import("../../../packages/workers/aiChat/replyState");
 const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 const {
+  cachedReplyGeneration,
   invalidateChatReplyCache,
   rateLimitNoticeTimes,
   resetAiChatReplyCache,
@@ -105,7 +106,7 @@ describe("AI 限频提示", () => {
   });
 
   test("发送在途期间群被清空时不再写进新一代记忆", async () => {
-    const generation: number = currentReplyGeneration(CHAT_ID);
+    const generation: number = cachedReplyGeneration(CHAT_ID);
     sendMessage.mockImplementationOnce(async (): Promise<number> => {
       invalidateChatReplyCache(CHAT_ID);
       return 502;

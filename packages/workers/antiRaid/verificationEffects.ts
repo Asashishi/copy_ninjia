@@ -23,7 +23,7 @@ import type {
   VerificationState,
 } from "../../types/states/verification";
 import { fetchAdminIds } from "./adminCache";
-import { retractJoin } from "./lockdownRuntime";
+import { retractJoinWindow } from "./lockdownJoinWindow";
 import { runKickMemberEffect } from "./verificationEffects/kick";
 import {
   runExpelEffect,
@@ -220,7 +220,7 @@ export async function runVerificationEffects({
         });
         break;
       case "retractJoinCount":
-        retractJoin(chatId, effect.joinedAt);
+        retractJoinWindow(chatId, effect.joinedAt);
         break;
       case "logUncancelableKickExemption":
         // Worker 只向主线程中继 error 日志；这是误踢后唯一可供人工纠正的线索。

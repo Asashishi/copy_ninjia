@@ -28,8 +28,6 @@ const {
 const {
   adoptStickerCatalogSnapshots,
   flushStickerCatalogs,
-  inspectStickerCatalogSnapshots,
-  maintainStickerCatalogSnapshots,
   markStickerCatalogSnapshotDirty,
 } = await import("../../../packages/workers/diskIO/stickerCatalogFiles");
 const {
@@ -45,6 +43,8 @@ const {
   resetAiMemoryCache,
 } = await import("../../../packages/cache/workers/diskIO/snapshots");
 const {
+  inspectStickerCatalogs,
+  maintainStickerCatalogFiles,
   writeStickerCatalogFile: writeStickerCatalogFileToDisk,
 } = await import("../../../packages/workers/diskIO/snapshotFiles");
 const { SNAPSHOT_FLUSH_INTERVAL_MS } =
@@ -120,12 +120,12 @@ afterEach(() => {
 
 describe("Disk I/O snapshot domain owners", () => {
   test("贴纸目录的三阶段启动 API 走真实目录：inspect 只读、adopt 才发布、maintenance 收尾", async () => {
-    // 生产启动只走这三个函数（见 workers/diskIO/startup.ts），此前它们在
-    // diskIOWorker.test.ts 里被整份 mock 掉，一行都没真跑过。
+    // 生产启动经 workers/diskIO/startup.ts 依次调用这三个函数；diskIOWorker.test.ts
+    // 把它们整份 mock 掉，真实目录上的行为由本用例覆盖。
     writeStickerCatalogFileToDisk("pack_one", stickerSnapshotJson("恢复出来的目录"));
     stickerCatalogCache.set("stale_pack", "stale-sticker");
 
-    const inspection = await inspectStickerCatalogSnapshots(["pack_one"]);
+    const inspection = await inspectStickerCatalogs(["pack_one"]);
     // 第一阶段只读：owner 缓存在 adopt 之前必须原封不动。
     expect(stickerCatalogCache.get("stale_pack")).toBe("stale-sticker");
     expect(inspection.snapshots.get("pack_one")).toBe(stickerSnapshotJson("恢复出来的目录"));
@@ -135,7 +135,7 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(stickerCatalogCache.has("stale_pack")).toBeFalse();
     expect(stickerCatalogCache.get("pack_one")).toBe(stickerSnapshotJson("恢复出来的目录"));
 
-    await expect(maintainStickerCatalogSnapshots(inspection)).resolves.toBeUndefined();
+    await expect(maintainStickerCatalogFiles(inspection)).resolves.toBeUndefined();
   });
 
   test("AI 上下文的 adopt 整体发布已校验 SQLite 快照", () => {

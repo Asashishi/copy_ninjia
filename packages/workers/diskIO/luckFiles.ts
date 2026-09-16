@@ -33,8 +33,6 @@ import {
 import {
   appendLuckEntries,
   cleanupStaleLuckFiles,
-  inspectLuckDay,
-  maintainLuckDay,
   recoverLuckDay,
 } from "./snapshotFiles";
 import type { LuckDrawDiskMessage } from "../../types/diskIO/messages";
@@ -248,27 +246,12 @@ export async function hydrateLuckDay(day: string): Promise<void> {
   luckFileState.current = recoveredFileState.current;
 }
 
-/** 跨域启动第一阶段：只读恢复当天结果与追加游标。 */
-export async function inspectLuckDayState(
-  day: string
-): Promise<LuckDayRecoveryInspection> {
-  return inspectLuckDay(day);
-}
-
 /** 跨域启动第二阶段：全部领域 inspect 成功后整体发布到 owner 缓存。 */
 export function adoptLuckDay(
   inspection: LuckDayRecoveryInspection
 ): void {
   hydrateLuckCache(inspection.cache);
   luckFileState.current = inspection.fileState;
-}
-
-/** 跨域启动成功后清理临时与过期日文件。 */
-export async function maintainLuckDayState(
-  day: string,
-  inspection: LuckDayRecoveryInspection
-): Promise<void> {
-  await maintainLuckDay(day, inspection);
 }
 
 /**

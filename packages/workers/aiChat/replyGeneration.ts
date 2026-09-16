@@ -12,17 +12,11 @@ import { logger } from "../../infra/logger";
 import { settleWithinBudget } from "../../libs/inflight";
 
 /**
- * AI 回复 epoch 与其异步任务的统一生命周期边界。回复轮、限频提示、媒体描述和
- * 记忆压缩都必须登记；群失效时同步撤销旧 epoch，再等待该 epoch 的任务 settle。
+ * AI 回复 epoch 与其异步任务的统一生命周期边界。epoch 的读取与核对由各调用方直接
+ * 使用 cache/workers/aiChat/replies.ts 的 cachedReplyGeneration 与
+ * isCachedReplyGenerationCurrent。回复轮、限频提示、媒体描述和记忆压缩都必须在
+ * 本模块登记；群失效时同步撤销旧 epoch，再等待该 epoch 的任务 settle。
  */
-
-export function currentReplyGeneration(chatId: number): number {
-  return cachedReplyGeneration(chatId);
-}
-
-export function isReplyGenerationCurrent(chatId: number, generation: number): boolean {
-  return isCachedReplyGenerationCurrent(chatId, generation);
-}
 
 function generationKey(chatId: number, generation: number): string {
   return `${chatId}:${generation}`;
@@ -64,7 +58,7 @@ export function trackReplyGenerationTask(
     current?.delete(task);
     if (current?.size === 0) {
       replyGenerationTasks.delete(key);
-      if (!isReplyGenerationCurrent(chatId, generation)) {
+      if (!isCachedReplyGenerationCurrent(chatId, generation)) {
         replyAbortControllers.delete(key);
       }
     }
@@ -107,7 +101,7 @@ export async function quiesceAiChatReplies(): Promise<void> {
  * compaction.ts 的 rotateCompaction 与 mediaIngest.ts 的回填守卫）。
  */
 export function invalidateChatReplies(chatId: number): Promise<void> {
-  const generation: number = currentReplyGeneration(chatId);
+  const generation: number = cachedReplyGeneration(chatId);
   const key: string = generationKey(chatId, generation);
   replyAbortControllers.get(key)?.abort(
     new DOMException("AI chat generation invalidated.", "AbortError")

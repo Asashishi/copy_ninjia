@@ -68,7 +68,7 @@ export function unacknowledgedIdentityWrites(
     : unacknowledgedBlocklistWrites;
 }
 
-/** 测试和应用全新生命周期初始化前重置有界缓存与一致性水位。 */
+/** 测试隔离与基准重置时清空有界缓存与一致性水位；生产进程从模块初始值开始。 */
 export function resetIdentityStorageCache(): void {
   whitelistEntryCache.clear();
   blocklistEntryCache.clear();

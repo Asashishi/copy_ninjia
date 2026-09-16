@@ -31,6 +31,11 @@ function nodeModuleName(name: string): string | undefined {
   return isBuiltin(name) ? `node:${name}` : undefined;
 }
 
+/** Bun 自有模块与 Node 内建模块（含不带前缀的形态）由运行时提供，不属于 npm 依赖。 */
+export function isRuntimeBuiltinModule(name: string): boolean {
+  return name === "bun" || name.startsWith("bun:") || nodeModuleName(name) !== undefined;
+}
+
 /** 属性名仅接收直接属性和字面量下标，不追踪动态表达式或别名。 */
 function staticPropertyName(node: ts.Node): string | undefined {
   if (ts.isPropertyAccessExpression(node)) return node.name.text;

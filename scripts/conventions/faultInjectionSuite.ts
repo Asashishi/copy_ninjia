@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
-import { isRuntimeModuleEdge, sourceFilesUnder } from "./sourceAnalysis";
+import { runtimeModuleReferences, sourceFilesUnder } from "./sourceAnalysis";
+import type { RuntimeModuleReference } from "./sourceAnalysis";
 
 /**
  * `bun run test:fault-injection` 的清单必须覆盖全部持久化 / 停机 / Worker 生命周期用例。
@@ -11,7 +12,9 @@ import { isRuntimeModuleEdge, sourceFilesUnder } from "./sourceAnalysis";
  * 门禁变红，套件却在无声中变窄——合入前跑的那一套不再覆盖新写的落盘或重建用例。
  *
  * 本模块按测试 harness 与生产恢复/生命周期边界的值导入给出机器可判的下界。
- * 归属按解析后的路径判定，包含动态 import，忽略纯类型引用。
+ * 归属按解析后的路径判定，包含动态 import 与目录入口 `index.ts`，忽略纯类型引用。
+ * 兼容入口这类混合主题模块可把边界限定到具体导出：只有取用其中之一（命名空间按
+ * 属性访问判定），或以无法静态确定取用范围的形态引用时，才要求登记。
  *
  * 判定只做下界，不禁止清单里出现别的文件：不依赖 harness 的故障注入用例（例如
  * readiness mock 整文件生效的那种）同样该进清单，但没有机器可判的特征，仍由维护者
@@ -24,6 +27,8 @@ interface FaultInjectionBoundary {
   readonly path: string;
   /** 该边界覆盖的故障面，用于失败文案。 */
   readonly purpose: string;
+  /** 只有取用这些导出才计入；缺省表示对该模块的任何运行期引用都计入。 */
+  readonly exports?: readonly string[];
 }
 
 interface ProjectPackageJson {
@@ -65,48 +70,42 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   { path: "packages/workers/antiRaid/lockdownApi.ts", purpose: "lockdown API ownership and permission compensation" },
   { path: "packages/states/lockdown.ts", purpose: "lockdown recovery and durable state transitions" },
   { path: "packages/aiChat/ai/weather.ts", purpose: "weather refresh cancellation and late-result ownership" },
+  { path: "packages/infra/telegram/outboundLifecycle.ts", purpose: "Telegram outbound drain, quiesce and timeout abort" },
+  {
+    path: "packages/infra/telegram/actions/messageLifecycle.ts",
+    purpose: "delayed message deletion shutdown flush and drain",
+    exports: ["drainPendingMessageDeletions", "flushPendingMessageDeletions"],
+  },
+  {
+    path: "packages/infra/telegram/actions.ts",
+    purpose: "delayed message deletion shutdown flush and drain",
+    exports: ["drainPendingMessageDeletions", "flushPendingMessageDeletions"],
+  },
+  {
+    path: "packages/infra/telegram/index.ts",
+    purpose: "delayed message deletion shutdown drain",
+    exports: ["drainPendingMessageDeletions"],
+  },
+  { path: "packages/libs/drainWaiter.ts", purpose: "drain waiter settlement and timeout" },
+  { path: "packages/infra/supervisedDuplexWorker.ts", purpose: "duplex Worker rebuild cancellation and generation-scoped replies" },
+  { path: "packages/infra/chatTeardown.ts", purpose: "combined chat teardown ordering and failure propagation" },
+  { path: "packages/infra/joinLog.ts", purpose: "join-log durable barrier and teardown purge" },
+  { path: "packages/workers/antiRaid/taskTracker.ts", purpose: "Anti-Raid task draining, dispatch quiesce and generation isolation" },
+  {
+    path: "packages/workers/antiRaid/verificationRuntime.ts",
+    purpose: "verification adoption, persisted terminal resume and generation isolation",
+  },
 ];
 
-/** 静态字符串字面量说明符；模板与动态表达式不参与判定。 */
-function literalSpecifier(node: ts.Expression | undefined): string | undefined {
-  if (node === undefined) return undefined;
-  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
-  return undefined;
+/** 该引用是否触及边界：未限定导出的边界按整模块计，无法确定取用范围的引用同样计入。 */
+function usesBoundary(reference: RuntimeModuleReference, boundary: FaultInjectionBoundary): boolean {
+  if (boundary.exports === undefined || reference.names === null) return true;
+  return reference.names.some((name: string): boolean => boundary.exports?.includes(name) === true);
 }
 
 /**
- * 取出一个模块里全部模块说明符。
- *
- * 必须同时认静态 `import`/`export … from` 与 `await import("x")`：这批用例里有一半是
- * 先装 `mock.module` 再 `const { … } = await import("../helpers/…")`，只认静态
- * `from` 的话正是漏掉它们。
- *
- * 走 AST 而不是正则：门禁自己的用例文件里就把 harness 路径当**字符串字面量**写在
- * 夹具内容里，按正文扫会把那些夹具误判成真的 import。
- */
-function importSpecifiers(source: ts.SourceFile): readonly string[] {
-  const specifiers: string[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      if (!isRuntimeModuleEdge(node)) return;
-      const specifier: string | undefined = literalSpecifier(node.moduleSpecifier);
-      if (specifier !== undefined) specifiers.push(specifier);
-    } else if (
-      ts.isCallExpression(node) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-    ) {
-      const specifier: string | undefined = literalSpecifier(node.arguments[0]);
-      if (specifier !== undefined) specifiers.push(specifier);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return specifiers;
-}
-
-/**
- * 相对说明符解析成绝对 `.ts` 路径，供与 harness 的真实路径比对。
+ * 相对说明符解析成绝对 `.ts` 路径，供与 harness 的真实路径比对：优先 `<说明符>.ts`，
+ * 不存在时取目录入口 `<说明符>/index.ts`。
  *
  * 按**路径**而不是按基名比对：同名不同目录的模块不该被误判成 harness。裸说明符
  * （`bun:test`、`grammy/types`）返回 undefined，直接跳过。
@@ -114,7 +113,10 @@ function importSpecifiers(source: ts.SourceFile): readonly string[] {
 function resolvedSpecifierPath(importerPath: string, specifier: string): string | undefined {
   if (!specifier.startsWith(".")) return undefined;
   const resolved: string = resolve(dirname(importerPath), specifier);
-  return extname(resolved) === ".ts" ? resolved : `${resolved}.ts`;
+  if (extname(resolved) === ".ts") return resolved;
+  const file: string = `${resolved}.ts`;
+  const directoryEntry: string = join(resolved, "index.ts");
+  return !existsSync(file) && existsSync(directoryEntry) ? directoryEntry : file;
 }
 
 /** 核对清单里声明的每条路径都真实存在且只出现一次。 */
@@ -175,14 +177,14 @@ export async function collectFaultInjectionSuiteProblems(
       path,
       await Bun.file(path).text(),
       ts.ScriptTarget.Latest,
-      false,
+      true,
       ts.ScriptKind.TS
     );
-    for (const specifier of importSpecifiers(source)) {
-      const resolved: string | undefined = resolvedSpecifierPath(path, specifier);
+    for (const reference of runtimeModuleReferences(source)) {
+      const resolved: string | undefined = resolvedSpecifierPath(path, reference.specifier);
       if (resolved === undefined) continue;
       const harness: FaultInjectionBoundary | undefined = requiredModules.get(resolved);
-      if (harness === undefined) continue;
+      if (harness === undefined || !usesBoundary(reference, harness)) continue;
       problems.push(
         `${relativePath} uses ${harness.path} (${harness.purpose}) ` +
         "but is missing from the test:fault-injection script"

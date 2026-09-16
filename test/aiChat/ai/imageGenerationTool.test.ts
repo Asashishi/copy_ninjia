@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ReplyToolContext, RoundMessageState } from "../../../packages/types/aiChat/replies";
 import type { ChatActionPhase } from "../../../packages/types/aiChat/chatAction";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
+import type { TaskPriority } from "../../../packages/libs/prioritizedBoundedTaskRunner";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
 const generateChatImage = mock(async (..._args: unknown[]): Promise<{
@@ -21,7 +22,11 @@ function normalizeAspectRatioStub(
 const normalizeImageAspectRatio = mock(normalizeAspectRatioStub);
 const referenceVisionImage = { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
 const downloadTelegramVisionImage = mock(async (..._args: unknown[]): Promise<typeof referenceVisionImage | null> => referenceVisionImage);
-const runMediaTask = mock(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
+/** 媒体执行器的 run 桩；beforeEach 的 mockReset 之后按这一份原样装回。 */
+async function runMediaTaskStub<T>(_priority: TaskPriority, task: () => Promise<T>, _signal?: AbortSignal): Promise<T | undefined> {
+  return await task();
+}
+const runMediaTask = mock(runMediaTaskStub);
 const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
   messageId: 77,
   repliedToMessageId: 42,
@@ -49,7 +54,7 @@ mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({
 }));
 mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult, sendMessageWithResult }));
 mock.module("../../../packages/aiChat/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
-mock.module("../../../packages/aiChat/ai/mediaTaskRunner", () => ({ runMediaTask }));
+mock.module("../../../packages/cache/workers/aiChat/mediaTasks", () => ({ mediaTaskRunner: { run: runMediaTask } }));
 
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageGeneration");
 const { buildImageReferenceBlock } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageReference");
@@ -124,7 +129,7 @@ beforeEach(() => {
   downloadTelegramVisionImage.mockReset();
   downloadTelegramVisionImage.mockResolvedValue(referenceVisionImage);
   runMediaTask.mockReset();
-  runMediaTask.mockImplementation(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
+  runMediaTask.mockImplementation(runMediaTaskStub);
   sendPhotoWithResult.mockReset();
   sendPhotoWithResult.mockResolvedValue({ messageId: 77, repliedToMessageId: 42 });
   sendMessageWithResult.mockReset();
@@ -240,6 +245,7 @@ describe("generate_image 工具执行器", () => {
       logLabel: "image generation reference",
     });
     expect(runMediaTask).toHaveBeenCalledTimes(1);
+    expect(runMediaTask).toHaveBeenCalledWith("interactive", expect.any(Function));
     expect(generateChatImage).toHaveBeenCalledWith({
       prompt: "把原图改成油画",
       aspectRatio: "16:9",

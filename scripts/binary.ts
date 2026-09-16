@@ -7,8 +7,8 @@ if (arguments_.length === 1 && arguments_[0] === "--help") {
   const manifest: { readonly version: string } = await Bun.file("binary.json").json() as { readonly version: string };
   console.log(manifest.version);
 } else if (arguments_.length === 0) {
-  const { runApplication }: typeof ApplicationEntry = await import("../index");
-  await runApplication();
+  const { application }: typeof ApplicationEntry = await import("../index");
+  await application.run("main");
 } else {
   throw new Error("Usage: ./copy-ninjia [--help|--version]");
 }

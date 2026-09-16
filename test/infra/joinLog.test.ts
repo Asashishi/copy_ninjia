@@ -1,7 +1,7 @@
 import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DiskBusinessMessage, JoinLogRecord } from "../../packages/types/diskIO";
+import type { DiskBusinessMessage } from "../../packages/types/diskIO";
 
 /**
  * 入群事实的 durable 屏障（packages/infra/joinLog.ts）。
@@ -14,17 +14,15 @@ import type { DiskBusinessMessage, JoinLogRecord } from "../../packages/types/di
 
 const postDiskIO = mock((_message: DiskBusinessMessage): boolean => true);
 const flushDiskIODomain = mock(async (): Promise<FlushResult> => "flushed");
-const readJoinLog = mock(async (..._args: unknown[]): Promise<readonly JoinLogRecord[]> => []);
 let buffering: boolean = false;
 
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   flushDiskIODomain,
   isDiskIOBuffering: (): boolean => buffering,
-  readJoinLog,
 })));
 
-const { purgeChatJoinLog, readRecentJoinLog, recordJoinLog } = await import("../../packages/infra/joinLog");
+const { purgeChatJoinLog, recordJoinLog } = await import("../../packages/infra/joinLog");
 const { teardownRegisteredChat } = await import("../../packages/infra/chatTeardownRegistry");
 
 const PARAMS = { chatId: -1001, userId: 42, joinedAt: 1_753_000_000_000 };
@@ -34,8 +32,6 @@ beforeEach(() => {
   flushDiskIODomain.mockClear();
   postDiskIO.mockImplementation((): boolean => true);
   flushDiskIODomain.mockImplementation(async (): Promise<FlushResult> => "flushed");
-  readJoinLog.mockClear();
-  readJoinLog.mockImplementation(async (): Promise<readonly JoinLogRecord[]> => []);
   buffering = false;
 });
 
@@ -77,42 +73,6 @@ describe("recordJoinLog 的 durable 屏障", () => {
     postDiskIO.mockImplementation((): boolean => false);
 
     await expect(recordJoinLog(PARAMS)).resolves.toBeFalse();
-  });
-});
-
-/**
- * 读取侧只是一层到 Disk I/O Worker 的转发，但它是 /batch_kick 等命令唯一的入群
- * 事实来源：三个字段任一在转发时丢掉或改名，命令拿到的就是一份「这段时间没人
- * 进群」的空清单，而不是报错——踢不到人却回执成功。因此这里钉的是「参数原样
- * 过桥、结果原样返回」。
- */
-describe("readRecentJoinLog 的读取转发", () => {
-  test("三个参数原样交给落盘线程，结果原样返回", async () => {
-    const records: readonly JoinLogRecord[] = [
-      { userId: 42, joinedAt: 1_753_000_000_000 },
-      { userId: 43, joinedAt: 1_753_000_000_500 },
-    ];
-    readJoinLog.mockImplementation(async (): Promise<readonly JoinLogRecord[]> => records);
-
-    await expect(readRecentJoinLog({
-      chatId: -1001,
-      since: 1_752_999_000_000,
-      now: 1_753_000_001_000,
-    })).resolves.toBe(records);
-    expect(readJoinLog).toHaveBeenCalledTimes(1);
-    expect(readJoinLog).toHaveBeenCalledWith({
-      chatId: -1001,
-      since: 1_752_999_000_000,
-      now: 1_753_000_001_000,
-    });
-  });
-
-  test("没有记录时返回空清单，不把它伪装成失败", async () => {
-    await expect(readRecentJoinLog({
-      chatId: -1001,
-      since: 1,
-      now: 2,
-    })).resolves.toEqual([]);
   });
 });
 

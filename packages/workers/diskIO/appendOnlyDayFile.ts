@@ -91,21 +91,13 @@ function writeBufferFully(
 }
 
 /**
- * 整份文件重写用：tmp + fsync + rename（同文件系统内原子操作），避免这类
- * 维护性重写被杀一半留下撕裂 JSON（同 snapshotFiles.ts atomicWriteText 的
- * 理由，fsync 的必要性见其注释）。只用在 openDayFile 的两处维护性重写上——
- * 真正的热路径 appendToDayFile 仍是位置写，其非原子性是刻意的性能取舍，
- * 是否允许裁掉末尾残片由调用方按数据权威性显式选择，见下方注释。
- */
-function atomicRewrite(path: string, content: string, mode?: number): void {
-  atomicWriteTextSync(path, content, mode);
-}
-
-/**
  * 打开（或接管）一个追加型 JSON 对象文件并校验其可追加性。文件不存在或为
  * 空对象视作空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准
  * 格式重写一次；解析失败时默认保留原始字节并抛错，只有 repair=true 才尝试
  * repairTruncated 裁掉末尾残片。顶层不是普通对象或无法修复时同样拒绝。
+ * 裁尾修复与排版规范化经 atomicWriteTextSync 以 tmp + fsync + rename 整份
+ * 原子替换；追记热路径（appendToAppendOnlyFile / appendToDayFile 向非空文件
+ * 追加）按位置写入。
  * size 一律以 fs.statSync 读到的物理文件大小为准，不信任内存里算出来的
  * 字节数。完整扫描只发生在打开/恢复阶段，成功后的追记热路径仍为 O(1)。
  * @param repair 是否显式允许裁掉末尾残片或规范化排版；默认 false。只写诊断
@@ -138,7 +130,7 @@ export async function openAppendOnlyFile(
     if (!isPlainRecord(repairedParsed)) {
       throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
     }
-    atomicRewrite(path, repaired, mode);
+    atomicWriteTextSync(path, repaired, mode);
     state.size = statSync(path).size;
     state.empty = Object.keys(repairedParsed).length === 0;
     return state;
@@ -158,7 +150,7 @@ export async function openAppendOnlyFile(
     // 「整数索引形态」的键提到最前，源文本的顺序在这一步就没了。这条路径只在
     // 文件被手工编辑过（结尾形态不符）时触发，属异常态的一次性归一；调用方
     // 不得把这条修复路径当作键顺序稳定性保证。
-    atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
+    atomicWriteTextSync(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
   }
   state.size = statSync(path).size;
   state.empty = false;
@@ -320,7 +312,7 @@ export async function appendToAppendOnlyFile({
     const content: string = `{\n${chunk}\n}`;
     // 首条也走原子替换；传入 mode 时临时文件会在 rename 前
     // fchmod，不会因进程 umask 而暴露权限不符合要求的目标。
-    atomicRewrite(path, content, mode);
+    atomicWriteTextSync(path, content, mode);
     state.size = Buffer.byteLength(content);
     state.empty = false;
     return;

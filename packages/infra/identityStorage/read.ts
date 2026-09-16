@@ -4,7 +4,7 @@ import {
   identityEntryCounts,
   whitelistEntryCache,
 } from "../../cache/main/identityStorage";
-import { resetTemporaryAdBypassCache } from
+import { temporaryAdBypassActivityCache } from
   "../../cache/main/temporaryAdBypass";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from
   "../../consts/identityStorage";
@@ -44,7 +44,12 @@ export function identityMetadataFromCachedUser(
   };
 }
 
-/** 启动恢复只灌入数据库计数，不把 SQLite 整表复制到主线程。 */
+/**
+ * 启动恢复只灌入数据库计数，不把 SQLite 整表复制到主线程。
+ *
+ * 两个计数都通过校验后才清空三份读取 LRU 并写入计数；三类未 ACK 最终值与
+ * revision 发号器不在这里改动，它们只随进程全新初始化清空。
+ */
 export function hydrateIdentityStorageCounts(
   whitelistCount: number,
   blocklistCount: number
@@ -57,7 +62,7 @@ export function hydrateIdentityStorageCounts(
   }
   whitelistEntryCache.clear();
   blocklistEntryCache.clear();
-  resetTemporaryAdBypassCache();
+  temporaryAdBypassActivityCache.clear();
   identityEntryCounts.whitelist = whitelistCount;
   identityEntryCounts.blocklist = blocklistCount;
 }

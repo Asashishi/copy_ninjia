@@ -128,7 +128,7 @@
 
 1. **リテラルなパラメータ、またはユーザーに見える文言か？** → `packages/consts/<domain>.ts`。ドメインが大きければ `packages/consts/<domain>/` に分割します。用途と不変条件を説明する中国語 JSDoc を付けます。コマンドの応答や提示は handler 内で組み立てず、コマンドごとの文言テーブルに収めます。deployment JSON の解析と検証は `packages/config/<domain>.ts` に置き、process environment は `packages/consts/paths.ts` の runtime path override だけが読みます。
 2. **モジュール間で共有する型または protocol か？** → `packages/types/<domain>.ts`。状態機械の `State/Event/Effect/Transition/Decision` contract は `packages/types/states/` に置きます。
-3. **Map、Set、キュー、timer、singleton など長寿命の可変状態か？** → `packages/cache/`。**まず所有スレッドのディレクトリを選び**（下記参照）、その中でドメイン別にファイルを分けます。`export let` ではなく holder オブジェクトを使い、いつ格納し、いつ削除し、Worker 再起動後にどう再構築するかを JSDoc に記載します。容量と削除方針は [04 実行時の正式な不変条件](04-invariants.md) を満たす必要があります。
+3. **Map、Set、AsyncLocalStorage、キュー、timer、singleton など長寿命の可変状態か？** → `packages/cache/`。**まず所有スレッドのディレクトリを選び**（下記参照）、その中でドメイン別にファイルを分けます。`export let` ではなく holder オブジェクトを使い、いつ格納し、いつ削除し、Worker 再起動後にどう再構築するかを JSDoc に記載します。容量と削除方針は [04 実行時の正式な不変条件](04-invariants.md) を満たす必要があります。
 4. **I/O のない、単体テスト可能な純粋状態遷移か？** → `packages/states/`。副作用は Worker 側の interpreter が実行します。
 5. **副作用または orchestration か？** → owner に従って配置します。コマンドは `packages/commands/`、自動動作は `packages/auto/`、Worker 内の処理は `packages/workers/<domain>/`、model capability は owner feature の `ai/` 子 directory、process 基盤は `packages/infra/` です。
 
@@ -157,7 +157,8 @@
 - **`perThread/`**
   - **所有者**：各スレッドに 1 つずつ。
   - **内容**：Telegram capability holder（main thread の実 adapter または Worker の duplex proxy）、
-    Worker duplex waiter、デプロイ設定 singleton、自己送信メッセージ登録。同じモジュールを
+    Worker duplex waiter、デプロイ設定 singleton、自己送信メッセージ登録、update 取消コンテキストの
+    storage。同じモジュールを
     各スレッドが独立に実体化し、共有を意図しません。
 
 `main/antiRaid/` と `workers/antiRaid/` は**何一つ共有しない別々の状態**である点に注意してください。正式な状態機械は Worker の中にあり、メインスレッド側はクラッシュ再生のための純粋なデータにすぎません。ディレクトリを間違えるのはスタイルの問題ではありません。書き込んだ内容が相手側から永遠に読めなくなります。`bun run check:conventions` が実際のモジュールグラフでこの所有関係を照合し（[04 実行時の正式な不変条件](04-invariants.md#スレッドと状態の帰属) を参照）、違反時は import 連鎖を全て出力します。
@@ -171,7 +172,7 @@
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。
 - `packages/types/index.ts` も同様で、テストと段階移行のためだけに残します。
-- パッケージ内の `index.ts` は、呼び出し側が単一 package surface を本当に必要とする場合だけ安定した公開入口にします。現在の `packages/aiChat/index.ts` と `packages/antiRaid/index.ts` は薄い明示的 export のみで、状態を所有しません。production 内部は引き続き owner の leaf module を直接 import し、無制限な `export *` surface を避けます。
+- パッケージ内の `index.ts` は、呼び出し側が単一 package surface を本当に必要とする場合だけ安定した公開入口にします。現在の `packages/aiChat/index.ts`、`packages/antiRaid/index.ts`、`packages/infra/telegram/index.ts` は薄い明示的 export のみで、状態を所有しません。`infra/telegram/index.ts` は既存の業務モジュールが経由して使う client・通常アクション・コマンド受領の symbol だけを再 export し、新しいコードは `client`、`actions/*`、`commandMessages` などの leaf module を直接 import します。aiChat と antiRaid の production 内部は引き続き owner の leaf module を直接 import し、これら 3 つの入口はいずれも無制限な `export *` surface を使いません。
 
 ## テストのミラー構造
 
