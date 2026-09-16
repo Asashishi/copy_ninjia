@@ -210,10 +210,10 @@
   6. 创建并单独推送 annotated version tag。
   7. 执行 `bun run release:publish -- --version <tag> --platforms <平台列表> --notes-file <说明文件>`，先补齐草稿资产并下载校验，再公开为 Latest，最后确认 Release、远端引用和下载内容。
   8. 将 `dev` reset 对齐到 `master`，并以 `--force-with-lease` 推送。
-- 二进制版本统一读取 `package.json` 的 `version`，必须为本次 Release 的无前缀 `MAJOR.MINOR.PATCH`；显式 `--version` 必须与之相同。更新版本后再提交、构建；发行包不包含 `.map` 文件。
-- `bun run release:check` 包含二进制构建及隔离启动、版本、无 source map、Worker、图片原生依赖和安装器验证；正式发行包必须在代码与基准提交后重新通过 `release:build` 生成。
+- `bun run build -- --version <tag>` 和 `bun run release:check -- --version <tag>` 必须显式传入无前缀的 `MAJOR.MINOR.PATCH`，不提供默认版本，也不从源码 manifest 推断版本；传入值写入包内 `package.json` 与 `binary.json`。缺失或非法版本在构建或安装依赖前拒绝。
+- `release:check` 包含二进制构建及隔离启动、版本、无 `.map` 文件、Worker、图片原生依赖和安装器验证；正式发行包必须在代码与基准提交后重新通过 `release:build` 生成。
 - 二进制平台为 `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl`；`--platforms` 必须明确列出本次发布的平台，不得缺包后静默缩减。每个平台都必须在对应环境原生构建和验证，使用同一 Git tree、Bun version/revision。
-- 每个平台上传 `copy-ninjia-<平台>.tar.gz` 与对应 `.tar.gz.sha256`。发布脚本核对 SHA-256 及包内版本、平台、Git tree、Bun 构建；版本不符或未提交工作树的产物不得发布。多机汇总目录通过 `--directory` 指定。
+- 每个平台上传 `copy-ninjia-<平台>.tar.gz` 与对应 `.tar.gz.sha256`。发布脚本核对 SHA-256 及包内版本、平台、Git tree、Bun 构建；`development` 或未提交工作树的产物不得发布。多机汇总目录通过 `--directory` 指定。
 - 二进制安装从 Release 下载发行包，不在目标机器检出源码或执行构建；Release 的 Compatibility / Migration Notes 必须列明本次提供的平台。
 - `release:publish` 只操作已推送 annotated tag 的 Release，不推送分支、不创建或移动 tag、不自动同步 `dev`；执行前必须完成仓库与部署保护检查。
 - 基准使用默认三轮，与上一次发布同机器、同 Bun 构建；`--rounds` 只用于本地排查，非默认轮数的读数不得写进文档。

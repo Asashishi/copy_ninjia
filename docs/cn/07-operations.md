@@ -245,7 +245,7 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 
 ## 升级发布
 
-1. 在源码工作树上通过 `bun run release:check`（frozen lockfile + 全量检查 + 覆盖率指标核对 + 故障注入 + 二进制构建验证）；联网环境加
+1. 在源码工作树上通过 `bun run release:check -- --version <tag>`（frozen lockfile + 全量检查 + 覆盖率指标核对 + 故障注入 + 二进制构建验证）；联网环境加
    `bun run audit:release`。
 2. 在任何会改写工作树的 Git 操作前，检查 `git status --short`、当前版本到目标版本的
    `git diff --name-status`，以及 `git ls-files config .env g-auth.json`。`config/`、

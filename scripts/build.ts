@@ -8,25 +8,19 @@ import { fileSha256, RELEASE_VERSION_PATTERN } from "./release/assets";
 import type { ReleaseCommand } from "./release/command";
 
 interface PackageManifest {
-  readonly version?: string;
   readonly packageManager?: string;
   readonly dependencies?: Readonly<Record<string, string>>;
 }
 
 const projectRoot: string = join(import.meta.dir, "..");
 const arguments_: readonly string[] = Bun.argv.slice(2).filter((value: string): boolean => value !== "--");
-if (arguments_.length !== 0 &&
-  (arguments_.length !== 2 || arguments_[0] !== "--version" || !RELEASE_VERSION_PATTERN.test(arguments_[1]!))) {
-  throw new Error("Usage: bun run build [-- --version MAJOR.MINOR.PATCH]");
+if (arguments_.length !== 2 || arguments_[0] !== "--version" || !RELEASE_VERSION_PATTERN.test(arguments_[1]!)) {
+  throw new Error("Usage: bun run build -- --version MAJOR.MINOR.PATCH (required, no default).");
 }
+const version: string = arguments_[1]!;
 const sourceCommand: ReleaseCommand | null = Bun.which("git") === null ? null : createReleaseCommand(projectRoot);
 const sourceTree: string | null = sourceCommand === null ? null : readBuildSourceTree(sourceCommand);
 const manifest: PackageManifest = await Bun.file(join(projectRoot, "package.json")).json() as PackageManifest;
-if (typeof manifest.version !== "string" || !RELEASE_VERSION_PATTERN.test(manifest.version)) {
-  throw new Error("package.json version must be the release MAJOR.MINOR.PATCH without a v prefix.");
-}
-const version: string = manifest.version;
-if (arguments_[1] !== undefined && arguments_[1] !== version) throw new Error("--version must match package.json version.");
 if (manifest.packageManager !== `bun@${Bun.version}`) throw new Error("Build requires the packageManager Bun version.");
 const libc: string | null = familySync();
 if (process.platform !== "linux" || !["x64", "arm64"].includes(process.arch) || (libc !== GLIBC && libc !== MUSL)) {
@@ -84,7 +78,7 @@ try {
     external: ["sharp"],
   });
   if (!installer.success) throw new AggregateError(installer.logs, "Installer compilation failed.");
-  for (const relative of ["install.sh", "package.json", "config_example", "prompt", "LICENSES", "packages/database/schema/migrations"]) {
+  for (const relative of ["install.sh", "config_example", "prompt", "LICENSES", "packages/database/schema/migrations"]) {
     await copyFixtureTree(join(projectRoot, relative), join(packageRoot, relative));
   }
   for await (const file of new Bun.Glob("*.sh").scan(join(projectRoot, "scripts/install"))) {
@@ -94,6 +88,7 @@ try {
   for await (const file of new Bun.Glob("**/*.map").scan({ cwd: packageRoot, dot: true })) {
     await Bun.file(join(packageRoot, file)).delete();
   }
+  await Bun.write(join(packageRoot, "package.json"), JSON.stringify({ ...manifest, version }, null, 2) + "\n");
   await Bun.write(join(packageRoot, "binary.json"), JSON.stringify({ version, platform, bun: Bun.version, bunRevision: Bun.revision, sourceTree }, null, 2) + "\n");
   chmodSync(executable, 0o755);
   run([executable, "--help"], packageRoot);

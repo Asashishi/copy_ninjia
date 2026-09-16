@@ -1,6 +1,5 @@
 {
   "name": "copy_ninjia",
-  "version": "12.0.1",
   "module": "index.ts",
   "type": "module",
   "packageManager": "bun@1.4.2",
@@ -29,7 +28,7 @@
     "perf:join-log": "bun scripts/perf/joinLog.ts",
     "typecheck": "tsc --noEmit --incremental",
     "check": "bun run check:install-script-syntax && bun run check:install-isolation && bun run check:conventions && bun run lint && bun run typecheck && bun run test:coverage && bun run perf:hot-path-gate",
-    "release:check": "bun install --frozen-lockfile && bun run check && bun run check:coverage && bun run test:fault-injection && bun run build",
+    "release:check": "bun scripts/release.ts check",
     "release:build": "bun scripts/release.ts build",
     "release:verify": "bun scripts/release.ts verify",
     "release:publish": "bun scripts/release.ts publish",

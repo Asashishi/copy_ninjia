@@ -261,7 +261,7 @@ The token fingerprint identifies the lock owner; it is not a data-isolation boun
 
 ## Upgrades and Releases
 
-1. In a source worktree, pass `bun run release:check` (frozen lockfile + full checks + coverage-metric verification + fault injection + binary build validation). On a networked
+1. In a source worktree, pass `bun run release:check -- --version <tag>` (frozen lockfile + full checks + coverage-metric verification + fault injection + binary build validation). On a networked
    host, also run `bun run audit:release`.
 2. Before any Git operation that can rewrite the worktree, inspect `git status --short`, the
    current-to-target `git diff --name-status`, and

@@ -33,8 +33,8 @@
 | `bun run perf:identity-database` | Benchmark six real identity-database cold/hot read and write operations in independent processes |
 | `bun run perf:full` | Full benchmark, six sections × three rounds; release and explicit request only. `--write-doc` rewrites all three 09 Performance pages and `fullSuite.lastRun` in `performance-result.json` |
 | `bun run perf:review` | Targeted review: 12 existing hot paths, 7 AI reply/payload scenarios, two complete command chains, and real Disk I/O Worker pressure; three independent rounds per item, selected with `--hot-paths` / `--ai` / `--chains` / `--worker` |
-| `bun run build` | Build the native Linux binary using the Release version in `package.json`, validate it in isolation, and generate archives and SHA-256 files in `dist/`; `.map` files are excluded |
-| `bun run release:check` | Frozen-lockfile install + check + coverage-metric verification + fault injection + binary build and validation; required before release |
+| `bun run build -- --version <tag>` | Require an explicit version with no default; build and validate the native Linux binary, then generate archives and SHA-256 files in `dist/`, excluding `.map` files |
+| `bun run release:check -- --version <tag>` | Frozen-lockfile install + check + coverage-metric verification + fault injection + binary build and validation; required before release; missing or invalid versions fail before dependency installation |
 | `bun run release:build -- --version <tag>` | Build a release natively from clean, committed `dev` |
 | `bun run release:verify -- --version <tag> --platforms <list>` | Verify every declared platform's archive, SHA-256, version, Git tree, and Bun build |
 | `bun run release:publish -- --version <tag> --platforms <list> --notes-file <file>` | Verify pushed references, create or resume a draft, download and verify assets, publish as Latest, and confirm again |
@@ -189,7 +189,7 @@ Two more sets of measured figures drift just as silently, independently of cover
 
 ## Release
 
-This repository does not rely on GitHub Actions. Release environments should make `bun run release:check` an explicit build or pre-deploy step. Networked environments should additionally run `bun run audit:release`; network failure means the audit was not completed, not that there are zero vulnerabilities. Any ignored CVE needs a recorded reason and expiration date. For releases with persistence-structure changes, first follow the migration process in [06 Common Modification Recipes](06-modification-guide.md#changing-a-persistence-schema).
+This repository does not rely on GitHub Actions. Release environments should make `bun run release:check -- --version <tag>` an explicit build or pre-deploy step. Networked environments should additionally run `bun run audit:release`; network failure means the audit was not completed, not that there are zero vulnerabilities. Any ignored CVE needs a recorded reason and expiration date. For releases with persistence-structure changes, first follow the migration process in [06 Common Modification Recipes](06-modification-guide.md#changing-a-persistence-schema).
 
 After the gates pass on `dev`, stop the service and other heavy workloads, wait for the machine to
 be idle, and run `bun run perf:full -- --write-doc` with the default three rounds. The command updates
@@ -203,16 +203,16 @@ Investigate failures or abnormal readings and rerun before publishing.
 Every squash merge into `master` must produce one GitHub Release with binary assets:
 
 1. Synchronize remote tags and read the current Latest Release tag through `gh release list`. Tags must use `MAJOR.MINOR.PATCH` without a `v` prefix. Select the version from the highest semantic impact in the complete change set: increment `MAJOR` for a breaking change (`1.0.9` → `2.0.0`), `MINOR` for backward-compatible functionality (`1.0.9` → `1.1.0`), and `PATCH` only for fixes, performance work, refactoring, or documentation (`1.0.9` → `1.0.10`).
-2. Set `package.json`'s `version` to this Release's unprefixed `MAJOR.MINOR.PATCH`, commit it with the code and current benchmark results, then run `release:build` on clean `dev`; an explicit `--version` must match that field. Build each declared platform natively on its architecture and libc, using the same Git tree and Bun version/revision. The build validates the executable's version, the absence of `.map` files, all three Workers, native image dependencies, and the binary installer. Generate release assets after the final commit.
+2. After committing the code and current benchmark results, run `release:build` on clean `dev` with an explicit `--version` matching the Release tag. There is no default or source-manifest version lookup: the supplied version is written to the packaged `package.json` and `binary.json`, and the executable's `--version` output must match. Build each declared platform natively on its architecture and libc, using the same Git tree and Bun version/revision. The build validates the version, absence of `.map` files, all three Workers, native image dependencies, and the binary installer. Generate release assets after the final commit.
 3. Collect each platform's `.tar.gz` and `.tar.gz.sha256`, then run `release:verify`. Supported names are `linux-x64`, `linux-arm64`, `linux-x64-musl`, and `linux-arm64-musl`. `--platforms` declares the complete required set; missing assets fail verification. The default directory is `dist/`; use `--directory` for a different collection directory. The version, platform, Git tree, and Bun version/revision in `binary.json` must match, and the actual SHA-256 must pass. Artifacts from uncommitted worktrees are rejected.
 4. Follow repository and deployment safeguards when squash-merging into `master`. Confirm that its Git tree matches the build, push `master`, then create and separately push an annotated version tag for that commit. Never overwrite, move, or reuse an existing tag.
 5. Prepare English notes covering only the delta from the previous Latest tag to current `master`, with Highlights, Compatibility / Migration Notes, and Validation. List the available binary platforms in the compatibility notes and use metrics from the current gates. Run `release:publish`: it checks local and remote `master` and the annotated tag, creates a draft, uploads assets, and downloads them to verify their contents. Only then does it publish as Latest, followed by another check of downloads and remote references. For migration attachments, a draft with matching notes may be created and populated first; the script then adds the binary assets.
 6. Preserve the release state and retry the same version after creation, upload, or confirmation failures. Drafts receive only missing assets; existing assets must match downloaded content and are never overwritten. A published Release missing assets is rejected without modification. Only after confirming the Release, Latest, assets, and Git references may you run `git diff dev master --quiet`, align and push `dev` following [`AGENTS.md`](../../AGENTS.md), and confirm that both local and remote branches point to the same commit. The publishing script does not perform these Git operations.
 
-This example uses `12.0.1` and Linux x64 glibc. Calculate the actual version from Latest and the change set, and list only platforms whose native builds have been validated:
+This example uses `12.1.0` and Linux x64 glibc. Calculate the actual version from Latest and the change set, and list only platforms whose native builds have been validated:
 
 ```bash
-RELEASE_VERSION=12.0.1
+RELEASE_VERSION=12.1.0
 RELEASE_PLATFORMS=linux-x64
 bun run release:build -- --version "$RELEASE_VERSION"
 bun run release:verify -- --version "$RELEASE_VERSION" --platforms "$RELEASE_PLATFORMS"

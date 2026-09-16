@@ -33,8 +33,8 @@
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
 | `bun run perf:review` | 既存の 12 hot path、AI 返信・payload の 7 シナリオ、2 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択 |
-| `bun run build` | `package.json` の Release 版で現在の Linux 向けバイナリを構築し、隔離検証後に `dist/` へアーカイブと SHA-256 ファイルを出力。`.map` ファイルは含めない |
-| `bun run release:check` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection + バイナリの構築・検証。リリース前に必須 |
+| `bun run build -- --version <tag>` | バージョンの明示指定が必須で既定値なし。現在の Linux 向けバイナリを隔離検証後、`.map` を含まないアーカイブと SHA-256 ファイルを `dist/` へ出力 |
+| `bun run release:check -- --version <tag>` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection + バイナリ構築・検証。リリース前に必須。バージョン未指定・不正は依存関係のインストール前に拒否 |
 | `bun run release:build -- --version <tag>` | クリーンでコミット済みの `dev` から正式版をネイティブ構築 |
 | `bun run release:verify -- --version <tag> --platforms <一覧>` | 宣言した全プラットフォームのアーカイブ、SHA-256、版、Git tree、Bun build を照合 |
 | `bun run release:publish -- --version <tag> --platforms <一覧> --notes-file <ファイル>` | push 済み参照を検証し、草稿の作成・再開、資産のダウンロード照合、Latest としての公開と再確認を実施 |
@@ -189,7 +189,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 ## リリース
 
-このリポジトリは GitHub Actions に依存しません。リリース環境では `bun run release:check` を明示的な build または pre-deploy step としてください。ネットワーク接続可能な環境では `bun run audit:release` も実行します。ネットワーク失敗は監査未完了を意味し、脆弱性が 0 件という意味ではありません。CVE を無視する場合は理由と期限を記録します。永続化構造を変更するリリースでは、先に [06 よくある変更手順](06-modification-guide.md#永続化-schema-の変更) の migration を実行してください。
+このリポジトリは GitHub Actions に依存しません。リリース環境では `bun run release:check -- --version <tag>` を明示的な build または pre-deploy step としてください。ネットワーク接続可能な環境では `bun run audit:release` も実行します。ネットワーク失敗は監査未完了を意味し、脆弱性が 0 件という意味ではありません。CVE を無視する場合は理由と期限を記録します。永続化構造を変更するリリースでは、先に [06 よくある変更手順](06-modification-guide.md#永続化-schema-の変更) の migration を実行してください。
 
 `dev` で gate が通過した後、サービスとほかの高負荷処理を停止してマシンが空くのを待ち、
 `bun run perf:full -- --write-doc` を既定の 3 ラウンドで実行します。3 言語の
@@ -202,16 +202,16 @@ build 間の差をコード最適化の効果として扱いません。失敗�
 `master` への squash merge ごとに、バイナリ資産付きの GitHub Release を 1 つ作成します。
 
 1. remote tag を同期し、`gh release list` で現在の Latest Release tag を取得します。tag は `v` prefix を付けない `MAJOR.MINOR.PATCH` 形式に限定します。変更セット全体で最も高い semantic impact に従い、breaking change は `MAJOR`（`1.0.9` → `2.0.0`）、後方互換の新機能は `MINOR`（`1.0.9` → `1.1.0`）、修正・性能改善・refactoring・documentation のみの場合は `PATCH`（`1.0.9` → `1.0.10`）を増やします。
-2. `package.json` の `version` を今回の Release の接頭辞なし `MAJOR.MINOR.PATCH` に設定し、コードと今回のベンチマーク結果とともにコミット後、クリーンな `dev` で `release:build` を実行します。明示する `--version` はこの値と一致させます。宣言する各プラットフォームのアーキテクチャ・libc に対応する環境で、同一の Git tree と Bun version/revision を使ってネイティブ構築します。ビルドでは実行ファイルの版、`.map` ファイルがないこと、3 つの Worker、画像処理のネイティブ依存、バイナリ用インストーラーを検証します。正式な公開資産は最終コミット後に生成します。
+2. コードと今回のベンチマーク結果をコミット後、クリーンな `dev` で `release:build` を実行し、Release tag を `--version` で明示します。既定値やソース manifest の版は使わず、指定値をパッケージ内の `package.json` と `binary.json` に書き込み、実行ファイルの `--version` 出力との一致を検証します。宣言する各プラットフォームのアーキテクチャ・libc に対応する環境で、同一の Git tree と Bun version/revision を使ってネイティブ構築します。ビルドでは版、`.map` ファイルがないこと、3 つの Worker、画像処理のネイティブ依存、バイナリ用インストーラーを検証します。正式な公開資産は最終コミット後に生成します。
 3. 各プラットフォームの `.tar.gz` と `.tar.gz.sha256` を集め、`release:verify` を実行します。対応する名前は `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl` です。`--platforms` は今回必要な全プラットフォームの一覧で、資産が不足すれば失敗します。既定では `dist/` を読み、別の集約先は `--directory` で指定します。`binary.json` の版、プラットフォーム、Git tree、Bun version/revision と実際の SHA-256 を照合し、未コミットの作業ツリーから作った資産は拒否します。
 4. リポジトリとデプロイの保護手順に従って `master` へ squash merge し、構築時と Git tree が一致することを確認します。`master` を push 後、そのコミットの annotated version tag を作成して個別に push します。既存 tag の上書き、移動、再利用は禁止です。
 5. 前回の Latest tag から現在の `master` までの差分だけを英語で説明し、Highlights、Compatibility / Migration Notes、Validation を含めます。互換性の説明に提供するバイナリのプラットフォームを列挙し、gate の数値には今回の実測値を使います。`release:publish` はローカル・リモートの `master` と annotated tag を照合してから草稿を作り、資産をアップロードしてダウンロード内容を検証します。全検証の通過後に Latest として公開し、ダウンロード内容とリモート参照を再確認します。移行用添付ファイルが必要な場合は、同じ説明文の草稿を先に作って添付し、スクリプトでバイナリ資産を追加できます。
 6. 作成・アップロード・確認に失敗した場合は状態を保ち、同じ版で再試行します。草稿には不足資産だけを追加し、同名の既存資産はダウンロード内容を照合して上書きしません。公開済み Release の資産不足は変更せず拒否します。Release、Latest、資産、Git 参照をすべて確認してから `git diff dev master --quiet` を実行し、[`AGENTS.md`](../../AGENTS.md) に従って `dev` を揃えて push します。最後にローカル・リモート両方の 2 ブランチが同じコミットを指すことを確認します。公開スクリプトはこれらの Git 操作を行いません。
 
-次は `12.0.1`、Linux x64 glibc の例です。実際の版は Latest と変更内容から決め、ネイティブ構築と検証が完了したプラットフォームを指定します。
+次は `12.1.0`、Linux x64 glibc の例です。実際の版は Latest と変更内容から決め、ネイティブ構築と検証が完了したプラットフォームを指定します。
 
 ```bash
-RELEASE_VERSION=12.0.1
+RELEASE_VERSION=12.1.0
 RELEASE_PLATFORMS=linux-x64
 bun run release:build -- --version "$RELEASE_VERSION"
 bun run release:verify -- --version "$RELEASE_VERSION" --platforms "$RELEASE_PLATFORMS"

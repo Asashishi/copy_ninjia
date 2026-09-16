@@ -259,7 +259,7 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 
 ## アップグレードとリリース
 
-1. ソース作業ツリーで `bun run release:check`（frozen lockfile + 全検査 + カバレッジ数値の照合 + fault injection + バイナリ構築検証）をすべて通します。
+1. ソース作業ツリーで `bun run release:check -- --version <tag>`（frozen lockfile + 全検査 + カバレッジ数値の照合 + fault injection + バイナリ構築検証）をすべて通します。
    ネットワーク環境では `bun run audit:release` も実行します。
 2. worktree を書き換える Git 操作の前に `git status --short`、現行から対象までの
    `git diff --name-status`、`git ls-files config .env g-auth.json` を確認します。
