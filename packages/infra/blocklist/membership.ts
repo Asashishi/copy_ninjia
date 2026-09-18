@@ -23,6 +23,7 @@ import type { DomainFlushOutcome } from "../../types/diskIO/replies";
 import {
   cachedBlocklistEntry,
   prefetchIdentityPolicies,
+  queueBlocklistDeletion,
   queueIdentityPolicyWrite,
   requeueUnacknowledgedIdentityWrite,
 } from "../identityStorage";
@@ -208,13 +209,14 @@ export function ensureBlocklistEntryQueued(userId: number): boolean {
 
 /**
  * 解除拉黑：先发布 LRU 负缓存，再让 outbox owner 裁剪含该 id 的在途批次，最后
- * 把 tombstone 投给 Disk I/O Worker。已经投进业务 Worker 的批次
- * 无法撤回，管理员仍可能需要执行一次 Telegram 解封。
+ * 把 tombstone 投给 Disk I/O Worker。Worker 按到达顺序处理并可能在任一条消息后
+ * 提交，裁剪快照先于 tombstone，已提交的数据库因此不会留下引用已删条目的冻结
+ * 批次，也不会在名单清空时留下补扫任务（启动恢复对两者都拒绝启动）。已经投进
+ * 业务 Worker 的批次无法撤回，管理员仍可能需要执行一次 Telegram 解封。
  * @returns 本次真的移除了记录为 true；本来就不在名单里为 false。
  */
 export function unblockUser(userId: number): boolean {
   if (cachedBlocklistEntry(userId) === undefined) return false;
-  queueIdentityPolicyWrite("blocklist", userId, null);
-  forgetUserBlocklistRemovals(userId);
+  queueBlocklistDeletion(userId, (): void => forgetUserBlocklistRemovals(userId));
   return true;
 }

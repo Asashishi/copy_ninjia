@@ -93,8 +93,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `telegram/`, `diskIO.ts`, `identityStorage.ts`, `supervisedWorker.ts`, and `workerSupervisor.ts`.
 - **`packages/infra/blocklist/`**
   - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
-    identity checks, durable outbox, and per-chat sweep logic.
-  - **Representative files**: `membership.ts`, `outbox.ts`, `sweep.ts`, and `sweepScheduler.ts`.
+    identity checks, durable outbox, per-chat sweep logic, and deleted-account detection.
+  - **Representative files**: `membership.ts`, `outbox.ts`, `participantInvalid.ts`, `sweep.ts`, and `sweepScheduler.ts`.
 - **`packages/infra/storage/`**
   - **Responsibility**: data-root preflight, instance lock, the business-state facade, the injectable `state.json` persistence boundary, and startup cleanup.
   - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`, `statePersistence.ts`, and `cleanup.ts`.

@@ -69,7 +69,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**4480 tests / 384 files / 158742 次 `expect()`**；全源码**函数覆盖率 97.22% / 行覆盖率 98.01%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**4519 tests / 388 files / 158896 次 `expect()`**；全源码**函数覆盖率 97.22% / 行覆盖率 98.02%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 

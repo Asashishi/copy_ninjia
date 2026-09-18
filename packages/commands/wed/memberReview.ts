@@ -17,7 +17,8 @@ import type { WedMemberReview, WedRuntime } from "../../types/wed";
 import { removeWedMember } from "./persistence";
 
 /**
- * 逐群快照，串行查询并限制全局起始频率；只删除确认离群且没有新在群观察的成员。
+ * 逐群快照，串行查询并限制全局起始频率；只删除确认离群（含 Telegram 以
+ * PARTICIPANT_ID_INVALID 拒绝该用户 ID）且没有新在群观察的成员。
  * 某群集合在复核期间被替换或清除时只结束该群，继续下一个群；整轮只因
  * `review.controller` 取消而提前结束。
  */

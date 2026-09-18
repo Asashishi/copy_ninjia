@@ -493,7 +493,7 @@
 
 ### `/wed` のメンバー永続化と操作
 
-- 日次再確認は Disk I/O Worker の唯一の Bun native `cron` が `Asia/Tokyo` の 00:00 に送る `midnightMaintenance` 通知だけで起動し、主スレッドに別の cron は作成しません。`commands/wed/memberReview.ts` は操作キャッシュのない群も含め、復元済みの権威メンバー集合をすべて走査します。一度に保持する snapshot は 1 群の最大 150,000 ID で、取得後にその集合へ追加された ID は次回に確認します。全群で直列照会を共有し、開始間隔は最低 200 ミリ秒、1 回の照会期限は 30 秒です。遅い要求の後に滞留分を一括発行しません。退室を明確に確認した場合だけ `removeWedMember` が元の Set を変更して dirty にします。失敗・取消では保持し、照会中の発言、在室を示す `chat_member`、入室サービスメッセージは遅延した退室結果を無効にできます。起動中は最新の深夜日付だけを保留し、Bot handshake と復元の成功後に受理します。同日を重複実行せず、日付をまたぐ処理は元の走査を継続して次回と重ねません。Worker 再構築では深夜通知を replay せず、プロセス再起動では進捗を消去して次の通知を待ちます。task は `wedRuntime.tasks` に登録し、quiesce で待機と照会を取り消し、drain で完了を待って既存経路から最終集合を送信します。旧集合への応答は新しく接管した集合を変更できません。
+- 日次再確認は Disk I/O Worker の唯一の Bun native `cron` が `Asia/Tokyo` の 00:00 に送る `midnightMaintenance` 通知だけで起動し、主スレッドに別の cron は作成しません。`commands/wed/memberReview.ts` は操作キャッシュのない群も含め、復元済みの権威メンバー集合をすべて走査します。一度に保持する snapshot は 1 群の最大 150,000 ID で、取得後にその集合へ追加された ID は次回に確認します。全群で直列照会を共有し、開始間隔は最低 200 ミリ秒、1 回の照会期限は 30 秒です。遅い要求の後に滞留分を一括発行しません。退室を明確に確認した場合だけ `removeWedMember` が元の Set を変更して dirty にします。Telegram が 400 `PARTICIPANT_ID_INVALID` でその ID を拒否した場合も退室として扱い、API error としては記録しません。その他の失敗・取消では保持し、照会中の発言、在室を示す `chat_member`、入室サービスメッセージは遅延した退室結果を無効にできます。起動中は最新の深夜日付だけを保留し、Bot handshake と復元の成功後に受理します。同日を重複実行せず、日付をまたぐ処理は元の走査を継続して次回と重ねません。Worker 再構築では深夜通知を replay せず、プロセス再起動では進捗を消去して次の通知を待ちます。task は `wedRuntime.tasks` に登録し、quiesce で待機と照会を取り消し、drain で完了を待って既存経路から最終集合を送信します。旧集合への応答は新しく接管した集合を変更できません。
 
   確認中にある群が無効化されたり集合が置き換えられたりした場合、その群の内側ループだけを終え、後続群は確認します。全走査を終了するのはラウンド全体の取消時だけです。
 - コマンドと callback は共通の `/init` gate の後に置きます。メンバー追加には `isInitEnabled === true` も必要で、最初の `/init` の例外では候補を作りません。gate が拒否した更新でも退室 ID は既存集合から削除しますが、グループ状態の作成や業務 handler の実行は行いません。
@@ -625,13 +625,13 @@
 
 ### ブロックリストと広告検出
 
-この節では、[正式なブロックリストと block コマンド](#正式なブロックリストと-block-コマンド)、[広告検出の受付・判定・処置](#広告検出の受付判定処置)、[BAN とメッセージ撤回](#ban-とメッセージ撤回)、[blocklist removal outbox](#blocklist-removal-outbox)、[権限回復後の replay](#権限回復後の-replay)を順に説明します。
+この節では、[正式なブロックリストと block コマンド](#正式なブロックリストと-block-コマンド)、[広告検出の受付・判定・処置](#広告検出の受付判定処置)、[BAN とメッセージ撤回](#ban-とメッセージ撤回)、[blocklist removal outbox](#blocklist-removal-outbox)、[権限回復後の replay](#権限回復後の-replay)、[ブロックリストの退会アカウント検出](#ブロックリストの退会アカウント検出)を順に説明します。
 
 #### 正式なブロックリストと block コマンド
 
-- `/block` の authoritative list は SQLite `blocklist_entries` table です。main thread は最近参照した identity の有界 LRU と未 ACK final value だけを保持します。blocklist は同期 security boundary のままであり、mutation 前に target の allow/block policy positive/negative state を prefetch し、write path は database revision の post より先に final LRU value を publish します。逆順では 2 step の間に届く join update が新 block を見落とします。entry は自動 expire せず、manual deletion は `/unblock` だけ。各 row は `blockedAt` と Telegram metadata を含む strict complete record です。
+- `/block` の authoritative list は SQLite `blocklist_entries` table です。main thread は最近参照した identity の有界 LRU と未 ACK final value だけを保持します。blocklist は同期 security boundary のままであり、mutation 前に target の allow/block policy positive/negative state を prefetch し、write path は database revision の post より先に final LRU value を publish します。逆順では 2 step の間に届く join update が新 block を見落とします。entry は時間では expire せず、削除経路は `/unblock` による手動削除と[退会アカウント検出](#ブロックリストの退会アカウント検出)による自動解除の 2 つだけです。各 row は `blockedAt` と Telegram metadata を含む strict complete record です。optional の `participantInvalidCount` は欠落時 0 とみなし、存在する場合は 1 から `BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1` の整数でなければならず、範囲外・非整数・型違いは起動を拒否します。
 
-  **`/unblock` は既定で完全解除します。** row があれば negative cache と deletion tombstone を publish し、pending batch から id を除去します。row の有無にかかわらず `ChatState.botPermissions?.isAdministrator` が true の全 chat で Telegram BAN を解除します。必要 permission は `isCanUnBlock` で、旧 `all` 引数は解析しません。chat 横断解除は `only_if_banned: true` の `unbanChatMemberIfBanned` を通し、current member の誤 kick を防ぎます。channel identity は `unbanChatSenderChat`。Worker 内ですでに実行中の batch は撤回できず、短い既知 window が残ります。
+  **`/unblock` は既定で完全解除します。** row があれば negative cache と件数を publish し、pending batch から id を除去して trim 後の outbox snapshot を送り、最後に deletion tombstone を送ります（`queueBlocklistDeletion`）。Disk I/O Worker は到着順に処理し、どのメッセージでも満杯 batch の commit が起こり得ます。snapshot を先に送るため、commit 済みの database に削除済み entry を参照する freeze batch や、リストが空になった後の sweep task が残ることはありません。どちらも起動時の復元が起動を拒否する状態です。row の有無にかかわらず `ChatState.botPermissions?.isAdministrator` が true の全 chat で Telegram BAN を解除します。必要 permission は `isCanUnBlock` で、旧 `all` 引数は解析しません。chat 横断解除は `only_if_banned: true` の `unbanChatMemberIfBanned` を通し、current member の誤 kick を防ぎます。channel identity は `unbanChatSenderChat`。Worker 内ですでに実行中の batch は撤回できず、短い既知 window が残ります。
 
   **身内は blocklist に入れません。** `isWhitelisted` は恒久 allowlist row と常時 protected のスーパー管理者を覆い、`/block`、`/mute`、`/batch_kick` が同じ境界を使います。一時 membership は広告免除だけを付与し、この恒久保護境界には入りません。`/white enable` も blocklist 中の identity を拒否します。`runProtectedIdentityMutation` は「disjointness check + authoritative identity value publish」を main-thread tail 1 本で直列化します。critical section は identity check と authoritative change だけを含み、Telegram effect と durable confirmation は外に置きます。block path は一時 activity の tombstone を blocklist final value より先に queue し、Disk I/O transaction と startup hydrate は blocklist と 2 種類の allowlist の非交差を独立再検証して、conflict は fail closed です。
 
@@ -905,7 +905,7 @@
 
 - 未完了の blocklist removal batch はプロセス再起動を越えて生存しなければなりません。メインスレッドは Anti-Raid Worker へ removal を送る前に、現在の `pendingBlockedRemovals` snapshot を Disk I/O Worker へ渡し、独立した `blocklistRemovalOutbox` domain で SQLite `pending_blocked_removals` の snapshot revision ACK を待ちます。対応する transaction が durable になった後だけ update を引き渡せます。Worker は新旧 snapshot を主キー単位の upsert/delete へ差分化し、決着のたびにファイル全体を書き直さず、変化した行だけを encode します。
 
-  **再 sweep entry（`probeMembership: true`）は `userIds` を永続化してはいけません**。outbox は「現在の blocklist でこの chat を走査する」という task だけを保存します。dispatch と replay は Disk I/O 境界から主キー昇順の安定 cursor page を読み、1 page は最大 512 id です。前 page の complete receipt を受け取るまで次 page を読まず、最後の page が決着した後だけ durable task を消せます。各 page を読む前に main thread は blocklist write の flush/ACK を確認し、Disk I/O Worker は commit 済み SQLite page に最大 128 件の並行 pending 最終値だけを重ねます。複数 page を完全な `Set` や配列へ組み直してはいけません。どの page でも read または delivery が失敗した場合は outbox task を保持し、今回の claim を解放して backoff を進め、次回は空 cursor から安全に replay します。各 chat task に名簿を固定すると、保存量と structured-clone が chat 数 × blocklist 長へ膨らみ、replay 時には古くなります。逆に `probeMembership: false` task は作成時に確定した空でない `userIds` を固定しなければなりません。両 shape は判別可能 union と strict codec で同時に強制します。
+  **再 sweep entry（`probeMembership: true`）は `userIds` を永続化してはいけません**。outbox は「現在の blocklist でこの chat を走査する」という task だけを保存します。dispatch と replay は Disk I/O 境界から主キー昇順の安定 cursor page を読み、1 page は最大 512 id です。前 page の complete receipt を受け取るまで次 page を読まず、最後の page が決着した後だけ durable task を消せます。各 page を読む前に main thread は blocklist write の flush/ACK を確認し（receipt 起点の書き込みはこの window を避けます。[退会アカウント検出](#ブロックリストの退会アカウント検出)を参照）、Disk I/O Worker は commit 済み SQLite page に最大 128 件の並行 pending 最終値だけを重ねます。複数 page を完全な `Set` や配列へ組み直してはいけません。どの page でも read または delivery が失敗した場合は outbox task を保持し、今回の claim を解放して backoff を進め、次回は空 cursor から安全に replay します。各 chat task に名簿を固定すると、保存量と structured-clone が chat 数 × blocklist 長へ膨らみ、replay 時には古くなります。逆に `probeMembership: false` task は作成時に確定した空でない `userIds` を固定しなければなりません。両 shape は判別可能 union と strict codec で同時に強制します。
 
   メインスレッド状態、thread message、Disk I/O snapshot は各 owner が必要とする 1 copy だけを持ちます。受信側は 1 行を一度だけ encode して canonical text を cache し、差分比較で旧行を毎回 stringify + parse してはいけません。診断 field だけの変化は表全体を独立に deep-copy せず、次の正式な snapshot と一緒に書き戻します。ただし alert threshold をまたぐ 1 回だけは即時 durable にします。threshold 到達は診断を強めるだけで、security task を削除しません。
 
@@ -918,6 +918,18 @@
 - `can_restrict_members` の回復を正式に確認したら、その chat で権限により freeze された instant-kick / 広告 pending batch を元の `removalId` のまま先に全件 replay し、その後で現時点の full-list sweep を発行します。sweep receipt が決着できるのは自分の ID だけで、古い freeze outbox entry を消してはいけません。
 
   各 freeze batch は自分自身の `complete` receipt が届くまで残り、sweep failure で先に決着させてもいけません。
+
+#### ブロックリストの退会アカウント検出
+
+- 退会済みアカウントに対する `getChatMember` と `banChatMember` には、Telegram がどちらも 400 `PARTICIPANT_ID_INVALID` を返します（`packages/infra/telegram/actions/core.ts` の `isParticipantIdInvalid`）。そのため、その id の sweep は決して決着しません。Worker は sweep（`probeMembership: true`）で 1 ユーザーを処分するとき、`BLOCKLIST_REMOVAL_MAX_ATTEMPTS` 回すべての試行で各 probe と各 ban がこのエラーを返し、shutdown 取消で打ち切られなかった場合に限り結果を `participantInvalid` とします。それ以外は `failed` のままです。`participantInvalid` も未決着として扱い、retry 回数と間隔、`complete: false`、`side-effect-incomplete` 診断、sweep backoff は変わらず、API error log も従来どおり記録します。instant-kick と広告 batch は membership を読まないためこの結果を生まず、チャンネル identity も対象外です。
+
+  `blockedMembersRemoved` receipt は常に 2 つのユーザー id 列を持ちます。`participantInvalidUserIds` と、この batch で決着した（BAN 済み、不在確認、管理者確認）`settledUserIds` です。main thread の `packages/infra/blocklist/participantInvalid.ts` は `settleBlockedRemoval` の後に receipt を `blocklistParticipantInvalidQueue` へ積み、到着順に直列で決着させます。前者は receipt ごとに `blocklist_entries.data.participantInvalidCount` を 1 加算し、後者のうちまだこの field を持つ entry は field を除いた record へ書き換えます。数える単位は「1 chat での 1 回の sweep 処分」なので、管理 chat が `BLOCKLIST_PARTICIPANT_INVALID_LIMIT`（5）以上あれば 1 回の sweep で上限に達し得ます。リストにない id は数えません。
+
+  上限に達しても範囲外の値は書きません。代わりに `runBlocklistIdentityMutation` で広告 BAN や `/unblock` と共有する identity 単位 queue に積み、実行時に再度 prefetch して、キャッシュ上の entry が積んだ時点と同じ object のときだけ `unblockUser` を呼びます。これにより上記 `/unblock` と同じ順序で negative cache を publish し、trim 後の pending snapshot を先に送り（その結果リストが空になれば sweep task も消します）、続いて削除 tombstone を送り、`Removed blocklisted user ...` を 1 行記録します。待機中に entry がクリア・書き換え・eviction 後の再読込・`/unblock` による削除のいずれかを受けた場合は中止し、次の同種 receipt で再び発火します。この経路ではチャット横断の BAN 解除を行いません。shutdown はこの chain を待たず、最終 flush 以降の count 変化はプロセスとともに破棄されます。
+
+  `settledUserIds` は 1 page 分（512 件）になり得ます。count を持つ entry を選ぶとき、キャッシュ済み identity は LRU の eviction 順を変えない `peek` だけで判定します。cold な id は `retainParticipantInvalidBlocklistIds` で database を読み、ローカルの未 ACK 最終値を重ね、**identity LRU へは書き戻しません**（`retainCurrentlyBlockedIdentityIds` と同じ扱い）。`prefetchIdentityPolicies` に渡すのは書き換えが必要な少数の identity だけで、sweep の 1 page 分が update ごとに prefetch される hot cache を押し出してはいけません。1 receipt の書き込みは全件か無しかで、後述の window を待つ間に identity が LRU から追い出されたら receipt 全体を prefetch し直します。最大 `BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS` 回で打ち切り、error を記録してその receipt を飛ばします。
+
+  receipt 起点の count 書き込みは、sweep page read の「flush 要求 → 未 ACK 確認」window の外で行わなければなりません。`readBlocklistSweepPage` はこの window を `blocklistSweepFlushWindows` に登録し、`writeOutsideBlocklistSweepFlushWindows` はすべての window が閉じるのを待ってから、閉じたことを確認した同じ同期区間で書き込みを実行します。その後に始まる page read は自分の flush でこれらの書き込みを含みます。続きの page read は receipt の直後に発行されるため、window 内に書き込みが入ると確認が失敗し、その sweep を失敗扱いにして backoff を進めてしまいます。
 
 ### 運勢と AI メモリの復元
 

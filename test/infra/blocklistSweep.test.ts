@@ -173,6 +173,8 @@ describe("黑名单清扫", () => {
     // 一页只有落地回执后才允许续读；不能一次把剩余页全塞进 Worker mailbox。
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId,
       complete: true,
@@ -182,6 +184,8 @@ describe("黑名单清扫", () => {
     // 下一页 flush/read 尚未完成时，上一页的重复回执不能把 durable 任务提前销账。
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId,
       complete: true,
@@ -213,6 +217,8 @@ describe("黑名单清扫", () => {
 
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId,
       complete: true,
@@ -241,6 +247,8 @@ describe("黑名单清扫", () => {
     const removalId: number = lastRemovalId();
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId,
       complete: true,
@@ -407,6 +415,8 @@ describe("黑名单清扫", () => {
         args[0] as readonly { removalId: number }[];
       settleBlockedRemoval({
         type: "blockedMembersRemoved",
+        participantInvalidUserIds: [],
+        settledUserIds: [],
         chatId: -1001,
         removalId: removals[0]!.removalId,
         complete: true,
@@ -439,7 +449,7 @@ describe("黑名单清扫", () => {
     const removalId: number = lastRemovalId();
 
     for (let attempt: number = 1; attempt <= BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS; attempt++) {
-      settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId, complete: false });
+      settleBlockedRemoval({ type: "blockedMembersRemoved", participantInvalidUserIds: [], settledUserIds: [], chatId: -1001, removalId, complete: false });
       expect(pendingBlockedRemovals.size).toBe(1);
     }
     expect(pendingBlockedRemovals.get(removalId)?.attempts)

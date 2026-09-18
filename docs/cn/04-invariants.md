@@ -435,7 +435,7 @@
 
 ### `/wed` 成员持久化与交互
 
-- 每日复核只由 Disk I/O Worker 的唯一 Bun 原生 `cron` 在 `Asia/Tokyo` 00:00 经 `midnightMaintenance` 通知触发，主线程不另建 cron。`commands/wed/memberReview.ts` 遍历全部已恢复的成员权威集合，包括没有交互缓存的群；每群只保留至多 150,000 个 ID 的快照，新加入该快照所属集合的 ID 留待下一轮。所有群串行共用至少 200 毫秒的请求起始间隔，单次查询预算 30 秒，慢请求后不补发积压。仅明确离群结果经 `removeWedMember` 修改原 Set 并标脏；查询失败或取消保留成员，查询期间观察到的发言、在群 `chat_member` 或入群服务消息可否决迟到离群结果。启动期间只暂存最新午夜日期，Bot 握手和启动恢复成功后接纳；同日去重，整轮跨日时继续原轮而不叠加任务。Worker 重建不重放午夜通知，进程重启清空进度并等待下一次通知。复核登记到 `wedRuntime.tasks`，quiesce 取消等待与查询，drain 等待结算并沿原路径提交最终成员集合；旧集合的回包不得修改重新接管的新集合。
+- 每日复核只由 Disk I/O Worker 的唯一 Bun 原生 `cron` 在 `Asia/Tokyo` 00:00 经 `midnightMaintenance` 通知触发，主线程不另建 cron。`commands/wed/memberReview.ts` 遍历全部已恢复的成员权威集合，包括没有交互缓存的群；每群只保留至多 150,000 个 ID 的快照，新加入该快照所属集合的 ID 留待下一轮。所有群串行共用至少 200 毫秒的请求起始间隔，单次查询预算 30 秒，慢请求后不补发积压。仅明确离群结果经 `removeWedMember` 修改原 Set 并标脏，Telegram 以 400 `PARTICIPANT_ID_INVALID` 拒绝该 ID 也按离群处理且不记 API 错误；其它查询失败或取消保留成员，查询期间观察到的发言、在群 `chat_member` 或入群服务消息可否决迟到离群结果。启动期间只暂存最新午夜日期，Bot 握手和启动恢复成功后接纳；同日去重，整轮跨日时继续原轮而不叠加任务。Worker 重建不重放午夜通知，进程重启清空进度并等待下一次通知。复核登记到 `wedRuntime.tasks`，quiesce 取消等待与查询，drain 等待结算并沿原路径提交最终成员集合；旧集合的回包不得修改重新接管的新集合。
 
   复核过程中某群停管或成员集合被替换时，只结束该群内循环，继续检查后续群；只有整轮取消才结束全部遍历。
 - `/wed` 命令和回调在统一 `/init` 网关之后；新增成员还要求 `isInitEnabled === true`，首次 `/init` 的特许放行不能提前建立候选。网关拒绝时仍处理退群清理，但只删除已有集合中的 ID，不创建群状态、不放行业务更新。
@@ -563,13 +563,13 @@
 
 ### 黑名单与广告检测
 
-本节依次说明 [黑名单权威名单与 block 命令](#黑名单权威名单与-block-命令)、[广告检测的准入、判定与处置](#广告检测的准入判定与处置)、[封禁与消息撤回](#封禁与消息撤回)、[黑名单移除 outbox](#黑名单移除-outbox)及[权限恢复后的重放](#权限恢复后的重放)。
+本节依次说明 [黑名单权威名单与 block 命令](#黑名单权威名单与-block-命令)、[广告检测的准入、判定与处置](#广告检测的准入判定与处置)、[封禁与消息撤回](#封禁与消息撤回)、[黑名单移除 outbox](#黑名单移除-outbox)、[权限恢复后的重放](#权限恢复后的重放)及[黑名单销号识别](#黑名单销号识别)。
 
 #### 黑名单权威名单与 block 命令
 
-- `/block` 的权威名单是 SQLite `blocklist_entries` 表；主线程只保留最近访问身份的有界 LRU 与未 ACK 最终值。黑名单仍是同步安全边界：调用前必须预热目标的白/黑名单正负结论，写路径先发布 LRU 最终值再投递数据库 revision，反过来会让两步之间到达的入群 update 看不到刚拉黑的人。名单不自动淘汰，只有 `/unblock` 人工删除；表内 data 必须是含 `blockedAt` 与 Telegram meta 的严格完整记录。
+- `/block` 的权威名单是 SQLite `blocklist_entries` 表；主线程只保留最近访问身份的有界 LRU 与未 ACK 最终值。黑名单仍是同步安全边界：调用前必须预热目标的白/黑名单正负结论，写路径先发布 LRU 最终值再投递数据库 revision，反过来会让两步之间到达的入群 update 看不到刚拉黑的人。名单不按时间淘汰，删除只有两条路径：`/unblock` 人工删除，以及[黑名单销号识别](#黑名单销号识别)的自动解除。表内 data 必须是含 `blockedAt` 与 Telegram meta 的严格完整记录；可选的 `participantInvalidCount` 缺省表示 0，存在时只能是 1 到 `BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1` 的整数，越界、非整数或类型不符一律拒绝启动。
 
-  **`/unblock` 默认完整解除**：已在表中时先发布负缓存和删除 tombstone，并从 `pendingBlockedRemovals` 在途批次摘掉该 id；无论目标是否在表中，都在所有 `ChatState.botPermissions?.isAdministrator === true` 的群解除 Telegram 封禁。命令只要求 `isCanUnBlock`，旧 `all` 参数不再解析。跨群解封必须走 `unbanChatMemberIfBanned`（`only_if_banned: true`），避免把当前仍是成员的人误踢；频道身份走 `unbanChatSenderChat`。已经投进 Worker 的旧批次无法撤回，这段窗口仍是已知取舍。
+  **`/unblock` 默认完整解除**：已在表中时先发布负缓存与计数，再从 `pendingBlockedRemovals` 在途批次摘掉该 id 并投递裁剪后的 outbox 快照，最后投递删除 tombstone（`queueBlocklistDeletion`）。Disk I/O Worker 按到达顺序处理，任一条消息都可能触发满批提交；快照在前，已提交的库就不会出现引用已删条目的冻结批次，也不会在名单清空时留下补扫任务，两者都会让启动恢复拒绝启动。无论目标是否在表中，都在所有 `ChatState.botPermissions?.isAdministrator === true` 的群解除 Telegram 封禁。命令只要求 `isCanUnBlock`，旧 `all` 参数不再解析。跨群解封必须走 `unbanChatMemberIfBanned`（`only_if_banned: true`），避免把当前仍是成员的人误踢；频道身份走 `unbanChatSenderChat`。已经投进 Worker 的旧批次无法撤回，这段窗口仍是已知取舍。
 
   **自己人不可拉黑**：`isWhitelisted` 覆盖永久白名单与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；临时广告免检只授予广告免检，不进入这道永久保护边界。`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。拉黑路径先排临时累计墓碑，再排黑名单最终值；Disk I/O 事务和启动 hydrate 复核黑名单不得与两类白名单相交，任何冲突均 fail closed。
 
@@ -796,7 +796,7 @@
 
 - 黑名单移除批次必须跨进程存活：主线程在投递 Anti-Raid Worker 前，把当前 `pendingBlockedRemovals` 快照交给 Disk I/O Worker，并按独立的 `blocklistRemovalOutbox` 领域等待 SQLite `pending_blocked_removals` 变化的 snapshot revision ACK；只有对应 transaction durable 后才能交接 update。Worker 把新旧快照比较成按主键的 upsert/delete，只编码实际变化的行，不再为每次销账整份重写文件。
 
-  **补扫条目（`probeMembership: true`）不得持久化 `userIds`**：outbox 只记录「拿当前黑名单扫这个群」的任务。投递与重放按主键升序从 Disk I/O 边界读取稳定游标页，每页最多 512 个 id；上一页收到完整回执后才读下一页，最后一页落定后才能销掉 durable task。每页读取前先确认 blocklist 领域的写入已经 flush/ACK，Disk I/O Worker 再把 SQLite 已提交页与最多 128 条并发 pending 最终值合并；不得把多页拼回完整 `Set` 或数组。任一页读取或投递失败都保留 outbox、释放本轮 claim 并推进退避，下次从空游标安全重放。把名单冻结进每个群任务会放大成「群数 × 名单长度」的存储和 structured-clone 成本，而且重放时已经过期。反过来，秒踢类 `probeMembership: false` 任务必须冻结当时已确定的非空 `userIds`；两种 shape 由判别联合与严格 codec 同时约束。
+  **补扫条目（`probeMembership: true`）不得持久化 `userIds`**：outbox 只记录「拿当前黑名单扫这个群」的任务。投递与重放按主键升序从 Disk I/O 边界读取稳定游标页，每页最多 512 个 id；上一页收到完整回执后才读下一页，最后一页落定后才能销掉 durable task。每页读取前先确认 blocklist 领域的写入已经 flush/ACK（回执驱动的写入必须避开这段窗口，见[黑名单销号识别](#黑名单销号识别)），Disk I/O Worker 再把 SQLite 已提交页与最多 128 条并发 pending 最终值合并；不得把多页拼回完整 `Set` 或数组。任一页读取或投递失败都保留 outbox、释放本轮 claim 并推进退避，下次从空游标安全重放。把名单冻结进每个群任务会放大成「群数 × 名单长度」的存储和 structured-clone 成本，而且重放时已经过期。反过来，秒踢类 `probeMembership: false` 任务必须冻结当时已确定的非空 `userIds`；两种 shape 由判别联合与严格 codec 同时约束。
 
   主线程、跨线程消息与 Disk I/O 快照各只保留职责所需的一份；接收端编码一次并缓存规范文本，比较变化时不得对旧行重复 stringify + parse。只有诊断字段变化时不额外深拷贝整表，下一次权威快照顺带提交；跨越告警阈值的那次仍立即持久化。达到告警阈值只升级诊断，不删除安全任务。
 
@@ -807,6 +807,18 @@
 #### 权限恢复后的重放
 
 - 确证恢复 `can_restrict_members` 时，必须先按原 `removalId` 重放该群全部因权限冻结的秒踢/广告 pending，再发起一次现时全名单补扫。后者只能按自己的回执销账，不能替前者删除 outbox 项；每个冻结批次仍须等自己的 `complete` 回执收敛，补扫失败也不得提前销账。
+
+#### 黑名单销号识别
+
+- Telegram 对已销号账号的 `getChatMember` 与 `banChatMember` 都返回 400 `PARTICIPANT_ID_INVALID`（`packages/infra/telegram/actions/core.ts` 的 `isParticipantIdInvalid`），这类 id 的补扫永远落不定。Worker 在补扫（`probeMembership: true`）中处置一个用户时，只有全部 `BLOCKLIST_REMOVAL_MAX_ATTEMPTS` 次尝试里的每次探测与每次封禁都得到这一句、且没有被停机取消打断，才把结局记为 `participantInvalid`；其余情况仍是 `failed`。`participantInvalid` 同样算未落定：重试次数与间隔、`complete: false`、`side-effect-incomplete` 诊断与补扫退避都不因它改变，API 错误日志照常记录。秒踢与广告批次不读成员身份，不产生这一档；频道身份不参与。
+
+  `blockedMembersRemoved` 回执始终带两组用户 ID：`participantInvalidUserIds`，以及本批已落定（已封、确认不在群、确认是管理员）的 `settledUserIds`。主线程 `packages/infra/blocklist/participantInvalid.ts` 在 `settleBlockedRemoval` 之后把回执排进 `blocklistParticipantInvalidQueue`，按到达顺序串行结算：前者的 `blocklist_entries.data.participantInvalidCount` 每条回执加 1，后者中仍带该字段的条目改写为不带该字段的记录。计数单位是「一个群的一次补扫处置」，托管群数不少于 `BLOCKLIST_PARTICIPANT_INVALID_LIMIT`（5）时，一轮补扫就可能记满。不在名单中的 id 不计数。
+
+  计数达到上限时不写出越界值，而是经 `runBlocklistIdentityMutation` 排进与广告封禁、`/unblock` 共用的逐身份队列；执行时重新预热，只有缓存中的条目仍是排队时那一个对象才调用 `unblockUser`：按上文 `/unblock` 的顺序发布负缓存、先投裁剪后的待踢快照（名单因此清空时连同补扫任务一起销账）、再投删除 tombstone，然后记一行 `Removed blocklisted user ...`。排队期间条目被清零、改写、淘汰后重读或已被 `/unblock` 删除时放弃，下一条同类回执会重新触发。这条路径不做跨群解封。停机不等待这条尾链，终局 flush 之后的计数变化随进程丢弃。
+
+  `settledUserIds` 可达一整页（512 个）。筛选仍带计数的条目时，已缓存的身份只 `peek`，不改变 LRU 淘汰顺序；冷缺失经 `retainParticipantInvalidBlocklistIds` 读库并叠加本地未 ACK 最终值，**不回填身份 LRU**，与 `retainCurrentlyBlockedIdentityIds` 同一口径。只有需要改写的少数身份才进入 `prefetchIdentityPolicies`，整页补扫不得挤占按 update 预热的热缓存。一条回执的写入全有或全无：等待下文窗口期间有身份被 LRU 淘汰时整条重新预热，最多 `BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS` 轮，用尽则记错误并跳过这条回执。
+
+  回执驱动的计数写入必须避开补扫分页读的「flush 请求 → 未 ACK 核对」窗口：`readBlocklistSweepPage` 在该窗口内登记 `blocklistSweepFlushWindows`，`writeOutsideBlocklistSweepFlushWindows` 等所有窗口关闭后，在确认关闭的同一同步片段内执行写入；之后开始的分页读由自己的 flush 覆盖这些写入。续页读取紧跟回执发出，写入落进窗口会让核对失败，把这一轮补扫判成失败并推进退避。
 
 ### 运势与 AI 记忆恢复
 

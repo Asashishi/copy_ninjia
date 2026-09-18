@@ -1,5 +1,6 @@
 import { IDENTITY_META_KEYS, WHITELIST_DATA_KEYS, BLOCKLIST_DATA_KEYS, TOKYO_TIMESTAMP_PATTERN } from "../../consts/storageSchema";
 import {
+  BLOCKLIST_PARTICIPANT_INVALID_LIMIT,
   BLOCKLIST_REMOVAL_ENTRY_KEYS,
   BLOCKLIST_REMOVAL_FAILURE_TYPES,
   BLOCKLIST_REMOVAL_PARAM_KEYS,
@@ -91,8 +92,13 @@ export function decodeBlocklistEntryData(
   source: string
 ): Readonly<BlocklistEntryData> {
   const value: unknown = parseJsonInput(text, source);
-  if (!isPlainRecord(value) || !hasExactKeys(value, BLOCKLIST_DATA_KEYS)) {
-    return invalidInput(source, "$", "an object with blockedAt and meta");
+  if (
+    !isPlainRecord(value) ||
+    !hasOnlyKeys(value, BLOCKLIST_DATA_KEYS) ||
+    !Object.hasOwn(value, "blockedAt") ||
+    !Object.hasOwn(value, "meta")
+  ) {
+    return invalidInput(source, "$", "an object with blockedAt, meta, and optional participantInvalidCount");
   }
   if (
     typeof value.blockedAt !== "string" ||
@@ -100,9 +106,28 @@ export function decodeBlocklistEntryData(
   ) {
     return invalidInput(source, "$.blockedAt", "a YYYY/MM/DD HH:mm:ss string");
   }
+  const meta: Readonly<TelegramIdentityMetadata> =
+    parseIdentityMetadata(value.meta, source, "$.meta");
+  if (!Object.hasOwn(value, "participantInvalidCount")) {
+    return { blockedAt: value.blockedAt, meta };
+  }
+  const participantInvalidCount: unknown = value.participantInvalidCount;
+  if (
+    typeof participantInvalidCount !== "number" ||
+    !Number.isSafeInteger(participantInvalidCount) ||
+    participantInvalidCount < 1 ||
+    participantInvalidCount >= BLOCKLIST_PARTICIPANT_INVALID_LIMIT
+  ) {
+    return invalidInput(
+      source,
+      "$.participantInvalidCount",
+      `an integer from 1 to ${BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1}`
+    );
+  }
   return {
     blockedAt: value.blockedAt,
-    meta: parseIdentityMetadata(value.meta, source, "$.meta"),
+    meta,
+    participantInvalidCount,
   };
 }
 

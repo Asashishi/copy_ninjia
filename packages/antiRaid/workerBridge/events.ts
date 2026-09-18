@@ -6,6 +6,7 @@ import {
 import { antiRaidBarrier, antiRaidRuntimeState } from "../../cache/main/antiRaid/proxy";
 import { LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS } from "../../consts/antiRaid/protocol";
 import { assertPersistableLockdown } from "../../database/codec/chatState";
+import { recordBlocklistParticipantReadability } from "../../infra/blocklist/participantInvalid";
 import { settleBlockedRemoval } from "../../infra/blocklist/sweep";
 import { logger } from "../../infra/logger";
 import {
@@ -185,6 +186,7 @@ export function handleAntiRaidWorkerEvent(
       break;
     case "blockedMembersRemoved":
       settleBlockedRemoval(event);
+      recordBlocklistParticipantReadability(event);
       break;
     case "adDetected":
       handleAdDetected(event);

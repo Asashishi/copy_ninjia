@@ -53,6 +53,10 @@ const {
   isUserBlocked,
   unblockUser,
 } = await import("../../packages/infra/blocklist/membership");
+const {
+  hasAnyBlockedIdentity,
+  queueBlocklistDeletion,
+} = await import("../../packages/infra/identityStorage");
 
 beforeEach(() => {
   diskMessages.length = 0;
@@ -136,6 +140,74 @@ describe("SQLite 黑名单主线程最终值", () => {
       userIds: [8],
     }));
     expect(unblockUser(7)).toBeFalse();
+  });
+
+  test("解除拉黑先投裁剪后的 outbox 快照，再投 tombstone", () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    blockedUserIds.set(8, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    pendingBlockedRemovals.set(1, {
+      params: { chatId: -1001, probeMembership: false, userIds: [7, 8], removalId: 1 },
+      createdAt: 1,
+      attempts: 0,
+      lastFailure: null,
+    });
+
+    expect(unblockUser(7)).toBeTrue();
+
+    // Worker 可能在任一条消息后提交：快照在前，已提交的库里就不会出现引用 7 的冻结批次。
+    expect(diskMessages.map((message: DiskBusinessMessage) => message.type))
+      .toEqual(["blocklistRemovals", "identityPolicyWrite"]);
+    expect(diskMessages[1]).toEqual(expect.objectContaining({ table: "blocklist", id: 7, data: null }));
+  });
+
+  test("名单清空时补扫任务随快照先于 tombstone 销账", () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    pendingBlockedRemovals.set(2, {
+      params: { chatId: -1001, probeMembership: true, removalId: 2 },
+      createdAt: 1,
+      attempts: 0,
+      lastFailure: null,
+    });
+
+    expect(unblockUser(7)).toBeTrue();
+
+    expect(pendingBlockedRemovals.size).toBe(0);
+    expect(diskMessages.map((message: DiskBusinessMessage) => message.type))
+      .toEqual(["blocklistRemovals", "identityPolicyWrite"]);
+    expect(diskMessages[0]).toEqual(expect.objectContaining({ removals: [] }));
+  });
+
+  test("删除入口先发布负缓存与计数，再执行回调，最后投递 tombstone", () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    const observed: unknown[] = [];
+
+    expect(queueBlocklistDeletion(7, (): void => {
+      observed.push(isUserBlocked(7), hasAnyBlockedIdentity(), diskMessages.length);
+    })).toBeTrue();
+
+    expect(observed).toEqual([false, false, 0]);
+    expect(diskMessages).toEqual([expect.objectContaining({ type: "identityPolicyWrite", id: 7, data: null })]);
+  });
+
+  test("回调抛错时 tombstone 仍投递，异常照常上抛", () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+
+    expect((): boolean => queueBlocklistDeletion(7, (): void => {
+      throw new Error("outbox snapshot failed");
+    })).toThrow("outbox snapshot failed");
+
+    expect(diskMessages).toEqual([expect.objectContaining({ type: "identityPolicyWrite", id: 7, data: null })]);
+    expect(unacknowledgedBlocklistWrites.get(7)?.data).toBeNull();
+  });
+
+  test("校验拒绝时不执行回调，也不改任何状态", () => {
+    const callback = mock((): void => {});
+
+    expect((): boolean => queueBlocklistDeletion(7, callback)).toThrow(/must be prefetched/);
+
+    expect(callback).not.toHaveBeenCalled();
+    expect(diskMessages).toEqual([]);
+    expect(unacknowledgedBlocklistWrites.has(7)).toBeFalse();
   });
 
   test("未 ACK 最终值可重复补投；精确 ACK 后停止补投", () => {

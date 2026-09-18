@@ -51,6 +51,21 @@ export const unacknowledgedIdentityBytes: { current: Record<IdentityPolicyTable,
 /** 身份策略写入 revision 发号器；只在主线程同步自增。 */
 export const identityWriteRevision: { current: number } = { current: 0 };
 
+/**
+ * 补扫分页读「flush 请求 → 未 ACK 核对」窗口的计数与关闭通知。
+ *
+ * readBlocklistSweepPage 发出 flush 前记下 generation 并自增 open，核对结束后只在
+ * generation 未变时自减；归零时 resolve 并清空 closed。回执驱动的黑名单写入（销号
+ * 计数）等到归零后才同步投递，避免落进窗口让核对失败。容量为一个计数、一个代次
+ * 与至多一组 resolver；flush 以回执、超时或失败结算，因此 Disk I/O Worker 重建不会
+ * 让窗口悬空；进程重启从零开始，测试隔离重置时推进 generation 并唤醒等待者。
+ */
+export const blocklistSweepFlushWindows: {
+  open: number;
+  generation: number;
+  closed: PromiseWithResolvers<void> | null;
+} = { open: 0, generation: 0, closed: null };
+
 /** 待踢成员完整快照的最新未 ACK revision；null 表示数据库已追平。 */
 export const unacknowledgedRemovalSnapshotRevision: {
   current: number | null;
@@ -79,6 +94,10 @@ export function resetIdentityStorageCache(): void {
   unacknowledgedIdentityBytes.current.whitelist = 0;
   unacknowledgedIdentityBytes.current.blocklist = 0;
   identityWriteRevision.current = 0;
+  blocklistSweepFlushWindows.open = 0;
+  blocklistSweepFlushWindows.generation++;
+  blocklistSweepFlushWindows.closed?.resolve();
+  blocklistSweepFlushWindows.closed = null;
   unacknowledgedRemovalSnapshotRevision.current = null;
   removalSnapshotRevision.current = 0;
   resetTemporaryAdBypassCache();

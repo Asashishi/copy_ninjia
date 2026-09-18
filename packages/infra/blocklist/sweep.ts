@@ -357,6 +357,8 @@ async function continueBlocklistSweep(
         complete: true,
         permissionDenied: false,
         targetIsAdmin: false,
+        participantInvalidUserIds: [],
+        settledUserIds: [],
       });
       return;
     }

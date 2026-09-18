@@ -69,7 +69,7 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**4480 tests / 384 files / 158742 `expect()` calls**。全ソースコードの**関数カバレッジは 97.22%、行カバレッジは 98.01%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**4519 tests / 388 files / 158896 `expect()` calls**。全ソースコードの**関数カバレッジは 97.22%、行カバレッジは 98.02%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 

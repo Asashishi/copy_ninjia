@@ -12,6 +12,24 @@ export const BLOCKLIST_REMOVAL_MAX_ATTEMPTS: number = 3;
 export const BLOCKLIST_REMOVAL_RETRY_DELAY_MS: number = 5_000;
 
 /**
+ * 黑名单用户被判定为已销号所需的 PARTICIPANT_ID_INVALID 连续次数。
+ *
+ * 一个群的一次补扫处置里，该用户的全部探测与封禁请求都被 Telegram 以
+ * PARTICIPANT_ID_INVALID 拒绝，记 1 次；任一群的处置落定即清零。达到本值时
+ * 把该用户移出黑名单并裁剪待踢批次。`blocklist_entries.data.participantInvalidCount`
+ * 只保存 1 到本值减 1。
+ * 所属模块：infra/blocklist/participantInvalid.ts、database/codec/identity.ts。
+ */
+export const BLOCKLIST_PARTICIPANT_INVALID_LIMIT: number = 5;
+
+/**
+ * 一条回执的销号计数写入最多预热几轮。预热后要等补扫 flush 窗口关闭才写，
+ * 等待期间相关身份被 LRU 淘汰时重新预热；轮数用尽只记错误并跳过这条回执。
+ * 所属模块：infra/blocklist/participantInvalid.ts。
+ */
+export const BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS: number = 3;
+
+/**
  * 补扫时每批处理多少个 id。Bot API 没有枚举群成员的接口，一次补扫固定是
  * O(名单长度) 次请求；它们与验证超时踢人共用主线程 kick 类 429 车道。
  * 不分批的话，该类别一旦进入恢复期，几千条名单会先占满 FIFO；分批和让步

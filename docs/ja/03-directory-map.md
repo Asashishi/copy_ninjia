@@ -90,8 +90,8 @@
     `supervisedWorker.ts`、`workerSupervisor.ts`。
 - **`packages/infra/blocklist/`**
   - **責務**：メインスレッド側ブロックリスト基盤。identity 判定、同期 membership、
-    durable outbox、チャット掃除に分割。
-  - **代表的なファイル**：`membership.ts`、`outbox.ts`、`sweep.ts`、`sweepScheduler.ts`。
+    durable outbox、チャット掃除、退会アカウント検出に分割。
+  - **代表的なファイル**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
   - **責務**：データルート事前検査、インスタンスロック、業務 state facade、注入可能な `state.json` 永続化境界、起動時の清掃。
   - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`、`cleanup.ts`。

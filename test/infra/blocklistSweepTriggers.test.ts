@@ -219,6 +219,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     remover.mockImplementationOnce(async (): Promise<number> => {
       settleBlockedRemoval({
         type: "blockedMembersRemoved",
+        participantInvalidUserIds: [],
+        settledUserIds: [],
         chatId: -1001,
         removalId: frozen.removalId,
         complete: false,
@@ -250,6 +252,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
 
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId: params.removalId,
       complete: false,
@@ -296,6 +300,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     });
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId: first.removalId,
       complete: false,
@@ -315,6 +321,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
       (remover.mock.calls[1]?.[0] as { removalId: number }[])[0]!.removalId;
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId: sweepRemovalId,
       complete: false,
@@ -325,6 +333,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     for (const removalId of [first.removalId, second.removalId]) {
       settleBlockedRemoval({
         type: "blockedMembersRemoved",
+        participantInvalidUserIds: [],
+        settledUserIds: [],
         chatId: -1001,
         removalId,
         complete: true,
@@ -351,6 +361,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     });
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
       chatId: -1001,
       removalId: frozen.removalId,
       complete: false,
@@ -468,12 +480,12 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     // fsync 的话，合起来就是 replayPendingBlockedRemovals 注释里点名禁止的
     // O(n²)。这里变的只有诊断字段，任务本身没有增删。
     for (let attempt: number = 1; attempt < BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS; attempt++) {
-      settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId, complete: false });
+      settleBlockedRemoval({ type: "blockedMembersRemoved", participantInvalidUserIds: [], settledUserIds: [], chatId: -1001, removalId, complete: false });
     }
     expect(postDiskIO).not.toHaveBeenCalled();
 
     // 跨越告警阈值那一次仍要立刻落盘：「已经失败到该报警了」必须跨重启存活。
-    settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId, complete: false });
+    settleBlockedRemoval({ type: "blockedMembersRemoved", participantInvalidUserIds: [], settledUserIds: [], chatId: -1001, removalId, complete: false });
     expect(postDiskIO).toHaveBeenCalledTimes(1);
     expect(pendingBlockedRemovals.get(removalId)?.attempts).toBe(BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS);
   });
@@ -564,7 +576,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     // 秒踢那一路的批次编号跟补扫进度对不上；黑名单入群不开验证窗口、没有超时
     // 踢人兜底，这批失败就是那个人留在群里的全部原因。
     const kick = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false, joinedAt: 2_000 });
-    settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId: kick.removalId, complete: false });
+    settleBlockedRemoval({ type: "blockedMembersRemoved", participantInvalidUserIds: [], settledUserIds: [], chatId: -1001, removalId: kick.removalId, complete: false });
 
     expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
   });

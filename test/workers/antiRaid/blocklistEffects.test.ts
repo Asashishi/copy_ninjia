@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { waitUntil } from "../../helpers/waitUntil";
 import type { BlockedMembersRemovedEvent } from "../../../packages/types/antiRaid";
 
-const probeChatMembership = mock(async (..._args: unknown[]): Promise<boolean | undefined> => true);
+const probeChatMembershipWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "present");
 const banChatMemberWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "banned");
 const banChatSenderChatWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "banned");
 const probeChatAdmin = mock(async (..._args: unknown[]): Promise<boolean | undefined> => false);
@@ -16,12 +16,14 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  probeChatMembership,
   probeChatAdmin,
   banChatMemberWithOutcome,
   banChatSenderChatWithOutcome,
   deleteMessage,
   telegramApi: guardApi,
+}));
+mock.module("../../../packages/infra/telegram/actions/membership", () => ({
+  probeChatMembershipWithOutcome,
 }));
 mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({ recordJoin }));
 mock.module("../../../packages/workers/antiRaid/adDetect/queueState", () => ({
@@ -75,7 +77,7 @@ function settle(): Promise<void> {
 
 beforeEach(() => {
   for (const mocked of [
-    probeChatMembership,
+    probeChatMembershipWithOutcome,
     probeChatAdmin,
     banChatMemberWithOutcome,
     banChatSenderChatWithOutcome,
@@ -86,7 +88,7 @@ beforeEach(() => {
     mocked.mockClear();
   }
   probeChatAdmin.mockImplementation(async (): Promise<boolean | undefined> => false);
-  probeChatMembership.mockImplementation(async (): Promise<boolean | undefined> => true);
+  probeChatMembershipWithOutcome.mockImplementation(async (): Promise<string> => "present");
   banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "banned");
   banChatSenderChatWithOutcome.mockImplementation(async (): Promise<string> => "banned");
   deleteMessage.mockImplementation(async (): Promise<boolean> => true);
@@ -106,11 +108,11 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(probeChatMembershipWithOutcome).not.toHaveBeenCalled();
     // 与验证超时踢人共用 kick 类别，不进入消息发送的 grammY 桶。
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42, guardApi);
     expect(releaseAdDetectDedupKey).toHaveBeenCalledWith(-1001, 42);
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 1, complete: true, permissionDenied: false, targetIsAdmin: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 1, complete: true, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [42] }]);
   });
 
   test("去重回收抛出也不改回执：一个已经跑完的批次不能被重投", async () => {
@@ -128,11 +130,12 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42, guardApi);
     // 恰好一条，且是真实结果；不能既发 complete:true 又补一条 complete:false。
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 9, complete: true, permissionDenied: false, targetIsAdmin: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 9, complete: true, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [42] }]);
   });
 
   test("probeMembership=true 时逐个探测，只封此刻真在群里的人", async () => {
-    probeChatMembership.mockImplementation(async (_chatId: unknown, userId: unknown): Promise<boolean> => userId === 7);
+    probeChatMembershipWithOutcome.mockImplementation(async (_chatId: unknown, userId: unknown): Promise<string> =>
+      userId === 7 ? "present" : "absent");
 
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8], probeMembership: true, removalId: 2 },
@@ -140,17 +143,18 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(probeChatMembership.mock.calls.map((call) => call[1])).toEqual([7, 8]);
+    expect(probeChatMembershipWithOutcome.mock.calls.map((call) => call[1])).toEqual([7, 8]);
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 7, guardApi);
     // 确认不在群不算失败：这批算完整落定。
     expect(events[0]?.complete).toBeTrue();
+    expect(events[0]?.settledUserIds).toEqual([7, 8]);
     // 补扫批次可能很大，不用它逐 id 触发广告去重回收。
     expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
   });
 
   test("探测失败不算「不在群」：宁可多封一次，也不放过坐在群里的人", async () => {
-    probeChatMembership.mockImplementation(async (): Promise<boolean | undefined> => undefined);
+    probeChatMembershipWithOutcome.mockImplementation(async (): Promise<string> => "failed");
 
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7], probeMembership: true, removalId: 3 },
@@ -174,7 +178,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(3);
     expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 4, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 4, complete: false, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] }]);
   });
 
   test("「目标是管理员」只结算这个 id，不把整个群标成权限受阻", async () => {
@@ -196,7 +200,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     // 同批其余 id 照常处置完，整批就此落定——不留给按时间的重试，也不闩住群。
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 8, guardApi);
     expect(events).toEqual([
-      { type: "blockedMembersRemoved", chatId: -1001, removalId: 41, complete: true, permissionDenied: false, targetIsAdmin: true },
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 41, complete: true, permissionDenied: false, targetIsAdmin: true, participantInvalidUserIds: [], settledUserIds: [7, 8] },
     ]);
     expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
   });
@@ -214,7 +218,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(events).toEqual([
-      { type: "blockedMembersRemoved", chatId: -1001, removalId: 42, complete: false, permissionDenied: true, targetIsAdmin: false },
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 42, complete: false, permissionDenied: true, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] },
     ]);
   });
 
@@ -343,7 +347,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
     // 没扫完，回执必须说清楚——重新接管后还要再欠一次。
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 7, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 7, complete: false, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [7] }]);
   });
 
   test("频道身份没有「成员」一说：直接封发言权，不做成员探测", async () => {
@@ -353,8 +357,10 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(probeChatMembershipWithOutcome).not.toHaveBeenCalled();
     expect(banChatSenderChatWithOutcome).toHaveBeenCalledWith(-1001, -4004, guardApi);
+    // 频道 ID 不参与销号计数。
+    expect(events[0]?.settledUserIds).toEqual([]);
   });
 
   test("频道身份也要能报权限受阻：否则那批只会一直按时间重试注定失败的请求", async () => {
@@ -370,7 +376,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     // 「停掉按时间重试、只等权限变更」的闩锁的唯一入口。
     expect(banChatSenderChatWithOutcome).toHaveBeenCalledTimes(1);
     expect(events).toEqual([
-      { type: "blockedMembersRemoved", chatId: -1001, removalId: 20, complete: false, permissionDenied: true, targetIsAdmin: false },
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 20, complete: false, permissionDenied: true, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] },
     ]);
   });
 
@@ -387,7 +393,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
     expect(probeChatAdmin).toHaveBeenCalledTimes(1);
     expect(events).toEqual([
-      { type: "blockedMembersRemoved", chatId: -1001, removalId: 21, complete: false, permissionDenied: true, targetIsAdmin: false },
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 21, complete: false, permissionDenied: true, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] },
     ]);
   });
 
@@ -426,7 +432,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 10, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 10, complete: false, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] }]);
   });
 
   test("停机取消后不再重试、也不开始下一个 id：整批立即按未完成回执", async () => {
@@ -445,7 +451,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
     // 与其它未落定路径同一形态：outbox 保留，下一次启动重放。
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 30, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 30, complete: false, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] }]);
     expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
   });
 
@@ -476,7 +482,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
 
       expect(drained).toBeTrue();
       expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
-      expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 31, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+      expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 31, complete: false, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] }]);
     } finally {
       timeoutSpy.mockRestore();
     }

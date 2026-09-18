@@ -27,8 +27,10 @@
  * 的清扫永久闩死，见 RemovalOutcome 的 targetIsAdmin。
  */
 
-import { banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, probeChatAdmin, probeChatMembership, telegramApi } from "../../infra/telegram";
+import { banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, probeChatAdmin, telegramApi } from "../../infra/telegram";
 import type { BanChatMemberOutcome } from "../../infra/telegram";
+import { probeChatMembershipWithOutcome } from "../../infra/telegram/actions/membership";
+import type { ChatMembershipProbeOutcome } from "../../infra/telegram/actions/membership";
 import { logger } from "../../infra/logger";
 import { botCanDeleteIn } from "./botPermissions";
 import { recordJoin } from "./lockdownRuntime";
@@ -59,8 +61,10 @@ import { sleep } from "../../libs/sleep";
  * 的黑名单清扫永久闩死——此后补扫早退、重扫请求被拒、每次重启跳过重放，而唯一
  * 的解锁边沿是「机器人的封禁权限变了」，那件事根本不会发生。这一档只结算这个
  * 目标，不动群级的 permissionBlocked。
+ * `participantInvalid` 与 `failed` 同样算未落定，区别只在回执里把这个 id 报给
+ * 主线程的销号计数（见 infra/blocklist/participantInvalid.ts）。
  */
-type RemovalOutcome = "removed" | "absent" | "failed" | "forbidden" | "targetIsAdmin";
+type RemovalOutcome = "removed" | "absent" | "failed" | "forbidden" | "targetIsAdmin" | "participantInvalid";
 
 export interface RemoveOneParams {
   chatId: number;
@@ -74,9 +78,11 @@ export interface RemoveOneParams {
  * 处置一个 id，失败按线性退避重试；停机取消后不再进入下一次退避。
  * @returns removed=已封；absent=确认不在群，不必封；forbidden=机器人在这个群
  *   缺封禁权限，重试没有意义；targetIsAdmin=目标本身是管理员，只这一个封不掉；
- *   failed=尝试用尽或停机取消时仍未落定。
+ *   participantInvalid=补扫里尝试用尽，且每次探测与封禁都被 Telegram 以
+ *   PARTICIPANT_ID_INVALID 拒绝；failed=尝试用尽或停机取消时仍未落定。
  */
 async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneParams): Promise<RemovalOutcome> {
+  let participantInvalid: boolean = probeMembership && userId > 0;
   for (let attempt: number = 1; attempt <= BLOCKLIST_REMOVAL_MAX_ATTEMPTS; attempt++) {
     // 频道马甲（sender_chat）没有「成员」这个概念，getChatMember 探不到，
     // 一律直接封掉它在本群的发言权（同 commands/block.ts 的处理）。
@@ -88,14 +94,17 @@ async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneP
       if (outcome === "forbidden") return "forbidden";
     } else {
       if (probeMembership) {
-        const present: boolean | undefined = await probeChatMembership(chatId, userId, telegramApi);
-        // 只有「确认不在群」才跳过。探测失败（429、网络抖动）时照样封：对一个
-        // 本来就不在群里的黑名单 id 多封一次是幂等的，效果只是提前封住；反过来
-        // 把失败当成「不在群」，坐在群里的人就被静默放过了。
-        if (present === false) return "absent";
+        const probe: ChatMembershipProbeOutcome =
+          await probeChatMembershipWithOutcome(chatId, userId, telegramApi);
+        // 只有「确认不在群」才跳过。探测失败（429、网络抖动、PARTICIPANT_ID_INVALID）
+        // 时照样封：对一个本来就不在群里的黑名单 id 多封一次是幂等的，效果只是
+        // 提前封住；反过来把失败当成「不在群」，坐在群里的人就被静默放过了。
+        if (probe === "absent") return "absent";
+        if (probe !== "participantInvalid") participantInvalid = false;
       }
       const outcome: BanChatMemberOutcome = await banChatMemberWithOutcome(chatId, userId, telegramApi);
       if (outcome === "banned") return "removed";
+      if (outcome !== "participantInvalid") participantInvalid = false;
       // 权限不够不再消耗剩余尝试：同一秒里重试三次只是把同一条报错刷三遍，
       // 这个批次要等的是权限变更，不是下一次退避。但在把这个群整体判成「缺
       // 封禁权限」之前必须先分辨一次：同一句 400 也可能只是说「这个目标是
@@ -119,7 +128,7 @@ async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneP
       }
     }
   }
-  return "failed";
+  return participantInvalid ? "participantInvalid" : "failed";
 }
 
 /** 一批处置的结局；permissionDenied 决定主线程是按时间重试还是等权限变更。 */
@@ -133,6 +142,10 @@ interface RemoveBatchResult {
    * 这个群还留着人，主线程据此保留补扫欠账（见 BlockedMembersRemovedEvent）。
    */
   targetIsAdmin: boolean;
+  /** 结局为 participantInvalid 的用户 ID，按处置顺序。 */
+  readonly participantInvalidUserIds: number[];
+  /** 结局为 removed、absent 或 targetIsAdmin 的用户 ID，按处置顺序；不含频道 ID。 */
+  readonly settledUserIds: number[];
 }
 
 /**
@@ -166,31 +179,48 @@ async function removeBlockedMembers({
   const epoch: number = currentBlocklistRemovalEpoch(chatId);
   const signal: AbortSignal = antiRaidDispatchSignal();
   let removed: number = 0;
-  let complete: boolean = true;
-  let permissionDenied: boolean = false;
-  let targetIsAdmin: boolean = false;
+  const result: RemoveBatchResult = {
+    complete: true,
+    permissionDenied: false,
+    targetIsAdmin: false,
+    participantInvalidUserIds: [],
+    settledUserIds: [],
+  };
   for (let index: number = 0; index < userIds.length; index++) {
     // 群已被停管：整批放弃，且不算完成——重新接管后会有新的边沿再扫一次。
-    if (currentBlocklistRemovalEpoch(chatId) !== epoch) return { complete: false, permissionDenied, targetIsAdmin };
+    if (currentBlocklistRemovalEpoch(chatId) !== epoch) {
+      result.complete = false;
+      return result;
+    }
     // Worker 正在停机：不再开始新的处置，整批按未完成回执，durable outbox 在
     // 下一次启动重放（见 cache/workers/antiRaid/tasks.ts 的 antiRaidDispatchAbort）。
-    if (signal.aborted) return { complete: false, permissionDenied, targetIsAdmin };
+    if (signal.aborted) {
+      result.complete = false;
+      return result;
+    }
     // 补扫可能有几千个 id，且与验证超时踢人共用 kick 类别的 429 FIFO；每批
     // 之间让一步，给同 owner 的其它安全动作与 Worker mailbox 留出调度机会。
     if (index > 0 && index % BLOCKLIST_SWEEP_BATCH_SIZE === 0) {
       try {
         await sleep(BLOCKLIST_SWEEP_BATCH_PAUSE_MS, signal);
       } catch (error: unknown) {
-        if (signal.aborted) return { complete: false, permissionDenied, targetIsAdmin };
+        if (signal.aborted) {
+          result.complete = false;
+          return result;
+        }
         throw error;
       }
     }
     const userId: number = userIds[index]!;
     const outcome: RemovalOutcome = await removeOne({ chatId, userId, probeMembership, signal });
-    if (outcome === "removed") removed++;
-    else if (outcome === "forbidden") {
-      complete = false;
-      permissionDenied = true;
+    if (outcome === "removed") {
+      removed++;
+      if (userId > 0) result.settledUserIds.push(userId);
+    } else if (outcome === "absent") {
+      result.settledUserIds.push(userId);
+    } else if (outcome === "forbidden") {
+      result.complete = false;
+      result.permissionDenied = true;
       // 机器人在这个群根本封不了人，剩下的 id 只会一个个撞上同一句 400。补扫
       // 可能有几千个 id，每个两次注定失败的请求外加分批暂停，全压在与验证超时
       // 踢人共用的 kick 类别上——发现这件事的这一次补扫本身就是要避免的风暴。
@@ -201,12 +231,16 @@ async function removeBlockedMembers({
       // 更糟——那会连累同批其余 id 一起停摆。改用一条独立回执让主线程保住这个
       // 群的补扫欠账（sweptAt 不落），管理员降级后由下一次补扫（或他自己重新
       // 入群时的秒踢）接上——那正是这行日志承诺的事。
-      targetIsAdmin = true;
+      result.targetIsAdmin = true;
+      result.settledUserIds.push(userId);
       logger.error(
         `Blocklisted user ${userId} is an administrator of chat ${chatId} and cannot be banned; ` +
         "settling this target and continuing with the rest of the batch."
       );
-    } else if (outcome === "failed") complete = false;
+    } else {
+      result.complete = false;
+      if (outcome === "participantInvalid") result.participantInvalidUserIds.push(userId);
+    }
   }
   // 入群公告：不投 join 就没人再管这条服务消息了，处置走完顺手删掉。
   //
@@ -224,13 +258,13 @@ async function removeBlockedMembers({
     await deleteMessage(chatId, announcementMessageId, telegramApi);
   }
   if (removed > 0) logger.log(`Removed ${removed} blocklisted member(s) from chat ${chatId}.`);
-  if (permissionDenied) {
+  if (result.permissionDenied) {
     logger.error(
       `Blocklist removal in chat ${chatId} is blocked by missing ban rights; ` +
       "it will stay pending until the bot's permissions there change."
     );
   }
-  return { complete, permissionDenied, targetIsAdmin };
+  return result;
 }
 
 export interface HandleRemoveBlockedMembersParams {
@@ -258,6 +292,8 @@ export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlocked
         complete: result.complete,
         permissionDenied: result.permissionDenied,
         targetIsAdmin: result.targetIsAdmin,
+        participantInvalidUserIds: result.participantInvalidUserIds,
+        settledUserIds: result.settledUserIds,
       });
       // 非探测批次里的目标已确认封禁后，尝试释放同 key 的广告判定去重记录；
       // release 内部只认 direct-ad 标记，不会误碰手工 /block 或秒踢的待检 bundle。
@@ -286,6 +322,8 @@ export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlocked
         complete: false,
         permissionDenied: false,
         targetIsAdmin: false,
+        participantInvalidUserIds: [],
+        settledUserIds: [],
       });
     });
   return trackAntiRaidTask({ task, blocklistChatId: msg.chatId });

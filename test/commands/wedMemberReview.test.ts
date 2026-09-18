@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, jest, mock, spyOn, test } from "bun:test";
+import { GrammyError } from "grammy";
 import type { ChatMember } from "grammy/types";
 import { diskIORuntime } from "../../packages/cache/main/diskIO";
 import { wedChats, wedRuntime } from "../../packages/cache/main/wed";
@@ -25,6 +26,15 @@ const gates: ReturnType<typeof Promise.withResolvers<ChatMember>>[] = [];
 
 function member(userId: number, status: ChatMember["status"] = "member", present: boolean = true): ChatMember {
   return { status, user: { id: userId, first_name: "群友", is_bot: false }, is_member: present } as ChatMember;
+}
+
+function participantInvalid(): GrammyError {
+  return new GrammyError(
+    "x",
+    { ok: false, error_code: 400, description: "Bad Request: PARTICIPANT_ID_INVALID" },
+    "getChatMember",
+    {}
+  );
 }
 
 function midnight(day: string = DAY): void {
@@ -166,6 +176,39 @@ test("查询超时后的离群回包无效，继续查询其余成员", async ()
   await tick(WED_OPERATION_TIMEOUT_MS);
   expect(signal.aborted).toBeTrue();
   gate.resolve(member(1, "left"));
+  await tick();
+  expect(wedMemberStates.get(-1001)!.members.has(1)).toBeTrue();
+  expect(probe).toHaveBeenCalledTimes(2);
+  expect(post).not.toHaveBeenCalled();
+});
+
+test("Telegram 以 PARTICIPANT_ID_INVALID 拒绝的 ID 按离群移除且不记错误，其它失败仍保留", async (): Promise<void> => {
+  const members: Set<number> = new Set<number>([1, 2, 3]);
+  hydrateWedMembers(new Map([[-1001, members]]));
+  probe.mockImplementation(async (_chatId: number, userId: number): Promise<ChatMember> => {
+    if (userId === 2) throw participantInvalid();
+    if (userId === 3) throw new Error("injected membership lookup failure");
+    return member(userId);
+  });
+  enableWedMemberReview();
+  midnight();
+  await tick();
+  for (let index: number = 0; index < 2; index++) await tick(200);
+  expect(probe).toHaveBeenCalledTimes(3);
+  expect([...members]).toEqual([1, 3]);
+  expect(errorLog).toHaveBeenCalledTimes(1);
+  expect(flushWedMembers()).toBeTrue();
+  expect(post).toHaveBeenCalledWith({ type: "wedMembers", chatId: -1001, revision: 1, members: [1, 3] });
+});
+
+test("查询超时后的 PARTICIPANT_ID_INVALID 回包同样无效", async (): Promise<void> => {
+  const gate = heldProbe();
+  enableWedMemberReview();
+  midnight();
+  const signal: AbortSignal = probe.mock.calls[0]![2]!;
+  await tick(WED_OPERATION_TIMEOUT_MS);
+  expect(signal.aborted).toBeTrue();
+  gate.reject(participantInvalid());
   await tick();
   expect(wedMemberStates.get(-1001)!.members.has(1)).toBeTrue();
   expect(probe).toHaveBeenCalledTimes(2);

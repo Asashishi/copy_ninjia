@@ -98,6 +98,8 @@ export type PermissionAwareOutcome =
   /** 由 claimError 认领的领域结局（如「目标已不在群」），既非权限也非故障。 */
   | "claimed"
   | "forbidden"
+  /** Telegram 以 PARTICIPANT_ID_INVALID 拒绝目标用户 ID；照常记 API 错误。 */
+  | "participantInvalid"
   | "failed";
 
 export interface RunPermissionAwareTelegramActionParams {
@@ -114,7 +116,8 @@ export interface RunPermissionAwareTelegramActionParams {
 /**
  * 执行一次需要区分「权限拒绝」与「偶发失败」的 Telegram 动作。
  *
- * mute / unmute / kick / ban / ban sender chat 共用这一权限闩锁与三元结果映射。
+ * mute / unmute / kick / ban / ban sender chat 共用这一权限闩锁与结果映射；
+ * 不关心 `participantInvalid` 的调用方把它归入 `failed`。
  * 闩锁必须覆盖整次动作，避免把永久的 403 归类为值得退避重试的偶发失败。
  *
  * 停机 abort 造成的失败不记 API 错误——它不是远端故障，口径与
@@ -141,7 +144,9 @@ export async function runPermissionAwareTelegramAction({
         outcome = "claimed";
         return false;
       }
-      outcome = isPermissionDenied(error) ? "forbidden" : "failed";
+      outcome = isPermissionDenied(error)
+        ? "forbidden"
+        : isParticipantIdInvalid(error) ? "participantInvalid" : "failed";
       return actionSignal?.aborted !== true;
     },
   });
@@ -188,4 +193,15 @@ export function isPermissionDenied(error: unknown): boolean {
     details.errorCode === 400 &&
     /not enough rights/i.test(details.description)
   );
+}
+
+/**
+ * Telegram 是否以 PARTICIPANT_ID_INVALID 拒绝了目标用户 ID。
+ * 已销号账号的 getChatMember 与 banChatMember 都返回这一句 400。
+ */
+export function isParticipantIdInvalid(error: unknown): boolean {
+  const details: Readonly<{ errorCode: number; description: string }> | undefined =
+    telegramErrorDetails(error);
+  return details?.errorCode === 400 &&
+    /\bPARTICIPANT_ID_INVALID\b/.test(details.description);
 }

@@ -55,14 +55,14 @@ function oppositeCache(
 }
 
 /**
- * 容量准入后发布 LRU 最终值，登记未 ACK revision 并投给 Disk I/O；迟到读不能覆盖它。
- * 调用前必须预热该 ID 的正/负结论，才能准确维护表计数与互斥边界。
+ * 校验并发布一次身份策略最终值：容量准入后写 LRU 与表计数，登记未 ACK revision，
+ * 返回待投递消息。所有拒绝都发生在任何状态变化之前。
  */
-export function queueIdentityPolicyWrite(
+function publishIdentityPolicyWrite(
   table: IdentityPolicyTable,
   id: number,
   value: Readonly<WhitelistEntryData> | Readonly<BlocklistEntryData> | null
-): boolean {
+): IdentityPolicyWriteDiskMessage {
   assertTelegramIdentityId(id, `identity ${table} write`);
   const cache: typeof whitelistEntryCache | typeof blocklistEntryCache =
     cacheForTable(table);
@@ -113,11 +113,44 @@ export function queueIdentityPolicyWrite(
   identityWriteRevision.current++;
   pendingWrites.set(id, { data, revision });
   unacknowledgedIdentityBytes.current[table] = bytes;
+  return message;
+}
+
+/** 投递已发布的最终值；失败时保留未 ACK revision 供 Worker 重建重放。 */
+function postIdentityPolicyWrite(message: IdentityPolicyWriteDiskMessage): boolean {
   if (diskIO.postDiskIO(message) === true) return true;
   logger.error(
-    `Failed to queue ${table} identity ${id}; retaining revision ${revision} for replay.`
+    `Failed to queue ${message.table} identity ${message.id}; retaining revision ${message.revision} for replay.`
   );
   return false;
+}
+
+/**
+ * 容量准入后发布 LRU 最终值，登记未 ACK revision 并投给 Disk I/O；迟到读不能覆盖它。
+ * 调用前必须预热该 ID 的正/负结论，才能准确维护表计数与互斥边界。
+ */
+export function queueIdentityPolicyWrite(
+  table: IdentityPolicyTable,
+  id: number,
+  value: Readonly<WhitelistEntryData> | Readonly<BlocklistEntryData> | null
+): boolean {
+  return postIdentityPolicyWrite(publishIdentityPolicyWrite(table, id, value));
+}
+
+/**
+ * 删除一条黑名单：校验与发布同 queueIdentityPolicyWrite，发布负缓存与计数后先执行
+ * beforePost，再投递 tombstone，因此 beforePost 投出的 Disk I/O 消息先于 tombstone
+ * 到达 Worker。beforePost 抛错时 tombstone 仍投递，异常照常上抛。
+ */
+export function queueBlocklistDeletion(id: number, beforePost: () => void): boolean {
+  const message: IdentityPolicyWriteDiskMessage = publishIdentityPolicyWrite("blocklist", id, null);
+  try {
+    beforePost();
+  } catch (error: unknown) {
+    postIdentityPolicyWrite(message);
+    throw error;
+  }
+  return postIdentityPolicyWrite(message);
 }
 
 /**

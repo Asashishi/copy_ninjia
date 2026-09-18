@@ -13,6 +13,7 @@ export {
 } from "./identityStorage/read";
 export {
   confirmIdentityPolicyPersisted,
+  queueBlocklistDeletion,
   queueIdentityPolicyWrite,
   requeueUnacknowledgedIdentityWrite,
 } from "./identityStorage/write";
@@ -20,4 +21,6 @@ export {
   hasAnyBlockedIdentity,
   readBlocklistSweepPage,
   retainCurrentlyBlockedIdentityIds,
+  retainParticipantInvalidBlocklistIds,
+  writeOutsideBlocklistSweepFlushWindows,
 } from "./identityStorage/sweep";

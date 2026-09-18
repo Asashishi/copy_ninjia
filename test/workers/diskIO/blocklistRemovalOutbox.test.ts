@@ -246,6 +246,34 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(restored.pendingBlockedRemovals).toEqual(new Map([[9, removal(9)]]));
   });
 
+  test("裁剪快照先于 tombstone 到达时，tombstone 触发的满批提交仍满足启动引用约束", () => {
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    handlePendingRemovalSnapshot({ type: "blocklistRemovals", removals: [[9, removal(9)]], revision: 1 }, reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    for (let index: number = 1; index < IDENTITY_WRITE_BATCH_MAX_ENTRIES; index++) {
+      handleIdentityPolicyWrite(blocklistWrite(1_000 + index, 1 + index), reply);
+    }
+    acknowledgements.length = 0;
+
+    handlePendingRemovalSnapshot({ type: "blocklistRemovals", removals: [], revision: 2 }, reply);
+    expect(acknowledgements).toHaveLength(0);
+    handleIdentityPolicyWrite({
+      type: "identityPolicyWrite",
+      table: "blocklist",
+      id: 7,
+      data: null,
+      revision: 1_000,
+    }, reply);
+
+    // tombstone 是第 128 条黑名单变化，就地提交；先到的快照删除随同一事务落盘。
+    expect(acknowledgements).toHaveLength(1);
+    expect(acknowledgements[0]!.removalSnapshotRevision).toBe(2);
+    resetStorageDatabaseCache();
+    const restored = hydrateStorageDatabase();
+    expect(restored.pendingBlockedRemovals.size).toBe(0);
+    expect(restored.blocklistEntryCount).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES - 1);
+  });
+
   test("待踢启动恢复按 removal_id 每页 2048 条读取并在页间继续", () => {
     handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
     const persisted: [number, PendingBlockedRemoval][] = Array.from(

@@ -8,8 +8,12 @@ export const IDENTITY_META_KEYS: readonly string[] = [
 /** 白名单数据持久化字段闭集，用于严格解析。 */
 export const WHITELIST_DATA_KEYS: readonly string[] = ["permissions", "meta"];
 
-/** 黑名单数据持久化字段闭集，用于严格解析。 */
-export const BLOCKLIST_DATA_KEYS: readonly string[] = ["blockedAt", "meta"];
+/** 黑名单数据持久化字段闭集，用于严格解析；`participantInvalidCount` 可缺省。 */
+export const BLOCKLIST_DATA_KEYS: readonly string[] = [
+  "blockedAt",
+  "meta",
+  "participantInvalidCount",
+];
 
 /** 身份记录的东京时间戳格式，不接受其他日期表示。 */
 export const TOKYO_TIMESTAMP_PATTERN: Readonly<RegExp> =

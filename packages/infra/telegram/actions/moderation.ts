@@ -183,11 +183,13 @@ export async function kickChatMemberWithOutcome({
 
 /**
  * 一次封禁尝试的结局。`forbidden` 与 `failed` 必须分开：前者是「再试一次也
- * 一样」，后者是限流/网络抖动这类值得退避重试的失败。
+ * 一样」，后者是限流/网络抖动这类值得退避重试的失败。`participantInvalid` 是
+ * Telegram 以 PARTICIPANT_ID_INVALID 拒绝这个用户 ID，只由真人封禁产生。
  */
 export type BanChatMemberOutcome =
   | "banned"
   | "forbidden"
+  | "participantInvalid"
   | "failed";
 
 /** 封禁一名成员，并撤销被移除成员对既有群消息的访问。 */
@@ -207,6 +209,7 @@ export async function banChatMemberWithOutcome(
       ),
   });
   if (outcome === "succeeded") return "banned";
+  if (outcome === "participantInvalid") return "participantInvalid";
   return outcome === "forbidden" ? "forbidden" : "failed";
 }
 

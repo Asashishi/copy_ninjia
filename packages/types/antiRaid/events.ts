@@ -17,6 +17,10 @@ export interface BlockedMembersRemovedEvent {
   permissionDenied?: boolean;
   /** 批次里有目标因自身管理员身份未被移除。 */
   targetIsAdmin?: boolean;
+  /** 本批补扫里全部探测与封禁都被 Telegram 以 PARTICIPANT_ID_INVALID 拒绝的用户 ID。 */
+  participantInvalidUserIds: readonly number[];
+  /** 本批已落定（已封、确认不在群、确认是管理员）的用户 ID；不含频道 ID。 */
+  settledUserIds: readonly number[];
 }
 
 /** Worker -> 主线程：写入 lockdown 非 idle 阶段。 */

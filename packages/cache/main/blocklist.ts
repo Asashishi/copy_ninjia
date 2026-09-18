@@ -32,6 +32,20 @@ export const protectedIdentityMutationQueue: { current: Promise<void> } = {
 export const blocklistIdentityMutationQueues: Map<number, Promise<void>> = new Map();
 
 /**
+ * 黑名单销号计数的主线程串行尾链（infra/blocklist/participantInvalid.ts）。
+ *
+ * 每条带观测的 Anti-Raid 处置回执到达时追加一步，按到达顺序累加或清零
+ * `participantInvalidCount`；失败被尾链吸收，下一条回执照常处理。holder 只保存
+ * 尾部 Promise；排队中的步骤与尚未结算的回执一一对应，每步持有该回执的两组 ID
+ * （各不超过一页 BLOCKLIST_SWEEP_PAGE_SIZE），步骤结算后释放。Anti-Raid Worker
+ * 崩溃不影响本链；停机不等待本链，终局 flush 之后的计数变化随进程丢弃，计数本身
+ * 随黑名单条目持久化，进程重启后尾链从空开始。
+ */
+export const blocklistParticipantInvalidQueue: { current: Promise<void> } = {
+  current: Promise.resolve(),
+};
+
+/**
  * 已投给入群守卫线程、但还没收到落地回执的处置批次（removalId → 入参 + 投递
  * 计数）。
  *

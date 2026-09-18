@@ -1,7 +1,7 @@
 import type { ChatMember, User } from "grammy/types";
 import { isAdminStatus, isPresentMember } from "../../../libs/chatMember";
 import { telegramApi } from "../client";
-import { runTelegramAction } from "./core";
+import { isParticipantIdInvalid, runTelegramAction } from "./core";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type { TelegramApi } from "../../../types/telegramWorker";
 
@@ -44,6 +44,38 @@ export async function isChatMember(
 }
 
 /**
+ * 一次成员探测的结局。`participantInvalid` 是 Telegram 以 PARTICIPANT_ID_INVALID
+ * 拒绝这个用户 ID；其余查询失败都是 `failed`。
+ */
+export type ChatMembershipProbeOutcome =
+  | "present"
+  | "absent"
+  | "participantInvalid"
+  | "failed";
+
+/** 探测成员身份并保留 PARTICIPANT_ID_INVALID 分类；所有查询失败照常记 API 错误。 */
+export async function probeChatMembershipWithOutcome(
+  chatId: number,
+  userId: number,
+  api: ChatMemberApi = telegramApi
+): Promise<ChatMembershipProbeOutcome> {
+  let participantInvalid: boolean = false;
+  const present: boolean | undefined = await runTelegramAction<ChatMember, boolean | undefined>({
+    action: `probe chat membership (chat ${chatId}, user ${userId})`,
+    execute: (signal?: AbortSignal): Promise<ChatMember> =>
+      getChatMember({ api, chatId, userId, signal }),
+    map: isPresentMember,
+    fallback: undefined,
+    shouldLogError: (error: unknown): boolean => {
+      participantInvalid = isParticipantIdInvalid(error);
+      return true;
+    },
+  });
+  if (present === undefined) return participantInvalid ? "participantInvalid" : "failed";
+  return present ? "present" : "absent";
+}
+
+/**
  * 把「确认不在群」与「查询失败」分开。
  * @returns 在群 true、确认不在群 false、查询失败 undefined。
  */
@@ -52,13 +84,10 @@ export async function probeChatMembership(
   userId: number,
   api: ChatMemberApi = telegramApi
 ): Promise<boolean | undefined> {
-  return runTelegramAction<ChatMember, boolean | undefined>({
-    action: `probe chat membership (chat ${chatId}, user ${userId})`,
-    execute: (signal?: AbortSignal): Promise<ChatMember> =>
-      getChatMember({ api, chatId, userId, signal }),
-    map: isPresentMember,
-    fallback: undefined,
-  });
+  const outcome: ChatMembershipProbeOutcome =
+    await probeChatMembershipWithOutcome(chatId, userId, api);
+  if (outcome === "present") return true;
+  return outcome === "absent" ? false : undefined;
 }
 
 /** 管理员探测共用客户端与请求取消边界。 */
@@ -111,14 +140,23 @@ export function readChatMemberUser({ chatId, userId, signal }: ChatMemberUserOpt
   });
 }
 
-/** 返回此刻在群内的用户；null 表示已离群，undefined 表示查询失败。 */
-export function readPresentChatUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<User | null | undefined> {
-  return runTelegramAction<ChatMember, User | null | undefined>({
+/**
+ * 返回此刻在群内的用户；null 表示已离群或 Telegram 以 PARTICIPANT_ID_INVALID
+ * 拒绝该用户 ID（后者不记 API 错误），undefined 表示其它查询失败。
+ */
+export async function readPresentChatUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<User | null | undefined> {
+  let participantInvalid: boolean = false;
+  const user: User | null | undefined = await runTelegramAction<ChatMember, User | null | undefined>({
     action: `read chat member (chat ${chatId}, user ${userId})`,
     execute: (requestSignal?: AbortSignal): Promise<ChatMember> =>
       getChatMember({ api: telegramApi, chatId, userId, signal: requestSignal }),
     map: (member: ChatMember): User | null => isPresentMember(member) ? member.user : null,
     fallback: undefined,
     signal,
+    shouldLogError: (error: unknown): boolean => {
+      participantInvalid = isParticipantIdInvalid(error);
+      return !participantInvalid;
+    },
   });
+  return participantInvalid ? null : user;
 }

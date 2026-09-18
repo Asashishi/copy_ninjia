@@ -6,6 +6,7 @@ import {
   decodeWhitelistEntryData,
 } from "../../packages/database/codec/identity";
 import { WHITELIST_PERMISSION_KEYS } from "../../packages/consts/whitelist";
+import { BLOCKLIST_PARTICIPANT_INVALID_LIMIT } from "../../packages/consts/antiRaid/blocklist";
 import { InputValidationError } from "../../packages/libs/inputValidation";
 import type { WhitelistPermissionKey } from "../../packages/types/identityPolicy";
 
@@ -202,6 +203,31 @@ describe("黑名单行的严格解码", () => {
     expectRejected(
       (): unknown => decodeBlocklistEntryData(blocklistJson({ meta: {} }), SOURCE),
       "$.meta"
+    );
+  });
+
+  test("participantInvalidCount 缺省按未计数，存在时只接受 1 到上限减 1", () => {
+    expect(decodeBlocklistEntryData(blocklistJson(), SOURCE)).not.toHaveProperty("participantInvalidCount");
+    expect(decodeBlocklistEntryData(blocklistJson({ participantInvalidCount: 1 }), SOURCE).participantInvalidCount)
+      .toBe(1);
+    expect(decodeBlocklistEntryData(blocklistJson({ participantInvalidCount: BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1 }), SOURCE).participantInvalidCount)
+      .toBe(BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1);
+    for (const invalid of [0, -1, 1.5, BLOCKLIST_PARTICIPANT_INVALID_LIMIT, "1", null, true]) {
+      expectRejected(
+        (): unknown => decodeBlocklistEntryData(blocklistJson({ participantInvalidCount: invalid }), SOURCE),
+        "$.participantInvalidCount"
+      );
+    }
+  });
+
+  test("可选字段不放宽必填字段", () => {
+    expectRejected(
+      (): unknown => decodeBlocklistEntryData(JSON.stringify({ meta: VALID_META, participantInvalidCount: 1 }), SOURCE),
+      "$"
+    );
+    expectRejected(
+      (): unknown => decodeBlocklistEntryData(JSON.stringify({ blockedAt: "2026/01/15 12:00:00", participantInvalidCount: 1 }), SOURCE),
+      "$"
     );
   });
 });

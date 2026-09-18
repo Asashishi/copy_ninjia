@@ -151,6 +151,8 @@ export function expectLastRemoval(expected: Record<string, unknown>): void {
 export function settleLast(complete: boolean, chatId: number = -1001): void {
   requireDeps().settleBlockedRemoval({
     type: "blockedMembersRemoved",
+    participantInvalidUserIds: [],
+    settledUserIds: [],
     chatId,
     removalId: lastRemovalId(),
     complete,
@@ -175,6 +177,8 @@ export function promotion(newStatus: string, oldStatus: string, canRestrict?: bo
 export function settleLastAsForbidden(chatId: number = -1001): void {
   requireDeps().settleBlockedRemoval({
     type: "blockedMembersRemoved",
+    participantInvalidUserIds: [],
+    settledUserIds: [],
     chatId,
     removalId: lastRemovalId(),
     complete: false,
