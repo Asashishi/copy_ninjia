@@ -194,7 +194,7 @@ SDK。安装器不会从示例生成这个文件。
     "chat_id": -1001234567890,
     "message_thread_id": 12,
     "cron": "0 9 * * *",
-    "tz": "Asia/Tokyo",
+    "time_zone": "Asia/Tokyo",
     "rand_cron": "6h-24h",
     "actions": [
       { "type": "send_message", "payload": { "content": "早上好" } },
@@ -212,7 +212,7 @@ SDK。安装器不会从示例生成这个文件。
 | `chat_id` | 是 | 目标会话 id（非零整数），或 `"all"`：所有能发送的已启用群，见下文 |
 | `message_thread_id` | 否 | 论坛群的话题 id；不写则落在 General；`chat_id` 为 `"all"` 时不能写 |
 | `cron` | 是 | 5 段表达式或 `@daily` 这类写法；必须还有将来的触发时间 |
-| `tz` | 否 | IANA 时区，缺省 `Asia/Tokyo` |
+| `time_zone` | 否 | IANA 时区名（如 `Asia/Shanghai`），缺省 `Asia/Tokyo` |
 | `rand_cron` | 否 | `"<最短>-<最长>"` 或单值（等于 `1m-<值>`），单位 m/h/d，范围 1m–24d；首次按 `cron` 触发，之后每轮结束再在区间内随机等待 |
 | `just_once` | 否 | `true` 时只执行一次，重启后才会再次登记；不能与 `rand_cron` 同时使用 |
 | `actions` | 是 | 1–16 个动作，按顺序执行，相邻两个间隔 1 秒 |

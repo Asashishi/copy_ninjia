@@ -212,7 +212,7 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
     "chat_id": -1001234567890,
     "message_thread_id": 12,
     "cron": "0 9 * * *",
-    "tz": "Asia/Tokyo",
+    "time_zone": "Asia/Tokyo",
     "rand_cron": "6h-24h",
     "actions": [
       { "type": "send_message", "payload": { "content": "おはよう" } },
@@ -230,7 +230,7 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 | `chat_id` | はい | 送信先 chat id（0 以外の整数）、または `"all"`（送信できる有効化済みグループすべて。下記参照） |
 | `message_thread_id` | いいえ | フォーラムのトピック id。無ければ General に送る。`chat_id` が `"all"` のときは書けません |
 | `cron` | はい | 5 フィールドの式か `@daily` などの別名。将来の発火時刻が必要 |
-| `tz` | いいえ | IANA タイムゾーン。既定 `Asia/Tokyo` |
+| `time_zone` | いいえ | IANA タイムゾーン名（例：`Asia/Shanghai`）。既定 `Asia/Tokyo` |
 | `rand_cron` | いいえ | `"<最短>-<最長>"` または単一値（`1m-<値>` と同じ）。単位 m/h/d、範囲 1m–24d。初回は `cron` に従い、以後は各回の終了後に範囲内でランダムに待つ |
 | `just_once` | いいえ | `true` なら 1 回だけ実行し、再起動するまで再登録しない。`rand_cron` とは併用不可 |
 | `actions` | はい | 1–16 個の動作。順に実行し、隣り合う動作の間は 1 秒 |

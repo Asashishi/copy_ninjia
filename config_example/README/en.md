@@ -230,7 +230,7 @@ them into `config/cron.json`. The installer never creates this file from the exa
     "chat_id": -1001234567890,
     "message_thread_id": 12,
     "cron": "0 9 * * *",
-    "tz": "Asia/Tokyo",
+    "time_zone": "Asia/Tokyo",
     "rand_cron": "6h-24h",
     "actions": [
       { "type": "send_message", "payload": { "content": "Good morning" } },
@@ -248,7 +248,7 @@ them into `config/cron.json`. The installer never creates this file from the exa
 | `chat_id` | Yes | Target chat id (non-zero integer), or `"all"` for every enabled group the bot can send to, see below |
 | `message_thread_id` | No | Forum topic id; without it messages land in General; not allowed when `chat_id` is `"all"` |
 | `cron` | Yes | 5-field expression or a nickname such as `@daily`; it must still have a future occurrence |
-| `tz` | No | IANA time zone, default `Asia/Tokyo` |
+| `time_zone` | No | IANA time zone name (such as `Asia/Shanghai`), default `Asia/Tokyo` |
 | `rand_cron` | No | `"<min>-<max>"` or a single value (meaning `1m-<value>`), m/h/d units, within 1m–24d; the first run follows `cron`, and after each run the next one waits a random time in the range |
 | `just_once` | No | `true` runs the task once; it is scheduled again only after a restart. Cannot be combined with `rand_cron` |
 | `actions` | Yes | 1–16 actions, run in order with one second between consecutive actions |

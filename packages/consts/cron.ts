@@ -48,7 +48,7 @@ export const CRON_TASK_KEYS: readonly string[] = [
   "chat_id",
   "message_thread_id",
   "cron",
-  "tz",
+  "time_zone",
   "rand_cron",
   "just_once",
   "actions",

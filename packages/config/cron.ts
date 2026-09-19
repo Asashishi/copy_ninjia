@@ -161,12 +161,12 @@ interface CronScheduleFields {
 /** 校验时区与表达式：两者都用 Bun.cron.parse 判定，且必须还有将来的触发时间。 */
 function parseSchedule(record: Record<string, unknown>, context: FieldContext): CronScheduleFields {
   // 只有键真正缺省才用默认时区；显式写出的非法值（含 null）照常拒绝。
-  const timeZone: unknown = record.tz === undefined ? CRON_DEFAULT_TIME_ZONE : record.tz;
-  if (typeof timeZone !== "string" || timeZone.length === 0) return fail(child(context, "tz"), "an IANA time zone name");
+  const timeZone: unknown = record.time_zone === undefined ? CRON_DEFAULT_TIME_ZONE : record.time_zone;
+  if (typeof timeZone !== "string" || timeZone.length === 0) return fail(child(context, "time_zone"), "an IANA time zone name");
   try {
     Bun.cron.parse("0 0 * * *", Date.now(), { tz: timeZone });
   } catch {
-    return fail(child(context, "tz"), "an IANA time zone name");
+    return fail(child(context, "time_zone"), "an IANA time zone name");
   }
   const cron: unknown = record.cron;
   const expected: string = "a 5-field cron expression or @nickname with a future occurrence";
@@ -183,7 +183,7 @@ function parseSchedule(record: Record<string, unknown>, context: FieldContext): 
 
 function parseTask(value: unknown, context: FieldContext): CronTask {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, CRON_TASK_KEYS)) {
-    return fail(context, "{ name, chat_id, message_thread_id?, cron, tz?, rand_cron?, just_once?, actions }");
+    return fail(context, "{ name, chat_id, message_thread_id?, cron, time_zone?, rand_cron?, just_once?, actions }");
   }
   const name: string = boundedText(value.name, child(context, "name"), CRON_TASK_NAME_MAX_CHARS);
   let chatId: number | CronAllChats;

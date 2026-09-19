@@ -12,7 +12,7 @@
     "chat_id": -1001234567890,
     "message_thread_id": 12,
     "cron": "30 18 * * *",
-    "tz": "Asia/Shanghai",
+    "time_zone": "Asia/Shanghai",
     "actions": [
       { "type": "send_message", "payload": { "content": "今日汇总来啦" } },
       { "type": "send_image", "payload": { "content": "今日配图", "url": "https://example.com/daily/cover.png" } },

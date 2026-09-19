@@ -48,7 +48,7 @@ describe("parseCronConfig", () => {
   test("完整任务：话题、时区、区间与三种动作的来源", () => {
     const config: CronConfig = parseCronConfig([task({
       message_thread_id: 12,
-      tz: "UTC",
+      time_zone: "UTC",
       rand_cron: "6h-24h",
       actions: [
         { type: "send_image", payload: { content: "今日图", rand_image: true } },
@@ -97,12 +97,13 @@ describe("parseCronConfig", () => {
     expect(parseCronConfig([task({ just_once: false, rand_cron: "1h" })], PATH)[0]!.justOnce).toBe(false);
   });
 
-  test("cron 与 tz 由 Bun.cron.parse 判定，不可能的日期同样拒绝", () => {
+  test("cron 与 time_zone 由 Bun.cron.parse 判定，不可能的日期同样拒绝；缩写键 tz 不认", () => {
     rejects([task({ cron: "61 * * * *" })], "$[0].cron must be a 5-field cron expression");
     rejects([task({ cron: "0 0 30 2 *" })], "$[0].cron must be a 5-field cron expression");
-    rejects([task({ tz: "Mars/Olympus" })], "$[0].tz must be an IANA time zone name");
+    rejects([task({ time_zone: "Mars/Olympus" })], "$[0].time_zone must be an IANA time zone name");
     // 显式写出的 null 不是「缺省」，不能静默换成默认时区。
-    rejects([task({ tz: null })], "$[0].tz must be an IANA time zone name");
+    rejects([task({ time_zone: null })], "$[0].time_zone must be an IANA time zone name");
+    rejects([task({ tz: "UTC" })], "$[0] must be { name, chat_id, message_thread_id?, cron, time_zone?, rand_cron?, just_once?, actions }");
     expect(parseCronConfig([task({ cron: "@daily" })], PATH)[0]!.cron).toBe("@daily");
   });
 
