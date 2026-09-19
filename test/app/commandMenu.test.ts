@@ -9,19 +9,32 @@ import { logger } from "../../packages/infra/logger";
 
 beforeEach(() => { chatStateCache.clear(); });
 
-test("启动注册默认菜单，并按群人设恢复普通菜单或删除旧的群菜单", async () => {
+test("启动只把菜单注册到所有群聊并清掉默认作用域（私聊不显示菜单），再按群人设恢复普通菜单或删除旧的群菜单", async () => {
   getOrCreateChatState(-1001).aiPersona = "自定义";
   getOrCreateChatState(-1002).isInitEnabled = true;
   const setMyCommands = mock(async (..._args: unknown[]): Promise<true> => true);
   const deleteMyCommands = mock(async (..._args: unknown[]): Promise<true> => true);
   await registerCommandMenu({ api: { setMyCommands, deleteMyCommands } } as unknown as Bot);
-  expect(setMyCommands).toHaveBeenCalledWith(ATMOSPHERE_TEXTS.teasing.BOT_COMMANDS);
+  expect(setMyCommands.mock.calls[0]).toEqual([ATMOSPHERE_TEXTS.teasing.BOT_COMMANDS, { scope: { type: "all_group_chats" } }]);
+  // 默认作用域在群作用域注册成功之后才清。
+  expect(deleteMyCommands.mock.calls[0]).toEqual([]);
   expect(setMyCommands).toHaveBeenCalledWith(ATMOSPHERE_TEXTS.plain.BOT_COMMANDS, { scope: { type: "chat", chat_id: -1001 } });
   expect(deleteMyCommands).toHaveBeenCalledWith({ scope: { type: "chat", chat_id: -1002 } });
   expect(setMyCommands).toHaveBeenCalledTimes(2);
 });
 
-test("人设变更只操作目标群作用域，移除后恢复全局默认菜单", async () => {
+test("群聊菜单注册失败时不清默认作用域，只记一行日志", async () => {
+  const setMyCommands = mock(async (..._args: unknown[]): Promise<true> => { throw new Error("unavailable"); });
+  const deleteMyCommands = mock(async (..._args: unknown[]): Promise<true> => true);
+  const error = spyOn(logger, "error").mockImplementation(() => undefined);
+  try {
+    await registerCommandMenu({ api: { setMyCommands, deleteMyCommands } } as unknown as Bot);
+    expect(deleteMyCommands).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledTimes(1);
+  } finally { error.mockRestore(); }
+});
+
+test("人设变更只操作目标群作用域，移除后回落到所有群聊的菜单", async () => {
   const setMyCommands = mock(async (..._args: unknown[]): Promise<true> => true);
   const deleteMyCommands = mock(async (..._args: unknown[]): Promise<true> => true);
   const api = { setMyCommands, deleteMyCommands };

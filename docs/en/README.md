@@ -253,7 +253,7 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
 | Allow groups | `/setjoingroups` → Enable (on by default) | Adding the bot to groups |
 | Bot-to-Bot Communication Mode (optional) | Enable it in the bot's settings | Needed when the target of `/translate` or `/copy` is another bot; see the note below |
 
-There is no need to run `/setcommands` in BotFather: the bot registers its command menu at startup and switches chats with a custom persona to the plain menu.
+There is no need to run `/setcommands` in BotFather: the bot registers its command menu at startup and switches chats with a custom persona to the plain menu. The menu appears only in group chats; private chats accept only the super administrator's `/send`, so they show no menu.
 
 > **About Bot-to-Bot**: by default Telegram does not deliver other bots' messages to this bot. Even when the other bot has the mode on, only its replies to this bot and `/command@thisbot` messages arrive, which is why translating another bot works only intermittently. Once this bot enables the mode, it receives every message from other bots in chats where it is an administrator or has privacy disabled, and AI interjections, copying, ad detection and flood counting do not distinguish bot senders. If a chat contains a bot that answers automatically, the two bots may keep replying to each other, so check before enabling it.
 

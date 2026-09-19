@@ -25,7 +25,7 @@
 - **提示发出来一会儿就消失了**：命令校验失败、权限拒绝、用法提示和操作回执都在发送成功 30 秒后自动删除；长期保留的例外见 [08 命令与行为参考](08-commands.md)。
 - **`@机器人` 不出现运势候选**：没开 Inline Mode。
 - **`/咬` 这类动作命令没反应**：只认 1~2 个中文字；全局每 90 秒最多应答 450 次，超出直接静默丢弃。
-- **另一个机器人的消息没被翻译或复读，或时有时无**：需要开启 Bot-to-Bot Communication Mode（见 [BotFather 设置](../../README.md#botfather-setup)）。翻译只处理文字，图片、图注不翻，含可渲染 `/命令` 的消息整条跳过。
+- **另一个机器人的消息没被翻译或复读，或时有时无**：需要开启 Bot-to-Bot Communication Mode（见 [BotFather 设置](../../README.md#botfather-setup)）。翻译处理文字与图注，没有文字的图片、贴纸、文件不发送，含可渲染 `/命令` 的消息整条跳过。
 - **入群验证、广告检测、刷屏禁言没有动作**：三者默认关闭，需分别执行 `/antiraid enable`、`/ad_detect enable`、`/flood_control enable`，且机器人要是管理员并有 [群内管理员权限](../../README.md#botfather-setup) 表中对应的权限；广告检测还需要 `config/agent.json` 配好广告检测能力。
 - **完全没反应，命令菜单也没有**：先确认进程在运行（`systemctl status <服务名>`、`journalctl -u <服务名>`），错误日志在数据根的 `logs/<日期>.json`。配置或状态写错时进程在启动阶段直接退出，日志写明文件路径和字段；日志反复出现 `Error fetching Telegram updates` 且错误码为 409，说明同一个 token 另有实例在拉取更新或设置了 webhook，进程会退出。排查步骤见 [07 运维与排障](07-operations.md#启动失败排查)。
 
