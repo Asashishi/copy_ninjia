@@ -26,7 +26,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/commands/`**
   - **Responsibility**: explicit commands organized by command family, with subcommands dispatched within that domain; shared permission and
     configuration gates for toggle commands live in separate files.
-  - **Representative files**: `copy.ts`, `icon.ts`, `mood.ts`, `prompt.ts`, `qa.ts`, `block.ts`, `hImage.ts`, `mute.ts`, `batchKick.ts`,
+  - **Representative files**: `copy.ts`, `icon.ts`, `mood.ts`, `prompt.ts`, `qa.ts`, `block.ts`, `hImage.ts` with `hImage/` (drawing and collecting), `info.ts`, `deferredCommands.ts` (the deferred command executor shared by drawing, collecting and `/info`), `mute.ts`, `batchKick.ts`,
     `targetResolution.ts`, and `configGate.ts`. The larger gag domain keeps command admission in
     `gag.ts`, with lifecycle, inline handling, and pure rendering split into `gag/runtime.ts`,
     `gag/inline.ts`, and `gag/rendering.ts`.
@@ -94,7 +94,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.
-  - **Representative files**: `telegram/`, `diskIO.ts`, `identityStorage.ts`, `supervisedWorker.ts`, `workerSupervisor.ts`, and `randomImage.ts` (random image directory preparation and drawing).
+  - **Representative files**: `telegram/`, `diskIO.ts`, `identityStorage.ts`, `supervisedWorker.ts`, `workerSupervisor.ts`, `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), and `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures).
 - **`packages/infra/blocklist/`**
   - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
     identity checks, durable outbox, per-chat sweep logic, and deleted-account detection.

@@ -24,7 +24,7 @@
     推导并与其同住，避免共享类型层反向依赖 `app/`。
 - **`packages/commands/`**
   - **职责**：显式命令按命令族组织，同一入口的子命令在该领域内分派；开关命令共用的权限与配置门禁另成文件。
-  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`prompt.ts`、`qa.ts`、`block.ts`、`hImage.ts`、`mute.ts`、`batchKick.ts`、
+  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`prompt.ts`、`qa.ts`、`block.ts`、`hImage.ts` 与 `hImage/`（抽图、收图）、`info.ts`、`deferredCommands.ts`（抽图、收图与 `/info` 共用的延迟命令执行器）、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`、`arguments.ts`；较大的 gag 领域以 `gag.ts` 保留命令入口，
     `gag/runtime.ts`、`gag/inline.ts`、`gag/rendering.ts` 分别承接生命周期、inline 与纯渲染。
 - **`packages/auto/`**
@@ -89,7 +89,7 @@
     `config.ts`（接管主线程投递的配置快照）。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理，以及随机图片的目录准备与抽取。
-  - **典型文件**：`telegram/`、`diskIO.ts`、`identityStorage.ts`、`supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`。
+  - **典型文件**：`telegram/`、`diskIO.ts`、`identityStorage.ts`、`supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
 - **`packages/infra/blocklist/`**
   - **职责**：黑名单主线程基础设施，按身份判定、同步名单、durable outbox、群清扫与销号识别拆分。
   - **典型文件**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepScheduler.ts`。
