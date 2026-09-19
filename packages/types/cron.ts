@@ -34,9 +34,8 @@ export interface CronRandomInterval {
  */
 export interface CronTask {
   readonly name: string;
-  /** 目标会话 id；`"all"`（CRON_ALL_CHATS）表示所有能发送的已启用群，此时 messageThreadId 恒为 undefined。 */
+  /** 目标会话 id；`"all"`（CRON_ALL_CHATS）表示所有能发送的已启用群。 */
   readonly chatId: number | CronAllChats;
-  readonly messageThreadId: number | undefined;
   readonly cron: string;
   readonly timeZone: string;
   readonly randomInterval: CronRandomInterval | undefined;
@@ -68,12 +67,6 @@ export interface CronRuntime {
   readonly runs: Set<Promise<void>>;
   /** 已执行过的 just_once 任务名。 */
   readonly justOnceRecords: LruCache<string, true>;
-}
-
-/** 一次投递的落点：具体会话与话题；`chat_id: "all"` 的任务每个群各一个。 */
-export interface CronDestination {
-  readonly chatId: number;
-  readonly messageThreadId: number | undefined;
 }
 
 /** 一个任务的动作需要哪几类发送权限（packages/cron/targets.ts）。 */

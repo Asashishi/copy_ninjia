@@ -3,7 +3,7 @@
  *
  * 每个动作最多一次尝试加 CRON_ACTION_RETRY_DELAYS_MS 那么多次重试；只有可重试的失败
  * （网络、5xx、出站队列满）才退避重试，429 由出站闸自己按 retry_after 退避、不计次。
- * 最终失败记一行英文错误日志并中止这一落点剩余的动作。任务被热重载撤销或停机时，当前
+ * 最终失败记一行英文错误日志并中止这个会话剩余的动作。任务被热重载撤销或停机时，当前
  * 请求不打断，在下一个动作、下一次重试或下一个群之前停下；停机超时由 signal 取消在途
  * 请求与等待。
  *
@@ -17,12 +17,12 @@ import { logger } from "../infra/logger";
 import { sleep } from "../libs/sleep";
 import { deliverCronAction } from "./delivery";
 import { resolveCronGroupTargets } from "./targets";
-import type { CronAction, CronAllChats, CronDeliveryOutcome, CronDestination, CronGroupTargets, CronTaskSchedule } from "../types/cron";
+import type { CronAction, CronAllChats, CronDeliveryOutcome, CronGroupTargets, CronTaskSchedule } from "../types/cron";
 
-/** 一个落点上的一次投递所需的上下文；每个落点建一次，动作与重试共用。 */
+/** 向一个会话投递所需的上下文；每个会话建一次，动作与重试共用。 */
 interface CronDeliveryContext {
   readonly schedule: CronTaskSchedule;
-  readonly destination: Readonly<CronDestination>;
+  readonly chatId: number;
   readonly signal: AbortSignal;
   /** 是否为 `chat_id: "all"` 的逐群投递；日志据此写明是哪个群。 */
   readonly perChat: boolean;
@@ -49,14 +49,14 @@ async function pause(ms: number, signal: AbortSignal): Promise<boolean> {
   }
 }
 
-/** 向一个落点投递一个动作，按分类重试。 */
+/** 向一个会话投递一个动作，按分类重试。 */
 async function deliverWithRetries(
-  { schedule, destination, signal }: CronDeliveryContext,
+  { schedule, chatId, signal }: CronDeliveryContext,
   action: Readonly<CronAction>
 ): Promise<CronActionResult> {
   for (let attempt: number = 0; ; attempt++) {
     if (isStopped(schedule, signal)) return { kind: "stopped" };
-    const outcome: CronDeliveryOutcome = await deliverCronAction(destination, action, signal);
+    const outcome: CronDeliveryOutcome = await deliverCronAction(chatId, action, signal);
     if (outcome.kind === "sent") return { kind: "delivered" };
     if (outcome.kind === "aborted") return { kind: "stopped" };
     const delay: number | undefined = CRON_ACTION_RETRY_DELAYS_MS[attempt];
@@ -68,11 +68,11 @@ async function deliverWithRetries(
 }
 
 /**
- * 向一个落点顺序投递全部动作。失败记一行日志并中止该落点剩余的动作；返回 false 表示
+ * 向一个会话顺序投递全部动作。失败记一行日志并中止该会话剩余的动作；返回 false 表示
  * 本轮已被撤销或取消，调用方应整轮收场。
  */
 async function runActions(context: CronDeliveryContext): Promise<boolean> {
-  const { schedule, destination, signal, perChat }: CronDeliveryContext = context;
+  const { schedule, chatId, signal, perChat }: CronDeliveryContext = context;
   const actions: readonly Readonly<CronAction>[] = schedule.task.actions;
   for (let index: number = 0; index < actions.length; index++) {
     if (index > 0 && !await pause(CRON_ACTION_GAP_MS, signal)) return false;
@@ -81,7 +81,7 @@ async function runActions(context: CronDeliveryContext): Promise<boolean> {
     if (result.kind === "stopped") return false;
     if (result.kind === "failed") {
       logger.error(perChat
-        ? `Cron task "${schedule.task.name}" action #${index + 1} (${action.type}) failed in chat ${destination.chatId} ` +
+        ? `Cron task "${schedule.task.name}" action #${index + 1} (${action.type}) failed in chat ${chatId} ` +
           `after ${result.attempts} attempt(s); skipping the remaining actions for this chat: ${result.detail}`
         : `Cron task "${schedule.task.name}" action #${index + 1} (${action.type}) failed after ` +
           `${result.attempts} attempt(s); skipping the remaining actions of this run: ${result.detail}`);
@@ -95,15 +95,14 @@ async function runActions(context: CronDeliveryContext): Promise<boolean> {
 export async function runCronRound(schedule: CronTaskSchedule, signal: AbortSignal): Promise<void> {
   const chatId: number | CronAllChats = schedule.task.chatId;
   if (chatId !== CRON_ALL_CHATS) {
-    await runActions({ schedule, destination: { chatId, messageThreadId: schedule.task.messageThreadId }, signal, perChat: false });
+    await runActions({ schedule, chatId, signal, perChat: false });
     return;
   }
   const targets: CronGroupTargets = await resolveCronGroupTargets(schedule.task, signal);
   for (let index: number = 0; index < targets.chatIds.length; index++) {
     if (isStopped(schedule, signal)) return;
     if (index > 0 && !await pause(CRON_ACTION_GAP_MS, signal)) return;
-    const destination: Readonly<CronDestination> = { chatId: targets.chatIds[index]!, messageThreadId: undefined };
-    if (!await runActions({ schedule, destination, signal, perChat: true })) return;
+    if (!await runActions({ schedule, chatId: targets.chatIds[index]!, signal, perChat: true })) return;
   }
   if (targets.skipped > 0) {
     logger.log(`Cron task "${schedule.task.name}" skipped ${targets.skipped} chat(s) without send permission.`);

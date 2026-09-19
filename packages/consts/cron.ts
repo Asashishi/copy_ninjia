@@ -5,7 +5,7 @@ export const CRON_DEFAULT_TIME_ZONE: string = "Asia/Tokyo";
 
 /**
  * cron.json 任务 `chat_id` 的「所有群」写法，属 packages/config/cron.ts 与 packages/cron/run.ts：
- * 每一轮向所有已启用、且机器人此刻能发出全部动作的群逐个发送；不能与 message_thread_id 同用。
+ * 每一轮向所有已启用、且机器人此刻能发出全部动作的群逐个发送。
  */
 export const CRON_ALL_CHATS: CronAllChats = "all";
 
@@ -46,7 +46,6 @@ export const CRON_JUST_ONCE_RECORD_MAX: number = 1_024;
 export const CRON_TASK_KEYS: readonly string[] = [
   "name",
   "chat_id",
-  "message_thread_id",
   "cron",
   "time_zone",
   "rand_cron",

@@ -2,7 +2,7 @@
  * cron 动作的唯一 Telegram 发送边界（`check:conventions` 禁止 packages/cron/ 其它文件发送）。
  *
  * cron 消息是用户授权的长期保留例外（见 AGENTS.md「Telegram 提示留存」），不挂固定
- * 延迟删除；按投递落点带 `message_thread_id`，不设 `parse_mode`。全部请求都经主线程
+ * 延迟删除；不带话题（落在 General），不设 `parse_mode`。全部请求都经主线程
  * grammY 客户端，因此照常经过发送类 throttler 与 429 分类出站闸；成功后登记自发消息。
  * 每次调用只投递一次，失败按 CronDeliveryOutcome 分类交给 cron/run.ts 决定是否重试，
  * 本边界不记日志。
@@ -21,7 +21,7 @@ import { telegramErrorDetails } from "../infra/telegram/errors";
 import { bot } from "../infra/telegram/mainClient";
 import { TelegramRetryQueueFullError } from "../infra/telegram/outboundRetryPolicy";
 import { signalArgs } from "../libs/telegramSignalArgs";
-import type { CronAction, CronDeliveryOutcome, CronDestination, CronFileSource, CronImageSource } from "../types/cron";
+import type { CronAction, CronDeliveryOutcome, CronFileSource, CronImageSource } from "../types/cron";
 import type { RandomImagePick } from "../types/randomImage";
 import type { TelegramSendResult } from "../types/telegram";
 
@@ -111,21 +111,20 @@ function isOutcome(value: string | InputFile | CronDeliveryOutcome): value is Cr
 }
 
 /**
- * 向一个落点投递一个动作一次。`rand_image` 每次调用都重新抽取；抽不出或本地文件不可用
+ * 向一个会话投递一个动作一次。`rand_image` 每次调用都重新抽取；抽不出或本地文件不可用
  * 按不可重试失败返回。signal 取消在途请求（停机超时）。
  */
 export async function deliverCronAction(
-  destination: Readonly<CronDestination>,
+  chatId: number,
   action: Readonly<CronAction>,
   signal: AbortSignal
 ): Promise<CronDeliveryOutcome> {
-  const { chatId, messageThreadId }: Readonly<CronDestination> = destination;
   switch (action.type) {
     case "send_message":
       return send(chatId, (requestSignal?: AbortSignal): Promise<Message> => bot.api.sendMessage(
         chatId,
         action.content,
-        { message_thread_id: messageThreadId },
+        undefined,
         ...signalArgs(requestSignal)
       ), signal);
     case "send_image": {
@@ -134,7 +133,7 @@ export async function deliverCronAction(
       return send(chatId, (requestSignal?: AbortSignal): Promise<Message> => bot.api.sendPhoto(
         chatId,
         photo,
-        { caption: action.content, message_thread_id: messageThreadId },
+        { caption: action.content },
         ...signalArgs(requestSignal)
       ), signal);
     }
@@ -144,7 +143,7 @@ export async function deliverCronAction(
       return send(chatId, (requestSignal?: AbortSignal): Promise<Message> => bot.api.sendDocument(
         chatId,
         document,
-        { caption: action.content, message_thread_id: messageThreadId },
+        { caption: action.content },
         ...signalArgs(requestSignal)
       ), signal);
     }

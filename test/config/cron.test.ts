@@ -36,7 +36,6 @@ describe("parseCronConfig", () => {
     expect(parseCronConfig([task()], PATH)).toEqual([{
       name: "daily",
       chatId: -1001,
-      messageThreadId: undefined,
       cron: "0 9 * * *",
       timeZone: "Asia/Tokyo",
       randomInterval: undefined,
@@ -45,9 +44,8 @@ describe("parseCronConfig", () => {
     }]);
   });
 
-  test("完整任务：话题、时区、区间与三种动作的来源", () => {
+  test("完整任务：时区、区间与三种动作的来源", () => {
     const config: CronConfig = parseCronConfig([task({
-      message_thread_id: 12,
       time_zone: "UTC",
       rand_cron: "6h-24h",
       actions: [
@@ -60,7 +58,6 @@ describe("parseCronConfig", () => {
       ],
     })], PATH);
     expect(config[0]).toMatchObject({
-      messageThreadId: 12,
       timeZone: "UTC",
       randomInterval: { minMs: 6 * 3_600_000, maxMs: 24 * 3_600_000 },
     });
@@ -84,9 +81,8 @@ describe("parseCronConfig", () => {
     }
   });
 
-  test("chat_id 可写 \"all\"，此时不能带 message_thread_id；其它字符串一律拒绝", () => {
-    expect(parseCronConfig([task({ chat_id: "all" })], PATH)[0]).toMatchObject({ chatId: "all", messageThreadId: undefined });
-    rejects([task({ chat_id: "all", message_thread_id: 12 })], `${PATH}: $[0].message_thread_id must be absent when chat_id is "all".`);
+  test("chat_id 可写 \"all\"，其它字符串一律拒绝", () => {
+    expect(parseCronConfig([task({ chat_id: "all" })], PATH)[0]).toMatchObject({ chatId: "all" });
     for (const chatId of ["ALL", "all ", "-1001", null]) {
       rejects([task({ chat_id: chatId })], `${PATH}: $[0].chat_id must be a non-zero safe integer chat id or "all".`);
     }
@@ -103,7 +99,7 @@ describe("parseCronConfig", () => {
     rejects([task({ time_zone: "Mars/Olympus" })], "$[0].time_zone must be an IANA time zone name");
     // 显式写出的 null 不是「缺省」，不能静默换成默认时区。
     rejects([task({ time_zone: null })], "$[0].time_zone must be an IANA time zone name");
-    rejects([task({ tz: "UTC" })], "$[0] must be { name, chat_id, message_thread_id?, cron, time_zone?, rand_cron?, just_once?, actions }");
+    rejects([task({ tz: "UTC" })], "$[0] must be { name, chat_id, cron, time_zone?, rand_cron?, just_once?, actions }");
     expect(parseCronConfig([task({ cron: "@daily" })], PATH)[0]!.cron).toBe("@daily");
   });
 
@@ -116,7 +112,8 @@ describe("parseCronConfig", () => {
     rejects([task(), task()], "$[1].name must be unique across tasks");
     rejects([task({ chat_id: 0 })], "$[0].chat_id must be a non-zero safe integer chat id");
     rejects([task({ chat_id: "1" })], "$[0].chat_id must be");
-    rejects([task({ message_thread_id: 0 })], "$[0].message_thread_id must be a positive safe integer");
+    // 不支持论坛话题：message_thread_id 是未知键，整份拒绝。
+    rejects([task({ message_thread_id: 12 })], "$[0] must be { name, chat_id, cron, time_zone?, rand_cron?, just_once?, actions }");
     rejects([task({ actions: [] })], "$[0].actions must be a non-empty array with at most 16 actions");
     rejects([task({ actions: Array.from({ length: 17 }, () => ({ type: "send_message", payload: { content: "x" } })) })], "$[0].actions must be");
     rejects([task({ actions: [{ type: "send_video", payload: {} }] })], "$[0].actions[0].type must be send_message, send_image or send_file");

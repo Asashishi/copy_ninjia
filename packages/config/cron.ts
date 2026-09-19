@@ -183,24 +183,13 @@ function parseSchedule(record: Record<string, unknown>, context: FieldContext): 
 
 function parseTask(value: unknown, context: FieldContext): CronTask {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, CRON_TASK_KEYS)) {
-    return fail(context, "{ name, chat_id, message_thread_id?, cron, time_zone?, rand_cron?, just_once?, actions }");
+    return fail(context, "{ name, chat_id, cron, time_zone?, rand_cron?, just_once?, actions }");
   }
   const name: string = boundedText(value.name, child(context, "name"), CRON_TASK_NAME_MAX_CHARS);
   let chatId: number | CronAllChats;
   if (value.chat_id === CRON_ALL_CHATS) chatId = CRON_ALL_CHATS;
   else if (Number.isSafeInteger(value.chat_id) && value.chat_id !== 0) chatId = value.chat_id as number;
   else return fail(child(context, "chat_id"), `a non-zero safe integer chat id or "${CRON_ALL_CHATS}"`);
-  let messageThreadId: number | undefined;
-  if (value.message_thread_id !== undefined) {
-    // 话题 id 只在它所属的群里有意义，「所有群」没有共同的话题。
-    if (chatId === CRON_ALL_CHATS) {
-      return fail(child(context, "message_thread_id"), `absent when chat_id is "${CRON_ALL_CHATS}"`);
-    }
-    if (!Number.isSafeInteger(value.message_thread_id) || (value.message_thread_id as number) <= 0) {
-      return fail(child(context, "message_thread_id"), "a positive safe integer");
-    }
-    messageThreadId = value.message_thread_id as number;
-  }
   const { cron, timeZone }: CronScheduleFields = parseSchedule(value, context);
   const randomInterval: CronRandomInterval | undefined = value.rand_cron === undefined
     ? undefined
@@ -217,7 +206,7 @@ function parseTask(value: unknown, context: FieldContext): CronTask {
   for (let index: number = 0; index < value.actions.length; index++) {
     actions.push(parseAction(value.actions[index], { sourcePath: context.sourcePath, field: `${actionsContext.field}[${index}]` }));
   }
-  return { name, chatId, messageThreadId, cron, timeZone, randomInterval, justOnce, actions };
+  return { name, chatId, cron, timeZone, randomInterval, justOnce, actions };
 }
 
 /** 严格解析 cron.json 的内容；只做形态与词法判定，不访问文件系统。 */

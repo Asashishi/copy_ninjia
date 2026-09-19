@@ -25,7 +25,6 @@ function task(overrides: Partial<CronTask> = {}): CronTask {
   return {
     name: "daily",
     chatId: -1001,
-    messageThreadId: undefined,
     cron: "* * * * *",
     timeZone: "Asia/Tokyo",
     randomInterval: undefined,

@@ -28,7 +28,6 @@ function task(actions: readonly CronAction[]): CronTask {
   return {
     name: "all-groups",
     chatId: "all",
-    messageThreadId: undefined,
     cron: "* * * * *",
     timeZone: "Asia/Tokyo",
     randomInterval: undefined,

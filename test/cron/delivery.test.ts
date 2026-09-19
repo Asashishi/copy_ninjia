@@ -47,7 +47,7 @@ const { TelegramRetryQueueFullError } = await import("../../packages/infra/teleg
 const { TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } = await import("../../packages/consts/telegram");
 
 function deliver(action: CronAction, signal: AbortSignal = new AbortController().signal): Promise<CronDeliveryOutcome> {
-  return deliverCronAction({ chatId: -1001, messageThreadId: 12 }, action, signal);
+  return deliverCronAction(-1001, action, signal);
 }
 
 beforeEach(() => {
@@ -63,9 +63,9 @@ afterEach(() => {
 });
 
 describe("cron 发送边界", () => {
-  test("文字消息带话题、不设 parse_mode，成功后登记自发消息", async () => {
+  test("文字消息不带话题、不设 parse_mode，成功后登记自发消息", async () => {
     expect(await deliver({ type: "send_message", content: "hi" })).toEqual({ kind: "sent" });
-    expect(calls).toEqual([{ method: "sendMessage", args: [-1001, "hi", { message_thread_id: 12 }, expect.any(AbortSignal)] }]);
+    expect(calls).toEqual([{ method: "sendMessage", args: [-1001, "hi", undefined, expect.any(AbortSignal)] }]);
     expect(markSelfSent).toHaveBeenCalledWith(-1001, 77);
   });
 
@@ -73,8 +73,8 @@ describe("cron 发送边界", () => {
     await deliver({ type: "send_image", content: "今日图", source: { kind: "url", url: "https://e.com/a.png" } });
     await deliver({ type: "send_file", content: undefined, source: { kind: "url", url: "https://e.com/r.zip" } });
     expect(calls).toEqual([
-      { method: "sendPhoto", args: [-1001, "https://e.com/a.png", { caption: "今日图", message_thread_id: 12 }, expect.any(AbortSignal)] },
-      { method: "sendDocument", args: [-1001, "https://e.com/r.zip", { caption: undefined, message_thread_id: 12 }, expect.any(AbortSignal)] },
+      { method: "sendPhoto", args: [-1001, "https://e.com/a.png", { caption: "今日图" }, expect.any(AbortSignal)] },
+      { method: "sendDocument", args: [-1001, "https://e.com/r.zip", { caption: undefined }, expect.any(AbortSignal)] },
     ]);
   });
 

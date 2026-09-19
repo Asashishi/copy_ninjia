@@ -86,7 +86,6 @@ describe("config_example 与解析器保持同步", () => {
     // 只做纯解析：本地来源是否存在要到加载时才核对，示例里的路径都是假的。
     const path: string = examplePath("cron.json");
     const config: CronConfig = parseCronConfig(await readJsonInput(path), path);
-    expect(config.some((entry: CronTask): boolean => entry.messageThreadId !== undefined)).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.timeZone !== "Asia/Tokyo")).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.cron.startsWith("@"))).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.justOnce)).toBe(true);

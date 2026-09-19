@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import type { CronAction, CronDeliveryOutcome, CronDestination, CronGroupTargets, CronTaskSchedule } from "../../packages/types/cron";
+import type { CronAction, CronDeliveryOutcome, CronGroupTargets, CronTaskSchedule } from "../../packages/types/cron";
 
 const delivered: string[] = [];
 const destinations: number[] = [];
 const outcomes: CronDeliveryOutcome[] = [];
 const deliverCronAction = mock(async (
-  destination: CronDestination,
+  chatId: number,
   action: CronAction,
   _signal: AbortSignal
 ): Promise<CronDeliveryOutcome> => {
-  destinations.push(destination.chatId);
+  destinations.push(chatId);
   delivered.push(action.type === "send_message" ? action.content : action.type);
   return outcomes.shift() ?? { kind: "sent" };
 });
@@ -29,7 +29,6 @@ function schedule(actions: readonly CronAction[], chatId: number | "all" = -1001
     task: {
       name: "daily",
       chatId,
-      messageThreadId: undefined,
       cron: "* * * * *",
       timeZone: "Asia/Tokyo",
       randomInterval: undefined,
@@ -139,7 +138,7 @@ describe("cron 一轮", () => {
     expect(loggerError).not.toHaveBeenCalled();
   });
 
-  test("单个会话的任务不解析群列表，按配置的会话与话题投递", async () => {
+  test("单个会话的任务不解析群列表，按配置的会话投递", async () => {
     await settle(runCronRound(schedule(MESSAGES), new AbortController().signal));
     expect(resolveCronGroupTargets).not.toHaveBeenCalled();
     expect(destinations).toEqual([-1001, -1001, -1001]);
@@ -178,8 +177,8 @@ describe("chat_id: \"all\" 的一轮", () => {
   test("调度被撤销后不再进入下一个群", async () => {
     groupTargets = { chatIds: [-2, -1], skipped: 0 };
     const target: CronTaskSchedule = schedule([{ type: "send_message", content: "one" }], "all");
-    deliverCronAction.mockImplementationOnce(async (destination: CronDestination): Promise<CronDeliveryOutcome> => {
-      destinations.push(destination.chatId);
+    deliverCronAction.mockImplementationOnce(async (chatId: number): Promise<CronDeliveryOutcome> => {
+      destinations.push(chatId);
       target.cancelled = true;
       return { kind: "sent" };
     });

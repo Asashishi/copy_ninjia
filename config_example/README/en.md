@@ -216,7 +216,7 @@ The top level is an array of tasks; a missing file or `[]` means no scheduled ta
 JSON, so comments are not allowed.
 
 [`config_example/cron.json`](../cron.json) holds example tasks that cover every form: plain weekday
-text; a forum topic with its own time zone sending text, then an image and a file by URL; a local
+text; a task in its own time zone sending text, then an image and a file by URL; a local
 image and file by absolute path; a `rand_cron` range drawing from the default image library; `@daily`
 with a single-value `rand_cron` drawing from a given directory; and `just_once`. The chat ids, URLs
 and local paths in it are fake, and an unedited copy in `config/` refuses startup because the local
@@ -228,7 +228,6 @@ them into `config/cron.json`. The installer never creates this file from the exa
   {
     "name": "daily-greeting",
     "chat_id": -1001234567890,
-    "message_thread_id": 12,
     "cron": "0 9 * * *",
     "time_zone": "Asia/Tokyo",
     "rand_cron": "6h-24h",
@@ -246,7 +245,6 @@ them into `config/cron.json`. The installer never creates this file from the exa
 | --- | --- | --- |
 | `name` | Yes | Non-empty, at most 64 characters, unique in the file; it is the task identity, so renaming makes a new task |
 | `chat_id` | Yes | Target chat id (non-zero integer), or `"all"` for every enabled group the bot can send to, see below |
-| `message_thread_id` | No | Forum topic id; without it messages land in General; not allowed when `chat_id` is `"all"` |
 | `cron` | Yes | 5-field expression or a nickname such as `@daily`; it must still have a future occurrence |
 | `time_zone` | No | IANA time zone name (such as `Asia/Shanghai`), default `Asia/Tokyo` |
 | `rand_cron` | No | `"<min>-<max>"` or a single value (meaning `1m-<value>`), m/h/d units, within 1m–24d; the first run follows `cron`, and after each run the next one waits a random time in the range |
@@ -281,8 +279,9 @@ Runtime behavior:
   from the chat, a deleted local file) are not retried. A final failure logs one
   `Cron task "<name>" action #<n> ...` line and skips the rest of that run. When a request times
   out but Telegram did receive it, the retry sends a duplicate.
-- Scheduled messages stay; they are not deleted after 30 seconds. Every request goes through the
-  bot's usual send throttling and 429 back-off.
+- Scheduled messages stay; they are not deleted after 30 seconds. They carry no forum topic, so in a
+  group with topics they land in General. Every request goes through the bot's usual send
+  throttling and 429 back-off.
 - The target chat does not need `/init`; once the bot has been removed from it, each trigger logs
   an error.
 - `chat_id: "all"`: at the start of each run the bot checks its current send permission in every
