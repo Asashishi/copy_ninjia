@@ -1,3 +1,4 @@
+import { TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } from "./telegram";
 import type { RandomImageMimeType } from "../types/randomImage";
 
 /**
@@ -13,6 +14,6 @@ export const RANDOM_IMAGE_EXTENSIONS: ReadonlyMap<string, RandomImageMimeType> =
 
 /**
  * 随机图片单个文件的字节上限，属 infra/randomImage.ts；等于 Telegram 官方 Bot API
- * 图片上传上限（10 MB）。超限的抽取结果直接报超限，不读入内存。
+ * 图片上传上限。超限的抽取结果直接报超限，不读入内存。
  */
-export const RANDOM_IMAGE_MAX_BYTES: number = 10 * 1024 * 1024;
+export const RANDOM_IMAGE_MAX_BYTES: number = TELEGRAM_PHOTO_UPLOAD_MAX_BYTES;

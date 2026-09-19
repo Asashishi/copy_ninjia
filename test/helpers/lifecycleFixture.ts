@@ -51,6 +51,7 @@ const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("
 const drainGagRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainGag"); return "flushed"; });
 const drainWedRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainWed"); return "flushed"; });
 const drainHImageRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainHImage"); return "flushed"; });
+const drainCronScheduler = mock(async (): Promise<FlushResult> => { calls.push("drainCron"); return "flushed"; });
 const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
 const drainPendingMessageDeletions = mock(async (): Promise<FlushResult> => {
   calls.push("drainMessageDeletions");
@@ -75,6 +76,8 @@ const quiesceTranslate = mock((): void => { calls.push("quiesceTranslate"); });
 const quiesceGagRuntime = mock((): void => { calls.push("quiesceGag"); });
 const quiesceWedRuntime = mock((): void => { calls.push("quiesceWed"); });
 const quiesceHImageRuntime = mock((): void => { calls.push("quiesceHImage"); });
+const quiesceCronScheduler = mock((): void => { calls.push("quiesceCron"); });
+const startCronScheduler = mock((): void => { calls.push("startCron"); });
 const abortChatTitleRefresh = mock((): void => { calls.push("abortTitles"); });
 const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
@@ -150,6 +153,7 @@ const testDependencies = {
   drainGagRuntime,
   drainWedRuntime,
   drainHImageRuntime,
+  drainCronScheduler,
   drainTranslate,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
@@ -205,6 +209,8 @@ const testDependencies = {
   quiesceGagRuntime,
   quiesceWedRuntime,
   quiesceHImageRuntime,
+  quiesceCronScheduler,
+  startCronScheduler,
   quiesceTranslate,
   seedSenderCache,
   setBusinessWorkerFatalHandler,
@@ -278,6 +284,7 @@ export function installLifecycleFixtureHooks(): void {
       drainGagRuntime,
       drainWedRuntime,
       drainHImageRuntime,
+      drainCronScheduler,
       drainTranslate,
       drainPendingMessageDeletions,
       drainTelegramOutbound,
@@ -297,6 +304,8 @@ export function installLifecycleFixtureHooks(): void {
       quiesceGagRuntime,
       quiesceWedRuntime,
       quiesceHImageRuntime,
+      quiesceCronScheduler,
+      startCronScheduler,
       abortChatTitleRefresh,
       hydrateWedMembers,
       hydrateAiMemory,
@@ -340,6 +349,7 @@ export function installLifecycleFixtureHooks(): void {
     drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
     drainWedRuntime.mockImplementation(async () => { calls.push("drainWed"); return "flushed" as const; });
     drainHImageRuntime.mockImplementation(async () => { calls.push("drainHImage"); return "flushed" as const; });
+    drainCronScheduler.mockImplementation(async () => { calls.push("drainCron"); return "flushed" as const; });
     drainGagRuntime.mockImplementation(async () => { calls.push("drainGag"); return "flushed" as const; });
     drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
     drainPendingMessageDeletions.mockImplementation(async () => {
@@ -382,6 +392,7 @@ export const lifecycleFixture = {
   drainGagRuntime,
   drainWedRuntime,
   drainHImageRuntime,
+  drainCronScheduler,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -417,6 +428,8 @@ export const lifecycleFixture = {
   quiesceGagRuntime,
   quiesceWedRuntime,
   quiesceHImageRuntime,
+  quiesceCronScheduler,
+  startCronScheduler,
   quiesceTranslate,
   realDrainDependencies,
   refreshAllChatTitles,

@@ -44,6 +44,9 @@
     durable handoff、update ingress、blocklist／verification／ad／flood orchestration。
   - **代表的なファイル**：`workerBridge.ts`、`durableDelivery.ts`、`updateIngress.ts`、
     `adCandidate.ts`、`ai/`。`index.ts` は薄い公開入口だけを提供。
+- **`packages/cron/`**
+  - **責務**：`cron.json` 定時タスクの主スレッドでのスケジュール（Bun ネイティブ cron、just_once、rand_cron のランダム待ち）、1 回分の動作の順次実行と再試行、唯一の Telegram 送信境界。
+  - **代表的なファイル**：`scheduler.ts`、`run.ts`、`delivery.ts`。解析は `packages/config/cron.ts`、状態は `packages/cache/main/cron.ts`。
 - **`packages/copy/`**
   - **責務**：通常コピー、テキスト変換、アバター更新キュー。
   - **代表的なファイル**：`echo.ts`、`copyModes.ts`、`avatarQueue.ts`。

@@ -3,9 +3,9 @@
  *
  * 目录级 `fs.watch` 覆盖原地写入、临时文件改名替换、删除与重建；任何事件只重新
  * 武装一次防抖 timer，到期后由最新值执行器串行跑一轮：config/reload.ts 读取并
- * 严格解析四份可热重载文件 → 同步替换主线程 holder → 按 holder 重算广告检测与
+ * 严格解析五份可热重载文件 → 同步替换主线程 holder → 按 holder 重算广告检测与
  * AI 闲聊的可用性 → 把变化投给持有副本的 Worker（AI 闲聊：agent 对话段、mood、
- * stickers；Anti-Raid：ad_detect 段与广告示例）。一轮在途时到达的事件合并成至多
+ * stickers；Anti-Raid：ad_detect 段与广告示例）→ cron.json 变化时对账定时任务。一轮在途时到达的事件合并成至多
  * 一轮补跑。
  *
  * 被拒绝的变更逐条记英文错误日志，对应快照保持上一份已校验版本；拒绝口径见
@@ -20,6 +20,7 @@ import { watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { resumeAiChat, syncAiChatConfig } from "../aiChat";
 import { syncAntiRaidAgentConfig } from "../antiRaid";
+import { reconcileCronSchedule } from "../cron/scheduler";
 import { configReloadRuntime } from "../cache/main/configReload";
 import {
   adDetectConfigReadiness,
@@ -97,6 +98,7 @@ async function reconcileDeploymentConfigs(): Promise<void> {
   }
   reconcileAdDetectAvailability(changes);
   reconcileAiChatAvailability(changes);
+  if (changes.cron) reconcileCronSchedule();
 }
 
 /** 防抖到期：交给执行器跑一轮；执行器拒绝只记日志，下一次事件照常重试。 */

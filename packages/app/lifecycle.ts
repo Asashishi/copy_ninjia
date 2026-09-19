@@ -191,6 +191,8 @@ export class ApplicationLifecycle {
     this.dependencies.hydrateBlocklist(loaded.pendingBlockedRemovals);
     this.dependencies.initAntiRaid();
     this.flags.antiRaidInitialized = true;
+    // 定时任务按启动总闸接管的 cron.json 登记；先于热重载，热重载的对账才有调度器可改。
+    this.dependencies.startCronScheduler();
     // 两条业务 Worker 都已持有初始配置快照，此后 config/ 的改动才有分发对象。
     this.dependencies.startConfigReload();
     this.dependencies.initBlocklistSweepScheduler();
@@ -229,7 +231,7 @@ export class ApplicationLifecycle {
     // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
     // init 前段，而上面的 initAvatarUpdates/
     // initChatTitleRefresh/initTranslate/initGagRuntime/initWedRuntime/initHImageRuntime/
-    // initBlocklistSweepScheduler 又把这些 owner 重新置为接受工作。
+    // startCronScheduler/initBlocklistSweepScheduler 又把这些 owner 重新置为接受工作。
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
     // getChat 扫描加批量落盘。

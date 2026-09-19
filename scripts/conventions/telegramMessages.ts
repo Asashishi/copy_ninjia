@@ -173,6 +173,29 @@ export async function collectTelegramMessageProblems(
     visit(source);
   }
 
+  // cron 消息是用户授权的长期保留例外，只有 cron/delivery.ts 可以发送。
+  const cronDeliveryPath: string = join(sourceRoot, "cron", "delivery.ts");
+  const telegramSendNames: ReadonlySet<string> = new Set([
+    "sendMessage", "sendPhoto", "sendDocument", "sendMessageWithResult", "sendPhotoWithResult", "sendCommandMessage",
+  ]);
+  for (const path of sourceFilesUnder(join(sourceRoot, "cron"))) {
+    if (path === cronDeliveryPath) continue;
+    const source: ts.SourceFile = await parse(path);
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node)) {
+        const callee: ts.Expression = node.expression;
+        const name: string | undefined = ts.isIdentifier(callee)
+          ? callee.text
+          : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+        if (name !== undefined && telegramSendNames.has(name)) {
+          problems.push(`${relative(projectRoot, path)}: cron messages must be sent through cron/delivery.ts`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+
   const fixedDelayDeleteExemptFiles: readonly string[] = [
     ...sourceFilesUnder(join(commandsRoot, "luckChallenge")),
     join(sourceRoot, "workers", "antiRaid", "verificationReminders.ts"),

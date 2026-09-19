@@ -122,7 +122,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
 
 `config/` は deployment 固有の設定ディレクトリで、Git の追跡対象外です。初回だけ `config_example/` からコピーし、その後は `config/` だけを編集してください。example ディレクトリは実行時設定ではありません。
 
-稼働中に `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` を編集すると hot reload されます。main thread が `config/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。この 4 file の追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI 雑談や広告検出はすぐに停止し（グループ switch は元の値のまま）、前提が戻れば再起動なしで自動的に再開します。`telegram.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が必要です。
+稼働中に `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`（定時タスク。形式は [config_example/README](../../config_example/README/ja.md)）を編集すると hot reload されます。main thread が `config/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。この 4 file の追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI 雑談や広告検出はすぐに停止し（グループ switch は元の値のまま）、前提が戻れば再起動なしで自動的に再開します。`telegram.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が必要です。
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI チャットの基本ペルソナ。
@@ -249,7 +249,7 @@ sidecar が同じ協働 group を継承します。
 
 5 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
 
-5 つ目のキー `randomImageDir` は `/h_image` が画像を引くディレクトリで（[08 コマンド](08-commands.md) を参照）、既定値は `images` です。相対パスは実行時データルート（`state.json` のあるディレクトリ）基準で解決し、絶対パスも指定できます。ディレクトリが無ければ起動時に自動作成し、存在してもディレクトリでない場合や作成できない場合は起動を拒否してフィールドパスを示します。画像の追加・削除に再起動は不要で、使うたびにディレクトリを列挙し直します。対象はディレクトリ直下の `jpg`、`jpeg`、`png`、`webp` だけで、隠しファイル・サブディレクトリ・シンボリックリンクは数えず、10 MB を超える画像は送らずに通知します。初回起動時はデータルートにまだ `state.json` がなく、起動成功後のこの補完で自動生成されます。
+5 つ目のキー `randomImageDir` は `/h_image` と cron `rand_image` が画像を引くディレクトリで（[08 コマンド](08-commands.md) を参照）、既定値は `images` です。相対パスは実行時データルート（`state.json` のあるディレクトリ）基準で解決し、絶対パスも指定できます。ディレクトリが無ければ起動時に自動作成し、存在してもディレクトリでない場合や作成できない場合は起動を拒否してフィールドパスを示します。画像の追加・削除に再起動は不要で、使うたびにディレクトリを列挙し直します。対象はディレクトリ直下の `jpg`、`jpeg`、`png`、`webp` だけで、隠しファイル・サブディレクトリ・シンボリックリンクは数えず、10 MB を超える画像は送らずに通知します。初回起動時はデータルートにまだ `state.json` がなく、起動成功後のこの補完で自動生成されます。
 
 > 起動前に `state.global.assets` の 4 つの URL を確認してください。サムネイル 3 枚は `https` が必須で、不正な URL はデコード時に起動を拒否し、フィールドパスを示します。
 

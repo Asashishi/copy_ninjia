@@ -84,7 +84,7 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
     one left as `http://` by an older version refuses to start at decode time and names the field
     path.
   - **Random image directory** (`global.assets.randomImageDir`, default `images`, resolved against
-    the data root): `/h_image` draws from it. Put `jpg`/`jpeg`/`png`/`webp`
+    the data root): `/h_image` and cron `rand_image` draw from it. Put `jpg`/`jpeg`/`png`/`webp`
     files there yourself; the service account must be able to read them, and a missing directory
     is created by the service at startup with mode 0755. Adding or removing pictures needs no
     restart; changing the path is a stopped-service edit like the rest. Before rolling back to a
@@ -303,6 +303,7 @@ The observation window is twice the effective restart-delay upper bound plus two
 - `logs/`: the Disk I/O Worker appends errors in batches. Messages are in English and can be grepped directly.
 - Worker crashes are rate-limited, self-healing, and restored from mirrors or snapshots. Intervene only when crashes loop repeatedly, which usually means persisted data and code versions do not match.
 - A persistence operation that exhausts bounded retries terminates the process nonzero by design: durability takes priority over availability. systemd restarts it from the last consistent state.
+- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`: an action of a scheduled task finally failed and the rest of that run was skipped. The tail is Telegram's error code and description or a local reason: `403` usually means the bot was removed from the target chat, `400` usually means the URL is unreachable or Telegram rejects the file type, and `local file ... is missing` means a file under `config/cron_files/` was deleted. Fixing `cron.json` or the files is hot-reloaded; no restart is needed.
 - `Failed to probe chat membership` / `Failed to ban chat member` lines ending in `PARTICIPANT_ID_INVALID` usually mean a deleted account is on the blocklist. Sweeps keep retrying with the usual backoff. One sweep disposal in one chat where every request returned that error counts once, and finding or banning the user in any chat resets the count. At 5 the user is removed from the blocklist and pending removals automatically, with a `Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results` log line. The `/wed` daily review drops such an ID from the candidate set on the same error without logging it.
 
 ---

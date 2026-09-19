@@ -235,6 +235,10 @@ describe("project convention collectors", () => {
       join(commandsRoot, "hImage.ts"),
       "function sendHImageResult() { return sendPhotoWithResult({ chatId: 1, bytes, mimeType }); }"
     );
+    await Bun.write(join(sourceRoot, "cron", "delivery.ts"),
+      "export function deliverCronAction() { return bot.api.sendMessage(1, \"hi\"); }");
+    await Bun.write(join(sourceRoot, "cron", "run.ts"),
+      "export function runCronRound() { return bot.api.sendDocument(1, file); }");
     await Bun.write(
       join(commandsRoot, "luckChallenge", "inline.ts"),
       'import { sendCommandMessage } from "../../infra/telegram";'
@@ -257,14 +261,16 @@ describe("project convention collectors", () => {
     expect(problems).toEqual(expect.arrayContaining([
       expect.stringContaining("bad.ts: state-owned command photos must use sendWedResult"),
       expect.stringContaining("bad.ts: long-lived command photos must use sendHImageResult"),
+      expect.stringContaining("cron/run.ts: cron messages must be sent through cron/delivery.ts"),
       expect.stringContaining("command text must use sendCommandMessage"),
       expect.stringContaining("must also pass messageThreadId"),
       expect.stringContaining("state-owned button messages"),
     ]));
     expect(problems).toContainEqual(expect.stringContaining("ordinary Worker/group notices"));
     expect(problems).toContainEqual(expect.stringContaining("verificationEffects.ts: ordinary Worker/group notices"));
-    expect(problems).toHaveLength(8);
+    expect(problems).toHaveLength(9);
     expect(problems.some((problem: string): boolean => problem.includes("hImage.ts"))).toBeFalse();
+    expect(problems.some((problem: string): boolean => problem.includes("cron/delivery.ts:"))).toBeFalse();
 
     await Bun.write(welcomePath,
       'import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient"; function runVerificationEffects() { return sendTemporaryMessageFromMain({purpose: "notice", chatId: 1, text: "welcome", deleteAfterMs: 30000}); }');

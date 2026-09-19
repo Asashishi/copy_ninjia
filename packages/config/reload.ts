@@ -1,7 +1,7 @@
 /**
- * config/ 热重载的主线程判定：按启动总闸同一套严格解析器读取四份可热重载部署
- * 文件（ad_samples.json、agent.json、mood.json、stickers.json），再与主线程已生效
- * 快照比较并整体替换 holder。
+ * config/ 热重载的主线程判定：按启动总闸同一套严格解析器读取五份可热重载部署
+ * 文件（ad_samples.json、agent.json、mood.json、stickers.json、cron.json），再与主线程
+ * 已生效快照比较并整体替换 holder。
  *
  * 判定口径（约束见 docs/cn/04-invariants.md）：
  * - 读不到（ENOENT 以外）或严格解析失败的变更整份拒绝，holder 保留上一份已校验快照；
@@ -12,7 +12,8 @@
  *
  * 一份文件内的变更要么整体生效、要么整体拒绝。拒绝诊断沿用 InputValidationError
  * 口径，只含文件路径、字段路径与期望形态。本模块只读盘并改写主线程 holder；
- * 功能可用性结论的重算、监听、日志与向 Worker 分发由 app/configReload.ts 负责。
+ * 功能可用性结论的重算、cron 调度对账、监听、日志与向 Worker 分发由
+ * app/configReload.ts 负责。
  */
 
 import { adoptAdSampleConfig, loadAdSampleConfig } from "./adSamples";
@@ -21,9 +22,11 @@ import {
   adoptAgentDeploymentConfig,
   loadAgentConfigSnapshots,
 } from "./agent";
+import { adoptCronConfig, loadCronConfig } from "./cron";
 import { adoptMoodConfig, loadMoodConfig } from "./mood";
 import { deploymentInputExists } from "./readiness";
 import { adoptStickerConfig, loadStickerConfig } from "./stickers";
+import { cronConfigCache } from "../cache/main/cron";
 import {
   adDetectAgentConfigCache,
   agentDeploymentConfigCache,
@@ -34,9 +37,11 @@ import {
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  CRON_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
+import type { CronConfig } from "../types/cron";
 import type {
   AdSampleConfig,
   AgentConfigSnapshots,
@@ -60,13 +65,14 @@ async function readHotConfig<T>(
   }
 }
 
-/** 按固定顺序逐份读取四份可热重载部署文件；不改写任何 holder。 */
+/** 按固定顺序逐份读取五份可热重载部署文件；不改写任何 holder。 */
 export async function readHotDeploymentConfigs(): Promise<HotDeploymentConfigReads> {
   const adSamples: HotConfigRead<AdSampleConfig> = await readHotConfig(AD_SAMPLES_CONFIG_PATH, loadAdSampleConfig);
   const agent: HotConfigRead<AgentConfigSnapshots> = await readHotConfig(AGENT_CONFIG_PATH, loadAgentConfigSnapshots);
   const mood: HotConfigRead<MoodConfig> = await readHotConfig(MOOD_CONFIG_PATH, loadMoodConfig);
   const stickers: HotConfigRead<StickerConfig> = await readHotConfig(STICKERS_CONFIG_PATH, loadStickerConfig);
-  return { adSamples, agent, mood, stickers };
+  const cron: HotConfigRead<CronConfig> = await readHotConfig(CRON_CONFIG_PATH, loadCronConfig);
+  return { adSamples, agent, mood, stickers, cron };
 }
 
 /** nextFileSnapshot 的入参：本轮读取结果、当前快照与拒绝诊断收集表。 */
@@ -160,12 +166,21 @@ export function applyHotDeploymentConfigs(reads: HotDeploymentConfigReads): HotD
   if (stickers !== undefined) adoptStickerConfig(stickers);
   recordFileOutcome(stickers, STICKERS_CONFIG_PATH, paths);
 
+  const cron: CronConfig | null | undefined = nextFileSnapshot({
+    read: reads.cron,
+    current: cronConfigCache.current,
+    rejections,
+  });
+  if (cron !== undefined) adoptCronConfig(cron);
+  recordFileOutcome(cron, CRON_CONFIG_PATH, paths);
+
   return {
     adDetect: adDetectChanged,
     aiAgent: aiAgentChanged,
     adSamples: adSamples !== undefined,
     mood: mood !== undefined,
     stickers: stickers !== undefined,
+    cron: cron !== undefined,
     reloadedPaths: paths.reloadedPaths,
     removedPaths: paths.removedPaths,
     rejections,

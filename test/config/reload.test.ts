@@ -8,12 +8,15 @@ import {
   defaultStickerConfigCache,
 } from "../../packages/cache/perThread/config";
 import { applyHotDeploymentConfigs, readHotDeploymentConfigs } from "../../packages/config/reload";
+import { cronConfigCache } from "../../packages/cache/main/cron";
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  CRON_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../../packages/consts/paths";
+import type { CronConfig } from "../../packages/types/cron";
 import type {
   AdDetectAgentConfig,
   AdSampleConfig,
@@ -31,6 +34,7 @@ interface Baseline {
   readonly agent: AgentDeploymentConfig | null;
   readonly mood: MoodConfig | null;
   readonly stickers: StickerConfig | null;
+  readonly cron: CronConfig | null;
 }
 
 const HOT_PATHS: readonly string[] = [
@@ -38,6 +42,7 @@ const HOT_PATHS: readonly string[] = [
   AGENT_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
+  CRON_CONFIG_PATH,
 ];
 
 let baseline: Baseline;
@@ -52,6 +57,7 @@ beforeAll(async (): Promise<void> => {
     agent: agentDeploymentConfigCache.current,
     mood: defaultMoodConfigCache.current,
     stickers: defaultStickerConfigCache.current,
+    cron: cronConfigCache.current,
   };
 });
 
@@ -62,6 +68,7 @@ afterEach(async (): Promise<void> => {
   agentDeploymentConfigCache.current = baseline.agent;
   defaultMoodConfigCache.current = baseline.mood;
   defaultStickerConfigCache.current = baseline.stickers;
+  cronConfigCache.current = baseline.cron;
 });
 
 async function reload(): Promise<HotDeploymentConfigChanges> {
@@ -85,6 +92,7 @@ describe("config/ 热重载判定", () => {
       adSamples: false,
       mood: false,
       stickers: false,
+      cron: false,
       reloadedPaths: [],
       removedPaths: [],
       rejections: [],
@@ -267,6 +275,31 @@ describe("config/ 热重载判定", () => {
     expect(changes.reloadedPaths).toEqual([]);
     expect(adDetectAgentConfigCache.current).toBeNull();
     expect(agentDeploymentConfigCache.current).toBeNull();
+  });
+
+  test("cron.json：新增任务替换任务表，删除文件换成 null，非法内容整份拒绝", async () => {
+    await writeJson(CRON_CONFIG_PATH, [{
+      name: "daily",
+      chat_id: -1001,
+      cron: "0 9 * * *",
+      actions: [{ type: "send_message", payload: { content: "hi" } }],
+    }]);
+    let changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.cron).toBe(true);
+    expect(changes.reloadedPaths).toEqual([CRON_CONFIG_PATH]);
+    expect(cronConfigCache.current?.map((task) => task.name)).toEqual(["daily"]);
+
+    await writeJson(CRON_CONFIG_PATH, [{ name: "daily", chat_id: -1001, cron: "bad", actions: [] }]);
+    changes = await reload();
+    expect(changes.cron).toBe(false);
+    expect(changes.rejections).toEqual([`${CRON_CONFIG_PATH}: $[0].cron must be a 5-field cron expression or @nickname with a future occurrence.`]);
+    expect(cronConfigCache.current?.map((task) => task.name)).toEqual(["daily"]);
+
+    rmSync(CRON_CONFIG_PATH);
+    changes = await reload();
+    expect(changes.cron).toBe(true);
+    expect(changes.removedPaths).toEqual([CRON_CONFIG_PATH]);
+    expect(cronConfigCache.current).toBeNull();
   });
 
   test("可选能力的增删只替换内容", async () => {

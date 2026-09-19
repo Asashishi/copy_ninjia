@@ -12,12 +12,14 @@ import type {
 const syncAiChatConfig = mock((_changes: HotDeploymentConfigChanges): void => {});
 const resumeAiChat = mock((): void => {});
 const syncAntiRaidAgentConfig = mock((): void => {});
+const reconcileCronSchedule = mock((): void => {});
 const loggerLog = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 const TEST_DEBOUNCE_MS: number = 100;
 
 mock.module("../../packages/aiChat", () => ({ resumeAiChat, syncAiChatConfig }));
 mock.module("../../packages/antiRaid", () => ({ syncAntiRaidAgentConfig }));
+mock.module("../../packages/cron/scheduler", () => ({ reconcileCronSchedule }));
 mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub({ log: loggerLog, error: loggerError }),
 }));
@@ -33,11 +35,14 @@ const {
   defaultStickerConfigCache,
 } = await import("../../packages/cache/perThread/config");
 const { adDetectConfigReadinessCache, aiChatConfigReadinessCache } = await import("../../packages/cache/main/configReadiness");
-const { AD_SAMPLES_CONFIG_PATH, MOOD_CONFIG_PATH, STICKERS_CONFIG_PATH } = await import("../../packages/consts/paths");
+const { AD_SAMPLES_CONFIG_PATH, CRON_CONFIG_PATH, MOOD_CONFIG_PATH, STICKERS_CONFIG_PATH } = await import("../../packages/consts/paths");
+const { cronConfigCache } = await import("../../packages/cache/main/cron");
 
 const originalMoodText: string = await Bun.file(MOOD_CONFIG_PATH).text();
 const originalStickerText: string = await Bun.file(STICKERS_CONFIG_PATH).text();
 const originalAdSampleText: string = await Bun.file(AD_SAMPLES_CONFIG_PATH).text();
+const originalCronText: string = await Bun.file(CRON_CONFIG_PATH).text();
+const originalCron = cronConfigCache.current;
 const originalMood: MoodConfig | null = defaultMoodConfigCache.current;
 const originalStickers: StickerConfig | null = defaultStickerConfigCache.current;
 const originalAdSamples: AdSampleConfig | null = defaultAdSampleConfigCache.current;
@@ -57,6 +62,7 @@ beforeEach((): void => {
   resumeAiChat.mockClear();
   resumeAiChat.mockImplementation((): void => {});
   syncAntiRaidAgentConfig.mockClear();
+  reconcileCronSchedule.mockClear();
   loggerLog.mockClear();
   loggerError.mockClear();
 });
@@ -66,6 +72,8 @@ afterEach(async (): Promise<void> => {
   await Bun.write(MOOD_CONFIG_PATH, originalMoodText);
   await Bun.write(STICKERS_CONFIG_PATH, originalStickerText);
   await Bun.write(AD_SAMPLES_CONFIG_PATH, originalAdSampleText);
+  await Bun.write(CRON_CONFIG_PATH, originalCronText);
+  cronConfigCache.current = originalCron;
   defaultMoodConfigCache.current = originalMood;
   defaultStickerConfigCache.current = originalStickers;
   defaultAdSampleConfigCache.current = originalAdSamples;
@@ -205,6 +213,23 @@ describe("config/ 目录监听", () => {
     expect(await waitUntil((): boolean => published(adDetectConfigReadinessCache).ok)).toBe(true);
     expect(syncAntiRaidAgentConfig).toHaveBeenCalledTimes(2);
     expect(loggerLog).toHaveBeenCalledWith("Ad detection became available after a deployment config reload.");
+  });
+
+  test("cron.json 变化后对账定时任务；其它文件变化不碰调度", async () => {
+    startConfigReload();
+    await settle();
+    await Bun.write(MOOD_CONFIG_PATH, moodDocument("平静"));
+    expect(await waitUntil((): boolean => syncAiChatConfig.mock.calls.length > 0)).toBe(true);
+    expect(reconcileCronSchedule).not.toHaveBeenCalled();
+
+    await Bun.write(CRON_CONFIG_PATH, `${JSON.stringify([{
+      name: "daily",
+      chat_id: -1001,
+      cron: "0 9 * * *",
+      actions: [{ type: "send_message", payload: { content: "hi" } }],
+    }])}\n`);
+    expect(await waitUntil((): boolean => reconcileCronSchedule.mock.calls.length > 0)).toBe(true);
+    expect(cronConfigCache.current?.[0]?.name).toBe("daily");
   });
 
   test("停止后不再接纳事件，watcher 与 timer 均已释放", async () => {

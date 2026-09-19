@@ -83,7 +83,7 @@
   `deploymentInputExists` 只把 ENOENT 当作「真的没配」：断链软链接与无权访问都算「已配置但非法」，照旧拒绝启动。一次只报第一个坏掉的输入：几份同时坏的概率远低于「照着第一条改完再重启」，堆在一起只会让真正要修的那条更难认。
 - **`config/` 热重载按文件替换已生效配置，文件与段的增删直接改变功能可用性。**主线程 owner 是 `packages/app/configReload.ts`：AI 闲聊与 Anti-Raid 初始化之后才以 `node:fs` 的 `watch` 监听整个 `config/` 目录，建立后立即对账一轮；每个目录事件重新武装 500 ms 防抖 timer，到期后由最新值执行器串行执行一轮，一轮在途时到达的事件合并成至多一轮补跑。watcher 与 timer 均 unref；watcher 建立失败或运行中出错时记一行错误日志，本进程余下时间不再热重载，已生效配置照常运行。停机维护关闸（`quiesceLifecycleMaintenance`）停止接纳事件，在途读取结束后不再分发。
 
-  判定在 `packages/config/reload.ts`，只覆盖 `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`，使用启动总闸同一套严格解析器，每份文件整体生效或整体拒绝：读不到或解析失败时整份拒绝，holder 保留上一份已校验快照；文件真正不存在是合法状态：被删除的文件对应 holder 换成 `null`，运行期出现的文件按新内容填充，`agent.json` 的 `ad_detect` 段与 `text`/`summary`/`media` 核心段各自独立判定；与当前快照深相等时不替换，holder 对象身份不变。每条拒绝记一行英文错误日志，只含文件路径、字段路径与期望形态。`image`/`song` 等可选能力的增删只是内容替换。
+  判定在 `packages/config/reload.ts`，只覆盖 `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`，使用启动总闸同一套严格解析器，每份文件整体生效或整体拒绝：读不到或解析失败时整份拒绝，holder 保留上一份已校验快照；文件真正不存在是合法状态：被删除的文件对应 holder 换成 `null`，运行期出现的文件按新内容填充，`agent.json` 的 `ad_detect` 段与 `text`/`summary`/`media` 核心段各自独立判定；与当前快照深相等时不替换，holder 对象身份不变。每条拒绝记一行英文错误日志，只含文件路径、字段路径与期望形态。`image`/`song` 等可选能力的增删只是内容替换。
 
   每轮应用 holder 之后，`packages/app/configReload.ts` 按 holder 重算 AI 闲聊与广告检测两条 readiness（`packages/config/readiness.ts` 的 `aiChatReadinessFromHolders` / `adDetectReadinessFromHolders`，判据与启动 probe 相同），可用性或失败文件变化时整体替换 `cache/main/configReadiness.ts` 的结论对象；每条群消息的门禁仍只读一次 holder、零分配。读盘之后的判定、发布与分发全部同步完成。转为不可用时先发布结论，投喂与对应 enable 命令随即关闭，持久化的群开关保持原值；AI Worker 不终止而是闲置，记忆照常持久化。AI 闲聊转为可用时先由 `packages/aiChat/hydration.ts` 的 `resumeAiChat` 恢复 Worker——已在运行则投递完整 `configReload`，从未启动则按启动顺序投递 `init`、群人设、记忆与贴纸目录镜像——成功后才发布可用；失败则保持不可用、记错误日志，下一次 `config/` 事件重试。广告检测可用性变化时重投 `agentConfig`，不可用时示例清单为 `null`。启动时 AI 前提不可用，恢复出的记忆与贴纸目录只写进主线程镜像、既不投递也不删除；`/clear_context`、`/ai_chat disable` 与群 teardown 照常经 `requestAiMemoryDelete` 摘除镜像条目，恢复时按群开关投递或删除。`g-auth.json` 与 `prompt/persona.md` 不热重载，翻译结论只在启动时判定。
 
@@ -467,6 +467,15 @@
 - 抽取（`pickRandomImage`）每次重新枚举目录、不缓存列表：候选只有扩展名在 `RANDOM_IMAGE_EXTENSIONS` 里的非隐藏普通文件（`Dirent.isFile()`，符号链接与子目录不算），均匀随机抽一张；大小先经 `Bun.file().stat()` 判定，超过 `RANDOM_IMAGE_MAX_BYTES`（10 MB，Telegram 图片上传上限）只报超限、不读入内存。
 - update runner 严格串行，`/h_image` 不在 handler 里等待目录枚举与上传：参数校验后同步交给 `cache/main/hImage.ts` 持有的 `createPrioritizedBoundedTaskRunner`（在途 2、等待 16）即返回，满额直接回忙碌提示；每项恢复接纳时的 update 取消上下文并合入运行时停止信号，口径同 `/wed`。停机维护关闸先停止接纳，排空表里的「h_image drain」排在 Telegram 总闸之前、在预算内等待，超时取消排队与在途请求；它不参与共享数据落盘闸门。
 - `commands/hImage.ts` 的 `sendHImageResult` 是结果图片的唯一发送边界（`check:conventions` 禁止 `commands/` 下其它位置调用 `sendPhotoWithResult`）。结果图片是用户授权的长期保留例外，不挂固定延迟删除，论坛群带触发消息所在话题并回复触发消息；用法、忙碌与失败提示一律走 `sendCommandMessage`，30 秒后删除。
+
+### `cron.json` 定时任务
+
+- 解析在 `packages/config/cron.ts`：`parseCronConfig` 只做形态、取值与路径的词法判定，不做 I/O；`loadCronConfig` 读盘后再用 `realpath` 核对 `payload.path` 的真实落点不出 `config/cron_files/`、类型相符。任务数、动作数与任务名长度都有上限（`CRON_MAX_TASKS`、`CRON_MAX_ACTIONS_PER_TASK`、`CRON_TASK_NAME_MAX_CHARS`），超出即拒绝而不截断；`cron` 与 `tz` 由 `Bun.cron.parse` 判定，没有将来触发时间的表达式同样拒绝；`just_once` 与 `rand_cron` 互斥；来源恰好一个。解析结果字段固定、一次写齐，热重载按任务名与深相等对账。
+- 调度在主线程 `packages/cron/scheduler.ts`，状态在 `cache/main/cron.ts`。每个任务一个 Bun 原生进程内 cron（任务时区、unref），handler 返回本轮 Promise，Bun 在结算后才排下一次，同一任务不重叠；handler 自己吞掉全部异常，不能让 `unhandledRejection` 触发紧急退出。`just_once` 首次触发即停并登记记录；`rand_cron` 首次按 cron 触发后停掉 cron，之后每轮结束用一个 unref 的 `setTimeout` 在区间内均匀随机等待（上限 24 天，低于单个 timer 能表达的范围）。
+- 对账：深相等的任务保留句柄与计时；变更或删除的任务停止调度并标记撤销，在途一轮不打断当前请求、在下一个动作或重试前停下；新增的任务登记。just_once 记录放在有界 LRU（`CRON_JUST_ONCE_RECORD_MAX`），任务仍是 just_once 时保留、转为周期任务即清除，当前任务表里的名字每轮刷新。记录与随机计时都不持久化，停机期间错过的触发不补发。
+- 执行（`packages/cron/run.ts`）：动作按顺序、间隔 1 秒；网络错误、5xx 与出站队列满按 2/4/8 秒退避最多重试 3 次，其余失败不重试；最终失败记一条英文错误日志并中止本轮剩余动作。重试可能在超时误判时重复发送。
+- `packages/cron/delivery.ts` 是唯一发送边界（`check:conventions` 禁止 `packages/cron/` 其它文件发送），经主线程 grammY 客户端走 throttler 与 429 分类闸，不设 `parse_mode`，成功后登记自发消息。cron 消息是用户授权的长期保留例外，不挂固定延迟删除。`url` 原样交给 Telegram 拉取，本机不下载；本地文件先按 Telegram 上传上限（图片 10 MB、文件 50 MB）判超限，上传源是每次序列化都重新打开的 `Bun.file().stream()`，429 重放不会拿到读完的流；`rand_image` 复用 `infra/randomImage.ts`，每次尝试重新抽取。
+- 生命周期：启动总闸在文件存在时严格加载；调度器在 `startConfigReload` 之前启动；维护关闸先停止接纳并停掉全部 cron 与 timer，排空表里的「cron drain」排在 Telegram 总闸之前，超时取消在途请求，不参与共享数据落盘闸门。
 
 ### 回复与响应体的资源边界
 

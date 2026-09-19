@@ -33,6 +33,7 @@ import {
   ensureAgentDeploymentConfig,
   validateAgentDeploymentConfig,
 } from "./agent";
+import { ensureCronConfig } from "./cron";
 import { ensurePersona } from "./persona";
 import {
   adDetectConfigReadinessCache,
@@ -50,6 +51,7 @@ import {
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  CRON_CONFIG_PATH,
   GOOGLE_AUTH_FILE_PATH,
   MOOD_CONFIG_PATH,
   PERSONA_PATH,
@@ -244,6 +246,7 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
     { path: AGENT_CONFIG_PATH, load: validateAgentDeploymentConfig },
     { path: GOOGLE_AUTH_FILE_PATH, load: validateAndCacheGoogleServiceAccountKey },
     { path: PERSONA_PATH, load: ensurePersona },
+    { path: CRON_CONFIG_PATH, load: ensureCronConfig },
   ];
   for (const probe of probes) {
     if (await deploymentInputExists(probe.path)) await probe.load();

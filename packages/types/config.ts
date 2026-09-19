@@ -3,6 +3,7 @@
  * 缓存 holder 见 packages/cache/perThread/config.ts）。
  */
 
+import type { CronConfig } from "./cron";
 import type { MoodOption } from "./aiChat/mood";
 
 /** stickers.json 的严格结构。 */
@@ -136,12 +137,13 @@ export type HotConfigRead<T> =
   | { readonly kind: "loaded"; readonly value: T }
   | { readonly kind: "invalid"; readonly reason: string };
 
-/** config/reload.ts 对四份可热重载部署文件的一轮读取。 */
+/** config/reload.ts 对五份可热重载部署文件的一轮读取。 */
 export interface HotDeploymentConfigReads {
   readonly adSamples: HotConfigRead<AdSampleConfig>;
   readonly agent: HotConfigRead<AgentConfigSnapshots>;
   readonly mood: HotConfigRead<MoodConfig>;
   readonly stickers: HotConfigRead<StickerConfig>;
+  readonly cron: HotConfigRead<CronConfig>;
 }
 
 /**
@@ -156,6 +158,8 @@ export interface HotDeploymentConfigChanges {
   readonly adSamples: boolean;
   readonly mood: boolean;
   readonly stickers: boolean;
+  /** cron.json 的任务表已替换。 */
+  readonly cron: boolean;
   /** 仍然存在、且至少替换了一份快照的文件路径。 */
   readonly reloadedPaths: readonly string[];
   /** 本轮被删除、对应快照已清空的文件路径。 */

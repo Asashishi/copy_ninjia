@@ -19,8 +19,8 @@ done
 
 既存 file を上書きする copy command を使わず、`config_example/` を deployment backup として
 扱わないでください。`config/` には credential が含まれるため、service account だけが読める
-権限を推奨します。稼働中の `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` の
-変更は hot reload され、それ以外の file は変更後に再起動が必要です（下記「稼働中の変更」）。allowlist、
+権限を推奨します。稼働中の `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
+`cron.json` の変更は hot reload され、それ以外の file は変更後に再起動が必要です（下記「稼働中の変更」）。allowlist、
 blocklist、未完了 removal は deployment 設定ではなく runtime data であり、
 `database/storage.sqlite` にまとめて保存し、command または明示 migration script だけで変更します。
 
@@ -38,6 +38,7 @@ blocklist、未完了 removal は deployment 設定ではなく runtime data で
 | `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `cron.json` | 定時送信タスク（テキスト・画像・ファイル） | 定時タスクなし |
 | `g-auth.json` | `/translate` 用の Google Cloud service account key。例は placeholder だけで、実 key はデプロイ側が帯域外で `config/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
 
 AI chat はこのディレクトリにない `prompt/persona.md` にも依存します。optional file が存在するのに
@@ -45,8 +46,8 @@ AI chat はこのディレクトリにない `prompt/persona.md` にも依存し
 
 ## 稼働中の変更
 
-bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`
-を最後に保存してから約 0.5 秒後に、起動時と同じ strict schema で parse し直します。
+bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
+`cron.json` を最後に保存してから約 0.5 秒後に、起動時と同じ strict schema で parse し直します。
 
 - parse が通り内容が変わっていれば snapshot を差し替えて関係する Worker に渡し、log に
   `Reloaded deployment config <path>.` を 1 行残します。実行中の model request は旧設定で完了します。
@@ -61,6 +62,9 @@ bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.
   提示されなくなり、その catalog は次回 startup 時に allowlist に沿って整理されます。
 - `mood.json` に残っている mood は各 chat に即時反映し、現在の mood が削除された chat は次に
   使うときに引き直します。
+- `cron.json` はタスク名で照合します。内容が変わらないタスクは元のタイミングを保ち、変更・
+  削除されたタスクはスケジュールを止め（実行中の回は次の動作の前で止まります）、新しいタスクは
+  スケジュールを始めます。ファイルを削除するとすべてのタスクが消えます。
 
 `telegram.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が
 必要です。
@@ -182,3 +186,69 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 `type` は存在する場合 `service_account` に限ります。`private_key_id`、`project_id`、
 `quota_project_id`、`universe_domain` は存在する場合に非空 string でなければならず、その他の
 公式 field はそのまま SDK に渡します。installer はこの例から file を作りません。
+
+## `cron.json`
+
+トップレベルはタスクの配列で、ファイルが無いか `[]` なら定時タスクはありません。strict JSON
+のためコメントは書けません。
+
+```json
+[
+  {
+    "name": "daily-greeting",
+    "chat_id": -1001234567890,
+    "message_thread_id": 12,
+    "cron": "0 9 * * *",
+    "tz": "Asia/Tokyo",
+    "rand_cron": "6h-24h",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "おはよう" } },
+      { "type": "send_image", "payload": { "content": "今日の一枚", "rand_image": true } },
+      { "type": "send_image", "payload": { "url": "https://example.com/a.png" } },
+      { "type": "send_file", "payload": { "content": "週報", "path": "report.pdf" } }
+    ]
+  }
+]
+```
+
+| フィールド | 必須 | 規則 |
+| --- | --- | --- |
+| `name` | はい | 空でなく 64 文字以内、ファイル内で一意。タスクの識別子で、名前を変えると別タスク |
+| `chat_id` | はい | 送信先 chat id（0 以外の整数） |
+| `message_thread_id` | いいえ | フォーラムのトピック id。無ければ General に送る |
+| `cron` | はい | 5 フィールドの式か `@daily` などの別名。将来の発火時刻が必要 |
+| `tz` | いいえ | IANA タイムゾーン。既定 `Asia/Tokyo` |
+| `rand_cron` | いいえ | `"<最短>-<最長>"` または単一値（`1m-<値>` と同じ）。単位 m/h/d、範囲 1m–24d。初回は `cron` に従い、以後は各回の終了後に範囲内でランダムに待つ |
+| `just_once` | いいえ | `true` なら 1 回だけ実行し、再起動するまで再登録しない。`rand_cron` とは併用不可 |
+| `actions` | はい | 1–16 個の動作。順に実行し、隣り合う動作の間は 1 秒 |
+
+動作の `type` と `payload`：
+
+- `send_message`：`content` 必須、最大 4096 文字。
+- `send_image`：`content` は任意（最大 1024 文字）。送信元はちょうど 1 つで、`url` か `path`
+  （ファイル）。`rand_image: true` ならディレクトリから 1 枚を抽選し、`path` はディレクトリを
+  指し、省略時は `state.json` の `global.assets.randomImageDir`（`/h_image` と同じ）を使います。
+  このとき `url` は書けません。
+- `send_file`：`content` は任意（最大 1024 文字）。送信元は `url` か `path` のちょうど 1 つ。
+
+`path` は `config/cron_files/` からの相対パスで、絶対パスや `..` は不可、シンボリックリンクを
+解決した後もこのディレクトリの外に出てはいけません。読み込み時にファイルやディレクトリの存在を
+確認します。`url` はそのまま Telegram に渡し、Bot はダウンロードしません。URL 送信では Telegram
+の上限が画像 5 MB・その他 20 MB で、ファイルの URL 送信で確実なのは PDF・ZIP・GIF だけです。
+それ以外の形式で送れないのは設定の問題です。ローカルからのアップロード上限は画像 10 MB、
+ファイル 50 MB です。
+
+実行時の振る舞い：
+
+- 同じタスクの回が重なることはなく、停止中に逃した発火は補いません。`just_once` の実行記録と
+  `rand_cron` の待ち時間はメモリだけにあり、再起動するとやり直しです。
+- ネットワーク、Telegram の 5xx、送信キュー満杯で失敗した動作は 2・4・8 秒の間隔で最大 3 回
+  再試行します。それ以外（Telegram の 4xx、グループからの削除、ローカルファイルの削除など）は
+  再試行しません。最終的に失敗すると `Cron task "<name>" action #<n> ...` をログに 1 行残し、
+  その回の残りの動作を飛ばします。タイムアウトしても Telegram 側に届いていた場合、再試行で
+  重複して送られます。
+- 定時メッセージは残し、30 秒削除は掛けません。すべての要求は Bot の通常の送信レート制御と
+  429 の待機を通ります。
+- 送信先のグループで `/init` は不要です。Bot がそこから削除されると、発火のたびにエラーを
+  ログに残します。
+

@@ -17,7 +17,7 @@ done
 
 不要使用会覆盖已有文件的复制命令，也不要把 `config_example/` 当作部署配置的备份。
 `config/` 中包含凭据，建议只允许服务账号读取。运行中修改 `ad_samples.json`、
-`agent.json`、`mood.json`、`stickers.json` 会热重载，其余文件修改后必须重启，详见下文
+`agent.json`、`mood.json`、`stickers.json`、`cron.json` 会热重载，其余文件修改后必须重启，详见下文
 「运行中修改」。白名单、黑名单和待完成处置不属于部署配置，统一保存在运行时数据根的
 `database/storage.sqlite`，只通过命令和显式迁移脚本修改。
 
@@ -34,6 +34,7 @@ done
 | `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `cron.json` | 定时发送任务（文字、图片、文件） | 没有定时任务 |
 | `g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；示例只有占位值，真实密钥由部署方带外放入 `config/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
 
 AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文件已经存在但内容非法时，
@@ -41,8 +42,8 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 
 ## 运行中修改
 
-机器人监听 `config/`。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`
-最后一次保存约 0.5 秒后，按启动时同一套严格 schema 重新解析：
+机器人监听 `config/`。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
+`cron.json` 最后一次保存约 0.5 秒后，按启动时同一套严格 schema 重新解析：
 
 - 解析通过且内容有变化：替换快照并投给相关 Worker，日志记一行
   `Reloaded deployment config <路径>.`；在途的模型请求按旧配置完成。
@@ -55,6 +56,8 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 - `stickers.json` 新加入的贴纸包立即开始生成目录；移出的包不再供 AI 使用，其目录在
   下次重启时按白名单清理。
 - `mood.json` 中仍然存在的心情对各群立即生效；当前心情已被删除的群在下次用到时重抽。
+- `cron.json` 按任务名对账：内容没变的任务保留原有计时；改动或删除的任务停止调度，正在
+  执行的那一轮在下一个动作前停下；新增的任务开始调度。删除文件等于清空全部任务。
 
 `telegram.json`、`prompt/persona.md` 与 `g-auth.json` 不热重载，修改后须重启。
 
@@ -168,3 +171,62 @@ Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限�
 RSA PEM 私钥；`type` 存在时只能是 `service_account`；`private_key_id`、`project_id`、
 `quota_project_id`、`universe_domain` 存在时必须是非空字符串；其余官方字段原样交给
 SDK。安装器不会从示例生成这个文件。
+
+## `cron.json`
+
+顶层是任务数组，缺省或 `[]` 表示没有定时任务。严格 JSON，不能写注释。
+
+```json
+[
+  {
+    "name": "daily-greeting",
+    "chat_id": -1001234567890,
+    "message_thread_id": 12,
+    "cron": "0 9 * * *",
+    "tz": "Asia/Tokyo",
+    "rand_cron": "6h-24h",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "早上好" } },
+      { "type": "send_image", "payload": { "content": "今日图", "rand_image": true } },
+      { "type": "send_image", "payload": { "url": "https://example.com/a.png" } },
+      { "type": "send_file", "payload": { "content": "周报", "path": "report.pdf" } }
+    ]
+  }
+]
+```
+
+| 字段 | 必填 | 规则 |
+| --- | --- | --- |
+| `name` | 是 | 非空、不超过 64 字符、全文件唯一；是任务身份，改名等于新任务 |
+| `chat_id` | 是 | 目标会话 id（非零整数） |
+| `message_thread_id` | 否 | 论坛群的话题 id；不写则落在 General |
+| `cron` | 是 | 5 段表达式或 `@daily` 这类写法；必须还有将来的触发时间 |
+| `tz` | 否 | IANA 时区，缺省 `Asia/Tokyo` |
+| `rand_cron` | 否 | `"<最短>-<最长>"` 或单值（等于 `1m-<值>`），单位 m/h/d，范围 1m–24d；首次按 `cron` 触发，之后每轮结束再在区间内随机等待 |
+| `just_once` | 否 | `true` 时只执行一次，重启后才会再次登记；不能与 `rand_cron` 同时使用 |
+| `actions` | 是 | 1–16 个动作，按顺序执行，相邻两个间隔 1 秒 |
+
+动作的 `type` 与 `payload`：
+
+- `send_message`：`content` 必填，最长 4096 字符。
+- `send_image`：`content` 可选（最长 1024 字符）。来源恰好一个：`url`，或 `path`（文件）；
+  `rand_image: true` 时改为从目录随机抽一张，`path` 写目录，省略则用 `state.json` 的
+  `global.assets.randomImageDir`（与 `/h_image` 同源），这时不能写 `url`。
+- `send_file`：`content` 可选（最长 1024 字符），来源恰好一个 `url` 或 `path`。
+
+`path` 是 `config/cron_files/` 下的相对路径，不能是绝对路径、不能含 `..`、经符号链接解析后
+也不能跑出这个目录；加载时就检查文件或目录是否存在。`url` 原样交给 Telegram 去拉取，本机
+不下载：按地址发送时 Telegram 限制图片 5 MB、其它文件 20 MB，发送文件时只保证 PDF、ZIP、
+GIF 可用，其余类型发不出去属于配置问题。本地上传的上限是图片 10 MB、文件 50 MB。
+
+执行语义：
+
+- 同一任务的两轮不会重叠；停机期间错过的触发不补发。`just_once` 的执行记录与 `rand_cron`
+  的随机等待都只在内存里，重启后重新开始。
+- 某个动作因网络、Telegram 5xx 或出站队列满失败时，按 2、4、8 秒退避最多重试 3 次；
+  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删）不重试。最终失败时日志记一条
+  `Cron task "<name>" action #<n> ...`，并跳过本轮剩下的动作。超时但 Telegram 实际已收到时，
+  重试会重复发送一条。
+- 定时消息长期保留，不做 30 秒删除；全部请求照常经过机器人的发送限速与 429 退避。
+- 不要求目标群已 `/init`；机器人被移出目标群后，每次触发都会记一条错误日志。
+

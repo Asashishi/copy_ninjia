@@ -17,6 +17,7 @@ import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../commands/wed/runtime";
 import { drainHImageRuntime, initHImageRuntime, quiesceHImageRuntime } from "../commands/hImage";
 import { ensureRandomImageDirectory } from "../infra/randomImage";
+import { drainCronScheduler, quiesceCronScheduler, startCronScheduler } from "../cron/scheduler";
 import { hydrateWedMembers } from "../commands/wed/persistence";
 import { enableWedMemberReview } from "../commands/wed/memberReview";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../translate/client";
@@ -81,6 +82,7 @@ export const lifecycleDependencies = {
   drainGagRuntime,
   drainWedRuntime,
   drainHImageRuntime,
+  drainCronScheduler,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -127,6 +129,7 @@ export const lifecycleDependencies = {
   quiesceGagRuntime,
   quiesceWedRuntime,
   quiesceHImageRuntime,
+  quiesceCronScheduler,
   quiesceBlocklistSweepScheduler,
   quiesceConfigReload,
   quiesceTranslate,
@@ -136,6 +139,7 @@ export const lifecycleDependencies = {
   setStatePersistenceFatalHandler,
   sleep,
   startConfigReload,
+  startCronScheduler,
   sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,

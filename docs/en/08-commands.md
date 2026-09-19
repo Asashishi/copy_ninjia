@@ -184,4 +184,5 @@ Once the group has run `/init enable`, anyone can send `/h_image` (no arguments)
 
 - **Source**: only `jpg`, `jpeg`, `png`, and `webp` files directly inside the directory count; hidden files, subdirectories, and symbolic links do not. The directory is listed afresh on every use, so adding or removing pictures needs no restart.
 - **Retention**: the posted picture stays; it is not deleted after 30 seconds. The usage hint for extra arguments, the busy hint, and the three failure hints (directory missing, no pictures, the drawn picture exceeds 10 MB) are deleted after 30 seconds.
+- It shares the drawing implementation (`packages/infra/randomImage.ts`) with cron tasks' `rand_image`.
 - **Concurrency**: the command returns as soon as it is accepted and does not hold up update processing; drawing and uploading run on a main-thread executor with at most 2 in flight and 16 waiting slots, and a full executor answers "try again later".

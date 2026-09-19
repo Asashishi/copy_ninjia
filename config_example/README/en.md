@@ -19,8 +19,8 @@ done
 
 Never use a copy command that overwrites existing files, and never treat `config_example/` as a
 deployment backup. Files under `config/` contain credentials and should be readable only by the
-service account. Runtime edits to `ad_samples.json`, `agent.json`, `mood.json`, and
-`stickers.json` are hot-reloaded; every other file requires a restart after a change (see
+service account. Runtime edits to `ad_samples.json`, `agent.json`, `mood.json`,
+`stickers.json`, and `cron.json` are hot-reloaded; every other file requires a restart after a change (see
 "Editing While Running" below).
 Allowlist, blocklist, and pending-removal state are runtime data rather than deployment
 configuration; they live together in `database/storage.sqlite` and change only through commands
@@ -40,6 +40,7 @@ configuration. Truly absent optional capabilities follow the feature boundaries 
 | `stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
+| `cron.json` | Scheduled sends (text, pictures, files) | No scheduled tasks |
 | `g-auth.json` | Google Cloud service-account key for `/translate`; the example holds placeholders only, and the operator places the real key in `config/` out of band | Translation cannot be enabled; active translation sessions stop handling messages, but startup still succeeds |
 
 AI chat also needs `prompt/persona.md`, which does not belong in this directory. An optional file
@@ -48,8 +49,8 @@ that exists but is invalid aborts startup even when its feature is currently dis
 ## Editing While Running
 
 The bot watches `config/`. About 0.5 seconds after the last save of `ad_samples.json`,
-`agent.json`, `mood.json`, or `stickers.json`, it re-parses the file with the same strict schema
-used at startup:
+`agent.json`, `mood.json`, `stickers.json`, or `cron.json`, it re-parses the file with the same
+strict schema used at startup:
 
 - Valid content that differs from the current snapshot replaces it and is handed to the Workers
   that use it; the log records `Reloaded deployment config <path>.`. In-flight model requests
@@ -69,6 +70,9 @@ used at startup:
   next restart.
 - Moods that still exist in `mood.json` take effect for every chat immediately; a chat whose
   current mood was removed draws a new one the next time it is used.
+- `cron.json` is reconciled by task name: unchanged tasks keep their timing, changed or removed
+  tasks stop being scheduled (a run in progress stops before its next action), and new tasks
+  start. Deleting the file removes every task.
 
 `telegram.json`, `prompt/persona.md`, and `g-auth.json` are not hot-reloaded and require a
 restart after a change.
@@ -199,3 +203,70 @@ exists only for comparison; its placeholder private key cannot be parsed, so cop
 `private_key_id`, `project_id`, `quota_project_id`, and `universe_domain`, when present, must be
 non-empty strings; the remaining official fields are passed to the SDK as they are. The installer
 never creates this file from the example.
+
+## `cron.json`
+
+The top level is an array of tasks; a missing file or `[]` means no scheduled tasks. It is strict
+JSON, so comments are not allowed.
+
+```json
+[
+  {
+    "name": "daily-greeting",
+    "chat_id": -1001234567890,
+    "message_thread_id": 12,
+    "cron": "0 9 * * *",
+    "tz": "Asia/Tokyo",
+    "rand_cron": "6h-24h",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "Good morning" } },
+      { "type": "send_image", "payload": { "content": "Picture of the day", "rand_image": true } },
+      { "type": "send_image", "payload": { "url": "https://example.com/a.png" } },
+      { "type": "send_file", "payload": { "content": "Weekly report", "path": "report.pdf" } }
+    ]
+  }
+]
+```
+
+| Field | Required | Rules |
+| --- | --- | --- |
+| `name` | Yes | Non-empty, at most 64 characters, unique in the file; it is the task identity, so renaming makes a new task |
+| `chat_id` | Yes | Target chat id (non-zero integer) |
+| `message_thread_id` | No | Forum topic id; without it messages land in General |
+| `cron` | Yes | 5-field expression or a nickname such as `@daily`; it must still have a future occurrence |
+| `tz` | No | IANA time zone, default `Asia/Tokyo` |
+| `rand_cron` | No | `"<min>-<max>"` or a single value (meaning `1m-<value>`), m/h/d units, within 1m–24d; the first run follows `cron`, and after each run the next one waits a random time in the range |
+| `just_once` | No | `true` runs the task once; it is scheduled again only after a restart. Cannot be combined with `rand_cron` |
+| `actions` | Yes | 1–16 actions, run in order with one second between consecutive actions |
+
+Action `type` and `payload`:
+
+- `send_message`: `content` is required, at most 4096 characters.
+- `send_image`: `content` is optional (at most 1024 characters). Exactly one source: `url`, or
+  `path` (a file). With `rand_image: true` one picture is drawn from a directory instead: `path`
+  names the directory, and without it the `global.assets.randomImageDir` of `state.json` is used
+  (the same source as `/h_image`); `url` is not allowed then.
+- `send_file`: `content` is optional (at most 1024 characters); exactly one of `url` or `path`.
+
+`path` is relative to `config/cron_files/`; it cannot be absolute, cannot contain `..`, and must
+not leave that directory after resolving symbolic links. The file or directory must exist when
+the configuration is loaded. `url` is handed to Telegram as-is and never downloaded by the bot:
+Telegram limits URL sends to 5 MB for pictures and 20 MB for other files, and only PDF, ZIP, and
+GIF are guaranteed for files sent by URL — any other type failing is a configuration issue. Local
+uploads are limited to 10 MB for pictures and 50 MB for files.
+
+Runtime behavior:
+
+- Two runs of the same task never overlap, and triggers missed while the bot is down are not
+  made up. `just_once` records and `rand_cron` waits live only in memory and start over after a
+  restart.
+- An action that fails with a network error, a Telegram 5xx, or a full outbound queue is retried
+  up to 3 times with 2, 4, and 8 second back-off; other failures (Telegram 4xx, the bot removed
+  from the chat, a deleted local file) are not retried. A final failure logs one
+  `Cron task "<name>" action #<n> ...` line and skips the rest of that run. When a request times
+  out but Telegram did receive it, the retry sends a duplicate.
+- Scheduled messages stay; they are not deleted after 30 seconds. Every request goes through the
+  bot's usual send throttling and 429 back-off.
+- The target chat does not need `/init`; once the bot has been removed from it, each trigger logs
+  an error.
+

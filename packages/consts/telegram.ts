@@ -146,6 +146,12 @@ export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
  */
 export const TELEGRAM_CAPTION_MAX_CHARS: number = 1024;
 
+/** Telegram 官方 Bot API 图片上传的字节上限（10 MB）；随机图片与 cron 本地图片按它判超限。 */
+export const TELEGRAM_PHOTO_UPLOAD_MAX_BYTES: number = 10 * 1024 * 1024;
+
+/** Telegram 官方 Bot API 其它文件上传的字节上限（50 MB）；cron 本地文件按它判超限。 */
+export const TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES: number = 50 * 1024 * 1024;
+
 /**
  * `deleteMessages` 单次能带的消息 id 数上限，Bot API 本身的硬上限。
  * 超出整批被拒（该接口只有整体成败），因此由调用方按这个数分片。

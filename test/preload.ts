@@ -17,6 +17,7 @@ import { adoptAdSampleConfig, parseAdSampleConfig } from "../packages/config/adS
 import { adoptMoodConfig, parseMoodConfig } from "../packages/config/mood";
 import { adoptPersona } from "../packages/config/persona";
 import { adoptStickerConfig, parseStickerConfig } from "../packages/config/stickers";
+import { adoptCronConfig, parseCronConfig } from "../packages/config/cron";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
@@ -31,6 +32,7 @@ import {
   IDENTITY_DATABASE_PATH,
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  CRON_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   PERSONA_PATH,
   STICKERS_CONFIG_PATH,
@@ -80,6 +82,7 @@ adoptAdSampleConfig(parseAdSampleConfig(JSON.parse(readFileSync(AD_SAMPLES_CONFI
 adoptMoodConfig(parseMoodConfig(JSON.parse(readFileSync(MOOD_CONFIG_PATH, "utf8"))));
 adoptStickerConfig(parseStickerConfig(JSON.parse(readFileSync(STICKERS_CONFIG_PATH, "utf8"))));
 adoptPersona(readFileSync(PERSONA_PATH, "utf8").trim());
+adoptCronConfig(parseCronConfig(JSON.parse(readFileSync(CRON_CONFIG_PATH, "utf8"))));
 aiChatConfigReadinessCache.current = { ok: true };
 adDetectConfigReadinessCache.current = { ok: true };
 translateConfigReadinessCache.current = { ok: true };
