@@ -38,6 +38,9 @@ try {
   const manifest: { readonly version: string } = await Bun.file(join(root, "package.json")).json() as { readonly version: string };
   if (run(["--version"]).trim() !== manifest.version) throw new Error("Binary version must match the packaged manifest.");
   await copyFixtureTree(join(root, "config_example"), join(root, "config"));
+  // 与首次部署一样不物化只示意结构的示例：g-auth.json 的占位私钥会被启动总闸拒绝，
+  // cron.json 的会话 id、地址与本地来源都是假的。
+  for (const name of ["g-auth.json", "cron.json"]) await Bun.file(join(root, "config", name)).delete();
   await Bun.write(join(root, "config/telegram.json"), JSON.stringify({ bot_token: "123456789:binary_test_token", super_admin_user_id: 123456789 }));
   await Bun.write(join(root, "config/agent.json"), JSON.stringify({ agent: {
     text: { provider: "openai", api_key: "binary-test-key", model: "test" },

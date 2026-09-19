@@ -1,1 +1,58 @@
-[]
+[
+  {
+    "name": "weekday-morning-greeting",
+    "chat_id": -1001234567890,
+    "cron": "0 9 * * 1-5",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "早上好，今天也要打起精神来喵~" } }
+    ]
+  },
+  {
+    "name": "forum-topic-evening-digest",
+    "chat_id": -1001234567890,
+    "message_thread_id": 12,
+    "cron": "30 18 * * *",
+    "tz": "Asia/Shanghai",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "今日汇总来啦" } },
+      { "type": "send_image", "payload": { "content": "今日配图", "url": "https://example.com/daily/cover.png" } },
+      { "type": "send_file", "payload": { "content": "今日日报", "url": "https://example.com/daily/report.pdf" } }
+    ]
+  },
+  {
+    "name": "weekly-local-files",
+    "chat_id": -1001234567890,
+    "cron": "0 10 * * 1",
+    "actions": [
+      { "type": "send_image", "payload": { "content": "本周海报", "path": "posters/weekly.png" } },
+      { "type": "send_file", "payload": { "content": "本周周报", "path": "reports/weekly.pdf" } }
+    ]
+  },
+  {
+    "name": "random-library-image",
+    "chat_id": -1009876543210,
+    "cron": "0 12 * * *",
+    "rand_cron": "6h-24h",
+    "actions": [
+      { "type": "send_image", "payload": { "content": "随手抽一张", "rand_image": true } }
+    ]
+  },
+  {
+    "name": "random-folder-image",
+    "chat_id": -1009876543210,
+    "cron": "@daily",
+    "rand_cron": "12h",
+    "actions": [
+      { "type": "send_image", "payload": { "rand_image": true, "path": "gallery" } }
+    ]
+  },
+  {
+    "name": "one-time-maintenance-notice",
+    "chat_id": -1009876543210,
+    "cron": "0 20 * * *",
+    "just_once": true,
+    "actions": [
+      { "type": "send_message", "payload": { "content": "维护通知：今晚 22:00 起停机约半小时" } }
+    ]
+  }
+]

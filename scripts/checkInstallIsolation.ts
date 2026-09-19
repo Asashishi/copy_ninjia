@@ -121,6 +121,10 @@ async function checkInterruptedResume(): Promise<void> {
     !existsSync(join(fixture.configRoot, "g-auth.json")),
     "安装器不得物化翻译凭据示例"
   );
+  assertCondition(
+    !existsSync(join(fixture.configRoot, "cron.json")),
+    "安装器不得物化定时任务示例"
+  );
 }
 
 async function checkSuccessfulReplacement(): Promise<void> {

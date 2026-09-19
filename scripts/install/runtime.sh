@@ -93,6 +93,10 @@ for example_file in config_example/*.json; do
     # 翻译凭据示例只示意结构，占位私钥必然被严格解析拒绝；真实密钥由部署方带外放入。
     continue
   fi
+  if [ "$config_name" = "cron.json" ]; then
+    # 定时任务示例只示意用法：会话 id 与地址都是假的，本地来源也不存在；缺省即没有定时任务。
+    continue
+  fi
   if [ -e "config/${config_name}" ]; then
     # 已有配置一律不覆盖：那是部署方数据，不能被示例值顶掉。
     info "保留 config/${config_name}（已存在）。"
