@@ -3,16 +3,16 @@
  * 文件（ad_samples.json、agent.json、mood.json、stickers.json），再与主线程已生效
  * 快照比较并整体替换 holder。
  *
- * 只替换已生效配置的内容，不改变 config/readiness.ts 的功能可用性结论：
- * - 读不到或严格解析失败的变更整份拒绝，holder 保留上一份已校验快照；
- * - 启动时缺省的文件运行期出现、启动时存在的文件被删除，以及 agent.json 的
- *   ad_detect 段或 text/summary/media 核心段整体增删，都会改变功能可用性，同样
- *   拒绝，须重启由启动总闸重新判定；
+ * 判定口径（约束见 docs/cn/04-invariants.md）：
+ * - 读不到（ENOENT 以外）或严格解析失败的变更整份拒绝，holder 保留上一份已校验快照；
+ * - 文件真正不存在是合法状态：启动时存在的文件被删除，对应 holder 换成 null；启动时
+ *   缺省的文件运行期出现，按新内容填充。agent.json 的 ad_detect 段与对话核心能力段
+ *   同理，各段独立判定；
  * - 与当前快照深相等的内容不替换，holder 对象身份保持不变。
  *
  * 一份文件内的变更要么整体生效、要么整体拒绝。拒绝诊断沿用 InputValidationError
  * 口径，只含文件路径、字段路径与期望形态。本模块只读盘并改写主线程 holder；
- * 监听、日志与向 Worker 分发由 app/configReload.ts 负责。
+ * 功能可用性结论的重算、监听、日志与向 Worker 分发由 app/configReload.ts 负责。
  */
 
 import { adoptAdSampleConfig, loadAdSampleConfig } from "./adSamples";
@@ -37,7 +37,6 @@ import {
   MOOD_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
-import { InputValidationError } from "../libs/inputValidation";
 import type {
   AdSampleConfig,
   AgentConfigSnapshots,
@@ -70,140 +69,105 @@ export async function readHotDeploymentConfigs(): Promise<HotDeploymentConfigRea
   return { adSamples, agent, mood, stickers };
 }
 
-/** 改变功能可用性的变更诊断。 */
-function availabilityRejection(path: string, fieldPath: string, expected: string): string {
-  return new InputValidationError(
-    path,
-    fieldPath,
-    `${expected} as it was at startup; restart the process to change feature availability`
-  ).message;
-}
-
-/** nextFileSnapshot 的入参：本轮读取结果、当前快照、文件路径与拒绝诊断收集表。 */
+/** nextFileSnapshot 的入参：本轮读取结果、当前快照与拒绝诊断收集表。 */
 interface FileSnapshotOptions<T> {
   readonly read: HotConfigRead<T>;
   readonly current: T | null;
-  readonly path: string;
   readonly rejections: string[];
 }
 
-/** 判定单份文件：返回要替换成的新快照；内容不变或被拒绝时返回 null，诊断写入 rejections。 */
-function nextFileSnapshot<T>({ read, current, path, rejections }: FileSnapshotOptions<T>): T | null {
+/**
+ * 判定单份文件要换成的快照：`undefined` 表示保持不变（内容相同、仍然缺省或被拒绝），
+ * `null` 表示文件已被删除，其余为新内容。拒绝诊断写入 rejections。
+ */
+function nextFileSnapshot<T>({ read, current, rejections }: FileSnapshotOptions<T>): T | null | undefined {
   switch (read.kind) {
     case "invalid":
       rejections.push(read.reason);
-      return null;
+      return undefined;
     case "absent":
-      if (current !== null) rejections.push(availabilityRejection(path, "$", "present"));
-      return null;
+      return current === null ? undefined : null;
     case "loaded":
-      if (current === null) {
-        rejections.push(availabilityRejection(path, "$", "absent"));
-        return null;
-      }
-      return Bun.deepEquals(read.value, current) ? null : read.value;
+      return current !== null && Bun.deepEquals(read.value, current) ? undefined : read.value;
   }
 }
 
-/** 判定 agent.json：两段的「配没配」都必须与当前快照一致，否则整份拒绝。 */
-function nextAgentSnapshots(
-  read: HotConfigRead<AgentConfigSnapshots>,
-  current: AgentConfigSnapshots,
-  rejections: string[]
-): AgentConfigSnapshots | null {
-  if (read.kind === "invalid") {
-    rejections.push(read.reason);
-    return null;
-  }
-  // agent.json 缺省时两段都按未配置判定。
-  const next: AgentConfigSnapshots = read.kind === "absent" ? { adDetect: null, agent: null } : read.value;
-  if ((next.adDetect === null) !== (current.adDetect === null)) {
-    rejections.push(availabilityRejection(
-      AGENT_CONFIG_PATH,
-      "$.agent.ad_detect",
-      current.adDetect === null ? "absent" : "configured"
-    ));
-    return null;
-  }
-  if ((next.agent === null) !== (current.agent === null)) {
-    rejections.push(availabilityRejection(
-      AGENT_CONFIG_PATH,
-      "$.agent",
-      current.agent === null ? "without the text, summary and media capabilities" : "configured with text, summary and media"
-    ));
-    return null;
-  }
-  return next;
+/** 一轮热重载里已生效与已删除的文件路径收集表。 */
+interface FileOutcomePaths {
+  readonly reloadedPaths: string[];
+  readonly removedPaths: string[];
+}
+
+/** 把一份文件的判定结果记进生效或删除清单；保持不变时不记。 */
+function recordFileOutcome<T>(next: T | null | undefined, path: string, paths: FileOutcomePaths): void {
+  if (next === undefined) return;
+  if (next === null) paths.removedPaths.push(path);
+  else paths.reloadedPaths.push(path);
 }
 
 /**
  * 把一轮读取结果应用到主线程 holder，返回实际替换了哪些快照。同步执行：判定与
- * 替换之间不让出事件循环，调用方可以紧接着按返回值分发给 Worker。
+ * 替换之间不让出事件循环，调用方可以紧接着按返回值重算可用性并分发给 Worker。
  */
 export function applyHotDeploymentConfigs(reads: HotDeploymentConfigReads): HotDeploymentConfigChanges {
   const rejections: string[] = [];
-  const reloadedPaths: string[] = [];
+  const paths: FileOutcomePaths = { reloadedPaths: [], removedPaths: [] };
 
-  const adSamples: AdSampleConfig | null = nextFileSnapshot({
+  const adSamples: AdSampleConfig | null | undefined = nextFileSnapshot({
     read: reads.adSamples,
     current: defaultAdSampleConfigCache.current,
-    path: AD_SAMPLES_CONFIG_PATH,
     rejections,
   });
-  if (adSamples !== null) {
-    adoptAdSampleConfig(adSamples);
-    reloadedPaths.push(AD_SAMPLES_CONFIG_PATH);
-  }
+  if (adSamples !== undefined) adoptAdSampleConfig(adSamples);
+  recordFileOutcome(adSamples, AD_SAMPLES_CONFIG_PATH, paths);
 
-  const currentAgent: AgentConfigSnapshots = {
-    adDetect: adDetectAgentConfigCache.current,
-    agent: agentDeploymentConfigCache.current,
-  };
-  const agent: AgentConfigSnapshots | null = nextAgentSnapshots(reads.agent, currentAgent, rejections);
   let adDetectChanged: boolean = false;
   let aiAgentChanged: boolean = false;
-  if (agent !== null) {
-    if (!Bun.deepEquals(agent.adDetect, currentAgent.adDetect)) {
-      adoptAdDetectAgentConfig(agent.adDetect);
+  if (reads.agent.kind === "invalid") {
+    rejections.push(reads.agent.reason);
+  } else {
+    // agent.json 缺省时两段都按未配置判定；两段各自与当前快照比较、各自替换。
+    const next: AgentConfigSnapshots = reads.agent.kind === "absent"
+      ? { adDetect: null, agent: null }
+      : reads.agent.value;
+    if (!Bun.deepEquals(next.adDetect, adDetectAgentConfigCache.current)) {
+      adoptAdDetectAgentConfig(next.adDetect);
       adDetectChanged = true;
     }
-    // 两段「配没配」已与当前一致：AI 段有变化时新旧都不是 null。
-    if (agent.agent !== null && !Bun.deepEquals(agent.agent, currentAgent.agent)) {
-      adoptAgentDeploymentConfig(agent.agent);
+    if (!Bun.deepEquals(next.agent, agentDeploymentConfigCache.current)) {
+      adoptAgentDeploymentConfig(next.agent);
       aiAgentChanged = true;
     }
+    if (adDetectChanged || aiAgentChanged) {
+      if (reads.agent.kind === "absent") paths.removedPaths.push(AGENT_CONFIG_PATH);
+      else paths.reloadedPaths.push(AGENT_CONFIG_PATH);
+    }
   }
-  if (adDetectChanged || aiAgentChanged) reloadedPaths.push(AGENT_CONFIG_PATH);
 
-  const mood: MoodConfig | null = nextFileSnapshot({
+  const mood: MoodConfig | null | undefined = nextFileSnapshot({
     read: reads.mood,
     current: defaultMoodConfigCache.current,
-    path: MOOD_CONFIG_PATH,
     rejections,
   });
-  if (mood !== null) {
-    adoptMoodConfig(mood);
-    reloadedPaths.push(MOOD_CONFIG_PATH);
-  }
+  if (mood !== undefined) adoptMoodConfig(mood);
+  recordFileOutcome(mood, MOOD_CONFIG_PATH, paths);
 
-  const stickers: StickerConfig | null = nextFileSnapshot({
+  const stickers: StickerConfig | null | undefined = nextFileSnapshot({
     read: reads.stickers,
     current: defaultStickerConfigCache.current,
-    path: STICKERS_CONFIG_PATH,
     rejections,
   });
-  if (stickers !== null) {
-    adoptStickerConfig(stickers);
-    reloadedPaths.push(STICKERS_CONFIG_PATH);
-  }
+  if (stickers !== undefined) adoptStickerConfig(stickers);
+  recordFileOutcome(stickers, STICKERS_CONFIG_PATH, paths);
 
   return {
     adDetect: adDetectChanged,
     aiAgent: aiAgentChanged,
-    adSamples: adSamples !== null,
-    mood: mood !== null,
-    stickers: stickers !== null,
-    reloadedPaths,
+    adSamples: adSamples !== undefined,
+    mood: mood !== undefined,
+    stickers: stickers !== undefined,
+    reloadedPaths: paths.reloadedPaths,
+    removedPaths: paths.removedPaths,
     rejections,
   };
 }

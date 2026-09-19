@@ -18,9 +18,10 @@ import type {
  * perThread：主线程在启动总闸严格解析后填充权威快照；AI 闲聊 Worker（agent 对话
  * 段、心情、贴纸、人设）与 Anti-Raid Worker（ad_detect 段、广告示例）只 adopt 主
  * 线程投递的副本，自己从不读这些文件。ad_samples.json、agent.json、mood.json 与
- * stickers.json 由主线程热重载（config/reload.ts）整体替换后，再经消息投给持有
- * 副本的 Worker；Worker 崩溃重建时重放主线程当前快照。每个 holder 恒为一个对象，
- * 只整体替换、绝不就地改写——logger 的凭据脱敏按对象身份判断是否重算。
+ * stickers.json 由主线程热重载（config/reload.ts）整体替换（文件删除时换成 null）后，
+ * 再经消息投给持有副本的 Worker；Worker 崩溃重建时重放主线程当前快照。每个 holder
+ * 恒为一个对象或 null，只整体替换、绝不就地改写——logger 的凭据脱敏按对象身份判断
+ * 是否重算。
  *
  * 按功能聚合的可用性结论只有主线程用，因此不在这里，见
  * cache/main/configReadiness.ts。
@@ -52,8 +53,8 @@ export const telegramConfigCache: { current: TelegramConfig | null } = { current
  *
  * 填充时机按线程分两路：
  * - 主线程：启动总闸 validateAgentDeploymentConfig 解析成功后写入；文件在但没有
- *   ad_detect 段时显式写 null。热重载（config/reload.ts）只替换已配置段的内容，
- *   不把 null 变成非 null，也不反过来。
+ *   ad_detect 段时显式写 null。热重载（config/reload.ts）按本轮读到的内容整体
+ *   替换，段或文件被删除时写 null，补上时写新快照。
  * - Anti-Raid Worker：主线程 agentConfig 消息到达时 adopt 写入（含显式 null）；
  *   初始化、热重载与 Worker 崩溃重建各投递一次主线程当前快照，绝不自己读盘。
  *

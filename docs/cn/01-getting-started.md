@@ -103,7 +103,7 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
 
 `config/` 是部署方自己的配置目录，已从 Git 追踪中排除；初次安装从 `config_example/` 复制，之后只改 `config/`，不要直接把示例目录当运行时配置。
 
-运行中修改 `ad_samples.json`、`agent.json`、`mood.json` 与 `stickers.json` 会自动热重载：主线程监听 `config/`，最后一次改动约 0.5 秒后按启动时同一套严格 schema 重新解析，通过后替换快照并投给相关 Worker。解析失败的改动整份拒绝并记一条错误日志，进程继续使用上一份已生效的配置；文件若保持非法，下次重启时启动总闸照样拒绝启动。热重载只替换已生效配置的内容，不改变功能可用性：新增或删除这四份文件、在 `agent.json` 里整段增删 `ad_detect` 或 `text`/`summary`/`media`，都会被拒绝并提示重启。`telegram.json`、`prompt/persona.md` 与 `g-auth.json` 不热重载，修改后须重启。
+运行中修改 `ad_samples.json`、`agent.json`、`mood.json` 与 `stickers.json` 会自动热重载：主线程监听 `config/`，最后一次改动约 0.5 秒后按启动时同一套严格 schema 重新解析，通过后替换快照并投给相关 Worker。解析失败的改动整份拒绝并记一条错误日志，进程继续使用上一份已生效的配置；文件若保持非法，下次重启时启动总闸照样拒绝启动。新增或删除这四份文件、在 `agent.json` 里整段增删 `ad_detect` 或 `text`/`summary`/`media`，会直接改变对应功能的可用性：缺了前提的 AI 闲聊或广告检测立即停用（群开关保持原值），补齐后自动恢复，无需重启。`telegram.json`、`prompt/persona.md` 与 `g-auth.json` 不热重载，修改后须重启。
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI 闲聊的基础人设。

@@ -52,9 +52,11 @@ bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.
   `Reloaded deployment config <path>.` を 1 行残します。実行中の model request は旧設定で完了します。
 - parse に失敗した変更は丸ごと拒否し、file path・field path・期待される形を示す error を
   log に 1 行残して、直前に適用済みの設定を使い続けます。不正なまま残すと次回 startup は拒否されます。
-- 機能の可用性を変える変更も拒否され、再起動が必要です：この 4 file の追加・削除、
-  `agent.json` での `ad_detect` 全体、または `text`・`summary`・`media` のいずれかの追加・削除。
-  `image`・`song` の追加・削除はそのまま反映します。
+- この 4 file の追加・削除、`agent.json` での `ad_detect` 全体、または `text`・`summary`・
+  `media` のいずれかの追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI
+  雑談や広告検出はすぐに停止して理由を log に 1 行残し、グループ switch は元の値のままです。
+  前提が戻れば再起動なしで自動的に再開します。file を削除すると log に
+  `Deployment config <path> was removed.` を残します。`image`・`song` の追加・削除はそのまま反映します。
 - `stickers.json` に新しく加えた pack はすぐに catalog 生成を始めます。外した pack は AI に
   提示されなくなり、その catalog は次回 startup 時に allowlist に沿って整理されます。
 - `mood.json` に残っている mood は各 chat に即時反映し、現在の mood が削除された chat は次に

@@ -35,8 +35,8 @@
   - **代表的なファイル**：`message/`（`triggerPolicy.ts` を含む）、`reactionSync.ts`。
 - **`packages/aiChat/`**
   - **責務**：AI chat のメインスレッド代理と model capability。Worker 監督、
-    memory mirror、availability、provider 実装パッケージ（`gemini/`、`openai/`）と選択、sticker、tool、media を含む。
-  - **代表的なファイル**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
+    memory mirror、起動時と hot reload 時の状態投入、availability、provider 実装パッケージ（`gemini/`、`openai/`）と選択、sticker、tool、media を含む。
+  - **代表的なファイル**：`workerBridge.ts`、`hydration.ts`、`messageIngress.ts`、`memoryMirror.ts`、
     `availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`。
     `index.ts` は薄い公開入口だけを提供。
 - **`packages/antiRaid/`**

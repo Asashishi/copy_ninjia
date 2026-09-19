@@ -328,8 +328,8 @@ export function adoptAdDetectAgentConfig(config: AdDetectAgentConfig | null): vo
   adDetectAgentConfigCache.current = config;
 }
 
-/** 接管已严格校验的 AI 对话能力快照；来源与语义同上。 */
-export function adoptAgentDeploymentConfig(config: AgentDeploymentConfig): void {
+/** 接管已严格校验的 AI 对话能力快照；来源与语义同上，null 表示文件或对话核心能力段已删除。 */
+export function adoptAgentDeploymentConfig(config: AgentDeploymentConfig | null): void {
   agentDeploymentConfigCache.current = config;
 }
 

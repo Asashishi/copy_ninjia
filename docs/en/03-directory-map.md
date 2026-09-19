@@ -36,8 +36,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `message/` (including `triggerPolicy.ts`) and `reactionSync.ts`.
 - **`packages/aiChat/`**
   - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
-    supervision, memory mirror, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
-  - **Representative files**: `workerBridge.ts`, `messageIngress.ts`, `memoryMirror.ts`,
+    supervision, memory mirror, startup and hot-reload hydration, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
+  - **Representative files**: `workerBridge.ts`, `hydration.ts`, `messageIngress.ts`, `memoryMirror.ts`,
     `availability.ts`, `provider.ts`, `gemini/`, `openai/`, and `ai/`;
     `index.ts` is only a thin public entry point.
 - **`packages/antiRaid/`**

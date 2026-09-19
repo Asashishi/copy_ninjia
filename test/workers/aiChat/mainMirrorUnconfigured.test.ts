@@ -5,7 +5,8 @@ import { diskIOStub } from "../../helpers/diskIOMock";
  *
  * 这里守的是一条会造成不可逆数据损失的边：hydrate 那条路把「本群没开 AI 闲聊」
  * 当成删除磁盘记忆的依据，而配置不可用时每个群看起来都是关的——一次配置失误后的
- * 重启就会把 memory/ 里所有群的 AI 记忆一起删光，修好配置也找不回来。
+ * 重启就会把 memory/ 里所有群的 AI 记忆一起删光，修好配置也找不回来。配置不可用
+ * 时记忆只进镜像；热重载补齐前提后 resumeAiChat 才按群开关投递或删除。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -62,6 +63,8 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
 
 const aiChat = await import("../../../packages/aiChat");
 const {
+  aiChatBotInfo,
+  aiChatWorkerState,
   lastInitState,
   latestAiMemories,
   latestAiMemoryRevisions,
@@ -76,6 +79,8 @@ beforeEach(() => {
   initWorker.mockClear();
   loggerLog.mockClear();
   lastInitState.current = null;
+  aiChatBotInfo.current = null;
+  aiChatWorkerState.available = false;
   latestAiMemories.clear();
   latestAiMemoryRevisions.clear();
   aiMemoryRevisionCounters.clear();
@@ -95,7 +100,7 @@ describe("AI main-thread proxy with unavailable agent config", () => {
     expect(loggerLog).toHaveBeenCalledTimes(1);
   });
 
-  test("hydrate 一条都不删：磁盘上的 AI 记忆原样留到配置修好并重启", () => {
+  test("hydrate 一条都不删也不投递，只把恢复出的记忆与贴纸目录记进镜像", () => {
     aiEnabledChats.add(-1002);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
@@ -110,8 +115,46 @@ describe("AI main-thread proxy with unavailable agent config", () => {
     // 安排 durable 删除（见 mainMirrorRecovery.test.ts），这里一条都不该有。
     expect(diskPosts).toEqual([]);
     expect(pendingAiMemoryDeletes.size).toBe(0);
-    expect(latestAiMemories.size).toBe(0);
-    expect(latestStickerCatalogs.size).toBe(0);
+    expect([...latestAiMemories]).toEqual([[-1001, "disabled-memory"], [-1002, "enabled-memory"]]);
+    expect([...latestStickerCatalogs]).toEqual([["pack_a", "restored-catalog"]]);
+  });
+
+  test("热重载补齐前提后 resumeAiChat 按启动顺序拉起 Worker，并按群开关投递或删除镜像", () => {
+    aiEnabledChats.add(-1002);
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    aiChat.hydrateAiMemory(new Map([
+      [-1001, "disabled-memory"],
+      [-1002, "enabled-memory"],
+    ]));
+    aiChat.hydrateStickerCatalog(new Map([["pack_a", "restored-catalog"]]));
+
+    aiChat.resumeAiChat();
+
+    expect(initWorker).toHaveBeenCalledTimes(1);
+    expect(workerPosts.map((message: AiChatWorkerMessage): string => message.type)).toEqual([
+      "init",
+      "hydrate",
+      "hydrateStickerCatalog",
+    ]);
+    expect(workerPosts[0]).toMatchObject({
+      type: "init",
+      botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" },
+    });
+    expect(workerPosts[1]).toEqual({ type: "hydrate", memories: new Map([[-1002, "enabled-memory"]]) });
+    expect(workerPosts[2]).toEqual({
+      type: "hydrateStickerCatalog",
+      catalogs: new Map([["pack_a", "restored-catalog"]]),
+    });
+    expect(diskPosts).toMatchObject([{ type: "deleteAiMemory", chatId: -1001 }]);
+    expect(latestAiMemories.has(-1001)).toBe(false);
+    expect(lastInitState.current).toBe(workerPosts[0] as typeof lastInitState.current);
+    expect(aiChatWorkerState.available).toBe(true);
+  });
+
+  test("还没记下机器人身份时 resumeAiChat 拒绝启动，不建线程", () => {
+    expect(() => aiChat.resumeAiChat()).toThrow("AI chat cannot start before initAiChat recorded the bot identity.");
+    expect(initWorker).not.toHaveBeenCalled();
+    expect(workerPosts).toEqual([]);
   });
 
   test("停机 flush 直接结算成 flushed，不因线程没起而卡住预算", async () => {

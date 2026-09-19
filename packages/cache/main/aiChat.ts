@@ -1,7 +1,7 @@
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import { createFlushBarrier } from "../../libs/flushBarrier";
 import type { AiMemoryUsage } from "../../types/aiChat/memory";
-import type { AiInitMessage } from "../../types/aiChat/protocol";
+import type { AiBotInfo, AiInitMessage } from "../../types/aiChat/protocol";
 import type {
   AiChatInvalidateWaiter,
   AiMemoryDeleteWaiter,
@@ -23,6 +23,15 @@ export const aiMemoryFlushBarrier: ReturnType<typeof createFlushBarrier> = creat
  *  不知道机器人自己的账号身份），见 aiChat/workerBridge.ts 的 initAiChat 与
  *  onRespawn。 */
 export const lastInitState: { current: AiInitMessage | null } = { current: null };
+/**
+ * 机器人自己的账号身份，供 AI Worker 在运行期首次启动时组装 init 消息。
+ *
+ * 填充：启动时 initAiChat 无论配置是否可用都写入一次（bot.init() 之后）。
+ * 使用：config/ 热重载让 AI 闲聊从「启动时就不可用」变为可用时，
+ * aiChat/hydration.ts 的 resumeAiChat 据此启动 Worker。清理：无，进程重启归零。
+ * 只在主线程，Worker 崩溃不影响；容量恒为一个对象。
+ */
+export const aiChatBotInfo: { current: AiBotInfo | null } = { current: null };
 
 /** 各群最新的 AI 记忆快照镜像（值是序列化 JSON 文本，与消息协议同形态，
  *  见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），见 aiChat/index.ts 模块头注

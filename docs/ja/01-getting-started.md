@@ -122,7 +122,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
 
 `config/` は deployment 固有の設定ディレクトリで、Git の追跡対象外です。初回だけ `config_example/` からコピーし、その後は `config/` だけを編集してください。example ディレクトリは実行時設定ではありません。
 
-稼働中に `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` を編集すると hot reload されます。main thread が `config/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。hot reload は適用済み設定の内容だけを差し替え、機能の可用性は変えません。この 4 file の追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は拒否し、再起動を促します。`telegram.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が必要です。
+稼働中に `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` を編集すると hot reload されます。main thread が `config/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。この 4 file の追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI 雑談や広告検出はすぐに停止し（グループ switch は元の値のまま）、前提が戻れば再起動なしで自動的に再開します。`telegram.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が必要です。
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI チャットの基本ペルソナ。

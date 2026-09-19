@@ -144,7 +144,10 @@ export interface HotDeploymentConfigReads {
   readonly stickers: HotConfigRead<StickerConfig>;
 }
 
-/** 一轮热重载实际替换的主线程快照、成功替换的文件与被拒绝变更的诊断。 */
+/**
+ * 一轮热重载实际替换的主线程快照、生效与删除的文件，以及被拒绝变更的诊断。
+ * 各布尔字段为 true 表示对应 holder 已整体替换，包括因文件或段被删除而换成 null。
+ */
 export interface HotDeploymentConfigChanges {
   /** agent.json 的 ad_detect 段快照已替换。 */
   readonly adDetect: boolean;
@@ -153,8 +156,10 @@ export interface HotDeploymentConfigChanges {
   readonly adSamples: boolean;
   readonly mood: boolean;
   readonly stickers: boolean;
-  /** 至少替换了一份快照的文件路径。 */
+  /** 仍然存在、且至少替换了一份快照的文件路径。 */
   readonly reloadedPaths: readonly string[];
+  /** 本轮被删除、对应快照已清空的文件路径。 */
+  readonly removedPaths: readonly string[];
   /** 被拒绝变更的英文诊断；对应 holder 保留上一份已校验快照。 */
   readonly rejections: readonly string[];
 }

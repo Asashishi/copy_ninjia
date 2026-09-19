@@ -10,11 +10,11 @@ import { getPersona } from "../config/persona";
 import { getStickerConfig } from "../config/stickers";
 import { beginAiMemoryTeardown, finishAiMemoryTeardown, nextAiMemoryRevision, requestAiMemoryDelete, settleAiMemoryTeardownWorker } from "./memoryMirror";
 import {
+  aiChatBotInfo,
   aiChatWorkerState,
   aiChatInvalidateRequestCounter,
   aiChatInvalidateWaiters,
   aiMemoryFlushBarrier,
-  aiMemoryRevisionCounters,
   aiMemoryUsages,
   lastInitState,
   latestAiMemories,
@@ -249,29 +249,17 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
 }
 
 /**
- * 把机器人自己的账号身份注入 AI Worker。须在 bot.init() 之后、runner 开始
- * 投喂更新之前调用一次（见 app/lifecycle.ts）——FIFO 保证 init 消息先于一切
- * record/trigger 到达。Worker 靠它在转录里认出自己并自录自己发的消息。
- * 顺带记一份 lastInitState：Worker 崩溃重启后要重放这条消息，新 Worker 才能
- * 重新认出自己。
- *
- * 两把供应商凭据都缺时整条线不启动：连线程都不建，lastInitState 保持 null，停机
- * 路径上的 flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker
- * 也是 no-op（见 infra/supervisedWorker.ts），生命周期那边不必分岔。判定放在
- * 这里而不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能
- * 配没配」的知识摊到编排层等于每加一个可选功能都要改一次生命周期。
+ * 启动 AI Worker 并注入身份与主线程当前生效的配置快照，再补发各群人设。FIFO
+ * 保证 init 先于一切 record/trigger 到达；Worker 靠它在转录里认出自己并自录自己
+ * 发的消息。投递全部成功后才记 lastInitState 并发布可用标记：Worker 崩溃重启要
+ * 重放这条消息，投递失败时两者都保持原值。调用方负责确认 AI 前提的 holder 已齐
+ * （启动走 readiness，热重载走 config/readiness.ts 的 aiChatReadinessFromHolders）。
  */
-export function initAiChat(botInfo: AiBotInfo): void {
-  if (!isAiChatConfigured()) {
-    logger.log("AI agent configuration is unavailable; the AI chat worker stays down and /ai_chat enable is refused.");
-    return;
-  }
+export function startAiChatWorker(botInfo: AiBotInfo): void {
   initAiChatWorker();
-  // isAiChatConfigured() 刚刚走完 readiness，agent 段快照已在主线程 holder 里；
-  // 这里取的是主线程当前生效的配置，随 init 一起交给 Worker（见 AiInitMessage）。
   const message: AiInitMessage = {
     type: "init",
-    botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
+    botInfo,
     superAdminUserId: SUPER_ADMIN_USER_ID,
     agent: getAgentDeploymentConfig(),
     mood: getMoodConfig(),
@@ -287,13 +275,38 @@ export function initAiChat(botInfo: AiBotInfo): void {
 }
 
 /**
- * 把热重载后主线程已生效的 AI 配置投给 AI Worker（见 app/configReload.ts）。
+ * 记下机器人自己的账号身份，AI 前提可用时启动 AI Worker。须在 bot.init() 之后、
+ * runner 开始投喂更新之前调用一次（见 app/lifecycle.ts）。
+ *
+ * 前提不可用时整条线不启动：连线程都不建，lastInitState 保持 null，停机路径上的
+ * flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker 也是 no-op
+ * （见 infra/supervisedWorker.ts），生命周期那边不必分岔。身份照样记下，config/
+ * 热重载补齐前提时由 aiChat/hydration.ts 的 resumeAiChat 据此启动。判定放在这里而
+ * 不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能配没配」的
+ * 知识摊到编排层等于每加一个可选功能都要改一次生命周期。
+ */
+export function initAiChat(botInfo: AiBotInfo): void {
+  const identity: AiBotInfo = { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name };
+  aiChatBotInfo.current = identity;
+  if (!isAiChatConfigured()) {
+    logger.log("AI agent configuration is unavailable; the AI chat worker stays down and /ai_chat enable is refused.");
+    return;
+  }
+  startAiChatWorker(identity);
+}
+
+/** syncAiChatConfig 要重投的配置领域；与 HotDeploymentConfigChanges 的同名字段一致。 */
+export type AiConfigDomains = Pick<HotDeploymentConfigChanges, "aiAgent" | "mood" | "stickers">;
+
+/**
+ * 把主线程已生效的 AI 配置投给 AI Worker（见 app/configReload.ts 与
+ * aiChat/hydration.ts 的 resumeAiChat）。
  *
  * 先把 lastInitState 改写成当前快照再投递：投递被拒绝（Worker 正在重建）时，
- * 重建重放的 init 已经带着这一份。Worker 从未启动或已放弃重启时 lastInitState
- * 为 null，直接返回，主线程 holder 的新快照留待下次 initAiChat。
+ * 重建重放的 init 已经带着这一份。Worker 从未启动时 lastInitState 为 null，直接
+ * 返回。调用方保证三份 holder 此刻都非空。
  */
-export function syncAiChatConfig(changes: HotDeploymentConfigChanges): void {
+export function syncAiChatConfig(domains: AiConfigDomains): void {
   const init: AiInitMessage | null = lastInitState.current;
   if (init === null) return;
   lastInitState.current = {
@@ -304,60 +317,12 @@ export function syncAiChatConfig(changes: HotDeploymentConfigChanges): void {
   };
   const message: AiConfigReloadMessage = {
     type: "configReload",
-    agent: changes.aiAgent ? getAgentDeploymentConfig() : undefined,
-    mood: changes.mood ? getMoodConfig() : undefined,
-    stickers: changes.stickers ? getStickerConfig() : undefined,
+    agent: domains.aiAgent ? getAgentDeploymentConfig() : undefined,
+    mood: domains.mood ? getMoodConfig() : undefined,
+    stickers: domains.stickers ? getStickerConfig() : undefined,
   };
   if (!post(message)) {
     logger.error("AI Worker rejected the deployment config reload; the next respawn replays the reloaded snapshot.");
-  }
-}
-
-/**
- * 启动时把 diskIOWorker 落盘恢复出的 AI 记忆快照灌回来：先存一份镜像
- * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
- * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts），FIFO 保证
- * hydrate 消息先于一切 record/trigger 到达。
- *
- * 进程侧 AI 配置可用时，未开启 AI 或已不受管的群统一清除上下文；仅恢复仍启用的群。
- */
-export function hydrateAiMemory(memories: Map<number, string>): void {
-  if (!isAiChatConfigured()) return;
-  const enabledMemories: Map<number, string> = new Map();
-  const dropped: number[] = [];
-  for (const [chatId, snapshot] of memories) {
-    if (getChatState(chatId).isAIChatEnabled !== true) {
-      dropped.push(chatId);
-      requestAiMemoryDelete(chatId, false);
-      continue;
-    }
-    latestAiMemories.set(chatId, snapshot);
-    latestAiMemoryRevisions.set(chatId, 0);
-    aiMemoryRevisionCounters.set(chatId, 0);
-    enabledMemories.set(chatId, snapshot);
-  }
-  if (dropped.length > 0) {
-    logger.log(`Dropping the persisted AI memory of ${dropped.length} chat(s) with AI chat disabled: ${dropped.join(", ")}.`);
-  }
-  if (enabledMemories.size > 0) {
-    postAiChatOrThrow({ type: "hydrate", memories: enabledMemories });
-  }
-}
-
-/**
- * 启动时把 diskIOWorker 落盘恢复出的白名单贴纸目录灌回来：先存一份镜像
- * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
- * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts）——FIFO 保证
- * 这条消息紧跟在 init 之后，让 ensureStickerCatalogs 的 diff 生成看到已
- * 恢复的条目、不重复调视觉模型。
- */
-export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
-  if (!isAiChatConfigured()) return;
-  for (const [pack, snapshot] of catalogs) {
-    latestStickerCatalogs.set(pack, snapshot);
-  }
-  if (catalogs.size > 0) {
-    postAiChatOrThrow({ type: "hydrateStickerCatalog", catalogs });
   }
 }
 

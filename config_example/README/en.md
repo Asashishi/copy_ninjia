@@ -57,9 +57,12 @@ used at startup:
 - A change that fails to parse is rejected as a whole; the log records one error naming the file
   path, field path, and expected shape, and the bot keeps the last applied configuration. A file
   left invalid still aborts the next startup.
-- Changes that would alter feature availability are rejected as well and need a restart: adding or
-  deleting any of these four files, or adding or removing the whole `ad_detect` section or any of
-  `text`, `summary`, and `media` in `agent.json`. Adding or removing `image` or `song` takes effect
+- Adding or deleting any of these four files, or adding or removing the whole `ad_detect` section
+  or any of `text`, `summary`, and `media` in `agent.json`, changes the matching feature's
+  availability directly: AI chat or ad detection stops as soon as a prerequisite is missing and
+  logs one line with the reason, per-chat switches keep their values, and the feature resumes
+  automatically once the prerequisite is back, with no restart. Deleting a file logs
+  `Deployment config <path> was removed.`. Adding or removing `image` or `song` takes effect
   directly.
 - Packs newly added to `stickers.json` start building their catalogs immediately; removed packs
   are no longer offered to the AI, and their catalogs are cleaned up against the whitelist at the

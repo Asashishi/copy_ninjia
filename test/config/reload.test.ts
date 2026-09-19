@@ -86,6 +86,7 @@ describe("config/ 热重载判定", () => {
       mood: false,
       stickers: false,
       reloadedPaths: [],
+      removedPaths: [],
       rejections: [],
     });
     expect(defaultMoodConfigCache.current).toBe(baseline.mood);
@@ -179,78 +180,93 @@ describe("config/ 热重载判定", () => {
     expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
   });
 
-  test("删除启动时存在的文件会改变功能可用性，拒绝并保留快照", async () => {
+  test("删除启动时存在的文件：holder 换成 null 并记入删除清单，不算拒绝", async () => {
     rmSync(MOOD_CONFIG_PATH);
     const changes: HotDeploymentConfigChanges = await reload();
-    expect(changes.mood).toBe(false);
-    expect(changes.rejections).toEqual([
-      `${MOOD_CONFIG_PATH}: $ must be present as it was at startup; ` +
-      "restart the process to change feature availability.",
-    ]);
-    expect(defaultMoodConfigCache.current).toBe(baseline.mood);
+    expect(changes.mood).toBe(true);
+    expect(changes.rejections).toEqual([]);
+    expect(changes.reloadedPaths).toEqual([]);
+    expect(changes.removedPaths).toEqual([MOOD_CONFIG_PATH]);
+    expect(defaultMoodConfigCache.current).toBeNull();
   });
 
-  test("启动时缺省的文件运行期出现同样拒绝，holder 保持 null", async () => {
+  test("启动时缺省的文件运行期出现：按新内容填充", async () => {
     defaultStickerConfigCache.current = null;
     const changes: HotDeploymentConfigChanges = await reload();
-    expect(changes.stickers).toBe(false);
-    expect(changes.rejections).toEqual([
-      `${STICKERS_CONFIG_PATH}: $ must be absent as it was at startup; ` +
-      "restart the process to change feature availability.",
-    ]);
-    expect(defaultStickerConfigCache.current).toBeNull();
+    expect(changes.stickers).toBe(true);
+    expect(changes.rejections).toEqual([]);
+    expect(changes.reloadedPaths).toEqual([STICKERS_CONFIG_PATH]);
+    expect(defaultStickerConfigCache.current as StickerConfig | null).toEqual(baseline.stickers!);
   });
 
-  test("启动时缺省且仍然缺省的文件不产生诊断", async () => {
+  test("启动时缺省且仍然缺省的文件不产生诊断，也不算变化", async () => {
     defaultStickerConfigCache.current = null;
     rmSync(STICKERS_CONFIG_PATH);
     const changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.stickers).toBe(false);
     expect(changes.rejections).toEqual([]);
+    expect(changes.removedPaths).toEqual([]);
     expect(defaultStickerConfigCache.current).toBeNull();
   });
 
-  test("agent.json 删掉 ad_detect 段时整份拒绝，同一次编辑里的其它改动也不生效", async () => {
+  test("已删除的文件内容非法地重新出现时整份拒绝，holder 保持 null", async () => {
+    defaultMoodConfigCache.current = null;
+    await Bun.write(MOOD_CONFIG_PATH, "{ not json");
+    const changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.mood).toBe(false);
+    expect(changes.rejections).toEqual([`${MOOD_CONFIG_PATH}: $ must be a readable valid JSON document.`]);
+    expect(defaultMoodConfigCache.current).toBeNull();
+  });
+
+  test("agent.json 删掉 ad_detect 段只清空该段，同一次编辑里的其它改动照常生效", async () => {
     const document = await readAgentDocument();
     delete document.agent.ad_detect;
-    document.agent.text!.model = "would-be-applied";
+    document.agent.text!.model = "applied-model";
     await writeJson(AGENT_CONFIG_PATH, document);
 
     const changes: HotDeploymentConfigChanges = await reload();
 
-    expect(changes.aiAgent).toBe(false);
-    expect(changes.adDetect).toBe(false);
-    expect(changes.rejections).toEqual([
-      `${AGENT_CONFIG_PATH}: $.agent.ad_detect must be configured as it was at startup; ` +
-      "restart the process to change feature availability.",
-    ]);
-    expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
-    expect(adDetectAgentConfigCache.current).toBe(baseline.adDetect);
+    expect(changes.rejections).toEqual([]);
+    expect(changes.adDetect).toBe(true);
+    expect(changes.aiAgent).toBe(true);
+    expect(changes.reloadedPaths).toEqual([AGENT_CONFIG_PATH]);
+    expect(adDetectAgentConfigCache.current).toBeNull();
+    expect(agentDeploymentConfigCache.current?.text.model).toBe("applied-model");
   });
 
-  test("agent.json 补上启动时缺省的 ad_detect 段同样拒绝", async () => {
+  test("agent.json 补上启动时缺省的 ad_detect 段：填充该段，AI 段身份不变", async () => {
     adDetectAgentConfigCache.current = null;
     const changes: HotDeploymentConfigChanges = await reload();
-    expect(changes.adDetect).toBe(false);
-    expect(changes.rejections).toEqual([
-      `${AGENT_CONFIG_PATH}: $.agent.ad_detect must be absent as it was at startup; ` +
-      "restart the process to change feature availability.",
-    ]);
-    expect(adDetectAgentConfigCache.current).toBeNull();
+    expect(changes.adDetect).toBe(true);
+    expect(changes.aiAgent).toBe(false);
+    expect(changes.rejections).toEqual([]);
+    expect(adDetectAgentConfigCache.current as AdDetectAgentConfig | null).toEqual(baseline.adDetect!);
+    expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
   });
 
-  test("agent.json 去掉对话核心能力时整份拒绝", async () => {
+  test("agent.json 去掉对话核心能力时 AI 段换成 null，ad_detect 段身份不变", async () => {
     const document = await readAgentDocument();
     delete document.agent.media;
     await writeJson(AGENT_CONFIG_PATH, document);
 
     const changes: HotDeploymentConfigChanges = await reload();
 
-    expect(changes.aiAgent).toBe(false);
-    expect(changes.rejections).toEqual([
-      `${AGENT_CONFIG_PATH}: $.agent must be configured with text, summary and media as it was at startup; ` +
-      "restart the process to change feature availability.",
-    ]);
-    expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
+    expect(changes.rejections).toEqual([]);
+    expect(changes.aiAgent).toBe(true);
+    expect(changes.adDetect).toBe(false);
+    expect(agentDeploymentConfigCache.current).toBeNull();
+    expect(adDetectAgentConfigCache.current).toBe(baseline.adDetect);
+  });
+
+  test("整份删除 agent.json 时两段都清空，并记入删除清单", async () => {
+    rmSync(AGENT_CONFIG_PATH);
+    const changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.adDetect).toBe(true);
+    expect(changes.aiAgent).toBe(true);
+    expect(changes.removedPaths).toEqual([AGENT_CONFIG_PATH]);
+    expect(changes.reloadedPaths).toEqual([]);
+    expect(adDetectAgentConfigCache.current).toBeNull();
+    expect(agentDeploymentConfigCache.current).toBeNull();
   });
 
   test("可选能力的增删只替换内容", async () => {

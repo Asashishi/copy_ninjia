@@ -31,9 +31,9 @@
   - **职责**：非命令的自动行为，包括复读、AI 转录与触发、反应同步。
   - **典型文件**：`message/`（含 `triggerPolicy.ts`）、`reactionSync.ts`。
 - **`packages/aiChat/`**
-  - **职责**：AI 闲聊主线程代理与模型能力，包括 Worker 监督、记忆镜像、可用性判定，
+  - **职责**：AI 闲聊主线程代理与模型能力，包括 Worker 监督、记忆镜像、启动与热重载的状态灌入、可用性判定，
     以及供应商实现包（`gemini/`、`openai/`）、provider 选取、贴纸、工具和媒体实现。
-  - **典型文件**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
+  - **典型文件**：`workerBridge.ts`、`hydration.ts`、`messageIngress.ts`、`memoryMirror.ts`、
     `availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`；
     `index.ts` 只提供薄公开入口。
 - **`packages/antiRaid/`**

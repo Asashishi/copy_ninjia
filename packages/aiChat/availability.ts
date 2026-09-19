@@ -19,8 +19,9 @@ import { getChatState } from "../infra/storage/stateStore";
 
 /**
  * 进程侧是否具备跑 AI 闲聊的前提（agent 能力配置 + 三份辅助部署配置）。为假时整条线停摆：
- * AI Worker 不启动、记忆不 hydrate（磁盘上那份原样留着，等前提补齐）、
- * /ai_chat enable 与 /mood switch 直接拒绝。
+ * 投喂与回复关闭，/ai_chat enable 与 /mood switch 直接拒绝。启动时就不可用则 AI Worker
+ * 不启动、记忆只进主线程镜像不投递（一条都不删，等前提补齐）；运行期经 config/ 热重载
+ * 变为不可用时 Worker 保持闲置。前提补齐后由 aiChat/hydration.ts 的 resumeAiChat 恢复。
  */
 export function isAiChatConfigured(): boolean {
   return aiChatConfigReadiness().ok;

@@ -4,9 +4,10 @@
  * 主进程启动总闸先校验全部已存在的部署输入；真正缺省的可选文件再由相关功能
  * （`/ai_chat enable`、`/ad_detect enable`、`/translate enable`）按需判定。
  *
- * 结论按进程缓存成功与缺省两侧；运行时只检查已校验配置 holder，不重新读取文件。
- * config/reload.ts 的热重载只替换已生效配置的内容、不改变这里的结论：补齐或
- * 删除可选配置必须重启，由启动总闸严格解析并重新判定。
+ * 结论按功能缓存成功与缺省两侧；运行时只检查已校验配置 holder，不重新读取文件。
+ * 启动总闸填充三条结论。之后 config/ 热重载每轮改写 holder，由 app/configReload.ts
+ * 按本模块的 *ReadinessFromHolders 重算 AI 闲聊与广告检测两条并经 adopt* 发布；
+ * 翻译结论（g-auth.json 不热重载）只在启动时判定。
  *
  * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
  * 投喂门禁，全在主线程；Worker 不问「这个功能能不能开」。
@@ -39,6 +40,14 @@ import {
   translateConfigReadinessCache,
 } from "../cache/main/configReadiness";
 import {
+  adDetectAgentConfigCache,
+  agentDeploymentConfigCache,
+  defaultAdSampleConfigCache,
+  defaultMoodConfigCache,
+  defaultStickerConfigCache,
+  personaCache,
+} from "../cache/perThread/config";
+import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
   GOOGLE_AUTH_FILE_PATH,
@@ -47,7 +56,7 @@ import {
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
 import { isErrno } from "../libs/errno";
-import { invalidInput } from "../libs/inputValidation";
+import { InputValidationError, invalidInput } from "../libs/inputValidation";
 import type {
   ConfigReadiness,
   ConfigReadinessCache,
@@ -130,6 +139,64 @@ const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
   { file: "config/ad_samples.json", load: ensureAdSampleConfig },
   { file: "config/agent.json", load: ensureAdDetectAgentConfig },
 ];
+
+/** 一份缺失部署输入的不可用结论；诊断口径同 InputValidationError。 */
+function unavailable(file: string, message: string): ConfigReadiness {
+  return { ok: false, failure: { file, reason: message } };
+}
+
+/**
+ * 按主线程当前 holder 判定 AI 闲聊的部署前提；只读 holder，不读盘。
+ *
+ * 顺序与 AI_CHAT_PROBES 一致，报第一份缺失的文件。启动总闸之后 holder 为空只可能
+ * 是文件或 agent.json 的对话核心能力段缺省（存在但非法的输入已拒绝启动或被热重载
+ * 拒绝），与启动时 probeAll 的判据相同。persona 不热重载，启动时缺省则一直为空。
+ */
+export function aiChatReadinessFromHolders(): ConfigReadiness {
+  if (defaultStickerConfigCache.current === null) {
+    return unavailable("config/stickers.json", new InputValidationError(STICKERS_CONFIG_PATH, "$", "a readable valid JSON document").message);
+  }
+  if (defaultMoodConfigCache.current === null) {
+    return unavailable("config/mood.json", new InputValidationError(MOOD_CONFIG_PATH, "$", "a readable valid JSON document").message);
+  }
+  if (personaCache.current === null) {
+    return unavailable("prompt/persona.md", new InputValidationError(PERSONA_PATH, "$", "a readable non-empty UTF-8 text file").message);
+  }
+  if (agentDeploymentConfigCache.current === null) {
+    return unavailable(
+      "config/agent.json",
+      new InputValidationError(AGENT_CONFIG_PATH, "$.agent", "configured with text, summary and media").message
+    );
+  }
+  return { ok: true };
+}
+
+/** 按主线程当前 holder 判定广告检测的部署前提；顺序与 AD_DETECT_PROBES 一致，其余同上。 */
+export function adDetectReadinessFromHolders(): ConfigReadiness {
+  if (defaultAdSampleConfigCache.current === null) {
+    return unavailable("config/ad_samples.json", new InputValidationError(AD_SAMPLES_CONFIG_PATH, "$", "a readable valid JSON document").message);
+  }
+  if (adDetectAgentConfigCache.current === null) {
+    return unavailable(
+      "config/agent.json",
+      new InputValidationError(AGENT_CONFIG_PATH, "$.agent.ad_detect", "configured").message
+    );
+  }
+  return { ok: true };
+}
+
+/**
+ * 热重载发布 AI 闲聊可用性结论（app/configReload.ts 在一轮对账里调用）。整体替换
+ * holder，每条群消息的门禁仍只读一次 holder、不分配。
+ */
+export function adoptAiChatConfigReadiness(readiness: ConfigReadiness): void {
+  aiChatConfigReadinessCache.current = readiness;
+}
+
+/** 热重载发布广告检测可用性结论；语义同 adoptAiChatConfigReadiness。 */
+export function adoptAdDetectConfigReadiness(readiness: ConfigReadiness): void {
+  adDetectConfigReadinessCache.current = readiness;
+}
 
 export function aiChatConfigReadiness(): ConfigReadiness {
   return cachedReadiness(aiChatConfigReadinessCache);

@@ -266,15 +266,7 @@ describe("AI 配置热重载分发", () => {
     const originalAgent = getAgentDeploymentConfig();
     const originalMood = getMoodConfig();
     const originalStickers = getStickerConfig();
-    const changes = {
-      adDetect: false,
-      aiAgent: false,
-      adSamples: false,
-      mood: true,
-      stickers: false,
-      reloadedPaths: [],
-      rejections: [],
-    };
+    const changes = { aiAgent: false, mood: true, stickers: false };
     try {
       aiChat.syncAiChatConfig(changes);
       expect(workerPosts).toEqual([]);
@@ -304,6 +296,25 @@ describe("AI 配置热重载分发", () => {
       adoptMoodConfig(originalMood);
       adoptStickerConfig(originalStickers);
     }
+  });
+});
+
+describe("AI 可用性经热重载恢复", () => {
+  test("Worker 已在运行时 resumeAiChat 只投递完整 configReload，不重建线程", () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const initialInit = lastInitState.current;
+    workerPosts.length = 0;
+
+    aiChat.resumeAiChat();
+
+    expect(workerPosts).toEqual([{
+      type: "configReload",
+      agent: getAgentDeploymentConfig(),
+      mood: getMoodConfig(),
+      stickers: getStickerConfig(),
+    }]);
+    expect(lastInitState.current).not.toBe(initialInit);
+    expect(lastInitState.current).toMatchObject({ type: "init", botInfo: { id: 99 } });
   });
 });
 

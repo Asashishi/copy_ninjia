@@ -3,26 +3,83 @@
  *
  * 目录级 `fs.watch` 覆盖原地写入、临时文件改名替换、删除与重建；任何事件只重新
  * 武装一次防抖 timer，到期后由最新值执行器串行跑一轮：config/reload.ts 读取并
- * 严格解析四份可热重载文件 → 同步替换主线程 holder → 把变化投给持有副本的
- * Worker（AI 闲聊：agent 对话段、mood、stickers；Anti-Raid：ad_detect 段与广告
- * 示例）。一轮在途时到达的事件合并成至多一轮补跑。
+ * 严格解析四份可热重载文件 → 同步替换主线程 holder → 按 holder 重算广告检测与
+ * AI 闲聊的可用性 → 把变化投给持有副本的 Worker（AI 闲聊：agent 对话段、mood、
+ * stickers；Anti-Raid：ad_detect 段与广告示例）。一轮在途时到达的事件合并成至多
+ * 一轮补跑。
  *
- * 被拒绝的变更逐条记英文错误日志，对应快照保持上一份已校验版本；可用性判定与
- * 拒绝口径见 config/reload.ts。watcher 与 timer 均 unref，不扣住进程退出；停机
- * 由 quiesceConfigReload 在维护关闸阶段停止接纳，在途读取完成后不再分发。
+ * 被拒绝的变更逐条记英文错误日志，对应快照保持上一份已校验版本；拒绝口径见
+ * config/reload.ts。文件或段的增删改变功能可用性：转为不可用时先发布结论、关闭
+ * 门禁；AI 闲聊转为可用时先经 aiChat/hydration.ts 的 resumeAiChat 恢复 Worker，
+ * 成功后才发布结论，失败则保持不可用、记错误日志，下一次事件重试。读盘之后的
+ * 判定、发布与分发全部同步完成。watcher 与 timer 均 unref，不扣住进程退出；停机由
+ * quiesceConfigReload 在维护关闸阶段停止接纳，在途读取完成后不再应用或分发。
  */
 
 import { watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { syncAiChatConfig } from "../aiChat";
+import { resumeAiChat, syncAiChatConfig } from "../aiChat";
 import { syncAntiRaidAgentConfig } from "../antiRaid";
 import { configReloadRuntime } from "../cache/main/configReload";
+import {
+  adDetectConfigReadiness,
+  adDetectReadinessFromHolders,
+  adoptAdDetectConfigReadiness,
+  adoptAiChatConfigReadiness,
+  aiChatConfigReadiness,
+  aiChatReadinessFromHolders,
+} from "../config/readiness";
 import { applyHotDeploymentConfigs, readHotDeploymentConfigs } from "../config/reload";
 import { CONFIG_RELOAD_DEBOUNCE_MS } from "../consts/configReload";
 import { CONFIG_ROOT } from "../consts/paths";
 import { logger } from "../infra/logger";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
-import type { HotDeploymentConfigChanges, HotDeploymentConfigReads } from "../types/config";
+import type { ConfigReadiness, HotDeploymentConfigChanges, HotDeploymentConfigReads } from "../types/config";
+
+/** 两份结论是否等价：可用性相同，不可用时失败的文件也相同。 */
+function sameReadiness(next: ConfigReadiness, current: ConfigReadiness): boolean {
+  if (next.ok || current.ok) return next.ok === current.ok;
+  return next.failure.file === current.failure.file;
+}
+
+/** 按 holder 重算广告检测可用性；结论变化时发布，配置或可用性有变就重投 Anti-Raid。 */
+function reconcileAdDetectAvailability(changes: HotDeploymentConfigChanges): void {
+  const next: ConfigReadiness = adDetectReadinessFromHolders();
+  const current: ConfigReadiness = adDetectConfigReadiness();
+  const availabilityChanged: boolean = next.ok !== current.ok;
+  // 先发布结论：replayAdDetectAgentConfig 按它决定示例清单投不投。
+  if (!sameReadiness(next, current)) adoptAdDetectConfigReadiness(next);
+  if (availabilityChanged) {
+    if (next.ok) logger.log("Ad detection became available after a deployment config reload.");
+    else logger.log(`Ad detection became unavailable after a deployment config reload: ${next.failure.reason}`);
+  }
+  if (availabilityChanged || changes.adDetect || changes.adSamples) syncAntiRaidAgentConfig();
+}
+
+/** 按 holder 重算 AI 闲聊可用性；转为可用先恢复 Worker 再发布，其余按内容变化同步。 */
+function reconcileAiChatAvailability(changes: HotDeploymentConfigChanges): void {
+  const next: ConfigReadiness = aiChatReadinessFromHolders();
+  const current: ConfigReadiness = aiChatConfigReadiness();
+  if (!next.ok) {
+    if (current.ok) {
+      logger.log(`AI chat became unavailable after a deployment config reload; the AI Worker stays idle: ${next.failure.reason}`);
+    }
+    if (!sameReadiness(next, current)) adoptAiChatConfigReadiness(next);
+    return;
+  }
+  if (!current.ok) {
+    try {
+      resumeAiChat();
+    } catch (error: unknown) {
+      logger.error("AI chat could not resume after a deployment config reload; it stays unavailable until the next config change:", error);
+      return;
+    }
+    adoptAiChatConfigReadiness(next);
+    logger.log("AI chat became available after a deployment config reload.");
+    return;
+  }
+  if (changes.aiAgent || changes.mood || changes.stickers) syncAiChatConfig(changes);
+}
 
 /** 读取、应用并分发一轮；停止接纳后读完的结果直接丢弃。 */
 async function reconcileDeploymentConfigs(): Promise<void> {
@@ -35,8 +92,11 @@ async function reconcileDeploymentConfigs(): Promise<void> {
   for (const path of changes.reloadedPaths) {
     logger.log(`Reloaded deployment config ${path}.`);
   }
-  if (changes.aiAgent || changes.mood || changes.stickers) syncAiChatConfig(changes);
-  if (changes.adDetect || changes.adSamples) syncAntiRaidAgentConfig();
+  for (const path of changes.removedPaths) {
+    logger.log(`Deployment config ${path} was removed.`);
+  }
+  reconcileAdDetectAvailability(changes);
+  reconcileAiChatAvailability(changes);
 }
 
 /** 防抖到期：交给执行器跑一轮；执行器拒绝只记日志，下一次事件照常重试。 */
