@@ -217,12 +217,11 @@ JSON, so comments are not allowed.
 
 [`config_example/cron.json`](../cron.json) holds example tasks that cover every form: plain weekday
 text; a forum topic with its own time zone sending text, then an image and a file by URL; a local
-image and file from `config/cron_files/`; a `rand_cron` range drawing from the default image library;
-`@daily` with a single-value `rand_cron` drawing from a subdirectory; and `just_once`. The chat ids,
-URLs and local files in it are fake, and an unedited copy in `config/` refuses startup because the
-local files do not exist. Pick the tasks you need, adapt them and write them into `config/cron.json`;
-put files into `config/cron_files/` before using `path`. The installer never creates this file from
-the example.
+image and file by absolute path; a `rand_cron` range drawing from the default image library; `@daily`
+with a single-value `rand_cron` drawing from a given directory; and `just_once`. The chat ids, URLs
+and local paths in it are fake, and an unedited copy in `config/` refuses startup because the local
+files do not exist. Pick the tasks you need, replace the chat ids and paths with real ones, and write
+them into `config/cron.json`. The installer never creates this file from the example.
 
 ```json
 [
@@ -237,7 +236,7 @@ the example.
       { "type": "send_message", "payload": { "content": "Good morning" } },
       { "type": "send_image", "payload": { "content": "Picture of the day", "rand_image": true } },
       { "type": "send_image", "payload": { "url": "https://example.com/a.png" } },
-      { "type": "send_file", "payload": { "content": "Weekly report", "path": "report.pdf" } }
+      { "type": "send_file", "payload": { "content": "Weekly report", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
     ]
   }
 ]
@@ -263,9 +262,11 @@ Action `type` and `payload`:
   (the same source as `/h_image`); `url` is not allowed then.
 - `send_file`: `content` is optional (at most 1024 characters); exactly one of `url` or `path`.
 
-`path` is relative to `config/cron_files/`; it cannot be absolute, cannot contain `..`, and must
-not leave that directory after resolving symbolic links. The file or directory must exist when
-the configuration is loaded. `url` is handed to Telegram as-is and never downloaded by the bot:
+`path` must be absolute and may point to a file or directory anywhere on the host (a symbolic link
+is judged by what it points to). It must exist and have the right type when the configuration is
+loaded. Any file the service account can read can be sent into a chat, so never point it at
+`config/`, `.env` or other files holding credentials. `url` is handed to Telegram as-is and never
+downloaded by the bot:
 Telegram limits URL sends to 5 MB for pictures and 20 MB for other files, and only PDF, ZIP, and
 GIF are guaranteed for files sent by URL — any other type failing is a configuration issue. Local
 uploads are limited to 10 MB for pictures and 50 MB for files.

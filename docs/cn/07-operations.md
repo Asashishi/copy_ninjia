@@ -282,7 +282,7 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 - `logs/`：错误由 Disk I/O Worker 批量追加，文案英文，可直接 grep。
 - Worker 崩溃会节流自愈并从镜像/快照恢复；反复崩溃循环才需要介入（通常意味着持久化数据与代码版本不匹配）。
 - 有限重试耗尽的持久化失败会让进程以非零状态退出——这是设计行为（durability 优先于可用性），由 systemd 拉起后从上一致状态续跑。
-- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定时任务的某个动作最终失败，本轮剩下的动作已跳过。末尾是 Telegram 的错误码与描述或本地原因：`403` 多为机器人已被移出目标群，`400` 多为地址不可用或文件类型不被 Telegram 接受，`local file ... is missing` 表示 `config/cron_files/` 里的文件被删了。改好 `cron.json` 或素材后会自动热重载，不用重启。
+- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定时任务的某个动作最终失败，本轮剩下的动作已跳过。末尾是 Telegram 的错误码与描述或本地原因：`403` 多为机器人已被移出目标群，`400` 多为地址不可用或文件类型不被 Telegram 接受，`local file ... is missing` 表示 `payload.path` 指向的本地文件已经不在了。改好 `cron.json` 或素材后会自动热重载，不用重启。
 - `Failed to probe chat membership` / `Failed to ban chat member` 以 `PARTICIPANT_ID_INVALID` 结尾时，通常是黑名单里有已销号账号。补扫照常按退避重试；同一用户在一个群的一次补扫里全部请求都返回这一句记 1 次，任一群查到或封到 TA 即清零，累计 5 次后自动移出黑名单与待踢批次，并记 `Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results`。`/wed` 每日复核遇到同一错误直接把该 ID 移出候选集合，不记错误日志。
 
 ---

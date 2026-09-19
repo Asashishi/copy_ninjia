@@ -72,12 +72,6 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
       purpose: "per-thread update cancellation and clock scope storage",
     },
   },
-  "packages/config/cron.ts": {
-    "node:fs/promises": {
-      symbols: ["realpath"],
-      purpose: "resolving cron.json local file paths to confirm they stay inside config/cron_files",
-    },
-  },
   "packages/config/googleAuth.ts": {
     "node:crypto": {
       symbols: ["createPrivateKey"],

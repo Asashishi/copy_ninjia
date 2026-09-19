@@ -24,8 +24,8 @@
     "chat_id": -1001234567890,
     "cron": "0 10 * * 1",
     "actions": [
-      { "type": "send_image", "payload": { "content": "本周海报", "path": "posters/weekly.png" } },
-      { "type": "send_file", "payload": { "content": "本周周报", "path": "reports/weekly.pdf" } }
+      { "type": "send_image", "payload": { "content": "本周海报", "path": "/srv/copy-ninjia/posters/weekly.png" } },
+      { "type": "send_file", "payload": { "content": "本周周报", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
     ]
   },
   {
@@ -43,7 +43,7 @@
     "cron": "@daily",
     "rand_cron": "12h",
     "actions": [
-      { "type": "send_image", "payload": { "rand_image": true, "path": "gallery" } }
+      { "type": "send_image", "payload": { "rand_image": true, "path": "/srv/copy-ninjia/gallery" } }
     ]
   },
   {

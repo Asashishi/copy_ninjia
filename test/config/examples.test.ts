@@ -83,7 +83,7 @@ describe("config_example 与解析器保持同步", () => {
   });
 
   test("cron.json 示例能被严格解析，并覆盖字段、动作与来源的全部写法", async () => {
-    // 只做纯解析：本地来源只在 config/cron_files/ 下核对，示例不带那些文件。
+    // 只做纯解析：本地来源是否存在要到加载时才核对，示例里的路径都是假的。
     const path: string = examplePath("cron.json");
     const config: CronConfig = parseCronConfig(await readJsonInput(path), path);
     expect(config.some((entry: CronTask): boolean => entry.messageThreadId !== undefined)).toBe(true);

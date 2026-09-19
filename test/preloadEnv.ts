@@ -30,7 +30,7 @@ cpSync(CONFIG_EXAMPLE_ROOT, TEST_CONFIG_ROOT, { recursive: true });
 // 翻译凭据示例的占位私钥必然被严格解析拒绝；副本与安装器一样不带它，翻译可用性
 // 由 preload 与各用例自行设定。
 rmSync(join(TEST_CONFIG_ROOT, "g-auth.json"));
-// 定时任务示例只示意用法：会话 id 与地址都是假的，本地来源也不存在。副本换成空任务表，
+// 定时任务示例只示意用法：会话 id、地址与本地路径都是假的。副本换成空任务表，
 // 需要任务的用例自行写入。
 writeFileSync(join(TEST_CONFIG_ROOT, "cron.json"), "[]\n");
 const TEST_AGENT_CONFIG_PATH: string = join(TEST_CONFIG_ROOT, "agent.json");

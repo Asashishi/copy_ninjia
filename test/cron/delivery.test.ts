@@ -39,7 +39,9 @@ mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
 mock.module("../../packages/infra/randomImage", () => ({ pickRandomImage }));
 
 const { deliverCronAction } = await import("../../packages/cron/delivery");
-const { CRON_FILES_ROOT } = await import("../../packages/consts/paths");
+const { TEST_DATA_ROOT } = await import("../preloadEnv");
+/** 本地来源的测试目录；cron.json 的 path 可以是本机任意绝对路径。 */
+const FILES_ROOT: string = join(TEST_DATA_ROOT, "cron-delivery-files");
 const { getRandomImageDirectory } = await import("../../packages/infra/storage/stateStore");
 const { TelegramRetryQueueFullError } = await import("../../packages/infra/telegram/outboundRetryPolicy");
 const { TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } = await import("../../packages/consts/telegram");
@@ -64,11 +66,11 @@ beforeEach(() => {
   nextFailure = undefined;
   markSelfSent.mockClear();
   pickRandomImage.mockClear();
-  mkdirSync(CRON_FILES_ROOT, { recursive: true });
+  mkdirSync(FILES_ROOT, { recursive: true });
 });
 
 afterEach(() => {
-  rmSync(CRON_FILES_ROOT, { recursive: true, force: true });
+  rmSync(FILES_ROOT, { recursive: true, force: true });
 });
 
 describe("cron 发送边界", () => {
@@ -88,7 +90,7 @@ describe("cron 发送边界", () => {
   });
 
   test("本地文件用可重复打开的上传源，429 重放或重试不会拿到读完的流", async () => {
-    const path: string = join(CRON_FILES_ROOT, "report.pdf");
+    const path: string = join(FILES_ROOT, "report.pdf");
     await Bun.write(path, "pdf-bytes");
     await deliver({ type: "send_file", content: "周报", source: { kind: "path", path } });
     const upload: InputFile = calls[0]!.args[1] as InputFile;
@@ -101,9 +103,9 @@ describe("cron 发送边界", () => {
   });
 
   test("本地文件缺失或超过上传上限按不可重试失败返回，不发请求", async () => {
-    expect(await deliver({ type: "send_file", content: undefined, source: { kind: "path", path: join(CRON_FILES_ROOT, "gone.pdf") } }))
+    expect(await deliver({ type: "send_file", content: undefined, source: { kind: "path", path: join(FILES_ROOT, "gone.pdf") } }))
       .toEqual({ kind: "permanent", detail: "local file gone.pdf is missing" });
-    const big: string = join(CRON_FILES_ROOT, "big.png");
+    const big: string = join(FILES_ROOT, "big.png");
     await Bun.write(big, new Uint8Array(TELEGRAM_PHOTO_UPLOAD_MAX_BYTES + 1));
     expect(await deliver({ type: "send_image", content: undefined, source: { kind: "path", path: big } }))
       .toMatchObject({ kind: "permanent", detail: expect.stringContaining("big.png exceeds the Telegram upload limit") });
@@ -112,8 +114,8 @@ describe("cron 发送边界", () => {
 
   test("rand_image 每次调用都重新抽取；省略目录时用 state 的随机图片目录", async () => {
     await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: null } });
-    await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: CRON_FILES_ROOT } });
-    expect(pickRandomImage.mock.calls.map((call: [string]): string => call[0])).toEqual([getRandomImageDirectory(), CRON_FILES_ROOT]);
+    await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: FILES_ROOT } });
+    expect(pickRandomImage.mock.calls.map((call: [string]): string => call[0])).toEqual([getRandomImageDirectory(), FILES_ROOT]);
     expect((calls[0]!.args[1] as InputFile).filename).toBe("drawn.png");
 
     pickRandomImage.mockImplementationOnce(async (): Promise<RandomImagePick> => ({ status: "empty" }));

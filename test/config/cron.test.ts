@@ -2,10 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { loadCronConfig, parseCronConfig } from "../../packages/config/cron";
-import { CRON_CONFIG_PATH, CRON_FILES_ROOT } from "../../packages/consts/paths";
+import { CRON_CONFIG_PATH } from "../../packages/consts/paths";
 import type { CronConfig } from "../../packages/types/cron";
+import { TEST_DATA_ROOT } from "../preloadEnv";
 
 const PATH: string = "/virtual/cron.json";
+/** 本地来源的测试目录；cron.json 的 path 可以是本机任意绝对路径。 */
+const FILES_ROOT: string = join(TEST_DATA_ROOT, "cron-files");
 
 /** 一个最小合法任务，按需覆盖字段。 */
 function task(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -23,7 +26,7 @@ function rejects(value: unknown, message: string): void {
 }
 
 afterEach(() => {
-  rmSync(CRON_FILES_ROOT, { recursive: true, force: true });
+  rmSync(FILES_ROOT, { recursive: true, force: true });
   rmSync(CRON_CONFIG_PATH, { force: true });
 });
 
@@ -49,10 +52,10 @@ describe("parseCronConfig", () => {
       rand_cron: "6h-24h",
       actions: [
         { type: "send_image", payload: { content: "今日图", rand_image: true } },
-        { type: "send_image", payload: { rand_image: true, path: "daily" } },
-        { type: "send_image", payload: { rand_image: true, path: "." } },
+        { type: "send_image", payload: { rand_image: true, path: "/srv/gallery/daily" } },
+        { type: "send_image", payload: { rand_image: true, path: "/srv/gallery/../albums/" } },
         { type: "send_image", payload: { url: "https://example.com/a.png" } },
-        { type: "send_file", payload: { content: "周报", path: "reports/w.pdf" } },
+        { type: "send_file", payload: { content: "周报", path: "/srv/reports/w.pdf" } },
         { type: "send_file", payload: { url: "http://example.com/r.zip" } },
       ],
     })], PATH);
@@ -63,10 +66,10 @@ describe("parseCronConfig", () => {
     });
     expect(config[0]!.actions).toEqual([
       { type: "send_image", content: "今日图", source: { kind: "random", directory: null } },
-      { type: "send_image", content: undefined, source: { kind: "random", directory: join(CRON_FILES_ROOT, "daily") } },
-      { type: "send_image", content: undefined, source: { kind: "random", directory: CRON_FILES_ROOT } },
+      { type: "send_image", content: undefined, source: { kind: "random", directory: "/srv/gallery/daily" } },
+      { type: "send_image", content: undefined, source: { kind: "random", directory: "/srv/albums" } },
       { type: "send_image", content: undefined, source: { kind: "url", url: "https://example.com/a.png" } },
-      { type: "send_file", content: "周报", source: { kind: "path", path: join(CRON_FILES_ROOT, "reports", "w.pdf") } },
+      { type: "send_file", content: "周报", source: { kind: "path", path: "/srv/reports/w.pdf" } },
       { type: "send_file", content: undefined, source: { kind: "url", url: "http://example.com/r.zip" } },
     ]);
   });
@@ -124,45 +127,54 @@ describe("parseCronConfig", () => {
     rejects(message({ url: "e.com/a.png" }), "$[0].actions[0].payload.url must be an absolute http(s) URL");
   });
 
-  test("path 只接受 cron_files 下的相对路径；只有随机目录能写 \".\"", () => {
+  test("path 只接受绝对路径，不限定目录，按规范化结果保存", () => {
     const image = (payload: Record<string, unknown>): unknown => [task({ actions: [{ type: "send_image", payload }] })];
-    for (const path of ["/etc/passwd", "../telegram.json", "a/../../x.png", "", "."]) {
-      rejects(image({ path }), "$[0].actions[0].payload.path must be a relative path inside config/cron_files");
+    for (const path of ["a.png", "../telegram.json", "./x.png", "", ".", "/tmp/a\0.png", 7]) {
+      rejects(image({ path }), "$[0].actions[0].payload.path must be an absolute local path.");
     }
-    rejects(image({ rand_image: true, path: "../images" }), "$[0].actions[0].payload.path must be a relative path inside config/cron_files (\".\" for the directory itself)");
+    rejects(image({ rand_image: true, path: "images" }), "$[0].actions[0].payload.path must be an absolute local path.");
+    const config: CronConfig = parseCronConfig([task({ actions: [{ type: "send_file", payload: { path: "/etc/../opt/./r.pdf" } }] })], PATH);
+    expect(config[0]!.actions[0]).toEqual({ type: "send_file", content: undefined, source: { kind: "path", path: "/opt/r.pdf" } });
   });
 });
 
 describe("loadCronConfig", () => {
   test("本地文件与目录必须真实存在且类型相符", async () => {
-    mkdirSync(join(CRON_FILES_ROOT, "daily"), { recursive: true });
-    await Bun.write(join(CRON_FILES_ROOT, "report.pdf"), "pdf");
+    const report: string = join(FILES_ROOT, "report.pdf");
+    const daily: string = join(FILES_ROOT, "daily");
+    mkdirSync(daily, { recursive: true });
+    await Bun.write(report, "pdf");
     await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({
       actions: [
-        { type: "send_file", payload: { path: "report.pdf" } },
-        { type: "send_image", payload: { rand_image: true, path: "daily" } },
+        { type: "send_file", payload: { path: report } },
+        { type: "send_image", payload: { rand_image: true, path: daily } },
       ],
     })]));
     expect((await loadCronConfig())[0]!.actions).toHaveLength(2);
 
-    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: "daily" } }] })]));
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: daily } }] })]));
     await expect(loadCronConfig()).rejects.toThrow(
-      `${CRON_CONFIG_PATH}: $[0].actions[0].payload.path must be an existing regular file inside config/cron_files.`
+      `${CRON_CONFIG_PATH}: $[0].actions[0].payload.path must be an existing regular file.`
     );
-    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_image", payload: { rand_image: true, path: "report.pdf" } }] })]));
-    await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing directory inside config/cron_files.");
-    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: "missing.pdf" } }] })]));
-    await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file");
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_image", payload: { rand_image: true, path: report } }] })]));
+    await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing directory.");
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: join(FILES_ROOT, "missing.pdf") } }] })]));
+    await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file.");
   });
 
-  test("经符号链接逃出 cron_files 的路径拒绝", async () => {
-    mkdirSync(CRON_FILES_ROOT, { recursive: true });
-    symlinkSync(CRON_CONFIG_PATH, join(CRON_FILES_ROOT, "escape.json"));
-    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: "escape.json" } }] })]));
-    await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file inside config/cron_files.");
+  test("符号链接按指向的对象判定；悬空链接按不存在拒绝", async () => {
+    mkdirSync(FILES_ROOT, { recursive: true });
+    const target: string = join(FILES_ROOT, "real.pdf");
+    await Bun.write(target, "pdf");
+    symlinkSync(target, join(FILES_ROOT, "linked.pdf"));
+    symlinkSync(join(FILES_ROOT, "gone.pdf"), join(FILES_ROOT, "dangling.pdf"));
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: join(FILES_ROOT, "linked.pdf") } }] })]));
+    expect(await loadCronConfig()).toHaveLength(1);
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: join(FILES_ROOT, "dangling.pdf") } }] })]));
+    await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file.");
   });
 
-  test("不用本地来源时 cron_files 目录可以不存在；非法 JSON 拒绝", async () => {
+  test("只用网址来源时不访问本地文件系统；非法 JSON 拒绝", async () => {
     await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_image", payload: { url: "https://e.com/a.png" } }] })]));
     expect(await loadCronConfig()).toHaveLength(1);
     await Bun.write(CRON_CONFIG_PATH, "[ // comment\n]");

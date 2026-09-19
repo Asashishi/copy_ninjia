@@ -182,10 +182,10 @@ SDK。安装器不会从示例生成这个文件。
 顶层是任务数组，缺省或 `[]` 表示没有定时任务。严格 JSON，不能写注释。
 
 [`config_example/cron.json`](../cron.json) 收录了覆盖全部写法的示例任务：工作日发纯文字；论坛话题加
-自定义时区，依次发文字、网址图片和网址文件；发送 `config/cron_files/` 下的本地图片与文件；`rand_cron`
-区间从默认图库抽图；`@daily` 加单值 `rand_cron` 从子目录抽图；以及 `just_once`。示例里的会话 id、
-地址和本地文件都是假的，原样放进 `config/` 会因本地文件不存在而拒绝启动；按需挑任务改好后写进
-`config/cron.json`，用到 `path` 时先把文件放进 `config/cron_files/`。安装器不会从示例生成这个文件。
+自定义时区，依次发文字、网址图片和网址文件；按绝对路径发送本地图片与文件；`rand_cron` 区间从默认
+图库抽图；`@daily` 加单值 `rand_cron` 从指定目录抽图；以及 `just_once`。示例里的会话 id、地址和
+本地路径都是假的，原样放进 `config/` 会因本地文件不存在而拒绝启动；按需挑任务、改成真实的会话 id
+与路径后写进 `config/cron.json`。安装器不会从示例生成这个文件。
 
 ```json
 [
@@ -200,7 +200,7 @@ SDK。安装器不会从示例生成这个文件。
       { "type": "send_message", "payload": { "content": "早上好" } },
       { "type": "send_image", "payload": { "content": "今日图", "rand_image": true } },
       { "type": "send_image", "payload": { "url": "https://example.com/a.png" } },
-      { "type": "send_file", "payload": { "content": "周报", "path": "report.pdf" } }
+      { "type": "send_file", "payload": { "content": "周报", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
     ]
   }
 ]
@@ -225,8 +225,9 @@ SDK。安装器不会从示例生成这个文件。
   `global.assets.randomImageDir`（与 `/h_image` 同源），这时不能写 `url`。
 - `send_file`：`content` 可选（最长 1024 字符），来源恰好一个 `url` 或 `path`。
 
-`path` 是 `config/cron_files/` 下的相对路径，不能是绝对路径、不能含 `..`、经符号链接解析后
-也不能跑出这个目录；加载时就检查文件或目录是否存在。`url` 原样交给 Telegram 去拉取，本机
+`path` 必须是绝对路径，可以指向本机任何位置的文件或目录（符号链接按指向的对象判定）；加载时就
+检查它是否存在、类型是否相符。服务账号能读到的文件都能被发进群里，不要指向 `config/`、`.env`
+这类含凭据的文件。`url` 原样交给 Telegram 去拉取，本机
 不下载：按地址发送时 Telegram 限制图片 5 MB、其它文件 20 MB，发送文件时只保证 PDF、ZIP、
 GIF 可用，其余类型发不出去属于配置问题。本地上传的上限是图片 10 MB、文件 50 MB。
 

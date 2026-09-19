@@ -2,14 +2,13 @@
  * config/cron.json 的严格解析：定时任务表，缺省即没有任务。
  *
  * parseCronConfig 只做形态、取值与路径的词法判定，不做 I/O；loadCronConfig 在读盘后
- * 再核对 `payload.path` 的真实落点（不得经符号链接逃出 `config/cron_files/`）与类型
- * （文件或目录）。任何一处非法都整份拒绝：启动时拒绝启动，热重载时沿用上一份（见
- * config/reload.ts）。诊断只含文件路径、字段路径与期望形态。
+ * 再核对 `payload.path` 指向的对象存在且类型相符（文件或目录，跟随符号链接）。
+ * `payload.path` 是本机任意绝对路径，不限定目录。任何一处非法都整份拒绝：启动时拒绝
+ * 启动，热重载时沿用上一份（见 config/reload.ts）。诊断只含文件路径、字段路径与期望形态。
  */
 
-import { realpath } from "node:fs/promises";
 import type { Stats } from "node:fs";
-import { isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { cronConfigCache } from "../cache/main/cron";
 import {
   CRON_DEFAULT_TIME_ZONE,
@@ -20,7 +19,7 @@ import {
   CRON_TASK_KEYS,
   CRON_TASK_NAME_MAX_CHARS,
 } from "../consts/cron";
-import { CRON_CONFIG_PATH, CRON_FILES_ROOT } from "../consts/paths";
+import { CRON_CONFIG_PATH } from "../consts/paths";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import { parseDurationTokenMs } from "../libs/durationToken";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
@@ -81,23 +80,12 @@ function parseRandomInterval(value: unknown, context: FieldContext): CronRandomI
   return { minMs, maxMs };
 }
 
-/**
- * `config/cron_files/` 下的相对路径：拒绝绝对路径与 `..`，解析结果必须落在根目录之内；
- * 只有随机图片目录允许 `"."`（根目录本身）。返回绝对路径。
- */
-function parseFilesPath(value: unknown, context: FieldContext, allowRoot: boolean): string {
-  const expected: string = allowRoot
-    ? "a relative path inside config/cron_files (\".\" for the directory itself)"
-    : "a relative path inside config/cron_files";
-  if (typeof value !== "string" || value.length === 0 || value.includes("\0") || isAbsolute(value) ||
-    value.split(/[\\/]/).includes("..")) {
-    return fail(context, expected);
+/** 本机的绝对路径（文件或目录）；拒绝相对路径与 NUL，返回规范化后的路径。 */
+function parseLocalPath(value: unknown, context: FieldContext): string {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0") || !isAbsolute(value)) {
+    return fail(context, "an absolute local path");
   }
-  const resolved: string = resolve(CRON_FILES_ROOT, value);
-  if (resolved === CRON_FILES_ROOT ? !allowRoot : !resolved.startsWith(CRON_FILES_ROOT + sep)) {
-    return fail(context, expected);
-  }
-  return resolved;
+  return resolve(value);
 }
 
 /** 交给 Telegram 拉取的绝对 http(s) 地址；只校验形态。 */
@@ -119,7 +107,7 @@ function parseFileSource(payload: Record<string, unknown>, context: FieldContext
     return fail(context, "exactly one of url or path");
   }
   if (payload.url !== undefined) return { kind: "url", url: parseUrl(payload.url, child(context, "url")) };
-  return { kind: "path", path: parseFilesPath(payload.path, child(context, "path"), false) };
+  return { kind: "path", path: parseLocalPath(payload.path, child(context, "path")) };
 }
 
 function parseAction(value: unknown, context: FieldContext): CronAction {
@@ -146,7 +134,7 @@ function parseAction(value: unknown, context: FieldContext): CronAction {
       if (payload.url !== undefined) return fail(child(payloadContext, "url"), "absent when rand_image is true");
       const source: CronImageSource = {
         kind: "random",
-        directory: payload.path === undefined ? null : parseFilesPath(payload.path, child(payloadContext, "path"), true),
+        directory: payload.path === undefined ? null : parseLocalPath(payload.path, child(payloadContext, "path")),
       };
       return { type: "send_image", content, source };
     }
@@ -243,25 +231,20 @@ export function parseCronConfig(value: unknown, sourcePath: string = CRON_CONFIG
   return tasks;
 }
 
-/** 核对一个本地来源的真实落点与类型；符号链接解析后仍须在 `config/cron_files/` 之内。 */
+/** 核对一个本地来源存在且类型相符；跟随符号链接，读不到一律按不存在处理。 */
 async function verifyLocalSource(
   path: string,
   kind: "file" | "directory",
   context: FieldContext
 ): Promise<void> {
-  const expected: string = kind === "file"
-    ? "an existing regular file inside config/cron_files"
-    : "an existing directory inside config/cron_files";
   let valid: boolean;
   try {
-    const root: string = await realpath(CRON_FILES_ROOT);
-    const real: string = await realpath(path);
-    const stats: Stats = await Bun.file(real).stat();
-    valid = (real === root || real.startsWith(root + sep)) && (kind === "file" ? stats.isFile() : stats.isDirectory());
+    const stats: Stats = await Bun.file(path).stat();
+    valid = kind === "file" ? stats.isFile() : stats.isDirectory();
   } catch {
     valid = false;
   }
-  if (!valid) fail(context, expected);
+  if (!valid) fail(context, kind === "file" ? "an existing regular file" : "an existing directory");
 }
 
 /** 读取并严格解析 cron.json，再核对全部本地来源；模块 import 本身不访问文件系统。 */

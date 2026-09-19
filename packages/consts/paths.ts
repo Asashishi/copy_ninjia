@@ -77,8 +77,6 @@ export const TELEGRAM_CONFIG_PATH: string = join(CONFIG_ROOT, "telegram.json");
 export const AGENT_CONFIG_PATH: string = join(CONFIG_ROOT, "agent.json");
 /** 定时任务部署配置（可选、可热重载），见 packages/config/cron.ts。 */
 export const CRON_CONFIG_PATH: string = join(CONFIG_ROOT, "cron.json");
-/** cron.json 里 `payload.path` 的解析根目录；路径只能落在这个目录之内。 */
-export const CRON_FILES_ROOT: string = join(CONFIG_ROOT, "cron_files");
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 

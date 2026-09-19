@@ -199,12 +199,11 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 
 [`config_example/cron.json`](../cron.json) にはすべての書き方を網羅する例のタスクがあります：平日の
 テキスト、フォーラムトピックと独自 time zone でテキスト・URL の画像・ファイルを順に送るもの、
-`config/cron_files/` のローカル画像とファイル、`rand_cron` の区間で既定の画像ライブラリから抽選
-するもの、`@daily` と単一値の `rand_cron` でサブディレクトリから抽選するもの、そして `just_once` です。
-例の会話 id、URL、ローカルファイルはすべて架空で、そのまま `config/` に置くとローカルファイルが
-存在しないため起動を拒否します。必要なタスクだけを選んで書き換えて `config/cron.json` に書き、
-`path` を使う場合は先に `config/cron_files/` へファイルを置いてください。installer が例からこのファイル
-を作ることはありません。
+絶対パスで指定したローカル画像とファイル、`rand_cron` の区間で既定の画像ライブラリから抽選する
+もの、`@daily` と単一値の `rand_cron` で指定ディレクトリから抽選するもの、そして `just_once` です。
+例の会話 id、URL、ローカルパスはすべて架空で、そのまま `config/` に置くとローカルファイルが存在
+しないため起動を拒否します。必要なタスクだけを選び、会話 id とパスを実際の値に書き換えてから
+`config/cron.json` に書いてください。installer が例からこのファイルを作ることはありません。
 
 ```json
 [
@@ -219,7 +218,7 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
       { "type": "send_message", "payload": { "content": "おはよう" } },
       { "type": "send_image", "payload": { "content": "今日の一枚", "rand_image": true } },
       { "type": "send_image", "payload": { "url": "https://example.com/a.png" } },
-      { "type": "send_file", "payload": { "content": "週報", "path": "report.pdf" } }
+      { "type": "send_file", "payload": { "content": "週報", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
     ]
   }
 ]
@@ -245,9 +244,10 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
   このとき `url` は書けません。
 - `send_file`：`content` は任意（最大 1024 文字）。送信元は `url` か `path` のちょうど 1 つ。
 
-`path` は `config/cron_files/` からの相対パスで、絶対パスや `..` は不可、シンボリックリンクを
-解決した後もこのディレクトリの外に出てはいけません。読み込み時にファイルやディレクトリの存在を
-確認します。`url` はそのまま Telegram に渡し、Bot はダウンロードしません。URL 送信では Telegram
+`path` は絶対パスでなければならず、ホスト上のどこにあるファイルやディレクトリでも指せます
+（シンボリックリンクはリンク先で判定します）。読み込み時に存在と種類を確認します。service account
+が読めるファイルはすべてチャットに送れてしまうため、`config/` や `.env` など資格情報を含むファイル
+を指さないでください。`url` はそのまま Telegram に渡し、Bot はダウンロードしません。URL 送信では Telegram
 の上限が画像 5 MB・その他 20 MB で、ファイルの URL 送信で確実なのは PDF・ZIP・GIF だけです。
 それ以外の形式で送れないのは設定の問題です。ローカルからのアップロード上限は画像 10 MB、
 ファイル 50 MB です。
