@@ -1,11 +1,8 @@
-import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
-
-/** `/h_image` 的主线程执行器状态（cache/main/hImage.ts）。 */
-export interface HImageRuntime {
-  readonly runner: PrioritizedBoundedTaskRunner;
-  /** 停机超时时取消排队与在途请求。 */
-  readonly controller: AbortController;
-  /** 已接纳、尚未结算的请求；结算自摘除。 */
-  readonly tasks: Set<Promise<void>>;
-  accepting: boolean;
+/** 一次 `/h_image` 请求出队后要用到的会话坐标（commands/hImage/）。 */
+export interface HImageRequest {
+  readonly chatId: number;
+  /** 触发命令的消息；结果与失败提示都回复它。 */
+  readonly messageId: number | undefined;
+  /** 论坛群里触发消息所在话题；General 与非论坛群为 undefined。 */
+  readonly messageThreadId: number | undefined;
 }

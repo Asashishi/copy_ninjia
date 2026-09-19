@@ -232,7 +232,7 @@ describe("project convention collectors", () => {
       "function sneaky() { return sendPhotoWithResult({ chatId: 1, bytes, mimeType }); }"
     );
     await Bun.write(
-      join(commandsRoot, "hImage.ts"),
+      join(commandsRoot, "hImage", "draw.ts"),
       "function sendHImageResult() { return sendPhotoWithResult({ chatId: 1, bytes, mimeType }); }"
     );
     await Bun.write(join(sourceRoot, "cron", "delivery.ts"),
@@ -269,7 +269,7 @@ describe("project convention collectors", () => {
     expect(problems).toContainEqual(expect.stringContaining("ordinary Worker/group notices"));
     expect(problems).toContainEqual(expect.stringContaining("verificationEffects.ts: ordinary Worker/group notices"));
     expect(problems).toHaveLength(9);
-    expect(problems.some((problem: string): boolean => problem.includes("hImage.ts"))).toBeFalse();
+    expect(problems.some((problem: string): boolean => problem.includes("hImage/draw.ts"))).toBeFalse();
     expect(problems.some((problem: string): boolean => problem.includes("cron/delivery.ts:"))).toBeFalse();
 
     await Bun.write(welcomePath,

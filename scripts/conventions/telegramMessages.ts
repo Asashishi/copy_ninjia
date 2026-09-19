@@ -27,7 +27,7 @@ export async function collectTelegramMessageProblems(
   const gagNoticesPath: string = join(commandsRoot, "gag", "notices.ts");
   const qaNoticesPath: string = join(commandsRoot, "qa", "notices.ts");
   const wedMessagesPath: string = join(commandsRoot, "wed", "messages.ts");
-  const hImagePath: string = join(commandsRoot, "hImage.ts");
+  const hImageDrawPath: string = join(commandsRoot, "hImage", "draw.ts");
 
   // 状态机按钮及功能性正文只有下列命名边界能够直接发送；普通提示统一交给主线程清理。
   const directBoundaries: Readonly<Record<string, string>> = {
@@ -75,7 +75,7 @@ export async function collectTelegramMessageProblems(
         node.expression.text === "sendPhotoWithResult") {
         let owner: ts.Node | undefined = node.parent;
         while (owner !== undefined && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
-        if (path !== hImagePath || owner?.name?.text !== "sendHImageResult") {
+        if (path !== hImageDrawPath || owner?.name?.text !== "sendHImageResult") {
           problems.push(`${relative(projectRoot, path)}: long-lived command photos must use sendHImageResult`);
         }
       }

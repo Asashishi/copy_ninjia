@@ -15,7 +15,7 @@ import {
 } from "../commands/gag/runtime";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../commands/wed/runtime";
-import { drainHImageRuntime, initHImageRuntime, quiesceHImageRuntime } from "../commands/hImage";
+import { drainDeferredCommandRuntime, initDeferredCommandRuntime, quiesceDeferredCommandRuntime } from "../commands/deferredCommands";
 import { ensureRandomImageDirectory } from "../infra/randomImage";
 import { drainCronScheduler, quiesceCronScheduler, startCronScheduler } from "../cron/scheduler";
 import { hydrateWedMembers } from "../commands/wed/persistence";
@@ -81,7 +81,7 @@ export const lifecycleDependencies = {
   drainAvatarUpdates,
   drainGagRuntime,
   drainWedRuntime,
-  drainHImageRuntime,
+  drainDeferredCommandRuntime,
   drainCronScheduler,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
@@ -102,7 +102,7 @@ export const lifecycleDependencies = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
-  initHImageRuntime,
+  initDeferredCommandRuntime,
   initAiChat,
   initAntiRaid,
   initBlocklistSweepScheduler,
@@ -128,7 +128,7 @@ export const lifecycleDependencies = {
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
   quiesceWedRuntime,
-  quiesceHImageRuntime,
+  quiesceDeferredCommandRuntime,
   quiesceCronScheduler,
   quiesceBlocklistSweepScheduler,
   quiesceConfigReload,

@@ -13,16 +13,19 @@ const pickRandomImage = mock(async (_directory: string): Promise<RandomImagePick
 mock.module("../../packages/infra/telegram", () => ({ sendCommandMessage, sendPhotoWithResult }));
 mock.module("../../packages/infra/randomImage", () => ({ pickRandomImage }));
 
+const { handleHImageCommand } = await import("../../packages/commands/hImage");
 const {
-  drainHImageRuntime,
-  handleHImageCommand,
-  initHImageRuntime,
-  quiesceHImageRuntime,
-} = await import("../../packages/commands/hImage");
-const { hImageRuntime } = await import("../../packages/cache/main/hImage");
+  drainDeferredCommandRuntime: drainHImageRuntime,
+  initDeferredCommandRuntime: initHImageRuntime,
+  quiesceDeferredCommandRuntime: quiesceHImageRuntime,
+} = await import("../../packages/commands/deferredCommands");
+const { deferredCommandRuntime: hImageRuntime } = await import("../../packages/cache/main/deferredCommands");
 const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
 const { getRandomImageDirectory } = await import("../../packages/infra/storage/stateStore");
-const { H_IMAGE_MAX_CONCURRENT, H_IMAGE_MAX_PENDING } = await import("../../packages/consts/hImage");
+const {
+  DEFERRED_COMMAND_MAX_CONCURRENT: H_IMAGE_MAX_CONCURRENT,
+  DEFERRED_COMMAND_MAX_PENDING: H_IMAGE_MAX_PENDING,
+} = await import("../../packages/consts/deferredCommands");
 
 const CHAT_ID: number = -1001;
 

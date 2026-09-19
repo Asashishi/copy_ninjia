@@ -1,5 +1,6 @@
 import type { Api, RawApi } from "grammy";
 import type { TelegramRetryCategory } from "./telegramOutbound";
+import type { TelegramFileDownloadResult } from "./telegram";
 
 /** 指定 grammY RawApi 方法的 JSON payload。 */
 export type TelegramRawPayload<M extends keyof RawApi> = Parameters<RawApi[M]>[0];
@@ -93,12 +94,8 @@ export type TelegramWorkerTemporaryMessageResult =
   | TelegramWorkerTemporaryMessageSentResult
   | TelegramWorkerTemporaryMessageSuppressedResult;
 
-export type TelegramWorkerDownloadFileResult =
-  | { readonly status: "ok"; readonly bytes: Uint8Array }
-  | { readonly status: "missingPath" }
-  | { readonly status: "httpError"; readonly httpStatus: number }
-  | { readonly status: "tooLarge"; readonly observedBytes: number }
-  | { readonly status: "empty" };
+/** 主线程代 Worker 下载的结局，与主线程自己的下载同一形态。 */
+export type TelegramWorkerDownloadFileResult = TelegramFileDownloadResult;
 
 /**
  * Worker 与主线程共用的内存上传描述；不携带 grammY 运行时对象。

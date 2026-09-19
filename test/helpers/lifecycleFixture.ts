@@ -50,7 +50,7 @@ const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drain
 const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
 const drainGagRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainGag"); return "flushed"; });
 const drainWedRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainWed"); return "flushed"; });
-const drainHImageRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainHImage"); return "flushed"; });
+const drainDeferredCommandRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainDeferredCommands"); return "flushed"; });
 const drainCronScheduler = mock(async (): Promise<FlushResult> => { calls.push("drainCron"); return "flushed"; });
 const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
 const drainPendingMessageDeletions = mock(async (): Promise<FlushResult> => {
@@ -65,7 +65,7 @@ const closeTranslate = mock(async (): Promise<FlushResult> => { calls.push("clos
 const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
 const initGagRuntime = mock((): void => { calls.push("initGag"); });
 const initWedRuntime = mock((): void => { calls.push("initWed"); });
-const initHImageRuntime = mock((): void => { calls.push("initHImage"); });
+const initDeferredCommandRuntime = mock((): void => { calls.push("initDeferredCommands"); });
 const prepareRandomImageDirectory = mock(async (): Promise<void> => { calls.push("prepareImageDir"); });
 const enableWedMemberReview = mock((): void => { calls.push("enableWedMemberReview"); });
 const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
@@ -75,7 +75,7 @@ const quiesceChatTitleRefresh = mock((): void => { calls.push("quiesceTitles"); 
 const quiesceTranslate = mock((): void => { calls.push("quiesceTranslate"); });
 const quiesceGagRuntime = mock((): void => { calls.push("quiesceGag"); });
 const quiesceWedRuntime = mock((): void => { calls.push("quiesceWed"); });
-const quiesceHImageRuntime = mock((): void => { calls.push("quiesceHImage"); });
+const quiesceDeferredCommandRuntime = mock((): void => { calls.push("quiesceDeferredCommands"); });
 const quiesceCronScheduler = mock((): void => { calls.push("quiesceCron"); });
 const startCronScheduler = mock((): void => { calls.push("startCron"); });
 const abortChatTitleRefresh = mock((): void => { calls.push("abortTitles"); });
@@ -152,7 +152,7 @@ const testDependencies = {
   drainAvatarUpdates,
   drainGagRuntime,
   drainWedRuntime,
-  drainHImageRuntime,
+  drainDeferredCommandRuntime,
   drainCronScheduler,
   drainTranslate,
   drainPendingMessageDeletions,
@@ -175,7 +175,7 @@ const testDependencies = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
-  initHImageRuntime,
+  initDeferredCommandRuntime,
   prepareRandomImageDirectory,
   enableWedMemberReview,
   initAiChat,
@@ -208,7 +208,7 @@ const testDependencies = {
   quiesceConfigReload,
   quiesceGagRuntime,
   quiesceWedRuntime,
-  quiesceHImageRuntime,
+  quiesceDeferredCommandRuntime,
   quiesceCronScheduler,
   startCronScheduler,
   quiesceTranslate,
@@ -283,7 +283,7 @@ export function installLifecycleFixtureHooks(): void {
       drainAvatarUpdates,
       drainGagRuntime,
       drainWedRuntime,
-      drainHImageRuntime,
+      drainDeferredCommandRuntime,
       drainCronScheduler,
       drainTranslate,
       drainPendingMessageDeletions,
@@ -292,7 +292,7 @@ export function installLifecycleFixtureHooks(): void {
       initAvatarUpdates,
       initGagRuntime,
       initWedRuntime,
-      initHImageRuntime,
+      initDeferredCommandRuntime,
       prepareRandomImageDirectory,
       enableWedMemberReview,
       initChatTitleRefresh,
@@ -303,7 +303,7 @@ export function installLifecycleFixtureHooks(): void {
       quiesceTranslate,
       quiesceGagRuntime,
       quiesceWedRuntime,
-      quiesceHImageRuntime,
+      quiesceDeferredCommandRuntime,
       quiesceCronScheduler,
       startCronScheduler,
       abortChatTitleRefresh,
@@ -348,7 +348,7 @@ export function installLifecycleFixtureHooks(): void {
     drainAntiRaid.mockImplementation(async () => { calls.push("drainAntiRaid"); return "flushed" as const; });
     drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
     drainWedRuntime.mockImplementation(async () => { calls.push("drainWed"); return "flushed" as const; });
-    drainHImageRuntime.mockImplementation(async () => { calls.push("drainHImage"); return "flushed" as const; });
+    drainDeferredCommandRuntime.mockImplementation(async () => { calls.push("drainDeferredCommands"); return "flushed" as const; });
     drainCronScheduler.mockImplementation(async () => { calls.push("drainCron"); return "flushed" as const; });
     drainGagRuntime.mockImplementation(async () => { calls.push("drainGag"); return "flushed" as const; });
     drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
@@ -391,7 +391,7 @@ export const lifecycleFixture = {
   drainAvatarUpdates,
   drainGagRuntime,
   drainWedRuntime,
-  drainHImageRuntime,
+  drainDeferredCommandRuntime,
   drainCronScheduler,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
@@ -411,7 +411,7 @@ export const lifecycleFixture = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
-  initHImageRuntime,
+  initDeferredCommandRuntime,
   prepareRandomImageDirectory,
   initChatTitleRefresh,
   initDiskIO,
@@ -427,7 +427,7 @@ export const lifecycleFixture = {
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
   quiesceWedRuntime,
-  quiesceHImageRuntime,
+  quiesceDeferredCommandRuntime,
   quiesceCronScheduler,
   startCronScheduler,
   quiesceTranslate,

@@ -1,0 +1,49 @@
+/**
+ * `/h_image` 抽图：从随机图片目录（state.global.assets.randomImageDir，见
+ * infra/storage/stateStore.ts 的 getRandomImageDirectory）均匀抽一张发到触发的群。
+ * 在延迟命令执行器里运行（见 commands/deferredCommands.ts）。结果图片只经
+ * sendHImageResult 发送；抽取失败的提示走 sendCommandMessage，30 秒后删除。
+ */
+
+import { chatAtmosphere } from "../../infra/atmosphere";
+import { pickRandomImage } from "../../infra/randomImage";
+import { getRandomImageDirectory } from "../../infra/storage/stateStore";
+import { sendCommandMessage, sendPhotoWithResult } from "../../infra/telegram";
+import type { AtmosphereTexts } from "../../types/atmosphere";
+import type { HImageRequest } from "../../types/hImage";
+import type { RandomImagePick } from "../../types/randomImage";
+
+/** sendHImageResult 的入参。 */
+interface SendHImageResultParams extends HImageRequest {
+  readonly pick: Extract<RandomImagePick, { status: "ok" }>;
+}
+
+/**
+ * `/h_image` 结果图片的唯一发送边界。**长期保留**：这是用户授权的保留例外（见
+ * AGENTS.md「Telegram 提示留存」），不挂固定延迟删除；论坛群带触发消息所在话题并
+ * 回复触发消息。经共享的 sendPhotoWithResult 发送，自发登记、throttler 与 429 分类闸
+ * 都在那一层。
+ */
+async function sendHImageResult({ chatId, messageId, messageThreadId, pick }: SendHImageResultParams): Promise<void> {
+  await sendPhotoWithResult({
+    chatId,
+    bytes: pick.bytes,
+    mimeType: pick.mimeType,
+    replyToMessageId: messageId,
+    messageThreadId,
+  });
+}
+
+/** 抽取并发送；抽取失败按结果回一句 30 秒提示。 */
+export async function deliverRandomImage(request: HImageRequest): Promise<void> {
+  const pick: RandomImagePick = await pickRandomImage(getRandomImageDirectory());
+  if (pick.status === "ok") {
+    await sendHImageResult({ ...request, pick });
+    return;
+  }
+  const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere(request.chatId).H_IMAGE_TEXTS;
+  const text: string = pick.status === "missingDirectory"
+    ? texts.missingDirectory
+    : pick.status === "empty" ? texts.empty : texts.tooLarge(pick.fileName);
+  await sendCommandMessage({ chatId: request.chatId, text, replyToMessageId: request.messageId });
+}

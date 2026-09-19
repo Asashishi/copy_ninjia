@@ -29,7 +29,7 @@ export function quiesceLifecycleMaintenance(
   quiesceOwner("translate", (): void => dependencies.quiesceTranslate());
   quiesceOwner("gag", (): void => dependencies.quiesceGagRuntime());
   quiesceOwner("wed", (): void => dependencies.quiesceWedRuntime());
-  quiesceOwner("h_image", (): void => dependencies.quiesceHImageRuntime());
+  quiesceOwner("deferred-commands", (): void => dependencies.quiesceDeferredCommandRuntime());
   // 定时任务会在排空期间继续触发发送，与其它发送方一起在排空前关闸。
   quiesceOwner("cron", (): void => dependencies.quiesceCronScheduler());
   // 补扫 timer 能启动 Anti-Raid 网络任务与 outbox 写入，必须在确认最终 offset

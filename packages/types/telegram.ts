@@ -155,6 +155,20 @@ export interface BotActionPermissions {
   readonly canDeleteMessages: boolean;
 }
 
+/**
+ * 一次 Telegram 文件下载（getFile + 有界读取）的结局，见 infra/telegram/fileDownload.ts。
+ * - missingPath：getFile 没有返回 file_path；
+ * - httpError：文件服务器回了非 2xx；
+ * - tooLarge：读到的字节超过调用方给的上限，observedBytes 是停下时已读到的量；
+ * - empty：下载成功但一个字节都没有。
+ */
+export type TelegramFileDownloadResult =
+  | { readonly status: "ok"; readonly bytes: Uint8Array }
+  | { readonly status: "missingPath" }
+  | { readonly status: "httpError"; readonly httpStatus: number }
+  | { readonly status: "tooLarge"; readonly observedBytes: number }
+  | { readonly status: "empty" };
+
 /** 有界头像下载结果；成功时字节只由当前操作持有，不进入持久化状态。 */
 export type AvatarDownloadResult =
   | { readonly status: "ok"; readonly bytes: Uint8Array }

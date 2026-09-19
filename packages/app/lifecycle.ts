@@ -135,7 +135,7 @@ export class ApplicationLifecycle {
     this.dependencies.initTranslate();
     this.dependencies.initGagRuntime();
     this.dependencies.initWedRuntime();
-    this.dependencies.initHImageRuntime();
+    this.dependencies.initDeferredCommandRuntime();
     this.flags.translateInitialized = true;
 
     // 配置文件和持久化状态都是不可信部署输入。已有部署输入不受功能开关影响，
@@ -230,7 +230,7 @@ export class ApplicationLifecycle {
     );
     // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
     // init 前段，而上面的 initAvatarUpdates/
-    // initChatTitleRefresh/initTranslate/initGagRuntime/initWedRuntime/initHImageRuntime/
+    // initChatTitleRefresh/initTranslate/initGagRuntime/initWedRuntime/initDeferredCommandRuntime/
     // startCronScheduler/initBlocklistSweepScheduler 又把这些 owner 重新置为接受工作。
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮

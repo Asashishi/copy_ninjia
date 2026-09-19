@@ -1,0 +1,66 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  drainDeferredCommandRuntime,
+  initDeferredCommandRuntime,
+  submitDeferredCommand,
+} from "../../packages/commands/deferredCommands";
+import { deferredCommandRuntime } from "../../packages/cache/main/deferredCommands";
+import {
+  DEFERRED_COMMAND_MAX_BACKGROUND_PENDING,
+  DEFERRED_COMMAND_MAX_CONCURRENT,
+  DEFERRED_COMMAND_MAX_PENDING,
+} from "../../packages/consts/deferredCommands";
+
+/** 可以从外部结算的一个任务。 */
+function gate(): { promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise: Promise<void> = new Promise<void>((resolve: () => void): void => { open = resolve; });
+  return { promise, open };
+}
+
+beforeEach(() => {
+  deferredCommandRuntime.current = null;
+  initDeferredCommandRuntime();
+});
+
+afterEach(async () => {
+  await drainDeferredCommandRuntime(0);
+});
+
+describe("延迟命令执行器", () => {
+  test("后台档最多占 DEFERRED_COMMAND_MAX_BACKGROUND_PENDING 个等待位，其余等待位仍接纳交互请求", async () => {
+    expect(DEFERRED_COMMAND_MAX_BACKGROUND_PENDING).toBeLessThan(DEFERRED_COMMAND_MAX_PENDING);
+    const blocker = gate();
+    for (let index: number = 0; index < DEFERRED_COMMAND_MAX_CONCURRENT; index++) {
+      expect(submitDeferredCommand("interactive", (): Promise<void> => blocker.promise, "test:")).toBe(true);
+    }
+    for (let index: number = 0; index < DEFERRED_COMMAND_MAX_BACKGROUND_PENDING; index++) {
+      expect(submitDeferredCommand("background", async (): Promise<void> => {}, "test:")).toBe(true);
+    }
+    expect(submitDeferredCommand("background", async (): Promise<void> => {}, "test:")).toBe(false);
+    expect(submitDeferredCommand("interactive", async (): Promise<void> => {}, "test:")).toBe(true);
+    blocker.open();
+    expect(await drainDeferredCommandRuntime(5_000)).toBe("flushed");
+  });
+
+  test("槽位空出来时，等待中的交互请求先于后台任务开始", async () => {
+    const blocker = gate();
+    const started: string[] = [];
+    for (let index: number = 0; index < DEFERRED_COMMAND_MAX_CONCURRENT; index++) {
+      submitDeferredCommand("interactive", (): Promise<void> => blocker.promise, "test:");
+    }
+    submitDeferredCommand("background", async (): Promise<void> => { started.push("background"); }, "test:");
+    submitDeferredCommand("interactive", async (): Promise<void> => { started.push("interactive"); }, "test:");
+    blocker.open();
+    expect(await drainDeferredCommandRuntime(5_000)).toBe("flushed");
+    expect(started).toEqual(["interactive", "background"]);
+  });
+
+  test("未启动或已停止接纳时拒绝", () => {
+    deferredCommandRuntime.current = null;
+    expect(submitDeferredCommand("interactive", async (): Promise<void> => {}, "test:")).toBe(false);
+    initDeferredCommandRuntime();
+    deferredCommandRuntime.current!.accepting = false;
+    expect(submitDeferredCommand("background", async (): Promise<void> => {}, "test:")).toBe(false);
+  });
+});
