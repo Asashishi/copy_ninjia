@@ -31,6 +31,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 | 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
 | 🎮 **Look up a command** | Every command, permission semantics and behavioural details (the root README keeps only a summary) | [📖 08 Commands](08-commands.md) |
 | 📊 **Read the numbers** | Release benchmark for cold/hot paths, total throughput and I/O, and end-to-end chain latency | [📖 09 Performance](09-performance.md) |
+| ❓ **Bot not replying** | Checklist for a running bot that stays silent | [📖 10 FAQ](10-faq.md) |
 
 ---
 
@@ -85,6 +86,9 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - What the six sections of `bun run perf:full` measure: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, containers and algorithms, join-log capacity line
    - Three independent rounds per item, reported as a mean with min, max and coefficient of variation
    - Total throughput, total I/O and mock data-root footprint per round
+
+10. **[10 FAQ](10-faq.md)**
+    - A running bot that does not reply: initialisation, privacy, AI triggers, private chats, auto-deleted notices, Inline Mode, Bot-to-Bot, protections that are off by default, and the process state
 
 ---
 
