@@ -517,6 +517,12 @@ This section covers [counting and enforcement boundaries](#counting-and-enforcem
 
 <p align="right"><a href="#quick-navigation">↑ Back to quick navigation</a></p>
 
+### `/info` Profile Lookups
+
+- `commands/info.ts` resolves the target with `acceptUserId`, `acceptChatId`, and `allowSelfTarget` (a read-only lookup may target the bot itself; every other command keeps the default refusal). It then hands the lookup to the deferred command executor's interactive lane, bounded by `INFO_TASK_BUDGET_MS`; a shutdown cancellation ends silently, and a budget timeout replies with whatever was fetched.
+- Profiles are looked up live: users through `readChatMemberUser` (membership in this group), channels and groups through `getChat`, and the bot itself from `ctx.me`. A failed lookup falls back to the `CachedUser` from target resolution, and with neither a name nor a username the reply is "not found". The avatar reuses `readCurrentAvatar` (group identities have no avatar to read). Names pass through `sanitizeDisplayName` to neutralize commands and bidirectional controls, and the id is marked with a `code` entity.
+- Replies with an avatar go only through `sendCommandPhoto` in `infra/telegram/commandPhotos.ts`, which registers the self-sent message and, in groups, the 30-second deletion at the moment the message id arrives; private chats are not deleted and a failed send creates no deletion task. It uses the main-thread grammY client directly (file ids are not part of the Worker capability surface), so it is not exported from `infra/telegram/index.ts`. When the photo send fails the reply falls back to plain text through `sendCommandMessage`.
+
 ### `/h_image` Random Pictures
 
 - The random image directory comes from the validated `state.global.assets.randomImageDir` (default `images`; a relative path resolves against the runtime data root, see `getRandomImageDirectory` in `infra/storage/stateStore.ts`). At startup, after the deployment-input gate and before any Worker or external connection, `ensureRandomImageDirectory` in `infra/randomImage.ts` prepares it: a directory (including a symbolic link to one) is left alone, a missing one is created, and a path that exists but is not a directory or cannot be created refuses startup with a diagnostic naming only the `state.json` path, the field path, and the resolved directory. A directory deleted at runtime is not recreated.

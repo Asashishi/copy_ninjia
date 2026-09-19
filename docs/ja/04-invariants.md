@@ -519,6 +519,12 @@
 
 <p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
 
+### `/info` プロフィール照会
+
+- `commands/info.ts` は `acceptUserId`・`acceptChatId`・`allowSelfTarget` を有効にして対象を解決します（読み取り専用の照会だけが Bot 自身を対象にでき、他のコマンドは既定どおり拒否します）。その後、遅延コマンド実行器の interactive 枠へ渡し、照会全体は `INFO_TASK_BUDGET_MS` に収めます。停止による取消では静かに終え、予算切れでは取得済みの情報で返答します。
+- プロフィールはその場で照会します。ユーザーは `readChatMemberUser`（このグループでのメンバー状態）、チャンネルとグループは `getChat`、Bot 自身は `ctx.me` を使います。照会に失敗したら対象解決で得た `CachedUser` に戻り、名前もユーザー名もなければ「見つからない」と返します。アバターは `readCurrentAvatar` を再利用します（グループの身元にはアバターがありません）。名前は `sanitizeDisplayName` でコマンドと双方向制御文字を無害化し、id は `code` エンティティで示します。
+- アバター付きの返答は `infra/telegram/commandPhotos.ts` の `sendCommandPhoto` だけを通ります。message id を得た時点で自己送信の登録とグループでの 30 秒削除を行い、プライベートチャットでは削除せず、送信失敗では削除タスクを作りません。file_id は Worker の機能面にないため主スレッドの grammY クライアントを直接使い、`infra/telegram/index.ts` からは export しません。画像の送信に失敗したら `sendCommandMessage` の文字だけの返答に切り替えます。
+
 ### `/h_image` ランダム画像
 
 - ランダム画像ディレクトリは検証済みの `state.global.assets.randomImageDir` から得ます（既定 `images`。相対パスは実行時データルート基準で、`infra/storage/stateStore.ts` の `getRandomImageDirectory` を参照）。起動時、デプロイ入力ゲートの後かつあらゆる Worker と外部接続の前に、`infra/randomImage.ts` の `ensureRandomImageDirectory` が準備します。ディレクトリ（ディレクトリへのシンボリックリンクを含む）ならそのまま、無ければ作成し、存在してもディレクトリでない場合や作成できない場合は起動を拒否します。診断には `state.json` のパス、フィールドパス、解決後のディレクトリだけを書きます。稼働中に削除されたディレクトリは再作成しません。

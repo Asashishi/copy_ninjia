@@ -162,7 +162,7 @@
 
 ## 🎮 命令与权限
 
-命令按入口授权：**群成员**可用复读、动作命令和安静模式；**身份权限键**控制 `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` 和功能开关。**`SUPER_ADMIN_USER_ID` 专属**包括 `/init`、权限修改、删除白名单成员、`/batch_kick`；`/white enable` 可按 `isCanWhiteOther` 委托。`/send` 仅超级管理员私聊可用。
+命令按入口授权：**群成员**可用复读、动作命令、安静模式和 `/info` 资料查询；**身份权限键**控制 `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` 和功能开关。**`SUPER_ADMIN_USER_ID` 专属**包括 `/init`、权限修改、删除白名单成员、`/batch_kick`；`/white enable` 可按 `isCanWhiteOther` 委托。`/send` 仅超级管理员私聊可用。
 
 群专属 AI 提示词由 `/prompt config <提示词>` 设置，`/prompt remove` 恢复 `prompt/persona.md`；两者受默认关闭的 `isCanConfigAiPrompt` 控制。`/bot_status` 可查看当前群是否已设置。
 

@@ -12,3 +12,4 @@ export * from "./plain/antiRaid_verification";
 export * from "./plain/notices";
 export * from "./plain/luck";
 export * from "./plain/hImage";
+export * from "./plain/info";

@@ -42,4 +42,5 @@ export { dispatchWedCommand, dispatchWedCallback } from "./wed/dispatch";
 
 export { handlePromptCommand } from "./prompt";
 export { handleHImageCommand } from "./hImage";
+export { handleInfoCommand } from "./info";
 export { drainDeferredCommandRuntime, initDeferredCommandRuntime, quiesceDeferredCommandRuntime } from "./deferredCommands";

@@ -81,6 +81,7 @@ describe("application handler registration", () => {
       "icon",
       "wed",
       "h_image",
+      "info",
       "block",
       "batch_kick",
       "prompt",

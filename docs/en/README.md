@@ -162,7 +162,7 @@ Behavior details, configuration and boundaries for each feature live in the **[ð
 
 ## ðŸŽ® Commands and Permissions
 
-Command access follows the entry point: **group members** can use copy, action commands and quiet mode. **Identity permission keys** control `/bot_status`, `/prompt`, `/clear_context`, `/mute`, `/gag`, `/block` and feature switches. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, `/batch_kick`; `/white enable` can be delegated with `isCanWhiteOther`. `/send` requires the super administrator in private chat.
+Command access follows the entry point: **group members** can use copy, action commands, quiet mode and `/info` profile lookups. **Identity permission keys** control `/bot_status`, `/prompt`, `/clear_context`, `/mute`, `/gag`, `/block` and feature switches. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, `/batch_kick`; `/white enable` can be delegated with `isCanWhiteOther`. `/send` requires the super administrator in private chat.
 
 Set this group's AI prompt with `/prompt config <prompt>` or restore `prompt/persona.md` with `/prompt remove`. Both require `isCanConfigAiPrompt`, which defaults to false. `/bot_status` shows whether the current group has a custom prompt.
 

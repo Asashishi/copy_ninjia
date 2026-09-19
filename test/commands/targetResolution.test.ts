@@ -251,6 +251,14 @@ describe("resolveCommandTarget", () => {
     expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "invalid:42", replyToMessageId: 7 });
   });
 
+  test("开了 allowSelfTarget 后机器人自己也是合法目标，回复与 id 两条路都认", async () => {
+    replyTarget = { id: 999, first_name: "Bot" };
+    expect(await resolveCommandTarget({ ...params(""), allowSelfTarget: true })).toEqual(replyTarget);
+    replyTarget = undefined;
+    expect(await resolveCommandTarget({ ...params("999", true), allowSelfTarget: true })).toEqual({ id: 999 });
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
   test("id 参数解析出的目标是机器人自己时照样被拒", async () => {
     expect(await resolveCommandTarget(params("999", true))).toBeUndefined();
     expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "self", replyToMessageId: 7 });

@@ -168,7 +168,7 @@
 
 ## 🎮 コマンドと権限
 
-コマンドは入口で認可します。**群メンバー**は Copy、アクション、静音モードを使用できます。**identity 権限キー**は `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` と機能スイッチを制御します。**`SUPER_ADMIN_USER_ID` 専用**は `/init`、権限変更、allowlist からの削除、`/batch_kick`。`/white enable` は `isCanWhiteOther` で委任でき、`/send` はスーパー管理者の個人チャットだけで使用できます。
+コマンドは入口で認可します。**群メンバー**は Copy、アクション、静音モード、`/info` によるプロフィール照会を使用できます。**identity 権限キー**は `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` と機能スイッチを制御します。**`SUPER_ADMIN_USER_ID` 専用**は `/init`、権限変更、allowlist からの削除、`/batch_kick`。`/white enable` は `isCanWhiteOther` で委任でき、`/send` はスーパー管理者の個人チャットだけで使用できます。
 
 本群 AI プロンプトは `/prompt config <プロンプト>` で設定し、`/prompt remove` で `prompt/persona.md` に戻します。両方とも既定 false の `isCanConfigAiPrompt` が必要です。`/bot_status` で本群の設定有無を確認できます。
 

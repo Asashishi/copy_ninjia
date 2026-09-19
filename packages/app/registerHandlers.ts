@@ -9,6 +9,7 @@ import {
   handleBatchKickCommand,
   handleBlockCommand,
   handleHImageCommand,
+  handleInfoCommand,
   handleBotStatusCommand,
   handleCjkActionCommand,
   handleCjkActionUsageCommand,
@@ -255,6 +256,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("icon", (ctx: CommandContext<Context>): Promise<void> => handleIconCommand(ctx));
   commands.command("wed", (ctx: CommandContext<Context>): void | Promise<void> => dispatchWedCommand(ctx));
   commands.command("h_image", (ctx: CommandContext<Context>): Promise<void> => handleHImageCommand(ctx));
+  commands.command("info", (ctx: CommandContext<Context>): Promise<void> => handleInfoCommand(ctx));
   commands.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
   commands.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
   commands.command("prompt", (ctx: CommandContext<Context>): Promise<void> => handlePromptCommand(ctx));

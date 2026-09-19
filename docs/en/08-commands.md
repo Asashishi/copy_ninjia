@@ -83,6 +83,7 @@ Sessions are stored as per-group arrays in `state.json.translate`; see [07 Opera
 <tr><td><code>/icon reset</code></td><td align="center">Group member</td><td>Restore the default avatar</td></tr>
 <tr><td><code>/wed</code></td><td align="center">Group members</td><td>Draw a random group partner with an avatar; confirm, change, or remove the result after <code>/init enable</code></td></tr>
 <tr><td><code>/h_image</code></td><td align="center">Group members</td><td>Post one picture drawn uniformly from the random image directory. The picture stays; failure hints are deleted after 30 seconds</td></tr>
+<tr><td><code>/info [@username|id]</code></td><td align="center">Group members</td><td>Look up a target's name, username, id and avatar; a reply, @username, user id or chat id all work, including channels and bots; the reply is deleted after 30 seconds</td></tr>
 <tr><td><code>/h_image add</code></td><td align="center"><code>isCanAddHImage</code></td><td>Reply to a message with a picture to add it (and, for an album, the other pictures of that album seen so far) to the random image library; the summary is deleted after 30 seconds</td></tr>
 <tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/揪住</code> replies "actor 咬了 target！"; successful results are retained</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
@@ -178,6 +179,14 @@ Member IDs are stored as numeric arrays in `memory/wed/<chatId>.json`. Only actu
 Every day at 00:00 Tokyo time, the unified Bun cron notifies the main thread to review every stored member set at a shared limit of five IDs per second across all groups. IDs confirmed absent from their corresponding group are removed from the original Set and saved through the batch path above; failed or timed-out queries retain records. An unfinished round continues without an overlapping round. Shutdown cancels the review and submits remaining changes; process restart waits for the next midnight notification.
 
 Sessions and image bytes remain in memory, with images held only for the current operation and at most 512 sessions per group. The interaction cache uses a 1,024-entry LRU: command and button reads refresh recency, and an insertion at capacity evicts the least recently used group's interactions and cleans up their results. Evicted buttons expire. Member records remain separate, with a 25-group limit that rejects new groups at capacity, so normal operation still supports at most 25 groups. Result messages belong to buttons, LRU eviction, and chat teardown, without fixed 30-second deletion; usage and failure notices use the shared 30-second cleanup. `/init disable` and the bot leaving the group cancel interactions and delete that group's member records and persisted file. Losing administrator rights retains member records. After restart, old buttons ask the caller to send `/wed` again.
+
+## 🔎 Profiles: `/info`
+
+Once the group has run `/init enable`, anyone can look up an identity's public profile with `/info`: reply to their message with `/info`, or send `/info @username`, `/info <user id>`, or `/info <channel or group id>`. Channels, other bots, and the bot itself are valid targets.
+
+- **Contents**: the name (`first_name` and `last_name` joined for users, the title for channels and groups), the username (or "无" when there is none), and the id (tap to copy). The avatar is attached when there is one; otherwise the reply says there is no avatar.
+- **Source**: looked up every time — a user's membership in this group, a channel's or group's chat info, and the bot's own profile from startup for itself. When the lookup fails the bot falls back to the identity it remembers, and answers "not found" when it has nothing. The avatar uses the same reader as `/wed` (a user's avatar is reused by file_id, a channel's is downloaded and uploaded, with the t.me page as a fallback); without one the reply carries no picture.
+- **Retention and concurrency**: the reply and every hint are deleted after 30 seconds. The lookup runs in the deferred command executor without holding up update processing, is limited to 30 seconds (on timeout it replies with what it has), and a full executor answers "try again later". `/info` in a private chat gets no reply.
 
 ## 🖼️ Random Picture: `/h_image`
 

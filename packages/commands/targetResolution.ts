@@ -70,6 +70,11 @@ export interface ResolveCommandTargetParams {
    * 不读名单做决策的命令保持缺省，预热结果不影响目标解析。
    */
   requireIdentityPolicies?: boolean;
+  /**
+   * 是否允许把机器人自己当目标（缺省不允许）。只读的查询命令（`/info`）打开；会改动目标
+   * 状态的命令一律保持缺省，避免拿机器人自己开刀。
+   */
+  allowSelfTarget?: boolean;
 }
 
 /**
@@ -180,6 +185,7 @@ export async function resolveCommandTarget({
   acceptUserId = false,
   acceptChatId = false,
   requireIdentityPolicies = false,
+  allowSelfTarget = false,
 }: ResolveCommandTargetParams): Promise<CachedUser | undefined> {
   const messageId: number = message.message_id;
   const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
@@ -219,8 +225,8 @@ export async function resolveCommandTarget({
     targetUser = argument.user;
   }
 
-  // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈。
-  if (targetUser.id === botUserId) {
+  // 缺省不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈；只读的 /info 例外。
+  if (!allowSelfTarget && targetUser.id === botUserId) {
     await sendCommandMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
     return undefined;
   }

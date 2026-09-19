@@ -50,6 +50,7 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   icon: "handleIconCommand",
   wed: "dispatchWedCommand",
   h_image: "handleHImageCommand",
+  info: "handleInfoCommand",
   block: "handleBlockCommand",
   batch_kick: "handleBatchKickCommand",
   ai_chat: "handleAiChatCommand",

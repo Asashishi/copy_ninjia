@@ -461,6 +461,12 @@
 
 <p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 
+### `/info` 资料查询
+
+- `commands/info.ts`：目标解析开 `acceptUserId`、`acceptChatId` 与 `allowSelfTarget`（只读查询允许以机器人自己为目标，其余命令保持缺省拒绝）。解析后交给延迟命令执行器的 interactive 档，整次查询受 `INFO_TASK_BUDGET_MS` 约束；停机取消静默收场，预算超时按已拿到的资料回复。
+- 资料现查：用户走 `readChatMemberUser`（本群成员身份），频道或群走 `getChat`，机器人自己用 `ctx.me`；查不到退回目标解析得到的 `CachedUser`，名称与用户名都没有时回「查不到」。头像复用 `readCurrentAvatar`（群身份不读头像）。名称经 `sanitizeDisplayName` 中和命令与双向控制字符，id 用 `code` 实体标出。
+- 带头像的回执只经 `infra/telegram/commandPhotos.ts` 的 `sendCommandPhoto` 发送：拿到 message id 的同一时刻登记自发消息与群聊的 30 秒删除，私聊不删、发送失败不建删除任务；它直接走主线程 grammY 客户端（file_id 不在 Worker 能力面里），因此不从 `infra/telegram/index.ts` 导出。带图发送失败退回 `sendCommandMessage` 的纯文字回执。
+
 ### `/h_image` 随机图片
 
 - 随机图片目录来自已校验的 `state.global.assets.randomImageDir`（缺省 `images`，相对路径按运行时数据根解析，`infra/storage/stateStore.ts` 的 `getRandomImageDirectory`）。启动时在部署输入闸之后、任何 Worker 与外部连接之前由 `infra/randomImage.ts` 的 `ensureRandomImageDirectory` 准备：是目录（含指向目录的符号链接）则不动，缺失则创建，存在但不是目录或建不出来就拒绝启动，诊断只写 `state.json` 路径、字段路径与解析后的目录。运行期目录被删不自动重建。
