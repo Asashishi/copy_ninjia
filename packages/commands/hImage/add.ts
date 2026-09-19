@@ -5,7 +5,8 @@
  * 的 background 档；任务在 H_IMAGE_ADD_TASK_BUDGET_MS 的总预算内一张一张处理，内存里最多
  * 同时只有一张图：图库里已有（同一 file_unique_id）的跳过，已知超过 10 MB 的不下载，其余
  * 经共享的 Telegram 文件下载读进有界内存，再按字节嗅探格式写进图库（infra/randomImage.ts）。
- * 结果只回一句汇总，30 秒后删除；停机取消时静默收场。
+ * 结果只回一句汇总（新收张数、收图前图库张数，以及跳过与失败的张数），30 秒后删除；停机
+ * 取消时静默收场。
  */
 
 import type { CommandContext, Context } from "grammy";
@@ -19,7 +20,7 @@ import { RANDOM_IMAGE_MAX_BYTES } from "../../consts/randomImage";
 import { chatAtmosphere } from "../../infra/atmosphere";
 import { logger } from "../../infra/logger";
 import { mediaGroupImagesIn } from "../../infra/mediaGroups";
-import { hasStoredRandomImage, isRandomImageDirectory, storeRandomImage } from "../../infra/randomImage";
+import { countRandomImages, hasStoredRandomImage, isRandomImageDirectory, storeRandomImage } from "../../infra/randomImage";
 import { getRandomImageDirectory } from "../../infra/storage/stateStore";
 import { sendCommandMessage } from "../../infra/telegram";
 import { downloadTelegramFileBytes } from "../../infra/telegram/fileDownload";
@@ -81,7 +82,7 @@ async function collectImage(
   }
 }
 
-/** 在总预算内逐张收图，最后回一句汇总。 */
+/** 先数一遍图库，再在总预算内逐张收图，最后回一句汇总。 */
 export async function addRandomImages(request: HImageAddRequest): Promise<void> {
   const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere(request.chatId).H_IMAGE_TEXTS;
   const directory: string = getRandomImageDirectory();
@@ -89,6 +90,7 @@ export async function addRandomImages(request: HImageAddRequest): Promise<void> 
     await sendCommandMessage({ chatId: request.chatId, text: texts.missingDirectory, replyToMessageId: request.messageId });
     return;
   }
+  const librarySize: number = await countRandomImages(directory);
   const signal: AbortSignal = signalWithTimeout(currentUpdateAbortSignal(), H_IMAGE_ADD_TASK_BUDGET_MS);
   let added: number = 0;
   let existing: number = 0;
@@ -105,7 +107,7 @@ export async function addRandomImages(request: HImageAddRequest): Promise<void> 
   }
   await sendCommandMessage({
     chatId: request.chatId,
-    text: texts.addResult(added, existing, failed),
+    text: texts.addResult({ added, librarySize, existing, failed }),
     replyToMessageId: request.messageId,
   });
 }

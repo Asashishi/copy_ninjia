@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  countRandomImages,
   ensureRandomImageDirectory,
   hasStoredRandomImage,
   isRandomImageDirectory,
@@ -64,6 +65,23 @@ describe("ensureRandomImageDirectory", () => {
     await expect(ensureRandomImageDirectory("/proc/copy-ninjia-random-image-test/images")).rejects.toThrow(
       "state.global.assets.randomImageDir must be an existing or creatable directory"
     );
+  });
+});
+
+describe("countRandomImages", () => {
+  test("口径同抽图候选：隐藏文件、收图临时文件、非白名单扩展名、子目录与符号链接都不算", async () => {
+    const root: string = temporaryRoot();
+    for (const name of ["a.jpg", "B.PNG", "c.webp", "d.jpeg", ".hidden.png", ".h_image-add-123.jpg", "notes.txt", "anim.gif", "target.png"]) {
+      await Bun.write(join(root, name), "x");
+    }
+    mkdirSync(join(root, "sub.png"));
+    symlinkSync(join(root, "target.png"), join(root, "link.png"));
+    expect(await countRandomImages(root)).toBe(5);
+    expect(await countRandomImages(temporaryRoot())).toBe(0);
+  });
+
+  test("目录读取失败原样上抛", async () => {
+    await expect(countRandomImages(join(temporaryRoot(), "missing"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

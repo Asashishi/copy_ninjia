@@ -1,3 +1,5 @@
+import type { HImageAddSummary } from "../../../types/hImage";
+
 /** `/h_image` 与 `/h_image add` 的用法、失败与结果提示（嘲讽风格）；全部经 sendCommandMessage 发送，30 秒后删除。 */
 export const H_IMAGE_TEXTS: Readonly<{
   usage: string;
@@ -8,7 +10,7 @@ export const H_IMAGE_TEXTS: Readonly<{
   addUsage: string;
   addRejected: (actorLabel: string) => string;
   addNoImage: string;
-  addResult: (added: number, existing: number, failed: number) => string;
+  addResult: (summary: HImageAddSummary) => string;
 }> = {
   usage: "笨蛋，直接发 /h_image 抽一张；回复一条带图的消息发 /h_image add 才是往图库里收图♡",
   busy: "一口气要这么多图，本天才忙不过来啦，杂鱼等会儿再来♡",
@@ -18,7 +20,8 @@ export const H_IMAGE_TEXTS: Readonly<{
   addUsage: "笨蛋，要先回复一条带图的消息，再发 /h_image add 才行♡",
   addRejected: (actorLabel: string): string => `就 ${actorLabel} 也想往本天才的图库里塞东西？没有 isCanAddHImage 可不行，笨蛋♡`,
   addNoImage: "这条消息里没有能收的图呀（只收图片，或 jpg、png、webp 格式的文件），杂鱼♡",
-  addResult: (added: number, existing: number, failed: number): string =>
-    `收好啦：新收 ${added} 张，图库里本来就有 ${existing} 张` +
+  addResult: ({ added, librarySize, existing, failed }: HImageAddSummary): string =>
+    `收好啦：新收 ${added} 张，图库里本来就有 ${librarySize} 张` +
+    (existing > 0 ? `，有 ${existing} 张早就在图库里了，没再收` : "") +
     (failed > 0 ? `，还有 ${failed} 张没收成（超过 10 MB、格式不对或下载失败）` : "") + "，杂鱼♡",
 };

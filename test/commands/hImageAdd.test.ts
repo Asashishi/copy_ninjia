@@ -125,7 +125,25 @@ describe("/h_image add", () => {
     await runAdd(photo("a", { media_group_id: "album" }));
     expect(downloadTelegramFileBytes.mock.calls.map((call: [{ fileId: string }]): string => call[0].fileId)).toEqual(["file-a", "file-b"]);
     expect(readdirSync(directory).sort()).toEqual(["a.jpg", "b.png", "c.webp"]);
-    expect(sendCommandMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: texts.addResult(2, 1, 0), replyToMessageId: 10 });
+    expect(sendCommandMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: texts.addResult({ added: 2, librarySize: 1, existing: 1, failed: 0 }), replyToMessageId: 10,
+    });
+  });
+
+  test("汇总里「本来就有」是收图前图库的张数，与本次跳过的重复张数分开写", async () => {
+    for (const name of ["old1.jpg", "old2.png", "old3.webp", "old4.jpg", "old5.jpg", "old6.png", "old7.jpg", "notes.txt", ".h_image-add-x.jpg"]) {
+      await Bun.write(`${directory}/${name}`, "x");
+    }
+    downloads.set("file-a", { status: "ok", bytes: JPEG });
+
+    await runAdd(photo("a"));
+    expect(readdirSync(directory)).toContain("a.jpg");
+    expect(sendCommandMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: "收好啦：新收 1 张，图库里本来就有 7 张，杂鱼♡", replyToMessageId: 10,
+    });
+    expect(texts.addResult({ added: 2, librarySize: 8, existing: 1, failed: 1 })).toBe(
+      "收好啦：新收 2 张，图库里本来就有 8 张，有 1 张早就在图库里了，没再收，还有 1 张没收成（超过 10 MB、格式不对或下载失败），杂鱼♡"
+    );
   });
 
   test("超限不下载；格式不对、下载失败与抛错都计为失败", async () => {
@@ -145,7 +163,9 @@ describe("/h_image add", () => {
     expect(downloadTelegramFileBytes.mock.calls.map((call: [{ fileId: string }]): string => call[0].fileId))
       .toEqual(["file-gif", "file-404", "file-err"]);
     expect(readdirSync(directory)).toEqual([]);
-    expect(sendCommandMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: texts.addResult(0, 0, 4), replyToMessageId: 10 });
+    expect(sendCommandMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: texts.addResult({ added: 0, librarySize: 0, existing: 0, failed: 4 }), replyToMessageId: 10,
+    });
     expect(loggerError).toHaveBeenCalledTimes(2);
   });
 
@@ -164,7 +184,9 @@ describe("/h_image add", () => {
     });
     await runAdd(photo("a", { media_group_id: "album" }));
     expect(downloadTelegramFileBytes).toHaveBeenCalledTimes(1);
-    expect(sendCommandMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: texts.addResult(0, 0, 2), replyToMessageId: 10 });
+    expect(sendCommandMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: texts.addResult({ added: 0, librarySize: 0, existing: 0, failed: 2 }), replyToMessageId: 10,
+    });
   });
 
   test("停机取消时静默收场，不回汇总", async () => {

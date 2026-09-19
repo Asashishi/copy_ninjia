@@ -1,8 +1,9 @@
 /**
  * 随机图片：`/h_image` 的目录准备、抽取与收图写盘。
  *
- * 只做「从目录抽一张并读出字节」和「把一张图写进目录」，不持有缓存，也不发送；目录路径
- * 由调用方传入（部署默认值见 infra/storage/stateStore.ts 的 getRandomImageDirectory）。
+ * 只做「从目录抽一张并读出字节」「数图库张数」和「把一张图写进目录」，不持有缓存，也不
+ * 发送；目录路径由调用方传入（部署默认值见 infra/storage/stateStore.ts 的
+ * getRandomImageDirectory）。
  * 每次抽取都重新枚举目录，增删图片不用重启；低频路径，不缓存目录列表。
  */
 
@@ -51,14 +52,34 @@ export async function ensureRandomImageDirectory(directory: string): Promise<voi
   throw invalid;
 }
 
+/**
+ * 目录项里算作图库图片的文件名：扩展名命中 RANDOM_IMAGE_EXTENSIONS 的非隐藏普通文件
+ * （符号链接、子目录与收图写到一半的点号临时文件都不算）。抽图与计数共用这一口径。
+ */
+function randomImageNames(entries: readonly Dirent[]): string[] {
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || entry.name.startsWith(".")) continue;
+    if (RANDOM_IMAGE_EXTENSIONS.has(extname(entry.name).toLowerCase())) names.push(entry.name);
+  }
+  return names;
+}
+
+/**
+ * 图库里现有的图片张数，口径同 pickRandomImage 的候选；目录读取失败原样上抛。
+ * @param directory 已解析成绝对路径的目录。
+ */
+export async function countRandomImages(directory: string): Promise<number> {
+  return randomImageNames(await readdir(directory, { withFileTypes: true })).length;
+}
+
 /** 列目录之后、读文件之前被删除、改名或换成目录的候选。 */
 function vanished(error: unknown): boolean {
   return isErrno(error, "ENOENT") || isErrno(error, "ENOTDIR") || isErrno(error, "EISDIR");
 }
 
 /**
- * 从目录非递归地均匀抽一张图片并读出字节。候选是扩展名命中 RANDOM_IMAGE_EXTENSIONS
- * 的非隐藏普通文件（符号链接与子目录不算）；抽中的文件超过 RANDOM_IMAGE_MAX_BYTES
+ * 从目录非递归地均匀抽一张图片并读出字节。候选口径见 randomImageNames；抽中的文件超过 RANDOM_IMAGE_MAX_BYTES
  * 时只报超限，不读入内存。抽中的文件在读取前已消失（部署方正在整理目录）时，从剩余
  * 候选里重新均匀抽取，候选抽完即报 empty；最多尝试候选数那么多次。
  * @param directory 已解析成绝对路径的目录。
@@ -71,11 +92,7 @@ export async function pickRandomImage(directory: string): Promise<RandomImagePic
     if (isErrno(error, "ENOENT") || isErrno(error, "ENOTDIR")) return { status: "missingDirectory" };
     throw error;
   }
-  const candidates: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || entry.name.startsWith(".")) continue;
-    if (RANDOM_IMAGE_EXTENSIONS.has(extname(entry.name).toLowerCase())) candidates.push(entry.name);
-  }
+  const candidates: string[] = randomImageNames(entries);
   for (let fileName: string | undefined = pickRandom(candidates); fileName !== undefined; fileName = pickRandom(candidates)) {
     const path: string = join(directory, fileName);
     try {

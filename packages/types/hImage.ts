@@ -30,3 +30,15 @@ export interface HImageAddRequest extends HImageRequest {
 
 /** 收一张图的结局（commands/hImage/add.ts）；stopped 表示停机取消，整批静默收场。 */
 export type HImageAddOutcome = "added" | "existing" | "failed" | "stopped";
+
+/** `/h_image add` 收完后的汇总计数，交给 H_IMAGE_TEXTS.addResult 渲染。 */
+export interface HImageAddSummary {
+  /** 本次新收进图库的张数。 */
+  readonly added: number;
+  /** 本次收图开始前图库里的张数，口径同 `/h_image` 抽图的候选（infra/randomImage.ts）。 */
+  readonly librarySize: number;
+  /** 图库里早已有同一 file_unique_id、本次跳过的张数。 */
+  readonly existing: number;
+  /** 超限、格式不对、下载失败或预算耗尽而没收成的张数。 */
+  readonly failed: number;
+}
