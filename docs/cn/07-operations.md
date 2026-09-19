@@ -112,7 +112,7 @@ WantedBy=multi-user.target
     最新 250,000 人。`/init disable` 与机器人被移出群会把该群保留窗口内外的全部
     日志一并删掉，不等自然过期（被撤管理员不删）。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
-  - **内容**：schema v10 共享存储数据库。`permission_list.policy` 是永久身份权限的严格 JSONB，`blocklist_entries` 保存黑名单（`data` 含 `blockedAt`、Telegram meta 与可选的 `participantInvalidCount`；不认识该字段的旧版本读到带该字段的行会拒绝启动，回滚到这类版本必须连同升级前同一时点的数据库备份一起恢复，不能只替换程序），`temporary_ad_bypass_entries` 保存临时广告免检累计；后者使用 `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at` 与 `qualified_at`。`pending_blocked_removals` 保存未完成的群级封禁任务；`storage_metadata` 与 Drizzle journal 共同约束 schema 和精确谱系。
+  - **内容**：schema v11 共享存储数据库。`permission_list.policy` 是永久身份权限的严格 JSONB，`blocklist_entries` 保存黑名单（`data` 含 `blockedAt`、Telegram meta 与可选的 `participantInvalidCount`；不认识该字段的旧版本读到带该字段的行会拒绝启动，回滚到这类版本必须连同升级前同一时点的数据库备份一起恢复，不能只替换程序），`temporary_ad_bypass_entries` 保存临时广告免检累计；后者使用 `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at` 与 `qualified_at`。`pending_blocked_removals` 保存未完成的群级封禁任务；`storage_metadata` 与 Drizzle journal 共同约束 schema 和精确谱系。
   - **群状态与人设**：`chat_states` 最多 25 行。`chat_id` 是群主键；`status` 是必填 JSONB 状态；`ai_persona` 是可空、非空白 TEXT，仅保存本群自定义提示词，缺省使用项目 `prompt/persona.md`。状态与人设在启动时读入现有主线程群缓存，`/bot_status` 直接查看是否已设置。`/init disable` 或 Bot 离群清除整行及人设；待恢复的 lockdown 状态按恢复协议保留。
   - **AI 上下文**：`ai_context` 是可空 JSONB version=1 快照，包含逐字消息、摘要、待合并摘要与保存时间，沿用 AI Worker 记忆缓存及主线程恢复镜像。只更新已有群行，不保留仅有上下文的行；清空记忆将该列置 NULL，不改人设。正文、名称与引用字段为单行，引用 text/quote 最多 500 个 UTF-16 码元，`at` 为有效东京本地时间 `YYYY/MM/DD HH:mm:ss`；摘要允许换行。非法字段拒绝恢复并指出嵌套路径，不修复原数据。
   - **备份与恢复**：数据库包含敏感群聊记忆与自定义提示词，必须备份。停 Bot 后，将主库及存在的 WAL/SHM 作为同一集合复制到工作树外，记录并核对 owner/mode 与 SHA-256。Disk I/O Worker 独占数据库，启动校验 integrity、JSONB、schema、谱系、严格行 codec、名单互斥与 outbox 引用；群状态和 AI 快照从同一连接恢复。身份热读使用 8,192 项 LRU，只按 update 所需身份冷读。任一校验失败都拒绝启动，不自动建库、迁移、丢行或降级。
@@ -153,20 +153,20 @@ WantedBy=multi-user.target
 
 启动不会凭缺失数据库猜测「空名单」，所以全新部署必须显式建一次当前 schema 的空库。步骤见 [01 环境搭建](01-getting-started.md#初始化身份数据库)，`install.sh` 也已包含。目标库已存在时建库入口直接拒绝覆盖。
 
-### 从 schema v9 冷迁移
+### 从 schema v10 冷迁移
 
-当前唯一冷迁移入口是 [`scripts/migrateClearContextPermission.ts`](../../scripts/migrateClearContextPermission.ts)，只接受上一次迁移产出的 schema v9 精确谱系，输出 schema v10。更旧部署须先按对应版本文档分阶段升级到 schema v9；未知谱系与已迁移的 v10 均拒绝。生产启动只校验当前格式，不执行迁移。
+当前唯一冷迁移入口是 [`scripts/migrateHImageAddPermission.ts`](../../scripts/migrateHImageAddPermission.ts)，只接受上一次迁移产出的 schema v10 精确谱系（12.x 发布的格式），输出 schema v11。更旧部署须先分阶段升级到 schema v10，见下节；未知谱系与已迁移的 v11 均拒绝。生产启动只校验当前格式，不执行迁移。
 
 1. 停止服务并确认 inactive、没有残留进程。用 `mktemp -d` 在工作树外备份真实配置、凭据和运行时数据；SQLite 主库与已有 WAL/SHM 必须来自同一停机时点。记录文件清单、权限、属主与 SHA-256，并逐文件核对副本。
 2. 指定源备份之外的新输出目录，父目录须存在。脚本不改源文件、不操作服务、不替换部署文件。
 
 ```bash
-bun run migrate:clear-context-permission \
+bun run migrate:h-image-add-permission \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. 迁移为每条 `permission_list.policy` 增加布尔权限 `isCanClearContext`。原有全部权限均为 true 的成员设为 true，其余设为 false；原权限、身份元数据、群状态、上下文、人设及其他领域数据保持不变。超级管理员不依赖此表，运行时始终直授 true。新成员默认 false，后续可以通过 `/permission` 单独授予或撤销。
+3. 迁移为每条 `permission_list.policy` 增加布尔权限 `isCanAddHImage`（`/h_image add` 收图）。原有全部权限均为 true 的成员设为 true，其余设为 false；原权限、身份元数据、群状态、上下文、人设及其他领域数据保持不变。超级管理员不依赖此表，运行时始终直授 true。新成员默认 false，后续可以通过 `/permission` 单独授予或撤销。
 4. `ready.json` 是转换、严格校验、SQLite checkpoint、连接关闭及源复核完成的唯一标记。核对 `sourceFiles`、`outputFiles` 的哈希和元数据，以及 `enabledPermissions`、`disabledPermissions` 计数。失败或中断时保留备份与不完整产物，从原备份向新目录重跑；不覆盖既有输出。
 5. 在停机状态下手工替换验证后的 SQLite 主库。旧 WAL/SHM 只在已有一致备份且确认无数据库句柄时移除，不得与新主库混用。按清单恢复原属主与权限，确保服务账号能写 SQLite 和父目录；`config/` 可只读。
 6. 打开数据库前核对安装后哈希，再严格校验配置、主备状态和当前数据库。全部就位后启动，观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长且 journal 无新增非零退出。全部核验完成前保留外部备份；回滚必须恢复对应代码与同一时点的数据集。
@@ -175,7 +175,7 @@ bun run migrate:clear-context-permission \
 
 ### 从 11.0.9 分阶段升级
 
-11.0.9 使用 schema v8。先在独立目录中使用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再由当前入口产出 v10；全过程保持服务停止，不需要启动中间版本。运行以下命令前，先按上节完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交，两个暂存输出目录须不存在。
+11.0.9 使用 schema v8，需要三段：先在独立目录中用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再用 12.1.0 发布的 `migrate:clear-context-permission` 产出 v10，最后由当前入口产出 v11；全过程保持服务停止，不需要启动中间版本。已在 12.x（schema v10）上的部署只做最后一段，即上节的步骤。运行以下命令前，先按上节完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交与 12.1.0 标签，三个暂存输出目录须不存在。
 
 中间源码是本流程的必需输入。仅有 11.0.9 标签或当前版本的源码压缩包时，须先取得上述固定提交的完整源码；发布前应独立保留并提供该源码，不能依赖 squash 后会被重置的 dev 历史。
 
@@ -191,12 +191,21 @@ git archive 500e848faeda75dcae3c3329507f24d05137e3b9 | tar -x -C "$MIGRATION_COD
     --source-root /absolute/11.0.9-cold-backup \
     --output-root /absolute/new-schema-v9-staging
 )
-bun run migrate:clear-context-permission \
-  --source-root /absolute/new-schema-v9-staging \
-  --output-root /absolute/new-schema-v10-staging
+RELEASE_CODE="$(mktemp -d)"
+git archive 12.1.0 | tar -x -C "$RELEASE_CODE"
+(
+  cd "$RELEASE_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:clear-context-permission \
+    --source-root /absolute/new-schema-v9-staging \
+    --output-root /absolute/new-schema-v10-staging
+)
+bun run migrate:h-image-add-permission \
+  --source-root /absolute/new-schema-v10-staging \
+  --output-root /absolute/new-schema-v11-staging
 ```
 
-第一阶段按原有全部 16 项权限授予 `isCanConfigAiPrompt`，第二阶段按完整 17 项权限授予 `isCanClearContext`。第一阶段仅导入 `chat_states` 已有群的记忆；无对应群行的记忆计入 `discardedContexts`，不创建群状态。逐阶段检查 `ready.json`、源/产物哈希和导入/丢弃计数，最终只安装 v10 主库；保留整份原始备份，手工移除部署根中已迁移的 `memory/ai/`，其余配置和状态按原路径保留。继续执行上节的权限恢复、严格校验和启动观察。当前运行时与迁移入口均不直接接受 v8。
+第一阶段按原有全部 16 项权限授予 `isCanConfigAiPrompt`，第二阶段按完整 17 项权限授予 `isCanClearContext`，第三阶段按完整 18 项权限授予 `isCanAddHImage`。第一阶段仅导入 `chat_states` 已有群的记忆；无对应群行的记忆计入 `discardedContexts`，不创建群状态。逐阶段检查 `ready.json`、源/产物哈希和导入/丢弃计数，最终只安装 v11 主库；保留整份原始备份，手工移除部署根中已迁移的 `memory/ai/`，其余配置和状态按原路径保留。继续执行上节的权限恢复、严格校验和启动观察。当前运行时与迁移入口均不直接接受 v8 或 v9。
 
 ## 启动失败排查
 

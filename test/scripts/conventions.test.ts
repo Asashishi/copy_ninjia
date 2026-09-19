@@ -285,18 +285,18 @@ describe("project convention collectors", () => {
     mkdirSync(join(root, "scripts"), { recursive: true });
 
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:clear-context-permission": "bun scripts/migrateClearContextPermission.ts" },
+      scripts: { "migrate:h-image-add-permission": "bun scripts/migrateHImageAddPermission.ts" },
     }));
     expect(await collectColdMigrationProblems(root)).toContainEqual(expect.stringContaining("active cold migration entry does not exist"));
-    await Bun.write(join(root, "scripts/migrateClearContextPermission.ts"), "export {};\n");
+    await Bun.write(join(root, "scripts/migrateHImageAddPermission.ts"), "export {};\n");
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:clear-context-permission": "bun scripts/migrateClearContextPermission.ts", "migrate:legacy": "bun scripts/legacy.ts" },
+      scripts: { "migrate:h-image-add-permission": "bun scripts/migrateHImageAddPermission.ts", "migrate:legacy": "bun scripts/legacy.ts" },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:clear-context-permission"
+        "package.json must expose exactly the declared active cold migration commands migrate:h-image-add-permission"
       ),
     ]);
   });

@@ -126,7 +126,7 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
     again, history compacts to the latest record per user, and each chat/day retains at most the
     newest 250,000 users.
 - **`database/storage.sqlite`** (with possible runtime `-wal` / `-shm` sidecars)
-  - **Contents**: schema v10 shared storage. `permission_list.policy` holds strict JSONB identity permissions; `blocklist_entries` holds permanent bans; its `data` carries `blockedAt`, Telegram metadata, and an optional `participantInvalidCount`, and versions that do not recognize that field refuse to start on any row carrying it, so rolling back to such a version requires restoring the database backup taken at the same point before the upgrade, not just replacing the program. `temporary_ad_bypass_entries` stores activity using `ad_bypass`, `ad_bypass_granted_at`, `qualified_days`, `send_count`, `counted_at` and `qualified_at`. `pending_blocked_removals` holds unfinished per-chat bans. `storage_metadata` and the Drizzle journal constrain the schema and exact lineage.
+  - **Contents**: schema v11 shared storage. `permission_list.policy` holds strict JSONB identity permissions; `blocklist_entries` holds permanent bans; its `data` carries `blockedAt`, Telegram metadata, and an optional `participantInvalidCount`, and versions that do not recognize that field refuse to start on any row carrying it, so rolling back to such a version requires restoring the database backup taken at the same point before the upgrade, not just replacing the program. `temporary_ad_bypass_entries` stores activity using `ad_bypass`, `ad_bypass_granted_at`, `qualified_days`, `send_count`, `counted_at` and `qualified_at`. `pending_blocked_removals` holds unfinished per-chat bans. `storage_metadata` and the Drizzle journal constrain the schema and exact lineage.
   - **Chat state and persona**: `chat_states` has at most 25 rows. `chat_id` is the primary key, `status` is required JSONB, and `ai_persona` is nullable, nonblank TEXT for this group's custom prompt. Missing personas use the project's `prompt/persona.md`. Startup loads state and persona into the existing main-thread chat cache; `/bot_status` reads whether a persona is configured there. `/init disable` and bot departure clear the row and persona; an unrestored lockdown record follows its recovery protocol.
   - **AI context**: nullable JSONB `ai_context` stores the version=1 verbatim buffer, summaries, pending summary and save time. It uses the AI Worker's existing memory cache and the main-thread recovery mirror. Writes update existing chat rows only; context-only rows are not retained. Clearing memory sets this column to NULL and preserves the persona. Message, name and reference fields are single-line; reference text/quote is limited to 500 UTF-16 code units, and `at` is valid Tokyo local time in `YYYY/MM/DD HH:mm:ss` form. Summaries may contain newlines. Invalid fields refuse recovery with a nested path and leave data unchanged.
   - **Backup and recovery**: the database contains sensitive conversation memory and custom prompts and requires backup. With the bot stopped, copy SQLite and any WAL/SHM as one set outside the worktree and record and verify owners, modes and SHA-256 hashes. Disk I/O Worker exclusively owns the database. Startup checks integrity, JSONB, schema, lineage, strict row codecs, disjoint policies and outbox references; chat state and AI snapshots recover through the same connection. Identity reads use 8,192-entry LRUs and fetch only the identities needed by an update. Any failure refuses startup without automatic creation, migration, row dropping or degraded operation.
@@ -167,20 +167,20 @@ The runtime has no old-format compatibility path and never creates this database
 
 Startup never guesses that a missing database means empty policy, so a fresh deployment must explicitly create one empty database at the current schema. The steps are in [01 Setup](01-getting-started.md#initializing-identity-storage), and `install.sh` already includes them. The creation entry point refuses to overwrite an existing target.
 
-### Cold migration from schema v9
+### Cold migration from schema v10
 
-The sole cold-migration entry point is [`scripts/migrateClearContextPermission.ts`](../../scripts/migrateClearContextPermission.ts). It accepts only the exact schema v9 lineage produced by the preceding migration and outputs schema v10. Older deployments must first upgrade in stages to v9 using the corresponding version guides. Unknown lineage and an already migrated v10 database are rejected. Production startup validates only the current format and performs no migration.
+The sole cold-migration entry point is [`scripts/migrateHImageAddPermission.ts`](../../scripts/migrateHImageAddPermission.ts). It accepts only the exact schema v10 lineage produced by the preceding migration (the format of the 12.x releases) and outputs schema v11. Older deployments must first upgrade in stages to v10, as described in the next section. Unknown lineage and an already migrated v11 database are rejected. Production startup validates only the current format and performs no migration.
 
 1. Stop the service and confirm inactive with no remaining process. Use `mktemp -d` outside the worktree to back up real configuration, credentials and runtime data. SQLite and any WAL/SHM must come from the same stopped-service snapshot. Record the file manifest, modes, owners and SHA-256 hashes, then verify every copy.
 2. Generate a new output directory outside the source backup, under an existing parent. The script does not modify the source, manage services or replace deployment files.
 
 ```bash
-bun run migrate:clear-context-permission \
+bun run migrate:h-image-add-permission \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. Each `permission_list.policy` receives the boolean permission `isCanClearContext`. Members whose existing permissions are all true receive true; all others receive false. Existing permissions, identity metadata, chat states, contexts, personas and other domains remain unchanged. The super administrator always receives true directly at runtime without a database entry. New members default to false, and `/permission` can grant or revoke this permission independently.
+3. Each `permission_list.policy` receives the boolean permission `isCanAddHImage` (collecting pictures with `/h_image add`). Members whose existing permissions are all true receive true; all others receive false. Existing permissions, identity metadata, chat states, contexts, personas and other domains remain unchanged. The super administrator always receives true directly at runtime without a database entry. New members default to false, and `/permission` can grant or revoke this permission independently.
 4. Only `ready.json` marks completed conversion, strict validation, SQLite checkpoint, connection closure and source verification. Check hashes and metadata in `sourceFiles` and `outputFiles`, plus `enabledPermissions` and `disabledPermissions`. On failure or interruption, retain the backup and partial output and rerun from the original backup into a new directory. Existing output cannot be overwritten.
 5. While stopped, manually replace SQLite with the verified output. Remove old deployment WAL/SHM only after backup and confirmation that no database handles remain; never combine them with the new main database. Restore original ownership and modes from the manifest. The service account must be able to write SQLite and its parent directory; `config/` may remain read-only.
 6. Verify installed hashes before opening the database, then strictly validate configuration, both state files and the current database. Start only when everything is ready. Confirm `active/running` over at least two supervisor restart intervals, unchanged `NRestarts` and no new nonzero journal exits. Retain the external backup until all checks pass. Rollback restores the matching program and the entire consistent backup set.
@@ -189,7 +189,7 @@ A read-only SQLite connection may rebuild the SHM index. Record file hashes befo
 
 ### Staged upgrade from 11.0.9
 
-11.0.9 uses schema v8. In an isolated directory, run `migrate:ai-context` from pinned commit `500e848faeda75dcae3c3329507f24d05137e3b9` to produce v9, then use the current entry to produce v10. Keep the service stopped throughout; the intermediate application does not need to run. Before these commands, take the external consistent backup described above, including `memory/ai/` and SQLite WAL/SHM. The Git repository must contain the pinned commit, and neither staging output directory may already exist.
+11.0.9 uses schema v8 and needs three stages: in an isolated directory, run `migrate:ai-context` from pinned commit `500e848faeda75dcae3c3329507f24d05137e3b9` to produce v9, then `migrate:clear-context-permission` from the 12.1.0 release to produce v10, and finally the current entry to produce v11. Keep the service stopped throughout; the intermediate applications do not need to run. A deployment already on 12.x (schema v10) only runs the last stage, which is the previous section. Before these commands, take the external consistent backup described above, including `memory/ai/` and SQLite WAL/SHM. The Git repository must contain the pinned commit and the 12.1.0 tag, and none of the three staging output directories may already exist.
 
 The intermediate source is a required input. A checkout containing only the 11.0.9 tag or the current source archive must first obtain the complete source of the pinned commit. Preserve and make that source available before release; do not rely on dev history that will be reset after the squash merge.
 
@@ -205,12 +205,21 @@ git archive 500e848faeda75dcae3c3329507f24d05137e3b9 | tar -x -C "$MIGRATION_COD
     --source-root /absolute/11.0.9-cold-backup \
     --output-root /absolute/new-schema-v9-staging
 )
-bun run migrate:clear-context-permission \
-  --source-root /absolute/new-schema-v9-staging \
-  --output-root /absolute/new-schema-v10-staging
+RELEASE_CODE="$(mktemp -d)"
+git archive 12.1.0 | tar -x -C "$RELEASE_CODE"
+(
+  cd "$RELEASE_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:clear-context-permission \
+    --source-root /absolute/new-schema-v9-staging \
+    --output-root /absolute/new-schema-v10-staging
+)
+bun run migrate:h-image-add-permission \
+  --source-root /absolute/new-schema-v10-staging \
+  --output-root /absolute/new-schema-v11-staging
 ```
 
-The first stage grants `isCanConfigAiPrompt` only when all 16 original permissions are true; the second grants `isCanClearContext` only when all 17 permissions are true. The first stage imports memory only for existing `chat_states` rows; orphan memory contributes to `discardedContexts` and creates no chat state. Check each stage’s `ready.json`, source/output hashes, and import/discard counts. Install only the final v10 database, retain the complete original backup, and manually remove the migrated `memory/ai/` from the deployment root. Keep other configuration and state at their existing paths. Complete the ownership, validation, and startup observation steps above. Neither the current runtime nor its migration entry accepts v8 directly.
+The first stage grants `isCanConfigAiPrompt` only when all 16 original permissions are true; the second grants `isCanClearContext` only when all 17 permissions are true; the third grants `isCanAddHImage` only when all 18 permissions are true. The first stage imports memory only for existing `chat_states` rows; orphan memory contributes to `discardedContexts` and creates no chat state. Check each stage’s `ready.json`, source/output hashes, and import/discard counts. Install only the final v11 database, retain the complete original backup, and manually remove the migrated `memory/ai/` from the deployment root. Keep other configuration and state at their existing paths. Complete the ownership, validation, and startup observation steps above. Neither the current runtime nor its migration entry accepts v8 or v9 directly.
 
 ## Startup Failures
 

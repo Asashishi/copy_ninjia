@@ -6,8 +6,8 @@ import { atomicWriteText, syncDirectory } from "../packages/libs/atomicFile";
 import { InputValidationError, invalidInput } from "../packages/libs/inputValidation";
 import { isErrno } from "../packages/libs/errno";
 import type { StorageDatabase } from "../packages/types/storageDatabase";
-import { migrateClearContextPermissionDatabase } from "./migrations/clearContextPermission/database";
-import type { ClearContextPermissionMigrationCounts } from "./migrations/clearContextPermission/database";
+import { migrateHImageAddPermissionDatabase } from "./migrations/hImageAddPermission/database";
+import type { HImageAddPermissionMigrationCounts } from "./migrations/hImageAddPermission/database";
 
 /** 停机备份中参与本次直接迁移的文件；SQLite 旁路文件必须来自同一一致性点。 */
 const SOURCE_FILES: readonly string[] = ["database/storage.sqlite", "database/storage.sqlite-wal", "database/storage.sqlite-shm"];
@@ -18,7 +18,7 @@ const STAGING_DIRECTORY_MODE: number = 0o700;
 /** 校验清单与文本暂存文件只允许当前账号读写。 */
 const STAGING_FILE_MODE: number = 0o600;
 
-export interface ClearContextPermissionMigrationOptions {
+export interface HImageAddPermissionMigrationOptions {
   readonly sourceRoot: string;
   readonly outputRoot: string;
 }
@@ -31,7 +31,7 @@ export interface MigrationFileRecord {
   readonly gid: number;
 }
 
-export interface ClearContextPermissionMigrationResult {
+export interface HImageAddPermissionMigrationResult {
   readonly sourceSchema: number;
   readonly enabledPermissions: number;
   readonly disabledPermissions: number;
@@ -82,11 +82,11 @@ function isInside(parent: string, child: string): boolean {
 }
 
 /**
- * 从 schema v9 停机备份生成独立产物；不改源文件，不覆盖既有目录，不执行服务操作。
+ * 从 schema v10 停机备份生成独立产物；不改源文件，不覆盖既有目录，不执行服务操作。
  * ready.json 只在全部校验及源哈希复核后产生。中断后保留目录，换新 outputRoot 重跑。
  * 部署方按 docs/cn/04-invariants.md 的持久化边界手工替换 SQLite。
  */
-export async function prepareClearContextPermissionMigration({ sourceRoot, outputRoot }: ClearContextPermissionMigrationOptions): Promise<ClearContextPermissionMigrationResult> {
+export async function prepareHImageAddPermissionMigration({ sourceRoot, outputRoot }: HImageAddPermissionMigrationOptions): Promise<HImageAddPermissionMigrationResult> {
   const source: string = await realpath(sourceRoot);
   const output: string = join(await realpath(dirname(resolve(outputRoot))), basename(resolve(outputRoot)));
   if (isInside(source, output) || isInside(output, source)) return invalidInput(output, "$path", "a new directory outside the source backup");
@@ -95,7 +95,7 @@ export async function prepareClearContextPermissionMigration({ sourceRoot, outpu
   const sourceFiles: readonly MigrationFileRecord[] = await sourceFileRecords(source);
   await mkdir(output, { mode: STAGING_DIRECTORY_MODE });
   await mkdir(join(output, "database"), { mode: STAGING_DIRECTORY_MODE });
-  await atomicWriteText(join(output, "incomplete.json"), JSON.stringify({ sourceSchema: 9, sourceFiles }, null, 2), STAGING_FILE_MODE);
+  await atomicWriteText(join(output, "incomplete.json"), JSON.stringify({ sourceSchema: 10, sourceFiles }, null, 2), STAGING_FILE_MODE);
   for (const record of sourceFiles) {
     const target: string = join(output, record.path);
     await Bun.write(target, Bun.file(join(source, record.path)));
@@ -103,9 +103,9 @@ export async function prepareClearContextPermissionMigration({ sourceRoot, outpu
   }
   const databasePath: string = join(output, "database/storage.sqlite");
   const database: StorageDatabase = openStorageDatabase({ path: databasePath });
-  let counts: ClearContextPermissionMigrationCounts;
+  let counts: HImageAddPermissionMigrationCounts;
   try {
-    counts = migrateClearContextPermissionDatabase(database, databasePath);
+    counts = migrateHImageAddPermissionDatabase(database, databasePath);
   } finally {
     database.$client.close(true);
   }
@@ -115,8 +115,8 @@ export async function prepareClearContextPermissionMigration({ sourceRoot, outpu
   }
   const outputFiles: MigrationFileRecord[] = [];
   for (const path of OUTPUT_FILES) outputFiles.push(await readMigrationFileRecord(output, path));
-  const result: ClearContextPermissionMigrationResult = {
-    sourceSchema: 9, targetSchema: 10, ...counts,
+  const result: HImageAddPermissionMigrationResult = {
+    sourceSchema: 10, targetSchema: 11, ...counts,
     sourceRoot: source, outputRoot: output, sourceFiles, outputFiles,
   };
   await atomicWriteText(join(output, "ready.json"), `${JSON.stringify(result, null, 2)}\n`, STAGING_FILE_MODE);
@@ -125,7 +125,7 @@ export async function prepareClearContextPermissionMigration({ sourceRoot, outpu
 }
 
 /** CLI 不接受默认部署根；源备份与产物目录都必须明确提供。 */
-function parseArguments(args: readonly string[]): ClearContextPermissionMigrationOptions {
+function parseArguments(args: readonly string[]): HImageAddPermissionMigrationOptions {
   const values: Map<string, string> = new Map();
   for (let index: number = 0; index < args.length; index += 2) {
     const key: string | undefined = args[index];
@@ -144,7 +144,7 @@ function parseArguments(args: readonly string[]): ClearContextPermissionMigratio
 
 if (import.meta.main) {
   if (Bun.argv.slice(2).length === 1 && Bun.argv[2] === "--help") {
-    console.log("bun run migrate:clear-context-permission --source-root <cold-backup> --output-root <new-directory>\n" +
+    console.log("bun run migrate:h-image-add-permission --source-root <cold-backup> --output-root <new-directory>\n" +
       "Stop the service and verify inactive before taking an external backup, including SQLite WAL/SHM.\n" +
       "The source remains unchanged. Only ready.json marks validated output; after interruption rerun into a new output directory.\n" +
       "Verify output hashes, then manually replace SQLite while stopped. Remove stale deployment WAL/SHM only after preserving the backup.\n" +
@@ -152,12 +152,12 @@ if (import.meta.main) {
       "Validate configuration and state before startup; retain the backup until service stability is confirmed.");
   } else {
     try {
-      const result: ClearContextPermissionMigrationResult = await prepareClearContextPermissionMigration(parseArguments(Bun.argv.slice(2)));
-      console.log(`Clear-context permission migration prepared: ${result.outputRoot}/ready.json. Manual replacement while stopped is required.`);
+      const result: HImageAddPermissionMigrationResult = await prepareHImageAddPermissionMigration(parseArguments(Bun.argv.slice(2)));
+      console.log(`/h_image add permission migration prepared: ${result.outputRoot}/ready.json. Manual replacement while stopped is required.`);
     } catch (error: unknown) {
       console.error(error instanceof InputValidationError
         ? error.message
-        : "Clear-context permission migration failed; source backup and incomplete output are retained. No deployment files were replaced.");
+        : "/h_image add permission migration failed; source backup and incomplete output are retained. No deployment files were replaced.");
       process.exitCode = 1;
     }
   }

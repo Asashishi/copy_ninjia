@@ -21,6 +21,7 @@ export const WHITELIST_PERMISSION_HELP: Readonly<Record<WhitelistPermissionKey, 
   isCanControllTranslatePermission: "允许使用 /translate enable|disable 开关翻译功能。",
   isCanControllAntiRaidPermission: "允许使用 /antiraid enable|disable 开关入群验证和防冲群私密模式。",
   isCanControllQaPermission: "允许使用 /qa set 和 /qa remove 维护本群问答。",
+  isCanAddHImage: "允许使用 /h_image add 把回复消息里的图片收进随机图库。",
 };
 
 /** 不可变说明表只在模块初始化时序列化一次。 */

@@ -27,6 +27,7 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanControllTranslatePermission: "让这号杂鱼能用 /translate enable|disable 开关翻译功能，这点小事总看得懂吧♡",
   isCanControllAntiRaidPermission: "让这号杂鱼能用 /antiraid enable|disable 开关入群验证与防冲群私密模式，关掉可就没人拦僵尸了哦♡",
   isCanControllQaPermission: "让这号杂鱼能用 /qa set 与 /qa remove 维护本群问答，答错了可别赖本天才♡",
+  isCanAddHImage: "让这号杂鱼能用 /h_image add 把回复消息里的图收进本天才的随机图库，别塞奇怪的东西进来哦♡",
 };
 
 /** /permission help 的稳定 JSON 代码块。 */

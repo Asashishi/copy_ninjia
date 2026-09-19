@@ -112,7 +112,7 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **安装器**：`install.sh` 定位目标工作树并转交该版本入口；`scripts/install/` 的 repository、service、config、runtime、configure、start 六个 shell 模块由入口统一检查可读性和语法后按序加载。`installSources.ts` 为语法检查与隔离夹具提供相同模块清单。
-  - **冷迁移**：`migrateClearContextPermission.ts` 校验 schema v9 停机备份并生成独立产物与校验清单；`migrations/clearContextPermission/database.ts` 校验源谱系并执行 schema v10 的权限迁移事务，不进入应用启动依赖图。
+  - **冷迁移**：`migrateHImageAddPermission.ts` 校验 schema v10 停机备份并生成独立产物与校验清单；`migrations/hImageAddPermission/database.ts` 校验源谱系并执行 schema v11 的权限迁移事务，不进入应用启动依赖图。
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
   - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`，以及两套基准根共用的 `fixtures/copyTree.ts`（目录树复制）与 `fixtures/pathBoundary.ts`（写入边界的真实路径分量核对）。
 

@@ -54,6 +54,7 @@ function permissions(
     isCanControllTranslatePermission: false,
     isCanControllAntiRaidPermission: false,
     isCanControllQaPermission: false,
+    isCanAddHImage: false,
     ...overrides,
   };
 }
@@ -77,6 +78,7 @@ function allEnabledPermissions(): Record<string, boolean> {
     isCanControllTranslatePermission: true,
     isCanControllAntiRaidPermission: true,
     isCanControllQaPermission: true,
+    isCanAddHImage: true,
   });
 }
 

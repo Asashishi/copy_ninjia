@@ -64,6 +64,13 @@
       "when": 20260915010000,
       "tag": "0008_clear_context_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 20260920000000,
+      "tag": "0009_h_image_add_permission",
+      "breakpoints": true
     }
   ]
 }

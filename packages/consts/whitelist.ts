@@ -35,6 +35,8 @@ const DEFAULT_IS_CAN_CONTROLL_TRANSLATE_PERMISSION: boolean = false;
 const DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION: boolean = false;
 /** 白名单条目缺省不可维护本群问答。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_QA_PERMISSION: boolean = false;
+/** 白名单条目缺省不可往随机图库收图（`/h_image add`）。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
+const DEFAULT_IS_CAN_ADD_H_IMAGE: boolean = false;
 
 /**
  * 白名单权限的完整默认值。跨调用方共享同一个对象，由 `Readonly<>` 在编译期
@@ -61,6 +63,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllTranslatePermission: DEFAULT_IS_CAN_CONTROLL_TRANSLATE_PERMISSION,
   isCanControllAntiRaidPermission: DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION,
   isCanControllQaPermission: DEFAULT_IS_CAN_CONTROLL_QA_PERMISSION,
+  isCanAddHImage: DEFAULT_IS_CAN_ADD_H_IMAGE,
 };
 
 /**
@@ -89,6 +92,7 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllTranslatePermission: false,
   isCanControllAntiRaidPermission: false,
   isCanControllQaPermission: false,
+  isCanAddHImage: false,
 };
 
 /**
@@ -118,6 +122,7 @@ export const TEMPORARY_AD_BYPASS_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllTranslatePermission: false,
   isCanControllAntiRaidPermission: false,
   isCanControllQaPermission: false,
+  isCanAddHImage: false,
 };
 
 /**
@@ -160,6 +165,7 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
   isCanControllTranslatePermission: true,
   isCanControllAntiRaidPermission: true,
   isCanControllQaPermission: true,
+  isCanAddHImage: true,
 };
 
 /** 白名单权限策略与 /permission 共同接受的权限键全集。 */
@@ -182,6 +188,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanControllTranslatePermission",
   "isCanControllAntiRaidPermission",
   "isCanControllQaPermission",
+  "isCanAddHImage",
 ];
 
 /**
