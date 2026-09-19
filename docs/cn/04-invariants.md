@@ -461,6 +461,13 @@
 
 <p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 
+### `/h_image` 随机图片
+
+- 随机图片目录来自已校验的 `state.global.assets.randomImageDir`（缺省 `images`，相对路径按运行时数据根解析，`infra/storage/stateStore.ts` 的 `getRandomImageDirectory`）。启动时在部署输入闸之后、任何 Worker 与外部连接之前由 `infra/randomImage.ts` 的 `ensureRandomImageDirectory` 准备：是目录（含指向目录的符号链接）则不动，缺失则创建，存在但不是目录或建不出来就拒绝启动，诊断只写 `state.json` 路径、字段路径与解析后的目录。运行期目录被删不自动重建。
+- 抽取（`pickRandomImage`）每次重新枚举目录、不缓存列表：候选只有扩展名在 `RANDOM_IMAGE_EXTENSIONS` 里的非隐藏普通文件（`Dirent.isFile()`，符号链接与子目录不算），均匀随机抽一张；大小先经 `Bun.file().stat()` 判定，超过 `RANDOM_IMAGE_MAX_BYTES`（10 MB，Telegram 图片上传上限）只报超限、不读入内存。
+- update runner 严格串行，`/h_image` 不在 handler 里等待目录枚举与上传：参数校验后同步交给 `cache/main/hImage.ts` 持有的 `createPrioritizedBoundedTaskRunner`（在途 2、等待 16）即返回，满额直接回忙碌提示；每项恢复接纳时的 update 取消上下文并合入运行时停止信号，口径同 `/wed`。停机维护关闸先停止接纳，排空表里的「h_image drain」排在 Telegram 总闸之前、在预算内等待，超时取消排队与在途请求；它不参与共享数据落盘闸门。
+- `commands/hImage.ts` 的 `sendHImageResult` 是结果图片的唯一发送边界（`check:conventions` 禁止 `commands/` 下其它位置调用 `sendPhotoWithResult`）。结果图片是用户授权的长期保留例外，不挂固定延迟删除，论坛群带触发消息所在话题并回复触发消息；用法、忙碌与失败提示一律走 `sendCommandMessage`，30 秒后删除。
+
 ### 回复与响应体的资源边界
 
 - **有界读取按字节和块引用共同控制留存**。`libs/boundedResponse.ts` 在接纳每块前检查累计字节，跳过空块；超过块引用预算时使用 `Bun.ArrayBufferSink` 聚合，成功结果独占输出字节。上限不控制输入生产者在交付前分配的内存。超限取消、读取错误和锁释放由同一读取边界处理；头像 HTTP 非成功分支取消未消费的响应体。
@@ -475,7 +482,7 @@
 - `state.json` 使用最新值合并、临时文件、fsync 和原子 rename，保存 `global.copy`、`global.assets` 与按群的 `translate` 会话。群功能开关仍在 SQLite `chat_states`。copy 与翻译会话的权威变更必须等待对应 revision 依次写入主文件和 LKG 后才能反馈成功并返回 middleware。
 - **翻译会话独立于 copy**：`cache/main/translateState.ts` 由主线程持有，最多 25 群，每群以只读非空数组保存 1–5 个不同身份及各自的 `ja|cn|en|uk|ru` 方向。`state.translate` 缺省为空；未知字段、非法值、重复身份、空数组或超容量均拒绝启动。恢复通过既有身份缓存播种目标，不创建 Worker 镜像。消息热路径按群查 Map，再在最多 5 项中按身份查找，不创建投影对象。仅文字消息进入复制或翻译，媒体及图注不发送；同目标与 copy 并存时翻译优先。增删目标替换数组，保留其他目标的会话对象身份；异步结果只在对应会话仍有效时发送。停止指定目标或全群先同步删除再等待主备落盘；`/translate disable` 先持久化会话删除，再写 SQLite 的 `isTranslationEnabled`，任一步失败都不反馈成功。开关权限为 `isCanControllTranslatePermission`，`/bot_status` 读取本群数组长度。翻译不操作头像或占用 copy 冷却。
 - **两份状态副本在解码之前先过读取边界**（`infra/storage/statePersistence.ts`）：目标必须是普通文件。`BunFile.stat()` 跟随软链接，因此指向普通文件的链接照常接受；目录、指向目录的链接、悬空软链接以及 `EACCES`/`ELOOP`/`ENOTDIR` 等访问失败一律按「已配置但非法」拒绝启动。只有 `lstat` 也报 `ENOENT`——叶子路径本身真的不存在——才算这份副本从没写过。不能用 `exists()` 判「路径不存在」：它对目录返回 `false`，会把「路径被占成目录」误读成缺省。内容经 fatal `TextDecoder` 严格解码，非法 UTF-8 不会被替换成 `U+FFFD` 后放行（BOM 照常剥离）；stat 成功之后的读取或解码失败同样报错，绝不降级成缺省。错误只带文件路径、字段路径与期望形态，且发生在任何补副本写入之前——被拒绝的那次启动一个字节都不回写。
-- **`state.global.assets`（两张内联抽签缩略图、gag 发言 inline 缩略图与机器人默认头像的直链）缺项 = 从没设过 = 回退代码常量**，不是「沿用上次」。启动成功后由 `seedMissingAssetState` 把仍缺的项补成当前生效值并**后台**落盘一次：它是为可读性做的补写而非谁按下的权威决策，因此不阻塞启动，写失败照常走 `StateStore` 的重试与 fatal 通道。补齐只补缺项，绝不覆盖部署方写下的地址；排在**最后一个会中止启动的 `await` 之后**（功能闸、持久化恢复、`bot.init()`、黑名单补扫都可能拒绝启动），被拒绝的那次运行不该改写运维正要拿去排查的 `state.json`——只排在功能闸之后守不住这句话。确有补写时记一行日志：改的是部署方的文件。落过盘的值此后不再跟随代码常量变化——要跟随就把那一项删掉再重启。
+- **`state.global.assets`（两张内联抽签缩略图、gag 发言 inline 缩略图与机器人默认头像的直链，以及随机图片目录 `randomImageDir`）缺项 = 从没设过 = 回退代码常量**，不是「沿用上次」。启动成功后由 `seedMissingAssetState` 把仍缺的项补成当前生效值并**后台**落盘一次：它是为可读性做的补写而非谁按下的权威决策，因此不阻塞启动，写失败照常走 `StateStore` 的重试与 fatal 通道。补齐只补缺项，绝不覆盖部署方写下的地址；排在**最后一个会中止启动的 `await` 之后**（功能闸、持久化恢复、`bot.init()`、黑名单补扫都可能拒绝启动），被拒绝的那次运行不该改写运维正要拿去排查的 `state.json`——只排在功能闸之后守不住这句话。确有补写时记一行日志：改的是部署方的文件。落过盘的值此后不再跟随代码常量变化——要跟随就把那一项删掉再重启。
 - 素材直链的合法性在解码期判定：非空、去首尾空白、可解析的绝对地址，读回的是 WHATWG 归一化后的 `href` 而不是原串（`trim` 只管首尾，URL 构造器还会吃掉字符串内部的 tab/LF/CR 并对空格做百分号编码，留着原串等于让一个「构造器认、Telegram 不认」的地址通过校验）。**不限定图床**，但限定协议：三张缩略图由 Telegram 客户端去取，只认 `https`；只有由本进程自己抓取的 `botDefaultAvatarUrl` 允许明文 `http`，走不走 TLS 是配置者的决定。写坏一律拒绝整份文件而不是静默回退常量——少写 scheme 时 Telegram 只是不显示这张图，与「图挂了」在群里看不出区别。
 - 复原默认头像那条 fetch **跟随重定向**（`redirect: "follow"`）：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google Drive 链接即是）。逼配置者自己解析出终点只会把一个必然踩到的坑变成必须写进文档的注意事项。`/copy`、`/icon steal` 那三条禁用 redirect 属于[出站请求与消息安全](#出站请求与消息安全)那条约束——那些地址来自 Bot API 的 `file_path` 与 t.me 主页的 HTML，受 Telegram 自有资产域 allowlist 管，与本项不是一回事。`AVATAR_MAX_DOWNLOAD_BYTES` 的有界读取和上传前的字节签名校验照旧，但那两道防的是「拿回来的根本不是图片」（Drive 的配额/病毒扫描 HTML 插页是典型），与跳不跳转无关。
 - 四条失败日志都点名生效的地址，才能区分「`state.json` 写错了」和「随版本发布的兜底常量烂了」；但**只打 `origin + pathname`**（`libs/redaction.ts` 的 `redactUrlForLog`），查询串、fragment 与 userinfo 一律丢掉。这一项由部署方配置，可能是 S3/OSS 的预签名地址，而 `logs/<day>.json` 的 mode 是 `0644` 且属于备份对象，同文件里的 `redactSecretsInText` 只脱敏已加载配置中的凭据、不看 query。取图仍用完整地址——削掉签名这张图就取不回来了。

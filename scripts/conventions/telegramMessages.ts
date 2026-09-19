@@ -27,6 +27,7 @@ export async function collectTelegramMessageProblems(
   const gagNoticesPath: string = join(commandsRoot, "gag", "notices.ts");
   const qaNoticesPath: string = join(commandsRoot, "qa", "notices.ts");
   const wedMessagesPath: string = join(commandsRoot, "wed", "messages.ts");
+  const hImagePath: string = join(commandsRoot, "hImage.ts");
 
   // 状态机按钮及功能性正文只有下列命名边界能够直接发送；普通提示统一交给主线程清理。
   const directBoundaries: Readonly<Record<string, string>> = {
@@ -67,6 +68,15 @@ export async function collectTelegramMessageProblems(
         while (owner !== undefined && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
         if (path !== wedMessagesPath || owner?.name?.text !== "sendWedResult") {
           problems.push(`${relative(projectRoot, path)}: state-owned command photos must use sendWedResult`);
+        }
+      }
+      // /h_image 结果图片是用户授权的长期保留例外，只有这一个边界函数可以发送。
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
+        node.expression.text === "sendPhotoWithResult") {
+        let owner: ts.Node | undefined = node.parent;
+        while (owner !== undefined && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
+        if (path !== hImagePath || owner?.name?.text !== "sendHImageResult") {
+          problems.push(`${relative(projectRoot, path)}: long-lived command photos must use sendHImageResult`);
         }
       }
       if (path === wedMessagesPath && ts.isImportSpecifier(node) &&

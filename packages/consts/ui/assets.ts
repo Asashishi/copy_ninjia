@@ -15,3 +15,10 @@ export const GAG_THUMBNAIL_URL: string =
 /** `/icon reset`、`/copy stop` 复原机器人头像时下载的缺省直链。 */
 export const BOT_DEFAULT_AVATAR_URL: string =
   "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci";
+
+/**
+ * `state.global.assets.randomImageDir` 的缺省值：随机图片（`/h_image`）的来源目录。
+ * 相对路径按运行时数据根解析，见 infra/storage/stateStore.ts 的 getRandomImageDirectory；
+ * 启动时不存在则自动创建。
+ */
+export const RANDOM_IMAGE_DIR: string = "images";

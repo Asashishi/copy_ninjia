@@ -67,7 +67,7 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
 `COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When unset, it defaults to the project root; an explicitly blank value is rejected at startup:
 
 - **`state.json` + `state.json.bak`**
-  - **Contents**: global copying in `global.copy`, four asset URLs in `global.assets`, and per-group translation sessions in `translate`. Group switches, lockdown records and permission snapshots live in `chat_states` inside `database/storage.sqlite`.
+  - **Contents**: global copying in `global.copy`, four asset URLs and the random image directory in `global.assets`, and per-group translation sessions in `translate`. Group switches, lockdown records and permission snapshots live in `chat_states` inside `database/storage.sqlite`.
   - **Translation format**: optional top-level `translate` defaults to `{}`. Keys are canonical negative integer group IDs; each value is a nonempty array of 1–5 sessions. Example: `"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`. At most 25 groups are allowed, identities must be unique within each group, and directions are exactly `ja`, `cn`, `en`, `uk`, or `ru`, with strict `CachedUser` validation. `global.copy.copyMode` accepts omission, `reverse`, or `nya`. An invalid primary or LKG, including an old single-session object, refuses startup; runtime never upgrades or discards entries.
   - **Manual state editing**: stop the service and confirm inactive, then use `mktemp -d` outside the worktree to back up both state copies and deployment data with modes, owners and SHA-256 hashes. Edit both copies, retain untouched `global` fields, strictly decode both with `decodeStateFile`, and verify intended differences and permissions before startup. Follow the cold-migration procedure below for upgrades; examples and Git content must never replace deployment state.
   - **Backup**: back up the primary and backup together.
@@ -83,6 +83,12 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
   - **Check the four entries before upgrading**: the three thumbnails now accept `https` only, so
     one left as `http://` by an older version refuses to start at decode time and names the field
     path.
+  - **Random image directory** (`global.assets.randomImageDir`, default `images`, resolved against
+    the data root): `/h_image` draws from it. Put `jpg`/`jpeg`/`png`/`webp`
+    files there yourself; the service account must be able to read them, and a missing directory
+    is created by the service at startup with mode 0755. Adding or removing pictures needs no
+    restart; changing the path is a stopped-service edit like the rest. Before rolling back to a
+    version that does not know this key, remove it from both the primary and backup `state.json`.
 - **`memory/wed/<chatId>.json`**
   - **Contents**: a plain numeric array of speaking-member IDs per group, such as `[5974478892]`; the main thread reuses one long-lived `Set<number>` per group. Up to 25 groups and 150,000 IDs per group are accepted. Full sets retain existing members and accept new IDs once departures free space.
   - **Validation**: filenames use canonical negative safe-integer group IDs; entries are unique positive safe integers. Invalid JSON, duplicates, types, or capacity refuse startup without truncating or repairing files. Missing directories or files are allowed and created as needed.

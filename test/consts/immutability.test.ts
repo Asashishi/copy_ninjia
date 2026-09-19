@@ -73,6 +73,8 @@ import {
   OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO,
 } from "../../packages/consts/aiChat/openai";
 import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
+import { RANDOM_IMAGE_EXTENSIONS } from "../../packages/consts/randomImage";
+import { H_IMAGE_TEXTS } from "../../packages/consts/atmosphere/teasing/hImage";
 import { EMPTY_MESSAGE_ENTITIES, MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import { QA_ANSWER_LABELS, QA_QUESTION_LABELS } from "../../packages/consts/qa";
 import { DEFAULT_CHAT_STATE, createChatState } from "../../packages/libs/chatState";
@@ -279,6 +281,15 @@ test("/white 成员关系的四种结局互不相同", () => {
   ];
   expect(new Set(outcomes).size).toBe(4);
   for (const outcome of outcomes) expect(outcome).toContain("目标");
+});
+
+test("随机图片的扩展名表与 /h_image 文案表不可写入", () => {
+  // @ts-expect-error RANDOM_IMAGE_EXTENSIONS 是 ReadonlyMap，没有 set
+  expect(() => { RANDOM_IMAGE_EXTENSIONS.set(".gif", "image/png"); }).toBeDefined();
+  // @ts-expect-error H_IMAGE_TEXTS.usage 只读
+  expect(() => { H_IMAGE_TEXTS.usage = "篡改"; }).toBeDefined();
+  // @ts-expect-error H_IMAGE_TEXTS.tooLarge 只读
+  expect(() => { H_IMAGE_TEXTS.tooLarge = (): string => "篡改"; }).toBeDefined();
 });
 
 test("各命令的目标解析文案表不可写入", () => {

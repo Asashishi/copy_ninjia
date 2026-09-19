@@ -90,6 +90,15 @@ function assetUrl(value: unknown, path: string, allowHttp: boolean = false): str
   return parsed.href;
 }
 
+/** 素材目录路径：非空、不含 NUL；收下去掉首尾空白后的值，解析在 stateStore 的取值函数里做。 */
+function assetDirectory(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${path} must be a non-empty path string`);
+  const raw: string = value.trim();
+  if (raw.length === 0 || raw.includes("\0")) throw new Error(`${path} must be a non-empty path string without NUL`);
+  return raw;
+}
+
 function cachedUser(value: unknown, path: string): CachedUser {
   const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, ["id", "username", "first_name", "last_name", "title", "isChannel"], path);
@@ -132,7 +141,7 @@ function globalCopy(value: unknown): DecodedGlobalCopyState {
 }
 
 /**
- * 全局素材直链。整块缺省按「四项都没设过」处理：这一块是
+ * 全局素材直链与随机图片目录。整块缺省按「五项都没设过」处理：这一块是
  * 后加的，既有的 state.json 里没有它，不该逼运维补一个空对象；块内字段存在但
  * 非法照旧拒绝整份文件。
  */
@@ -145,6 +154,7 @@ function globalAssets(value: unknown): GlobalAssetState {
       probabilityThumbnailUrl: undefined,
       gagThumbnailUrl: undefined,
       botDefaultAvatarUrl: undefined,
+      randomImageDir: undefined,
     };
   }
   const raw: Record<string, unknown> = record(value, path);
@@ -153,6 +163,7 @@ function globalAssets(value: unknown): GlobalAssetState {
     "probabilityThumbnailUrl",
     "gagThumbnailUrl",
     "botDefaultAvatarUrl",
+    "randomImageDir",
   ], path);
   return {
     fortuneThumbnailUrl: assetUrl(raw.fortuneThumbnailUrl, `${path}.fortuneThumbnailUrl`),
@@ -160,6 +171,7 @@ function globalAssets(value: unknown): GlobalAssetState {
     gagThumbnailUrl: assetUrl(raw.gagThumbnailUrl, `${path}.gagThumbnailUrl`),
     // 只有这一项允许明文 http，理由见 assetUrl。
     botDefaultAvatarUrl: assetUrl(raw.botDefaultAvatarUrl, `${path}.botDefaultAvatarUrl`, true),
+    randomImageDir: assetDirectory(raw.randomImageDir, `${path}.randomImageDir`),
   };
 }
 

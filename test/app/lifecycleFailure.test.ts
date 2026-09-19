@@ -229,6 +229,9 @@ describe("应用启动失败与退出清理", () => {
     // await 之后（部署输入闸、bot.init、黑名单补扫）——被拒绝启动的那次运行不该顺手
     // 改写运维正要拿去排查的 state.json。
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("seedAssets"));
+    // 随机图片目录按已校验的 state 准备，且在任何 Worker 与外部连接之前。
+    expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(calls.indexOf("prepareImageDir"));
+    expect(calls.indexOf("prepareImageDir")).toBeLessThan(calls.indexOf("initDiskIO"));
     expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(
       calls.indexOf("seedAssets")
     );
@@ -321,7 +324,7 @@ describe("应用启动失败与退出清理", () => {
     // 排在最后一个会拒绝启动的 await（黑名单补扫）之后。
     expect(calls.indexOf("seedAssets")).toBeGreaterThan(calls.indexOf("sweepBlocklist"));
     expect(testDependencies.logger.log).toHaveBeenCalledWith(
-      expect.stringContaining("Seeded 2 missing state.global.assets URL(s)")
+      expect.stringContaining("Seeded 2 missing state.global.assets value(s)")
     );
   });
 

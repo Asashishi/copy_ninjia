@@ -15,6 +15,8 @@ import {
 } from "../commands/gag/runtime";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../commands/wed/runtime";
+import { drainHImageRuntime, initHImageRuntime, quiesceHImageRuntime } from "../commands/hImage";
+import { ensureRandomImageDirectory } from "../infra/randomImage";
 import { hydrateWedMembers } from "../commands/wed/persistence";
 import { enableWedMemberReview } from "../commands/wed/memberReview";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../translate/client";
@@ -36,6 +38,7 @@ import {
   flushStateToDisk,
   getChatStateCache,
   getGlobalCopyState,
+  getRandomImageDirectory,
   hydrateChatStateCache,
   loadState,
   seedMissingAssetState,
@@ -77,6 +80,7 @@ export const lifecycleDependencies = {
   drainAvatarUpdates,
   drainGagRuntime,
   drainWedRuntime,
+  drainHImageRuntime,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -96,6 +100,7 @@ export const lifecycleDependencies = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
+  initHImageRuntime,
   initAiChat,
   initAntiRaid,
   initBlocklistSweepScheduler,
@@ -108,6 +113,7 @@ export const lifecycleDependencies = {
   logger,
   monotonicNow,
   validateExistingDeploymentInputs,
+  prepareRandomImageDirectory: (): Promise<void> => ensureRandomImageDirectory(getRandomImageDirectory()),
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,
@@ -120,6 +126,7 @@ export const lifecycleDependencies = {
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
   quiesceWedRuntime,
+  quiesceHImageRuntime,
   quiesceBlocklistSweepScheduler,
   quiesceConfigReload,
   quiesceTranslate,

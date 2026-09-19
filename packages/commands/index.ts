@@ -41,3 +41,4 @@ export { confirmLuckDraw, handleLuckChallengeInlineQuery, handleLuckChosenInline
 export { dispatchWedCommand, dispatchWedCallback } from "./wed/dispatch";
 
 export { handlePromptCommand } from "./prompt";
+export { drainHImageRuntime, handleHImageCommand, initHImageRuntime, quiesceHImageRuntime } from "./hImage";

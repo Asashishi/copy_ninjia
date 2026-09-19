@@ -135,6 +135,7 @@ export class ApplicationLifecycle {
     this.dependencies.initTranslate();
     this.dependencies.initGagRuntime();
     this.dependencies.initWedRuntime();
+    this.dependencies.initHImageRuntime();
     this.flags.translateInitialized = true;
 
     // 配置文件和持久化状态都是不可信部署输入。已有部署输入不受功能开关影响，
@@ -142,6 +143,8 @@ export class ApplicationLifecycle {
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
     await this.dependencies.validateExistingDeploymentInputs();
+    // 随机图片目录来自已校验的 state：缺失则创建，存在但不是目录或建不出来时拒绝启动。
+    await this.dependencies.prepareRandomImageDirectory();
     // global state 主副本与部署输入都通过严格校验后，才创建本地 Disk I/O Worker。
     // SQLite 群状态只负责恢复运行时开关，不再沿用 state.json 时代的功能前提或
     // 数据正确性启动总闸；功能命令和消息入口各自在 readiness 边界拒绝不可用配置。
@@ -195,7 +198,7 @@ export class ApplicationLifecycle {
     // 所有已初始化且已确证管理员的群补一轮，频道 ID 会由 Worker 走封发言权路径。
     await this.dependencies.sweepManagedBlocklistChats();
 
-    // 素材直链只能手工编辑，缺省时又整块不出现在文件里。把没设过的项按内置常量
+    // 素材直链与随机图片目录只能手工编辑，缺省时又整块不出现在文件里。把没设过的项按内置常量
     // 补进 state 并后台落盘，改图的人打开 state.json 就能看到当前生效值（见
     // infra/storage/stateStore.ts 的 seedMissingAssetState）。补写不阻塞启动。
     //
@@ -205,10 +208,10 @@ export class ApplicationLifecycle {
     //
     // 确有补写就记一行：改的是部署方的文件，logs/ 里不能只字不提（见
     // AGENTS.md 的数据归属）。
-    const seededAssetUrls: number = this.dependencies.seedMissingAssetState();
-    if (seededAssetUrls > 0) {
+    const seededAssets: number = this.dependencies.seedMissingAssetState();
+    if (seededAssets > 0) {
       this.dependencies.logger.log(
-        `Seeded ${seededAssetUrls} missing state.global.assets URL(s) with built-in defaults; ` +
+        `Seeded ${seededAssets} missing state.global.assets value(s) with built-in defaults; ` +
         "state.json and its backup are being rewritten in the background."
       );
     }
@@ -225,8 +228,8 @@ export class ApplicationLifecycle {
     );
     // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
     // init 前段，而上面的 initAvatarUpdates/
-    // initChatTitleRefresh/initTranslate/initGagRuntime/initBlocklistSweepScheduler 又把五个
-    // owner 重新置为接受工作。
+    // initChatTitleRefresh/initTranslate/initGagRuntime/initWedRuntime/initHImageRuntime/
+    // initBlocklistSweepScheduler 又把这些 owner 重新置为接受工作。
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
     // getChat 扫描加批量落盘。

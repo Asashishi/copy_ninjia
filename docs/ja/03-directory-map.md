@@ -25,7 +25,7 @@
 - **`packages/commands/`**
   - **責務**：明示的なコマンドを機能ごとにまとめ、同じ入口のサブコマンドをその領域内で分岐します。トグル系コマンドが
     共有する権限・設定ゲートは別ファイル。
-  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`prompt.ts`、`qa.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
+  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`prompt.ts`、`qa.ts`、`block.ts`、`hImage.ts`、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`。規模の大きい gag domain は command admission を
     `gag.ts` に残し、lifecycle、inline、純粋 rendering を `gag/runtime.ts`、
     `gag/inline.ts`、`gag/rendering.ts` に分割します。
@@ -88,7 +88,7 @@
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。
   - **代表的なファイル**：`telegram/`、`diskIO.ts`、`identityStorage.ts`、
-    `supervisedWorker.ts`、`workerSupervisor.ts`。
+    `supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`（ランダム画像ディレクトリの準備と抽選）。
 - **`packages/infra/blocklist/`**
   - **責務**：メインスレッド側ブロックリスト基盤。identity 判定、同期 membership、
     durable outbox、チャット掃除、退会アカウント検出に分割。

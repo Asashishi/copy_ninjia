@@ -102,6 +102,12 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
       purpose: "runtime capacity limits derived from host resources",
     },
   },
+  "packages/infra/randomImage.ts": {
+    "node:fs/promises": {
+      symbols: ["mkdir", "readdir"],
+      purpose: "random image directory creation at startup and per-request directory traversal",
+    },
+  },
   "packages/infra/storage/cleanup.ts": {
     "node:fs/promises": {
       symbols: ["readdir"],

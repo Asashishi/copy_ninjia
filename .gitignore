@@ -72,3 +72,7 @@ state.json
 state.json.bak
 state.json.*.corrupt
 .state.json.*.tmp
+
+# /h_image 的默认图片库（state.global.assets.randomImageDir），部署方自己放图。
+# 锚定根目录，理由同上面的 /database/ 与 /performance/。
+/images/

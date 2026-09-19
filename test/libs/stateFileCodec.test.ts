@@ -54,14 +54,27 @@ describe("decodeStateFile", () => {
     })).toThrow("state.global.model is not part of the current state schema");
   });
 
-  test("素材块整块缺省 = 四项都没设过：既有 state.json 不必补空对象", () => {
+  test("素材块整块缺省 = 五项都没设过：既有 state.json 不必补空对象", () => {
     const decoded = decodeStateFile({ global: { copy: { copiedUser: null } } });
     expect(decoded.global.assets).toEqual({
       fortuneThumbnailUrl: undefined,
       probabilityThumbnailUrl: undefined,
       gagThumbnailUrl: undefined,
       botDefaultAvatarUrl: undefined,
+      randomImageDir: undefined,
     });
+  });
+
+  test("随机图片目录收下去掉首尾空白的路径，空串、NUL 与非字符串拒绝", () => {
+    const decoded = decodeStateFile({
+      global: { copy: { copiedUser: null }, assets: { randomImageDir: "  images/daily  " } },
+    });
+    expect(decoded.global.assets.randomImageDir).toBe("images/daily");
+    for (const value of ["", "   ", "img\u0000s", 42]) {
+      expect(() => decodeStateFile({
+        global: { copy: { copiedUser: null }, assets: { randomImageDir: value } },
+      })).toThrow("state.global.assets.randomImageDir must be a non-empty path string");
+    }
   });
 
   test("四条素材直链原样读回，且各自独立", () => {

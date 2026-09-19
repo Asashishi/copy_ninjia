@@ -80,6 +80,7 @@ describe("application handler registration", () => {
       "translate",
       "icon",
       "wed",
+      "h_image",
       "block",
       "batch_kick",
       "prompt",

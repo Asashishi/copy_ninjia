@@ -90,7 +90,7 @@ interface ShutdownDrainOwner {
  * flush，就可能在数据尚未落盘时推进最终 Telegram offset。
  *
  * 顺序本身是约束，不能随手调整（见 docs/cn/04-invariants.md）：
- * - wed、gag 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发 Telegram
+ * - wed、gag、h_image 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发 Telegram
  *   请求，闸门一关就再也发不出去。
  * - 延迟删除排在 anti-raid 之后：广告处置会在 anti-raid 排空期间补发 30 秒公告，
  *   排在后面才能把最后一条也提前兑现。
@@ -144,6 +144,15 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
     initFlag: null,
     drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
       dependencies.drainWedRuntime(timeoutMs),
+  },
+  {
+    // /h_image 没有要落盘的数据；超时只意味着有图没发出去，不参与共享数据落盘闸门。
+    result: null,
+    label: "h_image drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainHImageRuntime(timeoutMs),
   },
   {
     // 删除失败/超时有自己的统一日志，但不属于共享数据落盘闸门。

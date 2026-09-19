@@ -67,7 +67,7 @@ WantedBy=multi-user.target
 `COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（未设置时使用项目根目录；显式空白值拒绝启动）：
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：`global.copy` 的全局复读状态、`global.assets` 的四条素材直链，以及 `translate` 的按群翻译会话。群开关、锁定记录和权限快照保存在 `database/storage.sqlite` 的 `chat_states`。
+  - **内容**：`global.copy` 的全局复读状态、`global.assets` 的四条素材直链与随机图片目录，以及 `translate` 的按群翻译会话。群开关、锁定记录和权限快照保存在 `database/storage.sqlite` 的 `chat_states`。
   - **翻译格式**：顶层可选 `translate` 缺省为 `{}`；键必须是规范负整数群 ID，值为 1–5 个会话的非空数组。例如 `"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`。最多 25 群，同群身份 ID 不得重复，方向仅允许 `ja`、`cn`、`en`、`uk`、`ru`，身份按 `CachedUser` 严格校验。`global.copy.copyMode` 仅接受缺省、`reverse`、`nya`。非法主文件或 LKG、单会话对象等旧形态均拒绝启动，不自动升级或丢弃条目。
   - **手工修改状态**：停服务并确认 inactive，在工作树外用 `mktemp -d` 备份主备及部署数据，记录权限、属主和 SHA-256，再编辑两份状态。保留未修改的 `global` 字段，并用 `decodeStateFile` 严格解析主备、核对预期差异和权限后启动。版本升级按下方冷迁移流程执行，不用示例或 Git 内容覆盖部署状态。
   - **备份**：主备一起备份。
@@ -79,6 +79,10 @@ WantedBy=multi-user.target
     链接即是）照样能用，不必自己解析出终点。
   - **升级前先看一眼这四项**：三张缩略图现在只认 `https`，从更早版本升上来时若有一项
     配成 `http://`，会在解码期拒绝启动并点名字段路径。
+  - **随机图片目录**（`global.assets.randomImageDir`，缺省 `images`，相对数据根解析）：
+    `/h_image` 从这里抽图。部署方自己往里放 `jpg`/`jpeg`/`png`/`webp`，
+    服务账号需要能读；目录不存在时服务在启动时按 0755 创建。放图、删图不用重启；改目录
+    路径同样只能停机改。回滚到不认识这个键的旧版本前，先从 `state.json` 主备里删掉它。
 - **`memory/wed/<chatId>.json`**
   - **内容**：每群已发言成员 ID 的纯数字数组，例如 `[5974478892]`；主线程每群长期复用一个 `Set<number>`。最多 25 群，每群最多 150,000 个 ID，满额保留已有成员，退群后可继续新增。
   - **校验**：文件名必须是规范负安全整数群 ID，数组元素必须是唯一的正安全整数；非法 JSON、重复、类型或容量错误拒绝启动，不截断或修复原文件。目录和文件缺失允许启动，由程序按需创建。

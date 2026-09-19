@@ -82,6 +82,7 @@ Sessions are stored as per-group arrays in `state.json.translate`; see [07 Opera
 <tr><td><code>/icon steal</code></td><td align="center">Group member</td><td>Copy avatar only</td></tr>
 <tr><td><code>/icon reset</code></td><td align="center">Group member</td><td>Restore the default avatar</td></tr>
 <tr><td><code>/wed</code></td><td align="center">Group members</td><td>Draw a random group partner with an avatar; confirm, change, or remove the result after <code>/init enable</code></td></tr>
+<tr><td><code>/h_image</code></td><td align="center">Group members</td><td>Post one picture drawn uniformly from the random image directory; takes no arguments. The picture stays; failure hints are deleted after 30 seconds</td></tr>
 <tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/揪住</code> replies "actor 咬了 target！"; successful results are retained</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
@@ -176,3 +177,11 @@ Member IDs are stored as numeric arrays in `memory/wed/<chatId>.json`. Only actu
 Every day at 00:00 Tokyo time, the unified Bun cron notifies the main thread to review every stored member set at a shared limit of five IDs per second across all groups. IDs confirmed absent from their corresponding group are removed from the original Set and saved through the batch path above; failed or timed-out queries retain records. An unfinished round continues without an overlapping round. Shutdown cancels the review and submits remaining changes; process restart waits for the next midnight notification.
 
 Sessions and image bytes remain in memory, with images held only for the current operation and at most 512 sessions per group. The interaction cache uses a 1,024-entry LRU: command and button reads refresh recency, and an insertion at capacity evicts the least recently used group's interactions and cleans up their results. Evicted buttons expire. Member records remain separate, with a 25-group limit that rejects new groups at capacity, so normal operation still supports at most 25 groups. Result messages belong to buttons, LRU eviction, and chat teardown, without fixed 30-second deletion; usage and failure notices use the shared 30-second cleanup. `/init disable` and the bot leaving the group cancel interactions and delete that group's member records and persisted file. Losing administrator rights retains member records. After restart, old buttons ask the caller to send `/wed` again.
+
+## 🖼️ Random Picture: `/h_image`
+
+Once the group has run `/init enable`, anyone can send `/h_image` (no arguments). The bot draws one picture uniformly from `global.assets.randomImageDir` in `state.json` (by default `images/` under the data root, created at startup if missing) and posts it to the group as a reply to the command; in forum groups it lands in the command's topic.
+
+- **Source**: only `jpg`, `jpeg`, `png`, and `webp` files directly inside the directory count; hidden files, subdirectories, and symbolic links do not. The directory is listed afresh on every use, so adding or removing pictures needs no restart.
+- **Retention**: the posted picture stays; it is not deleted after 30 seconds. The usage hint for extra arguments, the busy hint, and the three failure hints (directory missing, no pictures, the drawn picture exceeds 10 MB) are deleted after 30 seconds.
+- **Concurrency**: the command returns as soon as it is accepted and does not hold up update processing; drawing and uploading run on a main-thread executor with at most 2 in flight and 16 waiting slots, and a full executor answers "try again later".

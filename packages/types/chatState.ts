@@ -149,13 +149,13 @@ export interface GlobalCopyState {
 }
 
 /**
- * 所有群共用的外部素材直链，四项各自独立。
+ * 所有群共用的外部素材：四条直链与随机图片目录，五项各自独立。
  *
  * **缺字段 = 从没设过**，该项回退到 consts/ui/assets.ts 的内置常量，行为与
- * 没有这一块时逐字相同。这四项**显式写进文件是
- * 常态**：写一个与常量相同的值没有行为差别，而把四个旋钮摆在 state.json 里，
+ * 没有这一块时逐字相同。这五项**显式写进文件是
+ * 常态**：写一个与常量相同的值没有行为差别，而把五个旋钮摆在 state.json 里，
  * 换图的人才不必先去代码里翻键名。因此启动时缺项会被自动补成当前生效值（见
- * infra/storage/stateStore.ts 的 seedMissingAssetState），文件里永远看得到这四个键。
+ * infra/storage/stateStore.ts 的 seedMissingAssetState），文件里永远看得到这五个键。
  *
  * 没有任何命令会改这一块，运行期也没有写入方，只由部署方手工编辑 state.json（改完要
  * 重启，运行中的进程持有权威内存并会整份覆写文件）。放 state 而不放 config/：
@@ -174,6 +174,11 @@ export interface GlobalAssetState {
   gagThumbnailUrl?: string;
   /** `/icon reset`、`/copy stop` 复原机器人默认头像时抓的图；缺省用 BOT_DEFAULT_AVATAR_URL。 */
   botDefaultAvatarUrl?: string;
+  /**
+   * 随机图片（`/h_image`）的来源目录；相对路径按运行时数据根解析，
+   * 缺省用 RANDOM_IMAGE_DIR。启动时不存在则自动创建。
+   */
+  randomImageDir?: string;
 }
 
 /**

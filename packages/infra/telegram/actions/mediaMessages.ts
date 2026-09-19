@@ -58,7 +58,7 @@ export interface SendPhotoParams {
   chatId: number;
   /** Worker 调用会转移底层 ArrayBuffer；函数返回 Promise 后不得再读取。 */
   bytes: Uint8Array;
-  mimeType: "image/jpeg" | "image/png";
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
   replyToMessageId?: number;
   api?: SendPhotoApi;
   signal?: AbortSignal;
@@ -84,7 +84,7 @@ export async function sendPhotoWithResult({
     execute: async (
       requestSignal?: AbortSignal
     ): Promise<Message.PhotoMessage> => {
-      const extension: string = mimeType === "image/jpeg" ? "jpg" : "png";
+      const extension: string = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/png" ? "png" : "webp";
       // 定形一次初始化，理由同 actions/messages.ts 的 sendMessageWithResult。
       const other: Parameters<SendPhotoApi["sendPhoto"]>[2] = {
         message_thread_id: messageThreadId,

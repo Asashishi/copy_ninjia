@@ -170,6 +170,8 @@
 
 `/wed` 在已初始化的群里仅支持个人身份，随机抽取群友并展示头像及确认、更换、移除按钮。每群最多保存 15 万个已发言成员 ID，实际增删后批量写入 `memory/wed/<chatId>.json`，重启恢复候选；结果会话只保存在内存中。命令与按钮全局最多同时处理 32 项，出站复用统一队列和 429 等待。
 
+`/h_image` 从随机图片目录（`state.json` 的 `global.assets.randomImageDir`，缺省为数据根下的 `images/`，启动时自动创建）均匀抽一张图发到本群，图片长期保留；只认 `jpg`、`jpeg`、`png`、`webp`，放图不用重启。
+
 完整命令表、权限口径与每条命令的行为细节见 **[📖 08 命令与行为参考](docs/cn/08-commands.md)**。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>

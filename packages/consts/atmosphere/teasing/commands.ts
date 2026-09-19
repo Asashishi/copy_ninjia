@@ -10,6 +10,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "translate", description: `ja 日语 / cn 简体中文 / en 美式英语 / uk 乌克兰语 / ru 俄语；回复目标或加 @username，每群最多 ${TRANSLATE_CHAT_USER_LIMIT} 人，list 看清单，stop 停全群、加目标停单人，enable/disable 开关功能，杂鱼看好参数♡` },
   { command: "icon", description: "用 steal 偷目标头像，回复 TA 或加 @username；reset 换回本天才原装脸，连自己的头像都拿不出手吗，杂鱼♡" },
   { command: "wed", description: "让本天才随机抽取群友老婆；支持确认、换一只和移除，再发 /wed 可重抽♡" },
+  { command: "h_image", description: "让本天才从图库里随手抽一张图甩给你们看，直接发就行，不用加参数哦杂鱼♡" },
   // Telegram 菜单只接受英文命令名；/x 展示中文动作的用法并终止分派，不进入消息兜底。
   { command: "x", description: "把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 或加 @username 指定目标，笨蛋♡" },
   { command: "block", description: "末尾写 enable 把目标写进永久黑名单并在所有托管群封禁、之后再进群也秒踢（需 isCanBlock），写 disable 移出黑名单并解除封禁（需 isCanUnBlock）；支持回复、@username 或用户 id，disable 还认频道负数 id，杂鱼别乱碰♡" },

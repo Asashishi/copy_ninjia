@@ -200,14 +200,17 @@ chmod 660 database/storage.sqlite
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…"
+    "botDefaultAvatarUrl": "https://…",
+    "randomImageDir": "images"
   }
 }
 ```
 
-四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
+前四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
 
-四项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+五项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+
+第五个键 `randomImageDir` 是 `/h_image` 抽图的目录（见 [08 命令](08-commands.md)），缺省为 `images`：相对路径按运行时数据根（`state.json` 所在目录）解析，也可写绝对路径。启动时目录不存在会自动创建，存在但不是目录或建不出来则拒绝启动并点名字段路径。往目录里放图、删图不用重启，每次使用都会重新列目录；只认目录这一层的 `jpg`、`jpeg`、`png`、`webp`，隐藏文件、子目录和符号链接不算，单张超过 10 MB 的会被跳过并提示。首次运行时数据根里还没有 `state.json`，启动成功后随这次补写自动生成。
 
 > 启动前核对 `state.global.assets` 的四项地址：三张缩略图只接受 `https`，非法地址会在解码期拒绝启动并点名字段路径。
 
