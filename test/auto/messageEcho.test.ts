@@ -260,6 +260,29 @@ describe("文字与图注一律按字符串处理", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("带剧透的视频：换图注时照搬图注位置与起播时间，剧透由 Telegram 复制时保留；没有图注时不传图注位置", async () => {
+    const video = (fields: Record<string, unknown>): Message => ({
+      message_id: 10,
+      date: 1,
+      chat: { id: CHAT_ID, type: "supergroup" },
+      video: { file_id: "v", file_unique_id: "vu", width: 1, height: 1, duration: 30, start_timestamp: 12 },
+      has_media_spoiler: true,
+      show_caption_above_media: true,
+      ...fields,
+    }) as unknown as Message;
+    await echoMessage({ chatId: CHAT_ID, message: video({ caption: "看这里" }), mode: "nya" });
+    expect(copyMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID, fromChatId: CHAT_ID, messageId: 10, messageThreadId: undefined,
+      caption: "看这里 喵~", showCaptionAboveMedia: true, videoStartTimestamp: 12,
+    });
+    await echoMessage({ chatId: CHAT_ID, message: video({}), mode: "nya" });
+    expect(copyMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID, fromChatId: CHAT_ID, messageId: 10, messageThreadId: undefined,
+      caption: undefined, showCaptionAboveMedia: undefined, videoStartTimestamp: 12,
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("付费媒体只发文字；投票这类没有文字也没有文件的消息原样复制", async () => {
     await echoMessage({
       chatId: CHAT_ID,

@@ -189,12 +189,13 @@ describe("/h_image add", () => {
     });
   });
 
-  test("停机取消时静默收场，不回汇总", async () => {
+  test("停机取消时静默收场，不回汇总，图库里不留临时文件", async () => {
     hangDownloads = true;
     await handleHImageCommand(context(photo("a")));
     expect(await drainDeferredCommandRuntime(0)).toBe("timedOut");
     await Bun.sleep(10);
     expect(sendCommandMessage).not.toHaveBeenCalled();
+    expect(readdirSync(directory)).toEqual([]);
   });
 
   test("执行器停止接纳时回「稍后再试」", async () => {
