@@ -3,9 +3,9 @@
 <p><a href="../../README.md">简体中文</a> · <a href="../en/README.md">English</a> · <b>日本語</b></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/banner_dark.jpg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/banner_light.jpg">
-  <img alt="Copy Ninjia バナー" src="../../pictures/banner_light.jpg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/banner_dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/banner_light.jpg">
+  <img alt="Copy Ninjia バナー" src="../../public/banner_light.jpg" width="100%">
 </picture>
 
 <h1>
@@ -16,9 +16,9 @@
 <p><sub>アバターをクリックすると、サンプル Bot に移動できます：<a href="https://t.me/copy_ninjia_bot">@copy_ninjia_bot</a></sub></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_ja_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_ja_light.svg">
-  <img alt="アバターを盗み、メッセージを真似し、画像を見て、グループを守り、真顔で悪口まで言う Telegram グループチャット Bot" src="../../pictures/tagline_ja_light.svg" width="820">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_ja_light.svg">
+  <img alt="アバターを盗み、メッセージを真似し、画像を見て、グループを守り、真顔で悪口まで言う Telegram グループチャット Bot" src="../../public/tagline_ja_light.svg" width="820">
 </picture>
 
 **本番コード、テスト、ドキュメントをすべて AI が書く純 AI 開発プロジェクト** — 人間はアーキテクチャを設計し、AI と共同で全コミットをレビュー
@@ -29,7 +29,7 @@
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
-  <a href="https://platform.openai.com/docs/"><img src="../../pictures/openai_badge.svg" alt="OpenAI"></a>
+  <a href="https://platform.openai.com/docs/"><img src="../../public/openai_badge.svg" alt="OpenAI"></a>
 </p>
 
 <p align="center">
@@ -73,9 +73,9 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4531 件のテストが全て成功 / テストファイル 389 件 / expect() 呼び出し 158,942 回 / 関数カバレッジ 97.23% / 行カバレッジ 98.03%" src="../../pictures/coverage_light.svg" width="780">
+    <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
+    <img alt="bun run test:coverage — 4531 件のテストが全て成功 / テストファイル 389 件 / expect() 呼び出し 158,942 回 / 関数カバレッジ 97.23% / 行カバレッジ 98.03%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -278,9 +278,9 @@ Bot が動いているのに返信しない場合は、[10 よくある質問](1
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_ja_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_ja_light.svg">
-  <img alt="Copy Ninjia — 単に真似をするだけでなく、チャット現場を丸ごと盗んで演じ直す。" src="../../pictures/footer_ja_light.svg" width="750">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_ja_light.svg">
+  <img alt="Copy Ninjia — 単に真似をするだけでなく、チャット現場を丸ごと盗んで演じ直す。" src="../../public/footer_ja_light.svg" width="750">
 </picture>
 
 *人間は 1 行もコードを書きませんが、決して舞台を降りませんでした。設計図を描いた後も、すべてのコミットを AI と共同でレビューしています。*

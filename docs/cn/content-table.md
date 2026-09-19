@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../../pictures/tagline_light.svg" width="780">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../../public/tagline_light.svg" width="780">
 </picture>
 
 # 📚 Copy Ninjia 开发者文档
@@ -103,9 +103,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_light.svg">
-  <img alt="Copy Ninjia Footer" src="../../pictures/footer_light.svg" width="580">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_light.svg">
+  <img alt="Copy Ninjia Footer" src="../../public/footer_light.svg" width="580">
 </picture>
 
 </div>

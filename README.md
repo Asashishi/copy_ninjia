@@ -3,9 +3,9 @@
 <p><b>简体中文</b> · <a href="docs/en/README.md">English</a> · <a href="docs/ja/README.md">日本語</a></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="pictures/banner_dark.jpg">
-  <source media="(prefers-color-scheme: light)" srcset="pictures/banner_light.jpg">
-  <img alt="Copy Ninjia Banner" src="pictures/banner_light.jpg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="public/banner_dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="public/banner_light.jpg">
+  <img alt="Copy Ninjia Banner" src="public/banner_light.jpg" width="100%">
 </picture>
 
 <h1>
@@ -16,9 +16,9 @@
 <p><sub>点击头像即可跳转至示例 Bot：<a href="https://t.me/copy_ninjia_bot">@copy_ninjia_bot</a></sub></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="pictures/tagline_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="pictures/tagline_light.svg">
-  <img alt="会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人" src="pictures/tagline_light.svg" width="780">
+  <source media="(prefers-color-scheme: dark)" srcset="public/tagline_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="public/tagline_light.svg">
+  <img alt="会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人" src="public/tagline_light.svg" width="780">
 </picture>
 
 **生产代码、测试与文档均由 AI 编写的纯 AI 开发项目** — 人类负责架构设计，并与 AI 共同审查每一次提交
@@ -29,7 +29,7 @@
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
-  <a href="https://platform.openai.com/docs/"><img src="pictures/openai_badge.svg" alt="OpenAI"></a>
+  <a href="https://platform.openai.com/docs/"><img src="public/openai_badge.svg" alt="OpenAI"></a>
 </p>
 
 <p align="center">
@@ -71,9 +71,9 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：4531 项测试全部通过 / 389 个测试文件 / 158,942 次 expect() 调用 / 函数覆盖率 97.23% / 行覆盖率 98.03%" src="pictures/coverage_light.svg" width="780">
+    <source media="(prefers-color-scheme: dark)" srcset="public/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="public/coverage_light.svg">
+    <img alt="bun run test:coverage：4531 项测试全部通过 / 389 个测试文件 / 158,942 次 expect() 调用 / 函数覆盖率 97.23% / 行覆盖率 98.03%" src="public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -268,9 +268,9 @@ Copy Ninjia 的架构总览、模块导览、运行时权威约束、测试流�
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="pictures/footer_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="pictures/footer_light.svg">
-  <img alt="Copy Ninjia — 不是只会复读，是把整套群聊现场偷走再演一遍。" src="pictures/footer_light.svg" width="580">
+  <source media="(prefers-color-scheme: dark)" srcset="public/footer_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="public/footer_light.svg">
+  <img alt="Copy Ninjia — 不是只会复读，是把整套群聊现场偷走再演一遍。" src="public/footer_light.svg" width="580">
 </picture>
 
 *人类没有写下任何一行代码，但也从未退场——画完图纸之后，还和 AI 一起审过每一次提交。*

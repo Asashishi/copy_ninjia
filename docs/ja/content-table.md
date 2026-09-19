@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_ja_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_ja_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../../pictures/tagline_ja_light.svg" width="820">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_ja_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../../public/tagline_ja_light.svg" width="820">
 </picture>
 
 # 📚 Copy Ninjia 開発者ドキュメント
@@ -103,9 +103,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_ja_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_ja_light.svg">
-  <img alt="Copy Ninjia Footer" src="../../pictures/footer_ja_light.svg" width="750">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_ja_light.svg">
+  <img alt="Copy Ninjia Footer" src="../../public/footer_ja_light.svg" width="750">
 </picture>
 
 </div>

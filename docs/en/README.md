@@ -3,9 +3,9 @@
 <p><a href="../../README.md">简体中文</a> · <b>English</b> · <a href="../ja/README.md">日本語</a></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/banner_dark.jpg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/banner_light.jpg">
-  <img alt="Copy Ninjia Banner" src="../../pictures/banner_light.jpg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/banner_dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/banner_light.jpg">
+  <img alt="Copy Ninjia Banner" src="../../public/banner_light.jpg" width="100%">
 </picture>
 
 <h1>
@@ -16,9 +16,9 @@
 <p><sub>Click the avatar to open the example bot: <a href="https://t.me/copy_ninjia_bot">@copy_ninjia_bot</a></sub></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_en_light.svg">
-  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="../../pictures/tagline_en_light.svg" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_en_light.svg">
+  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="../../public/tagline_en_light.svg" width="760">
 </picture>
 
 **A pure-AI development project whose production code, tests, and documentation are written entirely by AI** — the human designs the architecture and reviews every commit together with AI
@@ -29,7 +29,7 @@
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
-  <a href="https://platform.openai.com/docs/"><img src="../../pictures/openai_badge.svg" alt="OpenAI"></a>
+  <a href="https://platform.openai.com/docs/"><img src="../../public/openai_badge.svg" alt="OpenAI"></a>
 </p>
 
 <p align="center">
@@ -71,9 +71,9 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4531 tests passed, 389 test files, 158,942 expect() calls, 97.23% function coverage, 98.03% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
+    <img alt="bun run test:coverage — 4531 tests passed, 389 test files, 158,942 expect() calls, 97.23% function coverage, 98.03% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -271,9 +271,9 @@ If the bot is running but does not reply, work through [10 FAQ](10-faq.md).
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_en_light.svg">
-  <img alt="Copy Ninjia — Not just copying messages, but stealing the entire group-chat scene and re-enacting it." src="../../pictures/footer_en_light.svg" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_en_light.svg">
+  <img alt="Copy Ninjia — Not just copying messages, but stealing the entire group-chat scene and re-enacting it." src="../../public/footer_en_light.svg" width="800">
 </picture>
 
 *The human never wrote a line of code, but never left the stage: after drawing the blueprints, they reviewed every commit together with AI.*

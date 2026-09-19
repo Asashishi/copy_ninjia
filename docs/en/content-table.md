@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_en_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../../pictures/tagline_en_light.svg" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_en_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../../public/tagline_en_light.svg" width="760">
 </picture>
 
 # 📚 Copy Ninjia Developer Documentation
@@ -103,9 +103,9 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_en_light.svg">
-  <img alt="Copy Ninjia Footer" src="../../pictures/footer_en_light.svg" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_en_light.svg">
+  <img alt="Copy Ninjia Footer" src="../../public/footer_en_light.svg" width="800">
 </picture>
 
 </div>

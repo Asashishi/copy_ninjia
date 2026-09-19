@@ -235,4 +235,4 @@
 - `master`、tag、Release、Latest 状态或二进制资产任一未确认成功时，不得宣称发布完成，不得改写 `dev`。
 - Release 确认成功后，必须先执行 `git diff dev master --quiet` 确认树一致，再在 `dev` 执行 `git reset --hard master` 和 `git push --force-with-lease origin dev`。
 - 发布结束前必须确认本地和远端的 `dev`、`master` 全部指向同一提交。
-- 仅在用户明确要求同步文档或指标时，依据合并前真实 `bun run check` 输出更新徽章、`pictures/coverage_{light,dark}.svg`、README `<img alt>` 和三份开发文档；完整清单以 `docs/cn/05-dev-workflow.md` 的“同步 README 指标”为准。
+- 仅在用户明确要求同步文档或指标时，依据合并前真实 `bun run check` 输出更新徽章、`public/coverage_{light,dark}.svg`、README `<img alt>` 和三份开发文档；完整清单以 `docs/cn/05-dev-workflow.md` 的“同步 README 指标”为准。

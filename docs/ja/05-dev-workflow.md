@@ -180,7 +180,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 以下はいずれも同じ実測値なので、1 か所直したら全部直します。
 
 - **3 言語の README にある Tests / Coverage badge。** Coverage badge は常に `All files` の行カバレッジを使います。
-- **カバレッジ図**：各 README の「プロジェクト品質」節が参照する [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) と [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg)。banner と同様、1 組を 3 言語の README が共用するため、両テーマのファイルの数値を一緒に更新します。
+- **カバレッジ図**：各 README の「プロジェクト品質」節が参照する [`public/coverage_light.svg`](../../public/coverage_light.svg) と [`public/coverage_dark.svg`](../../public/coverage_dark.svg)。banner と同様、1 組を 3 言語の README が共用するため、両テーマのファイルの数値を一緒に更新します。
 - **3 つの README の `<img alt>` 内の同等の文言。** 図は画像として読み込まれるため SVG 内部の `<title>` / `aria-label` は読み上げに届かず、alt が唯一の入口です。
 - **3 言語の本文にある「このドキュメント版の実測値」。**
 

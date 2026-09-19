@@ -180,7 +180,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 需要同步的位置是同一组实测数值，改一处就要全部改到：
 
 - **三语 README 的徽章行**（Tests / Coverage）。Coverage 徽章固定采用 `All files` 的行覆盖率。
-- **覆盖率图**：[`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) 与 [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg)。一对图由三语 README 共用（同 banner），改动要同时落在两个主题文件的数值上。
+- **覆盖率图**：[`public/coverage_light.svg`](../../public/coverage_light.svg) 与 [`public/coverage_dark.svg`](../../public/coverage_dark.svg)。一对图由三语 README 共用（同 banner），改动要同时落在两个主题文件的数值上。
 - **三份 README 里 `<img alt>` 的等价文案**：图以图片加载，SVG 内部的 `<title>` / `aria-label` 读屏软件读不到，alt 是唯一的无障碍出口。
 - **三语本文的「当前文档版本实测」**。
 

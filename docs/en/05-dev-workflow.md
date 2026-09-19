@@ -180,7 +180,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 These places all carry the same measured figures, so updating one obliges updating every one:
 
 - **The Tests/Coverage badges in all three READMEs.** The Coverage badge always uses the `All files` line-coverage value.
-- **The coverage graphics**: [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) and [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg), referenced from each README's “Project Quality” section. One pair is shared by all three READMEs (like the banner), so both theme files need the new figures.
+- **The coverage graphics**: [`public/coverage_light.svg`](../../public/coverage_light.svg) and [`public/coverage_dark.svg`](../../public/coverage_dark.svg), referenced from each README's “Project Quality” section. One pair is shared by all three READMEs (like the banner), so both theme files need the new figures.
 - **The equivalent `<img alt>` text in all three READMEs.** The graphic loads as an image, so the SVG's own `<title>` / `aria-label` never reaches a screen reader and the alt is the only accessible path.
 - **“Measurements for This Documentation Version” in all three workflow documents.**
 
