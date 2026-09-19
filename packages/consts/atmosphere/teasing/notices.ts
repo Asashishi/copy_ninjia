@@ -42,7 +42,7 @@ export const NOTICE_TEXTS: Readonly<AtmosphereNotices> = {
   statusProcess: "本机进程，本天才当然精神得很♡：",
   statusModels: "全局模型能力，本天才会的可多着呢♡：",
   statusGag: (activeGagSessions: number, capacity: number): string => `• 正在被本天才调教的杂鱼：${activeGagSessions}/${capacity}`,
-  statusTranslate: (activeTranslateSessions: number, capacity: number): string => `• 本群正赖着本天才翻译的杂鱼：${activeTranslateSessions}/${capacity} 人♡`,
+  statusTranslate: (activeTranslateSessions: number, capacity: number): string => `• 本群正赖着本天才翻译的杂鱼：${activeTranslateSessions}/${capacity}♡`,
   statusPermissions: "本天才在这个群的权柄，杂鱼可别眼红♡：",
   statusPermissionsUnknown: "• 还没确证呢，等本天才在这个群有了身份再来看吧，笨蛋♡",
   statusFeatures: "本群已开启，连这个都记不住吗，笨蛋♡：",

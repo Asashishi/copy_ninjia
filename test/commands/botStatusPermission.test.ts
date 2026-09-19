@@ -122,7 +122,7 @@ describe("/bot_status 白名单权限", () => {
     ]);
     translateStates.set(-2002, [{ translatedUser: { id: 9 }, language: "ja" }]);
     await handleBotStatusCommand(context());
-    expect(sendCommandMessage.mock.calls[0]?.[0].text).toContain("本群正赖着本天才翻译的杂鱼：2/5 人♡");
+    expect(sendCommandMessage.mock.calls[0]?.[0].text).toContain("本群正赖着本天才翻译的杂鱼：2/5♡");
 
     expect(aiChatConfigReadiness).toHaveBeenCalledTimes(1);
     expect(adDetectConfigReadiness).toHaveBeenCalledTimes(1);
