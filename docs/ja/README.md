@@ -203,7 +203,9 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/   # telegram.json の bot_token と super_admin_user_id を記入
+for example in config_example/*.json; do   # 不足分だけコピー。g-auth.json と cron.json は書き方の例なのでコピーしない
+  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" config/ ;; esac
+done                                       # telegram.json の bot_token と super_admin_user_id を記入
 bun run check                          # 規約 + ESLint + TypeScript 厳格チェック + カバレッジ + hot path gate
 bun run start                          # ロングポーリング開始
 ```

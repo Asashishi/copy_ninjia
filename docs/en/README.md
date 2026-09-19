@@ -195,7 +195,9 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/   # fill in bot_token and super_admin_user_id in telegram.json
+for example in config_example/*.json; do   # copy missing examples only; g-auth.json and cron.json are illustrative
+  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" config/ ;; esac
+done                                       # fill in bot_token and super_admin_user_id in telegram.json
 bun run check                          # conventions + ESLint + strict TypeScript + coverage + hot-path gate
 bun run start                          # start long polling
 ```

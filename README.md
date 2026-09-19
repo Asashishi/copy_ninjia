@@ -195,7 +195,9 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/   # 填好 telegram.json 的 bot_token 与 super_admin_user_id
+for example in config_example/*.json; do   # 只补缺失的示例；g-auth.json、cron.json 只示意写法，不复制
+  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" config/ ;; esac
+done                                       # 填好 telegram.json 的 bot_token 与 super_admin_user_id
 bun run check                          # 项目规约 + ESLint + TypeScript 严格检查 + 覆盖率测试 + 热路径门禁
 bun run start                          # 启动长轮询
 ```

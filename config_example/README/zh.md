@@ -6,12 +6,16 @@
 `config/`；示例中的 token、API key、用户 ID、模型名和端点都需要按部署环境确认，
 不能直接用于生产。
 
-首次部署可以只补齐不存在的 JSON 文件；`g-auth.json` 示例只示意结构，不要复制：
+首次部署可以只补齐不存在的 JSON 文件；`g-auth.json` 示例只示意结构，`cron.json` 示例只示意
+定时任务的写法，两者都不要复制：
 
 ```bash
 mkdir -p config
 for example in config_example/*.json; do
-  [ "${example##*/}" = g-auth.json ] || cp -n "$example" config/
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
 done
 ```
 
@@ -176,6 +180,12 @@ SDK。安装器不会从示例生成这个文件。
 ## `cron.json`
 
 顶层是任务数组，缺省或 `[]` 表示没有定时任务。严格 JSON，不能写注释。
+
+[`config_example/cron.json`](../cron.json) 收录了覆盖全部写法的示例任务：工作日发纯文字；论坛话题加
+自定义时区，依次发文字、网址图片和网址文件；发送 `config/cron_files/` 下的本地图片与文件；`rand_cron`
+区间从默认图库抽图；`@daily` 加单值 `rand_cron` 从子目录抽图；以及 `just_once`。示例里的会话 id、
+地址和本地文件都是假的，原样放进 `config/` 会因本地文件不存在而拒绝启动；按需挑任务改好后写进
+`config/cron.json`，用到 `path` 时先把文件放进 `config/cron_files/`。安装器不会从示例生成这个文件。
 
 ```json
 [

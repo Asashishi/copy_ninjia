@@ -75,7 +75,7 @@ usable controlling terminal the script exits rather than consuming half of its o
 The installation follows these steps:
 
 1. **Environment and package**: check Linux, readable `/proc`, and the controlling terminal; obtain missing tools and the Latest Release or reuse the existing deployment. Source mode installs or verifies the exact Bun version and runs `bun install --frozen-lockfile` with the seven-day dependency cooldown. Binary mode verifies the embedded Bun against `packageManager` and uses packaged dependencies.
-2. **Deployment configuration**: copy only missing examples, excluding `agent.json`. Telegram identity can be re-entered interactively; an existing file is backed up outside the tree before candidate validation and atomic replacement. No AI configuration creates no `agent.json`; an existing AI configuration is retained. Generated identity and AI configuration files use mode `600`.
+2. **Deployment configuration**: copy only missing examples, excluding `agent.json`, `g-auth.json` and `cron.json`. Telegram identity can be re-entered interactively; an existing file is backed up outside the tree before candidate validation and atomic replacement. No AI configuration creates no `agent.json`; an existing AI configuration is retained. Generated identity and AI configuration files use mode `600`.
 3. **Identity database and validation**: resolve the database location through production code, create the current empty schema only when `database/storage.sqlite` is absent, then validate deployment inputs.
 4. **Service and observation**: register or reuse the unit for a deployment already confirmed stopped, then start and verify state, the calculated observation window, restart count, and journal. Remove configuration and unit backups only after every check succeeds. Verification failures exit nonzero; foreground execution retains backups.
 
@@ -88,8 +88,15 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
+done
 ```
+
+The `g-auth.json` and `cron.json` examples are illustrative only and must not be copied; see [`config_example/README`](../../config_example/README/en.md).
 
 ## Configuring Telegram Identity
 

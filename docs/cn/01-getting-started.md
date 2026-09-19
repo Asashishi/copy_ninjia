@@ -61,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 安装流程包括以下步骤：
 
 1. **环境与发行包**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有部署。源码方式安装或核验指定 Bun，再执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期；二进制方式核验内置 Bun 与 `packageManager`，直接使用包内依赖。
-2. **部署配置**：只补缺少的示例文件，跳过 `agent.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
+2. **部署配置**：只补缺少的示例文件，跳过 `agent.json`、`g-auth.json` 与 `cron.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
 3. **身份数据库与校验**：按生产路径解析结果检查 `database/storage.sqlite`，只在不存在时创建当前 schema 的空库，再校验部署输入。
 4. **服务与观察**：在已确认停止的部署上注册或复用 unit，启动并完成状态、动态观察时长、重启计数与 journal 核验。仅全部通过才清理配置和 unit 备份；验证失败非零退出，前台运行保留备份。
 
@@ -74,8 +74,15 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
+done
 ```
+
+`g-auth.json` 与 `cron.json` 的示例只示意写法，不要复制，理由见 [`config_example/README`](../../config_example/README/zh.md)。
 
 ## 配置 Telegram 身份
 

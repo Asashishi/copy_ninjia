@@ -8,12 +8,16 @@ ID, model, and endpoint with values verified for the deployment; the placeholder
 production settings.
 
 On a fresh deployment, copy only JSON files that do not already exist; the `g-auth.json` example
-only shows the structure and must not be copied:
+only shows the structure and the `cron.json` example only shows how scheduled tasks are written, so
+neither may be copied:
 
 ```bash
 mkdir -p config
 for example in config_example/*.json; do
-  [ "${example##*/}" = g-auth.json ] || cp -n "$example" config/
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
 done
 ```
 
@@ -210,6 +214,15 @@ never creates this file from the example.
 
 The top level is an array of tasks; a missing file or `[]` means no scheduled tasks. It is strict
 JSON, so comments are not allowed.
+
+[`config_example/cron.json`](../cron.json) holds example tasks that cover every form: plain weekday
+text; a forum topic with its own time zone sending text, then an image and a file by URL; a local
+image and file from `config/cron_files/`; a `rand_cron` range drawing from the default image library;
+`@daily` with a single-value `rand_cron` drawing from a subdirectory; and `just_once`. The chat ids,
+URLs and local files in it are fake, and an unedited copy in `config/` refuses startup because the
+local files do not exist. Pick the tasks you need, adapt them and write them into `config/cron.json`;
+put files into `config/cron_files/` before using `path`. The installer never creates this file from
+the example.
 
 ```json
 [

@@ -73,7 +73,7 @@ pipe 実行では fd 0 が script 本文そのものなので、すべての問�
 インストールは次の順に進みます。
 
 1. **環境と配布物**：Linux、読み取り可能な `/proc`、制御端末を確認し、不足するツールと Latest Release を取得するか、既存デプロイを再利用します。ソース方式は指定 Bun を導入または検証し、7 日間の依存関係公開待機期間を維持して `bun install --frozen-lockfile` を実行します。バイナリ方式は内蔵 Bun と `packageManager` を照合し、同梱依存関係を使用します。
-2. **デプロイ設定**：欠けているサンプルだけを補い、`agent.json` サンプルは除外します。Telegram 身分は対話で再入力でき、既存ファイルを tree 外へバックアップしてから候補を検証し、原子的に置換します。AI 未設定時は `agent.json` を作成せず、既存 AI 設定は保持します。生成する身分・AI 設定の mode は `600` です。
+2. **デプロイ設定**：欠けているサンプルだけを補い、`agent.json`、`g-auth.json`、`cron.json` のサンプルは除外します。Telegram 身分は対話で再入力でき、既存ファイルを tree 外へバックアップしてから候補を検証し、原子的に置換します。AI 未設定時は `agent.json` を作成せず、既存 AI 設定は保持します。生成する身分・AI 設定の mode は `600` です。
 3. **身分 database と検証**：production コードで保存先を解決し、`database/storage.sqlite` が無い場合だけ現在の空 schema を作成して、デプロイ入力を検証します。
 4. **サービスと観察**：停止を確認済みのデプロイで unit を登録または再利用して起動し、状態・計算済み観察期間・再起動回数・journal を検証します。全検証成功時だけ設定と unit のバックアップを削除します。検証失敗は非ゼロ終了し、前面実行時もバックアップを保持します。
 
@@ -86,8 +86,15 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
+done
 ```
+
+`g-auth.json` と `cron.json` の例は書き方を示すだけなのでコピーしません。理由は [`config_example/README`](../../config_example/README/ja.md) を参照してください。
 
 ## Telegram identity の設定
 

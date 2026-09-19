@@ -7,13 +7,16 @@
 user ID、model、endpoint は deployment で確認した値へ置き換えてください。placeholder は
 production 設定として使用できません。
 
-初回 deployment では、まだ存在しない JSON だけをコピーできます。`g-auth.json` の例は構造を
-示すだけなのでコピーしないでください。
+初回 deployment では、まだ存在しない JSON だけをコピーできます。`g-auth.json` の例は構造を、
+`cron.json` の例は定時タスクの書き方を示すだけなので、どちらもコピーしないでください。
 
 ```bash
 mkdir -p config
 for example in config_example/*.json; do
-  [ "${example##*/}" = g-auth.json ] || cp -n "$example" config/
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
 done
 ```
 
@@ -193,6 +196,15 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 
 トップレベルはタスクの配列で、ファイルが無いか `[]` なら定時タスクはありません。strict JSON
 のためコメントは書けません。
+
+[`config_example/cron.json`](../cron.json) にはすべての書き方を網羅する例のタスクがあります：平日の
+テキスト、フォーラムトピックと独自 time zone でテキスト・URL の画像・ファイルを順に送るもの、
+`config/cron_files/` のローカル画像とファイル、`rand_cron` の区間で既定の画像ライブラリから抽選
+するもの、`@daily` と単一値の `rand_cron` でサブディレクトリから抽選するもの、そして `just_once` です。
+例の会話 id、URL、ローカルファイルはすべて架空で、そのまま `config/` に置くとローカルファイルが
+存在しないため起動を拒否します。必要なタスクだけを選んで書き換えて `config/cron.json` に書き、
+`path` を使う場合は先に `config/cron_files/` へファイルを置いてください。installer が例からこのファイル
+を作ることはありません。
 
 ```json
 [
