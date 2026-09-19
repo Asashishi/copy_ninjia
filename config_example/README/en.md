@@ -140,12 +140,14 @@ reload that replaces `media`, or a Worker or process rebuild, clears the probe r
 
 If a capability is still switched on in some chat and you remove its API key or configuration, the
 process **still starts** and that `true` is restored as usual, but the capability is judged
-unavailable at its single decision entry point: the AI chat Worker never starts and memory is not
-hydrated (the on-disk snapshots stay untouched), `/translate` sessions stop processing messages, and ad
-detection stops submitting bundles. The chat simply sees the bot stop working from one restart
-onward, with a single line in `logs/` as the only trace. The correct order is `/ai_chat disable`,
-`/ad_detect disable` or `/translate disable` in the chat first, then remove the configuration — or
-restore the prerequisite.
+unavailable at its single decision entry point: when the prerequisite is missing at startup the AI
+chat Worker never starts (the on-disk snapshots stay untouched), and when it is removed at runtime the
+Worker goes idle after the hot reload; `/translate` sessions stop processing messages, and ad
+detection stops submitting bundles. The chat simply sees the bot stop working from that moment (or
+that restart) onward, with a single line in `logs/` as the only trace. The correct order is
+`/ai_chat disable`, `/ad_detect disable` or `/translate disable` in the chat first, then remove the
+configuration — or restore the prerequisite: AI chat and ad detection resume automatically through
+hot reload, while a restored `g-auth.json` needs a restart.
 
 **Note the direction**: this applies only when the file is **genuinely absent**. A file that is
 still there but invalid refuses startup at the gate as before, even when the matching feature is

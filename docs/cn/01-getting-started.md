@@ -188,7 +188,7 @@ chmod 660 database/storage.sqlite
 
 旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 
-**注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——AI 闲聊的 Worker 根本不启动、记忆不 hydrate（`memory/` 里那份原样留着等前提补齐），`/translate` 会话不执行，广告检测不再送检。群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/translate disable`，或者干脆把前提补回去。
+**注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——启动时就缺前提则 AI 闲聊的 Worker 根本不启动、记忆只进主线程镜像（`memory/` 里那份原样留着等前提补齐），运行中经热重载撤掉则 Worker 闲置；`/translate` 会话不执行，广告检测不再送检。群里看到的就是机器人从撤掉那一刻（或那次重启）起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/translate disable`，或者干脆把前提补回去：AI 闲聊与广告检测的前提补回后经热重载自动恢复，`g-auth.json` 不热重载，补回后要重启。
 
 ### 换掉内联缩略图与机器人默认头像
 
