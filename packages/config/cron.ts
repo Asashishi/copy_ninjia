@@ -11,6 +11,7 @@ import type { Stats } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { cronConfigCache } from "../cache/main/cron";
 import {
+  CRON_ALL_CHATS,
   CRON_DEFAULT_TIME_ZONE,
   CRON_MAX_ACTIONS_PER_TASK,
   CRON_MAX_TASKS,
@@ -26,6 +27,7 @@ import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../libs/record";
 import type {
   CronAction,
+  CronAllChats,
   CronConfig,
   CronFileSource,
   CronImageSource,
@@ -184,12 +186,16 @@ function parseTask(value: unknown, context: FieldContext): CronTask {
     return fail(context, "{ name, chat_id, message_thread_id?, cron, tz?, rand_cron?, just_once?, actions }");
   }
   const name: string = boundedText(value.name, child(context, "name"), CRON_TASK_NAME_MAX_CHARS);
-  if (!Number.isSafeInteger(value.chat_id) || value.chat_id === 0) {
-    return fail(child(context, "chat_id"), "a non-zero safe integer chat id");
-  }
-  const chatId: number = value.chat_id as number;
+  let chatId: number | CronAllChats;
+  if (value.chat_id === CRON_ALL_CHATS) chatId = CRON_ALL_CHATS;
+  else if (Number.isSafeInteger(value.chat_id) && value.chat_id !== 0) chatId = value.chat_id as number;
+  else return fail(child(context, "chat_id"), `a non-zero safe integer chat id or "${CRON_ALL_CHATS}"`);
   let messageThreadId: number | undefined;
   if (value.message_thread_id !== undefined) {
+    // 话题 id 只在它所属的群里有意义，「所有群」没有共同的话题。
+    if (chatId === CRON_ALL_CHATS) {
+      return fail(child(context, "message_thread_id"), `absent when chat_id is "${CRON_ALL_CHATS}"`);
+    }
     if (!Number.isSafeInteger(value.message_thread_id) || (value.message_thread_id as number) <= 0) {
       return fail(child(context, "message_thread_id"), "a positive safe integer");
     }

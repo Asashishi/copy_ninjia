@@ -1,5 +1,13 @@
+import type { CronAllChats } from "../types/cron";
+
 /** cron.json 任务缺省的 IANA 时区，属 packages/config/cron.ts；与 Disk I/O 每日维护一致，不继承宿主机时区。 */
 export const CRON_DEFAULT_TIME_ZONE: string = "Asia/Tokyo";
+
+/**
+ * cron.json 任务 `chat_id` 的「所有群」写法，属 packages/config/cron.ts 与 packages/cron/run.ts：
+ * 每一轮向所有已启用、且机器人此刻能发出全部动作的群逐个发送；不能与 message_thread_id 同用。
+ */
+export const CRON_ALL_CHATS: CronAllChats = "all";
 
 /** cron.json 最多的任务数，属 packages/config/cron.ts；超出拒绝整份文件，同时给调度表定容量。 */
 export const CRON_MAX_TASKS: number = 128;

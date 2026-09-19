@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { HttpError, InputFile } from "grammy";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { CronAction, CronDeliveryOutcome, CronTask } from "../../packages/types/cron";
+import type { CronAction, CronDeliveryOutcome } from "../../packages/types/cron";
 import type { RandomImagePick } from "../../packages/types/randomImage";
 
 /** 记录调用并按预设返回的 grammY api 替身。 */
@@ -46,19 +46,8 @@ const { getRandomImageDirectory } = await import("../../packages/infra/storage/s
 const { TelegramRetryQueueFullError } = await import("../../packages/infra/telegram/outboundRetryPolicy");
 const { TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } = await import("../../packages/consts/telegram");
 
-const TASK: CronTask = {
-  name: "daily",
-  chatId: -1001,
-  messageThreadId: 12,
-  cron: "* * * * *",
-  timeZone: "Asia/Tokyo",
-  randomInterval: undefined,
-  justOnce: false,
-  actions: [],
-};
-
 function deliver(action: CronAction, signal: AbortSignal = new AbortController().signal): Promise<CronDeliveryOutcome> {
-  return deliverCronAction(TASK, action, signal);
+  return deliverCronAction({ chatId: -1001, messageThreadId: 12 }, action, signal);
 }
 
 beforeEach(() => {

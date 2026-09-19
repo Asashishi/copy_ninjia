@@ -19,6 +19,9 @@ export type CronAction =
   | { readonly type: "send_image"; readonly content: string | undefined; readonly source: CronImageSource }
   | { readonly type: "send_file"; readonly content: string | undefined; readonly source: CronFileSource };
 
+/** 任务 `chat_id` 的「所有群」写法（consts/cron.ts 的 CRON_ALL_CHATS）。 */
+export type CronAllChats = "all";
+
 /** `rand_cron` 区间：每轮结束后在 [minMs, maxMs] 内均匀随机等待。 */
 export interface CronRandomInterval {
   readonly minMs: number;
@@ -31,7 +34,8 @@ export interface CronRandomInterval {
  */
 export interface CronTask {
   readonly name: string;
-  readonly chatId: number;
+  /** 目标会话 id；`"all"`（CRON_ALL_CHATS）表示所有能发送的已启用群，此时 messageThreadId 恒为 undefined。 */
+  readonly chatId: number | CronAllChats;
   readonly messageThreadId: number | undefined;
   readonly cron: string;
   readonly timeZone: string;
@@ -64,6 +68,28 @@ export interface CronRuntime {
   readonly runs: Set<Promise<void>>;
   /** 已执行过的 just_once 任务名。 */
   readonly justOnceRecords: LruCache<string, true>;
+}
+
+/** 一次投递的落点：具体会话与话题；`chat_id: "all"` 的任务每个群各一个。 */
+export interface CronDestination {
+  readonly chatId: number;
+  readonly messageThreadId: number | undefined;
+}
+
+/** 一个任务的动作需要哪几类发送权限（packages/cron/targets.ts）。 */
+export interface CronSendNeeds {
+  readonly text: boolean;
+  readonly photos: boolean;
+  readonly documents: boolean;
+}
+
+/**
+ * `chat_id: "all"` 一轮的投递目标（packages/cron/targets.ts）：按 chat id 升序的可发送群，
+ * 以及因缺权限或查询失败被跳过的群数。
+ */
+export interface CronGroupTargets {
+  readonly chatIds: readonly number[];
+  readonly skipped: number;
 }
 
 /** 一次动作投递的结果（packages/cron/delivery.ts），决定是否重试。 */

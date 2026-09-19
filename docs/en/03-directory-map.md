@@ -48,7 +48,7 @@ This page answers “where does this code live, and where should new code go?”
     `adCandidate.ts`, and `ai/`; `index.ts` is only a thin public entry point.
 - **`packages/cron/`**
   - **Responsibility**: main-thread scheduling of `cron.json` tasks (Bun-native cron, just_once, rand_cron random waits), running a round's actions in order with retries, and the only Telegram send boundary for them.
-  - **Representative files**: `scheduler.ts`, `run.ts`, and `delivery.ts`; parsing lives in `packages/config/cron.ts` and state in `packages/cache/main/cron.ts`.
+  - **Representative files**: `scheduler.ts`, `run.ts`, `delivery.ts`, and `targets.ts` (live send-permission checks for `chat_id: "all"`); parsing lives in `packages/config/cron.ts` and state in `packages/cache/main/cron.ts`.
 - **`packages/copy/`**
   - **Responsibility**: ordinary copying, text transformations, and the avatar update queue.
   - **Representative files**: `echo.ts`, `copyModes.ts`, `avatarQueue.ts`.

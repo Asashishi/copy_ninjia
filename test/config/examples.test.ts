@@ -90,6 +90,7 @@ describe("config_example 与解析器保持同步", () => {
     expect(config.some((entry: CronTask): boolean => entry.timeZone !== "Asia/Tokyo")).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.cron.startsWith("@"))).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.justOnce)).toBe(true);
+    expect(config.some((entry: CronTask): boolean => entry.chatId === "all")).toBe(true);
     // 区间写法与单值写法（等于 1m-<值>）各一。
     expect(config.some((entry: CronTask): boolean => entry.randomInterval !== undefined && entry.randomInterval.minMs > 60_000)).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.randomInterval?.minMs === 60_000)).toBe(true);

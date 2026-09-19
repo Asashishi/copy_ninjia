@@ -43,7 +43,7 @@
     `adCandidate.ts`、`ai/`；`index.ts` 只提供薄公开入口。
 - **`packages/cron/`**
   - **职责**：`cron.json` 定时任务的主线程调度（Bun 原生 cron、just_once、rand_cron 随机等待）、一轮动作的顺序执行与重试，以及唯一的 Telegram 发送边界。
-  - **典型文件**：`scheduler.ts`、`run.ts`、`delivery.ts`；解析在 `packages/config/cron.ts`，状态在 `packages/cache/main/cron.ts`。
+  - **典型文件**：`scheduler.ts`、`run.ts`、`delivery.ts`、`targets.ts`（`chat_id: "all"` 的发送权限现查）；解析在 `packages/config/cron.ts`，状态在 `packages/cache/main/cron.ts`。
 - **`packages/copy/`**
   - **职责**：普通复制、复读文本变换与头像更新队列。
   - **典型文件**：`echo.ts`、`copyModes.ts`、`avatarQueue.ts`。

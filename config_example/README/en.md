@@ -245,8 +245,8 @@ them into `config/cron.json`. The installer never creates this file from the exa
 | Field | Required | Rules |
 | --- | --- | --- |
 | `name` | Yes | Non-empty, at most 64 characters, unique in the file; it is the task identity, so renaming makes a new task |
-| `chat_id` | Yes | Target chat id (non-zero integer) |
-| `message_thread_id` | No | Forum topic id; without it messages land in General |
+| `chat_id` | Yes | Target chat id (non-zero integer), or `"all"` for every enabled group the bot can send to, see below |
+| `message_thread_id` | No | Forum topic id; without it messages land in General; not allowed when `chat_id` is `"all"` |
 | `cron` | Yes | 5-field expression or a nickname such as `@daily`; it must still have a future occurrence |
 | `tz` | No | IANA time zone, default `Asia/Tokyo` |
 | `rand_cron` | No | `"<min>-<max>"` or a single value (meaning `1m-<value>`), m/h/d units, within 1m–24d; the first run follows `cron`, and after each run the next one waits a random time in the range |
@@ -285,4 +285,14 @@ Runtime behavior:
   bot's usual send throttling and 429 back-off.
 - The target chat does not need `/init`; once the bot has been removed from it, each trigger logs
   an error.
+- `chat_id: "all"`: at the start of each run the bot checks its current send permission in every
+  group with `/init enable`, one by one (owner and administrators can send; when restricted, its own
+  send permissions count; as a plain member, the group's default member permissions count). Text
+  needs permission to send messages, pictures to send photos, files to send documents; a group
+  missing any permission the task needs is skipped entirely, so no group gets half a run. The
+  groups that can receive run the whole action list one by one in ascending chat id order, with
+  the same 1-second gap between groups. A final failure in one group only skips the rest of that
+  group's actions, logs the chat id, and moves on to the next group. When groups were skipped, the
+  run ends with one `Cron task "<name>" skipped <n> chat(s) without send permission.` line. Random
+  pictures are drawn separately for each group.
 

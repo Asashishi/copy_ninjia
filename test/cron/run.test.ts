@@ -1,28 +1,34 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import type { CronAction, CronDeliveryOutcome, CronTask, CronTaskSchedule } from "../../packages/types/cron";
+import type { CronAction, CronDeliveryOutcome, CronDestination, CronGroupTargets, CronTaskSchedule } from "../../packages/types/cron";
 
 const delivered: string[] = [];
+const destinations: number[] = [];
 const outcomes: CronDeliveryOutcome[] = [];
 const deliverCronAction = mock(async (
-  _task: CronTask,
+  destination: CronDestination,
   action: CronAction,
   _signal: AbortSignal
 ): Promise<CronDeliveryOutcome> => {
+  destinations.push(destination.chatId);
   delivered.push(action.type === "send_message" ? action.content : action.type);
   return outcomes.shift() ?? { kind: "sent" };
 });
+let groupTargets: CronGroupTargets = { chatIds: [], skipped: 0 };
+const resolveCronGroupTargets = mock(async (): Promise<CronGroupTargets> => groupTargets);
 const loggerError = mock((..._args: unknown[]): void => {});
+const loggerLog = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/cron/delivery", () => ({ deliverCronAction }));
-mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
+mock.module("../../packages/cron/targets", () => ({ resolveCronGroupTargets }));
+mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError, log: loggerLog }) }));
 
 const { runCronRound } = await import("../../packages/cron/run");
 
-function schedule(actions: readonly CronAction[]): CronTaskSchedule {
+function schedule(actions: readonly CronAction[], chatId: number | "all" = -1001): CronTaskSchedule {
   return {
     task: {
       name: "daily",
-      chatId: -1001,
+      chatId,
       messageThreadId: undefined,
       cron: "* * * * *",
       timeZone: "Asia/Tokyo",
@@ -55,9 +61,13 @@ async function settle(round: Promise<void>, stepMs: number = 500): Promise<void>
 
 beforeEach(() => {
   delivered.length = 0;
+  destinations.length = 0;
   outcomes.length = 0;
+  groupTargets = { chatIds: [], skipped: 0 };
   deliverCronAction.mockClear();
+  resolveCronGroupTargets.mockClear();
   loggerError.mockClear();
+  loggerLog.mockClear();
   jest.useFakeTimers({ now: 0 });
 });
 
@@ -127,5 +137,53 @@ describe("cron 一轮", () => {
     outcomes.push({ kind: "aborted" });
     await settle(runCronRound(schedule(MESSAGES), new AbortController().signal));
     expect(loggerError).not.toHaveBeenCalled();
+  });
+
+  test("单个会话的任务不解析群列表，按配置的会话与话题投递", async () => {
+    await settle(runCronRound(schedule(MESSAGES), new AbortController().signal));
+    expect(resolveCronGroupTargets).not.toHaveBeenCalled();
+    expect(destinations).toEqual([-1001, -1001, -1001]);
+  });
+});
+
+describe("chat_id: \"all\" 的一轮", () => {
+  const TWO: readonly CronAction[] = [
+    { type: "send_message", content: "one" },
+    { type: "send_message", content: "two" },
+  ];
+
+  test("按目标群顺序逐群跑完整套动作，群与群之间同样间隔 1 秒", async () => {
+    groupTargets = { chatIds: [-2, -1], skipped: 0 };
+    const round: Promise<void> = runCronRound(schedule(TWO, "all"), new AbortController().signal);
+    for (let tick: number = 0; tick < 10; tick++) await Promise.resolve();
+    expect(delivered).toEqual(["one"]);
+    await settle(round);
+    expect(destinations).toEqual([-2, -2, -1, -1]);
+    expect(delivered).toEqual(["one", "two", "one", "two"]);
+    expect(loggerLog).not.toHaveBeenCalled();
+  });
+
+  test("一个群失败只中止该群剩余动作并写明群 id，随后继续下一个群；跳过的群记一行", async () => {
+    groupTargets = { chatIds: [-2, -1], skipped: 3 };
+    outcomes.push({ kind: "permanent", detail: "400 Bad Request: not enough rights" });
+    await settle(runCronRound(schedule(TWO, "all"), new AbortController().signal));
+    expect(destinations).toEqual([-2, -1, -1]);
+    expect(loggerError.mock.calls[0]![0]).toBe(
+      "Cron task \"daily\" action #1 (send_message) failed in chat -2 after 1 attempt(s); " +
+      "skipping the remaining actions for this chat: 400 Bad Request: not enough rights"
+    );
+    expect(loggerLog).toHaveBeenCalledWith("Cron task \"daily\" skipped 3 chat(s) without send permission.");
+  });
+
+  test("调度被撤销后不再进入下一个群", async () => {
+    groupTargets = { chatIds: [-2, -1], skipped: 0 };
+    const target: CronTaskSchedule = schedule([{ type: "send_message", content: "one" }], "all");
+    deliverCronAction.mockImplementationOnce(async (destination: CronDestination): Promise<CronDeliveryOutcome> => {
+      destinations.push(destination.chatId);
+      target.cancelled = true;
+      return { kind: "sent" };
+    });
+    await settle(runCronRound(target, new AbortController().signal));
+    expect(destinations).toEqual([-2]);
   });
 });

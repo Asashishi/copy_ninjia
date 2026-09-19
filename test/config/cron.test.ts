@@ -84,6 +84,14 @@ describe("parseCronConfig", () => {
     }
   });
 
+  test("chat_id 可写 \"all\"，此时不能带 message_thread_id；其它字符串一律拒绝", () => {
+    expect(parseCronConfig([task({ chat_id: "all" })], PATH)[0]).toMatchObject({ chatId: "all", messageThreadId: undefined });
+    rejects([task({ chat_id: "all", message_thread_id: 12 })], `${PATH}: $[0].message_thread_id must be absent when chat_id is "all".`);
+    for (const chatId of ["ALL", "all ", "-1001", null]) {
+      rejects([task({ chat_id: chatId })], `${PATH}: $[0].chat_id must be a non-zero safe integer chat id or "all".`);
+    }
+  });
+
   test("just_once 与 rand_cron 互斥", () => {
     rejects([task({ just_once: true, rand_cron: "1h" })], `${PATH}: $[0].just_once must be false or absent when rand_cron is set.`);
     expect(parseCronConfig([task({ just_once: false, rand_cron: "1h" })], PATH)[0]!.justOnce).toBe(false);

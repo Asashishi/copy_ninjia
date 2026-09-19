@@ -47,6 +47,15 @@
     ]
   },
   {
+    "name": "all-groups-weekly-notice",
+    "chat_id": "all",
+    "cron": "0 21 * * 5",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "周末愉快，这周也辛苦大家了" } },
+      { "type": "send_image", "payload": { "rand_image": true } }
+    ]
+  },
+  {
     "name": "one-time-maintenance-notice",
     "chat_id": -1009876543210,
     "cron": "0 20 * * *",

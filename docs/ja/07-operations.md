@@ -311,6 +311,7 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 - Worker crash はレート制限付きで自己修復し、ミラーまたは snapshot から復元します。介入が必要なのは crash loop が繰り返される場合で、通常は永続化データとコード version の不一致が原因です。
 - 永続化が上限付き retry を使い切ると、プロセスは非ゼロで終了します。これは availability より durability を優先する設計です。systemd が最後の整合状態から再起動します。
 - `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定時タスクのある動作が最終的に失敗し、その回の残りを飛ばしました。末尾は Telegram のエラーコードと説明、またはローカルの理由です。`403` はたいてい Bot が送信先グループから外されたこと、`400` はたいてい URL が取得できないか Telegram がファイル形式を受け付けないこと、`local file ... is missing` は `payload.path` の指すローカルファイルがなくなったことを示します。`cron.json` や素材を直せば hot reload され、再起動は不要です。
+- `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`：`chat_id: "all"` のタスクがあるグループで最終的に失敗し、そのグループの残りの動作だけを飛ばしました。他のグループには通常どおり送ります。原因の読み方は上と同じです。`Cron task "<name>" skipped <n> chat(s) without send permission.` は通常ログで、Bot に送信権限がないか照会に失敗したためにその回で飛ばしたグループがあったことを示します。
 - `Failed to probe chat membership` / `Failed to ban chat member` が `PARTICIPANT_ID_INVALID` で終わる場合、通常はブロックリストに退会済みアカウントがあります。sweep は通常の backoff で retry を続けます。1 chat での 1 回の sweep 処分ですべての要求がこのエラーを返すと 1 回と数え、いずれかの chat でそのユーザーを確認または BAN できれば 0 に戻ります。5 回に達するとブロックリストと待機中の処分から自動で外し、`Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results` を記録します。`/wed` の日次再確認は同じエラーでその ID を候補集合から外し、error log は残しません。
 
 ---
