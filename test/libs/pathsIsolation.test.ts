@@ -54,6 +54,7 @@ test("测试环境的默认部署配置只读取独占临时副本", () => {
     expect(path.startsWith(`${CONFIG_ROOT}/`)).toBeTrue();
     expect(existsSync(path)).toBeTrue();
   }
-  // 翻译凭据与其它部署配置同住 config/；示例目录不带它，副本里自然缺省。
+  // 翻译凭据与其它部署配置同住 config/；测试副本删掉了示例里的占位凭据。
   expect(GOOGLE_AUTH_FILE_PATH).toBe(join(CONFIG_ROOT, "g-auth.json"));
+  expect(existsSync(GOOGLE_AUTH_FILE_PATH)).toBeFalse();
 });

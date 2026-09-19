@@ -7,11 +7,14 @@ Git-ignored `config/` directory at the project root. Replace every example token
 ID, model, and endpoint with values verified for the deployment; the placeholders are not usable
 production settings.
 
-On a fresh deployment, copy only JSON files that do not already exist:
+On a fresh deployment, copy only JSON files that do not already exist; the `g-auth.json` example
+only shows the structure and must not be copied:
 
 ```bash
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  [ "${example##*/}" = g-auth.json ] || cp -n "$example" config/
+done
 ```
 
 Never use a copy command that overwrites existing files, and never treat `config_example/` as a
@@ -37,7 +40,7 @@ configuration. Truly absent optional capabilities follow the feature boundaries 
 | `stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
-| `g-auth.json` | Google Cloud service-account key for `/translate`; it holds a private key, so this directory ships no example and the operator places it in `config/` out of band | Translation cannot be enabled; active translation sessions stop handling messages, but startup still succeeds |
+| `g-auth.json` | Google Cloud service-account key for `/translate`; the example holds placeholders only, and the operator places the real key in `config/` out of band | Translation cannot be enabled; active translation sessions stop handling messages, but startup still succeeds |
 
 AI chat also needs `prompt/persona.md`, which does not belong in this directory. An optional file
 that exists but is invalid aborts startup even when its feature is currently disabled.
@@ -182,3 +185,14 @@ classified as advertising; it defines the deployment's classification policy and
 blocklist. The file accepts at most 500 entries. After whitespace normalization, every entry must
 be non-empty, unique, and no longer than 1,024 characters. Use de-identified samples and never put
 unrelated personal information or real credentials here.
+
+## `g-auth.json`
+
+The example has the same shape as a service-account key file downloaded from the GCP console and
+exists only for comparison; its placeholder private key cannot be parsed, so copying it into
+`config/` unchanged aborts startup. To use translation, save the real key file as
+`config/g-auth.json`; otherwise leave the file out. `client_email` must be non-empty and
+`private_key` a parseable RSA PEM private key; `type`, when present, must be `service_account`;
+`private_key_id`, `project_id`, `quota_project_id`, and `universe_domain`, when present, must be
+non-empty strings; the remaining official fields are passed to the SDK as they are. The installer
+never creates this file from the example.

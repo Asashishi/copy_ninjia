@@ -1,8 +1,9 @@
 # dependencies (bun install)
 node_modules
 
-# Google Cloud service account credentials
+# Google Cloud service account credentials; only the placeholder example is tracked
 g-auth.json
+!/config_example/g-auth.json
 
 # output
 out

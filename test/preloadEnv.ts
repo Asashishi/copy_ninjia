@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -27,6 +27,9 @@ export const TEST_CONFIG_ROOT: string = join(TEST_DATA_ROOT, "config");
 
 const CONFIG_EXAMPLE_ROOT: string = join(import.meta.dir, "..", "config_example");
 cpSync(CONFIG_EXAMPLE_ROOT, TEST_CONFIG_ROOT, { recursive: true });
+// 翻译凭据示例的占位私钥必然被严格解析拒绝；副本与安装器一样不带它，翻译可用性
+// 由 preload 与各用例自行设定。
+rmSync(join(TEST_CONFIG_ROOT, "g-auth.json"));
 const TEST_AGENT_CONFIG_PATH: string = join(TEST_CONFIG_ROOT, "agent.json");
 const TEST_AGENT_CONFIG: string = readFileSync(TEST_AGENT_CONFIG_PATH, "utf8").replace(
   /replace-with-([a-z]+)-api-key/g,

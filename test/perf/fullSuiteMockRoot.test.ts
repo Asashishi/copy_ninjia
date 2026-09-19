@@ -112,6 +112,8 @@ describe("mock 根的建立与清理", () => {
         agentDocument.agent?.ad_detect,
         "benchmark/agent.json"
       )).not.toThrow();
+      // 翻译凭据示例不进基准配置根，启动总闸按「缺省」处理翻译。
+      expect(await Bun.file(join(configRoot, "g-auth.json")).exists()).toBeFalse();
     } finally {
       removeMockPath(runRoot);
     }

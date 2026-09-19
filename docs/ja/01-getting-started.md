@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：ソース方式と開発時に必要で、`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` で導入できます。バイナリ配布物はこのランタイムを同梱し、システム Bun は不要です。Node.js は使用しません。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
-- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、`config/g-auth.json` として保存します。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
+- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、`config/g-auth.json` として保存します（構造は [example](../../config_example/g-auth.json) を参照。example の placeholder 秘密鍵は拒否されます）。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
 
 `g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない RS256 用 RSA PEM 秘密鍵（EC、Ed25519、RSA-PSS は拒否）です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
 

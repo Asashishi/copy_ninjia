@@ -89,6 +89,10 @@ for example_file in config_example/*.json; do
     # agent 示例含故意不可用的占位凭据；只有完成问卷后才生成部署文件。
     continue
   fi
+  if [ "$config_name" = "g-auth.json" ]; then
+    # 翻译凭据示例只示意结构，占位私钥必然被严格解析拒绝；真实密钥由部署方带外放入。
+    continue
+  fi
   if [ -e "config/${config_name}" ]; then
     # 已有配置一律不覆盖：那是部署方数据，不能被示例值顶掉。
     info "保留 config/${config_name}（已存在）。"

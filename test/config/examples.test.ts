@@ -2,7 +2,8 @@
  * `config_example/*.json` 必须能被自己那份严格解析器接受。
  *
  * install.sh 的「准备配置目录」一步把这些示例逐份复制成部署方的初始
- * `config/<name>.json`（agent.json 除外，它含故意不可用的占位凭据，由问卷生成）。
+ * `config/<name>.json`（agent.json 与 g-auth.json 除外：前者含故意不可用的占位凭据，
+ * 由问卷生成；后者只示意服务账号密钥的结构，由部署方带外放入真实密钥）。
  * 因此示例一旦与解析器脱节，新装的部署会在第一次启动就按「不为用户行为兜底」
  * 拒绝启动，而全套门禁不会有任何反应——这里把示例本身纳入门禁。
  *
@@ -13,8 +14,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
 import { loadAdSampleConfig } from "../../packages/config/adSamples";
+import { parseGoogleServiceAccountKey } from "../../packages/config/googleAuth";
 import { loadMoodConfig } from "../../packages/config/mood";
 import { loadStickerConfig } from "../../packages/config/stickers";
 import { parseTelegramConfig } from "../../packages/config/telegramInput";
@@ -59,6 +62,21 @@ describe("config_example 与解析器保持同步", () => {
         path
       )
     ).toEqual({ botToken: "123456789:example", superAdminUserId: 123456789 });
+  });
+
+  test("g-auth.json 示例恰好因为占位私钥被拒绝，换成真实 RSA 私钥后其余字段形态被接受", async () => {
+    const path: string = examplePath("g-auth.json");
+    const raw: Readonly<Record<string, unknown>> =
+      await readJsonInput(path) as Readonly<Record<string, unknown>>;
+    expect((): unknown => parseGoogleServiceAccountKey(raw, path)).toThrow(
+      `${path}: $.private_key must be a parseable non-empty PEM private key.`
+    );
+    const privateKey: string = generateKeyPairSync("rsa", {
+      modulusLength: 2_048,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    }).privateKey;
+    expect(parseGoogleServiceAccountKey({ ...raw, private_key: privateKey }, path)).toBeDefined();
   });
 
   test("agent.json 示例的六项能力形状被解析器接受", async () => {

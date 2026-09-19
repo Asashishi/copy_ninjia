@@ -7,11 +7,14 @@
 user ID、model、endpoint は deployment で確認した値へ置き換えてください。placeholder は
 production 設定として使用できません。
 
-初回 deployment では、まだ存在しない JSON だけをコピーできます。
+初回 deployment では、まだ存在しない JSON だけをコピーできます。`g-auth.json` の例は構造を
+示すだけなのでコピーしないでください。
 
 ```bash
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  [ "${example##*/}" = g-auth.json ] || cp -n "$example" config/
+done
 ```
 
 既存 file を上書きする copy command を使わず、`config_example/` を deployment backup として
@@ -35,7 +38,7 @@ blocklist、未完了 removal は deployment 設定ではなく runtime data で
 | `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
-| `g-auth.json` | `/translate` 用の Google Cloud service account key。秘密鍵を含むためこのディレクトリに例はなく、デプロイ側が帯域外で `config/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
+| `g-auth.json` | `/translate` 用の Google Cloud service account key。例は placeholder だけで、実 key はデプロイ側が帯域外で `config/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
 
 AI chat はこのディレクトリにない `prompt/persona.md` にも依存します。optional file が存在するのに
 不正な場合、feature が無効でも startup を拒否します。
@@ -167,3 +170,13 @@ top level は string 配列です。各 entry は「広告として分類すべ�
 deployment の分類方針を定義します。keyword blocklist ではありません。最大 500 件で、whitespace
 normalize 後に非空、unique、1,024 文字以下でなければなりません。識別情報を除いた sample を使い、
 無関係な個人情報や実 credential を置かないでください。
+
+## `g-auth.json`
+
+例は GCP console からダウンロードする service account key file と同じ形で、構造の対照用です。
+placeholder の秘密鍵は parse できないため、そのまま `config/` に置くと startup を拒否します。
+翻訳を使う場合は実 key file を `config/g-auth.json` として保存し、使わない場合はこの file を
+置かないでください。`client_email` は非空、`private_key` は parse 可能な RSA PEM 秘密鍵で、
+`type` は存在する場合 `service_account` に限ります。`private_key_id`、`project_id`、
+`quota_project_id`、`universe_domain` は存在する場合に非空 string でなければならず、その他の
+公式 field はそのまま SDK に渡します。installer はこの例から file を作りません。

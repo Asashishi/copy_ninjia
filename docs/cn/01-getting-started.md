@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：源码安装与开发需要，可用 `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` 安装；二进制发行包自带该运行时，无需系统 Bun。项目不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
-- **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为 `config/g-auth.json`。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
+- **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为 `config/g-auth.json`（结构见[示例](../../config_example/g-auth.json)，示例里的占位私钥会被拒绝）。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
 
 `g-auth.json` 由 `packages/config/googleAuth.ts` 严格解析：`client_email` 为非空字符串，`private_key` 为可解析的非空 RSA PEM 私钥（用于 RS256，不接受 EC、Ed25519 或 RSA-PSS）；`type` 可省略，存在时只能为 `service_account`。SDK 消费的 `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` 可省略，存在时必须为非空字符串。其余元数据原样保留。校验发生在创建 Worker 和连接 Telegram 之前，错误仅包含文件路径、字段路径与期望，不输出凭据值。
 

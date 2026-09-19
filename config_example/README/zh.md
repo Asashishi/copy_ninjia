@@ -6,11 +6,13 @@
 `config/`；示例中的 token、API key、用户 ID、模型名和端点都需要按部署环境确认，
 不能直接用于生产。
 
-首次部署可以只补齐不存在的 JSON 文件：
+首次部署可以只补齐不存在的 JSON 文件；`g-auth.json` 示例只示意结构，不要复制：
 
 ```bash
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  [ "${example##*/}" = g-auth.json ] || cp -n "$example" config/
+done
 ```
 
 不要使用会覆盖已有文件的复制命令，也不要把 `config_example/` 当作部署配置的备份。
@@ -32,7 +34,7 @@ cp -n config_example/*.json config/
 | `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；含私钥，本目录不提供示例，由部署方带外放入 `config/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
+| `g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；示例只有占位值，真实密钥由部署方带外放入 `config/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
 
 AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文件已经存在但内容非法时，
 即使对应功能当前关闭也会拒绝启动。
@@ -156,3 +158,12 @@ Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限�
 定义部署方的广告口径，不是命中词黑名单。最多 500 条；每条去除并合并空白后必须
 非空、不重复且不超过 1,024 个字符。应使用去标识化样本，不要放入无关个人信息或
 真实凭据。
+
+## `g-auth.json`
+
+示例与 GCP 控制台下载的服务账号密钥文件同形，只用于对照结构；占位私钥无法解析，
+原样放进 `config/` 会拒绝启动。需要翻译时把真实密钥文件存为 `config/g-auth.json`；
+不需要翻译就不要放这个文件。`client_email` 必须非空，`private_key` 必须是可解析的
+RSA PEM 私钥；`type` 存在时只能是 `service_account`；`private_key_id`、`project_id`、
+`quota_project_id`、`universe_domain` 存在时必须是非空字符串；其余官方字段原样交给
+SDK。安装器不会从示例生成这个文件。

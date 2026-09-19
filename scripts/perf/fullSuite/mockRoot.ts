@@ -142,6 +142,11 @@ export async function createBenchmarkConfigRoot(runRoot: string): Promise<string
   }
   assertInsidePerformanceMockRoot(telegramPath);
   await Bun.write(telegramPath, telegramConfig, { mode: 0o600 });
+
+  // 翻译凭据示例的占位私钥必然被启动总闸拒绝；与安装器一样不物化它，基准里翻译保持缺省。
+  const googleAuthPath: string = join(configRoot, "g-auth.json");
+  assertInsidePerformanceMockRoot(googleAuthPath);
+  await Bun.file(googleAuthPath).delete();
   return configRoot;
 }
 
