@@ -4,11 +4,10 @@ import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegi
 import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
-import { getAgentDeploymentConfig } from "../../../packages/config/agent";
-import { getMoodConfig } from "../../../packages/config/mood";
+import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
 import { getPersona } from "../../../packages/config/persona";
-import { getReactionConfig } from "../../../packages/config/reactions";
-import { getStickerConfig } from "../../../packages/config/stickers";
+import { adoptStickerConfig, getStickerConfig } from "../../../packages/config/stickers";
 import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
 import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
 import type {
@@ -262,6 +261,52 @@ test("未完成收尾达到容量时显式 fatal，不丢已有责任或继续�
   expect(aiMemoryRevisionCounters.size).toBe(STATE_MANAGED_CHAT_LIMIT);
 });
 
+describe("AI 配置热重载分发", () => {
+  test("只投递变化的领域，并把 lastInitState 改写成当前快照供重建重放", () => {
+    const originalAgent = getAgentDeploymentConfig();
+    const originalMood = getMoodConfig();
+    const originalStickers = getStickerConfig();
+    const changes = {
+      adDetect: false,
+      aiAgent: false,
+      adSamples: false,
+      mood: true,
+      stickers: false,
+      reloadedPaths: [],
+      rejections: [],
+    };
+    try {
+      aiChat.syncAiChatConfig(changes);
+      expect(workerPosts).toEqual([]);
+
+      aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+      workerPosts.length = 0;
+      const reloadedMood = { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] };
+      adoptMoodConfig(reloadedMood);
+      aiChat.syncAiChatConfig(changes);
+
+      expect(workerPosts).toEqual([{ type: "configReload", agent: undefined, mood: reloadedMood, stickers: undefined }]);
+      expect(lastInitState.current).toMatchObject({ type: "init", mood: reloadedMood });
+
+      // 投递被拒绝时，重建重放的 init 已经带着新快照。
+      workerPostAccepted = false;
+      const reloadedAgent = { ...originalAgent, text: { ...originalAgent.text, model: "reloaded-text" } };
+      adoptAgentDeploymentConfig(reloadedAgent);
+      aiChat.syncAiChatConfig({ ...changes, mood: false, aiAgent: true });
+      const replay: AiChatWorkerMessage[] = [];
+      supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
+        replay.push(message);
+        return true;
+      });
+      expect(replay[0]).toMatchObject({ type: "init", agent: reloadedAgent, mood: reloadedMood });
+    } finally {
+      adoptAgentDeploymentConfig(originalAgent);
+      adoptMoodConfig(originalMood);
+      adoptStickerConfig(originalStickers);
+    }
+  });
+});
+
 describe("AI main-thread persistence mirror", () => {
   test("AI 与 Disk I/O Worker 重建时重放最新镜像，清除后的迟到快照不会复活", async () => {
     aiEnabledChats.add(-1001);
@@ -289,11 +334,9 @@ describe("AI main-thread persistence mirror", () => {
         type: "init",
         botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" },
         superAdminUserId: SUPER_ADMIN_USER_ID,
-        // 重放的是进程启动时那条 init 本身，配置快照因此逐字节相同——新
-        // isolate 不会顺手加载磁盘上已经被改过的 agent.json。
+        // 重放的 init 带着主线程当前生效的配置快照，新 isolate 不自己读盘。
         agent: getAgentDeploymentConfig(),
         mood: getMoodConfig(),
-        reactions: getReactionConfig(),
         stickers: getStickerConfig(),
         persona: getPersona(),
       },

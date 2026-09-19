@@ -51,6 +51,7 @@ import { monotonicNow } from "../libs/monotonicDeadline";
 import { updateCachedIdentity } from "../users/senderIdentity";
 import { hydrateIdentityStorageCounts } from "../infra/identityStorage";
 import { validateExistingDeploymentInputs } from "./featurePreflight";
+import { quiesceConfigReload, startConfigReload } from "./configReload";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers } from "./registerHandlers";
 import { runAcknowledgedUpdateBatches } from "./updateRunner";
@@ -120,12 +121,14 @@ export const lifecycleDependencies = {
   quiesceGagRuntime,
   quiesceWedRuntime,
   quiesceBlocklistSweepScheduler,
+  quiesceConfigReload,
   quiesceTranslate,
   seedSenderCache: updateCachedIdentity,
   seedTranslateTargets,
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  startConfigReload,
   sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,

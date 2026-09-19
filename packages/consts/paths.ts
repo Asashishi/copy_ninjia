@@ -62,8 +62,6 @@ export const CONFIG_ROOT: string = resolve(
 
 /** 应景贴纸包白名单配置文件。 */
 export const STICKERS_CONFIG_PATH: string = join(CONFIG_ROOT, "stickers.json");
-/** Telegram 反应集合部署配置文件。 */
-export const REACTIONS_CONFIG_PATH: string = join(CONFIG_ROOT, "reactions.json");
 /** AI 心情档位配置（文案、base weight、天气/时段倍率），见 packages/config/mood.ts。 */
 export const MOOD_CONFIG_PATH: string = join(CONFIG_ROOT, "mood.json");
 /** 广告检测的部署者示例清单（纯字符串数组），见 packages/config/adSamples.ts。 */
@@ -125,8 +123,8 @@ export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
  */
 export const AD_SAMPLE_FILE_PATH: string = join(AD_SAMPLE_MEMORY_DIR, "sample.json");
 
-/** Google Cloud 服务账号密钥（/translate 翻译用，已进 .gitignore）。 */
-export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
+/** Google Cloud 服务账号密钥（/translate 翻译用），与其它部署配置同在 Git 忽略的 config/ 下。 */
+export const GOOGLE_AUTH_FILE_PATH: string = join(CONFIG_ROOT, "g-auth.json");
 
 /**
  * 原子重写（写 tmp、rename 覆盖目标路径）统一使用的临时后缀，全项目落盘复用，

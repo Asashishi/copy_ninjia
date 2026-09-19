@@ -9,6 +9,7 @@ import { loggerSecretsMemo } from "../../cache/perThread/logger";
 import {
   LOGGER_CIRCULAR_ERROR_VALUE,
   LOGGER_MAX_ERROR_NODES,
+  LOGGER_MAX_REDACTED_SECRETS,
   LOGGER_MAX_SERIALIZED_BYTES,
   LOGGER_MAX_SERIALIZED_ITEMS,
   LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE,
@@ -39,6 +40,9 @@ interface SerializationBudget {
  *
  * 结果按三个 holder 的**对象身份**记忆化（holder 见 cache/perThread/logger.ts 的
  * loggerSecretsMemo）。配置身份没变时凭据集合也不变，因此不逐条日志重建数组。
+ * 身份变化（热重载替换快照）时，上一份名单里不再生效的旧凭据排在当前凭据之后
+ * 继续脱敏：旧客户端的在途请求仍可能把它们带进错误。总量受
+ * LOGGER_MAX_REDACTED_SECRETS 限制，封顶时丢弃最早退役的。
  */
 function currentSecrets(): readonly string[] {
   const telegram: TelegramConfig | null = telegramConfigCache.current;
@@ -59,6 +63,10 @@ function currentSecrets(): readonly string[] {
     secrets.push(agent.text.apiKey, agent.summary.apiKey, agent.media.apiKey);
     if (agent.image !== undefined) secrets.push(agent.image.apiKey);
     if (agent.song !== undefined) secrets.push(agent.song.apiKey);
+  }
+  for (const previous of loggerSecretsMemo.value) {
+    if (secrets.length >= LOGGER_MAX_REDACTED_SECRETS) break;
+    if (!secrets.includes(previous)) secrets.push(previous);
   }
   loggerSecretsMemo.telegram = telegram;
   loggerSecretsMemo.adDetect = adDetect;

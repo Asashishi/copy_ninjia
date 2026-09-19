@@ -38,7 +38,7 @@
 
 ### 可选凭据与严格配置预检
 
-- 配置解析器本身无 I/O。主线程在创建 Worker 和建立外部连接之前，通过 `validateExistingDeploymentInputs` 严格校验所有已存在的部署输入；功能关闭不豁免非法配置。可选文件真正缺省时不阻止启动，由 `packages/config/readiness.ts` 和各功能 availability 边界拒绝启用对应能力。配置 holder 按进程缓存，修改配置后须重启生效。
+- 配置解析器本身无 I/O。主线程在创建 Worker 和建立外部连接之前，通过 `validateExistingDeploymentInputs` 严格校验所有已存在的部署输入；功能关闭不豁免非法配置。可选文件真正缺省时不阻止启动，由 `packages/config/readiness.ts` 和各功能 availability 边界拒绝启用对应能力。主线程持有配置 holder 的权威快照：`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` 运行期按下文「config/ 热重载」替换内容，其余部署输入修改后须重启生效。
 
   `config/agent.json` 按消费方读取能力：广告检测使用 `agent.ad_detect`，AI 闲聊使用 `text`、`summary`、`media` 和可选工具能力。启动校验覆盖文件中所有已存在的能力，功能 readiness 独立判定本领域所需能力。
 
@@ -59,11 +59,11 @@
   `/permission query` 与 `/permission help` 是只读入口：`query` 可以查询自身、回复目标或显式目标，返回补齐默认值后的完整视图，不创建数据库行；两者渲染出的 JSON 都长期保留——那是要照着逐项核对的权限看板，30 秒清理会在读完之前收走它。目标解析失败、修改拒绝与用法提示仍走统一 30 秒清理。
 - **进程级 Telegram 身份严格来自 `config/telegram.json`**：`bot_token` 与 `super_admin_user_id` 联网前必检，缺失、未知字段或非法值均拒绝启动。AI key 全部属于 `config/agent.json` 中的能力配置；每项能力独立声明 provider、api_key、base_url 与 model，不存在凭据默认、跨能力回退或运行时覆盖。`base_url` 只接受 `https`，明文 `http` 仅限 `localhost`/`127.0.0.1`/`::1`，且不得带 userinfo 或 `#` 片段——它旁边就是同一项能力的 api_key。
 
-  **同一进程内只有一代 AI 配置。** `agent.json` 由主线程在启动总闸解析一次，AI 闲聊 Worker 经 `init`、Anti-Raid Worker 经 `agentConfig` 各收到一份只读快照；两条 Worker 都只读本线程 holder，任何运行时路径都不再读盘，崩溃重建重放的也是**同一份**快照。因此改配置必须整进程重启，Worker 重建不会捡到磁盘上的新版本。ad_detect 未配置时快照显式为 `null`，判定侧 fail-closed，不得沿用上一实例的值。
+  **AI 配置只由主线程读盘。** `agent.json` 由主线程在启动总闸解析，运行期的修改由 `config/` 热重载重新严格解析；AI 闲聊 Worker 经 `init`/`configReload`、Anti-Raid Worker 经 `agentConfig` 收到主线程当前生效的只读快照。两条 Worker 都只读本线程 holder，Worker 路径从不读盘，崩溃重建重放的也是主线程当前那一份快照。ad_detect 未配置时快照显式为 `null`，判定侧 fail-closed，不得沿用上一实例的值。
 
   `text`、`summary`、`media` 三项齐备才算 AI 对话可用；缺 `image`/`song` 只摘对应工具，缺 `ad_detect` 只阻止广告检测。启动 preflight 严格校验已经存在的部署输入；可选输入缺省时由 readiness 判定相应功能不可用，持久化群开关保持原值。
 
-  **可选能力一律按「这个成员在不在」判定，绝不按供应商名字。** 两家都实现语音转写入口，但所配 media 模型是否接受视觉/语音由两种模态各自的首次真实请求探测；每种模态只允许一个在途探测，SDK 最多尝试五次，等待者不占媒体执行槽。结论分四档：`supported`；`unsupported`（端点明确拒绝该模态）；`misconfigured`（404/405，模型或 base_url 写错，落定时记一行指向 `$.agent.media` 的诊断）；其余保持 `unknown`。`unsupported` 与 `misconfigured` 都是终局，在 Worker 生命周期内不再下载该模态。端点故障（超时、408/429/5xx、网络）按连续次数做有限指数退避（30 秒起，封顶 10 分钟），退避期内直接返回共享结果、不下载也不占执行槽，一次成功即清零；普通 4xx 参数错误、下载失败与空响应只是这一份媒体的问题，既不下模态结论也不推进退避。生歌仍按 `provider.generateSong === undefined` 摘挂工具，且「配了这项能力但所选实现没有它」会在 Worker 初始化时记一次启动诊断。
+  **可选能力一律按「这个成员在不在」判定，绝不按供应商名字。** 两家都实现语音转写入口，但所配 media 模型是否接受视觉/语音由两种模态各自的首次真实请求探测；每种模态只允许一个在途探测，SDK 最多尝试五次，等待者不占媒体执行槽。结论分四档：`supported`；`unsupported`（端点明确拒绝该模态）；`misconfigured`（404/405，模型或 base_url 写错，落定时记一行指向 `$.agent.media` 的诊断）；其余保持 `unknown`。`unsupported` 与 `misconfigured` 都是终局，在 Worker 生命周期内不再下载该模态，直到热重载替换 `media` 能力：届时两种模态进入新配置代次、回到 `unknown`，旧代次请求迟到的结论一律丢弃。端点故障（超时、408/429/5xx、网络）按连续次数做有限指数退避（30 秒起，封顶 10 分钟），退避期内直接返回共享结果、不下载也不占执行槽，一次成功即清零；普通 4xx 参数错误、下载失败与空响应只是这一份媒体的问题，既不下模态结论也不推进退避。生歌仍按 `provider.generateSong === undefined` 摘挂工具，且「配了这项能力但所选实现没有它」会在 Worker 初始化与每次 agent 配置热重载后各记一次诊断。
 
   冷探测中某一份媒体的下载、参数或空响应失败只交还它自己的调用方，等待者继续逐份串行探测。已支持模态的并发请求在准入时记录能力状态对象；同一状态下接纳的请求最多推进一次端点失败退避，迟到失败不能覆盖成功或重复增加失败次数。媒体事件的 `replyTelegramBackpressured` 在主线程一次填入：`undefined` 不评论，布尔值表示本条允许评论及其 Telegram 背压快照；Worker 据此决定随机触发与回复并发，不追加跨线程查询。
 
@@ -74,13 +74,20 @@
   **AI 闲聊的「此刻跑不跑」只有 `packages/aiChat/availability.ts` 一个判定入口**（凭据 + 本群 opt-in 的合取），新增调用点必须走它：把这个合取拆开写在各调用点，迟早有一处只判了本群开关——落在启动 hydrate 上就是数据损失，因为那条路把「本群没开」当成删除磁盘记忆的依据，而没有凭据时每个群看起来都是关的。
 
   **因此凭据缺失时 `hydrateAiMemory` / `hydrateStickerCatalog` 必须整体早退、一条都不删**，`memory/` 里的快照要原样留到 key 补回来为止。
-- **启动总闸只校验「已经存在」的部署输入，缺省与否交给功能 readiness。**`packages/app/featurePreflight.ts` 现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口：`telegram.json` 是进程级必填，其余可选输入（`stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json`、`agent.json`、`g-auth.json`、`prompt/persona.md`）**只要文件在就必须严格解析通过**，非法内容不因对应功能当前关着而被掩盖；文件真正不存在时不阻止启动。
+- **启动总闸只校验「已经存在」的部署输入，缺省与否交给功能 readiness。**`packages/app/featurePreflight.ts` 现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口：`telegram.json` 是进程级必填，其余可选输入（`stickers.json`、`mood.json`、`ad_samples.json`、`agent.json`、`g-auth.json`、`prompt/persona.md`）**只要文件在就必须严格解析通过**，非法内容不因对应功能当前关着而被掩盖；文件真正不存在时不阻止启动。
 
   Google 凭据由 `packages/config/googleAuth.ts` 严格解析，要求用于 RS256 的 RSA PEM 私钥；EC、Ed25519 和 RSA-PSS 密钥不接受。完整只读结果由 main owner 的 `googleServiceAccountKey` 在启动时发布，翻译客户端以 `credentials` 消费同一快照，不重新读取文件。`closeTranslate` 仅回收客户端；缺省凭据在本进程内保持不可用，配置变更须重启后生效。字段契约见 [01 Google 凭据配置](01-getting-started.md#前置条件)。
 
   **SQLite `chat_states` 不参与启动时的凭据前提校验**，群开关只在持久化恢复边界解码。缺失凭据由各功能判定入口处理：AI 闲聊走 `packages/aiChat/availability.ts`（Worker 不启动、记忆不 hydrate、拒绝开启）；翻译走 `activeTranslateStateIn`（会话不运行，命令点名 `g-auth.json` 拒绝开始或开启）；广告检测走 `adDetectConfigReadiness()`（停止送检）。
 
   `deploymentInputExists` 只把 ENOENT 当作「真的没配」：断链软链接与无权访问都算「已配置但非法」，照旧拒绝启动。一次只报第一个坏掉的输入：几份同时坏的概率远低于「照着第一条改完再重启」，堆在一起只会让真正要修的那条更难认。
+- **`config/` 热重载只替换已生效配置的内容，不改变功能可用性。**主线程 owner 是 `packages/app/configReload.ts`：AI 闲聊与 Anti-Raid 初始化之后才以 `node:fs` 的 `watch` 监听整个 `config/` 目录，建立后立即对账一轮；每个目录事件重新武装 500 ms 防抖 timer，到期后由最新值执行器串行执行一轮，一轮在途时到达的事件合并成至多一轮补跑。watcher 与 timer 均 unref；watcher 建立失败或运行中出错时记一行错误日志，本进程余下时间不再热重载，已生效配置照常运行。停机维护关闸（`quiesceLifecycleMaintenance`）停止接纳事件，在途读取结束后不再分发。
+
+  判定在 `packages/config/reload.ts`，只覆盖 `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`，使用启动总闸同一套严格解析器，每份文件整体生效或整体拒绝：读不到或解析失败时整份拒绝，holder 保留上一份已校验快照；启动时缺省的文件出现、启动时存在的文件被删除，以及 `agent.json` 的 `ad_detect` 段或 `text`/`summary`/`media` 核心段整体增删，都会改变 readiness 结论，一律拒绝并须重启；与当前快照深相等时不替换，holder 对象身份不变。每条拒绝记一行英文错误日志，只含文件路径、字段路径与期望形态。`image`/`song` 等可选能力的增删只是内容替换。
+
+  分发只走现有 Worker 协议：AI 闲聊 Worker 收 `configReload`（只带变化的领域），主线程投递前先把 `lastInitState` 改写成当前快照；Anti-Raid Worker 收 `agentConfig`。投递被拒绝时由 Worker 重建重放补齐；Worker 未启动或已放弃重启时只更新主线程 holder。Worker 侧先整体替换 holder，再失效从旧快照派生的状态，在途请求继续持有旧门面与旧客户端直至结算：AI 闲聊丢弃能力门面与两家 SDK 客户端，保留协议、端点与凭据仍被新快照引用的配额 lane、摘除其余 lane，`media` 能力变化时重置输入模态探测，并重记一次「配了但没实现」的诊断；心情按档位名换成新快照、已删除档位的群下次读取时重抽；贴纸白名单替换后为新加入的包启动目录对账（停机排空期间不启动），移出白名单的包不再出现在贴纸工具中，其目录留到 Disk I/O 恢复按白名单对账。Anti-Raid 丢弃广告检测的两家 SDK 客户端，示例清单替换时清空 system prompt 缓存。
+
+  每条线程的 logger 值级脱敏名单保留被热重载替换下来的旧凭据，与当前凭据合计最多 `LOGGER_MAX_REDACTED_SECRETS`（32）项，超出时丢弃最早退役的旧凭据。
 
 ### 数据根与后台任务
 

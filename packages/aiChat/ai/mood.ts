@@ -18,7 +18,7 @@ interface WeightedMood {
  * 是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
  * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等）。心情档位
  * 的文案、base weight 与倍率来自部署配置 config/mood.json（严格解码见
- * config/mood.ts，主进程启动时严格解析、Worker 初始化消息接管快照）。两个内存缓存
+ * config/mood.ts，主进程启动时严格解析、Worker 经初始化与热重载消息接管快照）。两个内存缓存
  * （chatMoods/chatMoodExpiresAts，见 cache/workers/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
  *
@@ -151,4 +151,25 @@ export function currentMoodInstruction(
 ): string {
   const mood: MoodOption = currentMood(chatId, moods, expiresAts);
   return `【今天的心情：${mood.name}】${mood.instruction}`;
+}
+
+/**
+ * mood.json 热重载后调用：各群当前心情换成新快照里的同名档位（文案、权重与倍率
+ * 随之更新），剩余寿命不变；新快照里已不存在的档位连同到期时刻一起删除，下次
+ * 读取时按新表重抽。
+ */
+export function refreshChatMoods(
+  moods: Map<number, MoodOption> = chatMoods,
+  expiresAts: Map<number, number> = chatMoodExpiresAts
+): void {
+  const options: readonly MoodOption[] = getMoodConfig().moods;
+  for (const [chatId, mood] of moods) {
+    const next: MoodOption | undefined = options.find((option: MoodOption): boolean => option.name === mood.name);
+    if (next === undefined) {
+      moods.delete(chatId);
+      expiresAts.delete(chatId);
+    } else {
+      moods.set(chatId, next);
+    }
+  }
 }

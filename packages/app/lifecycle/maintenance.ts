@@ -34,6 +34,8 @@ export function quiesceLifecycleMaintenance(
   // 已完成后重新制造工作，破坏“排空后不再有生产者”的边界。
   quiesceOwner("blocklist-sweep", (): void =>
     dependencies.quiesceBlocklistSweepScheduler());
+  // 配置热重载会向两条业务 Worker 投递新快照并启动贴纸目录对账，同样在排空前关闸。
+  quiesceOwner("config-reload", (): void => dependencies.quiesceConfigReload());
   return succeeded;
 }
 

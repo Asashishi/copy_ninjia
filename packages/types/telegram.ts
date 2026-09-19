@@ -37,6 +37,9 @@ export type CurrentAvatarResult =
  */
 export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "upload_document";
 
+/** Telegram Bot API 标准 emoji 反应的精确联合。 */
+export type ReactionEmoji = ReactionTypeEmoji["emoji"];
+
 /**
  * 机器人能够设置的可复制反应。付费反应不在 Bot API 的可设置类型中；自定义
  * emoji 仅用于复制目标刚刚在同一条消息上设置的反应。

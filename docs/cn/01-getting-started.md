@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：源码安装与开发需要，可用 `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` 安装；二进制发行包自带该运行时，无需系统 Bun。项目不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
-- **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为项目根的 `g-auth.json`。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
+- **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为 `config/g-auth.json`。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
 
 `g-auth.json` 由 `packages/config/googleAuth.ts` 严格解析：`client_email` 为非空字符串，`private_key` 为可解析的非空 RSA PEM 私钥（用于 RS256，不接受 EC、Ed25519 或 RSA-PSS）；`type` 可省略，存在时只能为 `service_account`。SDK 消费的 `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` 可省略，存在时必须为非空字符串。其余元数据原样保留。校验发生在创建 Worker 和连接 Telegram 之前，错误仅包含文件路径、字段路径与期望，不输出凭据值。
 
@@ -96,12 +96,14 @@ Bot 身份和超级管理员写入 `config/telegram.json`：
     超级管理员的 `query` 返回那份逐项全开的视图。
 AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`。如需改变运行时
 数据目录，可在进程环境中设置 `COPY_NINJIA_DATA_ROOT`；缺省时数据落在项目根，详见
-[07 运维与排障](07-operations.md#数据根)。如需翻译，把服务账号密钥存为项目根目录
-的 `g-auth.json`；该文件已加入 `.gitignore`。
+[07 运维与排障](07-operations.md#数据根)。如需翻译，把服务账号密钥存为
+`config/g-auth.json`；`config/` 整个目录已加入 `.gitignore`。
 
 ## 项目侧配置文件
 
 `config/` 是部署方自己的配置目录，已从 Git 追踪中排除；初次安装从 `config_example/` 复制，之后只改 `config/`，不要直接把示例目录当运行时配置。
+
+运行中修改 `ad_samples.json`、`agent.json`、`mood.json` 与 `stickers.json` 会自动热重载：主线程监听 `config/`，最后一次改动约 0.5 秒后按启动时同一套严格 schema 重新解析，通过后替换快照并投给相关 Worker。解析失败的改动整份拒绝并记一条错误日志，进程继续使用上一份已生效的配置；文件若保持非法，下次重启时启动总闸照样拒绝启动。热重载只替换已生效配置的内容，不改变功能可用性：新增或删除这四份文件、在 `agent.json` 里整段增删 `ad_detect` 或 `text`/`summary`/`media`，都会被拒绝并提示重启。`telegram.json`、`prompt/persona.md` 与 `g-auth.json` 不热重载，修改后须重启。
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI 闲聊的基础人设。
@@ -113,9 +115,6 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
 - **`config/stickers.json`**（[示例](../../config_example/stickers.json)）
   - **内容**：AI 可用的贴纸包，最多 5 个。
   - **校验**：[`packages/config/stickers.ts`](../../packages/config/stickers.ts)。
-- **`config/reactions.json`**（[示例](../../config_example/reactions.json)）
-  - **内容**：AI 可用的 emoji 反应集合。
-  - **校验**：[`packages/config/reactions.ts`](../../packages/config/reactions.ts)。
 - **`config/mood.json`**（[示例](../../config_example/mood.json)）
   - **内容**：心情档位，包括文案、权重与天气/时段倍率。
   - **校验**：[`packages/config/mood.ts`](../../packages/config/mood.ts)；权重必须是正整数，
@@ -134,14 +133,15 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
     `https`，明文 `http` 仅限 `localhost`、`127.0.0.1`、`::1`；URL 不得带用户名/密码
     或 `#` 片段。
   - **校验**：[`packages/config/agent.ts`](../../packages/config/agent.ts)。文件与字段严格
-    校验，未知键、空 key/model、非法 provider/URL/协议都会拒绝对应功能。**整份配置只由
-    主线程在启动时解析一次**，再随各 Worker 的初始化消息投递过去；Worker 侧只读这份
-    快照、从不读盘，崩溃重建也重放同一份，因此同一进程内不会出现两代配置——修改后
-    必须整进程重启。媒体的视觉和语音输入分别在首次真实请求时探测：明确不支持、或端点
+    校验，未知键、空 key/model、非法 provider/URL/协议都会拒绝对应功能。**只有主线程
+    读这份文件**：启动时解析一次，运行中的修改由热重载重新严格解析，再随 Worker 的
+    初始化或热重载消息投递过去；Worker 侧只读收到的快照、从不读盘，崩溃重建时重放
+    主线程当前生效的那一份。媒体的视觉和语音输入分别在首次真实请求时探测：明确不支持、或端点
     以 404/405 表明模型/路径不存在时都停止下载该类媒体（后者另记一行指向
-    `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力。
+    `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力；热重载替换
+    `media` 能力后，两种输入重新探测。
 
-永久白名单、黑名单、临时广告免检累计与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB/关系列结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/translate enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。结论按进程缓存，修好文件后必须重启。
+永久白名单、黑名单、临时广告免检累计与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB/关系列结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/translate enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。可用性结论按进程缓存，补齐缺省的文件后必须重启。
 
 ### 初始化身份数据库
 
@@ -183,8 +183,8 @@ chmod 660 database/storage.sqlite
 
 升级时先停止旧进程并备份整个 `config/`。将原 `gemini.json`、`openai.json` 的模型、
 端点与 API key 手工迁入统一的 `agent.json`，不要用示例目录覆盖部署配置。旧的 AI 环境
-变量和 `state.json.global.model` 运行时选择不再读取；模型切换改为停机修改对应能力配置后
-重启。示例值只保证结构正确，不保证账号具有调用权限。
+变量和 `state.json.global.model` 运行时选择不再读取；模型切换改为修改 `agent.json` 中
+对应能力配置，保存后热重载生效。示例值只保证结构正确，不保证账号具有调用权限。
 
 旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 

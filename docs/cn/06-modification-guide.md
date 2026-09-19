@@ -112,13 +112,15 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`telegram.json` 在联网前严格加载；`stickers.json`、`reactions.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。永久白名单、黑名单、临时广告免检累计与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、对应的 `packages/database/codec/`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
+- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`telegram.json` 在联网前严格加载；`stickers.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` 运行中修改即热重载，拒绝口径见 [04 运行时权威约束](04-invariants.md)；其余部署输入修改后须重启。
+- AI `add_reaction` 工具可用的 emoji 固定在 [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts) 的 `AI_REACTION_EMOJIS`，元素类型限定为 Telegram 标准反应，改动随代码发布。永久白名单、黑名单、临时广告免检累计与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、对应的 `packages/database/codec/`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
 
 ## 新增部署 JSON 配置
 
 1. 在 `packages/config/<domain>.ts` 声明并严格解析（必填/可选、格式校验、未知键拒绝都在这里，解析失败拒绝启动）。
 2. 在 `config_example/<domain>.json` 增加不含真实凭据的结构示例，并同步 [`config_example/README/zh.md`](../../config_example/README/zh.md) 的字段说明。
-3. 根 README「配置」节与相关环境搭建入口同步。
+3. 需要运行中生效时，把文件加入 [`packages/config/reload.ts`](../../packages/config/reload.ts) 的读取与判定，并经现有 Worker 协议把新快照投给持有副本的线程；Worker 侧同步失效从旧快照派生的缓存。
+4. 根 README「配置」节与相关环境搭建入口同步。
 
 ## 新增运行时缓存
 

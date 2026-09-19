@@ -22,8 +22,9 @@
  *
  * 容量恒定：两个模态各一个固定 shape 的状态对象、各最多一个在途探测 Promise，
  * 没有 timer，也没有按媒体增长的表。Worker 崩溃重建或进程重启后 holder 回到
- * null，按（不变的）配置快照从初始状态重新探测——配置虽然没变，外部端点的能力
- * 可能已经恢复。
+ * null，按当前配置快照从初始状态重新探测——外部端点的能力可能已经恢复。
+ * agent.json 热重载替换 media 能力时由 resetMediaInputSupport 进入新配置代次，
+ * 旧代次请求迟到的结论不再改写新状态。
  */
 
 import { logger } from "../../../infra/logger";
@@ -55,6 +56,7 @@ const INITIAL_MODALITY_STATE: MediaInputModalityState = {
   support: "unknown",
   transientFailures: 0,
   nextProbeAt: 0,
+  configGeneration: 0,
 };
 
 /** 当前 Worker 的 media 模态探测表；首次读取时一次性建立固定 shape。 */
@@ -94,6 +96,21 @@ export function clearMediaInputProbe(
 ): void {
   const state: MediaInputProbeState | null = mediaInputProbeCache.current;
   if (state?.[capability] === pending) state[capability] = null;
+}
+
+/**
+ * agent.json 热重载替换 media 能力后调用：两种模态回到未探测状态并进入下一配置
+ * 代次，丢弃在途首次探测的登记，新请求按新配置重新探测。旧探测的等待者仍拿到
+ * 旧结果，其结论由 recordMediaInputResult 按代次丢弃；旧 Promise 的清理按身份
+ * 核对，不会清掉新登记。
+ */
+export function resetMediaInputSupport(): void {
+  const configGeneration: number = supportState().vision.configGeneration + 1;
+  mediaInputSupportCache.current = {
+    vision: { support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration },
+    voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration },
+  };
+  mediaInputProbeCache.current = null;
 }
 
 /** 取整张支持表；首次读取时按初始状态一次性建立。 */
@@ -164,7 +181,10 @@ export interface RecordMediaInputResultOptions {
   readonly now?: number;
 }
 
-/** 记录真实调用的结果；旧代次的瞬时失败不能推进当前退避，now 与准入共用墙钟。 */
+/**
+ * 记录真实调用的结果；旧配置代次的任何结论与旧状态代次的瞬时失败都不改写当前
+ * 状态，now 与准入共用墙钟。
+ */
 export function recordMediaInputResult({
   capability,
   result,
@@ -172,10 +192,16 @@ export function recordMediaInputResult({
   now = Date.now(),
 }: RecordMediaInputResultOptions): void {
   const current: MediaInputModalityState = getMediaInputState(capability);
+  if (attemptState.configGeneration !== current.configGeneration) return;
   if (result.ok) {
     // 成功即清空失败计数与退避：端点恢复了，下一份媒体不该继续被上一轮故障拖着。
     if (current.support === "supported" && current.transientFailures === 0) return;
-    replaceModalityState(capability, { support: "supported", transientFailures: 0, nextProbeAt: 0 });
+    replaceModalityState(capability, {
+      support: "supported",
+      transientFailures: 0,
+      nextProbeAt: 0,
+      configGeneration: current.configGeneration,
+    });
     return;
   }
 
@@ -196,6 +222,7 @@ export function recordMediaInputResult({
         support: result.mediaFailure,
         transientFailures: 0,
         nextProbeAt: 0,
+        configGeneration: current.configGeneration,
       });
       return;
     }
@@ -217,6 +244,7 @@ export function recordMediaInputResult({
         support: current.support,
         transientFailures,
         nextProbeAt: now + backoffMsFor(transientFailures),
+        configGeneration: current.configGeneration,
       });
       break;
     }

@@ -19,7 +19,6 @@ const testPrivateKey: string = generateKeyPairSync("rsa", {
 }).privateKey;
 
 let stickerFailure: string | null = null;
-let reactionFailure: string | null = null;
 let moodFailure: string | null = null;
 let adSampleFailure: string | null = null;
 let adDetectSectionFailure: string | null = null;
@@ -46,7 +45,6 @@ mock.module("../../packages/consts/paths", () => ({
   TELEGRAM_CONFIG_PATH: join(testRoot, "unused-telegram.json"),
   AGENT_CONFIG_PATH: join(testRoot, "unused-agent.json"),
   STICKERS_CONFIG_PATH: join(testRoot, "unused-stickers.json"),
-  REACTIONS_CONFIG_PATH: join(testRoot, "unused-reactions.json"),
   MOOD_CONFIG_PATH: join(testRoot, "unused-mood.json"),
   AD_SAMPLES_CONFIG_PATH: join(testRoot, "unused-ad-samples.json"),
   PERSONA_PATH: personaPath,
@@ -59,9 +57,6 @@ mock.module("../../packages/config/telegram", () => ({
 }));
 mock.module("../../packages/config/stickers", () => ({
   ensureStickerConfig: loaderOf("stickers", (): string | null => stickerFailure),
-}));
-mock.module("../../packages/config/reactions", () => ({
-  ensureReactionConfig: loaderOf("reactions", (): string | null => reactionFailure),
 }));
 mock.module("../../packages/config/mood", () => ({
   ensureMoodConfig: loaderOf("mood", (): string | null => moodFailure),
@@ -109,7 +104,6 @@ async function writeAuthFile(content: string): Promise<void> {
 beforeEach(async (): Promise<void> => {
   loaderCalls.clear();
   stickerFailure = null;
-  reactionFailure = null;
   moodFailure = null;
   adSampleFailure = null;
   adDetectSectionFailure = null;
@@ -135,13 +129,13 @@ describe("deployment config readiness", () => {
   });
 
   test("AI 闲聊按声明顺序报第一份坏文件并缓存失败", async () => {
-    reactionFailure = "Invalid reactions config: boom";
+    stickerFailure = "Invalid stickers config: boom";
     moodFailure = "Invalid mood config: also broken";
     await validateExistingDeploymentInputs();
     const verdict: ConfigReadiness = aiChatConfigReadiness();
     if (verdict.ok) throw new Error("expected a failure verdict");
-    expect(verdict.failure.file).toBe("config/reactions.json");
-    reactionFailure = null;
+    expect(verdict.failure.file).toBe("config/stickers.json");
+    stickerFailure = null;
     expect(aiChatConfigReadiness().ok).toBe(false);
   });
 
@@ -177,7 +171,6 @@ describe("deployment config readiness", () => {
     }
     // 热路径每条群消息都会问一次；命中缓存的那一路不得重新探测任何一份文件。
     expect(loaderCalls.get("stickers")).toBe(1);
-    expect(loaderCalls.get("reactions")).toBe(1);
     expect(loaderCalls.get("mood")).toBe(1);
     expect(loaderCalls.get("persona")).toBe(1);
     expect(loaderCalls.get("agent")).toBe(1);
@@ -190,7 +183,7 @@ describe("deployment config readiness", () => {
     await validateExistingDeploymentInputs();
     const verdict: ConfigReadiness = aiChatConfigReadiness();
     expect(verdict.ok).toBe(false);
-    // 探测在第三份就停下，人设与 agent 段这一轮不该被读到。
+    // 探测在第二份就停下，人设与 agent 段这一轮不该被读到。
     expect(loaderCalls.get("persona")).toBeUndefined();
     expect(loaderCalls.get("agent")).toBeUndefined();
 
@@ -218,6 +211,7 @@ describe("Google service account readiness", () => {
     await validateExistingDeploymentInputs();
     const result = translateConfigReadiness();
     expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failure.file).toBe("config/g-auth.json");
     expect(googleServiceAccountKey.current).toBeNull();
     await writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: testPrivateKey }));
     await validateExistingDeploymentInputs();

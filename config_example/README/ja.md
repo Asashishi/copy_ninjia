@@ -16,7 +16,8 @@ cp -n config_example/*.json config/
 
 既存 file を上書きする copy command を使わず、`config_example/` を deployment backup として
 扱わないでください。`config/` には credential が含まれるため、service account だけが読める
-権限を推奨します。設定は hot reload されず、手動変更後は再起動が必要です。allowlist、
+権限を推奨します。稼働中の `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` の
+変更は hot reload され、それ以外の file は変更後に再起動が必要です（下記「稼働中の変更」）。allowlist、
 blocklist、未完了 removal は deployment 設定ではなく runtime data であり、
 `database/storage.sqlite` にまとめて保存し、command または明示 migration script だけで変更します。
 
@@ -32,13 +33,32 @@ blocklist、未完了 removal は deployment 設定ではなく runtime data で
 | `telegram.json` | Telegram Bot token と唯一のスーパー管理者 | 常に startup を拒否 |
 | `agent.json` | capability ごとの AI provider、credential、endpoint、model | capability ごとに異なる。下記参照 |
 | `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
-| `reactions.json` | Telegram reaction の候補 keyword | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `g-auth.json` | `/translate` 用の Google Cloud service account key。秘密鍵を含むためこのディレクトリに例はなく、デプロイ側が帯域外で `config/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
 
-AI chat は `prompt/persona.md`、日本語翻訳はプロジェクトルートの `g-auth.json` にも依存します。
-どちらもこのディレクトリにはありません。optional file が存在するのに不正な場合、feature が
-無効でも startup を拒否します。
+AI chat はこのディレクトリにない `prompt/persona.md` にも依存します。optional file が存在するのに
+不正な場合、feature が無効でも startup を拒否します。
+
+## 稼働中の変更
+
+bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`
+を最後に保存してから約 0.5 秒後に、起動時と同じ strict schema で parse し直します。
+
+- parse が通り内容が変わっていれば snapshot を差し替えて関係する Worker に渡し、log に
+  `Reloaded deployment config <path>.` を 1 行残します。実行中の model request は旧設定で完了します。
+- parse に失敗した変更は丸ごと拒否し、file path・field path・期待される形を示す error を
+  log に 1 行残して、直前に適用済みの設定を使い続けます。不正なまま残すと次回 startup は拒否されます。
+- 機能の可用性を変える変更も拒否され、再起動が必要です：この 4 file の追加・削除、
+  `agent.json` での `ad_detect` 全体、または `text`・`summary`・`media` のいずれかの追加・削除。
+  `image`・`song` の追加・削除はそのまま反映します。
+- `stickers.json` に新しく加えた pack はすぐに catalog 生成を始めます。外した pack は AI に
+  提示されなくなり、その catalog は次回 startup 時に allowlist に沿って整理されます。
+- `mood.json` に残っている mood は各 chat に即時反映し、現在の mood が削除された chat は次に
+  使うときに引き直します。
+
+`telegram.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が
+必要です。
 
 ## `telegram.json`
 
@@ -95,8 +115,8 @@ song tool を登録しません。
 `media` の vision と voice 対応は、最初の実 request で別々に probe／cache します。明示的に
 unsupported と判定した後、その Worker は同種 media を download しません。成功は supported、
 一時的 network error は unknown のままなので後続 media が再 probe できます。通常の
-Google/OpenAI HTTP request は初回 failure 後に最大 5 回 retry します。Worker／process 再構築で
-probe 結果を消し、新設定を適用します。
+Google/OpenAI HTTP request は初回 failure 後に最大 5 回 retry します。hot reload による `media`
+の差し替え、または Worker／process 再構築で probe 結果を消します。
 
 ## 資格情報を外す前に機能を無効化する
 
@@ -126,12 +146,6 @@ permission key と default は `/permission help` が現行 reference です。�
 
 `packs` は `t.me` link ではなく Telegram sticker pack の short name 配列です。unique entry は
 最大 5 個。空配列は設定 sticker pack を無効化します。Bot が各 pack を読める必要があります。
-
-## `reactions.json`
-
-`emotionKeywords` は Telegram が対応する standard reaction emoji を非空 keyword 配列へ mapping
-します。model output が keyword に一致すると、その reaction が候補になります。custom emoji、
-空 keyword、string 以外の entry は不正です。
 
 ## `mood.json`
 

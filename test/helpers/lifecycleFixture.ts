@@ -86,6 +86,8 @@ const initAntiRaid = mock((): void => { calls.push("initAntiRaid"); });
 const initBlocklistSweepScheduler = mock((): void => { calls.push("initBlocklistScheduler"); });
 const quiesceBlocklistSweepScheduler = mock((): void => { calls.push("quiesceBlocklistScheduler"); });
 const sweepManagedBlocklistChats = mock(async (): Promise<void> => { calls.push("sweepBlocklist"); });
+const startConfigReload = mock((): void => { calls.push("startConfigReload"); });
+const quiesceConfigReload = mock((): void => { calls.push("quiesceConfigReload"); });
 const restoreLuckState = mock((..._args: unknown[]): void => { calls.push("restoreLuck"); });
 const seedSenderCache = mock((_value: unknown): void => { calls.push("seedSender"); });
 const registerCommandMenu = mock(async (): Promise<void> => { calls.push("registerMenu"); });
@@ -192,6 +194,7 @@ const testDependencies = {
   quiesceAvatarUpdates,
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
+  quiesceConfigReload,
   quiesceGagRuntime,
   quiesceWedRuntime,
   quiesceTranslate,
@@ -199,6 +202,7 @@ const testDependencies = {
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  startConfigReload,
   sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,
@@ -294,6 +298,8 @@ export function installLifecycleFixtureHooks(): void {
       initAntiRaid,
       initBlocklistSweepScheduler,
       sweepManagedBlocklistChats,
+      startConfigReload,
+      quiesceConfigReload,
       restoreLuckState,
       seedSenderCache,
       setBusinessWorkerFatalHandler,
@@ -413,6 +419,8 @@ export const lifecycleFixture = {
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  startConfigReload,
+  quiesceConfigReload,
   sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,

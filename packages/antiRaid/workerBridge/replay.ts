@@ -71,7 +71,7 @@ export function buildAdoptVerificationsMessage(
   };
 }
 
-/** 把进程内唯一一代广告检测配置放在新 Worker 的业务消息之前。 */
+/** 把主线程当前生效的广告检测配置投给 Worker；重建时排在新 Worker 的业务消息之前。 */
 export function replayAdDetectAgentConfig(
   postTo: (message: AntiRaidWorkerMessage) => boolean
 ): boolean {

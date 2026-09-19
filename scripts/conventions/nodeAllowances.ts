@@ -60,6 +60,12 @@ export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> 
 export const PRODUCTION_NODE_IMPORTS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {
+  "packages/app/configReload.ts": {
+    "node:fs": {
+      symbols: ["watch"],
+      purpose: "deployment config directory change notification (Bun documents node:fs watch as its file-watching API)",
+    },
+  },
   "packages/cache/perThread/updateContext.ts": {
     "node:async_hooks": {
       symbols: ["AsyncLocalStorage"],

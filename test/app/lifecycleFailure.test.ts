@@ -238,6 +238,10 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("initAntiRaid")).toBeLessThan(
       calls.indexOf("initBlocklistScheduler")
     );
+    // 配置热重载要把新快照投给两条业务 Worker，必须等两边都拿到初始快照后才开始监听。
+    expect(calls.indexOf("initAiChat")).toBeLessThan(calls.indexOf("startConfigReload"));
+    expect(calls.indexOf("initAntiRaid")).toBeLessThan(calls.indexOf("startConfigReload"));
+    expect(calls.indexOf("startConfigReload")).toBeLessThan(calls.indexOf("runUpdates"));
     expect(calls.indexOf("initBlocklistScheduler")).toBeLessThan(
       calls.indexOf("sweepBlocklist")
     );
@@ -250,6 +254,9 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("quiesceBlocklistScheduler")).toBeLessThan(
       calls.indexOf("drainAntiRaid")
     );
+    expect(calls.indexOf("quiesceConfigReload")).toBeGreaterThan(-1);
+    expect(calls.indexOf("quiesceConfigReload")).toBeLessThan(calls.indexOf("drainAntiRaid"));
+    expect(calls.indexOf("quiesceConfigReload")).toBeLessThan(calls.indexOf("flushAiMemory"));
   });
 
   test("state 主备均不可恢复时不启动任何运行时 Worker，并释放实例锁", async () => {

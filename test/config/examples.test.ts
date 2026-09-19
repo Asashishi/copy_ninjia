@@ -16,7 +16,6 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { loadAdSampleConfig } from "../../packages/config/adSamples";
 import { loadMoodConfig } from "../../packages/config/mood";
-import { loadReactionConfig } from "../../packages/config/reactions";
 import { loadStickerConfig } from "../../packages/config/stickers";
 import { parseTelegramConfig } from "../../packages/config/telegramInput";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
@@ -28,10 +27,9 @@ function examplePath(name: string): string {
   return join(EXAMPLE_ROOT, name);
 }
 
-/** install.sh 原样复制的四份示例，各自走自己的 load*（含读盘与严格解析）。 */
+/** install.sh 原样复制的三份示例，各自走自己的 load*（含读盘与严格解析）。 */
 const COPIED_EXAMPLES: readonly (readonly [string, (path: string) => Promise<unknown>])[] = [
   ["stickers.json", loadStickerConfig],
-  ["reactions.json", loadReactionConfig],
   ["mood.json", loadMoodConfig],
   ["ad_samples.json", loadAdSampleConfig],
 ];

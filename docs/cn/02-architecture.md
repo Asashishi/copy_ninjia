@@ -113,7 +113,7 @@ flowchart TD
 3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，出口在 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。
 4. 初始化 **Disk I/O Worker**。日志、AI、贴纸、运势、待验证、入群日志、wed 成员与 `database/storage.sqlite` 先完成全域只读 inspect 和严格解码；全部成功后才统一 adopt owner，成功回执之后再清理临时/孤儿/过期文件、执行 compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 先经 `midnightMaintenance` 通知主线程接纳 `/wed` 每日成员复核，再维护运势、日志、入群日志、广告样本归档、待验证日文件和临时广告免检累计；各领域原有的启动或业务事件触发清理继续作为兜底，待验证轮换失败只保留不阻止退出的一秒重试 timer。任何 inspect 失败都保留所有领域现场，不 chmod、rewrite、unlink，也不留下维护 cron。主线程接管 wed 成员集合，并接收 `chat_states`、永久名单计数和未完成处置，不复制永久白名单、黑名单或临时广告免检活动整表。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
-6. 初始化 **AI Worker**（AI 配置不可用时这一步只记一行日志并整体跳过），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker** 与黑名单补扫调度，并对已托管的群补扫一轮黑名单。
+6. 初始化 **AI Worker**（AI 配置不可用时这一步只记一行日志并整体跳过），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker**，开始监听 `config/` 热重载，再初始化黑名单补扫调度，并对已托管的群补扫一轮黑名单。
 7. 把 `state.global.assets` 的缺项补成内置缺省值（后台落盘，不阻塞启动），启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
 
 失败与退出统一由 `ApplicationLifecycle` 收口：只有已取得的资源才会释放或 flush。
@@ -122,7 +122,7 @@ flowchart TD
 
 正常与异常停机由同一个生命周期收口，顺序固定：
 
-1. **Quiesce**：停下标题、头像、翻译、gag 新预约与 blocklist 补扫调度器，并停止 runner。五个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这五个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。五次调用都是幂等赋值，重复执行没有代价。
+1. **Quiesce**：停下标题、头像、翻译、gag 与 wed 新预约、blocklist 补扫调度器和 `config/` 热重载监听，并停止 runner。七个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这七个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。七次调用都是幂等的，重复执行没有代价。
 2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
 3. **Flush 与 dispose**：正常路径先排空 Anti-Raid、gag 提示与统一延迟删除，再 flush AI、排空 Telegram 出站、flush Disk I/O 与 StateStore；最终 dispose 固定按同一维护排空顺序，再执行「flush AI → 终止 AI → 排空 Telegram 出站 → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」。
 

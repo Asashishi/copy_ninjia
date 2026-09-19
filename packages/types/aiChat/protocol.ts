@@ -5,7 +5,6 @@ import type { AiSpeakerSnapshot } from "./speaker";
 import type {
   AgentDeploymentConfig,
   MoodConfig,
-  ReactionConfig,
   StickerConfig,
 } from "../config";
 
@@ -23,10 +22,10 @@ export type AiDirectTriggerReason = "reply" | "mention";
 /**
  * AI Worker 的唯一初始化消息：机器人身份 + 主线程解析出来的 AI 对话能力快照。
  *
- * 配置随身份一起投递而不是让 Worker 自己读盘，是「同一进程内只有一代配置」的
- * 落点：这条消息在 initAiChat 里构造一次，崩溃重建时由 lastInitState 原样重放
- * （见 aiChat/workerBridge.ts），因此新 isolate 拿到的永远是进程启动那一刻的
- * 那份，改 config/agent.json 必须整进程重启才会生效。
+ * 配置随身份一起投递而不是让 Worker 自己读盘：这条消息在 initAiChat 里构造，
+ * 热重载时由 syncAiChatConfig 把 lastInitState 改写成主线程当前生效的快照，
+ * 崩溃重建时原样重放（见 aiChat/workerBridge.ts），因此新 isolate 拿到的永远是
+ * 主线程此刻的那一份，Worker 自己从不读盘。
  *
  * `agent` 里带着各能力的 api_key，只在这条消息上跨线程流动一次：不落盘、不进
  * state、不进任何事件回执，日志侧由 logger 的值级脱敏兜底（见 infra/logger.ts）。
@@ -38,9 +37,20 @@ export interface AiInitMessage {
   superAdminUserId: number;
   agent: AgentDeploymentConfig;
   mood: MoodConfig;
-  reactions: ReactionConfig;
   stickers: StickerConfig;
   persona: string;
+}
+
+/**
+ * config/ 热重载后主线程已生效的 AI 部署配置（见 app/configReload.ts）。字段为
+ * undefined 表示该领域本轮未变化；主线程在投递前同步改写 lastInitState，Worker
+ * 重建时由 init 重放同一份最新快照。`agent` 带凭据，传输与脱敏约束同 AiInitMessage。
+ */
+export interface AiConfigReloadMessage {
+  type: "configReload";
+  agent: AgentDeploymentConfig | undefined;
+  mood: MoodConfig | undefined;
+  stickers: StickerConfig | undefined;
 }
 
 /** 主线程从 Telegram update 提取的原始回复引用；Worker 会清洗成持久化形态。 */
@@ -231,6 +241,7 @@ export interface AiQueryMoodMessage {
 export type AiChatWorkerMessage =
   | AiPersonaMessage
   | AiInitMessage
+  | AiConfigReloadMessage
   | AiRecordMessage
   | AiRecordMediaMessage
   | AiTriggerMessage

@@ -5,12 +5,15 @@ import {
   computeAdjustedWeight,
   currentMood,
   currentMoodInstruction,
+  refreshChatMoods,
   switchMood,
 } from "../../../packages/aiChat/ai/mood";
-import { getMoodConfig } from "../../../packages/config/mood";
+import { defaultMoodConfigCache } from "../../../packages/cache/perThread/config";
+import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from
   "../../../packages/consts/aiChat/mood";
 import type { MoodOption } from "../../../packages/types";
+import type { MoodConfig } from "../../../packages/types/config";
 
 /**
  * aiChat/ai/mood.ts 的纯逻辑单测：首次抽取、寿命内维持/到期重抽、群间隔离。所有
@@ -199,5 +202,33 @@ describe("aiChat/ai/mood computeAdjustedWeight", () => {
   test("没有配置任何倍率表的心情始终是 base weight", () => {
     const plain: MoodOption = { name: "无倍率心情", weight: 7, instruction: "" };
     expect(computeAdjustedWeight(plain, "rain", "lateNight")).toBe(7);
+  });
+});
+
+describe("aiChat/ai/mood refreshChatMoods", () => {
+  test("mood.json 热重载后同名档位换成新快照、寿命不变，已删除的档位连同到期时刻一起清掉", () => {
+    const original: MoodConfig | null = defaultMoodConfigCache.current;
+    try {
+      adoptMoodConfig({
+        moods: [
+          { name: "平静", weight: 60, instruction: "新文案。" },
+          { name: "开心", weight: 40, instruction: "开心。" },
+        ],
+      });
+      const moods = new Map<number, MoodOption>([
+        [1, { name: "平静", weight: 20, instruction: "旧文案。" }],
+        [2, { name: "已删除", weight: 80, instruction: "旧档位。" }],
+      ]);
+      const expiresAts = new Map<number, number>([[1, 111], [2, 222]]);
+
+      refreshChatMoods(moods, expiresAts);
+
+      expect(moods.get(1)).toBe(getMoodConfig().moods[0]!);
+      expect(expiresAts.get(1)).toBe(111);
+      expect(moods.has(2)).toBe(false);
+      expect(expiresAts.has(2)).toBe(false);
+    } finally {
+      defaultMoodConfigCache.current = original;
+    }
   });
 });

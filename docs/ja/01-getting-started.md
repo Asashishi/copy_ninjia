@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：ソース方式と開発時に必要で、`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` で導入できます。バイナリ配布物はこのランタイムを同梱し、システム Bun は不要です。Node.js は使用しません。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
-- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
+- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、`config/g-auth.json` として保存します。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
 
 `g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない RS256 用 RSA PEM 秘密鍵（EC、Ed25519、RSA-PSS は拒否）です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
 
@@ -115,12 +115,14 @@ AI の provider、API key、endpoint、model は能力ごとに `config/agent.js
 runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` を設定し、
 未指定ならプロジェクトルートを使います。詳細は
 [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください。
-翻訳を使う場合は、サービスアカウントキーをプロジェクトルートの
-`g-auth.json` に保存します。この file は `.gitignore` の対象です。
+翻訳を使う場合は、サービスアカウントキーを
+`config/g-auth.json` に保存します。`config/` ディレクトリ全体が `.gitignore` の対象です。
 
 ## プロジェクト側の設定ファイル
 
 `config/` は deployment 固有の設定ディレクトリで、Git の追跡対象外です。初回だけ `config_example/` からコピーし、その後は `config/` だけを編集してください。example ディレクトリは実行時設定ではありません。
+
+稼働中に `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` を編集すると hot reload されます。main thread が `config/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。hot reload は適用済み設定の内容だけを差し替え、機能の可用性は変えません。この 4 file の追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は拒否し、再起動を促します。`telegram.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が必要です。
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI チャットの基本ペルソナ。
@@ -132,9 +134,6 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
 - **`config/stickers.json`**（[example](../../config_example/stickers.json)）
   - **内容**：AI が使えるスタンプパック、最大 5 個。
   - **検証**：[`packages/config/stickers.ts`](../../packages/config/stickers.ts)。
-- **`config/reactions.json`**（[example](../../config_example/reactions.json)）
-  - **内容**：AI が使える絵文字リアクション。
-  - **検証**：[`packages/config/reactions.ts`](../../packages/config/reactions.ts)。
 - **`config/mood.json`**（[example](../../config_example/mood.json)）
   - **内容**：ムードの文面、重み、天気・時間帯の倍率。
   - **検証**：[`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、
@@ -155,14 +154,15 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     `https` のみを受け付け、平文 `http` は `localhost`・`127.0.0.1`・`::1` に限られます。
     URL に userinfo と `#` fragment は含められません。
   - **検証**：[`packages/config/agent.ts`](../../packages/config/agent.ts)。未知 key、空の
-    key/model、不正な provider・URL・protocol は拒否します。**設定 file 全体は起動時に
-    main thread が一度だけ parse し**、各 Worker には init message で渡します。Worker 側は
-    その snapshot を読むだけで disk には触れず、crash 後の再生成でも同じ snapshot を replay
-    するため、同一 process 内に 2 世代の設定が並ぶことはありません。変更後は process 全体の
-    再起動が必要です。vision と voice の対応可否は最初の実 request で別々に probe し、
+    key/model、不正な provider・URL・protocol は拒否します。**この file を読むのは main
+    thread だけです**。起動時に一度 parse し、稼働中の編集は hot reload で厳密に parse し直して、
+    各 Worker には init または reload message で渡します。Worker 側は受け取った snapshot を
+    読むだけで disk には触れず、crash 後の再生成では main thread で現在有効な snapshot を
+    replay します。vision と voice の対応可否は最初の実 request で別々に probe し、
     明示的に非対応の modality と、404/405 で model や path の不在を示した endpoint
     （後者は `$.agent.media` を指す診断を 1 行記録）はどちらも以後 download しません。
     一時的な障害は回数に応じた backoff だけで、能力を恒久的に閉じることはありません。
+    hot reload で `media` 能力が差し替わると、2 種類の入力を改めて probe します。
 
 恒久 allowlist、blocklist、一時 allowlist activity、未完了 removal は deployment JSON ではなく、runtime data root の
 `database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、
@@ -171,7 +171,8 @@ feature 単位で検証し、翻訳は `g-auth.json` を読みます。欠落は
 実行経路だけを拒否し、起動は妨げません。ただし**ファイルが存在する限り厳密なパースを
 通らなければならず**、対応機能が今オフでも不正な内容は起動を拒否します
 （[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の
-`validateExistingDeploymentInputs` を参照）。修復後は再起動が必要です。
+`validateExistingDeploymentInputs` を参照）。可用性の判定は process ごとに cache され、
+欠けていた file を補った後は再起動が必要です。
 
 ### identity storage の初期化
 
@@ -221,8 +222,8 @@ sidecar が同じ協働 group を継承します。
 旧 process を停止し、deployment 所有の `config/` 全体を backup してください。旧
 `gemini.json`、`openai.json` と AI 環境変数にあった model、endpoint、API key を統一
 `agent.json` へ手動移行します。`config_example/` で deployment 設定を上書きしてはいけません。
-`state.json.global.model` の runtime 選択はもう読みません。model 変更は停止中に該当能力を
-編集し、再起動して反映します。
+`state.json.global.model` の runtime 選択はもう読みません。model 変更は `agent.json` の該当能力を
+編集し、保存すると hot reload で反映されます。
 
 旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、**9.1.5 上で** identity storage migration を実行します（この script は 9.2.0 で削除済み。[運用文書](07-operations.md#identity-storage-migration) を参照）。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/telegram.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
 

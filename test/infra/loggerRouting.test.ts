@@ -1,6 +1,7 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   LOGGER_CIRCULAR_ERROR_VALUE,
+  LOGGER_MAX_REDACTED_SECRETS,
   LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE,
   LOGGER_NESTED_ERROR_MAX_DEPTH,
 } from "../../packages/consts/logger";
@@ -45,8 +46,18 @@ const {
   agentDeploymentConfigCache,
   telegramConfigCache,
 } = await import("../../packages/cache/perThread/config");
+const { loggerSecretsMemo } = await import("../../packages/cache/perThread/logger");
 
 describe("logger persistence routing boundary", () => {
+  // 脱敏名单会保留热重载替换下来的旧凭据；每条用例从空名单起步，前一条用例
+  // 装进 holder 的替身值不得带进下一条。
+  beforeEach((): void => {
+    loggerSecretsMemo.telegram = null;
+    loggerSecretsMemo.adDetect = null;
+    loggerSecretsMemo.agent = null;
+    loggerSecretsMemo.value = [];
+  });
+
   test("初始化前只写控制台，完整恢复成功后 error 才转投唯一落盘 Worker", async () => {
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
@@ -154,17 +165,46 @@ describe("logger persistence routing boundary", () => {
       expect(stringArg).toBe(`now with token ${REDACTED_SECRET}`);
       expect(String(stringArg)).not.toContain(token);
 
-      // 换成另一份配置同样要立刻生效（测试替身与启动总闸都是整体替换 holder）。
+      // 换成另一份配置同样要立刻生效（测试替身、启动总闸与热重载都是整体替换 holder）。
       const rotated: string = "rotated-telegram-token";
       telegramConfigCache.current = { botToken: rotated, superAdminUserId: 1 };
       logger.error(`rotated ${rotated} but old ${token}`);
       const afterRotate: string = String(consoleError.mock.calls.at(-1)![0]);
       expect(afterRotate).not.toContain(rotated);
-      // 旧 token 已经不在配置里，不该再被当成敏感值抹掉。
-      expect(afterRotate).toContain(token);
+      // 旧凭据可能还在旧客户端的在途请求里，退役后照样脱敏。
+      expect(afterRotate).not.toContain(token);
     } finally {
       consoleError.mockRestore();
       telegramConfigCache.current = originalTelegram;
+    }
+  });
+
+  test("退役凭据按先进先出封顶保留，超出上限时最早退役的不再脱敏", () => {
+    const originalTelegram: TelegramConfig | null = telegramConfigCache.current;
+    const originalAgent: AgentDeploymentConfig | null = agentDeploymentConfigCache.current;
+    const originalAdDetect: AdDetectAgentConfig | null = adDetectAgentConfigCache.current;
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 只留 Telegram 一份当前凭据，名单容量全部留给退役值。
+      agentDeploymentConfigCache.current = null;
+      adDetectAgentConfigCache.current = null;
+      const tokens: string[] = [];
+      for (let index: number = 0; index <= LOGGER_MAX_REDACTED_SECRETS; index++) {
+        const token: string = `retired-telegram-token-${String(index).padStart(3, "0")}`;
+        tokens.push(token);
+        telegramConfigCache.current = { botToken: token, superAdminUserId: 1 };
+        logger.error("rotate");
+      }
+      logger.error(tokens.join(" "));
+      const output: string = String(consoleError.mock.calls.at(-1)![0]);
+      // 当前 1 个加最近退役的 LOGGER_MAX_REDACTED_SECRETS - 1 个仍在名单里。
+      expect(output).toContain(tokens[0]!);
+      for (const token of tokens.slice(1)) expect(output).not.toContain(token);
+    } finally {
+      consoleError.mockRestore();
+      telegramConfigCache.current = originalTelegram;
+      agentDeploymentConfigCache.current = originalAgent;
+      adDetectAgentConfigCache.current = originalAdDetect;
     }
   });
 

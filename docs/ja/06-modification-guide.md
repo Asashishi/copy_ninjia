@@ -112,13 +112,15 @@
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- deployment 固有の変更は Git ignore 対象の `config/` だけに行い、`config_example/` は schema または default example が変わるときだけ同期します。`telegram.json` は network 接続前に strict load し、`stickers.json`、`reactions.json`、`mood.json` などの feature input は各 enablement 境界で検証します。恒久 allowlist、blocklist、一時 allowlist activity、removal outbox は deployment config ではなく、authority は `database/storage.sqlite` です。identity structure を変える場合、先に `packages/database/schema/`、対応する `packages/database/codec/`、domain type、strict validation を更新し、停止中 migration script と fault-injection test を用意します。JSON 互換 read を戻してはいけません。
+- deployment 固有の変更は Git ignore 対象の `config/` だけに行い、`config_example/` は schema または default example が変わるときだけ同期します。`telegram.json` は network 接続前に strict load し、`stickers.json`、`mood.json` などの feature input は各 enablement 境界で検証します。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` は稼働中の編集が hot reload され、拒否の基準は [04 実行時の権威的制約](04-invariants.md) にあります。その他の deployment input は変更後に再起動が必要です。恒久 allowlist、blocklist、一時 allowlist activity、removal outbox は deployment config ではなく、authority は `database/storage.sqlite` です。identity structure を変える場合、先に `packages/database/schema/`、対応する `packages/database/codec/`、domain type、strict validation を更新し、停止中 migration script と fault-injection test を用意します。JSON 互換 read を戻してはいけません。
+- AI の `add_reaction` tool が使える emoji は [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts) の `AI_REACTION_EMOJIS` に固定され、要素型は Telegram 標準リアクションに限定されます。変更は code と一緒に release します。
 
 ## deployment JSON 設定の追加
 
 1. `packages/config/<domain>.ts` で厳密に宣言・解析し、必須／任意 field、形式検証、未知 key の拒否を定義します。解析失敗は起動を拒否します。
 2. 実 credential を含まない構造例を `config_example/<domain>.json` に追加し、[`config_example/README/ja.md`](../../config_example/README/ja.md) の field 説明も同期します。
-3. 3 言語のルート README にある「設定」section と関連する環境構築 entry point を同期します。
+3. 稼働中に反映させる必要がある場合は、[`packages/config/reload.ts`](../../packages/config/reload.ts) の読み込みと判定に file を加え、既存の Worker protocol で新しい snapshot を副本を持つ thread に渡し、Worker 側で旧 snapshot から派生した cache を無効化します。
+4. 3 言語のルート README にある「設定」section と関連する環境構築 entry point を同期します。
 
 ## 実行時 cache の追加
 

@@ -5,7 +5,8 @@
  * （`/ai_chat enable`、`/ad_detect enable`、`/translate enable`）按需判定。
  *
  * 结论按进程缓存成功与缺省两侧；运行时只检查已校验配置 holder，不重新读取文件。
- * 补齐可选配置后必须重启，由启动总闸严格解析并发布新的配置快照。
+ * config/reload.ts 的热重载只替换已生效配置的内容、不改变这里的结论：补齐或
+ * 删除可选配置必须重启，由启动总闸严格解析并重新判定。
  *
  * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
  * 投喂门禁，全在主线程；Worker 不问「这个功能能不能开」。
@@ -24,7 +25,6 @@ import { googleServiceAccountKey } from "../cache/main/translate";
 import { lstat } from "node:fs/promises";
 import { ensureAdSampleConfig } from "./adSamples";
 import { ensureMoodConfig } from "./mood";
-import { ensureReactionConfig } from "./reactions";
 import { ensureStickerConfig } from "./stickers";
 import { getTelegramConfig } from "./telegram";
 import {
@@ -44,7 +44,6 @@ import {
   GOOGLE_AUTH_FILE_PATH,
   MOOD_CONFIG_PATH,
   PERSONA_PATH,
-  REACTIONS_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
 import { isErrno } from "../libs/errno";
@@ -97,11 +96,10 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
 }
 
 /**
- * AI 闲聊要读的部署配置：贴纸白名单、反应词表、心情表、人设与 agent 段必检。
+ * AI 闲聊要读的部署配置：贴纸白名单、心情表、人设与 agent 段必检。
  *
- * 前三份缺一不可——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、
- * aiChat/ai/reactions.ts、aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场
- * 抛出而不是降级。
+ * 前两份缺一不可——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、
+ * aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
  *
  * agent 配置按能力声明 provider、api_key、model 与 base_url。AI 对话只要求
  * text、summary、media；image/song 缺省不阻塞，由工具装配单独摘挂。探测不读取
@@ -112,7 +110,6 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
  */
 const AI_CHAT_PROBES: readonly DeploymentFileProbe[] = [
   { file: "config/stickers.json", load: ensureStickerConfig },
-  { file: "config/reactions.json", load: ensureReactionConfig },
   { file: "config/mood.json", load: ensureMoodConfig },
   { file: "prompt/persona.md", load: ensurePersona },
   { file: "config/agent.json", load: ensureAgentDeploymentConfig },
@@ -156,7 +153,7 @@ export function translateConfigReadiness(): ConfigReadiness {
 }
 
 /** 只把路径真正不存在视为缺省；断链软链接和无权访问都是已配置但非法。 */
-async function deploymentInputExists(path: string): Promise<boolean> {
+export async function deploymentInputExists(path: string): Promise<boolean> {
   try {
     await lstat(path);
     return true;
@@ -175,7 +172,6 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
   getTelegramConfig();
   const probes: readonly Readonly<{ path: string; load: () => Promise<unknown> }>[] = [
     { path: STICKERS_CONFIG_PATH, load: ensureStickerConfig },
-    { path: REACTIONS_CONFIG_PATH, load: ensureReactionConfig },
     { path: MOOD_CONFIG_PATH, load: ensureMoodConfig },
     { path: AD_SAMPLES_CONFIG_PATH, load: ensureAdSampleConfig },
     { path: AGENT_CONFIG_PATH, load: validateAgentDeploymentConfig },
@@ -190,7 +186,7 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
   translateConfigReadinessCache.current ??= {
     ok: false,
     failure: {
-      file: "g-auth.json",
+      file: "config/g-auth.json",
       reason: `${GOOGLE_AUTH_FILE_PATH}: $ must be a configured Google service account JSON file.`,
     },
   };

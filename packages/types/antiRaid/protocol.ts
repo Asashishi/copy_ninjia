@@ -223,7 +223,11 @@ export interface ChatKindChangedMessage {
   isSupergroup: boolean;
 }
 
-/** 主线程 -> Worker：本进程唯一一代广告检测能力配置。 */
+/**
+ * 主线程 -> Worker：主线程当前生效的广告检测能力配置与示例清单。初始化、Worker
+ * 重建与 config/ 热重载替换这两份快照时各投递一次；adSamples 为 null 表示广告
+ * 检测不可用，Worker 保留原 holder 不动。
+ */
 export interface AntiRaidAgentConfigMessage {
   type: "agentConfig";
   adDetect: AdDetectAgentConfig | null;

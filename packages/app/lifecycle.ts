@@ -188,6 +188,8 @@ export class ApplicationLifecycle {
     this.dependencies.hydrateBlocklist(loaded.pendingBlockedRemovals);
     this.dependencies.initAntiRaid();
     this.flags.antiRaidInitialized = true;
+    // 两条业务 Worker 都已持有初始配置快照，此后 config/ 的改动才有分发对象。
+    this.dependencies.startConfigReload();
     this.dependencies.initBlocklistSweepScheduler();
     // SQLite 黑名单身份未必已有对应 outbox；在 runner 接收新 update 前，对
     // 所有已初始化且已确证管理员的群补一轮，频道 ID 会由 Worker 走封发言权路径。

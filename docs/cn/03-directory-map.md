@@ -17,9 +17,9 @@
 - **`LICENSES/`**
   - **内容**：项目 MIT 许可证 [`LICENSE`](../../LICENSES/LICENSE)，以及汉字变体数据使用的 [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt)。
 - **`packages/app/`**
-  - **职责**：启动/退出生命周期、已存在部署输入的启动校验出口、handler 注册、命令菜单
-    与 update runner，以及生命周期副作用依赖装配。
-  - **典型文件**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、
+  - **职责**：启动/退出生命周期、已存在部署输入的启动校验出口、`config/` 热重载监听与分发、
+    handler 注册、命令菜单与 update runner，以及生命周期副作用依赖装配。
+  - **典型文件**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、`configReload.ts`、
     `registerHandlers.ts`、`updateRunner.ts` / `updateFetcher.ts`。`ApplicationLifecycleDependencies` 从装配对象
     推导并与其同住，避免共享类型层反向依赖 `app/`。
 - **`packages/commands/`**
@@ -57,8 +57,8 @@
     四段生命周期）、`lockdown.ts` 与 `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt`
     五段生命周期）、`replyAdmission.ts`、`adDetectAdmission.ts`、`temporaryAdBypass.ts`。
 - **`packages/config/`**
-  - **职责**：部署 `config/*.json` 的严格 schema、进程快照与按功能聚合的可用性判定；身份策略不在这里。
-  - **典型文件**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
+  - **职责**：部署 `config/*.json` 的严格 schema、进程快照、热重载判定与按功能聚合的可用性判定；身份策略不在这里。
+  - **典型文件**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`、`reload.ts`。
 - **`packages/database/`**
   - **职责**：共享 SQLite（身份策略 + 群状态）的 schema、codec、行校验与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
   - **典型目录**：`schema/`（含 `migrations/`）、`codec/identity.ts`、`codec/chatState.ts`、
@@ -82,7 +82,8 @@
 - **`packages/workers/antiRaid/adDetect/`**
   - **职责**：广告检测流水线，包括排队批处理、消息串整形、provider 判定与命中处置。
   - **典型文件**：`queue.ts`（入口与节拍）、`queueState.ts`（接纳判据）、
-    `verdict.ts`（判定与处置编排）、`bundle.ts`、`classifier.ts`、`disposal.ts`。
+    `verdict.ts`（判定与处置编排）、`bundle.ts`、`classifier.ts`、`disposal.ts`、
+    `config.ts`（接管主线程投递的配置快照）。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理。
   - **典型文件**：`telegram/`、`diskIO.ts`、`identityStorage.ts`、`supervisedWorker.ts`、`workerSupervisor.ts`。

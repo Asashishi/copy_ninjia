@@ -9,7 +9,6 @@ import { adoptStickerConfig, getStickerConfig } from "../config/stickers";
 import { adoptMoodConfig } from "../config/mood";
 import { chatPersonas } from "../cache/workers/aiChat/persona";
 import { adoptPersona } from "../config/persona";
-import { adoptReactionConfig } from "../config/reactions";
 import { adoptAgentDeploymentConfig } from "../config/agent";
 import { reportUnimplementedAgentCapabilities } from "../aiChat/provider";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/weather";
@@ -32,6 +31,7 @@ import {
   recordChatMessage,
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
+import { applyAiChatConfigReload } from "./aiChat/configReload";
 import {
   drainPendingReplyQueues,
   generateAndSendReply,
@@ -160,15 +160,15 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
   switch (msg.type) {
     case "init":
       // 配置必须先于任何会调模型的动作落定：紧随其后的 ensureStickerCatalogs
-      // 就会去取 media 能力的模型名与凭据。本线程此后不再读 agent.json，
-      // 崩溃重建也只等主线程重放同一条 init（见 config/agent.ts 的边界说明）。
+      // 就会去取 media 能力的模型名与凭据。本线程从不读 agent.json，运行期
+      // 变化只经 configReload 消息到达，崩溃重建时主线程重放带着当前快照的
+      // init（见 config/agent.ts 的边界说明）。
       adoptAgentDeploymentConfig(msg.agent);
       adoptMoodConfig(msg.mood);
-      adoptReactionConfig(msg.reactions);
       adoptStickerConfig(msg.stickers);
       adoptPersona(msg.persona);
-      // 配置一落定就把「配了但这一家没实现」的可选能力记一次；能力配置在进程
-      // 生命周期内不变，逐轮回复重复记录只会淹掉真正的故障。
+      // 配置一落定就把「配了但这一家没实现」的可选能力记一次；热重载替换
+      // agent 段时由 reloadAgentDeploymentConfig 再记一次，逐轮回复不重复记录。
       reportUnimplementedAgentCapabilities();
       botInfoState.current = msg.botInfo;
       superAdminUserIdState.current = msg.superAdminUserId;
@@ -177,6 +177,9 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(getStickerConfig().packs);
+      break;
+    case "configReload":
+      applyAiChatConfigReload(msg);
       break;
     case "persona":
       if (msg.persona === null) chatPersonas.delete(msg.chatId);

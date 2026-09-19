@@ -7,6 +7,7 @@ export {
   invalidateAiChat,
   queryAiMood,
   switchAiMood,
+  syncAiChatConfig,
   terminateAiChat,
 } from "./workerBridge";
 export {

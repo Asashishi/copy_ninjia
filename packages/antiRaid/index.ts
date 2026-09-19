@@ -5,6 +5,7 @@ export {
   deactivateJoinGuardChat,
   hydratePendingVerifications,
   initAntiRaid,
+  syncAntiRaidAgentConfig,
   terminateAntiRaid,
 } from "./workerBridge";
 export { drainAntiRaid } from "./durableDelivery";

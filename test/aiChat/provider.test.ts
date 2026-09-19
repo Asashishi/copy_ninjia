@@ -4,6 +4,9 @@ import type { AgentDeploymentConfig } from "../../packages/types/config";
 let agentConfig: AgentDeploymentConfig;
 mock.module("../../packages/config/agent", () => ({
   getAgentDeploymentConfig: (): AgentDeploymentConfig => agentConfig,
+  adoptAgentDeploymentConfig: (config: AgentDeploymentConfig): void => {
+    agentConfig = config;
+  },
 }));
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
@@ -18,11 +21,20 @@ mock.module("../../packages/infra/logger", () => ({
 const {
   imageAiProvider,
   mediaAiProvider,
+  reloadAgentDeploymentConfig,
   reportUnimplementedAgentCapabilities,
   songAiProvider,
   summaryAiProvider,
   textAiProvider,
 } = await import("../../packages/aiChat/provider");
+const { geminiClientCache } = await import("../../packages/cache/workers/aiChat/gemini");
+const { openAiClientCache } = await import("../../packages/cache/workers/aiChat/openai");
+const {
+  getMediaInputState,
+  getMediaInputSupport,
+  mediaInputSupportCache,
+  recordMediaInputResult,
+} = await import("../../packages/cache/workers/aiChat/mediaInputSupport");
 const { geminiProvider } = await import("../../packages/aiChat/gemini");
 const { openAiProvider } = await import("../../packages/aiChat/openai");
 const { aiProviderQuotaLanes, resetAiProviderSchedulerCache } =
@@ -34,6 +46,9 @@ const {
 
 beforeEach((): void => {
   resetAiProviderSchedulerCache();
+  mediaInputSupportCache.current = null;
+  geminiClientCache.current = null;
+  openAiClientCache.current = null;
   agentConfig = {
     text: { provider: "google", apiKey: "google-text-key", baseUrl: undefined, model: "gemini-text" },
     summary: { provider: "openai", apiKey: "openai-summary-key", baseUrl: "https://openai.example/v1", model: "gpt-summary" },
@@ -271,4 +286,75 @@ test("生图与生歌门面透出 provider 结果", async () => {
     generateImage.mockRestore();
     generateSong.mockRestore();
   }
+});
+
+test("agent 热重载丢弃门面与 SDK 客户端，按新快照重建", () => {
+  const oldText = textAiProvider();
+  const oldSummary = summaryAiProvider();
+  geminiClientCache.current = new Map();
+  openAiClientCache.current = new Map();
+
+  reloadAgentDeploymentConfig({
+    ...agentConfig,
+    text: { ...agentConfig.text, model: "gemini-text-reloaded" },
+    song: undefined,
+  });
+
+  expect(textAiProvider()).not.toBe(oldText);
+  expect(summaryAiProvider()).not.toBe(oldSummary);
+  expect(songAiProvider()).toBeNull();
+  expect(geminiClientCache.current).toBeNull();
+  expect(openAiClientCache.current).toBeNull();
+});
+
+test("agent 热重载保留仍被引用的配额 lane，摘除失去引用的 lane", () => {
+  textAiProvider();
+  summaryAiProvider();
+  songAiProvider();
+  expect(aiProviderQuotaLanes.map((lane) => lane.apiKey)).toEqual([
+    "google-text-key",
+    "openai-summary-key",
+    "google-song-key",
+  ]);
+  const summaryLane = aiProviderQuotaLanes[1]!;
+
+  reloadAgentDeploymentConfig({
+    ...agentConfig,
+    text: { ...agentConfig.text, apiKey: "google-text-key-rotated" },
+    summary: { ...agentConfig.summary, model: "gpt-summary-reloaded" },
+  });
+
+  // text 换了凭据：旧 lane 失去引用被摘除；summary 只换模型，并发额度原样延续。
+  expect(aiProviderQuotaLanes.map((lane) => lane.apiKey)).toEqual([
+    "openai-summary-key",
+    "google-song-key",
+  ]);
+  summaryAiProvider();
+  expect(aiProviderQuotaLanes[0]).toBe(summaryLane);
+  textAiProvider();
+  expect(aiProviderQuotaLanes.map((lane) => lane.apiKey)).toContain("google-text-key-rotated");
+});
+
+test("只有 media 能力变化时两种输入模态才回到未探测状态", () => {
+  recordMediaInputResult({
+    capability: "voice",
+    result: { ok: false, retryable: false, mediaFailure: "unsupported" },
+    attemptState: getMediaInputState("voice"),
+  });
+
+  reloadAgentDeploymentConfig({ ...agentConfig, text: { ...agentConfig.text, model: "other-text" } });
+  expect(getMediaInputSupport("voice")).toBe("unsupported");
+
+  reloadAgentDeploymentConfig({ ...agentConfig, media: { ...agentConfig.media, model: "gemini-media-2" } });
+  expect(getMediaInputSupport("voice")).toBe("unknown");
+  expect(getMediaInputState("voice").configGeneration).toBe(1);
+});
+
+test("agent 热重载后按新快照重记「配了但没实现」的诊断", () => {
+  reloadAgentDeploymentConfig({
+    ...agentConfig,
+    song: { provider: "openai", apiKey: "openai-song-key", baseUrl: undefined, model: "song-model" },
+  });
+  expect(loggerError).toHaveBeenCalledTimes(1);
+  expect(String(loggerError.mock.calls[0]![0])).toContain("$.agent.song");
 });

@@ -86,13 +86,13 @@ describe("install.sh 到真实应用启动", () => {
 
   test("存在但非法的可选配置在启动之前拒绝", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
-    await writeText(join(fixture.configRoot, "reactions.json"), "{}\n");
+    await writeText(join(fixture.configRoot, "stickers.json"), "{}\n");
     const result = runInstaller(fixture, firstInstallPrompts(false));
     expect(result.exitCode).not.toBe(0);
-    expect(result.output).toContain("reactions.json: $ must be");
+    expect(result.output).toContain("stickers.json: $ must be");
     expect(result.output).not.toContain("INSTALL_API");
     expect(result.output).not.toContain("Bot started");
     expect(await Bun.file(join(fixture.runtimeRoot, "state.json")).exists()).toBe(false);
-    expect(await readText(join(fixture.configRoot, "reactions.json"))).toBe("{}\n");
+    expect(await readText(join(fixture.configRoot, "stickers.json"))).toBe("{}\n");
   }, 30_000);
 });

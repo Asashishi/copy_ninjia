@@ -74,8 +74,8 @@ export const pendingAdMessages: Map<string, AdMessageBundle> = new Map();
 /**
  * 广告判定 system prompt 的两个静态变体，键为发送者是否仍在入群窗口。
  *
- * classifier.ts 首次使用对应变体时填充；部署配置在进程内不变，因此不失效。
- * Anti-Raid Worker 崩溃后从空表重建。没有条目表示该变体尚未构造，调用方应
+ * classifier.ts 首次使用对应变体时填充；主线程投递新的广告示例快照时由
+ * workers/antiRaid/adDetect/config.ts 清空。Anti-Raid Worker 崩溃后从空表重建。没有条目表示该变体尚未构造，调用方应
  * 用当前已严格加载的广告样本生成。键域只有 boolean，容量固定为两条。
  */
 export const adDetectSystemPrompts: Map<boolean, string> = new Map();

@@ -108,6 +108,11 @@ export interface MediaInputModalityState {
    * 立即放行（同 auto/message/triggerPolicy.ts 的冷却口径）。
    */
   readonly nextProbeAt: number;
+  /**
+   * 所属 media 配置代次：初始为 0，agent.json 热重载替换 media 能力时两种模态一起
+   * 进入下一代。结论只能记到接纳该请求时的那一代上。
+   */
+  readonly configGeneration: number;
 }
 
 /** media 模型的模态支持表；两项固定初始化，避免运行期改变对象 shape。 */

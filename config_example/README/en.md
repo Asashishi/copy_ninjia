@@ -16,7 +16,9 @@ cp -n config_example/*.json config/
 
 Never use a copy command that overwrites existing files, and never treat `config_example/` as a
 deployment backup. Files under `config/` contain credentials and should be readable only by the
-service account. Configuration is not hot-reloaded, so manual changes require a restart.
+service account. Runtime edits to `ad_samples.json`, `agent.json`, `mood.json`, and
+`stickers.json` are hot-reloaded; every other file requires a restart after a change (see
+"Editing While Running" below).
 Allowlist, blocklist, and pending-removal state are runtime data rather than deployment
 configuration; they live together in `database/storage.sqlite` and change only through commands
 or an explicit migration script.
@@ -33,13 +35,37 @@ configuration. Truly absent optional capabilities follow the feature boundaries 
 | `telegram.json` | Telegram Bot token and sole super administrator | Startup always fails |
 | `agent.json` | Per-capability AI provider, credential, endpoint, and model | Depends on the capability; see below |
 | `stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
-| `reactions.json` | Candidate words for Telegram reactions | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
+| `g-auth.json` | Google Cloud service-account key for `/translate`; it holds a private key, so this directory ships no example and the operator places it in `config/` out of band | Translation cannot be enabled; active translation sessions stop handling messages, but startup still succeeds |
 
-AI chat also needs `prompt/persona.md`, and Japanese translation needs `g-auth.json` at the project
-root; neither belongs in this directory. An optional file that exists but is invalid aborts startup
-even when its feature is currently disabled.
+AI chat also needs `prompt/persona.md`, which does not belong in this directory. An optional file
+that exists but is invalid aborts startup even when its feature is currently disabled.
+
+## Editing While Running
+
+The bot watches `config/`. About 0.5 seconds after the last save of `ad_samples.json`,
+`agent.json`, `mood.json`, or `stickers.json`, it re-parses the file with the same strict schema
+used at startup:
+
+- Valid content that differs from the current snapshot replaces it and is handed to the Workers
+  that use it; the log records `Reloaded deployment config <path>.`. In-flight model requests
+  finish with the old configuration.
+- A change that fails to parse is rejected as a whole; the log records one error naming the file
+  path, field path, and expected shape, and the bot keeps the last applied configuration. A file
+  left invalid still aborts the next startup.
+- Changes that would alter feature availability are rejected as well and need a restart: adding or
+  deleting any of these four files, or adding or removing the whole `ad_detect` section or any of
+  `text`, `summary`, and `media` in `agent.json`. Adding or removing `image` or `song` takes effect
+  directly.
+- Packs newly added to `stickers.json` start building their catalogs immediately; removed packs
+  are no longer offered to the AI, and their catalogs are cleaned up against the whitelist at the
+  next restart.
+- Moods that still exist in `mood.json` take effect for every chat immediately; a chat whose
+  current mood was removed draws a new one the next time it is used.
+
+`telegram.json`, `prompt/persona.md`, and `g-auth.json` are not hot-reloaded and require a
+restart after a change.
 
 ## `telegram.json`
 
@@ -97,8 +123,8 @@ song tool.
 Vision and voice support for `media` are probed and cached separately on the first real request.
 After an explicit unsupported result, that Worker no longer downloads that media type. Success
 marks it supported; transient network errors leave support unknown so later media can probe again.
-Ordinary Google/OpenAI HTTP requests retry at most five times after the initial failure. A Worker
-or process rebuild clears the probe result and applies the new configuration.
+Ordinary Google/OpenAI HTTP requests retry at most five times after the initial failure. A hot
+reload that replaces `media`, or a Worker or process rebuild, clears the probe result.
 
 ## Disable a Feature Before Removing Its Credential
 
@@ -132,12 +158,6 @@ tables aborts before network access. Migrate legacy JSON deployments once by fol
 `packs` contains Telegram sticker-pack short names, not `t.me` links. It accepts at most five
 unique entries. An empty array disables configured sticker packs. The Bot must be able to read
 every listed pack.
-
-## `reactions.json`
-
-`emotionKeywords` maps Telegram-supported standard reaction emoji to non-empty keyword arrays.
-When model output matches a keyword, the corresponding reaction becomes a candidate. Custom emoji,
-empty keywords, and non-string entries are invalid.
 
 ## `mood.json`
 

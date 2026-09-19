@@ -7,7 +7,6 @@ import { isAiChatConfigured } from "./availability";
 import { getAgentDeploymentConfig } from "../config/agent";
 import { getMoodConfig } from "../config/mood";
 import { getPersona } from "../config/persona";
-import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
 import { beginAiMemoryTeardown, finishAiMemoryTeardown, nextAiMemoryRevision, requestAiMemoryDelete, settleAiMemoryTeardownWorker } from "./memoryMirror";
 import {
@@ -38,8 +37,10 @@ import type {
   AiBotInfo,
   AiChatWorkerEvent,
   AiChatWorkerMessage,
+  AiConfigReloadMessage,
   AiInitMessage,
 } from "../types/aiChat/protocol";
+import type { HotDeploymentConfigChanges } from "../types/config";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import type {
   AiChatInvalidateWaiter,
@@ -192,10 +193,10 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     rejectAllAiChatInvalidateWaiters("AI Worker crashed before completing chat invalidation.");
     settleAiMemoryTeardownWorker();
     // 新 Worker 重新走一遍身份注入与配置快照投递，FIFO 保证它先于任何
-    // record/trigger 到达。重放的是**进程启动时那条 init 消息本身**，因此新
-    // isolate 拿到的配置与旧实例逐字节相同——重建不会顺手加载磁盘上已经被改过
-    // 的 agent.json。重启发生在 initAiChat 调用之前的话 lastInitState.current
-    // 仍是 null，没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
+    // record/trigger 到达。重放的 init 带着主线程当前生效的配置快照（热重载由
+    // syncAiChatConfig 同步改写），新 isolate 不自己读盘。重启发生在 initAiChat
+    // 调用之前的话 lastInitState.current 仍是 null，没有可重放的，新 Worker 等
+    // 本来就该来的那次 initAiChat 调用即可。
     if (lastInitState.current && !postToNext(lastInitState.current)) return;
     for (const [chatId, state] of getChatStateCache()) {
       if (state.aiPersona !== undefined && !postToNext({ type: "persona", chatId, persona: state.aiPersona })) return;
@@ -267,14 +268,13 @@ export function initAiChat(botInfo: AiBotInfo): void {
   }
   initAiChatWorker();
   // isAiChatConfigured() 刚刚走完 readiness，agent 段快照已在主线程 holder 里；
-  // 这里取的就是进程内那唯一一代配置，随 init 一起交给 Worker（见 AiInitMessage）。
+  // 这里取的是主线程当前生效的配置，随 init 一起交给 Worker（见 AiInitMessage）。
   const message: AiInitMessage = {
     type: "init",
     botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
     superAdminUserId: SUPER_ADMIN_USER_ID,
     agent: getAgentDeploymentConfig(),
     mood: getMoodConfig(),
-    reactions: getReactionConfig(),
     stickers: getStickerConfig(),
     persona: getPersona(),
   };
@@ -285,6 +285,34 @@ export function initAiChat(botInfo: AiBotInfo): void {
   lastInitState.current = message;
   aiChatWorkerState.available = true;
 }
+
+/**
+ * 把热重载后主线程已生效的 AI 配置投给 AI Worker（见 app/configReload.ts）。
+ *
+ * 先把 lastInitState 改写成当前快照再投递：投递被拒绝（Worker 正在重建）时，
+ * 重建重放的 init 已经带着这一份。Worker 从未启动或已放弃重启时 lastInitState
+ * 为 null，直接返回，主线程 holder 的新快照留待下次 initAiChat。
+ */
+export function syncAiChatConfig(changes: HotDeploymentConfigChanges): void {
+  const init: AiInitMessage | null = lastInitState.current;
+  if (init === null) return;
+  lastInitState.current = {
+    ...init,
+    agent: getAgentDeploymentConfig(),
+    mood: getMoodConfig(),
+    stickers: getStickerConfig(),
+  };
+  const message: AiConfigReloadMessage = {
+    type: "configReload",
+    agent: changes.aiAgent ? getAgentDeploymentConfig() : undefined,
+    mood: changes.mood ? getMoodConfig() : undefined,
+    stickers: changes.stickers ? getStickerConfig() : undefined,
+  };
+  if (!post(message)) {
+    logger.error("AI Worker rejected the deployment config reload; the next respawn replays the reloaded snapshot.");
+  }
+}
+
 /**
  * 启动时把 diskIOWorker 落盘恢复出的 AI 记忆快照灌回来：先存一份镜像
  * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在

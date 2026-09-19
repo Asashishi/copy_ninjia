@@ -16,7 +16,6 @@ import {
 import { adoptAdSampleConfig, parseAdSampleConfig } from "../packages/config/adSamples";
 import { adoptMoodConfig, parseMoodConfig } from "../packages/config/mood";
 import { adoptPersona } from "../packages/config/persona";
-import { adoptReactionConfig, parseReactionConfig } from "../packages/config/reactions";
 import { adoptStickerConfig, parseStickerConfig } from "../packages/config/stickers";
 import {
   adDetectConfigReadinessCache,
@@ -34,7 +33,6 @@ import {
   AGENT_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   PERSONA_PATH,
-  REACTIONS_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../packages/consts/paths";
 import {
@@ -67,8 +65,8 @@ seedStorageDatabase(identityDatabase, {
 closeStorageDatabase(identityDatabase);
 chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
 
-// agent.json 是唯一不由运行时读盘取得的部署配置：真实进程里主线程解析一次，
-// 再经 AI Worker 的 init 与 Anti-Raid Worker 的 agentConfig 消息投递给两条业务
+// 部署配置快照只由主线程读盘：真实进程里主线程解析后，再经 AI Worker 的
+// init/configReload 与 Anti-Raid Worker 的 agentConfig 消息投递给两条业务
 // 线程（见 packages/config/agent.ts 的边界说明）。测试 isolate 收不到那两条
 // 消息，因此在这里把同一份 config_example/agent.json adopt 进本 isolate 的
 // holder，等价于「快照已经送到」。临时副本里的凭据是测试专用值；需要验证
@@ -80,7 +78,6 @@ adoptAgentDeploymentConfig(parseAgentDeploymentConfig(agentDocument.agent));
 adoptAdDetectAgentConfig(parseAdDetectAgentConfig(agentDocument.agent.ad_detect));
 adoptAdSampleConfig(parseAdSampleConfig(JSON.parse(readFileSync(AD_SAMPLES_CONFIG_PATH, "utf8"))));
 adoptMoodConfig(parseMoodConfig(JSON.parse(readFileSync(MOOD_CONFIG_PATH, "utf8"))));
-adoptReactionConfig(parseReactionConfig(JSON.parse(readFileSync(REACTIONS_CONFIG_PATH, "utf8"))));
 adoptStickerConfig(parseStickerConfig(JSON.parse(readFileSync(STICKERS_CONFIG_PATH, "utf8"))));
 adoptPersona(readFileSync(PERSONA_PATH, "utf8").trim());
 aiChatConfigReadinessCache.current = { ok: true };

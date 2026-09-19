@@ -18,7 +18,7 @@ This page takes a clean environment all the way to “the bot works normally in 
 - **Bun 1.4.2**: required for source installation and development; install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Binary packages include this runtime and need no system Bun. Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
-- **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `g-auth.json` in the project root. When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
+- **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `config/g-auth.json`. When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
 
 `packages/config/googleAuth.ts` strictly parses `g-auth.json`: `client_email` must be a non-empty string and `private_key` a parseable, non-empty RSA PEM private key for RS256 (EC, Ed25519, and RSA-PSS are rejected). `type` is optional; when present it must equal `service_account`. The SDK-consumed `private_key_id`, `project_id`, `quota_project_id`, and `universe_domain` fields are optional non-empty strings. Other metadata is retained verbatim. Validation precedes Worker creation and Telegram connections; errors contain only the file path, field path, and expected form, never credential values.
 
@@ -115,12 +115,14 @@ capability reference. Put bot identity and the super administrator in `config/te
 Configure AI providers, API keys, endpoints, and models per capability in `config/agent.json`.
 To relocate runtime data, set `COPY_NINJIA_DATA_ROOT` in the process environment; when omitted,
 data stays under the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root).
-For translation, save the service-account key as `g-auth.json` in the project root;
-that file is covered by `.gitignore`.
+For translation, save the service-account key as `config/g-auth.json`; the whole `config/`
+directory is covered by `.gitignore`.
 
 ## Project Configuration Files
 
 `config/` is deployment-owned and excluded from Git. Copy it from `config_example/` once, then edit only `config/`; the example directory is not the runtime configuration.
+
+Editing `ad_samples.json`, `agent.json`, `mood.json`, or `stickers.json` while the bot runs hot-reloads it: the main thread watches `config/` and, about 0.5 seconds after the last change, re-parses the file with the same strict schema used at startup, then swaps the snapshot and hands it to the Workers that use it. A change that fails to parse is rejected as a whole and logged as one error, and the process keeps the last applied configuration; a file left invalid still refuses the next startup. Hot reload only replaces the content of configuration already in effect and never changes feature availability: adding or deleting any of these four files, or adding or removing the whole `ad_detect` section or any of `text`/`summary`/`media` in `agent.json`, is rejected with a note to restart. `telegram.json`, `prompt/persona.md`, and `g-auth.json` are not hot-reloaded and require a restart.
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **Contents**: base persona for AI chat.
@@ -133,9 +135,6 @@ that file is covered by `.gitignore`.
 - **`config/stickers.json`** ([example](../../config_example/stickers.json))
   - **Contents**: sticker packs available to the AI, up to 5.
   - **Validation**: [`packages/config/stickers.ts`](../../packages/config/stickers.ts).
-- **`config/reactions.json`** ([example](../../config_example/reactions.json))
-  - **Contents**: emoji reactions available to the AI.
-  - **Validation**: [`packages/config/reactions.ts`](../../packages/config/reactions.ts).
 - **`config/mood.json`** ([example](../../config_example/mood.json))
   - **Contents**: mood tiers, including copy, weights, and weather/time multipliers.
   - **Validation**: [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must
@@ -156,25 +155,26 @@ that file is covered by `.gitignore`.
     plain `http` is limited to `localhost`, `127.0.0.1`, and `::1`, and the URL must carry no
     userinfo and no `#` fragment.
   - **Validation**: [`packages/config/agent.ts`](../../packages/config/agent.ts). Unknown keys,
-    blank keys/models, and invalid providers, URLs, or protocols are rejected. **The whole file is
-    parsed once, by the main thread, at startup**, then handed to each Worker in its init message;
-    Workers only read that snapshot and never touch the disk, and a respawn replays the very same
-    snapshot, so one process never runs two generations of configuration — changes require a full
-    process restart. Vision and voice support are probed independently on their first real media
+    blank keys/models, and invalid providers, URLs, or protocols are rejected. **Only the main thread
+    reads this file**: it parses it once at startup and re-parses it strictly on hot reload, then
+    hands the snapshot to each Worker in its init or reload message; Workers only read the snapshot
+    they received and never touch the disk, and a respawn replays the snapshot currently in effect on
+    the main thread. Vision and voice support are probed independently on their first real media
     request: an explicitly unsupported modality and an endpoint answering 404/405 (missing model or
     wrong path, which also logs one diagnostic pointing at `$.agent.media`) both stop further
-    downloads, while transient failures only back off and never close the capability for good.
+    downloads, while transient failures only back off and never close the capability for good. Once
+    hot reload replaces the `media` capability, both inputs are probed again.
 
 Permanent-allowlist, blocklist, temporary-ad-bypass activity, and pending-removal state are no longer deployment JSON. They live together
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
 SQLite integrity, migration lineage, schema version, JSONB/relational row shapes, and policy disjointness.
-Other inputs are validated per feature: AI chat reads stickers, reactions, moods, persona, and the
+Other inputs are validated per feature: AI chat reads stickers, moods, persona, and the
 chat section of `agent.json`; translation reads `g-auth.json`. A missing input refuses only
 that toggle and that feature's runtime path — it does not block startup. **A file that exists must
 still parse strictly**, though: invalid content refuses startup even when the matching feature is
 currently off (see `validateExistingDeploymentInputs` in
-[`packages/config/readiness.ts`](../../packages/config/readiness.ts)). Results are cached until
-restart.
+[`packages/config/readiness.ts`](../../packages/config/readiness.ts)). Availability results are
+cached per process; adding a missing file requires a restart.
 
 ### Initializing Identity Storage
 
@@ -225,7 +225,7 @@ Stop the old process and back up the complete deployment-owned `config/` directo
 migrate models, endpoints, and API keys from the former `gemini.json`, `openai.json`, and AI
 environment variables into the unified `agent.json`; never overwrite deployment configuration
 with `config_example/`. Runtime selections in `state.json.global.model` are no longer read.
-Model changes now require editing the relevant capability while stopped and restarting.
+Model changes are made by editing the relevant capability in `agent.json`; saving the file hot-reloads it.
 
 Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration **on 9.1.5** (that script was removed in 9.2.0, see [Operations](07-operations.md#identity-storage-migration)); never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/telegram.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
 

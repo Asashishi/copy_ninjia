@@ -141,10 +141,10 @@ async function checkSuccessfulReplacement(): Promise<void> {
   assertEqual(replacementStats.uid, originalOwner.uid, "原子替换必须保持既有配置属主");
   assertEqual(replacementStats.gid, originalOwner.gid, "原子替换必须保持既有配置属组");
   const exampleMode: number = statSync(
-    join(fixture.worktree, "config_example", "reactions.json")
+    join(fixture.worktree, "config_example", "stickers.json")
   ).mode & 0o777;
   const deployedExampleMode: number = statSync(
-    join(fixture.configRoot, "reactions.json")
+    join(fixture.configRoot, "stickers.json")
   ).mode & 0o777;
   assertEqual(
     deployedExampleMode,

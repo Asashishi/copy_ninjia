@@ -174,6 +174,17 @@ export function postAntiRaid(message: AntiRaidWorkerMessage): boolean {
   return post(message);
 }
 
+/**
+ * 热重载替换广告检测配置后，把主线程当前快照投给 Worker（见 app/configReload.ts）。
+ * 投递被拒绝时由重建路径的 replayAdDetectAgentConfig 按同一份 holder 补齐。
+ */
+export function syncAntiRaidAgentConfig(): void {
+  if (!antiRaidRuntimeState.initialized) return;
+  if (!replayAdDetectAgentConfig(post)) {
+    logger.error("Anti-Raid Worker rejected the ad detection config reload; the next respawn replays the reloaded snapshot.");
+  }
+}
+
 /** 群人设写入和删除完成后推送风格；不可用的 Worker 在重建时重放当前群状态。 */
 export function syncAntiRaidAtmosphere(chatId: number): void {
   if (!antiRaidRuntimeState.initialized) return;

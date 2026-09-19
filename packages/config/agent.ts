@@ -14,6 +14,7 @@ import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/record";
 import type {
   AdDetectAgentConfig,
   AgentCapabilityConfig,
+  AgentConfigSnapshots,
   AgentDeploymentConfig,
   AgentImageCapabilityConfig,
   AgentProvider,
@@ -37,15 +38,15 @@ import type {
  * **读盘只发生在主线程。** 本文件分成三段边界，谁能调哪一段由所在线程决定：
  *
  * 1. `parse*` / `load*` / `validateAgentDeploymentConfig`：解析与启动总闸，只有
- *    主线程走。总闸解析成功后把两段结果放进本 isolate 的 holder，成为进程内
- *    唯一权威快照。
+ *    主线程走。总闸解析成功后把两段结果放进本 isolate 的 holder，成为主线程的
+ *    权威快照；运行期由 config/reload.ts 用同一份 loadAgentConfigSnapshots 严格
+ *    解析改过的文件，通过后整体替换 holder。
  * 2. `ensure*`：主线程 readiness 探测入口。holder 已被总闸填好就直接返回，
  *    否则解析一次并填充；抛出的错误由 config/readiness.ts 缓存成功能结论。
- * 3. `get*` / `adopt*`：**只读 holder，绝不读盘**。Worker 在初始化消息里收到
- *    主线程的快照后 adopt 一次，之后每条群消息的模型名、凭据与端点都只从
- *    holder 取。Worker 崩溃重建会重放同一份快照（见 aiChat/workerBridge.ts 与
- *    antiRaid/workerBridge.ts），因此同一进程内不可能出现两代配置——「改配置
- *    必须重启进程」这句话对主线程和两条业务线程同时成立。
+ * 3. `get*` / `adopt*`：**只读 holder，绝不读盘**。Worker 只 adopt 主线程经初始化
+ *    消息与热重载消息投递的快照，每条群消息的模型名、凭据与端点都只从 holder 取。
+ *    Worker 崩溃重建重放的是主线程当前生效的那份快照（见 aiChat/workerBridge.ts
+ *    与 antiRaid/workerBridge.ts），Worker 自己从不读盘。
  */
 
 /** 解码必填非空字符串。 */
@@ -230,10 +231,10 @@ async function readAgentConfigRecord(
   return requireAgentRecord(await readJsonInput(path), path);
 }
 
-/** 启动总闸严格校验整份已存在的 agent.json，并填充默认路径缓存。 */
-export async function validateAgentDeploymentConfig(
+/** 严格解析整份已存在的 agent.json：已出现的每项能力都必须合法，缺省的段返回 null。 */
+export async function loadAgentConfigSnapshots(
   path: string = AGENT_CONFIG_PATH
-): Promise<void> {
+): Promise<AgentConfigSnapshots> {
   const record: Readonly<Record<string, unknown>> = await readAgentConfigRecord(path);
   if (!hasOnlyKeys(record, AGENT_CAPABILITY_NAMES)) {
     return invalidInput(
@@ -255,12 +256,20 @@ export async function validateAgentDeploymentConfig(
   const hasAiChatCore: boolean = AGENT_AI_CHAT_REQUIRED_CAPABILITIES.every(
     (key: string): boolean => Object.hasOwn(record, key)
   );
-  const agentConfig: AgentDeploymentConfig | undefined = hasAiChatCore
+  const agentConfig: AgentDeploymentConfig | null = hasAiChatCore
     ? parseAgentDeploymentConfig(record, path)
-    : undefined;
+    : null;
+  return { adDetect: adDetectConfig ?? null, agent: agentConfig };
+}
+
+/** 启动总闸严格校验整份已存在的 agent.json，并填充默认路径缓存。 */
+export async function validateAgentDeploymentConfig(
+  path: string = AGENT_CONFIG_PATH
+): Promise<void> {
+  const snapshots: AgentConfigSnapshots = await loadAgentConfigSnapshots(path);
   if (path === AGENT_CONFIG_PATH) {
-    adDetectAgentConfigCache.current = adDetectConfig ?? null;
-    agentDeploymentConfigCache.current = agentConfig ?? null;
+    adDetectAgentConfigCache.current = snapshots.adDetect;
+    agentDeploymentConfigCache.current = snapshots.agent;
   }
 }
 
@@ -308,17 +317,18 @@ export function adDetectAgentConfigSnapshot(): AdDetectAgentConfig | null {
 }
 
 /**
- * Worker 侧接管主线程投递过来的 ad_detect 快照。
+ * 接管已严格校验的 ad_detect 快照：Worker 侧来自主线程的初始化、重建与热重载
+ * 消息，主线程侧来自 config/reload.ts。
  *
- * 每次初始化/重建都无条件赋值（含显式 null），不做 `??=`：崩溃重建的新 isolate
- * holder 本来就是空的，写成条件赋值只会在将来有人复用这条通道时把「这次明确
- * 没配」误读成「沿用上次」。
+ * 每次都无条件整体赋值（含显式 null），不做 `??=`，也不就地改写旧对象：「这次
+ * 明确没配」不得被读成「沿用上次」，logger 的凭据脱敏也按 holder 的对象身份
+ * 判断是否重算。
  */
 export function adoptAdDetectAgentConfig(config: AdDetectAgentConfig | null): void {
   adDetectAgentConfigCache.current = config;
 }
 
-/** Worker 侧接管主线程投递过来的 AI 对话能力快照；语义同上。 */
+/** 接管已严格校验的 AI 对话能力快照；来源与语义同上。 */
 export function adoptAgentDeploymentConfig(config: AgentDeploymentConfig): void {
   agentDeploymentConfigCache.current = config;
 }
@@ -326,7 +336,7 @@ export function adoptAgentDeploymentConfig(config: AgentDeploymentConfig): void 
 /**
  * 读取本 isolate 的 ad_detect 配置。**只读 holder，不读盘。**
  *
- * 主线程由启动总闸填充，Anti-Raid Worker 由初始化消息填充。取不到只可能是
+ * 主线程由启动总闸与热重载填充，Anti-Raid Worker 由主线程的 agentConfig 消息填充。取不到只可能是
  * 「这个部署没配广告检测」或「配置消息还没到」，两种都必须 fail-closed：主线程
  * 那道 adDetectConfigReadiness 门禁本就拦住了候选消息，走到这里说明调用序有
  * 问题，猜一个默认值只会让判定用着不存在的模型继续拉黑人。

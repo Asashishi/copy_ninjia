@@ -112,13 +112,15 @@ The contract is split into five minimal per-capability interfaces (`AiTextProvid
 ## Changing the Persona or JSON Configuration
 
 - Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
-- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `telegram.json` loads strictly before network access; `stickers.json`, `reactions.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. The permanent allowlist, blocklist, temporary-ad-bypass activity, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, the matching `packages/database/codec/` module, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
+- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `telegram.json` loads strictly before network access; `stickers.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. Runtime edits to `ad_samples.json`, `agent.json`, `mood.json`, and `stickers.json` hot-reload, with the rejection rules in [04 Runtime Invariants](04-invariants.md); every other deployment input requires a restart after a change. The permanent allowlist, blocklist, temporary-ad-bypass activity, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, the matching `packages/database/codec/` module, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
+- The emoji available to the AI `add_reaction` tool are fixed in `AI_REACTION_EMOJIS` in [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts); its element type is restricted to Telegram standard reactions, and changes ship with the code.
 
 ## Adding Deployment JSON Configuration
 
 1. Declare and strictly parse it in `packages/config/<domain>.ts`, including required/optional fields, format validation, and rejection of unknown keys. Parsing failure must block startup.
 2. Add a structure-only example without real credentials under `config_example/<domain>.json`, and document its fields in [`config_example/README/en.md`](../../config_example/README/en.md).
-3. Synchronize the root README's “Configuration” section and the relevant environment-setup entry points.
+3. If the file must take effect while running, add it to the reads and decisions in [`packages/config/reload.ts`](../../packages/config/reload.ts), hand the new snapshot to the threads holding a copy through the existing Worker protocols, and invalidate caches derived from the old snapshot on the Worker side.
+4. Synchronize the root README's “Configuration” section and the relevant environment-setup entry points.
 
 ## Adding a Runtime Cache
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { AiTextResult } from "../../../packages/types/aiChat/provider";
+import type { AiTextResult, MediaInputModalityState } from "../../../packages/types/aiChat/provider";
 import type { TelegramWorkerDownloadFileResult } from "../../../packages/types/telegramWorker";
 
 const downloadTelegramFileFromMain = mock(async (..._args: unknown[]): Promise<TelegramWorkerDownloadFileResult> => ({
@@ -37,6 +37,9 @@ const {
   mediaInputSupportCache,
   recordMediaInputResult,
   getMediaInputState,
+  getMediaInputSupport,
+  resetMediaInputSupport,
+  setMediaInputProbe,
 } = await import("../../../packages/cache/workers/aiChat/mediaInputSupport");
 const {
   MEDIA_MAX_DOWNLOAD_BYTES,
@@ -175,8 +178,8 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
   test("最后一个消费者取消：中止共享请求，并摘除注定为 null 的缓存条目", async () => {
     // 支持度预置为已确认，避开首次探测那条路，把用例聚焦在引用计数与缓存摘除上。
     mediaInputSupportCache.current = {
-      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0 },
-      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
     };
     const controller: AbortController = new AbortController();
     const requestSignal: { current: AbortSignal | null } = { current: null };
@@ -387,7 +390,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     expect(describeVision).toHaveBeenCalledTimes(2);
     expect(downloadedFileIds()).toEqual(["single-a", "single-b"]);
     expect(mediaInputProbeCache.current?.vision).not.toBeNull();
-    expect(mediaInputSupportCache.current?.vision).toEqual({ support: "unknown", transientFailures: 0, nextProbeAt: 0 });
+    expect(mediaInputSupportCache.current?.vision).toEqual({ support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 });
 
     secondProbe.resolve({ ok: true, text: "第二份自己的描述" });
     await expect(second).resolves.toBe("第二份自己的描述");
@@ -437,8 +440,8 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("已确认支持时同一次端点故障里的并发失败只计一次，退避从 30 秒起", async () => {
     mediaInputSupportCache.current = {
-      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0 },
-      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
     };
     const album: ControlledVisionCall[] = [];
     const pending: Promise<string | null>[] = [];
@@ -462,8 +465,8 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("同批请求错峰失败跨过退避窗口也只计一次，后续真实探测失败才推进下一档", async () => {
     mediaInputSupportCache.current = {
-      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0 },
-      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+      vision: { support: "supported", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
     };
     const time = spyOn(Date, "now").mockReturnValue(1_000_000);
     try {
@@ -520,26 +523,28 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     }
 
     recordMediaInputResult({ capability: "vision", result: { ok: true, text: "恢复" }, attemptState: getMediaInputState("vision"), now });
-    expect(mediaInputSupportCache.current!.vision).toEqual({ support: "supported", transientFailures: 0, nextProbeAt: 0 });
+    expect(mediaInputSupportCache.current!.vision).toEqual({ support: "supported", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 });
     recordMediaInputResult({ capability: "vision", result: transient, attemptState: getMediaInputState("vision"), now: now + 1 });
     expect(mediaInputSupportCache.current!.vision).toEqual({
       support: "supported",
       transientFailures: 1,
       nextProbeAt: now + 1 + MEDIA_PROBE_BACKOFF_BASE_MS,
+      configGeneration: 0,
     });
   });
 
   test("墙钟回拨遗留的过远 nextProbeAt 不算退避窗口，下一次瞬时失败照常计数并重新计时", () => {
     const now: number = 5_000_000;
     mediaInputSupportCache.current = {
-      vision: { support: "unknown", transientFailures: 1, nextProbeAt: now + 24 * 60 * 60_000 },
-      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+      vision: { support: "unknown", transientFailures: 1, nextProbeAt: now + 24 * 60 * 60_000, configGeneration: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
     };
     recordMediaInputResult({ capability: "vision", result: { ok: false, retryable: false, mediaFailure: "transient" }, attemptState: getMediaInputState("vision"), now });
     expect(mediaInputSupportCache.current.vision).toEqual({
       support: "unknown",
       transientFailures: 2,
       nextProbeAt: now + MEDIA_PROBE_BACKOFF_BASE_MS * 2,
+      configGeneration: 0,
     });
   });
 
@@ -613,6 +618,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       support: "supported",
       transientFailures: 0,
       nextProbeAt: 0,
+      configGeneration: 0,
     });
   });
 
@@ -623,8 +629,9 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
         transientFailures: 1,
         // 任何一档退避都不可能排到一天之后：只可能是系统时钟往回拨了。
         nextProbeAt: Date.now() + 24 * 60 * 60_000,
+        configGeneration: 0,
       },
-      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0 },
+      voice: { support: "unknown", transientFailures: 0, nextProbeAt: 0, configGeneration: 0 },
     };
 
     await expect(describeMedia({
@@ -648,6 +655,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       support: "unknown",
       transientFailures: 0,
       nextProbeAt: 0,
+      configGeneration: 0,
     });
     // 没有退避，下一份媒体照常下载并请求。
     await expect(describeMedia({ kind: "photo", fileId: "good", fileUniqueId: "good-unique", voiceMime: undefined, voiceDurationSeconds: 0 }))
@@ -748,5 +756,55 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     // 下载 + 模型请求（键空间不冲突，file_unique_id 本就是 Telegram 全局唯一）。
     expect(second).toBe(first);
     await first;
+  });
+});
+
+describe("media 配置代次", () => {
+  test("热重载替换 media 能力后两种模态回到未探测状态，在途探测登记一并丢弃", () => {
+    recordMediaInputResult({
+      capability: "voice",
+      result: { ok: false, retryable: false, mediaFailure: "unsupported" },
+      attemptState: getMediaInputState("voice"),
+    });
+    setMediaInputProbe("vision", new Promise<AiTextResult>((): void => {}));
+
+    resetMediaInputSupport();
+
+    for (const capability of ["vision", "voice"] as const) {
+      expect(getMediaInputState(capability)).toEqual({
+        support: "unknown",
+        transientFailures: 0,
+        nextProbeAt: 0,
+        configGeneration: 1,
+      });
+    }
+    expect(mediaInputProbeCache.current).toBeNull();
+  });
+
+  test("旧代次请求迟到的任何结论都不改写新代次状态", () => {
+    const oldAttempt: MediaInputModalityState = getMediaInputState("vision");
+    resetMediaInputSupport();
+    const fresh: MediaInputModalityState = getMediaInputState("vision");
+
+    recordMediaInputResult({
+      capability: "vision",
+      result: { ok: false, retryable: false, mediaFailure: "unsupported" },
+      attemptState: oldAttempt,
+    });
+    recordMediaInputResult({ capability: "vision", result: { ok: true, text: "旧模型" }, attemptState: oldAttempt });
+    recordMediaInputResult({
+      capability: "vision",
+      result: { ok: false, retryable: false, mediaFailure: "transient" },
+      attemptState: oldAttempt,
+    });
+    expect(getMediaInputState("vision")).toBe(fresh);
+
+    recordMediaInputResult({
+      capability: "vision",
+      result: { ok: false, retryable: false, mediaFailure: "unsupported" },
+      attemptState: fresh,
+    });
+    expect(getMediaInputSupport("vision")).toBe("unsupported");
+    expect(getMediaInputState("vision").configGeneration).toBe(fresh.configGeneration);
   });
 });

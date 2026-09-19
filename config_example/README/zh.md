@@ -14,8 +14,9 @@ cp -n config_example/*.json config/
 ```
 
 不要使用会覆盖已有文件的复制命令，也不要把 `config_example/` 当作部署配置的备份。
-`config/` 中包含凭据，建议只允许服务账号读取。配置在进程内不会热重载，手工修改后
-必须重启。白名单、黑名单和待完成处置不属于部署配置，统一保存在运行时数据根的
+`config/` 中包含凭据，建议只允许服务账号读取。运行中修改 `ad_samples.json`、
+`agent.json`、`mood.json`、`stickers.json` 会热重载，其余文件修改后必须重启，详见下文
+「运行中修改」。白名单、黑名单和待完成处置不属于部署配置，统一保存在运行时数据根的
 `database/storage.sqlite`，只通过命令和显式迁移脚本修改。
 
 所有 JSON 都按严格 schema 解析：文件只要存在，未知字段、拼错的字段、错误类型、
@@ -29,12 +30,30 @@ cp -n config_example/*.json config/
 | `telegram.json` | Telegram Bot token 与唯一超级管理员 | 始终拒绝启动 |
 | `agent.json` | 各项 AI 能力自己的 provider、凭据、端点和模型 | 由能力决定，见下文 |
 | `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `reactions.json` | AI 文本情绪到 Telegram reaction 的候选词 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；含私钥，本目录不提供示例，由部署方带外放入 `config/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
 
-AI 对话还依赖 `prompt/persona.md`，日语翻译依赖项目根目录下的 `g-auth.json`；两者不在
-本目录。任一可选配置文件已经存在但内容非法时，即使对应功能当前关闭也会拒绝启动。
+AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文件已经存在但内容非法时，
+即使对应功能当前关闭也会拒绝启动。
+
+## 运行中修改
+
+机器人监听 `config/`。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`
+最后一次保存约 0.5 秒后，按启动时同一套严格 schema 重新解析：
+
+- 解析通过且内容有变化：替换快照并投给相关 Worker，日志记一行
+  `Reloaded deployment config <路径>.`；在途的模型请求按旧配置完成。
+- 解析失败：整份改动被拒绝，日志记一条带文件路径、字段路径与期望形态的错误，机器人
+  继续使用上一份已生效配置。文件若一直不修，下次重启时启动总闸会拒绝启动。
+- 会改变功能可用性的改动同样被拒绝，须重启生效：新增或删除这四份文件；在
+  `agent.json` 里整段增删 `ad_detect`，或增删 `text`、`summary`、`media` 中任一项。
+  `image`、`song` 的增删直接生效。
+- `stickers.json` 新加入的贴纸包立即开始生成目录；移出的包不再供 AI 使用，其目录在
+  下次重启时按白名单清理。
+- `mood.json` 中仍然存在的心情对各群立即生效；当前心情已被删除的群在下次用到时重抽。
+
+`telegram.json`、`prompt/persona.md` 与 `g-auth.json` 不热重载，修改后须重启。
 
 ## `telegram.json`
 
@@ -87,8 +106,8 @@ OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provid
 
 `media` 的视觉与语音输入支持度分别在第一次真实请求时探测和缓存。明确不支持后，
 当前 Worker 生命周期内不再下载该类媒体；成功后记为支持；网络等瞬时错误保持未知，
-后续媒体仍可再探测。普通 Google/OpenAI HTTP 请求最多在首次失败后重试五次，配置
-修改或 Worker/进程重建后会重新探测。
+后续媒体仍可再探测。普通 Google/OpenAI HTTP 请求最多在首次失败后重试五次；`media`
+被热重载替换或 Worker/进程重建后会重新探测。
 
 ## 撤掉凭据之前先关掉功能
 
@@ -115,12 +134,6 @@ Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限�
 
 `packs` 是允许 AI 使用的 Telegram 贴纸包 short name 数组，不是 `t.me` 链接。最多
 配置 5 个，不能重复；空数组表示 AI 不使用配置贴纸包。Bot 必须能读取这些贴纸包。
-
-## `reactions.json`
-
-`emotionKeywords` 把 Telegram 支持的标准 reaction emoji 映射到非空关键词数组。
-模型输出命中关键词时会选择对应 reaction；自定义 emoji、空关键词和非字符串条目
-都会被拒绝。
 
 ## `mood.json`
 

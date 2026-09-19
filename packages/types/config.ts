@@ -3,16 +3,7 @@
  * 缓存 holder 见 packages/cache/perThread/config.ts）。
  */
 
-import type { ReactionTypeEmoji } from "grammy/types";
 import type { MoodOption } from "./aiChat/mood";
-
-/** Telegram Bot API 标准 emoji 反应的精确联合。 */
-export type ReactionEmoji = ReactionTypeEmoji["emoji"];
-
-/** reactions.json 的严格结构。 */
-export interface ReactionConfig {
-  readonly emotionKeywords: Readonly<Partial<Record<ReactionEmoji, readonly string[]>>>;
-}
 
 /** stickers.json 的严格结构。 */
 export interface StickerConfig {
@@ -125,6 +116,47 @@ export interface AgentDeploymentConfig {
   readonly image?: AgentImageCapabilityConfig;
   /** 缺省表示不提供生歌工具；实现不支持时同样不会注册对应工具。 */
   readonly song?: AgentCapabilityConfig;
+}
+
+/**
+ * 整份 config/agent.json 严格解析后的两段快照；null 表示该段在文件里缺省
+ * （文件本身缺省时两段都是 null）。分段边界见 config/agent.ts。
+ */
+export interface AgentConfigSnapshots {
+  readonly adDetect: AdDetectAgentConfig | null;
+  readonly agent: AgentDeploymentConfig | null;
+}
+
+/**
+ * 一份可热重载部署文件的一次读取：文件真正不存在、严格解析通过，或带安全诊断
+ * 的失败（诊断口径同 InputValidationError，只含文件路径、字段路径与期望形态）。
+ */
+export type HotConfigRead<T> =
+  | { readonly kind: "absent" }
+  | { readonly kind: "loaded"; readonly value: T }
+  | { readonly kind: "invalid"; readonly reason: string };
+
+/** config/reload.ts 对四份可热重载部署文件的一轮读取。 */
+export interface HotDeploymentConfigReads {
+  readonly adSamples: HotConfigRead<AdSampleConfig>;
+  readonly agent: HotConfigRead<AgentConfigSnapshots>;
+  readonly mood: HotConfigRead<MoodConfig>;
+  readonly stickers: HotConfigRead<StickerConfig>;
+}
+
+/** 一轮热重载实际替换的主线程快照、成功替换的文件与被拒绝变更的诊断。 */
+export interface HotDeploymentConfigChanges {
+  /** agent.json 的 ad_detect 段快照已替换。 */
+  readonly adDetect: boolean;
+  /** agent.json 的 AI 对话能力段快照已替换。 */
+  readonly aiAgent: boolean;
+  readonly adSamples: boolean;
+  readonly mood: boolean;
+  readonly stickers: boolean;
+  /** 至少替换了一份快照的文件路径。 */
+  readonly reloadedPaths: readonly string[];
+  /** 被拒绝变更的英文诊断；对应 holder 保留上一份已校验快照。 */
+  readonly rejections: readonly string[];
 }
 
 /** 一份坏掉的部署文件：文件名给人看，诊断给日志看。 */

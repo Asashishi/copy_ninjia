@@ -18,8 +18,9 @@ This page answers “where does this code live, and where should new code go?”
   - **Contents**: the project’s MIT [`LICENSE`](../../LICENSES/LICENSE) and [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt) for the Han variant data.
 - **`packages/app/`**
   - **Responsibility**: startup/shutdown lifecycle, the startup validation entry point for deployment
-    inputs that already exist, handler registration, command menu, update runner, and lifecycle side-effect composition.
-  - **Representative files**: `lifecycle.ts`, `lifecycleDependencies.ts`, `featurePreflight.ts`,
+    inputs that already exist, `config/` hot-reload watching and distribution, handler registration,
+    command menu, update runner, and lifecycle side-effect composition.
+  - **Representative files**: `lifecycle.ts`, `lifecycleDependencies.ts`, `featurePreflight.ts`, `configReload.ts`,
     `registerHandlers.ts`, and `updateRunner.ts` / `updateFetcher.ts`. `ApplicationLifecycleDependencies` is inferred
     from and colocated with the composition object, avoiding a reverse dependency from shared types into `app/`.
 - **`packages/commands/`**
@@ -61,8 +62,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts` plus `lockdown/` (the `apply`/`persistence`/`restore`/`announcement`/`adopt` lifecycle segments), `replyAdmission.ts`,
     `adDetectAdmission.ts`, `temporaryAdBypass.ts`.
 - **`packages/config/`**
-  - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
-  - **Representative files**: `telegram.ts`, `telegramInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
+  - **Responsibility**: strict schemas, process snapshots, and hot-reload decisions for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
+  - **Representative files**: `telegram.ts`, `telegramInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, `readiness.ts`, and `reload.ts`.
 - **`packages/database/`**
   - **Responsibility**: the shared SQLite (identity policy plus chat state) schema, codecs, row validation, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
   - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `temporaryAdBypass.ts`, `aiContext.ts`, `migration.ts`, `initialization.ts`, `inspection.ts`), and `validation/storageRows.ts`.
@@ -86,7 +87,7 @@ This page answers “where does this code live, and where should new code go?”
     bundle shaping, verdicts, and disposal on a hit.
   - **Representative files**: `queue.ts` (entry point and tick), `queueState.ts` (admission
     predicates), `verdict.ts` (verdict and disposal orchestration), `bundle.ts`, `classifier.ts`,
-    `disposal.ts`.
+    `disposal.ts`, and `config.ts` (adopting configuration snapshots posted by the main thread).
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.

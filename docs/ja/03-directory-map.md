@@ -17,9 +17,9 @@
 - **`LICENSES/`**
   - **内容**：プロジェクトの MIT [`LICENSE`](../../LICENSES/LICENSE) と、漢字変体データの [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt)。
 - **`packages/app/`**
-  - **責務**：起動・終了ライフサイクル、すでに存在するデプロイ入力の起動時検証入口、handler
-    登録、コマンドメニュー、update runner、ライフサイクル副作用の composition。
-  - **代表的なファイル**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、
+  - **責務**：起動・終了ライフサイクル、すでに存在するデプロイ入力の起動時検証入口、`config/`
+    hot reload の監視と配布、handler 登録、コマンドメニュー、update runner、ライフサイクル副作用の composition。
+  - **代表的なファイル**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、`configReload.ts`、
     `registerHandlers.ts`、`updateRunner.ts` / `updateFetcher.ts`。`ApplicationLifecycleDependencies` は composition object
     から推論して同じ場所に置き、共有型レイヤーから `app/` への逆依存を避けます。
 - **`packages/commands/`**
@@ -59,8 +59,8 @@
   - **代表的なファイル**：`verification.ts` と `verification/`（`join`/`pending`/`terminal`/`disable` の 4 区分）、`lockdown.ts` と `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt` の 5 区分）、`replyAdmission.ts`、
     `adDetectAdmission.ts`、`temporaryAdBypass.ts`。
 - **`packages/config/`**
-  - **責務**：deployment `config/*.json` の厳密 schema と process snapshot、feature 単位の readiness 判定。identity policy はここに置きません。
-  - **代表的なファイル**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
+  - **責務**：deployment `config/*.json` の厳密 schema、process snapshot、hot reload 判定、feature 単位の readiness 判定。identity policy はここに置きません。
+  - **代表的なファイル**：`telegram.ts`、`telegramInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`、`reload.ts`。
 - **`packages/database/`**
   - **責務**：共有 SQLite（identity policy と chat state）の schema、codec、行検証、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
   - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`codec/chatQa.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`chatQa.ts`、`temporaryAdBypass.ts`、`aiContext.ts`、`migration.ts`、`initialization.ts`、`inspection.ts`）、`validation/storageRows.ts`。
@@ -82,7 +82,8 @@
   - **責務**：provider routed 広告検出パイプライン。バッチキュー、送信者ごとの
     メッセージ束の整形、判定、命中時の処分を含む。
   - **代表的なファイル**：`queue.ts`（入口と tick）、`queueState.ts`（受理判定）、
-    `verdict.ts`（判定と処分のオーケストレーション）、`bundle.ts`、`classifier.ts`、`disposal.ts`。
+    `verdict.ts`（判定と処分のオーケストレーション）、`bundle.ts`、`classifier.ts`、`disposal.ts`、
+    `config.ts`（main thread から届く設定 snapshot の取り込み）。
 - **`packages/infra/`**
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。

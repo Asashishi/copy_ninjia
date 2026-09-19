@@ -1,0 +1,127 @@
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
+import { waitUntil } from "../helpers/waitUntil";
+import type { HotDeploymentConfigChanges, MoodConfig, StickerConfig } from "../../packages/types/config";
+
+const syncAiChatConfig = mock((_changes: HotDeploymentConfigChanges): void => {});
+const syncAntiRaidAgentConfig = mock((): void => {});
+const loggerLog = mock((..._args: unknown[]): void => {});
+const loggerError = mock((..._args: unknown[]): void => {});
+const TEST_DEBOUNCE_MS: number = 100;
+
+mock.module("../../packages/aiChat", () => ({ syncAiChatConfig }));
+mock.module("../../packages/antiRaid", () => ({ syncAntiRaidAgentConfig }));
+mock.module("../../packages/infra/logger", () => ({
+  logger: loggerStub({ log: loggerLog, error: loggerError }),
+}));
+mock.module("../../packages/consts/configReload", () => ({
+  CONFIG_RELOAD_DEBOUNCE_MS: TEST_DEBOUNCE_MS,
+}));
+
+const { quiesceConfigReload, startConfigReload } = await import("../../packages/app/configReload");
+const { configReloadRuntime } = await import("../../packages/cache/main/configReload");
+const { defaultMoodConfigCache, defaultStickerConfigCache } = await import("../../packages/cache/perThread/config");
+const { MOOD_CONFIG_PATH, STICKERS_CONFIG_PATH } = await import("../../packages/consts/paths");
+
+const originalMoodText: string = await Bun.file(MOOD_CONFIG_PATH).text();
+const originalStickerText: string = await Bun.file(STICKERS_CONFIG_PATH).text();
+const originalMood: MoodConfig | null = defaultMoodConfigCache.current;
+const originalStickers: StickerConfig | null = defaultStickerConfigCache.current;
+
+/** 让一份合法心情表的档位名随编号变化，便于区分每一轮。 */
+function moodDocument(label: string): string {
+  return `${JSON.stringify({ moods: [{ name: label, weight: 100, instruction: `${label}。` }] })}\n`;
+}
+
+/** 留出防抖窗口加一轮读取的时间；只用于启动对账与「不该发生」的负向断言。 */
+async function settle(): Promise<void> {
+  await Bun.sleep(TEST_DEBOUNCE_MS * 3);
+}
+
+beforeEach((): void => {
+  syncAiChatConfig.mockClear();
+  syncAntiRaidAgentConfig.mockClear();
+  loggerLog.mockClear();
+  loggerError.mockClear();
+});
+
+afterEach(async (): Promise<void> => {
+  quiesceConfigReload();
+  await Bun.write(MOOD_CONFIG_PATH, originalMoodText);
+  await Bun.write(STICKERS_CONFIG_PATH, originalStickerText);
+  defaultMoodConfigCache.current = originalMood;
+  defaultStickerConfigCache.current = originalStickers;
+});
+
+afterAll((): void => {
+  quiesceConfigReload();
+});
+
+describe("config/ 目录监听", () => {
+  test("启动时对账一轮；内容未变时不分发也不记日志", async () => {
+    startConfigReload();
+    await settle();
+    expect(syncAiChatConfig).not.toHaveBeenCalled();
+    expect(syncAntiRaidAgentConfig).not.toHaveBeenCalled();
+    expect(loggerLog).not.toHaveBeenCalled();
+    expect(loggerError).not.toHaveBeenCalled();
+    expect(configReloadRuntime.watcher).not.toBeNull();
+  });
+
+  test("文件改动在防抖后替换主线程快照并只分发给持有副本的 Worker", async () => {
+    startConfigReload();
+    await settle();
+    await Bun.write(MOOD_CONFIG_PATH, moodDocument("平静"));
+
+    expect(await waitUntil((): boolean => syncAiChatConfig.mock.calls.length > 0)).toBe(true);
+    const changes: HotDeploymentConfigChanges = syncAiChatConfig.mock.calls[0]![0];
+    expect(changes.mood).toBe(true);
+    expect(changes.stickers).toBe(false);
+    expect(changes.aiAgent).toBe(false);
+    expect(defaultMoodConfigCache.current?.moods[0]?.name).toBe("平静");
+    expect(syncAntiRaidAgentConfig).not.toHaveBeenCalled();
+    expect(loggerLog).toHaveBeenCalledWith(`Reloaded deployment config ${MOOD_CONFIG_PATH}.`);
+  });
+
+  test("连续写入合并到防抖窗口之后，只应用最后一份内容", async () => {
+    startConfigReload();
+    await settle();
+    for (let index: number = 0; index < 5; index++) {
+      await Bun.write(MOOD_CONFIG_PATH, moodDocument(`档位${index}`));
+    }
+
+    expect(await waitUntil((): boolean => defaultMoodConfigCache.current?.moods[0]?.name === "档位4")).toBe(true);
+    await settle();
+    expect(syncAiChatConfig).toHaveBeenCalledTimes(1);
+  });
+
+  test("非法内容被拒绝并记错误日志，修好之后照常生效", async () => {
+    startConfigReload();
+    await settle();
+    await Bun.write(STICKERS_CONFIG_PATH, "{\"packs\": [\"bad name\"]}\n");
+
+    expect(await waitUntil((): boolean => loggerError.mock.calls.length > 0)).toBe(true);
+    expect(loggerError.mock.calls[0]![0]).toBe(
+      "Rejected a runtime deployment config change; keeping the last validated snapshot: " +
+      `${STICKERS_CONFIG_PATH}: $.packs[0] must be a valid Telegram sticker pack short name.`
+    );
+    expect(syncAiChatConfig).not.toHaveBeenCalled();
+
+    await Bun.write(STICKERS_CONFIG_PATH, "{\"packs\": [\"NewPack_1\"]}\n");
+    expect(await waitUntil((): boolean => syncAiChatConfig.mock.calls.length > 0)).toBe(true);
+    expect(syncAiChatConfig.mock.calls[0]![0].stickers).toBe(true);
+  });
+
+  test("停止后不再接纳事件，watcher 与 timer 均已释放", async () => {
+    startConfigReload();
+    await settle();
+    quiesceConfigReload();
+    expect(configReloadRuntime.watcher).toBeNull();
+    expect(configReloadRuntime.debounceTimer).toBeNull();
+
+    await Bun.write(MOOD_CONFIG_PATH, moodDocument("停机后"));
+    await settle();
+    expect(syncAiChatConfig).not.toHaveBeenCalled();
+    expect(defaultMoodConfigCache.current).toBe(originalMood);
+  });
+});

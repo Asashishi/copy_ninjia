@@ -164,6 +164,6 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
   fi
 fi
 
-if [ ! -e g-auth.json ]; then
-  info "未发现 g-auth.json：/translate 翻译不可用。需要的话把 GCP 服务账号密钥放到仓库根再重启。"
+if [ ! -e config/g-auth.json ]; then
+  info "未发现 config/g-auth.json：/translate 翻译不可用。需要的话把 GCP 服务账号密钥放到 config/ 再重启。"
 fi
