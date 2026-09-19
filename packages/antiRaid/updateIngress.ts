@@ -138,7 +138,7 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
       : undefined;
     // 黑名单优先于一切豁免，且取代 join 投递：Worker 不会为一个马上要被踢掉的人开窗口。
     // 这一路没有入群公告（chat_member 更新不带服务消息），刷群计数由处置消息补记。
-    // 被取代的 join 一并登记：处置在 durable 对账里被 /unblock 取消掉时改投它，
+    // 被取代的 join 一并登记：处置在 durable 对账里被 /block disable 取消掉时改投它，
     // 否则这个人既没有移除也没有验证窗口（见 blocklistDelivery.ts）。
     if (!claimBlockedJoiner({
       chatId,

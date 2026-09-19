@@ -127,7 +127,7 @@ OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provid
 
 白名单、黑名单、待完成处置和**每群状态**（功能开关、静默、锁定记录、机器人权限快照、
 群名、中转标记）的权威源都是运行时数据根下的 `database/storage.sqlite`。群状态存放在
-`chat_states` 表，最多 25 个群，超出时 `/init enable` 会以一句回执拒绝。`/white`、`/permission`、`/block` 与 `/unblock` 通过
+`chat_states` 表，最多 25 个群，超出时 `/init enable` 会以一句回执拒绝。`/white`、`/permission`、`/block … enable` 与 `/block … disable` 通过
 Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限键与默认值以
 `/permission help` 为准，数据库 schema 非法、版本不匹配或两张名单存在交集都会在
 联网前拒绝启动。旧 JSON 部署按 [运维文档](../../docs/cn/07-operations.md) 的一次性

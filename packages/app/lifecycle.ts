@@ -166,7 +166,7 @@ export class ApplicationLifecycle {
     // 超管与黑名单必须互斥。这条断言只能排在 hydrate 之后（它会清空三份 LRU）、
     // 且必须早于 sweepManagedBlocklistChats——否则一个指向历史 /block 账号的
     // super_admin_user_id 会让本进程把新超管从所有托管群里清出去，而他连一条
-    // /unblock 都发不出来（理由见 infra/blocklist/membership.ts）。
+    // /block disable 都发不出来（理由见 infra/blocklist/membership.ts）。
     await this.dependencies.assertSuperAdminNotBlocked(
       this.dependencies.SUPER_ADMIN_USER_ID
     );

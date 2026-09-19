@@ -260,7 +260,7 @@ Make the bot a group administrator and grant the rights for the features you use
 | Administrator right | Features that use it |
 | :--- | :--- |
 | Delete messages | `/gag`, deleting ads found by ad detection, deleting messages from blocklisted channel identities |
-| Restrict and ban members | Kicking unverified members, Anti-Raid private mode, `/block`, `/unblock`, `/mute`, `/unmute`, `/batch_kick`, flood muting, bans from ad detection |
+| Restrict and ban members | Kicking unverified members, Anti-Raid private mode, `/block enable|disable`, `/mute`, `/unmute`, `/batch_kick`, flood muting, bans from ad detection |
 
 Join verification also depends on the administrator status itself: Telegram sends member join and leave events only to administrator bots. When a right is missing, the bot's notice names that right; identities holding `isCanViewBotStatus` can run `/bot_status` to see the rights granted in the current chat.
 

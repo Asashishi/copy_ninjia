@@ -56,6 +56,8 @@ mock.module("../../packages/infra/logger", () => ({
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (): Record<string, never> => ({}), getChatStateCache: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
+const handleBlockDisable = mock(async (_ctx: unknown, _targetArgument: string): Promise<void> => {});
+mock.module("../../packages/commands/unblock", () => ({ handleBlockDisable }));
 const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
@@ -81,7 +83,7 @@ function context(userId: number | undefined = 100): never {
     msgId: 10,
     msg: { message_id: 10 },
     me: { id: 999 },
-    match: "@alice",
+    match: "@alice enable",
   } as never;
 }
 
@@ -89,6 +91,7 @@ beforeEach(() => {
   target = { id: 7, first_name: "Alice", username: "alice" };
   chatStates.clear();
   for (const mocked of [
+    handleBlockDisable,
     sendMessage,
     banChatMember,
     banChatSenderChat,
@@ -111,6 +114,35 @@ beforeEach(() => {
 });
 
 describe("/block 跨群封禁与黑名单", () => {
+
+  test("末位动作缺省或不是 enable/disable 时只回用法提示，不解析目标也不分派", async () => {
+    for (const match of ["", "@alice", "@alice block", "enable @alice"]) {
+      const ctx = context() as unknown as { match: string };
+      ctx.match = match;
+      await handleBlockCommand(ctx as never);
+    }
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+    expect(handleBlockDisable).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(4);
+    for (const call of sendMessage.mock.calls) {
+      expect(call[0]).toMatchObject({ chatId: -1001, replyToMessageId: 10, text: expect.stringContaining("disable") });
+    }
+  });
+
+  test("disable 分派给解除流程，并只交出去掉动作后的目标参数", async () => {
+    const ctx = context() as unknown as { match: string };
+    ctx.match = "@alice DISABLE";
+    await handleBlockCommand(ctx as never);
+    expect(handleBlockDisable).toHaveBeenCalledWith(ctx, "@alice");
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+  });
+
+  test("回复目标时只写动作，目标参数为空串", async () => {
+    const ctx = context() as unknown as { match: string };
+    ctx.match = "disable";
+    await handleBlockCommand(ctx as never);
+    expect(handleBlockDisable).toHaveBeenCalledWith(ctx, "");
+  });
   test("非白名单用户只收到拒绝，不探测管理员身份或目标", async () => {
     await handleBlockCommand(context(101));
     expect(sendMessage).toHaveBeenCalledTimes(1);

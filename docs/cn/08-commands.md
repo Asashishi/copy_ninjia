@@ -31,7 +31,7 @@
 
 目标解析遵循以下规则：
 
-- **按用户名查找依赖机器人此前观察到该账号**；改名、移除用户名或用户名换绑会立即使旧别名失效。对 `/block`、`/unblock` 这类破坏性操作，优先回复目标消息或直接给用户 id（那两条命令额外接受裸 id），不要依赖历史用户名。
+- **按用户名查找依赖机器人此前观察到该账号**；改名、移除用户名或用户名换绑会立即使旧别名失效。对 `/block … enable`、`/block … disable` 这类破坏性操作，优先回复目标消息或直接给用户 id（那两条命令额外接受裸 id），不要依赖历史用户名。
 - **匿名管理员以当前群身份发言时，复读目标就是当前群**，因而可取得群头像并复读这层「皮套」；`/block` 会拒绝把当前群身份当作成员目标。
 - **`/copy`、`/copy reverse`、`/copy nya` 与 `/icon steal`、`/icon reset` 共用 5 分钟全局冷却**；仅 `SUPER_ADMIN_USER_ID` 本人豁免，白名单身份仍受冷却限制。`/copy stop` 不占冷却。
 
@@ -86,8 +86,8 @@
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
 <tr><td><code>/mute … &lt;时长&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>在超级群临时禁言或提前解除；目标支持回复、<code>@username</code>、用户 id，时长支持 <code>m/h/d</code></td></tr>
 <tr><td><code>/gag … [5|10|15] [用具]</code><br><code>/ungag …</code></td><td align="center"><code>isCanGag</code></td><td>让用户或频道身份只能经 Bot 的 inline 入口发言，或定向提前解除；目标支持回复、<code>@username</code>、用户 id 与频道负数 id</td></tr>
-<tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
-<tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>从 SQLite 权威黑名单事务删除目标，并在机器人管理的全部群解除封禁；目标方式同 <code>/block</code>，也接受频道负数 id，拒绝本群自己的身份</td></tr>
+<tr><td><code>/block … enable</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
+<tr><td><code>/block … disable</code></td><td align="center"><code>isCanUnBlock</code></td><td>从 SQLite 权威黑名单事务删除目标，并在机器人管理的全部群解除封禁；目标方式同 <code>/block … enable</code>，也接受频道负数 id，拒绝本群自己的身份</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊</td></tr>
 <tr><td><code>/prompt config &lt;提示词&gt;</code><br><code>/prompt remove</code></td><td align="center"><code>isCanConfigAiPrompt</code></td><td>配置或移除本群专属 AI 提示词；移除后使用默认人设</td></tr>
 <tr><td><code>/clear_context</code></td><td align="center"><code>isCanClearContext</code></td><td>清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，并将 <code>chat_states.ai_context</code> 置 NULL，保留本群自定义人设；使本群在途回复代数失效。不接受参数，部署配置写坏或 AI Worker 没起来时同样执行</td></tr>
@@ -135,7 +135,7 @@
 
   发言入口按会话独立累计群消息，每 **7 条**触发一次刷新；会被 gag 删除的目标直发文字不计数，合法按钮发言与保留的无文字媒体计数。用户专属入口还在首次激活及每次刷新结算后等待 **30 秒**再补发，因此群里无人发言时也会维护；剩余 gag 时间不超过 30 秒时不再安排这轮补发。如果目标连续 **45 秒**未发言，下一次在本群发言时立即补发，并在刷新结算后重新开始 30 秒计时；45 秒只按目标发言计算，定时补发和消息计数刷新不重置它。首次发言前从 gag 激活时起算；不足 45 秒的同话题发言不会重设补发 timer。三种触发共用同一刷新任务，先发新入口再删旧入口，刷新不延长 gag 的到期时间。目标在其他论坛话题发言时，入口沿同一流程移到该话题。Telegram 发送失败时保留现有入口，下一轮消息阈值或定时触发再试；在途请求不重复排队。这个 30 秒是补发间隔，不是普通回执的删除延迟。[Telegram 专属临时消息](https://core.telegram.org/bots/api#ephemeral-messages-and-commands)仍可能自动消失或在客户端重启时消失，离线用户也不保证收到，不能把补发理解为同一弹窗永久可见。
 
-- **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。补扫时如果某个用户在一个群里的全部查询和封禁都被 Telegram 以 `PARTICIPANT_ID_INVALID` 拒绝（已销号账号的表现），记一次；任一群查到或封到 TA 就清零，累计 5 次后视为已销号，自动移出黑名单和待踢队列。`/unblock` 会从权威 SQLite 黑名单事务删除目标，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
+- **`/block` 黑名单**：动作写在末位，与 `/white` 同一口径——`/block <目标> enable` 拉黑，`/block <目标> disable` 解除，回复目标时只写动作；缺动作或写错时回用法提示（30 秒删除）。两个动作分别要求 `isCanBlock` 与 `isCanUnBlock`。目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。补扫时如果某个用户在一个群里的全部查询和封禁都被 Telegram 以 `PARTICIPANT_ID_INVALID` 拒绝（已销号账号的表现），记一次；任一群查到或封到 TA 就清零，累计 5 次后视为已销号，自动移出黑名单和待踢队列。`/block disable` 会从权威 SQLite 黑名单事务删除目标，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/block disable` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
 - **机器人自身权限不足的提示**：按机器人在本群的权限快照说明原因——确证不是管理员时说不是管理员，并点名要授予的权限；是管理员但没勾某一项时只点名缺的那一项；快照查不到时只说暂时没查清。`/gag`、`/ungag` 缺「删除消息」时直接拒绝并这样说明；`/mute`、`/unmute` 被 Telegram 拒绝后，快照确证缺「限制与封禁成员」或不是管理员才点名原因，快照查不到或该项齐全时仍提示「缺权限或目标是管理员」两种可能；`/block` 在本群没有执行封禁时，说明是没查清还是不是管理员。
 - **`/batch_kick` 慢速清理**：只允许超级管理员在已初始化的超级群中使用，参数是 `30m`、`2h`、`1d` 这类不超过 24 小时的单个窗口。命令按入群日志找出窗口内最后一次加入且仍在群中的成员，小并发执行只踢不封；白名单边界内的身份（含恒在边界内的超级管理员）和永久黑名单成员都不会被这条命令当作普通目标处理。
 - **`/ad_detect` 广告检测**：每条消息按发送者（`chatId:senderId`）归并成消息串，队列每秒一拍取一批交 `agent.ad_detect` 配置的模型判定，持续发言者的稳态判定间隔就是「一个节拍 + 一次分类往返」；90 秒的窗口只约束命中后的处置抑制与已消费上下文的保留，不是「同一个人多久判一次」。非受保护身份命中后执行与 `/block` 相同的处置，并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发；剔除消息序号后，整串若只有普通姓名（可选）和链接（包括 `vless://`、`vmess://`、`trojan://`、`ss://` 代理节点或订阅链接）且姓名和正文均没有推广、招募或交易文案，一律不判广告。其余判定口径见 [`config/ad_samples.json`](../../config_example/ad_samples.json)。 个人候选的 `first_name`、`last_name` 与正文共同送检，姓名各限 128 个 UTF-16 码元且不占正文配额；姓名含广告时，正常正文不豁免该姓名。

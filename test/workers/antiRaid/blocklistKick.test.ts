@@ -267,7 +267,7 @@ describe("黑名单成员入群秒踢", () => {
 
     const handling: Promise<void> = handleChatMemberUpdate(joinUpdate(42));
     // 先跨过 joinLog durable flush，再等 write-ahead snapshot 的领域 flush 真正
-    // 挂起，才模拟并发到达的 /unblock。
+    // 挂起，才模拟并发到达的 /block disable。
     for (
       let turn: number = 0;
       turn < 20 && flushDiskIODomain.mock.calls.length < 2;
@@ -286,7 +286,7 @@ describe("黑名单成员入群秒踢", () => {
 
     expect(removals()).toHaveLength(0);
     expect(pendingBlockedRemovals.size).toBe(0);
-    // 发现权威任务已取消后还要再 flush 一次空快照，不能只依赖 /unblock
+    // 发现权威任务已取消后还要再 flush 一次空快照，不能只依赖 /block disable
     // 排队但尚未确认的 cleanup。
     expect(flushDiskIODomain).toHaveBeenCalledTimes(3);
     expect(diskPosts.at(-1)).toMatchObject({

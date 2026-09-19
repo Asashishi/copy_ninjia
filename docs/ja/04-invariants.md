@@ -460,20 +460,20 @@
 - 送信者 username cache は「正規化 username → identity」と「sender ID → 現在の username」の両方を保持します。名前変更、username 削除、再割り当て、容量超過による eviction は同じ owner が双方向関係をアトミックに更新し、resolver は不整合な alias を拒否します。
 - 匿名管理者本人は管理者として免除されますが、招待者を特定 account に帰属できないため、管理者招待による継承免除を新規メンバーへ与えません。匿名管理者が現在のグループとして発言した場合、visible sender の解決は copy と avatar crawler のためにそのグループ identity を保持します。破壊的なメンバー操作は現在のグループ identity を user target として拒否しなければなりません。
 
-  **`/block` と `/unblock` は裸のユーザー id も受け付けます**（`USER_ID_ARG_PATTERN`。加えて `Number.isSafeInteger` を通す必要があります）：そもそも処置の対象は id であり、一方ユーザー名は手放されたあと他人が再登録できます——`/icon steal` の実照会要求と同じ懸念ですが、この 2 つのコマンドは取り消せないぶん代償が大きくなります。
+  **`/block … enable` と `/block … disable` は裸のユーザー id も受け付けます**（`USER_ID_ARG_PATTERN`。加えて `Number.isSafeInteger` を通す必要があります）：そもそも処置の対象は id であり、一方ユーザー名は手放されたあと他人が再登録できます——`/icon steal` の実照会要求と同じ懸念ですが、この 2 つのコマンドは取り消せないぶん代償が大きくなります。
 
   id 経路でキャッシュに無いことは**失敗ではなく**（`resolveIdTarget` は id だけの最小 identity に縮退します）、影響するのは応答のラベルだけです。裸 id はコマンドごとの opt-in（`acceptUserId`）であり全体の挙動にはしません：`/copy` と中国語アクションコマンドが必要とするのは名前とアバターを持つ identity で、見たことのない裸 id では空の器を複唱するだけになります。
 
   **返信先と引数の両方があり、しかも別人を指している場合はエラーにしなければならず、黙ってどちらかを採ってはいけません**：id の経路が入った動機はまさに「他人が貼った id に対して手を出す」場面です——管理者がグループの「123456789 を BAN して」という投稿に返信して `/block 123456789` を送る、というものです。黙って返信先を優先すると、その id を貼った同僚が管理下の各グループで `revoke_messages` 付きで永久にブロックリスト入りし、しかも応答にはその同僚の名前が出るので成功確認のように読めます。
 
   引数から対象を解決できない場合も同じ衝突として報告し、「正しい username ではありません」とは言いません：後者は「引数は無視され返信先が効いた」と読まれます。両者が同じ id を指しているのは無害な重複なので、そのまま通します。
-- 裸の**会話** id（チャンネル／グループの負の id、`CHAT_ID_ARG_PATTERN`）は別のスイッチで、`/gag`、`/ungag`、`/unblock`、`/permission`、`/white` だけが開きます（`acceptChatId`）。前二者は可逆な一時メッセージ削除状態の開始／解除、3 番目は復旧操作、後二者は channel identity を許す allowlist 設定の管理です。それ以外のコマンドが負の会話 id を通常 user の対象として扱ってはいけません。
+- 裸の**会話** id（チャンネル／グループの負の id、`CHAT_ID_ARG_PATTERN`）は別のスイッチで、`/gag`、`/ungag`、`/block disable`、`/permission`、`/white` だけが開きます（`acceptChatId`）。前二者は可逆な一時メッセージ削除状態の開始／解除、3 番目は復旧操作、後二者は channel identity を許す allowlist 設定の管理です。それ以外のコマンドが負の会話 id を通常 user の対象として扱ってはいけません。
 
   チャンネル被りの id はそもそもブロックリストに入ります（チャンネルのメッセージへ返信しての `/block`、および広告検出が `sender_chat` に命中した場合）が、それを消す手段はこれまで返信と `@username` の 2 つだけでした：前者は広告検出が元メッセージを削除した時点で失われ、後者は公開 username があり `USER_CACHE_MAX` でキャッシュから押し出されていないことを要求します。両方が断たれた項目はリストに永久に残ります。
 
-  逆方向の `/block` は負の id を拒否し続けなければなりません：貼り間違えた会話 id を対象にすると処置が会話 identity 全体の BAN に変わり、しかもそのコマンドは取り消せません。`/unblock` は復旧方向であり、対象を誤っても高々 1 回の空振り解除で済みます。
+  逆方向の `/block` は負の id を拒否し続けなければなりません：貼り間違えた会話 id を対象にすると処置が会話 identity 全体の BAN に変わり、しかもそのコマンドは取り消せません。`/block disable` は復旧方向であり、対象を誤っても高々 1 回の空振り解除で済みます。
 
-  **負の id には必ず `isChannel` が付きます**（`resolveIdTarget` が最小 identity の時点で付与。符号による振り分けは `workers/antiRaid/blocklistEffects.ts` と同源）：`/unblock` はこれを見て `unbanChatMemberIfBanned` ではなく `unbanChatSenderChat` を選ぶため、付け忘れると解除が失敗して `failedCount` に計上され、応答は「一度も触れていない対象」についての虚偽の戦果報告になります。
+  **負の id には必ず `isChannel` が付きます**（`resolveIdTarget` が最小 identity の時点で付与。符号による振り分けは `workers/antiRaid/blocklistEffects.ts` と同源）：`/block disable` はこれを見て `unbanChatMemberIfBanned` ではなく `unbanChatSenderChat` を選ぶため、付け忘れると解除が失敗して `failedCount` に計上され、応答は「一度も触れていない対象」についての虚偽の戦果報告になります。
 - gag の正式なテーブルは main thread が所有し、chat ごとの小さな対象リストを保持します。グローバル上限は 5 で、同一 chat の同一 identity は `starting`、`active`、`ending` の全期間を通して 1 slot だけを占有します。すべての対象へ最初に群内の公開 status を送ります。通常 user の公開 status はボタンなしで、その後に `ephemeral_message_parameters.receiver_user_id` で限定された対象本人だけに見えるボタン付き ephemeral 入口を送ります。受信 user を持たない channel はボタン付き公開 status だけを保持します。必要な全メッセージが成功し、公開 `message_id` と、通常 user では検証済みの `ephemeral_message_id` の両方を同期的に記録してから `active` へ移り、`unref` timer を設置します。2 通目の送信に失敗した場合も、予約を解放する前に着地済みの公開 status を削除しなければなりません。timeout、対象指定の `/ungag`、chat teardown は、まず同期的に `ending` を取得して timer を解除し、対応する削除 API を順に呼びます。すべての削除結果が `deleted/gone` で、必要な解除通知も settle した後にだけ object identity で slot を解放します。`failed/forbidden` は ending owner を保持し、有限かつ `unref` の backoff retry を行います。retry を使い切った後も `/ungag`、chat teardown、process drain が再試行できます。したがって古い後処理が同一対象の新 session を削除したり途中へ割り込んだりせず、cleanup debt も同じ 5 slot 上限内に収まります。すべての開始 status は gag session が所有し、固定 30 秒の command cleanup には入れません。解除通知だけは統一 command boundary を通します。gag owner は Telegram outbound gate より先に quiesce/drain し、未完了 cleanup は最終 offset と instance lock の解放を止めます。
 
   **gag 入口の更新は同じセッション owner が所有します。** `commands/gag/counter.ts` は群メッセージ数をその場で更新し、閾値は 7 件です。閾値未満、またはそのセッションの `speakNoticeRefreshTask` が処理中なら due 配列を作りません。`commands/gag/refresh.ts` は準備できた各セッションのタスクを同期的に一つ取得し、`gagBackgroundTasks` に登録します。セッションは独立して開始し、出站の同時実行と背圧は共通 Telegram 境界が管理します。メッセージ閾値、topic 移動、定時再送、沈黙後の発言による再送のいずれも、既存タスクへ待機者を追加してはいけません。最大 5 セッションがそれぞれ一つの更新タスクを持ち、群メッセージの滞留に応じて増えません。
@@ -496,7 +496,7 @@
 
   **dispatch 一覧を呼び出し側で重複させてはいけません**。`teardownChatRuntime` は `packages/consts/chatTeardown.ts` の `CHAT_TEARDOWN_ORDER` を走査します。この定数は型で `ChatRuntimeOwner` の全項目を網羅するよう強制され、任意の owner が欠けると compile できません。各 teardown はこの順序で全 owner を同期的に起動してから、非同期の完了をまとめて待ちます。
 - メンバー現状確認そのものが新しい非同期境界です。`probeChatMembership` が在室を返してから `kickChatMember` を呼ぶ前に、終端状態が照会開始時と同一オブジェクトのままか再確認し、その確認と API 呼び出しの間には新たな `await` を置いてはいけません。そうしないと teardown、管理停止、状態置換で取り消された旧処置が遅延結果を消費し、もはやその終端処置の対象ではないメンバーを kick できます。
-- `/unblock` は、チャット横断 unban の両端でコマンド側「kick 確認済み」cache を無効化しなければなりません。開始前に旧結果を消し、すべての `unban` await が終わった後にも、その待機中に遅れて着地した `/block` の書き戻しをもう一度消します。runner の直列化は chat 単位だけなので、異なる chat のコマンドは交錯できます。
+- `/block disable` は、チャット横断 unban の両端でコマンド側「kick 確認済み」cache を無効化しなければなりません。開始前に旧結果を消し、すべての `unban` await が終わった後にも、その待機中に遅れて着地した `/block` の書き戻しをもう一度消します。runner の直列化は chat 単位だけなので、異なる chat のコマンドは交錯できます。
 
   後段の無効化がないと、より後に unban されたユーザーが cache hit のまま残り、同日の次回 `/block` がメンバー照会と BAN を誤って省略します。
 
@@ -592,7 +592,7 @@
 
 - **容量ゲートは拒否するだけで、決して追い出しません。** 26 件目の新規作成は `assertChatStateCapacity` が拒否します。起動時の `decodeStoredChatStates` は容量とプロキシ対象の一意性を検証し、Disk I/O Worker は書き込み側で容量を独立に検証します。`hydrateChatStateCache` は復号済み状態を固定 shape のキャッシュへ格納するだけであり、これらの境界により管理中のグループ状態が LRU から追い出されることを防ぎます。
 
-  追い出しが起こり得ないからこそ、**ホット読み取りは `get` ではなく `peek` を使います**：recency を更新するための `Map.delete` + `Map.set` は何も買えず（chat-state-map-read の実測で 253.0 → 14.1 ns/op）、`getChatStateCache()` の反復順序を読み取り履歴の関数にしてしまいます。その順序は `/block`・`/unblock` の連動 BAN 対象グループ一覧としてそのままユーザーに提示されます。
+  追い出しが起こり得ないからこそ、**ホット読み取りは `get` ではなく `peek` を使います**：recency を更新するための `Map.delete` + `Map.set` は何も買えず（chat-state-map-read の実測で 253.0 → 14.1 ns/op）、`getChatStateCache()` の反復順序を読み取り履歴の関数にしてしまいます。その順序は `/block`・`/block disable` の連動 BAN 対象グループ一覧としてそのままユーザーに提示されます。
 
 - **容量超過の拒否は `/init enable` だけのものであり、必ず 1 行の返信でなければなりません。** 新しいグループを管理下に置く入口はこのコマンドだけで、上限を超えた場合は `INIT_CHAT_LIMIT_TEXT` を返します。他のコマンドは新規作成を引き起こしてはいけません——したがって `/send <グループ id>` は対象が既に行を持っていることを要求し、無ければ 1 行の案内だけを返します。容量エラーがコマンドハンドラから逸出すると、それは再配信に駆動される再起動ループです：update は確認されず、プロセスは非ゼロで終了し、Telegram が同じコマンドを再配信し、また throw します。
 
@@ -638,9 +638,9 @@
 
 #### 正式なブロックリストと block コマンド
 
-- `/block` の authoritative list は SQLite `blocklist_entries` table です。main thread は最近参照した identity の有界 LRU と未 ACK final value だけを保持します。blocklist は同期 security boundary のままであり、mutation 前に target の allow/block policy positive/negative state を prefetch し、write path は database revision の post より先に final LRU value を publish します。逆順では 2 step の間に届く join update が新 block を見落とします。entry は時間では expire せず、削除経路は `/unblock` による手動削除と[退会アカウント検出](#ブロックリストの退会アカウント検出)による自動解除の 2 つだけです。各 row は `blockedAt` と Telegram metadata を含む strict complete record です。optional の `participantInvalidCount` は欠落時 0 とみなし、存在する場合は 1 から `BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1` の整数でなければならず、範囲外・非整数・型違いは起動を拒否します。
+- `/block` の authoritative list は SQLite `blocklist_entries` table です。main thread は最近参照した identity の有界 LRU と未 ACK final value だけを保持します。blocklist は同期 security boundary のままであり、mutation 前に target の allow/block policy positive/negative state を prefetch し、write path は database revision の post より先に final LRU value を publish します。逆順では 2 step の間に届く join update が新 block を見落とします。entry は時間では expire せず、削除経路は `/block disable` による手動削除と[退会アカウント検出](#ブロックリストの退会アカウント検出)による自動解除の 2 つだけです。各 row は `blockedAt` と Telegram metadata を含む strict complete record です。optional の `participantInvalidCount` は欠落時 0 とみなし、存在する場合は 1 から `BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1` の整数でなければならず、範囲外・非整数・型違いは起動を拒否します。
 
-  **`/unblock` は既定で完全解除します。** row があれば negative cache と件数を publish し、pending batch から id を除去して trim 後の outbox snapshot を送り、最後に deletion tombstone を送ります（`queueBlocklistDeletion`）。Disk I/O Worker は到着順に処理し、どのメッセージでも満杯 batch の commit が起こり得ます。snapshot を先に送るため、commit 済みの database に削除済み entry を参照する freeze batch や、リストが空になった後の sweep task が残ることはありません。どちらも起動時の復元が起動を拒否する状態です。row の有無にかかわらず `ChatState.botPermissions?.isAdministrator` が true の全 chat で Telegram BAN を解除します。必要 permission は `isCanUnBlock` で、旧 `all` 引数は解析しません。chat 横断解除は `only_if_banned: true` の `unbanChatMemberIfBanned` を通し、current member の誤 kick を防ぎます。channel identity は `unbanChatSenderChat`。Worker 内ですでに実行中の batch は撤回できず、短い既知 window が残ります。
+  **`/block disable` は既定で完全解除します。** row があれば negative cache と件数を publish し、pending batch から id を除去して trim 後の outbox snapshot を送り、最後に deletion tombstone を送ります（`queueBlocklistDeletion`）。Disk I/O Worker は到着順に処理し、どのメッセージでも満杯 batch の commit が起こり得ます。snapshot を先に送るため、commit 済みの database に削除済み entry を参照する freeze batch や、リストが空になった後の sweep task が残ることはありません。どちらも起動時の復元が起動を拒否する状態です。row の有無にかかわらず `ChatState.botPermissions?.isAdministrator` が true の全 chat で Telegram BAN を解除します。必要 permission は `isCanUnBlock` で、旧 `all` 引数は解析しません。chat 横断解除は `only_if_banned: true` の `unbanChatMemberIfBanned` を通し、current member の誤 kick を防ぎます。channel identity は `unbanChatSenderChat`。Worker 内ですでに実行中の batch は撤回できず、短い既知 window が残ります。
 
   **身内は blocklist に入れません。** `isWhitelisted` は恒久 allowlist row と常時 protected のスーパー管理者を覆い、`/block`、`/mute`、`/batch_kick` が同じ境界を使います。一時 membership は広告免除だけを付与し、この恒久保護境界には入りません。`/white enable` も blocklist 中の identity を拒否します。`runProtectedIdentityMutation` は「disjointness check + authoritative identity value publish」を main-thread tail 1 本で直列化します。critical section は identity check と authoritative change だけを含み、Telegram effect と durable confirmation は外に置きます。block path は一時 activity の tombstone を blocklist final value より先に queue し、Disk I/O transaction と startup hydrate は blocklist と 2 種類の allowlist の非交差を独立再検証して、conflict は fail closed です。
 
@@ -680,7 +680,7 @@
 
   取りこぼすと、実行 owner が投げ続ける間（Worker 使用不能、outbox 満杯）は毎ラウンドが基本間隔で組まれて上限に永久に届かず、しかも 1 ラウンドごとに outbox id 1 つとエラー log 1 行を焼きます。
 
-  **3 つ目が最も見えにくいため、実行 owner は実際に投函した件数を返さなければなりません**（`BlockedMemberRemover` は `Promise<number>` を返します）。並行する `/unblock` が `BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS` の間 outbox を変え続けると、durable な突き合わせは `removeBlockedMembers` のバッチを丸ごと差し止め、純粋な補掃除のバッチは空配列だけになり、配信経路は `length === 0` で早期 return して正常に resolve します——例外も投げず、実行中のメッセージも 1 件もありません。ゼロ配信は例外時と同じ後始末（claim の無効化、`delivery-boundary` の記録、バックオフの前進）を通さなければなりません。「例外が出なかった」だけを見ると claim の `removalId` は元の値のまま、受領は永久に来ず、`prepareBlocklistSweep` はこのチャットに対して以後ずっと早期 return します。プロセスの生存期間中そのチャットは二度と掃除されず、`hydrateBlocklist` + `replayPendingBlockedRemovals` を通るプロセス再起動でしか回収できません。
+  **3 つ目が最も見えにくいため、実行 owner は実際に投函した件数を返さなければなりません**（`BlockedMemberRemover` は `Promise<number>` を返します）。並行する `/block disable` が `BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS` の間 outbox を変え続けると、durable な突き合わせは `removeBlockedMembers` のバッチを丸ごと差し止め、純粋な補掃除のバッチは空配列だけになり、配信経路は `length === 0` で早期 return して正常に resolve します——例外も投げず、実行中のメッセージも 1 件もありません。ゼロ配信は例外時と同じ後始末（claim の無効化、`delivery-boundary` の記録、バックオフの前進）を通さなければなりません。「例外が出なかった」だけを見ると claim の `removalId` は元の値のまま、受領は永久に来ず、`prepareBlocklistSweep` はこのチャットに対して以後ずっと早期 return します。プロセスの生存期間中そのチャットは二度と掃除されず、`hydrateBlocklist` + `replayPendingBlockedRemovals` を通るプロセス再起動でしか回収できません。
 
   **「権限不足」は他の失敗と別枠にします**。バックオフを伸ばしても結局は時間による再試行であり、BAN 権限がない状態では何度試しても同じエラーを再び出力し、さらに O(リスト長) の再スキャンを払うだけです。`banChatMemberWithOutcome`（`packages/infra/telegram/actions.ts`）が Telegram の応答から切り分けます。403 はすべて該当、400 は `not enough rights` を名指しした場合のみ該当します（同じ 400 の「ユーザーが存在しない」を含めてはいけません。
 
@@ -704,7 +704,7 @@
 
   **処置には状態機械がなく、再送だけが生存手段です。** 各 batch は `trackBlockedRemoval` で採番して `pendingBlockedRemovals` に控え、Anti-Raid Worker の再生成時には表ごと再投入します（重複 ban は冪等ですが、取りこぼしはその人が居座り続けることを意味します）。
 
-  **控えを消してよいのは task が完了したか、正式な状態から不要と判断できるときだけ**で、経路は 3 種類です。`complete: true` の受領、正式な取消（`/unblock` で user を外すか、そのチャットの担当を外れる）、そして同じチャットの掃除 batch が新しい掃除に置き換わったとき（リストは増える一方なので、新しいスナップショットは古い batch の上位集合です）。後ろの 2 つを省くと無制限に増えます。
+  **控えを消してよいのは task が完了したか、正式な状態から不要と判断できるときだけ**で、経路は 3 種類です。`complete: true` の受領、正式な取消（`/block disable` で user を外すか、そのチャットの担当を外れる）、そして同じチャットの掃除 batch が新しい掃除に置き換わったとき（リストは増える一方なので、新しいスナップショットは古い batch の上位集合です）。後ろの 2 つを省くと無制限に増えます。
 
   BAN 権限のないチャットは待機 window ごとに完全な `userIds` の複製を溜め、Worker 再生成のたびにそれらを全部投げ直します。
 
@@ -742,13 +742,13 @@
 
   **ブロックリスト入り参加者への処置は join を「置き換える」のであって「付け足す」のではないため、処置が取り消されたらその join を戻さなければなりません**（`ClaimBlockedJoinerParams.replacedJoin`）：`claimBlockedJoiner` はヒット時に意図的に `join` を積みません——Worker はこれから kick される相手に認証窓を開かないからです。
 
-  ところがそのバッチは write-ahead flush を待っている最中に並行する `/unblock`（`forgetUserBlocklistRemovals`）で丸ごと消え得ますし、`reconcileBlockedRemovalMessages` は権威 params が消えたメッセージをただ外します：戻さなければ、その参加者は removal も認証窓も持たない状態になります——リマインドもタイムアウト kick もなく、荒らし窓の参加カウントも漏れ、そしてシステム内のどこも彼のために窓を開き直しません（`chat_member` だけの経路ではさらに悪く、バッチ全体が空になり何も送られません）。
+  ところがそのバッチは write-ahead flush を待っている最中に並行する `/block disable`（`forgetUserBlocklistRemovals`）で丸ごと消え得ますし、`reconcileBlockedRemovalMessages` は権威 params が消えたメッセージをただ外します：戻さなければ、その参加者は removal も認証窓も持たない状態になります——リマインドもタイムアウト kick もなく、荒らし窓の参加カウントも漏れ、そしてシステム内のどこも彼のために窓を開き直しません（`chat_member` だけの経路ではさらに悪く、バッチ全体が空になり何も送られません）。
 
   **必要なのは「バッチが権威 mirror から本当に消えた」場合だけです**。突き合わせラウンドを使い切った場合は戻してはいけません——task は durable outbox に残っていて当人はまだ排除予定であり、そこで認証窓を開くのはブロックリストに載ったままの相手を通すことになります。
 
-  **この契約は配信経路全体に及び、`claimBlockedJoiner` だけの話ではありません**。`prepareDurableAntiRaidMessages` が `BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS` を使い切ったときも投げてはいけません——`postAntiRaidDurably` 経由で同じ update middleware から呼ばれるため同じ再起動ループになり、しかも発生条件（並行する `/unblock` が同じバッチを削り続ける）は再投入後もそのまま成立します。
+  **この契約は配信経路全体に及び、`claimBlockedJoiner` だけの話ではありません**。`prepareDurableAntiRaidMessages` が `BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS` を使い切ったときも投げてはいけません——`postAntiRaidDurably` 経由で同じ update middleware から呼ばれるため同じ再起動ループになり、しかも発生条件（並行する `/block disable` が同じバッチを削り続ける）は再投入後もそのまま成立します。
 
-  かといって最後の照合結果をそのまま投げるのも不可です。`/unblock` が取り消したばかりのバッチを含みうるからで、それこそこの照合が防ぐべきものです。正しい降格は、処置メッセージだけを丸ごと外して残りを通常どおり投げ、エラーログを 1 行残し、該当グループに再スキャンを負わせることです。タスク自体は durable outbox に残るので失われません。
+  かといって最後の照合結果をそのまま投げるのも不可です。`/block disable` が取り消したばかりのバッチを含みうるからで、それこそこの照合が防ぐべきものです。正しい降格は、処置メッセージだけを丸ごと外して残りを通常どおり投げ、エラーログを 1 行残し、該当グループに再スキャンを負わせることです。タスク自体は durable outbox に残るので失われません。
 
   **判定と業務実行順はスレッドで分離します。** 判定はメインスレッドに置きます。リストはメインスレッドの状態で Anti-Raid Worker には複製がなく、しかも join を投げる前に判断する必要があるためです（そうしないと Worker がすぐ退出させる相手のために認証 window を開いてしまいます）。メンバー判定と BAN の業務順は Anti-Raid Worker が所有し、各 Telegram capability request は duplex 境界から main thread へ戻って query / kick の 429 lane に入ります。掃除のコストは常にブロックリスト長ぶんの Bot API request ですが、一方の category の backoff が通常 message や別 category を止めることはありません。
 
@@ -934,7 +934,7 @@
 
   `blockedMembersRemoved` receipt は常に 2 つのユーザー id 列を持ちます。`participantInvalidUserIds` と、この batch で決着した（BAN 済み、不在確認、管理者確認）`settledUserIds` です。main thread の `packages/infra/blocklist/participantInvalid.ts` は `settleBlockedRemoval` の後に receipt を `blocklistParticipantInvalidQueue` へ積み、到着順に直列で決着させます。前者は receipt ごとに `blocklist_entries.data.participantInvalidCount` を 1 加算し、後者のうちまだこの field を持つ entry は field を除いた record へ書き換えます。数える単位は「1 chat での 1 回の sweep 処分」なので、管理 chat が `BLOCKLIST_PARTICIPANT_INVALID_LIMIT`（5）以上あれば 1 回の sweep で上限に達し得ます。リストにない id は数えません。
 
-  上限に達しても範囲外の値は書きません。代わりに `runBlocklistIdentityMutation` で広告 BAN や `/unblock` と共有する identity 単位 queue に積み、実行時に再度 prefetch して、キャッシュ上の entry が積んだ時点と同じ object のときだけ `unblockUser` を呼びます。これにより上記 `/unblock` と同じ順序で negative cache を publish し、trim 後の pending snapshot を先に送り（その結果リストが空になれば sweep task も消します）、続いて削除 tombstone を送り、`Removed blocklisted user ...` を 1 行記録します。待機中に entry がクリア・書き換え・eviction 後の再読込・`/unblock` による削除のいずれかを受けた場合は中止し、次の同種 receipt で再び発火します。この経路ではチャット横断の BAN 解除を行いません。shutdown はこの chain を待たず、最終 flush 以降の count 変化はプロセスとともに破棄されます。
+  上限に達しても範囲外の値は書きません。代わりに `runBlocklistIdentityMutation` で広告 BAN や `/block disable` と共有する identity 単位 queue に積み、実行時に再度 prefetch して、キャッシュ上の entry が積んだ時点と同じ object のときだけ `unblockUser` を呼びます。これにより上記 `/block disable` と同じ順序で negative cache を publish し、trim 後の pending snapshot を先に送り（その結果リストが空になれば sweep task も消します）、続いて削除 tombstone を送り、`Removed blocklisted user ...` を 1 行記録します。待機中に entry がクリア・書き換え・eviction 後の再読込・`/block disable` による削除のいずれかを受けた場合は中止し、次の同種 receipt で再び発火します。この経路ではチャット横断の BAN 解除を行いません。shutdown はこの chain を待たず、最終 flush 以降の count 変化はプロセスとともに破棄されます。
 
   `settledUserIds` は 1 page 分（512 件）になり得ます。count を持つ entry を選ぶとき、キャッシュ済み identity は LRU の eviction 順を変えない `peek` だけで判定します。cold な id は `retainParticipantInvalidBlocklistIds` で database を読み、ローカルの未 ACK 最終値を重ね、**identity LRU へは書き戻しません**（`retainCurrentlyBlockedIdentityIds` と同じ扱い）。`prefetchIdentityPolicies` に渡すのは書き換えが必要な少数の identity だけで、sweep の 1 page 分が update ごとに prefetch される hot cache を押し出してはいけません。1 receipt の書き込みは全件か無しかで、後述の window を待つ間に identity が LRU から追い出されたら receipt 全体を prefetch し直します。最大 `BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS` 回で打ち切り、error を記録してその receipt を飛ばします。
 

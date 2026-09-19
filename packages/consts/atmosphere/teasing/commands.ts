@@ -12,8 +12,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "wed", description: "让本天才随机抽取群友老婆；支持确认、换一只和移除，再发 /wed 可重抽♡" },
   // Telegram 菜单只接受英文命令名；/x 展示中文动作的用法并终止分派，不进入消息兜底。
   { command: "x", description: "把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 或加 @username 指定目标，笨蛋♡" },
-  { command: "block", description: "把目标写进永久黑名单并在所有托管群封禁，之后再进群也秒踢；支持回复、@username 或用户 id，仅持有 isCanBlock 的身份配用，杂鱼别乱碰♡" },
-  { command: "unblock", description: "把目标移出永久黑名单并解除所有托管群封禁；支持回复、@username、用户 id 或频道负数 id，仅持有 isCanUnBlock 的身份配用，笨蛋♡" },
+  { command: "block", description: "末尾写 enable 把目标写进永久黑名单并在所有托管群封禁、之后再进群也秒踢（需 isCanBlock），写 disable 移出黑名单并解除封禁（需 isCanUnBlock）；支持回复、@username 或用户 id，disable 还认频道负数 id，杂鱼别乱碰♡" },
   { command: "prompt", description: "用 config/remove 配置或移除本天才在本群的 AI 提示词；需要 isCanConfigAiPrompt，杂鱼别乱改♡" },
   { command: "ai_chat", description: "用 enable/disable 开关本群 AI 闲聊，只有获授权者配使唤本天才，杂鱼别乱按♡" },
   { command: "clear_context", description: "把本天才在这个群攒下的 AI 上下文记忆全忘光，内存里的和存档里的一起清，之后从零重新记；不带参数，需要 isCanClearContext，杂鱼别乱按♡" },
@@ -112,20 +111,20 @@ export const INIT_CHAT_LIMIT_TEXT: string =
   `去不再需要的那个群 /init disable，或者把本天才移出那个群，腾出一格再回来启用本群。` +
   `还在私密模式里的群可腾不出来——那条记录要留到邀请权限恢复为止，笨蛋♡`;
 
-/** `/block` 的目标解析提示。 */
+/** `/block … enable` 的目标解析提示。 */
 export const BLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
-  missingTarget: `笨蛋，要么 /block @username 或 /block 用户id，要么回复 TA 的一条消息再 /block，本天才可不会读心术♡`,
+  missingTarget: `笨蛋，要么 /block @username enable 或 /block 用户id enable，要么回复 TA 的一条消息再 /block enable，本天才可不会读心术♡`,
   invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数，群和频道那种负数 id 不算），别拿半截参数糊弄本天才♡`,
-  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /block 吧♡`,
+  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /block enable 吧♡`,
   conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；封人这事本天才可不猜——想封谁就只留一个，要么删掉参数、要么别回复♡`,
   selfTarget: `笨蛋，本天才才不会把自己拉黑呢♡`,
 };
 
-/** `/unblock` 的目标解析提示。 */
+/** `/block … disable` 的目标解析提示。 */
 export const UNBLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
-  missingTarget: `笨蛋，要么 /unblock @username 或 /unblock 用户id（频道就给那串负数 id），要么回复 TA 的一条消息再 /unblock，本天才可不会读心术♡`,
+  missingTarget: `笨蛋，要么 /block @username disable 或 /block 用户id disable（频道就给那串负数 id），要么回复 TA 的一条消息再 /block disable，本天才可不会读心术♡`,
   invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是 id（用户是正整数，频道是那串负数），别拿半截参数糊弄本天才♡`,
-  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /unblock 吧♡`,
+  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /block disable 吧♡`,
   conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想解封谁就只留一个，要么删掉参数、要么别回复♡`,
   selfTarget: `笨蛋，本天才本来就没把自己拉黑呀♡`,
 };

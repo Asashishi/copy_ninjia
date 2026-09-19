@@ -62,7 +62,7 @@ describe("resolveCommandTarget", () => {
 
   test("回归用例：开启 requireIdentityPolicies 时预热失败拒绝执行，提示一个人都没动", async () => {
     // 冷 LRU 下 isWhitelisted 读成「不在白名单」：放行的话 /mute 会捂住自己人，
-    // /unblock 回「本来就不在小本本上」而 SQLite 里的记录还在。
+    // /block disable 回「本来就不在小本本上」而 SQLite 里的记录还在。
     prefetchIdentityPolicies.mockResolvedValue(false);
     expect(await resolveCommandTarget({ ...params("777", true), requireIdentityPolicies: true })).toBeUndefined();
     expect(prefetchIdentityPolicies).toHaveBeenCalledWith([777]);
@@ -213,7 +213,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("只开 acceptUserId 时负数、零、前导零、小数与超出安全整数的位数一律拒绝", async () => {
-    // 负数 id 是会话身份，只有单独开了 acceptChatId 的 /unblock 才认——/block
+    // 负数 id 是会话身份，只有单独开了 acceptChatId 的 /block disable 才认——/block
     // 走到这里就该拒绝，粘错一个会话 id 会把处置改成封掉整个会话身份；
     // 20 位那种完全匹配「十进制正整数」，Number 之后却已经是另一个数了。
     for (const argument of ["-1001", "-1001234567890", "0", "007", "4.2", "1e5", "99999999999999999999"]) {
@@ -224,7 +224,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("开了 acceptChatId 后负数 id 成立，并带上决定解封接口的 isChannel", async () => {
-    // 这个标记是承重的：/unblock 靠它选 unbanChatSenderChat，漏标就会拿
+    // 这个标记是承重的：/block disable 靠它选 unbanChatSenderChat，漏标就会拿
     // 负数去调 unbanChatMemberIfBanned，报错记进 failedCount 变成假战报。
     expect(await resolveCommandTarget(params("-1002233445566", true, true)))
       .toEqual({ id: -1002233445566, isChannel: true });
@@ -279,7 +279,7 @@ const DEPLOYED_TARGET_TEXTS: readonly DeployedTargetTexts[] = [
   { command: "/gag", texts: GAG_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
   { command: "/ungag", texts: UNGAG_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
   { command: "/block", texts: BLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
-  { command: "/unblock", texts: UNBLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
+  { command: "/block disable", texts: UNBLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
   { command: "/mute", texts: MUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
   { command: "/unmute", texts: UNMUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
   { command: "/copy", texts: COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },

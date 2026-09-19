@@ -219,7 +219,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
  * 与群默认权限取交集，见 consts/telegram.ts 的 UNMUTED_CHAT_PERMISSIONS）。
  * 不带时长参数；目标指定方式与权限门槛同 /mute。目标本来就没被禁言时
  * Telegram 一样返回成功，不必事先区分——恢复方向指错目标至多是一次空操作
- * （同 /unblock 对恢复方向的宽容）。也不设自己人闸：解除限制只会把人放出来，
+ * （同 /block disable 对恢复方向的宽容）。也不设自己人闸：解除限制只会把人放出来，
  * 自己人被别的管理员禁了言，正该能用这条命令捞。
  */
 export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise<void> {

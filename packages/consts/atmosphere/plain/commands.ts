@@ -10,8 +10,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "icon", description: "steal 使用目标头像，回复目标或加 @username；reset 恢复默认头像" },
   { command: "wed", description: "随机抽取群友老婆；可确认、更换和移除，再发 /wed 可重新抽取" },
   { command: "x", description: "将 x 换成任意 1~2 个中文字，如 /咬、/贴贴；回复目标或加 @username" },
-  { command: "block", description: "将用户加入永久黑名单并在所有受管群封禁；回复目标、@username 或用户 id；需要 isCanBlock" },
-  { command: "unblock", description: "移出永久黑名单并解除所有受管群的封禁；回复目标、@username 或用户/频道 id；需要 isCanUnBlock" },
+  { command: "block", description: "末尾 enable 加入永久黑名单并在所有受管群封禁（需要 isCanBlock），disable 移出并解除封禁（需要 isCanUnBlock）；回复目标、@username 或用户 id，disable 另认频道 id" },
   { command: "prompt", description: "config/remove 配置或移除本群 AI 自定义提示词；需要 isCanConfigAiPrompt" },
   { command: "ai_chat", description: "enable/disable 开关本群 AI 闲聊；需要 AI 管理权限" },
   { command: "clear_context", description: "清空本群内存和数据库中的 AI 上下文；不带参数，需要 isCanClearContext" },
@@ -101,20 +100,20 @@ export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
 export const INIT_CHAT_LIMIT_TEXT: string =
   `最多可管理 ${STATE_MANAGED_CHAT_LIMIT} 个群，当前已满。请在不再管理的群执行 /init disable，或将机器人移出该群，再启用本群。仍处于私密模式的群须等待邀请权限恢复后才能释放名额。`;
 
-/** `/block` 的目标解析提示。 */
+/** `/block … enable` 的目标解析提示。 */
 export const BLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
-  missingTarget: "请回复目标消息，或在 /block 后指定 @username 或用户 id（正整数）。",
+  missingTarget: "请回复目标消息后发送 /block enable，或使用 /block <@username|用户 id（正整数）> enable。",
   invalidUsername: (argument: string): string => `${argument} 不是完整合法的 Telegram 用户名或用户 id（正整数）。`,
-  unknownUsername: (username: string): string => `尚未记录 @${username}，请回复目标消息后使用 /block。`,
+  unknownUsername: (username: string): string => `尚未记录 @${username}，请回复目标消息后使用 /block enable。`,
   conflictingTarget: (argument: string): string => `回复对象与 ${argument} 不一致，请只保留一个目标。`,
   selfTarget: "不能将机器人自身设为此命令的目标。",
 };
 
-/** `/unblock` 的目标解析提示。 */
+/** `/block … disable` 的目标解析提示。 */
 export const UNBLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
-  missingTarget: "请回复目标消息，或在 /unblock 后指定 @username 或用户 id（正整数）或频道 id（负整数）。",
+  missingTarget: "请回复目标消息后发送 /block disable，或使用 /block <@username|用户 id（正整数）|频道 id（负整数）> disable。",
   invalidUsername: (argument: string): string => `${argument} 不是完整合法的 Telegram 用户名或用户 id（正整数）或频道 id（负整数）。`,
-  unknownUsername: (username: string): string => `尚未记录 @${username}，请回复目标消息后使用 /unblock。`,
+  unknownUsername: (username: string): string => `尚未记录 @${username}，请回复目标消息后使用 /block disable。`,
   conflictingTarget: (argument: string): string => `回复对象与 ${argument} 不一致，请只保留一个目标。`,
   selfTarget: "不能将机器人自身设为此命令的目标。",
 };

@@ -37,7 +37,8 @@ async function executeUnblock(targetUser: CachedUser, originChatId: number): Pro
 }
 
 /**
- * 处理 /unblock 指令：把目标从持久化黑名单里移除，与 /block 互为逆操作。
+ * `/block <目标> disable`：把目标从持久化黑名单里移除，与 `/block <目标> enable`
+ * 互为逆操作；由 commands/block.ts 的 handleBlockCommand 按末位动作分派进来。
  *
  * 删除与新增走同一 revision/ACK 协议：先把主线程 LRU 发布为负结论，再向
  * DiskIO Worker 投递 SQLite tombstone；事务 ACK 前由主线程保留并可重放。
@@ -46,14 +47,15 @@ async function executeUnblock(targetUser: CachedUser, originChatId: number): Pro
  * 解除 Telegram 群级封禁。整条操作只认 isCanUnBlock；不再接受 `all` 参数，避免
  * 「名单已移除、群级封禁仍保留」这档容易误解的半完成状态。
  *
- * 目标解析比 /block 多一档：回复目标的一条消息优先，也可以用 /unblock @username、
- * /unblock <用户 id> 或 /unblock <频道的负数 id>。id 不必在缓存里见过——解除
- * 拉黑处置的同样是一个 id，缓存只用来给回执配个人类可读的标签。
+ * 目标解析比 enable 多一档：回复目标的一条消息优先，也可以用 `@username`、
+ * 用户 id 或频道的负数 id。id 不必在缓存里见过——解除拉黑处置的同样是一个 id，
+ * 缓存只用来给回执配个人类可读的标签。
  *
- * 负数 id 只有这条命令认，供管理员在源消息已删除、频道无公开 username 或缓存
- * 无记录时恢复频道身份；`/block` 仍拒绝粘贴会话 id，避免误封整个会话身份。
+ * 负数 id 只有 disable 认，供管理员在源消息已删除、频道无公开 username 或缓存
+ * 无记录时恢复频道身份；enable 仍拒绝粘贴会话 id，避免误封整个会话身份。
+ * @param targetArgument 去掉末位动作后的目标参数原文，可为空（此时只认回复目标）。
  */
-export async function handleUnblockCommand(ctx: CommandContext<Context>): Promise<void> {
+export async function handleBlockDisable(ctx: CommandContext<Context>, targetArgument: string): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
@@ -64,8 +66,6 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
-
-  const targetArgument: string = ctx.match.trim();
 
   const targetUser: CachedUser | undefined = await resolveCommandTarget({
     chatId,

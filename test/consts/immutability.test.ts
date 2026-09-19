@@ -313,7 +313,7 @@ test("各命令的目标解析文案表不可写入", () => {
 test("目标解析文案念的是各自的命令名", () => {
   for (const [command, texts] of [
     ["/block", BLOCK_TARGET_TEXTS],
-    ["/unblock", UNBLOCK_TARGET_TEXTS],
+    ["/block disable", UNBLOCK_TARGET_TEXTS],
     ["/mute", MUTE_TARGET_TEXTS],
     ["/unmute", UNMUTE_TARGET_TEXTS],
     ["/copy", COPY_TARGET_TEXTS],
@@ -324,7 +324,7 @@ test("目标解析文案念的是各自的命令名", () => {
   ] as const) {
     expect(texts.missingTarget).toContain(command);
   }
-  // /unblock 与 /unmute 的提示不能退化成 /block、/mute 的那份。
+  // /block disable 与 /unmute 的提示不能退化成 /block、/mute 的那份。
   expect(UNBLOCK_TARGET_TEXTS.missingTarget).not.toBe(BLOCK_TARGET_TEXTS.missingTarget);
   expect(UNMUTE_TARGET_TEXTS.missingTarget).not.toBe(MUTE_TARGET_TEXTS.missingTarget);
   expect(STEAL_ICON_TARGET_TEXTS.missingTarget).not.toBe(COPY_TARGET_TEXTS.missingTarget);

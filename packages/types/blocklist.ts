@@ -49,7 +49,7 @@ export interface RemoveBlockedMembersParams {
  *    里唯一一个大小随黑名单长度增长的文件，而它在启动恢复的关键路径上。
  * 2. **重放时那份快照可能已经过期**：Worker 重建后重投的应该是「用**此刻**的名单
  *    扫这个群」，而不是当初那一份。
- * 3. **`/unblock` 被迫改写它**：`forgetUserBlocklistRemovals` 要把这个 id 从每一条
+ * 3. **`/block disable` 被迫改写它**：`forgetUserBlocklistRemovals` 要把这个 id 从每一条
  *    批次里滤掉再整份重新落盘，而这件事只是因为当初冻了一份不该冻的列表。
  *
  * 秒踢与广告处置（`probeMembership: false`）相反，名单**必须**随任务冻结：那批人
@@ -162,7 +162,7 @@ export interface BlocklistSweepSchedulerState {
  * outbox 条目；它与 Telegram update 重投共同提供恢复，不能互相替代。
  *
  * @returns **真正投给 Worker 的处置条数**。正常 resolve 不等于「都投出去了」：
- *   durable 对账（antiRaid/blocklistDelivery.ts）在并发 `/unblock` 反复裁剪
+ *   durable 对账（antiRaid/blocklistDelivery.ts）在并发 `/block disable` 反复裁剪
  *   同一批时会把整批 removeBlockedMembers 全部扣下、只留其余消息，随后 post
  *   路径以 `length === 0` 早退并正常 resolve。调用方（infra/blocklist/sweep.ts）
  *   必须据此把「一条都没投出去」判成失败并推进退避，否则 claim 里的 removalId

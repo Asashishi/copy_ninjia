@@ -83,7 +83,7 @@ export interface ClaimBlockedJoinerParams {
    * 这次处置**取代掉**的那条 join 消息。
    *
    * 处置不是附加在 join 之外的，而是替代它：Worker 不会为一个马上要被踢掉的人
-   * 开验证窗口。可这批处置在随后的 durable 对账里仍可能被并发的 `/unblock`
+   * 开验证窗口。可这批处置在随后的 durable 对账里仍可能被并发的 `/block disable`
    * 整批取消（`forgetUserBlocklistRemovals`），那时这个人既没有移除、也没有验证
    * 窗口——没有窗口就没有提醒、没有超时踢人，他就这么留在群里，而系统里再没有
    * 任何一处会为他重新开一个。因此把被取代的那条 join 一并登记下来兜底。

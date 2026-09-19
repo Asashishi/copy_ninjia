@@ -212,8 +212,8 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
 }
 
 /**
- * 同一身份的广告封禁与 `/unblock` 必须覆盖完整副作用后串行结算。只锁名单写入
- * 会让这里等待落盘时被 `/unblock` 越过，随后又登记一批已经过期的封禁。
+ * 同一身份的广告封禁与 `/block disable` 必须覆盖完整副作用后串行结算。只锁名单写入
+ * 会让这里等待落盘时被 `/block disable` 越过，随后又登记一批已经过期的封禁。
  */
 function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
   return runBlocklistIdentityMutation(

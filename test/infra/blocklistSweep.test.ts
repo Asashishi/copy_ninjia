@@ -509,7 +509,7 @@ describe("黑名单清扫", () => {
   });
 
   test("正常 resolve 但零投递按失败结算：作废 claim 并推进退避", async () => {
-    // durable 对账在并发 /unblock 反复裁剪同一批时会扣下整批 removeBlockedMembers，
+    // durable 对账在并发 /block disable 反复裁剪同一批时会扣下整批 removeBlockedMembers，
     // 投递路径于是拿着空数组早退并正常 resolve——没抛错，也没有任何消息在途。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     remover.mockImplementationOnce(async (): Promise<number> => 0);

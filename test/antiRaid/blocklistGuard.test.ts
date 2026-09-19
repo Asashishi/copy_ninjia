@@ -128,7 +128,7 @@ describe("黑名单入群秒踢的投递侧", () => {
     // 两条投递路径（chat_member 与 new_chat_members）会为同一次入群各来一次；
     // 两条都带 joinedAt 就是记两次，阈值对黑名单账号实际减半。
     expect(messages.map((message) => (message as RemoveBlockedMembersParams).joinedAt)).toEqual([1_000, undefined]);
-    // 每批处置都登记下它取代掉的那条 join：批次被并发 /unblock 取消时，
+    // 每批处置都登记下它取代掉的那条 join：批次被并发 /block disable 取消时，
     // durable 对账要靠它把验证窗口补回来（见 blocklistDelivery.ts）。
     expect([...replacedJoins.keys()]).toEqual([1, 2]);
     expect(replacedJoins.get(1)).toBe(replacedJoin);

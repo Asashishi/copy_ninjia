@@ -29,8 +29,8 @@ mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked 
 
 const {
   handleWhiteCommand,
-  parseWhiteAction,
 } = await import("../../packages/commands/white");
+const { parseToggleAction } = await import("../../packages/commands/arguments");
 const {
   updateCachedIdentity,
 } = await import("../../packages/users/senderIdentity");
@@ -113,9 +113,9 @@ beforeEach(() => {
 
 describe("/white", () => {
   test("动作大小写不敏感且只接受 enable/disable", () => {
-    expect(parseWhiteAction("ENABLE")).toBe("enable");
-    expect(parseWhiteAction("disable")).toBe("disable");
-    expect(parseWhiteAction("true")).toBeUndefined();
+    expect(parseToggleAction("ENABLE")).toBe("enable");
+    expect(parseToggleAction("disable")).toBe("disable");
+    expect(parseToggleAction("true")).toBeUndefined();
   });
 
   test("非超级管理员收到权限提示，且不修改白名单", async () => {
@@ -230,7 +230,7 @@ describe("/white", () => {
     }));
   });
 
-  test("黑名单身份必须先 /unblock，不能直接加入白名单", async () => {
+  test("黑名单身份必须先 /block disable，不能直接加入白名单", async () => {
     isUserBlocked.mockImplementation(
       (id: number): boolean => id === 100 || id === -1002233445566
     );
@@ -239,7 +239,7 @@ describe("/white", () => {
 
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("先用 /unblock"),
+      text: expect.stringContaining("先用 /block disable"),
     }));
 
     await handleWhiteCommand(context(1, "-1002233445566 enable"));

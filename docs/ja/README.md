@@ -267,7 +267,7 @@ Bot をグループ管理者にし、使う機能に応じて権限を付与し�
 | 管理者権限 | 使う機能 |
 | :--- | :--- |
 | メッセージの削除 | `/gag`、広告検出による広告の削除、ブロックリスト入りチャンネル identity の発言の削除 |
-| メンバーの制限と BAN | 未認証メンバーのキック、Anti-Raid のプライベートモード、`/block`、`/unblock`、`/mute`、`/unmute`、`/batch_kick`、連投ミュート、広告検出による BAN |
+| メンバーの制限と BAN | 未認証メンバーのキック、Anti-Raid のプライベートモード、`/block enable|disable`、`/mute`、`/unmute`、`/batch_kick`、連投ミュート、広告検出による BAN |
 
 参加認証は管理者であること自体にも依存します。Telegram はメンバーの参加・退出イベントを管理者の Bot にしか送りません。権限が足りないときは、Bot の通知が欠けている権限を示します。`isCanViewBotStatus` を持つ identity は `/bot_status` で現在のグループに付与された権限を確認できます。
 

@@ -250,7 +250,7 @@ function releaseSweepClaim(chatId: number, removalId: number): void {
 /**
  * 把某个 id 从冻结名单批次摘掉。补扫不冻结名单，只有权威名单被清空时才连同
  * 补扫任务一起销账；所有销账路径同步释放永远不会再收到回执的 sweep claim。
- * @internal 由 membership.ts 的 /unblock 路径调用。
+ * @internal 由 membership.ts 的 /block disable 路径调用。
  */
 export function forgetUserBlocklistRemovals(userId: number): void {
   let changed: boolean = false;

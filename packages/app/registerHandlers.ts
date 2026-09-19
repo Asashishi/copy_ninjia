@@ -32,7 +32,6 @@ import {
   handleIconCommand,
   dispatchWedCommand,
   dispatchWedCallback,
-  handleUnblockCommand,
   handleUngagCommand,
   handleUnmuteCommand,
   handleUnquietCommand,
@@ -256,7 +255,6 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("wed", (ctx: CommandContext<Context>): void | Promise<void> => dispatchWedCommand(ctx));
   commands.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
   commands.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
-  commands.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
   commands.command("prompt", (ctx: CommandContext<Context>): Promise<void> => handlePromptCommand(ctx));
   commands.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
   commands.command("clear_context", (ctx: CommandContext<Context>): Promise<void> => handleClearContextCommand(ctx));

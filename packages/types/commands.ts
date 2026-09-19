@@ -20,6 +20,9 @@ export interface CommandTargetMessages {
   readonly selfTarget: string;
 }
 
+/** 以 enable/disable 结尾的命令动作（`/white`、`/block`），见 commands/arguments.ts 的 parseToggleAction。 */
+export type ToggleAction = "enable" | "disable";
+
 /**
  * 一条 enable/disable 开关命令的全部对外文案。
  *

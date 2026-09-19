@@ -24,9 +24,9 @@ export const protectedIdentityMutationQueue: { current: Promise<void> } = {
 /**
  * 动态黑名单处置的逐身份串行尾链。
  *
- * owner 是主线程；广告命中的「拉黑、落盘、登记并投递封禁」与 `/unblock` 的
+ * owner 是主线程；广告命中的「拉黑、落盘、登记并投递封禁」与 `/block disable` 的
  * 「删名单、落盘、跨群解封」必须按同一身份的到达顺序完整结算，否则较早广告
- * 任务可能在较晚 `/unblock` 之后补登记旧封禁。不同身份互不阻塞。每条尾链结算
+ * 任务可能在较晚 `/block disable` 之后补登记旧封禁。不同身份互不阻塞。每条尾链结算
  * 后立即删除，因此容量只等于当前仍在处理的身份数；进程重启后自然重建。
  */
 export const blocklistIdentityMutationQueues: Map<number, Promise<void>> = new Map();
@@ -52,7 +52,7 @@ export const blocklistParticipantInvalidQueue: { current: Promise<void> } = {
  * 生命周期：sweepBlockedMembers / claimBlockedJoiner 投递前写入。删除只在
  * 「这批不再需要执行」时发生，分成三类：
  * 1. 收到 `complete: true` 回执；
- * 2. 权威状态取消：`/unblock` 摘掉用户，或 forgetChatBlocklistWork 停管群；
+ * 2. 权威状态取消：`/block disable` 摘掉用户，或 forgetChatBlocklistWork 停管群；
  * 3. 同群的补扫批次被新一轮补扫取代（名单只增不减，新快照是旧批次的超集）。
  * 投递拒绝、屏障超时、落盘失败与副作用失败都不删除：durable outbox 是独立
  * 于 Telegram update 重投的恢复边界（见 infra/blocklist/）。

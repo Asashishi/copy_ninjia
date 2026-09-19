@@ -250,7 +250,7 @@ export function flushStateToDisk(
  * 会各读一次当前状态；同一 middleware 内复用引用（见 libs/chatState.ts 的形状契约），
  * 外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn 的独立读取。
  *
- * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/unblock 的连带
+ * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/block disable 的连带
  * 封禁群清单、各处 managed 群清扫、lockdown 收养与恢复……），用 `get` 会让它变成
  * 「读历史的函数」，其中两处直接呈现给用户。
  */

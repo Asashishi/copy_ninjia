@@ -307,7 +307,7 @@ export async function handlePermissionCommand(
     messages: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;
-  // 与 /block、/unblock、/white 同一道闸：匿名管理员拿当前群当皮套时
+  // 与 /block、/block disable、/white 同一道闸：匿名管理员拿当前群当皮套时
   // resolveCommandTarget 按设计返回这个群自己的 identity（见
   // targetResolution.ts 结尾）。这里必须自己拒绝——给它逐项发权限，等于把
   // /block、/mute 与各功能开关交给这个群的任意匿名管理员，而 Telegram 从不

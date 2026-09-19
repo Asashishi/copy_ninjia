@@ -127,7 +127,7 @@ function prepareBlocklistSweep(
   page: BlocklistIdPage
 ): PreparedBlocklistSweep | null {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-  // 读盘期间状态可能已经变化（新 claim 落地、权限闩锁置真、`/unblock` 清空名单），
+  // 读盘期间状态可能已经变化（新 claim 落地、权限闩锁置真、`/block disable` 清空名单），
   // 因此调用方在 await 之前的同口径预判不能替代这一次复查。
   if (!canClaimSweep(progress, now)) return null;
   if (!hasAnyBlockedIdentity()) return null;
@@ -207,7 +207,7 @@ async function deliverPreparedSweeps(
     throw error;
   }
   if (deliveredCount > 0) return;
-  // 正常 resolve 不等于投出去了：并发 `/unblock` 在
+  // 正常 resolve 不等于投出去了：并发 `/block disable` 在
   // BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS 轮内持续改动 outbox 时，durable 对账
   // 会扣下整批 removeBlockedMembers（antiRaid/blocklistDelivery.ts），纯补扫这批
   // 于是只剩空数组，投递路径以 length === 0 早退并正常 resolve。不在这里判失败的

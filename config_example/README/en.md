@@ -152,8 +152,8 @@ currently off.
 The authoritative allowlist, blocklist, pending-removal state and **per-chat state** (feature
 switches, quiet mode, lockdown records, the bot's permission snapshot, title and relay flag) all live
 in `database/storage.sqlite` under the runtime data root. Chat state sits in the `chat_states` table,
-capped at 25 chats; over the limit `/init enable` refuses with a one-line reply. `/white`, `/permission`, `/block`, and
-`/unblock` persist changes transactionally through the Disk I/O Worker; ordinary deployments
+capped at 25 chats; over the limit `/init enable` refuses with a one-line reply. `/white`, `/permission`, and
+`/block … enable|disable` persist changes transactionally through the Disk I/O Worker; ordinary deployments
 should not edit the database directly. `/permission help` is the current permission-key and
 default reference. An invalid schema, unsupported version, or overlap between the two policy
 tables aborts before network access. Migrate legacy JSON deployments once by following

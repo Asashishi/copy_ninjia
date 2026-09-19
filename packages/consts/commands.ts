@@ -45,8 +45,8 @@ export const USER_ID_ARG_PATTERN: RegExp = /^[1-9]\d*$/;
  * 命令参数中裸会话 id（频道/群）的完整匹配规则：带负号的十进制整数，同样不接受
  * 前导零、指数与小数，位数边界仍由调用方的 `Number.isSafeInteger` 兜底。
  *
- * `/gag`、`/ungag`、`/unblock`、`/permission` 与 `/white` 按需打开这条路
- *（`acceptChatId`）。前两条用它直接指定频道 sender_chat；`/unblock` 必须保证
+ * `/gag`、`/ungag`、`/block disable`、`/permission` 与 `/white` 按需打开这条路
+ *（`acceptChatId`）。前两条用它直接指定频道 sender_chat；`/block disable` 必须保证
  * 黑名单里的频道马甲始终能被划掉；后两者管理的白名单本来就允许负数频道 ID，
  * 不能强迫管理员依赖一条仍存在的频道消息或公开 username。
  *
@@ -167,7 +167,7 @@ export const BATCH_KICK_MAX_DURATION_MS: number = 24 * 60 * 60_000;
 export const BATCH_KICK_CONCURRENCY: number = 5;
 
 /**
- * 跨托管群处置同时运行的群数（`/block` 的连坐封禁与 `/unblock` 的跨群解封）。
+ * 跨托管群处置同时运行的群数（`/block` 的连坐封禁与 `/block disable` 的跨群解封）。
  *
  * 单租户通常只有约 15 个群，但配置状态仍可能长期增长；固定小并发避免一次命令
  * 把全部群同时展开成 Telegram 请求和闭包，也避免逐群串行让 update 中间件几十次

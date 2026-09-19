@@ -403,7 +403,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
 
   test("群管理员即使被判成广告也不处置", async () => {
     // 处置与 /block 同权且不可逆：永久黑名单 + 每个托管群封禁 + revoke_messages
-    // 抹掉近期消息，恢复要人工 /unblock 再逐群解封。
+    // 抹掉近期消息，恢复要人工 /block disable 再逐群解封。
     classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
     fetchedAdmins.set(-1001, new Set([7]));
     enqueueAdCandidate(candidate({ messageId: 1, text: "看我合作方的链接" }), 1_000);

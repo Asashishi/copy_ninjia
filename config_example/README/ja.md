@@ -141,7 +141,7 @@ Google/OpenAI HTTP request は初回 failure 後に最大 5 回 retry します�
 allowlist、blocklist、未完了 removal、そして**グループ単位の状態**（機能スイッチ、静音、
 ロックダウン記録、Bot の権限スナップショット、グループ名、中継フラグ）の authoritative source は
 いずれも runtime data root の `database/storage.sqlite` です。グループ状態は `chat_states` テーブルに
-あり、最大 25 グループまで。超過時は `/init enable` が 1 行の返信で拒否します。`/white`、`/permission`、`/block`、`/unblock` は Disk I/O Worker
+あり、最大 25 グループまで。超過時は `/init enable` が 1 行の返信で拒否します。`/white`、`/permission`、`/block … enable`、`/block … disable` は Disk I/O Worker
 経由の transaction で変更を永続化し、通常の deployment は database を直接編集しません。
 permission key と default は `/permission help` が現行 reference です。不正 schema、未対応 version、
 2 つの policy table の重複は network 接続前に startup を拒否します。legacy JSON deployment は

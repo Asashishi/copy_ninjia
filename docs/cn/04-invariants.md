@@ -406,18 +406,18 @@
 - 发送者用户名缓存同时维护「归一化 username → identity」与「sender ID → 当前 username」；改名、去名、换绑和容量淘汰都在同一 owner 原子更新双向关系，解析器拒绝不一致别名。
 - 匿名管理员本人仍按管理员身份豁免，但不能作为“可归属的管理员邀请人”为新成员继承邀请豁免。匿名管理员以当前群身份发言时，可见发送者必须保留当前群 identity，供 copy/头像爬取复用；破坏性的成员操作必须拒绝把当前群 identity 当作用户目标。
 
-  **`/block` 与 `/unblock` 额外接受裸用户 id**（`USER_ID_ARG_PATTERN`，且必须过 `Number.isSafeInteger`）：处置的对象本来就是一个 id，而用户名可以被释放后由别人重新注册——同 `/icon steal` 那条现查要求，只是这两条命令不可逆，代价更大。id 那条路查不到缓存**不算失败**（`resolveIdTarget` 退化成只带 id 的最小身份），只影响回执标签。
+  **`/block … enable` 与 `/block … disable` 额外接受裸用户 id**（`USER_ID_ARG_PATTERN`，且必须过 `Number.isSafeInteger`）：处置的对象本来就是一个 id，而用户名可以被释放后由别人重新注册——同 `/icon steal` 那条现查要求，只是这两条命令不可逆，代价更大。id 那条路查不到缓存**不算失败**（`resolveIdTarget` 退化成只带 id 的最小身份），只影响回执标签。
 
   裸 id 逐命令 opt-in（`acceptUserId`），不做成全局行为：`/copy` 与中文动作命令要的是有名字、有头像的身份，拿一个没见过的裸 id 只能复读出一具空壳。
 
   **回复目标与参数同时给出、又指向不同的人时必须报错，绝不静默取一**：id 那条路被引入的场景恰恰是「对着别人贴出的 id 动手」——管理员看到群里有人发「请封 123456789」，对着那条消息点回复再发 `/block 123456789`，而静默优先取回复目标的话，被永久拉黑并在每个托管群带 `revoke_messages` 封禁的是贴出这串 id 的同事，回执里显示的正是那位同事的名字，读起来像一次成功确认。参数解析不出目标时同样按冲突报错，不再说「这不是合法用户名」：那句话会让人以为参数被忽略、回复目标生效了。
 
   两者指向同一个 id 时是无害的重复，照常放行。
-- 裸**会话** id（频道/群的负数，`CHAT_ID_ARG_PATTERN`）单独一个开关，只有 `/gag`、`/ungag`、`/unblock`、`/permission` 与 `/white` 打开（`acceptChatId`）。前两条只建立或解除可逆的临时消息删除状态，第三条是恢复方向，后两条管理允许频道身份存在的白名单配置；其余命令不得把负数会话 id 当普通用户目标。频道马甲的 id 本来就会进黑名单（`/block` 回复一条频道消息、广告检测命中 `sender_chat`），而划掉它此前只有回复消息与 `@username` 两条路：前者在广告检测删掉原消息后就没了，后者要求频道有公开 username 且未被 `USER_CACHE_MAX` 挤出缓存——两条都断掉的条目会永远留在名单上。
+- 裸**会话** id（频道/群的负数，`CHAT_ID_ARG_PATTERN`）单独一个开关，只有 `/gag`、`/ungag`、`/block disable`、`/permission` 与 `/white` 打开（`acceptChatId`）。前两条只建立或解除可逆的临时消息删除状态，第三条是恢复方向，后两条管理允许频道身份存在的白名单配置；其余命令不得把负数会话 id 当普通用户目标。频道马甲的 id 本来就会进黑名单（`/block` 回复一条频道消息、广告检测命中 `sender_chat`），而划掉它此前只有回复消息与 `@username` 两条路：前者在广告检测删掉原消息后就没了，后者要求频道有公开 username 且未被 `USER_CACHE_MAX` 挤出缓存——两条都断掉的条目会永远留在名单上。
 
-  反方向的 `/block` 必须继续拒绝负数：把粘错的会话 id 当目标会改去封整个会话身份，而那条命令不可逆；`/unblock` 是恢复方向，指错至多一次空解封。
+  反方向的 `/block` 必须继续拒绝负数：把粘错的会话 id 当目标会改去封整个会话身份，而那条命令不可逆；`/block disable` 是恢复方向，指错至多一次空解封。
 
-  **负数 id 一律带 `isChannel`**（`resolveIdTarget` 在最小身份上就标好，与 `workers/antiRaid/blocklistEffects.ts` 按符号分派同源）：`/unblock` 靠它选 `unbanChatSenderChat` 而非 `unbanChatMemberIfBanned`，漏标会让解封报错记进 `failedCount`，回执变成一份关于「根本没被碰过的目标」的假战报。
+  **负数 id 一律带 `isChannel`**（`resolveIdTarget` 在最小身份上就标好，与 `workers/antiRaid/blocklistEffects.ts` 按符号分派同源）：`/block disable` 靠它选 `unbanChatSenderChat` 而非 `unbanChatMemberIfBanned`，漏标会让解封报错记进 `failedCount`，回执变成一份关于「根本没被碰过的目标」的假战报。
 - gag 的主线程权威表按群保存目标小列表，全局硬上限 5；同群同 identity 从 `starting`、`active` 到 `ending` 始终只占一个槽。所有目标先发送一条群内公开状态；普通用户的公开状态不带按钮，随后再发送一条由 `ephemeral_message_parameters.receiver_user_id` 限定、仅目标可见且带按钮的临时入口，频道没有接收用户则只保留带按钮的公开状态。只有全部必需消息都成功并同步登记公开 `message_id`、以及普通用户入口响应中经核验的 `ephemeral_message_id` 后，才能切 `active`、安装 `unref` timer；第二条发送失败也必须先删除已经落地的公开状态再释放预约。超时、定向 `/ungag` 与 chat teardown 必须先同步认领 `ending` 并清 timer，再依次调用对应删除 API。只有全部删除结局均为 `deleted/gone`，且需要发送的解除回执也已结算后，才能按对象身份释放槽位；`failed/forbidden` 保留 ending owner，使用有限、`unref` 的退避重试，耗尽后等待 `/ungag`、chat teardown 或停机再次触发。这样旧收尾不能误删或穿插同目标的新会话，清理债务总量仍受全局 5 槽硬顶约束。全部开始状态均由 gag 会话持有，不进入命令文本的固定 30 秒清理；解除回执仍走统一命令清理边界。gag owner 必须在 Telegram 总闸前 quiesce/drain，未清理完会阻止最终 offset 与实例锁释放。
 
   **gag 入口刷新由同一会话 owner 持有**：`commands/gag/counter.ts` 原地更新群消息计数，阈值为 7；没有命中阈值或该会话已有 `speakNoticeRefreshTask` 时不创建待刷新数组。`commands/gag/refresh.ts` 为每个就绪会话同步认领一个任务，再登记到 `gagBackgroundTasks`，不同会话独立启动，出站并发与背压交给统一 Telegram 边界。消息滚动、跨话题移动、定时补发及沉默后的发言补发都不能为已有任务再创建等待者，最多五个会话各持有一个刷新任务，不随群消息积压增长。
@@ -440,7 +440,7 @@
 
   **派发清单不得在调用点手写**：`teardownChatRuntime` 遍历 `packages/consts/chatTeardown.ts` 的 `CHAT_TEARDOWN_ORDER`，该常量由类型强制穷尽 `ChatRuntimeOwner`，少列任一 owner 都会编译失败。一次 teardown 必须按该表同步启动全部 owner，再统一等待异步收尾。
 - 成员现查本身是新的异步边界：`probeChatMembership` 返回“仍在群”后、真正调用 `kickChatMember` 前必须再次确认终态对象仍是发起查询时的同一引用，而且这次确认与 API 调用之间不得再有 `await`。否则 teardown、停管或状态替换已经取消的旧处置会消费迟到查询结果，把不再属于该终态的成员踢掉。
-- `/block` 不得缓存“此前确证踢出”来替代实时成员查询：`/unblock`、外部管理员操作与重新入群都能让历史结局过期，而不同 chat lane 的命令还可交错。每次命令都必须重新调用 `isChatMember`，并无条件重发 `banChatMember`，让 Telegram 执行 `revoke_messages`；`/unblock` 因此不需要维护命令侧成员结局缓存。
+- `/block` 不得缓存“此前确证踢出”来替代实时成员查询：`/block disable`、外部管理员操作与重新入群都能让历史结局过期，而不同 chat lane 的命令还可交错。每次命令都必须重新调用 `isChatMember`，并无条件重发 `banChatMember`，让 Telegram 执行 `revoke_messages`；`/block disable` 因此不需要维护命令侧成员结局缓存。
 
 ### `/wed` 成员持久化与交互
 
@@ -530,7 +530,7 @@
 
 - **容量闸只拒绝、绝不淘汰**：新建第 26 条时 `assertChatStateCapacity` 抛错，启动读取由 `decodeStoredChatStates` 校验容量与代理目标唯一性，Disk I/O Worker 在写入侧独立复核容量。`hydrateChatStateCache` 只将已解码状态装入固定 shape 热缓存；这些边界保证管理中的群状态不会被 LRU 淘汰。
 
-  正因为淘汰不可能发生，**热读走 `peek` 而不是 `get`**：那次为刷新热度而做的 `Map.delete` + `Map.set` 一分钱也买不到（chat-state-map-read 实测 253.0 → 14.1 ns/op），还会让 `getChatStateCache()` 的迭代序变成读取历史的函数，而 `/block`、`/unblock` 的连带封禁群清单直接把它呈现给用户。
+  正因为淘汰不可能发生，**热读走 `peek` 而不是 `get`**：那次为刷新热度而做的 `Map.delete` + `Map.set` 一分钱也买不到（chat-state-map-read 实测 253.0 → 14.1 ns/op），还会让 `getChatStateCache()` 的迭代序变成读取历史的函数，而 `/block … enable`、`/block … disable` 的连带封禁群清单直接把它呈现给用户。
 
 - **容量拒绝只属于 `/init enable`，而且必须是一句回执**：它是唯一会把一个新群纳入管理的入口，超限时回 `INIT_CHAT_LIMIT_TEXT`。其余命令一律不得触发新建——`/send <群组 id>` 因此要求目标已经在 `chat_states` 里，否则只回一句提示。容量错逸出命令处理器就是一个由重投驱动的重启循环：update 不被确认、进程带非零码退出、Telegram 重投同一条命令、再抛一次。
 
@@ -576,9 +576,9 @@
 
 #### 黑名单权威名单与 block 命令
 
-- `/block` 的权威名单是 SQLite `blocklist_entries` 表；主线程只保留最近访问身份的有界 LRU 与未 ACK 最终值。黑名单仍是同步安全边界：调用前必须预热目标的白/黑名单正负结论，写路径先发布 LRU 最终值再投递数据库 revision，反过来会让两步之间到达的入群 update 看不到刚拉黑的人。名单不按时间淘汰，删除只有两条路径：`/unblock` 人工删除，以及[黑名单销号识别](#黑名单销号识别)的自动解除。表内 data 必须是含 `blockedAt` 与 Telegram meta 的严格完整记录；可选的 `participantInvalidCount` 缺省表示 0，存在时只能是 1 到 `BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1` 的整数，越界、非整数或类型不符一律拒绝启动。
+- `/block` 的权威名单是 SQLite `blocklist_entries` 表；主线程只保留最近访问身份的有界 LRU 与未 ACK 最终值。黑名单仍是同步安全边界：调用前必须预热目标的白/黑名单正负结论，写路径先发布 LRU 最终值再投递数据库 revision，反过来会让两步之间到达的入群 update 看不到刚拉黑的人。名单不按时间淘汰，删除只有两条路径：`/block disable` 人工删除，以及[黑名单销号识别](#黑名单销号识别)的自动解除。表内 data 必须是含 `blockedAt` 与 Telegram meta 的严格完整记录；可选的 `participantInvalidCount` 缺省表示 0，存在时只能是 1 到 `BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1` 的整数，越界、非整数或类型不符一律拒绝启动。
 
-  **`/unblock` 默认完整解除**：已在表中时先发布负缓存与计数，再从 `pendingBlockedRemovals` 在途批次摘掉该 id 并投递裁剪后的 outbox 快照，最后投递删除 tombstone（`queueBlocklistDeletion`）。Disk I/O Worker 按到达顺序处理，任一条消息都可能触发满批提交；快照在前，已提交的库就不会出现引用已删条目的冻结批次，也不会在名单清空时留下补扫任务，两者都会让启动恢复拒绝启动。无论目标是否在表中，都在所有 `ChatState.botPermissions?.isAdministrator === true` 的群解除 Telegram 封禁。命令只要求 `isCanUnBlock`，旧 `all` 参数不再解析。跨群解封必须走 `unbanChatMemberIfBanned`（`only_if_banned: true`），避免把当前仍是成员的人误踢；频道身份走 `unbanChatSenderChat`。已经投进 Worker 的旧批次无法撤回，这段窗口仍是已知取舍。
+  **`/block disable` 默认完整解除**：已在表中时先发布负缓存与计数，再从 `pendingBlockedRemovals` 在途批次摘掉该 id 并投递裁剪后的 outbox 快照，最后投递删除 tombstone（`queueBlocklistDeletion`）。Disk I/O Worker 按到达顺序处理，任一条消息都可能触发满批提交；快照在前，已提交的库就不会出现引用已删条目的冻结批次，也不会在名单清空时留下补扫任务，两者都会让启动恢复拒绝启动。无论目标是否在表中，都在所有 `ChatState.botPermissions?.isAdministrator === true` 的群解除 Telegram 封禁。命令只要求 `isCanUnBlock`，旧 `all` 参数不再解析。跨群解封必须走 `unbanChatMemberIfBanned`（`only_if_banned: true`），避免把当前仍是成员的人误踢；频道身份走 `unbanChatSenderChat`。已经投进 Worker 的旧批次无法撤回，这段窗口仍是已知取舍。
 
   **自己人不可拉黑**：`isWhitelisted` 覆盖永久白名单与恒受保护的超级管理员，`/block`、`/mute`、`/batch_kick` 都复用这一边界；临时广告免检只授予广告免检，不进入这道永久保护边界。`/white enable` 也拒绝仍在黑名单中的身份。`runProtectedIdentityMutation` 用单条主线程串行链把「检查互斥 + 发布身份最终值」串行化，临界区只含身份检查和权威状态变化，Telegram 副作用与 durable confirmation 留在外面。拉黑路径先排临时累计墓碑，再排黑名单最终值；Disk I/O 事务和启动 hydrate 复核黑名单不得与两类白名单相交，任何冲突均 fail closed。
 
@@ -607,7 +607,7 @@
 
   **这个计数必须由每一条没落定的路径推进，不只是回执那一条**：`sweepBlockedMembers` 的三条降级路径（登记不进 outbox、投递边界抛错、**投递正常 resolve 但一条都没投出去**）之后不会再有回执来替它们推进（claim 已清空，迟到的回执走的是不动计数的重扫请求），漏掉就等于执行 owner 持续抛错（Worker 不可用、outbox 满）时每一轮都按基础间隔重来、永远走不到上限，而每一轮还要烧掉一个 outbox id 加一行错误日志。
 
-  **第三条最隐蔽，因此执行 owner 必须回报真正投出去的条数**（`BlockedMemberRemover` 返回 `Promise<number>`）：并发 `/unblock` 在 `BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS` 轮内持续改动 outbox 时，durable 对账会扣下整批 `removeBlockedMembers`，纯补扫那批于是只剩空数组，投递路径以 `length === 0` 早退并正常 resolve——没抛错，也没有任何消息在途。零投递必须与抛错走同一套善后（作废 claim、记 `delivery-boundary`、推进退避）；只看「没抛错」的话 claim 里的 `removalId` 停在原值而回执永不会来，`prepareBlocklistSweep` 对这个群从此永久早退，本进程生命周期内它再也不会被清扫，只能靠整进程重启走 `hydrateBlocklist` + `replayPendingBlockedRemovals` 捞回来。
+  **第三条最隐蔽，因此执行 owner 必须回报真正投出去的条数**（`BlockedMemberRemover` 返回 `Promise<number>`）：并发 `/block disable` 在 `BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS` 轮内持续改动 outbox 时，durable 对账会扣下整批 `removeBlockedMembers`，纯补扫那批于是只剩空数组，投递路径以 `length === 0` 早退并正常 resolve——没抛错，也没有任何消息在途。零投递必须与抛错走同一套善后（作废 claim、记 `delivery-boundary`、推进退避）；只看「没抛错」的话 claim 里的 `removalId` 停在原值而回执永不会来，`prepareBlocklistSweep` 对这个群从此永久早退，本进程生命周期内它再也不会被清扫，只能靠整进程重启走 `hydrateBlocklist` + `replayPendingBlockedRemovals` 捞回来。
 
   固定间隔兜不住「永远封不掉」的目标——目标本人就是这个群的管理员、或机器人是管理员却没有封禁权限时，每一轮补扫都注定失败，那就是这个群在进程存活期间每 5 分钟重扫一次整份名单；它们与验证超时踢人同属 `kick` 429 类别，真实限流时还会共同积压。上限同样不能去掉：闩锁必须始终有打开的路径，权限修好之后不能等到进程重启才重扫。
 
@@ -629,7 +629,7 @@
 
   **处置没有状态机，重放是它唯一的存活方式**：每批经 `trackBlockedRemoval` 编号并登记进 `pendingBlockedRemovals`，Anti-Raid Worker 重建时整表重投（重复 ban 幂等，漏掉却意味着人一直坐在群里）。
 
-  **镜像只能在任务已经完成或被权威状态判定为不再需要时删除**，分成三类：收到 `complete: true` 回执；权威取消（`/unblock` 摘掉用户或该群停管）；同群的补扫批次被新一轮补扫取代（名单只增不减，新快照是旧批次的超集）。后两条不做就是无界增长：一个缺封禁权限的群每个退避窗口沉积一份完整 `userIds` 副本，且每次 Worker 重建全量重投。
+  **镜像只能在任务已经完成或被权威状态判定为不再需要时删除**，分成三类：收到 `complete: true` 回执；权威取消（`/block disable` 摘掉用户或该群停管）；同群的补扫批次被新一轮补扫取代（名单只增不减，新快照是旧批次的超集）。后两条不做就是无界增长：一个缺封禁权限的群每个退避窗口沉积一份完整 `userIds` 副本，且每次 Worker 重建全量重投。
 
   **投递调用抛错也不能删除任务**：`postAntiRaidDurably` 的 `post()` 返回 false 只说明 Worker 没收到；durable outbox 仍是独立于 Telegram update 重投的恢复边界。屏障超时与落盘失败时 Worker 可能已经收下并在后台执行，任何一种错误里删镜像都会毁掉跨进程重放依据。catch 里回写 `blocklistSweepState` 前还必须对账 `removalId` 仍是自己，否则会踩掉抢先到达的回执写下的 `sweptAt`。
 
@@ -657,11 +657,11 @@
 
   **黑名单成员入群的处置是「取代」join、不是「附加」在 join 之外，因此它被取消时必须把那条 join 补回去**（`ClaimBlockedJoinerParams.replacedJoin`）：`claimBlockedJoiner` 命中时刻意不投 `join`——Worker 不会为一个马上要被踢掉的人开验证窗口。
 
-  可这批处置在随后的 write-ahead flush 等待期里仍可能被并发的 `/unblock`（`forgetUserBlocklistRemovals`）整批删掉，而 `reconcileBlockedRemovalMessages` 只会把查不到权威参数的消息摘掉：不补 join 的话，这个人既没有移除、也没有验证窗口——没有窗口就没有提醒、没有超时踢人，他就这么留在群里，反刷群的入群计数也漏记，而系统里再没有任何一处会为他重新开一个（`chat_member`-only 的入群更甚：那一批消息会因此整个变空，什么都不投）。
+  可这批处置在随后的 write-ahead flush 等待期里仍可能被并发的 `/block disable`（`forgetUserBlocklistRemovals`）整批删掉，而 `reconcileBlockedRemovalMessages` 只会把查不到权威参数的消息摘掉：不补 join 的话，这个人既没有移除、也没有验证窗口——没有窗口就没有提醒、没有超时踢人，他就这么留在群里，反刷群的入群计数也漏记，而系统里再没有任何一处会为他重新开一个（`chat_member`-only 的入群更甚：那一批消息会因此整个变空，什么都不投）。
 
   **只有「批次真的从权威镜像里消失」这一档需要补**；对账轮数用尽的那一档不补——任务还在 durable outbox 里、这个人仍待清出去，那时补一个验证窗口等于给一个仍在黑名单上的人开门。
 
-  **这条契约覆盖整条投递路径，不止 `claimBlockedJoiner`**：`prepareDurableAntiRaidMessages` 的对账轮数（`BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS`）用尽时同样不得抛——它经 `postAntiRaidDurably` 被同一批 update 中间件调用，抛出去是同一个重启循环，而触发条件（并发 `/unblock` 反复裁剪同一批）在重投后照样成立。用尽时也不能退而投出最后一次对账结果，那可能含刚被 `/unblock` 取消的批次，正是这套对账要挡的；
+  **这条契约覆盖整条投递路径，不止 `claimBlockedJoiner`**：`prepareDurableAntiRaidMessages` 的对账轮数（`BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS`）用尽时同样不得抛——它经 `postAntiRaidDurably` 被同一批 update 中间件调用，抛出去是同一个重启循环，而触发条件（并发 `/block disable` 反复裁剪同一批）在重投后照样成立。用尽时也不能退而投出最后一次对账结果，那可能含刚被 `/block disable` 取消的批次，正是这套对账要挡的；
 
   正确做法是把处置消息整批摘掉、非处置消息照常投，记一行错误日志并让相关群欠一次补扫——任务本身留在 durable outbox 里不会丢。
 
@@ -823,7 +823,7 @@
 
   `blockedMembersRemoved` 回执始终带两组用户 ID：`participantInvalidUserIds`，以及本批已落定（已封、确认不在群、确认是管理员）的 `settledUserIds`。主线程 `packages/infra/blocklist/participantInvalid.ts` 在 `settleBlockedRemoval` 之后把回执排进 `blocklistParticipantInvalidQueue`，按到达顺序串行结算：前者的 `blocklist_entries.data.participantInvalidCount` 每条回执加 1，后者中仍带该字段的条目改写为不带该字段的记录。计数单位是「一个群的一次补扫处置」，托管群数不少于 `BLOCKLIST_PARTICIPANT_INVALID_LIMIT`（5）时，一轮补扫就可能记满。不在名单中的 id 不计数。
 
-  计数达到上限时不写出越界值，而是经 `runBlocklistIdentityMutation` 排进与广告封禁、`/unblock` 共用的逐身份队列；执行时重新预热，只有缓存中的条目仍是排队时那一个对象才调用 `unblockUser`：按上文 `/unblock` 的顺序发布负缓存、先投裁剪后的待踢快照（名单因此清空时连同补扫任务一起销账）、再投删除 tombstone，然后记一行 `Removed blocklisted user ...`。排队期间条目被清零、改写、淘汰后重读或已被 `/unblock` 删除时放弃，下一条同类回执会重新触发。这条路径不做跨群解封。停机不等待这条尾链，终局 flush 之后的计数变化随进程丢弃。
+  计数达到上限时不写出越界值，而是经 `runBlocklistIdentityMutation` 排进与广告封禁、`/block disable` 共用的逐身份队列；执行时重新预热，只有缓存中的条目仍是排队时那一个对象才调用 `unblockUser`：按上文 `/block disable` 的顺序发布负缓存、先投裁剪后的待踢快照（名单因此清空时连同补扫任务一起销账）、再投删除 tombstone，然后记一行 `Removed blocklisted user ...`。排队期间条目被清零、改写、淘汰后重读或已被 `/block disable` 删除时放弃，下一条同类回执会重新触发。这条路径不做跨群解封。停机不等待这条尾链，终局 flush 之后的计数变化随进程丢弃。
 
   `settledUserIds` 可达一整页（512 个）。筛选仍带计数的条目时，已缓存的身份只 `peek`，不改变 LRU 淘汰顺序；冷缺失经 `retainParticipantInvalidBlocklistIds` 读库并叠加本地未 ACK 最终值，**不回填身份 LRU**，与 `retainCurrentlyBlockedIdentityIds` 同一口径。只有需要改写的少数身份才进入 `prefetchIdentityPolicies`，整页补扫不得挤占按 update 预热的热缓存。一条回执的写入全有或全无：等待下文窗口期间有身份被 LRU 淘汰时整条重新预热，最多 `BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS` 轮，用尽则记错误并跳过这条回执。
 

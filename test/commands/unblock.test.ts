@@ -58,7 +58,12 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO,
 })));
 
-const { handleUnblockCommand } = await import("../../packages/commands/unblock");
+const { handleBlockDisable } = await import("../../packages/commands/unblock");
+
+/** `/block <目标> disable` 经 handleBlockCommand 去掉末位动作后交给解除流程的形态。 */
+function handleUnblockCommand(ctx: never): Promise<void> {
+  return handleBlockDisable(ctx, (ctx as { match: string }).match);
+}
 const { blocklistIdentityMutationQueues } = await import("../../packages/cache/main/blocklist");
 
 function context(userId: number | undefined = 100, match: string = "@alice"): never {
@@ -95,7 +100,7 @@ beforeEach(() => {
   resolveBotAdminStatus.mockImplementation(async (): Promise<boolean> => false);
 });
 
-describe("/unblock", () => {
+describe("/block disable", () => {
   test("非授权身份不解析目标也不改名单", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     await handleUnblockCommand(context(101));

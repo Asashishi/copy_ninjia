@@ -18,6 +18,7 @@ export interface AtmosphereNotices {
   readonly joinLogUnavailable: string;
   readonly batchKickEmpty: (duration: string) => string;
   readonly batchKickResult: (values: Readonly<{ duration: string; recordCount: number; scanned: number; kicked: number; absent: number; protected: number; blocked: number; forbidden: number; failed: number; abortedNotice: string }>) => string;
+  readonly blockUsage: string;
   readonly blockRejected: (actorLabel: string) => string;
   readonly blockCurrentChat: string;
   readonly blockProtected: (targetLabel: string) => string;

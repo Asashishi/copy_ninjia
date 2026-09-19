@@ -13,8 +13,8 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanUnMute: "让这号杂鱼也能用 /unmute 提前松开普通成员的嘴，勉强算有点用♡",
   isCanGag: "让这号杂鱼能用 /gag 与 /ungag 控制群内用户或频道身份只能 @ 本天才说话，别乱戴东西哦♡",
   isCanViewBotStatus: "让这号杂鱼能用 /bot_status 查看全局模型能力、Telegram 出站和本群功能状态♡",
-  isCanBlock: "让这号杂鱼能用 /block 把目标记进永久黑名单，还会在托管群里一起封掉哦♡",
-  isCanUnBlock: "让这号杂鱼能用 /unblock 把目标移出永久黑名单，并解除所有托管群里的封禁哦♡",
+  isCanBlock: "让这号杂鱼能用 /block enable 把目标记进永久黑名单，还会在托管群里一起封掉哦♡",
+  isCanUnBlock: "让这号杂鱼能用 /block disable 把目标移出永久黑名单，并解除所有托管群里的封禁哦♡",
   isCanWhiteOther: "让这号杂鱼能用 /white 给其它身份添加一套默认白名单权限；不能删除成员，也不能借此授予更多权限♡",
   isCanSwitchMood: "让这号杂鱼能用 /mood switch 重新抽取本天才现在的心情，可别把本天才折腾坏了♡",
   isCanBypassAdDetection: "让这个身份绕过广告检测与自动处置，本天才会当作没看见，别放广告杂鱼进来哦♡",
@@ -122,7 +122,7 @@ export const WHITE_COMMAND_TEXTS: Readonly<WhiteCommandTexts> = {
     `笨蛋，这是本群自己的身份呀——匿名管理员拿它当皮套时，Telegram 也不会告诉本天才皮套底下是谁；` +
     `把整个群加进白名单等于把本天才交给随便哪个匿名管理员，本天才才不干♡`,
   blocked: (targetLabel: string): string =>
-    `笨蛋，${targetLabel} 还在黑名单里；先用 /unblock 解除，再加入白名单呀♡`,
+    `笨蛋，${targetLabel} 还在黑名单里；先用 /block disable 解除，再加入白名单呀♡`,
   mutationFailed:
     `啧，本天才没能把白名单写进硬盘——杂鱼管理员快去看看 database/ 的写权限和磁盘♡`,
   enabled: (targetLabel: string): string =>

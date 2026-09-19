@@ -2,6 +2,7 @@ import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
+import type { ToggleAction } from "../types/commands";
 import type { SetWhitelistMembershipResult } from "../infra/identityPolicy/whitelist";
 import {
   confirmWhitelistEntryPersisted,
@@ -9,7 +10,7 @@ import {
   setWhitelistMembership,
 } from "../infra/identityPolicy/whitelist";
 
-import { commandArgumentTokens } from "./arguments";
+import { commandArgumentTokens, parseToggleAction } from "./arguments";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
@@ -20,19 +21,10 @@ import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
 
-type WhiteAction = "enable" | "disable";
-
 type WhiteMutationOutcome =
   | { readonly kind: "blocked" }
   | { readonly kind: "unauthorized" }
   | { readonly kind: "updated"; readonly result: SetWhitelistMembershipResult };
-
-/** 大小写不敏感地解析成员关系动作，拒绝其它近似写法。 */
-export function parseWhiteAction(raw: string): WhiteAction | undefined {
-  const normalized: string = raw.toLowerCase();
-  if (normalized === "enable" || normalized === "disable") return normalized;
-  return undefined;
-}
 
 /**
  * 处理 /white：超级管理员可新增或删除；持有 isCanWhiteOther 的普通白名单身份
@@ -71,9 +63,9 @@ export async function handleWhiteCommand(
 
   const tokens: string[] = commandArgumentTokens(ctx.match);
   const rawAction: string | undefined = tokens.at(-1);
-  const action: WhiteAction | undefined = rawAction === undefined
+  const action: ToggleAction | undefined = rawAction === undefined
     ? undefined
-    : parseWhiteAction(rawAction);
+    : parseToggleAction(rawAction);
   if (action === undefined) {
     await sendCommandMessage({
       chatId,
@@ -105,7 +97,7 @@ export async function handleWhiteCommand(
   });
   if (target === undefined) return;
 
-  // 与 /block（commands/block.ts）、/unblock（commands/unblock.ts）同一道闸：
+  // 与 /block（commands/block.ts）、/block disable（commands/unblock.ts）同一道闸：
   // 匿名管理员拿当前群当皮套时 Telegram 只给 sender_chat=本群，
   // resolveCommandTarget 按设计原样返回这个群自己的 identity（理由见
   // targetResolution.ts 结尾）。这里必须自己拒绝——把群 identity 写进白名单，

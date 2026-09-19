@@ -88,10 +88,11 @@ describe("application command menu", () => {
     expect(permissionDescription).toContain("所有杂鱼都能用");
     expect(permissionDescription).toContain("超级管理员");
     expect(permissionDescription).not.toContain("白名单边界内");
-    expect(BOT_COMMANDS.find(({ command }) => command === "block")?.description)
-      .toContain("isCanBlock");
-    expect(BOT_COMMANDS.find(({ command }) => command === "unblock")?.description)
-      .toContain("isCanUnBlock");
+    const blockDescription: string | undefined =
+      BOT_COMMANDS.find(({ command }) => command === "block")?.description;
+    expect(blockDescription).toContain("isCanBlock");
+    expect(blockDescription).toContain("isCanUnBlock");
+    expect(BOT_COMMANDS.map(({ command }) => command)).not.toContain("unblock");
     expect(BOT_COMMANDS.find(({ command }) => command === "mute")?.description)
       .toContain("isCanMute");
     expect(BOT_COMMANDS.find(({ command }) => command === "unmute")?.description)

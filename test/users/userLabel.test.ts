@@ -20,7 +20,7 @@ describe("破坏性命令的目标标签", () => {
   });
 
   test("只有 id 的频道身份念成频道，不与真人目标混为一谈", () => {
-    // /unblock 按负数 id 划掉的正是这一档，而 isChannel 同时决定走哪个解封
+    // /block disable 按负数 id 划掉的正是这一档，而 isChannel 同时决定走哪个解封
     // 接口——回执得让管理员看出本天才把目标当成了哪一类。
     expect(formatTargetLabel({ id: -1009, isChannel: true })).toBe("频道 -1009");
     expect(formatUserLabel({ id: -1009, isChannel: true })).toBe("这个频道");

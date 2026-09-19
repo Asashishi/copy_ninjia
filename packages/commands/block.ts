@@ -2,6 +2,7 @@ import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
+import type { ToggleAction } from "../types/commands";
 import {
   sendCommandMessage,
   banChatMember,
@@ -12,6 +13,8 @@ import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 
 import { resolveCommandTarget } from "./targetResolution";
+import { commandArgumentTokens, parseToggleAction } from "./arguments";
+import { handleBlockDisable } from "./unblock";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import { botChatPermissionsIn } from "../infra/botAdmin";
 import { describeBotPermissionGap } from "../libs/botPermissionGap";
@@ -36,7 +39,7 @@ interface BlockAdmission {
 }
 
 /**
- * 处理 /block 指令：把目标写进持久化黑名单，并在所有「机器人是管理员」的群里
+ * `/block <目标> enable`：把目标写进持久化黑名单，并在所有「机器人是管理员」的群里
  * 同时封禁（与入群验证/反刷群的自动踢出不同——那些踢而不 ban 以防误杀，这里
  * 是管理员的手动判断，直接全网封死）。封禁对还没加入的群同样生效，目标之后
  * 也进不去，但那终究不是「踢」——战报文案按目标此刻是否在场分别措辞
@@ -51,15 +54,16 @@ interface BlockAdmission {
  * 入群更新里都会被秒踢（见 antiRaid/blocklistGuard.ts），名单由 DiskIO Worker
  * 持久化到 database/storage.sqlite（见 infra/identityStorage.ts）。
  *
- * 目标有三种指定方式：回复目标的一条消息（优先）、`/block @username`（要求本
- * 机器人此前缓存过该用户）、`/block <用户 id>`。**id 那条最可靠**：用户名可以被
+ * 目标有三种指定方式：回复目标的一条消息（优先）、`/block @username enable`（要求本
+ * 机器人此前缓存过该用户）、`/block <用户 id> enable`。**id 那条最可靠**：用户名可以被
  * 释放后由别人重新注册，而 id 不会改指另一个人；这条命令又是不可逆的，因此
  * 拿不准用户名新鲜度时应当用 id 或回复消息。id 只认正整数——群/频道的负数 id
  * 会让处置改去封整个会话身份，那是另一回事。目标若是频道马甲（sender_chat），
  * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限持有 isCanBlock 的
  * 用户或频道身份使用（超级管理员恒持有，见 whitelist.ts）。
+ * @param targetArgument 去掉末位动作后的目标参数原文，可为空（此时只认回复目标）。
  */
-export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<void> {
+async function blockTarget(ctx: CommandContext<Context>, targetArgument: string): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
@@ -82,7 +86,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     chatId,
     message: ctx.msg,
     botUserId: ctx.me.id,
-    rawArgument: ctx.match,
+    rawArgument: targetArgument,
     // 处置的对象本来就是一个 id，用 id 指定比 @username 更准（用户名会被释放
     // 后重新注册，而这条命令不可逆），见 targetResolution.ts 的 acceptUserId。
     acceptUserId: true,
@@ -104,8 +108,8 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     return;
   }
 
-  // 自己人不可拉黑。虽然 /unblock 已经提供了撤销路径，这道闸仍然保留：拉黑
-  // 会连带在所有管理群 banChatMember；虽然 /unblock 会默认跨群解除，误操作到
+  // 自己人不可拉黑。虽然 /block disable 已经提供了撤销路径，这道闸仍然保留：拉黑
+  // 会连带在所有管理群 banChatMember；虽然 /block disable 会默认跨群解除，误操作到
   // 修复之间自己人仍会被逐群踢出。回错一条消息、或用了过期的
   // @username 别名，就能把超级管理员或白名单成员踢出并封禁在所有监听群里，
   // 事后要一个群一个群手动解封——值得在入口就挡住。
@@ -145,7 +149,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const requeued: boolean = newlyBlocked ? false : ensureBlocklistEntryQueued(targetUser.id);
   const persisted: boolean = newlyBlocked || requeued ? await confirmBlocklistPersisted() : true;
 
-  // 封禁清单与 /unblock 的跨群解封同源，见 infra/blocklist/membership.ts 的 managedAdminChatIds。
+  // 封禁清单与 /block disable 的跨群解封同源，见 infra/blocklist/membership.ts 的 managedAdminChatIds。
   const targetChatIds: number[] = managedAdminChatIds(chatId, isAdminHere);
 
   // 无跨群操作时直接渲染本次落盘结果。
@@ -170,7 +174,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 待到进程结束（见 infra/blocklist/ 的 requestBlocklistResweep）。
   const resweepChatIds: number[] = [];
   // 群内那两步是真实依赖（先查在不在，再封），群与群之间不是；扇出与逐项结算
-  // 收在 runManagedChatBatch，与 `/unblock` 的跨群解封共用同一份清单和同一个
+  // 收在 runManagedChatBatch，与 `/block disable` 的跨群解封共用同一份清单和同一个
   // 并发上限（见 infra/blocklist/membership.ts）。
   const perChatOutcomes: readonly ManagedChatOutcome<PerChatBlockOutcome>[] =
     await runManagedChatBatch<PerChatBlockOutcome>({
@@ -184,7 +188,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
             : "failed";
         }
         // `/block` 是低频管理员命令，每次都取 Telegram 当前成员状态并重新封禁；
-        // 不缓存历史“踢出”结局，避免 `/unblock`、外部管理员解封或重新入群后
+        // 不缓存历史“踢出”结局，避免 `/block disable`、外部管理员解封或重新入群后
         // 读到过期事实。
         const wasMember: boolean = await isChatMember(targetChatId, targetUser.id);
         const banned: boolean = await banChatMember(targetChatId, targetUser.id);
@@ -236,4 +240,27 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     text: atmosphere.NOTICE_TEXTS.blockResult({ skippedHereNote, targetLabel, actionNote, failedNote, blocklistNote }),
     replyToMessageId: messageId,
   });
+}
+
+/**
+ * 处理 /block：动作放在末位，与 /white 同一口径——`/block <目标> enable` 拉黑、
+ * `/block <目标> disable` 解除（commands/unblock.ts），回复目标时只写动作。动作缺省
+ * 或不是 enable/disable 时回用法提示（30 秒删除）；两个动作各自校验权限
+ * （isCanBlock / isCanUnBlock）。
+ */
+export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<void> {
+  const tokens: string[] = commandArgumentTokens(ctx.match);
+  const rawAction: string | undefined = tokens.at(-1);
+  const action: ToggleAction | undefined = rawAction === undefined ? undefined : parseToggleAction(rawAction);
+  if (action === undefined) {
+    await sendCommandMessage({
+      chatId: ctx.chat.id,
+      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.blockUsage,
+      replyToMessageId: ctx.msgId,
+    });
+    return;
+  }
+  const targetArgument: string = tokens.slice(0, -1).join(" ");
+  if (action === "enable") await blockTarget(ctx, targetArgument);
+  else await handleBlockDisable(ctx, targetArgument);
 }
