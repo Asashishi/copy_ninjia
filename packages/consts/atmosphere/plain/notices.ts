@@ -5,6 +5,7 @@ export const NOTICE_TEXTS: Readonly<AtmosphereNotices> = {
   verificationCallbackPassed: "验证已通过。",
   verificationCallbackExpired: "验证已失效，请重新加入群后再试。",
   verificationUseSelfButton: (selfButton: string, approveButton: string): string => `请点击「${selfButton}」完成本人的验证；「${approveButton}」仅供管理员代他人验证。`,
+  statusChatIdLabel: "• 本群 ID：",
   statusContextUsage: (percent: string): string => `• AI 上下文利用率：${percent}`,
   blockAlreadyRecorded: (warning: string): string => `（原本就在黑名单中${warning}）`,
   blockKicked: (count: number): string => `从 ${count} 个群移出并封禁`,

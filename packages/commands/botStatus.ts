@@ -38,6 +38,8 @@ export interface BotStatusMessage {
 }
 
 export interface BotStatusSnapshot {
+  /** 命令所在会话的 id，展示在本群一组的第一行。 */
+  readonly chatId: number;
   readonly aiReady: boolean;
   readonly aiConfig: AgentDeploymentConfig | null;
   readonly adDetectReady: boolean;
@@ -157,9 +159,9 @@ function permissionsJson(permissions: Readonly<BotChatPermissions>): string {
 /**
  * 只展示 provider/model，不输出 api_key、base_url 或配置失败细节。
  *
- * 权限块用 `pre` 实体标出范围而不是拼 ``` 围栏：本项目的发送边界一律不设
- * parse_mode（见 infra/telegram/actions/messages.ts），围栏只会原样显示成三个
- * 反引号。偏移按 UTF-16 码元计算，与 Telegram 对 entities 的口径一致。
+ * 本群 id 用 `code` 实体、权限块用 `pre` 实体标出范围，而不是拼反引号：本项目的发送
+ * 边界一律不设 parse_mode（见 infra/telegram/actions/messages.ts），反引号只会原样显示。
+ * 实体按出现顺序排列，偏移按 UTF-16 码元计算，与 Telegram 对 entities 的口径一致。
  */
 export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMessage {
   const atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS[snapshot.chatState.aiPersona === undefined ? "teasing" : "plain"];
@@ -199,19 +201,28 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     "Telegram 出站：",
     `• 处理中 ${snapshot.telegramActive}`,
     `• 429 退避排队 ${snapshot.telegramPending}/${snapshot.telegramCapacity}`,
-    "",
-    snapshot.chatState.aiPersona === undefined
-      ? atmosphere.BOT_STATUS_PERSONA_DEFAULT
-      : atmosphere.BOT_STATUS_PERSONA_CONFIGURED,
+    ""
+  );
+  // 本群一组：id 在前（code 实体，点一下即可复制），人设行在最后。
+  const chatId: string = String(snapshot.chatId);
+  const entities: MessageEntity[] = [{
+    type: "code",
+    offset: `${lines.join("\n")}\n${atmosphere.NOTICE_TEXTS.statusChatIdLabel}`.length,
+    length: chatId.length,
+  }];
+  lines.push(
+    `${atmosphere.NOTICE_TEXTS.statusChatIdLabel}${chatId}`,
     contextCapacityLine(snapshot.aiContextUsage, atmosphere),
     atmosphere.NOTICE_TEXTS.statusGag(snapshot.activeGagSessions, GAG_SESSION_MAX),
     atmosphere.NOTICE_TEXTS.statusTranslate(snapshot.activeTranslateSessions, TRANSLATE_CHAT_USER_LIMIT),
+    snapshot.chatState.aiPersona === undefined
+      ? atmosphere.BOT_STATUS_PERSONA_DEFAULT
+      : atmosphere.BOT_STATUS_PERSONA_CONFIGURED,
     "",
     atmosphere.NOTICE_TEXTS.statusPermissions
   );
   const permissions: BotChatPermissions | undefined =
     snapshot.chatState.botPermissions;
-  const entities: MessageEntity[] = [];
   if (permissions === undefined) {
     // undefined 只表示尚未确证（见 types/chatState.ts）：确认不是管理员时快照仍在，
     // 只是全 false，那种情况照常出 JSON。
@@ -253,6 +264,7 @@ export async function handleBotStatusCommand(
   const adDetectReady: boolean = adDetectConfigReadiness().ok;
   const stats: ReturnType<typeof telegramOutboundStats> = telegramOutboundStats();
   const message: BotStatusMessage = buildBotStatusMessage({
+    chatId: ctx.chat.id,
     aiReady,
     aiConfig: aiReady ? getAgentDeploymentConfig() : null,
     adDetectReady,

@@ -6,7 +6,7 @@ import { renderQaFormPrompt } from "../../packages/commands/qa/rendering";
 
 /** 只检查固定字符串，用户提供的动态文本不参与语气校验。 */
 function assertPlainStrings(value: unknown): void {
-  if (typeof value === "string") expect(value).not.toMatch(/本天才|杂鱼|笨蛋|♡|哼|小本本|猫脑子/);
+  if (typeof value === "string") expect(value).not.toMatch(/本天才|杂鱼|笨蛋|♡|哼|小本本|猫娘大脑/);
   else if (value !== null && typeof value === "object") {
     for (const field of Object.values(value)) assertPlainStrings(field);
   }

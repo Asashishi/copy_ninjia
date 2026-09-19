@@ -1,5 +1,7 @@
 /** 机器人固定通知的文案和格式化参数；动态内容只参与显式插值。 */
 export interface AtmosphereNotices {
+  /** `/bot_status` 本群 id 行的前缀；id 紧跟其后，用 code 实体标出。 */
+  readonly statusChatIdLabel: string;
   readonly statusContextUsage: (percent: string) => string;
   readonly blockAlreadyRecorded: (warning: string) => string;
   readonly blockKicked: (count: number) => string;
