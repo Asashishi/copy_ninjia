@@ -44,10 +44,16 @@ export async function ensureRandomImageDirectory(directory: string): Promise<voi
   throw invalid;
 }
 
+/** 列目录之后、读文件之前被删除、改名或换成目录的候选。 */
+function vanished(error: unknown): boolean {
+  return isErrno(error, "ENOENT") || isErrno(error, "ENOTDIR") || isErrno(error, "EISDIR");
+}
+
 /**
  * 从目录非递归地均匀抽一张图片并读出字节。候选是扩展名命中 RANDOM_IMAGE_EXTENSIONS
  * 的非隐藏普通文件（符号链接与子目录不算）；抽中的文件超过 RANDOM_IMAGE_MAX_BYTES
- * 时只报超限，不读入内存。
+ * 时只报超限，不读入内存。抽中的文件在读取前已消失（部署方正在整理目录）时，从剩余
+ * 候选里重新均匀抽取，候选抽完即报 empty；最多尝试候选数那么多次。
  * @param directory 已解析成绝对路径的目录。
  */
 export async function pickRandomImage(directory: string): Promise<RandomImagePick> {
@@ -63,10 +69,16 @@ export async function pickRandomImage(directory: string): Promise<RandomImagePic
     if (!entry.isFile() || entry.name.startsWith(".")) continue;
     if (RANDOM_IMAGE_EXTENSIONS.has(extname(entry.name).toLowerCase())) candidates.push(entry.name);
   }
-  const fileName: string | undefined = pickRandom(candidates);
-  if (fileName === undefined) return { status: "empty" };
-  const path: string = join(directory, fileName);
-  if ((await Bun.file(path).stat()).size > RANDOM_IMAGE_MAX_BYTES) return { status: "tooLarge", fileName };
-  const mimeType: RandomImageMimeType = RANDOM_IMAGE_EXTENSIONS.get(extname(fileName).toLowerCase())!;
-  return { status: "ok", bytes: await Bun.file(path).bytes(), mimeType, fileName };
+  for (let fileName: string | undefined = pickRandom(candidates); fileName !== undefined; fileName = pickRandom(candidates)) {
+    const path: string = join(directory, fileName);
+    try {
+      if ((await Bun.file(path).stat()).size > RANDOM_IMAGE_MAX_BYTES) return { status: "tooLarge", fileName };
+      const mimeType: RandomImageMimeType = RANDOM_IMAGE_EXTENSIONS.get(extname(fileName).toLowerCase())!;
+      return { status: "ok", bytes: await Bun.file(path).bytes(), mimeType, fileName };
+    } catch (error: unknown) {
+      if (!vanished(error)) throw error;
+      candidates.splice(candidates.indexOf(fileName), 1);
+    }
+  }
+  return { status: "empty" };
 }

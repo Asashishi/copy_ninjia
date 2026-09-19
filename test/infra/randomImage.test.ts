@@ -111,6 +111,28 @@ describe("pickRandomImage", () => {
     }
   });
 
+  test("抽中的文件在读取前消失时从剩余候选重抽，抽完报 empty", async () => {
+    const root: string = temporaryRoot();
+    await Bun.write(join(root, "a.png"), "a");
+    await Bun.write(join(root, "b.png"), "b");
+    const random = spyOn(Math, "random").mockReturnValue(0);
+    const realFile: typeof Bun.file = Bun.file;
+    const gone: Error = Object.assign(new Error("gone"), { code: "ENOENT" });
+    const file = spyOn(Bun, "file").mockImplementation(((path: string) => path.endsWith("a.png")
+      ? { stat: async (): Promise<never> => { throw gone; } }
+      : realFile(path)) as unknown as typeof Bun.file);
+    try {
+      const pick: RandomImagePick = await pickRandomImage(root);
+      expect(pick).toMatchObject({ status: "ok", fileName: "b.png" });
+      await Bun.write(join(root, "b.png"), "b");
+      file.mockImplementation((() => ({ stat: async (): Promise<never> => { throw gone; } })) as unknown as typeof Bun.file);
+      expect(await pickRandomImage(root)).toEqual({ status: "empty" });
+    } finally {
+      file.mockRestore();
+      random.mockRestore();
+    }
+  });
+
   test("超过上限的文件只报超限，不读入内存", async () => {
     const root: string = temporaryRoot();
     await Bun.write(join(root, "huge.jpg"), new Uint8Array(RANDOM_IMAGE_MAX_BYTES + 1));

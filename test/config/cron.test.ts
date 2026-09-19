@@ -90,6 +90,8 @@ describe("parseCronConfig", () => {
     rejects([task({ cron: "61 * * * *" })], "$[0].cron must be a 5-field cron expression");
     rejects([task({ cron: "0 0 30 2 *" })], "$[0].cron must be a 5-field cron expression");
     rejects([task({ tz: "Mars/Olympus" })], "$[0].tz must be an IANA time zone name");
+    // 显式写出的 null 不是「缺省」，不能静默换成默认时区。
+    rejects([task({ tz: null })], "$[0].tz must be an IANA time zone name");
     expect(parseCronConfig([task({ cron: "@daily" })], PATH)[0]!.cron).toBe("@daily");
   });
 

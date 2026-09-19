@@ -170,7 +170,8 @@ interface CronScheduleFields {
 
 /** 校验时区与表达式：两者都用 Bun.cron.parse 判定，且必须还有将来的触发时间。 */
 function parseSchedule(record: Record<string, unknown>, context: FieldContext): CronScheduleFields {
-  const timeZone: unknown = record.tz ?? CRON_DEFAULT_TIME_ZONE;
+  // 只有键真正缺省才用默认时区；显式写出的非法值（含 null）照常拒绝。
+  const timeZone: unknown = record.tz === undefined ? CRON_DEFAULT_TIME_ZONE : record.tz;
   if (typeof timeZone !== "string" || timeZone.length === 0) return fail(child(context, "tz"), "an IANA time zone name");
   try {
     Bun.cron.parse("0 0 * * *", Date.now(), { tz: timeZone });
