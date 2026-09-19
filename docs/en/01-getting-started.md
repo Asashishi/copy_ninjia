@@ -260,6 +260,7 @@ All four are seeded with the built-in defaults (see [`packages/consts/ui/assets.
 2. Add the bot to the group and grant administrator permissions to delete messages, ban members, and manage the group. Verification and Anti-Raid run only when the bot has the required permissions, and only after `/antiraid enable` is run in that group (they are off by default).
 3. Enable Inline Mode with `/setinline`; fortune draws use `@bot requested topic`.
 4. Set `/setinlinefeedback` to 100%. `chosen_inline_result` is the primary path for confirming and persisting a draw; the signed receipt embedded in the message is a supplementary confirmation path.
+5. (Optional) Enable Bot-to-Bot Communication Mode. It is needed only when the target of `/translate` or `/copy` is another bot. By default Telegram does not deliver other bots' messages to this bot; even when the other bot has the mode on, only its replies to this bot and `/command@thisbot` messages arrive. Once this bot enables the mode, it receives every message from other bots in chats where it is an administrator or has Privacy Mode disabled, and AI interjections, copying, ad detection and flood counting do not distinguish bot senders. If a chat contains a bot that answers automatically, the two bots may keep replying to each other, so check before enabling it.
 
 ## First Launch
 

@@ -42,8 +42,8 @@ import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
  * 发起群排最前是语义不是顺手：处置发起群里的目标最紧迫，而两条命令都把这份清单
  * 交给同一个 `runManagedChatBatch`——它按输入顺序取任务、按输入顺序结算，因此
  * 计数与并发度无关。发起群不是管理员时不进清单——试也没用。
- * @param isAdminHere 由调用方现查（`resolveBotAdminStatus`）：发起群的权限值得一次
- *   实时确认，其余群只能读已落盘的权限快照。
+ * @param isAdminHere 由调用方现查（`botChatPermissionsIn` 的管理员位）：发起群的权限
+ *   值得一次实时确认，其余群只能读已落盘的权限快照。
  */
 export function managedAdminChatIds(chatId: number, isAdminHere: boolean): number[] {
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];

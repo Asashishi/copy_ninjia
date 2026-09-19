@@ -219,6 +219,7 @@ chmod 660 database/storage.sqlite
 2. 把机器人拉进群并授予管理员权限（删消息、封禁成员、管理群）——入群验证与 Anti-Raid 只在有权限时启用，还要在群里 `/antiraid enable` 打开（缺省关闭）。
 3. `/setinline` 开启 Inline Mode——运势抽签 `@机器人 所求事项` 依赖它。
 4. `/setinlinefeedback` 设为 100%——`chosen_inline_result` 是抽签结果确认与落盘的主路径；消息内的签名回执是补充确认路径。
+5. （可选）开启 Bot-to-Bot Communication Mode——只有 `/translate` 或 `/copy` 的目标是另一个机器人时需要。Telegram 默认不把其他机器人的消息推给本机器人；对方开启了该模式时，也只有回复本机器人或 `/命令@本机器人` 的消息能送达。本机器人开启后，在它是管理员或已关闭 Privacy Mode 的群里会收到其他机器人的全部消息，而 AI 插话、复读、广告检测与刷屏计数不区分发送者是不是机器人：群里若有会自动接话的机器人，两边可能互相回复，开启前先确认。
 
 ## 首次启动
 

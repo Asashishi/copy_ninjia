@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4519_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.02%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4531_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.03%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -44,7 +44,7 @@
 
 ---
 
-🧬 [純 AI 開発](#pure-ai-development) • ✨ [機能](#features) • 🎮 [コマンドと権限](#commands-and-permissions) • 🚀 [クイックスタート](#quick-start) • 📚 [開発者ドキュメント](content-table.md)
+🧬 [純 AI 開発](#pure-ai-development) • ✨ [機能](#features) • 🎮 [コマンドと権限](#commands-and-permissions) • 🚀 [クイックスタート](#quick-start) • 🤖 [BotFather とよくある質問](#botfather-and-faq) • 📚 [開発者ドキュメント](content-table.md)
 
 </div>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4519 件のテストが全て成功 / テストファイル 388 件 / expect() 呼び出し 158,896 回 / 関数カバレッジ 97.22% / 行カバレッジ 98.02%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4531 件のテストが全て成功 / テストファイル 389 件 / expect() 呼び出し 158,942 回 / 関数カバレッジ 97.23% / 行カバレッジ 98.03%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -207,7 +207,7 @@ bun run start                          # ロングポーリング開始
 ```
 
 手動 install の場合、初回起動の前に identity database の初期化と、BotFather 側での Privacy Mode
-無効化・Inline Mode 有効化も必要です。設定項目の意味、必須の組み合わせ、厳格な検証ルールは
+無効化・Inline Mode 有効化も必要です（一覧は [BotFather 設定とよくある質問](#botfather-and-faq)）。設定項目の意味、必須の組み合わせ、厳格な検証ルールは
 [`config_example/README/ja.md`](../../config_example/README/ja.md)、手順の全体（ランタイム data root、
 素材の直リンク、移行コマンド）は [01 環境構築と初回起動](01-getting-started.md) にあります。
 
@@ -238,6 +238,54 @@ Copy Ninjia のアーキテクチャ概要、モジュールマップ、実行�
 | 🛡️ **運用マニュアル** | systemd デプロイ、ハードウェアの目安、`COPY_NINJIA_DATA_ROOT`、バックアップとトラブルシューティング | [📖 07 運用マニュアル](07-operations.md) |
 | 🎮 **コマンド** | 全コマンド、権限の読み方、挙動の詳細 | [📖 08 コマンドリファレンス](08-commands.md) |
 | 📊 **パフォーマンス** | リリースごとに再計測するコールド/ホットパス、スループット、I/O、チェーン遅延 | [📖 09 パフォーマンス](09-performance.md) |
+
+<p align="right"><sub><a href="#copy-ninjia">⬆️ トップへ戻る</a></sub></p>
+
+<a id="botfather-and-faq"></a>
+
+## 🤖 BotFather 設定とよくある質問
+
+### BotFather の設定
+
+| 設定 | @BotFather での操作 | 用途 |
+| :--- | :--- | :--- |
+| グループのプライバシーモードを無効化 | `/setprivacy` → Disable | グループの通常メッセージを受信します。copy、翻訳、AI メモリと割り込み、グループ Q&A がこれに依存します。変更後は Bot をグループから外して追加し直す必要があります。グループ管理者の Bot は元から全メッセージを受信します |
+| Inline Mode を有効化 | `/setinline` | 今日の運勢 `@Bot 所求事項` と、`/gag` 対象の「発言」ボタン |
+| インラインフィードバック 100% | `/setinlinefeedback` | 運勢結果の確認と永続化の主経路 |
+| グループ参加を許可 | `/setjoingroups` → Enable（既定で有効） | Bot をグループに追加できるようにします |
+| Bot-to-Bot Communication Mode（任意） | Bot の設定で有効化 | `/translate` や `/copy` の対象が別の Bot のときに必要です。下の説明を参照してください |
+
+BotFather で `/setcommands` を実行する必要はありません。Bot は起動時にコマンドメニューを登録し、カスタムペルソナを設定したグループでは通常版メニューに切り替えます。
+
+> **Bot-to-Bot について**：Telegram は既定で他の Bot のメッセージをこの Bot に配信しません。相手の Bot がこのモードを有効にしていても、届くのはこの Bot への返信と `/コマンド@この Bot` だけなので、別の Bot の翻訳は届いたり届かなかったりします。この Bot で有効にすると、管理者であるかプライバシーモードを無効にしたグループでは他の Bot の全メッセージを受信し、AI の割り込み、copy、広告検出、連投カウントは送信者が Bot かどうかを区別しません。自動で返答する Bot がいるグループでは両者が応答し合う可能性があるため、有効にする前に確認してください。
+
+### グループ内の管理者権限
+
+Bot をグループ管理者にし、使う機能に応じて権限を付与します：
+
+| 管理者権限 | 使う機能 |
+| :--- | :--- |
+| メッセージの削除 | `/gag`、広告検出による広告の削除、ブロックリスト入りチャンネル identity の発言の削除 |
+| メンバーの制限と BAN | 未認証メンバーのキック、Anti-Raid のプライベートモード、`/block`、`/unblock`、`/mute`、`/unmute`、`/batch_kick`、連投ミュート、広告検出による BAN |
+
+参加認証は管理者であること自体にも依存します。Telegram はメンバーの参加・退出イベントを管理者の Bot にしか送りません。権限が足りないときは、Bot の通知が欠けている権限を示します。`isCanViewBotStatus` を持つ identity は `/bot_status` で現在のグループに付与された権限を確認できます。
+
+### よくある質問：Bot は動いているのに、なぜ返信しないのか
+
+- **グループで何を送っても反応しない**：そのグループでまだ `/init enable` を実行していません。未初期化のグループでは、スーパー管理者の `/init` 以外のメッセージとコマンドは通知なしで無視されます。
+- **通常メッセージに反応しない（copy、翻訳、AI の返答、Q&A が動かない）**：Bot が通常メッセージを受信できていません。プライバシーモードが有効のままで Bot が管理者でないか、プライバシーモードを変更した後に Bot をグループから外して追加し直していません。
+- **AI が話さない**：
+  - `config/agent.json` で AI を設定し、そのグループで `/ai_chat enable`（既定は無効）を実行する必要があります。
+  - 確実に反応するのは Bot への返信と @ メンションだけです。それ以外は確率による割り込みで、`/quiet` の間は割り込みません。反応が起きても、話すかどうかは AI がペルソナに従って決めます。
+  - そのグループで `/copy` 実行中は、AI と他の自発的な動作が止まります。
+  - 反応が密集するとレート制限がかかり、制限通知はグループごとのクールダウンがあるため毎回は送られません。
+- **Bot に個人チャットしても反応しない**：個人チャットはスーパー管理者の `/send` だけを受け付け、他のスラッシュコマンドは無視します。AI との会話はグループでだけ行います。
+- **通知が表示されてしばらくすると消える**：コマンド検証の失敗、権限拒否、用法の案内、操作の結果は送信成功の 30 秒後に自動削除されます。長期保持の例外は [08 コマンドリファレンス](08-commands.md) を参照してください。
+- **`@Bot` で運勢の候補が出ない**：Inline Mode が有効になっていません。
+- **`/咬` のような動作コマンドに反応しない**：中国語 1〜2 文字だけを受け付けます。全体で 90 秒ごとに最大 450 回まで応答し、超過分は通知なしで破棄します。
+- **別の Bot のメッセージが翻訳・copy されない、または届いたり届かなかったりする**：Bot-to-Bot Communication Mode を有効にしてください（上記参照）。翻訳は文字だけを扱い、画像とキャプションは翻訳せず、描画されるコマンド `/コマンド` を含むメッセージはまるごと飛ばします。
+- **参加認証、広告検出、連投ミュートが動かない**：3 つとも既定で無効です。それぞれ `/antiraid enable`、`/ad_detect enable`、`/flood_control enable` を実行し、Bot が管理者で上の表の権限を持っていることを確認してください。広告検出には `config/agent.json` での広告検出能力の設定も必要です。
+- **まったく反応せず、コマンドメニューもない**：まずプロセスが動いているか確認します（`systemctl status <サービス名>`、`journalctl -u <サービス名>`）。エラーログは data root の `logs/<日付>.json` にあります。設定や状態の書き誤りがあるとプロセスは起動段階で終了し、ログにファイルパスとフィールドを記録します。ログに `Error fetching Telegram updates` がエラーコード 409 付きで繰り返し出る場合は、同じ token で別のインスタンスが更新を取得しているか webhook が設定されており、プロセスは終了します。調査手順は [07 運用とトラブルシューティング](07-operations.md#起動失敗の調査) を参照してください。
 
 ---
 

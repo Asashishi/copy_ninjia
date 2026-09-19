@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
+import type { BotChatPermissions } from "../../packages/types/telegram";
+import { botPermissions } from "../helpers/botPermissions";
 import {
   MUTE_DISPATCH_MIN_REMAINING_MS,
   MUTE_MAX_DURATION_MS,
@@ -11,6 +13,11 @@ const muteChatMemberWithOutcome = mock(async (..._args: unknown[]): Promise<stri
 const unmuteChatMemberWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "unmuted");
 let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => target);
+/** 本群机器人权限快照；默认是有「限制与封禁成员」的管理员，forbidden 只能来自目标一侧。 */
+const RESTRICTING_ADMIN: BotChatPermissions = botPermissions({ canRestrictMembers: true });
+const botChatPermissionsIn = mock(
+  async (_chatId: number): Promise<BotChatPermissions | undefined> => RESTRICTING_ADMIN
+);
 
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
@@ -26,6 +33,7 @@ mock.module("../../packages/infra/telegram", () => ({
   unmuteChatMemberWithOutcome,
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
+mock.module("../../packages/infra/botAdmin", () => ({ botChatPermissionsIn }));
 
 const { handleMuteCommand, handleUnmuteCommand, parseMuteDurationMs } =
   await import("../../packages/commands/mute");
@@ -54,9 +62,10 @@ function lastReplyText(): string {
 
 beforeEach(() => {
   target = { id: 7, first_name: "Alice", username: "alice" };
-  for (const mocked of [sendMessage, muteChatMemberWithOutcome, unmuteChatMemberWithOutcome, resolveCommandTarget]) {
+  for (const mocked of [sendMessage, muteChatMemberWithOutcome, unmuteChatMemberWithOutcome, resolveCommandTarget, botChatPermissionsIn]) {
     mocked.mockClear();
   }
+  botChatPermissionsIn.mockImplementation(async (): Promise<BotChatPermissions | undefined> => RESTRICTING_ADMIN);
   muteChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "muted");
   unmuteChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "unmuted");
   Date.now = (): number => 1_000_000;
@@ -193,6 +202,35 @@ describe("/mute 手动禁言", () => {
     await handleMuteCommand(context({ match: "10m" }));
     expect(lastReplyText()).toContain("再试");
   });
+
+  test("forbidden 时按机器人权限快照点名原因：缺权限位不说成不是管理员", async () => {
+    muteChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "forbidden");
+
+    botChatPermissionsIn.mockResolvedValueOnce(botPermissions());
+    await handleMuteCommand(context({ match: "10m" }));
+    expect(lastReplyText()).toContain("是管理员，可没被勾上「限制与封禁成员」权限");
+    expect(lastReplyText()).not.toContain("不是管理员");
+    expect(lastReplyText()).not.toContain("要么");
+
+    botChatPermissionsIn.mockResolvedValueOnce(botPermissions({ isAdministrator: false, canManageChat: false }));
+    await handleMuteCommand(context({ match: "10m" }));
+    expect(lastReplyText()).toContain("还不是管理员");
+    expect(lastReplyText()).toContain("「限制与封禁成员」");
+
+    // 查不到快照或该位齐全时，两种成因都说给管理员听。
+    botChatPermissionsIn.mockResolvedValueOnce(undefined);
+    await handleMuteCommand(context({ match: "10m" }));
+    expect(lastReplyText()).toContain("要么");
+    await handleMuteCommand(context({ match: "10m" }));
+    expect(lastReplyText()).toContain("要么");
+  });
+
+  test("成功与 failed 不查机器人权限快照", async () => {
+    await handleMuteCommand(context({ match: "10m" }));
+    muteChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "failed");
+    await handleMuteCommand(context({ match: "10m" }));
+    expect(botChatPermissionsIn).not.toHaveBeenCalled();
+  });
 });
 
 describe("/unmute 解除禁言", () => {
@@ -232,5 +270,14 @@ describe("/unmute 解除禁言", () => {
     unmuteChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "failed");
     await handleUnmuteCommand(context({}));
     expect(lastReplyText()).toContain("再试");
+  });
+
+  test("forbidden 且机器人缺限制权限时点名那一位", async () => {
+    unmuteChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "forbidden");
+    botChatPermissionsIn.mockResolvedValueOnce(botPermissions());
+    await handleUnmuteCommand(context({}));
+    expect(lastReplyText()).toContain("松不开");
+    expect(lastReplyText()).toContain("是管理员，可没被勾上「限制与封禁成员」权限");
+    expect(botChatPermissionsIn).toHaveBeenCalledWith(-1001);
   });
 });

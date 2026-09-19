@@ -55,7 +55,7 @@
 - `/咬` 等动作命令使用 1~2 个中文字；其命令解析与显示文案分别维护。
 - 群自定义 AI 人设优先，未设置时使用 `prompt/persona.md`。
 
-其他语言需自行 fork 并同步调整文案、交互和提示词。按 TypeScript AST 统计，`packages/` 中含中文字符串或模板字面量的源码行有 1355 行，分布在 81 个文件，不含注释；另有 `prompt/persona.md` 和部署配置。修改后运行 `bun run check`。
+其他语言需自行 fork 并同步调整文案、交互和提示词。按 TypeScript AST 统计，`packages/` 中含中文字符串或模板字面量的源码行有 1365 行，分布在 81 个文件，不含注释；另有 `prompt/persona.md` 和部署配置。修改后运行 `bun run check`。
 
 ## 调整行为参数
 

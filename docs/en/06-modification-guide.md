@@ -55,7 +55,7 @@ Fixed user-facing copy is Simplified Chinese. `packages/consts/atmosphere/` prov
 - Action commands such as `/咬` use one or two Chinese characters; command parsing and display copy are maintained separately.
 - A group's custom AI persona takes priority; an unset persona uses `prompt/persona.md`.
 
-Fork the project for another language and update copy, interactions, and prompts together. TypeScript AST counting finds 1355 source lines with Chinese string or template literals across 81 files in `packages/`, excluding comments; persona and deployment configuration are separate. Run `bun run check` after changes.
+Fork the project for another language and update copy, interactions, and prompts together. TypeScript AST counting finds 1365 source lines with Chinese string or template literals across 81 files in `packages/`, excluding comments; persona and deployment configuration are separate. Run `bun run check` after changes.
 
 ## Adjusting Behavioral Parameters
 

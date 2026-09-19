@@ -1,4 +1,5 @@
 import type { AtmosphereTexts } from "../types/atmosphere";
+import type { AtmosphereNotices } from "../types/atmosphereNotices";
 import { chatAtmosphere } from "../infra/atmosphere";
 
 import type { CommandContext, Context } from "grammy";
@@ -7,8 +8,11 @@ import type { MuteChatMemberOutcome, UnmuteChatMemberOutcome } from "../infra/te
 import { muteChatMemberWithOutcome, sendCommandMessage, unmuteChatMemberWithOutcome } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
+import { botChatPermissionsIn } from "../infra/botAdmin";
+import type { BotChatPermissions } from "../types/telegram";
 import { MUTE_DISPATCH_MIN_REMAINING_MS, MUTE_MAX_DURATION_MS, MUTE_MIN_DURATION_MS } from "../consts/commands";
 
+import { describeBotPermissionGap } from "../libs/botPermissionGap";
 import {
   formatDurationCn,
   parseDurationTokenMs,
@@ -32,6 +36,32 @@ export function parseMuteDurationMs(token: string): number | undefined {
   const durationMs: number | undefined = parseDurationTokenMs(token);
   if (durationMs === undefined) return undefined;
   return Math.min(MUTE_MAX_DURATION_MS, Math.max(MUTE_MIN_DURATION_MS, durationMs));
+}
+
+/**
+ * `forbidden` 结局的回执。Telegram 对「机器人缺限制成员权限」与「目标本身是管理员」
+ * 回的是同一句 400，因此按机器人自己的权限快照分辨：确证不是管理员或缺
+ * 「限制与封禁成员」时点名原因；快照缺失或该位齐全时把两种成因都说给管理员听。
+ * 具体错误已由统一错误边界记进日志。
+ */
+async function forbiddenReplyText(
+  chatId: number,
+  targetLabel: string,
+  command: "mute" | "unmute"
+): Promise<string> {
+  const notices: Readonly<AtmosphereNotices> = chatAtmosphere(chatId).NOTICE_TEXTS;
+  const permissions: BotChatPermissions | undefined = await botChatPermissionsIn(chatId);
+  const reason: string | undefined = permissions === undefined
+    ? undefined
+    : describeBotPermissionGap(permissions, "canRestrictMembers", notices);
+  if (command === "mute") {
+    return reason === undefined
+      ? notices.muteForbidden(targetLabel)
+      : notices.muteBotLacksRights(targetLabel, reason);
+  }
+  return reason === undefined
+    ? notices.unmuteForbidden(targetLabel)
+    : notices.unmuteBotLacksRights(targetLabel, reason);
 }
 
 /**
@@ -177,11 +207,9 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     });
     return;
   }
-  // forbidden 混着两种成因（机器人缺「限制成员」权限，或目标本身是管理员），
-  // Telegram 回的是同一句 400，文案把两种都说给管理员听；failed 是限流/网络
-  // 抖动，值得再试。具体原因已由统一错误边界记进日志。
+  // failed 是限流/网络抖动，值得再试；forbidden 的措辞见 forbiddenReplyText。
   const failureText: string = outcome === "forbidden"
-    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteForbidden(targetLabel)
+    ? await forbiddenReplyText(chatId, targetLabel, "mute")
     : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteFailed(targetLabel);
   await sendCommandMessage({ chatId, text: failureText, replyToMessageId: messageId });
 }
@@ -225,7 +253,7 @@ export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise
     return;
   }
   const failureText: string = outcome === "forbidden"
-    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unmuteForbidden(targetLabel)
+    ? await forbiddenReplyText(chatId, targetLabel, "unmute")
     : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unmuteFailed(targetLabel);
   await sendCommandMessage({ chatId, text: failureText, replyToMessageId: messageId });
 }

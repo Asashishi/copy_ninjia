@@ -39,7 +39,7 @@
 1. **[01 环境搭建与首次运行](01-getting-started.md)**
    - 基础依赖 (Bun 1.4.2 / Linux / Bot Token / AI 供应商 API Key)
    - `config/telegram.json` 等部署配置的必填字段
-   - Telegram BotFather 配置（Privacy Mode / Admin 权限 / Inline Mode）
+   - Telegram BotFather 配置（Privacy Mode / Admin 权限 / Inline Mode / Bot-to-Bot）
    - 首次启动与机器人入群后的 `/init enable` 握手流程
 
 2. **[02 架构总览](02-architecture.md)**

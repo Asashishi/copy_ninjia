@@ -24,10 +24,13 @@ export interface AtmosphereNotices {
   readonly blockPersistFailed: string;
   readonly blockNoManagedChat: (targetLabel: string, persistWarning: string) => string;
   readonly blockAllFailed: (targetLabel: string, persistWarning: string) => string;
-  readonly blockNotAdminHere: string;
+  readonly blockSkippedHere: (reason: string) => string;
   readonly blockPartialFailure: (failedCount: number) => string;
   readonly blockRecorded: (persistWarning: string) => string;
-  readonly blockResult: (values: Readonly<{ notAdminHereNote: string; targetLabel: string; actionNote: string; failedNote: string; blocklistNote: string }>) => string;
+  readonly blockResult: (values: Readonly<{ skippedHereNote: string; targetLabel: string; actionNote: string; failedNote: string; blocklistNote: string }>) => string;
+  readonly botPermissionUnknown: string;
+  readonly botNotAdministrator: (permission: string) => string;
+  readonly botMissingPermission: (permission: string) => string;
   readonly statusTitle: string;
   readonly statusProcess: string;
   readonly statusModels: string;
@@ -60,7 +63,7 @@ export interface AtmosphereNotices {
   readonly gagRejected: (actorLabel: string, command: string) => string;
   readonly gagGroupOnly: string;
   readonly gagNotInitialized: string;
-  readonly gagMissingRights: string;
+  readonly gagMissingRights: (command: string, reason: string) => string;
   readonly gagToolTooLong: string;
   readonly gagCapacity: (capacity: number) => string;
   readonly gagEnding: (targetLabel: string) => string;
@@ -99,9 +102,11 @@ export interface AtmosphereNotices {
   readonly muteProtected: (targetLabel: string) => string;
   readonly muteDone: (targetLabel: string, duration: string) => string;
   readonly muteForbidden: (targetLabel: string) => string;
+  readonly muteBotLacksRights: (targetLabel: string, reason: string) => string;
   readonly muteFailed: (targetLabel: string) => string;
   readonly unmuteDone: (targetLabel: string) => string;
   readonly unmuteForbidden: (targetLabel: string) => string;
+  readonly unmuteBotLacksRights: (targetLabel: string, reason: string) => string;
   readonly unmuteFailed: (targetLabel: string) => string;
   readonly quietAlreadyEnabled: (remainingMinutes: number) => string;
   readonly quietUsage: (minMinutes: number, maxMinutes: number, defaultMinutes: number) => string;

@@ -55,7 +55,7 @@
 - `/咬` などの action command は 1〜2 文字の漢字を使い、コマンド解析と表示文言を別々に管理します。
 - 群専用 AI 人設を優先し、未設定なら `prompt/persona.md` を使用します。
 
-別言語にする場合は fork し、文言・操作・プロンプトをまとめて調整してください。TypeScript AST で数えると、`packages/` の中国語 string/template literal を含むソース行は 81 ファイルに 1355 行あり、コメントは含みません。人設ファイルとデプロイ設定は別です。変更後は `bun run check` を実行します。
+別言語にする場合は fork し、文言・操作・プロンプトをまとめて調整してください。TypeScript AST で数えると、`packages/` の中国語 string/template literal を含むソース行は 81 ファイルに 1365 行あり、コメントは含みません。人設ファイルとデプロイ設定は別です。変更後は `bun run check` を実行します。
 
 ## 動作パラメータの調整
 

@@ -120,6 +120,38 @@ describe("/gag 与 /ungag 状态机", () => {
     expect(sendCommandMessage).toHaveBeenCalledTimes(3);
   });
 
+  /**
+   * 删除权限门禁按快照三态说原因：是管理员只缺「删除消息」时点名那一位，确证
+   * 不是管理员才说不是管理员，查不到时只说没查清。
+   */
+  test("机器人是管理员但缺删除权限时点名「删除消息」，不说成不是管理员", async () => {
+    gagTestSwitches.canDeleteMessages = false;
+    await gag.handleGagCommand(commandContext());
+
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+    expect(lastCommandText()).toContain("是管理员，可没被勾上「删除消息」权限");
+    expect(lastCommandText()).not.toContain("不是管理员");
+  });
+
+  test("机器人确证不是管理员时才说不是管理员，并点名要补的权限", async () => {
+    gagTestSwitches.botIsAdministrator = false;
+    await gag.handleUngagCommand(commandContext());
+
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+    expect(lastCommandText()).toContain("/ungag");
+    expect(lastCommandText()).toContain("还不是管理员");
+    expect(lastCommandText()).toContain("「删除消息」");
+  });
+
+  test("机器人权限查不到时只说没查清，不猜不是管理员", async () => {
+    gagTestSwitches.botPermissionsKnown = false;
+    await gag.handleGagCommand(commandContext());
+
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+    expect(lastCommandText()).toContain("没查清自己在这个群的权限");
+    expect(lastCommandText()).not.toContain("管理员");
+  });
+
   test("普通用户先收到群内无按钮状态，再收到目标专属入口，全部成功后才激活", async () => {
     await gag.handleGagCommand(commandContext({ match: "@alice 5" }));
 

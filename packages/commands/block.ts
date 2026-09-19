@@ -13,7 +13,9 @@ import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
-import { resolveBotAdminStatus } from "../infra/botAdmin";
+import { botChatPermissionsIn } from "../infra/botAdmin";
+import { describeBotPermissionGap } from "../libs/botPermissionGap";
+import type { BotChatPermissions } from "../types/telegram";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
 import { identityMetadataFromCachedUser } from "../infra/identityStorage";
 import {
@@ -69,8 +71,10 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     return;
   }
 
-  // 语义见函数顶部说明（本群非管理员不影响其它群连坐）。
-  const isAdminHere: boolean = await resolveBotAdminStatus(chatId);
+  // 语义见函数顶部说明（本群非管理员不影响其它群连坐）。快照整份留着，本群没踢时
+  // 回执据它说清是没查清还是不是管理员。
+  const herePermissions: BotChatPermissions | undefined = await botChatPermissionsIn(chatId);
+  const isAdminHere: boolean = herePermissions?.isAdministrator === true;
 
   // 目标解析同 /copy：回复目标的消息优先于参数里的 @username（没有公开
   // username 或没被缓存过的目标只能靠回复锁定），见 targetResolution.ts。
@@ -207,8 +211,12 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     return;
   }
 
-  // 本群不是管理员时明确说清：本群这个人还留着，被拉黑的是其它群。
-  const notAdminHereNote: string = isAdminHere ? "" : atmosphere.NOTICE_TEXTS.blockNotAdminHere;
+  // 本群没进清单时明确说清：本群这个人还留着，被拉黑的是其它群；原因按快照三态说
+  // （见 libs/botPermissionGap.ts），查不到不说成不是管理员。
+  const hereGap: string | undefined = isAdminHere
+    ? undefined
+    : describeBotPermissionGap(herePermissions, "canRestrictMembers", atmosphere.NOTICE_TEXTS);
+  const skippedHereNote: string = hereGap === undefined ? "" : atmosphere.NOTICE_TEXTS.blockSkippedHere(hereGap);
   const failedCount: number = targetChatIds.length - bannedCount;
   const failedNote: string = failedCount > 0 ? atmosphere.NOTICE_TEXTS.blockPartialFailure(failedCount) : "";
   // “不在群”只表示本次没有执行移出动作，无法证明目标从未加入过；因此只说
@@ -225,7 +233,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     : atmosphere.NOTICE_TEXTS.blockAlreadyRecorded(persistWarning);
   await sendCommandMessage({
     chatId,
-    text: atmosphere.NOTICE_TEXTS.blockResult({ notAdminHereNote, targetLabel, actionNote, failedNote, blocklistNote }),
+    text: atmosphere.NOTICE_TEXTS.blockResult({ skippedHereNote, targetLabel, actionNote, failedNote, blocklistNote }),
     replyToMessageId: messageId,
   });
 }

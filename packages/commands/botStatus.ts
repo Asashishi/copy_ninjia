@@ -8,8 +8,8 @@ import { translateStates } from "../cache/main/translateState";
 import { TRANSLATE_CHAT_USER_LIMIT } from "../consts/translate";
 import { getAdDetectAgentConfig, getAgentDeploymentConfig } from "../config/agent";
 import { adDetectConfigReadiness, aiChatConfigReadiness } from "../config/readiness";
-import { BOT_CHAT_PERMISSION_KEYS } from "../consts/botAdmin";
-import { BOT_STATUS_BYTES_PER_GIB, BOT_STATUS_BYTES_PER_KIB, BOT_STATUS_BYTES_PER_MIB, BOT_STATUS_COLD_MEMORY_WEIGHT, BOT_STATUS_DECIMAL_PLACES, BOT_STATUS_HOT_MEMORY_WEIGHT, BOT_STATUS_PERCENT_SCALE, BOT_STATUS_PERMISSION_JSON_INDENT, BOT_STATUS_PERMISSION_JSON_LANGUAGE, BOT_STATUS_PERMISSION_LABELS, BOT_STATUS_SECONDS_PER_DAY, BOT_STATUS_SECONDS_PER_HOUR, BOT_STATUS_SECONDS_PER_MINUTE } from "../consts/botStatus";
+import { BOT_CHAT_PERMISSION_KEYS, BOT_CHAT_PERMISSION_LABELS } from "../consts/botAdmin";
+import { BOT_STATUS_BYTES_PER_GIB, BOT_STATUS_BYTES_PER_KIB, BOT_STATUS_BYTES_PER_MIB, BOT_STATUS_COLD_MEMORY_WEIGHT, BOT_STATUS_DECIMAL_PLACES, BOT_STATUS_HOT_MEMORY_WEIGHT, BOT_STATUS_PERCENT_SCALE, BOT_STATUS_PERMISSION_JSON_INDENT, BOT_STATUS_PERMISSION_JSON_LANGUAGE, BOT_STATUS_SECONDS_PER_DAY, BOT_STATUS_SECONDS_PER_HOUR, BOT_STATUS_SECONDS_PER_MINUTE } from "../consts/botStatus";
 
 import { BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS } from "../consts/commands";
 import { MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../consts/aiChat/memory";
@@ -149,7 +149,7 @@ function contextCapacityLine(usage: Readonly<AiMemoryUsage> | undefined, atmosph
 function permissionsJson(permissions: Readonly<BotChatPermissions>): string {
   const display: Record<string, string> = {};
   for (const key of BOT_CHAT_PERMISSION_KEYS) {
-    if (permissions[key]) display[key] = BOT_STATUS_PERMISSION_LABELS[key];
+    if (permissions[key]) display[key] = BOT_CHAT_PERMISSION_LABELS[key];
   }
   return JSON.stringify(display, null, BOT_STATUS_PERMISSION_JSON_INDENT);
 }

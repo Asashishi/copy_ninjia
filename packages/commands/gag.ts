@@ -20,6 +20,7 @@ import {
   sendCommandMessage,
   sendMessage,
 } from "../infra/telegram";
+import { describeBotPermissionGap } from "../libs/botPermissionGap";
 import { explicitReplyTo, forumTopicThreadId } from "../libs/forumTopic";
 import { sanitizeDisplayName } from "../libs/text";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
@@ -82,10 +83,16 @@ async function passesGagCommandGate(
   }
   const permissions: BotChatPermissions | undefined =
     await botChatPermissionsIn(ctx.chat.id);
-  if (permissions?.canDeleteMessages !== true) {
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
+  const permissionGap: string | undefined = describeBotPermissionGap(
+    permissions,
+    "canDeleteMessages",
+    atmosphere.NOTICE_TEXTS
+  );
+  if (permissionGap !== undefined) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagMissingRights,
+      text: atmosphere.NOTICE_TEXTS.gagMissingRights(command, permissionGap),
       replyToMessageId: ctx.msgId,
     });
     return false;

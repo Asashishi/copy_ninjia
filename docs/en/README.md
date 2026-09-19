@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4519_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.02%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4531_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.03%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -44,7 +44,7 @@ Message copying and personality mimicry are only the surface. Underneath is a mu
 
 ---
 
-🧬 [Pure AI Development](#-pure-ai-development) • ✨ [Features](#-features) • 🎮 [Commands and Permissions](#-commands-and-permissions) • 🚀 [Quick Start](#-quick-start) • 📚 [Developer Docs](content-table.md)
+🧬 [Pure AI Development](#-pure-ai-development) • ✨ [Features](#-features) • 🎮 [Commands and Permissions](#-commands-and-permissions) • 🚀 [Quick Start](#-quick-start) • 🤖 [BotFather & FAQ](#botfather-and-faq) • 📚 [Developer Docs](content-table.md)
 
 </div>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4519 tests passed, 388 test files, 158,896 expect() calls, 97.22% function coverage, 98.02% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 4531 tests passed, 389 test files, 158,942 expect() calls, 97.23% function coverage, 98.03% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -199,7 +199,7 @@ bun run start                          # start long polling
 ```
 
 With a manual install, before the first start you also initialise the identity database and, on the
-BotFather side, turn Privacy Mode off and Inline Mode on. Field-by-field meanings, required combinations and the strict
+BotFather side, turn Privacy Mode off and Inline Mode on (full list in [BotFather Setup & FAQ](#botfather-and-faq)). Field-by-field meanings, required combinations and the strict
 validation rules are in [`config_example/README/en.md`](../../config_example/README/en.md); the full
 walkthrough (runtime data root, asset URLs, migration commands) is in
 [01 Getting Started](01-getting-started.md).
@@ -231,6 +231,54 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
 | 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup & troubleshooting | [📖 07 Operations](07-operations.md) |
 | 🎮 **Commands** | Every command, permission semantics and behavioural details | [📖 08 Commands](08-commands.md) |
 | 📊 **Performance** | Cold/hot paths, throughput, I/O and chain latency, rerun on every release | [📖 09 Performance](09-performance.md) |
+
+<p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
+
+<a id="botfather-and-faq"></a>
+
+## 🤖 BotFather Setup & FAQ
+
+### BotFather Settings
+
+| Setting | In @BotFather | Used for |
+| :--- | :--- | :--- |
+| Disable group privacy | `/setprivacy` → Disable | Receiving ordinary group messages; copying, translation, AI memory and interjections, and chat Q&A all depend on it. After changing it, remove the bot from the group and add it back; a bot that is a group administrator already receives every message |
+| Enable Inline Mode | `/setinline` | Daily fortune `@bot requested topic`, and the "speak" button of `/gag` targets |
+| Inline feedback at 100% | `/setinlinefeedback` | The primary path for confirming and persisting fortune draws |
+| Allow groups | `/setjoingroups` → Enable (on by default) | Adding the bot to groups |
+| Bot-to-Bot Communication Mode (optional) | Enable it in the bot's settings | Needed when the target of `/translate` or `/copy` is another bot; see the note below |
+
+There is no need to run `/setcommands` in BotFather: the bot registers its command menu at startup and switches chats with a custom persona to the plain menu.
+
+> **About Bot-to-Bot**: by default Telegram does not deliver other bots' messages to this bot. Even when the other bot has the mode on, only its replies to this bot and `/command@thisbot` messages arrive, which is why translating another bot works only intermittently. Once this bot enables the mode, it receives every message from other bots in chats where it is an administrator or has privacy disabled, and AI interjections, copying, ad detection and flood counting do not distinguish bot senders. If a chat contains a bot that answers automatically, the two bots may keep replying to each other, so check before enabling it.
+
+### Administrator Rights in the Group
+
+Make the bot a group administrator and grant the rights for the features you use:
+
+| Administrator right | Features that use it |
+| :--- | :--- |
+| Delete messages | `/gag`, deleting ads found by ad detection, deleting messages from blocklisted channel identities |
+| Restrict and ban members | Kicking unverified members, Anti-Raid private mode, `/block`, `/unblock`, `/mute`, `/unmute`, `/batch_kick`, flood muting, bans from ad detection |
+
+Join verification also depends on the administrator status itself: Telegram sends member join and leave events only to administrator bots. When a right is missing, the bot's notice names that right; identities holding `isCanViewBotStatus` can run `/bot_status` to see the rights granted in the current chat.
+
+### FAQ: the bot is running, so why doesn't it reply?
+
+- **Nothing in the group gets a response**: the chat has not run `/init enable`. In an uninitialised chat every message and command except the super administrator's `/init` is dropped without any notice.
+- **Ordinary messages get no response (no copying, translation, AI replies or Q&A answers)**: the bot cannot see ordinary messages. Privacy is still enabled and the bot is not an administrator, or privacy was changed without removing the bot from the group and adding it back.
+- **The AI stays silent**:
+  - `config/agent.json` must configure the AI, and the chat must have run `/ai_chat enable` (off by default).
+  - Only replying to the bot or mentioning it always triggers a round; other messages lead to random interjections by probability, and there are none during `/quiet`. Once triggered, the AI still decides from its persona whether to speak.
+  - While the chat is running `/copy`, the AI and other proactive behaviours pause.
+  - Triggers that come too fast are rate limited, and the rate-limit notice has a per-chat cooldown, so it is not sent every time.
+- **Private messages to the bot get no response**: private chats accept only the super administrator's `/send`; other slash commands are ignored, and AI chat happens only in groups.
+- **A notice appears and then disappears**: validation failures, permission refusals, usage hints and action receipts are deleted 30 seconds after they are sent; see [08 Commands](08-commands.md) for the messages that stay.
+- **`@bot` shows no fortune result**: Inline Mode is not enabled.
+- **Action commands such as `/咬` get no response**: only 1–2 Chinese characters are accepted, and at most 450 replies are sent globally every 90 seconds; the excess is dropped silently.
+- **Another bot's messages are not translated or copied, or only sometimes**: enable Bot-to-Bot Communication Mode (see above). Translation handles only text; photos and captions are not translated, and a message containing a renderable `/command` is skipped entirely.
+- **Join verification, ad detection or flood muting does nothing**: all three are off by default. Run `/antiraid enable`, `/ad_detect enable` and `/flood_control enable` respectively, and make sure the bot is an administrator with the rights listed above; ad detection also needs the ad detection capability configured in `config/agent.json`.
+- **No response at all, and no command menu**: first confirm the process is running (`systemctl status <service>`, `journalctl -u <service>`); error logs are in `logs/<date>.json` under the data root. A misconfigured config or state file makes the process exit during startup, and the log names the file path and field. If the log keeps showing `Error fetching Telegram updates` with error code 409, another instance is polling with the same token or a webhook is set, and the process exits. See [07 Operations and Troubleshooting](07-operations.md#startup-failures).
 
 ---
 

@@ -69,7 +69,7 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **4519 tests / 388 files / 158896 `expect()` calls**; full-source **function coverage 97.22% / line coverage 98.02%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **4531 tests / 389 files / 158942 `expect()` calls**; full-source **function coverage 97.23% / line coverage 98.03%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 

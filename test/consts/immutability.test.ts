@@ -79,7 +79,7 @@ import { DEFAULT_CHAT_STATE, createChatState } from "../../packages/libs/chatSta
 import { DEFAULT_WHITELIST_PERMISSIONS, NON_WHITELIST_PERMISSIONS, SUPER_ADMIN_WHITELIST_PERMISSIONS, TEMPORARY_AD_BYPASS_PERMISSIONS, WHITELIST_PERMISSION_KEY_BY_LOWERCASE } from "../../packages/consts/whitelist";
 import { PERMISSION_COMMAND_TEXTS, WHITE_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/whitelist";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
-import { BOT_STATUS_PERMISSION_LABELS } from "../../packages/consts/botStatus";
+import { BOT_CHAT_PERMISSION_LABELS } from "../../packages/consts/botAdmin";
 import { getChatState } from "../../packages/infra/storage/stateStore";
 import * as Admission from "../../packages/consts/antiRaid/admission";
 import * as ReplyAdmission from "../../packages/consts/aiChat/admission";
@@ -215,9 +215,9 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   expect(() => { MUTED_CHAT_PERMISSIONS.can_send_messages = true; }).toBeDefined();
   // @ts-expect-error Readonly<Record<number, string>> 不允许新增/覆盖键
   expect(() => { WEATHER_CODE_DESCRIPTIONS[0] = "篡改"; }).toBeDefined();
-  // @ts-expect-error 权限中文名表被 /bot_status 每次回执读取，改坏它等于对着
-  // 所有群报错一个权限位的含义。
-  expect(() => { BOT_STATUS_PERMISSION_LABELS.canDeleteMessages = "篡改"; }).toBeDefined();
+  // @ts-expect-error 权限中文名表被 /bot_status 回执与缺权限提示共用，改坏它等于
+  // 对着所有群报错一个权限位的含义。
+  expect(() => { BOT_CHAT_PERMISSION_LABELS.canDeleteMessages = "篡改"; }).toBeDefined();
   // @ts-expect-error Readonly<WhitelistPermissions> 的字段只读；这份默认值被
   // parsePermissions 逐条展开复用，写坏它等于改掉此后所有条目的缺省权限。
   expect(() => { DEFAULT_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
