@@ -3,6 +3,7 @@ import type { Message } from "grammy/types";
 import { isAiChatConfigured } from "../../aiChat/availability";
 import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat/rateLimit";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";
+import { observeMediaGroupImage } from "../../infra/mediaGroups";
 import {
   activeCopyModeIn,
   activeCopyTargetIdIn,
@@ -50,6 +51,9 @@ function handleAcceptedIncomingMessage(
 ): Promise<void> | undefined {
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message);
+  // 相册里的图记进缓存，供 `/h_image add` 收齐整组；普通消息只多读这一个字段。排在复读、
+  // 翻译等提前返回的分支之前，被复读的人发的相册同样记得到。
+  if (message.media_group_id !== undefined) observeMediaGroupImage(message);
   const state: Readonly<ChatState> = groupState ?? getChatState(chatId);
   /**
    * 本条消息统一的「现在」，显式传给下面两个吃 now 的判定。

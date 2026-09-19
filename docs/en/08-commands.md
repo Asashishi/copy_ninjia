@@ -82,7 +82,8 @@ Sessions are stored as per-group arrays in `state.json.translate`; see [07 Opera
 <tr><td><code>/icon steal</code></td><td align="center">Group member</td><td>Copy avatar only</td></tr>
 <tr><td><code>/icon reset</code></td><td align="center">Group member</td><td>Restore the default avatar</td></tr>
 <tr><td><code>/wed</code></td><td align="center">Group members</td><td>Draw a random group partner with an avatar; confirm, change, or remove the result after <code>/init enable</code></td></tr>
-<tr><td><code>/h_image</code></td><td align="center">Group members</td><td>Post one picture drawn uniformly from the random image directory; takes no arguments. The picture stays; failure hints are deleted after 30 seconds</td></tr>
+<tr><td><code>/h_image</code></td><td align="center">Group members</td><td>Post one picture drawn uniformly from the random image directory. The picture stays; failure hints are deleted after 30 seconds</td></tr>
+<tr><td><code>/h_image add</code></td><td align="center"><code>isCanAddHImage</code></td><td>Reply to a message with a picture to add it (and, for an album, the other pictures of that album seen so far) to the random image library; the summary is deleted after 30 seconds</td></tr>
 <tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/揪住</code> replies "actor 咬了 target！"; successful results are retained</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
@@ -180,9 +181,19 @@ Sessions and image bytes remain in memory, with images held only for the current
 
 ## 🖼️ Random Picture: `/h_image`
 
-Once the group has run `/init enable`, anyone can send `/h_image` (no arguments). The bot draws one picture uniformly from `global.assets.randomImageDir` in `state.json` (by default `images/` under the data root, created at startup if missing) and posts it to the group as a reply to the command; in forum groups it lands in the command's topic.
+Once the group has run `/init enable`, anyone can send `/h_image` (no arguments); any other argument only gets the usage hint. The bot draws one picture uniformly from `global.assets.randomImageDir` in `state.json` (by default `images/` under the data root, created at startup if missing) and posts it to the group as a reply to the command; in forum groups it lands in the command's topic.
 
 - **Source**: only `jpg`, `jpeg`, `png`, and `webp` files directly inside the directory count; hidden files, subdirectories, and symbolic links do not. The directory is listed afresh on every use, so adding or removing pictures needs no restart.
 - **Retention**: the posted picture stays; it is not deleted after 30 seconds. The usage hint for extra arguments, the busy hint, and the three failure hints (directory missing, no pictures, the drawn picture exceeds 10 MB) are deleted after 30 seconds.
 - It shares the drawing implementation (`packages/infra/randomImage.ts`) with cron tasks' `rand_image`.
-- **Concurrency**: the command returns as soon as it is accepted and does not hold up update processing; drawing and uploading run on a main-thread executor with at most 2 in flight and 16 waiting slots, and a full executor answers "try again later".
+- **Concurrency**: the command returns as soon as it is accepted and does not hold up update processing; drawing and uploading run on the main-thread deferred command executor with at most 2 in flight and 16 waiting slots, and a full executor answers "try again later".
+
+### Adding pictures: `/h_image add`
+
+An identity with `isCanAddHImage` (the super administrator always has it; others get it through `/permission`) replies to a message with a picture and sends `/h_image add`. The bot adds the picture to the random image library, where `/h_image` and cron `rand_image` can draw it.
+
+- **What is collected**: the picture in the replied message (largest size), or a `jpg`, `png`, or `webp` sent as a file. When the replied message belongs to an album, the album's other pictures the bot has seen are collected too (at most 10 per album). Album records live only in memory for the latest 256 albums and are cleared by a restart, after which replying to an album collects only the replied picture.
+- **Names and duplicates**: the file is named after Telegram's `file_unique_id` plus the extension detected from its header (`.jpg`/`.png`/`.webp`). A picture whose `file_unique_id` is already in the library is skipped without downloading. Pictures in other formats or over 10 MB are not collected.
+- **How it is written**: the picture is downloaded into memory (10 MB cap), written to a dot-prefixed temporary file, and renamed within the same directory, so drawing never sees a half-written file. The service account needs write access to the library directory.
+- **Replies**: a missing reply, a replied message without a picture, or a missing permission gets a single hint; when done, one summary line reports how many were added, already present, and failed. All hints are deleted after 30 seconds.
+- **Duration**: collection runs in the deferred command executor's background lane, behind interactive requests, and uses at most 120 seconds per command; pictures left after that count as failed. On shutdown the batch in progress is dropped silently, and files already written stay.

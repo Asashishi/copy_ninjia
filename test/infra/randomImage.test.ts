@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureRandomImageDirectory, pickRandomImage } from "../../packages/infra/randomImage";
+import {
+  ensureRandomImageDirectory,
+  hasStoredRandomImage,
+  isRandomImageDirectory,
+  pickRandomImage,
+  storeRandomImage,
+} from "../../packages/infra/randomImage";
 import { RANDOM_IMAGE_MAX_BYTES } from "../../packages/consts/randomImage";
 import { STATE_FILE_PATH } from "../../packages/consts/paths";
 import type { RandomImagePick } from "../../packages/types/randomImage";
@@ -143,5 +149,56 @@ describe("pickRandomImage", () => {
     } finally {
       bytes.mockRestore();
     }
+  });
+});
+
+/** 各格式的最小文件头；只用于嗅探，不是完整图片。 */
+const JPEG: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2]);
+const PNG: Uint8Array = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+const GIF: Uint8Array = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1]);
+
+describe("收图写盘", () => {
+  test("按嗅探出的格式以 file_unique_id 命名写入，不留临时文件，写入后能被抽中", async () => {
+    const root: string = temporaryRoot();
+    expect(await storeRandomImage(root, "AQADabc-_1", JPEG)).toEqual({ status: "stored", fileName: "AQADabc-_1.jpg" });
+    expect(await storeRandomImage(root, "AQADpng", PNG)).toEqual({ status: "stored", fileName: "AQADpng.png" });
+    expect(readdirSync(root).sort()).toEqual(["AQADabc-_1.jpg", "AQADpng.png"]);
+    expect(Array.from(await Bun.file(join(root, "AQADabc-_1.jpg")).bytes())).toEqual(Array.from(JPEG));
+    expect(await hasStoredRandomImage(root, "AQADabc-_1")).toBe(true);
+    expect(await hasStoredRandomImage(root, "AQADother")).toBe(false);
+    expect((await pickRandomImage(root)).status).toBe("ok");
+  });
+
+  test("不是 jpeg、png、webp 的字节不写入", async () => {
+    const root: string = temporaryRoot();
+    expect(await storeRandomImage(root, "AQADgif", GIF)).toEqual({ status: "unsupportedFormat" });
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  test("file_unique_id 形态不符时拒绝，不拼出目录外的路径", async () => {
+    const root: string = temporaryRoot();
+    for (const id of ["../escape", "a/b", "", "x".repeat(129)]) {
+      await expect(storeRandomImage(root, id, JPEG)).rejects.toThrow(RangeError);
+      await expect(hasStoredRandomImage(root, id)).rejects.toThrow(RangeError);
+    }
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  test("改名失败时删掉临时文件并原样上抛", async () => {
+    const root: string = temporaryRoot();
+    // 目标名已被一个目录占着，rename 会失败。
+    mkdirSync(join(root, "AQADdir.jpg"));
+    await expect(storeRandomImage(root, "AQADdir", JPEG)).rejects.toThrow();
+    expect(readdirSync(root)).toEqual(["AQADdir.jpg"]);
+  });
+
+  test("目录判定跟随符号链接，不存在或是文件都不算目录", async () => {
+    const root: string = temporaryRoot();
+    mkdirSync(join(root, "real"));
+    symlinkSync(join(root, "real"), join(root, "link"));
+    await Bun.write(join(root, "file.txt"), "x");
+    expect(await isRandomImageDirectory(join(root, "link"))).toBe(true);
+    expect(await isRandomImageDirectory(join(root, "file.txt"))).toBe(false);
+    expect(await isRandomImageDirectory(join(root, "missing"))).toBe(false);
   });
 });

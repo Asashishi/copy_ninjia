@@ -11,7 +11,12 @@ const pickRandomImage = mock(async (_directory: string): Promise<RandomImagePick
 }));
 
 mock.module("../../packages/infra/telegram", () => ({ sendCommandMessage, sendPhotoWithResult }));
-mock.module("../../packages/infra/randomImage", () => ({ pickRandomImage }));
+mock.module("../../packages/infra/randomImage", () => ({
+  pickRandomImage,
+  hasStoredRandomImage: async (): Promise<boolean> => false,
+  isRandomImageDirectory: async (): Promise<boolean> => true,
+  storeRandomImage: async (): Promise<unknown> => ({ status: "unsupportedFormat" }),
+}));
 
 const { handleHImageCommand } = await import("../../packages/commands/hImage");
 const {

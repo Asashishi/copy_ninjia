@@ -9,7 +9,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "translate", description: "ja 日语 / cn 简体中文 / en 美式英语 / uk 乌克兰语 / ru 俄语；回复目标或加 @username；list 查看，stop 停止，enable/disable 开关" },
   { command: "icon", description: "steal 使用目标头像，回复目标或加 @username；reset 恢复默认头像" },
   { command: "wed", description: "随机抽取群友老婆；可确认、更换和移除，再发 /wed 可重新抽取" },
-  { command: "h_image", description: "从随机图片目录抽一张图发到本群；不接受参数" },
+  { command: "h_image", description: "从随机图片目录抽一张图发到本群；回复带图片的消息发送 add 可把图片收进图库，需要 isCanAddHImage" },
   { command: "x", description: "将 x 换成任意 1~2 个中文字，如 /咬、/贴贴；回复目标或加 @username" },
   { command: "block", description: "末尾 enable 加入永久黑名单并在所有受管群封禁（需要 isCanBlock），disable 移出并解除封禁（需要 isCanUnBlock）；回复目标、@username 或用户 id，disable 另认频道 id" },
   { command: "prompt", description: "config/remove 配置或移除本群 AI 自定义提示词；需要 isCanConfigAiPrompt" },

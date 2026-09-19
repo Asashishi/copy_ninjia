@@ -1,21 +1,28 @@
 /**
- * 随机图片：`/h_image` 的目录准备与抽取。
+ * 随机图片：`/h_image` 的目录准备、抽取与收图写盘。
  *
- * 只做「从目录抽一张并读出字节」，不持有缓存，也不发送；目录路径由调用方传入
- * （部署默认值见 infra/storage/stateStore.ts 的 getRandomImageDirectory）。每次抽取都
- * 重新枚举目录，增删图片不用重启；低频路径，不缓存目录列表。
+ * 只做「从目录抽一张并读出字节」和「把一张图写进目录」，不持有缓存，也不发送；目录路径
+ * 由调用方传入（部署默认值见 infra/storage/stateStore.ts 的 getRandomImageDirectory）。
+ * 每次抽取都重新枚举目录，增删图片不用重启；低频路径，不缓存目录列表。
  */
 
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, rename } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { extname, join } from "node:path";
 import { STATE_FILE_PATH } from "../consts/paths";
-import { RANDOM_IMAGE_EXTENSIONS, RANDOM_IMAGE_MAX_BYTES } from "../consts/randomImage";
+import {
+  RANDOM_IMAGE_EXTENSIONS,
+  RANDOM_IMAGE_FILE_UNIQUE_ID_PATTERN,
+  RANDOM_IMAGE_MAX_BYTES,
+  RANDOM_IMAGE_SAVE_EXTENSIONS,
+  RANDOM_IMAGE_TEMP_PREFIX,
+} from "../consts/randomImage";
 import { isErrno } from "../libs/errno";
 import { InputValidationError } from "../libs/inputValidation";
 import { pickRandom } from "../libs/random";
 import { logger } from "./logger";
-import type { RandomImageMimeType, RandomImagePick } from "../types/randomImage";
+import { sniffImageFormat } from "./image";
+import type { RandomImageMimeType, RandomImagePick, StoreRandomImageResult } from "../types/randomImage";
 
 /**
  * 启动时准备随机图片目录：已是目录（允许经符号链接指向别处）则不动；不存在则
@@ -81,4 +88,52 @@ export async function pickRandomImage(directory: string): Promise<RandomImagePic
     }
   }
   return { status: "empty" };
+}
+
+/** 路径此刻是不是目录（跟随符号链接）；不存在或读不到都按不是处理。 */
+export async function isRandomImageDirectory(directory: string): Promise<boolean> {
+  try {
+    return (await Bun.file(directory).stat()).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 图库里是否已有这张图：收进来的文件以 file_unique_id 加保存扩展名命名，任一扩展名存在
+ * 即算已有。file_unique_id 形态不符时抛出 RangeError，由调用方按失败计数。
+ */
+export async function hasStoredRandomImage(directory: string, fileUniqueId: string): Promise<boolean> {
+  if (!RANDOM_IMAGE_FILE_UNIQUE_ID_PATTERN.test(fileUniqueId)) throw new RangeError("Unexpected Telegram file_unique_id shape.");
+  for (const extension of RANDOM_IMAGE_SAVE_EXTENSIONS.values()) {
+    if (await Bun.file(join(directory, `${fileUniqueId}${extension}`)).exists()) return true;
+  }
+  return false;
+}
+
+/**
+ * 把一张图写进图库：按字节嗅探格式（只收 jpeg、png、webp），先写点号开头的临时文件，
+ * 再在同一目录内改名为 `<file_unique_id><扩展名>`，抽图永远看不到写到一半的文件。改名
+ * 覆盖同名文件：同一个 file_unique_id 就是同一份内容。写入或改名失败时删除临时文件并
+ * 原样上抛。file_unique_id 形态不符时抛出 RangeError。
+ * @param directory 已解析成绝对路径的图库目录。
+ */
+export async function storeRandomImage(
+  directory: string,
+  fileUniqueId: string,
+  bytes: Uint8Array
+): Promise<StoreRandomImageResult> {
+  if (!RANDOM_IMAGE_FILE_UNIQUE_ID_PATTERN.test(fileUniqueId)) throw new RangeError("Unexpected Telegram file_unique_id shape.");
+  const extension: string | undefined = RANDOM_IMAGE_SAVE_EXTENSIONS.get(sniffImageFormat(bytes));
+  if (extension === undefined) return { status: "unsupportedFormat" };
+  const fileName: string = `${fileUniqueId}${extension}`;
+  const temporary: string = join(directory, `${RANDOM_IMAGE_TEMP_PREFIX}${crypto.randomUUID()}${extension}`);
+  try {
+    await Bun.write(temporary, bytes);
+    await rename(temporary, join(directory, fileName));
+  } catch (error: unknown) {
+    await Bun.file(temporary).delete().catch((): undefined => undefined);
+    throw error;
+  }
+  return { status: "stored", fileName };
 }

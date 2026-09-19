@@ -465,8 +465,12 @@
 
 - 随机图片目录来自已校验的 `state.global.assets.randomImageDir`（缺省 `images`，相对路径按运行时数据根解析，`infra/storage/stateStore.ts` 的 `getRandomImageDirectory`）。启动时在部署输入闸之后、任何 Worker 与外部连接之前由 `infra/randomImage.ts` 的 `ensureRandomImageDirectory` 准备：是目录（含指向目录的符号链接）则不动，缺失则创建，存在但不是目录或建不出来就拒绝启动，诊断只写 `state.json` 路径、字段路径与解析后的目录。运行期目录被删不自动重建。
 - 抽取（`pickRandomImage`）每次重新枚举目录、不缓存列表：候选只有扩展名在 `RANDOM_IMAGE_EXTENSIONS` 里的非隐藏普通文件（`Dirent.isFile()`，符号链接与子目录不算），均匀随机抽一张；大小先经 `Bun.file().stat()` 判定，超过 `RANDOM_IMAGE_MAX_BYTES`（10 MB，Telegram 图片上传上限）只报超限、不读入内存。
-- update runner 严格串行，`/h_image` 不在 handler 里等待目录枚举与上传：参数校验后同步交给 `cache/main/hImage.ts` 持有的 `createPrioritizedBoundedTaskRunner`（在途 2、等待 16）即返回，满额直接回忙碌提示；每项恢复接纳时的 update 取消上下文并合入运行时停止信号，口径同 `/wed`。停机维护关闸先停止接纳，排空表里的「h_image drain」排在 Telegram 总闸之前、在预算内等待，超时取消排队与在途请求；它不参与共享数据落盘闸门。
-- `commands/hImage.ts` 的 `sendHImageResult` 是结果图片的唯一发送边界（`check:conventions` 禁止 `commands/` 下其它位置调用 `sendPhotoWithResult`）。结果图片是用户授权的长期保留例外，不挂固定延迟删除，论坛群带触发消息所在话题并回复触发消息；用法、忙碌与失败提示一律走 `sendCommandMessage`，30 秒后删除。
+- update runner 严格串行，`/h_image` 不在 handler 里等待目录枚举、下载与上传：参数校验后同步交给延迟命令执行器（`commands/deferredCommands.ts`，状态在 `cache/main/deferredCommands.ts`；在途 2、等待 16，其中后台档至多 4）即返回，满额直接回忙碌提示；抽图走 interactive 档，收图走 background 档，两档都有等待项时按 `interactiveBurst` 轮流取。每项恢复接纳时的 update 取消上下文并合入运行时停止信号，口径同 `/wed`。停机维护关闸先停止接纳（owner `deferred-commands`），排空表里的「deferred commands drain」排在 Telegram 总闸之前、在预算内等待，超时取消排队与在途任务；它不参与共享数据落盘闸门。
+- `commands/hImage/draw.ts` 的 `sendHImageResult` 是结果图片的唯一发送边界（`check:conventions` 禁止 `commands/` 下其它位置调用 `sendPhotoWithResult`）。结果图片是用户授权的长期保留例外，不挂固定延迟删除，论坛群带触发消息所在话题并回复触发消息；用法、忙碌与失败提示一律走 `sendCommandMessage`，30 秒后删除。
+
+- `/h_image add`（`commands/hImage/add.ts`）要求 `isCanAddHImage`。候选是被回复消息里的图（`libs/telegramImage.ts` 的纯函数 `messageImageCandidate`：最大尺寸的 photo，或 MIME 在 `RANDOM_IMAGE_DOCUMENT_MIME_TYPES` 里的 document），加上相册缓存里同一 `media_group_id`、同一群的其余几张，按 `file_unique_id` 去重。
+- 相册缓存 `cache/main/mediaGroups.ts` 由主线程消息流水线写入：`handleAcceptedIncomingMessage` 只在消息带 `media_group_id` 时调用 `infra/mediaGroups.ts` 的 `observeMediaGroupImage`（普通群消息只多一次字段读取，不分配对象）；私聊不记，按 chatId 核对归属，每组至多 `MEDIA_GROUP_ITEMS_MAX`（10）张，容量 `MEDIA_GROUP_CACHE_MAX`（256）组、LRU 淘汰，不随群 teardown 清理，不持久化，重启后为空。
+- 收图任务在 `H_IMAGE_ADD_TASK_BUDGET_MS` 总预算内逐张处理，内存里至多一张：已有同名（任一保存扩展名）跳过；已知超过 `RANDOM_IMAGE_MAX_BYTES` 不下载；下载经共享的 `infra/telegram/fileDownload.ts`（getFile 与下载各自计时、download 出站闸、有界读取）；`infra/randomImage.ts` 的 `storeRandomImage` 按字节嗅探格式，先写 `RANDOM_IMAGE_TEMP_PREFIX` 开头的临时文件（隐藏文件不是抽图候选），再在同一目录内 `rename` 成 `<file_unique_id><扩展名>`，失败删除临时文件。`file_unique_id` 必须匹配 `RANDOM_IMAGE_FILE_UNIQUE_ID_PATTERN`，拼不出目录外的路径。预算耗尽时其余记为失败并照常回汇总；停机取消时静默收场。
 
 ### `cron.json` 定时任务
 

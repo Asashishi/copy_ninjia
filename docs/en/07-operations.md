@@ -85,7 +85,10 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
     path.
   - **Random image directory** (`global.assets.randomImageDir`, default `images`, resolved against
     the data root): `/h_image` and cron `rand_image` draw from it. Put `jpg`/`jpeg`/`png`/`webp`
-    files there yourself; the service account must be able to read them, and a missing directory
+    files there yourself or collect them in a group with `/h_image add` (files are named after
+    Telegram's `file_unique_id` plus the extension; a dot-prefixed `.h_image-add-*` file is a
+    half-written temporary one and can be deleted if left over). The service account must be able to
+    read them, and to write there for `/h_image add`, and a missing directory
     is created by the service at startup with mode 0755. Adding or removing pictures needs no
     restart; changing the path is a stopped-service edit like the rest. Before rolling back to a
     version that does not know this key, remove it from both the primary and backup `state.json`.

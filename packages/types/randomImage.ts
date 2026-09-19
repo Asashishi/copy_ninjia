@@ -18,3 +18,12 @@ export type RandomImagePick =
   | { readonly status: "missingDirectory" }
   | { readonly status: "empty" }
   | { readonly status: "tooLarge"; readonly fileName: string };
+
+/**
+ * 把一张图写进随机图库的结局（infra/randomImage.ts 的 storeRandomImage）：
+ * - stored：已按 file_unique_id 与嗅探出的格式命名写入；
+ * - unsupportedFormat：字节不是 jpeg、png 或 webp，没有写入。
+ */
+export type StoreRandomImageResult =
+  | { readonly status: "stored"; readonly fileName: string }
+  | { readonly status: "unsupportedFormat" };

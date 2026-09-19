@@ -81,7 +81,8 @@
 <tr><td><code>/icon steal</code></td><td align="center">群成员</td><td>只偷头像</td></tr>
 <tr><td><code>/icon reset</code></td><td align="center">群成员</td><td>把头像换回默认那张</td></tr>
 <tr><td><code>/wed</code></td><td align="center">群成员</td><td>随机抽取群友老婆并显示头像；支持确认、更换和移除，需先 <code>/init enable</code></td></tr>
-<tr><td><code>/h_image</code></td><td align="center">群成员</td><td>从随机图片目录均匀抽一张发到本群，不接受参数；图片长期保留，失败提示 30 秒后删除</td></tr>
+<tr><td><code>/h_image</code></td><td align="center">群成员</td><td>从随机图片目录均匀抽一张发到本群；图片长期保留，失败提示 30 秒后删除</td></tr>
+<tr><td><code>/h_image add</code></td><td align="center"><code>isCanAddHImage</code></td><td>回复一条带图的消息，把这张图（相册则连同已见过的同组其余几张）收进随机图库；结果汇总 30 秒后删除</td></tr>
 <tr><td><code>/&lt;1~2 个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code>、<code>/揪住</code> 回复「发起人 咬了 目标！」；成功结果长期保留</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
@@ -179,9 +180,19 @@
 
 ## 🖼️ 随机图片：`/h_image`
 
-群已执行 `/init enable` 后，任何人发送 `/h_image`（不带参数）即可。机器人从 `state.json` 的 `global.assets.randomImageDir`（缺省为数据根下的 `images/`，启动时不存在会自动创建）里均匀随机抽一张图，回复这条命令发到本群；论坛群里落在命令所在的话题。
+群已执行 `/init enable` 后，任何人发送 `/h_image`（不带参数）即可；其它参数只回用法提示。机器人从 `state.json` 的 `global.assets.randomImageDir`（缺省为数据根下的 `images/`，启动时不存在会自动创建）里均匀随机抽一张图，回复这条命令发到本群；论坛群里落在命令所在的话题。
 
 - **图片来源**：只认目录这一层的 `jpg`、`jpeg`、`png`、`webp`，隐藏文件、子目录与符号链接不算。每次都重新列目录，放图、删图不用重启。
 - **留存**：结果图片长期保留，不挂 30 秒删除；带参数的用法提示、忙碌提示，以及目录不存在、目录里没有图、抽中的图超过 10 MB 这三种失败提示，都在 30 秒后删除。
 - 与 cron 任务的 `rand_image` 共用同一套抽图实现（`packages/infra/randomImage.ts`）。
-- **并发**：命令接纳后立即返回，不占住更新处理；抽图与上传在主线程执行器里进行，全局最多同时 2 项、另有 16 个排队位，满额时回「稍后再试」。
+- **并发**：命令接纳后立即返回，不占住更新处理；抽图与上传在主线程的延迟命令执行器里进行，全局最多同时 2 项、另有 16 个排队位，满额时回「稍后再试」。
+
+### 收图：`/h_image add`
+
+持有 `isCanAddHImage` 的身份（超级管理员恒有，其余由 `/permission` 授予）回复一条带图的消息并发送 `/h_image add`，机器人把图收进随机图库，之后 `/h_image` 与 cron 的 `rand_image` 都能抽到。
+
+- **收哪些图**：被回复消息里的图片（取最大尺寸），或以文件形式发送的 `jpg`、`png`、`webp`。被回复的消息属于相册时，同一相册里机器人见过的其余图片一并收进来（每个相册至多 10 张）。相册记录只在内存里、最多保留最近 256 个相册，重启后清空——那之后回复相册只收得到被回复的那一张。
+- **命名与去重**：文件名是 Telegram 的 `file_unique_id` 加按文件头判定的扩展名（`.jpg`/`.png`/`.webp`）；图库里已有同一 `file_unique_id` 的图就跳过，不重复下载。格式不对、超过 10 MB 的图不收。
+- **写入方式**：从 Telegram 下载到内存（上限 10 MB），先写成点号开头的临时文件，再在同一目录内改名为正式文件名，抽图永远看不到写到一半的文件。服务账号需要对图库目录有写权限。
+- **回执**：不回复消息、被回复的消息里没有图、没有权限时只回一句提示；收完回一句汇总（新收几张、已有几张、失败几张）。所有提示都在 30 秒后删除。
+- **时长**：收图走延迟命令执行器的后台档，交互请求优先；一次最多用 120 秒，超出后剩下的图记为失败。停机时正在收的这批静默放弃，已写入的文件保留。

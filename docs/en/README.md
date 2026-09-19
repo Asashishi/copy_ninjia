@@ -170,7 +170,7 @@ The copy target is globally unique: the `/copy` family echoes message by message
 
 `/wed` supports personal accounts in initialized groups, displaying a random partner's avatar with confirm, change and remove buttons. Each group retains up to 150,000 speaking-member IDs, batches actual changes into `memory/wed/<chatId>.json`, and restores candidates on restart; result sessions stay in memory. Commands and buttons share 32 active slots globally and use the shared outbound queue and 429 waits.
 
-`/h_image` posts one picture drawn uniformly from the random image directory (`global.assets.randomImageDir` in `state.json`, by default `images/` under the data root, created at startup); the picture stays. Only `jpg`, `jpeg`, `png`, and `webp` count, and adding pictures needs no restart.
+`/h_image` posts one picture drawn uniformly from the random image directory (`global.assets.randomImageDir` in `state.json`, by default `images/` under the data root, created at startup); the picture stays. Only `jpg`, `jpeg`, `png`, and `webp` count, and adding pictures needs no restart; an identity with `isCanAddHImage` can reply to a message with a picture and send `/h_image add` to collect it (a whole album at once) into the library.
 
 The full command table, permission semantics and per-command behaviour live in **[📖 08 Command and Behaviour Reference](08-commands.md)**.
 

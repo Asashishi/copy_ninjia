@@ -104,8 +104,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/infra/randomImage.ts": {
     "node:fs/promises": {
-      symbols: ["mkdir", "readdir"],
-      purpose: "random image directory creation at startup and per-request directory traversal",
+      symbols: ["mkdir", "readdir", "rename"],
+      purpose: "random image directory creation at startup, per-request directory traversal, and the atomic rename that publishes a collected picture",
     },
   },
   "packages/infra/storage/cleanup.ts": {

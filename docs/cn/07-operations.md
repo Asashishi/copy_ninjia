@@ -81,7 +81,8 @@ WantedBy=multi-user.target
     配成 `http://`，会在解码期拒绝启动并点名字段路径。
   - **随机图片目录**（`global.assets.randomImageDir`，缺省 `images`，相对数据根解析）：
     `/h_image` 与 cron `rand_image` 从这里抽图。部署方自己往里放 `jpg`/`jpeg`/`png`/`webp`，
-    服务账号需要能读；目录不存在时服务在启动时按 0755 创建。放图、删图不用重启；改目录
+    或在群里用 `/h_image add` 收图（文件名是 Telegram 的 `file_unique_id` 加扩展名；点号开头的
+    `.h_image-add-*` 是写到一半的临时文件，残留时可以删）。服务账号需要能读，用 `/h_image add` 还要能写；目录不存在时服务在启动时按 0755 创建。放图、删图不用重启；改目录
     路径同样只能停机改。回滚到不认识这个键的旧版本前，先从 `state.json` 主备里删掉它。
 - **`memory/wed/<chatId>.json`**
   - **内容**：每群已发言成员 ID 的纯数字数组，例如 `[5974478892]`；主线程每群长期复用一个 `Set<number>`。最多 25 群，每群最多 150,000 个 ID，满额保留已有成员，退群后可继续新增。
