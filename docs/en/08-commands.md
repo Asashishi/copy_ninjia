@@ -22,11 +22,13 @@ The copy target is global: one instance can “become” only one target at a ti
 | Command | Behavior |
 | :---: | :--- |
 | `/copy` | Reproduce messages unchanged |
-| `/copy reverse` | Reverse plain text by grapheme cluster |
-| `/copy nya` | Append “喵~” to plain text |
+| `/copy reverse` | Reverse text and captions by grapheme cluster |
+| `/copy nya` | Append “喵~” to text and captions |
 | `/icon steal` | Copy only the avatar |
 | `/icon reset` | Restore the bot's own default avatar |
 | `/copy stop` | Stop the global copy state and restore the avatar |
+
+**How echoes are sent** (the same for `/copy` modes and random echo): text and captions are handled as plain strings, and text with links or @mentions is transformed like any other text. Plain text is sent again, Telegram re-detects links and @usernames, and the original link-preview settings are kept; bold, hidden links, spoilers, custom emoji and other formatting are not kept, so spoiler text appears in the clear. Photos, video, files, stickers and similar media are copied server-side by Telegram, with the caption replaced by the processed text when there is one; nothing is downloaded locally. Paid media cannot be copied, so only the text is sent. Messages with neither text nor a file, such as polls, dice, locations and contacts, are copied as they are. A transformed result over Telegram's text or caption length limit is not sent.
 
 Choose a target by replying to their message or providing `@username`. Put the mode before the target, for example `/copy reverse @username` or `/copy nya @username`; use `/icon steal @username` for the avatar alone. `/copy stop` and `/icon reset` accept no extra arguments.
 
@@ -38,7 +40,7 @@ Target resolution follows these rules:
 
 ## 🌐 Per-group translation
 
-Translation handles text messages independently of the global copy target, the five-minute cooldown and avatar operations. An identity with `isCanControllTranslatePermission` must first run `/translate enable` (disabled by default). A valid `g-auth.json` is required. When the translation target is another bot, enable Bot-to-Bot Communication Mode for this bot in @BotFather; otherwise the other bot's ordinary messages never arrive (see [01 Getting Started](01-getting-started.md)).
+Translation handles text and captions independently of the global copy target, the five-minute cooldown and avatar operations. An identity with `isCanControllTranslatePermission` must first run `/translate enable` (disabled by default). A valid `g-auth.json` is required. When the translation target is another bot, enable Bot-to-Bot Communication Mode for this bot in @BotFather; otherwise the other bot's ordinary messages never arrive (see [01 Getting Started](01-getting-started.md)).
 
 | Command | Behavior |
 | :--- | :--- |
@@ -66,9 +68,9 @@ Every direction accepts a reply or `@username`, including user and channel ident
 }
 ```
 
-Only text without entities reaches the translation API. Text matching the target script, or containing only numbers, punctuation and emoji, is copied without an API call. Japanese requires kana; Simplified Chinese excludes traditional characters with simplified variants in Unicode Unihan; English accepts ASCII letters. Ukrainian accepts its alphabet and apostrophes, excluding Russian `ёъыэ`; Russian accepts `Ё/ё` and excludes Ukrainian `єіїґ`. Shared Han words, unaccented Latin phrases and shared Cyrillic phrases can remain ambiguous; regex checks do not identify language semantically.
+Text and captions are translated as plain strings, including text with links, @mentions or formatting entities. Text matching the target script, or containing only numbers, punctuation and emoji, is sent as the original without an API call. Japanese requires kana; Simplified Chinese excludes traditional characters with simplified variants in Unicode Unihan; English accepts ASCII letters. Ukrainian accepts its alphabet and apostrophes, excluding Russian `ёъыэ`; Russian accepts `Ё/ё` and excludes Ukrainian `єіїґ`. Shared Han words, unaccented Latin phrases and shared Cyrillic phrases can remain ambiguous; regex checks do not identify language semantically.
 
-Text with entities is copied with its formatting; API failure also copies the original text. Photos, stickers, video, audio, files, other non-text messages and captions are not sent, including when the same identity is a copy target. American English uses [Google Translation LLM](https://docs.cloud.google.com/translate/docs/languages#translation-llm) with `en-US`. Outputs retain the topic and reject renderable commands; command notices are deleted after 30 seconds.
+An API failure sends the original text. Text messages go out as plain strings with the original link-preview settings and without formatting; photos, video, audio and files with a caption are copied by Telegram as they are with the caption replaced by the translation, without any local download; paid media sends the translation only. Pictures, stickers or files without text, and messages such as polls or locations, are not sent, including when the same identity is a copy target. A translation over the text or caption length limit is not sent. American English uses [Google Translation LLM](https://docs.cloud.google.com/translate/docs/languages#translation-llm) with `en-US`. Outputs retain the topic and reject renderable commands; command notices are deleted after 30 seconds.
 
 Sessions are stored as per-group arrays in `state.json.translate`; see [07 Operations](07-operations.md) for the format and cold migration. Stopping one identity cancels only its session. Adding or stopping another identity preserves an in-flight translation for the current target. Disable and chat teardown remove all sessions in the group; asynchronous results recheck their own session object before sending. `/bot_status` shows this group's translation count as `count/5`.
 

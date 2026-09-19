@@ -15,8 +15,8 @@ function reverseText(text: string): string {
 
 /**
  * 给尚未以 喵~ 结尾的文本追加 " 喵~"（前面带一个半角空格）。安全校验由调用方负责
- * （见 auto/message/echo.ts 的 containsRenderableCommand 守卫与 plainText 判定）——本函数只会在已通过该校验的消息上
- * 运行，且结果仍会通过不带 parse_mode 的 sendMessage() 发送。
+ * （见 auto/message/echo.ts 对变换前后两串的 containsRenderableCommand 守卫），结果以
+ * 不带实体、不设 parse_mode 的字符串发出（正文或新图注）。
  * @param text 待追加后缀的文本。
  */
 function appendNyaSuffix(text: string): string {
@@ -24,20 +24,18 @@ function appendNyaSuffix(text: string): string {
 }
 
 /**
- * 对纯文本消息应用当前激活的 copy mode 文本变换。
- * 没有模式时返回 null，调用方此时应
- * 退化为通过 copyMessage() 原样转发消息，而不是直接丢弃它。
- * @param text 待变换的纯文本消息。
+ * 对复读的文字（正文或图注）应用当前激活的 copy mode 文本变换；没有模式时原样返回。
+ * @param text 待变换的文字。
  * @param mode 当前激活的 copy mode（如果有）。
  */
-export function applyCopyModeTransform(text: string, mode: CopyMode | undefined): string | null {
+export function applyCopyModeTransform(text: string, mode: CopyMode | undefined): string {
   switch (mode) {
     case "reverse":
       return reverseText(text);
     case "nya":
       return appendNyaSuffix(text);
     default:
-      return null;
+      return text;
   }
 }
 

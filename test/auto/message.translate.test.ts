@@ -62,13 +62,15 @@ describe("群消息翻译分流", () => {
   test("翻译和 copy 可同时盯不同人，同一目标优先完成翻译且只发送一次", async () => {
     autoMessageCopyState.targetId = 8;
     await handleIncomingMessageMiddleware(context(8));
-    expect(copyMessageMock).toHaveBeenCalledTimes(1);
+    // 复读按字符串重新发送原文，不再原样复制。
+    expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: "你好", messageThreadId: 42 });
     expect(translateText).not.toHaveBeenCalled();
-    copyMessageMock.mockClear();
+    sendMessageMock.mockClear();
     autoMessageCopyState.targetId = 7;
     await handleIncomingMessageMiddleware(context(7));
     expect(translateText).toHaveBeenCalledTimes(1);
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: "こんにちは", messageThreadId: 42 });
     expect(copyMessageMock).not.toHaveBeenCalled();
   });
 
@@ -76,19 +78,20 @@ describe("群消息翻译分流", () => {
     autoMessageChatState.isTranslationEnabled = false;
     autoMessageCopyState.targetId = 7;
     await handleIncomingMessageMiddleware(context(7));
-    expect(copyMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: "你好", messageThreadId: 42 });
     expect(translateText).not.toHaveBeenCalled();
   });
 
-  test("翻译目标的图片即使同时命中 copy 也不复制图注或回落到 AI", async () => {
+  test("翻译目标的图片同时命中 copy 时只按翻译处理一次：图片原样复制、图注换成译文，不回落到 AI", async () => {
     autoMessageCopyState.targetId = 7;
     const ctx = context(7) as any;
     delete ctx.msg.text;
     ctx.msg.photo = [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }];
     ctx.msg.caption = "你好";
     await handleIncomingMessageMiddleware(ctx);
-    expect(translateText).not.toHaveBeenCalled();
-    expect(copyMessageMock).not.toHaveBeenCalled();
+    expect(translateText).toHaveBeenCalledWith("你好", "ja");
+    expect(copyMessageMock).toHaveBeenCalledTimes(1);
+    expect(copyMessageMock).toHaveBeenCalledWith(expect.objectContaining({ messageId: 5, caption: "こんにちは", messageThreadId: 42 }));
     expect(sendMessageMock).not.toHaveBeenCalled();
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });

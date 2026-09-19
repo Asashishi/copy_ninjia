@@ -237,6 +237,12 @@ describe("project convention collectors", () => {
     );
     await Bun.write(join(sourceRoot, "cron", "delivery.ts"),
       "export function deliverCronAction() { return bot.api.sendMessage(1, \"hi\"); }");
+    await Bun.write(join(sourceRoot, "copy", "echo.ts"),
+      "export function sendEchoPayload() { return copyMessage({ chatId: 1, caption: text }); }");
+    await Bun.write(join(sourceRoot, "auto", "message", "proxySend.ts"),
+      "export function handlePrivateProxySend() { return copyMessage({ chatId: 1 }); }");
+    await Bun.write(join(sourceRoot, "translate", "message.ts"),
+      "export function translateMessage() { return copyMessage({ chatId: 1, caption: translated }); }");
     await Bun.write(join(sourceRoot, "cron", "run.ts"),
       "export function runCronRound() { return bot.api.sendDocument(1, file); }");
     await Bun.write(
@@ -262,13 +268,15 @@ describe("project convention collectors", () => {
       expect.stringContaining("bad.ts: state-owned command photos must use sendWedResult"),
       expect.stringContaining("bad.ts: long-lived command photos must use sendHImageResult"),
       expect.stringContaining("cron/run.ts: cron messages must be sent through cron/delivery.ts"),
+      expect.stringContaining("translate/message.ts: copies with a replaced caption must go through sendEchoPayload"),
       expect.stringContaining("command text must use sendCommandMessage"),
       expect.stringContaining("must also pass messageThreadId"),
       expect.stringContaining("state-owned button messages"),
     ]));
     expect(problems).toContainEqual(expect.stringContaining("ordinary Worker/group notices"));
     expect(problems).toContainEqual(expect.stringContaining("verificationEffects.ts: ordinary Worker/group notices"));
-    expect(problems).toHaveLength(9);
+    expect(problems).toHaveLength(10);
+    expect(problems.some((problem: string): boolean => problem.includes("copy/echo.ts:") || problem.includes("proxySend.ts:"))).toBeFalse();
     expect(problems.some((problem: string): boolean => problem.includes("hImage/draw.ts"))).toBeFalse();
     expect(problems.some((problem: string): boolean => problem.includes("cron/delivery.ts:"))).toBeFalse();
 

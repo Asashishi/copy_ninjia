@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { canCopyWithoutTranslation } from "../../packages/translate/language";
+import { needsNoTranslation } from "../../packages/translate/language";
 import type { TranslateLanguage } from "../../packages/types/translate";
 
 describe("翻译前的正则判定", () => {
@@ -39,20 +39,20 @@ describe("翻译前的正则判定", () => {
     ["Љубав", "ru", false],
     ["Љубав", "uk", false],
   ] as const)("%s → %s 的跳过判定为 %s", (text: string, language: TranslateLanguage, expected: boolean) => {
-    expect(canCopyWithoutTranslation(text, language)).toBe(expected);
-    expect(canCopyWithoutTranslation(text, language)).toBe(expected);
+    expect(needsNoTranslation(text, language)).toBe(expected);
+    expect(needsNoTranslation(text, language)).toBe(expected);
   });
 
   test("俄乌共用字母短句按字形判断，不能消除语种歧义", () => {
     for (const language of ["uk", "ru"] as const) {
-      expect(canCopyWithoutTranslation("Мама тут", language)).toBe(true);
+      expect(needsNoTranslation("Мама тут", language)).toBe(true);
     }
   });
 
   test("中性内容对所有方向都不占额度", () => {
     for (const language of ["ja", "cn", "en", "uk", "ru"] as const) {
       for (const text of ["", "123！", "🙂 ❤️ 👩‍💻", "  \n"]) {
-        expect(canCopyWithoutTranslation(text, language)).toBe(true);
+        expect(needsNoTranslation(text, language)).toBe(true);
       }
     }
   });

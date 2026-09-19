@@ -9,8 +9,8 @@ describe("copy mode 文本变换", () => {
     expect(applyCopyModeTransform("你好 喵~", "nya")).toBe("你好 喵~");
   });
 
-  test("未指定模式时返回 null", () => {
-    expect(applyCopyModeTransform("原文", undefined)).toBeNull();
+  test("未指定模式时原样返回", () => {
+    expect(applyCopyModeTransform("原文", undefined)).toBe("原文");
   });
 
   test("启动提示按模式描述实际效果", () => {

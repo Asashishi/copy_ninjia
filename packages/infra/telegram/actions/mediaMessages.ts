@@ -180,6 +180,12 @@ export interface CopyMessageParams {
   messageId: number;
   /** 论坛群的话题标识；挂回复时也必须显式传递。 */
   messageThreadId?: number;
+  /** 替换原图注的新文字（不带实体、不设 parse_mode）；不给则保留原图注。 */
+  caption?: string;
+  /** 新图注是否显示在媒体上方；只在给出 caption 时生效。 */
+  showCaptionAboveMedia?: boolean;
+  /** 复制视频时的起播时间（秒）。 */
+  videoStartTimestamp?: number;
 }
 
 /** 复制消息并登记其自发消息标识。 */
@@ -188,6 +194,9 @@ export async function copyMessage({
   fromChatId,
   messageId,
   messageThreadId,
+  caption,
+  showCaptionAboveMedia,
+  videoStartTimestamp,
 }: CopyMessageParams): Promise<number | undefined> {
   return runTelegramAction({
     action: "copy message",
@@ -196,7 +205,13 @@ export async function copyMessage({
         chatId,
         fromChatId,
         messageId,
-        { message_thread_id: messageThreadId },
+        // 定形一次初始化，缺席用 undefined 表达；grammY 序列化时丢弃 undefined。
+        {
+          message_thread_id: messageThreadId,
+          caption,
+          show_caption_above_media: showCaptionAboveMedia,
+          video_start_timestamp: videoStartTimestamp,
+        },
         ...signalArgs(signal)
       ),
     map: (copied: MessageId): number | undefined => {

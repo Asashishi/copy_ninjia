@@ -15,10 +15,10 @@ import type { TranslateLanguage } from "../types/translate";
 import { TRANSLATE_TRADITIONAL_HAN } from "../consts/translateHan";
 
 /**
- * 仅对符合目标文字形态或完全中性的文本跳过翻译；不创建中间数组。
+ * 符合目标文字形态或完全中性的文本不需要翻译，按原文发送；不创建中间数组。
  * 正则按字形启发式识别，共用汉字词、无重音拉丁短句和共用西里尔字母短句仍可能有语种歧义。
  */
-export function canCopyWithoutTranslation(text: string, language: TranslateLanguage): boolean {
+export function needsNoTranslation(text: string, language: TranslateLanguage): boolean {
   if (TRANSLATE_NEUTRAL_TEXT.test(text)) return true;
   switch (language) {
     case "ja":

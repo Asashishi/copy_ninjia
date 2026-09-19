@@ -21,11 +21,13 @@
 | 命令 | 行为 |
 | :---: | :--- |
 | `/copy` | 原样复读 |
-| `/copy reverse` | 按字素簇反转纯文本 |
-| `/copy nya` | 在纯文本末尾追加「喵~」 |
+| `/copy reverse` | 按字素簇反转文字与图注 |
+| `/copy nya` | 在文字与图注末尾追加「喵~」 |
 | `/icon steal` | 只复制头像 |
 | `/icon reset` | 把头像换回机器人自己的默认那张 |
 | `/copy stop` | 停止全局复读状态，并顺带复原头像 |
+
+**发送方式**（`/copy` 系与随机复读相同）：文字和图注一律按字符串处理，带链接或 @ 的文字照样变换。纯文字重新发送，链接与 @username 由 Telegram 重新识别，原消息的链接预览设置照搬；粗体、隐藏链接、剧透、自定义表情等格式不保留，剧透文字会以明文发出。图片、视频、文件、贴纸等由 Telegram 在服务端原样复制，有图注时换成处理后的文字，本机不下载任何文件。付费媒体不能复制，只发文字。投票、骰子、位置、联系人这类没有文字也没有文件的消息原样复制。变换后超过 Telegram 的正文或图注长度上限时整条不发。
 
 目标可通过「回复 TA 的消息」或 `@username` 指定。模式写在目标前，例如 `/copy reverse @username`、`/copy nya @username`；只换头像用 `/icon steal @username`。`/copy stop` 与 `/icon reset` 不接受额外参数。
 
@@ -37,7 +39,7 @@
 
 ## 🌐 按群翻译
 
-翻译只处理文字消息，独立于全局 copy 目标、5 分钟冷却和头像操作。先由拥有 `isCanControllTranslatePermission` 的身份执行 `/translate enable`（默认关闭），并提供有效的 `g-auth.json`。翻译目标是另一个机器人时，需要在 @BotFather 为本机器人开启 Bot-to-Bot Communication Mode，否则收不到对方的普通消息（见 [01 环境搭建](01-getting-started.md)）。
+翻译处理文字与图注，独立于全局 copy 目标、5 分钟冷却和头像操作。先由拥有 `isCanControllTranslatePermission` 的身份执行 `/translate enable`（默认关闭），并提供有效的 `g-auth.json`。翻译目标是另一个机器人时，需要在 @BotFather 为本机器人开启 Bot-to-Bot Communication Mode，否则收不到对方的普通消息（见 [01 环境搭建](01-getting-started.md)）。
 
 | 命令 | 行为 |
 | :--- | :--- |
@@ -65,9 +67,9 @@
 }
 ```
 
-仅无实体的文字请求翻译。正则识别为目标文字，或只有数字、标点、表情的文字时，原样复制且不调用翻译 API。日语需要假名；简体中文排除 Unicode Unihan 中具有简化变体的繁体字；英语接受 ASCII 字母。乌克兰语接受本语种字母与撇号，排除俄语的 `ёъыэ`；俄语接受 `Ё/ё`，排除乌克兰语的 `єіїґ`。共用汉字、无重音拉丁字母和共用西里尔字母短句仍可能有语种歧义，正则不做语义级语言识别。
+文字与图注一律按字符串翻译，带链接、@ 或格式实体的文字同样翻译。正则识别为目标文字，或只有数字、标点、表情的文字时，不调用翻译 API，直接发送原文。日语需要假名；简体中文排除 Unicode Unihan 中具有简化变体的繁体字；英语接受 ASCII 字母。乌克兰语接受本语种字母与撇号，排除俄语的 `ёъыэ`；俄语接受 `Ё/ё`，排除乌克兰语的 `єіїґ`。共用汉字、无重音拉丁字母和共用西里尔字母短句仍可能有语种歧义，正则不做语义级语言识别。
 
-带实体的文字保留格式原样复制；翻译 API 失败也复制原文字。图片、贴纸、视频、音频、文件及其他非文字消息和图注均不发送，也不回落到同目标的 copy。美式英语使用支持 `en-US` 的 [Google Translation LLM](https://docs.cloud.google.com/translate/docs/languages#translation-llm)。输出保留话题，拒绝可渲染命令；命令提示 30 秒后删除。
+翻译 API 失败时发送原文。文字消息按字符串发出，原消息的链接预览设置照搬，格式不保留；带图注的图片、视频、音频、文件由 Telegram 原样复制并把图注换成译文，本机不下载；付费媒体只发译文。没有文字的图片、贴纸、文件等以及投票、位置这类消息不发送，也不回落到同目标的 copy。译文超过正文或图注长度上限时不发。美式英语使用支持 `en-US` 的 [Google Translation LLM](https://docs.cloud.google.com/translate/docs/languages#translation-llm)。输出保留话题，拒绝可渲染命令；命令提示 30 秒后删除。
 
 会话保存在 `state.json.translate` 的每群数组中，格式与冷迁移见 [07 运维](07-operations.md)。停止单人只取消该目标；新增、停止其他人不取消当前目标的在途翻译。禁用和群 teardown 删除全群会话，异步结果在发送前重新核对该目标的会话对象。`/bot_status` 显示本群正在使用翻译的 `人数/5`。
 

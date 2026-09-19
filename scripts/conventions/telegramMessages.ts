@@ -37,7 +37,6 @@ export async function collectTelegramMessageProblems(
     "auto/message/qaDirectAnswer.ts": "sendQaDirectAnswer",
     "auto/message/proxySend.ts": "handlePrivateProxySend",
     "auto/message/proactive.ts": "replyToBathTrigger",
-    "auto/message/echo.ts": "echoMessage",
   };
   for (const directory of ["workers", "antiRaid", "auto"]) {
     for (const path of sourceFilesUnder(join(sourceRoot, directory))) {
@@ -189,6 +188,27 @@ export async function collectTelegramMessageProblems(
           : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
         if (name !== undefined && telegramSendNames.has(name)) {
           problems.push(`${relative(projectRoot, path)}: cron messages must be sent through cron/delivery.ts`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+
+  // 复读与翻译换图注复制媒体只经 copy/echo.ts 的 sendEchoPayload，一处决定哪些载荷可以复制。
+  const echoPath: string = join(sourceRoot, "copy", "echo.ts");
+  for (const path of sourceFilesUnder(sourceRoot)) {
+    const source: ts.SourceFile = await parse(path);
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "copyMessage") {
+        const options: ts.Expression | undefined = node.arguments[0];
+        const replacesCaption: boolean = options !== undefined && ts.isObjectLiteralExpression(options) &&
+          options.properties.some((property: ts.ObjectLiteralElementLike): boolean =>
+            property.name !== undefined && ts.isIdentifier(property.name) && property.name.text === "caption");
+        let owner: ts.Node | undefined = node.parent;
+        while (owner !== undefined && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
+        if (replacesCaption && (path !== echoPath || owner?.name?.text !== "sendEchoPayload")) {
+          problems.push(`${relative(projectRoot, path)}: copies with a replaced caption must go through sendEchoPayload`);
         }
       }
       ts.forEachChild(node, visit);
