@@ -40,7 +40,7 @@ mock.module("../../packages/infra/randomImage", () => ({ pickRandomImage }));
 
 const { deliverCronAction } = await import("../../packages/cron/delivery");
 const { TEST_DATA_ROOT } = await import("../preloadEnv");
-/** 本地来源的测试目录；cron.json 的 path 可以是本机任意绝对路径。 */
+/** 本地来源的测试目录；cron.json 的 path 解析后一律是绝对路径。 */
 const FILES_ROOT: string = join(TEST_DATA_ROOT, "cron-delivery-files");
 const { getRandomImageDirectory } = await import("../../packages/infra/storage/stateStore");
 const { TelegramRetryQueueFullError } = await import("../../packages/infra/telegram/outboundRetryPolicy");

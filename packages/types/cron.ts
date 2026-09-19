@@ -1,6 +1,6 @@
 import type { LruCache } from "../libs/lruCache";
 
-/** 图片或文件的来源：交给 Telegram 拉取的地址，或本机任意绝对路径的文件。 */
+/** 图片或文件的来源：交给 Telegram 拉取的地址，或本机的文件（已按项目根解析成绝对路径）。 */
 export type CronFileSource =
   | { readonly kind: "url"; readonly url: string }
   | { readonly kind: "path"; readonly path: string };

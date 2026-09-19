@@ -3,12 +3,13 @@
  *
  * parseCronConfig 只做形态、取值与路径的词法判定，不做 I/O；loadCronConfig 在读盘后
  * 再核对 `payload.path` 指向的对象存在且类型相符（文件或目录，跟随符号链接）。
- * `payload.path` 是本机任意绝对路径，不限定目录。任何一处非法都整份拒绝：启动时拒绝
- * 启动，热重载时沿用上一份（见 config/reload.ts）。诊断只含文件路径、字段路径与期望形态。
+ * `payload.path` 写绝对路径，或相对项目根（PROJECT_ROOT）的路径，不限定目录。任何一处
+ * 非法都整份拒绝：启动时拒绝启动，热重载时沿用上一份（见 config/reload.ts）。诊断只含
+ * 文件路径、字段路径与期望形态。
  */
 
 import type { Stats } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { cronConfigCache } from "../cache/main/cron";
 import {
   CRON_ALL_CHATS,
@@ -20,7 +21,7 @@ import {
   CRON_TASK_KEYS,
   CRON_TASK_NAME_MAX_CHARS,
 } from "../consts/cron";
-import { CRON_CONFIG_PATH } from "../consts/paths";
+import { CRON_CONFIG_PATH, PROJECT_ROOT } from "../consts/paths";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import { parseDurationTokenMs } from "../libs/durationToken";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
@@ -82,12 +83,12 @@ function parseRandomInterval(value: unknown, context: FieldContext): CronRandomI
   return { minMs, maxMs };
 }
 
-/** 本机的绝对路径（文件或目录）；拒绝相对路径与 NUL，返回规范化后的路径。 */
+/** 本机的文件或目录路径：绝对路径原样使用，相对路径按项目根解析；拒绝空串与 NUL，返回规范化后的绝对路径。 */
 function parseLocalPath(value: unknown, context: FieldContext): string {
-  if (typeof value !== "string" || value.length === 0 || value.includes("\0") || !isAbsolute(value)) {
-    return fail(context, "an absolute local path");
+  if (typeof value !== "string" || value.length === 0 || value.includes("\0")) {
+    return fail(context, "an absolute local path or a path relative to the project root");
   }
-  return resolve(value);
+  return resolve(PROJECT_ROOT, value);
 }
 
 /** 交给 Telegram 拉取的绝对 http(s) 地址；只校验形态。 */

@@ -216,8 +216,9 @@ The top level is an array of tasks; a missing file or `[]` means no scheduled ta
 JSON, so comments are not allowed.
 
 [`config_example/cron.json`](../cron.json) holds example tasks that cover every form: plain weekday
-text; a task in its own time zone sending text, then an image and a file by URL; a local
-image and file by absolute path; a `rand_cron` range drawing from the default image library; `@daily`
+text; a task that spells out its time zone and sends text, then an image and a file by URL; a local
+image by a path relative to the project root and a local file by absolute path; a `rand_cron`
+range drawing from the default image library; `@daily`
 with a single-value `rand_cron` drawing from a given directory; and `just_once`. The chat ids, URLs
 and local paths in it are fake, and an unedited copy in `config/` refuses startup because the local
 files do not exist. Pick the tasks you need, replace the chat ids and paths with real ones, and write
@@ -260,7 +261,9 @@ Action `type` and `payload`:
   (the same source as `/h_image`); `url` is not allowed then.
 - `send_file`: `content` is optional (at most 1024 characters); exactly one of `url` or `path`.
 
-`path` must be absolute and may point to a file or directory anywhere on the host (a symbolic link
+`path` is either absolute or relative to the project root (the repository root when running from
+source, the service's working directory for the binary) and may point to a file or directory
+anywhere on the host (a symbolic link
 is judged by what it points to). It must exist and have the right type when the configuration is
 loaded. Any file the service account can read can be sent into a chat, so never point it at
 `config/`, `.env` or other files holding credentials. `url` is handed to Telegram as-is and never

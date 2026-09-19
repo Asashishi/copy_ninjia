@@ -481,7 +481,7 @@
 
 ### `cron.json` 定时任务
 
-- 解析在 `packages/config/cron.ts`：`parseCronConfig` 只做形态、取值与路径的词法判定，不做 I/O；`loadCronConfig` 读盘后再核对 `payload.path` 指向的对象存在且类型相符（跟随符号链接）。`payload.path` 只收绝对路径，可以指向本机任意位置，不设基准目录；服务账号读得到的文件都能被发进群，指向哪里由部署方负责。任务数、动作数与任务名长度都有上限（`CRON_MAX_TASKS`、`CRON_MAX_ACTIONS_PER_TASK`、`CRON_TASK_NAME_MAX_CHARS`），超出即拒绝而不截断；`cron` 与 `time_zone` 由 `Bun.cron.parse` 判定，没有将来触发时间的表达式同样拒绝；`just_once` 与 `rand_cron` 互斥；来源恰好一个。解析结果字段固定、一次写齐，热重载按任务名与深相等对账。
+- 解析在 `packages/config/cron.ts`：`parseCronConfig` 只做形态、取值与路径的词法判定，不做 I/O；`loadCronConfig` 读盘后再核对 `payload.path` 指向的对象存在且类型相符（跟随符号链接）。`payload.path` 收绝对路径，或相对项目根（`PROJECT_ROOT`）的路径，解析时一律规范化成绝对路径，可以指向本机任意位置；服务账号读得到的文件都能被发进群，指向哪里由部署方负责。任务数、动作数与任务名长度都有上限（`CRON_MAX_TASKS`、`CRON_MAX_ACTIONS_PER_TASK`、`CRON_TASK_NAME_MAX_CHARS`），超出即拒绝而不截断；`cron` 与 `time_zone` 由 `Bun.cron.parse` 判定，没有将来触发时间的表达式同样拒绝；`just_once` 与 `rand_cron` 互斥；来源恰好一个。解析结果字段固定、一次写齐，热重载按任务名与深相等对账。
 - 调度在主线程 `packages/cron/scheduler.ts`，状态在 `cache/main/cron.ts`。每个任务一个 Bun 原生进程内 cron（任务时区、unref），handler 返回本轮 Promise，Bun 在结算后才排下一次，同一任务不重叠；handler 自己吞掉全部异常，不能让 `unhandledRejection` 触发紧急退出。`just_once` 首次触发即停并登记记录；`rand_cron` 首次按 cron 触发后停掉 cron，之后每轮结束用一个 unref 的 `setTimeout` 在区间内均匀随机等待（上限 24 天，低于单个 timer 能表达的范围）。
 - 对账：深相等的任务保留句柄与计时；变更或删除的任务停止调度并标记撤销，在途一轮不打断当前请求、在下一个动作或重试前停下；新增的任务登记。just_once 记录放在有界 LRU（`CRON_JUST_ONCE_RECORD_MAX`），任务仍是 just_once 时保留、转为周期任务即清除，当前任务表里的名字每轮刷新。记录与随机计时都不持久化，停机期间错过的触发不补发。
 - 执行（`packages/cron/run.ts`）：动作按顺序、间隔 1 秒；网络错误、5xx 与出站队列满按 2/4/8 秒退避最多重试 3 次，其余失败不重试；最终失败记一条英文错误日志并中止本轮剩余动作。重试可能在超时误判时重复发送。

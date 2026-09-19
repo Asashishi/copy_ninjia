@@ -16,13 +16,14 @@
 
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { loadAdSampleConfig } from "../../packages/config/adSamples";
 import { parseCronConfig } from "../../packages/config/cron";
 import { parseGoogleServiceAccountKey } from "../../packages/config/googleAuth";
 import { loadMoodConfig } from "../../packages/config/mood";
 import { loadStickerConfig } from "../../packages/config/stickers";
 import { parseTelegramConfig } from "../../packages/config/telegramInput";
+import { PROJECT_ROOT } from "../../packages/consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { readJsonInput } from "../../packages/libs/inputValidation";
 import type { CronConfig, CronTask } from "../../packages/types/cron";
@@ -85,8 +86,10 @@ describe("config_example 与解析器保持同步", () => {
   test("cron.json 示例能被严格解析，并覆盖字段、动作与来源的全部写法", async () => {
     // 只做纯解析：本地来源是否存在要到加载时才核对，示例里的路径都是假的。
     const path: string = examplePath("cron.json");
-    const config: CronConfig = parseCronConfig(await readJsonInput(path), path);
-    expect(config.some((entry: CronTask): boolean => entry.timeZone !== "Asia/Tokyo")).toBe(true);
+    const raw: unknown = await readJsonInput(path);
+    const config: CronConfig = parseCronConfig(raw, path);
+    // 至少一个任务显式写出 time_zone；取值可以与缺省相同。
+    expect((raw as readonly Readonly<Record<string, unknown>>[]).some((entry: Readonly<Record<string, unknown>>): boolean => entry.time_zone !== undefined)).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.cron.startsWith("@"))).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.justOnce)).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.chatId === "all")).toBe(true);
@@ -94,8 +97,13 @@ describe("config_example 与解析器保持同步", () => {
     expect(config.some((entry: CronTask): boolean => entry.randomInterval !== undefined && entry.randomInterval.minMs > 60_000)).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.randomInterval?.minMs === 60_000)).toBe(true);
     const sources: Set<string> = new Set<string>();
+    const pathForms: Set<string> = new Set<string>();
     for (const entry of config) {
       for (const action of entry.actions) {
+        // 本地路径的两种写法：相对项目根解析后落在项目根下，绝对路径在项目根之外。
+        if (action.type !== "send_message" && action.source.kind === "path") {
+          pathForms.add(action.source.path.startsWith(`${PROJECT_ROOT}${sep}`) ? "relative" : "absolute");
+        }
         if (action.type === "send_message") sources.add("send_message");
         else if (action.source.kind === "random") sources.add(`${action.type}:random:${action.source.directory === null ? "default" : "directory"}`);
         else sources.add(`${action.type}:${action.source.kind}`);
@@ -110,6 +118,7 @@ describe("config_example 与解析器保持同步", () => {
       "send_image:url",
       "send_message",
     ]);
+    expect([...pathForms].sort()).toEqual(["absolute", "relative"]);
   });
 
   test("agent.json 示例的六项能力形状被解析器接受", async () => {

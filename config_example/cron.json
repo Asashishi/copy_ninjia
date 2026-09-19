@@ -8,10 +8,10 @@
     ]
   },
   {
-    "name": "evening-digest-in-another-time-zone",
+    "name": "evening-digest-with-explicit-time-zone",
     "chat_id": -1001234567890,
     "cron": "30 18 * * *",
-    "time_zone": "Asia/Shanghai",
+    "time_zone": "Asia/Tokyo",
     "actions": [
       { "type": "send_message", "payload": { "content": "今日汇总来啦" } },
       { "type": "send_image", "payload": { "content": "今日配图", "url": "https://example.com/daily/cover.png" } },
@@ -23,7 +23,7 @@
     "chat_id": -1001234567890,
     "cron": "0 10 * * 1",
     "actions": [
-      { "type": "send_image", "payload": { "content": "本周海报", "path": "/srv/copy-ninjia/posters/weekly.png" } },
+      { "type": "send_image", "payload": { "content": "本周海报", "path": "posters/weekly.png" } },
       { "type": "send_file", "payload": { "content": "本周周报", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
     ]
   },
