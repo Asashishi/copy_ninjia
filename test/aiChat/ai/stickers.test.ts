@@ -90,7 +90,7 @@ function sendStickerForTest({
   state?: any;
   onSent?: (stickerDescription: string, messageId: number) => void;
 }): Promise<string> {
-  const execution = sendStickerTool({ chatAction, stickerLock, chatId, messageThreadId: undefined, menu, argumentsJson, state, onSent });
+  const execution = sendStickerTool({ chatAction, stickerLock, chatId, messageThreadId: undefined, menu, argumentsJson, state, onSent, isActive: (): boolean => true });
   return Promise.resolve(typeof execution === "string" ? execution : execution.run(chatAction));
 }
 

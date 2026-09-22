@@ -19,7 +19,7 @@ export interface AiProviderQuotaLane {
   readonly runner: PrioritizedBoundedTaskRunner;
 }
 
-/** 每项能力的一次构造后只读门面缓存；配置在 Worker 生命周期内不变。 */
+/** 每项能力的门面缓存；首次取用时构造，agent.json 热重载时整体清空后按新快照重建。 */
 export interface AiProviderFacadeCache {
   text: AiTextProvider | undefined;
   summary: AiSummaryProvider | undefined;

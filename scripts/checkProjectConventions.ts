@@ -1,9 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
-import ts from "typescript";
+import type ts from "typescript";
 import { createModuleGraphReader } from "./conventions/moduleGraph";
 import type { ModuleGraphReader } from "./conventions/moduleGraph";
-import { sourceFilesUnder } from "./conventions/sourceAnalysis";
+import { parseSourceFile, sourceFilesUnder } from "./conventions/sourceAnalysis";
 import {
   collectCacheJsDocProblems,
   collectConstantProblems,
@@ -17,6 +17,7 @@ import { collectColdMigrationProblems } from "./conventions/coldMigrations";
 import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectFaultInjectionSuiteProblems } from "./conventions/faultInjectionSuite";
 import { collectFileLengthProblems } from "./conventions/fileLength";
+import { collectInstallModuleProblems } from "./conventions/installModules";
 import {
   collectUndeclaredDependencyProblems,
   readDeclaredPackages,
@@ -27,6 +28,7 @@ import {
   CACHE_OWNER_BY_PREFIX,
   CACHE_OWNER_EXEMPTIONS,
   collectCacheOwnershipProblems,
+  collectStaleCacheExemptionProblems,
   THREAD_ENTRY_PATHS,
 } from "./conventions/cacheOwnership";
 import { collectWorkerTimerProblems } from "./conventions/workerTimers";
@@ -35,12 +37,22 @@ import {
   collectMarkdownModuleListProblems,
   collectSourceDirectories,
 } from "./conventions/markdownModuleLists";
+import { collectMarkdownAnchors } from "./conventions/markdownAnchors";
 import { withoutMarkdownCodeFences } from "./conventions/markdownSource";
 import {
   collectNodeCompatibilityProblems,
+  collectNodeImportUsage,
   collectStaleNodeAllowanceProblems,
+  collectUnusedNodeAllowanceProblems,
 } from "./conventions/nodeCompatibility";
+import type { NodeImportUsage } from "./conventions/nodeCompatibility";
 import { collectTelegramMessageProblems } from "./conventions/telegramMessages";
+import {
+  collectEnvironmentAccessProblems,
+  collectFullSuiteImportProblems,
+  collectInfraLayeringProblems,
+  collectStatesPurityProblems,
+} from "./conventions/moduleBoundaries";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
 const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
@@ -49,6 +61,8 @@ const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
 const SCRIPTS_ROOT: string = join(PROJECT_ROOT, "scripts");
 const TEST_ROOT: string = join(PROJECT_ROOT, "test");
 const COMMANDS_ROOT: string = join(SOURCE_ROOT, "commands");
+const INFRA_ROOT: string = join(SOURCE_ROOT, "infra");
+const STATES_ROOT: string = join(SOURCE_ROOT, "states");
 const WORKERS_ROOT: string = join(SOURCE_ROOT, "workers");
 
 /** 检查受跟踪与尚未加入索引的源码；Git 忽略的部署数据不进入清单。 */
@@ -84,6 +98,23 @@ function projectFiles(): string[] {
   );
 }
 
+/** 每份文档的锚点集合只算一次；同一批检查里多个文件会互相指来指去。 */
+const markdownAnchorCache: Map<string, ReadonlySet<string> | null> = new Map();
+
+/** 读取并缓存一份文档的锚点；文件读不到时返回 null（路径那一半另有报错）。 */
+async function anchorsOf(path: string): Promise<ReadonlySet<string> | null> {
+  const cached: ReadonlySet<string> | null | undefined = markdownAnchorCache.get(path);
+  if (cached !== undefined) return cached;
+  let anchors: ReadonlySet<string> | null;
+  try {
+    anchors = collectMarkdownAnchors(await Bun.file(path).text());
+  } catch {
+    anchors = null;
+  }
+  markdownAnchorCache.set(path, anchors);
+  return anchors;
+}
+
 /** 检查 Markdown inline/reference link 与 HTML href/src 的本地目标。 */
 async function checkMarkdownLocalLinks(
   path: string,
@@ -101,26 +132,46 @@ async function checkMarkdownLocalLinks(
       const target: string | undefined = match[1];
       if (
         target === undefined ||
-        target.startsWith("#") ||
         target.startsWith("/") ||
         target.startsWith("//") ||
         /^[a-z][a-z0-9+.-]*:/i.test(target)
       ) {
         continue;
       }
-      const targetWithoutFragment: string = target.split(/[?#]/, 1)[0] ?? "";
-      if (targetWithoutFragment.length === 0) continue;
-      let decodedTarget: string;
-      try {
-        decodedTarget = decodeURIComponent(targetWithoutFragment);
-      } catch {
-        decodedTarget = targetWithoutFragment;
-      }
-      if (existsSync(resolve(dirname(path), decodedTarget))) continue;
       const line: number =
         searchable.slice(0, match.index).split("\n").length;
+      const fragmentIndex: number = target.indexOf("#");
+      const fragment: string = fragmentIndex < 0 ? "" : target.slice(fragmentIndex + 1);
+      const targetWithoutFragment: string = target.split(/[?#]/, 1)[0] ?? "";
+      // 纯 `#片段` 指向当前文档自己的标题。
+      let linkedPath: string = path;
+      if (targetWithoutFragment.length > 0) {
+        let decodedTarget: string;
+        try {
+          decodedTarget = decodeURIComponent(targetWithoutFragment);
+        } catch {
+          decodedTarget = targetWithoutFragment;
+        }
+        linkedPath = resolve(dirname(path), decodedTarget);
+        if (!existsSync(linkedPath)) {
+          failures.push(
+            `${relative(PROJECT_ROOT, path)}:${line} local link target does not exist: ${target}`
+          );
+          continue;
+        }
+      }
+      if (fragment.length === 0 || extname(linkedPath) !== ".md") continue;
+      let decodedFragment: string;
+      try {
+        decodedFragment = decodeURIComponent(fragment);
+      } catch {
+        decodedFragment = fragment;
+      }
+      const anchors: ReadonlySet<string> | null = await anchorsOf(linkedPath);
+      if (anchors === null || anchors.has(decodedFragment.toLowerCase())) continue;
       failures.push(
-        `${relative(PROJECT_ROOT, path)}:${line} local link target does not exist: ${target}`
+        `${relative(PROJECT_ROOT, path)}:${line} link fragment has no matching heading in ` +
+        `${relative(PROJECT_ROOT, linkedPath)}: #${decodedFragment}`
       );
     }
   }
@@ -147,6 +198,8 @@ const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
 ];
 
 const failures: string[] = [];
+/** 逐文件遍历时顺带记下的 Node 兼容 import；整趟结束后反向核对登记表。 */
+const nodeImportUsage: NodeImportUsage[] = [];
 failures.push(...await collectRuntimeCalibrationProblems({ projectRoot: PROJECT_ROOT }));
 failures.push(...collectStaleNodeAllowanceProblems(PROJECT_ROOT));
 for (const problem of await collectColdMigrationProblems(PROJECT_ROOT)) {
@@ -161,6 +214,9 @@ for (const problem of await collectFaultInjectionSuiteProblems(PROJECT_ROOT)) {
 
 for (const problem of await collectPerformanceRecordProblems(PROJECT_ROOT)) {
   failures.push(`performance record: ${problem}`);
+}
+for (const problem of await collectInstallModuleProblems(PROJECT_ROOT)) {
+  failures.push(`install script: ${problem}`);
 }
 // 目录清单核对要按真实目录解析文档里的目录名；整趟只遍历一次，且只走源码根
 // （理由见 collectSourceDirectories：仓库根下有部署方数据目录，不能碰）。
@@ -224,26 +280,22 @@ for (const [thread, closure] of threadClosures) {
   }
 }
 
+const cacheFiles: readonly string[] = sourceFilesUnder(CACHE_ROOT);
+failures.push(...collectStaleCacheExemptionProblems({
+  projectRoot: PROJECT_ROOT,
+  cacheFiles,
+  threadClosures,
+  exemptions: CACHE_OWNER_EXEMPTIONS,
+}));
 for (const problem of collectCacheOwnershipProblems({
   projectRoot: PROJECT_ROOT,
-  cacheFiles: sourceFilesUnder(CACHE_ROOT),
+  cacheFiles,
   threadEntries: THREAD_ENTRIES,
   threadClosures,
   ownerByPrefix: CACHE_OWNER_BY_PREFIX,
   exemptions: CACHE_OWNER_EXEMPTIONS,
 })) {
   failures.push(problem);
-}
-
-/** 解析一个源文件；每个文件在整次检查里只走这一次。 */
-async function parseSourceFile(path: string): Promise<ts.SourceFile> {
-  return ts.createSourceFile(
-    path,
-    await Bun.file(path).text(),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
 }
 
 /**
@@ -273,6 +325,7 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
     failures.push(problem);
   }
+  nodeImportUsage.push(...collectNodeImportUsage(PROJECT_ROOT, path, source));
   failures.push(...collectUndeclaredDependencyProblems({ projectRoot: PROJECT_ROOT, path, source, declaredPackages }));
   if (cacheSourceFiles.has(path)) {
     for (const problem of collectCacheJsDocProblems(params)) failures.push(problem);
@@ -285,6 +338,13 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
     for (const problem of collectModuleCacheProblems(params)) failures.push(problem);
   }
   for (const problem of collectDeclarationProblems(params)) failures.push(problem);
+  failures.push(...collectEnvironmentAccessProblems(params));
+  if (path.startsWith(STATES_ROOT + "/") || path === STATES_ROOT + ".ts") {
+    failures.push(...collectStatesPurityProblems(params));
+  }
+  if (path.startsWith(INFRA_ROOT + "/")) {
+    failures.push(...collectInfraLayeringProblems(params));
+  }
   for (const problem of await collectCommentReferenceProblems({
     projectRoot: PROJECT_ROOT,
     path,
@@ -306,8 +366,11 @@ for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
     failures.push(problem);
   }
+  nodeImportUsage.push(...collectNodeImportUsage(PROJECT_ROOT, path, source));
   failures.push(...collectUndeclaredDependencyProblems({ projectRoot: PROJECT_ROOT, path, source, declaredPackages }));
+  failures.push(...collectFullSuiteImportProblems({ projectRoot: PROJECT_ROOT, path, source }));
 }
+failures.push(...collectUnusedNodeAllowanceProblems(nodeImportUsage));
 
 for (const problem of await collectTelegramMessageProblems(
   PROJECT_ROOT,

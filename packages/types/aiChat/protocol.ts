@@ -1,3 +1,4 @@
+import type { Atmosphere } from "../atmosphere";
 import type { MediaKind, TelegramVisionSource } from "../media";
 import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../stickers/protocol";
 import type { AiMemoryUsage } from "./memory";
@@ -5,7 +6,6 @@ import type { AiSpeakerSnapshot } from "./speaker";
 import type {
   AgentDeploymentConfig,
   MoodConfig,
-  ReactionConfig,
   StickerConfig,
 } from "../config";
 
@@ -21,26 +21,35 @@ export type ImageGenerationReference = TelegramVisionSource;
 export type AiDirectTriggerReason = "reply" | "mention";
 
 /**
- * AI Worker 的唯一初始化消息：机器人身份 + 主线程解析出来的 AI 对话能力快照。
+ * AI Worker 初始化消息：机器人身份 + 主线程解析的 AI 对话能力快照。
+ * startAiChatWorker 构造消息，syncAiChatConfig 在热重载时更新 lastInitState；Worker
+ * 崩溃重建时重放当前快照，Worker 不自行读取部署配置（见 aiChat/workerBridge.ts）。
  *
- * 配置随身份一起投递而不是让 Worker 自己读盘，是「同一进程内只有一代配置」的
- * 落点：这条消息在 initAiChat 里构造一次，崩溃重建时由 lastInitState 原样重放
- * （见 aiChat/workerBridge.ts），因此新 isolate 拿到的永远是进程启动那一刻的
- * 那份，改 config/agent.json 必须整进程重启才会生效。
- *
- * `agent` 里带着各能力的 api_key，只在这条消息上跨线程流动一次：不落盘、不进
- * state、不进任何事件回执，日志侧由 logger 的值级脱敏兜底（见 infra/logger.ts）。
+ * `agent` 的 api_key 随 init 与 configReload 由主线程传给 AI Worker，重建时会重放；
+ * 不写入运行时状态或事件回执。凭据与日志脱敏约束见 docs/cn/04-invariants.md。
  */
 export interface AiInitMessage {
   type: "init";
   botInfo: AiBotInfo;
-  /** 主线程从部署配置读取后注入；Worker 不直接加载 Telegram 配置。 */
+  /** 主线程从 config/bot.json 读取后注入；Worker 不直接加载 Bot 部署配置。 */
   superAdminUserId: number;
+  defaultAtmosphere: Atmosphere;
   agent: AgentDeploymentConfig;
   mood: MoodConfig;
-  reactions: ReactionConfig;
   stickers: StickerConfig;
   persona: string;
+}
+
+/**
+ * config/ 热重载后主线程已生效的 AI 部署配置（见 app/configReload.ts）。字段为
+ * undefined 表示该领域本轮未变化；主线程在投递前同步改写 lastInitState，Worker
+ * 重建时由 init 重放同一份最新快照。`agent` 带凭据，传输与脱敏约束同 AiInitMessage。
+ */
+export interface AiConfigReloadMessage {
+  type: "configReload";
+  agent: AgentDeploymentConfig | undefined;
+  mood: MoodConfig | undefined;
+  stickers: StickerConfig | undefined;
 }
 
 /** 主线程从 Telegram update 提取的原始回复引用；Worker 会清洗成持久化形态。 */
@@ -201,7 +210,6 @@ export interface AiFlushMemoryMessage {
 export interface AiInvalidateChatMessage {
   type: "invalidateChat";
   chatId: number;
-  purgeMemory: boolean;
   requestId: number;
 }
 
@@ -231,6 +239,7 @@ export interface AiQueryMoodMessage {
 export type AiChatWorkerMessage =
   | AiPersonaMessage
   | AiInitMessage
+  | AiConfigReloadMessage
   | AiRecordMessage
   | AiRecordMediaMessage
   | AiTriggerMessage

@@ -3,7 +3,7 @@ import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../packag
 import type { AdDetectAgentConfig } from "../../../packages/types/config";
 import { workerDuplexRequestSignal } from "../../../packages/cache/perThread/workerDuplex";
 import { workerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
-import { plainAtmosphereChats } from "../../../packages/cache/workers/antiRaid/atmosphere";
+import { plainAtmosphereChats, defaultAtmosphereState } from "../../../packages/cache/workers/antiRaid/atmosphere";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 
 const calls: string[] = [];
@@ -78,7 +78,10 @@ mock.module("../../../packages/workers/antiRaid/chatKind", () => ({
   resetWorkerChatKind(): void { calls.push("resetChatKind"); },
 }));
 const sweepRecentComments = mock((_now: number): number => 0);
-mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
+mock.module("../../../packages/workers/antiRaid/recentComments", () => ({
+  sweepRecentComments,
+  resetRecentComments(): void { calls.push("resetRecentComments"); },
+}));
 mock.module("../../../packages/infra/telegram/actions/messageLifecycle", () => ({
   flushPendingMessageDeletions(): readonly Promise<void>[] {
     calls.push("flushGenericMessageDeletions");
@@ -150,6 +153,7 @@ describe("Anti-Raid Worker lifecycle", () => {
     worker.handleAntiRaidWorkerMessage({ type: "atmosphere", chatId: -1001, plain: true });
     worker.stopAntiRaidWorker();
     expect(plainAtmosphereChats.size).toBe(0);
+    expect(defaultAtmosphereState.current).toBeNull();
   });
   test("stop/start 作废旧关联频道在途槽，旧 settle 不破坏新代去重", async () => {
     let resolveStale!: () => void;
@@ -219,7 +223,7 @@ describe("Anti-Raid Worker lifecycle", () => {
     expect(workerSelf.onmessage).not.toBeNull();
 
     const messages: AntiRaidWorkerMessage[] = [
-      { type: "agentConfig", adDetect: injectedAdDetectConfig, adSamples: [] },
+      { defaultAtmosphere: "teasing", type: "agentConfig", adDetect: injectedAdDetectConfig, adSamples: [] },
       {
         type: "join",
         chatId: -1001,
@@ -276,8 +280,8 @@ describe("Anti-Raid Worker lifecycle", () => {
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();
-    expect(calls.slice(-7)).toEqual([
-      "stopVerification", "stopLockdown", "stopAdDetect",
+    expect(calls.slice(-8)).toEqual([
+      "stopVerification", "stopLockdown", "stopAdDetect", "resetRecentComments",
       "resetFloodWindows", "resetGenericMessageDeletions", "resetBotPermissions",
       "resetChatKind",
     ]);

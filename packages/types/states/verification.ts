@@ -1,14 +1,14 @@
 /**
  * 入群验证状态机的契约：状态、事件、效果与转移结果。
  *
- * **状态对象的缺省字段一律写成 `T | undefined` 而不是 `field?:`**：这些对象活到
- * 整条验证生命周期结束，期间 verificationSnapshot 与解释器要反复读它们。写成可选
- * 就允许构造点各写一部分字段、之后再补上，同一个 kind 因此分出多个 hidden class，
- * 而后补字段本身就是一次形状变更（见 AGENTS.md「性能、内存与 Bun/JSC JIT」，
- * 口径同 types/aiChat/speaker.ts 与 workers/aiChat/bufferedMessage.ts）。改成必填之后，
- * 漏写字段是编译错误，构造顺序由声明顺序固定；终态两个 kind 的构造统一收在
- * states/verification/shared.ts 的 checkingInviterOf / expellingOf，adopt 重建与状态机
- * 新建共用同一份。缺省值仍是 undefined，`JSON.stringify` 照常省略，落盘格式不变。
+ * **状态对象的缺省字段一律写成必填的 `T | undefined`，不用 `field?:`**：这些对象活到
+ * 整条验证生命周期结束，期间 verificationSnapshot 与解释器要反复读它们。必填字段
+ * 保证每个构造点一次写全，同一个 kind 只有一种 hidden class，不会事后补字段改形状
+ * （见 AGENTS.md「性能、内存与 Bun/JSC JIT」，口径同 types/aiChat/speaker.ts 与
+ * workers/aiChat/bufferedMessage.ts）。漏写字段是编译错误，构造顺序由声明顺序固定；
+ * 终态两个 kind 的构造统一收在 states/verification/shared.ts 的 checkingInviterOf /
+ * expellingOf，adopt 重建与状态机新建共用同一份。值为 undefined 的字段在
+ * `JSON.stringify` 时照常省略。
  *
  * 事件与 VerificationTransition 是每次转移现造现用的短命对象，不适用本条。
  */
@@ -100,8 +100,8 @@ export interface CheckingInviterState {
   kind: "checkingInviter";
   inviterId: number;
   snapshot: ExpelSnapshot;
-  /** Worker 本地幂等门；不持久化，Worker 重建后允许安全重放。 */
-  executionStarted: boolean | undefined;
+  /** Worker 本地幂等门；不持久化，构造与重建时为 false，Worker 重建后允许安全重放。 */
+  executionStarted: boolean;
 }
 
 /** 已持久化后才可执行验证痕迹清理/踢人；这些 API 均按幂等方式重放。 */
@@ -109,8 +109,8 @@ export interface ExpellingState {
   kind: "expelling";
   reason: "timeout" | "flood";
   snapshot: ExpelSnapshot;
-  /** Worker 本地幂等门；不持久化，Worker 重建后允许安全重放。 */
-  executionStarted: boolean | undefined;
+  /** Worker 本地幂等门；不持久化，构造与重建时为 false，Worker 重建后允许安全重放。 */
+  executionStarted: boolean;
   /**
    * 「想踢却踢不动」（缺 can_restrict_members）这条告警已发送。
    *

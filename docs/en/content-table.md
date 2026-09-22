@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_en_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../../pictures/tagline_en_light.svg" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_en_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../../public/tagline_en_light.svg" width="760">
 </picture>
 
 # 📚 Copy Ninjia Developer Documentation
@@ -30,7 +30,9 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 | 🛠️ **Modifications** | Step-by-step recipes for commands, AI tools, and schema edits | [📖 06 Recipes](06-modification-guide.md) |
 | 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
 | 🎮 **Look up a command** | Every command, permission semantics and behavioural details (the root README keeps only a summary) | [📖 08 Commands](08-commands.md) |
+| 🖼️ **Images and scheduled tasks** | Collection, content deduplication, albums, time zones and path bases | [📖 Configuration](../../config_example/README/en.md) |
 | 📊 **Read the numbers** | Release benchmark for cold/hot paths, total throughput and I/O, and end-to-end chain latency | [📖 09 Performance](09-performance.md) |
+| ❓ **Bot not replying** | Checklist for a running bot that stays silent | [📖 10 FAQ](10-faq.md) |
 
 ---
 
@@ -38,8 +40,8 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 
 1. **[01 Environment Setup and First Run](01-getting-started.md)**
    - Dependencies (Bun 1.4.2 / Linux / Bot Token / AI provider API Key)
-   - Required fields in `config/telegram.json` and other deployment configuration
-   - Telegram BotFather setup (Privacy Mode / Admin permissions / Inline Mode)
+   - Required fields in `config/bot.json` and other deployment configuration
+   - Telegram BotFather setup (Privacy Mode / Admin permissions / Inline Mode / Bot-to-Bot)
    - First launch and the `/init enable` handshake after the bot joins a group
 
 2. **[02 Architecture Overview](02-architecture.md)**
@@ -59,7 +61,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Persistence: durability and snapshot contracts, chat state and `chat_states`, blocklist and ad detection, acknowledgement boundary and shutdown, file permissions
 
 5. **[05 Development Workflow and Quality Gates](05-dev-workflow.md)**
-   - `bun run check` 7-stage validation: install-script syntax + install isolation + conventions + lint + typecheck + full test suite with coverage + the hot-path gate
+   - `bun run check` 8-stage validation: install-script syntax + install isolation + conventions + lint + typecheck + full test suite with coverage + the fixed-seed random-order suite + the hot-path gate
    - Test isolation mechanism and temporary data root sandbox
    - Commit standards and pre-release fault injection suite `bun run test:fault-injection`
 
@@ -86,6 +88,9 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Three independent rounds per item, reported as a mean with min, max and coefficient of variation
    - Total throughput, total I/O and mock data-root footprint per round
 
+10. **[10 FAQ](10-faq.md)**
+    - A running bot that does not reply: initialisation, privacy, AI triggers, private chats, auto-deleted notices, Inline Mode, Bot-to-Bot, protections that are off by default, and the process state
+
 ---
 
 ## 📝 Documentation Maintenance
@@ -99,9 +104,9 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_en_light.svg">
-  <img alt="Copy Ninjia Footer" src="../../pictures/footer_en_light.svg" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_en_light.svg">
+  <img alt="Copy Ninjia Footer" src="../../public/footer_en_light.svg" width="800">
 </picture>
 
 </div>

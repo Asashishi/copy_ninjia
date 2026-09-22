@@ -25,13 +25,6 @@ import { startReplyRound } from "./replyRound";
 import { hasReplyDeliveryCapacity } from "./replyDelivery";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 
-export {
-  invalidateChatReplies,
-  quiesceAiChatReplies,
-  replyGenerationSignal,
-  trackReplyGenerationTask,
-} from "./replyState";
-
 /**
  * AI 回复准入编排。并发闸决定立即执行、排队或丢弃；滑动窗口计数和单轮
  * 工具生命周期分别由 replyRound.ts 管理，队列快照与 FIFO 由 replyQueue.ts
@@ -81,7 +74,7 @@ function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
   const times: TimestampDeque | undefined = longTriggerTimes.get(chatId);
   if (times !== undefined) {
     times.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
-    if (admitRound({ windowCount: times.size }).action === "rateLimited") return;
+    if (admitRound({ windowCount: times.size }) === "rateLimited") return;
   }
   drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
 }
@@ -127,10 +120,7 @@ export function drainPendingReplyQueues(now: number = Date.now()): void {
   }
 }
 
-/**
- * 接纳一次 AI 回复触发。此函数同步完成并发准入与排队决策，真正的生成发送
- * 以 fire-and-forget 方式执行，不阻塞 Worker 继续分发消息。
- */
+/** generateAndSendReply 的入参。 */
 export interface GenerateAndSendReplyParams {
   chatId: number;
   triggerSenderId: number;
@@ -152,6 +142,10 @@ export interface GenerateAndSendReplyParams {
   mediaPreparation?: Promise<MediaCommentContext | null>;
 }
 
+/**
+ * 接纳一次 AI 回复触发。此函数同步完成并发准入与排队决策，真正的生成发送
+ * 以 fire-and-forget 方式执行，不阻塞 Worker 继续分发消息。
+ */
 export function generateAndSendReply({
   chatId,
   triggerSenderId,
@@ -181,7 +175,7 @@ export function generateAndSendReply({
     telegramBackpressured,
     deliveryAvailable: hasReplyDeliveryCapacity(chatId),
   });
-  switch (decision.action) {
+  switch (decision) {
     case "startRound":
       startReplyRound(
         {

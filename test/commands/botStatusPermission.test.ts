@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CachedUser } from "../../packages/types/chatState";
 import { translateStates } from "../../packages/cache/main/translateState";
 
 interface SentCommandMessage {
@@ -9,13 +8,9 @@ interface SentCommandMessage {
 }
 
 let permissionAllowed: boolean = false;
-const hasCommandPermission = mock((_ctx: unknown, key: string): boolean =>
+const hasWhitelistPermission = mock((_id: number, key: string): boolean =>
   permissionAllowed && key === "isCanViewBotStatus"
 );
-const resolveCommandActor = mock((_ctx: unknown): CachedUser => ({
-  id: 100,
-  username: "viewer",
-}));
 const sendCommandMessage = mock(async (
   _params: SentCommandMessage
 ): Promise<number | undefined> => 1);
@@ -44,12 +39,11 @@ const readBotProcessStatus = mock((): Readonly<{
 }));
 const activeGagSessionCount = mock((): number => 3);
 
-mock.module("../../packages/commands/commandActor", () => ({
-  hasCommandPermission,
-  resolveCommandActor,
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
+  hasWhitelistPermission,
 }));
 mock.module("../../packages/users/userLabel", () => ({
-  formatUserLabel: (): string => "@viewer",
+  formatActorLabel: (): string => "@viewer",
 }));
 mock.module("../../packages/infra/telegram", () => ({ sendCommandMessage }));
 mock.module("../../packages/config/readiness", () => ({
@@ -72,10 +66,11 @@ mock.module("../../packages/cache/main/gag", () => ({ activeGagSessionCount }));
 const { handleBotStatusCommand } = await import("../../packages/commands/botStatus");
 
 function context(): never {
+  const chat = { id: -1001, type: "supergroup" };
   return {
-    chat: { id: -1001, type: "supergroup" },
+    chat,
     from: { id: 100, first_name: "Viewer", username: "viewer" },
-    msg: { message_id: 10 },
+    msg: { message_id: 10, chat },
     msgId: 10,
   } as never;
 }
@@ -84,8 +79,7 @@ beforeEach(() => {
   translateStates.clear();
   permissionAllowed = false;
   for (const mocked of [
-    hasCommandPermission,
-    resolveCommandActor,
+    hasWhitelistPermission,
     sendCommandMessage,
     aiChatConfigReadiness,
     adDetectConfigReadiness,
@@ -101,7 +95,7 @@ describe("/bot_status 白名单权限", () => {
     const ctx: never = context();
     await handleBotStatusCommand(ctx);
 
-    expect(hasCommandPermission).toHaveBeenCalledWith(ctx, "isCanViewBotStatus");
+    expect(hasWhitelistPermission).toHaveBeenCalledWith(100, "isCanViewBotStatus");
     expect(sendCommandMessage).toHaveBeenCalledWith({
       chatId: -1001,
       text: "就 @viewer 也想看本天才的全局状态？哪来的资格呀，笨蛋♡",
@@ -122,7 +116,7 @@ describe("/bot_status 白名单权限", () => {
     ]);
     translateStates.set(-2002, [{ translatedUser: { id: 9 }, language: "ja" }]);
     await handleBotStatusCommand(context());
-    expect(sendCommandMessage.mock.calls[0]?.[0].text).toContain("本群正赖着本天才翻译的杂鱼：2/5 人♡");
+    expect(sendCommandMessage.mock.calls[0]?.[0].text).toContain("本群正赖着本天才翻译的杂鱼：2/5♡");
 
     expect(aiChatConfigReadiness).toHaveBeenCalledTimes(1);
     expect(adDetectConfigReadiness).toHaveBeenCalledTimes(1);

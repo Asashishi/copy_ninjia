@@ -16,8 +16,7 @@ import {
   pendingSummaries,
 } from "../../cache/workers/aiChat/memory";
 import { clearChatMoodCache } from "../../cache/workers/aiChat/mood";
-import { invalidateChatRuntimeCache } from "../../cache/workers/aiChat/index";
-import { hasActiveAiChatTasks } from "./replyGeneration";
+import { evictChatReplyGeneration, hasActiveAiChatTasks } from "./replyGeneration";
 import type { AiMemorySnapshot, AiMemoryUsage, BufferedMessage } from "../../types/aiChat/memory";
 
 /** 启动恢复时解析成功、等待按 savedAt 排序的一条群快照。 */
@@ -123,7 +122,7 @@ function ensureMemoryCapacity(excludeChatId: number): void {
     const oldestChatId: number | undefined = findOldest(true) ?? findOldest(false);
     if (oldestChatId === undefined) return;
 
-    invalidateChatRuntimeCache(oldestChatId);
+    evictChatReplyGeneration(oldestChatId);
     purgeChatMemory(oldestChatId);
     self.postMessage({ type: "memoryDeleted", chatId: oldestChatId } satisfies AiMemoryDeletedEvent);
   }

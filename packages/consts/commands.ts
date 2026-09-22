@@ -1,4 +1,4 @@
-/** 群聊命令文本发送后自动清理的最长保留时间。 */
+/** 群聊非功能性命令提示的延迟删除时长；发送边界见 infra/telegram。 */
 export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
 
 /** `/bot_status` 展示单个 provider/model 标签的最大字符数，防止部署值撑破消息上限。 */
@@ -8,9 +8,8 @@ export const BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS: number = 96;
 export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
 
 /**
- * 从命令参数里解析裸 @username（如 "/copy @foo" 的 "@foo"）的正则，
- * 见 commands/targetResolution.ts 的 resolveCommandTarget。规则与 Telegram
- * 普通用户名一致：5~32 位、字母开头、只含字母/数字/下划线且不以下划线结尾。
+ * 命令参数接受的用户名最小长度，不含可选的 @ 前缀；
+ * 由 USERNAME_ARG_PATTERN 使用，所属模块：commands/targetResolution.ts。
  */
 export const TELEGRAM_USERNAME_MIN_LENGTH: number = 5;
 /** Telegram 用户名允许的最大长度。 */
@@ -45,15 +44,8 @@ export const USER_ID_ARG_PATTERN: RegExp = /^[1-9]\d*$/;
  * 命令参数中裸会话 id（频道/群）的完整匹配规则：带负号的十进制整数，同样不接受
  * 前导零、指数与小数，位数边界仍由调用方的 `Number.isSafeInteger` 兜底。
  *
- * `/gag`、`/ungag`、`/unblock`、`/permission` 与 `/white` 按需打开这条路
- *（`acceptChatId`）。前两条用它直接指定频道 sender_chat；`/unblock` 必须保证
- * 黑名单里的频道马甲始终能被划掉；后两者管理的白名单本来就允许负数频道 ID，
- * 不能强迫管理员依赖一条仍存在的频道消息或公开 username。
- *
- * 反方向的 `/block` 继续拒绝负数：把粘错的会话 id 当目标会改去封整个会话身份，
- * 而那条命令不可逆；其余调用都是可恢复的运行时或配置操作。
- * 不限定 `-100` 前缀：这条口子存在的意义正是「名单上的东西一定划得掉」，
- * 不该再留下一类划不掉的 id。
+ * 不限定 -100 前缀。libs/telegramId.ts 负责数值解析，commands/targetResolution.ts
+ * 通过 acceptChatId 控制各命令是否接受这种目标形态。
  */
 export const CHAT_ID_ARG_PATTERN: RegExp = /^-[1-9]\d*$/;
 
@@ -83,6 +75,12 @@ export const INVALID_USERNAME_ECHO_MAX_CHARS: number = TELEGRAM_USERNAME_MAX_LEN
  */
 export const CJK_ACTION_COMMAND_PATTERN: RegExp =
   /^\/([\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]{1,2})(?:@([A-Za-z0-9_]+))?(?:\s|$)/;
+
+/**
+ * 「/」的 UTF-16 码元。app/registerHandlers.ts 用它给中文动作命令的 hears 子链做
+ * 外闸：CJK_ACTION_COMMAND_PATTERN 以 `^\/` 开头，原文首字符不是它的消息不进子链。
+ */
+export const SLASH_CHAR_CODE: number = 0x2f;
 
 /**
  * 动作命令的全局滑动窗口限流：每 CJK_ACTION_RATE_LIMIT_WINDOW_MS（90 秒）
@@ -125,32 +123,15 @@ export const DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = {
 export const MUTE_MIN_DURATION_MS: number = 60_000;
 
 /**
- * `/mute` 的请求真正发出时，`until_date` 距当下必须仍然剩下的时长。
- *
- * 派发截止取「本次时长 − 本常量」：超时即放弃这次禁言，按「Telegram 这会儿
- * 不理本天才」如实回执。不设它的话，一条 `/mute @x 1m` 撞上 restrict 类 429
- * 退避就会在发出那一刻落进「不足 30 秒即永久」区间，被静默升级成只能人工
- * `/unmute` 的永久禁言，而战报照常念「到点自动松开」。
- *
- * 取 45 秒而不是刷屏禁言那侧的 60 秒（FLOOD_MUTE_DISPATCH_TIMEOUT_MS）：那边
- * 的时长恒为 3 分钟，这边的下限是 MUTE_MIN_DURATION_MS（1 分钟），留 60 秒
- * 等于把 1 分钟那一档的派发窗口压成 0，`/mute @x 1m` 从此永远发不出去。45 秒
- * 仍比那条 30 秒红线宽出半程，1 分钟那一档也还剩 15 秒可以排队。
- * 所属模块：commands/mute.ts。
+ * `/mute` 为禁言截止时刻预留的剩余时长；派发预算为「本次时长 − 本常量」。
+ * 最短 1 分钟禁言对应 15 秒派发预算，到期取消请求。所属模块：commands/mute.ts；
+ * 派发截止与 Telegram 禁言边界见 docs/cn/04-invariants.md。
  */
 export const MUTE_DISPATCH_MIN_REMAINING_MS: number = 45_000;
 
 /**
- * `/mute` 允许的最长时长。Bot API 同一条约定的另一头：`until_date` 距现在
- * 超过 366 天同样按永久禁言处理。
- *
- * 上限取 365 天而不是贴着 366 天的边：Bot API 是按**它收到请求的时刻**算这
- * 个差值的，命令处理、restrict 类 429 退避和网络往返都会把 `until_date` 相对「现在」
- * 往前推；而 muteChatMemberWithOutcome 还要向上取整到秒，又加最多 1 秒。贴顶
- * 时这些余量全部溢出到 366 天之外，禁言被静默升级成永久——本进程不排恢复
- * 计时器、不写任何持久化状态，除人工 /unmute 外永不解除，而战报却照常念
- * 「到点自动松开」。留一整天余量把这条边界彻底移出可达范围。
- * 所属模块：commands/mute.ts。
+ * `/mute` 的最长时长为 365 天，超出时由 commands/mute.ts 收敛到本上限。
+ * 截止时刻交给 Telegram，本进程不保存恢复计时器；禁言边界见 docs/cn/04-invariants.md。
  */
 export const MUTE_MAX_DURATION_MS: number = 365 * 24 * 60 * 60_000;
 
@@ -167,7 +148,7 @@ export const BATCH_KICK_MAX_DURATION_MS: number = 24 * 60 * 60_000;
 export const BATCH_KICK_CONCURRENCY: number = 5;
 
 /**
- * 跨托管群处置同时运行的群数（`/block` 的连坐封禁与 `/unblock` 的跨群解封）。
+ * 跨托管群处置同时运行的群数（`/block` 的连坐封禁与 `/block disable` 的跨群解封）。
  *
  * 单租户通常只有约 15 个群，但配置状态仍可能长期增长；固定小并发避免一次命令
  * 把全部群同时展开成 Telegram 请求和闭包，也避免逐群串行让 update 中间件几十次

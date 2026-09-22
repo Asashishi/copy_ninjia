@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createKeyedSerialTaskRunner } from "../../packages/libs/keyedSerialTaskRunner";
-import { deferred } from "./helpers";
 
 describe("createKeyedSerialTaskRunner", () => {
   test("同一个 key 严格按提交顺序执行，较早的慢任务不会晚于新任务落地", async () => {
-    const first = deferred();
-    const second = deferred();
+    const first: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    const second: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const started: number[] = [];
     const finished: number[] = [];
     const chains = new Map<string, Promise<void>>();
@@ -35,7 +34,7 @@ describe("createKeyedSerialTaskRunner", () => {
   });
 
   test("不同 key 各自独立，互不阻塞", async () => {
-    const slow = deferred();
+    const slow: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const order: string[] = [];
     const chains = new Map<string, Promise<void>>();
     const runner = createKeyedSerialTaskRunner(chains);
@@ -85,7 +84,7 @@ describe("createKeyedSerialTaskRunner", () => {
   });
 
   test("链跑完之前又有新任务顶上：清理只认自己那一代，不误删顶替者", async () => {
-    const first = deferred();
+    const first: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const chains = new Map<string, Promise<void>>();
     const runner = createKeyedSerialTaskRunner(chains);
 

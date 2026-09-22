@@ -8,9 +8,21 @@ import {
 /** 关联频道按需缓存（packages/workers/antiRaid/linkedChannel.ts）的内存状态；Worker
  * 重建后从空表开始，由下一次按需查询重新填充。 */
 
-/** 各群是否有关联频道的按需 TTL 缓存。 */
+/**
+ * 各群是否有关联频道的按需 TTL 缓存。
+ *
+ * 填充：cacheLinkedChannel 在一次按需查询结算后写入。清理：
+ * sweepLinkedChannelCache 按 LINKED_CHANNEL_TTL_MS 淘汰过期项（仍在拉取的群
+ * 保留旧值作为同步降级结果），resetLinkedChannelCache 整表清空。
+ * 容量：setBoundedMapValue 限制为 ANTI_RAID_CHAT_CACHE_MAX 项，满载淘汰最早
+ * 写入的群。Worker 崩溃重建：不重放，从空表开始由下一次按需查询重新填充。
+ */
 export const linkedChannels: Map<number, LinkedChannelCache> = new Map();
-/** 进行中的关联频道信息拉取，按 chatId 去重。 */
+/**
+ * 进行中的关联频道信息拉取，按 chatId 去重。
+ * 清理：getOrCreateLinkedChannelFetch 的 finally 在 settle 后释放槽位，
+ * resetLinkedChannelCache 整表清空。容量：同时在途的群数，上界为受管群数。
+ */
 export const linkedChannelFetches: Map<number, Promise<void>> = new Map();
 /**
  * 关联频道整表世代号；只在 reset 时递增，阻止清空前的网络结果写回新一代快照。

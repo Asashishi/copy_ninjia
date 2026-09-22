@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 
 const botUse = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
@@ -80,14 +81,10 @@ mock.module("../../packages/infra/telegram/outboundGate", () => ({
 mock.module("../../packages/infra/telegram/outboundLifecycle", () => ({
   initTelegramOutbound,
 }));
-mock.module("../../packages/config/telegram", () => ({ BOT_TOKEN: "token:secret" }));
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing", BOT_TOKEN: "token:secret" }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerError,
-  },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const client = await import("../../packages/infra/telegram/client");

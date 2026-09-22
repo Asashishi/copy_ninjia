@@ -67,7 +67,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 `COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。未設定時はプロジェクトルートを使用し、明示的な空白値は起動時に拒否します。
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：`global.copy` の全体復唱状態、`global.assets` の 4 本の素材 URL、`translate` の群別翻訳セッション。グループスイッチ・ロックダウン記録・権限スナップショットは `database/storage.sqlite` の `chat_states` に保持します。
+  - **内容**：`global.copy` の全体復唱状態、`global.assets` の 4 本の素材 URL とランダム画像ディレクトリ、`translate` の群別翻訳セッション。グループスイッチ・ロックダウン記録・権限スナップショットは `database/storage.sqlite` の `chat_states` に保持します。
   - **翻訳形式**：任意のトップレベル `translate` は欠落時 `{}`。キーは正規形の負整数グループ ID、値は 1–5 セッションの空でない配列です。例：`"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`。最大 25 群、同群内の identity ID は一意で、方向は `ja`・`cn`・`en`・`uk`・`ru` のみ。identity は `CachedUser` として厳密検証します。`global.copy.copyMode` は欠落・`reverse`・`nya` だけを受け入れます。主ファイルまたは LKG の不正、単独オブジェクトなどの旧形式は起動を拒否し、自動更新や項目破棄をしません。
   - **状態の手動編集**：サービスを停止して inactive を確認し、作業ツリー外の `mktemp -d` に主備とデプロイデータをバックアップして mode・所有者・SHA-256 を記録します。両方を編集し、変更対象外の `global` を保持して `decodeStateFile` で厳密検証し、差分と権限を確認してから起動します。アップグレードは下記 cold migration に従い、サンプルや Git の内容でデプロイ状態を置き換えてはいけません。
   - **バックアップ**：主・副を同時にバックアップ。
@@ -83,10 +83,12 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **アップグレード前にこの 4 項目を確認**：サムネイル 3 枚は現在 `https` のみを受け付ける
     ため、古いバージョンで `http://` のままの項目があると decode 時に起動を拒否し、
     フィールドパスを示します。
+  - **専用画像ディレクトリ**（`global.assets.randomHImageDir`、既定 `./h_image`、data root 基準）：`/h_image` と明示ディレクトリのない cron ランダム画像が使います。追加は `/h_image add` を使い、手動ファイルは内容 SHA-256 の小文字 16 進数 64 文字に jpg/jpeg/png/webp 拡張子を付けます。他機能の画像は混ぜません。起動時に不正名、サブディレクトリ、ファイル symlink、残存 `.h_image-add-*` 一時ファイルを拒否します。残存物は停止・バックアップ後に確認して整理してください。サービスアカウントには読み書きとディレクトリアクセスが必要で、未作成なら 0755 で作成します。適合画像の増減は再起動不要ですが、パス変更は停止中に行います。ロールバックはコードに一致する設定・state・画像を一緒に復元します。
 - **`memory/wed/<chatId>.json`**
   - **内容**：各群の発言済みメンバー ID の数値配列（例：`[5974478892]`）。主スレッドは各群で同じ長期 `Set<number>` を再利用します。最大 25 群、各群 150,000 ID です。満杯では既存 ID を保持し、退室で空きができると追加を再開します。
   - **検証**：ファイル名は正規形の負の安全整数グループ ID、要素は重複のない正の安全整数です。不正 JSON、重複、型や容量の違反は原本を切り詰めたり修復したりせず起動を拒否します。ディレクトリやファイルの欠落は許可し、必要時に作成します。
   - **保存とバックアップ**：実際の変更を累計 300 件または最初の変更から 30 秒で DiskIO に送り、全体を原子置換します。変更がなければ書き込みません。日次の期限は無く再起動時はファイルから復元しますが、`/init disable` と Bot のグループ退出ではファイルごと削除します（管理者権限の剥奪だけでは削除しません。権限が戻れば再び必要になるためです）。データルートの整合バックアップに含め、突然の終了では未保存変更を失う場合があります。
+  - **退室の整理**：退室サービスメッセージ、`chat_member` 更新、毎日深夜の再確認が退室者をファイルから外します。後の 2 つは Bot がグループ管理者のときだけ機能します。管理者でない群では退室サービスメッセージしか残らず、大きめのスーパーグループやメンバー一覧を隠した群では Telegram がそれを送らないことがあるため、ファイルに退室済みの ID が残り、`/wed` もそのまま抽選します。これは想定どおりの挙動で、障害ではありません。確実に整理するには Bot に管理者権限を与えてください。手作業で ID を消す場合は、ほかの実行時状態と同じくサービスを停止してから編集します。
 - **`memory/stickers/<pack>.json`**
   - **内容**：allowlist 対象スタンプパック 1 件の version=1 カタログ。
     `file_unique_id` ごとの emoji/説明とパック要約を保持。
@@ -116,7 +118,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     `/init disable` と Bot のグループ退出では、保持 window の内外を問わずその chat の
     ファイルをすべて削除し、自然な期限切れを待ちません（管理者権限の剥奪では削除しません）。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
-  - **内容**：schema v10 共有ストレージです。`permission_list.policy` は厳密な JSONB の恒久権限、`blocklist_entries` はブラックリストを保持します（`data` は `blockedAt`、Telegram metadata、省略可能な `participantInvalidCount` を持ち、この field を認識しない旧版はこの field を持つ row があると起動を拒否します。そうした版へ戻すときはプログラムだけを置き換えず、アップグレード前の同一時点の database バックアップも併せて復元しなければなりません）。`temporary_ad_bypass_entries` は `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at`、`qualified_at` で広告免除の活動を集計します。`pending_blocked_removals` は未完了の群別 ban、`storage_metadata` と Drizzle journal は schema と厳密な系譜を保持します。
+  - **内容**：schema v11 共有ストレージです。`permission_list.policy` は厳密な JSONB の恒久権限、`blocklist_entries` はブラックリストを保持します（`data` は `blockedAt`、Telegram metadata、省略可能な `participantInvalidCount` を持ち、この field を認識しない旧版はこの field を持つ row があると起動を拒否します。そうした版へ戻すときはプログラムだけを置き換えず、アップグレード前の同一時点の database バックアップも併せて復元しなければなりません）。`temporary_ad_bypass_entries` は `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at`、`qualified_at` で広告免除の活動を集計します。`pending_blocked_removals` は未完了の群別 ban、`storage_metadata` と Drizzle journal は schema と厳密な系譜を保持します。
   - **群状態と人設**：`chat_states` は最大 25 行。`chat_id` が主キー、`status` は必須 JSONB、`ai_persona` は NULL 許容・空白のみ不可の TEXT で、本群専用プロンプトを保存します。未設定ならプロジェクトの `prompt/persona.md` を使用します。起動時に状態と人設を既存メインスレッド群 cache に読み込み、`/bot_status` は設定の有無をそこから確認します。`/init disable` と Bot 退群では行と人設を削除し、未復元 lockdown は復元 protocol に従って保持します。
   - **AI context**：NULL 許容 JSONB `ai_context` は version=1 の逐語メッセージ、要約、未統合要約、保存時刻を保持し、既存 AI Worker memory cache とメインスレッド復元 mirror を使用します。書き込みは既存群行だけを更新し、context だけの行は保持しません。記憶の消去はこの列を NULL にして人設を保持します。本文・名前・引用は単一行、引用 text/quote は最大 500 UTF-16 code unit、`at` は有効な東京時刻 `YYYY/MM/DD HH:mm:ss` です。要約は改行可能。不正 field は復元を拒否して入れ子 path を示し、元データを変更しません。
   - **バックアップと復元**：群会話と専用プロンプトを含む機密データです。Bot 停止中に本体と存在する WAL/SHM を同一集合として作業ツリー外へコピーし、所有者・mode・SHA-256 を記録して検証します。Disk I/O Worker が DB を独占し、起動時に integrity、JSONB、schema、系譜、厳密な行 codec、policy 排他、outbox 参照を検証します。群状態と AI snapshot は同じ接続から復元します。identity の参照は 8,192 件 LRU と update に必要な ID の cold read を使います。検証失敗時は自動建庫・移行・行破棄・縮退をせず起動を拒否します。
@@ -158,29 +160,83 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 起動は database 欠落を「空 policy」と推測しないため、新規 deployment は現行 schema の空 database を明示的に一度作成する必要があります。手順は [01 セットアップ](01-getting-started.md#identity-storage-の初期化) にあり、`install.sh` にも含まれています。作成 entry point は既存 target の上書きを拒否します。
 
-### schema v9 からの cold migration
+### schema v10 からの cold migration
 
-唯一の入口は [`scripts/migrateClearContextPermission.ts`](../../scripts/migrateClearContextPermission.ts) です。直前の migration が出力した厳密な schema v9 系譜だけを受け入れ、schema v10 を出力します。古い版は対応する版の手順で先に v9 まで段階的に更新してください。未知の系譜と変換済み v10 は拒否します。本番起動は現行形式だけを検証し、migration を行いません。
+database の移行入口は [`scripts/migrateHImageAddPermission.ts`](../../scripts/migrateHImageAddPermission.ts) です。直前の移行出力の厳密な schema v10 系譜を受け付け、schema v11 を出力します。古い配置は先に [段階的アップグレード](#1109-からの段階的なアップグレード) で v10 に更新してください。未知の系譜と移行済み v11 は拒否します。Bot 設定と画像名には本節の独立ツールを使います。本番起動は現形式だけを検証し、移行は行いません。
 
 1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、実際の設定・資格情報・実行データをコピーします。SQLite 本体と既存 WAL/SHM は同一停止時点のものを使い、ファイル一覧・mode・所有者・SHA-256 を記録して全コピーを検証します。
 2. ソース外の新しい出力先を指定します。親ディレクトリは事前に存在する必要があります。スクリプトはソース、サービス、実際のデプロイファイルを変更しません。
 
 ```bash
-bun run migrate:clear-context-permission \
+bun run migrate:h-image-add-permission \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. 各 `permission_list.policy` に boolean 権限 `isCanClearContext` を追加します。既存権限がすべて true のメンバーだけ true、他は false です。元の権限・identity metadata・群状態・context・専用人設・他領域のデータは保持します。スーパー管理者は database 行に依存せず、runtime で常に true を持ちます。新規メンバーは false が既定で、以後は `/permission` で個別に付与・撤回できます。
+3. 各 `permission_list.policy` に boolean 権限 `isCanAddHImage`（`/h_image add` による画像の追加）を追加します。既存権限がすべて true のメンバーだけ true、他は false です。元の権限・identity metadata・群状態・context・専用人設・他領域のデータは保持します。スーパー管理者は database 行に依存せず、runtime で常に true を持ちます。新規メンバーは false が既定で、以後は `/permission` で個別に付与・撤回できます。
 4. 変換、厳密検証、SQLite checkpoint、接続終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata、および `enabledPermissions`・`disabledPermissions` を確認します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行します。既存出力は上書きできません。
 5. 停止状態で検証済み SQLite 本体を手動置換します。旧 WAL/SHM はバックアップ済みで DB を開くプロセスがない場合だけ削除し、新本体と混在させません。一覧から元の所有者と mode を復元し、サービスアカウントが SQLite と親ディレクトリに書けることを確認します。`config/` は読み取り専用でも構いません。
 6. DB を開く前に設置後ハッシュを確認し、設定・主備状態・現行 DB を厳密検証します。すべて整ってから起動し、最低 2 回の supervisor 再起動間隔にわたり `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認します。全検証完了まで外部バックアップを保持します。rollback は旧データに対応するプログラムと同一時点のバックアップ全体を復元します。
 
 読み取り専用 SQLite 接続でも SHM インデックスを再構築する場合があります。DB を開く前にハッシュを記録し、サイドカー索引の変化は元のバックアップ清単を上書きせず別途記録してください。
 
+### Bot 設定と画像ソースのコールド移行
+
+サービスを停止して inactive を確認し、設定 root、data root、state 主副本と対象画像の外部バックアップを作成します。Google 翻訳を利用する配置では project root の `g-auth.json` もバックアップしてください。ファイル一覧、ハッシュ、所有者、mode を記録します。設定・data・project のバックアップは分離可能で、出力先は設定と data の両方の外にある新規ディレクトリとし、どの入力ファイルの実体も含めてはいけません。受け付ける直接入力形式は `telegram.json`、任意の state フィールド `randomImageDir`、固定画像の scalar cron source です。12.1.0 で画像フィールドや `cron.json` が欠落している場合、補って作る必要はありません。新旧混在、不正値、さらに古い形式は拒否され、古い配置は先にこの入力形式まで段階的に更新する必要があります。
+
+ソースでは `bun run migrate:bot-config --source-config-root <config-backup> --source-data-root <data-backup> --output-root <new-directory> [--source-google-auth <credentials-backup-file>]`。バイナリ配布には有効な全 migration tool が同梱され、system Bun やソース取得は不要です。次の例は project root の資格情報も移行します：
+
+```bash
+BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateBotConfig.js --source-config-root /backup/config --source-data-root /backup/data --output-root /backup/prepared --source-google-auth /backup/project/g-auth.json
+```
+
+project root に Google 資格情報がない場合、`--source-google-auth` は省略します。tool は場所を検索・推測しません。明示したファイルは存在し、現在のサービスアカウントの厳密な検証を通る必要があります。UTF-8 BOM を含む元のバイト列を出力の `config/g-auth.json` へそのままコピーし、ハッシュがバックアップと一致することを確認します。この指定時に入力設定 root に `g-auth.json` が存在すると、dangling symlink を含め完了を拒否します。先に資格情報の出所を確認してください。manifest は path、hash、mode、所有者、link 構造のみを記録し、資格情報の本文を含めません。
+
+同じディレクトリの `migrateRandomImageNames.js` と `migrateHImageAddPermission.js` は、それぞれ独立した画像名と SQLite の移行です。引数は各 `--help` で確認します。後者は 12.1.0 の schema v10 データベースから v11 産物を作成します。停止時のバックアップには、存在する `database/storage.sqlite-wal` と `database/storage.sqlite-shm` も保持してください。その tool の manifest に従って移行済みデータベースを配置し、古い sidecar を混ぜてはいけません。通常起動と installer は自動移行しません。
+
+完了マーカーは `ready.json` のみです。中断時は現場を保持し、新規出力先で再実行します。ハッシュ確認後、mapping の `config/bot.json`、任意の `config/cron.json`、`config/g-auth.json`、`data/state.json`/`.bak` だけを手動配置し、バックアップ済みの旧 `telegram.json` 入口を除去します。元の所有者、mode、symlink 構造を復元してください。project root の資格情報バックアップは全検証終了まで保持します。現在の runtime は設定 root の資格情報だけを読みます。一時ファイルは 0600、ディレクトリは 0700 です。配置時は manifest に従って権限を復元し、サービスアカウントが SQLite ディレクトリ（WAL/SHM を含む）、state、各 memory ディレクトリへ書けることを確認します。その他の設定と未変更データはバックアップから保持し、サンプルで上書きしません。画像パスは維持され、画像の移動はしません。画像名の移行が必要なら別 tool を実行し、画像だけを配置してください。専用画像ディレクトリに manifest を入れてはいけません。
+
+全設定・state・画像を検証してから起動し、active/running、最低 2 回の supervisor 再起動間隔、NRestarts の非増加、journal に新しい非ゼロ終了がないことを確認してからバックアップを削除します。失敗時はバックアップと現場を保持します。
+
+### ランダム画像ライブラリのファイル名コールド移行
+
+専用画像は `state.json` の `global.assets.randomHImageDir` で指定し、既定は runtime data root 下の `h_image/` です。この cold migration は直接前序の `<uuidv7>[-<file_unique_id>]<拡張子>` だけを受け付け、**内容 SHA-256** と拡張子の名前を生成します。現在の起動検査は旧名を拒否し、自動移行しません。入口は
+[`scripts/migrateRandomImageNames.ts`](../../scripts/migrateRandomImageNames.ts) です。
+
+1. サービスを停止し、inactive で残留プロセスがないことを確認します。`mktemp -d` でライブラリ
+   ディレクトリを作業ツリー外に完全バックアップし、ファイル一覧・mode・所有者・SHA-256 を記録して
+   コピーを 1 ファイルずつ照合します。
+2. ソース外の新しい出力ディレクトリを指定します。親ディレクトリは存在し、出力先自体は未作成で
+   ある必要があります。スクリプトはソースを変更せず、サービス操作もデプロイファイルの置換も
+   行いません。
+
+```bash
+bun run migrate:random-image-names \
+  --source-directory /absolute/cold-backup/images \
+  --output-directory /absolute/new-staging-directory
+```
+
+3. 各画像は内容の SHA-256 に改名し、拡張子はファイル先頭から判定し直します（`.jpeg` は `.jpg` に
+   なり、実体と合わない拡張子は訂正されます）。バイト列が完全に同じ画像は 1 ファイルに統合し、
+   明細は `ready.json` の `duplicates` に記録します。ライブラリ候補でない項目（隠しファイル、
+   サブディレクトリ、シンボリックリンク、他の拡張子）が 1 つでも混ざっている場合、または内容が
+   jpeg・png・webp でないファイルがある場合は、その場で名指しして移行全体を拒否します。
+   ライブラリはデプロイ側のデータであり、何を捨ててよいかをスクリプトが代わりに決めることは
+   しません。整理してから再実行してください。
+4. コピー、ファイルごとのハッシュ照合、ソース再確認が完了した場合だけ `ready.json` が生成され
+   ます。`sourceFiles`・`outputFiles` のハッシュと metadata、および `renamed`・`alreadyNamed`・
+   `deduplicated` を確認します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから
+   別の新規出力先へ再実行します。既存出力は上書きできません。
+5. 停止状態でライブラリディレクトリを検証済みの産物に手動で置き換え、`sourceFiles` から所有者と
+   mode を復元します。サービスアカウントがそのディレクトリを読め、かつ書き込めること
+   （`/h_image add` が書き込みます）を確認してください。
+6. 起動後は最低 2 回の supervisor 再起動間隔にわたり `active/running`、増えない `NRestarts`、
+   journal に新しい非ゼロ終了がないことを確認し、`/h_image` を 1 回引いて送信できることを
+   確かめます。全検証完了まで外部バックアップを保持します。
+
 ### 11.0.9 からの段階的なアップグレード
 
-11.0.9 は schema v8 を使用します。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、現行入口で v10 を生成します。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットが必要で、二つの出力ディレクトリは未作成である必要があります。
+11.0.9 は schema v8 を使用し、三段階が必要です。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、12.1.0 リリースの `migrate:clear-context-permission` で v10 を生成し、最後に現行入口で v11 を生成します。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。すでに 12.x（schema v10）のデプロイは最後の段階、つまり上節の手順だけを実施します。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットと 12.1.0 タグが必要で、三つの出力ディレクトリは未作成である必要があります。
 
 中間ソースはこの手順の必須入力です。11.0.9 タグまたは現行ソースアーカイブだけを持つ環境では、先に固定コミットの完全なソースを取得してください。リリース前にそのソースを独立して保持・提供し、squash 後に reset される dev 履歴だけに依存しないでください。
 
@@ -196,12 +252,21 @@ git archive 500e848faeda75dcae3c3329507f24d05137e3b9 | tar -x -C "$MIGRATION_COD
     --source-root /absolute/11.0.9-cold-backup \
     --output-root /absolute/new-schema-v9-staging
 )
-bun run migrate:clear-context-permission \
-  --source-root /absolute/new-schema-v9-staging \
-  --output-root /absolute/new-schema-v10-staging
+RELEASE_CODE="$(mktemp -d)"
+git archive 12.1.0 | tar -x -C "$RELEASE_CODE"
+(
+  cd "$RELEASE_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:clear-context-permission \
+    --source-root /absolute/new-schema-v9-staging \
+    --output-root /absolute/new-schema-v10-staging
+)
+bun run migrate:h-image-add-permission \
+  --source-root /absolute/new-schema-v10-staging \
+  --output-root /absolute/new-schema-v11-staging
 ```
 
-第一段階では元の 16 権限がすべて true の場合だけ `isCanConfigAiPrompt` を付与し、第二段階では 17 権限がすべて true の場合だけ `isCanClearContext` を付与します。第一段階は `chat_states` に存在するグループの記憶だけを取り込みます。対応行のない記憶は `discardedContexts` に計上し、グループ状態を作成しません。各段階の `ready.json`、入力・出力ハッシュ、取り込み・破棄件数を確認し、最終 v10 主 DB だけを設置します。元のバックアップ全体を保持し、移行済みの `memory/ai/` を配備ルートから手動で削除してください。他の設定と状態は元のパスに保持します。続いて上節の所有者・権限復元、厳密検証、起動観察を実施します。現行ランタイムと移行入口は v8 を直接受け付けません。
+第一段階では元の 16 権限がすべて true の場合だけ `isCanConfigAiPrompt` を付与し、第二段階では 17 権限がすべて true の場合だけ `isCanClearContext` を付与し、第三段階では 18 権限がすべて true の場合だけ `isCanAddHImage` を付与します。第一段階は `chat_states` に存在するグループの記憶だけを取り込みます。対応行のない記憶は `discardedContexts` に計上し、グループ状態を作成しません。各段階の `ready.json`、入力・出力ハッシュ、取り込み・破棄件数を確認し、最終 v11 主 DB だけを設置します。元のバックアップ全体を保持し、移行済みの `memory/ai/` を配備ルートから手動で削除してください。他の設定と状態は元のパスに保持します。続いて上節の所有者・権限復元、厳密検証、起動観察を実施します。現行ランタイムと移行入口は v8 や v9 を直接受け付けません。
 
 ## 起動失敗の調査
 
@@ -225,7 +290,7 @@ bun run migrate:clear-context-permission \
 - **identity database が欠落、または validation failure**
   - **原因**：migration 未実行、`storage.sqlite` が書込不能、integrity/JSONB/schema/
     migration lineage 不正、row codec failure、または blocklist と恒久／一時 allowlist が交差。
-  - **対応**：確認済み 10.5.4 schema v7 は停止状態で上記 cold migration を実行し、古い版は先に 10.5.4 まで段階的に更新します。
+  - **対応**：現在の v10 → v11 コールド移行は確認済み schema v10 バックアップだけに適用できます。古い系譜は先に v10 まで段階的に更新します。
     それ以外は [Identity Storage Migration](#identity-storage-migration) に従って database を作成または
     rollback します。同一 consistency point の DB と sidecar を復元し、collaboration group
     permission を直してから起動します。空 DB を作ったり失敗 row を削除してはいけません。
@@ -295,12 +360,14 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 - `logs/`：Disk I/O Worker がエラーを batch 追記します。文面は英語なので直接 grep できます。
 - Worker crash はレート制限付きで自己修復し、ミラーまたは snapshot から復元します。介入が必要なのは crash loop が繰り返される場合で、通常は永続化データとコード version の不一致が原因です。
 - 永続化が上限付き retry を使い切ると、プロセスは非ゼロで終了します。これは availability より durability を優先する設計です。systemd が最後の整合状態から再起動します。
+- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定時タスクのある動作が最終的に失敗し、その回の残りを飛ばしました。末尾は Telegram のエラーコードと説明、またはローカルの理由です。`403` はたいてい Bot が送信先グループから外されたこと、`400` はたいてい URL が取得できないか Telegram がファイル形式を受け付けないこと、`local file ... is missing` は `payload.path` の指すローカルファイルがなくなったことを示します。`cron.json` や素材を直せば hot reload され、再起動は不要です。
+- `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`：複数の会話に送るタスク（`["all"]`、`["except", ...]`、または複数を個別に列挙）がある会話で最終的に失敗し、その会話の残りの動作だけを飛ばしました。他のグループには通常どおり送ります。原因の読み方は上と同じです。`Cron task "<name>" skipped <n> chat(s) without send permission.` は通常ログで、Bot に送信権限がないか照会に失敗したためにその回で飛ばしたグループがあったことを示します。
 - `Failed to probe chat membership` / `Failed to ban chat member` が `PARTICIPANT_ID_INVALID` で終わる場合、通常はブロックリストに退会済みアカウントがあります。sweep は通常の backoff で retry を続けます。1 chat での 1 回の sweep 処分ですべての要求がこのエラーを返すと 1 回と数え、いずれかの chat でそのユーザーを確認または BAN できれば 0 に戻ります。5 回に達するとブロックリストと待機中の処分から自動で外し、`Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results` を記録します。`/wed` の日次再確認は同じエラーでその ID を候補集合から外し、error log は残しません。
 
 ---
 
 <div align="center">
 
-[← 前のページ：06 変更レシピ](06-modification-guide.md) · [📚 開発者ドキュメント TOP](content-table.md) · [⬆️ トップへ戻る](#07-運用とトラブルシューティング) · **次のページ：なし →**
+[← 前のページ：06 変更レシピ](06-modification-guide.md) · [📚 開発者ドキュメント TOP](content-table.md) · [⬆️ トップへ戻る](#07-運用とトラブルシューティング) · [次のページ：08 コマンドと挙動 →](08-commands.md)
 
 </div>

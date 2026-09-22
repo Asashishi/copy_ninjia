@@ -14,7 +14,7 @@ import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { visibleSenderChat } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
 import { shouldPromoteToPermanentBypass } from "../states/temporaryAdBypass";
-import { postAntiRaid } from "./workerBridge";
+import { postAntiRaid } from "./workerBridge/controller";
 import type { AdDetectionMessageContext } from
   "../types/antiRaid/adDetect";
 import type { PromoteAdBypassWhitelistResult } from

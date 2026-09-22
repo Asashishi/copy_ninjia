@@ -1,6 +1,7 @@
 import { DISABLED_LINK_PREVIEW, MESSAGE_NOT_MODIFIED } from "../../../consts/telegram";
 import type {
   InlineKeyboardMarkup,
+  LinkPreviewOptions,
   Message,
   MessageEntity,
 } from "grammy/types";
@@ -36,6 +37,8 @@ export interface SendMessageParams {
   entities?: readonly MessageEntity[];
   /** 是否关闭 Telegram 为正文中第一个 URL 自动生成的预览卡片。 */
   disableLinkPreview?: boolean;
+  /** 原样沿用的链接预览设置（复读、翻译照搬原消息的预览）；给出时优先于 disableLinkPreview。 */
+  linkPreviewOptions?: LinkPreviewOptions;
   /**
    * 论坛（topics）群里这条消息要落进哪个话题。
    *
@@ -73,6 +76,7 @@ export async function sendMessageWithResult({
   signal,
   entities,
   disableLinkPreview,
+  linkPreviewOptions,
   messageThreadId,
   onSent,
 }: SendMessageParams): Promise<TelegramSendResult | undefined> {
@@ -90,7 +94,7 @@ export async function sendMessageWithResult({
         reply_parameters: replyParametersFor(replyToMessageId),
         reply_markup: keyboard,
         entities: entities && entities.length > 0 ? [...entities] : undefined,
-        link_preview_options: disableLinkPreview ? DISABLED_LINK_PREVIEW : undefined,
+        link_preview_options: linkPreviewOptions ?? (disableLinkPreview ? DISABLED_LINK_PREVIEW : undefined),
       };
       return api.sendMessage(
         chatId,

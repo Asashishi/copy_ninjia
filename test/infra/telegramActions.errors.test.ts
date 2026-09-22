@@ -3,8 +3,10 @@ import { GrammyError } from "grammy";
 import type { Api } from "grammy";
 import type { TelegramApi } from "../../packages/types/telegramWorker";
 import { settleTestBatch } from "../libs/helpers";
+import { loggerStub } from "../helpers/loggerMock";
 
 const logApiError = mock((..._args: unknown[]): void => {});
+const loggerError = mock((..._args: unknown[]): void => {});
 const markSelfSent = mock((..._args: unknown[]): void => {});
 const copyMessageApi = mock(async (..._args: unknown[]) => ({ message_id: 91 }));
 const telegramApi = { copyMessage: copyMessageApi };
@@ -15,6 +17,9 @@ mock.module("../../packages/infra/telegram/client", () => ({
   logApiError,
 }));
 mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
+mock.module("../../packages/infra/logger", () => ({
+  logger: loggerStub({ error: loggerError }),
+}));
 
 const actions = await import("../../packages/infra/telegram/actions");
 const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
@@ -61,6 +66,7 @@ function apiWithFailures(): TelegramApi {
 beforeEach(() => {
   actions.resetPendingMessageDeletions();
   logApiError.mockClear();
+  loggerError.mockClear();
   markSelfSent.mockClear();
   copyMessageApi.mockClear();
   copyMessageApi.mockImplementation(async () => ({ message_id: 91 }));
@@ -335,6 +341,25 @@ describe("Telegram 动作适配层失败归一化", () => {
 
     await expect(actions.drainPendingMessageDeletions(0)).resolves.toBe("timedOut");
     expect(api.deleteMessage).not.toHaveBeenCalled();
+  });
+
+  test("在途删除超出排空预算：返回 timedOut 并记一行带待删与在途计数的错误日志", async () => {
+    const pending: PromiseWithResolvers<true> = Promise.withResolvers<true>();
+    const deleteMessage = mock(async (..._args: unknown[]): Promise<true> => pending.promise);
+    const api: Api = { deleteMessage } as unknown as Api;
+    actions.deleteMessageAfter({ chatId: -1001, messageId: 48, delayMs: 30_000, api });
+
+    await expect(actions.drainPendingMessageDeletions(5)).resolves.toBe("timedOut");
+    expect(deleteMessage).toHaveBeenCalledWith(-1001, 48);
+    expect(loggerError.mock.calls).toEqual([[
+      "Delayed Telegram message deletion drain timed out with 0 pending and 1 in flight.",
+    ]]);
+
+    // 超时只放弃等待，不取消请求：它结算后下一次排空立即完成。
+    pending.resolve(true);
+    await expect(actions.drainPendingMessageDeletions(1_000)).resolves.toBe("flushed");
+    expect(deleteMessage).toHaveBeenCalledTimes(1);
+    expect(loggerError).toHaveBeenCalledTimes(1);
   });
 });
 

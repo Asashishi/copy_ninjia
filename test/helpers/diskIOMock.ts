@@ -30,6 +30,7 @@ export function diskIOStub(overrides: Partial<typeof diskIO> = {}): typeof diskI
     terminateDiskIO: async (): Promise<void> => {},
     onAiMemoryDeletedPersisted: (): void => {},
     onAiMemoryPersisted: (): void => {},
+    onStickerCatalogPersisted: (): void => {},
     onDiskIOGiveUp: (): void => {},
     onDiskIORespawn: (): void => {},
     onIdentityStoragePersisted: (): void => {},

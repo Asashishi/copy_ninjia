@@ -135,6 +135,11 @@ function productionJitTiersAreStable(
 
 function parseScenarioName(value: string | undefined): ScenarioName {
   switch (value) {
+    case "cooldown-hit":
+    case "cooldown-renew":
+    case "cooldown-growth":
+    case "cooldown-saturated":
+    case "cooldown-expiry":
     case "reply-admission":
     case "reply-delivery-normal":
     case "reply-delivery-capacity":
@@ -191,6 +196,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
       throw new Error(
         "Usage: bun run perf:hot-paths -- " +
         "<verification-snapshot|verification-snapshot-clone|" +
+        "cooldown-hit|cooldown-renew|cooldown-growth|cooldown-saturated|cooldown-expiry|" +
         "reply-admission|reply-delivery-normal|reply-delivery-capacity|base64-normal|base64-large|base64-head|base64-tail|" +
         "bounded-response-empty|bounded-response-tiny|bounded-response-small|bounded-response-normal|bounded-response-large|" +
         "sender-no-username|sender-stable-username|sender-mixed-identity|" +
@@ -214,6 +220,10 @@ function parseScenarioName(value: string | undefined): ScenarioName {
  * 跑一轮并收敛成数字。同步场景就地返回；只有异步场景进入 Promise 调度。
  */
 async function runOnce(scenario: Scenario, iterations: number): Promise<number> {
+  if (scenario.resetBeforeSample === true) {
+    scenario.reset?.();
+    scenario.prepare?.();
+  }
   const result: number | Promise<number> = scenario.run(iterations);
   return typeof result === "number" ? result : await result;
 }

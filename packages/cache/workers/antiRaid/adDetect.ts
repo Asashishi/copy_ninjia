@@ -19,6 +19,11 @@ import type {
  * 待检发言者的键队列，元素是 `chatId:senderId`（verificationKey）。队列只排键、
  * 不排内容：同一个人在等待期间新说的话直接并进 pendingAdMessages 里的同一串，
  * 不会让他在队列里占多个位置。每个节拍取走队首至多 AD_DETECT_BATCH_SIZE 个。
+ *
+ * 清理：派发时出队、停管与关开关时按群摘键、Worker 停止时整体丢弃。
+ * 容量：不单独设闸——每个键在队列里最多占一个位置（由 queuedAdDetectKeys 保证），
+ * 长度因此被 pendingAdMessages 的 AD_DETECT_MAX_PENDING_SENDERS 硬顶兜住。
+ * Worker 崩溃重建：不重放，随 isolate 一起清空（理由见模块头注）。
  */
 export const adDetectQueue: LinkedQueue<string> = new LinkedQueue<string>();
 
@@ -74,8 +79,8 @@ export const pendingAdMessages: Map<string, AdMessageBundle> = new Map();
 /**
  * 广告判定 system prompt 的两个静态变体，键为发送者是否仍在入群窗口。
  *
- * classifier.ts 首次使用对应变体时填充；部署配置在进程内不变，因此不失效。
- * Anti-Raid Worker 崩溃后从空表重建。没有条目表示该变体尚未构造，调用方应
+ * classifier.ts 首次使用对应变体时填充；主线程投递新的广告示例快照时由
+ * workers/antiRaid/adDetect/config.ts 清空。Anti-Raid Worker 崩溃后从空表重建。没有条目表示该变体尚未构造，调用方应
  * 用当前已严格加载的广告样本生成。键域只有 boolean，容量固定为两条。
  */
 export const adDetectSystemPrompts: Map<boolean, string> = new Map();

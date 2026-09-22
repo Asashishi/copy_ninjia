@@ -1,3 +1,5 @@
+import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
+
 /** 每个热读样本执行的双表批量查询次数。 */
 export const READ_BATCH_COUNT: number = 25_000;
 
@@ -7,8 +9,8 @@ export const COLD_READ_BATCH_COUNT: number = 1_000;
 /** 一次身份策略读取批次包含的固定身份数。 */
 export const READ_BATCH_SIZE: number = 8;
 
-/** 读库与主线程 LRU 的固定身份基数。 */
-export const READ_FIXTURE_SIZE: number = 8_192;
+/** 读库与主线程 LRU 的固定身份基数；直接取生产 LRU 容量，不另写字面量。 */
+export const READ_FIXTURE_SIZE: number = IDENTITY_READ_CACHE_MAX_ENTRIES;
 
 /** 每个热写样本提交的 128 行事务数。 */
 export const WRITE_TRANSACTION_COUNT: number = 512;

@@ -7,9 +7,10 @@ import type {
   ForwardedLogBatch,
   ForwardedLogBatchAccepted,
 } from "../types/diskIO/messages";
+import { toErrorOr } from "../libs/errorMessage";
 
 /**
- * 可自愈的业务 Worker 宿主（主线程侧），aiChat/workerBridge.ts 与 antiRaid/workerBridge.ts 共用的骨架：
+ * 可自愈的业务 Worker 宿主（主线程侧），aiChat/workerBridge.ts 与 antiRaid/workerBridge/controller.ts 共用的骨架：
  * - 创建 Worker 并 unref（不阻止进程退出，停机时在途任务随线程丢弃）；
  * - 识别 Worker 回传的有界 error 日志批次（logger.ts 的转发模式），转投主线程
  *   唯一的落盘线程并确认该批；其余消息交给 onEvent（业务事件回传）；
@@ -29,8 +30,7 @@ export interface SupervisedWorkerOptions<TMessage, TEvent> {
   /** 永久不可用时，fatal 错误里点明受影响的业务能力。 */
   giveUpConsequence: string;
   /** 非日志信封的业务事件回传（如 antiRaid 的 lockdown/unlock 镜像同步）。
-   *  data 按 TEvent 交付——与旧的内联 onmessage 一样，信任 Worker 只回传
-   *  声明过的事件类型。 */
+   *  data 按 TEvent 交付，不做运行期校验：信任 Worker 只回传声明过的事件类型。 */
   onEvent?: (
     data: TEvent,
     context: SupervisedWorkerEventContext<TMessage>
@@ -72,10 +72,6 @@ export function superviseWorker<TMessage, TEvent = never>(
   let worker: Worker | null = null;
   let generationAbortController: AbortController | null = null;
   let initialized: boolean = false;
-
-  function asError(error: unknown, fallback: string): Error {
-    return error instanceof Error ? error : new Error(fallback, { cause: error });
-  }
 
   function terminateFailedWorker(failedWorker: Worker): void {
     try {
@@ -179,7 +175,7 @@ export function superviseWorker<TMessage, TEvent = never>(
       try {
         next = createWorker();
       } catch (error: unknown) {
-        const failure: Error = asError(error, `${options.label} replacement construction failed.`);
+        const failure: Error = toErrorOr(error, `${options.label} replacement construction failed.`);
         logger.error(`${options.label} replacement construction failed:`, error);
         becomeUnavailable(w, failure);
         return;
@@ -194,7 +190,7 @@ export function superviseWorker<TMessage, TEvent = never>(
           return false;
         });
       } catch (error: unknown) {
-        replayFailure = asError(error, `${options.label} state replay failed.`);
+        replayFailure = toErrorOr(error, `${options.label} state replay failed.`);
         logger.error(`${options.label} state replay failed:`, error);
       }
       if (replayFailure !== null) {
@@ -230,7 +226,7 @@ export function superviseWorker<TMessage, TEvent = never>(
         current.terminate();
         return Promise.resolve();
       } catch (error: unknown) {
-        return Promise.reject(error instanceof Error ? error : new Error("Worker termination failed."));
+        return Promise.reject(toErrorOr(error, "Worker termination failed."));
       }
     },
   };

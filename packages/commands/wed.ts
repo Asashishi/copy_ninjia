@@ -14,6 +14,7 @@ import type { ChatTeardownReason } from "../types/chatTeardown";
 import type { WedCandidate, WedChat, WedSession } from "../types/wed";
 import { drawWedCandidate } from "./wed/draw";
 import { getOrCreateWedChat, teardownWedChat } from "./wed/chats";
+import { parseUserIdArgument } from "../libs/telegramId";
 import { purgeWedMembers } from "./wed/persistence";
 import { confirmWedResult, removeWedResult, replaceWedResult, sendWedResult } from "./wed/messages";
 
@@ -80,21 +81,21 @@ export async function handleWedCommand(ctx: CommandContext<Context>): Promise<vo
   const actor: User | undefined = ctx.from;
   if ((ctx.chat.type !== "group" && ctx.chat.type !== "supergroup") ||
     ctx.msg.sender_chat !== undefined || actor === undefined || actor.is_bot) {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.groupOnly, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat.id).WED_TEXTS.groupOnly, replyToMessageId: ctx.msgId });
     return;
   }
   if (ctx.match.trim().length > 0) {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.usage, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat.id).WED_TEXTS.usage, replyToMessageId: ctx.msgId });
     return;
   }
   const chat: WedChat | undefined = getOrCreateWedChat(ctx.chat.id);
   const previous: WedSession | undefined = chat?.sessions.get(actor.id);
-  const rejected: string | undefined = previous?.busy ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.busy
-    : chat === undefined || (previous === undefined && chat.sessions.size >= WED_SESSION_LIMIT) ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.full
-    : chat.members.size === 0 || (chat.members.size === 1 && chat.members.has(actor.id)) ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.empty
+  const rejected: string | undefined = previous?.busy ? chatAtmosphere(ctx.chat.id).WED_TEXTS.busy
+    : chat === undefined || (previous === undefined && chat.sessions.size >= WED_SESSION_LIMIT) ? chatAtmosphere(ctx.chat.id).WED_TEXTS.full
+    : chat.members.size === 0 || (chat.members.size === 1 && chat.members.has(actor.id)) ? chatAtmosphere(ctx.chat.id).WED_TEXTS.empty
     : undefined;
   if (rejected !== undefined || chat === undefined) {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: rejected ?? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.full, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: rejected ?? chatAtmosphere(ctx.chat.id).WED_TEXTS.full, replyToMessageId: ctx.msgId });
     return;
   }
   const session: WedSession = {
@@ -151,14 +152,15 @@ export async function handleWedCallback(ctx: Context): Promise<boolean> {
   const query: CallbackQuery | undefined = ctx.callbackQuery;
   if (!query?.data?.startsWith(WED_CALLBACK_PREFIX)) return false;
   const parts: string[] = query.data.slice(WED_CALLBACK_PREFIX.length).split(":");
-  const actorId: number = Number(parts[0]);
-  const targetId: number = Number(parts[1]);
+  // 与命令参数共用同一道严格十进制判定：裸 `Number()` 会放过 `"1e3"`、`" 12"`、
+  // `"12.0"` 这些本 bot 从不生成的写法（见 libs/telegramId.ts）。
+  const actorId: number | undefined = parseUserIdArgument(parts[0] ?? "");
+  const targetId: number | undefined = parseUserIdArgument(parts[1] ?? "");
   const action: string | undefined = parts[2];
   const message: CallbackQuery["message"] = query.message;
   const chat: WedChat | undefined = message === undefined ? undefined : wedChats.get(message.chat.id);
-  const session: WedSession | undefined = chat?.sessions.get(actorId);
-  const rejected: string | undefined = parts.length !== 3 || !Number.isSafeInteger(actorId) || actorId <= 0 ||
-    !Number.isSafeInteger(targetId) || targetId <= 0 ||
+  const session: WedSession | undefined = actorId === undefined ? undefined : chat?.sessions.get(actorId);
+  const rejected: string | undefined = parts.length !== 3 || actorId === undefined || targetId === undefined ||
     (action !== "remove" && action !== "marry" && action !== "change") ||
     message === undefined || message.date === 0 || session?.messageId !== message.message_id
     ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.expired : query.from.id !== session.actor.id ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.ownerOnly

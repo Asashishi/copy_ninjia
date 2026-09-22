@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { getAdDetectAgentConfig } from "../../../packages/config/agent";
 
 const errorLogs: string[] = [];
@@ -6,12 +7,7 @@ const requestAdDetectJson = mock(async (..._args: unknown[]): Promise<string | n
   "{\"ad\": false, \"reason\": \"闲聊\"}");
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 mock.module("../../../packages/antiRaid/ai/provider", () => ({ requestAdDetectJson }));
 mock.module("../../../packages/config/adSamples", () => ({

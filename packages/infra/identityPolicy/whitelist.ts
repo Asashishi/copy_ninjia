@@ -5,7 +5,7 @@ import {
   TEMPORARY_AD_BYPASS_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
 } from "../../consts/whitelist";
-import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../../config/bot";
 import {
   cachedWhitelistEntry,
   confirmIdentityPolicyPersisted,

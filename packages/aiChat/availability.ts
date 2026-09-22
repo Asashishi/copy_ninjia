@@ -1,8 +1,8 @@
 /**
  * AI 闲聊「此刻到底跑不跑」的唯一判定入口。
  *
- * 三个条件缺一不可：config/agent.json 的 AI 能力与凭据严格合法、三份辅助部署配置
- * 解析得动（config/{stickers,reactions,mood}.json，见 config/readiness.ts）、本群开了
+ * 三个条件缺一不可：config/agent.json 的 AI 能力与凭据严格合法、辅助部署配置
+ * 解析得动（config/{stickers,mood}.json 与 prompt/persona.md，见 config/readiness.ts）、本群开了
  * /ai_chat enable（ChatState.isAIChatEnabled，缺省关闭）。判定散在各调用点的话，
  * 前两个条件迟早会漏掉某一处——漏在投喂路径上就是每条群消息都去 Worker 里换一次
  * 「部署配置不可用」的错误日志，或让那条线程读配置
@@ -19,8 +19,9 @@ import { getChatState } from "../infra/storage/stateStore";
 
 /**
  * 进程侧是否具备跑 AI 闲聊的前提（agent 能力配置 + 三份辅助部署配置）。为假时整条线停摆：
- * AI Worker 不启动、记忆不 hydrate（磁盘上那份原样留着，等前提补齐）、
- * /ai_chat enable 与 /mood switch 直接拒绝。
+ * 投喂与回复关闭，/ai_chat enable 与 /mood switch 直接拒绝。启动时就不可用则 AI Worker
+ * 不启动、记忆只进主线程镜像不投递（一条都不删，等前提补齐）；运行期经 config/ 热重载
+ * 变为不可用时 Worker 保持闲置。前提补齐后由 aiChat/hydration.ts 的 resumeAiChat 恢复。
  */
 export function isAiChatConfigured(): boolean {
   return aiChatConfigReadiness().ok;

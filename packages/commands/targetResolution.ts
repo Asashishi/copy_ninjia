@@ -5,7 +5,8 @@ import type { CommandTargetMessages } from "../types/commands";
 import { sendCommandMessage } from "../infra/telegram";
 import { resolveIdTarget, resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
 import { sanitizeDisplayName, truncateInline } from "../libs/text";
-import { CHAT_ID_ARG_PATTERN, INVALID_USERNAME_ECHO_MAX_CHARS, USERNAME_ARG_PATTERN, USER_ID_ARG_PATTERN } from "../consts/commands";
+import { INVALID_USERNAME_ECHO_MAX_CHARS, USERNAME_ARG_PATTERN } from "../consts/commands";
+import { parseChatIdArgument, parseUserIdArgument } from "../libs/telegramId";
 
 import { prefetchIdentityPolicies } from "../infra/identityStorage";
 
@@ -42,21 +43,17 @@ export interface ResolveCommandTargetParams {
   /**
    * 是否接受裸用户 id 作为目标（缺省不接受）。
    *
-   * 逐命令 opt-in，不做成全局行为：`/block`、`/unblock`、`/gag`、`/ungag`、
-   * `/permission` 与 `/white` 操作的权威目标都是 id，用 id 指定反而比 @username
-   * 更准——用户名可以被释放后由别人重新注册，而 id 不会改指另一个人。`/copy`
-   * 与中文动作命令则相反，它们要的是一份有名字、有头像的身份，拿一个没在
-   * 本天才见过的群里说过话的裸 id 只能复读出一具空壳。
+   * 调用方按命令开启；支持未命中身份缓存的 id，展示字段由 resolveIdTarget 提供。
+   * 管理命令与只读的 `/info` 可开启，`/copy` 和中文动作命令保持缺省。
    */
   acceptUserId?: boolean;
   /**
    * 是否接受裸会话 id（频道/群的负数 id）作为目标（缺省不接受）。
    *
-   * `/gag`、`/ungag`、`/unblock`、`/permission` 与 `/white` 开这条路：前两条
-   * 按 sender_chat 建立或解除频道发言限制，`/unblock` 要保证黑名单里的频道身份
-   * 始终能被划掉，后两者需要直接管理频道白名单及权限。`/block` 不开这条：粘错
-   * 一个会话 id 会把处置改成封掉整个会话身份，而那条命令不可逆；其余调用都是
-   * 可恢复的运行时或配置操作。详见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN。
+   * `/gag`、`/ungag`、`/block disable`、`/permission`、`/white` 与 `/info` 开启。
+   * `/block enable` 保持缺省，频道目标须由回复或用户名解析。
+   * 形态校验见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN；当前群身份的处置约束
+   * 见 docs/cn/04-invariants.md。
    */
   acceptChatId?: boolean;
   /**
@@ -65,36 +62,28 @@ export interface ResolveCommandTargetParams {
    * 预热失败时主线程 LRU 仍是冷的，isWhitelisted、isUserBlocked 等同步判定按
    * fail-closed 读成「不在名单」，名单写入也要求先预热（见
    * infra/identityStorage/read.ts 的 prefetchIdentityPolicies）。依赖这些判定做保护或
-   * 破坏性决策的命令（`/block`、`/unblock`、`/mute`、`/white`、`/permission` 修改
+   * 破坏性决策的命令（`/block … enable`、`/block … disable`、`/mute`、`/white`、`/permission` 修改
    * 路径）必须开启：此时发送 IDENTITY_POLICY_UNAVAILABLE_TEXT 并返回 undefined。
    * 不读名单做决策的命令保持缺省，预热结果不影响目标解析。
    */
   requireIdentityPolicies?: boolean;
-}
-
-/**
- * 把参数解析成 Telegram 用户 id；不是合法 id 时返回 undefined 交给用户名那条路。
- *
- * 正则之外还要过一次安全整数：`99999999999999999999` 完全匹配「十进制正整数」，
- * 而 `Number` 之后已经不是那个数了，拿它去封人封的是另一个 id。
- */
-function parseUserIdArgument(argument: string): number | undefined {
-  if (!USER_ID_ARG_PATTERN.test(argument)) return undefined;
-  const userId: number = Number(argument);
-  return Number.isSafeInteger(userId) ? userId : undefined;
-}
-
-/**
- * 把参数解析成 Telegram 会话 id（频道/群的负数 id）；不合法时返回 undefined。
- * 安全整数那道闸的理由同 parseUserIdArgument，只是方向朝负。
- *
- * 导出给 commands/send.ts 复用：裸 `Number()` 会放过 `-100123456789.0`、`0x2d`
- * 这类非规范写法，而那条命令拿解析结果去开持久代发会话。
- */
-export function parseChatIdArgument(argument: string): number | undefined {
-  if (!CHAT_ID_ARG_PATTERN.test(argument)) return undefined;
-  const chatId: number = Number(argument);
-  return Number.isSafeInteger(chatId) ? chatId : undefined;
+  /**
+   * 是否允许把机器人自己当目标（缺省不允许）。只读的查询命令（`/info`）打开；会改动目标
+   * 状态的命令一律保持缺省，避免拿机器人自己开刀。
+   */
+  allowSelfTarget?: boolean;
+  /**
+   * 目标落在「当前群自己的 identity」上时的拒绝文案（缺省不拒绝）。
+   *
+   * 匿名管理员以当前群为 sender_chat 发言时，Telegram 只提供 sender_chat=本群、
+   * 不暴露皮套底下的真实用户，解析结果因此就是这个群自己的频道 identity；开了
+   * acceptChatId 的命令还能由用户把本群 id 直接粘进参数，落点完全相同。`/copy`
+   * 一类要保留该身份（复制群头像、复读同一皮套），所以缺省放行；`/block`、
+   * `/block disable`、`/white`、`/permission` 这些会据此做破坏性处置或发权限的
+   * 命令传入各自文案，命中时发送它并返回 undefined。
+   * 这道闸排在身份名单预热之后，与 requireIdentityPolicies 的顺序不变。
+   */
+  currentChatTargetText?: string;
 }
 
 /**
@@ -155,18 +144,9 @@ export function peekCommandTarget(message: Message, rawArgument: string): Cached
 }
 
 /**
- * 解析命令的目标用户/频道：只给了回复目标时用它——这样即使对方没有公开
- * username、或者本天才还没缓存过 TA（比如 privacy mode 没关导致漏听），只要能
- * 回复到 TA 发的一条消息就能直接锁定目标。/copy 系、/block 与中文动作命令共用
- * 同一套解析流程，只是失败时的嘲讽文案不同。
- *
- * **回复目标与参数同时给出、又指向不同的人时报错，绝不静默取一。** 这类命令最
- * 自然的用法恰恰会撞上它：管理员看到群里有人贴出「请封 123456789」，对着那条
- * 消息点回复再发 `/block 123456789`。静默优先取回复目标的话，被永久拉黑并在每个
- * 托管群带 `revoke_messages` 封禁的是贴出这串 id 的同事，而回执里显示的正是那位
- * 同事的名字，读起来像一次成功确认——「对着别人贴出的 id 动手」本来就是 id 那条
- * 路被引入的场景（见 acceptUserId）。参数解析不出目标时同样按冲突报错，不再说
- * 「这不是合法用户名」：那句话会让人以为参数被忽略掉、回复目标生效了。
+ * 解析命令的目标用户/频道：支持回复消息、缓存中的用户名，以及调用方开启的裸 id。
+ * 回复目标不要求命中身份缓存；回复与参数同时存在时，参数必须解析为同一个 id，
+ * 否则发送目标冲突提示。各命令通过 options 指定准入条件与当前氛围的失败文案。
  *
  * 目标确定后预热它的黑白名单；开启 requireIdentityPolicies 时预热失败按解析失败处理。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
@@ -180,6 +160,8 @@ export async function resolveCommandTarget({
   acceptUserId = false,
   acceptChatId = false,
   requireIdentityPolicies = false,
+  allowSelfTarget = false,
+  currentChatTargetText,
 }: ResolveCommandTargetParams): Promise<CachedUser | undefined> {
   const messageId: number = message.message_id;
   const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
@@ -219,19 +201,22 @@ export async function resolveCommandTarget({
     targetUser = argument.user;
   }
 
-  // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈。
-  if (targetUser.id === botUserId) {
+  // 缺省不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈；只读的 /info 例外。
+  if (!allowSelfTarget && targetUser.id === botUserId) {
     await sendCommandMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
     return undefined;
   }
 
-  // 不在共享解析层拒绝 targetUser.id === chatId：匿名管理员以当前群为
-  // sender_chat 时，/copy 必须保留该身份来复制群头像并复读同一皮套的消息。
-  // Telegram 不会提供皮套背后的真实用户；/block 等破坏性命令应在调用处
-  // 按自己的语义拒绝，避免误把整个群组身份当作那名管理员。
+  // 「目标是当前群自己的 identity」缺省放行：/copy 要保留该身份来复制群头像并
+  // 复读同一皮套的消息，Telegram 不会提供皮套背后的真实用户。会据此做破坏性
+  // 处置或发权限的命令传 currentChatTargetText 打开下面那道闸。
   const prefetched: boolean = await prefetchIdentityPolicies([targetUser.id]);
   if (!prefetched && requireIdentityPolicies) {
     await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: messageId });
+    return undefined;
+  }
+  if (currentChatTargetText !== undefined && targetUser.isChannel === true && targetUser.id === chatId) {
+    await sendCommandMessage({ chatId, text: currentChatTargetText, replyToMessageId: messageId });
     return undefined;
   }
   return targetUser;

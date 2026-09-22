@@ -50,7 +50,7 @@ export function requeueIfUnchecked(key: string, bundle: AdMessageBundle): void {
     queued: queuedAdDetectKeys.has(key),
     inFlight: inFlightAdDetectKeys.has(key),
   });
-  if (decision.action === "skip") return;
+  if (decision === "skip") return;
   // 两张表一起动，缺一张就会让「谁在待检」出现两个互相矛盾的答案，
   // 见 docs/cn/04-invariants.md。
   queuedAdDetectKeys.add(key);

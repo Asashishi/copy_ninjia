@@ -8,7 +8,7 @@ import type { FileApiFlavor } from "@grammyjs/files";
 import { Bot, InputFile } from "grammy";
 import type { Api, Context } from "grammy";
 import { telegramClientInitialization } from "../../cache/main/telegram";
-import { BOT_TOKEN } from "../../config/telegram";
+import { BOT_TOKEN } from "../../config/bot";
 import { installTelegramApi } from "./client";
 import { telegramMessageThrottler } from "./messageThrottler";
 import {

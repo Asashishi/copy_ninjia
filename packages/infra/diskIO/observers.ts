@@ -7,6 +7,7 @@ import type {
   AiMemoryDeletedPersistedReply,
   WedMembersDeletedPersistedReply,
   AiMemoryPersistedReply,
+  StickerCatalogPersistedReply,
   IdentityStoragePersistedReply,
   LuckAppendStalledReply,
   MidnightMaintenanceReply,
@@ -67,6 +68,11 @@ export function onWedMembersDeletedPersisted(callback: (reply: WedMembersDeleted
 /** 注册 purge 后首份新 AI 记忆真正 durable 的确认回调。 */
 export function onAiMemoryPersisted(callback: (reply: AiMemoryPersistedReply) => void): void {
   diskIORuntime.aiMemoryPersistedListeners.push(callback);
+}
+
+/** 模块初始化时登记贴纸目录 durable 回执，释放已退出配置的主线程镜像。 */
+export function onStickerCatalogPersisted(callback: (reply: StickerCatalogPersistedReply) => void): void {
+  diskIORuntime.stickerCatalogPersistedListeners.push(callback);
 }
 
 /** Worker 耗尽重启预算后通知仍在等待 durable 回执的 owner 立即按失败结算。 */

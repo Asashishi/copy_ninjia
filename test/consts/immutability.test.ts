@@ -1,3 +1,4 @@
+import { NO_MENTION_FACTS } from "../../packages/consts/auto";
 import { PROMPT_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/prompt";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
@@ -73,36 +74,24 @@ import {
   OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO,
 } from "../../packages/consts/aiChat/openai";
 import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
+import { RANDOM_IMAGE_EXTENSIONS } from "../../packages/consts/randomImage";
+import { H_IMAGE_TEXTS } from "../../packages/consts/atmosphere/teasing/hImage";
 import { EMPTY_MESSAGE_ENTITIES, MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import { QA_ANSWER_LABELS, QA_QUESTION_LABELS } from "../../packages/consts/qa";
-import { DEFAULT_CHAT_STATE, createChatState } from "../../packages/libs/chatState";
+import { DEFAULT_CHAT_STATE, adoptChatState, createChatState, isEmptyChatState } from "../../packages/libs/chatState";
+import { CHAT_STATE_KEYS } from "../../packages/consts/storageSchema";
+import { botPermissions } from "../helpers/botPermissions";
+import type { ChatState } from "../../packages/types/chatState";
 import { DEFAULT_WHITELIST_PERMISSIONS, NON_WHITELIST_PERMISSIONS, SUPER_ADMIN_WHITELIST_PERMISSIONS, TEMPORARY_AD_BYPASS_PERMISSIONS, WHITELIST_PERMISSION_KEY_BY_LOWERCASE } from "../../packages/consts/whitelist";
 import { PERMISSION_COMMAND_TEXTS, WHITE_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/whitelist";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
-import { BOT_STATUS_PERMISSION_LABELS } from "../../packages/consts/botStatus";
+import { BOT_CHAT_PERMISSION_LABELS } from "../../packages/consts/botAdmin";
 import { getChatState } from "../../packages/infra/storage/stateStore";
-import * as Admission from "../../packages/consts/antiRaid/admission";
-import * as ReplyAdmission from "../../packages/consts/aiChat/admission";
 
-const assertReplyAdmissionReadonly = (): void => {
-  // @ts-expect-error 共享的启动决策只读。
-  ReplyAdmission.START_REPLY_ROUND.action = "enqueue";
-  // @ts-expect-error 共享的排队决策只读。
-  ReplyAdmission.ENQUEUE_REPLY.action = "startRound";
-  // @ts-expect-error 共享的丢弃决策只读。
-  ReplyAdmission.DROP_REPLY_SILENTLY.action = "enqueue";
-  // @ts-expect-error 共享的溢出决策只读。
-  ReplyAdmission.REPLY_QUEUE_OVERFLOW.action = "enqueue";
-  // @ts-expect-error 共享的运行决策只读。
-  ReplyAdmission.RUN_REPLY_ROUND.action = "rateLimited";
-  // @ts-expect-error 共享的限频决策只读。
-  ReplyAdmission.REPLY_ROUND_RATE_LIMITED.action = "run";
-};
-void assertReplyAdmissionReadonly;
 import * as Media from "../../packages/consts/aiChat/media";
 import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
-import { EMPTY_OUTPUT_ITEMS, OPENAI_EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/openai";
-import { GEMINI_EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/gemini";
+import { EMPTY_OUTPUT_ITEMS } from "../../packages/consts/aiChat/openai";
+import { EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/tools";
 import { EMPTY_STICKER_MENU } from "../../packages/consts/aiChat/stickers";
 import { DISABLED_LINK_PREVIEW, NO_SIGNAL_ARGS } from "../../packages/consts/telegram";
 
@@ -153,20 +142,6 @@ test("常量表本身不可整体替换或就地增删", () => {
 
 test("准入、媒体、Telegram 固定载荷和各领域空列表均不可写", () => {
   const assertReadonly = (): void => {
-    // @ts-expect-error 广告准入结果必须只读。
-    Admission.ACCEPT_CANDIDATE.action = "ignore";
-    // @ts-expect-error 广告忽略结果必须只读。
-    Admission.IGNORE_CANDIDATE.action = "accept";
-    // @ts-expect-error 频道残留处置结果必须只读。
-    Admission.DELETE_STRAGGLER.action = "ignore";
-    // @ts-expect-error 入队结果必须只读。
-    Admission.ENQUEUE_KEY.action = "skip";
-    // @ts-expect-error 跳过结果必须只读。
-    Admission.SKIP_ENQUEUE.action = "enqueue";
-    // @ts-expect-error 派发结果必须只读。
-    Admission.DISPATCH.action = "saturated";
-    // @ts-expect-error 满载结果必须只读。
-    Admission.SATURATED.action = "dispatch";
     // @ts-expect-error 模态关闭结果必须只读。
     Media.MEDIA_CLOSED_RESULT.ok = false;
     // @ts-expect-error 退避结果必须只读。
@@ -175,6 +150,8 @@ test("准入、媒体、Telegram 固定载荷和各领域空列表均不可写",
     Media.MEDIA_TASK_REJECTED_RESULT.ok = false;
     // @ts-expect-error 取消结果必须只读。
     Media.MEDIA_CANCELLED_RESULT.ok = false;
+    // @ts-expect-error 模态初始状态由两种模态共享，必须只读。
+    Media.INITIAL_MEDIA_INPUT_STATE.support = "supported";
     // @ts-expect-error 禁用链接预览的共享载荷必须只读。
     DISABLED_LINK_PREVIEW.is_disabled = true;
     // @ts-expect-error 信号适配的共享空元组不得追加。
@@ -183,10 +160,8 @@ test("准入、媒体、Telegram 固定载荷和各领域空列表均不可写",
     EMPTY_AD_CANDIDATE_ENTRIES.push({});
     // @ts-expect-error OpenAI 输出的共享空列表不得追加。
     EMPTY_OUTPUT_ITEMS.push({});
-    // @ts-expect-error OpenAI 调用的共享空列表不得追加。
-    OPENAI_EMPTY_FUNCTION_CALLS.push({});
-    // @ts-expect-error Gemini 调用的共享空列表不得追加。
-    GEMINI_EMPTY_FUNCTION_CALLS.push({});
+    // @ts-expect-error 两家供应商共用的无工具调用空列表不得追加。
+    EMPTY_FUNCTION_CALLS.push({});
     // @ts-expect-error 贴纸共享空菜单不得追加。
     EMPTY_STICKER_MENU.push({});
   };
@@ -215,9 +190,9 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   expect(() => { MUTED_CHAT_PERMISSIONS.can_send_messages = true; }).toBeDefined();
   // @ts-expect-error Readonly<Record<number, string>> 不允许新增/覆盖键
   expect(() => { WEATHER_CODE_DESCRIPTIONS[0] = "篡改"; }).toBeDefined();
-  // @ts-expect-error 权限中文名表被 /bot_status 每次回执读取，改坏它等于对着
-  // 所有群报错一个权限位的含义。
-  expect(() => { BOT_STATUS_PERMISSION_LABELS.canDeleteMessages = "篡改"; }).toBeDefined();
+  // @ts-expect-error 权限中文名表被 /bot_status 回执与缺权限提示共用，改坏它等于
+  // 对着所有群报错一个权限位的含义。
+  expect(() => { BOT_CHAT_PERMISSION_LABELS.canDeleteMessages = "篡改"; }).toBeDefined();
   // @ts-expect-error Readonly<WhitelistPermissions> 的字段只读；这份默认值被
   // parsePermissions 逐条展开复用，写坏它等于改掉此后所有条目的缺省权限。
   expect(() => { DEFAULT_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
@@ -281,6 +256,15 @@ test("/white 成员关系的四种结局互不相同", () => {
   for (const outcome of outcomes) expect(outcome).toContain("目标");
 });
 
+test("随机图片的扩展名表与 /h_image 文案表不可写入", () => {
+  // @ts-expect-error RANDOM_IMAGE_EXTENSIONS 是 ReadonlyMap，没有 set
+  expect(() => { RANDOM_IMAGE_EXTENSIONS.set(".gif", "image/png"); }).toBeDefined();
+  // @ts-expect-error H_IMAGE_TEXTS.usage 只读
+  expect(() => { H_IMAGE_TEXTS.usage = "篡改"; }).toBeDefined();
+  // @ts-expect-error H_IMAGE_TEXTS.tooLarge 只读
+  expect(() => { H_IMAGE_TEXTS.tooLarge = (): string => "篡改"; }).toBeDefined();
+});
+
 test("各命令的目标解析文案表不可写入", () => {
   // @ts-expect-error CommandTargetMessages.missingTarget 只读
   expect(() => { BLOCK_TARGET_TEXTS.missingTarget = "篡改"; }).toBeDefined();
@@ -313,7 +297,7 @@ test("各命令的目标解析文案表不可写入", () => {
 test("目标解析文案念的是各自的命令名", () => {
   for (const [command, texts] of [
     ["/block", BLOCK_TARGET_TEXTS],
-    ["/unblock", UNBLOCK_TARGET_TEXTS],
+    ["/block disable", UNBLOCK_TARGET_TEXTS],
     ["/mute", MUTE_TARGET_TEXTS],
     ["/unmute", UNMUTE_TARGET_TEXTS],
     ["/copy", COPY_TARGET_TEXTS],
@@ -324,7 +308,7 @@ test("目标解析文案念的是各自的命令名", () => {
   ] as const) {
     expect(texts.missingTarget).toContain(command);
   }
-  // /unblock 与 /unmute 的提示不能退化成 /block、/mute 的那份。
+  // /block disable 与 /unmute 的提示不能退化成 /block、/mute 的那份。
   expect(UNBLOCK_TARGET_TEXTS.missingTarget).not.toBe(BLOCK_TARGET_TEXTS.missingTarget);
   expect(UNMUTE_TARGET_TEXTS.missingTarget).not.toBe(MUTE_TARGET_TEXTS.missingTarget);
   expect(STEAL_ICON_TARGET_TEXTS.missingTarget).not.toBe(COPY_TARGET_TEXTS.missingTarget);
@@ -397,7 +381,56 @@ test("默认群状态单例与新建状态同形状：形状不一致会让热�
   // getChatState 在「有条目」和「没条目」之间来回交出这两个对象；键集合或顺序
   // 一旦分叉，每条群消息那 4~6 次读取就又变成多态（见 libs/chatState.ts 的
   // createChatState）。漏加一个字段在别处只会静默降级，只有这里看得出来。
-  expect(Object.keys(DEFAULT_CHAT_STATE)).toEqual(Object.keys(createChatState()));
+  //
+  // 比对的是一份**手写的**字段清单，不是 createChatState() 自己：
+  // DEFAULT_CHAT_STATE 就等于 createChatState() 的返回值，两者互比恒真。
+  // `Record<keyof ChatState, true>` 让 ChatState 新增字段时这里编译不过
+  // （字段全是可选的，TS 不会替 createChatState 检查遗漏）；运行期再比一次键
+  // 顺序，抓 createChatState 少写或写错顺序的那一档。
+  const shape: Record<keyof ChatState, true> = {
+    aiPersona: true,
+    quietUntil: true,
+    lockdown: true,
+    isAIChatEnabled: true,
+    isTranslationEnabled: true,
+    isAdDetectEnabled: true,
+    isFloodControlEnabled: true,
+    isAntiRaidEnabled: true,
+    isInitEnabled: true,
+    botPermissions: true,
+    title: true,
+    isProxySendEnabled: true,
+  };
+  expect(Object.keys(createChatState())).toEqual(Object.keys(shape));
+  expect(Object.keys(DEFAULT_CHAT_STATE)).toEqual(Object.keys(shape));
+  // 恢复路径逐字段抄写，键顺序必须落回同一个隐藏类。
+  expect(Object.keys(adoptChatState(DEFAULT_CHAT_STATE))).toEqual(Object.keys(shape));
+  // 持久化字段闭集 = 规范形状减去独立落 ai_persona 列的那一个。
+  expect([...CHAT_STATE_KEYS]).toEqual(Object.keys(shape).filter((key: string): boolean => key !== "aiPersona"));
+});
+
+test("isEmptyChatState 必须认得全部 12 个字段：漏掉一个就会把有状态的群当成空条目回收", () => {
+  // 回收判定漏一个字段，那个群的状态会在下一次保存时连同条目一起消失。
+  const values: Readonly<Record<keyof ChatState, unknown>> = {
+    aiPersona: "人设",
+    quietUntil: 1,
+    lockdown: { phase: "applying", intentId: 1, originalPermissions: {}, announced: false, expiresAt: 1 },
+    isAIChatEnabled: true,
+    isTranslationEnabled: true,
+    isAdDetectEnabled: true,
+    isFloodControlEnabled: true,
+    isAntiRaidEnabled: true,
+    isInitEnabled: true,
+    botPermissions: botPermissions(),
+    title: "群名",
+    isProxySendEnabled: true,
+  };
+  expect(isEmptyChatState(createChatState())).toBe(true);
+  for (const [field, value] of Object.entries(values)) {
+    const state: ChatState = createChatState();
+    (state as Record<string, unknown>)[field] = value;
+    expect(isEmptyChatState(state)).toBe(false);
+  }
 });
 
 test("常量表内容本身仍可正常读取", () => {
@@ -428,3 +461,16 @@ function assertPromptTextsReadonly(): void {
   PROMPT_COMMAND_TEXTS.usage = "changed";
 }
 void assertPromptTextsReadonly;
+
+function assertNoMentionFactsReadonly(): void {
+  // @ts-expect-error 无实体消息共享的提及事实不可修改。
+  NO_MENTION_FACTS.isMentioned = true;
+}
+void assertNoMentionFactsReadonly;
+
+import { BOT_ATMOSPHERES } from "../../packages/consts/bot";
+function assertBotAtmospheresReadonly(): void {
+  // @ts-expect-error 部署枚举到通知风格的映射不能由调用方改写。
+  BOT_ATMOSPHERES.normal = "teasing";
+}
+void assertBotAtmospheresReadonly;

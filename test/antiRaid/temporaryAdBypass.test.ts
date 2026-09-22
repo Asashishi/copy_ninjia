@@ -51,7 +51,7 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
     return { changed: true, queued: true };
   },
 }));
-mock.module("../../packages/antiRaid/workerBridge", () => ({
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({
   postAntiRaid: (message: AntiRaidWorkerMessage): boolean => {
     workerPosts.push(message);
     return true;

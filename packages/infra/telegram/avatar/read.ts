@@ -50,7 +50,9 @@ function readReusableUserAvatar(targetId: number, current: ChatPhoto, signal?: A
 }
 
 /**
- * 读取当前头像；用户必须来自本轮 getChatMember，频道只传 ID 并以 getChat 核实身份。
+ * 读取当前头像。`target` 是调用方已持有的用户身份，或只有 ID 的频道/用户：只给 ID 时以同一次
+ * getChat 核实身份，频道得到 ChannelChat，用户得到私聊资料 PrivateChat，不另发成员查询，
+ * 因此不要求机器人是群管理员。
  * 用户优先复用匹配的 PhotoSize.file_id；ChatPhoto ID 只用于下载，网页兜底复用抓取边界。
  * 结果分三态：调用方据此区分「确认没有可用头像」与「这次没查成」，见
  * types/telegram.ts 的 CurrentAvatarResult。
@@ -64,12 +66,12 @@ export async function readCurrentAvatar(target: User | number, signal: AbortSign
     execute: async (requestSignal?: AbortSignal): Promise<CurrentAvatarProbe> => {
       const chat: ChatFullInfo = await bot.api.getChat(targetId, ...signalArgs(requestSignal));
       if (typeof target === "number") {
-        if (chat.type !== "channel" || chat.id !== targetId) return AVATAR_PROBE_ABSENT;
+        if (chat.id !== targetId || (chat.type !== "channel" && chat.type !== "private")) return AVATAR_PROBE_ABSENT;
         identity = chat;
       }
       if (requestSignal?.aborted) return AVATAR_PROBE_FAILED;
       if (chat.photo === undefined) return AVATAR_PROBE_ABSENT;
-      if (typeof target !== "number") {
+      if (typeof target !== "number" || chat.type === "private") {
         const fileId: string | undefined = await readReusableUserAvatar(targetId, chat.photo, requestSignal);
         if (requestSignal?.aborted) return AVATAR_PROBE_FAILED;
         if (fileId !== undefined) return { photo: fileId, transient: false };

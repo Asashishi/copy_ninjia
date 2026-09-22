@@ -1,8 +1,4 @@
 import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../consts/aiChat/rateLimit";
-import {
-  DROP_REPLY_SILENTLY, ENQUEUE_REPLY, REPLY_QUEUE_OVERFLOW,
-  REPLY_ROUND_RATE_LIMITED, RUN_REPLY_ROUND, START_REPLY_ROUND,
-} from "../consts/aiChat/admission";
 import type {
   AdmitDecision,
   AdmitRoundInput,
@@ -43,16 +39,16 @@ export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
   if (
     input.telegramBackpressured &&
     (input.kind === "random" || input.kind === "mediaRandom")
-  ) return DROP_REPLY_SILENTLY;
+  ) return "dropSilently";
   const maxConcurrent: number = input.telegramBackpressured
     ? 1
     : REPLY_ROUND_MAX_CONCURRENT;
   if (input.deliveryAvailable && input.queueSize === 0 && input.activeRounds < maxConcurrent) {
-    return START_REPLY_ROUND;
+    return "startRound";
   }
-  if (input.kind === "random" || input.kind === "mediaRandom") return DROP_REPLY_SILENTLY;
-  if (input.queueSize >= REPLY_TRIGGER_QUEUE_MAX) return REPLY_QUEUE_OVERFLOW;
-  return ENQUEUE_REPLY;
+  if (input.kind === "random" || input.kind === "mediaRandom") return "dropSilently";
+  if (input.queueSize >= REPLY_TRIGGER_QUEUE_MAX) return "enqueueOverflow";
+  return "enqueue";
 }
 
 /**
@@ -61,6 +57,6 @@ export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
  * @param input.windowCount 挤掉过期项之后，窗口内剩余的触发数。
  */
 export function admitRound(input: AdmitRoundInput): RoundDecision {
-  if (input.windowCount >= RATE_LIMIT_LONG_MAX_TRIGGERS) return REPLY_ROUND_RATE_LIMITED;
-  return RUN_REPLY_ROUND;
+  if (input.windowCount >= RATE_LIMIT_LONG_MAX_TRIGGERS) return "rateLimited";
+  return "run";
 }

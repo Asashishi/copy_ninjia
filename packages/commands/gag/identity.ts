@@ -6,11 +6,8 @@ import {
   GAG_PUBLIC_PROFILE_QUERY,
   GAG_USER_PROFILE_LINK_PREFIX,
 } from "../../consts/gag";
-import {
-  CHAT_ID_ARG_PATTERN,
-  USER_ID_ARG_PATTERN,
-  USERNAME_ARG_PATTERN,
-} from "../../consts/commands";
+import { USERNAME_ARG_PATTERN } from "../../consts/commands";
+import { parseChatIdArgument, parseUserIdArgument } from "../../libs/telegramId";
 import type { CachedUser } from "../../types/chatState";
 import type { GagSession } from "../../types/gag";
 
@@ -54,18 +51,13 @@ export function isGagInlineMarkerUrl(url: string): boolean {
   const rawChatId: string = url.slice(
     separatorIndex + GAG_PROFILE_CHAT_SEPARATOR.length
   );
-  const chatId: number = Number(rawChatId);
-  if (
-    !CHAT_ID_ARG_PATTERN.test(rawChatId) ||
-    !Number.isSafeInteger(chatId)
-  ) return false;
+  if (parseChatIdArgument(rawChatId) === undefined) return false;
   const profileUrl: string = url.slice(0, separatorIndex);
   if (profileUrl.startsWith(GAG_USER_PROFILE_LINK_PREFIX)) {
     const rawUserId: string = profileUrl.slice(
       GAG_USER_PROFILE_LINK_PREFIX.length
     );
-    const userId: number = Number(rawUserId);
-    return USER_ID_ARG_PATTERN.test(rawUserId) && Number.isSafeInteger(userId);
+    return parseUserIdArgument(rawUserId) !== undefined;
   }
   if (profileUrl.startsWith(GAG_PRIVATE_CHANNEL_PROFILE_LINK_PREFIX)) {
     const privateChannelScope: string = profileUrl.slice(
@@ -80,9 +72,7 @@ export function isGagInlineMarkerUrl(url: string): boolean {
     const rawMessageId: string = privateChannelScope.slice(
       scopeSeparatorIndex + 1
     );
-    const channelId: number = Number(rawChannelId);
-    return USER_ID_ARG_PATTERN.test(rawChannelId) &&
-      Number.isSafeInteger(channelId) &&
+    return parseUserIdArgument(rawChannelId) !== undefined &&
       rawMessageId === String(GAG_PRIVATE_CHANNEL_ENTRY_MESSAGE_ID);
   }
   if (!profileUrl.startsWith(GAG_PUBLIC_PROFILE_LINK_PREFIX)) return false;

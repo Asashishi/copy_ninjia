@@ -1,3 +1,5 @@
+import { ACTIVE_COLD_MIGRATION_EDGES } from "../migrations/active";
+import type { ColdMigrationEdge } from "../migrations/active";
 import { join } from "node:path";
 import { checked } from "./command";
 import type { ReleaseCommand } from "./command";
@@ -47,6 +49,15 @@ export async function verifyReleaseAssets({ directory, version, platforms, sourc
       !("platform" in metadata) || metadata.platform !== platform || !("sourceTree" in metadata) || metadata.sourceTree !== sourceTree ||
       !("bun" in metadata) || metadata.bun !== Bun.version || !("bunRevision" in metadata) || metadata.bunRevision !== Bun.revision) {
       throw new Error(`${name}: binary.json must match the release version, platform, clean source tree and current Bun build.`);
+    }
+    const entries: readonly string[] = checked(command, ["tar", "-tzf", path]).split("\n");
+    const migrations: readonly string[] = ACTIVE_COLD_MIGRATION_EDGES.map(
+      (edge: ColdMigrationEdge): string => `copy-ninjia/${edge.bundledPath}`
+    );
+    if (migrations.some((entry: string): boolean => !entries.includes(entry)) ||
+      entries.some((entry: string): boolean => entry.endsWith(".map") ||
+        (/^copy-ninjia\/scripts\/(?:migrations\/)?migrate[^/]*\.js$/.test(entry) && !migrations.includes(entry)))) {
+      throw new Error(`${name}: package must contain exactly the active migration bundles and no source maps.`);
     }
     assets.push({ name, path, sha256: checksum, size: Bun.file(path).size });
     assets.push({ name: `${name}.sha256`, path: checksumPath, sha256: await fileSha256(checksumPath), size: Bun.file(checksumPath).size });

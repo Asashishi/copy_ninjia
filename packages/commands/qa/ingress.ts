@@ -12,15 +12,10 @@ import {
   needsBotOwnMessageWait,
   waitForBotOwnMessage,
 } from "../../infra/selfSentTracker";
-import { visibleSenderChat } from "../../users/visibleSender";
+import { visibleSenderId } from "../../users/visibleSender";
 import type { QaFieldInput, QaFormIngressResult, QaFormSession } from "../../types/qa";
 import { findQaFormSession } from "./session";
 import { parseQaFieldMessage } from "./rendering";
-
-/** 这条消息对外可见的发起身份 id；拿不到时 undefined。 */
-function messageActorId(message: Message): number | undefined {
-  return visibleSenderChat(message)?.id ?? message.from?.id;
-}
 
 /**
  * 认领一条表单投递消息并写回会话。
@@ -36,7 +31,7 @@ export async function claimQaFieldMessage(
   if (message.message_id === session.formMessageId) return null;
   // 频道回投包含表单示例、回执及 Worker 回复；自发消息不参与字段收集。
   if (isBotOwnMessage(message)) return null;
-  const actorId: number | undefined = messageActorId(message);
+  const actorId: number | undefined = visibleSenderId(message);
   if (actorId === undefined || actorId !== session.openedById) return null;
   const parsed: QaFieldInput | undefined = parseQaFieldMessage(message);
   if (parsed === undefined) return null;

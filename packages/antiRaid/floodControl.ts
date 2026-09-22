@@ -1,4 +1,5 @@
-import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import { BOT_ATMOSPHERE } from "../config/bot";
+import { atmosphereOf } from "../libs/atmosphere";
 /**
  * 刷屏禁言在主线程侧的那一半：只有投递。
  *
@@ -69,6 +70,6 @@ export function buildFloodCandidate({
     // formatUserLabel 只读 username / isChannel / title / first_name，grammY 的
     // `User` 在这四项上与 CachedUser 逐字兼容（没有 isChannel 即按真人分支走），
     // 而这条路跑在每条计入刷屏窗口的群消息上，投影对象是一次纯浪费的分配。
-    label: formatUserLabel(sender, ATMOSPHERE_TEXTS[currentState.aiPersona === undefined ? "teasing" : "plain"]),
+    label: formatUserLabel(sender, atmosphereOf(currentState, BOT_ATMOSPHERE)),
   };
 }

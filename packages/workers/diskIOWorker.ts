@@ -5,7 +5,6 @@
  * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
  * 互相踩坏。群状态也进入同一 SQLite；只有 主线程持有的 `state.json` 是明确例外，
  * 由主线程 StateStore 独立异步维护。
- * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *
  * 本文件只做消息路由与统一 flush 调度；启动恢复编排在 diskIO/startup.ts，
  * 具体领域逻辑分别在
@@ -77,7 +76,6 @@ import {
   handleWedMembersDeleteMessage,
   handleWedMembersMessage,
 } from "./diskIO/wedMemberFiles";
-import type { DiskIOStartupReplySink } from "./diskIO/startup";
 import { LOG_REOPEN_RETRY_MS } from "../consts/diskIO/appendOnly";
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../consts/diskIO/business";
 import { forgetAiMemoryChat } from "../cache/workers/diskIO/snapshots";
@@ -88,32 +86,33 @@ import { StorageWriteCapacityError } from "../libs/storageWriteBudget";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type {
   DiskFlushRequest,
-  DiskDiagnosticMessage,
   DiskIOMessage,
 } from "../types/diskIO/messages";
 import type {
-  AiMemoryDeletedPersistedReply,
-  AiMemoryPersistedReply,
   DiskFlushFailedReply,
   DiskFlushReply,
   DiskDiagnosticBatchAcceptedReply,
   DiskDiagnosticBatchRetryReply,
   DiskIODomain,
+  DiskIOReply,
   JoinLogReadReply,
-  IdentityStoragePersistedReply,
-  LuckAppendStalledReply,
   LuckSecretReply,
   RecoveryReplayFailedReply,
-  VerificationPersistedReply,
 } from "../types/diskIO/replies";
 import type {
   JoinLogRecord,
 } from "../types/diskIO/storage";
 import { enqueueDiskIOOperation } from "./diskIO/operationQueue";
 import { wedMemberDeletePersistedNotifier } from "../cache/workers/diskIO/wed";
-import type { WedMembersDeletedPersistedReply } from "../types/diskIO/replies";
+import { stickerCatalogPersistedNotifier } from "../cache/workers/diskIO/stickers";
+import { errorMessage } from "../libs/errorMessage";
 
 declare const self: Worker;
+
+/** Worker → 主线程的唯一回执出口；参数类型把回执协议交给编译器核对。 */
+function postReply(reply: DiskIOReply): void {
+  self.postMessage(reply);
+}
 
 /**
  * 统一 flush：普通范围覆盖日志与全部业务领域；`business` 范围只在已知日志故障的
@@ -130,12 +129,8 @@ async function flushAll(
   if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
   if (!flushWedMemberFiles()) failedDomains.push("wedMembers");
   if (!await flushLuckAppends()) failedDomains.push("luck");
-  if (!await flushVerificationChanges(
-    (reply: VerificationPersistedReply): void => self.postMessage(reply)
-  )) failedDomains.push("verification");
-  if (!flushStorageDatabase(
-    (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
-  )) {
+  if (!await flushVerificationChanges(postReply)) failedDomains.push("verification");
+  if (!flushStorageDatabase(postReply)) {
     failedDomains.push(...pendingStorageDatabaseDomains());
   }
   if (!await flushJoinLogDomain()) failedDomains.push("joinLog");
@@ -158,12 +153,16 @@ export async function handleDiskIOWorkerMessage(
         throw new Error("Invalid Disk I/O operation batch.");
       }
       for (const message of msg.messages) await handleDiskIOWorkerMessage(message);
-      self.postMessage({ type: "operationBatchAccepted", batchId: msg.batchId });
+      postReply({ type: "operationBatchAccepted", batchId: msg.batchId });
       break;
     case "diagnosticBatch": {
+      // 日志先入缓冲并刷盘，成功后才追加 adSample：刷盘失败时主线程整批重投，
+      // adSample 在这一轮还没写，重投只追加一次。两者是不同文件，相对顺序无意义。
       let containsLog: boolean = false;
       for (const diagnostic of msg.messages) {
-        if (await handleDiskIODiagnostic(diagnostic)) containsLog = true;
+        if (diagnostic.type !== "log") continue;
+        await handleLogMessage(diagnostic);
+        containsLog = true;
       }
       if (containsLog && !await flushLogBuffer()) {
         const retry: DiskDiagnosticBatchRetryReply = {
@@ -171,14 +170,19 @@ export async function handleDiskIOWorkerMessage(
           batchId: msg.batchId,
           retryAfterMs: LOG_REOPEN_RETRY_MS,
         };
-        self.postMessage(retry);
+        postReply(retry);
         break;
+      }
+      // 纯旁路素材：收到即写，不进合并窗口、不进统一 flush、失败即弃
+      // （见 diskIO/adSampleFile.ts 的文件头）。
+      for (const diagnostic of msg.messages) {
+        if (diagnostic.type === "adSample") await handleAdSampleMessage(diagnostic);
       }
       const reply: DiskDiagnosticBatchAcceptedReply = {
         type: "diagnosticBatchAccepted",
         batchId: msg.batchId,
       };
-      self.postMessage(reply);
+      postReply(reply);
       break;
     }
     case "aiMemory":
@@ -203,7 +207,7 @@ export async function handleDiskIOWorkerMessage(
       forgetAiMemoryChat(msg.chatId);
       break;
     case "stickerCatalog":
-      markStickerCatalogSnapshotDirty(msg.pack, msg.snapshot);
+      markStickerCatalogSnapshotDirty(msg.pack, msg.snapshot, msg.revision);
       break;
     case "wedMembers":
       handleWedMembersMessage(msg);
@@ -249,17 +253,17 @@ export async function handleDiskIOWorkerMessage(
         reply = {
           type: "luckSecret",
           requestId: msg.requestId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
         };
       }
-      self.postMessage(reply);
+      postReply(reply);
       break;
     }
     case "verificationUpsert":
-      await handleVerificationUpsert({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
+      await handleVerificationUpsert({ msg, reply: postReply });
       break;
     case "verificationDelete":
-      await handleVerificationDelete({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
+      await handleVerificationDelete({ msg, reply: postReply });
       break;
     // 这两条与 joinLog 同理：handlePendingRemovalSnapshot 会在 removalId 重复、
     // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
@@ -271,46 +275,31 @@ export async function handleDiskIOWorkerMessage(
     case "blocklistRemovals":
       handleIdentityMessage(
         "blocklistRemovalOutbox",
-        (): void => handlePendingRemovalSnapshot(
-          msg,
-          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
-        )
+        (): void => handlePendingRemovalSnapshot(msg, postReply)
       );
       break;
     case "identityPolicyWrite":
       handleIdentityMessage(
         msg.table,
-        (): void => handleIdentityPolicyWrite(
-          msg,
-          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
-        )
+        (): void => handleIdentityPolicyWrite(msg, postReply)
       );
       break;
     case "temporaryAdBypassWrite":
       handleIdentityMessage(
         "temporaryAdBypass",
-        (): void => handleTemporaryAdBypassWrite(
-          msg,
-          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
-        )
+        (): void => handleTemporaryAdBypassWrite(msg, postReply)
       );
       break;
     case "chatStateWrite":
       handleIdentityMessage(
         "chatState",
-        (): void => handleChatStateWrite(
-          msg,
-          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
-        )
+        (): void => handleChatStateWrite(msg, postReply)
       );
       break;
     case "chatQaWrite":
       handleIdentityMessage(
         "chatQa",
-        (): void => handleChatQaWrite(
-          msg,
-          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
-        )
+        (): void => handleChatQaWrite(msg, postReply)
       );
       break;
     case "recoveryReplay":
@@ -339,9 +328,9 @@ export async function handleDiskIOWorkerMessage(
           const reply: RecoveryReplayFailedReply = {
             type: "recoveryReplayFailed",
             domain: "joinLog",
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMessage(error),
           };
-          self.postMessage(reply);
+          postReply(reply);
         }
       }
       break;
@@ -364,30 +353,35 @@ export async function handleDiskIOWorkerMessage(
         reply = {
           type: "joinLogRead",
           requestId: msg.requestId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
         };
       }
-      self.postMessage(reply);
+      postReply(reply);
       break;
     }
     case "readIdentityPolicies":
-      self.postMessage(readIdentityPolicies(msg));
+      postReply(readIdentityPolicies(msg));
       break;
     case "readBlocklistIdPage":
-      self.postMessage(readBlocklistIdPage(msg));
+      postReply(readBlocklistIdPage(msg));
       break;
     case "load":
-      await handleDiskIOStartupLoad(
-        msg.stickerPacks,
-        (reply: Parameters<DiskIOStartupReplySink>[0]): void => self.postMessage(reply)
-      );
+      await handleDiskIOStartupLoad(msg.stickerPacks, postReply);
       break;
     case "flush": {
       const failedDomains: readonly DiskIODomain[] = await flushAll(msg.scope);
       const reply: DiskFlushReply | DiskFlushFailedReply = failedDomains.length === 0
         ? { type: "flushed", flushedId: msg.flushId }
         : { type: "flushFailed", flushedId: msg.flushId, failedDomains };
-      self.postMessage(reply);
+      postReply(reply);
+      break;
+    }
+    default: {
+      // 穷尽性断言：协议新增一条 main -> diskIO 消息时这一行编译失败，必须在本
+      // switch 里点名它的 owner。落到这里的消息会被整条丢掉且没有任何回执，
+      // 请求方只能等到超时；运行期不可达，因此不改变任何现有分支的行为。
+      const unhandled: never = msg;
+      void unhandled;
       break;
     }
   }
@@ -418,44 +412,30 @@ function handleIdentityMessage(
     apply();
   } catch (error: unknown) {
     noteStorageWriteRejected(domain);
-    if (error instanceof StorageWriteCapacityError) self.postMessage({ type: "storageWriteStalled" });
+    if (error instanceof StorageWriteCapacityError) postReply({ type: "storageWriteStalled" });
     console.error(`[diskIOWorker] rejected an identity ${domain} message:`, error);
     if (!diskIOReplayWindow.current) return;
     const reply: RecoveryReplayFailedReply = {
       type: "recoveryReplayFailed",
       domain,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     };
-    self.postMessage(reply);
+    postReply(reply);
   }
 }
 
 /** 一批中的诊断保持原始顺序同步消费；完成整批后才能向主线程回 ACK。 */
-async function handleDiskIODiagnostic(
-  message: DiskDiagnosticMessage
-): Promise<boolean> {
-  if (message.type === "log") {
-    await handleLogMessage(message);
-    return true;
-  }
-  // 纯旁路素材：收到即写，不进合并窗口、不进统一 flush、失败即弃
-  // （见 diskIO/adSampleFile.ts 的文件头）。
-  await handleAdSampleMessage(message);
-  return false;
-}
-
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 function startDiskIOWorker(): void {
-  wedMemberDeletePersistedNotifier.current = (reply: WedMembersDeletedPersistedReply): void => self.postMessage(reply);
-  storageWriteFatalReply.current = (): void => self.postMessage({ type: "storageWriteStalled" });
-  configureStoragePersistenceReply(
-    (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
-  );
-  configureAiMemoryDeletePersistedReply((reply: AiMemoryDeletedPersistedReply): void => self.postMessage(reply));
-  configureAiMemoryPersistedReply((reply: AiMemoryPersistedReply): void => self.postMessage(reply));
+  wedMemberDeletePersistedNotifier.current = postReply;
+  stickerCatalogPersistedNotifier.current = postReply;
+  storageWriteFatalReply.current = (): void => postReply({ type: "storageWriteStalled" });
+  configureStoragePersistenceReply(postReply);
+  configureAiMemoryDeletePersistedReply(postReply);
+  configureAiMemoryPersistedReply(postReply);
   // 运势追加持续失败时的兜底诊断出口：本线程的 console 可能被部署接到
   // /dev/null，这条会由主线程的运势 owner 记进统一 logs/（见 luckFiles.ts）。
-  configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => self.postMessage(reply));
+  configureLuckAppendStalledReply(postReply);
   self.onmessage = (event: MessageEvent<DiskIOMessage>): void => {
     void queueDiskIOWorkerMessage(event.data);
   };

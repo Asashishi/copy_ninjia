@@ -4,7 +4,11 @@ import type {
 } from "../../../types/antiRaid/verification";
 
 /**
- * 入群验证的主线程侧镜像（owner 是 packages/antiRaid/verificationMirror.ts）。
+ * 入群验证的主线程侧镜像（owner 是 packages/antiRaid/verificationMirror.ts；终态执行
+ * 预算与延后索引由同域的 packages/antiRaid/verificationAttempts.ts 维护）。所有写入只经
+ * 这两个模块的具名函数；活动快照、延后索引与待确认墓碑两两互斥，等待落盘的延后请求与
+ * 精确落盘水位线都只属于仍在活动快照里的 key（test/helpers/verificationMirrorInvariants.ts
+ * 逐条断言）。
  *
  * 这里全是**主线程**状态，与 cache/workers/antiRaid/verification.ts 那份入群守卫线程
  * 的验证状态机没有任何共享：权威状态机在 Worker 内，本模块只保存供两类 Worker
@@ -20,13 +24,27 @@ import type {
  * 崩溃重建时（onRespawn）本镜像不清空，只原地把
  * 每条记录的 generation 提升到新代际后整体回放给新 Worker；Disk I/O Worker
  * 崩溃重建时（onDiskIORespawn）同样整体重放给它补齐。
+ *
+ * 容量：不在本层设淘汰——条目代表「这个人还欠一次处置」，按容量丢掉等于放过
+ * 刷群者；硬顶在落盘侧由 VERIFICATION_RECORD_CAPACITY 挡住（见
+ * workers/diskIO/verificationWrites.ts），预算耗尽的终态改由
+ * deferredVerificationRecords 以最小索引保留。
  */
 export const activeVerificationSnapshots: Map<string, VerificationSnapshot> = new Map();
 
-/** 主线程已收到 Disk I/O 回执的最新 active revision，用于 Anti-Raid Worker 重建。 */
+/**
+ * 主线程已收到 Disk I/O 回执的最新 active revision，用于 Anti-Raid Worker 重建。
+ * 清理：对应 key 从 activeVerificationSnapshots 删除并收到删除回执时移出，
+ * 完整启动 hydrate 时整表重建。容量与 activeVerificationSnapshots 同阶。
+ */
 export const persistedVerificationRevisions: Map<string, { generation: number; revision: number }> = new Map();
 
-/** 已从 active 镜像删除、但尚未收到当天 JSON 追加确认的终结变化。 */
+/**
+ * 已从 active 镜像删除、但尚未收到当天 JSON 追加确认的终结变化。
+ * 清理：收到该 revision 的追加确认时移出，完整启动 hydrate 时整表清空。
+ * 容量：同时在途的终结写入数，被 Disk I/O 的写预算封住；不设淘汰——丢掉一条
+ * 墓碑会让已经结束的验证记录在重启后复活。
+ */
 export const pendingVerificationDeletes: Map<string, {
   chatId: number;
   userId: number;

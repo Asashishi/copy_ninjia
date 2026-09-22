@@ -1,5 +1,7 @@
 import type { InlineQueryResultArticle, ChosenInlineResult, InlineQuery, User } from "grammy/types";
 import type { Context } from "grammy";
+import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
+import { BOT_ATMOSPHERE } from "../../config/bot";
 import { formatUserLabel } from "../../users/userLabel";
 import type { LuckDraw } from "../../types/luckChallenge";
 import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
@@ -69,11 +71,12 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     return;
   }
   const fromUser: User = inlineQuery.from;
+  // inline 查询没有目标群上下文，使用本进程生效的 Bot 配置。
   const userLabel: string = formatUserLabel({
     id: fromUser.id,
     username: fromUser.username,
     first_name: fromUser.first_name,
-  });
+  }, ATMOSPHERE_TEXTS[BOT_ATMOSPHERE]);
   const text: string = inlineQuery.query.trim();
   const cacheKey: string = luckCacheKey(fromUser.id, text || undefined);
   const draw: LuckDraw = getOrDrawLuck(cacheKey);

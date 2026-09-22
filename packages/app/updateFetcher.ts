@@ -7,6 +7,7 @@ import {
   UPDATE_POLL_TIMEOUT_SECONDS,
 } from "../consts/updateRunner";
 import { logger } from "../infra/logger";
+import { createMonotonicDeadline, remainingMonotonicTime } from "../libs/monotonicDeadline";
 import { signalArgs } from "../libs/telegramSignalArgs";
 import { sleep } from "../libs/sleep";
 import type { TelegramAllowedUpdates } from "../types/lifecycle";
@@ -28,7 +29,9 @@ export function createAcknowledgedUpdateFetcher(
       offset,
       limit: UPDATE_POLL_LIMIT,
     };
-    const retryDeadline: number = Date.now() + UPDATE_POLL_RETRY_WINDOW_MS;
+    // 进程内耗时预算一律走单调时钟：系统校时往前跳会把整扇重试窗口一次性烧掉，
+    // 往回跳则让窗口无限延长（口径见 docs/cn/04-invariants.md）。
+    const retryDeadline: number = createMonotonicDeadline(UPDATE_POLL_RETRY_WINDOW_MS);
     let delay: number = UPDATE_POLL_INITIAL_RETRY_MS;
     for (;;) {
       signal.throwIfAborted();
@@ -49,7 +52,7 @@ export function createAcknowledgedUpdateFetcher(
             await sleep(error.parameters.retry_after * 1_000, signal);
           }
         }
-        if (Date.now() + delay >= retryDeadline) throw error;
+        if (delay >= remainingMonotonicTime(retryDeadline)) throw error;
         await sleep(delay, signal);
         delay *= 2;
       }

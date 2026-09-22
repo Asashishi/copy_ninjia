@@ -4,6 +4,7 @@ import { activeCopyTargetIdIn } from "../infra/storage/stateStore";
 import { setMessageReactions } from "../infra/telegram";
 import { logger } from "../infra/logger";
 import type { MessageReactionUpdated } from "grammy/types";
+import { TELEGRAM_DATE_UNIT_MS } from "../consts/telegram";
 
 /**
  * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义
@@ -53,7 +54,7 @@ export async function handleReaction(ctx: Context): Promise<void> {
   if (!applied) return;
 
   const nowMs: number = Date.now();
-  const deliveryMs: number = Math.max(0, startedAtMs - reaction.date * 1000);
+  const deliveryMs: number = Math.max(0, startedAtMs - reaction.date * TELEGRAM_DATE_UNIT_MS);
   logger.log(
     `Reaction synced (chat ${reaction.chat.id}, msg ${reaction.message_id}): ` +
     `delivery ${(deliveryMs / 1000).toFixed(1)}s, queue ${((nowMs - startedAtMs) / 1000).toFixed(1)}s`

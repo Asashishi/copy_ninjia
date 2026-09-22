@@ -6,6 +6,7 @@
  */
 
 import { afterEach, beforeEach, mock } from "bun:test";
+import { loggerStub } from "./loggerMock";
 import type {
   InlineKeyboardMarkup,
   Message,
@@ -79,26 +80,43 @@ export const answerInlineQuery = mock(async (
   _options: InlineAnswerOptions,
   _signal?: unknown
 ): Promise<void> => undefined);
-/** 三个开关由用例直接改写；mock 出口在每次调用时读取当前值。 */
+/** 开关由用例直接改写；mock 出口在每次调用时读取当前值。 */
 export const gagTestSwitches: {
   permissionAllowed: boolean;
   initEnabled: boolean;
+  /** false 时机器人权限快照查不到（`botChatPermissionsIn` 给 undefined）。 */
+  botPermissionsKnown: boolean;
+  /** false 时快照确证机器人不是本群管理员，此时各权限位恒为 false。 */
+  botIsAdministrator: boolean;
   canDeleteMessages: boolean;
   /** 非 undefined 时模拟本群配置了自定义人设，命令改用普通版文案。 */
   aiPersona: string | undefined;
-} = { permissionAllowed: true, initEnabled: true, canDeleteMessages: true, aiPersona: undefined };
+} = {
+  permissionAllowed: true,
+  initEnabled: true,
+  botPermissionsKnown: true,
+  botIsAdministrator: true,
+  canDeleteMessages: true,
+  aiPersona: undefined,
+};
 
 mock.module("../../packages/infra/botAdmin", () => ({
-  botChatPermissionsIn: async (): Promise<BotChatPermissions> => botPermissions({
-    canDeleteMessages: gagTestSwitches.canDeleteMessages,
-    canRestrictMembers: true,
-  }),
+  botChatPermissionsIn: async (): Promise<BotChatPermissions | undefined> => {
+    if (!gagTestSwitches.botPermissionsKnown) return undefined;
+    if (!gagTestSwitches.botIsAdministrator) {
+      return botPermissions({ isAdministrator: false, canManageChat: false });
+    }
+    return botPermissions({
+      canDeleteMessages: gagTestSwitches.canDeleteMessages,
+      canRestrictMembers: true,
+    });
+  },
 }));
 mock.module("../../packages/infra/chatTeardownRegistry", () => ({
   registerChatTeardown: (): void => undefined,
 }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: { error(): void {}, info(): void {}, log(): void {}, warn(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (): Readonly<{ isInitEnabled: boolean; aiPersona: string | undefined }> => ({
@@ -116,9 +134,9 @@ mock.module("../../packages/infra/telegram", () => ({
   sendEphemeralMessage,
   sendMessage,
 }));
-mock.module("../../packages/commands/commandActor", () => ({
-  hasCommandPermission: (): boolean => gagTestSwitches.permissionAllowed,
-  resolveCommandActor: (): CachedUser => ({ id: 100, first_name: "Admin" }),
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
+  hasWhitelistPermission: (id: number, key: string): boolean =>
+    id === 100 && key === "isCanGag" && gagTestSwitches.permissionAllowed,
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 
@@ -299,6 +317,8 @@ export function installGagTestHooks(): void {
     resetGagTestState();
     gagTestSwitches.permissionAllowed = true;
     gagTestSwitches.initEnabled = true;
+    gagTestSwitches.botPermissionsKnown = true;
+    gagTestSwitches.botIsAdministrator = true;
     gagTestSwitches.canDeleteMessages = true;
     gagTestSwitches.aiPersona = undefined;
     Date.now = (): number => 1_000_000;

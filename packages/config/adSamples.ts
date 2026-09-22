@@ -48,8 +48,11 @@ export async function loadAdSampleConfig(
   return parseAdSampleConfig(await readJsonInput(path), path);
 }
 
-/** 接管启动预检或 Worker 初始化消息已经严格校验的广告示例快照。 */
-export function adoptAdSampleConfig(config: AdSampleConfig): void {
+/**
+ * 接管已经严格校验的广告示例快照：启动预检、Worker 初始化消息或 config/ 热重载。
+ * null 只来自主线程热重载，表示部署方删除了该文件。
+ */
+export function adoptAdSampleConfig(config: AdSampleConfig | null): void {
   defaultAdSampleConfigCache.current = config;
 }
 

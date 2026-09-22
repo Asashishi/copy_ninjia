@@ -46,8 +46,9 @@ import type {
   StoredIdentityPolicyRow,
 } from "../../../types/storageDatabase";
 import type { BlocklistIdPage } from "../../../types/identityStorage";
-import { requireStorageDatabase, storageSource } from "./context";
+import { assertPositiveRevision, requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull } from "./flush";
+import { errorMessage } from "../../../libs/errorMessage";
 
 /**
  * 取本连接的三条预编译语句，首次用到时建好挂进连接级缓存。
@@ -142,9 +143,7 @@ export function hasAnyEffectiveBlocklistIdentity(): boolean {
 function validatePolicyData(message: IdentityPolicyWriteDiskMessage): void {
   const source: string = storageSource(`${message.table}_entries`, message.id);
   assertTelegramIdentityId(message.id, source);
-  if (!Number.isSafeInteger(message.revision) || message.revision < 1) {
-    throw new Error(`${source}: revision must be a positive safe integer.`);
-  }
+  assertPositiveRevision(message.revision, source);
   if (message.data === null) return;
   if (message.table === "whitelist") {
     decodeWhitelistEntryData(message.data, source);
@@ -258,7 +257,7 @@ export function readIdentityPolicies(
     return {
       type: "identityPoliciesRead",
       requestId: message.requestId,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     };
   }
 }
@@ -283,7 +282,7 @@ export function readBlocklistIdPage(
     return {
       type: "blocklistIdPageRead",
       requestId: message.requestId,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     };
   }
 }

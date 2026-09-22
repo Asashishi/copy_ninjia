@@ -8,6 +8,7 @@ import {
   SONG_GENERATION_COOLDOWN_MS,
 } from "../songGeneration";
 import { AI_MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
+import { AI_REACTION_EMOJIS } from "../reactions";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 import { IMAGE_SENT_TAG_HINT, SONG_SENT_TAG_HINT, STICKER_SENT_TAG_HINT } from "./transcript";
 import { REPLY_CONTEXT_SECTION_NAMES } from "./memory";
@@ -81,10 +82,11 @@ export const TYPO_REQUIRED_INSTRUCTION: string =
   "这一轮不适用「通常 1~3 个动作」的默认节奏：请确保总共至少 3 个动作（可能含执行侧自动产生的纠正动作），" +
   "不要发完这一条带错字的消息就草草收尾；凑动作要用新的句子、贴纸或表情反应，不能靠重复说过的话凑数。";
 
-/** add_reaction 工具的模型可见使用说明。 */
+/** add_reaction 工具的模型可见使用说明，末尾附可选 emoji 清单。 */
 export const ADD_REACTION_TOOL_INSTRUCTION: string =
   "给触发这次回复的那条消息扣一个 emoji 表情反应（贴在消息角落的那种）。心情到了就扣一个，" +
-  `每轮回复最多 ${MAX_REACTIONS_PER_REPLY} 次。emoji 只能从下面这份清单里选：\n`;
+  `每轮回复最多 ${MAX_REACTIONS_PER_REPLY} 次。emoji 只能从下面这份清单里选：\n` +
+  AI_REACTION_EMOJIS.join(" ");
 
 /** generate_image 工具的模型可见资格与冷却说明。 */
 export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =

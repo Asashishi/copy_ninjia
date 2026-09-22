@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import type { Mock } from "bun:test";
 import type { DeleteMessageOutcome } from "../../packages/infra/telegram/actions/messageLifecycle";
 import type { QaFormSession } from "../../packages/types/qa";
@@ -51,30 +52,16 @@ mock.module("../../packages/infra/telegram", () => ({
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): { isInitEnabled?: boolean } => chatStates.get(chatId) ?? {},
 }));
-interface ActorContext {
-  from?: { id: number };
-  msg?: { sender_chat?: { id: number } };
-}
-mock.module("../../packages/commands/commandActor", () => ({
-  // 与生产同构：sender_chat 优先于 from，并带上 isChannel 标记。
-  resolveCommandActor: (
-    ctx: ActorContext
-  ): { id: number; isChannel?: boolean } | undefined => {
-    const senderChat = ctx.msg?.sender_chat;
-    if (senderChat !== undefined) return { id: senderChat.id, isChannel: true };
-    return ctx.from === undefined ? undefined : { id: ctx.from.id };
-  },
-  hasCommandPermission: (ctx: ActorContext): boolean => {
-    const senderChat = ctx.msg?.sender_chat;
-    const id = senderChat?.id ?? ctx.from?.id;
-    return id !== undefined && permitted.has(id);
-  },
-}));
 mock.module("../../packages/users/userLabel", () => ({
-  formatUserLabel: (user: { id: number }): string => `用户${user.id}`,
+  // 与生产同构：解析不出发起人时退化为氛围文案里的「未知发起人」。
+  formatActorLabel: (
+    actor: { id: number } | undefined,
+    atmosphere: { NOTICE_TEXTS: { unknownActor: string } }
+  ): string => (actor === undefined ? atmosphere.NOTICE_TEXTS.unknownActor : `用户${actor.id}`),
 }));
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
-  hasWhitelistPermission: (id: number): boolean => permitted.has(id),
+  hasWhitelistPermission: (id: number, key: string): boolean =>
+    key === "isCanControllQaPermission" && permitted.has(id),
 }));
 
 const {
@@ -106,13 +93,14 @@ function context(
   match: string,
   overrides: ContextOverrides = {}
 ): never {
+  const chat: ChatShape = overrides.chat ?? { id: CHAT_ID, type: "supergroup", title: "T" };
   return {
-    chat: overrides.chat ?? { id: CHAT_ID, type: "supergroup", title: "T" },
+    chat,
     msgId: 10,
     match,
     // grammY 的 CommandContext 恒带 msg；夹具始终提供最小消息，再叠加覆写，
     // 避免制造生产中不存在的 undefined 形态。
-    msg: { message_id: 10, ...overrides.msg },
+    msg: { message_id: 10, chat, ...overrides.msg },
     ...(fromId === undefined ? {} : { from: { id: fromId } }),
   } as never;
 }
@@ -179,6 +167,19 @@ test.each(["", "unknown", "set extra", "set query", "setter"])("/qa %s 不创建
   expect(chatQaEntries.get(CHAT_ID)?.get("问题")).toBe("回答");
 });
 
+// 子命令词不区分大小写，口径同 `/copy`、`/icon`、`/translate`、`/mood`；
+// 问题文本那一组是用户内容，绝不跟着折叠。
+test.each(["SET", "Set"])("/qa %s 照常开表单", async (argument) => {
+  await handleQaCommand(context(OWNER, argument));
+  expect(qaFormSessions.size).toBe(1);
+});
+
+test("/qa REMOVE 的问题文本保持原样大小写", async () => {
+  chatQaEntries.set(CHAT_ID, new Map([["Hello World", "回答"]]));
+  await handleQaCommand(context(OWNER, "REMOVE Hello World"));
+  expect(chatQaEntries.get(CHAT_ID)?.get("Hello World")).toBeUndefined();
+});
+
 describe("/qa set", () => {
   test("未接管的群一律拒绝，三条命令同一句", async () => {
     chatStates.set(CHAT_ID, {});
@@ -206,14 +207,34 @@ describe("/qa set", () => {
   test("没有权限的频道身份同样拿不到表单", async () => {
     await handleQaCommand(channelContext("set"));
 
-    expect(lastText()).toContain("isCanControllQaPermission");
+    expect(sendCommandMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID,
+      text: QA_COMMAND_TEXTS.rejected(`用户${CHANNEL_ID}`),
+      replyToMessageId: 10,
+    });
     expect(qaFormSessions.size).toBe(0);
+  });
+
+  test("解析不出发起身份时拒绝开表单，标签退化为未知发起人", async () => {
+    await handleQaCommand(context(undefined, "set"));
+
+    expect(sendCommandMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID,
+      text: QA_COMMAND_TEXTS.rejected(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownActor),
+      replyToMessageId: 10,
+    });
+    expect(qaFormSessions.size).toBe(0);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("没有 isCanControllQaPermission 的身份拿不到表单", async () => {
     await handleQaCommand(context(7, "set"));
 
-    expect(lastText()).toContain("isCanControllQaPermission");
+    expect(sendCommandMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID,
+      text: QA_COMMAND_TEXTS.rejected("用户7"),
+      replyToMessageId: 10,
+    });
     expect(qaFormSessions.size).toBe(0);
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -328,7 +349,11 @@ describe("/qa remove", () => {
 
     await handleQaCommand(context(7, "remove 怎么入群？"));
 
-    expect(lastText()).toContain("isCanControllQaPermission");
+    expect(sendCommandMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID,
+      text: QA_COMMAND_TEXTS.rejected("用户7"),
+      replyToMessageId: 10,
+    });
     expect(chatQaEntries.get(CHAT_ID)?.has("怎么入群？")).toBeTrue();
   });
 
@@ -400,7 +425,7 @@ describe("表单填齐后的结算", () => {
 
     // 上面那条回执 30 秒后自删，之后只有表单还说得出这张单子填到了哪。
     const edited: EditedMessage = editMessageText.mock.calls.at(-1)![0];
-    expect(edited.text).toBe(renderQaFormPrompt("怎么入群？", undefined));
+    expect(edited.text).toBe(renderQaFormPrompt("怎么入群？", undefined, ATMOSPHERE_TEXTS.teasing));
     // 改写而不是重发：表单 id 是状态机持有的删除责任，换一条就再也删不掉旧的。
     expect(edited.chatId).toBe(CHAT_ID);
     expect(edited.messageId).toBe(55);
@@ -420,7 +445,7 @@ describe("表单填齐后的结算", () => {
     expect(lastText()).toBe(QA_COMMAND_TEXTS.questionTooLong);
     expect(qaFormSessions.get(CHAT_ID)?.a).toBe("点置顶");
     expect(editMessageText.mock.calls.at(-1)![0].text)
-      .toBe(renderQaFormPrompt(undefined, "点置顶"));
+      .toBe(renderQaFormPrompt(undefined, "点置顶", ATMOSPHERE_TEXTS.teasing));
   });
 
   test("整条都被挡下时不改表单——会话一个字都没变", async () => {

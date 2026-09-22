@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   BLOCKED_AT,
   META,
-  deferred,
+  drainParticipantInvalidWork,
   identityWrites,
   lastWrittenData,
   participantInvalidDiskIO,
@@ -14,7 +14,6 @@ import {
   storeBlocked,
   writtenCounts,
 } from "../helpers/blocklistParticipantInvalidHarness";
-import { waitUntil } from "../helpers/waitUntil";
 import { BLOCKLIST_PARTICIPANT_INVALID_LIMIT } from "../../packages/consts/antiRaid/blocklist";
 import type { PendingBlockedRemoval } from "../../packages/types/blocklist";
 import type { BotChatPermissions } from "../../packages/types/telegram";
@@ -33,7 +32,6 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 mock.module("../../packages/infra/logger", participantInvalidLogger);
 
 const {
-  blocklistIdentityMutationQueues,
   blocklistParticipantInvalidQueue,
   pendingBlockedRemovals,
 } = await import("../../packages/cache/main/blocklist");
@@ -46,11 +44,6 @@ const { cachedBlocklistEntry } = await import("../../packages/infra/identityStor
 const { runBlocklistIdentityMutation } = await import("../../packages/infra/identityPolicy/coordination");
 const { isUserBlocked } = await import("../../packages/infra/blocklist/membership");
 const { recordBlocklistParticipantReadability } = await import("../../packages/infra/blocklist/participantInvalid");
-
-async function drain(): Promise<void> {
-  await blocklistParticipantInvalidQueue.current;
-  await waitUntil((): boolean => blocklistIdentityMutationQueues.size === 0);
-}
 
 beforeEach(async () => {
   await blocklistParticipantInvalidQueue.current;
@@ -65,7 +58,7 @@ describe("黑名单销号计数", () => {
     const before: Promise<void> = blocklistParticipantInvalidQueue.current;
     recordBlocklistParticipantReadability(receipt([], []));
     expect(blocklistParticipantInvalidQueue.current).toBe(before);
-    await drain();
+    await drainParticipantInvalidWork();
     expect(readIdentityPolicies).not.toHaveBeenCalled();
   });
 
@@ -73,14 +66,14 @@ describe("黑名单销号计数", () => {
     storeBlocked(7);
 
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
 
     expect(readIdentityPolicies).toHaveBeenCalledTimes(1);
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META, participantInvalidCount: 1 });
     expect(cachedBlocklistEntry(7)?.participantInvalidCount).toBe(1);
 
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META, participantInvalidCount: 2 });
     expect(isUserBlocked(7)).toBeTrue();
   });
@@ -99,7 +92,7 @@ describe("黑名单销号计数", () => {
     for (let round: number = 1; round <= BLOCKLIST_PARTICIPANT_INVALID_LIMIT; round++) {
       recordBlocklistParticipantReadability(receipt([7]));
     }
-    await drain();
+    await drainParticipantInvalidWork();
 
     expect(isUserBlocked(7)).toBeFalse();
     expect(lastWrittenData(7)).toBeNull();
@@ -124,12 +117,12 @@ describe("黑名单销号计数", () => {
     storeBlocked(7, 3);
 
     recordBlocklistParticipantReadability(receipt([], [7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META });
     expect(cachedBlocklistEntry(7)).not.toHaveProperty("participantInvalidCount");
 
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META, participantInvalidCount: 1 });
   });
 
@@ -137,7 +130,7 @@ describe("黑名单销号计数", () => {
     storeBlocked(8);
 
     recordBlocklistParticipantReadability(receipt([9], [8, 10]));
-    await drain();
+    await drainParticipantInvalidWork();
 
     // 已落定 ID 一次筛选读，只有待计数的 9 进入预热。
     expect(readIdentityPolicies.mock.calls.map((call) => call[0])).toEqual([[8, 10], [9]]);
@@ -148,12 +141,12 @@ describe("黑名单销号计数", () => {
     storeBlocked(7, 2);
     storeBlocked(8);
     recordBlocklistParticipantReadability(receipt([], [7]));
-    await drain();
+    await drainParticipantInvalidWork();
     readIdentityPolicies.mockClear();
     expect(blocklistEntryCache.peek(7)).not.toBeUndefined();
 
     recordBlocklistParticipantReadability(receipt([], [7, 8, 11]));
-    await drain();
+    await drainParticipantInvalidWork();
 
     expect(readIdentityPolicies.mock.calls.map((call) => call[0])).toEqual([[8, 11]]);
     expect(blocklistEntryCache.peek(8)).toBeUndefined();
@@ -164,18 +157,18 @@ describe("黑名单销号计数", () => {
   test("冷读到的计数叠加本地未 ACK 最终值", async () => {
     storeBlocked(7);
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
     // 本地已写出计数 1 但尚未 flush；数据库行仍没有计数。
     blocklistEntryCache.delete(7);
 
     recordBlocklistParticipantReadability(receipt([], [7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META });
   });
 
   test("排队等待解除期间计数被清零时放弃解除", async () => {
     storeBlocked(7, BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1);
-    const busy: { promise: Promise<void>; resolve: () => void } = deferred();
+    const busy: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
     const held: Promise<void> = runBlocklistIdentityMutation(7, (): Promise<void> => busy.promise);
 
     recordBlocklistParticipantReadability(receipt([7]));
@@ -185,7 +178,7 @@ describe("黑名单销号计数", () => {
 
     busy.resolve();
     await held;
-    await drain();
+    await drainParticipantInvalidWork();
     expect(isUserBlocked(7)).toBeTrue();
     expect(identityWrites("blocklist")).toHaveLength(1);
   });
@@ -195,13 +188,13 @@ describe("黑名单销号计数", () => {
     participantInvalidHarness.readFailure = new Error("disk offline");
 
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(identityWrites("blocklist")).toEqual([]);
     expect(participantInvalidHarness.loggedErrors.length).toBeGreaterThan(0);
 
     participantInvalidHarness.readFailure = null;
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META, participantInvalidCount: 1 });
   });
 
@@ -210,7 +203,7 @@ describe("黑名单销号计数", () => {
     diskIORuntime.fatalSignaled = true;
 
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(identityWrites("blocklist")).toEqual([]);
     expect(participantInvalidHarness.loggedErrors.some((message: string): boolean =>
       message.includes("Failed to update blocklist PARTICIPANT_ID_INVALID counts for removal 1 in chat -1001")
@@ -218,13 +211,13 @@ describe("黑名单销号计数", () => {
 
     diskIORuntime.fatalSignaled = false;
     recordBlocklistParticipantReadability(receipt([7]));
-    await drain();
+    await drainParticipantInvalidWork();
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META, participantInvalidCount: 1 });
   });
 
   test("持久化拒收解除时记一行错误并保留黑名单条目", async () => {
     storeBlocked(7, BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1);
-    const busy: { promise: Promise<void>; resolve: () => void } = deferred();
+    const busy: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
     const held: Promise<void> = runBlocklistIdentityMutation(7, (): Promise<void> => busy.promise);
 
     recordBlocklistParticipantReadability(receipt([7]));
@@ -232,7 +225,7 @@ describe("黑名单销号计数", () => {
     diskIORuntime.fatalSignaled = true;
     busy.resolve();
     await held;
-    await drain();
+    await drainParticipantInvalidWork();
 
     expect(isUserBlocked(7)).toBeTrue();
     expect(identityWrites("blocklist")).toEqual([]);

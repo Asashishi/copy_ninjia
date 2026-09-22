@@ -9,8 +9,11 @@ import type {
 } from "grammy/types";
 import type { TelegramApi } from "./telegramWorker";
 
-/** 头像交互可使用的用户或频道身份；发起身份来自更新，候选身份来自本轮查询。 */
-export type AvatarIdentity = User | Chat.ChannelChat;
+/**
+ * 头像交互可使用的身份；发起身份来自更新，候选身份来自本轮查询。只给 ID 时由 getChat
+ * 核实：频道得到 ChannelChat，用户得到私聊资料 PrivateChat（见 infra/telegram/avatar/read.ts）。
+ */
+export type AvatarIdentity = User | Chat.ChannelChat | Chat.PrivateChat;
 
 /** 当前候选身份与发送源一起返回；字符串为可复用 file_id，下载字节仅供本轮上传。 */
 export interface CurrentAvatar {
@@ -36,6 +39,9 @@ export type CurrentAvatarResult =
  * 另一个状态。
  */
 export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "upload_document";
+
+/** Telegram Bot API 标准 emoji 反应的精确联合。 */
+export type ReactionEmoji = ReactionTypeEmoji["emoji"];
 
 /**
  * 机器人能够设置的可复制反应。付费反应不在 Bot API 的可设置类型中；自定义
@@ -151,6 +157,20 @@ export interface BotActionPermissions {
   /** 能否删除别人的消息。 */
   readonly canDeleteMessages: boolean;
 }
+
+/**
+ * 一次 Telegram 文件下载（getFile + 有界读取）的结局，见 infra/telegram/fileDownload.ts。
+ * - missingPath：getFile 没有返回 file_path；
+ * - httpError：文件服务器回了非 2xx；
+ * - tooLarge：读到的字节超过调用方给的上限，observedBytes 是停下时已读到的量；
+ * - empty：下载成功但一个字节都没有。
+ */
+export type TelegramFileDownloadResult =
+  | { readonly status: "ok"; readonly bytes: Uint8Array }
+  | { readonly status: "missingPath" }
+  | { readonly status: "httpError"; readonly httpStatus: number }
+  | { readonly status: "tooLarge"; readonly observedBytes: number }
+  | { readonly status: "empty" };
 
 /** 有界头像下载结果；成功时字节只由当前操作持有，不进入持久化状态。 */
 export type AvatarDownloadResult =

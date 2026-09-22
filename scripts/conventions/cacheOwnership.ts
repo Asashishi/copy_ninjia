@@ -86,3 +86,42 @@ export function collectCacheOwnershipProblems({
   }
   return problems;
 }
+
+/**
+ * 反向核对豁免表：登记过的文件还在不在，以及被豁免的那条线程是不是真的还会加载它。
+ *
+ * 正向检查只在「某条线程确实加载了」时才用到豁免，因此引入路径一旦消失，豁免就
+ * 再也不会被访问到，会作为一条永不过期的例外留在表里——下一个人看到它，会以为
+ * 这条跨线程引入仍然存在且被审过。
+ *
+ * 与 collectCacheOwnershipProblems 分开导出：那一个按调用方给的文件子集判定，
+ * 而整表核对必须拿到 `packages/cache/` 的完整文件集合才有意义。
+ */
+export function collectStaleCacheExemptionProblems({
+  projectRoot,
+  cacheFiles,
+  threadClosures,
+  exemptions,
+}: Pick<
+  CollectCacheOwnershipProblemsParams,
+  "projectRoot" | "cacheFiles" | "threadClosures" | "exemptions"
+>): readonly string[] {
+  const problems: string[] = [];
+  const byRelativePath: Map<string, string> = new Map(
+    cacheFiles.map((path: string): [string, string] => [relative(projectRoot, path), path])
+  );
+  for (const [relativePath, threads] of Object.entries(exemptions)) {
+    const path: string | undefined = byRelativePath.get(relativePath);
+    if (path === undefined) {
+      problems.push(`CACHE_OWNER_EXEMPTIONS retains an exemption for a cache module that no longer exists: ${relativePath}`);
+      continue;
+    }
+    for (const thread of threads) {
+      if (threadClosures.get(thread)?.has(path) === true) continue;
+      problems.push(
+        `CACHE_OWNER_EXEMPTIONS retains an unused exemption: the ${thread} thread no longer loads ${relativePath}`
+      );
+    }
+  }
+  return problems;
+}

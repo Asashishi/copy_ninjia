@@ -4,6 +4,7 @@ import type {
   ChatTeardownCallback,
   ChatTeardownReason,
 } from "../types/chatTeardown";
+import { toErrorOr } from "../libs/errorMessage";
 
 /** 上层 owner 反向注册 teardown；本叶子注册表不静态依赖任何业务领域。 */
 export function registerChatTeardown(owner: ChatRuntimeOwner, callback: ChatTeardownCallback): void {
@@ -21,9 +22,6 @@ export function teardownRegisteredChat(
   } catch (error: unknown) {
     // owner 必须在调用栈内同步关闸；这里只把同步异常标准化为 rejected Promise，
     // 让组合 teardown 仍能启动其余 owner 并统一等待全部结果。
-    const reason: Error = error instanceof Error
-      ? error
-      : new Error("Chat teardown callback threw a non-Error value.", { cause: error });
-    return Promise.reject(reason);
+    return Promise.reject(toErrorOr(error, "Chat teardown callback threw a non-Error value."));
   }
 }

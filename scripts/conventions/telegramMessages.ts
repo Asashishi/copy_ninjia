@@ -1,16 +1,6 @@
 import { join, relative } from "node:path";
 import ts from "typescript";
-import { sourceFilesUnder } from "./sourceAnalysis";
-
-async function parse(path: string): Promise<ts.SourceFile> {
-  return ts.createSourceFile(
-    path,
-    await Bun.file(path).text(),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-}
+import { parseSourceFile, sourceFilesUnder } from "./sourceAnalysis";
 
 /** 核对命令提示清理、状态消息豁免与长期留存话题归属。 */
 export async function collectTelegramMessageProblems(
@@ -27,6 +17,7 @@ export async function collectTelegramMessageProblems(
   const gagNoticesPath: string = join(commandsRoot, "gag", "notices.ts");
   const qaNoticesPath: string = join(commandsRoot, "qa", "notices.ts");
   const wedMessagesPath: string = join(commandsRoot, "wed", "messages.ts");
+  const hImageDrawPath: string = join(commandsRoot, "hImage", "draw.ts");
 
   // 状态机按钮及功能性正文只有下列命名边界能够直接发送；普通提示统一交给主线程清理。
   const directBoundaries: Readonly<Record<string, string>> = {
@@ -36,11 +27,10 @@ export async function collectTelegramMessageProblems(
     "auto/message/qaDirectAnswer.ts": "sendQaDirectAnswer",
     "auto/message/proxySend.ts": "handlePrivateProxySend",
     "auto/message/proactive.ts": "replyToBathTrigger",
-    "auto/message/echo.ts": "echoMessage",
   };
   for (const directory of ["workers", "antiRaid", "auto"]) {
     for (const path of sourceFilesUnder(join(sourceRoot, directory))) {
-      const source: ts.SourceFile = await parse(path);
+      const source: ts.SourceFile = await parseSourceFile(path);
       const sendNames: Set<string> = new Set(["sendMessage"]);
       function visit(node: ts.Node): void {
         if (ts.isImportSpecifier(node) && (node.propertyName?.text ?? node.name.text) === "sendMessage") sendNames.add(node.name.text);
@@ -58,7 +48,7 @@ export async function collectTelegramMessageProblems(
   }
 
   for (const path of commandTextOutputFiles) {
-    const source: ts.SourceFile = await parse(path);
+    const source: ts.SourceFile = await parseSourceFile(path);
     function visit(node: ts.Node): void {
       // /wed 图片由按钮状态机拥有，只有此函数可直接发送并认领返回的消息 ID。
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
@@ -67,6 +57,15 @@ export async function collectTelegramMessageProblems(
         while (owner !== undefined && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
         if (path !== wedMessagesPath || owner?.name?.text !== "sendWedResult") {
           problems.push(`${relative(projectRoot, path)}: state-owned command photos must use sendWedResult`);
+        }
+      }
+      // /h_image 结果图片是用户授权的长期保留例外，只有这一个边界函数可以发送。
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
+        node.expression.text === "sendPhotoWithResult") {
+        let owner: ts.Node | undefined = node.parent;
+        while (owner !== undefined && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
+        if (path !== hImageDrawPath || owner?.name?.text !== "sendHImageResult") {
+          problems.push(`${relative(projectRoot, path)}: long-lived command photos must use sendHImageResult`);
         }
       }
       if (path === wedMessagesPath && ts.isImportSpecifier(node) &&
@@ -98,7 +97,7 @@ export async function collectTelegramMessageProblems(
   }
 
   for (const path of [gagCommandPath, gagNoticesPath, qaNoticesPath]) {
-    const source: ts.SourceFile = await parse(path);
+    const source: ts.SourceFile = await parseSourceFile(path);
     function visit(node: ts.Node): void {
       if (
         ts.isCallExpression(node) &&
@@ -135,7 +134,7 @@ export async function collectTelegramMessageProblems(
   }
 
   for (const path of sourceFilesUnder(commandsRoot)) {
-    const source: ts.SourceFile = await parse(path);
+    const source: ts.SourceFile = await parseSourceFile(path);
     function visit(node: ts.Node): void {
       if (ts.isObjectLiteralExpression(node)) {
         let preservesInGroup: boolean = false;
@@ -163,12 +162,56 @@ export async function collectTelegramMessageProblems(
     visit(source);
   }
 
+  // cron 消息是用户授权的长期保留例外，只有 cron/delivery.ts 可以发送。
+  const cronDeliveryPath: string = join(sourceRoot, "cron", "delivery.ts");
+  const telegramSendNames: ReadonlySet<string> = new Set([
+    "sendMessage", "sendPhoto", "sendMediaGroup", "sendDocument", "sendMessageWithResult", "sendPhotoWithResult", "sendCommandMessage",
+  ]);
+  for (const path of sourceFilesUnder(join(sourceRoot, "cron"))) {
+    if (path === cronDeliveryPath) continue;
+    const source: ts.SourceFile = await parseSourceFile(path);
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node)) {
+        const callee: ts.Expression = node.expression;
+        const name: string | undefined = ts.isIdentifier(callee)
+          ? callee.text
+          : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+        if (name !== undefined && telegramSendNames.has(name)) {
+          problems.push(`${relative(projectRoot, path)}: cron messages must be sent through cron/delivery.ts`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+
+  // 复读与翻译换图注复制媒体只经 copy/echo.ts 的 sendEchoPayload，一处决定哪些载荷可以复制。
+  const echoPath: string = join(sourceRoot, "copy", "echo.ts");
+  for (const path of sourceFilesUnder(sourceRoot)) {
+    const source: ts.SourceFile = await parseSourceFile(path);
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "copyMessage") {
+        const options: ts.Expression | undefined = node.arguments[0];
+        const replacesCaption: boolean = options !== undefined && ts.isObjectLiteralExpression(options) &&
+          options.properties.some((property: ts.ObjectLiteralElementLike): boolean =>
+            property.name !== undefined && ts.isIdentifier(property.name) && property.name.text === "caption");
+        let owner: ts.Node | undefined = node.parent;
+        while (owner !== undefined && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
+        if (replacesCaption && (path !== echoPath || owner?.name?.text !== "sendEchoPayload")) {
+          problems.push(`${relative(projectRoot, path)}: copies with a replaced caption must go through sendEchoPayload`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+  }
+
   const fixedDelayDeleteExemptFiles: readonly string[] = [
     ...sourceFilesUnder(join(commandsRoot, "luckChallenge")),
     join(sourceRoot, "workers", "antiRaid", "verificationReminders.ts"),
   ];
   for (const path of fixedDelayDeleteExemptFiles) {
-    const source: ts.SourceFile = await parse(path);
+    const source: ts.SourceFile = await parseSourceFile(path);
     function visit(node: ts.Node): void {
       if (
         ts.isImportSpecifier(node) &&

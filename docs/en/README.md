@@ -3,9 +3,9 @@
 <p><a href="../../README.md">简体中文</a> · <b>English</b> · <a href="../ja/README.md">日本語</a></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/banner_dark.jpg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/banner_light.jpg">
-  <img alt="Copy Ninjia Banner" src="../../pictures/banner_light.jpg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/banner_dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/banner_light.jpg">
+  <img alt="Copy Ninjia Banner" src="../../public/banner_light.jpg" width="100%">
 </picture>
 
 <h1>
@@ -16,9 +16,9 @@
 <p><sub>Click the avatar to open the example bot: <a href="https://t.me/copy_ninjia_bot">@copy_ninjia_bot</a></sub></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_en_light.svg">
-  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="../../pictures/tagline_en_light.svg" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_en_light.svg">
+  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="../../public/tagline_en_light.svg" width="760">
 </picture>
 
 **A pure-AI development project whose production code, tests, and documentation are written entirely by AI** — the human designs the architecture and reviews every commit together with AI
@@ -29,14 +29,14 @@
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
-  <a href="https://platform.openai.com/docs/"><img src="../../pictures/openai_badge.svg" alt="OpenAI"></a>
+  <a href="https://platform.openai.com/docs/"><img src="../../public/openai_badge.svg" alt="OpenAI"></a>
 </p>
 
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4519_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.02%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5072_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.12%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -44,7 +44,7 @@ Message copying and personality mimicry are only the surface. Underneath is a mu
 
 ---
 
-🧬 [Pure AI Development](#-pure-ai-development) • ✨ [Features](#-features) • 🎮 [Commands and Permissions](#-commands-and-permissions) • 🚀 [Quick Start](#-quick-start) • 📚 [Developer Docs](content-table.md)
+🧬 [Pure AI Development](#-pure-ai-development) • ✨ [Features](#-features) • 🎮 [Commands and Permissions](#-commands-and-permissions) • 🚀 [Quick Start](#-quick-start) • 🤖 [BotFather Setup](#botfather-setup) • ❓ [FAQ](10-faq.md) • 📚 [Developer Docs](content-table.md)
 
 </div>
 
@@ -71,9 +71,9 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 4519 tests passed, 388 test files, 158,896 expect() calls, 97.22% function coverage, 98.02% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
+    <img alt="bun run test:coverage — 5072 tests passed, 441 test files, 192,270 expect() calls, 97.01% function coverage, 98.12% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -154,6 +154,48 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
   <sub>Answers pre-registered questions directly, without going through the AI.</sub></p>
 </td>
 </tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🖼️ Random Image Library</b><br>
+  <sub>Use /h_image to send a random spoiler-covered image; authorized members can save replied images or albums with content deduplication.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>⏰ Scheduled Posts</b><br>
+  <sub>Schedule text, files, random images or 1–10 fixed images with time zones, one-shot tasks and random intervals.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🎨 Personas &amp; Notice Styles</b><br>
+  <sub>Set an AI persona per group and choose teasing or ordinary Bot notices; custom-persona groups use ordinary notices.</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🤐 Speech Control</b><br>
+  <sub>Use /gag to route a target's text through a dedicated button that transforms it, until expiry or release.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🫧 Chinese Actions</b><br>
+  <sub>Reply with one- or two-character Chinese actions such as /咬 or /贴贴, with no prior registration.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🌊 Flood Control</b><br>
+  <sub>Enable per-group message-rate checks and temporary mutes, with a separate exemption permission.</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🔎 Identity Lookup</b><br>
+  <sub>Use /info for public user or channel profiles and avatars, or group details; results disappear after 30 seconds.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🔐 Granular Permissions</b><br>
+  <sub>Grant feature switches, image collection, group Q&amp;A and moderation permissions by identity, with a queryable dashboard.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>📨 Private Relay</b><br>
+  <sub>The super administrator can start /send in private chat to relay messages to a managed group.</sub></p>
+</td>
+</tr>
 </table>
 
 Behavior details, configuration and boundaries for each feature live in the **[📚 developer docs](content-table.md)**.
@@ -162,13 +204,17 @@ Behavior details, configuration and boundaries for each feature live in the **[�
 
 ## 🎮 Commands and Permissions
 
-Command access follows the entry point: **group members** can use copy, action commands and quiet mode. **Identity permission keys** control `/bot_status`, `/prompt`, `/clear_context`, `/mute`, `/gag`, `/block` and feature switches. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, `/batch_kick`; `/white enable` can be delegated with `isCanWhiteOther`. `/send` requires the super administrator in private chat.
+Command access follows the entry point: **group members** can use copy, action commands, quiet mode and `/info` profile lookups. **Identity permission keys** control `/bot_status`, `/prompt`, `/clear_context`, `/mute`, `/gag`, `/block` and feature switches. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, `/batch_kick`; `/white enable` can be delegated with `isCanWhiteOther`. `/send` requires the super administrator in private chat.
 
 Set this group's AI prompt with `/prompt config <prompt>` or restore `prompt/persona.md` with `/prompt remove`. Both require `isCanConfigAiPrompt`, which defaults to false. `/bot_status` shows whether the current group has a custom prompt.
 
 The copy target is globally unique: the `/copy` family echoes message by message in the chat where the command was issued and syncs the avatar. `/luck_challenge` runs through Inline Mode, and Chinese action commands (`/咬`, `/揪住`) need no registration.
 
 `/wed` supports personal accounts in initialized groups, displaying a random partner's avatar with confirm, change and remove buttons. Each group retains up to 150,000 speaking-member IDs, batches actual changes into `memory/wed/<chatId>.json`, and restores candidates on restart; result sessions stay in memory. Commands and buttons share 32 active slots globally and use the shared outbound queue and 429 waits.
+
+`/h_image` posts one picture drawn uniformly from its dedicated directory (`global.assets.randomHImageDir` in `state.json`, by default `h_image/` under the data root, created at startup); the picture is spoiler-covered and stays. Only `jpg`, `jpeg`, `png`, and `webp` count. An identity with `isCanAddHImage` can reply to a picture with `/h_image add` to collect it (a whole album at once) without restarting. Keep other features’ pictures elsewhere; manual files require content SHA-256 names, and invalid names block startup.
+
+Set `atmosphere` in `config/bot.json` to `mesugaki` (default) or `normal`, then restart; a custom group AI persona takes priority for ordinary notices. `config/cron.json` hot-reloads scheduled tasks, supports single fixed images or albums of 2–10, and can draw random images from a separate directory. See [deployment configuration](../../config_example/README/en.md) and the [operations guide](07-operations.md) for source and binary cold migrations.
 
 The full command table, permission semantics and per-command behaviour live in **[📖 08 Command and Behaviour Reference](08-commands.md)**.
 
@@ -193,16 +239,23 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/   # fill in bot_token and super_admin_user_id in telegram.json
-bun run check                          # conventions + ESLint + strict TypeScript + coverage + hot-path gate
-bun run start                          # start long polling
+for example in config_example/*.json; do   # copy missing examples only; g-auth.json and cron.json are illustrative
+  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" config/ ;; esac
+done                                       # fill in bot_token and super_admin_user_id in bot.json
 ```
 
 With a manual install, before the first start you also initialise the identity database and, on the
-BotFather side, turn Privacy Mode off and Inline Mode on. Field-by-field meanings, required combinations and the strict
+BotFather side, turn Privacy Mode off and Inline Mode on (full list in [BotFather & Group Rights Setup](#botfather-setup)). Field-by-field meanings, required combinations and the strict
 validation rules are in [`config_example/README/en.md`](../../config_example/README/en.md); the full
 walkthrough (runtime data root, asset URLs, migration commands) is in
 [01 Getting Started](01-getting-started.md).
+
+After initializing identity storage and completing configuration, run:
+
+```bash
+bun run check                          # conventions + ESLint + strict TypeScript + coverage + hot-path gate
+bun run start                          # start long polling
+```
 
 Once the bot has joined a group, `SUPER_ADMIN_USER_ID` runs there:
 
@@ -231,15 +284,49 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
 | 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup & troubleshooting | [📖 07 Operations](07-operations.md) |
 | 🎮 **Commands** | Every command, permission semantics and behavioural details | [📖 08 Commands](08-commands.md) |
 | 📊 **Performance** | Cold/hot paths, throughput, I/O and chain latency, rerun on every release | [📖 09 Performance](09-performance.md) |
+| ❓ **FAQ** | Checklist for a running bot that does not reply | [📖 10 FAQ](10-faq.md) |
+
+<p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
+
+<a id="botfather-setup"></a>
+
+## 🤖 BotFather & Group Rights Setup
+
+### BotFather Settings
+
+| Setting | In @BotFather | Used for |
+| :--- | :--- | :--- |
+| Disable group privacy | `/setprivacy` → Disable | Receiving ordinary group messages; copying, translation, AI memory and interjections, and chat Q&A all depend on it. After changing it, remove the bot from the group and add it back; a bot that is a group administrator already receives every message |
+| Enable Inline Mode | `/setinline` | Daily fortune `@bot requested topic`, and the "speak" button of `/gag` targets |
+| Inline feedback at 100% | `/setinlinefeedback` | The primary path for confirming and persisting fortune draws |
+| Allow groups | `/setjoingroups` → Enable (on by default) | Adding the bot to groups |
+| Bot-to-Bot Communication Mode (optional) | Enable it in the bot's settings | Needed when the target of `/translate` or `/copy` is another bot; see the note below |
+
+There is no need to run `/setcommands` in BotFather: the bot registers the menu in its configured notice style at startup, with plain menus for chats with a custom persona. The menu appears only in group chats; private chats accept only the super administrator's `/send`, so they show no menu.
+
+> **About Bot-to-Bot**: by default Telegram does not deliver other bots' messages to this bot. Even when the other bot has the mode on, only its replies to this bot and `/command@thisbot` messages arrive, which is why translating another bot works only intermittently. Once this bot enables the mode, it receives every message from other bots in chats where it is an administrator or has privacy disabled, and AI interjections, copying, ad detection and flood counting do not distinguish bot senders. If a chat contains a bot that answers automatically, the two bots may keep replying to each other, so check before enabling it.
+
+### Administrator Rights in the Group
+
+Make the bot a group administrator and grant the rights for the features you use:
+
+| Administrator right | Features that use it |
+| :--- | :--- |
+| Delete messages | `/gag`, deleting ads found by ad detection, deleting messages from blocklisted channel identities |
+| Restrict and ban members | Kicking unverified members, Anti-Raid private mode, `/block enable|disable`, `/mute`, `/unmute`, `/batch_kick`, flood muting, bans from ad detection |
+
+Join verification also depends on the administrator status itself: Telegram sends member join and leave events only to administrator bots. When a right is missing, the bot's notice names that right; identities holding `isCanViewBotStatus` can run `/bot_status` to see the rights granted in the current chat.
+
+If the bot is running but does not reply, work through [10 FAQ](10-faq.md).
 
 ---
 
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_en_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_en_light.svg">
-  <img alt="Copy Ninjia — Not just copying messages, but stealing the entire group-chat scene and re-enacting it." src="../../pictures/footer_en_light.svg" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_en_light.svg">
+  <img alt="Copy Ninjia — Not just copying messages, but stealing the entire group-chat scene and re-enacting it." src="../../public/footer_en_light.svg" width="800">
 </picture>
 
 *The human never wrote a line of code, but never left the stage: after drawing the blueprints, they reviewed every commit together with AI.*

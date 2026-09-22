@@ -9,22 +9,17 @@ export { handleQuietCommand, handleUnquietCommand } from "./quiet";
 export { handleMuteCommand, handleUnmuteCommand } from "./mute";
 export {
   handleGagCommand,
-  handleGagInlineQuery,
   handleGagMessageIngress,
   handleUngagCommand,
-  resetGagSessions,
-  teardownGagInChat,
 } from "./gag";
 export {
   handleQaBoardCallback,
   handleQaMessageIngress,
   handleQaCommand,
-  teardownQaInChat,
 } from "./qa";
 export { handleInlineQuery } from "./inline";
 export { handleBlockCommand } from "./block";
 export { handleBatchKickCommand } from "./batchKick";
-export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
 export { handleClearContextCommand } from "./clearContext";
 export { handleAdDetectCommand } from "./adDetect";
@@ -37,8 +32,10 @@ export { handleInitCommand } from "./init";
 export { handleSendCommand } from "./send";
 export { handlePermissionCommand } from "./permission";
 export { handleWhiteCommand } from "./white";
-export { confirmLuckDraw, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, restoreLuckState } from "./luckChallenge/index";
+export { confirmLuckDraw, handleLuckChosenInlineResult, restoreLuckState } from "./luckChallenge/index";
 
 export { dispatchWedCommand, dispatchWedCallback } from "./wed/dispatch";
 
 export { handlePromptCommand } from "./prompt";
+export { handleHImageCommand } from "./hImage";
+export { handleInfoCommand } from "./info";

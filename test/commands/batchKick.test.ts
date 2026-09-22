@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../packages/consts/identityStorage";
 import type { JoinLogRecord } from "../../packages/types/diskIO/storage";
 import { diskIOStub } from "../helpers/diskIOMock";
+import { lastReplyText } from "../helpers/replies";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const probeChatMembership = mock(
@@ -26,7 +29,8 @@ const prefetchIdentityPolicies = mock(
 
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
-mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
   hasWhitelistPermission: (id: number): boolean => id === 1,
@@ -39,12 +43,7 @@ mock.module("../../packages/infra/blocklist/sweep", () => ({
 }));
 mock.module("../../packages/infra/diskIO", () => diskIOStub({ readJoinLog }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error: loggerError,
-  },
+  logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
@@ -72,17 +71,14 @@ function context({
   match = "30m",
   chatType = "supergroup",
 }: ContextOverrides = {}): never {
+  const chat = { id: -1001, type: chatType };
   return {
-    chat: { id: -1001, type: chatType },
+    chat,
     from: { id: userId, first_name: "Admin" },
-    msg: { message_id: 10, date: COMMAND_DATE_SECONDS },
+    msg: { message_id: 10, date: COMMAND_DATE_SECONDS, chat },
     msgId: 10,
     match,
   } as never;
-}
-
-function lastReplyText(): string {
-  return (sendMessage.mock.calls.at(-1)?.[0] as { text: string }).text;
 }
 
 beforeEach(() => {
@@ -134,6 +130,11 @@ describe("parseBatchKickDurationMs", () => {
 describe("/batch_kick", () => {
   test("非超级管理员、非超级群和非法参数都在读盘前拒绝", async () => {
     await handleBatchKickCommand(context({ userId: 2 }));
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.batchKickRejected,
+      replyToMessageId: 10,
+    });
     await handleBatchKickCommand(context({ chatType: "group" }));
     await handleBatchKickCommand(context({ match: "2d" }));
 
@@ -145,7 +146,7 @@ describe("/batch_kick", () => {
       (sendMessage.mock.calls[1]?.[0] as { text: string }).text;
     expect(groupReply).toContain("只能在超级群");
     expect(groupReply).not.toContain("初始化");
-    expect(lastReplyText()).toContain("只踢人");
+    expect(lastReplyText(sendMessage)).toContain("只踢人");
   });
 
   test("读取失败时不执行任何踢人动作", async () => {
@@ -160,7 +161,7 @@ describe("/batch_kick", () => {
     );
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
-    expect(lastReplyText()).toContain("一个人都没动");
+    expect(lastReplyText(sendMessage)).toContain("一个人都没动");
   });
 
   test("回溯窗口按命令消息自带的 Telegram 时间戳算，不掺宿主时钟", async () => {
@@ -183,7 +184,7 @@ describe("/batch_kick", () => {
     expect(readJoinLog).toHaveBeenCalledTimes(1);
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
-    expect(lastReplyText()).toContain("没有写入黑名单");
+    expect(lastReplyText(sendMessage)).toContain("没有写入黑名单");
   });
 
   test("保护自己人，先查仍在群，再只踢确认在群的普通成员", async () => {
@@ -217,12 +218,12 @@ describe("/batch_kick", () => {
       .toEqual([2, 3, 4, 5, 6]);
     expect(kickChatMemberWithOutcome.mock.calls.map((call) => call[0]?.userId))
       .toEqual([4, 5, 6]);
-    expect(lastReplyText()).toContain("踢出 1");
-    expect(lastReplyText()).toContain("已不在群 1");
-    expect(lastReplyText()).toContain("自己人跳过 2");
-    expect(lastReplyText()).toContain("权限不足 1");
-    expect(lastReplyText()).toContain("查询或请求失败 2");
-    expect(lastReplyText()).toContain("只踢未拉黑");
+    expect(lastReplyText(sendMessage)).toContain("踢出 1");
+    expect(lastReplyText(sendMessage)).toContain("已不在群 1");
+    expect(lastReplyText(sendMessage)).toContain("自己人跳过 2");
+    expect(lastReplyText(sendMessage)).toContain("权限不足 1");
+    expect(lastReplyText(sendMessage)).toContain("查询或请求失败 2");
+    expect(lastReplyText(sendMessage)).toContain("只踢未拉黑");
   });
 
   test("单条意外 rejection 带记录身份落日志，并继续结算同批其它成员", async () => {
@@ -249,8 +250,8 @@ describe("/batch_kick", () => {
       expect.stringMatching(/chat -1001, user 7, record 0, attempt 1/),
       expect.any(Error)
     );
-    expect(lastReplyText()).toContain("踢出 1");
-    expect(lastReplyText()).toContain("查询或请求失败 1");
+    expect(lastReplyText(sendMessage)).toContain("踢出 1");
+    expect(lastReplyText(sendMessage)).toContain("查询或请求失败 1");
   });
 
   test("429 等待期间目标已离群时按 absent 结算，不误报请求失败", async () => {
@@ -259,8 +260,8 @@ describe("/batch_kick", () => {
 
     await handleBatchKickCommand(context());
 
-    expect(lastReplyText()).toContain("已不在群 1");
-    expect(lastReplyText()).toContain("查询或请求失败 0");
+    expect(lastReplyText(sendMessage)).toContain("已不在群 1");
+    expect(lastReplyText(sendMessage)).toContain("查询或请求失败 0");
   });
 
   test("已有黑名单成员不执行只踢，并单独计入交回封禁", async () => {
@@ -274,7 +275,7 @@ describe("/batch_kick", () => {
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(banChatMemberWithOutcome).not.toHaveBeenCalled();
-    expect(lastReplyText()).toContain("黑名单交回封禁 1");
+    expect(lastReplyText(sendMessage)).toContain("黑名单交回封禁 1");
     // 「交回」必须真的交出去：本命令对这条记录一步都没做，不请一次补扫的话
     // 战报那句话是空的，人还坐在群里而没有任何批次、清扫或重试存在。
     expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
@@ -298,8 +299,8 @@ describe("/batch_kick", () => {
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42);
     expect(requestBlocklistResweep).not.toHaveBeenCalled();
-    expect(lastReplyText()).toContain("踢出 0");
-    expect(lastReplyText()).toContain("黑名单交回封禁 1");
+    expect(lastReplyText(sendMessage)).toContain("踢出 0");
+    expect(lastReplyText(sendMessage)).toContain("黑名单交回封禁 1");
   });
 
   test("只踢返回不确定失败但名单已并发拉黑时仍补回永久封禁", async () => {
@@ -318,8 +319,8 @@ describe("/batch_kick", () => {
     await handleBatchKickCommand(context());
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42);
-    expect(lastReplyText()).toContain("黑名单交回封禁 1");
-    expect(lastReplyText()).toContain("查询或请求失败 0");
+    expect(lastReplyText(sendMessage)).toContain("黑名单交回封禁 1");
+    expect(lastReplyText(sendMessage)).toContain("查询或请求失败 0");
   });
 
   test("并发拉黑的补封失败时请求补扫且不报告踢出成功", async () => {
@@ -340,8 +341,8 @@ describe("/batch_kick", () => {
 
     expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
     expect(sweepBlockedMembers).toHaveBeenCalledWith(-1001);
-    expect(lastReplyText()).toContain("踢出 0");
-    expect(lastReplyText()).toContain("查询或请求失败 1");
+    expect(lastReplyText(sendMessage)).toContain("踢出 0");
+    expect(lastReplyText(sendMessage)).toContain("查询或请求失败 1");
   });
 });
 
@@ -369,7 +370,7 @@ describe("身份预取与批次消费必须交错", () => {
     expect(prefetchedAtCall[0]).toBe(0);
     // 第二次预取发生在第一块**已经消费完**之后，而不是一开始就全部取完。
     expect(prefetchedAtCall[1]).toBe(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
-    expect(lastReplyText()).toContain(`的 ${records.length} 条入群记录中的 ${records.length} 条`);
+    expect(lastReplyText(sendMessage)).toContain(`的 ${records.length} 条入群记录中的 ${records.length} 条`);
   });
 
   test("冷读失败时一个人都不动，并如实回执", async () => {
@@ -381,7 +382,7 @@ describe("身份预取与批次消费必须交错", () => {
     // 缺正/负结论时不能按「不在白名单」处置：那正是白名单管理员被误踢的路径。
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
-    expect(lastReplyText()).toContain("一个人都没动");
+    expect(lastReplyText(sendMessage)).toContain("一个人都没动");
   });
 
   test("中途冷读失败时只报已扫描的部分，并说明剩余没动", async () => {
@@ -401,9 +402,9 @@ describe("身份预取与批次消费必须交错", () => {
     expect(kickChatMemberWithOutcome).toHaveBeenCalledTimes(
       IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
     );
-    expect(lastReplyText()).toContain(
+    expect(lastReplyText(sendMessage)).toContain(
       `的 ${records.length} 条入群记录中的 ${IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES} 条`
     );
-    expect(lastReplyText()).toContain("剩下的记录一条都没动");
+    expect(lastReplyText(sendMessage)).toContain("剩下的记录一条都没动");
   });
 });

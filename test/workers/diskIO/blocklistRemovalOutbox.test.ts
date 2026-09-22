@@ -39,15 +39,17 @@ import {
 import {
   pendingBlocklistWrites,
   pendingChatStateWrites,
+  pendingTemporaryAdBypassWrites,
   pendingWhitelistWrites,
   resetStorageDatabaseCache,
 } from "../../../packages/cache/workers/diskIO/storageDatabase";
+import { handleTemporaryAdBypassWrite } from
+  "../../../packages/workers/diskIO/storageDatabase/temporaryAdBypass";
 import { handleChatStateWrite } from
   "../../../packages/workers/diskIO/storageDatabase/chatState";
 import { flushStorageDatabase } from
   "../../../packages/workers/diskIO/storageDatabase/flush";
-import { hydrateStorageDatabase } from
-  "../../../packages/workers/diskIO/storageDatabase/hydration";
+import { hydrateStorageDatabase } from "../../helpers/storageDatabaseHydration";
 import {
   handleIdentityPolicyWrite,
   readIdentityPolicies,
@@ -59,6 +61,7 @@ import type {
   ChatStateWriteDiskMessage,
   IdentityStoragePersistedReply,
   IdentityPolicyWriteDiskMessage,
+  TemporaryAdBypassWriteDiskMessage,
 } from "../../../packages/types/diskIO";
 import type { WhitelistEntryData } from "../../../packages/types/identityPolicy";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../../packages/consts/whitelist";
@@ -538,6 +541,52 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     const restored = hydrateStorageDatabase();
     expect(restored.blocklistEntryCount).toBe(1);
     expect(restored.permissionEntryCount).toBe(1);
+  });
+
+  test("同一窗口里尚未提交的跨表写同样互斥，被拒的写不进入待提交视图", () => {
+    handleIdentityPolicyWrite(whitelistWrite(5, 1), reply);
+    expect((): void => handleIdentityPolicyWrite(blocklistWrite(5, 2), reply))
+      .toThrow("Identity 5 cannot exist in both permission_list and blocklist_entries.");
+    handleIdentityPolicyWrite(blocklistWrite(6, 1), reply);
+    expect((): void => handleIdentityPolicyWrite(whitelistWrite(6, 2), reply))
+      .toThrow("Identity 6 cannot exist in both permission_list and blocklist_entries.");
+    expect([...pendingWhitelistWrites.keys()]).toEqual([5]);
+    expect([...pendingBlocklistWrites.keys()]).toEqual([6]);
+
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    resetStorageDatabaseCache();
+    const restored = hydrateStorageDatabase();
+    expect(restored.blocklistEntryCount).toBe(1);
+    expect(restored.permissionEntryCount).toBe(1);
+  });
+
+  test("黑名单写与临时广告免检累计互斥：两侧都只在待提交视图里时同样拒绝", () => {
+    const now: number = Date.now();
+    const bypass = (id: number, revision: number): TemporaryAdBypassWriteDiskMessage => ({
+      type: "temporaryAdBypassWrite",
+      id,
+      revision,
+      activity: {
+        adBypass: false,
+        adBypassGrantedAt: null,
+        qualifiedDays: 0,
+        sendCount: 1,
+        countedAt: now,
+        qualifiedAt: null,
+      },
+    });
+    handleTemporaryAdBypassWrite(bypass(21, 1), reply);
+    expect((): void => handleIdentityPolicyWrite(blocklistWrite(21, 1), reply))
+      .toThrow("Identity 21 cannot exist in blocklist_entries and temporary_ad_bypass_entries.");
+    handleIdentityPolicyWrite(blocklistWrite(22, 1), reply);
+    expect((): void => handleTemporaryAdBypassWrite(bypass(22, 1), reply))
+      .toThrow("Identity 22 cannot exist in temporary_ad_bypass_entries and blocklist_entries.");
+    expect(pendingBlocklistWrites.has(21)).toBeFalse();
+    expect(pendingTemporaryAdBypassWrites.has(22)).toBeFalse();
+
+    // 墓碑不算存在：同一窗口里先把累计写成墓碑，再拉黑同一身份是合法的。
+    handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id: 21, revision: 2, activity: null }, reply);
+    expect((): void => handleIdentityPolicyWrite(blocklistWrite(21, 2), reply)).not.toThrow();
   });
 
   test("群状态第 25 条自动事务提交并精确 ACK，第 26 条在 Worker owner 再次拒绝", () => {

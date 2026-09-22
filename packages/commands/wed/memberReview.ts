@@ -21,6 +21,8 @@ import { removeWedMember } from "./persistence";
  * PARTICIPANT_ID_INVALID 拒绝该用户 ID）且没有新在群观察的成员。
  * 某群集合在复核期间被替换或清除时只结束该群，继续下一个群；整轮只因
  * `review.controller` 取消而提前结束。
+ * 查询用 getChatMember，只对群管理员机器人保证可用；机器人不是管理员的群里查询失败即
+ * 保留成员，本轮删不掉人，见 docs/cn/04-invariants.md。
  */
 async function reviewWedMembers(review: WedMemberReview): Promise<void> {
   let nextCheckAt: number = 0;

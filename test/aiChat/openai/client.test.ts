@@ -6,6 +6,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type OpenAI from "openai";
 
 const create = mock(async (..._args: unknown[]): Promise<unknown> => ({
@@ -43,7 +44,7 @@ mock.module("../../../packages/config/agent", () => ({
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const {

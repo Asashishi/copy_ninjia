@@ -15,7 +15,7 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const match: RegExpExecArray | null = ICON_SUBCOMMAND_PATTERN.exec(ctx.match.trim());
-  const subcommand: string | undefined = match?.[1];
+  const subcommand: string | undefined = match?.[1]?.toLowerCase();
   if (match === null || (subcommand === "reset" && match[2] !== undefined)) {
     await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).ICON_USAGE_TEXT, replyToMessageId: messageId });
     return;

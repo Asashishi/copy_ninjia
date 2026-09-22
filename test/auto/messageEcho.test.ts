@@ -55,6 +55,9 @@ describe("复读的话题落点", () => {
       fromChatId: CHAT_ID,
       messageId: 5,
       messageThreadId: 42,
+      caption: "今天天气不错",
+      showCaptionAboveMedia: undefined,
+      videoStartTimestamp: undefined,
     });
   });
 
@@ -67,7 +70,6 @@ describe("复读的话题落点", () => {
         chat: { id: CHAT_ID, type: "supergroup", title: "Test Group" },
         text: "今天天气不错",
       } as unknown as Message,
-      // nya 模式才走文本变换分支；无模式的纯文本会退化成 copyMessage。
       mode: "nya",
       messageThreadId: 42,
     });
@@ -99,12 +101,7 @@ describe("复读的命令守卫", () => {
       mode: undefined,
     });
 
-    expect(copyMessage).toHaveBeenCalledWith({
-      chatId: CHAT_ID,
-      fromChatId: CHAT_ID,
-      messageId: 5,
-      messageThreadId: undefined,
-    });
+    expect(copyMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 5, caption: "今天天气不错" }));
   });
 
   test("没有 caption 的媒体消息照常复读", async () => {
@@ -161,12 +158,7 @@ describe("复读的命令守卫", () => {
       mode: undefined,
     });
 
-    expect(copyMessage).toHaveBeenCalledWith({
-      chatId: CHAT_ID,
-      fromChatId: CHAT_ID,
-      messageId: 5,
-      messageThreadId: undefined,
-    });
+    expect(copyMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 5, caption: "要么 a/b 要么 c" }));
   });
 
   test("纯文本命令仍然不复读", async () => {
@@ -187,7 +179,7 @@ describe("复读的命令守卫", () => {
   });
 });
 
-/** 纯文本（无 entity）才会走文本变换分支。 */
+/** 纯文字消息。 */
 function plainTextMessage(text: string): Message {
   return {
     message_id: 9,
@@ -234,5 +226,84 @@ describe("变换之后的文本同样要过命令守卫", () => {
 
     expect(echoed).toBe("a/b");
     expect(sendMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: "a/b" });
+  });
+});
+
+describe("文字与图注一律按字符串处理", () => {
+  test("带链接与 @ 的文字照样变换，按字符串发送，不再原样复制；原消息的预览设置照搬", async () => {
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: {
+        ...plainTextMessage("看 https://example.com @alice"),
+        entities: [{ type: "url", offset: 2, length: 19 }, { type: "mention", offset: 22, length: 6 }],
+        link_preview_options: { is_disabled: true },
+      } as unknown as Message,
+      mode: "nya",
+      messageThreadId: 3,
+    });
+    expect(echoed).toBe("看 https://example.com @alice 喵~");
+    expect(copyMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: "看 https://example.com @alice 喵~", messageThreadId: 3, linkPreviewOptions: { is_disabled: true },
+    });
+  });
+
+  test("没有模式的纯文字同样按字符串重新发送", async () => {
+    expect(await echoMessage({ chatId: CHAT_ID, message: plainTextMessage("原样"), mode: undefined })).toBe("原样");
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: "原样" });
+    expect(copyMessage).not.toHaveBeenCalled();
+  });
+
+  test("图注照样变换，媒体复制并换成新图注", async () => {
+    await echoMessage({ chatId: CHAT_ID, message: mediaMessage("你好"), mode: "reverse" });
+    expect(copyMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 5, caption: "好你" }));
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("带剧透的视频：换图注时照搬图注位置与起播时间，剧透由 Telegram 复制时保留；没有图注时不传图注位置", async () => {
+    const video = (fields: Record<string, unknown>): Message => ({
+      message_id: 10,
+      date: 1,
+      chat: { id: CHAT_ID, type: "supergroup" },
+      video: { file_id: "v", file_unique_id: "vu", width: 1, height: 1, duration: 30, start_timestamp: 12 },
+      has_media_spoiler: true,
+      show_caption_above_media: true,
+      ...fields,
+    }) as unknown as Message;
+    await echoMessage({ chatId: CHAT_ID, message: video({ caption: "看这里" }), mode: "nya" });
+    expect(copyMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID, fromChatId: CHAT_ID, messageId: 10, messageThreadId: undefined,
+      caption: "看这里 喵~", showCaptionAboveMedia: true, videoStartTimestamp: 12,
+    });
+    await echoMessage({ chatId: CHAT_ID, message: video({}), mode: "nya" });
+    expect(copyMessage).toHaveBeenLastCalledWith({
+      chatId: CHAT_ID, fromChatId: CHAT_ID, messageId: 10, messageThreadId: undefined,
+      caption: undefined, showCaptionAboveMedia: undefined, videoStartTimestamp: 12,
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("付费媒体只发文字；投票这类没有文字也没有文件的消息原样复制", async () => {
+    await echoMessage({
+      chatId: CHAT_ID,
+      message: { message_id: 8, date: 1, chat: { id: CHAT_ID, type: "supergroup" }, paid_media: { star_count: 1, paid_media: [] }, caption: "付费" } as unknown as Message,
+      mode: "nya",
+    });
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: "付费 喵~" });
+    expect(copyMessage).not.toHaveBeenCalled();
+
+    await echoMessage({
+      chatId: CHAT_ID,
+      message: { message_id: 9, date: 1, chat: { id: CHAT_ID, type: "supergroup" }, poll: { id: "p", question: "?" } } as unknown as Message,
+      mode: "nya",
+    });
+    expect(copyMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: 9, caption: undefined }));
+  });
+
+  test("变换后超过正文或图注上限时整条丢弃", async () => {
+    expect(await echoMessage({ chatId: CHAT_ID, message: plainTextMessage("x".repeat(4094)), mode: "nya" })).toBeUndefined();
+    expect(await echoMessage({ chatId: CHAT_ID, message: mediaMessage("x".repeat(1022)), mode: "nya" })).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(copyMessage).not.toHaveBeenCalled();
   });
 });

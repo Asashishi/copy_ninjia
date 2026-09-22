@@ -36,14 +36,14 @@ const METRIC_SENTENCE_FILES: readonly string[] = [
   "docs/cn/05-dev-workflow.md",
   "docs/en/05-dev-workflow.md",
   "docs/ja/05-dev-workflow.md",
-  "pictures/coverage_light.svg",
-  "pictures/coverage_dark.svg",
+  "public/coverage_light.svg",
+  "public/coverage_dark.svg",
 ];
 
 /** 五个数字各占一格画出来的位置：两张覆盖率图的数值单元。 */
 const SVG_FILES: readonly string[] = [
-  "pictures/coverage_light.svg",
-  "pictures/coverage_dark.svg",
+  "public/coverage_light.svg",
+  "public/coverage_dark.svg",
 ];
 
 /** 只携带测试数与行覆盖率的位置：三语 README 顶部的两个 shields 徽章。 */

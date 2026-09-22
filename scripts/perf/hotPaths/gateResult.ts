@@ -20,6 +20,7 @@
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../../packages/libs/record";
 import { writePerformanceResultEntry } from "../performanceResult";
 import { HOT_PATH_PROFILE_REPEATS } from "../../../packages/consts/performance";
+import { errorMessage } from "../../../packages/libs/errorMessage";
 
 /** 校准时使用的 Bun 运行时；同版本不同构建也会混测，两项都要对上。 */
 export interface HotPathGateRuntimeCalibration {
@@ -300,7 +301,7 @@ export async function readHotPathGateCalibration(
   try {
     return parseCalibrationDocument(await readDocument(path));
   } catch (error: unknown) {
-    const reason: string = error instanceof Error ? error.message : String(error);
+    const reason: string = errorMessage(error);
     throw new Error(`${path}: ${reason}`, { cause: error });
   }
 }

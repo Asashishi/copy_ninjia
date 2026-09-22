@@ -11,3 +11,5 @@ export * from "./teasing/aiChat_rateLimit";
 export * from "./teasing/antiRaid_verification";
 export * from "./teasing/notices";
 export * from "./teasing/luck";
+export * from "./teasing/hImage";
+export * from "./teasing/info";

@@ -1,4 +1,5 @@
 import type { AiTextResult } from "./../../types/aiChat/provider";
+import type { MediaInputModalityState } from "../../types/states/mediaInputSupport";
 /** 媒体视觉描述请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
 export const MEDIA_DESCRIPTION_ERROR_LABEL: string = "AI image understanding API";
 
@@ -73,3 +74,16 @@ export const MEDIA_TASK_REJECTED_RESULT: Readonly<AiTextResult> = { ok: false, r
 
 /** AI 媒体主动取消时的共享不可重试结果，不归因于供应商。 */
 export const MEDIA_CANCELLED_RESULT: Readonly<AiTextResult> = { ok: false, retryable: false };
+
+/**
+ * media 模态从未探测过的初始状态，属 states/mediaInputSupport.ts。两种模态各取
+ * 这一份共享只读对象；状态机只整体替换，不就地改写，因此共享不会串台。
+ * 配置代次 0 是第一代，agent.json 热重载替换 media 能力时由 resetMediaInputSupport
+ * 递增。
+ */
+export const INITIAL_MEDIA_INPUT_STATE: Readonly<MediaInputModalityState> = {
+  support: "unknown",
+  transientFailures: 0,
+  nextProbeAt: 0,
+  configGeneration: 0,
+};

@@ -3,8 +3,9 @@ import type { KeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner"
 import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal";
 
 /**
- * 私密模式状态机（packages/workers/antiRaid/lockdownRuntime.ts）的内存状态；
- * verificationRuntime.ts 只读取 lockdownEntries 判断当前是否处于私密模式。
+ * 私密模式状态机（packages/workers/antiRaid/lockdownRuntime.ts 及同目录的
+ * lockdownApi.ts、lockdownPersistence.ts）的内存状态；verificationEvents.ts 只读取
+ * lockdownEntries 判断当前是否处于私密模式。
  */
 
 /**
@@ -12,7 +13,13 @@ import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal
  * 静默超时、群停用或 Worker 停止时清除；Worker 重建后为空并从下一次入群计数。
  */
 export const joinWindows: Map<number, JoinWindow> = new Map();
-/** 每群 lockdown 状态机与恢复 timer；解锁、停用或 Worker 停止时清除。 */
+/**
+ * 每群 lockdown 状态机与恢复 timer；解锁、停用或 Worker 停止时清除。
+ * 容量：每个受管群最多一条，上界 STATE_MANAGED_CHAT_LIMIT（见 consts/storage.ts）；
+ * 不设淘汰——条目要么随恢复结束删除，要么随群停用删除。Worker 崩溃重建：由
+ * 主线程的 lockdown 镜像重放，未恢复的意图按 ChatState.lockdown（SQLite
+ * `chat_states` 持久化）里的 LockdownRecord 接管。
+ */
 export const lockdownEntries: Map<number, LockdownEntry> = new Map();
 /**
  * 每群「暂停再次触发私密模式」的绝对截止时刻（ms）。
@@ -26,7 +33,13 @@ export const lockdownEntries: Map<number, LockdownEntry> = new Map();
  * 无条目 = 不抑制触发，这是 fail-safe 方向（宁可多试一次也不漏防）。
  */
 export const lockdownRetriggerCooldowns: Map<number, number> = new Map();
-/** 同一群的加锁、恢复和纠偏 API 调用共用的串行链。 */
+/**
+ * 同一群的加锁、恢复和纠偏 API 调用共用的串行链。
+ * 填充：lockdownApiRunner 为某群排入第一个任务时建链。清理：该群的链排空后由
+ * 执行器自动删除条目，Worker stop 时随 runner 一起丢弃。容量：同时有在途私密
+ * 模式调用的群数，上界为受管群数。Worker 崩溃重建：不重放——新 isolate 从空链
+ * 开始，未结算的 Telegram 调用由主线程镜像重新驱动。
+ */
 export const lockdownApiChains: Map<number, Promise<void>> = new Map();
 /**
  * 私密模式 Telegram API 的按群串行调度器，与 lockdownApiChains 共同存活；

@@ -289,7 +289,15 @@ export interface WedMembersDeletedPersistedReply {
   readonly revision: number;
 }
 
+/** 贴纸目录与目录项已 durable；主线程据此释放退出白名单的镜像。 */
+export interface StickerCatalogPersistedReply {
+  readonly type: "stickerCatalogPersisted";
+  readonly pack: string;
+  readonly revision: number;
+}
+
 export type DiskIOReply =
+  | StickerCatalogPersistedReply
   | WedMembersDeletedPersistedReply
   | MidnightMaintenanceReply
   | DiskOperationBatchAcceptedReply

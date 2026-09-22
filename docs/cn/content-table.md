@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../../pictures/tagline_light.svg" width="780">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../../public/tagline_light.svg" width="780">
 </picture>
 
 # 📚 Copy Ninjia 开发者文档
@@ -30,7 +30,9 @@
 | 🛠️ **新增/修改功能** | 添加命令、调参、新增 AI 工具及 schema 变更的分步指南 | [📖 06 修改配方](06-modification-guide.md) |
 | 🛡️ **生产运维** | systemd 部署、硬件参考、`COPY_NINJIA_DATA_ROOT`、备份与故障排查 | [📖 07 运维手册](07-operations.md) |
 | 🎮 **查命令** | 全部命令、权限口径与行为细节（根 README 只留概述） | [📖 08 命令参考](08-commands.md) |
+| 🖼️ **图库与定时任务** | 收图、内容去重、单图与相册发送、时区与路径基准 | [📖 配置说明](../../config_example/README/zh.md) |
 | 📊 **看性能读数** | 冷热路径、总吞吐与总读写、端到端链路耗时的发布基准 | [📖 09 性能基准](09-performance.md) |
+| ❓ **排查没有回复** | 机器人在运行却不回应时的逐条排查清单 | [📖 10 常见问题](10-faq.md) |
 
 ---
 
@@ -38,8 +40,8 @@
 
 1. **[01 环境搭建与首次运行](01-getting-started.md)**
    - 基础依赖 (Bun 1.4.2 / Linux / Bot Token / AI 供应商 API Key)
-   - `config/telegram.json` 等部署配置的必填字段
-   - Telegram BotFather 配置（Privacy Mode / Admin 权限 / Inline Mode）
+   - `config/bot.json` 等部署配置的必填字段
+   - Telegram BotFather 配置（Privacy Mode / Admin 权限 / Inline Mode / Bot-to-Bot）
    - 首次启动与机器人入群后的 `/init enable` 握手流程
 
 2. **[02 架构总览](02-architecture.md)**
@@ -59,7 +61,7 @@
    - 持久化：落盘与快照契约、群状态与 `chat_states`、黑名单与广告检测、确认边界与停机、文件权限
 
 5. **[05 开发流程与质量门禁](05-dev-workflow.md)**
-   - `bun run check` 7 级串行流水线：install 脚本语法 + 安装隔离 + 规范检查 + Lint + Typecheck + 带覆盖率统计的全量测试 + 热路径门禁
+   - `bun run check` 8 级串行流水线：install 脚本语法 + 安装隔离 + 规范检查 + Lint + Typecheck + 带覆盖率统计的全量测试 + 固定种子乱序全量测试 + 热路径门禁
    - 测试环境隔离机制与临时数据根沙盒
    - 提交规范与发布前故障注入测试 `bun run test:fault-injection`
 
@@ -86,6 +88,9 @@
    - 每项三轮取平均，附最小值、最大值与变异系数
    - 每轮的总吞吐、总读写与 mock 数据根落盘量
 
+10. **[10 常见问题](10-faq.md)**
+    - 机器人在运行却没有回复：初始化、隐私模式、AI 触发条件、私聊、提示自动删除、Inline Mode、Bot-to-Bot、默认关闭的防护功能与进程状态
+
 ---
 
 ## 📝 文档维护约定
@@ -99,9 +104,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_light.svg">
-  <img alt="Copy Ninjia Footer" src="../../pictures/footer_light.svg" width="580">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_light.svg">
+  <img alt="Copy Ninjia Footer" src="../../public/footer_light.svg" width="580">
 </picture>
 
 </div>

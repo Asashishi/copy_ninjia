@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, statSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  AppendOnlyFileFormatError,
   appendToDayFile,
   openAppendOnlyFile,
   openDayFile,
@@ -71,6 +72,41 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
 
     await expect(openDayFile(dir, "2026-07-16")).rejects.toThrow("could not be parsed; refusing to repair this file");
     expect(await Bun.file(path).text()).toBe(content);
+  });
+
+  test("允许修复时，裁尾也救不回的内容按 AppendOnlyFileFormatError 拒绝，字节不变", async () => {
+    const path: string = join(dir, "2026-07-16.json");
+    for (const content of ["not-json", "[1, 2"]) {
+      await Bun.write(path, content);
+
+      const error: unknown = await openRepairableDay("2026-07-16").catch((thrown: unknown): unknown => thrown);
+      expect(error).toBeInstanceOf(AppendOnlyFileFormatError);
+      expect((error as Error).message).toContain("could not be parsed or repaired");
+      expect(await Bun.file(path).text()).toBe(content);
+    }
+  });
+
+  test("允许修复时，合法但顶层不是对象的 JSON 仍拒绝，字节不变", async () => {
+    const path: string = join(dir, "2026-07-16.json");
+    await Bun.write(path, "[]");
+
+    const error: unknown = await openRepairableDay("2026-07-16").catch((thrown: unknown): unknown => thrown);
+    expect(error).toBeInstanceOf(AppendOnlyFileFormatError);
+    expect((error as Error).message).toContain("must contain a top-level JSON object");
+    expect(await Bun.file(path).text()).toBe("[]");
+  });
+
+  test("结尾排版不规范：不允许修复时拒绝且字节不变，允许修复时按规范排版重写", async () => {
+    const path: string = join(dir, "2026-07-16.json");
+    const content: string = "{\"a\":1}";
+    await Bun.write(path, content);
+
+    await expect(openDayFile(dir, "2026-07-16")).rejects.toThrow("must use the canonical append-only JSON object formatting");
+    expect(await Bun.file(path).text()).toBe(content);
+
+    const state: DayFileState = await openRepairableDay("2026-07-16");
+    expect(await Bun.file(path).text()).toBe("{\n  \"a\": 1\n}");
+    expect(state).toEqual({ day: "2026-07-16", size: statSync(path).size, empty: false });
   });
 
   test("从空文件开始追加一条，结果是合法 JSON 且值正确", async () => {

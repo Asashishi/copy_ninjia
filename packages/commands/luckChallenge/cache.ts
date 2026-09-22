@@ -22,9 +22,11 @@ import { deriveLuckDraw } from "./draw";
 import { ensureLuckReceiptSecret, onDiskIORespawn, onLuckAppendStalled, postDiskIO } from "../../infra/diskIO";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
-/** 进程内是否发生过跨东京零点的日切换（即 adoptLuckSecret 清空过前一天的
- *  pending）。见 promotePendingDraw：切换后 pending 未命中不再允许重建派生。 */
-
+/**
+ * 采用某个东京日的持久化密钥，并清空日缓存与 pending。换日采用时置
+ * luckRuntimeState.daySwitchedInProcess，标记进程内已跨过东京零点（见
+ * promotePendingDraw：此后 pending 未命中不允许重建派生）。
+ */
 function adoptLuckSecret(secret: LuckReceiptSecret): void {
   if (luckCacheState.dayKey && luckCacheState.dayKey !== secret.day) {
     luckRuntimeState.daySwitchedInProcess = true;

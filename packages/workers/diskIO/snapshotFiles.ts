@@ -29,16 +29,7 @@ import {
 } from "../../libs/persistedSnapshotCodec";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
 import { isCanonicalDateKey } from "../../libs/time";
-import { assertFileReadableWritable, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
-
-/** 清理已确认无用的文件；删除失败保留现场，由下一轮维护重试。 */
-async function tryUnlink(path: string): Promise<void> {
-  try {
-    await Bun.file(path).delete();
-  } catch {
-    // 删除失败（权限问题等）不影响主流程，下次同样的清理还会再试一次。
-  }
-}
+import { assertFileReadableWritable, bestEffortUnlink, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
 
 /** 贴纸目录快照的 inspect 结果：待载入的快照、孤儿快照与 *.tmp 残留三类路径。 */
 export interface StickerCatalogRecoveryInspection {
@@ -97,8 +88,8 @@ export async function maintainStickerCatalogFiles(
   inspection: StickerCatalogRecoveryInspection
 ): Promise<void> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) await tryUnlink(path);
-  for (const path of inspection.orphanPaths) await tryUnlink(path);
+  for (const path of inspection.temporaryPaths) await bestEffortUnlink(path);
+  for (const path of inspection.orphanPaths) await bestEffortUnlink(path);
 }
 
 /** 覆盖式写入某个白名单贴纸包的目录快照（tmp + fsync + rename 原子落盘），
@@ -150,7 +141,7 @@ export async function cleanupStaleLuckFiles(
   todayKey: string,
   names: readonly string[] = readdirSync(LUCK_MEMORY_DIR)
 ): Promise<void> {
-  for (const path of inspectStaleLuckFiles(todayKey, names)) await tryUnlink(path);
+  for (const path of inspectStaleLuckFiles(todayKey, names)) await bestEffortUnlink(path);
 }
 
 export interface LuckFileStateHolder {
@@ -269,7 +260,7 @@ export async function maintainLuckDay(
   inspection: LuckDayRecoveryInspection
 ): Promise<void> {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) await tryUnlink(path);
+  for (const path of inspection.temporaryPaths) await bestEffortUnlink(path);
   await cleanupStaleLuckFiles(todayKey, inspection.names);
 }
 

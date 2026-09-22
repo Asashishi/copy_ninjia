@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
@@ -15,12 +16,7 @@ mock.module("../../../packages/aiChat/provider", () => ({
 }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: logError,
-  },
+  logger: loggerStub({ error: logError }),
 }));
 mock.module("../../../packages/workers/aiChat/timeSentence", () => ({
   currentTimeSentence: (): string => "当前实际时间：测试。",

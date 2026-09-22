@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { getActiveProxySendTarget, getChatState } from "./storage/stateStore";
-import { SUPER_ADMIN_USER_ID } from "../config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import type { Chat, Message } from "grammy/types";
 
 /**

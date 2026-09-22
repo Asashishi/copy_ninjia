@@ -242,7 +242,7 @@ export function boundSampleContext(
  * 预算有剩余时再从紧挨着的已判上下文往回补：拆开发的「加我 / 微信 / xxx」
  * 要合起来才判得出来。补进来的上下文不影响水位，它们本来就已经判过。
  *
- * 单独拆出来还因为**命中样本要记的正是这一份**：没入选的消息模型根本没读过。
+ * 命中样本只记录本函数选出的消息，保持样本与模型实际输入一致。
  */
 export function selectAdBundleEntries(bundle: AdMessageBundle): AdBundleSelection {
   let budget: number = AD_DETECT_BUNDLE_MAX_CHARS;

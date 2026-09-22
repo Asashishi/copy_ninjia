@@ -1,4 +1,5 @@
 import type { Message, MessageEntity } from "grammy/types";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { describe, expect, test } from "bun:test";
 import { CHAT_QA_ANSWER_MAX_CHARS, CHAT_QA_QUESTION_MAX_CHARS, QA_TRUNCATION_MARK } from "../../packages/consts/qa";
 import { QA_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/qa";
@@ -117,7 +118,7 @@ describe("表单字段解析", () => {
 
 describe("表单提示", () => {
   test("提示里写着两个标签，未填项显示成未设置", () => {
-    const prompt: string = renderQaFormPrompt(undefined, undefined);
+    const prompt: string = renderQaFormPrompt(undefined, undefined, ATMOSPHERE_TEXTS.teasing);
 
     expect(prompt).toContain("问题:");
     expect(prompt).toContain("回答:");
@@ -125,7 +126,7 @@ describe("表单提示", () => {
   });
 
   test("已收到的项照原样摆出来", () => {
-    const prompt: string = renderQaFormPrompt("怎么入群？", undefined);
+    const prompt: string = renderQaFormPrompt("怎么入群？", undefined, ATMOSPHERE_TEXTS.teasing);
 
     expect(prompt).toContain("怎么入群？");
     expect(prompt).toContain(QA_COMMAND_TEXTS.formUnset);
@@ -137,7 +138,7 @@ describe("表单提示", () => {
     // 拿到 400 并被 editQaForm 丢弃，表单会一直停在旧内容上。
     const question: string = "问".repeat(CHAT_QA_QUESTION_MAX_CHARS);
     const answer: string = "答".repeat(CHAT_QA_ANSWER_MAX_CHARS);
-    const prompt: string = renderQaFormPrompt(question, answer);
+    const prompt: string = renderQaFormPrompt(question, answer, ATMOSPHERE_TEXTS.teasing);
 
     expect(prompt.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_MAX_CHARS);
     expect(prompt).toContain(question);
@@ -146,7 +147,7 @@ describe("表单提示", () => {
 
   test("装得下时一个字都不截，也不补省略号", () => {
     const answer: string = "答".repeat(CHAT_QA_ANSWER_MAX_CHARS);
-    const prompt: string = renderQaFormPrompt(undefined, answer);
+    const prompt: string = renderQaFormPrompt(undefined, answer, ATMOSPHERE_TEXTS.teasing);
 
     expect(prompt.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_MAX_CHARS);
     expect(prompt).toContain(answer);
@@ -159,7 +160,7 @@ describe("表单提示", () => {
     const question: string = "问".repeat(CHAT_QA_QUESTION_MAX_CHARS);
     for (let padding: number = 0; padding < 4; padding++) {
       const answer: string = "答".repeat(padding) + "🌟".repeat(CHAT_QA_ANSWER_MAX_CHARS);
-      const prompt: string = renderQaFormPrompt(question, answer.slice(0, CHAT_QA_ANSWER_MAX_CHARS));
+      const prompt: string = renderQaFormPrompt(question, answer.slice(0, CHAT_QA_ANSWER_MAX_CHARS), ATMOSPHERE_TEXTS.teasing);
 
       expect(prompt.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_MAX_CHARS);
       expect(prompt).not.toContain("�");

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
 import { settleTestBatch } from "../libs/helpers";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const setWhitelistMembership = mock((): {
@@ -16,7 +17,8 @@ const hasWhitelistPermission = mock(
   (id: number, _key: string): boolean => id === 1
 );
 
-mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
@@ -29,8 +31,8 @@ mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked 
 
 const {
   handleWhiteCommand,
-  parseWhiteAction,
 } = await import("../../packages/commands/white");
+const { parseToggleAction } = await import("../../packages/commands/arguments");
 const {
   updateCachedIdentity,
 } = await import("../../packages/users/senderIdentity");
@@ -51,11 +53,13 @@ function context(
   match: string,
   replyToMessage?: object
 ): never {
+  const chat = { id: -1001, type: "supergroup" };
   return {
-    chat: { id: -1001, type: "supergroup" },
+    chat,
     from: { id: userId, first_name: "Admin", username: "admin" },
     msg: {
       message_id: 10,
+      chat,
       ...(replyToMessage === undefined
         ? {}
         : { reply_to_message: replyToMessage }),
@@ -113,9 +117,9 @@ beforeEach(() => {
 
 describe("/white", () => {
   test("动作大小写不敏感且只接受 enable/disable", () => {
-    expect(parseWhiteAction("ENABLE")).toBe("enable");
-    expect(parseWhiteAction("disable")).toBe("disable");
-    expect(parseWhiteAction("true")).toBeUndefined();
+    expect(parseToggleAction("ENABLE")).toBe("enable");
+    expect(parseToggleAction("disable")).toBe("disable");
+    expect(parseToggleAction("true")).toBeUndefined();
   });
 
   test("非超级管理员收到权限提示，且不修改白名单", async () => {
@@ -124,7 +128,7 @@ describe("/white", () => {
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("哪来的资格"),
+      text: ATMOSPHERE_TEXTS.teasing.WHITE_COMMAND_TEXTS.rejection("@admin"),
       replyToMessageId: 10,
     });
   });
@@ -230,7 +234,7 @@ describe("/white", () => {
     }));
   });
 
-  test("黑名单身份必须先 /unblock，不能直接加入白名单", async () => {
+  test("黑名单身份必须先 /block disable，不能直接加入白名单", async () => {
     isUserBlocked.mockImplementation(
       (id: number): boolean => id === 100 || id === -1002233445566
     );
@@ -239,7 +243,7 @@ describe("/white", () => {
 
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("先用 /unblock"),
+      text: expect.stringContaining("先用 /block disable"),
     }));
 
     await handleWhiteCommand(context(1, "-1002233445566 enable"));

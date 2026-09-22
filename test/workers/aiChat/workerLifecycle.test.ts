@@ -1,5 +1,6 @@
 import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type { AgentDeploymentConfig } from "../../../packages/types/config";
 
@@ -22,6 +23,9 @@ const flushDirtyStickerCatalogs = mock((emit: (event: unknown) => void): void =>
   emit({ type: "stickerCatalogSnapshot", name: "pack" });
 });
 const hydrateStickerCatalogs = mock((_catalogs: unknown): void => { calls.push("hydrateCatalogs"); });
+const pruneStickerCatalogs = mock((_packs: readonly string[]): void => { calls.push("pruneCatalogs"); });
+const pruneStickerSets = mock((_packs: readonly string[]): void => { calls.push("pruneSets"); });
+mock.module("../../../packages/aiChat/ai/stickers/sets", () => ({ pruneStickerSets }));
 const getStickerConfig = mock(() => ({ packs: ["pack"] }));
 const adoptStickerConfig = mock((_config: unknown): void => {});
 const startWeatherRefreshLoop = mock((): void => { calls.push("weather"); });
@@ -45,6 +49,7 @@ const quiesceAiChatReplies = mock(async (): Promise<void> => { calls.push("drain
 const initTelegramClients = mock((): void => { calls.push("telegram"); });
 const currentMood = mock((_chatId: number) => ({ name: "平静", weight: 1, instruction: "" }));
 const switchMood = mock((_chatId: number) => ({ name: "开心", weight: 1, instruction: "" }));
+const refreshChatMoods = mock((): void => { calls.push("refreshMoods"); });
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({
@@ -52,6 +57,7 @@ mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({
   drainStickerCatalogTasks,
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
+  pruneStickerCatalogs,
   retryIncompleteStickerCatalogs,
 }));
 mock.module("../../../packages/config/stickers", () => ({
@@ -71,19 +77,22 @@ mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
 mock.module("../../../packages/workers/aiChat/mediaIngest", () => ({ recordChatMedia }));
 mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   generateAndSendReply,
-  invalidateChatReplies,
-  quiesceAiChatReplies,
   drainPendingReplyQueues,
 }));
+mock.module("../../../packages/workers/aiChat/replyGeneration", () => ({
+  invalidateChatReplies,
+  quiesceAiChatReplies,
+}));
 mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }));
-mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMood, switchMood }));
+mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMood, refreshChatMoods, switchMood }));
 mock.module("../../../packages/infra/logger", () => ({
   acceptForwardedLogBatch: (): boolean => false,
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const worker = await import("../../../packages/workers/aiChatWorker");
-const { botInfoState, superAdminUserIdState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { botInfoState, superAdminUserIdState, defaultAtmosphereState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { stickerMenuRevision } = await import("../../../packages/cache/workers/aiChat/stickers/menu");
 const { agentDeploymentConfigCache } = await import("../../../packages/cache/perThread/config");
 
 /** 主线程投递过来的那一代快照；断言 Worker 原样收进 holder，不另行读盘。 */
@@ -112,6 +121,8 @@ beforeEach(() => {
     drainStickerCatalogTasks,
     flushDirtyStickerCatalogs,
     hydrateStickerCatalogs,
+    pruneStickerCatalogs,
+    pruneStickerSets,
     getStickerConfig,
     adoptStickerConfig,
     startWeatherRefreshLoop,
@@ -130,6 +141,7 @@ beforeEach(() => {
     initTelegramClients,
     currentMood,
     switchMood,
+    refreshChatMoods,
     loggerError,
   ]) mocked.mockClear();
   quiesceAiChatReplies.mockImplementation(async (): Promise<void> => { calls.push("drainReplies"); });
@@ -144,13 +156,12 @@ afterAll(() => {
 describe("AI Chat Worker lifecycle", () => {
   test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", async () => {
     const messages: AiChatWorkerMessage[] = [
-      {
+      { defaultAtmosphere: "plain",
         type: "init",
         botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
         superAdminUserId: 1,
         agent: injectedAgentConfig,
         mood: { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] },
-        reactions: { emotionKeywords: {} },
         stickers: { packs: ["pack"] },
         persona: "测试人设",
       },
@@ -192,8 +203,8 @@ describe("AI Chat Worker lifecycle", () => {
       { type: "hydrate", memories: new Map<number, string>() },
       { type: "hydrateStickerCatalog", catalogs: new Map<string, string>() },
       { type: "flushMemory", flushId: 8 },
-      { type: "invalidateChat", chatId: -1001, purgeMemory: false, requestId: 1 },
-      { type: "invalidateChat", chatId: -1002, purgeMemory: true, requestId: 2 },
+      { type: "invalidateChat", chatId: -1001, requestId: 1 },
+      { type: "invalidateChat", chatId: -1002, requestId: 2 },
       { type: "queryMood", chatId: -1001, requestId: 3, deadlineAt: Number.MAX_SAFE_INTEGER },
       { type: "switchMood", chatId: -1001, requestId: 4, deadlineAt: Number.MAX_SAFE_INTEGER },
     ];
@@ -203,6 +214,7 @@ describe("AI Chat Worker lifecycle", () => {
 
     expect(botInfoState.current?.id).toBe(99);
     expect(superAdminUserIdState.current).toBe(1);
+    expect(defaultAtmosphereState.current).toBe("plain");
     // 配置快照进 holder，且是主线程投来的那一个对象本身：本线程此后不读盘。
     expect(agentDeploymentConfigCache.current).toBe(injectedAgentConfig);
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
@@ -224,8 +236,12 @@ describe("AI Chat Worker lifecycle", () => {
     expect(hydrateMemories).toHaveBeenCalledTimes(1);
     expect(hydrateStickerCatalogs).toHaveBeenCalledTimes(1);
     expect(invalidateChatReplies).toHaveBeenCalledTimes(2);
+    // invalidateChat 恒带记忆清理：主线程只有「失效并删记忆」这一条路。
+    expect(purgeChatMemory).toHaveBeenCalledTimes(2);
+    expect(purgeChatMemory).toHaveBeenCalledWith(-1001);
     expect(purgeChatMemory).toHaveBeenCalledWith(-1002);
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 8 });
+    expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1001 });
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1002 });
     expect(postMessage).toHaveBeenCalledWith({ type: "chatInvalidated", chatId: -1001, requestId: 1 });
     expect(postMessage).toHaveBeenCalledWith({ type: "chatInvalidated", chatId: -1002, requestId: 2 });
@@ -233,6 +249,59 @@ describe("AI Chat Worker lifecycle", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "moodQueried", chatId: -1001, requestId: 3, moodName: "平静" });
     expect(switchMood).toHaveBeenCalledWith(-1001);
     expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 4, moodName: "开心" });
+  });
+
+  test("configReload 只替换变化的领域并失效各自的派生状态", () => {
+    worker.handleAiChatWorkerMessage({ defaultAtmosphere: "plain",
+      type: "init",
+      botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
+      superAdminUserId: 1,
+      agent: injectedAgentConfig,
+      mood: { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] },
+      stickers: { packs: ["pack"] },
+      persona: "测试人设",
+    });
+    ensureStickerCatalogs.mockClear();
+    pruneStickerCatalogs.mockClear();
+    adoptStickerConfig.mockClear();
+
+    const reloadedAgent: AgentDeploymentConfig = {
+      ...injectedAgentConfig,
+      text: { ...injectedAgentConfig.text, model: "reloaded-text" },
+    };
+    worker.handleAiChatWorkerMessage({ type: "configReload", agent: reloadedAgent, mood: undefined, stickers: undefined });
+    expect(agentDeploymentConfigCache.current).toBe(reloadedAgent);
+    expect(refreshChatMoods).not.toHaveBeenCalled();
+    expect(adoptStickerConfig).not.toHaveBeenCalled();
+
+    const stickers = { packs: ["pack", "new_pack"] };
+    const menuRevision: number = stickerMenuRevision.current;
+    worker.handleAiChatWorkerMessage({
+      type: "configReload",
+      agent: undefined,
+      mood: { moods: [{ name: "开心", weight: 100, instruction: "开心。" }] },
+      stickers,
+    });
+    expect(agentDeploymentConfigCache.current).toBe(reloadedAgent);
+    expect(refreshChatMoods).toHaveBeenCalledTimes(1);
+    expect(adoptStickerConfig).toHaveBeenCalledWith(stickers);
+    expect(pruneStickerCatalogs).toHaveBeenCalledWith(["pack", "new_pack"]);
+    expect(pruneStickerSets).toHaveBeenCalledWith(["pack", "new_pack"]);
+    expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack", "new_pack"]);
+    // 配置替换显式失效菜单；即使目录生成与剪枝没有改写条目，revision 仍须递增。
+    expect(stickerMenuRevision.current).toBeGreaterThan(menuRevision);
+    // 先接管配置、再剪枝、最后启动对账：剪枝用的是新白名单，新加入的包不会被自己剪掉。
+    expect(pruneStickerCatalogs.mock.invocationCallOrder[0]!)
+      .toBeLessThan(ensureStickerCatalogs.mock.invocationCallOrder[0]!);
+
+    // 停机排空期间只接管快照并剪枝，不再启动贴纸目录对账。
+    aiChatWorkerQuiescing.current = true;
+    const quiescedRevision: number = stickerMenuRevision.current;
+    worker.handleAiChatWorkerMessage({ type: "configReload", agent: undefined, mood: undefined, stickers });
+    expect(adoptStickerConfig).toHaveBeenCalledTimes(2);
+    expect(pruneStickerCatalogs).toHaveBeenCalledTimes(2);
+    expect(stickerMenuRevision.current).toBeGreaterThan(quiescedRevision);
+    expect(ensureStickerCatalogs).toHaveBeenCalledTimes(1);
   });
 
   test("hydrate decoder 失败时异常离开消息边界，由 Worker supervisor 接管", () => {
@@ -349,6 +418,11 @@ describe("AI Chat Worker lifecycle", () => {
     expect(flushDirtyMemories).toHaveBeenCalledTimes(1);
     expect(flushDirtyStickerCatalogs).toHaveBeenCalledTimes(1);
     expect(postMessage).toHaveBeenCalledWith({ type: "stickerCatalogSnapshot", name: "pack" });
+    // 白名单剪枝兜住热重载时正在生成、当时跳过的包；必须排在 dirty 上报之前，
+    // 已下架包的 dirty 标记才不会换来一次下次启动就被删掉的落盘。
+    expect(pruneStickerCatalogs).toHaveBeenCalledWith(["pack"]);
+    expect(pruneStickerCatalogs.mock.invocationCallOrder[0]!)
+      .toBeLessThan(flushDirtyStickerCatalogs.mock.invocationCallOrder[0]!);
   });
 
   test("显式启动只安装双工 handler、维护 timer 与天气刷新，不初始化 Telegram 客户端", () => {

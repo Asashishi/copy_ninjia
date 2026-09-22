@@ -271,6 +271,61 @@ describe("Worker 双工能力边界", () => {
     }
   });
 
+  test("post 同步抛出非 Error 时按固定文案拒绝并清掉 waiter", async () => {
+    initializeWorkerDuplex<TestRequest>((): void => {
+      throw "post refused";
+    });
+    const failed: Promise<number> = requestMainThread<TestRequest, number>({ value: "boom" });
+    const failure: unknown = await failed.catch((reason: unknown): unknown => reason);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("Worker duplex post failed.");
+    expect((failure as Error).cause).toBe("post refused");
+    expect(workerDuplexWaiters.size).toBe(0);
+  });
+
+  test("主线程能力处理器同步抛出非 Error 时回投通用失败，不外泄原值", async () => {
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const handle = superviseDuplexWorker<
+      { type: "business" },
+      { type: "event" },
+      TestRequest
+    >({
+      url: "sync-throw-worker.ts",
+      label: "sync throw Worker",
+      giveUpConsequence: "test unavailable",
+      handleRequest: (): Promise<number> => {
+        throw "handler secret detail";
+      },
+    });
+
+    try {
+      handle.init();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      worker.onmessage!({
+        data: { __duplex: "request", requestId: 3, request: { value: "sync" } },
+      } as MessageEvent<unknown>);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(worker.messages).toContainEqual({
+        __duplex: "response",
+        requestId: 3,
+        ok: false,
+        value: undefined,
+        error: {
+          name: "Error",
+          message: "Main-thread capability request failed.",
+          telegramErrorCode: undefined,
+          telegramDescription: undefined,
+        },
+      });
+      expect(JSON.stringify(worker.messages)).not.toContain("handler secret detail");
+    } finally {
+      await handle.terminate();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
   test("响应 transfer 选择失败时回投安全错误，不悬挂 Worker waiter", async () => {
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;

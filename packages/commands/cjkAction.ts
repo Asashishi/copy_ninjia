@@ -118,8 +118,8 @@ export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
  * 两个名字都用 first_name last_name 形式，并各自挂上 t.me 主页链接（只有公开
  * username 的人才有链接，其余是纯文本）。链接靠显式 entities 表达而非
  * parse_mode，昵称里的标记字符不会被解析（见 infra/telegram/actions.ts）。
- * 目标解析与 /copy、/block 共用 targetResolution.ts：回复 TA 的消息优先，
- * 也可以写成 `/咬 @username`（要求本天才此前缓存过该用户）。
+ * 目标解析与 /copy、/block 共用 targetResolution.ts：支持回复目标或当前缓存中的
+ * 用户名（如 `/咬 @username`）；回复与参数同时给出时必须指向同一身份。
  * 成功动作是用户明确要求长期保留的功能性群内容，与 `/permission help`、
  * `/permission query` 一样显式设置 preserveInGroup；目标解析失败与 `/x` 用法
  * 提示仍走默认 30 秒清理。

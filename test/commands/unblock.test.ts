@@ -1,9 +1,11 @@
 import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "../helpers/botPermissions";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import {
   blockedIdentityTestView as blockedUserIds,
   seedMissingIdentity,
@@ -18,17 +20,30 @@ const chatStates: Map<number, { botPermissions?: BotChatPermissions }> = new Map
   { botPermissions?: BotChatPermissions }
 >();
 let target: CachedUser | undefined;
-const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => {
-  if (target !== undefined) seedMissingIdentity(target.id);
+/**
+ * 与生产同构的桩：预热身份名单后，传了 currentChatTargetText 的调用在这一层挡下
+ * 「当前群自己的频道身份」（见 commands/targetResolution.ts），命令侧只负责把文案
+ * 传进来。真实闸的用例在 test/commands/targetResolution.test.ts。
+ */
+const resolveCommandTarget = mock(async (
+  params: { chatId: number; message: { message_id: number }; currentChatTargetText?: string }
+): Promise<CachedUser | undefined> => {
+  if (target === undefined) return target;
+  seedMissingIdentity(target.id);
+  if (params.currentChatTargetText !== undefined && target.isChannel === true && target.id === params.chatId) {
+    await sendMessage({ chatId: params.chatId, text: params.currentChatTargetText, replyToMessageId: params.message.message_id });
+    return undefined;
+  }
   return target;
 });
 const loggerError = mock((..._args: unknown[]): void => {});
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
 
-mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
@@ -58,15 +73,21 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO,
 })));
 
-const { handleUnblockCommand } = await import("../../packages/commands/unblock");
+const { handleBlockDisable } = await import("../../packages/commands/unblock");
+
+/** `/block <目标> disable` 经 handleBlockCommand 去掉末位动作后交给解除流程的形态。 */
+function handleUnblockCommand(ctx: never): Promise<void> {
+  return handleBlockDisable(ctx, (ctx as { match: string }).match);
+}
 const { blocklistIdentityMutationQueues } = await import("../../packages/cache/main/blocklist");
 
 function context(userId: number | undefined = 100, match: string = "@alice"): never {
+  const chat = { id: -1001, type: "supergroup" };
   return {
-    chat: { id: -1001 },
+    chat,
     from: userId === undefined ? undefined : { id: userId, first_name: "Admin", username: "admin" },
     msgId: 10,
-    msg: { message_id: 10 },
+    msg: { message_id: 10, chat },
     me: { id: 999 },
     match,
   } as never;
@@ -95,12 +116,30 @@ beforeEach(() => {
   resolveBotAdminStatus.mockImplementation(async (): Promise<boolean> => false);
 });
 
-describe("/unblock", () => {
+describe("/block disable", () => {
   test("非授权身份不解析目标也不改名单", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     await handleUnblockCommand(context(101));
     expect(resolveCommandTarget).not.toHaveBeenCalled();
     expect(blockedUserIds.has(7)).toBeTrue();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unblockRejected("@admin"),
+      replyToMessageId: 10,
+    });
+  });
+
+  test("解析不出发起身份时同样拒绝，标签退化为未知发起人", async () => {
+    const ctx = context() as unknown as { from?: object };
+    delete ctx.from;
+    await handleUnblockCommand(ctx as never);
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unblockRejected(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownActor),
+      replyToMessageId: 10,
+    });
   });
 
   test("从 SQLite 视图移除后在所有管理员群解除真人封禁", async () => {

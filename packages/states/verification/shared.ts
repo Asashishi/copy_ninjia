@@ -4,8 +4,23 @@ import type {
   ExpellingState,
   PendingState,
   VerificationEffect,
+  VerificationState,
   VerificationTransition,
 } from "../../types/states/verification";
+import type { VerificationSnapshot } from "../../types/antiRaid/verification";
+
+/**
+ * 验证记录是否处在终态执行段（kickPending / checkingInviter / expelling）。
+ * 状态机的 `kind` 与持久化快照的 `phase` 用同一组字面量，主线程镜像、Anti-Raid
+ * Worker 解释器与状态机转移共用这一条判定；纯函数，只比较字符串。
+ */
+export function isTerminalVerificationPhase(
+  phase: VerificationState["kind"] | VerificationSnapshot["phase"] | undefined
+): boolean {
+  return phase === "kickPending" ||
+    phase === "checkingInviter" ||
+    phase === "expelling";
+}
 
 /** 落盘快照里带过来的终态播报记账；新建终态时四项均为 undefined。 */
 export interface PersistedExpelNotices {
@@ -31,7 +46,7 @@ export function checkingInviterOf(
     kind: "checkingInviter",
     inviterId,
     snapshot,
-    executionStarted: undefined,
+    executionStarted: false,
   };
 }
 
@@ -39,7 +54,7 @@ export function checkingInviterOf(
  * 建立 expelling 终态；构造顺序与形状约束同 checkingInviterOf。
  *
  * `executionStarted` 与 `cleanupSettled` 是 Worker 本地幂等门，不随快照持久化，
- * 因此重建时同样从 undefined 起；其余四项由 adopt 从落盘记账带回。
+ * 因此重建时同样从初始值（false / undefined）起；其余四项由 adopt 从落盘记账带回。
  */
 export function expellingOf(
   reason: ExpellingState["reason"],
@@ -50,7 +65,7 @@ export function expellingOf(
     kind: "expelling",
     reason,
     snapshot,
-    executionStarted: undefined,
+    executionStarted: false,
     failureNoticeSent: persisted?.failureNoticeSent,
     unconfirmedNoticeSent: persisted?.unconfirmedNoticeSent,
     successNoticeSent: persisted?.successNoticeSent,

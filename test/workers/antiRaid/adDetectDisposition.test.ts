@@ -1,8 +1,10 @@
 import { diskIOStub } from "../../helpers/diskIOMock";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
-import type { TelegramConfig } from "../../../packages/types/config";
+import type { BotConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
 const chatStates = new Map<number, Record<string, unknown>>();
 const activeVerificationSnapshots = new Map<string, unknown>();
@@ -44,16 +46,12 @@ const sendMessage = mock(async (params: SendMessageMockParams): Promise<number |
 const deleteMessageAfter = mock((..._args: unknown[]): void => {});
 const clearTemporaryAdBypassActivity = mock((_id: number): boolean => true);
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
-mock.module("../../../packages/config/telegram", () => ({
+mock.module("../../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 1,
-  getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 1 }),
+  getBotConfig: (): BotConfig => ({ atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 }),
 }));
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
@@ -359,15 +357,16 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("模型没给理由时播报用兜底文案，不留空", () => {
-    expect(formatAdNotice({ label: "@spammer", reason: "", enforcedChats: 2, failedChats: 0 }))
+    expect(formatAdNotice({ label: "@spammer", reason: "", enforcedChats: 2, failedChats: 0, atmosphere: ATMOSPHERE_TEXTS.teasing }))
       .toContain("整串消息通篇都是推广引流");
-    expect(formatAdNotice({ label: "@spammer", reason: "卖号", enforcedChats: 2, failedChats: 0 }))
+    expect(formatAdNotice({ label: "@spammer", reason: "卖号", enforcedChats: 2, failedChats: 0, atmosphere: ATMOSPHERE_TEXTS.teasing }))
       .toContain("理由：卖号");
   });
 
   test("部分群登记失败时只报封上的群数，不说「在所有盯着的群里」", () => {
     // 那些登记失败的群里人还坐着，说「所有」同样是假话。
     const notice: string = formatAdNotice({
+      atmosphere: ATMOSPHERE_TEXTS.teasing,
       label: "@spammer",
       reason: "卖号",
       enforcedChats: 3,
@@ -383,6 +382,7 @@ describe("广告判定命中后的处置", () => {
     // 只说这边确证得了的两件事：记进名单、封了几个群。
     for (const enforcedChats of [0, 2]) {
       const notice: string = formatAdNotice({
+        atmosphere: ATMOSPHERE_TEXTS.teasing,
         label: "@spammer",
         reason: "卖号",
         enforcedChats,

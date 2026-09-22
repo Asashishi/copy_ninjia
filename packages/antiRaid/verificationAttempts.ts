@@ -21,14 +21,7 @@ import type {
 } from "../types/antiRaid/protocol";
 import type { VerificationDeferredEvent } from
   "../types/antiRaid/events";
-
-function isTerminalSnapshot(
-  snapshot: VerificationSnapshot | undefined
-): boolean {
-  return snapshot?.phase === "kickPending" ||
-    snapshot?.phase === "checkingInviter" ||
-    snapshot?.phase === "expelling";
-}
+import { isTerminalVerificationPhase } from "../states/verification/shared";
 
 /** 主线程原子批准一轮终态执行；批准发生即计数，Worker 崩溃也不退还。 */
 export function grantVerificationAttempt(
@@ -48,7 +41,7 @@ export function grantVerificationAttempt(
     activeVerificationSnapshots.get(request.key);
   if (
     snapshot === undefined ||
-    !isTerminalSnapshot(snapshot) ||
+    !isTerminalVerificationPhase(snapshot?.phase) ||
     snapshot.generation !== request.generation ||
     snapshot.revision !== request.revision
   ) {
@@ -75,7 +68,7 @@ export function acceptVerificationDeferred(
     activeVerificationSnapshots.get(key);
   if (
     current === undefined ||
-    !isTerminalSnapshot(current) ||
+    !isTerminalVerificationPhase(current?.phase) ||
     current.generation !== record.generation ||
     current.revision !== record.revision
   ) {

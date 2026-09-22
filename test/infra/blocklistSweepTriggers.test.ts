@@ -44,10 +44,17 @@ const {
 } = await import("../../packages/consts/antiRaid/blocklist");
 
 const {
-  handleMyChatMemberUpdate,
+  handleMyChatMemberUpdate: routeMyChatMemberUpdate,
   markBotAdminObserved,
   resolveBotAdminStatus,
 } = await import("../../packages/infra/botAdmin");
+const { syncChatPersonaSurfaces } =
+  await import("../../packages/commands/chatPersonaSync");
+
+/** 三处人设同步在生产里由 app/registerHandlers.ts 注入；本文件按同一份实现驱动。 */
+function handleMyChatMemberUpdate(ctx: never): Promise<void> {
+  return routeMyChatMemberUpdate(ctx, syncChatPersonaSurfaces);
+}
 
 const {
   blocklistSweepPages,
@@ -519,11 +526,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("停管的在途批次先丢弃再落盘：落盘失败也不会把它们留到下次重启", async () => {
-    // 停管是 Telegram 已经告知的权威事实，不会因为 state.json 没写成而撤销。
-    // 清理排在落盘之后的话，persistChatState 一拒绝这行就不执行、
-    // 进程随即退出，而 state.json 里的权限快照还是管理员——启动恢复那道
-    // `isAdministrator !== true` 过滤同样兜不住，这批注定失败的处置会在每次重启和
-    // 每次 Worker 重建时原样重投。
+    // Telegram 停管更新先清理待处理批次，再向 SQLite chat_states 持久化权限快照；
+    // 本次落盘失败也必须保持主线程待处理集合为空，Worker 重建时无旧批次可重投。
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });

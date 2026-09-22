@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
-import { isRuntimeModuleEdge } from "./sourceAnalysis";
+import { isRuntimeModuleEdge, parseSourceFile } from "./sourceAnalysis";
 
 /** 把相对说明符解析成仓库内的 .ts 文件；解析不到（npm 包等）返回 undefined。 */
 function resolveRelativeModule(specifier: string, fromFile: string): string | undefined {
@@ -50,13 +50,7 @@ export function createModuleGraphReader(): ModuleGraphReader {
   async function moduleEdges(path: string): Promise<ModuleEdges> {
     const cached: ModuleEdges | undefined = edgesByPath.get(path);
     if (cached !== undefined) return cached;
-    const source: ts.SourceFile = ts.createSourceFile(
-      path,
-      await Bun.file(path).text(),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS
-    );
+    const source: ts.SourceFile = await parseSourceFile(path);
     const internal: string[] = [];
     const external: string[] = [];
     function record(specifier: string): void {

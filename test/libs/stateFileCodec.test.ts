@@ -54,14 +54,41 @@ describe("decodeStateFile", () => {
     })).toThrow("state.global.model is not part of the current state schema");
   });
 
-  test("素材块整块缺省 = 四项都没设过：既有 state.json 不必补空对象", () => {
+  test("素材块整块缺省 = 五项都没设过：既有 state.json 不必补空对象", () => {
     const decoded = decodeStateFile({ global: { copy: { copiedUser: null } } });
     expect(decoded.global.assets).toEqual({
       fortuneThumbnailUrl: undefined,
       probabilityThumbnailUrl: undefined,
       gagThumbnailUrl: undefined,
       botDefaultAvatarUrl: undefined,
+      randomHImageDir: undefined,
     });
+  });
+
+  test("随机图片目录收下去掉首尾空白的路径，空串、NUL 与非字符串拒绝", () => {
+    const decoded = decodeStateFile({
+      global: { copy: { copiedUser: null }, assets: { randomHImageDir: "  ./images/daily  " } },
+    });
+    expect(decoded.global.assets.randomHImageDir).toBe("./images/daily");
+    for (const value of ["", "   ", "./img\u0000s", 42]) {
+      expect(() => decodeStateFile({
+        global: { copy: { copiedUser: null }, assets: { randomHImageDir: value } },
+      })).toThrow("state.global.assets.randomHImageDir must be a non-empty path string");
+    }
+  });
+
+  test("随机图片目录只收绝对路径或 ./、../ 开头的显式相对路径", () => {
+    for (const value of ["/srv/pictures", "./images", "../shared/images"]) {
+      const decoded = decodeStateFile({
+        global: { copy: { copiedUser: null }, assets: { randomHImageDir: value } },
+      });
+      expect(decoded.global.assets.randomHImageDir).toBe(value);
+    }
+    for (const value of ["images", "images/daily", "~/pictures", ".images"]) {
+      expect(() => decodeStateFile({
+        global: { copy: { copiedUser: null }, assets: { randomHImageDir: value } },
+      })).toThrow("state.global.assets.randomHImageDir must be an absolute path or a relative path starting with ./ or ../");
+    }
   });
 
   test("四条素材直链原样读回，且各自独立", () => {
@@ -189,4 +216,11 @@ describe("decodeStateFile", () => {
     })).toThrow("state.imageProvider is not part of the current state schema");
     expect(() => decodeStateFile({})).toThrow("state.global is required");
   });
+});
+
+test("旧图库键即使与新键并存也拒绝，缺省新键仍合法", () => {
+  for (const assets of [{ randomImageDir: "./images" }, { randomImageDir: "./images", randomHImageDir: "./h_image" }]) {
+    expect(() => decodeStateFile({ global: { copy: { copiedUser: null }, assets } })).toThrow("randomImageDir is not part of the current state schema");
+  }
+  expect(decodeStateFile({ global: { copy: { copiedUser: null } } }).global.assets.randomHImageDir).toBeUndefined();
 });

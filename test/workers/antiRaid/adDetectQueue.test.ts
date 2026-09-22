@@ -545,7 +545,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     classifyAdText.mockImplementationOnce((): Promise<AdVerdict> => new Promise<AdVerdict>((resolve) => {
       release = resolve;
     }));
-    startAdDetectQueue((): void => {});
+    startAdDetectQueue((): void => {}, (): void => {});
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
     const running: Promise<void> = runAdDetectBatch(1_000);
     expect(antiRaidInFlightTasks.size).toBe(0);
@@ -582,10 +582,10 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
   test("启动登记回投通道与唯一节拍，停止后全部清空", () => {
     const events: AdDetectedEvent[] = [];
-    startAdDetectQueue((event: AdDetectedEvent): void => { events.push(event); });
-    startAdDetectQueue((event: AdDetectedEvent): void => { events.push(event); });
+    startAdDetectQueue((event: AdDetectedEvent): void => { events.push(event); }, (): void => {});
+    startAdDetectQueue((event: AdDetectedEvent): void => { events.push(event); }, (): void => {});
     expect(adDetectPublishHolder.current).not.toBeNull();
-    expect(adVerdictTruePublishHolder.current).toBeNull();
+    expect(adVerdictTruePublishHolder.current).not.toBeNull();
 
     enqueueAdCandidate(candidate());
     inFlightReferencedAdCleanupTasks.add(Promise.resolve());

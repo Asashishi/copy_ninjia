@@ -11,7 +11,6 @@ const {
   advanceMonotonicTime,
   calls,
   closeTranslate,
-  deferred,
   drainAntiRaid,
   drainWedRuntime,
   drainTelegramOutbound,
@@ -34,7 +33,7 @@ installLifecycleFixtureHooks();
 
 describe("应用最终 offset 确认与排空", () => {
   test("最终确认等待已接纳 wed 任务结算，超时不发送最终 offset", async () => {
-    const gate = deferred<FlushResult>();
+    const gate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
     drainWedRuntime.mockImplementationOnce(() => gate.promise);
     setLastSeenUpdateId(650);
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -74,7 +73,7 @@ describe("应用最终 offset 确认与排空", () => {
   });
 
   test("wait 在 Anti-Raid drain 完成前不得 flush，更不得确认 offset", async () => {
-    const antiRaidGate = deferred<FlushResult>();
+    const antiRaidGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
     drainAntiRaid.mockImplementationOnce(() => {
       calls.push("drainAntiRaid");
       return antiRaidGate.promise;
@@ -159,7 +158,7 @@ describe("应用最终 offset 确认与排空", () => {
   });
 
   test("wait 首次维护超时后即使 dispose 时落定也不能改写未确认结果", async () => {
-    const maintenance = deferred<void>();
+    const maintenance: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     refreshAllChatTitles.mockImplementationOnce((): Promise<void> => maintenance.promise);
     setLastSeenUpdateId(654);
     const lifecycle = new ApplicationLifecycle(testDependencies);

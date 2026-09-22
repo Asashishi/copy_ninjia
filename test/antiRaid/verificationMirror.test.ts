@@ -12,8 +12,20 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   },
 })));
 
-const { acceptVerificationDelete, acceptVerificationUpsert } =
-  await import("../../packages/antiRaid/verificationMirror");
+const {
+  acceptVerificationDelete,
+  acceptVerificationUpsert,
+  advanceActiveVerificationGeneration,
+  recordVerificationPersisted,
+  replaceActiveVerificationMirror,
+  settleVerificationDeletePersisted,
+} = await import("../../packages/antiRaid/verificationMirror");
+const {
+  acceptVerificationDeferred,
+  resetVerificationAttemptRuntime,
+  settlePersistedVerificationDeferral,
+} = await import("../../packages/antiRaid/verificationAttempts");
+const { assertVerificationMirrorInvariants } = await import("../helpers/verificationMirrorInvariants");
 const { antiRaidRuntimeState } = await import("../../packages/cache/main/antiRaid/proxy");
 const {
   activeVerificationSnapshots,
@@ -151,5 +163,78 @@ describe("antiRaid/verificationMirror 的 revision 水位线", () => {
     expect(activeVerificationSnapshots.size).toBe(VERIFICATION_RECORD_CAPACITY);
     expect(fatalErrors).toHaveLength(1);
     expect(fatalErrors[0]?.message).toContain("record capacity");
+  });
+});
+
+describe("主线程验证镜像的具名写入口与五表不变量", () => {
+  function terminal(generation: number, revision: number): VerificationSnapshot {
+    return { ...record(generation, revision), phase: "checkingInviter", terminalInviterId: 7 } as VerificationSnapshot;
+  }
+
+  test("一条记录从活动、落盘、延后到墓碑结算的全程，每一步都满足不变量", () => {
+    resetVerificationAttemptRuntime();
+    const step = (): void => assertVerificationMirrorInvariants();
+
+    expect(acceptVerificationUpsert({ type: "verificationUpsert", record: record(1, 1) })).toBeTrue();
+    step();
+    // 迟到或不匹配的落盘回执不改镜像。
+    expect(recordVerificationPersisted(KEY, 1, 2)).toBeFalse();
+    expect(recordVerificationPersisted(KEY, 1, 1)).toBeTrue();
+    expect(persistedVerificationRevisions.get(KEY)).toEqual({ generation: 1, revision: 1 });
+    step();
+
+    expect(acceptVerificationUpsert({ type: "verificationUpsert", record: terminal(1, 2) })).toBeTrue();
+    step();
+    // 最新 revision 尚未落盘：延后请求挂在活动快照上等回执。
+    expect(acceptVerificationDeferred({
+      type: "verificationDeferred",
+      record: { chatId: -1001, userId: 42, generation: 1, revision: 2 },
+    })).toBeTrue();
+    expect(pendingVerificationDeferrals.has(KEY)).toBeTrue();
+    step();
+
+    expect(recordVerificationPersisted(KEY, 1, 2)).toBeTrue();
+    expect(settlePersistedVerificationDeferral(KEY, 1, 2)).toBeTrue();
+    expect(activeVerificationSnapshots.has(KEY)).toBeFalse();
+    expect(deferredVerificationRecords.has(KEY)).toBeTrue();
+    step();
+
+    expect(acceptVerificationDelete({
+      type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 3,
+    })).toBeTrue();
+    expect(pendingVerificationDeletes.get(KEY)).toMatchObject({ generation: 1, revision: 3 });
+    step();
+    // 不匹配的删除回执保留墓碑，精确回执才移出。
+    settleVerificationDeletePersisted(KEY, 1, 2);
+    expect(pendingVerificationDeletes.has(KEY)).toBeTrue();
+    settleVerificationDeletePersisted(KEY, 1, 3);
+    expect(pendingVerificationDeletes.has(KEY)).toBeFalse();
+    step();
+  });
+
+  test("代际提升只带走已精确落盘的水位线，hydrate 整体替换并以快照自身为水位", () => {
+    expect(acceptVerificationUpsert({ type: "verificationUpsert", record: record(1, 1) })).toBeTrue();
+    expect(recordVerificationPersisted(KEY, 1, 1)).toBeTrue();
+    const other: VerificationSnapshot = { ...record(1, 1), userId: 43 };
+    expect(acceptVerificationUpsert({ type: "verificationUpsert", record: other })).toBeTrue();
+
+    advanceActiveVerificationGeneration(2);
+    expect(activeVerificationSnapshots.get(KEY)?.generation).toBe(2);
+    expect(persistedVerificationRevisions.get(KEY)).toEqual({ generation: 2, revision: 1 });
+    expect(persistedVerificationRevisions.has("-1001:43")).toBeFalse();
+    assertVerificationMirrorInvariants();
+
+    pendingVerificationDeletes.set("-1001:44", { chatId: -1001, userId: 44, generation: 1, revision: 5 });
+    replaceActiveVerificationMirror(new Map([["-1001:45", { ...record(3, 4), userId: 45 }]]));
+    expect([...activeVerificationSnapshots.keys()]).toEqual(["-1001:45"]);
+    expect(pendingVerificationDeletes.size).toBe(0);
+    expect(persistedVerificationRevisions.get("-1001:45")).toEqual({ generation: 3, revision: 4 });
+    assertVerificationMirrorInvariants();
+  });
+
+  test("不变量断言本身能拦住违例：同一 key 同时处在活动与墓碑", () => {
+    activeVerificationSnapshots.set(KEY, record(1, 1));
+    pendingVerificationDeletes.set(KEY, { chatId: -1001, userId: 42, generation: 1, revision: 2 });
+    expect(assertVerificationMirrorInvariants).toThrow(`${KEY}: active and pending delete`);
   });
 });

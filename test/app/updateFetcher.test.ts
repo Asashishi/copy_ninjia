@@ -20,7 +20,11 @@ async function trace(candidate: boolean, results: readonly unknown[], rounds: nu
   const requests: unknown[] = [];
   const delays: number[] = [];
   const outputs: unknown[] = [];
+  // 两个时钟都要假：grammY 的参照实现按墙钟算重试预算，本仓库那份按
+  // performance.now() 的单调时钟算（见 libs/monotonicDeadline.ts）。喂同一个
+  // now 才对得上——差别只在读哪个钟，语义必须逐字一致。
   const clock: ReturnType<typeof spyOn<typeof Date, "now">> = spyOn(Date, "now").mockImplementation((): number => now);
+  const monotonic: ReturnType<typeof spyOn<Performance, "now">> = spyOn(performance, "now").mockImplementation((): number => now);
   const stderr: ReturnType<typeof spyOn<typeof console, "error">> = spyOn(console, "error").mockImplementation((): void => {});
   const timers: ReturnType<typeof spyOn<typeof globalThis, "setTimeout">> = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number): number => {
     delays.push(delay);
@@ -48,7 +52,7 @@ async function trace(candidate: boolean, results: readonly unknown[], rounds: nu
       }
     }
   } finally {
-    timers.mockRestore(); clock.mockRestore(); stderr.mockRestore();
+    timers.mockRestore(); clock.mockRestore(); monotonic.mockRestore(); stderr.mockRestore();
   }
   return { requests, delays, outputs };
 }

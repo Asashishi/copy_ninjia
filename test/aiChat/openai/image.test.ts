@@ -7,6 +7,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type {
   AgentDeploymentConfig,
   OpenAiImageProtocol,
@@ -31,7 +32,7 @@ mock.module("../../../packages/config/agent", () => ({
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const { generateOpenAiImage } = await import("../../../packages/aiChat/openai/image");

@@ -11,6 +11,7 @@ import type {
   VerificationState,
   VerificationTerminalState,
 } from "../../types/states/verification";
+import { isTerminalVerificationPhase } from "../../states/verification/shared";
 
 /** 需要跨 Worker 重建持久化的验证阶段。 */
 type PersistedVerificationState =
@@ -22,10 +23,7 @@ type PersistedVerificationState =
 export function isPersistedVerificationState(
   state: VerificationState | undefined
 ): state is PersistedVerificationState {
-  return state?.kind === "pending" ||
-    state?.kind === "kickPending" ||
-    state?.kind === "checkingInviter" ||
-    state?.kind === "expelling";
+  return state?.kind === "pending" || isTerminalVerificationPhase(state?.kind);
 }
 
 interface VerificationSnapshotParams {
@@ -42,38 +40,53 @@ export function verificationSnapshot({
   state,
   revision,
 }: VerificationSnapshotParams): VerificationSnapshot {
-  const source: PendingState | ExpelSnapshot | undefined =
-    state.kind === "pending"
-      ? state
-      : state.kind === "kickPending"
-        ? undefined
-        : state.snapshot;
+  // kickPending 自带身份与入群时刻；其余阶段取 pending 本身或终态冻结的语义快照。
+  let label: string;
+  let isBot: boolean;
+  let announcementMessageId: number | undefined;
+  let reminderMessageId: number | undefined;
+  let replyReminderMessageId: number | undefined;
+  let joinedAt: number;
+  let expiresAt: number;
+  if (state.kind === "kickPending") {
+    label = state.label;
+    isBot = state.isBot;
+    announcementMessageId = state.announcementMessageId;
+    reminderMessageId = undefined;
+    replyReminderMessageId = undefined;
+    joinedAt = state.requestedAt;
+    expiresAt = state.requestedAt;
+  } else {
+    const source: PendingState | ExpelSnapshot = state.kind === "pending" ? state : state.snapshot;
+    label = source.label;
+    isBot = source.isBot;
+    announcementMessageId = source.announcementMessageId;
+    reminderMessageId = source.reminderMessageId;
+    replyReminderMessageId = source.replyReminderMessageId;
+    joinedAt = source.joinedAt;
+    expiresAt = source.expiresAt;
+  }
   const base: PendingVerificationSnapshot = {
     chatId,
     userId,
     generation: verificationGeneration.current,
     revision,
-    label: state.kind === "kickPending" ? state.label : source!.label,
-    isBot: state.kind === "kickPending" ? state.isBot : source!.isBot,
-    announcementMessageId:
-      state.kind === "kickPending"
-        ? state.announcementMessageId
-        : source!.announcementMessageId,
+    label,
+    isBot,
+    announcementMessageId,
     trackedMessageTimes:
       state.kind === "pending" ? [...state.trackedMessageTimes] : [],
     invitedBy: state.kind === "pending" ? state.invitedBy : undefined,
-    reminderMessageId: source?.reminderMessageId,
-    replyReminderMessageId: source?.replyReminderMessageId,
+    reminderMessageId,
+    replyReminderMessageId,
     replyReminderRequested:
       state.kind === "pending" ? state.replyReminderRequested : false,
     welcomeAnchorMessageId:
       state.kind === "pending" ? state.welcomeAnchorMessageId : undefined,
     reminderSuperseded:
       state.kind === "pending" ? state.reminderSuperseded : true,
-    joinedAt:
-      state.kind === "kickPending" ? state.requestedAt : source!.joinedAt,
-    expiresAt:
-      state.kind === "kickPending" ? state.requestedAt : source!.expiresAt,
+    joinedAt,
+    expiresAt,
     phase: "pending",
   };
   if (state.kind === "pending") return base;

@@ -3,16 +3,9 @@
  * 缓存 holder 见 packages/cache/perThread/config.ts）。
  */
 
-import type { ReactionTypeEmoji } from "grammy/types";
+import type { BotAtmosphere } from "./atmosphere";
+import type { CronConfig } from "./cron";
 import type { MoodOption } from "./aiChat/mood";
-
-/** Telegram Bot API 标准 emoji 反应的精确联合。 */
-export type ReactionEmoji = ReactionTypeEmoji["emoji"];
-
-/** reactions.json 的严格结构。 */
-export interface ReactionConfig {
-  readonly emotionKeywords: Readonly<Partial<Record<ReactionEmoji, readonly string[]>>>;
-}
 
 /** stickers.json 的严格结构。 */
 export interface StickerConfig {
@@ -31,12 +24,14 @@ export interface MoodConfig {
  */
 export type AdSampleConfig = readonly string[];
 
-/** Telegram Bot 身份与超级管理员身份的进程级部署配置。 */
-export interface TelegramConfig {
+/** Bot 身份、超级管理员身份与默认通知风格的进程级部署配置。 */
+export interface BotConfig {
   /** BotFather 发放的 Bot API token。 */
   readonly botToken: string;
   /** 唯一超级管理员的正安全整数 Telegram 用户 ID。 */
   readonly superAdminUserId: number;
+  /** 没有自定义群人设时采用的通知风格。 */
+  readonly atmosphere: BotAtmosphere;
 }
 
 /** Google 翻译 SDK 实际消费的服务账号字段；官方密钥的其它元数据由 SDK 保留。 */
@@ -125,6 +120,55 @@ export interface AgentDeploymentConfig {
   readonly image?: AgentImageCapabilityConfig;
   /** 缺省表示不提供生歌工具；实现不支持时同样不会注册对应工具。 */
   readonly song?: AgentCapabilityConfig;
+}
+
+/**
+ * 整份 config/agent.json 严格解析后的两段快照；null 表示该段在文件里缺省
+ * （文件本身缺省时两段都是 null）。分段边界见 config/agent.ts。
+ */
+export interface AgentConfigSnapshots {
+  readonly adDetect: AdDetectAgentConfig | null;
+  readonly agent: AgentDeploymentConfig | null;
+}
+
+/**
+ * 一份可热重载部署文件的一次读取：文件真正不存在、严格解析通过，或带安全诊断
+ * 的失败（诊断口径同 InputValidationError，只含文件路径、字段路径与期望形态）。
+ */
+export type HotConfigRead<T> =
+  | { readonly kind: "absent" }
+  | { readonly kind: "loaded"; readonly value: T }
+  | { readonly kind: "invalid"; readonly reason: string };
+
+/** config/reload.ts 对五份可热重载部署文件的一轮读取。 */
+export interface HotDeploymentConfigReads {
+  readonly adSamples: HotConfigRead<AdSampleConfig>;
+  readonly agent: HotConfigRead<AgentConfigSnapshots>;
+  readonly mood: HotConfigRead<MoodConfig>;
+  readonly stickers: HotConfigRead<StickerConfig>;
+  readonly cron: HotConfigRead<CronConfig>;
+}
+
+/**
+ * 一轮热重载实际替换的主线程快照、生效与删除的文件，以及被拒绝变更的诊断。
+ * 各布尔字段为 true 表示对应 holder 已整体替换，包括因文件或段被删除而换成 null。
+ */
+export interface HotDeploymentConfigChanges {
+  /** agent.json 的 ad_detect 段快照已替换。 */
+  readonly adDetect: boolean;
+  /** agent.json 的 AI 对话能力段快照已替换。 */
+  readonly aiAgent: boolean;
+  readonly adSamples: boolean;
+  readonly mood: boolean;
+  readonly stickers: boolean;
+  /** cron.json 的任务表已替换。 */
+  readonly cron: boolean;
+  /** 仍然存在、且至少替换了一份快照的文件路径。 */
+  readonly reloadedPaths: readonly string[];
+  /** 本轮被删除、对应快照已清空的文件路径。 */
+  readonly removedPaths: readonly string[];
+  /** 被拒绝变更的英文诊断；对应 holder 保留上一份已校验快照。 */
+  readonly rejections: readonly string[];
 }
 
 /** 一份坏掉的部署文件：文件名给人看，诊断给日志看。 */

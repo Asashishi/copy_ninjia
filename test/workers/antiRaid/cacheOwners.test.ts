@@ -1,6 +1,7 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { ANTI_RAID_CHAT_CACHE_MAX } from
   "../../../packages/consts/antiRaid/cache";
 import {
@@ -61,12 +62,7 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage(event: AntiRaidWorkerEvent): void { lockdownEvents.push(event); } },
 });
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(...args: unknown[]): void { loggedErrors.push(args); },
-  },
+  logger: loggerStub({ error(...args: unknown[]): void { loggedErrors.push(args); } }),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   telegramApi: {

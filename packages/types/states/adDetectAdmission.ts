@@ -18,11 +18,11 @@ export interface AdCandidateAdmissionInput {
 
 export type AdCandidateDecision =
   /** 并进这个发送者的消息串。 */
-  | { readonly action: "accept" }
+  | "accept"
   /** 不参与判定，也不必再做别的。 */
-  | { readonly action: "ignore" }
+  | "ignore"
   /** 不参与判定，但要顺手删掉这条：见 states/adDetectAdmission.ts 的说明。 */
-  | { readonly action: "deleteStraggler" };
+  | "deleteStraggler";
 
 export interface AdRequeueInput {
   /** 这一串里还有序号大于 checkedSeq 的消息，即还有没判过的内容。 */
@@ -34,15 +34,13 @@ export interface AdRequeueInput {
 }
 
 export type AdRequeueDecision =
-  | { readonly action: "enqueue" }
+  | "enqueue"
   /** 无需排队：没有新内容，或这个键已经排着、在途。 */
-  | { readonly action: "skip" };
+  | "skip";
 
 export interface AdDispatchInput {
   /** 此刻正在等广告检测 provider 回话的键数。 */
   readonly inFlight: number;
 }
 
-export type AdDispatchDecision =
-  | { readonly action: "dispatch" }
-  | { readonly action: "saturated" };
+export type AdDispatchDecision = "dispatch" | "saturated";

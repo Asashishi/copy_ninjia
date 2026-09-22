@@ -524,12 +524,12 @@ test("镜像已消费的 revision 覆盖旧 FIFO，镜像之后的新写仍按�
 test("贴纸镜像覆盖发送前的旧快照，发送后到达的新快照仍会落盘", async (): Promise<void> => {
   const fixture: RecoveryFixture = await startDiskIO();
   const restoreListeners: () => void = withOnlyRespawnListener((transport: DiskIORecoveryTransport): boolean => {
-    if (!transport.post({ type: "stickerCatalog", pack: "test_pack", snapshot: "mirror" })) return false;
-    return diskIO.postDiskIO({ type: "stickerCatalog", pack: "test_pack", snapshot: "newest" });
+    if (!transport.post({ type: "stickerCatalog", revision: 1, pack: "test_pack", snapshot: "mirror" })) return false;
+    return diskIO.postDiskIO({ type: "stickerCatalog", revision: 1, pack: "test_pack", snapshot: "newest" });
   });
   try {
     fixture.first.autoAcknowledgeOperations = false;
-    diskIO.postDiskIO({ type: "stickerCatalog", pack: "test_pack", snapshot: "old" });
+    diskIO.postDiskIO({ type: "stickerCatalog", revision: 1, pack: "test_pack", snapshot: "old" });
     const second: FakeWorker = crashDiskIOWorker(fixture.first);
     emitSuccessfulLoad(second); await Bun.sleep(0);
     const snapshots: string[] = [];

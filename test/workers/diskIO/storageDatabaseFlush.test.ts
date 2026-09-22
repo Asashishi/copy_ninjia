@@ -28,8 +28,7 @@ import {
   flushStorageDatabase,
   pendingStorageDatabaseDomains,
 } from "../../../packages/workers/diskIO/storageDatabase/flush";
-import { hydrateStorageDatabase } from
-  "../../../packages/workers/diskIO/storageDatabase/hydration";
+import { hydrateStorageDatabase } from "../../helpers/storageDatabaseHydration";
 import { handleIdentityPolicyWrite } from
   "../../../packages/workers/diskIO/storageDatabase/identityPolicy";
 import { handlePendingRemovalSnapshot } from

@@ -189,11 +189,11 @@ export function enqueueAdCandidate(
     recentlyDisposed,
     blocked: message.blocked,
   });
-  if (decision.action === "deleteStraggler") {
+  if (decision === "deleteStraggler") {
     deleteStragglerAdMessage(message.chatId, message.messageId);
     return;
   }
-  if (decision.action === "ignore") return;
+  if (decision === "ignore") return;
 
   const bundle: AdMessageBundle = existing ?? {
     chatId: message.chatId,
@@ -253,7 +253,7 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
     // 全局在途闸（判定见 states/adDetectAdmission.ts）：判断排在 shift 之前——
     // 先取出来再发现发不掉，那个键就从队列里消失了，而它未必还有下一条新消息
     // 把自己重新排进来。
-    if (admitAdDispatch({ inFlight: inFlightAdDetectKeys.size }).action === "saturated") {
+    if (admitAdDispatch({ inFlight: inFlightAdDetectKeys.size }) === "saturated") {
       saturated = true;
       break;
     }
@@ -347,9 +347,8 @@ export function clearIdentityAdDetect(identityId: number): void {
  * 5 分钟一次的维护回收：裁掉窗口外已经消费完的上下文，删掉整串判完又不在
  * 排队/在途的空 bundle，并清理过期的处置抑制记录。未消费条目没有等待 TTL。
  *
- * 还留着未判内容的消息串在这里补排一次。既不在队列、也不在途的 bundle 没有
- * 任何其它力量会把它排回去——旧的 rotateAdDetectDedupWindow 靠每 90 秒清空
- * 整张认领表把所有未判串重排一遍，那张表删掉之后这条自愈职责落在这里。
+ * 还留着未判内容的消息串在这里补排一次：既不在队列、也不在途的 bundle 没有
+ * 其它路径会把它排回去。
  * requeueIfUnchecked 自己会跳过已排队和在途的键，所以无条件调用是安全的；
  * 它兜的是异常态，不是常规调度路径——常规路径上补排由 detectOne 结算时发起。
  */
@@ -374,11 +373,11 @@ export function sweepAdDetect(now: number = Date.now()): void {
 /** Worker 启动入口：登记回投通道并挂上唯一批处理节拍。 */
 export function startAdDetectQueue(
   publish: (event: AdDetectedEvent) => void,
-  publishVerdictTrue?: (event: AdVerdictTrueEvent) => void
+  publishVerdictTrue: (event: AdVerdictTrueEvent) => void
 ): void {
   adDetectStopping.current = false;
   adDetectPublishHolder.current = publish;
-  adVerdictTruePublishHolder.current = publishVerdictTrue ?? null;
+  adVerdictTruePublishHolder.current = publishVerdictTrue;
   if (adDetectTickTimer.current !== null) return;
   adDetectTickTimer.current = setInterval((): void => {
     void runAdDetectBatch();

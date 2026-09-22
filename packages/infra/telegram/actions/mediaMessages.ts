@@ -58,7 +58,7 @@ export interface SendPhotoParams {
   chatId: number;
   /** Worker 调用会转移底层 ArrayBuffer；函数返回 Promise 后不得再读取。 */
   bytes: Uint8Array;
-  mimeType: "image/jpeg" | "image/png";
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
   replyToMessageId?: number;
   api?: SendPhotoApi;
   signal?: AbortSignal;
@@ -66,6 +66,8 @@ export interface SendPhotoParams {
   caption?: string;
   /** 论坛群的话题标识；挂回复时也必须显式传递。 */
   messageThreadId?: number;
+  /** 为 true 时以 Telegram 剧透遮罩发送（`has_spoiler`），点开才显示。 */
+  hasSpoiler?: boolean;
 }
 
 /** 从内存上传图片，登记自发消息并返回实际回复关系。 */
@@ -78,18 +80,20 @@ export async function sendPhotoWithResult({
   signal,
   caption,
   messageThreadId,
+  hasSpoiler = false,
 }: SendPhotoParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send photo",
     execute: async (
       requestSignal?: AbortSignal
     ): Promise<Message.PhotoMessage> => {
-      const extension: string = mimeType === "image/jpeg" ? "jpg" : "png";
+      const extension: string = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/png" ? "png" : "webp";
       // 定形一次初始化，理由同 actions/messages.ts 的 sendMessageWithResult。
       const other: Parameters<SendPhotoApi["sendPhoto"]>[2] = {
         message_thread_id: messageThreadId,
         caption: caption ? caption : undefined,
         reply_parameters: replyParametersFor(replyToMessageId),
+        has_spoiler: hasSpoiler ? true : undefined,
       };
       return api.sendPhoto(
         chatId,
@@ -180,6 +184,12 @@ export interface CopyMessageParams {
   messageId: number;
   /** 论坛群的话题标识；挂回复时也必须显式传递。 */
   messageThreadId?: number;
+  /** 替换原图注的新文字（不带实体、不设 parse_mode）；不给则保留原图注。 */
+  caption?: string;
+  /** 新图注是否显示在媒体上方；只在给出 caption 时生效。 */
+  showCaptionAboveMedia?: boolean;
+  /** 复制视频时的起播时间（秒）。 */
+  videoStartTimestamp?: number;
 }
 
 /** 复制消息并登记其自发消息标识。 */
@@ -188,6 +198,9 @@ export async function copyMessage({
   fromChatId,
   messageId,
   messageThreadId,
+  caption,
+  showCaptionAboveMedia,
+  videoStartTimestamp,
 }: CopyMessageParams): Promise<number | undefined> {
   return runTelegramAction({
     action: "copy message",
@@ -196,7 +209,13 @@ export async function copyMessage({
         chatId,
         fromChatId,
         messageId,
-        { message_thread_id: messageThreadId },
+        // 定形一次初始化，缺席用 undefined 表达；grammY 序列化时丢弃 undefined。
+        {
+          message_thread_id: messageThreadId,
+          caption,
+          show_caption_above_media: showCaptionAboveMedia,
+          video_start_timestamp: videoStartTimestamp,
+        },
         ...signalArgs(signal)
       ),
     map: (copied: MessageId): number | undefined => {

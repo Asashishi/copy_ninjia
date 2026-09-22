@@ -1,4 +1,3 @@
-import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { User } from "grammy/types";
 import { logger } from "../infra/logger";
@@ -7,21 +6,16 @@ import {
   persistChatState,
 } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { formatUserLabel } from "../users/userLabel";
-import { SUPER_ADMIN_USER_ID } from "../config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import type { WhitelistPermissionKey } from "../types/identityPolicy";
 import type { CachedUser, ChatState } from "../types/chatState";
 import type { ToggleCommandTexts } from "../types/commands";
-import {
-  hasCommandPermission,
-  isSuperAdminActor,
-  resolveCommandActor,
-} from "./commandActor";
+import { rejectUnlessPermitted, rejectUnlessSuperAdmin } from "./commandActor";
 
 /**
  * 发起人是否是 SUPER_ADMIN_USER_ID 本人。当前只有 /send 用它：它是唯一以
  * `ctx.from` 而非命令可见发起身份判定的入口——私聊里没有频道马甲，也不该让
- * sender_chat 参与。其余仅超管命令走 isSuperAdminActor（见 commandActor.ts）。
+ * sender_chat 参与。其余仅超管命令走 rejectUnlessSuperAdmin（见 commandActor.ts）。
  *
  * 校验不通过时的反应也刻意不收进这里：/send 只能私聊触发，对非本人的探测保持
  * 沉默、不确认这个指令存在（见 commands/send.ts 头注），与群聊指令「照样回嘴，
@@ -167,7 +161,7 @@ export async function runChatToggleCommand({
  *
  * 提供 permission 时按该权限键授权；超级管理员恒持有全部权限键（见
  * whitelist.ts），因此不必也不该在这里再判一次身份。省略 permission 则是
- * 「只认身份、无法授权出去」的一类（当前只有 /init），走 isSuperAdminActor。
+ * 「只认身份、无法授权出去」的一类（当前只有 /init），走 rejectUnlessSuperAdmin。
  * ctx.match 还必须是 enable/disable 之一。
  */
 export async function resolveSuperAdminToggleArg(
@@ -176,19 +170,10 @@ export async function resolveSuperAdminToggleArg(
 ): Promise<"enable" | "disable" | undefined> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  const isAuthorized: boolean = permission === undefined
-    ? isSuperAdminActor(ctx)
-    : hasCommandPermission(ctx, permission);
-
-  if (!actor || !isAuthorized) {
-    await sendCommandMessage({
-      chatId,
-      text: texts.rejection(actor ? formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0)) : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor),
-      replyToMessageId: messageId,
-    });
-    return undefined;
-  }
+  const actor: CachedUser | undefined = permission === undefined
+    ? await rejectUnlessSuperAdmin(ctx, texts.rejection)
+    : await rejectUnlessPermitted(ctx, permission, texts.rejection);
+  if (actor === undefined) return undefined;
 
   const arg: string = ctx.match.trim().toLowerCase();
   if (arg !== "enable" && arg !== "disable") {

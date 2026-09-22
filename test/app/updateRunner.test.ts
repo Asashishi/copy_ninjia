@@ -6,15 +6,9 @@ import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
 import { logger } from "../../packages/infra/logger";
 import { currentUpdateAbortSignal } from "../../packages/infra/updateContext";
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve: (() => void) | undefined;
-  const promise = new Promise<void>((done) => { resolve = done; });
-  return { promise, resolve: (): void => resolve?.() };
-}
-
 describe("acknowledgement-safe update runner", () => {
   test("middleware 同步调用 stop 后悬挂也不会漏掉停机唤醒", async () => {
-    const held = deferred();
+    const held: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     let stopped: boolean = false;
     const offsets: number[] = [];
     const bot = {
@@ -41,7 +35,7 @@ describe("acknowledgement-safe update runner", () => {
   });
 
   test("每次只取一条，middleware 完成前不发起携带更高 offset 的下一次 getUpdates", async () => {
-    const first = deferred();
+    const first: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const fetchOffsets: number[] = [];
     const fetchLimits: number[] = [];
     let fetchCount: number = 0;
@@ -79,7 +73,7 @@ describe("acknowledgement-safe update runner", () => {
     // per-chat sequentialize 已从 registerHandlers 移除，同群消息的顺序保证此后
     // 完全来自本 runner 的 `await updateTask` 循环，因此这条不变量必须被直接断言，
     // 而不是只看 offset 记账。
-    const gates = [deferred(), deferred()];
+    const gates: PromiseWithResolvers<void>[] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const started: number[] = [];
     let fetchCount: number = 0;
     const fakeBot = {
@@ -117,7 +111,7 @@ describe("acknowledgement-safe update runner", () => {
   });
 
   test("stop 不等待悬挂 middleware，且停止后绝不通过下一次 fetch 确认该批次", async () => {
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const fetchOffsets: number[] = [];
     const fakeBot = {
       api: {
@@ -258,7 +252,7 @@ describe("acknowledgement-safe update runner", () => {
     // stop() 让取数循环赢下 Promise.race 并直接 return，之后 updateTask 的 rejection
     // 再没有观察者、task() 正常 resolve。只靠 task() 的话生命周期会照常确认最终
     // offset，把这条从未成功处理的 update 一并确认掉，Telegram 不再重投。
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     let handledErrors: number = 0;
     const fakeBot = {
       api: {

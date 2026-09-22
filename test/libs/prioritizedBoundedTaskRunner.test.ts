@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { createPrioritizedBoundedTaskRunner } from "../../packages/libs/prioritizedBoundedTaskRunner";
-import { deferred } from "./helpers";
 import { settleTestBatch } from "./helpers";
 
 describe("createPrioritizedBoundedTaskRunner", () => {
@@ -11,7 +10,7 @@ describe("createPrioritizedBoundedTaskRunner", () => {
       maxBackgroundPending: 1,
       interactiveBurst: 2,
     });
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const started: string[] = [];
     const first: Promise<string | undefined> = runner.run("interactive", async (): Promise<string> => {
       started.push("active");
@@ -51,7 +50,7 @@ describe("createPrioritizedBoundedTaskRunner", () => {
       maxBackgroundPending: 2,
       interactiveBurst: 2,
     });
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const started: string[] = [];
     const active: Promise<string | undefined> = runner.run("interactive", async (): Promise<string> => {
       started.push("active");
@@ -87,7 +86,7 @@ describe("createPrioritizedBoundedTaskRunner", () => {
       maxBackgroundPending: 1,
       interactiveBurst: 2,
     });
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const controller: AbortController = new AbortController();
     let queuedStarted: boolean = false;
     const active: Promise<string | undefined> = runner.run("interactive", async (): Promise<string> => {
@@ -127,9 +126,9 @@ describe("createPrioritizedBoundedTaskRunner", () => {
       maxBackgroundPending: 1,
       interactiveBurst: 1,
     });
-    const first = deferred();
-    const second = deferred();
-    const third = deferred();
+    const first: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    const second: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    const third: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const started: number[] = [];
 
     const run = (id: number, gate: Promise<void>) => runner.run("interactive", async () => {
@@ -170,7 +169,7 @@ describe("createPrioritizedBoundedTaskRunner", () => {
       maxBackgroundPending: 1,
       interactiveBurst: 1,
     });
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const controller: AbortController = new AbortController();
     let queuedStarted: boolean = false;
     const active: Promise<void | undefined> = runner.run("interactive", async (): Promise<void> => {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil } from "../../helpers/waitUntil";
 import type { BlockedMembersRemovedEvent } from "../../../packages/types/antiRaid";
 
@@ -13,7 +14,7 @@ const releaseAdDetectDedupKey = mock((..._args: unknown[]): void => {});
 const guardApi = { kind: "guard-api" };
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   probeChatAdmin,

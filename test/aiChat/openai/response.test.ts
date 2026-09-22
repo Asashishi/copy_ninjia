@@ -13,7 +13,7 @@ import {
   normalizedFinishReason,
   responseOutputText,
 } from "../../../packages/aiChat/openai/response";
-import { OPENAI_EMPTY_FUNCTION_CALLS as EMPTY_FUNCTION_CALLS } from "../../../packages/consts/aiChat/openai";
+import { EMPTY_FUNCTION_CALLS } from "../../../packages/consts/aiChat/tools";
 import { OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS } from "../../../packages/consts/aiChat/openai";
 
 function response(overrides: Record<string, unknown>): OpenAI.Responses.Response {

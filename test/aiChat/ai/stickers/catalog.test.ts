@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { aiChatWorkerAbortController } from "../../../../packages/cache/workers/aiChat/worker";
+import { adoptStickerConfig, getStickerConfig } from "../../../../packages/config/stickers";
 import type { AiTextResult } from "../../../../packages/types/aiChat/provider";
+import type { AiStickerCatalogEvent } from "../../../../packages/types/stickers/protocol";
 
 function generatedText(text: string): AiTextResult {
   return { ok: true, text };
@@ -43,19 +45,27 @@ mock.module("../../../../packages/aiChat/provider", () => ({
 const {
   drainStickerCatalogTasks,
   ensureStickerCatalogs,
+  flushDirtyStickerCatalogs,
   generatePackCatalog,
   getCatalogEntry,
   getPackSummary,
   hydrateStickerCatalogs,
+  pruneStickerCatalogs,
   retryIncompleteStickerCatalogs,
 } = await import("../../../../packages/aiChat/ai/stickers/catalog");
 const { transientDescriptionCache } = await import("../../../../packages/cache/workers/aiChat/imageDescription");
 const {
+  catalogs,
+  dirtyPacks,
   failedEntries,
   generatingPacks,
   stickerCatalogRetryState,
 } = await import("../../../../packages/cache/workers/aiChat/stickers/catalog");
+const { stickerMenuRevision } = await import("../../../../packages/cache/workers/aiChat/stickers/menu");
 const { STICKER_CATALOG_RETRY_INTERVAL_MS } = await import("../../../../packages/consts/aiChat/stickers");
+const previousConfig: ReturnType<typeof getStickerConfig> = getStickerConfig();
+
+afterEach((): void => { adoptStickerConfig(previousConfig); });
 
 /**
  * 五个替身都是模块级共享的，而 bun 的 `mockClear()` 只清调用记录、**不清
@@ -396,5 +406,88 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     expect(getCatalogEntry("latch-uid")).toEqual({ emoji: "😂", description: "终于描述出来了" });
     expect(getPackSummary("pack_latch")).toBe("自愈出来的简介");
     expect(failedEntries.has("pack_latch")).toBe(false);
+  });
+});
+
+describe("aiChat/ai/stickers/catalog pruneStickerCatalogs 按白名单剪枝", () => {
+  test.each([false, true])("移出的在途目录在任务结算及上报后释放（拉取成功=%s）", async (succeeded: boolean): Promise<void> => {
+    const pack: string = "settling_pack";
+    adoptStickerConfig({ packs: [pack] });
+    hydrateStickerCatalogs(persisted(pack, { "settling-uid": { emoji: "🙂", description: "待对账" } }));
+    const deferred: PromiseWithResolvers<any> = Promise.withResolvers<any>();
+    getStickerSetMock.mockImplementationOnce((): Promise<any> => deferred.promise);
+    ensureStickerCatalogs([pack]);
+    adoptStickerConfig({ packs: [] });
+    pruneStickerCatalogs([]);
+    expect(catalogs.has(pack)).toBeTrue();
+    deferred.resolve(succeeded ? { stickers: [] } : null);
+    await drainStickerCatalogTasks();
+    expect(generatingPacks.has(pack)).toBeFalse();
+    expect(catalogs.has(pack)).toBe(succeeded);
+    expect(dirtyPacks.has(pack)).toBe(succeeded);
+    const posted: string[] = [];
+    flushDirtyStickerCatalogs((event: AiStickerCatalogEvent): void => { posted.push(event.pack); });
+    expect(posted.includes(pack)).toBe(succeeded);
+    expect(catalogs.has(pack)).toBeFalse();
+    expect(dirtyPacks.has(pack)).toBeFalse();
+  });
+
+  /** 当前目录里除指定包以外的全部包名：用它当白名单，剪枝只针对本用例的包，
+   *  不动同文件其它用例播下的状态（本文件刻意不在 beforeEach 清目录）。 */
+  function whitelistExcept(excluded: string): string[] {
+    return [...catalogs.keys()].filter((pack: string): boolean => pack !== excluded);
+  }
+
+  test("已下架包先交回待上报快照，再剪掉目录、简介与失败记录", () => {
+    hydrateStickerCatalogs(persisted("prune_stale", { "prune-stale-uid": { emoji: "😭", description: "下架包" } }, "下架包简介"));
+    hydrateStickerCatalogs(persisted("prune_kept", { "prune-kept-uid": { emoji: "😂", description: "留用包" } }, "留用包简介"));
+    dirtyPacks.add("prune_stale");
+    dirtyPacks.add("prune_kept");
+    failedEntries.set("prune_stale", new Map([["prune-stale-uid", 0]]));
+    const revision: number = stickerMenuRevision.current;
+
+    pruneStickerCatalogs(whitelistExcept("prune_stale"));
+    expect(catalogs.has("prune_stale")).toBeTrue();
+    expect(dirtyPacks.has("prune_stale")).toBeTrue();
+    adoptStickerConfig({ packs: whitelistExcept("prune_stale") });
+    const posted: string[] = [];
+    flushDirtyStickerCatalogs((event: AiStickerCatalogEvent): void => { posted.push(event.pack); });
+    expect(posted).toContain("prune_stale");
+
+    expect(catalogs.has("prune_stale")).toBe(false);
+    expect(getCatalogEntry("prune-stale-uid")).toBeUndefined();
+    expect(getPackSummary("prune_stale")).toBeUndefined();
+    expect(failedEntries.has("prune_stale")).toBe(false);
+    expect(dirtyPacks.has("prune_stale")).toBe(false);
+    expect(stickerMenuRevision.current).toBeGreaterThan(revision);
+    // 仍在白名单里的包保留已上报的目录。
+    expect(getCatalogEntry("prune-kept-uid")).toEqual({ emoji: "😂", description: "留用包" });
+    expect(getPackSummary("prune_kept")).toBe("留用包简介");
+    expect(dirtyPacks.has("prune_kept")).toBe(false);
+    dirtyPacks.delete("prune_kept");
+  });
+
+  test("正在生成目录的包跳过，生成结算之后才剪", () => {
+    hydrateStickerCatalogs(persisted("prune_inflight", { "prune-inflight-uid": { emoji: "👍", description: "在途包" } }));
+    const whitelist: string[] = whitelistExcept("prune_inflight");
+    generatingPacks.set("prune_inflight", Promise.resolve());
+
+    // 在途任务还在往这几张表里写，此刻剪了会被它补回来。
+    pruneStickerCatalogs(whitelist);
+    expect(getCatalogEntry("prune-inflight-uid")).toEqual({ emoji: "👍", description: "在途包" });
+
+    generatingPacks.delete("prune_inflight");
+    pruneStickerCatalogs(whitelist);
+    expect(getCatalogEntry("prune-inflight-uid")).toBeUndefined();
+  });
+
+  test("白名单覆盖当前全部包时不剪也不失效菜单", () => {
+    hydrateStickerCatalogs(persisted("prune_stable", { "prune-stable-uid": { emoji: "🙂", description: "稳定包" } }));
+    const revision: number = stickerMenuRevision.current;
+
+    pruneStickerCatalogs([...catalogs.keys()]);
+
+    expect(getCatalogEntry("prune-stable-uid")).toEqual({ emoji: "🙂", description: "稳定包" });
+    expect(stickerMenuRevision.current).toBe(revision);
   });
 });

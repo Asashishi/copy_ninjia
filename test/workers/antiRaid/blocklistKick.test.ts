@@ -2,6 +2,7 @@ import type { IdentityPolicyRawReadResult } from "../../../packages/types/identi
 import type { FlushResult } from "../../../packages/types/lifecycle";
 import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { AntiRaidWorkerMessage } from "../../../packages/types";
 import type { DiskBusinessMessage, AdSampleDiskMessage } from "../../../packages/types/diskIO";
 import {
@@ -25,7 +26,7 @@ const flushDiskIODomain = mock(async (): Promise<FlushResult> => {
 });
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
@@ -54,6 +55,7 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
 }));
 mock.module("../../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
+  logApiError: (): void => {},
   telegramApi: { kind: "guard-api" },
 }));
 mock.module("../../../packages/infra/botAdmin", () => ({
@@ -267,7 +269,7 @@ describe("黑名单成员入群秒踢", () => {
 
     const handling: Promise<void> = handleChatMemberUpdate(joinUpdate(42));
     // 先跨过 joinLog durable flush，再等 write-ahead snapshot 的领域 flush 真正
-    // 挂起，才模拟并发到达的 /unblock。
+    // 挂起，才模拟并发到达的 /block disable。
     for (
       let turn: number = 0;
       turn < 20 && flushDiskIODomain.mock.calls.length < 2;
@@ -286,7 +288,7 @@ describe("黑名单成员入群秒踢", () => {
 
     expect(removals()).toHaveLength(0);
     expect(pendingBlockedRemovals.size).toBe(0);
-    // 发现权威任务已取消后还要再 flush 一次空快照，不能只依赖 /unblock
+    // 发现权威任务已取消后还要再 flush 一次空快照，不能只依赖 /block disable
     // 排队但尚未确认的 cleanup。
     expect(flushDiskIODomain).toHaveBeenCalledTimes(3);
     expect(diskPosts.at(-1)).toMatchObject({

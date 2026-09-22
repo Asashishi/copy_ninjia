@@ -30,7 +30,8 @@ mock.module("../../packages/config/readiness", () => ({
   adDetectConfigReadiness: (): ConfigReadiness => adDetectVerdict,
   translateConfigReadiness: (): ConfigReadiness => jaTranslateVerdict,
 }));
-mock.module("../../packages/config/telegram", () => ({
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 100,
 }));
 mock.module("../../packages/infra/telegram", () => ({
@@ -60,9 +61,11 @@ const { handleTranslateCommand } = await import("../../packages/commands/transla
 const { handleMoodCommand } = await import("../../packages/commands/mood");
 
 function context(argument: string): never {
+  const chat = { id: -1001, type: "supergroup" };
   return {
-    chat: { id: -1001 },
+    chat,
     from: { id: 100, first_name: "Admin", username: "admin" },
+    msg: { message_id: 7, chat },
     msgId: 7,
     match: argument,
   } as never;

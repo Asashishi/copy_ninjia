@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import type { TelegramConfig } from "../../packages/types/config";
+import type { BotConfig } from "../../packages/types/config";
 import { CLEAR_CONTEXT_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
-const invalidateAiChat = mock(async (_chatId: number, _purgeMemory: boolean): Promise<void> => undefined);
+const invalidateAiChat = mock(async (_chatId: number): Promise<void> => undefined);
 const loggerError = mock((..._args: unknown[]): void => {});
 const delegatedPermissions = new Set<number>();
 
-mock.module("../../packages/config/telegram", () => ({
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 100,
-  getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 100 }),
+  getBotConfig: (): BotConfig => ({ atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 100 }),
 }));
 // 超级管理员直授全部权限，普通成员按被授予的独立权限位判定。
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
@@ -29,9 +31,11 @@ const { handleClearContextCommand } = await import("../../packages/commands/clea
 // userId 传 null 表示这条 update 解析不出发起身份；显式 undefined 会被默认值
 // 补成超级管理员，那正好把「拒绝」测成「放行」。
 function context(argument: string = "", userId: number | null = 100): never {
+  const chat = { id: -1001, type: "supergroup" };
   return {
-    chat: { id: -1001 },
+    chat,
     from: userId === null ? undefined : { id: userId, first_name: "Admin", username: "admin" },
+    msg: { message_id: 7, chat },
     msgId: 7,
     match: argument,
   } as never;
@@ -41,7 +45,7 @@ beforeEach(() => {
   delegatedPermissions.clear();
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
-  invalidateAiChat.mockImplementation(async (_chatId: number, _purgeMemory: boolean): Promise<void> => undefined);
+  invalidateAiChat.mockImplementation(async (_chatId: number): Promise<void> => undefined);
   loggerError.mockClear();
 });
 
@@ -49,8 +53,8 @@ describe("/clear_context", () => {
   test("超级管理员清空本群上下文：内存与磁盘记忆一并删除", async () => {
     await handleClearContextCommand(context("", 100));
 
-    // purgeMemory=true 才同时走 Worker 侧 purge 与 durable 删除 chat_states.ai_context。
-    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+    // invalidateAiChat 恒同时走 Worker 侧 purge 与 durable 删除 chat_states.ai_context。
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("一句都不记得"),
@@ -62,7 +66,7 @@ describe("/clear_context", () => {
     delegatedPermissions.add(200);
     await handleClearContextCommand(context("", 200));
     expect(invalidateAiChat).toHaveBeenCalledTimes(1);
-    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001);
 
     delegatedPermissions.delete(200);
     invalidateAiChat.mockClear();
@@ -76,7 +80,7 @@ describe("/clear_context", () => {
     expect(invalidateAiChat).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("哪来的资格"),
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.clearContextRejected("@admin"),
       replyToMessageId: 7,
     });
   });
@@ -93,7 +97,7 @@ describe("/clear_context", () => {
     expect(invalidateAiChat).not.toHaveBeenCalled();
     delegatedPermissions.add(-2001);
     await handleClearContextCommand(ctx as never);
-    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001);
   });
 
   test("解析不出发起身份时同样拒绝", async () => {
@@ -102,7 +106,7 @@ describe("/clear_context", () => {
     expect(invalidateAiChat).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("哪个杂鱼"),
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.clearContextRejected(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownActor),
       replyToMessageId: 7,
     });
   });

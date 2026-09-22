@@ -29,7 +29,10 @@ export const replyGenerations: Map<number, number> = new Map();
  * 不回退它，防止 reset 前尚未回调的异步工作与 reset 后的新工作复用同一个 epoch。
  */
 const replyGenerationCounter: { current: number } = { current: 0 };
-/** 每群最近一次限频提示时刻；周期 sweep 删除过期项，Worker 重建后清空。 */
+/**
+ * 每群最近一次限频提示时刻；周期 sweep 删除过期项，Worker 重建后清空。
+ * 容量：受管群数（STATE_MANAGED_CHAT_LIMIT），每群至多一项。
+ */
 export const rateLimitNoticeTimes: Map<number, number> = new Map();
 /**
  * 每群长窗口触发时刻队列；周期 sweep 删除过期项。
@@ -54,7 +57,8 @@ export const replyDeliveryWindows: Map<number, ReplyDeliveryWindow> = new Map();
 /**
  * owner：AI Worker。各群全部代际尚未按序回收的发送槽位数；reserve 填充、
  * advanceDelivery 逐项释放并在归零时删除。invalidate/reset 不提前清空，
- * Worker 销毁后自然释放；群数不超过 REPLY_DELIVERY_MAX_TOTAL。
+ * Worker 销毁后自然释放；容量上界为 REPLY_DELIVERY_MAX_TOTAL（每群至少占一个
+ * 存活轮次才会有条目），不设淘汰。
  */
 export const replyDeliveryCounts: Map<number, number> = new Map();
 /**
@@ -81,9 +85,16 @@ export const pendingOverflowNotices: Map<number, number | undefined> = new Map()
 /**
  * 每个 chat:generation 的取消控制器。回复轮或限频提示开始时创建，invalidate
  * 同步 abort 旧代；该代任务全部 settle 后删除。
+ * 容量：同时存活的代际数，被 replyDeliveryTotal 的 REPLY_DELIVERY_MAX_TOTAL
+ * 与每群并发闸共同兜住；不设淘汰——丢掉一个控制器等于让那一代永远取消不掉。
  */
 export const replyAbortControllers: Map<string, AbortController> = new Map();
-/** 每个 chat:generation 尚未 settle 的回复及其发送链、提示、媒体描述与记忆压缩任务。 */
+/**
+ * 每个 chat:generation 尚未 settle 的回复及其发送链、提示、媒体描述与记忆压缩任务。
+ * 清理：每个 Promise settle 时从内层 Set 移除，Set 空了删外层键；群失效与
+ * resetAiChatReplyCache 整表清空。容量与不设淘汰的理由同 replyAbortControllers，
+ * 两张表覆盖同一批 chat:generation 键。
+ */
 export const replyGenerationTasks: Map<string, Set<Promise<void>>> = new Map();
 
 /** 读取某群当前回复 epoch；未登记时分配一个本 isolate 内唯一的新值。 */

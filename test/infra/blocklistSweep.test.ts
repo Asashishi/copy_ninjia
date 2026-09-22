@@ -229,6 +229,66 @@ describe("黑名单清扫", () => {
     expect(blocklistSweepPages.size).toBe(0);
   });
 
+  test("续页读到空页（名单在两页之间被清掉）按整轮完成收尾并销账", async () => {
+    for (let id: number = 1; id <= BLOCKLIST_SWEEP_PAGE_SIZE + 1; id++) {
+      blockedUserIds.set(id, { isBlocked: true, blockedAt: "2026/08/17 00:00:00" });
+    }
+    let reads: number = 0;
+    setBlocklistIdReads((): Promise<readonly number[]> => {
+      reads++;
+      return Promise.resolve(reads === 1 ? [...blockedUserIds.keys()] : []);
+    });
+    await sweepBlockedMembers(-1001, 1_000);
+    const removalId: number = lastRemovalId();
+
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
+      chatId: -1001,
+      removalId,
+      complete: true,
+      permissionDenied: false,
+      targetIsAdmin: false,
+    });
+    await settleBackgroundWork();
+
+    expect(readBlocklistIdPage).toHaveBeenCalledTimes(2);
+    expect(remover).toHaveBeenCalledTimes(1);
+    expect(pendingBlockedRemovals.has(removalId)).toBeFalse();
+    expect(blocklistSweepPages.has(removalId)).toBeFalse();
+  });
+
+  test("非末页缺续读游标时记边界失败并推进退避，不再续扫，任务留在 outbox", async () => {
+    for (let id: number = 1; id <= BLOCKLIST_SWEEP_PAGE_SIZE + 1; id++) {
+      blockedUserIds.set(id, { isBlocked: true, blockedAt: "2026/08/17 00:00:00" });
+    }
+    await sweepBlockedMembers(-1001, 1_000);
+    const removalId: number = lastRemovalId();
+    // 读取边界已按页校验游标，这里直接构造「非末页却没有游标」的页状态，覆盖结算侧的防线。
+    const page = blocklistSweepPages.get(removalId)!;
+    expect(page.done).toBeFalse();
+    blocklistSweepPages.set(removalId, { ...page, nextCursor: null });
+
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
+      chatId: -1001,
+      removalId,
+      complete: true,
+      permissionDenied: false,
+      targetIsAdmin: false,
+    });
+    await settleBackgroundWork();
+
+    expect(readBlocklistIdPage).toHaveBeenCalledTimes(1);
+    expect(remover).toHaveBeenCalledTimes(1);
+    expect(pendingBlockedRemovals.has(removalId)).toBeTrue();
+    expect(blocklistSweepPages.has(removalId)).toBeFalse();
+    expect(blocklistSweepState.get(-1001)?.failedSweeps).toBe(1);
+  });
+
   test("续页读取失败释放 claim 并推进退避，outbox 留给下一轮从头重放", async () => {
     for (let id: number = 1; id <= BLOCKLIST_SWEEP_PAGE_SIZE + 1; id++) {
       blockedUserIds.set(id, {
@@ -509,7 +569,7 @@ describe("黑名单清扫", () => {
   });
 
   test("正常 resolve 但零投递按失败结算：作废 claim 并推进退避", async () => {
-    // durable 对账在并发 /unblock 反复裁剪同一批时会扣下整批 removeBlockedMembers，
+    // durable 对账在并发 /block disable 反复裁剪同一批时会扣下整批 removeBlockedMembers，
     // 投递路径于是拿着空数组早退并正常 resolve——没抛错，也没有任何消息在途。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     remover.mockImplementationOnce(async (): Promise<number> => 0);

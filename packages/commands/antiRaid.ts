@@ -24,12 +24,12 @@ import { runChatToggleCommand } from "./superAdminToggle";
  * 邀请权限——开关都关了，没人再会解开它）。与另外三条尽力而为的清理不同，
  * 这里的失败必须如实回执：验证窗口活在主线程镜像里，Worker 重建后会被 adopt
  * 重放回去，管理员得知道「还没拆干净」并再关一次（adopt 那一侧另有
- * purgeDisabledJoinGuards 兜底，见 antiRaid/workerBridge.ts）。
+ * purgeDisabledJoinGuards 兜底，见 antiRaid/workerBridge/replay.ts）。
  */
 export async function handleAntiRaidCommand(
   ctx: CommandContext<Context>
 ): Promise<void> {
-  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
   await runChatToggleCommand({
     ctx,
     texts: atmosphere.ANTI_RAID_TOGGLE_TEXTS,

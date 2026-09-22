@@ -20,7 +20,7 @@ import type {
   PendingTemporaryAdBypassWrite,
 } from "../../../types/temporaryAdBypass";
 import { hasEffectiveBlocklistIdentity } from "./identityPolicy";
-import { requireStorageDatabase, storageSource } from "./context";
+import { assertPositiveRevision, requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull, flushStorageDatabase } from "./flush";
 
 /** 收下一条临时广告免检累计最终值；同一主键的迟到 revision 不覆盖新值。 */
@@ -30,9 +30,7 @@ export function handleTemporaryAdBypassWrite(
 ): void {
   const source: string = storageSource("temporary_ad_bypass_entries", message.id);
   assertTelegramIdentityId(message.id, source);
-  if (!Number.isSafeInteger(message.revision) || message.revision < 1) {
-    throw new Error(`${source}: revision must be a positive safe integer.`);
-  }
+  assertPositiveRevision(message.revision, source);
   let activity: TemporaryAdBypassWriteDiskMessage["activity"] = message.activity;
   if (activity !== null) {
     assertTemporaryAdBypassActivity(activity, source);

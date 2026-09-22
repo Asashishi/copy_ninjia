@@ -1,4 +1,3 @@
-import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
 import type { AtmosphereTexts } from "../../types/atmosphere";
 import { workerAtmosphere } from "./atmosphere";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
@@ -156,7 +155,7 @@ export function observeMemberMessage(
  * 到点自己就解开了，和广告检测那条「人已经没了」的播报不是一回事。
  * 导出仅为可测试性。
  */
-export function formatFloodMuteNotice(label: string, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
+export function formatFloodMuteNotice(label: string, atmosphere: AtmosphereTexts): string {
   const minutes: number = Math.round(FLOOD_MUTE_DURATION_MS / 60_000);
   return atmosphere.NOTICE_TEXTS.floodMuted(label, FLOOD_MESSAGE_LIMIT, minutes);
 }
@@ -277,22 +276,19 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
  * ./botPermissions.ts），而它是三态——「没观测到」不当成没权限，照常往下走，
  * 由 Telegram 的回应当裁判，见 muteFlooder 对 `forbidden` / `failed` 的分档。
  *
- * @param now 缺省取候选自带的主线程观测时刻（见 FloodCandidateMessage.observedAt）；
- *   本线程不为每条候选另读一次墙钟。只有单测显式覆盖它。
+ * 计数时刻取候选自带的主线程观测时刻（见 FloodCandidateMessage.observedAt）；
+ * 本线程不为每条候选另读一次墙钟。
  */
-export function handleFloodCandidate(
-  message: FloodCandidateMessage,
-  now: number = message.observedAt
-): void {
+export function handleFloodCandidate(message: FloodCandidateMessage): void {
   const entry: FloodWindowEntry | undefined =
-    observeMemberMessage(message.chatId, message.userId, now);
+    observeMemberMessage(message.chatId, message.userId, message.observedAt);
   if (entry === undefined) return;
   // 乐观抑制：本函数是同步的 mailbox handler，一次爆发式刷屏能在第一次网络
   // 往返回来之前就把下一个窗口填满。等结果再置位就是同一个人挨两次禁言、
   // 群里挨两条公告。瞬时失败由 muteFlooder 自己回滚。
   //
-  // 基准取 entry.lastObservedAt 而不是本函数的 now：observeMemberMessage 只把
-  // **它自己的形参**钳到单调值（见那边的 Math.max），本函数的 now 还是原始墙钟。
+  // 基准取 entry.lastObservedAt 而不是 message.observedAt：observeMemberMessage 只把
+  // **它自己的形参**钳到单调值（见那边的 Math.max），候选自带的观测时刻还是原始墙钟。
   // 两边读不同的钟，系统校时往回跳一下就会写出一个「已经过期」的抑制位——消费侧
   // 拿钳过的时刻去比，`now < suppressedUntil` 恒假，这段乐观抑制等于没有。
   entry.suppressedUntil = entry.lastObservedAt + FLOOD_MUTE_DURATION_MS;

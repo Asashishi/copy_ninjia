@@ -3,7 +3,6 @@ import { join } from "node:path";
 import {
   cleanupFixtures,
   createFixture,
-  readText,
   runInstaller,
   systemdPrompt,
   validTelegram,
@@ -48,11 +47,11 @@ function runFragment(
 afterEach(cleanupFixtures);
 
 async function installationCalls(fixture: InstallerFixture): Promise<string> {
-  return (await readText(fixture.callLog)).replaceAll("systemctl-secret-env=absent\n", "");
+  return (await Bun.file(fixture.callLog).text()).replaceAll("systemctl-secret-env=absent\n", "");
 }
 
 async function expectReadOnlyServiceQueries(fixture: InstallerFixture): Promise<void> {
-  const calls: string[] = (await readText(fixture.outboundLog)).trim().split("\n");
+  const calls: string[] = (await Bun.file(fixture.outboundLog).text()).trim().split("\n");
   expect(calls.length).toBeGreaterThan(0);
   for (const call of calls) expect(call).toStartWith("systemctl:guarded:show ");
 }
@@ -67,7 +66,7 @@ describe("安装器精确运行时边界", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.output).toContain("scripts/install/configure.sh");
     expect(await installationCalls(fixture)).toBe("");
-    expect(await Bun.file(join(fixture.configRoot, "telegram.json")).exists()).toBeFalse();
+    expect(await Bun.file(join(fixture.configRoot, "bot.json")).exists()).toBeFalse();
     await expectReadOnlyServiceQueries(fixture);
   });
 
@@ -80,7 +79,7 @@ describe("安装器精确运行时边界", () => {
       expect(result.output).toContain(`需要 Bun ${REQUIRED_VERSION}`);
       expect(await installationCalls(fixture)).toBe("");
       await expectReadOnlyServiceQueries(fixture);
-      expect(await Bun.file(join(fixture.configRoot, "telegram.json")).exists()).toBe(false);
+      expect(await Bun.file(join(fixture.configRoot, "bot.json")).exists()).toBe(false);
       expect(await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists()).toBe(false);
     }
   );
@@ -98,12 +97,12 @@ describe("安装器精确运行时边界", () => {
     expect(result.exitCode).not.toBe(0);
     expect(await installationCalls(fixture)).toBe("manifest:check\n");
     await expectReadOnlyServiceQueries(fixture);
-    expect(await Bun.file(join(fixture.configRoot, "telegram.json")).exists()).toBe(false);
+    expect(await Bun.file(join(fixture.configRoot, "bot.json")).exists()).toBe(false);
   });
 
   test("匹配时先核对 manifest，再进入原有安装流程", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture();
-    await writeText(join(fixture.configRoot, "telegram.json"), validTelegram(), 0o600);
+    await writeText(join(fixture.configRoot, "bot.json"), validTelegram(), 0o600);
     const result: InstallerRunResult = runInstaller(fixture, [
       { prompt: "是否重新填写？", reply: "n" },
       { prompt: "现在配置 AI 能力", reply: "n" },
@@ -141,7 +140,7 @@ describe("安装器精确运行时边界", () => {
       REAL_BUN_PATH: Bun.argv[0]!,
     });
     expect(result).toEqual({ exitCode: 0, output: "" });
-    expect((await readText(tagLog)).trim()).toBe(`bun-v${REQUIRED_VERSION}`);
+    expect((await Bun.file(tagLog).text()).trim()).toBe(`bun-v${REQUIRED_VERSION}`);
   });
 });
 

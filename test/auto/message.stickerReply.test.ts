@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import {
   aiRecordMediaMessageFixture,
   aiRecordMessageFixture,
@@ -12,7 +12,7 @@ import {
  * 顺带验证这一点。 */
 
 // 六个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
-// 必须在下面的 await import 之前登记。本文件另外还桩了贴纸视觉源解析。
+// 必须在下面的 await import 之前登记。贴纸视觉源解析用真实实现。
 import {
   autoMessageChatState,
   copyMessageMock,
@@ -28,25 +28,6 @@ import {
 const { userReplyTriggerTimes } = await import("../../packages/cache/main/auto");
 const { clearUserReplyTriggerTimes } =
   await import("../../packages/auto/message/triggerPolicy");
-
-// 全量跑时 test/aiChat/ai/stickers/catalog.test.ts 会把 pickStickerVisionSource 换成
-// 恒返回素材的桩（bun 的 mock.module 是进程级注册表，跨文件生效），这里按
-// 真实语义重新钉住：静态贴纸下载本体，动态/视频贴纸只有缩略图可用、没有
-// 缩略图则没有素材（与 packages/aiChat/ai/stickers/describe.ts 的实现一致）。
-const realStickerDescribe = await import("../../packages/aiChat/ai/stickers/describe");
-mock.module("../../packages/aiChat/ai/stickers/describe", () => ({
-  ...realStickerDescribe,
-  pickStickerVisionSource: (sticker: any) => {
-    const source: any = !sticker.is_animated && !sticker.is_video ? sticker : sticker.thumbnail;
-    if (!source?.file_id) return null;
-    return {
-      fileId: source.file_id,
-      fileUniqueId: sticker.file_unique_id,
-      width: source.width,
-      height: source.height,
-    };
-  },
-}));
 
 const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
 const { clearAiReplyActivity } = await import("../../packages/auto/message/aiReplyActivity");

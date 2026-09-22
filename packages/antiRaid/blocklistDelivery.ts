@@ -28,7 +28,7 @@ function blocklistPagesMatch(
  *
  * 摘掉时若这批处置**取代过**一条 join（黑名单成员入群那一路：Worker 不会为一个
  * 马上要被踢掉的人开窗口，所以那条 join 压根没入过数组），必须把它补回去。否则
- * 并发的 `/unblock` 在 outbox flush 的等待期里取消掉这批处置之后，这个人既没有
+ * 并发的 `/block disable` 在 outbox flush 的等待期里取消掉这批处置之后，这个人既没有
  * 移除、也没有验证窗口——没有窗口就没有提醒、没有超时踢人，他就这么留在群里，
  * 而系统里再没有任何一处会为他重新开一个（反刷群的入群计数同样漏记）。
  * @param replacedJoins removalId -> 被它取代的 join，由 claimBlockedJoiner 登记。
@@ -118,7 +118,7 @@ function durableAntiRaidMessagesMatch(
 }
 
 /**
- * 处置消息在 outbox flush 等待期间仍可能被 `/unblock` 或停管裁剪。每次发现
+ * 处置消息在 outbox flush 等待期间仍可能被 `/block disable` 或停管裁剪。每次发现
  * 权威参数变化都重新持久化，直到「本次已 durable 的内容」与即将投递的内容
  * 完全一致；最终对账与同步 post 之间没有 await，不留旧任务重新进入 Worker
  * 的事件循环窗口。
@@ -127,10 +127,10 @@ function durableAntiRaidMessagesMatch(
  * outbox 深拷贝加一次带 fsync 的整文件重写，而本函数跑在 update 处理里面。
  *
  * 用尽时既不投也不抛，只把处置消息整批摘掉：
- * - 不投最后一次对账结果——那可能含刚被 `/unblock` 取消的批次，正是这套对账要挡的。
+ * - 不投最后一次对账结果——那可能含刚被 `/block disable` 取消的批次，正是这套对账要挡的。
  * - 不抛——本函数跑在 update 中间件里（postAntiRaidDurably 没有 try/catch），异常
  *   会让这条 update 判失败、最终 offset 被扣住，重启后 Telegram 重投同一条，
- *   而触发条件（并发 `/unblock` 反复裁剪同一批）照样成立，正好把重启循环焊死。
+ *   而触发条件（并发 `/block disable` 反复裁剪同一批）照样成立，正好把重启循环焊死。
  *   这与同子系统 blocklistGuard.claimBlockedJoiner 的降级语义一致。
  * 任务本身留在 durable outbox 里不会丢，再让相关群欠一次补扫作为下一次机会。
  * 这一档**不补投被取代的 join**：批次还在 outbox 里、这个人仍然待清出去，补一个

@@ -1,4 +1,3 @@
-import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
 import type { AtmosphereTexts } from "../../types/atmosphere";
 /**
  * 群问答的文本解析与渲染：表单投递消息的字段解析，以及表单提示正文。
@@ -137,7 +136,7 @@ export function parseQaFieldMessage(message: Message): QaFieldInput | undefined 
 export function renderQaFormPrompt(
   q: string | undefined,
   a: string | undefined,
-  atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing
+  atmosphere: AtmosphereTexts
 ): string {
   const unset: string = atmosphere.QA_COMMAND_TEXTS.formUnset;
   const head: string = `${atmosphere.QA_COMMAND_TEXTS.formPrompt}\n` +

@@ -44,3 +44,13 @@ export function parseVerificationKey(key: string): ParsedVerificationKey | null 
   if (verificationKey(chatId, userId) !== key) return null;
   return { chatId, userId };
 }
+
+/**
+ * 解析本线程自己用 verificationKey 生成的键；形状不符说明内部表被写坏，按不变量
+ * 违例抛错。来自线程外的键仍用 parseVerificationKey 并自行处理 null。
+ */
+export function requireVerificationKey(key: string): ParsedVerificationKey {
+  const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
+  if (parsed === null) throw new Error(`Verification key was not produced by verificationKey: ${key}`);
+  return parsed;
+}

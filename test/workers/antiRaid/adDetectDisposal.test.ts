@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import type { AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { AdMessageBundle } from "../../../packages/types/antiRaid/adDetect";
 import type { TelegramWorkerTemporaryMessageResult } from "../../../packages/types/telegramWorker";
@@ -14,12 +16,7 @@ const sendTemporaryMessageFromMain = mock(async (
 const errorLogs: string[] = [];
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   deleteMessage,
@@ -259,7 +256,7 @@ describe("广告处置副作用", () => {
           : Number.NEGATIVE_INFINITY,
     });
 
-    const warning: string = formatReferencedAdWarning("@spammer");
+    const warning: string = formatReferencedAdWarning("@spammer", ATMOSPHERE_TEXTS.teasing);
     expect(warning).toContain("不要回复、引用或转发广告相关内容");
     expect(warning).toContain("连这点都记不住吗，杂鱼♡");
     expect(warning).not.toContain("五分钟");

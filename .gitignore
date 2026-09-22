@@ -1,8 +1,9 @@
 # dependencies (bun install)
 node_modules
 
-# Google Cloud service account credentials
+# Google Cloud service account credentials; only the placeholder example is tracked
 g-auth.json
+!/config_example/g-auth.json
 
 # output
 out
@@ -69,5 +70,9 @@ bot.lock
 bot.lock.*
 state.json
 state.json.bak
-state.json.*.corrupt
 .state.json.*.tmp
+
+# /h_image 专用图库（state.global.assets.randomHImageDir），以及显式配置为 images 的图库。
+# 锚定根目录，理由同上面的 /database/ 与 /performance/。
+/images/
+/h_image/

@@ -12,7 +12,7 @@ export const ANTI_RAID_DRAIN_TIMEOUT_MS: number = 15_000;
 /**
  * 停机 drain 在「落盘镜像 → Worker 执行副作用 → 发布新镜像」之间最多对账轮数。
  * 状态机阶段有限，正常一至两轮收敛；上限防止异常状态永久阻塞停机。
- * 所属模块：antiRaid/workerBridge.ts。
+ * 所属模块：antiRaid/durableDelivery.ts。
  */
 export const ANTI_RAID_DRAIN_MAX_ROUNDS: number = 5;
 
@@ -24,6 +24,6 @@ export const ANTI_RAID_DRAIN_MAX_ROUNDS: number = 5;
  * 一次带 fsync 的 SQLite 事务和精确 ACK，绝不能让主线程陷在里面出不来。
  * 用尽只是这个群的当前任务暂停并留下一行错误日志；期间已到达的新事件会续跑
  * 一个新任务。
- * 所属模块：antiRaid/workerBridge.ts。
+ * 所属模块：antiRaid/workerBridge/events.ts。
  */
 export const LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS: number = 5;

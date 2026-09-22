@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   parseVerificationKey,
+  requireVerificationKey,
   verificationKey,
   verificationKeyPrefix,
 } from "../../packages/libs/verificationKey";
@@ -38,5 +39,10 @@ describe("待验证复合键", () => {
     expect(parseVerificationKey("-1001: 42")).toBeNull();
     expect(parseVerificationKey("-1001:+42")).toBeNull();
     expect(parseVerificationKey("-1001:4e1")).toBeNull();
+  });
+
+  test("本线程生成的键按不变量解析，形状不符直接抛错", () => {
+    expect(requireVerificationKey(verificationKey(-1001, 42))).toEqual({ chatId: -1001, userId: 42 });
+    expect(() => requireVerificationKey("-1001:")).toThrow("Verification key was not produced by verificationKey: -1001:");
   });
 });

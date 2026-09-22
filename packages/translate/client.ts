@@ -6,7 +6,7 @@ import { googleServiceAccountKey, translateParentCache, translateRuntime } from 
 import type { GoogleServiceAccountKey } from "../types/config";
 import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
 import { withTimeout } from "../libs/withTimeout";
-import { settleWithinBudget } from "../libs/inflight";
+import { assertTimeoutMs, settleWithinBudget } from "../libs/inflight";
 import type { FlushResult } from "../types/lifecycle";
 
 // Google Cloud Translation - Advanced (v3) 客户端使用启动时发布的凭据快照。
@@ -140,9 +140,7 @@ export function translateText(text: string, language: TranslateLanguage): Promis
 
 /** 等待所有已接收翻译结束；超时只报告，closeTranslate 仍会尝试关闭通道。 */
 export async function drainTranslate(timeoutMs: number): Promise<FlushResult> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new Error("translate drain timeout must be a non-negative finite number");
-  }
+  assertTimeoutMs(timeoutMs, "translate drain timeout");
   if (translateRuntime.tasks.size === 0) return "flushed";
   if (timeoutMs === 0) return "timedOut";
 
@@ -152,9 +150,7 @@ export async function drainTranslate(timeoutMs: number): Promise<FlushResult> {
 
 /** 释放 gRPC 客户端与 project parent；重新 init 后会构造全新客户端。 */
 export async function closeTranslate(timeoutMs: number = TRANSLATE_REQUEST_TIMEOUT_MS): Promise<FlushResult> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new Error("translate close timeout must be a non-negative finite number");
-  }
+  assertTimeoutMs(timeoutMs, "translate close timeout");
   translateRuntime.accepting = false;
   translateRuntime.generation += 1;
   const client: GoogleTranslate.TranslationServiceClient | null = translateRuntime.client;

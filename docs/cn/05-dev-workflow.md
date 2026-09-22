@@ -22,9 +22,9 @@
 | `bun run test:random` | 固定种子的乱序全量测试，用于暴露测试间残留。桩的复位用 `mockReset()`：`mockClear()` 不清 `mockResolvedValueOnce` 的排队值，未被消费的那一份会漏给下一个用例，复位后每个桩都要重新装回实现 |
 | `bun run test:coverage` | 测试 + 全源码覆盖率 |
 | `bun run check:install-script-syntax` | 只用 `bash -n` 解析 `install.sh` 的 shell 语法；不执行安装脚本 |
-| `bun run check:install-isolation` | 在 `copy-ninjia-install-test-*` 专属临时根的夹具里实跑 `install.sh`（`scripts/checkInstallIsolation.ts`），核对暂存失败清理、`telegram.json` 回滚、中断续跑、成功替换、符号链接拓扑、未校验备份保留与凭据隔离；不触碰任何真实部署路径 |
+| `bun run check:install-isolation` | 在 `copy-ninjia-install-test-*` 专属临时根的夹具里实跑 `install.sh`（`scripts/checkInstallIsolation.ts`），核对暂存失败清理、`bot.json` 回滚、中断续跑、成功替换、符号链接拓扑、未校验备份保留与凭据隔离；不触碰任何真实部署路径 |
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
-| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 热路径门禁，共七段，**合入 master 前必跑** |
+| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 固定种子乱序全量测试 + 热路径门禁，共八段，**合入 master 前必跑** |
 | `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；因为要整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
@@ -32,7 +32,7 @@
 | `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
-| `bun run perf:review` | 专项复核：12 个既有热点、7 个 AI 回复/载荷场景、两条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择；文本清洗专项仅在显式 `--text` 时运行 |
+| `bun run perf:review` | 专项复核：12 个既有热点、7 个 AI 回复/载荷场景、两条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择；文本清洗与冷却表专项分别在显式 `--text` / `--cooldown` 时运行 |
 | `bun run build -- --version <tag>` | 显式版本必填，无默认值；构建当前 Linux 平台二进制，隔离验证后生成 `dist/` 发行包和 SHA-256 文件，不包含 `.map` 文件 |
 | `bun run release:check -- --version <tag>` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入 + 二进制构建验证，发布前必跑；缺失或非法版本在安装依赖前拒绝 |
 | `bun run release:build -- --version <tag>` | 在干净、已提交的 `dev` 上原生构建正式版本 |
@@ -44,7 +44,7 @@
 
 - **安装启动隔离**：安装夹具使用独立临时配置与数据根，mock 系统管理、依赖安装和网络出站，执行真实 `index.ts`、Worker 与退出落盘。每个 Worker 通过 Bun `preload` 安装网络替身，天气返回固定应答，其他请求被拒绝；测试核对替身已加载、轮询成功、SIGTERM 排空和锁文件清除。
 - **文件长度与扫描范围**：手写 TS、JS、shell 文件超过 1,000 行即拒绝；超过 500 行应评估拆分。检查覆盖受跟踪文件与尚未加入索引的新文件，Git 忽略的部署数据不进入扫描。安装语法检查同时覆盖 `install.sh` 和它声明的全部 shell 模块。
-- **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 90%。这意味着新增模块不写测试会直接拉低全局覆盖率。
+- **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 95%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **类型导入独立声明**：源码、脚本和测试都使用独立 `import type`；ESLint 的 `no-restricted-syntax` 拒绝 `import { value, type Shape }` 等 inline type specifier。`test/scripts/typeImportConventions.test.ts` 验证三类文件的拒绝/接受边界，并确认 `Promise.all` 禁令仍然生效。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
@@ -69,7 +69,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**4519 tests / 388 files / 158896 次 `expect()`**；全源码**函数覆盖率 97.22% / 行覆盖率 98.02%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5072 tests / 441 files / 192270 次 `expect()`**；全源码**函数覆盖率 97.01% / 行覆盖率 98.12%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -77,18 +77,22 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 1. **文件隔离**：Bun 为每个测试文件创建新的 global object；`mock.module` 与模块级状态不会污染其它测试文件。这里没有启用 `--parallel`，因此不宣称每个文件各占一个进程。
 2. **临时数据根**：`test/preloadEnv.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`、`database/`；结束后临时目录被清理。**路径注入单独成文件**是因为 ESM 的 import 一律先于同文件语句求值：只要 `test/preload.ts` 静态 import 了任何生产模块，写在文件里的环境变量赋值就已经晚了一步，`CONFIG_ROOT` 会指向开发机上的真实部署目录。
-3. **独占配置根**：同一份注入把 `config_example/` 整棵复制到该数据根下的 `config/`，再把 `COPY_NINJIA_CONFIG_ROOT` 指向这份副本（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）；`agent.json` 与 `telegram.json` 的占位凭据只在副本里换成测试专用值，严格解析器才收得下，副本随数据根一起删除。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读或改写开发机上的真实 Telegram 与功能配置；身份策略数据库已由上一层临时数据根隔离。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
-4. **agent 配置快照**：`agent.json` 是唯一不由运行时读盘取得的部署配置（真实进程里由主线程解析后经 Worker 初始化消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到那两条消息，因此 `test/preload.ts` 把上一层那份 `agent.json` 副本一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
+3. **独占配置根**：同一份注入把 `config_example/` 整棵复制到该数据根下的 `config/`，再把 `COPY_NINJIA_CONFIG_ROOT` 指向这份副本（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）；`agent.json` 与 `bot.json` 的占位凭据只在副本里换成测试专用值，严格解析器才收得下；`g-auth.json` 示例与安装器一样不进副本，翻译可用性由 preload 与各用例自行设定；副本随数据根一起删除。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读或改写开发机上的真实 Telegram 与功能配置；身份策略数据库已由上一层临时数据根隔离。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
+4. **agent 配置快照**：Worker 持有的部署配置只由主线程读盘（真实进程里由主线程解析后经 Worker 初始化与热重载消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到这些消息，因此 `test/preload.ts` 把上一层副本中的 `agent.json`、`ad_samples.json`、`mood.json`、`stickers.json` 与人设一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
 
 `test/scripts/installStartup.test.ts` 复用安装隔离夹具，在独立临时配置和数据根中运行 `install.sh`、`bun run start` 及真实 Worker；Telegram 应答和系统服务命令由测试替身接管。它覆盖不启用 AI、正常 AI 配置、重复安装启动，以及非法可选配置在联网前拒绝，核对正常停机和实例锁释放。
 
 安装隔离检查还覆盖既有 unit 数据根缺失或不匹配、`EnvironmentFiles` 与相关 `PassEnvironment` / `UnsetEnvironment` 拒绝、启动后 `NRestarts` 基线及计数回落拒绝、已有配置重新填写后的 mode 保留。系统命令全部由夹具接管，失败预检必须早于配置、unit 和运行数据的写入。
 
+`test/scripts/installMigration.test.ts` 验证 12.1.0 mock 备份经冷迁移、按清单手工放置、源码安装及真实启动的完整链路，并拒绝未经迁移的身份入口。`scripts/checkBinary.ts` 在构建验证时对包内迁移工具、二进制安装及启动执行同类检查，目标进程不使用系统 Bun。两者复用 `scripts/fixtures/migrationDeployment.ts`，覆盖 schema v10 的两种合法谱系、非空 WAL、全部数据库业务表、state 主备、Google 凭据、部署配置与图库内容；源备份哈希、权限、属主和链接拓扑保持不变。数据库迁移只增加声明的权限位、更新版本并追加谱系条目，其余业务内容不变。
+
+凭据使用临时生成的 RSA 密钥；`test/scripts/migrateBotConfig.test.ts` 另核对 BOM 原样保留、非法或缺失凭据、来源冲突和不覆盖产物。源码迁移安装用例同时进入故障注入套件。可用 `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateBotConfig.test.ts` 单独验证源码链路，二进制链路随 `bun run build -- --version <tag>` 验证。
+
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
 
 ### 写测试的约定
 
-- 路径镜像 `packages/`：`packages/foo/bar.ts` → `test/foo/bar.test.ts`。
+- 目录镜像 `packages/`：`packages/foo/bar.ts` 的用例放 `test/foo/`。文件名不强求逐字对应——一个模块的用例按主题拆成几个文件是常态（`packages/commands/gag.ts` → `test/commands/gag.lifecycle.test.ts`、`gag.ingress.test.ts`…），子目录里的模块也可以按命令族并到一个文件（`packages/commands/hImage/add.ts` → `test/commands/hImageAdd.test.ts`）。已经逼近 1000 行硬上限的测试文件一律新增到新文件，不要继续往里塞。
 - 跨领域共用的替身、夹具与 harness 放 `test/helpers/`，与领域无关的通用小工具放 `test/libs/helpers.ts`；不要在测试间共享可变模块状态（隔离机制会掩盖这类错误直到有人不用 `--isolate` 运行）。
 - 触发真实文件 I/O 的测试可以放心写——preload 的临时数据根兜底；但涉及 `infra/storage` 的测试注意 mock 边界（只 mock `infra/diskIO` 而漏掉 `infra/storage` 会调到真实 `saveStateInBackground`，这正是 [`AGENTS.md`](../../AGENTS.md) 要求先备份运行时文件的场景）。
 
@@ -98,7 +102,7 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 `test/workers/antiRaid/verificationWelcome.test.ts` 贯通真实双工协议、主线程临时消息及删除边界，Telegram 出站由 SDK transformer 接管。用例覆盖四种欢迎文案、回复锚点、回执丢失、取消、Worker teardown/重建、发送与传输失败，核对删除任务只认领一次、timer 不阻止退出及后续副作用顺序；它同时属于全量测试与故障注入套件。
 
-`/wed` 交互回归覆盖 1,024 项 LRU 容量、命令和按钮命中续期、淘汰取消排队与在途交互、迟到结果清理、单条删除失败后的继续清理、update 取消隔离和停机排空；成员权威表单独验证 25 群满额拒绝。持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
+`/wed` 交互回归覆盖 1,024 项 LRU 容量、命令和按钮命中续期、淘汰取消排队与在途交互、迟到结果清理、单条删除失败后的继续清理、update 取消隔离和停机排空；成员权威表单独验证 25 群满额拒绝。持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。抽取回归另外确认只按 ID 读头像、身份取自 `getChat` 的私聊资料、不再调 `getChatMember`。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
 
 ## 热路径门禁
 
@@ -140,6 +144,8 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 `--chains` 运行启用功能的 `ad-detect-command` 与 `ai-reply-command`，逐轮断言 Telegram 罐头调用及处置排空。`--worker` 经真实 Disk I/O Worker 每轮写入 400 批、每批 128 条消息；每批等待最终 revision ACK，每轮执行两次优雅停机重建并核对 25 群恢复值。该项包含 clone、事务及落盘等待，报告吞吐、延迟、堆留存与 RSS；它不替代故障注入。以上模式各跑三轮，不改全量基准和默认十场景硬门禁的阈值。
 
+`--cooldown` 仅在显式选择时运行五类生产冷却场景：`cooldown-hit`、`cooldown-renew`、`cooldown-growth`、`cooldown-saturated` 和 `cooldown-expiry`，覆盖已有键命中、单键续期、建表、满表拒绝与整批到期。容量和窗口复用生产常量，每项各三轮独立计时与 profile，断言接纳数量并观测生产函数的 JIT 探针。建表场景在每轮预热和正式采样前复位，复位不计入耗时。普通测量提供延迟、留存堆和 RSS，profile 提供 JIT 采样，不提供 GC 暂停比例；该模式不进入默认复核或全量基准，也不修改热路径硬门禁阈值。
+
 `--text` 只在显式指定时运行，不进入缺省的全部复核。36 个场景各三轮独立进程，直接调用生产 `sanitizeInline` 与 `buildBufferedMessage`；消息构造使用默认时钟与时间格式化，结果按压缩批次大小留存。夹具固定中文、英文、emoji 按 6:3:1 轮换，正文 8–4096 码元，长正文占比 1%–75%，并覆盖首部、中部、尾部换行、密集空白、混合排版与回复引用。每个子进程在预热样本中执行与正式样本相同的内存读取，JIT 探针连续三个样本不变后再采 9 个样本，报告中位耗时、峰值堆与 RSS 增量、留存堆、JIT 分层及父进程解析的 GC 暂停；每个场景汇总三轮中位耗时的均值、范围、CV 与 JIT 稳定性。
 
 `sender-mixed-identity` 交替输入普通用户与频道身份，观察稳态读数和 JIT 重新优化；发送者数量与单用户场景不同，两者的耗时差不能单独解释为 shape 混合成本。基准用户 ID 覆盖超出 int32 的数值，生产中也允许较小 ID。
@@ -180,7 +186,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 需要同步的位置是同一组实测数值，改一处就要全部改到：
 
 - **三语 README 的徽章行**（Tests / Coverage）。Coverage 徽章固定采用 `All files` 的行覆盖率。
-- **覆盖率图**：[`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) 与 [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg)。一对图由三语 README 共用（同 banner），改动要同时落在两个主题文件的数值上。
+- **覆盖率图**：[`public/coverage_light.svg`](../../public/coverage_light.svg) 与 [`public/coverage_dark.svg`](../../public/coverage_dark.svg)。一对图由三语 README 共用（同 banner），改动要同时落在两个主题文件的数值上。
 - **三份 README 里 `<img alt>` 的等价文案**：图以图片加载，SVG 内部的 `<title>` / `aria-label` 读屏软件读不到，alt 是唯一的无障碍出口。
 - **三语本文的「当前文档版本实测」**。
 

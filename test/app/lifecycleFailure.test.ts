@@ -8,6 +8,7 @@ import {
   lifecycleFixture as sharedFixture,
 } from "../helpers/lifecycleFixture";
 import type { FlushResult } from "../helpers/lifecycleFixture";
+import { waitUntil } from "../helpers/waitUntil";
 
 const {
   ApplicationLifecycle,
@@ -17,7 +18,6 @@ const {
   calls,
   cleanupOrphanedTempFiles,
   closeTranslate,
-  deferred,
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
@@ -35,7 +35,6 @@ const {
   initDiskIO,
   initTelegramClients,
   initTranslate,
-  loadPersistedData,
   loadState,
   loggerLog,
   loggerError,
@@ -47,7 +46,6 @@ const {
   quiesceTranslate,
   realDrainDependencies,
   refreshAllChatTitles,
-  registerHandlers,
   releaseSingleInstanceLock,
   runnerStop,
   runnerTask,
@@ -68,7 +66,7 @@ installLifecycleFixtureHooks();
 
 describe("应用启动失败与退出清理", () => {
   test("每日成员复核只在 Bot 握手及启动补扫成功后启用", async () => {
-    const gate = deferred<void>();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     botInit.mockImplementationOnce((): Promise<void> => {
       calls.push("botInit");
       return gate.promise;
@@ -107,9 +105,7 @@ describe("应用启动失败与退出清理", () => {
     }
   });
 
-  // 部署配置不再在这里预热（见 config/readiness.ts），因此这条「持锁之后 init
-  // 抛错」的路径改由临时文件清理注入失败——它是持锁与 initDiskIO 之间仍然存在的
-  // 那一步，断言的收尾语义与原来完全一致。
+  // 在取得实例锁后、初始化 Disk I/O Worker 前让临时文件清理失败，验证资源收尾。
   test("取得单实例锁后 init 抛错，run 仍刷 state、释放锁并移除进程监听器", async () => {
     cleanupOrphanedTempFiles.mockImplementationOnce(async (): Promise<never> => {
       throw new Error("temp cleanup failed");
@@ -148,6 +144,54 @@ describe("应用启动失败与退出清理", () => {
       "Unhandled error in bot main runner:",
       expect.any(Error)
     );
+  });
+
+  /** 四个进程 handler 的装卸必须成对；只查 SIGINT/SIGTERM 会漏掉另外两个。 */
+  const PROCESS_HANDLER_EVENTS: readonly string[] =
+    ["SIGINT", "SIGTERM", "uncaughtException", "unhandledRejection"];
+
+  function listenerCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const event of PROCESS_HANDLER_EVENTS) counts[event] = process.listenerCount(event);
+    return counts;
+  }
+
+  test("main 模式在 run 期间接管四个进程 handler，收尾时逐个摘掉", async () => {
+    const baseline: Record<string, number> = listenerCounts();
+    let duringRun: Record<string, number> = {};
+    cleanupOrphanedTempFiles.mockImplementationOnce(async (): Promise<never> => {
+      duringRun = listenerCounts();
+      throw new Error("temp cleanup failed");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run("main");
+    await lifecycle.dispose();
+
+    // 少装 uncaughtException / unhandledRejection 时，Worker 之外的致命错误就
+    // 没人负责紧急排空与非零退出码；少摘则会在嵌入宿主里越积越多。
+    for (const event of PROCESS_HANDLER_EVENTS) {
+      expect(duringRun[event]).toBe((baseline[event] ?? 0) + 1);
+      expect(process.listenerCount(event)).toBe(baseline[event] ?? 0);
+    }
+    process.exitCode = 0;
+  });
+
+  test("test 模式四个进程 handler 一个都不装", async () => {
+    const baseline: Record<string, number> = listenerCounts();
+    let duringRun: Record<string, number> = {};
+    cleanupOrphanedTempFiles.mockImplementationOnce(async (): Promise<never> => {
+      duringRun = listenerCounts();
+      throw new Error("temp cleanup failed");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await expect(lifecycle.run("test")).rejects.toThrow("temp cleanup failed");
+
+    for (const event of PROCESS_HANDLER_EVENTS) {
+      expect(duringRun[event]).toBe(baseline[event] ?? 0);
+      expect(process.listenerCount(event)).toBe(baseline[event] ?? 0);
+    }
   });
 
   test("回归用例：启动期到达的停止信号不能把 quiesce 一次性闩死", async () => {
@@ -190,27 +234,6 @@ describe("应用启动失败与退出清理", () => {
     expect(process.exitCode).toBe(0);
   });
 
-  test("SQLite 恢复缺少表计数时拒绝启动 Telegram handler", async () => {
-    loadPersistedData.mockResolvedValueOnce({
-      aiMemories: new Map<number, string>(),
-      stickerCatalogs: new Map<string, string>(),
-      luckDay: null,
-      luckReceiptSecret: { day: "2026-07-19", secret: "test-secret" },
-      verifications: new Map<string, never>(),
-      pendingBlockedRemovals: new Map(),
-    } as never);
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    await lifecycle.run("main");
-    await lifecycle.dispose();
-
-    expect(initDiskIO).toHaveBeenCalledTimes(1);
-    expect(registerHandlers).not.toHaveBeenCalled();
-    expect(botInit).not.toHaveBeenCalled();
-    expect(hydrateBlocklist).not.toHaveBeenCalled();
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
   test("state 与部署输入校验完成后才初始化 Telegram 和 Disk I/O Worker", async () => {
     const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
@@ -229,6 +252,9 @@ describe("应用启动失败与退出清理", () => {
     // await 之后（部署输入闸、bot.init、黑名单补扫）——被拒绝启动的那次运行不该顺手
     // 改写运维正要拿去排查的 state.json。
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("seedAssets"));
+    // 随机图片目录按已校验的 state 准备，且在任何 Worker 与外部连接之前。
+    expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(calls.indexOf("prepareImageDir"));
+    expect(calls.indexOf("prepareImageDir")).toBeLessThan(calls.indexOf("initDiskIO"));
     expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(
       calls.indexOf("seedAssets")
     );
@@ -238,6 +264,10 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("initAntiRaid")).toBeLessThan(
       calls.indexOf("initBlocklistScheduler")
     );
+    // 配置热重载要把新快照投给两条业务 Worker，必须等两边都拿到初始快照后才开始监听。
+    expect(calls.indexOf("initAiChat")).toBeLessThan(calls.indexOf("startConfigReload"));
+    expect(calls.indexOf("initAntiRaid")).toBeLessThan(calls.indexOf("startConfigReload"));
+    expect(calls.indexOf("startConfigReload")).toBeLessThan(calls.indexOf("runUpdates"));
     expect(calls.indexOf("initBlocklistScheduler")).toBeLessThan(
       calls.indexOf("sweepBlocklist")
     );
@@ -250,6 +280,9 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("quiesceBlocklistScheduler")).toBeLessThan(
       calls.indexOf("drainAntiRaid")
     );
+    expect(calls.indexOf("quiesceConfigReload")).toBeGreaterThan(-1);
+    expect(calls.indexOf("quiesceConfigReload")).toBeLessThan(calls.indexOf("drainAntiRaid"));
+    expect(calls.indexOf("quiesceConfigReload")).toBeLessThan(calls.indexOf("flushAiMemory"));
   });
 
   test("state 主备均不可恢复时不启动任何运行时 Worker，并释放实例锁", async () => {
@@ -314,7 +347,7 @@ describe("应用启动失败与退出清理", () => {
     // 排在最后一个会拒绝启动的 await（黑名单补扫）之后。
     expect(calls.indexOf("seedAssets")).toBeGreaterThan(calls.indexOf("sweepBlocklist"));
     expect(testDependencies.logger.log).toHaveBeenCalledWith(
-      expect.stringContaining("Seeded 2 missing state.global.assets URL(s)")
+      expect.stringContaining("Seeded 2 missing state.global.assets value(s)")
     );
   });
 
@@ -406,7 +439,7 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("dispose 在 Anti-Raid drain 落定前不得 flush 或终止任何业务 Worker", async () => {
-    const antiRaidGate = deferred<FlushResult>();
+    const antiRaidGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
     drainAntiRaid.mockImplementationOnce(() => {
       calls.push("drainAntiRaid");
       return antiRaidGate.promise;
@@ -438,7 +471,7 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("普通 dispose 在途时发生致命异常会受独立硬截止约束且只请求退出一次", async () => {
-    const antiRaidGate = deferred<FlushResult>();
+    const antiRaidGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
     drainAntiRaid.mockImplementationOnce(() => {
       calls.push("drainAntiRaid");
       return antiRaidGate.promise;
@@ -491,6 +524,39 @@ describe("应用启动失败与退出清理", () => {
       await disposing;
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;
+      exit.mockRestore();
+    }
+  });
+
+  test("进程级 uncaught / unhandled 处理器各记一行错误并转入紧急退出，退出只启动一次", async () => {
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+    const exit = spyOn(process, "exit").mockImplementation(
+      (_code?: string | number | null): never => undefined as never
+    );
+    const handlers = lifecycle as unknown as {
+      handleUncaughtException(error: unknown): void;
+      handleUnhandledRejection(reason: unknown): void;
+    };
+    const failure: Error = new Error("boom");
+    try {
+      // 直接调用实例上的处理器，不向测试进程广播真实的 uncaughtException。
+      handlers.handleUncaughtException(failure);
+      handlers.handleUnhandledRejection("late rejection");
+
+      expect(loggerError).toHaveBeenCalledWith(
+        "Uncaught exception, attempting a best-effort flush before exit:", failure
+      );
+      expect(loggerError).toHaveBeenCalledWith(
+        "Unhandled rejection, attempting a best-effort flush before exit:", "late rejection"
+      );
+      await waitUntil((): boolean => exit.mock.calls.length > 0);
+      await Bun.sleep(0);
+      // 第二个处理器命中已在途的紧急退出，不再发起第二轮清理或第二次退出。
+      expect(exit).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(terminateDiskIO).toHaveBeenCalledTimes(1);
+    } finally {
       exit.mockRestore();
     }
   });

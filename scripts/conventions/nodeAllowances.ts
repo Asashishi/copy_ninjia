@@ -10,56 +10,23 @@ export interface BufferGlobalAllowance {
   readonly purpose: string;
 }
 
-/** 脚本与测试可复用的 Node 兼容接口；生产模块必须再按精确文件登记。 */
-export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
-  "node:async_hooks": {
-    symbols: ["AsyncLocalStorage"],
-    purpose: "per-update asynchronous log context",
-  },
-  "node:crypto": {
-    symbols: ["createPrivateKey"],
-    purpose: "private-key parsing",
-  },
-  "node:fs": {
-    symbols: [
-      "accessSync",
-      "chmodSync",
-      "closeSync",
-      "constants",
-      "existsSync",
-      "fchmodSync",
-      "fsyncSync",
-      "lstatSync",
-      "mkdirSync",
-      "openSync",
-      "readFileSync",
-      "readdirSync",
-      "renameSync",
-      "statSync",
-      "unlinkSync",
-      "writeFileSync",
-      "writeSync",
-    ],
-    purpose: "synchronous metadata, descriptor, durability, directory, and atomic-file operations",
-  },
-  "node:fs/promises": {
-    symbols: ["link", "lstat", "mkdir", "open", "readdir", "realpath", "rename"],
-    purpose: "asynchronous metadata, descriptor, hard-link, directory, canonical filesystem path, and atomic rename operations",
-  },
-  "node:os": {
-    symbols: ["availableParallelism", "totalmem"],
-    purpose: "runtime capacity limits derived from host resources",
-  },
+/** 生产、脚本与测试都可直接使用的 Node 兼容接口。 */
+export const PORTABLE_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
   "node:path": {
     symbols: "*",
     purpose: "portable lexical path construction and normalization",
   },
 };
 
-/** 生产模块中 Bun 原生能力未覆盖的精确 Node 兼容调用位置。 */
 export const PRODUCTION_NODE_IMPORTS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {
+  "packages/app/configReload.ts": {
+    "node:fs": {
+      symbols: ["watch"],
+      purpose: "deployment config directory change notification (Bun documents node:fs watch as its file-watching API)",
+    },
+  },
   "packages/cache/perThread/updateContext.ts": {
     "node:async_hooks": {
       symbols: ["AsyncLocalStorage"],
@@ -70,6 +37,12 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
     "node:crypto": {
       symbols: ["createPrivateKey"],
       purpose: "private-key syntax validation",
+    },
+  },
+  "packages/config/botInput.ts": {
+    "node:fs/promises": {
+      symbols: ["lstat"],
+      purpose: "rejecting legacy Bot configuration entries including dangling links without reading their contents",
     },
   },
   "packages/config/readiness.ts": {
@@ -94,6 +67,13 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
     "node:os": {
       symbols: ["availableParallelism", "totalmem"],
       purpose: "runtime capacity limits derived from host resources",
+    },
+  },
+  "packages/infra/randomImage.ts": {
+    "node:fs": { symbols: ["constants"], purpose: "directory read, write and search access flags" },
+    "node:fs/promises": {
+      symbols: ["access", "lstat", "mkdir", "readdir", "rename"],
+      purpose: "random image directory creation at startup, per-request directory traversal, and the atomic rename that publishes a collected picture",
     },
   },
   "packages/infra/storage/cleanup.ts": {
@@ -245,35 +225,66 @@ export const SCRIPT_BUFFER_GLOBALS: Readonly<Record<string, BufferGlobalAllowanc
   },
 };
 
-/** 一次性脚本为同步编排、临时根和机器信息额外使用的 Node 兼容接口。 */
-export const SCRIPT_ONLY_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
+/** 一次性脚本（约定自检、冷迁移、基准、发布）可用的 Node 兼容接口；只在 scripts/ 下生效。 */
+export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
   "node:module": {
     symbols: ["isBuiltin"],
     purpose: "runtime-authoritative builtin module identification without maintaining a duplicate module list",
   },
   "node:fs": {
-    symbols: ["mkdtempSync", "rmSync", "symlinkSync"],
-    purpose: "isolated temporary-root lifecycle and fixture topology for one-shot scripts and benchmarks",
+    symbols: [
+      "chmodSync",
+      "existsSync",
+      "lstatSync",
+      "mkdirSync",
+      "mkdtempSync",
+      "readdirSync",
+      "renameSync",
+      "rmSync",
+      "statSync",
+      "symlinkSync",
+    ],
+    // 同步内容 I/O（readFileSync / writeFileSync）不走本表：只由
+    // SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS 按调用点逐个放行（见 nodeCompatibility.ts 的 permitted 判定）。
+    purpose: "synchronous metadata, permission, directory, atomic rename, and isolated temporary-root operations",
+  },
+  "node:fs/promises": {
+    symbols: ["lstat", "mkdir", "readdir", "readlink", "realpath"],
+    purpose: "asynchronous metadata, directory creation, directory enumeration with entry types, and canonical filesystem path resolution",
   },
   "node:os": {
-    symbols: ["arch", "cpus", "platform", "release", "tmpdir"],
-    purpose: "benchmark machine identity and temporary-root placement",
+    symbols: ["arch", "availableParallelism", "cpus", "platform", "release", "tmpdir", "totalmem"],
+    purpose: "benchmark machine identity, host capacity limits, and temporary-root placement",
   },
 };
 
-/** 测试夹具、隔离临时根与密钥样本额外使用的 Node 兼容接口；测试同时复用 SCRIPT_NODE_IMPORTS。 */
-export const TEST_ONLY_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
+/** 测试夹具、隔离临时根与密钥样本可用的 Node 兼容接口；只在 test/ 下生效。 */
+export const TEST_SHARED_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> = {
   "node:crypto": {
     symbols: ["generateKeyPairSync"],
     purpose: "throwaway private-key fixtures for credential parsing",
   },
   "node:fs": {
-    symbols: ["cpSync", "mkdtempSync", "rmSync", "rmdirSync", "symlinkSync"],
-    purpose: "isolated temporary-root lifecycle, config fixture copies, and filesystem topology fixtures",
+    symbols: [
+      "chmodSync",
+      "cpSync",
+      "existsSync",
+      "lstatSync",
+      "mkdirSync",
+      "mkdtempSync",
+      "readdirSync",
+      "rmSync",
+      "rmdirSync",
+      "statSync",
+      "symlinkSync",
+      "writeSync",
+    ],
+    // 同步内容 I/O 只由 TEST_SYNC_CONTENT_IO_EXEMPTIONS 按调用点放行。
+    purpose: "isolated temporary-root lifecycle, config fixture copies, metadata and permission fixtures, and filesystem topology fixtures",
   },
   "node:fs/promises": {
-    symbols: ["mkdtemp", "rm"],
-    purpose: "asynchronous isolated temporary-root lifecycle",
+    symbols: ["chmod", "lstat", "mkdir", "mkdtemp", "rm", "symlink"],
+    purpose: "asynchronous metadata and isolated temporary-root lifecycle",
   },
   "node:os": {
     symbols: ["tmpdir"],
@@ -357,12 +368,6 @@ export const SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS: Readonly<
 export const TEST_SYNC_CONTENT_IO_EXEMPTIONS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {
-  "test/preload.ts": {
-    "node:fs": {
-      symbols: ["readFileSync"],
-      purpose: "synchronous deployment-config adoption before test modules evaluate",
-    },
-  },
   "test/preloadEnv.ts": {
     "node:fs": {
       symbols: ["readFileSync", "writeFileSync"],

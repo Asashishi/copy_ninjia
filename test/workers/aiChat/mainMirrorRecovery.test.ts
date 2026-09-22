@@ -1,15 +1,15 @@
+import { pendingStickerCatalogRevisions, stickerCatalogRevisionCounter } from "../../../packages/cache/main/stickers";
 import { diskIOStub } from "../../helpers/diskIOMock";
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegistry";
 import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
-import { getAgentDeploymentConfig } from "../../../packages/config/agent";
-import { getMoodConfig } from "../../../packages/config/mood";
+import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
 import { getPersona } from "../../../packages/config/persona";
-import { getReactionConfig } from "../../../packages/config/reactions";
-import { getStickerConfig } from "../../../packages/config/stickers";
-import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
+import { adoptStickerConfig, getStickerConfig } from "../../../packages/config/stickers";
+import { SUPER_ADMIN_USER_ID } from "../../../packages/config/bot";
 import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
 import type {
   AiMemoryDeletedPersistedReply,
@@ -121,6 +121,9 @@ beforeEach(() => {
   moodRequestWaiters.clear();
   moodRequestCounter.current = 0;
   latestStickerCatalogs.clear();
+  pendingStickerCatalogRevisions.clear();
+  stickerCatalogRevisionCounter.current = 0;
+  adoptStickerConfig({ packs: ["pack_a"] });
   purgedAiMemoryChats.clear();
   aiChatWorkerState.available = false;
   aiEnabledChats.clear();
@@ -246,7 +249,7 @@ test("超时后 DiskIO 重建重放删除，普通 disable 不授权 teardown �
   expect(replayed).toContainEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
   diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
   expect(pendingAiMemoryTeardowns.size).toBe(0);
-  const disable = aiChat.invalidateAiChat(-1002, true);
+  const disable = aiChat.invalidateAiChat(-1002);
   const revision: number = pendingAiMemoryDeletes.get(-1002)!;
   diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision });
   await disable;
@@ -260,6 +263,63 @@ test("未完成收尾达到容量时显式 fatal，不丢已有责任或继续�
   expect(teardownFatal).toHaveBeenCalledTimes(1);
   expect(pendingAiMemoryTeardowns.size).toBe(STATE_MANAGED_CHAT_LIMIT);
   expect(aiMemoryRevisionCounters.size).toBe(STATE_MANAGED_CHAT_LIMIT);
+});
+
+describe("AI 配置热重载分发", () => {
+  test("只投递变化的领域，并把 lastInitState 改写成当前快照供重建重放", () => {
+    const originalAgent = getAgentDeploymentConfig();
+    const originalMood = getMoodConfig();
+    const originalStickers = getStickerConfig();
+    const changes = { aiAgent: false, mood: true, stickers: false };
+    try {
+      aiChat.syncAiChatConfig(changes);
+      expect(workerPosts).toEqual([]);
+
+      aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+      workerPosts.length = 0;
+      const reloadedMood = { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] };
+      adoptMoodConfig(reloadedMood);
+      aiChat.syncAiChatConfig(changes);
+
+      expect(workerPosts).toEqual([{ type: "configReload", agent: undefined, mood: reloadedMood, stickers: undefined }]);
+      expect(lastInitState.current).toMatchObject({ type: "init", mood: reloadedMood });
+
+      // 投递被拒绝时，重建重放的 init 已经带着新快照。
+      workerPostAccepted = false;
+      const reloadedAgent = { ...originalAgent, text: { ...originalAgent.text, model: "reloaded-text" } };
+      adoptAgentDeploymentConfig(reloadedAgent);
+      aiChat.syncAiChatConfig({ ...changes, mood: false, aiAgent: true });
+      const replay: AiChatWorkerMessage[] = [];
+      supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
+        replay.push(message);
+        return true;
+      });
+      expect(replay[0]).toMatchObject({ type: "init", agent: reloadedAgent, mood: reloadedMood });
+    } finally {
+      adoptAgentDeploymentConfig(originalAgent);
+      adoptMoodConfig(originalMood);
+      adoptStickerConfig(originalStickers);
+    }
+  });
+});
+
+describe("AI 可用性经热重载恢复", () => {
+  test("Worker 已在运行时 resumeAiChat 只投递完整 configReload，不重建线程", () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const initialInit = lastInitState.current;
+    workerPosts.length = 0;
+
+    aiChat.resumeAiChat();
+
+    expect(workerPosts).toEqual([{
+      type: "configReload",
+      agent: getAgentDeploymentConfig(),
+      mood: getMoodConfig(),
+      stickers: getStickerConfig(),
+    }]);
+    expect(lastInitState.current).not.toBe(initialInit);
+    expect(lastInitState.current).toMatchObject({ defaultAtmosphere: "teasing", type: "init", botInfo: { id: 99 } });
+  });
 });
 
 describe("AI main-thread persistence mirror", () => {
@@ -285,15 +345,13 @@ describe("AI main-thread persistence mirror", () => {
 
     expect(initWorker).toHaveBeenCalledTimes(1);
     expect(aiRespawnPosts).toEqual([
-      {
+      { defaultAtmosphere: "teasing",
         type: "init",
         botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" },
         superAdminUserId: SUPER_ADMIN_USER_ID,
-        // 重放的是进程启动时那条 init 本身，配置快照因此逐字节相同——新
-        // isolate 不会顺手加载磁盘上已经被改过的 agent.json。
+        // 重放的 init 带着主线程当前生效的配置快照，新 isolate 不自己读盘。
         agent: getAgentDeploymentConfig(),
         mood: getMoodConfig(),
-        reactions: getReactionConfig(),
         stickers: getStickerConfig(),
         persona: getPersona(),
       },
@@ -319,11 +377,11 @@ describe("AI main-thread persistence mirror", () => {
     })).toBeFalse();
     expect(diskPosts).toEqual([
       { type: "aiMemory", chatId: -1001, revision: 1, snapshot: "latest-memory" },
-      { type: "stickerCatalog", pack: "pack_a", snapshot: "latest-catalog" },
+      { type: "stickerCatalog", pack: "pack_a", snapshot: "latest-catalog", revision: 1 },
     ]);
     expect(aiMemoryUsages.get(-1001)).toEqual({ bufferedCount: 12, summaryCount: 2 });
 
-    const invalidated = aiChat.invalidateAiChat(-1001, true);
+    const invalidated = aiChat.invalidateAiChat(-1001);
     supervisorOptions!.onEvent({
       type: "memory",
       chatId: -1001,
@@ -386,7 +444,7 @@ describe("AI main-thread persistence mirror", () => {
 
   test("purge 后首份新记忆跨两级 Worker 立即持久化，确认后恢复普通批处理", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-    const invalidated = aiChat.invalidateAiChat(-1001, true);
+    const invalidated = aiChat.invalidateAiChat(-1001);
     const invalidateRequest: AiChatWorkerMessage | undefined = workerPosts.at(-1);
     if (invalidateRequest?.type !== "invalidateChat") throw new Error("Expected an invalidateChat request");
     supervisorOptions!.onEvent({ type: "memoryDeleted", chatId: -1001 });
@@ -532,7 +590,7 @@ describe("AI main-thread persistence mirror", () => {
     const { forgetAiMemoryRevisionCounter } = await import("../../../packages/aiChat/memoryMirror");
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
-    const deleted = aiChat.invalidateAiChat(-1001, true);
+    const deleted = aiChat.invalidateAiChat(-1001);
     // 墓碑还没拿到 durable 回执：这时清掉计数器，重置后的 revision 1 会与在途
     // 的那一号撞车，一条过期回执就能把新记忆判成已删。
     forgetAiMemoryRevisionCounter(-1001);
@@ -563,7 +621,7 @@ describe("AI main-thread persistence mirror", () => {
     // 放弃之后没有替补 Worker：onDiskIORespawn 不会跑，deleteAiMemory 不会重放，
     // durable 回执永远不会来。干等那两秒恰好和同一个 fatal 信号触发的停机抢排空
     // 预算，失败原因也会被表述成超时而不是「Worker 已经放弃」。
-    const deleted = aiChat.invalidateAiChat(-1001, true);
+    const deleted = aiChat.invalidateAiChat(-1001);
     expect(aiMemoryDeleteWaiters.size).toBe(1);
 
     diskGaveUp!();
@@ -590,7 +648,7 @@ describe("AI main-thread persistence mirror", () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
     const { forgetAiMemoryRevisionCounter } = await import("../../../packages/aiChat/memoryMirror");
 
-    const deleted = aiChat.invalidateAiChat(-1001, true);
+    const deleted = aiChat.invalidateAiChat(-1001);
     forgetAiMemoryRevisionCounter(-1001);
     expect(diskPosts.some((message: DiskBusinessMessage): boolean => message.type === "forgetAiMemory")).toBeFalse();
 
@@ -608,7 +666,7 @@ describe("AI main-thread persistence mirror", () => {
 
   test("Worker 放弃自愈只清 Worker purge guard，不丢未确认的 durable tombstone", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-    const firstDelete = aiChat.invalidateAiChat(-1001, true);
+    const firstDelete = aiChat.invalidateAiChat(-1001);
     expect(purgedAiMemoryChats.has(-1001)).toBeTrue();
 
     supervisorOptions!.onGiveUp();
@@ -621,7 +679,7 @@ describe("AI main-thread persistence mirror", () => {
       "AI Worker gave up before completing chat invalidation."
     );
 
-    const secondDelete = aiChat.invalidateAiChat(-1002, true);
+    const secondDelete = aiChat.invalidateAiChat(-1002);
     expect(purgedAiMemoryChats.size).toBe(0);
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1002, revision: 1 });
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision: 1 });

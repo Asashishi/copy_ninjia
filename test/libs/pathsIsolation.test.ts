@@ -5,6 +5,7 @@ import {
   AD_SAMPLES_CONFIG_PATH,
   CONFIG_ROOT,
   DATABASE_DIR,
+  GOOGLE_AUTH_FILE_PATH,
   IDENTITY_DATABASE_PATH,
   LOCK_FILE_PATH,
   LOGS_DIR,
@@ -12,7 +13,6 @@ import {
   MEMORY_DIR,
   MOOD_CONFIG_PATH,
   PROJECT_ROOT,
-  REACTIONS_CONFIG_PATH,
   RUNTIME_DATA_ROOT,
   STATE_FILE_PATH,
   STICKERS_CONFIG_PATH,
@@ -49,10 +49,12 @@ test("测试环境的默认部署配置只读取独占临时副本", () => {
   for (const path of [
     AD_SAMPLES_CONFIG_PATH,
     MOOD_CONFIG_PATH,
-    REACTIONS_CONFIG_PATH,
     STICKERS_CONFIG_PATH,
   ]) {
     expect(path.startsWith(`${CONFIG_ROOT}/`)).toBeTrue();
     expect(existsSync(path)).toBeTrue();
   }
+  // 翻译凭据与其它部署配置同住 config/；测试副本删掉了示例里的占位凭据。
+  expect(GOOGLE_AUTH_FILE_PATH).toBe(join(CONFIG_ROOT, "g-auth.json"));
+  expect(existsSync(GOOGLE_AUTH_FILE_PATH)).toBeFalse();
 });

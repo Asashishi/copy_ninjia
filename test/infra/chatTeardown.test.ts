@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { botPermissions } from "../helpers/botPermissions";
 
 const calls: string[] = [];
@@ -9,7 +10,7 @@ const saveStateInBackground = mock((context: string): void => { calls.push(`save
 const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
@@ -55,6 +56,8 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 
 const botAdmin = await import("../../packages/infra/botAdmin");
+const { syncChatPersonaSurfaces } =
+  await import("../../packages/commands/chatPersonaSync");
 const botAdminCache = await import("../../packages/cache/main/botAdmin");
 const chatTeardown = await import("../../packages/infra/chatTeardown");
 const chatTeardownRegistry = await import("../../packages/infra/chatTeardownRegistry");
@@ -161,6 +164,21 @@ describe("chat runtime teardown", () => {
     expect(states.get(-1001)?.isProxySendEnabled).toBeUndefined();
   });
 
+  test("owner 同步抛出非 Error 时按固定文案归一化，原值挂在 cause", async () => {
+    chatTeardownRegistry.registerChatTeardown("copy", (): never => {
+      throw "copy refused";
+    });
+
+    const error = await chatTeardown.teardownChatRuntime(-1001, "lostAuthority")
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    const [first] = (error as AggregateError).errors as unknown[];
+    expect(first).toBeInstanceOf(Error);
+    expect((first as Error).message).toBe("Chat teardown callback threw a non-Error value.");
+    expect((first as Error).cause).toBe("copy refused");
+  });
+
   test("退群保留尚未恢复的 lockdown owner，删除其它群配置", async () => {
     const lockdown = {
       phase: "active",
@@ -180,7 +198,7 @@ describe("chat runtime teardown", () => {
       reasons.push(reason);
     });
 
-    await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"));
+    await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"), syncChatPersonaSurfaces);
     // 离群按 departed 派发：人已经不在这个群里，本群的记忆、奖池、入群日志与
     // 问答一并删除；被撤管理员那一路仍是 lostAuthority，一条数据都不动。
     expect(reasons).toEqual(["departed"]);
@@ -213,7 +231,7 @@ describe("chat runtime teardown", () => {
     });
     chatTeardownRegistry.registerChatTeardown("antiRaid", async (): Promise<void> => { throw teardownError; });
 
-    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("left"))
+    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("left"), syncChatPersonaSurfaces)
       .catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -233,7 +251,7 @@ describe("chat runtime teardown", () => {
       botPermissions: botPermissions(),
       isProxySendEnabled: true,
     });
-    await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
+    await botAdmin.handleMyChatMemberUpdate(memberContext("member"), syncChatPersonaSurfaces);
     expect(reasons).toEqual(["lostAuthority"]);
     expect(calls.slice(0, 7)).toEqual([
       "clear:isProxySendEnabled",
@@ -256,7 +274,7 @@ describe("chat runtime teardown", () => {
     });
     chatTeardownRegistry.registerChatTeardown("aiChat", async (): Promise<void> => { throw teardownError; });
 
-    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("member"))
+    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("member"), syncChatPersonaSurfaces)
       .catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(AggregateError);

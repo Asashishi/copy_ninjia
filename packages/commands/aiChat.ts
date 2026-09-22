@@ -23,7 +23,7 @@ import { runChatToggleCommand } from "./superAdminToggle";
 export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise<void> {
   await runChatToggleCommand({
     ctx,
-    texts: chatAtmosphere(ctx.chat?.id ?? 0).AI_CHAT_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat.id).AI_CHAT_TOGGLE_TEXTS,
     permission: "isCanControllAIPermission",
     persistReason: "ai_chat toggled",
     runtimeLabel: "AI chat runtime",
@@ -37,8 +37,8 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
         chatId,
         messageId,
         feature: "AI chat",
-        text: (file: string): string => chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.aiConfigInvalid(file),
+        text: (file: string): string => chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.aiConfigInvalid(file),
       }),
-    teardown: (chatId: number): Promise<void> => invalidateAiChat(chatId, true),
+    teardown: (chatId: number): Promise<void> => invalidateAiChat(chatId),
   });
 }

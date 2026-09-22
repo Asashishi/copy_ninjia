@@ -7,6 +7,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import OpenAI from "openai";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
@@ -23,7 +24,7 @@ mock.module("../../../packages/aiChat/openai/client", () => ({
   requestOpenAiTextResult,
 }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const {

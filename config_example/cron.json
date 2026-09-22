@@ -1,0 +1,74 @@
+[
+  {
+    "name": "weekday-morning-greeting",
+    "chat_id": [-1001234567890],
+    "cron": "0 9 * * 1-5",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "早上好，今天也要打起精神来喵~" } }
+    ]
+  },
+  {
+    "name": "evening-digest-with-explicit-time-zone",
+    "chat_id": [-1001234567890, -1009876543210],
+    "cron": "30 18 * * *",
+    "time_zone": "Asia/Tokyo",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "今日汇总来啦" } },
+      { "type": "send_image", "payload": { "content": "今日配图", "url": ["https://example.com/daily/cover.png"] } },
+      { "type": "send_file", "payload": { "content": "今日日报", "url": "https://example.com/daily/report.pdf" } }
+    ]
+  },
+  {
+    "name": "weekly-local-files",
+    "chat_id": [-1001234567890],
+    "cron": "0 10 * * 1",
+    "actions": [
+      { "type": "send_image", "payload": { "content": "本周海报", "path": ["posters/weekly.png"] } },
+      { "type": "send_file", "payload": { "content": "本周周报", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
+    ]
+  },
+  {
+    "name": "random-library-image",
+    "chat_id": [-1009876543210],
+    "cron": "0 12 * * *",
+    "rand_cron": "6h-24h",
+    "actions": [
+      { "type": "send_image", "payload": { "content": "随手抽一张", "rand_image": true } }
+    ]
+  },
+  {
+    "name": "random-folder-image",
+    "chat_id": [-1009876543210],
+    "cron": "@daily",
+    "rand_cron": "12h",
+    "actions": [
+      { "type": "send_image", "payload": { "rand_image": true, "path": "/srv/copy-ninjia/gallery", "is_blurred": true } }
+    ]
+  },
+  {
+    "name": "all-groups-weekly-notice",
+    "chat_id": ["all"],
+    "cron": "0 21 * * 5",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "周末愉快，这周也辛苦大家了" } },
+      { "type": "send_image", "payload": { "rand_image": true } }
+    ]
+  },
+  {
+    "name": "all-groups-except-two",
+    "chat_id": ["except", -1001234567890, -1009876543210],
+    "cron": "0 22 * * *",
+    "actions": [
+      { "type": "send_image", "payload": { "content": "今日のエッチ", "rand_image": true } }
+    ]
+  },
+  {
+    "name": "one-time-welcome-notice",
+    "chat_id": [-1009876543210],
+    "cron": "0 20 * * *",
+    "just_once": true,
+    "actions": [
+      { "type": "send_message", "payload": { "content": "本群已接入机器人，用 /help 看看它会做什么" } }
+    ]
+  }
+]

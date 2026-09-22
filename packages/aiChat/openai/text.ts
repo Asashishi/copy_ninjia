@@ -25,11 +25,13 @@ import {
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
-import { finalizeAiTextResult } from "../ai/utils/textResult";
+import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
+import type { AiRequestFailureKind } from "../ai/utils/textResult";
 import {
   classifyProviderApiFailure,
   numericErrorStatus,
 } from "../ai/utils/mediaSupportError";
+import type { ProviderApiFailureKind } from "../ai/utils/mediaSupportError";
 import { getOpenAiClient, requestOpenAiTextResult } from "./client";
 import type {
   AiTextRequest,
@@ -91,14 +93,14 @@ export function describeOpenAiVision(request: AiVisionRequest): Promise<AiTextRe
   });
 }
 
-/**
- * 用 media 能力配置尝试 OpenAI 兼容音频转写。模型是否同时支持视觉与音频不靠
- * 名字推断：第一次真实语音请求由端点回答，结果会被媒体支持度缓存记住。
- */
 function isVoiceRequestAborted(request: AiVoiceRequest): boolean {
   return request.signal?.aborted === true;
 }
 
+/**
+ * 用 media 能力配置尝试 OpenAI 兼容音频转写。模型是否同时支持视觉与音频不靠
+ * 名字推断：第一次真实语音请求由端点回答，结果会被媒体支持度缓存记住。
+ */
 export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<AiTextResult> {
   if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
   try {
@@ -128,25 +130,18 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
     return finalizeAiTextResult(request.normalize(response.text));
   } catch (error: unknown) {
     if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
+    let failureKind: AiRequestFailureKind = "request";
     if (error instanceof OpenAI.APIError) {
       const status: number | undefined = numericErrorStatus(error);
       logger.error(`${request.errorLabel} error: ${status ?? "?"} ${error.message}`);
-      // 归因级联与两个 client 共用 ai/utils/mediaSupportError.ts 的同一条判定。
-      // 本入口恒为媒体能力（语音转写），因此 isMediaCapability 直接传 true。
-      switch (classifyProviderApiFailure(status, error.message, true)) {
-        case "misconfigured":
-          return { ok: false, retryable: false, mediaFailure: "misconfigured" };
-        case "unsupported":
-          return { ok: false, retryable: false, mediaFailure: "unsupported" };
-        // 普通 4xx 只说明这一份音频不合适：不下模态结论，也不推动退避。
-        case "rejected":
-          return { ok: false, retryable: false };
-        case "endpointFailure":
-          break;
-      }
+      // 归因级联与失败结果映射都与两个 client 共用：本入口恒为媒体能力（语音
+      // 转写），isMediaCapability 直接传 true；endpointFailure 按端点故障 request 处理。
+      const providerFailure: ProviderApiFailureKind =
+        classifyProviderApiFailure(status, error.message, true);
+      if (providerFailure !== "endpointFailure") failureKind = providerFailure;
     } else {
       logger.error(`Error calling ${request.errorLabel}:`, error);
     }
-    return { ok: false, retryable: false, mediaFailure: "transient" };
+    return classifyAiTextFailure(failureKind, "media");
   }
 }

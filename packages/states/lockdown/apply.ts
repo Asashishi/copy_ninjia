@@ -28,7 +28,7 @@ export function handleThresholdExceeded(
         { kind: "prefetchAdmins", onlyIfCold: true },
         // 公告排在读权限之前：从这一刻起入群就会被请出去，群里不能没有交代。
         { kind: "beginLockdownAnnouncement", joinCount: event.joinCount },
-        { kind: "prepareApply", joinCount: event.joinCount },
+        { kind: "prepareApply" },
       ],
     };
   }
@@ -50,7 +50,6 @@ export function handleApplyPrepared(
       kind: "applying",
       stage: "prepared",
       originalPermissions: event.originalPermissions,
-      joinCount: event.joinCount,
       intentId: event.intentId,
       commitStarted: false,
       ...announcementOf(state),

@@ -86,7 +86,7 @@ export function markLuckDirty(entry: LuckPendingEntry): number {
   return luckPendingAppends.length;
 }
 
-/** Worker 停止或测试隔离时取消 timer 并清空运势运行态。 */
+/** 测试隔离时取消 timer 并清空运势运行态；生产代码不调用，Worker 停止时随 isolate 释放。 */
 export function resetLuckCache(): void {
   if (luckFlushTimer.timer !== null) clearTimeout(luckFlushTimer.timer);
   luckFlushTimer.timer = null;

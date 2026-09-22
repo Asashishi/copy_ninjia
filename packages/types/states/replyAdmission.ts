@@ -21,13 +21,13 @@ export interface AdmitTriggerInput {
 
 export type AdmitDecision =
   /** 模型与存活容量均允许且等待队列为空：立即开新轮。 */
-  | { readonly action: "startRound" }
+  | "startRound"
   /** 直接触发暂不能启动且队列有空位：入队等补跑。 */
-  | { readonly action: "enqueue" }
+  | "enqueue"
   /** 随机触发因并发、容量、排队或出站压力受阻：静默丢弃。 */
-  | { readonly action: "dropSilently" }
+  | "dropSilently"
   /** 直接触发的等待队列已满：丢弃并登记溢出提示。 */
-  | { readonly action: "enqueueOverflow" };
+  | "enqueueOverflow";
 
 export interface AdmitRoundInput {
   windowCount: number;
@@ -35,6 +35,6 @@ export interface AdmitRoundInput {
 
 export type RoundDecision =
   /** 窗口未满：调用方记账后执行。 */
-  | { readonly action: "run" }
+  | "run"
   /** 窗口已满：不记账，调用方按触发来源通知或保留队首。 */
-  | { readonly action: "rateLimited" };
+  | "rateLimited";

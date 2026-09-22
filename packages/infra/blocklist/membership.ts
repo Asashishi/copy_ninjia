@@ -4,7 +4,7 @@
  * 判定必须是同步的：入群更新到达时要立刻决定踢不踢，不能等跨线程往返。
  * 每条 update 进入业务链前批量预热 LRU；写保持「先发布内存最终值、后投递
  * Disk I/O Worker」并保留到事务 ACK。durable removal outbox 由同目录 outbox.ts
- * 持有，本模块只在 /unblock 时请求它裁剪相关任务。
+ * 持有，本模块只在 /block disable 时请求它裁剪相关任务。
  * @see ../../../docs/cn/04-invariants.md
  */
 
@@ -36,14 +36,14 @@ import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
  * 连坐封禁与跨群解封共用的目标群清单：机器人已确证是管理员的全部托管群，
  * 发起群排在最前。
  *
- * `/block` 与 `/unblock` 必须读同一份：两条命令是同一个处置的正反面，清单一旦
+ * `/block … enable` 与 `/block … disable` 必须读同一份：两条命令是同一个处置的正反面，清单一旦
  * 分叉就会出现「封的时候算上了 A 群、解封时漏掉 A 群」。
  *
  * 发起群排最前是语义不是顺手：处置发起群里的目标最紧迫，而两条命令都把这份清单
  * 交给同一个 `runManagedChatBatch`——它按输入顺序取任务、按输入顺序结算，因此
  * 计数与并发度无关。发起群不是管理员时不进清单——试也没用。
- * @param isAdminHere 由调用方现查（`resolveBotAdminStatus`）：发起群的权限值得一次
- *   实时确认，其余群只能读已落盘的权限快照。
+ * @param isAdminHere 由调用方现查（`botChatPermissionsIn` 的管理员位）：发起群的权限
+ *   值得一次实时确认，其余群只能读已落盘的权限快照。
  */
 export function managedAdminChatIds(chatId: number, isAdminHere: boolean): number[] {
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
@@ -76,7 +76,7 @@ export interface RunManagedChatBatchParams<T> {
 /**
  * 对 `managedAdminChatIds` 的清单做有界并发处置，并按输入顺序逐项结算。
  *
- * `/block` 的连坐封禁与 `/unblock` 的跨群解封是同一处置的正反面：清单同源，
+ * `/block` 的连坐封禁与 `/block disable` 的跨群解封是同一处置的正反面：清单同源，
  * 扇出形态也必须同源。逐群串行的话，40 个群就是几十次串行往返、十几秒里 update
  * 中间件一直不返回，ack 边界被推后，停机时更容易把 runner drain 拖超时；而各群
  * 之间本来没有依赖，它们共用主线程 Telegram 总闸，真实 429 会把原任务退回自适应

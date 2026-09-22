@@ -9,7 +9,7 @@ import {
   shouldPromoteToPermanentBypass,
 } from "../../packages/states/temporaryAdBypass";
 import type { TemporaryAdBypassActivity } from
-  "../../packages/types/temporaryAdBypass";
+  "../../packages/types/states/temporaryAdBypass";
 
 const FIRST_DAY_AT: number = new Date("2026-08-01T12:00:00+09:00").getTime();
 

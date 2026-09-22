@@ -8,11 +8,20 @@ import type { CachedUser } from "../types/chatState";
  * 匿名管理员以当前群组身份发言时，sender_chat.id 会等于 message.chat.id；
  * 这里有意保留该身份，/copy 需要据此复制群头像并匹配后续皮套消息进行复读。
  * Telegram 不会暴露皮套背后的真实用户，破坏性操作必须由调用方单独拦截。
- * auto/message/facts.ts 的转录身份与 users/senderIdentity.ts 的缓存身份共用
- * 这一条判定，避免两处各写一份后悄悄漂移。
+ * auto/message/facts.ts 的转录身份、users/senderIdentity.ts 的缓存身份与
+ * commands/commandActor.ts 的命令发起人共用这一条判定，避免各写一份后悄悄漂移。
  */
 export function visibleSenderChat(message: Message): Chat | undefined {
   return message.sender_chat ?? (message.chat.type === "channel" ? message.chat : undefined);
+}
+
+/**
+ * 消息在群里显示的发送者 id：visibleSenderChat 的会话 id 优先，否则取 from.id；
+ * 两者都拿不到时返回 undefined，调用方不得据此伪造相等关系。只读属性、不分配对象，
+ * 可放在每条群消息的路径上。
+ */
+export function visibleSenderId(message: Message): number | undefined {
+  return visibleSenderChat(message)?.id ?? message.from?.id;
 }
 
 /**

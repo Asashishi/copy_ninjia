@@ -1,5 +1,6 @@
 import type { DiskBusinessMessage } from "../../packages/types/diskIO/messages";
 import { diskIOStub } from "./diskIOMock";
+import { loggerStub } from "./loggerMock";
 /**
  * Anti-Raid 主线程镜像与恢复用例共用的替身、缓存句柄与隔离钩子。
  *
@@ -19,6 +20,8 @@ import type {
 } from "../../packages/types";
 
 export const workerPosts: AntiRaidWorkerMessage[] = [];
+/** 列在这里的消息类型被 Worker 投递拒收（post 返回 false），模拟 Worker 不可达。 */
+export const rejectedWorkerPostTypes = new Set<AntiRaidWorkerMessage["type"]>();
 export const diskPosts: (VerificationUpsertDiskMessage | VerificationDeleteDiskMessage)[] = [];
 /**
  * 三个替身在 mock 安装时回填到 holder，供多个用例文件共享可变绑定。
@@ -52,14 +55,10 @@ export const flushStateToDisk = mock(async (): Promise<FlushResult> => "flushed"
 export const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
 export const restoreLockdownInvitePermission = mock(async (..._args: unknown[]): Promise<void> => {});
 
-export function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
-}
+export const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../packages/infra/joinLog", () => ({
   recordJoinLog: async (): Promise<boolean> => true,
@@ -98,6 +97,7 @@ mock.module("../../packages/infra/telegram/actions", () => ({
 }));
 mock.module("../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
+  logApiError: (): void => {},
   telegramApi: { kind: "main-thread-test-api" },
 }));
 mock.module("../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
@@ -121,7 +121,11 @@ mock.module("../../packages/infra/supervisedWorker", () => ({
     workerHooks.supervisorOptions = options;
     return {
       init(): void {},
-      post: (message: AntiRaidWorkerMessage): boolean => { workerPosts.push(message); return true; },
+      post: (message: AntiRaidWorkerMessage): boolean => {
+        if (rejectedWorkerPostTypes.has(message.type)) return false;
+        workerPosts.push(message);
+        return true;
+      },
       terminate: async (): Promise<void> => {},
     };
   },
@@ -208,6 +212,7 @@ const deps: { current: AntiRaidMirrorDeps | null } = { current: null };
 export async function resetAntiRaidTestState(): Promise<void> {
   await deps.current!.terminateAntiRaid();
   workerPosts.length = 0;
+  rejectedWorkerPostTypes.clear();
   diskPosts.length = 0;
   chatStates.clear();
   activeVerificationSnapshots.clear();
@@ -238,6 +243,7 @@ export async function resetAntiRaidTestState(): Promise<void> {
   flushDiskIO.mockImplementation(async (): Promise<FlushResult> => "flushed");
   restoreLockdownInvitePermission.mockReset();
   restoreLockdownInvitePermission.mockImplementation(async (..._args: unknown[]): Promise<void> => {});
+  loggerError.mockClear();
 }
 
 /** 两个 Anti-Raid 镜像用例文件共用的隔离钩子；每份都要登记一次。 */

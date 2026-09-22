@@ -9,7 +9,12 @@ import type { BotChatPermissions } from "../../types/telegram";
  * 进程重启后全部恢复为空，由后续现查与 Worker 注册重新建立。
  */
 
-/** 进行中的权限现查，按 chatId 去重：同群并发判定共享同一次 getChatMember。 */
+/**
+ * 进行中的权限现查，按 chatId 去重：同群并发判定共享同一次 getChatMember。
+ * 清理：请求 settle 时按 chatId 删除，身份令牌失效（`/init` 切换、停管、主动
+ * invalidate）时连同令牌一起删除。容量：同时在途的群数，上界为受管群数
+ * （STATE_MANAGED_CHAT_LIMIT）；不设淘汰——丢掉一项只会让等待者永远等不到。
+ */
 export const botPermissionFetches: Map<number, Promise<BotChatPermissions | undefined>> = new Map();
 
 /**
@@ -17,19 +22,22 @@ export const botPermissionFetches: Map<number, Promise<BotChatPermissions | unde
  *
  * 旧请求即使晚到，也必须先核对自己的 symbol 仍是当前值才能回填 State；新请求因此
  * 不必等待已作废的 Telegram 往返结算。条目只存在于请求在途期间，settle 时清理。
+ * 容量：与 botPermissionFetches 逐键对齐，同样以受管群数为上界。
  */
 export const botPermissionRequestTokens: Map<number, symbol> = new Map();
 
 /**
- * 按需补齐权限位失败后的退避时刻（ms），按 `BOT_PERMISSION_PROBE_RETRY_MS`。
+ * 权限现查的退避截止时刻（ms），窗口长度为 `BOT_PERMISSION_PROBE_RETRY_MS`。
  *
- * 只在没能确证权限位时写入，确证成功即删除（此后走缓存命中，不再有人问）。
- * 容量与「当前正处于退化状态的群数」同阶；`/init` 切换与停管一并清除。
+ * `infra/botAdmin.ts` 的 admitBotPermissionProbe 每放行一次现查就先写入，不等现查
+ * 结果；已 /init 的群记下确证快照（recordBotChatPermissions）时删除，此后走快照命中；
+ * forgetBotChatPermissions（`/init` 切换、离群、作废陈旧快照）同样删除。
+ * 容量与「当前正处于退化状态的群数」同阶。
  */
 export const botPermissionProbeBackoff: Map<number, number> = new Map();
 
 /**
- * 权限位变更的下游观察者单槽位，由 `packages/antiRaid/workerBridge.ts` 反向注册
+ * 权限位变更的下游观察者单槽位，由 `packages/antiRaid/workerBridge/observers.ts` 反向注册
  * （同 `packages/cache/main/blocklist.ts` 的处置 owner 槽位）。
  *
  * infra 不得静态依赖 Anti-Raid 业务模块（见 docs/cn/04-invariants.md），而权限位

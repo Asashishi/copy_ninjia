@@ -141,6 +141,30 @@ describe("diskIO/joinLogFiles", () => {
     expect(existsSync(stalePath)).toBeFalse();
   });
 
+  test("临时与过期文件删不掉时静默跳过，保留其缓存，其余照删", async () => {
+    await recoverJoinLogFiles();
+    const tomorrow: string = getTokyoDateKey(new Date(todayAt() + 24 * 60 * 60_000));
+    const stuckTempPath: string = join(joinLogDir, "stuck.json.tmp");
+    const stuckStalePath: string = datedFile(-1001, "2000-01-02");
+    const stalePath: string = datedFile(-1001, "2000-01-01");
+    // 目录形态的同名条目 unlink 必然 EISDIR，模拟权限等删除失败。
+    mkdirSync(stuckTempPath, { recursive: true });
+    mkdirSync(stuckStalePath, { recursive: true });
+    await Bun.write(stalePath, "{}");
+    joinLogRetryAt.set("-1001:2000-01-02", 1);
+    joinLogRetryAt.set("-1001:2000-01-01", 1);
+
+    await maintainJoinLogRetention(tomorrow);
+
+    expect(existsSync(stuckTempPath)).toBeTrue();
+    expect(existsSync(stuckStalePath)).toBeTrue();
+    expect(existsSync(stalePath)).toBeFalse();
+    expect(joinLogRetryAt.has("-1001:2000-01-02")).toBeTrue();
+    expect(joinLogRetryAt.has("-1001:2000-01-01")).toBeFalse();
+    rmSync(stuckTempPath, { recursive: true, force: true });
+    rmSync(stuckStalePath, { recursive: true, force: true });
+  });
+
   test("命令读取前刷新缓冲、按时间过滤，并把同一用户折叠到最后一次加入", async () => {
     const now: number = todayAt();
     await handleJoinLogMessage(joinMessage(-1001, 42, now - 30_000));

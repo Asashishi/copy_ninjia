@@ -1,6 +1,7 @@
 import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { Message } from "grammy/types";
 import type { AntiRaidWorkerMessage } from "../../packages/types";
 import type { AdDetectionMessageContext } from
@@ -28,7 +29,7 @@ const temporaryAdBypassActivityTimes: number[] = [];
 const chatState: Record<string, boolean> = {};
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
@@ -50,12 +51,18 @@ mock.module("../../packages/infra/telegram/actions", () => ({
 }));
 mock.module("../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
+  logApiError: (): void => {},
   telegramApi: { kind: "guard-api" },
 }));
+/**
+ * 机器人在本群的管理员判定：`undefined` 逼 ingress 退回一次现查
+ * （resolveBotAdminStatus），其余值走同步快路径。默认是已确证的管理员。
+ */
+const botAdminStatus: { cached: boolean | undefined; resolved: boolean } = { cached: true, resolved: true };
 mock.module("../../packages/infra/botAdmin", () => ({
-  resolveBotAdminStatus: async (): Promise<boolean> => true,
+  resolveBotAdminStatus: async (): Promise<boolean> => botAdminStatus.resolved,
   // ingress 的同步快路径读它；未确证时返回 undefined 才会退回上面那次现查。
-  cachedBotAdminStatus: (): true => true,
+  cachedBotAdminStatus: (): boolean | undefined => botAdminStatus.cached,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},
@@ -172,6 +179,8 @@ beforeEach(() => {
   chatIsSupergroupById.clear();
   for (const key of Object.keys(chatState)) delete chatState[key];
   chatState.isFloodControlEnabled = true;
+  botAdminStatus.cached = true;
+  botAdminStatus.resolved = true;
 });
 
 describe("入群守卫开关（主线程投递侧）", () => {
@@ -418,4 +427,101 @@ describe("入群守卫开关（主线程投递侧）", () => {
     ]);
     expect(answeredCallbacks).toHaveLength(0);
   });
+});
+
+describe("机器人不是本群管理员时的投递门禁", () => {
+  /** 一条普通群消息；new_chat_members 为真时是入群公告。 */
+  function groupMessage(overrides: Record<string, unknown> = {}): never {
+    return {
+      message_id: 11,
+      date: 1,
+      chat: { id: -1001, type: "supergroup" },
+      from: { id: 42, is_bot: false, first_name: "Zako" },
+      text: "喵",
+      ...overrides,
+    } as never;
+  }
+
+  test("已确证不是管理员时一条都不投，入群公告仍被吞掉", async () => {
+    botAdminStatus.cached = false;
+    chatState.isAntiRaidEnabled = true;
+
+    const announcement: boolean = await handleAntiRaidMessageIngress(
+      groupMessage({ new_chat_members: [{ id: 43, is_bot: false, first_name: "New" }] }),
+      999
+    );
+    const ordinary: boolean = await handleAntiRaidMessageIngress(groupMessage(), 999);
+
+    expect(announcement).toBeTrue();
+    expect(ordinary).toBeFalse();
+    // 群类型镜像刻意排在管理员门禁之前，其余一条都不投。
+    expect(typesOf()).toEqual(["chatKind"]);
+  });
+
+  test("未确证时退回一次现查，现查说不是管理员同样不投", async () => {
+    botAdminStatus.cached = undefined;
+    botAdminStatus.resolved = false;
+    chatState.isAntiRaidEnabled = true;
+
+    const announcement: boolean = await handleAntiRaidMessageIngress(
+      groupMessage({ new_chat_members: [{ id: 43, is_bot: false, first_name: "New" }] }),
+      999
+    );
+
+    expect(announcement).toBeTrue();
+    expect(typesOf()).toEqual(["chatKind"]);
+  });
+
+  test("未确证但现查说是管理员时照常走投递段", async () => {
+    botAdminStatus.cached = undefined;
+    botAdminStatus.resolved = true;
+    chatState.isAntiRaidEnabled = true;
+
+    await handleAntiRaidMessageIngress(
+      groupMessage({ new_chat_members: [{ id: 43, is_bot: false, first_name: "New" }] }),
+      999
+    );
+
+    expect(typesOf()).toContain("join");
+  });
+
+  test("私聊消息不进这条链路", async () => {
+    expect(await handleAntiRaidMessageIngress(
+      groupMessage({ chat: { id: 42, type: "private" } }),
+      999
+    )).toBeFalse();
+    expect(typesOf()).toEqual([]);
+  });
+});
+
+describe("验证按钮的非法目标", () => {
+  async function click(data: string, id: string): Promise<void> {
+    await handleVerificationCallback({
+      callbackQuery: {
+        id,
+        data,
+        from: { id: 7, is_bot: false, first_name: "Clicker" },
+        message: { chat: { id: -1001 } },
+      },
+    } as never);
+  }
+
+  // NaN / 0 / 负数进 Worker 会生成一个永远不会被结算的状态键，按钮只会一直转。
+  // 后四种是裸 `Number()` 会放行、而本 bot 从不生成的非规范写法：指数、十六进制、
+  // 前导空白、带小数点与带正号（见 libs/telegramId.ts 的 parseUserIdArgument）。
+  test.each([
+    "verify:abc", "verify:", "verify:0", "verify:-5", "approve:abc",
+    "verify:1e3", "verify:0x10", "verify: 12", "verify:12.0", "verify:+5",
+  ])(
+    "%s 当场以「非法目标」应答，不投给 Worker",
+    async (data: string) => {
+      chatState.isAntiRaidEnabled = true;
+
+      await click(data, "cb-invalid");
+
+      expect(answeredCallbacks).toHaveLength(1);
+      expect(answeredCallbacks[0]?.callbackQueryId).toBe("cb-invalid");
+      expect(typesOf()).not.toContain("callback");
+    }
+  );
 });

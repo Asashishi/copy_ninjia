@@ -76,7 +76,7 @@ export interface WhiteCommandTexts {
   readonly superAdminDisableNoEntry: string;
   /** 目标解析成了当前群自己的身份（匿名管理员皮套或手滑粘了本群 id）。 */
   readonly currentChatTarget: string;
-  /** 目标还在黑名单里，得先 /unblock。 */
+  /** 目标还在黑名单里，得先 /block disable。 */
   readonly blocked: (targetLabel: string) => string;
   /** 写盘失败：白名单没有被改动，必须如实说出来而不是让异常掀翻进程。 */
   readonly mutationFailed: string;

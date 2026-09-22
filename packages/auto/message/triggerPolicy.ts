@@ -57,14 +57,21 @@ export function mediaTriggerHandled(
  * 导出以便验证精确到期和异常时间轴。
  */
 export function sweepUserReplyTriggerTimes(now: number = Date.now()): void {
+  let earliest: number = Number.POSITIVE_INFINITY;
   for (const [key, claimedAt] of userReplyTriggerTimes) {
     if (
       claimedAt > now ||
       now - claimedAt >= USER_REPLY_TRIGGER_COOLDOWN_MS
     ) {
       userReplyTriggerTimes.delete(key);
+    } else if (claimedAt < earliest) {
+      earliest = claimedAt;
     }
   }
+  userReplyTriggerSweepState.validFrom = now;
+  userReplyTriggerSweepState.validUntil = userReplyTriggerTimes.size >= USER_REPLY_TRIGGER_CACHE_MAX
+    ? earliest + USER_REPLY_TRIGGER_COOLDOWN_MS
+    : Number.NEGATIVE_INFINITY;
 }
 
 /** 只为整张冷却表安排一个最早到期清扫。 */
@@ -103,14 +110,18 @@ export function tryClaimUserReplyTrigger(chatId: number, speakerId: number, now:
   const lastTime: number | undefined = userReplyTriggerTimes.get(key);
   // 时钟回拨时旧冷却点位于未来；先失效它，再从新时间轴计时。
   if (lastTime !== undefined) {
-    if (lastTime > now) userReplyTriggerTimes.delete(key);
-    else if (now - lastTime < USER_REPLY_TRIGGER_COOLDOWN_MS) return false;
-    else userReplyTriggerTimes.delete(key);
+    if (lastTime <= now && now - lastTime < USER_REPLY_TRIGGER_COOLDOWN_MS) return false;
+    userReplyTriggerTimes.delete(key);
+    // 满表中的条目已换代，旧有效区间不能在后续时钟回拨时复用。
+    if (userReplyTriggerTimes.size === USER_REPLY_TRIGGER_CACHE_MAX - 1) {
+      userReplyTriggerSweepState.validUntil = Number.NEGATIVE_INFINITY;
+    }
   }
 
   // 正常到期由唯一 timer 清理；只有逼近硬顶时在热路径补扫一次，避免每次
   // 随机命中都 O(n)。仍满说明所有现存冷却都有效，fail closed 放弃本次随机回复。
   if (userReplyTriggerTimes.size >= USER_REPLY_TRIGGER_CACHE_MAX) {
+    if (now >= userReplyTriggerSweepState.validFrom && now < userReplyTriggerSweepState.validUntil) return false;
     sweepUserReplyTriggerTimes(now);
     if (userReplyTriggerTimes.size >= USER_REPLY_TRIGGER_CACHE_MAX) return false;
   }
@@ -127,4 +138,5 @@ export function clearUserReplyTriggerTimes(): void {
     userReplyTriggerSweepState.timer = null;
   }
   userReplyTriggerTimes.clear();
+  userReplyTriggerSweepState.validUntil = Number.NEGATIVE_INFINITY;
 }

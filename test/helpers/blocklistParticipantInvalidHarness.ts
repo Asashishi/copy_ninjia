@@ -1,7 +1,12 @@
 import { mock } from "bun:test";
+import {
+  blocklistIdentityMutationQueues,
+  blocklistParticipantInvalidQueue,
+} from "../../packages/cache/main/blocklist";
 import { identityEntryCounts } from "../../packages/cache/main/identityStorage";
 import { diskIOStub } from "./diskIOMock";
 import { loggerStub } from "./loggerMock";
+import { waitUntil } from "./waitUntil";
 import type * as diskIO from "../../packages/infra/diskIO";
 import type { BlockedMembersRemovedEvent } from "../../packages/types/antiRaid/events";
 import type {
@@ -164,9 +169,10 @@ export function writtenCounts(): readonly (readonly [number, unknown])[] {
   ] as const);
 }
 
-export function deferred(): { promise: Promise<void>; resolve: () => void } {
-  const { promise, resolve }: PromiseWithResolvers<void> = Promise.withResolvers<void>();
-  return { promise, resolve: (): void => resolve() };
+/** 等销号计数队列与黑名单身份写入队列都排空。 */
+export async function drainParticipantInvalidWork(): Promise<void> {
+  await blocklistParticipantInvalidQueue.current;
+  await waitUntil((): boolean => blocklistIdentityMutationQueues.size === 0);
 }
 
 /** 清空替身状态与调用记录；生产缓存由用例文件自行重置。 */

@@ -7,6 +7,7 @@
 
 import { assertStorageAdmission } from "./diskIO/storageAdmission";
 import { canQueueDiskIOBusiness } from "./diskIO/transport";
+import { describeFlushFailure, postWithTransport } from "./diskIO/businessWrite";
 import { storageWriteCost } from "../libs/storageWriteBudget";
 import {
   chatStateCache,
@@ -80,24 +81,12 @@ function encodeCurrentChatState(chatId: number): EncodedChatStateWrite {
   const state: ChatState | undefined = chatStateCache.peek(chatId);
   if (state === undefined) return { data: null, deleted: true, aiPersona: null };
   normalizeChatState(state);
-  if (isEmptyChatState(state)) {
-    chatStateCache.delete(chatId);
-    return { data: null, deleted: true, aiPersona: null };
-  }
+  if (isEmptyChatState(state)) return { data: null, deleted: true, aiPersona: null };
   return {
     data: encodeChatStateData(state, `chat state ${chatId}`),
     deleted: false,
     aiPersona: state.aiPersona ?? null,
   };
-}
-
-function postChatStateWrite(
-  message: ChatStateWriteDiskMessage,
-  transport?: DiskIORecoveryTransport
-): boolean {
-  return transport === undefined
-    ? diskIO.postDiskIO(message) === true
-    : transport.post(message);
 }
 
 /** 把一群当前最终值排进 SQLite；返回本次 revision 供 durability barrier 核对。 */
@@ -123,9 +112,11 @@ export function queueChatStateWrite(chatId: number): number {
   }
   assertStorageAdmission(unacknowledgedChatStateWrites.size + (unacknowledgedChatStateWrites.has(chatId) ? 0 : 1), bytes);
   if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat state publication.");
+  // 准入通过后才摘除已空的群状态：闸抛错时 LRU 与未 ACK 记账都保持调用前原样。
+  if (encoded.deleted) chatStateCache.delete(chatId);
   chatStateWriteRevision.current = revision;
   unacknowledgedChatStateWrites.set(chatId, { revision, deleted: encoded.deleted });
-  if (!postChatStateWrite(message)) {
+  if (!postWithTransport(message)) {
     logger.error(
       `Failed to queue chat state ${chatId}; retaining revision ${revision} for replay.`
     );
@@ -140,12 +131,9 @@ export async function persistChatState(chatId: number, context: string): Promise
   const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("chatState");
   throwIfUpdateAborted();
   if (outcome.result !== "flushed") {
-    const domainNote: string = outcome.failedDomains === undefined
-      ? "no per-domain reply"
-      : `failed domains: ${outcome.failedDomains.join(", ")}`;
     throw new Error(
       `Failed to persist chat state update (${context}): flush ${outcome.result} for ` +
-      `chat ${chatId} revision ${revision}; ${domainNote}.`
+      `chat ${chatId} revision ${revision}; ${describeFlushFailure(outcome)}.`
     );
   }
   if (unacknowledgedChatStateWrites.get(chatId)?.revision === revision) {
@@ -201,7 +189,7 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
       aiPersona: encoded.aiPersona,
       revision: write.revision,
     };
-    if (!postChatStateWrite(message, transport)) return false;
+    if (!postWithTransport(message, transport)) return false;
   }
   return true;
 }

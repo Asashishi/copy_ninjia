@@ -1,4 +1,3 @@
-import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
 import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 /**
@@ -118,7 +117,7 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       // clearAdDetection，而 clearAdDetection 只清得掉 Worker 里还没判的队列，
       // 够不到一条已经发布出来的判定。不在写名单之前复查一次的话，开关关掉之后
       // 仍然会有人被写进永久黑名单、在所有托管群封禁并被群内公告点名，正是
-      // clearAdDetection 存在的意义（见 antiRaid/workerBridge.ts）。复查放在临界
+      // clearAdDetection 存在的意义（见 antiRaid/workerBridge/controller.ts）。复查放在临界
       // 区内、紧挨着 blockUser：再往后就过了不可逆点，那时候撤只会留下一条既成
       // 事实的名单条目却没有任何执行。
       if (getChatState(event.chatId).isAdDetectEnabled !== true) return null;
@@ -212,8 +211,8 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
 }
 
 /**
- * 同一身份的广告封禁与 `/unblock` 必须覆盖完整副作用后串行结算。只锁名单写入
- * 会让这里等待落盘时被 `/unblock` 越过，随后又登记一批已经过期的封禁。
+ * 同一身份的广告封禁与 `/block disable` 必须覆盖完整副作用后串行结算。只锁名单写入
+ * 会让这里等待落盘时被 `/block disable` 越过，随后又登记一批已经过期的封禁。
  */
 function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
   return runBlocklistIdentityMutation(
@@ -231,7 +230,7 @@ export interface FormatAdNoticeParams {
   enforcedChats: number;
   /** 登记失败、改由补扫接手的群数。 */
   failedChats: number;
-  readonly atmosphere?: AtmosphereTexts;
+  readonly atmosphere: AtmosphereTexts;
 }
 
 /**
@@ -253,7 +252,7 @@ export interface FormatAdNoticeParams {
  * 一眼就能证伪的假话。只说这边确证得了的两件事：记进名单、封了几个群。
  * 删除失败由判定线程自己记日志（见 workers/antiRaid/adDetect/disposal.ts）。
  */
-export function formatAdNotice({ label, reason, enforcedChats, failedChats, atmosphere = ATMOSPHERE_TEXTS.teasing }: FormatAdNoticeParams): string {
+export function formatAdNotice({ label, reason, enforcedChats, failedChats, atmosphere }: FormatAdNoticeParams): string {
   const head: string = atmosphere.NOTICE_TEXTS.adDetected(label, reason || "整串消息通篇都是推广引流");
   if (enforcedChats === 0) {
     return atmosphere.NOTICE_TEXTS.adNoManagedChat(head);

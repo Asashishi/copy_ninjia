@@ -1,4 +1,5 @@
 import { afterEach, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { WorkerDuplexOutbound } from "../../../packages/types/workerDuplex";
 import type * as WorkerClientModule from "../../../packages/infra/telegram/workerClient";
 import type * as DuplexModule from "../../../packages/libs/workerDuplex";
@@ -8,7 +9,7 @@ import type * as LinkedChannelCacheModule from "../../../packages/cache/workers/
 import type * as TasksModule from "../../../packages/cache/workers/antiRaid/tasks";
 const root: string = new URL("../../../packages/", import.meta.url).pathname.slice(0, -1);
 mock.module(root + "/consts/antiRaid/cache.ts", () => ({ LINKED_CHANNEL_FETCH_TIMEOUT_MS: 5, LINKED_CHANNEL_TTL_MS: 300_000, ANTI_RAID_CHAT_CACHE_MAX: 500 }));
-mock.module(root + "/infra/logger.ts", () => ({ logger: { error(): void {}, log(): void {}, warn(): void {}, info(): void {} } }));
+mock.module(root + "/infra/logger.ts", () => ({ logger: loggerStub() }));
 const { workerTelegramApi }: typeof WorkerClientModule = await import(root + "/infra/telegram/workerClient.ts");
 mock.module(root + "/infra/telegram/index.ts", () => ({ telegramApi: workerTelegramApi }));
 const duplex: typeof DuplexModule = await import(root + "/libs/workerDuplex.ts");

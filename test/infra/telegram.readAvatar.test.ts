@@ -1,4 +1,5 @@
 import { beforeEach, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { Mock } from "bun:test";
 import type { User, UserProfilePhotos } from "grammy/types";
 import type { CurrentAvatarResult } from "../../packages/types/telegram";
@@ -10,7 +11,7 @@ const getUserProfilePhotos: ApiMock = mock(async (): Promise<UserProfilePhotos> 
 const download: ApiMock = mock(async (): Promise<any> => ({ status: "ok", bytes: new Uint8Array([1, 2, 3]) }));
 const web: ApiMock = mock(async (): Promise<Uint8Array> => new Uint8Array([4, 5]));
 const logError: Mock<(...args: unknown[]) => void> = mock((..._args: unknown[]): void => {});
-mock.module("../../packages/infra/logger", () => ({ logger: { error: logError, warn(): void {}, info(): void {}, log(): void {} } }));
+mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: logError }) }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({ bot: { api: { getChat, getUserProfilePhotos } } }));
 mock.module("../../packages/infra/telegram/avatar/download", () => ({ downloadAvatarFile: download }));
 mock.module("../../packages/infra/telegram/avatar/webProfile", () => ({ fetchAvatarFromWebProfile: web }));
@@ -93,6 +94,28 @@ test("频道使用 getChat 的当前身份与头像；下载失败仅访问当�
   expect(await readCurrentAvatar(channel.id, signal)).toEqual({ status: "ok", identity: channel, photo: new Uint8Array([4, 5]) });
   expect(web).toHaveBeenCalledWith("current_channel", signal);
   expect(getUserProfilePhotos).not.toHaveBeenCalled();
+});
+
+test("只给用户 ID 时用同一次 getChat 的私聊资料作身份，并照常复用当前头像的 file_id", async (): Promise<void> => {
+  const privateChat = {
+    id: 42, type: "private", first_name: "群友", username: "current_user",
+    photo: { big_file_id: "active-photo", big_file_unique_id: "active-unique" },
+  } as const;
+  getChat.mockImplementation(async (): Promise<any> => privateChat);
+  getUserProfilePhotos.mockImplementation(async (): Promise<UserProfilePhotos> => currentPhotos());
+  const signal: AbortSignal = new AbortController().signal;
+  expect(await readCurrentAvatar(42, signal)).toEqual({ status: "ok", identity: privateChat, photo: "reusable-current" });
+  expect(getChat).toHaveBeenCalledTimes(1);
+  expect(download).not.toHaveBeenCalled();
+  // 没有当前头像时按私聊资料里的公开用户名走网页兜底。
+  getChat.mockImplementation(async (): Promise<any> => ({ id: 42, type: "private", first_name: "群友", username: "current_user" }));
+  expect(await readCurrentAvatar(42, signal)).toEqual({
+    status: "ok", identity: { id: 42, type: "private", first_name: "群友", username: "current_user" }, photo: new Uint8Array([4, 5]),
+  });
+  expect(web).toHaveBeenCalledWith("current_user", signal);
+  // 返回的资料不是这个 ID 时不认。
+  getChat.mockImplementationOnce(async (): Promise<any> => ({ ...privateChat, id: 43 }));
+  expect(await readCurrentAvatar(42, signal)).toEqual(ABSENT);
 });
 
 test("频道身份查询失败或返回不符时不猜测用户名，也不下载其它身份的图片", async (): Promise<void> => {

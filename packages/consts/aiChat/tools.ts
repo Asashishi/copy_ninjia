@@ -81,3 +81,9 @@ export const DUPLICATE_REPLY_RESULT: string = JSON.stringify({
   skipped: "duplicate",
   actions_used: 0,
 });
+
+/**
+ * 模型回复没有工具调用时两家供应商共用的只读空列表（aiChat/gemini/replySession.ts、
+ * aiChat/openai/{replySession,response}.ts），无调用的轮次不另分配数组。
+ */
+export const EMPTY_FUNCTION_CALLS: readonly [] = [];

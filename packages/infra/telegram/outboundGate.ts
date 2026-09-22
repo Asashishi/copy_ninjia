@@ -27,6 +27,7 @@ import {
   removeRetryJob,
   takeRetryHead,
 } from "./outboundQueue";
+import { toErrorOr } from "../../libs/errorMessage";
 
 type PreviousCall = Parameters<Transformer<RawApi>>[0];
 type UnbanChatMemberPayload = Parameters<RawApi["unbanChatMember"]>[0];
@@ -194,13 +195,12 @@ export function resetRecoveryIfIdle(lane: TelegramRetryLane): void {
   lane.recoveryLimit = 1;
 }
 
+/**
+ * 结算一个仍然 active 的任务。唯一调用方 handleActiveResponse 已在同一个同步
+ * 片段里确认过状态，中间只隔一次纯读 header 的 telegramRetryAfterMilliseconds，
+ * 因此这里不再重复判状态；非 active 的响应由那一处统一释放 body。
+ */
 function resolveActiveJob(job: TelegramOutboundJob, response: unknown): void {
-  if (job.state !== "active") {
-    if (response instanceof Response) {
-      void response.body?.cancel().catch((): void => undefined);
-    }
-    return;
-  }
   const wasRecovery: boolean = job.fromRetryQueue;
   const lane: TelegramRetryLane = releaseActiveJob(job);
   job.state = "settled";
@@ -300,10 +300,7 @@ function executeActiveJob(job: TelegramOutboundJob): void {
   try {
     request = job.call(job.signal);
   } catch (error: unknown) {
-    rejectActiveJob(
-      job,
-      error instanceof Error ? error : new Error("Telegram outbound call threw.")
-    );
+    rejectActiveJob(job, toErrorOr(error, "Telegram outbound call threw."));
     return;
   }
   void request.then(

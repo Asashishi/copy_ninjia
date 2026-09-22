@@ -1,11 +1,12 @@
 import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { Message } from "grammy/types";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { ChatState } from "../../../packages/types/chatState";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
-import type { TelegramConfig } from "../../../packages/types/config";
+import type { BotConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
 const chatStates = new Map<number, Record<string, unknown>>();
 const getChatState = mock((chatId: number) => chatStates.get(chatId) ?? {});
@@ -48,16 +49,12 @@ const sendMessage = mock(async (params: SendMessageMockParams): Promise<number |
 const deleteMessageAfter = mock((..._args: unknown[]): void => {});
 const clearTemporaryAdBypassActivity = mock((_id: number): boolean => true);
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
-mock.module("../../../packages/config/telegram", () => ({
+mock.module("../../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 1,
-  getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 1 }),
+  getBotConfig: (): BotConfig => ({ atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 }),
 }));
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
@@ -403,6 +400,26 @@ describe("广告检测投递门禁", () => {
         },
       },
     }), 999)).toBeUndefined();
+  });
+
+  test("被回复消息以频道马甲发出时按马甲身份判白名单，不看附带的 from", () => {
+    const repliedByChannel = (senderChatId: number): NonNullable<Message["reply_to_message"]> => ({
+      message_id: 9,
+      date: 0,
+      chat: { id: -1001, type: "supergroup", title: "群" },
+      from: { id: 136817688, is_bot: true, first_name: "Channel_Bot" },
+      sender_chat: { id: senderChatId, type: "channel", title: "马甲" },
+      text: "日入过千 加V channel",
+      reply_to_message: undefined,
+    });
+    const quoted = (senderChatId: number): Message => message({
+      text: "这是我自己写的正文",
+      quote: { text: "日入过千", position: 0, is_manual: true },
+      reply_to_message: repliedByChannel(senderChatId),
+    });
+
+    expect(buildAdCandidate(quoted(-200), 999)?.sampleContext).toBeUndefined();
+    expect(buildAdCandidate(quoted(-300), 999)?.sampleContext).toBeDefined();
   });
 
   test("回复一条转发消息时按原作者判白名单，不按转发者判", () => {

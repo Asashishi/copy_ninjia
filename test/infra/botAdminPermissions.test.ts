@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { ChatMember, ChatMemberAdministrator } from "grammy/types";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import { settleBackgroundWork, settleTestBatch } from "../libs/helpers";
@@ -70,7 +71,7 @@ let onGetChatMember: (() => void) | undefined;
 let getChatMemberGate: Promise<void> | undefined;
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: {
@@ -125,11 +126,21 @@ const {
   botChatPermissionsIn,
   ensureBotChatPermissions,
   forgetBotChatPermissions,
-  handleMyChatMemberUpdate,
+  handleMyChatMemberUpdate: routeMyChatMemberUpdate,
   invalidateBotAdminStatus,
   markBotAdminObserved,
   registerBotPermissionObserver,
 } = await import("../../packages/infra/botAdmin");
+const { syncChatPersonaSurfaces } =
+  await import("../../packages/commands/chatPersonaSync");
+
+/**
+ * 三处人设同步由 app/registerHandlers.ts 注入（botAdmin 属 infra，不得静态依赖
+ * commands/）；用例统一经这个包装调用，注入的就是生产用的那一份实现。
+ */
+function handleMyChatMemberUpdate(ctx: never): Promise<void> {
+  return routeMyChatMemberUpdate(ctx, syncChatPersonaSurfaces);
+}
 const {
   botPermissionFetches,
   botPermissionObserver,

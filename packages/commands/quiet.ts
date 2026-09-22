@@ -3,7 +3,7 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { clearChatStateField, getChatState, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { QUIET_DEFAULT_MINUTES, QUIET_MAX_MINUTES, QUIET_MIN_MINUTES } from "../consts/commands";
+import { DURATION_UNIT_MS, QUIET_DEFAULT_MINUTES, QUIET_MAX_MINUTES, QUIET_MIN_MINUTES } from "../consts/commands";
 import { isQuietUntilActive } from "../libs/chatState";
 
 /**
@@ -20,8 +20,8 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
 
   const quietUntil: number = getChatState(chatId).quietUntil ?? 0;
   if (isQuietUntilActive(quietUntil)) {
-    const remainingMinutes: number = Math.ceil((quietUntil - Date.now()) / 60_000);
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietAlreadyEnabled(remainingMinutes), replyToMessageId: messageId });
+    const remainingMinutes: number = Math.ceil((quietUntil - Date.now()) / DURATION_UNIT_MS.m);
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.quietAlreadyEnabled(remainingMinutes), replyToMessageId: messageId });
     return;
   }
 
@@ -30,17 +30,17 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   if (arg) {
     const parsed: number = Number(arg);
     if (!Number.isFinite(parsed)) {
-      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietUsage(QUIET_MIN_MINUTES, QUIET_MAX_MINUTES, QUIET_DEFAULT_MINUTES), replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.quietUsage(QUIET_MIN_MINUTES, QUIET_MAX_MINUTES, QUIET_DEFAULT_MINUTES), replyToMessageId: messageId });
       return;
     }
     minutes = Math.min(QUIET_MAX_MINUTES, Math.max(QUIET_MIN_MINUTES, Math.round(parsed)));
   }
 
   const state: ChatState = getOrCreateChatState(chatId);
-  state.quietUntil = Date.now() + minutes * 60_000;
+  state.quietUntil = Date.now() + minutes * DURATION_UNIT_MS.m;
   await persistChatState(chatId, "quiet set");
 
-  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietEnabled(minutes), replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.quietEnabled(minutes), replyToMessageId: messageId });
 }
 
 /**
@@ -53,7 +53,7 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
 
   const state: Readonly<ChatState> = getChatState(chatId);
   if (!isQuietUntilActive(state.quietUntil)) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietAlreadyDisabled, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.quietAlreadyDisabled, replyToMessageId: messageId });
     return;
   }
 
@@ -62,5 +62,5 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
   clearChatStateField(chatId, "quietUntil");
   await persistChatState(chatId, "quiet cleared");
 
-  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.quietDisabled, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.quietDisabled, replyToMessageId: messageId });
 }

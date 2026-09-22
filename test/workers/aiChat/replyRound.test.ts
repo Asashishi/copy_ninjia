@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import {
   aiRecordMessageFixture,
   aiReplyReferenceFixture,
@@ -56,12 +57,7 @@ mock.module("../../../packages/workers/aiChat/replyModel", () => ({ generateRepl
 mock.module("../../../packages/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: logError,
-  },
+  logger: loggerStub({ error: logError }),
 }));
 
 const { startReplyRound } = await import("../../../packages/workers/aiChat/replyRound");

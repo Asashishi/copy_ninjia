@@ -1,4 +1,3 @@
-import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
 import type { AtmosphereTexts } from "../../types/atmosphere";
 import { chatAtmosphere } from "../../infra/atmosphere";
 /**
@@ -18,7 +17,7 @@ import { chatAtmosphere } from "../../infra/atmosphere";
 import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { CallbackQuery } from "grammy/types";
-import { QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_JSON_LANGUAGE, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../consts/qa";
+import { QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_JSON_LANGUAGE, QA_QUERY_PAGE_ARG_PATTERN, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../consts/qa";
 
 import { answerCallbackQuery, editMessageText } from "../../infra/telegram";
 import { getChatQa } from "../../infra/qaStore";
@@ -58,7 +57,7 @@ function renderQaBoardPage(entries: readonly QaEntry[], atmosphere: AtmosphereTe
  * 整个消失。单页不会超出 Telegram 上限的依据写在该常量的 JSDoc 里，这里因此
  * 不再对整页做一次 `JSON.stringify` 试装。
  */
-export function buildQaBoardPages(entries: readonly QaEntry[], atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): readonly RichTextMessage[] {
+export function buildQaBoardPages(entries: readonly QaEntry[], atmosphere: AtmosphereTexts): readonly RichTextMessage[] {
   const pages: RichTextMessage[] = [];
   for (let start: number = 0; start < entries.length; start += QA_QUERY_PAGE_MAX_ENTRIES) {
     const bucket: QaEntry[] = [];
@@ -79,7 +78,7 @@ export function buildQaBoardPages(entries: readonly QaEntry[], atmosphere: Atmos
  * 首页不给「上一页」、末页不给「下一页」：Telegram 没有禁用态按钮，画一个点了
  * 没反应的按钮只会让人以为看板坏了。中间那颗是页码指示，点它什么都不做。
  */
-export function buildQaBoardKeyboard(page: number, total: number, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): InlineKeyboard | undefined {
+export function buildQaBoardKeyboard(page: number, total: number, atmosphere: AtmosphereTexts): InlineKeyboard | undefined {
   if (total <= 1) return undefined;
   const keyboard: InlineKeyboard = new InlineKeyboard();
   if (page > 0) {
@@ -110,9 +109,12 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
 
   const boardMessage: CallbackQuery["message"] = query.message;
   if (boardMessage === undefined) return true;
-  // callback_data 属于外部输入：前缀对上不代表后半段是合法页号。
-  const requested: number = Number(data.slice(QA_QUERY_PAGE_CALLBACK_PREFIX.length));
-  if (!Number.isSafeInteger(requested) || requested < 0) return true;
+  // callback_data 属于外部输入：前缀对上不代表后半段是合法页号。本 bot 只生成
+  // 规范十进制，`"1e3"`、`" 2"`、`"2.0"` 这些写法一律来自外部构造。
+  const rawPage: string = data.slice(QA_QUERY_PAGE_CALLBACK_PREFIX.length);
+  if (!QA_QUERY_PAGE_ARG_PATTERN.test(rawPage)) return true;
+  const requested: number = Number(rawPage);
+  if (!Number.isSafeInteger(requested)) return true;
 
   const chatId: number = boardMessage.chat.id;
   const stored: ReadonlyMap<string, string> | undefined = getChatQa(chatId);

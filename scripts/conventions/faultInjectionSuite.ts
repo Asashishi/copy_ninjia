@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
-import ts from "typescript";
-import { runtimeModuleReferences, sourceFilesUnder } from "./sourceAnalysis";
+import type ts from "typescript";
+import { parseSourceFile, runtimeModuleReferences, sourceFilesUnder } from "./sourceAnalysis";
 import type { RuntimeModuleReference } from "./sourceAnalysis";
 
 /**
@@ -45,6 +45,7 @@ interface ProjectPackageJson {
  * 进这套套件只会拖长发布前的必跑面而换不到恢复能力。
  */
 export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
+  { path: "scripts/migrateBotConfig.ts", purpose: "Bot configuration cold migration integrity and interruption recovery" },
   {
     path: "test/helpers/diskIOWorkerHarness.ts",
     purpose: "Disk I/O Worker initialization, backpressure, diagnostic restart and give-up",
@@ -95,6 +96,8 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
     path: "packages/workers/antiRaid/verificationRuntime.ts",
     purpose: "verification adoption, persisted terminal resume and generation isolation",
   },
+  { path: "packages/infra/storage/instanceLock.ts", purpose: "single-instance lock acquisition, stale-owner recovery and release" },
+  { path: "packages/app/lifecycle/shutdown.ts", purpose: "application shutdown ordering, drain budgets and final flush" },
 ];
 
 /** 该引用是否触及边界：未限定导出的边界按整模块计，无法确定取用范围的引用同样计入。 */
@@ -173,13 +176,7 @@ export async function collectFaultInjectionSuiteProblems(
     if (!path.endsWith(".test.ts")) continue;
     const relativePath: string = relative(projectRoot, path);
     if (listedSet.has(relativePath)) continue;
-    const source: ts.SourceFile = ts.createSourceFile(
-      path,
-      await Bun.file(path).text(),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS
-    );
+    const source: ts.SourceFile = await parseSourceFile(path);
     for (const reference of runtimeModuleReferences(source)) {
       const resolved: string | undefined = resolvedSpecifierPath(path, reference.specifier);
       if (resolved === undefined) continue;

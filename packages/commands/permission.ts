@@ -19,12 +19,12 @@ import {
   isWhitelisted,
   setWhitelistPermission,
 } from "../infra/identityPolicy/whitelist";
-import { SUPER_ADMIN_USER_ID } from "../config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../config/bot";
 
 import { prefetchIdentityPolicies } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
-import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
+import { formatActorLabel, formatTargetLabel } from "../users/userLabel";
 import { resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
 
@@ -175,7 +175,7 @@ export async function handlePermissionCommand(
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  // 直接比对上面已经解析出来的发起身份，不再调 isSuperAdminActor 重解析一遍：
+  // 直接比对上面已经解析出来的发起身份，不再重解析一遍：
   // resolveCommandActor 对同一个 ctx 是纯函数，第二次调用只多造一个 CachedUser。
   const actorIsSuperAdmin: boolean = actor?.id === SUPER_ADMIN_USER_ID;
   const tokens: string[] = commandArgumentTokens(ctx.match);
@@ -214,14 +214,14 @@ export async function handlePermissionCommand(
         // 于是 `/permission query -100…` 被回成「不是合法用户名」——刚用
         // `/permission -100… isCanBlock true` 授过权的频道身份反而读不回来。
         acceptChatId: true,
-        messages: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.target,
+        messages: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.target,
       });
     }
     if (target === undefined) return;
     if (!await prefetchIdentityPolicies([target.id])) {
       await sendCommandMessage({
         chatId,
-        text: chatAtmosphere(ctx.chat?.id ?? 0).IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
+        text: chatAtmosphere(chatId).IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
         replyToMessageId: messageId,
       });
       return;
@@ -252,12 +252,10 @@ export async function handlePermissionCommand(
   }
 
   if (!actorIsSuperAdmin) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
     await sendCommandMessage({
       chatId,
-      text: atmosphere.PERMISSION_COMMAND_TEXTS.mutationRejection(
-        actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor
-      ),
+      text: atmosphere.PERMISSION_COMMAND_TEXTS.mutationRejection(formatActorLabel(actor, atmosphere)),
       replyToMessageId: messageId,
     });
     return;
@@ -267,7 +265,7 @@ export async function handlePermissionCommand(
   if (!isEnableAll && tokens.length < 2) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.usage,
+      text: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.usage,
       replyToMessageId: messageId,
     });
     return;
@@ -283,7 +281,7 @@ export async function handlePermissionCommand(
     if (key === undefined || value === undefined) {
       await sendCommandMessage({
         chatId,
-        text: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.usageWithKeys(
+        text: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.usageWithKeys(
           WHITELIST_PERMISSION_KEYS.join(", ")
         ),
         replyToMessageId: messageId,
@@ -304,22 +302,15 @@ export async function handlePermissionCommand(
     acceptChatId: true,
     // 「目标不在白名单」判定与逐项权限写入都读目标的名单结论。
     requireIdentityPolicies: true,
-    messages: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.target,
+    // 与 /block、/block disable、/white 同一道闸：匿名管理员拿当前群当皮套时
+    // resolveCommandTarget 按设计返回这个群自己的 identity（见
+    // targetResolution.ts 的 currentChatTargetText）。这里必须拒绝——给它逐项发
+    // 权限，等于把 /block、/mute 与各功能开关交给这个群的任意匿名管理员，而
+    // Telegram 从不告诉本进程皮套底下是谁。
+    currentChatTargetText: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.currentChatTarget,
+    messages: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;
-  // 与 /block、/unblock、/white 同一道闸：匿名管理员拿当前群当皮套时
-  // resolveCommandTarget 按设计返回这个群自己的 identity（见
-  // targetResolution.ts 结尾）。这里必须自己拒绝——给它逐项发权限，等于把
-  // /block、/mute 与各功能开关交给这个群的任意匿名管理员，而 Telegram 从不
-  // 告诉本进程皮套底下是谁。
-  if (target.isChannel === true && target.id === chatId) {
-    await sendCommandMessage({
-      chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.currentChatTarget,
-      replyToMessageId: messageId,
-    });
-    return;
-  }
   // 超级管理员的权限来自身份本身、恒为全开，永远不落进 SQLite 白名单表
   // （见 consts/whitelist.ts 的 SUPER_ADMIN_WHITELIST_PERMISSIONS）。放行只会
   // 写进一条永远不被读到的条目，换过 SUPER_ADMIN_USER_ID 后还会留成全开的旧
@@ -327,13 +318,13 @@ export async function handlePermissionCommand(
   if (target.id === SUPER_ADMIN_USER_ID) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).PERMISSION_COMMAND_TEXTS.superAdminTarget,
+      text: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.superAdminTarget,
       replyToMessageId: messageId,
     });
     return;
   }
   if (!isWhitelisted(target.id)) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
     await sendCommandMessage({
       chatId,
       text: atmosphere.PERMISSION_COMMAND_TEXTS.targetNotWhitelisted(formatTargetLabel(target, atmosphere)),
@@ -351,7 +342,7 @@ export async function handlePermissionCommand(
       await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
       return;
     }
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
     const replyText: string = result.changed
       ? atmosphere.PERMISSION_COMMAND_TEXTS.allEnabled(formatTargetLabel(target, atmosphere))
       : atmosphere.PERMISSION_COMMAND_TEXTS.allAlreadyEnabled(formatTargetLabel(target, atmosphere));
@@ -374,7 +365,7 @@ export async function handlePermissionCommand(
     await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
     return;
   }
-  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
   await sendCommandMessage({
     chatId,
     text: atmosphere.PERMISSION_COMMAND_TEXTS.permissionSet({

@@ -16,9 +16,21 @@ import type { DayFileState } from "../../../types/diskIO/storage";
  * handleVerificationUpsert/handleVerificationDelete
  * 按验证生命周期增量更新/删除；compactVerificationDay 收敛快照或跨东京日
  * rollover 时会整份重写落盘文件，但不改变本镜像的更新方式。
+ *
+ * 清理：handleVerificationDelete 单条删除（验证通过、离群、终态结算完成），
+ * 跨日 rollover 按最新旧日重建，resetVerificationPersistenceCache 整表清空。
+ * 容量：硬顶 VERIFICATION_RECORD_CAPACITY（见 consts/antiRaid/verification.ts），
+ * 满载时拒收新记录而不是淘汰旧记录——被淘汰的那条正是还欠一次踢人的。
+ * Worker 崩溃重建：由 inspectVerificationDay + adoptVerificationDay 从当天与
+ * 最新旧日文件整份重建。
  */
 export const verificationWorkerCache: Map<string, VerificationSnapshot> = new Map();
-/** 250ms 合并窗口内每个成员的最新变化；flush 后按 revision 删除。 */
+/**
+ * 250ms 合并窗口内每个成员的最新变化；flush 后按 revision 删除，
+ * resetVerificationPersistenceCache 整表清空。容量：一个合并窗口内发生变化的
+ * 成员数，上界同 verificationWorkerCache。Worker 崩溃重建：不重放——未落盘的
+ * 那一批由主线程按未 ACK revision 重投。
+ */
 export const verificationPendingChanges: Map<string, VerificationFileChange> = new Map();
 /** 当前东京日追加文件的游标与收敛计数；跨日、恢复或 reset 时重建。 */
 export const verificationFileState: {

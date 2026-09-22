@@ -29,6 +29,37 @@ export const BOT_CHAT_PERMISSION_KEYS: readonly (keyof BotChatPermissions)[] = [
 ];
 
 /**
+ * 权限位的中文名。`/bot_status` 的权限块只列**已经拥有**的位，缺权限提示点名
+ * 机器人缺的那一位（见 libs/botPermissionGap.ts）；两处读同一张表，同一位在
+ * 群里只有一个叫法。
+ *
+ * 字段全集与展示顺序以 BOT_CHAT_PERMISSION_KEYS 为准，这里只补名字；新增权限位时
+ * 两处都要加，缺了会在类型层报错。
+ */
+export const BOT_CHAT_PERMISSION_LABELS: Readonly<
+  Record<keyof BotChatPermissions, string>
+> = {
+  isAdministrator: "管理员身份",
+  isAnonymous: "匿名身份",
+  canManageChat: "管理聊天",
+  canDeleteMessages: "删除消息",
+  canManageVideoChats: "管理视频聊天",
+  canRestrictMembers: "限制与封禁成员",
+  canPromoteMembers: "任免管理员",
+  canChangeInfo: "修改聊天资料",
+  canInviteUsers: "邀请用户",
+  canManageTags: "管理成员标签",
+  canPostStories: "发布故事",
+  canEditStories: "编辑故事",
+  canDeleteStories: "删除故事",
+  canPostMessages: "频道发布消息",
+  canEditMessages: "编辑频道消息",
+  canPinMessages: "置顶消息",
+  canManageTopics: "管理论坛话题",
+  canManageDirectMessages: "管理频道私信",
+};
+
+/**
  * 这份快照里**下游 Anti-Raid Worker 真正读的**那两位（见 types/telegram.ts 的
  * `BotActionPermissions`）。
  *

@@ -31,11 +31,11 @@ import {
   getMediaInputProbe,
   getMediaInputState,
   getMediaInputSupport,
-  isMediaInputClosed,
   isMediaInputProbeCoolingDown,
   recordMediaInputResult,
   setMediaInputProbe,
 } from "../../cache/workers/aiChat/mediaInputSupport";
+import { isMediaInputClosed } from "../../states/mediaInputSupport";
 import {
   IMAGE_DESCRIPTION_MAX_CHARS,
   MEDIA_DESCRIPTION_ERROR_LABEL,
@@ -54,9 +54,9 @@ import type {
   AiTextResult,
   AiProviderTaskPriority,
   MediaInputCapability,
-  MediaInputModalityState,
   MediaInputSupport,
 } from "../../types/aiChat/provider";
+import type { MediaInputModalityState } from "../../types/states/mediaInputSupport";
 
 /** 模态不可用时复用同一个已完成 Promise，避免每条后续媒体都分配新 Promise。 */
 const MEDIA_CLOSED_PROMISE: Promise<AiTextResult> = Promise.resolve(MEDIA_CLOSED_RESULT);
@@ -325,8 +325,7 @@ async function describeVisionUncached({
       normalize: (text: string): string => {
         const description: string = sanitizeInline(text);
         if (!description) return "";
-        // 模型超限时收在子句边界而不是硬切——memory/stickers/ 里曾大批量出现
-        // 「……以戏谑的口」式断在半句的目录条目，就是硬切造成的。
+        // 模型超限时收在子句边界，不在半句中间硬切。
         return truncateAtClauseBoundary(description, maxCharsFor(kind));
       },
     });

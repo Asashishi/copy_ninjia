@@ -10,26 +10,13 @@ import {
   trackAntiRaidTask,
 } from "../../../packages/workers/antiRaid/taskTracker";
 
-interface Deferred {
-  promise: Promise<void>;
-  resolve(): void;
-}
-
-function deferred(): Deferred {
-  let resolve!: () => void;
-  const promise: Promise<void> = new Promise<void>((done: () => void): void => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 beforeEach((): void => resetAntiRaidTaskTracker());
 afterEach((): void => resetAntiRaidTaskTracker());
 
 describe("Anti-Raid async task tracker", () => {
   test("drain 会继续等待首项结算回调派生的新任务", async () => {
-    const first: Deferred = deferred();
-    const second: Deferred = deferred();
+    const first: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    const second: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const firstTask: Promise<void> = first.promise.then((): void => {
       void trackAntiRaidTask({ task: second.promise });
     });
@@ -51,12 +38,12 @@ describe("Anti-Raid async task tracker", () => {
   });
 
   test("stop 代际隔离旧 Promise，迟到结算不能清掉新 Worker 的同群状态", async () => {
-    const oldTask: Deferred = deferred();
+    const oldTask: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     void trackAntiRaidTask({ task: oldTask.promise, blocklistChatId: -1001 });
     blocklistRemovalEpochs.set(-1001, 1);
 
     resetAntiRaidTaskTracker();
-    const newTask: Deferred = deferred();
+    const newTask: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     void trackAntiRaidTask({ task: newTask.promise, blocklistChatId: -1001 });
     blocklistRemovalEpochs.set(-1001, 7);
     oldTask.resolve();

@@ -74,3 +74,17 @@ export function assertDirectoryReadableWritable(path: string): void {
     );
   }
 }
+
+/**
+ * 尽力删除一个已确认无用的文件（`Bun.file(path).delete()`）。删除成功返回 true；
+ * 任何失败（不存在、权限、路径是目录等）都静默返回 false，不记日志也不抛出，
+ * 现场留给调用方的下一轮清理重试。
+ */
+export async function bestEffortUnlink(path: string): Promise<boolean> {
+  try {
+    await Bun.file(path).delete();
+    return true;
+  } catch {
+    return false;
+  }
+}

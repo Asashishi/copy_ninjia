@@ -3,9 +3,9 @@
 <p><b>简体中文</b> · <a href="docs/en/README.md">English</a> · <a href="docs/ja/README.md">日本語</a></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="pictures/banner_dark.jpg">
-  <source media="(prefers-color-scheme: light)" srcset="pictures/banner_light.jpg">
-  <img alt="Copy Ninjia Banner" src="pictures/banner_light.jpg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="public/banner_dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="public/banner_light.jpg">
+  <img alt="Copy Ninjia Banner" src="public/banner_light.jpg" width="100%">
 </picture>
 
 <h1>
@@ -16,9 +16,9 @@
 <p><sub>点击头像即可跳转至示例 Bot：<a href="https://t.me/copy_ninjia_bot">@copy_ninjia_bot</a></sub></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="pictures/tagline_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="pictures/tagline_light.svg">
-  <img alt="会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人" src="pictures/tagline_light.svg" width="780">
+  <source media="(prefers-color-scheme: dark)" srcset="public/tagline_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="public/tagline_light.svg">
+  <img alt="会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人" src="public/tagline_light.svg" width="780">
 </picture>
 
 **生产代码、测试与文档均由 AI 编写的纯 AI 开发项目** — 人类负责架构设计，并与 AI 共同审查每一次提交
@@ -29,14 +29,14 @@
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
-  <a href="https://platform.openai.com/docs/"><img src="pictures/openai_badge.svg" alt="OpenAI"></a>
+  <a href="https://platform.openai.com/docs/"><img src="public/openai_badge.svg" alt="OpenAI"></a>
 </p>
 
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable--5.1_/_Gpt--6--astra-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-4519_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.02%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5072_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.12%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -44,7 +44,7 @@
 
 ---
 
-🧬 [纯 AI 开发](#-纯-ai-开发) • ✨ [它能做什么](#-它能做什么) • 🎮 [命令与权限](#-命令与权限) • 🚀 [快速开始](#-快速开始) • 📚 [开发者文档](docs/cn/content-table.md)
+🧬 [纯 AI 开发](#-纯-ai-开发) • ✨ [它能做什么](#-它能做什么) • 🎮 [命令与权限](#-命令与权限) • 🚀 [快速开始](#-快速开始) • 🤖 [BotFather 配置](#botfather-setup) • ❓ [常见问题](docs/cn/10-faq.md) • 📚 [开发者文档](docs/cn/content-table.md)
 
 </div>
 
@@ -71,9 +71,9 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：4519 项测试全部通过 / 388 个测试文件 / 158,896 次 expect() 调用 / 函数覆盖率 97.22% / 行覆盖率 98.02%" src="pictures/coverage_light.svg" width="780">
+    <source media="(prefers-color-scheme: dark)" srcset="public/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="public/coverage_light.svg">
+    <img alt="bun run test:coverage：5072 项测试全部通过 / 441 个测试文件 / 192,270 次 expect() 调用 / 函数覆盖率 97.01% / 行覆盖率 98.12%" src="public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -154,6 +154,48 @@
   <sub>预先登记的问题命中后直接作答，不经过 AI。</sub></p>
 </td>
 </tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🖼️ 随机图库</b><br>
+  <sub>用 /h_image 随机发一张带剧透遮罩的图；授权成员可回复图片或相册收图，按内容去重。</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>⏰ 定时发送</b><br>
+  <sub>按时区定时发送文字、文件、随机图或 1–10 张固定图片，支持一次性任务与随机间隔。</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🎨 人设与通知语气</b><br>
+  <sub>每群可单独设 AI 人设；Bot 通知可选雌小鬼或普通语气，自定义人设群使用普通语气。</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🤐 发言管教</b><br>
+  <sub>用 /gag 限制目标直接发文字，改由专属按钮发送变形后的文字，到期或解除后恢复。</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🫧 中文动作</b><br>
+  <sub>回复群友发 /咬、/贴贴 等一两个中文字的动作命令，无需预先登记。</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🌊 防刷屏</b><br>
+  <sub>按群开启发言频率检测，达到阈值自动短时禁言，豁免权限可单独控制。</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🔎 身份资料</b><br>
+  <sub>用 /info 查询用户、频道的公开资料与头像，也能查询群资料；回执 30 秒后删除。</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🔐 细粒度权限</b><br>
+  <sub>按身份分配功能开关、收图、群问答和管理权限，通过权限看板查询。</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>📨 私聊中转</b><br>
+  <sub>超级管理员在私聊开启 /send 后，可把消息转发到指定的已接管群。</sub></p>
+</td>
+</tr>
 </table>
 
 每项功能的行为细节、配置与边界见 **[📚 开发者文档](docs/cn/content-table.md)**。
@@ -162,13 +204,17 @@
 
 ## 🎮 命令与权限
 
-命令按入口授权：**群成员**可用复读、动作命令和安静模式；**身份权限键**控制 `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` 和功能开关。**`SUPER_ADMIN_USER_ID` 专属**包括 `/init`、权限修改、删除白名单成员、`/batch_kick`；`/white enable` 可按 `isCanWhiteOther` 委托。`/send` 仅超级管理员私聊可用。
+命令按入口授权：**群成员**可用复读、动作命令、安静模式和 `/info` 资料查询；**身份权限键**控制 `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` 和功能开关。**`SUPER_ADMIN_USER_ID` 专属**包括 `/init`、权限修改、删除白名单成员、`/batch_kick`；`/white enable` 可按 `isCanWhiteOther` 委托。`/send` 仅超级管理员私聊可用。
 
 群专属 AI 提示词由 `/prompt config <提示词>` 设置，`/prompt remove` 恢复 `prompt/persona.md`；两者受默认关闭的 `isCanConfigAiPrompt` 控制。`/bot_status` 可查看当前群是否已设置。
 
 复读目标全局唯一，`/copy` 系列在发起命令的群里逐条复读并同步头像；`/luck_challenge` 走 Inline Mode，中文动作命令（`/咬`、`/揪住`）不需要预先登记。
 
 `/wed` 在已初始化的群里仅支持个人身份，随机抽取群友并展示头像及确认、更换、移除按钮。每群最多保存 15 万个已发言成员 ID，实际增删后批量写入 `memory/wed/<chatId>.json`，重启恢复候选；结果会话只保存在内存中。命令与按钮全局最多同时处理 32 项，出站复用统一队列和 429 等待。
+
+`/h_image` 从专用图片目录（`state.json` 的 `global.assets.randomHImageDir`，缺省为数据根下的 `h_image/`，启动时自动创建）均匀抽一张图发到本群，图片固定带剧透遮罩并长期保留；只认 `jpg`、`jpeg`、`png`、`webp`。持有 `isCanAddHImage` 的身份回复带图的消息发 `/h_image add`，可以把图（相册则整组）收进图库，无需重启。不要混放其他功能的图片；手工放置必须以内容 SHA-256 命名，非法名称会拒绝启动。
+
+通知语气在 `config/bot.json` 的 `atmosphere` 中选择 `mesugaki`（缺省）或 `normal`，重启生效；群自定义 AI 人设优先使用普通通知。`config/cron.json` 可热重载定时任务，固定图片支持单图或 2–10 张相册，随机图可指定独立目录。配置示例与规则见 [部署配置说明](config_example/README/zh.md)，源码与二进制的冷迁移步骤见 [运维手册](docs/cn/07-operations.md)。
 
 完整命令表、权限口径与每条命令的行为细节见 **[📖 08 命令与行为参考](docs/cn/08-commands.md)**。
 
@@ -193,14 +239,21 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/   # 填好 telegram.json 的 bot_token 与 super_admin_user_id
+for example in config_example/*.json; do   # 只补缺失的示例；g-auth.json、cron.json 只示意写法，不复制
+  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" config/ ;; esac
+done                                       # 填好 bot.json 的 bot_token 与 super_admin_user_id
+```
+
+手工安装时首次启动前还要初始化身份数据库、在 BotFather 侧关闭 Privacy Mode 并开启 Inline Mode（完整清单见 [BotFather 与群权限配置](#botfather-setup)）。
+配置逐项含义、必填关系与严格校验规则见 [`config_example/README/zh.md`](config_example/README/zh.md)，
+完整步骤（含运行时数据根、素材直链与迁移命令）见 [01 环境搭建与首次运行](docs/cn/01-getting-started.md)。
+
+完成身份数据库初始化与上述配置后，再运行：
+
+```bash
 bun run check                          # 项目规约 + ESLint + TypeScript 严格检查 + 覆盖率测试 + 热路径门禁
 bun run start                          # 启动长轮询
 ```
-
-手工安装时首次启动前还要初始化身份数据库、在 BotFather 侧关闭 Privacy Mode 并开启 Inline Mode。
-配置逐项含义、必填关系与严格校验规则见 [`config_example/README/zh.md`](config_example/README/zh.md)，
-完整步骤（含运行时数据根、素材直链与迁移命令）见 [01 环境搭建与首次运行](docs/cn/01-getting-started.md)。
 
 机器人首次加入群聊后，由 `SUPER_ADMIN_USER_ID` 在群内执行：
 
@@ -228,15 +281,49 @@ Copy Ninjia 的架构总览、模块导览、运行时权威约束、测试流�
 | 🛡️ **运维手册** | systemd 部署、硬件参考、`COPY_NINJIA_DATA_ROOT`、备份与排障 | [📖 07 运维手册](docs/cn/07-operations.md) |
 | 🎮 **命令参考** | 全部命令、权限口径与行为细节 | [📖 08 命令与行为参考](docs/cn/08-commands.md) |
 | 📊 **性能基准** | 发布时重跑的冷热路径、吞吐、读写与链路耗时读数 | [📖 09 性能基准](docs/cn/09-performance.md) |
+| ❓ **常见问题** | 机器人在运行却没有回复时的排查清单 | [📖 10 常见问题](docs/cn/10-faq.md) |
+
+<p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
+
+<a id="botfather-setup"></a>
+
+## 🤖 BotFather 与群权限配置
+
+### BotFather 设置
+
+| 设置 | 在 @BotFather 中 | 用途 |
+| :--- | :--- | :--- |
+| 关闭群隐私模式 | `/setprivacy` → Disable | 收到群里的普通消息；复读、翻译、AI 记忆与插话、群问答都依赖它。改完要把机器人移出群再拉回才生效；机器人是群管理员时本来就能收到全部消息 |
+| 开启 Inline Mode | `/setinline` | 今日运势 `@机器人 所求事项`，以及 `/gag` 目标的「发言」按钮 |
+| 内联结果反馈 100% | `/setinlinefeedback` | 运势结果确认与落盘的主路径 |
+| 允许加入群组 | `/setjoingroups` → Enable（默认开启） | 能把机器人拉进群 |
+| Bot-to-Bot Communication Mode（可选） | 机器人设置中开启 | `/translate` 或 `/copy` 的目标是另一个机器人时需要，见下方说明 |
+
+命令菜单不需要在 BotFather 里 `/setcommands`：机器人启动时按 Bot 配置语气自动注册，配置了自定义人设的群使用普通版菜单。菜单只在群聊里显示；私聊只接受超级管理员的 `/send`，因此不显示菜单。
+
+> **关于 Bot-to-Bot**：Telegram 默认不把其他机器人的消息推给本机器人；对方开启这个模式时，也只有回复本机器人或 `/命令@本机器人` 的消息能送达，所以翻译另一个机器人会时有时无。本机器人开启后，在它是管理员或已关闭隐私模式的群里会收到其他机器人的全部消息，而 AI 插话、复读、广告检测与刷屏计数不区分发送者是不是机器人：群里若有会自动接话的机器人，两边可能互相回复，开启前先确认。
+
+### 群内管理员权限
+
+把机器人设为群管理员，并按要用的功能勾选：
+
+| 管理员权限 | 用到它的功能 |
+| :--- | :--- |
+| 删除消息 | `/gag`、广告检测删除广告、删除黑名单频道身份的发言 |
+| 限制与封禁成员 | 入群验证踢人、防冲群私密模式、`/block enable|disable`、`/mute`、`/unmute`、`/batch_kick`、刷屏禁言、广告处置封禁 |
+
+入群验证还依赖管理员身份本身：Telegram 只向管理员机器人推送成员进出事件。缺权限时，机器人的提示会点名缺的是哪一项；持有 `isCanViewBotStatus` 的身份可用 `/bot_status` 查看本群已授予的权限。
+
+机器人在运行却没有回复时，按 [10 常见问题](docs/cn/10-faq.md) 逐条排查。
 
 ---
 
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="pictures/footer_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="pictures/footer_light.svg">
-  <img alt="Copy Ninjia — 不是只会复读，是把整套群聊现场偷走再演一遍。" src="pictures/footer_light.svg" width="580">
+  <source media="(prefers-color-scheme: dark)" srcset="public/footer_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="public/footer_light.svg">
+  <img alt="Copy Ninjia — 不是只会复读，是把整套群聊现场偷走再演一遍。" src="public/footer_light.svg" width="580">
 </picture>
 
 *人类没有写下任何一行代码，但也从未退场——画完图纸之后，还和 AI 一起审过每一次提交。*

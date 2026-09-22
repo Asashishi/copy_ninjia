@@ -5,7 +5,6 @@ import {
   raceAbortOrThrow,
   signalWithTimeout,
 } from "../../packages/libs/abortSignal";
-import { deferred } from "./helpers";
 
 describe("AbortSignal 组合", () => {
   test("调用方取消会立即传播到组合信号", () => {
@@ -92,7 +91,7 @@ describe("raceAbortOrThrow 独占任务等待", () => {
   });
 
   test("底层任务不监听 signal 时，上层仍在中止时结束等待", async () => {
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const underlying: Promise<string> = gate.promise.then((): string => "late result");
     const controller: AbortController = new AbortController();
     const reason: Error = new Error("caller invalidated");
@@ -117,7 +116,7 @@ describe("raceAbort 共享等待", () => {
   });
 
   test("取消只结束本次等待：共享 Promise 照常结算，其余等待者拿到真实结果", async () => {
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const shared: Promise<string> = gate.promise.then((): string => "共享结果");
     const first: AbortController = new AbortController();
     const second: AbortController = new AbortController();
@@ -167,7 +166,7 @@ describe("raceAbort 共享等待", () => {
 
   test("钩子顺序固定为 onSettle → onCancel，取消与正常结算各走一次 onSettle", async () => {
     const order: string[] = [];
-    const gate = deferred();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const controller: AbortController = new AbortController();
 
     const wait: Promise<string> = raceAbort(gate.promise.then((): string => "done"), {
@@ -183,7 +182,7 @@ describe("raceAbort 共享等待", () => {
     expect(order).toEqual(["settle", "cancel"]);
 
     gate.resolve();
-    const settled = deferred();
+    const settled: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const normal: Promise<string> = raceAbort(settled.promise.then((): string => "done"), {
       signal: new AbortController().signal,
       cancelled: "取消",

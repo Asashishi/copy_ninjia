@@ -1,4 +1,5 @@
 import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
+import { BOT_ATMOSPHERE } from "../../config/bot";
 import type { AtmosphereTexts } from "../../types/atmosphere";
 import type { InlineQueryResultArticle } from "grammy/types";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
@@ -47,9 +48,10 @@ export function buildFortuneResult({
   userLabel,
   text,
 }: BuildFortuneResultParams): InlineQueryResultArticle {
+  const comment: string = ATMOSPHERE_TEXTS[BOT_ATMOSPHERE].LUCK_TIER_COMMENTS[draw.tier.label];
   const bodyText: string = text
-    ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${draw.tier.comment}`
-    : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${draw.tier.comment}`;
+    ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${comment}`
+    : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${comment}`;
   const signed: SignedLuckResult = signLuckResultText(bodyText, luckCacheKey(userId, text));
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
@@ -85,7 +87,9 @@ export function buildProbabilityResult(
   });
 }
 
-export function buildRateLimitedResult(atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): InlineQueryResultArticle {
+export function buildRateLimitedResult(): InlineQueryResultArticle {
+  // inline 查询没有目标群上下文，使用本进程生效的 Bot 配置。
+  const atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS[BOT_ATMOSPHERE];
   const windowSeconds: number = RATE_LIMIT_WINDOW_MS / 1000;
   return InlineQueryResultBuilder.article("luck-rate-limited", atmosphere.NOTICE_TEXTS.inlineRateLimitTitle, {
     description: atmosphere.NOTICE_TEXTS.inlineRateLimitDescription(windowSeconds, RATE_LIMIT_MAX_CALLS_PER_WINDOW),

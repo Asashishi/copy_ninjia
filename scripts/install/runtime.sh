@@ -82,11 +82,25 @@ fi
 step "5/8 准备配置目录"
 # --------------------------------------------------------------------------
 
+# 旧文件在模板补缺之前拒绝，迁移必须由部署方显式执行。
+bun -e '
+  import { assertCurrentBotConfigDirectory } from "./scripts/install/runtime";
+  await assertCurrentBotConfigDirectory("config");
+' || die "先执行 migrate:bot-config 冷迁移；二进制包用 BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateBotConfig.js --help 查看用法。"
+
 mkdir -p config
 for example_file in config_example/*.json; do
   config_name="$(basename -- "$example_file")"
   if [ "$config_name" = "agent.json" ]; then
     # agent 示例含故意不可用的占位凭据；只有完成问卷后才生成部署文件。
+    continue
+  fi
+  if [ "$config_name" = "g-auth.json" ]; then
+    # 翻译凭据示例只示意结构，占位私钥必然被严格解析拒绝；真实密钥由部署方带外放入。
+    continue
+  fi
+  if [ "$config_name" = "cron.json" ]; then
+    # 定时任务示例只示意用法：会话 id 与地址都是假的，本地来源也不存在；缺省即没有定时任务。
     continue
   fi
   if [ -e "config/${config_name}" ]; then

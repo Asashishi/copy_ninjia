@@ -24,7 +24,7 @@ export function runProtectedIdentityMutation<T>(
  *
  * 与全局 protected-identity 队列职责不同：后者只守白名单/黑名单互斥的短临界
  * 区；本队列允许同一身份的落盘与 Telegram 副作用跨 await，以保证后到的
- * `/unblock` 一定排在较早广告封禁之后完成，同时不阻塞无关身份。
+ * `/block disable` 一定排在较早广告封禁之后完成，同时不阻塞无关身份。
  */
 export function runBlocklistIdentityMutation<T>(
   identityId: number,

@@ -21,11 +21,11 @@
 
 ## 新增一个斜杠命令
 
-1. **handler**：在 `packages/commands/` 导出带显式返回类型的 `handleXxxCommand`。按权限键授权使用 `hasCommandPermission(ctx, key)`；仅超级管理员本人可执行的操作使用 `isSuperAdminActor`；私聊命令参考 `send.ts`。固定提示和格式化函数放在 `packages/consts/atmosphere/{teasing,plain}/` 的对应领域文件，两版使用同一类型。主线程通过 `chatAtmosphere(chatId)` 读取当前群文案；动态昵称、提示词和问题作为参数插入，不在渲染后替换文本。 同次渲染用局部 `AtmosphereTexts` 传给称呼、正文和按钮函数；跨配置变更、后续交互或后台执行时重新读取。已有 `chatState` 的消息热路径直接依据其 `aiPersona` 选表，不增加缓存查询。
+1. **handler**：在 `packages/commands/` 导出带显式返回类型的 `handleXxxCommand`。按权限键授权并回拒绝回执使用 `rejectUnlessPermitted(ctx, key, rejection)`，仅超级管理员本人可执行的操作使用 `rejectUnlessSuperAdmin(ctx, rejection)`（均在 `commands/commandActor.ts`，放行时返回已解析的发起身份）；私聊命令参考 `send.ts`。固定提示和格式化函数放在 `packages/consts/atmosphere/{teasing,plain}/` 的对应领域文件，两版使用同一类型。主线程通过 `chatAtmosphere(chatId)` 读取当前群文案；动态昵称、提示词和问题作为参数插入，不在渲染后替换文本。 同次渲染用局部 `AtmosphereTexts` 传给称呼、正文和按钮函数；跨配置变更、后续交互或后台执行时重新读取。已有 `chatState` 的消息热路径直接依据其 `aiPersona` 选表，不增加缓存查询。
 2. **导出**：加入 `packages/commands/index.ts`。
 3. **注册**：在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 的 `commands` 子链上加 `commands.command("xxx", ...)`。**不要直接挂到 `bot` 上**——命令一律收在那条 `bot.on(":entities:bot_command")` 子链后面（理由见 [02 架构总览](02-architecture.md#一条消息的旅程) 的「命令注册」），`test/app/registerHandlers.test.ts` 会拒绝任何直接挂在 `bot` 上的命令。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
 4. **私聊网关**：新命令若要在私聊中使用，还必须同步调整 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 并补网关测试；当前私聊中的斜杠命令只显式放行 `/send`，仅注册 handler 不会到达命令处理器。纯群聊命令无需改这里。
-5. **菜单**：在 `packages/consts/atmosphere/{teasing,plain}/commands.ts` 的两份 `BOT_COMMANDS` 同时添加同名命令；隐藏命令 `/send` 不加入。`packages/app/commandMenu.ts` 注册全局默认版和按群覆盖的普通版。
+5. **菜单**：在 `packages/consts/atmosphere/{teasing,plain}/commands.ts` 的两份 `BOT_COMMANDS` 同时添加同名命令；隐藏命令 `/send` 不加入。`packages/app/commandMenu.ts` 按 Bot 配置语气注册所有群聊菜单，并为自定义人设群注册普通版覆盖。
 6. **参数常量**：冷却、阈值等进 `packages/consts/commands.ts` 或对应领域 consts，带中文 JSDoc。
 7. **测试**：`test/commands/xxx.test.ts`，至少覆盖权限拒绝、参数解析与主路径。
 8. **文档**：三语 `docs/{cn,en,ja}/08-commands.md` 的命令表添加条目，并写明交互和权限边界。
@@ -34,7 +34,7 @@
 
 `/咬`、`/贴贴` 这类中文动作命令（动作词收 1~2 个中文字）走另一条路，现成范例见 [`cjkAction.ts`](../../packages/commands/cjkAction.ts)：
 
-- **改用 `bot.hears` 匹配**：Telegram 只为 ASCII 命令生成 `bot_command` 实体，`bot.command` 永远匹配不到。必须用 `bot.hears(正则, ...)` 按消息原文匹配，并注册在消息兜底处理器 `bot.on(["message", "channel_post"], ...)` 之前，否则会被当作普通消息进入 AI/复读流水线。
+- **改用 `bot.hears` 匹配**：Telegram 只为 ASCII 命令生成 `bot_command` 实体，`bot.command` 永远匹配不到。必须用 `hears(正则, ...)` 按消息原文匹配，注册在 `app/registerHandlers.ts` 里「原文首字符是 `/`」外闸后面的 `cjkActions` 子 Composer 上（正则须以 `^\/` 开头，外闸才是它的严格超集），该外闸排在消息兜底之前，否则会被当作普通消息进入 AI/复读流水线。
 - **目标解析走另一条入口**：这类 handler 拿到的是普通 `Context` 而非 `CommandContext`，改为直接给 [`targetResolution.ts`](../../packages/commands/targetResolution.ts) 的 `resolveCommandTarget` 传 `ResolveCommandTargetParams`。不认领的形态（`/咬@OtherBot`、只有 caption 的消息、消息形态异常）必须 `next()` 放行，不能静默吞掉更新。
 - **只认 `message.text`**：`bot.hears` 对 text 和 caption 都会匹配，但认领一条带图消息意味着它不再流进 `handleIncomingMessageMiddleware`，那张图就不会进 AI 滚动记忆与视觉流水线。
 - **自己补上流水线的前置动作**：注册点在自动流水线**之前**，拿不到它那道自发消息门禁与 `cacheSender`。handler 必须自己调 `isBotOwnMessage` 跳过机器人自己的消息（否则频道回弹会形成自问自答的刷屏循环），并自己把发起人写进 username 缓存。
@@ -49,13 +49,13 @@
 
 ## 换成别的语言：不做 i18n，请自行 fork
 
-面向用户的固定提示均为简体中文，`packages/consts/atmosphere/` 提供默认雌小鬼版与普通版。群内配置自定义人设时选择普通版；这两版不按客户端语言切换。
+面向用户的固定提示均为简体中文，`packages/consts/atmosphere/` 提供雌小鬼版与普通版。`config/bot.json` 的 `atmosphere` 选择 Bot 默认通知语气；群自定义 AI 人设优先选择普通版。通知语气不改写 AI 人设，也不随客户端语言切换。
 
 - 文案表保存固定字符串和格式化函数，Telegram `entities` 的 UTF-16 偏移由最终渲染文本计算。昵称、问题、提示词和模型输出不参与语气替换。
 - `/咬` 等动作命令使用 1~2 个中文字；其命令解析与显示文案分别维护。
 - 群自定义 AI 人设优先，未设置时使用 `prompt/persona.md`。
 
-其他语言需自行 fork 并同步调整文案、交互和提示词。按 TypeScript AST 统计，`packages/` 中含中文字符串或模板字面量的源码行有 1355 行，分布在 81 个文件，不含注释；另有 `prompt/persona.md` 和部署配置。修改后运行 `bun run check`。
+其他语言需自行 fork，并同步整理 `packages/consts/atmosphere/`、其余中文文案、交互、`prompt/persona.md` 与部署配置。修改后运行 `bun run check`。
 
 ## 调整行为参数
 
@@ -101,7 +101,7 @@
 4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
 5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、服务端联网检索，以及贴纸/反应/生成图片/生成歌曲各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
 6. **提示词**：如需使用规则，在 `packages/consts/aiChat/prompts/` 补充；涉及转录格式的必须复用 `transcript.ts` 共享模板，两侧不得各自手写。
-7. **测试 + 文档**：`test/aiChat/ai/`（或对应功能/Worker 路径）补测试；根 README「工具」行按需更新。
+7. **测试 + 文档**：`test/aiChat/ai/`（或对应功能/Worker 路径）补测试；三语 README 能力表按需更新。
 
 ## 新增一个通用 JSON API 调用
 
@@ -112,13 +112,15 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`telegram.json` 在联网前严格加载；`stickers.json`、`reactions.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。永久白名单、黑名单、临时广告免检累计与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、对应的 `packages/database/codec/`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
+- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`bot.json` 在联网前严格加载；`stickers.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json` 运行中修改即热重载，拒绝口径见 [04 运行时权威约束](04-invariants.md)；其余部署输入修改后须重启。
+- AI `add_reaction` 工具可用的 emoji 固定在 [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts) 的 `AI_REACTION_EMOJIS`，元素类型限定为 Telegram 标准反应，改动随代码发布。永久白名单、黑名单、临时广告免检累计与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、对应的 `packages/database/codec/`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
 
 ## 新增部署 JSON 配置
 
 1. 在 `packages/config/<domain>.ts` 声明并严格解析（必填/可选、格式校验、未知键拒绝都在这里，解析失败拒绝启动）。
 2. 在 `config_example/<domain>.json` 增加不含真实凭据的结构示例，并同步 [`config_example/README/zh.md`](../../config_example/README/zh.md) 的字段说明。
-3. 根 README「配置」节与相关环境搭建入口同步。
+3. 需要运行中生效时，把文件加入 [`packages/config/reload.ts`](../../packages/config/reload.ts) 的读取与判定，并经现有 Worker 协议把新快照投给持有副本的线程；Worker 侧同步失效从旧快照派生的缓存。
+4. 三语 README 快速开始、环境搭建与 `config_example/README/` 的配置说明同步。
 
 ## 新增运行时缓存
 
@@ -147,14 +149,14 @@
 1. `packages/database/schema/<domain>.ts` 声明表并注册进 `schema/storage.ts`；`data` 列沿用 `jsonbText` + `jsonDataCheck`，与其余业务表同一口径。
 2. 写 `schema/migrations/000N_<name>.sql`，并把条目补进 `migrations/meta/_journal.json`。
 3. **hash 要实测，不能算**：建一个临时库跑一次 migration，从 `__drizzle_migrations` 读回 `created_at` 与 `hash`，再写进 `packages/consts/identityStorage.ts`。同时把 `IDENTITY_DATABASE_SCHEMA_VERSION` 加一。
-4. 写冷迁移脚本，并**替换** `scripts/conventions/coldMigrations.ts` 里那条唯一的边——约定按迁移计数、与 Release 数量无关：只允许存在「上一次迁移产出的格式 → 本次迁移产出的格式」一条，旧脚本连同它的测试一起删掉。
+4. 编写冷迁移脚本，在 `scripts/migrations/active.ts` 中替换同一份数据的上一条迁移边，并删除被替换的旧脚本与测试。未知谱系拒绝；落后于直接输入格式的部署须先分阶段升级。
 5. 迁移**前**的校验必须用那一版的历史形态。若本次改动了某张表的字段闭集（例如给白名单加一个权限键），迁移前不能用生产解码器：它已经按新版要求那个字段存在，拿它去校验待迁库会让每个部署在迁移开始前就被判成损坏，报错还指向部署方从没写过的字段。历史键集合写死在迁移脚本里，不从当前常量推导——推导会在下次加键时悄悄改写这条历史边的判定。
-6. 不随版本变的部分（如 `meta`）仍用生产解析器：`--check` 必须拦下 `--apply` 会拒绝的一切，否则坏行要等库已经被改过之后才暴露。
+6. 不随版本变的部分（如 `meta`）复用生产解析器；完整校验源备份后再生成独立产物，产物通过当前格式校验和源哈希复核后才写 `ready.json`。
 7. 落盘沿用既有 write-through：主线程发布内存最终值 → 投给 Disk I/O Worker → 显式事务 → 精确 revision ACK → Worker 重建后从内存重放。
 
-当前仓库只保留最近发布版到当前版的迁移入口；实现新边时必须同时替换上一条入口、测试与约定登记。
+当前有效冷迁移在 `scripts/migrations/active.ts` 登记：SQLite 权限、图库命名、Bot 配置与图片来源三条边分别覆盖各自的数据范围。约束按迁移计数，与 Release 数量无关；同一份数据再次迁移时，只保留上一迁移产出格式到当前格式的直接边，并同步替换旧入口、测试与登记。`scripts/conventions/coldMigrations.ts` 校验登记与 package scripts 一致。
 
-「只留一条边」约束的是 `scripts/` 下面向已部署数据的冷迁移脚本、它的测试与 `coldMigrations.ts` 登记，不适用于 `schema/migrations/` 的 SQL 文件与 `meta/_journal.json`。后者必须从 `0000` 起完整保留：`createStorageDatabase` 建新库时由 Drizzle migrator 逐条重放，启动时 `packages/database/interact/inspection.ts` 的 `assertStorageDatabaseMigrationLineage` 也要求 `__drizzle_migrations` 带着完整谱系。
+「只留一条边」约束的是 `scripts/` 下面向已部署数据的冷迁移脚本、它的测试与 `migrations/active.ts` 登记，不适用于 `schema/migrations/` 的 SQL 文件与 `meta/_journal.json`。后者必须从 `0000` 起完整保留：`createStorageDatabase` 建新库时由 Drizzle migrator 逐条重放，启动时 `packages/database/interact/inspection.ts` 的 `assertStorageDatabaseMigrationLineage` 也要求 `__drizzle_migrations` 带着完整谱系。
 
 ## 改动 Worker 间协议
 

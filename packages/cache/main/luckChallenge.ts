@@ -24,7 +24,11 @@ export const dailyLuckCacheSaturated: { current: boolean } = { current: false };
  * 真的选中发出，见 commands/luckChallenge/cache.ts 的 getOrDrawLuck 与
  * receipt.ts 的 confirmLuckDraw 的注释——不算"今天测过"，
  * 用户光是打字预览（哪怕只是 @ 机器人几句、根本没打算测运势）不会留下
- * 任何痕迹。key 是 cacheKey（同 dailyLuckCache）。 */
+ * 任何痕迹。key 是 cacheKey（同 dailyLuckCache）。
+ * 清理：confirmLuckDraw 认领后移入 dailyLuckCache 并删除本项，跨日随整份缓存
+ * 一起清空。容量：与 dailyLuckCache 同界（DAILY_LUCK_CACHE_MAX），撑满时同样
+ * 拒收新 key——key 里带的是用户随手输入的问题原文哈希，没有自然上界。
+ * 进程重启不恢复：未确认的预览本来就不算「今天测过」。 */
 export const pendingLuckDraws: Map<string, LuckDraw> = new Map();
 
 /** 当前东京日期的持久化密钥；启动恢复后才允许生成预览。 */
@@ -43,6 +47,8 @@ export const luckRuntimeState: {
 
 /** 内联查询的全局滑动窗口频率限制：最近 RATE_LIMIT_WINDOW_MS（90 秒）内各次请求的时刻戳。
  *  只在仍有配额时记账，长度恒不超过 RATE_LIMIT_MAX_CALLS_PER_WINDOW（300），
- *  环形缓冲按这个数定容，见 libs/slidingWindowRateLimit.ts。 */
+ *  环形缓冲按这个数定容，见 libs/slidingWindowRateLimit.ts。
+ *  清理：每次记账前由 TimestampDeque.trim 丢掉窗口外的队首与时钟回拨后落在未来
+ *  的队尾；没有整体清空路径，进程重启归零。 */
 export const recentCallTimestamps: TimestampDeque =
   new TimestampDeque(RATE_LIMIT_MAX_CALLS_PER_WINDOW);

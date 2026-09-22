@@ -18,20 +18,17 @@ describe("TimestampDeque", () => {
     queue.push(5);
 
     expect(queue.peek()).toBe(2);
-    expect(queue.peekLast()).toBe(5);
     expect(contents(queue)).toEqual([2, 3, 4, 5]);
   });
 
-  test("pop 从尾部移除，clear 后可复用已扩容的队列", () => {
+  test("clear 后可复用已扩容的队列", () => {
     const queue = new TimestampDeque(8, 2);
     for (const value of [1, 2, 3, 4]) queue.push(value);
-    expect(queue.pop()).toBe(4);
-    expect(queue.peekLast()).toBe(3);
 
     queue.clear();
     expect(queue.size).toBe(0);
     expect(queue.peek()).toBeUndefined();
-    expect(queue.pop()).toBeUndefined();
+    expect(queue.shift()).toBeUndefined();
     queue.push(9);
     expect(contents(queue)).toEqual([9]);
   });

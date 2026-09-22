@@ -71,12 +71,22 @@ export class ApplicationLifecycle {
    */
   private finalOffsetGateSucceeded: boolean = true;
 
-  private stopAfterSignal(): void {
+  /**
+   * 三条停机入口（信号、Disk I/O fatal、业务 Worker fatal）共用的停止动作：
+   * 置位 stopRequested、静默维护任务，再请求 runner 停止取 update。runner 停止
+   * 失败只记一行日志，不上抛——此刻已经在停机路上，抛出去只会顶掉真正的停机原因。
+   * @param stopErrorMessage runner 停止失败时的日志前缀，按入口区分。
+   */
+  private stopForShutdown(stopErrorMessage: string): void {
     this.stopRequested = true;
     this.quiesceMaintenance();
     this.runner?.stop().catch((error: unknown): void => {
-      this.dependencies.logger.error("Error stopping runner:", error);
+      this.dependencies.logger.error(stopErrorMessage, error);
     });
+  }
+
+  private stopAfterSignal(): void {
+    this.stopForShutdown("Error stopping runner:");
   }
 
   private stopOnSignal(signal: ShutdownSignal): void {
@@ -102,11 +112,7 @@ export class ApplicationLifecycle {
   private readonly handleDiskIOFatal = (error: Error): void => {
     this.dependencies.logger.error("Persistence became unavailable at runtime; stopping for a supervised restart:", error);
     process.exitCode = 1;
-    this.stopRequested = true;
-    this.quiesceMaintenance();
-    this.runner?.stop().catch((stopError: unknown): void => {
-      this.dependencies.logger.error("Error stopping runner after persistence failure:", stopError);
-    });
+    this.stopForShutdown("Error stopping runner after persistence failure:");
   };
 
   private readonly handleBusinessWorkerFatal = (error: Error): void => {
@@ -115,11 +121,7 @@ export class ApplicationLifecycle {
       error
     );
     process.exitCode = 1;
-    this.stopRequested = true;
-    this.quiesceMaintenance();
-    this.runner?.stop().catch((stopError: unknown): void => {
-      this.dependencies.logger.error("Error stopping runner after business Worker failure:", stopError);
-    });
+    this.stopForShutdown("Error stopping runner after business Worker failure:");
   };
 
   /** 初始化各组件并开始长轮询；重复调用会被拒绝。 */
@@ -135,6 +137,7 @@ export class ApplicationLifecycle {
     this.dependencies.initTranslate();
     this.dependencies.initGagRuntime();
     this.dependencies.initWedRuntime();
+    this.dependencies.initDeferredCommandRuntime();
     this.flags.translateInitialized = true;
 
     // 配置文件和持久化状态都是不可信部署输入。已有部署输入不受功能开关影响，
@@ -142,19 +145,15 @@ export class ApplicationLifecycle {
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
     await this.dependencies.validateExistingDeploymentInputs();
+    // 按已校验的 state 准备专用图库，并在 Worker 与外部连接之前核对权限、文件名和条目类型。
+    await this.dependencies.prepareRandomImageDirectory();
     // global state 主副本与部署输入都通过严格校验后，才创建本地 Disk I/O Worker。
-    // SQLite 群状态只负责恢复运行时开关，不再沿用 state.json 时代的功能前提或
-    // 数据正确性启动总闸；功能命令和消息入口各自在 readiness 边界拒绝不可用配置。
+    // SQLite 群状态只负责恢复运行时开关，不充当功能前提或数据正确性的启动总闸；
+    // 功能命令和消息入口各自在 readiness 边界拒绝不可用配置。
     this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
     this.flags.diskIOInitialized = true;
 
     const loaded: LoadedData = await this.dependencies.loadPersistedData();
-    if (
-      loaded.blocklistEntryCount === undefined ||
-      loaded.permissionEntryCount === undefined
-    ) {
-      throw new Error("Identity database recovery did not return both policy table counts.");
-    }
     this.dependencies.hydrateChatStateCache(loaded.chatStates);
     this.dependencies.hydrateChatQaCache(loaded.chatQa);
     this.dependencies.hydrateWedMembers(loaded.wedMembers);
@@ -166,7 +165,7 @@ export class ApplicationLifecycle {
     // 超管与黑名单必须互斥。这条断言只能排在 hydrate 之后（它会清空三份 LRU）、
     // 且必须早于 sweepManagedBlocklistChats——否则一个指向历史 /block 账号的
     // super_admin_user_id 会让本进程把新超管从所有托管群里清出去，而他连一条
-    // /unblock 都发不出来（理由见 infra/blocklist/membership.ts）。
+    // /block disable 都发不出来（理由见 infra/blocklist/membership.ts）。
     await this.dependencies.assertSuperAdminNotBlocked(
       this.dependencies.SUPER_ADMIN_USER_ID
     );
@@ -188,12 +187,16 @@ export class ApplicationLifecycle {
     this.dependencies.hydrateBlocklist(loaded.pendingBlockedRemovals);
     this.dependencies.initAntiRaid();
     this.flags.antiRaidInitialized = true;
+    // 定时任务按启动总闸接管的 cron.json 登记；先于热重载，热重载的对账才有调度器可改。
+    this.dependencies.startCronScheduler();
+    // 两条业务 Worker 都已持有初始配置快照，此后 config/ 的改动才有分发对象。
+    this.dependencies.startConfigReload();
     this.dependencies.initBlocklistSweepScheduler();
     // SQLite 黑名单身份未必已有对应 outbox；在 runner 接收新 update 前，对
     // 所有已初始化且已确证管理员的群补一轮，频道 ID 会由 Worker 走封发言权路径。
     await this.dependencies.sweepManagedBlocklistChats();
 
-    // 素材直链只能手工编辑，缺省时又整块不出现在文件里。把没设过的项按内置常量
+    // 素材直链与随机图片目录只能手工编辑，缺省时又整块不出现在文件里。把没设过的项按内置常量
     // 补进 state 并后台落盘，改图的人打开 state.json 就能看到当前生效值（见
     // infra/storage/stateStore.ts 的 seedMissingAssetState）。补写不阻塞启动。
     //
@@ -203,10 +206,10 @@ export class ApplicationLifecycle {
     //
     // 确有补写就记一行：改的是部署方的文件，logs/ 里不能只字不提（见
     // AGENTS.md 的数据归属）。
-    const seededAssetUrls: number = this.dependencies.seedMissingAssetState();
-    if (seededAssetUrls > 0) {
+    const seededAssets: number = this.dependencies.seedMissingAssetState();
+    if (seededAssets > 0) {
       this.dependencies.logger.log(
-        `Seeded ${seededAssetUrls} missing state.global.assets URL(s) with built-in defaults; ` +
+        `Seeded ${seededAssets} missing state.global.assets value(s) with built-in defaults; ` +
         "state.json and its backup are being rewritten in the background."
       );
     }
@@ -223,8 +226,8 @@ export class ApplicationLifecycle {
     );
     // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
     // init 前段，而上面的 initAvatarUpdates/
-    // initChatTitleRefresh/initTranslate/initGagRuntime/initBlocklistSweepScheduler 又把五个
-    // owner 重新置为接受工作。
+    // initChatTitleRefresh/initTranslate/initGagRuntime/initWedRuntime/initDeferredCommandRuntime/
+    // startCronScheduler/initBlocklistSweepScheduler 又把这些 owner 重新置为接受工作。
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
     // getChat 扫描加批量落盘。

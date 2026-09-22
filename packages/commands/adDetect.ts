@@ -28,7 +28,7 @@ import { runChatToggleCommand } from "./superAdminToggle";
 export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promise<void> {
   await runChatToggleCommand({
     ctx,
-    texts: chatAtmosphere(ctx.chat?.id ?? 0).AD_DETECT_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat.id).AD_DETECT_TOGGLE_TEXTS,
     permission: "isCanControllAdDetectPermission",
     persistReason: "ad_detect toggled",
     runtimeLabel: "queued ad detection",
@@ -42,7 +42,7 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
         chatId,
         messageId,
         feature: "Ad detection",
-        text: (file: string): string => chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.adConfigInvalid(file),
+        text: (file: string): string => chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.adConfigInvalid(file),
       }),
     teardown: clearAdDetection,
   });

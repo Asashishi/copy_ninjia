@@ -17,7 +17,7 @@ import { antiRaidBarrier, antiRaidRuntimeState } from "../cache/main/antiRaid/pr
 import { drainAdDisposals } from "./adDetect";
 import { registerBlocklistRemoval } from "./blocklistGuard";
 import { prepareDurableAntiRaidMessages } from "./blocklistDelivery";
-import { postAntiRaid } from "./workerBridge";
+import { postAntiRaid } from "./workerBridge/controller";
 import type { FlushResult } from "../types/lifecycle";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid/protocol";
 
@@ -77,12 +77,19 @@ export async function drainAntiRaid(
       await barrierAntiRaidMailbox(remainingMonotonicTime(deadline));
     if (initialBarrier !== "flushed") return initialBarrier;
 
+    // 预算先取一次再进两个 flush：两者都把非正预算当成致命参数错误，
+    // flushDiskIO 是 async（拒绝的 promise）而 flushStateToDisk 是同步 throw，
+    // 写在同一个数组字面量里时后者会在前者已经产生拒绝之后中断整个表达式，
+    // 那条拒绝就再也交不到 allSettled 手上（unhandledRejection -> lifecycle.ts
+    // 的强制 exit(1)）。零预算在本函数其余每一步都是 timedOut，这里同口径。
+    const persistenceBudget: number = remainingMonotonicTime(deadline);
+    if (persistenceBudget === 0) return "timedOut";
     const persistenceResults: [
       PromiseSettledResult<FlushResult>,
       PromiseSettledResult<FlushResult>
     ] = await Promise.allSettled([
-      flushDiskIO(remainingMonotonicTime(deadline)),
-      flushStateToDisk(remainingMonotonicTime(deadline)),
+      flushDiskIO(persistenceBudget),
+      flushStateToDisk(persistenceBudget),
     ]);
     if (persistenceResults.some(
       (result: PromiseSettledResult<FlushResult>): boolean =>
@@ -120,6 +127,14 @@ export async function drainAntiRaid(
   return "failed";
 }
 
+/** 本批是否含黑名单处置（removeBlockedMembers）；含时先经 durable 对账再投递。 */
+function containsBlockedRemoval(messages: readonly AntiRaidWorkerMessage[]): boolean {
+  for (const message of messages) {
+    if (message.type === "removeBlockedMembers") return true;
+  }
+  return false;
+}
+
 /**
  * update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。
  * @returns 真正投给 Worker 的消息条数。durable 对账可能把整批
@@ -129,14 +144,10 @@ export async function drainAntiRaid(
  */
 export async function postAntiRaidDurably(
   messages: readonly AntiRaidWorkerMessage[],
-  replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage> = new Map(),
-  timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS
+  replacedJoins?: ReadonlyMap<number, AntiRaidWorkerMessage>
 ): Promise<number> {
   let messagesToPost: readonly AntiRaidWorkerMessage[] = messages;
-  if (messages.some(
-    (message: AntiRaidWorkerMessage): boolean =>
-      message.type === "removeBlockedMembers"
-  )) {
+  if (containsBlockedRemoval(messages)) {
     // 黑名单处置是安全副作用：update 被确认前先把主线程镜像写入持久化 outbox。
     // mailbox barrier 只证明 Worker 收到消息，不能替代跨进程恢复能力。
     messagesToPost = await prepareDurableAntiRaidMessages(
@@ -157,7 +168,7 @@ export async function postAntiRaidDurably(
     }
   }
   const barrierResult: FlushResult =
-    await barrierAntiRaidMailbox(timeoutMs);
+    await barrierAntiRaidMailbox(ANTI_RAID_BARRIER_TIMEOUT_MS);
   if (barrierResult !== "flushed") {
     throw new Error(`Anti-Raid Worker barrier ${barrierResult}.`);
   }
@@ -170,8 +181,8 @@ export async function postAntiRaidDurably(
     PromiseSettledResult<FlushResult>,
     PromiseSettledResult<FlushResult>
   ] = await Promise.allSettled([
-    flushDiskIO(timeoutMs),
-    flushStateToDisk(timeoutMs),
+    flushDiskIO(ANTI_RAID_BARRIER_TIMEOUT_MS),
+    flushStateToDisk(ANTI_RAID_BARRIER_TIMEOUT_MS),
   ]);
   const failures: unknown[] = persistenceResults
     .filter(

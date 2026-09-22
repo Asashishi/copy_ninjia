@@ -6,22 +6,7 @@ import type {
   ChatActionSendRequest,
 } from "../../../packages/aiChat/ai/chatActionHeartbeat";
 import type { ChatActionHeartbeatEntry } from "../../../packages/types";
-
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-/** 发送走条目上的串行链（微任务级排队），断言前先把已就绪的微任务全部
- *  排干；宏任务边界保证链上无阻塞的 run 都执行完。 */
-function flush(): Promise<void> {
-  return new Promise((done) => {
-    setTimeout(done, 0);
-  });
-}
+import { settleBackgroundWork } from "../../libs/helpers";
 
 type PhaseSender = (chatId: number, signal?: AbortSignal) => Promise<boolean>;
 
@@ -64,7 +49,7 @@ describe("chatActionHeartbeat", () => {
     const deps = dependencies(sendTyping, async () => true);
     const first = startChatActionHeartbeat({ chatId: 100, messageThreadId: undefined, dependencies: deps, signal: firstController.signal });
     first.set("typing");
-    await flush();
+    await settleBackgroundWork();
 
     expect(observedSignal).toBe(firstController.signal);
     firstController.abort(new DOMException("invalidated", "AbortError"));
@@ -77,7 +62,7 @@ describe("chatActionHeartbeat", () => {
   });
 
   test("心跳从 idle 起步不发状态；切换挡位时补发对应状态，idle 后 settle 等齐在途请求", async () => {
-    const choose = deferred<boolean>();
+    const choose: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
     const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
     const sendUploadPhoto = mock(async (_chatId: number): Promise<boolean> => true);
     const sendChooseSticker = mock((_chatId: number): Promise<boolean> => choose.promise);
@@ -92,17 +77,17 @@ describe("chatActionHeartbeat", () => {
 
     heartbeat.set("typing");
     expect(heartbeat.current()).toBe("typing");
-    await flush();
+    await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("upload_photo");
     expect(heartbeat.current()).toBe("upload_photo");
-    await flush();
+    await settleBackgroundWork();
     expect(sendUploadPhoto).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("choose_sticker");
     expect(heartbeat.current()).toBe("choose_sticker");
-    await flush();
+    await settleBackgroundWork();
     expect(sendChooseSticker).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("idle");
@@ -110,7 +95,7 @@ describe("chatActionHeartbeat", () => {
     const waiting = heartbeat.settle().then(() => {
       settled = true;
     });
-    await flush();
+    await settleBackgroundWork();
     expect(settled).toBe(false);
 
     choose.resolve(true);
@@ -121,13 +106,13 @@ describe("chatActionHeartbeat", () => {
   });
 
   test("串行链在执行时重读挡位：发送在途时排队的旧挡位请求随切 idle 坍缩跳过", async () => {
-    const typing = deferred<boolean>();
+    const typing: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
     const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
     const deps = dependencies(() => typing.promise, sendChooseSticker);
     const heartbeat = startChatActionHeartbeat({ chatId: 456, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     // typing 请求还挂在网络上时切到 choose_sticker 又立刻切回 idle：排队的
     // choose_sticker 补发执行时重读到 idle 挡，必须整个跳过，不能迟到盖回。
     heartbeat.set("choose_sticker");
@@ -145,16 +130,16 @@ describe("chatActionHeartbeat", () => {
     const heartbeat = startChatActionHeartbeat({ chatId: 789, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledTimes(1);
 
     // 切 idle 意味着消息落地清掉了聊天状态，节流记忆随之重置：下一段窗口
     // 哪怕还是 typing 挡也要立即补发。
     heartbeat.set("idle");
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledTimes(2);
     await heartbeat.stop();
   });
@@ -166,7 +151,7 @@ describe("chatActionHeartbeat", () => {
     const roundB = startChatActionHeartbeat({ chatId: 111, messageThreadId: undefined, dependencies: deps });
 
     roundA.set("choose_sticker");
-    await flush();
+    await settleBackgroundWork();
     expect(sendChooseSticker).toHaveBeenCalledTimes(1);
 
     // A 轮在选择贴纸挡结束（翻了包没发贴纸）：挡位必须随 stop 收回 idle，
@@ -201,13 +186,13 @@ describe("chatActionHeartbeat", () => {
   });
 
   test("发送挂起期间的连续 tick 合并为一发，恢复后不背靠背连发同一状态", async () => {
-    const typing = deferred<boolean>();
+    const typing: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
     const sendTyping = mock((_chatId: number): Promise<boolean> => typing.promise);
     const deps = dependencies(sendTyping, async () => true);
     const heartbeat = startChatActionHeartbeat({ chatId: 654, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledTimes(1);
 
     // 第一发挂在网络上时连续来三个 tick（生产里由 setInterval 驱动，这里
@@ -225,13 +210,13 @@ describe("chatActionHeartbeat", () => {
   });
 
   test("排队的切挡补发混入 tick 后降级为必发，强制刷新不被节流吞掉", async () => {
-    const typing = deferred<boolean>();
+    const typing: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
     const sendTyping = mock((_chatId: number): Promise<boolean> => typing.promise);
     const deps = dependencies(sendTyping, async () => true);
     const heartbeat = startChatActionHeartbeat({ chatId: 987, messageThreadId: undefined, dependencies: deps });
 
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     // 可节流的切挡补发先排队，随后一个 tick 合并进来：第一发落定时刚记过
     // 节流账，排队那发若仍按可节流执行会被跳过，tick 的刷新语义要求必发。
     heartbeat.set("typing");
@@ -249,16 +234,16 @@ describe("chatActionHeartbeat", () => {
   });
 
   test("条目因失败被移除后，串行链上排队的请求坍缩跳过，settle 不再悬挂", async () => {
-    const typing = deferred<boolean>();
+    const typing: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
     const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
     const deps = dependencies(() => typing.promise, sendChooseSticker, 1);
     const heartbeat = startChatActionHeartbeat({ chatId: 456, messageThreadId: undefined, dependencies: deps });
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     heartbeat.set("choose_sticker");
 
     typing.resolve(false);
-    await flush();
+    await settleBackgroundWork();
     expect(deps.entries.has(456)).toBe(false);
 
     // 排队的 choose_sticker 补发执行时发现条目已被移除，直接跳过；settle
@@ -270,18 +255,18 @@ describe("chatActionHeartbeat", () => {
   });
 
   test("异常中断时 stop 先移除心跳，再等待已经发出的状态请求落定", async () => {
-    const typing = deferred<boolean>();
+    const typing: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
     const deps = dependencies(() => typing.promise, async () => true);
     const heartbeat = startChatActionHeartbeat({ chatId: 789, messageThreadId: undefined, dependencies: deps });
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
 
     let stopped: boolean = false;
     const stopping = heartbeat.stop().then(() => {
       stopped = true;
     });
     expect(deps.entries.has(789)).toBe(false);
-    await flush();
+    await settleBackgroundWork();
     expect(stopped).toBe(false);
 
     typing.resolve(true);
@@ -297,13 +282,13 @@ describe("chatActionHeartbeat", () => {
     // 节流记忆只记真正送达的状态：前一发失败后，同挡位补发不会被「刚发过」
     // 误拦，三连败照常累计到阈值。
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     expect(deps.entries.has(321)).toBe(true);
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     expect(deps.entries.has(321)).toBe(true);
     heartbeat.set("typing");
-    await flush();
+    await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledTimes(3);
     expect(deps.entries.has(321)).toBe(false);
     expect(heartbeat.current()).toBe("idle");

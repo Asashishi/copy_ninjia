@@ -30,11 +30,14 @@ export const TRANSLATE_LIST_JSON_LANGUAGE: string = "json";
 /** Google Translation 支持地区变体的内置模型，供美式英语方向使用。 */
 export const TRANSLATE_REGIONAL_MODEL: string = "general/translation-llm";
 
-/** /translate 的参数结构；方向后只留目标参数给共享身份解析器校验。 */
-export const TRANSLATE_ARGUMENT_PATTERN: RegExp = /^(ja|cn|en|uk|ru)(?:\s+([\s\S]+))?$/u;
+/**
+ * /translate 的参数结构；方向后只留目标参数给共享身份解析器校验。
+ * 方向词不区分大小写；捕获组保留原样大小写，调用方取值时自己 `toLowerCase()`。
+ */
+export const TRANSLATE_ARGUMENT_PATTERN: RegExp = /^(ja|cn|en|uk|ru)(?:\s+([\s\S]+))?$/iu;
 
-/** /translate stop 的参数结构；可选用户名或 ID 交给共享目标解析器。 */
-export const TRANSLATE_STOP_ARGUMENT_PATTERN: RegExp = /^stop(?:\s+([\s\S]+))?$/u;
+/** /translate stop 的参数结构；stop 不区分大小写，可选用户名或 ID 交给共享目标解析器。 */
+export const TRANSLATE_STOP_ARGUMENT_PATTERN: RegExp = /^stop(?:\s+([\s\S]+))?$/iu;
 
 /** 日语同语种判定需要假名证据；纯汉字不据此判为日语。 */
 export const TRANSLATE_JAPANESE_EVIDENCE: RegExp = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;

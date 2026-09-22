@@ -10,6 +10,7 @@ import type {
   WorkerDuplexResponse,
 } from "../types/workerDuplex";
 import type { WorkerDuplexWaiter } from "../cache/perThread/workerDuplex";
+import { toErrorOr } from "./errorMessage";
 
 /** 主线程能力请求失败后在 Worker 侧重建的安全错误。 */
 class WorkerDuplexRemoteError extends Error {
@@ -113,7 +114,7 @@ export function requestMainThread<TRequest, TResult>(
       if (abortListener !== undefined) {
         requestSignal!.removeEventListener("abort", abortListener);
       }
-      reject(error instanceof Error ? error : new Error("Worker duplex post failed."));
+      reject(toErrorOr(error, "Worker duplex post failed."));
     }
   });
 }

@@ -1,7 +1,7 @@
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import { createFlushBarrier } from "../../libs/flushBarrier";
 import type { AiMemoryUsage } from "../../types/aiChat/memory";
-import type { AiInitMessage } from "../../types/aiChat/protocol";
+import type { AiBotInfo, AiInitMessage } from "../../types/aiChat/protocol";
 import type {
   AiChatInvalidateWaiter,
   AiMemoryDeleteWaiter,
@@ -23,10 +23,28 @@ export const aiMemoryFlushBarrier: ReturnType<typeof createFlushBarrier> = creat
  *  不知道机器人自己的账号身份），见 aiChat/workerBridge.ts 的 initAiChat 与
  *  onRespawn。 */
 export const lastInitState: { current: AiInitMessage | null } = { current: null };
+/**
+ * 机器人自己的账号身份，供 AI Worker 在运行期首次启动时组装 init 消息。
+ *
+ * 填充：启动时 initAiChat 无论配置是否可用都写入一次（bot.init() 之后）。
+ * 使用：config/ 热重载让 AI 闲聊从「启动时就不可用」变为可用时，
+ * aiChat/hydration.ts 的 resumeAiChat 据此启动 Worker。清理：无，进程重启归零。
+ * 只在主线程，Worker 崩溃不影响；容量恒为一个对象。
+ */
+export const aiChatBotInfo: { current: AiBotInfo | null } = { current: null };
 
-/** 各群最新的 AI 记忆快照镜像（值是序列化 JSON 文本，与消息协议同形态，
- *  见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），见 aiChat/index.ts 模块头注
- *  「AI 记忆持久化」。 */
+/**
+ * 各群最新的 AI 记忆快照镜像（值是序列化 JSON 文本，与消息协议同形态，
+ * 见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），见 aiChat/index.ts 模块头注
+ * 「AI 记忆持久化」。
+ *
+ * 填充：Worker 的 memory 事件逐群覆盖，启动恢复时由 hydration.ts 从磁盘快照播种。
+ * 清理：aiChat/memoryMirror.ts 的 requestAiMemoryDelete 单群删除（`/clear_context`、
+ * `/ai_chat disable`、群 teardown 与 Worker 侧 LRU 淘汰都经它）；没有整表清空路径。
+ * Worker 崩溃重建：本表就是重放源，onRespawn 把它整份 hydrate 给新 isolate。
+ * 容量：与 Worker 侧滚动记忆同界，最多 AI_MEMORY_MAX_CHATS 个群
+ * （见 consts/aiChat/memory.ts）。
+ */
 export const latestAiMemories: Map<number, string> = new Map();
 /**
  * 各群 AI 上下文占用量的只读镜像，供 `/bot_status` 展示本群上下文容量。
@@ -49,7 +67,11 @@ export const latestAiMemories: Map<number, string> = new Map();
  * 容量与 latestAiMemories 同界，最多 AI_MEMORY_MAX_CHATS 个群。
  */
 export const aiMemoryUsages: Map<number, AiMemoryUsage> = new Map();
-/** latestAiMemories 中每份快照对应的运行时 revision。启动恢复快照统一从 0 开始。 */
+/**
+ * latestAiMemories 中每份快照对应的运行时 revision。启动恢复快照统一从 0 开始。
+ * 填充、清理与容量策略跟随 latestAiMemories，两张表成对增删；Worker 崩溃重建
+ * 时随同一次 hydrate 一起重放。
+ */
 export const latestAiMemoryRevisions: Map<number, number> = new Map();
 /**
  * 本进程内各 chat 已分配的最高 revision；进程重启后旧消息不存在，可安全从 0 重建。
@@ -73,26 +95,43 @@ export const aiMemoryRevisionFloor: { current: number } = { current: 0 };
  * 无条目不授权忘记 revision；进程重启不恢复此纯内存表。
  */
 export const pendingAiMemoryTeardowns: Map<number, AiMemoryTeardown> = new Map();
-/** 已投递但尚未收到 durable delete 回执的最新墓碑。 */
+/**
+ * 已投递但尚未收到 durable delete 回执的最新墓碑。
+ *
+ * 填充：requestAiMemoryDelete 投出删除时登记。清理：对应 revision 的 durable
+ * 回执到达时删除。Disk I/O Worker 重建：由 onDiskIORespawn 重放整表，回执到达
+ * 才移出。容量：同时在途的删除数，上界为受管群数（STATE_MANAGED_CHAT_LIMIT）。
+ */
 export const pendingAiMemoryDeletes: Map<number, number> = new Map();
 /**
  * purge 后首份新记忆的即时持久化状态：null 表示已把强制上报标志交给 AI
  * Worker、尚未收到快照；number 表示已投给 Disk I/O、等待该 revision
  * durable。确认前保留，供 AI/Disk I/O Worker 重建时继续强制快速路径。
+ *
+ * 填充：一次 purge 完成后登记。清理：收到该 revision 的 durable upsert 回执，
+ * 或该群再次被 purge 时整条替换。容量：同时处于「purge 后还没落下首份新记忆」
+ * 状态的群数，上界为受管群数。
  */
 export const postPurgeAiMemoryPersistRevisions: Map<number, number | null> = new Map();
-/** 只有显式禁用/teardown 会等待；LRU 删除只保留 pending tombstone。 */
+/**
+ * 只有显式禁用/teardown 会等待；LRU 删除只保留 pending tombstone。
+ * 填充：`/clear_context`、`/ai_chat disable` 与群 teardown 各挂一个 waiter。
+ * 清理：durable 回执、超时或 Worker 放弃时逐个结算并删除。容量：同时在途的
+ * 显式删除命令数，上界为受管群数 × 每群并发命令数（runner 串行，实际为群数）。
+ */
 export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Map();
 /**
  * 已请求彻底清除记忆、正在等待 Worker 确认删除的群。用于在等待期间拒绝
  * 旧 Worker 迟到的记忆快照上报："memory" 事件到达时若群在此集合中，快照
  * 直接丢弃并改发一次 delete，不当作有效数据存进 latestAiMemories。
- * invalidateAiChat(chatId, true) 在 Worker 可用时加入；Worker 确认删除完成
+ * invalidateAiChat(chatId) 在 Worker 可用时加入；Worker 确认删除完成
  * （"memoryDeleted" 事件）或该群又开始产生新记录（recordChatMessage/
  * recordChatMedia，意味着 AI 记忆已重新启用）时移出。Worker 彻底不可用时
  * （onGiveUp/terminateAiChat）整表清空：已终止的实例不可能再回传旧快照，
  * 没有可拒绝的对象；pendingAiMemoryDeletes 由 Disk I/O 的 durable 回执
  * 独立拥有，不受这里清空影响。
+ *
+ * 容量：同时处于「已请求清除、还没等到 Worker 确认」的群数，上界为受管群数。
  */
 export const purgedAiMemoryChats: Set<number> = new Set();
 /** 在途心情查询/重抽请求的等待表（requestId → waiter）：成功回执、超时或
@@ -101,12 +140,21 @@ export const purgedAiMemoryChats: Set<number> = new Set();
 export const moodRequestWaiters: Map<number, MoodRequestWaiter> = new Map();
 /** 本进程内已分配的最高心情请求 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
 export const moodRequestCounter: { current: number } = { current: 0 };
-/** requestId → invalidate waiter；回执、超时、Worker 崩溃或终止时结算。 */
+/**
+ * requestId → invalidate waiter；回执、超时、Worker 崩溃或终止时结算并删除，
+ * 四条路径都会清空条目，没有别的保留方。Worker 重建不重放：旧实例的回执不可能
+ * 再到达，重建前已按「Worker 不可用」结算。容量受同时在途的 `/ai_chat disable`、
+ * `/clear_context` 与群 teardown 数约束，上界为受管群数。
+ */
 export const aiChatInvalidateWaiters: Map<number, AiChatInvalidateWaiter> = new Map();
 /** 本进程内 invalidate 回执关联 ID。 */
 export const aiChatInvalidateRequestCounter: { current: number } = { current: 0 };
 /** Worker 是否仍可接收 invalidate 并回传 memoryDeleted；give-up 后显式关闭。 */
 export const aiChatWorkerState: { available: boolean } = { available: false };
-/** 各白名单贴纸包最新的目录快照镜像（同为序列化 JSON 文本），机制与
- *  latestAiMemories 完全一致（双向崩溃重放的唯一来源），见 aiChat/index.ts 模块头注。 */
+/**
+ * 主线程持有的贴纸目录镜像；Worker 上报与启动恢复填充。
+ * AI Worker 重建只重放当前白名单；Disk I/O 重建还重放未 durable 的旧包。
+ * 配置轮换删除已确认的旧包，待写旧包由匹配最新编号的 durable 回执删除。
+ * 容量为当前白名单及未确认快照；无条目表示没有可重放目录，不沿用旧值。
+ */
 export const latestStickerCatalogs: Map<string, string> = new Map();

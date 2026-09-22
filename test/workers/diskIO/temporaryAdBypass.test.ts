@@ -24,8 +24,7 @@ import {
   configureStoragePersistenceReply,
   flushStorageDatabase,
 } from "../../../packages/workers/diskIO/storageDatabase/flush";
-import { hydrateStorageDatabase } from
-  "../../../packages/workers/diskIO/storageDatabase/hydration";
+import { hydrateStorageDatabase } from "../../helpers/storageDatabaseHydration";
 import {
   handleTemporaryAdBypassWrite,
   maintainTemporaryAdBypassActivities,

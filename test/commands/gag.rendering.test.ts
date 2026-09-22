@@ -70,6 +70,26 @@ describe("gag 参数与文本渲染", () => {
     )).toBeFalse();
   });
 
+  test("隐藏校验链接里的三段 ID 只认规范十进制安全整数", () => {
+    for (const url of [
+      "tg://user?id=07#-1001",
+      "tg://user?id=+7#-1001",
+      "tg://user?id=7.0#-1001",
+      "tg://user?id=9007199254740992#-1001",
+      "tg://user?id=7#-01001",
+      "tg://user?id=7#-1001.0",
+      "tg://user?id=7#-9007199254740993",
+      "https://t.me/c/02233445566/1#-1001",
+      "https://t.me/c/9007199254740992/1#-1001",
+      "https://t.me/c/-2233445566/1#-1001",
+      "https://t.me/c/2233445566/2#-1001",
+    ]) {
+      expect(identity.isGagInlineMarkerUrl(url)).toBeFalse();
+    }
+    expect(identity.isGagInlineMarkerUrl("tg://user?id=9007199254740991#-9007199254740991"))
+      .toBeTrue();
+  });
+
   test("显式目标、回复目标、可选时长、默认用具和自由文本用具分别解析", () => {
     expect(rendering.parseGagCommand("@alice 5")).toEqual({
       durationMinutes: 5,

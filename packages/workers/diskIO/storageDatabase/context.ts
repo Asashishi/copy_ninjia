@@ -16,3 +16,15 @@ export function requireStorageDatabase(): StorageDatabase {
 export function storageSource(table: string, id: number | string): string {
   return storageRowSource(IDENTITY_DATABASE_PATH, table, id);
 }
+
+/**
+ * 主线程写消息携带的单调 revision 必须是正安全整数；否则以该行来源路径抛错，
+ * 由 Disk I/O Worker 的领域拒收边界接住。
+ * @param revision 消息里的 revision。
+ * @param source storageSource 生成的行来源路径。
+ */
+export function assertPositiveRevision(revision: number, source: string): void {
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    throw new Error(`${source}: revision must be a positive safe integer.`);
+  }
+}

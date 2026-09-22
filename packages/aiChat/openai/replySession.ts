@@ -40,7 +40,7 @@ import {
   responseOutputItems,
   responseOutputText,
 } from "./response";
-import { OPENAI_EMPTY_FUNCTION_CALLS as EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/openai";
+import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
 import type {
   AiReplySession,
@@ -79,8 +79,8 @@ function buildTools(request: AiReplyTurnRequest): OpenAI.Responses.Tool[] {
  * 判断本次请求能否使用 GPT-5.6 的 prompt cache breakpoint 协议。
  *
  * 只有 SDK 默认的 OpenAI 官方端点且模型属于当前已核对的 GPT-5.6 家族时启用。
- * 自定义 base_url 代表兼容协议，不能因模型名相同就假定端点接受新字段；更早的
- * OpenAI 模型同样保留原来的自动前缀缓存请求形态。
+ * 自定义 base_url 代表兼容协议，不能因模型名相同就假定端点接受 breakpoint 字段；
+ * 其余 OpenAI 模型不带 breakpoint 与 `prompt_cache_options`，只走自动前缀缓存。
  */
 function supportsPromptCacheBreakpoints(config: AgentCapabilityConfig): boolean {
   if (config.provider !== "openai" || config.baseUrl !== undefined) return false;
@@ -127,8 +127,8 @@ function toInputItems(output: readonly OpenAI.Responses.ResponseOutputItem[]): O
  * 内容排在前面才可能命中。所有模型都带按稳定前缀算出的 `prompt_cache_key`——键只
  * 影响路由，让共享同一段前缀的请求尽量落到同一台机器上。GPT-5.6 官方端点还在最后
  * 一个稳定区块后放显式 breakpoint，同时保留 implicit 模式：显式断点服务跨回复的
- * 稳定前缀，隐式断点服务同一回复内持续增长的工具往返。兼容端点与更早模型不发送
- * 这些新字段。`prompt_cache_key` 的分段哈希约定见 openai/promptCacheKey.ts。
+ * 稳定前缀，隐式断点服务同一回复内持续增长的工具往返。兼容端点与其余模型不发送
+ * 这两个字段。`prompt_cache_key` 的分段哈希约定见 openai/promptCacheKey.ts。
  */
 export function createOpenAiReplySession(
   { stableBlocks, volatileBlocks, signal }: AiReplySessionParams

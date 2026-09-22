@@ -8,7 +8,7 @@ import {
   WHITELIST_PERMISSION_KEYS,
 } from "../../packages/consts/whitelist";
 import { DAY_MS } from "../../packages/consts/diskIO/common";
-import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../../packages/config/bot";
 import type {
   DiskBusinessMessage,
   IdentityStoragePersistedReply,

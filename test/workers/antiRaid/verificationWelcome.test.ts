@@ -1,5 +1,6 @@
 /** 欢迎语经真实双工协议与主线程发送/删除边界，Telegram 出站由 SDK transformer 替换。 */
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { Mock } from "bun:test";
 import { Api } from "grammy";
 import type { Transformer } from "grammy";
@@ -36,7 +37,7 @@ api.config.use((...args: Parameters<Transformer>): Promise<any> => telegramReque
 const logError: Mock<(...args: unknown[]) => void> = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/infra/telegram/mainClient", (): object => ({ bot: { api } }));
 mock.module("../../../packages/infra/logger", (): object => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: logError },
+  logger: loggerStub({ error: logError }),
 }));
 
 const { installTelegramApi }: typeof TelegramClientModule =

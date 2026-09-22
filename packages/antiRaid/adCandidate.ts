@@ -1,4 +1,5 @@
-import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import { BOT_ATMOSPHERE } from "../config/bot";
+import { atmosphereOf } from "../libs/atmosphere";
 import type { AtmosphereTexts } from "../types/atmosphere";
 /** 广告检测主线程入口：把一条 Telegram 群消息收敛为 Worker 所需的最小候选载荷。 */
 
@@ -29,7 +30,7 @@ import type {
 import type { TelegramIdentityMetadata } from "../types/identityPolicy";
 import { formatUserLabel } from "../users/userLabel";
 import { messageOriginIdentityId } from "../users/messageOrigin";
-import { visibleSenderChat } from "../users/visibleSender";
+import { visibleSenderChat, visibleSenderId } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { canBypassAdDetection } from "./memberFacts";
@@ -67,9 +68,7 @@ function replySourceIdentityId(message: Message): number | undefined {
   const origin: MessageOrigin | undefined =
     replied?.forward_origin ?? message.external_reply?.origin;
   if (origin !== undefined) return messageOriginIdentityId(origin);
-  return replied === undefined
-    ? undefined
-    : visibleSenderChat(replied)?.id ?? replied.from?.id;
+  return replied === undefined ? undefined : visibleSenderId(replied);
 }
 
 /**
@@ -133,8 +132,8 @@ export function buildAdCandidate(
     now,
   }: AdDetectionMessageContext
 ): AdCandidateMessage | undefined {
-  const chatId: number | undefined = message.chat?.id;
-  if (chatId === undefined || message.chat.type === "private") return undefined;
+  const chatId: number = message.chat.id;
+  if (message.chat.type === "private") return undefined;
   if (!adDetectConfigReadiness().ok) return undefined;
   if (chatState.isAdDetectEnabled !== true) return undefined;
   if (message.is_automatic_forward === true || isBotOwnMessage(message)) return undefined;
@@ -195,7 +194,7 @@ export function buildAdCandidate(
   // `senderChat === undefined` 时 senderId 只能来自 `message.from.id`，上面那道
   // `senderId === undefined` 早退已经证明它在；频道那一支仍要投影，它得合成
   // `isChannel: true` 与 title。
-  const atmosphere: AtmosphereTexts = chatState.aiPersona === undefined ? ATMOSPHERE_TEXTS.teasing : ATMOSPHERE_TEXTS.plain;
+  const atmosphere: AtmosphereTexts = atmosphereOf(chatState, BOT_ATMOSPHERE);
   const label: string = senderChat === undefined
     ? formatUserLabel(message.from!, atmosphere)
     : formatUserLabel({

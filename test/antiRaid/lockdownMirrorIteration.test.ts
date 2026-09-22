@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { waitUntil } from "../helpers/waitUntil";
 import { LruCache } from "../../packages/libs/lruCache";
 import type { ChatState, LockdownRecord } from "../../packages/types/chatState";
@@ -19,7 +20,7 @@ const saveChatStateInBackground = mock((_chatId: number, _context: string): void
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: (): LruCache<number, ChatState> => chatStates,
@@ -106,6 +107,30 @@ describe("主线程紧急恢复遍历真实群状态 LRU", () => {
     }
     expect(saveChatStateInBackground).toHaveBeenCalledTimes(chatIds.length);
     expect(emergencyLockdownRecoveries.size).toBe(0);
+  });
+
+  test("恢复任务自身拒绝时仍释放 inFlight，不留下未处理的拒绝", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    restoreLockdownInvitePermission.mockImplementation(async (): Promise<void> => {
+      throw new Error("restore failed");
+    });
+    // 失败分支里记日志本身再抛，恢复任务整体拒绝。
+    loggerError.mockImplementation((...args: unknown[]): void => {
+      if (String(args[0]).startsWith("Emergency anti-raid permission restore failed")) throw new Error("logger failed");
+    });
+    try {
+      recoverAbandonedLockdowns();
+      const recoveries = chatIds.map((chatId: number) => emergencyLockdownRecoveries.get(chatId)!);
+      await waitUntil((): boolean => recoveries.every((recovery): boolean => recovery.inFlight === null));
+      await Bun.sleep(0);
+      expect(unhandled).toEqual([]);
+      expect(loggerError).toHaveBeenCalledTimes(chatIds.length + 1);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      loggerError.mockImplementation((): void => {});
+    }
   });
 
   test("恢复期间被挪到最新端的条目不会让遍历漏群，也不会无限产出", () => {

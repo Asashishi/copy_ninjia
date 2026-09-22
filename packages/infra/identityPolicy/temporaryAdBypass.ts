@@ -25,9 +25,9 @@ import type { IdentityStoragePersistedReply } from "../../types/diskIO/replies";
 import type {
   StoredTemporaryAdBypassActivity,
   RecordedTemporaryAdBypassActivity,
-  TemporaryAdBypassActivity,
   UnacknowledgedTemporaryAdBypassWrite,
 } from "../../types/temporaryAdBypass";
+import type { TemporaryAdBypassActivity } from "../../types/states/temporaryAdBypass";
 
 /** 临时广告免检 LRU 是否已有该主键的正/负结论。 */
 export function isTemporaryAdBypassActivityCached(id: number): boolean {

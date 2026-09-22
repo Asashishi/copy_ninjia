@@ -11,13 +11,30 @@ import type { BufferedMessage } from "../../../types/aiChat/memory";
  * bufferedMessageIndex.ts 维护），细节见各导出注释。
  */
 
-/** 可持久化 AI 记忆的唯一内存 owner；快照恢复/刷盘由 rollingMemory.ts 编排。 */
+/**
+ * 可持久化 AI 记忆的唯一内存 owner；快照恢复/刷盘由 rollingMemory.ts 编排。
+ *
+ * 清理：clearChatMemoryCache（群 teardown、`/clear_context`、`/ai_chat disable`）、
+ * ensureMemoryCapacity 的 LRU 淘汰、resetAiChatMemoryCache（Worker dispose/测试隔离）。
+ * 容量：至多 AI_MEMORY_MAX_CHATS 个群（见 consts/aiChat/memory.ts），满载按
+ * chatLastActivityTimes 淘汰最久未活动的那个群；每群条数由 BoundedDeque 自己封顶。
+ * Worker 崩溃重建：新 isolate 由主线程 latestAiMemories 整份 hydrate。
+ */
 export const chatBuffers: Map<number, BoundedDeque<BufferedMessage>> = new Map();
-/** 每群已完成的冷历史摘要；轮换压缩填充，快照恢复，群淘汰时删除。 */
+/**
+ * 每群已完成的冷历史摘要；轮换压缩填充，快照恢复，群淘汰时删除。
+ * 容量与清理路径同 chatBuffers，两张表随同一次群淘汰一起删除。
+ */
 export const chatSummaries: Map<number, LinkedQueue<string>> = new Map();
-/** 每群尚未合并进 summaries 的摘要文本；压缩 settle 或群淘汰时清除。 */
+/**
+ * 每群尚未合并进 summaries 的摘要文本；压缩 settle 或群淘汰时清除。
+ * 容量：每群至多一条，随 chatBuffers 同界。
+ */
 export const pendingSummaries: Map<number, string> = new Map();
-/** 需要在下一次周期上报快照的群；成功上报或群清除时删除。 */
+/**
+ * 需要在下一次周期上报快照的群；成功上报或群清除时删除。
+ * 容量：chatBuffers 的子集，同样以 AI_MEMORY_MAX_CHATS 为上界。
+ */
 export const dirtyMemoryChats: Set<number> = new Set();
 
 /** 各群最后一次记入滚动缓存的时刻，仅用于容量满时的 LRU 淘汰排序（见

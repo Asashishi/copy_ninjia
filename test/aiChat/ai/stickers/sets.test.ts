@@ -1,3 +1,4 @@
+import { adoptStickerConfig } from "../../../../packages/config/stickers";
 import { describe, expect, mock, test } from "bun:test";
 
 const { getStickerSet } = await import("../../../../packages/aiChat/ai/stickers/sets");
@@ -7,6 +8,7 @@ const { aiChatWorkerAbortController } = await import("../../../../packages/cache
 describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
   test("瞬时失败只在负缓存窗口内拦截，过期后同一进程会重新请求并恢复", async () => {
     const pack = "retryable_pack";
+    adoptStickerConfig({ packs: [pack] });
     const expected: any = { name: pack, title: "Retryable", sticker_type: "regular", stickers: [] };
     let calls = 0;
     const api = {
@@ -40,6 +42,7 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
 
   test("缓存未命中时并发调用合并成一次请求，settle 后不留在途登记", async () => {
     const pack = "coalesced_pack";
+    adoptStickerConfig({ packs: [pack] });
     const expected: any = { name: pack, title: "Coalesced", sticker_type: "regular", stickers: [] };
     let calls = 0;
     let release!: () => void;
@@ -71,6 +74,7 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
 
   test("注入的 api 同步抛出时不留下永不摘除的已 settle 在途条目", async () => {
     const pack = "sync_throw_pack";
+    adoptStickerConfig({ packs: [pack] });
     const expected: any = { name: pack, title: "Recovered", sticker_type: "regular", stickers: [] };
     let calls = 0;
     // 线程还没 installTelegramApi 时 currentTelegramApi() 就是内联抛：整段 IIFE
@@ -102,6 +106,7 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
 
   test("Worker 停机取消 Telegram 请求不写失败负缓存", async () => {
     const pack: string = "cancelled_pack";
+    adoptStickerConfig({ packs: [pack] });
     const previousWorker: AbortController = aiChatWorkerAbortController.current;
     const controller: AbortController = new AbortController();
     aiChatWorkerAbortController.current = controller;
@@ -137,6 +142,7 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
 
   test("API 忽略 Worker 停机并迟到成功时不回写正缓存", async () => {
     const pack: string = "cancelled_late_success_pack";
+    adoptStickerConfig({ packs: [pack] });
     const expected: any = {
       name: pack,
       title: "Cancelled late success",
@@ -179,6 +185,7 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
     // 取消就会连正缓存回写一起作废，signal 仍存活的其余等待者只能拿到 null，并把
     // 它当成「这个包不可用」。
     const pack: string = "shared_wait_pack";
+    adoptStickerConfig({ packs: [pack] });
     const expected: any = {
       name: pack,
       title: "Shared wait",

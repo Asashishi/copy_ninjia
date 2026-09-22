@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { VerificationSnapshot } from "../../../packages/types/antiRaid";
 
 const loggerErrorMock = mock((_message: unknown, _error?: unknown): void => {});
@@ -8,12 +9,7 @@ const getChatAdministratorsMock = mock(
 );
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error: loggerErrorMock,
-  },
+  logger: loggerStub({ error: loggerErrorMock }),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   telegramApi: {

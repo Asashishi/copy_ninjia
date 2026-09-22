@@ -4,7 +4,7 @@ import {
 } from "../../consts/temporaryAdBypass";
 import { invalidInput } from "../../libs/inputValidation";
 import { getTokyoDayIndex } from "../../libs/time";
-import type { TemporaryAdBypassActivity } from "../../types/temporaryAdBypass";
+import type { TemporaryAdBypassActivity } from "../../types/states/temporaryAdBypass";
 
 function assertTimestamp(value: number, source: string, path: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {

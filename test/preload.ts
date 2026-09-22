@@ -1,5 +1,5 @@
 import { afterAll } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync } from "node:fs";
 // 必须排在下面那条生产 import 之前：它负责在 consts/paths 求值之前注入两个
 // 根目录（见 test/preloadEnv.ts 的说明）。
 import { PREVIOUS_CONFIG_ROOT, PREVIOUS_DATA_ROOT, TEST_DATA_ROOT } from "./preloadEnv";
@@ -16,8 +16,8 @@ import {
 import { adoptAdSampleConfig, parseAdSampleConfig } from "../packages/config/adSamples";
 import { adoptMoodConfig, parseMoodConfig } from "../packages/config/mood";
 import { adoptPersona } from "../packages/config/persona";
-import { adoptReactionConfig, parseReactionConfig } from "../packages/config/reactions";
 import { adoptStickerConfig, parseStickerConfig } from "../packages/config/stickers";
+import { adoptCronConfig, parseCronConfig } from "../packages/config/cron";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
@@ -32,9 +32,9 @@ import {
   IDENTITY_DATABASE_PATH,
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  CRON_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   PERSONA_PATH,
-  REACTIONS_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../packages/consts/paths";
 import {
@@ -67,22 +67,24 @@ seedStorageDatabase(identityDatabase, {
 closeStorageDatabase(identityDatabase);
 chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
 
-// agent.json 是唯一不由运行时读盘取得的部署配置：真实进程里主线程解析一次，
-// 再经 AI Worker 的 init 与 Anti-Raid Worker 的 agentConfig 消息投递给两条业务
+// 部署配置快照只由主线程读盘：真实进程里主线程解析后，再经 AI Worker 的
+// init/configReload 与 Anti-Raid Worker 的 agentConfig 消息投递给两条业务
 // 线程（见 packages/config/agent.ts 的边界说明）。测试 isolate 收不到那两条
 // 消息，因此在这里把同一份 config_example/agent.json adopt 进本 isolate 的
 // holder，等价于「快照已经送到」。临时副本里的凭据是测试专用值；需要验证
 // 「没配」的用例自行把 holder 置空。
+// 顶层 await：Bun 1.4.2 的 preload 会等本模块的续体跑完再开始跑测试文件
+// （实测）。真正不能异步的是 preloadEnv.ts，理由见那一份的头注。
 const agentDocument = JSON.parse(
-  readFileSync(AGENT_CONFIG_PATH, "utf8")
+  await Bun.file(AGENT_CONFIG_PATH).text()
 ) as { agent: Record<string, unknown> };
 adoptAgentDeploymentConfig(parseAgentDeploymentConfig(agentDocument.agent));
 adoptAdDetectAgentConfig(parseAdDetectAgentConfig(agentDocument.agent.ad_detect));
-adoptAdSampleConfig(parseAdSampleConfig(JSON.parse(readFileSync(AD_SAMPLES_CONFIG_PATH, "utf8"))));
-adoptMoodConfig(parseMoodConfig(JSON.parse(readFileSync(MOOD_CONFIG_PATH, "utf8"))));
-adoptReactionConfig(parseReactionConfig(JSON.parse(readFileSync(REACTIONS_CONFIG_PATH, "utf8"))));
-adoptStickerConfig(parseStickerConfig(JSON.parse(readFileSync(STICKERS_CONFIG_PATH, "utf8"))));
-adoptPersona(readFileSync(PERSONA_PATH, "utf8").trim());
+adoptAdSampleConfig(parseAdSampleConfig(JSON.parse(await Bun.file(AD_SAMPLES_CONFIG_PATH).text())));
+adoptMoodConfig(parseMoodConfig(JSON.parse(await Bun.file(MOOD_CONFIG_PATH).text())));
+adoptStickerConfig(parseStickerConfig(JSON.parse(await Bun.file(STICKERS_CONFIG_PATH).text())));
+adoptPersona((await Bun.file(PERSONA_PATH).text()).trim());
+adoptCronConfig(parseCronConfig(JSON.parse(await Bun.file(CRON_CONFIG_PATH).text())));
 aiChatConfigReadinessCache.current = { ok: true };
 adDetectConfigReadinessCache.current = { ok: true };
 translateConfigReadinessCache.current = { ok: true };

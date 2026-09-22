@@ -12,6 +12,7 @@ import type {
   SupervisedWorkerHandle,
   SupervisedWorkerOptions,
 } from "./supervisedWorker";
+import { toErrorOr } from "../libs/errorMessage";
 
 function isWorkerDuplexRequest<TRequest>(
   value: unknown
@@ -97,9 +98,7 @@ export function superviseDuplexWorker<TMessage, TEvent, TRequest>(
       try {
         execution = options.handleRequest(data.request, signal);
       } catch (error: unknown) {
-        execution = Promise.reject(
-          error instanceof Error ? error : new Error("Worker capability handler threw.")
-        );
+        execution = Promise.reject(toErrorOr(error, "Worker capability handler threw."));
       }
       void execution.then(
         (value: unknown): void => {

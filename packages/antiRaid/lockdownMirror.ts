@@ -211,9 +211,11 @@ function runEmergencyLockdownRecovery(
     }
   })();
   recovery.inFlight = task;
-  void task.finally((): void => {
+  // 两路都结算：finally 派生的 Promise 会带着 task 的拒绝，无人处理就成未处理拒绝。
+  const settle = (): void => {
     if (recovery.inFlight === task) recovery.inFlight = null;
-  });
+  };
+  void task.then(settle, settle);
 }
 
 function startEmergencyLockdownRecovery(chatId: number, record: LockdownRecord): void {

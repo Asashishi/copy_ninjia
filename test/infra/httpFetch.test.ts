@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import {
   JSON_API_ALLOWED_ORIGINS,
   JSON_API_ERROR_LOG_MAX_CHARS,
@@ -9,7 +10,7 @@ import { chunkedResponse } from "../libs/helpers";
 
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const { fetchJsonWithTimeout } = await import("../../packages/infra/httpFetch");

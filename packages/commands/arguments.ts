@@ -1,4 +1,5 @@
 import { COMMAND_ARGUMENT_SEPARATOR_PATTERN } from "../consts/commands";
+import type { ToggleAction } from "../types/commands";
 
 /**
  * 命令参数的统一分词。
@@ -20,4 +21,11 @@ export function commandArgumentTokens(match: string): string[] {
     .trim()
     .split(COMMAND_ARGUMENT_SEPARATOR_PATTERN)
     .filter((token: string): boolean => token.length > 0);
+}
+
+/** 大小写不敏感地解析 enable/disable 动作，拒绝其它近似写法（`/white` 与 `/block` 共用）。 */
+export function parseToggleAction(raw: string): ToggleAction | undefined {
+  const normalized: string = raw.toLowerCase();
+  if (normalized === "enable" || normalized === "disable") return normalized;
+  return undefined;
 }

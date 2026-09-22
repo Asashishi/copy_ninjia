@@ -10,11 +10,16 @@ import type {
 
 const {
   activeVerificationSnapshots,
+  antiRaidRuntimeState,
   chatStates,
-  deferred,
   flushDiskIO,
   flushStateToDisk,
+  loggerError,
+  pendingLockdownPersistence,
+  persistedLockdownFingerprints,
+  queuedLockdownPersistence,
   record,
+  rejectedWorkerPostTypes,
   restoreLockdownInvitePermission,
   saveState,
   saveStateInBackground,
@@ -158,12 +163,141 @@ describe("Anti-Raid mirror persistence barriers", () => {
     ]);
   });
 
+  test("intent 已落盘但 Worker 拒收回执：循环外层接住投递异常并记日志，释放 pending，保留已落盘指纹", async () => {
+    rejectedWorkerPostTypes.add("lockdownPersisted");
+
+    workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2008,
+      phase: "active",
+      intentId: 94,
+      originalPermissions: { can_invite_users: true },
+      announced: true,
+      expiresAt: 900_000,
+    });
+    await waitUntil((): boolean => !pendingLockdownPersistence.has(-2008));
+
+    expect(saveState).toHaveBeenCalledTimes(1);
+    expect(loggerError.mock.calls).toEqual([[
+      "Anti-raid lockdown durability loop for chat -2008 failed:",
+      expect.objectContaining({ message: "Anti-Raid Worker is unavailable." }),
+    ]]);
+    expect(pendingLockdownPersistence.has(-2008)).toBeFalse();
+    expect(queuedLockdownPersistence.has(-2008)).toBeFalse();
+    expect(persistedLockdownFingerprints.get(-2008)).toEqual({
+      phase: "active",
+      intentId: 94,
+      announced: true,
+    });
+    expect(chatStates.get(-2008)?.lockdown?.intentId).toBe(94);
+    expect(workerPosts.some((message: AntiRaidWorkerMessage): boolean =>
+      message.type === "lockdownPersisted" && message.chatId === -2008
+    )).toBeFalse();
+  });
+
+  test("intent 落盘失败且 Worker 同时拒收作废通知：落盘失败与投递失败各记一行，恢复记录保留", async () => {
+    const diskFull: Error = new Error("disk is full");
+    saveState.mockImplementationOnce(async (): Promise<void> => {
+      throw diskFull;
+    });
+    rejectedWorkerPostTypes.add("lockdownPersistFailed");
+
+    workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2009,
+      phase: "applying",
+      intentId: 95,
+      originalPermissions: { can_invite_users: true },
+      announced: false,
+      expiresAt: 900_000,
+    });
+    await waitUntil((): boolean => !pendingLockdownPersistence.has(-2009));
+
+    expect(loggerError.mock.calls).toEqual([
+      ["Failed to persist anti-raid lockdown intent for chat -2009:", diskFull],
+      [
+        "Anti-raid lockdown durability loop for chat -2009 failed:",
+        expect.objectContaining({ message: "Anti-Raid Worker is unavailable." }),
+      ],
+    ]);
+    expect(chatStates.get(-2009)?.lockdown?.intentId).toBe(95);
+    expect(persistedLockdownFingerprints.has(-2009)).toBeFalse();
+    expect(workerPosts.some((message: AntiRaidWorkerMessage): boolean =>
+      "chatId" in message && message.chatId === -2009
+    )).toBeFalse();
+  });
+
+  test("落盘途中排队的续跑在 Anti-Raid 终止后不再发起", async () => {
+    const release: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    saveState.mockImplementationOnce((): Promise<void> => release.promise);
+    const publish = (expiresAt: number): void => workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2010,
+      phase: "active",
+      intentId: 96,
+      originalPermissions: { can_invite_users: true },
+      announced: true,
+      expiresAt,
+    });
+
+    publish(900_000);
+    publish(900_500);
+    expect(queuedLockdownPersistence.has(-2010)).toBeTrue();
+    await antiRaid.terminateAntiRaid();
+    expect(antiRaidRuntimeState.initialized).toBeFalse();
+
+    release.resolve();
+    await waitUntil((): boolean => !pendingLockdownPersistence.has(-2010));
+    await Bun.sleep(0);
+
+    expect(saveState).toHaveBeenCalledTimes(1);
+    expect(pendingLockdownPersistence.has(-2010)).toBeFalse();
+    expect(queuedLockdownPersistence.has(-2010)).toBeFalse();
+  });
+
+  test("解锁发生在 intent 落盘途中：不回执 lockdownPersisted，也不登记已落盘指纹", async () => {
+    const release: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    saveState.mockImplementationOnce((): Promise<void> => release.promise);
+
+    workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2011,
+      phase: "active",
+      intentId: 97,
+      originalPermissions: { can_invite_users: true },
+      announced: true,
+      expiresAt: 900_000,
+    });
+    workerHooks.supervisorOptions!.onEvent({ type: "unlock", chatId: -2011 });
+    expect(saveStateInBackground).toHaveBeenCalledWith("anti-raid unlock");
+
+    release.resolve();
+    await waitUntil((): boolean => !pendingLockdownPersistence.has(-2011));
+
+    expect(saveState).toHaveBeenCalledTimes(1);
+    expect(chatStates.get(-2011)?.lockdown).toBeUndefined();
+    expect(persistedLockdownFingerprints.has(-2011)).toBeFalse();
+    expect(workerPosts.some((message: AntiRaidWorkerMessage): boolean =>
+      message.type === "lockdownPersisted" && message.chatId === -2011
+    )).toBeFalse();
+    expect(loggerError).not.toHaveBeenCalled();
+  });
+
+  test("没有 lockdown 记录时收到 unlock：不排后台保存，也不推进持久化版本", () => {
+    const version: number = antiRaidRuntimeState.persistenceVersion;
+
+    workerHooks.supervisorOptions!.onEvent({ type: "unlock", chatId: -2012 });
+
+    expect(saveStateInBackground).not.toHaveBeenCalled();
+    expect(antiRaidRuntimeState.persistenceVersion).toBe(version);
+  });
+
   test("chat_member update 必须依次跨过 Worker barrier 与两类落盘后才结算", async () => {
     workerPosts.length = 0;
     flushDiskIO.mockClear();
     flushStateToDisk.mockClear();
-    const diskGate = deferred<FlushResult>();
-    const stateGate = deferred<FlushResult>();
+    const diskGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
+    const stateGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
     flushDiskIO.mockImplementationOnce(() => diskGate.promise);
     flushStateToDisk.mockImplementationOnce(() => stateGate.promise);
     const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
@@ -516,8 +650,8 @@ describe("Anti-Raid mirror persistence barriers", () => {
     }
 
     let retryAttempts: number = 0;
-    const changedRestore = deferred<void>();
-    const stoppedRestore = deferred<void>();
+    const changedRestore: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    const stoppedRestore: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     restoreLockdownInvitePermission.mockImplementation(async (input: unknown): Promise<void> => {
       const chatId: number = (input as { chatId: number }).chatId;
       if (chatId === retryChatId && retryAttempts++ === 0) throw new Error("temporary Telegram failure");

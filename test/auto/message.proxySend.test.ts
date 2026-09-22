@@ -43,7 +43,7 @@ mock.module("../../packages/infra/selfSentTracker", () => ({
 }));
 
 const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
-const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/telegram");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/bot");
 
 function privateMessageCtx(userId: number): any {
   return {

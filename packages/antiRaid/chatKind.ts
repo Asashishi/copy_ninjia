@@ -12,7 +12,7 @@
  */
 
 import { chatIsSupergroupById } from "../cache/main/antiRaid/chatKind";
-import { postAntiRaid } from "./workerBridge";
+import { postAntiRaid } from "./workerBridge/controller";
 import type { Chat } from "grammy/types";
 
 /**

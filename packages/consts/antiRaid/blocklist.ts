@@ -72,7 +72,7 @@ export const BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE: number = 2_048;
 /**
  * 处置消息投递前，「落盘 → 再看一眼权威镜像还是不是同一批」的对账最多重来几轮。
  *
- * 正常一轮就够：重来意味着 flush 等待期间真的有 `/unblock` 或停管裁剪了这批，
+ * 正常一轮就够：重来意味着 flush 等待期间真的有 `/block disable` 或停管裁剪了这批，
  * 那是人为操作、次数有界。这道闸是兜底——每一轮都是一次整份 outbox 深拷贝 +
  * 带 fsync 的整文件重写，而本函数跑在 update 处理里面；没有上限的话，一个持续
  * 变动的镜像就能让这条 update 一直转下去，把 runner drain 拖到超时、扣住

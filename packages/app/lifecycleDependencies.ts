@@ -15,6 +15,9 @@ import {
 } from "../commands/gag/runtime";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../commands/wed/runtime";
+import { drainDeferredCommandRuntime, initDeferredCommandRuntime, quiesceDeferredCommandRuntime } from "../commands/deferredCommands";
+import { ensureRandomImageDirectory } from "../infra/randomImage";
+import { drainCronScheduler, quiesceCronScheduler, startCronScheduler } from "../cron/scheduler";
 import { hydrateWedMembers } from "../commands/wed/persistence";
 import { enableWedMemberReview } from "../commands/wed/memberReview";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../translate/client";
@@ -25,7 +28,7 @@ import {
   quiesceChatTitleRefresh,
   refreshAllChatTitles,
 } from "../infra/chatTitle";
-import { BOT_TOKEN, SUPER_ADMIN_USER_ID } from "../config/telegram";
+import { BOT_TOKEN, SUPER_ADMIN_USER_ID } from "../config/bot";
 import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO } from "../infra/diskIO";
 import { logger } from "../infra/logger";
 import { setBusinessWorkerFatalHandler } from "../infra/workerSupervisor";
@@ -36,6 +39,7 @@ import {
   flushStateToDisk,
   getChatStateCache,
   getGlobalCopyState,
+  getRandomHImageDirectory,
   hydrateChatStateCache,
   loadState,
   seedMissingAssetState,
@@ -50,7 +54,8 @@ import { sleep } from "../libs/sleep";
 import { monotonicNow } from "../libs/monotonicDeadline";
 import { updateCachedIdentity } from "../users/senderIdentity";
 import { hydrateIdentityStorageCounts } from "../infra/identityStorage";
-import { validateExistingDeploymentInputs } from "./featurePreflight";
+import { validateExistingDeploymentInputs } from "../config/readiness";
+import { quiesceConfigReload, startConfigReload } from "./configReload";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers } from "./registerHandlers";
 import { runAcknowledgedUpdateBatches } from "./updateRunner";
@@ -76,6 +81,8 @@ export const lifecycleDependencies = {
   drainAvatarUpdates,
   drainGagRuntime,
   drainWedRuntime,
+  drainDeferredCommandRuntime,
+  drainCronScheduler,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -95,6 +102,7 @@ export const lifecycleDependencies = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
+  initDeferredCommandRuntime,
   initAiChat,
   initAntiRaid,
   initBlocklistSweepScheduler,
@@ -107,6 +115,7 @@ export const lifecycleDependencies = {
   logger,
   monotonicNow,
   validateExistingDeploymentInputs,
+  prepareRandomImageDirectory: (): Promise<void> => ensureRandomImageDirectory(getRandomHImageDirectory()),
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,
@@ -119,13 +128,18 @@ export const lifecycleDependencies = {
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
   quiesceWedRuntime,
+  quiesceDeferredCommandRuntime,
+  quiesceCronScheduler,
   quiesceBlocklistSweepScheduler,
+  quiesceConfigReload,
   quiesceTranslate,
   seedSenderCache: updateCachedIdentity,
   seedTranslateTargets,
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  startConfigReload,
+  startCronScheduler,
   sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,

@@ -231,22 +231,16 @@ export function decodePendingBlockedRemovalData(
 }
 
 /** 编码前先走同一严格解码器，避免内存中的非法结构进入数据库。 */
-export function encodeWhitelistEntryData(
-  value: Readonly<WhitelistEntryData>,
-  source: string = "whitelist entry"
-): string {
+export function encodeWhitelistEntryData(value: Readonly<WhitelistEntryData>): string {
   const text: string = JSON.stringify(value);
-  decodeWhitelistEntryData(text, source);
+  decodeWhitelistEntryData(text, "whitelist entry");
   return text;
 }
 
 /** 编码前先走同一严格解码器。 */
-export function encodeBlocklistEntryData(
-  value: Readonly<BlocklistEntryData>,
-  source: string = "blocklist entry"
-): string {
+export function encodeBlocklistEntryData(value: Readonly<BlocklistEntryData>): string {
   const text: string = JSON.stringify(value);
-  decodeBlocklistEntryData(text, source);
+  decodeBlocklistEntryData(text, "blocklist entry");
   return text;
 }
 

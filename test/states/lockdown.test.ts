@@ -67,7 +67,7 @@ describe("触发与占位", () => {
     expect(effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: true },
       { kind: "beginLockdownAnnouncement", joinCount: 46 },
-      { kind: "prepareApply", joinCount: 46 },
+      { kind: "prepareApply" },
     ]);
   });
 
@@ -203,13 +203,12 @@ describe("加锁落地", () => {
       ...ANNOUNCED,
     };
     const prepared = transitionLockdown(preparing, {
-      type: "applyPrepared", originalPermissions: PERMS, joinCount: 46, intentId: 7,
+      type: "applyPrepared", originalPermissions: PERMS, intentId: 7,
     });
     expect(prepared.next).toEqual({
       kind: "applying",
       stage: "prepared",
       originalPermissions: PERMS,
-      joinCount: 46,
       intentId: 7,
       commitStarted: false,
       ...ANNOUNCED,
@@ -225,7 +224,6 @@ describe("加锁落地", () => {
       kind: "applying",
       stage: "prepared",
       originalPermissions: PERMS,
-      joinCount: 46,
       intentId: 7,
       commitStarted: true,
       ...ANNOUNCED,
@@ -236,7 +234,7 @@ describe("加锁落地", () => {
   });
 
   test("set 成功 → ACTIVE：只排恢复计时与落盘，公告在占位时就发过了", () => {
-    const applying: LockdownState = { ...PREPARED, joinCount: 46 } as LockdownState;
+    const applying: LockdownState = PREPARED;
     const { next, effects } = transitionLockdown(applying, { type: "applyResult", ok: true });
     expect(next).toEqual({
       kind: "active",

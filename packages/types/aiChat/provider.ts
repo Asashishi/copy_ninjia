@@ -92,30 +92,6 @@ export type MediaInputCapability = "vision" | "voice";
  */
 export type MediaInputSupport = "unknown" | "supported" | "unsupported" | "misconfigured";
 
-/**
- * 一种模态的完整探测状态；字段在构造时一次写全，运行期只整体替换，不增删。
- */
-export interface MediaInputModalityState {
-  readonly support: MediaInputSupport;
-  /**
-   * 连续瞬时失败次数，封顶 MEDIA_PROBE_MAX_TRANSIENT_FAILURES；成功或落定终局
-   * 结论时清零。只有 `transient` 计数——单份坏媒体不得把整条模态推进退避。
-   */
-  readonly transientFailures: number;
-  /**
-   * 下一次允许发起真实探测的绝对时刻（Date.now() 口径）；0 表示不在退避中。
-   * 墙钟回拨会让它落在过远的未来，读取侧按 MEDIA_PROBE_BACKOFF_MAX_MS 识别并
-   * 立即放行（同 auto/message/triggerPolicy.ts 的冷却口径）。
-   */
-  readonly nextProbeAt: number;
-}
-
-/** media 模型的模态支持表；两项固定初始化，避免运行期改变对象 shape。 */
-export interface MediaInputSupportState {
-  readonly vision: MediaInputModalityState;
-  readonly voice: MediaInputModalityState;
-}
-
 /** 一轮回复请求里随轮次变化的工具配置与采样语义。 */
 export interface AiReplyTurnRequest {
   /**

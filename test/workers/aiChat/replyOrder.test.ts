@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil as pollUntil } from "../../helpers/waitUntil";
 import type { AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
 import type { MediaCommentContext, ReplyPromptSections, ReplyToolset } from "../../../packages/types/aiChat/replies";
@@ -56,11 +57,12 @@ mock.module("../../../packages/workers/aiChat/replyModel", () => ({
     return model.promise;
   },
 }));
-mock.module("../../../packages/infra/logger", () => ({ logger: { error: logError, info: (): void => {}, log: (): void => {} } }));
+mock.module("../../../packages/infra/logger", () => ({ logger: loggerStub({ error: logError }) }));
 const sendNotice = mock(async (): Promise<undefined> => undefined);
 mock.module("../../../packages/infra/telegram/workerClient", () => ({ sendTemporaryMessageFromMain: sendNotice }));
 
-const { generateAndSendReply, invalidateChatReplies, quiesceAiChatReplies } = await import("../../../packages/workers/aiChat/replyPipeline");
+const { generateAndSendReply } = await import("../../../packages/workers/aiChat/replyPipeline");
+const { invalidateChatReplies, quiesceAiChatReplies } = await import("../../../packages/workers/aiChat/replyGeneration");
 const { recordChatMedia } = await import("../../../packages/workers/aiChat/mediaIngest");
 const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 const { aiChatWorkerQuiescing } = await import("../../../packages/cache/workers/aiChat/worker");
@@ -365,7 +367,7 @@ test.each([false, true])("待处理队列上限仍为 15，模型并发遵守高
   expect(activeReplyCounts.get(-1001)).toBe(maxConcurrent);
   expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
   expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(maxConcurrent + 1);
-  expect(pendingReplyTriggers.get(-1001)?.peekLast()?.replyToMessageId).toBe(maxConcurrent + REPLY_TRIGGER_QUEUE_MAX);
+  expect([...pendingReplyTriggers.get(-1001)!.values()].at(-1)?.replyToMessageId).toBe(maxConcurrent + REPLY_TRIGGER_QUEUE_MAX);
   expect(replyDeliveryWindows.get(-1001)?.size).toBe(maxConcurrent);
 });
 

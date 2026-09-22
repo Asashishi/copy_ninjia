@@ -59,10 +59,17 @@ export const storageDatabaseHandle: { current: StorageDatabase | null } = {
   current: null,
 };
 
-/** 白名单未提交最终值；容量达到 128 即触发一次显式事务。 */
+/**
+ * 白名单未提交最终值；容量达到 128 即触发一次显式事务。
+ * 提交成功后由 flush 清空，失败时保留给 30 秒 timer 重试；resetStorageDatabaseCache
+ * 也会清空。Worker 重建后为空，主线程以未 ACK revision 重放最终值。
+ */
 export const pendingWhitelistWrites: Map<number, PendingIdentityPolicyWrite> = new Map();
 
-/** 黑名单未提交最终值；容量达到 128 即触发一次显式事务。 */
+/**
+ * 黑名单未提交最终值；容量达到 128 即触发一次显式事务。
+ * 清理与重建路径同 pendingWhitelistWrites。
+ */
 export const pendingBlocklistWrites: Map<number, PendingIdentityPolicyWrite> = new Map();
 
 /**
@@ -75,10 +82,16 @@ export const pendingTemporaryAdBypassWrites: Map<
   PendingTemporaryAdBypassWrite
 > = new Map();
 
-/** 待踢成员未提交行变化；容量达到 128 即触发一次显式事务。 */
+/**
+ * 待踢成员未提交行变化；容量达到 128 即触发一次显式事务。
+ * 清理与重建路径同 pendingWhitelistWrites。
+ */
 export const pendingRemovalWrites: Map<number, PendingRemovalWrite> = new Map();
 
-/** 群状态未提交最终值；容量达到 25 时仍由显式事务整体提交。 */
+/**
+ * 群状态未提交最终值；容量达到 25 时仍由显式事务整体提交。
+ * 清理与重建路径同 pendingWhitelistWrites。
+ */
 export const pendingChatStateWrites: Map<number, PendingChatStateWrite> = new Map();
 
 /**
@@ -92,13 +105,19 @@ export const pendingChatQaWrites: Map<number, Map<string, PendingChatQaWrite>> =
 
 /**
  * Worker 当前待踢成员权威快照。启动从 SQLite 恢复，之后由主线程完整快照替换；
- * 只用于计算行级 diff，容量受 outbox 业务硬顶约束。
+ * 只用于计算行级 diff，容量受 outbox 业务硬顶
+ * （BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES）约束。
+ *
+ * 清理：每次主线程快照整体替换时按 diff 删除消失的行，
+ * resetStorageDatabaseCache 整表清空。Worker 重建：从 SQLite 重新 hydrate，
+ * 随后主线程重放最新 outbox 快照。
  */
 export const removalSnapshot: Map<number, PendingBlockedRemoval> = new Map();
 
 /**
  * 与 removalSnapshot 逐主键对齐的已编码规范文本，只用于行级变更比较。
- * hydrate、快照替换与删除路径必须让两张 Map 同增同删。
+ * hydrate、快照替换与删除路径必须让两张 Map 同增同删，容量与清理因此逐字
+ * 跟随 removalSnapshot。
  */
 export const removalSnapshotData: Map<number, string> = new Map();
 

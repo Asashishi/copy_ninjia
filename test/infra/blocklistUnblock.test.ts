@@ -241,7 +241,7 @@ describe("超管与黑名单互斥的启动断言", () => {
     blockUser(1);
     // isWhitelisted 对超管短路 true、isUserBlocked 不短路：两者同时成立时
     // sweepManagedBlocklistChats 会把这位新超管从每个托管群清出去，而他连一条
-    // /unblock 都发不出来。按 AGENTS.md「不为用户行为兜底」在启动阶段退出。
+    // /block disable 都发不出来。按 AGENTS.md「不为用户行为兜底」在启动阶段退出。
     await expect(assertSuperAdminNotBlocked(1)).rejects.toThrow(
       /blocklist_entries must not contain the configured super admin identity 1/
     );

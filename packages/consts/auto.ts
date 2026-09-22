@@ -1,3 +1,4 @@
+import type { MentionFacts } from "../types/auto";
 import type { CopyMode } from "../types/chatState";
 
 /** 消息自动流水线（packages/auto）的调参常量。 */
@@ -38,3 +39,9 @@ export const BATH_TRIGGER_REPLY_TEXT: string = "看看";
 export const FALLBACK_CHANNEL_NAME: string = "某频道";
 /** 无法解析到用户或频道身份时使用的最终兜底展示名。 */
 export const FALLBACK_SPEAKER_NAME: string = "某杂鱼";
+
+/**
+ * 消息没有 entity 表时的提及事实（auto/message/facts.ts 的 resolveMentionFacts）：
+ * 两项都为 false。全局共享一份，调用方只读字段，不得修改。
+ */
+export const NO_MENTION_FACTS: Readonly<MentionFacts> = { isMentioned: false, hasOtherMention: false };

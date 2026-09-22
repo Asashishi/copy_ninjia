@@ -17,6 +17,7 @@ import { decodeStateFile } from "../../libs/stateFileCodec";
 import type { FlushResult } from "../../types/lifecycle";
 import type { DecodedStateFile, StateFileSchema } from "../../types/chatState";
 import { logger } from "../logger";
+import { toError } from "../../libs/errorMessage";
 
 export interface StateStoreOptions {
   stateFilePath?: string;
@@ -256,7 +257,7 @@ export class StateStore {
       // 只能接收可被启动期同一严格 codec 再次加载的值。
       decodeStateFile(JSON.parse(json));
     } catch (error: unknown) {
-      const reason: Error = error instanceof Error ? error : new Error(String(error));
+      const reason: Error = toError(error);
       return Promise.reject(reason);
     }
     const write: StateWrite = { json, revision: this.nextRevision++ };
@@ -295,7 +296,7 @@ export class StateStore {
     const failedAttempt: number = ++this.retryAttempt;
     this.onRetryError(failedAttempt, error);
     if (failedAttempt >= this.maxAttempts) {
-      const reason: Error = error instanceof Error ? error : new Error(String(error));
+      const reason: Error = toError(error);
       const fatal: Error = new Error(
         `State persistence failed after ${failedAttempt} attempt(s); refusing further updates.`,
         { cause: reason }
@@ -317,7 +318,7 @@ export class StateStore {
       settledCount < this.persistenceWaiters.length &&
       this.persistenceWaiters[settledCount]!.revision <= revision
     ) settledCount++;
-    // 保留既有的倒序 resolve 次序，只把每条一次 splice 改为最后一次性移除前缀。
+    // 已落盘前缀按倒序 resolve，之后一次性移除。
     for (let index: number = settledCount - 1; index >= 0; index--) {
       this.persistenceWaiters[index]!.resolve();
     }
@@ -325,7 +326,7 @@ export class StateStore {
   }
 
   private rejectPersistenceWaiters(error: unknown): void {
-    const reason: Error = error instanceof Error ? error : new Error(String(error));
+    const reason: Error = toError(error);
     for (const waiter of this.persistenceWaiters.splice(0)) waiter.reject(reason);
   }
 

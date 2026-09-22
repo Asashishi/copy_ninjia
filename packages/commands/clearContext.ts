@@ -6,16 +6,14 @@ import { invalidateAiChat } from "../aiChat";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import type { CachedUser } from "../types/chatState";
-import { formatUserLabel } from "../users/userLabel";
-import { resolveCommandActor } from "./commandActor";
-import { hasWhitelistPermission } from "../infra/identityPolicy/whitelist";
+import { rejectUnlessPermitted } from "./commandActor";
 
 /**
  * 处理 /clear_context：清空本群 AI 上下文记忆，从零重新累计。
  *
  * 清掉的是 AI Worker 里这个群的滚动逐字缓存、中期摘要、待晋升摘要与心情，以及
  * 磁盘上的 chat_states.ai_context——两件事由 aiChat/workerBridge.ts 的
- * invalidateAiChat(chatId, true) 一并完成，本命令不另写一条清理路径。同一次调用
+ * invalidateAiChat(chatId) 一并完成，本命令不另写一条清理路径。同一次调用
  * 还会递增本群回复代数：在途那一轮的上下文此刻已经不存在，它的回复不该再发出去。
  *
  * 发起身份必须持有 isCanClearContext；超级管理员由统一权限边界直授。
@@ -31,32 +29,28 @@ import { hasWhitelistPermission } from "../infra/identityPolicy/whitelist";
 export async function handleClearContextCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  if (actor === undefined || !hasWhitelistPermission(actor.id, "isCanClearContext")) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
-    await sendCommandMessage({
-      chatId,
-      text: atmosphere.NOTICE_TEXTS.clearContextRejected(actor === undefined ? atmosphere.NOTICE_TEXTS.unknownActor : formatUserLabel(actor, atmosphere)),
-      replyToMessageId: messageId,
-    });
-    return;
-  }
+  const actor: CachedUser | undefined = await rejectUnlessPermitted(
+    ctx,
+    "isCanClearContext",
+    (actorLabel: string, atmosphere: AtmosphereTexts): string => atmosphere.NOTICE_TEXTS.clearContextRejected(actorLabel)
+  );
+  if (actor === undefined) return;
   if (ctx.match.trim().length > 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).CLEAR_CONTEXT_USAGE_TEXT,
+      text: chatAtmosphere(chatId).CLEAR_CONTEXT_USAGE_TEXT,
       replyToMessageId: messageId,
     });
     return;
   }
 
   try {
-    await invalidateAiChat(chatId, true);
+    await invalidateAiChat(chatId);
   } catch (error: unknown) {
     logger.error(`Failed to clear the AI chat context of chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.clearContextFailed,
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.clearContextFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -64,7 +58,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
 
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.clearContextDone,
+    text: chatAtmosphere(chatId).NOTICE_TEXTS.clearContextDone,
     replyToMessageId: messageId,
   });
 }

@@ -1,21 +1,25 @@
 import type { AtmosphereTexts } from "../types/atmosphere";
+import type { AtmosphereNotices } from "../types/atmosphereNotices";
 import { chatAtmosphere } from "../infra/atmosphere";
 
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type { MuteChatMemberOutcome, UnmuteChatMemberOutcome } from "../infra/telegram";
 import { muteChatMemberWithOutcome, sendCommandMessage, unmuteChatMemberWithOutcome } from "../infra/telegram";
-import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
+import { formatTargetLabel } from "../users/userLabel";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
+import { botChatPermissionsIn } from "../infra/botAdmin";
+import type { BotChatPermissions } from "../types/telegram";
 import { MUTE_DISPATCH_MIN_REMAINING_MS, MUTE_MAX_DURATION_MS, MUTE_MIN_DURATION_MS } from "../consts/commands";
 
+import { describeBotPermissionGap } from "../libs/botPermissionGap";
 import {
   formatDurationCn,
   parseDurationTokenMs,
 } from "../libs/durationToken";
 import { commandArgumentTokens } from "./arguments";
 import { resolveCommandTarget } from "./targetResolution";
-import { hasCommandPermission, resolveCommandActor } from "./commandActor";
+import { rejectUnlessPermitted } from "./commandActor";
 
 /**
  * 把 `/mute` 的时长 token 解析成毫秒数并收敛进合法区间。
@@ -35,6 +39,32 @@ export function parseMuteDurationMs(token: string): number | undefined {
 }
 
 /**
+ * `forbidden` 结局的回执。Telegram 对「机器人缺限制成员权限」与「目标本身是管理员」
+ * 回的是同一句 400，因此按机器人自己的权限快照分辨：确证不是管理员或缺
+ * 「限制与封禁成员」时点名原因；快照缺失或该位齐全时把两种成因都说给管理员听。
+ * 具体错误已由统一错误边界记进日志。
+ */
+async function forbiddenReplyText(
+  chatId: number,
+  targetLabel: string,
+  command: "mute" | "unmute"
+): Promise<string> {
+  const notices: Readonly<AtmosphereNotices> = chatAtmosphere(chatId).NOTICE_TEXTS;
+  const permissions: BotChatPermissions | undefined = await botChatPermissionsIn(chatId);
+  const reason: string | undefined = permissions === undefined
+    ? undefined
+    : describeBotPermissionGap(permissions, "canRestrictMembers", notices);
+  if (command === "mute") {
+    return reason === undefined
+      ? notices.muteForbidden(targetLabel)
+      : notices.muteBotLacksRights(targetLabel, reason);
+  }
+  return reason === undefined
+    ? notices.unmuteForbidden(targetLabel)
+    : notices.unmuteBotLacksRights(targetLabel, reason);
+}
+
+/**
  * /mute 与 /unmute 共用的入口校验：发起人持有对应权限、且本群是超级群。
  * 任一不满足时回复嘲讽/说明并返回 false，调用方直接 return。
  * `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群与私聊里连
@@ -44,24 +74,19 @@ export function parseMuteDurationMs(token: string): number | undefined {
 async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mute" | "unmute"): Promise<boolean> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const actor: CachedUser | undefined = resolveCommandActor(ctx);
   const permission: "isCanMute" | "isCanUnMute" =
     command === "mute" ? "isCanMute" : "isCanUnMute";
-
-  if (!actor || !hasCommandPermission(ctx, permission)) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
-    await sendCommandMessage({
-      chatId,
-      text: atmosphere.NOTICE_TEXTS.muteRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor, command),
-      replyToMessageId: messageId,
-    });
-    return false;
-  }
+  const actor: CachedUser | undefined = await rejectUnlessPermitted(
+    ctx,
+    permission,
+    (actorLabel: string, atmosphere: AtmosphereTexts): string => atmosphere.NOTICE_TEXTS.muteRejected(actorLabel, command)
+  );
+  if (actor === undefined) return false;
 
   if (ctx.chat.type !== "supergroup") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteSupergroupOnly,
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.muteSupergroupOnly,
       replyToMessageId: messageId,
     });
     return false;
@@ -80,7 +105,7 @@ async function rejectUnrestrictableTarget(
   targetUser: CachedUser
 ): Promise<boolean> {
   if (targetUser.isChannel !== true) return false;
-  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
   await sendCommandMessage({
     chatId: ctx.chat.id,
     text: atmosphere.NOTICE_TEXTS.muteChannelTarget(formatTargetLabel(targetUser, atmosphere)),
@@ -126,7 +151,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   const durationToken: string | undefined = tokens.at(-1);
   const durationMs: number | undefined = durationToken === undefined ? undefined : parseMuteDurationMs(durationToken);
   if (durationMs === undefined) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).MUTE_USAGE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).MUTE_USAGE_TEXT, replyToMessageId: messageId });
     return;
   }
 
@@ -140,7 +165,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     acceptUserId: true,
     // 下面的自己人闸读 isWhitelisted，冷读失败时不能当成「不受保护」。
     requireIdentityPolicies: true,
-    messages: chatAtmosphere(ctx.chat?.id ?? 0).MUTE_TARGET_TEXTS,
+    messages: chatAtmosphere(chatId).MUTE_TARGET_TEXTS,
   });
   if (!targetUser) return;
   if (await rejectUnrestrictableTarget(ctx, targetUser)) return;
@@ -148,7 +173,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   // 自己人不可禁言：部署方亲手配的身份不该被机器人按住（口径同自动处置的
   // isWhitelisted 边界，超级管理员已含在内），回错消息也只损失一句嘲讽。
   if (isWhitelisted(targetUser.id)) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
     await sendCommandMessage({
       chatId,
       text: atmosphere.NOTICE_TEXTS.muteProtected(formatTargetLabel(targetUser, atmosphere)),
@@ -157,7 +182,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  const targetLabel: string = formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
+  const targetLabel: string = formatTargetLabel(targetUser, chatAtmosphere(chatId));
   const outcome: MuteChatMemberOutcome = await muteChatMemberWithOutcome({
     chatId,
     userId: targetUser.id,
@@ -172,17 +197,15 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   if (outcome === "muted") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteDone(targetLabel, formatDurationCn(durationMs)),
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.muteDone(targetLabel, formatDurationCn(durationMs)),
       replyToMessageId: messageId,
     });
     return;
   }
-  // forbidden 混着两种成因（机器人缺「限制成员」权限，或目标本身是管理员），
-  // Telegram 回的是同一句 400，文案把两种都说给管理员听；failed 是限流/网络
-  // 抖动，值得再试。具体原因已由统一错误边界记进日志。
+  // failed 是限流/网络抖动，值得再试；forbidden 的措辞见 forbiddenReplyText。
   const failureText: string = outcome === "forbidden"
-    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteForbidden(targetLabel)
-    : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.muteFailed(targetLabel);
+    ? await forbiddenReplyText(chatId, targetLabel, "mute")
+    : chatAtmosphere(chatId).NOTICE_TEXTS.muteFailed(targetLabel);
   await sendCommandMessage({ chatId, text: failureText, replyToMessageId: messageId });
 }
 
@@ -191,7 +214,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
  * 与群默认权限取交集，见 consts/telegram.ts 的 UNMUTED_CHAT_PERMISSIONS）。
  * 不带时长参数；目标指定方式与权限门槛同 /mute。目标本来就没被禁言时
  * Telegram 一样返回成功，不必事先区分——恢复方向指错目标至多是一次空操作
- * （同 /unblock 对恢复方向的宽容）。也不设自己人闸：解除限制只会把人放出来，
+ * （同 /block disable 对恢复方向的宽容）。也不设自己人闸：解除限制只会把人放出来，
  * 自己人被别的管理员禁了言，正该能用这条命令捞。
  */
 export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise<void> {
@@ -206,12 +229,12 @@ export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise
     botUserId: ctx.me.id,
     rawArgument: ctx.match,
     acceptUserId: true,
-    messages: chatAtmosphere(ctx.chat?.id ?? 0).UNMUTE_TARGET_TEXTS,
+    messages: chatAtmosphere(chatId).UNMUTE_TARGET_TEXTS,
   });
   if (!targetUser) return;
   if (await rejectUnrestrictableTarget(ctx, targetUser)) return;
 
-  const targetLabel: string = formatTargetLabel(targetUser, chatAtmosphere(ctx.chat?.id ?? 0));
+  const targetLabel: string = formatTargetLabel(targetUser, chatAtmosphere(chatId));
   const outcome: UnmuteChatMemberOutcome = await unmuteChatMemberWithOutcome({
     chatId,
     userId: targetUser.id,
@@ -219,13 +242,13 @@ export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise
   if (outcome === "unmuted") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unmuteDone(targetLabel),
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.unmuteDone(targetLabel),
       replyToMessageId: messageId,
     });
     return;
   }
   const failureText: string = outcome === "forbidden"
-    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unmuteForbidden(targetLabel)
-    : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unmuteFailed(targetLabel);
+    ? await forbiddenReplyText(chatId, targetLabel, "unmute")
+    : chatAtmosphere(chatId).NOTICE_TEXTS.unmuteFailed(targetLabel);
   await sendCommandMessage({ chatId, text: failureText, replyToMessageId: messageId });
 }

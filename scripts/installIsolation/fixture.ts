@@ -49,10 +49,6 @@ export async function writeText(path: string, content: string, mode?: number): P
   if (mode !== undefined) chmodSync(path, mode);
 }
 
-export async function readText(path: string): Promise<string> {
-  return Bun.file(path).text();
-}
-
 async function executable(path: string, lines: readonly string[]): Promise<void> {
   await writeText(path, lines.join("\n") + "\n", 0o700);
 }
@@ -109,10 +105,16 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "  secret_env_state generator",
     "  exec \"$REAL_BUN_PATH\" \"$@\"",
     "fi",
-    "if [[ \"$inline_source\" == *\"loadTelegramConfig\"* ]]; then",
+    "if [[ \"$inline_source\" == *\"assertCurrentBotConfigDirectory\"* ]]; then",
+    "  exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); await runtime.assertCurrentBotConfigDirectory(\"config\");' \"$FAKE_INSTALL_RUNTIME_MODULE\"",
+    "fi",
+    "if [[ \"$inline_source\" == *\"loadInstallerBotAtmosphere\"* ]]; then",
+    "  exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); console.log(await runtime.loadInstallerBotAtmosphere(\"config/bot.json\"));' \"$FAKE_INSTALL_RUNTIME_MODULE\"",
+    "fi",
+    "if [[ \"$inline_source\" == *\"validateStagedBotConfig\"* ]]; then",
     "  printf 'validate:telegram\\n' >> \"$FAKE_CALL_LOG\"",
     "  [ \"${FAKE_TELEGRAM_VALIDATION_FAIL:-0}\" = \"1\" ] && exit 41",
-    "  exec \"$REAL_BUN_PATH\" -e 'JSON.parse(await Bun.file(Bun.argv[1]).text())' \"${3:?}\"",
+    "  exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); await runtime.validateStagedBotConfig(Bun.argv[2]);' \"$FAKE_INSTALL_RUNTIME_MODULE\" \"${3:?}\"",
     "fi",
     "if [[ \"$inline_source\" == *\"validateAgentDeploymentConfig\"* ]]; then",
     "  printf 'validate:agent\\n' >> \"$FAKE_CALL_LOG\"",
@@ -179,7 +181,7 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
     "    privileged_command=\"$1\"",
     "    target_path=\"${@: -1}\"",
     "    case \"$target_path\" in",
-    "      \"$FAKE_WORKTREE\"/config/.telegram.json.install.*)",
+    "      \"$FAKE_WORKTREE\"/config/.bot.json.install.*)",
     "        shift",
     "        exec \"/bin/$privileged_command\" \"$@\"",
     "        ;;",
@@ -358,6 +360,7 @@ function installerEnvironment(
     FAKE_REAL_RUNTIME: fixture.realRuntime ? "1" : "0",
     FAKE_OUTBOUND_LOG: fixture.outboundLog,
     FAKE_PATHS_MODULE: PATHS_MODULE_PATH,
+    FAKE_INSTALL_RUNTIME_MODULE: join(PROJECT_ROOT, "scripts/install/runtime.ts"),
   };
   for (const [name, value] of Object.entries(extra)) {
     if (value === undefined) {

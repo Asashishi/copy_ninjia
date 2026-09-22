@@ -42,7 +42,9 @@ mock.module("../../packages/commands/copyShared", () => ({
   stealAvatarInBackground: copySideEffect,
   restoreAvatarInBackground: copySideEffect,
 }));
-mock.module("../../packages/infra/identityPolicy/whitelist", () => ({ hasWhitelistPermission: () => allowed }));
+mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
+  hasWhitelistPermission: (_id: number, key: string): boolean => allowed && key === "isCanControllTranslatePermission",
+}));
 const { handleTranslateCommand } = await import("../../packages/commands/translate");
 const { setTranslateState } = await import("../../packages/translate/state");
 const { seedTranslateTargets } = await import("../../packages/translate/recovery");
@@ -146,6 +148,38 @@ describe("/translate 独立命令", () => {
     });
   });
 
+  // 方向词不区分大小写，口径同 `/copy`、`/qa`、`/icon`、`/mood`。
+  test.each([["JA", "ja"], ["Cn", "cn"], ["UK", "uk"], ["Ru", "ru"]] as const)(
+    "方向参数 %s 折叠成 %s 后照常建立会话",
+    async (argument: string, language: TranslateLanguage) => {
+      await handleTranslateCommand(context(argument));
+      expect(translateStates.get(-1001)).toEqual([{ translatedUser: { id: 7, first_name: "Target" }, language }]);
+    }
+  );
+
+  test("STOP 也认：停止词同样不区分大小写", async () => {
+    await handleTranslateCommand(context("ja"));
+    expect(translateStates.size).toBe(1);
+    await handleTranslateCommand(context("STOP"));
+    expect(translateStates.size).toBe(0);
+  });
+
+  test("子命令词不区分大小写：LIST、Enable、DISABLE 与小写同效，目标参数保留原文", async () => {
+    await handleTranslateCommand(context("LIST"));
+    expect(sendCommandMessage.mock.calls[0]?.[0]).toMatchObject({ entities: [expect.objectContaining({ type: "pre" })] });
+
+    await handleTranslateCommand(context("ja"));
+    await handleTranslateCommand(context("DISABLE"));
+    expect(translateStates.has(-1001)).toBe(false);
+    expect(state.isTranslationEnabled).toBe(false);
+    await handleTranslateCommand(context("Enable"));
+    expect(state.isTranslationEnabled).toBe(true);
+
+    resolveCommandTarget.mockClear();
+    await handleTranslateCommand(context("JA @Alice"));
+    expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({ rawArgument: "@Alice" });
+  });
+
   test("list 使用 JSON 代码块列出所有方向，功能关闭、配置缺失和无管理权限时仍可查看", async () => {
     configured = false;
     allowed = false;
@@ -168,7 +202,7 @@ describe("/translate 独立命令", () => {
     expect(persistChatState).not.toHaveBeenCalled();
   });
 
-  test.each(["ua", "UK", "RU", "uk/ru", "list extra", "list @Alice"])("非法参数 %s 不进入目标解析或修改会话", async (argument: string) => {
+  test.each(["ua", "uk/ru", "list extra", "list @Alice"])("非法参数 %s 不进入目标解析或修改会话", async (argument: string) => {
     await handleTranslateCommand(context(argument));
     expect(resolveCommandTarget).not.toHaveBeenCalled();
     expect(translateStates.size).toBe(0);

@@ -54,6 +54,7 @@ function permissions(
     isCanControllTranslatePermission: false,
     isCanControllAntiRaidPermission: false,
     isCanControllQaPermission: false,
+    isCanAddHImage: false,
     ...overrides,
   };
 }
@@ -77,6 +78,7 @@ function allEnabledPermissions(): Record<string, boolean> {
     isCanControllTranslatePermission: true,
     isCanControllAntiRaidPermission: true,
     isCanControllQaPermission: true,
+    isCanAddHImage: true,
   });
 }
 
@@ -87,7 +89,8 @@ const getWhitelistPermissionQueryView = mock(
       : whitelistPermissionsById.get(id) ?? NON_WHITELIST_PERMISSIONS
 );
 
-mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
@@ -127,11 +130,13 @@ function context(
   match: string,
   replyToMessage?: object
 ): never {
+  const chat = { id: -1001, type: "supergroup" };
   return {
-    chat: { id: -1001, type: "supergroup" },
+    chat,
     from: { id: userId, first_name: "Admin", username: "admin" },
     msg: {
       message_id: 10,
+      chat,
       ...(replyToMessage === undefined
         ? {}
         : { reply_to_message: replyToMessage }),

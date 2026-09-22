@@ -1,4 +1,4 @@
-import { GrammyError } from "grammy";
+import { Composer, GrammyError } from "grammy";
 import type { Bot } from "grammy";
 import { handleIncomingMessageMiddleware, handleReaction } from "../auto";
 import {
@@ -8,6 +8,8 @@ import {
   handlePromptCommand,
   handleBatchKickCommand,
   handleBlockCommand,
+  handleHImageCommand,
+  handleInfoCommand,
   handleBotStatusCommand,
   handleCjkActionCommand,
   handleCjkActionUsageCommand,
@@ -32,7 +34,6 @@ import {
   handleIconCommand,
   dispatchWedCommand,
   dispatchWedCallback,
-  handleUnblockCommand,
   handleUngagCommand,
   handleUnmuteCommand,
   handleUnquietCommand,
@@ -44,8 +45,9 @@ import {
   handleVerificationCallback,
 } from "../antiRaid";
 import { handleMyChatMemberUpdate } from "../infra/botAdmin";
+import { syncChatPersonaSurfaces } from "../commands/chatPersonaSync";
 import { observeWedMemberDeparture, observeWedMembers } from "../commands/wed/members";
-import { CJK_ACTION_COMMAND_PATTERN } from "../consts/commands";
+import { CJK_ACTION_COMMAND_PATTERN, SLASH_CHAR_CODE } from "../consts/commands";
 import { logger } from "../infra/logger";
 import {
   isIdentityPolicyCached,
@@ -59,11 +61,9 @@ import {
 import { messageOriginIdentityId } from "../users/messageOrigin";
 import type {
   BotError,
-  CommandContext,
-  Composer,
   Context,
   Filter,
-  HearsContext,
+  MiddlewareFn,
   NextFunction,
 } from "grammy";
 import type { Chat, Message } from "grammy/types";
@@ -213,24 +213,37 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
+  // message / channel_post 上的 ingress 与消息兜底一律直接挂 bot.use，自己判定
+  // update 类型：grammY 的 on/hears 经 filter -> branch -> lazy 注册，每条 update
+  // 都要 await 一次工厂、建一个数组并 new 一个 Composer。判据与 on("message")、
+  // on(["message", "channel_post"]) 相同（allowed_updates 不含 edited_*，因此
+  // `ctx.msg` 恒等于 `message ?? channelPost`），命中集合、顺序与认领语义不变。
+
   // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
-  bot.on("message", (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> | undefined =>
-    claimOrContinue(handleAntiRaidMessageIngress(ctx.message, ctx.me.id), next));
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+    const message: Message | undefined = ctx.message;
+    return message === undefined
+      ? next()
+      : claimOrContinue(handleAntiRaidMessageIngress(message, ctx.me.id), next);
+  });
 
   // gag 同样要覆盖命令消息，因此必须位于全部 bot.command 之前；Anti-Raid 先看
   // 原始消息，才能保持广告/刷屏/待验证追踪的既有事实口径。被 gag 的消息即使
   // Telegram 删除失败也在这里终止，不得继续喂给 AI、copy 或命令处理器。
-  bot.on("message", (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> | undefined =>
-    claimOrContinue(handleGagMessageIngress(ctx.message, ctx.me.id), next));
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+    const message: Message | undefined = ctx.message;
+    return message === undefined
+      ? next()
+      : claimOrContinue(handleGagMessageIngress(message, ctx.me.id), next);
+  });
 
   // /qa set 表单投递同样要覆盖命令消息，且必须终止本条 update：那条投递消息
   // 已经被认领并删除，再放进 AI、复读或命令链路只会处理一个不存在的东西。
-  // 必须同时挂在 channel_post 上——频道里的「问题:」「回答:」是频道帖，只监听
-  // message 的话频道根本填不了表单，而频道能设置问答正是本轮改动的目的。
-  bot.on(["message", "channel_post"], (
-    ctx: Filter<Context, "message" | "channel_post">,
-    next: NextFunction
-  ): Promise<void> | undefined => claimOrContinue(handleQaMessageIngress(ctx.msg), next));
+  // 必须同时覆盖 channel_post：频道里的「问题:」「回答:」是频道帖。
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+    const message: Message | undefined = ctx.message ?? ctx.channelPost;
+    return message === undefined ? next() : claimOrContinue(handleQaMessageIngress(message), next);
+  });
 
   // 授权维护命令与其余命令一样排在上面那道 ingress 之后，没有例外：这两条
   // handler 都不调 next()，注册在 ingress 之前的话，/permission 与 /white 会
@@ -238,55 +251,68 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 拿到一条机器人回复（非白名单是拒绝文案，白名单是整份权限 JSON），等于一个
   // 不受防刷屏约束的回复放大器；黑名单频道身份发的这两条命令也不会被就地删除，
   // 待验证成员发的更不会产生 trackedMessage。
-  // 全部命令收在一层 `:entities:bot_command` 子链后面，而不是逐条挂在 bot 上。
-  // grammY 的 command/on/hears 都经 filter -> branch -> lazy 注册，而 lazy 每条
-  // update 都要 await 一次工厂、建一个数组并 new 一个 Composer；25 条命令平铺
-  // 就是每条 update 付 25 次，普通群消息一次都用不上。外闸判据与
-  // Context.has.command() 自己的第一步完全相同（都是 `:entities:bot_command`），
-  // 因此它是每条命令判据的严格超集：命中集合、相对顺序和「命中即终止」的语义
-  // 都不变，只是让不带 bot_command 实体的消息一次跳过整组。
-  // 中文动作命令拿不到 bot_command 实体，因此下面的 bot.hears 必须留在组外。
+  // 全部命令收在一层 `:entities:bot_command` 子链后面，而不是逐条挂在 bot 上：
+  // 外闸判据与 Context.has.command() 自己的第一步完全相同（都是
+  // `:entities:bot_command`），因此它是每条命令判据的严格超集，命中集合、相对
+  // 顺序和「命中即终止」的语义都不变，不带 bot_command 实体的消息一次跳过整组。
+  // 中文动作命令拿不到 bot_command 实体，因此由下面的「/」外闸单独承接。
   const commands: Composer<Filter<Context, ":entities:bot_command">> =
     bot.on(":entities:bot_command");
-  commands.command("permission", (ctx: CommandContext<Context>): Promise<void> => handlePermissionCommand(ctx));
-  commands.command("white", (ctx: CommandContext<Context>): Promise<void> => handleWhiteCommand(ctx));
-  commands.command("copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx));
-  commands.command("translate", (ctx: CommandContext<Context>): Promise<void> => handleTranslateCommand(ctx));
-  commands.command("icon", (ctx: CommandContext<Context>): Promise<void> => handleIconCommand(ctx));
-  commands.command("wed", (ctx: CommandContext<Context>): void | Promise<void> => dispatchWedCommand(ctx));
-  commands.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
-  commands.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
-  commands.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
-  commands.command("prompt", (ctx: CommandContext<Context>): Promise<void> => handlePromptCommand(ctx));
-  commands.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
-  commands.command("clear_context", (ctx: CommandContext<Context>): Promise<void> => handleClearContextCommand(ctx));
-  commands.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));
-  commands.command("flood_control", (ctx: CommandContext<Context>): Promise<void> => handleFloodControlCommand(ctx));
-  commands.command("antiraid", (ctx: CommandContext<Context>): Promise<void> => handleAntiRaidCommand(ctx));
-  commands.command("bot_status", (ctx: CommandContext<Context>): Promise<void> => handleBotStatusCommand(ctx));
-  commands.command("mood", (ctx: CommandContext<Context>): Promise<void> => handleMoodCommand(ctx));
-  commands.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
-  commands.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));
-  commands.command("unquiet", (ctx: CommandContext<Context>): Promise<void> => handleUnquietCommand(ctx));
-  commands.command("mute", (ctx: CommandContext<Context>): Promise<void> => handleMuteCommand(ctx));
-  commands.command("unmute", (ctx: CommandContext<Context>): Promise<void> => handleUnmuteCommand(ctx));
-  commands.command("gag", (ctx: CommandContext<Context>): Promise<void> => handleGagCommand(ctx));
-  commands.command("ungag", (ctx: CommandContext<Context>): Promise<void> => handleUngagCommand(ctx));
-  commands.command("send", (ctx: CommandContext<Context>): Promise<void> => handleSendCommand(ctx));
-  commands.command("qa", (ctx: CommandContext<Context>): Promise<void> => handleQaCommand(ctx));
+  commands.command("permission", handlePermissionCommand);
+  commands.command("white", handleWhiteCommand);
+  commands.command("copy", handleCopyCommand);
+  commands.command("translate", handleTranslateCommand);
+  commands.command("icon", handleIconCommand);
+  commands.command("wed", dispatchWedCommand);
+  commands.command("h_image", handleHImageCommand);
+  commands.command("info", handleInfoCommand);
+  commands.command("block", handleBlockCommand);
+  commands.command("batch_kick", handleBatchKickCommand);
+  commands.command("prompt", handlePromptCommand);
+  commands.command("ai_chat", handleAiChatCommand);
+  commands.command("clear_context", handleClearContextCommand);
+  commands.command("ad_detect", handleAdDetectCommand);
+  commands.command("flood_control", handleFloodControlCommand);
+  commands.command("antiraid", handleAntiRaidCommand);
+  commands.command("bot_status", handleBotStatusCommand);
+  commands.command("mood", handleMoodCommand);
+  commands.command("init", handleInitCommand);
+  commands.command("quiet", handleQuietCommand);
+  commands.command("unquiet", handleUnquietCommand);
+  commands.command("mute", handleMuteCommand);
+  commands.command("unmute", handleUnmuteCommand);
+  commands.command("gag", handleGagCommand);
+  commands.command("ungag", handleUngagCommand);
+  commands.command("send", handleSendCommand);
+  commands.command("qa", handleQaCommand);
   // 菜单占位项：它只为在命令菜单里曝光「/<1~2 个中文字>」这个用法（那类命令名
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
   // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
   // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
-  commands.command("x", (ctx: CommandContext<Context>): Promise<void> => handleCjkActionUsageCommand(ctx));
+  commands.command("x", handleCjkActionUsageCommand);
+
   // `/咬`、`/贴贴` 这类中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
   // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成
   // 普通消息进入 AI/复读流水线；不认领的形态由 handler 自己 next() 放行。
-  bot.hears(CJK_ACTION_COMMAND_PATTERN, (ctx: HearsContext<Context>, next: NextFunction): Promise<void> => handleCjkActionCommand(ctx, next));
-  bot.on(["message", "channel_post"], (ctx: Filter<Context, "message" | "channel_post">): Promise<void> | undefined => handleIncomingMessageMiddleware(ctx));
-  bot.on("message_reaction", (ctx: Filter<Context, "message_reaction">): Promise<void> => handleReaction(ctx));
-  bot.on("chat_member", (ctx: Filter<Context, "chat_member">): Promise<void> => handleChatMemberUpdate(ctx));
-  bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx));
+  // CJK_ACTION_COMMAND_PATTERN 以 `^\/` 开头，「原文首字符是 /」是它的严格超集，
+  // 其余消息不进 hears 子链。原文取法与 Context.has.text() 相同。
+  const cjkActions: Composer<Context> = new Composer();
+  cjkActions.hears(CJK_ACTION_COMMAND_PATTERN, handleCjkActionCommand);
+  const cjkActionMiddleware: MiddlewareFn<Context> = cjkActions.middleware();
+  bot.use((ctx: Context, next: NextFunction): unknown => {
+    const message: Message | undefined = ctx.message ?? ctx.channelPost;
+    const text: string | undefined = message?.text ?? message?.caption;
+    return text?.charCodeAt(0) === SLASH_CHAR_CODE
+      ? cjkActionMiddleware(ctx, next)
+      : next();
+  });
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined =>
+    (ctx.message ?? ctx.channelPost) === undefined ? next() : handleIncomingMessageMiddleware(ctx));
+  bot.on("message_reaction", handleReaction);
+  bot.on("chat_member", handleChatMemberUpdate);
+  // 群人设三处同步由这里注入：botAdmin 属 infra，不得静态依赖 commands/、AI
+  // 与 Anti-Raid 业务模块（见 docs/cn/04-invariants.md）。
+  bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx, syncChatPersonaSurfaces));
   // /wed 结果和 /qa query 翻页按钮排在入群验证之前：前缀各自独立，认领了就
   // 不再往下走，没认领的原样交给验证按钮。
   bot.on("callback_query:data", async (
@@ -297,10 +323,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     if (await handleQaBoardCallback(ctx)) return;
     return next();
   });
-  bot.on("callback_query:data", (ctx: Filter<Context, "callback_query:data">): Promise<void> =>
-    handleVerificationCallback(ctx));
-  bot.on("inline_query", (ctx: Filter<Context, "inline_query">): Promise<void> => handleInlineQuery(ctx));
-  bot.on("chosen_inline_result", (ctx: Filter<Context, "chosen_inline_result">): Promise<void> => handleLuckChosenInlineResult(ctx));
+  bot.on("callback_query:data", handleVerificationCallback);
+  bot.on("inline_query", handleInlineQuery);
+  bot.on("chosen_inline_result", handleLuckChosenInlineResult);
 
   bot.catch((err: BotError<Context>): never => {
     // GrammyError 携带完整请求 payload；这里只记录状态码和描述，避免日志泄漏

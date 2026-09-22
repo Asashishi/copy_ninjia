@@ -22,7 +22,7 @@ import {
 import { assertBenchmarkRuntimeRoot } from "./mockRoot";
 import { validateExistingDeploymentInputs } from
   "../../../packages/config/readiness";
-import { BOT_TOKEN } from "../../../packages/config/telegram";
+import { BOT_TOKEN } from "../../../packages/config/bot";
 import { RUNTIME_DATA_ROOT } from "../../../packages/consts/paths";
 import {
   acquireSingleInstanceLock,

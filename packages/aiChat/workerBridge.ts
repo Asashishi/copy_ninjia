@@ -7,15 +7,14 @@ import { isAiChatConfigured } from "./availability";
 import { getAgentDeploymentConfig } from "../config/agent";
 import { getMoodConfig } from "../config/mood";
 import { getPersona } from "../config/persona";
-import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
 import { beginAiMemoryTeardown, finishAiMemoryTeardown, nextAiMemoryRevision, requestAiMemoryDelete, settleAiMemoryTeardownWorker } from "./memoryMirror";
 import {
+  aiChatBotInfo,
   aiChatWorkerState,
   aiChatInvalidateRequestCounter,
   aiChatInvalidateWaiters,
   aiMemoryFlushBarrier,
-  aiMemoryRevisionCounters,
   aiMemoryUsages,
   lastInitState,
   latestAiMemories,
@@ -38,9 +37,11 @@ import type {
   AiBotInfo,
   AiChatWorkerEvent,
   AiChatWorkerMessage,
+  AiConfigReloadMessage,
   AiInitMessage,
 } from "../types/aiChat/protocol";
-import { SUPER_ADMIN_USER_ID } from "../config/telegram";
+import type { HotDeploymentConfigChanges } from "../types/config";
+import { BOT_ATMOSPHERE, SUPER_ADMIN_USER_ID } from "../config/bot";
 import type {
   AiChatInvalidateWaiter,
   AiMemoryTeardown,
@@ -53,6 +54,8 @@ import {
   handleAiWorkerTelegramRequest,
   telegramWorkerResponseTransfer,
 } from "../infra/telegram/workerRequests";
+import { toError } from "../libs/errorMessage";
+import { activeStickerCatalogs, mirrorStickerCatalog, pruneStickerCatalogMirror } from "./stickerMirror";
 
 /** 在途心情查询/重抽请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
  *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
@@ -79,9 +82,8 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
  * calling 往返与供应商内置的服务端联网检索）、工具化的发言/消息反应/两层应景贴纸
  * （见 packages/aiChat/ai/tools/replyToolset/）、白名单贴纸目录与整包简介生成——全部在独立
  * 的 Bun Worker（packages/workers/aiChatWorker.ts）里
- * 执行；主线程正向只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
- * 反向则只接收并执行 Worker 所需的 Telegram 能力请求，模型与其它外部 API 不经
- * 此边界。这样 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
+ * 执行。主线程投递消息记录、回复触发、配置与生命周期消息，并接收快照、业务回执
+ * 和 Telegram 能力请求；模型与其它外部 API 不经此边界。postMessage 按 FIFO 送达，
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 infra/supervisedWorker.ts。
@@ -146,8 +148,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
         requestAiMemoryDelete(event.chatId, false);
         break;
       case "stickerCatalog":
-        latestStickerCatalogs.set(event.pack, event.snapshot);
-        postDiskIO({ type: "stickerCatalog", pack: event.pack, snapshot: event.snapshot });
+        mirrorStickerCatalog(event.pack, event.snapshot);
         break;
       case "memoryFlushed": {
         aiMemoryFlushBarrier.settle(event.flushId, "flushed");
@@ -192,10 +193,10 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     rejectAllAiChatInvalidateWaiters("AI Worker crashed before completing chat invalidation.");
     settleAiMemoryTeardownWorker();
     // 新 Worker 重新走一遍身份注入与配置快照投递，FIFO 保证它先于任何
-    // record/trigger 到达。重放的是**进程启动时那条 init 消息本身**，因此新
-    // isolate 拿到的配置与旧实例逐字节相同——重建不会顺手加载磁盘上已经被改过
-    // 的 agent.json。重启发生在 initAiChat 调用之前的话 lastInitState.current
-    // 仍是 null，没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
+    // record/trigger 到达。重放的 init 带着主线程当前生效的配置快照（热重载由
+    // syncAiChatConfig 同步改写），新 isolate 不自己读盘。重启发生在 initAiChat
+    // 调用之前的话 lastInitState.current 仍是 null，没有可重放的，新 Worker 等
+    // 本来就该来的那次 initAiChat 调用即可。
     if (lastInitState.current && !postToNext(lastInitState.current)) return;
     for (const [chatId, state] of getChatStateCache()) {
       if (state.aiPersona !== undefined && !postToNext({ type: "persona", chatId, persona: state.aiPersona })) return;
@@ -208,7 +209,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     // 贴纸目录镜像同理：新 Worker 的 init 处理会重新 ensureStickerCatalogs，
     // 若不先灌回已生成的条目会白白重新调一遍视觉模型。
     if (latestStickerCatalogs.size > 0) {
-      if (!postToNext({ type: "hydrateStickerCatalog", catalogs: latestStickerCatalogs })) {
+      if (!postToNext({ type: "hydrateStickerCatalog", catalogs: activeStickerCatalogs() })) {
         logger.error("AI Worker sticker catalog replay was rejected.");
       }
     }
@@ -248,33 +249,22 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
 }
 
 /**
- * 把机器人自己的账号身份注入 AI Worker。须在 bot.init() 之后、runner 开始
- * 投喂更新之前调用一次（见 app/lifecycle.ts）——FIFO 保证 init 消息先于一切
- * record/trigger 到达。Worker 靠它在转录里认出自己并自录自己发的消息。
- * 顺带记一份 lastInitState：Worker 崩溃重启后要重放这条消息，新 Worker 才能
- * 重新认出自己。
- *
- * 两把供应商凭据都缺时整条线不启动：连线程都不建，lastInitState 保持 null，停机
- * 路径上的 flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker
- * 也是 no-op（见 infra/supervisedWorker.ts），生命周期那边不必分岔。判定放在
- * 这里而不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能
- * 配没配」的知识摊到编排层等于每加一个可选功能都要改一次生命周期。
+ * 启动 AI Worker 并注入身份与主线程当前生效的配置快照，再补发各群人设。FIFO
+ * 保证 init 先于一切 record/trigger 到达；Worker 靠它在转录里认出自己并自录自己
+ * 发的消息。投递全部成功后才记 lastInitState 并发布可用标记：Worker 崩溃重启要
+ * 重放这条消息，投递失败时两者都保持原值。调用方负责确认 AI 前提的 holder 已齐
+ * （启动走 readiness，热重载走 config/readiness.ts 的 aiChatReadinessFromHolders）。
  */
-export function initAiChat(botInfo: AiBotInfo): void {
-  if (!isAiChatConfigured()) {
-    logger.log("AI agent configuration is unavailable; the AI chat worker stays down and /ai_chat enable is refused.");
-    return;
-  }
+export function startAiChatWorker(botInfo: AiBotInfo): void {
+  pruneStickerCatalogMirror(getStickerConfig().packs);
   initAiChatWorker();
-  // isAiChatConfigured() 刚刚走完 readiness，agent 段快照已在主线程 holder 里；
-  // 这里取的就是进程内那唯一一代配置，随 init 一起交给 Worker（见 AiInitMessage）。
   const message: AiInitMessage = {
     type: "init",
-    botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
+    botInfo,
     superAdminUserId: SUPER_ADMIN_USER_ID,
+    defaultAtmosphere: BOT_ATMOSPHERE,
     agent: getAgentDeploymentConfig(),
     mood: getMoodConfig(),
-    reactions: getReactionConfig(),
     stickers: getStickerConfig(),
     persona: getPersona(),
   };
@@ -285,51 +275,57 @@ export function initAiChat(botInfo: AiBotInfo): void {
   lastInitState.current = message;
   aiChatWorkerState.available = true;
 }
-/**
- * 启动时把 diskIOWorker 落盘恢复出的 AI 记忆快照灌回来：先存一份镜像
- * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
- * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts），FIFO 保证
- * hydrate 消息先于一切 record/trigger 到达。
- *
- * 进程侧 AI 配置可用时，未开启 AI 或已不受管的群统一清除上下文；仅恢复仍启用的群。
- */
-export function hydrateAiMemory(memories: Map<number, string>): void {
-  if (!isAiChatConfigured()) return;
-  const enabledMemories: Map<number, string> = new Map();
-  const dropped: number[] = [];
-  for (const [chatId, snapshot] of memories) {
-    if (getChatState(chatId).isAIChatEnabled !== true) {
-      dropped.push(chatId);
-      requestAiMemoryDelete(chatId, false);
-      continue;
-    }
-    latestAiMemories.set(chatId, snapshot);
-    latestAiMemoryRevisions.set(chatId, 0);
-    aiMemoryRevisionCounters.set(chatId, 0);
-    enabledMemories.set(chatId, snapshot);
-  }
-  if (dropped.length > 0) {
-    logger.log(`Dropping the persisted AI memory of ${dropped.length} chat(s) with AI chat disabled: ${dropped.join(", ")}.`);
-  }
-  if (enabledMemories.size > 0) {
-    postAiChatOrThrow({ type: "hydrate", memories: enabledMemories });
-  }
-}
 
 /**
- * 启动时把 diskIOWorker 落盘恢复出的白名单贴纸目录灌回来：先存一份镜像
- * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
- * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts）——FIFO 保证
- * 这条消息紧跟在 init 之后，让 ensureStickerCatalogs 的 diff 生成看到已
- * 恢复的条目、不重复调视觉模型。
+ * 记下机器人自己的账号身份，AI 前提可用时启动 AI Worker。须在 bot.init() 之后、
+ * runner 开始投喂更新之前调用一次（见 app/lifecycle.ts）。
+ *
+ * 前提不可用时整条线不启动：连线程都不建，lastInitState 保持 null，停机路径上的
+ * flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker 也是 no-op
+ * （见 infra/supervisedWorker.ts），生命周期那边不必分岔。身份照样记下，config/
+ * 热重载补齐前提时由 aiChat/hydration.ts 的 resumeAiChat 据此启动。判定放在这里而
+ * 不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能配没配」的
+ * 知识摊到编排层等于每加一个可选功能都要改一次生命周期。
  */
-export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
-  if (!isAiChatConfigured()) return;
-  for (const [pack, snapshot] of catalogs) {
-    latestStickerCatalogs.set(pack, snapshot);
+export function initAiChat(botInfo: AiBotInfo): void {
+  const identity: AiBotInfo = { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name };
+  aiChatBotInfo.current = identity;
+  if (!isAiChatConfigured()) {
+    logger.log("AI agent configuration is unavailable; the AI chat worker stays down and /ai_chat enable is refused.");
+    return;
   }
-  if (catalogs.size > 0) {
-    postAiChatOrThrow({ type: "hydrateStickerCatalog", catalogs });
+  startAiChatWorker(identity);
+}
+
+/** syncAiChatConfig 要重投的配置领域；与 HotDeploymentConfigChanges 的同名字段一致。 */
+export type AiConfigDomains = Pick<HotDeploymentConfigChanges, "aiAgent" | "mood" | "stickers">;
+
+/**
+ * 把主线程已生效的 AI 配置投给 AI Worker（见 app/configReload.ts 与
+ * aiChat/hydration.ts 的 resumeAiChat）。
+ *
+ * 先把 lastInitState 改写成当前快照再投递：投递被拒绝（Worker 正在重建）时，
+ * 重建重放的 init 已经带着这一份。Worker 从未启动时 lastInitState 为 null，直接
+ * 返回。调用方保证三份 holder 此刻都非空。
+ */
+export function syncAiChatConfig(domains: AiConfigDomains): void {
+  if (domains.stickers) pruneStickerCatalogMirror(getStickerConfig().packs);
+  const init: AiInitMessage | null = lastInitState.current;
+  if (init === null) return;
+  lastInitState.current = {
+    ...init,
+    agent: getAgentDeploymentConfig(),
+    mood: getMoodConfig(),
+    stickers: getStickerConfig(),
+  };
+  const message: AiConfigReloadMessage = {
+    type: "configReload",
+    agent: domains.aiAgent ? getAgentDeploymentConfig() : undefined,
+    mood: domains.mood ? getMoodConfig() : undefined,
+    stickers: domains.stickers ? getStickerConfig() : undefined,
+  };
+  if (!post(message)) {
+    logger.error("AI Worker rejected the deployment config reload; the next respawn replays the reloaded snapshot.");
   }
 }
 
@@ -389,7 +385,7 @@ function requestAiMood(
     } catch (error: unknown) {
       moodRequestWaiters.delete(requestId);
       clearTimeout(waiter.timer);
-      reject(error instanceof Error ? error : new Error(String(error)));
+      reject(toError(error));
     }
   });
 }
@@ -410,15 +406,13 @@ export function switchAiMood(chatId: number): Promise<string> {
 }
 
 /**
- * 使某群当前回复代数失效并清空等候队列。/ai_chat disable 时调用；在途请求
- * 返回后也会因代数失配而停止发送和记忆回填。
+ * 使某群当前回复代数失效、清空等候队列并删除该群的 AI 记忆。/ai_chat disable、
+ * /clear_context 与群级 teardown 共用这一条路；在途请求返回后也会因代数失配而
+ * 停止发送和记忆回填。
  */
-export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Promise<void> {
-  let persistedDelete: Promise<void> | undefined;
-  if (purgeMemory) {
-    if (aiChatWorkerState.available) purgedAiMemoryChats.add(chatId);
-    persistedDelete = requestAiMemoryDelete(chatId, true);
-  }
+export async function invalidateAiChat(chatId: number): Promise<void> {
+  if (aiChatWorkerState.available) purgedAiMemoryChats.add(chatId);
+  const persistedDelete: Promise<void> = requestAiMemoryDelete(chatId, true);
   let workerInvalidated: Promise<void> | undefined;
   if (aiChatWorkerState.available) {
     const requestId: number = ++aiChatInvalidateRequestCounter.current;
@@ -435,7 +429,7 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
         aiChatInvalidateWaiters.set(requestId, { chatId, resolve, reject, timer });
       }
     );
-    if (!post({ type: "invalidateChat", chatId, purgeMemory, requestId })) {
+    if (!post({ type: "invalidateChat", chatId, requestId })) {
       const waiter: AiChatInvalidateWaiter | undefined = aiChatInvalidateWaiters.get(requestId);
       aiChatInvalidateWaiters.delete(requestId);
       if (waiter !== undefined) {
@@ -445,7 +439,7 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
     }
   }
   const settlements: PromiseSettledResult<void>[] = await Promise.allSettled([
-    persistedDelete ?? Promise.resolve(),
+    persistedDelete,
     workerInvalidated ?? Promise.resolve(),
   ]);
   const labels: readonly string[] = ["durable memory deletion", "Worker runtime invalidation"];
@@ -468,7 +462,7 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
 registerChatTeardown("aiChat", async (chatId: number): Promise<void> => {
   beginAiMemoryTeardown(chatId);
   try {
-    await invalidateAiChat(chatId, true);
+    await invalidateAiChat(chatId);
   } finally {
     finishAiMemoryTeardown(chatId);
   }

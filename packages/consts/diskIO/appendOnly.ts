@@ -16,8 +16,9 @@ export const DAY_FILE_JSON_INDENT: number = 2;
  * writeDay）。
  *
  * 追加失败会丢弃当前游标，让下一次 flush 重新校验文件——不这么做就会在一个
- * 损坏的结尾上继续追加。但重开一次的代价是把整个日文件 readFileSync +
- * JSON.parse 两遍、逐条走一次 schema 校验、再 readdirSync 扫一遍目录，而磁盘满
+ * 损坏的结尾上继续追加。但重开一次的代价是把整个日文件整份读回（`Bun.file`
+ * 的字节读 + 严格 UTF-8 解码）并 JSON.parse 两遍、逐条走一次 schema 校验、再
+ * readdirSync 扫一遍目录，而磁盘满
  * 或卷转只读这类故障不会在一个 flush 周期内自愈：不退避的话每个周期都要按日
  * 文件大小付一次这个代价，而故障期本身还会制造大量 `logger.error` 把
  * FLUSH_MAX_ENTRIES 压得更密。这条线程同时持有身份策略/群状态 SQLite、移除 outbox

@@ -128,20 +128,29 @@ export async function createBenchmarkConfigRoot(runRoot: string): Promise<string
     );
   }
   assertInsidePerformanceMockRoot(agentPath);
-  await Bun.write(agentPath, agentConfig, { mode: 0o600 });
+  await Bun.write(agentPath, agentConfig);
 
-  const telegramPath: string = join(configRoot, "telegram.json");
-  const telegramConfig: string = (await Bun.file(telegramPath).text()).replaceAll(
+  const telegramPath: string = join(configRoot, "bot.json");
+  const botConfig: string = (await Bun.file(telegramPath).text()).replaceAll(
     TELEGRAM_BOT_TOKEN_PLACEHOLDER,
     BENCHMARK_BOT_TOKEN
   );
-  if (telegramConfig.includes(TELEGRAM_BOT_TOKEN_PLACEHOLDER)) {
+  if (botConfig.includes(TELEGRAM_BOT_TOKEN_PLACEHOLDER)) {
     throw new Error(
       "Benchmark Telegram configuration still contains a placeholder token."
     );
   }
   assertInsidePerformanceMockRoot(telegramPath);
-  await Bun.write(telegramPath, telegramConfig, { mode: 0o600 });
+  await Bun.write(telegramPath, botConfig);
+
+  // 翻译凭据示例的占位私钥必然被启动总闸拒绝；与安装器一样不物化它，基准里翻译保持缺省。
+  const googleAuthPath: string = join(configRoot, "g-auth.json");
+  assertInsidePerformanceMockRoot(googleAuthPath);
+  await Bun.file(googleAuthPath).delete();
+  // 定时任务示例的会话 id 与地址都是假的，本地来源也不存在；基准里定时任务保持缺省。
+  const cronPath: string = join(configRoot, "cron.json");
+  assertInsidePerformanceMockRoot(cronPath);
+  await Bun.file(cronPath).delete();
   return configRoot;
 }
 

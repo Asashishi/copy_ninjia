@@ -143,5 +143,5 @@ test("任务失败仍释放并发槽并继续排空，空闲和非法停机预�
   expect(await drainWedRuntime(1_000)).toBe("flushed");
   expect(wedRuntime.current!.runner.activeCount).toBe(0);
   expect(wedRuntime.current!.tasks.size).toBe(0);
-  await expect(drainWedRuntime(-1)).rejects.toThrow("finite and non-negative");
+  await expect(drainWedRuntime(-1)).rejects.toThrow("Wed drain timeout must be a non-negative finite number.");
 });

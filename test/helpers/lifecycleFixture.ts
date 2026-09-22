@@ -5,12 +5,6 @@ import type { ApplicationLifecycleDependencies } from "../../packages/app/lifecy
 
 const calls: string[] = [];
 
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
-  let resolve!: (value: T) => void;
-  const promise: Promise<T> = new Promise<T>((done: (value: T) => void): void => { resolve = done; });
-  return { promise, resolve };
-}
-
 const acquireSingleInstanceLock = mock(async (): Promise<void> => { calls.push("acquireLock"); });
 const releaseSingleInstanceLock = mock(async (): Promise<void> => { calls.push("releaseLock"); });
 const initTelegramClients = mock((): void => { calls.push("initTelegram"); });
@@ -50,6 +44,8 @@ const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drain
 const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
 const drainGagRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainGag"); return "flushed"; });
 const drainWedRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainWed"); return "flushed"; });
+const drainDeferredCommandRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainDeferredCommands"); return "flushed"; });
+const drainCronScheduler = mock(async (): Promise<FlushResult> => { calls.push("drainCron"); return "flushed"; });
 const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
 const drainPendingMessageDeletions = mock(async (): Promise<FlushResult> => {
   calls.push("drainMessageDeletions");
@@ -63,6 +59,8 @@ const closeTranslate = mock(async (): Promise<FlushResult> => { calls.push("clos
 const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
 const initGagRuntime = mock((): void => { calls.push("initGag"); });
 const initWedRuntime = mock((): void => { calls.push("initWed"); });
+const initDeferredCommandRuntime = mock((): void => { calls.push("initDeferredCommands"); });
+const prepareRandomImageDirectory = mock(async (): Promise<void> => { calls.push("prepareImageDir"); });
 const enableWedMemberReview = mock((): void => { calls.push("enableWedMemberReview"); });
 const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
 const initTranslate = mock((): void => { calls.push("initTranslate"); });
@@ -71,6 +69,9 @@ const quiesceChatTitleRefresh = mock((): void => { calls.push("quiesceTitles"); 
 const quiesceTranslate = mock((): void => { calls.push("quiesceTranslate"); });
 const quiesceGagRuntime = mock((): void => { calls.push("quiesceGag"); });
 const quiesceWedRuntime = mock((): void => { calls.push("quiesceWed"); });
+const quiesceDeferredCommandRuntime = mock((): void => { calls.push("quiesceDeferredCommands"); });
+const quiesceCronScheduler = mock((): void => { calls.push("quiesceCron"); });
+const startCronScheduler = mock((): void => { calls.push("startCron"); });
 const abortChatTitleRefresh = mock((): void => { calls.push("abortTitles"); });
 const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
@@ -86,6 +87,8 @@ const initAntiRaid = mock((): void => { calls.push("initAntiRaid"); });
 const initBlocklistSweepScheduler = mock((): void => { calls.push("initBlocklistScheduler"); });
 const quiesceBlocklistSweepScheduler = mock((): void => { calls.push("quiesceBlocklistScheduler"); });
 const sweepManagedBlocklistChats = mock(async (): Promise<void> => { calls.push("sweepBlocklist"); });
+const startConfigReload = mock((): void => { calls.push("startConfigReload"); });
+const quiesceConfigReload = mock((): void => { calls.push("quiesceConfigReload"); });
 const restoreLuckState = mock((..._args: unknown[]): void => { calls.push("restoreLuck"); });
 const seedSenderCache = mock((_value: unknown): void => { calls.push("seedSender"); });
 const registerCommandMenu = mock(async (): Promise<void> => { calls.push("registerMenu"); });
@@ -143,6 +146,8 @@ const testDependencies = {
   drainAvatarUpdates,
   drainGagRuntime,
   drainWedRuntime,
+  drainDeferredCommandRuntime,
+  drainCronScheduler,
   drainTranslate,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
@@ -164,6 +169,8 @@ const testDependencies = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
+  initDeferredCommandRuntime,
+  prepareRandomImageDirectory,
   enableWedMemberReview,
   initAiChat,
   initDiskIO,
@@ -192,13 +199,18 @@ const testDependencies = {
   quiesceAvatarUpdates,
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
+  quiesceConfigReload,
   quiesceGagRuntime,
   quiesceWedRuntime,
+  quiesceDeferredCommandRuntime,
+  quiesceCronScheduler,
+  startCronScheduler,
   quiesceTranslate,
   seedSenderCache,
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  startConfigReload,
   sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,
@@ -265,6 +277,8 @@ export function installLifecycleFixtureHooks(): void {
       drainAvatarUpdates,
       drainGagRuntime,
       drainWedRuntime,
+      drainDeferredCommandRuntime,
+      drainCronScheduler,
       drainTranslate,
       drainPendingMessageDeletions,
       drainTelegramOutbound,
@@ -272,6 +286,8 @@ export function installLifecycleFixtureHooks(): void {
       initAvatarUpdates,
       initGagRuntime,
       initWedRuntime,
+      initDeferredCommandRuntime,
+      prepareRandomImageDirectory,
       enableWedMemberReview,
       initChatTitleRefresh,
       initTranslate,
@@ -281,6 +297,9 @@ export function installLifecycleFixtureHooks(): void {
       quiesceTranslate,
       quiesceGagRuntime,
       quiesceWedRuntime,
+      quiesceDeferredCommandRuntime,
+      quiesceCronScheduler,
+      startCronScheduler,
       abortChatTitleRefresh,
       hydrateWedMembers,
       hydrateAiMemory,
@@ -294,6 +313,8 @@ export function installLifecycleFixtureHooks(): void {
       initAntiRaid,
       initBlocklistSweepScheduler,
       sweepManagedBlocklistChats,
+      startConfigReload,
+      quiesceConfigReload,
       restoreLuckState,
       seedSenderCache,
       setBusinessWorkerFatalHandler,
@@ -321,6 +342,8 @@ export function installLifecycleFixtureHooks(): void {
     drainAntiRaid.mockImplementation(async () => { calls.push("drainAntiRaid"); return "flushed" as const; });
     drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
     drainWedRuntime.mockImplementation(async () => { calls.push("drainWed"); return "flushed" as const; });
+    drainDeferredCommandRuntime.mockImplementation(async () => { calls.push("drainDeferredCommands"); return "flushed" as const; });
+    drainCronScheduler.mockImplementation(async () => { calls.push("drainCron"); return "flushed" as const; });
     drainGagRuntime.mockImplementation(async () => { calls.push("drainGag"); return "flushed" as const; });
     drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
     drainPendingMessageDeletions.mockImplementation(async () => {
@@ -357,11 +380,12 @@ export const lifecycleFixture = {
   calls,
   cleanupOrphanedTempFiles,
   closeTranslate,
-  deferred,
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
   drainWedRuntime,
+  drainDeferredCommandRuntime,
+  drainCronScheduler,
   drainPendingMessageDeletions,
   drainTelegramOutbound,
   drainTranslate,
@@ -380,6 +404,8 @@ export const lifecycleFixture = {
   initAvatarUpdates,
   initGagRuntime,
   initWedRuntime,
+  initDeferredCommandRuntime,
+  prepareRandomImageDirectory,
   initChatTitleRefresh,
   initDiskIO,
   initTelegramClients,
@@ -394,6 +420,9 @@ export const lifecycleFixture = {
   quiesceChatTitleRefresh,
   quiesceGagRuntime,
   quiesceWedRuntime,
+  quiesceDeferredCommandRuntime,
+  quiesceCronScheduler,
+  startCronScheduler,
   quiesceTranslate,
   realDrainDependencies,
   refreshAllChatTitles,
@@ -413,6 +442,8 @@ export const lifecycleFixture = {
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  startConfigReload,
+  quiesceConfigReload,
   sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,

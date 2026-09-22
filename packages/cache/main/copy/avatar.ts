@@ -15,7 +15,11 @@ export const avatarUpdateState: {
   latestGeneration: 0,
 };
 
-/** 等待头像执行槽和 latest-only 槽归零的回调；完成或停机超时时结算清空。 */
+/**
+ * 等待头像执行槽和 latest-only 槽归零的回调；完成或停机超时时结算清空。
+ * 容量：同时在等排空的调用方数——只有停机路径会登记，实际至多一个；
+ * 不设淘汰，丢掉一个 waiter 会让停机永远等下去。
+ */
 export const avatarDrainWaiters: Set<() => void> = new Set();
 /** 头像入口闸与统一 abort owner；init 重建 controller，quiesce/abort 时关闭。 */
 export const avatarUpdateRuntime: { accepting: boolean; controller: AbortController } = {

@@ -38,6 +38,7 @@ import { trackAntiRaidTask } from "./taskTracker";
 import { requestVerificationAttemptPermit } from "./verificationAttemptPermit";
 import type { VerificationAttemptPermitResult } from
   "../../types/antiRaid/protocol";
+import { isTerminalVerificationPhase } from "../../states/verification/shared";
 
 export type VerificationAttemptRequester = (
   key: string,
@@ -66,12 +67,6 @@ function includesTerminalAttempt(effects: readonly VerificationEffect[]): boolea
     }
   }
   return false;
-}
-
-function isTerminalState(state: VerificationState | undefined): boolean {
-  return state?.kind === "kickPending" ||
-    state?.kind === "checkingInviter" ||
-    state?.kind === "expelling";
 }
 
 /** 按序执行一次转移返回的副作用；同一列表内先删后踢再通知的顺序有意义。 */
@@ -239,7 +234,7 @@ export async function runVerificationEffects({
   if (
     grantedAttempt >= VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS &&
     verificationRevisions.get(key)?.revision === grantedRevision &&
-    isTerminalState(verificationEntries.get(key)?.state)
+    isTerminalVerificationPhase(verificationEntries.get(key)?.state?.kind)
   ) {
     dispatchVerification(chatId, userId, {
       type: "terminalAttemptBudgetExhausted",

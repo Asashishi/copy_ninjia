@@ -22,7 +22,7 @@ import type {
 import type { ChatState } from "../../../types/chatState";
 import type { PendingChatStateWrite } from "../../../types/identityStorage";
 import type { StoredChatStateRow } from "../../../types/storageDatabase";
-import { requireStorageDatabase, storageSource } from "./context";
+import { assertPositiveRevision, requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull } from "./flush";
 
 /** 已提交主键叠加未提交最终值后的有效群集合；容量闸只需要这个，不碰 data。 */
@@ -58,9 +58,7 @@ export function handleChatStateWrite(
   const rowSource: string = storageSource("chat_states", message.chatId);
   assertTelegramChatId(message.chatId, rowSource);
   decodeAiPersona(message.aiPersona, rowSource);
-  if (!Number.isSafeInteger(message.revision) || message.revision < 1) {
-    throw new Error(`${rowSource}: revision must be a positive safe integer.`);
-  }
+  assertPositiveRevision(message.revision, rowSource);
   // 解码结果留着用：下面的唯一代理目标判定只关心「这次写有没有把 isProxySendEnabled
   // 打开」，重新解一遍纯属白付一次完整校验。
   const incoming: ChatState | null = message.data === null

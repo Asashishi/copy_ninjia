@@ -1,4 +1,5 @@
-import { EMPTY_OUTPUT_ITEMS, OPENAI_EMPTY_FUNCTION_CALLS as EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/openai";
+import { EMPTY_OUTPUT_ITEMS } from "../../consts/aiChat/openai";
+import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
 /**
  * OpenAI Responses 响应里的项目级诊断与 output item 解析。正文直接读 SDK 的
  * `output_text` 访问器，本文件只补 SDK 没有提供的异常收尾诊断、函数调用抽取

@@ -4,7 +4,7 @@
  * 观测发生在主线程（`my_chat_member` 更新与按需 `getChatMember` 现查都只到那边），
  * 执行发生在本线程（踢人、禁言、删消息都走 telegramApi）。两边因此按
  * 变更镜像：主线程每次确证或作废都发一条 `botPermissionsChanged`，Worker 重建与
- * 进程启动时整表重放（见 packages/antiRaid/workerBridge.ts）。
+ * 进程启动时整表重放（见 packages/antiRaid/workerBridge/replay.ts）。
  *
  * 读出来的是三态。**「没观测到」不是「观测到没有」**：撤管理员会镜像确证的
  * false；离群、`/init` 切换和主动失效才清成未知，首次现查失败也继续保持未知。

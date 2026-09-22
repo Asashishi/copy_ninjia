@@ -1,6 +1,7 @@
 import * as diskIO from "../diskIO";
 import { assertStorageAdmission } from "../diskIO/storageAdmission";
 import { canQueueDiskIOBusiness } from "../diskIO/transport";
+import { describeFlushFailure } from "../diskIO/businessWrite";
 import { storageWriteCost } from "../../libs/storageWriteBudget";
 import {
   blocklistEntryCache,
@@ -169,11 +170,8 @@ export async function confirmIdentityPolicyPersisted(
   if (retryUnacknowledged) requeueUnacknowledgedIdentityWrite(table, id);
   const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome(table);
   if (outcome.result !== "flushed") {
-    const domainNote: string = outcome.failedDomains === undefined
-      ? "no per-domain reply"
-      : `failed domains: ${outcome.failedDomains.join(", ")}`;
     throw new Error(
-      `Persistence flush ${outcome.result} for ${table} identity ${id} revision ${pending.revision}; ${domainNote}.`
+      `Persistence flush ${outcome.result} for ${table} identity ${id} revision ${pending.revision}; ${describeFlushFailure(outcome)}.`
     );
   }
   if (

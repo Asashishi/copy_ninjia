@@ -1,4 +1,3 @@
-import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
 import type { AtmosphereTexts } from "../types/atmosphere";
 import type { CachedUser } from "../types/chatState";
 import { joinPersonName, sanitizeDisplayName } from "../libs/text";
@@ -9,12 +8,22 @@ import { joinPersonName, sanitizeDisplayName } from "../libs/text";
  * first_name/title。
  * @param user 要生成标签的用户/频道。
  */
-export function formatUserLabel(user: CachedUser, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
+export function formatUserLabel(user: CachedUser, atmosphere: AtmosphereTexts): string {
   if (user.username) return `@${user.username}`;
   // title / first_name 是用户可控内容，同样要清洗后才拼进机器人的句子；
   // username 由 Telegram 限定字符集，直接用。
   if (user.isChannel) return sanitizeDisplayName(user.title ?? "") || "这个频道";
   return sanitizeDisplayName(user.first_name ?? "") || atmosphere.NOTICE_TEXTS.unknownUser;
+}
+
+/**
+ * 命令回执里的发起人标签。解析不出发起人（匿名管理员、频道身份或缓存缺失）
+ * 时退化为氛围文案里的「未知发起人」措辞，其余情况与 formatUserLabel 一致。
+ * @param actor 已解析的发起人；未解析出来时传 undefined。
+ * @param atmosphere 当前群的氛围文案。
+ */
+export function formatActorLabel(actor: CachedUser | undefined, atmosphere: AtmosphereTexts): string {
+  return actor === undefined ? atmosphere.NOTICE_TEXTS.unknownActor : formatUserLabel(actor, atmosphere);
 }
 
 /**
@@ -24,12 +33,12 @@ export function formatUserLabel(user: CachedUser, atmosphere: AtmosphereTexts = 
  * 而不是泛指的「这个杂鱼」。按裸 id 下的命令正是这一档——那个人可能从没在
  * 本天才见过的群里说过话，缓存里自然什么都没有。回执必须把 id 原样念出来，
  * 否则打错一位数字，管理员从「已经把这个杂鱼踢出去了」里根本看不出来。
- * 频道身份念成「频道 <id>」：`/gag`、`/ungag`、`/unblock`、`/permission` 与
+ * 频道身份念成「频道 <id>」：`/gag`、`/ungag`、`/block disable`、`/permission` 与
  * `/white` 都接受负数 id，管理员该从回执里看出本天才把它当成了哪一类目标；
- * `/unblock` 还据此决定走哪个解封接口。
+ * `/block disable` 还据此决定走哪个解封接口。
  * @param user 目标用户/频道；只带 id 的最小身份也接受。
  */
-export function formatTargetLabel(user: CachedUser, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
+export function formatTargetLabel(user: CachedUser, atmosphere: AtmosphereTexts): string {
   if (user.username !== undefined || user.first_name !== undefined || user.title !== undefined) {
     return formatUserLabel(user, atmosphere);
   }
@@ -43,7 +52,7 @@ export function formatTargetLabel(user: CachedUser, atmosphere: AtmosphereTexts 
  * 单个空格，避免一句话被撑成多行。
  * @param user 要生成展示名的用户/频道。
  */
-export function formatFullName(user: CachedUser, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
+export function formatFullName(user: CachedUser, atmosphere: AtmosphereTexts): string {
   const rawName: string = user.isChannel
     ? user.title ?? ""
     : joinPersonName(user.first_name, user.last_name);

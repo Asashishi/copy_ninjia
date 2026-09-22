@@ -12,7 +12,7 @@
  * 字节偏移并发追加同一个日志文件会互相踩踏写坏文件）。这里只是门面：主线程
  * 下 error 日志经 relayLogMessage 转投给它；Worker 线程里的 logger 处于「转发模式」：
  * error 日志经单批 ACK、有消息数与载荷字节硬顶的 ForwardedLogBatch 通道回主线程，由拥有该 Worker
- * 的主线程模块（见 aiChat/workerBridge.ts 与 antiRaid/workerBridge.ts 的 onEvent）调用 relayLogMessage 转投唯一的
+ * 的主线程模块（见 aiChat/workerBridge.ts 与 antiRaid/workerBridge/controller.ts 的 onEvent）调用 relayLogMessage 转投唯一的
  * 落盘线程。
  */
 

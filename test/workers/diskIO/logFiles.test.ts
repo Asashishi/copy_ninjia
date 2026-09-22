@@ -153,6 +153,26 @@ describe("diskIO/logFiles 启动恢复", () => {
     expect(existsSync(tempPath)).toBeFalse();
   });
 
+  test("临时与过期文件删不掉时静默跳过，其余照删、维护不抛", async () => {
+    await initLogFiles();
+    const stuckTempPath: string = join(LOGS_DIR, `stuck${TMP_FILE_SUFFIX}`);
+    const stuckStalePath: string = join(LOGS_DIR, "2000-01-02.json");
+    const tempPath: string = join(LOGS_DIR, `other${TMP_FILE_SUFFIX}`);
+    const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
+    // 目录形态的同名条目 unlink 必然 EISDIR，模拟权限等删除失败。
+    mkdirSync(stuckTempPath);
+    mkdirSync(stuckStalePath);
+    await Bun.write(tempPath, "partial");
+    await Bun.write(stalePath, "{}");
+
+    await maintainLogRetention();
+
+    expect(existsSync(stuckTempPath)).toBeTrue();
+    expect(existsSync(stuckStalePath)).toBeTrue();
+    expect(existsSync(tempPath)).toBeFalse();
+    expect(existsSync(stalePath)).toBeFalse();
+  });
+
   test("批次写入遇到不兼容文件时失败并重置游标，原文件保持不变", async () => {
     const today: string = getTokyoDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);

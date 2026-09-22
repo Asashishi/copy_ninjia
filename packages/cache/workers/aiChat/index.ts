@@ -15,8 +15,13 @@ export function invalidateChatRuntimeCache(chatId: number): void {
   clearChatHeartbeatCache(chatId);
 }
 
-/** Worker dispose/测试隔离的全量清理边界；生产中的 Worker 重建由线程上下文
- * 销毁天然完成同样效果。 */
+/**
+ * 本线程各领域缓存的全量清理边界。
+ *
+ * **只有测试隔离用它**：生产中 AI Worker 的重建就是换一个 isolate，线程上下文
+ * 销毁天然完成同样效果，没有任何生产路径需要手工清空这九份表。运行期的按群
+ * 失效走上面的 invalidateChatRuntimeCache。
+ */
 export function resetAiChatWorkerCache(): void {
   resetAiChatHeartbeatCache();
   resetAiChatCompactionCache();

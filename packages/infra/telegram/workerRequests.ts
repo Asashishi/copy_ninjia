@@ -1,17 +1,14 @@
 import { InputFile } from "grammy";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { bot } from "./mainClient";
-import type { HydratedTelegramFile } from "./mainClient";
+import { downloadTelegramFileBytes } from "./fileDownload";
 import type { SendTemporaryMessageOnMainParams } from "./temporaryMessage";
-import { signalWithTimeout } from "../../libs/abortSignal";
-import { readBoundedResponseBytes } from "../../libs/boundedResponse";
 import {
   MEDIA_DOWNLOAD_TIMEOUT_MS,
   MEDIA_FILE_METADATA_TIMEOUT_MS,
   MEDIA_MAX_DOWNLOAD_BYTES,
 } from "../../consts/aiChat/media";
 import { VOICE_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/voice";
-import type { BoundedResponseResult } from "../../libs/boundedResponse";
 import type {
   TelegramWorkerDownloadFileResult,
   TelegramWorkerJsonCall,
@@ -19,7 +16,6 @@ import type {
   TelegramWorkerTemporaryMessageResult,
   TelegramWorkerTemporaryMessageSentResult,
 } from "../../types/telegramWorker";
-import { runTelegramCategorizedRequest } from "./outboundGate";
 import { telegramRetryCategoryFor } from "./outboundRetryPolicy";
 import { markSelfSent } from "../selfSentTracker";
 
@@ -100,44 +96,17 @@ function executeJsonCall(
   }
 }
 
-async function downloadTelegramFile(
+function downloadTelegramFile(
   request: Extract<TelegramWorkerRequest, { operation: "downloadFile" }>,
   signal: AbortSignal
 ): Promise<TelegramWorkerDownloadFileResult> {
-  const maxBytes: number = request.purpose === "vision"
-    ? MEDIA_MAX_DOWNLOAD_BYTES
-    : VOICE_MAX_DOWNLOAD_BYTES;
-  const file: HydratedTelegramFile = await bot.api.getFile(
-    request.fileId,
-    signalWithTimeout(signal, MEDIA_FILE_METADATA_TIMEOUT_MS) as never
-  );
-  if (!file.file_path) return { status: "missingPath" };
-  const downloadSignal: AbortSignal = signalWithTimeout(
+  return downloadTelegramFileBytes({
+    fileId: request.fileId,
+    maxBytes: request.purpose === "vision" ? MEDIA_MAX_DOWNLOAD_BYTES : VOICE_MAX_DOWNLOAD_BYTES,
+    metadataTimeoutMs: MEDIA_FILE_METADATA_TIMEOUT_MS,
+    downloadTimeoutMs: MEDIA_DOWNLOAD_TIMEOUT_MS,
     signal,
-    MEDIA_DOWNLOAD_TIMEOUT_MS
-  );
-  const response: Response = await runTelegramCategorizedRequest({
-    category: "download",
-    signal: downloadSignal,
-    execute: (requestSignal: AbortSignal): Promise<Response> => fetch(file.getUrl(), {
-      redirect: "error",
-      signal: requestSignal,
-    }),
   });
-  if (!response.ok) {
-    // 不读取错误页，但要显式释放响应体，避免持续失败时占住连接和缓冲。
-    void response.body?.cancel().catch((): undefined => undefined);
-    return { status: "httpError", httpStatus: response.status };
-  }
-  const download: BoundedResponseResult = await readBoundedResponseBytes(
-    response,
-    maxBytes
-  );
-  if (!download.ok) {
-    return { status: "tooLarge", observedBytes: download.observedBytes };
-  }
-  if (download.bytes.byteLength === 0) return { status: "empty" };
-  return { status: "ok", bytes: download.bytes };
 }
 
 /**

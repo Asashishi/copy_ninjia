@@ -294,6 +294,20 @@ describe("Telegram 常规动作封装", () => {
     });
   });
 
+  test("只有 hasSpoiler 为 true 时才带 has_spoiler，缺省时请求里没有该字段", async () => {
+    const sendPhotoMock = mock(async (..._args: unknown[]) => ({ message_id: 81 }));
+    const api = { sendPhoto: sendPhotoMock } as unknown as TelegramApi;
+
+    await sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api, hasSpoiler: true });
+    await sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([2]), mimeType: "image/png", api, hasSpoiler: false });
+    await sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([3]), mimeType: "image/png", api });
+
+    const spoilers: unknown[] = sendPhotoMock.mock.calls.map(
+      (call: unknown[]): unknown => (call[2] as { has_spoiler?: boolean }).has_spoiler
+    );
+    expect(spoilers).toEqual([true, undefined, undefined]);
+  });
+
   test("从内存上传歌曲：文件名、封面与音频元数据一次组装齐", async () => {
     const sendAudioMock = mock(async (..._args: unknown[]) => ({
       message_id: 90,

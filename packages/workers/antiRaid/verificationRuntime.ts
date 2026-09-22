@@ -1,6 +1,4 @@
 import { logger } from "../../infra/logger";
-import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
-import { trimSlidingWindowArray } from "../../libs/slidingWindowRateLimit";
 import {
   LOCKDOWN_KICK_DEDUPE_MS,
 } from "../../consts/antiRaid/verification";
@@ -27,18 +25,17 @@ import type {
   VerificationUpsertEvent,
 } from "../../types/antiRaid/events";
 import {
-  checkingInviterOf,
-  expellingOf,
+  adoptVerificationState,
   transitionVerification,
 } from "../../states/verification";
 import type {
-  ExpelSnapshot,
   VerificationEvent,
   VerificationState,
   VerificationTransition,
 } from "../../types/states/verification";
 import {
   parseVerificationKey,
+  requireVerificationKey,
   verificationKey,
   verificationKeyPrefix,
 } from "../../libs/verificationKey";
@@ -60,6 +57,7 @@ import {
   isPersistedVerificationState,
   verificationSnapshot,
 } from "./verificationSnapshot";
+import { isTerminalVerificationPhase } from "../../states/verification/shared";
 
 declare const self: Worker;
 
@@ -90,13 +88,7 @@ function startVerificationTimer(
     expiryTimer.unref();
     return expiryTimer;
   }
-  if (
-    state.kind === "kickPending" ||
-    state.kind === "checkingInviter" ||
-    state.kind === "expelling"
-  ) {
-    return undefined;
-  }
+  if (isTerminalVerificationPhase(state.kind)) return undefined;
   const dedupeTimer: ReturnType<typeof setTimeout> = setTimeout(
     (): void => dispatchVerification(chatId, userId, { type: "dedupeExpired" }),
     LOCKDOWN_KICK_DEDUPE_MS
@@ -266,52 +258,9 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
       continue;
     }
     verificationRevisions.set(key, { revision: record.revision });
-    const expelSnapshot: ExpelSnapshot = {
-      label: record.label,
-      isBot: record.isBot,
-      announcementMessageId: record.announcementMessageId,
-      reminderMessageId: record.reminderMessageId,
-      replyReminderMessageId: record.replyReminderMessageId,
-      joinedAt: record.joinedAt,
-      expiresAt: record.expiresAt,
-    };
-    const state: VerificationState = record.phase === "kickPending"
-      ? {
-        kind: "kickPending",
-        label: record.label,
-        isBot: record.isBot,
-        requestedAt: record.requestedAt,
-        countedJoinAt: record.countedJoinAt,
-        announcementMessageId: record.announcementMessageId,
-        effectStarted: false,
-        executionStarted: false,
-      }
-      : record.phase === "checkingInviter"
-      ? checkingInviterOf(record.terminalInviterId, expelSnapshot)
-      : record.phase === "expelling"
-        ? expellingOf(record.expelReason, expelSnapshot, record)
-        : {
-          kind: "pending",
-          label: record.label,
-          isBot: record.isBot,
-          announcementMessageId: record.announcementMessageId,
-          // 与 states/verification.ts 的刷屏窗口共用同一份边界判定：手写 filter
-          // 会漏掉时钟回拨后落在「未来」的那些，恢复出来的记录带着一整窗永不
-          // 过期的时间戳，接着几条发言就能把人判成 flood。
-          trackedMessageTimes: trimSlidingWindowArray({
-            timestamps: record.trackedMessageTimes,
-            windowMs: JOIN_WINDOW_MS,
-            now,
-          }),
-          invitedBy: record.invitedBy,
-          reminderMessageId: record.reminderMessageId,
-          replyReminderMessageId: record.replyReminderMessageId,
-          replyReminderRequested: record.replyReminderRequested,
-          welcomeAnchorMessageId: record.welcomeAnchorMessageId,
-          reminderSuperseded: record.reminderSuperseded,
-          joinedAt: record.joinedAt,
-          expiresAt: record.expiresAt,
-        };
+    // 快照 → 状态的形状转换是纯逻辑，留在 states/verification/adopt.ts；本函数
+    // 只负责计时器、提醒与补投这些有副作用的部分。
+    const state: VerificationState = adoptVerificationState(record, now);
     // 同代增量重放也要先清旧 timer，否则旧期限会提前触发新状态。
     const previousEntry: VerificationEntry | undefined = verificationEntries.get(key);
     if (previousEntry?.timer !== undefined) clearTimeout(previousEntry.timer);
@@ -334,11 +283,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
         dispatchVerification,
       });
     } else if (
-      (
-        state.kind === "kickPending" ||
-        state.kind === "checkingInviter" ||
-        state.kind === "expelling"
-      ) &&
+      isTerminalVerificationPhase(state.kind) &&
       message.resumePersistedTerminals === true
     ) {
       dispatchVerification(
@@ -366,11 +311,7 @@ export function handleVerificationPersisted(
   const userId: number = parsed.userId;
   const state: VerificationState | undefined =
     verificationEntries.get(message.key)?.state;
-  if (
-    state?.kind !== "kickPending" &&
-    state?.kind !== "checkingInviter" &&
-    state?.kind !== "expelling"
-  ) return;
+  if (state === undefined || !isTerminalVerificationPhase(state.kind)) return;
   dispatchVerification(
     chatId,
     userId,
@@ -402,28 +343,11 @@ export function disableJoinGuardChat(chatId: number): void {
   }
   for (const key of [...verificationEntries.keys()]) {
     if (!key.startsWith(prefix)) continue;
-    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
-    if (parsed === null) {
-      // 理论上进不来（键由 verificationKey 生成）；真的进来了也不能把条目留下，
-      // 但没有 userId 就没法投递 tombstone，只能就地删掉并留一行诊断。
-      const entry: VerificationEntry | undefined = verificationEntries.get(key);
-      if (entry?.timer !== undefined) clearTimeout(entry.timer);
-      cancelReminderDelivery(key);
-      verificationEntries.delete(key);
-      logger.error(`Dropped a join verification entry with an unparsable key while disabling the guard: ${key}`);
-      continue;
-    }
-    dispatchVerification(chatId, parsed.userId, { type: "guardDisabled" });
+    dispatchVerification(chatId, requireVerificationKey(key).userId, { type: "guardDisabled" });
   }
   for (const key of [...deferredVerificationRecords.keys()]) {
     if (!key.startsWith(prefix)) continue;
-    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
-    if (parsed === null) {
-      deferredVerificationRecords.delete(key);
-      logger.error(`Dropped a deferred join verification with an unparsable key while disabling the guard: ${key}`);
-      continue;
-    }
-    deleteDeferredVerification(chatId, parsed.userId);
+    deleteDeferredVerification(chatId, requireVerificationKey(key).userId);
   }
 }
 
@@ -435,23 +359,15 @@ export function deactivateVerificationChat(chatId: number): void {
   }
   for (const [key, entry] of [...verificationEntries]) {
     if (!key.startsWith(prefix)) continue;
+    const userId: number = requireVerificationKey(key).userId;
     cancelReminderDelivery(key);
-    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
     if (entry.timer !== undefined) clearTimeout(entry.timer);
     verificationEntries.delete(key);
-    if (isPersistedVerificationState(entry.state) && parsed !== null) {
-      publishVerificationChange(chatId, parsed.userId, true);
-    }
+    if (isPersistedVerificationState(entry.state)) publishVerificationChange(chatId, userId, true);
   }
   for (const key of [...deferredVerificationRecords.keys()]) {
     if (!key.startsWith(prefix)) continue;
-    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
-    if (parsed === null) {
-      deferredVerificationRecords.delete(key);
-      logger.error(`Dropped a deferred join verification with an unparsable key during chat teardown: ${key}`);
-      continue;
-    }
-    deleteDeferredVerification(chatId, parsed.userId);
+    deleteDeferredVerification(chatId, requireVerificationKey(key).userId);
   }
 }
 

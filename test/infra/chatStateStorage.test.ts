@@ -68,6 +68,7 @@ const {
   resetChatStateCache,
   unacknowledgedChatStateWrites,
 } = await import("../../packages/cache/main/chatState");
+const { diskIORuntime } = await import("../../packages/cache/main/diskIO");
 const {
   assertChatStateCapacity,
   hydrateChatStateCache,
@@ -123,6 +124,24 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     expect(JSON.parse(message.data!)).toEqual({ isInitEnabled: true, title: "Test" });
   });
 
+  test("空状态只在准入通过后才摘出 LRU；闸拒绝时缓存与未 ACK 记账保持原样", () => {
+    chatStateCache.set(-1001, {});
+    diskIORuntime.fatalSignaled = true;
+    try {
+      expect(() => queueChatStateWrite(-1001)).toThrow("Disk I/O refused chat state publication.");
+    } finally {
+      diskIORuntime.fatalSignaled = false;
+    }
+    expect(chatStateCache.has(-1001)).toBeTrue();
+    expect(unacknowledgedChatStateWrites.has(-1001)).toBeFalse();
+    expect(diskMessages).toHaveLength(0);
+
+    queueChatStateWrite(-1001);
+    expect(chatStateCache.has(-1001)).toBeFalse();
+    expect(unacknowledgedChatStateWrites.get(-1001)).toMatchObject({ deleted: true });
+    expect(diskMessages[0]).toMatchObject({ type: "chatStateWrite", chatId: -1001, data: null });
+  });
+
   test("旧 ACK 不会删除同一群更新的 revision", () => {
     chatStateCache.set(-1001, { title: "first" });
     const firstRevision: number = queueChatStateWrite(-1001);
@@ -148,6 +167,33 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     await expect(persistChatState(-1001, "missing ACK"))
       .rejects.toThrow("did not acknowledge");
     expect(unacknowledgedChatStateWrites.has(-1001)).toBeTrue();
+  });
+
+  test("领域 flush 失败时报错逐字点名结局、revision 与失败领域；无回执时如实说明", async () => {
+    chatStateCache.set(-1001, { isInitEnabled: true });
+    flushDiskIODomainOutcome.mockImplementationOnce(
+      async (): Promise<DomainFlushOutcome> => ({ result: "failed", failedDomains: ["chatState", "luck"] })
+    );
+    const first: Error = await persistChatState(-1001, "ctx").then(
+      (): never => { throw new Error("expected rejection"); },
+      (error: unknown): Error => error as Error
+    );
+    const firstRevision: number = unacknowledgedChatStateWrites.get(-1001)!.revision;
+    expect(first.message).toBe(
+      `Failed to persist chat state update (ctx): flush failed for chat -1001 revision ${firstRevision}; failed domains: chatState, luck.`
+    );
+
+    flushDiskIODomainOutcome.mockImplementationOnce(
+      async (): Promise<DomainFlushOutcome> => ({ result: "timedOut" })
+    );
+    const second: Error = await persistChatState(-1001, "ctx").then(
+      (): never => { throw new Error("expected rejection"); },
+      (error: unknown): Error => error as Error
+    );
+    const secondRevision: number = unacknowledgedChatStateWrites.get(-1001)!.revision;
+    expect(second.message).toBe(
+      `Failed to persist chat state update (ctx): flush timedOut for chat -1001 revision ${secondRevision}; no per-domain reply.`
+    );
   });
 
   test("Worker 重建从当前 LRU 重编码最新 revision，删除只保留墓碑", async () => {

@@ -10,8 +10,10 @@
  * 打开、探测与追加；截断修复只供调用方显式选择的诊断材料和日志使用。
  *
  * 两层 API：openAppendOnlyFile/appendToAppendOnlyFile 直接按完整路径操作，
- * 供入群日志等固定路径文件使用；openDayFile/appendToDayFile 是它们在
- * `<dir>/<day>.json` 命名约定上的薄封装，供按天滚动的三个领域使用。
+ * 供入群日志与广告样本使用；openDayFile/appendToDayFile 是它们在
+ * `<dir>/<day>.json` 命名约定上的薄封装。appendToDayFile 供按天滚动的日志、每日
+ * 运势与待验证三个领域使用；openDayFile 只有每日运势（snapshotFiles.ts）使用，
+ * 日志与待验证由各自模块构造 DayFileState。
  */
 
 import { closeSync, fsyncSync, openSync, statSync, writeSync } from "node:fs";
@@ -22,6 +24,7 @@ import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { readUtf8TextInput } from "../../libs/inputValidation";
 import { isPlainRecord } from "../../libs/record";
 import { inspectOptionalFile } from "../../libs/fileAccess";
+import { toErrorOr } from "../../libs/errorMessage";
 
 const UTF8_ENCODER: TextEncoder = new TextEncoder();
 
@@ -185,7 +188,7 @@ export function openValidatedAppendOnlyFile({
   return state;
 }
 
-/** openAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装（按天滚动的三个领域用）。 */
+/** openAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装（每日运势 snapshotFiles.ts 使用）。 */
 export async function openDayFile(
   dir: string,
   day: string,
@@ -340,7 +343,7 @@ export async function appendToAppendOnlyFile({
     const recovered: AppendOnlyFileState = await openAppendOnlyFile(path, mode, repair);
     state.size = recovered.size;
     state.empty = recovered.empty;
-    throw failure instanceof Error ? failure : new Error("Append failed with a non-Error value.");
+    throw toErrorOr(failure, "Append failed with a non-Error value.");
   }
   state.size = state.size - 2 + data.length;
 }

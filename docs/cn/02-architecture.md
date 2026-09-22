@@ -36,7 +36,7 @@ flowchart TD
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 SQLite `pending_blocked_removals` 表；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
 - **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/`、`wed/` 六个领域目录的串行读写；`state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
 
-[`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) 都只是稳定公开面的薄显式导出，不再持有实现或状态。AI 的监督生命周期与跨线程代理归 [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)，每消息入口归 [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts)；Anti-Raid 的监督生命周期归 [`workerBridge.ts`](../../packages/antiRaid/workerBridge.ts)，durable 投递归 [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)，update 路由归 [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts)。广告检测继续按「主线程投递门禁与候选字段投影、Worker 判定与副作用、不可丢的拉黑与封禁回主线程」分工，候选构造见 [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts)，投递与排空见 [`adDetect.ts`](../../packages/antiRaid/adDetect.ts)，Worker 流水线见 [`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/)。
+[`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) 都只是稳定公开面的薄显式导出，不再持有实现或状态。AI 的监督生命周期与跨线程代理归 [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)，每消息入口归 [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts)；Anti-Raid 的监督生命周期归 [`workerBridge/controller.ts`](../../packages/antiRaid/workerBridge/controller.ts)，durable 投递归 [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)，update 路由归 [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts)。广告检测继续按「主线程投递门禁与候选字段投影、Worker 判定与副作用、不可丢的拉黑与封禁回主线程」分工，候选构造见 [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts)，投递与排空见 [`adDetect.ts`](../../packages/antiRaid/adDetect.ts)，Worker 流水线见 [`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/)。
 
 验证领域仍由同一个 dispatcher 与 revision 入口保证单一权威，但纯状态转移已按 join、pending、terminal 与 disable 生命周期拆到 [`packages/states/verification/`](../../packages/states/verification/)，[`packages/states/verification.ts`](../../packages/states/verification.ts) 只保留完整事件路由；Worker 的 Telegram 副作用进一步把踢人与终态处置拆到 [`packages/workers/antiRaid/verificationEffects/`](../../packages/workers/antiRaid/verificationEffects/)。私密模式的纯状态转移按同一模式拆到 [`packages/states/lockdown/`](../../packages/states/lockdown/)（加锁、落盘、恢复、公告与重启接管五段），[`packages/states/lockdown.ts`](../../packages/states/lockdown.ts) 只保留状态图与完整事件路由。lockdown 恢复与验证镜像接收分别由 [`lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) 和 [`verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts) 承担。
 
@@ -106,15 +106,15 @@ flowchart TD
 
 入口 [`index.ts`](../../index.ts) 只组装 [`packages/app/lifecycle.ts`](../../packages/app/lifecycle.ts) 的 `ApplicationLifecycle`；生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入，一切运行时初始化都显式发生：
 
-`runApplication()` 以 `"main"` 模式调用统一的 `ApplicationLifecycle.run(mode)`，只在 `import.meta.main` 为真时自动执行；该模式安装进程信号/异常 handler，并把未处理的运行错误记录为非零退出。测试或嵌入式宿主必须显式调用 `runTest()`：它选择 `"test"` 模式，不接管进程 handler，并在完成 `dispose()` 后把启动/轮询异常原样交还调用方。两种模式共用同一条 `init()` → `wait()` → `dispose()` 边界，普通 import 仍无副作用。
+`index.ts` 只导出一个 `application`（`ApplicationLifecycle` 实例），并在 `import.meta.main` 为真时调用 `application.run("main")`。`"main"` 模式安装进程信号/异常 handler，并把未处理的运行错误记录为非零退出。测试或嵌入式宿主显式调用 `application.run("test")`：该模式不接管进程 handler，并在完成 `dispose()` 后把启动/轮询异常原样交还调用方。两种模式共用同一条 `init()` → `wait()` → `dispose()` 边界，普通 import 仍无副作用。
 
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
-3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，出口在 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。
+3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`bot.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。随后按恢复出的 `state.global.assets.randomHImageDir` 准备专用图库（[`packages/infra/randomImage.ts`](../../packages/infra/randomImage.ts)）：创建缺失目录，核对访问权限、SHA-256 文件名与条目类型，失败拒绝启动。
 4. 初始化 **Disk I/O Worker**。日志、AI、贴纸、运势、待验证、入群日志、wed 成员与 `database/storage.sqlite` 先完成全域只读 inspect 和严格解码；全部成功后才统一 adopt owner，成功回执之后再清理临时/孤儿/过期文件、执行 compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 先经 `midnightMaintenance` 通知主线程接纳 `/wed` 每日成员复核，再维护运势、日志、入群日志、广告样本归档、待验证日文件和临时广告免检累计；各领域原有的启动或业务事件触发清理继续作为兜底，待验证轮换失败只保留不阻止退出的一秒重试 timer。任何 inspect 失败都保留所有领域现场，不 chmod、rewrite、unlink，也不留下维护 cron。主线程接管 wed 成员集合，并接收 `chat_states`、永久名单计数和未完成处置，不复制永久白名单、黑名单或临时广告免检活动整表。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
-6. 初始化 **AI Worker**（AI 配置不可用时这一步只记一行日志并整体跳过），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker** 与黑名单补扫调度，并对已托管的群补扫一轮黑名单。
-7. 把 `state.global.assets` 的缺项补成内置缺省值（后台落盘，不阻塞启动），启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
+6. 初始化 **AI Worker**（AI 配置不可用时不启动 Worker、只记一行日志，恢复出的记忆与贴纸目录只写进主线程镜像，等热重载补齐配置后再启动），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker**，按 `cron.json` 启动定时任务调度（[`packages/cron/scheduler.ts`](../../packages/cron/scheduler.ts)），开始监听 `config/` 热重载，再初始化黑名单补扫调度，并对已托管的群补扫一轮黑名单。
+7. 把 `state.global.assets` 的缺项补成内置缺省值（后台落盘，不阻塞启动；首次运行的 `state.json` 由此生成），启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
 
 失败与退出统一由 `ApplicationLifecycle` 收口：只有已取得的资源才会释放或 flush。
 
@@ -122,11 +122,11 @@ flowchart TD
 
 正常与异常停机由同一个生命周期收口，顺序固定：
 
-1. **Quiesce**：停下标题、头像、翻译、gag 新预约与 blocklist 补扫调度器，并停止 runner。五个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这五个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。五次调用都是幂等赋值，重复执行没有代价。
+1. **Quiesce**：停下标题、头像、翻译、gag 与 wed 新预约、延迟命令（`/h_image` 抽图与收图、`/info` 查询）接纳、cron 定时任务、blocklist 补扫调度器和 `config/` 热重载监听，并停止 runner。九个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这九个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。七次调用都是幂等的，重复执行没有代价。
 2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
 3. **Flush 与 dispose**：正常路径先排空 Anti-Raid、gag 提示与统一延迟删除，再 flush AI、排空 Telegram 出站、flush Disk I/O 与 StateStore；最终 dispose 固定按同一维护排空顺序，再执行「flush AI → 终止 AI → 排空 Telegram 出站 → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」。
 
-生命周期与 Anti-Raid drain 的进程内耗时预算统一通过 [`packages/libs/monotonicDeadline.ts`](../../packages/libs/monotonicDeadline.ts) 和 `performance.now()` 计算，系统时钟回拨不能延长关停或排空期限；业务状态与持久化所需的绝对时间戳仍使用 `Date.now()`。
+生命周期、Anti-Raid drain 与 getUpdates 重试窗口的进程内耗时预算统一通过 [`packages/libs/monotonicDeadline.ts`](../../packages/libs/monotonicDeadline.ts) 和 `performance.now()` 计算，系统时钟回拨不能延长关停或排空期限；业务状态与持久化所需的绝对时间戳仍使用 `Date.now()`。
 
 失败语义：
 

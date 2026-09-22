@@ -1,4 +1,3 @@
-import { LUCK_TIER_COMMENTS } from "./atmosphere/teasing/luck";
 import type { LuckTier } from "../types/luckChallenge";
 
 /** /luck_challenge 内联抽签（packages/commands/luckChallenge/）的调参常量。 */
@@ -9,13 +8,13 @@ import type { LuckTier } from "../types/luckChallenge";
  * 区间两两不重叠、按档递减，「尚可」的 45~55 区间跨越 50。
  */
 export const LUCK_TIERS: readonly LuckTier[] = [
-  { label: "大吉", weight: 7, comment: LUCK_TIER_COMMENTS.大吉, fortunePercentRange: [88, 97] as const },
-  { label: "吉", weight: 15, comment: LUCK_TIER_COMMENTS.吉, fortunePercentRange: [72, 82] as const },
-  { label: "小吉", weight: 20, comment: LUCK_TIER_COMMENTS.小吉, fortunePercentRange: [58, 67] as const },
-  { label: "尚可", weight: 26, comment: LUCK_TIER_COMMENTS.尚可, fortunePercentRange: [45, 55] as const },
-  { label: "小凶", weight: 17, comment: LUCK_TIER_COMMENTS.小凶, fortunePercentRange: [33, 42] as const },
-  { label: "凶", weight: 10, comment: LUCK_TIER_COMMENTS.凶, fortunePercentRange: [18, 28] as const },
-  { label: "大凶", weight: 5, comment: LUCK_TIER_COMMENTS.大凶, fortunePercentRange: [3, 12] as const },
+  { label: "大吉", weight: 7, fortunePercentRange: [88, 97] as const },
+  { label: "吉", weight: 15, fortunePercentRange: [72, 82] as const },
+  { label: "小吉", weight: 20, fortunePercentRange: [58, 67] as const },
+  { label: "尚可", weight: 26, fortunePercentRange: [45, 55] as const },
+  { label: "小凶", weight: 17, fortunePercentRange: [33, 42] as const },
+  { label: "凶", weight: 10, fortunePercentRange: [18, 28] as const },
+  { label: "大凶", weight: 5, fortunePercentRange: [3, 12] as const },
 ];
 
 /**

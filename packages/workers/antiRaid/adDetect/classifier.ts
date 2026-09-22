@@ -79,8 +79,8 @@ export interface ClassifyAdTextParams {
  * 两个提示词变体的 Worker 内缓存，键就是 justJoined。
  *
  * buildAdDetectSystemPrompt 会把最多 MAX_CONFIGURED_AD_SAMPLES 条示例 map+join
- * 成一整段文本，而全部输入都不随请求变化——getAdSampleConfig() 返回的是 frozen
- * 数组，只有 justJoined 有两种取值。不缓存的话，满载时每秒最多
+ * 成一整段文本，而全部输入都不随请求变化——示例快照只在主线程投递新版本时整体
+ * 替换（届时缓存一并清空），只有 justJoined 有两种取值。不缓存的话，满载时每秒最多
  * AD_DETECT_BATCH_SIZE 次判定各重建一遍同样的字符串，纯粹是给 isolate 制造
  * GC 压力，而这条线程上还压着验证踢人与封禁。
  */

@@ -6,7 +6,7 @@ import { COPY_SUBCOMMAND_PATTERN } from "../consts/copyModes";
 
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
-import { getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
+import { adoptCopyTarget, clearCopyTarget, getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
 import { describeCopyModeEffect } from "../copy/copyModes";
@@ -24,9 +24,8 @@ function copyTargetTextsForMode(mode: CopyMode | undefined, atmosphere: Atmosphe
 
 /**
  * 处理 /copy [reverse|nya] [@username] 与 /copy stop。目标既可以通过 @username
- * 参数指定（要求机器人此前已从某条消息中缓存过该用户），也可以（优先）通过回复
- * 目标的一条消息来指定——这种方式对没有公开 username、或机器人从未直接观察到的
- * 用户同样有效。
+ * 参数指定（要求当前身份缓存中存在该用户名），也可以回复目标消息来指定。
+ * 回复目标不要求公开 username 或命中缓存；回复与参数同时给出时必须指向同一身份。
  *
  * 复读目标是全局唯一的（机器人只有一张脸，同一时刻只能"变成"一个人）：
  * 任何群在复读时，其他群想 /copy 都会被挡，得先 /copy stop（任何群都能停）。
@@ -37,7 +36,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
   const messageId: number | undefined = ctx.msgId;
   const argument: string = ctx.match.trim();
   const match: RegExpExecArray | null = COPY_SUBCOMMAND_PATTERN.exec(argument);
-  const subcommand: string | undefined = match?.[1];
+  const subcommand: string | undefined = match?.[1]?.toLowerCase();
   if (subcommand === "stop") {
     if (match?.[2] !== undefined) {
       await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).COPY_USAGE_TEXT, replyToMessageId: messageId });
@@ -77,9 +76,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     targetUser = await resolveCopyCommandTarget(ctx, copyTargetTextsForMode(mode, chatAtmosphere(chatId)), targetArgument);
     if (!targetUser) return;
 
-    globalCopy.copiedUser = targetUser;
-    globalCopy.copyMode = mode;
-    globalCopy.copyChatId = chatId;
+    adoptCopyTarget(targetUser, mode, chatId);
     copyStarted = true;
   } finally {
     if (!copyStarted && cooldownClaim && !cooldownClaim.rejected) {
@@ -87,7 +84,6 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     }
   }
 
-  if (!targetUser) return;
   // 成功反馈和头像任务必须等对应 revision 的主、备两份 state 都 durable，
   // 避免 update 已确认后重启复活旧 copy 状态。
   await persistGlobalState("copy started");
@@ -123,9 +119,7 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
     return;
   }
 
-  globalCopy.copiedUser = null;
-  globalCopy.copyMode = undefined;
-  globalCopy.copyChatId = undefined;
+  clearCopyTarget();
   await persistGlobalState("copy stopped");
 
   await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.copyStopped, replyToMessageId: messageId });
@@ -141,9 +135,7 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
 function stopCopyOwnedByChat(chatId: number): boolean {
   const globalCopy: GlobalCopyState = getGlobalCopyState();
   if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return false;
-  globalCopy.copiedUser = null;
-  globalCopy.copyMode = undefined;
-  globalCopy.copyChatId = undefined;
+  clearCopyTarget();
   return true;
 }
 

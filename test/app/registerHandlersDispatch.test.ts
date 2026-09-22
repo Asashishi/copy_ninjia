@@ -10,6 +10,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { Bot, Context } from "grammy";
 
 /** 本次 update 命中的 handler 名，按调用顺序。 */
@@ -24,6 +25,8 @@ const claims: { antiRaid: boolean; gag: boolean; qa: boolean; qaBoard: boolean; 
   qaBoard: false,
   wed: false,
 };
+/** hears 交给中文动作命令 handler 的 `ctx.match`，按调用顺序。 */
+const cjkMatches: (string | undefined)[][] = [];
 /** 两道前置网关的判定；缺省全放行。 */
 const gates: { init: boolean; privateCommand: boolean; privateProxy: boolean } = {
   init: true,
@@ -49,9 +52,10 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   translate: "handleTranslateCommand",
   icon: "handleIconCommand",
   wed: "dispatchWedCommand",
+  h_image: "handleHImageCommand",
+  info: "handleInfoCommand",
   block: "handleBlockCommand",
   batch_kick: "handleBatchKickCommand",
-  unblock: "handleUnblockCommand",
   ai_chat: "handleAiChatCommand",
   prompt: "handlePromptCommand",
   clear_context: "handleClearContextCommand",
@@ -75,8 +79,9 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
 const commandsModule: Record<string, unknown> = {
   confirmLuckDraw: (): undefined => undefined,
   // 中文动作命令按原文 hears；不认领时由 handler 自己 next()，这里照搬那条语义。
-  handleCjkActionCommand: (_ctx: Context, next: () => Promise<void>): Promise<void> => {
+  handleCjkActionCommand: (ctx: Context, next: () => Promise<void>): Promise<void> => {
     calls.push("handleCjkActionCommand");
+    cjkMatches.push(Array.isArray(ctx.match) ? [...ctx.match] : []);
     return next();
   },
   handleGagMessageIngress: (): Promise<boolean> => {
@@ -121,13 +126,13 @@ mock.module("../../packages/antiRaid", () => ({
 mock.module("../../packages/infra/botAdmin", () => ({
   handleMyChatMemberUpdate: record("handleMyChatMemberUpdate"),
 }));
+// 路由用例只关心「哪条 update 交给了谁」；人设同步在这里只是被注入的一个
+// 依赖，替身挡住它就不必把 AI / Anti-Raid 的整张模块图拉进本文件。
+mock.module("../../packages/commands/chatPersonaSync", () => ({
+  syncChatPersonaSurfaces: async (): Promise<void> => {},
+}));
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log: (): undefined => undefined,
-    info: (): undefined => undefined,
-    warn: (): undefined => undefined,
-    error: (): undefined => undefined,
-  },
+  logger: loggerStub(),
 }));
 mock.module("../../packages/infra/identityStorage", () => ({
   isIdentityPolicyCached: (): boolean => true,
@@ -199,6 +204,7 @@ function commandMessage(text: string): unknown {
 async function dispatch(update: unknown): Promise<readonly string[]> {
   calls.length = 0;
   commandArguments.length = 0;
+  cjkMatches.length = 0;
   await bot.handleUpdate(update as Parameters<Bot["handleUpdate"]>[0]);
   return [...calls];
 }
@@ -292,6 +298,25 @@ describe("registerHandlers 分发", () => {
     expect(observed).toContain("handleCjkActionCommand");
     expect(observed.indexOf("handleCjkActionCommand"))
       .toBeLessThan(observed.indexOf("handleIncomingMessageMiddleware"));
+  });
+
+  test("中文动作命令外闸：正文或图注以 / 开头才进 hears，频道帖同样覆盖，ctx.match 为正则结果", async () => {
+    expect(await dispatch(groupMessage(`/贴贴@${BOT_USERNAME} 你`))).toContain("handleCjkActionCommand");
+    expect(cjkMatches).toEqual([[`/贴贴@${BOT_USERNAME} `, "贴贴", BOT_USERNAME]]);
+    nextUpdateId += 1;
+    expect(await dispatch({
+      update_id: nextUpdateId,
+      message: { message_id: nextUpdateId, date: 1, chat: CHAT, from: FROM, photo: [], caption: "/咬" },
+    })).toContain("handleCjkActionCommand");
+    nextUpdateId += 1;
+    expect(await dispatch({
+      update_id: nextUpdateId,
+      channel_post: { message_id: nextUpdateId, date: 1, chat: CHANNEL, text: "/摸 大家" },
+    })).toEqual(["handleQaMessageIngress", "handleCjkActionCommand", "handleIncomingMessageMiddleware"]);
+    for (const text of ["咬", " /咬", "/咬人人", "／咬"]) {
+      expect(await dispatch(groupMessage(text))).not.toContain("handleCjkActionCommand");
+    }
+    expect(cjkMatches).toHaveLength(0);
   });
 
   test("频道帖里的命令同样命中：命令组覆盖 channel_post", async () => {

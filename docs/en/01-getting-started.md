@@ -18,7 +18,7 @@ This page takes a clean environment all the way to “the bot works normally in 
 - **Bun 1.4.2**: required for source installation and development; install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Binary packages include this runtime and need no system Bun. Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
-- **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `g-auth.json` in the project root. When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
+- **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `config/g-auth.json` (see the [example](../../config_example/g-auth.json) for its structure; the example's placeholder private key is rejected). When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
 
 `packages/config/googleAuth.ts` strictly parses `g-auth.json`: `client_email` must be a non-empty string and `private_key` a parseable, non-empty RSA PEM private key for RS256 (EC, Ed25519, and RSA-PSS are rejected). `type` is optional; when present it must equal `service_account`. The SDK-consumed `private_key_id`, `project_id`, `quota_project_id`, and `universe_domain` fields are optional non-empty strings. Other metadata is retained verbatim. Validation precedes Worker creation and Telegram connections; errors contain only the file path, field path, and expected form, never credential values.
 
@@ -75,7 +75,7 @@ usable controlling terminal the script exits rather than consuming half of its o
 The installation follows these steps:
 
 1. **Environment and package**: check Linux, readable `/proc`, and the controlling terminal; obtain missing tools and the Latest Release or reuse the existing deployment. Source mode installs or verifies the exact Bun version and runs `bun install --frozen-lockfile` with the seven-day dependency cooldown. Binary mode verifies the embedded Bun against `packageManager` and uses packaged dependencies.
-2. **Deployment configuration**: copy only missing examples, excluding `agent.json`. Telegram identity can be re-entered interactively; an existing file is backed up outside the tree before candidate validation and atomic replacement. No AI configuration creates no `agent.json`; an existing AI configuration is retained. Generated identity and AI configuration files use mode `600`.
+2. **Deployment configuration**: copy only missing examples, excluding `agent.json`, `g-auth.json` and `cron.json`. Telegram identity can be re-entered interactively; an existing file is backed up outside the tree before candidate validation and atomic replacement. No AI configuration creates no `agent.json`; an existing AI configuration is retained. Generated identity and AI configuration files use mode `600`.
 3. **Identity database and validation**: resolve the database location through production code, create the current empty schema only when `database/storage.sqlite` is absent, then validate deployment inputs.
 4. **Service and observation**: register or reuse the unit for a deployment already confirmed stopped, then start and verify state, the calculated observation window, restart count, and journal. Remove configuration and unit backups only after every check succeeds. Verification failures exit nonzero; foreground execution retains backups.
 
@@ -88,13 +88,20 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
+done
 ```
+
+The `g-auth.json` and `cron.json` examples are illustrative only and must not be copied; see [`config_example/README`](../../config_example/README/en.md).
 
 ## Configuring Telegram Identity
 
 See [`config_example/README/en.md`](../../config_example/README/en.md) for the complete field and
-capability reference. Put bot identity and the super administrator in `config/telegram.json`:
+capability reference. Put bot identity and the super administrator in `config/bot.json`:
 
 - **`bot_token`** (required)
   - Token issued by BotFather.
@@ -115,27 +122,28 @@ capability reference. Put bot identity and the super administrator in `config/te
 Configure AI providers, API keys, endpoints, and models per capability in `config/agent.json`.
 To relocate runtime data, set `COPY_NINJIA_DATA_ROOT` in the process environment; when omitted,
 data stays under the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root).
-For translation, save the service-account key as `g-auth.json` in the project root;
-that file is covered by `.gitignore`.
+For translation, save the service-account key as `config/g-auth.json`; the whole `config/`
+directory is covered by `.gitignore`.
+
+Optional `atmosphere` accepts only `"mesugaki"` (teasing, the default) or `"normal"` (ordinary). A group with a custom AI persona still uses ordinary notices; other groups and their command menus use this setting. Restart to apply it. The installer preserves a valid style when changing identity. Any remaining `telegram.json`, including one beside `bot.json`, blocks installation and startup until explicit cold migration.
 
 ## Project Configuration Files
 
 `config/` is deployment-owned and excluded from Git. Copy it from `config_example/` once, then edit only `config/`; the example directory is not the runtime configuration.
 
+Editing `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, or `cron.json` (scheduled tasks; format in [config_example/README](../../config_example/README/en.md)) while the bot runs hot-reloads it: the main thread watches `config/` and, about 0.5 seconds after the last change, re-parses the file with the same strict schema used at startup, then swaps the snapshot and hands it to the Workers that use it. A change that fails to parse is rejected as a whole and logged as one error, and the process keeps the last applied configuration; a file left invalid still refuses the next startup. Adding or deleting the AI configuration files listed above, or adding or removing the whole `ad_detect` section or any of `text`/`summary`/`media` in `agent.json`, changes the matching feature's availability directly: AI chat or ad detection stops as soon as a prerequisite is missing (per-chat switches keep their values) and resumes automatically once it is back, with no restart. `bot.json`, `prompt/persona.md`, and `g-auth.json` are not hot-reloaded and require a restart.
+
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **Contents**: base persona for AI chat.
   - **Validation**: plain text; no schema.
-- **`config/telegram.json`** ([example](../../config_example/telegram.json))
-  - **Contents**: Bot API token and the sole super-administrator user ID.
-  - **Validation**: [`packages/config/telegramInput.ts`](../../packages/config/telegramInput.ts), loaded
+- **`config/bot.json`** ([example](../../config_example/bot.json))
+  - **Contents**: Bot API token, the sole super-administrator user ID, and optional notice style `atmosphere`.
+  - **Validation**: [`packages/config/botInput.ts`](../../packages/config/botInput.ts), loaded
     strictly before network access; missing files, unknown fields, blank tokens, and invalid IDs
     abort startup.
 - **`config/stickers.json`** ([example](../../config_example/stickers.json))
   - **Contents**: sticker packs available to the AI, up to 5.
   - **Validation**: [`packages/config/stickers.ts`](../../packages/config/stickers.ts).
-- **`config/reactions.json`** ([example](../../config_example/reactions.json))
-  - **Contents**: emoji reactions available to the AI.
-  - **Validation**: [`packages/config/reactions.ts`](../../packages/config/reactions.ts).
 - **`config/mood.json`** ([example](../../config_example/mood.json))
   - **Contents**: mood tiers, including copy, weights, and weather/time multipliers.
   - **Validation**: [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must
@@ -156,25 +164,25 @@ that file is covered by `.gitignore`.
     plain `http` is limited to `localhost`, `127.0.0.1`, and `::1`, and the URL must carry no
     userinfo and no `#` fragment.
   - **Validation**: [`packages/config/agent.ts`](../../packages/config/agent.ts). Unknown keys,
-    blank keys/models, and invalid providers, URLs, or protocols are rejected. **The whole file is
-    parsed once, by the main thread, at startup**, then handed to each Worker in its init message;
-    Workers only read that snapshot and never touch the disk, and a respawn replays the very same
-    snapshot, so one process never runs two generations of configuration — changes require a full
-    process restart. Vision and voice support are probed independently on their first real media
+    blank keys/models, and invalid providers, URLs, or protocols are rejected. **Only the main thread
+    reads this file**: it parses it once at startup and re-parses it strictly on hot reload, then
+    hands the snapshot to each Worker in its init or reload message; Workers only read the snapshot
+    they received and never touch the disk, and a respawn replays the snapshot currently in effect on
+    the main thread. Vision and voice support are probed independently on their first real media
     request: an explicitly unsupported modality and an endpoint answering 404/405 (missing model or
     wrong path, which also logs one diagnostic pointing at `$.agent.media`) both stop further
-    downloads, while transient failures only back off and never close the capability for good.
+    downloads, while transient failures only back off and never close the capability for good. Once
+    hot reload replaces the `media` capability, both inputs are probed again.
 
 Permanent-allowlist, blocklist, temporary-ad-bypass activity, and pending-removal state are no longer deployment JSON. They live together
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
 SQLite integrity, migration lineage, schema version, JSONB/relational row shapes, and policy disjointness.
-Other inputs are validated per feature: AI chat reads stickers, reactions, moods, persona, and the
+Other inputs are validated per feature: AI chat reads stickers, moods, persona, and the
 chat section of `agent.json`; translation reads `g-auth.json`. A missing input refuses only
 that toggle and that feature's runtime path — it does not block startup. **A file that exists must
 still parse strictly**, though: invalid content refuses startup even when the matching feature is
 currently off (see `validateExistingDeploymentInputs` in
-[`packages/config/readiness.ts`](../../packages/config/readiness.ts)). Results are cached until
-restart.
+[`packages/config/readiness.ts`](../../packages/config/readiness.ts)). AI-chat and ad-detection availability is recomputed after hot reload, so restoring missing prerequisites resumes them automatically. `g-auth.json` and the default persona require a restart.
 
 ### Initializing Identity Storage
 
@@ -225,11 +233,11 @@ Stop the old process and back up the complete deployment-owned `config/` directo
 migrate models, endpoints, and API keys from the former `gemini.json`, `openai.json`, and AI
 environment variables into the unified `agent.json`; never overwrite deployment configuration
 with `config_example/`. Runtime selections in `state.json.global.model` are no longer read.
-Model changes now require editing the relevant capability while stopped and restarting.
+Model changes are made by editing the relevant capability in `agent.json`; saving the file hot-reloads it.
 
-Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration **on 9.1.5** (that script was removed in 9.2.0, see [Operations](07-operations.md#identity-storage-migration)); never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/telegram.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
+Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration **on 9.1.5** (that script was removed in 9.2.0, see [Operations](07-operations.md#identity-storage-migration)); never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/bot.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
 
-**Careful: removing a credential does not fail startup, but that chat goes quiet.** The startup gate validates only deployment inputs that **already exist** (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts), now just an export of `validateExistingDeploymentInputs` from `packages/config/readiness.ts`): a present file must parse strictly, while a genuinely absent one does not block startup. The `true` in `chat_states` is restored as usual, but the matching feature is judged unavailable at its single decision entry point — the AI chat Worker never starts and memory is not hydrated (the snapshots under `memory/` stay untouched until the prerequisite returns), `/translate` sessions remain inactive, and ad detection stops submitting bundles. The group simply sees the bot stop chatting, stop catching ads, or stop translating from one restart onward, with a single line in `logs/` as the only trace. So run `/ai_chat disable`, `/ad_detect disable`, or `/translate disable` before removing a credential — or restore the prerequisite instead.
+**Careful: removing a credential does not fail startup, but that chat goes quiet.** The startup gate validates only deployment inputs that **already exist** (see `validateExistingDeploymentInputs` in [`packages/config/readiness.ts`](../../packages/config/readiness.ts)): a present file must parse strictly, while a genuinely absent one does not block startup. The `true` in `chat_states` is restored as usual, but the matching feature is judged unavailable at its single decision entry point — when the prerequisite is missing at startup the AI chat Worker never starts and memory only enters the main-thread mirror (the snapshots under `memory/` stay untouched until the prerequisite returns), and when it is removed at runtime through hot reload the Worker goes idle; `/translate` sessions remain inactive, and ad detection stops submitting bundles. The group simply sees the bot stop chatting, stop catching ads, or stop translating from that moment (or that restart) onward, with a single line in `logs/` as the only trace. So run `/ai_chat disable`, `/ad_detect disable`, or `/translate disable` before removing a credential — or restore the prerequisite instead: AI chat and ad detection resume automatically through hot reload, while `g-auth.json` is not hot-reloaded and needs a restart.
 
 ### Replacing the Inline Thumbnails and the Default Avatar
 
@@ -241,14 +249,17 @@ The three inline thumbnails (the two `/luck_challenge` results and the gag speec
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…"
+    "botDefaultAvatarUrl": "https://…",
+    "randomHImageDir": "./h_image"
   }
 }
 ```
 
-The four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
+The first four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
 
-All four are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The requirement is an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
+Missing values among the five fields are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The first four fields require an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
+
+The fifth key, `randomHImageDir`, is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts absolute paths or explicit relative paths starting with `./` or `../`, resolved against the runtime data root; bare names and `~/…` are invalid. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. A first-run `state.json` is seeded after successful startup. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
 
 > Check the four `state.global.assets` URLs before starting: all three thumbnails require `https`; an invalid URL fails startup during decoding and identifies the field path.
 
@@ -260,6 +271,7 @@ All four are seeded with the built-in defaults (see [`packages/consts/ui/assets.
 2. Add the bot to the group and grant administrator permissions to delete messages, ban members, and manage the group. Verification and Anti-Raid run only when the bot has the required permissions, and only after `/antiraid enable` is run in that group (they are off by default).
 3. Enable Inline Mode with `/setinline`; fortune draws use `@bot requested topic`.
 4. Set `/setinlinefeedback` to 100%. `chosen_inline_result` is the primary path for confirming and persisting a draw; the signed receipt embedded in the message is a supplementary confirmation path.
+5. (Optional) Enable Bot-to-Bot Communication Mode. It is needed only when the target of `/translate` or `/copy` is another bot. By default Telegram does not deliver other bots' messages to this bot; even when the other bot has the mode on, only its replies to this bot and `/command@thisbot` messages arrive. Once this bot enables the mode, it receives every message from other bots in chats where it is an administrator or has Privacy Mode disabled, and AI interjections, copying, ad detection and flood counting do not distinguish bot senders. If a chat contains a bot that answers automatically, the two bots may keep replying to each other, so check before enabling it.
 
 ## First Launch
 

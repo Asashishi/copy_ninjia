@@ -34,6 +34,7 @@ import { pauseDiskIOOperations, postBufferedDiskIOBusiness, safePostDiskIO } fro
 import { signalDiskIOFatal } from "./fatal";
 import { DiskIORecoveryRevisions } from "../../libs/diskIORecoveryRevisions";
 import { diskIOMessageCost } from "../../libs/diskIOMessageCost";
+import { errorMessage } from "../../libs/errorMessage";
 
 /** 清除运行时恢复握手的超时 timer；重复调用安全。 */
 export function clearRuntimeRecoveryTimer(): void {
@@ -135,10 +136,6 @@ function createRecoveryTransportScope(worker: Worker, revisions: DiskIORecoveryR
   };
 }
 
-function describeRecoveryError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * 开合重放区间标记。投递失败按 fatal 处理：开标记确保区间内写失败升级为停机，
  * 关标记确保恢复完成后的在线写回到常规失败语义。
@@ -170,7 +167,7 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
         if (!isCurrentRecoveryWorker(worker)) return;
         stopWorkerAfterLoadFailure(
           worker,
-          `${registration.owner} mirror replay failed: ${describeRecoveryError(error)}`,
+          `${registration.owner} mirror replay failed: ${errorMessage(error)}`,
           true
         );
         return;

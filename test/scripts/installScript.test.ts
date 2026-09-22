@@ -232,7 +232,7 @@ describe("install.sh 与代码共享同一份事实", () => {
   });
 
   test("重填问卷的判据用的就是 TELEGRAM_BOT_TOKEN_PLACEHOLDER", () => {
-    // install.sh 靠 grep 这个串判断「telegram.json 还是示例值、需要问」。
+    // install.sh 靠 grep 这个串判断「bot.json 还是示例值、需要问」。
     // 常量改了而这里没改，安装器会把已填好的配置当成没填，反复追问。
     expect(INSTALL_SCRIPT).toContain(`'${TELEGRAM_BOT_TOKEN_PLACEHOLDER}'`);
   });
@@ -414,7 +414,7 @@ describe("install.sh 覆盖前核对既有 unit 的数据根", () => {
     for (const write of [
       "bun install --frozen-lockfile",
       'create_config_from_example "$example_file"',
-      'commit_staged_config \\\n    "$TELEGRAM_CONFIG_STAGING_PATH"',
+      'commit_staged_config \\\n    "$BOT_CONFIG_STAGING_PATH"',
       'mkdir -p -- "$IDENTITY_DATABASE_DIR"',
       'run_privileged tee "$SERVICE_UNIT_PATH"',
     ]) {

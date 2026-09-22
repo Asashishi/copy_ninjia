@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：源码安装与开发需要，可用 `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` 安装；二进制发行包自带该运行时，无需系统 Bun。项目不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **所配 AI 能力的 API Key**：`config/agent.json` 的每项能力各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或所配兼容服务取得。能力之间不回退。
-- **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为项目根的 `g-auth.json`。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
+- **（可选）Google Cloud 服务账号 JSON**：只有 `/translate` 翻译需要，存为 `config/g-auth.json`（结构见[示例](../../config_example/g-auth.json)，示例里的占位私钥会被拒绝）。缺失时 `/translate` 直接拒绝并点名这个文件，本群翻译会话不执行，但不阻止进程启动；文件存在却写坏时，启动总闸会在解析阶段拒绝启动。
 
 `g-auth.json` 由 `packages/config/googleAuth.ts` 严格解析：`client_email` 为非空字符串，`private_key` 为可解析的非空 RSA PEM 私钥（用于 RS256，不接受 EC、Ed25519 或 RSA-PSS）；`type` 可省略，存在时只能为 `service_account`。SDK 消费的 `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` 可省略，存在时必须为非空字符串。其余元数据原样保留。校验发生在创建 Worker 和连接 Telegram 之前，错误仅包含文件路径、字段路径与期望，不输出凭据值。
 
@@ -61,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 安装流程包括以下步骤：
 
 1. **环境与发行包**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有部署。源码方式安装或核验指定 Bun，再执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期；二进制方式核验内置 Bun 与 `packageManager`，直接使用包内依赖。
-2. **部署配置**：只补缺少的示例文件，跳过 `agent.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
+2. **部署配置**：只补缺少的示例文件，跳过 `agent.json`、`g-auth.json` 与 `cron.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
 3. **身份数据库与校验**：按生产路径解析结果检查 `database/storage.sqlite`，只在不存在时创建当前 schema 的空库，再校验部署输入。
 4. **服务与观察**：在已确认停止的部署上注册或复用 unit，启动并完成状态、动态观察时长、重启计数与 journal 核验。仅全部通过才清理配置和 unit 备份；验证失败非零退出，前台运行保留备份。
 
@@ -74,13 +74,20 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
+done
 ```
+
+`g-auth.json` 与 `cron.json` 的示例只示意写法，不要复制，理由见 [`config_example/README`](../../config_example/README/zh.md)。
 
 ## 配置 Telegram 身份
 
 完整字段与能力说明见 [`config_example/README/zh.md`](../../config_example/README/zh.md)。
-Bot 身份和超级管理员写入 `config/telegram.json`：
+Bot 身份和超级管理员写入 `config/bot.json`：
 
 - **`bot_token`**（必填）
   - BotFather 下发的 token。
@@ -96,26 +103,27 @@ Bot 身份和超级管理员写入 `config/telegram.json`：
     超级管理员的 `query` 返回那份逐项全开的视图。
 AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`。如需改变运行时
 数据目录，可在进程环境中设置 `COPY_NINJIA_DATA_ROOT`；缺省时数据落在项目根，详见
-[07 运维与排障](07-operations.md#数据根)。如需翻译，把服务账号密钥存为项目根目录
-的 `g-auth.json`；该文件已加入 `.gitignore`。
+[07 运维与排障](07-operations.md#数据根)。如需翻译，把服务账号密钥存为
+`config/g-auth.json`；`config/` 整个目录已加入 `.gitignore`。
+
+`atmosphere` 可选，只接受 `"mesugaki"`（雌小鬼）或 `"normal"`（普通），缺省为雌小鬼。已配置自定义 AI 人设的群仍优先使用普通文案；其他群的通知与菜单采用该配置。修改后重启生效。安装器重新填写身份时保留合法风格。配置目录中仍有 `telegram.json`（包括与 `bot.json` 并存）时拒绝启动和安装，先按冷迁移步骤处理。
 
 ## 项目侧配置文件
 
 `config/` 是部署方自己的配置目录，已从 Git 追踪中排除；初次安装从 `config_example/` 复制，之后只改 `config/`，不要直接把示例目录当运行时配置。
 
+运行中修改 `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json` 与 `cron.json`（定时任务，格式见 [config_example/README](../../config_example/README/zh.md)）会自动热重载：主线程监听 `config/`，最后一次改动约 0.5 秒后按启动时同一套严格 schema 重新解析，通过后替换快照并投给相关 Worker。解析失败的改动整份拒绝并记一条错误日志，进程继续使用上一份已生效的配置；文件若保持非法，下次重启时启动总闸照样拒绝启动。新增或删除上述 AI 配置文件、在 `agent.json` 里整段增删 `ad_detect` 或 `text`/`summary`/`media`，会直接改变对应功能的可用性：缺了前提的 AI 闲聊或广告检测立即停用（群开关保持原值），补齐后自动恢复，无需重启。`bot.json`、`prompt/persona.md` 与 `g-auth.json` 不热重载，修改后须重启。
+
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI 闲聊的基础人设。
   - **校验**：纯文本，无 schema。
-- **`config/telegram.json`**（[示例](../../config_example/telegram.json)）
-  - **内容**：Bot API token 与唯一超级管理员用户 ID。
-  - **校验**：[`packages/config/telegramInput.ts`](../../packages/config/telegramInput.ts)；联网前严格
+- **`config/bot.json`**（[示例](../../config_example/bot.json)）
+  - **内容**：Bot API token、唯一超级管理员用户 ID 与可选通知语气 `atmosphere`。
+  - **校验**：[`packages/config/botInput.ts`](../../packages/config/botInput.ts)；联网前严格
     加载，缺失、未知字段、空 token 或非法 ID 均拒绝启动。
 - **`config/stickers.json`**（[示例](../../config_example/stickers.json)）
   - **内容**：AI 可用的贴纸包，最多 5 个。
   - **校验**：[`packages/config/stickers.ts`](../../packages/config/stickers.ts)。
-- **`config/reactions.json`**（[示例](../../config_example/reactions.json)）
-  - **内容**：AI 可用的 emoji 反应集合。
-  - **校验**：[`packages/config/reactions.ts`](../../packages/config/reactions.ts)。
 - **`config/mood.json`**（[示例](../../config_example/mood.json)）
   - **内容**：心情档位，包括文案、权重与天气/时段倍率。
   - **校验**：[`packages/config/mood.ts`](../../packages/config/mood.ts)；权重必须是正整数，
@@ -134,14 +142,15 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
     `https`，明文 `http` 仅限 `localhost`、`127.0.0.1`、`::1`；URL 不得带用户名/密码
     或 `#` 片段。
   - **校验**：[`packages/config/agent.ts`](../../packages/config/agent.ts)。文件与字段严格
-    校验，未知键、空 key/model、非法 provider/URL/协议都会拒绝对应功能。**整份配置只由
-    主线程在启动时解析一次**，再随各 Worker 的初始化消息投递过去；Worker 侧只读这份
-    快照、从不读盘，崩溃重建也重放同一份，因此同一进程内不会出现两代配置——修改后
-    必须整进程重启。媒体的视觉和语音输入分别在首次真实请求时探测：明确不支持、或端点
+    校验，未知键、空 key/model、非法 provider/URL/协议都会拒绝对应功能。**只有主线程
+    读这份文件**：启动时解析一次，运行中的修改由热重载重新严格解析，再随 Worker 的
+    初始化或热重载消息投递过去；Worker 侧只读收到的快照、从不读盘，崩溃重建时重放
+    主线程当前生效的那一份。媒体的视觉和语音输入分别在首次真实请求时探测：明确不支持、或端点
     以 404/405 表明模型/路径不存在时都停止下载该类媒体（后者另记一行指向
-    `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力。
+    `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力；热重载替换
+    `media` 能力后，两种输入重新探测。
 
-永久白名单、黑名单、临时广告免检累计与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB/关系列结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/translate enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。结论按进程缓存，修好文件后必须重启。
+永久白名单、黑名单、临时广告免检累计与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB/关系列结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/translate enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。AI 闲聊与广告检测的可用性在热重载后重算，补齐缺省配置会自动恢复；`g-auth.json` 与默认人设不热重载，补齐后须重启。
 
 ### 初始化身份数据库
 
@@ -183,12 +192,12 @@ chmod 660 database/storage.sqlite
 
 升级时先停止旧进程并备份整个 `config/`。将原 `gemini.json`、`openai.json` 的模型、
 端点与 API key 手工迁入统一的 `agent.json`，不要用示例目录覆盖部署配置。旧的 AI 环境
-变量和 `state.json.global.model` 运行时选择不再读取；模型切换改为停机修改对应能力配置后
-重启。示例值只保证结构正确，不保证账号具有调用权限。
+变量和 `state.json.global.model` 运行时选择不再读取；模型切换改为修改 `agent.json` 中
+对应能力配置，保存后热重载生效。示例值只保证结构正确，不保证账号具有调用权限。
 
-旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
+旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并**在 9.1.5 上**运行身份存储迁移（该脚本已在 9.2.0 删除，见 [07 运维与排障](07-operations.md#身份存储迁移)）；不要在 SQLite 迁移完成后手改数据库。只需要保留自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/bot.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 
-**注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)，它现在只是 `packages/config/readiness.ts` 的 `validateExistingDeploymentInputs` 出口）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——AI 闲聊的 Worker 根本不启动、记忆不 hydrate（`memory/` 里那份原样留着等前提补齐），`/translate` 会话不执行，广告检测不再送检。群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/translate disable`，或者干脆把前提补回去。
+**注意：撤掉凭据不会拒绝启动，但那个群会静默停摆。**启动总闸只校验**已经存在**的部署输入（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）：文件在就必须严格解析通过，文件真的不在则不阻止启动。`chat_states` 里那个 `true` 会照常恢复，但对应功能在唯一判定入口上被判为不可用——启动时就缺前提则 AI 闲聊的 Worker 根本不启动、记忆只进主线程镜像（`memory/` 里那份原样留着等前提补齐），运行中经热重载撤掉则 Worker 闲置；`/translate` 会话不执行，广告检测不再送检。群里看到的就是机器人从撤掉那一刻（或那次重启）起再也不闲聊/不抓广告/不翻译，而痕迹只有 `logs/` 里的一行。因此撤凭据前先 `/ai_chat disable`、`/ad_detect disable`、`/translate disable`，或者干脆把前提补回去：AI 闲聊与广告检测的前提补回后经热重载自动恢复，`g-auth.json` 不热重载，补回后要重启。
 
 ### 换掉内联缩略图与机器人默认头像
 
@@ -200,14 +209,17 @@ chmod 660 database/storage.sqlite
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…"
+    "botDefaultAvatarUrl": "https://…",
+    "randomHImageDir": "./h_image"
   }
 }
 ```
 
-四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
+前四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
 
-四项在启动成功时被自动补成代码里的内置缺省值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+五项缺省字段在启动成功时被自动补成代码里的内置值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。前四项要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+
+第五项 `randomHImageDir` 是 `/h_image` 专用图库，也是 cron 未指定目录时的随机图来源，缺省 `./h_image`。只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析；裸目录名和 `~/…` 无效。启动会创建缺失目录，核对读写与访问权限，并严格检查每个条目：只允许以内容 SHA-256 的 64 位小写十六进制摘要命名、扩展名为 `jpg`/`jpeg`/`png`/`webp` 的普通文件；子目录、文件链接、隐藏文件和残留临时文件均拒绝启动。目录根本身可以是符号链接。启动不重算内容哈希，手工文件名与内容的对应由部署方负责。推荐通过 `/h_image add` 收图；合规图片的增删无需重启，抽图时超过 10 MB 的文件会被跳过。首次运行的 `state.json` 在启动成功后补写生成。cron 显式指定的独立随机目录允许普通文件名，详见 [部署配置说明](../../config_example/README/zh.md)。
 
 > 启动前核对 `state.global.assets` 的四项地址：三张缩略图只接受 `https`，非法地址会在解码期拒绝启动并点名字段路径。
 
@@ -219,6 +231,7 @@ chmod 660 database/storage.sqlite
 2. 把机器人拉进群并授予管理员权限（删消息、封禁成员、管理群）——入群验证与 Anti-Raid 只在有权限时启用，还要在群里 `/antiraid enable` 打开（缺省关闭）。
 3. `/setinline` 开启 Inline Mode——运势抽签 `@机器人 所求事项` 依赖它。
 4. `/setinlinefeedback` 设为 100%——`chosen_inline_result` 是抽签结果确认与落盘的主路径；消息内的签名回执是补充确认路径。
+5. （可选）开启 Bot-to-Bot Communication Mode——只有 `/translate` 或 `/copy` 的目标是另一个机器人时需要。Telegram 默认不把其他机器人的消息推给本机器人；对方开启了该模式时，也只有回复本机器人或 `/命令@本机器人` 的消息能送达。本机器人开启后，在它是管理员或已关闭 Privacy Mode 的群里会收到其他机器人的全部消息，而 AI 插话、复读、广告检测与刷屏计数不区分发送者是不是机器人：群里若有会自动接话的机器人，两边可能互相回复，开启前先确认。
 
 ## 首次启动
 

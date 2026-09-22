@@ -18,6 +18,7 @@ import { join } from "node:path";
 import {
   assertDirectoryReadableWritable,
   assertFileReadableWritable,
+  bestEffortUnlink,
   inspectOptionalDirectory,
   inspectOptionalFile,
 } from "../../packages/libs/fileAccess";
@@ -125,7 +126,7 @@ describe("持久化路径的启动权限检查", () => {
   test("可读写的既有文件通过，不改动权限位", async () => {
     const root: string = tempRoot();
     const path: string = join(root, "state.json");
-    await Bun.write(path, "{}", { mode: 0o600 });
+    await Bun.write(path, "{}");
 
     expect(() => assertFileReadableWritable(path)).not.toThrow();
   });
@@ -196,5 +197,21 @@ describe("持久化路径的启动权限检查", () => {
     // 底层异常一律被吞掉：errno 文案进日志等于把部署方的目录结构写进 logs/。
     expect(message).not.toContain("ENOENT");
     expect(message).not.toContain("no such file");
+  });
+});
+
+describe("尽力删除", () => {
+  test("删掉普通文件返回 true；不存在或是目录时静默返回 false 且不抛", async () => {
+    const root: string = tempRoot();
+    const file: string = join(root, "stale.json.tmp");
+    const directory: string = join(root, "stuck.json.tmp");
+    await Bun.write(file, "partial");
+    mkdirSync(directory);
+
+    expect(await bestEffortUnlink(file)).toBeTrue();
+    expect(fs.existsSync(file)).toBeFalse();
+    expect(await bestEffortUnlink(file)).toBeFalse();
+    expect(await bestEffortUnlink(directory)).toBeFalse();
+    expect(fs.existsSync(directory)).toBeTrue();
   });
 });

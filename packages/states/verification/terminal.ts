@@ -4,7 +4,7 @@ import type {
   VerificationState,
   VerificationTransition,
 } from "../../types/states/verification";
-import { expellingOf, remindersOf } from "./shared";
+import { expellingOf, isTerminalVerificationPhase, remindersOf } from "./shared";
 
 /** 处理拉人者终核结果，管理员豁免，否则切换到可重放处置终态。 */
 export function handleTimeoutInviterVerdict(
@@ -81,11 +81,7 @@ export function handleTerminalPersisted(
 export function handleTerminalAttemptBudgetExhausted(
   state: VerificationState | undefined
 ): VerificationTransition {
-  if (
-    state?.kind !== "kickPending" &&
-    state?.kind !== "checkingInviter" &&
-    state?.kind !== "expelling"
-  ) {
+  if (!isTerminalVerificationPhase(state?.kind)) {
     return { next: state, effects: [] };
   }
   return {

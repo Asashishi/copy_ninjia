@@ -17,6 +17,7 @@ import type {
   RenderGagSpeechOptions,
 } from "../../types/gag";
 import { sanitizeDisplayName, sanitizeInline, splitGraphemes } from "../../libs/text";
+import { parseChatIdArgument, parseUserIdArgument } from "../../libs/telegramId";
 
 /** inline 文本开头的唯一格式；消息落群时复用它核对当前用具。 */
 export function gagSpeechPrefix(tool: string): string {
@@ -50,11 +51,8 @@ export function parseGagInlineQuery(
   const scopeEnd: number = separatorIndex === -1 ? query.length : separatorIndex;
   const scope: string = query.slice(scopeStart, scopeEnd);
   const text: string = separatorIndex === -1 ? "" : query.slice(separatorIndex + 1);
-  const targetId: number = Number(scope);
-  if (
-    (!USER_ID_ARG_PATTERN.test(scope) && !CHAT_ID_ARG_PATTERN.test(scope)) ||
-    !Number.isSafeInteger(targetId)
-  ) return undefined;
+  const targetId: number | undefined = parseUserIdArgument(scope) ?? parseChatIdArgument(scope);
+  if (targetId === undefined) return undefined;
   return { targetId, text };
 }
 

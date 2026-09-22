@@ -35,15 +35,6 @@ import {
   stopWorkerAfterLoadFailure,
 } from "./recovery";
 
-export {
-  rejectPendingDiskIORequests,
-  requestBlocklistIdPageFromWorker,
-  requestIdentityPoliciesFromWorker,
-  requestJoinLogFromWorker,
-  requestLuckSecretFromWorker,
-} from "./requests";
-export { clearRuntimeRecoveryTimer, stopWorkerAfterLoadFailure } from "./recovery";
-
 /** 创建一个落盘 Worker 实例并挂上回执路由与崩溃自愈；不改变 diskIORuntime.worker。 */
 export function createDiskIOWorker(): Worker {
   const w: Worker = new Worker(DISK_IO_WORKER_URL);
@@ -101,6 +92,10 @@ export function createDiskIOWorker(): Worker {
     }
     if (data.type === "aiMemoryPersisted") {
       for (const listener of diskIORuntime.aiMemoryPersistedListeners) listener(data);
+      return;
+    }
+    if (data.type === "stickerCatalogPersisted") {
+      for (const listener of diskIORuntime.stickerCatalogPersistedListeners) listener(data);
       return;
     }
     if (data.type === "recoveryReplayFailed") {

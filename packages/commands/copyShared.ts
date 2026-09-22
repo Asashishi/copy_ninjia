@@ -9,7 +9,7 @@ import type {
 } from "../types/copy/cooldown";
 import { getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { SUPER_ADMIN_USER_ID } from "../config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
 import { queueAvatarUpdate } from "../copy/avatarQueue";
@@ -17,19 +17,17 @@ import { resolveCommandTarget } from "./targetResolution";
 
 /**
  * copy 类命令（/copy 系与 /icon steal）的公共零件：共享冷却检查、
- * 目标解析（回复消息优先于 @username 参数）、后台偷头像任务。
+ * 目标解析（回复与用户名参数的一致性校验）、后台偷头像任务。
  */
 
-/** claimCopyCooldownOrReject 的返回值：拒绝时只有 rejected；放行时附带占用前
- * 的旧时间戳与本次占用写入的时间戳，供调用方在这次尝试最终没有真正开始复制时
- * 用 releaseCopyCooldownClaim 回滚。 */
+/** 冷却检查只读取发起人的 id，用于判定超级管理员豁免。 */
 interface CopyCommandUser {
   id: number;
 }
 
 /**
  * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟
- * （跨所有群，不再按群分别计时——消耗的是机器人自己头像这一份全局资源）。
+ * （跨所有群共用，不按群分别计时——消耗的是机器人自己头像这一份全局资源）。
  *
  * 检查通过后会在同一个同步执行栈里立刻写入 globalCopyState.lastCopyTime 占住
  * 冷却槽，中间不经过任何 await。当前 acknowledged runner 全局逐条处理 update，

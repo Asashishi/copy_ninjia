@@ -69,7 +69,7 @@ beforeEach((): void => {
 
 describe("看板装页", () => {
   test("装得下就是一页，形状恒为数组", () => {
-    const pages = buildQaBoardPages([{ q: "a", a: "1" }, { q: "b", a: "2" }]);
+    const pages = buildQaBoardPages([{ q: "a", a: "1" }, { q: "b", a: "2" }], ATMOSPHERE_TEXTS.teasing);
 
     expect(pages).toHaveLength(1);
     expect(parsePage(pages[0]!.text, pages[0]!.entities[0]!))
@@ -85,13 +85,13 @@ describe("看板装页", () => {
       a: `答案${index}`,
     }));
 
-    const pages = buildQaBoardPages(entries);
+    const pages = buildQaBoardPages(entries, ATMOSPHERE_TEXTS.teasing);
 
     expect(pages).toHaveLength(2);
     expect(parsePage(pages[0]!.text, pages[0]!.entities[0]!) as unknown[])
       .toHaveLength(QA_QUERY_PAGE_MAX_ENTRIES);
     expect(parsePage(pages[1]!.text, pages[1]!.entities[0]!) as unknown[]).toHaveLength(2);
-    expect(buildQaBoardKeyboard(0, pages.length)).toBeDefined();
+    expect(buildQaBoardKeyboard(0, pages.length, ATMOSPHERE_TEXTS.teasing)).toBeDefined();
   });
 
   test("每页恰好装满时不留空页", () => {
@@ -100,7 +100,7 @@ describe("看板装页", () => {
       index: number
     ) => ({ q: `问题${index}`, a: `答案${index}` }));
 
-    const pages = buildQaBoardPages(entries);
+    const pages = buildQaBoardPages(entries, ATMOSPHERE_TEXTS.teasing);
 
     expect(pages).toHaveLength(2);
     for (const page of pages) {
@@ -117,7 +117,7 @@ describe("看板装页", () => {
       a: "答".repeat(CHAT_QA_ANSWER_MAX_CHARS),
     }));
 
-    const pages = buildQaBoardPages(entries);
+    const pages = buildQaBoardPages(entries, ATMOSPHERE_TEXTS.teasing);
 
     expect(pages).toHaveLength(1);
     expect(pages[0]!.text.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_MAX_CHARS);
@@ -130,7 +130,7 @@ describe("看板装页", () => {
         a: "长".repeat(QA_QUERY_ANSWER_PREVIEW_MAX_CHARS),
       }));
 
-      const pages = buildQaBoardPages(entries);
+      const pages = buildQaBoardPages(entries, ATMOSPHERE_TEXTS.teasing);
 
       expect(pages).toHaveLength(Math.ceil(count / QA_QUERY_PAGE_MAX_ENTRIES));
       const total: number = pages.reduce(
@@ -146,7 +146,7 @@ describe("看板装页", () => {
     const question: string = "问".repeat(200);
     const answer: string = "答".repeat(QA_QUERY_ANSWER_PREVIEW_MAX_CHARS + 100);
 
-    const pages = buildQaBoardPages([{ q: question, a: answer }]);
+    const pages = buildQaBoardPages([{ q: question, a: answer }], ATMOSPHERE_TEXTS.teasing);
     const parsed = parsePage(pages[0]!.text, pages[0]!.entities[0]!) as { q: string; a: string }[];
 
     // 问题是 /qa remove 的入参，截断过的照抄回去什么也删不掉。
@@ -156,14 +156,14 @@ describe("看板装页", () => {
   });
 
   test("没到上限的答案原样保留，不补省略号", () => {
-    const pages = buildQaBoardPages([{ q: "a", a: "点置顶" }]);
+    const pages = buildQaBoardPages([{ q: "a", a: "点置顶" }], ATMOSPHERE_TEXTS.teasing);
     const parsed = parsePage(pages[0]!.text, pages[0]!.entities[0]!) as { a: string }[];
 
     expect(parsed[0]!.a).toBe("点置顶");
   });
 
   test("代码块答案在看板上按字面围栏显示", () => {
-    const pages = buildQaBoardPages([{ q: "a", a: "```json\n[]\n```" }]);
+    const pages = buildQaBoardPages([{ q: "a", a: "```json\n[]\n```" }], ATMOSPHERE_TEXTS.teasing);
     const parsed = parsePage(pages[0]!.text, pages[0]!.entities[0]!) as { a: string }[];
 
     expect(parsed[0]!.a).toBe("```json\n[]\n```");
@@ -172,19 +172,19 @@ describe("看板装页", () => {
 
 describe("翻页条", () => {
   test("只有一页时不画按钮", () => {
-    expect(buildQaBoardKeyboard(0, 1)).toBeUndefined();
+    expect(buildQaBoardKeyboard(0, 1, ATMOSPHERE_TEXTS.teasing)).toBeUndefined();
   });
 
   test("首页没有上一页，末页没有下一页", () => {
-    expect(buttonTexts(buildQaBoardKeyboard(0, 3))).toEqual([
+    expect(buttonTexts(buildQaBoardKeyboard(0, 3, ATMOSPHERE_TEXTS.teasing))).toEqual([
       "1/3",
       QA_QUERY_PAGE_NEXT_TEXT,
     ]);
-    expect(buttonTexts(buildQaBoardKeyboard(2, 3))).toEqual([
+    expect(buttonTexts(buildQaBoardKeyboard(2, 3, ATMOSPHERE_TEXTS.teasing))).toEqual([
       QA_QUERY_PAGE_PREV_TEXT,
       "3/3",
     ]);
-    expect(buttonTexts(buildQaBoardKeyboard(1, 3))).toEqual([
+    expect(buttonTexts(buildQaBoardKeyboard(1, 3, ATMOSPHERE_TEXTS.teasing))).toEqual([
       QA_QUERY_PAGE_PREV_TEXT,
       "2/3",
       QA_QUERY_PAGE_NEXT_TEXT,
@@ -263,13 +263,17 @@ describe("翻页回调", () => {
     expect(call.keyboard).toBeUndefined();
   });
 
-  test("页号不是合法整数时只应答，不改写", async () => {
-    chatQaEntries.set(CHAT_ID, new Map([["a", "1"]]));
+  // 后六种是裸 `Number()` 会放行、而本 bot 从不生成的非规范写法。
+  test.each(["abc", "", "-1", "1e3", "0x10", " 1", "1.0", "+1", "01"])(
+    "页号 %p 不是规范十进制时只应答，不改写",
+    async (page: string) => {
+      chatQaEntries.set(CHAT_ID, new Map([["a", "1"]]));
 
-    expect(await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}abc`)))
-      .toBeTrue();
+      expect(await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}${page}`)))
+        .toBeTrue();
 
-    expect(answerCallbackQuery).toHaveBeenCalled();
-    expect(editMessageText).not.toHaveBeenCalled();
-  });
+      expect(answerCallbackQuery).toHaveBeenCalled();
+      expect(editMessageText).not.toHaveBeenCalled();
+    }
+  );
 });

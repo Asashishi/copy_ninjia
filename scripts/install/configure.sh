@@ -7,11 +7,15 @@ step "6/8 填写配置"
 
 # 首次填写（含仍是示例占位值的文件）固定 0600；重新填写已填过的文件沿用原 mode。
 CONFIGURE_TELEGRAM=1
-TELEGRAM_CONFIG_MODE_POLICY=new
-if [ -e config/telegram.json ] &&
-   ! grep -q 'replace-with-telegram-bot-token' config/telegram.json; then
-  if confirm "config/telegram.json 已经填过，是否重新填写？" n; then
-    TELEGRAM_CONFIG_MODE_POLICY=preserve
+BOT_ATMOSPHERE="$(bun -e '
+  import { loadInstallerBotAtmosphere } from "./scripts/install/runtime";
+  console.log(await loadInstallerBotAtmosphere("config/bot.json"));
+')" || die "config/bot.json 严格校验未通过，原文件未改动。"
+BOT_CONFIG_MODE_POLICY=new
+if [ -e config/bot.json ] &&
+   ! grep -q 'replace-with-telegram-bot-token' config/bot.json; then
+  if confirm "config/bot.json 已经填过，是否重新填写？" n; then
+    BOT_CONFIG_MODE_POLICY=preserve
   else
     CONFIGURE_TELEGRAM=0
   fi
@@ -32,25 +36,26 @@ if [ "$CONFIGURE_TELEGRAM" -eq 1 ]; then
     [[ "$SUPER_ADMIN_USER_ID" =~ ^[1-9][0-9]*$ ]] && break
     warn "只接受正整数，请重新输入。"
   done
-  TELEGRAM_CONFIG_STAGING_PATH=""
-  TELEGRAM_CONFIG_TARGET_PATH=""
-  resolve_config_target_path config/telegram.json TELEGRAM_CONFIG_TARGET_PATH
-  create_config_staging_path "$TELEGRAM_CONFIG_TARGET_PATH" TELEGRAM_CONFIG_STAGING_PATH
-  cat > "$TELEGRAM_CONFIG_STAGING_PATH" <<JSON
+  BOT_CONFIG_STAGING_PATH=""
+  BOT_CONFIG_TARGET_PATH=""
+  resolve_config_target_path config/bot.json BOT_CONFIG_TARGET_PATH
+  create_config_staging_path "$BOT_CONFIG_TARGET_PATH" BOT_CONFIG_STAGING_PATH
+  cat > "$BOT_CONFIG_STAGING_PATH" <<JSON
 {
   "bot_token": "${BOT_TOKEN}",
-  "super_admin_user_id": ${SUPER_ADMIN_USER_ID}
+  "super_admin_user_id": ${SUPER_ADMIN_USER_ID},
+  "atmosphere": "${BOT_ATMOSPHERE}"
 }
 JSON
-  unset BOT_TOKEN SUPER_ADMIN_USER_ID
-  backup_deployment_config "$TELEGRAM_CONFIG_TARGET_PATH"
-  validate_staged_telegram_config "$TELEGRAM_CONFIG_STAGING_PATH" ||
-    die "候选 config/telegram.json 严格校验未通过，原文件未改动。"
+  unset BOT_TOKEN SUPER_ADMIN_USER_ID BOT_ATMOSPHERE
+  backup_deployment_config "$BOT_CONFIG_TARGET_PATH"
+  validate_staged_telegram_config "$BOT_CONFIG_STAGING_PATH" ||
+    die "候选 config/bot.json 严格校验未通过，原文件未改动。"
   commit_staged_config \
-    "$TELEGRAM_CONFIG_STAGING_PATH" "$TELEGRAM_CONFIG_TARGET_PATH" "$TELEGRAM_CONFIG_MODE_POLICY"
-  TELEGRAM_CONFIG_MODE="$(stat -c '%a' -- "$TELEGRAM_CONFIG_TARGET_PATH")" ||
-    die "无法读取 config/telegram.json 权限。"
-  info "已写入 config/telegram.json（权限 ${TELEGRAM_CONFIG_MODE}）。"
+    "$BOT_CONFIG_STAGING_PATH" "$BOT_CONFIG_TARGET_PATH" "$BOT_CONFIG_MODE_POLICY"
+  BOT_CONFIG_MODE="$(stat -c '%a' -- "$BOT_CONFIG_TARGET_PATH")" ||
+    die "无法读取 config/bot.json 权限。"
+  info "已写入 config/bot.json（权限 ${BOT_CONFIG_MODE}）。"
 fi
 
 if [ -e config/agent.json ]; then
@@ -164,6 +169,6 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
   fi
 fi
 
-if [ ! -e g-auth.json ]; then
-  info "未发现 g-auth.json：/translate 翻译不可用。需要的话把 GCP 服务账号密钥放到仓库根再重启。"
+if [ ! -e config/g-auth.json ]; then
+  info "未发现 config/g-auth.json：/translate 翻译不可用。需要的话把 GCP 服务账号密钥（结构见 config_example/g-auth.json）放到 config/ 再重启。"
 fi

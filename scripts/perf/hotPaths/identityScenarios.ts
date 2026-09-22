@@ -22,7 +22,7 @@ import { temporaryAdBypassActivityCache } from
   "../../../packages/cache/main/temporaryAdBypass";
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../../packages/consts/whitelist";
-import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../../../packages/config/bot";
 import {
   canBypassAdDetection,
   canBypassFloodControl,

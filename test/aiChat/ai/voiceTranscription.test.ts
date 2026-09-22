@@ -7,6 +7,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import type { TelegramWorkerDownloadFileResult } from "../../../packages/types/telegramWorker";
 
@@ -29,12 +30,7 @@ const realProvider = await import("../../../packages/aiChat/provider");
 // 引用，整份替换会让那条 import 在求值期就断掉。
 mock.module("../../../packages/aiChat/provider", () => ({ ...realProvider, mediaAiProvider }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerError,
-  },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const { transcribeVoiceUncached } = await import("../../../packages/aiChat/ai/voiceTranscription");

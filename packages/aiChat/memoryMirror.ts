@@ -20,6 +20,7 @@ import {
   postPurgeAiMemoryPersistRevisions,
 } from "../cache/main/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import { pendingStickerCatalogRevisions } from "../cache/main/stickers";
 import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
 import { signalDiskIOFatal } from "../infra/diskIO/fatal";
 import type { AiMemoryDeleteWaiter, AiMemoryTeardown } from "../types/aiChat/waiters";
@@ -221,7 +222,7 @@ onDiskIORespawn("AI memory", DISK_IO_RESPAWN_PRIORITIES.AI_MEMORY, (transport: D
     }
   }
   for (const [pack, snapshot] of latestStickerCatalogs) {
-    if (!transport.post({ type: "stickerCatalog", pack, snapshot })) return false;
+    if (!transport.post({ type: "stickerCatalog", pack, snapshot, revision: pendingStickerCatalogRevisions.get(pack) ?? 0 })) return false;
   }
   return true;
 });

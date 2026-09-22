@@ -62,7 +62,7 @@ describe("resolveCommandTarget", () => {
 
   test("回归用例：开启 requireIdentityPolicies 时预热失败拒绝执行，提示一个人都没动", async () => {
     // 冷 LRU 下 isWhitelisted 读成「不在白名单」：放行的话 /mute 会捂住自己人，
-    // /unblock 回「本来就不在小本本上」而 SQLite 里的记录还在。
+    // /block disable 回「本来就不在小本本上」而 SQLite 里的记录还在。
     prefetchIdentityPolicies.mockResolvedValue(false);
     expect(await resolveCommandTarget({ ...params("777", true), requireIdentityPolicies: true })).toBeUndefined();
     expect(prefetchIdentityPolicies).toHaveBeenCalledWith([777]);
@@ -131,6 +131,57 @@ describe("resolveCommandTarget", () => {
 
     expect(await resolveCommandTarget(params(""))).toEqual(replyTarget);
     expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  test("传入 currentChatTargetText 的命令拒绝当前群自己的 identity，并发出各自的文案", async () => {
+    // 匿名管理员拿当前群当皮套时 Telegram 只给 sender_chat=本群，皮套底下是谁
+    // 从不暴露；/block、/block disable、/white、/permission 据此做破坏性处置或发
+    // 权限，全部要在这一层被挡下（见 docs/cn/04-invariants.md）。
+    replyTarget = { id: -1001, title: "Test Group", isChannel: true };
+
+    expect(await resolveCommandTarget({ ...params(""), currentChatTargetText: "拒绝本群皮套" }))
+      .toBeUndefined();
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: "拒绝本群皮套",
+      replyToMessageId: 7,
+    });
+  });
+
+  test("把本群 id 直接粘进参数走同一道闸：开了 acceptChatId 的命令落点完全相同", async () => {
+    expect(await resolveCommandTarget({ ...params("-1001", false, true), currentChatTargetText: "拒绝本群皮套" }))
+      .toBeUndefined();
+    expect(sendMessageMock).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: "拒绝本群皮套",
+      replyToMessageId: 7,
+    });
+  });
+
+  test("这道闸只挡当前群自己：在群里发言的关联频道照常放行", async () => {
+    replyTarget = { id: -4004, title: "Linked Channel", isChannel: true };
+
+    expect(await resolveCommandTarget({ ...params(""), currentChatTargetText: "拒绝本群皮套" }))
+      .toEqual(replyTarget);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  test("这道闸排在身份名单预热之后：预热失败时先报名单不可用", async () => {
+    prefetchIdentityPolicies.mockResolvedValue(false);
+    replyTarget = { id: -1001, title: "Test Group", isChannel: true };
+
+    expect(await resolveCommandTarget({
+      ...params(""),
+      requireIdentityPolicies: true,
+      currentChatTargetText: "拒绝本群皮套",
+    })).toBeUndefined();
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: IDENTITY_POLICY_UNAVAILABLE_TEXT,
+      replyToMessageId: 7,
+    });
   });
 
   test("无回复且 trim 后为空时报告缺少目标", async () => {
@@ -213,7 +264,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("只开 acceptUserId 时负数、零、前导零、小数与超出安全整数的位数一律拒绝", async () => {
-    // 负数 id 是会话身份，只有单独开了 acceptChatId 的 /unblock 才认——/block
+    // 负数 id 是会话身份，只有单独开了 acceptChatId 的 /block disable 才认——/block
     // 走到这里就该拒绝，粘错一个会话 id 会把处置改成封掉整个会话身份；
     // 20 位那种完全匹配「十进制正整数」，Number 之后却已经是另一个数了。
     for (const argument of ["-1001", "-1001234567890", "0", "007", "4.2", "1e5", "99999999999999999999"]) {
@@ -224,7 +275,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("开了 acceptChatId 后负数 id 成立，并带上决定解封接口的 isChannel", async () => {
-    // 这个标记是承重的：/unblock 靠它选 unbanChatSenderChat，漏标就会拿
+    // 这个标记是承重的：/block disable 靠它选 unbanChatSenderChat，漏标就会拿
     // 负数去调 unbanChatMemberIfBanned，报错记进 failedCount 变成假战报。
     expect(await resolveCommandTarget(params("-1002233445566", true, true)))
       .toEqual({ id: -1002233445566, isChannel: true });
@@ -249,6 +300,14 @@ describe("resolveCommandTarget", () => {
   test("单开 acceptChatId 时正整数不放行：两条路各管各的开关", async () => {
     expect(await resolveCommandTarget(params("42", false, true))).toBeUndefined();
     expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "invalid:42", replyToMessageId: 7 });
+  });
+
+  test("开了 allowSelfTarget 后机器人自己也是合法目标，回复与 id 两条路都认", async () => {
+    replyTarget = { id: 999, first_name: "Bot" };
+    expect(await resolveCommandTarget({ ...params(""), allowSelfTarget: true })).toEqual(replyTarget);
+    replyTarget = undefined;
+    expect(await resolveCommandTarget({ ...params("999", true), allowSelfTarget: true })).toEqual({ id: 999 });
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
   test("id 参数解析出的目标是机器人自己时照样被拒", async () => {
@@ -279,7 +338,7 @@ const DEPLOYED_TARGET_TEXTS: readonly DeployedTargetTexts[] = [
   { command: "/gag", texts: GAG_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
   { command: "/ungag", texts: UNGAG_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
   { command: "/block", texts: BLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
-  { command: "/unblock", texts: UNBLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
+  { command: "/block disable", texts: UNBLOCK_TARGET_TEXTS, acceptUserId: true, acceptChatId: true },
   { command: "/mute", texts: MUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
   { command: "/unmute", texts: UNMUTE_TARGET_TEXTS, acceptUserId: true, acceptChatId: false },
   { command: "/copy", texts: COPY_TARGET_TEXTS, acceptUserId: false, acceptChatId: false },

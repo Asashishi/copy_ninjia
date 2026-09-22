@@ -4,8 +4,11 @@ const syncMenu = mock(async (): Promise<void> => {});
 mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: syncMenu }));
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT, INIT_CHAT_LIMIT_TEXT, INIT_TOGGLE_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { botPermissions } from "../helpers/botPermissions";
+import { lastReplyText } from "../helpers/replies";
+import type { ChatState, LockdownRecord } from "../../packages/types/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
@@ -21,10 +24,11 @@ const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {})
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const clearFloodControl = mock((..._args: unknown[]): void => {});
 const deactivateJoinGuardChat = mock((..._args: unknown[]): void => {});
-const states = new Map<number, Record<string, unknown>>();
+const { chatStateCache: states } = await import("../../packages/cache/main/chatState");
 const delegatedPermissions: Map<number, Set<string>> = new Map<number, Set<string>>();
 
-mock.module("../../packages/config/telegram", () => ({
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 100,
 }));
 // 超级管理员由身份直接持有全部白名单权限（见 packages/infra/identityPolicy/whitelist.ts 的
@@ -50,45 +54,13 @@ mock.module("../../packages/antiRaid", () => ({ clearAdDetection, clearFloodCont
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
 mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, resolveBotAdminStatus }));
 mock.module("../../packages/infra/chatTeardown", () => ({ teardownChatRuntime }));
-mock.module("../../packages/infra/storage/stateStore", () => ({
-  getOrCreateChatState(chatId: number): Record<string, unknown> {
-    let state = states.get(chatId);
-    if (!state) {
-      state = {};
-      states.set(chatId, state);
-    }
-    return state;
-  },
-  // aiChat/availability.ts 的按群判定要读它；这里的命令只关心开关本身，
-  // 读到空对象即可（等价于「本群还没开过」）。
-  getChatState(chatId: number): Record<string, unknown> {
-    return states.get(chatId) ?? {};
-  },
-  getChatStateCache(): ReadonlyMap<number, Record<string, unknown>> {
-    return states;
-  },
-  // 复刻真实实现的两步收敛（见 infra/storage/stateStore.ts 与 libs/chatState.ts）：
-  // 清掉字段后跑一次 normalize（布尔开关的 false 等价于「没设过」），整条回到缺省
-  // 就把记录本身删掉。/init disable 的残留判定全靠这一步，简化掉就测不出来了。
-  clearChatStateField(chatId: number, field: string): boolean {
-    const state = states.get(chatId);
-    if (state === undefined || state[field] === undefined) return false;
-    delete state[field];
-    for (const key of Object.keys(state)) {
-      if (state[key] === false) delete state[key];
-    }
-    if (Object.keys(state).length === 0) states.delete(chatId);
-    return true;
-  },
-  // /init disable 整行删除，仍未恢复的 lockdown 除外（真实实现同名函数）。
-  purgeChatStateExceptLockdown(chatId: number): void {
-    const state = states.get(chatId);
-    if (state === undefined) return;
-    if (state.lockdown === undefined) states.delete(chatId);
-    else states.set(chatId, { lockdown: state.lockdown });
-  },
+// 群状态走真实 stateStore 与 LRU（getOrCreateChatState / clearChatStateField /
+// purgeChatStateExceptLockdown 的收敛语义不替身）；只替身它下面的 SQLite 落盘边界。
+mock.module("../../packages/infra/chatStateStorage", () => ({
+  assertChatStateCapacity: (): void => {},
+  hydrateChatStateCache: (): void => {},
   persistChatState,
-  persistGlobalState: async (): Promise<void> => {},
+  saveChatStateInBackground: (): void => {},
 }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));
 
@@ -100,10 +72,12 @@ const { handleFloodControlCommand } = await import("../../packages/commands/floo
 const { handleAntiRaidCommand } = await import("../../packages/commands/antiRaid");
 const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
 
-function context(argument: string, userId: number | undefined = 100, chatId: number = -1001): never {
+function context(argument: string, userId: number | null = 100, chatId: number = -1001): never {
+  const chat = { id: chatId, type: "supergroup" };
   return {
-    chat: { id: chatId },
-    from: userId === undefined ? undefined : { id: userId, first_name: "Admin", username: "admin" },
+    chat,
+    from: userId === null ? undefined : { id: userId, first_name: "Admin", username: "admin" },
+    msg: { message_id: 7, chat },
     msgId: 7,
     match: argument,
   } as never;
@@ -151,9 +125,22 @@ describe("超级管理员开关命令", () => {
     await expect(resolveSuperAdminToggleArg(context("enable", 101), messages)).resolves.toBeUndefined();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("reject:"),
+      text: "reject:@admin",
       replyToMessageId: 7,
     });
+    await expect(resolveSuperAdminToggleArg(context("enable", null), messages)).resolves.toBeUndefined();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: `reject:${ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownActor}`,
+      replyToMessageId: 7,
+    });
+    // 省略 permission 时只认超级管理员本人：持有任何白名单权限都不放行。
+    delegatedPermissions.set(200, new Set(["isCanControllAIPermission"]));
+    await expect(resolveSuperAdminToggleArg(context("enable", 200), { texts: messages.texts }))
+      .resolves.toBeUndefined();
+    expect(sendMessage).toHaveBeenLastCalledWith({ chatId: -1001, text: "reject:@admin", replyToMessageId: 7 });
+    await expect(resolveSuperAdminToggleArg(context("enable", 100), { texts: messages.texts }))
+      .resolves.toBe("enable");
     await expect(resolveSuperAdminToggleArg(context("invalid"), messages)).resolves.toBeUndefined();
     expect(sendMessage).toHaveBeenLastCalledWith({ chatId: -1001, text: "usage", replyToMessageId: 7 });
     expect(states.size).toBe(0);
@@ -167,7 +154,7 @@ describe("超级管理员开关命令", () => {
 
     await handleAiChatCommand(context("disable"));
     expect(states.get(-1001)?.isAIChatEnabled).toBe(false);
-    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001);
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
@@ -294,6 +281,11 @@ describe("超级管理员开关命令", () => {
 
     await handleInitCommand(context("enable", 200));
     expect(states.get(-1001)?.isInitEnabled).toBeUndefined();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: INIT_TOGGLE_TEXTS.rejection("@admin"),
+      replyToMessageId: 7,
+    });
 
     await handleAiChatCommand(context("enable", 200));
     expect(states.get(-1001)?.isAIChatEnabled).toBe(true);
@@ -309,7 +301,7 @@ describe("超级管理员开关命令", () => {
     expect(states.has(-1001)).toBe(false);
     expect(persistChatState).not.toHaveBeenCalled();
     expect(resolveBotAdminStatus).not.toHaveBeenCalled();
-    expect(lastReplyText()).toBe(INIT_CHAT_LIMIT_TEXT);
+    expect(lastReplyText(sendMessage)).toBe(INIT_CHAT_LIMIT_TEXT);
   });
 
   test("/init disable 连群名一起清掉：不再管的群不留任何记录", async () => {
@@ -333,7 +325,7 @@ describe("超级管理员开关命令", () => {
     await handleInitCommand(context("enable"));
 
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
-    expect(lastReplyText()).not.toBe(INIT_CHAT_LIMIT_TEXT);
+    expect(lastReplyText(sendMessage)).not.toBe(INIT_CHAT_LIMIT_TEXT);
   });
 
   test("频道白名单按 sender_chat 取得委派权限", async () => {
@@ -342,6 +334,7 @@ describe("超级管理员开关命令", () => {
       msg: { sender_chat: object };
     };
     ctx.msg = {
+      ...ctx.msg,
       sender_chat: { id: -500, type: "channel", title: "Trusted Channel" },
     };
 
@@ -377,7 +370,7 @@ describe("超级管理员开关命令", () => {
   test("/init disable 保留仍未恢复的 lockdown，只删其余群配置", async () => {
     // 删了它那个群的邀请权限就永久卡住：反刷群恢复流程还要用 originalPermissions
     // 解锁（见 infra/storage/stateStore.ts 的 purgeChatStateExceptLockdown）。
-    const lockdown = { phase: "active", intentId: 7, originalPermissions: {}, announced: true, expiresAt: 9_000 };
+    const lockdown: LockdownRecord = { phase: "active", intentId: 7, originalPermissions: {}, announced: true, expiresAt: 9_000 };
     states.set(-1001, { isInitEnabled: true, isAdDetectEnabled: true, lockdown });
 
     await handleInitCommand(context("disable"));
@@ -408,7 +401,7 @@ describe("超级管理员开关命令", () => {
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
     expect(saveStateInBackground).not.toHaveBeenCalledWith("init teardown settled");
     expect(syncAiChatPersona).not.toHaveBeenCalled();
-    expect(lastReplyText()).toContain("没能拆干净");
+    expect(lastReplyText(sendMessage)).toContain("没能拆干净");
   });
 
   test("/init disable 不为没有记录的群建条目，重复关掉不撞群数上限", async () => {
@@ -418,7 +411,7 @@ describe("超级管理员开关命令", () => {
     await handleInitCommand(context("disable"));
 
     expect(states.has(-1001)).toBeFalse();
-    expect(lastReplyText()).toBe(INIT_TOGGLE_TEXTS.alreadyDisabled);
+    expect(lastReplyText(sendMessage)).toBe(INIT_TOGGLE_TEXTS.alreadyDisabled);
   });
 
   test("/init disable 的总开关先落盘，再拆运行态", async () => {
@@ -515,7 +508,7 @@ describe("超级管理员开关命令", () => {
 
     releaseState();
     await Bun.sleep(0);
-    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001);
     expect(sendMessage).not.toHaveBeenCalled();
 
     releaseDelete();
@@ -527,7 +520,7 @@ describe("超级管理员开关命令", () => {
 /** 每条开关命令的驱动方式与它写的那个 ChatState 字段。 */
 interface ToggleCase {
   readonly name: string;
-  readonly field: string;
+  readonly field: keyof ChatState;
   readonly run: (argument: string) => Promise<void>;
   /**
    * disable 之后该字段读出来是什么。功能开关落成 false（规范化后等价于「没设过」，
@@ -570,10 +563,6 @@ const TOGGLE_CASES: readonly ToggleCase[] = [
   },
 ];
 
-function lastReplyText(): string {
-  return (sendMessage.mock.calls.at(-1)?.[0] as { text: string }).text;
-}
-
 describe("开关命令的同状态重复执行", () => {
   for (const toggle of TOGGLE_CASES) {
     test(`${toggle.name} 同状态重复执行说破「本来就是」，不复用刚改完那句`, async () => {
@@ -585,11 +574,11 @@ describe("开关命令的同状态重复执行", () => {
         sendMessage.mockClear();
 
         await toggle.run(action);
-        const changedText: string = lastReplyText();
+        const changedText: string = lastReplyText(sendMessage);
         expect(states.get(-1001)?.[toggle.field]).toBe(target);
 
         await toggle.run(action);
-        const repeatText: string = lastReplyText();
+        const repeatText: string = lastReplyText(sendMessage);
         // 状态不动，但回执必须换一句：沿用刚改完那句等于报告了一次并不存在的
         // 状态变化，管理员会以为自己刚刚才把它打开/关掉。
         expect(states.get(-1001)?.[toggle.field]).toBe(target);
@@ -615,7 +604,7 @@ describe("开关命令的同状态重复执行", () => {
     await handleAdDetectCommand(context("disable"));
     expect(clearAdDetection).toHaveBeenCalledTimes(2);
     expect(saveStateInBackground).toHaveBeenCalledWith("ad_detect toggled");
-    expect(lastReplyText()).toContain("本来就");
+    expect(lastReplyText(sendMessage)).toContain("本来就");
   });
 
   test("/init 重复 enable 仍不作废管理员记录，只是回执说破没变", async () => {
@@ -629,6 +618,6 @@ describe("开关命令的同状态重复执行", () => {
     expect(resolveBotAdminStatus).not.toHaveBeenCalled();
     expect((states.get(-1001)?.botPermissions as { isAdministrator?: boolean } | undefined)?.isAdministrator).toBe(true);
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
-    expect(lastReplyText()).toContain("本来就");
+    expect(lastReplyText(sendMessage)).toContain("本来就");
   });
 });

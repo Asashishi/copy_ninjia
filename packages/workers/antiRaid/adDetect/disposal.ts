@@ -1,4 +1,3 @@
-import { ATMOSPHERE_TEXTS } from "../../../consts/atmosphere";
 import type { AtmosphereTexts } from "../../../types/atmosphere";
 import { workerAtmosphere } from "../atmosphere";
 /**
@@ -66,7 +65,7 @@ interface DisposalMessageIdsParams {
 }
 
 /** 引用类广告第一次命中时的公开警告；刻意不透露内部五分钟升级窗口。 */
-export function formatReferencedAdWarning(label: string, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
+export function formatReferencedAdWarning(label: string, atmosphere: AtmosphereTexts): string {
   return atmosphere.NOTICE_TEXTS.adReferenceWarning(label);
 }
 

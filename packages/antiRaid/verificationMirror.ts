@@ -10,6 +10,7 @@ import {
 } from "../cache/main/antiRaid/verificationMirror";
 import { VERIFICATION_RECORD_CAPACITY } from "../consts/antiRaid/verification";
 import { verificationKey } from "../libs/verificationKey";
+import { isTerminalVerificationPhase } from "../states/verification/shared";
 import { postDiskIO } from "../infra/diskIO";
 import { signalBusinessWorkerFatal } from "../infra/workerSupervisor";
 import type {
@@ -88,9 +89,7 @@ export function acceptVerificationUpsert(
   );
   if (snapshot.revision <= latestRevision) return false;
   const critical: boolean = !activeVerificationSnapshots.has(key) ||
-    snapshot.phase === "kickPending" ||
-    snapshot.phase === "checkingInviter" ||
-    snapshot.phase === "expelling";
+    isTerminalVerificationPhase(snapshot.phase);
   activeVerificationSnapshots.set(key, {
     ...snapshot,
     trackedMessageTimes: [...snapshot.trackedMessageTimes],
@@ -139,4 +138,73 @@ export function acceptVerificationDelete(
   pendingVerificationDeletes.set(key, deletion);
   postDiskIO({ type: "verificationDelete", ...deletion });
   return true;
+}
+
+/**
+ * 启动 hydrate：用 Disk I/O 恢复出的活动快照整体替换活动镜像，每条的精确落盘水位线取
+ * 快照自身的代际与 revision（能载入即已落盘），待确认墓碑清空。预算、延后索引与容量
+ * fatal 标记由调用方先经 verificationAttempts.ts 的 resetVerificationAttemptRuntime 复位。
+ */
+export function replaceActiveVerificationMirror(
+  records: ReadonlyMap<string, VerificationSnapshot>
+): void {
+  activeVerificationSnapshots.clear();
+  pendingVerificationDeletes.clear();
+  persistedVerificationRevisions.clear();
+  for (const [key, record] of records) {
+    activeVerificationSnapshots.set(key, {
+      ...record,
+      trackedMessageTimes: [...record.trackedMessageTimes],
+    });
+    persistedVerificationRevisions.set(key, {
+      generation: record.generation,
+      revision: record.revision,
+    });
+  }
+}
+
+/** 把活动镜像与精确落盘水位线一起提升到将要接管它们的 Worker 代际。 */
+export function advanceActiveVerificationGeneration(generation: number): void {
+  for (const [key, record] of activeVerificationSnapshots) {
+    const persisted: { generation: number; revision: number } | undefined =
+      persistedVerificationRevisions.get(key);
+    activeVerificationSnapshots.set(key, { ...record, generation });
+    if (
+      persisted?.generation === record.generation &&
+      persisted.revision === record.revision
+    ) {
+      persistedVerificationRevisions.set(key, {
+        generation,
+        revision: record.revision,
+      });
+    }
+  }
+}
+
+/**
+ * 活动快照的 Disk I/O 落盘回执：只有与当前活动快照同代际、同 revision 的回执才记为
+ * 精确落盘水位线并返回 true；迟到或已被更新覆盖的回执返回 false，镜像不变。
+ */
+export function recordVerificationPersisted(
+  key: string,
+  generation: number,
+  revision: number
+): boolean {
+  const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(key);
+  if (current?.generation !== generation || current.revision !== revision) return false;
+  persistedVerificationRevisions.set(key, { generation, revision });
+  return true;
+}
+
+/** 墓碑的 Disk I/O 落盘回执：精确匹配待确认墓碑的代际与 revision 时才移出。 */
+export function settleVerificationDeletePersisted(
+  key: string,
+  generation: number,
+  revision: number
+): void {
+  const deletion: { generation: number; revision: number } | undefined =
+    pendingVerificationDeletes.get(key);
+  if (deletion?.generation === generation && deletion.revision === revision) {
+    pendingVerificationDeletes.delete(key);
+  }
 }

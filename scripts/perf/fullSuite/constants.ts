@@ -10,6 +10,7 @@ import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   MAX_SUMMARY_ROUNDS,
 } from "../../../packages/consts/aiChat/memory";
+import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 
@@ -40,11 +41,10 @@ export const BENCHMARK_BOT_TOKEN: string =
 export const RUNTIME_ROOT_PREFIX: string = MAIN_BENCHMARK_ROOT_PREFIX;
 
 /**
- * 冷启动 fixture 的白/黑名单行数，各取主线程 LRU 容量
- * （`IDENTITY_READ_CACHE_MAX_ENTRIES` = 8192）的一倍。
+ * 冷启动 fixture 的白/黑名单行数，各取主线程 LRU 容量的一倍。
  * 启动恢复只读计数不读整表，这个量级用于让 SQLite 真的有页要读。
  */
-export const COLD_START_IDENTITY_ROWS: number = 8_192;
+export const COLD_START_IDENTITY_ROWS: number = IDENTITY_READ_CACHE_MAX_ENTRIES;
 
 /** 冷启动 fixture 的群状态行数；生产硬顶就是这个值，直接顶满测最坏情况。 */
 export const COLD_START_CHAT_STATE_ROWS: number = STATE_MANAGED_CHAT_LIMIT;

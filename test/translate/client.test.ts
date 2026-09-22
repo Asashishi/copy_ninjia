@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -38,12 +39,7 @@ mock.module("@google-cloud/translate", () => ({
 }));
 mock.module("../../packages/consts/paths", () => ({ GOOGLE_AUTH_FILE_PATH: authFilePath }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerError,
-  },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const {
@@ -74,6 +70,18 @@ beforeEach(async () => {
 });
 
 describe("Google Translation 适配层", () => {
+  test("drain 与 close 的非法预算在任何状态变化之前拒绝", async () => {
+    for (const budget of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(drainTranslate(budget)).rejects.toThrow(
+        new RangeError("translate drain timeout must be a non-negative finite number.")
+      );
+      await expect(closeTranslate(budget)).rejects.toThrow(
+        new RangeError("translate close timeout must be a non-negative finite number.")
+      );
+    }
+    await expect(requestTranslation("仍可用", "ja")).resolves.toBe("こんにちは");
+  });
+
   test("预检后改写与删除文件不影响鉴权，close 后重开复用完整凭据快照", async () => {
     const snapshot = googleServiceAccountKey.current;
     await Bun.write(authFilePath, "invalid");

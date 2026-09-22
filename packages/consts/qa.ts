@@ -117,6 +117,17 @@ export const QA_QUERY_PAGE_MAX_ENTRIES: number = 3;
 export const QA_QUERY_PAGE_CALLBACK_PREFIX: string = "qa_page:";
 
 /**
+ * `/qa query` 看板翻页按钮 callback_data 里页号的严格形态：非负十进制整数，
+ * 不带正号、前导零、空白、小数点与指数。
+ *
+ * 页号从 0 起，因此与 USER_ID_ARG_PATTERN 不同，这里显式放行单独的 `0`。
+ * 裸 `Number()` 加 `Number.isSafeInteger` 会放行 `"1e3"`、`" 2"`、`"2.0"`、
+ * `"+2"`，而本 bot 生成的 callback_data 只可能是规范十进制；越界仍由调用方
+ * 按当前页数判定。
+ */
+export const QA_QUERY_PAGE_ARG_PATTERN: RegExp = /^(?:0|[1-9]\d*)$/;
+
+/**
  * 页码指示按钮的 callback_data：它只是块占位，点了什么都不改。
  *
  * 单独给一个取值而不是复用当前页号，是因为「翻到当前页」会让 Telegram 以
@@ -124,5 +135,9 @@ export const QA_QUERY_PAGE_CALLBACK_PREFIX: string = "qa_page:";
  */
 export const QA_QUERY_PAGE_NOOP_DATA: string = "qa_page:-";
 
-/** /qa 子命令结构；query 和 remove 后保留完整问题文本，set 不接受额外参数。 */
-export const QA_SUBCOMMAND_PATTERN: RegExp = /^(set|remove|query)(?:\s+([\s\S]+))?$/u;
+/**
+ * /qa 子命令结构；query 和 remove 后保留完整问题文本，set 不接受额外参数。
+ * 子命令词不区分大小写；捕获组保留原样大小写，调用方取值时自己 `toLowerCase()`
+ * ——问题文本那一组是用户内容，绝不能跟着折叠。
+ */
+export const QA_SUBCOMMAND_PATTERN: RegExp = /^(set|remove|query)(?:\s+([\s\S]+))?$/iu;

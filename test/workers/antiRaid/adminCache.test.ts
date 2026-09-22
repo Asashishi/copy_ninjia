@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 
 /**
  * 处置前那道身份闸的三态契约（packages/workers/antiRaid/adminCache.ts 的
@@ -15,12 +16,7 @@ const fetchedAdmins = new Map<number, Set<number>>();
 let fetchCalls: number = 0;
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   telegramApi: {

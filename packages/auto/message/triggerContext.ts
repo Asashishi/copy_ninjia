@@ -25,7 +25,7 @@ export function createMessageTriggerContext({
   const repliedTo: Message | undefined = explicitReplyTo(message);
   const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === bot.id;
   // 两个提及事实一次遍历解析（见 facts.ts 的 resolveMentionFacts）。
-  const mentionFacts: MentionFacts = resolveMentionFacts(message, bot.id, bot.username);
+  const mentionFacts: Readonly<MentionFacts> = resolveMentionFacts(message, bot.id, bot.username);
   const directTriggerReason: AiDirectTriggerReason | undefined = isReplyToBot
     ? "reply"
     : mentionFacts.isMentioned

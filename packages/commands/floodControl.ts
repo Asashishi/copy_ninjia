@@ -19,7 +19,7 @@ export async function handleFloodControlCommand(
 ): Promise<void> {
   await runChatToggleCommand({
     ctx,
-    texts: chatAtmosphere(ctx.chat?.id ?? 0).FLOOD_CONTROL_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat.id).FLOOD_CONTROL_TOGGLE_TEXTS,
     permission: "isCanControllFloodControlPermission",
     persistReason: "flood_control toggled",
     runtimeLabel: "flood control runtime",

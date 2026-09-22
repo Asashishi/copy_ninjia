@@ -1,10 +1,9 @@
-import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
+import { BOT_ATMOSPHERE } from "../config/bot";
+import { atmosphereOf } from "../libs/atmosphere";
 import { getChatState } from "./storage/stateStore";
 import type { AtmosphereTexts } from "../types/atmosphere";
 
-/** 主线程直接读取群状态缓存；没有自定义人设时使用默认雌小鬼文案。 */
+/** 主线程读取群状态缓存；自定义人设优先使用普通文案，其余使用 Bot 配置语气。 */
 export function chatAtmosphere(chatId: number): AtmosphereTexts {
-  return getChatState(chatId).aiPersona === undefined
-    ? ATMOSPHERE_TEXTS.teasing
-    : ATMOSPHERE_TEXTS.plain;
+  return atmosphereOf(getChatState(chatId), BOT_ATMOSPHERE);
 }

@@ -37,7 +37,7 @@ function allIdentityPoliciesCached(ids: readonly number[]): boolean {
 
 /**
  * 在同一身份的黑名单处置队列里解除一名已判定销号的用户。缓存里的条目必须仍是
- * 排队时那一个对象，期间被改写、清零、淘汰重读或已被 `/unblock` 删除时放弃。
+ * 排队时那一个对象，期间被改写、清零、淘汰重读或已被 `/block disable` 删除时放弃。
  */
 async function unblockDeletedAccount(
   userId: number,
@@ -79,7 +79,7 @@ function applyParticipantReadability(
       });
       continue;
     }
-    // 与广告封禁、/unblock 共用逐身份队列，较早的封禁处置先完整结算。
+    // 与广告封禁、/block disable 共用逐身份队列，较早的封禁处置先完整结算。
     void runBlocklistIdentityMutation(
       userId,
       (): Promise<void> => unblockDeletedAccount(userId, entry)

@@ -3,7 +3,7 @@ import { TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD } from
 import { advanceTemporaryAdBypassActivity } from
   "../../../packages/states/temporaryAdBypass";
 import type { TemporaryAdBypassActivity } from
-  "../../../packages/types/temporaryAdBypass";
+  "../../../packages/types/states/temporaryAdBypass";
 import type { Scenario } from "./types";
 
 /** 临时广告免检已达标稳态、未达标稳态与首次授权边沿共用的固定基准输入。 */

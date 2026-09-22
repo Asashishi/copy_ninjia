@@ -1,23 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../packages/types";
 
-interface DeferredChat {
-  promise: Promise<Record<string, unknown>>;
-  resolve(value: Record<string, unknown>): void;
-  reject(error: Error): void;
-}
-
-function deferredChat(): DeferredChat {
-  let resolve!: (value: Record<string, unknown>) => void;
-  let reject!: (error: Error) => void;
-  const promise = new Promise<Record<string, unknown>>((done, fail) => {
-    resolve = done;
-    reject = fail;
-  });
-  return { promise, resolve, reject };
-}
-
-const chatRequests: DeferredChat[] = [];
+const chatRequests: PromiseWithResolvers<Record<string, unknown>>[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
 Object.defineProperty(globalThis, "self", {
   configurable: true,
@@ -25,7 +10,7 @@ Object.defineProperty(globalThis, "self", {
 });
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () => ({
   requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),
@@ -33,7 +18,7 @@ mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () =
 mock.module("../../../packages/infra/telegram", () => ({
   telegramApi: {
     getChat(): Promise<Record<string, unknown>> {
-      const request = deferredChat();
+      const request: PromiseWithResolvers<Record<string, unknown>> = Promise.withResolvers<Record<string, unknown>>();
       chatRequests.push(request);
       return request.promise;
     },

@@ -6,7 +6,7 @@ import {
 } from "../../packages/consts/temporaryAdBypass";
 import { getTokyoDayIndex } from "../../packages/libs/time";
 import { InputValidationError } from "../../packages/libs/inputValidation";
-import type { TemporaryAdBypassActivity } from "../../packages/types/temporaryAdBypass";
+import type { TemporaryAdBypassActivity } from "../../packages/types/states/temporaryAdBypass";
 
 /**
  * 临时广告免检关系列的严格校验：**每一条拒绝分支**都要真的拒绝。

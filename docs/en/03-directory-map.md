@@ -18,33 +18,40 @@ This page answers “where does this code live, and where should new code go?”
   - **Contents**: the project’s MIT [`LICENSE`](../../LICENSES/LICENSE) and [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt) for the Han variant data.
 - **`packages/app/`**
   - **Responsibility**: startup/shutdown lifecycle, the startup validation entry point for deployment
-    inputs that already exist, handler registration, command menu, update runner, and lifecycle side-effect composition.
-  - **Representative files**: `lifecycle.ts`, `lifecycleDependencies.ts`, `featurePreflight.ts`,
+    inputs that already exist, `config/` hot-reload watching and distribution, handler registration,
+    command menu, update runner, and lifecycle side-effect composition.
+  - **Representative files**: `lifecycle.ts`, `lifecycleDependencies.ts`, `configReload.ts`,
     `registerHandlers.ts`, and `updateRunner.ts` / `updateFetcher.ts`. `ApplicationLifecycleDependencies` is inferred
     from and colocated with the composition object, avoiding a reverse dependency from shared types into `app/`.
 - **`packages/commands/`**
   - **Responsibility**: explicit commands organized by command family, with subcommands dispatched within that domain; shared permission and
     configuration gates for toggle commands live in separate files.
-  - **Representative files**: `copy.ts`, `icon.ts`, `mood.ts`, `prompt.ts`, `qa.ts`, `block.ts`, `mute.ts`, `batchKick.ts`,
-    `targetResolution.ts`, and `configGate.ts`. The larger gag domain keeps command admission in
+  - **Representative files**: `copy.ts`, `icon.ts`, `mood.ts`, `prompt.ts`, `qa.ts`, `block.ts`, `hImage.ts` with `hImage/` (drawing and collecting), `info.ts`, `deferredCommands.ts` (the deferred command executor shared by drawing, collecting and `/info`), `mute.ts`, `batchKick.ts`,
+    `targetResolution.ts`, `configGate.ts`, and `arguments.ts`. The larger gag domain keeps command admission in
     `gag.ts`, with lifecycle, inline handling, and pure rendering split into `gag/runtime.ts`,
-    `gag/inline.ts`, and `gag/rendering.ts`.
+    `gag/inline.ts`, and `gag/rendering.ts`; the inline fortune domain is split the same way under
+    `luckChallenge/` (`cache.ts`, `draw.ts`, `key.ts`, `rateLimit.ts`, `receipt.ts`, `rendering.ts`,
+    `telegramAdapter.ts`, with `index.ts` as a thin entry).
 - **`packages/auto/`**
   - **Responsibility**: automatic non-command behavior, including copying, AI transcription
     and triggers, and reaction synchronization.
   - **Representative files**: `message/` (including `triggerPolicy.ts`) and `reactionSync.ts`.
 - **`packages/aiChat/`**
   - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
-    supervision, memory mirror, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
-  - **Representative files**: `workerBridge.ts`, `messageIngress.ts`, `memoryMirror.ts`,
+    supervision, memory mirror, startup and hot-reload hydration, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
+  - **Representative files**: `workerBridge.ts`, `hydration.ts`, `messageIngress.ts`, `memoryMirror.ts`,
     `availability.ts`, `provider.ts`, `gemini/`, `openai/`, and `ai/`;
     `index.ts` is only a thin public entry point.
 - **`packages/antiRaid/`**
   - **Responsibility**: Anti-Raid main-thread proxy and ad model capability, including Worker
     supervision, durable handoff, update ingress, and blocklist/verification/ad/flood
     orchestration.
-  - **Representative files**: `workerBridge.ts`, `durableDelivery.ts`, `updateIngress.ts`,
+  - **Representative files**: `workerBridge/` (`controller.ts`, `events.ts`,
+    `observers.ts`, `replay.ts`), `durableDelivery.ts`, `updateIngress.ts`,
     `adCandidate.ts`, and `ai/`; `index.ts` is only a thin public entry point.
+- **`packages/cron/`**
+  - **Responsibility**: main-thread scheduling of `cron.json` tasks (Bun-native cron, just_once, rand_cron random waits), running a round's actions in order with retries, and the only Telegram send boundary for them.
+  - **Representative files**: `scheduler.ts`, `run.ts`, `delivery.ts`, and `targets.ts` (live send-permission checks for `chat_id: ["all"]` and `["except", ...]`); parsing lives in `packages/config/cron.ts` and state in `packages/cache/main/cron.ts`.
 - **`packages/copy/`**
   - **Responsibility**: ordinary copying, text transformations, and the avatar update queue.
   - **Representative files**: `echo.ts`, `copyModes.ts`, `avatarQueue.ts`.
@@ -58,19 +65,20 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/states/`**
   - **Responsibility**: **I/O-free** state transitions and admission rules for verification,
     lockdown, AI replies, ad detection, and temporary-ad-bypass accrual.
-  - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts` plus `lockdown/` (the `apply`/`persistence`/`restore`/`announcement`/`adopt` lifecycle segments), `replyAdmission.ts`,
+  - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments, plus `adopt.ts`, which rebuilds a persisted snapshot into in-memory state), `lockdown.ts` plus `lockdown/` (the `apply`/`persistence`/`restore`/`announcement`/`adopt` lifecycle segments), `replyAdmission.ts`,
     `adDetectAdmission.ts`, `temporaryAdBypass.ts`.
 - **`packages/config/`**
-  - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
-  - **Representative files**: `telegram.ts`, `telegramInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
+  - **Responsibility**: strict schemas, process snapshots, and hot-reload decisions for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
+  - **Representative files**: `bot.ts`, `botInput.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, `readiness.ts`, and `reload.ts`.
 - **`packages/database/`**
   - **Responsibility**: the shared SQLite (identity policy plus chat state) schema, codecs, row validation, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
-  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `temporaryAdBypass.ts`, `aiContext.ts`, `migration.ts`, `initialization.ts`, `inspection.ts`), and `validation/storageRows.ts`.
+  - **Representative paths**: `schema/` (including `migrations/`), `codec/identity.ts`, `codec/chatState.ts`, `codec/chatQa.ts`, `codec/temporaryAdBypass.ts`, `interact/` (`connection.ts`, `transaction.ts`, `identityPolicy.ts`, `chatState.ts`, `chatQa.ts`, `temporaryAdBypass.ts`, `aiContext.ts`, `migration.ts`, `initialization.ts`, `inspection.ts`), and `validation/storageRows.ts`.
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
   - **Representative files**: `flushBarrier.ts`, `linkedQueue.ts`, `acknowledgedBatchQueue.ts`,
-    `boundedResponse.ts`, `boundedSettledBatch.ts`, `monotonicDeadline.ts`, `text.ts`.
+    `boundedResponse.ts`, `boundedSettledBatch.ts`, `monotonicDeadline.ts`, `text.ts`, and
+    `errorMessage.ts` (the single boundary that normalizes a caught `unknown` into a message or an Error).
 - **`packages/workers/`**
   - **Responsibility**: in-thread implementations for all three Workers.
   - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
@@ -86,11 +94,11 @@ This page answers “where does this code live, and where should new code go?”
     bundle shaping, verdicts, and disposal on a hit.
   - **Representative files**: `queue.ts` (entry point and tick), `queueState.ts` (admission
     predicates), `verdict.ts` (verdict and disposal orchestration), `bundle.ts`, `classifier.ts`,
-    `disposal.ts`.
+    `disposal.ts`, and `config.ts` (adopting configuration snapshots posted by the main thread).
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.
-  - **Representative files**: `telegram/`, `diskIO.ts`, `identityStorage.ts`, `supervisedWorker.ts`, and `workerSupervisor.ts`.
+  - **Representative files**: `telegram/` (including `telegram/avatar/`), `diskIO.ts` with `diskIO/` (`diagnosticChannel.ts`, `fatal.ts`, `host.ts`, `observers.ts`, `recovery.ts`, `requests.ts`, `storageAdmission.ts`, `transport.ts`), `identityStorage.ts` with `identityStorage/` (`read.ts`, `shared.ts`, `sweep.ts`, `write.ts`), `logger.ts` with `logger/` (`forwarding.ts`, `redaction.ts`, `serialization.ts`), `supervisedWorker.ts`, `workerSupervisor.ts`, `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), and `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures).
 - **`packages/infra/blocklist/`**
   - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
     identity checks, durable outbox, per-chat sweep logic, and deleted-account detection.
@@ -116,11 +124,13 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
   - **Installer**: `install.sh` locates the target worktree and hands off to its versioned entry. It checks readability and syntax of the repository, service, config, runtime, configure, and start shell modules in `scripts/install/` before sourcing them in order. `installSources.ts` supplies the same module list to syntax checks and isolated fixtures.
-  - **Cold migration**: `migrateClearContextPermission.ts` validates a schema v9 cold backup and produces isolated output and manifests; `migrations/clearContextPermission/database.ts` validates lineage and executes the schema v10 permission transaction. These modules stay outside the application startup graph.
+  - **Cold migration**: `migrateHImageAddPermission.ts` validates a schema v10 cold backup and produces isolated output and manifests; `migrations/hImageAddPermission/database.ts` validates lineage and executes the schema v11 permission transaction. These modules stay outside the application startup graph. `migrateRandomImageNames.ts` rebuilds the random image library's old file names into isolated output named after each picture's content SHA-256, likewise reading the source only and using `ready.json` as the sole completion marker.
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
   - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`, plus `fixtures/copyTree.ts` (directory-tree copying) and `fixtures/pathBoundary.ts` (real path-component checks for the write boundary), both shared by the two benchmark roots.
 
-`telegramInput.ts` provides strict reading and parsing shared by the installer and runtime, without reading deployment files or populating caches on import; `telegram.ts` owns the runtime snapshot. `libs/inflight.ts` provides bounded waits for in-flight tasks while domain owners retain admission, cancellation, and zero-budget policies. `infra/backgroundTasks.ts` logs background-task errors and removes settled tasks. Group toggles share the authorization, configuration gate, write, persistence, and receipt sequence in `commands/superAdminToggle.ts`.
+`scripts/migrations/active.ts` lists active migration entries for builds, release verification and convention checks. `migrateBotConfig.ts` handles Bot identity/style, the state library field, cron fixed-image arrays and explicitly supplied project-root Google credentials; `migrations/botConfig/` owns parsing and file preparation. Binary packages include all three CLIs, run with `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<entry>.js`; see [07 Operations](07-operations.md) for deployment steps.
+
+`botInput.ts` provides strict reading and parsing shared by the installer and runtime, without reading deployment files or populating caches on import; `bot.ts` owns the runtime snapshot. `libs/inflight.ts` provides bounded waits for in-flight tasks while domain owners retain admission, cancellation, and zero-budget policies. `infra/backgroundTasks.ts` logs background-task errors and removes settled tasks. Group toggles share the authorization, configuration gate, write, persistence, and receipt sequence in `commands/superAdminToggle.ts`.
 
 `commands/wed.ts` owns the interaction state machine, `wed/dispatch.ts` handles admission, `wed/chats.ts` owns interaction-cache creation, LRU eviction, and session cleanup, `wed/members.ts` observes membership changes, `wed/runtime.ts` connects the shared bounded executor to application lifecycle, and `wed/rendering.ts` stays pure. Interaction state and executor handles live in `cache/main/wed.ts`. Persistent per-group member sets and the dirty window live in `cache/main/wedMembers.ts`; `wed/persistence.ts` handles startup adoption, batched delivery, and Worker recovery replay. `workers/diskIO/wedMemberFiles.ts` strictly validates files and replaces them atomically, with pending snapshots owned by `cache/workers/diskIO/wed.ts`. Avatar reads and outbound calls reuse `infra/telegram/`.
 
@@ -136,7 +146,7 @@ Ask these questions in order:
 4. **Is it pure state-transition logic** with no I/O and straightforward unit testing? → `packages/states/`; Worker-side interpreters execute the side effects.
 5. **Is it side-effecting code or orchestration?** → place it with its owner: commands in `packages/commands/`, automatic behavior in `packages/auto/`, Worker-internal logic in `packages/workers/<domain>/`, model capabilities in the owning feature's `ai/` subdirectory, and process-level infrastructure in `packages/infra/`.
 
-Anti-patterns removed during earlier reviews include module-level Maps growing inside business files, constants scattered at call sites, and Workers writing shared directories with `fs` instead of going through the Disk I/O Worker.
+Prohibited placements include module-level Maps growing inside business files, constants scattered at call sites, and Workers writing shared directories with `fs` instead of going through the Disk I/O Worker.
 
 ## Cache Partitioned by Owning Thread
 
@@ -166,7 +176,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
 
 Note that `main/antiRaid/` and `workers/antiRaid/` are **two sets of state that share nothing**: the authoritative state machines live inside the Worker, while the main-thread copy is pure data kept for crash replay. Choosing the wrong directory is not a style issue — whatever you write there can never be read on the other side. `bun run check:conventions` verifies this ownership against the real module graph (see [04 Authoritative Runtime Invariants](04-invariants.md#thread-and-state-ownership)) and prints the full import chain on a violation.
 
-Watch out for shared domain code such as `packages/aiChat/ai/`: if a pure function used only by the main thread lives in the same file as a Worker-owned cache, importing that function from the main thread instantiates the cache there too. [`packages/aiChat/ai/stickers/describe.ts`](../../packages/aiChat/ai/stickers/describe.ts) is the worked example — it was split out of `sets.ts` precisely so the main-thread message pipeline can format sticker descriptions without touching the AI Worker's sticker-set cache.
+Watch out for shared domain code such as `packages/aiChat/ai/`: if a pure function used only by the main thread lives in the same file as a Worker-owned cache, importing that function from the main thread instantiates the cache there too. [`packages/aiChat/ai/stickers/describe.ts`](../../packages/aiChat/ai/stickers/describe.ts) provides pure formatting functions to the main-thread message pipeline; the sticker-set cache used by `sets.ts` belongs exclusively to the AI Worker.
 
 ## Compatibility Entry-Point (Barrel) Convention
 

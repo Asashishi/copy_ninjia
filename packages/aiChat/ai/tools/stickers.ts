@@ -291,7 +291,8 @@ export interface SendStickerToolParams {
    * （防频道自回环，见 infra/selfSentTracker.ts）。
    */
   onSent: (stickerDescription: string, messageId: number) => void;
-  isActive?: () => boolean;
+  /** 本轮回复是否仍属当前代际；失效后拒绝接纳并在发送前后复核。 */
+  isActive: () => boolean;
   signal?: AbortSignal;
 }
 
@@ -308,7 +309,7 @@ export function sendStickerTool({
   argumentsJson,
   state,
   onSent,
-  isActive = (): boolean => true,
+  isActive,
   signal,
 }: SendStickerToolParams): ReplyToolExecution {
   if (!isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);

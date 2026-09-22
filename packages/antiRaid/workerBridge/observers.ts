@@ -2,7 +2,6 @@ import { chatIsSupergroupById } from "../../cache/main/antiRaid/chatKind";
 import {
   activeVerificationSnapshots,
   pendingVerificationDeletes,
-  persistedVerificationRevisions,
 } from "../../cache/main/antiRaid/verificationMirror";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import {
@@ -17,8 +16,6 @@ import {
 import { logger } from "../../infra/logger";
 import type { AntiRaidWorkerMessage } from
   "../../types/antiRaid/protocol";
-import type { VerificationSnapshot } from
-  "../../types/antiRaid/verification";
 import type { ChatTeardownReason } from "../../types/chatTeardown";
 import type {
   VerificationPersistedReply,
@@ -29,6 +26,10 @@ import type {
   BotChatPermissions,
 } from "../../types/telegram";
 import { settlePersistedVerificationDeferral } from "../verificationAttempts";
+import {
+  recordVerificationPersisted,
+  settleVerificationDeletePersisted,
+} from "../verificationMirror";
 
 /** Anti-Raid 主线程观察者注册所需的代理能力。 */
 export interface RegisterAntiRaidBridgeObserversOptions {
@@ -94,16 +95,7 @@ export function registerAntiRaidBridgeObservers({
 
   onVerificationPersisted((reply: VerificationPersistedReply): void => {
     if (!reply.deleted) {
-      const current: VerificationSnapshot | undefined =
-        activeVerificationSnapshots.get(reply.key);
-      if (
-        current?.generation !== reply.generation ||
-        current.revision !== reply.revision
-      ) return;
-      persistedVerificationRevisions.set(reply.key, {
-        generation: reply.generation,
-        revision: reply.revision,
-      });
+      if (!recordVerificationPersisted(reply.key, reply.generation, reply.revision)) return;
       if (settlePersistedVerificationDeferral(
         reply.key,
         reply.generation,
@@ -122,17 +114,6 @@ export function registerAntiRaidBridgeObservers({
       }
       return;
     }
-    const deletion: {
-      chatId: number;
-      userId: number;
-      generation: number;
-      revision: number;
-    } | undefined = pendingVerificationDeletes.get(reply.key);
-    if (
-      deletion?.generation === reply.generation &&
-      deletion.revision === reply.revision
-    ) {
-      pendingVerificationDeletes.delete(reply.key);
-    }
+    settleVerificationDeletePersisted(reply.key, reply.generation, reply.revision);
   });
 }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { GrammyError } from "grammy";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
@@ -8,12 +9,7 @@ import {
 
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerErrorMock,
-  },
+  logger: loggerStub({ error: loggerErrorMock }),
 }));
 
 const realFetch = globalThis.fetch;
@@ -213,7 +209,7 @@ describe("copyUserProfilePhoto Bot API 主路径", () => {
     // 无取消信号时 signalArgs 省略末位参数（见 libs/telegramSignalArgs.ts），
     // 不再显式传 undefined；grammY 一律把这一位原样转发进 raw 调用，两种写法
     // 产出同一次请求。
-    expect(getFileMock).toHaveBeenCalledWith("channel-avatar-file");
+    expect(getFileMock).toHaveBeenCalledWith("channel-avatar-file", expect.any(AbortSignal));
     expect(fetchCalls).toHaveLength(1);
     expect(fetchCalls[0]!.init?.redirect).toBe("error");
     expect(fetchCalls[0]!.init?.signal).toBeInstanceOf(AbortSignal);
@@ -227,7 +223,7 @@ describe("copyUserProfilePhoto Bot API 主路径", () => {
       42,
       { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }
     );
-    expect(getFileMock).toHaveBeenCalledWith("active-avatar-file");
+    expect(getFileMock).toHaveBeenCalledWith("active-avatar-file", expect.any(AbortSignal));
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(1);
   });
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InstanceLockOptions } from "../../packages/infra/storage/instanceLock";
@@ -42,6 +42,11 @@ function lockOptions(currentIdentity: ProcessIdentity, liveIdentities: ProcessId
     currentIdentity,
     readProcessIdentity: async (pid) => identities.get(pid) ?? null,
   };
+}
+
+/** 失败路径不得留下 hard-link 发布用的 candidate 文件。 */
+function leftoverCandidates(): string[] {
+  return readdirSync(testDir).filter((name: string): boolean => name.includes(".candidate."));
 }
 
 beforeEach(() => {
@@ -122,6 +127,69 @@ describe("single instance lock registry", () => {
     expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
     expect(existsSync(`${lockFilePath}.guard.recovery`)).toBe(false);
     expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+  });
+
+  test("旧 guard 已死而 recovery 被活进程持有时拒绝启动，两份文件原样保留", async () => {
+    const staleOwner: ProcessIdentity = identity(999_991, "10");
+    const recoverer: ProcessIdentity = identity(999_992, "20");
+    const current: ProcessIdentity = identity(process.pid, "30");
+    const options: InstanceLockOptions = lockOptions(current, [current, recoverer]);
+    await Bun.write(`${lockFilePath}.guard`, ownerText(staleOwner));
+    await Bun.write(`${lockFilePath}.guard.recovery`, ownerText(recoverer));
+
+    await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options))
+      .rejects.toThrow(`Another process (pid=${recoverer.pid}) is recovering the bot lock guard`);
+    expect(await Bun.file(`${lockFilePath}.guard`).text()).toBe(ownerText(staleOwner));
+    expect(await Bun.file(`${lockFilePath}.guard.recovery`).text()).toBe(ownerText(recoverer));
+    expect(existsSync(lockFilePath)).toBe(false);
+    expect(leftoverCandidates()).toEqual([]);
+  });
+
+  test("陈旧 recovery 在判死与删除之间消失时重试接管，最终拿到锁", async () => {
+    const staleOwner: ProcessIdentity = identity(999_993, "10");
+    const staleRecoverer: ProcessIdentity = identity(999_994, "20");
+    const current: ProcessIdentity = identity(process.pid, "30");
+    const recoveryPath: string = `${lockFilePath}.guard.recovery`;
+    await Bun.write(`${lockFilePath}.guard`, ownerText(staleOwner));
+    await Bun.write(recoveryPath, ownerText(staleRecoverer));
+    const options: InstanceLockOptions = {
+      currentIdentity: current,
+      readProcessIdentity: async (pid: number): Promise<ProcessIdentity | null> => {
+        // 另一个清理者恰好在本进程判死之后抢先删掉了陈旧 recovery。
+        if (pid === staleRecoverer.pid) await Bun.file(recoveryPath).delete();
+        return pid === current.pid ? current : null;
+      },
+    };
+
+    await acquireSingleInstanceLock(TOKEN_A, lockFilePath, options);
+
+    expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
+    expect(existsSync(recoveryPath)).toBe(false);
+    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+  });
+
+  test("持有 recovery 期间 guard 被活进程重新取得时报错，并清掉自己的 recovery", async () => {
+    const staleOwner: ProcessIdentity = identity(999_995, "10");
+    const newcomer: ProcessIdentity = identity(999_996, "20");
+    const current: ProcessIdentity = identity(process.pid, "30");
+    const guardPath: string = `${lockFilePath}.guard`;
+    await Bun.write(guardPath, ownerText(staleOwner));
+    const options: InstanceLockOptions = {
+      currentIdentity: current,
+      readProcessIdentity: async (pid: number): Promise<ProcessIdentity | null> => {
+        // 判定旧 owner 已死的同时，另一个进程回收了陈旧 guard 并发布了自己的身份。
+        if (pid === staleOwner.pid) await Bun.write(guardPath, ownerText(newcomer));
+        if (pid === newcomer.pid) return newcomer;
+        return pid === current.pid ? current : null;
+      },
+    };
+
+    await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options))
+      .rejects.toThrow(`Another process (pid=${newcomer.pid}) acquired the bot lock guard during recovery.`);
+    expect(await Bun.file(guardPath).text()).toBe(ownerText(newcomer));
+    expect(existsSync(`${guardPath}.recovery`)).toBe(false);
+    expect(existsSync(lockFilePath)).toBe(false);
+    expect(leftoverCandidates()).toEqual([]);
   });
 
   test("完整身份仍活跃的 v2 guard 原样保留并拒绝抢锁", async () => {

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import type { TelegramConfig } from "../../packages/types/config";
+import type { BotConfig } from "../../packages/types/config";
 import { MOOD_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const queryAiMood = mock(async (_chatId: number): Promise<string> => "平静");
@@ -9,14 +10,15 @@ const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
 const loggerError = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 
-mock.module("../../packages/config/telegram", () => ({
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 100,
-  getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 100 }),
+  getBotConfig: (): BotConfig => ({ atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 100 }),
 }));
 // 超级管理员由身份直接持有全部白名单权限（见 packages/infra/identityPolicy/whitelist.ts 的
 // getEffectiveWhitelistPermissions），命令层不再单独判身份。
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
-  hasWhitelistPermission: (id: number): boolean => id === 100,
+  hasWhitelistPermission: (id: number, key: string): boolean => id === 100 && key === "isCanSwitchMood",
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
@@ -30,9 +32,11 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 const { handleMoodCommand } = await import("../../packages/commands/mood");
 
 function context(argument: string, userId: number | undefined = 100): never {
+  const chat = { id: -1001, type: "supergroup" };
   return {
-    chat: { id: -1001 },
+    chat,
     from: userId === undefined ? undefined : { id: userId, first_name: "Admin", username: "admin" },
+    msg: { message_id: 7, chat },
     msgId: 7,
     match: argument,
   } as never;
@@ -49,12 +53,26 @@ beforeEach(() => {
   loggerError.mockClear();
 });
 
-test.each(["", "unknown", "query extra", "switch extra", "query switch"])("/mood %s 不发起查询或重抽", async (argument) => {
+test.each(["", "unknown", "query extra", "switch extra", "query switch", "QUERY extra"])("/mood %s 不发起查询或重抽", async (argument) => {
   states.set(-1001, { isAIChatEnabled: true });
   await handleMoodCommand(context(argument));
   expect(queryAiMood).not.toHaveBeenCalled();
   expect(switchAiMood).not.toHaveBeenCalled();
   expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: MOOD_USAGE_TEXT, replyToMessageId: 7 });
+});
+
+// 子命令词不区分大小写，口径同 `/copy`、`/qa`、`/icon`、`/translate`。
+test.each(["Query", "QUERY", "qUeRy"])("/mood %s 照常发起查询", async (argument) => {
+  states.set(-1001, { isAIChatEnabled: true });
+  await handleMoodCommand(context(argument, 101));
+  expect(queryAiMood).toHaveBeenCalledWith(-1001);
+});
+
+test.each(["Switch", "SWITCH"])("/mood %s 照常发起重抽", async (argument) => {
+  states.set(-1001, { isAIChatEnabled: true });
+  // 重抽只认超级管理员，这里用缺省的 100。
+  await handleMoodCommand(context(argument));
+  expect(switchAiMood).toHaveBeenCalledWith(-1001);
 });
 
 describe("mood commands: /mood query", () => {
@@ -107,7 +125,20 @@ describe("mood commands: /mood switch", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("轮不到杂鱼"),
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.moodSwitchRejected("@admin"),
+      replyToMessageId: 7,
+    });
+  });
+
+  test("解析不出发起身份时同样拒绝，标签退化为未知发起人", async () => {
+    states.set(-1001, { isAIChatEnabled: true });
+    const chat = { id: -1001, type: "supergroup" };
+    await handleMoodCommand({ chat, msg: { message_id: 7, chat }, msgId: 7, match: "switch" } as never);
+
+    expect(switchAiMood).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.moodSwitchRejected(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownActor),
       replyToMessageId: 7,
     });
   });

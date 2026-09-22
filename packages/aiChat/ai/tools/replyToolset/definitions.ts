@@ -8,7 +8,6 @@ import {
   ADD_REACTION_TOOL,
   SEND_MESSAGE_TOOL,
 } from "../../../../consts/tools";
-import { getReactionEmojis } from "../../reactions";
 
 export function buildSendMessageToolDefinition(roundHasTypo: boolean): AiToolDefinition {
   const properties: Record<string, unknown> = {
@@ -40,13 +39,10 @@ export function buildSendMessageToolDefinition(roundHasTypo: boolean): AiToolDef
   };
 }
 
-/** 反应白名单为空时不向模型提供反应工具。 */
-export function buildAddReactionToolDefinition(): AiToolDefinition | null {
-  const reactionEmojis: readonly string[] = getReactionEmojis();
-  if (reactionEmojis.length === 0) return null;
+export function buildAddReactionToolDefinition(): AiToolDefinition {
   return {
     name: ADD_REACTION_TOOL,
-    description: ADD_REACTION_TOOL_INSTRUCTION + reactionEmojis.join(" "),
+    description: ADD_REACTION_TOOL_INSTRUCTION,
     parametersJsonSchema: {
       type: "object",
       properties: {

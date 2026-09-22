@@ -6,6 +6,8 @@
  * 掐断的 signal。两者名字相近但职责不同，不要合并。
  */
 
+import { toErrorOr } from "./errorMessage";
+
 /**
  * 把调用方的 invalidate signal 与一份**独立**的超时预算合成一个 signal。
  *
@@ -36,17 +38,12 @@ export function isTimeoutAbort(signal: AbortSignal): boolean {
 
 /** 取消原因必须以 Error 传播；标准 AbortController 的 DOMException 原样保留。 */
 function abortSignalError(signal: AbortSignal): Error {
-  const reason: unknown = signal.reason as unknown;
-  return reason instanceof Error
-    ? reason
-    : new Error("AbortSignal was aborted with a non-Error reason.", { cause: reason });
+  return toErrorOr(signal.reason as unknown, "AbortSignal was aborted with a non-Error reason.");
 }
 
 /** Promise 违反 Error rejection 约定时在本边界归一化，原值保留为 cause。 */
 function taskRejectionError(reason: unknown): Error {
-  return reason instanceof Error
-    ? reason
-    : new Error("Abortable task rejected with a non-Error value.", { cause: reason });
+  return toErrorOr(reason, "Abortable task rejected with a non-Error value.");
 }
 
 /**

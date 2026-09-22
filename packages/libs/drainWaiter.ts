@@ -1,4 +1,5 @@
 import type { FlushResult } from "../types/lifecycle";
+import { assertTimeoutMs } from "./inflight";
 
 /**
  * 停机 drain 的骨架：等待某个 owner 的在途与待执行工作归零，超出预算则 abort 并结算。
@@ -37,9 +38,7 @@ export function drainWithWaiter({
   notifyIfIdle,
   abort,
 }: DrainWaiterParams): Promise<FlushResult> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new RangeError(`${owner} drain timeout must be a non-negative finite number.`);
-  }
+  assertTimeoutMs(timeoutMs, `${owner} drain timeout`);
   if (isIdle()) return Promise.resolve("flushed");
   // 预算为 0（异常退出路径）时没有可等待的窗口：直接执行 timer 回调本该做的
   // 事——abort 在途 Telegram 请求并结算，而不是把校验错误抛回 dispose()。

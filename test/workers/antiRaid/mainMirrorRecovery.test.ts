@@ -2,8 +2,8 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { adDetectAgentConfigSnapshot } from "../../../packages/config/agent";
-import { getAdSampleConfig } from "../../../packages/config/adSamples";
+import { adDetectAgentConfigSnapshot, adoptAdDetectAgentConfig } from "../../../packages/config/agent";
+import { adoptAdSampleConfig, getAdSampleConfig } from "../../../packages/config/adSamples";
 
 import type {
   AntiRaidWorkerMessage,
@@ -17,7 +17,6 @@ const {
   activeVerificationSnapshots,
   chatIsSupergroupById,
   chatStates,
-  deferred,
   deferredVerificationRecords,
   diskPosts,
   inFlightAdDisposals,
@@ -39,7 +38,7 @@ const {
 type FlushResult = "flushed" | "timedOut" | "failed";
 
 const antiRaid = await import("../../../packages/antiRaid");
-const { syncAntiRaidAtmosphere } = await import("../../../packages/antiRaid/workerBridge/controller");
+const { syncAntiRaidAgentConfig, syncAntiRaidAtmosphere } = await import("../../../packages/antiRaid/workerBridge/controller");
 
 const { grantVerificationAttempt } = await import("../../../packages/antiRaid/verificationAttempts");
 
@@ -68,6 +67,39 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(replay.findIndex((message) => message.type === "atmosphere"))
       .toBeLessThan(replay.findIndex((message) => message.type === "adoptVerifications"));
   });
+  test("热重载后投递主线程当前广告检测快照，重建重放的也是这一份", async () => {
+    await resetAntiRaidTestState();
+    const originalAdDetect = adDetectAgentConfigSnapshot();
+    const originalSamples = getAdSampleConfig();
+    try {
+      syncAntiRaidAgentConfig();
+      expect(workerPosts).toEqual([]);
+
+      antiRaid.initAntiRaid();
+      workerPosts.length = 0;
+      const reloadedAdDetect = { ...originalAdDetect!, model: "reloaded-ad-model" };
+      adoptAdDetectAgentConfig(reloadedAdDetect);
+      adoptAdSampleConfig(["热重载后的示例"]);
+      syncAntiRaidAgentConfig();
+      const expected: AntiRaidWorkerMessage = { defaultAtmosphere: "teasing",
+        type: "agentConfig",
+        adDetect: reloadedAdDetect,
+        adSamples: ["热重载后的示例"],
+      };
+      expect(workerPosts).toEqual([expected]);
+
+      const replay: AntiRaidWorkerMessage[] = [];
+      workerHooks.supervisorOptions!.onRespawn((message: AntiRaidWorkerMessage): boolean => {
+        replay.push(message);
+        return true;
+      });
+      expect(replay[0]).toEqual(expected);
+    } finally {
+      adoptAdDetectAgentConfig(originalAdDetect);
+      adoptAdSampleConfig(originalSamples);
+    }
+  });
+
   test("完整进程冷启动把磁盘终态提升到新代际，恢复后的第一轮许可不会被判 stale", async () => {
     await resetAntiRaidTestState();
     antiRaid.hydratePendingVerifications(new Map([
@@ -225,7 +257,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
 
     // 配置快照永远排在第一条：广告判定逐条候选取模型名与凭据（见
     // types/antiRaid.ts 的 AntiRaidAgentConfigMessage）。
-    expect(workerPosts[0]).toEqual({
+    expect(workerPosts[0]).toEqual({ defaultAtmosphere: "teasing",
       type: "agentConfig",
       adDetect: adDetectAgentConfigSnapshot(),
       adSamples: getAdSampleConfig(),
@@ -248,7 +280,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     ]);
     expect(respawnPosts).toEqual([
       // 重生同样先投配置快照，且投的是主线程那份唯一快照，不重新读盘。
-      {
+      { defaultAtmosphere: "teasing",
         type: "agentConfig",
         adDetect: adDetectAgentConfigSnapshot(),
         adSamples: getAdSampleConfig(),
@@ -343,7 +375,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
   test("初始 Worker drain 边界登记的广告处置必须结算后才能返回 flushed", async () => {
     antiRaid.initAntiRaid();
     const firstBoundaryIndex: number = workerPosts.length;
-    const disposal = deferred<void>();
+    const disposal: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const disposalTask: Promise<void> = disposal.promise.finally((): void => {
       inFlightAdDisposals.delete(disposalTask);
     });

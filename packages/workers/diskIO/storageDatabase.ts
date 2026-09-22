@@ -12,11 +12,7 @@ export {
   flushStorageDatabase,
   pendingStorageDatabaseDomains,
 } from "./storageDatabase/flush";
-export {
-  adoptStorageDatabase,
-  hydrateStorageDatabase,
-  inspectStorageDatabase,
-} from "./storageDatabase/hydration";
+export { adoptStorageDatabase, inspectStorageDatabase } from "./storageDatabase/hydration";
 export {
   handleIdentityPolicyWrite,
   readBlocklistIdPage,

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { FinishReason } from "@google/genai";
 import type {
   GenerateContentParameters,
@@ -44,7 +45,7 @@ mock.module("../../../packages/config/agent", () => ({
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const {

@@ -22,9 +22,9 @@
 | `bun run test:random` | 固定 seed のランダム順で全テストを実行し、テスト間の残留を炙り出す。スタブの復位には `mockReset()` を使う。`mockClear()` は `mockResolvedValueOnce` のキューを消さないため、消費されなかった分が次のテストに漏れる。復位後は各スタブに実装を入れ直す |
 | `bun run test:coverage` | テスト + 全ソースコードのカバレッジ |
 | `bun run check:install-script-syntax` | `bash -n` で `install.sh` の shell 構文だけを解析し、インストール処理は実行しない |
-| `bun run check:install-isolation` | `copy-ninjia-install-test-*` 専用の一時 fixture root で `install.sh` を実際に実行し（`scripts/checkInstallIsolation.ts`）、staging 失敗時の cleanup、`telegram.json` の rollback、中断後の再開、置換成功、symlink topology、未検証 backup の保持、資格情報の分離を検査。実際の deploy path には一切触れない |
+| `bun run check:install-isolation` | `copy-ninjia-install-test-*` 専用の一時 fixture root で `install.sh` を実際に実行し（`scripts/checkInstallIsolation.ts`）、staging 失敗時の cleanup、`bot.json` の rollback、中断後の再開、置換成功、symlink topology、未検証 backup の保持、資格情報の分離を検査。実際の deploy path には一切触れない |
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
-| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + hot path gate の 7 段。**master へのマージ前に必須** |
+| `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 固定 seed のランダム順全テスト + hot path gate の 8 段。**master へのマージ前に必須** |
 | `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するため `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
@@ -32,7 +32,7 @@
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
-| `bun run perf:review` | 既存の 12 hot path、AI 返信・payload の 7 シナリオ、2 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択。テキスト清掃の専用検証は `--text` を明示した場合のみ実行 |
+| `bun run perf:review` | 既存の 12 hot path、AI 返信・payload の 7 シナリオ、2 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択。テキスト清掃とクールダウンの専用検証は `--text` / `--cooldown` を明示した場合のみ実行 |
 | `bun run build -- --version <tag>` | バージョンの明示指定が必須で既定値なし。現在の Linux 向けバイナリを隔離検証後、`.map` を含まないアーカイブと SHA-256 ファイルを `dist/` へ出力 |
 | `bun run release:check -- --version <tag>` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection + バイナリ構築・検証。リリース前に必須。バージョン未指定・不正は依存関係のインストール前に拒否 |
 | `bun run release:build -- --version <tag>` | クリーンでコミット済みの `dev` から正式版をネイティブ構築 |
@@ -44,7 +44,7 @@
 
 - **インストーラー起動の隔離**：フィクスチャは独立した一時設定・データルートを使用し、システム管理、依存インストール、ネットワーク送信を mock 化して、実際の `index.ts`、Worker、終了時の永続化を実行します。各 Worker は Bun `preload` でネットワーク代替を読み込み、天気には固定応答を返し、他の要求は拒否します。読み込み完了、ポーリング開始、SIGTERM 時の排空、ロックファイル削除を検証します。
 - **ファイル長と走査範囲**：手書き TS・JS・shell ファイルは 1,000 行を超えると拒否し、500 行を超えたら分割を検討します。追跡済みファイルと未 stage の新規ファイルが対象で、Git が無視する配備データは走査しません。インストーラーの構文検査は `install.sh` と宣言された全 shell モジュールを対象とします。
-- **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
+- **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 95% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **型 import は独立して宣言**：ソース・script・test は独立した `import type` を使用します。ESLint の `no-restricted-syntax` が `import { value, type Shape }` などの inline type specifier を拒否します。`test/scripts/typeImportConventions.test.ts` は 3 種類のファイルで許可・拒否の境界を検証し、既存の `Promise.all` 禁止も確認します。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
@@ -69,7 +69,7 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**4519 tests / 388 files / 158896 `expect()` calls**。全ソースコードの**関数カバレッジは 97.22%、行カバレッジは 98.02%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5072 tests / 441 files / 192270 `expect()` calls**。全ソースコードの**関数カバレッジは 97.01%、行カバレッジは 98.12%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -77,18 +77,22 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 1. **ファイル分離**：Bun はテストファイルごとに新しい global object を作成するため、`mock.module` とモジュールレベル状態がほかのテストファイルを汚染しません。`--parallel` は有効にしていないので、各ファイルが別プロセスを占有するとは説明しません。
 2. **一時データルート**：`test/preloadEnv.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` には触れません。終了後に一時ディレクトリを削除します。**path 注入を別 file に分けている**のは、ESM が import を同 file の文より先に評価するためです。`test/preload.ts` が production モジュールを static import した時点で、file 内に書いた環境変数の代入はすでに手遅れになり、`CONFIG_ROOT` は開発機の実デプロイディレクトリを指してしまいます。
-3. **専用の設定ルート**：同じ注入は `config_example/` をその data root 下の `config/` へ丸ごと複製し、`COPY_NINJIA_CONFIG_ROOT` をその複製に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。`agent.json` と `telegram.json` の placeholder 資格情報は複製の中だけテスト専用値に置き換えられ、厳格な parser はこれを受け付けます。複製は data root ごと削除されます。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実 Telegram / feature 設定を読んだり書き換えたりするのを防ぎます。identity database は前項の一時 data root で隔離されます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
-4. **agent 設定 snapshot**：`agent.json` は runtime path が disk から読まない唯一のデプロイ入力です（実 process では main thread が parse し、各 Worker へ init message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はその message を受け取らないため、`test/preload.ts` が前項の `agent.json` 複製を isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
+3. **専用の設定ルート**：同じ注入は `config_example/` をその data root 下の `config/` へ丸ごと複製し、`COPY_NINJIA_CONFIG_ROOT` をその複製に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。`agent.json` と `bot.json` の placeholder 資格情報は複製の中だけテスト専用値に置き換えられ、厳格な parser はこれを受け付けます。`g-auth.json` の例は installer と同じく複製に含めず、翻訳の可用性は preload と各テストが設定します。複製は data root ごと削除されます。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実 Telegram / feature 設定を読んだり書き換えたりするのを防ぎます。identity database は前項の一時 data root で隔離されます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
+4. **agent 設定 snapshot**：Worker が持つデプロイ設定を disk から読むのは main thread だけです（実 process では main thread が parse し、各 Worker へ init と hot reload の message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はそれらの message を受け取らないため、`test/preload.ts` が前項の複製から `agent.json`、`ad_samples.json`、`mood.json`、`stickers.json` とペルソナを isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
 
 `test/scripts/installStartup.test.ts` は installer の隔離 fixture を再利用し、独立した一時設定・データルートで `install.sh`、`bun run start`、実際の Worker を動かします。Telegram 応答とシステムサービスコマンドはテスト用の代替処理が担当します。AI 無効、有効な AI 設定、再インストールと再起動、不正な任意設定の接続前拒否を検証し、正常停止とインスタンスロック解放も確認します。
 
 installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFiles` と関連する `PassEnvironment` / `UnsetEnvironment` の拒否、起動後の `NRestarts` 基準値と減少拒否、既存設定再入力時の mode 保持も検証します。system command はすべて fixture が受け持ち、preflight 失敗は設定・unit・実行データへの書き込みより前に発生する必要があります。
 
+`test/scripts/installMigration.test.ts` は 12.1.0 の mock バックアップから cold migration、mapping 産物の手動配置、ソースインストール、実際の起動までを検証し、未移行の identity 入口を拒否します。ビルド検証の `scripts/checkBinary.ts` は同梱 migration tool、バイナリインストール、起動を同様に確認し、対象プロセスは system Bun を使いません。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、schema v10 の 2 種類の正規系譜、空でない WAL、全業務テーブル、state 主副本、Google 資格情報、配置設定、画像内容を扱います。元バックアップのハッシュ、mode、所有者、link 構造を維持します。データベース移行は宣言した権限 bit の追加、version の更新、系譜 entry の追加だけを行い、その他の業務内容を保持します。
+
+資格情報には一時生成した RSA 鍵を使用します。`test/scripts/migrateBotConfig.test.ts` は BOM の保持、資格情報の不正・欠落、出所の競合、産物の上書き拒否も確認します。ソース移行インストールのテストは fault injection にも含まれます。ソース経路は `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateBotConfig.test.ts`、バイナリ経路は `bun run build -- --version <tag>` で検証できます。
+
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
 
 ### テスト作成の規約
 
-- `packages/` のパスを反映します：`packages/foo/bar.ts` → `test/foo/bar.test.ts`。
+- `packages/` のディレクトリ構成を反映します：`packages/foo/bar.ts` のテストは `test/foo/` に置きます。ファイル名は 1 対 1 でなくて構いません。1 つのモジュールのテストを主題ごとに複数ファイルへ分けるのは普通です（`packages/commands/gag.ts` → `test/commands/gag.lifecycle.test.ts`、`gag.ingress.test.ts` など）。サブディレクトリ内のモジュールをコマンド族でまとめることもあります（`packages/commands/hImage/add.ts` → `test/commands/hImageAdd.test.ts`）。1000 行のハード上限に近いテストファイルには新しいケースを足さず、新規ファイルを作ってください。
 - domain をまたいで共用する test double・fixture・harness は `test/helpers/` に、domain に依存しない汎用ユーティリティは `test/libs/helpers.ts` に置きます。テスト間で可変なモジュール状態を共有しないでください。分離機構によって、`--isolate` なしで実行されるまで問題が隠れる可能性があります。
 - 実ファイル I/O を行うテストも、preload の一時データルートによって安全です。ただし `infra/storage` 周辺の mock 境界には注意してください。`infra/diskIO` だけを mock して `infra/storage` を実物のままにすると、実際の `saveStateInBackground` に到達する可能性があります。これは [`AGENTS.md`](../../AGENTS.md) が実行時ファイルの事前バックアップを求める状況です。
 
@@ -98,7 +102,7 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 
 `test/workers/antiRaid/verificationWelcome.test.ts` は実際の双方向プロトコル、main thread の一時通知境界、削除 owner を通し、Telegram 出力を SDK transformer で代替します。4 種類の歓迎文、返信先、応答消失、取消、Worker teardown・再生成、送信・通信失敗を検証し、削除の一度だけの登録、終了を妨げない timer、後続副作用の順序を確認します。このファイルは全量テストと障害注入の両方に含まれます。
 
-`/wed` の操作回帰は 1,024 件の LRU 容量、コマンドとボタン参照による利用順更新、eviction 時の待機・実行中操作の取消、遅着結果の清掃、個別削除失敗後の継続、update 取消からの独立性、停止時 drain を検証します。メンバー正本では 25 群の満杯時拒否を別途検証します。永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
+`/wed` の操作回帰は 1,024 件の LRU 容量、コマンドとボタン参照による利用順更新、eviction 時の待機・実行中操作の取消、遅着結果の清掃、個別削除失敗後の継続、update 取消からの独立性、停止時 drain を検証します。メンバー正本では 25 群の満杯時拒否を別途検証します。永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。抽選の回帰では、ID でアバターを読み、身分を `getChat` の private chat 情報から取り、`getChatMember` を呼ばないことも確認します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
 
 ## Hot path gate
 
@@ -140,6 +144,8 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 
 `--chains` は機能を有効にした `ad-detect-command` と `ai-reply-command` を実行し、Telegram canned call 数と処理完了を検証します。`--worker` は各 round で実 Disk I/O Worker に 128 message × 400 batch を渡し、batch ごとに最終 revision の ACK を待ちます。各 round で 2 回の graceful shutdown と Worker 再構築を行い、25 chat の復旧値を照合します。clone、transaction、disk wait を含め、throughput、latency、retained heap、RSS を記録しますが、fault injection の代用にはなりません。各 mode は 3 round で、全量基準と既定 10 scenario の hard gate 閾値は変更しません。
 
+`--cooldown` は明示した場合のみ、production のクールダウンを 5 シナリオで測定します。`cooldown-hit`、`cooldown-renew`、`cooldown-growth`、`cooldown-saturated`、`cooldown-expiry` が、既存キーの hit、単一キーの更新、表の充填、満杯時の拒否、一括期限切れを検証します。容量と期間は production 定数を使います。各シナリオは独立 process で通常測定 3 回と profile 3 回を実行し、受理件数を断言して production JIT probe を観測します。充填シナリオは各 warmup と正式 sample の直前に初期化し、その処理は計時に含めません。通常測定は latency、保持 heap、RSS を返し、profile は JIT sample を返しますが GC 停止比率は返しません。この mode は既定の検証と全量基準には含めず、hard gate の閾値も変更しません。
+
 `--text` は明示した場合のみ実行し、既定の全体検証には含めません。36 シナリオで各 3 回の独立 process を実行し、production の `sanitizeInline` と `buildBufferedMessage` を直接呼びます。メッセージ構築は既定の時計と時刻整形を使い、結果は圧縮 batch サイズの window に保持します。fixture は中国語・英語・emoji を 6:3:1 で巡回し、本文 8〜4,096 code unit、長文の割合 1%〜75%、先頭・中央・末尾の改行、密な空白、混在レイアウト、返信引用を含みます。各子プロセスは warmup でも正式 sample と同じメモリ読み取りを行い、JIT probe が 3 sample 連続で変化しなくなってから 9 sample を採取します。中央値の所要時間、ピーク heap と RSS の増分、保持 heap、JIT tier、親プロセスが解析した GC 停止を報告し、シナリオごとに 3 ラウンド中央値の平均・範囲・CV と JIT 安定性を集計します。
 
 `sender-mixed-identity` は user と channel の identity を交互に入力して steady behavior と JIT 再最適化を観測します。単一 user scenario とは sender 数が異なるため、時間差を shape 混在だけのコストとは解釈しません。benchmark の user ID は int32 を超える値を扱い、production では小さい ID も有効です。
@@ -180,7 +186,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 以下はいずれも同じ実測値なので、1 か所直したら全部直します。
 
 - **3 言語の README にある Tests / Coverage badge。** Coverage badge は常に `All files` の行カバレッジを使います。
-- **カバレッジ図**：各 README の「プロジェクト品質」節が参照する [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) と [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg)。banner と同様、1 組を 3 言語の README が共用するため、両テーマのファイルの数値を一緒に更新します。
+- **カバレッジ図**：各 README の「プロジェクト品質」節が参照する [`public/coverage_light.svg`](../../public/coverage_light.svg) と [`public/coverage_dark.svg`](../../public/coverage_dark.svg)。banner と同様、1 組を 3 言語の README が共用するため、両テーマのファイルの数値を一緒に更新します。
 - **3 つの README の `<img alt>` 内の同等の文言。** 図は画像として読み込まれるため SVG 内部の `<title>` / `aria-label` は読み上げに届かず、alt が唯一の入口です。
 - **3 言語の本文にある「このドキュメント版の実測値」。**
 

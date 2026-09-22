@@ -88,24 +88,9 @@ export class TimestampDeque {
     return value;
   }
 
-  /** 移除并返回最新时间戳，供系统时钟回拨时原地裁掉未来尾段。 */
-  pop(): number | undefined {
-    if (this.count === 0) return undefined;
-    const value: number | undefined = this.values[this.tailIndex()];
-    this.count -= 1;
-    if (this.count === 0) this.head = 0;
-    return value;
-  }
-
   /** 查看最早时间戳但不移除。 */
   peek(): number | undefined {
     return this.count === 0 ? undefined : this.values[this.head];
-  }
-
-  /** 查看最新时间戳但不移除。 */
-  peekLast(): number | undefined {
-    if (this.count === 0) return undefined;
-    return this.values[this.tailIndex()];
   }
 
   /**

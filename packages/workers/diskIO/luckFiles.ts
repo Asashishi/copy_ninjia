@@ -40,6 +40,7 @@ import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { DayFileState, LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
 import type { LuckDayRecoveryInspection } from "./snapshotFiles";
 import { enqueueDiskIOOperation } from "./operationQueue";
+import { errorMessage } from "../../libs/errorMessage";
 
 /** 装上运势追加停摆诊断的投递出口（仅 Worker 线程启动时调用一次）。 */
 export function configureLuckAppendStalledReply(
@@ -154,7 +155,7 @@ export async function flushLuckAppends(): Promise<boolean> {
           day,
           pendingEntries: luckPendingAppends.length,
           consecutiveFailures: luckAppendFailures.consecutive,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
         });
         // 只在真正投出去之后才置位：出口没装上、或投递失败时不能把这一轮当成
         // 已告警，否则这段故障期就永远不会再报。

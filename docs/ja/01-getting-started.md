@@ -18,7 +18,7 @@
 - **Bun 1.4.2**：ソース方式と開発時に必要で、`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` で導入できます。バイナリ配布物はこのランタイムを同梱し、システム Bun は不要です。Node.js は使用しません。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
-- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
+- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、`config/g-auth.json` として保存します（構造は [example](../../config_example/g-auth.json) を参照。example の placeholder 秘密鍵は拒否されます）。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
 
 `g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない RS256 用 RSA PEM 秘密鍵（EC、Ed25519、RSA-PSS は拒否）です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
 
@@ -73,7 +73,7 @@ pipe 実行では fd 0 が script 本文そのものなので、すべての問�
 インストールは次の順に進みます。
 
 1. **環境と配布物**：Linux、読み取り可能な `/proc`、制御端末を確認し、不足するツールと Latest Release を取得するか、既存デプロイを再利用します。ソース方式は指定 Bun を導入または検証し、7 日間の依存関係公開待機期間を維持して `bun install --frozen-lockfile` を実行します。バイナリ方式は内蔵 Bun と `packageManager` を照合し、同梱依存関係を使用します。
-2. **デプロイ設定**：欠けているサンプルだけを補い、`agent.json` サンプルは除外します。Telegram 身分は対話で再入力でき、既存ファイルを tree 外へバックアップしてから候補を検証し、原子的に置換します。AI 未設定時は `agent.json` を作成せず、既存 AI 設定は保持します。生成する身分・AI 設定の mode は `600` です。
+2. **デプロイ設定**：欠けているサンプルだけを補い、`agent.json`、`g-auth.json`、`cron.json` のサンプルは除外します。Telegram 身分は対話で再入力でき、既存ファイルを tree 外へバックアップしてから候補を検証し、原子的に置換します。AI 未設定時は `agent.json` を作成せず、既存 AI 設定は保持します。生成する身分・AI 設定の mode は `600` です。
 3. **身分 database と検証**：production コードで保存先を解決し、`database/storage.sqlite` が無い場合だけ現在の空 schema を作成して、デプロイ入力を検証します。
 4. **サービスと観察**：停止を確認済みのデプロイで unit を登録または再利用して起動し、状態・計算済み観察期間・再起動回数・journal を検証します。全検証成功時だけ設定と unit のバックアップを削除します。検証失敗は非ゼロ終了し、前面実行時もバックアップを保持します。
 
@@ -86,14 +86,21 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 mkdir -p config
-cp -n config_example/*.json config/
+for example in config_example/*.json; do
+  case "${example##*/}" in
+    g-auth.json | cron.json) ;;
+    *) cp -n "$example" config/ ;;
+  esac
+done
 ```
+
+`g-auth.json` と `cron.json` の例は書き方を示すだけなのでコピーしません。理由は [`config_example/README`](../../config_example/README/ja.md) を参照してください。
 
 ## Telegram identity の設定
 
 全 field と能力の説明は
 [`config_example/README/ja.md`](../../config_example/README/ja.md) を参照してください。
-Bot identity とスーパー管理者は `config/telegram.json` に置きます。
+Bot identity とスーパー管理者は `config/bot.json` に置きます。
 
 - **`bot_token`**（必須）
   - BotFather が発行した token。
@@ -115,26 +122,27 @@ AI の provider、API key、endpoint、model は能力ごとに `config/agent.js
 runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` を設定し、
 未指定ならプロジェクトルートを使います。詳細は
 [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください。
-翻訳を使う場合は、サービスアカウントキーをプロジェクトルートの
-`g-auth.json` に保存します。この file は `.gitignore` の対象です。
+翻訳を使う場合は、サービスアカウントキーを
+`config/g-auth.json` に保存します。`config/` ディレクトリ全体が `.gitignore` の対象です。
+
+任意の `atmosphere` は `"mesugaki"`（雌小鬼、既定）または `"normal"`（普通）のみ受け付けます。カスタム AI 人設のある群は引き続き普通の通知を優先し、その他の群の通知とメニューにはこの設定を使います。変更は再起動で反映され、installer で identity を再入力しても有効な風格は維持されます。`telegram.json` が残っている場合、`bot.json` との併存も含め、明示的な cold migration まで起動とインストールを拒否します。
 
 ## プロジェクト側の設定ファイル
 
 `config/` は deployment 固有の設定ディレクトリで、Git の追跡対象外です。初回だけ `config_example/` からコピーし、その後は `config/` だけを編集してください。example ディレクトリは実行時設定ではありません。
 
+稼働中に `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`（定時タスク。形式は [config_example/README](../../config_example/README/ja.md)）を編集すると hot reload されます。main thread が `config/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。上記 AI 設定ファイルの追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI 雑談や広告検出はすぐに停止し（グループ switch は元の値のまま）、前提が戻れば再起動なしで自動的に再開します。`bot.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が必要です。
+
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI チャットの基本ペルソナ。
   - **検証**：プレーンテキスト、schema なし。
-- **`config/telegram.json`**（[example](../../config_example/telegram.json)）
-  - **内容**：Bot API token と唯一のスーパー管理者 user ID。
-  - **検証**：[`packages/config/telegramInput.ts`](../../packages/config/telegramInput.ts)。network
+- **`config/bot.json`**（[example](../../config_example/bot.json)）
+  - **内容**：Bot API token、唯一のスーパー管理者 user ID、任意の通知口調 `atmosphere`。
+  - **検証**：[`packages/config/botInput.ts`](../../packages/config/botInput.ts)。network
     接続前に厳密ロードし、欠落、未知 field、空 token、不正な ID は startup を拒否します。
 - **`config/stickers.json`**（[example](../../config_example/stickers.json)）
   - **内容**：AI が使えるスタンプパック、最大 5 個。
   - **検証**：[`packages/config/stickers.ts`](../../packages/config/stickers.ts)。
-- **`config/reactions.json`**（[example](../../config_example/reactions.json)）
-  - **内容**：AI が使える絵文字リアクション。
-  - **検証**：[`packages/config/reactions.ts`](../../packages/config/reactions.ts)。
 - **`config/mood.json`**（[example](../../config_example/mood.json)）
   - **内容**：ムードの文面、重み、天気・時間帯の倍率。
   - **検証**：[`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、
@@ -155,14 +163,15 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     `https` のみを受け付け、平文 `http` は `localhost`・`127.0.0.1`・`::1` に限られます。
     URL に userinfo と `#` fragment は含められません。
   - **検証**：[`packages/config/agent.ts`](../../packages/config/agent.ts)。未知 key、空の
-    key/model、不正な provider・URL・protocol は拒否します。**設定 file 全体は起動時に
-    main thread が一度だけ parse し**、各 Worker には init message で渡します。Worker 側は
-    その snapshot を読むだけで disk には触れず、crash 後の再生成でも同じ snapshot を replay
-    するため、同一 process 内に 2 世代の設定が並ぶことはありません。変更後は process 全体の
-    再起動が必要です。vision と voice の対応可否は最初の実 request で別々に probe し、
+    key/model、不正な provider・URL・protocol は拒否します。**この file を読むのは main
+    thread だけです**。起動時に一度 parse し、稼働中の編集は hot reload で厳密に parse し直して、
+    各 Worker には init または reload message で渡します。Worker 側は受け取った snapshot を
+    読むだけで disk には触れず、crash 後の再生成では main thread で現在有効な snapshot を
+    replay します。vision と voice の対応可否は最初の実 request で別々に probe し、
     明示的に非対応の modality と、404/405 で model や path の不在を示した endpoint
     （後者は `$.agent.media` を指す診断を 1 行記録）はどちらも以後 download しません。
     一時的な障害は回数に応じた backoff だけで、能力を恒久的に閉じることはありません。
+    hot reload で `media` 能力が差し替わると、2 種類の入力を改めて probe します。
 
 恒久 allowlist、blocklist、一時 allowlist activity、未完了 removal は deployment JSON ではなく、runtime data root の
 `database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、
@@ -171,7 +180,7 @@ feature 単位で検証し、翻訳は `g-auth.json` を読みます。欠落は
 実行経路だけを拒否し、起動は妨げません。ただし**ファイルが存在する限り厳密なパースを
 通らなければならず**、対応機能が今オフでも不正な内容は起動を拒否します
 （[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の
-`validateExistingDeploymentInputs` を参照）。修復後は再起動が必要です。
+`validateExistingDeploymentInputs` を参照）。AI 雑談・広告検出の可用性は hot reload 後に再判定し、不足設定を補うと自動復帰します。`g-auth.json` と既定人設は再起動が必要です。
 
 ### identity storage の初期化
 
@@ -221,12 +230,12 @@ sidecar が同じ協働 group を継承します。
 旧 process を停止し、deployment 所有の `config/` 全体を backup してください。旧
 `gemini.json`、`openai.json` と AI 環境変数にあった model、endpoint、API key を統一
 `agent.json` へ手動移行します。`config_example/` で deployment 設定を上書きしてはいけません。
-`state.json.global.model` の runtime 選択はもう読みません。model 変更は停止中に該当能力を
-編集し、再起動して反映します。
+`state.json.global.model` の runtime 選択はもう読みません。model 変更は `agent.json` の該当能力を
+編集し、保存すると hot reload で反映されます。
 
-旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、**9.1.5 上で** identity storage migration を実行します（この script は 9.2.0 で削除済み。[運用文書](07-operations.md#identity-storage-migration) を参照）。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/telegram.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
+旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、**9.1.5 上で** identity storage migration を実行します（この script は 9.2.0 で削除済み。[運用文書](07-operations.md#identity-storage-migration) を参照）。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/bot.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
 
-**注意：資格情報を外しても起動は拒否されませんが、そのグループは静かに止まります。** 起動時の総ゲートが検証するのは**すでに存在する**デプロイ入力だけです（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照。現在は `packages/config/readiness.ts` の `validateExistingDeploymentInputs` を再 export するだけです）。存在するファイルは厳密なパースを通らなければならず、本当に存在しないファイルは起動を妨げません。`chat_states` の `true` は従来どおり復元されますが、対応機能は唯一の判定入口で利用不可と判定されます——AI 雑談の Worker はそもそも起動せずメモリも hydrate されず（`memory/` のスナップショットは前提が戻るまでそのまま保持されます）、`/translate` のセッションは動作せず、広告検出は bundle を送らなくなります。グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えず、痕跡は `logs/` の 1 行だけです。したがって資格情報を外す前に `/ai_chat disable`、`/ad_detect disable`、`/translate disable` を実行するか、前提そのものを復旧してください。
+**注意：資格情報を外しても起動は拒否されませんが、そのグループは静かに止まります。** 起動時の総ゲートが検証するのは**すでに存在する**デプロイ入力だけです（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs` を参照）。存在するファイルは厳密なパースを通らなければならず、本当に存在しないファイルは起動を妨げません。`chat_states` の `true` は従来どおり復元されますが、対応機能は唯一の判定入口で利用不可と判定されます——起動時に前提が欠けていれば AI 雑談の Worker はそもそも起動せずメモリは main thread のミラーに入るだけで（`memory/` のスナップショットは前提が戻るまでそのまま保持されます）、稼働中に hot reload で外した場合は Worker が待機します。`/translate` のセッションは動作せず、広告検出は bundle を送らなくなります。グループからは Bot が外した時点（またはその再起動）を境に雑談・広告検出・翻訳をやめたようにしか見えず、痕跡は `logs/` の 1 行だけです。したがって資格情報を外す前に `/ai_chat disable`、`/ad_detect disable`、`/translate disable` を実行するか、前提そのものを復旧してください。AI 雑談と広告検出は前提が戻れば hot reload で自動的に再開しますが、`g-auth.json` は hot reload されないため再起動が必要です。
 
 ### インラインサムネイルと Bot 既定アバターの差し替え
 
@@ -238,14 +247,17 @@ sidecar が同じ協働 group を継承します。
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…"
+    "botDefaultAvatarUrl": "https://…",
+    "randomHImageDir": "./h_image"
   }
 }
 ```
 
-4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
+最初の 4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
 
-4 項目は起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
+5 項目の欠落フィールドは起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。最初の 4 項目の要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
+
+5 つ目のキー `randomHImageDir` は `/h_image` 専用画像庫で、cron がディレクトリを指定しない場合の抽選元でもあります。既定は `./h_image` です。絶対パスか `./`・`../` で始まる明示的相対パスを受け付け、相対パスは実行時データルート基準です。裸の名前と `~/…` は無効です。起動時に不足するディレクトリを作成し、読み書き・アクセス権と全項目を検査します。内容 SHA-256 の小文字 16 進数 64 文字を名前本体とする `jpg`/`jpeg`/`png`/`webp` の通常ファイルだけを許可し、サブディレクトリ・ファイルへのリンク・隠しファイル・残存一時ファイルは起動を拒否します。ディレクトリ自体はリンクでも構いません。内容ハッシュは再計算しないため、手動名と内容の一致は運用者が確認します。追加は `/h_image add` を推奨します。適合画像の追加・削除は再起動不要で、抽選時に 10 MB 超の画像を飛ばします。初回の `state.json` は起動成功後に補完されます。cron で明示した独立ディレクトリでは通常のファイル名を使えます。詳細は [配置設定](../../config_example/README/ja.md) を参照してください。
 
 > 起動前に `state.global.assets` の 4 つの URL を確認してください。サムネイル 3 枚は `https` が必須で、不正な URL はデコード時に起動を拒否し、フィールドパスを示します。
 
@@ -257,6 +269,7 @@ sidecar が同じ協働 group を継承します。
 2. Bot をグループに追加し、メッセージ削除、メンバーの BAN、グループ管理の管理者権限を与えます。参加認証と Anti-Raid は必要な権限がある場合だけ動作し、さらにグループ内で `/antiraid enable`（既定は無効）を実行する必要があります。
 3. `/setinline` で Inline Mode を有効にします。運勢抽選の `@Bot 所求事項` に必要です。
 4. `/setinlinefeedback` を 100% に設定します。`chosen_inline_result` が抽選結果の確認と永続化の主経路で、メッセージ内の署名付き receipt は補助確認経路です。
+5. （任意）Bot-to-Bot Communication Mode を有効にします。`/translate` や `/copy` の対象が別の Bot のときだけ必要です。Telegram は既定で他の Bot のメッセージをこの Bot に配信しません。相手の Bot がこのモードを有効にしていても、届くのはこの Bot への返信と `/コマンド@この Bot` だけです。この Bot で有効にすると、管理者であるか Privacy Mode を無効にしたグループでは他の Bot の全メッセージを受信し、AI の割り込み、copy、広告検出、連投カウントは送信者が Bot かどうかを区別しません。自動で返答する Bot がいるグループでは両者が応答し合う可能性があるため、有効にする前に確認してください。
 
 ## 初回起動
 

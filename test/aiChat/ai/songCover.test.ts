@@ -11,6 +11,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { GeneratedChatImage } from "../../../packages/types/aiChat/imageGeneration";
 
 const generateChatImage = mock(async (..._args: unknown[]): Promise<GeneratedChatImage | null> => ({
@@ -24,12 +25,7 @@ const realImage = await import("../../../packages/infra/image");
 
 mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({ generateChatImage }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerError,
-  },
+  logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../../packages/infra/image", () => ({ ...realImage, prepareThumbnailJpeg }));
 

@@ -4,9 +4,9 @@ import type { AdmitDecision, RoundDecision } from "../../../packages/types/state
 import { TimestampDeque } from "../../../packages/libs/timestampDeque";
 import { RATE_LIMIT_LONG_MAX_TRIGGERS } from "../../../packages/consts/aiChat/rateLimit";
 
-let decision: AdmitDecision = { action: "startRound" };
+let decision: AdmitDecision = "startRound";
 const admitTrigger = mock((_input: unknown): AdmitDecision => decision);
-let roundDecision: RoundDecision = { action: "run" };
+let roundDecision: RoundDecision = "run";
 const admitRound = mock((_input: unknown): RoundDecision => roundDecision);
 const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void, _modelFinished: (chatId: number) => void): boolean => true);
 const pushReplyTrigger = mock((_input: unknown): void => {});
@@ -49,15 +49,6 @@ mock.module("../../../packages/workers/aiChat/replyQueue", () => ({
 }));
 mock.module("../../../packages/workers/aiChat/replyRound", () => ({ startReplyRound }));
 mock.module("../../../packages/workers/aiChat/bufferedMessageIndex", () => ({ replyReferenceForBufferedMessage }));
-// replyPipeline.ts 把 replyState 的这四个名字原样再导出，被测函数虽然不碰它们，
-// 模块链接仍要求它们存在：整份模块被替换掉时缺一个就在 import 阶段报
-// `export ... not found`。
-mock.module("../../../packages/workers/aiChat/replyState", () => ({
-  invalidateChatReplies: (): void => {},
-  quiesceAiChatReplies: async (): Promise<void> => {},
-  replyGenerationSignal: (): AbortSignal => new AbortController().signal,
-  trackReplyGenerationTask: (): void => {},
-}));
 
 const { drainPendingReplyQueues, generateAndSendReply } = await import("../../../packages/workers/aiChat/replyPipeline");
 
@@ -71,8 +62,8 @@ const baseRequest = {
 };
 
 beforeEach(() => {
-  decision = { action: "startRound" };
-  roundDecision = { action: "run" };
+  decision = "startRound";
+  roundDecision = "run";
   botInfoState.current = botInfo;
   pendingOverflowNotices.clear();
   pendingReplyTriggers.clear();
@@ -94,7 +85,7 @@ beforeEach(() => {
 describe("AI reply admission pipeline", () => {
   test("准入携带发送容量，容量不足的直接触发按排队决策处理", () => {
     hasReplyDeliveryCapacity.mockReturnValue(false);
-    decision = { action: "enqueue" };
+    decision = "enqueue";
     generateAndSendReply(baseRequest);
     expect(admitTrigger).toHaveBeenCalledWith(expect.objectContaining({ deliveryAvailable: false }));
     expect(pushReplyTrigger).toHaveBeenCalledTimes(1);
@@ -113,7 +104,7 @@ describe("AI reply admission pipeline", () => {
     const times = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(Date.now());
     longTriggerTimes.set(-1001, times);
-    roundDecision = { action: "rateLimited" };
+    roundDecision = "rateLimited";
     onModelFinished(-1001);
     expect(drainQueuedReplies).toHaveBeenCalledTimes(1);
     startReplyRound.mock.calls[0]![1](-1001);
@@ -137,18 +128,18 @@ describe("AI reply admission pipeline", () => {
   });
 
   test("排队、溢出和静默丢弃分别只执行自己的副作用", () => {
-    decision = { action: "enqueue" };
+    decision = "enqueue";
     generateAndSendReply({ ...baseRequest, imageGenerationRequested: true });
     expect(pushReplyTrigger).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
       triggerReference,
     }));
 
-    decision = { action: "enqueueOverflow" };
+    decision = "enqueueOverflow";
     generateAndSendReply(baseRequest);
     expect(pendingOverflowNotices.has(-1001)).toBeTrue();
 
-    decision = { action: "dropSilently" };
+    decision = "dropSilently";
     generateAndSendReply(baseRequest);
     expect(startReplyRound).not.toHaveBeenCalled();
     expect(pushReplyTrigger).toHaveBeenCalledTimes(1);
@@ -239,12 +230,12 @@ describe("AI reply admission pipeline", () => {
     times.push(900);
     longTriggerTimes.set(-1001, times);
 
-    roundDecision = { action: "rateLimited" };
+    roundDecision = "rateLimited";
     drainPendingReplyQueues(1_000);
     // 空转一次就等于每分钟往群里刷一条限频提示（提示自带 60 秒冷却）。
     expect(drainQueuedReplies).not.toHaveBeenCalled();
 
-    roundDecision = { action: "run" };
+    roundDecision = "run";
     drainPendingReplyQueues(1_000);
     expect(drainQueuedReplies).toHaveBeenCalledWith(-1001, expect.any(Function));
   });
@@ -261,7 +252,7 @@ describe("AI reply admission pipeline", () => {
     const onFinished = startReplyRound.mock.calls[0]![1];
     drainQueuedReplies.mockClear();
 
-    roundDecision = { action: "rateLimited" };
+    roundDecision = "rateLimited";
     pendingOverflowNotices.set(-1001, undefined);
     onFinished(-1001);
 

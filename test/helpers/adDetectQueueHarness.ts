@@ -1,6 +1,7 @@
 /** 广告队列测试共用的 owner 状态、provider 替身与逐用例复位。 */
 
 import { mock } from "bun:test";
+import { loggerStub } from "./loggerMock";
 import type { AdCandidateMessage } from "../../packages/types/antiRaid";
 import type { AdVerdict } from "../../packages/types/antiRaid/adDetect";
 import type { TelegramWorkerTemporaryMessageResult } from "../../packages/types/telegramWorker";
@@ -28,12 +29,7 @@ export const fetchAdminIds = mock(async (chatId: number): Promise<Set<number>> =
 
 export const errorLogs: string[] = [];
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 mock.module("../../packages/workers/antiRaid/adDetect/classifier", () => ({
   classifyAdText: async (params: { text: string; justJoined: boolean }): Promise<AdVerdict | null> => {

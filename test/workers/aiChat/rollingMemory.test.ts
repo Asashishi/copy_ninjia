@@ -29,9 +29,10 @@ const {
 const {
   activeReplyCounts,
   cachedReplyGeneration,
+  replyAbortControllers,
   resetAiChatReplyCache,
 } = await import("../../../packages/cache/workers/aiChat/replies");
-const { trackReplyGenerationTask } = await import("../../../packages/workers/aiChat/replyGeneration");
+const { replyGenerationSignal, trackReplyGenerationTask } = await import("../../../packages/workers/aiChat/replyGeneration");
 const {
   AI_MEMORY_MAX_CHATS,
   REPLY_REFERENCE_MAX_CHARS,
@@ -234,6 +235,37 @@ describe("AI rolling-memory capacity", () => {
     expect(chatBuffers.has(oldestIdleChatId)).toBe(false);
     expect(chatBuffers.has(-20_000)).toBe(true);
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: oldestIdleChatId });
+  });
+
+  test("淘汰空闲群时一并回收当前代的取消控制器，在途代的控制器留给任务结算回收", async () => {
+    for (let index: number = 0; index < AI_MEMORY_MAX_CHATS; index++) {
+      const chatId: number = -10_000 - index;
+      chatBuffers.set(chatId, new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX));
+      chatLastActivityTimes.set(chatId, index);
+    }
+    // 最老的两个群都建过本代控制器；-10_000 的任务已结算，-10_001 的仍在途。
+    const idleKey: string = `-10000:${cachedReplyGeneration(-10_000)}`;
+    replyGenerationSignal(-10_000, cachedReplyGeneration(-10_000));
+    const busyGeneration: number = cachedReplyGeneration(-10_001);
+    const busyKey: string = `-10001:${busyGeneration}`;
+    replyGenerationSignal(-10_001, busyGeneration);
+    const pending = Promise.withResolvers<void>();
+    trackReplyGenerationTask(-10_001, busyGeneration, pending.promise);
+
+    pushBufferedMessage(-20_000, entry("new chat"));
+    expect(chatBuffers.has(-10_000)).toBe(false);
+    expect(replyAbortControllers.has(idleKey)).toBe(false);
+
+    // 其余候选全都在途时才按原始 LRU 淘汰在途群：控制器保留到任务结算。
+    for (let index: number = 2; index < AI_MEMORY_MAX_CHATS; index++) activeReplyCounts.set(-10_000 - index, 1);
+    activeReplyCounts.set(-20_000, 1);
+    pushBufferedMessage(-20_001, entry("another chat"));
+    expect(chatBuffers.has(-10_001)).toBe(false);
+    expect(replyAbortControllers.get(busyKey)?.signal.aborted).toBe(false);
+    pending.resolve();
+    await pending.promise;
+    await Bun.sleep(0);
+    expect(replyAbortControllers.has(busyKey)).toBe(false);
   });
 
   test("模型已结束但发送链未完成时保留记忆，链结束后恢复 LRU 淘汰", async () => {

@@ -1,14 +1,5 @@
 /** 多个领域的测试文件共用、与被测领域无关的小工具（非测试文件，bun test 不会执行它）。 */
 
-/** 手动控制 settle 时机的 Promise，串行/并发调度类测试用。 */
-export function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
 /**
  * 排空「已经发起、但调用方按设计不 await」的后台链——典型是 infra/botAdmin.ts 的
  * 按需权限现查：它不能挡住串行的 update 处理，因此快照要晚若干个微任务才落下。

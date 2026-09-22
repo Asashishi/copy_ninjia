@@ -149,7 +149,7 @@ describe("Disk I/O snapshot domain owners", () => {
   test("dirty 项的快照在落盘前消失时只摘标记，不再写盘", () => {
     // 两个 owner 走的是各自的循环（AI 记忆自己那份还要顺带结算即时回执），
     // 因此这条「标了 dirty 但快照已被删掉」的分支要各测一次。
-    markStickerCatalogSnapshotDirty("pack_gone", "sticker-gone");
+    markStickerCatalogSnapshotDirty("pack_gone", "sticker-gone", 1);
     stickerCatalogCache.delete("pack_gone");
     flushStickerCatalogs(stickerFiles);
     expect(dirtyStickerPacks.size).toBe(0);
@@ -189,10 +189,10 @@ describe("Disk I/O snapshot domain owners", () => {
       // 定时 flush 走的是模块默认依赖，也就是真的写进贴纸目录；因此内容必须是
       // 合法的快照 JSON——owner 缓存里存的本来就是序列化好的文本，随手塞一个
       // 非 JSON 串会给同一目录留下一份下一次 inspect 必然拒绝的孤儿文件。
-      markStickerCatalogSnapshotDirty("pack_two", stickerSnapshotJson("定时落盘"));
+      markStickerCatalogSnapshotDirty("pack_two", stickerSnapshotJson("定时落盘"), 1);
       expect(stickerFlushState.timer).not.toBeNull();
       // 重复 markDirty 不另排一条：定时器槽只有一个。
-      markStickerCatalogSnapshotDirty("pack_three", stickerSnapshotJson("同一拍"));
+      markStickerCatalogSnapshotDirty("pack_three", stickerSnapshotJson("同一拍"), 1);
 
       jest.advanceTimersByTime(SNAPSHOT_FLUSH_INTERVAL_MS);
 
@@ -215,7 +215,7 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(dirtyStickerPacks).toHaveLength(0);
 
     markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", storage: aiFiles });
-    markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
+    markStickerCatalogSnapshotDirty("pack_two", "sticker-two", 1);
     expect(aiMemoryFlushState.timer).not.toBeNull();
     expect(stickerFlushState.timer).not.toBeNull();
     expect(aiMemoryFlushState.timer).not.toBe(stickerFlushState.timer);
@@ -263,7 +263,7 @@ describe("Disk I/O snapshot domain owners", () => {
     deleteAiMemoryFile.mockImplementationOnce((): void => { throw new Error("ai delete failed"); });
 
     markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", storage: aiFiles });
-    markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
+    markStickerCatalogSnapshotDirty("pack_two", "sticker-two", 1);
     expect(flushAiMemorySnapshots(aiFiles)).toBeFalse();
     expect(flushStickerCatalogs(stickerFiles)).toBeFalse();
     expect(dirtyChats.has(2)).toBeTrue();
@@ -326,7 +326,7 @@ describe("Disk I/O snapshot domain owners", () => {
 
   test("reset 取消本领域 timer 并清空恢复态、dirty 与待删除集合", () => {
     markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", storage: aiFiles });
-    markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
+    markStickerCatalogSnapshotDirty("pack_two", "sticker-two", 1);
     deletedAiMemoryChats.add(3);
 
     resetAiMemoryCache();

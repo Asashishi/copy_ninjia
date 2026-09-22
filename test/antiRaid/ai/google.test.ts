@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 
 const errorLogs: string[] = [];
 const constructions: unknown[] = [];
@@ -28,12 +29,7 @@ mock.module("../../../packages/config/agent", () => ({
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 
 const { requestGoogleAdDetectJson } = await import("../../../packages/antiRaid/ai/google");

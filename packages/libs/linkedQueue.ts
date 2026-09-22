@@ -49,11 +49,6 @@ export class LinkedQueue<T> {
     return this.head ? this.head.value : undefined;
   }
 
-  /** 查看队尾元素但不出队；队列为空时返回 undefined。 */
-  peekLast(): T | undefined {
-    return this.tail ? this.tail.value : undefined;
-  }
-
   /** 只读遍历当前 FIFO；遍历期间调用方不得修改队列，用于恢复时核对已有事实。 */
   *values(): IterableIterator<T> {
     for (let node: QueueNode<T> | null = this.head; node !== null; node = node.next) yield node.value;
@@ -67,7 +62,7 @@ export class LinkedQueue<T> {
   }
 
   /** 取队尾最近的 n 个元素，保持入队顺序；n 大于队列长度时返回全部。
-   *  n=1 走 tail 指针 O(1) 特判（replyQueue 每次入队都取最新一条），其余
+   *  n=1 走 tail 指针 O(1) 特判，其余
    *  情况单链表只能从头遍历。 */
   last(n: number): T[] {
     if (n === 1) return this.tail ? [this.tail.value] : [];

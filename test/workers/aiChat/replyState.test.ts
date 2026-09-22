@@ -38,7 +38,7 @@ import {
   quiesceAiChatReplies,
   replyGenerationSignal,
   trackReplyGenerationTask,
-} from "../../../packages/workers/aiChat/replyState";
+} from "../../../packages/workers/aiChat/replyGeneration";
 
 afterEach(() => {
   resetAiChatWorkerCache();

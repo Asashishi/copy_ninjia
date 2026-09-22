@@ -15,6 +15,7 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { GrammyError } from "grammy";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
@@ -24,12 +25,7 @@ import { BOT_DEFAULT_AVATAR_URL } from "../../packages/consts/ui/assets";
 
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerErrorMock,
-  },
+  logger: loggerStub({ error: loggerErrorMock }),
 }));
 
 const realFetch = globalThis.fetch;

@@ -139,7 +139,7 @@ export function hydrateBlocklist(
       continue;
     }
     // 冻结批次在这里**不再裁剪**，因为 SQLite owner 根本不会交出需要裁剪的行：
-    // hydrateStorageDatabase 对「冻结 userId 不在 blocklist_entries」直接抛错，
+    // inspectStorageDatabase 对「冻结 userId 不在 blocklist_entries」直接抛错，
     // handlePendingRemovalSnapshot 对同一条件也抛（见 workers/diskIO/
     // storageDatabase/pendingRemoval.ts）。也就是说这是一条断言而不是一次修剪——部署方从旧备份
     // 恢复 database/storage.sqlite、或手删一行 blocklist_entries 撤销误 /block 时，
@@ -166,18 +166,14 @@ export function hydrateBlocklist(
  * 其后的领域 flush 才是 durable 边界；排队快照与可变失败诊断字段分离。
  * @internal 供同目录 sweep owner 合并权威变更。
  */
-type BlocklistSnapshotPoster = (message: BlocklistRemovalsDiskMessage) => boolean;
-
-export function queuePendingBlockedRemovalsSnapshot(
-  postMessage: BlocklistSnapshotPoster = postDiskIO
-): boolean {
+export function queuePendingBlockedRemovalsSnapshot(): boolean {
   if (!Number.isSafeInteger(removalSnapshotRevision.current + 1)) {
     throw new Error("Pending removal snapshot revision space is exhausted.");
   }
   removalSnapshotRevision.current++;
   const revision: number = removalSnapshotRevision.current;
   unacknowledgedRemovalSnapshotRevision.current = revision;
-  return postMessage({
+  return postDiskIO({
     type: "blocklistRemovals",
     removals: pendingRemovalSnapshot(),
     revision,
@@ -250,7 +246,7 @@ function releaseSweepClaim(chatId: number, removalId: number): void {
 /**
  * 把某个 id 从冻结名单批次摘掉。补扫不冻结名单，只有权威名单被清空时才连同
  * 补扫任务一起销账；所有销账路径同步释放永远不会再收到回执的 sweep claim。
- * @internal 由 membership.ts 的 /unblock 路径调用。
+ * @internal 由 membership.ts 的 /block disable 路径调用。
  */
 export function forgetUserBlocklistRemovals(userId: number): void {
   let changed: boolean = false;

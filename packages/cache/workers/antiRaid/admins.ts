@@ -7,11 +7,29 @@ import {
 
 /** 非匿名管理员邀请豁免表（packages/workers/antiRaid/adminCache.ts）的内存状态。 */
 
-/** 按需拉取的各群非匿名管理员 ID 表。 */
+/**
+ * 按需拉取的各群非匿名管理员 ID 表。
+ *
+ * 填充：首次需要判定时整群拉一次，此后按 my_chat_member 增量更新。
+ * 清理：读时按 ADMIN_CACHE_TTL_MS 回收过期快照，周期 sweep 清死记录，
+ * resetAdminCache 整表清空。容量：setBoundedMapValue 限制为
+ * ANTI_RAID_CHAT_CACHE_MAX 项，满载淘汰最早写入的群。
+ * Worker 崩溃重建：不重放——新 isolate 从空表开始，下一次判定重新拉取；
+ * 「没有条目」表示「此刻不知道」，不表示「不是管理员」。
+ */
 export const chatAdmins: Map<number, ChatAdminCache> = new Map();
-/** 进行中的全量管理员拉取，按 chatId 去重。 */
+/**
+ * 进行中的全量管理员拉取，按 chatId 去重。
+ * 清理：请求结算（成功或失败）时删除，resetAdminCache 整表清空。
+ * 容量：同时在途的群数，上界为受管群数；Worker 崩溃后旧 Promise 随 isolate 消失。
+ */
 export const adminFetches: Map<number, Promise<Set<number>>> = new Map();
-/** 全量拉取在途期间到达的增量资格变化，待快照落地后重放。 */
+/**
+ * 全量拉取在途期间到达的增量资格变化，待快照落地后重放。
+ * 清理：对应的拉取落地并重放完毕时按 chatId 删除，resetAdminCache 整表清空。
+ * 容量：只在拉取在途的那几个群上存在，内层是那段窗口里变动过的成员数。
+ * Worker 崩溃重建：不重放——快照本身就要重拉，那段窗口的增量随之作废。
+ */
 export const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> = new Map();
 
 /**

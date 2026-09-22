@@ -1,15 +1,16 @@
 import type { Message } from "grammy/types";
 import type { CopyMode } from "../../types/chatState";
 import { activeCopyTargetIdIn } from "../../infra/storage/stateStore";
-import { sendMessage } from "../../infra/telegram";
-import { copyEchoMessage } from "../../copy/echo";
+import { sendEchoPayload } from "../../copy/echo";
 import { applyCopyModeTransform } from "../../copy/copyModes";
+import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
 import { containsRenderableCommand } from "../../libs/renderableCommand";
 
 /**
- * 将消息复读回所在聊天。只有无 entity 的纯文本会执行文本变换，避免变换后
- * entity 偏移量失效；其余消息一律走普通复制出口。发送前核对锁定目标，
- * 只允许当前 copy 会话继续发送。
+ * 将消息复读回所在聊天（`/copy` 系与随机复读）。文字与图注一律按字符串处理：有模式时
+ * 变换，没有模式时原样使用，链接、@ 与格式实体都不再单独处理；发送经 copy/echo.ts 的
+ * sendEchoPayload（纯文字重新发送，媒体复制并换图注）。发送前核对锁定目标，只允许
+ * 当前 copy 会话继续发送。
  */
 export interface EchoMessageParams {
   chatId: number;
@@ -21,53 +22,32 @@ export interface EchoMessageParams {
    *
    * 复读**不挂回复**（复读的是原话，不是回原话），所以话题群里缺了它，被复读的
    * 人在自己话题里说话、本天才却在 General 学舌（判定见 libs/forumTopic.ts）。
-   * 两条出口都要带：文本变换走 sendMessage，其余载荷走 copyMessage。
    */
   messageThreadId?: number;
 }
 
+/** @returns 发出去的文字；没发出去或原消息没有文字时为 undefined。 */
 export async function echoMessage(params: EchoMessageParams): Promise<string | undefined> {
   const { chatId, message, mode, expectedTargetId, messageThreadId }: EchoMessageParams = params;
-  // caption 也要看：只读 message.text 的话，图片/动画/文件消息在这里恒为空串，
-  // 一条 caption 写着 `/batch_kick 1d` 的图片会一路走到下面的 copyMessage 被
-  // 原样重发，而 Telegram 会把机器人自己发出的那句 caption 渲染成可点击的命令
-  // 链接——等于本天才亲手给一条破坏性管理命令造了个一键入口。
-  //
-  // 判定和下面那道守卫共用 containsRenderableCommand，不再自己写 `startsWith("/")`：
-  // 前缀判定只挡得住偏移 0 的命令，`喵 /batch_kick 1d` 这种命令在中段的消息因为
-  // 带 bot_command 实体而拿不到 plainText，会直接落到 copyMessage 被原样复读出去——
-  // 两条兄弟分支各判各的，等于下面守得再严也能从这里绕过去。
-  const commandText: string = message.text ?? message.caption ?? "";
-  if (containsRenderableCommand(commandText)) return undefined;
+  // caption 也要看：一条 caption 写着 `/batch_kick 1d` 的图片被复读出去时，Telegram 会把
+  // 机器人自己发出的那句 caption 渲染成可点击的命令链接。判定不用 `startsWith("/")`：
+  // bot_command 不只认行首，`喵 /batch_kick 1d` 同样能被点击。
+  const source: string | undefined = message.text ?? message.caption;
+  if (source !== undefined && containsRenderableCommand(source)) return undefined;
 
-  const plainText: string | undefined =
-    typeof message.text === "string" &&
-    (!message.entities || message.entities.length === 0)
-      ? message.text
-      : undefined;
-  const transformed: string | null = plainText !== undefined
-    ? applyCopyModeTransform(plainText, mode)
-    : null;
+  const text: string | undefined = source === undefined ? undefined : applyCopyModeTransform(source, mode);
+  if (text !== undefined) {
+    // 上面那道守卫看的是**变换前**的原文，真正发出去的是这一串：`reverse` 能把
+    // `d1 kcik_hctab/` 倒成 `/batch_kick 1d`。守卫和被守卫的值必须是同一个字符串，
+    // 命中即整条丢弃，不退化成原样复制。
+    if (containsRenderableCommand(text)) return undefined;
+    // 变换可能撑破上限（nya 的后缀）；超限整条丢弃，不发一个注定被拒的请求。
+    const limit: number = typeof message.text === "string" ? TELEGRAM_MESSAGE_MAX_CHARS : TELEGRAM_CAPTION_MAX_CHARS;
+    if (text.length > limit) return undefined;
+  }
 
   if (expectedTargetId !== undefined && activeCopyTargetIdIn(chatId) !== expectedTargetId) {
     return undefined;
   }
-
-  if (transformed !== null) {
-    // 上面那道守卫看的是**变换前**的原文，而真正发出去的是这一串：`reverse`
-    // 把整句倒过来后，`d1 kcik_hctab/` 会变成 `/batch_kick 1d`——原文不以 `/`
-    // 开头，一路放行，最后由本天才亲手发出一条可点击的批量踢人命令。守卫和
-    // 被守卫的值必须是同一个字符串，因此这里对最终文本再判一次。
-    // 命中即整条丢弃，不退化成 copyMessage：那是把用户原文重发一遍，虽然安全
-    // 但复读的内容与本次抽到的模式对不上，不如什么都不说。
-    if (containsRenderableCommand(transformed)) return undefined;
-    const sentMessageId: number | undefined = await sendMessage({
-      chatId,
-      text: transformed,
-      messageThreadId,
-    });
-    return sentMessageId !== undefined ? transformed : undefined;
-  }
-
-  return copyEchoMessage(params);
+  return await sendEchoPayload({ chatId, message, text, messageThreadId }) ? text : undefined;
 }

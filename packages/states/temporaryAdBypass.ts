@@ -3,7 +3,7 @@ import {
   TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
 } from "../consts/temporaryAdBypass";
 import { getTokyoDayIndex } from "../libs/time";
-import type { TemporaryAdBypassActivity } from "../types/temporaryAdBypass";
+import type { TemporaryAdBypassActivity } from "../types/states/temporaryAdBypass";
 
 /**
  * 记录是否尚未越过保留边界；未来时间轴留给下一条发言显式收敛。
@@ -125,7 +125,14 @@ export function advanceTemporaryAdBypassActivity(
   }
   const sendCount: number = current.sendCount + 1;
   if (sendCount <= TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD) {
-    return { ...current, sendCount, countedAt: now };
+    return {
+      adBypass: current.adBypass,
+      adBypassGrantedAt: current.adBypassGrantedAt,
+      qualifiedDays: current.qualifiedDays,
+      sendCount,
+      countedAt: now,
+      qualifiedAt: current.qualifiedAt,
+    };
   }
 
   const qualifiedDays: number = Math.min(

@@ -35,6 +35,17 @@ mock.module("../../packages/infra/telegram", () => ({
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (): { aiPersona?: string } => persona,
   getGlobalCopyState: () => globalCopy,
+  // 与生产同构的两个写入边界：三元组整体写、整体清（见 stateStore.ts）。
+  adoptCopyTarget: (copiedUser: CachedUser, copyMode: CopyMode | undefined, copyChatId: number): void => {
+    globalCopy.copiedUser = copiedUser;
+    globalCopy.copyMode = copyMode;
+    globalCopy.copyChatId = copyChatId;
+  },
+  clearCopyTarget: (): void => {
+    globalCopy.copiedUser = null;
+    globalCopy.copyMode = undefined;
+    globalCopy.copyChatId = undefined;
+  },
   persistGlobalState: async (context: string): Promise<void> => { saveStateInBackground(context); },
 }));
 mock.module("../../packages/commands/copyShared", () => ({
@@ -105,6 +116,12 @@ describe("copy 类命令生命周期", () => {
     expect(stealAvatarInBackground).toHaveBeenCalledWith({ chatId: -1001, target: { id: 7 }, source: "icon" });
   });
 
+  test.each(["STEAL", "Steal"])("/icon %s 照常开始换头像", async (argument: string) => {
+    await handleIconCommand(context(-1001, undefined, argument));
+    expect(stealAvatarInBackground)
+      .toHaveBeenCalledWith(expect.objectContaining({ chatId: -1001, source: "icon" }));
+  });
+
   test.each([
     ["", undefined, ""],
     ["@alice", undefined, "@alice"],
@@ -114,6 +131,11 @@ describe("copy 类命令生命周期", () => {
     ["nya\n@alice", "nya", "@alice"],
     ["@reverse", undefined, "@reverse"],
     ["reverse_alice", undefined, "reverse_alice"],
+    // 子命令词不区分大小写，目标参数保留原样大小写。
+    ["Reverse", "reverse", ""],
+    ["REVERSE @Alice", "reverse", "@Alice"],
+    ["NYA", "nya", ""],
+    ["Nya @Alice", "nya", "@Alice"],
   ] as const)("/copy 参数 %s 分派模式并保留目标", async (argument, mode, targetArgument) => {
     const ctx = context(-1001, 7, argument);
     await handleCopyCommand(ctx);
@@ -122,7 +144,7 @@ describe("copy 类命令生命周期", () => {
     expect(stealAvatarInBackground).toHaveBeenCalledTimes(1);
   });
 
-  test.each(["stop @alice", "stop reverse", "stop\nnya"])("/copy %s 不停止会话也不占冷却", async (argument) => {
+  test.each(["stop @alice", "stop reverse", "stop\nnya", "STOP @alice"])("/copy %s 不停止会话也不占冷却", async (argument) => {
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     globalCopy.copyMode = "nya";
     globalCopy.copyChatId = -1001;

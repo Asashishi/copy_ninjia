@@ -20,10 +20,11 @@ import {
   sendCommandMessage,
   sendMessage,
 } from "../infra/telegram";
+import { describeBotPermissionGap } from "../libs/botPermissionGap";
 import { explicitReplyTo, forumTopicThreadId } from "../libs/forumTopic";
 import { sanitizeDisplayName } from "../libs/text";
-import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { hasCommandPermission, resolveCommandActor } from "./commandActor";
+import { formatTargetLabel } from "../users/userLabel";
+import { rejectUnlessPermitted } from "./commandActor";
 import {
   canRenderMaximumInlineQuery,
   parseGagCommand,
@@ -49,25 +50,19 @@ async function passesGagCommandGate(
   ctx: CommandContext<Context>,
   command: "gag" | "ungag"
 ): Promise<boolean> {
-  const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  const actorLabel: string = actor === undefined
-    ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unknownActor
-    : formatUserLabel(actor, chatAtmosphere(ctx.chat?.id ?? 0));
-  if (!hasCommandPermission(ctx, "isCanGag")) {
-    await sendCommandMessage({
-      chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagRejected(actorLabel, command),
-      replyToMessageId: ctx.msgId,
-    });
-    return false;
-  }
+  const actor: CachedUser | undefined = await rejectUnlessPermitted(
+    ctx,
+    "isCanGag",
+    (actorLabel: string, atmosphere: AtmosphereTexts): string => atmosphere.NOTICE_TEXTS.gagRejected(actorLabel, command)
+  );
+  if (actor === undefined) return false;
   if (
     ctx.chat.type !== "group" &&
     ctx.chat.type !== "supergroup"
   ) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagGroupOnly,
+      text: chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagGroupOnly,
       replyToMessageId: ctx.msgId,
     });
     return false;
@@ -75,17 +70,23 @@ async function passesGagCommandGate(
   if (getChatState(ctx.chat.id).isInitEnabled !== true) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagNotInitialized,
+      text: chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagNotInitialized,
       replyToMessageId: ctx.msgId,
     });
     return false;
   }
   const permissions: BotChatPermissions | undefined =
     await botChatPermissionsIn(ctx.chat.id);
-  if (permissions?.canDeleteMessages !== true) {
+  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
+  const permissionGap: string | undefined = describeBotPermissionGap(
+    permissions,
+    "canDeleteMessages",
+    atmosphere.NOTICE_TEXTS
+  );
+  if (permissionGap !== undefined) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagMissingRights,
+      text: atmosphere.NOTICE_TEXTS.gagMissingRights(command, permissionGap),
       replyToMessageId: ctx.msgId,
     });
     return false;
@@ -103,7 +104,7 @@ function createGagReservation(
     chatId: ctx.chat.id,
     targetId: target.id,
     targetProfileUrl: createGagTargetProfileUrl(target),
-    targetLabel: formatTargetLabel(target, chatAtmosphere(ctx.chat?.id ?? 0)),
+    targetLabel: formatTargetLabel(target, chatAtmosphere(ctx.chat.id)),
     chatLabel: sanitizeDisplayName(ctx.chat.title ?? String(ctx.chat.id)),
     tool: parsed.tool,
     durationMinutes: parsed.durationMinutes,
@@ -138,7 +139,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   if (parsed === undefined) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).GAG_USAGE_TEXT,
+      text: chatAtmosphere(ctx.chat.id).GAG_USAGE_TEXT,
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -146,7 +147,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   if (!canRenderMaximumInlineQuery(parsed.tool)) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagToolTooLong,
+      text: chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagToolTooLong,
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -154,7 +155,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   if (gagSessionCount() >= GAG_SESSION_MAX) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagCapacity(GAG_SESSION_MAX),
+      text: chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagCapacity(GAG_SESSION_MAX),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -166,7 +167,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     rawArgument: parsed.rawTarget,
     acceptUserId: true,
     acceptChatId: true,
-    messages: chatAtmosphere(ctx.chat?.id ?? 0).GAG_TARGET_TEXTS,
+    messages: chatAtmosphere(ctx.chat.id).GAG_TARGET_TEXTS,
   });
   if (target === undefined) return;
   const existingTarget: GagSession | undefined = findGagSession(
@@ -174,7 +175,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     target.id
   );
   if (existingTarget !== undefined) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: existingTarget.phase === "ending"
@@ -188,7 +189,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     ? true
     : await probeChatMembership(ctx.chat.id, target.id);
   if (targetMembership !== true) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: targetMembership === false
@@ -211,10 +212,10 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: reservation === "full"
-        ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagCapacity(GAG_SESSION_MAX)
+        ? chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagCapacity(GAG_SESSION_MAX)
         : existing?.phase === "ending"
-          ? chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagEnding(session.targetLabel)
-          : chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.gagExists(session.targetLabel),
+          ? chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagEnding(session.targetLabel)
+          : chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagExists(session.targetLabel),
       replyToMessageId: ctx.msgId,
     });
     return;
@@ -303,7 +304,7 @@ export async function handleUngagCommand(ctx: CommandContext<Context>): Promise<
     rawArgument: ctx.match,
     acceptUserId: true,
     acceptChatId: true,
-    messages: chatAtmosphere(ctx.chat?.id ?? 0).UNGAG_TARGET_TEXTS,
+    messages: chatAtmosphere(ctx.chat.id).UNGAG_TARGET_TEXTS,
   });
   if (target === undefined) return;
   const session: GagSession | undefined = findGagSession(ctx.chat.id, target.id);
@@ -311,7 +312,7 @@ export async function handleUngagCommand(ctx: CommandContext<Context>): Promise<
     if (session?.phase === "ending") {
       requestGagCleanupRetry(session);
     }
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: session?.phase === "ending"

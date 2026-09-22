@@ -1,6 +1,7 @@
 /** 热路径场景名到独立领域夹具的唯一注册表。 */
 
 import { createAdCapacityRejectScenario } from "./adDetectScenarios";
+import { cooldownScenario } from "./cooldownScenarios";
 import { storageFlushScenario } from "./storageFlushScenario";
 import { verificationSnapshotScenario } from "./verificationSnapshotScenario";
 import { boundedResponseScenario } from "./boundedResponseScenario";
@@ -51,6 +52,11 @@ import { base64PayloadScenario, replyAdmissionScenario, replyDeliveryScenario } 
 /** 按稳定名称建立一份独立场景；每个子进程只调用一次。 */
 export function createScenario(name: ScenarioName): Scenario {
   switch (name) {
+    case "cooldown-hit": return cooldownScenario("hit");
+    case "cooldown-renew": return cooldownScenario("renew");
+    case "cooldown-growth": return cooldownScenario("growth");
+    case "cooldown-saturated": return cooldownScenario("saturated");
+    case "cooldown-expiry": return cooldownScenario("expiry");
     case "reply-admission": return replyAdmissionScenario();
     case "reply-delivery-normal": return replyDeliveryScenario(false);
     case "reply-delivery-capacity": return replyDeliveryScenario(true);

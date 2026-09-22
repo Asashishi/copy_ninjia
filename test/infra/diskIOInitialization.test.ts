@@ -6,7 +6,7 @@ import type {
   LuckDrawDiskMessage,
   VerificationPersistedReply,
 } from "../../packages/types";
-import { diskIORuntime } from "../../packages/cache/main/diskIO";
+import { diskIORuntime, pendingLoad } from "../../packages/cache/main/diskIO";
 import { onMidnightMaintenance } from "../../packages/infra/diskIO/observers";
 import {
   DEFAULT_MAX_PENDING_BUSINESS_MESSAGES,
@@ -28,16 +28,72 @@ const luckDraw: LuckDrawDiskMessage = {
   label: "大吉",
   fortunePercent: 99,
 };
-function deferredVoid(): { promise: Promise<void>; resolve(): void } {
-  let resolve: (() => void) | undefined;
-  const promise: Promise<void> = new Promise<void>((done: () => void): void => {
-    resolve = done;
-  });
-  return { promise, resolve: (): void => resolve?.() };
-}
 
 beforeEach(() => {
   FakeWorker.instances.length = 0;
+});
+
+describe("启动恢复拒绝以空状态启动", () => {
+  /** 在 FakeWorker 上初始化后执行 body，结束时终止并还原全局 Worker。 */
+  async function withFakeWorker(body: (worker: FakeWorker) => Promise<void>): Promise<void> {
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      diskIO.initDiskIO();
+      await body(FakeWorker.instances.at(-1)!);
+    } finally {
+      await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  }
+
+  test("Worker 不存在时直接拒绝", async () => {
+    await expect(diskIO.loadPersistedData(1_000)).rejects.toThrow("Persistence Worker is unavailable");
+  });
+
+  test("没有回执时按预算超时拒绝，并清空单槽", async () => {
+    await withFakeWorker(async (): Promise<void> => {
+      await expect(diskIO.loadPersistedData(10)).rejects.toThrow("load handshake timed out after 10ms");
+      expect(pendingLoad).toEqual({ resolve: null, reject: null, timer: null });
+    });
+  });
+
+  test("回执带错误或缺少运势密钥都拒绝", async () => {
+    await withFakeWorker(async (worker: FakeWorker): Promise<void> => {
+      const failed: Promise<unknown> = diskIO.loadPersistedData(1_000);
+      worker.onmessage!({ data: { type: "loaded", error: "disk broken" } } as MessageEvent<DiskIOReply>);
+      await expect(failed).rejects.toThrow("persistence recovery failed: disk broken");
+      expect(pendingLoad.timer).toBeNull();
+      // 恢复失败的 Worker 被停掉，不进入 writable。
+      expect(diskIORuntime.worker).toBeNull();
+    });
+    await withFakeWorker(async (worker: FakeWorker): Promise<void> => {
+      const secretless: Promise<unknown> = diskIO.loadPersistedData(1_000);
+      worker.onmessage!({ data: {
+        type: "loaded",
+        aiMemories: new Map(),
+        stickerCatalogs: new Map(),
+        luckDay: null,
+        luckReceiptSecret: null,
+        verifications: new Map(),
+        pendingBlockedRemovals: new Map(),
+        blocklistEntryCount: 0,
+        permissionEntryCount: 0,
+      } } as MessageEvent<DiskIOReply>);
+      await expect(secretless).rejects.toThrow("returned no luck receipt secret");
+    });
+  });
+
+  test("单槽在途时拒绝第二个并发请求，不覆盖前一个的回调与计时器", async () => {
+    await withFakeWorker(async (worker: FakeWorker): Promise<void> => {
+      const first: Promise<unknown> = diskIO.loadPersistedData(1_000);
+      const timer: ReturnType<typeof setTimeout> | null = pendingLoad.timer;
+      expect(() => diskIO.loadPersistedData(1_000)).toThrow("a startup load request is already pending");
+      expect(pendingLoad.timer).toBe(timer);
+      emitSuccessfulLoad(worker);
+      await expect(first).resolves.toMatchObject({ luckReceiptSecret });
+    });
+  });
 });
 
 describe("explicit Worker initialization", () => {
@@ -320,7 +376,7 @@ describe("explicit Worker initialization", () => {
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
-    const gate = deferredVoid();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
     const bufferedDraw: LuckDrawDiskMessage = { ...luckDraw, key: "buffered" };
     try {
@@ -376,7 +432,7 @@ describe("explicit Worker initialization", () => {
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     const error = spyOn(console, "error").mockImplementation(() => {});
     const fatalErrors: Error[] = [];
-    const oldGate = deferredVoid();
+    const oldGate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
     let invocations: number = 0;
     const currentDraw: LuckDrawDiskMessage = { ...luckDraw, key: "current-generation" };

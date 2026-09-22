@@ -36,11 +36,8 @@ import { reserveReplyDelivery } from "./replyDelivery";
 import { buildReplyPromptSections } from "./promptContext";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
-import {
-  notifyRateLimited,
-  replyGenerationSignal,
-  trackReplyGenerationTask,
-} from "./replyState";
+import { notifyRateLimited } from "./replyState";
+import { replyGenerationSignal, trackReplyGenerationTask } from "./replyGeneration";
 import { recordChatMessage } from "./rollingMemory";
 import type { ChatActionHeartbeatControl } from "../../types/aiChat/chatAction";
 
@@ -117,7 +114,7 @@ export function startReplyRound(
   }
   // 回拨时仅裁掉未来时间戳，保留仍在窗口内的已用配额。
   longTimes.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
-  if (admitRound({ windowCount: longTimes.size }).action === "rateLimited") {
+  if (admitRound({ windowCount: longTimes.size }) === "rateLimited") {
     notifyRateLimited({ chatId, now, generation, messageThreadId });
     return false;
   }

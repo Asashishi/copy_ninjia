@@ -21,11 +21,11 @@
 
 ## スラッシュコマンドの追加
 
-1. **Handler**：`packages/commands/` から明示的な戻り値型付きで `handleXxxCommand` を export します。委任可能な権限は `hasCommandPermission(ctx, key)`、スーパー管理者本人限定の操作は `isSuperAdminActor`、private chat は `send.ts` を参照します。固定文言と formatter は `packages/consts/atmosphere/{teasing,plain}/` の対応する領域に置き、両版で同じ型を使います。main は `chatAtmosphere(chatId)` で選択し、名前・プロンプト・質問は引数で挿入します。描画後の本文置換は行いません。 一度の描画ではローカルの `AtmosphereTexts` を呼称・本文・ボタンの formatter に渡し、人設変更後・次の操作・バックグラウンド実行時は再選択します。`chatState` を持つメッセージ hot path は、その `aiPersona` から選び、cache 読み取りを追加しません。
+1. **Handler**：`packages/commands/` から明示的な戻り値型付きで `handleXxxCommand` を export します。委任可能な権限は `rejectUnlessPermitted(ctx, key, rejection)`、スーパー管理者本人限定の操作は `rejectUnlessSuperAdmin(ctx, rejection)`（どちらも `commands/commandActor.ts`。拒否時は返信し、許可時は解決済みの発起身元を返します）、private chat は `send.ts` を参照します。固定文言と formatter は `packages/consts/atmosphere/{teasing,plain}/` の対応する領域に置き、両版で同じ型を使います。main は `chatAtmosphere(chatId)` で選択し、名前・プロンプト・質問は引数で挿入します。描画後の本文置換は行いません。 一度の描画ではローカルの `AtmosphereTexts` を呼称・本文・ボタンの formatter に渡し、人設変更後・次の操作・バックグラウンド実行時は再選択します。`chatState` を持つメッセージ hot path は、その `aiPersona` から選び、cache 読み取りを追加しません。
 2. **Export**：`packages/commands/index.ts` に追加します。
 3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) の `commands` サブチェーンに `commands.command("xxx", ...)` を追加します。**`bot` へ直接登録してはいけません** — コマンドはすべて共有の `bot.on(":entities:bot_command")` サブチェーンの後ろに収めます（理由は [02 アーキテクチャ概要](02-architecture.md#1-件のメッセージが通る経路) の「コマンド登録」を参照）。`test/app/registerHandlers.test.ts` は `bot` に直接登録されたコマンドを拒否します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
 4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。
-5. **メニュー**：`packages/consts/atmosphere/{teasing,plain}/commands.ts` の両方の `BOT_COMMANDS` に同じコマンド名を追加します。`/send` などの非表示コマンドは追加しません。`packages/app/commandMenu.ts` が既定の全体メニューと群別の普通版を登録します。
+5. **メニュー**：`packages/consts/atmosphere/{teasing,plain}/commands.ts` の両方の `BOT_COMMANDS` に同じコマンド名を追加します。`/send` などの非表示コマンドは追加しません。`packages/app/commandMenu.ts` がBot 設定口調で全群メニューを登録し、専用人設のある群には普通版を登録します。
 6. **パラメータ定数**：cooldown、threshold などは `packages/consts/commands.ts` または該当ドメインの consts に置き、中国語 JSDoc を付けます。
 7. **テスト**：`test/commands/xxx.test.ts` を追加し、少なくとも権限拒否、引数解析、主要経路を検証します。
 8. **ドキュメント**：3 言語の `docs/{cn,en,ja}/08-commands.md` のコマンド表に項目を追加し、操作と権限の境界を記載します。
@@ -34,7 +34,7 @@
 
 `/咬` や `/贴贴` のような漢字アクションコマンド（アクション語は漢字 1~2 文字）は別経路です。実装例は [`cjkAction.ts`](../../packages/commands/cjkAction.ts) です。
 
-- **`bot.hears` で照合する。** Telegram は ASCII コマンドにしか `bot_command` entity を付けないため `bot.command` では永久に一致しません。`bot.hears(正規表現, ...)` でメッセージ原文に対して照合し、フォールバックの `bot.on(["message", "channel_post"], ...)` より前に登録します。そうしないと通常メッセージとして AI/copy pipeline に流れます。
+- **`bot.hears` で照合する。** Telegram は ASCII コマンドにしか `bot_command` entity を付けないため `bot.command` では永久に一致しません。`hears(正規表現, ...)` でメッセージ原文に対して照合し、`app/registerHandlers.ts` の「原文の先頭文字が `/`」ゲートの後ろにある `cjkActions` 子 Composer に登録します（ゲートが厳密な上位集合であるよう正規表現は `^\/` で始めること）。このゲートはメッセージのフォールバックより前にあり、そうしないと通常メッセージとして AI/copy pipeline に流れます。
 - **対象解決は別の入口を通る。** この handler が受け取るのは `CommandContext` ではなく素の `Context` なので、[`targetResolution.ts`](../../packages/commands/targetResolution.ts) の `resolveCommandTarget` に `ResolveCommandTargetParams` を直接渡します。自分宛でない形（`/咬@OtherBot`、caption だけのメッセージ、異常なメッセージ形態）は `next()` で通し、update を黙って握り潰してはいけません。
 - **`message.text` だけを見る。** `bot.hears` は text と caption の両方に一致しますが、画像付きメッセージを受理するとそれは `handleIncomingMessageMiddleware` に届かなくなり、その画像が AI のローリングメモリと視覚パイプラインに入りません。
 - **パイプラインの前提を自分で用意する。** 登録位置は自動パイプラインより**前**なので、そのパイプラインの自己送信ガードと `cacheSender` の恩恵を受けられません。handler 自身が `isBotOwnMessage` で Bot 自身のメッセージを除外し（さもないとチャンネルの跳ね返りが自問自答の連投ループになります）、送信者 ID のキャッシュも自分で行う必要があります。
@@ -49,13 +49,13 @@
 
 ## 別の言語にする：i18n はやらないので fork してください
 
-固定通知は簡体中国語です。`packages/consts/atmosphere/` に既定の雌小鬼版と普通版を置き、専用人設を設定した群では普通版を選びます。クライアントの言語では切り替えません。
+固定通知は簡体中国語で、`packages/consts/atmosphere/` に雌小鬼版と普通版を置きます。`config/bot.json` の `atmosphere` が Bot の既定通知口調を選び、専用 AI 人設のある群では普通版を優先します。通知口調は AI 人設を書き換えず、クライアント言語にも依存しません。
 
 - 文言表は固定文字列と formatter を保持し、Telegram `entities` の UTF-16 offset は描画後の本文から計算します。名前・質問・プロンプト・モデル出力を口調変更のために置換しません。
 - `/咬` などの action command は 1〜2 文字の漢字を使い、コマンド解析と表示文言を別々に管理します。
 - 群専用 AI 人設を優先し、未設定なら `prompt/persona.md` を使用します。
 
-別言語にする場合は fork し、文言・操作・プロンプトをまとめて調整してください。TypeScript AST で数えると、`packages/` の中国語 string/template literal を含むソース行は 81 ファイルに 1355 行あり、コメントは含みません。人設ファイルとデプロイ設定は別です。変更後は `bun run check` を実行します。
+別言語にする場合は fork し、`packages/consts/atmosphere/`・その他の中国語文言・操作・`prompt/persona.md`・配置設定をまとめて調整してください。変更後は `bun run check` を実行します。
 
 ## 動作パラメータの調整
 
@@ -101,7 +101,7 @@
 4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
 5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、サーバー側ウェブ検索、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像・生成楽曲です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
 6. **Prompt**：必要なら `packages/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
-7. **テスト + 文書**：`test/aiChat/ai/` または対応する feature／Worker パスにテストを追加し、必要ならルート README のツール行を更新します。
+7. **テスト + 文書**：`test/aiChat/ai/` または対応する feature／Worker パスにテストを追加し、必要なら3 言語の README 能力表を更新します。
 
 ## 汎用 JSON API 呼び出しの追加
 
@@ -112,13 +112,15 @@
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- deployment 固有の変更は Git ignore 対象の `config/` だけに行い、`config_example/` は schema または default example が変わるときだけ同期します。`telegram.json` は network 接続前に strict load し、`stickers.json`、`reactions.json`、`mood.json` などの feature input は各 enablement 境界で検証します。恒久 allowlist、blocklist、一時 allowlist activity、removal outbox は deployment config ではなく、authority は `database/storage.sqlite` です。identity structure を変える場合、先に `packages/database/schema/`、対応する `packages/database/codec/`、domain type、strict validation を更新し、停止中 migration script と fault-injection test を用意します。JSON 互換 read を戻してはいけません。
+- deployment 固有の変更は Git ignore 対象の `config/` だけに行い、`config_example/` は schema または default example が変わるときだけ同期します。`bot.json` は network 接続前に strict load し、`stickers.json`、`mood.json` などの feature input は各 enablement 境界で検証します。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json` は稼働中の編集が hot reload され、拒否の基準は [04 実行時の権威的制約](04-invariants.md) にあります。その他の deployment input は変更後に再起動が必要です。恒久 allowlist、blocklist、一時 allowlist activity、removal outbox は deployment config ではなく、authority は `database/storage.sqlite` です。identity structure を変える場合、先に `packages/database/schema/`、対応する `packages/database/codec/`、domain type、strict validation を更新し、停止中 migration script と fault-injection test を用意します。JSON 互換 read を戻してはいけません。
+- AI の `add_reaction` tool が使える emoji は [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts) の `AI_REACTION_EMOJIS` に固定され、要素型は Telegram 標準リアクションに限定されます。変更は code と一緒に release します。
 
 ## deployment JSON 設定の追加
 
 1. `packages/config/<domain>.ts` で厳密に宣言・解析し、必須／任意 field、形式検証、未知 key の拒否を定義します。解析失敗は起動を拒否します。
 2. 実 credential を含まない構造例を `config_example/<domain>.json` に追加し、[`config_example/README/ja.md`](../../config_example/README/ja.md) の field 説明も同期します。
-3. 3 言語のルート README にある「設定」section と関連する環境構築 entry point を同期します。
+3. 稼働中に反映させる必要がある場合は、[`packages/config/reload.ts`](../../packages/config/reload.ts) の読み込みと判定に file を加え、既存の Worker protocol で新しい snapshot を副本を持つ thread に渡し、Worker 側で旧 snapshot から派生した cache を無効化します。
+4. 3 言語の README のクイックスタート、環境構築、`config_example/README/` の設定説明を同期します。
 
 ## 実行時 cache の追加
 
@@ -147,14 +149,14 @@
 1. `packages/database/schema/<domain>.ts` で table を宣言し、`schema/storage.ts` に登録します。`data` 列は他の業務 table と同じく `jsonbText` と `jsonDataCheck` を使います。
 2. `schema/migrations/000N_<name>.sql` を書き、`migrations/meta/_journal.json` に entry を追加します。
 3. **hash は計算せず実測します**：使い捨ての database を作って migration を 1 回実行し、`__drizzle_migrations` から `created_at` と `hash` を読み戻して `packages/consts/identityStorage.ts` に書きます。同時に `IDENTITY_DATABASE_SCHEMA_VERSION` を 1 つ上げます。
-4. cold migration script を書き、`scripts/conventions/coldMigrations.ts` の唯一の edge を**置き換え**ます。規約は release ではなく migration で数え、「直前の migration が出力した形式 → 今回の migration が出力する形式」の 1 本だけを許すため、旧 script はその test ごと削除します。
+4. コールド移行スクリプトを作成し、`scripts/migrations/active.ts` の同じデータに対する前の移行辺を置き換え、旧スクリプトとテストを削除します。未知の系譜は拒否し、直接入力形式より古い配置は先に段階的に更新します。
 5. migration **前**の検証はその version の歴史的な形態で行います。今回の変更が table の閉じた field 集合を変える場合（permission key の追加など）、事前に production decoder は使えません。新 version の field が存在することを既に要求しているため、移行待ちの deployment はすべて migration 開始前に破損と判定され、運用者が書いたことのない field を名指しされます。歴史的な key 一覧は migration script 内に固定し、現行定数から導出しないでください。導出は、次に key を追加したときこの歴史的 edge の判定を静かに書き換えます。
-6. version に依存しない部分（`meta` など）は production の parser を使います。`--check` は `--apply` が拒否するものをすべて拒否しなければならず、さもないと不正な row は database が書き換えられた後にしか露見しません。
+6. `meta` など変更しない項目は本番の解析器を共用します。入力バックアップを完全検証してから独立した出力を作成し、現形式の検証と入力ハッシュの再確認が成功した後だけ `ready.json` を書きます。
 7. 永続化は既存の write-through を再利用します：main thread が memory 上の最終値を publish し、Disk I/O Worker へ post、明示 transaction で commit、正確な revision を ACK、再構築後は memory から replay します。
 
-現行 repository が保持する migration entry は、直近の released version から現行 version への 1 本だけです。新しい edge を実装するときは、前の entry・test・convention 登録を同時に置き換えます。
+現在のコールド移行は `scripts/migrations/active.ts` に登録し、SQLite 権限・画像名・Bot 設定と画像ソースをそれぞれ扱います。規約は Release ではなく移行単位で数えます。同じデータを再移行するときは直前の移行出力から現形式への直接の辺だけを残し、以前の入口・テスト・登録を同時に置き換えます。`scripts/conventions/coldMigrations.ts` が登録と package scripts の一致を検査します。
 
-「edge は 1 本だけ」の規約が対象とするのは、deploy 済みデータを書き換える `scripts/` 配下の cold migration script、その test、`coldMigrations.ts` の登録です。`schema/migrations/` の SQL ファイルと `meta/_journal.json` には適用せず、`0000` から欠かさず保持します。`createStorageDatabase` は新しい database を作るとき Drizzle migrator で全 entry を順に replay し、起動時には `packages/database/interact/inspection.ts` の `assertStorageDatabaseMigrationLineage` が `__drizzle_migrations` に完全な系譜があることを要求します。
+「edge は 1 本だけ」の規約が対象とするのは、deploy 済みデータを書き換える `scripts/` 配下の cold migration script、その test、`migrations/active.ts` の登録です。`schema/migrations/` の SQL ファイルと `meta/_journal.json` には適用せず、`0000` から欠かさず保持します。`createStorageDatabase` は新しい database を作るとき Drizzle migrator で全 entry を順に replay し、起動時には `packages/database/interact/inspection.ts` の `assertStorageDatabaseMigrationLineage` が `__drizzle_migrations` に完全な系譜があることを要求します。
 
 ## Worker 間 protocol の変更
 

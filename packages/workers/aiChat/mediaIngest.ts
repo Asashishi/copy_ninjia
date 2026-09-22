@@ -9,11 +9,8 @@ import type { AiRecordMediaMessage, ImageGenerationReference } from "../../types
 import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
 import { buildBufferedMessage } from "./bufferedMessage";
 import { pushBufferedMessage } from "./rollingMemory";
-import {
-  generateAndSendReply,
-  replyGenerationSignal,
-  trackReplyGenerationTask,
-} from "./replyPipeline";
+import { generateAndSendReply } from "./replyPipeline";
+import { replyGenerationSignal, trackReplyGenerationTask } from "./replyGeneration";
 import { replyReferenceForBufferedEntry } from "./bufferedMessageIndex";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";

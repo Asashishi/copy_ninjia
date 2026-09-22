@@ -9,6 +9,8 @@ import type { WedMemberState } from "../../types/wed";
 
 /**
  * 退群清理已有集合，在群更新保护在途复核；初始化网关也可调用，不建立群状态。
+ * `chat_member` 更新只推送给群管理员机器人，`left_chat_member` 服务消息在较大的超级群里
+ * 可能缺失，离群信号因此可能不全，见 docs/cn/04-invariants.md。
  * @param chat 调用方已经解析好的 `ctx.chat`。`ctx.chat` 是每次求值的 getter 链
  *   （先跑一遍 `ctx.msg` 再串九个 update 字段），两个调用点都已经持有它，
  *   由参数传入避免本函数在每条 update 上重复求值。
@@ -29,8 +31,8 @@ export function observeWedMemberDeparture(ctx: Context, chat: Chat | undefined):
 
 /** 只记录以个人身份实际发言的用户 ID；离群摘除用户，不从引用和自动转发扩充候选。 */
 export function observeWedMembers(ctx: Context): void {
-  // 本函数原先要读五次 `ctx.chat`，每次都重跑那条 getter 链；`ctx.update` 在一条
-  // update 的处理期内不可变，取一次交给下面全部判定与退群分支。
+  // `ctx.chat` 每次读取都重跑 getter 链；`ctx.update` 在一条 update 的处理期内
+  // 不可变，取一次交给下面全部判定与退群分支。
   const chat: Chat | undefined = ctx.chat;
   if (chat?.type !== "group" && chat?.type !== "supergroup") return;
   if (observeWedMemberDeparture(ctx, chat)) return;

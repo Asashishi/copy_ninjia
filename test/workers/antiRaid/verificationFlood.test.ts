@@ -1,6 +1,7 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil } from "../../helpers/waitUntil";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from
   "../../../packages/consts/antiRaid/lockdown";
@@ -21,7 +22,7 @@ function recordDelete(messageId: number): string {
 }
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () => ({
   requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),

@@ -15,7 +15,7 @@ import type {
 } from "../../../types/diskIO/replies";
 import type { PendingChatQaWrite } from "../../../types/identityStorage";
 import type { StoredChatQaRow } from "../../../types/storageDatabase";
-import { requireStorageDatabase, storageSource } from "./context";
+import { assertPositiveRevision, requireStorageDatabase, storageSource } from "./context";
 import { flushIfStorageFull } from "./flush";
 
 /**
@@ -51,9 +51,7 @@ export function handleChatQaWrite(
   const rowSource: string = storageSource("chat_qa", message.chatId);
   assertTelegramChatId(message.chatId, rowSource);
   assertChatQaQuestion(message.q, rowSource);
-  if (!Number.isSafeInteger(message.revision) || message.revision < 1) {
-    throw new Error(`${rowSource}: revision must be a positive safe integer.`);
-  }
+  assertPositiveRevision(message.revision, rowSource);
   // 解一次是为了在进缓冲前就拒掉非法答案；解码结果本身不留用——落库的是主线程
   // 已经编码好的那份文本，Worker 不重新组装结构。
   if (message.data !== null) decodeChatQaData(message.data, rowSource);

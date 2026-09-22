@@ -9,7 +9,7 @@ import {
   throwIfUpdateAborted,
 } from "../infra/updateContext";
 import { isSuperAdmin } from "./superAdminToggle";
-import { parseChatIdArgument } from "./targetResolution";
+import { parseChatIdArgument } from "../libs/telegramId";
 import type { ChatFullInfo } from "grammy/types";
 
 /**
@@ -30,12 +30,12 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
 
   if (arg.toLowerCase() === "finish") {
     if (activeTargetChatId === undefined) {
-      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyAlreadyStopped, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyAlreadyStopped, replyToMessageId: messageId });
       return;
     }
     clearChatStateField(activeTargetChatId, "isProxySendEnabled");
     await persistChatState(activeTargetChatId, "send finished");
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyStopped, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyStopped, replyToMessageId: messageId });
     return;
   }
 
@@ -45,12 +45,12 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   // 一个他从没输入过的群。
   const targetChatId: number | undefined = parseChatIdArgument(arg);
   if (targetChatId === undefined) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyUsage, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyUsage, replyToMessageId: messageId });
     return;
   }
 
   if (activeTargetChatId !== undefined) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyAlreadyStarted(activeTargetChatId), replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyAlreadyStarted(activeTargetChatId), replyToMessageId: messageId });
     return;
   }
 
@@ -59,7 +59,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   // 这里只读现有状态，不为未纳管目标创建 chat_states 记录，也不触发只属于
   // /init enable 的容量闸。判定放在 getChat 之前，没纳管的目标无需探测可达性。
   if (!getChatStateCache().has(targetChatId)) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyNotInitialized(targetChatId), replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyNotInitialized(targetChatId), replyToMessageId: messageId });
     return;
   }
 
@@ -68,17 +68,17 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
     const targetChat: ChatFullInfo =
       await bot.api.getChat(targetChatId, ...signalArgs(signal));
     if (targetChat.type !== "group" && targetChat.type !== "supergroup") {
-      await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyNotGroup(targetChatId), replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyNotGroup(targetChatId), replyToMessageId: messageId });
       return;
     }
   } catch (error: unknown) {
     throwIfUpdateAborted();
     logApiError(`resolve /send target chat ${targetChatId}`, error);
-    await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyUnavailable(targetChatId), replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyUnavailable(targetChatId), replyToMessageId: messageId });
     return;
   }
 
   getOrCreateChatState(targetChatId).isProxySendEnabled = true;
   await persistChatState(targetChatId, "send started");
-  await sendCommandMessage({ chatId, text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.proxyStarted(targetChatId), replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyStarted(targetChatId), replyToMessageId: messageId });
 }

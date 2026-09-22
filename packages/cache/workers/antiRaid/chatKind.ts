@@ -14,7 +14,9 @@
  * 把绝大多数超级群误判成普通群，在那里打出真正的持久封禁。
  *
  * Worker 重建时由主线程整表重放并填充；完整进程冷启动镜像为空时由执行侧反查。
- * `deactivateChat` 与 Worker stop 时清除。
+ * `deactivateChat` 与 Worker stop 时清除，没有按容量的淘汰——误删一项等于把
+ * 一个超级群重新当成「不知道」，只是多付一次 getChat。
+ * 容量：每个受管群一项，上界 STATE_MANAGED_CHAT_LIMIT（见 consts/storage.ts）。
  */
 export const workerChatIsSupergroup: Map<number, boolean> = new Map();
 

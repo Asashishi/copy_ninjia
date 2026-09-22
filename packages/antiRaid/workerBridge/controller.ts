@@ -2,7 +2,6 @@ import { emergencyLockdownRecoveryRuntime } from "../../cache/main/antiRaid/lock
 import { antiRaidBarrier, antiRaidRuntimeState } from "../../cache/main/antiRaid/proxy";
 import {
   activeVerificationSnapshots,
-  pendingVerificationDeletes,
   persistedVerificationRevisions,
 } from "../../cache/main/antiRaid/verificationMirror";
 import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
@@ -48,6 +47,9 @@ import { handleAntiRaidWorkerEvent } from "./events";
 import { registerAntiRaidBridgeObservers } from "./observers";
 import {
   advanceActiveVerificationGeneration,
+  replaceActiveVerificationMirror,
+} from "../verificationMirror";
+import {
   buildAdoptVerificationsMessage,
   nextAntiRaidGeneration,
   purgeDisabledJoinGuards,
@@ -56,6 +58,7 @@ import {
   replayChatKinds,
   replayChatAtmospheres,
 } from "./replay";
+import { isTerminalVerificationPhase } from "../../states/verification/shared";
 
 /**
  * Anti-Raid 主线程控制器：只负责 Worker 生命周期、代际切换和公开控制命令。
@@ -125,11 +128,7 @@ const {
       if (!postToNext(buildAdoptVerificationsMessage(generation))) return;
 
       for (const [key, record] of activeVerificationSnapshots) {
-        if (
-          record.phase !== "kickPending" &&
-          record.phase !== "checkingInviter" &&
-          record.phase !== "expelling"
-        ) continue;
+        if (!isTerminalVerificationPhase(record.phase)) continue;
         const persisted: { generation: number; revision: number } | undefined =
           persistedVerificationRevisions.get(key);
         if (
@@ -174,6 +173,17 @@ export function postAntiRaid(message: AntiRaidWorkerMessage): boolean {
   return post(message);
 }
 
+/**
+ * 热重载替换广告检测配置后，把主线程当前快照投给 Worker（见 app/configReload.ts）。
+ * 投递被拒绝时由重建路径的 replayAdDetectAgentConfig 按同一份 holder 补齐。
+ */
+export function syncAntiRaidAgentConfig(): void {
+  if (!antiRaidRuntimeState.initialized) return;
+  if (!replayAdDetectAgentConfig(post)) {
+    logger.error("Anti-Raid Worker rejected the ad detection config reload; the next respawn replays the reloaded snapshot.");
+  }
+}
+
 /** 群人设写入和删除完成后推送风格；不可用的 Worker 在重建时重放当前群状态。 */
 export function syncAntiRaidAtmosphere(chatId: number): void {
   if (!antiRaidRuntimeState.initialized) return;
@@ -204,8 +214,12 @@ export function initAntiRaid(): void {
         "Anti-Raid Worker rejected the agent configuration snapshot."
       );
     }
-    replayBotPermissions(post);
-    replayChatKinds(post);
+    if (!replayBotPermissions(post)) {
+      throw new WorkerUndeliveredError("Anti-Raid Worker rejected the bot permissions snapshot.");
+    }
+    if (!replayChatKinds(post)) {
+      throw new WorkerUndeliveredError("Anti-Raid Worker rejected the chat kind snapshot.");
+    }
     if (!replayChatAtmospheres(post)) {
       throw new WorkerUndeliveredError("Anti-Raid Worker rejected the atmosphere snapshot.");
     }
@@ -282,18 +296,6 @@ export function hydratePendingVerifications(
       `Pending verification recovery exceeded the ${VERIFICATION_RECORD_CAPACITY}-record capacity.`
     );
   }
-  activeVerificationSnapshots.clear();
-  pendingVerificationDeletes.clear();
-  persistedVerificationRevisions.clear();
   resetVerificationAttemptRuntime();
-  for (const [key, record] of records) {
-    activeVerificationSnapshots.set(key, {
-      ...record,
-      trackedMessageTimes: [...record.trackedMessageTimes],
-    });
-    persistedVerificationRevisions.set(key, {
-      generation: record.generation,
-      revision: record.revision,
-    });
-  }
+  replaceActiveVerificationMirror(records);
 }

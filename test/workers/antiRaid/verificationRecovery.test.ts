@@ -1,6 +1,7 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil } from "../../helpers/waitUntil";
 import type {
   AntiRaidWorkerEvent,
@@ -32,7 +33,7 @@ async function recordDelete(messageId: number): Promise<string> {
 }
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () => ({
   requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),

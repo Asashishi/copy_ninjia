@@ -54,6 +54,7 @@ import type { LuckSecretRecoveryInspection } from "./luckSecretFile";
 import type { JoinLogRecoveryInspection } from "./joinLogFiles";
 import type { VerificationRecoveryInspection } from "./verificationRecovery";
 import type { StorageDatabaseInspection } from "./storageDatabase/hydration";
+import { errorMessage } from "../../libs/errorMessage";
 
 export type DiskIOStartupReplySink = (
   reply: LoadedReply | VerificationPersistedReply | IdentityStoragePersistedReply | MidnightMaintenanceReply
@@ -149,7 +150,7 @@ export async function handleDiskIOStartupLoad(
       wedMembers,
     };
   } catch (error: unknown) {
-    loadError = error instanceof Error ? error.message : String(error);
+    loadError = errorMessage(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
   }
 

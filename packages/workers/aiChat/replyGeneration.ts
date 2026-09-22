@@ -29,6 +29,19 @@ export function hasActiveAiChatTasks(chatId: number): boolean {
   return generation !== undefined && (replyGenerationTasks.get(generationKey(chatId, generation))?.size ?? 0) > 0;
 }
 
+/**
+ * 记忆淘汰的失效边界：同 invalidateChatRuntimeCache，不 abort 在途任务；当前代已无
+ * 在途任务时一并回收它的取消控制器，有在途任务时由 trackReplyGenerationTask 在
+ * 结算后回收（那时该代已不是当前代）。
+ */
+export function evictChatReplyGeneration(chatId: number): void {
+  const generation: number | undefined = replyGenerations.get(chatId);
+  invalidateChatRuntimeCache(chatId);
+  if (generation === undefined) return;
+  const key: string = generationKey(chatId, generation);
+  if (!replyGenerationTasks.has(key)) replyAbortControllers.delete(key);
+}
+
 /** 取得本轮 generation 的唯一取消信号。 */
 export function replyGenerationSignal(chatId: number, generation: number): AbortSignal {
   const key: string = generationKey(chatId, generation);

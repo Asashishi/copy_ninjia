@@ -1,7 +1,6 @@
-import { syncAntiRaidAtmosphere } from "../antiRaid/workerBridge/controller";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
-import { syncAiChatPersona } from "../aiChat/workerBridge";
+import { syncChatPersonaSurfaces } from "./chatPersonaSync";
 import { syncChatCommandMenu } from "../app/commandMenu";
 import type { ChatState } from "../types/chatState";
 import type { ReadonlyLruCache } from "../libs/lruCache";
@@ -30,7 +29,7 @@ import { teardownChatRuntime } from "../infra/chatTeardown";
  */
 export async function handleInitCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
-    texts: chatAtmosphere(ctx.chat?.id ?? 0).INIT_TOGGLE_TEXTS,
+    texts: chatAtmosphere(ctx.chat.id).INIT_TOGGLE_TEXTS,
   });
   if (!arg) return;
 
@@ -44,7 +43,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   ) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).INIT_CHAT_LIMIT_TEXT,
+      text: chatAtmosphere(chatId).INIT_CHAT_LIMIT_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -102,9 +101,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
       // 这一次跟着拆除一起降级——总开关那一次已经 durable，这里只补收尾，失败按
       // 「有几样没拆干净」如实回执，不再扣住 offset 制造上面那种歧义。
       await persistChatState(chatId, "init teardown settled");
-      syncAiChatPersona(chatId);
-      syncAntiRaidAtmosphere(chatId);
-      await syncChatCommandMenu(ctx.api, chatId);
+      await syncChatPersonaSurfaces(ctx.api, chatId);
     } catch (error: unknown) {
       teardownFailed = true;
       logger.error(
@@ -131,11 +128,11 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   if (isEnabled && getChatState(chatId).botPermissions === undefined) await resolveBotAdminStatus(chatId);
 
   const replyText: string = teardownFailed
-    ? chatAtmosphere(ctx.chat?.id ?? 0).INIT_DISABLE_TEARDOWN_FAILED_TEXT
+    ? chatAtmosphere(chatId).INIT_DISABLE_TEARDOWN_FAILED_TEXT
     : toggleReplyText({
       isEnabled,
       wasEnabled,
-      texts: chatAtmosphere(ctx.chat?.id ?? 0).INIT_TOGGLE_TEXTS,
+      texts: chatAtmosphere(chatId).INIT_TOGGLE_TEXTS,
     });
   await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

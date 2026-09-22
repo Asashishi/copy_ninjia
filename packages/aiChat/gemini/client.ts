@@ -2,10 +2,9 @@
  * Gemini generateContent 的底层收发与响应分类。本实现包（packages/aiChat/gemini/）
  * 的回复会话、文本生成、视觉描述与生图全部经由这里发请求。
  *
- * 收发走官方 @google/genai SDK（Google 现行的统一 GenAI JS SDK）而不是手写
- * fetch：SDK 自带每次请求的超时（httpOptions.timeout）与瞬时失败（网络错误/
- * 5xx/429）的自动重试（显式限制为首次加最多 5 次重试），比自己维护一份 AbortController
- * 省心。视觉输入（inlineData）与多轮函数调用往返均由同一 SDK 处理。
+ * 收发走官方 @google/genai SDK：SDK 自带每次请求的超时（httpOptions.timeout）与
+ * 瞬时失败（网络错误/5xx/429）的自动重试（显式限制为首次加最多 5 次重试）。
+ * 视觉输入（inlineData）与多轮函数调用往返均由同一 SDK 处理。
  *
  * 本文件负责发请求、按业务结果分类并记录错误日志；正文与函数调用直接读取
  * SDK 的 text/functionCalls 访问器，应用侧只在 aiChat/gemini/response.ts 补充
@@ -182,11 +181,6 @@ export async function requestGeminiResponse(
   return result.ok ? result.response : null;
 }
 
-/**
- * 请求一段需要业务侧清洗的 Gemini 文本，并把跨请求重试边界显式带回调用方。
- * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
- * HTTP 成功但 candidate 异常或清洗后正文为空时，才允许按领域策略重新采样。
- */
 /** Google 无状态文本调用参数。 */
 export interface GeminiTextRequestOptions {
   readonly capability: "summary" | "media";
@@ -196,6 +190,11 @@ export interface GeminiTextRequestOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * 请求一段需要业务侧清洗的 Gemini 文本，并把跨请求重试边界显式带回调用方。
+ * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
+ * HTTP 成功但 candidate 异常或清洗后正文为空时，才允许按领域策略重新采样。
+ */
 export async function requestGeminiTextResult({
   capability,
   buildBody,

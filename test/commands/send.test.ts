@@ -54,7 +54,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 
 const { handleSendCommand } = await import("../../packages/commands/send");
-const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/telegram");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/bot");
 
 function makeCtx(chatType: "private" | "group", userId: number | undefined, arg: string): any {
   return {

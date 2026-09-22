@@ -74,7 +74,7 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     business: true,
   },
   stickerCatalog: {
-    message: { type: "stickerCatalog", pack: "pack_name", snapshot: "目录" },
+    message: { type: "stickerCatalog", revision: 1, pack: "pack_name", snapshot: "目录" },
     payloadBytes: ("目录".length + "pack_name".length) * 2,
     business: true,
   },

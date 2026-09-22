@@ -33,7 +33,7 @@ import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLog
 import { getTokyoDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
-import { inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
+import { bestEffortUnlink, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
 import { readUtf8TextInput } from "../../libs/inputValidation";
 import {
   AppendOnlyFileFormatError,
@@ -176,12 +176,8 @@ function dayKey(timestamp: number): string {
  */
 async function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
   for (const name of names) {
-    if (!name.endsWith(TMP_FILE_SUFFIX)) continue;
-    try {
-      await Bun.file(join(LOGS_DIR, name)).delete();
-    } catch {
-      // 删除失败（权限问题等）不影响主流程，下次启动同样的清理还会再试一次。
-    }
+    // 删除失败不影响主流程，下次同样的清理还会再试一次。
+    if (name.endsWith(TMP_FILE_SUFFIX)) await bestEffortUnlink(join(LOGS_DIR, name));
   }
 }
 
@@ -190,13 +186,8 @@ async function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)):
   const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
   for (const name of names) {
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
-    if (match && match[1]! < oldestKept) {
-      try {
-        await Bun.file(join(LOGS_DIR, name)).delete();
-      } catch {
-        // 删除失败（例如权限问题）不影响写入，下次跨天再试。
-      }
-    }
+    // 删除失败不影响写入，下次跨天再试。
+    if (match && match[1]! < oldestKept) await bestEffortUnlink(join(LOGS_DIR, name));
   }
 }
 

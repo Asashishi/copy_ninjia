@@ -10,10 +10,11 @@ import type { UnacknowledgedChatStateWrite } from "../../types/identityStorage";
  *
  * **这里用不到 LruCache 的淘汰**：新建群状态前一律先过
  * `infra/chatStateStorage.ts` 的 `assertChatStateCapacity`，第 26 个群直接抛错，
- * 因此链表永远不会因超容量摘节点。每条消息的读取也都走 `peek` 不刷新热度，
- * 只有 `infra/storage/stateStore.ts` 的 `clearChatStateField` 与
- * `purgeChatStateExceptLockdown` 两处用 `get`。侵入式链表在这份缓存上实际承担的是
- * **有序迭代**：`getActiveProxySendTarget`、`refreshAllChatTitles` 与
+ * 因此链表永远不会因超容量摘节点。每条消息路径上的读取（`getChatState`、
+ * `getOrCreateChatState`）走 `peek` 不刷新热度；`clearChatStateField`、
+ * `purgeChatStateExceptLockdown` 与经 `getChatStateCache()` 读取的低频路径（lockdown
+ * 对账、黑名单 outbox 与清扫调度）用 `get`，只改变迭代次序。侵入式链表在这份缓存上
+ * 实际承担的是**有序迭代**：`getActiveProxySendTarget`、`refreshAllChatTitles` 与
  * `antiRaid/lockdownMirror.ts` 的 `recoverAbandonedLockdowns` 都按它遍历，
  * 迭代期改写的语义见 `libs/lruCache.ts` 的 `LruCache`。
  *
@@ -25,7 +26,12 @@ import type { UnacknowledgedChatStateWrite } from "../../types/identityStorage";
 export const chatStateCache: LruCache<number, ChatState> =
   new LruCache(STATE_MANAGED_CHAT_LIMIT);
 
-/** 群状态未 ACK revision 与删除墓碑；正文只保留在上方 LRU。 */
+/**
+ * 群状态未 ACK revision 与删除墓碑；正文只保留在上方 LRU。
+ * 清理：收到该 revision 的精确 ACK 时按 chatId 删除；Disk I/O Worker 重建时
+ * 不清空，整表重放后等 ACK 才移出。容量：每个受管群至多一项，上界
+ * STATE_MANAGED_CHAT_LIMIT；不淘汰未落盘事实。
+ */
 export const unacknowledgedChatStateWrites: Map<
   number,
   UnacknowledgedChatStateWrite

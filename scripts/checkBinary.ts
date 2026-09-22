@@ -2,8 +2,11 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { checkBinaryMigrations } from "./checkBinaryMigrations";
+import { assertMigrationSourcesUnchanged, deployMigratedFixture } from "./fixtures/migrationDeployment";
+import type { MigratedDeployment } from "./fixtures/migrationDeployment";
 import { copyFixtureTree } from "./fixtures/copyTree";
-import { cleanupFixtures, createFixture, readText, runInstaller, writeText } from "./installIsolation/fixture";
+import { cleanupFixtures, createFixture, runInstaller, writeText } from "./installIsolation/fixture";
 import type { InstallerFixture, InstallerRunResult } from "./installIsolation/fixture";
 import { readInstallScripts } from "./installSources";
 import type { InstallScriptSource } from "./installSources";
@@ -38,7 +41,10 @@ try {
   const manifest: { readonly version: string } = await Bun.file(join(root, "package.json")).json() as { readonly version: string };
   if (run(["--version"]).trim() !== manifest.version) throw new Error("Binary version must match the packaged manifest.");
   await copyFixtureTree(join(root, "config_example"), join(root, "config"));
-  await Bun.write(join(root, "config/telegram.json"), JSON.stringify({ bot_token: "123456789:binary_test_token", super_admin_user_id: 123456789 }));
+  // 与首次部署一样不物化只示意结构的示例：g-auth.json 的占位私钥会被启动总闸拒绝，
+  // cron.json 的会话 id、地址与本地来源都是假的。
+  for (const name of ["g-auth.json", "cron.json"]) await Bun.file(join(root, "config", name)).delete();
+  await Bun.write(join(root, "config/bot.json"), JSON.stringify({ bot_token: "123456789:binary_test_token", super_admin_user_id: 123456789 }));
   await Bun.write(join(root, "config/agent.json"), JSON.stringify({ agent: {
     text: { provider: "openai", api_key: "binary-test-key", model: "test" },
     summary: { provider: "openai", api_key: "binary-test-key", model: "test" },
@@ -68,6 +74,7 @@ try {
   if (output.includes("BINARY_NETWORK_BLOCKED") || existsSync(join(root, "bot.lock")) || !existsSync(join(root, "state.json"))) {
     throw new Error(`Binary check did not complete cleanly:\n${output}`);
   }
+  const migrated: MigratedDeployment = await checkBinaryMigrations(root);
   const originalFixture: InstallerFixture = await createFixture();
   const worktree: string = join(originalFixture.root, "binary deployment");
   renameSync(originalFixture.worktree, worktree);
@@ -91,15 +98,47 @@ try {
     { prompt: "现在配置 AI 能力", reply: "n" },
     { prompt: "覆盖它？", reply: "y" },
   ]);
-  if (installed.exitCode !== 0 || (await readText(fixture.callLog)).includes("bun:")) {
+  if (installed.exitCode !== 0 || (await Bun.file(fixture.callLog).text()).includes("bun:")) {
     throw new Error(`Binary installer failed or invoked system Bun:\n${installed.output}`);
   }
   if (!existsSync(join(fixture.runtimeRoot, "database/storage.sqlite"))) throw new Error("Binary installer did not initialize storage.");
-  const unit: string = await readText(join(fixture.runtimeRoot, "unit-preview"));
+  const unit: string = await Bun.file(join(fixture.runtimeRoot, "unit-preview")).text();
   if (!unit.split("\n").includes(`ExecStart=":${join(worktree, "copy-ninjia")}"`)) {
     throw new Error("Binary installer must quote the executable path as one systemd argument.");
   }
-  console.log("Binary check passed: installer without system Bun, sharp, three Workers and SIGTERM drain.");
+  // 在同一隔离安装根模拟停服后的手工替换；旧安装没有打开的 SQLite 连接。
+  rmSync(join(fixture.runtimeRoot, "database"), { recursive: true });
+  for (const name of ["service-started", "service-observed"]) rmSync(join(fixture.runtimeRoot, name), { force: true });
+  await deployMigratedFixture(migrated, fixture.configRoot, fixture.runtimeRoot);
+  const upgraded: InstallerRunResult = runInstaller(fixture, [
+    { prompt: "是否重新填写？", reply: "n" }, { prompt: "覆盖它？", reply: "y" },
+  ]);
+  if (upgraded.exitCode !== 0 || !upgraded.output.includes("配置校验通过") || upgraded.output.includes("/translate 翻译不可用") ||
+    (await Bun.file(fixture.callLog).text()).includes("bun:")) {
+    throw new Error(`Binary migration installer failed or invoked system Bun:\n${upgraded.output}`);
+  }
+  const started: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+    cmd: [join(worktree, "copy-ninjia")], cwd: worktree,
+    env: { ...environment, COPY_NINJIA_DATA_ROOT: fixture.runtimeRoot, COPY_NINJIA_CONFIG_ROOT: fixture.configRoot,
+      BUN_OPTIONS: `--preload ${join(import.meta.dir, "../test/fixtures/binaryNetwork.ts")}` },
+    stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL",
+  });
+  const migratedOutput: string = new TextDecoder().decode(started.stdout) + new TextDecoder().decode(started.stderr);
+  for (const marker of ["diskIOWorker.ts", "aiChatWorker.ts", "antiRaidWorker.ts", "Received SIGTERM; beginning graceful shutdown."]) {
+    if (!migratedOutput.includes(marker)) throw new Error(`Migrated binary startup missing ${marker}:\n${migratedOutput}`);
+  }
+  if (started.exitCode !== 0 || !migratedOutput.includes("Restored state for 1 chat(s).") ||
+    !migratedOutput.includes("BINARY_API getUpdates") || migratedOutput.includes("BINARY_NETWORK_BLOCKED") ||
+    migratedOutput.includes("Shutdown drain/flush results:") || existsSync(join(fixture.runtimeRoot, "bot.lock"))) {
+    throw new Error(`Migrated binary startup failed:\n${migratedOutput}`);
+  }
+  for (const name of ["agent.json", "ad_samples.json", "mood.json", "stickers.json", "reactions.json", "g-auth.json"]) {
+    if (await Bun.file(join(fixture.configRoot, name)).text() !== await Bun.file(join(migrated.config, name)).text()) {
+      throw new Error(`Binary installer changed a preserved configuration: ${name}`);
+    }
+  }
+  await assertMigrationSourcesUnchanged(migrated.sources);
+  console.log("Binary check passed: installer and cold migrations without system Bun, sharp, three Workers and SIGTERM drain.");
 } finally {
   cleanupFixtures();
   rmSync(root, { recursive: true, force: true });

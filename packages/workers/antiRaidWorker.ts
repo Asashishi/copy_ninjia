@@ -45,12 +45,10 @@ import {
   resetWorkerChatKind,
 } from "./antiRaid/chatKind";
 import { bumpBlocklistRemovalEpoch } from "../cache/workers/antiRaid/blocklist";
-import { adoptAdDetectAgentConfig } from "../config/agent";
-import { adoptAdSampleConfig } from "../config/adSamples";
+import { adoptAdDetectConfigMessage } from "./antiRaid/adDetect/config";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
 import { resetAdminCache, sweepAdminCache } from "../cache/workers/antiRaid/admins";
 import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/workers/antiRaid/linkedChannels";
-import { recentChannelComments } from "../cache/workers/antiRaid/recentComments";
 import { sweepVerificationRevisionCache } from "../cache/workers/antiRaid/verification";
 import type {
   AntiRaidWorkerMessage,
@@ -60,13 +58,16 @@ import type {
   AdDetectedEvent,
   AdVerdictTrueEvent,
 } from "../types/antiRaid/adDetect";
-import type { BlockedMembersRemovedEvent } from
-  "../types/antiRaid/events";
+import type {
+  AntiRaidBarrierCompleteEvent,
+  AntiRaidDrainCompleteEvent,
+  BlockedMembersRemovedEvent,
+} from "../types/antiRaid/events";
 import {
   flushPendingMessageDeletions,
   resetPendingMessageDeletions as resetGenericMessageDeletions,
 } from "../infra/telegram/actions/messageLifecycle";
-import { sweepRecentComments } from "./antiRaid/recentComments";
+import { resetRecentComments, sweepRecentComments } from "./antiRaid/recentComments";
 import { antiRaidCacheSweepTimer } from "../cache/workers/antiRaid/worker";
 import {
   antiRaidDispatchSignal,
@@ -85,13 +86,13 @@ import {
 import type { WorkerDuplexOutbound } from "../types/workerDuplex";
 import { installTelegramApi } from "../infra/telegram/client";
 import { applyWorkerAtmosphere } from "./antiRaid/atmosphere";
-import { plainAtmosphereChats } from "../cache/workers/antiRaid/atmosphere";
+import { plainAtmosphereChats, defaultAtmosphereState } from "../cache/workers/antiRaid/atmosphere";
 import { workerTelegramApi } from "../infra/telegram/workerClient";
 import { acceptForwardedLogBatch } from "../infra/logger";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
- * 主线程（app/registerHandlers.ts → antiRaid/workerBridge.ts 代理）只做事件投递。
+ * 主线程（app/registerHandlers.ts → antiRaid/workerBridge/controller.ts 代理）只做事件投递。
  *
  * 本文件是两台状态机（packages/states/verification.ts / lockdown.ts）的解释器
  * 入口：入群验证核心、事件翻译、副作用和提醒 owner 分别位于
@@ -125,11 +126,10 @@ declare const self: Worker;
 export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
   switch (msg.type) {
     case "agentConfig":
-      // 主线程投给本线程的第一条消息（见 types/antiRaid.ts 的
-      // AntiRaidAgentConfigMessage）。本线程此后不读 config/agent.json，
-      // 崩溃重建也只等主线程重放同一份快照。
-      adoptAdDetectAgentConfig(msg.adDetect);
-      if (msg.adSamples !== null) adoptAdSampleConfig(msg.adSamples);
+      // 主线程投给本线程的第一条消息，config/ 热重载替换广告检测配置时再投一次
+      // （见 types/antiRaid/protocol.ts 的 AntiRaidAgentConfigMessage）。
+      defaultAtmosphereState.current = msg.defaultAtmosphere;
+      adoptAdDetectConfigMessage(msg);
       break;
     case "join":
       handleJoin(msg);
@@ -227,7 +227,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       applyChatKindChange(msg.chatId, msg.isSupergroup);
       break;
     case "barrier":
-      self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });
+      self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId } satisfies AntiRaidBarrierCompleteEvent);
       break;
     case "drain": {
       // drain 只发生在停机路径上：先停掉广告判定的节拍，别在退出前又开一批新的
@@ -253,7 +253,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
         void trackAntiRaidTask({ task });
       }
       void drainAntiRaidTasks().then((): void => {
-        self.postMessage({ type: "drainComplete", drainId: msg.drainId });
+        self.postMessage({ type: "drainComplete", drainId: msg.drainId } satisfies AntiRaidDrainCompleteEvent);
       });
       break;
     }
@@ -310,11 +310,12 @@ export function stopAntiRaidWorker(): void {
   stopAdDetectQueue();
   resetAdminCache();
   resetLinkedChannelCache();
-  recentChannelComments.clear();
+  resetRecentComments();
   resetFloodWindows();
   resetGenericMessageDeletions();
   resetWorkerBotPermissions();
   plainAtmosphereChats.clear();
+  defaultAtmosphereState.current = null;
   resetWorkerChatKind();
   resetAntiRaidTaskTracker();
   resetWorkerDuplex("Anti-Raid Worker stopped before the main-thread request completed.");

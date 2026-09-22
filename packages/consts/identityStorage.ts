@@ -38,7 +38,7 @@ export const BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES: number =
 export const IDENTITY_WRITE_FLUSH_INTERVAL_MS: number = 30_000;
 
 /** SQLite 当前唯一受支持的 schema 版本。 */
-export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 10;
+export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 11;
 
 /** 历史文本初始 migration 的时间戳；用于核验当前库的已发布谱系。 */
 export const IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT: number =
@@ -144,3 +144,10 @@ export const CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT: number = 20_260_915_
 /** 清理上下文权限迁移的 SHA-256；启动据此核验当前谱系。 */
 export const CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH: string =
   "50aefd0c0916b681cae8914a589b7d50e212f368551551c186813299cde8242d";
+
+/** 新增 `/h_image add` 权限迁移的时间戳；当前数据库必须以此条目结尾。所属模块：数据库谱系校验。 */
+export const H_IMAGE_ADD_PERMISSION_MIGRATION_CREATED_AT: number = 20_260_920_000_000;
+
+/** `/h_image add` 权限迁移的 SHA-256；SQL 变更必须同步更新，启动据此核验当前谱系。 */
+export const H_IMAGE_ADD_PERMISSION_MIGRATION_HASH: string =
+  "699c8bfe967c8c2b6d88963f3b8f59725c2743ce417211ffdbf76d7c94ad5226";

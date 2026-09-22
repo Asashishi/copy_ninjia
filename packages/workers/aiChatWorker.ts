@@ -3,18 +3,18 @@ import {
   ensureStickerCatalogs,
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
+  pruneStickerCatalogs,
   retryIncompleteStickerCatalogs,
 } from "../aiChat/ai/stickers/catalog";
 import { adoptStickerConfig, getStickerConfig } from "../config/stickers";
 import { adoptMoodConfig } from "../config/mood";
 import { chatPersonas } from "../cache/workers/aiChat/persona";
 import { adoptPersona } from "../config/persona";
-import { adoptReactionConfig } from "../config/reactions";
 import { adoptAgentDeploymentConfig } from "../config/agent";
 import { reportUnimplementedAgentCapabilities } from "../aiChat/provider";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
-import { botInfoState, superAdminUserIdState } from "../cache/workers/aiChat/identity";
+import { botInfoState, superAdminUserIdState, defaultAtmosphereState } from "../cache/workers/aiChat/identity";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
 import { sweepSongGenerationCache } from "../cache/workers/aiChat/songGeneration";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
@@ -32,17 +32,18 @@ import {
   recordChatMessage,
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
+import { applyAiChatConfigReload } from "./aiChat/configReload";
 import {
   drainPendingReplyQueues,
   generateAndSendReply,
-  invalidateChatReplies,
-  quiesceAiChatReplies,
 } from "./aiChat/replyPipeline";
+import { invalidateChatReplies, quiesceAiChatReplies } from "./aiChat/replyGeneration";
 import { currentMood, switchMood } from "../aiChat/ai/mood";
 import type {
   AiChatInvalidatedEvent,
   AiChatWorkerMessage,
   AiInvalidateChatMessage,
+  AiMemoryDeletedEvent,
   AiMemoryFlushedEvent,
   AiMoodQueriedEvent,
   AiMoodSwitchedEvent,
@@ -102,10 +103,8 @@ function handleInvalidateChat(msg: AiInvalidateChatMessage): void {
   // invalidateChatReplies 在返回 Promise 前已同步撤销旧 epoch 并 abort 旧代；
   // purge 同样必须同步发生，避免随后 FIFO record 被迟到的清理删掉。
   const drained: Promise<void> = invalidateChatReplies(msg.chatId);
-  if (msg.purgeMemory) {
-    purgeChatMemory(msg.chatId);
-    self.postMessage({ type: "memoryDeleted", chatId: msg.chatId });
-  }
+  purgeChatMemory(msg.chatId);
+  self.postMessage({ type: "memoryDeleted", chatId: msg.chatId } satisfies AiMemoryDeletedEvent);
   void drained.then((): void => {
     self.postMessage({
       type: "chatInvalidated",
@@ -160,23 +159,27 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
   switch (msg.type) {
     case "init":
       // 配置必须先于任何会调模型的动作落定：紧随其后的 ensureStickerCatalogs
-      // 就会去取 media 能力的模型名与凭据。本线程此后不再读 agent.json，
-      // 崩溃重建也只等主线程重放同一条 init（见 config/agent.ts 的边界说明）。
+      // 就会去取 media 能力的模型名与凭据。本线程从不读 agent.json，运行期
+      // 变化只经 configReload 消息到达，崩溃重建时主线程重放带着当前快照的
+      // init（见 config/agent.ts 的边界说明）。
       adoptAgentDeploymentConfig(msg.agent);
       adoptMoodConfig(msg.mood);
-      adoptReactionConfig(msg.reactions);
       adoptStickerConfig(msg.stickers);
       adoptPersona(msg.persona);
-      // 配置一落定就把「配了但这一家没实现」的可选能力记一次；能力配置在进程
-      // 生命周期内不变，逐轮回复重复记录只会淹掉真正的故障。
+      // 配置一落定就把「配了但这一家没实现」的可选能力记一次；热重载替换
+      // agent 段时由 reloadAgentDeploymentConfig 再记一次，逐轮回复不重复记录。
       reportUnimplementedAgentCapabilities();
       botInfoState.current = msg.botInfo;
       superAdminUserIdState.current = msg.superAdminUserId;
+      defaultAtmosphereState.current = msg.defaultAtmosphere;
       // 白名单贴纸包的目录生成后台启动，不阻塞后续 record/trigger 的处理，
       // 见 aiChat/ai/stickers/catalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(getStickerConfig().packs);
+      break;
+    case "configReload":
+      applyAiChatConfigReload(msg);
       break;
     case "persona":
       if (msg.persona === null) chatPersonas.delete(msg.chatId);
@@ -248,6 +251,8 @@ export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
   drainPendingReplyQueues(now);
   sweepImageGenerationCache(now);
   sweepSongGenerationCache(now);
+  // 配置轮换、任务结算与上报均会清理旧包；维护节拍复核仍在途或待上报的条目。
+  pruneStickerCatalogs(getStickerConfig().packs);
   // 启动那次对账整包失败的（拉贴纸集合时网络抖了一下）在这里补回来：
   // 没有它，一次瞬时失败就等于两个贴纸工具在整个进程生命周期里失效。
   retryIncompleteStickerCatalogs(getStickerConfig().packs, now);

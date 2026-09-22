@@ -40,17 +40,11 @@ export interface RemoveBlockedMembersParams {
 /**
  * outbox 里**持久化并镜像**的那一份任务参数，按 `probeMembership` 分成两种形态。
  *
- * 补扫（`probeMembership: true`）刻意不带 `userIds`：它欠的活是「拿黑名单把这个群
- * 扫一遍」，不是「拿这 1000 个具体 id 把这个群扫一遍」。冻一份 id 列表进来有三个
- * 坏处——
- * 1. **写盘量按群数 × 名单长度放大**：每次变更都要整份 outbox 重写，而 N 个群的
- *    补扫条目装的是同一份内容，加起来就是 O(N² × 名单长度) 的落盘，正是
- *    docs/cn/04-invariants.md 点名要避开的形态；`removals.json` 也因此成为整个持久化
- *    里唯一一个大小随黑名单长度增长的文件，而它在启动恢复的关键路径上。
- * 2. **重放时那份快照可能已经过期**：Worker 重建后重投的应该是「用**此刻**的名单
- *    扫这个群」，而不是当初那一份。
- * 3. **`/unblock` 被迫改写它**：`forgetUserBlocklistRemovals` 要把这个 id 从每一条
- *    批次里滤掉再整份重新落盘，而这件事只是因为当初冻了一份不该冻的列表。
+ * 补扫（`probeMembership: true`）不带 `userIds`：它欠的活是「拿**此刻**的黑名单把
+ * 这个群扫一遍」，投递与重放按页从 Disk I/O 边界读取当前名单。因此
+ * `pending_blocked_removals` 里补扫行的大小不随黑名单长度增长，Worker 重建后重投时
+ * 扫的也是当时的名单；`forgetUserBlocklistRemovals` 不改写补扫行，只在黑名单清空时
+ * 整条删除。约束全文见 docs/cn/04-invariants.md。
  *
  * 秒踢与广告处置（`probeMembership: false`）相反，名单**必须**随任务冻结：那批人
  * 是「此刻确定在群里的这几个」，与名单当前内容无关，现算会扫到一群不相干的人。
@@ -162,7 +156,7 @@ export interface BlocklistSweepSchedulerState {
  * outbox 条目；它与 Telegram update 重投共同提供恢复，不能互相替代。
  *
  * @returns **真正投给 Worker 的处置条数**。正常 resolve 不等于「都投出去了」：
- *   durable 对账（antiRaid/blocklistDelivery.ts）在并发 `/unblock` 反复裁剪
+ *   durable 对账（antiRaid/blocklistDelivery.ts）在并发 `/block disable` 反复裁剪
  *   同一批时会把整批 removeBlockedMembers 全部扣下、只留其余消息，随后 post
  *   路径以 `length === 0` 早退并正常 resolve。调用方（infra/blocklist/sweep.ts）
  *   必须据此把「一条都没投出去」判成失败并推进退避，否则 claim 里的 removalId

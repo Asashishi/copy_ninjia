@@ -24,6 +24,7 @@ import {
   clearGagSpeakNoticeRefreshTimer,
   scheduleGagSpeakNoticeRefresh,
 } from "./refresh";
+import { DURATION_UNIT_MS } from "../../consts/commands";
 
 export type GagEndReason = "timeout" | "ungag" | "teardown";
 export type GagReservationOutcome =
@@ -302,12 +303,12 @@ export function expireGag(session: GagSession): void {
 /** 激活预约并安装不会阻止进程退出的到期 timer。 */
 function activateGag(session: GagSession): void {
   const now: number = Date.now();
-  session.expiresAt = now + session.durationMinutes * 60_000;
+  session.expiresAt = now + session.durationMinutes * DURATION_UNIT_MS.m;
   session.lastTargetMessageAt = now;
   session.phase = "active";
   session.timer = setTimeout(
     expireGag,
-    session.durationMinutes * 60_000,
+    session.durationMinutes * DURATION_UNIT_MS.m,
     session
   );
   session.timer.unref();

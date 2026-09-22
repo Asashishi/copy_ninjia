@@ -1,4 +1,3 @@
-import { ACCEPT_CANDIDATE, IGNORE_CANDIDATE, DELETE_STRAGGLER, ENQUEUE_KEY, SKIP_ENQUEUE, DISPATCH, SATURATED } from "../consts/antiRaid/admission";
 import {
   AD_DETECT_MAX_IN_FLIGHT,
   AD_DETECT_MAX_PENDING_SENDERS,
@@ -32,12 +31,12 @@ import type {
  * 再判一次只会换来一模一样的处置。
  */
 export function admitAdCandidate(input: AdCandidateAdmissionInput): AdCandidateDecision {
-  if (input.textLength === 0) return IGNORE_CANDIDATE;
-  if (!input.isChannel && input.knownAdmin) return IGNORE_CANDIDATE;
+  if (input.textLength === 0) return "ignore";
+  if (!input.isChannel && input.knownAdmin) return "ignore";
   if (input.blocked || input.recentlyDisposed) {
-    return input.isChannel ? DELETE_STRAGGLER : IGNORE_CANDIDATE;
+    return input.isChannel ? "deleteStraggler" : "ignore";
   }
-  return ACCEPT_CANDIDATE;
+  return "accept";
 }
 
 /**
@@ -54,9 +53,9 @@ export function admitAdCandidate(input: AdCandidateAdmissionInput): AdCandidateD
  *   本函数不认识 bundle。
  */
 export function admitAdRequeue(input: AdRequeueInput): AdRequeueDecision {
-  if (!input.hasUncheckedContent) return SKIP_ENQUEUE;
-  if (input.queued || input.inFlight) return SKIP_ENQUEUE;
-  return ENQUEUE_KEY;
+  if (!input.hasUncheckedContent) return "skip";
+  if (input.queued || input.inFlight) return "skip";
+  return "enqueue";
 }
 
 /**
@@ -85,5 +84,5 @@ export function isNewAdBundleAtCapacity(pendingSize: number): boolean {
  * 重新排进来。
  */
 export function admitAdDispatch(input: AdDispatchInput): AdDispatchDecision {
-  return input.inFlight >= AD_DETECT_MAX_IN_FLIGHT ? SATURATED : DISPATCH;
+  return input.inFlight >= AD_DETECT_MAX_IN_FLIGHT ? "saturated" : "dispatch";
 }

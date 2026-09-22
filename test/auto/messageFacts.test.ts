@@ -230,6 +230,19 @@ describe("auto/message/facts", () => {
       reply_to_message: message({ message_id: 2, sender_chat: anonymousSender }),
     }))).toBe(true);
     expect(isReplyToSelf(message({ from: undefined, reply_to_message: message({ message_id: 2, from: undefined }) }))).toBe(false);
+
+    // 频道帖没有 sender_chat 也没有 from，可见身份退回帖子所在的频道。
+    const channel = { id: -100900, type: "channel", title: "Channel" };
+    expect(isReplyToSelf(message({
+      chat: channel,
+      from: undefined,
+      reply_to_message: message({ message_id: 2, chat: channel, from: undefined }),
+    }))).toBe(true);
+    // 同一真人换成频道马甲回复自己以真人身份发的消息，不算自回复。
+    expect(isReplyToSelf(message({
+      sender_chat: { id: -100700, type: "channel", title: "Mask" },
+      reply_to_message: message({ message_id: 2 }),
+    }))).toBe(false);
   });
 
   test("论坛话题里自动填入的话题创建消息不算回复：不产生自回复、回复引用或回复机器人触发", () => {

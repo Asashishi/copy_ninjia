@@ -2,6 +2,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { familySync, GLIBC, MUSL } from "detect-libc";
+import { ACTIVE_COLD_MIGRATION_EDGES } from "./migrations/active";
 import { copyFixtureTree } from "./fixtures/copyTree";
 import { createReleaseCommand, readBuildSourceTree } from "./release/command";
 import { fileSha256, RELEASE_VERSION_PATTERN } from "./release/assets";
@@ -78,6 +79,19 @@ try {
     external: ["sharp"],
   });
   if (!installer.success) throw new AggregateError(installer.logs, "Installer compilation failed.");
+  for (const edge of ACTIVE_COLD_MIGRATION_EDGES) {
+    const migration: Bun.BuildOutput = await Bun.build({
+      entrypoints: [join(projectRoot, edge.entryPath)],
+      outdir: join(packageRoot, "scripts/migrations"),
+      target: "bun",
+      naming: "[name].js",
+      sourcemap: "none",
+      // bundle 的目录与 consts 源码同为根下两层，SQL 等资产相对包根解析。
+      define: { "Bun.isStandaloneExecutable": "false" },
+      external: ["sharp"],
+    });
+    if (!migration.success) throw new AggregateError(migration.logs, `Migration compilation failed: ${edge.command}`);
+  }
   for (const relative of ["install.sh", "config_example", "prompt", "LICENSES", "packages/database/schema/migrations"]) {
     await copyFixtureTree(join(projectRoot, relative), join(packageRoot, relative));
   }

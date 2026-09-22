@@ -1,7 +1,4 @@
-import { syncAntiRaidAtmosphere } from "../antiRaid/workerBridge/controller";
 import type { Context } from "grammy";
-import { syncAiChatPersona } from "../aiChat/workerBridge";
-import { syncChatCommandMenu } from "../app/commandMenu";
 import { logger } from "./logger";
 import { bot } from "./telegram/mainClient";
 import { signalArgs } from "../libs/telegramSignalArgs";
@@ -32,6 +29,7 @@ import {
   sweepBlockedMembers,
 } from "./blocklist/sweep";
 import { teardownChatRuntime } from "./chatTeardown";
+import type { ChatPersonaSurfaceSync } from "../types/commands";
 import type { ChatState } from "../types/chatState";
 import type { BotChatPermissions } from "../types/telegram";
 import type { ChatMember, ChatMemberUpdated } from "grammy/types";
@@ -69,7 +67,7 @@ async function completeAfterTeardown(
  *    移出时 Telegram 必发，近实时且权威；
  * 2. 收到别人的 chat_member 更新本身就证明机器人是管理员；若快照
  *    尚未建立，markBotAdminObserved 会现查一次完整 ChatMember；
- * 3. 两者都没来过的存量群（比如此功能上线前就已是管理员的群），首次判定
+ * 3. 两者都没来过的群（快照缺失，比如状态里从未记下过权限位），首次判定
  *    时按需 getChatMember 现查一次并回填（resolveBotAdminStatus）。
  *
  * 三条路径最终都经 recordBotChatPermissions 落盘。它同时是「机器人在这个群可以
@@ -151,7 +149,10 @@ async function recordBotChatPermissions(
  * 必须显式列进 allowed_updates 才会送达（见 app/lifecycle.ts）。
  * 非管理员 -> 管理员的那一跳会经 recordBotChatPermissions 触发一次黑名单清扫。
  */
-export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
+export async function handleMyChatMemberUpdate(
+  ctx: Context,
+  syncChatPersonaSurfaces: ChatPersonaSurfaceSync
+): Promise<void> {
   const update: ChatMemberUpdated | undefined = ctx.myChatMember;
   if (!update) return;
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
@@ -174,9 +175,7 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
           update.chat.id,
           `chat ${update.chat.id} state pruned after bot left/kicked`
         );
-        syncAiChatPersona(update.chat.id);
-        syncAntiRaidAtmosphere(update.chat.id);
-        await syncChatCommandMenu(bot.api, update.chat.id);
+        await syncChatPersonaSurfaces(bot.api, update.chat.id);
       },
       `Failed to complete departure transition for chat ${update.chat.id}.`
     );
@@ -286,7 +285,7 @@ export function cachedBotAdminStatus(chatId: number): boolean | undefined {
 }
 
 /**
- * 机器人在某群是否为管理员。身份不再另走一套查询与缓存：直接复用
+ * 机器人在某群是否为管理员。身份不另走一套查询与缓存：直接复用
  * `botChatPermissionsIn` 的完整快照，未知/查询失败时 fail closed 为 false。
  */
 export async function resolveBotAdminStatus(chatId: number): Promise<boolean> {
@@ -310,7 +309,7 @@ export function forgetBotChatPermissions(chatId: number): void {
   // 下面两件事都只在真的丢掉了一份已知值时做：teardown 路径会对同一个群反复调用，
   // 无条件执行就是白写一次盘、再往 Worker mailbox 里灌一条重复消息。
   if (!had) return;
-  // 落盘不能省。botPermissions 现在是持久字段：只清 LRU 的话，内存说「未知」而
+  // 落盘不能省。botPermissions 是持久字段：只清 LRU 的话，内存说「未知」而
   // SQLite 还留着刚被判定为陈旧的那份快照。多数调用点后面跟着 persistChatState
   // （离群、/init 两条路），唯独 markBotAdminObserved 那条不是——它 forget 之后
   // 现查，而 getChatMember 失败时按约定什么都不记，这一轮就这么带着分歧结束。
@@ -318,7 +317,7 @@ export function forgetBotChatPermissions(chatId: number): void {
   // ensureBotChatPermissions 直接早退、resolveBotAdminStatus 恒为 false，/block 与
   // 各处 managed 群清扫都会跳过这个群，尽管机器人在那儿是好好的管理员。
   //
-  // 用后台写而不是 persistChatState：这个函数会被 teardown 路径反复调用，不该在
+  // 用后台写，不走 persistChatState：这个函数会被 teardown 路径反复调用，不该在
   // 那里插一道 flush barrier；而「未知」这个值写晚了最多多现查一次，不是
   // durability 事故。
   saveChatStateInBackground(chatId, "bot permissions forgotten");
@@ -423,7 +422,7 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
     if (authoritative !== undefined) return authoritative;
     const permissions: BotChatPermissions = readBotChatPermissions(member);
     // 「没 /init enable 的群不创建 State」这道门禁由 recordBotChatPermissions 首行
-    // 独家把守（两处 JSDoc 都称它是唯一门禁）；这里不再重判一次——重判省不掉任何
+    // 独家把守（两处 JSDoc 都称它是唯一门禁）；这里不重判一次——重判省不掉任何
     // 工作，却多一个将来要跟着一起改的地方。
     // 落盘失败是 fatal durability failure，不得被上面的 Telegram API catch 折算成未知。
     await recordBotChatPermissions(chatId, permissions);

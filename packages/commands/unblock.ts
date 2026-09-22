@@ -4,12 +4,9 @@ import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 
 import { sendCommandMessage, unbanChatMemberIfBanned, unbanChatSenderChat } from "../infra/telegram";
-import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
+import { formatTargetLabel } from "../users/userLabel";
 import { resolveCommandTarget } from "./targetResolution";
-import {
-  hasCommandPermission,
-  resolveCommandActor,
-} from "./commandActor";
+import { rejectUnlessPermitted } from "./commandActor";
 import { resolveBotAdminStatus } from "../infra/botAdmin";
 import {
   confirmBlocklistPersisted,
@@ -27,8 +24,7 @@ interface UnblockExecutionOutcome extends UnbanOutcome {
 
 /** 同一身份较早的自动封禁结算后，再以本命令的较晚结果覆盖名单与群级封禁。 */
 async function executeUnblock(targetUser: CachedUser, originChatId: number): Promise<UnblockExecutionOutcome> {
-  // 先发布 LRU 负结论、再投递 tombstone——顺序不能反。反过来的话，两步之间到达的入群
-  // 更新会查到一个还没解除的名单，那个人白白被秒踢一次。
+  // 先发布主线程 LRU 的解除结论，再投递 tombstone；后续入群更新立即读到新结论。
   const removedFromList: boolean = unblockUser(targetUser.id);
   // 名单里没有目标不代表各群没有封禁；默认完整解封仍要继续逐群执行。
   const persisted: boolean = removedFromList ? await confirmBlocklistPersisted() : true;
@@ -37,68 +33,40 @@ async function executeUnblock(targetUser: CachedUser, originChatId: number): Pro
 }
 
 /**
- * 处理 /unblock 指令：把目标从持久化黑名单里移除，与 /block 互为逆操作。
+ * `/block <目标> disable`：移除持久化黑名单身份，并解除已知管理群中的群级封禁。
+ * 由 commands/block.ts 的 handleBlockCommand 按末位动作分派，只认 isCanUnBlock。
  *
- * 删除与新增走同一 revision/ACK 协议：先把主线程 LRU 发布为负结论，再向
- * DiskIO Worker 投递 SQLite tombstone；事务 ACK 前由主线程保留并可重放。
+ * 先移出名单并等待持久化结果，再执行各群解封；持久化失败仍继续解封，并在
+ * 回执中附加警告。revision/ACK 与崩溃重放约束见 docs/cn/04-invariants.md。
  *
- * 命令默认完整解除：先把目标移出黑名单并确认事务落盘，再在所有已知管理群
- * 解除 Telegram 群级封禁。整条操作只认 isCanUnBlock；不再接受 `all` 参数，避免
- * 「名单已移除、群级封禁仍保留」这档容易误解的半完成状态。
- *
- * 目标解析比 /block 多一档：回复目标的一条消息优先，也可以用 /unblock @username、
- * /unblock <用户 id> 或 /unblock <频道的负数 id>。id 不必在缓存里见过——解除
- * 拉黑处置的同样是一个 id，缓存只用来给回执配个人类可读的标签。
- *
- * 负数 id 只有这条命令认，供管理员在源消息已删除、频道无公开 username 或缓存
- * 无记录时恢复频道身份；`/block` 仍拒绝粘贴会话 id，避免误封整个会话身份。
+ * 目标支持回复、用户名、用户 id 或频道的负数 id；回复与参数同时存在时必须
+ * 指向同一身份。裸 id 不要求命中缓存；`/block enable` 不接受裸负数 id。
+ * @param targetArgument 去掉末位动作后的目标参数原文，可为空（此时只认回复目标）。
  */
-export async function handleUnblockCommand(ctx: CommandContext<Context>): Promise<void> {
+export async function handleBlockDisable(ctx: CommandContext<Context>, targetArgument: string): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const actor: CachedUser | undefined = resolveCommandActor(ctx);
-
-  if (!actor || !hasCommandPermission(ctx, "isCanUnBlock")) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
-    const replyText: string = atmosphere.NOTICE_TEXTS.unblockRejected(actor ? formatUserLabel(actor, atmosphere) : atmosphere.NOTICE_TEXTS.unknownActor);
-    await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
-    return;
-  }
-
-  const targetArgument: string = ctx.match.trim();
+  const actor: CachedUser | undefined = await rejectUnlessPermitted(
+    ctx,
+    "isCanUnBlock",
+    (actorLabel: string, atmosphere: AtmosphereTexts): string => atmosphere.NOTICE_TEXTS.unblockRejected(actorLabel)
+  );
+  if (actor === undefined) return;
 
   const targetUser: CachedUser | undefined = await resolveCommandTarget({
     chatId,
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: targetArgument,
-    // 同 /block：解除的对象也是一个 id，允许直接给 id。
     acceptUserId: true,
-    // 只有这条命令认负数 id，理由见函数顶部说明与 targetResolution.ts。
     acceptChatId: true,
     // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不能当成「不在名单」。
     requireIdentityPolicies: true,
-    messages: chatAtmosphere(ctx.chat?.id ?? 0).UNBLOCK_TARGET_TEXTS,
+    // 拒绝当前群自己的身份，覆盖匿名管理员回复与裸会话 id；约束见 docs/cn/04-invariants.md。
+    currentChatTargetText: chatAtmosphere(chatId).NOTICE_TEXTS.unblockCurrentChat,
+    messages: chatAtmosphere(chatId).UNBLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;
-
-  // 与 /block 同一道闸（见 commands/block.ts 与 docs/cn/04-invariants.md 的
-  // 「破坏性的成员操作必须拒绝把当前群 identity 当作用户目标」）：匿名管理员拿
-  // 当前群当皮套时，resolveCommandTarget 按设计返回的是这个群自己的 identity。
-  // 放它过去的话，unbanChatSenderChat(chatId, chatId) 自解封必然报错、落进
-  // failedCount，管理员会收到一条「已在 N 个群解开、还有 1 个群没解开，快去检查
-  // 权限」——一份关于「根本没被碰过的人」的假战报，还把运维引向一个其实没坏的群。
-  // 只挡当前群自己：在群里发言的关联频道 sender_chat 是另一个 id，照常可解。
-  // 开了 acceptChatId 之后这道闸多守一种手滑——把本群的 id 直接粘进参数，
-  // 落点与匿名管理员皮套完全相同，文案因此要把两条路都念到。
-  if (targetUser.isChannel === true && targetUser.id === chatId) {
-    await sendCommandMessage({
-      chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.unblockCurrentChat,
-      replyToMessageId: messageId,
-    });
-    return;
-  }
 
   const {
     removedFromList,
@@ -109,8 +77,7 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     targetUser.id,
     (): Promise<UnblockExecutionOutcome> => executeUnblock(targetUser, chatId)
   );
-  // tombstone 没落盘就不能说「划掉了」：数据库里那条还在，重启后这个人会重新回到
-  // 名单上，而管理员以为已经放过 TA 了。没动过名单就不必等这一次回执。
+  // 未收到持久化确认时附加警告；名单无变更时不等待 ACK。
   const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
   const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
   const persistWarning: string = persisted
@@ -143,12 +110,8 @@ interface UnbanOutcome {
 }
 
 /**
- * 在所有「本天才是管理员」的群里解除该目标的封禁。群清单与 /block 的连坐封禁
- * 读同一个 `managedAdminChatIds`，扇出也走同一个 `runManagedChatBatch`（都见
- * infra/blocklist/membership.ts）：两条命令是同一处置的正反面，清单同源而形态
- * 分叉的话，早晚会长出「封的时候有界并发、解的时候逐群串行」这种不对称，而
- * 后者在几十个群时会让 update 中间件几十次往返都不返回。结算与输入同序，
- * 计数仍按确定顺序收敛。
+ * 在机器人具有管理员身份的群中解除目标封禁。群清单与有界并发执行分别由
+ * managedAdminChatIds、runManagedChatBatch 提供，结算结果按输入顺序计数。
  */
 async function unbanEverywhereFor(targetUser: CachedUser, chatId: number): Promise<UnbanOutcome> {
   const isAdminHere: boolean = await resolveBotAdminStatus(chatId);
@@ -158,9 +121,7 @@ async function unbanEverywhereFor(targetUser: CachedUser, chatId: number): Promi
     chatIds: targetChatIds,
     action: `lift the ban on identity ${targetUser.id}`,
     onUnexpectedFailure: false,
-    // 频道马甲走 unbanChatSenderChat；真实用户必须走带 only_if_banned 的那个
-    // helper，否则「当前就在群里」的人会被 unbanChatMember 直接踢出去
-    // （见 infra/telegram/actions/moderation.ts）。
+    // 频道身份解除 sender_chat 封禁；用户仅解除已有封禁，保留在群成员身份。
     execute: (targetChatId: number): Promise<boolean> => targetUser.isChannel === true
       ? unbanChatSenderChat(targetChatId, targetUser.id)
       : unbanChatMemberIfBanned(targetChatId, targetUser.id),

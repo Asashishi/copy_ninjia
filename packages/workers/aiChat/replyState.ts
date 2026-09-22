@@ -17,13 +17,6 @@ import {
   trackReplyGenerationTask,
 } from "./replyGeneration";
 
-export {
-  invalidateChatReplies,
-  quiesceAiChatReplies,
-  replyGenerationSignal,
-  trackReplyGenerationTask,
-} from "./replyGeneration";
-
 /** notifyRateLimited 的入参；话题落点是第四项，因此收成 options。 */
 export interface NotifyRateLimitedParams {
   chatId: number;

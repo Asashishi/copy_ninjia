@@ -8,6 +8,7 @@ import { isErrno } from "../../libs/errno";
 import type { FileHandle } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Stats } from "node:fs";
+import { toError } from "../../libs/errorMessage";
 
 export interface DataRootProbeDependencies {
   mkdir: typeof mkdir;
@@ -175,7 +176,7 @@ export async function prepareRuntimeDataRoot(
     await directoryHandle.close();
     directoryHandle = null;
   } catch (error: unknown) {
-    const reason: Error = error instanceof Error ? error : new Error(String(error));
+    const reason: Error = toError(error);
     throw new Error(
       `Runtime data root preflight failed for ${root}: ${reason.message}. ` +
       "Ensure it is a writable directory on a filesystem that supports hard links, atomic rename, and directory fsync.",

@@ -26,7 +26,7 @@ import {
   parseAdDetectAgentConfig,
   parseAgentDeploymentConfig,
 } from "../../packages/config/agent";
-import { parseTelegramConfig } from "../../packages/config/telegramInput";
+import { parseBotConfig } from "../../packages/config/botInput";
 
 describe("全量基准的 mock 根边界", () => {
   test("mock 根只覆盖仓库下的 performance/", () => {
@@ -93,16 +93,16 @@ describe("mock 根的建立与清理", () => {
     try {
       const configRoot: string = await createBenchmarkConfigRoot(runRoot);
       const telegramDocument: unknown = await Bun.file(
-        join(configRoot, "telegram.json")
+        join(configRoot, "bot.json")
       ).json();
       const agentDocument: Readonly<{
         agent?: Readonly<{ ad_detect?: unknown }>;
       }> = await Bun.file(
         join(configRoot, "agent.json")
       ).json();
-      expect((): unknown => parseTelegramConfig(
+      expect((): unknown => parseBotConfig(
         telegramDocument,
-        "benchmark/telegram.json"
+        "benchmark/bot.json"
       )).not.toThrow();
       expect((): unknown => parseAgentDeploymentConfig(
         agentDocument.agent,
@@ -112,6 +112,8 @@ describe("mock 根的建立与清理", () => {
         agentDocument.agent?.ad_detect,
         "benchmark/agent.json"
       )).not.toThrow();
+      // 翻译凭据示例不进基准配置根，启动总闸按「缺省」处理翻译。
+      expect(await Bun.file(join(configRoot, "g-auth.json")).exists()).toBeFalse();
     } finally {
       removeMockPath(runRoot);
     }

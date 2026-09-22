@@ -1,22 +1,21 @@
+import { AI_REACTION_EMOJI_SET } from "../../../../consts/aiChat/reactions";
 import { MAX_REACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
 import { setMessageReaction } from "../../../../infra/telegram";
 import type { ReplyToolContext, ReplyToolExecution } from "../../../../types/aiChat/replies";
-import { getReactionEmojis } from "../../reactions";
 import { parseStringField } from "../../utils/toolArgs";
 
 export function createAddReactionExecutor(
   ctx: ReplyToolContext
 ): (argumentsJson: string) => ReplyToolExecution {
-  const reactionEmojis: readonly string[] = getReactionEmojis();
   let reactionCount: number = 0;
   return (argumentsJson: string): ReplyToolExecution => {
     if (!ctx.isActive()) {
       return toolError(REPLY_INVALIDATED_TOOL_ERROR);
     }
     const emoji: string | null = parseStringField(argumentsJson, "emoji");
-    if (emoji === null || !reactionEmojis.includes(emoji)) {
+    if (emoji === null || !AI_REACTION_EMOJI_SET.has(emoji)) {
       return toolError("Invalid reaction emoji: pick one from the list");
     }
     if (reactionCount >= MAX_REACTIONS_PER_REPLY) {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser } from "../../packages/types/chatState";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import type { AvatarNoticeSource } from "../../packages/types/copy/avatar";
@@ -14,7 +15,8 @@ const globalCopyState: { lastCopyTime?: number } = {};
 const personas = new Map<number, { aiPersona?: string }>();
 const DEFAULT_AVATAR_URL: string = "https://cdn.example/default-face.jpg";
 
-mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 100 }));
+mock.module("../../packages/config/bot", () => ({
+  BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 100 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
@@ -30,12 +32,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerError,
-  },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 const shared = await import("../../packages/commands/copyShared");

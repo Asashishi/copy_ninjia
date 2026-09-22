@@ -10,41 +10,49 @@ export {
 } from "./client";
 export {
   answerCallbackQuery,
-  banChatMember,
-  banChatMemberWithOutcome,
-  banChatSenderChat,
-  banChatSenderChatWithOutcome,
+  editMessageText,
+  sendChatAction,
+  sendEphemeralMessage,
+  sendMessage,
+  sendMessageWithResult,
+} from "./actions/messages";
+export {
   copyMessage,
+  sendAudioWithResult,
+  sendPhotoWithResult,
+  sendSticker,
+} from "./actions/mediaMessages";
+export {
   deleteEphemeralMessageWithOutcome,
   deleteMessage,
   deleteMessageAfter,
   deleteMessages,
   deleteMessageWithOutcome,
   drainPendingMessageDeletions,
-  editMessageText,
-  isChatMember,
-  kickChatMemberWithOutcome,
-  muteChatMemberWithOutcome,
-  probeChatAdmin,
-  probeChatMembership,
-  sendAudioWithResult,
-  sendChatAction,
-  sendEphemeralMessage,
-  sendMessage,
-  sendMessageWithResult,
-  sendPhotoWithResult,
-  sendSticker,
   setMessageReaction,
   setMessageReactions,
+} from "./actions/messageLifecycle";
+export type { DeleteMessageOutcome } from "./actions/messageLifecycle";
+export {
+  banChatMember,
+  banChatMemberWithOutcome,
+  banChatSenderChat,
+  banChatSenderChatWithOutcome,
+  kickChatMemberWithOutcome,
+  muteChatMemberWithOutcome,
   unbanChatMemberIfBanned,
   unbanChatSenderChat,
   unmuteChatMemberWithOutcome,
-} from "./actions";
+} from "./actions/moderation";
 export type {
   BanChatMemberOutcome,
-  DeleteMessageOutcome,
   KickChatMemberOutcome,
   MuteChatMemberOutcome,
   UnmuteChatMemberOutcome,
-} from "./actions";
+} from "./actions/moderation";
+export {
+  isChatMember,
+  probeChatAdmin,
+  probeChatMembership,
+} from "./actions/membership";
 export { sendCommandMessage } from "./commandMessages";

@@ -1,4 +1,5 @@
 import { beforeEach, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { Api } from "grammy";
 import type { PhotoSize, User } from "grammy/types";
 import type * as AvatarReader from "../../packages/infra/telegram/avatar/read";
@@ -44,7 +45,7 @@ const api: Api = new Api("123:fixture", {
   },
 });
 
-mock.module("../../packages/infra/logger", (): unknown => ({ logger: { error(): void {} } }));
+mock.module("../../packages/infra/logger", (): unknown => ({ logger: loggerStub() }));
 mock.module("../../packages/infra/telegram/mainClient", (): unknown => ({ bot: { api } }));
 mock.module("../../packages/infra/telegram/avatar/download", (): unknown => ({
   downloadAvatarFile: async (): Promise<never> => { throw new Error("Unexpected avatar download"); },

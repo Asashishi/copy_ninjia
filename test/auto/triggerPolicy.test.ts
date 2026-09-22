@@ -35,6 +35,62 @@ afterEach((): void => {
 });
 
 describe("随机回复个人冷却", () => {
+  function fill(now: number): void {
+    for (let userId: number = 1; userId <= USER_REPLY_TRIGGER_CACHE_MAX; userId++) {
+      expect(tryClaimUserReplyTrigger(-1001, userId, now)).toBeTrue();
+    }
+  }
+
+  test("满表有效区间拒绝新键且不淘汰现有冷却，精确到期后恢复", (): void => {
+    fill(1_000);
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 1_001)).toBeFalse();
+    expect(userReplyTriggerSweepState.validUntil).toBe(1_000 + USER_REPLY_TRIGGER_COOLDOWN_MS);
+    const before: [string, number][] = [...userReplyTriggerTimes];
+    for (let index: number = 0; index < 100; index++) {
+      expect(tryClaimUserReplyTrigger(-1001, 100_000 + index, 1_002 + index)).toBeFalse();
+    }
+    expect([...userReplyTriggerTimes]).toEqual(before);
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 1_000 + USER_REPLY_TRIGGER_COOLDOWN_MS)).toBeTrue();
+    expect(userReplyTriggerTimes.size).toBe(1);
+  });
+
+  test("满表续期后回拨到旧有效区间，仍清理跨键未来冷却", (): void => {
+    fill(1_000);
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 1_500)).toBeFalse();
+    expect(tryClaimUserReplyTrigger(-1001, 1, 1_000 + USER_REPLY_TRIGGER_COOLDOWN_MS)).toBeTrue();
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 1_501)).toBeTrue();
+    expect(userReplyTriggerTimes.has("-1001:1")).toBeFalse();
+    expect(userReplyTriggerTimes.get("-1001:2")).toBe(1_000);
+    expect(userReplyTriggerTimes.size).toBe(USER_REPLY_TRIGGER_CACHE_MAX);
+  });
+
+  test("跨键时钟回拨离开有效区间时补扫，部分到期只释放过期名额", (): void => {
+    expect(tryClaimUserReplyTrigger(-1001, 1, 1_000)).toBeTrue();
+    for (let userId: number = 2; userId <= USER_REPLY_TRIGGER_CACHE_MAX; userId++) {
+      expect(tryClaimUserReplyTrigger(-1001, userId, 2_000)).toBeTrue();
+    }
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 2_001)).toBeFalse();
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 1_000 + USER_REPLY_TRIGGER_COOLDOWN_MS)).toBeTrue();
+    expect(userReplyTriggerTimes.has("-1001:1")).toBeFalse();
+    expect(userReplyTriggerTimes.get("-1001:2")).toBe(2_000);
+    expect(userReplyTriggerTimes.size).toBe(USER_REPLY_TRIGGER_CACHE_MAX);
+    expect(tryClaimUserReplyTrigger(-1001, 100_001, 1_999)).toBeTrue();
+    expect(userReplyTriggerTimes.size).toBe(1);
+  });
+
+  test("显式清扫与清空使旧满表判定失效，重新填表使用新时间轴", (): void => {
+    fill(1_000);
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 1_001)).toBeFalse();
+    sweepUserReplyTriggerTimes(999);
+    expect(userReplyTriggerTimes.size).toBe(0);
+    fill(900);
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 950)).toBeFalse();
+    clearUserReplyTriggerTimes();
+    expect(userReplyTriggerSweepState.timer).toBeNull();
+    fill(800);
+    expect(tryClaimUserReplyTrigger(-1001, 100_000, 799)).toBeTrue();
+    expect(userReplyTriggerTimes.size).toBe(1);
+  });
   test("小回拨立即失效未来点，新冷却仍按正常时长恢复", () => {
     const key = "-1001:7";
     userReplyTriggerTimes.set(key, 1_001);

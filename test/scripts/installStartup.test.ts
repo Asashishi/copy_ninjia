@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { lstatSync, mkdirSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { openStorageDatabase } from "../../packages/database/interact/connection";
 import { seedStorageDatabase } from "../../scripts/fixtures/storageDatabase";
 import {
   cleanupFixtures,
   createFixture,
-  readText,
   runInstaller,
   systemdPrompt,
   writeText,
 } from "../../scripts/installIsolation/fixture";
-import type { InstallerFixture, PromptReply } from "../../scripts/installIsolation/fixture";
+import type { InstallerFixture, InstallerRunResult, PromptReply } from "../../scripts/installIsolation/fixture";
 
 afterEach(cleanupFixtures);
 
@@ -55,17 +55,48 @@ async function assertInstalledStartup(fixture: InstallerFixture, output: string,
   expect(await Bun.file(join(fixture.runtimeRoot, "state.json")).json()).toBeDefined();
   expect(await Bun.file(join(fixture.runtimeRoot, "bot.lock")).exists()).toBe(false);
   expect(await Bun.file(join(fixture.worktree, "state.json")).exists()).toBe(false);
-  expect(await readText(fixture.outboundLog)).not.toContain(":blocked");
+  expect(await Bun.file(fixture.outboundLog).text()).not.toContain(":blocked");
 }
 
 describe("install.sh 到真实应用启动", () => {
+  test("重填 Bot 身份时保留指向外部 telegram.json 的链接、权限和普通语气", async (): Promise<void> => {
+    const fixture: InstallerFixture = await createFixture(true);
+    mkdirSync(fixture.configRoot);
+    const external: string = join(fixture.root, "external-secrets");
+    mkdirSync(external);
+    const target: string = join(external, "telegram.json");
+    const entry: string = join(fixture.configRoot, "bot.json");
+    await writeText(target, JSON.stringify({
+      bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere: "normal",
+    }), 0o640);
+    symlinkSync(target, entry);
+    const original: ReturnType<typeof statSync> = statSync(target);
+    const result: InstallerRunResult = runInstaller(fixture, [
+      { prompt: "是否重新填写？", reply: "y" },
+      { prompt: "Telegram bot token", reply: "987654321:replacement_test_token", secret: true },
+      { prompt: "超级管理员用户 ID", reply: "987654321" },
+      { prompt: "现在配置 AI 能力", reply: "n", optional: true },
+      systemdPrompt(),
+    ]);
+    expect(result.exitCode, result.output).toBe(0);
+    await assertInstalledStartup(fixture, result.output, false);
+    expect(lstatSync(entry).isSymbolicLink()).toBeTrue();
+    expect(await Bun.file(target).json()).toEqual({
+      bot_token: "987654321:replacement_test_token", super_admin_user_id: 987654321, atmosphere: "normal",
+    });
+    const replaced: ReturnType<typeof statSync> = statSync(target);
+    expect(replaced.mode).toBe(original.mode);
+    expect(replaced.uid).toBe(original.uid);
+    expect(replaced.gid).toBe(original.gid);
+  }, 30_000);
+
   test.each([false, true])("新安装、正常配置与重启（AI=%s）", async (ai: boolean): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
     const first = runInstaller(fixture, firstInstallPrompts(ai));
     expect(first.exitCode, first.output).toBe(0);
     await assertInstalledStartup(fixture, first.output, ai);
 
-    const telegram: string = await readText(join(fixture.configRoot, "telegram.json"));
+    const telegram: string = await Bun.file(join(fixture.configRoot, "bot.json")).text();
     const database = openStorageDatabase({ path: join(fixture.runtimeRoot, "database/storage.sqlite") });
     try {
       seedStorageDatabase(database, {
@@ -81,18 +112,18 @@ describe("install.sh 到真实应用启动", () => {
     await assertInstalledStartup(fixture, second.output, ai);
     expect(second.output).toContain("Restored state for 1 chat(s).");
     expect(second.output).toContain("INSTALL_API getChat");
-    expect(await readText(join(fixture.configRoot, "telegram.json"))).toBe(telegram);
+    expect(await Bun.file(join(fixture.configRoot, "bot.json")).text()).toBe(telegram);
   }, 60_000);
 
   test("存在但非法的可选配置在启动之前拒绝", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
-    await writeText(join(fixture.configRoot, "reactions.json"), "{}\n");
+    await writeText(join(fixture.configRoot, "stickers.json"), "{}\n");
     const result = runInstaller(fixture, firstInstallPrompts(false));
     expect(result.exitCode).not.toBe(0);
-    expect(result.output).toContain("reactions.json: $ must be");
+    expect(result.output).toContain("stickers.json: $ must be");
     expect(result.output).not.toContain("INSTALL_API");
     expect(result.output).not.toContain("Bot started");
     expect(await Bun.file(join(fixture.runtimeRoot, "state.json")).exists()).toBe(false);
-    expect(await readText(join(fixture.configRoot, "reactions.json"))).toBe("{}\n");
+    expect(await Bun.file(join(fixture.configRoot, "stickers.json")).text()).toBe("{}\n");
   }, 30_000);
 });

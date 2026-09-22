@@ -54,7 +54,6 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
 
   const viewDefinition: AiToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: AiToolDefinition | null = buildSendStickerToolDefinition(menu);
-  const addReactionDefinition: AiToolDefinition | null = buildAddReactionToolDefinition();
   // 重媒体工具只在直接触发轮查询供应商能力并挂载；随机插话与非直接媒体评价
   // 不读取对应 provider，也不向模型暴露工具 schema。
   const imageEnabled: boolean = ctx.mediaToolsRequested && imageAiProvider() !== null;
@@ -64,7 +63,7 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   ];
   if (imageEnabled) declarations.push(buildGenerateImageToolDefinition());
   if (songEnabled) declarations.push(buildGenerateSongToolDefinition());
-  if (addReactionDefinition !== null) declarations.push(addReactionDefinition);
+  declarations.push(buildAddReactionToolDefinition());
   if (viewDefinition !== null) declarations.push(viewDefinition);
   if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
   // 本群没登记问答时这里是空数组，两个工具都不挂——模型看不到的工具不会被调用。

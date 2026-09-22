@@ -9,6 +9,7 @@ import { diskIOStub } from "./diskIOMock";
  */
 
 import { beforeEach, expect, mock } from "bun:test";
+import { loggerStub } from "./loggerMock";
 import type { BlockedMemberRemover } from "../../packages/types/blocklist";
 import { BLOCKLIST_SWEEP_PAGE_SIZE } from "../../packages/consts/identityStorage";
 import type { BlocklistIdPage } from "../../packages/types/identityStorage";
@@ -63,7 +64,7 @@ export const readBlocklistIdPage = mock(
 );
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: loggerStub(),
 }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },

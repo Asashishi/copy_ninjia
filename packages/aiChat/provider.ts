@@ -14,8 +14,12 @@ import { openAiProvider } from "./openai";
 import {
   aiProviderFacades,
   aiProviderQuotaLanes,
+  resetAiProviderFacades,
 } from "../cache/workers/aiChat/providerScheduler";
-import { getAgentDeploymentConfig } from "../config/agent";
+import { geminiClientCache } from "../cache/workers/aiChat/gemini";
+import { resetMediaInputSupport } from "../cache/workers/aiChat/mediaInputSupport";
+import { openAiClientCache } from "../cache/workers/aiChat/openai";
+import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../config/agent";
 import {
   AI_PROVIDER_BACKGROUND_MAX_PENDING,
   AI_PROVIDER_INTERACTIVE_BURST,
@@ -75,13 +79,15 @@ function capabilityConfig(capability: AgentCapability): AgentCapabilityConfig {
  * 以供应商协议、端点与凭据识别真实配额归属。模型名刻意不参与：同一账号下的
  * 多模型通常仍共享项目级额度，拆开会让总并发悄悄倍增。
  */
+function isQuotaLaneOf(lane: AiProviderQuotaLane, config: AgentCapabilityConfig): boolean {
+  return lane.provider === config.provider &&
+    lane.baseUrl === config.baseUrl &&
+    lane.apiKey === config.apiKey;
+}
+
 function quotaRunnerFor(config: AgentCapabilityConfig): PrioritizedBoundedTaskRunner {
   for (const lane of aiProviderQuotaLanes) {
-    if (
-      lane.provider === config.provider &&
-      lane.baseUrl === config.baseUrl &&
-      lane.apiKey === config.apiKey
-    ) return lane.runner;
+    if (isQuotaLaneOf(lane, config)) return lane.runner;
   }
   const lane: AiProviderQuotaLane = {
     provider: config.provider,
@@ -338,8 +344,8 @@ export function songAiProvider(): AiSongProvider | null {
  * 但没有这行诊断，部署者只能从「机器人为什么不会唱歌」反推到「我给 song 选的
  * provider 没实现它」，中间隔着整条工具装配链路。
  *
- * 在 AI Worker 初始化时调用一次即可：能力配置在进程生命周期内不变，逐轮回复重复
- * 记录只会把真正的故障淹掉。
+ * 在 AI Worker 初始化与每次 agent 配置热重载后各调用一次：逐轮回复重复记录只会
+ * 把真正的故障淹掉。
  */
 export function reportUnimplementedAgentCapabilities(): void {
   const config: AgentDeploymentConfig = getAgentDeploymentConfig();
@@ -356,4 +362,36 @@ export function reportUnimplementedAgentCapabilities(): void {
       "which does not implement it. Voice messages will fall back to a placeholder in the transcript."
     );
   }
+}
+
+/** lane 仍被新快照的某项能力引用时保留。 */
+function isQuotaLaneInUse(lane: AiProviderQuotaLane, config: AgentDeploymentConfig): boolean {
+  return isQuotaLaneOf(lane, config.text) ||
+    isQuotaLaneOf(lane, config.summary) ||
+    isQuotaLaneOf(lane, config.media) ||
+    (config.image !== undefined && isQuotaLaneOf(lane, config.image)) ||
+    (config.song !== undefined && isQuotaLaneOf(lane, config.song));
+}
+
+/**
+ * 接管主线程热重载投递的 agent 对话能力快照（见 workers/aiChat/configReload.ts）。
+ *
+ * 整体替换本线程 holder 后丢弃按旧快照建立的能力门面与两家 SDK 客户端，下一次
+ * 取用按新快照重建；在途请求继续持有旧门面与旧客户端直至结算。同一协议、端点
+ * 与凭据的配额 lane 原样保留，并发额度跨重载延续；不再被任何能力引用的 lane
+ * 从表中摘除。media 能力变化时两种输入模态回到未探测状态。
+ */
+export function reloadAgentDeploymentConfig(config: AgentDeploymentConfig): void {
+  const previousMedia: AgentCapabilityConfig = getAgentDeploymentConfig().media;
+  adoptAgentDeploymentConfig(config);
+  resetAiProviderFacades();
+  geminiClientCache.current = null;
+  openAiClientCache.current = null;
+  let kept: number = 0;
+  for (const lane of aiProviderQuotaLanes) {
+    if (isQuotaLaneInUse(lane, config)) aiProviderQuotaLanes[kept++] = lane;
+  }
+  aiProviderQuotaLanes.length = kept;
+  if (!Bun.deepEquals(previousMedia, config.media)) resetMediaInputSupport();
+  reportUnimplementedAgentCapabilities();
 }

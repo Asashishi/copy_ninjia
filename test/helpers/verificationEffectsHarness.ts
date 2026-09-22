@@ -8,6 +8,7 @@ installTemporaryMessageWorkerMock();
  */
 
 import { beforeEach, mock, spyOn } from "bun:test";
+import { loggerStub } from "./loggerMock";
 import { checkingInviterOf } from "../../packages/states/verification";
 import type { InlineKeyboardMarkup } from "grammy/types";
 import type {
@@ -85,12 +86,10 @@ Object.defineProperty(globalThis, "self", {
 });
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
+  logger: loggerStub({
     warn(message: string): void { warnings.push(message); },
     error(message: string): void { loggedErrors.push(message); },
-  },
+  }),
 }));
 mock.module("../../packages/infra/telegram", () => ({
   telegramApi,

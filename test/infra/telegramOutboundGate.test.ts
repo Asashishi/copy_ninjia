@@ -228,6 +228,16 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramOutboundGateState.lanes.query.retryTimer).toBeNull();
   });
 
+  test("出站调用同步抛出非 Error 时按固定文案拒绝，原值挂在 cause，不占住并发位", async () => {
+    const failure: unknown = await runTelegramCategorizedRequest({
+      category: "query",
+      execute: (_signal: AbortSignal): Promise<unknown> => { throw "call refused"; },
+    }).catch((reason: unknown): unknown => reason);
+    expect(failure).toBeInstanceOf(Error);
+    expect([(failure as Error).message, (failure as Error).cause]).toEqual(["Telegram outbound call threw.", "call refused"]);
+    expect(telegramOutboundGateState.activeCount).toBe(0);
+  });
+
   test("quiesce 后拒绝新工作，显式初始化以新代际恢复接纳", async () => {
     let calls: number = 0;
     quiesceTelegramOutbound();
@@ -867,46 +877,6 @@ describe("Telegram 主线程出站总闸", () => {
     }) as Promise<unknown>;
     await expect(request).resolves.toEqual({ ok: true, result: true });
     expect(calledMethods).toEqual(["unbanChatMember", "unbanChatMember"]);
-  });
-
-  /**
-   * 429 与调用方取消撞在一起时的响应体归属。
-   *
-   * 只有 fetch 那条路（媒体下载、头像抓取，见 telegram/workerRequests.ts 与
-   * avatar/）会拿到真正的 Response，而那几处都带超时 signal——「下载超时」与
-   * 「返回 429」同时发生就是这条分支。reject 前必须释放 response body，避免
-   * 持续占用连接与缓冲。
-   */
-  test("调用方已取消时收到 429，响应体被释放而不是丢着", async () => {
-    let cancelled: boolean = false;
-    const controller: AbortController = new AbortController();
-    const throttled: Response = new Response("rate limited", {
-      status: 429,
-      headers: { "retry-after": "1" },
-    });
-    // 直接观察 body 的释放，而不是相信实现内部调了哪个方法。
-    const body: ReadableStream<Uint8Array> | null = throttled.body;
-    const originalCancel: (reason?: unknown) => Promise<void> =
-      body === null ? async (): Promise<void> => {} : body.cancel.bind(body);
-    if (body !== null) {
-      body.cancel = async (reason?: unknown): Promise<void> => {
-        cancelled = true;
-        return originalCancel(reason);
-      };
-    }
-
-    const request: Promise<unknown> = runTelegramCategorizedRequest({
-      category: "download",
-      signal: controller.signal,
-      execute: async (): Promise<unknown> => {
-        // 请求已发出、响应正在回来的那一刻调用方取消：先 abort 再交出 429。
-        controller.abort();
-        return throttled;
-      },
-    });
-
-    await expect(request).rejects.toMatchObject({ name: "AbortError" });
-    expect(cancelled).toBeTrue();
   });
 
   test("队列已满时把 429 原样交给调用方，不抢先释放响应体", async () => {

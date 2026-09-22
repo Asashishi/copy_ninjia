@@ -9,6 +9,11 @@ import type { HotPathProfileScenarioName } from "../../../packages/types/perform
 
 export type ScenarioName =
   | HotPathProfileScenarioName
+  | "cooldown-hit"
+  | "cooldown-renew"
+  | "cooldown-growth"
+  | "cooldown-saturated"
+  | "cooldown-expiry"
   | "reply-admission"
   | "reply-delivery-normal"
   | "reply-delivery-capacity"

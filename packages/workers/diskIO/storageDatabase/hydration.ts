@@ -193,8 +193,3 @@ export function adoptStorageDatabase(
     pendingBlockedRemovals: removalSnapshot,
   };
 }
-
-/** 单领域恢复入口；跨域启动编排使用 inspect/adopt 两阶段 API。 */
-export function hydrateStorageDatabase(): StorageDatabaseHydration {
-  return adoptStorageDatabase(inspectStorageDatabase());
-}

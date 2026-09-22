@@ -4,12 +4,13 @@ import {
   activeVerificationSnapshots,
   deferredVerificationRecords,
   pendingVerificationDeferrals,
-  persistedVerificationRevisions,
 } from "../../cache/main/antiRaid/verificationMirror";
+import { BOT_ATMOSPHERE } from "../../config/bot";
 import { adDetectAgentConfigSnapshot } from "../../config/agent";
 import { getAdSampleConfig } from "../../config/adSamples";
 import { adDetectConfigReadiness } from "../../config/readiness";
 import { logger } from "../../infra/logger";
+import { projectBotActionPermissions } from "../../libs/chatMember";
 import {
   getChatState,
   getChatStateCache,
@@ -29,24 +30,6 @@ import { deleteDeferredVerificationsForChat } from "../verificationAttempts";
 export function nextAntiRaidGeneration(): number {
   antiRaidRuntimeState.generation++;
   return antiRaidRuntimeState.generation;
-}
-
-/** 把活动镜像与精确落盘水位线一起提升到将要接管它们的 Worker 代际。 */
-export function advanceActiveVerificationGeneration(generation: number): void {
-  for (const [key, record] of activeVerificationSnapshots) {
-    const persisted: { generation: number; revision: number } | undefined =
-      persistedVerificationRevisions.get(key);
-    activeVerificationSnapshots.set(key, { ...record, generation });
-    if (
-      persisted?.generation === record.generation &&
-      persisted.revision === record.revision
-    ) {
-      persistedVerificationRevisions.set(key, {
-        generation,
-        revision: record.revision,
-      });
-    }
-  }
 }
 
 /** 构建当前代际的验证接管快照，不把等待延迟落盘的记录重复列入活动集合。 */
@@ -71,12 +54,13 @@ export function buildAdoptVerificationsMessage(
   };
 }
 
-/** 把进程内唯一一代广告检测配置放在新 Worker 的业务消息之前。 */
+/** 把主线程当前生效的广告检测配置投给 Worker；重建时排在新 Worker 的业务消息之前。 */
 export function replayAdDetectAgentConfig(
   postTo: (message: AntiRaidWorkerMessage) => boolean
 ): boolean {
   return postTo({
     type: "agentConfig",
+    defaultAtmosphere: BOT_ATMOSPHERE,
     adDetect: adDetectAgentConfigSnapshot(),
     adSamples: adDetectConfigReadiness().ok ? getAdSampleConfig() : null,
   });
@@ -92,10 +76,7 @@ export function replayBotPermissions(
     if (!postTo({
       type: "botPermissionsChanged",
       chatId,
-      permissions: {
-        canRestrictMembers: permissions.canRestrictMembers,
-        canDeleteMessages: permissions.canDeleteMessages,
-      },
+      permissions: projectBotActionPermissions(permissions),
     })) return false;
   }
   return true;

@@ -4,6 +4,7 @@ import { chatAtmosphere } from "../infra/atmosphere";
 import { commandArgumentTokens } from "./arguments";
 import type { CommandContext, Context } from "grammy";
 import { BATCH_KICK_CONCURRENCY, BATCH_KICK_MAX_DURATION_MS, BATCH_KICK_MIN_DURATION_MS } from "../consts/commands";
+import { TELEGRAM_DATE_UNIT_MS } from "../consts/telegram";
 
 import {
   formatDurationCn,
@@ -35,7 +36,8 @@ import type {
   BoundedBatchExecution,
   BoundedBatchResult,
 } from "../libs/boundedSettledBatch";
-import { isSuperAdminActor } from "./commandActor";
+import { rejectUnlessSuperAdmin } from "./commandActor";
+import type { CachedUser } from "../types/chatState";
 
 interface BatchKickStats {
   kicked: number;
@@ -62,7 +64,6 @@ export function parseBatchKickDurationMs(token: string): number | undefined {
   const durationMs: number | undefined = parseDurationTokenMs(token);
   if (
     durationMs === undefined ||
-    !Number.isFinite(durationMs) ||
     durationMs < BATCH_KICK_MIN_DURATION_MS ||
     durationMs > BATCH_KICK_MAX_DURATION_MS
   ) {
@@ -240,18 +241,15 @@ export async function handleBatchKickCommand(
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  if (!isSuperAdminActor(ctx)) {
-    await sendCommandMessage({
-      chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickRejected,
-      replyToMessageId: messageId,
-    });
-    return;
-  }
+  const actor: CachedUser | undefined = await rejectUnlessSuperAdmin(
+    ctx,
+    (_actorLabel: string, atmosphere: AtmosphereTexts): string => atmosphere.NOTICE_TEXTS.batchKickRejected
+  );
+  if (actor === undefined) return;
   if (ctx.chat.type !== "supergroup") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickSupergroupOnly,
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.batchKickSupergroupOnly,
       replyToMessageId: messageId,
     });
     return;
@@ -263,7 +261,7 @@ export async function handleBatchKickCommand(
   if (durationMs === undefined) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).BATCH_KICK_USAGE_TEXT,
+      text: chatAtmosphere(chatId).BATCH_KICK_USAGE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -277,7 +275,7 @@ export async function handleBatchKickCommand(
   //
   // 文件保留期那侧仍按宿主时钟判（见 readJoinLog 里的 today）：那问的是「盘上
   // 还剩哪几天」，由 Worker 自己的跨日清理决定，与事件时间无关。
-  const now: number = ctx.msg.date * 1000;
+  const now: number = ctx.msg.date * TELEGRAM_DATE_UNIT_MS;
   let records: readonly JoinLogRecord[];
   try {
     records = await readJoinLog({
@@ -292,7 +290,7 @@ export async function handleBatchKickCommand(
     );
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.joinLogUnavailable,
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.joinLogUnavailable,
       replyToMessageId: messageId,
     });
     return;
@@ -301,7 +299,7 @@ export async function handleBatchKickCommand(
   if (records.length === 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).NOTICE_TEXTS.batchKickEmpty(formatDurationCn(durationMs)),
+      text: chatAtmosphere(chatId).NOTICE_TEXTS.batchKickEmpty(formatDurationCn(durationMs)),
       replyToMessageId: messageId,
     });
     return;
@@ -311,7 +309,7 @@ export async function handleBatchKickCommand(
   if (stats.aborted && stats.scanned === 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).IDENTITY_POLICY_UNAVAILABLE_TEXT,
+      text: chatAtmosphere(chatId).IDENTITY_POLICY_UNAVAILABLE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -335,7 +333,7 @@ export async function handleBatchKickCommand(
       );
     }
   }
-  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat?.id ?? 0);
+  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
   await sendCommandMessage({
     chatId,
     text:

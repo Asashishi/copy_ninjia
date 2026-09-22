@@ -12,8 +12,8 @@ const trackReplyGenerationTask = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/aiChat/ai/imageDescription", () => ({ describeMedia }));
 mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({ getCatalogEntry }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ pushBufferedMessage }));
-mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
-  generateAndSendReply,
+mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({ generateAndSendReply }));
+mock.module("../../../packages/workers/aiChat/replyGeneration", () => ({
   replyGenerationSignal: (): AbortSignal => new AbortController().signal,
   trackReplyGenerationTask,
 }));

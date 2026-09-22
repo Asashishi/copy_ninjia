@@ -4,15 +4,15 @@ import { isBuiltin } from "node:module";
 import ts from "typescript";
 
 import {
-  SCRIPT_NODE_IMPORTS,
-  PRODUCTION_NODE_IMPORTS,
+  PORTABLE_NODE_IMPORTS,
   PRODUCTION_BUFFER_GLOBALS,
+  PRODUCTION_NODE_IMPORTS,
   SCRIPT_BUFFER_GLOBALS,
-  SCRIPT_ONLY_NODE_IMPORTS,
+  SCRIPT_NODE_IMPORTS,
   SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS,
   TEST_BUFFER_GLOBALS,
   TEST_NODE_IMPORTS,
-  TEST_ONLY_NODE_IMPORTS,
+  TEST_SHARED_NODE_IMPORTS,
   TEST_SYNC_CONTENT_IO_EXEMPTIONS,
 } from "./nodeAllowances";
 import type { NodeImportAllowance, BufferGlobalAllowance } from "./nodeAllowances";
@@ -158,18 +158,14 @@ export function collectNodeCompatibilityProblems(
     ) continue;
     const moduleName: string | undefined = nodeModuleName(statement.moduleSpecifier.text);
     if (moduleName === undefined) continue;
-    const allowed: NodeImportAllowance | undefined = moduleName === "node:path"
+    const allowed: NodeImportAllowance | undefined = PORTABLE_NODE_IMPORTS[moduleName] ?? (isScript
       ? SCRIPT_NODE_IMPORTS[moduleName]
-      : isScript
-        ? SCRIPT_NODE_IMPORTS[moduleName]
-        : isTest
-          ? TEST_NODE_IMPORTS[relativePath]?.[moduleName] ?? SCRIPT_NODE_IMPORTS[moduleName]
-          : PRODUCTION_NODE_IMPORTS[relativePath]?.[moduleName];
-    const extraAllowed: NodeImportAllowance | undefined = isScript
-      ? SCRIPT_ONLY_NODE_IMPORTS[moduleName]
       : isTest
-        ? TEST_ONLY_NODE_IMPORTS[moduleName]
-        : undefined;
+        ? TEST_NODE_IMPORTS[relativePath]?.[moduleName]
+        : PRODUCTION_NODE_IMPORTS[relativePath]?.[moduleName]);
+    const extraAllowed: NodeImportAllowance | undefined = isTest
+      ? TEST_SHARED_NODE_IMPORTS[moduleName]
+      : undefined;
     const line: number = source.getLineAndCharacterOfPosition(statement.getStart()).line + 1;
     const location: string = `${relativePath}:${line}`;
     const clause: ts.ImportClause | undefined = statement.importClause;
@@ -323,6 +319,124 @@ export function collectStaleNodeAllowanceProblems(
         problems.push(
           `${table} retains an allowance for a file that no longer exists: ${relativePath}`
         );
+      }
+    }
+  }
+  return problems;
+}
+
+/** 一处真实存在的 Node 兼容具名 import；逐文件遍历时顺带记下，供反向核对。 */
+export interface NodeImportUsage {
+  /** 相对仓库根的文件路径。 */
+  readonly relativePath: string;
+  readonly moduleName: string;
+  readonly imported: string;
+}
+
+/**
+ * 收集一个文件里全部运行期 Node 兼容具名 import。
+ *
+ * 与 collectNodeCompatibilityProblems 共用同一份 AST：前者判「用到的是否登记过」，
+ * 本函数供 collectUnusedNodeAllowanceProblems 判反方向的「登记的是否还在用」。
+ */
+export function collectNodeImportUsage(
+  projectRoot: string,
+  path: string,
+  source: ts.SourceFile
+): readonly NodeImportUsage[] {
+  const relativePath: string = relative(projectRoot, path);
+  const usage: NodeImportUsage[] = [];
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const moduleName: string | undefined = nodeModuleName(statement.moduleSpecifier.text);
+    if (moduleName === undefined) continue;
+    const clause: ts.ImportClause | undefined = statement.importClause;
+    if (clause?.phaseModifier === ts.SyntaxKind.TypeKeyword) continue;
+    const bindings: ts.NamedImportBindings | undefined = clause?.namedBindings;
+    if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+      // 命名空间 import 只在 `symbols: "*"` 下被允许；记成同一个通配名即可。
+      usage.push({ relativePath, moduleName, imported: "*" });
+      continue;
+    }
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
+      usage.push({ relativePath, moduleName, imported: (element.propertyName ?? element.name).text });
+    }
+  }
+  return usage;
+}
+
+/** 反向核对的作用域：登记条目只在这一类文件里才可能被用到。 */
+type AllowanceScope = "script" | "test" | "any" | "production";
+
+function inScope(relativePath: string, scope: AllowanceScope): boolean {
+  const isScript: boolean = relativePath.startsWith("scripts/");
+  const isTest: boolean = relativePath.startsWith("test/");
+  if (scope === "script") return isScript;
+  if (scope === "test") return isTest;
+  if (scope === "any") return true;
+  return !isScript && !isTest;
+}
+
+/**
+ * 登记表里已经没人再用的条目。
+ *
+ * 正向检查只在遍历到某个文件时才查它的登记，因此「某个符号已经不再被 import」永远
+ * 不会报出来——豁免于是只增不减，下一个人看到表里有它就以为这是被审过、仍然必要的
+ * 用法。共享表（PORTABLE/SCRIPT/TEST_SHARED）按作用域核对符号是否还有使用者；
+ * 逐文件表额外核对该文件是否真的还 import 这个模块与这些符号。
+ *
+ * 路径已经消失的条目由 collectStaleNodeAllowanceProblems 报，这里不重复。
+ */
+export function collectUnusedNodeAllowanceProblems(
+  usage: readonly NodeImportUsage[]
+): readonly string[] {
+  const problems: string[] = [];
+  const shared: readonly (readonly [string, Readonly<Record<string, NodeImportAllowance>>, AllowanceScope])[] = [
+    ["PORTABLE_NODE_IMPORTS", PORTABLE_NODE_IMPORTS, "any"],
+    ["SCRIPT_NODE_IMPORTS", SCRIPT_NODE_IMPORTS, "script"],
+    ["TEST_SHARED_NODE_IMPORTS", TEST_SHARED_NODE_IMPORTS, "test"],
+  ];
+  for (const [table, entries, scope] of shared) {
+    for (const [moduleName, allowance] of Object.entries(entries)) {
+      const used: readonly NodeImportUsage[] = usage.filter(
+        (entry: NodeImportUsage): boolean =>
+          entry.moduleName === moduleName && inScope(entry.relativePath, scope)
+      );
+      if (allowance.symbols === "*") {
+        if (used.length === 0) problems.push(`${table} retains an unused allowance for ${moduleName}`);
+        continue;
+      }
+      for (const symbol of allowance.symbols) {
+        if (used.some((entry: NodeImportUsage): boolean => entry.imported === symbol)) continue;
+        problems.push(`${table} retains an unused allowance: ${moduleName} export ${symbol}`);
+      }
+    }
+  }
+  const perFile: readonly (readonly [string, Readonly<Record<string, Readonly<Record<string, NodeImportAllowance>>>>])[] = [
+    ["PRODUCTION_NODE_IMPORTS", PRODUCTION_NODE_IMPORTS],
+    ["TEST_NODE_IMPORTS", TEST_NODE_IMPORTS],
+    ["SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS", SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS],
+    ["TEST_SYNC_CONTENT_IO_EXEMPTIONS", TEST_SYNC_CONTENT_IO_EXEMPTIONS],
+  ];
+  for (const [table, entries] of perFile) {
+    for (const [relativePath, modules] of Object.entries(entries)) {
+      for (const [moduleName, allowance] of Object.entries(modules)) {
+        const used: readonly NodeImportUsage[] = usage.filter(
+          (entry: NodeImportUsage): boolean =>
+            entry.relativePath === relativePath && entry.moduleName === moduleName
+        );
+        if (allowance.symbols === "*") {
+          if (used.length === 0) {
+            problems.push(`${table} retains an unused allowance for ${relativePath}: ${moduleName}`);
+          }
+          continue;
+        }
+        for (const symbol of allowance.symbols) {
+          if (used.some((entry: NodeImportUsage): boolean => entry.imported === symbol)) continue;
+          problems.push(`${table} retains an unused allowance for ${relativePath}: ${moduleName} export ${symbol}`);
+        }
       }
     }
   }

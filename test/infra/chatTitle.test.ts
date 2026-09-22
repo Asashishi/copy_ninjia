@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../../packages/consts/telegram";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 
@@ -14,7 +15,7 @@ const getChatState = mock((chatId: number) => states.get(chatId) ?? {});
 
 mock.module("../../packages/infra/telegram/mainClient", () => ({ bot: { api: { getChat } } }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, warn(): void {}, info: loggerInfo, error: loggerError },
+  logger: loggerStub({ info: loggerInfo, error: loggerError }),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => states,

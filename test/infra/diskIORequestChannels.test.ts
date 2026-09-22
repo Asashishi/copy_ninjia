@@ -41,13 +41,6 @@ const luckDraw: LuckDrawDiskMessage = {
   label: "大吉",
   fortunePercent: 99,
 };
-function deferredVoid(): { promise: Promise<void>; resolve(): void } {
-  let resolve: (() => void) | undefined;
-  const promise: Promise<void> = new Promise<void>((done: () => void): void => {
-    resolve = done;
-  });
-  return { promise, resolve: (): void => resolve?.() };
-}
 
 beforeEach(() => {
   FakeWorker.instances.length = 0;
@@ -289,7 +282,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     const error = spyOn(console, "error").mockImplementation(() => {});
     const fatalErrors: Error[] = [];
-    const gate = deferredVoid();
+    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
     try {
       diskIO.initDiskIO({

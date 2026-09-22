@@ -1,6 +1,7 @@
 import { logger } from "./logger";
 import type { Sharp } from "sharp";
 import type { VisionImage } from "../types/media";
+import type { ImageDimensions } from "../types/hImage";
 
 /**
  * 把任意支持的图片字节转成两家视觉接口都稳妥能收的格式：只认 jpg/jpeg 或 png
@@ -61,6 +62,31 @@ export async function prepareVisionImage(bytes: Uint8Array): Promise<VisionImage
     return { bytes: png, mime: "image/png" };
   } catch (error: unknown) {
     logger.error(`Failed to transcode ${format} image to png for vision API:`, error);
+    return null;
+  }
+}
+
+/**
+ * 只读一张图的像素尺寸，不解码像素、不转码。
+ *
+ * 用 `Bun.Image` 而不是 sharp：Bun 官方文档对 `metadata()` 的说明就是
+ * 「Decode just enough to read width/height/format」，语义完整覆盖本函数所需，
+ * 按 AGENTS.md「Bun 运行时与原生 API」不再走原生绑定那条路，也不保留双实现。
+ *
+ * 任何解码失败（不认识的格式、截断的头、超出 maxPixels）都返回 null——调用方
+ * 对「读不出尺寸」和「读出来不合规」要分开处置，但都不该让一次收图抛出去。
+ *
+ * **刻意不记日志**：入参是用户随手转发进来的字节，「这不是一张能解码的图」是
+ * 正常输入而不是故障；一个刷屏相册就能把它变成日志噪声源。调用方把 null 归到
+ * 与「格式不对」同一档，用户从命令回执里看得到张数。
+ * @param bytes 完整的图片字节。
+ * @returns 像素宽高；读不出时为 null。
+ */
+export async function readImageDimensions(bytes: Uint8Array): Promise<ImageDimensions | null> {
+  try {
+    const metadata: Bun.Image.Metadata = await new Bun.Image(bytes).metadata();
+    return { width: metadata.width, height: metadata.height };
+  } catch {
     return null;
   }
 }

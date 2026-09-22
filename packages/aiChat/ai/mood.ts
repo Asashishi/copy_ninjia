@@ -18,7 +18,7 @@ interface WeightedMood {
  * 是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
  * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等）。心情档位
  * 的文案、base weight 与倍率来自部署配置 config/mood.json（严格解码见
- * config/mood.ts，主进程启动时严格解析、Worker 初始化消息接管快照）。两个内存缓存
+ * config/mood.ts，主进程启动时严格解析、Worker 经初始化与热重载消息接管快照）。两个内存缓存
  * （chatMoods/chatMoodExpiresAts，见 cache/workers/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
  *
@@ -81,8 +81,8 @@ export function computeAdjustedWeight(mood: MoodOption, weather: WeatherBucket |
 /**
  * 按当前天气/时段调整过的权重表抽一个心情：现查一次天气分桶与时段分桶，
  * 把 config/mood.json 各档位的 base weight 逐个按各自倍率调整后，在
- * [0, 调整后总权重) 里掷一个连续骰子累加匹配——不再是 LUCK_TIERS 那种
- * 凑满 100 的固定整数区间，因为倍率之后权重不再是整数、总和也不再是 100。
+ * [0, 调整后总权重) 里掷一个连续骰子累加匹配：乘上倍率之后的权重不是整数、
+ * 总和也不固定。
  */
 function pickMood(): MoodOption {
   const weather: WeatherBucket | null = currentWeatherBucket();
@@ -105,37 +105,31 @@ function pickMood(): MoodOption {
  * 立即重抽某群的心情并写回缓存：无视剩余寿命强制换一次，给新心情掷一个
  * 新的随机寿命。自然到期重抽（下方 currentMood）与 /mood switch
  * 手动切换（aiChatWorker.ts 的 switchMood 消息路由）共用这一条路径。
+ * 读写 Worker 内的 chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
  * @param chatId 群聊 ID。
- * @param moods/expiresAts 可注入仅为单测隔离；生产调用共享 Worker 内的
- *   chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
  */
 export function switchMood(
-  chatId: number,
-  moods: Map<number, MoodOption> = chatMoods,
-  expiresAts: Map<number, number> = chatMoodExpiresAts
+  chatId: number
 ): MoodOption {
   const mood: MoodOption = pickMood();
-  moods.set(chatId, mood);
-  expiresAts.set(chatId, Date.now() + MOOD_REROLL_MIN_MS + Math.random() * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
+  chatMoods.set(chatId, mood);
+  chatMoodExpiresAts.set(chatId, Date.now() + MOOD_REROLL_MIN_MS + Math.random() * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
   return mood;
 }
 
 /**
  * 读取某群当前有效心情。心情缺失（本群第一次用到、或 Worker 重启后缓存
  * 清空）或已过寿命时按自然轮换规则现场重抽；未到期时绝不强制切换。
+ * 读写 Worker 内的 chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
  * @param chatId 群聊 ID。
- * @param moods/expiresAts 可注入仅为单测隔离；生产调用共享 Worker 内的
- *   chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
  */
 export function currentMood(
-  chatId: number,
-  moods: Map<number, MoodOption> = chatMoods,
-  expiresAts: Map<number, number> = chatMoodExpiresAts
+  chatId: number
 ): MoodOption {
   const now: number = Date.now();
-  let mood: MoodOption | undefined = moods.get(chatId);
-  if (!mood || now >= (expiresAts.get(chatId) ?? 0)) {
-    mood = switchMood(chatId, moods, expiresAts);
+  let mood: MoodOption | undefined = chatMoods.get(chatId);
+  if (!mood || now >= (chatMoodExpiresAts.get(chatId) ?? 0)) {
+    mood = switchMood(chatId);
   }
   return mood;
 }
@@ -145,10 +139,26 @@ export function currentMood(
  * 维护，避免查询命令与提示词拼装各自实现一遍缓存读取。
  */
 export function currentMoodInstruction(
-  chatId: number,
-  moods: Map<number, MoodOption> = chatMoods,
-  expiresAts: Map<number, number> = chatMoodExpiresAts
+  chatId: number
 ): string {
-  const mood: MoodOption = currentMood(chatId, moods, expiresAts);
+  const mood: MoodOption = currentMood(chatId);
   return `【今天的心情：${mood.name}】${mood.instruction}`;
+}
+
+/**
+ * mood.json 热重载后调用：各群当前心情换成新快照里的同名档位（文案、权重与倍率
+ * 随之更新），剩余寿命不变；新快照里已不存在的档位连同到期时刻一起删除，下次
+ * 读取时按新表重抽。
+ */
+export function refreshChatMoods(): void {
+  const options: readonly MoodOption[] = getMoodConfig().moods;
+  for (const [chatId, mood] of chatMoods) {
+    const next: MoodOption | undefined = options.find((option: MoodOption): boolean => option.name === mood.name);
+    if (next === undefined) {
+      chatMoods.delete(chatId);
+      chatMoodExpiresAts.delete(chatId);
+    } else {
+      chatMoods.set(chatId, next);
+    }
+  }
 }

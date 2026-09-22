@@ -9,13 +9,18 @@
  * 而 Worker 里那个群的验证窗口、待检队列或发言窗口原封不动。
  */
 
+import { botPermissions } from "../helpers/botPermissions";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid/protocol";
+import type { BotChatPermissions } from "../../packages/types/telegram";
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
-/** post 的返回值；false 模拟「Worker 正在重建或已放弃」。 */
-const delivery: { accepts: boolean } = { accepts: true };
+/**
+ * post 的返回值；false 模拟「Worker 正在重建或已放弃」。`rejectType` 只拒这一种消息，
+ * 模拟重放中途被拒。
+ */
+const delivery: { accepts: boolean; rejectType: string | null } = { accepts: true, rejectType: null };
 const deletedDeferralChats: number[] = [];
 const grantedPermits: unknown[] = [];
 const telegramRequests: unknown[] = [];
@@ -36,7 +41,7 @@ mock.module("../../packages/infra/supervisedDuplexWorker", () => ({
     return {
       init: (): void => {},
       post: (message: AntiRaidWorkerMessage): boolean => {
-        if (!delivery.accepts) return false;
+        if (!delivery.accepts || message.type === delivery.rejectType) return false;
         workerPosts.push(message);
         return true;
       },
@@ -104,8 +109,17 @@ const {
   clearFloodControl,
   deactivateAntiRaidChat,
   deactivateJoinGuardChat,
+  hydratePendingVerifications,
+  initAntiRaid,
   postAntiRaid,
+  terminateAntiRaid,
 } = await import("../../packages/antiRaid/workerBridge/controller");
+const { antiRaidRuntimeState } =
+  await import("../../packages/cache/main/antiRaid/proxy");
+const { chatIsSupergroupById } = await import("../../packages/cache/main/antiRaid/chatKind");
+const { getOrCreateChatState } = await import("../../packages/infra/storage/stateStore");
+const { VERIFICATION_RECORD_CAPACITY } =
+  await import("../../packages/consts/antiRaid/verification");
 
 const CHAT_ID: number = -1001;
 
@@ -124,6 +138,8 @@ beforeEach(() => {
   identityPrefetchSucceeds = true;
   prefetchIdentityPolicies.mockClear();
   delivery.accepts = true;
+  delivery.rejectType = null;
+  antiRaidRuntimeState.initialized = false;
 });
 
 describe("Anti-Raid 控制命令", () => {
@@ -274,5 +290,103 @@ describe("Anti-Raid 双工能力分派", () => {
   test("Worker 监督句柄按既定标签与放弃后果注册", () => {
     expect(captured.options!.label).toBe("Anti-raid guard Worker");
     expect(captured.options!.giveUpConsequence).toContain("join verification");
+  });
+});
+
+describe("Anti-Raid 初始化与重建重放", () => {
+  test("任一重放被拒时 initAntiRaid 回滚 initialized，不把半接管的状态留着", () => {
+    delivery.accepts = false;
+
+    expect(() => initAntiRaid()).toThrow("Anti-Raid Worker");
+    // 留着 true 的话，此后每一条 postAntiRaidDurably 都会以为 Worker 已接管，
+    // 排空也会去等一个永远不会来的回执。
+    expect(antiRaidRuntimeState.initialized).toBeFalse();
+  });
+
+  test.each([
+    ["botPermissionsChanged", "bot permissions snapshot"],
+    ["chatKind", "chat kind snapshot"],
+  ])("权限或群类型重放中途被拒（%s）同样中止接管并回滚", (rejectType: string, snapshot: string) => {
+    getOrCreateChatState(CHAT_ID).botPermissions = { canRestrictMembers: true, canDeleteMessages: true } as BotChatPermissions;
+    chatIsSupergroupById.set(CHAT_ID, true);
+    delivery.rejectType = rejectType;
+    try {
+      expect(() => initAntiRaid()).toThrow(`Anti-Raid Worker rejected the ${snapshot}.`);
+      expect(antiRaidRuntimeState.initialized).toBeFalse();
+      expect(typesOf()).not.toContain("adoptVerifications");
+    } finally {
+      delete getOrCreateChatState(CHAT_ID).botPermissions;
+      chatIsSupergroupById.delete(CHAT_ID);
+    }
+  });
+
+  test("接管重放的机器人权限只投影出 Worker 需要的两位", () => {
+    getOrCreateChatState(CHAT_ID).botPermissions = botPermissions({ canRestrictMembers: true, canDeleteMessages: false });
+    try {
+      initAntiRaid();
+      expect(workerPosts.filter((message: AntiRaidWorkerMessage): boolean => message.type === "botPermissionsChanged"))
+        .toEqual([{
+          type: "botPermissionsChanged",
+          chatId: CHAT_ID,
+          permissions: { canRestrictMembers: true, canDeleteMessages: false },
+        }]);
+    } finally {
+      delete getOrCreateChatState(CHAT_ID).botPermissions;
+    }
+  });
+
+  test("接管成功后 initialized 置位，重复调用幂等", () => {
+    initAntiRaid();
+    const afterFirst: number = workerPosts.length;
+
+    initAntiRaid();
+
+    expect(antiRaidRuntimeState.initialized).toBeTrue();
+    expect(workerPosts).toHaveLength(afterFirst);
+  });
+
+  test("重建重放按 FIFO 先投配置再投接管快照", () => {
+    const replayed: AntiRaidWorkerMessage[] = [];
+    captured.options?.onRespawn((message: AntiRaidWorkerMessage): boolean => {
+      replayed.push(message);
+      return true;
+    });
+
+    const types: string[] = replayed.map((message: AntiRaidWorkerMessage): string => message.type);
+    expect(types[0]).toBe("agentConfig");
+    expect(types).toContain("adoptVerifications");
+    expect(types.indexOf("agentConfig")).toBeLessThan(types.indexOf("adoptVerifications"));
+  });
+
+  test("重建重放在第一条被拒时立刻停手，不继续投后面的接管快照", () => {
+    const replayed: AntiRaidWorkerMessage[] = [];
+    captured.options?.onRespawn((message: AntiRaidWorkerMessage): boolean => {
+      replayed.push(message);
+      return false;
+    });
+
+    // 新 Worker 已经不可用；继续投只会把 adopt 丢进一个注定失败的信箱，
+    // 下一次重建会以同一份镜像重来。
+    expect(replayed.map((message: AntiRaidWorkerMessage): string => message.type)).toEqual(["agentConfig"]);
+  });
+});
+
+describe("待验证镜像灌入的守卫", () => {
+  test("必须早于 Anti-Raid 初始化", () => {
+    initAntiRaid();
+
+    expect(() => hydratePendingVerifications(new Map()))
+      .toThrow("before Anti-Raid initialization");
+  });
+
+  test("超过容量上限时拒绝灌入", async () => {
+    await terminateAntiRaid();
+    const records = new Map<string, never>();
+    for (let index: number = 0; index <= VERIFICATION_RECORD_CAPACITY; index++) {
+      records.set(`-1001:${index}`, undefined as never);
+    }
+
+    expect(() => hydratePendingVerifications(records))
+      .toThrow(`${VERIFICATION_RECORD_CAPACITY}-record capacity`);
   });
 });

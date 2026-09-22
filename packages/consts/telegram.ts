@@ -5,6 +5,9 @@ import type { ChatPermissions, MessageEntity } from "grammy/types";
 /** Telegram 部署示例中的 Bot token 占位值；生产严格解析必须拒绝。 */
 export const TELEGRAM_BOT_TOKEN_PLACEHOLDER: string = "replace-with-telegram-bot-token";
 
+/** Telegram update 里 `date` 字段（Unix 秒）换算成毫秒的倍数。 */
+export const TELEGRAM_DATE_UNIT_MS: number = 1_000;
+
 /** 长轮询订阅的完整 update 类型集合。 */
 export const TELEGRAM_ALLOWED_UPDATES: readonly (
   | "message"
@@ -145,6 +148,29 @@ export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
  * `.length` 判定即可，不要换成 grapheme 或 code point 计数。
  */
 export const TELEGRAM_CAPTION_MAX_CHARS: number = 1024;
+
+/** Telegram 官方 Bot API 图片上传的字节上限（10 MB）；随机图片与 cron 本地图片按它判超限。 */
+export const TELEGRAM_PHOTO_UPLOAD_MAX_BYTES: number = 10 * 1024 * 1024;
+
+/**
+ * `sendPhoto` 对宽高之和的硬性上限（官方 Bot API：width + height 必须 ≤ 10000）。
+ *
+ * 与字节上限并列的第二道门槛，且两者互不蕴含——一张 12000×40 的长条 PNG 只有
+ * 几十 KB，照样发不出去。`/h_image add` 在收图时按它拒收（commands/hImage/add.ts），
+ * 否则这张图会一直躺在图库里，直到某次 `/h_image` 或 cron `rand_image` 抽中它，
+ * 才以一次 PHOTO_INVALID_DIMENSIONS 静默失败收场。
+ */
+export const TELEGRAM_PHOTO_MAX_DIMENSION_SUM: number = 10_000;
+
+/**
+ * `sendPhoto` 对长宽比的硬性上限（官方 Bot API：width / height 必须 ≤ 20，
+ * 反过来同样）。判定取长边除以短边，两个方向共用这一个数。
+ * 拒收时机与理由同 TELEGRAM_PHOTO_MAX_DIMENSION_SUM。
+ */
+export const TELEGRAM_PHOTO_MAX_ASPECT_RATIO: number = 20;
+
+/** Telegram 官方 Bot API 其它文件上传的字节上限（50 MB）；cron 本地文件按它判超限。 */
+export const TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES: number = 50 * 1024 * 1024;
 
 /**
  * `deleteMessages` 单次能带的消息 id 数上限，Bot API 本身的硬上限。

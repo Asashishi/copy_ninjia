@@ -2,8 +2,22 @@ import { describe, expect, test } from "bun:test";
 import ts from "typescript";
 import {
   collectNodeCompatibilityProblems,
+  collectNodeImportUsage,
   collectStaleNodeAllowanceProblems,
+  collectUnusedNodeAllowanceProblems,
+  isRuntimeBuiltinModule,
 } from "../../scripts/conventions/nodeCompatibility";
+import type { NodeImportUsage } from "../../scripts/conventions/nodeCompatibility";
+import {
+  PORTABLE_NODE_IMPORTS,
+  PRODUCTION_NODE_IMPORTS,
+  SCRIPT_NODE_IMPORTS,
+  SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS,
+  TEST_NODE_IMPORTS,
+  TEST_SHARED_NODE_IMPORTS,
+  TEST_SYNC_CONTENT_IO_EXEMPTIONS,
+} from "../../scripts/conventions/nodeAllowances";
+import type { NodeImportAllowance } from "../../scripts/conventions/nodeAllowances";
 
 function source(path: string, text: string): ts.SourceFile {
   return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -312,5 +326,172 @@ describe("Node 兼容登记的陈旧条目", () => {
       expect.stringContaining("PRODUCTION_BUFFER_GLOBALS retains an allowance for a file that no longer exists"),
       expect.stringContaining("SCRIPT_BUFFER_GLOBALS retains an allowance for a file that no longer exists"),
     ]));
+  });
+});
+
+describe("运行时内建模块识别", () => {
+  test("Bun 自有模块与带或不带 node: 前缀的 Node 内建模块（含子路径）都由运行时提供", (): void => {
+    for (const name of [
+      "bun", "bun:test", "bun:sqlite", "bun:jsc",
+      "fs", "node:fs", "fs/promises", "node:fs/promises", "path", "crypto", "child_process",
+    ]) expect(isRuntimeBuiltinModule(name)).toBeTrue();
+  });
+
+  test("npm 包、相对路径与名字近似的第三方包都不算内建模块", (): void => {
+    for (const name of [
+      "typescript", "grammy", "@grammyjs/runner", "bun-types", "@types/bun",
+      "fs-extra", "node-fetch", "./fs", "../bun",
+    ]) expect(isRuntimeBuiltinModule(name)).toBeFalse();
+  });
+});
+
+describe("Node 兼容 import 使用记录", () => {
+  test("只记录运行期具名与命名空间 import，按原导出名归一并补齐 node: 前缀", (): void => {
+    const path: string = "/project/test/example.test.ts";
+    expect(collectNodeImportUsage("/project", path, source(path,
+      'import { mkdtempSync as makeTemp, rmSync } from "fs";\n' +
+      'import { type Stats, statSync } from "node:fs";\n' +
+      'import type { Dirent } from "node:fs";\n' +
+      'import fs, { existsSync } from "node:fs";\n' +
+      'import * as os from "node:os";\n' +
+      'import { readdir } from "fs/promises";\n' +
+      'import path from "node:path";\n' +
+      'import "node:crypto";\n' +
+      'import { test } from "bun:test";\n' +
+      'import ts from "typescript";\n' +
+      'import { helper } from "./helper";\n' +
+      'const lazy = await import("node:child_process");\n'
+    ))).toEqual([
+      { relativePath: "test/example.test.ts", moduleName: "node:fs", imported: "mkdtempSync" },
+      { relativePath: "test/example.test.ts", moduleName: "node:fs", imported: "rmSync" },
+      { relativePath: "test/example.test.ts", moduleName: "node:fs", imported: "statSync" },
+      { relativePath: "test/example.test.ts", moduleName: "node:fs", imported: "existsSync" },
+      { relativePath: "test/example.test.ts", moduleName: "node:os", imported: "*" },
+      { relativePath: "test/example.test.ts", moduleName: "node:fs/promises", imported: "readdir" },
+    ]);
+  });
+
+  test("没有 Node 兼容 import 的文件记录为空", (): void => {
+    const path: string = "/project/scripts/example.ts";
+    expect(collectNodeImportUsage("/project", path, source(path,
+      'import { heapStats } from "bun:jsc";\nimport ts from "typescript";\nexport const VALUE: number = 1;'
+    ))).toEqual([]);
+  });
+});
+
+/** 共享登记表及其作用域内的一个代表文件。 */
+const SHARED_TABLES: readonly (readonly [string, Readonly<Record<string, NodeImportAllowance>>, string])[] = [
+  ["PORTABLE_NODE_IMPORTS", PORTABLE_NODE_IMPORTS, "packages/example.ts"],
+  ["SCRIPT_NODE_IMPORTS", SCRIPT_NODE_IMPORTS, "scripts/example.ts"],
+  ["TEST_SHARED_NODE_IMPORTS", TEST_SHARED_NODE_IMPORTS, "test/example.test.ts"],
+];
+
+/** 逐文件登记表；使用记录必须落在登记的那个文件上。 */
+const PER_FILE_TABLES: readonly (readonly [string, Readonly<Record<string, Readonly<Record<string, NodeImportAllowance>>>>])[] = [
+  ["PRODUCTION_NODE_IMPORTS", PRODUCTION_NODE_IMPORTS],
+  ["TEST_NODE_IMPORTS", TEST_NODE_IMPORTS],
+  ["SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS", SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS],
+  ["TEST_SYNC_CONTENT_IO_EXEMPTIONS", TEST_SYNC_CONTENT_IO_EXEMPTIONS],
+];
+
+/** 按真实登记表合成「每条登记恰好被用到一次」的使用记录；通配登记记成 `*`。 */
+function completeUsage(): NodeImportUsage[] {
+  const usage: NodeImportUsage[] = [];
+  const push = (relativePath: string, moduleName: string, allowance: NodeImportAllowance): void => {
+    const symbols: readonly string[] = allowance.symbols === "*" ? ["*"] : allowance.symbols;
+    for (const imported of symbols) usage.push({ relativePath, moduleName, imported });
+  };
+  for (const [, entries, relativePath] of SHARED_TABLES) {
+    for (const [moduleName, allowance] of Object.entries(entries)) push(relativePath, moduleName, allowance);
+  }
+  for (const [, entries] of PER_FILE_TABLES) {
+    for (const [relativePath, modules] of Object.entries(entries)) {
+      for (const [moduleName, allowance] of Object.entries(modules)) push(relativePath, moduleName, allowance);
+    }
+  }
+  return usage;
+}
+
+/** 从完整记录里去掉命中谓词的条目，模拟对应 import 已被删除。 */
+function usageWithout(predicate: (entry: NodeImportUsage) => boolean): NodeImportUsage[] {
+  return completeUsage().filter((entry: NodeImportUsage): boolean => !predicate(entry));
+}
+
+describe("Node 兼容登记的反向核对", () => {
+  test("每条登记都有使用者时不报问题", (): void => {
+    expect(collectUnusedNodeAllowanceProblems(completeUsage())).toEqual([]);
+  });
+
+  test("没有任何使用记录时七张登记表的每一条都报为无人使用", (): void => {
+    const problems: readonly string[] = collectUnusedNodeAllowanceProblems([]);
+    expect(problems).toHaveLength(completeUsage().length);
+    for (const [table, entries] of [...SHARED_TABLES, ...PER_FILE_TABLES]) {
+      if (Object.keys(entries).length === 0) continue;
+      expect(problems).toContainEqual(expect.stringContaining(`${table} retains an unused allowance`));
+    }
+  });
+
+  test("共享通配登记只要作用域内还有一处使用就保留", (): void => {
+    const usage: NodeImportUsage[] = usageWithout(
+      (entry: NodeImportUsage): boolean => entry.moduleName === "node:path"
+    );
+    expect(collectUnusedNodeAllowanceProblems(usage)).toEqual([
+      "PORTABLE_NODE_IMPORTS retains an unused allowance for node:path",
+    ]);
+    // PORTABLE 的作用域覆盖全部文件：脚本里的一处具名使用即可满足。
+    expect(collectUnusedNodeAllowanceProblems([
+      ...usage,
+      { relativePath: "scripts/example.ts", moduleName: "node:path", imported: "join" },
+    ])).toEqual([]);
+  });
+
+  test("共享逐符号登记按作用域核对，别的作用域里的同名使用不算数", (): void => {
+    const usage: NodeImportUsage[] = usageWithout((entry: NodeImportUsage): boolean =>
+      entry.relativePath.startsWith("test/") && entry.moduleName === "node:os" && entry.imported === "tmpdir");
+    const unused: readonly string[] = [
+      "TEST_SHARED_NODE_IMPORTS retains an unused allowance: node:os export tmpdir",
+    ];
+    expect(collectUnusedNodeAllowanceProblems(usage)).toEqual(unused);
+    for (const relativePath of ["scripts/example.ts", "packages/example.ts"]) {
+      expect(collectUnusedNodeAllowanceProblems([
+        ...usage,
+        { relativePath, moduleName: "node:os", imported: "tmpdir" },
+      ])).toEqual(unused);
+    }
+    expect(collectUnusedNodeAllowanceProblems([
+      ...usage,
+      { relativePath: "test/other.test.ts", moduleName: "node:os", imported: "tmpdir" },
+    ])).toEqual([]);
+  });
+
+  test("逐文件逐符号豁免只认登记的那个文件", (): void => {
+    const processIoPath: string = "scripts/perf/fullSuite/processIo.ts";
+    const usage: NodeImportUsage[] = usageWithout((entry: NodeImportUsage): boolean =>
+      entry.relativePath === processIoPath && entry.imported === "readFileSync");
+    const unused: readonly string[] = [
+      `SCRIPT_SYNC_CONTENT_IO_EXEMPTIONS retains an unused allowance for ${processIoPath}: node:fs export readFileSync`,
+    ];
+    expect(collectUnusedNodeAllowanceProblems(usage)).toEqual(unused);
+    expect(collectUnusedNodeAllowanceProblems([
+      ...usage,
+      { relativePath: "scripts/perf/fullSuite/other.ts", moduleName: "node:fs", imported: "readFileSync" },
+    ])).toEqual(unused);
+  });
+
+  test("逐文件通配豁免在该文件不再 import 模块时报出，任意一处使用即可保留", (): void => {
+    const fileAccessPath: string = "test/libs/fileAccess.test.ts";
+    const usage: NodeImportUsage[] = usageWithout((entry: NodeImportUsage): boolean =>
+      entry.relativePath === fileAccessPath && entry.moduleName === "node:fs");
+    expect(collectUnusedNodeAllowanceProblems(usage)).toEqual([
+      `TEST_NODE_IMPORTS retains an unused allowance for ${fileAccessPath}: node:fs`,
+    ]);
+    // 使用记录直接取自 collectNodeImportUsage 的解析结果，与门禁里的串联方式一致。
+    const absolutePath: string = `/project/${fileAccessPath}`;
+    for (const text of ['import * as fs from "node:fs";', 'import { statSync } from "fs";']) {
+      expect(collectUnusedNodeAllowanceProblems([
+        ...usage,
+        ...collectNodeImportUsage("/project", absolutePath, source(absolutePath, text)),
+      ])).toEqual([]);
+    }
   });
 });

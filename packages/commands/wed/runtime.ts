@@ -2,7 +2,7 @@ import { wedChats, wedRuntime } from "../../cache/main/wed";
 import { WED_MAX_CONCURRENT, WED_MAX_PENDING } from "../../consts/wed";
 import { trackBackgroundTask } from "../../infra/backgroundTasks";
 import { combineWithUpdateAbortSignal, runWithUpdateAbortSignal } from "../../infra/updateContext";
-import { settleWithinBudget } from "../../libs/inflight";
+import { assertTimeoutMs, drainTrackedTasks } from "../../libs/inflight";
 import { createPrioritizedBoundedTaskRunner } from "../../libs/prioritizedBoundedTaskRunner";
 import type { FlushResult } from "../../types/lifecycle";
 import type { WedChat, WedRuntime } from "../../types/wed";
@@ -63,12 +63,15 @@ export function quiesceWedRuntime(): void {
 
 /** 等待交互与成员复核结算；预算耗尽时取消排队和在途请求，零预算可用于紧急停机。 */
 export async function drainWedRuntime(timeoutMs: number): Promise<FlushResult> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new RangeError("Wed drain timeout must be finite and non-negative.");
+  assertTimeoutMs(timeoutMs, "Wed drain timeout");
   quiesceWedRuntime();
   const runtime: WedRuntime | null = wedRuntime.current;
-  if (runtime === null || runtime.tasks.size === 0) return flushWedMembers() ? "flushed" : "failed";
-  if (timeoutMs > 0 && await settleWithinBudget(runtime.tasks, timeoutMs)) return flushWedMembers() ? "flushed" : "failed";
-  runtime.controller.abort();
-  flushWedMembers();
-  return "timedOut";
+  const drained: "flushed" | "timedOut" = runtime === null
+    ? "flushed"
+    : await drainTrackedTasks(runtime.tasks, runtime.controller, timeoutMs);
+  if (drained === "timedOut") {
+    flushWedMembers();
+    return "timedOut";
+  }
+  return flushWedMembers() ? "flushed" : "failed";
 }

@@ -238,9 +238,7 @@ describe("atomicWriteText 的失败清理", () => {
 
 describe("atomicWriteText 的权限接管", () => {
   test("沿用目标原有权限：部署方 chmod 0600 过的文件不被一次普通写入放宽", async () => {
-    // 临时文件是新建的，`0666 & ~umask`（常见 0644）与目标原有权限没有任何关系，
-    // 而 rename 直接把它替换上去——config/whitelist.json、state.json、bot.lock
-    // 都会在一次普通写入后被静默放宽，且不留日志。
+    // rename 替换目标前，临时文件须接管目标的权限；原子写入后仍保持 0600。
     realFsSnapshot.writeFileSync(targetPath, "old");
     realFsSnapshot.chmodSync(targetPath, 0o600);
 

@@ -5,7 +5,7 @@ bun = true
 [test]
 preload = ["./test/preload.ts"]
 coverageSkipTestFiles = true
-coverageThreshold = { line = 0.90, function = 0.90 }
+coverageThreshold = { line = 0.95, function = 0.95 }
 
 [install]
 # 只解析发布满 7 天的版本。

@@ -3,12 +3,11 @@
  * 的回复会话、文本生成与视觉描述全部经由这里发请求（生图走 images 接口，
  * 见同目录 image.ts，但共用同一个客户端）。
  *
- * 走官方 openai SDK 而不是手写 fetch，理由同 Gemini 那边：超时与瞬时失败重试
- * 由 SDK 内建，不必自己维护一份 AbortController。客户端是线程内单例，Worker
- * 崩溃重建后由 cache/workers/aiChat/openai.ts 的空 holder 重新构造。
+ * 收发走官方 openai SDK：超时与瞬时失败重试由 SDK 内建。客户端是线程内单例，
+ * Worker 崩溃重建后由 cache/workers/aiChat/openai.ts 的空 holder 重新构造。
  *
- * 选 Responses 而不是 chat.completions：hosted 的 web_search 内建工具只在
- * Responses 上提供，而联网查证是本项目回复流水线的既有能力，不能丢。
+ * 使用 Responses API：回复流水线的联网查证依赖 hosted 的 web_search 内建工具，
+ * 它只在 Responses 上提供。
  */
 
 import OpenAI from "openai";
@@ -158,11 +157,6 @@ export async function requestOpenAiResult({
   return { ok: true, response };
 }
 
-/**
- * 请求一段需要业务侧清洗的 OpenAI 文本，并把跨请求重试边界显式带回调用方。
- * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
- * HTTP 成功但产出异常或清洗后正文为空时，才允许按领域策略重新采样。
- */
 /** OpenAI 无状态文本调用参数。 */
 export interface OpenAiTextRequestOptions {
   readonly capability: "summary" | "media";
@@ -172,6 +166,11 @@ export interface OpenAiTextRequestOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * 请求一段需要业务侧清洗的 OpenAI 文本，并把跨请求重试边界显式带回调用方。
+ * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
+ * HTTP 成功但产出异常或清洗后正文为空时，才允许按领域策略重新采样。
+ */
 export async function requestOpenAiTextResult({
   capability,
   buildBody,

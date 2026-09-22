@@ -16,6 +16,7 @@ import {
   getGagThumbnailUrl,
   getProbabilityThumbnailUrl,
   getGlobalCopyState,
+  getRandomHImageDirectory,
   getOrCreateChatState,
   loadState,
   purgeChatStateExceptLockdown,
@@ -32,7 +33,9 @@ import {
   FORTUNE_THUMBNAIL_URL,
   GAG_THUMBNAIL_URL,
   PROBABILITY_THUMBNAIL_URL,
+  RANDOM_H_IMAGE_DIR,
 } from "../../../packages/consts/ui/assets";
+import { RUNTIME_DATA_ROOT } from "../../../packages/consts/paths";
 import { DEFAULT_CHAT_STATE } from "../../../packages/libs/chatState";
 import { decodeStateFile } from "../../../packages/libs/stateFileCodec";
 import type {
@@ -773,6 +776,17 @@ describe("素材直链的取值", () => {
     globalAssetState.probabilityThumbnailUrl = undefined;
     globalAssetState.gagThumbnailUrl = undefined;
     globalAssetState.botDefaultAvatarUrl = undefined;
+    globalAssetState.randomHImageDir = undefined;
+  });
+
+  test("随机图片目录：缺省与相对路径按数据根解析，绝对路径原样使用", () => {
+    // 缺省值用显式相对路径语法书写，补写进 state.json 的就是这一份字面量。
+    expect(RANDOM_H_IMAGE_DIR).toBe("./h_image");
+    expect(getRandomHImageDirectory()).toBe(join(RUNTIME_DATA_ROOT, "h_image"));
+    globalAssetState.randomHImageDir = "./gallery/daily";
+    expect(getRandomHImageDirectory()).toBe(join(RUNTIME_DATA_ROOT, "gallery", "daily"));
+    globalAssetState.randomHImageDir = "/srv/pictures";
+    expect(getRandomHImageDirectory()).toBe("/srv/pictures");
   });
 
   test("四项都没设过时回退到内置常量", () => {
@@ -897,6 +911,7 @@ describe("启动补齐素材直链", () => {
     globalAssetState.probabilityThumbnailUrl = undefined;
     globalAssetState.gagThumbnailUrl = undefined;
     globalAssetState.botDefaultAvatarUrl = undefined;
+    globalAssetState.randomHImageDir = undefined;
     stateStoreHolder.current?.dispose();
     stateStoreHolder.current = null;
     writes.length = 0;
@@ -922,10 +937,11 @@ describe("启动补齐素材直链", () => {
     return written;
   }
 
-  test("四项都没设过时补齐并落盘一次", async () => {
+  test("五项都没设过时补齐并落盘一次", async () => {
     const written: Promise<void> = installRecordingStore();
 
-    expect(seedMissingAssetState()).toBe(4);
+    expect(seedMissingAssetState()).toBe(5);
+    expect(globalAssetState.randomHImageDir).toBe(RANDOM_H_IMAGE_DIR);
     expect(globalAssetState.fortuneThumbnailUrl).toBe(FORTUNE_THUMBNAIL_URL);
     expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
     expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
@@ -939,6 +955,7 @@ describe("启动补齐素材直链", () => {
       probabilityThumbnailUrl: PROBABILITY_THUMBNAIL_URL,
       gagThumbnailUrl: GAG_THUMBNAIL_URL,
       botDefaultAvatarUrl: BOT_DEFAULT_AVATAR_URL,
+      randomHImageDir: RANDOM_H_IMAGE_DIR,
     });
   });
 
@@ -947,15 +964,18 @@ describe("启动补齐素材直链", () => {
     globalAssetState.botDefaultAvatarUrl = "https://cdn.example/custom-face.jpg";
     globalAssetState.fortuneThumbnailUrl = "https://cdn.example/fortune.png";
 
+    globalAssetState.randomHImageDir = "/srv/pictures";
     expect(seedMissingAssetState()).toBe(2);
+    expect(globalAssetState.randomHImageDir).toBe("/srv/pictures");
     expect(globalAssetState.botDefaultAvatarUrl).toBe("https://cdn.example/custom-face.jpg");
     expect(globalAssetState.fortuneThumbnailUrl).toBe("https://cdn.example/fortune.png");
     expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
     expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
   });
 
-  test("四项都配过时不写盘", async () => {
+  test("五项都配过时不写盘", async () => {
     void installRecordingStore();
+    globalAssetState.randomHImageDir = "./images";
     globalAssetState.fortuneThumbnailUrl = "https://cdn.example/f.png";
     globalAssetState.probabilityThumbnailUrl = "https://cdn.example/p.png";
     globalAssetState.gagThumbnailUrl = "https://cdn.example/g.png";

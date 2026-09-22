@@ -18,12 +18,17 @@ import { getChatQa } from "../infra/qaStore";
 import { telegramOutboundStats } from "../infra/telegram/outboundLifecycle";
 import { postAiChatOrThrow } from "./workerBridge";
 
-/** 为 purge 后第一份新记忆武装即时持久化标志，并在投递失败时回滚新标志。 */
+/**
+ * 为 purge 后第一份新记忆武装即时持久化标志，并在投递失败时回滚新标志。
+ *
+ * 这条路跑在每条进 AI 记忆的群消息上，因此只查一次 postPurgeAiMemoryPersistRevisions：
+ * 它的值域是 `number | null`，存进去的值永远不是 `undefined`，所以
+ * `get(...) === undefined` 与 `!has(...)` 逐字等价，同一个键不必查两遍。
+ */
 function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage): void {
   const armedRevision: number | null | undefined =
     postPurgeAiMemoryPersistRevisions.get(message.chatId);
-  const wasArmed: boolean = postPurgeAiMemoryPersistRevisions.has(message.chatId);
-  const shouldArm: boolean = !wasArmed &&
+  const shouldArm: boolean = armedRevision === undefined &&
     !latestAiMemories.has(message.chatId) &&
     aiMemoryRevisionCounters.has(message.chatId);
   if (shouldArm) postPurgeAiMemoryPersistRevisions.set(message.chatId, null);

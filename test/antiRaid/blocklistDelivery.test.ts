@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../packages/types/blocklist";
 
 /**
  * 投递前的 durable 对账（antiRaid/blocklistDelivery.ts）：处置消息在 outbox flush
- * 的等待期里仍可能被并发的 `/unblock` 取消，而黑名单成员入群那一路的处置是
+ * 的等待期里仍可能被并发的 `/block disable` 取消，而黑名单成员入群那一路的处置是
  * **取代** join 投递的——两件事撞在一起就会让这个人既没有移除、也没有验证窗口。
  */
 const errorLogs: string[] = [];
@@ -18,12 +19,7 @@ const retainCurrentlyBlockedIdentityIds = mock(
 let authoritative = new Map<number, RemoveBlockedMembersParams>();
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 mock.module("../../packages/infra/blocklist/outbox", () => ({
   getPendingBlockedRemovalParams: (
@@ -80,7 +76,7 @@ describe("黑名单处置投递前的 durable 对账", () => {
 
   test("批次在等待期里被取消时补投它取代掉的那条 join", async () => {
     // claimBlockedJoiner 对黑名单成员刻意不投 join——Worker 不会为一个马上要被
-    // 踢掉的人开窗口。flush 等待期里并发的 /unblock 把这批处置整批删掉之后，
+    // 踢掉的人开窗口。flush 等待期里并发的 /block disable 把这批处置整批删掉之后，
     // 不补 join 的话这个人既没有移除、也没有验证窗口：没有提醒、没有超时踢人，
     // 就这么留在群里，而系统里再没有任何一处会为他重新开一个。
     authoritative.clear();

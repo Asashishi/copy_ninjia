@@ -19,6 +19,8 @@ import type {
  * 每个已打开群日文件的追加游标与 latest-by-user 索引。权威副本只存在于
  * Disk I/O Worker；由有界 LruCache 自动淘汰。被淘汰或 Worker 崩溃后不沿用
  * 内存，下一次写入/读取从磁盘严格重建；进程重启同样从空缓存开始。
+ * 容量：JOIN_LOG_MAX_CACHED_FILES 项，满载淘汰最久未用的那份游标；
+ * 测试隔离时由 resetJoinLogCache 整表清空。
  */
 export const joinLogFileCaches: LruCache<string, JoinLogFileCache> =
   new LruCache<string, JoinLogFileCache>(JOIN_LOG_MAX_CACHED_FILES);
@@ -26,6 +28,8 @@ export const joinLogFileCaches: LruCache<string, JoinLogFileCache> =
 /**
  * 追加失败文件允许重开的最早时刻；有界 LruCache 独立淘汰最旧项。
  * 没有条目只表示不退避、允许立即重试，不表示此前写入已经成功。
+ * 容量：JOIN_LOG_MAX_RETRY_FILES 项；退避到期后由写入路径覆盖或淘汰，
+ * 测试隔离时由 resetJoinLogCache 整表清空。Worker 崩溃重建后为空，等于不退避。
  */
 export const joinLogRetryAt: LruCache<string, number> =
   new LruCache<string, number>(JOIN_LOG_MAX_RETRY_FILES);
@@ -98,7 +102,7 @@ export function markJoinLogDirty(entry: BufferedJoinLogEntry): number {
   return joinLogBuffer.entries.length;
 }
 
-/** Worker 停止或测试隔离时清空游标、退避、缓冲与 timer。 */
+/** 测试隔离时清空游标、退避、缓冲与 timer；生产代码不调用，Worker 停止时随 isolate 释放。 */
 export function resetJoinLogCache(): void {
   if (joinLogBuffer.timer !== null) clearTimeout(joinLogBuffer.timer);
   joinLogBuffer.entries = [];

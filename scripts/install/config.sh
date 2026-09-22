@@ -180,12 +180,12 @@ commit_staged_config() {
   mv -- "$staging_path" "$target_path" || die "原子替换 ${target_path} 失败。"
 }
 
-# 只验证候选 Telegram 文件；无导入副作用的读取入口与运行时共用严格解析器。
+# 只验证候选 Bot 文件内容；候选可能位于配置软链接的外部目标目录。
 validate_staged_telegram_config() {
   local staging_path="$1"
   bun -e '
-    import { loadTelegramConfig } from "./scripts/install/runtime";
-    await loadTelegramConfig(Bun.argv[1]);
+    import { validateStagedBotConfig } from "./scripts/install/runtime";
+    await validateStagedBotConfig(Bun.argv[1]);
   ' "$staging_path"
 }
 

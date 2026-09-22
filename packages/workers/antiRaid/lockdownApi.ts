@@ -84,7 +84,7 @@ export function deleteLockdownAnnouncement(chatId: number, messageId: number): v
  * 读取当前权限，按本轮身份回投 applyPrepared；权限提交由 durable 回执触发。
  * preparing 占位阻止重复触发，取消或换轮后丢弃旧查询结果。
  */
-export function prepareApplyLockdown(chatId: number, joinCount: number, dispatchLockdown: LockdownDispatcher): void {
+export function prepareApplyLockdown(chatId: number, dispatchLockdown: LockdownDispatcher): void {
   const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
   const isCurrent = (): boolean => entry !== undefined && lockdownEntries.get(chatId) === entry &&
     entry.state.kind === "applying" && entry.state.stage === "preparing";
@@ -104,7 +104,6 @@ export function prepareApplyLockdown(chatId: number, joinCount: number, dispatch
       dispatchLockdown(chatId, {
         type: "applyPrepared",
         originalPermissions,
-        joinCount,
         intentId: nextLockdownIntentId(),
       });
     } catch (error: unknown) {

@@ -1,5 +1,7 @@
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 
 /**
  * mock.module 必须在任何真实 import 之前调用（静态 import 会被提升，所以下面
@@ -31,12 +33,7 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: {
-    log: () => {},
-    info: () => {},
-    warn: () => {},
-    error: loggerErrorMock,
-  },
+  logger: loggerStub({ error: loggerErrorMock }),
 }));
 
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
@@ -652,7 +649,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const ctx = makeInlineCtx(777, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     expect(bodyTextOf(ctx.results[0])).toContain(tier.label);
-    expect(bodyTextOf(ctx.results[0])).toContain(tier.comment);
+    expect(bodyTextOf(ctx.results[0])).toContain(ATMOSPHERE_TEXTS.teasing.LUCK_TIER_COMMENTS[tier.label]);
 
     // 已经是确认过的结果，预览不应该重新调用 postDiskIO
     expect(postDiskIOMock).not.toHaveBeenCalled();

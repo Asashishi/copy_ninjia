@@ -27,6 +27,8 @@ globalThis.fetch = (async (input: Parameters<typeof fetch>[0]): Promise<Response
     switch (method) {
       case "getMe":
         return Response.json({ ok: true, result: { id: 123456789, is_bot: true, first_name: "Binary test", username: "binary_test_bot" } });
+      case "getChat":
+        return Response.json({ ok: true, result: { id: -1001, type: "supergroup", title: "Migration test group" } });
       case "setMyCommands":
       case "deleteMyCommands":
         return Response.json({ ok: true, result: true });

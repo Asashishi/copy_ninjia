@@ -686,6 +686,7 @@ describe("supervised Worker", () => {
       }
       expect(rejection).toBeInstanceOf(Error);
       expect((rejection as Error).message).toBe("Worker termination failed.");
+      expect((rejection as Error).cause).toBe("terminate refused");
       expect(second.terminated).toBeTrue();
       expect(handle.post({ type: "ping" })).toBeFalse();
       expect(scope.fatalErrors).toEqual([]);

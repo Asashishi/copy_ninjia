@@ -1,6 +1,8 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 installTemporaryMessageWorkerMock();
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { BotActionPermissions } from "../../../packages/types/telegram";
 import type { FloodCandidateMessage } from "../../../packages/types/antiRaid";
 import type { FloodWindowEntry } from "../../../packages/types/antiRaid/internal";
@@ -32,12 +34,7 @@ let holdAdminFetch: boolean = false;
 let releaseAdminFetch: (() => void) | undefined;
 
 mock.module("../../../packages/infra/logger", () => ({
-  logger: {
-    log(): void {},
-    info(): void {},
-    warn(): void {},
-    error(message: unknown): void { errorLogs.push(String(message)); },
-  },
+  logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   telegramApi: { kind: "guard-api" },
@@ -334,7 +331,7 @@ describe("刷屏禁言的处置", () => {
     expect(muteCalls).toHaveLength(1);
     expect(muteCalls[0]).toMatchObject({ chatId: -1001, userId: 7 });
     expect(muteCalls[0]!.mutedUntil).toBeGreaterThan(Date.now());
-    expect(sentTexts).toEqual([formatFloodMuteNotice("刷屏怪")]);
+    expect(sentTexts).toEqual([formatFloodMuteNotice("刷屏怪", ATMOSPHERE_TEXTS.teasing)]);
     expect(deleteAfterCalls).toEqual([{
       chatId: -1001,
       messageId: 500,
@@ -517,7 +514,7 @@ describe("刷屏禁言的处置", () => {
   });
 
   test("播报只说清谁被按了多久，不回显刷屏内容", () => {
-    const notice: string = formatFloodMuteNotice("@noisy");
+    const notice: string = formatFloodMuteNotice("@noisy", ATMOSPHERE_TEXTS.teasing);
     expect(notice).toContain("@noisy");
     expect(notice).toContain(String(FLOOD_MESSAGE_LIMIT));
     expect(notice).toContain(`${FLOOD_MUTE_DURATION_MS / 60_000} 分钟`);

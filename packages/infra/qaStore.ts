@@ -8,6 +8,7 @@
 
 import { assertStorageAdmission } from "./diskIO/storageAdmission";
 import { canQueueDiskIOBusiness } from "./diskIO/transport";
+import { postWithTransport } from "./diskIO/businessWrite";
 import { storageWriteCost } from "../libs/storageWriteBudget";
 import {
   chatQaEntries,
@@ -59,15 +60,6 @@ export function chatQaCount(chatId: number): number {
   return chatQaEntries.get(chatId)?.size ?? 0;
 }
 
-function postChatQaWrite(
-  message: ChatQaWriteDiskMessage,
-  transport?: DiskIORecoveryTransport
-): boolean {
-  return transport === undefined
-    ? diskIO.postDiskIO(message) === true
-    : transport.post(message);
-}
-
 function trackUnacknowledged(chatId: number, q: string, revision: number): void {
   const existing: Map<string, number> | undefined = unacknowledgedChatQaWrites.get(chatId);
   const questions: Map<string, number> = existing ?? new Map<string, number>();
@@ -99,7 +91,7 @@ function prepareChatQaWrite(chatId: number, q: string, answer: string | undefine
 function queueChatQaWrite(message: ChatQaWriteDiskMessage): void {
   nextChatQaRevision.current = message.revision;
   trackUnacknowledged(message.chatId, message.q, message.revision);
-  if (!postChatQaWrite(message)) {
+  if (!postWithTransport(message)) {
     logger.error("Failed to queue chat qa; retaining its revision for replay.");
     throw new Error("Failed to queue chat qa persistence.");
   }
@@ -195,7 +187,7 @@ function replayChatQaWrites(transport: DiskIORecoveryTransport): boolean {
       const data: string | null = answer === undefined
         ? null
         : encodeChatQaData(answer, `${IDENTITY_DATABASE_PATH}:chat_qa[${chatId}]`);
-      if (!postChatQaWrite({ type: "chatQaWrite", chatId, q, data, revision }, transport)) {
+      if (!postWithTransport({ type: "chatQaWrite", chatId, q, data, revision }, transport)) {
         return false;
       }
     }

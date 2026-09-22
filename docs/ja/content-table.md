@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/tagline_ja_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/tagline_ja_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../../pictures/tagline_ja_light.svg" width="820">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/tagline_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/tagline_ja_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../../public/tagline_ja_light.svg" width="820">
 </picture>
 
 # 📚 Copy Ninjia 開発者ドキュメント
@@ -30,7 +30,9 @@
 | 🛠️ **機能の追加・変更** | コマンド追加、パラメータ調整、AI ツール追加および schema 変更のレシピ | [📖 06 変更レシピ](06-modification-guide.md) |
 | 🛡️ **本番運用** | systemd デプロイ、ハードウェアの目安、`COPY_NINJIA_DATA_ROOT`、バックアップと障害対応 | [📖 07 運用マニュアル](07-operations.md) |
 | 🎮 **コマンドを調べる** | 全コマンド、権限の読み方、挙動の詳細（ルート README には概要だけ） | [📖 08 コマンドリファレンス](08-commands.md) |
+| 🖼️ **画像庫と定時タスク** | 画像収集・内容重複判定・アルバム・時区・パス基準 | [📖 設定説明](../../config_example/README/ja.md) |
 | 📊 **計測値を見る** | コールド/ホットパス、総スループットと総 I/O、エンドツーエンドのチェーン遅延のリリースベンチマーク | [📖 09 パフォーマンス](09-performance.md) |
+| ❓ **返信がないとき** | Bot が動いているのに反応しないときの確認リスト | [📖 10 よくある質問](10-faq.md) |
 
 ---
 
@@ -38,8 +40,8 @@
 
 1. **[01 環境構築と初回実行](01-getting-started.md)**
    - 依存関係（Bun 1.4.2 / Linux / Bot Token / AI provider API Key）
-   - `config/telegram.json` など deployment 設定の必須項目
-   - Telegram BotFather 設定（Privacy Mode / 管理者権限 / Inline Mode）
+   - `config/bot.json` など deployment 設定の必須項目
+   - Telegram BotFather 設定（Privacy Mode / 管理者権限 / Inline Mode / Bot-to-Bot）
    - 初回起動と `/init enable` のハンドシェイク
 
 2. **[02 アーキテクチャ概要](02-architecture.md)**
@@ -59,7 +61,7 @@
    - 永続化：永続化と snapshot の contract、グループ状態と `chat_states`、ブロックリストと広告検出、確認境界と停止、ファイル権限
 
 5. **[05 開発フローと品質ゲート](05-dev-workflow.md)**
-   - `bun run check` 7 段階検証パイプライン：install script 構文 + install 隔離 + 規約チェック + Lint + Typecheck + カバレッジ付き全テスト + hot path gate
+   - `bun run check` 8 段階検証パイプライン：install script 構文 + install 隔離 + 規約チェック + Lint + Typecheck + カバレッジ付き全テスト + 固定 seed のランダム順全テスト + hot path gate
    - テスト隔離機構と一時データサンドボックス
    - コミット規約とリリース前の障害注入テスト `bun run test:fault-injection`
 
@@ -86,6 +88,9 @@
    - 各項目を独立 3 ラウンド実行し、平均・最小・最大・変動係数を報告
    - 1 ラウンドあたりの総スループット、総 I/O、モックデータルートの使用量
 
+10. **[10 よくある質問](10-faq.md)**
+    - Bot が動いているのに返信しない場合：初期化、プライバシーモード、AI の反応条件、個人チャット、通知の自動削除、Inline Mode、Bot-to-Bot、既定で無効な保護機能、プロセスの状態
+
 ---
 
 ## 📝 ドキュメント保守規約
@@ -99,9 +104,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../pictures/footer_ja_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="../../pictures/footer_ja_light.svg">
-  <img alt="Copy Ninjia Footer" src="../../pictures/footer_ja_light.svg" width="750">
+  <source media="(prefers-color-scheme: dark)" srcset="../../public/footer_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../public/footer_ja_light.svg">
+  <img alt="Copy Ninjia Footer" src="../../public/footer_ja_light.svg" width="750">
 </picture>
 
 </div>

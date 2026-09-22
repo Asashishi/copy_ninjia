@@ -1,16 +1,18 @@
 import { resetWedMemberStates } from "../../packages/cache/main/wedMembers";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { loggerStub } from "../helpers/loggerMock";
 import type { Bot } from "grammy";
-import type { User } from "grammy/types";
+import type { Chat, User } from "grammy/types";
 import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
 import { wedChats, wedRuntime } from "../../packages/cache/main/wed";
 import { currentUpdateAbortSignal, runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
 
 const logError = mock((): void => {});
-mock.module("../../packages/infra/logger", () => ({ logger: { error: logError, warn(): void {}, info(): void {}, log(): void {} } }));
+mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: logError }) }));
 let download = Promise.withResolvers<void>();
 let upload = Promise.withResolvers<void>();
-const partner: User = { id: 999, is_bot: false, first_name: "群友" };
+/** 抽取按 ID 读头像，身份是那次 getChat 返回的私聊资料。 */
+const partner: Chat.PrivateChat = { id: 999, type: "private", first_name: "群友" };
 const avatar = mock(async () => {
   await download.promise;
   return { status: "ok" as const, identity: partner, photo: "current-avatar" };
@@ -59,7 +61,7 @@ beforeEach(() => {
   nextMessageId = 100;
   for (const fn of [avatar, photo, answer, edit, remove, send, logError]) fn.mockClear();
   Object.assign(bot.api, {
-    getChatMember: async () => ({ status: "member", user: partner }),
+    getChatMember: async () => { throw new Error("wed must not query chat members"); },
     sendPhoto: photo, answerCallbackQuery: answer, editMessageMedia: edit, deleteMessage: remove,
     sendMessage: send,
   });

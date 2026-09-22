@@ -1,5 +1,5 @@
 import { durableUnlinkSync } from "../../libs/atomicFile";
-import { inspectOptionalDirectory } from "../../libs/fileAccess";
+import { bestEffortUnlink, inspectOptionalDirectory } from "../../libs/fileAccess";
 import {
   mkdirSync,
   readdirSync,
@@ -64,24 +64,17 @@ export async function cleanupExpiredJoinLogDays(
     recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
   for (const name of names) {
     const path: string = join(JOIN_LOG_MEMORY_DIR, name);
+    // 删除失败不阻断当天记录与窗口内事实；下一次跨日清理仍会重试。
     if (name.endsWith(TMP_FILE_SUFFIX)) {
-      try {
-        await Bun.file(path).delete();
-      } catch {
-        // 权限异常不阻断当天记录；下一次跨日清理仍会重试。
-      }
+      await bestEffortUnlink(path);
       continue;
     }
     const match: RegExpExecArray | null = JOIN_LOG_FILE_PATTERN.exec(name);
     if (match === null || retainedDays.has(match[2]!) || match[2]! > today) continue;
-    try {
-      await Bun.file(path).delete();
-      const key: string = `${Number(match[1]!)}:${match[2]!}`;
-      joinLogFileCaches.delete(key);
-      joinLogRetryAt.delete(key);
-    } catch {
-      // 清理失败不影响窗口内事实；旧文件留给下一次跨日清理重试。
-    }
+    if (!await bestEffortUnlink(path)) continue;
+    const key: string = `${Number(match[1]!)}:${match[2]!}`;
+    joinLogFileCaches.delete(key);
+    joinLogRetryAt.delete(key);
   }
   joinLogCleanupDay.current = today;
 }

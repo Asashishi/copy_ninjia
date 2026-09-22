@@ -228,8 +228,23 @@ describe("project convention collectors", () => {
       join(commandsRoot, "bad.ts"),
       'import { sendMessage } from "../infra/telegram";\n' +
       "const options = { preserveInGroup: true };\n" +
-      "function wrong() { return bot.api.sendPhoto(1, image); }"
+      "function wrong() { return bot.api.sendPhoto(1, image); }\n" +
+      "function sneaky() { return sendPhotoWithResult({ chatId: 1, bytes, mimeType }); }"
     );
+    await Bun.write(
+      join(commandsRoot, "hImage", "draw.ts"),
+      "function sendHImageResult() { return sendPhotoWithResult({ chatId: 1, bytes, mimeType }); }"
+    );
+    await Bun.write(join(sourceRoot, "cron", "delivery.ts"),
+      "export function deliverCronAction() { return bot.api.sendMessage(1, \"hi\"); }");
+    await Bun.write(join(sourceRoot, "copy", "echo.ts"),
+      "export function sendEchoPayload() { return copyMessage({ chatId: 1, caption: text }); }");
+    await Bun.write(join(sourceRoot, "auto", "message", "proxySend.ts"),
+      "export function handlePrivateProxySend() { return copyMessage({ chatId: 1 }); }");
+    await Bun.write(join(sourceRoot, "translate", "message.ts"),
+      "export function translateMessage() { return copyMessage({ chatId: 1, caption: translated }); }");
+    await Bun.write(join(sourceRoot, "cron", "run.ts"),
+      "export function runCronRound() { return bot.api.sendDocument(1, file); }");
     await Bun.write(
       join(commandsRoot, "luckChallenge", "inline.ts"),
       'import { sendCommandMessage } from "../../infra/telegram";'
@@ -251,13 +266,19 @@ describe("project convention collectors", () => {
     );
     expect(problems).toEqual(expect.arrayContaining([
       expect.stringContaining("bad.ts: state-owned command photos must use sendWedResult"),
+      expect.stringContaining("bad.ts: long-lived command photos must use sendHImageResult"),
+      expect.stringContaining("cron/run.ts: cron messages must be sent through cron/delivery.ts"),
+      expect.stringContaining("translate/message.ts: copies with a replaced caption must go through sendEchoPayload"),
       expect.stringContaining("command text must use sendCommandMessage"),
       expect.stringContaining("must also pass messageThreadId"),
       expect.stringContaining("state-owned button messages"),
     ]));
     expect(problems).toContainEqual(expect.stringContaining("ordinary Worker/group notices"));
     expect(problems).toContainEqual(expect.stringContaining("verificationEffects.ts: ordinary Worker/group notices"));
-    expect(problems).toHaveLength(7);
+    expect(problems).toHaveLength(10);
+    expect(problems.some((problem: string): boolean => problem.includes("copy/echo.ts:") || problem.includes("proxySend.ts:"))).toBeFalse();
+    expect(problems.some((problem: string): boolean => problem.includes("hImage/draw.ts"))).toBeFalse();
+    expect(problems.some((problem: string): boolean => problem.includes("cron/delivery.ts:"))).toBeFalse();
 
     await Bun.write(welcomePath,
       'import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient"; function runVerificationEffects() { return sendTemporaryMessageFromMain({purpose: "notice", chatId: 1, text: "welcome", deleteAfterMs: 30000}); }');
@@ -267,23 +288,38 @@ describe("project convention collectors", () => {
     expect(fixedProblems.some((problem: string): boolean => /verification(?:Effects|Reminders)\.ts/.test(problem))).toBeFalse();
   });
 
-  test("package.json 只允许当前清理上下文权限冷迁移边并要求入口存在", async () => {
+  test("package.json 只允许当前声明的冷迁移边并要求入口都存在", async () => {
     const root: string = temporaryRoot("copy-ninjia-conventions-");
     mkdirSync(join(root, "scripts"), { recursive: true });
+    const active: Readonly<Record<string, string>> = {
+      "migrate:bot-config": "bun scripts/migrateBotConfig.ts",
+      "migrate:h-image-add-permission": "bun scripts/migrateHImageAddPermission.ts",
+      "migrate:random-image-names": "bun scripts/migrateRandomImageNames.ts",
+    };
 
-    await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:clear-context-permission": "bun scripts/migrateClearContextPermission.ts" },
-    }));
+    await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: active }));
     expect(await collectColdMigrationProblems(root)).toContainEqual(expect.stringContaining("active cold migration entry does not exist"));
-    await Bun.write(join(root, "scripts/migrateClearContextPermission.ts"), "export {};\n");
+    for (const entry of ["scripts/migrateHImageAddPermission.ts", "scripts/migrateRandomImageNames.ts", "scripts/migrateBotConfig.ts"]) {
+      await Bun.write(join(root, entry), "export {};\n");
+    }
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
+    // 少一条声明过的边同样要报，不只是多出来的那种。
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:clear-context-permission": "bun scripts/migrateClearContextPermission.ts", "migrate:legacy": "bun scripts/legacy.ts" },
+      scripts: { "migrate:h-image-add-permission": active["migrate:h-image-add-permission"]! },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:clear-context-permission"
+        "package.json must expose exactly the declared active cold migration commands migrate:bot-config, migrate:h-image-add-permission, migrate:random-image-names"
+      ),
+      expect.stringContaining("migrate:random-image-names must invoke"),
+      expect.stringContaining("migrate:bot-config must invoke"),
+    ]);
+
+    await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: { ...active, "migrate:legacy": "bun scripts/legacy.ts" } }));
+    expect(await collectColdMigrationProblems(root)).toEqual([
+      expect.stringContaining(
+        "package.json must expose exactly the declared active cold migration commands migrate:bot-config, migrate:h-image-add-permission"
       ),
     ]);
   });

@@ -21,21 +21,8 @@ import type {
 } from "../../packages/types/identityStorage";
 import type {
   RecordedTemporaryAdBypassActivity,
-  TemporaryAdBypassActivity,
 } from "../../packages/types/temporaryAdBypass";
-
-interface Deferred<T> {
-  readonly promise: Promise<T>;
-  resolve(value: T): void;
-}
-
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  const promise: Promise<T> = new Promise<T>((done: (value: T) => void): void => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import type { TemporaryAdBypassActivity } from "../../packages/types/states/temporaryAdBypass";
 
 const diskMessages: DiskBusinessMessage[] = [];
 const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
@@ -314,7 +301,8 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
   });
 
   test("未 ACK 最终值覆盖迟到数据库冷读，不能把新拉黑回滚成负缓存", async () => {
-    const pendingRead: Deferred<IdentityPolicyRawReadResult> = deferred();
+    const pendingRead: PromiseWithResolvers<IdentityPolicyRawReadResult> =
+      Promise.withResolvers<IdentityPolicyRawReadResult>();
     readImplementation = async (): Promise<IdentityPolicyRawReadResult> => pendingRead.promise;
     const loading: Promise<boolean> = prefetchIdentityPolicies([7]);
     await Bun.sleep(0);
@@ -447,6 +435,27 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       .rejects.toThrow("did not acknowledge");
     expect(diskMessages).toHaveLength(1);
     expect(unacknowledgedWhitelistWrites.has(7)).toBeTrue();
+  });
+
+  test("领域 flush 失败时报错逐字点名结局、revision 与失败领域；无回执时如实说明", async () => {
+    seedMissing(7);
+    expect(queueIdentityPolicyWrite("whitelist", 7, {
+      permissions: DEFAULT_WHITELIST_PERMISSIONS,
+      meta: { firstName: "Alice", lastName: "", username: "alice" },
+    })).toBeTrue();
+    const revision: number = unacknowledgedWhitelistWrites.get(7)!.revision;
+    flushDiskIODomainOutcome.mockImplementationOnce(
+      async (): Promise<DomainFlushOutcome> => ({ result: "failed", failedDomains: ["whitelist", "luck"] })
+    );
+    await expect(confirmIdentityPolicyPersisted("whitelist", 7, false)).rejects.toThrow(
+      `Persistence flush failed for whitelist identity 7 revision ${revision}; failed domains: whitelist, luck.`
+    );
+    flushDiskIODomainOutcome.mockImplementationOnce(
+      async (): Promise<DomainFlushOutcome> => ({ result: "timedOut" })
+    );
+    await expect(confirmIdentityPolicyPersisted("whitelist", 7, false)).rejects.toThrow(
+      `Persistence flush timedOut for whitelist identity 7 revision ${revision}; no per-domain reply.`
+    );
   });
 
   test("revision 耗尽在发布缓存之前失败，不留下无法重放的半份状态", () => {

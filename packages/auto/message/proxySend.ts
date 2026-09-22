@@ -1,6 +1,6 @@
 import { chatAtmosphere } from "../../infra/atmosphere";
 import type { Message } from "grammy/types";
-import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../../config/bot";
 import {
   clearChatStateField,
   getActiveProxySendTarget,

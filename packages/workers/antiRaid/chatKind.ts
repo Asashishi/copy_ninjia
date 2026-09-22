@@ -3,7 +3,7 @@
  *
  * 观测发生在主线程（每条 update 都带 `chat.type`），执行发生在本线程（踢人走
  * telegramApi）。两边因此按变更镜像：主线程每次观测到新值就发一条
- * `chatKind`，Worker 重建与进程启动时整表重放（见 packages/antiRaid/workerBridge.ts）。
+ * `chatKind`，Worker 重建与进程启动时整表重放（见 packages/antiRaid/workerBridge/replay.ts）。
  *
  * 读出来的是三态。**「没观测到」不是「是普通群」**：镜像到达之前、或这个群从未
  * 有过一条被本进程处理的 update 时都读不到值，而绝大多数托管群是超级群。把未知

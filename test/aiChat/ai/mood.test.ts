@@ -1,24 +1,46 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   classifyTimeBucket,
   classifyWeatherCodeBucket,
   computeAdjustedWeight,
   currentMood,
   currentMoodInstruction,
+  refreshChatMoods,
   switchMood,
 } from "../../../packages/aiChat/ai/mood";
-import { getMoodConfig } from "../../../packages/config/mood";
+import { defaultMoodConfigCache } from "../../../packages/cache/perThread/config";
+import {
+  chatMoodExpiresAts,
+  chatMoods,
+  resetAiChatMoodCache,
+} from "../../../packages/cache/workers/aiChat/mood";
+import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from
   "../../../packages/consts/aiChat/mood";
 import type { MoodOption } from "../../../packages/types";
+import type { MoodConfig } from "../../../packages/types/config";
 
 /**
- * aiChat/ai/mood.ts 的纯逻辑单测：首次抽取、寿命内维持/到期重抽、群间隔离。所有
- * 用例注入独立 Map，不碰 Worker 全局的 chatMoods/chatMoodExpiresAts（同
- * test/aiChat/ai/stickers/sendLock.test.ts 的隔离方式）。抽中哪一档不硬编码具体
- * 心情名——只断言「roll=0 落在权重表第一档」「roll 顶到上限落在最后一档」，
- * config/mood.json 内容/顺序/条目数之后再调也不用跟着改这份测试。
+ * aiChat/ai/mood.ts 的单测：首次抽取、寿命内维持/到期重抽、群间隔离。每个用例用
+ * seedMoods 重置并预置 Worker 内的 chatMoods/chatMoodExpiresAts，结束后清空。抽中
+ * 哪一档不硬编码具体心情名——只断言「roll=0 落在权重表第一档」「roll 顶到上限落在
+ * 最后一档」，config/mood.json 内容/顺序/条目数之后再调也不用跟着改这份测试。
  */
+
+/** 以给定条目重置 Worker 内的心情缓存，返回两张表供断言。 */
+function seedMoods(
+  moods: readonly (readonly [number, MoodOption])[],
+  expiresAts: readonly (readonly [number, number])[]
+): { moods: Map<number, MoodOption>; expiresAts: Map<number, number> } {
+  resetAiChatMoodCache();
+  for (const [chatId, mood] of moods) chatMoods.set(chatId, mood);
+  for (const [chatId, at] of expiresAts) chatMoodExpiresAts.set(chatId, at);
+  return { moods: chatMoods, expiresAts: chatMoodExpiresAts };
+}
+
+afterEach(() => {
+  resetAiChatMoodCache();
+});
 
 const MOOD_OPTIONS: readonly MoodOption[] = getMoodConfig().moods;
 const FIRST_MOOD_NAME: string = MOOD_OPTIONS[0]!.name;
@@ -27,22 +49,20 @@ const LAST_MOOD_NAME: string = MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.name;
 describe("aiChat/ai/mood currentMoodInstruction", () => {
   test("查询未到期心情时返回同一缓存档位且不强制重抽", () => {
     const cachedMood: MoodOption = { name: "平静", weight: 20, instruction: "慢慢来。" };
-    const moods = new Map<number, MoodOption>([[1, cachedMood]]);
-    const expiresAts = new Map<number, number>([[1, Date.now() + 60_000]]);
+    const { moods } = seedMoods([[1, cachedMood]], [[1, Date.now() + 60_000]]);
 
-    expect(currentMood(1, moods, expiresAts)).toBe(cachedMood);
+    expect(currentMood(1)).toBe(cachedMood);
     expect(moods.get(1)).toBe(cachedMood);
   });
 
   test("本群第一次用到时直接抽一次心情并按随机寿命记下到期时刻", () => {
-    const moods = new Map<number, MoodOption>();
-    const expiresAts = new Map<number, number>();
+    const { moods, expiresAts } = seedMoods([], []);
     const originalNow = Date.now;
     const originalRandom = Math.random;
     try {
       Date.now = () => 1_000_000;
       Math.random = () => 0; // roll = 0，落在权重表第一档；寿命取区间下限
-      const instruction: string = currentMoodInstruction(1, moods, expiresAts);
+      const instruction: string = currentMoodInstruction(1);
 
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
       expect(instruction).toBe(`【今天的心情：${FIRST_MOOD_NAME}】${MOOD_OPTIONS[0]!.instruction}`);
@@ -54,21 +74,20 @@ describe("aiChat/ai/mood currentMoodInstruction", () => {
   });
 
   test("寿命没到期时维持原心情；过了寿命上限后必然重抽", () => {
-    const moods = new Map<number, MoodOption>();
-    const expiresAts = new Map<number, number>();
+    const { moods, expiresAts } = seedMoods([], []);
     const originalNow = Date.now;
     const originalRandom = Math.random;
     try {
       Date.now = () => 1_000_000;
       Math.random = () => 0; // roll = 0，落在权重表第一档
-      currentMoodInstruction(1, moods, expiresAts);
+      currentMoodInstruction(1);
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
 
       // 才过 1 分钟，远小于寿命下限（2 小时），不该重抽——即使这次
       // Math.random 换成会抽到另一档心情的值，也不该生效。
       Date.now = () => 1_000_000 + 60_000;
       Math.random = () => 0.99;
-      currentMoodInstruction(1, moods, expiresAts);
+      currentMoodInstruction(1);
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
 
       // 过了寿命上限一毫秒：无论寿命本身随机浮动到多少都已到期，一定会
@@ -76,7 +95,7 @@ describe("aiChat/ai/mood currentMoodInstruction", () => {
       // roll 顶到上限附近，落在权重表最后一档。
       Date.now = () => 1_000_000 + MOOD_REROLL_MAX_MS + 1;
       Math.random = () => 0.99;
-      currentMoodInstruction(1, moods, expiresAts);
+      currentMoodInstruction(1);
       expect(moods.get(1)?.name).toBe(LAST_MOOD_NAME);
       expect(expiresAts.get(1)).toBe(1_000_000 + MOOD_REROLL_MAX_MS + 1 + MOOD_REROLL_MIN_MS + 0.99 * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
     } finally {
@@ -86,13 +105,12 @@ describe("aiChat/ai/mood currentMoodInstruction", () => {
   });
 
   test("不同群的心情与到期时刻互不影响", () => {
-    const moods = new Map<number, MoodOption>();
-    const expiresAts = new Map<number, number>();
+    const { moods, expiresAts } = seedMoods([], []);
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      currentMoodInstruction(1, moods, expiresAts);
-      currentMoodInstruction(2, moods, expiresAts);
+      currentMoodInstruction(1);
+      currentMoodInstruction(2);
       expect(moods.size).toBe(2);
       expect(expiresAts.size).toBe(2);
     } finally {
@@ -101,22 +119,20 @@ describe("aiChat/ai/mood currentMoodInstruction", () => {
   });
 
   test("已有心情且没到期时用缓存的心情拼指令句", () => {
-    const moods = new Map<number, MoodOption>([[1, { name: "摆烂", weight: 20, instruction: "随便啦。" }]]);
-    const expiresAts = new Map<number, number>([[1, Date.now() + 60_000]]);
-    expect(currentMoodInstruction(1, moods, expiresAts)).toBe("【今天的心情：摆烂】随便啦。");
+    seedMoods([[1, { name: "摆烂", weight: 20, instruction: "随便啦。" }]], [[1, Date.now() + 60_000]]);
+    expect(currentMoodInstruction(1)).toBe("【今天的心情：摆烂】随便啦。");
   });
 });
 
 describe("aiChat/ai/mood switchMood", () => {
   test("未到期也强制重抽，写回新心情并重掷随机寿命", () => {
-    const moods = new Map<number, MoodOption>([[1, { name: "旧心情", weight: 1, instruction: "旧指令" }]]);
-    const expiresAts = new Map<number, number>([[1, 9_999_999]]);
+    const { moods, expiresAts } = seedMoods([[1, { name: "旧心情", weight: 1, instruction: "旧指令" }]], [[1, 9_999_999]]);
     const originalNow = Date.now;
     const originalRandom = Math.random;
     try {
       Date.now = () => 1_000_000;
       Math.random = () => 0; // roll = 0，落在权重表第一档；寿命取区间下限
-      const mood: MoodOption = switchMood(1, moods, expiresAts);
+      const mood: MoodOption = switchMood(1);
 
       expect(mood.name).toBe(FIRST_MOOD_NAME);
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
@@ -128,13 +144,12 @@ describe("aiChat/ai/mood switchMood", () => {
   });
 
   test("切换后 currentMoodInstruction 直接使用新抽的心情", () => {
-    const moods = new Map<number, MoodOption>();
-    const expiresAts = new Map<number, number>();
+    seedMoods([], []);
     const originalRandom = Math.random;
     try {
       Math.random = () => 0.99; // roll 顶到上限，落在权重表最后一档
-      switchMood(1, moods, expiresAts);
-      expect(currentMoodInstruction(1, moods, expiresAts)).toBe(
+      switchMood(1);
+      expect(currentMoodInstruction(1)).toBe(
         `【今天的心情：${LAST_MOOD_NAME}】${MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.instruction}`
       );
     } finally {
@@ -199,5 +214,32 @@ describe("aiChat/ai/mood computeAdjustedWeight", () => {
   test("没有配置任何倍率表的心情始终是 base weight", () => {
     const plain: MoodOption = { name: "无倍率心情", weight: 7, instruction: "" };
     expect(computeAdjustedWeight(plain, "rain", "lateNight")).toBe(7);
+  });
+});
+
+describe("aiChat/ai/mood refreshChatMoods", () => {
+  test("mood.json 热重载后同名档位换成新快照、寿命不变，已删除的档位连同到期时刻一起清掉", () => {
+    const original: MoodConfig | null = defaultMoodConfigCache.current;
+    try {
+      adoptMoodConfig({
+        moods: [
+          { name: "平静", weight: 60, instruction: "新文案。" },
+          { name: "开心", weight: 40, instruction: "开心。" },
+        ],
+      });
+      const { moods, expiresAts } = seedMoods([
+        [1, { name: "平静", weight: 20, instruction: "旧文案。" }],
+        [2, { name: "已删除", weight: 80, instruction: "旧档位。" }],
+      ], [[1, 111], [2, 222]]);
+
+      refreshChatMoods();
+
+      expect(moods.get(1)).toBe(getMoodConfig().moods[0]!);
+      expect(expiresAts.get(1)).toBe(111);
+      expect(moods.has(2)).toBe(false);
+      expect(expiresAts.has(2)).toBe(false);
+    } finally {
+      defaultMoodConfigCache.current = original;
+    }
   });
 });

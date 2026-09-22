@@ -44,6 +44,7 @@ export const qaFormSessions: Map<number, QaFormSession> = new Map();
  * 与白名单同一套 write-through 语义：命令回执要等本领域 durable 确认，未确认的
  * 最终值留在这里，Worker 重建后重放。问题、正文和墓碑在发布前共同检查
  * STORAGE_PENDING_MAX_ENTRIES / STORAGE_PENDING_MAX_BYTES；精确 ACK 后移除。
+ * 容量就由这两个预算封顶（外层另受受管群数约束），本表自身不淘汰未落盘事实。
  */
 export const unacknowledgedChatQaWrites: Map<number, Map<string, number>> = new Map();
 

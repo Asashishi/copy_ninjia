@@ -33,8 +33,8 @@ export function replyAdmissionScenario(): Scenario {
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index++) {
-        checksum += admitTrigger(inputs[index % inputs.length]!).action.length +
-          admitRound(rounds[index % rounds.length]!).action.length;
+        checksum += admitTrigger(inputs[index % inputs.length]!).length +
+          admitRound(rounds[index % rounds.length]!).length;
       }
       return checksum;
     },

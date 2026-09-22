@@ -16,8 +16,7 @@ import type {
   ReadJoinLogRequest,
 } from "../../types/diskIO/messages";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
-import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
-import type { BlocklistIdPage } from "../../types/identityStorage";
+import type { BlocklistIdPage, IdentityPolicyRawReadResult } from "../../types/identityStorage";
 import { safePostDiskIO } from "./transport";
 
 /** 结算一条通道上的全部等待者；Worker 代际失效与 terminate 共用。 */

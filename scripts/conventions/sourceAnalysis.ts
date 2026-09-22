@@ -178,6 +178,22 @@ export function sourceFilesUnder(root: string): string[] {
   return files;
 }
 
+/**
+ * 读入一个源文件并解析成 AST。四处约定检查共用这一份：`setParentNodes` 必须为
+ * true（规则要沿 `node.parent` 上行），`ScriptKind.TS` 固定按 TypeScript 解析，
+ * 避免各检查各写一份参数而在某一处漏掉 parent 指针。
+ * @param path 源文件路径。
+ */
+export async function parseSourceFile(path: string): Promise<ts.SourceFile> {
+  return ts.createSourceFile(
+    path,
+    await Bun.file(path).text(),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+}
+
 /** 判断声明是否带有 export 修饰符。 */
 export function isExported(node: ts.Node): boolean {
   return ts.canHaveModifiers(node) &&

@@ -16,7 +16,7 @@ export function dispatchWedCommand(ctx: CommandContext<Context>): void | Promise
   const chat: WedChat | undefined = getOrCreateWedChat(ctx.chat.id);
   if (chat !== undefined && submitWedTask(chat, (): Promise<void> => handleWedCommand(ctx))) return;
   return sendCommandMessage({ chatId: ctx.chat.id,
-    text: chat === undefined ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.full : chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.queueFull, replyToMessageId: ctx.msgId }).then((): void => undefined);
+    text: chat === undefined ? chatAtmosphere(ctx.chat.id).WED_TEXTS.full : chatAtmosphere(ctx.chat.id).WED_TEXTS.queueFull, replyToMessageId: ctx.msgId }).then((): void => undefined);
 }
 
 /** /wed 按钮与命令共享执行槽；出队后重新核对消息、目标及发起人身份。 */

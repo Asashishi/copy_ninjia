@@ -1,4 +1,4 @@
-import { GEMINI_EMPTY_FUNCTION_CALLS as EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/gemini";
+import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
 /**
  * Gemini 侧的一轮回复会话：把中立的 AiReplySession 契约落到 generateContent
  * 的 contents 累积上。

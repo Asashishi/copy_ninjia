@@ -1,9 +1,9 @@
 import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User, Chat } from "grammy/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
-import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
+import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME, NO_MENTION_FACTS } from "../../consts/auto";
 import { explicitReplyTo } from "../../libs/forumTopic";
 import { joinPersonName } from "../../libs/text";
-import { visibleSenderChat } from "../../users/visibleSender";
+import { visibleSenderChat, visibleSenderId } from "../../users/visibleSender";
 import type { TelegramVisionSource } from "../../types/media";
 import type { AiReplyReference } from "../../types/aiChat/protocol";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
@@ -33,23 +33,11 @@ export function resolveSpeaker(message: Message): AiSpeakerSnapshot {
   return { id: 0, firstName: FALLBACK_SPEAKER_NAME, lastName: "", username: undefined };
 }
 
-/** 文本与媒体 caption 共用的 entity 来源。 */
-function messageEntitySource(message: Message): { text: string; entities: MessageEntity[] } | null {
-  if (typeof message.text === "string" && message.entities) {
-    return { text: message.text, entities: message.entities };
-  }
-  if (typeof message.caption === "string" && message.caption_entities) {
-    return { text: message.caption, entities: message.caption_entities };
-  }
-  return null;
-}
-
 /**
  * 一次遍历实体数组同时判定两个提及事实——createMessageTriggerContext 对每条
- * 消息都要两者，合并解析避免对同一条消息的 entities 重复扫两遍。
- *
- * `{text, entities}` 只在确实存在 entity 表时构造；无 entity 的常见路径直接返回，
- * 不分配投影对象。该字面量不逃逸，可由 JSC 消除。
+ * 消息都要两者，合并解析避免对同一条消息的 entities 重复扫两遍。正文与媒体
+ * caption 共用同一套 entity 判定；没有 entity 表时返回共享的 NO_MENTION_FACTS，
+ * 不分配对象。
  *
  * 逐个实体先用**长度**筛一道，筛掉的实体连子串都不物化：`toLowerCase` 只会让
  * 长度不变或变长（全 Unicode 里唯一会变长的是 U+0130，`test/auto/messageFacts.test.ts`
@@ -63,10 +51,23 @@ function messageEntitySource(message: Message): { text: string; entities: Messag
  * 一律走下面的物化比对，两条分支与「整串折小写后逐字比对 `@用户名`」同解，
  * 由 `test/auto/messageFacts.test.ts` 的参考实现穷举对拍守住。
  */
-export function resolveMentionFacts(message: Message, botId: number, botUsername: string | undefined): MentionFacts {
+export function resolveMentionFacts(
+  message: Message,
+  botId: number,
+  botUsername: string | undefined
+): Readonly<MentionFacts> {
+  let text: string;
+  let entities: MessageEntity[];
+  if (typeof message.text === "string" && message.entities) {
+    text = message.text;
+    entities = message.entities;
+  } else if (typeof message.caption === "string" && message.caption_entities) {
+    text = message.caption;
+    entities = message.caption_entities;
+  } else {
+    return NO_MENTION_FACTS;
+  }
   const facts: MentionFacts = { isMentioned: false, hasOtherMention: false };
-  const source: { text: string; entities: MessageEntity[]; } | null = messageEntitySource(message);
-  if (!source) return facts;
   // 只折用户名自己的大小写，不拼 `@用户名`：拼接必然分配一个短命字符串，而
   // 已经是小写的用户名 `toLowerCase` 原样返回同一个对象。前导 `@` 由下面的首码元
   // 判定承担，两者合起来与「整串比对 `@用户名` 的小写形态」逐字等价（`@` 既非
@@ -75,15 +76,15 @@ export function resolveMentionFacts(message: Message, botId: number, botUsername
   // 于是任何 mention 一律记成别人，与「没有可比对的目标」这个语义一致。
   const botUsernameLower: string = botUsername ? botUsername.toLowerCase() : "";
   const botMentionLength: number = botUsernameLower.length === 0 ? -1 : botUsernameLower.length + 1;
-  for (const entity of source.entities) {
+  for (const entity of entities) {
     if (entity.type === "mention") {
       const mentionEnd: number = entity.offset + entity.length;
       if (
         entity.length <= botMentionLength ||
         entity.offset < 0 ||
-        mentionEnd > source.text.length
+        mentionEnd > text.length
       ) {
-        const mentionText: string = source.text.substring(entity.offset, mentionEnd).toLowerCase();
+        const mentionText: string = text.substring(entity.offset, mentionEnd).toLowerCase();
         if (
           mentionText.length === botMentionLength &&
           // 0x40 是 `@`：与下面的 endsWith 合起来等价于整串比对 `@用户名`。
@@ -100,11 +101,6 @@ export function resolveMentionFacts(message: Message, botId: number, botUsername
     }
   }
   return facts;
-}
-
-/** 消息在群里显示的发送者 id；拿不到时返回 undefined，不伪造相等关系。 */
-function visibleSenderId(message: Message): number | undefined {
-  return visibleSenderChat(message)?.id ?? message.from?.id;
 }
 
 /** 判断当前消息是否显式回复同一个可见发送者先前的消息（判定见 libs/forumTopic.ts 的 explicitReplyTo）。 */

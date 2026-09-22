@@ -36,7 +36,8 @@ import {
   pickMember,
 } from "./memberFacts";
 import { postAntiRaidDurably } from "./durableDelivery";
-import { postAntiRaid } from "./workerBridge";
+import { parseUserIdArgument } from "../libs/telegramId";
+import { postAntiRaid } from "./workerBridge/controller";
 import { recordEligibleTemporaryAdBypassActivity } from "./temporaryAdBypass";
 import type {
   AdCandidateMessage,
@@ -47,6 +48,7 @@ import type {
   FloodCandidateMessage,
 } from "../types/antiRaid/protocol";
 import type { ChatState } from "../types/chatState";
+import { TELEGRAM_DATE_UNIT_MS } from "../consts/telegram";
 
 /**
  * 处理 `chat_member` 更新：这是权威且始终会送达的入群/离群信号（不同于
@@ -116,7 +118,7 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
     const joinLogged: boolean = await recordJoinLog({
       chatId,
       userId: user.id,
-      joinedAt: update.date * 1000,
+      joinedAt: update.date * TELEGRAM_DATE_UNIT_MS,
     });
     if (!joinLogged) {
       throw new Error(
@@ -138,7 +140,7 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
       : undefined;
     // 黑名单优先于一切豁免，且取代 join 投递：Worker 不会为一个马上要被踢掉的人开窗口。
     // 这一路没有入群公告（chat_member 更新不带服务消息），刷群计数由处置消息补记。
-    // 被取代的 join 一并登记：处置在 durable 对账里被 /unblock 取消掉时改投它，
+    // 被取代的 join 一并登记：处置在 durable 对账里被 /block disable 取消掉时改投它，
     // 否则这个人既没有移除也没有验证窗口（见 blocklistDelivery.ts）。
     if (!claimBlockedJoiner({
       chatId,
@@ -426,10 +428,13 @@ export async function handleVerificationCallback(
     return;
   }
 
-  const targetUserId: number = Number(data.slice(prefixLength));
   // callback_data 属于外部输入：前缀匹配不代表后半段一定是合法整数。NaN 若
   // 进入 Worker 会生成 "chatId:NaN" 状态键，按钮只会永远转圈且留下脏状态。
-  if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
+  // 与命令参数共用同一道严格十进制判定（见 libs/telegramId.ts 的
+  // parseUserIdArgument）：本 bot 只生成规范十进制，`"1e3"`、`" 12"` 这类写法
+  // 一律来自外部构造，没有放行的理由。
+  const targetUserId: number | undefined = parseUserIdArgument(data.slice(prefixLength));
+  if (targetUserId === undefined) {
     await answerCallbackQuery({
       callbackQueryId: query.id,
       text: chatAtmosphere(ctx.chat?.id ?? 0).VERIFICATION_INVALID_CALLBACK_TEXT,

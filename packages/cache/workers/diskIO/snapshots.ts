@@ -5,11 +5,24 @@ import type {
 
 /** owner: workers/diskIO。AI 上下文缓存由 aiMemoryStorage.ts 写入 SQLite。 */
 
-/** AI 记忆快照、dirty/delete 集合及其 flush timer 的唯一 owner。 */
+/**
+ * AI 记忆快照、dirty/delete 集合及其 flush timer 的唯一 owner。
+ *
+ * 填充：hydrate 按磁盘现存快照整体重建，此后每次 markAiMemoryDirty 覆盖一群。
+ * 清理：markAiMemoryDeleted（接管一次删除）、hydrateAiMemoryCache、
+ * resetAiMemoryCache。Worker 崩溃重建：load 后的 hydrate 从 SQLite 重读。
+ * 容量：每个受管群一份快照，上界 STATE_MANAGED_CHAT_LIMIT（见 consts/storage.ts）。
+ */
 export const aiMemoryCache: Map<number, string> = new Map();
-/** 需要覆盖写入的群；成功 flush、删除接管或 reset 时清除。 */
+/**
+ * 需要覆盖写入的群；成功 flush、删除接管或 reset 时清除。
+ * 容量：aiMemoryCache 的子集，同样以受管群数为上界。
+ */
 export const dirtyChats: Set<number> = new Set();
-/** 需要 durable 清除 ai_context 的群；删除回执或 reset 时清除。 */
+/**
+ * 需要 durable 清除 ai_context 的群；删除回执或 reset 时清除。
+ * 容量：受管群数级别；清空事务达到 durable 边界后逐个移出。
+ */
 export const deletedAiMemoryChats: Set<number> = new Set();
 /**
  * diskIOWorker 运行时按 chat 观察到的最新 revision（迟到消息的水位线）。
@@ -34,6 +47,10 @@ export const aiMemoryFlushState: { timer: ReturnType<typeof setTimeout> | null }
 /**
  * 要求即时写入的最早 revision；若写盘前被更新 revision 覆盖，写入最新快照
  * 后以最新 revision 回执，同样证明这次 purge 后已有新记忆 durable。
+ *
+ * 填充：purge 之后的首份新快照登记一次。清理：写盘回执、markAiMemoryDeleted
+ * 与 resetAiMemoryCache。Worker 崩溃重建：不重建——它只表达「本进程这一刻还欠
+ * 一次即时写」，新实例没有这笔欠账。容量：同时处于该状态的群数，上界为受管群数。
  */
 export const aiMemoryImmediateRevisions: Map<number, number> = new Map();
 

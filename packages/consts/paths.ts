@@ -62,21 +62,21 @@ export const CONFIG_ROOT: string = resolve(
 
 /** 应景贴纸包白名单配置文件。 */
 export const STICKERS_CONFIG_PATH: string = join(CONFIG_ROOT, "stickers.json");
-/** Telegram 反应集合部署配置文件。 */
-export const REACTIONS_CONFIG_PATH: string = join(CONFIG_ROOT, "reactions.json");
 /** AI 心情档位配置（文案、base weight、天气/时段倍率），见 packages/config/mood.ts。 */
 export const MOOD_CONFIG_PATH: string = join(CONFIG_ROOT, "mood.json");
 /** 广告检测的部署者示例清单（纯字符串数组），见 packages/config/adSamples.ts。 */
 export const AD_SAMPLES_CONFIG_PATH: string = join(CONFIG_ROOT, "ad_samples.json");
 
-/** Telegram Bot token 与超级管理员 ID 的必填部署配置。 */
-export const TELEGRAM_CONFIG_PATH: string = join(CONFIG_ROOT, "telegram.json");
+/** Bot token、超级管理员 ID 与默认通知风格的必填部署配置文件。 */
+export const BOT_CONFIG_PATH: string = join(CONFIG_ROOT, "bot.json");
 
 /**
  * AI 部署配置；agent 下的各项能力分别配置 provider、api_key、model 与可选
  * base_url，见 packages/config/agent.ts。
  */
 export const AGENT_CONFIG_PATH: string = join(CONFIG_ROOT, "agent.json");
+/** 定时任务部署配置（可选、可热重载），见 packages/config/cron.ts。 */
+export const CRON_CONFIG_PATH: string = join(CONFIG_ROOT, "cron.json");
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 
@@ -125,8 +125,8 @@ export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
  */
 export const AD_SAMPLE_FILE_PATH: string = join(AD_SAMPLE_MEMORY_DIR, "sample.json");
 
-/** Google Cloud 服务账号密钥（/translate 翻译用，已进 .gitignore）。 */
-export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
+/** Google Cloud 服务账号密钥（/translate 翻译用），与其它部署配置同在 Git 忽略的 config/ 下。 */
+export const GOOGLE_AUTH_FILE_PATH: string = join(CONFIG_ROOT, "g-auth.json");
 
 /**
  * 原子重写（写 tmp、rename 覆盖目标路径）统一使用的临时后缀，全项目落盘复用，

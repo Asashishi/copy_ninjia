@@ -35,8 +35,6 @@ export interface LockdownPreparedState extends LockdownAnnouncement {
   kind: "applying";
   stage: "prepared";
   originalPermissions: ChatPermissions;
-  /** Worker 重建接管时无法恢复触发瞬间的入群人数。 */
-  joinCount?: number;
   intentId: number;
   /**
    * 本轮已派发 commitApply，重复落盘回执不得再次派发。
@@ -73,7 +71,7 @@ export type LockdownState =
 
 export type LockdownMachineEvent =
   | { type: "thresholdExceeded"; joinCount: number }
-  | { type: "applyPrepared"; originalPermissions: ChatPermissions; joinCount: number; intentId: number }
+  | { type: "applyPrepared"; originalPermissions: ChatPermissions; intentId: number }
   | { type: "applyPreparationFailed" }
   | { type: "applyCommitPreparationFailed" }
   | { type: "statePersisted"; phase: LockdownPhase; intentId: number }
@@ -118,7 +116,7 @@ export type LockdownEffect =
   /** 预热管理员表：锁定期内「管理员拉人免验证」只认同步缓存判定。 */
   | { kind: "prefetchAdmins"; onlyIfCold: boolean }
   /** 只读取原权限；此阶段绝不修改 Telegram。 */
-  | { kind: "prepareApply"; joinCount: number }
+  | { kind: "prepareApply" }
   /** 把当前非 idle 状态交给主线程落盘。 */
   | { kind: "persistState" }
   /** applying intent 已落盘，可以重新读取最新权限并收紧 invite 权限。 */

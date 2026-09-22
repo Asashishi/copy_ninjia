@@ -7,13 +7,13 @@
  * Worker 拥有权、flush/load 握手与对外投递语义收在本文件；Worker 创建、
  * 回执路由与崩溃自愈的重启节流在 infra/diskIO/host.ts。
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
- * aiChat/workerBridge.ts、commands/luckChallenge/cache.ts、antiRaid/workerBridge.ts 与
+ * aiChat/workerBridge.ts、commands/luckChallenge/cache.ts、antiRaid/workerBridge/controller.ts 与
  * infra/blocklist/ 经 postDiskIO 投递。
  *
  * 本模块自身的错误一律 console.error（由进程控制台日志兜底）——它就是落盘终点，
- * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是
- * 本模块不复用 infra/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）
- * 的原因，需要一份独立的、只用 console 的自愈逻辑。
+ * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。崩溃自愈
+ * 同样只用 console，不经 infra/supervisedWorker.ts 通用骨架（其 onerror 走
+ * logger.error）。
  * @see ../../docs/cn/04-invariants.md
  */
 
@@ -26,16 +26,15 @@ import {
 } from "../cache/main/diskIO";
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
 import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import { createDiskIOWorker } from "./diskIO/host";
+import { clearRuntimeRecoveryTimer, stopWorkerAfterLoadFailure } from "./diskIO/recovery";
 import {
-  clearRuntimeRecoveryTimer,
-  createDiskIOWorker,
   rejectPendingDiskIORequests,
-  requestJoinLogFromWorker,
-  requestIdentityPoliciesFromWorker,
   requestBlocklistIdPageFromWorker,
+  requestIdentityPoliciesFromWorker,
+  requestJoinLogFromWorker,
   requestLuckSecretFromWorker,
-  stopWorkerAfterLoadFailure,
-} from "./diskIO/host";
+} from "./diskIO/requests";
 import {
   enqueueDiskIODiagnostic,
   resetDiskIODiagnosticChannel,
@@ -45,11 +44,11 @@ import { canQueueDiskIOBusiness, resetDiskIOOperations, safePostDiskIO } from ".
 import { AcknowledgedBatchQueue } from "../libs/acknowledgedBatchQueue";
 import { diskIOMessageCost } from "../libs/diskIOMessageCost";
 import { DISK_OPERATION_CONTROL_RESERVE, DISK_BUSINESS_BATCH_MAX_MESSAGES, DISK_OPERATION_MAX_RETAINED_BYTES } from "../consts/diskIO/business";
-import type { DiskIOOperationMessage } from "../types/diskIO/messages";
 import { stickerPacksForRecovery } from "../config/stickers";
 export {
   onAiMemoryDeletedPersisted,
   onAiMemoryPersisted,
+  onStickerCatalogPersisted,
   onDiskIOGiveUp,
   onDiskIORespawn,
   onIdentityStoragePersisted,
@@ -60,6 +59,7 @@ import type { FlushResult } from "../types/lifecycle";
 import type {
   DiskBusinessMessage,
   DiskFlushRequest,
+  DiskIOOperationMessage,
   LoadRequest,
   AdSampleDiskMessage,
   LogMessage,
@@ -74,8 +74,8 @@ import type {
   JoinLogRecord,
   LuckReceiptSecret,
 } from "../types/diskIO/storage";
-import type { IdentityPolicyRawReadResult } from "../types/identityStorage";
-import type { BlocklistIdPage } from "../types/identityStorage";
+import type { BlocklistIdPage, IdentityPolicyRawReadResult } from "../types/identityStorage";
+import { toErrorOr } from "../libs/errorMessage";
 
 const isMainThread: boolean = Bun.isMainThread;
 export interface DiskIOInitOptions {
@@ -87,9 +87,6 @@ export interface DiskIOInitOptions {
   maxPendingBusinessMessages?: number;
 }
 
-// 落盘 Worker 只能由入口在取得 bot.lock 后显式初始化。模块导入本身不得
-// 创建线程：否则竞争单实例锁失败的第二进程仍会触达共享数据。Worker 线程里
-// 永远不初始化本宿主，只使用 logger.ts 的转发模式。
 function requirePositiveFinite(value: number, label: string): number {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${label} must be a positive finite number.`);
   return value;
@@ -98,6 +95,8 @@ function requirePositiveFinite(value: number, label: string): number {
 /**
  * 在主线程显式启动唯一的落盘 Worker。调用方必须已经取得数据目录的
  * bot.lock；重复调用幂等，不能借重复初始化绕过崩溃自愈的放弃阈值。
+ * 模块导入本身不创建线程，竞争单实例锁失败的第二进程因此不会触达共享数据；
+ * Worker 线程里永远不初始化本宿主，只使用 logger.ts 的转发模式。
  */
 export function initDiskIO({
   onFatal,
@@ -143,9 +142,9 @@ export function isDiskIOInitialized(): boolean {
  * 记入后续汇总，因此本函数仍返回已接管，让来源 Worker 可以释放原批。
  */
 export function relayLogMessage(message: LogMessage): boolean {
-  // 进程尚未取得单实例锁、也未初始化唯一 DiskIO owner 时保持旧边界：只写
-  // journal，不建立可能永远等不到消费者的进程级积压。业务 Worker 只会在
-  // DiskIO 初始化完成后启动，因此运行期转发不经过这个分支。
+  // 进程尚未取得单实例锁、也未初始化唯一 DiskIO owner 时只写 journal，不建立
+  // 可能永远等不到消费者的进程级积压。业务 Worker 只会在 DiskIO 初始化完成后
+  // 启动，因此运行期转发不经过这个分支。
   if (!diskIORuntime.initialized) return false;
   return enqueueDiskIODiagnostic({ type: "log", ...message });
 }
@@ -206,6 +205,10 @@ export function isDiskIOBuffering(): boolean {
  */
 export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<LoadedData> {
   requirePositiveFinite(timeoutMs, "Disk I/O load timeout");
+  // pendingLoad 是单槽：第二个并发请求会覆盖前一个的 resolve / reject / timer。
+  if (pendingLoad.timer !== null) {
+    throw new Error("[diskIO] a startup load request is already pending.");
+  }
   const worker: Worker | null = diskIORuntime.worker;
   if (!worker) {
     return Promise.reject(new Error("Persistence Worker is unavailable; refusing to start with empty persisted state."));
@@ -454,6 +457,6 @@ export function terminateDiskIO(): Promise<void> {
     worker.terminate();
     return Promise.resolve();
   } catch (error: unknown) {
-    return Promise.reject(error instanceof Error ? error : new Error("Persistence Worker termination failed."));
+    return Promise.reject(toErrorOr(error, "Persistence Worker termination failed."));
   }
 }

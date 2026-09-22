@@ -1,4 +1,3 @@
-import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
 import type { AtmosphereTexts } from "../../types/atmosphere";
 import {
   ANTI_RAID_PER_MINUTE_LIMIT,
@@ -16,7 +15,7 @@ import type { LockdownAbandonReason } from "../../types/states/lockdown";
 import { logger } from "../../infra/logger";
 
 /** 生成超过入群阈值时的封锁公告。 */
-export function lockdownAnnouncementText(joinCount?: number, atmosphere: AtmosphereTexts = ATMOSPHERE_TEXTS.teasing): string {
+export function lockdownAnnouncementText(joinCount: number | undefined, atmosphere: AtmosphereTexts): string {
   const influx: string = joinCount === undefined
     ? "检测到短时间内大量成员入群"
     : atmosphere.NOTICE_TEXTS.lockdownInflux(JOIN_WINDOW_MS / 1000, joinCount);
@@ -71,11 +70,8 @@ function joinWindowCoolingDown(chatId: number, now: number): boolean {
  * 开始某群的重触发冷却。冷却比计数窗口长，期间记录在允许重触发前必然过期，
  * 因此立即释放窗口；写入时顺带清理其余过期冷却项。
  */
-function suppressJoinWindowRetrigger(
-  chatId: number,
-  durationMs: number,
-  now: number = Date.now()
-): void {
+function suppressJoinWindowRetrigger(chatId: number, durationMs: number): void {
+  const now: number = Date.now();
   clearJoinWindow(chatId);
   for (const [cooledChatId, until] of lockdownRetriggerCooldowns) {
     if (now >= until) lockdownRetriggerCooldowns.delete(cooledChatId);

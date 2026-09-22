@@ -12,6 +12,7 @@ import { DAY_FILE_JSON_INDENT } from "../../packages/consts/diskIO/appendOnly";
 import {
   JOIN_LOG_ENTRY_SEPARATOR_BYTES,
   JOIN_LOG_MAX_BUFFERED_ENTRIES,
+  JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
 } from "../../packages/consts/diskIO/joinLog";
 import {
   joinLogSnapshotChunks,
@@ -80,8 +81,8 @@ interface BenchmarkReport {
   results: AggregateResult[];
 }
 
-/** 生产容量线；输入固定后 baseline/current 才能做同轮对照。 */
-const RECORD_COUNT: number = 250_000;
+/** 生产容量线；夹具规模直接引用生产常量，输入固定后 baseline/current 才能做同轮对照。 */
+const RECORD_COUNT: number = JOIN_LOG_MAX_USERS_PER_CHAT_DAY;
 /** 单次正常 flush 最多引入的高基数溢出量。 */
 const OVERFLOW: number = 300;
 /** 子进程正式采样前的小规模预热输入。 */

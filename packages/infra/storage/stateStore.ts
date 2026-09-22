@@ -3,11 +3,14 @@ import type { FlushResult } from "../../types/lifecycle";
 import { chatStateCache } from "../../cache/main/chatState";
 import { translateStates } from "../../cache/main/translateState";
 import { globalAssetState, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
+import { resolve } from "node:path";
+import { RUNTIME_DATA_ROOT } from "../../consts/paths";
 import {
   BOT_DEFAULT_AVATAR_URL,
   FORTUNE_THUMBNAIL_URL,
   GAG_THUMBNAIL_URL,
   PROBABILITY_THUMBNAIL_URL,
+  RANDOM_H_IMAGE_DIR,
 } from "../../consts/ui/assets";
 import {
   DEFAULT_CHAT_STATE,
@@ -29,6 +32,7 @@ import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
 import { assertChatStateCapacity } from "../chatStateStorage";
 import { StateStore } from "./statePersistence";
+import { toError } from "../../libs/errorMessage";
 
 export {
   hydrateChatStateCache,
@@ -83,7 +87,7 @@ export function activeCopyModeIn(chatId: number): CopyMode | undefined {
 /**
  * 「未卜先知」内联结果此刻该用的缩略图直链。
  *
- * 四个取值函数都直接返回**最终可用值**而不是 `string | undefined`：与
+ * 五个取值函数都直接返回**最终可用值**而不是 `string | undefined`：与
  * agent 能力配置不同，这里的缺省只对应一个内置常量；语义在这里收敛一次，
  * 调用点就不必各自记得兜底。
  */
@@ -113,6 +117,14 @@ export function getBotDefaultAvatarUrl(): string {
   return globalAssetState.botDefaultAvatarUrl ?? BOT_DEFAULT_AVATAR_URL;
 }
 
+/**
+ * 随机图片目录的绝对路径；缺省语义同上。相对路径按运行时数据根（state.json 所在
+ * 目录）解析，绝对路径原样使用。
+ */
+export function getRandomHImageDirectory(): string {
+  return resolve(RUNTIME_DATA_ROOT, globalAssetState.randomHImageDir ?? RANDOM_H_IMAGE_DIR);
+}
+
 export function getChatStateCache(): ReadonlyLruCache<number, ChatState> {
   return chatStateCache;
 }
@@ -124,10 +136,22 @@ export function getActiveProxySendTarget(): number | undefined {
   return undefined;
 }
 
-function adoptCopyTarget(copiedUser: CachedUser, copyMode: CopyMode | undefined, copyChatId: number): void {
+/**
+ * 锁定复读目标：三元组整体写，不留「有目标但还没记群」的中间态。启动恢复与
+ * `/copy` 系命令共用这一个写入边界（见 cache/main/storage.ts 的 globalCopyState）。
+ */
+export function adoptCopyTarget(copiedUser: CachedUser, copyMode: CopyMode | undefined, copyChatId: number): void {
   globalCopyState.copiedUser = copiedUser;
   globalCopyState.copyMode = copyMode;
   globalCopyState.copyChatId = copyChatId;
+}
+
+/** 解除复读目标：与 adoptCopyTarget 对称，三元组整体清空。lastCopyTime 是冷却
+ *  记账，不属于这一组，解除时保持原值。 */
+export function clearCopyTarget(): void {
+  globalCopyState.copiedUser = null;
+  globalCopyState.copyMode = undefined;
+  globalCopyState.copyChatId = undefined;
 }
 
 export async function loadState(): Promise<void> {
@@ -152,6 +176,7 @@ export async function loadState(): Promise<void> {
     globalAssetState.probabilityThumbnailUrl = decoded.global.assets.probabilityThumbnailUrl;
     globalAssetState.gagThumbnailUrl = decoded.global.assets.gagThumbnailUrl;
     globalAssetState.botDefaultAvatarUrl = decoded.global.assets.botDefaultAvatarUrl;
+    globalAssetState.randomHImageDir = decoded.global.assets.randomHImageDir;
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
     throw error;
@@ -164,14 +189,14 @@ export async function loadState(): Promise<void> {
  * 目的是**让旋钮出现在文件里**：这一块没有任何命令会写，改图的人得直接编辑
  * state.json；而缺省语义（缺字段=回退常量）意味着一个从没配过的部署里根本看不到
  * 这些键，于是要么去翻代码找键名，要么照着别处抄一份可能已经过时的示例。启动时
- * 补齐之后，文件里永远摆着四个当前生效的值，改图就是就地改。
+ * 补齐之后，文件里永远摆着五个当前生效的值，改图就是就地改。
  *
  * 只补缺的那一项：已经配过的值原样保留，绝不用常量覆盖部署方写下的地址。
  *
  * 落盘走 saveGlobalStateInBackground 而不是 persistGlobalState：这是一次为了
  * 可读性做的补写，不是谁按下的权威决策，写失败不该拦住启动——失败会照常走
  * StateStore 的重试与 fatal 通道（见 app/lifecycle.ts 的 setStatePersistenceFatalHandler）。
- * @returns 本次补写了几项；四项都配过时为 0，且不产生任何写盘。
+ * @returns 本次补写了几项；五项都配过时为 0，且不产生任何写盘。
  */
 export function seedMissingAssetState(): number {
   let seeded: number = 0;
@@ -189,6 +214,10 @@ export function seedMissingAssetState(): number {
   }
   if (globalAssetState.botDefaultAvatarUrl === undefined) {
     globalAssetState.botDefaultAvatarUrl = BOT_DEFAULT_AVATAR_URL;
+    seeded++;
+  }
+  if (globalAssetState.randomHImageDir === undefined) {
+    globalAssetState.randomHImageDir = RANDOM_H_IMAGE_DIR;
     seeded++;
   }
   if (seeded > 0) saveGlobalStateInBackground("seed default asset URLs");
@@ -213,7 +242,7 @@ export async function persistGlobalState(context: string): Promise<void> {
     throwIfUpdateAborted();
   } catch (error: unknown) {
     throwIfUpdateAborted();
-    const reason: Error = error instanceof Error ? error : new Error(String(error));
+    const reason: Error = toError(error);
     throw new Error(`Failed to persist global state update (${context}): ${reason.message}`, { cause: error });
   }
 }
@@ -250,7 +279,7 @@ export function flushStateToDisk(
  * 会各读一次当前状态；同一 middleware 内复用引用（见 libs/chatState.ts 的形状契约），
  * 外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn 的独立读取。
  *
- * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/unblock 的连带
+ * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/block disable 的连带
  * 封禁群清单、各处 managed 群清扫、lockdown 收养与恢复……），用 `get` 会让它变成
  * 「读历史的函数」，其中两处直接呈现给用户。
  */

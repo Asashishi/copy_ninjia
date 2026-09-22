@@ -7,8 +7,9 @@ import { chatStateCache } from "../../packages/cache/main/chatState";
 import { whitelistEntryCache } from "../../packages/cache/main/identityStorage";
 import { temporaryAdBypassActivityCache } from
   "../../packages/cache/main/temporaryAdBypass";
-import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
+import { SUPER_ADMIN_USER_ID } from "../../packages/config/bot";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 const BOT_ID: number = 99;
 /** 固定的主线程观测时刻；投递载荷原样带给 Worker 当窗口时刻。 */
@@ -77,6 +78,14 @@ describe("刷屏计数的主线程投递门禁", () => {
       groupMessage({ from: { id: 7, is_bot: false, first_name: "刷屏怪", username: "noisy" } } as Partial<Message>)
     );
     expect(named?.label).toBe("@noisy");
+  });
+
+  test("无名发送者的标签兜底随本群人设切换文案风格", () => {
+    const nameless: Message = groupMessage({ from: { id: 7, is_bot: false, first_name: "" } } as Partial<Message>);
+    expect(candidate(nameless, { isFloodControlEnabled: true })?.label)
+      .toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser);
+    expect(candidate(nameless, { isFloodControlEnabled: true, aiPersona: "温柔的助手" })?.label)
+      .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
   });
 
   test("只认超级群：restrictChatMember 在普通群和私聊里根本不适用", () => {

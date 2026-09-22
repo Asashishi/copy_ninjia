@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReleaseCommand, readBuildSourceTree } from "../../scripts/release/command";
 import type { CommandResult, ReleaseCommand } from "../../scripts/release/command";
+import { ACTIVE_COLD_MIGRATION_EDGES } from "../../scripts/migrations/active";
 import { fileSha256, verifyReleaseAssets } from "../../scripts/release/assets";
 import type { ReleaseAsset } from "../../scripts/release/assets";
 import { publishRelease } from "../../scripts/release/github";
@@ -15,7 +16,10 @@ const VERSION: string = "12.1.0";
 const NOTES: string = "## Highlights\nBinary releases.\n\n## Compatibility / Migration Notes\nCurrent storage format.\n\n## Validation\nMock verification.\n";
 const roots: string[] = [];
 
-async function fixture(overrides: Readonly<Record<string, unknown>> = {}): Promise<{ root: string; notes: string }> {
+async function fixture(
+  overrides: Readonly<Record<string, unknown>> = {},
+  migrationPaths: readonly string[] = ACTIVE_COLD_MIGRATION_EDGES.map((edge): string => edge.bundledPath)
+): Promise<{ root: string; notes: string }> {
   const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-release-test-"));
   roots.push(root);
   const content: string = join(root, "content/copy-ninjia");
@@ -23,6 +27,7 @@ async function fixture(overrides: Readonly<Record<string, unknown>> = {}): Promi
   await Bun.write(join(content, "binary.json"), JSON.stringify({
     version: VERSION, platform: "linux-x64", bun: Bun.version, bunRevision: Bun.revision, sourceTree: TREE, ...overrides,
   }));
+  for (const path of migrationPaths) await Bun.write(join(content, path), "export {};\n");
   const archive: string = join(root, "copy-ninjia-linux-x64.tar.gz");
   const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({ cmd: ["tar", "-czf", archive, "copy-ninjia"], cwd: join(root, "content"), stdout: "pipe", stderr: "pipe" });
   expect(result.exitCode).toBe(0);
@@ -132,6 +137,13 @@ describe("发布资产与谱系", (): void => {
     await expect(verifiedAssets(root, ["linux-x64", "linux-arm64"])).rejects.toThrow();
     await Bun.write(join(root, "copy-ninjia-linux-x64.tar.gz.sha256"), "bad checksum\n");
     await expect(verifiedAssets(root)).rejects.toThrow("SHA-256 mismatch");
+  });
+  test.each(["missing", "obsolete", "source-map"])("拒绝迁移交付清单不完整或混入额外产物：%s", async (kind: string): Promise<void> => {
+    const paths: string[] = ACTIVE_COLD_MIGRATION_EDGES.map((edge): string => edge.bundledPath);
+    if (kind === "missing") paths.pop();
+    else paths.push(kind === "obsolete" ? "scripts/migrations/migrateOldFormat.js" : "scripts/migrations/migrateBotConfig.js.map");
+    const { root }: { root: string } = await fixture({}, paths);
+    await expect(verifiedAssets(root)).rejects.toThrow("exactly the active migration bundles and no source maps");
   });
   test("本地未提交改动不能获得发布用 Git tree", (): void => {
     expect(readBuildSourceTree(() => ({ exitCode: 0, stdout: " M scripts/build.ts\n" }))).toBeNull();

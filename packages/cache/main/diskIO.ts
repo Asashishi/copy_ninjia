@@ -21,6 +21,7 @@ import type {
   AiMemoryDeletedPersistedReply,
   WedMembersDeletedPersistedReply,
   AiMemoryPersistedReply,
+  StickerCatalogPersistedReply,
   DiskIODomain,
   LoadedReply,
   LuckAppendStalledReply,
@@ -115,6 +116,8 @@ export const DISK_IO_REQUEST_CHANNELS: readonly DiskIORequestChannel<never>[] = 
  * Worker 明确回复为部分失败、且正在等待调用方消费的 flush 回执。
  * host 只在对应 barrier 仍在途时填充，infra/diskIO.ts 在同一次请求恢复后立即删除；
  * 传输失败、超时、Worker 崩溃不会产生条目，因而不能被误判成某领域成功。
+ * 容量：同时在途的 flush barrier 数（键是 requestId），由各 barrier 调用方
+ * 自己的串行边界封住；不设淘汰——丢掉一条会把部分失败读成全部成功。
  */
 export const pendingFlushFailedDomains: Map<number, readonly DiskIODomain[]> = new Map();
 
@@ -149,6 +152,7 @@ interface DiskIORuntime {
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   wedMembersDeletedPersistedListeners: ((reply: WedMembersDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
+  stickerCatalogPersistedListeners: ((reply: StickerCatalogPersistedReply) => void)[];
   luckAppendStalledListeners: ((reply: LuckAppendStalledReply) => void)[];
   identityStoragePersistedListeners: ((reply: IdentityStoragePersistedReply) => void)[];
   giveUpListeners: (() => void)[];
@@ -158,6 +162,8 @@ interface DiskIORuntime {
  * 主线程 Disk I/O Worker 的完整运行态。initDiskIO 填充 Worker/配置，恢复
  * 窗口暂存有硬顶的业务消息；terminateDiskIO 结算等待、清 timer 并恢复默认值。
  * Worker 崩溃后保留监听器并从主线程镜像重建，业务队列容量由配置硬顶约束。
+ * stickerCatalogPersistedListeners 仅贴纸镜像模块初始化登记一次，容量固定；
+ * 随主进程退出释放，Disk I/O 重建沿用，缺失监听器不构成落盘确认。
  * midnightMaintenanceListeners 仅模块初始化登记，容量由主线程维护领域数约束；
  * Worker 重建保留监听器且不重放午夜通知，进程退出时随 owner 释放。
  * wedMembersDeletedPersistedListeners 由成员 owner 在模块初始化时登记一次，
@@ -208,6 +214,7 @@ export const diskIORuntime: DiskIORuntime = {
   aiMemoryDeletedPersistedListeners: [],
   wedMembersDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],
+  stickerCatalogPersistedListeners: [],
   luckAppendStalledListeners: [],
   identityStoragePersistedListeners: [],
   giveUpListeners: [],

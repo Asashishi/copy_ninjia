@@ -31,11 +31,11 @@ test("每个 SQLite 领域独立按主键覆盖旧 revision，保留镜像后的
 test("无 revision 的贴纸只覆盖当前 FIFO 的同包快照，不按墙钟猜新旧", (): void => {
   const revisions: DiskIORecoveryRevisions = new DiskIORecoveryRevisions();
   const buffered = new LinkedQueue<DiskBusinessMessage>();
-  const old: DiskBusinessMessage = { type: "stickerCatalog", pack: "one", snapshot: "old" };
-  const other: DiskBusinessMessage = { type: "stickerCatalog", pack: "two", snapshot: "other" };
-  const newer: DiskBusinessMessage = { type: "stickerCatalog", pack: "one", snapshot: "newer" };
+  const old: DiskBusinessMessage = { type: "stickerCatalog", revision: 1, pack: "one", snapshot: "old" };
+  const other: DiskBusinessMessage = { type: "stickerCatalog", revision: 1, pack: "two", snapshot: "other" };
+  const newer: DiskBusinessMessage = { type: "stickerCatalog", revision: 1, pack: "one", snapshot: "newer" };
   buffered.push(old); buffered.push(other);
-  revisions.record({ type: "stickerCatalog", pack: "one", snapshot: "mirror" }, buffered);
+  revisions.record({ type: "stickerCatalog", revision: 1, pack: "one", snapshot: "mirror" }, buffered);
   buffered.push(newer);
   expect(revisions.covers(old)).toBeTrue(); expect(revisions.covers(other)).toBeFalse();
   expect(revisions.covers(newer)).toBeFalse();

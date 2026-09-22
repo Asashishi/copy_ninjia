@@ -1,6 +1,6 @@
 /**
  * 专项复核入口：生产热点、启用功能的命令链路与真实 Worker 压力，三轮独立进程。
- * 文本清洗专项仅在显式 `--text` 时运行，不进入缺省的全部复核。
+ * 文本清洗与冷却表专项仅在显式 `--text`、`--cooldown` 时运行。
  */
 import { join } from "node:path";
 import { FULL_SUITE_ROUNDS } from "./fullSuite/constants";
@@ -34,9 +34,9 @@ interface ReviewResult {
 }
 
 const mode: string | undefined = Bun.argv[2];
-const MODES: readonly string[] = ["--hot-paths", "--chains", "--worker", "--ai", "--text"];
+const MODES: readonly string[] = ["--hot-paths", "--chains", "--worker", "--ai", "--text", "--cooldown"];
 if (Bun.argv.length > 3 || (mode !== undefined && !MODES.includes(mode))) {
-  throw new Error("Usage: bun run perf:review [--hot-paths|--chains|--worker|--ai|--text]");
+  throw new Error("Usage: bun run perf:review [--hot-paths|--chains|--worker|--ai|--text|--cooldown]");
 }
 const runRoot: string = createRunRoot();
 try {
@@ -47,6 +47,13 @@ try {
   };
   const results: (ReviewResult | TextReviewResult)[] = [];
   const tasks: RoundsOptions[] = [];
+  if (mode === "--cooldown") {
+    const names: readonly ScenarioName[] = ["cooldown-hit", "cooldown-renew", "cooldown-growth", "cooldown-saturated", "cooldown-expiry"];
+    for (const name of names) {
+      tasks.push({ label: name, seedMode: "none", args: [HOT_PATH_ENTRY, name] });
+      tasks.push({ label: `${name}:profile`, seedMode: "none", args: [HOT_PATH_ENTRY, name, "--profile"] });
+    }
+  }
   if (mode === undefined || mode === "--hot-paths") {
     for (const name of HOT_PATHS) {
       tasks.push({ label: name, seedMode: "none", args: [HOT_PATH_ENTRY, name] });

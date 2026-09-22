@@ -2,7 +2,7 @@ import type { AdSampleMessage } from "../antiRaid/adDetect";
 import type { VerificationSnapshot } from "../antiRaid/verification";
 import type { PendingBlockedRemoval } from "../blocklist";
 import type { IdentityPolicyTable } from "../identityPolicy";
-import type { TemporaryAdBypassActivity } from "../temporaryAdBypass";
+import type { TemporaryAdBypassActivity } from "../states/temporaryAdBypass";
 import type { LuckReceiptSecret } from "./storage";
 
 /**
@@ -80,6 +80,8 @@ export interface StickerCatalogDiskMessage {
   type: "stickerCatalog";
   pack: string;
   snapshot: string;
+  /** 进程内快照编号；仅关联 durable 回执，不写入文件。 */
+  revision: number;
 }
 
 /**

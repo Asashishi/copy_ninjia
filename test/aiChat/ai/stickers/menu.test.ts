@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { loggerStub } from "../../../helpers/loggerMock";
 import { settleTestBatch } from "../../../libs/helpers";
 
 /**
@@ -11,7 +12,7 @@ const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+  logger: loggerStub({ error: loggerError }),
 }));
 
 // aiChat/ai/tools/stickers.ts 从领域入口 `../stickers` 取 getStickerSet，而那个入口是

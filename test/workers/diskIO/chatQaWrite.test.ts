@@ -7,8 +7,7 @@ import {
   pendingChatQaWrites,
   resetStorageDatabaseCache,
 } from "../../../packages/cache/workers/diskIO/storageDatabase";
-import { hydrateStorageDatabase } from
-  "../../../packages/workers/diskIO/storageDatabase/hydration";
+import { hydrateStorageDatabase } from "../../helpers/storageDatabaseHydration";
 import { handleChatQaWrite } from
   "../../../packages/workers/diskIO/storageDatabase/chatQa";
 import { flushStorageDatabase } from

@@ -1,323 +1,60 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { DiskIOMessage, DiskIOOperationMessage } from "../../packages/types";
+import type { AdSampleDiskMessage } from "../../packages/types/diskIO/messages";
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../../packages/consts/diskIO/business";
-
-const handleLogMessage = mock((_message: unknown): void => {});
-const markAiMemorySnapshotDirty = mock((_input: unknown): void => {});
-const deleteAiMemorySnapshot = mock((_chatId: number, _revision: number): void => {});
-const markStickerCatalogSnapshotDirty = mock((_pack: string, _snapshot: string): void => {});
-const handleLuckDrawMessage = mock((_message: unknown): void => {});
-const handleVerificationUpsert = mock((_input: unknown): void => {});
-const handleVerificationDelete = mock((_input: unknown): void => {});
-const handleJoinLogMessage = mock((_message: unknown): void => {});
-const handleJoinLogDeleteMessage = mock((_message: unknown): void => {});
-const purgeJoinLogDeletions = mock((): boolean => true);
-const inspectLogFiles = mock((): { readonly kind: "logs" } => ({ kind: "logs" }));
-const adoptLogFiles = mock((_inspection: unknown): void => {});
-const maintainLogFiles = mock(async (_inspection: unknown): Promise<void> => {});
-const maintainLogRetention = mock((): void => {});
-const adoptAiMemorySnapshots = mock((_inspection: unknown): Map<number, string> => new Map());
-interface StickerInspection {
-  readonly kind: "stickers";
-}
-const inspectStickerCatalogs = mock(async (
-  _packs: readonly string[]
-): Promise<StickerInspection> => ({ kind: "stickers" }));
-const adoptStickerCatalogSnapshots = mock((_inspection: unknown): Map<string, string> => new Map());
-const maintainStickerCatalogFiles = mock((_inspection: unknown): void => {});
-const inspectJoinLogFiles = mock((day: string): { readonly today: string } => ({ today: day }));
-const maintainJoinLogFiles = mock((_inspection: unknown): void => {});
-const maintainJoinLogRetention = mock((_day?: string): void => {});
-const readJoinLog = mock((_message: unknown): readonly {
-  userId: number;
-  joinedAt: number;
-}[] => [{ userId: 42, joinedAt: 1_000 }]);
-interface LuckSecretRecoveryInput {
-  day: string;
-  confirmedResultCount: number;
-}
-const recoverLuckReceiptSecret = mock((input: LuckSecretRecoveryInput): {
-  version: 1;
-  day: string;
-  key: string;
-} => ({
-  version: 1,
-  day: input.day,
-  key: "secret",
-}));
-const luckWorkerCache: {
-  current: { day: string; entries: Map<string, { label: string; fortunePercent: number }> } | null;
-} = { current: null };
-type HydratedLuckEntries = Map<string, { label: string; fortunePercent: number }>;
-let hydratedLuckEntries: HydratedLuckEntries = new Map();
-const hydrateLuckDay = mock((day: string): void => {
-  luckWorkerCache.current = { day, entries: new Map(hydratedLuckEntries) };
-});
-const inspectLuckDay = mock((day: string): {
-  readonly day: string;
-  readonly cache: { readonly day: string; readonly entries: HydratedLuckEntries };
-} => ({ day, cache: { day, entries: new Map(hydratedLuckEntries) } }));
-const adoptLuckDay = mock((inspection: {
-  readonly cache: { day: string; entries: HydratedLuckEntries };
-}): void => { luckWorkerCache.current = inspection.cache; });
-const maintainLuckDay = mock((_day: string, _inspection: unknown): void => {});
-const maintainLuckForDay = mock((_day: string): void => {});
-const inspectLuckReceiptSecret = mock((input: LuckSecretRecoveryInput): {
-  readonly day: string;
-  readonly path: string;
-  readonly secret: null;
-} => ({ day: input.day, path: "receipt-secret.json", secret: null }));
-const adoptLuckReceiptSecret = mock((inspection: { readonly day: string }): {
-  version: 1;
-  day: string;
-  key: string;
-} => ({ version: 1, day: inspection.day, key: "secret" }));
-const inspectVerificationDay = mock((day: string): { readonly day: string } => ({ day }));
-const adoptVerificationDay = mock((_inspection: unknown): Map<string, unknown> => new Map());
-const maintainVerificationDay = mock((_inspection: unknown): void => {});
-const flushLogBuffer = mock((): boolean => true);
-const flushAiMemorySnapshots = mock((): boolean => true);
-const flushStickerCatalogs = mock((): boolean => true);
-const flushLuckAppends = mock((): boolean => true);
-const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
-const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
-const maintainVerificationDayForToday = mock((
-  _reply: (reply: unknown) => void,
-  _day?: string
-): void => {});
-const maintainAdSampleFiles = mock((_today?: string): void => {});
-const maintainTemporaryAdBypassActivities = mock((_reply: unknown, _now?: number): void => {});
-const flushBlocklistRemovalOutbox = mock((): boolean => true);
-const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
-  "blocklistRemovalOutbox",
-]);
-const flushJoinLogDomain = mock((): boolean => true);
-const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
-const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
-const handleChatStateWrite = mock((_message: unknown): void => {});
-const handleChatQaWrite = mock((_message: unknown): void => {});
-const handleTemporaryAdBypassWrite = mock((_message: unknown): void => {});
-const postMessage = mock((_reply: unknown): void => {});
-const consoleError = mock((..._args: unknown[]): void => {});
-interface HydratedStorageDatabase {
-  readonly blocklistEntryCount: number;
-  readonly permissionEntryCount: number;
-  readonly pendingBlockedRemovals: Map<number, never>;
-  readonly chatStates: Map<number, never>;
-  readonly chatQa: Map<number, never>;
-}
-const inspectStorageDatabase = mock((): { readonly kind: "storage" } => ({ kind: "storage" }));
-const adoptStorageDatabase = mock((_inspection: unknown): HydratedStorageDatabase => ({
-  blocklistEntryCount: 0,
-  permissionEntryCount: 0,
-  pendingBlockedRemovals: new Map<number, never>(),
-  chatStates: new Map<number, never>(),
-  chatQa: new Map<number, never>(),
-}));
-
-mock.module("../../packages/workers/diskIO/logFiles", () => ({
-  adoptLogFiles,
-  flushLogBuffer,
-  handleLogMessage,
-  inspectLogFiles,
-  maintainLogFiles,
-  maintainLogRetention,
-}));
-mock.module("../../packages/workers/diskIO/luckFiles", () => ({
-  adoptLuckDay,
-  configureLuckAppendStalledReply,
-  flushLuckAppends,
-  handleLuckDrawMessage,
-  hydrateLuckDay,
-  maintainLuckForDay,
-}));
-mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({
-  adoptLuckReceiptSecret,
-  inspectLuckReceiptSecret,
-  recoverLuckReceiptSecret,
-}));
-mock.module("../../packages/cache/workers/diskIO/luck", () => ({ luckWorkerCache }));
-mock.module("../../packages/workers/diskIO/verificationRecovery", () => ({
-  adoptVerificationDay,
-  inspectVerificationDay,
-  maintainVerificationDay,
-}));
-mock.module("../../packages/workers/diskIO/verificationWrites", () => ({
-  flushVerificationChanges,
-  handleVerificationDelete,
-  handleVerificationUpsert,
-  maintainVerificationDayForToday,
-}));
-mock.module("../../packages/workers/diskIO/adSampleFile", () => ({
-  handleAdSampleMessage: (_message: unknown): void => {},
-  maintainAdSampleFiles,
-}));
-mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
-  flushJoinLogDomain,
-  handleJoinLogDeleteMessage,
-  handleJoinLogMessage,
-  purgeJoinLogDeletions,
-  inspectJoinLogFiles,
-  maintainJoinLogFiles,
-  maintainJoinLogRetention,
-  readJoinLog,
-}));
-mock.module("../../packages/workers/diskIO/aiMemoryStorage", () => ({
+import {
   adoptAiMemorySnapshots,
-  configureAiMemoryDeletePersistedReply: (): void => {},
-  configureAiMemoryPersistedReply: (): void => {},
-  deleteAiMemorySnapshot,
-  flushAiMemorySnapshots,
-
-  markAiMemorySnapshotDirty,
-}));
-mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
+  adoptLogFiles,
+  adoptLuckDay,
   adoptStickerCatalogSnapshots,
+  adoptStorageDatabase,
+  adoptVerificationDay,
+  consoleError,
+  consumeJoinLogRejection,
+  deleteAiMemorySnapshot,
+  diskIOMaintenanceCron,
+  flushAiMemorySnapshots,
+  flushBlocklistRemovalOutbox,
+  flushJoinLogDomain,
+  flushLogBuffer,
+  flushLuckAppends,
   flushStickerCatalogs,
-  markStickerCatalogSnapshotDirty,
-}));
-mock.module("../../packages/workers/diskIO/snapshotFiles", () => ({
+  flushVerificationChanges,
+  handleAdSampleMessage,
+  handleBlocklistRemovalsMessage,
+  handleChatQaWrite,
+  handleChatStateWrite,
+  handleIdentityPolicyWrite,
+  handleJoinLogMessage,
+  handleLogMessage,
+  handleLuckDrawMessage,
+  handleTemporaryAdBypassWrite,
+  handleVerificationDelete,
+  hydrateLuckDay,
+  hydratedLuckEntries,
+  inspectJoinLogFiles,
   inspectLuckDay,
+  inspectLuckReceiptSecret,
   inspectStickerCatalogs,
+  inspectStorageDatabase,
+  luckWorkerCache,
+  maintainAdSampleFiles,
+  maintainJoinLogFiles,
+  maintainLogFiles,
   maintainLuckDay,
   maintainStickerCatalogFiles,
-}));
-mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
-  adoptStorageDatabase,
-  configureStoragePersistenceReply: (): void => {},
-  flushStorageDatabase: flushBlocklistRemovalOutbox,
-  handleIdentityPolicyWrite,
-  handleChatStateWrite,
-  handleChatQaWrite,
-  handleTemporaryAdBypassWrite,
-  handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
-  inspectStorageDatabase,
-  pendingStorageDatabaseDomains,
   maintainTemporaryAdBypassActivities,
-  readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({
-    type: "blocklistIdPageRead",
-    requestId: message.requestId,
-    page: { ids: [], nextCursor: message.afterId, done: true },
-  }),
-  readIdentityPolicies: (message: { requestId: number }): unknown => ({
-    type: "identityPoliciesRead",
-    requestId: message.requestId,
-    whitelist: [],
-    blocklist: [],
-    temporaryAdBypass: [],
-  }),
-}));
-const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: unknown) => void };
-const originalPostMessage = workerGlobal.postMessage;
-workerGlobal.postMessage = postMessage;
-const {
-  handleDiskIOWorkerMessage,
+  maintainVerificationDay,
+  markAiMemorySnapshotDirty,
+  markStickerCatalogSnapshotDirty,
+  postMessage,
   queueDiskIOWorkerMessage,
-} = await import("../../packages/workers/diskIOWorker");
-const { diskIOMaintenanceCron } = await import(
-  "../../packages/cache/workers/diskIO/maintenance"
-);
-const { stopDiskIOMaintenanceCron } = await import(
-  "../../packages/workers/diskIO/maintenanceCron"
-);
-// 拒收标记走真实的 owner 缓存：路由层的兜底就是靠它把失败传给统一 flush。
-const { consumeJoinLogRejection } = await import("../../packages/cache/workers/diskIO/joinLog");
-const {
+  readJoinLog,
+  recoverLuckReceiptSecret,
   rejectedStorageDomains,
-} = await import("../../packages/cache/workers/diskIO/storageDatabase");
-const {
-  diskIOOperationTail,
-  resetDiskIOReplayWindow,
-} = await import("../../packages/cache/workers/diskIO/recovery");
-
-afterAll(() => {
-  stopDiskIOMaintenanceCron();
-  workerGlobal.postMessage = originalPostMessage;
-});
-
-beforeEach(() => {
-  for (const fn of [
-    handleLogMessage,
-    markAiMemorySnapshotDirty,
-    deleteAiMemorySnapshot,
-    markStickerCatalogSnapshotDirty,
-    handleLuckDrawMessage,
-    handleVerificationUpsert,
-    handleVerificationDelete,
-    handleJoinLogMessage,
-    inspectLogFiles,
-    adoptLogFiles,
-    maintainLogFiles,
-    maintainLogRetention,
-
-    adoptAiMemorySnapshots,
-
-    inspectStickerCatalogs,
-    adoptStickerCatalogSnapshots,
-    maintainStickerCatalogFiles,
-    inspectJoinLogFiles,
-    maintainJoinLogFiles,
-    maintainJoinLogRetention,
-    readJoinLog,
-    flushLogBuffer,
-    flushAiMemorySnapshots,
-    flushStickerCatalogs,
-    flushLuckAppends,
-    flushVerificationChanges,
-    maintainVerificationDayForToday,
-    maintainAdSampleFiles,
-    maintainTemporaryAdBypassActivities,
-    flushBlocklistRemovalOutbox,
-    pendingStorageDatabaseDomains,
-    flushJoinLogDomain,
-    handleBlocklistRemovalsMessage,
-    handleIdentityPolicyWrite,
-    handleChatStateWrite,
-    handleChatQaWrite,
-    handleTemporaryAdBypassWrite,
-    postMessage,
-    hydrateLuckDay,
-    inspectLuckDay,
-    adoptLuckDay,
-    maintainLuckDay,
-    maintainLuckForDay,
-    inspectLuckReceiptSecret,
-    adoptLuckReceiptSecret,
-    inspectVerificationDay,
-    adoptVerificationDay,
-    maintainVerificationDay,
-    consoleError,
-    inspectStorageDatabase,
-    adoptStorageDatabase,
-  ]) fn.mockClear();
-  // 重放窗口是 Worker 独占的模块级状态：某个用例遗留的 true 会让后面每一次
-  // 写失败都误报成停机回执。
-  resetDiskIOReplayWindow();
-  diskIOOperationTail.current = Promise.resolve();
-  luckWorkerCache.current = null;
-  hydratedLuckEntries = new Map();
-  recoverLuckReceiptSecret.mockReset();
-  recoverLuckReceiptSecret.mockImplementation((input) => ({ version: 1, day: input.day, key: "secret" }));
-  adoptStorageDatabase.mockImplementation((): HydratedStorageDatabase => ({
-    blocklistEntryCount: 0,
-    permissionEntryCount: 0,
-    pendingBlockedRemovals: new Map<number, never>(),
-    chatStates: new Map<number, never>(),
-    chatQa: new Map<number, never>(),
-  }));
-  flushLogBuffer.mockReturnValue(true);
-  flushAiMemorySnapshots.mockReturnValue(true);
-  flushStickerCatalogs.mockReturnValue(true);
-  flushLuckAppends.mockReturnValue(true);
-  flushVerificationChanges.mockReturnValue(true);
-  flushBlocklistRemovalOutbox.mockReturnValue(true);
-  flushJoinLogDomain.mockReturnValue(true);
-  readJoinLog.mockImplementation(() => [{ userId: 42, joinedAt: 1_000 }]);
-});
-
-async function route(message: DiskIOMessage): Promise<void> {
-  await handleDiskIOWorkerMessage(message);
-}
+  route,
+} from "../helpers/diskIOWorkerRouterHarness";
+import type { StickerInspection } from "../helpers/diskIOWorkerRouterHarness";
 
 describe("Disk I/O Worker protocol router", () => {
   test("把各业务消息准确交给唯一领域 owner", async () => {
@@ -334,7 +71,7 @@ describe("Disk I/O Worker protocol router", () => {
       persistImmediately: true,
     });
     await route({ type: "deleteAiMemory", chatId: -1, revision: 3 });
-    await route({ type: "stickerCatalog", pack: "pack", snapshot: "catalog" });
+    await route({ type: "stickerCatalog", revision: 1, pack: "pack", snapshot: "catalog" });
     await route({ type: "luckDraw", day: "2026-07-22", key: "42", label: "大吉", fortunePercent: 99 });
     await route({ type: "verificationDelete", chatId: -1, userId: 42, generation: 1, revision: 4 });
     await route({ type: "blocklistRemovals", revision: 1, removals: [] });
@@ -354,7 +91,7 @@ describe("Disk I/O Worker protocol router", () => {
       persistImmediately: true,
     });
     expect(deleteAiMemorySnapshot).toHaveBeenCalledWith(-1, 3);
-    expect(markStickerCatalogSnapshotDirty).toHaveBeenCalledWith("pack", "catalog");
+    expect(markStickerCatalogSnapshotDirty).toHaveBeenCalledWith("pack", "catalog", 1);
     expect(handleLuckDrawMessage).toHaveBeenCalledTimes(1);
     expect(handleVerificationDelete).toHaveBeenCalledTimes(1);
     expect(handleBlocklistRemovalsMessage).toHaveBeenCalledTimes(1);
@@ -425,6 +162,40 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
       type: "diagnosticBatchAccepted",
     }));
+  });
+
+  test("诊断批次先刷日志后追加 adSample：刷盘失败不追加，重投后只追加一次", async () => {
+    const sample: AdSampleDiskMessage = {
+      type: "adSample",
+      chatId: -1,
+      senderId: 42,
+      label: "spammer",
+      detectedAt: "2026/09/22 00:00:00",
+      reason: "spam",
+      messages: [],
+    };
+    const batch: DiskIOMessage = {
+      type: "diagnosticBatch",
+      batchId: 12,
+      messages: [sample, { type: "log", timestamp: 1, level: "error", args: ["retry"] }],
+    };
+    flushLogBuffer.mockReturnValueOnce(false);
+
+    await route(batch);
+    expect(handleLogMessage).toHaveBeenCalledTimes(1);
+    expect(handleAdSampleMessage).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith({ type: "diagnosticBatchRetry", batchId: 12, retryAfterMs: 300_000 });
+
+    await route(batch);
+    expect(handleLogMessage).toHaveBeenCalledTimes(2);
+    expect(handleAdSampleMessage).toHaveBeenCalledTimes(1);
+    expect(handleAdSampleMessage).toHaveBeenCalledWith(sample);
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "diagnosticBatchAccepted", batchId: 12 });
+
+    // 不含日志的批次不刷日志，直接追加。
+    await route({ type: "diagnosticBatch", batchId: 13, messages: [sample] });
+    expect(handleAdSampleMessage).toHaveBeenCalledTimes(2);
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "diagnosticBatchAccepted", batchId: 13 });
   });
 
   test("身份 SQLite 的三个 owner 抛错同样不逸出 onmessage，按领域记拒收", async () => {
@@ -672,7 +443,7 @@ describe("Disk I/O Worker protocol router", () => {
   });
 
   test("密钥请求总有显式成功或失败回执", async () => {
-    hydratedLuckEntries.set("confirmed", { label: "大吉", fortunePercent: 99 });
+    hydratedLuckEntries.current.set("confirmed", { label: "大吉", fortunePercent: 99 });
     await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 8 });
     expect(flushLuckAppends).toHaveBeenCalledTimes(1);
     expect(hydrateLuckDay).toHaveBeenCalledWith("2026-07-22");
@@ -740,7 +511,7 @@ describe("Disk I/O Worker protocol router", () => {
   });
 
   test("启动恢复先加载当天结果，再把确认数交给密钥一致性检查", async () => {
-    hydratedLuckEntries.set("confirmed", { label: "大吉", fortunePercent: 99 });
+    hydratedLuckEntries.current.set("confirmed", { label: "大吉", fortunePercent: 99 });
 
     await route({ type: "load", stickerPacks: ["pack_a"] });
 
