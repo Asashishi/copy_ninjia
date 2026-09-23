@@ -1,5 +1,5 @@
 import type * as diskIO from "../../packages/infra/diskIO";
-import type { DomainFlushOutcome } from "../../packages/types/diskIO/replies";
+import type { DiskIOReplyListenerMap, DomainFlushOutcome } from "../../packages/types/diskIO/replies";
 import type { FlushResult } from "../../packages/types/lifecycle";
 
 /** 未提供读取夹具时拒绝调用，不把缺失数据伪装成空结果。 */
@@ -28,14 +28,28 @@ export function diskIOStub(overrides: Partial<typeof diskIO> = {}): typeof diskI
     flushDiskIODomain: async (): Promise<FlushResult> => "failed",
     flushDiskIODomainOutcome: async (): Promise<DomainFlushOutcome> => ({ result: "failed" }),
     terminateDiskIO: async (): Promise<void> => {},
-    onAiMemoryDeletedPersisted: (): void => {},
-    onAiMemoryPersisted: (): void => {},
-    onStickerCatalogPersisted: (): void => {},
     onDiskIOGiveUp: (): void => {},
+    onDiskIOReply: (): void => {},
     onDiskIORespawn: (): void => {},
-    onIdentityStoragePersisted: (): void => {},
-    onLuckAppendStalled: (): void => {},
-    onVerificationPersisted: (): void => {},
     ...overrides,
+  };
+}
+
+/** 各类可订阅回执的登记捕获；未列出的回执类型登记即丢弃。 */
+export type DiskIOReplyCaptures = {
+  readonly [K in keyof DiskIOReplyListenerMap]?: (listener: (reply: DiskIOReplyListenerMap[K]) => void) => void;
+};
+
+/**
+ * `onDiskIOReply` 替身：按回执类型把登记交给对应的捕获函数，测试据此持有并驱动
+ * 生产 owner 登记的回调。
+ */
+export function diskIOReplyStub(captures: DiskIOReplyCaptures): typeof diskIO.onDiskIOReply {
+  return <K extends keyof DiskIOReplyListenerMap>(
+    type: K,
+    listener: (reply: DiskIOReplyListenerMap[K]) => void
+  ): void => {
+    const capture = captures[type] as ((captured: (reply: DiskIOReplyListenerMap[K]) => void) => void) | undefined;
+    capture?.(listener);
   };
 }

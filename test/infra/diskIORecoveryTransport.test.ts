@@ -249,7 +249,7 @@ describe("Disk I/O 恢复握手的 scoped transport", () => {
 
 describe("Disk I/O 恢复期的缓冲重放", () => {
   test("重放区间的开标记投不出去就停机，绝不降级为静默重放", async () => {
-    // 漏掉开标记，区间内的写失败会退回被静默吞掉的旧行为（见 postRecoveryReplayMark）。
+    // 验证开标记投递失败时区间内的写失败立即停机，不会被 postRecoveryReplayMark 静默吞掉。
     const fixture: RecoveryFixture = await startDiskIO();
     const restoreListeners: () => void = withOnlyRespawnListener((): boolean => true);
     try {

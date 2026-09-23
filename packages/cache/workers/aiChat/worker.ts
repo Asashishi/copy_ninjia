@@ -1,3 +1,5 @@
+/** owner: workers/aiChat。AI Worker 生命周期与后台维护任务的进程内运行态。 */
+
 /**
  * AI Worker 的统一维护 interval。Worker 启动时填充，协作式停止时清除；
  * 崩溃时随 isolate 销毁，新 Worker 从空 holder 重建，容量固定为一个 timer。

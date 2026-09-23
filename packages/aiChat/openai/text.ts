@@ -133,7 +133,8 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
     let failureKind: AiRequestFailureKind = "request";
     if (error instanceof OpenAI.APIError) {
       const status: number | undefined = numericErrorStatus(error);
-      logger.error(`${request.errorLabel} error: ${status ?? "?"} ${error.message}`);
+      // APIError.message 已以 HTTP 状态码开头，此处不另加状态码。
+      logger.error(`${request.errorLabel} error: ${error.message}`);
       // 归因级联与失败结果映射都与两个 client 共用：本入口恒为媒体能力（语音
       // 转写），isMediaCapability 直接传 true；endpointFailure 按端点故障 request 处理。
       const providerFailure: ProviderApiFailureKind =

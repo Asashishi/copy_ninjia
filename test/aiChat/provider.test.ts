@@ -125,15 +125,7 @@ test("相同协议、端点和凭据的不同能力共享一个配额闸门", ()
   expect(aiProviderQuotaLanes).toHaveLength(1);
 });
 
-/**
- * 跨能力调用必须在**编译期**就不成立。
- *
- * 断言写在不会被调用的闭包里：只要类型收窄失效，`@ts-expect-error` 就会变成
- * 「未使用的抑制」而让 typecheck 失败——这一条不靠运行期覆盖率保证。
- */
 test("配了但这一家没实现的可选能力，只在启动时记一次诊断", () => {
-  // song 选了没有生歌实现的那一家：结构校验会过、工具静默不挂，只有这行诊断
-  // 能让部署者知道该改 $.agent.song 的 provider。
   agentConfig = {
     ...agentConfig,
     song: { provider: "openai", apiKey: "openai-song-key", baseUrl: undefined, model: "song-model" },
@@ -152,9 +144,13 @@ test("两家都实现的能力不刷诊断", () => {
   expect(loggerError).not.toHaveBeenCalled();
 });
 
+/**
+ * 断言写在不会被调用的闭包内：闭包从不执行，`@ts-expect-error` 只在编译期
+ * 生效，一旦对应类型收窄失效就会变成「未使用的抑制」而让 typecheck 失败。
+ */
 test("跨能力调用无法通过类型检查", () => {
   const assertCrossCapabilityCallsRejected = (): void => {
-    // 用完即弃的本地收集器，只为让每条断言成为一条语句；闭包从不执行。
+    // 用完即弃的本地收集器，只为让每条断言成为一条语句。
     const rejected: unknown[] = [];
     // @ts-expect-error summary 路由只能生成摘要，不能拿去读图。
     rejected.push(summaryAiProvider().describeVision);
@@ -171,12 +167,8 @@ test("跨能力调用无法通过类型检查", () => {
 });
 
 /**
- * 门面把每一次真实模型调用裹进配额闸门。
- *
- * 两件事都要钉住：正常时结果原样透出（漏一层就等于配额闸门根本没生效），
- * 闸门拒收时**按能力各自的「这次没成」形状返回**，绝不能把 undefined 交给
- * 上层——回复流水线拿到 undefined 会当成模型返回了空正文，对着一条 @ 提及
- * 完全沉默，而队列满本该走限频提示那条路。
+ * 以下测试覆盖门面对配额闸门的包装：正常调用把 provider 结果原样透出；
+ * 闸门拒收时返回各能力自身的「未成功」形状，不返回 undefined。
  */
 const releases: (() => void)[] = [];
 

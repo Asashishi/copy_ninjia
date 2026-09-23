@@ -13,19 +13,10 @@ export const DAY_FILE_JSON_INDENT: number = 2;
 
 /**
  * 日志追加失败之后重新打开日文件的退避间隔（见 workers/diskIO/logFiles.ts 的
- * writeDay）。
- *
- * 追加失败会丢弃当前游标，让下一次 flush 重新校验文件——不这么做就会在一个
- * 损坏的结尾上继续追加。但重开一次的代价是把整个日文件整份读回（`Bun.file`
- * 的字节读 + 严格 UTF-8 解码）并 JSON.parse 两遍、逐条走一次 schema 校验、再
- * readdirSync 扫一遍目录，而磁盘满
- * 或卷转只读这类故障不会在一个 flush 周期内自愈：不退避的话每个周期都要按日
- * 文件大小付一次这个代价，而故障期本身还会制造大量 `logger.error` 把
- * FLUSH_MAX_ENTRIES 压得更密。这条线程同时持有身份策略/群状态 SQLite、移除 outbox
- * 与 AI 记忆快照，日志写不下去不该把它们一起拖垮。
- *
- * 取 FLUSH_INTERVAL_MS 的十倍：重试够勤（磁盘腾出来后五分钟内恢复），又足够稀
- * 到重开的开销可以忽略。
+ * writeDay）。追加失败会丢弃当前游标，让下一次 flush 重新校验文件，避免在
+ * 损坏的结尾上继续追加；重开一次需要整份读回、解析并校验日文件，因此以退避
+ * 限制重试频率。这条线程同时持有身份策略/群状态 SQLite、移除 outbox 与 AI
+ * 记忆快照，日志故障不应拖垮它们。
  */
 export const LOG_REOPEN_RETRY_MS: number = FLUSH_INTERVAL_MS * 10;
 
@@ -34,14 +25,10 @@ export const LOG_REOPEN_RETRY_MS: number = FLUSH_INTERVAL_MS * 10;
  * 由主线程的运势 owner 记进统一 `logs/`（见 workers/diskIO/luckFiles.ts 的
  * flushLuckAppends 与 commands/luckChallenge/cache.ts 的监听）。
  *
- * 为什么需要这条旁路：本 Worker 自身的写盘错误按设计只有 `console.error`
- * （见 workers/diskIOWorker.ts 模块头），而部署可以把 Worker 的 stdout/stderr
- * 接到 /dev/null——那种部署上「条目进了主线程 dailyLuckCache、却永远写不进
- * memory/luck/<day>.json」是**完全不可观测**的。这条诊断不取代 console.error，
- * 只是额外给出一条一定能进 `logs/` 的告警。
- *
- * 取 3：追加失败会按 FLUSH_INTERVAL_MS 重排重试（见 scheduleLuckFlush），因此
- * 3 次连续失败≈持续 1 分钟写不进去，足以滤掉单次瞬时抖动，又不会让运维等太久。
+ * 本 Worker 自身的写盘错误按设计只有 `console.error`（见 workers/diskIOWorker.ts
+ * 模块头），部署方可能不采集这条输出；这条诊断额外给出一条一定能进 `logs/`
+ * 的告警，不取代 console.error。追加失败按 FLUSH_INTERVAL_MS 重排重试（见
+ * scheduleLuckFlush），达到本阈值约等于持续写入失败 1 分钟。
  */
 export const LUCK_APPEND_STALL_ALERT_FAILURES: number = 3;
 
@@ -49,14 +36,9 @@ export const LUCK_APPEND_STALL_ALERT_FAILURES: number = 3;
  * 跨日刷盘失败期间，最多滞留多少条「新一天」的抽签等待补录（见
  * workers/diskIO/luckFiles.ts 的 handleLuckDrawMessage）。
  *
- * 为什么需要滞留：换日前必须先把旧日已确认结果刷盘，刷不动就不能换 owner
- * （startLuckDay 会把待刷批次整个清零）。但触发这次换日的那条新日抽签，主线程
- * 早已把它写进 dailyLuckCache 并给用户发了回执——直接丢掉的话，磁盘恢复后当天
- * 文件永远缺这一条，用户当天也再抽不了第二次，而没有任何一条路径会补回来：
- * onDiskIORespawn 的全量重放只覆盖 Worker 重建，不覆盖「Worker 活着但写不进盘」。
- *
- * 取 FLUSH_MAX_ENTRIES：与一个批量窗口同量级，够装下一次典型故障期内的新日抽签
- * （运势是每人每天一次的低频写入），又给出明确的内存上界。超出后丢最旧的一条并
- * 记一行——那时故障已经持续到远超告警阈值，丢失必须是**有记录**的，不能静默。
+ * 换日前必须先把旧日已确认结果刷盘，刷不动就不能换 owner（startLuckDay
+ * 会把待刷批次整个清零）；触发换日的那条新日抽签已写入主线程 dailyLuckCache
+ * 并回执用户，须滞留补录，否则磁盘恢复后当天文件永久缺失这一条。超出上限后
+ * 丢弃最旧的一条并记一行日志，不静默丢失。
  */
 export const LUCK_DEFERRED_DRAW_MAX: number = FLUSH_MAX_ENTRIES;

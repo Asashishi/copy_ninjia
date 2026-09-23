@@ -1,10 +1,8 @@
 /**
  * 生歌载荷的解码门禁与上传扩展名映射。
  *
- * 与图片那侧的门禁刻意不同：音频容器由供应商决定（Lyria 默认 MP3，也可请求 WAV），
- * 逐一维护魔数表只会在换容器时静默把一首正常的歌判死，因此这里只认「是不是
- * audio/*」加体积上限。扩展名必须与真实容器一致——Bot API 靠文件名判定容器，
- * 对不上时客户端拿到的是一条点开就报错的音频。
+ * 解码门禁只认 mime 是否以 audio/ 开头加体积上限，不校验具体容器的魔数；
+ * 扩展名映射按容器逐一列出，认不出的容器统一映射为 mp3。
  */
 
 import { describe, expect, test } from "bun:test";
@@ -35,10 +33,8 @@ describe("生歌载荷解码", () => {
     expect(decodeGeneratedSong("", "audio/mp3")).toEqual({ ok: false, reason: "empty payload" });
     expect(decodeGeneratedSong("not base64!!", "audio/mp3"))
       .toEqual({ ok: false, reason: "payload is not canonical base64" });
-    // 超限在**解码之前**就被挡住，不为一个必然超限的载荷分配字节数组——整首歌
-    // 本来就有几 MB，这一步不是可省的保险。超一个字节的真实载荷同样落在这条
-    // 分支上（编码长度随字节数单调增长，因此解码后的那道上限判定是纯防御，
-    // 正常输入走不到）。
+    // 编码长度超限在解码前就被挡住，不为超限载荷分配字节数组；
+    // 解码后按字节数的上限判定是另一条独立分支，用超限字节数组触发。
     expect(decodeGeneratedSong("A".repeat(SONG_GENERATION_MAX_ENCODED_CHARS + 4), "audio/mp3"))
       .toEqual({ ok: false, reason: "encoded payload exceeds the size limit" });
     expect(decodeGeneratedSong(new Uint8Array(SONG_GENERATION_MAX_BYTES + 1).toBase64(), "audio/mp3"))

@@ -37,8 +37,7 @@ const sendMessageWithResult = mock(async (..._args: unknown[]): Promise<Telegram
   messageId: 78,
   repliedToMessageId: 42,
 }));
-// 超长图注降级会走一次拟人停顿；停顿本身是 send_message 已覆盖的行为，这里
-// 只关心两条消息的落地顺序和结算，因此按 replyToolset 用例的惯例把 sleep 打掉。
+// 超长图注降级会走一次拟人停顿；这里只核对两条消息的落地顺序和结算，故打掉 sleep。
 /** 拟人停顿的桩实现；beforeEach 的 mockReset 之后按这一份原样装回。 */
 async function sleepStub(..._args: unknown[]): Promise<void> {}
 const sleepMock = mock(sleepStub);
@@ -148,8 +147,8 @@ describe("generate_image 工具执行器", () => {
     expect(buildGenerateImageToolDefinition().description).toContain("每轮最多成功发送 1 张");
     expect(buildGenerateImageToolDefinition().description).toContain(IMAGE_REFERENCE_POINTER);
 
-    // 冷却推进、superAdmin 旁路、带不带参考图，都不得改变声明的任何一个字节：
-    // 这段前缀每轮重发，只要它变了供应商侧的缓存就整段落空。
+    // 冷却推进、superAdmin 旁路、带不带参考图，都不得改变声明的任何一个字节；
+    // 前缀缓存约束见 docs/cn/04-invariants.md。
     claimImageGeneration({ chatId: -1001, bypassCooldown: false });
     expect(JSON.stringify(buildGenerateImageToolDefinition())).toBe(baseline);
     resetImageGenerationCache();
@@ -215,8 +214,9 @@ describe("generate_image 工具执行器", () => {
 
     const result = JSON.parse(await execute(JSON.stringify({ prompt: "  日落下的纸飞机  ", aspect_ratio: "7:5" })));
 
-    // 不再上报 resolution：那个 "1K" 是 Gemini 生图模型的专属档位；oai 兼容侧
-    // 可能走 OpenAI size，也可能走 xAI aspect_ratio / resolution。
+    // toEqual 精确核对整个结果对象：不含 resolution 字段——OpenAI 走 size、
+    // xAI 走 aspect_ratio/resolution、Gemini 固定 1K，供应商侧的画幅/分辨率细节
+    // 都不进 generate_image 的工具结果。
     expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", actions_used: 1 });
     expect(generateChatImage).toHaveBeenCalledWith({
       prompt: "日落下的纸飞机",
@@ -394,9 +394,8 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("整轮只剩一个动作预算时不补发超长图注，图照发，硬顶不被顶破", async () => {
-    // 编排器的门禁只判断「还有没有额度开始这次调用」；这条补发若照发，一次
-    // 调用就会返回 actions_used: 2 把整轮顶过 HARD_MAX_ACTIONS_PER_REPLY，而
-    // 那个数正是工具错误文案对模型承诺的硬顶。丢图注不丢图：图才是主体。
+    // 编排器的门禁只判断「还有没有额度开始这次调用」；补发若照发会让这次调用
+    // 返回 actions_used: 2，顶破 HARD_MAX_ACTIONS_PER_REPLY 硬顶，因此丢图注不丢图。
     const ctx: ReplyToolContext = buildContext();
     const state: RoundMessageState = createRoundMessageState();
     const longCaption: string = "长".repeat(1025);
@@ -414,9 +413,9 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("发图失败时的错误不可重试：冷却已被这次真实模型请求占掉", async () => {
-    // 认领不释放（modelRequestStarted 已为真）却返回可重试错误，模型同轮重试
-    // 必然撞上自家冷却闸，那条分支的 required_action 会逼机器人向群里播报
-    // 「暂时不能使用生图」——群里根本没收到过任何图，那句话是假的。
+    // 认领不释放（modelRequestStarted 已为真）时错误必须标 retryable: false：
+    // 否则模型同轮重试会撞上自家冷却闸，其 required_action 会让机器人向群里
+    // 播报「暂时不能使用生图」——但群里其实并未收到过任何图。
     sendPhotoWithResult.mockImplementationOnce(async (): Promise<undefined> => undefined);
 
     const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "发不出去的图" })));
@@ -529,8 +528,8 @@ describe("generate_image 工具执行器", () => {
     expect(wrongType.error).toContain("caption must be a string");
     expect(generateChatImage).not.toHaveBeenCalled();
 
-    // 模型把可选参数填成 null 很常见，不能因此整条调用报参数错误。各用一个群，
-    // 避免前一次成功生图占掉后一次的群冷却。
+    // caption: null 与清洗后为空串都按「没写图注」放行，不报参数错误；三段各用
+    // 不同群，避免前一次成功生图占掉后一次的群冷却。
     const explicitNull = JSON.parse(await buildExecutor(buildContext(-1002))(JSON.stringify({
       prompt: "显式 null",
       caption: null,

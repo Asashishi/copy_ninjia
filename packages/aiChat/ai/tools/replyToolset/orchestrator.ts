@@ -131,11 +131,11 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
     functions,
     // 本轮生图参考素材文案。与 declarations 同一时刻取快照，交给运行时状态区块渲染
     // （见 imageReference.ts 与 workers/aiChat/runtimeState.ts）；没挂生图工具时是空串，
-    // 那一段因此与不含生图的轮次逐字相同。生图/生歌的群冷却不在提示词里，只由两个
-    // 执行器在调用时判定。
+    // 那一段因此与不含生图的轮次逐字相同。前缀缓存与群冷却约束见
+    // docs/cn/04-invariants.md。
     imageReference: buildImageReferenceBlock({ ctx, imageEnabled }),
-    // 服务端联网检索恒开：次数是写进提示词的软限制，回复循环只记账并在超出时
-    // 点名，不摘工具（见 workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
+    // 服务端联网检索恒开，挂载约束见 docs/cn/04-invariants.md；回复循环只记账并在
+    // 超出软限制时点名（见 workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
     webSearch: true,
     has: (name: string): boolean => names.has(name),
     execute: (name: string, argumentsJson: string): Promise<string> => {

@@ -49,7 +49,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     ? subcommand
     : undefined;
   const targetArgument: string = mode === undefined ? argument : match?.[2] ?? "";
-  const globalCopy: GlobalCopyState = getGlobalCopyState();
+  const globalCopy: Readonly<GlobalCopyState> = getGlobalCopyState();
 
   // acknowledged runner 严格串行处理 update；本次命令返回前不会开始另一条命令。
   if (globalCopy.copiedUser !== null) {
@@ -108,7 +108,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
 async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const globalCopy: GlobalCopyState = getGlobalCopyState();
+  const globalCopy: Readonly<GlobalCopyState> = getGlobalCopyState();
 
   if (!globalCopy.copiedUser) {
     await sendCommandMessage({
@@ -133,7 +133,7 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
 
 /** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */
 function stopCopyOwnedByChat(chatId: number): boolean {
-  const globalCopy: GlobalCopyState = getGlobalCopyState();
+  const globalCopy: Readonly<GlobalCopyState> = getGlobalCopyState();
   if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return false;
   clearCopyTarget();
   return true;

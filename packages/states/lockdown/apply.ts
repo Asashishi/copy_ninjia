@@ -1,4 +1,4 @@
-import { LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
+import { LOCKDOWN_MS, NO_LOCKDOWN_EFFECTS } from "../../consts/antiRaid/lockdown";
 import {
   announcementCleanupEffects,
   announcementOf,
@@ -43,7 +43,7 @@ export function handleApplyPrepared(
   event: Extract<LockdownMachineEvent, { type: "applyPrepared" }>
 ): LockdownTransition {
   if (state?.kind !== "applying" || state.stage !== "preparing") {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   }
   return {
     next: {
@@ -63,7 +63,7 @@ export function handleApplyPreparationFailed(
   state: LockdownState | undefined
 ): LockdownTransition {
   if (state?.kind !== "applying" || state.stage !== "preparing") {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   }
   // 从未形成 intent、也从未改过 Telegram：撤销占位，并撤掉刚发出去的公告。
   return {
@@ -77,7 +77,7 @@ export function handleApplyCommitPreparationFailed(
   state: LockdownState | undefined
 ): LockdownTransition {
   if (state?.kind !== "applying" || state.stage !== "prepared") {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   }
   // applying intent 已经落盘，但 Telegram 写操作尚未开始；删除 owner 即可，
   // 不能走恢复路径，否则可能用 T0 快照覆盖管理员刚改过的 invite 权限。
@@ -97,7 +97,7 @@ export function handleApplyResult(
   event: Extract<LockdownMachineEvent, { type: "applyResult" }>
 ): LockdownTransition {
   if (state?.kind !== "applying" || state.stage !== "prepared") {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   }
   if (!event.ok) {
     // 写操作结果不确定（可能已经生效），补一次恢复对账。公告在 APPLYING

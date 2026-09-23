@@ -61,8 +61,8 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   if (!update) return;
 
   const chatId: number = update.chat.id;
-  // 群类型镜像：只有主线程看得见 chat.type，而踢人在 Worker 里按它分派方法
-  // （见 ./chatKind.ts）。按值去重，正常情况下每个群一生只投一两条。
+  // 群类型镜像只收已接管群；只有主线程看得见 chat.type，而踢人在 Worker 里
+  // 按它分派方法（见 ./chatKind.ts）。按值去重，每次类型变化只投一条。
   observeChatKind(update.chat);
   const user: User = update.new_chat_member.user;
   // 自身的成员变动本来走 my_chat_member；这条排除必须放在最前面——万一
@@ -182,8 +182,8 @@ export function handleAntiRaidMessageIngress(
   // 验证只发生在群聊里，私聊消息不必跨线程投递去查一次注定落空的 Map。
   if (message.chat?.type === "private") return false;
 
-  // 群类型镜像（见 ./chatKind.ts）。排在管理员门禁之前：机器人此刻不是管理员
-  // 不代表以后不是，而这张表按值去重、每个群一生只投一两条，提前记没有代价。
+  // 已接管群的类型镜像（见 ./chatKind.ts）排在管理员门禁之前：机器人此刻不是
+  // 管理员不代表以后不是；未接管群的 /init 不会在容量拒绝前占用镜像。
   observeChatKind(message.chat);
 
   // 机器人不是本群管理员时整个入群守卫不启动：踢人/删消息都做不了，投递
@@ -328,9 +328,13 @@ function ingestAdmittedMessage(
   // 刷屏计数投递：与广告检测同一形态，主线程只做同步门禁 + 一次尽力而为的
   // post，窗口与禁言都在 Worker 侧（见 workers/antiRaid/floodControl.ts）。排在
   // 服务消息两条分支之后——入群/离群公告不是谁的「发言」，不该计进那个人的窗口。
-  // now 与上面广告判定上下文取的是同一个值：updateNow 每条 update 只读一次墙钟。
+  // 无论开关如何，先保留本条 update 的时刻供后续自动流水线复用；普通群和未开
+  // 刷屏的群跳过候选函数及其入参对象。开启时与上面广告上下文仍共用同一时刻。
+  const now: number = updateNow();
   const floodCandidate: FloodCandidateMessage | undefined =
-    buildFloodCandidate({ message, botId, now: updateNow(), chatState });
+    message.chat.type === "supergroup" && chatState.isFloodControlEnabled === true
+      ? buildFloodCandidate({ message, botId, now, chatState })
+      : undefined;
   if (floodCandidate !== undefined) {
     // 顺手把这个群的权限位补齐一次（已知或已在途时是一次 Map 查找）：Worker 侧
     // 的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程生命周期内到过。

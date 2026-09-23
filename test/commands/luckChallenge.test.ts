@@ -1,5 +1,5 @@
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
-import { diskIOStub } from "../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 
@@ -39,7 +39,7 @@ mock.module("../../packages/infra/logger", () => ({
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
-  onLuckAppendStalled: onLuckAppendStalledMock,
+  onDiskIOReply: diskIOReplyStub({ luckAppendStalled: onLuckAppendStalledMock }),
   relayLogMessage: relayLogMessageMock,
   ensureLuckReceiptSecret: ensureLuckReceiptSecretMock,
 })));
@@ -175,11 +175,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("cache key 解不开的恶意回执走完确认链路并正常 resolve", async () => {
-    // 攻击者可离线算出整条载荷：任取 32 字节得到 43 字符签名组，它的十六进制
-    // 就是正文要展示的摘要，两道同步闸因此都放行；cache key 组则取一个长度
-    // ≡ 1 (mod 4) 的值，`Uint8Array.fromBase64` 对它抛 SyntaxError。这条 promise
-    // 一旦 reject，中间件会把异常交给 bot.catch 重抛，acknowledged runner 带着
-    // 未确认的 offset 退出，Telegram 重投同一条消息——进程再也起不来。
+    // 签名部分是合法的 32 字节，两道同步闸都能通过；cache key 部分构造成
+    // 长度 ≡ 1 (mod 4)，使 `Uint8Array.fromBase64` 对它抛 SyntaxError。
     const signaturePart: string = new Uint8Array(32).fill(0xab)
       .toBase64({ alphabet: "base64url", omitPadding: true });
     const receipt: string = `luck:v1:${getTokyoDateKey()}:AAAAA.${signaturePart}`;
@@ -279,8 +276,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const receiptUrl: string = entitiesOf(ctx.results[0])[1]!.url;
     const legacyReceipt: string = receiptUrl.slice("https://t.me/#luck-receipt=".length);
 
-    // 验签要求回执内嵌日期等于当天，日级密钥每天轮换：旧格式回执在展示标签
-    // 格式上线次日起就已不可能验过，识别路径因此只保留当前格式。
+    // 验签要求回执内嵌日期等于当天，日级密钥每天轮换，旧格式回执因此必然验证失败。
     await luckChallenge.confirmLuckDraw(`${lines.join("\n")}\n${legacyReceipt}`);
     expect(postDiskIOMock).not.toHaveBeenCalled();
   });
@@ -298,8 +294,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
   test("Worker 收不下落盘消息时点名记一行：这条抽签只在内存里", async () => {
     // postDiskIO 在 Worker 已终止、或恢复握手期积压撑到硬顶时返回 false，
-    // 而它自己不打印任何东西。不判返回值就等于：内存里有、磁盘上没有、
-    // 日志里也没有——本仓其余调用点都判了这一支，只有运势这条漏了。
+    // 而它自己不打印任何东西，返回值必须由调用方判定。
     postDiskIOAccepted = false;
     const ctx = makeInlineCtx(444, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
@@ -314,8 +309,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("落盘线程连续追加失败的诊断被转成一行 logger.error（Worker 侧只有 console.error）", () => {
-    // Worker 的 console 在把 stdout/stderr 接到 /dev/null 的部署上等于没有，
-    // 这条监听是「条目进了 dailyLuckCache 却写不进 memory/luck/」唯一的可观测出口。
+    // onLuckAppendStalled 是「条目进了 dailyLuckCache 却写不进 memory/luck/」
+    // 唯一的可观测出口，见 docs/cn/04-invariants.md 运势追加停摆一节。
     expect(onLuckAppendStalledMock).toHaveBeenCalledTimes(1);
     const notify = onLuckAppendStalledMock.mock.calls[0]![0] as (reply: {
       type: "luckAppendStalled";
@@ -336,7 +331,6 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
     expect(loggerErrorMock).toHaveBeenCalledTimes(1);
     const line: string = loggerErrorMock.mock.calls[0]![0] as string;
-    // 运维要能从这一行直接判读：哪天、丢了几条、为什么写不进去。
     expect(line).toContain("2030-01-01");
     expect(line).toContain("3 times in a row");
     expect(line).toContain("7 confirmed draw(s)");
@@ -419,9 +413,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("以频道马甲/匿名管理员身份发出（消息 from 带不回真实 uid）：仍能按签名回执认领落盘", async () => {
-    // 回归线上事故：inline 预览永远是真人账号发起，但用户以马甲身份把结果
-    // 发进群时，via_bot 消息的 from 被 Telegram 换成 Channel_Bot/匿名马甲，
-    // via_bot 确认只能按文本索引，不能依赖被 Telegram 替换后的 from id。
+    // via_bot 消息的 from 会被 Telegram 换成 Channel_Bot/匿名马甲，确认路径
+    // 只能按文本索引，不能依赖被替换后的 from id。
     const ctx = makeInlineCtx(888, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     // 调用方只传消息文本及其实体，不含（也拿不到）真实 uid。
@@ -433,10 +426,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("当日已确认结果撑满上限后拒收新 key，也不再落盘", async () => {
-    // key 是 `userId:sha256(问题原文)`，问题原文由用户随手输入——「当日唯一 key
-    // 数」是攻击者选的数字而不是自然上界。不设闸的话，主线程这张 Map、Disk I/O
-    // Worker 侧的当日镜像与 memory/luck/<day>.json 会一起整天长下去，而下次启动
-    // 还要把整个文件逐条按 LUCK_TIERS 校验一遍才能开始收 update。
+    // key 数由用户输入驱动，不是自然上界；容量与清理策略见
+    // cache/main/luckChallenge.ts 的 dailyLuckCache 注释。
     const tier = LUCK_TIERS[0]!;
     for (let index: number = 0; index < DAILY_LUCK_CACHE_MAX; index++) {
       cache.dailyLuckCache.set(`filler:${index}`, { tier, fortunePercent: tier.fortunePercentRange[0] });
@@ -447,7 +438,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
     await confirmResult(ctx.results[0]);
 
-    // 撑满时连落盘消息都不投：那正是 Worker 侧镜像与当日文件无界增长的入口。
+    // 撑满时不再投递落盘消息。
     expect(postDiskIOMock).not.toHaveBeenCalled();
     expect(cache.dailyLuckCache.has("999")).toBe(false);
     expect(cache.dailyLuckCache.size).toBe(DAILY_LUCK_CACHE_MAX);
@@ -735,9 +726,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("启动时恰好卡在日切：丢弃过期凭据继续启动，不抛错拦下整个进程", async () => {
-    // Disk I/O Worker 在启动边界算出的是 D，主线程等到 load 回执时已经
-    // 是 D+1。抛错的话异常会逸出 ApplicationLifecycle.init()（调用点没有
-    // try/catch），run() 记一行日志并以退出码 1 结束——一次日切让 bot 起不来。
+    // Disk I/O Worker 在启动边界算出的日期是 D，主线程收到 load 回执时
+    // 可能已经是 D+1；restoreLuckState 必须能处理这种过期凭据而不抛错。
     try {
       mockTodayOverride = "2030-01-02";
       cache.luckCacheState.dayKey = "";

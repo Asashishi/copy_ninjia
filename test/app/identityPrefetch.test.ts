@@ -93,8 +93,7 @@ describe("update 前置身份预热", () => {
     });
 
     // users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts 都
-    // 按 ctx.chat.id 解析频道帖的行为主体；不收集它的话，已在 permission_list
-    // 里的频道在自己频道发命令会撞上冷 LRU 的 fail-closed 判定被拒。
+    // 按 ctx.chat.id 解析频道帖的行为主体，因此这里预热的是频道自身的 id。
     expect(prefetchedBatches[0]).toEqual([-1002233445566]);
   });
 

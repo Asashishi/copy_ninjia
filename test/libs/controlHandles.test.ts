@@ -3,7 +3,7 @@ import type { createFlushBarrier } from "../../packages/libs/flushBarrier";
 import type { createKeyedSerialTaskRunner } from "../../packages/libs/keyedSerialTaskRunner";
 import type { createLatestValueRunner } from "../../packages/libs/latestValueRunner";
 import type { createPrioritizedBoundedTaskRunner } from "../../packages/libs/prioritizedBoundedTaskRunner";
-import type { ReadonlyLruCache } from "../../packages/libs/lruCache";
+import type { getChatStateCache } from "../../packages/infra/storage/stateStore";
 import type { superviseWorker } from "../../packages/infra/supervisedWorker";
 import type { registerHandlers } from "../../packages/app/registerHandlers";
 import type { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
@@ -100,20 +100,16 @@ test("AI 心跳与贴纸发送锁句柄的方法不可替换", (): void => {
   expect(check).toBeDefined();
 });
 
-test("LRU 只读视图的查询与迭代入口不可替换", (): void => {
-  const check = (view: ReadonlyLruCache<number, string>): void => {
+test("群状态热读副本的只读视图不能绕过 owner 改写", (): void => {
+  const check = (view: ReturnType<typeof getChatStateCache>): void => {
     // @ts-expect-error 缓存大小只读。
     view.size = 0;
-    // @ts-expect-error 存在性查询入口只读。
-    view.has = (): boolean => false;
-    // @ts-expect-error 命中读取入口只读。
-    view.get = (): undefined => undefined;
-    // @ts-expect-error 无副作用读取入口只读。
-    view.peek = (): undefined => undefined;
-    // @ts-expect-error 主键迭代入口只读。
-    view.keys = (): IterableIterator<number> => [][Symbol.iterator]();
-    // @ts-expect-error 继承的条目迭代入口同样只读。
-    view[Symbol.iterator] = (): IterableIterator<readonly [number, string]> => [][Symbol.iterator]();
+    // @ts-expect-error 只读视图没有写入入口。
+    view.set(-1, view.get(-1)!);
+    // @ts-expect-error 只读视图没有删除入口。
+    view.delete(-1);
+    // @ts-expect-error 只读视图没有清空入口。
+    view.clear();
   };
   expect(check).toBeDefined();
 });

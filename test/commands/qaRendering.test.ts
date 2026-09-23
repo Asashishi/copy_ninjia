@@ -78,7 +78,7 @@ describe("表单字段解析", () => {
   });
 
   test("代码块内部以标签开头的行不切断答案", () => {
-    // 块内正文自带一行「回答:」——认它就会把答案从中间劈开。
+    // 块内正文自带一行「回答:」，验证它不会被当成新字段的标签。
     const body: string = "回答: 这一行在代码块里\n第二行";
     const text: string = `回答:\n${body}`;
     const parsed: QaFieldInput | undefined = parseQaFieldMessage(groupMessage(text, [
@@ -133,9 +133,8 @@ describe("表单提示", () => {
   });
 
   test("两项都填满时按 Telegram 上限截断回答，问题不动", () => {
-    // 两项上限各自独立（256 / 3840），且分别来自不同的投递消息——单条入站
-    // 消息的 4096 上限管不住它们的和。不截断的话这里是 4216，editMessageText
-    // 拿到 400 并被 editQaForm 丢弃，表单会一直停在旧内容上。
+    // 问题与回答各自的字符上限相加会超过单条消息 4096 的上限，这里验证渲染时
+    // 只截断回答、问题保持原文。
     const question: string = "问".repeat(CHAT_QA_QUESTION_MAX_CHARS);
     const answer: string = "答".repeat(CHAT_QA_ANSWER_MAX_CHARS);
     const prompt: string = renderQaFormPrompt(question, answer, ATMOSPHERE_TEXTS.teasing);
@@ -155,8 +154,7 @@ describe("表单提示", () => {
   });
 
   test("截断点不落在代理对中间", () => {
-    // 预算刚好把一个星标切成两半时，truncateInline 必须退回整字符；留下孤立
-    // 高位代理会在表单上显示成乱码方块。
+    // 逐个字符偏移量试探预算边界，验证 truncateInline 遇到代理对会退回整字符。
     const question: string = "问".repeat(CHAT_QA_QUESTION_MAX_CHARS);
     for (let padding: number = 0; padding < 4; padding++) {
       const answer: string = "答".repeat(padding) + "🌟".repeat(CHAT_QA_ANSWER_MAX_CHARS);

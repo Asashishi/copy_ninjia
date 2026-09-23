@@ -68,9 +68,8 @@ function defaultPerformer(): string {
 }
 
 /**
- * generate_song 的工具声明。**整段逐字恒定**，不接受任何本轮上下文，理由同
- * buildGenerateImageToolDefinition：带着每秒变化的冷却秒数的文案留在声明里，会把整段
- * 稳定前缀的指纹打散。群冷却因此连提示词都不进，只在调用真的发生时由执行侧判定并把
+ * generate_song 的工具声明。**整段逐字恒定**，不接受任何本轮上下文；前缀缓存约束见
+ * docs/cn/04-invariants.md。群冷却连提示词都不进，只在调用真的发生时由执行侧判定并把
  * 剩余秒数回给模型（见 createGenerateSongExecutor 的冷却闸）；工具是否挂载仍由
  * createReplyToolset 按 mediaToolsRequested 与供应商能力决定。
  */
@@ -170,9 +169,8 @@ function parseArguments(argumentsJson: string): ParsedSongArguments | null {
 /**
  * 冷却未过时回给模型的统一提示。
  *
- * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段：模型的提示词里
- * 没有任何冷却状态，这条工具结果是它唯一一次知道「还要等多久」的机会，两条路径的
- * 文案与秒数口径因此必须同源。
+ * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段：这条工具结果是
+ * 模型唯一一次知道「还要等多久」的机会，两条路径的文案与秒数口径因此必须同源。
  * @param retryAfterMs 冷却剩余毫秒，由生歌冷却表给出。
  */
 function coolingDownError(retryAfterMs: number): string {
@@ -216,9 +214,9 @@ export function createGenerateSongExecutor(
         { retryable: false }
       );
     }
-    // 冷却整条不进提示词，模型是在不知道本轮还剩多久的情况下调用的：因此在解析参数和
-    // 请求模型之前先做一次只读判定，冷却中直接把剩余秒数回给它。真正的原子闸仍是下面
-    // 的 claim——只读判定与 claim 之间同群另一轮可能抢先占位，那条路径回同一段文案。
+    // 冷却状态不进提示词，因此在解析参数和请求模型之前先做一次只读判定，冷却中
+    // 直接把剩余秒数回给模型。真正的原子闸仍是下面的 claim——只读判定与 claim 之间
+    // 同群另一轮可能抢先占位，那条路径回同一段文案。
     const availability: SongGenerationAvailability = getSongGenerationAvailability({
       chatId: ctx.chatId,
       bypassCooldown: ctx.bypassMediaToolCooldown,

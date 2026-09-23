@@ -81,7 +81,6 @@ describe("广告命中样本旁路", () => {
   });
 
   test("被截断的旧文件按追加机制自愈，不阻塞新样本", async () => {
-    // 样本是可丢的旁路素材：断电撕裂了末尾那条就裁掉，与日志/运势同一档取舍。
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     await Bun.write(AD_SAMPLE_FILE_PATH, '{\n  "-1001:1": {\n    "reason": "旧的"\n  },\n  "-1001:2": {\n    "rea');
 
@@ -99,9 +98,8 @@ describe("广告命中样本旁路", () => {
 
     await handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
 
-    // 新文件只剩轮转后的这一条。
     expect(Object.keys(await readSamples())).toEqual(["-1001:99"]);
-    // 当天新归档在 15 个东京自然日的保留窗口内，内容应原样保留。
+    // 新归档落在 15 个东京自然日保留窗口内，内容应原样保留。
     const archives: string[] = readdirSync(AD_SAMPLE_MEMORY_DIR)
       .filter((name: string): boolean => name !== "sample.json");
     expect(archives).toHaveLength(1);
@@ -226,13 +224,9 @@ describe("广告命中样本旁路", () => {
   });
 
   test("写盘失败只作废游标、不抛出：旁路绝不能拖住封禁本身", async () => {
-    // 目录被占成普通文件，mkdir 必然失败。
-    //
-    // 父目录必须显式建出来：本用例要造的前置条件是「ad-detected 这个名字被一个
-    // 普通文件占着」，而不是「memory/ 也不存在」。beforeEach 只删 ad-detected，
-    // memory/ 一直是别的用例调 handleAdSampleMessage 时 recursive mkdir 顺带建的
-    // ——`bun test --randomize` 把本用例排到文件里第一个时，占位写入会先撞
-    // ENOENT，用例还没开始就失败。
+    // 显式建父目录 memory/：beforeEach 只删 AD_SAMPLE_MEMORY_DIR 本身，
+    // --randomize 把本用例排第一个时若 memory/ 还不存在，占位写入会先撞
+    // ENOENT。父目录建好后把 AD_SAMPLE_MEMORY_DIR 占成普通文件，让 mkdir 失败。
     mkdirSync(dirname(AD_SAMPLE_MEMORY_DIR), { recursive: true });
     rmSync(AD_SAMPLE_MEMORY_DIR, { recursive: true, force: true });
     await Bun.write(AD_SAMPLE_MEMORY_DIR, "not a directory");

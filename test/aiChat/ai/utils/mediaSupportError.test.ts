@@ -8,10 +8,8 @@ import type { ProviderApiFailureKind } from
   "../../../../packages/aiChat/ai/utils/mediaSupportError";
 
 /**
- * 归因级联的**顺序本身是语义**（见 mediaSupportError.ts 的头注）：三个模型客户端
- * 必须得出同一档结论，否则同一个 HTTP 状态在不同供应商上会分叉。这里直接钉住那条
- * 级联与它的三档结果映射，不经由任何 SDK 替身——客户端单测覆盖的是各自的日志与
- * 结果形态，覆盖不到「先判 404 还是先判模态」这种排序。
+ * 归因级联的顺序（见 mediaSupportError.ts 的头注），不经由任何 SDK 替身，
+ * 直接对级联函数与三档结果映射做断言。
  */
 
 /** 同时命中「不支持」与「媒体输入」两类语义的典型上游文案。 */
@@ -29,8 +27,7 @@ describe("供应商 API 失败的状态读取", () => {
 
 describe("供应商 API 失败的归因级联", () => {
   test("路径级 404/405 最先判，压过同一条消息里的模态语义", () => {
-    // 这条正文本身足以判成 unsupported；级联必须仍然先给出 misconfigured，
-    // 否则部署把 model 或 base_url 写错会被记成「这个模型没有视觉能力」。
+    // 正文本身命中 unsupported 语义，但 404/405 优先于模态判断。
     for (const status of [404, 405]) {
       expect(classifyProviderApiFailure(status, UNSUPPORTED_MEDIA_MESSAGE, true))
         .toBe("misconfigured");

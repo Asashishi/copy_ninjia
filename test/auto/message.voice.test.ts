@@ -1,15 +1,13 @@
 /**
  * 语音消息的准入与记录（见 packages/auto/message/voice.ts）。
  *
- * 两条上限（时长、声明体积）在**下载之前**就拦掉：那道下载侧的字节闸要先把整段
- * 音频拉下来才知道超限，一条一小时的语音会白占一个媒体执行槽和整段带宽，最后
- * 仍然只换来一行兜底占位。被拦下的语音退回一行带时长的纯文本，直接触发时照样
- * 回一句——真人在等回应，「已读不回」比回一句「太长了没听」更糟。
+ * 时长与声明体积两条上限在**下载之前**就拦掉，不等下载侧的字节闸。被拦下的
+ * 语音退回一行带时长的纯文本，直接触发时仍会回复。
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { aiRecordMediaMessageFixture, aiRecordMessageFixture } from "../helpers/aiMemoryFixtures";
-// 六个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
+// 七个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
 // 必须在下面的 await import 之前登记。
 import {
   generateAndSendReplyMock,
@@ -82,9 +80,8 @@ describe("群聊语音消息", () => {
       directTriggerReason: "reply",
       replyTelegramBackpressured: false,
     });
-    // 语音不作为生图参考素材，但直接触发仍开放重媒体工具资格——这一条事实就是
-    // directTriggerReason 本身，不再有单独的布尔字段重复它
-    // （见 types/aiChat/protocol.ts 的 directTriggerReason）。
+    // 直接触发资格完全由 directTriggerReason 表达，没有单独的布尔字段
+    // （见 types/aiChat/protocol.ts）。
     expect(payload.directTriggerReason).toBe("reply");
     expect(recordChatMessageMock).not.toHaveBeenCalled();
   });
@@ -106,7 +103,7 @@ describe("群聊语音消息", () => {
       text: `[语音 ${VOICE_MAX_DURATION_SECONDS + 1} 秒]`,
       replyTo: expect.anything(),
     }));
-    // 真人在等回应：拦下的是转写，不是回复。
+    // 超时只拦转写，不拦直接触发的回复。
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
   });
 

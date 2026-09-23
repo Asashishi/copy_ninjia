@@ -25,7 +25,7 @@
 | `bun run check:install-isolation` | 在 `copy-ninjia-install-test-*` 专属临时根的夹具里实跑 `install.sh`（`scripts/checkInstallIsolation.ts`），核对暂存失败清理、`bot.json` 回滚、中断续跑、成功替换、符号链接拓扑、未校验备份保留与凭据隔离；不触碰任何真实部署路径 |
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
 | `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 固定种子乱序全量测试 + 热路径门禁，共八段，**合入 master 前必跑** |
-| `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；因为要整跑一遍测试，不进 `check` |
+| `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；会整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
 | `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 51 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
@@ -55,9 +55,9 @@
 
 ### 依赖冷却期
 
-依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时固定为 1.4.2，`@types/bun` 固定为 1.4.1；两者使用相同的主、次版本，运行时补丁版本由 `packageManager` 与 `install.sh` 共同锁定。
+依赖安装固定使用 `bunfig.toml` 的七天发布冷却期。未满七天的精确版本只有在用户知情批准并核对上游来源、npm integrity 与安装脚本后才能临时加入包级豁免；安装完成立即移除，并记录包名、原因与移除时间。当前 Bun 运行时与 `@types/bun` 均固定为 1.4.2；`packageManager` 与 `install.sh` 共同锁定运行时版本。
 
-TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；当前 `typescript-eslint` 声明的 TypeScript 兼容范围为 `>=4.8.4 <6.1.0`。
+`bun run typecheck` 使用 `@typescript/native`（`npm:typescript@~7.0.2`）提供的 TypeScript 7.0.2 编译器。`typescript` 依赖使用 `npm:@typescript/typescript6@^6.0.2`，锁文件解析为 `@typescript/typescript6` 6.0.2；该包通过 `@typescript/old` 提供 TypeScript 6.0.3 编译器 API，供 ESLint 与约定检查使用。当前 `typescript-eslint` 为 8.70.0，声明的 TypeScript 兼容范围为 `>=4.8.4 <6.1.0`。
 
 ### Bun 运行边界
 
@@ -69,14 +69,14 @@ TypeScript 依赖范围为 `~6.0.3`（6.0.x），锁文件版本为 `6.0.3`；�
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5072 tests / 441 files / 192270 次 `expect()`**；全源码**函数覆盖率 97.01% / 行覆盖率 98.12%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5104 tests / 444 files / 192389 次 `expect()`**；全源码**函数覆盖率 97.06% / 行覆盖率 98.19%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
 测试必须通过 `bun run test`（即 `bun test --isolate`）执行，四层保护：
 
 1. **文件隔离**：Bun 为每个测试文件创建新的 global object；`mock.module` 与模块级状态不会污染其它测试文件。这里没有启用 `--parallel`，因此不宣称每个文件各占一个进程。
-2. **临时数据根**：`test/preloadEnv.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`、`database/`；结束后临时目录被清理。**路径注入单独成文件**是因为 ESM 的 import 一律先于同文件语句求值：只要 `test/preload.ts` 静态 import 了任何生产模块，写在文件里的环境变量赋值就已经晚了一步，`CONFIG_ROOT` 会指向开发机上的真实部署目录。
+2. **临时数据根**：`test/preloadEnv.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`、`database/`；结束后临时目录被清理。**路径注入单独放在这个文件里，不与 `test/preload.ts` 合并**：一旦 `test/preload.ts` 静态 import 了生产模块，文件内的环境变量赋值就晚于模块加载，`CONFIG_ROOT` 会指向开发机上的真实部署目录。
 3. **独占配置根**：同一份注入把 `config_example/` 整棵复制到该数据根下的 `config/`，再把 `COPY_NINJIA_CONFIG_ROOT` 指向这份副本（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）；`agent.json` 与 `bot.json` 的占位凭据只在副本里换成测试专用值，严格解析器才收得下；`g-auth.json` 示例与安装器一样不进副本，翻译可用性由 preload 与各用例自行设定；副本随数据根一起删除。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读或改写开发机上的真实 Telegram 与功能配置；身份策略数据库已由上一层临时数据根隔离。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
 4. **agent 配置快照**：Worker 持有的部署配置只由主线程读盘（真实进程里由主线程解析后经 Worker 初始化与热重载消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到这些消息，因此 `test/preload.ts` 把上一层副本中的 `agent.json`、`ad_samples.json`、`mood.json`、`stickers.json` 与人设一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
 

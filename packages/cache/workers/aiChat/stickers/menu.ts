@@ -5,10 +5,9 @@ import type { StickerPackCandidate } from "../../../../types/stickers/tools";
  * 只由该文件读写；随 AI 闲聊 Worker isolate 生死，崩溃重启后从 0 重建。
  *
  * 菜单的两个输入——贴纸集合缓存（cache/workers/aiChat/stickers/sets.ts）与画面描述目录/整包简介
- * （cache/workers/aiChat/stickers/catalog.ts）——都是无 TTL 的进程内缓存，稳态下根本不变，而
- * `createReplyToolset` 每轮回复都要一份菜单（每群最多 5 轮并发）。不记忆化的话，
- * 每一轮都在重跑一遍 `Promise.allSettled` 并重新分配一份数百对象的相同结构，
- * 纯 GC 压力。
+ * （cache/workers/aiChat/stickers/catalog.ts）——都是无 TTL 的进程内缓存，稳态下根本不变；
+ * `createReplyToolset` 每轮回复都取一份菜单（每群最多 5 轮并发），版本号一致时直接复用
+ * 上次构建结果，不重跑 `Promise.allSettled`。
  */
 
 /**

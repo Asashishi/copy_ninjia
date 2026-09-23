@@ -79,7 +79,8 @@
     `errorMessage.ts`（catch 到的 `unknown` 归一化成文案或 Error 的唯一边界）。
 - **`packages/workers/`**
   - **职责**：三个 Worker 的线程内实现。
-  - **典型文件**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`，以及
+  - **典型文件**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、`businessWorkerPort.ts`
+    （两条业务 Worker 共用的线程端口：Telegram 代理、双工出口与入站路由），以及
     `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/storageDatabase.ts` 与
     `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
@@ -93,10 +94,13 @@
     `config.ts`（接管主线程投递的配置快照）。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理，以及随机图片的目录准备与抽取。
-  - **典型文件**：`telegram/`（含 `telegram/avatar/`）、`diskIO.ts` 与 `diskIO/`（`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
+  - **典型文件**：`telegram/`（含 `telegram/avatar/`、`telegram/actions/`）、`diskIO.ts` 与 `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
+- **`packages/infra/identityPolicy/`**
+  - **职责**：白名单逐项权限、临时广告免检与黑白名单互斥协调的主线程读取边界。
+  - **典型文件**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。
 - **`packages/infra/blocklist/`**
   - **职责**：黑名单主线程基础设施，按身份判定、同步名单、durable outbox、群清扫与销号识别拆分。
-  - **典型文件**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepScheduler.ts`。
+  - **典型文件**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepEligibility.ts`、`sweepReplay.ts`、`sweepRetryState.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
   - **职责**：数据根预检、实例锁、业务状态门面、可注入的 `state.json` 持久化边界与启动清理。
   - **典型文件**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`、`cleanup.ts`。
@@ -107,7 +111,7 @@
     `workers/diskIO/`、`perThread/`。
 - **`packages/consts/`**
   - **职责**：字面量常量、调参值与用户可见文案表，按领域分文件/子目录。
-  - **典型文件**：`atmosphere/{teasing,plain}/`、`commands.ts`、`whitelist.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
+  - **典型文件**：`atmosphere/{teasing,plain}/`、`commands.ts`、`whitelist.ts`、`aiChat/rateLimit.ts`、`antiRaid/`、`diskIO/`。
 - **`packages/types/`**
   - **职责**：跨模块协议、领域类型、状态机契约（`types/states/`）。
   - **典型文件**：`chatState.ts`、`commands.ts`、`lifecycle.ts`、`diskIO.ts`。
@@ -146,7 +150,7 @@
 
 - **`main/`**
   - **owner**：主线程。
-  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像与 `translateState.ts` 的按群翻译会话、`chatState.ts` 的 `chat_states` 群状态 LRU（容量 25）、Disk I/O 宿主，以及
+  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像与 `translateState.ts` 的按群翻译会话、`chatState.ts` 的 `chat_states` 群状态热读副本（`Map`，至多 25 个群）、Disk I/O 宿主，以及
     **主线程侧的 Worker 代理与镜像**（`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **owner**：AI 闲聊 Worker。

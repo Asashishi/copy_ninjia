@@ -1,4 +1,4 @@
-import { LOCKDOWN_RETRIGGER_COOLDOWN_MS } from "../../consts/antiRaid/lockdown";
+import { LOCKDOWN_RETRIGGER_COOLDOWN_MS, NO_LOCKDOWN_EFFECTS } from "../../consts/antiRaid/lockdown";
 import type {
   LockdownAbandonReason,
   LockdownAnnouncement,
@@ -16,9 +16,9 @@ export function announcementOf(state: LockdownState): LockdownAnnouncement {
 }
 
 /** 本轮结束时撤掉群里那条封锁公告；ID 未知（没发成功或还在途）就不删。 */
-export function announcementCleanupEffects(state: LockdownState): LockdownEffect[] {
+export function announcementCleanupEffects(state: LockdownState): readonly LockdownEffect[] {
   return state.announcementMessageId === undefined
-    ? []
+    ? NO_LOCKDOWN_EFFECTS
     : [{ kind: "deleteLockdownAnnouncement", messageId: state.announcementMessageId }];
 }
 

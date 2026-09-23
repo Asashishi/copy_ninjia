@@ -28,13 +28,3 @@ export type AdmitDecision =
   | "dropSilently"
   /** 直接触发的等待队列已满：丢弃并登记溢出提示。 */
   | "enqueueOverflow";
-
-export interface AdmitRoundInput {
-  windowCount: number;
-}
-
-export type RoundDecision =
-  /** 窗口未满：调用方记账后执行。 */
-  | "run"
-  /** 窗口已满：不记账，调用方按触发来源通知或保留队首。 */
-  | "rateLimited";

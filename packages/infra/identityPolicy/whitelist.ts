@@ -132,13 +132,10 @@ export function confirmWhitelistEntryPersisted(
 /**
  * 发布一条白名单最终值，并确认它真的交到了 Disk I/O Worker 手上。
  *
- * `queueIdentityPolicyWrite` 的返回值是 postDiskIO 拒收的**唯一**信号（见
- * infra/identityStorage.ts）：Worker 已经放弃自愈、恢复缓冲顶到硬顶、或同步拒收
- * 时它返回 false，而这条最终值此刻只活在主线程 LRU 里，重启就没了。丢掉这个布尔
- * 的后果是 `/white`、`/permission` 一律回执成功——真正的事务失败在 Worker 侧按
- * 设计只有 console.error，而部署单元的 Std{Output,Error} 都是 null，运维要到下次
- * 重启才发现那位管理员根本没有白名单条目。抛出去，交给两条命令既有的
- * mutationFailed 分支如实回执（commands/permission.ts、commands/white.ts）。
+ * `queueIdentityPolicyWrite` 返回 false 是 postDiskIO 拒收的唯一信号（见
+ * infra/identityStorage.ts）：Worker 侧的写盘错误只有 console.error，不进入 logs/。
+ * 拒收时在这里抛出，交给两条命令既有的 mutationFailed 分支如实回执
+ * （commands/permission.ts、commands/white.ts）。
  */
 function publishWhitelistEntry(
   id: number,

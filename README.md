@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5072_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.12%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5104_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.19%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -52,7 +52,7 @@
 
 ## 🧬 纯 AI 开发
 
-这个仓库里的每一行生产代码、每一个测试用例，连同这份 README 本身，都出自 AI 之手。人类不写代码，但从未离席：负责架构设计，并和 AI 一起审查了每一次提交。
+这个仓库里的每一行生产代码、每一个测试用例，连同这份 README 本身，都出自 AI 之手；下表按环节列出人类与 AI 各自的职责。
 
 <table width="100%">
 <tr><th width="18%" align="left">环节</th><th width="32%" align="left">由谁完成</th><th width="50%" align="left">做了什么</th></tr>
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="public/coverage_light.svg">
-    <img alt="bun run test:coverage：5072 项测试全部通过 / 441 个测试文件 / 192,270 次 expect() 调用 / 函数覆盖率 97.01% / 行覆盖率 98.12%" src="public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：5104 项测试全部通过 / 444 个测试文件 / 192,389 次 expect() 调用 / 函数覆盖率 97.06% / 行覆盖率 98.19%" src="public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -204,17 +204,9 @@
 
 ## 🎮 命令与权限
 
-命令按入口授权：**群成员**可用复读、动作命令、安静模式和 `/info` 资料查询；**身份权限键**控制 `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` 和功能开关。**`SUPER_ADMIN_USER_ID` 专属**包括 `/init`、权限修改、删除白名单成员、`/batch_kick`；`/white enable` 可按 `isCanWhiteOther` 委托。`/send` 仅超级管理员私聊可用。
+命令按入口授权：**群成员**可用复读、翻译、动作命令、安静模式、`/info`、`/wed`、`/h_image` 等；**身份权限键**（`isCanXxx`）控制 `/bot_status`、`/prompt`、`/mute`、`/gag`、`/block`、`/h_image add` 等操作与各功能开关；**`SUPER_ADMIN_USER_ID` 专属**包括 `/init`、权限修改、删除白名单成员、`/batch_kick`，`/send` 仅限超级管理员私聊使用。
 
-群专属 AI 提示词由 `/prompt config <提示词>` 设置，`/prompt remove` 恢复 `prompt/persona.md`；两者受默认关闭的 `isCanConfigAiPrompt` 控制。`/bot_status` 可查看当前群是否已设置。
-
-复读目标全局唯一，`/copy` 系列在发起命令的群里逐条复读并同步头像；`/luck_challenge` 走 Inline Mode，中文动作命令（`/咬`、`/揪住`）不需要预先登记。
-
-`/wed` 在已初始化的群里仅支持个人身份，随机抽取群友并展示头像及确认、更换、移除按钮。每群最多保存 15 万个已发言成员 ID，实际增删后批量写入 `memory/wed/<chatId>.json`，重启恢复候选；结果会话只保存在内存中。命令与按钮全局最多同时处理 32 项，出站复用统一队列和 429 等待。
-
-`/h_image` 从专用图片目录（`state.json` 的 `global.assets.randomHImageDir`，缺省为数据根下的 `h_image/`，启动时自动创建）均匀抽一张图发到本群，图片固定带剧透遮罩并长期保留；只认 `jpg`、`jpeg`、`png`、`webp`。持有 `isCanAddHImage` 的身份回复带图的消息发 `/h_image add`，可以把图（相册则整组）收进图库，无需重启。不要混放其他功能的图片；手工放置必须以内容 SHA-256 命名，非法名称会拒绝启动。
-
-通知语气在 `config/bot.json` 的 `atmosphere` 中选择 `mesugaki`（缺省）或 `normal`，重启生效；群自定义 AI 人设优先使用普通通知。`config/cron.json` 可热重载定时任务，固定图片支持单图或 2–10 张相册，随机图可指定独立目录。配置示例与规则见 [部署配置说明](config_example/README/zh.md)，源码与二进制的冷迁移步骤见 [运维手册](docs/cn/07-operations.md)。
+图库、cron 定时任务的字段与规则见 [部署配置说明](config_example/README/zh.md)，源码与二进制的冷迁移步骤见 [运维手册](docs/cn/07-operations.md)。
 
 完整命令表、权限口径与每条命令的行为细节见 **[📖 08 命令与行为参考](docs/cn/08-commands.md)**。
 

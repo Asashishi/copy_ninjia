@@ -25,7 +25,7 @@
 | `bun run check:install-isolation` | `copy-ninjia-install-test-*` 専用の一時 fixture root で `install.sh` を実際に実行し（`scripts/checkInstallIsolation.ts`）、staging 失敗時の cleanup、`bot.json` の rollback、中断後の再開、置換成功、symlink topology、未検証 backup の保持、資格情報の分離を検査。実際の deploy path には一切触れない |
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
 | `bun run check` | install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + 固定 seed のランダム順全テスト + hot path gate の 8 段。**master へのマージ前に必須** |
-| `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するため `check` には含めない |
+| `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するので `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
 | `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 51 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
@@ -55,9 +55,9 @@
 
 ### 依存関係の release-age gate
 
-依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。Bun runtime は 1.4.2、`@types/bun` は 1.4.1 に固定します。両者の major/minor は同じで、runtime の patch version は `packageManager` と `install.sh` が共同で固定します。
+依存関係の install では、`bunfig.toml` の 7 日間 release-age gate を常に使用します。公開から 7 日未満の厳密な version を一時的に package 単位で除外できるのは、利用者がリスクを理解したうえで承認し、upstream source・npm integrity・lifecycle script を検証した場合だけです。除外は install 直後に削除し、package 名・理由・削除時刻を記録します。Bun runtime と `@types/bun` はともに 1.4.2 に固定します。`packageManager` と `install.sh` が runtime の version を共同で固定します。
 
-TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョンは `6.0.3` です。現在の `typescript-eslint` が宣言する TypeScript の互換範囲は `>=4.8.4 <6.1.0` です。
+`bun run typecheck` は `@typescript/native`（`npm:typescript@~7.0.2`）が提供する TypeScript 7.0.2 コンパイラを使用します。`typescript` 依存関係は `npm:@typescript/typescript6@^6.0.2` を使用し、lockfile では `@typescript/typescript6` 6.0.2 に解決されます。この package は `@typescript/old` を介して TypeScript 6.0.3 のコンパイラ API を ESLint と規約検査に提供します。現在の `typescript-eslint` は 8.70.0 で、宣言する TypeScript の互換範囲は `>=4.8.4 <6.1.0` です。
 
 ### Bun の実行境界
 
@@ -69,14 +69,14 @@ TypeScript の依存範囲は `~6.0.3`（6.0.x）で、lockfile のバージョ�
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5072 tests / 441 files / 192270 `expect()` calls**。全ソースコードの**関数カバレッジは 97.01%、行カバレッジは 98.12%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5104 tests / 444 files / 192389 `expect()` calls**。全ソースコードの**関数カバレッジは 97.06%、行カバレッジは 98.19%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
 テストは必ず `bun run test`、つまり `bun test --isolate` から実行し、4 層で保護します。
 
 1. **ファイル分離**：Bun はテストファイルごとに新しい global object を作成するため、`mock.module` とモジュールレベル状態がほかのテストファイルを汚染しません。`--parallel` は有効にしていないので、各ファイルが別プロセスを占有するとは説明しません。
-2. **一時データルート**：`test/preloadEnv.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` には触れません。終了後に一時ディレクトリを削除します。**path 注入を別 file に分けている**のは、ESM が import を同 file の文より先に評価するためです。`test/preload.ts` が production モジュールを static import した時点で、file 内に書いた環境変数の代入はすでに手遅れになり、`CONFIG_ROOT` は開発機の実デプロイディレクトリを指してしまいます。
+2. **一時データルート**：`test/preloadEnv.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` には触れません。終了後に一時ディレクトリを削除します。**path 注入は `test/preload.ts` とは別の file に分けています**：`test/preload.ts` が production モジュールを static import した時点で、file 内に書いた環境変数の代入はすでに手遅れになり、`CONFIG_ROOT` は開発機の実デプロイディレクトリを指してしまいます。
 3. **専用の設定ルート**：同じ注入は `config_example/` をその data root 下の `config/` へ丸ごと複製し、`COPY_NINJIA_CONFIG_ROOT` をその複製に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。`agent.json` と `bot.json` の placeholder 資格情報は複製の中だけテスト専用値に置き換えられ、厳格な parser はこれを受け付けます。`g-auth.json` の例は installer と同じく複製に含めず、翻訳の可用性は preload と各テストが設定します。複製は data root ごと削除されます。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実 Telegram / feature 設定を読んだり書き換えたりするのを防ぎます。identity database は前項の一時 data root で隔離されます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
 4. **agent 設定 snapshot**：Worker が持つデプロイ設定を disk から読むのは main thread だけです（実 process では main thread が parse し、各 Worker へ init と hot reload の message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はそれらの message を受け取らないため、`test/preload.ts` が前項の複製から `agent.json`、`ad_samples.json`、`mood.json`、`stickers.json` とペルソナを isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
 

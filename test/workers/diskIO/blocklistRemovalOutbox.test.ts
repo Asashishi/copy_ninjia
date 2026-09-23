@@ -402,9 +402,8 @@ describe("DiskIO Worker SQLite 身份存储", () => {
   });
 
   test("补扫条目要求名单里至少还有一个有效身份，否则拒绝落盘", () => {
-    // 补扫（probeMembership）不冻结 id 列表，它欠的活是「拿当前名单扫这个群」。
-    // 名单一个人都不剩时这条任务已经没有意义，写进去只会在重放时扫一次空名单；
-    // 按「不为用户行为兜底」，这里直接拒绝而不是静默丢弃这一条。
+    // 补扫（probeMembership）不冻结 id 列表，任务语义是「拿当前名单扫这个群」；
+    // 名单已空时直接拒绝，不静默丢弃这一条。
     expect(() => handlePendingRemovalSnapshot({
       type: "blocklistRemovals",
       removals: [[9, sweepRemoval(9)]],
@@ -644,9 +643,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(restored.chatStates.get(-1_002)?.isProxySendEnabled).toBeTrue();
   });
 
-  // 唯一性是归纳不变量：写之前它已经成立，只有「把代理打开」的那一条能破坏它。
-  // 因此普通写入不再逐行解码整张表去数一个布尔（那是每条群消息都可能付一次的
-  // 完整字段/lockdown/18 位权限校验 × 25 行），而拒绝该拒绝的那一条照旧当场拒绝。
+  // 代理目标唯一性的归纳校验见 docs/cn/04-invariants.md「至多一个代理发送目标」。
   test("满载的普通写入不影响已有代理目标，再开第二个仍当场拒绝", () => {
     handleChatStateWrite(chatStateWrite(-1_001, 1, true), reply);
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT - 1; index++) {

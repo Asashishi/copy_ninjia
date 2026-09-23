@@ -2,9 +2,8 @@ import { describe, expect, mock, test } from "bun:test";
 import { parseIndexField } from "../../../packages/aiChat/ai/utils/toolArgs";
 
 /**
- * infra/telegram 的 sendSticker 替换为测试可控的假实现——本文件
- * 不关心真实 Telegram API 调用是否成功（那部分已用真实 API 手动验证过），
- * 只关心 stickers.ts 自己的解析/组装/两层选择与每轮限额逻辑。
+ * infra/telegram 的 sendSticker 替换为测试可控的假实现，只覆盖 stickers.ts
+ * 自身的解析、组装、两层选择与每轮限额逻辑，不发起真实 Telegram 请求。
  */
 const realTelegram = await import("../../../packages/infra/telegram");
 const sendStickerMock = mock(async (_params: {
@@ -13,8 +12,9 @@ const sendStickerMock = mock(async (_params: {
   signal?: AbortSignal;
 }): Promise<number | undefined> => 12345);
 mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
-// view_sticker_pack 会为模拟真人翻贴纸面板停顿 1.5~5 秒，单测里直接跳过；
-// 但要保留「已 abort 就以 abort 原因 reject」这一半，那正是作废路径的入口。
+// sendStickerTool 的发送链在选择挡位被打断时会用 pauseForToolAction 做
+// 1.5~5 秒的拟人停顿（STICKER_CHOOSE_DELAY_BASE_MS/JITTER_MS），这里把 sleep
+// 换成立即 resolve，已 abort 时按 abort 原因 reject，单测无需真的等待。
 mock.module("../../../packages/libs/sleep", () => ({
   sleep: async (_ms: number, signal?: AbortSignal): Promise<void> => {
     if (signal?.aborted === true) throw signal.reason;
@@ -172,10 +172,8 @@ describe("aiChat/ai/stickers viewStickerPackTool", () => {
   });
 
   test("停顿期间轮次被作废：返回工具错误，不让 reject 逃出 execute", async () => {
-    // orchestrator 的 dispatch/execute 与 generateReply 的 await toolset.execute(...)
-    // 都没有 try/catch：逃出去展开的是整个 functionCalls 循环——同一轮里模型发出
-    // 的其余调用一个都不执行，contents 里还留下一个带未应答 functionCall 的
-    // model 轮。同轮的 send_message / send_sticker 走的是同一个共用停顿。
+    // signal 在调用前已 abort：viewStickerPackTool 在入口同步返回工具错误，
+    // 不进入任何异步路径。
     const chatAction = chatActionMock();
     const state = createStickerRoundState();
     const controller = new AbortController();
@@ -190,7 +188,7 @@ describe("aiChat/ai/stickers viewStickerPackTool", () => {
     });
 
     expect(JSON.parse(result).error).toBe(REPLY_INVALIDATED_TOOL_ERROR);
-    // 作废的这一轮不该把包记成「已看过」，否则重开一轮时它就被锁死了。
+    // 作废的这次调用不标记包为已查看。
     expect(state.viewedPackIntents.size).toBe(0);
   });
 
@@ -365,8 +363,7 @@ describe("aiChat/ai/stickers sendStickerTool", () => {
     expect(result).toBe(JSON.stringify({ error: "Failed to send sticker" }));
     expect(called).toBe(false);
     expect(state.acceptedStickerUids.size).toBe(1);
-    // 失败不把挡位续回选择贴纸：模型重试时发送路径会自己重新拉起，就此
-    // 放弃时也不留下等不来贴纸的状态。
+    // 发送失败后挡位停在 idle，不续回选择贴纸。
     expect(chatAction.set).toHaveBeenLastCalledWith("idle");
   });
 });
@@ -386,7 +383,7 @@ describe("aiChat/ai/stickers 同群并发轮的发贴纸锁", () => {
 
     expect(result.error).toContain("Sticker throttled");
     expect(sendStickerMock).not.toHaveBeenCalled();
-    // 锁被抢是本轮终局的拒绝，「正在选择贴纸…」等不来贴纸，立即收回。
+    // 锁被抢时立即把挡位收回 idle。
     expect(chatAction.set).toHaveBeenCalledWith("idle");
   });
 

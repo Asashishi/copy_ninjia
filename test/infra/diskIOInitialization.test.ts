@@ -7,7 +7,7 @@ import type {
   VerificationPersistedReply,
 } from "../../packages/types";
 import { diskIORuntime, pendingLoad } from "../../packages/cache/main/diskIO";
-import { onMidnightMaintenance } from "../../packages/infra/diskIO/observers";
+import { onDiskIOReply } from "../../packages/infra/diskIO/observers";
 import {
   DEFAULT_MAX_PENDING_BUSINESS_MESSAGES,
   LOAD_TIMEOUT_MS,
@@ -99,11 +99,11 @@ describe("启动恢复拒绝以空状态启动", () => {
 describe("explicit Worker initialization", () => {
   test("午夜通知只路由当前 Worker，旧实例和终止后的通知无效", async () => {
     const originalWorker: typeof Worker = globalThis.Worker;
-    const count: number = diskIORuntime.midnightMaintenanceListeners.length;
+    const count: number = diskIORuntime.replyListeners.midnightMaintenance.length;
     const days: string[] = [];
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     try {
-      onMidnightMaintenance((reply): void => { days.push(reply.day); });
+      onDiskIOReply("midnightMaintenance", (reply): void => { days.push(reply.day); });
       diskIO.initDiskIO();
       const first: FakeWorker = FakeWorker.instances[0]!;
       const event = { data: { type: "midnightMaintenance", day: "2026-09-07" } } as MessageEvent<DiskIOReply>;
@@ -118,7 +118,7 @@ describe("explicit Worker initialization", () => {
       expect(days).toEqual(["2026-09-07", "2026-09-07"]);
     } finally {
       await diskIO.terminateDiskIO();
-      diskIORuntime.midnightMaintenanceListeners.length = count;
+      diskIORuntime.replyListeners.midnightMaintenance.length = count;
       globalThis.Worker = originalWorker;
     }
   });
@@ -279,7 +279,7 @@ describe("explicit Worker initialization", () => {
       });
 
       const persisted: VerificationPersistedReply[] = [];
-      diskIO.onVerificationPersisted((reply) => { persisted.push(reply); });
+      diskIO.onDiskIOReply("verificationPersisted", (reply) => { persisted.push(reply); });
       const ack: VerificationPersistedReply = {
         type: "verificationPersisted",
         key: "-1001:42",
@@ -291,7 +291,7 @@ describe("explicit Worker initialization", () => {
       expect(persisted).toEqual([ack]);
 
       const aiMemoryPersisted: AiMemoryPersistedReply[] = [];
-      diskIO.onAiMemoryPersisted((reply) => { aiMemoryPersisted.push(reply); });
+      diskIO.onDiskIOReply("aiMemoryPersisted", (reply) => { aiMemoryPersisted.push(reply); });
       const aiMemoryAck: AiMemoryPersistedReply = {
         type: "aiMemoryPersisted",
         chatId: -1001,

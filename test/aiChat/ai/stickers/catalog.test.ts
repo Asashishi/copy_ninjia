@@ -12,11 +12,9 @@ const retryableFailure: AiTextResult = { ok: false, retryable: true };
 const requestFailure: AiTextResult = { ok: false, retryable: false };
 
 /**
- * aiChat/ai/stickers/sets.ts（真实拉取贴纸集合）、aiChat/ai/imageDescription.ts（真实调
- * 视觉模型）与 aiChat/provider.ts（整包简介生成走的文本模型）也一并 mock 掉，
- * 换成测试可控的假实现——本文件只关心 generatePackCatalog 的对账逻辑
- * （补/剪/失败时按兵不动/整包简介的生成时机），不关心真实网络调用是否
- * 成功（那部分由手动跑过的真实模型调用验证过）。
+ * aiChat/ai/stickers/sets.ts、aiChat/ai/imageDescription.ts 与 aiChat/provider.ts
+ * 均替换为测试可控的假实现，本文件只覆盖 generatePackCatalog 的对账逻辑
+ * （补/剪/失败时按兵不动/整包简介的生成时机）。
  */
 const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
 const describeMediaMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
@@ -68,12 +66,11 @@ const previousConfig: ReturnType<typeof getStickerConfig> = getStickerConfig();
 afterEach((): void => { adoptStickerConfig(previousConfig); });
 
 /**
- * 五个替身都是模块级共享的，而 bun 的 `mockClear()` 只清调用记录、**不清
- * `mockImplementationOnce` 排队的实现**。每条用例开始前统一复位调用记录与实现，
- * 保证随机执行顺序不会让排队替身泄漏到下一条用例。
+ * 五个替身都是模块级共享的，`mockReset()` 同时清调用记录与 `mockImplementationOnce`
+ * 排队的实现，每条用例开始前统一复位，避免执行顺序不同导致排队替身串到下一条用例。
  *
- * **目录状态刻意不在这里清**：每条用例都用各自独立的包名与 uid 自行 `hydrate`
- * 播种，彼此不可见；清掉反而会把「hydrate 是合并语义」这件事从覆盖里抹掉。
+ * 目录状态（catalogs/dirtyPacks/failedEntries/generatingPacks）不在这里清：
+ * 每条用例都用各自独立的包名与 uid 自行 `hydrate` 播种，彼此不可见。
  */
 beforeEach(() => {
   getStickerSetMock.mockReset();
@@ -248,7 +245,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     expect(getCatalogEntry("stale-uid")).toBeDefined();
     transientDescriptionCache.set("stale-uid", Promise.resolve("不应复活的旧描述"));
 
-    getStickerSetMock.mockImplementationOnce(async () => ({ title: "空包", stickers: [] })); // 线上这个包已经没有贴纸了
+    getStickerSetMock.mockImplementationOnce(async () => ({ title: "空包", stickers: [] }));
 
     await generatePackCatalog("pack_prune");
 
@@ -259,11 +256,10 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   test("查线上失败（getStickerSet 返回 null）：不补也不剪，保留现状", async () => {
     hydrateStickerCatalogs(persisted("pack_fail", { "kept-uid": { emoji: "😴", description: "保留的贴纸" } }, "保留的简介"));
 
-    getStickerSetMock.mockImplementationOnce(async () => null); // 网络失败
+    getStickerSetMock.mockImplementationOnce(async () => null);
 
     await generatePackCatalog("pack_fail");
 
-    // 失败不该把已有描述铲掉——这是本次修复要守住的核心不变量。
     expect(getCatalogEntry("kept-uid")).toEqual({ emoji: "😴", description: "保留的贴纸" });
     expect(getPackSummary("pack_fail")).toBe("保留的简介");
   });
@@ -348,9 +344,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   });
 
   test("目录还没建起来的包在维护节拍上按间隔重试，建好之后不再打扰", async () => {
-    // 生产路径上 ensureStickerCatalogs 只有 init 那一次调用，而拉贴纸集合失败
-    // 是整包放弃的：一次几秒的网络抖动就能让 catalogs 永久为空，两个贴纸工具
-    // 对所有回复返回 null，而 systemd 托管的进程可能几周都不重启。
     getStickerSetMock.mockImplementation(async () => null);
     stickerCatalogRetryState.lastAttemptAt = 0;
 
@@ -358,8 +351,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     await Bun.sleep(1);
     expect(getStickerSetMock).toHaveBeenCalledTimes(1);
 
-    // 间隔没到不重复打请求：包名配错这类永远好不了的情形下，每次重试都要跟着
-    // 记一条错误日志。
+    // 间隔没到不重复打请求。
     retryIncompleteStickerCatalogs(["pack_periodic"], 10_001);
     await Bun.sleep(1);
     expect(getStickerSetMock).toHaveBeenCalledTimes(1);
@@ -380,10 +372,6 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   });
 
   test("整包描述全失败不永久闩死：失败负缓存到期后对账真的会重描", async () => {
-    // 首次部署撞上一次视觉端点故障（配额耗尽/密钥刚轮换）时整包每一枚都失败。
-    // 失败桶若是永久闩，retryIncompleteStickerCatalogs 每 5 分钟正确选中这个包也
-    // 只会原地跳过每一枚，目录永远填不起来——两个贴纸工具对所有回复返回 null，
-    // 而 systemd 托管的进程可以连跑几周。
     getStickerSetMock.mockImplementation(async () => ({ title: "闩死包", stickers: [sticker("latch-uid", "😂")] }));
     describeMediaForStickerCatalogMock.mockImplementation(async () => retryableFailure);
 
@@ -432,8 +420,8 @@ describe("aiChat/ai/stickers/catalog pruneStickerCatalogs 按白名单剪枝", (
     expect(dirtyPacks.has(pack)).toBeFalse();
   });
 
-  /** 当前目录里除指定包以外的全部包名：用它当白名单，剪枝只针对本用例的包，
-   *  不动同文件其它用例播下的状态（本文件刻意不在 beforeEach 清目录）。 */
+  /** 当前目录里除指定包以外的全部包名，作为白名单传给 pruneStickerCatalogs，
+   *  使剪枝只作用于本用例的包，不影响同文件其它用例播下的状态。 */
   function whitelistExcept(excluded: string): string[] {
     return [...catalogs.keys()].filter((pack: string): boolean => pack !== excluded);
   }

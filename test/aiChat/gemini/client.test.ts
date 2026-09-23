@@ -149,10 +149,8 @@ describe("Gemini request safety settings", () => {
   });
 
   test("请求体自己抛错也归一成 ok:false，不越过这层边界", async () => {
-    // 请求体里要读 config/agent.json 的模型名。这份部署配置写坏时，若请求体是在
-    // 调用方的对象字面量里求值，异常就抛在本函数之外：调用方拿不到 ok:false，
-    // 异常一路穿过 session.request() 与 generateReply，最终被回复循环最外层的
-    // .catch 吞掉——群里看到的是回复连同排队中的其余工具调用一起静默消失。
+    // buildBody 闭包在 requestGeminiResult 内部被调用，抛错时归一化为 ok:false
+    // 而不是让异常穿透出去。
     const broken = (): GenerateContentParameters => {
       throw new Error("Invalid Gemini config: models.reply must be a non-empty string");
     };

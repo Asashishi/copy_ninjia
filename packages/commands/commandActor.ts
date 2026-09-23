@@ -29,21 +29,6 @@ export function resolveCommandActor(ctx: CommandContext<Context>): CachedUser | 
 }
 
 /**
- * 命令发起身份是否有某项授权。超级管理员由 whitelist.ts 的读取边界
- * 统一持有全部可授予的白名单权限，这里不再逐命令区分要不要放行超管；
- * 仅超级管理员可用的命令（/permission 修改、/batch_kick、/init、/send）不属于
- * 白名单权限键；/white 的受限代加能力由 isCanWhiteOther 单独授权。
- */
-export function hasCommandPermission(
-  ctx: CommandContext<Context>,
-  key: WhitelistPermissionKey
-): boolean {
-  const actorId: number | undefined = resolveCommandActor(ctx)?.id;
-  if (actorId === undefined) return false;
-  return hasWhitelistPermission(actorId, key);
-}
-
-/**
  * 按白名单权限键放行群命令。发起身份只解析一次：持有 permission 时原样返回它；
  * 否则（含解析不出发起身份）在本群回复命令消息发一条拒绝，文案由 rejection 按
  * 发起人标签与本群氛围文案拼出，走 sendCommandMessage 的默认 30 秒清理，并返回

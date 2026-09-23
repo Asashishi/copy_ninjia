@@ -32,7 +32,7 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
   // 入群守卫开着：本文件考察的是守卫开启时黑名单如何取代验证投递（关着时
   // 的行为由 test/antiRaid/joinGuardSwitch.test.ts 覆盖）。
-  getChatState: () => ({ isFloodControlEnabled: true, isAntiRaidEnabled: true }),
+  getChatState: () => ({ isInitEnabled: true, isFloodControlEnabled: true, isAntiRaidEnabled: true }),
   getChatStateCache: () => new Map(),
   getOrCreateChatState: () => ({}),
   persistChatState: async (): Promise<void> => {},
@@ -86,7 +86,6 @@ mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
   isDiskIOBuffering: (): boolean => false,
   flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIODomain() }),
   onDiskIORespawn: (): void => {},
-  onIdentityStoragePersisted: (): void => {},
   readBlocklistIdPage: async (afterId: number | null): Promise<{
     ids: readonly number[];
     nextCursor: number | null;
@@ -108,7 +107,6 @@ mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
       .filter((id: number): boolean => readBlockedIdentityTestIds().includes(id))
       .map((id: number): readonly [number, string] => [id, "{}"]),
   }),
-  onVerificationPersisted: (): void => {},
   postDiskIO: (message: TestDiskMessage): boolean => {
     diskPosts.push(message);
     deliveryOrder.push(`disk-${message.type}`);

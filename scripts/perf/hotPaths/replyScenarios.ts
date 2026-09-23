@@ -3,10 +3,10 @@ import type { DecodeBase64PayloadOptions } from "../../../packages/aiChat/ai/uti
 import { IMAGE_GENERATION_MAX_BYTES } from "../../../packages/consts/aiChat/imageGeneration";
 import { SONG_GENERATION_MAX_BYTES, SONG_GENERATION_MAX_ENCODED_CHARS } from "../../../packages/consts/aiChat/songGeneration";
 import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../../../packages/consts/aiChat/rateLimit";
-import { admitRound, admitTrigger } from "../../../packages/states/replyAdmission";
+import { admitTrigger, isReplyRoundRateLimited } from "../../../packages/states/replyAdmission";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 import { invalidateChatReplyCache, replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows } from "../../../packages/cache/workers/aiChat/replies";
-import type { AdmitRoundInput, AdmitTriggerInput } from "../../../packages/types/states/replyAdmission";
+import type { AdmitTriggerInput } from "../../../packages/types/states/replyAdmission";
 import type { ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
 import type { Scenario } from "./types";
 
@@ -24,9 +24,7 @@ export function replyAdmissionScenario(): Scenario {
       }
     }
   }
-  const rounds: readonly AdmitRoundInput[] = [
-    { windowCount: 0 }, { windowCount: RATE_LIMIT_LONG_MAX_TRIGGERS - 1 }, { windowCount: RATE_LIMIT_LONG_MAX_TRIGGERS },
-  ];
+  const windowCounts: readonly number[] = [0, RATE_LIMIT_LONG_MAX_TRIGGERS - 1, RATE_LIMIT_LONG_MAX_TRIGGERS];
   return {
     iterations: 4_000_000,
     warmupIterations: 8_000_000,
@@ -34,11 +32,11 @@ export function replyAdmissionScenario(): Scenario {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index++) {
         checksum += admitTrigger(inputs[index % inputs.length]!).length +
-          admitRound(rounds[index % rounds.length]!).length;
+          (isReplyRoundRateLimited(windowCounts[index % windowCounts.length]!) ? 1 : 0);
       }
       return checksum;
     },
-    probes: { admitTrigger, admitRound },
+    probes: { admitTrigger, isReplyRoundRateLimited },
   };
 }
 

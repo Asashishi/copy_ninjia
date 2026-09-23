@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FINAL_OFFSET_CONFIRM_TIMEOUT_MS } from "../../packages/consts/lifecycle";
+import { TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS } from "../../packages/consts/telegram";
 import {
   installLifecycleFixtureHooks,
   lifecycleFixture as sharedFixture,
@@ -125,6 +126,44 @@ describe("应用最终 offset 确认与排空", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
+  test("服务端对重复 offset 挂起最短等待时，最终确认仍在本地截止内完成", async () => {
+    setLastSeenUpdateId(777);
+    const originalTimeout: typeof AbortSignal.timeout = AbortSignal.timeout;
+    let localDeadlineMs: number | undefined;
+    // 不真等：服务端到点应答与本地截止谁先到，直接按两段时长比较结算。
+    AbortSignal.timeout = ((timeoutMs: number): AbortSignal => {
+      localDeadlineMs = timeoutMs;
+      return new AbortController().signal;
+    }) as typeof AbortSignal.timeout;
+    getUpdates.mockImplementationOnce(async (): Promise<unknown[]> => {
+      calls.push("getUpdates");
+      if (localDeadlineMs === undefined || localDeadlineMs <= TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS) {
+        throw new DOMException("confirmation timed out", "TimeoutError");
+      }
+      return [];
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    try {
+      await lifecycle.init();
+      await lifecycle.wait();
+      await lifecycle.dispose();
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+
+    expect(getUpdates).toHaveBeenCalledWith(
+      { offset: 778, limit: 1, timeout: 0 },
+      expect.any(AbortSignal)
+    );
+    expect(process.exitCode).toBe(0);
+    expect(loggerError).not.toHaveBeenCalledWith(
+      "Failed to confirm update offset on shutdown:",
+      expect.anything()
+    );
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
   test("永不自行 settle 的最终确认受专用 AbortSignal 截断", async () => {
     setLastSeenUpdateId(543);
     const originalTimeout: typeof AbortSignal.timeout = AbortSignal.timeout;
@@ -209,8 +248,6 @@ describe("应用最终 offset 确认与排空", () => {
   });
 
   test("回归：确认 offset 前的排空不关闭出站闸门，只有 dispose 那一遍才关", async () => {
-    // 关早了的话，dispose() 里 gag 提示、延迟删除与 anti-raid 的重试全部只会
-    // 拿到 AbortError：提示永远留在群里，owner 永远结算不掉、锁也就扣着不放。
     setLastSeenUpdateId(555);
     const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
@@ -255,9 +292,8 @@ describe("应用最终 offset 确认与排空", () => {
   });
 
   test("停机时有 update 处理失败：不确认 offset 并以非零状态退出", async () => {
-    // 停机路径放弃在途批次后 task() 会正常 resolve，排空也会归零，光靠这两者
-    // 无法发现那批里失败的 update。漏掉就等于替 Telegram 确认了一条从未成功
-    // 处理的 update，重启后不会再收到它。
+    // task() resolve 与排空归零都不能反映在途批次里失败的 update，需另由
+    // runnerHasFailedUpdate 判定。
     setLastSeenUpdateId(888);
     runnerHasFailedUpdate.mockReturnValue(true);
     const lifecycle = new ApplicationLifecycle(testDependencies);

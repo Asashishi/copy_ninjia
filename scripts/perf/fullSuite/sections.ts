@@ -65,12 +65,11 @@ export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
 /**
  * 生产选用的容器与算法，单独把容器本身的成本量出来。
  *
- * 只列线上真正在用的实现，被淘汰的候选不进表——读者没有办法从一行读数看出它
- * 到底是不是生产成本。滑动窗口线上有两套，都使用 `TimestampDeque`：普通配额
- * 窗口满时拒绝，反刷群入群窗口满时覆盖最早项并维持饱和标记。AI 滚动记忆缓冲
- * 使用 `BoundedDeque`。
+ * 只列线上真正在用的实现。滑动窗口线上有两套，都使用 `TimestampDeque`：普通
+ * 配额窗口满时拒绝，反刷群入群窗口满时覆盖最早项并维持饱和标记。AI 滚动记忆
+ * 缓冲使用 `BoundedDeque`。
  *
- * 与生产热路径分表，是因为那张表量的是完整业务函数，这张表量的是容器原语。
+ * 与生产热路径分表：那张表量完整业务函数，这张表量容器原语。
  */
 export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "quota-timestamp-window",

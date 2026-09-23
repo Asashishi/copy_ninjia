@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5072_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.12%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5104_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.19%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -52,7 +52,7 @@ Message copying and personality mimicry are only the surface. Underneath is a mu
 
 ## 🧬 Pure AI Development
 
-Every line of production code, every test case, and this README itself was written by AI. The human does not write code, but has never left the room: they design the architecture and review every commit together with AI.
+Every line of production code, every test case, and this README itself was written by AI; the table below lists who does what.
 
 <table width="100%">
 <tr><th width="18%" align="left">Stage</th><th width="32%" align="left">Who</th><th width="50%" align="left">What they do</th></tr>
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5072 tests passed, 441 test files, 192,270 expect() calls, 97.01% function coverage, 98.12% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5104 tests passed, 444 test files, 192,389 expect() calls, 97.06% function coverage, 98.19% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -204,17 +204,9 @@ Behavior details, configuration and boundaries for each feature live in the **[�
 
 ## 🎮 Commands and Permissions
 
-Command access follows the entry point: **group members** can use copy, action commands, quiet mode and `/info` profile lookups. **Identity permission keys** control `/bot_status`, `/prompt`, `/clear_context`, `/mute`, `/gag`, `/block` and feature switches. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, `/batch_kick`; `/white enable` can be delegated with `isCanWhiteOther`. `/send` requires the super administrator in private chat.
+Command access follows the entry point: **group members** can use copy, translation, action commands, quiet mode, `/info`, `/wed`, `/h_image` and more. **Identity permission keys** (`isCanXxx`) control `/bot_status`, `/prompt`, `/mute`, `/gag`, `/block`, `/h_image add` and each feature switch. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, and `/batch_kick`; `/send` requires the super administrator in private chat.
 
-Set this group's AI prompt with `/prompt config <prompt>` or restore `prompt/persona.md` with `/prompt remove`. Both require `isCanConfigAiPrompt`, which defaults to false. `/bot_status` shows whether the current group has a custom prompt.
-
-The copy target is globally unique: the `/copy` family echoes message by message in the chat where the command was issued and syncs the avatar. `/luck_challenge` runs through Inline Mode, and Chinese action commands (`/咬`, `/揪住`) need no registration.
-
-`/wed` supports personal accounts in initialized groups, displaying a random partner's avatar with confirm, change and remove buttons. Each group retains up to 150,000 speaking-member IDs, batches actual changes into `memory/wed/<chatId>.json`, and restores candidates on restart; result sessions stay in memory. Commands and buttons share 32 active slots globally and use the shared outbound queue and 429 waits.
-
-`/h_image` posts one picture drawn uniformly from its dedicated directory (`global.assets.randomHImageDir` in `state.json`, by default `h_image/` under the data root, created at startup); the picture is spoiler-covered and stays. Only `jpg`, `jpeg`, `png`, and `webp` count. An identity with `isCanAddHImage` can reply to a picture with `/h_image add` to collect it (a whole album at once) without restarting. Keep other features’ pictures elsewhere; manual files require content SHA-256 names, and invalid names block startup.
-
-Set `atmosphere` in `config/bot.json` to `mesugaki` (default) or `normal`, then restart; a custom group AI persona takes priority for ordinary notices. `config/cron.json` hot-reloads scheduled tasks, supports single fixed images or albums of 2–10, and can draw random images from a separate directory. See [deployment configuration](../../config_example/README/en.md) and the [operations guide](07-operations.md) for source and binary cold migrations.
+Image-library and `config/cron.json` fields and rules are in [deployment configuration](../../config_example/README/en.md); source and binary cold migrations are in the [operations guide](07-operations.md).
 
 The full command table, permission semantics and per-command behaviour live in **[📖 08 Command and Behaviour Reference](08-commands.md)**.
 

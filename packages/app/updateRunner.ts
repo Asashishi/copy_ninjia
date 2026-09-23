@@ -8,6 +8,7 @@ import {
 } from "../infra/updateContext";
 import type { AcknowledgedUpdateRunner, TelegramAllowedUpdates } from "../types/lifecycle";
 import { createAcknowledgedUpdateFetcher } from "./updateFetcher";
+import { updateTopicOf } from "../libs/forumTopic";
 
 /**
  * 每次只取一条更新，middleware 成功完成后才发起下一次取数。
@@ -22,27 +23,26 @@ export function runAcknowledgedUpdateBatches(
     createAcknowledgedUpdateFetcher(bot.api, allowedUpdates);
   let running: boolean = true;
   let failedUpdate: boolean = false;
-  const activeUpdateControllers: Set<AbortController> = new Set();
+  // 取数循环在上一条 middleware 结算前不再取数，停机后也不再开始新的一条，
+  // 因此在途 update 至多一条。
+  let activeUpdateController: AbortController | null = null;
   let currentAbortController: AbortController | null = null;
   let resolveStop: (() => void) | undefined;
 
-  const abortActiveUpdates = (reason: DOMException): number => {
-    let aborted: number = 0;
-    for (const controller of activeUpdateControllers) {
-      if (controller.signal.aborted) continue;
-      controller.abort(reason);
-      aborted++;
-    }
-    return aborted;
+  const abortActiveUpdate = (reason: DOMException): number => {
+    if (activeUpdateController === null || activeUpdateController.signal.aborted) return 0;
+    activeUpdateController.abort(reason);
+    return 1;
   };
 
   const handleUpdate = async (update: Update): Promise<void> => {
     const updateController: AbortController = new AbortController();
-    activeUpdateControllers.add(updateController);
+    activeUpdateController = updateController;
     try {
       await runWithUpdateAbortSignal(
         updateController.signal,
-        (): Promise<void> => bot.handleUpdate(update)
+        (): Promise<void> => bot.handleUpdate(update),
+        updateTopicOf(update)
       );
       // handler 可能没有 await 可取消操作；即便它恰好在 abort 后自行返回，
       // 该 update 仍不能被当成成功完成并跨过 offset。
@@ -67,7 +67,7 @@ export function runAcknowledgedUpdateBatches(
       // 应用生命周期停止进程，由 Telegram 在重启后重新投递。
       throw error;
     } finally {
-      activeUpdateControllers.delete(updateController);
+      if (activeUpdateController === updateController) activeUpdateController = null;
     }
   };
 
@@ -118,9 +118,9 @@ export function runAcknowledgedUpdateBatches(
       await task;
     },
     task: (): Promise<void> => task,
-    size: (): number => activeUpdateControllers.size,
+    size: (): number => activeUpdateController === null ? 0 : 1,
     hasFailedUpdate: (): boolean => failedUpdate,
-    abortActive: (): number => abortActiveUpdates(new DOMException(
+    abortActive: (): number => abortActiveUpdate(new DOMException(
       "Telegram update aborted because the shutdown drain budget was exhausted.",
       "AbortError"
     )),

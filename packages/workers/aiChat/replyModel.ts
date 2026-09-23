@@ -72,8 +72,9 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
  *   副作用（发消息/贴纸/反应/图片/歌曲）都发生在它内部；toolset.functions
  *   直接传给供应商会话。
  * @returns 模型最后一轮的正文文本（正常情况下模型已通过工具把话说完、正文
- *   为空）；请求失败、超时、被 token 上限腰斩或空输出时返回 null。调用方
- *   只在模型没有接纳任何可见动作时才把它经 send_message 当兜底回复用。
+ *   为空）；请求失败、超时、被 token 上限腰斩、空输出、工具结果无法续接或本轮
+ *   作废时返回 null，除作废外都已在这里记下具体原因。调用方只在模型没有接纳任何
+ *   可见动作时才把它经 send_message 当兜底回复用。
  */
 export async function generateReply(
   chatId: number,
@@ -183,7 +184,13 @@ export async function generateReply(
       }
       // 供应商交不出可续接的模型轮次时到此为止：再发一次请求只会让对话记录
       // 与模型实际看到的历史错位。
-      if (!session.appendToolOutputs(outputs)) return null;
+      if (!session.appendToolOutputs(outputs)) {
+        logger.error(
+          `AI reply session could not continue after tool outputs for chat ${chatId}: round=${round}, ` +
+          `custom_calls=${customToolCalls}, side_effects=${toolset.actionsUsed()}.`
+        );
+        return null;
+      }
       continue;
     }
 

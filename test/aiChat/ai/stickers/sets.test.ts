@@ -77,8 +77,8 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
     adoptStickerConfig({ packs: [pack] });
     const expected: any = { name: pack, title: "Recovered", sticker_type: "regular", stickers: [] };
     let calls = 0;
-    // 线程还没 installTelegramApi 时 currentTelegramApi() 就是内联抛：整段 IIFE
-    // 在第一个 await 之前跑完，登记与摘除的先后顺序一旦反了，条目就永远留着。
+    // 线程还没 installTelegramApi 时 currentTelegramApi() 内联抛出，
+    // 整段 IIFE 在第一个 await 之前跑完，登记与摘除的先后顺序需要覆盖这一时序。
     const api = {
       getStickerSet: mock((): Promise<any> => {
         calls++;
@@ -91,8 +91,6 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
       expect(await getStickerSet(pack, api)).toBeNull();
       expect(inflightStickerSets.has(pack)).toBe(false);
 
-      // 负缓存到期后必须能真正重试；留着那个 resolved-null 的话，这个包会在
-      // Worker 余生里静默缺席，而且不再报第二次错。
       failedPacks.set(pack, Date.now() - 1);
       expect(await getStickerSet(pack, api)).toBe(expected);
       expect(calls).toBe(2);
@@ -181,9 +179,6 @@ describe("aiChat/ai/stickers/sets getStickerSet 失败恢复", () => {
   });
 
   test("一个调用方取消只结束它自己的等待，共享请求照常服务其余等待者", async () => {
-    // 回归用例：共享请求一旦绑到「恰好第一个到达」的调用方 signal 上，那个调用方
-    // 取消就会连正缓存回写一起作废，signal 仍存活的其余等待者只能拿到 null，并把
-    // 它当成「这个包不可用」。
     const pack: string = "shared_wait_pack";
     adoptStickerConfig({ packs: [pack] });
     const expected: any = {

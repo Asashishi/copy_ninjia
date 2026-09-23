@@ -54,7 +54,7 @@ const message: BufferedMessage = bufferedMessageFixture({
 const TRANSCRIPT_OPTIONS: TieredTranscriptOptions = { selfId: -1, triggerMessageId: -1 };
 
 /** 多数用例只关心拼出来的文本；随渲染一并交出的编号表与消息号在位判定
- *  另有专门用例（见「渲染结果交出行内编号」一组）。 */
+ *  另有专门用例（文件末尾「渲染结果提供行内编号与单跳引用…」那条）。 */
 function renderTranscript(
   messages: BufferedMessage[],
   options: TieredTranscriptOptions = TRANSCRIPT_OPTIONS
@@ -70,9 +70,8 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("单独的身份段与转录行里同一个人的写法逐字一致", () => {
-    // 提示词里点名某个人（唤起者声明）用的就是这一段。它与转录行、回复标注
-    // 分别拼串，形状漂了模型就得在两种身份写法之间猜同一个人，因此这里逐字
-    // 对齐同一条消息的行内身份段。
+    // 身份段被唤起者声明等场景单独复用；这里逐字比对转录行与回复标注中
+    // 同一条消息的行内身份段写法是否一致。
     const withUsername: BufferedMessage = { ...message, username: "anon_tokyo" };
     expect(formatSpeakerIdentity(withUsername)).toBe("[id:42] [username:@anon_tokyo] 千早 愛音");
     expect(formatBufferedMessageLine(withUsername)).toContain(formatSpeakerIdentity(withUsername));
@@ -84,10 +83,9 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("显示名退化：只有一个名字段、全空白、乃至字段缺失都退回占位而不抛", () => {
-    // 这里替换掉的是 `[first, last].filter(Boolean).join(" ").trim()`。改写成
-    // 直接分支后，`(first || last).trim()` 在两个字段都缺失时会抛 TypeError，
-    // 而原写法会安全退到占位符——多出来的那个 `|| ""` 就是为这条守的。转录是
-    // 每次回复的必经之地，不能因为一条脏记录把整轮回复打断。
+    // 两个名字字段都缺失时 `(first || last || "")` 退化为空串再 `.trim()`，
+    // 最终落到占位符而不抛异常；转录是每次回复的必经之地，不能因为一条脏
+    // 记录把整轮回复打断。
     expect(formatBufferedMessageLine({ ...message, lastName: "" })).toBe(
       "[2026/07/17 18:18:42] [message_id:42] [id:42] 千早：咋啦"
     );
@@ -200,8 +198,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("分层边界按对齐粒度跳变：同一格内追加消息不移动边界", () => {
-    // 边界不动 = 本轮转录相对上一轮是纯追加，两家供应商的自动前缀缓存才能一路
-    // 命中到边界处。边界若逐条前移，整段【最热记忆】每轮都错位，从边界起全部落空。
+    // 同一格内追加消息不移动边界，本轮转录相对上一轮是纯追加。
     function hotLineCount(transcript: string): number {
       return transcript.slice(transcript.indexOf("【最热记忆"))
         .split("\n")
@@ -321,7 +318,7 @@ describe("AI 群聊转录身份格式", () => {
     };
     const transcript: string = renderTranscript([target, inWindow, evicted], { selfId: 99, triggerMessageId: 12 });
 
-    // 段内目标：只留指针，作者与原文不再复制一份——这是转录里最贵的一类结构开销。
+    // 段内目标只留指针，作者与原文不再复制一份。
     expect(transcript).toContain("u2（回复 #10）：指针回复");
     expect(transcript).not.toContain("的消息：「被回复的原话」");
     // 目标带上了消息号，否则指针指向一个段内找不到的编号。
@@ -346,19 +343,17 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("转录区块只出数据与名册，行格式说明归系统提示词", () => {
-    // 说明恒定、转录每轮都变；混在一起就等于让这几百字跟着数据一起落在
-    // 缓存不到的那一半，还逼防注入白名单为「格式说明」留一类例外。
     const transcript: string = renderTranscript([message], TRANSCRIPT_OPTIONS);
     expect(transcript).not.toContain(TRANSCRIPT_FORMAT_INSTRUCTION);
     expect(transcript).not.toContain("的读法：");
-    // 说明搬走之后必须自带「讲的是哪个 Part」，否则它离样例行太远无从对齐。
+    // 说明文案自带「讲的是哪个 Part」，不依赖靠近样例行才能对齐。
     expect(TRANSCRIPT_FORMAT_INSTRUCTION).toStartWith("[BEGIN CURRENT_CONVERSATION] 的读法：");
     expect(TRANSCRIPT_FORMAT_INSTRUCTION).toContain(COMPACT_LINE_FORMAT_HINT);
     expect(TRANSCRIPT_FORMAT_INSTRUCTION).toContain(REPLY_POINTER_HINT);
     expect(TRANSCRIPT_FORMAT_INSTRUCTION).toContain(REPLY_EVICTED_HINT);
     expect(TRANSCRIPT_FORMAT_INSTRUCTION).toContain(FORWARD_TAG_HINT);
     expect(TRANSCRIPT_FORMAT_INSTRUCTION).toContain(SELF_ROSTER_CODE);
-    // 自包含行格式只剩冷历史压缩在用，它的说明不能跟着紧凑格式一起改掉。
+    // 冷历史压缩仍使用自包含行格式，其说明与紧凑格式的说明各自独立。
     expect(SUMMARY_SYSTEM_PROMPT).toContain(TRANSCRIPT_LINE_FORMAT_HINT);
     expect(SUMMARY_SYSTEM_PROMPT).toContain(REPLY_TAG_HINT);
   });
@@ -376,8 +371,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("分层记忆只对内可见：禁止对群友复述分块名、机制细节，也不许被套话确认", () => {
-    // 转录与冷记忆区块里真实出现的分块名，必须逐个被禁言指令点到，
-    // 否则模型只会回避没写进禁令的那几个。
+    // 转录与冷记忆区块里真实出现的分块名逐个被禁言指令点到。
     for (const blockName of [
       "【最热记忆】",
       "【较早逐字记录】",
@@ -388,8 +382,7 @@ describe("AI 群聊转录身份格式", () => {
       expect(MEMORY_MECHANISM_SILENCE_INSTRUCTION).toContain(blockName);
     }
     // 分块名之外，行内还有一批只有模型看得见的记号：名册编号、消息号，以及
-    // 「被回复的原消息已滑出」这个标记。最后一个尤其危险——它等于把淘汰机制
-    // 写在脸上，模型照着解释就成了「主动拿窗口滑出说自己为什么忘了事」。
+    // 「被回复的原消息已滑出」这个标记，同样逐个被禁言指令点到。
     for (const marker of [SELF_ROSTER_CODE, "u1", "f1", MESSAGE_NUMBER_HINT, REPLY_TARGET_EVICTED_TAG]) {
       expect(MEMORY_MECHANISM_SILENCE_INSTRUCTION).toContain(marker);
     }

@@ -5,7 +5,7 @@ import {
   sweepExpiredSnapshots,
 } from "../../../libs/boundedMap";
 
-/** 非匿名管理员邀请豁免表（packages/workers/antiRaid/adminCache.ts）的内存状态。 */
+/** owner: workers/antiRaid。非匿名管理员邀请豁免表（packages/workers/antiRaid/adminCache.ts）的内存状态。 */
 
 /**
  * 按需拉取的各群非匿名管理员 ID 表。

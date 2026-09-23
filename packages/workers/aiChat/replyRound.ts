@@ -20,7 +20,7 @@ import { logger } from "../../infra/logger";
 import { TimestampDeque } from "../../libs/timestampDeque";
 import { raceAbort } from "../../libs/abortSignal";
 import { truncateInline } from "../../libs/text";
-import { admitRound } from "../../states/replyAdmission";
+import { isReplyRoundRateLimited } from "../../states/replyAdmission";
 import type { AiBotInfo, ImageGenerationReference } from "../../types/aiChat/protocol";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type {
@@ -114,7 +114,7 @@ export function startReplyRound(
   }
   // 回拨时仅裁掉未来时间戳，保留仍在窗口内的已用配额。
   longTimes.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
-  if (admitRound({ windowCount: longTimes.size }) === "rateLimited") {
+  if (isReplyRoundRateLimited(longTimes.size)) {
     notifyRateLimited({ chatId, now, generation, messageThreadId });
     return false;
   }
@@ -249,8 +249,9 @@ export function startReplyRound(
           }
         }
 
-        // 全部发送链收尾后按真实落地数记录零动作；已作废轮次保持静默。
-        if (isActive() && toolset.actionsCompleted() === 0) {
+        // 全部发送链收尾后按真实落地数记录零动作；已作废轮次保持静默。finalText 为
+        // null 时模型侧已记下具体原因（见 replyModel.ts 的 generateReply），此处不另记。
+        if (isActive() && toolset.actionsCompleted() === 0 && finalText !== null) {
           const triggerKind: string = queuedTrigger
             ? "queued"
             : mediaComment?.directTriggerReason
@@ -260,7 +261,7 @@ export function startReplyRound(
             : isRandomTrigger
             ? "random"
             : "direct";
-          logger.error(`AI reply round ended with zero actions (chat ${chatId}, trigger=${triggerKind}, finalText=${finalText === null ? "none" : "unsent"}).`);
+          logger.error(`AI reply round ended with zero actions (chat ${chatId}, trigger=${triggerKind}, finalText=unsent).`);
         }
       } finally {
         await heartbeat.stop();

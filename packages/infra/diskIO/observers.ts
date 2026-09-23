@@ -3,16 +3,7 @@ import type {
   DiskIORespawnListener,
   DiskIORespawnRegistration,
 } from "../../types/diskIO/messages";
-import type {
-  AiMemoryDeletedPersistedReply,
-  WedMembersDeletedPersistedReply,
-  AiMemoryPersistedReply,
-  StickerCatalogPersistedReply,
-  IdentityStoragePersistedReply,
-  LuckAppendStalledReply,
-  MidnightMaintenanceReply,
-  VerificationPersistedReply,
-} from "../../types/diskIO/replies";
+import type { DiskIOReplyListenerMap } from "../../types/diskIO/replies";
 
 /**
  * 注册一个恢复 listener：diskIOWorker 崩溃重建后调用，用于把主线程侧的镜像
@@ -45,49 +36,19 @@ export function onDiskIORespawn(
   diskIORuntime.respawnListeners.splice(insertionIndex, 0, registration);
 }
 
-/** 模块初始化时注册主线程午夜维护入口；回调只接纳任务，不等待整轮完成。 */
-export function onMidnightMaintenance(callback: (reply: MidnightMaintenanceReply) => void): void {
-  diskIORuntime.midnightMaintenanceListeners.push(callback);
-}
-
-/** 注册待验证增量 JSON 真正写入后的确认回调。 */
-export function onVerificationPersisted(callback: (reply: VerificationPersistedReply) => void): void {
-  diskIORuntime.verificationPersistedListeners.push(callback);
-}
-
-/** 注册 AI 记忆删除真正 durable（或被更新 revision 覆盖）的确认回调。 */
-export function onAiMemoryDeletedPersisted(callback: (reply: AiMemoryDeletedPersistedReply) => void): void {
-  diskIORuntime.aiMemoryDeletedPersistedListeners.push(callback);
-}
-
-/** 注册成员文件及目录项真正 durable 删除后的回执。 */
-export function onWedMembersDeletedPersisted(callback: (reply: WedMembersDeletedPersistedReply) => void): void {
-  diskIORuntime.wedMembersDeletedPersistedListeners.push(callback);
-}
-
-/** 注册 purge 后首份新 AI 记忆真正 durable 的确认回调。 */
-export function onAiMemoryPersisted(callback: (reply: AiMemoryPersistedReply) => void): void {
-  diskIORuntime.aiMemoryPersistedListeners.push(callback);
-}
-
-/** 模块初始化时登记贴纸目录 durable 回执，释放已退出配置的主线程镜像。 */
-export function onStickerCatalogPersisted(callback: (reply: StickerCatalogPersistedReply) => void): void {
-  diskIORuntime.stickerCatalogPersistedListeners.push(callback);
+/**
+ * 模块初始化时登记某类 Disk I/O 回执的主线程 owner 回调；回调同步执行，只接纳
+ * 结果或结算本 owner 的等待，不等待后续工作。回执语义见 types/diskIO/replies.ts
+ * 的各回执类型。
+ */
+export function onDiskIOReply<K extends keyof DiskIOReplyListenerMap>(
+  type: K,
+  listener: (reply: DiskIOReplyListenerMap[K]) => void
+): void {
+  diskIORuntime.replyListeners[type].push(listener);
 }
 
 /** Worker 耗尽重启预算后通知仍在等待 durable 回执的 owner 立即按失败结算。 */
 export function onDiskIOGiveUp(callback: () => void): void {
   diskIORuntime.giveUpListeners.push(callback);
-}
-
-/** 注册当日运势追加连续失败到阈值后的领域诊断回调。 */
-export function onLuckAppendStalled(callback: (reply: LuckAppendStalledReply) => void): void {
-  diskIORuntime.luckAppendStalledListeners.push(callback);
-}
-
-/** 注册 SQLite 事务 ACK；各 owner 只消费自己的 revision。 */
-export function onIdentityStoragePersisted(
-  callback: (reply: IdentityStoragePersistedReply) => void
-): void {
-  diskIORuntime.identityStoragePersistedListeners.push(callback);
 }

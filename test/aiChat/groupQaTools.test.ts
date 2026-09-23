@@ -19,7 +19,7 @@ describe("群问答的两个模型工具", () => {
   test("有问答时挂两个纯查询工具，且都不占动作预算", async () => {
     const definitions = buildGroupQaToolDefinitions(ENTRIES);
     expect(definitions.map((d) => d.name)).toEqual(["group_qa_query", "group_qa_answer"]);
-    // 动作预算清单是另一份常量；这两个不在其中，因此模型可以随便查而不消耗回合。
+    // 校验这两个工具名不在 ACTION_TOOL_NAMES 动作预算清单中。
     const { ACTION_TOOL_NAMES } = await import("../../packages/consts/tools");
     for (const definition of definitions) {
       expect(ACTION_TOOL_NAMES).not.toContain(definition.name);
@@ -30,7 +30,7 @@ describe("群问答的两个模型工具", () => {
     const parsed: { questions: string[] } = JSON.parse(executeGroupQaQuery(ENTRIES));
 
     expect(parsed.questions).toEqual(["怎么入群？", "几点开饭"]);
-    // 清单里不能带答案：先让模型判断语义够不够近，够近才去取答案。
+    // query 的返回文本中不出现任何答案内容。
     expect(executeGroupQaQuery(ENTRIES)).not.toContain("点置顶那条链接");
   });
 
@@ -48,7 +48,6 @@ describe("群问答的两个模型工具", () => {
       executeGroupQaAnswer(ENTRIES, JSON.stringify({ question: "怎么入群" }))
     );
 
-    // 模型改写了原文时替它猜一条最像的，等于把本群没登记过的答案说成登记过的。
     expect(parsed.found).toBeFalse();
   });
 

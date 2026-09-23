@@ -37,8 +37,9 @@ function isQuoteWrapped(text: string): boolean {
  * 清洗模型给出的消息文本，得到可直接发送的纯文本：去掉联网搜索可能附带的
  * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
  * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
- * 空则返回 null。aiChat/ai/tools/replyToolset/sendMessage.ts 的 createSendMessageExecutor
- * 与 workers/aiChat/replyRound.ts 的最终正文兜底都经此清洗。
+ * 空则返回 null。send_message 正文（见 replyToolset/typoHandling.ts 的
+ * parseCleanMessageText）与生图、生歌的图注/caption 解析（见
+ * replyToolset/imageGeneration.ts、replyToolset/songGeneration.ts）均经此清洗。
  */
 export function cleanReply(raw: string): string | null {
   // URL 部分匹配「非括号非空白字符，或者一对不含嵌套的平衡括号」重复一次以上：

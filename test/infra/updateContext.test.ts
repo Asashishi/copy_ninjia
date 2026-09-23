@@ -1,9 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import {
   currentUpdateAbortSignal,
+  currentUpdateTopic,
   refreshUpdateNow,
   runWithUpdateAbortSignal,
   updateNow,
+  updateTopicThreadIdFor,
 } from "../../packages/infra/updateContext";
 
 describe("Bun AsyncLocalStorage update 上下文", () => {
@@ -116,5 +118,24 @@ describe("本条 update 统一的「现在」", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("本条 update 的触发话题", () => {
+  test("同群沿用触发话题，别的群与作用域之外一律 undefined，嵌套作用域各记各的", async () => {
+    const signal: AbortSignal = new AbortController().signal;
+    await runWithUpdateAbortSignal(signal, async (): Promise<void> => {
+      await Bun.sleep(0);
+      expect(currentUpdateTopic()).toEqual({ chatId: -1001, threadId: 5 });
+      expect(updateTopicThreadIdFor(-1001)).toBe(5);
+      expect(updateTopicThreadIdFor(-1002)).toBeUndefined();
+      await runWithUpdateAbortSignal(signal, async (): Promise<void> => {
+        expect(currentUpdateTopic()).toBeUndefined();
+        expect(updateTopicThreadIdFor(-1001)).toBeUndefined();
+      });
+      expect(updateTopicThreadIdFor(-1001)).toBe(5);
+    }, { chatId: -1001, threadId: 5 });
+    expect(currentUpdateTopic()).toBeUndefined();
+    expect(updateTopicThreadIdFor(-1001)).toBeUndefined();
   });
 });

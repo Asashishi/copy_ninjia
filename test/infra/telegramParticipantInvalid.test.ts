@@ -73,16 +73,42 @@ describe("成员探测的 PARTICIPANT_ID_INVALID 分档", () => {
     const getChatMember = mock(async (..._args: unknown[]): Promise<unknown> => participantInvalid());
     Object.assign(telegramApi, { getChatMember });
     try {
-      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toBeNull();
+      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toEqual({ kind: "absent" });
       expect(logApiError).not.toHaveBeenCalled();
 
+      getChatMember.mockImplementation(async (): Promise<unknown> => ({ status: "left", user: { id: 7 } }));
+      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toEqual({ kind: "absent" });
+
       getChatMember.mockImplementation(async (): Promise<never> => { throw new Error("socket hang up"); });
-      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toBeUndefined();
+      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toEqual({ kind: "failed" });
       expect(logApiError).toHaveBeenCalledTimes(1);
 
       const user = { id: 7, is_bot: false, first_name: "Ada" };
       getChatMember.mockImplementation(async (): Promise<unknown> => ({ status: "member", user }));
-      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toEqual(user);
+      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toEqual({ kind: "present", user });
+    } finally {
+      Reflect.deleteProperty(telegramApi, "getChatMember");
+    }
+  });
+
+  test("/wed 复核读取区分本群拒绝成员查询，并照常记一行 API 错误", async () => {
+    const denied: readonly GrammyError[] = [
+      new GrammyError("x", { ok: false, error_code: 400, description: "Bad Request: CHAT_ADMIN_REQUIRED" }, "getChatMember", {}),
+      new GrammyError("x", { ok: false, error_code: 403, description: "Forbidden: bot was kicked from the supergroup chat" }, "getChatMember", {}),
+    ];
+    const getChatMember = mock(async (..._args: unknown[]): Promise<unknown> => undefined);
+    Object.assign(telegramApi, { getChatMember });
+    try {
+      for (const error of denied) {
+        getChatMember.mockImplementation(async (): Promise<never> => { throw error; });
+        expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toEqual({ kind: "chatDenied" });
+      }
+      expect(logApiError).toHaveBeenCalledTimes(denied.length);
+
+      getChatMember.mockImplementation(async (): Promise<never> => {
+        throw new GrammyError("x", { ok: false, error_code: 400, description: "Bad Request: user not found" }, "getChatMember", {});
+      });
+      expect(await membership.readPresentChatUser({ chatId: -1001, userId: 7 })).toEqual({ kind: "failed" });
     } finally {
       Reflect.deleteProperty(telegramApi, "getChatMember");
     }

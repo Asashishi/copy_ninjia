@@ -32,7 +32,9 @@ export const botPermissionRequestTokens: Map<number, symbol> = new Map();
  * `infra/botAdmin.ts` 的 admitBotPermissionProbe 每放行一次现查就先写入，不等现查
  * 结果；已 /init 的群记下确证快照（recordBotChatPermissions）时删除，此后走快照命中；
  * forgetBotChatPermissions（`/init` 切换、离群、作废陈旧快照）同样删除。
- * 容量与「当前正处于退化状态的群数」同阶。
+ * 过期时间戳在该群下次探测时覆盖；没有后续访问的群会一直保留到权限确证、
+ * 主动失效或进程重启。容量与尚无确证快照且曾进入退避的受管群数同阶，
+ * 上界为 STATE_MANAGED_CHAT_LIMIT（见 consts/storage.ts）。
  */
 export const botPermissionProbeBackoff: Map<number, number> = new Map();
 

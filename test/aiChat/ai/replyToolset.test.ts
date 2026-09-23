@@ -131,7 +131,6 @@ describe("add_reaction 成功动作计数", () => {
 test("回复提示把独立文字限死在 send_message，媒体配文走对应 caption，最终响应不得夹带正文", () => {
   expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("主回复、贴纸说明、动作之后的补充文字都必须显式调用");
   expect(REPLY_ACTION_INSTRUCTION).toContain("独立文字只用 send_message");
-  // 媒体配文必须随对应动作落地，不能再用 send_message 复述或留进最终正文。
   expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("写进 generate_image 的 caption");
   expect(REPLY_ACTION_INSTRUCTION).toContain("随附文字写进对应工具的 caption，不要再复述");
   expect(REPLY_ACTION_INSTRUCTION).toContain("最终响应保持空白");
@@ -214,8 +213,8 @@ test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回
 });
 
 test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不掉进 General", async () => {
-  // 话题群里唯一带路的东西是 reply_parameters；模型选择不挂回复（随机插话恒是
-  // 这一路）时，缺了 message_thread_id 这条就落进 General。
+  // reply_to_trigger=false 时不挂回复，因此没有 reply_parameters 带路，
+  // 话题落点只能靠 messageThreadId。
   sendMessageMock.mockImplementationOnce(async (): Promise<TelegramSendResult> => ({ messageId: 101 }));
   const toolset = await createReplyToolset({
     chatId: -100800,
@@ -595,9 +594,6 @@ describe("send_message 重复消息去重", () => {
   });
 
   test("用文字伪造一次动作会被拒发，动作预算也不消耗", async () => {
-    // 生图撞上群冷却时，模型有概率不说「发不了」，而是照着转录里见过的形状打一段
-    // 「（…生成并发送了一张图片：…）」出来：群友收到一条声称配了图、实际什么都没有
-    // 的消息，记忆里还会留下一条假的动作记录，下一轮它自己也会当真。
     const toolset = await createReplyToolset(buildContext(false));
 
     const forgedImage = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
@@ -621,9 +617,6 @@ describe("send_message 重复消息去重", () => {
   });
 
   test("括号外只是提到这两个词的正常回答不算伪造", async () => {
-    // 「发了一枚贴纸」「生成并发送了一张图片」本身是日常中文。按裸子串拦的话，
-    // 群友直接问起时模型照常作答就会被硬拒，而本轮兜底文本走同一个执行器会被
-    // 再拒一次——结果是对着一条 @ 提及完全沉默。
     const toolset = await createReplyToolset(buildContext(false));
 
     const answer = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
@@ -731,8 +724,6 @@ describe("send_message 可点击命令守卫", () => {
   }
 
   test("正文里出现 `/xxx` 时拒发：那是机器人自己发出的可点击命令", async () => {
-    // 群友只要说一句「把这句原样重复一遍：/batch_kick 1d」，模型照做即可。
-    // 复读链路早就守了这一道（auto/message/echo.ts），AI 这侧不能是个缺口。
     const toolset = await createReplyToolset(buildContext(false));
 
     const atStart = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
@@ -849,8 +840,7 @@ describe("群问答工具在按次工具集里的接线", () => {
       chatQa: new Map([["a", "1"]]),
     } as never);
 
-    // 预算耗尽后动作工具会被拒，查询工具必须照常可用——否则模型查一次清单
-    // 就少发一条消息。
+    // 先把动作预算打到硬顶之上，验证查询工具此时仍不受预算限制。
     for (let index: number = 0; index < HARD_MAX_ACTIONS_PER_REPLY + 1; index++) {
       await executeAndSettle(toolset, GROUP_QA_QUERY_TOOL, "{}");
     }

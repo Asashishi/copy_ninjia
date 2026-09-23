@@ -83,9 +83,8 @@ describe("群消息主动行为", () => {
     }));
   });
 
-  // 这条回复不挂延迟删除，会长期留在群里；只靠 reply_parameters 的话，触发它的
-  // 消息被删掉时整条回复会掉进 General 并永久留在那儿（见 SendMessageParams
-  // 的 messageThreadId）。同一文件里的随机复读一直是带话题的，两者口径必须一致。
+  // 这条回复不挂延迟删除，长期留在群里，因此需要显式带话题（SendMessageParams
+  // 的 messageThreadId），不能只靠 reply_parameters。
   test("论坛话题里的洗澡触发，回复带着话题发回去", async () => {
     await handleProactiveMessageActions({
       message: messageFixture({

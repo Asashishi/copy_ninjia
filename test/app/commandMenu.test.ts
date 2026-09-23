@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { GrammyError } from "grammy";
 import type { Bot } from "grammy";
 import { registerCommandMenu, syncChatCommandMenu } from "../../packages/app/commandMenu";
 import { chatStateCache } from "../../packages/cache/main/chatState";
@@ -61,6 +62,32 @@ test("某群菜单更新失败仍继续同步其他群", async () => {
   } finally { error.mockRestore(); }
 });
 
+test("机器人已不在的群菜单同步遇 403 只记 warn，其它失败仍记 error", async () => {
+  const api = {
+    setMyCommands: mock(async (..._args: unknown[]): Promise<true> => true),
+    deleteMyCommands: mock(async (..._args: unknown[]): Promise<true> => {
+      throw new GrammyError(
+        "x",
+        { ok: false, error_code: 403, description: "Forbidden: bot was kicked from the group chat" },
+        "deleteMyCommands",
+        {}
+      );
+    }),
+  };
+  const error = spyOn(logger, "error").mockImplementation(() => undefined);
+  const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+  try {
+    await syncChatCommandMenu(api, -1001);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "Skipped the commands menu for chat -1001: the bot is no longer in the chat (Forbidden: bot was kicked from the group chat)."
+    );
+  } finally {
+    error.mockRestore();
+    warn.mockRestore();
+  }
+});
+
 describe("application command menu", () => {
   test("copy、qa、mood、icon 只展示统一入口并说明子命令", () => {
     const names: readonly string[] = BOT_COMMANDS.map(({ command }) => command);
@@ -80,9 +107,7 @@ describe("application command menu", () => {
   });
 
   test("命令名全部满足 Telegram 的字符集与长度限制", () => {
-    // setMyCommands 是整体提交：任何一项非法都会让整份菜单以
-    // BOT_COMMAND_INVALID 失败，而注册失败只记日志、不阻断启动，
-    // 于是菜单会静默消失。中文动作命令因此只能靠 /x 占位说明项曝光。
+    // setMyCommands 整体提交：任一命令非法会让整份菜单以 BOT_COMMAND_INVALID 失败。
     for (const { command, description } of BOT_COMMANDS) {
       expect(command).toMatch(/^[a-z0-9_]{1,32}$/);
       expect(description.length).toBeGreaterThan(0);

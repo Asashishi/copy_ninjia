@@ -3,8 +3,8 @@ import { GrammyError } from "grammy";
 import type { TelegramApi } from "../../packages/types/telegramWorker";
 import {
   resetSelfSentTracker,
-  sentMessageCount,
 } from "../../packages/cache/perThread/selfSentTracker";
+import { sentMessageCount } from "../helpers/selfSentCount";
 import { MUTED_CHAT_PERMISSIONS, UNMUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import {
   deleteEphemeralMessageWithOutcome,

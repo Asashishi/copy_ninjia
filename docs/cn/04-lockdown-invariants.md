@@ -7,7 +7,7 @@
 - lockdown 落盘握手的指纹由 `phase`、`intentId` 与 `announced` 组成。前两项是一次锁定意图的稳定身份；`announced` 虽然每轮最多只从 false 变为 true 一次，却直接决定恢复后能否发解锁公告，因此落盘回执必须覆盖它。紧急权限恢复判断迟到结果是否仍属于当前意图时仍只比较 `phase` 与 `intentId`，公告落盘不应创建新的权限意图。两类指纹都不得含 `expiresAt`：`APPLYING`/`RESTORING` 阶段发布时它填的是当刻墙钟，同一份意图前后两次发布（例如公告结果落盘）就会不相等；把它算进落盘指纹，主线程「存下去 → 再看一眼还是不是同一份」的对账循环永远等不到相等，每轮一次带 fsync 的整表写入，发布比写盘更快时循环不终止，既写不下指纹也发不出落盘回执。
 
   倒计时本身照常落在镜像的 `expiresAt` 里，adopt 时据此换算剩余时长。该对账循环另有轮次上限兜底；持久化在途期间到达的新事件会置位待续跑标记，用尽后当前任务只留下错误日志并让出微任务，随后自动以最新镜像开启新任务，不得依赖下一条外部 lockdown 事件补回最后一次唤醒。
-- Worker 放弃自愈后，主线程的 `recoverAbandonedLockdowns` 直接遍历群状态 LRU 而不是快照，而恢复链在第一次 `await` 之前就同步 `get` 当前这一条，把它挪到最新端。`libs/lruCache.ts` 的迭代器为此保留一格让位槽：正停留的条目被移走时不漏掉它后面的条目，该条目在末尾再产出一次。**终止只在「每条至多被移到最新端一次」时成立**——同一群第二次产出时恢复已在册，`startEmergencyLockdownRecovery` 按指纹直接返回，不再读缓存。要在遍历中反复重排、批量删除或嵌套遍历，必须先取快照（`[...cache]`）。
+- Worker 放弃自愈后，主线程的 `recoverAbandonedLockdowns` 按插入顺序直接遍历群状态热读副本（`cache/main/chatState.ts` 的 `Map`），不取快照。恢复链在第一次 `await` 之前同步读取当前这一条，`Map.get` 不改变迭代顺序，因此每个带 lockdown 的群只产出一次，接管日志里每群也只列一次；同一群的恢复已在册时，`startEmergencyLockdownRecovery` 按指纹直接返回。
 - 当前 lockdown 镜像要求 `phase` 与正数 `intentId`；待验证 active 记录要求 `phase` 与 `trackedMessageTimes`。reminder ID 与 `announcementMessageId` 仍是业务可选字段：缺失只表示提醒尚未成功落地、或这条记录压根没观测到入群公告，恢复后各走自己的补发/清理路径。其它缺失或不兼容字段必须在旧进程停止期间人工迁移，生产读取路径不保留兼容逻辑。
 - **终态播报的三个标志均须持久化**：`successNoticeSent` 表示成功战报，`failureNoticeSent` 表示无法踢人或缺少 `can_restrict_members`，`unconfirmedNoticeSent` 表示无法确认成员或群类型。三类提示均在发送成功后由主线程于 30 秒后删除。各标志独立阻止对应播报在 Worker 重建或进程重启后重复发送，不能互相替代；设置标志须发布新 revision，并由终态重试等待该 revision 的持久化确认。
 

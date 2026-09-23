@@ -18,16 +18,9 @@ import type {
   DiskIOOperationMessage,
 } from "../../types/diskIO/messages";
 import type {
-  AiMemoryDeletedPersistedReply,
-  WedMembersDeletedPersistedReply,
-  AiMemoryPersistedReply,
-  StickerCatalogPersistedReply,
   DiskIODomain,
+  DiskIOReplyListeners,
   LoadedReply,
-  LuckAppendStalledReply,
-  IdentityStoragePersistedReply,
-  MidnightMaintenanceReply,
-  VerificationPersistedReply,
 } from "../../types/diskIO/replies";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
@@ -147,14 +140,7 @@ interface DiskIORuntime {
     timer: ReturnType<typeof setTimeout>;
   }>;
   respawnListeners: DiskIORespawnRegistration[];
-  midnightMaintenanceListeners: ((reply: MidnightMaintenanceReply) => void)[];
-  verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
-  aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
-  wedMembersDeletedPersistedListeners: ((reply: WedMembersDeletedPersistedReply) => void)[];
-  aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
-  stickerCatalogPersistedListeners: ((reply: StickerCatalogPersistedReply) => void)[];
-  luckAppendStalledListeners: ((reply: LuckAppendStalledReply) => void)[];
-  identityStoragePersistedListeners: ((reply: IdentityStoragePersistedReply) => void)[];
+  replyListeners: DiskIOReplyListeners;
   giveUpListeners: (() => void)[];
 }
 
@@ -162,12 +148,10 @@ interface DiskIORuntime {
  * 主线程 Disk I/O Worker 的完整运行态。initDiskIO 填充 Worker/配置，恢复
  * 窗口暂存有硬顶的业务消息；terminateDiskIO 结算等待、清 timer 并恢复默认值。
  * Worker 崩溃后保留监听器并从主线程镜像重建，业务队列容量由配置硬顶约束。
- * stickerCatalogPersistedListeners 仅贴纸镜像模块初始化登记一次，容量固定；
- * 随主进程退出释放，Disk I/O 重建沿用，缺失监听器不构成落盘确认。
- * midnightMaintenanceListeners 仅模块初始化登记，容量由主线程维护领域数约束；
- * Worker 重建保留监听器且不重放午夜通知，进程退出时随 owner 释放。
- * wedMembersDeletedPersistedListeners 由成员 owner 在模块初始化时登记一次，
- * Worker 重建保留，进程退出释放；只结算本代 Worker 的 durable 删除回执。
+ * replyListeners 按回执类型分表，只由各 owner 模块初始化时经 onDiskIOReply 登记，
+ * 容量由订阅该回执的 owner 数固定；Worker 重建沿用，进程退出时释放。缺失监听器
+ * 不构成落盘确认；午夜维护通知不在 Worker 重建时重放；成员删除回执只结算本代
+ * Worker 的 durable 删除。
  * diagnosticQueue 由 relayLogMessage/postDiskIODiagnostic 填充、DiskIO ACK 排空；
  * 单批在途并保留到 ACK，Worker 崩溃后原批重发。总消息数与 JSON 载荷字节均有
  * 硬顶；越界项只累加两个标量，队列重新有空间后追加一条汇总日志。terminate 时
@@ -209,14 +193,16 @@ export const diskIORuntime: DiskIORuntime = {
   consecutiveDiagnosticRebuilds: 0,
   diagnosticDrainWaiters: new Set(),
   respawnListeners: [],
-  midnightMaintenanceListeners: [],
-  verificationPersistedListeners: [],
-  aiMemoryDeletedPersistedListeners: [],
-  wedMembersDeletedPersistedListeners: [],
-  aiMemoryPersistedListeners: [],
-  stickerCatalogPersistedListeners: [],
-  luckAppendStalledListeners: [],
-  identityStoragePersistedListeners: [],
+  replyListeners: {
+    midnightMaintenance: [],
+    verificationPersisted: [],
+    aiMemoryDeletedPersisted: [],
+    wedMembersDeletedPersisted: [],
+    aiMemoryPersisted: [],
+    stickerCatalogPersisted: [],
+    luckAppendStalled: [],
+    identityStoragePersisted: [],
+  },
   giveUpListeners: [],
 };
 

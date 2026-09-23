@@ -45,8 +45,7 @@ describe("/qa set 表单会话", () => {
   });
 
   test("查找只按群，不看发起人：匿名管理员开的表单也找得到", () => {
-    // 命令侧的 sender_chat 是本群，因此 openedById 就是群 id；随后那条 inline
-    // 查询来自真实用户账号。按人索引的话这张表单永远填不了。
+    // 模拟命令侧 sender_chat 是本群的场景：openedById 等于群 id。
     openQaFormSession({ chatId: CHAT_ID, openedById: CHAT_ID, onDiscard: noop });
 
     expect(findQaFormSession(CHAT_ID)).toBeDefined();
@@ -58,7 +57,6 @@ describe("/qa set 表单会话", () => {
         .not.toBeNull();
     }
 
-    // 被顶掉的人只会看到自己的按钮突然不认了，无从排查；宁可当场说满了。
     expect(openQaFormSession({ chatId: -99999, openedById: 1, onDiscard: noop })).toBeNull();
     expect(qaFormSessions.size).toBe(QA_FORM_SESSION_MAX);
   });
@@ -100,8 +98,8 @@ describe("/qa set 表单会话", () => {
   });
 
   test("TTL 到期自行结算并交回会话，让调用方删掉表单消息", () => {
-    // 半填的表单不该永远挂在群里：到点由会话自己的 timer 摘表 + 回调收走那条
-    // 按钮消息（commands/qa.ts 的 discardQaForm），不依赖任何外部扫描。
+    // 到点由会话自身的 timer 摘表并触发 onDiscard 回调（生产侧接 commands/qa.ts
+    // 的 discardQaForm），不依赖外部扫描。
     jest.useFakeTimers();
     try {
       const expired: QaFormSession[] = [];

@@ -7,7 +7,7 @@ import type {
 import type { DeferredVerificationRecord } from
   "../../../types/antiRaid/verification";
 
-/** 入群验证状态机（packages/workers/antiRaid/verificationRuntime.ts）的内存状态。 */
+/** owner: workers/antiRaid。入群验证状态机（packages/workers/antiRaid/verificationRuntime.ts）的内存状态。 */
 
 /**
  * 以 "chatId:userId" 为键，同一个人在不同群里独立追踪。

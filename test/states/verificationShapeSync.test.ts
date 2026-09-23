@@ -3,20 +3,13 @@ import type { PendingState } from "../../packages/types/states/verification";
 import type { VerificationSnapshotBase } from "../../packages/types/antiRaid/verification";
 
 /**
- * 「待验证成员」这组事实在两个领域里各声明了一份：
- * `types/states/verification.ts` 的 `PendingState` 是 Anti-Raid Worker 的运行态，
- * `types/antiRaid/verification.ts` 的 `VerificationSnapshotBase` 是落盘快照。
+ * 「待验证成员」这组事实在两处各声明一份：`types/states/verification.ts` 的
+ * `PendingState`（Anti-Raid Worker 运行态）与 `types/antiRaid/verification.ts` 的
+ * `VerificationSnapshotBase`（落盘快照）。两者不共享基类型，字段改动需人工同步。
  *
- * **刻意不合并成一个共享基类型**，两条理由：一是两侧的可变性不同（同域的
- * `ExpelSnapshot` 全是 `readonly`，运行态要就地改写），二是合并会在
- * `types/states/`（Worker 状态机）与 `types/antiRaid/`（持久化协议）之间引入一条
- * 目前并不存在的跨域类型依赖，与「共享类型按领域放置、避免无关协议耦合」相悖。
- *
- * 代价是两张字段表要靠人记着一起改，而漏改**不会有任何编译或运行期报错**：
- * 只给运行态加一个字段，它就是不进快照，表现为「重启之后那个字段没了」。
- * 这里用两个编译期探针把这件事变成编译错误——任一侧新增、改名或删除字段，
- * 对应那个 `Record` 要么缺键要么多键，当场编译失败；运行期再核对一次两张表
- * 与下面这份清单三者相等，保证探针本身没有被改成只覆盖一侧。
+ * 下面用两个 `Record<K, true>` 编译期探针分别覆盖两侧字段：任一侧新增、改名或
+ * 删除字段会让对应 Record 缺键或多键，编译失败；运行期再核对两张表与
+ * SHARED_MEMBER_FACT_KEYS 三者相等，确认探针本身覆盖完整。
  */
 
 /** 运行态里描述成员事实的字段（去掉判别标签）。 */

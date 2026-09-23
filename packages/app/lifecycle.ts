@@ -79,21 +79,17 @@ export class ApplicationLifecycle {
    */
   private stopForShutdown(stopErrorMessage: string): void {
     this.stopRequested = true;
-    this.quiesceMaintenance();
+    quiesceLifecycleMaintenance(this.dependencies);
     this.runner?.stop().catch((error: unknown): void => {
       this.dependencies.logger.error(stopErrorMessage, error);
     });
-  }
-
-  private stopAfterSignal(): void {
-    this.stopForShutdown("Error stopping runner:");
   }
 
   private stopOnSignal(signal: ShutdownSignal): void {
     if (!this.stopRequested) {
       this.dependencies.logger.log(`Received ${signal}; beginning graceful shutdown.`);
     }
-    this.stopAfterSignal();
+    this.stopForShutdown("Error stopping runner:");
   }
 
   private readonly stopOnSigint = (): void => { this.stopOnSignal("SIGINT"); };
@@ -231,7 +227,7 @@ export class ApplicationLifecycle {
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
     // getChat 扫描加批量落盘。
-    if (this.stopRequested) this.stopAfterSignal();
+    if (this.stopRequested) this.stopForShutdown("Error stopping runner:");
     this.dependencies.enableWedMemberReview();
     // 关键 Bot API 握手、Worker hydrate 和 runner 入口全部就绪后，才让低优先级
     // 标题维护进入 Telegram query 类别的 429 队列；小并发池由 chatTitle owner 自己保证。
@@ -262,7 +258,7 @@ export class ApplicationLifecycle {
     } finally {
       this.runnerTaskSettled = true;
     }
-    const maintenanceQuiesceSucceeded: boolean = this.quiesceMaintenance();
+    const maintenanceQuiesceSucceeded: boolean = quiesceLifecycleMaintenance(this.dependencies);
     const runnerDrained: boolean = await this.waitForRunnerDrain(runner);
 
     // 标题刷新可能排入 chatState SQLite 写缓冲；必须先等它完成，再做最终 flush。
@@ -315,7 +311,7 @@ export class ApplicationLifecycle {
   dispose(timeouts: FlushTimeouts = NORMAL_FLUSH_TIMEOUTS): Promise<void> {
     this.disposePromise ??= (async (): Promise<void> => {
       const settler: OwnerSettler = createOwnerSettler(this.dependencies.logger);
-      const maintenanceQuiesceSucceeded: boolean = this.quiesceMaintenance();
+      const maintenanceQuiesceSucceeded: boolean = quiesceLifecycleMaintenance(this.dependencies);
       const runner: AcknowledgedUpdateRunner | null = this.runner;
       if (runner !== null && !this.runnerTaskSettled) {
         await runner.stop().catch((error: unknown): void => {
@@ -476,18 +472,6 @@ export class ApplicationLifecycle {
     const task: Promise<void> | null = this.chatTitleRefreshTask;
     if (task === null || this.chatTitleRefreshSettled) return true;
     return waitForLifecycleBackgroundMaintenance(task, timeoutMs, this.dependencies);
-  }
-
-  /**
-   * 让后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
-   * init() 里的各 init 会把 accepting 重新置真，启动期到达的停止信号若把成功
-   * 记成一次性完成，此后 wait()/dispose() 的每一次调用都会被短路——owner
-   * 整个停机期间继续收活，
-   * 而 maintenanceQuiesceSucceeded 仍报 true，最终 offset 照常确认，停机诊断里
-   * 一点痕迹都没有。各调用都是幂等赋值，重复执行不花什么代价。
-   */
-  private quiesceMaintenance(): boolean {
-    return quiesceLifecycleMaintenance(this.dependencies);
   }
 
   private flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {

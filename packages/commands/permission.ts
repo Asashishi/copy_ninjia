@@ -85,7 +85,7 @@ function formatPermissionHelpMessage(atmosphere: AtmosphereTexts): PermissionHel
  *
  * 与 `help` 一样长期保留：这份回执是一张要照着逐项核对的权限看板，30 秒清理会
  * 在人读完之前把它收走，于是只能反复重发同一条命令。用户已明确授权这条例外，
- * 调用点显式传 `preserveInGroup: true`（见 AGENTS.md 的「Telegram 提示留存」）。
+ * 调用点显式传 `preserveInGroup: true`（见 docs/cn/04-invariants.md）。
  */
 function formatPermissionQueryMessage(
   permissions: Readonly<WhitelistPermissions>,

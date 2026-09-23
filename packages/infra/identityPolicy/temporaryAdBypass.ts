@@ -204,7 +204,7 @@ function replayTemporaryAdBypassWrites(transport: DiskIORecoveryTransport): bool
   return true;
 }
 
-diskIO.onIdentityStoragePersisted(settleTemporaryAdBypassWrites);
+diskIO.onDiskIOReply("identityStoragePersisted", settleTemporaryAdBypassWrites);
 diskIO.onDiskIORespawn(
   "temporary ad bypass",
   DISK_IO_RESPAWN_PRIORITIES.TEMPORARY_AD_BYPASS,

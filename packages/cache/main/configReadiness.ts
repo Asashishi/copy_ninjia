@@ -10,8 +10,8 @@ import type { ConfigReadinessCache } from "../../types/config";
  */
 
 /**
- * AI 闲聊部署配置的可用性结论。**失败结论同样缓存**：这道判定挂在
- * /ai_chat enable 与投喂门禁上，不缓存失败等于每条群消息一次读盘。
+ * AI 闲聊部署配置的可用性结论。**失败结论同样写入本缓存**，与成功结论一样只由
+ * 下方替换时机整体覆盖，不留空表示「还没判定过」。
  *
  * 填充：启动总闸（config/readiness.ts 的 validateExistingDeploymentInputs）。
  * 替换：config/ 热重载每轮按 holder 重算，可用性或失败文件变化时由

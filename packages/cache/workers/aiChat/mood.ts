@@ -1,6 +1,6 @@
 import type { MoodOption } from "../../../types/aiChat/mood";
 
-/** AI 心情抽取与到期（packages/aiChat/ai/mood.ts）的内存状态；容量等于仍有当前
+/** owner: workers/aiChat。AI 心情抽取与到期（packages/aiChat/ai/mood.ts）的内存状态；容量等于仍有当前
  * 心情的群数，群 teardown 与到期路径同步删除。 */
 
 /**

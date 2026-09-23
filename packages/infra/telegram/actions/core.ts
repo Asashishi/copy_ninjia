@@ -196,6 +196,18 @@ export function isPermissionDenied(error: unknown): boolean {
 }
 
 /**
+ * Telegram 是否拒绝了本群的成员查询本身，而不是针对目标用户：403（机器人不在群、
+ * 被踢出），或 400 `CHAT_ADMIN_REQUIRED`（本群只允许管理员查询他人成员身份）。
+ */
+export function isChatMemberQueryDenied(error: unknown): boolean {
+  const details: Readonly<{ errorCode: number; description: string }> | undefined =
+    telegramErrorDetails(error);
+  if (details === undefined) return false;
+  if (details.errorCode === 403) return true;
+  return details.errorCode === 400 && /\bCHAT_ADMIN_REQUIRED\b/.test(details.description);
+}
+
+/**
  * Telegram 是否以 PARTICIPANT_ID_INVALID 拒绝了目标用户 ID。
  * 已销号账号的 getChatMember 与 banChatMember 都返回这一句 400。
  */

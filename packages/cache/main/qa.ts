@@ -13,9 +13,8 @@ import type { QaFormSession } from "../../types/qa";
  * 因此整表恒定不超过 375 条，不需要淘汰策略。一群的最后一条被删除后外层随之
  * 移除，空 Map 不留存。
  *
- * **为什么按原文而不是归一化文本索引**：直答只认完全一致，热路径直接拿
- * `message.text` 查表即可命中，不必为每条群消息造一个归一化字符串。语义相近
- * 的提问由模型侧的 group_qa_answer 处理，不走这张表的键。
+ * **按原文索引，不做归一化**：直答只认完全一致，热路径直接拿 `message.text`
+ * 查表命中。语义相近的提问由模型侧的 group_qa_answer 处理，不走这张表的键。
  */
 export const chatQaEntries: Map<number, Map<string, string>> = new Map();
 

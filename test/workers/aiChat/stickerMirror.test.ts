@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { diskIOStub } from "../../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../../helpers/diskIOMock";
 import { latestStickerCatalogs } from "../../../packages/cache/main/aiChat";
 import { pendingStickerCatalogRevisions } from "../../../packages/cache/main/stickers";
 import { adoptStickerConfig, getStickerConfig } from "../../../packages/config/stickers";
@@ -12,7 +12,9 @@ let receipt: (reply: StickerCatalogPersistedReply) => void;
 let replay: DiskIORespawnListener;
 mock.module("../../../packages/infra/diskIO", (): unknown => diskIOStub({
   postDiskIO: (message: DiskBusinessMessage): boolean => { posts.push(message); return true; },
-  onStickerCatalogPersisted: (callback: typeof receipt): void => { receipt = callback; },
+  onDiskIOReply: diskIOReplyStub({
+    stickerCatalogPersisted: (callback: typeof receipt): void => { receipt = callback; },
+  }),
   onDiskIORespawn: (owner: string, _priority: number, callback: DiskIORespawnListener): void => {
     if (owner === "AI memory") replay = callback;
   },

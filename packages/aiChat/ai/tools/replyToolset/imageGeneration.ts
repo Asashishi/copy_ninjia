@@ -55,12 +55,11 @@ export function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerati
 }
 
 /**
- * generate_image 的工具声明。**整段逐字恒定**，不接受任何本轮上下文。
- *
- * 参考素材尺寸随轮变化，写进声明会让整段稳定前缀每轮换一个指纹、把供应商侧的前缀
- * 缓存打穿；那段文案住在运行时状态区块，见 imageReference.ts。群冷却连提示词都不进：
- * 剩余秒数只在调用真的发生时由执行侧算给模型（见 createGenerateImageExecutor 的冷却
- * 闸）。工具是否挂载仍由 createReplyToolset 按 mediaToolsRequested 决定。
+ * generate_image 的工具声明。**整段逐字恒定**，不接受任何本轮上下文；前缀缓存约束见
+ * docs/cn/04-invariants.md。参考素材文案住在运行时状态区块，见 imageReference.ts。
+ * 群冷却连提示词都不进：剩余秒数只在调用真的发生时由执行侧算给模型（见
+ * createGenerateImageExecutor 的冷却闸）。工具是否挂载仍由 createReplyToolset 按
+ * mediaToolsRequested 决定。
  */
 export function buildGenerateImageToolDefinition(): AiToolDefinition {
   return {
@@ -130,9 +129,8 @@ function parseArguments(
 /**
  * 冷却未过时回给模型的统一提示。
  *
- * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段：模型的提示词里
- * 没有任何冷却状态，这条工具结果是它唯一一次知道「还要等多久」的机会，两条路径的
- * 文案与秒数口径因此必须同源。
+ * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段：这条工具结果是
+ * 模型唯一一次知道「还要等多久」的机会，两条路径的文案与秒数口径因此必须同源。
  * @param retryAfterMs 冷却剩余毫秒，由生图冷却表给出。
  */
 function coolingDownError(retryAfterMs: number): string {
@@ -166,10 +164,9 @@ export function createGenerateImageExecutor(
         { retryable: false }
       );
     }
-    // 冷却整条不进提示词，模型是在不知道本轮还剩多久的情况下调用的：因此在解析参数、
-    // 下载参考图和请求模型之前先做一次只读判定，冷却中直接把剩余秒数回给它。真正的
-    // 原子闸仍是下面的 claim——只读判定与 claim 之间同群另一轮可能抢先占位，那条路径
-    // 回同一段文案。
+    // 冷却状态不进提示词，因此在解析参数、下载参考图和请求模型之前先做一次只读
+    // 判定，冷却中直接把剩余秒数回给模型。真正的原子闸仍是下面的 claim——只读判定
+    // 与 claim 之间同群另一轮可能抢先占位，那条路径回同一段文案。
     const availability: ImageGenerationAvailability = getImageGenerationAvailability({
       chatId: ctx.chatId,
       bypassCooldown: ctx.bypassMediaToolCooldown,

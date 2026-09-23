@@ -10,7 +10,7 @@
 
 ---
 
-This page takes a clean environment all the way to “the bot works normally in a group.” It focuses on the shortest path; see [02 Architecture Overview](02-architecture.md) for the design reasoning behind each step.
+This page takes a clean environment all the way to "the bot works normally in a group," focusing on the shortest path. See [02 Architecture Overview](02-architecture.md) for how the system is put together.
 
 ## Prerequisites
 
@@ -50,11 +50,10 @@ Both modes read **GitHub's Latest Release** from `releases/latest`, install into
 Running `bash install.sh` in an existing source tree preserves its checkout; running it in a binary deployment reuses that package.
 
 If the source came from an extracted release archive (or a copied directory) — source present, no
-`.git` — the script creates the git repository in place so you can update with git afterwards: it runs
-`git init`, points `origin` at this repository, fetches every tag, then **compares content tag by tag**
-to identify the one matching the files already on disk and points `HEAD` at it (detached, the same
-shape a clone produces). `git status` is then clean and updating is a plain `git fetch --tags` followed
-by `git checkout <new tag>`.
+`.git` — the script creates the git repository in place: it runs `git init`, points `origin` at this
+repository, fetches every tag, then **compares content tag by tag** to identify the one matching the
+files already on disk and points `HEAD` at it (detached, the same shape a clone produces). Updating
+afterwards is a plain `git fetch --tags` followed by `git checkout <new tag>`.
 
 Creating the repository **writes no file in the working tree**, and it never takes deployment data such
 as `config/`, `state.json`, or `g-auth.json` into the object store — it compares only against objects
@@ -260,8 +259,6 @@ The first four keys are, in order, the thumbnail for the fortune result, the thu
 Missing values among the five fields are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The first four fields require an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
 
 The fifth key, `randomHImageDir`, is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts absolute paths or explicit relative paths starting with `./` or `../`, resolved against the runtime data root; bare names and `~/…` are invalid. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. A first-run `state.json` is seeded after successful startup. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
-
-> Check the four `state.global.assets` URLs before starting: all three thumbnails require `https`; an invalid URL fails startup during decoding and identifies the field path.
 
 **Edit it while stopped**: the running process holds the authoritative state in memory and rewrites the whole file, so `systemctl stop` → edit → `systemctl start` (see [07 Operations and Troubleshooting](07-operations.md)).
 

@@ -1,9 +1,7 @@
 /**
  * 子进程编排：每一项测量都在自己的进程里跑。
  *
- * 独立进程是本基准的测量前提，不是实现偏好：同一个 JSC 堆里连着跑，前一项的
- * 类型反馈、内联缓存、页缓存温度和已分配堆都会带进下一项，读数会系统性偏乐观
- * 且顺序相关。父进程只负责 spawn、限时和解析 JSON。
+ * 父进程只负责 spawn、限时和解析 JSON，不参与被测量的执行过程。
  */
 
 import { CHILD_TIMEOUT_MS } from "./constants";
@@ -25,8 +23,7 @@ export interface SpawnChildOptions {
 /**
  * 跑一个子进程并把 stdout 解析成 JSON。
  *
- * 任何一种失败都抛：非零退出、超时、stdout 不是 JSON。半截读数没有价值，
- * 让它静默变成一行 NaN 只会让整份报告不可信。
+ * 以下情形都会抛出而不是返回部分结果：非零退出、超时、stdout 不是合法 JSON。
  */
 export async function spawnJsonChild<TResult>({
   args,
@@ -59,8 +56,7 @@ export async function spawnJsonChild<TResult>({
   }
   const stdout: string = await stdoutPromise;
   const stderr: string = await stderrPromise;
-  // 超时要点名。被 kill 掉的子进程只留下一个信号退出码，照「exited 143」报，
-  // 排查的人会去找一个并不存在的崩溃。
+  // 超时单独归类为一种失败，不复用 kill 后子进程留下的信号退出码。
   if (timedOut) {
     throw new Error(
       `${label}: benchmark child exceeded ${timeoutMs} ms and was killed. ${stderr.trim()}`

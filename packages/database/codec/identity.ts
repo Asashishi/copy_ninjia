@@ -248,18 +248,15 @@ export function encodeBlocklistEntryData(value: Readonly<BlocklistEntryData>): s
 export interface EncodedPendingBlockedRemoval {
   /** 落库文本；同一个值反复编码逐字节稳定，可直接用于变更比较。 */
   readonly text: string;
-  /** 校验过程本来就解出来的规范值；丢掉它只会让调用方紧接着再 parse 一遍。 */
+  /** 解码校验过程中得到的规范值。 */
   readonly value: PendingBlockedRemoval;
 }
 
 /**
- * 编码前先走同一严格解码器，并把那次解码的结果一并返回。
+ * 编码前先走同一严格解码器，并把那次解码得到的规范值一并返回。
  *
- * outbox 快照对每一条 removal 都要「编码 -> 落库文本」和「规范值 -> 内存镜像」
- * 两样东西（见 workers/diskIO/storageDatabase/pendingRemoval.ts 的
- * handlePendingRemovalSnapshot）。
- * 只回 text 的话调用方必须紧接着再解一次同一段 JSON，等于每条持久化条目多付一次
- * 完整 parse + 全量校验。
+ * outbox 快照需要同时得到落库文本与内存镜像用的规范值，调用方见
+ * workers/diskIO/storageDatabase/pendingRemoval.ts 的 handlePendingRemovalSnapshot。
  */
 export function encodePendingBlockedRemovalData(
   value: PendingBlockedRemoval,

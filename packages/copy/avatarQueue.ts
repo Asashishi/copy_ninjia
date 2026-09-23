@@ -6,6 +6,7 @@ import { copyUserProfilePhoto } from "../infra/telegram/avatar/copy";
 import { restoreDefaultProfilePhoto } from "../infra/telegram/avatar/restore";
 import { getBotDefaultAvatarUrl } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
+import { updateTopicThreadIdFor } from "../infra/updateContext";
 import { chatAtmosphere } from "../infra/atmosphere";
 import { formatUserLabel } from "../users/userLabel";
 import type { AtmosphereTexts } from "../types/atmosphere";
@@ -42,9 +43,8 @@ async function consumeAvatarUpdates(): Promise<void> {
       const signal: AbortSignal = avatarUpdateRuntime.controller.signal;
       if (signal.aborted) break;
       try {
-        // 偷脸与复原共用这一个执行槽：两者抢的是同一份「换头像」限流资源，
-        // 分开跑只会让 Telegram 两边都限流。latest-only 语义也因此对两类目标
-        // 通用——连点 /icon steal 再 /icon reset，最终生效的是最后那个。
+        // 偷脸与复原共用这一个执行槽，latest-only 语义对两类目标通用——连点
+        // /icon steal 再 /icon reset，最终生效的是最后那个。
         // 默认头像的直链在这里取：state 内存只属于主线程，而 avatar/restore.ts
         // 被两条 Worker 一并 import（见 stateStore.ts 的 getBotDefaultAvatarUrl）。
         const updated: boolean = task.target.kind === "default"
@@ -60,6 +60,7 @@ async function consumeAvatarUpdates(): Promise<void> {
           await sendCommandMessage({
             chatId: task.chatId,
             text: renderAvatarNotice(task, updated),
+            messageThreadId: task.messageThreadId,
             signal,
           });
         }
@@ -76,12 +77,21 @@ async function consumeAvatarUpdates(): Promise<void> {
   }
 }
 
-/** 提交头像目标；运行中只保留最新一份，历史请求不会形成 Promise 链。 */
+/**
+ * 提交头像目标；运行中只保留最新一份，历史请求不会形成 Promise 链。回执在执行槽里
+ * 发出、已不在提交它的 update 作用域内，因此在提交时记下触发话题。
+ */
 export function queueAvatarUpdate(request: AvatarUpdateRequest): void {
   if (!avatarUpdateRuntime.accepting) return;
   const generation: number = avatarUpdateState.nextGeneration++;
   avatarUpdateState.latestGeneration = generation;
-  avatarUpdateState.pending = { ...request, generation };
+  avatarUpdateState.pending = {
+    generation,
+    chatId: request.chatId,
+    target: request.target,
+    source: request.source,
+    messageThreadId: updateTopicThreadIdFor(request.chatId),
+  };
   void consumeAvatarUpdates();
 }
 

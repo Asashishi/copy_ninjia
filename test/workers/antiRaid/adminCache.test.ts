@@ -5,9 +5,8 @@ import { loggerStub } from "../../helpers/loggerMock";
  * 处置前那道身份闸的三态契约（packages/workers/antiRaid/adminCache.ts 的
  * isChatAdmin）。
  *
- * 它是一条权限边界：`undefined` 表示「没查出来」，调用方必须按不处置办。刷屏
- * 禁言与广告处置共用这一权限边界；两条链路的用例会 mock 它，真实语义由本文件
- * 直接覆盖。
+ * 它是一条权限边界：`undefined` 表示「没查出来」，调用方必须按不处置办。入群
+ * 验证、刷屏禁言、广告处置等多处调用方会 mock 它，真实语义由本文件直接覆盖。
  */
 
 const errorLogs: string[] = [];
@@ -65,9 +64,6 @@ describe("处置前的管理员身份闸", () => {
   });
 
   test("拉取失败返回 undefined 而不是 false：确证不了一律不处置", async () => {
-    // 这一条是整个契约的重点。把失败当成「不是管理员」等于在 Telegram 抖动时
-    // 对着群主动手，而 restrictChatMember 回的那句 400 与「机器人自己缺权限」
-    // 完全一样，运维只会被引向权限配置。
     expect(await isChatAdmin(-1001, 7, "flooding user")).toBeUndefined();
     expect(errorLogs[0]).toContain("Failed to check admin exemption for flooding user 7 in chat -1001");
   });

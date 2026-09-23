@@ -4,19 +4,16 @@ import type { TelegramApi } from "../../packages/types/telegramWorker";
 import type { Transformer } from "grammy";
 
 /**
- * 出站硬闸：基准脚本会 import 生产模块，而部署机上 bot 通常正在运行、用的是同一个
- * token。任何一次真实出站都以线上机器人的身份发出，且无法撤回。所有场景按设计
- * 都只碰进程内存和自己的 mock 数据根，这里把统一出站通道堵死，让越界变成一次
- * 响亮的失败。
+ * 出站硬闸：基准子进程会 import 生产模块，部署机上运行的 bot 通常用同一个
+ * token。本函数堵死统一出站通道，任何一次出站调用都直接抛错。
  *
- * grammY 在模块加载时绑定内部 fetch；修改 `globalThis.fetch` 不覆盖这条通道。
- * 因此 Telegram API 必须由 transformer 在 grammY 调用层拦截。
+ * grammY 在模块加载时绑定内部 fetch；修改 `globalThis.fetch` 不覆盖这条通道，
+ * 因此 Telegram API 由 transformer 在 grammY 调用层拦截。
  *
- * globalThis.fetch 这道仍然保留，但它覆盖的是**另一类**调用：项目里直接写
- * `fetch(...)` 的地方（头像抓取、JSON API）在调用时才解析全局，因此拦得住。
+ * `globalThis.fetch` 这道拦的是另一类调用：项目里直接写 `fetch(...)` 的地方
+ * （头像抓取、JSON API）在调用时才解析全局，因此拦得住。
  *
- * 本模块由 hotPaths.ts 与 fullSuite 的各子进程共用：多一个会 import 生产模块的
- * 基准入口，就多一条可能打到线上的路径，这道闸只能有一份实现。
+ * 本模块由 hotPaths.ts 与 fullSuite 的各子进程共用。
  */
 export function installOutboundGuards(): void {
   const deny: Transformer = (_prev: unknown, method: string): never => {
@@ -46,13 +43,10 @@ const CANNED_TELEGRAM_RESULTS: Readonly<Record<string, (payload: Record<string, 
     ({ id: Number(payload.chat_id), type: "supergroup" }),
   getChatAdministrators: (): readonly unknown[] => [],
   /**
-   * 只有机器人自己是管理员。
-   *
-   * 机器人那份要带齐处置权限，否则 ensureBotChatPermissions 记下的是「没有处置
-   * 权」，广告处置会在排队前短路，量不到 outbox 那一段。但**不能**对所有人都回
-   * 管理员：那样任何依赖成员态的链路都会把发送者当成管理员而走进豁免分支，读数
-   * 变快且量的是另一件事。当前广告链路靠预热的管理员缓存绕开了这个查询，这里按
-   * 身份区分是为了下一条命令链路不必再发现一次。
+   * 只有机器人自己算管理员：其余成员返回 `member`，机器人自己返回
+   * `administrator` 并带齐处置权限字段。所有人都返回 administrator 会让依赖
+   * 成员态的链路把发送者当管理员走进豁免分支，读数偏快且不准。当前广告链路靠
+   * 预热的管理员缓存，不会再触发这次查询。
    */
   getChatMember: (payload: Record<string, unknown>): unknown => {
     const userId: number = Number(payload.user_id);
@@ -81,11 +75,8 @@ const CANNED_TELEGRAM_RESULTS: Readonly<Record<string, (payload: Record<string, 
 };
 
 /**
- * 罐头应答过的方法调用次数，按方法名累计。
- *
- * 命令链路必须能断言「这一条真的走完了」。少了它，一次把链路导进静默 return 的
- * 回归（准入闸拒绝、配置没投递、触发被丢弃）会表现成读数突然变快，而不是失败——
- * 那是基准最坏的一种坏法：还在出数，数已经不对。
+ * 罐头应答过的方法调用次数，按方法名累计；命令链路用它断言链路真的走完（见
+ * AGENTS.md 对 scripts/perf/ 的约束：静默提前返回必须使基准失败）。
  */
 export const cannedTelegramCalls: Map<string, number> = new Map<string, number>();
 
@@ -116,24 +107,18 @@ function cannedMessage(payload: Record<string, unknown>): unknown {
 }
 
 /**
- * 装一套只在进程内应答的 Telegram 出站。
+ * 装一套只在进程内应答的 Telegram 出站，供跑完整命令链路的基准使用（广告判定、
+ * AI 回复）。
  *
- * 只给要跑完整命令链路的基准用（广告判定、AI 回复）：那两条链路的处置段会真的
- * 调 deleteMessages / banChatMember / sendMessage，而 installOutboundGuards 装的
- * 闸是**抛异常**。让它抛，量到的就是每一步都失败的错误分支——错误分支既不落盘
- * 也不做处置记账，读数会系统性偏快且毫无意义。
+ * 回的一律是「调用成功」的最小形状：计时窗口里保留处置段的全部进程内工作
+ * （黑名单落盘、移除 outbox 写前日志、播报编码），只摘掉网络往返本身。返回值
+ * 只满足调用方实际读取的字段，不追求与 Bot API 完全同构；调用方读到未覆盖的
+ * 字段时需要在这里补上对应分支。
  *
- * 回的一律是「调用成功」的最小形状，因此计时窗口里保留了处置段的全部进程内工作
- * （黑名单落盘、移除 outbox 写前日志、播报编码），只把网络往返本身摘掉——这正是
- * 「除网络延迟外都要测」的口径。返回值不追求与 Bot API 完全同构，只满足调用方
- * 真正读取的字段；读到别的字段说明链路变了，那时应当在这里补，而不是放任 undefined
- * 悄悄把链路导进另一条分支。
- *
- * **必须在 installOutboundGuards 之后调用。** grammY 的 `use` 是每装一层就把当前
- * 调用链包进去（`transformers.reduce(concatTransformer, this.call)`），所以**后装
- * 的在最外层**。罐头装在后面才拿得到第一手，而 deny 那一层直接抛、根本不会调用
- * 下一层——顺序反了的话罐头永远不会被执行。顺序对了就是「罐头认得的方法就地应答，
- * 认不得的继续撞在硬闸上」。
+ * **必须在 installOutboundGuards 之后调用。** grammY 的 `use` 后装的转换器在
+ * 最外层（`transformers.reduce(concatTransformer, this.call)`），罐头必须先于
+ * deny 那层拦截调用才会生效。顺序对了之后，罐头认得的方法就地应答，认不得的
+ * 继续撞在硬闸上。
  */
 export function installCannedTelegramOutbound(): void {
   // botAdmin.ts 读 bot.botInfo.id 判断一条成员态是不是机器人自己的，而填上它的
@@ -177,7 +162,7 @@ export function installCannedTelegramOutbound(): void {
       return Promise.resolve(canned({ chat_id: args[0], user_id: args[1] }));
     };
   }
-  // 一次性收窄：逐个方法照 grammY 的 Message/ChatMember 完整形状构造，只会让这
-  // 份替身比被测链路还长，而调用方读到的字段就上面那几个。
+  // 只按调用方实际读取的字段构造替身响应，不照 grammY 的 Message/ChatMember
+  // 完整形状。
   installTelegramApi(capability as unknown as TelegramApi);
 }

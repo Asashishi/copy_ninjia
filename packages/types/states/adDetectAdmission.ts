@@ -8,8 +8,6 @@ export interface AdCandidateAdmissionInput {
   readonly textLength: number;
   /** 发送者是频道马甲（没有「群成员」身份，处置走 banChatSenderChat）。 */
   readonly isChannel: boolean;
-  /** Worker 侧管理员缓存**明确**认得这个发送者是本群管理员；缓存冷时为 false。 */
-  readonly knownAdmin: boolean;
   /** 自己的去重 TTL 内这个键刚被判成广告并已发出处置。 */
   readonly recentlyDisposed: boolean;
   /** 主线程投递时这个发送者已经在永久黑名单里（封禁多半还没落地）。 */
@@ -37,10 +35,3 @@ export type AdRequeueDecision =
   | "enqueue"
   /** 无需排队：没有新内容，或这个键已经排着、在途。 */
   | "skip";
-
-export interface AdDispatchInput {
-  /** 此刻正在等广告检测 provider 回话的键数。 */
-  readonly inFlight: number;
-}
-
-export type AdDispatchDecision = "dispatch" | "saturated";

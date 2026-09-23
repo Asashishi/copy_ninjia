@@ -82,13 +82,7 @@ describe("/send 私聊中转权限", () => {
     });
   });
 
-  /**
-   * 转发失败必须**当场结束会话**并回执一句。
-   *
-   * 不结束的话超管此后每条私聊都会被这条静默失败的路径吞掉：`copyMessage` 返回
-   * undefined 不抛错，会话标志还开着，于是消息既没转出去、也不落进任何别的处理，
-   * 而超管那头看不到任何异常——正是这条路径存在的全部理由。
-   */
+  // copyMessage 失败时返回 undefined、不抛错。
   test("转发失败时关掉中转会话、落盘并回执，不再静默吞掉后续私聊", async () => {
     copyMessageMock.mockImplementation(async (): Promise<number | undefined> => undefined);
 

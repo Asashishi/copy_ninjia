@@ -9,7 +9,7 @@
   含めてしまうと、メインスレッドの「保存してからもう一度同じ意図かを見る」照合ループが一致にたどり着かず、1 周ごとに `state.json` と LKG のファイル全体を fsync 付きで書き直します。公開がその書き込みより速いとループは終わらず、指紋も永続化受領も一生生まれません。カウントダウン自体はミラーの `expiresAt` に残り、adopt はそこから残り時間を換算します。このループには保険として周回上限もあります。
 
   永続化の実行中に新しいイベントが届くと再実行待ちフラグを立てます。上限を使い切った場合、現在の task はエラーログを残して microtask を譲り、その後で最新ミラーから新しい task を自動的に開始します。最後の wake-up を次の外部 lockdown イベントに依存させてはいけません。
-- Worker が自己修復を諦めた後、メインスレッドの `recoverAbandonedLockdowns` は snapshot ではなくチャット状態 LRU を直接走査します。復旧チェーンは最初の `await` より前に現在の項目を同期的に `get` し、最新端へ移動させます。`libs/lruCache.ts` の iterator はそのために 1 枠の退避スロットを持ちます：停留中の項目が外されてもその後ろの項目を飛ばさず、その項目は末尾でもう一度だけ産出されます。**終了が保証されるのは「各項目が最新端へ移されるのは高々 1 回」の場合だけ**です——同じグループの 2 回目の産出では復旧がすでに登録済みで、`startEmergencyLockdownRecovery` は fingerprint を見て cache を読まずに戻ります。走査中に繰り返し並べ替える、まとめて削除する、入れ子で走査する場合は先に snapshot（`[...cache]`）を取ってください。
+- Worker が自己修復を諦めた後、メインスレッドの `recoverAbandonedLockdowns` は snapshot を取らず、チャット状態のホット読み取りコピー（`cache/main/chatState.ts` の `Map`）を挿入順に直接走査します。復旧チェーンは最初の `await` より前に現在の項目を同期的に読みますが、`Map.get` は走査順を変えないため、lockdown を持つ各グループは 1 回だけ産出され、引き継ぎログにも 1 回だけ載ります。同じグループの復旧がすでに登録済みなら、`startEmergencyLockdownRecovery` は fingerprint を見て戻ります。
 - 現行の lockdown ミラーには `phase` と正の `intentId` が必要で、認証待ち active record には `phase` と `trackedMessageTimes` が必要です。reminder ID と `announcementMessageId` は業務上 optional のままで、欠落は reminder がまだ送信成功していないこと、あるいはこの record が入室アナウンスを観測しなかったことだけを表し、復元時にはそれぞれの再送・清掃経路を使います。
 
   それ以外の欠落・非互換 field は旧プロセス停止中に手動 migration し、production 読み取り経路に互換 logic を残しません。

@@ -14,8 +14,6 @@ import { loggerStub } from "../../helpers/loggerMock";
 import { adoptStickerConfig } from "../../../packages/config/stickers";
 import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type {
-  AiMemoryDeletedPersistedReply,
-  AiMemoryPersistedReply,
   DiskIORespawnListener,
   DiskBusinessMessage,
 } from "../../../packages/types/diskIO";
@@ -51,8 +49,6 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
 }));
 mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return true; },
-  onAiMemoryDeletedPersisted: (_callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {},
-  onAiMemoryPersisted: (_callback: (reply: AiMemoryPersistedReply) => void): void => {},
   onDiskIORespawn: (_owner: string, _priority: number, _listener: DiskIORespawnListener): void => {},
   onDiskIOGiveUp: (_callback: () => void): void => {},
   relayLogMessage: (): boolean => true,

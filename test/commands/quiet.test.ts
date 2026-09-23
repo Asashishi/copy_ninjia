@@ -85,8 +85,7 @@ describe("/quiet 与 /unquiet", () => {
   });
 
   test("小幅回拨落在容差内时静默仍然生效，不允许叠加重设", async () => {
-    // 15 分钟上限 + 1 分钟容差 = 16 分钟以内都还算「在闭嘴」。没有这道容差的话，
-    // 顶格 /quiet 撞上一次 1 毫秒的 NTP 回拨就当场恢复说话。
+    // isQuietUntilActive 的判定边界：15 分钟上限 + 1 分钟容差，16 分钟以内都算生效中。
     states.set(-1001, { quietUntil: 1_000_000 + 16 * 60_000 });
 
     await handleQuietCommand(context("2"));

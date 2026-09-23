@@ -1,8 +1,4 @@
-/**
- * 命令参数分词的唯一口径。空参数必须得到空数组而不是 `[""]`——四条命令都按
- * `tokens.length` / `tokens.at(-1)` 分派子命令，多出一个空 token 会让本该报用法的
- * 输入走进解析分支。
- */
+/** 命令参数分词的唯一口径：空参数与纯空白必须得到空数组，而不是 `[""]`。 */
 
 import { describe, expect, test } from "bun:test";
 import { commandArgumentTokens } from "../../packages/commands/arguments";

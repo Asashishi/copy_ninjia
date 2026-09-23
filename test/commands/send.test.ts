@@ -2,13 +2,12 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 /**
  * commands/send.ts 经 infra/telegram 会实例化真实的 grammY Bot、经
- * infra/storage 的 saveStateInBackground 会真的写项目根目录下的
- * state.json——单测里都要 mock 掉，绝不能让测试把真实状态文件覆盖掉，
- * 也不能让开会话前的 getChat 可达性校验打真实 Telegram API。infra/storage
- * 这里用一份简化的内存实现代替（只保留 getOrCreateChatState/
- * getActiveProxySendTarget/saveStateInBackground 三个 handleSendCommand
- * 用到的接口，getActiveProxySendTarget 复刻真实实现的扫描语义），比只
- * mock 掉 infra/diskIO 再用真实 storage.ts 更直接、也更安全。
+ * infra/storage 会写项目根目录下的 state.json、开会话前的 getChat 校验会打真实
+ * Telegram API，这里全部替换成 mock。infra/storage/stateStore 用一份内存实现
+ * 代替，只覆盖 handleSendCommand 用到的接口（getChatState、
+ * getOrCreateChatState、getChatStateCache、getActiveProxySendTarget、
+ * clearChatStateField、persistChatState），getActiveProxySendTarget 复刻真实
+ * 实现的扫描语义。
  */
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const getChatMock = mock(async (chatId: number): Promise<any> => ({ id: chatId, type: "supergroup", title: "Test Group" }));
@@ -124,9 +123,8 @@ describe("handleSendCommand", () => {
     expect(sendMessageMock).toHaveBeenCalledTimes(2);
   });
 
-  // 这条命令过去在这里 getOrCreateChatState(targetChatId)：目标没纳管时那是一次
-  // 新建，State 管满 25 个群时新建抛容量错，异常逸出命令处理器就是一个由重投
-  // 驱动的重启循环。现在只回一句提示——容量拒绝只属于 /init enable 那一处。
+  // 目标群未纳管时只读 getChatStateCache，不调用 getOrCreateChatState；
+  // 容量闸（chat_states 满 25 个群）只属于 /init enable 那一处。
   test("目标群没被纳管时只回一句提示：不抛错、不建状态、不落盘，也不探可达性", async () => {
     for (let index: number = 0; index < 25; index += 1) manage(-2_000 - index);
 
@@ -140,9 +138,8 @@ describe("handleSendCommand", () => {
   });
 
   test("非规范写法的 id 按用法错误挡在可达性探测之前，绝不开会话", async () => {
-    // 裸 Number() 会把这些悄悄收下：小数尾巴、十六进制、前导零各自 coerce 成
-    // 一个超管从没输入过的 chat id，而这条命令的结果是一个持久代发会话。
-    // 正数同样拒绝：群和频道的 id 恒为负。
+    // 覆盖裸 Number() 会悄悄收下的写法：小数尾巴、十六进制、前导零、科学计数法；
+    // 正数同样拒绝，群和频道的 id 恒为负。
     for (const arg of ["-100123.0", "0x2d", "123", "-0100123", "-1e5", "--100123"]) {
       await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, arg));
     }

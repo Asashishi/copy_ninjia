@@ -5,6 +5,7 @@ import {
   submitDeferredCommand,
 } from "../../packages/commands/deferredCommands";
 import { deferredCommandRuntime } from "../../packages/cache/main/deferredCommands";
+import { currentUpdateTopic, runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
 import {
   DEFERRED_COMMAND_MAX_BACKGROUND_PENDING,
   DEFERRED_COMMAND_MAX_CONCURRENT,
@@ -28,6 +29,24 @@ afterEach(async () => {
 });
 
 describe("延迟命令执行器", () => {
+  test("出队执行时恢复接纳时的触发话题，占满槽位后排队的任务同样如此", async () => {
+    const blockers: { promise: Promise<void>; open: () => void }[] = [];
+    const topics: unknown[] = [];
+    await runWithUpdateAbortSignal(new AbortController().signal, async (): Promise<void> => {
+      for (let index: number = 0; index < DEFERRED_COMMAND_MAX_CONCURRENT; index++) {
+        const blocker = gate();
+        blockers.push(blocker);
+        submitDeferredCommand("interactive", (): Promise<void> => blocker.promise, "test:");
+      }
+      submitDeferredCommand("interactive", async (): Promise<void> => { topics.push(currentUpdateTopic()); }, "test:");
+    }, { chatId: -1001, threadId: 42 });
+    expect(topics).toEqual([]);
+    for (const blocker of blockers) blocker.open();
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    expect(topics).toEqual([{ chatId: -1001, threadId: 42 }]);
+  });
+
   test("后台档最多占 DEFERRED_COMMAND_MAX_BACKGROUND_PENDING 个等待位，其余等待位仍接纳交互请求", async () => {
     expect(DEFERRED_COMMAND_MAX_BACKGROUND_PENDING).toBeLessThan(DEFERRED_COMMAND_MAX_PENDING);
     const blocker = gate();

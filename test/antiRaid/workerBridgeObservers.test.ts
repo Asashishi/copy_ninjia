@@ -1,5 +1,5 @@
 import type { DiskIORespawnListener } from "../../packages/types/diskIO/messages";
-import { diskIOStub } from "../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type {
@@ -13,13 +13,10 @@ import type { ChatTeardownReason } from "../../packages/types/chatTeardown";
 
 /**
  * Anti-Raid 主线程侧的四个观察者（权限镜像、群 teardown、Disk I/O 重生重放、
- * 验证落盘回执）。
+ * 验证落盘回执），均为「注册一次、由上游在别的时刻回调」的闭包。
  *
- * 它们都是**注册一次、由上游在别的时刻回调**的闭包。本文件直接执行四个回调体，
- * 覆盖重建与落盘边界：Worker 重生后把镜像整份重放回去
- * （中途投递失败必须立刻停手并报失败，不能只重放一半就宣称成功），以及落盘回执
- * 的代际/修订号核对（对不上就必须整条丢弃，否则会拿一份陈旧回执去解开新一代的
- * 等待）。这里把四个回调抓出来直接驱动。
+ * 覆盖点：Worker 重生后整份重放镜像（中途投递失败立刻停手并报失败）；落盘回执
+ * 按代际/修订号核对，不匹配则整条丢弃。这里直接抓取四个回调驱动执行。
  */
 
 const post = mock((_message: AntiRaidWorkerMessage): boolean => true);
@@ -52,9 +49,9 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
     _priority: number,
     replay: DiskIORespawnListener
   ): void => { captured.respawn = replay; },
-  onVerificationPersisted: (
-    observer: (reply: VerificationPersistedReply) => void
-  ): void => { captured.persisted = observer; },
+  onDiskIOReply: diskIOReplyStub({
+    verificationPersisted: (observer: (reply: VerificationPersistedReply) => void): void => { captured.persisted = observer; },
+  }),
 })));
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/antiRaid/verificationAttempts", () => ({
@@ -119,8 +116,7 @@ describe("Anti-Raid 主线程观察者", () => {
     expect(withPermissions.chatId).toBe(-1001);
     expect(withPermissions.permissions).toBeDefined();
 
-    // 三态：undefined 表示「没观测到」，绝不能被投影成一份「什么都不能做」的权限，
-    // 那会让 Worker 把尚未查明的群当成确证无权限而放弃处置。
+    // undefined 表示「没观测到」，字段缺失而不是投影成空权限对象。
     post.mockClear();
     captured.permissions?.(-1002, undefined);
     const unknownPermissions = post.mock.calls[0]![0] as unknown as Record<string, unknown>;
@@ -155,8 +151,7 @@ describe("Anti-Raid 主线程观察者", () => {
     expect(captured.respawn?.(transport)).toBeTrue();
     expect(posted).toHaveLength(3);
     expect(posted.filter((m) => m.type === "verificationUpsert")).toHaveLength(2);
-    // 重放的 upsert 必须标 critical：这一批是「重建后重新证明这些事实还在」，
-    // 被当成可丢的普通写就等于重放了个寂寞。
+    // 重放的 upsert 全部标 critical。
     expect(posted.every((m) => m.type !== "verificationUpsert" || (m as { critical: boolean }).critical)).toBeTrue();
     expect(posted.at(-1)?.type).toBe("verificationDelete");
   });

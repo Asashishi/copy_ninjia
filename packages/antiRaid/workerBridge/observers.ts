@@ -11,7 +11,7 @@ import { registerChatTeardown } from "../../infra/chatTeardownRegistry";
 import { projectBotActionPermissions } from "../../libs/chatMember";
 import {
   onDiskIORespawn,
-  onVerificationPersisted,
+  onDiskIOReply,
 } from "../../infra/diskIO";
 import { logger } from "../../infra/logger";
 import type { AntiRaidWorkerMessage } from
@@ -93,7 +93,7 @@ export function registerAntiRaidBridgeObservers({
     }
   );
 
-  onVerificationPersisted((reply: VerificationPersistedReply): void => {
+  onDiskIOReply("verificationPersisted", (reply: VerificationPersistedReply): void => {
     if (!reply.deleted) {
       if (!recordVerificationPersisted(reply.key, reply.generation, reply.revision)) return;
       if (settlePersistedVerificationDeferral(

@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5072_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.12%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5104_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.19%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -54,7 +54,7 @@
 
 ## 🧬 純 AI 開発
 
-このリポジトリの production コード、テストケース、そして README 自体も、すべて AI が書いています。人間はコードを書きませんが、決して席を外してはいません。アーキテクチャを設計し、すべてのコミットを AI と共同でレビューします。
+このリポジトリの production コード、テストケース、そして README 自体も、すべて AI が書いています。担当は下表のとおりです。
 
 <table width="100%">
 <tr><th width="18%" align="left">工程</th><th width="32%" align="left">担当者</th><th width="50%" align="left">役割</th></tr>
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5072 件のテストが全て成功 / テストファイル 441 件 / expect() 呼び出し 192,270 回 / 関数カバレッジ 97.01% / 行カバレッジ 98.12%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5104 件のテストが全て成功 / テストファイル 444 件 / expect() 呼び出し 192,389 回 / 関数カバレッジ 97.06% / 行カバレッジ 98.19%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -210,17 +210,9 @@
 
 ## 🎮 コマンドと権限
 
-コマンドは入口で認可します。**群メンバー**は Copy、アクション、静音モード、`/info` によるプロフィール照会を使用できます。**identity 権限キー**は `/bot_status`、`/prompt`、`/clear_context`、`/mute`、`/gag`、`/block` と機能スイッチを制御します。**`SUPER_ADMIN_USER_ID` 専用**は `/init`、権限変更、allowlist からの削除、`/batch_kick`。`/white enable` は `isCanWhiteOther` で委任でき、`/send` はスーパー管理者の個人チャットだけで使用できます。
+コマンドは入口で認可します。**群メンバー**は Copy、翻訳、アクション、静音モード、`/info`、`/wed`、`/h_image` などを使用できます。**identity 権限キー**（`isCanXxx`）は `/bot_status`、`/prompt`、`/mute`、`/gag`、`/block`、`/h_image add` と各機能スイッチを制御します。**`SUPER_ADMIN_USER_ID` 専用**は `/init`、権限変更、allowlist からの削除、`/batch_kick`。`/send` はスーパー管理者の個人チャットだけで使用できます。
 
-本群 AI プロンプトは `/prompt config <プロンプト>` で設定し、`/prompt remove` で `prompt/persona.md` に戻します。両方とも既定 false の `isCanConfigAiPrompt` が必要です。`/bot_status` で本群の設定有無を確認できます。
-
-Copy の対象はグローバルに 1 つだけで、`/copy` 系はコマンドを実行したグループで 1 通ずつ復唱しアイコンも同期します。`/luck_challenge` は Inline Mode、中国語のアクションコマンド（`/咬`、`/揪住`）は事前登録不要です。
-
-`/wed` は初期化済みグループの個人アカウントに対応し、ランダムな相手のアイコンと確認・変更・削除ボタンを表示します。各グループは発言済みメンバー ID を最大 15 万件保持し、実際の増減をまとめて `memory/wed/<chatId>.json` に保存して再起動時に復元します。結果のセッションはメモリ内だけに保持します。コマンドとボタンは全体で同時 32 件まで処理し、共通の出力キューと 429 待機を使います。
-
-`/h_image` は専用画像ディレクトリ（`state.json` の `global.assets.randomHImageDir`、既定はデータルート直下の `h_image/`、起動時に自動作成）から一様に 1 枚引いてグループへ送り、画像はネタバレ防止付きで残ります。対象は `jpg`、`jpeg`、`png`、`webp` です。`isCanAddHImage` を持つ身元は画像付きメッセージに返信して `/h_image add` を送ると、その画像（アルバムならまとめて）を再起動なしで追加できます。他機能の画像は混ぜず、手動配置には内容 SHA-256 名を使ってください。不正名があると起動を拒否します。
-
-通知の口調は `config/bot.json` の `atmosphere` で `mesugaki`（既定）か `normal` を選び、再起動で反映します。群の専用 AI 人設がある場合は普通の通知を優先します。`config/cron.json` は定時タスクのホットリロード、固定画像 1 枚または 2〜10 枚のアルバム、独立ディレクトリからのランダム画像に対応します。[配置設定](../../config_example/README/ja.md) と [運用手順](07-operations.md) にソース・バイナリのコールド移行をまとめています。
+画像庫と `config/cron.json` の項目・規則は [配置設定](../../config_example/README/ja.md)、ソース・バイナリのコールド移行は [運用手順](07-operations.md) を参照してください。
 
 完全なコマンド表、権限の読み方、コマンドごとの挙動は **[📖 08 コマンドと挙動リファレンス](08-commands.md)** にあります。
 

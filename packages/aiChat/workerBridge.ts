@@ -94,8 +94,9 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
  * 转投 diskIOWorker 落盘。这份镜像与按 chat 单调递增的 revision、待确认删除
  * tombstone 一起构成双向崩溃重放来源：aiChatWorker 崩溃重启后凭镜像重放
  * hydrate（下方 onRespawn），diskIOWorker 崩溃重启后重放 tombstone 与最新快照。
- * revision / tombstone / 删除回执 waiter 与 diskIOWorker 侧的重放都在
- * aiChat/memoryMirror.ts；本文件只保留 Worker 监督与对外 API。
+ * revision 计数、tombstone 与删除回执 waiter 的维护函数都在
+ * aiChat/memoryMirror.ts；本文件的 onEvent 负责在收到 memory/stickerCatalog
+ * 事件时写入镜像并转投 diskIOWorker，另外保留 Worker 监督与对外 API。
  */
 
 const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: SupervisedWorkerHandle<WorkerDuplexInbound<AiChatWorkerMessage>> = superviseDuplexWorker<AiChatWorkerMessage, AiChatWorkerEvent, TelegramWorkerRequest>({
@@ -217,15 +218,9 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
   onGiveUp: (): void => {
     aiChatWorkerState.available = false;
     // 身份注入记录必须一起清掉：flushAiMemory 用 `lastInitState.current === null`
-    // 判断「这条线根本没起来，没什么可刷的」并直接返回 flushed。放弃重启后
-    // worker 已经是 null，留着这份记录只会让停机时的 flushAiMemory 越过短路、
-    // 进 barrier 后因 post 失败结算成 "failed"，于是 flushAllToDisk 返回 false、
-    // wait() 拒绝确认最终 offset，Telegram 重投上次确认点之后的全部更新，重复
-    // 执行复读/命令回执这些非幂等副作用。而本功能既定的降级只是「AI 闲聊静默
-    // 停用到下次重启」，不该牵连整个停机的 offset 闸门。
+    // 判断「这条线根本没起来，没什么可刷的」并直接返回 flushed。
     lastInitState.current = null;
-    // 同 onRespawn/terminateAiChat：不结算的话等待者只能等定时器过期，停机白等
-    // 一整份 flush 预算，还会挤占紧急退出路径上共享的那份时间。
+    // 同 onRespawn/terminateAiChat：立即结算全部等待者，不留给定时器超时兜底。
     aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodRequestWaiters("AI Worker gave up restarting before acknowledging the mood request.");
     rejectAllAiChatInvalidateWaiters("AI Worker gave up before completing chat invalidation.");
@@ -282,10 +277,8 @@ export function startAiChatWorker(botInfo: AiBotInfo): void {
  *
  * 前提不可用时整条线不启动：连线程都不建，lastInitState 保持 null，停机路径上的
  * flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker 也是 no-op
- * （见 infra/supervisedWorker.ts），生命周期那边不必分岔。身份照样记下，config/
- * 热重载补齐前提时由 aiChat/hydration.ts 的 resumeAiChat 据此启动。判定放在这里而
- * 不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能配没配」的
- * 知识摊到编排层等于每加一个可选功能都要改一次生命周期。
+ * （见 infra/supervisedWorker.ts）。身份照样记下，config/ 热重载补齐前提时由
+ * aiChat/hydration.ts 的 resumeAiChat 据此启动。
  */
 export function initAiChat(botInfo: AiBotInfo): void {
   const identity: AiBotInfo = { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name };

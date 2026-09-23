@@ -49,7 +49,7 @@ export type VerificationAttemptRequester = (
 export interface RunVerificationEffectsParams {
   chatId: number;
   userId: number;
-  effects: VerificationEffect[];
+  effects: readonly VerificationEffect[];
   dispatchVerification: VerificationDispatcher;
   publishVerificationChange: VerificationChangePublisher;
   requestTerminalAttempt?: VerificationAttemptRequester;

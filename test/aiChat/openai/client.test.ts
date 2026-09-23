@@ -19,9 +19,10 @@ const create = mock(async (..._args: unknown[]): Promise<unknown> => ({
 const loggerError = mock((..._args: unknown[]): void => {});
 const createdOptions: Record<string, unknown>[] = [];
 
+/** 与 openai SDK 的 APIError 一致：message 以 HTTP 状态码开头。 */
 class FakeApiError extends Error {
   constructor(readonly status: number, message: string) {
-    super(message);
+    super(`${status} ${message}`);
   }
 }
 
@@ -242,8 +243,7 @@ describe("失败分类", () => {
       errorLabel: "AI test API",
     });
 
-    // 关键在于「不 reject」：抛出去就绕过了上层为 ok:false 准备的全部诊断与
-    // 降级路径，群里只剩沉默、日志里一行都没有（见 client.ts 的 JSDoc）。
+    // 验证 buildBody 抛错时不 reject，而是归类为普通请求失败。
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.failureKind).toBe("request");
     expect(create).not.toHaveBeenCalled();

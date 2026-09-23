@@ -101,7 +101,16 @@ export interface OwnerSettler {
 }
 
 /**
- * 一条 update 的取消边界，以及它统一的「现在」（infra/updateContext.ts）。
+ * 触发一条 update 的消息所在的论坛话题：只有触发消息位于论坛话题（非 General）
+ * 时才存在，判定见 libs/forumTopic.ts 的 forumTopicThreadId。
+ */
+export interface UpdateTopic {
+  readonly chatId: number;
+  readonly threadId: number;
+}
+
+/**
+ * 一条 update 的取消边界、它统一的「现在」与触发话题（infra/updateContext.ts）。
  *
  * `now` 惰性填充：第一次有调用点询问时刻时取一次墙钟，此后同一条 update 的
  * 全部调用点复用它（见 updateNow）。
@@ -110,4 +119,6 @@ export interface UpdateScope {
   readonly signal: AbortSignal;
   /** `null` 表示本条 update 还没有任何调用点问过时刻，不表示时刻为零。 */
   now: number | null;
+  /** 触发消息不在论坛话题里（含没有触发消息的 update）时为 undefined。 */
+  readonly topic: UpdateTopic | undefined;
 }

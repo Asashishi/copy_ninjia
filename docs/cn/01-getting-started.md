@@ -10,7 +10,7 @@
 
 ---
 
-本页把一个全新环境带到「机器人在群里正常工作」。只求最短路径；每一步背后的设计原因见 [02 架构总览](02-architecture.md)。
+本页把一个全新环境带到「机器人在群里正常工作」，只求最短路径。系统架构见 [02 架构总览](02-architecture.md)。
 
 ## 前置条件
 
@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 
 已有源码工作树执行 `bash install.sh` 时保持 checkout；已有二进制目录执行该命令时复用当前发行包。
 
-源码若是解压发布包（或整目录拷贝）得到的——有源码、没有 `.git`——脚本会就地补出 git 仓库，好让此后能用 git 更新：`git init`、把 `origin` 指向本仓库、拉全部 tag，再**逐个 tag 比对内容**认出与现有文件一致的那个，把 `HEAD` 指过去（detached，与 clone 出来的形态相同），于是 `git status` 是干净的，更新就是一次 `git fetch --tags` 加 `git checkout <新 tag>`。
+源码若是解压发布包（或整目录拷贝）得到的——有源码、没有 `.git`——脚本会就地补出 git 仓库：`git init`、把 `origin` 指向本仓库、拉全部 tag，再**逐个 tag 比对内容**认出与现有文件一致的那个，把 `HEAD` 指过去（detached，与 clone 出来的形态相同）。此后更新就是一次 `git fetch --tags` 加 `git checkout <新 tag>`。
 
 补仓库这一步**不写工作树里的任何文件**，也不会把 `config/`、`state.json`、`g-auth.json` 这类部署数据收进对象库——它只用 `read-tree`/`diff-index` 比对 tag 自带的对象，未跟踪文件完全不参与，因此不依赖 `.gitignore` 是否完整。对不上任何已发布 tag 时（改过，或根本不是发布包）**不猜版本**：仓库、`origin` 和 tag 都给到位，但 `HEAD` 不指向任何版本，由你核对后自行 `git checkout <tag>`。装不上 `git`、拉不到 tag 也只是跳过这一步并提示，不会中断安装。
 
@@ -220,8 +220,6 @@ chmod 660 database/storage.sqlite
 五项缺省字段在启动成功时被自动补成代码里的内置值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。前四项要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
 
 第五项 `randomHImageDir` 是 `/h_image` 专用图库，也是 cron 未指定目录时的随机图来源，缺省 `./h_image`。只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析；裸目录名和 `~/…` 无效。启动会创建缺失目录，核对读写与访问权限，并严格检查每个条目：只允许以内容 SHA-256 的 64 位小写十六进制摘要命名、扩展名为 `jpg`/`jpeg`/`png`/`webp` 的普通文件；子目录、文件链接、隐藏文件和残留临时文件均拒绝启动。目录根本身可以是符号链接。启动不重算内容哈希，手工文件名与内容的对应由部署方负责。推荐通过 `/h_image add` 收图；合规图片的增删无需重启，抽图时超过 10 MB 的文件会被跳过。首次运行的 `state.json` 在启动成功后补写生成。cron 显式指定的独立随机目录允许普通文件名，详见 [部署配置说明](../../config_example/README/zh.md)。
-
-> 启动前核对 `state.global.assets` 的四项地址：三张缩略图只接受 `https`，非法地址会在解码期拒绝启动并点名字段路径。
 
 **改法是停机改**：运行中的进程持有权威内存，会整份覆写这个文件，改完必须 `systemctl stop` → 编辑 → `systemctl start`（同 [07 运维与排障](07-operations.md)）。
 

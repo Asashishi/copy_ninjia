@@ -1,17 +1,16 @@
 /**
  * 全量性能基准入口。
  *
- * 只在发布或明确指令时运行：一次完整跑要几分钟、要拉起上百个子进程，它不属于
- * `bun run check` 那一档随手可跑的门禁（热路径的 GC/RSS/JIT 硬门禁仍由
- * `bun run perf:hot-path-gate` 承担，本脚本不重复那件事，也不设失败阈值）。
+ * 只在发布或明确指令时运行，不进 `bun run check`；热路径的 GC/RSS/JIT 硬门禁
+ * 由 `bun run perf:hot-path-gate` 单独承担，本脚本不设失败阈值。
  *
  * 覆盖六个分区：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、
- * 容器与算法、入群日志容量线。每一项都在独立子进程里跑三轮，报告给平均值、
+ * 容器与算法、入群日志容量线。每一项都在独立子进程里跑三轮，报告平均值、
  * 最小值、最大值与变异系数。
  *
  * 数据一律落在仓库根的 `performance/` 下（不进 Git），配置从 `config_example/`
- * 复制到本次运行目录并换成非占位夹具凭据，每轮跑完整棵删除。父进程刻意不
- * import 任何生产实现模块，因此它自己**没有能力**写到真实数据根。
+ * 复制到本次运行目录并换成非占位夹具凭据，每轮跑完整棵删除。父进程不 import
+ * 任何生产实现模块，因此没有能力写到真实数据根。
  *
  * 用法：
  *   bun run perf:full                  跑完把 JSON 报告打到 stdout
@@ -196,8 +195,8 @@ async function runSuite(options: SuiteOptions): Promise<FullSuiteReport> {
 /**
  * 子进程模块的统一形状。
  *
- * 四个子进程模块都只对外暴露一个 `main`；用同一个结构类型接住，父进程就不必
- * 为了拿类型去 import 它们的实现——那正是本文件绝不能做的事。
+ * 四个子进程模块（seed / cold-start / chain / storage）都只对外暴露一个
+ * `main`；本文件用这个结构类型接住动态 import 的结果，不静态 import 它们的实现。
  */
 interface ChildModule {
   readonly main: (argument: string | undefined) => Promise<void>;

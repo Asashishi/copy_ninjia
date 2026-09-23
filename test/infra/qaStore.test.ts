@@ -1,6 +1,6 @@
 import type { DiskIORespawnListener } from "../../packages/types/diskIO/messages";
 import type { IdentityStoragePersistedReply } from "../../packages/types/diskIO/replies";
-import { diskIOStub } from "../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { CHAT_QA_MAX_PER_CHAT } from "../../packages/consts/qa";
 
@@ -15,9 +15,11 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
     posted.push(message);
     return true;
   },
-  onIdentityStoragePersisted: (callback: (reply: IdentityStoragePersistedReply) => void): void => {
-    persistedListener = callback;
-  },
+  onDiskIOReply: diskIOReplyStub({
+    identityStoragePersisted: (callback: (reply: IdentityStoragePersistedReply) => void): void => {
+      persistedListener = callback;
+    },
+  }),
   // 按 owner 名捕获：同一 isolate 里还有别的领域也会登记重放回调。
   onDiskIORespawn: (
     owner: string,

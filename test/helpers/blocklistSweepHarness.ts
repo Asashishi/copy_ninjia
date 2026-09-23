@@ -2,10 +2,8 @@ import type { IdentityPolicyRawReadResult } from "../../packages/types/identityS
 import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOStub } from "./diskIOMock";
 /**
- * 黑名单清扫与启动恢复各用例文件共用的替身、状态与隔离钩子。
- *
- * 这套 mock.module 装配、Worker 回执工厂与 beforeEach 复位每一份用例都要用，
- * 收在一处才不会各写一份悄悄漂移的替身。
+ * 黑名单清扫与启动恢复各用例文件共用的替身、状态与隔离钩子：mock.module
+ * 装配、Worker 回执工厂与 beforeEach 复位。
  */
 
 import { beforeEach, expect, mock } from "bun:test";
@@ -34,16 +32,16 @@ export const states = new Map<number, Record<string, unknown>>();
 export const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
 export const persistChatState = mock(async (): Promise<void> => {});
 /**
- * 处置的执行 owner 替身：主线程侧只该「投出去」，不该自己打 API。
- * 返回值是**真正投出去的条数**（见 types/blocklist.ts 的 BlockedMemberRemover）：
- * 默认整批都投出去，零投递由个别用例单独 mock。
+ * 处置的执行 owner 替身，返回值是真正投出去的条数（`BlockedMemberRemover`，
+ * 见 docs/cn/04-invariants.md 黑名单补扫小节）。默认整批投出去，零投递由个别
+ * 用例单独 mock。
  */
 export const remover = mock(async (...args: unknown[]): Promise<number> =>
   (args[0] as readonly unknown[]).length);
 export const postDiskIO = mock((..._args: unknown[]): boolean => true);
 /**
- * 黑名单主键读的当前实现。SQLite 迁移之后它是**跨线程 request/reply**，Disk I/O
- * 自愈窗口里会直接 reject（见 infra/diskIO.ts），因此用例要能切换成失败。
+ * 黑名单主键读为跨线程 request/reply，Disk I/O 自愈窗口内会直接 reject
+ * （见 infra/diskIO.ts）；用例可切换实现以模拟这个失败。
  */
 const blocklistIdPageSource: { current: () => Promise<readonly number[]> } = {
   current: async (): Promise<readonly number[]> => readBlockedIdentityTestIds(),
@@ -75,7 +73,6 @@ mock.module("../../packages/aiChat/workerBridge", () => ({
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   onDiskIORespawn: (): void => {},
-  onIdentityStoragePersisted: (): void => {},
   readBlocklistIdPage,
   readIdentityPolicies: async (ids: readonly number[]): Promise<IdentityPolicyRawReadResult> => ({
     temporaryAdBypass: [],

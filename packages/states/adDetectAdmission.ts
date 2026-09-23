@@ -5,18 +5,28 @@ import {
 import type {
   AdCandidateAdmissionInput,
   AdCandidateDecision,
-  AdDispatchDecision,
-  AdDispatchInput,
   AdRequeueDecision,
   AdRequeueInput,
 } from "../types/states/adDetectAdmission";
 
 /**
- * 投递闸：一条新到的候选消息该不该并进这个发送者的消息串。
+ * 管理员闸：发送者是否为本群已知管理员，其消息不参与广告判定。
  *
- * 管理员只在缓存**明确**认得时挡（knownAdmin）：缓存冷时照常送检，判定命中后
- * 还有一道以 getChatAdministrators 为准的确证闸兜底，这里只是把已知管理员的
- * 消息挡在额度之外。
+ * 只在缓存**明确**认得时挡：缓存冷时照常送检，判定命中后还有一道以
+ * getChatAdministrators 为准的确证闸兜底，这里只是把已知管理员的消息挡在额度之外。
+ * 频道马甲不适用：它没有「群成员」身份，交给投递闸按 blocked/处置抑制分派。
+ *
+ * 判据只读两个标量，排在正文清洗之前：结论已定的消息不该先付 sanitize、截断、
+ * URL 拼接与引文认领（调用方见 workers/antiRaid/adDetect/queue.ts 的 enqueueAdCandidate）。
+ * @param knownAdmin Worker 侧管理员缓存明确认得这个发送者；缓存冷时为 false。
+ */
+export function isKnownAdminCandidate(isChannel: boolean, knownAdmin: boolean): boolean {
+  return !isChannel && knownAdmin;
+}
+
+/**
+ * 投递闸：一条已过管理员闸（isKnownAdminCandidate）的候选消息该不该并进这个
+ * 发送者的消息串。
  *
  * recentlyDisposed 命中时通常直接忽略——处置已经发出，主线程正在把人写进黑
  * 名单，再攒一串重判只会换来第二次完全相同的处置。**频道马甲是例外**：
@@ -32,7 +42,6 @@ import type {
  */
 export function admitAdCandidate(input: AdCandidateAdmissionInput): AdCandidateDecision {
   if (input.textLength === 0) return "ignore";
-  if (!input.isChannel && input.knownAdmin) return "ignore";
   if (input.blocked || input.recentlyDisposed) {
     return input.isChannel ? "deleteStraggler" : "ignore";
   }
@@ -76,13 +85,14 @@ export function isNewAdBundleAtCapacity(pendingSize: number): boolean {
 }
 
 /**
- * 在途闸：这一拍还能不能再起一次判定。
+ * 在途闸：这一拍是否已不能再起判定。
  *
  * 批大小只限每拍**起**多少个，拦不住「上一批还没回来就再起一批」，因此这道闸
  * 按全局在途数算、不按群分配。调用方必须在把键从队列里取出**之前**问：先取
  * 出来再发现发不掉，那个键就从队列里消失了，而它未必还有下一条新消息把自己
  * 重新排进来。
+ * @param inFlight 此刻正在等广告检测 provider 回话的键数。
  */
-export function admitAdDispatch(input: AdDispatchInput): AdDispatchDecision {
-  return input.inFlight >= AD_DETECT_MAX_IN_FLIGHT ? "saturated" : "dispatch";
+export function isAdDispatchSaturated(inFlight: number): boolean {
+  return inFlight >= AD_DETECT_MAX_IN_FLIGHT;
 }

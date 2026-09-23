@@ -1,19 +1,17 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import { waitUntil } from "../helpers/waitUntil";
-import { LruCache } from "../../packages/libs/lruCache";
 import type { ChatState, LockdownRecord } from "../../packages/types/chatState";
 
 /**
- * 主线程紧急恢复遍历真实 LRU 的契约。
+ * 主线程紧急恢复遍历群状态热读副本的契约。
  *
- * `recoverAbandonedLockdowns()` 遍历的是生产的群状态 LRU，而恢复链在第一次
- * `await` 之前就会同步 `get` 当前这一条，把它挪到最新端——共享 harness 里那份普通
- * Map 没有链表，覆盖不到这段。这里只替身出站（Telegram 权限恢复）与落盘，缓存
- * 用真实 `LruCache`。
+ * `recoverAbandonedLockdowns()` 遍历群状态热读副本，而恢复链在第一次 `await` 之前
+ * 就会同步读取当前这一条；遍历必须每群恰好产出一次。这里只替身出站（Telegram
+ * 权限恢复）与落盘，缓存与生产同为 `Map`。
  */
 
-const chatStates = new LruCache<number, ChatState>(25);
+const chatStates = new Map<number, ChatState>();
 const restoreLockdownInvitePermission = mock(async (..._args: unknown[]): Promise<void> => {});
 const deleteMessageWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "deleted");
 const saveChatStateInBackground = mock((_chatId: number, _context: string): void => {});
@@ -23,7 +21,7 @@ mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatStateCache: (): LruCache<number, ChatState> => chatStates,
+  getChatStateCache: (): ReadonlyMap<number, ChatState> => chatStates,
   clearChatStateField: (chatId: number, field: "lockdown"): boolean => {
     const state: ChatState | undefined = chatStates.get(chatId);
     if (state === undefined || state[field] === undefined) return false;
@@ -133,34 +131,23 @@ describe("主线程紧急恢复遍历真实群状态 LRU", () => {
     }
   });
 
-  test("恢复期间被挪到最新端的条目不会让遍历漏群，也不会无限产出", () => {
+  test("恢复链同步读取当前条目时，遍历每群恰好一次，接管日志不重复列群", () => {
     const visited: number[] = [];
     restoreLockdownInvitePermission.mockImplementation(async (input: unknown): Promise<void> => {
       visited.push((input as { chatId: number }).chatId);
       await new Promise<void>((): void => {});
     });
-    // 有限步数哨兵：遍历真的不终止时，用例要失败而不是把测试挂住。这里只断言
-    // 每群恰好发起一次恢复，不锁死链表被重排后的具体步数。
-    const stepLimit: number = 64;
-    let steps: number = 0;
-    const originalIterator = chatStates[Symbol.iterator].bind(chatStates);
-    chatStates[Symbol.iterator] = function* bounded(): IterableIterator<[number, ChatState]> {
-      for (const entry of originalIterator()) {
-        if (++steps > stepLimit) throw new Error("chat-state iteration did not terminate");
-        yield entry;
-      }
-    };
 
-    try {
-      recoverAbandonedLockdowns();
-    } finally {
-      // 只摘掉刚才盖在实例上的那一层，让原型上的生成器重新生效。
-      Reflect.deleteProperty(chatStates, Symbol.iterator);
-    }
+    recoverAbandonedLockdowns();
 
-    expect(visited.slice().sort()).toEqual(chatIds.slice().sort());
-    expect(steps).toBeLessThanOrEqual(stepLimit);
+    expect(visited).toEqual([...chatIds]);
     expect(chatStates.size).toBe(chatIds.length);
+    const takeover: unknown[] | undefined = loggerError.mock.calls.find((call: unknown[]): boolean =>
+      String(call[0]).startsWith("Anti-raid Worker gave up self-healing"));
+    expect(takeover?.[0]).toBe(
+      "Anti-raid Worker gave up self-healing; main-thread emergency permission recovery started for chats: " +
+      chatIds.join(", ")
+    );
   });
 });
 

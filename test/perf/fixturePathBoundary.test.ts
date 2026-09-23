@@ -9,11 +9,10 @@ import {
 import type { FixturePathBoundary } from "../../scripts/fixtures/pathBoundary";
 
 /**
- * 叶子校验器本身的边界。
+ * assertUnlinkedFixturePath / assertUnlinkedFixtureParent 的边界校验。
  *
- * 根级软链接只能在自建的临时锚点下测：仓库的 `performance/` 是全量基准真实的
- * 落点，把它换成链接会影响同机器上正在跑的基准。这里的锚点、允许根和外部夹具
- * 全部由用例自己在系统临时目录里建出来，跑完整棵删掉。
+ * 锚点、允许根和外部夹具全部在系统临时目录下自建自删，不复用仓库的
+ * `performance/` 目录（后者是全量基准的真实落点）。
  */
 describe("脚本夹具的写入边界", () => {
   const subject: string = "Test fixture";

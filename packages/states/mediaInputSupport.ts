@@ -2,6 +2,7 @@ import {
   MEDIA_PROBE_BACKOFF_BASE_MS,
   MEDIA_PROBE_BACKOFF_MAX_MS,
   MEDIA_PROBE_MAX_TRANSIENT_FAILURES,
+  NO_MEDIA_INPUT_EFFECTS,
 } from "../consts/aiChat/media";
 import type {
   MediaInputSupport,
@@ -44,7 +45,7 @@ export function isWithinMediaProbeBackoff(nextProbeAt: number, now: number): boo
 
 /** 状态不变的归因结果；`next` 原样返回 current，调用方据此跳过整表替换。 */
 function unchanged(current: MediaInputModalityState): MediaInputTransition {
-  return { next: current, effects: [] };
+  return { next: current, effects: NO_MEDIA_INPUT_EFFECTS };
 }
 
 /**
@@ -66,7 +67,7 @@ export function reduceMediaInputResult(
         nextProbeAt: 0,
         configGeneration: current.configGeneration,
       },
-      effects: [],
+      effects: NO_MEDIA_INPUT_EFFECTS,
     };
   }
 
@@ -85,7 +86,7 @@ export function reduceMediaInputResult(
         // 但不能每份媒体刷一条。
         effects: result.mediaFailure === "misconfigured"
           ? [{ kind: "logMisconfiguredMediaEndpoint", capability }]
-          : [],
+          : NO_MEDIA_INPUT_EFFECTS,
       };
     }
     case "transient": {
@@ -109,7 +110,7 @@ export function reduceMediaInputResult(
           nextProbeAt: now + backoffMsFor(transientFailures),
           configGeneration: current.configGeneration,
         },
-        effects: [],
+        effects: NO_MEDIA_INPUT_EFFECTS,
       };
     }
     default:

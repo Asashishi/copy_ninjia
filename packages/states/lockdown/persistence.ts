@@ -1,3 +1,4 @@
+import { NO_LOCKDOWN_EFFECTS } from "../../consts/antiRaid/lockdown";
 import {
   announcementCleanupEffects,
   announcementOf,
@@ -14,7 +15,7 @@ export function handleStatePersisted(
   state: LockdownState | undefined,
   event: Extract<LockdownMachineEvent, { type: "statePersisted" }>
 ): LockdownTransition {
-  if (state?.kind !== event.phase) return { next: state, effects: [] };
+  if (state?.kind !== event.phase) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   if (state.kind === "applying") {
     if (
       state.stage !== "prepared" ||
@@ -22,11 +23,11 @@ export function handleStatePersisted(
       // 公告落盘与主线程对账可重复确认同一 intent，提交仅派发一次。
       state.commitStarted
     ) {
-      return { next: state, effects: [] };
+      return { next: state, effects: NO_LOCKDOWN_EFFECTS };
     }
     return { next: { ...state, commitStarted: true }, effects: [{ kind: "commitApply" }] };
   }
-  if (state.intentId !== event.intentId) return { next: state, effects: [] };
+  if (state.intentId !== event.intentId) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   if (state.kind === "restoring" && state.restoreAfterPersist) {
     return {
       next: { ...state, restoreAfterPersist: false },
@@ -39,7 +40,7 @@ export function handleStatePersisted(
       effects: [{ kind: "beginReapply" }],
     };
   }
-  return { next: state, effects: [] };
+  return { next: state, effects: NO_LOCKDOWN_EFFECTS };
 }
 
 /**
@@ -50,10 +51,10 @@ export function handlePersistFailed(
   state: LockdownState | undefined,
   event: Extract<LockdownMachineEvent, { type: "persistFailed" }>
 ): LockdownTransition {
-  if (state?.kind !== event.phase) return { next: state, effects: [] };
+  if (state?.kind !== event.phase) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   if (state.kind === "applying") {
     if (state.stage !== "prepared" || state.intentId !== event.intentId) {
-      return { next: state, effects: [] };
+      return { next: state, effects: NO_LOCKDOWN_EFFECTS };
     }
     if (!state.commitStarted) {
       return {
@@ -66,10 +67,10 @@ export function handlePersistFailed(
       };
     }
   }
-  if (!("intentId" in state) || state.intentId !== event.intentId) return { next: state, effects: [] };
+  if (!("intentId" in state) || state.intentId !== event.intentId) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   if (state.kind === "restoring") {
     // 本来就等着落盘回执去恢复：回执永远不会来了，直接恢复。
-    if (!state.restoreAfterPersist) return { next: state, effects: [] };
+    if (!state.restoreAfterPersist) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
     return {
       next: { ...state, restoreAfterPersist: false },
       effects: [

@@ -6,8 +6,7 @@ const DECOMPOSED_GA: string = "が";
 
 describe("buildCharacterTypo", () => {
   test("按字素簇替换，不会拆开组合序列", () => {
-    // 按码点切会命中「か」这个还挂着浊点的基字，替换后浊点留在原地：换出来的
-    // 字跟模型说的「原字/错字」对不上，基字不搭配时更是直接发出一条乱码。
+    // 按码点切会命中「か」这个还挂着浊点的基字，替换后浊点留在原地。
     const text: string = `${DECOMPOSED_GA}んばって`;
 
     expect(buildCharacterTypo(text, "か", "き")).toBeNull();

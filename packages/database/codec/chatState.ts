@@ -181,11 +181,11 @@ function decodeLockdown(
 }
 
 /**
- * 主线程接收 Worker lockdown 事件时的入站校验。
+ * 主线程接收 Worker lockdown 事件时的入站校验，校验规则与磁盘解码同源。
  *
- * ChatState 是「先写内存、再落盘」的：一条落盘自检过不了的记录挂进内存，会让
- * 该群此后**所有**状态写入（任何开关命令）一并抛错。落盘格式的守门必须提前
- * 到入口，不能等到 encodeChatStateData 才发现。校验规则与磁盘解码同源。
+ * ChatState 采用先写内存、再落盘的顺序；未通过校验的记录一旦写入内存，会导致
+ * 该群此后所有状态写入（任何开关命令）随之抛错。校验必须在写入内存前完成，
+ * 不能延后到 encodeChatStateData 才发现。
  */
 export function assertPersistableLockdown(
   record: LockdownRecord,

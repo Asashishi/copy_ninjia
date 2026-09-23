@@ -3,9 +3,9 @@ import type { KeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner"
 import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal";
 
 /**
- * 私密模式状态机（packages/workers/antiRaid/lockdownRuntime.ts 及同目录的
- * lockdownApi.ts、lockdownPersistence.ts）的内存状态；verificationEvents.ts 只读取
- * lockdownEntries 判断当前是否处于私密模式。
+ * owner: workers/antiRaid。私密模式状态机（packages/workers/antiRaid/lockdownRuntime.ts
+ * 及同目录的 lockdownApi.ts、lockdownPersistence.ts）的内存状态；verificationEvents.ts
+ * 只读取 lockdownEntries 判断当前是否处于私密模式。
  */
 
 /**

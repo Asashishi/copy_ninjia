@@ -7,8 +7,12 @@ const create = mock(async (..._args: unknown[]): Promise<unknown> => ({
   choices: [{ message: { content: "{\"ok\": true}" } }],
 }));
 
+/** 与 openai SDK 的 APIError 一致：message 以 HTTP 状态码开头。 */
 class FakeAPIError extends Error {
-  status: number = 429;
+  readonly status: number = 429;
+  constructor(message: string) {
+    super(`429 ${message}`);
+  }
 }
 
 mock.module("../../../packages/infra/logger", () => ({
@@ -65,7 +69,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
   test("按传入参数发一次 JSON 模式请求，客户端只构造一次", async () => {
     await expect(requestOpenAiAdDetectJson(request())).resolves.toBe("{\"ok\": true}");
     await requestOpenAiAdDetectJson(request());
-    // 线程内单例：客户端构造远贵于一次请求，Worker 重建后才会重新构造。
+    // 两次请求复用同一客户端实例，只在首次请求时构造。
     expect(constructions).toHaveLength(1);
     expect(constructions[0]).toMatchObject({
       baseURL: "https://api.deepseek.com",
@@ -84,7 +88,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
     expect(body.temperature).toBe(0);
     expect(body.max_tokens).toBe(256);
     expect(body.response_format).toEqual({ type: "json_object" });
-    // 提示词与待判定内容分属两个 role：正文永远只作为数据出现。
+    // 系统提示词与待判定正文分别落在 system/user 两条消息上。
     expect(body.messages).toEqual([
       { role: "system", content: "只输出 JSON" },
       { role: "user", content: "1. 在吗" },
@@ -92,8 +96,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
   });
 
   test("正文为空时重试一次；重试拿到正文就照常返回", async () => {
-    // 推理模型的空转是抖动而不是判断结果：交回空串会被调用方读成「没有结论」，
-    // 与「模型认为不是广告」不可区分，成为一次没有日志痕迹的漏判。
+    // 首次返回空正文，重试的实现走 beforeEach 里设置的默认 mock（返回可用正文）。
     create.mockImplementationOnce(async (): Promise<unknown> => ({
       choices: [{ finish_reason: "stop", message: { content: "" } }],
     }));
@@ -110,7 +113,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
     expect(create).toHaveBeenCalledTimes(AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS);
     expect(errorLogs[0]).toContain(`no usable body in ${AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS} attempt(s)`);
 
-    // 整个 choices 缺失同样算空转，不是「拿到了一个空答案」。
+    // choices 数组为空同样按空正文计入重试。
     errorLogs.length = 0;
     create.mockImplementation(async (): Promise<unknown> => ({ choices: [] }));
     await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
@@ -123,7 +126,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
       usage: { completion_tokens_details: { reasoning_tokens: 64 } },
     }));
     await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
-    // 截断的正文多半是半个 JSON，交回去只会让调用方多做一次注定失败的解析。
+    // 因 reasoning 占满额度被截断时返回 null，错误日志带 truncated/hasPartialText/reasoning_tokens/max_tokens 四个字段。
     expect(errorLogs[0]).toContain("truncated=true");
     expect(errorLogs[0]).toContain("hasPartialText=true");
     expect(errorLogs[0]).toContain("reasoning_tokens=64");

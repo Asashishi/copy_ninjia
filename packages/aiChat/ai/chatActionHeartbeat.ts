@@ -14,14 +14,13 @@ export interface ChatActionSendRequest {
   signal?: AbortSignal;
 }
 
-/** 依赖可注入只为让心跳的并发/失败时序能用确定性的单测覆盖；生产调用使用
- *  下方默认值，仍共享 Worker 内的 typingHeartbeats。 */
+/** 心跳依赖集合，可注入测试替身；生产调用使用下方默认值，共享 Worker 内的
+ *  typingHeartbeats。 */
 export interface ChatActionHeartbeatDependencies {
   entries: Map<number, ChatActionHeartbeatEntry>;
   intervalMs: number;
   maxConsecutiveFailures: number;
-  /** 只有一个发送口：每个挡位各开一个依赖方法的话，新增挡位要同时改依赖接口、
-   *  默认值与分发分支，而漏掉分发那处对现有挡位照样编译通过。 */
+  /** 唯一的发送口；新增挡位需同步更新依赖接口、默认值与分发分支。 */
   sendChatAction(request: ChatActionSendRequest): Promise<boolean>;
 }
 
@@ -160,9 +159,8 @@ export function startChatActionHeartbeat({
       if (live?.timer !== timer || live.action === "idle") return;
       pumpChatAction({ chatId, entry: live, deduplicate: false, dependencies });
     }, dependencies.intervalMs);
-    // 与全仓其余四处 setInterval 一致地 unref：条目正常由 stop/refCount 归零或
-    // resetAiChatHeartbeatCache 清掉，但一个还在重发打字状态的心跳不该成为
-    // 「谁都没拆表」时唯一吊住 Worker 事件循环、拖住停机的东西。
+    // timer 必须 unref（口径见 docs/cn/04-invariants.md）；条目正常由
+    // stop/refCount 归零或 resetAiChatHeartbeatCache 清掉。
     timer.unref();
     entry = {
       timer,

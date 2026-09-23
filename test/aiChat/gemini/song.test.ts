@@ -32,7 +32,7 @@ const AUDIO_BYTES: Uint8Array = new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, 1, 2,
 function audioInteraction(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     output_audio: { type: "audio", data: AUDIO_BYTES.toBase64(), mime_type: "audio/mp3" },
-    // Lyria 会一并回歌词；本项目刻意不采，用例里保留它正是为了断言这一点。
+    // 响应里带歌词字段，用于断言结果对象不透出它。
     output_text: "第一段歌词",
     ...overrides,
   };
@@ -55,7 +55,6 @@ describe("Gemini 生歌适配器", () => {
     });
     expect(song?.mimeType).toBe("audio/mp3");
     expect(song?.bytes).toEqual(AUDIO_BYTES);
-    // 歌词不进结果：群里只发这首歌本身，采回来存着不用就是一份没有消费方的状态。
     expect(Object.keys(song ?? {}).sort()).toEqual(["bytes", "mimeType"]);
   });
 
@@ -65,13 +64,11 @@ describe("Gemini 生歌适配器", () => {
     const options = create.mock.calls[0]![1] as { timeout: number; maxRetries: number; signal: AbortSignal };
     expect(options.timeout).toBe(GEMINI_SONG_REQUEST_TIMEOUT_MS);
     expect(options.maxRetries).toBe(GEMINI_SONG_REQUEST_ATTEMPTS - 1);
-    // 一次生成就是一次计费，重试只是再买一次同样的失败。
     expect(GEMINI_SONG_REQUEST_ATTEMPTS).toBe(1);
   });
 
   test("超时预算必须由本包合成成 signal——SDK 一见到 signal 就跳过自己那份 timeout", async () => {
-    // 没有调用方 signal 时也要带一个：否则这条端点上的请求可以无限期挂住，
-    // 占着整轮的心跳与工具轮次。
+    // 没有调用方 signal 时仍合成一个 AbortSignal 传给 create。
     await generateGeminiSong({ prompt: "p" });
     const withoutCaller = (create.mock.calls[0]![1] as { signal?: AbortSignal }).signal;
     expect(withoutCaller).toBeInstanceOf(AbortSignal);
@@ -120,7 +117,6 @@ describe("Gemini 生歌适配器", () => {
   });
 
   test("超时中止仍要记日志：那次生成已经在服务端出过账", async () => {
-    // 调用方没有 abort，因此这次失败必须留下痕迹，不能被当成「本轮作废」吞掉。
     const controller: AbortController = new AbortController();
     create.mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"));
 

@@ -301,8 +301,7 @@ describe("/permission", () => {
     expect(text).toContain("true 是有这项权限");
     expect(text).toContain("false 就是没有");
     expect(text).toContain("杂鱼♡");
-    // 用户明确授权的长期保留例外：这张权限看板要照着逐项核对，30 秒清理会在
-    // 读完之前收走它。与 /permission help 同一口径，见 AGENTS.md「Telegram 提示留存」。
+    // 长期保留例外，见 docs/cn/04-invariants.md。
     expect(message?.preserveInGroup).toBeTrue();
   });
 
@@ -497,8 +496,7 @@ describe("/permission", () => {
       }
     );
 
-    // 理由同 /white 那条：异常逸出会把一条命令变成永久重启循环，而配置此刻
-    // 一点没被改动（见 commands/permission.ts 的 reportWhitelistMutationFailure）。
+    // 降级路径见 commands/permission.ts 的 reportWhitelistMutationFailure。
     await handlePermissionCommand(context(1, "100 all"));
 
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -630,8 +628,7 @@ describe("/permission", () => {
   });
 
   test("拒绝把当前群自己的身份当成授权目标（匿名管理员皮套）", async () => {
-    // 这个 id 在白名单里也照挡：Telegram 不会告诉本进程皮套底下是谁，给它发
-    // 权限等于把 /block、/mute 与各功能开关交给这个群的任意匿名管理员。
+    // 这个 id 即使在白名单里也照挡：Telegram 不会告诉本进程皮套底下是谁。
     whitelistPermissionsById.set(-1001, permissions());
 
     await handlePermissionCommand(context(1, "-1001 isCanBlock true"));

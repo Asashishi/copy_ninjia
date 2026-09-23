@@ -10,7 +10,13 @@ import {
 import type { AcknowledgedUpdateRunner } from "../../types/lifecycle";
 import type { ApplicationLifecycleDependencies } from "../lifecycleDependencies";
 
-/** 依次关闭所有会在停机排空期间继续制造工作的维护 owner。 */
+/**
+ * 依次关闭所有会在停机排空期间继续制造工作的维护 owner。
+ *
+ * 不记「已经 quiesce 过」：每次调用都完整执行全部入口（均为幂等赋值），因为
+ * app/lifecycle.ts 的 init() 会把各 owner 的接纳重新置真。
+ * @returns 全部入口都未抛错时为 true。
+ */
 export function quiesceLifecycleMaintenance(
   dependencies: ApplicationLifecycleDependencies
 ): boolean {

@@ -40,8 +40,7 @@ export interface WritePerformanceResultEntryParams {
 /**
  * 替换记录文件中的指定字段，保留其他字段的值并统一序列化。
  *
- * 节不存在时创建；存在但不是对象则直接失败，不猜、不覆盖——那说明这份文件已经
- * 被改坏，静默重建只会把坏掉的地方藏起来。
+ * 节不存在时创建；存在但不是对象则直接失败，不猜、不覆盖。
  */
 export async function writePerformanceResultEntry({
   path,

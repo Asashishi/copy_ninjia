@@ -1,15 +1,13 @@
 /**
  * mock 数据根的建立、校验与清理。
  *
- * 全量基准的**全部**落盘只允许发生在仓库根下的 `performance/` 里：部署机上
- * 同一个工作目录里就摆着真实的 `database/`、`memory/`、`state.json` 与
- * `bot.lock`，一次写错目录就是改运维正在用的数据。因此建目录、复制、写文件都
- * 先过 `assertInsidePerformanceMockRoot`，删除先过同一道形态闸加父链核对，越界
- * 一律抛错而不是「尽力而为」。词法前缀判定挡不住软链接，真实分量的核对在
+ * 全量基准的全部落盘只允许发生在仓库根下的 `performance/` 里：部署机上同一个
+ * 工作目录里还摆着真实的 `database/`、`memory/`、`state.json` 与 `bot.lock`。
+ * 建目录、复制、写文件都先过 `assertInsidePerformanceMockRoot`，删除先过同一道
+ * 形态闸加父链核对，越界一律抛错。词法前缀判定挡不住软链接，真实分量的核对在
  * `scripts/fixtures/pathBoundary.ts`。
  *
- * 本文件只从 `packages/` import 纯常量：父进程一旦把生产实现模块图加载进来，
- * 冷启动那一段就再也测不到真实的模块加载成本了。
+ * 本文件只从 `packages/` import 纯常量，不加载生产实现模块图。
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";

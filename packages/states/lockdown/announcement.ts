@@ -1,3 +1,4 @@
+import { NO_LOCKDOWN_EFFECTS } from "../../consts/antiRaid/lockdown";
 import { isPersistable } from "./shared";
 import type {
   LockdownMachineEvent,
@@ -20,16 +21,16 @@ export function handleAnnouncementResult(
       next: state,
       effects: event.ok && event.messageId !== undefined
         ? [{ kind: "deleteLockdownAnnouncement", messageId: event.messageId }]
-        : [],
+        : NO_LOCKDOWN_EFFECTS,
     };
   }
-  if (!state.announcementPending) return { next: state, effects: [] };
-  if (!event.ok) return { next: { ...state, announcementPending: false }, effects: [] };
+  if (!state.announcementPending) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
+  if (!event.ok) return { next: { ...state, announcementPending: false }, effects: NO_LOCKDOWN_EFFECTS };
   const next: LockdownState = {
     ...state,
     announced: true,
     announcementPending: false,
     announcementMessageId: event.messageId,
   };
-  return { next, effects: isPersistable(next) ? [{ kind: "persistState" }] : [] };
+  return { next, effects: isPersistable(next) ? [{ kind: "persistState" }] : NO_LOCKDOWN_EFFECTS };
 }

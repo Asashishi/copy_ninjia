@@ -22,9 +22,9 @@ import type { MoodConfig } from "../../../packages/types/config";
 
 /**
  * aiChat/ai/mood.ts 的单测：首次抽取、寿命内维持/到期重抽、群间隔离。每个用例用
- * seedMoods 重置并预置 Worker 内的 chatMoods/chatMoodExpiresAts，结束后清空。抽中
- * 哪一档不硬编码具体心情名——只断言「roll=0 落在权重表第一档」「roll 顶到上限落在
- * 最后一档」，config/mood.json 内容/顺序/条目数之后再调也不用跟着改这份测试。
+ * seedMoods 重置并预置 Worker 内的 chatMoods/chatMoodExpiresAts，结束后清空。断言
+ * 只按权重表位置（roll=0 落在第一档，roll 顶到上限落在最后一档），不硬编码具体
+ * 心情名。
  */
 
 /** 以给定条目重置 Worker 内的心情缓存，返回两张表供断言。 */

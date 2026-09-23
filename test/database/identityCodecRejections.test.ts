@@ -11,15 +11,10 @@ import { InputValidationError } from "../../packages/libs/inputValidation";
 import type { WhitelistPermissionKey } from "../../packages/types/identityPolicy";
 
 /**
- * 名单与 outbox 三个解码器的**拒绝分支**逐条核对。
+ * 名单与 outbox 三个解码器的拒绝分支逐条核对，对应 AGENTS.md「不为用户行为兜底」
+ * 在持久化侧的落点（另见 temporaryAdBypassCodec.test.ts）。
  *
- * 与 temporaryAdBypassCodec.test.ts 同一条理由：这些解码器是 AGENTS.md
- * 「不为用户行为兜底」在持久化侧的落点，被改坏的行必须致命退出而不是被默认值
- * 回填或丢弃。正例通过证明不了任何一条判定写对了方向——只有让每条 invalidInput
- * 都被一个具体的坏输入命中，才谈得上这道闸真的在。
- *
- * 断言统一核对「抛的是 InputValidationError」且「消息命中该字段路径」：字段路径
- * 是运维唯一能据以定位的东西，写错路径等于把人指到别的列上。
+ * 断言统一核对抛出 InputValidationError 且消息命中对应字段路径。
  */
 
 const SOURCE: string = "permission_list[7].policy";

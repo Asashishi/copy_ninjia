@@ -91,10 +91,7 @@ function context(controller: AbortController = new AbortController()): ReplyTool
   };
 }
 
-/**
- * 条件在预算内未成立就当场失败，而不是静默继续：条件没成立时后面 `await` 的
- * 工具链结果永远不会到来，静默继续等于挂死。
- */
+/** 断言条件在预算内成立；不成立时立即失败，不静默等待。 */
 async function waitUntil(predicate: () => boolean): Promise<void> {
   expect(await pollUntil(predicate)).toBe(true);
 }

@@ -1,11 +1,9 @@
 import type { DiskBusinessMessage } from "../../packages/types/diskIO/messages";
-import { diskIOStub } from "./diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "./diskIOMock";
 import { loggerStub } from "./loggerMock";
 /**
- * Anti-Raid 主线程镜像与恢复用例共用的替身、缓存句柄与隔离钩子。
- *
- * 单文件曾超过 1000 行（AGENTS.md 要求必须拆分）；这套 mock.module 装配、
- * drain 推进助手与 beforeEach 复位两份用例都要用。
+ * Anti-Raid 主线程镜像与恢复用例共用的替身、缓存句柄与隔离钩子：mock.module
+ * 装配、drain 推进助手与 beforeEach 复位。
  */
 
 import { afterEach, beforeEach, mock } from "bun:test";
@@ -71,8 +69,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     return true;
   },
   getChatStateCache: () => chatStates,
-  // 入群守卫默认开着：本文件的用例全部考察守卫开启后的镜像与恢复语义，
-  // 逐个用例再去建 chat state 只会淹没被测的东西。
+  // 入群守卫默认开着，覆盖用例可通过 chatStates 逐条改写。
   getChatState: (chatId: number) => ({ isAntiRaidEnabled: true, ...chatStates.get(chatId) }),
   getOrCreateChatState: (chatId: number) => {
     const current = chatStates.get(chatId) ?? {};
@@ -143,8 +140,9 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
     workerHooks.diskRespawn = listener;
   },
-  onIdentityStoragePersisted: (): void => {},
-  onVerificationPersisted: (callback: (reply: VerificationPersistedReply) => void): void => { workerHooks.persistedAck = callback; },
+  onDiskIOReply: diskIOReplyStub({
+    verificationPersisted: (callback: (reply: VerificationPersistedReply) => void): void => { workerHooks.persistedAck = callback; },
+  }),
 })));
 
 import {

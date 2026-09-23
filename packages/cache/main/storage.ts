@@ -1,7 +1,7 @@
 import type { StateStore } from "../../infra/storage/statePersistence";
 import type { GlobalAssetState, GlobalCopyState } from "../../types/chatState";
 
-/** state 权威存储（packages/infra/storage/stateStore.ts）的内存状态。 */
+/** owner: main。state 权威存储（packages/infra/storage/stateStore.ts）的内存状态。 */
 
 /**
  * 进程唯一 StateStore 的惰性 holder。首次持久化操作时填充，应用生命周期

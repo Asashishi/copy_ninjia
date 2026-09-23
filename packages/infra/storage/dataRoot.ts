@@ -92,9 +92,7 @@ function currentProcessGroupIds(): readonly number[] {
 /**
  * 在实例锁和任何联网/Worker 初始化之前验证数据根真正支持本仓库依赖的
  * durability 原语：可创建/写入、同目录 hard link、原子 rename 与目录 fsync。
- * 显式配置的生产数据根还必须不宽于 RUNTIME_DATA_ROOT_MAX_MODE（0755，见
- * consts/storage.ts）；已有目录只校验、不自动 chmod，避免进程替部署者改变共享
- * 主机上的访问策略。
+ * 权限校验规则见 docs/cn/04-invariants.md；已有目录只校验、不自动 chmod。
  */
 export async function prepareRuntimeDataRoot(
   dataRoot: string,
@@ -133,10 +131,8 @@ export async function prepareRuntimeDataRoot(
     for (const directoryName of RUNTIME_SENSITIVE_DIRECTORY_NAMES) {
       const directoryPath: string = join(root, directoryName);
       const isIdentityDatabaseDirectory: boolean = directoryName === "database";
-      // 建目录和校验目录必须用同一个上限。`database/` 的上限是 0770（协作组可写、
-      // 但不给 other 任何位），比数据根的 0755 在 other 侧更严；拿数据根那个值去
-      // 建它，建出来的 0755 会当场被下面的断言判成「宽于 0770」——自己建的目录
-      // 自己不收，而且报错指向的是部署方从没碰过的路径。
+      // 建目录与校验目录必须用同一个上限：`database/` 的上限是 0770，比数据根的
+      // 0755 更严格，两处混用会导致新建目录的 mode 通不过下方的校验。
       const maximumMode: number = isIdentityDatabaseDirectory
         ? IDENTITY_DATABASE_DIRECTORY_MODE & 0o777
         : RUNTIME_DATA_ROOT_MAX_MODE;

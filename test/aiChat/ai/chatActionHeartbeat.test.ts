@@ -135,8 +135,7 @@ describe("chatActionHeartbeat", () => {
     await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledTimes(1);
 
-    // 切 idle 意味着消息落地清掉了聊天状态，节流记忆随之重置：下一段窗口
-    // 哪怕还是 typing 挡也要立即补发。
+    // 切 idle 会重置节流记忆：下一段窗口哪怕还是 typing 挡也要立即补发。
     heartbeat.set("idle");
     heartbeat.set("typing");
     await settleBackgroundWork();

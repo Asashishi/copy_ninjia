@@ -29,6 +29,17 @@ export const TELEGRAM_ALLOWED_UPDATES: readonly (
   "chosen_inline_result",
 ] as const;
 
+/**
+ * Bot API 服务端对重复 offset 的最短应答等待。
+ *
+ * 同一 offset 在上一次 getUpdates 开始后 3 秒内再次请求、且 `timeout` 小于 3 时，
+ * 服务端把这次请求的 `timeout` 提到 3 秒（telegram-bot-api
+ * `Client::process_get_updates_query`），期间没有新 update 就到点返回空数组。
+ * 停机时的最终 offset 确认正是这种请求，其本地截止必须大于本值
+ * （见 consts/lifecycle.ts 的 FINAL_OFFSET_CONFIRM_TIMEOUT_MS）。所属模块：app/lifecycle.ts。
+ */
+export const TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS: number = 3_000;
+
 /** 抓取目标头像（Bot API / t.me 兜底）的单次请求超时。 */
 export const AVATAR_FETCH_TIMEOUT_MS: number = 15_000;
 /** 抓取目标头像允许的最大尝试次数。 */
@@ -216,14 +227,8 @@ export const SELF_SENT_RENDEZVOUS_TIMEOUT_MS: number = 1_000;
  * 只有最后一次应答里的结果才可能被发出去。上限管的是「同时有多少人正在输入
  * inline 查询」，inline 模式对任何人开放，因此必须有硬顶；撑满时按最久未登记
  * 的查询者淘汰，被淘汰只意味着他那条 inline 结果拿不到源文本、退回不判定。
- *
- * 定 1024 而不是几十：淘汰的代价是漏判一条广告，而多留一位查询者的代价只是一份
- * 应答文本，两边完全不对称；这个数量级足以覆盖同时输入的真实并发，正常不会有人
- * 因为被挤掉而漏判。占用上界算得出来——单条登记就是一次应答的全部结果正文，运势
- * 是一条几百字符的回执，gag 一条不超过 TELEGRAM_MESSAGE_MAX_CHARS、一次应答至多
- * GAG_SESSION_MAX 条，即单人最坏约 20K 字符。常态是每人几百字符、全表百 KB 级；
- * 理论最坏要 1024 个不同的人同时各用满长度查询命中满额 gag 会话，而每人只占一条、
- * 下次查询就地覆盖，不会累积。
+ * 单条登记的正文上界为一次应答的全部结果内容（运势回执或至多 GAG_SESSION_MAX
+ * 条、each 受 TELEGRAM_MESSAGE_MAX_CHARS 约束的 gag 文本），因此整表占用有界。
  */
 export const INLINE_RESULT_SOURCE_MAX_AUTHORS: number = 1_024;
 

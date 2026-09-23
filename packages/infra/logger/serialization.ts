@@ -33,16 +33,15 @@ interface SerializationBudget {
 }
 
 /**
- * 本次调用要脱敏的敏感值。每条日志取一次而不是每个参数取一次；不提到模块
- * 加载期，是为了不依赖「logger 首次 import 时配置已经读完」这个额外前提。
- * Telegram 与 agent loader 都把成功结果放在线程内 holder，logger 只读取已有
- * 快照，不反向触发同步文件 I/O。
+ * 本次调用要脱敏的敏感值。每条日志取一次而不是每个参数取一次。Telegram 与
+ * agent loader 都把成功结果放在线程内 holder，logger 只读取已有快照，不反向
+ * 触发同步文件 I/O。
  *
- * 结果按三个 holder 的**对象身份**记忆化（holder 见 cache/perThread/logger.ts 的
- * loggerSecretsMemo）。配置身份没变时凭据集合也不变，因此不逐条日志重建数组。
- * 身份变化（热重载替换快照）时，上一份名单里不再生效的旧凭据排在当前凭据之后
- * 继续脱敏：旧客户端的在途请求仍可能把它们带进错误。总量受
- * LOGGER_MAX_REDACTED_SECRETS 限制，封顶时丢弃最早退役的。
+ * 结果按三个 holder 的对象身份记忆化（holder 见 cache/perThread/logger.ts 的
+ * loggerSecretsMemo）。配置身份未变时不重建凭据数组；身份变化（热重载替换快照）
+ * 时，上一份名单里不再生效的旧凭据排在当前凭据之后继续脱敏，覆盖旧客户端在途
+ * 请求仍可能带出的凭据。总量受 LOGGER_MAX_REDACTED_SECRETS 限制，封顶时丢弃
+ * 最早退役的。
  */
 function currentSecrets(): readonly string[] {
   const telegram: BotConfig | null = botConfigCache.current;
@@ -86,10 +85,8 @@ function currentSecrets(): readonly string[] {
  * 的 message/stack/path/cause 都不会漏。
  */
 function serializeArg(arg: unknown, secrets: readonly string[], budget: SerializationBudget): unknown {
-  // 绝大多数日志参数是拼好的字符串（本项目的 logger.log/info/warn 全部如此）。
-  // 字符串直接脱敏即可，不必走 stringify -> 脱敏 -> parse 的往返：两条路径对
-  // 字符串的结果逐字符相同，唯一的差异是敏感值自身含 JSON 转义字符时，往返
-  // 路径反而会因为转义后不再字面匹配而漏脱敏，直接脱敏没有这个问题。
+  // 字符串参数直接脱敏，不经过 stringify -> 脱敏 -> parse 往返：敏感值本身
+  // 含 JSON 转义字符时，往返路径会因转义后不再字面匹配而漏脱敏。
   if (typeof arg === "string") {
     return redactSecretsInText(redactSensitiveFieldsInText(arg), secrets);
   }
@@ -97,17 +94,11 @@ function serializeArg(arg: unknown, secrets: readonly string[], budget: Serializ
   const error: Error | null = asError(arg);
   const serializable: unknown = error !== null
     ? serializeError(error, null, budget)
-    // 非 Error 不预先做一轮 stringify/parse：下面那一轮的结果与先往返一次
-    // 完全相同（safeStringify 的兜底对两条路径同样降级），白付一次全量序列化。
     : arg;
 
   const redacted: string = redactSecretsInText(safeStringify(serializable), secrets);
-  // 脱敏是对整份 JSON 文本做字面替换，敏感值本身是 JSON 结构字符（Telegram
-  // token 或 agent api_key 只要 trim 后非空就能通过语法校验，`"` 或 `,` 都是合法取值）
-  // 时，替换结果就不再是合法 JSON。裸 parse 会让这个 SyntaxError 从 logger 自己
-  // 的调用点抛出去：catch 块里那句 logger.error 顶掉原始错误、真实故障一条都不
-  // 落盘，连 uncaughtException 处理器都会在汇报退出原因时再炸一次。解析不了就
-  // 退化成脱敏后的文本，日志本身绝不能成为新的故障源。
+  // 脱敏是对整份 JSON 文本做字面替换；敏感值本身是 JSON 结构字符（如 `"`、`,`）
+  // 时，替换结果可能不再是合法 JSON。解析失败就退化为脱敏后的文本，不向上抛出。
   try {
     return JSON.parse(redacted);
   } catch {
@@ -180,16 +171,14 @@ function serializeError(
  * Error 自有的可枚举属性（GrammyError.payload、Bun fetch 的 code/path 等），外加
  * 不可枚举的 `cause` 与 AggregateError 的 `errors`。只读取数据描述符，不执行 getter。
  * 值为 Error 的字段、`cause` 与 `errors` 数组中的 Error 元素经 serializeNestedError
- * 递归展开；其余值逐个属性独立降级：某个值不可序列化（循环引用、BigInt）时只让它
- * 自己退化成字符串，不会连累整条记录。不能整体 `{...JSON.parse(safeStringify({...arg}))}`
- * ——safeStringify 走 `String(value)` 兜底时返回的是字符串，展开进对象字面量
- * 会炸成 `{"0":"[","1":"o",...}` 一串下标键，把真正要看的 code/path 冲掉。
+ * 递归展开；其余值逐个属性独立降级，某个值不可序列化（循环引用、BigInt）时只让它
+ * 自己退化成字符串，不连累整条记录。不能用 `{...JSON.parse(safeStringify({...arg}))}`：
+ * safeStringify 走 `String(value)` 兜底时返回字符串，展开进对象字面量会变成
+ * `{"0":"[","1":"o",...}` 的下标键，覆盖掉 code/path 等真实字段。
  *
- * 累加对象必须无原型：键来自 error 自身，`__proto__` 一旦出现在里面，往普通
- * `{}` 上赋值命中的是 Object.prototype 继承来的那个访问器——值是对象就静默换掉
- * 本条记录的原型，不是对象就整句赋值失效。两种结局都一样：那个字段不会出现在
- * logs/ 的错误记录里，运维排查时看不到唯一能解释这次故障的诊断。外层的对象
- * 展开与 JSON.parse 都按数据属性定义，不吃这个亏，只有这里的下标赋值会。
+ * 累加对象必须用 `Object.create(null)`（无原型）：键名为 `__proto__` 时，向普通
+ * `{}` 赋值会命中 Object.prototype 继承的访问器，导致该字段被静默丢弃或整条
+ * 记录的原型被替换，字段不会出现在 logs/ 里。
  */
 function ownErrorProperties(
   error: Error,

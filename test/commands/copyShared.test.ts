@@ -25,6 +25,17 @@ mock.module("../../packages/infra/telegram/avatar/restore", () => ({ restoreDefa
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): { aiPersona?: string } => personas.get(chatId) ?? {},
   getGlobalCopyState: () => globalCopyState,
+  // 与生产同构的冷却写入边界：占位返回原值，回滚只在起点仍是本次占位时生效（见 stateStore.ts）。
+  claimCopyCooldown: (claimedAt: number): number | undefined => {
+    const previous: number | undefined = globalCopyState.lastCopyTime;
+    globalCopyState.lastCopyTime = claimedAt;
+    return previous;
+  },
+  restoreCopyCooldown: (claimedAt: number, previous: number | undefined): boolean => {
+    if (globalCopyState.lastCopyTime !== claimedAt) return false;
+    globalCopyState.lastCopyTime = previous;
+    return true;
+  },
   // copy/avatarQueue.ts 在主线程取默认头像直链后传给 restoreDefaultProfilePhoto；
   // 这里的替身必须一并提供，否则整个模块的具名导入会在加载期就失败。
   getBotDefaultAvatarUrl: (): string => DEFAULT_AVATAR_URL,
@@ -136,6 +147,15 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       text: ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.iconChanged("本天才♡"),
     }));
+  });
+
+  test("头像回执落在提交它的 update 触发话题，执行槽已不在作用域内也不丢", async () => {
+    const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
+    await runWithUpdateAbortSignal(new AbortController().signal, async (): Promise<void> => {
+      shared.stealAvatarInBackground({ chatId: -1001, target: { id: 7, first_name: "话题里的人" }, source: "icon" });
+    }, { chatId: -1001, threadId: 42 });
+    await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: -1001, messageThreadId: 42 }));
   });
 
   test("头像 drain 拒绝非有限与负预算", () => {

@@ -179,12 +179,7 @@ async function writeBotLockRecords(lockFilePath: string, records: BotLockRecord[
 
 /**
  * 用 hard link 原子发布完整进程身份 guard，并安全回收当前 v2 格式的 stale guard。
- *
- * **协议的覆盖边界**：回收陈旧 recovery 与回收陈旧 guard 都是「判死 → 删除」两步，
- * 两步之间没有原子性。因此在「同一数据根下两个进程同时启动、且现场同时残留两份
- * 陈旧辅助文件」这一种场景里，两个进程可能都认为自己持有 recovery，随后各自把对方
- * 刚发布的那份删掉。线上由 systemd 以单实例方式拉起，同一数据根不会有第二个启动中的
- * 进程，这条路径不可达；协议按现状保留，不为它加分布式锁。
+ * 协议的非原子回收边界见 docs/cn/04-invariants.md。
  */
 async function acquirePidFileLock(
   lockFilePath: string,

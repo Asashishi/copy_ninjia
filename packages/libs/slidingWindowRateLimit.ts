@@ -59,10 +59,9 @@ export function trimSlidingWindowArray({
  * verificationSnapshot / verificationWrites / verificationCodec），没有第二处别名。
  * 需要一份新数组的冷路径（恢复与接管）继续用 `trimSlidingWindowArray`。
  *
- * **参数刻意用位置形式，不要改成 options interface**：相邻的
- * `trimSlidingWindowArray` 用 options 是因为它本来就要新建数组，多一个字面量无所谓；
- * 而本函数存在的唯一理由就是「每条待验证成员消息不再分配」。改成 options 会在同一条
- * 热路径上每次现造一个入参对象，收益当场归零。三个位置参数也在 AGENTS.md 的上限内。
+ * **参数刻意用位置形式，不要改成 options interface**：本函数用于每条待验证成员消息
+ * 的热路径，不分配入参对象；改成 options 会在该路径上每次现造入参对象。三个位置
+ * 参数也在 AGENTS.md 的位置参数上限内。
  *
  * @param timestamps 就地修剪的时间戳数组；长度可能变短，元素相对顺序不变。
  */

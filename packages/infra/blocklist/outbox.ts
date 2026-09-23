@@ -24,7 +24,7 @@ import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import {
   flushDiskIODomain,
   onDiskIORespawn,
-  onIdentityStoragePersisted,
+  onDiskIOReply,
   postDiskIO,
 } from "../diskIO";
 import { logger } from "../logger";
@@ -138,13 +138,9 @@ export function hydrateBlocklist(
       }
       continue;
     }
-    // 冻结批次在这里**不再裁剪**，因为 SQLite owner 根本不会交出需要裁剪的行：
-    // inspectStorageDatabase 对「冻结 userId 不在 blocklist_entries」直接抛错，
-    // handlePendingRemovalSnapshot 对同一条件也抛（见 workers/diskIO/
-    // storageDatabase/pendingRemoval.ts）。也就是说这是一条断言而不是一次修剪——部署方从旧备份
-    // 恢复 database/storage.sqlite、或手删一行 blocklist_entries 撤销误 /block 时，
-    // 进程会在启动阶段以非零码退出并点名那一行，按 AGENTS.md「不为用户行为兜底」
-    // 要求运维显式修好数据，而不是让本函数悄悄丢掉一批待踢成员。
+    // 冻结批次在这里不裁剪：SQLite owner（inspectStorageDatabase 与
+    // handlePendingRemovalSnapshot，见 workers/diskIO/storageDatabase/pendingRemoval.ts）
+    // 对「冻结 userId 不在 blocklist_entries」直接抛错，进程在启动阶段以非零码退出并点名该行。
     const userIds: number[] = [...pending.params.userIds];
     pendingBlockedRemovals.set(removalId, {
       params: { ...pending.params, userIds },
@@ -352,7 +348,7 @@ function settleRemovalSnapshot(reply: IdentityStoragePersistedReply): void {
   }
 }
 
-onIdentityStoragePersisted(settleRemovalSnapshot);
+onDiskIOReply("identityStoragePersisted", settleRemovalSnapshot);
 
 // Disk I/O Worker 重建后只重放仍未收到事务 ACK 的最终 outbox 快照。
 onDiskIORespawn("blocklist outbox", DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST + 1, (

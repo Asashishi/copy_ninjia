@@ -19,7 +19,7 @@ import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";
-import { ensureLuckReceiptSecret, onDiskIORespawn, onLuckAppendStalled, postDiskIO } from "../../infra/diskIO";
+import { ensureLuckReceiptSecret, onDiskIORespawn, onDiskIOReply, postDiskIO } from "../../infra/diskIO";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /**
@@ -229,7 +229,7 @@ function initializeRespawnRecovery(): void {
   // 而把 stdout/stderr 接到 /dev/null 的部署上那等于没有——那种部署上「抽签
   // 在 dailyLuckCache 里命中、memory/luck/<day>.json 却永远不涨」是完全不可
   // 观测的。触发口径与边沿语义见 workers/diskIO/luckFiles.ts。
-  onLuckAppendStalled((reply: LuckAppendStalledReply): void => {
+  onDiskIOReply("luckAppendStalled", (reply: LuckAppendStalledReply): void => {
     logger.error(
       `Daily luck appends for ${reply.day} have failed ${reply.consecutiveFailures} times in a row; ` +
       `${reply.pendingEntries} confirmed draw(s) are stuck in the persistence Worker and are not on disk. ` +

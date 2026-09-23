@@ -17,8 +17,8 @@ import type {
  * 共享 SQLite 业务行的**启动期严格校验**。
  *
  * schema 版本与群状态是 `AGENTS.md`「不为用户行为兜底」要求 fail closed 的边界；
- * 身份表、outbox 与 migration 谱系由 storageDatabaseSchemaGate 的真实 SQLite
- * 启动检查覆盖。
+ * 身份表、outbox 与 migration 谱系由 test/workers/diskIO/storageDatabaseSchemaGate.test.ts
+ * 的真实 SQLite 启动检查覆盖。
  *
  * 错误文案也一起钉住：必须写明来源路径与字段路径，且**不得回显行内容**。
  */

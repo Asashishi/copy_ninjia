@@ -32,9 +32,7 @@ export interface HotPathMedianLatencyReport {
 /**
  * 超过校准值时返回软上报内容。
  *
- * 阈值合法性**不在这里判**：调用方跑一次 assertHotPathMedianPolicyCoverage 就
- * 拿到了一张证明过的表，两处各判一次只会让将来改阈值形状时要同步改两个地方
- * 才自洽，而其中一处的失败分支根本没有生产调用方到得了。
+ * 阈值合法性不在这里判：由调用方先跑 assertHotPathMedianPolicyCoverage 校验。
  */
 export function createHotPathMedianLatencyReport({
   scenario,
@@ -57,8 +55,8 @@ export function createHotPathMedianLatencyReport({
 /**
  * 默认场景与阈值表必须一一对应，禁止新场景漏报或死阈值滞留。
  *
- * @returns 场景 -> 已校验阈值，按场景声明顺序。门禁直接遍历它，就不必再拿
- *   场景名回表查一次，也就没有第二处「阈值可能缺失」的分支要交代。
+ * @returns 场景 -> 已校验阈值，按场景声明顺序；门禁直接遍历，不再按场景名
+ *   回表查询。
  */
 export function assertHotPathMedianPolicyCoverage(
   scenarios: readonly string[],

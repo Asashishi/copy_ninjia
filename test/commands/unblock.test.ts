@@ -66,7 +66,6 @@ mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandT
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   onDiskIORespawn: (): void => {},
-  onIdentityStoragePersisted: (): void => {},
   relayLogMessage: (): boolean => true,
   flushDiskIODomain: flushDiskIO,
   flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIO() }),

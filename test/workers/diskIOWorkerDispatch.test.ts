@@ -1,7 +1,7 @@
 /**
  * Disk I/O Worker 路由层里此前没有任何用例走过的五条分支：删掉其中任意一条
  * `case` 都必须让本文件变红。夹具与 diskIOWorker.test.ts 共用，见
- * test/helpers/diskIOWorkerHarness.ts。
+ * test/helpers/diskIOWorkerRouterHarness.ts。
  */
 
 import { describe, expect, test } from "bun:test";

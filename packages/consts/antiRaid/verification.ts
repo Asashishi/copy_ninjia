@@ -1,3 +1,11 @@
+import type { VerificationEffect } from "../../types/states/verification";
+
+/**
+ * 状态不变或无需副作用的验证转移共用的空效果表；只读，任何转移都不得向它追加。
+ * 所属模块：states/verification/。
+ */
+export const NO_VERIFICATION_EFFECTS: readonly VerificationEffect[] = [];
+
 /**
  * 本人验证按钮 callback_data 的前缀，后面拼上待验证成员的 userId。
  * 与 VERIFY_APPROVE_CALLBACK_PREFIX、consts/qa.ts 的看板前缀互不为前缀。

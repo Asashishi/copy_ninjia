@@ -3,7 +3,7 @@ import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO/append
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../consts/storage";
 import { flushDiskIODomainOutcome, onDiskIORespawn, postDiskIO } from "../../infra/diskIO";
-import { onWedMembersDeletedPersisted } from "../../infra/diskIO/observers";
+import { onDiskIOReply } from "../../infra/diskIO/observers";
 import type { DiskIORecoveryTransport, WedMembersDeleteDiskMessage, WedMembersDiskMessage } from "../../types/diskIO/messages";
 import type { DomainFlushOutcome, WedMembersDeletedPersistedReply } from "../../types/diskIO/replies";
 import type { WedMemberState } from "../../types/wed";
@@ -116,7 +116,7 @@ export function replayWedMembers(transport: DiskIORecoveryTransport): boolean {
 }
 
 onDiskIORespawn("wed members", DISK_IO_RESPAWN_PRIORITIES.WED_MEMBERS, replayWedMembers);
-onWedMembersDeletedPersisted((reply: WedMembersDeletedPersistedReply): void => {
+onDiskIOReply("wedMembersDeletedPersisted", (reply: WedMembersDeletedPersistedReply): void => {
   if (pendingWedMemberDeletes.get(reply.chatId)?.revision === reply.revision) {
     pendingWedMemberDeletes.delete(reply.chatId);
   }

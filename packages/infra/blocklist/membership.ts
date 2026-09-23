@@ -33,17 +33,11 @@ import { clearTemporaryAdBypassActivity } from
 import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
 
 /**
- * 连坐封禁与跨群解封共用的目标群清单：机器人已确证是管理员的全部托管群，
- * 发起群排在最前。
- *
- * `/block … enable` 与 `/block … disable` 必须读同一份：两条命令是同一个处置的正反面，清单一旦
- * 分叉就会出现「封的时候算上了 A 群、解封时漏掉 A 群」。
- *
- * 发起群排最前是语义不是顺手：处置发起群里的目标最紧迫，而两条命令都把这份清单
- * 交给同一个 `runManagedChatBatch`——它按输入顺序取任务、按输入顺序结算，因此
- * 计数与并发度无关。发起群不是管理员时不进清单——试也没用。
- * @param isAdminHere 由调用方现查（`botChatPermissionsIn` 的管理员位）：发起群的权限
- *   值得一次实时确认，其余群只能读已落盘的权限快照。
+ * 连坐封禁与跨群解封共用的目标群清单：机器人已确证是管理员的全部托管群，发起群排在
+ * 最前；发起群不是管理员时不进入清单。`/block enable` 与 `/block disable` 必须使用
+ * 同一份清单。`runManagedChatBatch` 按输入顺序取任务、按输入顺序结算，计数与并发度无关。
+ * @param isAdminHere 发起群的管理员位，由调用方现查（`botChatPermissionsIn`）；其余群
+ *   读已落盘的权限快照。
  */
 export function managedAdminChatIds(chatId: number, isAdminHere: boolean): number[] {
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
@@ -74,15 +68,9 @@ export interface RunManagedChatBatchParams<T> {
 }
 
 /**
- * 对 `managedAdminChatIds` 的清单做有界并发处置，并按输入顺序逐项结算。
- *
- * `/block` 的连坐封禁与 `/block disable` 的跨群解封是同一处置的正反面：清单同源，
- * 扇出形态也必须同源。逐群串行的话，40 个群就是几十次串行往返、十几秒里 update
- * 中间件一直不返回，ack 边界被推后，停机时更容易把 runner drain 拖超时；而各群
- * 之间本来没有依赖，它们共用主线程 Telegram 总闸，真实 429 会把原任务退回自适应
- * 队列。个别群失败（管理员身份记录过时、缺权限）不中断其余群。
- *
- * 结果数组与输入同序，因此计数仍按确定顺序收敛，与并发度无关。
+ * 对 `managedAdminChatIds` 的清单做有界并发处置（并发度 `MANAGED_CHAT_BATCH_CONCURRENCY`）。
+ * 结果数组与输入同序结算，与并发度无关；单群失败（意外异常或调用方判定的业务失败）
+ * 不中断其余群的处置。
  */
 export async function runManagedChatBatch<T>({
   chatIds,
@@ -100,8 +88,7 @@ export async function runManagedChatBatch<T>({
   const outcomes: ManagedChatOutcome<T>[] = [];
   for (const settlement of settlements) {
     if (settlement.status === "rejected") {
-      // 常规 API 错误早已在适配层归一化成业务结果；能走到这里的是意外异常，
-      // 逐项记下来而不是让它掀掉整条命令的其余群。
+      // 常规 API 错误已在适配层归一化成业务结果；这里只处理意外 rejection。
       logger.error(
         `Unexpected error while running ${action} in chat ${settlement.item} ` +
         `(batch index ${settlement.index}, attempt ${settlement.attempt}):`,
@@ -128,12 +115,9 @@ export function isUserBlocked(userId: number): boolean {
 /**
  * 启动阶段的致命互斥校验：配置里的超级管理员不得同时存在于 blocklist_entries。
  *
- * `isWhitelisted` 对超管短路 true，`isUserBlocked` 不短路（见 infra/identityPolicy/whitelist.ts
- * 与本文件上方）。两者同时成立时，`sweepManagedBlocklistChats` 会给每个托管群排一次
- * 探测扫描，把这位新超管从所有群里清出去，重进又被 claimBlockedJoiner 再踢一次；
- * 而他连撤销的机会都没有——私聊网关只放行 `/send`，群里的消息在落地前就被处置。
- * 按 AGENTS.md「不为用户行为兜底」，这条互斥在启动阶段以非零码退出，不猜测
- * 部署方意图继续运行。
+ * `isWhitelisted` 对超管短路 true，`isUserBlocked` 不短路（见 identityPolicy/whitelist.ts
+ * 与本文件上方 `isUserBlocked`）。两者同时成立会导致该身份被 `sweepManagedBlocklistChats`
+ * 反复清出并被 `claimBlockedJoiner` 再次拉黑。校验失败时以非零码退出，不继续启动。
  */
 export async function assertSuperAdminNotBlocked(
   superAdminUserId: number
@@ -152,8 +136,7 @@ export async function assertSuperAdminNotBlocked(
 }
 
 /**
- * 拉黑一个 id：先写 LRU，再投递落盘消息——顺序不能反。反过来的话，两步
- * 之间到达的入群更新会查到一个还没记上的黑名单，那个人就这么进来了。
+ * 拉黑一个 id：先写 LRU 再投递落盘消息，写入顺序约束见 docs/cn/04-invariants.md。
  * @returns 本次真的新增了记录为 true；已经在名单里为 false（不重复落盘）。
  */
 export function blockUser(
@@ -176,21 +159,15 @@ export function blockUser(
 }
 
 /**
- * 等这一次拉黑真正落盘。postDiskIO 只保证消息进了 Worker 的信箱；写盘失败
- * （database/ 只读、磁盘满、部署后属主不对）在 Worker 内部只有 console.error，
- * 而按本仓库的设计那条日志不会进 logs/，管理员那边看到的仍是「永久拉黑成功」。
- * /block 低频且关键，值得为它等一次统一 flush 回执再措辞。
+ * 等待本次拉黑落盘的统一 flush 回执。`queueIdentityPolicyWrite` 只保证消息进入
+ * Worker 信箱；写盘失败时 Worker 内部只有 console.error，不进入 logs/。
  * @returns 已 durable 为 true；false 表示这条记录目前只活在内存里，重启就没了。
  */
 export async function confirmBlocklistPersisted(): Promise<boolean> {
-  // 只看黑名单这一个领域：统一 flush 是各领域的合取，某群 AI 记忆快照写不
-  // 进去也会让这里报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。
+  // flushDiskIODomainOutcome 按各领域合取判定，这里只看 "blocklist" 领域的结果。
   const outcome: DomainFlushOutcome = await flushDiskIODomainOutcome("blocklist");
   if (outcome.result === "flushed") return true;
-  // 领域名必须取自**这一次** flush 的回执：Worker 侧的写盘错误按设计只有
-  // console.error，不在这里点名就没有任何一条进得了 logs/，而点错名比不点名
-  // 更糟——超时/崩溃这两种没有回执的情况下，进程级的「最后一次失败领域」是
-  // 上一次无关 flush 留下的，会把运维支去修一个跟本次失败毫无关系的文件。
+  // 领域名取自本次 flush 的回执；超时或崩溃时 outcome.failedDomains 为 undefined。
   const domainNote: string = outcome.failedDomains === undefined
     ? " no reply arrived for this flush; the persistence Worker timed out or crashed mid-flush."
     : ` failed domains: ${outcome.failedDomains.join(", ")}.`;
@@ -209,10 +186,9 @@ export function ensureBlocklistEntryQueued(userId: number): boolean {
 
 /**
  * 解除拉黑：先发布 LRU 负缓存，再让 outbox owner 裁剪含该 id 的在途批次，最后
- * 把 tombstone 投给 Disk I/O Worker。Worker 按到达顺序处理并可能在任一条消息后
- * 提交，裁剪快照先于 tombstone，已提交的数据库因此不会留下引用已删条目的冻结
- * 批次，也不会在名单清空时留下补扫任务（启动恢复对两者都拒绝启动）。已经投进
- * 业务 Worker 的批次无法撤回，管理员仍可能需要执行一次 Telegram 解封。
+ * 把 tombstone 投给 Disk I/O Worker；顺序是裁剪快照先于 tombstone。Worker 按
+ * 到达顺序处理，已提交的数据库不会留下引用已删条目的冻结批次。已经投进业务
+ * Worker 的批次无法撤回，管理员仍可能需要执行一次 Telegram 解封。
  * @returns 本次真的移除了记录为 true；本来就不在名单里为 false。
  */
 export function unblockUser(userId: number): boolean {

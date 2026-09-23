@@ -5,8 +5,7 @@ import { settleTestBatch } from "../../../libs/helpers";
 /**
  * 贴纸包菜单的记忆化（packages/aiChat/ai/tools/stickers.ts 的 buildStickerPackMenu）。
  *
- * 菜单的两个输入——贴纸集合缓存与画面描述目录——都是无 TTL 的进程内缓存，稳态
- * 下根本不变，而 createReplyToolset 每轮回复都要一份（每群最多 5 轮并发）。
+ * 菜单的两个输入——贴纸集合缓存与画面描述目录——均为无 TTL 的进程内缓存。
  */
 const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
 const loggerError = mock((..._args: unknown[]): void => {});
@@ -67,8 +66,7 @@ describe("贴纸包菜单的记忆化", () => {
 
     const second = await buildStickerPackMenu();
 
-    // 同一份引用：稳态下每轮回复都重建等于反复丢弃并重新分配一份完全相同的
-    // 数百对象结构，纯 GC 压力。
+    // 复用同一份对象引用，不是内容相等的新对象。
     expect(second).toBe(first);
     expect(getStickerSetMock).toHaveBeenCalledTimes(1);
   });
@@ -87,8 +85,6 @@ describe("贴纸包菜单的记忆化", () => {
   });
 
   test("冷启动时并发的几轮回复共用同一次构建", async () => {
-    // createReplyToolset 每轮调用一次，一个群最多 5 轮并发；不合并的话冷启动
-    // 那一刻会对每个包各打 5 次 getStickerSet。
     const [first, second, third] = await settleTestBatch([
       buildStickerPackMenu(),
       buildStickerPackMenu(),

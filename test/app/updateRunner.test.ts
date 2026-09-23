@@ -4,9 +4,48 @@ import { BotError } from "grammy";
 import type { Bot, Context } from "grammy";
 import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
 import { logger } from "../../packages/infra/logger";
-import { currentUpdateAbortSignal } from "../../packages/infra/updateContext";
+import { currentUpdateAbortSignal, currentUpdateTopic } from "../../packages/infra/updateContext";
 
 describe("acknowledgement-safe update runner", () => {
+  test("middleware 在本条 update 的触发话题作用域内运行", async () => {
+    const topics: unknown[] = [];
+    let fetchCount: number = 0;
+    const topicUpdate: Update = {
+      update_id: 5,
+      message: {
+        message_id: 1,
+        date: 1_700_000_000,
+        chat: { id: -1001, type: "supergroup", title: "论坛群" },
+        is_topic_message: true,
+        message_thread_id: 42,
+      },
+    } as Update;
+    const bot = {
+      api: {
+        getUpdates: async (_args: unknown, signal: AbortSignal): Promise<Update[]> => {
+          fetchCount++;
+          if (fetchCount === 1) return [topicUpdate];
+          if (fetchCount === 2) return [{ update_id: 6 } as Update];
+          return await new Promise<Update[]>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("aborted")));
+          });
+        },
+      },
+      handleUpdate: async (): Promise<void> => {
+        await Bun.sleep(0);
+        topics.push(currentUpdateTopic());
+      },
+      errorHandler: (): void => {},
+    };
+    const runner = runAcknowledgedUpdateBatches(bot as unknown as Bot, ["message"]);
+    try {
+      await Bun.sleep(5);
+      expect(topics).toEqual([{ chatId: -1001, threadId: 42 }, undefined]);
+    } finally {
+      await runner.stop();
+    }
+  });
+
   test("middleware 同步调用 stop 后悬挂也不会漏掉停机唤醒", async () => {
     const held: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     let stopped: boolean = false;
@@ -70,9 +109,7 @@ describe("acknowledgement-safe update runner", () => {
   });
 
   test("update 严格串行：前一条 middleware 未完成前绝不启动下一条", async () => {
-    // per-chat sequentialize 已从 registerHandlers 移除，同群消息的顺序保证此后
-    // 完全来自本 runner 的 `await updateTask` 循环，因此这条不变量必须被直接断言，
-    // 而不是只看 offset 记账。
+    // 同群消息顺序完全来自本 runner 的 `await updateTask` 循环，这里直接断言该顺序。
     const gates: PromiseWithResolvers<void>[] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const started: number[] = [];
     let fetchCount: number = 0;

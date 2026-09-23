@@ -61,8 +61,7 @@ describe("AI 媒体转录文本", () => {
     expect(composeMediaText("[图片：天空]", "")).toBe("[图片：天空]");
     expect(replyFallbackDescriptionFor(stickerMessage)).toBe("[贴纸：🙂，来自 pack]");
     expect(replyFallbackDescriptionFor({ ...stickerMessage, kind: "photo" })).toContain("没看清");
-    // 必回指令里不能出现「请无视此消息」，否则模型可能听话地沉默；语音这条
-    // 说的是「没听清」而不是「没看清」。
+    // 语音失败占位使用「没听清」而非「没看清」，且不含「请无视此消息」。
     const voiceFallback: string = replyFallbackDescriptionFor({ ...stickerMessage, kind: "voice" });
     expect(voiceFallback).toContain("没听清");
     expect(voiceFallback).not.toContain("请无视");

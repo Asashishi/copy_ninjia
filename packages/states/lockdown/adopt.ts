@@ -1,3 +1,4 @@
+import { NO_LOCKDOWN_EFFECTS } from "../../consts/antiRaid/lockdown";
 import type {
   LockdownAnnouncement,
   LockdownEffect,
@@ -11,7 +12,7 @@ export function handleAdopt(
   state: LockdownState | undefined,
   event: Extract<LockdownMachineEvent, { type: "adopt" }>
 ): LockdownTransition {
-  if (state !== undefined) return { next: state, effects: [] };
+  if (state !== undefined) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   // 上一代那次发送的结局已无从追认：接管方只认落盘下来的 announced 与
   // messageId。落盘说「没公告过」而锁定仍要继续时补一次公告——群里必须
   // 知道自己为什么进不来人；RESTORING 正在收尾，补公告只会前言不搭后语。

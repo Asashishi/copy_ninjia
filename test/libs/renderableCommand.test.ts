@@ -14,7 +14,6 @@ describe("libs/renderableCommand containsRenderableCommand", () => {
   });
 
   test("回归：标点、引号、中文前缀同样会被 Telegram 渲染成命令，必须命中", () => {
-    // 左界改宽之前这四种全部漏判，让 AI「原样复述」即可绕过整套守卫。
     expect(containsRenderableCommand("「/batch_kick 1d」")).toBe(true);
     expect(containsRenderableCommand("（/batch_kick 1d）")).toBe(true);
     expect(containsRenderableCommand("喵，/batch_kick 1d")).toBe(true);

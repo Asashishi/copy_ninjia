@@ -204,7 +204,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
     controller.abort();
     await expect(only).resolves.toBeNull();
-    // 引用计数归零才中止底层请求——这正是计数机制存在的理由。
+    // 只有引用计数归零才会中止底层请求。
     expect(requestSignal.current?.aborted).toBeTrue();
     // 中止的同时摘掉条目：底层请求要到回卷完才把 pending 结算成 null，这段窗口里
     // 另一个聊天带着存活的 signal 进来会命中它、挂到一个已中止的任务上，从此永远
@@ -242,8 +242,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       signal: controller.signal,
     })).resolves.toBeNull();
 
-    // 文本可以丢，观测不能丢：连结论一起丢掉会让 support 永远停在 unknown，之后
-    // 每份媒体都退回「只放行一个探测」的串行路径，频繁失效的聊天永远学不会端点。
+    // 观测结果（support）与本次文本结果分开处理：即使这轮已取消，观测仍要落地。
     expect(mediaInputSupportCache.current?.vision.support).toBe("supported");
     expect(mediaInputSupportCache.current?.vision.nextProbeAt).toBe(0);
   });

@@ -46,10 +46,9 @@ installGagTestHooks();
 
 describe("/gag 与 /ungag 状态机", () => {
   /**
-   * 三条命令拒绝分支：走到它们时命令都还没解析出目标，因此断言口径统一是
-   * 「回一条固定文案 + 绝不进入目标解析」。文案本身按 AGENTS.md 的
-   * 「Telegram 提示留存」走 sendCommandMessage 这一个统一边界（由它挂 30 秒延迟
-   * 删除），所以这里同时钉住「用的就是这个边界」，而不是各自现发一条。
+   * 三条命令拒绝分支：走到它们时命令都还没解析出目标，断言口径统一是
+   * 「回一条固定文案 + 绝不进入目标解析」，且都经 sendCommandMessage 这一个
+   * 统一边界（带 30 秒延迟删除，见 docs/cn/04-invariants.md）。
    */
   test("私聊里用 /gag 只回一条提示，不解析目标", async () => {
     await gag.handleGagCommand(commandContext({ chatType: "private" }));
@@ -200,8 +199,7 @@ describe("/gag 与 /ungag 状态机", () => {
     });
     expect(sessionButton).not.toHaveProperty("callback_data");
     // 交出去的必须是 GAG_TARGET_TEXTS 本身：解析失败的六条文案由解析器渲染并经
-    // sendCommandMessage 发出（覆盖见 test/commands/targetResolution.test.ts），
-    // 换成别的表就会答非所问。
+    // sendCommandMessage 发出（覆盖见 test/commands/targetResolution.test.ts）。
     expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
       botUserId: 999,
       messages: GAG_TARGET_TEXTS,
@@ -501,9 +499,8 @@ describe("/gag 与 /ungag 状态机", () => {
   });
 
   test("回归：提示已发出后遭遇停机 abort，message id 不丢，排空仍能删掉它", async () => {
-    // 远端已经收下提示、handler 还没走到提交那一行时 runner.abortActive() 落下：
-    // await 以 AbortError 解开并带走返回值。没有同步登记的话这条提示从此没人
-    // 知道它的 id，drainGagRuntime 每次都判 failed，进程带非零码退出并扣住实例锁。
+    // 模拟远端已收下提示、handler 还没走到提交那一行时 abort 落下：onSent 同步
+    // 登记 id，随后 await 才以 AbortError 解开。
     sendEphemeralMessage.mockImplementationOnce(
       async (params: EphemeralMessageParams & { readonly onSent?: (messageId: number) => void }): Promise<number> => {
         params.onSent?.(91);

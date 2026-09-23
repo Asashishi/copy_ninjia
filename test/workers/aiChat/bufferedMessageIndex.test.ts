@@ -34,7 +34,7 @@ const {
 
 const CHAT_ID = -1001;
 
-/** 发送者 id 固定为 messageId + 10，规避 max-params 又保持各条目发送者可区分。 */
+/** 发送者 id 固定为 messageId + 10，使各条目发送者可区分。 */
 function message(messageId: number, text: string, replyToId?: number): BufferedMessage {
   const senderId: number = messageId + 10;
   return bufferedMessageFixture({

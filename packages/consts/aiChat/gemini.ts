@@ -17,26 +17,20 @@ import type { SafetySetting, ToolConfig } from "@google/genai";
 export const GEMINI_IMAGE_SIZE: string = "1K";
 
 /**
- * 闲聊回复生成温度：略高于中性，保留人设发挥。
- *
- * 采样温度是供应商能力，不是领域策略：OpenAI 侧的 GPT-5 系推理模型只接受默认
- * 温度，那边根本不发送这个参数。放在共享 consts 里会让「这个数对两家都成立」
- * 成为一句假话。
+ * 闲聊回复生成温度，仅 Gemini 使用。采样温度是供应商特有能力，不放进跨供应商
+ * 共享的 consts：OpenAI 侧 GPT-5 系推理模型只接受默认温度，不发送该参数。
  */
 export const GEMINI_REPLY_TEMPERATURE: number = 1.0;
-/** 本轮已观测到服务端搜索后，后续工具轮改用的温度：高温对事实忠实度的伤害
- *  比提示词措辞更大，查证过的轮次压低采样随机性，让模型照搜索结果讲。
- *  注意搜索与首次成文发生在同一次请求里，那一轮仍按 GEMINI_REPLY_TEMPERATURE 生成。 */
+/** 本轮已观测到服务端搜索后，后续工具轮改用的温度，用于降低采样随机性、贴合
+ *  搜索结果。搜索与首次成文发生在同一次请求里，那一轮仍按
+ *  GEMINI_REPLY_TEMPERATURE 生成。 */
 export const GEMINI_GROUNDED_REPLY_TEMPERATURE: number = 0.7;
 /** 冷消息压缩与贴纸整包简介共用的总结温度。 */
 export const GEMINI_SUMMARY_TEMPERATURE: number = 0.5;
 
 /**
- * 各流水线的输出 token 上限。这几个数同样是供应商能力而非领域策略——上限要
- * 覆盖的是该模型的思考消耗，换模型就得重新估；产出该多长由领域侧的字符上限
- * （SUMMARY_MAX_CHARS 等）约束，那才是两家通用的。
- *
- * 回复这一档包含思考 token。
+ * 各流水线的输出 token 上限，均为供应商能力（换模型需重新估算）。产出实际长度
+ * 由领域侧字符上限（SUMMARY_MAX_CHARS 等）约束。回复这一档包含思考 token。
  */
 export const GEMINI_REPLY_MAX_TOKENS: number = 65_536;
 /** 冷消息压缩摘要请求的输出 token 上限。 */
@@ -46,10 +40,8 @@ export const GEMINI_STICKER_PACK_SUMMARY_MAX_TOKENS: number = 4_096;
 /** 单次媒体描述请求的输出 token 上限。 */
 export const GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS: number = 8_192;
 /**
- * 单次语音转写请求的输出 token 上限。
- *
- * 高于媒体描述那一档：转写要逐字还原群友原话，一段几分钟的语音正文本身就能顶到
- * 几千 token，再叠上思考消耗；卡在描述那一档等于让长语音稳定被 MAX_TOKENS 腰斩。
+ * 单次语音转写请求的输出 token 上限，高于媒体描述档：转写需逐字还原语音全文，
+ * 加上思考消耗后体量明显更大。
  */
 export const GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS: number = 16_384;
 
@@ -61,22 +53,16 @@ export const GEMINI_IMAGE_ERROR_LABEL: string = "Gemini image generation API";
 export const GEMINI_SONG_ERROR_LABEL: string = "Gemini song generation API";
 
 /**
- * 单次生歌请求的超时上限。
- *
- * 独立于 GEMINI_REQUEST_TIMEOUT_MS：生歌走的是 Interactions API 的另一条端点，
- * 一首整曲要合成几分钟量级的 44.1 kHz 立体声音频，按常规请求那 180 秒的预算发
- * 会稳定超时——而超时是在**服务端已经开始出账**之后发生的，等于每次都花钱换一次
- * 失败。SDK 的 next-gen 客户端只继承构造期的 `httpOptions.timeout`，因此这一档
- * 必须在每次调用时显式传入（见 aiChat/gemini/song.ts）。
+ * 单次生歌请求的超时上限，独立于 GEMINI_REQUEST_TIMEOUT_MS：生歌走 Interactions
+ * API 的另一条端点，合成一首整曲耗时以分钟计。SDK 的 next-gen 客户端只继承构造期
+ * 的 `httpOptions.timeout`，因此这一档必须在每次调用时显式传入（见
+ * aiChat/gemini/song.ts）。
  */
 export const GEMINI_SONG_REQUEST_TIMEOUT_MS: number = 600_000;
 
 /**
- * 生歌请求的总尝试次数（含首次）。
- *
- * 刻意是 1（不重试）：一次生成就是一次计费，而失败多半来自内容过滤或配额，重试
- * 只是再买一次同样的失败。瞬时网络抖动造成的损失由调用方那一层的冷却核销策略
- * 承担，见 replyToolset/songGeneration.ts。
+ * 生歌请求的总尝试次数（含首次），固定为 1、不重试。瞬时网络抖动造成的损失由
+ * 调用方一层的冷却核销策略承担，见 replyToolset/songGeneration.ts。
  */
 export const GEMINI_SONG_REQUEST_ATTEMPTS: number = 1;
 
@@ -87,13 +73,9 @@ export const GEMINI_SONG_REQUEST_ATTEMPTS: number = 1;
  */
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 180_000;
 /**
- * media 能力（视觉描述与语音转写）的独立超时。
- *
- * 这一档必须宽于纯文本往返：服务端要先把整份图片或整段音频解码进上下文才开始
- * 出字，端到端耗时本就长一截，套用通用档会在模型还在读媒体时把连接掐掉——而
- * 掐断发生在服务端已经出账之后，等于花钱换一条
- * `[图片：解析失败，请无视此消息]`。视觉与语音共用 config/agent.json 的
- * `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
+ * media 能力（视觉描述与语音转写）的独立超时，宽于纯文本往返：服务端需先把
+ * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/agent.json
+ * 的 `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
  */
 export const GEMINI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
 /**
@@ -118,13 +100,10 @@ export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
 ];
 
 /**
- * 服务端检索工具与函数调用混用时必须携带的 toolConfig。
- *
- * 缺了它，Gemini 会以 `Please enable tool_config.include_server_side_tool_invocations
- * to use Built-in tools with Function calling` 拒绝整个请求。因此它与 googleSearch
+ * 服务端检索工具与函数调用混用时必须携带的 toolConfig，否则 Gemini 会以
+ * `Please enable tool_config.include_server_side_tool_invocations to use
+ * Built-in tools with Function calling` 拒绝整个请求；因此它与 googleSearch
  * 同进同出，由每次完整请求直接填进 config。
- *
- * 定成模块级常量而不是每轮现拼一个对象字面量：这一句跑在每轮工具往返上。
  */
 export const GEMINI_SERVER_TOOL_CONFIG: Readonly<ToolConfig> = {
   includeServerSideToolInvocations: true,

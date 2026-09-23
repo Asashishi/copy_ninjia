@@ -144,7 +144,7 @@ function reconcileLockdownEntryTimers(
 }
 
 /** 执行一次私密模式转移返回的副作用（主线程网络能力请求不阻塞 mailbox，结果以事件回投）。 */
-function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
+function runLockdownEffects(chatId: number, effects: readonly LockdownEffect[]): void {
   for (const effect of effects) {
     switch (effect.kind) {
       case "prefetchAdmins":

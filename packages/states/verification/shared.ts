@@ -104,7 +104,7 @@ export function remindersOf(
  */
 export function pendingUpdated(
   state: PendingState,
-  effects: VerificationEffect[],
+  effects: readonly VerificationEffect[],
   rescheduleTimer: boolean = false
 ): VerificationTransition {
   if (rescheduleTimer) {

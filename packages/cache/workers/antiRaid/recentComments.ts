@@ -1,6 +1,6 @@
 import type { RecentChannelComment } from "../../../types/antiRaid/internal";
 
-/** 频道评论区留言暂存缓冲（packages/workers/antiRaid/recentComments.ts）的内存状态。 */
+/** owner: workers/antiRaid。频道评论区留言暂存缓冲（packages/workers/antiRaid/recentComments.ts）的内存状态。 */
 
 /**
  * 评论先于入群事件到达时的短期关联缓冲，以 "chatId:userId" 为键。

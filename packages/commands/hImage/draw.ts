@@ -20,7 +20,7 @@ interface SendHImageResultParams extends HImageRequest {
 
 /**
  * `/h_image` 结果图片的唯一发送边界。**长期保留**：这是用户授权的保留例外（见
- * AGENTS.md「Telegram 提示留存」），不挂固定延迟删除；论坛群带触发消息所在话题并
+ * docs/cn/04-invariants.md），不挂固定延迟删除；论坛群带触发消息所在话题并
  * 回复触发消息。图片固定以 Telegram 剧透遮罩发送，点开才显示。经共享的
  * sendPhotoWithResult 发送，自发登记、throttler 与 429 分类闸都在那一层。
  */

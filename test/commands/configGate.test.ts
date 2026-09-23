@@ -1,7 +1,6 @@
 /**
- * 部署配置写坏时开关命令与 /mood switch 的统一拒绝。这些文件不再在启动时预热
- * （见 config/readiness.ts），判定挪到了这里——覆盖不上就等于把「一份坏文件
- * 关掉整个进程」换成了「一个看着已生效、实际什么都不做的开关」。
+ * 部署配置写坏时（config/readiness.ts 判定失败），开关命令与 /mood switch/query
+ * 的统一拒绝路径：不写入任何状态、点名具体坏掉的文件。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";

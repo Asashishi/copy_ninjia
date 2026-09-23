@@ -1,18 +1,12 @@
 /**
  * 生图工具的**本轮参考素材文案**：拼进运行时状态区块，不进工具声明。
  *
- * 参考素材尺寸每次触发都不同。它一旦待在 `generate_image` 的 description 里，就会把
- * 「静态系统提示词 + 全部工具声明 + 参考记忆」这整段本应逐字恒定的前缀变成每轮一个
- * 新值，两家供应商的自动前缀缓存都会从这里开始落空（见
- * aiChat/{gemini,openai}/replySession.ts）。
+ * 参考素材尺寸每轮不同，因此工具声明只留常量指引（IMAGE_REFERENCE_POINTER），真正的
+ * 素材说明由本模块渲染到 CURRENT_RUNTIME_STATE 区块（见 workers/aiChat/runtimeState.ts）。
+ * 系统提示词与工具声明的前缀缓存约束见 docs/cn/04-invariants.md。
  *
- * 因此工具声明只留常量指引（IMAGE_REFERENCE_POINTER），真正的素材说明由本模块渲染到
- * CURRENT_RUNTIME_STATE 区块——那一段本来就是每轮都变的可信系统状态，心情与当前时间
- * 同住（见 workers/aiChat/runtimeState.ts）。
- *
- * 生图与生歌的群冷却**整条不进提示词**：能不能调用只在工具真的被调用时由执行侧判定，
- * 冷却中直接拒绝并返回剩余秒数（见 imageGeneration.ts 与 songGeneration.ts 的冷却闸）。
- * 本模块因此不读任何冷却状态。
+ * 生图与生歌的群冷却不进提示词，只在工具被调用时由执行侧判定并返回剩余秒数（见
+ * imageGeneration.ts 与 songGeneration.ts 的冷却闸）；本模块因此不读任何冷却状态。
  *
  * 所属线程：AI 闲聊 Worker；本模块自身不持有缓存。
  */

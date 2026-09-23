@@ -1,17 +1,9 @@
 /**
- * AI 闲聊「此刻到底跑不跑」的唯一判定入口。
+ * AI 闲聊「此刻是否运行」的唯一判定入口。
  *
  * 三个条件缺一不可：config/agent.json 的 AI 能力与凭据严格合法、辅助部署配置
- * 解析得动（config/{stickers,mood}.json 与 prompt/persona.md，见 config/readiness.ts）、本群开了
- * /ai_chat enable（ChatState.isAIChatEnabled，缺省关闭）。判定散在各调用点的话，
- * 前两个条件迟早会漏掉某一处——漏在投喂路径上就是每条群消息都去 Worker 里换一次
- * 「部署配置不可用」的错误日志，或让那条线程读配置
- * 时当场抛出、进而走完整套崩溃自愈；漏在 hydrate 上更糟：那条路把「本群没开」
- * 当成删除记忆的依据，前提临时缺失会被误读成全部群都关了，一次重启就把 memory/
- * 里的 AI 记忆全部删光。
- *
- * 单独成文件而不并进 aiChat/index.ts：那个模块在 import 期就登记 chatTeardown、
- * 建立 Worker 监督句柄，而命令与自动流水线只想问一句「开没开」。
+ * 解析成功（config/{stickers,mood}.json 与 prompt/persona.md，见 config/readiness.ts）、
+ * 本群已执行 /ai_chat enable（ChatState.isAIChatEnabled，缺省关闭）。
  */
 
 import { aiChatConfigReadiness } from "../config/readiness";

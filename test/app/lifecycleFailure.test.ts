@@ -168,8 +168,6 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.run("main");
     await lifecycle.dispose();
 
-    // 少装 uncaughtException / unhandledRejection 时，Worker 之外的致命错误就
-    // 没人负责紧急排空与非零退出码；少摘则会在嵌入宿主里越积越多。
     for (const event of PROCESS_HANDLER_EVENTS) {
       expect(duringRun[event]).toBe((baseline[event] ?? 0) + 1);
       expect(process.listenerCount(event)).toBe(baseline[event] ?? 0);
@@ -195,10 +193,8 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("回归用例：启动期到达的停止信号不能把 quiesce 一次性闩死", async () => {
-    // 取锁期间收到 SIGTERM：这次 quiesce 发生在 init 用 initAvatarUpdates 等四个
-    // 入口把 owner 重新武装**之前**，把它记成「已经 quiesce 完了」就等于此后
-    // wait()/dispose() 的每一次调用都被短路——四个 owner 整个停机期间继续收活，
-    // 而停机结果照报 maintenance=true，最终 offset 照常确认，日志里什么都看不出来。
+    // 取锁期间收到 SIGTERM：此时 init 还没用 initAvatarUpdates 等四个入口
+    // 重新武装 owner。
     acquireSingleInstanceLock.mockImplementationOnce(async (): Promise<void> => {
       calls.push("acquireLock");
       process.emit("SIGTERM");
@@ -210,8 +206,7 @@ describe("应用启动失败与退出清理", () => {
     // init 尾部那次重新收口之后，wait()/dispose() 仍会各自再 quiesce 一遍。
     expect(quiesceAvatarUpdates.mock.calls.length).toBeGreaterThan(1);
     expect(quiesceTranslate.mock.calls.length).toBeGreaterThan(1);
-    // 标题刷新只在入口同步查一次 accepting，因此重新收口必须排在它启动之前，
-    // 否则「已经要求停机」之后照样跑完整轮 getChat 扫描加批量落盘。
+    // 标题刷新只在入口同步查一次 accepting，因此重新收口必须排在它启动之前。
     expect(calls.indexOf("quiesceTitles")).toBeGreaterThan(-1);
     expect(calls.indexOf("quiesceTitles")).toBeLessThan(calls.indexOf("refreshTitles"));
     const signalLogs: unknown[][] = loggerLog.mock.calls.filter(
@@ -248,9 +243,8 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("initDiskIO")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("initDiskIO")).toBeLessThan(calls.indexOf("hydrateIdentityCounts"));
     expect(calls.indexOf("hydrateIdentityCounts")).toBeLessThan(calls.indexOf("botInit"));
-    // 补齐素材直链读的是 loadState 恢复出来的内存，且必须排在**所有**会拒绝启动的
-    // await 之后（部署输入闸、bot.init、黑名单补扫）——被拒绝启动的那次运行不该顺手
-    // 改写运维正要拿去排查的 state.json。
+    // 补齐素材直链必须排在所有会拒绝启动的 await 之后（部署输入闸、bot.init、
+    // 黑名单补扫），被拒绝启动的运行不改写 state.json。
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("seedAssets"));
     // 随机图片目录按已校验的 state 准备，且在任何 Worker 与外部连接之前。
     expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(calls.indexOf("prepareImageDir"));
@@ -317,8 +311,7 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("部署输入闸之后的启动拒绝同样不补齐——bot.init 失败也不改写 state.json", async () => {
-    // 部署输入闸不是最后一道拒绝点：吊销的 token 要到 bot.init 才炸。补齐排在所有
-    // 会中止启动的 await 之后，这条路径才守得住「被拒绝的启动不动运维的文件」。
+    // 部署输入闸不是最后一道拒绝点：吊销的 token 要到 bot.init 才炸。
     botInit.mockImplementationOnce(async (): Promise<never> => {
       calls.push("botInit");
       throw new Error("401: Unauthorized");
@@ -372,18 +365,13 @@ describe("应用启动失败与退出清理", () => {
     expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
     expect(terminateDiskIO).toHaveBeenCalledTimes(1);
     expect(runnerStop).not.toHaveBeenCalled();
-    // task() 抛错会让整段确认前闸门被跳过。闸门标记若停在初始值 true，dispose()
-    // 组装出的 offsetConfirmed 就是真，这一轮会被判成干净停机：诊断行不输出，
-    // 运维 grep 日志看到的是「一切正常」，实际丢了一条更新且扣住了 offset。
-    // 跳过 = 记为失败（见 docs/cn/04-invariants.md）。
+    // task() 抛错会跳过确认前闸门，跳过按失败处理（见 docs/cn/04-invariants.md）。
     expect(process.exitCode).toBe(1);
     const errorLines: string[] = loggerError.mock.calls.map((call: unknown[]): string => String(call[0]));
     expect(errorLines.some((line: string): boolean =>
       line.startsWith("Shutdown drain/flush results:") && line.includes("offset=false")
     )).toBeTrue();
-    // 但这一档只是 offset 没确认：runner 已排空、各 owner 已 flush、Worker 已
-    // terminate，没有任何东西还会写共享数据目录，锁必须照常释放。扣住锁会留下
-    // 一条陈旧的 bot.lock 记录，并把运维引向根本没坏的 Worker 和磁盘。
+    // 仅 offset 未确认：runner 已排空、各 owner 已 flush、Worker 已 terminate，锁照常释放。
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(errorLines.some((line: string): boolean =>
       line.startsWith("Releasing the single-instance lock even though")
@@ -709,8 +697,7 @@ describe("应用启动失败与退出清理", () => {
     triggerDiskIOFatal(new Error("runtime recovery failed"));
     await lifecycle.wait();
 
-    // 最终 offset 的确认前排空必须先关掉补扫生产者；等到 dispose() 才关会让
-    // timer 在本轮 anti-raid drain 之后重新登记网络任务与 outbox 写入。
+    // 最终 offset 确认前的排空必须先关掉补扫生产者，早于 dispose() 才关。
     expect(calls.indexOf("quiesceBlocklistScheduler")).toBeLessThan(
       calls.indexOf("drainAntiRaid")
     );

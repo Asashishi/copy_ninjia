@@ -50,7 +50,7 @@ WantedBy=multi-user.target
 
 数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`（`0755` 也接受，见下）。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 与 `database/` 都不要放容器临时层。
 
-程序会补建数据根、`logs/`、`memory/` 与初始 `database/`（前三者按 `0755`，`database/` 按 `0770`，实际权限再受 umask 收窄），四者都拒绝符号链接。数据根、`logs/` 与 `memory/` 必须属于运行 UID 且 mode 不宽于 `0755`——这道闸拦的是**写**：group 或 other 拿到 `w` 位一律拒绝启动。读侧放开到 `0755`，因为本项目按单租户处理、绝大多数部署是 root 直接跑，而默认 umask 建出来的目录就是 `0755`。
+程序会补建数据根、`logs/`、`memory/` 与初始 `database/`（前三者按 `0755`，`database/` 按 `0770`，实际权限再受 umask 收窄），四者都拒绝符号链接。数据根、`logs/` 与 `memory/` 必须属于运行 UID 且 mode 不宽于 `0755`——这道闸拦的是**写**：group 或 other 拿到 `w` 位一律拒绝启动。读侧放开到 `0755`（默认 umask 建出的目录就是这个 mode）。
 
 > **代价**：`memory/` 新文件默认是 `0644`，所以只采用默认值时，群聊逐字记录的访问控制主要依赖目录位。留在 `0755` 意味着同机器上任何本地账号都能读它们。多租户或存在非特权登录用户的机器，请自行把数据根与 `memory/` 收回 `0750`，并可把既有文件收紧为 `0600`/`0640`；运行时会保留这些 mode，不自动 chmod。部署方可将 `database/` 设为 `02770`，主库及 WAL/SHM 首次创建为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
 

@@ -1,9 +1,8 @@
 /**
  * 存储分区子进程：直接复用 `perf:identity-database` 的六项冷热读写实现。
  *
- * 这里**只做编排**——夹具、批量大小、校验和判定全在
- * `scripts/perf/identityDatabase/` 里，全量基准不另抄一份。抄一份的代价是两处
- * 的批量大小会各自漂移，届时两张表明明写着同一个操作名，却不再是同一件事。
+ * 这里只做编排——夹具、批量大小、校验和判定全在 `scripts/perf/identityDatabase/`
+ * 里，不重复实现。
  *
  * 与独立跑 `bun run perf:identity-database` 的唯一差别是 mock 根：那边在系统
  * 临时目录，这里统一落在仓库的 `performance/` 下（见 fullSuite/mockRoot.ts）。

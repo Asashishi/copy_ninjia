@@ -6,9 +6,10 @@ import type { UpdateScope } from "../../types/lifecycle";
  *
  * perThread：infra/telegram/actions/core.ts 经 infra/updateContext.ts 引入本模块，
  * 主线程、AI 闲聊 Worker 与 Anti-Raid Worker 各持一份互不相关的实例。只有主线程填入
- * 作用域：app/updateRunner.ts 为每条 update 填入，commands/wed/runtime.ts 在交互出队时
- * 恢复接纳时的信号，commands/wed/chats.ts 在淘汰群会话时以 /wed 停机信号运行清理；
- * Worker 内的实例从不填入，读取恒为「不在 update 作用域内」。
+ * 作用域：app/updateRunner.ts 为每条 update 填入信号与触发话题，commands/wed/runtime.ts
+ * 与 commands/deferredCommands.ts 在任务出队时恢复接纳时的话题，commands/wed/chats.ts
+ * 在淘汰群会话时以 /wed 停机信号运行清理；Worker 内的实例从不填入，读取恒为「不在
+ * update 作用域内」。
  */
 
 /**

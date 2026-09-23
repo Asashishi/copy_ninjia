@@ -1,13 +1,18 @@
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser, GlobalCopyState } from "../types/chatState";
+import type { CachedUser } from "../types/chatState";
 import type { CommandTargetMessages } from "../types/commands";
 import type { AvatarNoticeSource } from "../types/copy/avatar";
 import type {
   CopyCooldownClaim,
   GrantedCopyCooldownClaim,
 } from "../types/copy/cooldown";
-import { getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
+import {
+  claimCopyCooldown,
+  getGlobalCopyState,
+  persistGlobalState,
+  restoreCopyCooldown,
+} from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
@@ -29,7 +34,7 @@ interface CopyCommandUser {
  * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟
  * （跨所有群共用，不按群分别计时——消耗的是机器人自己头像这一份全局资源）。
  *
- * 检查通过后会在同一个同步执行栈里立刻写入 globalCopyState.lastCopyTime 占住
+ * 检查通过后会在同一个同步执行栈里经 stateStore.ts 的 claimCopyCooldown 占住
  * 冷却槽，中间不经过任何 await。当前 acknowledged runner 全局逐条处理 update，
  * 但这份原子性不能依赖调用入口；若"检查"和"占用"分成两步、中间跨了 await，
  * 两个几乎同时抵达的不同群命令就可能都读到"未冷却"从而一起放行，全局冷却
@@ -49,11 +54,11 @@ export async function claimCopyCooldownOrReject(
   chatId: number,
   messageId: number | undefined
 ): Promise<CopyCooldownClaim> {
-  const globalCopyState: GlobalCopyState = getGlobalCopyState();
+  const lastCopyTime: number | undefined = getGlobalCopyState().lastCopyTime;
   // 只有超级管理员本人免冷却；白名单身份与其他人一样排队。
   const isExempted: boolean = fromUser?.id === SUPER_ADMIN_USER_ID;
-  if (!isExempted && globalCopyState.lastCopyTime) {
-    const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
+  if (!isExempted && lastCopyTime) {
+    const elapsed: number = Date.now() - lastCopyTime;
     // 墙钟回拨时 elapsed 为负；把旧时间戳视为已过期，随后本次 claim 会用
     // 当前时钟重建冷却起点，避免额外冻结到时钟追平。
     if (elapsed >= 0 && elapsed < COPY_COOLDOWN_MS) {
@@ -66,9 +71,8 @@ export async function claimCopyCooldownOrReject(
     }
   }
 
-  const previousLastCopyTime: number | undefined = globalCopyState.lastCopyTime;
   const claimedAt: number = Date.now();
-  globalCopyState.lastCopyTime = claimedAt;
+  const previousLastCopyTime: number | undefined = claimCopyCooldown(claimedAt);
   await persistGlobalState("copy cooldown claimed");
   return { rejected: false, previousLastCopyTime, claimedAt };
 }
@@ -89,9 +93,7 @@ export async function claimCopyCooldownOrReject(
 export async function releaseCopyCooldownClaim(
   claim: GrantedCopyCooldownClaim
 ): Promise<void> {
-  const globalCopyState: GlobalCopyState = getGlobalCopyState();
-  if (globalCopyState.lastCopyTime === claim.claimedAt) {
-    globalCopyState.lastCopyTime = claim.previousLastCopyTime;
+  if (restoreCopyCooldown(claim.claimedAt, claim.previousLastCopyTime)) {
     await persistGlobalState("copy cooldown released");
   }
 }

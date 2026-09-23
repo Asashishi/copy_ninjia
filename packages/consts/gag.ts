@@ -90,10 +90,9 @@ export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
 
 /**
  * 候选操作选择填充的概率；剩余概率走 GAG_REPLACEMENT_CHARACTERS 替换分支。
- * 两个分支由 gag/rendering.ts 的 `roll < GAG_FILL_OPERATION_PROBABILITY` 单条判定切分，
- * 不再单列替换分支常量——那份常量没有生产消费者，改这一个时它不会跟着动，
- * 却会让测试继续按 0.75 + 0.25 推导出一条早已偏离实现的阈值。连续操作闸门
- * 可以挡住候选，因此该值描述抽样概率，不承诺最终文本中的填充占比。
+ * 两个分支由 gag/rendering.ts 的 `roll < GAG_FILL_OPERATION_PROBABILITY` 单条判定
+ * 切分，不单列替换分支常量，避免两个常量各改各的漂移。连续操作闸门会挡住
+ * 部分候选，因此该值只描述抽样概率，不承诺最终文本中的填充占比。
  */
 export const GAG_FILL_OPERATION_PROBABILITY: number = 0.75;
 

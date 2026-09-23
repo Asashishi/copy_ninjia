@@ -14,6 +14,7 @@ import { markSelfSent } from "../selfSentTracker";
 import { logUnlessAborted, replyParametersFor, runTelegramAction } from "./actions/core";
 import { deleteMessageAfter } from "./actions/messageLifecycle";
 import { bot } from "./mainClient";
+import { updateTopicThreadIdFor } from "../updateContext";
 
 /** sendCommandPhoto 的入参。 */
 export interface SendCommandPhotoParams {
@@ -24,7 +25,10 @@ export interface SendCommandPhotoParams {
   readonly caption: string;
   readonly captionEntities: readonly MessageEntity[];
   readonly replyToMessageId?: number;
-  /** 论坛群的话题标识；挂回复时也必须显式传递。 */
+  /**
+   * 论坛群的话题标识；省略时沿用当前 update 触发消息所在的话题（仅限同群，见
+   * infra/updateContext.ts 的 updateTopicThreadIdFor）。
+   */
   readonly messageThreadId?: number;
   readonly signal?: AbortSignal;
 }
@@ -52,7 +56,7 @@ export function sendCommandPhoto({
         caption,
         caption_entities: captionEntities.length > 0 ? [...captionEntities] : undefined,
         reply_parameters: replyParametersFor(replyToMessageId),
-        message_thread_id: messageThreadId,
+        message_thread_id: messageThreadId ?? updateTopicThreadIdFor(chatId),
       },
       ...signalArgs(requestSignal)
     ),

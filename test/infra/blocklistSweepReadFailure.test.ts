@@ -1,4 +1,4 @@
-/** 黑名单主键跨线程读失败时的降级、re-arm 与忙等防护。 */
+/** 黑名单主键跨线程读失败与 durable 重投交接失败时的降级、re-arm 与忙等防护。 */
 
 import { describe, expect, test } from "bun:test";
 import { botPermissions } from "../helpers/botPermissions";
@@ -18,6 +18,7 @@ const {
 
 const {
   initBlocklistSweepScheduler,
+  noteBanPermissionObserved,
   quiesceBlocklistSweepScheduler,
   replayPendingBlockedRemovals,
   requestBlocklistResweep,
@@ -32,6 +33,8 @@ const {
   blocklistSweepState,
   pendingBlockedRemovals,
 } = await import("../../packages/cache/main/blocklist");
+
+const { BLOCKLIST_SWEEP_RETRY_INTERVAL_MS } = await import("../../packages/consts/antiRaid/blocklist");
 
 installBlocklistSweepHooks({
   quiesceBlocklistSweepScheduler,
@@ -114,5 +117,61 @@ describe("黑名单主键读失败的降级边界", () => {
     // 被跳过的补扫没有任何回执可等，必须重新欠一次。
     expect(blocklistSweepState.get(-1002)?.sweptAt).toBeNull();
     expect(blocklistSweepState.get(-1002)?.nextRetryAt).toBeGreaterThan(0);
+  });
+});
+
+describe("durable 重投交接失败后重新欠一次补扫", () => {
+  test("Worker 重建重投被拒：补扫批次按失败结算并退避，冻结批次所在群重新申请补扫", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    states.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
+    trackBlockedRemoval({ chatId: -1001, probeMembership: false, userIds: [7] });
+    const sweep = trackBlockedRemoval({ chatId: -1002, probeMembership: true }, [7]);
+    blocklistSweepState.set(-1002, {
+      removalId: sweep.removalId,
+      sweptAt: null,
+      nextRetryAt: 0,
+      resweepRequested: false,
+      failedSweeps: 0,
+      permissionBlocked: false,
+    });
+    remover.mockImplementationOnce(async (): Promise<number> => { throw new Error("Anti-Raid Worker is unavailable."); });
+    const before: number = Date.now();
+
+    replayPendingBlockedRemovals();
+    for (let turn: number = 0; turn < 5; turn++) await Bun.sleep(0);
+
+    expect(blocklistSweepPages.has(sweep.removalId)).toBeFalse();
+    expect(blocklistSweepState.get(-1002)).toMatchObject({ removalId: null, sweptAt: null, failedSweeps: 1 });
+    expect(blocklistSweepState.get(-1002)!.nextRetryAt).toBeGreaterThan(before);
+    expect(blocklistSweepState.get(-1001)).toMatchObject({ sweptAt: null, permissionBlocked: false });
+    expect(blocklistSweepState.get(-1001)!.nextRetryAt).toBeGreaterThanOrEqual(before);
+    quiesceBlocklistSweepScheduler();
+  });
+
+  test("权限恢复后单群重投被拒：该群按退避重新申请补扫", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    trackBlockedRemoval({ chatId: -1001, probeMembership: false, userIds: [7] });
+    blocklistSweepState.set(-1001, {
+      removalId: null,
+      sweptAt: 1,
+      nextRetryAt: 0,
+      resweepRequested: false,
+      failedSweeps: 0,
+      permissionBlocked: true,
+    });
+    remover.mockClear();
+    remover.mockImplementationOnce(async (): Promise<number> => { throw new Error("Anti-Raid Worker is unavailable."); });
+    const before: number = Date.now();
+
+    noteBanPermissionObserved(-1001, true);
+    for (let turn: number = 0; turn < 5; turn++) await Bun.sleep(0);
+
+    expect(remover).toHaveBeenCalledTimes(1);
+    expect(blocklistSweepState.get(-1001)).toMatchObject({ sweptAt: null, permissionBlocked: false });
+    // 权限恢复本身把截止置为当刻；交接失败后改按一档退避重排。
+    expect(blocklistSweepState.get(-1001)!.nextRetryAt).toBeGreaterThanOrEqual(before + BLOCKLIST_SWEEP_RETRY_INTERVAL_MS);
+    quiesceBlocklistSweepScheduler();
   });
 });

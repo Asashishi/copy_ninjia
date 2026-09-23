@@ -53,11 +53,8 @@ export const CHAT_ID_ARG_PATTERN: RegExp = /^-[1-9]\d*$/;
  * 「这不是合法用户名」提示里回显参数原文的最大字符数。
  *
  * 参数原文只受 Telegram 单条消息 4096 字符的限制，而提示语还要在它前后拼上固定
- * 文案——原样插回去拼出的就是一条超过 4096 的出站消息，Telegram 直接 400，
- * `runTelegramAction` 把它吞进日志后返回 undefined：用户收到的是彻底的沉默而不是
- * 这句嘲讽，而命令的限频名额早就在调用方扣掉了。上限取用户名最大长度的两倍
- * ——回显只是为了让人看清自己打错了什么，比合法用户名长一截就足够了。
- * 所属模块：commands/targetResolution.ts。
+ * 文案；不设上限时拼接结果可能超过 4096 触发 Telegram 400，`runTelegramAction`
+ * 吞掉错误后返回 undefined，提示语整条静默丢失。所属模块：commands/targetResolution.ts。
  */
 export const INVALID_USERNAME_ECHO_MAX_CHARS: number = TELEGRAM_USERNAME_MAX_LENGTH * 2;
 
@@ -149,11 +146,7 @@ export const BATCH_KICK_CONCURRENCY: number = 5;
 
 /**
  * 跨托管群处置同时运行的群数（`/block` 的连坐封禁与 `/block disable` 的跨群解封）。
- *
- * 单租户通常只有约 15 个群，但配置状态仍可能长期增长；固定小并发避免一次命令
- * 把全部群同时展开成 Telegram 请求和闭包，也避免逐群串行让 update 中间件几十次
- * 往返都不返回。两条命令是同一处置的正反面，读同一份群清单、用同一个上限——
- * 拆成两个数值早晚会漂移出「封的时候并发、解的时候串行」这种不对称。
+ * 两条命令共用同一份群清单与同一个并发上限，不单独各设一份。
  * 所属模块：infra/blocklist/membership.ts 的 runManagedChatBatch。
  */
 export const MANAGED_CHAT_BATCH_CONCURRENCY: number = 5;
@@ -171,12 +164,9 @@ export const QUIET_MAX_DURATION_MS: number = QUIET_MAX_MINUTES * 60_000;
  * `/quiet` 剩余时长判定在最大值之上额外容忍的墙钟回拨量。
  *
  * `handleQuietCommand` 写的是 `Date.now() + minutes * 60_000`，顶格时
- * `quietUntil - now` 恰好等于 QUIET_MAX_DURATION_MS，容差为零：主机时钟往回
- * 跳哪怕 1 毫秒（NTP step、`chronyc makestep`、快照恢复、容器时钟同步——本仓
- * 在 libs/slidingWindowRateLimit.ts 与 workers/antiRaid/floodControl.ts 里都把
- * 回拨当作必须扛住的真实风险），顶格那条静默就整个失效。留出这一分钟让常见的
- * 小幅回拨不改变任何判定；超出容差的大幅回拨由 libs/chatState.ts 的
- * normalizeChatState 收敛到上限，而不是把字段删掉。
+ * `quietUntil - now` 恰好等于 QUIET_MAX_DURATION_MS，容差为零，主机时钟任何
+ * 回拨都会让顶格判定失效；本值为小幅回拨留出余量。超出容差的大幅回拨由
+ * libs/chatState.ts 的 normalizeChatState 收敛到上限，不删除字段。
  * 所属模块：commands/quiet.ts 与 libs/chatState.ts。
  */
 export const QUIET_CLOCK_SKEW_TOLERANCE_MS: number = 60_000;

@@ -1,9 +1,9 @@
 /**
  * 存储分区的操作表与参数解析。
  *
- * 与 `fullSuite/storage.ts` 分开，是因为父进程也要按这张表排队 spawn，而
- * storage.ts 会静态 import 生产模块——父进程一旦 import 它，就把整张生产模块图
- * 拉进了那个本该只负责 spawn 的进程（约束见 fullSuite/mockRoot.ts 的模块头注）。
+ * 本文件只放操作表与参数解析，供父进程按序 spawn。`fullSuite/storage.ts` 会
+ * 静态 import 生产模块，父进程不 import 它（约束见 fullSuite/mockRoot.ts 的模块
+ * 头注）。
  */
 
 import type { BenchmarkOperation } from "../identityDatabase/types";

@@ -1,6 +1,6 @@
 import type { AiReplyActivityEntry } from "../../types/auto";
 
-/** 消息自动流水线（packages/auto）的内存状态。 */
+/** owner: main。消息自动流水线（packages/auto）的内存状态。 */
 
 /**
  * 记录各用户上一次触发随机 AI 回复（随机插话/媒体评价）的时刻，以 chatId + 用户 id

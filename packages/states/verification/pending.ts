@@ -1,5 +1,6 @@
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import {
+  NO_VERIFICATION_EFFECTS,
   VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
   VERIFICATION_TIMEOUT_MS,
 } from "../../consts/antiRaid/verification";
@@ -28,7 +29,7 @@ export function handleTrackedMessage(
   state: VerificationState | undefined,
   event: TrackedMessageEvent
 ): VerificationTransition {
-  if (state?.kind !== "pending") return { next: state, effects: [] };
+  if (state?.kind !== "pending") return { next: state, effects: NO_VERIFICATION_EFFECTS };
 
   if (event.inCommentThread) {
     return {
@@ -48,22 +49,19 @@ export function handleTrackedMessage(
 
   // 频道评论区活动已提前豁免；其余消息按成员自己的滑动窗口统计。
   //
-  // 就地修剪而不是「filter 出新数组再赋回」：这条判定跑在待验证成员的每一条
-  // 消息上，正是刷屏防御最吃紧的路径，窗口又铺得满（上限
-  // ANTI_RAID_PER_MINUTE_LIMIT），每条消息现造一个临时数组是纯浪费。
-  // 状态机独占这份数组（下一行本来就在 push 它），全部消费方都 `[...]` 复制
-  // 出去，没有第二处别名；边界判据与 filter 版由同一组对拍锁住，见
-  // libs/slidingWindowRateLimit.ts 的 trimSlidingWindowArrayInPlace。
+  // 就地修剪窗口数组：状态机独占这份数组（下一行紧接着 push），全部消费方
+  // 都以 `[...]` 复制出去，没有第二处别名。边界判据与 filter 版本由同一组
+  // 对拍锁住，见 libs/slidingWindowRateLimit.ts 的 trimSlidingWindowArrayInPlace。
   trimSlidingWindowArrayInPlace(state.trackedMessageTimes, JOIN_WINDOW_MS, event.now);
   state.trackedMessageTimes.push(event.now);
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
     return {
       next: expellingOf("flood", snapshotOf(state)),
-      effects: [],
+      effects: NO_VERIFICATION_EFFECTS,
     };
   }
   // 滑动窗口本身是持久字段，即使提醒已补发，也必须发布本次原地修改。
-  if (state.replyReminderRequested) return pendingUpdated(state, []);
+  if (state.replyReminderRequested) return pendingUpdated(state, NO_VERIFICATION_EFFECTS);
   state.replyReminderRequested = true;
   state.welcomeAnchorMessageId = event.messageId;
   state.reminderSuperseded = true;
@@ -100,7 +98,7 @@ export function handleConfirmedThreadComment(
     state.executionStarted === true ||
     !event.allowFloodTerminalExemption
   ) {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_VERIFICATION_EFFECTS };
   }
   const snapshot: ExpelSnapshot = state.snapshot;
   return {
@@ -179,7 +177,7 @@ export function handleVerifyTimeout(
   state: VerificationState | undefined,
   event: VerifyTimeoutEvent
 ): VerificationTransition {
-  if (state?.kind !== "pending") return { next: state, effects: [] };
+  if (state?.kind !== "pending") return { next: state, effects: NO_VERIFICATION_EFFECTS };
 
   if (
     state.reminderMessageId === undefined &&
@@ -207,10 +205,10 @@ export function handleVerifyTimeout(
   if (state.invitedBy !== undefined) {
     return {
       next: checkingInviterOf(state.invitedBy, snapshot),
-      effects: [],
+      effects: NO_VERIFICATION_EFFECTS,
     };
   }
-  return { next: expellingOf("timeout", snapshot), effects: [] };
+  return { next: expellingOf("timeout", snapshot), effects: NO_VERIFICATION_EFFECTS };
 }
 
 /** 回填真正落地的提醒，并从按钮可见时重新给满验证窗口。 */
@@ -227,7 +225,7 @@ export function handleReminderLanded(
   if (event.reminderKind === "original") state.reminderMessageId = event.messageId;
   else state.replyReminderMessageId = event.messageId;
   state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
-  return pendingUpdated(state, [], true);
+  return pendingUpdated(state, NO_VERIFICATION_EFFECTS, true);
 }
 
 /**
@@ -243,7 +241,7 @@ export function handleReminderLanded(
 export function handleAdminCheckResolved(
   state: VerificationState | undefined
 ): VerificationTransition {
-  if (state?.kind !== "pending") return { next: state, effects: [] };
+  if (state?.kind !== "pending") return { next: state, effects: NO_VERIFICATION_EFFECTS };
   return {
     next: { kind: "exempt", label: state.label, isBot: state.isBot },
     effects: [

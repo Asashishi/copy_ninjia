@@ -156,6 +156,7 @@ export async function handleDiskIOWorkerMessage(
       postReply({ type: "operationBatchAccepted", batchId: msg.batchId });
       break;
     case "diagnosticBatch": {
+      // 一批中的诊断保持原始顺序同步消费；完成整批后才向主线程回 ACK。
       // 日志先入缓冲并刷盘，成功后才追加 adSample：刷盘失败时主线程整批重投，
       // adSample 在这一轮还没写，重投只追加一次。两者是不同文件，相对顺序无意义。
       let containsLog: boolean = false;
@@ -424,7 +425,6 @@ function handleIdentityMessage(
   }
 }
 
-/** 一批中的诊断保持原始顺序同步消费；完成整批后才能向主线程回 ACK。 */
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 function startDiskIOWorker(): void {
   wedMemberDeletePersistedNotifier.current = postReply;

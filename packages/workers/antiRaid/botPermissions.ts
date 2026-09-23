@@ -27,12 +27,9 @@ export function applyBotPermissionsChange(chatId: number, permissions: BotAction
 /**
  * 机器人此刻能不能在这个群限制成员（禁言/封禁）。
  *
- * **三态，调用方必须把 undefined 与 false 分开**：前者是「没观测到」，后者是
- * 「观测到不行」。把它们压成一个布尔看着省事，代价是两种相反的处置只能取其一
- * ——要么把未知当没权限（现查撞上一次 429 就等于那 5 分钟退避里刷屏无人处置，
- * 日志里还写着一句不准确的「没有权限」），要么把未知当有权限（在一个真的没
- * 权限的群里反复打注定失败的请求）。分开之后才能各按各的办：确证没有就别打，
- * 没观测到就让 Telegram 当裁判（见 floodControl.ts 的兜底）。
+ * 三态语义：调用方必须把 undefined 与 false 分开处理，前者是「没观测到」，
+ * 后者是「观测到不行」。确证没有就不发起限制；没观测到时让 Telegram 当裁判
+ * （见 floodControl.ts 的兜底）。
  * @returns 确证有 true、确证没有 false、没观测到 undefined。
  */
 export function botCanRestrictIn(chatId: number): boolean | undefined {

@@ -1,15 +1,10 @@
 /**
  * 黑名单补扫的资格判定：这个群受不受管、它的 claim 槽位此刻空不空。
  *
- * 只做纯判定，不读缓存也不投递，因此 `sweep.ts`、`sweepScheduler.ts`、
- * `sweepRetryState.ts` 与 `outbox.ts` 都能直接依赖它而不形成环（调度器与补扫
- * 状态机之间那条「执行函数由 sweep.ts 注入」的边界仍然成立）。
- *
- * 四个消费方读的必须是同一份判据：`prepareBlocklistSweep` 用它决定建不建
- * claim、`sweepBlockedMembers` 用它决定付不付那次跨线程名单页读、
- * `nextBlocklistSweepAt` 用它挑该排 timer 的群、`hydrateBlocklist` 用它筛恢复出的
- * 任务。抄开的话，哪天改了兜底语义（例如把 permissionBlocked 也算成可 claim）
- * 只会改到一处，几条路径从此对「这个群该不该扫」各执一词。
+ * 只做纯判定，不读缓存也不投递；`sweep.ts`、`sweepScheduler.ts`、`sweepRetryState.ts`
+ * 与 `outbox.ts` 共用这份判据。消费方：`prepareBlocklistSweep` 决定建不建 claim、
+ * `sweepBlockedMembers` 决定付不付跨线程名单页读、`nextBlocklistSweepAt` 挑该排
+ * timer 的群、`hydrateBlocklist` 筛恢复出的任务。
  * @see ../../../docs/cn/04-invariants.md
  */
 

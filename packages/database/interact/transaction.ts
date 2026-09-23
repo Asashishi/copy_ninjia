@@ -22,11 +22,7 @@ export interface CommitStorageDatabaseChangesOptions {
   readonly temporaryAdBypass: ReadonlyMap<number, PendingTemporaryAdBypassWrite>;
   readonly removals: ReadonlyMap<number, StorageDatabaseChange>;
   readonly chatStates: ReadonlyMap<number, StorageChatStateChange>;
-  /**
-   * 群问答按 (chatId, q) 复合主键变更，因此外层是群、内层是问题文本。
-   * 嵌套而不是拼一个 `${chatId}\u0000${q}` 复合键：拼键要为每条变更造一个字符串，
-   * 而按群删除（群 teardown）也得把那个前缀再解析回来。
-   */
+  /** 群问答按 (chatId, q) 复合主键变更；外层键为 chatId，内层键为问题文本 q。 */
   readonly chatQa: ReadonlyMap<number, ReadonlyMap<string, StorageDatabaseChange>>;
 }
 

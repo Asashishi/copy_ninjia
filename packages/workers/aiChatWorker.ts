@@ -49,17 +49,10 @@ import type {
   AiMoodSwitchedEvent,
 } from "../types/aiChat/protocol";
 import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
-import {
-  handleWorkerDuplexResponse,
-  initializeWorkerDuplex,
-  isWorkerDuplexResponse,
-  resetWorkerDuplex,
-} from "../libs/workerDuplex";
-import type { WorkerDuplexOutbound } from "../types/workerDuplex";
+import { resetWorkerDuplex } from "../libs/workerDuplex";
 import type { TelegramWorkerRequest } from "../types/telegramWorker";
-import { installTelegramApi } from "../infra/telegram/client";
-import { workerTelegramApi } from "../infra/telegram/workerClient";
-import { acceptForwardedLogBatch, logger } from "../infra/logger";
+import { logger } from "../infra/logger";
+import { installBusinessWorkerPort } from "./businessWorkerPort";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（packages/auto/message/ → aiChat/index.ts 代理）
@@ -266,22 +259,7 @@ export function startAiChatWorker(): void {
   aiChatWorkerQuiescing.current = false;
   aiChatWorkerAbortController.current = new AbortController();
   aiChatWorkerDrain.current = null;
-  installTelegramApi(workerTelegramApi);
-  initializeWorkerDuplex<TelegramWorkerRequest>((
-    message: WorkerDuplexOutbound<TelegramWorkerRequest>,
-    transfer?: Bun.Transferable[]
-  ): void => {
-    if (transfer === undefined) self.postMessage(message);
-    else self.postMessage(message, transfer);
-  });
-  self.onmessage = (event: MessageEvent<unknown>): void => {
-    if (acceptForwardedLogBatch(event.data)) return;
-    if (isWorkerDuplexResponse(event.data)) {
-      handleWorkerDuplexResponse(event.data);
-      return;
-    }
-    handleAiChatWorkerMessage(event.data as AiChatWorkerMessage);
-  };
+  installBusinessWorkerPort<TelegramWorkerRequest, AiChatWorkerMessage>(handleAiChatWorkerMessage);
   aiChatMaintenanceTimer.current = setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
   aiChatMaintenanceTimer.current.unref();
   // 东京天气的后台定时刷新（见 aiChat/ai/weather.ts）：get_tokyo_weather 工具与

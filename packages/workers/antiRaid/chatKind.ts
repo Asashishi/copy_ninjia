@@ -4,11 +4,11 @@
  * 观测发生在主线程（每条 update 都带 `chat.type`），执行发生在本线程（踢人走
  * telegramApi）。两边因此按变更镜像：主线程每次观测到新值就发一条
  * `chatKind`，Worker 重建与进程启动时整表重放（见 packages/antiRaid/workerBridge/replay.ts）。
+ * 主线程只观测已 /init enable 的群；镜像缺席时本线程仍须按三态反查。
  *
- * 读出来的是三态。**「没观测到」不是「是普通群」**：镜像到达之前、或这个群从未
- * 有过一条被本进程处理的 update 时都读不到值，而绝大多数托管群是超级群。把未知
- * 折算成普通群，就会在超级群里用 `banChatMember` 打出一次真正的持久封禁——而
- * 「除 /block 与黑名单秒踢外一律只踢不封」是这套自动处置的硬约束。
+ * 读出来的是三态，「没观测到」不等于「是普通群」：镜像到达之前、或这个群从未
+ * 有过一条被本进程处理的 update 时都读不到值。终态处置按群类型分派
+ * `banChatMember`/`unbanChatMember`，「只踢不封」不变量见 docs/cn/04-invariants.md。
  *
  * 冷启动时主线程镜像也可能为空；终态执行前会用 getChat 按群复用反查，查不出
  * 类型就保留终态退避，绝不拿「未知」猜一个破坏性 API。
@@ -19,6 +19,7 @@ import { VERIFICATION_CHAT_KIND_FETCH_MAX } from "../../consts/antiRaid/verifica
 import {
   workerChatIsSupergroup,
   workerChatKindFetches,
+  workerChatKindActiveFetches,
 } from "../../cache/workers/antiRaid/chatKind";
 import { telegramApi } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
@@ -41,7 +42,7 @@ export function resolveChatIsSupergroup(
   const existing: Promise<boolean | undefined> | undefined =
     workerChatKindFetches.get(chatId);
   if (existing !== undefined) return existing;
-  if (workerChatKindFetches.size >= VERIFICATION_CHAT_KIND_FETCH_MAX) {
+  if (workerChatKindActiveFetches.size >= VERIFICATION_CHAT_KIND_FETCH_MAX) {
     return Promise.resolve(undefined);
   }
   const task: Promise<boolean | undefined> = telegramApi.getChat(chatId)
@@ -64,10 +65,12 @@ export function resolveChatIsSupergroup(
       return undefined;
     })
     .finally((): void => {
+      workerChatKindActiveFetches.delete(task);
       if (workerChatKindFetches.get(chatId) === task) {
         workerChatKindFetches.delete(chatId);
       }
     });
+  workerChatKindActiveFetches.add(task);
   workerChatKindFetches.set(chatId, task);
   return task;
 }
@@ -81,5 +84,6 @@ export function forgetWorkerChatKind(chatId: number): void {
 /** Worker stop/测试隔离时清空整表；重建后由主线程重放。 */
 export function resetWorkerChatKind(): void {
   workerChatKindFetches.clear();
+  workerChatKindActiveFetches.clear();
   workerChatIsSupergroup.clear();
 }

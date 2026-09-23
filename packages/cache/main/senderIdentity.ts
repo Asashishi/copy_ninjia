@@ -1,6 +1,6 @@
 import type { CachedUser } from "../../types/chatState";
 
-/** 发送者身份缓存（packages/users/senderIdentity.ts）的内存状态；进程重启后从空表
+/** owner: main。发送者身份缓存（packages/users/senderIdentity.ts）的内存状态；进程重启后从空表
  * 开始，由后续发送者消息重新填充。 */
 
 /** 小写 username -> 最近一次观察到的身份，供 /copy、/block 等命令按

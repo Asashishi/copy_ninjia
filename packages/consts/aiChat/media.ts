@@ -1,5 +1,5 @@
 import type { AiTextResult } from "./../../types/aiChat/provider";
-import type { MediaInputModalityState } from "../../types/states/mediaInputSupport";
+import type { MediaInputEffect, MediaInputModalityState } from "../../types/states/mediaInputSupport";
 /** 媒体视觉描述请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
 export const MEDIA_DESCRIPTION_ERROR_LABEL: string = "AI image understanding API";
 
@@ -25,9 +25,8 @@ export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
 /**
  * 取文件元数据（`getFile`）的独立超时预算，必须与下载分开计时：两步共用一个
  * deadline 时，一次 429 退避就能把下载的额度吃光，下载几乎立刻 abort，机器人
- * 对着一张明明能看的图装看不见。这里比下载短——它只是一次小的 Bot API 往返，
- * 长尾全部来自主线程自适应 429 队列，不值得占满整条描述流水线的
- * 执行槽（媒体描述那一路不带 invalidate signal，没有别的兜底）。
+ * 对着一张明明能看的图装看不见。媒体描述这一路不带 invalidate signal，没有
+ * 别的兜底。
  */
 export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
 /** 单个媒体下载允许读入内存的最大字节数。 */
@@ -45,8 +44,7 @@ export const MEDIA_DESCRIPTION_MAX_PENDING: number = 75;
  *
  * 这道退避挡的是「端点持续故障」：SDK 自己已经把首次加最多五次重试用完了，若
  * 下一条媒体立刻又下载一遍、再套一整轮请求，一个抽风的端点就能让每条群媒体都
- * 白付一次下载、转码和执行器槽位。取 30 秒是因为常见的 429/5xx 抖动在这个量级
- * 内多半已经恢复，而群里几十秒不认图的观感损失可以接受。
+ * 白付一次下载、转码和执行器槽位。
  */
 export const MEDIA_PROBE_BACKOFF_BASE_MS: number = 30_000;
 /**
@@ -55,11 +53,9 @@ export const MEDIA_PROBE_BACKOFF_BASE_MS: number = 30_000;
  */
 export const MEDIA_PROBE_BACKOFF_MAX_MS: number = 10 * 60_000;
 /**
- * 连续瞬时失败计数的封顶。计数只用于选退避档位，取 6 是因为
- * `30s × 2^(n-1)` 到第 6 档（960 秒）才真正撞上 MEDIA_PROBE_BACKOFF_MAX_MS 的
- * 十分钟上界——封得更低，那个上界就永远不会生效，读代码的人会以为退避能涨到
- * 十分钟而实际最多八分钟。到顶之后档位不再变化，数值本身没有继续增长的意义，
- * 留着只会让一个永远不清零的整数无声地涨下去。
+ * 连续瞬时失败计数的封顶，只用于选退避档位。按 `MEDIA_PROBE_BACKOFF_BASE_MS
+ * × 2^(n-1)` 换算退避时长，超过本值不再继续增长；必须选到刚好使换算结果达到
+ * MEDIA_PROBE_BACKOFF_MAX_MS 的档位，改动其中一个常量需要一并重算另一个。
  */
 export const MEDIA_PROBE_MAX_TRANSIENT_FAILURES: number = 6;
 
@@ -87,3 +83,9 @@ export const INITIAL_MEDIA_INPUT_STATE: Readonly<MediaInputModalityState> = {
   nextProbeAt: 0,
   configGeneration: 0,
 };
+
+/**
+ * 模态支持度状态机无需副作用时共用的空效果表；只读，任何转移都不得向它追加。
+ * 所属模块：states/mediaInputSupport.ts。
+ */
+export const NO_MEDIA_INPUT_EFFECTS: readonly MediaInputEffect[] = [];

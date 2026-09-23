@@ -79,6 +79,7 @@
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
+    `businessWorkerPort.ts`（2 つの業務 Worker が共用するスレッド端口：Telegram 代理、duplex 出口、受信ルーティング）、
     `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/storageDatabase.ts` と `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
@@ -94,12 +95,15 @@
 - **`packages/infra/`**
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。
-  - **代表的なファイル**：`telegram/`（`telegram/avatar/` を含む）、`diskIO.ts` と `diskIO/`（`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` と `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` と `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、
+  - **代表的なファイル**：`telegram/`（`telegram/avatar/`、`telegram/actions/` を含む）、`diskIO.ts` と `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` と `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` と `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、
     `supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）。
+- **`packages/infra/identityPolicy/`**
+  - **責務**：ホワイトリストの項目別権限、一時広告免除の累計、ブラックリストとの排他制御を担うメインスレッド側の読み取り境界。
+  - **代表的なファイル**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。
 - **`packages/infra/blocklist/`**
   - **責務**：メインスレッド側ブロックリスト基盤。identity 判定、同期 membership、
     durable outbox、チャット掃除、退会アカウント検出に分割。
-  - **代表的なファイル**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepScheduler.ts`。
+  - **代表的なファイル**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepEligibility.ts`、`sweepReplay.ts`、`sweepRetryState.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
   - **責務**：データルート事前検査、インスタンスロック、業務 state facade、注入可能な `state.json` 永続化境界、起動時の清掃。
   - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`、`cleanup.ts`。
@@ -150,7 +154,7 @@
 
 - **`main/`**
   - **所有者**：メインスレッド。
-  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラーと `translateState.ts` の群別翻訳セッション、`chatState.ts` の `chat_states` LRU（容量 25）、
+  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラーと `translateState.ts` の群別翻訳セッション、`chatState.ts` の `chat_states` ホット読み取りコピー（`Map`、最大 25 グループ）、
     Disk I/O ホスト、および **Worker のメインスレッド側プロキシとミラー**
     （`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**

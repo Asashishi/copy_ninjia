@@ -9,12 +9,11 @@ import type { AdDetectionMessageContext } from
 import type { DiskBusinessMessage, AdSampleDiskMessage } from "../../packages/types/diskIO";
 
 /**
- * `/antiraid` 这道开关在主线程投递侧的边界（见 antiRaid/updateIngress.ts）。
+ * `/antiraid` 开关在主线程投递侧的边界（见 antiRaid/updateIngress.ts）。
  *
- * 要守的是**范围**：关掉的只有入群验证与防冲群私密模式这一条链路，同样跑在
- * Anti-Raid Worker 里的黑名单秒踢、广告检测、防刷屏计数，以及 `/batch_kick`
- * 依赖的入群日志，一律照旧——它们各有各的开关，把它们一起关掉是这次改动最
- * 容易犯、也最难在群里发现的错。
+ * 关掉的只有入群验证与防冲群私密模式这一条链路；同样跑在 Anti-Raid Worker 里的
+ * 黑名单秒踢、广告检测、防刷屏计数，以及 `/batch_kick` 依赖的入群日志不受这道
+ * 开关影响。
  */
 
 /** 测试观察业务写入与诊断消息。 */
@@ -25,15 +24,18 @@ const diskPosts: TestDiskMessage[] = [];
 const answeredCallbacks: { callbackQueryId: string; text?: string }[] = [];
 const temporaryAdBypassActivityMessages: Message[] = [];
 const temporaryAdBypassActivityTimes: number[] = [];
-/** 逐用例可改的群状态；缺省是「已开防刷屏、未开入群守卫」。 */
+/** 逐用例可改的群状态；缺省是「已接管、已开防刷屏、未开入群守卫」。 */
 const chatState: Record<string, boolean> = {};
+const unmanagedChatIds: Set<number> = new Set<number>();
 
 mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub(),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
-  getChatState: () => chatState,
+  getChatState: (chatId: number) => unmanagedChatIds.has(chatId)
+    ? { ...chatState, isInitEnabled: false }
+    : chatState,
   getChatStateCache: () => new Map(),
   getOrCreateChatState: () => ({}),
   persistChatState: async (): Promise<void> => {},
@@ -85,8 +87,6 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   isDiskIOBuffering: (): boolean => false,
   flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
   onDiskIORespawn: (): void => {},
-  onIdentityStoragePersisted: (): void => {},
-  onVerificationPersisted: (): void => {},
   postDiskIO: (message: TestDiskMessage): boolean => {
     diskPosts.push(message);
     return true;
@@ -113,8 +113,10 @@ const {
 } = await import("../../packages/antiRaid");
 const { blocklistEntryCache, whitelistEntryCache } =
   await import("../../packages/cache/main/identityStorage");
-const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
+const { runWithUpdateAbortSignal, updateNow } = await import("../../packages/infra/updateContext");
 const { chatIsSupergroupById } = await import("../../packages/cache/main/antiRaid/chatKind");
+const { replayChatKinds } = await import("../../packages/antiRaid/workerBridge/replay");
+const { STATE_MANAGED_CHAT_LIMIT } = await import("../../packages/consts/storage");
 const { activeVerificationSnapshots } = await import("../../packages/cache/main/antiRaid/verificationMirror");
 
 /** 一条「从不在群里变成群成员」的 chat_member 更新。 */
@@ -177,7 +179,9 @@ beforeEach(() => {
   whitelistEntryCache.clear();
   activeVerificationSnapshots.clear();
   chatIsSupergroupById.clear();
+  unmanagedChatIds.clear();
   for (const key of Object.keys(chatState)) delete chatState[key];
+  chatState.isInitEnabled = true;
   chatState.isFloodControlEnabled = true;
   botAdminStatus.cached = true;
   botAdminStatus.resolved = true;
@@ -193,10 +197,7 @@ describe("入群守卫开关（主线程投递侧）", () => {
   });
 
   test("关着时邀请者豁免变更照投：这条不受开关管", async () => {
-    // 缓存条目按 fetchedAt 判过期，applyAdminChange 不刷新它（见
-    // workers/antiRaid/adminCache.ts）。漏掉这条，「关闭 → 降权 → 重新开启」挤在
-    // 同一个 ADMIN_CACHE_TTL_MS 窗口里时，被降权的人在剩余时间里拉进来的人仍会
-    // 免验证。投过去没有副作用：applyAdminChange 只改缓存，不碰状态机。
+    // applyAdminChange 只改管理员缓存（workers/antiRaid/adminCache.ts），不碰状态机。
     await handleChatMemberUpdate(demoteUpdate(7));
 
     expect(workerPosts).toContainEqual(expect.objectContaining({
@@ -238,14 +239,12 @@ describe("入群守卫开关（主线程投递侧）", () => {
     const removal: AntiRaidWorkerMessage | undefined =
       workerPosts.find((message): boolean => message.type === "removeBlockedMembers");
     expect(removal).toBeDefined();
-    // joinedAt 是给私密模式滑动窗口补记的那一笔；守卫关着就不该由黑名单成员的
-    // 入群把阈值凑出来——否则「关掉了」的群还是会自己锁上。
+    // 守卫关着时不记入私密模式滑动窗口，joinedAt 为 undefined。
     expect(removal).toMatchObject({ chatId: -1001, userIds: [42], joinedAt: undefined });
     expect(typesOf()).not.toContain("join");
   });
 
   test("关着时不投验证用的 message，刷屏计数照投", async () => {
-    // 评论区线索这一路不依赖待验证镜像，最容易在关掉之后继续白投。
     await handleAntiRaidMessageIngress({
       chat: { id: -1001, type: "supergroup" },
       message_id: 9,
@@ -259,10 +258,9 @@ describe("入群守卫开关（主线程投递侧）", () => {
   });
 
   test("稳定态普通群消息同步返回 false，不为每条群消息分配 Promise", () => {
-    // 管理员身份已确证（cachedBotAdminStatus 命中）、没有黑名单频道身份、不是
-    // 服务消息、待验证镜像为空：整条判定全同步。返回 Promise 就意味着每条群
-    // 消息都白付一次 Promise 分配与一个微任务回合（见 app/registerHandlers.ts
-    // 的 claimOrContinue）。这条断言是那条形态契约唯一的守卫。
+    // 管理员身份已确证（cachedBotAdminStatus 命中）、无黑名单频道身份、非服务
+    // 消息、待验证镜像为空时，整条判定同步返回（对应 app/registerHandlers.ts
+    // 的 claimOrContinue 快路径）。
     const started: boolean | Promise<boolean> = handleAntiRaidMessageIngress({
       chat: { id: -1001, type: "supergroup" },
       message_id: 11,
@@ -324,8 +322,8 @@ describe("入群守卫开关（主线程投递侧）", () => {
     const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now")
       .mockReturnValue(now);
     try {
-      // 生产里 bot.handleUpdate 一定跑在这个作用域内（见 app/updateRunner.ts），
-      // 广告判定上下文与刷屏候选因此共用 updateNow 那唯一一次读取。
+      // bot.handleUpdate 跑在这个作用域内（见 app/updateRunner.ts），广告判定
+      // 上下文与刷屏候选共用 updateNow 同一次读取。
       await runWithUpdateAbortSignal(
         new AbortController().signal,
         async (): Promise<void> => {
@@ -350,6 +348,35 @@ describe("入群守卫开关（主线程投递侧）", () => {
         observedAt: now,
         label: "Zako",
       });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test("刷屏关闭或普通群跳过候选，仍为后续流水线保留本条时刻", async () => {
+    const now: number = 1_800_000_000_001;
+    const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      for (const scenario of [
+        { chatType: "supergroup", floodEnabled: false, expectedCandidate: false },
+        { chatType: "group", floodEnabled: true, expectedCandidate: false },
+        { chatType: "supergroup", floodEnabled: true, expectedCandidate: true },
+      ] as const) {
+        workerPosts.length = 0;
+        chatState.isFloodControlEnabled = scenario.floodEnabled;
+        await runWithUpdateAbortSignal(new AbortController().signal, async (): Promise<void> => {
+          await handleAntiRaidMessageIngress({
+            chat: { id: -1001, type: scenario.chatType },
+            message_id: 201,
+            date: 1,
+            from: { id: 42, is_bot: false, first_name: "Zako" },
+            text: "普通群消息",
+          } as Message, 999);
+          expect(updateNow()).toBe(now);
+        });
+        expect(typesOf().includes("floodCandidate")).toBe(scenario.expectedCandidate);
+      }
+      expect(nowSpy).toHaveBeenCalledTimes(3);
     } finally {
       nowSpy.mockRestore();
     }
@@ -442,6 +469,44 @@ describe("机器人不是本群管理员时的投递门禁", () => {
     } as never;
   }
 
+  test("容量已满时拒绝的 /init 群不占群类型镜像，Worker 重建只重放受管群", async () => {
+    botAdminStatus.cached = false;
+    for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index += 1) {
+      await handleAntiRaidMessageIngress(groupMessage({
+        chat: { id: -1000 - index, type: "supergroup" },
+      }), 999);
+    }
+    for (let index: number = 0; index < 100; index += 1) {
+      const chatId: number = -2000 - index;
+      unmanagedChatIds.add(chatId);
+      await handleAntiRaidMessageIngress(groupMessage({
+        chat: { id: chatId, type: "supergroup" },
+        text: "/init enable",
+      }), 999);
+    }
+
+    expect(chatIsSupergroupById.size).toBe(STATE_MANAGED_CHAT_LIMIT);
+    const replayed: AntiRaidWorkerMessage[] = [];
+    expect(replayChatKinds((message: AntiRaidWorkerMessage): boolean => {
+      replayed.push(message);
+      return true;
+    })).toBeTrue();
+    expect(replayed).toHaveLength(STATE_MANAGED_CHAT_LIMIT);
+    expect(replayed.some((message: AntiRaidWorkerMessage): boolean => message.type === "chatKind" && message.chatId === -2000)).toBeFalse();
+  });
+
+  test("已接管普通群升级后按新类型更新镜像", async () => {
+    botAdminStatus.cached = false;
+    await handleAntiRaidMessageIngress(groupMessage({ chat: { id: -1001, type: "group" } }), 999);
+    await handleAntiRaidMessageIngress(groupMessage(), 999);
+
+    expect(chatIsSupergroupById.get(-1001)).toBeTrue();
+    expect(workerPosts.filter((message: AntiRaidWorkerMessage): boolean => message.type === "chatKind")).toEqual([
+      { type: "chatKind", chatId: -1001, isSupergroup: false },
+      { type: "chatKind", chatId: -1001, isSupergroup: true },
+    ]);
+  });
+
   test("已确证不是管理员时一条都不投，入群公告仍被吞掉", async () => {
     botAdminStatus.cached = false;
     chatState.isAntiRaidEnabled = true;
@@ -506,9 +571,8 @@ describe("验证按钮的非法目标", () => {
     } as never);
   }
 
-  // NaN / 0 / 负数进 Worker 会生成一个永远不会被结算的状态键，按钮只会一直转。
-  // 后四种是裸 `Number()` 会放行、而本 bot 从不生成的非规范写法：指数、十六进制、
-  // 前导空白、带小数点与带正号（见 libs/telegramId.ts 的 parseUserIdArgument）。
+  // 覆盖 NaN / 0 / 负数，以及裸 `Number()` 会放行但本 bot 从不生成的非规范写法：
+  // 指数、十六进制、前导空白、小数点、正号（见 libs/telegramId.ts 的 parseUserIdArgument）。
   test.each([
     "verify:abc", "verify:", "verify:0", "verify:-5", "approve:abc",
     "verify:1e3", "verify:0x10", "verify: 12", "verify:12.0", "verify:+5",

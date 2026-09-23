@@ -4,9 +4,8 @@
  *
  * 与 workerBridgeObservers.test.ts 分工：那一条驱动的是「注册一次、由上游回调」
  * 的四个观察者；本文件驱动的是命令侧——`/antiraid disable`、`/ad_detect disable`、
- * `/flood_control disable` 与统一 teardown 各自投什么、以及 Worker 不可用时它们
- * 必须上抛而不是静默吞掉。命令静默失败最难在群里发现：管理员看到一句成功回执，
- * 而 Worker 里那个群的验证窗口、待检队列或发言窗口原封不动。
+ * `/flood_control disable` 与统一 teardown 各自投什么，以及 Worker 不可用时它们
+ * 必须上抛而不是静默吞掉。
  */
 
 import { botPermissions } from "../helpers/botPermissions";
@@ -175,7 +174,6 @@ describe("Anti-Raid 控制命令", () => {
     clearAdDetection(CHAT_ID);
     clearFloodControl(CHAT_ID);
 
-    // 两条互不牵连：把待检队列和发言窗口一起清掉是这一带最容易犯的错。
     expect(typesOf()).toEqual(["clearAdDetect", "clearFloodControl"]);
     expect(deletedDeferralChats).toEqual([]);
   });
@@ -274,8 +272,6 @@ describe("Anti-Raid 双工能力分派", () => {
   });
 
   test("许可回执没有可转移缓冲；只有 Telegram 回执才问 transfer 清单", () => {
-    // 许可的返回值是一个小对象，问一次 transfer 只会白走一遍 Telegram 那侧的
-    // 判定；而真把它当成可转移缓冲交出去，主线程就再也读不到它了。
     expect(captured.options!.responseTransfer(
       { operation: "verificationAttemptPermit" } as never,
       { granted: true }
@@ -298,8 +294,6 @@ describe("Anti-Raid 初始化与重建重放", () => {
     delivery.accepts = false;
 
     expect(() => initAntiRaid()).toThrow("Anti-Raid Worker");
-    // 留着 true 的话，此后每一条 postAntiRaidDurably 都会以为 Worker 已接管，
-    // 排空也会去等一个永远不会来的回执。
     expect(antiRaidRuntimeState.initialized).toBeFalse();
   });
 
@@ -365,8 +359,7 @@ describe("Anti-Raid 初始化与重建重放", () => {
       return false;
     });
 
-    // 新 Worker 已经不可用；继续投只会把 adopt 丢进一个注定失败的信箱，
-    // 下一次重建会以同一份镜像重来。
+    // 第一条被拒后停止投递，留给下一次重建重放同一份镜像。
     expect(replayed.map((message: AntiRaidWorkerMessage): string => message.type)).toEqual(["agentConfig"]);
   });
 });

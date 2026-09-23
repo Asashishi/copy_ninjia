@@ -437,10 +437,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
   });
 
   test("旧日刷不动时拒绝换 owner，但新一天的抽签滞留待补录而不是被丢掉", async () => {
-    // 主线程的 dailyLuckCache 已经把这条记成「今天抽过了」并发了回执：直接丢掉
-    // 的话，磁盘恢复后当天文件永远缺它，用户当天也再抽不了第二次，而
-    // onDiskIORespawn 的全量重放只覆盖 Worker 重建，覆盖不到「Worker 活着但
-    // 写不进盘」这条路径。
+    // 新一天抽签若被静默丢弃：dailyLuckCache 已记为完成，磁盘却永远缺这条。
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     breakDayFile();
 
@@ -471,9 +468,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
   });
 
   test("重试定时器自己刷成功时就补录，不必等下一条抽签来推", async () => {
-    // 运势是每人每天一次的低频写入：靠「下一条 luckDraw」来推动补录的话，磁盘
-    // 早就恢复了，滞留的条目却可能还要在内存里再躺几个小时，甚至今天再也没有
-    // 下一条。这里直接触发那个重试定时器的回调，验证它自己会把滞留区排空。
+    // 直接触发重试定时器的回调，不依赖下一条抽签消息来推动补录。
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     breakDayFile();
     await handleLuckDrawMessage(luckMsg({ key: "222", label: "凶", fortunePercent: 10.5, day: "2026-07-17" }));

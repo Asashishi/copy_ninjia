@@ -161,12 +161,8 @@ describe("chat_states codec", () => {
 });
 
 /**
- * 群状态解码器剩下的拒绝分支。
- *
- * 与 identityCodecRejections.test.ts 同一条理由：这些是 AGENTS.md「不为用户行为
- * 兜底」在群状态侧的落点。上面的用例覆盖了往返与几条主干判定，这里补齐可选字段、
- * 两张权限表和 lockdown 各字段的逐条拒绝——它们写反一个比较方向不会让任何正例
- * 失败，只会让一整类坏行悄悄通过。
+ * 群状态解码器剩下的拒绝分支：补齐可选字段、两张权限表和 lockdown 各字段的逐条拒绝。
+ * 对应 AGENTS.md「不为用户行为兜底」在群状态侧的落点（另见 identityCodecRejections.test.ts）。
  */
 describe("chat_states codec 的拒绝分支", () => {
   const SOURCE: string = "chat_states[-1001].status";

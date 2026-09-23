@@ -7,10 +7,7 @@ import type { ChatQaEntryData } from "../../types/qa";
 /**
  * 校验问题文本可以作为主键落库。
  *
- * 两条都不是「顺手加的防御」：空串与带首尾空白的串会让直答路径的 Map 查表与
- * 用户看到的文本对不上（用户永远打不出一个前后带空格的问题），而超长键会把
- * 每条群消息都要付的哈希成本抬上去。写入侧先 trim 再进来，因此这里出现空白
- * 边界就说明调用方漏了那一步，属于编程错误而非用户输入问题。
+ * 调用方须在调用前完成 trim；本函数拒绝空串、首尾带空白或超过上限长度的问题文本。
  */
 export function assertChatQaQuestion(q: string, source: string): void {
   if (q.length === 0 || q.trim().length !== q.length) {
@@ -40,8 +37,8 @@ export function decodeChatQaData(text: string, source: string): ChatQaEntryData 
 /**
  * 把一条答案编码为落库 JSON 文本。
  *
- * 与解码共用同一组上限，所以「写得进去的一定读得回来」；调用方拿到的是可直接
- * 交给 Disk I/O Worker 的最终文本，Worker 不再重新组装结构。
+ * 与 decodeChatQaData 共用同一组长度上限，编码结果可被同一解码器还原。
+ * 返回值可直接交给 Disk I/O Worker 写入，Worker 不再重新组装结构。
  */
 export function encodeChatQaData(answer: string, source: string): string {
   if (answer.length === 0) {

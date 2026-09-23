@@ -1,10 +1,10 @@
 import { wedChats, wedRuntime } from "../../cache/main/wed";
 import { WED_MAX_CONCURRENT, WED_MAX_PENDING } from "../../consts/wed";
 import { trackBackgroundTask } from "../../infra/backgroundTasks";
-import { combineWithUpdateAbortSignal, runWithUpdateAbortSignal } from "../../infra/updateContext";
+import { combineWithUpdateAbortSignal, currentUpdateTopic, runWithUpdateAbortSignal } from "../../infra/updateContext";
 import { assertTimeoutMs, drainTrackedTasks } from "../../libs/inflight";
 import { createPrioritizedBoundedTaskRunner } from "../../libs/prioritizedBoundedTaskRunner";
-import type { FlushResult } from "../../types/lifecycle";
+import type { FlushResult, UpdateTopic } from "../../types/lifecycle";
 import type { WedChat, WedRuntime } from "../../types/wed";
 import { resetWedMemberStates } from "../../cache/main/wedMembers";
 import { flushWedMembers } from "./persistence";
@@ -47,8 +47,9 @@ export function submitWedTask(chat: WedChat, task: () => Promise<unknown>): bool
   const taskSignal: AbortSignal = combineWithUpdateAbortSignal(runtime.controller.signal)!;
   if (taskSignal.aborted) return false;
   const queuedSignal: AbortSignal = AbortSignal.any([taskSignal, chat.controller.signal]);
+  const topic: UpdateTopic | undefined = currentUpdateTopic();
   const completion: Promise<unknown> = runtime.runner.run("interactive", (): Promise<unknown> =>
-    runWithUpdateAbortSignal(taskSignal, task), queuedSignal).catch((error: unknown): void => {
+    runWithUpdateAbortSignal(taskSignal, task, topic), queuedSignal).catch((error: unknown): void => {
     if (!taskSignal.aborted) throw error;
   });
   trackBackgroundTask(runtime.tasks, completion, "Unexpected error while processing wed interaction:");

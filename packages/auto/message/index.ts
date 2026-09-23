@@ -61,9 +61,9 @@ function handleAcceptedIncomingMessage(
    * 活跃度入窗与安静期判定必须使用同一时刻，不能因两次 Date.now() 横跨毫秒边界。
    * 两个热函数都显式接收 now，避免在被调方默认参数中重复读取墙钟。
    *
-   * 取值经 updateNow 而不是直接读墙钟：开了广告检测或防刷屏的群里，入群守卫
-   * 入口已经在本条 update 上问过同一个问题，两处共用那一次读取；没问过时本处
-   * 就是首个提问者，读一次墙钟并留给后续调用点（见 infra/updateContext.ts）。
+   * 取值经 updateNow 而不是直接读墙钟：已确证机器人是管理员的群消息在入群
+   * 守卫入口已先取本条 update 的时刻，广告检测与防刷屏开关关闭时也一样；
+   * 其余消息在本处首次取值并留给后续调用点（见 infra/updateContext.ts）。
    */
   const now: number = updateNow();
 

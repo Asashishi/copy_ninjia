@@ -742,30 +742,6 @@ describe("群级状态门面", () => {
   });
 });
 
-describe("全局复读状态门面", () => {
-  afterEach((): void => {
-    globalCopyState.copiedUser = null;
-    globalCopyState.copyMode = undefined;
-    globalCopyState.copyChatId = undefined;
-    globalCopyState.lastCopyTime = undefined;
-  });
-
-  test("目标只在所属群可见，模式与同一份权威状态保持一致", (): void => {
-    expect(activeCopyTargetIdIn(-1001)).toBeUndefined();
-    expect(activeCopyModeIn(-1001)).toBeUndefined();
-
-    globalCopyState.copiedUser = { id: 42, first_name: "Target" };
-    globalCopyState.copyMode = "reverse";
-    globalCopyState.copyChatId = -1001;
-
-    expect(activeCopyTargetIdIn(-1002)).toBeUndefined();
-    expect(activeCopyModeIn(-1002)).toBeUndefined();
-    expect(activeCopyTargetIdIn(-1001)).toBe(42);
-    expect(activeCopyModeIn(-1001)).toBe("reverse");
-    expect(getGlobalCopyState()).toBe(globalCopyState);
-  });
-});
-
 /**
  * `state.global.assets` 的五个取值函数：缺省即回退到内置常量，设过就以 state 为准。
  * 缺省这一侧必须守住——它是「没配过的部署行为与从前逐字相同」的唯一保证。

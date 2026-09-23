@@ -271,10 +271,6 @@ describe("diskIO/joinLogFiles", () => {
   });
 
   test("领先本机今天的事件抛错交给统一拒收出口，不静默丢弃", async () => {
-    // 与上一条「过旧」用例正好相反的一侧：过旧是有意静默丢弃（滚动 24 小时窗口
-    // 本来就用不上，报失败只会让 update 永远得不到确认）；领先则说明事件时间与
-    // 宿主时钟对不上，静默 return 会让 recordJoinLog 把它当成已经落盘，这条入群
-    // 从此在 /batch_kick 里查无此人、全链路零日志。
     const aheadAt: number = todayAt() + 2 * 24 * 60 * 60_000;
 
     await expect(handleJoinLogMessage(joinMessage(-1001, 42, aheadAt)))
@@ -319,15 +315,11 @@ describe("diskIO/joinLogFiles", () => {
   });
 
   test("载入超过评估门槛的历史文件时当场压实，只留每人最后一次入群", async () => {
-    // 追加型文件只增不减：一个群反复有人重新入群，文件会一直涨，而真正有效的
-    // 只是每人最后那一条。没有这次压实，`/batch_kick` 的按需读取要把整份几 MB
-    // 的历史重新解析一遍，且磁盘占用永不回落。
     const written: number =
       await writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_CHECK_BYTES + 64 * 1_024);
     expect(written).toBeGreaterThanOrEqual(JOIN_LOG_COMPACT_CHECK_BYTES);
 
     // 压实挂在「第一次真正打开这份文件」上，不在启动扫描里；按需读取就是那一刻。
-    // 顺带确认压实只丢历史物理条目，语义一条不少：40 个人各留最后一次入群。
     expect(await readJoinLog({
       type: "readJoinLog",
       requestId: 1,
@@ -350,7 +342,6 @@ describe("diskIO/joinLogFiles", () => {
   });
 
   test("冗余条数够了但收不回空间时不重写，只重新开始累计", async () => {
-    // 本轮多数是不同用户时整表重写换不回字节，白付一次整文件序列化。
     const now: number = todayAt();
     await handleJoinLogMessage(joinMessage(-1001, 1, now));
     expect(await flushJoinLogBuffer()).toBeTrue();
@@ -608,9 +599,7 @@ describe("diskIO/joinLogFiles", () => {
     const day: string = getTokyoDateKey();
     await handleJoinLogMessage({ type: "joinLog", chatId: -31_000, userId: 7, joinedAt: 1_000, day });
 
-    // 缓冲里的条目照常写盘成功，但这一轮有事实压根没进来（缓冲满、跨日刷盘
-    // 失败、清理抛错都会走到这里），领域出口必须回报失败：主线程的 durability
-    // barrier 据此拒绝确认那条 update，Telegram 重投。
+    // 拒收标记语义见 docs/cn/04-invariants.md 的 joinLog 领域说明。
     noteJoinLogRejected();
     expect(await flushJoinLogDomain()).toBeFalse();
     expect(joinLogBuffer.entries).toHaveLength(0);
@@ -674,8 +663,7 @@ describe("diskIO/joinLogFiles", () => {
         joinedAt: newestJoinedAt,
       });
 
-      // 逐条增量记账必须与整表重算逐字节一致，否则 rewriteJoinLogFile 会抛
-      // size mismatch，把整个群的当日日志卡在退避里。
+      // 逐条增量记账必须与整表重算逐字节一致。
       expect(cache.snapshotBytes).toBe(measureJoinLogSnapshotBytes(cache.latestByUser));
       expect(cache.state).toEqual({ size: cache.snapshotBytes, empty: false });
       expect(cache.appendedBytesSinceCompaction).toBe(0);
@@ -687,7 +675,7 @@ describe("diskIO/joinLogFiles", () => {
       expect(written).not.toContain(`"${base + 1}:1"`);
       expect(written).toContain(`"${newestJoinedAt}:${newUserId}"`);
 
-      // 成功落盘后退避条目必须清掉，否则同一天的后续写入会被自己的旧退避挡住。
+      // 成功落盘后退避条目必须清掉。
       expect(joinLogRetryAt.has(key)).toBeFalse();
 
       expect(cache.capacityWarningEmitted).toBeTrue();

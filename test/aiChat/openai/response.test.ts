@@ -55,11 +55,8 @@ describe("异常产出诊断", () => {
   });
 
   test("error 缺 message 或干脆是字符串时照样出诊断，不抛 TypeError", () => {
-    // 本函数的调用点在 requestOpenAiResult 的 try/catch 之外，抛出去的异常会
-    // 一路穿过 session.request() 与 generateReply，被回复循环最外层的 .catch
-    // 吞掉：群里整轮静默，日志里只剩一个泛化的 TypeError——恰好把这个诊断
-    // 存在的意义丢干净。SDK 把 error 标成 { code, message } 必填，但兼容网关
-    // 经常只给 code、或者把 error 整个写成一个字符串。
+    // SDK 把 error 标成 { code, message } 必填，但兼容网关经常只给 code、
+    // 或者把 error 整个写成一个字符串。
     const missingMessage: string | null = abnormalResponseDiagnostic(response({
       error: { code: "rate_limit" },
     }));
@@ -70,8 +67,8 @@ describe("异常产出诊断", () => {
   });
 
   test("error 字段是结构化对象时保留内容，序列化不出来才退成类型标记，且长度有界", () => {
-    // 网关会往 message 里塞结构化的上游错误，一律 String() 成 [object Object]
-    // 等于把这次诊断作废；反过来，形状不受本进程控制，长度也必须封顶。
+    // message 可能是网关透传的结构化上游错误体；序列化失败（如循环引用）
+    // 时退化为 [unserializable object] 标记，长度另外封顶。
     expect(abnormalResponseDiagnostic(response({ error: { message: { upstream: "quota exhausted" } } })))
       .toContain("quota exhausted");
 
@@ -87,17 +84,15 @@ describe("异常产出诊断", () => {
   });
 
   test("网关省略 output 时按「没有 output item」处理，不抛 TypeError", () => {
-    // SDK 把 output 标成必填数组；省略它的代理/自建网关会让三个遍历点
-    // （诊断、函数调用抽取、检索计数）在 .length 或 for...of 处当场抛错。
+    // SDK 把 output 标成必填数组，省略它的兼容网关会让它是 undefined；
+    // 同时覆盖诊断、函数调用抽取、检索计数三处遍历点。
     expect(abnormalResponseDiagnostic(response({ output: undefined }))).toBe("no output items");
     expect(extractFunctionCalls(response({ output: undefined }))).toBe(EMPTY_FUNCTION_CALLS);
     expect(countWebSearchCalls(response({ output: undefined }))).toBe(0);
   });
 
   test("status 缺失按正常处理，与 normalizedFinishReason 同一口径", () => {
-    // SDK 里 `status?: ResponseStatus` 本就是可选的，OpenAI 兼容网关普遍省略它。
-    // 判成异常的话，回复、记忆压缩、贴纸包摘要、媒体描述的每一个请求都会被
-    // 丢弃，而日志里只有一句 status=?——因为收尾原因那边认为它正常结束。
+    // SDK 里 status?: ResponseStatus 本就是可选的，OpenAI 兼容网关普遍省略它。
     const withoutStatus: OpenAI.Responses.Response = response({
       status: undefined,
       output: [{ type: "message", content: [] }],
@@ -109,9 +104,8 @@ describe("异常产出诊断", () => {
 
 describe("正文读取", () => {
   test("网关省略 output_text 时读成空串，不抛也不字符串化成 \"undefined\"", () => {
-    // SDK 只在响应体带 object:"response" 时才合成 output_text；无保护解引用
-    // 会在 `.length` 处抛 TypeError 冲出实现包，或被清洗函数强转成字面量
-    // "undefined" 混进摘要与媒体描述。
+    // SDK 只在响应体带 object:"response" 时才合成 output_text，省略该字段的
+    // 网关会让它是 undefined。
     expect(responseOutputText(response({ output_text: undefined }))).toBe("");
     expect(responseOutputText(response({ output_text: "正文" }))).toBe("正文");
   });
@@ -159,8 +153,6 @@ describe("产出抽取", () => {
   });
 
   test("零调用交回共用空数组，不在热路径上每轮新建一个", () => {
-    // 每个回复的最后一轮按构造必然零 function call（replyModel.ts 的循环退出
-    // 条件），纯文本中间轮同理——这条路才是有流量的那条。
     expect(extractFunctionCalls(response({ output: [] }))).toBe(EMPTY_FUNCTION_CALLS);
     expect(extractFunctionCalls(response({
       output: [{ type: "message" }, { type: "function_call", call_id: "", name: "dropped", arguments: "{}" }],

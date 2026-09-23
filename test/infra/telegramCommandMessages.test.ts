@@ -14,6 +14,7 @@ mock.module("../../packages/infra/telegram/actions", () => ({
 const { sendCommandMessage } = await import(
   "../../packages/infra/telegram/commandMessages"
 );
+const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
 
 beforeEach(() => {
   sendMessage.mockClear();
@@ -50,6 +51,20 @@ describe("sendCommandMessage", () => {
       delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       api,
     });
+  });
+
+  test("提示落在触发消息所在的论坛话题；发往别的群不带，显式传入的话题优先", async () => {
+    const threadOf = (index: number): number | undefined =>
+      (sendMessage.mock.calls[index]![0] as { messageThreadId?: number }).messageThreadId;
+    await runWithUpdateAbortSignal(new AbortController().signal, async (): Promise<void> => {
+      await sendCommandMessage({ chatId: -1001, text: "同群提示", replyToMessageId: 10 });
+      await sendCommandMessage({ chatId: -1002, text: "别的群" });
+      await sendCommandMessage({ chatId: -1001, text: "显式话题", messageThreadId: 9 });
+      await sendCommandMessage({ chatId: -1001, text: "长期保留", preserveInGroup: true });
+    }, { chatId: -1001, threadId: 5 });
+    await sendCommandMessage({ chatId: -1001, text: "作用域之外" });
+
+    expect([0, 1, 2, 3, 4].map(threadOf)).toEqual([5, undefined, 9, 5, undefined]);
   });
 
   test("私聊提示保持原有留存行为", async () => {

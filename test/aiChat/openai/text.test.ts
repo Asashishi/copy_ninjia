@@ -1,9 +1,6 @@
 /**
- * OpenAI 的纯文本生成与视觉描述请求映射。
- *
- * 两条路径都必须显式带 instructions：不给系统提示词时，部分代理网关会把
- * 自己的默认提示词灌进去，产出的文风与长度全不受本项目控制——这份测试守的
- * 就是那一条。
+ * OpenAI 的纯文本生成、视觉描述与语音转写请求映射：验证 instructions/input
+ * 等字段的请求体构造，以及语音转写的取消与错误分类路径。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -41,8 +38,8 @@ const {
 
 type ResponseBody = OpenAI.Responses.ResponseCreateParamsNonStreaming;
 
-/** 取本次调用交给底层的请求体构造器并就地求值：请求体改在 client.ts 的 try 内
- *  构造，好让 config/agent.json 的解析错误降级成一次普通失败而不是抛出。 */
+/** 从被 mock 的 requestOpenAiTextResult 首个调用参数中取出 buildBody 闭包
+ *  并求值，得到实际发送的请求体。 */
 function capturedBody(): ResponseBody {
   return (requestOpenAiTextResult.mock.calls[0]![0] as { buildBody: () => ResponseBody }).buildBody();
 }
@@ -286,6 +283,8 @@ describe("语音转写", () => {
       errorLabel: "AI voice transcription API",
       normalize: (text: string): string => text,
     })).resolves.toEqual({ ok: false, retryable: false });
+    // 真实 SDK 的 APIError.message 已以状态码开头，日志里状态码只出现一次。
+    expect(loggerError).toHaveBeenCalledWith("AI voice transcription API error: 422 invalid audio payload");
   });
 
   test("429、5xx 与网络错误归为瞬时端点故障", async () => {

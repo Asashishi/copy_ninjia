@@ -102,11 +102,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  /**
-   * 业务批次分派此前一行没跑过（既有用例全部逐条 route 单条消息）。这里把
-   * 「批内逐条派发 + 回执」与三条入参校验一起钉住：批号与批长都是协议不变量，
-   * 越界必须当场抛，不能吞掉半个批次再回一个 accepted。
-   */
+  /** 批内逐条派发 + 回执与批号/批长校验一起验证：批号与批长是协议不变量，越界必须当场抛，不能吞掉半个批次再回一个 accepted。 */
   test("业务批次逐条派发并回一条 accepted", async () => {
     await route({
       type: "operationBatch",
@@ -212,8 +208,7 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      // 校验失败必须留在当前消息边界内；异常离开 onmessage 会让 Bun 终止落盘线程，
-      // 连带丢失各领域的进程内缓冲并触发重启节流。
+      // 校验失败必须留在当前消息边界内，见 docs/cn/04-invariants.md 的路由捕获约束。
       await expect(route({
         type: "identityPolicyWrite",
         table: "whitelist",
@@ -338,8 +333,7 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      // 逸出 onmessage 的异常会被 Bun 直接终止整条落盘线程：在途 flush 全按失败
-      // 结算、各领域缓冲随线程一起没了，反复触发还会把整个进程停掉。
+      // 路由必须捕获异常不逸出 onmessage，见 docs/cn/04-invariants.md。
       await expect(route({
         type: "joinLog",
         chatId: -1,
@@ -359,9 +353,8 @@ describe("Disk I/O Worker protocol router", () => {
   });
 
   test("恢复缓冲重放期间的入群写失败升级为停机回执，不只是记拒收", async () => {
-    // 重放的这条在崩溃窗口里就已经被 recordJoinLog 放行、update 也确认过了，
-    // 后面没有任何 flush 会再问它写没写进去。只记拒收的话，标记会挂到某个无关的
-    // 后续入群事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条毫无痕迹。
+    // 重放窗口内写失败必须升级为停机而非普通拒收标记，见 docs/cn/04-invariants.md
+    // 的 RecoveryReplayRequest 说明。
     handleJoinLogMessage.mockImplementationOnce((): void => {
       throw new Error("Join log buffer reached its hard limit of 4096 entries.");
     });
@@ -688,9 +681,7 @@ describe("Disk I/O Worker protocol router", () => {
     ]) {
       expect(fn).toHaveBeenCalledTimes(1);
     }
-    // 按领域而不是一个合取布尔：等自己那条记录落盘的调用方（/block）不该被
-    // 无关领域的失败误导——那会把运维引向一个其实没坏的文件，而真正坏掉的
-    // 领域按设计只有 console.error，永远进不了 logs/。
+    // 回执按领域列出失败清单，不是单个合取布尔。
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "flushFailed",
       flushedId: 11,

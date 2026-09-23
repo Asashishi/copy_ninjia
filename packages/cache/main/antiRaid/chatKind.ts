@@ -8,7 +8,8 @@
  * 同时兼作**投递去重**：群类型近乎恒定（只有普通群升级成超级群这一次单向跃迁），
  * 不去重的话每条群消息都会向 Worker 多投一条同值消息。
  *
- * 条目数与见过的群数同阶；`deactivateChat` / 群 teardown 时删除，进程重启后
- * 为空，由随后的第一条 update 重新填上。
+ * 只记录已 /init enable 的群，上界 STATE_MANAGED_CHAT_LIMIT（见 consts/storage.ts）。
+ * `deactivateChat` / 群 teardown 时删除，进程重启后为空，由已接管群的随后一次
+ * update 或首次启用命令重新填上。
  */
 export const chatIsSupergroupById: Map<number, boolean> = new Map();

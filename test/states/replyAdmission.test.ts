@@ -4,7 +4,7 @@ import {
   REPLY_ROUND_MAX_CONCURRENT,
   REPLY_TRIGGER_QUEUE_MAX,
 } from "../../packages/consts/aiChat/rateLimit";
-import { admitRound, admitTrigger as decideTrigger } from "../../packages/states/replyAdmission";
+import { admitTrigger as decideTrigger, isReplyRoundRateLimited } from "../../packages/states/replyAdmission";
 import type { AdmitDecision, AdmitTriggerInput, TriggerKind } from "../../packages/types/states/replyAdmission";
 
 const ALL_KINDS: TriggerKind[] = ["direct", "random", "mediaDirect", "mediaRandom"];
@@ -115,21 +115,21 @@ test.each(ALL_KINDS)("存活轮次容量耗尽时 %s 不继续调用模型", (ki
   }
 });
 
-describe("admitRound：限频闸", () => {
-  test("windowCount 低于上限 → run", () => {
-    expect(admitRound({ windowCount: RATE_LIMIT_LONG_MAX_TRIGGERS - 1 })).toBe("run");
+describe("isReplyRoundRateLimited：限频闸", () => {
+  test("windowCount 低于上限 → 放行", () => {
+    expect(isReplyRoundRateLimited(RATE_LIMIT_LONG_MAX_TRIGGERS - 1)).toBe(false);
   });
 
-  test("windowCount 为 0 → run", () => {
-    expect(admitRound({ windowCount: 0 })).toBe("run");
+  test("windowCount 为 0 → 放行", () => {
+    expect(isReplyRoundRateLimited(0)).toBe(false);
   });
 
-  test("windowCount 达到上限（边界值）→ rateLimited", () => {
-    expect(admitRound({ windowCount: RATE_LIMIT_LONG_MAX_TRIGGERS })).toBe("rateLimited");
+  test("windowCount 达到上限（边界值）→ 限频", () => {
+    expect(isReplyRoundRateLimited(RATE_LIMIT_LONG_MAX_TRIGGERS)).toBe(true);
   });
 
-  test("windowCount 超过上限 → rateLimited", () => {
-    expect(admitRound({ windowCount: RATE_LIMIT_LONG_MAX_TRIGGERS + 10 })).toBe("rateLimited");
+  test("windowCount 超过上限 → 限频", () => {
+    expect(isReplyRoundRateLimited(RATE_LIMIT_LONG_MAX_TRIGGERS + 10)).toBe(true);
   });
 });
 
@@ -137,11 +137,11 @@ describe("补跑不占限频名额（组合场景，验证两道闸的分工）"
   test("并发闸放行（补跑腾出空位）后，仍需过一次独立的限频闸判定", () => {
     // 补跑（drainReplyQueue）不会再调用 admitTrigger——它直接调
     // startReplyRound（对应真实解释器里 admitTrigger 被完全跳过），本用例
-    // 验证的是 admitRound 本身与 activeRounds 无关：即便并发位已经腾出，
+    // 验证的是 isReplyRoundRateLimited 本身与 activeRounds 无关：即便并发位已经腾出，
     // 限频闸只看滑动窗口计数，不因为“是补跑”而放宽或收紧。
     const admitted = admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT - 1, queueSize: 0, kind: "direct" });
     expect(admitted).toBe("startRound");
-    expect(admitRound({ windowCount: RATE_LIMIT_LONG_MAX_TRIGGERS })).toBe("rateLimited");
-    expect(admitRound({ windowCount: RATE_LIMIT_LONG_MAX_TRIGGERS - 1 })).toBe("run");
+    expect(isReplyRoundRateLimited(RATE_LIMIT_LONG_MAX_TRIGGERS)).toBe(true);
+    expect(isReplyRoundRateLimited(RATE_LIMIT_LONG_MAX_TRIGGERS - 1)).toBe(false);
   });
 });

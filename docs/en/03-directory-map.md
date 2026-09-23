@@ -82,6 +82,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/workers/`**
   - **Responsibility**: in-thread implementations for all three Workers.
   - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
+    `businessWorkerPort.ts` (the thread port shared by both business Workers: Telegram proxy, duplex outlet, and inbound routing),
     `aiChat/`, `antiRaid/verificationEffects/`, `diskIO/storageDatabase.ts` with `diskIO/storageDatabase/`, and `diskIO/verification{Codec,Recovery,Writes}.ts`.
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
@@ -98,11 +99,14 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.
-  - **Representative files**: `telegram/` (including `telegram/avatar/`), `diskIO.ts` with `diskIO/` (`diagnosticChannel.ts`, `fatal.ts`, `host.ts`, `observers.ts`, `recovery.ts`, `requests.ts`, `storageAdmission.ts`, `transport.ts`), `identityStorage.ts` with `identityStorage/` (`read.ts`, `shared.ts`, `sweep.ts`, `write.ts`), `logger.ts` with `logger/` (`forwarding.ts`, `redaction.ts`, `serialization.ts`), `supervisedWorker.ts`, `workerSupervisor.ts`, `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), and `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures).
+  - **Representative files**: `telegram/` (including `telegram/avatar/` and `telegram/actions/`), `diskIO.ts` with `diskIO/` (`businessWrite.ts`, `diagnosticChannel.ts`, `fatal.ts`, `host.ts`, `observers.ts`, `recovery.ts`, `requests.ts`, `storageAdmission.ts`, `transport.ts`), `identityStorage.ts` with `identityStorage/` (`read.ts`, `shared.ts`, `sweep.ts`, `write.ts`), `logger.ts` with `logger/` (`forwarding.ts`, `redaction.ts`, `serialization.ts`), `supervisedWorker.ts`, `workerSupervisor.ts`, `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), and `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures).
+- **`packages/infra/identityPolicy/`**
+  - **Responsibility**: the main-thread read boundary for per-item whitelist permissions, temporary ad-bypass accrual, and blocklist/whitelist mutual-exclusion coordination.
+  - **Representative files**: `whitelist.ts`, `temporaryAdBypass.ts`, and `coordination.ts`.
 - **`packages/infra/blocklist/`**
   - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
     identity checks, durable outbox, per-chat sweep logic, and deleted-account detection.
-  - **Representative files**: `membership.ts`, `outbox.ts`, `participantInvalid.ts`, `sweep.ts`, and `sweepScheduler.ts`.
+  - **Representative files**: `membership.ts`, `outbox.ts`, `participantInvalid.ts`, `sweep.ts`, `sweepEligibility.ts`, `sweepReplay.ts`, `sweepRetryState.ts`, and `sweepScheduler.ts`.
 - **`packages/infra/storage/`**
   - **Responsibility**: data-root preflight, instance lock, the business-state facade, the injectable `state.json` persistence boundary, and startup cleanup.
   - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`, `statePersistence.ts`, and `cleanup.ts`.
@@ -114,7 +118,7 @@ This page answers “where does this code live, and where should new code go?”
     `workers/diskIO/`, `perThread/`.
 - **`packages/consts/`**
   - **Responsibility**: literal constants, tunable parameters, and user-facing text tables, split by domain.
-  - **Representative files**: `atmosphere/{teasing,plain}/`, `commands.ts`, `whitelist.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
+  - **Representative files**: `atmosphere/{teasing,plain}/`, `commands.ts`, `whitelist.ts`, `aiChat/rateLimit.ts`, `antiRaid/`, `diskIO/`.
 - **`packages/types/`**
   - **Responsibility**: cross-module protocols, domain types, and state-machine contracts under
     `types/states/`.
@@ -154,7 +158,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
 
 - **`main/`**
   - **Owner**: main thread.
-  - **Contents**: command and automatic-pipeline state, the `state.json` global mirror and per-group sessions in `translateState.ts` managed through the `stateStore.ts` facade plus the `chat_states` LRU in `chatState.ts` (capacity 25), the
+  - **Contents**: command and automatic-pipeline state, the `state.json` global mirror and per-group sessions in `translateState.ts` managed through the `stateStore.ts` facade plus the `chat_states` hot-read copy in `chatState.ts` (a `Map`, at most 25 groups), the
     Disk I/O host, and the **main-thread proxies and mirrors of the Workers**
     (`main/aiChat.ts`, `main/antiRaid/`).
 - **`workers/aiChat/`**

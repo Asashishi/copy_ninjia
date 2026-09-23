@@ -77,8 +77,7 @@ function scheduleDiskDiagnosticRetry(worker: Worker, retryAfterMs: number): void
 /** 把下一批诊断交给指定代际；同一时刻最多存在一个尚未确认的批次。 */
 function pumpDiskIODiagnostics(worker: Worker): boolean {
   if (diskIORuntime.worker !== worker || !diskIORuntime.writable) return false;
-  // Worker 已明确要求按文件重开窗口退避时，新日志只能继续进本地 FIFO，不能
-  // 借每次 enqueue 绕过 timer 反复重读损坏/只读的整份日志文件。
+  // 已设置重试 timer 时，新日志只入本地 FIFO，不绕过 timer 重新投递。
   if (diskIORuntime.diagnosticRetryTimer !== null) return true;
   const batch: AcknowledgedBatch<DiskDiagnosticMessage> | null =
     diskIORuntime.diagnosticQueue.nextDelivery();
@@ -108,8 +107,8 @@ export function enqueueDiskIODiagnostic(message: DiskDiagnosticMessage): boolean
   }
   const worker: Worker | null = diskIORuntime.worker;
   if (worker !== null && diskIORuntime.writable) pumpDiskIODiagnostics(worker);
-  // true 表示已经由本边界接管：消息要么在 FIFO，要么已进入有界丢弃记账。
-  // Worker 日志转发据此 ACK 原批，避免把积压转移回业务 isolate。
+  // true 表示消息已被此边界接管：或在 FIFO 中，或已计入有界丢弃统计。
+  // Worker 日志转发据此确认原批。
   return true;
 }
 

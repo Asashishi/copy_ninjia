@@ -35,12 +35,10 @@ async function hasInactiveCurrentFormatOwner(path: string): Promise<boolean> {
   const content: string = await Bun.file(path).text();
   const match: RegExpExecArray | null = PROCESS_IDENTITY_PATTERN.exec(content);
   if (!match) {
-    // 0 字节孤儿：candidate 是先 `open(..., "wx")` 建空文件、再写身份行的（见
-    // instanceLock.ts 的 acquirePidFileLock），这中间被 SIGKILL/OOM/掉电打断就
-    // 留下这个形态。内容里什么都没有，但足以证明属主已死的 PID 就明明白白写在
-    // 文件名上——只按内容判的话这种孤儿一个都回收不掉，每次启动还照着报一行
-    // 「属主还活着或格式不对」，而两半都不成立。
-    // 非空却认不出的内容不走这条路：那是「不认识的格式」，仍按人工修复处理。
+    // 0 字节孤儿：candidate 先 `open(..., "wx")` 建空文件、再写身份行（见
+    // instanceLock.ts 的 acquirePidFileLock），中途被 SIGKILL/OOM/掉电打断会留下
+    // 这个形态。内容为空，属主 PID 写在文件名上，因此按文件名判定。非空却认不出
+    // 的内容不走这条路，仍按人工修复处理。
     if (content.trim().length > 0) return false;
     return await hasDeadCandidateFilenameOwner(path);
   }

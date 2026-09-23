@@ -177,7 +177,7 @@ test("删除 flush 失败后由重建重放，迟到 durable 回执释放名额"
   expect(replayWedMembers({ post: (message): boolean => { replayed.push(message); return true; } } as DiskIORecoveryTransport)).toBe(true);
   expect(replayed).toEqual([pending]);
   expect(replayWedMembers({ post: (): boolean => false, ensureLuckReceiptSecret: async (): Promise<never> => { throw new Error("unused"); } })).toBe(false);
-  for (const listener of diskIORuntime.wedMembersDeletedPersistedListeners) {
+  for (const listener of diskIORuntime.replyListeners.wedMembersDeletedPersisted) {
     listener({ type: "wedMembersDeletedPersisted", chatId: -1001, revision: pending.revision });
   }
   expect(pendingWedMemberDeletes.size).toBe(0);
@@ -196,7 +196,7 @@ test("重开以空奖池接管旧删除，旧回执不能摘除新一轮删除",
   await expect(purgeWedMembers(-1001)).rejects.toThrow("flush failed");
   const current = pendingWedMemberDeletes.get(-1001)!;
   expect(current.revision).toBeGreaterThan(old.revision);
-  for (const listener of diskIORuntime.wedMembersDeletedPersistedListeners) {
+  for (const listener of diskIORuntime.replyListeners.wedMembersDeletedPersisted) {
     listener({ type: "wedMembersDeletedPersisted", chatId: -1001, revision: old.revision });
   }
   expect(pendingWedMemberDeletes.get(-1001)).toBe(current);

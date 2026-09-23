@@ -115,8 +115,8 @@ export async function requestOpenAiResult({
     }
     if (error instanceof OpenAI.APIError) {
       const status: number | undefined = numericErrorStatus(error);
-      // APIError 自带状态码与服务端错误信息，拼一行足够定位。
-      logger.error(`${errorLabel} error: ${status ?? "?"} ${error.message}`);
+      // APIError.message 已以 HTTP 状态码开头并带服务端错误信息，此处原样记一行。
+      logger.error(`${errorLabel} error: ${error.message}`);
       // 归因级联与失败结果映射都与 aiChat/gemini/client.ts 共用
       // ai/utils/mediaSupportError.ts 的同一份实现；undefined 是 endpointFailure
       // 那一档，落到下面的统一兜底。

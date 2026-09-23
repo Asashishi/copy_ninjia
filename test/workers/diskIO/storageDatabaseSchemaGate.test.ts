@@ -24,7 +24,7 @@ interface MigrationSnapshot {
   readonly createdAt: number;
 }
 
-/** 还原 v8 所需的原始 DDL、migration 记录与 schema 版本行。 */
+/** 还原当前已迁移 schema（IDENTITY_DATABASE_SCHEMA_VERSION）所需的原始 DDL、migration 记录与版本行。 */
 interface SchemaSnapshot {
   readonly temporaryAdBypassDdl: string;
   readonly migrations: readonly MigrationSnapshot[];
@@ -154,8 +154,8 @@ describe("共享存储库的启动 schema 闸", () => {
   test("未迁移的 v5 库报 schema 版本，而不是临时广告免检缺表", () => {
     degradeToSchemaV5();
 
-    // 版本判定必须先于任何按版本才存在的表：先读 startup rows 的话，这里拿到的
-    // 是临时广告免检缺表，运维照着那句排查不会想到该跑冷迁移。
+    // 版本判定必须先于任何按版本才存在的表：报错须是 schema-version 不符，
+    // 而不是临时广告免检缺表。
     expect(() => hydrateStorageDatabase()).toThrow(
       `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":11}.`
     );

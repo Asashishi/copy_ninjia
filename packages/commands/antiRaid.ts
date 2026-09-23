@@ -18,7 +18,7 @@ import { runChatToggleCommand } from "./superAdminToggle";
  *
  * 同在 Anti-Raid Worker 里跑的广告检测（/ad_detect）、防刷屏禁言
  * （/flood_control）和永久黑名单**不受影响**：各有各的边界，见
- * types/antiRaid.ts 的 DeactivateJoinGuardMessage。
+ * types/antiRaid/protocol.ts 的 DeactivateJoinGuardMessage。
  *
  * 关闭时把这个群已经开着的验证窗口和仍生效的私密模式一并收掉（后者会恢复
  * 邀请权限——开关都关了，没人再会解开它）。与另外三条尽力而为的清理不同，

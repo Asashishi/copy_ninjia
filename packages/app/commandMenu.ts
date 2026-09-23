@@ -4,6 +4,7 @@ import { BOT_ATMOSPHERE } from "../config/bot";
 import { ATMOSPHERE_TEXTS } from "../consts/atmosphere";
 import { getChatState, getChatStateCache } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
+import { telegramErrorDetails } from "../infra/telegram/errors";
 
 /**
  * 向 Telegram 注册聊天框里的命令菜单。菜单只是提示层，注册失败不应阻断
@@ -11,7 +12,8 @@ import { logger } from "../infra/logger";
  *
  * 所有群聊作用域使用 Bot 配置语气；有自定义人设的群另设普通版作用域。
  * 全群菜单注册成功后清除默认作用域，私聊不注册菜单；私聊命令准入由
- * infra/updateGate.ts 控制。注册失败保留已有默认作用域，各群同步仍继续执行。
+ * infra/updateGate.ts 控制。注册失败保留已有默认作用域，各群同步仍继续执行；
+ * 机器人已不在的群（Telegram 回 403）只记 warn，见 syncChatCommandMenu。
  */
 export async function registerCommandMenu(bot: Bot): Promise<void> {
   try {
@@ -35,6 +37,13 @@ export async function syncChatCommandMenu(
       await api.setMyCommands(ATMOSPHERE_TEXTS.plain.BOT_COMMANDS, { scope: { type: "chat", chat_id: chatId } });
     }
   } catch (error: unknown) {
+    // 403 表示机器人已不在该群：本群菜单作用域既改不了也不再生效，离群清理由
+    // infra/botAdmin.ts 的 my_chat_member 路径完成，这里只记 warn。
+    const details: Readonly<{ errorCode: number; description: string }> | undefined = telegramErrorDetails(error);
+    if (details?.errorCode === 403) {
+      logger.warn(`Skipped the commands menu for chat ${chatId}: the bot is no longer in the chat (${details.description}).`);
+      return;
+    }
     logger.error(`Failed to synchronize the commands menu for chat ${chatId}:`, error);
   }
 }

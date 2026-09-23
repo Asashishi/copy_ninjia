@@ -15,12 +15,12 @@ import {
   DEFERRED_COMMAND_MAX_PENDING,
 } from "../consts/deferredCommands";
 import { trackBackgroundTask } from "../infra/backgroundTasks";
-import { combineWithUpdateAbortSignal, runWithUpdateAbortSignal } from "../infra/updateContext";
+import { combineWithUpdateAbortSignal, currentUpdateTopic, runWithUpdateAbortSignal } from "../infra/updateContext";
 import { assertTimeoutMs, drainTrackedTasks } from "../libs/inflight";
 import { createPrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
 import type { TaskPriority } from "../libs/prioritizedBoundedTaskRunner";
 import type { DeferredCommandRuntime } from "../types/deferredCommands";
-import type { FlushResult } from "../types/lifecycle";
+import type { FlushResult, UpdateTopic } from "../types/lifecycle";
 
 /**
  * 同步接纳一个命令任务；执行器未启动、已停止接纳或该档等待位已满时返回 false，调用方
@@ -37,8 +37,9 @@ export function submitDeferredCommand(
   if (priority === "background" && runtime.runner.backgroundPendingCount >= DEFERRED_COMMAND_MAX_BACKGROUND_PENDING) return false;
   const taskSignal: AbortSignal = combineWithUpdateAbortSignal(runtime.controller.signal)!;
   if (taskSignal.aborted) return false;
+  const topic: UpdateTopic | undefined = currentUpdateTopic();
   const completion: Promise<unknown> = runtime.runner.run(priority, (): Promise<void> =>
-    runWithUpdateAbortSignal(taskSignal, task), taskSignal)
+    runWithUpdateAbortSignal(taskSignal, task, topic), taskSignal)
     .catch((error: unknown): void => {
       if (!taskSignal.aborted) throw error;
     });

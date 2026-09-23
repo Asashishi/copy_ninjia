@@ -3,7 +3,7 @@ import { TimestampDeque } from "../../libs/timestampDeque";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw } from "../../types/luckChallenge";
 
-/** 抽签命令（packages/commands/luckChallenge/）的内存状态。 */
+/** owner: main。抽签命令（packages/commands/luckChallenge/）的内存状态。 */
 
 /** 每日结果缓存：dayKey 记录当前缓存对应的东京时间日期，跟今天不一致就整体清空重开。
  * 只存"已确认"的抽签结果——即用户真的把它选中发了出来（chosen_inline_result

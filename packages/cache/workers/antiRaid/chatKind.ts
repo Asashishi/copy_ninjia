@@ -22,9 +22,17 @@ export const workerChatIsSupergroup: Map<number, boolean> = new Map();
 
 /**
  * 冷启动镜像缺失时按群复用的 getChat 请求；请求结算、镜像到达、停管或 Worker
- * stop 时删除。容量由 VERIFICATION_CHAT_KIND_FETCH_MAX 限制，Worker 重建后为空。
+ * stop 时删除。作废的请求仍留在 workerChatKindActiveFetches 计入并发，
+ * 本表容量不超过 VERIFICATION_CHAT_KIND_FETCH_MAX，Worker 重建后为空。
  */
 export const workerChatKindFetches: Map<
   number,
   Promise<boolean | undefined>
 > = new Map();
+
+/**
+ * 已发出且尚未结算的 getChat 请求，包含镜像到达或停管后从按群复用表中作废的请求。
+ * 请求结算时删除；Worker stop 时清空，重建后从空表开始。容量由
+ * VERIFICATION_CHAT_KIND_FETCH_MAX 限制，作废旧请求不会提前归还并发名额。
+ */
+export const workerChatKindActiveFetches: Set<Promise<boolean | undefined>> = new Set();

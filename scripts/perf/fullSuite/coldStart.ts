@@ -34,8 +34,7 @@ function elapsedMsSince(startedAtNs: number): number {
 /**
  * 跑一次冷启动并逐段计时。
  *
- * 各段之间不插 GC、不清缓存：生产启动同样是一段接一段跑下来的，人为在中间
- * 制造干净现场量到的是一条谁都走不到的路径。
+ * 各段之间不插入 GC、不清空缓存，与生产启动连续执行的方式一致。
  */
 async function runColdStartChild(): Promise<ColdStartRound> {
   const io: ProcessIoSnapshot = readProcessIo();

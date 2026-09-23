@@ -3,10 +3,8 @@ import { cleanReply, isEmojiOnly } from "../../../../packages/aiChat/ai/utils/re
 
 describe("isEmojiOnly", () => {
   test("含数字/井号/星号的正常回复不是纯表情", () => {
-    // \p{Emoji_Component} 按 Unicode 定义包含 ASCII 0-9、#、*，直接拿它当
-    // 「允许出现的附属码点」会把这些全判成纯表情。后果有两级：send_message
-    // 拒绝这类回复；更糟的是最终正文兜底走同一个执行器，模型的全部输出正好
-    // 是这样一句时工具报错、actionsUsed() 停在 0，机器人对着一条 @ 提及完全沉默。
+    // \p{Emoji_Component} 按 Unicode 定义包含 ASCII 0-9、#、*，这里验证它们
+    // 不会被当成「允许出现的附属码点」而被误判成纯表情。
     for (const text of ["🎉2026", "🎂 30", "👍 #1", "😂233", "2026🎉年", "🎉abc"]) {
       expect(isEmojiOnly(text)).toBeFalse();
     }
@@ -19,8 +17,7 @@ describe("isEmojiOnly", () => {
   });
 
   test("旗帜（区域指示符）也算 emoji 本体", () => {
-    // 区域指示符既不是 Extended_Pictographic、也不在附属码点里，漏列时 send_message
-    // 的拦截失效，机器人会直接把一条纯表情文本发进群里。
+    // 区域指示符既不是 Extended_Pictographic、也不在附属码点里，需要单独判定。
     for (const text of ["🇯🇵", "👍🇯🇵", "🇯🇵🇺🇸", "🇯🇵 👍"]) {
       expect(isEmojiOnly(text)).toBeTrue();
     }

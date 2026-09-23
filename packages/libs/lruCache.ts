@@ -15,16 +15,7 @@ interface LruNode<K, V> {
   older: LruNode<K, V> | null;
 }
 
-/** 只暴露读取与迭代能力的 LRU 视图；调用方不能绕过 owner 改写缓存。 */
-export interface ReadonlyLruCache<K, V> extends Readonly<Iterable<readonly [K, V]>> {
-  readonly size: number;
-  readonly has: (key: K) => boolean;
-  readonly get: (key: K) => V | undefined;
-  readonly peek: (key: K) => V | undefined;
-  readonly keys: () => IterableIterator<K>;
-}
-
-export class LruCache<K, V> implements ReadonlyLruCache<K, V> {
+export class LruCache<K, V> {
   private readonly map: Map<K, LruNode<K, V>> = new Map();
   private oldest: LruNode<K, V> | null = null;
   private newest: LruNode<K, V> | null = null;
@@ -121,9 +112,7 @@ export class LruCache<K, V> implements ReadonlyLruCache<K, V> {
    *
    * **只有「每条至多被移到最新端一次」才保证终止**：每次产出都把当前条目重新
    * 排到最新端时链表被持续重排，迭代不会结束，容量和条目数都保持不变，也不是
-   * 泄漏。`antiRaid/lockdownMirror.ts` 的 recoverAbandonedLockdowns 正落在受支持
-   * 的那一侧——同一群第二次产出时恢复已在册，直接返回而不再读缓存。要在遍历中
-   * 反复重排，先取快照（`[...cache]`）。
+   * 泄漏。要在遍历中反复重排，先取快照（`[...cache]`）。
    *
    * 让位槽只有一格，两种情形下会失效并让本次迭代提前结束：一次推进之间摘掉了
    * 不止一条链（后者覆盖前者），以及在遍历体里又起一次对同一份缓存的嵌套遍历

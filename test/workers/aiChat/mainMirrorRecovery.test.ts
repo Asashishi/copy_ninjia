@@ -1,5 +1,5 @@
 import { pendingStickerCatalogRevisions, stickerCatalogRevisionCounter } from "../../../packages/cache/main/stickers";
-import { diskIOStub } from "../../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../../helpers/diskIOMock";
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegistry";
 import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
@@ -51,12 +51,14 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
 }));
 mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return true; },
-  onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
-    diskDeletePersisted = callback;
-  },
-  onAiMemoryPersisted: (callback: (reply: AiMemoryPersistedReply) => void): void => {
-    diskMemoryPersisted = callback;
-  },
+  onDiskIOReply: diskIOReplyStub({
+    aiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
+      diskDeletePersisted = callback;
+    },
+    aiMemoryPersisted: (callback: (reply: AiMemoryPersistedReply) => void): void => {
+      diskMemoryPersisted = callback;
+    },
+  }),
   // 按 owner 名捕获，不用「最后注册的那个」：同一个 isolate 里还有别的领域
   // （群状态、群问答、身份策略）也会登记重放回调，谁最后被 import 就会顶掉
   // 前一个，测试于是悄悄换成在验别人的重放。

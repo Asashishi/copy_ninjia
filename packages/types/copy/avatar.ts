@@ -14,6 +14,8 @@ export interface AvatarUpdateTask {
   chatId: number;
   target: AvatarUpdateTarget;
   source: AvatarNoticeSource;
+  /** 回执落点：提交时所属 update 触发消息的论坛话题；不在话题里时为 undefined。 */
+  messageThreadId: number | undefined;
 }
 
-export type AvatarUpdateRequest = Omit<AvatarUpdateTask, "generation">;
+export type AvatarUpdateRequest = Omit<AvatarUpdateTask, "generation" | "messageThreadId">;

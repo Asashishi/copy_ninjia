@@ -347,10 +347,8 @@ describe("pending verification daily append JSON", () => {
 
   test("时钟回拨：晚于今天的日文件一律保留，绝不未读删除", async () => {
     resetVerificationPersistenceCache();
-    // 宿主 RTC 快于真实时间（VM 恢复、NTP 同步前启动）时写出的那一份。
-    // latestPriorVerificationDay 用 `candidate >= day` 明确拒绝把它并进本次恢复，
-    // 删掉就等于把这一整天的待验证记录未读丢弃：那批人永不被超时踢出，群里还
-    // 挂着一堆背后没有状态机的验证按钮。
+    // 模拟宿主 RTC 快于真实时间写出的未来日文件；inspectVerificationDirectory
+    // 的 latestPriorDay 只收 candidate < day，不会把它当迁移基线并删除。
     const DAY_FUTURE: string = "2026-07-21";
     await Bun.write(
       join(dir, `${DAY_FUTURE}.json`),

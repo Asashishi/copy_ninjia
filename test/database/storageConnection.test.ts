@@ -3,8 +3,7 @@
  *
  * 这里守两件事：
  * 1. **缺库必须拒绝**。运行时只接受迁移脚本建好的数据库，绝不顺手创建一个空库
- *    ——那会让一次路径写错静默变成「全部黑白名单、群状态、问答凭空消失」，
- *    而进程照常起来（AGENTS.md「不为用户行为兜底」）。
+ *    （AGENTS.md「不为用户行为兜底」）。
  * 2. **写连接额外核对文件与父目录**。SQLite 写连接要维护 WAL/SHM 旁路文件，
  *    因此比只读连接多查一道父目录；两道检查的拒绝分支在
  *    test/libs/fileAccess.test.ts，这里只钉住写连接确实多走这一步。
@@ -47,8 +46,7 @@ describe("共享存储数据库连接", () => {
     expect(() => openStorageDatabase({ path })).toThrow(
       `${path}: database file is missing; initialize current storage first.`
     );
-    // 拒绝之后不得留下任何文件：顺手建一个空库等于把「路径写错了」变成
-    // 「名单被清空了」，而两者在运行期看起来一模一样。
+    // 拒绝之后不得顺手创建空库。
     expect(existsSync(path)).toBeFalse();
   });
 
@@ -56,9 +54,6 @@ describe("共享存储数据库连接", () => {
     const path: string = join(tempRoot(), "storage.sqlite");
     createStorageDatabase(path);
 
-    // requireWritableAccess 走的是 libs/fileAccess.ts 的两道 access 检查；
-    // 拒绝分支（权限不足 / 路径不存在）由 test/libs/fileAccess.test.ts 覆盖，
-    // 这里只钉住「写连接确实多查这一步，且齐备时不误伤」。
     const database: StorageDatabase = openStorageDatabase({
       path,
       requireWritableAccess: true,

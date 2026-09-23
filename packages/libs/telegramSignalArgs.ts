@@ -11,9 +11,8 @@ import { NO_SIGNAL_ARGS } from "../consts/telegram";
  * 把这一位原样转发进 `this.raw.x(payload, signal)`，两种写法产出同一次请求；
  * 省略是本仓库统一的调用形态，测试断言按这个形态写。
  *
- * 放在 libs 而不是 infra/telegram/actions/：它只依赖一个常量，却被 app、commands
- * 与 infra 下十几个模块调用。留在 actions/core.ts 里会让每个调用方连带 import
- * 整个 Telegram 动作层与 `infra/telegram/client`，把一个两行纯函数变成重依赖。
+ * 被 app、commands 与 infra 下十几个模块调用，只依赖一个常量，不 import
+ * Telegram 动作层或 `infra/telegram/client`。
  * @returns 没有信号时是共用空元组，有信号时是新建的单元素元组。
  */
 export function signalArgs(

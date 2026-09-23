@@ -10,7 +10,7 @@ import {
 import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
 import { logger } from "../../infra/logger";
 import type { TimestampDeque } from "../../libs/timestampDeque";
-import { admitRound, admitTrigger } from "../../states/replyAdmission";
+import { admitTrigger, isReplyRoundRateLimited } from "../../states/replyAdmission";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AdmitDecision } from "../../types/states/replyAdmission";
@@ -74,7 +74,7 @@ function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
   const times: TimestampDeque | undefined = longTriggerTimes.get(chatId);
   if (times !== undefined) {
     times.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
-    if (admitRound({ windowCount: times.size }) === "rateLimited") return;
+    if (isReplyRoundRateLimited(times.size)) return;
   }
   drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
 }

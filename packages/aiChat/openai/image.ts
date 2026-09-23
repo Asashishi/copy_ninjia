@@ -295,7 +295,7 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
       // 载荷」，而运维手里那份配置看上去完全正常，图却每张都白计费。
       //
       // OpenAI 原生分支不改用 `response_format: "b64_json"` 去要 base64：SDK 明写该参数
-      // 「isn't supported for the GPT image models, which always return
+      // 「only supported for `dall-e-2` ..., as GPT image models always return
       // base64-encoded images」（node_modules/openai/resources/images.d.ts），
       // 无条件带上只会把本来正常的 gpt-image 请求打成 400。xAI 协议分支按其
       // 官方兼容文档单独携带该字段，不与这里矛盾。

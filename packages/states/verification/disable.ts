@@ -1,3 +1,4 @@
+import { NO_VERIFICATION_EFFECTS } from "../../consts/antiRaid/verification";
 import type {
   VerificationState,
   VerificationTransition,
@@ -32,5 +33,5 @@ export function handleGuardDisabled(
   if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
     return { next: undefined, effects: [remindersOf(state.snapshot)] };
   }
-  return { next: undefined, effects: [] };
+  return { next: undefined, effects: NO_VERIFICATION_EFFECTS };
 }

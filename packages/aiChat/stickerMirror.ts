@@ -4,7 +4,7 @@ import {
   stickerCatalogRevisionCounter,
 } from "../cache/main/stickers";
 import { stickerPacksForRecovery } from "../config/stickers";
-import { onStickerCatalogPersisted, postDiskIO } from "../infra/diskIO";
+import { onDiskIOReply, postDiskIO } from "../infra/diskIO";
 import type { StickerCatalogPersistedReply } from "../types/diskIO/replies";
 
 /** 接管 Worker 快照；即使包已移出配置，也保留到最新编号 durable 后再释放。 */
@@ -35,7 +35,7 @@ export function activeStickerCatalogs(): Map<string, string> {
   return catalogs;
 }
 
-onStickerCatalogPersisted((reply: StickerCatalogPersistedReply): void => {
+onDiskIOReply("stickerCatalogPersisted", (reply: StickerCatalogPersistedReply): void => {
   if (pendingStickerCatalogRevisions.get(reply.pack) !== reply.revision) return;
   pendingStickerCatalogRevisions.delete(reply.pack);
   if (!stickerPacksForRecovery()?.includes(reply.pack)) latestStickerCatalogs.delete(reply.pack);

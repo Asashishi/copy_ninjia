@@ -1,10 +1,7 @@
 /**
  * 读写计量：进程级 `/proc/<pid>/io` 计数器与 mock 数据根的落盘足迹。
  *
- * 用 `/proc` 而不是在代码里数字节，是因为要计的正是**真实发生的** I/O：
- * SQLite 的 WAL、页写回、fsync 与 Bun 自身的文件读取都不经过项目代码，
- * 靠调用点累加只会得到一个偏小且随实现漂移的数。项目本就只支持带可读
- * `/proc` 的 Linux（见 README 的运行前提），这里不做跨平台回退。
+ * 项目只支持带可读 `/proc` 的 Linux（见 README 的运行前提），这里不做跨平台回退。
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";

@@ -34,7 +34,7 @@ function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage): void
   if (shouldArm) postPurgeAiMemoryPersistRevisions.set(message.chatId, null);
   try {
     // 只改已存在字段的值，不新增键：载荷在构造点已按协议顺序写全（含
-    // persistImmediately: false），这里补一个键会把它换成另一个隐藏类。
+    // persistImmediately: false）。
     if (shouldArm || armedRevision === null) message.persistImmediately = true;
     postAiChatOrThrow(message);
     if (shouldArm) pendingAiMemoryTeardowns.delete(message.chatId);
@@ -58,15 +58,13 @@ function isTelegramReplyBackpressured(): boolean {
 /**
  * 记录一条群消息到 Worker 侧滚动上下文；主线程只负责保持 FIFO 投递顺序。
  *
- * 入参就是最终载荷，本函数不再 `{type, ...message}` 补一次型别——那次展开
- * 是纯粹的属性重拷贝，且会把调用点刚定好的形状再洗一遍。载荷由
+ * 入参就是最终载荷，不做 `{type, ...message}` 式的重新展开。载荷由
  * auto/message/recordContext.ts 与 aiChat/ai/utils/selfRecord.ts 一次成型。
  *
- * **调用即交出所有权：** 少了那次拷贝之后，postMemoryRecord 的
- * `persistImmediately` 置位改的就是调用方那个对象本身。生产上每个调用点都用
- * builder 现造一份再传进来，天然不共享；但不要把同一个载荷对象攒起来投第二次
- * ——上一次投递可能已经把它的即时持久化标志置上了，第二条会跟着白走一次
- * durable 落盘。
+ * **调用即交出所有权：** postMemoryRecord 对 `persistImmediately` 的置位
+ * 改的就是调用方传入的那个对象本身。每个调用点须用 builder 现造一份传入，
+ * 不得把同一个载荷对象重复投递——上一次投递可能已经把它的即时持久化标志
+ * 置上，重复投会跟着白走一次 durable 落盘。
  */
 export function recordChatMessage(message: AiRecordMessage): void {
   purgedAiMemoryChats.delete(message.chatId);
@@ -114,8 +112,8 @@ export function generateAndSendReply({
     isRandomTrigger,
     telegramBackpressured: isTelegramReplyBackpressured(),
     imageGenerationRequested,
-    // 同 workers/aiChat/rollingMemory.ts：字段一律发出，不用条件展开。这条消息
-    // 走在每次 AI 触发的路径上，两种形状轮着产生会让 Worker 侧的读取变多态。
+    // 同 workers/aiChat/rollingMemory.ts：字段一律发出，不用条件展开，保持消息
+    // 对象 shape 稳定。
     imageGenerationReference,
     // 同理恒发。本群没登记问答时是 undefined，Worker 侧据此不挂那两个工具；
     // structuredClone 会复制这张 Map，两条线程不共享可变内存。载荷有界：

@@ -170,9 +170,8 @@ function parseLimits(gate: Readonly<Record<string, unknown>>): HotPathGateLimits
     [...LIMIT_KEYS, NOTES_KEY],
     "hotPathProfileGate.calibration.limits"
   );
-  // 逐字段显式取值而不是循环装配后强转：LIMIT_KEYS 只用来锁死键集合闭包，
-  // 字段类型仍由 HotPathGateLimits 在编译期保证，将来加一项会在这里编译报错，
-  // 而不是悄悄产出一个少一个字段的对象。
+  // 逐字段显式取值，不循环装配后强转：字段类型由 HotPathGateLimits 在编译期
+  // 保证，新增一项会在这里编译报错，不会悄悄产出少一个字段的对象。
   return {
     minProfileSamples: requiredPositiveNumber(
       limits, "minProfileSamples", "hotPathProfileGate.calibration.limits.minProfileSamples"

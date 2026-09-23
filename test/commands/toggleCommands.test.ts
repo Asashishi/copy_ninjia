@@ -1,5 +1,9 @@
 const syncAtmosphere = mock((_chatId: number): void => {});
-mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere: syncAtmosphere }));
+const postAntiRaid = mock((_message: unknown): boolean => true);
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({
+  syncAntiRaidAtmosphere: syncAtmosphere,
+  postAntiRaid,
+}));
 const syncMenu = mock(async (): Promise<void> => {});
 mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: syncMenu }));
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -14,7 +18,7 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
 const syncAiChatPersona = mock((_chatId: number): void => {});
 mock.module("../../packages/aiChat/workerBridge", () => ({ syncAiChatPersona }));
-const teardownChatRuntime = mock(async (..._args: unknown[]): Promise<void> => {});
+const teardownChatRuntime = mock(async (_chatId: number, _reason: unknown): Promise<void> => {});
 const invalidateBotAdminStatus = mock((chatId: number): void => {
   delete states.get(chatId)?.botPermissions;
 });
@@ -25,6 +29,7 @@ const clearAdDetection = mock((..._args: unknown[]): void => {});
 const clearFloodControl = mock((..._args: unknown[]): void => {});
 const deactivateJoinGuardChat = mock((..._args: unknown[]): void => {});
 const { chatStateCache: states } = await import("../../packages/cache/main/chatState");
+const { chatIsSupergroupById } = await import("../../packages/cache/main/antiRaid/chatKind");
 const delegatedPermissions: Map<number, Set<string>> = new Map<number, Set<string>>();
 
 mock.module("../../packages/config/bot", () => ({
@@ -37,8 +42,7 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 100 || delegatedPermissions.get(id)?.has(key) === true,
 }));
-// 开关命令测试只验证授权与状态变化；部署文件的失败分支由 configGate 与
-// config readiness 测试覆盖，不能让本机 g-auth.json 是否存在左右这里的结果。
+// 开关命令测试只验证授权与状态变化，配置校验一律视为通过；失败分支见 configGate.test.ts。
 mock.module("../../packages/config/readiness", () => ({
   adDetectConfigReadiness: (): { ok: true } => ({ ok: true }),
   aiChatConfigReadiness: (): { ok: true } => ({ ok: true }),
@@ -49,8 +53,7 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection, clearFloodControl, deactivateJoinGuardChat }));
-// /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」
-// 那道边沿触发黑名单清扫（见 infra/botAdmin.ts）。
+// resolveBotAdminStatus 是 /init enable 之后重新判定管理员身份的调用点（见 infra/botAdmin.ts）。
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
 mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, resolveBotAdminStatus }));
 mock.module("../../packages/infra/chatTeardown", () => ({ teardownChatRuntime }));
@@ -85,11 +88,17 @@ function context(argument: string, userId: number | null = 100, chatId: number =
 
 beforeEach(() => {
   states.clear();
+  chatIsSupergroupById.clear();
+  postAntiRaid.mockClear();
   delegatedPermissions.clear();
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
   syncAiChatPersona.mockReset();
   teardownChatRuntime.mockClear();
+  // 模拟 Anti-Raid teardown 对群类型镜像的清理。
+  teardownChatRuntime.mockImplementation(async (chatId: number): Promise<void> => {
+    chatIsSupergroupById.delete(chatId);
+  });
   invalidateBotAdminStatus.mockClear();
   resolveBotAdminStatus.mockClear();
   resolveBotAdminStatus.mockImplementation(async (_chatId: number): Promise<boolean> => false);
@@ -166,17 +175,12 @@ describe("超级管理员开关命令", () => {
 
     await handleAdDetectCommand(context("disable"));
     expect(states.get(-1001)?.isAdDetectEnabled).toBe(false);
-    // 主线程这道门禁只拦得住之后的消息；不清队列的话，关掉开关之后还会有人
-    // 被排在 Worker 里的旧消息串判成广告拉黑。
+    // disable 同步清掉 Worker 里已排队的待检消息。
     expect(clearAdDetection).toHaveBeenCalledWith(-1001);
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
   test("回归用例：Worker 不可用时 /ad_detect disable 不把异常抛出去——那会焊出一个重启循环", async () => {
-    // post() 只在「Worker 用尽重启预算被放弃」与「正在重生」两种状态下失败，而
-    // 那两种状态下待检队列本来就随旧 isolate 一起没了，没有任何东西需要清。放异常
-    // 逃出 handler 的代价是：开关已经落盘，这条 update 却被判失败，最终 offset 扣住
-    // 不确认、进程非零退出，重启后 Telegram 重投同一条命令——Worker 仍不可用。
     clearAdDetection.mockImplementationOnce((): never => {
       throw new Error("Anti-Raid Worker is unavailable.");
     });
@@ -251,8 +255,7 @@ describe("超级管理员开关命令", () => {
 
     await handleAntiRaidCommand(context("disable"));
 
-    // 开关照样 durable 地关掉：异常逃出 handler 只会扣住 offset 让 Telegram 重投，
-    // 而那时 wasEnabled 已经是 false，管理员反而会收到一句「本来就关着」。
+    // 开关照样 durable 地关掉，即使拆运行态抛错。
     expect(states.get(-1001)?.isAntiRaidEnabled).toBe(false);
     expect(saveStateInBackground).toHaveBeenCalledWith("antiraid toggled");
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -301,7 +304,17 @@ describe("超级管理员开关命令", () => {
     expect(states.has(-1001)).toBe(false);
     expect(persistChatState).not.toHaveBeenCalled();
     expect(resolveBotAdminStatus).not.toHaveBeenCalled();
+    expect(chatIsSupergroupById.has(-1001)).toBeFalse();
+    expect(postAntiRaid).not.toHaveBeenCalled();
     expect(lastReplyText(sendMessage)).toBe(INIT_CHAT_LIMIT_TEXT);
+  });
+
+  test("首次启用落盘后立即补齐群类型镜像", async () => {
+    await handleInitCommand(context("enable"));
+
+    expect(persistChatState).toHaveBeenCalledWith(-1001, "init toggled");
+    expect(chatIsSupergroupById.get(-1001)).toBeTrue();
+    expect(postAntiRaid).toHaveBeenCalledWith({ type: "chatKind", chatId: -1001, isSupergroup: true });
   });
 
   test("/init disable 连群名一起清掉：不再管的群不留任何记录", async () => {
@@ -346,8 +359,7 @@ describe("超级管理员开关命令", () => {
   test("/init disable 同时失效 AI 并整行删除群状态，enable 恢复群更新入口", async () => {
     states.set(-1001, { botPermissions: botPermissions(), isAIChatEnabled: true });
     await handleInitCommand(context("disable"));
-    // 整行没了：功能开关、权限快照与总开关一起删掉，这个群不再占
-    // STATE_MANAGED_CHAT_LIMIT 的名额（见 commands/init.ts）。
+    // 整行没了：功能开关、权限快照与总开关一起删掉。
     expect(states.has(-1001)).toBeFalse();
     expect(invalidateBotAdminStatus).toHaveBeenLastCalledWith(-1001);
     expect(teardownChatRuntime).toHaveBeenCalledWith(-1001, "explicitDisable");
@@ -360,16 +372,13 @@ describe("超级管理员开关命令", () => {
     expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
     // disable 写两次（总开关一次、拆完的整行删除一次），enable 一次。
     expect(saveStateInBackground).toHaveBeenCalledTimes(3);
-    // enable 必须立刻重新判定管理员身份：作废之后不重判，「是管理员 && 已初始化」
-    // 那道边沿就永远等不到，「先给管理员、后 /init enable」的群不会被补扫黑名单。
+    // enable 必须立刻重新判定管理员身份。
     expect(resolveBotAdminStatus).toHaveBeenCalledWith(-1001);
     // disable 不重判——那一刻合取本来就不成立。
     expect(resolveBotAdminStatus).toHaveBeenCalledTimes(1);
   });
 
   test("/init disable 保留仍未恢复的 lockdown，只删其余群配置", async () => {
-    // 删了它那个群的邀请权限就永久卡住：反刷群恢复流程还要用 originalPermissions
-    // 解锁（见 infra/storage/stateStore.ts 的 purgeChatStateExceptLockdown）。
     const lockdown: LockdownRecord = { phase: "active", intentId: 7, originalPermissions: {}, announced: true, expiresAt: 9_000 };
     states.set(-1001, { isInitEnabled: true, isAdDetectEnabled: true, lockdown });
 
@@ -387,14 +396,11 @@ describe("超级管理员开关命令", () => {
     });
     teardownChatRuntime.mockRejectedValueOnce(teardownError);
 
-    // 不上抛：异常逸出会让 acknowledged runner 带非零码退出且不确认 offset，
-    // Telegram 重投同一条 /init disable，而那时 wasEnabled 已经是 false，
-    // 管理员反而会收到一句「本来就关着」（见 commands/init.ts）。
+    // 拆运行态失败不上抛。
     await handleInitCommand(context("disable"));
 
-    // 总开关已经 durable 地关掉（缺省即禁用）；整行删除排在 teardown 之后，这一轮
-    // 没跑到，功能开关还留着，由管理员照回执再关一次补做（同状态重复 disable
-    // 照常重跑清理）。
+    // 总开关已经 durable 地关掉；整行删除排在 teardown 之后，这一轮没跑到，
+    // 功能开关还留着。
     expect(states.get(-1001)?.isInitEnabled).toBeUndefined();
     expect(states.get(-1001)?.isAdDetectEnabled).toBe(true);
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
@@ -405,9 +411,6 @@ describe("超级管理员开关命令", () => {
   });
 
   test("/init disable 不为没有记录的群建条目，重复关掉不撞群数上限", async () => {
-    // disable 的终点是整行删掉这个群；先现建一条的话，别处已经管满
-    // STATE_MANAGED_CHAT_LIMIT 个群时 assertChatStateCapacity 会抛错，把「关掉之后
-    // 再关一次」这条手工重试路径变成一次带非零码的进程退出（见 commands/init.ts）。
     await handleInitCommand(context("disable"));
 
     expect(states.has(-1001)).toBeFalse();
@@ -416,8 +419,7 @@ describe("超级管理员开关命令", () => {
 
   test("/init disable 的总开关先落盘，再拆运行态", async () => {
     // teardownChatRuntime 里有不可逆的持久化动作（aiChat owner 的 durable 记忆
-    // 删除、translate owner 的会话删除）。反过来做的话，落盘一旦失败就是「磁盘上
-    // 开关还开着、本群的 AI 记忆已经没了」。口径同 runChatToggleCommand。
+    // 删除、translate owner 的会话删除）；口径同 superAdminToggle.ts 的 runChatToggleCommand。
     const order: string[] = [];
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions(), aiPersona: "本群人设" });
     persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
@@ -444,9 +446,7 @@ describe("超级管理员开关命令", () => {
   });
 
   test("拆完无条件补一次落盘，把整行删除与 teardown 清掉的 isProxySendEnabled 一起写下去", async () => {
-    // teardownChatRuntime 同步清掉的持久字段只有 isProxySendEnabled，整行删除
-    // 同样只动内存；不写盘的话，重启后代发会话与整套开关会连同一个已经不再接管
-    // 的群一起复活。
+    // teardownChatRuntime 同步清掉的持久字段只有 isProxySendEnabled，整行删除同样只动内存。
     const order: string[] = [];
     states.set(-1001, {
       isInitEnabled: true,
@@ -579,8 +579,7 @@ describe("开关命令的同状态重复执行", () => {
 
         await toggle.run(action);
         const repeatText: string = lastReplyText(sendMessage);
-        // 状态不动，但回执必须换一句：沿用刚改完那句等于报告了一次并不存在的
-        // 状态变化，管理员会以为自己刚刚才把它打开/关掉。
+        // 状态不动，但回执必须换一句，不能沿用刚改完那句。
         expect(states.get(-1001)?.[toggle.field]).toBe(target);
         expect(repeatText).not.toBe(changedText);
         expect(repeatText).toContain("本来就");
@@ -589,9 +588,6 @@ describe("开关命令的同状态重复执行", () => {
   }
 
   test("同状态重复 disable 仍落盘并重跑运行时清理：上一次 Worker 不可用时就靠它补做", async () => {
-    // 清理是尽力而为、失败只记日志（见 commands/adDetect.ts），所以「关掉之后
-    // 再关一次」正是管理员修好 Worker 后最自然的手工重试动作。回执如实说状态
-    // 没变，但这条路径本身不能因此被短路掉。
     clearAdDetection.mockImplementationOnce((): never => {
       throw new Error("Anti-Raid Worker is unavailable.");
     });
@@ -608,8 +604,6 @@ describe("开关命令的同状态重复执行", () => {
   });
 
   test("/init 重复 enable 仍不作废管理员记录，只是回执说破没变", async () => {
-    // 空操作照样作废的话，随后的重新判定会被 recordBotChatPermissions 当成一次全新
-    // 的 undefined -> true 边沿，把整份黑名单再清扫一遍（见 commands/init.ts）。
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
 
     await handleInitCommand(context("enable"));

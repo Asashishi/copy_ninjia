@@ -199,13 +199,9 @@ describe("Google Translation 适配层", () => {
   });
 
   test("SDK 动态 import 期间发生 close：不给已失效的 owner 造客户端，避免泄漏永不关闭的 gRPC 通道", async () => {
-    // `await import(...)` 形成一个交错窗口：closeTranslate 会在这期间把 client
-    // 置空并推进 generation，
-    // 而它已经拿着 null 走完了关闭流程。若此时照旧构造并写回，就留下一个谁也
-    // 不会去 close 的 gRPC 客户端——每次停机泄漏一个通道。
-    //
-    // 时序靠 closeTranslate 的同步前缀成立：它一进函数就 `generation += 1`，
-    // 发生在任何微任务排空之前，因此 import resolve 时看到的必然是新世代。
+    // `await import(...)` 形成交错窗口：closeTranslate 同步前缀一进函数就
+    // `generation += 1`（发生在任何微任务排空之前），此时 client 已置空并走完关闭流程；
+    // import resolve 时看到的是新 generation，不再构造或写回客户端。
     const translating = requestTranslation("during dynamic import", "ja");
     await expect(closeTranslate()).resolves.toBe("flushed");
 

@@ -149,8 +149,7 @@ describe("Gemini 回复会话的请求映射", () => {
         parametersJsonSchema: SEND_MESSAGE.parametersJsonSchema,
       }],
     }]);
-    // 声明按引用透传，不逐字段抄成一个同构对象：这里每个工具轮跑一次，
-    // 复制一遍什么新东西都没产生（见 buildTools 的注释）。
+    // 校验 functionDeclarations[0] 与 SEND_MESSAGE 引用相同（buildTools 按引用透传声明）。
     expect((body.config?.tools?.[0] as { functionDeclarations: unknown[] }).functionDeclarations[0])
       .toBe(SEND_MESSAGE);
     expect(body.config?.toolConfig).toBeUndefined();

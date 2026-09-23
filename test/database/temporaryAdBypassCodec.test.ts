@@ -9,14 +9,11 @@ import { InputValidationError } from "../../packages/libs/inputValidation";
 import type { TemporaryAdBypassActivity } from "../../packages/types/states/temporaryAdBypass";
 
 /**
- * 临时广告免检关系列的严格校验：**每一条拒绝分支**都要真的拒绝。
+ * 临时广告免检关系列的严格校验：每一条拒绝分支逐条核对，对应 AGENTS.md
+ * 「不为用户行为兜底」在持久化侧的落点。
  *
- * 这是 AGENTS.md「不为用户行为兜底」在持久化侧的落点——被改坏的行必须在启动阶段
- * 致命退出，不得被默认值回填、静默修复或降级运行掩盖。校验器只有拒绝分支被逐条
- * 钉住才算数：写错一个比较方向不会让任何正例失败，只会让一整类坏行悄悄通过。
- *
- * 另一半契约是**错误信息只写来源、字段路径与期望形态**，不得回显实际值，因此
- * 每条断言同时核对抛出的是 InputValidationError 且消息命中对应字段路径。
+ * 错误信息只写来源、字段路径与期望形态，不回显实际值；每条断言同时核对抛出的是
+ * InputValidationError 且消息命中对应字段路径。
  */
 
 const SOURCE: string = "temporary_ad_bypass_activity[42]";

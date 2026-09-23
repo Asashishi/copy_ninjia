@@ -1,5 +1,5 @@
 import type { DiskIODomain } from "../../packages/types/diskIO/replies";
-import { diskIOStub } from "../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
@@ -41,11 +41,11 @@ const flushDiskIODomainOutcome = mock(
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   isDiskIOInitialized: (): boolean => false,
   onDiskIORespawn: (): void => {},
-  onIdentityStoragePersisted: (
-    listener: (reply: IdentityStoragePersistedReply) => void
-  ): void => {
-    persistedListeners.push(listener);
-  },
+  onDiskIOReply: diskIOReplyStub({
+    identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
+      persistedListeners.push(listener);
+    },
+  }),
   relayLogMessage: (): boolean => true,
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskMessages.push(message);
@@ -312,9 +312,7 @@ describe("落盘投递被拒收时不得回执成功", () => {
   test("三条写入路径都抛错，交给命令的 mutationFailed 分支如实回执", async () => {
     seedMissing(7);
     acceptDiskMessages = false;
-    // 丢掉 queueIdentityPolicyWrite 的返回值等于把「Worker 没收下」读成成功：
-    // 真正的事务失败在 Worker 侧只有 console.error，而部署单元的
-    // Std{Output,Error} 都是 null，运维要到下次重启才发现条目根本不存在。
+    // queueIdentityPolicyWrite 的返回值不得被忽略，否则 Worker 拒收会被误读成成功。
     expect(() => setWhitelistMembership({
       id: 7,
       enabled: true,

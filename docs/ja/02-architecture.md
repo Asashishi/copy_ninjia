@@ -122,7 +122,7 @@ flowchart TD
 
 正常停止と異常停止は同じライフサイクルに合流し、順序は固定です。
 
-1. **Quiesce**：タイトル、アバター、翻訳、新規 gag と wed、遅延コマンド（`/h_image` の抽選と追加、`/info` の照会）の受付、cron 定時タスク、blocklist 再 sweep、`config/` hot reload の入口を閉じ、runner を止めます。9 つの quiesce 入口は個別に失敗隔離され、1 つが例外を投げても残りの入口を閉じます。**「quiesce 済み」を cache してはなりません**：`init()` は 9 つの owner を再度武装するため、起動中に届いた停止シグナルで成功を一度きりの完了として記録すると、以降の quiesce はすべて短絡され、owner は停止処理の間ずっと新しい仕事を受け付け続けるのに結果はクリーンだと報告されます。7 つの呼び出しはいずれも冪等なので、繰り返しても代償はありません。
+1. **Quiesce**：タイトル、アバター、翻訳、新規 gag と wed、遅延コマンド（`/h_image` の抽選と追加、`/info` の照会）の受付、cron 定時タスク、blocklist 再 sweep、`config/` hot reload の入口を閉じ、runner を止めます。9 つの quiesce 入口は個別に失敗隔離され、1 つが例外を投げても残りの入口を閉じます。**「quiesce 済み」を cache してはなりません**：`init()` は 9 つの owner を再度武装するため、起動中に届いた停止シグナルで成功を一度きりの完了として記録すると、以降の quiesce はすべて短絡され、owner は停止処理の間ずっと新しい仕事を受け付け続けるのに結果はクリーンだと報告されます。9 つの呼び出しはいずれも冪等なので、繰り返しても代償はありません。
 2. **上限付き drain**：各キューと mailbox を drain します。runner は update ごとの cancellation signal を持ち、実行中の handler が drain deadline を超えた場合はそれらを abort して最後の上限付き settle 時間を与えます。それでも settle しない handler は最終 offset の確認を止め、best-effort dispose 後の非ゼロ終了を強制します。
 3. **Flush と dispose**：正常経路では Anti-Raid、gag 通知、統一 delayed deletion を先に drain し、続いて AI を flush、Telegram outbound を drain、Disk I/O と StateStore を flush します。最終 dispose も同じ maintenance 順序の後、「AI を flush → AI を終了 → Telegram outbound を drain → Disk I/O を flush → Anti-Raid と Disk I/O を終了 → StateStore を flush → インスタンスロックを解放」で固定です。
 

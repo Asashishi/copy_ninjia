@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { explicitReplyTo, forumTopicThreadId } from "../../packages/libs/forumTopic";
-import type { Message } from "grammy/types";
+import { explicitReplyTo, forumTopicThreadId, updateTopicOf } from "../../packages/libs/forumTopic";
+import type { Message, Update } from "grammy/types";
 
 const CHAT: Message["chat"] = { id: -1001, type: "supergroup", title: "论坛群" };
 
@@ -85,5 +85,36 @@ describe("explicitReplyTo", () => {
       message_thread_id: 12345,
       reply_to_message: channelForward as never,
     }))).toBe(channelForward);
+  });
+});
+
+describe("updateTopicOf", () => {
+  // 可访问消息的 date 恒大于 0；InaccessibleMessage 才以 date: 0 表示。
+  const topicMessage: Message = message({ date: 1_700_000_000, is_topic_message: true, message_thread_id: 42 });
+
+  test("消息、频道帖与按钮所在消息位于论坛话题时给出群与话题", () => {
+    const expected = { chatId: -1001, threadId: 42 };
+    expect(updateTopicOf({ update_id: 1, message: topicMessage } as Update)).toEqual(expected);
+    expect(updateTopicOf({ update_id: 2, channel_post: topicMessage } as Update)).toEqual(expected);
+    expect(updateTopicOf({
+      update_id: 3,
+      callback_query: { id: "q", chat_instance: "c", from: { id: 7, is_bot: false, first_name: "A" }, message: topicMessage },
+    } as Update)).toEqual(expected);
+  });
+
+  test("General、讨论组评论、已不可访问的按钮消息与没有触发消息的 update 一律 undefined", () => {
+    expect(updateTopicOf({ update_id: 1, message: message({}) } as Update)).toBeUndefined();
+    expect(updateTopicOf({ update_id: 2, message: message({ message_thread_id: 42 }) } as Update)).toBeUndefined();
+    expect(updateTopicOf({
+      update_id: 3,
+      callback_query: {
+        id: "q",
+        chat_instance: "c",
+        from: { id: 7, is_bot: false, first_name: "A" },
+        message: { chat: CHAT, message_id: 1, date: 0 },
+      },
+    } as Update)).toBeUndefined();
+    expect(updateTopicOf({ update_id: 4, inline_query: { id: "i", from: { id: 7, is_bot: false, first_name: "A" }, query: "", offset: "" } } as Update))
+      .toBeUndefined();
   });
 });

@@ -127,10 +127,11 @@
 
   **30 秒側の下限を守るのは切り上げではなく発行期限です。** 切り上げが防ぐのはサブ秒の切り捨てだけで、`until_date` はキュー投入前に算出した絶対時刻であり、`restrict` カテゴリーの 429 は専用レーンで `retry_after` を上限なく待たせます。そのため `muteChatMemberWithOutcome` は `dispatchTimeoutMs` を**必須**とし、ラッパー内部で呼び出し側の signal と合成して下流まで渡します。期限が切れたらこの禁言は諦めます。契約を型に書くことで、三つ目の呼び出し点が取りこぼすことはありません。予算は各自の最短時間に合わせて呼び出し側が与えます。スパム禁言は `FLOOD_MUTE_DISPATCH_TIMEOUT_MS`（時間は常に 3 分、60 秒を残す）、`/mute` は「今回の時間 − `MUTE_DISPATCH_MIN_REMAINING_MS`」（下限が 1 分のため 60 秒を残すとその段の発行枠が 0 になる。よって 45 秒）。諦める代償は一度禁言できないだけで、人手でしか解けない永久禁言よりはるかに小さい。
 - グループ内の非機能的な command text は `sendCommandMessage` を通し、送信成功から 30 秒後に削除します。private chat は対象外です。ユーザーが明示的に許可した `/permission help`、`/permission query` の permission board、`/qa query` の Q&A board、そして成功した CJK action result だけが `preserveInGroup: true` で長期保持できます。action command の対象 validation failure と `/x` の使い方提示は引き続き自動削除します。新しい例外は呼び出し箇所とテストの両方で明示しなければなりません。`check:conventions` はこの枠に `messageThreadId` も渡すことを強制します。理由は次項です。
-- **forum（topics）グループでの着地先は「そのメッセージがグループにどれだけ残るか」で決めます。メッセージの種類では決めません**。`message_thread_id` を渡さないことは General への送信と同義で、reply を付けても安全ではありません——返信先が削除済みだと `allow_sending_without_reply` が通常送信へ降格させ、その時 topic に残るのはこの parameter だけです。
-  - **長期保持されるものは必ず渡す**：会話的な出力（copy、AI 返信、入浴トリガー返信、Q&A 直答）、上項で挙げた `preserveInGroup` の例外、そして固定遅延削除が保持しない状態機械所有の message（`/qa set` フォーム、gag の発言提示）。これらの出力は対応するセッションの topic に配置します。gag 専用入口の表示には Telegram の ephemeral message の規則も適用されます。
-  - **期限で自動削除されるものは渡さない**：30 秒で消える command receipt と使い方提示、広告 ban の告知、flood mute の告知。間違っても cleanup までで、そのために topic id を全呼び出し箇所と Worker protocol へ通す価値はありません。
-  - **入室認証の reminder は明示的な適用除外**：reply 形式の reminder は未認証メンバーの発言に紐づくため、その anchor が削除されると General に落ちます。しかし state machine が認証確定時に削除し（上限は `VERIFICATION_TIMEOUT_MS`、未送達の極端な場合でも `VERIFICATION_REMINDER_UNDELIVERED_MAX_MS`）、自動削除の枠に入ります。対応するには topic id を未認証 snapshot の形式へ永続化する必要があり、唯一の cold migration 辺を消費します。理由と再評価の契機は `packages/libs/forumTopic.ts` の module 冒頭注釈にあります。
+- **forum（topics）グループでの着地先は「そのメッセージを何が引き起こしたか」で決めます**。`message_thread_id` を渡さないことは General への送信と同義で、reply を付けても安全ではありません——返信先が削除済みだと `allow_sending_without_reply` が通常送信へ降格させ、その時 topic に残るのはこの parameter だけです。
+  - **ユーザーのコマンドや操作が引き起こしたメッセージはトリガーメッセージの topic に置く**：会話的な出力（copy、翻訳、AI 返信、入浴トリガー返信、Q&A 直答）、上項で挙げた `preserveInGroup` の例外、そして固定遅延削除が保持しない状態機械所有の message（`/qa set` フォーム、gag の発言提示）は呼び出し側が明示的に渡します。gag 専用入口の表示には Telegram の ephemeral message の規則も適用されます。30 秒で消える command receipt と使い方提示が `messageThreadId` を省略した場合は、`sendCommandMessage` と画像付き receipt の境界が現在の update のトリガー topic で補います（`infra/updateContext.ts` の `updateTopicThreadIdFor`。トリガーメッセージと同じグループの場合だけ引き継ぎます）。
+  - **トリガー topic は update scope と一緒に運ばれる**：`app/updateRunner.ts` が各 update のトリガーメッセージの topic を記録します（`libs/forumTopic.ts` の `updateTopicOf`：message、channel_post、またはボタンが付いたメッセージを見て、topic 内でなければオブジェクトを割り当てません）。遅延コマンドと wed の操作はキューから取り出す時に受理時の topic を復元します。update scope の外で送る receipt は提出時に topic を記録します：アバター更新の receipt、AI のレート制限通知、gag 終了の receipt。
+  - **bot が自発的に出す通知は topic を渡さない**：flood mute の告知、広告の警告と ban の告知、ロックダウン告知、そして `cron.json` の定時タスク（topic を有効にしたグループでは General に落ちます）。
+  - **入室認証の reminder も bot の自発通知に入る**：reply 形式の reminder は未認証メンバーの発言に紐づくため、その anchor が削除されると General に落ちます。state machine が認証確定時に削除します（上限は `VERIFICATION_TIMEOUT_MS`、未送達の極端な場合でも `VERIFICATION_REMINDER_UNDELIVERED_MAX_MS`）。topic を付けるには topic id を未認証 snapshot の形式へ永続化する必要があり、唯一の cold migration 辺を消費します。再評価の契機は `packages/libs/forumTopic.ts` の module 冒頭注釈にあります。
 - **起きていない状態変化を応答が報告してはいけません。** `/init`、`/ai_chat`、`/ad_detect`、`/flood_control`、`/antiraid`、`/translate` の 6 つの switch command は書き込み前に必ず元の値を読み、同じ状態で繰り返し実行した場合は「元からそうです」と言い切らなければなりません。変更直後の文をそのまま流用すると、管理者は最初の実行が効いたのかどうか判断できません。4 つの結末の文言は `ToggleCommandTexts`（`packages/types/commands.ts`）という **4 項目すべて必須**の構造に収め、選択は `toggleReplyText` が行います。「on」「off」の 2 文しか用意しない新しい switch command は compile できません。`/quiet`、`/unquiet`、`/white`、`/permission` は同じ方針の既存実装です。
 
   判定は「目標の状態」と「元の状態」だけを見ます。**永続化や runtime cleanup が実行されたかは見ません。** これらの cleanup はベストエフォートで、失敗しても log を残すだけです（`clearAdDetection`、`clearFloodControl`、`invalidateAiChat`、および `/init disable` の `teardownChatRuntime`——失敗しても総 switch はすでに durable に off なので、応答は「片付け切れなかったものがある」と名指しする文面に切り替え、決して throw しません。throw すれば offset を確定できず、再配信時には `wasEnabled` がすでに false なので、管理者はかえって「もともと off だった」と告げられます）。したがって「disable したあともう一度 disable する」は Worker 復帰後にもっとも自然な手動リトライであり、同じ状態での繰り返し実行でも永続化と cleanup は通常どおり行い、応答だけが「何も変わっていない」と正直に伝えます。`/init` は、すでに有効なチャットで `enable` を繰り返しても管理者身分の記録を無効化しません。無効化すると `recordBotChatPermissions` が新しい `undefined -> true` の edge を見て blocklist 全体を再走査してしまうためです。
@@ -250,7 +251,7 @@
   並行枠が埋まって queue に入った直接 trigger は、追い出し実行中に rate limit の関門に拒否されたら queue の先頭に留め、そこで排出を止めなければなりません。rate limit はそのチャットの window 内の回数だけを見ており、どの trigger かとは無関係です。
 
   最初の 1 件が拒否されたなら後続もすべて拒否されますし、拒否では並行カウントが増えないため、そのまま進めると 1 回の同期 tick で @ メンションと返信の queue を丸ごと捨てることになり、その全員が 1 件も返信を受け取れません。
-- AI 返信の受け入れは 2 つの独立した関門で、その間には「キューに入って補走を待つ」という長さの読めない中間状態が挟まります。並行関門（`admitTrigger`）はトリガー到着時に判定し、レート関門（`admitRound`）はラウンドを実際に始める直前に 5 分スライディング窓で判定します。
+- AI 返信の受け入れは 2 つの独立した関門で、その間には「キューに入って補走を待つ」という長さの読めない中間状態が挟まります。並行関門（`admitTrigger`）はトリガー到着時に判定し、レート関門（`isReplyRoundRateLimited`）はラウンドを実際に始める直前に 5 分スライディング窓で判定します。
 
   **キューが空でない間は、並行枠が空いていても必ずキューへ入れます**。キューは FIFO であり、すでに 1 ラウンド待った人たちの前に新しいトリガーを割り込ませると、その意味論がまるごと反転します——窓が開いた瞬間に最初に走るのは到着したばかりの 1 件で、キューの人たちは数分待たされたままです。
 
@@ -258,7 +259,7 @@
 
   入隊直後の試行と保守 tick は「稼働モデルなし・キュー非空」のチャットも再開します。レート制限による拒否はラウンド task を作らないため、窓に余裕が戻った後の先頭処理は保守 tick が再開します。
 
-  4 つとも `drainReplyQueueIfWindowAllows` で 5 分窓の余裕を確認し、飽和中はそのまま戻ります。実際のラウンド開始時にも `admitRound` を通ります。モデル完了の callback は待機キューの排出だけを行い、溢れ通知は送信が順に完了するまで保持します。
+  4 つとも `drainReplyQueueIfWindowAllows` で 5 分窓の余裕を確認し、飽和中はそのまま戻ります。実際のラウンド開始時にも `isReplyRoundRateLimited` を通ります。モデル完了の callback は待機キューの排出だけを行い、溢れ通知は送信が順に完了するまで保持します。
 
   **溢れ通知の送出はキュー押し出しとは別経路でなければなりません**（`flushOverflowNotice` と `drainReplyQueueIfWindowAllows`）：`enqueueOverflow` がグループに負っているその 1 行は窓に余裕があるかどうかに関係なく出す必要があり、同じ関数にまとめると、ゲートを付ければ通知が永久に飲み込まれ、外せば上の連投が戻ってきます。
 
@@ -340,7 +341,7 @@
   対象が存在しない、終端状態、または不一致の場合は失敗応答だけを返し、認証状態を変更してはいけません。
 - 終端処置（timeout / 連投の kick）が `kickChatMember` を呼ぶ前には `probeChatMembership` で現状を確認します。在室を確認できた場合だけ kick し、退出済みを確認した場合は誤った戦果報告を出さずに完了し、lookup が不確定なら破壊的なメンバー操作を行わず終端レコードを既存の backoff 再試行へ残します。**初回もこの確認を払い、免除はありません。** supergroup の「BAN せず kick」は `only_if_banned` を付けない `unbanChatMember` に対応し、この呼び出しは **既存の BAN を解除します**。429 を受けた request は独立した kick lane で待ち、その間に人間の管理者が対象を BAN する可能性があります。そのため main thread はこの形の `unbanChatMember` を再生するたび、query category の `getChatMember` で再確認します。対象がまだ在室なら続行し、`left` / `kicked` なら再生を取り消して business outcome を `absent` にします。`only_if_banned: true` の明示的な unban にはこの前置条件を適用しません。これがなければ遅延再生が管理者の BAN を解除しながら `kicked` を返し、対象は招待 link から戻れてしまいます。
 
-  「BAN せず kick」には正確なチャット種別も必要です。通常グループでは `banChatMember`（通常グループでは除去だけ）、スーパーグループでは `unbanChatMember` を使います。メインスレッドは update から `group` / `supergroup` を観測し、初回起動と Worker 再生成のどちらでも終端 adopt より前にミラー全体を再生します。プロセスの完全なコールドスタートでミラーが無い場合、Worker はチャット単位で `getChat` を重複排除し、実行中 lookup を `VERIFICATION_CHAT_KIND_FETCH_MAX` で制限します。lookup 失敗、グループ以外の結果、または背圧上限到達時にどちらかの破壊的 API を推測してはいけません。終端を保持して既存 backoff へ残します。lookup 中にミラー更新が届いた場合は、遅れて返った結果よりミラーを優先します。
+  「BAN せず kick」には正確なチャット種別も必要です。通常グループでは `banChatMember`（通常グループでは除去だけ）、スーパーグループでは `unbanChatMember` を使います。メインスレッドは `/init enable` 済みのチャットに限って update から `group` / `supergroup` を観測し、最初の `/init enable` は永続化の後に 1 回観測を補います。管理対象外のチャット（`STATE_MANAGED_CHAT_LIMIT` の容量ゲートで拒否された `/init` を含む）はミラーに入らないため、ミラーの上限は管理対象チャット数です。初回起動と Worker 再生成のどちらでも終端 adopt より前にミラー全体を再生します。プロセスの完全なコールドスタートでミラーが無い場合、Worker はチャット単位で `getChat` を重複排除し、実行中 lookup を `VERIFICATION_CHAT_KIND_FETCH_MAX` で制限します。ミラー更新や管理停止で無効化されたがまだ決着していない request も、この上限に数えます。lookup 失敗、グループ以外の結果、または背圧上限到達時にどちらかの破壊的 API を推測してはいけません。終端を保持して既存 backoff へ残します。lookup 中にミラー更新が届いた場合は、遅れて返った結果よりミラーを優先します。
 
   終端処置が失敗したときは指数 backoff で上限まで再試行し、再試行が長引いたという理由でレコードを削除しません。削除は「処置していないメンバーを完了扱いにする」ことだからです。固定間隔では足りません。bot が管理者でも BAN 権限がない場合や、相手自身がそのチャットの管理者である場合、この再試行は決して成功しません。1 度の荒らしが残した未認証メンバーがそれぞれ永久の短周期ループを 1 つずつ占有し、メッセージ削除 + kick を打ち続けて `logs/` に同じエラー行を書き、Worker 再生成やプロセス再起動のたびに再武装されます。
 
@@ -511,9 +512,9 @@
 
 - 日次再確認は Disk I/O Worker の唯一の Bun native `cron` が `Asia/Tokyo` の 00:00 に送る `midnightMaintenance` 通知だけで起動し、主スレッドに別の cron は作成しません。`commands/wed/memberReview.ts` は操作キャッシュのない群も含め、復元済みの権威メンバー集合をすべて走査します。一度に保持する snapshot は 1 群の最大 150,000 ID で、取得後にその集合へ追加された ID は次回に確認します。全群で直列照会を共有し、開始間隔は最低 200 ミリ秒、1 回の照会期限は 30 秒です。遅い要求の後に滞留分を一括発行しません。退室を明確に確認した場合だけ `removeWedMember` が元の Set を変更して dirty にします。Telegram が 400 `PARTICIPANT_ID_INVALID` でその ID を拒否した場合も退室として扱い、API error としては記録しません。その他の失敗・取消では保持し、照会中の発言、在室を示す `chat_member`、入室サービスメッセージは遅延した退室結果を無効にできます。起動中は最新の深夜日付だけを保留し、Bot handshake と復元の成功後に受理します。同日を重複実行せず、日付をまたぐ処理は元の走査を継続して次回と重ねません。Worker 再構築では深夜通知を replay せず、プロセス再起動では進捗を消去して次の通知を待ちます。task は `wedRuntime.tasks` に登録し、quiesce で待機と照会を取り消し、drain で完了を待って既存経路から最終集合を送信します。旧集合への応答は新しく接管した集合を変更できません。
 
-  確認中にある群が無効化されたり集合が置き換えられたりした場合、その群の内側ループだけを終え、後続群は確認します。全走査を終了するのはラウンド全体の取消時だけです。
+  確認中にある群が無効化されたり集合が置き換えられたりした場合、その群の内側ループだけを終え、後続群は確認します。全走査を終了するのはラウンド全体の取消時だけです。Telegram がその群のメンバー照会そのものを拒否した場合（403、または 400 `CHAT_ADMIN_REQUIRED`。`infra/telegram/actions/core.ts` の `isChatMemberQueryDenied`）は、同じ群の残りの照会も必ず同じく失敗するため、その群の今回のラウンドはこの 1 回だけ照会し、API エラーを 1 行記録して終え、メンバーは全員残します。
 
-  **退室の判定が確実なのは Bot がグループ管理者のときだけで、管理者でない群で退室済みの人が抽選されるのは既定の挙動です**。Bot API が他ユーザーへの `getChatMember` を保証するのは Bot が管理者のときだけで、`chat_member` 更新も管理者の Bot にしか届きません。`left_chat_member` サービスメッセージはプライバシーモードに関係なくすべての Bot に届きますが、大きめのスーパーグループやメンバー一覧を隠した群では Telegram が生成しないことがあり、退会したアカウントは何の合図も出しません。抽選で使う `getChat(userId)` はユーザーの private chat 情報を返すだけで、在室とは無関係です。したがって Bot が管理者でない群では、日次再確認の照会はすべて失敗し、上の失敗時の扱いどおり誰も削除できません。退室の整理は `left_chat_member` だけになり、それが届かなかった退室者は集合に残って通常どおり抽選・送信されます。抽選経路は在室確認をせず `getChatMember` も呼ばず、集合に発言時刻による期限切れもありません。確実な整理が必要な群では、デプロイ側が Bot に管理者権限を与えれば、`chat_member` 更新と日次再確認が機能します。
+  **退室の判定が確実なのは Bot がグループ管理者のときだけで、管理者でない群で退室済みの人が抽選されるのは既定の挙動です**。Bot API が他ユーザーへの `getChatMember` を保証するのは Bot が管理者のときだけで、`chat_member` 更新も管理者の Bot にしか届きません。`left_chat_member` サービスメッセージはプライバシーモードに関係なくすべての Bot に届きますが、大きめのスーパーグループやメンバー一覧を隠した群では Telegram が生成しないことがあり、退会したアカウントは何の合図も出しません。抽選で使う `getChat(userId)` はユーザーの private chat 情報を返すだけで、在室とは無関係です。したがって Bot が管理者でない群では、日次再確認は最初の照会で群単位の拒否を受けてその群を終え、誰も削除できません。退室の整理は `left_chat_member` だけになり、それが届かなかった退室者は集合に残って通常どおり抽選・送信されます。抽選経路は在室確認をせず `getChatMember` も呼ばず、集合に発言時刻による期限切れもありません。確実な整理が必要な群では、デプロイ側が Bot に管理者権限を与えれば、`chat_member` 更新と日次再確認が機能します。
 - コマンドと callback は共通の `/init` gate の後に置きます。メンバー追加には `isInitEnabled === true` も必要で、最初の `/init` の例外では候補を作りません。gate が拒否した更新でも退室 ID は既存集合から削除しますが、グループ状態の作成や業務 handler の実行は行いません。
 - メンバーの権威 owner は `packages/cache/main/wedMembers.ts` です。各グループで同じ長期 `Set<number>` を再利用し、上限は 150,000 件です。満杯では既存メンバーを保持して新規 ID を拒否し、退室で空きができると追加を再開します。`packages/cache/main/wed.ts` は操作状態と実行器を持ち、各グループで一人一件、最大 512 件の session を保持します。操作キャッシュは `LruCache` を使い、容量は `WED_CHAT_CACHE_MAX_ENTRIES`（1,024）です。コマンドとボタンの読み取りヒットで利用順を更新し、満杯での追加時は最も長く使われていない群を除去します。メンバー正本と起動時ファイル検証は `STATE_MANAGED_CHAT_LIMIT`（25）に従い、満杯では新規群を拒否するため、通常運用は引き続き 25 群が上限です。メンバー表には LRU eviction を適用しません。チャンネルの発言、返信先、転送元、自動転送、匿名グループ名義からは候補を追加しません。通常の発言では同期的な集合照会、実際の追加、dirty 登録だけを行い、一時 Set、候補 snapshot、スレッド間送信を作りません。抽選用の候補配列はコマンドと変更ボタンの経路だけで作成します。
 - 実際の追加・削除だけが revision と変更件数を増やし、dirty を設定します。再発言、満杯時の拒否、存在しない ID の削除は何も送信しません。メンバー owner は DiskIO 共通の 300 件 / 30 秒の閾値を使い、最初の未送信変更から計時し、件数到達時は非同期バッチを前倒しします。dirty なグループだけ最終配列を生成します。DiskIO は共通 dirty flush と一時ファイル、fsync、rename により `memory/wed/<chatId>.json` を原子置換します。成功時は待機配列を解放し、失敗時は各群の最新 snapshot を保持して再試行します。Worker 再構築では main が未確認削除と最終集合を replay します。復旧の除外対象は replay 時点で有界 FIFO に存在する同群の旧操作だけです。ライフサイクルをまたぐ revision の大小では判定せず、その後の新操作は順番に送ります。
@@ -634,9 +635,9 @@
 
 - **グループごとの状態の正本は SQLite の `chat_states` テーブルであり、メインスレッドは容量がちょうど `STATE_MANAGED_CHAT_LIMIT`（25）のホット読み取り用コピーだけを持ちます**（`packages/cache/main/chatState.ts`）。`status` は 7 つの機能スイッチ（`isProxySendEnabled` を含む）、`quietUntil`、`lockdown` write-ahead、完全な `botPermissions`、`title` を保持します。別列 `ai_persona` の値を同じ `ChatState.aiPersona` に取り込みます。
 
-- **容量ゲートは拒否するだけで、決して追い出しません。** 26 件目の新規作成は `assertChatStateCapacity` が拒否します。起動時の `decodeStoredChatStates` は容量とプロキシ対象の一意性を検証し、Disk I/O Worker は書き込み側で容量を独立に検証します。`hydrateChatStateCache` は復号済み状態を固定 shape のキャッシュへ格納するだけであり、これらの境界により管理中のグループ状態が LRU から追い出されることを防ぎます。
+- **容量ゲートは拒否するだけで、決して追い出しません。** 26 件目の新規作成は `assertChatStateCapacity` が拒否します。起動時の `decodeStoredChatStates` は容量とプロキシ対象の一意性を検証し、Disk I/O Worker は書き込み側で容量を独立に検証します。`hydrateChatStateCache` は復号済み状態を固定 shape のホット読み取りコピーへ格納するだけで、ホット読み取りコピーは追い出しを行わない通常の `Map` です。
 
-  追い出しが起こり得ないからこそ、**ホット読み取りは `get` ではなく `peek` を使います**：recency を更新するための `Map.delete` + `Map.set` は何も買えず（chat-state-map-read の実測で 253.0 → 14.1 ns/op）、`getChatStateCache()` の反復順序を読み取り履歴の関数にしてしまいます。その順序は `/block`・`/block disable` の連動 BAN 対象グループ一覧としてそのままユーザーに提示されます。
+  **ホット読み取りコピーは挿入順に反復します**（起動時の hydrate 順、次に新規作成順）。`get` は順序を変えないため、`getChatStateCache()` の反復順序は読み取り履歴に左右されません。その順序は `/block`・`/block disable` の連動 BAN 対象グループ一覧としてそのままユーザーに提示されます。`getChatStateCache()` は `ReadonlyMap` を返し、呼び出し側は読み取りと反復だけを行い、書き込みは `stateStore.ts` の facade だけを通します。
 
 - **容量超過の拒否は `/init enable` だけのものであり、必ず 1 行の返信でなければなりません。** 新しいグループを管理下に置く入口はこのコマンドだけで、上限を超えた場合は `INIT_CHAT_LIMIT_TEXT` を返します。他のコマンドは新規作成を引き起こしてはいけません——したがって `/send <グループ id>` は対象が既に行を持っていることを要求し、無ければ 1 行の案内だけを返します。容量エラーがコマンドハンドラから逸出すると、それは再配信に駆動される再起動ループです：update は確認されず、プロセスは非ゼロで終了し、Telegram が同じコマンドを再配信し、また throw します。
 
@@ -1011,7 +1012,7 @@
 - runner の各 `getUpdates` は `limit: 1` に固定し、現在の middleware が成功した後だけ、より高い offset の次 fetch を始めます。後の update が失敗しても、前の非冪等 side effect は独立した確認境界の内側ですでに確定しており、sibling として再配信されません。取得元が limit に反して複数 update を返した場合は、handler を 1 つも実行せず fail closed します。失敗後は次の update を fetch せず、offset も進めません。
 - `app/updateFetcher.ts` は公開 `api.getUpdates` を使い、long poll は 30 秒、1 回の取得の再試行窓は 15 時間、指数 backoff は 100 ms から開始し、429 の `retry_after` も待ちます。401/409 は即時失敗です。要求と全 backoff は同じ取消 signal を継承します。runner は現在の middleware の停止 waiter だけを保持し、完了時に解除します。`stop()` は取得を終え、`size()` と `abortActive()` が実行中処理の drain 境界を提供します。
 - 関連チャンネルの照会には 15 秒の取消 signal を渡します。Telegram duplex proxy が実行中要求を取り消し、waiter を確定します。失敗・timeout は `undefined` を返し、cache へ書かず、免除を与えません。同一 chat の重複抑制、cache TTL、世代分離はそれぞれの境界を維持します。
-- 最終 offset の `getUpdates(timeout: 0)` も network request です。`timeout: 0` が無効にするのは Telegram server 側の long polling だけで、DNS、connection、response read は制限しません。そのため `FINAL_OFFSET_CONFIRM_TIMEOUT_MS` の local `AbortSignal` も必須です。
+- 最終 offset の `getUpdates(timeout: 0)` も network request で、server 側で保留されることがあります。offset は実行中の long polling と同じで、同じ offset を前回の `getUpdates` 開始から 3 秒以内に再要求すると、Bot API server は `timeout` を 3 秒に引き上げます（`TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS`）。local の期限 `FINAL_OFFSET_CONFIRM_TIMEOUT_MS` はこの待機に 5 秒を加えた 8 秒で、DNS、connection、response read もまとめて制限する `AbortSignal` で適用します。
 
   確認の reject・timeout、または runner / maintenance / persistence の前提が未完了で skip した場合、この lifecycle gate はプロセス終了まで失敗のまま保持し、非ゼロ終了とします。
 
@@ -1039,7 +1040,7 @@
 
   したがって失敗経路でも残り予算で `inFlightAdDisposals` を 1 回は排出し（受領がない以上、安定した境界もないので、その 1 回はその時点で処理中のものだけを対象とするベストエフォートです）、そのうえで元の失敗理由を呼び出し側へ返します。この救済で戻り値を書き換えてはいけません。
 - 実行中の各 Telegram update は cancellation signal を所有します。通常の drain deadline を過ぎると、停止処理は全 handler を abort し、上限付きの settle 時間を与えます。Telegram 呼び出しと正式な state write はその signal を監視しなければなりません。それでも settle しない handler は最終 offset の確認を止め、best-effort dispose 後の非ゼロ終了を強制します。
-- 正常・異常停止のどちらでも、まずタイトル、アバター、翻訳、新規 gag、wed、blocklist 再 sweep の入口を quiesce して runner を止め、その後に上限付き drain を行います。6 つの quiesce 呼び出しの失敗は個別に捕捉しなければなりません。1 つが例外を投げても残りを試行し、その回の失敗によって最終 offset の確認とインスタンスロック解放を止めます。後続の `wait()` または `dispose()` は、冪等な 6 つの入口を再試行できます。再 sweep timer は Anti-Raid の network task と outbox write を開始できるため、終端の `dispose()` だけでなく Anti-Raid の前段 drain より先に止めなければなりません。**「quiesce 済み」を cache してはなりません**——`init()` は同じ 6 つの owner を再武装するため、起動中の停止シグナルで成功を latch すると以降の quiesce がすべて短絡され、owner は停止処理の間ずっと仕事を受け付け続けるのに結果はクリーンだと報告されます。
+- 正常・異常停止のどちらでも、まずタイトル、アバター、翻訳、新規 gag、wed、遅延コマンド、cron スケジューラ、blocklist 再 sweep、config ホットリロードの入口を quiesce して runner を止め、その後に上限付き drain を行います。9 つの quiesce 呼び出しの失敗は個別に捕捉しなければなりません。1 つが例外を投げても残りを試行し、その回の失敗によって最終 offset の確認とインスタンスロック解放を止めます。後続の `wait()` または `dispose()` は、冪等な 9 つの入口を再試行できます。再 sweep timer は Anti-Raid の network task と outbox write を開始できるため、終端の `dispose()` だけでなく Anti-Raid の前段 drain より先に止めなければなりません。**「quiesce 済み」を cache してはなりません**——`init()` は同じ 9 つの owner を再武装するため、起動中の停止シグナルで成功を latch すると以降の quiesce がすべて短絡され、owner は停止処理の間ずっと仕事を受け付け続けるのに結果はクリーンだと報告されます。
 
   翻訳 client は最初の実要求でだけ遅延生成し、各 RPC にはプロジェクト共通の短い timeout を設け、drain 後に明示的な `close()` と project parent/client reference の削除を行います。翻訳 drain の timeout や close 失敗も、ほかの重要 owner と同様にインスタンスロック解放を妨げます。正常経路では最終 Telegram offset の確認前に Anti-Raid、gag 通知、wed 処理、統一 delayed deletion を先に drain し、続いて AI を flush、Telegram outbound を drain、Disk I/O と StateStore を flush しなければなりません。
 

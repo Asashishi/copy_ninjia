@@ -11,12 +11,10 @@
  * 2. OpenAI 官方 gpt-image-2 协议按十档发送满足 16 像素倍数约束的 `size`；
  *    GPT Image 通用档收敛到全系共同支持的三种标准尺寸；xAI 协议改用
  *    `aspect_ratio`。三套能力由 agent.image 的必填 image_protocol 明确分流。
- * 3. 采样温度不可调：GPT-5 系推理模型只接受默认值，本包因此不提供任何温度
- *    常量，请求里也不带该参数。查证过的轮次压低随机性、摘要用低温这两条策略
- *    在 OpenAI 侧不生效。日后真换到接受 `temperature` 的型号，再连同常量一起
- *    加回来——**别拿「网关没报错」当能传的依据**：当前部署的代理网关接受该参数
- *    但静默丢弃（传 0.7，响应里 temperature 仍回显 1），真正会以
- *    `unsupported_value` 直接 400 的是官方端点。
+ * 3. 采样温度不可调：GPT-5 系推理模型只接受默认值，本包不提供任何温度常量，
+ *    请求里也不带该参数；查证过的轮次压低随机性、摘要用低温这两条策略在
+ *    OpenAI 侧不生效。代理网关静默丢弃该参数不代表官方端点会接受，官方端点
+ *    会以 `unsupported_value` 直接拒绝。
  *
  * 所属模块：packages/aiChat/openai/。
  */
@@ -31,22 +29,15 @@ type OpenAiImageSize = NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming
  * 各流水线的输出 token 上限。与 Gemini 侧同为供应商能力：上限要覆盖的是该模型
  * 的推理消耗，换模型就得重新估。产出该多长由领域侧的字符上限约束。
  *
- * **这四个数不能照抄 Gemini 表**。Responses 的 `max_output_tokens` 同时封顶
- * reasoning token，而这里四个模型全是 GPT-5 系推理模型：上限吃紧时模型会在
- * 思考阶段就把额度烧光、正文一个字都没产出，响应回
+ * **这四个数不能照抄 Gemini 表**：Responses 的 `max_output_tokens` 同时封顶
+ * reasoning token，而这四个模型全是 GPT-5 系推理模型，上限吃紧时模型会在思考
+ * 阶段就把额度烧光、正文一个字都没产出，响应回
  * `status:"incomplete", incomplete_details.reason:"max_output_tokens"`，被
- * aiChat/openai/response.ts 判成不可用并标 `retryable: true`——于是领域侧的
- * 重试策略把整套退避全耗在一个确定性失败上。上限只是天花板，模型写多少才付
- * 多少 token，因此宁可宽。
- *
- * 贴纸整包简介要一次读完整包逐贴纸描述，媒体描述要看图，两档都保留 16K；
- * 回复与冷消息压缩分别保留 64K/48K 量级，覆盖提示词与推理消耗。
+ * aiChat/openai/response.ts 判成不可用并标 `retryable: true`。上限只是天花板，
+ * 模型写多少才付多少 token。
  *
  * 本包不提供采样温度：上面四个模型全是 GPT-5 系推理模型，官方端点只接受默认
- * 温度，传 0.7/0.5 会以 `unsupported_value` 直接 400，因此请求里压根不带这个
- * 参数。注意代理网关可能默默吞掉它而不报错，「网关上没报错」不能当成可以传。
- *
- * 回复这一档包含推理 token。
+ * 温度，请求里不带该参数（见模块头注）。回复这一档包含推理 token。
  */
 export const OPENAI_REPLY_MAX_TOKENS: number = 65_536;
 /** 冷消息压缩摘要请求的输出 token 上限（含推理 token）。 */
@@ -54,10 +45,9 @@ export const OPENAI_CHAT_SUMMARY_MAX_TOKENS: number = 49_152;
 /**
  * 贴纸整包简介请求的输出 token 上限（含推理 token）。
  *
- * 比 Gemini 侧的同名常量高一个档次是有意的：这条流水线一旦持续失败，
- * `packSummaries` 会永久为空，第一层选包器（aiChat/ai/tools/stickers.ts）只能
- * 把每个包都描述成「整包简介还在生成中」——bot 从此随机挑包，而且每次启动
- * reconcile 都要为每个包白烧一轮重试。
+ * 这条流水线一旦持续失败，`packSummaries` 会永久为空，第一层选包器
+ * （aiChat/ai/tools/stickers.ts）只能把每个包都描述成「整包简介还在生成中」，
+ * 且每次启动 reconcile 都要为每个包重试一轮。
  */
 export const OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS: number = 16_384;
 /** 单次媒体描述请求的输出 token 上限（含推理 token）。 */
@@ -102,13 +92,9 @@ export const OPENAI_IMAGE_ERROR_LABEL: string = "OpenAI image generation API";
  */
 export const OPENAI_REQUEST_TIMEOUT_MS: number = 180_000;
 /**
- * media 能力（视觉描述与语音转写）的独立超时。
- *
- * 这一档必须宽于纯文本往返：服务端要先把整份图片或整段音频解码进上下文才开始
- * 出字，端到端耗时本就长一截，套用通用档会在模型还在读媒体时把连接掐掉——而
- * 掐断发生在服务端已经出账之后，等于花钱换一条
- * `[图片：解析失败，请无视此消息]`。视觉与语音共用 config/agent.json 的
- * `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
+ * media 能力（视觉描述与语音转写）的独立超时，宽于纯文本往返：服务端需先把
+ * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/agent.json
+ * 的 `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
  */
 export const OPENAI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
 /**
@@ -118,8 +104,7 @@ export const OPENAI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
 export const OPENAI_IMAGE_REQUEST_TIMEOUT_MS: number = 300_000;
 /**
  * SDK 对 408/429/5xx 的重试次数（不含首次请求，语义同 OpenAI SDK 的
- * maxRetries）。取 5 与 Gemini 侧「首次加最多五次重试」对齐；所有调用方不得再重试
- * 这类请求失败。
+ * maxRetries）；所有调用方不得再重试这类请求失败。
  */
 export const OPENAI_REQUEST_MAX_RETRIES: number = 5;
 

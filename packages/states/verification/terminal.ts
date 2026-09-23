@@ -1,3 +1,4 @@
+import { NO_VERIFICATION_EFFECTS } from "../../consts/antiRaid/verification";
 import type {
   TimeoutInviterVerdictEvent,
   VerificationEffect,
@@ -11,11 +12,11 @@ export function handleTimeoutInviterVerdict(
   state: VerificationState | undefined,
   event: TimeoutInviterVerdictEvent
 ): VerificationTransition {
-  if (state?.kind !== "checkingInviter") return { next: state, effects: [] };
+  if (state?.kind !== "checkingInviter") return { next: state, effects: NO_VERIFICATION_EFFECTS };
   if (!event.inviterIsAdmin) {
     return {
       next: expellingOf("timeout", state.snapshot),
-      effects: [],
+      effects: NO_VERIFICATION_EFFECTS,
     };
   }
   const effects: VerificationEffect[] = [
@@ -37,7 +38,7 @@ export function handleTerminalPersisted(
   state: VerificationState | undefined
 ): VerificationTransition {
   if (state?.kind === "kickPending") {
-    if (state.effectStarted === true) return { next: state, effects: [] };
+    if (state.effectStarted === true) return { next: state, effects: NO_VERIFICATION_EFFECTS };
     state.effectStarted = true;
     const effects: VerificationEffect[] = [];
     if (state.announcementMessageId !== undefined) {
@@ -47,7 +48,7 @@ export function handleTerminalPersisted(
     return { next: state, effects };
   }
   if (state?.kind === "checkingInviter") {
-    if (state.executionStarted === true) return { next: state, effects: [] };
+    if (state.executionStarted === true) return { next: state, effects: NO_VERIFICATION_EFFECTS };
     state.executionStarted = true;
     return {
       next: state,
@@ -59,7 +60,7 @@ export function handleTerminalPersisted(
     };
   }
   if (state?.kind === "expelling") {
-    if (state.executionStarted === true) return { next: state, effects: [] };
+    if (state.executionStarted === true) return { next: state, effects: NO_VERIFICATION_EFFECTS };
     state.executionStarted = true;
     return {
       next: state,
@@ -69,7 +70,7 @@ export function handleTerminalPersisted(
       }],
     };
   }
-  return { next: state, effects: [] };
+  return { next: state, effects: NO_VERIFICATION_EFFECTS };
 }
 
 /**
@@ -82,11 +83,11 @@ export function handleTerminalAttemptBudgetExhausted(
   state: VerificationState | undefined
 ): VerificationTransition {
   if (!isTerminalVerificationPhase(state?.kind)) {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_VERIFICATION_EFFECTS };
   }
   return {
     next: undefined,
-    effects: [],
+    effects: NO_VERIFICATION_EFFECTS,
     retainPersistedSnapshot: true,
   };
 }
@@ -95,8 +96,8 @@ export function handleTerminalAttemptBudgetExhausted(
 export function handleExpelSettled(
   state: VerificationState | undefined
 ): VerificationTransition {
-  if (state?.kind === "expelling") return { next: undefined, effects: [] };
-  return { next: state, effects: [] };
+  if (state?.kind === "expelling") return { next: undefined, effects: NO_VERIFICATION_EFFECTS };
+  return { next: state, effects: NO_VERIFICATION_EFFECTS };
 }
 
 /** 私密模式踢人失败后的重试只对尚未执行的原 token 生效。 */
@@ -108,7 +109,7 @@ export function handleKickRetry(
     state.executionStarted === true ||
     state.effectStarted === true
   ) {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_VERIFICATION_EFFECTS };
   }
   state.effectStarted = true;
   return { next: state, effects: [{ kind: "kickMember" }] };
@@ -119,7 +120,7 @@ export function handleKickSettled(
   state: VerificationState | undefined,
   now: number
 ): VerificationTransition {
-  if (state?.kind !== "kickPending") return { next: state, effects: [] };
+  if (state?.kind !== "kickPending") return { next: state, effects: NO_VERIFICATION_EFFECTS };
   return {
     next: {
       kind: "kicked",
@@ -127,7 +128,7 @@ export function handleKickSettled(
       isBot: state.isBot,
       kickedAt: now,
     },
-    effects: [],
+    effects: NO_VERIFICATION_EFFECTS,
   };
 }
 
@@ -136,7 +137,7 @@ export function handleDedupeExpired(
   state: VerificationState | undefined
 ): VerificationTransition {
   if (state?.kind === "exempt" || state?.kind === "kicked") {
-    return { next: undefined, effects: [] };
+    return { next: undefined, effects: NO_VERIFICATION_EFFECTS };
   }
-  return { next: state, effects: [] };
+  return { next: state, effects: NO_VERIFICATION_EFFECTS };
 }

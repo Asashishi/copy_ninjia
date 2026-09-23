@@ -1,11 +1,6 @@
 /**
- * 业务 Worker 侧 error 日志回主线程的有界转发通道。
- *
- * 从 infra/logger.ts 分出来的一层。那边是门面，按 `Bun.isMainThread` 在「直接转投
- * 落盘线程」与「包信封向上转发」之间二选一；而 isMainThread 是模块加载期定死的
- * 常量，于是整条 Worker 侧协议——单批在途、溢出计数、汇总补发、迟到/重复 ACK——
- * 在主线程跑的测试里一行都执行不到。抽到这里并把出口做成可注入的 sink 之后，
- * 这几条路径不再依赖「当前线程是谁」。
+ * 业务 Worker 侧 error 日志回主线程的有界转发通道，供 infra/logger.ts 按
+ * `Bun.isMainThread` 在 Worker 侧调用；主线程直接落盘不经过此通道。
  *
  * 通道形状：任一时刻只有一个批次在途，主线程回 `__logBatchAccepted` 才推进下一批。
  * 总消息数与 JSON 载荷字节双硬顶（见 cache/perThread/logger.ts 的 forwardedLogQueue），
@@ -58,9 +53,8 @@ export function pumpForwardedLogs(post: ForwardedLogSink): boolean {
  * 主线程重新消费后，把 Worker 侧整段溢出收敛为一条可落盘的普通日志。
  * 只有汇总真的入了队才清零：入不进去说明队列仍然满着，计数必须留到下一次。
  *
- * `now` 只是测试缝，两个生产调用点都用缺省值。**不要**改成
- * 从触发日志上取时刻——那会让同一条汇总按走哪条路径拿到两个不同的时间源，而
- * 这条路径本来就极少走，省一次读钟换不来任何东西。
+ * `now` 是测试缝，两个生产调用点都用缺省值 `Date.now()`；不得改成从触发日志上
+ * 取时刻，否则同一条汇总会因调用路径不同而取到两个不同的时间源。
  */
 export function enqueueForwardedLogDropSummary(now: number = Date.now()): void {
   const dropState: typeof forwardedLogDropState.current =

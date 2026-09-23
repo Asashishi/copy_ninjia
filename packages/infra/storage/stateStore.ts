@@ -27,7 +27,6 @@ import type {
   GlobalCopyState,
   StateFileSchema,
 } from "../../types/chatState";
-import type { ReadonlyLruCache } from "../../libs/lruCache";
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
 import { assertChatStateCapacity } from "../chatStateStorage";
@@ -48,19 +47,17 @@ function sharedStateStore(): StateStore {
   return stateStoreHolder.current;
 }
 
-export function getGlobalCopyState(): GlobalCopyState {
+/** 全局复读状态的只读视图；写入只经 adoptCopyTarget/clearCopyTarget 与复读冷却的两个函数。 */
+export function getGlobalCopyState(): Readonly<GlobalCopyState> {
   return globalCopyState;
 }
 
 /**
  * 本群此刻的复读目标 id；没有目标、或目标锁在别的群时为 undefined。
  *
- * **刻意不返回 `{ copiedUser, copyMode }` 投影对象**：这条判定挂在每条群消息和
- * 每次反应更新上（auto/message/index.ts、auto/reactionSync.ts、echo.ts、
- * guards.ts 四处），而四个调用点要的都只是「是不是 TA」——为此现造一个两字段
- * 对象，等于复读进行期间每条消息白付一次分配（见 AGENTS.md 的「高频路径可直接
- * 读取现值时，不得创建投影对象」）。需要整份身份的冷路径直接读
- * getGlobalCopyState()。
+ * 不返回 `{ copiedUser, copyMode }` 投影对象：该判定挂在每条群消息与每次反应更新上
+ * （auto/message/index.ts、auto/reactionSync.ts、echo.ts、guards.ts），调用点只需
+ * 判断「是不是 TA」。需要整份身份的冷路径直接读 getGlobalCopyState()。
  */
 export function activeCopyTargetIdIn(chatId: number): number | undefined {
   if (globalCopyState.copiedUser === null || globalCopyState.copyChatId !== chatId) {
@@ -70,12 +67,8 @@ export function activeCopyTargetIdIn(chatId: number): number | undefined {
 }
 
 /**
- * 本群此刻生效的复读模式。
- *
- * 语义上依附于上面那个判定：**调用方必须先用 activeCopyTargetIdIn 确认本群确有
- * 目标**，否则这里的 undefined 分不清「没目标」还是「有目标但没指定模式」。
- * 拆成两个函数而不是返回一个二元组，正是为了让「没目标」那条最常见的路径
- * 一次分配都不产生。
+ * 本群此刻生效的复读模式。调用方必须先用 activeCopyTargetIdIn 确认本群确有目标，
+ * 否则这里的 undefined 分不清「没目标」还是「有目标但没指定模式」。
  */
 export function activeCopyModeIn(chatId: number): CopyMode | undefined {
   if (globalCopyState.copiedUser === null || globalCopyState.copyChatId !== chatId) {
@@ -125,7 +118,7 @@ export function getRandomHImageDirectory(): string {
   return resolve(RUNTIME_DATA_ROOT, globalAssetState.randomHImageDir ?? RANDOM_H_IMAGE_DIR);
 }
 
-export function getChatStateCache(): ReadonlyLruCache<number, ChatState> {
+export function getChatStateCache(): ReadonlyMap<number, ChatState> {
   return chatStateCache;
 }
 
@@ -152,6 +145,27 @@ export function clearCopyTarget(): void {
   globalCopyState.copiedUser = null;
   globalCopyState.copyMode = undefined;
   globalCopyState.copyChatId = undefined;
+}
+
+/**
+ * 占住全局复读冷却：同步写入新的冷却起点并返回原值，调用方放弃这次尝试时把两者
+ * 交给 restoreCopyCooldown。只改内存，落盘由调用方经 persistGlobalState 完成（见
+ * commands/copyShared.ts 的 claimCopyCooldownOrReject）。
+ */
+export function claimCopyCooldown(claimedAt: number): number | undefined {
+  const previousLastCopyTime: number | undefined = globalCopyState.lastCopyTime;
+  globalCopyState.lastCopyTime = claimedAt;
+  return previousLastCopyTime;
+}
+
+/**
+ * 回滚一次冷却占用：只在冷却起点仍是这次占用写入的值时恢复原值。
+ * @returns 是否发生回滚；调用方据此决定是否落盘。
+ */
+export function restoreCopyCooldown(claimedAt: number, previousLastCopyTime: number | undefined): boolean {
+  if (globalCopyState.lastCopyTime !== claimedAt) return false;
+  globalCopyState.lastCopyTime = previousLastCopyTime;
+  return true;
 }
 
 export async function loadState(): Promise<void> {
@@ -185,17 +199,11 @@ export async function loadState(): Promise<void> {
 
 /**
  * 把 `state.global.assets` 里没设过的项补成内置常量，并在确有补写时落一次盘。
+ * 只补缺的那一项：已经配过的值原样保留。
  *
- * 目的是**让旋钮出现在文件里**：这一块没有任何命令会写，改图的人得直接编辑
- * state.json；而缺省语义（缺字段=回退常量）意味着一个从没配过的部署里根本看不到
- * 这些键，于是要么去翻代码找键名，要么照着别处抄一份可能已经过时的示例。启动时
- * 补齐之后，文件里永远摆着五个当前生效的值，改图就是就地改。
- *
- * 只补缺的那一项：已经配过的值原样保留，绝不用常量覆盖部署方写下的地址。
- *
- * 落盘走 saveGlobalStateInBackground 而不是 persistGlobalState：这是一次为了
- * 可读性做的补写，不是谁按下的权威决策，写失败不该拦住启动——失败会照常走
- * StateStore 的重试与 fatal 通道（见 app/lifecycle.ts 的 setStatePersistenceFatalHandler）。
+ * 落盘走 saveGlobalStateInBackground 而不是 persistGlobalState：写失败不拦住启动，
+ * 按 StateStore 既有的重试与 fatal 通道处理（见 app/lifecycle.ts 的
+ * setStatePersistenceFatalHandler）。
  * @returns 本次补写了几项；五项都配过时为 0，且不产生任何写盘。
  */
 export function seedMissingAssetState(): number {
@@ -266,29 +274,19 @@ export function flushStateToDisk(
 }
 
 /**
- * 只读地查一个群的状态。没有条目时返回全局共享的 `DEFAULT_CHAT_STATE`，因此
- * 返回类型必须是 `Readonly<ChatState>`：写成可变的 `ChatState` 等于在类型层面
- * 把那个共享单例交出去（TS 的 `readonly` 不参与可赋值性判定，声明成
- * `Readonly<ChatState>` 的常量在这个边界会被静默放宽回可变），一次误写就污染
- * 所有没有状态的群。要修改状态的调用方一律走 `getOrCreateChatState`。
- *
- * 取值走 `peek` 而不是 `get`：读取群状态不能刷新 LRU 或改变迭代顺序。缓存容量恰好是
- * STATE_MANAGED_CHAT_LIMIT，`getOrCreateChatState` 与 `hydrateChatStateCache` 又都在
- * 入口处拒绝第 26 条（见 infra/chatStateStorage.ts 的 assertChatStateCapacity），
- * 淘汰分支永远走不到，因此热度刷新没有语义价值。每条群消息的不同 middleware
- * 会各读一次当前状态；同一 middleware 内复用引用（见 libs/chatState.ts 的形状契约），
- * 外加 ensureBotChatPermissions 与 botCanDeleteMessagesIn 的独立读取。
- *
- * 另一半理由是迭代序：`getChatStateCache()` 有十余处在迭代（/block、/block disable 的连带
- * 封禁群清单、各处 managed 群清扫、lockdown 收养与恢复……），用 `get` 会让它变成
- * 「读历史的函数」，其中两处直接呈现给用户。
+ * 只读地查一个群的状态。没有条目时返回全局共享的 `DEFAULT_CHAT_STATE`，
+ * 返回类型为 `Readonly<ChatState>`。要修改状态的调用方一律走 `getOrCreateChatState`。
  */
 export function getChatState(chatId: number): Readonly<ChatState> {
-  return chatStateCache.peek(chatId) ?? DEFAULT_CHAT_STATE;
+  return chatStateCache.get(chatId) ?? DEFAULT_CHAT_STATE;
 }
 
+/**
+ * 取可写的群状态；没有条目时先过容量闸（infra/chatStateStorage.ts 的
+ * assertChatStateCapacity），再以规范形状新建并登记。
+ */
 export function getOrCreateChatState(chatId: number): ChatState {
-  let chatState: ChatState | undefined = chatStateCache.peek(chatId);
+  let chatState: ChatState | undefined = chatStateCache.get(chatId);
   if (!chatState) {
     assertChatStateCapacity(chatId);
     // 规范形状一次建好；写入方只赋值，不往裸 `{}` 上一个个加字段（见
@@ -312,17 +310,13 @@ export function clearChatStateField(chatId: number, field: keyof ChatState): boo
 /**
  * 停管一个群时删除它的全部配置，但保留尚需恢复的 lockdown write-ahead 记录。
  *
- * 两条路共用：`/init disable`（见 commands/init.ts）与机器人被移出群（见
- * infra/botAdmin.ts）。功能开关一并删掉——「本天才不再管这个群」之后，一份没有
- * 任何人会读的开关既占着 STATE_MANAGED_CHAT_LIMIT 的名额，又没有任何命令能删掉
- * 它；重新 `/init enable` 时逐条重配，比留一堆看不见的残留开关清楚。
+ * 两条路径共用：`/init disable`（见 commands/init.ts）与机器人被移出群（见
+ * infra/botAdmin.ts）。lockdown 是唯一例外：反刷群恢复流程仍要用它的
+ * originalPermissions 解锁（同 libs/chatState.ts 的 normalizeChatState）。
  *
- * lockdown 是唯一的例外：反刷群恢复流程仍要用它的 originalPermissions 解锁，
- * 删掉等于让那个群的邀请权限永久卡住（同 libs/chatState.ts 的 normalizeChatState）。
- *
- * 无记录时不做任何事；调用方负责在同一 teardown 尾部统一落盘——清完若整条状态
- * 回到缺省，这里会删掉 LRU 条目，那次 persistChatState 写出的就是删除墓碑，
- * SQLite 行一并消失（见 infra/chatStateStorage.ts 的 encodeCurrentChatState）。
+ * 无记录时不做任何事；调用方负责在同一 teardown 尾部统一落盘。清完后若整条状态
+ * 回到缺省，这里会删掉热读副本条目，随后的 persistChatState 写出删除墓碑，SQLite 行
+ * 一并消失（见 infra/chatStateStorage.ts 的 encodeCurrentChatState）。
  */
 export function purgeChatStateExceptLockdown(chatId: number): void {
   const current: ChatState | undefined = chatStateCache.get(chatId);

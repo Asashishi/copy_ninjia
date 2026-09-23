@@ -135,16 +135,13 @@ export type IdentityPersistenceReply = (
 ) => void;
 
 /**
- * 统一 flush 覆盖的落盘领域。回执按领域拆开，是为了让「等自己这条记录
- * 落盘」的调用方（典型是 /block）不会因为无关领域失败而误报——那会把运维
- * 引向一个其实没坏的文件，而真正坏掉的领域按设计只有 console.error，
- * 永远进不了 logs/（见 workers/diskIOWorker.ts 的 flushAll）。
+ * 统一 flush 覆盖的落盘领域，回执按领域拆开：调用方（典型是 /block）只需要
+ * 关心自己这条记录所在领域是否失败，不受无关领域影响（见
+ * workers/diskIOWorker.ts 的 flushAll）。
  *
- * 入群日志占两格，`joinLog` 是追写、`joinLogPurge` 是群 teardown 的整群删除。
- * **必须分开**：追写那一格由每一条入群事实的 durable 屏障消费（见
- * infra/joinLog.ts 的 recordJoinLog），把一个已停管群删不掉的文件算进去，等于让
- * 那一个文件把所有群的入群 update 全部判成未确认、无限重投，而 joinLogFiles.ts
- * 的分组失败语义本来就是为了不让一个群连坐其它群。
+ * 入群日志占两格：`joinLog` 是追写，`joinLogPurge` 是群 teardown 的整群删除，
+ * 两者分开领域各自独立失败。追写那一格由每一条入群事实的 durable 屏障消费
+ * （见 infra/joinLog.ts 的 recordJoinLog）。
  */
 export type DiskIODomain =
   | "log"
@@ -295,6 +292,26 @@ export interface StickerCatalogPersistedReply {
   readonly pack: string;
   readonly revision: number;
 }
+
+/**
+ * 由主线程 owner 订阅的 Disk I/O 回执，按回执类型索引（infra/diskIO/observers.ts 的
+ * onDiskIOReply 登记，infra/diskIO/host.ts 分派）。
+ */
+export interface DiskIOReplyListenerMap {
+  readonly midnightMaintenance: MidnightMaintenanceReply;
+  readonly verificationPersisted: VerificationPersistedReply;
+  readonly aiMemoryDeletedPersisted: AiMemoryDeletedPersistedReply;
+  readonly wedMembersDeletedPersisted: WedMembersDeletedPersistedReply;
+  readonly aiMemoryPersisted: AiMemoryPersistedReply;
+  readonly stickerCatalogPersisted: StickerCatalogPersistedReply;
+  readonly luckAppendStalled: LuckAppendStalledReply;
+  readonly identityStoragePersisted: IdentityStoragePersistedReply;
+}
+
+/** 每类可订阅回执各自的监听器表。 */
+export type DiskIOReplyListeners = {
+  readonly [K in keyof DiskIOReplyListenerMap]: ((reply: DiskIOReplyListenerMap[K]) => void)[];
+};
 
 export type DiskIOReply =
   | StickerCatalogPersistedReply

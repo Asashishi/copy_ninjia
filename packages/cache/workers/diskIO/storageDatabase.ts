@@ -37,9 +37,9 @@ export const storageWriteFatalReply: { current: (() => void) | null } = { curren
  *
  * 容量固定为「每条活着的连接一项」，而本线程同时只持有一条连接，因此无淘汰需求。
  * 清理交给 GC：键是连接对象本身，连接被换掉后整项随之回收，本表不额外持有强引用。
- * 之所以按连接存而不是做成模块级单例——库句柄会被整个换掉（重开库、测试重建），
- * 而 SQLite 预编译语句绑在它自己的连接上，跨连接复用会在旧连接关闭后失效。
- * Worker 崩溃重建后是全新 isolate，本表随之为空，下一次调用重新预编译。
+ * SQLite 预编译语句绑在它自己的连接上，库句柄被整个换掉（重开库、测试重建）后旧
+ * 语句失效，因此按连接对象建索引，不做成模块级单例。Worker 崩溃重建后是全新
+ * isolate，本表随之为空，下一次调用重新预编译。
  */
 export const storedIdentityIdLookups: WeakMap<
   StorageDatabase,

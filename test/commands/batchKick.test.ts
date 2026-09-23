@@ -276,8 +276,7 @@ describe("/batch_kick", () => {
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(banChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(lastReplyText(sendMessage)).toContain("黑名单交回封禁 1");
-    // 「交回」必须真的交出去：本命令对这条记录一步都没做，不请一次补扫的话
-    // 战报那句话是空的，人还坐在群里而没有任何批次、清扫或重试存在。
+    // 「交回」必须真的交出去：请求一次补扫。
     expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
     expect(sweepBlockedMembers).toHaveBeenCalledWith(-1001);
   });

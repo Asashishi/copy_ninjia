@@ -172,6 +172,18 @@ export type TelegramFileDownloadResult =
   | { readonly status: "tooLarge"; readonly observedBytes: number }
   | { readonly status: "empty" };
 
+/**
+ * 查询某人此刻是否在群的结局，见 infra/telegram/actions/membership.ts 的 readPresentChatUser。
+ * - present：此刻在群，附带本次查询到的身份；
+ * - absent：已离群，或 Telegram 以 PARTICIPANT_ID_INVALID 拒绝该用户 ID；
+ * - chatDenied：本群拒绝成员查询本身（机器人不在群、或只允许管理员查询他人），
+ *   与目标用户无关，同群其余查询必然同样失败；
+ * - failed：其它查询失败。
+ */
+export type ChatMemberPresence =
+  | { readonly kind: "present"; readonly user: User }
+  | { readonly kind: "absent" | "chatDenied" | "failed" };
+
 /** 有界头像下载结果；成功时字节只由当前操作持有，不进入持久化状态。 */
 export type AvatarDownloadResult =
   | { readonly status: "ok"; readonly bytes: Uint8Array }

@@ -1,9 +1,8 @@
 /**
  * 生歌消息 caption 的排版：模型自己那句话 + 一段固定格式的曲目信息。
  *
- * 元信息只写算得出来的：容器与体积恒有，码率要靠解析音频才有，解析不出就整段
- * 省掉那一项——宁可少展示，也不在群里挂一个编出来的数。时长不进 caption，它由
- * sendAudio 的 duration 参数显示在播放条上。
+ * 容器与体积恒有，码率解析不出时整项省掉，不进 caption；时长不出现在 caption
+ * 里，由 sendAudio 的 duration 参数单独传递。
  */
 
 import { describe, expect, test } from "bun:test";

@@ -428,6 +428,10 @@ test("会话交不出可续接的模型轮次时，本轮就此收尾", async ()
   // 工具已经执行过（副作用当场发生），但不再发下一次请求。
   expect(execute).toHaveBeenCalledTimes(1);
   expect(requestMock).toHaveBeenCalledTimes(1);
+  // 回复轮对 null 结果不记零动作，原因只由模型侧这一行记录。
+  expect(loggerErrorMock).toHaveBeenCalledWith(
+    "AI reply session could not continue after tool outputs for chat -1001: round=0, custom_calls=1, side_effects=0."
+  );
 });
 
 test("不存在通用单工具四次上限，无效调用只受整轮总预算约束", async () => {

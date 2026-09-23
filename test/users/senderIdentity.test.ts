@@ -39,12 +39,10 @@ beforeEach(() => {
 });
 
 /**
- * identityById 必须恒等于「按 alias 回查 userCache」的结果：cacheSender 的稳态
- * 判定直接读它，任一条写入路径漏同步都会让每条群消息读到作废身份。
+ * 断言 identityById 与「按 alias 反查 userCache」的结果逐项一致。
  */
 function expectIdentityIndexInLockstep(): void {
-  // 逐条 expect 会按 USER_CACHE_MAX 把公开的 expect() 计数灌成几万次，指标就不再
-  // 反映测试广度；这里先收集不一致项，再用固定两次断言报出来。
+  // 先收集不一致项，再用固定两次断言报出，避免按 USER_CACHE_MAX 逐条 expect()。
   const mismatches: string[] = [];
   for (const [id, username] of senderUsernameCache) {
     if (identityById.get(id) !== userCache.get(username)) mismatches.push(`alias:${id}`);
@@ -171,9 +169,8 @@ describe("sender identity cache", () => {
   });
 
   test("username 不变但资料字段变化时照样刷新：守住快路径的比较清单", () => {
-    // cacheSender 的快路径逐字段比对缓存条目（为的是每条群消息不白付一次对象
-    // 分配），字段清单必须覆盖 resolveSenderIdentity 构造的全部字段：漏掉任何
-    // 一个，该字段的变化都会被误判成「未变」，缓存从此停在旧资料上。
+    // cacheSender 的快路径逐字段比对缓存条目，字段清单需覆盖 resolveSenderIdentity
+    // 构造的全部字段；下面逐一改变 first_name、last_name、title 后核对缓存已刷新。
     const user: Message = userMessage(41, "ProfileUser");
     cacheSender(user);
     expect(userCache.get("profileuser")).toMatchObject({ first_name: "User 41" });
@@ -263,23 +260,23 @@ describe("sender identity cache", () => {
   });
 
   test("改名、去名、换绑与容量淘汰后 identityById 与另外两张表始终同步", () => {
-    // 新增：三张表一起建立。
+    // 新增。
     cacheSender(userMessage(1, "first_name_alias"));
     expect(identityById.get(1)).toBe(userCache.get("first_name_alias"));
     expectIdentityIndexInLockstep();
 
-    // 改名：旧 alias 连同索引一起换成新的那份对象。
+    // 改名。
     cacheSender(userMessage(1, "second_name_alias"));
     expect(identityById.get(1)).toBe(userCache.get("second_name_alias"));
     expect(identityById.get(1)?.username).toBe("second_name_alias");
     expectIdentityIndexInLockstep();
 
-    // 去名：这个 id 不再有缓存身份，索引必须一起摘掉，不能留着旧对象。
+    // 去名。
     cacheSender(userMessage(1));
     expect(identityById.has(1)).toBe(false);
     expectIdentityIndexInLockstep();
 
-    // username 换绑到另一个 sender：旧 sender 的索引条目必须同步撤销。
+    // username 换绑到另一个 sender。
     cacheSender(userMessage(2, "shared_alias"));
     expect(identityById.get(2)).toBe(userCache.get("shared_alias"));
     cacheSender(userMessage(3, "shared_alias"));
@@ -287,7 +284,7 @@ describe("sender identity cache", () => {
     expect(identityById.get(3)).toBe(userCache.get("shared_alias"));
     expectIdentityIndexInLockstep();
 
-    // 频道形态走同一条写入路径，索引跟着换形状。
+    // 频道形态走同一条写入路径。
     cacheSender(senderChatMessage(-1009, "channel_alias"));
     expect(identityById.get(-1009)).toMatchObject({ isChannel: true });
     expectIdentityIndexInLockstep();
@@ -308,20 +305,16 @@ describe("按裸 id 解析目标", () => {
   });
 
   test("缓存落空不是失败：id 本身就是权威目标，退化成只带 id 的最小身份", () => {
-    // 与 @username 那条路的关键差别——用户名会被释放后由别人重新注册，
-    // 而 id 不会改指另一个人，因此按 id 下的命令不必要求「这个人说过话」。
     expect(resolveIdTarget(4242)).toEqual({ id: 4242 });
   });
 
   test("负数 id 退化时带上 isChannel：解封接口按这个标记分派", () => {
-    // 漏标就会拿一个负数去调 unbanChatMemberIfBanned，报错记进 failedCount，
-    // 管理员收到一份关于「根本没被碰过的目标」的假战报（见 commands/unblock.ts）。
     expect(resolveIdTarget(-1002233445566)).toEqual({ id: -1002233445566, isChannel: true });
   });
 
   test("双向关系对不上时不采信残留别名，免得回执写成另一个人的名字", () => {
     cacheSender(userMessage(42, "Alice_1"));
-    // 模拟单边残留：正向记录还指着 42，反向记录已经改名。
+    // 制造单边残留：正向记录仍指向 42，反向记录已改名。
     senderUsernameCache.set(42, "someone_else");
     expect(resolveIdTarget(42)).toEqual({ id: 42 });
   });

@@ -40,15 +40,10 @@ export const DAY_MS: number = 24 * 60 * 60 * 1_000;
 /**
  * 广告命中样本文件超过这个大小就轮转成一个带时间戳的归档，重新从空文件写起。
  *
- * 轮转的理由不是磁盘占用，是**读回成本**：追加游标在 Worker 重建后与每次追加
- * 失败后都会作废，下一条命中因此要对整份文件重跑一次整份读回 + JSON.parse
- * （必要时还要加一次截断修复的全扫），压在唯一那条串行 I/O 线程上。
- * 不设上界的话，攒上几个月就能把同期的 `/block` 落盘确认拖过
- * DISK_IO_FLUSH_TIMEOUT_MS，让管理员看到「小本本没能写进硬盘」——而那条黑名单
- * 其实完全写得进去。
- *
- * 归档按 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 保留，限制旁路素材的总磁盘占用。
- * 所属模块：workers/diskIO/adSampleFile.ts。
+ * 追加游标在 Worker 重建后与每次追加失败后都会作废，下一条命中需要对整份
+ * 文件重新读回、解析并校验，压在唯一那条串行 I/O 线程上；文件越大这次重读
+ * 越可能拖慢同期其它落盘确认。归档按 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 保留，
+ * 限制旁路素材的总磁盘占用。所属模块：workers/diskIO/adSampleFile.ts。
  */
 export const AD_SAMPLE_FILE_MAX_BYTES: number = 8 * 1_024 * 1_024;
 

@@ -156,8 +156,7 @@ describe("请求分流", () => {
     expect(body.prompt).toBe("把原图改成水彩");
     expect(body.size).toBe("1024x1024");
     expect(body.output_format).toBe(OPENAI_IMAGE_OUTPUT_FORMAT);
-    // 两条分支的审核档位不对称是**有意**的：openai@6.49 的 ImageEditParamsBase
-    // 上根本没有 moderation，硬塞就是对未声明字段的猜测（见 image.ts 头注）。
+    // openai@7.15 的 ImageEditParamsBase 上没有 moderation 字段，edit 分支不发送它。
     expect(body.moderation).toBeUndefined();
     expect(body.n).toBe(1);
     // 扩展名与 MIME 跟随实际字节格式，服务端据此判格式。
@@ -259,7 +258,6 @@ describe("载荷校验", () => {
   test("签名认不出 png/jpeg 时不做猜测性放行，且点名记下原因", async () => {
     respondWith(new TextEncoder().encode("RIFF????WEBP").toBase64());
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
-    // 静默返回 null 的话，图照样计费而日志里没有一行指向格式不匹配。
     expect(loggerError).toHaveBeenCalledWith(
       expect.stringContaining("unusable image payload: byte signature matches neither PNG nor JPEG")
     );
@@ -289,8 +287,7 @@ describe("载荷校验", () => {
 
   test("只回 url 信封时与「模型没画出来」分开点名——那是配置问题不是模型问题", async () => {
     // agent.image.model 是自由文本、解析器只校验非空：填成非 gpt-image 模型，
-    // 或指向一个默认回 URL 信封的兼容网关，就是这个形状。日志只说「没有载荷」的
-    // 话，运维手里那份配置看上去完全正常，图却每张都白计费。
+    // 或指向一个默认回 URL 信封的兼容网关，就是这个形状。
     generate.mockResolvedValueOnce({ data: [{ url: "https://cdn.invalid/generated.png" }] });
     await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
     expect(loggerError).toHaveBeenCalledWith(

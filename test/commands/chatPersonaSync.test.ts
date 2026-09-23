@@ -1,9 +1,7 @@
 /**
- * 群人设三处对外表现的同步边界（packages/commands/chatPersonaSync.ts）。
- *
- * 这一组从前在 botAdmin、`/prompt`、`/init disable` 三处逐字重复，顺序一旦分叉
- * 就会出现「命令菜单已经换了、Worker 还在用旧人设」这类只在群里才看得出来的
- * 不一致，因此顺序本身是契约。
+ * 验证 `syncChatPersonaSurfaces`（packages/commands/chatPersonaSync.ts）的调用顺序：
+ * 两个 Worker 侧人设快照先同步完成，命令菜单（唯一真实出站请求）最后发送；
+ * 命令菜单失败时原样上抛，此时两个 Worker 快照已经落到新人设上。
  */
 
 import { beforeEach, expect, mock, test } from "bun:test";

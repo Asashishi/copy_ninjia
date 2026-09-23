@@ -50,7 +50,7 @@ WantedBy=multi-user.target
 
 データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`（`0755` も受け付けます。下記参照）。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` と `database/` を container の一時 layer に置かないでください。
 
-program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 者は `0755`、`database/` は `0770`。実際の mode は umask でさらに絞られます）、4 path の symlink を拒否します。root・`logs/`・`memory/` は runtime UID 所有かつ `0755` 以下でなければなりません。この gate が止めるのは**書き込み**で、group または other に `w` bit があれば起動を拒否します。読み側を `0755` まで緩めているのは、本 project を単一テナントとして扱い、大半の deployment が root で直接動かし、既定 umask で作られる directory がまさに `0755` だからです。
+program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 者は `0755`、`database/` は `0770`。実際の mode は umask でさらに絞られます）、4 path の symlink を拒否します。root・`logs/`・`memory/` は runtime UID 所有かつ `0755` 以下でなければなりません。この gate が止めるのは**書き込み**で、group または other に `w` bit があれば起動を拒否します。読み側は `0755` まで緩めています(既定 umask で作られる directory はもともとこの mode)。
 
 > **代償**：`memory/` の新規 file は `0644` が既定値なので、既定のまま使う deployment では group chat の逐語記録を主に directory bit で保護します。`0755` のままにすると、同じマシンのどの local account からも読めます。マルチテナント host では data root と `memory/` を `0750`、既存 file を必要に応じて `0600`/`0640` に収めてください。runtime の adopt と replace はその mode を維持し、自動 chmod しません。deployment tooling は `database/` を `02770` に設定でき、主 DB と WAL/SHM は初回作成時に `0660` を使います。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
 

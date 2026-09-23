@@ -46,13 +46,9 @@ export interface MessageTriggerContext {
    */
   messageThreadId?: number;
   /**
-   * 直接唤起的成因；随机/无触发为 undefined。
-   *
-   * 摊平成字符串而不是包一个 `{ reason }` 对象，理由与
-   * types/aiChat/protocol.ts 里 voiceMime/voiceDurationSeconds 那段完全相同：
-   * 这条上下文每条消息造一次、还要随媒体记录跨线程 clone 一次，多一层按类型
-   * 才出现的嵌套对象既多一次分配，也让消费侧在「有对象」与「没对象」之间多态。
-   * 字段名与 types/aiChat/replies.ts 的 directTriggerReason 保持一致。
+   * 直接唤起的成因；随机/无触发为 undefined。字段名与
+   * types/aiChat/replies.ts 的 directTriggerReason 保持一致；摊平为字符串而非
+   * 嵌套对象的约束同 types/aiChat/protocol.ts 的 voiceMime/voiceDurationSeconds。
    */
   directTriggerReason?: AiDirectTriggerReason;
 }
@@ -70,12 +66,7 @@ export interface MentionFacts {
 }
 
 /**
- * 随机媒体评价的掷骰结果。
- *
- * **三态而不是 `{ candidate, claimed }` 两个布尔**：`claimed` 蕴含 `candidate`，
- * 四种组合里只有三种有意义；而返回对象意味着 photo/sticker/animation/voice
- * 四条每消息路径各白付一次分配（见 AGENTS.md 的「高频路径……不得创建投影
- * 对象」）。字符串字面量是常量，比较不产生任何分配，也比位标量读得懂。
+ * 随机媒体评价的掷骰结果，三态：
  *
  * - `none`：没掷中，这条媒体不成为评价候选。
  * - `candidate`：掷中了，但「群 × 发言人」的冷却名额没抢到。

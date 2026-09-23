@@ -7,11 +7,9 @@ import { MEDIA_CLOSED_RESULT, MEDIA_BACKOFF_RESULT, MEDIA_TASK_REJECTED_RESULT, 
  * 视觉那条同时供 aiChat/ai/stickers/catalog.ts 生成机器人自己贴纸目录的描述条目。
  * 跑在 AI Worker 线程里（调用方就是它）。
  *
- * 四种媒体共用这一个入口是有代价换来的：**去重缓存、有界执行器、占位→回填时序
- * 只有一份**。语音另起一条并行管线的话，同一份媒体的并发合并、容量淘汰、执行槽
- * 竞争就要各写一遍，而那几处的正确性恰恰是最难在测试里覆盖的（见下方
- * transientDescriptionCache 的 peek 注释）。逐媒体的差异只落在
- * resolveMedia 这一个分支上。
+ * 四种媒体共用这一个入口：去重缓存、有界执行器、占位→回填时序只有一份（见下方
+ * transientDescriptionCache 的 peek 注释），逐媒体的差异只落在 resolveMedia
+ * 这一个分支上。
  *
  * 失败一律返回 null、绝不抛错——调用方按各自的兜底处理（图片退化成
  * 「[图片]」占位、贴纸退化成原有的元数据行、GIF/语音退化成失败占位），转录里

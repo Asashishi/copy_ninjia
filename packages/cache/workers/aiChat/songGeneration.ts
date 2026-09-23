@@ -14,8 +14,8 @@ import type { SongGenerationAvailability, SongGenerationClaim } from "../../../t
  * owner: AI 闲聊 Worker 线程（packages/workers/aiChatWorker.ts）。
  *
  * 判定本身在 libs/cooldownClaim.ts —— 那是一个不持有任何缓存的叶子模块，两个
- * 工具共用同一套「先占位、失败按 token 撤销」语义；**表仍然逐份独立**，共用一张
- * 会造出「刚生过图所以十五分钟内不能生歌」这种谁都解释不清的耦合。
+ * 工具共用同一套「先占位、失败按 token 撤销」语义；生图与生歌各自一张独立的表，
+ * 互不共享容量与冷却时刻。
  */
 
 /**

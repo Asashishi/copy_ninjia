@@ -18,8 +18,11 @@ mock.module("../../packages/infra/logger", () => ({
 mock.module("../../packages/infra/blocklist/membership", () => ({
   isUserBlocked: (userId: number): boolean => blockedIds.has(userId),
 }));
+let registeredRemover: ((removals: readonly RemoveBlockedMembersParams[]) => Promise<number>) | undefined;
 mock.module("../../packages/infra/blocklist/outbox", () => ({
-  registerBlockedMemberRemover: (): void => {},
+  registerBlockedMemberRemover: (
+    remover: (removals: readonly RemoveBlockedMembersParams[]) => Promise<number>
+  ): void => { registeredRemover = remover; },
   trackBlockedRemoval: (
     params: Omit<RemoveBlockedMembersParams, "removalId">
   ): RemoveBlockedMembersParams => {
@@ -37,7 +40,10 @@ mock.module("../../packages/infra/telegram/actions", () => ({ deleteMessageWithO
 const {
   claimBlockedJoiner,
   deleteBlockedSenderChatMessage,
+  registerBlocklistRemoval,
 } = await import("../../packages/antiRaid/blocklistGuard");
+const { BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES } = await import("../../packages/consts/antiRaid/blocklist");
+const { JOIN_WINDOW_MS } = await import("../../packages/consts/antiRaid/lockdown");
 const { recentBlockedJoinCounts } = await import("../../packages/cache/main/antiRaid/blocklistGuard");
 
 beforeEach(() => {
@@ -146,9 +152,7 @@ describe("黑名单入群秒踢的投递侧", () => {
   });
 
   test("登记失败不上抛：那会在更新中间件里换来一个重启循环", () => {
-    // 抛出去的话，整批 update 失败 → 扣住 offset → 非零退出 → systemd 重启 →
-    // Telegram 重投同一条 update → 再抛。只能靠手改 memory/blocklist/removals.json
-    // 解开，而 outbox 满本身通常正是一批永远封不掉的处置堆出来的。
+    // 登记失败不上抛，避免单条 update 处理异常导致重启循环。
     blockedIds.add(42);
     trackFails = true;
     const messages: AntiRaidWorkerMessage[] = [];
@@ -163,20 +167,15 @@ describe("黑名单入群秒踢的投递侧", () => {
       joinGuardEnabled: true,
     })).not.toThrow();
     expect(messages).toHaveLength(0);
-    // 登记失败时也不能留下兜底 join：名单判定没变，不该给他开验证窗口。
+    // 登记失败时也不留兜底 join，且不重新开验证窗口。
     expect(replacedJoins.size).toBe(0);
     expect(errorLogs.some((line) => line.includes("Failed to queue removal of blocklisted user 42"))).toBeTrue();
-    // 仍算「已按黑名单处置」：名单判定没变，不该反过来给他开一个验证窗口。
-    // 位置留给补扫：outbox 腾出空间后由下一次管理员身份观测接上。
+    // 转由补扫接手：outbox 腾出空间后由下一次管理员身份观测触发。
     expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
   });
 
   test("登记失败时不消耗入群计数认领：另一路投递还能替这次入群补记", () => {
-    // 认领写在实参位置时，trackBlockedRemoval 抛错走降级返回，去重项却已经被
-    // 消耗掉——同一次物理入群的另一路投递随后只能带 joinedAt: undefined，这次
-    // 入群从反刷群滑动窗口里整个消失。一波以黑名单账号为主的突袭因此凑不满
-    // ANTI_RAID_PER_MINUTE_LIMIT，私密模式不触发，紧随其后的非黑名单号各自
-    // 拿满一个三分钟验证窗口而不是被秒踢。
+    // 登记失败不消耗入群计数去重项，留给同一次入群的另一路投递补记。
     blockedIds.add(42);
     trackFails = true;
     const messages: AntiRaidWorkerMessage[] = [];
@@ -193,5 +192,37 @@ describe("黑名单入群秒踢的投递侧", () => {
     expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins,
       joinGuardEnabled: true, now: 1_050 })).toBeTrue();
     expect(messages.map((message) => (message as RemoveBlockedMembersParams).joinedAt)).toEqual([1_050]);
+  });
+});
+
+describe("入群计数去重表的上界与处置注册", () => {
+  test("先按窗口清掉过期项，再把仍在窗口内的记账压回上界，最旧的先走", () => {
+    const now: number = 10 * JOIN_WINDOW_MS;
+    recentBlockedJoinCounts.set("expired", now - JOIN_WINDOW_MS);
+    for (let index: number = 0; index < BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES + 5; index++) {
+      recentBlockedJoinCounts.set(`live:${index}`, now);
+    }
+    blockedIds.add(42);
+    const messages: AntiRaidWorkerMessage[] = [];
+
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoins: new Map(),
+      joinGuardEnabled: true, now })).toBeTrue();
+
+    expect(recentBlockedJoinCounts.has("expired")).toBeFalse();
+    expect(recentBlockedJoinCounts.has("live:4")).toBeFalse();
+    expect(recentBlockedJoinCounts.has("live:5")).toBeTrue();
+    // 压回上界之后本次入群再记一笔，表长恒不超过上界加一。
+    expect(recentBlockedJoinCounts.size).toBe(BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES + 1);
+    expect((messages[0] as RemoveBlockedMembersParams).joinedAt).toBe(now);
+  });
+
+  test("注册的处置投递把每批封禁包成 removeBlockedMembers 交给 durable 边界", async () => {
+    const postDurably = mock(async (messages: readonly AntiRaidWorkerMessage[]): Promise<number> => messages.length);
+    registerBlocklistRemoval(postDurably);
+    const removal: RemoveBlockedMembersParams = { chatId: -1001, userIds: [42], probeMembership: false, removalId: 3 };
+
+    await expect(registeredRemover!([removal])).resolves.toBe(1);
+
+    expect(postDurably).toHaveBeenCalledWith([{ type: "removeBlockedMembers", ...removal }]);
   });
 });

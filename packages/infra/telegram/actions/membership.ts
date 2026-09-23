@@ -1,8 +1,9 @@
 import type { ChatMember, User } from "grammy/types";
 import { isAdminStatus, isPresentMember } from "../../../libs/chatMember";
 import { telegramApi } from "../client";
-import { isParticipantIdInvalid, runTelegramAction } from "./core";
+import { isChatMemberQueryDenied, isParticipantIdInvalid, runTelegramAction } from "./core";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
+import type { ChatMemberPresence } from "../../../types/telegram";
 import type { TelegramApi } from "../../../types/telegramWorker";
 
 type ChatMemberApi = Pick<TelegramApi, "getChatMember">;
@@ -141,11 +142,13 @@ export function readChatMemberUser({ chatId, userId, signal }: ChatMemberUserOpt
 }
 
 /**
- * 返回此刻在群内的用户；null 表示已离群或 Telegram 以 PARTICIPANT_ID_INVALID
- * 拒绝该用户 ID（后者不记 API 错误），undefined 表示其它查询失败。
+ * 查询目标此刻是否在群，结局语义见 types/telegram.ts 的 ChatMemberPresence。
+ * PARTICIPANT_ID_INVALID 按离群处理且不记 API 错误；本群拒绝查询与其它失败照常
+ * 记一行 API 错误。
  */
-export async function readPresentChatUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<User | null | undefined> {
+export async function readPresentChatUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<ChatMemberPresence> {
   let participantInvalid: boolean = false;
+  let chatDenied: boolean = false;
   const user: User | null | undefined = await runTelegramAction<ChatMember, User | null | undefined>({
     action: `read chat member (chat ${chatId}, user ${userId})`,
     execute: (requestSignal?: AbortSignal): Promise<ChatMember> =>
@@ -155,8 +158,11 @@ export async function readPresentChatUser({ chatId, userId, signal }: ChatMember
     signal,
     shouldLogError: (error: unknown): boolean => {
       participantInvalid = isParticipantIdInvalid(error);
+      chatDenied = isChatMemberQueryDenied(error);
       return !participantInvalid;
     },
   });
-  return participantInvalid ? null : user;
+  if (participantInvalid || user === null) return { kind: "absent" };
+  if (user !== undefined) return { kind: "present", user };
+  return { kind: chatDenied ? "chatDenied" : "failed" };
 }

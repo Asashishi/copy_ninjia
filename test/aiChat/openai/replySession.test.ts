@@ -43,8 +43,8 @@ const SEND_MESSAGE: AiToolDefinition = {
 
 type ResponseBody = OpenAI.Responses.ResponseCreateParamsNonStreaming;
 
-/** 取第 index 次调用交给底层的请求体构造器并就地求值：请求体改在 client.ts 的
- *  try 内构造，好让 config/agent.json 的解析错误降级成一次普通失败而不是抛出。 */
+/** 从被 mock 的 requestOpenAiResult 第 index 次调用参数中取出 buildBody 闭包
+ *  并求值，得到实际发送的请求体。 */
 function capturedBody(index: number): ResponseBody {
   return (requestOpenAiResult.mock.calls[index]![0] as { buildBody: () => ResponseBody }).buildBody();
 }

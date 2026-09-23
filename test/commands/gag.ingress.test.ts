@@ -557,9 +557,8 @@ describe("gag 消息与 inline 入口", () => {
   });
 
   test("本群没有活动会话且这条不是 gag 结果时同步返回 false", () => {
-    // 常态：一次 Map.has 加一次 via_bot/entity 判定，同步返回。本 handler 挂在
-    // 每条群消息与全部命令之前（见 app/registerHandlers.ts），返回 Promise 就
-    // 等于每条群消息都白付一次分配与一个微任务回合。
+    // 判定只需一次 Map.has 加一次 via_bot/entity 判定；本 handler 挂在每条群
+    // 消息与全部命令之前（见 app/registerHandlers.ts），返回值必须同步。
     expect(gagSessionsByChat.size).toBe(0);
     expect(gag.handleGagMessageIngress(normalMessage({ message_id: 4242 }), 999))
       .toBe(false);

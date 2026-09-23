@@ -3,7 +3,6 @@ import type { CommandContext, Context } from "grammy";
 import { syncChatPersonaSurfaces } from "./chatPersonaSync";
 import { syncChatCommandMenu } from "../app/commandMenu";
 import type { ChatState } from "../types/chatState";
-import type { ReadonlyLruCache } from "../libs/lruCache";
 
 import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
 import { logger } from "../infra/logger";
@@ -19,13 +18,14 @@ import { sendCommandMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
 import { invalidateBotAdminStatus, resolveBotAdminStatus } from "../infra/botAdmin";
 import { teardownChatRuntime } from "../infra/chatTeardown";
+import { observeChatKind } from "../antiRaid/chatKind";
 
 /**
  * 处理 /init enable|disable 指令：按群开关机器人是否处理这个群的更新（见
  * ChatState.isInitEnabled，缺省未初始化）。禁用/未初始化时，这个群的更新在
  * app/registerHandlers.ts 最前端的网关中间件处直接丢弃，不做任何监听/
  * 复读/AI 相关工作
- * ——只有超级管理员可以控制这个总开关。
+ * ——只有超级管理员可以控制这个总开关。首次启用落盘后补齐群类型镜像。
  */
 export async function handleInitCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
@@ -35,7 +35,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
 
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const knownChats: ReadonlyLruCache<number, ChatState> = getChatStateCache();
+  const knownChats: ReadonlyMap<number, ChatState> = getChatStateCache();
   if (
     arg === "enable" &&
     !knownChats.has(chatId) &&
@@ -73,6 +73,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // （见 docs/cn/04-invariants.md）。此刻还什么都没写进去，因此重投那一轮读到的
   // wasEnabled 仍是 true，回执不会出现「本来就关着」那种歧义。
   await persistChatState(chatId, "init toggled");
+  if (isEnabled) observeChatKind(ctx.chat);
   if (isEnabled) await syncChatCommandMenu(ctx.api, chatId);
 
   // 拆运行态失败**不上抛**。总开关上面已经 durable 地关掉，异常逸出只会让

@@ -30,13 +30,6 @@ export const sentMessages: Map<number, Map<number, ReturnType<typeof setTimeout>
  */
 export const pendingSelfSentWaiters: Map<number, Map<number, Set<SelfSentWaiter>>> = new Map();
 
-/** 在窗自发消息总条数；分层之后 `sentMessages.size` 只是群数，断言与诊断用这个。 */
-export function sentMessageCount(): number {
-  let count: number = 0;
-  for (const byMessage of sentMessages.values()) count += byMessage.size;
-  return count;
-}
-
 /** 线程停止或测试隔离时取消两张表的全部 timer 并清空；不改变任何持久化状态。 */
 export function resetSelfSentTracker(): void {
   for (const byMessage of sentMessages.values()) {

@@ -1,5 +1,6 @@
 /** 进程停机排空、轮询与落盘的统一时间预算。 */
 
+import { TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS } from "./telegram";
 import type { FlushTimeouts } from "../types/lifecycle";
 
 /** 等待 grammY runner 中在途 update 处理完毕的最长时间与轮询间隔。 */
@@ -14,11 +15,12 @@ export const RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS: number = 1_000;
 /**
  * 正常停机时确认最终 Telegram update offset 的本地网络截止。
  *
- * Bot API 的 `timeout: 0` 只关闭服务端 long polling，不限制 DNS、建连或响应体
- * 读取；必须另带 AbortSignal，避免一次网络半开让正常停机永远卡在最终确认。
- * 所属模块：app/lifecycle.ts。
+ * 最终确认的 offset 与在途长轮询相同，Bot API 服务端会把其中一部分请求按
+ * TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS 挂起后才应答；本截止必须覆盖这段等待，
+ * 另留 5 秒给 DNS、建连与响应读取。请求另带 AbortSignal，一次网络半开也不会让
+ * 正常停机卡在最终确认。所属模块：app/lifecycle.ts。
  */
-export const FINAL_OFFSET_CONFIRM_TIMEOUT_MS: number = 3_000;
+export const FINAL_OFFSET_CONFIRM_TIMEOUT_MS: number = TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS + 5_000;
 
 /** 正常停机时各持久化 owner 的独立 flush 预算。 */
 export const AI_MEMORY_FLUSH_TIMEOUT_MS: number = 2_000;

@@ -11,7 +11,7 @@ import type {
   IdentityPolicyRawReadResult,
 } from "../../packages/types/identityStorage";
 import type { WedMembersDeletedPersistedReply } from "../../packages/types/diskIO/replies";
-import { onWedMembersDeletedPersisted } from "../../packages/infra/diskIO/observers";
+import { onDiskIOReply } from "../../packages/infra/diskIO/observers";
 import {
   blocklistIdPageReadRequests,
   diskIORuntime,
@@ -49,7 +49,7 @@ beforeEach(() => {
 describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
   test("成员删除 durable 回执转交 owner，终止后的旧 Worker 回执被丢弃", async () => {
     const originalWorker: typeof Worker = globalThis.Worker;
-    const originalListeners = [...diskIORuntime.wedMembersDeletedPersistedListeners];
+    const originalListeners = [...diskIORuntime.replyListeners.wedMembersDeletedPersisted];
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     try {
       diskIO.initDiskIO();
@@ -58,7 +58,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       emitSuccessfulLoad(worker);
       await loading;
       const seen: WedMembersDeletedPersistedReply[] = [];
-      onWedMembersDeletedPersisted((reply: WedMembersDeletedPersistedReply): void => { seen.push(reply); });
+      onDiskIOReply("wedMembersDeletedPersisted", (reply: WedMembersDeletedPersistedReply): void => { seen.push(reply); });
       const reply: WedMembersDeletedPersistedReply = { type: "wedMembersDeletedPersisted", chatId: -1001, revision: 9 };
       worker.onmessage!({ data: reply } as MessageEvent<DiskIOReply>);
       expect(seen).toEqual([reply]);
@@ -67,7 +67,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       expect(seen).toEqual([reply]);
     } finally {
       await diskIO.terminateDiskIO();
-      diskIORuntime.wedMembersDeletedPersistedListeners.splice(0, diskIORuntime.wedMembersDeletedPersistedListeners.length, ...originalListeners);
+      diskIORuntime.replyListeners.wedMembersDeletedPersisted.splice(0, diskIORuntime.replyListeners.wedMembersDeletedPersisted.length, ...originalListeners);
       globalThis.Worker = originalWorker;
     }
   });
@@ -108,7 +108,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
   test("运势追加停摆诊断转交监听器，已被换掉的旧 Worker 报上来的不算数", async () => {
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;
-    const originalListeners = [...diskIORuntime.luckAppendStalledListeners];
+    const originalListeners = [...diskIORuntime.replyListeners.luckAppendStalled];
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     try {
       diskIO.initDiskIO();
@@ -118,7 +118,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       await loadedPromise;
 
       const seen: LuckAppendStalledReply[] = [];
-      diskIO.onLuckAppendStalled((reply: LuckAppendStalledReply): void => { seen.push(reply); });
+      diskIO.onDiskIOReply("luckAppendStalled", (reply: LuckAppendStalledReply): void => { seen.push(reply); });
       const stalled: LuckAppendStalledReply = {
         type: "luckAppendStalled",
         day: "2026-07-19",
@@ -136,9 +136,9 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       expect(seen).toEqual([stalled]);
     } finally {
       await diskIO.terminateDiskIO();
-      diskIORuntime.luckAppendStalledListeners.splice(
+      diskIORuntime.replyListeners.luckAppendStalled.splice(
         0,
-        diskIORuntime.luckAppendStalledListeners.length,
+        diskIORuntime.replyListeners.luckAppendStalled.length,
         ...originalListeners
       );
       globalThis.Worker = originalWorker;

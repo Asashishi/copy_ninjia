@@ -61,10 +61,8 @@ describe("群问答直答", () => {
   });
 
   test("@机器人 的用户名比对折大小写，与 AI 触发口径一致", () => {
-    // BotFather 里注册的是混合大小写，用户手打却常是全小写或全大写；Telegram
-    // 用户名本身大小写不敏感，三种写法都会生成同一条指向本机器人的 mention 实体。
-    // 直答这里若区分大小写，同一条消息就会「AI 触发认、直答不认」，白付一次模型
-    // 调用去回答一个已经写死的答案。
+    // Telegram 用户名大小写不敏感，三种写法都会生成同一条 mention 实体；
+    // 直答判定与 AI 触发口径保持一致，同样折大小写。
     const canonical: string = "Copy_Ninjia_Bot";
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶那条链接"]]));
 

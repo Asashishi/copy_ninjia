@@ -102,12 +102,9 @@ export interface ChatState {
   /**
    * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
    * 需由超级管理员通过 /init enable 显式开启（见 commands/init.ts）。未初始化
-   * 群的更新在
-   * app/registerHandlers.ts 的前置网关处直接丢弃（除 /init 与本群无关的
-   * my_chat_member 外），不进入授权维护、入群验证、普通指令匹配、AI 调用等
-   * 后续处理——Bot API 长轮询没有「取消订阅某个群」
-   * 的机制，这是应用层面能做到的最接近「不监听」的效果，避免被拉进大量群时
-   * 被拖垮。
+   * 群的更新在 app/registerHandlers.ts 的前置网关处直接丢弃（除 /init 与本群
+   * 无关的 my_chat_member 外），不进入授权维护、入群验证、普通指令匹配、AI
+   * 调用等后续处理。
    */
   isInitEnabled?: boolean;
   /**
@@ -151,19 +148,12 @@ export interface GlobalCopyState {
 /**
  * 所有群共用的外部素材：四条直链与随机图片目录，五项各自独立。
  *
- * **缺字段 = 从没设过**，该项回退到 consts/ui/assets.ts 的内置常量，行为与
- * 没有这一块时逐字相同。这五项**显式写进文件是
- * 常态**：写一个与常量相同的值没有行为差别，而把五个旋钮摆在 state.json 里，
- * 换图的人才不必先去代码里翻键名。因此启动时缺项会被自动补成当前生效值（见
- * infra/storage/stateStore.ts 的 seedMissingAssetState），文件里永远看得到这五个键。
+ * 缺字段表示从没设过，回退到 consts/ui/assets.ts 的内置常量；启动时缺项会被
+ * 自动补成当前生效值（见 infra/storage/stateStore.ts 的 seedMissingAssetState），
+ * 文件里因此始终能看到这五个键，补齐后为一次性快照，不随代码里的常量再变化。
  *
- * 没有任何命令会改这一块，运行期也没有写入方，只由部署方手工编辑 state.json（改完要
- * 重启，运行中的进程持有权威内存并会整份覆写文件）。放 state 而不放 config/：
- * 它是「这套部署长什么样」的全局取值，因此属于全局块。
- *
- * 补齐是**一次性快照**：之后再改代码里的常量，已经落过盘的部署不会跟着变，
- * 那正是「部署方写下的值不被覆盖」的另一面。要跟随新常量就把那一项从
- * state.json 里删掉再重启。
+ * 没有任何命令会改这一块，运行期也没有写入方，只由部署方手工编辑 state.json，
+ * 改完需要重启（运行中的进程持有权威内存并会整份覆写文件）。
  */
 export interface GlobalAssetState {
   /** 「未卜先知」内联结果的缩略图直链；缺省用 FORTUNE_THUMBNAIL_URL。 */
@@ -201,15 +191,11 @@ export interface StateFileSchema {
 }
 
 /**
- * `state.global.copy` **解码后**的形态。
- *
- * 与运行期的 `GlobalCopyState` 分开：后者是主线程那份可变持有者，初始只有
- * `copiedUser: null`、三个字段由 adoptCopyTarget 一次写齐，因此写不成判别联合。
- * 而解码器（libs/stateFileCodec.ts 的 globalCopy）**已经**强制了「copiedUser 为
- * null ⟺ 没有 copyMode/copyChatId；copiedUser 非空 ⟺ copyChatId 是合法负数群 id」
- * 这条配对，这里把它表达进类型：消费侧不必再用非空断言把 copyChatId 从 undefined
- * 里捞出来，将来漏掉哪一侧校验也会在编译期当场暴露，而不是等到运行期凭空捏造
- * 出一个 chatId。
+ * `state.global.copy` 解码后的形态，与运行期的 `GlobalCopyState` 分开维护
+ * （后者是主线程可变持有者，初始只有 `copiedUser: null`，三个字段由
+ * adoptCopyTarget 一次写齐）。判别联合强制「copiedUser 为 null ⟺ 没有
+ * copyMode/copyChatId；copiedUser 非空 ⟺ copyChatId 是合法负数群 id」这条配对，
+ * 由解码器（libs/stateFileCodec.ts 的 globalCopy）保证成立。
  */
 export type DecodedGlobalCopyState =
   | Readonly<{

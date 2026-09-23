@@ -105,9 +105,8 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
  * generate_song 工具的模型可见资格与冷却说明。
  *
  * 措辞比生图更收：一次生成是分钟级的等待 + 一笔按首计的账单，且结果是一条群友
- * 点开才能听的音频。因此这里把「必须是明确点歌」写死，并明确列出不构成调用意图
- * 的情形——生图那条的经验是，只要留下「你觉得配一首更好」这种口子，模型就会自行
- * 发挥。这段文案只在当前供应商实现了生歌能力时才会出现（工具本身也是），
+ * 点开才能听的音频，因此这里把「必须是明确点歌」写死，并明确列出不构成调用意图
+ * 的情形。这段文案只在当前供应商实现了生歌能力时才会出现（工具本身也是），
  * 见 aiChat/ai/tools/replyToolset/orchestrator.ts。
  */
 export const GENERATE_SONG_TOOL_INSTRUCTION: string =

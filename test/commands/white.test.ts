@@ -348,8 +348,7 @@ describe("/white", () => {
   });
 
   test("拒绝把当前群自己的身份加进白名单（匿名管理员皮套）", async () => {
-    // Telegram 只给 sender_chat=本群，皮套底下是谁永远查不到；加进白名单等于
-    // 让这个群的匿名身份绕过广告检测与永久拉黑，还能被 /permission 授权。
+    // Telegram 只给 sender_chat=本群，皮套底下是谁永远查不到。
     await handleWhiteCommand(context(1, "enable", repliedChannel(-1001)));
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -370,9 +369,6 @@ describe("/white", () => {
       throw new Error("disk full");
     });
 
-    // 不上抛：bot.catch 按设计原样重抛、acknowledged runner 随即带非零码退出
-    // 且不确认 offset，Telegram 重投同一条命令——持久化边界持续异常时会形成
-    // 永久重启循环，因此命令层必须就地收口并留下错误日志。
     await handleWhiteCommand(context(1, "100 enable"));
 
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({

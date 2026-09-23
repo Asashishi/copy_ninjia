@@ -61,8 +61,6 @@ describe("resolveCommandTarget", () => {
   });
 
   test("回归用例：开启 requireIdentityPolicies 时预热失败拒绝执行，提示一个人都没动", async () => {
-    // 冷 LRU 下 isWhitelisted 读成「不在白名单」：放行的话 /mute 会捂住自己人，
-    // /block disable 回「本来就不在小本本上」而 SQLite 里的记录还在。
     prefetchIdentityPolicies.mockResolvedValue(false);
     expect(await resolveCommandTarget({ ...params("777", true), requireIdentityPolicies: true })).toBeUndefined();
     expect(prefetchIdentityPolicies).toHaveBeenCalledWith([777]);
@@ -96,9 +94,6 @@ describe("resolveCommandTarget", () => {
   });
 
   test("回归用例：回复目标与参数指向不同的人时报冲突，绝不静默取一", async () => {
-    // 管理员看到群里有人贴出「请封 123456789」，对着那条消息点回复再发
-    // /block 123456789：静默优先取回复目标，被永久拉黑并在每个托管群封禁的就是
-    // 贴出这串 id 的同事，而回执显示的正是那位同事的名字。
     replyTarget = { id: 42, first_name: "Reply Target" };
     expect(await resolveCommandTarget(params("123456789", true))).toBeUndefined();
     expect(sendMessageMock).toHaveBeenLastCalledWith({
@@ -107,8 +102,7 @@ describe("resolveCommandTarget", () => {
       replyToMessageId: 7,
     });
 
-    // 参数解析不出目标时同样报冲突：说「这不是合法用户名」会让人以为参数被
-    // 忽略、回复目标生效了。
+    // 参数解析不出合法目标时同样报冲突，而不是报「格式不对」。
     expect(await resolveCommandTarget(params(" @bad-name trailing"))).toBeUndefined();
     expect(sendMessageMock).toHaveBeenLastCalledWith({
       chatId: -1001,
@@ -205,9 +199,8 @@ describe("resolveCommandTarget", () => {
   });
 
   test("回显的参数原文按上限截断并压成单行，出站文案不会撑爆单条消息上限", async () => {
-    // 参数原文可以长到近 4096 字符（命令词之后的全部内容）。原样插回提示语拼出的
-    // 就是一条超过 Telegram 单条上限的消息，发不出去、被吞进日志，用户收到的是
-    // 彻底的沉默——而命令的限频名额早就扣掉了。
+    // 参数原文可以长到近 4096 字符（命令词之后的全部内容），原样插回提示语会
+    // 超过 Telegram 单条消息上限。
     const huge: string = "长".repeat(4_000);
     expect(await resolveCommandTarget(params(huge))).toBeUndefined();
     const sent = sendMessageMock.mock.calls.at(-1)![0] as { text: string };
@@ -264,9 +257,8 @@ describe("resolveCommandTarget", () => {
   });
 
   test("只开 acceptUserId 时负数、零、前导零、小数与超出安全整数的位数一律拒绝", async () => {
-    // 负数 id 是会话身份，只有单独开了 acceptChatId 的 /block disable 才认——/block
-    // 走到这里就该拒绝，粘错一个会话 id 会把处置改成封掉整个会话身份；
-    // 20 位那种完全匹配「十进制正整数」，Number 之后却已经是另一个数了。
+    // 负数 id 只在单独开了 acceptChatId 时才认；20 位那种虽完全匹配「十进制
+    // 正整数」，但 Number() 转换后已经超出安全整数范围、指向另一个数。
     for (const argument of ["-1001", "-1001234567890", "0", "007", "4.2", "1e5", "99999999999999999999"]) {
       sendMessageMock.mockClear();
       expect(await resolveCommandTarget(params(argument, true))).toBeUndefined();
@@ -275,8 +267,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("开了 acceptChatId 后负数 id 成立，并带上决定解封接口的 isChannel", async () => {
-    // 这个标记是承重的：/block disable 靠它选 unbanChatSenderChat，漏标就会拿
-    // 负数去调 unbanChatMemberIfBanned，报错记进 failedCount 变成假战报。
+    // isChannel 决定 /block disable 选 unbanChatSenderChat 还是 unbanChatMemberIfBanned。
     expect(await resolveCommandTarget(params("-1002233445566", true, true)))
       .toEqual({ id: -1002233445566, isChannel: true });
     expect(sendMessageMock).not.toHaveBeenCalled();
@@ -288,8 +279,8 @@ describe("resolveCommandTarget", () => {
   });
 
   test("开了 acceptChatId 也只放行负号那一种形态，畸形写法照样拒绝", async () => {
-    // -0 与 -007 会被 Number 归成 0 / -7，那都不是任何一个会话；位数超出安全整数
-    // 的负数同样在 Number 之后改指别处，理由与正数那条完全对称。
+    // -0 与 -007 会被 Number() 归成 0 / -7，都不是任何一个会话 id；位数超出
+    // 安全整数的负数同样在转换后改指别处。
     for (const argument of ["-0", "-007", "-4.2", "-1e5", "-99999999999999999999", "- 1001"]) {
       sendMessageMock.mockClear();
       expect(await resolveCommandTarget(params(argument, true, true))).toBeUndefined();
@@ -318,8 +309,7 @@ describe("resolveCommandTarget", () => {
 
 /**
  * 各命令实际投产的目标提示表。三条失败分支的文案函数只有真的走一遍解析器才会被
- * 调用，`@ts-expect-error` 不可变性断言不触发调用——`packages/consts/gag.ts` 的六个
- * 模板此前函数覆盖率为 0 就是这么来的。
+ * 调用，`@ts-expect-error` 不可变性断言不会触发调用。
  */
 const { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/gag");
 const { BLOCK_TARGET_TEXTS, COPY_TARGET_TEXTS, MUTE_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS, STEAL_ICON_TARGET_TEXTS, UNBLOCK_TARGET_TEXTS, UNMUTE_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/commands");
@@ -400,10 +390,8 @@ describe("投产目标提示表的三条失败分支", () => {
       expect(conflicting.text).toBe(texts.conflictingTarget("777"));
       expect(conflicting.text).toContain("777");
 
-      // 三条分支各发且只发一条，且全部经 sendCommandMessage —— 这个边界替调用方
-      // 挂上 30 秒延迟删除（见 infra/telegram/commandMessages.ts），换成 sendMessage
-      // 就会把嘲讽永久留在群里。三句必须互不相同：两条分支共用同一个模板时，
-      // 用户收到的是一句答非所问的拒绝，而覆盖率照样是满的。
+      // 三条分支各发且只发一条，全部经 sendCommandMessage（带 30 秒延迟删除，
+      // 见 docs/cn/04-invariants.md），且三句文案必须互不相同。
       expect(sendMessageMock).toHaveBeenCalledTimes(3);
       expect(new Set([malformed.text, unknown.text, conflicting.text]).size).toBe(3);
     });

@@ -77,18 +77,12 @@ import {
   trackAntiRaidTask,
 } from "./antiRaid/taskTracker";
 import {
-  handleWorkerDuplexResponse,
-  initializeWorkerDuplex,
-  isWorkerDuplexResponse,
   resetWorkerDuplex,
   setWorkerDuplexRequestSignal,
 } from "../libs/workerDuplex";
-import type { WorkerDuplexOutbound } from "../types/workerDuplex";
-import { installTelegramApi } from "../infra/telegram/client";
 import { applyWorkerAtmosphere } from "./antiRaid/atmosphere";
 import { plainAtmosphereChats, defaultAtmosphereState } from "../cache/workers/antiRaid/atmosphere";
-import { workerTelegramApi } from "../infra/telegram/workerClient";
-import { acceptForwardedLogBatch } from "../infra/logger";
+import { installBusinessWorkerPort } from "./businessWorkerPort";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
@@ -273,27 +267,12 @@ export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler 或 sweeper。 */
 export function startAntiRaidWorker(): void {
   if (antiRaidCacheSweepTimer.current !== null) return;
-  installTelegramApi(workerTelegramApi);
-  initializeWorkerDuplex<AntiRaidWorkerRequest>((
-    message: WorkerDuplexOutbound<AntiRaidWorkerRequest>,
-    transfer?: Bun.Transferable[]
-  ): void => {
-    if (transfer === undefined) self.postMessage(message);
-    else self.postMessage(message, transfer);
-  });
+  installBusinessWorkerPort<AntiRaidWorkerRequest, AntiRaidWorkerMessage>(handleAntiRaidWorkerMessage);
   setWorkerDuplexRequestSignal(antiRaidDispatchSignal());
   startAdDetectQueue(
     (event: AdDetectedEvent): void => self.postMessage(event),
     (event: AdVerdictTrueEvent): void => self.postMessage(event)
   );
-  self.onmessage = (event: MessageEvent<unknown>): void => {
-    if (acceptForwardedLogBatch(event.data)) return;
-    if (isWorkerDuplexResponse(event.data)) {
-      handleWorkerDuplexResponse(event.data);
-      return;
-    }
-    handleAntiRaidWorkerMessage(event.data as AntiRaidWorkerMessage);
-  };
   antiRaidCacheSweepTimer.current = setInterval(sweepAntiRaidWorkerCaches, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS);
   antiRaidCacheSweepTimer.current.unref();
   process.once("exit", stopAntiRaidWorker);

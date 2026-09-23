@@ -142,5 +142,6 @@ export type LockdownEffect =
 export interface LockdownTransition {
   /** 下一个状态：undefined = 删除记录；与传入同一对象 = 保持（计时器由 scheduleRestore 副作用管理）。 */
   next: LockdownState | undefined;
-  effects: LockdownEffect[];
+  /** 只读：无副作用时是共享的 NO_LOCKDOWN_EFFECTS（consts/antiRaid/lockdown.ts）。 */
+  effects: readonly LockdownEffect[];
 }

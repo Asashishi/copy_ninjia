@@ -1,11 +1,7 @@
 /**
- * AI 闲聊「此刻到底跑不跑」的唯一判定入口（packages/aiChat/availability.ts）。
- *
- * 这两个函数本身只有几行，但它们是一个合取：进程侧凭据/配置齐备 **且** 本群
- * `/ai_chat enable`。合取的任一半在调用点被漏掉，后果都写在该文件的头注里——
- * 漏在投喂路径上是每条群消息换一次「部署配置不可用」的错误日志，漏在 hydrate
- * 上会把「前提临时缺失」误读成「所有群都关了」，一次重启删光 memory/ 里的 AI
- * 记忆。因此这里逐组合钉住四个真值表格子，而不是只测「开着能用」。
+ * 覆盖 packages/aiChat/availability.ts 的判定入口：进程侧前提就绪
+ * （aiChatConfigReadiness）与本群 `isAIChatEnabled` 的合取，逐组合覆盖
+ * 真值表四格。约束见 docs/cn/04-invariants.md。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -46,8 +42,6 @@ describe("AI 闲聊可用性", () => {
   });
 
   test("进程侧前提缺失时，即使群开着也不算在跑", () => {
-    // 这一格承重：hydrate 那条路把「本群没开」当成删记忆的依据，若这里把
-    // 「凭据没配好」折算成「群关了」，一次重启就会删光 memory/ 里的 AI 记忆。
     readiness.ok = false;
     chatState.isAIChatEnabled = true;
     expect(isAiChatActiveIn(CHAT_ID)).toBeFalse();
@@ -60,8 +54,8 @@ describe("AI 闲聊可用性", () => {
   });
 
   test("群开关缺省（从没设过）按关闭处理", () => {
-    // ChatState 的规范形状里这个字段恒存在、缺省为 undefined（见
-    // libs/chatState.ts 的 createChatState）；判定必须是严格 === true。
+    // isAIChatEnabled 在 createChatState（packages/libs/chatState.ts）建立的
+    // 规范形状里恒存在，缺省为 undefined；判定要求严格 === true。
     readiness.ok = true;
     chatState.isAIChatEnabled = undefined;
     expect(isAiChatActiveIn(CHAT_ID)).toBeFalse();

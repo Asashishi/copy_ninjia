@@ -144,15 +144,8 @@ describe("随机回复个人冷却", () => {
     expect(userReplyTriggerTimes.size).toBe(1);
   });
 
-  /**
-   * 冷却必须按**本条消息的 now** 计时，而不是让被调方自己再读一次墙钟。
-   *
-   * 两个理由，缺一不可：语义上，同一条消息的活跃度入窗、安静期判定与这次冷却
-   * 认领必须落在同一时刻（见 auto/message/index.ts 的「本条消息统一的『现在』」）；
-   * 性能上，这台部署机的 clocksource 是 kvm-clock，实测在带真实工作集的函数里
-   * 多读一次墙钟约 3 µs（syscall 本身约 0.87 µs，其余是它对缓存的污染），
-   * 是这条判定其余部分的几十倍。
-   */
+  // 冷却按上下文里的 now 计时，不读墙钟：同一条消息的活跃度入窗、安静期判定与
+  // 冷却认领需落在同一时刻（见 auto/message/index.ts 的「本条消息统一的『现在』」）。
   test("媒体随机掷骰的冷却按上下文的 now 计时，不读墙钟", () => {
     const base: number = 1_767_225_600_000;
 
@@ -193,8 +186,7 @@ describe("随机回复个人冷却", () => {
     expect(userReplyTriggerTimes.has("-1001:1")).toBeFalse();
     expect(userReplyTriggerTimes.has("-1001:2")).toBeTrue();
 
-    // 回调必须把 holder 归零再重排，否则 scheduleUserReplyTriggerSweep 第一行
-    // 就返回，此后只剩逼近硬顶时那一次热路径补扫在收拾这张表。
+    // 回调需先把 holder 归零再重排下一次清扫。
     jest.advanceTimersByTime(500);
     expect(userReplyTriggerTimes.size).toBe(0);
     expect(userReplyTriggerSweepState.timer).toBeNull();

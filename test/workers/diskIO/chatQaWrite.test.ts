@@ -57,7 +57,6 @@ describe("Disk I/O Worker 的问答写入闸", () => {
 
     expect(() => handleChatQaWrite(write("再来一条", "不行", 99), noReply))
       .toThrow(`at most ${CHAT_QA_MAX_PER_CHAT} entries per chat`);
-    // 被拒的那条不得留在缓冲里。
     expect(pendingChatQaWrites.get(CHAT_ID)?.has("再来一条")).toBeFalse();
   });
 
@@ -88,7 +87,6 @@ describe("Disk I/O Worker 的问答写入闸", () => {
     });
 
     expect(acknowledged).toEqual([{ chatId: CHAT_ID, q: "怎么入群？", revision: 1 }]);
-    // 空 Map 不留存，否则每个曾写过问答的群都会在缓冲里留一项空壳。
     expect(pendingChatQaWrites.has(CHAT_ID)).toBeFalse();
   });
 });

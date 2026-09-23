@@ -61,12 +61,8 @@ export const BOT_CHAT_PERMISSION_LABELS: Readonly<
 
 /**
  * 这份快照里**下游 Anti-Raid Worker 真正读的**那两位（见 types/telegram.ts 的
- * `BotActionPermissions`）。
- *
- * 与上面那张全字段表分开的理由：`my_chat_member` 对机器人自身成员记录的任何改动都会
- * 送达，而其余 16 位本仓库一处都不读——按全表判等去广播，等于每次勾掉一个无关权限
- * 都往 Worker mailbox 里投一条与上一条逐字节相同的消息。投影与广播去重共用这一份清单
- * （见 libs/chatMember.ts），两处不再各写一份会漂移的字段集。
+ * `BotActionPermissions`）；其余 16 位 Worker 不读。投影与广播去重共用这一份
+ * 清单（见 libs/chatMember.ts），不另写一份会漂移的字段集。
  */
 export const BOT_ACTION_PERMISSION_KEYS: readonly (keyof BotActionPermissions)[] = [
   "canRestrictMembers",
@@ -77,9 +73,7 @@ export const BOT_ACTION_PERMISSION_KEYS: readonly (keyof BotActionPermissions)[]
  * 一次没能确证权限位的现查之后，同一个群多久才允许再现查一次。
  *
  * 权限位的按需补齐挂在群消息热路径上（见 `ensureBotChatPermissions`）：成功一次
- * 就写入 State 快照，此后由 `my_chat_member` 维护，因此正常情况下这道退避根本用不到。
- * 它兜的是状态快照缺失或 `getChatMember` 持续
- * 失败这类退化路径——没有退避的话，那种群里每条消息都会换来一次注定失败的
- * 现查，一个刷屏号就能把限流队列打满。
+ * 就写入 State 快照，此后由 `my_chat_member` 维护，正常情况下这道退避不会触发；
+ * 它只在状态快照缺失或 `getChatMember` 持续失败时限制现查频率。
  */
 export const BOT_PERMISSION_PROBE_RETRY_MS: number = 5 * 60_000;

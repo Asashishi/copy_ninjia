@@ -66,8 +66,8 @@ describe("aiChat/gemini/response", () => {
     });
 
     test("带 functionCall 的响应不再打印 SDK 那行非文本 part 告警", () => {
-      // 工具轮的响应必然带 functionCall part：SDK 的 getter 每轮刷一行绕过 logger 的
-      // 告警，本地实现必须一行都不打（回归这条就是本函数存在的全部理由）。
+      // 响应带 functionCall part：SDK 的 getter 会打印一行绕过 logger 的
+      // 非文本 part 告警，本地实现不打印。
       const toolRound: GenerateContentResponse = geminiResponse({
         candidates: [{
           content: {

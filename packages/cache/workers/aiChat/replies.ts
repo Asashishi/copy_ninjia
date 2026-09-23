@@ -37,7 +37,7 @@ export const rateLimitNoticeTimes: Map<number, number> = new Map();
 /**
  * 每群长窗口触发时刻队列；周期 sweep 删除过期项。
  *
- * 只在 admitRound 判定仍有配额时记账，因此单群长度恒不超过
+ * 只在 isReplyRoundRateLimited 判定仍有配额时记账，因此单群长度恒不超过
  * RATE_LIMIT_LONG_MAX_TRIGGERS（150），环形缓冲按这个数定容（构造在
  * workers/aiChat/replyRound.ts），永远撑不满。
  */

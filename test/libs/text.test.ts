@@ -161,8 +161,7 @@ describe("libs/text sanitizeInline", () => {
   test("回归用例：前置判定漏判等于放行未清洗文本，因此对各形态与参考实现对拍", () => {
     // 这条守的是防转录注入本身，不只是性能。前置判定一旦漏判（false negative），
     // sanitizeInline 会把带换行的原文原样交出去，而「一行 = 一条消息」的拼装
-    // 正是靠折叠换行堵住伪造发言行。开发期确实写错过一次该正则，而当时全部既有
-    // 用例仍然全绿——它们只喂脏输入，两条路径的结果恰好一样。
+    // 正是靠折叠换行堵住伪造发言行。
     const reference = (raw: string): string => raw.replace(/[\s\u0085]+/g, " ").trim();
     const whitespace: string[] = [" ", "\n", "\t", "\r", "\f", "\v", "\u0085", "\u00a0", "\u1680", "\u2028", "\u2029", "\u3000", "\ufeff"];
 
@@ -174,8 +173,7 @@ describe("libs/text sanitizeInline", () => {
       expect(sanitizeInline(`中${ws}文${ws}混排`)).toBe(reference(`中${ws}文${ws}混排`));
     }
 
-    // 首尾空白：各由 `^`/`$` 那两支认出来。必须显式枚举——先前这两支只靠下面
-    // 的随机扫描碰巧撞到，把「测得到」寄托在随机性上，正是本用例要避免的脆弱。
+    // 首尾空白：各由 `^`/`$` 那两支认出来，必须显式枚举，不依赖随机扫描碰巧撞到。
     for (const ws of whitespace) {
       for (const sample of [`${ws}a`, `a${ws}`, `${ws}a${ws}`, `${ws}${ws}a`, `a${ws}${ws}`]) {
         expect(sanitizeInline(sample)).toBe(reference(sample));

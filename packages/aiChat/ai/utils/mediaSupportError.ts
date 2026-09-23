@@ -137,8 +137,8 @@ export interface ProviderApiFailureResult {
  * 调用点自己的兜底路径」的信号（两个 client 都在那之后统一记一行日志并返回
  * `failureKind: "request"`）。返回 `undefined` 让调用点显式接住这一档。
  *
- * `aiChat/openai/text.ts` 的语音探测不走这里：它映射的是 `mediaFailure` 而不是
- * 结果联合，形态本来就不同（见该文件那处 switch）。
+ * `aiChat/openai/text.ts` 的语音探测不走这里：它把归因档位交给 textResult.ts 的
+ * `classifyAiTextFailure` 映射成 `mediaFailure`，形态本来就与结果联合不同。
  */
 export function providerApiFailureResult(
   kind: ProviderApiFailureKind

@@ -63,16 +63,11 @@ export const REPLY_CONTEXT_SECTION_TEXT: Readonly<ReplyContextSectionText> = {
 };
 
 /**
- * 群聊转录的行格式说明。整段由编译期常量拼成，与消息内容无关。
- *
- * 住在 systemInstruction 而不是转录区块头部：说明恒定、转录每轮都变，拼在一起
- * 等于让这三百多字跟着变化的数据一起落在缓存不到的那一半里，每轮工具往返重新
- * 计费一次。挪进系统提示词后它进了人设之后、心情之前的可缓存前缀；顺带把
- * 「数据 Part 内部也有可信的系统文字」这条例外收掉一类——防注入声明的可信
- * 白名单里不再需要「格式说明」（见 REPLY_CONTEXT_STRUCTURE_INSTRUCTION）。
- *
- * 代价是说明不再紧邻它描述的样例行，因此开头显式点名它讲的是哪个 Part。
- * 三种占位形态仍从 prompts/transcript.ts 的模板代入生成，与拼装侧同源。
+ * 群聊转录的行格式说明。整段由编译期常量拼成，与消息内容无关，放在
+ * systemInstruction 而非转录区块头部（进入人设之后、心情之前的可缓存前缀，
+ * 避免随每轮变化的转录数据一起落在两家供应商自动前缀缓存命中不到的部分）。
+ * 开头显式点名讲的是哪个 Part；三种占位形态仍从 prompts/transcript.ts 的模板
+ * 代入生成，与拼装侧同源。
  */
 export const TRANSCRIPT_FORMAT_INSTRUCTION: string =
   `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}] 的读法：` +

@@ -793,10 +793,8 @@ describe("Lockdown write-ahead runtime", () => {
   });
 
   /**
-   * `scheduleRestoreRetry` 这条 effect 此前**整条 case 从没被派发过**——连
-   * 「entry 已消失就 break」和「已有 timer 先 clearTimeout」都没进过。这里补上
-   * 它唯一的来源：RESTORING 阶段恢复失败（states/lockdown/restore.ts 的
-   * handleRestoreResult）。
+   * `scheduleRestoreRetry` 这条 effect 唯一的触发来源是 RESTORING 阶段恢复失败
+   * （见 states/lockdown/restore.ts 的 handleRestoreResult）。
    *
    * 三个 schedule* 排的 timer 都 unref() 且延迟按分钟计，用例不推进时钟就不会
    * 执行，因此这里只钉「排了、没误判成已解除」，不断言回调体。

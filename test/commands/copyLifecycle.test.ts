@@ -208,9 +208,6 @@ describe("copy 类命令生命周期", () => {
   });
 
   test("已有复制目标时只回一条拒绝，不触发带发送副作用的目标解析", async () => {
-    // 走完整解析的话，参数是未缓存的 @username 时它会自己发一条「@x 都还没
-    // 说过话呢」然后返回 undefined——用户收到的是「不认识这个用户名」，而真正
-    // 的原因（正在复读别人）永远没说出口。
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
 
     await handleCopyCommand(context());

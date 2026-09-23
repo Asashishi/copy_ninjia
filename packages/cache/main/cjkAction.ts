@@ -1,7 +1,7 @@
 import { CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../consts/commands";
 import { TimestampDeque } from "../../libs/timestampDeque";
 
-/** 中文动作命令（packages/commands/cjkAction.ts）的内存状态。 */
+/** owner: main。中文动作命令（packages/commands/cjkAction.ts）的内存状态。 */
 
 /**
  * 动作命令的全局滑动窗口频率限制：最近 CJK_ACTION_RATE_LIMIT_WINDOW_MS

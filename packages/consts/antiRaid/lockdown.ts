@@ -1,4 +1,12 @@
+import type { LockdownEffect } from "../../types/states/lockdown";
+
 /** 反刷群私密模式的计数窗口、阈值与恢复策略。 */
+
+/**
+ * 状态不变或无需副作用的私密模式转移共用的空效果表；只读，任何转移都不得向它追加。
+ * 所属模块：states/lockdown/。
+ */
+export const NO_LOCKDOWN_EFFECTS: readonly LockdownEffect[] = [];
 
 /** 滑动计数窗口时长：最近这么长时间内的入群数超过阈值，视为疑似拉人头刷群。 */
 export const JOIN_WINDOW_MS: number = 60 * 1000;

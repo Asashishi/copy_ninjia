@@ -1,5 +1,5 @@
 import type { DiskIODomain } from "../../packages/types/diskIO/replies";
-import { diskIOStub } from "../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import type { ChatState } from "../../packages/types/chatState";
@@ -51,11 +51,11 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   ): void => {
     respawnListeners.push(listener);
   },
-  onIdentityStoragePersisted: (
-    listener: (reply: IdentityStoragePersistedReply) => void
-  ): void => {
-    persistedListeners.push(listener);
-  },
+  onDiskIOReply: diskIOReplyStub({
+    identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
+      persistedListeners.push(listener);
+    },
+  }),
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskMessages.push(message);
     return true;
@@ -108,8 +108,8 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     expect(() => hydrateChatStateCache(states)).not.toThrow();
     expect(chatStateCache.size).toBe(2);
     expect(chatStateCache.has(-1001)).toBeFalse();
-    expect(chatStateCache.peek(-1002)?.isProxySendEnabled).toBeTrue();
-    expect(chatStateCache.peek(-1003)?.isProxySendEnabled).toBeTrue();
+    expect(chatStateCache.get(-1002)?.isProxySendEnabled).toBeTrue();
+    expect(chatStateCache.get(-1003)?.isProxySendEnabled).toBeTrue();
   });
 
   test("权威写等待精确事务 ACK，主线程未 ACK 元数据不复制 JSON 正文", async () => {
@@ -145,7 +145,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
   test("旧 ACK 不会删除同一群更新的 revision", () => {
     chatStateCache.set(-1001, { title: "first" });
     const firstRevision: number = queueChatStateWrite(-1001);
-    chatStateCache.peek(-1001)!.title = "second";
+    chatStateCache.get(-1001)!.title = "second";
     const secondRevision: number = queueChatStateWrite(-1001);
 
     for (const listener of persistedListeners) {
@@ -199,7 +199,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
   test("Worker 重建从当前 LRU 重编码最新 revision，删除只保留墓碑", async () => {
     chatStateCache.set(-1001, { title: "before" });
     queueChatStateWrite(-1001);
-    chatStateCache.peek(-1001)!.title = "after";
+    chatStateCache.get(-1001)!.title = "after";
     const latestRevision: number = queueChatStateWrite(-1001);
     chatStateCache.set(-1002, { isInitEnabled: false });
     const deleteRevision: number = queueChatStateWrite(-1002);

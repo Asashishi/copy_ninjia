@@ -38,7 +38,7 @@ function participantInvalid(): GrammyError {
 }
 
 function midnight(day: string = DAY): void {
-  for (const listener of diskIORuntime.midnightMaintenanceListeners) listener({ type: "midnightMaintenance", day });
+  for (const listener of diskIORuntime.replyListeners.midnightMaintenance) listener({ type: "midnightMaintenance", day });
 }
 
 function heldProbe(): ReturnType<typeof Promise.withResolvers<ChatMember>> {
@@ -316,4 +316,29 @@ test("每群快照有限，跳过已删除成员，新发言 ID 留到下一轮"
   await tick(200);
   expect(probe.mock.calls.map((call) => call[1])).toEqual([1, 3]);
   expect([...wedMemberStates.get(-1001)!.members]).toEqual([1, 3, 4]);
+});
+
+test("本群拒绝成员查询时只查一次即结束该群本轮，成员全部保留，其余群照常复核", async (): Promise<void> => {
+  const denied: Set<number> = new Set<number>([1, 2, 3]);
+  const reviewed: Set<number> = new Set<number>([4, 5]);
+  hydrateWedMembers(new Map([[-1001, denied], [-1002, reviewed]]));
+  probe.mockImplementation(async (chatId: number, userId: number): Promise<ChatMember> => {
+    if (chatId === -1001) {
+      throw new GrammyError(
+        "x",
+        { ok: false, error_code: 400, description: "Bad Request: CHAT_ADMIN_REQUIRED" },
+        "getChatMember",
+        {}
+      );
+    }
+    return member(userId, userId === 5 ? "left" : "member");
+  });
+  enableWedMemberReview();
+  midnight();
+  await tick();
+  for (let index: number = 0; index < 2; index++) await tick(200);
+  expect(probe.mock.calls.map(([chatId, userId]) => [chatId, userId])).toEqual([[-1001, 1], [-1002, 4], [-1002, 5]]);
+  expect([...denied]).toEqual([1, 2, 3]);
+  expect([...reviewed]).toEqual([4]);
+  expect(errorLog).toHaveBeenCalledTimes(1);
 });

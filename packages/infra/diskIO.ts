@@ -46,14 +46,9 @@ import { diskIOMessageCost } from "../libs/diskIOMessageCost";
 import { DISK_OPERATION_CONTROL_RESERVE, DISK_BUSINESS_BATCH_MAX_MESSAGES, DISK_OPERATION_MAX_RETAINED_BYTES } from "../consts/diskIO/business";
 import { stickerPacksForRecovery } from "../config/stickers";
 export {
-  onAiMemoryDeletedPersisted,
-  onAiMemoryPersisted,
-  onStickerCatalogPersisted,
   onDiskIOGiveUp,
+  onDiskIOReply,
   onDiskIORespawn,
-  onIdentityStoragePersisted,
-  onLuckAppendStalled,
-  onVerificationPersisted,
 } from "./diskIO/observers";
 import type { FlushResult } from "../types/lifecycle";
 import type {

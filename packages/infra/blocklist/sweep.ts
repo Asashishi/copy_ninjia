@@ -92,12 +92,9 @@ export function noteBanPermissionObserved(chatId: number, canRestrict: boolean):
   if (progress?.permissionBlocked !== true) return;
   logger.log(`Ban rights restored in chat ${chatId}; re-arming the blocklist sweep.`);
   blocklistSweepState.set(chatId, {
-    // claim 一律释放，不沿用闩锁期间记下的 removalId。那个 id 未必还有对应的
-    // 在途任务：闩锁一旦置真，Worker 重建时的 replayPendingBlockedRemovals 就
-    // 跳过这个群，被闩住之前投出去的补扫批次没人重投、也永远等不到回执；而下面
-    // 那次重投按设计只覆盖 frozen 批次（probeMembership 的补扫由新一轮重新登记）。
-    // 继续把它当成有效 claim，等于让 prepareBlocklistSweep 的 removalId !== null
-    // 早退永久成立——这个群从此再也补扫不了，群里的黑名单成员一直坐着。
+    // claim 一律释放，不沿用闩锁期间记下的 removalId：该 id 对应的批次在闩锁期间
+    // 被 replayPendingBlockedRemovals 跳过，不会再收到回执。下面的重投只覆盖
+    // frozen 批次，probeMembership 补扫由新一轮重新登记。
     removalId: null,
     sweptAt: null,
     nextRetryAt: Date.now(),
@@ -136,7 +133,7 @@ function prepareBlocklistSweep(
   try {
     params = trackBlockedRemoval({ chatId, probeMembership: true }, page.ids);
   } catch (error: unknown) {
-    // 满仓或 id 耗尽必须在 update 内就地降级；抛出去会形成重投/重启循环。
+    // 满仓或 id 耗尽在这里就地降级，不向上抛出以避免重投/重启循环。
     logger.error(`Failed to queue the blocklist sweep of chat ${chatId}:`, error);
     noteSweepAttemptFailed(chatId, failedSweeps, now);
     return null;
@@ -207,14 +204,10 @@ async function deliverPreparedSweeps(
     throw error;
   }
   if (deliveredCount > 0) return;
-  // 正常 resolve 不等于投出去了：并发 `/block disable` 在
+  // 正常 resolve 不等于已投出：并发 `/block disable` 在
   // BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS 轮内持续改动 outbox 时，durable 对账
-  // 会扣下整批 removeBlockedMembers（antiRaid/blocklistDelivery.ts），纯补扫这批
-  // 于是只剩空数组，投递路径以 length === 0 早退并正常 resolve。不在这里判失败的
-  // 话：claim 里的 removalId 停在原值、诊断不记、退避不推进，而消息从未投出，
-  // blockedMembersRemoved 回执永不会来——此后 prepareBlocklistSweep 对这个群永远
-  // 在 `removalId !== null` 早退，本进程生命周期内它再也不会被清扫，只能靠整进程
-  // 重启走 hydrateBlocklist + replayPendingBlockedRemovals 捞回来。
+  // （antiRaid/blocklistDelivery.ts）会把整批 removeBlockedMembers 扣下，纯补扫
+  // 批次投递因此以空数组早退并正常 resolve，仍需按失败处理。
   abandonPreparedSweeps(sweeps);
   logger.error(
     `Blocklist sweep delivery posted nothing for ${sweeps.length} chat(s); ` +
@@ -230,20 +223,14 @@ export async function sweepBlockedMembers(
   chatId: number,
   now: number = Date.now()
 ): Promise<void> {
-  // 名单读取必须留在 try 里：它已经不是同步本地读，而是跨线程 request/reply，
-  // 超时或 Worker 拒收都会 reject（infra/diskIO/host.ts）。落在 try 之外时那次
-  // reject 直接跳过 finally，`armBlocklistSweepScheduler()` 本次不执行——典型
-  // 路径是 recordBotChatPermissions 在权限恢复时调用本函数而 Disk I/O 正在 recycle，
-  // 于是周期性补扫在本进程生命周期内不再被武装。
+  // 名单读取跨线程 request/reply（infra/diskIO/host.ts），超时或 Worker 拒收会
+  // reject；必须留在 try 内，否则 reject 会跳过 finally 里的 armBlocklistSweepScheduler()。
   try {
-    // 建不了 claim 就不能付这次名单页读。它不是本地读：先向 Disk I/O Worker 请求
-    // 一次**全领域** flush，再跨线程取一页主键（见 infra/identityStorage/sweep.ts
-    // 与 workers/diskIOWorker.ts 的 flushAll——那一次 flush 明确不看各领域的攒批
-    // 阈值，会把当时所有脏领域立刻写盘）。而本函数挂在每条 chat_member 更新的
-    // 管理员身份观测上（infra/botAdmin.ts 的 recordBotChatPermissions），稳定态
-    // 下这个群早就 `sweptAt !== null`，读回来的那一页只会被下面的
-    // prepareBlocklistSweep 原样丢掉。判据与它同源；读盘期间状态仍可能变化，
-    // 那边照旧复查一次，这里只去掉注定空转的那一趟 I/O。
+    // canClaimSweep 判定不通过时提前返回，避免付出一次不必要的名单页读：
+    // readBlocklistSweepPage 会先触发 Disk I/O Worker 的全领域 flush（不看各领域
+    // 攒批阈值，见 infra/identityStorage/sweep.ts 与 workers/diskIOWorker.ts 的
+    // flushAll），再跨线程取一页主键。判据与 prepareBlocklistSweep 同源，下方仍会
+    // 复查一次。
     if (!canClaimSweep(blocklistSweepState.get(chatId), now)) return;
     const page: BlocklistIdPage = hasAnyBlockedIdentity()
       ? await readBlocklistSweepPage(null)
@@ -259,11 +246,9 @@ export async function sweepBlockedMembers(
 }
 
 /**
- * 名单读不出来时，把这一轮本来该扫的群按「这一轮没成」记账并推进退避。
- *
- * 不能让读失败原样抛给调度器：`armBlocklistSweepScheduler` 在 finally 里按早已
- * 过期的 nextRetryAt 立刻重排，Disk I/O 自愈窗口里就是一串 0ms 的忙等重试，每轮
- * 还多一行错误日志。资格判定与 prepareBlocklistSweep 保持同一口径。
+ * 名单读不出来时，把这一轮本来该扫的群按「这一轮没成」记账并推进退避，避免
+ * `armBlocklistSweepScheduler` 按已过期的 nextRetryAt 立刻重排造成忙等重试。
+ * 资格判定与 prepareBlocklistSweep 同口径。
  */
 function deferManagedBlocklistSweeps(now: number): void {
   for (const [chatId, state] of getChatStateCache()) {
@@ -276,10 +261,8 @@ function deferManagedBlocklistSweeps(now: number): void {
 }
 
 /**
- * 本轮是否至少有一个受管群还能建立 claim；判据与 prepareBlocklistSweep 同源。
- *
- * 只用来决定「要不要付那次名单页读」，命中即停。全表都扫不动时读回来的页
- * 只会被逐群的 prepareBlocklistSweep 原样丢掉，理由同 sweepBlockedMembers。
+ * 本轮是否至少有一个受管群还能建立 claim，判据与 prepareBlocklistSweep 同源；
+ * 只用来决定要不要付出这次名单页读，命中即停。
  */
 function hasClaimableManagedChat(now: number): boolean {
   for (const [chatId, state] of getChatStateCache()) {

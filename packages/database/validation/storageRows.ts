@@ -85,8 +85,7 @@ export function decodeStoredPendingRemovals(
       throw new Error(`${path}: params.removalId must equal the row primary key.`);
     }
     values.set(row.removalId, pending);
-    // pending 已由上面的严格 decoder 规范化；这里直接生成与 encoder 相同的稳定
-    // 文本，避免为了取得文本把刚解出的同一个值再 parse 和逐字段校验一遍。
+    // pending 已由上面的严格 decoder 规范化；这里直接生成与 encoder 相同的稳定文本。
     encoded.set(row.removalId, JSON.stringify(pending));
   }
   return { values, encoded };
@@ -159,11 +158,9 @@ export function decodeStoredChatStates(
 }
 
 /**
- * 严格解码全部问答行，并顺带核对每群条数没有越过硬顶。
+ * 严格解码全部问答行，并核对每群条数没有越过硬顶。
  *
- * 条数在写入侧已经把过一道闸，这里再核一次的理由与其它表一致：库里已有的行
- * 不依赖主线程准入——手工改库、从别处恢复的备份都可能带进越界数据，而那会让
- * `/qa set` 从此永远拒绝新增却看不出原因。
+ * 启动读取不依赖写入侧校验；手工改库或从别处恢复的备份都可能带入越界数据。
  *
  * @returns 群 -> 问题 -> 答案；调用方据此重建热缓存。
  */

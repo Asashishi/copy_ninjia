@@ -21,11 +21,9 @@ export function readStoredChatQa(
 }
 
 /**
- * 只读取某一群已提交问答的问题文本。
- *
- * 容量闸要的只是「这个群现在登记了哪几句」，而 data 是 JSONB BLOB，读它必须
- * 逐行经 `jsonbTextProjection` 物化成 JSON 文本——那是每次问答写入都要为该群
- * 已有行白付的转换与字符串分配。与 readStoredChatStateIds 同一取舍。
+ * 只读取某一群已提交问答的问题文本，不读取 data 列（JSONB BLOB，需经
+ * `jsonbTextProjection` 物化成 JSON 文本）。容量闸只需要知道该群已登记哪些
+ * 问题；做法与 readStoredChatStateIds 相同。
  */
 export function readStoredChatQaQuestions(
   database: StorageDatabase,

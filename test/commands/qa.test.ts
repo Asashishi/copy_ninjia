@@ -397,9 +397,8 @@ describe("群 teardown 对已登记问答的处置", () => {
 
 describe("表单填齐后的结算", () => {
   test("本群没有未完成表单时同步返回 false，不为每条群消息分配 Promise", () => {
-    // 绝大多数群任何时刻都没有开着的表单，判定只有一次以群 id 为键的 Map.get。
-    // 本 handler 挂在每条群消息与频道帖之前（见 app/registerHandlers.ts），
-    // 返回 Promise 就等于每条消息都白付一次分配与一个微任务回合。
+    // 判定只需一次以群 id 为键的 Map.get；本 handler 挂在每条群消息与频道帖之前
+    // （见 app/registerHandlers.ts），返回值必须同步。
     expect(qaFormSessions.has(CHAT_ID)).toBeFalse();
     expect(handleQaMessageIngress(delivered("问题:\n怎么入群？"))).toBe(false);
   });

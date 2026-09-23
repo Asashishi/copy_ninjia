@@ -1,10 +1,8 @@
 import { installTemporaryMessageWorkerMock } from "./temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
 /**
- * 验证副作用解释器用例共用的替身、状态与隔离钩子。
- *
- * 单文件曾超过 1000 行（AGENTS.md 要求必须拆分）；这套 mock.module 装配、状态
- * 工厂与 beforeEach 复位两份用例都要用。
+ * 验证副作用解释器用例共用的替身、状态与隔离钩子：mock.module 装配、状态
+ * 工厂与 beforeEach 复位。
  */
 
 import { beforeEach, mock, spyOn } from "bun:test";
@@ -42,11 +40,9 @@ export const callbackTexts: string[] = [];
 export const sentKeyboards: (InlineKeyboardMarkup | undefined)[] = [];
 export const warnings: string[] = [];
 export const loggedErrors: string[] = [];
-/** 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。 */
 /**
- * 清理机器人验证消息时每次 deleteMessageWithOutcome 的结局，按调用顺序消费，用尽后
- * 回落到 "deleted"。三态是有意义的：`gone`（已被别人手删）不该被
- * 折算成「删不动」，否则战报会冤枉一个权限齐全的管理员。
+ * 清理机器人验证消息时每次 deleteMessageWithOutcome 的结局，按调用顺序消费，
+ * 用尽后回落到 "deleted"。取值含 "deleted" / "gone" / "failed" 三态。
  */
 export const traceDeleteOutcomes: string[] = [];
 /**
@@ -57,7 +53,7 @@ export const testState: {
   nextSentMessageId: number | undefined;
   kickSucceeds: boolean;
   kickTargetAbsent: boolean;
-  /** 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。 */
+  /** 模拟机器人是否具备删除验证消息的权限，可与踢人权限独立开关。 */
   deleteSucceeds: boolean;
   membershipPresent: boolean | undefined;
   fetchedChatType: "group" | "supergroup" | undefined;

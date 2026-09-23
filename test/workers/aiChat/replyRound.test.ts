@@ -237,6 +237,21 @@ describe("AI 单轮回复生命周期", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  test("零落地只在模型给出正文时记一行；模型侧已记原因的空结果不重复记", async () => {
+    const zeroActionLogs = (): unknown[][] =>
+      logError.mock.calls.filter((call: unknown[]): boolean => String(call[0]).includes("zero actions"));
+    actionsUsed = 0;
+    generateReply.mockImplementationOnce(async (): Promise<null> => null);
+    await runRound();
+    expect(zeroActionLogs()).toEqual([]);
+
+    execute.mockImplementationOnce(async (): Promise<string> => JSON.stringify({ error: "send failed" }));
+    await runRound();
+    expect(zeroActionLogs()).toEqual([[
+      "AI reply round ended with zero actions (chat -1001, trigger=direct, finalText=unsent).",
+    ]]);
+  });
+
   test("工具发送回调只在代际仍有效时登记滚动记忆", async () => {
     actionsUsed = 2;
     generateReply.mockImplementationOnce(async (): Promise<null> => {

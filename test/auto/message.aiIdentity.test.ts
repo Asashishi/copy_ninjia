@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { aiRecordMessageFixture, aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
-// 六个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
+// 七个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
 // 必须在下面的 await import 之前登记。
 import {
   autoMessageChatState,

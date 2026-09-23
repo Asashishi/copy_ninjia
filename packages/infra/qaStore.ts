@@ -195,7 +195,7 @@ function replayChatQaWrites(transport: DiskIORecoveryTransport): boolean {
   return true;
 }
 
-diskIO.onIdentityStoragePersisted(settleChatQaWrites);
+diskIO.onDiskIOReply("identityStoragePersisted", settleChatQaWrites);
 diskIO.onDiskIORespawn(
   "chat qa",
   DISK_IO_RESPAWN_PRIORITIES.CHAT_QA,

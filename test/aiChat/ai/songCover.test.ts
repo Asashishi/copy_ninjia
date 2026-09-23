@@ -1,13 +1,6 @@
 /**
- * 生歌消息的封面缩略图。
- *
- * Lyria 只产出音频与歌词（模型卡的 Supported outputs 就是 "Audio (MP3),
- * Text (Lyrics)"），响应里没有任何图像；群里那些带专辑封面的音乐消息，封面来自
- * 源文件里嵌的 ID3 APIC 帧——搬运真实曲目才有。想让播放条上不是一个通用音符
- * 图标，只能自己补一张。
- *
- * 这里要守住的三条：封面画幅固定正方形、提示词禁止出现文字、任何一步失败都
- * 静默交回 null（歌才是这次调用的主体，绝不能为一张装帧图把它整条丢掉）。
+ * 生歌封面缩略图：画幅固定正方形、提示词禁止出现文字，生图或压缩任一步失败
+ * 都静默交回 null。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -77,9 +70,7 @@ describe("生歌封面", () => {
     expect(prompt).toContain("夏天的尾巴");
     expect(prompt).toContain("小忍");
     expect(prompt).toContain("a warm lo-fi ballad, 80 BPM, Chinese vocals");
-    // 生图模型写出来的中日文几乎必然是错的，而缩略图只有 320 像素见方。
     expect(prompt).toContain("不要出现任何文字");
-    // 创作说明里的技术词不能被照着画进去。
     expect(prompt).toContain("不要照抄");
   });
 
@@ -93,7 +84,7 @@ describe("生歌封面", () => {
       qualities: SONG_COVER_JPEG_QUALITIES,
     });
     expect(SONG_COVER_MAX_EDGE).toBe(320);
-    // 「小于 200 kB」的单位与 multipart 开销文档都没写死，留出余量而不是卡边界。
+    // 体积上限严格小于 200 KB，不是等于。
     expect(SONG_COVER_MAX_BYTES).toBeLessThan(200 * 1024);
   });
 
@@ -119,9 +110,6 @@ describe("生歌封面", () => {
   });
 
   test("生图这一步**抛错**同样只交回 null，绝不让异常逃出去", async () => {
-    // imageAiProvider() 在能力配置或端点异常时可能抛错。这个 reject 若逃出
-    // generateSongCover，展开的不是这一次封面，而是 toolset.execute() 外面整个
-    // 工具循环——歌已经生成、账已经出，群里却什么都收不到。
     generateChatImage.mockImplementationOnce(async (): Promise<GeneratedChatImage | null> => {
       throw new Error('Agent capability "image" is unavailable.');
     });

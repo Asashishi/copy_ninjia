@@ -1,4 +1,4 @@
-import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../../consts/antiRaid/verification";
+import { KICKED_REJOIN_GRACE_MS, NO_VERIFICATION_EFFECTS, VERIFICATION_TIMEOUT_MS } from "../../consts/antiRaid/verification";
 import type {
   JoinEvent,
   PendingState,
@@ -57,7 +57,7 @@ export function handleJoin(
 
   if (exempt) {
     // 已有豁免占位时不动它，也不刷新其去重计时。
-    if (state?.kind === "exempt") return { next: state, effects: [] };
+    if (state?.kind === "exempt") return { next: state, effects: NO_VERIFICATION_EFFECTS };
     if (state?.kind === "kickPending") {
       if (state.executionStarted === true) {
         // Telegram 调用已经同步发出，后来的身份证明无法再撤销；等待请求结算
@@ -163,7 +163,7 @@ export function handleJoin(
         effectStarted: false,
         executionStarted: false,
       },
-      effects: [],
+      effects: NO_VERIFICATION_EFFECTS,
     };
   }
 
@@ -207,7 +207,7 @@ export function handleLeft(
     return { next: undefined, effects: [remindersOf(state)] };
   }
   if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_VERIFICATION_EFFECTS };
   }
-  return { next: undefined, effects: [] };
+  return { next: undefined, effects: NO_VERIFICATION_EFFECTS };
 }

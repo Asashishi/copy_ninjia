@@ -110,8 +110,7 @@ describe("按群 AI 随机搭话活跃度", () => {
     expect(aiReplyActivityByChat.has(-1001)).toBeFalse();
     expect(aiReplyActivityByChat.has(-2002)).toBeTrue();
 
-    // 回调必须把 holder 归零再重排，否则 scheduleNextSweep 第一行就返回，
-    // 此后永远不会再有下一次清扫，只剩硬顶淘汰兜着。
+    // 回调需先把 holder 归零再重排下一次清扫。
     jest.advanceTimersByTime(500);
     expect(aiReplyActivityByChat.size).toBe(0);
     expect(aiReplyActivitySweepState.timer).toBeNull();

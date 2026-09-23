@@ -90,6 +90,8 @@ import { getChatState } from "../../packages/infra/storage/stateStore";
 
 import * as Media from "../../packages/consts/aiChat/media";
 import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
+import { NO_VERIFICATION_EFFECTS } from "../../packages/consts/antiRaid/verification";
+import { NO_LOCKDOWN_EFFECTS } from "../../packages/consts/antiRaid/lockdown";
 import { EMPTY_OUTPUT_ITEMS } from "../../packages/consts/aiChat/openai";
 import { EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/tools";
 import { EMPTY_STICKER_MENU } from "../../packages/consts/aiChat/stickers";
@@ -164,6 +166,12 @@ test("准入、媒体、Telegram 固定载荷和各领域空列表均不可写",
     EMPTY_FUNCTION_CALLS.push({});
     // @ts-expect-error 贴纸共享空菜单不得追加。
     EMPTY_STICKER_MENU.push({});
+    // @ts-expect-error 验证状态机共享的空效果表不得追加。
+    NO_VERIFICATION_EFFECTS.push({ kind: "sendReminder", label: "x", isBot: false });
+    // @ts-expect-error 私密模式状态机共享的空效果表不得追加。
+    NO_LOCKDOWN_EFFECTS.push({ kind: "persistState" });
+    // @ts-expect-error 模态支持度状态机共享的空效果表不得追加。
+    Media.NO_MEDIA_INPUT_EFFECTS.push({ kind: "logMisconfiguredMediaEndpoint", capability: "media" });
   };
   expect(assertReadonly).toBeFunction();
 });

@@ -8,9 +8,8 @@ import {
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 /**
- * cache key 的编解码器提到模块级复用，理由同 libs/time.ts 里几个
- * Intl.DateTimeFormat：构造远贵于一次调用，而这两个类在 Bun 上恒可用、构造
- * 不会失败，因此不需要 libs/text.ts 那种可重试的 holder。
+ * cache key 的编解码器在模块级复用（同 libs/time.ts 的 Intl.DateTimeFormat 处理）：
+ * 这两个类在 Bun 上恒可用、构造不会失败，不需要 libs/text.ts 那种可重试的 holder。
  *
  * 解码器带 `fatal: true`：非法 UTF-8 必须抛出而不是替换成 U+FFFD，否则伪造的
  * cache key 会被悄悄改写成另一个合法字符串。抛出后实例仍可继续使用——每次

@@ -250,7 +250,7 @@ function replayIdentityPolicyWrites(
   return true;
 }
 
-diskIO.onIdentityStoragePersisted(settleIdentityStorageWrite);
+diskIO.onDiskIOReply("identityStoragePersisted", settleIdentityStorageWrite);
 diskIO.onDiskIORespawn(
   "identity policies",
   DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST,

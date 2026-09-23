@@ -70,7 +70,7 @@ function pendingState(overrides: Partial<PendingState> = {}): PendingState {
   };
 }
 
-function effectKinds(effects: { kind: string }[]): string[] {
+function effectKinds(effects: readonly { kind: string }[]): string[] {
   return effects.map((effect) => effect.kind);
 }
 
@@ -624,9 +624,6 @@ describe("超时与拉人者终核", () => {
   });
 
   test("提醒一直发不出去时续期有尽头，超过总时长按普通超时结算", () => {
-    // 某群 sendMessage 持续失败（论坛 General 话题被关、机器人被禁言却仍能限制
-    // 成员）时，无限续期会让每个入群者留下一条不朽记录：常驻待验证表、常驻主
-    // 线程镜像并持续刷新日文件。
     const state = pendingState({ joinedAt: 1_000 });
     const late: number = 1_000 + VERIFICATION_REMINDER_UNDELIVERED_MAX_MS;
 
@@ -803,9 +800,8 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
   });
 
   test("回归：新入群取代终态记录时，先删掉旧记录留下的验证提醒", () => {
-    // 旧记录被替换后，它的 expel 收尾会因对象同一性复核不过而整段跳过——那条
-    // 收尾正是负责删提醒的人。提醒带按钮，不能挂固定 30 秒删除，漏发这条 effect
-    // 就等于在群里永久留一个指向已不存在记录的「验证」按钮。
+    // 旧记录被替换后，它的 expel 收尾会因对象同一性复核不过而整段跳过，
+    // 因此替换发生时必须由这条转移路径直接发出 deleteReminders。
     const snapshot = {
       label: "杂鱼A",
       isBot: false,

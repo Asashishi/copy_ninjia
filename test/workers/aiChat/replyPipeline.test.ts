@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
-import type { AdmitDecision, RoundDecision } from "../../../packages/types/states/replyAdmission";
+import type { AdmitDecision } from "../../../packages/types/states/replyAdmission";
 import { TimestampDeque } from "../../../packages/libs/timestampDeque";
 import { RATE_LIMIT_LONG_MAX_TRIGGERS } from "../../../packages/consts/aiChat/rateLimit";
 
 let decision: AdmitDecision = "startRound";
 const admitTrigger = mock((_input: unknown): AdmitDecision => decision);
-let roundDecision: RoundDecision = "run";
-const admitRound = mock((_input: unknown): RoundDecision => roundDecision);
+let roundRateLimited: boolean = false;
+const isReplyRoundRateLimited = mock((_windowCount: number): boolean => roundRateLimited);
 const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void, _modelFinished: (chatId: number) => void): boolean => true);
 const pushReplyTrigger = mock((_input: unknown): void => {});
 const drainQueuedReplies = mock((_chatId: number, _start: (trigger: unknown) => void): void => {});
@@ -40,7 +40,7 @@ mock.module("../../../packages/cache/workers/aiChat/replies", () => ({
 mock.module("../../../packages/infra/logger", () => ({
   logger: loggerStub({ error: loggerError }),
 }));
-mock.module("../../../packages/states/replyAdmission", () => ({ admitTrigger, admitRound }));
+mock.module("../../../packages/states/replyAdmission", () => ({ admitTrigger, isReplyRoundRateLimited }));
 mock.module("../../../packages/workers/aiChat/replyQueue", () => ({
   drainReplyQueue: drainQueuedReplies,
   flushOverflowNotice,
@@ -63,7 +63,7 @@ const baseRequest = {
 
 beforeEach(() => {
   decision = "startRound";
-  roundDecision = "run";
+  roundRateLimited = false;
   botInfoState.current = botInfo;
   pendingOverflowNotices.clear();
   pendingReplyTriggers.clear();
@@ -76,7 +76,7 @@ beforeEach(() => {
     pushReplyTrigger,
     drainQueuedReplies,
     flushOverflowNotice,
-    admitRound,
+    isReplyRoundRateLimited,
     loggerError,
     replyReferenceForBufferedMessage,
   ]) fn.mockClear();
@@ -104,7 +104,7 @@ describe("AI reply admission pipeline", () => {
     const times = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(Date.now());
     longTriggerTimes.set(-1001, times);
-    roundDecision = "rateLimited";
+    roundRateLimited = true;
     onModelFinished(-1001);
     expect(drainQueuedReplies).toHaveBeenCalledTimes(1);
     startReplyRound.mock.calls[0]![1](-1001);
@@ -230,12 +230,12 @@ describe("AI reply admission pipeline", () => {
     times.push(900);
     longTriggerTimes.set(-1001, times);
 
-    roundDecision = "rateLimited";
+    roundRateLimited = true;
     drainPendingReplyQueues(1_000);
     // 空转一次就等于每分钟往群里刷一条限频提示（提示自带 60 秒冷却）。
     expect(drainQueuedReplies).not.toHaveBeenCalled();
 
-    roundDecision = "run";
+    roundRateLimited = false;
     drainPendingReplyQueues(1_000);
     expect(drainQueuedReplies).toHaveBeenCalledWith(-1001, expect.any(Function));
   });
@@ -252,7 +252,7 @@ describe("AI reply admission pipeline", () => {
     const onFinished = startReplyRound.mock.calls[0]![1];
     drainQueuedReplies.mockClear();
 
-    roundDecision = "rateLimited";
+    roundRateLimited = true;
     pendingOverflowNotices.set(-1001, undefined);
     onFinished(-1001);
 

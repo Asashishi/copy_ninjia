@@ -63,7 +63,11 @@ import {
   AD_DETECT_QUEUE_TICK_MS,
 } from "../../../consts/antiRaid/adDetect";
 import { sanitizeInline, truncateInline } from "../../../libs/text";
-import { admitAdCandidate, admitAdDispatch } from "../../../states/adDetectAdmission";
+import {
+  admitAdCandidate,
+  isAdDispatchSaturated,
+  isKnownAdminCandidate,
+} from "../../../states/adDetectAdmission";
 import {
   appendLinkUrls,
   boundSampleContext,
@@ -139,17 +143,13 @@ export function enqueueAdCandidate(
   // 裁剪提到接纳判定之前：下面那道引文去重要按「裁完之后这一串还剩哪些条目」算，
   // 否则会把一段引文认领给本次就要被回收的 entry，新来的这条跟着丢掉它。
   if (existing !== undefined) pruneConsumedContext(existing, now);
-  // 已知管理员（用户身份）在投递闸里恒判 ignore，与正文长短无关，而判据是纯
-  // O(1) 的缓存查表。提到正文清洗之前，理由与上面那道容量闸完全相同——结论
-  // 已经确定的消息不该先做 sanitize/truncate/URL 拼接/引文认领。频道马甲不适用
-  // 本豁免：它没有「群成员」身份，判据是
-  // isChannel 而不是 id 在不在表里，仍交给下面的投递闸按 blocked/处置抑制分派。
-  //
-  // 传本条消息的 now，让同一条消息的两处判定落在同一时刻（同
-  // auto/message/index.ts 的「本条消息统一的『现在』」）。
-  const knownAdmin: boolean =
-    freshAdminIds(message.chatId, now)?.has(message.senderId) === true;
-  if (knownAdmin && !message.isChannel) return;
+  // 管理员闸排在正文清洗之前（判据见 states/adDetectAdmission.ts 的
+  // isKnownAdminCandidate）。传本条消息的 now，让同一条消息的两处判定落在同一
+  // 时刻（同 auto/message/index.ts 的「本条消息统一的『现在』」）。
+  if (isKnownAdminCandidate(
+    message.isChannel,
+    freshAdminIds(message.chatId, now)?.has(message.senderId) === true
+  )) return;
   // 被引用段/被回复原文与正文一起送检：广告的主流形态是「先发正常消息 → 隔一段
   // 时间编辑成广告 → 用回复/引用把它顶上来」，广告正文永远不在新消息的 text 里
   // （详见 bundle.ts 的 claimSampleContextParts，归因边界与跨条去重也写在那里）。
@@ -180,12 +180,11 @@ export function enqueueAdCandidate(
     existing !== undefined && existing.entries.length > 0 &&
     existing.meta.firstName === message.meta.firstName &&
     existing.meta.lastName === message.meta.lastName;
-  // 三道投递闸（没有可判定正文、已知管理员、自己的 TTL 内刚处置过）收在
+  // 投递闸（没有可判定正文、已拉黑或自己的 TTL 内刚处置过）收在
   // states/adDetectAdmission.ts 里；这里只执行结论。
   const decision: AdCandidateDecision = admitAdCandidate({
     textLength: onlyKnownName ? 0 : text.length,
     isChannel: message.isChannel,
-    knownAdmin,
     recentlyDisposed,
     blocked: message.blocked,
   });
@@ -253,7 +252,7 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
     // 全局在途闸（判定见 states/adDetectAdmission.ts）：判断排在 shift 之前——
     // 先取出来再发现发不掉，那个键就从队列里消失了，而它未必还有下一条新消息
     // 把自己重新排进来。
-    if (admitAdDispatch({ inFlight: inFlightAdDetectKeys.size }) === "saturated") {
+    if (isAdDispatchSaturated(inFlightAdDetectKeys.size)) {
       saturated = true;
       break;
     }

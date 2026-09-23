@@ -77,7 +77,6 @@ const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   onDiskIORespawn: (): void => {},
-  onIdentityStoragePersisted: (): void => {},
   // infra/logger.ts 从同一模块取它；整份模块被替换掉时缺了会在 import 阶段报错。
   relayLogMessage: (): boolean => true,
   // /block 只等黑名单这一个领域的落盘回执：统一 flush 是各领域的合取，
@@ -222,8 +221,7 @@ describe("/block 跨群封禁与黑名单", () => {
   });
 
   test("按裸 id 拉黑时战报念出 id，不写成泛指的兜底称呼", async () => {
-    // resolveCommandTarget 对只给 id 的参数返回只带 id 的最小身份（缓存里没有
-    // 这个人）。战报里必须能看出打的是哪个 id，否则打错一位数字没人看得出来。
+    // resolveCommandTarget 对只给 id 的参数返回只带 id 的最小身份（缓存里没有这个人）。
     target = { id: 4242 };
     chatStates.set(-2002, { botPermissions: botPermissions() });
 
@@ -348,8 +346,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
     await handleBlockCommand(context());
 
-    // 第二次不复用第一次的“在群”历史：实时结果已经是不在群，所以只报告
-    // 确认封禁；banChatMember 仍重发，让外部解封或重新入群得到重新结算。
+    // 第二次不复用第一次的“在群”历史，成员状态实时重查，封禁也重发。
     expect(isChatMember).toHaveBeenCalledTimes(2);
     expect(banChatMember).toHaveBeenCalledTimes(2);
     expect(banChatMember).toHaveBeenLastCalledWith(-1001, 7);
@@ -428,8 +425,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
 describe("/block 的黑名单落盘", () => {
   test("先更新内存 Map 再投递落盘，封禁失败也照样入名单", async () => {
-    // 投递时 Map 必须已经写好：两步之间到达的入群更新查的就是这个 Map，
-    // 顺序反了那个人就这么进来了。
+    // 投递落盘消息那一刻，内存 Map 必须已经写好。
     postDiskIO.mockImplementation((): boolean => {
       expect(blockedUserIds.has(7)).toBeTrue();
       return true;
@@ -466,10 +462,7 @@ describe("/block 的黑名单落盘", () => {
 
     await handleBlockCommand(context());
 
-    // 这个 id 是本进程新增的（在 sessionBlockedAt 里），上一次落盘可能压根没
-    // 成功——管理员修好磁盘再跑一次 /block 正是最自然的重试动作，不能因为
-    // 「Map 里已经有了」就静默跳过。成员状态每次实时查询，封禁也必须重发，
-    // 让新加的群、上次失败的群和消息撤回都得到重新结算。
+    // 重复调用不因「Map 里已经有了」而跳过：落盘补投一次，成员状态与封禁也重新结算。
     expect(postDiskIO).toHaveBeenCalledTimes(2);
     expect(banChatMember).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -506,8 +499,6 @@ describe("/block 的黑名单落盘", () => {
   });
 
   test("封禁失败的群被标回「欠一次」补扫", async () => {
-    // sweptAt 是永久闩锁，唯一的复位路径本来只有停管：这个群若早就扫过，
-    // 被拉黑的人会一直待到进程结束——入群秒踢只对之后的入群更新生效。
     chatStates.set(-2002, { botPermissions: botPermissions() });
     blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0, permissionBlocked: false });
     banChatMember.mockResolvedValue(false);
@@ -536,9 +527,7 @@ describe("/block 的黑名单落盘", () => {
   });
 
   test("自己人不可拉黑：超级管理员与白名单成员在入口就被挡住", async () => {
-    // 名单只增不删，解除要停进程手工改文件（docs/cn/04-invariants.md）。回错一条
-    // 消息或用了过期的 @username 别名，就能把自己人永久锁在所有监听群之外，
-    // 而机器人里没有任何撤销路径——只能在入口挡。
+    // 黑名单只增不删，解除要停进程手工改文件（docs/cn/04-invariants.md），只能在入口挡。
     for (const insiderId of [1, 100]) {
       target = { id: insiderId, first_name: "Insider" };
       await handleBlockCommand(context());
@@ -559,8 +548,7 @@ describe("/block 的黑名单落盘", () => {
 
     await handleBlockCommand(context());
 
-    // 本进程内照样拦得住，但管理员必须知道这条记录还没进硬盘：写盘失败在
-    // Worker 里只有 console.error，而那条日志按设计不会进 logs/。
+    // 本进程内照样拦得住，但回执必须说清这条记录还没进硬盘。
     expect(blockedUserIds.has(7)).toBeTrue();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,

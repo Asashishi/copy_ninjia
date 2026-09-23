@@ -44,8 +44,8 @@ describe("Gemini 图片生成适配器", () => {
 
     const image = await generateGeminiImage({ prompt: "一只纸飞机", aspectRatio: "16:9" });
 
-    // 请求体是个闭包而不是拼好的对象：模型名要在 client.ts 的 try 内才被读到，
-    // 否则 config/agent.json 写坏时异常会绕开那层失败归一化（见 client.ts 头注）。
+    // requestGeminiResponse 收的第二个参数是拼请求体的闭包，requestBody()
+    // 取出并求值它，而不是直接比对调用参数。
     expect(requestBody()).toEqual({
       model: getAgentDeploymentConfig().image?.model ?? "",
       contents: "一只纸飞机",

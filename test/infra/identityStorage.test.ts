@@ -1,5 +1,5 @@
 import type { DiskIODomain } from "../../packages/types/diskIO/replies";
-import { diskIOStub } from "../helpers/diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   BLOCKLIST_SWEEP_PAGE_SIZE,
@@ -76,11 +76,11 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   ): void => {
     respawnListeners.push(listener);
   },
-  onIdentityStoragePersisted: (
-    listener: (reply: IdentityStoragePersistedReply) => void
-  ): void => {
-    persistedListeners.push(listener);
-  },
+  onDiskIOReply: diskIOReplyStub({
+    identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
+      persistedListeners.push(listener);
+    },
+  }),
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskMessages.push(message);
     return acceptDiskMessages;

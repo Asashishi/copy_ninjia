@@ -1,9 +1,9 @@
 /**
  * 各热点场景共用的基准夹具：固定的群 id、时间戳起点与一份最小消息。
  *
- * 单独成文件是因为它们跨场景组共用（scenarios.ts、messageSpineScenarios.ts、
- * floodScenarios.ts、transcriptScenarios.ts），而各组按领域分文件之后，
- * 谁都不该为了拿一个常量去 import 另一组场景。
+ * 跨场景组共用（scenarios.ts、messageSpineScenarios.ts、floodScenarios.ts、
+ * transcriptScenarios.ts）；各组按领域分文件，不为拿一个常量去 import 另一组
+ * 场景。
  */
 
 import type { ChatMemberAdministrator, Message, UserFromGetMe } from "grammy/types";

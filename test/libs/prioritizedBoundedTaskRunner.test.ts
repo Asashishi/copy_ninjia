@@ -116,9 +116,8 @@ describe("createPrioritizedBoundedTaskRunner", () => {
   });
 
   // 下面两条是单档退化配置（maxBackgroundPending 取满 maxPending、interactiveBurst
-  // 取 1、全部按 interactive 提交）。packages/cache/workers/aiChat/mediaTasks.ts 的
-  // 媒体执行器就用这一档，这里把它依赖的「饱和即拒 / 槽位释放后续队 / 排队中可取消」
-  // 三条语义钉死，避免后续改动公平策略时把这条退化路径顺手改坏。
+  // 取 1、全部按 interactive 提交），对应 packages/cache/workers/aiChat/mediaTasks.ts
+  // 媒体执行器的用法，钉住「饱和即拒 / 槽位释放后续队 / 排队中可取消」三条语义。
   test("单档退化：限制执行与等待数量，饱和后立即拒绝且槽位释放后继续队列", async () => {
     const runner = createPrioritizedBoundedTaskRunner({
       maxConcurrent: 2,

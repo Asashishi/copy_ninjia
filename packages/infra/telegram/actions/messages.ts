@@ -47,16 +47,15 @@ export interface SendMessageParams {
    * （见 libs/forumTopic.ts）。挂了回复也不等于安全：`allow_sending_without_reply`
    * 会在目标已被删除时把这条降级成普通发送，那时只有这个参数还留在话题里。
    *
-   * **该不该带，按这条消息在群里活多久判定**：
-   * - **长期留存的必须带**——会话性输出（复读、AI 回复、洗澡回复、问答直答）、
-   *   `AGENTS.md`「Telegram 提示留存」列举的长期保留例外（两块权限看板、问答
-   *   看板、成功的中文动作结果），以及不由固定延迟清理持有的按钮消息
-   *   （`/qa set` 表单、gag 发言提示）。这些输出必须落在对应的会话话题中。
-   *   `preserveInGroup` 那一档由 `bun run check:conventions` 强制。
-   * - **到期自删的不带**——命令回执与用法提示（30 秒清理，见 commandMessages.ts）、
-   *   广告封禁播报与刷屏禁言公告，以及入群验证提醒（理由见 libs/forumTopic.ts
-   *   的入群验证豁免）。错也只错到清理为止，不值得为它把话题 id 铺进每一个
-   *   调用点与 Worker 协议。
+   * **用户命令与交互触发的消息落在触发消息所在的话题**（`AGENTS.md`「Telegram
+   * 提示留存」）：
+   * - 会话性输出、长期保留例外与按钮消息由调用方显式传入；`preserveInGroup`
+   *   那一档由 `bun run check:conventions` 强制。
+   * - 30 秒自删的命令提示省略时由 commandMessages.ts / commandPhotos.ts 按当前
+   *   update 的触发话题补齐（infra/updateContext.ts 的 updateTopicThreadIdFor）；
+   *   脱离 update 作用域的回执（头像更新、AI 限频提示、gag 结束回执）显式带上。
+   * - bot 主动发出的提示不带：刷屏禁言公告、广告警告与封禁播报、入群验证提醒
+   *   （另见 libs/forumTopic.ts 的豁免）、私密模式公告与 cron 定时任务。
    */
   messageThreadId?: number;
   /** 消息 id 的同步登记点，语义见 SendEphemeralMessageParams.onSent。 */

@@ -3,7 +3,7 @@ import { wedChats, wedRuntime } from "../../packages/cache/main/wed";
 import { WED_MAX_CONCURRENT, WED_MAX_PENDING } from "../../packages/consts/wed";
 import { getOrCreateWedChat } from "../../packages/commands/wed/chats";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime, submitWedTask } from "../../packages/commands/wed/runtime";
-import { currentUpdateAbortSignal, runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
+import { currentUpdateAbortSignal, currentUpdateTopic, runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
 import type { WedChat } from "../../packages/types/wed";
 
 const gates: ReturnType<typeof Promise.withResolvers<void>>[] = [];
@@ -101,16 +101,20 @@ test("出队恢复自己的取消上下文，不继承释放槽位任务的 upda
   });
   const started = Promise.withResolvers<AbortSignal>();
   const finish = heldTask();
+  let topic: unknown = null;
   await runWithUpdateAbortSignal(later.signal, async () => {
     submitWedTask(chat, async () => {
+      topic = currentUpdateTopic();
       started.resolve(currentUpdateAbortSignal()!);
       await finish.promise;
     });
-  });
+  }, { chatId: -1001, threadId: 42 });
   earlier.abort();
   held.resolve();
   const signal = await started.promise;
   expect(signal.aborted).toBeFalse();
+  // 出队的任务同样恢复接纳时的触发话题，提示落回发起交互的话题。
+  expect(topic).toEqual({ chatId: -1001, threadId: 42 });
   later.abort();
   expect(signal.aborted).toBeTrue();
 });

@@ -1,4 +1,4 @@
-import { RESTORE_RETRY_MS } from "../../consts/antiRaid/lockdown";
+import { NO_LOCKDOWN_EFFECTS, RESTORE_RETRY_MS } from "../../consts/antiRaid/lockdown";
 import { announcementCleanupEffects, announcementOf } from "./shared";
 import type { ChatPermissions } from "grammy/types";
 import type {
@@ -13,7 +13,7 @@ export function handleRestoreTimerFired(
   event: Extract<LockdownMachineEvent, { type: "restoreTimerFired" }>
 ): LockdownTransition {
   if (state?.kind !== "active" && state?.kind !== "reconciling") {
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   }
   return {
     next: {
@@ -29,7 +29,7 @@ export function handleRestoreTimerFired(
 
 /** 恢复重试计时器到点：状态不变，只再发一次恢复。 */
 export function handleRestoreRetryFired(state: LockdownState | undefined): LockdownTransition {
-  if (state?.kind !== "restoring") return { next: state, effects: [] };
+  if (state?.kind !== "restoring") return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   return {
     next: state,
     effects: [{ kind: "beginRestore", originalPermissions: state.originalPermissions }],
@@ -38,7 +38,7 @@ export function handleRestoreRetryFired(state: LockdownState | undefined): Lockd
 
 /** 纠偏重试计时器到点：状态不变，只再发一次重新收紧。 */
 export function handleReapplyRetryFired(state: LockdownState | undefined): LockdownTransition {
-  if (state?.kind !== "reconciling") return { next: state, effects: [] };
+  if (state?.kind !== "reconciling") return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   return { next: state, effects: [{ kind: "beginReapply" }] };
 }
 
@@ -47,7 +47,7 @@ export function handleDeactivate(
   state: LockdownState | undefined,
   event: Extract<LockdownMachineEvent, { type: "deactivate" }>
 ): LockdownTransition {
-  if (state === undefined) return { next: state, effects: [] };
+  if (state === undefined) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   if (state.kind === "applying" && state.stage === "preparing") {
     // 尚未形成 intent、更没改过 Telegram，直接撤销占位并撤掉公告即可。
     return { next: undefined, effects: announcementCleanupEffects(state) };
@@ -71,7 +71,7 @@ export function handleRestoreResult(
   state: LockdownState | undefined,
   event: Extract<LockdownMachineEvent, { type: "restoreResult" }>
 ): LockdownTransition {
-  if (state === undefined || state.kind === "applying") return { next: state, effects: [] };
+  if (state === undefined || state.kind === "applying") return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   if (event.ok) {
     if (state.kind === "active") {
       // ACTIVE 收到恢复成功回执时，先持久化远端权限与当前意图的差异，
@@ -87,7 +87,7 @@ export function handleRestoreResult(
         effects: [{ kind: "persistState" }],
       };
     }
-    if (state.kind === "reconciling") return { next: state, effects: [] };
+    if (state.kind === "reconciling") return { next: state, effects: NO_LOCKDOWN_EFFECTS };
     return {
       next: undefined,
       effects: state.announced
@@ -101,7 +101,7 @@ export function handleRestoreResult(
   }
   if (state.kind === "active" || state.kind === "reconciling") {
     // 当前意图仍为锁定，迟到的失败回执不改变它的倒计时或纠偏阶段。
-    return { next: state, effects: [] };
+    return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   }
   return { next: state, effects: [{ kind: "scheduleRestoreRetry", delayMs: RESTORE_RETRY_MS }] };
 }
@@ -111,7 +111,7 @@ export function handleReapplyResult(
   state: LockdownState | undefined,
   event: Extract<LockdownMachineEvent, { type: "reapplyResult" }>
 ): LockdownTransition {
-  if (state?.kind !== "reconciling") return { next: state, effects: [] };
+  if (state?.kind !== "reconciling") return { next: state, effects: NO_LOCKDOWN_EFFECTS };
   if (!event.ok) {
     return {
       next: state,

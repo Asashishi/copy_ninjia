@@ -65,10 +65,8 @@ export interface AiReplyReference extends AiSpeakerSnapshot {
 /**
  * 文字与媒体记录协议共用的消息身份和回复关系。
  *
- * 全部字段必填（缺省显式 undefined），且构造点必须一次写全、按声明顺序。
- * 这条协议每条 AI 群消息走一次，形状发散会同时打到主线程构造侧和 Worker
- * 的消费侧；`persistImmediately` 尤其不能沿用「用到才补一个键」的写法——
- * 事后加属性会当场把已经定型的对象改成另一个隐藏类。
+ * 全部字段必填（缺省显式 undefined），且构造点必须一次写全、按声明顺序（热路径
+ * 对象形状约束见 docs/cn/04-invariants.md）；`persistImmediately` 同样不得省略。
  */
 export interface AiRecordContext {
   chatId: number;
@@ -118,26 +116,16 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   /** 贴纸取不到视觉源时的兜底文案；其余媒体为 undefined。 */
   stickerFallbackText: string | undefined;
   /**
-   * 语音专用的两项事实；其余媒体分别为 undefined 与 0。
-   *
-   * 摊平成两个字段而不是包一个 `voice: {...} | undefined` 对象：这条协议每条媒体
-   * 消息走一次，多一个按类型才出现的嵌套对象既多一次分配，也让消费侧的读取点在
-   * 「有对象」与「没对象」之间多态（形状约束见 AiRecordContext 的说明）。
-   *
-   * mime 是 Telegram 声明的容器，交给转写侧按白名单归一（见
-   * aiChat/ai/telegramAudio.ts 的 normalizeVoiceMime）——声明值是外部输入，不原样
-   * 转发进模型请求体。
+   * 语音专用的两项事实，摊平为两个字段而非嵌套对象；其余媒体分别为 undefined
+   * 与 0。mime 为 Telegram 声明的容器原始值，交给转写侧按白名单归一（见
+   * aiChat/ai/telegramAudio.ts 的 normalizeVoiceMime）后才可用于模型请求。
    */
   voiceMime: string | undefined;
   voiceDurationSeconds: number;
   /**
-   * 直接触发的成因；随机/无触发为 undefined。
-   *
-   * 摊平理由同上面 voiceMime/voiceDurationSeconds：嵌套对象会增加一次分配并让
-   * 消费侧读取点多态。
-   *
-   * **它同时就是「本轮有没有图片工具资格」这一个事实**，不要增加重复布尔字段；
-   * 四个 handler 与 workers/aiChat/mediaIngest.ts 都以是否为 undefined 判断。
+   * 直接触发的成因；随机/无触发为 undefined。它同时就是「本轮有没有图片工具
+   * 资格」这一个事实，不要增加重复布尔字段；四个 handler 与
+   * workers/aiChat/mediaIngest.ts 都以是否为 undefined 判断。
    */
   directTriggerReason: AiDirectTriggerReason | undefined;
   /**
@@ -145,9 +133,7 @@ export interface AiRecordMediaMessage extends AiRecordContext {
    *
    * 媒体轮的回复由 Worker 在 describeMedia 解析完成后异步发起，那时手上只剩这条
    * 载荷，因此话题落点必须随它一起过线（见 workers/aiChat/mediaIngest.ts）。判定
-   * 与提取见 libs/forumTopic.ts。键恒发、缺省显式 undefined——理由同上面
-   * directTriggerReason 那段：本协议每条媒体消息走一次，两种形状轮着产生会让
-   * Worker 侧的读取点多态。
+   * 与提取见 libs/forumTopic.ts。键恒发、缺省显式 undefined，不得省略。
    */
   messageThreadId: number | undefined;
 }
@@ -183,9 +169,7 @@ export interface AiTriggerMessage {
    *
    * 本轮全部主动发送（文字、贴纸、生图、生歌、「正在输入…」与限频提示）都要带上
    * 它，否则话题群里除「挂了回复」之外的每一条都会掉进 General。判定与提取见
-   * libs/forumTopic.ts。键恒发、缺省显式 undefined，理由同上面的
-   * imageGenerationReference：这条消息走在每次 AI 触发的路径上，两种形状轮着
-   * 产生会让 Worker 侧的读取变多态。
+   * libs/forumTopic.ts。键恒发、缺省显式 undefined，不得省略。
    */
   messageThreadId: number | undefined;
 }

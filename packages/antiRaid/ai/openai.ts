@@ -72,7 +72,8 @@ async function attemptOpenAiAdDetectJson({
     };
   } catch (error: unknown) {
     if (error instanceof OpenAI.APIError) {
-      logger.error(`${errorLabel} failed: ${error.status ?? "?"} ${error.message}`);
+      // APIError.message 已以 HTTP 状态码开头，此处不另加状态码。
+      logger.error(`${errorLabel} failed: ${error.message}`);
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }

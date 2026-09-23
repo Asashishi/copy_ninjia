@@ -7,15 +7,17 @@ import { PROMPT_COMMAND_PATTERN } from "../consts/prompt";
 import { getChatState, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { forumTopicThreadId } from "../libs/forumTopic";
-import { hasCommandPermission } from "./commandActor";
+import { hasWhitelistPermission } from "../infra/identityPolicy/whitelist";
+import { resolveCommandActor } from "./commandActor";
 
 /** 按身份授权配置群级人设；成功回执必须晚于 SQLite 精确 revision ACK。 */
 export async function handlePromptCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
+  const actorId: number | undefined = resolveCommandActor(ctx)?.id;
   let text: string;
   if (getChatState(chatId).isInitEnabled !== true) {
     text = chatAtmosphere(chatId).PROMPT_COMMAND_TEXTS.notInitialized;
-  } else if (!hasCommandPermission(ctx, "isCanConfigAiPrompt")) {
+  } else if (actorId === undefined || !hasWhitelistPermission(actorId, "isCanConfigAiPrompt")) {
     text = chatAtmosphere(chatId).PROMPT_COMMAND_TEXTS.rejected;
   } else {
     const match: RegExpExecArray | null = PROMPT_COMMAND_PATTERN.exec(ctx.match.trim());

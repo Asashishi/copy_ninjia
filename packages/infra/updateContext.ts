@@ -1,18 +1,37 @@
 import { updateScopeStorage } from "../cache/perThread/updateContext";
-import type { UpdateScope } from "../types/lifecycle";
+import type { UpdateScope, UpdateTopic } from "../types/lifecycle";
 
 /**
- * 一条 update 的取消边界与统一时刻。app/updateRunner.ts 为每条 update 填入独立
- * signal；wed/runtime.ts 在交互出队时恢复接纳时的信号并合入自己的停机边界。存储
- * 实例见 cache/perThread/updateContext.ts，Worker isolate 不共享主线程的作用域。
+ * 一条 update 的取消边界、统一时刻与触发话题。app/updateRunner.ts 为每条 update
+ * 填入独立 signal 与触发话题；wed/runtime.ts 与 commands/deferredCommands.ts 在任务
+ * 出队时恢复接纳时的话题，并以自己的停机边界作为信号。存储实例见
+ * cache/perThread/updateContext.ts，Worker isolate 不共享主线程的作用域。
  */
 
-/** 在指定取消上下文中执行 middleware 或已经接纳的异步交互。 */
+/**
+ * 在指定取消上下文中执行 middleware 或已经接纳的异步交互。
+ * @param topic 触发消息所在的论坛话题；不在话题里时省略。
+ */
 export function runWithUpdateAbortSignal<T>(
   signal: AbortSignal,
-  run: () => Promise<T>
+  run: () => Promise<T>,
+  topic?: UpdateTopic
 ): Promise<T> {
-  return updateScopeStorage.run({ signal, now: null }, run);
+  return updateScopeStorage.run({ signal, now: null, topic }, run);
+}
+
+/** 当前异步调用链所属 update 的触发话题；不在 update 作用域或不在话题里时为 undefined。 */
+export function currentUpdateTopic(): UpdateTopic | undefined {
+  return updateScopeStorage.getStore()?.topic;
+}
+
+/**
+ * 发往 chatId 的临时提示应落的论坛话题：只有与触发消息同群时才沿用触发话题，
+ * 发往别的群一律不带（话题 id 只在所属群内有效）。
+ */
+export function updateTopicThreadIdFor(chatId: number): number | undefined {
+  const topic: UpdateTopic | undefined = updateScopeStorage.getStore()?.topic;
+  return topic?.chatId === chatId ? topic.threadId : undefined;
 }
 
 /** 当前异步调用链所属 update 的取消信号；非 update owner 返回 undefined。 */
@@ -23,7 +42,7 @@ export function currentUpdateAbortSignal(): AbortSignal | undefined {
 /**
  * 本条 update 统一的「现在」。
  *
- * 同一条群消息会在两条 middleware 上各要一次时刻：入群守卫的广告判定上下文
+ * 同一条群消息会在两条 middleware 上各要一次时刻：入群守卫的投递段
  * （antiRaid/updateIngress.ts）与自动流水线主干（auto/message/index.ts）。两处
  * 各读一次墙钟，同一条消息的判定就可能横跨毫秒边界——这正是主干内部早已用
  * 单个 `now` 防住的那件事，本函数只是把同一条不变量扩到整条 update。

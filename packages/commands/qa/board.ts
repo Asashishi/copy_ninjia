@@ -3,7 +3,7 @@ import { chatAtmosphere } from "../../infra/atmosphere";
 /**
  * `/qa query` 看板：把本群已登记的问答铺成可复制的 JSON 代码块，并按长度分页。
  *
- * 看板是**用户明确授权的长期保留例外**（见 AGENTS.md「Telegram 提示留存」），
+ * 看板是**用户明确授权的长期保留例外**（见 docs/cn/04-invariants.md），
  * 不挂 30 秒清理；翻页按钮因此必须能在任意时刻工作，页码不进任何会话状态——
  * 每次点击都按 callback_data 里的页号从热表重新装页。这样重启、`/qa remove`
  * 改动条目、甚至整群条目被清空之后，旧看板再点一下也会自己收敛到当前事实，

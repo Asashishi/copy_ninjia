@@ -24,10 +24,8 @@ describe("application handler registration", () => {
   test("导入不注册；显式调用一次后安装完整更新链并追踪最大 update_id", async () => {
     const middleware: TestMiddleware[] = [];
     const commands: string[] = [];
-    // 直接挂在 bot 上的命令与 hears。必须恒为空：命令一律注册在
-    // `:entities:bot_command` 子链上，中文动作命令收在「/」外闸后面的子 Composer 里，
-    // 漏一条在 bot 上就等于每条普通群消息都要为它多走一层 grammY 的
-    // filter -> branch -> lazy（见 app/registerHandlers.ts 的说明）。
+    // 直接挂在 bot 上的命令与 hears，必须恒为空：命令注册在 :entities:bot_command
+    // 子链上，中文动作命令收在「/」外闸后的子 Composer 里（见 app/registerHandlers.ts）。
     const directCommands: string[] = [];
     const directHears: RegExp[] = [];
     const updates: unknown[] = [];
@@ -110,13 +108,9 @@ describe("application handler registration", () => {
     ]);
     expect(directCommands).toEqual([]);
     expect(directHears).toEqual([]);
-    // 顺序承重：use:3 承载 init 与私聊命令门禁；use:6/7/8 依次是 Anti-Raid、gag、
-    // /qa set 表单三条 ingress（Anti-Raid 先看原始消息以保持刷屏/黑名单事实口径，
-    // 被 gag 的消息不得再往下走，表单投递认领后删掉那条消息）。命令 handler 一律
-    // 不调 next()，注册在 ingress 之前的那条就会整条绕开刷屏计数、黑名单频道消息
-    // 就地删除与待验证成员的消息追踪（见 antiRaid/updateIngress.ts 的函数头）。
-    // use:9 是中文动作命令的「/」外闸，必须早于 use:10 的消息兜底，否则每条 `/咬`
-    // 都会先被 handleIncomingMessageMiddleware 吞掉，落进 AI/复读流水线。
+    // use:3 是 init 与私聊命令门禁；use:6/7/8 依次是 Anti-Raid、gag、/qa set 表单
+    // 三条 ingress（见 antiRaid/updateIngress.ts 的函数头）；use:9 是中文动作命令的
+    // 「/」外闸，须早于 use:10 的消息兜底。
     const commandGroupIndex: number =
       registrationOrder.indexOf(`on:${JSON.stringify(":entities:bot_command")}`);
     expect(registrationOrder.slice(0, 8)).toEqual([
@@ -128,8 +122,8 @@ describe("application handler registration", () => {
       expect(registrationOrder.indexOf(`command:${command}`)).toBeLessThan(registrationOrder.indexOf("use:9"));
     }
     expect(registrationOrder.indexOf("use:9")).toBeLessThan(registrationOrder.indexOf("use:10"));
-    // 两条 callback_query:data：/qa query 翻页先认领，没认领的才交给入群验证。
-    // 前者不认领时会 next()，后者不调 next()，顺序反了翻页按钮就永远转圈。
+    // 两条 callback_query:data：/qa query 翻页先认领（未认领时 next()），
+    // 未认领的交给入群验证（不调 next()）。
     expect(registrationOrder.slice(registrationOrder.indexOf("use:10") + 1)).toEqual([
       `on:${JSON.stringify("message_reaction")}`,
       `on:${JSON.stringify("chat_member")}`,

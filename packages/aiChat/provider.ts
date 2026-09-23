@@ -284,9 +284,7 @@ export function mediaAiProvider(
 /**
  * 可缺席能力的门面记忆化：缺配置时把 `null` 也缓存下来。
  *
- * 缓存 null 与缓存门面同样重要——不缓存的话，每次工具注册都要重新读一遍部署
- * 配置去确认「还是没配」。`undefined` 因此专表「还没问过」，与「问过、没有」
- * 严格分开。
+ * `undefined` 专表「还没问过」，`null` 表「问过、没配」，两者严格分开缓存。
  */
 interface OptionalCapabilityFacadeParams<TFacade> {
   /** 部署配置里的能力键，也是记忆化槽位名。 */
@@ -338,14 +336,10 @@ export function songAiProvider(): AiSongProvider | null {
 }
 
 /**
- * 启动诊断：能力配置齐全、结构校验也过了，但选中的那一家**根本没有**这项能力。
+ * 启动诊断：能力配置齐全、结构校验也过了，但选中的那一家**根本没有**这项能力
+ * （工具不挂、语音不转写）。这不是错误配置，不拒绝启动。
  *
- * 这不是错误配置，因此不拒绝启动——功能行为是正确的（工具不挂、语音不转写）。
- * 但没有这行诊断，部署者只能从「机器人为什么不会唱歌」反推到「我给 song 选的
- * provider 没实现它」，中间隔着整条工具装配链路。
- *
- * 在 AI Worker 初始化与每次 agent 配置热重载后各调用一次：逐轮回复重复记录只会
- * 把真正的故障淹掉。
+ * 在 AI Worker 初始化与每次 agent 配置热重载后各调用一次，逐轮回复不重复记录。
  */
 export function reportUnimplementedAgentCapabilities(): void {
   const config: AgentDeploymentConfig = getAgentDeploymentConfig();

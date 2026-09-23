@@ -2,9 +2,8 @@
  * 全量性能基准的公共契约：子进程回传的原始读数、三轮聚合后的指标，以及
  * 最终报告的形状。
  *
- * 单独成文件是为了让父进程（编排与渲染）不必 import 任何会拉起生产模块图的
- * 子进程实现——父进程一旦静态 import 了 coldStart/chain，它自己就先把整张
- * 生产模块图加载进来了，冷启动那一段读数当场失效。
+ * 单独成文件：父进程（编排与渲染）只 import 这里的类型，不 import 会拉起生产
+ * 模块图的子进程实现。
  */
 
 import type { ChildResult as IdentityChildResult } from "../identityDatabase/types";
@@ -181,8 +180,7 @@ export interface BenchmarkSection {
 /**
  * 冷启动分区的旁注：恢复到的数据量与进程峰值 RSS。
  *
- * 不做成分区里的一行：分区那张表的每一行都是一个启动阶段、单位都是毫秒，
- * 把「恢复了多少条」和「峰值多少字节」塞进同一张表只会让列的含义按行变化。
+ * 不放进分区表：分区表每一行是一个启动阶段、单位都是毫秒，与这里的字段单位不同。
  */
 export interface ColdStartSummary {
   readonly recovered: ColdStartRecovered;
@@ -213,10 +211,9 @@ export interface SuiteEnvironment {
   readonly arch: string;
   readonly kernel: string;
   /**
-   * 逻辑核心数；刻意不记录 CPU 型号。
+   * 逻辑核心数；不记录 CPU 型号。
    *
-   * 型号既不参与任何读数的解释，又把出数机器的具体硬件写进了公开文档；判断一
-   * 份读数能不能和历史比，看的是核心数、内存和 Bun 构建这三项。
+   * 判断一份读数能否与历史比较，看核心数、内存和 Bun 构建这三项。
    */
   readonly cpuCount: number;
   readonly totalMemoryBytes: number;

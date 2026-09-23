@@ -9,6 +9,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
+import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../packages/consts/identityStorage";
 import { encodeChatQaData } from "../../packages/database/codec/chatQa";
 import { encodeChatStateData } from "../../packages/database/codec/chatState";
 import {
@@ -29,8 +31,10 @@ import {
 import { createStorageDatabase } from "../../packages/database/interact/migration";
 import { readStorageDatabasePendingRemovalPage } from
   "../../packages/database/interact/inspection";
-import { readStoredTemporaryAdBypassActivities } from
-  "../../packages/database/interact/temporaryAdBypass";
+import {
+  deleteStaleTemporaryAdBypassActivities,
+  readStoredTemporaryAdBypassActivities,
+} from "../../packages/database/interact/temporaryAdBypass";
 import { commitStorageDatabaseChanges } from
   "../../packages/database/interact/transaction";
 import type { CommitStorageDatabaseChangesOptions } from
@@ -171,4 +175,23 @@ test("待踢 outbox、临时免检与群状态的删除各自只命中一行", (
   expect(readStorageDatabasePendingRemovalPage(database, null).map((row: { removalId: number }): number => row.removalId)).toEqual([32]);
   expect(readStoredTemporaryAdBypassActivities(database, [21, 22]).map((row: { id: number }): number => row.id)).toEqual([22]);
   expect(readStoredChatStateIds(database).map((row: { chatId: number }): number => row.chatId)).toEqual([OTHER_CHAT_ID]);
+});
+
+test("临时免检读取与清理的入参守卫：空批直接返回，超批次与非法日界拒绝", () => {
+  expect(readStoredTemporaryAdBypassActivities(database, [])).toEqual([]);
+  const oversized: number[] = Array.from(
+    { length: IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 1 },
+    (_unused: unknown, index: number): number => index + 1
+  );
+  expect(() => readStoredTemporaryAdBypassActivities(database, oversized))
+    .toThrow(`at most ${IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES} IDs`);
+
+  for (const [currentDayStart, previousDayStart] of [
+    [DAY_MS, 0.5],
+    [DAY_MS - 1, -1],
+    [2 * DAY_MS, 0],
+  ] as const) {
+    expect(() => deleteStaleTemporaryAdBypassActivities(database, currentDayStart, previousDayStart))
+      .toThrow("day bounds must be increasing non-negative safe integers");
+  }
 });

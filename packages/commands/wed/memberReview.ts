@@ -1,4 +1,3 @@
-import type { User } from "grammy/types";
 import { wedRuntime } from "../../cache/main/wed";
 import { wedMemberReview } from "../../cache/main/wedMemberReview";
 import { wedMemberStates } from "../../cache/main/wedMembers";
@@ -8,11 +7,12 @@ import {
 } from "../../consts/wed";
 import { trackBackgroundTask } from "../../infra/backgroundTasks";
 import { signalWithTimeout } from "../../libs/abortSignal";
-import { onMidnightMaintenance } from "../../infra/diskIO/observers";
+import { onDiskIOReply } from "../../infra/diskIO/observers";
 import { readPresentChatUser } from "../../infra/telegram/actions/membership";
 import { monotonicNow } from "../../libs/monotonicDeadline";
 import { sleep } from "../../libs/sleep";
 import type { MidnightMaintenanceReply } from "../../types/diskIO/replies";
+import type { ChatMemberPresence } from "../../types/telegram";
 import type { WedMemberReview, WedRuntime } from "../../types/wed";
 import { removeWedMember } from "./persistence";
 
@@ -21,8 +21,9 @@ import { removeWedMember } from "./persistence";
  * PARTICIPANT_ID_INVALID 拒绝该用户 ID）且没有新在群观察的成员。
  * 某群集合在复核期间被替换或清除时只结束该群，继续下一个群；整轮只因
  * `review.controller` 取消而提前结束。
- * 查询用 getChatMember，只对群管理员机器人保证可用；机器人不是管理员的群里查询失败即
- * 保留成员，本轮删不掉人，见 docs/cn/04-invariants.md。
+ * 查询用 getChatMember，只对群管理员机器人保证可用；查询失败即保留成员，见
+ * docs/cn/04-invariants.md。本群拒绝成员查询本身（机器人不在群、或只允许管理员查询
+ * 他人）时同群其余查询必然同样失败，只查这一次即结束该群本轮，成员全部保留。
  */
 async function reviewWedMembers(review: WedMemberReview): Promise<void> {
   let nextCheckAt: number = 0;
@@ -48,13 +49,13 @@ async function reviewWedMembers(review: WedMemberReview): Promise<void> {
         nextCheckAt = monotonicNow() + WED_MEMBER_REVIEW_INTERVAL_MS;
         const signal: AbortSignal =
           signalWithTimeout(review.controller.signal, WED_OPERATION_TIMEOUT_MS);
-        const user: User | null | undefined = await readPresentChatUser({ chatId, userId, signal });
+        const presence: ChatMemberPresence = await readPresentChatUser({ chatId, userId, signal });
         const observed: boolean = review.observed;
         review.chatId = null;
         review.userId = null;
         review.observed = false;
-        if (wedMemberStates.get(chatId) !== state) break;
-        if (user === null && !signal.aborted && !observed) {
+        if (wedMemberStates.get(chatId) !== state || presence.kind === "chatDenied") break;
+        if (presence.kind === "absent" && !signal.aborted && !observed) {
           removeWedMember(chatId, userId);
         }
       }
@@ -84,7 +85,7 @@ function requestWedMemberReview(day: string): void {
   trackBackgroundTask(runtime.tasks, task, "Failed to review wed membership:");
 }
 
-onMidnightMaintenance((reply: MidnightMaintenanceReply): void => {
+onDiskIOReply("midnightMaintenance", (reply: MidnightMaintenanceReply): void => {
   requestWedMemberReview(reply.day);
 });
 

@@ -4,7 +4,7 @@ import {
   blocklistParticipantInvalidQueue,
 } from "../../packages/cache/main/blocklist";
 import { identityEntryCounts } from "../../packages/cache/main/identityStorage";
-import { diskIOStub } from "./diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "./diskIOMock";
 import { loggerStub } from "./loggerMock";
 import { waitUntil } from "./waitUntil";
 import type * as diskIO from "../../packages/infra/diskIO";
@@ -98,9 +98,11 @@ export const flushDiskIODomainOutcome = mock(async (domain: DiskIODomain): Promi
 export function participantInvalidDiskIO(): typeof diskIO {
   return diskIOStub({
     isDiskIOInitialized: (): boolean => true,
-    onIdentityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
-      participantInvalidHarness.persistedListeners.push(listener);
-    },
+    onDiskIOReply: diskIOReplyStub({
+      identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
+        participantInvalidHarness.persistedListeners.push(listener);
+      },
+    }),
     postDiskIO: (message: DiskBusinessMessage): boolean => {
       participantInvalidHarness.diskMessages.push(message);
       return true;

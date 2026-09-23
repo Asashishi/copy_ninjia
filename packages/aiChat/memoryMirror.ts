@@ -1,6 +1,5 @@
 import {
-  onAiMemoryDeletedPersisted,
-  onAiMemoryPersisted,
+  onDiskIOReply,
   onDiskIOGiveUp,
   onDiskIORespawn,
   postDiskIO,
@@ -160,9 +159,7 @@ export function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<vo
 
 onDiskIOGiveUp((): void => {
   // Worker 已经放弃自愈，没有替补实例：onDiskIORespawn 不会跑，deleteAiMemory
-  // 不会重放，durable 回执永远不会来。此时不结算的话，命令与 teardown 只能干等
-  // 满 AI_MEMORY_FLUSH_TIMEOUT_MS 再报「超时」——那两秒恰好和同一个 fatal 信号
-  // 触发的停机抢排空预算，失败原因也被表述成超时而不是「Worker 已经放弃」。
+  // 不会重放，durable 回执永远不会来，因此在此立即结算所有等待者为失败。
   for (const waiters of aiMemoryDeleteWaiters.values()) {
     for (const waiter of [...waiters]) {
       clearTimeout(waiter.timer);
@@ -174,7 +171,7 @@ onDiskIOGiveUp((): void => {
   aiMemoryDeleteWaiters.clear();
 });
 
-onAiMemoryDeletedPersisted((reply: AiMemoryDeletedPersistedReply): void => {
+onDiskIOReply("aiMemoryDeletedPersisted", (reply: AiMemoryDeletedPersistedReply): void => {
   if (pendingAiMemoryDeletes.get(reply.chatId) === reply.revision) {
     pendingAiMemoryDeletes.delete(reply.chatId);
   }
@@ -188,7 +185,7 @@ onAiMemoryDeletedPersisted((reply: AiMemoryDeletedPersistedReply): void => {
   finishAiMemoryTeardown(reply.chatId);
 });
 
-onAiMemoryPersisted((reply: AiMemoryPersistedReply): void => {
+onDiskIOReply("aiMemoryPersisted", (reply: AiMemoryPersistedReply): void => {
   const expectedRevision: number | null | undefined =
     postPurgeAiMemoryPersistRevisions.get(reply.chatId);
   if (expectedRevision === undefined || expectedRevision === null) return;

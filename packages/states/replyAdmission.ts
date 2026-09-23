@@ -1,9 +1,7 @@
 import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../consts/aiChat/rateLimit";
 import type {
   AdmitDecision,
-  AdmitRoundInput,
   AdmitTriggerInput,
-  RoundDecision,
 } from "../types/states/replyAdmission";
 
 /**
@@ -12,10 +10,10 @@ import type {
  * 与 replyRound.ts，本模块只出这两道闸的判定：
  *
  * - admitTrigger：并发闸，在触发到达时判定。
- * - admitRound：限频闸，在真正开始一轮前判定。
+ * - isReplyRoundRateLimited：限频闸，在真正开始一轮前判定。
  *
  * 两道闸不是同一个状态对象的两次转移——之间隔着「入队等待补跑」这个
- * 不定时长的中间态（补跑时才会走到 admitRound，见 replyQueue.ts），且
+ * 不定时长的中间态（补跑时才会走到 isReplyRoundRateLimited，见 replyQueue.ts），且
  * 没有一个有意义的离散状态集合可以枚举（不像
  * verification/lockdown 那样有 PENDING/ACTIVE 这类需要持久化在 Map 里、
  * 会被后续事件引用的状态），本质是两次独立的阈值判定，各自只吃调用方
@@ -54,9 +52,9 @@ export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
 /**
  * 限频闸判定：该群 5 分钟滑动窗口内的触发数是否已达上限。调用方必须先把
  * 窗口外的旧触发挤掉再数 windowCount——本函数不掐时间，只比较数量。
- * @param input.windowCount 挤掉过期项之后，窗口内剩余的触发数。
+ * 返回 true 时调用方不记账，按触发来源通知或保留队首；false 时记账后执行。
+ * @param windowCount 挤掉过期项之后，窗口内剩余的触发数。
  */
-export function admitRound(input: AdmitRoundInput): RoundDecision {
-  if (input.windowCount >= RATE_LIMIT_LONG_MAX_TRIGGERS) return "rateLimited";
-  return "run";
+export function isReplyRoundRateLimited(windowCount: number): boolean {
+  return windowCount >= RATE_LIMIT_LONG_MAX_TRIGGERS;
 }

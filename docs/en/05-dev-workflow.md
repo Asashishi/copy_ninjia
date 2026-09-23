@@ -25,7 +25,7 @@
 | `bun run check:install-isolation` | Actually run `install.sh` inside a dedicated `copy-ninjia-install-test-*` temporary fixture root (`scripts/checkInstallIsolation.ts`) and verify staging-failure cleanup, `bot.json` rollback, interrupted-then-resumed installs, successful replacement, symlink topology, unverified-backup retention, and credential isolation; no real deployment path is touched |
 | `bun run check:conventions` | Check repository conventions with `scripts/checkProjectConventions.ts` |
 | `bun run check` | Run all eight segments — install-script-syntax + install-isolation + conventions + lint + typecheck + coverage + the fixed-seed random-order suite + the hot-path gate; **required before merging into master** |
-| `bun run check:coverage` | Measure coverage now and verify the metrics in the three README badges/alts, the three copies of this page, and both coverage images match the real reading; excluded from `check` because it runs the whole suite again |
+| `bun run check:coverage` | Measure coverage now and verify the metrics in the three README badges/alts, the three copies of this page, and both coverage images match the real reading; reruns the whole suite, so it is excluded from `check` |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
 | `bun run perf:hot-paths` | Measure a single hot-path scenario in its own process (`--profile` adds sampling analysis) |
 | `bun run perf:hot-path-gate` | Run the memory/GC/JIT gate over the 10 scenarios selected in `HOT_PATH_PROFILE_SCENARIOS` (the registry holds 51; other scenarios run through the full-suite manifest or targeted commands); already part of `check`. `--write-result` records the run into the repository-root `performance-result.json` |
@@ -55,9 +55,9 @@
 
 ### Dependency Release-Age Gate
 
-Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The Bun runtime is pinned to 1.4.2 and `@types/bun` to 1.4.1; both use the same major and minor versions, while `packageManager` and `install.sh` jointly pin the runtime patch version.
+Dependency installation always uses the seven-day release-age gate in `bunfig.toml`. An exact version younger than seven days may receive a temporary package-specific exemption only after informed user approval and verification of its upstream source, npm integrity, and lifecycle scripts. The exemption is removed immediately after installation, and its package name, reason, and removal time are recorded. The Bun runtime and `@types/bun` are both pinned to 1.4.2; `packageManager` and `install.sh` jointly pin the runtime version.
 
-The TypeScript dependency range is `~6.0.3` (6.0.x), with `6.0.3` recorded in the lockfile. The current `typescript-eslint` package declares a TypeScript compatibility range of `>=4.8.4 <6.1.0`.
+`bun run typecheck` uses the TypeScript 7.0.2 compiler provided by `@typescript/native` (`npm:typescript@~7.0.2`). The `typescript` dependency uses `npm:@typescript/typescript6@^6.0.2`, resolved in the lockfile to `@typescript/typescript6` 6.0.2; through `@typescript/old`, it provides the TypeScript 6.0.3 compiler API for ESLint and convention checks. The current `typescript-eslint` version is 8.70.0 and declares a TypeScript compatibility range of `>=4.8.4 <6.1.0`.
 
 ### Bun Runtime Boundaries
 
@@ -69,14 +69,14 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **5072 tests / 441 files / 192270 `expect()` calls**; full-source **function coverage 97.01% / line coverage 98.12%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **5104 tests / 444 files / 192389 `expect()` calls**; full-source **function coverage 97.06% / line coverage 98.19%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
 Tests must run through `bun run test`, which invokes `bun test --isolate`, with four layers of protection:
 
 1. **File isolation**: Bun creates a fresh global object for every test file, so `mock.module` and module-level state do not contaminate other files. `--parallel` is not enabled, so this project does not claim that every file gets a separate process.
-2. **Temporary data root**: before any production module loads, `test/preloadEnv.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, `memory/`, or `database/`. The directory is removed afterward. **The path injection lives in its own file** because ESM evaluates imports before any statement in the importing file: the moment `test/preload.ts` statically imports a production module, an environment assignment written inside that file is already too late and `CONFIG_ROOT` resolves to the developer's real deployment directory.
+2. **Temporary data root**: before any production module loads, `test/preloadEnv.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, `memory/`, or `database/`. The directory is removed afterward. **The path injection lives in its own file, separate from `test/preload.ts`**: the moment `test/preload.ts` statically imports a production module, an environment assignment written inside that file is already too late and `CONFIG_ROOT` resolves to the developer's real deployment directory.
 3. **Dedicated configuration root**: the same injection copies the whole `config_example/` tree into `config/` under that data root and points `COPY_NINJIA_CONFIG_ROOT` at the copy (see `CONFIG_ROOT` in `packages/consts/paths.ts`). Placeholder credentials in `agent.json` and `bot.json` are replaced with test-only values in that copy alone, which is what the strict parsers accept; like the installer, the copy leaves out the `g-auth.json` example, and translation availability is set by the preload and by each test; the copy is removed together with the data root. The deployed `config/` is not version-controlled, so this layer both keeps a clean checkout runnable and stops tests and test Workers from reading or rewriting a developer's real Telegram and feature configuration. The preceding temporary-data-root layer isolates the identity database. That variable exists for tests only — it is not a deployment switch, which is why the README environment table omits it.
 4. **Agent configuration snapshot**: only the main thread reads the deployment configuration that Workers hold (in a real process the main thread parses it and hands it to each Worker in init and hot-reload messages, see [04 Runtime Invariants](04-invariants.md)). Test isolates never receive those messages, so `test/preload.ts` adopts the `agent.json`, `ad_samples.json`, `mood.json`, `stickers.json`, and persona copies from the previous layer into the isolate's holders once — equivalent to "the snapshot already arrived". Tests that need the unconfigured path clear the holder themselves.
 

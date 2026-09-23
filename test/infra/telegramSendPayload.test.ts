@@ -1,11 +1,11 @@
 /**
- * 出站 payload 改成「定形一次初始化 + 缺席用 undefined」之后，真正发到网络上的
- * 请求体必须与「整个不带这个键」逐字节相同。
+ * 出站 payload 采用「可选字段定形一次初始化、缺席用 undefined 表达」的写法时，
+ * 真正发到网络上的请求体必须与「整个不带这个键」逐字节相同。
  *
- * 这条断言是那次改写的全部安全性依据：字段从「不存在」变成「存在但为 undefined」
- * 是一次真实的载荷变化，只是恰好被 grammY 的两条序列化路径各自过滤掉了。
- * **依据在依赖内部**，升级 grammY 时没有任何编译期信号会提醒这里，所以钉成用例：
- * 哪天上游改了过滤口径，这里先红。
+ * 字段从「不存在」变成「存在但为 undefined」本是一次真实的载荷变化，
+ * 只是恰好被 grammY 的两条序列化路径（JSON / multipart）各自过滤掉了；
+ * 这一过滤行为在依赖内部实现，grammY 升级时没有任何编译期信号会提醒这里，
+ * 因此用例直接判定网络层的真实请求体。
  *
  * 判据取**注入 fetch 拿到的真实请求体**，不 import grammY 的内部模块：那些路径
  * 不在它的 exports 映射里，照着写等于把测试绑在依赖的目录结构上。
@@ -59,7 +59,7 @@ async function capture(
 
 describe("grammY 丢弃值为 undefined 的出站字段", () => {
   test("JSON 路径：定形 payload 与省略写法产出同一请求体", async () => {
-    // 定形写法：五个可选字段恒定出现，缺席用 undefined 表达。
+    // 五个可选字段恒定出现，缺席用 undefined 表达。
     const fixedShape: CapturedRequest = await capture((api: Api): Promise<unknown> =>
       api.raw.sendMessage({
         chat_id: -100_123,
@@ -70,7 +70,7 @@ describe("grammY 丢弃值为 undefined 的出站字段", () => {
         entities: undefined,
         link_preview_options: undefined,
       }));
-    // 改写前的写法：条件展开的结果就是这些键根本不存在。
+    // 对照写法：这些键在对象字面量里整个不出现。
     const omitted: CapturedRequest = await capture((api: Api): Promise<unknown> =>
       api.raw.sendMessage({
         chat_id: -100_123,
